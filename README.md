@@ -289,4 +289,9 @@ Proma 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱
 
 ## 许可证
 
-当前 workspace 包在 `package.json` 中声明为 `Apache-2.0`。根目录许可证文件尚未补齐时，请以仓库实际发布内容和各包声明为准。
+本项目采用 **Apache-2.0 或 MIT 双许可**，你可任选其一：
+
+- Apache License, Version 2.0：详见根目录 `LICENSE-APACHE` 或 https://www.apache.org/licenses/LICENSE-2.0
+- MIT License：详见根目录 `LICENSE-MIT` 或 https://opensource.org/licenses/MIT
+
+根目录 `LICENSE` 文件亦说明了双许可的选择方式。

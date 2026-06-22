@@ -283,4 +283,9 @@ Proma currently has a PR bounty program. You can leave your email in the PR desc
 
 ## License
 
-Current workspace packages declare `Apache-2.0` in their `package.json` files. Until a root license file is added, please refer to the actual repository release contents and package declarations.
+This project is dual-licensed under **Apache-2.0 or MIT**, at your option:
+
+- Apache License, Version 2.0: see `LICENSE-APACHE` in the repository root or https://www.apache.org/licenses/LICENSE-2.0
+- MIT License: see `LICENSE-MIT` in the repository root or https://opensource.org/licenses/MIT
+
+The root `LICENSE` file also describes how to choose between the two licenses.
