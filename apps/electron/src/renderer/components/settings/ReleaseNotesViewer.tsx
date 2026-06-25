@@ -4,7 +4,7 @@
  * 显示 GitHub Release 的发布说明（Markdown 格式）
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import type { GitHubRelease } from '@proma/shared'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'

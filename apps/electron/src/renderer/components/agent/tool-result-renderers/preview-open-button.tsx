@@ -6,7 +6,7 @@
  * 点击后将文件内容在右侧 PreviewPanel 中以完整视图打开。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { previewFileMapAtom, previewPanelOpenMapAtom } from '@/atoms/preview-atoms'
 import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'

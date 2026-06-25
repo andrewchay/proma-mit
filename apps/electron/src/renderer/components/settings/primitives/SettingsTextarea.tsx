@@ -2,7 +2,7 @@
  * SettingsTextarea - 设置多行文本输入控件
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { LABEL_CLASS, DESCRIPTION_CLASS } from './SettingsUIConstants'

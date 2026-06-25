@@ -5,7 +5,7 @@
  * 使用低级 Dialog 原语实现轻遮罩 + 无默认关闭按钮（关闭按钮由 SettingsPanel 内部提供）。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtom } from 'jotai'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { settingsOpenAtom } from '@/atoms/settings-tab'

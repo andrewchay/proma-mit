@@ -3,7 +3,7 @@
  * Displays title and optional action buttons
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 export interface PanelHeaderProps {

@@ -33,7 +33,7 @@ import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanMo
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
 import { isTransientNetworkError } from './error-patterns'
-import { AgentEventBus } from './agent-event-bus'
+import type { AgentEventBus } from './agent-event-bus'
 import { decryptApiKey, getChannelById, listChannels } from './channel-manager'
 import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@proma/core'
 import { getFetchFn } from './proxy-fetch'
@@ -85,10 +85,10 @@ function extractApiError(stderr: string): { statusCode: number; message: string 
 
   // 模式 1：JSON 错误格式 - "401 {...}"
   const jsonMatch = stderr.match(/(\d{3})\s+(\{[^}]*"error"[^}]*\})/s)
-  if (jsonMatch) {
+  if (jsonMatch && jsonMatch[1] && jsonMatch[2]) {
     try {
-      const statusCode = parseInt(jsonMatch[1]!)
-      const errorObj = JSON.parse(jsonMatch[2]!)
+      const statusCode = parseInt(jsonMatch[1])
+      const errorObj = JSON.parse(jsonMatch[2])
       const message = errorObj.error?.message || errorObj.message || '未知错误'
       return { statusCode, message }
     } catch {
@@ -98,10 +98,10 @@ function extractApiError(stderr: string): { statusCode: number; message: string 
 
   // 模式 2：API error 格式 - "API error (attempt X/Y): 401 401 {...}"
   const apiErrorMatch = stderr.match(/API error[^:]*:\s+(\d{3})\s+\d{3}\s+(\{.*?\})/s)
-  if (apiErrorMatch) {
+  if (apiErrorMatch && apiErrorMatch[1] && apiErrorMatch[2]) {
     try {
-      const statusCode = parseInt(apiErrorMatch[1]!)
-      const errorObj = JSON.parse(apiErrorMatch[2]!)
+      const statusCode = parseInt(apiErrorMatch[1])
+      const errorObj = JSON.parse(apiErrorMatch[2])
       const message = errorObj.error?.message || errorObj.message || '未知错误'
       return { statusCode, message }
     } catch {
@@ -111,9 +111,9 @@ function extractApiError(stderr: string): { statusCode: number; message: string 
 
   // 模式 3：直接的状态码 + 消息
   const simpleMatch = stderr.match(/(\d{3})[:\s]+(.+?)(?:\n|$)/i)
-  if (simpleMatch) {
-    const statusCode = parseInt(simpleMatch[1]!)
-    const message = simpleMatch[2]!.trim()
+  if (simpleMatch && simpleMatch[1] && simpleMatch[2]) {
+    const statusCode = parseInt(simpleMatch[1])
+    const message = simpleMatch[2].trim()
     if (statusCode >= 400 && statusCode < 600) {
       return { statusCode, message }
     }

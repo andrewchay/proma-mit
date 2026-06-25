@@ -343,10 +343,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom)
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtomFamily(sessionId))
   const workspaces = useAtomValue(agentWorkspacesAtom)
-  // 保持 channelId 稳定：初始化前使用上次有效值，避免工具栏抖动
-  const stableChannelIdRef = React.useRef(agentChannelId)
-  if (agentChannelId) stableChannelIdRef.current = agentChannelId
-  const stableChannelId = agentChannelId ?? stableChannelIdRef.current
 
   // 已有会话首次打开时，从全局默认值初始化 per-session map。
   // setter 内的 `prev.has(sessionId)` 守卫保证幂等，外层不再订阅 Map atom，
@@ -377,8 +373,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     contextWindow: streamState?.contextWindow,
   }
   const setAgentStreamErrors = useSetAtom(agentStreamErrorsAtom)
-  const streamErrors = useAtomValue(agentStreamErrorsAtom)
-  const agentError = streamErrors.get(sessionId) ?? null
   const planModeSessions = useAtomValue(agentPlanModeSessionsAtom)
   const isPlanMode = planModeSessions.has(sessionId)
   const permissionModeMap = useAtomValue(agentPermissionModeMapAtom)
@@ -450,7 +444,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const sessionPath = sessionPathMap.get(sessionId) ?? null
   const [workspaceFilesPath, setWorkspaceFilesPath] = React.useState<string | null>(null)
   const [isDragOver, setIsDragOver] = React.useState(false)
-  const [errorCopied, setErrorCopied] = React.useState(false)
 
   // pendingFiles ref（供 addFilesAsAttachments 读取最新列表，避免闭包旧值）
   const pendingFilesRef = React.useRef(pendingFiles)
@@ -1505,19 +1498,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       })
     })
   }, [sessionId, agentChannelId, agentModelId, currentWorkspaceId, streaming, setStreamingStates, store, permissionMode])
-
-  /** 复制错误信息到剪贴板 */
-  const handleCopyError = React.useCallback(async (): Promise<void> => {
-    if (!agentError) return
-
-    try {
-      await navigator.clipboard.writeText(agentError)
-      setErrorCopied(true)
-      setTimeout(() => setErrorCopied(false), 2000)
-    } catch (error) {
-      console.error('[AgentView] 复制错误信息失败:', error)
-    }
-  }, [agentError])
 
   /** 重试：在当前会话中重新发送最后一条用户消息 */
   const handleRetry = React.useCallback((): void => {

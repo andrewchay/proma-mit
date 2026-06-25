@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unlinkSync, rmSync, renameSync, readdirSync, cpSync, copyFileSync, createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
+import { safeParseJSONObject } from './safe-json'
 import { randomUUID } from 'node:crypto'
 import { join, resolve, dirname } from 'node:path'
 import {
@@ -129,10 +130,7 @@ export function createAgentSession(
       const claudeDir = join(sessionDir, '.claude')
       if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true })
       const settingsPath = join(claudeDir, 'settings.json')
-      let sdkSettings: Record<string, unknown> = {}
-      try {
-        sdkSettings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
-      } catch { /* 文件不存在或解析失败 */ }
+      const sdkSettings = safeParseJSONObject(readFileSync(settingsPath, 'utf-8'))
       let needsWrite = false
       if (sdkSettings.plansDirectory !== '.context') {
         sdkSettings.plansDirectory = '.context'
@@ -187,13 +185,16 @@ export function appendAgentMessage(id: string, message: AgentMessage): void {
     appendFileSync(filePath, line, 'utf-8')
 
     // 追加消息时更新 updatedAt，若已归档则自动恢复活跃
+    // 使用原子写避免 index 文件在并发更新时损坏
     const index = readIndex()
     const idx = index.sessions.findIndex((s) => s.id === id)
     if (idx !== -1) {
-      const session = index.sessions[idx]!
-      session.updatedAt = Date.now()
-      if (session.archived) session.archived = false
-      writeIndex(index)
+      const session = index.sessions[idx]
+      if (session) {
+        session.updatedAt = Date.now()
+        if (session.archived) session.archived = false
+        writeIndex(index)
+      }
     }
   } catch (error) {
     console.error(`[Agent 会话] 追加消息失败 (${id}):`, error)
@@ -242,12 +243,12 @@ function sanitizeOversizedMessage(msg: SDKMessage, originalLength: number): SDKM
   const truncationNote = `\n[内容已截断: 原始 ${(originalLength / 1024).toFixed(0)}K chars 超出存储限制]`
   const truncationThreshold = MAX_SDK_MESSAGE_LENGTH / 2
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const clone: any = JSON.parse(JSON.stringify(msg))
-  const content = clone.message?.content
+  const clone = JSON.parse(JSON.stringify(msg)) as Record<string, unknown>
+  const message = clone.message as Record<string, unknown> | undefined
+  const content = message?.content
   if (Array.isArray(content)) {
     for (let i = 0; i < content.length; i++) {
-      const block = content[i]
+      const block = content[i] as Record<string, unknown> | null | undefined
       if (!block || typeof block !== 'object') continue
 
       // 截断超长 text block
@@ -275,8 +276,9 @@ function sanitizeOversizedMessage(msg: SDKMessage, originalLength: number): SDKM
   }
 
   // 截断 error.message
-  if (clone.error && typeof clone.error === 'object' && typeof clone.error.message === 'string' && clone.error.message.length > truncationThreshold) {
-    clone.error.message = clone.error.message.slice(0, TRUNCATED_PREVIEW_LENGTH) + truncationNote
+  const errorObj = clone.error as Record<string, unknown> | undefined
+  if (errorObj && typeof errorObj === 'object' && typeof errorObj.message === 'string' && errorObj.message.length > truncationThreshold) {
+    errorObj.message = errorObj.message.slice(0, TRUNCATED_PREVIEW_LENGTH) + truncationNote
   }
 
   return clone as SDKMessage
@@ -818,7 +820,7 @@ export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSe
   }
 
   if (sourceDir && destDir && messagesToCopy.length > 0) {
-    messagesToCopy = messagesToCopy.map((m) => rewritePathsInSDKMessage(m, sourceDir, destDir!))
+    messagesToCopy = messagesToCopy.map((m) => rewritePathsInSDKMessage(m, sourceDir, destDir))
   }
 
   if (messagesToCopy.length > 0) {
@@ -1357,8 +1359,8 @@ async function findFirstMatchInAgentJsonl(
         textContent = parsed.content
       } else if (Array.isArray(parsed.message?.content)) {
         textContent = parsed.message.content
-          .filter((b) => b.type === 'text' && b.text)
-          .map((b) => b.text!)
+          .filter((b) => b.type === 'text' && typeof b.text === 'string')
+          .map((b) => b.text)
           .join('\n')
       }
       if (!textContent) continue
@@ -1396,8 +1398,8 @@ function extractTextFromPersistedMessage(parsed: unknown): string {
 
   if (Array.isArray(record.message?.content)) {
     return record.message.content
-      .filter((b) => b.type === 'text' && b.text)
-      .map((b) => b.text!)
+      .filter((b) => b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text)
       .join('\n')
   }
 
@@ -1450,7 +1452,7 @@ export function searchAgentSessionReferences(input: AgentSessionReferenceSearchI
 
   const query = (input?.query ?? '').trim()
   const queryLower = query.toLowerCase()
-  const requestedLimit = Number.isFinite(input?.limit) ? input.limit! : 20
+  const requestedLimit = Number.isFinite(input?.limit) ? (input.limit ?? 20) : 20
   const limit = Math.min(Math.max(requestedLimit, 1), 50)
 
   const candidates = listAgentSessions()

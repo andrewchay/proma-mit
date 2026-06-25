@@ -3,7 +3,7 @@
  * Displays a header with title and scrollable content area
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { Panel } from './Panel'
 import { PanelHeader } from './PanelHeader'
 

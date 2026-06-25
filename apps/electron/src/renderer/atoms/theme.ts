@@ -136,11 +136,6 @@ export function applyThemeToDOM(themeMode: ThemeMode, themeStyle: ThemeStyle = '
     return
   }
 
-  // [FLASH-DEBUG] 仅在真正发生 DOM 变更时打印
-  console.log(
-    `[FLASH-DEBUG] applyThemeToDOM apply: mode=${themeMode}, style=${themeStyle}, systemIsDark=${systemIsDark}, diff={dark: ${currentIsDark}→${targetIsDark}, style: ${currentStyleClass}→${targetStyleClass}}`
-  )
-
   // 只修改确实需要变的 class
   if (currentStyleClass !== targetStyleClass) {
     if (currentStyleClass) {

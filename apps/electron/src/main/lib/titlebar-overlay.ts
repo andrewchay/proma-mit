@@ -1,4 +1,4 @@
-import { BrowserWindow, nativeTheme } from 'electron'
+import { type BrowserWindow, nativeTheme } from 'electron'
 import type { ThemeMode, ThemeStyle } from '../../types'
 import { getSettings } from './settings-service'
 

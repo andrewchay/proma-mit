@@ -5,7 +5,7 @@
  * 点击任务徽章滚动到对应的实时工具调用。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { TaskBadge } from './TaskBadge'
 import { cn } from '@/lib/utils'
 import type { BackgroundTask } from '@/atoms/agent-atoms'

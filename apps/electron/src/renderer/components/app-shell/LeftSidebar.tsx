@@ -211,9 +211,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
-  const [activeItem, setActiveItem] = React.useState<SidebarItemId>('all-chats')
   const [conversations, setConversations] = useAtom(conversationsAtom)
-  const [currentConversationId, setCurrentConversationId] = useAtom(currentConversationIdAtom)
+  const currentConversationId = useAtomValue(currentConversationIdAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
 
@@ -500,7 +499,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       setPinnedExpanded((prev) => !prev)
       return
     }
-    setActiveItem(item)
     setActiveView(ITEM_TO_VIEW[item])
   }
 
@@ -522,7 +520,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       openSession('chat', meta.id, meta.title)
       // 确保在对话视图
       setActiveView('conversations')
-      setActiveItem('all-chats')
       // 根据默认提示词重置选中
       if (promptConfig.defaultPromptId) {
         setSelectedPromptId(promptConfig.defaultPromptId)
@@ -536,7 +533,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const handleSelectConversation = React.useCallback((id: string, title: string): void => {
     openSession('chat', id, title)
     setActiveView('conversations')
-    setActiveItem('all-chats')
   }, [openSession, setActiveView])
 
   /** 请求删除对话（弹出确认框） */
@@ -708,7 +704,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       // 打开新标签页
       openSession('agent', meta.id, meta.title)
       setActiveView('conversations')
-      setActiveItem('all-chats')
     } catch (error) {
       console.error('[侧边栏] 创建 Agent 会话失败:', error)
     }
@@ -718,7 +713,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const handleSelectAgentSession = React.useCallback((id: string, title: string): void => {
     openSession('agent', id, title)
     setActiveView('conversations')
-    setActiveItem('all-chats')
     // 清除该会话的"已完成未查看"标记
     setUnviewedCompleted((prev: Set<string>) => {
       if (!prev.has(id)) return prev

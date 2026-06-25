@@ -5,7 +5,7 @@
  * 参考 Craft-agent-oss 的表格样式设计。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { Loader2, Terminal, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BackgroundTask } from '@/atoms/agent-atoms'

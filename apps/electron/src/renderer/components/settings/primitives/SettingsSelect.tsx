@@ -5,7 +5,7 @@
  * 用于有限选项的设置项。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import {
   Select,
   SelectContent,

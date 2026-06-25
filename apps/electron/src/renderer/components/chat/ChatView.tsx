@@ -75,7 +75,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   const [inlineEditingMessageId, setInlineEditingMessageId] = React.useState<string | null>(null)
 
   // ===== Per-conversation hooks（分屏独立） =====
-  const [selectedModel, setSelectedModel] = useConversationModel()
+  const [selectedModel] = useConversationModel()
   const [contextLength] = useConversationContextLength()
   const [thinkingEnabled] = useConversationThinkingEnabled()
   const [conversationPromptId] = useConversationPromptId()

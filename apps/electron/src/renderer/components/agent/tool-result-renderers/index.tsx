@@ -5,7 +5,7 @@
  * 未匹配时使用 DefaultResultRenderer。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { BashResultRenderer } from './bash-result'
 import { ReadResultRenderer } from './read-result'
 import { EditResultRenderer } from './edit-result'

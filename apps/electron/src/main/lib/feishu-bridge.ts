@@ -38,6 +38,7 @@ import {
   getWorkspaceCapabilities,
 } from './agent-workspace-manager'
 import { getFeishuBotBindingsPath } from './config-paths'
+import { safeParseJSON } from './safe-json'
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
 import {
   inferImageMediaType as inferImageMediaTypeShared,
@@ -553,16 +554,16 @@ class FeishuBridge {
     const fileAttachments: FeishuFileAttachment[] = []
 
     if (messageType === 'text') {
-      const content = JSON.parse(message.content as string) as { text?: string }
+      const content = safeParseJSON<{ text?: string }>(message.content as string, {})
       text = content.text?.trim() ?? ''
       // 去除 @Bot 的占位符（如 @_user_1）
       text = text.replace(/@_user_\d+/g, '').trim()
     } else if (messageType === 'post') {
       // 富文本消息：提取文本和图片
-      const content = JSON.parse(message.content as string) as {
+      const content = safeParseJSON<{
         title?: string
         content?: Array<Array<{ tag: string; text?: string; image_key?: string }>>
-      }
+      }>(message.content as string, {})
       const textParts: string[] = []
       if (content.title) textParts.push(content.title)
       for (const line of content.content ?? []) {
@@ -582,7 +583,7 @@ class FeishuBridge {
       }
       text = textParts.join(' ').replace(/@_user_\d+/g, '').trim()
     } else if (messageType === 'image') {
-      const content = JSON.parse(message.content as string) as { image_key?: string }
+      const content = safeParseJSON<{ image_key?: string }>(message.content as string, {})
       if (content.image_key) {
         try {
           const imageData = await this.downloadFeishuImage(messageId, content.image_key)
@@ -598,7 +599,7 @@ class FeishuBridge {
         }
       }
     } else if (messageType === 'file') {
-      const content = JSON.parse(message.content as string) as { file_key?: string; file_name?: string }
+      const content = safeParseJSON<{ file_key?: string; file_name?: string }>(message.content as string, {})
       if (content.file_key) {
         try {
           const fileData = await this.downloadFeishuFile(messageId, content.file_key)
@@ -802,9 +803,9 @@ class FeishuBridge {
     this.saveBindings()
 
     // 通知渲染进程刷新会话列表（复用 TITLE_UPDATED 通道触发列表刷新）
-    const windows = BrowserWindow.getAllWindows()
-    if (windows.length > 0 && !windows[0]!.isDestroyed()) {
-      windows[0]!.webContents.send(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
+    const [window] = BrowserWindow.getAllWindows()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
         sessionId: session.id,
         title: session.title,
       })
@@ -1447,9 +1448,9 @@ class FeishuBridge {
       sessionTitle: title,
       preview,
     }
-    const windows = BrowserWindow.getAllWindows()
-    if (windows.length > 0 && !windows[0]!.isDestroyed()) {
-      windows[0]!.webContents.send(FEISHU_IPC_CHANNELS.NOTIFICATION_SENT, payload)
+    const [window] = BrowserWindow.getAllWindows()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(FEISHU_IPC_CHANNELS.NOTIFICATION_SENT, payload)
     }
   }
 
@@ -1761,15 +1762,15 @@ class FeishuBridge {
     try {
       switch (msgType) {
         case 'text': {
-          const parsed = JSON.parse(rawContent) as { text?: string }
+          const parsed = safeParseJSON<{ text?: string }>(rawContent, {})
           return parsed.text ?? ''
         }
         case 'post': {
           // 富文本消息，提取纯文本
-          const parsed = JSON.parse(rawContent) as {
+          const parsed = safeParseJSON<{
             title?: string
             content?: Array<Array<{ tag: string; text?: string }>>
-          }
+          }>(rawContent, {})
           const parts: string[] = []
           if (parsed.title) parts.push(parsed.title)
           for (const line of parsed.content ?? []) {
@@ -2066,9 +2067,9 @@ class FeishuBridge {
     this.status = { ...this.status, ...partial }
 
     // 广播到渲染进程（包含 botId 和 botName）
-    const windows = BrowserWindow.getAllWindows()
-    if (windows.length > 0 && !windows[0]!.isDestroyed()) {
-      windows[0]!.webContents.send(FEISHU_IPC_CHANNELS.STATUS_CHANGED, {
+    const [window] = BrowserWindow.getAllWindows()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(FEISHU_IPC_CHANNELS.STATUS_CHANGED, {
         ...this.status,
         botId: this.botConfig.id,
         botName: this.botConfig.name,

@@ -438,3 +438,23 @@ export function formatElapsed(seconds: number): string {
   const remainingSeconds = Math.floor(seconds % 60)
   return `${minutes}m ${remainingSeconds}s`
 }
+
+/**
+ * 为 SDKContentBlock 生成稳定的 React key。
+ *
+ * tool_use 块使用唯一 id；text/thinking 等内容块使用类型 + 内容摘要 + 索引，
+ * 避免在列表重排或流式追加时出现状态复用问题。
+ */
+export function getBlockKey(block: { type: string }, index: number): string {
+  const b = block as Record<string, unknown>
+  if (block.type === 'tool_use' && typeof b.id === 'string') {
+    return `tool-${b.id}`
+  }
+  if (block.type === 'text' && typeof b.text === 'string') {
+    return `text-${b.text.slice(0, 20)}-${index}`
+  }
+  if (block.type === 'thinking' && typeof b.thinking === 'string') {
+    return `thinking-${b.thinking.slice(0, 20)}-${index}`
+  }
+  return `block-${block.type}-${index}`
+}

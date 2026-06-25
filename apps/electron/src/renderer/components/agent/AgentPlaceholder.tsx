@@ -4,7 +4,7 @@
  * 临时占位组件，后续将替换为完整的 Agent/Flow 组件
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { Bot } from 'lucide-react'
 
 export function AgentPlaceholder(): React.ReactElement {

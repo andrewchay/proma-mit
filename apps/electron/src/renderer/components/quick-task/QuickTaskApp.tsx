@@ -5,7 +5,8 @@
  * 轻量级独立窗口：多行输入 + 附件粘贴 + 模式切换 + 默认模型展示。
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import type React from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { fileToBase64, formatFileNames } from '@/lib/file-utils'
 import { MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import { toast } from 'sonner'

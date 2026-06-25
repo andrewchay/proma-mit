@@ -65,8 +65,8 @@ function highlightPattern(text: string, pattern: string): React.ReactNode {
     const parts = text.split(regex)
     return parts.map((part, i) =>
       regex.test(part)
-        ? <mark key={i} className="bg-yellow-300/30 text-yellow-200 rounded-sm px-0.5">{part}</mark>
-        : part,
+        ? <mark key={`highlight-${part}-${i}`} className="bg-yellow-300/30 text-yellow-200 rounded-sm px-0.5">{part}</mark>
+        : <span key={`highlight-${part}-${i}`}>{part}</span>,
     )
   } catch {
     return text
@@ -103,9 +103,6 @@ export function GrepResultRenderer({ result, isError, input }: GrepResultRendere
   const totalMatches = groups.reduce((sum, g) => sum + g.matches.length, 0)
 
   const renderGroups = React.useCallback((text: string): React.ReactNode => {
-    // 根据 text 长度决定显示多少（CollapsibleResult 会截断）
-    const visibleLines = text.split('\n').length
-
     return (
       <div className="space-y-2">
         {/* 统计 */}
@@ -124,7 +121,7 @@ export function GrepResultRenderer({ result, isError, input }: GrepResultRendere
             {/* 匹配行 */}
             <div className="font-mono text-[12px]">
               {group.matches.map((m, i) => (
-                <div key={i} className="flex px-3 py-0.5 hover:bg-zinc-800/30">
+                <div key={`${group.file}:${m.line}:${m.content.slice(0, 20)}`} className="flex px-3 py-0.5 hover:bg-zinc-800/30">
                   <span className="shrink-0 w-10 text-right pr-3 select-none text-zinc-500 text-[11px]">
                     {m.line}
                   </span>

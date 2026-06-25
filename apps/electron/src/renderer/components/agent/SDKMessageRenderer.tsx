@@ -20,6 +20,7 @@ import { ContentBlock } from './ContentBlock'
 import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary } from './TurnFileChangesSummary'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
+import { getBlockKey } from './tool-utils'
 import { DurationBadge } from './AgentMessages'
 import {
   Message,
@@ -628,7 +629,7 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
 
               return (
                 <ContentBlock
-                  key={i}
+                  key={getBlockKey(block, i)}
                   block={block}
                   allMessages={allMessages}
                   basePath={basePath}
@@ -744,7 +745,7 @@ export function SDKMessageRenderer({
           <div className={cn('space-y-2')}>
             {blocks.map((block, i) => (
               <ContentBlock
-                key={i}
+                key={getBlockKey(block, i)}
                 block={block}
                 allMessages={allMessages}
                 basePath={basePath}
@@ -1114,7 +1115,7 @@ function ErrorMessage({ message, onRetry, onRetryInNewSession, onCompact }: Erro
             {detailsOpen && (
               <ul className="mt-1.5 space-y-0.5 list-disc list-inside">
                 {errorDetails.map((d, i) => (
-                  <li key={i}>{d}</li>
+                  <li key={`error-detail-${d.slice(0, 30)}-${i}`}>{d}</li>
                 ))}
               </ul>
             )}

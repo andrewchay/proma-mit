@@ -5,7 +5,7 @@
  * 直接传递 sessionId/conversationId prop，无需桥接全局 atoms。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { tabsAtom } from '@/atoms/tab-atoms'
 import { ChatView } from '@/components/chat'
@@ -20,13 +20,6 @@ export interface TabContentProps {
 export function TabContent({ tabId }: TabContentProps): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
   const tab = tabs.find((t) => t.id === tabId)
-
-  // [FLASH-DEBUG] 监控 tab 查找失败（说明 tabId 指向了不存在的标签）
-  React.useEffect(() => {
-    if (!tab) {
-      console.warn(`[FLASH-DEBUG] TabContent: tab not found for tabId="${tabId}"`, { tabIds: tabs.map(t => t.id) })
-    }
-  }, [tab, tabId, tabs])
 
   if (!tab) {
     return (

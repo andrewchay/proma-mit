@@ -62,16 +62,6 @@ export function useGlobalChatListeners(): void {
       })
     }
 
-    /** 辅助函数：从 Map 中移除某个对话的流式状态 */
-    const removeState = (convId: string): void => {
-      store.set(streamingStatesAtom, (prev) => {
-        if (!prev.has(convId)) return prev
-        const map = new Map(prev)
-        map.delete(convId)
-        return map
-      })
-    }
-
     // ===== 1. 流式内容块 =====
     const cleanupChunk = window.electronAPI.onStreamChunk(
       (event: StreamChunkEvent) => {

@@ -5,7 +5,7 @@
  * 用于布尔值设置项。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { Switch } from '@/components/ui/switch'
 import { LABEL_CLASS, DESCRIPTION_CLASS, ROW_CLASS } from './SettingsUIConstants'
 import { cn } from '@/lib/utils'

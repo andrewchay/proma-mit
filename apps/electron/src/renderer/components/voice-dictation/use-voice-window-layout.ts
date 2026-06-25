@@ -5,7 +5,6 @@
 import * as React from 'react'
 
 const WINDOW_HEIGHT_BUFFER = 6
-const LINE_HEIGHT = 28
 const MIN_TRANSCRIPT_HEIGHT = 34
 const MAX_TRANSCRIPT_HEIGHT = 260
 const MAX_WINDOW_HEIGHT = 540

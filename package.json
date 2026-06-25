@@ -15,9 +15,12 @@
     "electron:start": "bun run --filter='@proma/electron' start",
     "build": "bun run --filter='*' build",
     "typecheck": "bun run --filter='*' typecheck",
-    "test": "bun test"
+    "test": "bun test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
     "@types/bun": "latest",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^20.0.0",

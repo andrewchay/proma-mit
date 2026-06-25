@@ -8,6 +8,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync } from 'node:fs'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
+import { safeParseJSON } from './safe-json'
 import { randomUUID } from 'node:crypto'
 import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:path'
 import {
@@ -451,7 +452,7 @@ export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig
 
   try {
     const raw = readFileSync(mcpPath, 'utf-8')
-    const parsed = JSON.parse(raw) as Partial<WorkspaceMcpConfig>
+    const parsed = safeParseJSON<Partial<WorkspaceMcpConfig>>(raw, {})
     return { servers: parsed.servers ?? {} }
   } catch (error) {
     console.error('[Agent 工作区] 读取 MCP 配置失败:', error)
@@ -778,11 +779,7 @@ const SOURCE_META_FILE = '.source.json'
 function readSkillImportSource(skillDir: string): SkillImportSource | undefined {
   const p = join(skillDir, SOURCE_META_FILE)
   if (!existsSync(p)) return undefined
-  try {
-    return JSON.parse(readFileSync(p, 'utf-8')) as SkillImportSource
-  } catch {
-    return undefined
-  }
+  return safeParseJSON<SkillImportSource | undefined>(readFileSync(p, 'utf-8'), undefined)
 }
 
 function writeSkillImportSource(skillDir: string, source: SkillImportSource): void {
@@ -1048,19 +1045,15 @@ function readWorkspaceConfig(workspaceSlug: string): WorkspaceConfig {
     return {}
   }
 
-  try {
-    const raw = readFileSync(configPath, 'utf-8')
-    const data = JSON.parse(raw) as Partial<WorkspaceConfig>
-    return {
-      attachedDirectories: Array.isArray(data.attachedDirectories)
-        ? data.attachedDirectories.filter((dir): dir is string => typeof dir === 'string')
-        : undefined,
-      attachedFiles: Array.isArray(data.attachedFiles)
-        ? data.attachedFiles.filter((file): file is string => typeof file === 'string')
-        : undefined,
-    }
-  } catch {
-    return {}
+  const raw = readFileSync(configPath, 'utf-8')
+  const data = safeParseJSON<Partial<WorkspaceConfig>>(raw, {})
+  return {
+    attachedDirectories: Array.isArray(data.attachedDirectories)
+      ? data.attachedDirectories.filter((dir): dir is string => typeof dir === 'string')
+      : undefined,
+    attachedFiles: Array.isArray(data.attachedFiles)
+      ? data.attachedFiles.filter((file): file is string => typeof file === 'string')
+      : undefined,
   }
 }
 

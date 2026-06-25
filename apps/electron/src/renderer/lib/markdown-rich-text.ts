@@ -80,7 +80,7 @@ function isPreviewBlockHtml(value: string): boolean {
 }
 
 function addMathSupport(md: MarkdownIt): void {
-  md.inline.ruler.after('escape', 'math_inline', (state: any, silent: boolean) => {
+  md.inline.ruler.after('escape', 'math_inline', (state, silent) => {
     const start = state.pos
     if (state.src.charCodeAt(start) !== 0x24 || state.src.charCodeAt(start + 1) === 0x24) return false
 
@@ -99,9 +99,9 @@ function addMathSupport(md: MarkdownIt): void {
     return true
   })
 
-  md.block.ruler.after('blockquote', 'math_block', (state: any, startLine: number, endLine: number, silent: boolean) => {
-    const start = state.bMarks[startLine] + state.tShift[startLine]
-    const max = state.eMarks[startLine]
+  md.block.ruler.after('blockquote', 'math_block', (state, startLine, endLine, silent) => {
+    const start = (state.bMarks[startLine] ?? 0) + (state.tShift[startLine] ?? 0)
+    const max = state.eMarks[startLine] ?? 0
     const firstLine = state.src.slice(start, max)
     if (!firstLine.startsWith('$$')) return false
 
@@ -116,8 +116,8 @@ function addMathSupport(md: MarkdownIt): void {
       const lines: string[] = []
       if (content.trim()) lines.push(content)
       for (; nextLine < endLine; nextLine++) {
-        const lineStart = state.bMarks[nextLine] + state.tShift[nextLine]
-        const lineMax = state.eMarks[nextLine]
+        const lineStart = (state.bMarks[nextLine] ?? 0) + (state.tShift[nextLine] ?? 0)
+        const lineMax = state.eMarks[nextLine] ?? 0
         const line = state.src.slice(lineStart, lineMax)
         const end = line.indexOf('$$')
         if (end >= 0) {
@@ -153,7 +153,7 @@ const markdownIt = new MarkdownIt({
 
 addMathSupport(markdownIt)
 
-markdownIt.core.ruler.after('inline', 'emoji_shortcode', (state: any) => {
+markdownIt.core.ruler.after('inline', 'emoji_shortcode', (state) => {
   for (const token of state.tokens) {
     if (token.type !== 'inline' || !token.children) continue
     for (const child of token.children) {

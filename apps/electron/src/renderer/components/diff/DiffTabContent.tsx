@@ -40,7 +40,6 @@ type CacheEntry = {
   /** 非文本文件预览数据 */
   pdfSrc?: string
   imageDataUrl?: string
-  imagePath?: string
   docxHtml?: string
   officeHtml?: string
   officeText?: string
@@ -200,7 +199,6 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const [pdfSrc, setPdfSrc] = React.useState('')
   const [pdfZoom, setPdfZoom] = React.useState(100)
   const pdfIframeRef = React.useRef<HTMLIFrameElement>(null)
-  const [imagePath, setImagePath] = React.useState('')
   const [imageDataUrl, setImageDataUrl] = React.useState('')
   // 默认 25%：预览面板空间有限，先展示缩略全貌，用户可手动放大查看细节
   const [imageZoom, setImageZoom] = React.useState(0.25)
@@ -430,7 +428,6 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     setOfficeText('')
     setPdfSrc('')
     setPdfZoom(100)
-    setImagePath('')
     setImageDataUrl('')
     setImageZoom(0.25)
     setImageNaturalSize({ w: 0, h: 0 })
@@ -493,7 +490,6 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       setOfficeText(cached.officeText ?? '')
       setPdfSrc(cached.pdfSrc ?? '')
       setPdfZoom(100)
-      setImagePath(cached.imagePath ?? '')
       setImageDataUrl(cached.imageDataUrl ?? '')
       setImageZoom(0.25)
       setImageNaturalSize({ w: 0, h: 0 })
@@ -508,7 +504,6 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       setOfficeText('')
       setPdfSrc('')
       setPdfZoom(100)
-      setImagePath('')
       setImageDataUrl('')
       setImageZoom(0.25)
       setImageNaturalSize({ w: 0, h: 0 })
@@ -535,13 +530,11 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
               const resolved = await window.electronAPI.resolveFilePath(filePath, fileAccess)
               if (cancelled) return
               if (resolved) {
-                setImagePath(filePath)
                 setImageDataUrl(resolved.url)
-                cacheSet(cacheKey, { oldContent: '', newContent: '', imagePath: filePath, imageDataUrl: resolved.url })
+                cacheSet(cacheKey, { oldContent: '', newContent: '', imageDataUrl: resolved.url })
               } else {
-                setImagePath('')
                 setImageDataUrl('')
-                cacheSet(cacheKey, { oldContent: '', newContent: '', imagePath: '', imageDataUrl: '' })
+                cacheSet(cacheKey, { oldContent: '', newContent: '', imageDataUrl: '' })
               }
               return
             }

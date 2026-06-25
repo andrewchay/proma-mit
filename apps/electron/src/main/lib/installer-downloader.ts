@@ -8,11 +8,11 @@
 import { createHash } from 'crypto'
 import { createWriteStream, existsSync, promises as fsp } from 'fs'
 import { get as httpsGet } from 'https'
-import { get as httpGet, IncomingMessage } from 'http'
+import { get as httpGet, type IncomingMessage } from 'http'
 import path from 'path'
 import { URL } from 'url'
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, type BrowserWindow, shell } from 'electron'
 
 import {
   INSTALLER_IPC_CHANNELS,

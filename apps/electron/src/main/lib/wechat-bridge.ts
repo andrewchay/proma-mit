@@ -504,7 +504,10 @@ class WeChatBridge {
   }
 
   private async pollQRStatus(qrcode: string): Promise<WeChatCredentials> {
-    const signal = this.loginAbortController!.signal
+    if (!this.loginAbortController) {
+      throw new Error('loginAbortController 未初始化')
+    }
+    const signal = this.loginAbortController.signal
 
     while (!signal.aborted) {
       try {
@@ -592,12 +595,18 @@ class WeChatBridge {
   }
 
   private async pollLoop(): Promise<void> {
-    const signal = this.pollAbortController!.signal
+    if (!this.pollAbortController) {
+      throw new Error('pollAbortController 未初始化')
+    }
+    const signal = this.pollAbortController.signal
     let failures = 0
 
     while (!signal.aborted) {
       try {
-        const resp = await this.client!.getUpdates(this.getUpdatesBuf, signal)
+        if (!this.client) {
+          throw new Error('微信客户端未初始化')
+        }
+        const resp = await this.client.getUpdates(this.getUpdatesBuf, signal)
         failures = 0
 
         // Session 过期
@@ -684,7 +693,7 @@ class WeChatBridge {
 
     const text = msg.item_list
       .filter((item) => item.type === WECHAT_ITEM_TYPE.TEXT && item.text_item)
-      .map((item) => item.text_item!.text)
+      .map((item) => item.text_item?.text ?? '')
       .join('')
 
     const imageItems = msg.item_list.filter(
@@ -713,8 +722,10 @@ class WeChatBridge {
     const imageDownloads: WeChatImageAttachment[] = []
     const msgId = msg.message_id ?? `msg-${Date.now()}`
     for (let idx = 0; idx < imageItems.length; idx++) {
+      const imageItem = imageItems[idx]
+      if (!imageItem) continue
       try {
-        const buf = await this.client.downloadImage(imageItems[idx]!)
+        const buf = await this.client.downloadImage(imageItem)
         const mediaType = inferImageMediaType(buf)
         if (buf.length > MAX_IMAGE_SIZE) {
           console.warn(`[微信 Bridge] 图片超过大小限制: ${(buf.length / 1024 / 1024).toFixed(1)}MB`)
@@ -731,10 +742,11 @@ class WeChatBridge {
     // 下载文件
     const fileDownloads: WeChatFileAttachment[] = []
     for (let idx = 0; idx < fileItems.length; idx++) {
-      const fileItem = fileItems[idx]!
-      const fileName = fileItem.file_item!.file_name || `file_${msgId}_${idx}`
+      const fileItem = fileItems[idx]
+      if (!fileItem?.file_item) continue
+      const fileName = fileItem.file_item.file_name || `file_${msgId}_${idx}`
       // 预检文件大小（len 字段为字符串形式的字节数）
-      const declaredSize = fileItem.file_item!.len ? parseInt(fileItem.file_item!.len, 10) : 0
+      const declaredSize = fileItem.file_item.len ? parseInt(fileItem.file_item.len, 10) : 0
       if (declaredSize > MAX_FILE_SIZE) {
         console.warn(`[微信 Bridge] 文件超过大小限制: ${(declaredSize / 1024 / 1024).toFixed(1)}MB, 文件名: ${fileName}`)
         await this.client.sendText(chatId, `⚠️ 文件「${fileName}」超过 20MB 限制，已跳过`, contextToken)

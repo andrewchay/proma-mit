@@ -4,7 +4,7 @@
  * 复用 MessageResponse 组件渲染抓取到的网页内容
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { MessageResponse } from '@/components/ai-elements/message'
 import { CollapsibleResult } from './collapsible-result'
 

@@ -6,7 +6,7 @@
  * 的地方在 Agent 流式中都会触发此对话框。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import {
   AlertDialog,

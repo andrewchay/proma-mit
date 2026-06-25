@@ -5,7 +5,7 @@
  * 支持错误状态提示。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { Input } from '@/components/ui/input'
 import { LABEL_CLASS, DESCRIPTION_CLASS } from './SettingsUIConstants'
 import { cn } from '@/lib/utils'

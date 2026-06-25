@@ -47,7 +47,7 @@ export function DefaultResultRenderer({ result, isError }: DefaultResultRenderer
         <table className="w-full text-[12px]">
           <tbody>
             {keyValues.map(({ key, value }, i) => (
-              <tr key={i} className="border-b border-border/20 last:border-b-0">
+              <tr key={`kv-${key}-${i}`} className="border-b border-border/20 last:border-b-0">
                 <td className="px-3 py-1.5 text-muted-foreground/60 font-mono whitespace-nowrap align-top">
                   {key}
                 </td>

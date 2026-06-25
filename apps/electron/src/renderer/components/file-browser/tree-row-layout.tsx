@@ -3,7 +3,7 @@
  * FileBrowser 与 SidePanel 的附加目录树共用同一套 sticky / 引导线视觉。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 const TREE_ROW_HEIGHT = 32

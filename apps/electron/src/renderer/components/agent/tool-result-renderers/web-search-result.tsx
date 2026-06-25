@@ -90,7 +90,7 @@ export function WebSearchResultRenderer({ result, isError }: WebSearchResultRend
         {searchResults.length} 条结果
       </div>
       {searchResults.map((item, i) => (
-        <div key={i} className="rounded-md bg-muted/20 p-2.5 space-y-1">
+        <div key={`search-${item.url ?? item.title}-${i}`} className="rounded-md bg-muted/20 p-2.5 space-y-1">
           <div className="flex items-center gap-1.5">
             <Globe className="size-3 shrink-0 text-muted-foreground/50" />
             <span className="text-[12px] font-medium text-foreground/80 truncate">

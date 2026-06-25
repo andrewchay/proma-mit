@@ -1,4 +1,4 @@
-import * as React from 'react'
+import type * as React from 'react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import type { Editor } from '@tiptap/react'
 import { CellSelection, isInTable } from '@tiptap/pm/tables'

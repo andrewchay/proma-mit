@@ -21,7 +21,7 @@ import { useAtomValue } from 'jotai'
 import { thinkingExpandedAtom } from '@/atoms/chat-atoms'
 import { cn } from '@/lib/utils'
 import { MessageResponse } from '@/components/ai-elements/message'
-import { getToolIcon, extractFilePath } from './tool-utils'
+import { getToolIcon, extractFilePath, getBlockKey } from './tool-utils'
 import { getToolPhrase } from './tool-phrase'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { PreviewOpenButton } from './tool-result-renderers/preview-open-button'
@@ -265,13 +265,14 @@ function renderLabelWithDiffColors(label: string, toolName: string): React.React
   const parts = label.split(/((?:^|(?<=\s))[+-]\d+)/g)
   if (parts.length === 1) return label
   return parts.map((part, i) => {
+    const key = `label-part-${part}-${i}`
     if (/^\+\d+$/.test(part)) {
-      return <span key={i} className="text-green-500">{part}</span>
+      return <span key={key} className="text-green-500">{part}</span>
     }
     if (/^-\d+$/.test(part)) {
-      return <span key={i} className="text-red-500">{part}</span>
+      return <span key={key} className="text-red-500">{part}</span>
     }
-    return part
+    return <span key={key}>{part}</span>
   })
 }
 
@@ -449,7 +450,7 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
             {/* 子代理工具调用 */}
             {hasChildren && childBlocks.map((childBlock, ci) => (
               <ContentBlock
-                key={ci}
+                key={getBlockKey(childBlock, ci)}
                 block={childBlock}
                 allMessages={allMessages}
                 basePath={basePath}

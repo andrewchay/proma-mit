@@ -7,7 +7,7 @@
  * 无搜索、无最小条目限制。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AlertTriangle } from 'lucide-react'

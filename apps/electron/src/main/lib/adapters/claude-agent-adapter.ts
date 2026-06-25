@@ -718,11 +718,14 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
           })
           // 手动转发 stderr（SDK 默认在 spawnLocalProcess 里做，自定义 spawn 需自己做）
           // 同时必须消费 stderr 流避免缓冲区满（默认 64KB）导致子进程挂起
-          if (options.onStderr) {
-            const onStderr = options.onStderr
-            child.stderr?.on('data', (chunk: Buffer) => {
-              try { onStderr(chunk.toString()) } catch { /* 用户回调异常不影响流 */ }
-            })
+          const onStderr = options.onStderr
+          const stderrHandler = onStderr
+            ? (chunk: Buffer) => {
+                try { onStderr(chunk.toString()) } catch { /* 用户回调异常不影响流 */ }
+              }
+            : undefined
+          if (stderrHandler) {
+            child.stderr?.on('data', stderrHandler)
           } else {
             // 即便上层不关心，也要 resume() 流否则缓冲会阻塞
             child.stderr?.resume()
@@ -733,6 +736,10 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
               // 仅当当前记录就是这个 pid 时才清理，防止并发会话误删
               if (pidMap.get(options.sessionId) === child.pid) {
                 pidMap.delete(options.sessionId)
+              }
+              // 子进程退出后移除 stderr 监听器，避免内存泄漏
+              if (stderrHandler) {
+                child.stderr?.off('data', stderrHandler)
               }
             })
           }
