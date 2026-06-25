@@ -173,7 +173,7 @@ function MessageColumn({
     if (side === 'assistant' && streaming && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [streaming, streamingContent, streamingReasoning, side])
+  }, [streaming, side])
 
   if (messages.length === 0 && !(side === 'assistant' && streaming)) {
     return <EmptyColumn side={side} />

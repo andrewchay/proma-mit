@@ -431,7 +431,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
       if (!cancelled) setReady(true)
     })
     return () => { cancelled = true }
-  }, [streaming, liveMessages, persistedSDKMessages, messagesLoaded])
+  }, [streaming, liveMessages, persistedSDKMessages, messagesLoaded, ready])
 
   // 从 streamState 属性中计算派生值
   const streamingContent = streamState?.content ?? ''

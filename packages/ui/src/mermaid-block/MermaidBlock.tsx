@@ -131,7 +131,7 @@ export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [code])
+  }, [])
 
   // ---- 主题变化：重新渲染当前 code ----
   React.useEffect(() => {
@@ -164,7 +164,7 @@ export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
     }
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => el.removeEventListener('wheel', handleWheel)
-  }, [svgVisible])
+  }, [])
 
   // ---- 拖拽平移 ----
   const handleMouseDown = React.useCallback((e: React.MouseEvent) => {

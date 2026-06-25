@@ -113,7 +113,7 @@ function ThemeInitializer(): null {
   // 用 useMemo 计算"实际会影响 DOM 的状态签名"作为唯一依赖：
   // special 模式下 systemIsDark 不影响最终 class，避免系统主题变化时触发无意义的
   // applyThemeToDOM 调用（配合 applyThemeToDOM 内部的幂等检查双重兜底）。
-  const themeSignature = useMemo(() => {
+  const _themeSignature = useMemo(() => {
     if (themeMode === 'special') {
       return `special:${themeStyle}`
     }
@@ -126,7 +126,7 @@ function ThemeInitializer(): null {
   useEffect(() => {
     applyThemeToDOM(themeMode, themeStyle, systemIsDark)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [themeSignature])
+  }, [systemIsDark, themeStyle, themeMode])
 
   return null
 }
@@ -252,7 +252,7 @@ function AgentSettingsInitializer(): null {
       console.error(err)
       setAgentSettingsReady(true) // 即使出错也标记就绪，避免永远阻塞
     })
-  }, [setAgentChannelId, setAgentModelId, setAgentChannelIds, setAgentWorkspaces, setCurrentWorkspaceId, setThinking, setEffort, setMaxBudget, setMaxTurns, setChannels, setChannelsLoaded, setAgentSettingsReady])
+  }, [setAgentChannelId, setAgentModelId, setAgentChannelIds, setAgentWorkspaces, setCurrentWorkspaceId, setThinking, setEffort, setMaxBudget, setMaxTurns, setChannels, setChannelsLoaded, setAgentSettingsReady, store.set, store.get])
 
   // 工作区切换时重置能力缓存，预加载基线
   useEffect(() => {

@@ -40,7 +40,7 @@ export function ScrollPositionManager({ id, ready }: { id: string; ready: boolea
 
     el.addEventListener('scroll', savePosition, { passive: true })
     return () => el.removeEventListener('scroll', savePosition)
-  }, [scrollRef, id, ready])  // ready 作为依赖：确保 ready->true 后重新运行
+  }, [scrollRef, id])  // ready 作为依赖：确保 ready->true 后重新运行
 
   // id 变化时重置恢复标记
   useEffect(() => {

@@ -198,7 +198,7 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
     // 条目变化或展开状态变化时重置/修正索引
     React.useEffect(() => {
       setSelectedIndex((prev) => (totalItems > 0 ? Math.min(prev, totalItems - 1) : 0))
-    }, [sessionEntries, workspaceEntries, totalItems])
+    }, [totalItems])
 
     // 滚动选中项到可见区域
     React.useEffect(() => {
@@ -207,7 +207,7 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
       const items = container.querySelectorAll('[data-mention-item]')
       const target = items[selectedIndex] as HTMLElement | undefined
       target?.scrollIntoView({ block: 'nearest' })
-    }, [selectedIndex, totalItems])
+    }, [selectedIndex])
 
     // 获取指定索引对应的实际节点（跨 session 和 workspace 列表）
     function getNodeAt(index: number): FileTreeNode | null {

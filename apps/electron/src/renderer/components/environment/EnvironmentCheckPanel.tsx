@@ -62,7 +62,7 @@ export function EnvironmentCheckPanel({
         .catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [refresh, setRuntime, setManifest, runtime, autoDetectOnMount])
 
   // ----- Shell 环境卡片 -----
   const shell = runtime?.shell

@@ -64,6 +64,27 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     }
   }, [])
 
+  const toggleOptionByState = React.useCallback((qIdx: number, q: AskUserQuestion, label: string): void => {
+    setAnswers((prev) => {
+      const map = new Map(prev)
+      const cur = map.get(qIdx) ?? EMPTY_ANSWER
+      const selected = q.multiSelect
+        ? (cur.selected.includes(label) ? cur.selected.filter((s) => s !== label) : [...cur.selected, label])
+        : [label]
+      map.set(qIdx, { ...cur, selected, showCustom: false, customText: '' })
+      return map
+    })
+  }, [])
+
+  const toggleCustomByState = React.useCallback((qIdx: number): void => {
+    setAnswers((prev) => {
+      const map = new Map(prev)
+      const cur = map.get(qIdx) ?? EMPTY_ANSWER
+      map.set(qIdx, { ...cur, showCustom: !cur.showCustom, selected: cur.showCustom ? cur.selected : [] })
+      return map
+    })
+  }, [])
+
   // 组件卸载时清理未触发的跳转定时器
   React.useEffect(() => clearAutoAdvanceTimer, [clearAutoAdvanceTimer])
 
@@ -75,7 +96,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     setAnswers(firstOpt
       ? new Map([[0, { ...EMPTY_ANSWER, selected: [firstOpt.label] }]])
       : new Map())
-  }, [request?.requestId])
+  }, [clearAutoAdvanceTimer, questions[0]?.options[0]])
 
   // 切换 Tab 时重置焦点并默认选中第一个选项
   React.useEffect(() => {
@@ -88,7 +109,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
       map.set(activeTab, { ...EMPTY_ANSWER, selected: [firstOpt.label] })
       return map
     })
-  }, [activeTab])
+  }, [activeTab, questions])
 
   // 键盘导航：只在 requestId 变化时重建 handler，内部通过 ref 读取最新值
   React.useEffect(() => {
@@ -137,7 +158,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [request?.requestId])
+  }, [request, toggleCustomByState, toggleOptionByState, questions.length])
 
   /** 关闭问题 & 终止 Agent */
   const handleDismiss = (): void => {
@@ -166,27 +187,6 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   if (!request) return null
 
   const getAnswer = (idx: number): QuestionAnswer => answers.get(idx) ?? EMPTY_ANSWER
-
-  function toggleOptionByState(qIdx: number, q: AskUserQuestion, label: string): void {
-    setAnswers((prev) => {
-      const map = new Map(prev)
-      const cur = map.get(qIdx) ?? EMPTY_ANSWER
-      const selected = q.multiSelect
-        ? (cur.selected.includes(label) ? cur.selected.filter((s) => s !== label) : [...cur.selected, label])
-        : [label]
-      map.set(qIdx, { ...cur, selected, showCustom: false, customText: '' })
-      return map
-    })
-  }
-
-  function toggleCustomByState(qIdx: number): void {
-    setAnswers((prev) => {
-      const map = new Map(prev)
-      const cur = map.get(qIdx) ?? EMPTY_ANSWER
-      map.set(qIdx, { ...cur, showCustom: !cur.showCustom, selected: cur.showCustom ? cur.selected : [] })
-      return map
-    })
-  }
 
   const handleSubmit = async (): Promise<void> => {
     if (submitting) return

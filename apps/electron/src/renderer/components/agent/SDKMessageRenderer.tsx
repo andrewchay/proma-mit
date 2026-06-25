@@ -524,23 +524,25 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
     parentToolUseId?: string | null
   }
 
-  const enrichedBlocks: EnrichedBlock[] = []
-  let hasError = false
-  let errorContent: SDKAssistantMessage | null = null
-
-  for (const aMsg of turn.assistantMessages) {
-    if (aMsg.error) {
-      hasError = true
-      errorContent = aMsg
-      continue
-    }
-    const blocks = aMsg.message?.content
-    if (Array.isArray(blocks)) {
-      for (const block of blocks) {
-        enrichedBlocks.push({ block, parentToolUseId: aMsg.parent_tool_use_id })
+  const { enrichedBlocks, hasError, errorContent } = React.useMemo(() => {
+    const blocks: EnrichedBlock[] = []
+    let error = false
+    let errorMsg: SDKAssistantMessage | null = null
+    for (const aMsg of turn.assistantMessages) {
+      if (aMsg.error) {
+        error = true
+        errorMsg = aMsg
+        continue
+      }
+      const contentBlocks = aMsg.message?.content
+      if (Array.isArray(contentBlocks)) {
+        for (const block of contentBlocks) {
+          blocks.push({ block, parentToolUseId: aMsg.parent_tool_use_id })
+        }
       }
     }
-  }
+    return { enrichedBlocks: blocks, hasError: error, errorContent: errorMsg }
+  }, [turn.assistantMessages])
 
   // 从 turnMessages 中提取 result 消息的耗时和用量
   const { durationMs, usage } = extractTurnUsage(turn.turnMessages)
@@ -555,28 +557,29 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
   const showStoppedBadge = stoppedByUser || isInterruptedTurn
 
   // 构建 Agent/Task tool_use → 子代理内容块映射
-  const agentToolIds = new Set<string>()
-  for (const eb of enrichedBlocks) {
-    if (eb.block.type === 'tool_use') {
-      const tu = eb.block as { name: string; id: string }
-      if (tu.name === 'Agent' || tu.name === 'Task') {
-        agentToolIds.add(tu.id)
+  const { childBlocksMap, topLevelBlocks } = React.useMemo(() => {
+    const toolIds = new Set<string>()
+    for (const eb of enrichedBlocks) {
+      if (eb.block.type === 'tool_use') {
+        const tu = eb.block as { name: string; id: string }
+        if (tu.name === 'Agent' || tu.name === 'Task') {
+          toolIds.add(tu.id)
+        }
       }
     }
-  }
-
-  const childBlocksMap = new Map<string, SDKContentBlock[]>()
-  const topLevelBlocks: SDKContentBlock[] = []
-
-  for (const eb of enrichedBlocks) {
-    if (eb.parentToolUseId && agentToolIds.has(eb.parentToolUseId)) {
-      const children = childBlocksMap.get(eb.parentToolUseId) ?? []
-      children.push(eb.block)
-      childBlocksMap.set(eb.parentToolUseId, children)
-    } else {
-      topLevelBlocks.push(eb.block)
+    const childMap = new Map<string, SDKContentBlock[]>()
+    const topBlocks: SDKContentBlock[] = []
+    for (const eb of enrichedBlocks) {
+      if (eb.parentToolUseId && toolIds.has(eb.parentToolUseId)) {
+        const children = childMap.get(eb.parentToolUseId) ?? []
+        children.push(eb.block)
+        childMap.set(eb.parentToolUseId, children)
+      } else {
+        topBlocks.push(eb.block)
+      }
     }
-  }
+    return { childBlocksMap: childMap, topLevelBlocks: topBlocks }
+  }, [enrichedBlocks])
 
   // 检测是否有主要内容（text 块），用于决定 tool/thinking 是否 dimmed
   const hasTextContent = topLevelBlocks.some(

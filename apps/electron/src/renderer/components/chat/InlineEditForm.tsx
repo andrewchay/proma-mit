@@ -96,7 +96,7 @@ export function InlineEditForm({ message, onSubmit, onCancel }: InlineEditFormPr
     return () => {
       canceled = true
     }
-  }, [message.id, message.attachments])
+  }, [message.attachments])
 
   const addPendingAttachments = React.useCallback((items: NewInlineAttachment[]): void => {
     if (items.length === 0) return

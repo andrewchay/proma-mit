@@ -41,18 +41,7 @@ export function QuickTaskApp(): React.ReactElement {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 设置透明背景
-  useEffect(() => {
-    document.body.style.background = 'transparent'
-    document.documentElement.style.background = 'transparent'
-  }, [])
-
-  // 加载默认模型信息
-  useEffect(() => {
-    loadModelInfo()
-  }, [mode])
-
-  async function loadModelInfo(): Promise<void> {
+  const loadModelInfo = useCallback(async (): Promise<void> => {
     try {
       const [settings, channels] = await Promise.all([
         window.electronAPI.getSettings(),
@@ -87,7 +76,18 @@ export function QuickTaskApp(): React.ReactElement {
     } catch {
       setModelInfo(null)
     }
-  }
+  }, [mode])
+
+  // 设置透明背景
+  useEffect(() => {
+    document.body.style.background = 'transparent'
+    document.documentElement.style.background = 'transparent'
+  }, [])
+
+  // 加载默认模型信息
+  useEffect(() => {
+    loadModelInfo()
+  }, [loadModelInfo])
 
   // 聚焦输入框
   const focusInput = useCallback(() => {
@@ -105,7 +105,7 @@ export function QuickTaskApp(): React.ReactElement {
       loadModelInfo()
     })
     return cleanup
-  }, [focusInput])
+  }, [focusInput, loadModelInfo])
 
   // 初始聚焦
   useEffect(() => {
@@ -118,7 +118,7 @@ export function QuickTaskApp(): React.ReactElement {
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }, [text])
+  }, [])
 
   // 全局键盘事件
   useEffect(() => {

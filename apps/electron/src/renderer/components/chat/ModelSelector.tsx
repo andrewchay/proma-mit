@@ -147,7 +147,7 @@ export function ModelSelector({
   // 搜索变化时重置高亮
   React.useEffect(() => {
     setHighlightIndex(-1)
-  }, [search])
+  }, [])
 
   // 高亮项变化时滚动到可见区域
   React.useEffect(() => {

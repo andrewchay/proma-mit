@@ -51,7 +51,7 @@ export function MemorySettings(): React.ReactElement {
       .finally(() => setLoading(false))
   }, [])
 
-  const handleSave = async (updated: MemoryConfig): Promise<void> => {
+  const handleSave = React.useCallback(async (updated: MemoryConfig): Promise<void> => {
     setSaving(true)
     try {
       await window.electronAPI.setMemoryConfig(updated)
@@ -67,13 +67,13 @@ export function MemorySettings(): React.ReactElement {
     } finally {
       setSaving(false)
     }
-  }
+  }, [setChatTools])
 
   /** API Key 输入框失焦时静默保存 */
   const handleBlurSave = React.useCallback(async (): Promise<void> => {
     if (apiKey === config.apiKey) return
     await handleSave({ ...config, apiKey })
-  }, [apiKey, config])
+  }, [apiKey, config, handleSave])
 
   const handleTest = async (): Promise<void> => {
     // 如果有未保存的 API Key，先保存再测试

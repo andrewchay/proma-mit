@@ -105,7 +105,7 @@ export const DiffChangesList = React.memo(function DiffChangesList({
 
   React.useEffect(() => {
     fetchChanges()
-  }, [fetchChanges, refreshVersion])
+  }, [fetchChanges])
 
   // 窗口聚焦刷新已统一在 useGlobalAgentListeners 中处理（递增 refreshVersion）
 

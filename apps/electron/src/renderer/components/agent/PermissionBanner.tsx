@@ -61,7 +61,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [request?.requestId])
+  }, [request?.requestId, request])
 
   /** 关闭权限请求 & 终止 Agent */
   const handleDismiss = (): void => {

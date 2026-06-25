@@ -117,7 +117,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   const streamingModel = streamState?.model ?? null
   const toolActivities = streamState?.toolActivities ?? []
   const chatError = chatStreamErrors.get(conversationId) ?? null
-  const refreshVersion = refreshMap.get(conversationId) ?? 0
+  const _refreshVersion = refreshMap.get(conversationId) ?? 0
 
   // ===== 对话切换时重置状态 =====
   React.useEffect(() => {
@@ -139,7 +139,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     if (window.__pendingAttachmentData) {
       window.__pendingAttachmentData.clear()
     }
-  }, [conversationId, setPendingRecommendation])
+  }, [setPendingRecommendation])
 
   // ===== 加载消息 + 上下文分隔线 =====
   React.useEffect(() => {
@@ -162,7 +162,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
         })
       })
       .catch(console.error)
-  }, [conversationId, refreshVersion, setStreamingStates])
+  }, [conversationId, setStreamingStates])
 
   // 从对话元数据加载分隔线
   React.useEffect(() => {
@@ -331,19 +331,20 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
       })
     })
   }, [
-    conversationId,
-    selectedModel,
-    messages.length,
-    pendingAttachments,
-    contextLength,
-    contextDividers,
-    thinkingEnabled,
-    conversationPromptId,
-    promptConfig,
-    userProfile.userName,
-    activeToolIds,
-    setChatStreamErrors,
-    setStreamingStates,
+    conversationId, 
+    selectedModel, 
+    messages.length, 
+    pendingAttachments, 
+    contextLength, 
+    contextDividers, 
+    thinkingEnabled, 
+    conversationPromptId, 
+    promptConfig, 
+    userProfile.userName, 
+    activeToolIds, 
+    setChatStreamErrors, 
+    setStreamingStates, // 取消 draft 标记，让会话出现在侧边栏
+      setDraftSessionIds
   ])
 
   // ===== 自动发送快速任务消息 =====

@@ -115,6 +115,7 @@ export function useVoiceWindowLayout(input: VoiceWindowLayoutInput): VoiceWindow
     return () => observer.disconnect()
   }, [requestTranscriptBottomScroll, resizeVoiceWindow])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: transcript/commitResultMessage/message/status 变化会改变浮窗内容尺寸，需要重新布局
   React.useLayoutEffect(() => {
     const frame = requestAnimationFrame(() => {
       resizeVoiceWindow()
@@ -124,6 +125,7 @@ export function useVoiceWindowLayout(input: VoiceWindowLayoutInput): VoiceWindow
     return () => cancelAnimationFrame(frame)
   }, [commitResultMessage, message, resizeVoiceWindow, scrollTranscriptToBottom, status, transcript])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: transcript 内容变化或最大高度变化都需要滚动到底部
   React.useLayoutEffect(() => {
     requestTranscriptBottomScroll()
   }, [requestTranscriptBottomScroll, transcript, transcriptMaxHeight])

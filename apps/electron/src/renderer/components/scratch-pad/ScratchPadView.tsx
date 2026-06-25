@@ -110,11 +110,11 @@ export function ScratchPadView(): React.ReactElement {
     return agentTab?.title ?? null
   }, [tabs, activeSessionId])
 
-  const makeFilename = () => {
+  const makeFilename = React.useCallback(() => {
     const now = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     return `scratch-pad-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}.md`
-  }
+  }, [])
 
   const handleExport = React.useCallback(
     async (target: 'session' | 'workspace') => {
@@ -137,7 +137,7 @@ export function ScratchPadView(): React.ReactElement {
         console.error('[ScratchPad] 导出失败:', err)
       }
     },
-    [editor, activeSessionId, currentWorkspaceId, currentWorkspace],
+    [editor, activeSessionId, currentWorkspaceId, currentWorkspace, makeFilename],
   )
 
   const handleBrowseExport = React.useCallback(async () => {
@@ -154,7 +154,7 @@ export function ScratchPadView(): React.ReactElement {
     } catch (err) {
       console.error('[ScratchPad] 导出失败:', err)
     }
-  }, [editor])
+  }, [editor, makeFilename])
 
   // ===== 内容同步 =====
 

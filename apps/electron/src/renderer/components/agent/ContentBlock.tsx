@@ -579,7 +579,7 @@ function ThinkingBlock({ block, dimmed = false }: ThinkingBlockProps): React.Rea
     const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 22
     const maxHeight = lineHeight * THINKING_COLLAPSE_LINE_THRESHOLD
     setShouldCollapse(el.scrollHeight > maxHeight + 10)
-  }, [block.thinking])
+  }, [])
 
   // 当全局偏好变更时同步（仅在"应折叠"时生效）
   React.useEffect(() => {

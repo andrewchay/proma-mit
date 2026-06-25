@@ -582,7 +582,7 @@ export const UserMessageContent = React.memo(
 
       // scrollHeight 超过最大高度 + 容差时折叠
       setShouldCollapse(element.scrollHeight > maxHeight + 10)
-    }, [children])
+    }, [])
 
     const toggleExpand = React.useCallback(() => {
       setIsExpanded((prev) => !prev)

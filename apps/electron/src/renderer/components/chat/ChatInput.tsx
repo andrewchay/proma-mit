@@ -213,7 +213,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     onSend(content.trim())
     setContent('')
     // 附件清理由 ChatView 的 handleSend 负责
-  }, [canSend, content, onSend])
+  }, [canSend, content, onSend, setContent])
 
   /** 粘贴文件回调 */
   const handlePasteFiles = React.useCallback((files: File[]): void => {

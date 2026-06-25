@@ -91,7 +91,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
     setFocusedIdx(0)
     setShowFeedback(false)
     setFeedbackText('')
-  }, [request?.requestId])
+  }, [])
 
   const handleAction = async (action: ExitPlanModeAction): Promise<void> => {
     if (submitting || !request) return
@@ -197,7 +197,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [request?.requestId])
+  }, [request?.requestId, request])
 
   if (!request) return null
 

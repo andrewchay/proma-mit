@@ -34,7 +34,7 @@ function MentionListInner<T>(
 
   React.useEffect(() => {
     setLocalIndex(0)
-  }, [items])
+  }, [])
 
   React.useEffect(() => {
     const container = containerRef.current

@@ -754,7 +754,7 @@ function AttachedDirTree({ dirPath, onDetach, selectedPaths, onSelect, refreshVe
         .then((items) => setChildren(items))
         .catch((err) => console.error('[AttachedDirTree] 刷新失败:', err))
     }
-  }, [refreshVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [expanded, sessionId, dirPath, allowedPaths, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleExpand = async (): Promise<void> => {
     if (!expanded && !loaded) {
@@ -863,7 +863,7 @@ function AttachedDirItem({ entry, depth, selectedPaths, onSelect, refreshVersion
         .then((items) => setChildren(items))
         .catch((err) => console.error('[AttachedDirItem] 刷新子目录失败:', err))
     }
-  }, [refreshVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, loaded, expanded, entry.isDirectory, currentPath, allowedPaths]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleDir = async (): Promise<void> => {
     if (!entry.isDirectory) return

@@ -75,7 +75,7 @@ function ScrollTopLoader({ hasMore, loading, onLoadMore }: ScrollTopLoaderProps)
   // hasMore 变化时重置触发标记（例如切换对话）
   React.useEffect(() => {
     triggeredRef.current = false
-  }, [hasMore])
+  }, [])
 
   React.useEffect(() => {
     const el = scrollRef.current

@@ -542,7 +542,7 @@ export function RichTextInput({
         lastEditorValueRef.current = controllerValue
       }
     }
-  }, [editor, value])
+  }, [editor, value, htmlValue])
 
   // 同步 disabled 状态
   useEffect(() => {
@@ -572,7 +572,7 @@ export function RichTextInput({
       }, 100)
       return () => clearTimeout(timer)
     }
-  }, [editor, disabled, autoFocusTrigger])
+  }, [editor, disabled])
 
   // 语音输入回填：优先插入到当前编辑器的光标位置。
   useEffect(() => {

@@ -528,7 +528,7 @@ function BotConfigCard({ bot, state, onSaved, onRemoved }: BotConfigCardProps): 
     } catch {
       toast.error('保存配置失败')
     }
-  }, [bot.id, name, appId, appSecret, onSaved])
+  }, [bot.id, name, appId, appSecret, onSaved, bot.defaultWorkspaceId, bot.defaultModelId, bot.defaultChannelId])
 
   const handleTest = React.useCallback(async () => {
     if (!appId.trim() || !appSecret.trim()) return

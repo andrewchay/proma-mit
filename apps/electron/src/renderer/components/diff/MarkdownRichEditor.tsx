@@ -156,7 +156,7 @@ export function MarkdownRichEditor({
   React.useEffect(() => {
     if (!editor) return
     editor.view.dispatch(editor.state.tr.setMeta('markdownShikiCodeBlockRefresh', true))
-  }, [editor, shikiTheme])
+  }, [editor])
 
   React.useEffect(() => {
     if (!editor) return
@@ -166,7 +166,7 @@ export function MarkdownRichEditor({
     localMarkdownRef.current = value
     rendererVersionRef.current = markdownRendererVersion
     editor.commands.setContent(html, { emitUpdate: false })
-  }, [editor, value, markdownRendererVersion])
+  }, [editor, value])
 
   React.useEffect(() => {
     if (!editor || !isEditable || pendingFocusPosRef.current === null) return

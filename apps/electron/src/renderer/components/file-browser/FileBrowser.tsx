@@ -163,7 +163,7 @@ export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddT
 
   React.useEffect(() => {
     loadRoot()
-  }, [loadRoot, filesVersion])
+  }, [loadRoot])
 
   /** 选中项 */
   const handleSelect = React.useCallback((entry: FileEntry, event: React.MouseEvent) => {
@@ -462,7 +462,7 @@ function FileTreeItem({
         .then((items) => setChildren(items))
         .catch((err) => console.error('[FileTreeItem] 刷新子目录失败:', err))
     }
-  }, [refreshVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [expanded, entry.isDirectory, childrenLoaded, entry.path]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ===== Agent 自动定位：祖先目录自动展开 + 目标行滚动到中心 + 0.8s 高亮脉冲 =====
   React.useEffect(() => {
@@ -498,7 +498,7 @@ function FileTreeItem({
       const t = setTimeout(() => setFlash(false), 1200)
       return () => clearTimeout(t)
     }
-  }, [revealTs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [revealTs, revealTarget, expanded, entry.path, revealAncestors.has, entry.isDirectory, childrenLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 重命名编辑状态
   const [editName, setEditName] = React.useState('')

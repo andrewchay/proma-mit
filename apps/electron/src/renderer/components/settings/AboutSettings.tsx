@@ -216,7 +216,7 @@ function EnvironmentCard(): React.ReactElement {
         setEnvironmentResult(settings.lastEnvironmentCheck)
       }
     })
-  }, [])
+  }, [setEnvironmentResult])
 
   // 执行环境检测
   const handleCheck = async () => {

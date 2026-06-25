@@ -208,7 +208,7 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 }
 
 export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
-  const [activeView, setActiveView] = useAtom(activeViewAtom)
+  const [_activeView, setActiveView] = useAtom(activeViewAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
@@ -250,7 +250,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
   // 工作区能力（MCP + Skill 计数）
   const [capabilities, setCapabilities] = React.useState<WorkspaceCapabilities | null>(null)
-  const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom)
+  const _capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom)
 
   // Tab 状态
   const [tabs, setTabs] = useAtom(tabsAtom)
@@ -282,7 +282,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     if (h > 0) {
       setAgentTopHeight(Math.round(h * 0.4))
     }
-  }, [agentTopHeight, setAgentTopHeight, mode, viewMode])
+  }, [agentTopHeight, setAgentTopHeight])
 
   // 容器尺寸变化时（窗口缩放、Sidebar 宽度变化等），把上区高度 clamp 到允许范围内，
   // 避免持久化的高度值在小屏幕下溢出导致分割线与"最近会话"等下方区域重合。
@@ -304,7 +304,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     })
     ro.observe(el)
     return () => { ro.disconnect() }
-  }, [setAgentTopHeight, mode, viewMode])
+  }, [setAgentTopHeight])
 
   const handleAgentTopResizeStart = React.useCallback(
     (e: React.MouseEvent) => {
@@ -408,7 +408,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       .getWorkspaceCapabilities(currentWorkspaceSlug)
       .then(setCapabilities)
       .catch(console.error)
-  }, [currentWorkspaceSlug, mode, activeView, capabilitiesVersion])
+  }, [currentWorkspaceSlug, mode])
 
   /** 置顶对话列表（仅活跃模式显示，排除 draft） */
   const pinnedConversations = React.useMemo(
@@ -505,7 +505,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   // 切换模式时重置归档视图
   React.useEffect(() => {
     setViewMode('active')
-  }, [mode, setViewMode])
+  }, [setViewMode])
 
   /** 创建新对话（继承当前选中的模型/渠道） */
   const handleNewConversation = async (): Promise<void> => {
