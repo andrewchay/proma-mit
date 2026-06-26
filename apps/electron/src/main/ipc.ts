@@ -306,6 +306,16 @@ function isUnderRoot(resolvedPath: string, root: string): boolean {
   return resolvedPath === resolvedRoot || resolvedPath.startsWith(resolvedRoot + sep)
 }
 
+/** 校验并解析路径必须位于 Agent 工作区根目录下；返回解析后的真实路径。 */
+function resolveWorkspacePath(filePath: string): string {
+  const safePath = realpathSync(resolve(filePath))
+  const workspacesRoot = resolve(getAgentWorkspacesDir())
+  if (!isUnderRoot(safePath, workspacesRoot)) {
+    throw new Error('访问路径超出 Agent 工作区范围')
+  }
+  return safePath
+}
+
 function isPathAllowed(filePath: string, options?: FileAccessOptions): boolean {
   let resolved: string
   try {
@@ -2134,12 +2144,8 @@ export function registerIpcHandlers(): void {
       const { readdirSync, statSync } = await import('node:fs')
       const { resolve } = await import('node:path')
 
-      // 安全校验：路径必须在 agent-workspaces 目录下
-      const safePath = resolve(dirPath)
-      const workspacesRoot = resolve(getAgentWorkspacesDir())
-      if (!safePath.startsWith(workspacesRoot)) {
-        throw new Error('访问路径超出 Agent 工作区范围')
-      }
+      // 安全校验：路径必须在 agent-workspaces 目录下（解析 symlink 并用路径分隔符防止前缀绕过）
+      const safePath = resolveWorkspacePath(dirPath)
 
       const entries: FileEntry[] = []
       const items = readdirSync(safePath, { withFileTypes: true })
@@ -2175,14 +2181,9 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.DELETE_FILE,
     async (_, filePath: string): Promise<void> => {
       const { rmSync } = await import('node:fs')
-      const { resolve } = await import('node:path')
 
-      // 安全校验：路径必须在 agent-workspaces 目录下
-      const safePath = resolve(filePath)
-      const workspacesRoot = resolve(getAgentWorkspacesDir())
-      if (!safePath.startsWith(workspacesRoot)) {
-        throw new Error('访问路径超出 Agent 工作区范围')
-      }
+      // 安全校验：路径必须在 agent-workspaces 目录下（解析 symlink 并用路径分隔符防止前缀绕过）
+      const safePath = resolveWorkspacePath(filePath)
 
       rmSync(safePath, { recursive: true, force: true })
       console.log(`[Agent 文件] 已删除: ${safePath}`)
@@ -2193,14 +2194,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.OPEN_FILE,
     async (_, filePath: string): Promise<void> => {
-      const { resolve } = await import('node:path')
-
-      const safePath = resolve(filePath)
-      const workspacesRoot = resolve(getAgentWorkspacesDir())
-      if (!safePath.startsWith(workspacesRoot)) {
-        throw new Error('访问路径超出 Agent 工作区范围')
-      }
-
+      const safePath = resolveWorkspacePath(filePath)
       await shell.openPath(safePath)
     }
   )
@@ -2246,14 +2240,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.SHOW_IN_FOLDER,
     async (_, filePath: string): Promise<void> => {
-      const { resolve } = await import('node:path')
-
-      const safePath = resolve(filePath)
-      const workspacesRoot = resolve(getAgentWorkspacesDir())
-      if (!safePath.startsWith(workspacesRoot)) {
-        throw new Error('访问路径超出 Agent 工作区范围')
-      }
-
+      const safePath = resolveWorkspacePath(filePath)
       shell.showItemInFolder(safePath)
     }
   )
@@ -2379,18 +2366,13 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.RENAME_FILE,
     async (_, filePath: string, newName: string): Promise<void> => {
       const { renameSync } = await import('node:fs')
-      const { resolve, dirname, join, sep } = await import('node:path')
+      const { dirname, join, sep } = await import('node:path')
 
       if (newName.includes('/') || newName.includes('\\') || newName.includes('..') || newName.includes(sep)) {
         throw new Error('文件名不能包含路径分隔符或 ".."')
       }
 
-      const safePath = resolve(filePath)
-      const workspacesRoot = resolve(getAgentWorkspacesDir())
-      if (!safePath.startsWith(workspacesRoot)) {
-        throw new Error('访问路径超出 Agent 工作区范围')
-      }
-
+      const safePath = resolveWorkspacePath(filePath)
       const newPath = join(dirname(safePath), newName)
       renameSync(safePath, newPath)
       console.log(`[Agent 文件] 已重命名: ${safePath} → ${newPath}`)
@@ -2402,15 +2384,10 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.MOVE_FILE,
     async (_, filePath: string, targetDir: string): Promise<void> => {
       const { renameSync } = await import('node:fs')
-      const { resolve, basename, join } = await import('node:path')
+      const { basename, join } = await import('node:path')
 
-      const safePath = resolve(filePath)
-      const safeTarget = resolve(targetDir)
-      const workspacesRoot = resolve(getAgentWorkspacesDir())
-      if (!safePath.startsWith(workspacesRoot) || !safeTarget.startsWith(workspacesRoot)) {
-        throw new Error('访问路径超出 Agent 工作区范围')
-      }
-
+      const safePath = resolveWorkspacePath(filePath)
+      const safeTarget = resolveWorkspacePath(targetDir)
       const newPath = join(safeTarget, basename(safePath))
       renameSync(safePath, newPath)
       console.log(`[Agent 文件] 已移动: ${safePath} → ${newPath}`)
