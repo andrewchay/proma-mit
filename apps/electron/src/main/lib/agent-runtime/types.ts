@@ -6,7 +6,7 @@
  */
 
 import type { ToolDefinition, ToolCall, ToolResult } from '@proma/core'
-import type { ProviderType } from '@proma/shared'
+import type { ProviderType, PromaPermissionMode } from '@proma/shared'
 import type { SessionCallbacks } from '../agent-orchestrator'
 
 /** Agent Runtime 输入 */
@@ -57,6 +57,19 @@ export interface ToolContext {
   sessionId: string
   /** 中止信号 */
   abortSignal?: AbortSignal
+  /** 当前权限模式（Plan 模式判断用） */
+  permissionMode?: PromaPermissionMode
+  /** Plan 模式是否已由 Agent 触发进入 */
+  planModeEntered?: boolean
+  /** 进入 Plan 模式通知回调 */
+  onEnterPlanMode?: () => void
+  /** 退出 Plan 模式审批回调 */
+  onExitPlanMode?: (
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<{ behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }>
+  /** 切换权限模式（由 ExitPlanMode 回调结果触发） */
+  setPermissionMode?: (mode: PromaPermissionMode) => void
 }
 
 /** Runtime 工具定义 */

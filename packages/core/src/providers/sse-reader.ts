@@ -10,7 +10,7 @@
  * - 累积工具调用信息（tool use 支持）
  */
 
-import type { ProviderAdapter, ProviderRequest, StreamEventCallback, ThinkingBlock, ToolCall } from './types.ts'
+import type { ProviderAdapter, ProviderRequest, StreamEventCallback, StreamUsageEvent, ThinkingBlock, ToolCall } from './types.ts'
 
 // ===== 流式请求 =====
 
@@ -45,6 +45,8 @@ export interface StreamSSEResult {
   toolCalls: ToolCall[]
   /** 停止原因（'tool_use' 表示需要执行工具后继续） */
   stopReason?: string
+  /** 本轮流式请求的用量统计（取决于供应商协议，可能缺失） */
+  usage?: StreamUsageEvent['usage']
 }
 
 /**
@@ -95,6 +97,9 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   // 思考块追踪（Anthropic 协议：每个 thinking 块由多个 thinking_delta + signature_delta 组成）
   const thinkingBlocks: ThinkingBlock[] = []
   let currentThinking: ThinkingBlock | null = null
+
+  // 用量统计追踪
+  let lastUsage: StreamUsageEvent['usage'] | undefined
 
   try {
     while (true) {
@@ -165,6 +170,8 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
             }
           } else if (event.type === 'done' && event.stopReason) {
             stopReason = event.stopReason
+          } else if (event.type === 'usage') {
+            lastUsage = event.usage
           }
           onEvent(event)
         }
@@ -201,7 +208,7 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   }
 
   onEvent({ type: 'done', stopReason })
-  return { content, reasoning, thinkingBlocks, toolCalls, stopReason }
+  return { content, reasoning, thinkingBlocks, toolCalls, stopReason, usage: lastUsage }
 }
 
 // ===== 非流式标题请求 =====

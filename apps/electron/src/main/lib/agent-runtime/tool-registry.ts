@@ -31,6 +31,13 @@ import {
   createGrepToolDefinition,
   executeGrepTool,
 } from './tool-impls/grep-tool.ts'
+import {
+  ENTER_PLAN_MODE_TOOL_NAME,
+  EXIT_PLAN_MODE_TOOL_NAME,
+  createEnterPlanModeToolDefinition,
+  createExitPlanModeToolDefinition,
+} from './tool-impls/plan-mode-tools.ts'
+export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME }
 
 /** 阶段 1 核心工具列表 */
 export function createCoreTools(): RuntimeToolDefinition[] {
@@ -40,6 +47,8 @@ export function createCoreTools(): RuntimeToolDefinition[] {
     { ...createEditToolDefinition(), execute: executeEditTool },
     { ...createBashToolDefinition(), execute: executeBashTool },
     { ...createGrepToolDefinition(), execute: executeGrepTool },
+    createEnterPlanModeToolDefinition(),
+    createExitPlanModeToolDefinition(),
   ]
 }
 
@@ -50,6 +59,8 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   EDIT_TOOL_NAME,
   BASH_TOOL_NAME,
   GREP_TOOL_NAME,
+  ENTER_PLAN_MODE_TOOL_NAME,
+  EXIT_PLAN_MODE_TOOL_NAME,
 ]
 
 /**

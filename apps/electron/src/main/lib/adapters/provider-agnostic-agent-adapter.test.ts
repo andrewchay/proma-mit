@@ -322,6 +322,57 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(capturedRequests[0]?.userMessage).toBe('新问题')
   })
 
+  test('plan 模式下写工具被拒绝', async () => {
+    let round = 0
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        round++
+        if (round === 1) {
+          return makeStreamResult('', [{ id: 'tc_write', name: 'Write', arguments: { file_path: 'plan.txt', content: 'x' } }])
+        }
+        return makeStreamResult('Plan 模式下无法执行写操作')
+      },
+    }))
+
+    writeFileSync(join(tempDir, 'plan.txt'), 'original', 'utf-8')
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's-plan',
+      prompt: '写入 plan.txt',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'plan',
+    })) {
+      messages.push(msg)
+    }
+
+    // 文件不应被修改
+    expect(readFileSync(join(tempDir, 'plan.txt'), 'utf-8')).toBe('original')
+
+    // 应包含工具结果错误消息
+    const toolResultMsgs = messages.filter((m) => m.type === 'user')
+    expect(toolResultMsgs.length).toBeGreaterThanOrEqual(1)
+    const lastToolResult = toolResultMsgs[toolResultMsgs.length - 1]
+    expect(JSON.stringify(lastToolResult)).toContain('Plan 模式')
+  })
+
   test('streamSSE 瞬时错误会重试', async () => {
     let attempts = 0
     mock.module('@proma/core', () => ({

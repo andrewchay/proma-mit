@@ -47,6 +47,17 @@ interface OpenAIMessage {
   tool_call_id?: string
 }
 
+/** OpenAI SSE 用量详情 */
+interface OpenAIChunkUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  prompt_tokens_details?: { cached_tokens?: number }
+  /** DeepSeek 等扩展字段 */
+  prompt_cache_hit_tokens?: number
+  prompt_cache_miss_tokens?: number
+}
+
 /** OpenAI SSE 数据块 */
 interface OpenAIChunkData {
   choices?: Array<{
@@ -61,6 +72,7 @@ interface OpenAIChunkData {
     }
     finish_reason?: string | null
   }>
+  usage?: OpenAIChunkUsage
 }
 
 /** OpenAI 标题响应 */
@@ -195,6 +207,8 @@ export class OpenAIAdapter implements ProviderAdapter {
       model: input.modelId,
       messages,
       stream: true,
+      // 请求供应商在最后一条 chunk 返回 usage（OpenAI / DeepSeek 均支持）
+      stream_options: { include_usage: true },
     }
 
     // 工具定义
@@ -258,6 +272,21 @@ export class OpenAIAdapter implements ProviderAdapter {
       const finishReason = chunk.choices?.[0]?.finish_reason
       if (finishReason === 'tool_calls') {
         events.push({ type: 'done', stopReason: 'tool_use' })
+      }
+
+      // 用量统计（stream_options.include_usage 在最后一条 chunk 返回）
+      if (chunk.usage) {
+        events.push({
+          type: 'usage',
+          usage: {
+            input_tokens: chunk.usage.prompt_tokens,
+            output_tokens: chunk.usage.completion_tokens,
+            total_tokens: chunk.usage.total_tokens,
+            cache_read_input_tokens: chunk.usage.prompt_tokens_details?.cached_tokens,
+            prompt_cache_hit_tokens: chunk.usage.prompt_cache_hit_tokens,
+            prompt_cache_miss_tokens: chunk.usage.prompt_cache_miss_tokens,
+          },
+        })
       }
 
       return events

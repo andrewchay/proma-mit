@@ -130,7 +130,9 @@ export function createAgentSession(
       const claudeDir = join(sessionDir, '.claude')
       if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true })
       const settingsPath = join(claudeDir, 'settings.json')
-      const sdkSettings = safeParseJSONObject(readFileSync(settingsPath, 'utf-8'))
+      const sdkSettings = existsSync(settingsPath)
+        ? safeParseJSONObject(readFileSync(settingsPath, 'utf-8'))
+        : {}
       let needsWrite = false
       if (sdkSettings.plansDirectory !== '.context') {
         sdkSettings.plansDirectory = '.context'
@@ -620,6 +622,70 @@ export function migrateChatToAgentSession(conversationId: string, agentSessionId
  *
  * @returns 新创建的会话元数据
  */
+/**
+ * 分叉 Provider-Agnostic Agent 会话
+ *
+ * 该会话没有 SDK session，仅复制 Proma JSONL 历史和工作区文件到新会话。
+ */
+async function forkProviderAgnosticAgentSession(input: ForkSessionInput): Promise<AgentSessionMeta> {
+  const { sessionId, upToMessageUuid } = input
+
+  const sourceMeta = getAgentSessionMeta(sessionId)
+  if (!sourceMeta) {
+    throw new Error(`源 Agent 会话不存在: ${sessionId}`)
+  }
+
+  if (!sourceMeta.workspaceId) {
+    throw new Error('Provider-Agnostic 会话分叉需要绑定工作区')
+  }
+
+  const ws = getAgentWorkspace(sourceMeta.workspaceId)
+  if (!ws) {
+    throw new Error(`源 Agent 会话工作区不存在: ${sourceMeta.workspaceId}`)
+  }
+
+  const sourceDir = getAgentSessionWorkspacePath(ws.slug, sessionId)
+  const newMeta = createAgentSession(
+    `${sourceMeta.title} (fork)`,
+    sourceMeta.channelId,
+    sourceMeta.workspaceId,
+  )
+  const destDir = getAgentSessionWorkspacePath(ws.slug, newMeta.id)
+
+  // 1. 复制工作区文件
+  if (existsSync(sourceDir)) {
+    mkdirSync(destDir, { recursive: true })
+    const entries = readdirSync(sourceDir)
+    const skip = (entry: string) => entry === '.claude' || entry === '.DS_Store' || entry === '.git'
+    for (const entry of entries) {
+      if (skip(entry)) continue
+      const srcPath = join(sourceDir, entry)
+      const destPath = join(destDir, entry)
+      cpSync(srcPath, destPath, { recursive: true })
+    }
+  }
+
+  // 2. 复制截断后的 JSONL 历史
+  const sourceMessages = getAgentSessionSDKMessages(sessionId)
+  let messagesToCopy: SDKMessage[]
+  if (upToMessageUuid) {
+    const cutIndex = sourceMessages.findIndex(
+      (m) => 'uuid' in m && (m as { uuid?: string }).uuid === upToMessageUuid,
+    )
+    messagesToCopy = cutIndex >= 0 ? sourceMessages.slice(0, cutIndex + 1) : sourceMessages
+  } else {
+    messagesToCopy = sourceMessages
+  }
+
+  if (messagesToCopy.length > 0) {
+    messagesToCopy = messagesToCopy.map((m) => rewritePathsInSDKMessage(m, sourceDir, destDir))
+    appendSDKMessages(newMeta.id, messagesToCopy)
+  }
+
+  console.log(`[Agent 会话] Provider-Agnostic 分叉完成: ${sourceMeta.title} → ${newMeta.title} (${messagesToCopy.length} 条消息)`)
+  return newMeta
+}
+
 export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSessionMeta> {
   const { sessionId, upToMessageUuid } = input
 
@@ -629,8 +695,9 @@ export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSe
     throw new Error(`源 Agent 会话不存在: ${sessionId}`)
   }
 
+  // Provider-Agnostic Runtime 会话没有 SDK session，走 Proma 级分叉
   if (!sourceMeta.sdkSessionId) {
-    throw new Error('该会话没有 SDK session，无法分叉')
+    return forkProviderAgnosticAgentSession(input)
   }
 
   // 2. 确定源会话的工作目录（SDK 需要从此目录的项目空间读取 session 文件）
@@ -889,6 +956,18 @@ function rewritePathsInSDKMessage(msg: SDKMessage, sourceDir: string, destDir: s
     console.warn(`[Agent 会话] 改写 SDKMessage 路径失败，使用原消息:`, err)
     return msg
   }
+}
+
+/**
+ * 回退 Provider-Agnostic Agent 会话
+ *
+ * 该会话没有 SDK session，仅截断 Proma JSONL 历史到指定消息点。
+ */
+export function rewindProviderAgnosticSession(
+  sessionId: string,
+  assistantMessageUuid: string,
+): SDKMessage[] {
+  return truncateSDKMessages(sessionId, assistantMessageUuid)
 }
 
 /**

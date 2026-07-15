@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment } from '@proma/shared'
+import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput } from '@proma/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -39,7 +39,7 @@ import { decryptApiKey, getChannelById, listChannels } from './channel-manager'
 import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@proma/core'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
-import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot } from './agent-session-manager'
+import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
 import { getAgentWorkspace, getWorkspaceMcpConfig, ensurePluginManifest } from './agent-workspace-manager'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
@@ -551,12 +551,18 @@ export class AgentOrchestrator {
     try {
       // 确定工作目录
       let agentCwd = homedir()
+      let mcpServerConfigs: Record<string, import('@proma/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
           agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
           if (!existsSync(agentCwd)) {
             mkdirSync(agentCwd, { recursive: true })
+          }
+          try {
+            mcpServerConfigs = getWorkspaceMcpConfig(ws.slug).servers
+          } catch (err) {
+            console.warn(`[Agent Runtime] 加载 MCP 配置失败:`, err)
           }
         }
       }
@@ -603,12 +609,33 @@ export class AgentOrchestrator {
         historyMessages,
         attachments,
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+        mcpServers: mcpServerConfigs,
         canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
           const result = await canUseTool(toolName, input, {
             signal,
             toolUseID: `tool-${Date.now()}`,
           })
           return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
+        },
+        onEnterPlanMode: () => {
+          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } } as AgentStreamPayload)
+        },
+        onExitPlanMode: async (
+          input: Record<string, unknown>,
+          signal: AbortSignal,
+        ): Promise<{ behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }> => {
+          const result = await exitPlanService.handleExitPlanMode(
+            sessionId,
+            input,
+            signal,
+            (request: ExitPlanModeRequest) => {
+              this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } } as AgentStreamPayload)
+            },
+          )
+          if (result.behavior === 'allow' && 'targetMode' in result && result.targetMode) {
+            this.sessionPermissionModes.set(sessionId, result.targetMode)
+          }
+          return result as { behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }
         },
       }
 
@@ -1187,13 +1214,16 @@ export class AgentOrchestrator {
       const runGeneration = Date.now()
       this.activeSessions.set(sessionId, runGeneration)
       try {
+        // DeepSeek 渠道在 Proma 中注册为 Anthropic 兼容适配器（供 Claude SDK 使用），
+        // Provider-Agnostic Runtime 需要 OpenAI 兼容协议，因此映射到 openai 适配器。
+        const runtimeProvider: ProviderType = channel.provider === 'deepseek' ? 'openai' : channel.provider
         await this.runProviderAgnosticAgent({
           sessionId,
           channelId,
           workspaceId,
           userMessage,
           modelId,
-          provider: channel.provider,
+          provider: runtimeProvider,
           apiKey,
           baseUrl: channel.baseUrl,
           callbacks,
@@ -2311,6 +2341,20 @@ export class AgentOrchestrator {
     console.log(`[Agent 编排] 运行中权限模式已切换: sessionId=${sessionId}, mode=${mode}`)
   }
 
+  /**
+   * 分叉 Agent 会话
+   *
+   * 对 Provider-Agnostic Runtime 会话（无 sdkSessionId）：复制工作区文件并截断 Proma JSONL 历史。
+   * 对 Claude SDK 会话：调用 SDK 原生 forkSession，再复制工作区文件与 JSONL 历史。
+   * 运行中的会话禁止分叉，避免 JSONL 并发写入损坏。
+   */
+  async forkAgentSession(input: ForkSessionInput): Promise<AgentSessionMeta> {
+    if (this.activeSessions.has(input.sessionId)) {
+      throw new Error('会话正在运行中，请停止后再分叉')
+    }
+    return forkAgentSessionInternal(input)
+  }
+
   // ===== 快照回退 =====
 
   /**
@@ -2333,8 +2377,18 @@ export class AgentOrchestrator {
     }
 
     const sessionMeta = getAgentSessionMeta(sessionId)
-    if (!sessionMeta?.sdkSessionId) {
-      throw new Error('会话没有 SDK session ID，无法回退')
+    if (!sessionMeta) {
+      throw new Error(`会话不存在: ${sessionId}`)
+    }
+
+    // Provider-Agnostic Runtime 回退路径：不支持 SDK 级文件快照，仅截断对话历史
+    if (!sessionMeta.sdkSessionId) {
+      const kept = rewindProviderAgnosticSession(sessionId, assistantMessageUuid)
+      console.log(`[Agent 编排] Provider-Agnostic 回退完成: sessionId=${sessionId}, 保留 ${kept.length} 条消息, 文件状态未恢复`)
+      return {
+        remainingMessages: kept.length,
+        fileRewind: { canRewind: false, error: 'Provider-Agnostic Runtime 暂不支持文件快照恢复，已截断对话' },
+      }
     }
 
     // 0.5 从 SDK session JSONL 解析对应的 user message UUID（rewindFiles 需要）

@@ -25,6 +25,8 @@ import type {
   AgentStreamPayload,
   AgentQueueMessageInput,
   PromaPermissionMode,
+  ForkSessionInput,
+  AgentSessionMeta,
 } from '@proma/shared'
 import { ClaudeAgentAdapter, scanAndKillOrphanedClaudeSubprocesses } from './adapters/claude-agent-adapter'
 import { AgentEventBus } from './agent-event-bus'
@@ -241,6 +243,15 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
  */
 export function stopAgent(sessionId: string): void {
   orchestrator.stop(sessionId)
+}
+
+/**
+ * 分叉 Agent 会话
+ *
+ * 委托给 Orchestrator，由其根据是否存在 sdkSessionId 选择 Provider-Agnostic 或 Claude SDK 路径。
+ */
+export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSessionMeta> {
+  return orchestrator.forkAgentSession(input)
 }
 
 /**

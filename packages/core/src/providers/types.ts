@@ -149,6 +149,20 @@ export interface StreamDoneEvent {
   stopReason?: 'end_turn' | 'tool_use' | string
 }
 
+/** 流式用量事件（OpenAI stream_options.include_usage 等协议的最后一条 chunk） */
+export interface StreamUsageEvent {
+  type: 'usage'
+  usage: {
+    input_tokens?: number
+    output_tokens?: number
+    total_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+    prompt_cache_hit_tokens?: number
+    prompt_cache_miss_tokens?: number
+  }
+}
+
 /** 工具调用开始事件 */
 export interface StreamToolCallStartEvent {
   type: 'tool_call_start'
@@ -174,6 +188,7 @@ export type StreamEvent =
   | StreamReasoningBlockStopEvent
   | StreamErrorEvent
   | StreamDoneEvent
+  | StreamUsageEvent
   | StreamToolCallStartEvent
   | StreamToolCallDeltaEvent
 

@@ -20,6 +20,8 @@ import type {
   SDKResultMessage,
   SDKContentBlock,
   FileAttachment,
+  McpServerEntry,
+  PromaPermissionMode,
 } from '@proma/shared'
 import type {
   ProviderAdapter,
@@ -32,7 +34,8 @@ import type {
 import { getAdapter, streamSSE } from '@proma/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
-import { createCoreTools } from '../agent-runtime/tool-registry'
+import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME } from '../agent-runtime/tool-registry'
+import { McpClientManager } from '../agent-runtime/mcp-client'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
 import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
@@ -68,6 +71,15 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   historyMessages?: import('@proma/shared').SDKMessage[]
   /** 最大 LLM 请求重试次数 */
   maxRetries?: number
+  /** 工作区 MCP 服务器配置 */
+  mcpServers?: Record<string, McpServerEntry>
+  /** 进入 Plan 模式通知回调 */
+  onEnterPlanMode?: () => void
+  /** 退出 Plan 模式审批回调 */
+  onExitPlanMode?: (
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<{ behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }>
 }
 
 /** 活跃会话状态 */
@@ -92,6 +104,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       maxTurns = 25,
       systemPrompt,
       attachments,
+      mcpServers,
+      onEnterPlanMode,
+      onExitPlanMode,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -99,15 +114,33 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     }
 
     const adapter = getAdapter(provider)
-    const tools = createCoreTools()
-    const toolMap = new Map(tools.map((t) => [t.name, t]))
-    const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
-
     const controller = new AbortController()
     if (abortSignal) {
       abortSignal.addEventListener('abort', () => controller.abort(), { once: true })
     }
     this.activeSessions.set(sessionId, { controller })
+
+    // 加载 MCP 工具
+    const mcpManager = mcpServers && Object.keys(mcpServers).length > 0
+      ? new McpClientManager(mcpServers, cwd, { abortSignal: controller.signal })
+      : undefined
+    let mcpTools: RuntimeToolDefinition[] = []
+    if (mcpManager) {
+      try {
+        await mcpManager.connectAll()
+        mcpTools = await mcpManager.listAllTools()
+        console.log(`[Agent Runtime] 已加载 ${mcpTools.length} 个 MCP 工具`)
+      } catch (err) {
+        console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
+      }
+    }
+    const tools = [...createCoreTools(), ...mcpTools]
+    const toolMap = new Map(tools.map((t) => [t.name, t]))
+    const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
+
+    // Plan 模式状态
+    let currentPermissionMode: PromaPermissionMode = input.permissionMode ?? 'auto'
+    let planModeEntered = currentPermissionMode === 'plan'
 
     // 累积本轮所有消息（用于持久化和事件流）
     const runtimeMessages: RuntimeMessage[] = []
@@ -169,6 +202,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         let currentReasoning = ''
         let currentThinkingBlocks: ThinkingBlock[] = []
         let currentToolCalls: ToolCall[] = []
+        let roundUsage: import('@proma/core').StreamUsageEvent['usage'] | undefined
 
         const handleStreamEvent = (event: StreamEvent): void => {
           if (event.type === 'chunk') {
@@ -177,6 +211,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
             currentReasoning += event.delta
           } else if (event.type === 'tool_call_start') {
             // 工具调用开始，由 streamSSE 累积参数
+          } else if (event.type === 'usage') {
+            roundUsage = event.usage
           }
         }
 
@@ -204,9 +240,19 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         currentReasoning = result.reasoning
         currentThinkingBlocks = result.thinkingBlocks
         currentToolCalls = result.toolCalls
+        // 优先使用流式回调中的 usage，其次使用 streamSSE 汇总返回值
+        const finalRoundUsage = roundUsage ?? result.usage
 
         // 累积 token 用量（最佳 effort，部分 provider 不返回）
-        // 注意：streamSSE 目前不返回 usage，阶段 1 先按 0 计，后续扩展
+        if (finalRoundUsage) {
+          totalInputTokens += finalRoundUsage.input_tokens ?? 0
+          totalOutputTokens += finalRoundUsage.output_tokens ?? 0
+          totalCacheReadTokens += finalRoundUsage.cache_read_input_tokens ?? finalRoundUsage.prompt_cache_hit_tokens ?? 0
+          totalCacheCreationTokens += finalRoundUsage.cache_creation_input_tokens ?? finalRoundUsage.prompt_cache_miss_tokens ?? 0
+          console.log(
+            `[Agent Runtime] 第 ${round} 轮用量: input=${finalRoundUsage.input_tokens ?? '-'}, output=${finalRoundUsage.output_tokens ?? '-'}, cache_hit=${finalRoundUsage.prompt_cache_hit_tokens ?? finalRoundUsage.cache_read_input_tokens ?? '-'}, cache_miss=${finalRoundUsage.prompt_cache_miss_tokens ?? finalRoundUsage.cache_creation_input_tokens ?? '-'}`
+          )
+        }
 
         // 构建 assistant 消息的内容块
         const assistantContentBlocks: SDKContentBlock[] = []
@@ -252,8 +298,18 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           cwd,
           sessionId,
           abortSignal: controller.signal,
-          permissionMode: input.permissionMode,
+          permissionMode: currentPermissionMode,
+          planModeEntered,
           canUseTool: input.canUseTool,
+          onEnterPlanMode: () => {
+            planModeEntered = true
+            onEnterPlanMode?.()
+          },
+          onExitPlanMode,
+          setPermissionMode: (mode) => {
+            currentPermissionMode = mode
+            planModeEntered = false
+          },
         })
 
         // 生成 user 消息（tool_result）
@@ -313,6 +369,11 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       yield resultMessage as unknown as SDKMessage
     } finally {
       this.activeSessions.delete(sessionId)
+      if (mcpManager) {
+        mcpManager.disconnect().catch((err: unknown) => {
+          console.warn('[Agent Runtime] 断开 MCP 服务器失败:', err)
+        })
+      }
     }
   }
 
@@ -338,6 +399,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
    *
    * 阶段 1 简化策略：
    * - bypassPermissions：全部放行
+   * - plan 模式：只允许只读工具 + EnterPlanMode/ExitPlanMode
    * - 未提供 canUseTool 回调时：只读工具（Read/Grep）自动放行，写工具（Write/Edit/Bash）默认拒绝
    * - 提供 canUseTool 回调时：委托给回调（可接入 AgentPermissionService）
    */
@@ -346,12 +408,24 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     input: Record<string, unknown>,
     ctx: {
       abortSignal?: AbortSignal
-      permissionMode?: import('@proma/shared').PromaPermissionMode
+      permissionMode?: PromaPermissionMode
+      planModeEntered?: boolean
       canUseTool?: CanUseToolCallback
     },
   ): Promise<ToolPermissionResult> {
     if (ctx.permissionMode === 'bypassPermissions') {
       return { allowed: true }
+    }
+
+    // Plan 模式本地兜底：只允许只读工具与 Plan 模式控制工具
+    if (ctx.permissionMode === 'plan' || ctx.planModeEntered) {
+      const planAllowedTools = new Set(['Read', 'Grep', ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME])
+      if (!planAllowedTools.has(toolName)) {
+        return {
+          allowed: false,
+          message: `当前处于 Plan 模式，${toolName} 需要用户审批后才能执行。请先调用 ExitPlanMode 提交计划并等待用户批准。`,
+        }
+      }
     }
 
     if (ctx.canUseTool) {
@@ -381,13 +455,43 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       cwd: string
       sessionId: string
       abortSignal?: AbortSignal
-      permissionMode?: import('@proma/shared').PromaPermissionMode
+      permissionMode?: PromaPermissionMode
+      planModeEntered?: boolean
       canUseTool?: CanUseToolCallback
+      onEnterPlanMode?: () => void
+      onExitPlanMode?: ProviderAgnosticAgentQueryOptions['onExitPlanMode']
+      setPermissionMode?: (mode: PromaPermissionMode) => void
     },
   ): Promise<ToolResult[]> {
     const results: ToolResult[] = []
 
     for (const tc of toolCalls) {
+      // EnterPlanMode：标记进入 Plan 模式并通知 UI
+      if (tc.name === ENTER_PLAN_MODE_TOOL_NAME) {
+        ctx.onEnterPlanMode?.()
+        results.push({ toolCallId: tc.id, content: '已进入 Plan 模式', isError: false })
+        continue
+      }
+
+      // ExitPlanMode：提交计划审批，等待用户响应
+      if (tc.name === EXIT_PLAN_MODE_TOOL_NAME) {
+        if (ctx.onExitPlanMode) {
+          const signal = ctx.abortSignal ?? new AbortController().signal
+          const result = await ctx.onExitPlanMode(tc.arguments, signal)
+          if (result.behavior === 'allow') {
+            if (result.targetMode) {
+              ctx.setPermissionMode?.(result.targetMode)
+            }
+            results.push({ toolCallId: tc.id, content: `已退出 Plan 模式，切换到 ${result.targetMode ?? '默认'} 模式`, isError: false })
+          } else {
+            results.push({ toolCallId: tc.id, content: result.message || '用户拒绝了计划', isError: true })
+          }
+        } else {
+          results.push({ toolCallId: tc.id, content: '已退出 Plan 模式', isError: false })
+        }
+        continue
+      }
+
       const tool = toolMap.get(tc.name)
       if (!tool) {
         results.push({
