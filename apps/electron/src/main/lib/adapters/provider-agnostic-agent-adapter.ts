@@ -34,8 +34,21 @@ import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools } from '../agent-runtime/tool-registry'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
-import { buildAgentSystemPrompt, runtimeMessagesToChatMessages } from '../agent-runtime/prompt-builder'
+import { buildAgentSystemPrompt } from '../agent-runtime/prompt-builder'
 import type { RuntimeMessage } from '../agent-runtime/types'
+
+/** 工具权限检查结果 */
+export interface ToolPermissionResult {
+  allowed: boolean
+  message?: string
+}
+
+/** 工具权限检查回调 */
+export type CanUseToolCallback = (
+  toolName: string,
+  input: Record<string, unknown>,
+  signal: AbortSignal,
+) => Promise<ToolPermissionResult>
 
 /** Provider-Agnostic 查询选项（扩展通用输入） */
 export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
@@ -43,6 +56,10 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   maxTurns?: number
   /** 系统提示词 */
   systemPrompt?: string
+  /** 权限模式 */
+  permissionMode?: import('@proma/shared').PromaPermissionMode
+  /** 自定义权限检查回调；未提供时按 permissionMode 做本地兜底判断 */
+  canUseTool?: CanUseToolCallback
 }
 
 /** 活跃会话状态 */
@@ -103,24 +120,21 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       runtimeMessages.push(userMessage)
 
       // 工具续接循环
+      // 关键约定：userMessage 始终为本次用户原始 prompt；
+      // assistant tool_use 与 tool_result 必须放在 continuationMessages 中，
+      // 否则 Anthropic 适配器会产生“user tool_result -> assistant tool_use”的乱序/重复结构。
       let continuationMessages: ContinuationMessage[] = []
       let round = 0
 
       while (round < maxTurns) {
         round++
 
-        const history = runtimeMessagesToChatMessages(runtimeMessages.slice(0, -1))
-        const currentUserMessage = runtimeMessages[runtimeMessages.length - 1]
-        if (!currentUserMessage) {
-          throw new Error('Runtime 消息历史为空，无法继续')
-        }
-
         const request = adapter.buildStreamRequest({
           baseUrl,
           apiKey,
           modelId: model || '',
-          history,
-          userMessage: currentUserMessage.content,
+          history: [], // 阶段 1 不加载历史；后续支持多轮时从 runtimeMessages 提取
+          userMessage: prompt,
           systemMessage: effectiveSystemPrompt,
           readImageAttachments: emptyImageReader,
           tools: tools.map((t) => ({
@@ -201,11 +215,13 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           break
         }
 
-        // 执行工具调用
+        // 执行工具调用（带权限检查）
         const toolResults = await this.executeToolCalls(currentToolCalls, toolMap, {
           cwd,
           sessionId,
           abortSignal: controller.signal,
+          permissionMode: input.permissionMode,
+          canUseTool: input.canUseTool,
         })
 
         // 生成 user 消息（tool_result）
@@ -286,12 +302,56 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
   }
 
   /**
+   * 检查工具调用权限
+   *
+   * 阶段 1 简化策略：
+   * - bypassPermissions：全部放行
+   * - 未提供 canUseTool 回调时：只读工具（Read/Grep）自动放行，写工具（Write/Edit/Bash）默认拒绝
+   * - 提供 canUseTool 回调时：委托给回调（可接入 AgentPermissionService）
+   */
+  private async checkToolPermission(
+    toolName: string,
+    input: Record<string, unknown>,
+    ctx: {
+      abortSignal?: AbortSignal
+      permissionMode?: import('@proma/shared').PromaPermissionMode
+      canUseTool?: CanUseToolCallback
+    },
+  ): Promise<ToolPermissionResult> {
+    if (ctx.permissionMode === 'bypassPermissions') {
+      return { allowed: true }
+    }
+
+    if (ctx.canUseTool) {
+      const signal = ctx.abortSignal ?? new AbortController().signal
+      return ctx.canUseTool(toolName, input, signal)
+    }
+
+    // 本地兜底：只读工具放行，其余拒绝
+    const readOnlyTools = new Set(['Read', 'Grep'])
+    if (readOnlyTools.has(toolName)) {
+      return { allowed: true }
+    }
+
+    return {
+      allowed: false,
+      message: `${toolName} 需要用户授权，但当前未配置权限回调。请在设置中将权限模式设为“允许所有”或启用交互式权限。`,
+    }
+  }
+
+  /**
    * 执行工具调用列表
    */
   private async executeToolCalls(
     toolCalls: ToolCall[],
     toolMap: Map<string, RuntimeToolDefinition>,
-    ctx: { cwd: string; sessionId: string; abortSignal?: AbortSignal },
+    ctx: {
+      cwd: string
+      sessionId: string
+      abortSignal?: AbortSignal
+      permissionMode?: import('@proma/shared').PromaPermissionMode
+      canUseTool?: CanUseToolCallback
+    },
   ): Promise<ToolResult[]> {
     const results: ToolResult[] = []
 
@@ -301,6 +361,17 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         results.push({
           toolCallId: tc.id,
           content: `未知工具: ${tc.name}`,
+          isError: true,
+        })
+        continue
+      }
+
+      // 权限检查
+      const permission = await this.checkToolPermission(tc.name, tc.arguments, ctx)
+      if (!permission.allowed) {
+        results.push({
+          toolCallId: tc.id,
+          content: permission.message || `权限被拒绝：${tc.name}`,
           isError: true,
         })
         continue

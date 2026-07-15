@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executeReadTool, createReadToolDefinition } from './read-tool'
@@ -105,6 +105,55 @@ describe('Agent Runtime 核心工具', () => {
 
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('target line')
+  })
+
+  test('Grep 工具不存在 shell 注入', async () => {
+    writeFileSync(join(tempDir, 'safe.txt'), 'hello', 'utf-8')
+    const injectedPath = join(tempDir, 'injected_by_grep')
+
+    const result = await executeGrepTool(
+      { regex: '$(touch "' + injectedPath.replace(/"/g, '\\"') + '")' },
+      { cwd: tempDir, sessionId },
+    )
+
+    // 无论搜索是否命中，都不应创建注入文件
+    expect(existsSync(injectedPath)).toBe(false)
+    expect(result.isError).toBeFalsy()
+  })
+
+  test('Read 工具拒绝 symlink 路径绕过', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'proma-agent-runtime-outside-'))
+    const outsideFile = join(outsideDir, 'secret.txt')
+    writeFileSync(outsideFile, 'outside-secret', 'utf-8')
+
+    try {
+      symlinkSync(outsideFile, join(tempDir, 'link.txt'))
+
+      const result = await executeReadTool({ file_path: 'link.txt' }, { cwd: tempDir, sessionId })
+
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('路径越界')
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  test('Write 工具拒绝 symlink 目录绕过', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'proma-agent-runtime-outside-'))
+
+    try {
+      symlinkSync(outsideDir, join(tempDir, 'linkdir'), 'dir')
+
+      const result = await executeWriteTool(
+        { file_path: 'linkdir/evil.txt', content: 'pwned' },
+        { cwd: tempDir, sessionId },
+      )
+
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('路径越界')
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true })
+    }
   })
 
   test('工具定义符合预期', () => {

@@ -15,29 +15,48 @@ import type { SDKMessage, SDKResultMessage } from '@proma/shared'
 // 被测模块需要在 mock 之后导入
 const { ProviderAgnosticAgentAdapter } = await import('./provider-agnostic-agent-adapter')
 
+/** 从 mock 请求体中提取的轻量视图 */
+interface CapturedRequest {
+  userMessage: string
+  historyLength: number
+  continuationCount: number
+}
+
 describe('Provider-Agnostic Agent 适配器', () => {
   let tempDir: string
   let streamCallCount = 0
+  let capturedRequests: CapturedRequest[] = []
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'proma-paa-adapter-test-'))
     streamCallCount = 0
+    capturedRequests = []
 
     // mock @proma/core，用回合制逻辑替代真实 SSE 请求
     mock.module('@proma/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
-        buildStreamRequest: (input): ProviderRequest => ({
-          url: 'http://localhost/mock',
-          headers: { Authorization: 'Bearer mock' },
-          body: JSON.stringify({
-            model: input.modelId,
-            system: input.systemMessage,
-            history: input.history,
-            userMessage: input.userMessage,
-            continuationMessages: input.continuationMessages,
-          }),
-        }),
+        buildStreamRequest: (input): ProviderRequest => {
+          const body = JSON.parse(
+            JSON.stringify({
+              model: input.modelId,
+              system: input.systemMessage,
+              history: input.history,
+              userMessage: input.userMessage,
+              continuationMessages: input.continuationMessages,
+            }),
+          )
+          capturedRequests.push({
+            userMessage: body.userMessage,
+            historyLength: (body.history ?? []).length,
+            continuationCount: (body.continuationMessages ?? []).length,
+          })
+          return {
+            url: 'http://localhost/mock',
+            headers: { Authorization: 'Bearer mock' },
+            body: JSON.stringify(body),
+          }
+        },
         parseSSELine: () => [],
         buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
         parseTitleResponse: () => null,
@@ -78,6 +97,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
       apiKey: 'mock-key',
       baseUrl: 'http://localhost/mock',
       cwd: tempDir,
+      permissionMode: 'bypassPermissions',
     })) {
       messages.push(msg)
     }
@@ -106,6 +126,47 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
     // 验证 streamSSE 被调用了 3 次
     expect(streamCallCount).toBe(3)
+
+    // 验证请求体结构：userMessage 始终为原始 prompt，续接消息逐轮累积
+    expect(capturedRequests).toHaveLength(3)
+    expect(capturedRequests[0]?.userMessage).toBe('把 note.txt 里的 old 改成 new')
+    expect(capturedRequests[1]?.userMessage).toBe('把 note.txt 里的 old 改成 new')
+    expect(capturedRequests[2]?.userMessage).toBe('把 note.txt 里的 old 改成 new')
+    expect(capturedRequests[0]?.historyLength).toBe(0)
+    expect(capturedRequests[1]?.historyLength).toBe(0)
+    expect(capturedRequests[2]?.historyLength).toBe(0)
+    expect(capturedRequests[0]?.continuationCount).toBe(0)
+    expect(capturedRequests[1]?.continuationCount).toBe(2) // assistant tool_use + user tool_result
+    expect(capturedRequests[2]?.continuationCount).toBe(4) // 两轮 tool_use + tool_result
+  })
+
+  test('非 bypassPermissions 模式下写工具会被拒绝', async () => {
+    writeFileSync(join(tempDir, 'note.txt'), 'old content', 'utf-8')
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's1',
+      prompt: '把 note.txt 里的 old 改成 new',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      // 未提供 permissionMode，默认走本地兜底：写工具拒绝
+    })) {
+      messages.push(msg)
+    }
+
+    // 文件不应被修改
+    expect(readFileSync(join(tempDir, 'note.txt'), 'utf-8')).toBe('old content')
+
+    // 应产生 assistant + user tool_result（拒绝） + result
+    expect(messages.length).toBeGreaterThanOrEqual(2)
+    const resultMsg = messages.find((m): m is SDKResultMessage => m.type === 'result')
+    expect(resultMsg).toBeDefined()
+    expect(resultMsg?.subtype).toBe('success')
   })
 
   test('无工具调用时直接结束', async () => {

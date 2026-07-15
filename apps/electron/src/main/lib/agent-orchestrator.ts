@@ -501,6 +501,17 @@ export class AgentOrchestrator {
   }
 
   /**
+   * Provider-Agnostic Runtime 实验开关
+   *
+   * 默认关闭，需显式设置环境变量 PROMA_ENABLE_AGENT_RUNTIME=1 才会启用。
+   * 阶段 1 先以白名单 + 显式开关控制，避免影响现有用户和权限模型。
+   */
+  private isProviderAgnosticRuntimeEnabled(): boolean {
+    const envFlag = process.env.PROMA_ENABLE_AGENT_RUNTIME
+    return envFlag === '1' || envFlag === 'true'
+  }
+
+  /**
    * Provider-Agnostic Runtime 实验分支（阶段 1）
    *
    * 仅支持核心工具循环，不处理 resume、MCP、权限模式、子 Agent 等高级能力。
@@ -516,8 +527,9 @@ export class AgentOrchestrator {
     baseUrl: string
     callbacks: SessionCallbacks
     startedAt?: number
+    permissionMode?: PromaPermissionMode
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt } = options
+    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode } = options
 
     try {
       // 确定工作目录
@@ -543,6 +555,18 @@ export class AgentOrchestrator {
       } as unknown as SDKMessage
       appendSDKMessages(sessionId, [userSDKMsg])
 
+      // 创建权限检查回调，复用 AgentPermissionService 的 auto/ask 逻辑
+      const canUseTool = permissionService.createCanUseTool(
+        sessionId,
+        (request: PermissionRequest) => {
+          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'permission_request', request } } as AgentStreamPayload)
+        },
+        (sid, toolInput, signal, sendAskUser) => askUserService.handleAskUserQuestion(sid, toolInput, signal, sendAskUser),
+        (request: AskUserRequest) => {
+          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
+        },
+      )
+
       const queryOptions = {
         sessionId,
         prompt: userMessage,
@@ -552,6 +576,14 @@ export class AgentOrchestrator {
         baseUrl,
         cwd: agentCwd,
         systemPrompt: undefined,
+        permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+        canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
+          const result = await canUseTool(toolName, input, {
+            signal,
+            toolUseID: `tool-${Date.now()}`,
+          })
+          return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
+        },
       }
 
       const iterable = this.providerAgnosticAdapter.query(queryOptions)
@@ -1128,9 +1160,9 @@ export class AgentOrchestrator {
     }
 
     // 阶段 1：Provider-Agnostic Runtime 实验分支（仅 DeepSeek）
-    // 白名单控制，避免影响现有 Claude SDK 用户
+    // 需要显式开启实验开关，默认走原有 Claude SDK 路径，避免绕过权限系统
     const RUNTIME_PROVIDER_WHITELIST: ProviderType[] = ['deepseek']
-    if (RUNTIME_PROVIDER_WHITELIST.includes(channel.provider)) {
+    if (this.isProviderAgnosticRuntimeEnabled() && RUNTIME_PROVIDER_WHITELIST.includes(channel.provider)) {
       const runGeneration = Date.now()
       this.activeSessions.set(sessionId, runGeneration)
       try {
@@ -1145,6 +1177,7 @@ export class AgentOrchestrator {
           baseUrl: channel.baseUrl,
           callbacks,
           startedAt: input.startedAt,
+          permissionMode: permissionModeOverride,
         })
       } finally {
         this.activeSessions.delete(sessionId)
