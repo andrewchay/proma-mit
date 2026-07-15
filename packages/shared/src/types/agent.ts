@@ -995,6 +995,8 @@ export interface AgentSaveFilesInput {
 export interface AgentSavedFile {
   filename: string
   targetPath: string
+  /** 文件大小（字节） */
+  size: number
 }
 
 /** Agent 文件保存到工作区文件目录的输入 */

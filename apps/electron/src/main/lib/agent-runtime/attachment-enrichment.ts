@@ -29,6 +29,23 @@ export function getImageAttachmentData(attachments?: FileAttachment[]): ImageAtt
     }))
 }
 
+/** XML 属性转义：防止文件名破坏 <file name="..."> 结构 */
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** XML 文本内容转义：防止文档内容误闭合外层标签 */
+function escapeXmlContent(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 async function extractDocumentText(localPath: string, filename: string): Promise<string> {
   try {
     const text = await extractTextFromAttachment(localPath)
@@ -56,7 +73,7 @@ export async function enrichMessageWithDocuments(
   const parts: string[] = [messageText]
   for (const att of docAttachments) {
     const text = await extractDocumentText(att.localPath, att.filename)
-    parts.push(`\n<file name="${att.filename}">\n${text}\n</file>`)
+    parts.push(`\n<file name="${escapeXmlAttribute(att.filename)}">\n${escapeXmlContent(text)}\n</file>`)
   }
   return parts.join('')
 }

@@ -20,7 +20,7 @@ export interface FileAttachment {
   filename: string
   /** MIME 类型 */
   mediaType: string
-  /** 相对路径: {conversationId}/{uuid}.ext */
+  /** 附件路径：相对路径 {conversationId}/{uuid}.ext 或 ~/.proma/ 下的绝对路径（Agent 工作区附件） */
   localPath: string
   /** 文件大小（字节） */
   size: number

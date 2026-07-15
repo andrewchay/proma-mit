@@ -82,6 +82,27 @@ describe('附件富化', () => {
     expect(result).toContain('[文档提取失败: 提取失败]')
   })
 
+  test('enrichMessageWithDocuments 对文件名做 XML 属性转义', async () => {
+    const attachments: FileAttachment[] = [
+      { id: '1', filename: 'evil"<>&.txt', mediaType: 'text/plain', size: 100, localPath: 's1/evil.txt' },
+    ]
+    const result = await enrichMessageWithDocuments('请查看', attachments)
+    expect(result).toContain('<file name="evil&quot;&lt;&gt;&amp;.txt">')
+    expect(result).not.toContain('name="evil"<>&.txt"')
+  })
+
+  test('enrichMessageWithDocuments 对文档内容做 XML 文本转义', async () => {
+    mock.module('../document-parser', () => ({
+      isDocumentAttachment: (mediaType: string) => mediaType === 'text/plain',
+      extractTextFromAttachment: async () => '内容含 </file> 与 <script> & "',
+    }))
+    const attachments: FileAttachment[] = [
+      { id: '1', filename: 'note.txt', mediaType: 'text/plain', size: 100, localPath: 's1/note.txt' },
+    ]
+    const result = await enrichMessageWithDocuments('请查看', attachments)
+    expect(result).toContain('内容含 &lt;/file&gt; 与 &lt;script&gt; &amp; "')
+  })
+
   test('enrichHistoryWithDocuments 只处理含文档的用户消息', async () => {
     const history = [
       { id: 'u1', role: 'user' as const, content: '看文件', createdAt: 1, attachments: [{ id: '1', filename: 'note.txt', mediaType: 'text/plain', size: 100, localPath: 's1/note.txt' }] },

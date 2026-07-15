@@ -10,8 +10,8 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { extname } from 'node:path'
-import { resolveAttachmentPath } from './config-paths'
+import { extname, isAbsolute, normalize } from 'node:path'
+import { getConfigDir, resolveAttachmentPath } from './config-paths'
 
 // ===== 文件类型分类 =====
 
@@ -130,15 +130,33 @@ async function extractOffice(filePath: string): Promise<string> {
 }
 
 /**
- * 从附件相对路径提取文本（IPC 层使用）
+ * 安全解析附件路径
  *
- * 将附件的 localPath（如 {conversationId}/{uuid}.ext）
- * 解析为完整路径后提取文本。
+ * 支持两种格式：
+ * 1. 相对路径 {conversationId}/{uuid}.ext → ~/.proma/attachments/
+ * 2. 绝对路径（Agent 工作区附件）→ 需在 ~/.proma/ 目录下
+ */
+function resolveAttachmentPathSafe(localPath: string): string {
+  if (isAbsolute(localPath)) {
+    const configDir = getConfigDir()
+    const normalized = normalize(localPath)
+    if (!normalized.startsWith(configDir)) {
+      throw new Error(`附件路径不在安全目录内: ${localPath}`)
+    }
+    return normalized
+  }
+  return resolveAttachmentPath(localPath)
+}
+
+/**
+ * 从附件路径提取文本（IPC 层使用）
  *
- * @param localPath 附件相对路径
+ * 将附件的 localPath（相对或绝对）解析为完整路径后提取文本。
+ *
+ * @param localPath 附件相对路径或 ~/.proma/ 下的绝对路径
  * @returns 提取的纯文本内容
  */
 export async function extractTextFromAttachment(localPath: string): Promise<string> {
-  const fullPath = resolveAttachmentPath(localPath)
+  const fullPath = resolveAttachmentPathSafe(localPath)
   return extractTextFromFile(fullPath)
 }

@@ -95,7 +95,7 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
-import type { AgentSendInput, AgentPendingFile, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
+import type { AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
 import { MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 
@@ -1237,6 +1237,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
     // 1. 如果有 pending 文件，先保存到 session 目录
     let fileReferences = ''
+    const fileAttachments: FileAttachment[] = []
     if (pendingFiles.length > 0) {
       const workspace = workspaces.find((w) => w.id === currentWorkspaceId)
       if (!workspace) {
@@ -1252,10 +1253,17 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
       const allRefs: Array<{ filename: string; targetPath: string }> = []
 
-      // 已有路径的文件直接引用
+      // 已有路径的文件直接引用，同时构造 FileAttachment 供多模态 runtime 使用
       for (const f of existingFiles) {
         const sourcePath = f.sourcePath!
         allRefs.push({ filename: f.filename, targetPath: sourcePath })
+        fileAttachments.push({
+          id: f.id,
+          filename: f.filename,
+          mediaType: f.mediaType,
+          size: f.size,
+          localPath: sourcePath,
+        })
         const parentPath = getFileParentPath(sourcePath)
         if (parentPath) additionalDirectoriesForRun.add(parentPath)
       }
@@ -1280,7 +1288,22 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
             sessionId,
             files: filesToSave,
           })
-          allRefs.push(...saved)
+          if (saved.length !== newFiles.length) {
+            console.warn('[AgentView] 部分附件保存时被跳过', { expected: newFiles.length, actual: saved.length })
+          }
+          for (let i = 0; i < saved.length; i++) {
+            const pending = newFiles[i]
+            const result = saved[i]
+            if (!pending || !result) continue
+            allRefs.push({ filename: result.filename, targetPath: result.targetPath })
+            fileAttachments.push({
+              id: pending.id,
+              filename: result.filename,
+              mediaType: pending.mediaType,
+              size: result.size,
+              localPath: result.targetPath,
+            })
+          }
         } catch (error) {
           console.error('[AgentView] 保存附件到 session 失败:', error)
           toast.error('附件保存失败', {
@@ -1385,6 +1408,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       workspaceId: currentWorkspaceId || undefined,
       startedAt: streamStartedAt,
       permissionModeOverride: permissionMode,
+      ...(fileAttachments.length > 0 && { attachments: fileAttachments }),
       ...(additionalDirectoriesForRun.size > 0 && { additionalDirectories: Array.from(additionalDirectoriesForRun) }),
       // 解析用户消息中的 Skill/MCP/会话引用，传递结构化元数据给后端
       ...(() => {
