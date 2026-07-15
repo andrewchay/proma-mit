@@ -370,7 +370,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
     const toolResultMsgs = messages.filter((m) => m.type === 'user')
     expect(toolResultMsgs.length).toBeGreaterThanOrEqual(1)
     const lastToolResult = toolResultMsgs[toolResultMsgs.length - 1]
-    expect(JSON.stringify(lastToolResult)).toContain('Plan 模式')
+    expect(JSON.stringify(lastToolResult)).toContain('计划模式')
   })
 
   test('streamSSE 瞬时错误会重试', async () => {

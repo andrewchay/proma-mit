@@ -24,10 +24,10 @@ Bun workspace monorepo：
 proma-v2/
 ├── packages/
 │   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.15)
-│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.2)
+│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.10)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.3)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.9.5)
+    └── electron/   # Electron 桌面应用 (v0.9.56)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -45,7 +45,7 @@ proma-v2/
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
 - **依赖**：无运行时依赖（仅 TypeScript）
 
-#### @proma/core (v0.2.2)
+#### @proma/core (v0.2.10)
 - **导出模块**：`./providers`、`./highlight`、`./types`、`./utils`
 - **关键功能**：Provider 适配器注册表、代码高亮（Shiki）
 - **依赖**：`@proma/shared`、`shiki`
@@ -56,7 +56,7 @@ proma-v2/
 - **依赖**：`@proma/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @proma/electron (v0.9.5)
+#### @proma/electron (v0.9.56)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -232,6 +232,11 @@ bun run generate:icons    # 生成应用图标
 | **通义千问** | `openai-adapter.ts` | Chat Completions | OpenAI 兼容 |
 | **Google** | `google-adapter.ts` | Generative Language API | Gemini 系列 |
 | **Custom** | `openai-adapter.ts` | Chat Completions | 自定义 OpenAI 兼容端点 |
+
+#### OpenAI 兼容适配器注意事项
+
+- `openai-adapter.ts` 被 OpenAI、智谱、豆包、通义千问、Custom 等多个 provider 复用。
+- `stream_options.include_usage` 仅在确认支持的 `openai`、`deepseek` 上发送，避免其他 OpenAI 兼容端点因未知参数报错。
 
 #### 多模态支持
 - **图片**：各 Provider 格式不同，适配器自动转换
@@ -486,6 +491,7 @@ React UI 更新
 
 - ✅ **多 Provider 支持**：Anthropic、OpenAI、DeepSeek、Kimi、智谱、MiniMax、豆包、通义千问、Google、自定义端点
 - ✅ **Agent SDK 集成**：基于 Codex Agent SDK 的完整 Agent 模式
+- ✅ **Provider-Agnostic Runtime**：不依赖 Claude Agent SDK 的 Agent 运行路径，当前支持 deepseek，具备 MCP 工具、Plan mode、fork/rewind 等能力
 - ✅ **飞书集成**：消息同步、任务通知、OAuth 认证（68KB 核心服务）
 - ✅ **工作区管理**：多工作区隔离、MCP Server 配置、Skills 管理
 - ✅ **权限系统**：工具权限检查、用户确认流程
@@ -504,3 +510,4 @@ React UI 更新
 - **文件监听**：工作区文件、MCP 配置、Chat 工具实时监控
 - **事件流处理**：SDK 消息流式转换与累积
 - **错误映射**：SDK 错误统一转换为应用错误
+- **Provider-Agnostic Runtime**：基于 `@proma/core` Provider 适配器的多轮工具循环；MCP 工具名按 OpenAI function name 规则清洗为 `mcp__${server}__${tool}`，避免非法字符导致请求失败

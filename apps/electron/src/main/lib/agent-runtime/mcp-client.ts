@@ -71,7 +71,7 @@ export class McpClientManager {
       try {
         const result = await server.client.listTools()
         for (const tool of result.tools) {
-          const namespacedName = `${server.name}__${tool.name}`
+          const namespacedName = sanitizeMcpToolName(`mcp__${server.name}__${tool.name}`)
           tools.push({
             name: namespacedName,
             description: tool.description ?? `${server.name} 的 ${tool.name} 工具`,
@@ -195,4 +195,25 @@ export class McpClientManager {
 
     return JSON.stringify(content, null, 2)
   }
+}
+
+/**
+ * 规范化 MCP 工具名，使其符合 OpenAI function name 规则。
+ *
+ * OpenAI/DeepSeek 要求 function name 只能包含 [a-zA-Z0-9_-]，且长度不超过 64。
+ * 这里把非法字符替换为下划线，并截断超长部分。
+ *
+ * 注意：不合并连续下划线，以保证 `mcp__${server}__${tool}` 命名空间前缀
+ * （`mcp__`）在清洗后仍然可被识别。
+ */
+export function sanitizeMcpToolName(name: string): string {
+  const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '_')
+  if (sanitized.length <= 64) return sanitized
+  // 超长时保留前缀和尾部，中间用哈希摘要避免碰撞
+  const hash = Array.from(name)
+    .reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0)
+    .toString(36)
+    .replace(/-/g, '0')
+  const suffix = `_${hash}`
+  return sanitized.slice(0, 64 - suffix.length) + suffix
 }

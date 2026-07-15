@@ -15,7 +15,7 @@
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { CHAT_IPC_CHANNELS } from '@proma/shared'
-import type { ChatSendInput, ChatMessage, GenerateTitleInput, FileAttachment, ChatToolActivity } from '@proma/shared'
+import type { ChatSendInput, ChatMessage, GenerateTitleInput, FileAttachment, ChatToolActivity, ProviderType } from '@proma/shared'
 import {
   getAdapter,
   streamSSE,
@@ -310,6 +310,7 @@ export async function sendMessage(
       pendingToolResults = false
 
       const request = adapter.buildStreamRequest({
+        providerType: channel.provider as ProviderType,
         baseUrl: channel.baseUrl,
         apiKey,
         modelId,
@@ -386,6 +387,7 @@ export async function sendMessage(
       console.log(`[聊天服务] 工具轮次已达上限 (${MAX_TOOL_ROUNDS})，发起最终响应轮`)
 
       const finalRequest = adapter.buildStreamRequest({
+        providerType: channel.provider as ProviderType,
         baseUrl: channel.baseUrl,
         apiKey,
         modelId,

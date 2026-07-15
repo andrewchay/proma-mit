@@ -211,6 +211,8 @@ export interface ProviderRequest {
 
 /** 流式请求的输入参数 */
 export interface StreamRequestInput {
+  /** 供应商类型（用于适配器做供应商特定决策） */
+  providerType?: ProviderType
   /** 供应商 API Base URL */
   baseUrl: string
   /** 明文 API Key */

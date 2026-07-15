@@ -2,10 +2,23 @@
  * Agent 会话管理器单元测试
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
 import type { SDKMessage } from '@proma/shared'
 import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
+
+// 使用临时 HOME 目录，避免测试污染开发者本机的 ~/.proma-dev
+// Bun 的 os.homedir() 不读取 process.env.HOME，因此通过 mock.module 覆盖
+const originalHomedir = homedir()
+const tempHomeDir = mkdtempSync(join(tmpdir(), 'proma-agent-session-test-'))
+process.env.PROMA_DEV = '1'
+
+mock.module('os', () => ({
+  homedir: () => tempHomeDir,
+  tmpdir,
+}))
 
 mock.module('electron', () => ({
   BrowserWindow: class MockBrowserWindow {},
@@ -40,9 +53,18 @@ describe('Agent 会话管理器', () => {
     }
     const wsDir = getAgentWorkspacePath(testWorkspaceSlug)
     if (existsSync(wsDir)) rmSync(wsDir, { recursive: true, force: true })
-    // 清理工作区索引
+    // 清理本测试创建的工作区索引（在临时 HOME 下，不会污染本机）
     const indexPath = join(getConfigDir(), 'agent-workspaces.json')
     if (existsSync(indexPath)) rmSync(indexPath, { force: true })
+  })
+
+  afterAll(() => {
+    if (existsSync(tempHomeDir)) rmSync(tempHomeDir, { recursive: true, force: true })
+    // 恢复 os.homedir，避免影响同一进程中的其他测试文件
+    mock.module('os', () => ({
+      homedir: () => originalHomedir,
+      tmpdir,
+    }))
   })
 
   test('fork Provider-Agnostic 会话：复制工作区文件与 JSONL 历史', async () => {

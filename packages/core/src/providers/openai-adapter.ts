@@ -22,6 +22,14 @@ import type {
 } from './types.ts'
 import { normalizeBaseUrl } from './url-utils.ts'
 
+/** 已知支持 stream_options.include_usage 的供应商 */
+const STREAM_USAGE_SUPPORTED_PROVIDERS = new Set(['openai', 'deepseek'])
+
+/** 判断供应商是否支持流式 usage 统计 */
+function supportsStreamUsage(providerType?: string): boolean {
+  return !!providerType && STREAM_USAGE_SUPPORTED_PROVIDERS.has(providerType)
+}
+
 // ===== OpenAI 特有类型 =====
 
 /** OpenAI 内容块 */
@@ -207,8 +215,11 @@ export class OpenAIAdapter implements ProviderAdapter {
       model: input.modelId,
       messages,
       stream: true,
-      // 请求供应商在最后一条 chunk 返回 usage（OpenAI / DeepSeek 均支持）
-      stream_options: { include_usage: true },
+    }
+
+    // 仅在确认支持的供应商上请求流式 usage，避免其他 OpenAI 兼容端点报未知参数错误
+    if (supportsStreamUsage(input.providerType)) {
+      bodyObj.stream_options = { include_usage: true }
     }
 
     // 工具定义

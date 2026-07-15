@@ -182,6 +182,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         round++
 
         const request = adapter.buildStreamRequest({
+          providerType: provider,
           baseUrl,
           apiKey,
           modelId: model || '',
@@ -399,8 +400,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
    *
    * 阶段 1 简化策略：
    * - bypassPermissions：全部放行
-   * - plan 模式：只允许只读工具 + EnterPlanMode/ExitPlanMode
-   * - 未提供 canUseTool 回调时：只读工具（Read/Grep）自动放行，写工具（Write/Edit/Bash）默认拒绝
+   * - plan 模式：与 Claude SDK 路径对齐，允许只读工具、写 .md 计划文件、只读 Bash、MCP 工具
+   * - 未提供 canUseTool 回调时：只读工具（Read/Grep）自动放行，写工具默认拒绝
    * - 提供 canUseTool 回调时：委托给回调（可接入 AgentPermissionService）
    */
   private async checkToolPermission(
@@ -417,15 +418,54 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       return { allowed: true }
     }
 
-    // Plan 模式本地兜底：只允许只读工具与 Plan 模式控制工具
+    // Plan 模式本地兜底：与旧 Claude SDK 路径保持一致
     if (ctx.permissionMode === 'plan' || ctx.planModeEntered) {
-      const planAllowedTools = new Set(['Read', 'Grep', ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME])
-      if (!planAllowedTools.has(toolName)) {
-        return {
-          allowed: false,
-          message: `当前处于 Plan 模式，${toolName} 需要用户审批后才能执行。请先调用 ExitPlanMode 提交计划并等待用户批准。`,
+      const planAllowedTools = new Set([
+        'Read',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'Agent',
+        'TodoRead',
+        'TodoWrite',
+        'TaskOutput',
+        'TaskCreate',
+        'TaskUpdate',
+        'TaskList',
+        'TaskGet',
+        'ListMcpResourcesTool',
+        'ReadMcpResourceTool',
+        ENTER_PLAN_MODE_TOOL_NAME,
+        EXIT_PLAN_MODE_TOOL_NAME,
+      ])
+      if (planAllowedTools.has(toolName)) {
+        return { allowed: true }
+      }
+
+      // 允许 Write/Edit 到任意 .md 文件（计划文档）
+      if (toolName === 'Write' || toolName === 'Edit') {
+        const filePath = typeof input.file_path === 'string' ? input.file_path : ''
+        if (filePath.toLowerCase().endsWith('.md')) {
+          return { allowed: true }
         }
       }
+
+      // Bash 工具：只读命令允许，写操作拒绝
+      if (toolName === 'Bash') {
+        const command = typeof input.command === 'string' ? input.command : ''
+        if (isBashCommandReadOnly(command)) {
+          return { allowed: true }
+        }
+        return { allowed: false, message: '计划模式下不允许执行写操作，请在计划审批通过后再执行' }
+      }
+
+      // MCP 工具（以 mcp__ 开头）允许调研调用
+      if (toolName.startsWith('mcp__')) {
+        return { allowed: true }
+      }
+
+      return { allowed: false, message: '计划模式下不允许执行写操作，请在计划审批通过后再执行' }
     }
 
     if (ctx.canUseTool) {
@@ -539,4 +579,32 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error) || '未知错误'
+}
+
+/**
+ * 判断 Bash 命令是否为只读操作
+ *
+ * 与 agent-orchestrator.ts 中旧 Claude 路径保持一致，
+ * 用于 Plan 模式下允许安全的调研命令。
+ */
+function isBashCommandReadOnly(command: string): boolean {
+  // 输出重定向：匹配未被数字或 & 前置的 > 符号
+  if (/(?<![0-9&])>/.test(command)) return false
+  // 破坏性文件操作
+  if (/\b(rm|rmdir)\s/.test(command)) return false
+  if (/\bsed\s+[^|&;]*-i/.test(command)) return false
+  if (/\b(chmod|chown|chattr|truncate)\s/.test(command)) return false
+  if (/\b(mv|cp)\s/.test(command)) return false
+  if (/\b(mkdir|touch|mktemp)\s/.test(command)) return false
+  // 包管理器写操作
+  if (/\b(npm|pnpm|yarn|bun)\s+(install|i\b|add|remove|uninstall|update|upgrade|link|unlink)\b/.test(command)) return false
+  if (/\bpip[23]?\s+(install|uninstall|upgrade)\b/.test(command)) return false
+  if (/\b(apt|apt-get|brew|yum|dnf)\s+(install|remove|purge|uninstall|upgrade)\b/.test(command)) return false
+  // Git 写操作
+  if (/\bgit\s+(commit|push|checkout\s+-[bB]|branch\s+-[mMdD]|merge\b|rebase\b|reset\b|stash\s+(drop|pop)\b|add\b|apply\b|cherry-pick\b)/.test(command)) return false
+  // 进程控制
+  if (/\b(kill|killall|pkill)\s/.test(command)) return false
+  // 脚本执行
+  if (/\b(node|python[23]?|ruby|perl|php)\s+[^-]/.test(command)) return false
+  return true
 }
