@@ -479,6 +479,21 @@ function collectAttachedDirectories(params: {
 
 // ===== AgentOrchestrator =====
 
+/**
+ * Provider-Agnostic Runtime 运行失败错误
+ *
+ * 携带本次追加的用户消息 UUID，供 sendMessage 截断后降级到 Claude SDK。
+ */
+class ProviderAgnosticRuntimeError extends Error {
+  constructor(
+    message: string,
+    public readonly userMessageUuid: string,
+  ) {
+    super(message)
+    this.name = 'ProviderAgnosticRuntimeError'
+  }
+}
+
 export class AgentOrchestrator {
   private adapter: AgentProviderAdapter
   private providerAgnosticAdapter: ProviderAgnosticAgentAdapter
@@ -530,6 +545,7 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
   }): Promise<void> {
     const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode } = options
+    let userMessageUuid = ''
 
     try {
       // 确定工作目录
@@ -551,11 +567,13 @@ export class AgentOrchestrator {
       const historyMessages = allHistory.length > 0 ? allHistory.slice(0, -1) : []
       console.log(`[Agent Runtime] 加载历史消息：${historyMessages.length} 条`)
 
-      // 持久化初始用户消息
+      // 持久化初始用户消息（带 UUID，失败时可用于截断并降级到 Claude SDK）
+      userMessageUuid = randomUUID()
       const userSDKMsg: SDKMessage = {
         type: 'user',
         message: { content: [{ type: 'text', text: userMessage }] },
         parent_tool_use_id: null,
+        uuid: userMessageUuid,
       } as unknown as SDKMessage
       appendSDKMessages(sessionId, [userSDKMsg])
 
@@ -617,18 +635,13 @@ export class AgentOrchestrator {
       const message = error instanceof Error ? error.message : String(error)
       console.error('[Agent Runtime] 实验分支运行失败:', error)
 
-      // 持久化错误消息
-      const errorSDKMsg: SDKMessage = {
-        type: 'assistant',
-        message: { content: [{ type: 'text', text: message }] },
-        parent_tool_use_id: null,
-        error: { message },
-        _createdAt: Date.now(),
-      } as unknown as SDKMessage
-      appendSDKMessages(sessionId, [errorSDKMsg])
+      // 用户主动中止时不走降级，直接向上抛出让外层处理
+      if (message.includes('中止') || message.includes('aborted')) {
+        throw error
+      }
 
-      callbacks.onError(message)
-      callbacks.onComplete([], { startedAt })
+      // 抛出可降级错误，由 sendMessage 截断用户消息后切到 Claude SDK
+      throw new ProviderAgnosticRuntimeError(message, userMessageUuid)
     }
   }
 
@@ -1184,10 +1197,23 @@ export class AgentOrchestrator {
           startedAt: input.startedAt,
           permissionMode: permissionModeOverride,
         })
+        return
+      } catch (error) {
+        // 可降级错误：截断 Runtime 追加的用户消息，继续走 Claude SDK
+        if (error instanceof ProviderAgnosticRuntimeError) {
+          console.log('[Agent 编排] Provider-Agnostic Runtime 失败，降级到 Claude SDK')
+          try {
+            truncateSDKMessages(sessionId, error.userMessageUuid)
+          } catch (truncateError) {
+            console.error('[Agent 编排] 截断 Runtime 用户消息失败:', truncateError)
+          }
+          // 继续执行下方 Claude SDK 路径
+        } else {
+          throw error
+        }
       } finally {
         this.activeSessions.delete(sessionId)
       }
-      return
     }
 
     // 2.1 立即抢占会话槽位（在所有同步检查通过后、第一个 await 之前）

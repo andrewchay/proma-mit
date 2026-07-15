@@ -251,6 +251,50 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(capturedRequests[0]?.historyLength).toBe(2)
     expect(capturedRequests[0]?.userMessage).toBe('新问题')
   })
+
+  test('streamSSE 瞬时错误会重试', async () => {
+    let attempts = 0
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        attempts++
+        if (attempts === 1) {
+          throw new Error('fetch failed: socket hang up')
+        }
+        return makeStreamResult('重试成功')
+      },
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's4',
+      prompt: '重试测试',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      maxRetries: 2,
+    })) {
+      messages.push(msg)
+    }
+
+    expect(attempts).toBe(2)
+    expect(messages).toHaveLength(2)
+    expect(messages[0]?.type).toBe('assistant')
+  })
 })
 
 function makeStreamResult(content: string, toolCalls: ToolCall[] = []): StreamSSEResult {

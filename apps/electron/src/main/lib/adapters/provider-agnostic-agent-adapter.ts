@@ -35,6 +35,8 @@ import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools } from '../agent-runtime/tool-registry'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
+import { withRetry } from '../agent-runtime/retry'
+import { isTransientNetworkError } from '../error-patterns'
 import type { RuntimeMessage } from '../agent-runtime/types'
 
 /** 工具权限检查结果 */
@@ -62,6 +64,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   canUseTool?: CanUseToolCallback
   /** 历史 SDKMessage（阶段 2：多轮会话上下文） */
   historyMessages?: import('@proma/shared').SDKMessage[]
+  /** 最大 LLM 请求重试次数 */
+  maxRetries?: number
 }
 
 /** 活跃会话状态 */
@@ -127,6 +131,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       // 否则 Anthropic 适配器会产生“user tool_result -> assistant tool_use”的乱序/重复结构。
       let continuationMessages: ContinuationMessage[] = []
       let round = 0
+      const maxRetries = input.maxRetries ?? 2
 
       // 阶段 2：加载历史消息
       const history = input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : []
@@ -165,13 +170,25 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           }
         }
 
-        const result = await streamSSE({
-          request,
-          adapter,
-          signal: controller.signal,
-          fetchFn,
-          onEvent: handleStreamEvent,
-        })
+        const result = await withRetry(
+          () =>
+            streamSSE({
+              request,
+              adapter,
+              signal: controller.signal,
+              fetchFn,
+              onEvent: handleStreamEvent,
+            }),
+          {
+            maxRetries,
+            baseDelayMs: 1000,
+            shouldRetry: (error) => isTransientNetworkError(getErrorMessage(error)),
+            onRetry: (attempt, error, delayMs) => {
+              console.warn(`[Agent Runtime] 第 ${attempt} 次重试 streamSSE（${delayMs}ms）: ${getErrorMessage(error)}`)
+            },
+            signal: controller.signal,
+          },
+        )
 
         currentContent = result.content
         currentReasoning = result.reasoning
@@ -407,4 +424,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 /** 空图片附件读取器（阶段 1 不支持图片） */
 function emptyImageReader(): ImageAttachmentData[] {
   return []
+}
+
+/** 从任意错误中提取可读消息 */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error) || '未知错误'
 }
