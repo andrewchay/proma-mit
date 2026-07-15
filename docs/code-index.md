@@ -77,8 +77,9 @@ proma-mit/
 |---|---|---|
 | `agent-orchestrator.ts` | ~2,400 | Agent 核心编排：并发守卫、渠道查找、环境变量构建、SDK 路径解析、消息持久化、事件流处理、错误处理、自动标题生成；新增 Provider-Agnostic Runtime 白名单路由 |
 | `agent-session-manager.ts` | 1,499 | SDK 消息持久化、会话元数据 CRUD、JSONL 存储、fork / rewind |
-| `agent-runtime/` | ~650 | Provider-Agnostic Agent Runtime：工具循环、提示词构建、历史消息转换、重试与降级、Read/Write/Edit/Bash/Grep 工具实现；含权限检查、路径安全、命令注入防护 |
-| `agent-runtime/prompt-builder.ts` | ~120 | Agent Runtime system prompt 与 SDKMessage → ChatMessage 历史转换 |
+| `agent-runtime/` | ~750 | Provider-Agnostic Agent Runtime：工具循环、提示词构建、历史消息转换、附件富化、重试与降级、Read/Write/Edit/Bash/Grep 工具实现；含权限检查、路径安全、命令注入防护 |
+| `agent-runtime/prompt-builder.ts` | ~120 | Agent Runtime system prompt 与 SDKMessage → ChatMessage 历史转换（含 `_attachments` 透传） |
+| `agent-runtime/attachment-enrichment.ts` | ~80 | 图片附件 base64 读取、文档附件文本提取、历史消息批量富化 |
 | `agent-runtime/retry.ts` | ~60 | withRetry 指数退避重试工具 |
 | `agent-workspace-manager.ts` | ~1,200 | 工作区 CRUD、MCP Server 配置、Skills 配置、默认 Skill 同步 |
 | `agent-prompt-builder.ts` | ~700 | 系统提示词构建、动态上下文、内置 Agent 配置 |

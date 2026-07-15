@@ -4,6 +4,8 @@
  * 包含 Agent SDK 集成所需的事件类型、会话管理、消息持久化和 IPC 通道常量。
  */
 
+import type { FileAttachment } from './chat'
+
 // ===== 记忆配置 =====
 
 /** 全局记忆配置（MemOS Cloud） */
@@ -802,6 +804,8 @@ export interface AgentSendInput {
   mentionedSessionIds?: string[]
   /** 渲染进程生成的流式开始时间戳，主进程原样回传到 STREAM_COMPLETE，确保竞态保护比较的是同一个值 */
   startedAt?: number
+  /** 多模态附件（图片 / 文档） */
+  attachments?: FileAttachment[]
 }
 
 // ===== Agent 队列消息 =====

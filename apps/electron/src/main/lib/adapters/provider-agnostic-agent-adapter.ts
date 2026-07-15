@@ -19,6 +19,7 @@ import type {
   SDKUserMessage,
   SDKResultMessage,
   SDKContentBlock,
+  FileAttachment,
 } from '@proma/shared'
 import type {
   ProviderAdapter,
@@ -29,14 +30,15 @@ import type {
   ThinkingBlock,
 } from '@proma/core'
 import { getAdapter, streamSSE } from '@proma/core'
-import type { ImageAttachmentData } from '@proma/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools } from '../agent-runtime/tool-registry'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
+import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
 import { withRetry } from '../agent-runtime/retry'
 import { isTransientNetworkError } from '../error-patterns'
+import { isImageAttachment } from '../attachment-service'
 import type { RuntimeMessage } from '../agent-runtime/types'
 
 /** 工具权限检查结果 */
@@ -89,6 +91,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       abortSignal,
       maxTurns = 25,
       systemPrompt,
+      attachments,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -117,10 +120,19 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       const proxyUrl = await getEffectiveProxyUrl()
       const fetchFn = getFetchFn(proxyUrl)
 
+      // 阶段 2：加载历史消息，并提取历史消息中的文档附件文本
+      const rawHistory = input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : []
+      const history = await enrichHistoryWithDocuments(rawHistory)
+
+      // 处理当前用户消息的多模态附件
+      // 文档类附件提取文本后追加到 prompt；图片类附件通过 readImageAttachments 注入
+      const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
+      const currentImageAttachments = attachments?.filter((att) => isImageAttachment(att.mediaType)) ?? []
+
       // 初始用户消息
       const userMessage: RuntimeMessage = {
         role: 'user',
-        content: prompt,
+        content: enrichedPrompt,
         createdAt: Date.now(),
       }
       runtimeMessages.push(userMessage)
@@ -133,9 +145,6 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       let round = 0
       const maxRetries = input.maxRetries ?? 2
 
-      // 阶段 2：加载历史消息
-      const history = input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : []
-
       while (round < maxTurns) {
         round++
 
@@ -144,9 +153,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           apiKey,
           modelId: model || '',
           history,
-          userMessage: prompt,
+          userMessage: enrichedPrompt,
           systemMessage: effectiveSystemPrompt,
-          readImageAttachments: emptyImageReader,
+          readImageAttachments: () => getImageAttachmentData(currentImageAttachments),
+          attachments: currentImageAttachments,
           tools: tools.map((t) => ({
             name: t.name,
             description: t.description,
@@ -419,11 +429,6 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
     return results
   }
-}
-
-/** 空图片附件读取器（阶段 1 不支持图片） */
-function emptyImageReader(): ImageAttachmentData[] {
-  return []
 }
 
 /** 从任意错误中提取可读消息 */

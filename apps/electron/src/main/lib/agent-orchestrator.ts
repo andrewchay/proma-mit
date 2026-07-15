@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType } from '@proma/shared'
+import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment } from '@proma/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -543,8 +543,9 @@ export class AgentOrchestrator {
     callbacks: SessionCallbacks
     startedAt?: number
     permissionMode?: PromaPermissionMode
+    attachments?: FileAttachment[]
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode } = options
+    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
     let userMessageUuid = ''
 
     try {
@@ -574,6 +575,7 @@ export class AgentOrchestrator {
         message: { content: [{ type: 'text', text: userMessage }] },
         parent_tool_use_id: null,
         uuid: userMessageUuid,
+        _attachments: attachments,
       } as unknown as SDKMessage
       appendSDKMessages(sessionId, [userSDKMsg])
 
@@ -599,6 +601,7 @@ export class AgentOrchestrator {
         cwd: agentCwd,
         systemPrompt: undefined,
         historyMessages,
+        attachments,
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
         canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
           const result = await canUseTool(toolName, input, {
@@ -1081,7 +1084,7 @@ export class AgentOrchestrator {
    * 通过 EventBus 分发 AgentEvent，通过 callbacks 发送控制信号。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks): Promise<void> {
-    const { sessionId, userMessage, channelId, modelId, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds } = input
+    const { sessionId, userMessage, channelId, modelId, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护
@@ -1196,6 +1199,7 @@ export class AgentOrchestrator {
           callbacks,
           startedAt: input.startedAt,
           permissionMode: permissionModeOverride,
+          attachments,
         })
         return
       } catch (error) {

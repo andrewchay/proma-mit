@@ -7,6 +7,7 @@
  */
 
 import type { SDKMessage } from './agent'
+import type { FileAttachment } from './chat'
 
 /** SDK 用户消息（队列消息注入用，匹配 SDK SDKUserMessage 结构） */
 export interface SDKUserMessageInput {
@@ -43,6 +44,8 @@ export interface AgentQueryInput {
   apiKey?: string
   /** API Base URL（Provider-Agnostic Runtime 使用） */
   baseUrl?: string
+  /** 多模态附件（图片 / 文档） */
+  attachments?: FileAttachment[]
 }
 
 /**

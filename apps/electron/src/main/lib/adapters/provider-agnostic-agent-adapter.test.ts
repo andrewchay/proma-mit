@@ -12,6 +12,26 @@ import { join } from 'node:path'
 import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@proma/core'
 import type { SDKMessage, SDKResultMessage } from '@proma/shared'
 
+// 被测模块依赖 attachment-service/document-parser，它们会加载 electron，
+// 因此在测试环境中先 mock electron。
+mock.module('electron', () => ({
+  BrowserWindow: class MockBrowserWindow {},
+  dialog: {
+    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
+    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
+  },
+}))
+
+// 附件富化依赖真实文件系统，在集成测试中 mock 为可控行为
+mock.module('../attachment-service', () => ({
+  isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),
+  readAttachmentAsBase64: (localPath: string) => `base64:${localPath}`,
+}))
+mock.module('../document-parser', () => ({
+  isDocumentAttachment: (mediaType: string) => mediaType === 'text/plain',
+  extractTextFromAttachment: async (localPath: string) => `文档内容：${localPath}`,
+}))
+
 // 被测模块需要在 mock 之后导入
 const { ProviderAgnosticAgentAdapter } = await import('./provider-agnostic-agent-adapter')
 
@@ -20,6 +40,7 @@ interface CapturedRequest {
   userMessage: string
   historyLength: number
   continuationCount: number
+  attachmentCount?: number
 }
 
 describe('Provider-Agnostic Agent 适配器', () => {
@@ -203,6 +224,55 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(messages).toHaveLength(2)
     expect(messages[0]?.type).toBe('assistant')
     expect(messages[1]?.type).toBe('result')
+  })
+
+  test('附件会进入 buildStreamRequest', async () => {
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => {
+          capturedRequests.push({
+            userMessage: input.userMessage,
+            historyLength: (input.history ?? []).length,
+            continuationCount: (input.continuationMessages ?? []).length,
+            attachmentCount: (input.attachments ?? []).length,
+          })
+          return {
+            url: 'http://localhost/mock',
+            headers: {},
+            body: JSON.stringify({ userMessage: input.userMessage }),
+          }
+        },
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => makeStreamResult('收到附件'),
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+
+    for await (const _msg of adapter.query({
+      sessionId: 's3-attach',
+      prompt: '总结附件',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      attachments: [
+        { id: 'img', filename: 'screenshot.png', mediaType: 'image/png', size: 100, localPath: 's1/screenshot.png' },
+        { id: 'doc', filename: 'note.txt', mediaType: 'text/plain', size: 100, localPath: 's1/note.txt' },
+      ],
+    })) {
+      // no-op
+    }
+
+    expect(capturedRequests).toHaveLength(1)
+    expect(capturedRequests[0]?.userMessage).toContain('总结附件')
+    expect(capturedRequests[0]?.userMessage).toContain('<file name="note.txt">')
+    expect(capturedRequests[0]?.userMessage).toContain('文档内容：s1/note.txt')
+    expect(capturedRequests[0]?.attachmentCount).toBe(1)
   })
 
   test('历史消息会传入 buildStreamRequest', async () => {
