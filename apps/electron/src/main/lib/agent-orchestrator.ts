@@ -546,12 +546,16 @@ export class AgentOrchestrator {
 
       console.log(`[Agent Runtime] 启动实验分支 — provider: ${provider}, model: ${modelId}, cwd: ${agentCwd}`)
 
+      // 加载历史消息（阶段 2），排除最后一条当前用户消息
+      const allHistory = getAgentSessionSDKMessages(sessionId)
+      const historyMessages = allHistory.length > 0 ? allHistory.slice(0, -1) : []
+      console.log(`[Agent Runtime] 加载历史消息：${historyMessages.length} 条`)
+
       // 持久化初始用户消息
       const userSDKMsg: SDKMessage = {
         type: 'user',
         message: { content: [{ type: 'text', text: userMessage }] },
         parent_tool_use_id: null,
-        _createdAt: Date.now(),
       } as unknown as SDKMessage
       appendSDKMessages(sessionId, [userSDKMsg])
 
@@ -576,6 +580,7 @@ export class AgentOrchestrator {
         baseUrl,
         cwd: agentCwd,
         systemPrompt: undefined,
+        historyMessages,
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
         canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
           const result = await canUseTool(toolName, input, {

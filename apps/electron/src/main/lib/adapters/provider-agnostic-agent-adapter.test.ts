@@ -204,6 +204,53 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(messages[0]?.type).toBe('assistant')
     expect(messages[1]?.type).toBe('result')
   })
+
+  test('历史消息会传入 buildStreamRequest', async () => {
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => {
+          capturedRequests.push({
+            userMessage: input.userMessage,
+            historyLength: (input.history ?? []).length,
+            continuationCount: (input.continuationMessages ?? []).length,
+          })
+          return {
+            url: 'http://localhost/mock',
+            headers: {},
+            body: JSON.stringify({ historyLength: (input.history ?? []).length }),
+          }
+        },
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => makeStreamResult('收到历史'),
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const history: SDKMessage[] = [
+      { type: 'user', message: { content: [{ type: 'text', text: '之前的问题' }] }, parent_tool_use_id: null } as SDKMessage,
+      { type: 'assistant', message: { content: [{ type: 'text', text: '之前的回答' }] }, parent_tool_use_id: null } as SDKMessage,
+    ]
+
+    for await (const _msg of adapter.query({
+      sessionId: 's3',
+      prompt: '新问题',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      historyMessages: history,
+    })) {
+      // no-op
+    }
+
+    expect(capturedRequests).toHaveLength(1)
+    expect(capturedRequests[0]?.historyLength).toBe(2)
+    expect(capturedRequests[0]?.userMessage).toBe('新问题')
+  })
 })
 
 function makeStreamResult(content: string, toolCalls: ToolCall[] = []): StreamSSEResult {

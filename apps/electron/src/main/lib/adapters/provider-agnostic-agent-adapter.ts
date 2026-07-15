@@ -34,7 +34,7 @@ import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools } from '../agent-runtime/tool-registry'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
-import { buildAgentSystemPrompt } from '../agent-runtime/prompt-builder'
+import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
 import type { RuntimeMessage } from '../agent-runtime/types'
 
 /** 工具权限检查结果 */
@@ -60,6 +60,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   permissionMode?: import('@proma/shared').PromaPermissionMode
   /** 自定义权限检查回调；未提供时按 permissionMode 做本地兜底判断 */
   canUseTool?: CanUseToolCallback
+  /** 历史 SDKMessage（阶段 2：多轮会话上下文） */
+  historyMessages?: import('@proma/shared').SDKMessage[]
 }
 
 /** 活跃会话状态 */
@@ -126,6 +128,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       let continuationMessages: ContinuationMessage[] = []
       let round = 0
 
+      // 阶段 2：加载历史消息
+      const history = input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : []
+
       while (round < maxTurns) {
         round++
 
@@ -133,7 +138,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           baseUrl,
           apiKey,
           modelId: model || '',
-          history: [], // 阶段 1 不加载历史；后续支持多轮时从 runtimeMessages 提取
+          history,
           userMessage: prompt,
           systemMessage: effectiveSystemPrompt,
           readImageAttachments: emptyImageReader,
