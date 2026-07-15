@@ -35,6 +35,14 @@ export interface AgentQueryInput {
   cwd?: string
   /** 中止信号 */
   abortSignal?: AbortSignal
+  /** 渠道 ID（Provider-Agnostic Runtime 使用） */
+  channelId?: string
+  /** 供应商类型（Provider-Agnostic Runtime 使用） */
+  provider?: import('./channel').ProviderType
+  /** 明文 API Key（Provider-Agnostic Runtime 使用） */
+  apiKey?: string
+  /** API Base URL（Provider-Agnostic Runtime 使用） */
+  baseUrl?: string
 }
 
 /**

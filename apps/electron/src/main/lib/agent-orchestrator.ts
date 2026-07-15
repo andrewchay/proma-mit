@@ -32,6 +32,7 @@ import {
 import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@proma/shared'
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
+import { ProviderAgnosticAgentAdapter } from './adapters/provider-agnostic-agent-adapter'
 import { isTransientNetworkError } from './error-patterns'
 import type { AgentEventBus } from './agent-event-bus'
 import { decryptApiKey, getChannelById, listChannels } from './channel-manager'
@@ -480,6 +481,7 @@ function collectAttachedDirectories(params: {
 
 export class AgentOrchestrator {
   private adapter: AgentProviderAdapter
+  private providerAgnosticAdapter: ProviderAgnosticAgentAdapter
   private eventBus: AgentEventBus
   private activeSessions = new Map<string, number>()
 
@@ -494,7 +496,145 @@ export class AgentOrchestrator {
 
   constructor(adapter: AgentProviderAdapter, eventBus: AgentEventBus) {
     this.adapter = adapter
+    this.providerAgnosticAdapter = new ProviderAgnosticAgentAdapter()
     this.eventBus = eventBus
+  }
+
+  /**
+   * Provider-Agnostic Runtime 实验分支（阶段 1）
+   *
+   * 仅支持核心工具循环，不处理 resume、MCP、权限模式、子 Agent 等高级能力。
+   */
+  private async runProviderAgnosticAgent(options: {
+    sessionId: string
+    channelId: string
+    workspaceId?: string
+    userMessage: string
+    modelId?: string
+    provider: ProviderType
+    apiKey: string
+    baseUrl: string
+    callbacks: SessionCallbacks
+    startedAt?: number
+  }): Promise<void> {
+    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt } = options
+
+    try {
+      // 确定工作目录
+      let agentCwd = homedir()
+      if (workspaceId) {
+        const ws = getAgentWorkspace(workspaceId)
+        if (ws) {
+          agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
+          if (!existsSync(agentCwd)) {
+            mkdirSync(agentCwd, { recursive: true })
+          }
+        }
+      }
+
+      console.log(`[Agent Runtime] 启动实验分支 — provider: ${provider}, model: ${modelId}, cwd: ${agentCwd}`)
+
+      // 持久化初始用户消息
+      const userSDKMsg: SDKMessage = {
+        type: 'user',
+        message: { content: [{ type: 'text', text: userMessage }] },
+        parent_tool_use_id: null,
+        _createdAt: Date.now(),
+      } as unknown as SDKMessage
+      appendSDKMessages(sessionId, [userSDKMsg])
+
+      const queryOptions = {
+        sessionId,
+        prompt: userMessage,
+        model: modelId,
+        provider,
+        apiKey,
+        baseUrl,
+        cwd: agentCwd,
+        systemPrompt: undefined,
+      }
+
+      const iterable = this.providerAgnosticAdapter.query(queryOptions)
+      const accumulatedMessages: SDKMessage[] = []
+
+      for await (const msg of iterable) {
+        accumulatedMessages.push(msg)
+        this.eventBus.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
+
+        // 自动标题生成（第一条 assistant 文本消息）
+        if (msg.type === 'assistant' && !this.hasTitle(sessionId)) {
+          const text = this.extractTextFromSDKMessage(msg as SDKAssistantMessage)
+          if (text) {
+            this.generateTitleAsync(sessionId, userMessage, channelId, modelId, callbacks)
+          }
+        }
+      }
+
+      // 持久化所有消息
+      if (accumulatedMessages.length > 0) {
+        appendSDKMessages(sessionId, accumulatedMessages)
+      }
+
+      callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[Agent Runtime] 实验分支运行失败:', error)
+
+      // 持久化错误消息
+      const errorSDKMsg: SDKMessage = {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: message }] },
+        parent_tool_use_id: null,
+        error: { message },
+        _createdAt: Date.now(),
+      } as unknown as SDKMessage
+      appendSDKMessages(sessionId, [errorSDKMsg])
+
+      callbacks.onError(message)
+      callbacks.onComplete([], { startedAt })
+    }
+  }
+
+  /**
+   * 判断会话是否已有标题
+   */
+  private hasTitle(sessionId: string): boolean {
+    const meta = getAgentSessionMeta(sessionId)
+    return meta != null && meta.title != null && meta.title !== '' && meta.title !== DEFAULT_SESSION_TITLE
+  }
+
+  /**
+   * 从 SDK assistant 消息中提取文本内容
+   */
+  private extractTextFromSDKMessage(msg: SDKAssistantMessage): string {
+    const content = msg.message?.content
+    if (!Array.isArray(content)) return ''
+    return content
+      .filter((b) => b.type === 'text' && 'text' in b)
+      .map((b) => (b as { text: string }).text)
+      .join('\n')
+  }
+
+  /**
+   * 异步生成会话标题
+   */
+  private generateTitleAsync(
+    sessionId: string,
+    userMessage: string,
+    channelId: string,
+    modelId?: string,
+    callbacks?: SessionCallbacks,
+  ): void {
+    this.generateTitle({ userMessage, channelId, modelId: modelId || 'unknown' })
+      .then((title) => {
+        if (!title) return
+        const meta = getAgentSessionMeta(sessionId)
+        if (meta && meta.title === DEFAULT_SESSION_TITLE) {
+          updateAgentSessionMeta(sessionId, { title })
+          callbacks?.onTitleUpdated(title)
+        }
+      })
+      .catch((err) => console.error('[Agent Runtime] 标题生成失败:', err))
   }
 
   /**
@@ -984,6 +1124,31 @@ export class AgentOrchestrator {
         ],
         canRetry: false,
       })
+      return
+    }
+
+    // 阶段 1：Provider-Agnostic Runtime 实验分支（仅 DeepSeek）
+    // 白名单控制，避免影响现有 Claude SDK 用户
+    const RUNTIME_PROVIDER_WHITELIST: ProviderType[] = ['deepseek']
+    if (RUNTIME_PROVIDER_WHITELIST.includes(channel.provider)) {
+      const runGeneration = Date.now()
+      this.activeSessions.set(sessionId, runGeneration)
+      try {
+        await this.runProviderAgnosticAgent({
+          sessionId,
+          channelId,
+          workspaceId,
+          userMessage,
+          modelId,
+          provider: channel.provider,
+          apiKey,
+          baseUrl: channel.baseUrl,
+          callbacks,
+          startedAt: input.startedAt,
+        })
+      } finally {
+        this.activeSessions.delete(sessionId)
+      }
       return
     }
 
@@ -2053,6 +2218,7 @@ export class AgentOrchestrator {
     this.stoppedBySessions.add(sessionId)
     this.queuedMessageUuids.delete(sessionId)
     this.adapter.abort(sessionId)
+    this.providerAgnosticAdapter.abort(sessionId)
     console.log(`[Agent 编排] 已中止会话: ${sessionId}`)
   }
 
@@ -2163,6 +2329,7 @@ export class AgentOrchestrator {
     }
     // 即便 activeSessions 为空，也要调 dispose 清理可能残留的 pidMap / 子进程
     this.adapter.dispose()
+    this.providerAgnosticAdapter.dispose()
     this.activeSessions.clear()
     this.sessionPermissionModes.clear()
     this.queuedMessageUuids.clear()
