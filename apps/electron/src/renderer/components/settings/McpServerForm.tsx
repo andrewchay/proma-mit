@@ -48,6 +48,19 @@ const AUTH_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'oauthClientCredentials', label: 'OAuth 2.1 客户端凭证模式' },
 ]
 
+/** MCP 服务器名称校验：只允许 OpenAI function name 兼容的字符 */
+const MCP_SERVER_NAME_REGEX = /^[a-zA-Z0-9_-]+$/
+
+/** 校验服务器名称，返回错误信息或 undefined */
+function validateMcpServerName(value: string): string | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return '服务器名称不能为空'
+  if (!MCP_SERVER_NAME_REGEX.test(trimmed)) {
+    return '服务器名称只能包含字母、数字、下划线和连字符'
+  }
+  return undefined
+}
+
 /**
  * 解析多行文本为 key=value / key: value 的 Record
  *
@@ -85,6 +98,7 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
 
   // 表单状态
   const [name, setName] = React.useState(server?.name ?? '')
+  const [nameError, setNameError] = React.useState<string | undefined>()
   const [transportType, setTransportType] = React.useState<McpTransportType>(server?.entry.type ?? 'stdio')
   const [enabled, setEnabled] = React.useState(server?.entry.enabled ?? false) // 默认关闭
 
@@ -188,8 +202,10 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
 
   /** 测试连接 */
   const handleTest = async (): Promise<void> => {
+    const error = validateMcpServerName(name)
+    setNameError(error)
+    if (error) return
     const serverName = name.trim()
-    if (!serverName) return
 
     // stdio 需要 command，http/sse 需要 url
     if (transportType === 'stdio' && !command.trim()) return
@@ -219,8 +235,10 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault()
 
+    const error = validateMcpServerName(name)
+    setNameError(error)
+    if (error) return
     const serverName = name.trim()
-    if (!serverName) return
 
     // stdio 需要 command，http/sse 需要 url
     if (transportType === 'stdio' && !command.trim()) return
@@ -330,10 +348,14 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
           <SettingsInput
             label="服务器名称"
             value={name}
-            onChange={setName}
+            onChange={(value) => {
+              setName(value)
+              setNameError(undefined)
+            }}
             placeholder="例如: github-mcp"
             required
             disabled={isEdit}
+            error={nameError}
           />
           <SettingsSelect
             label="传输类型"

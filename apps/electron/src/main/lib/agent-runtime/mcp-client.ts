@@ -70,7 +70,7 @@ export class McpClientManager {
       try {
         transport = await this.createTransport(name, entry)
         const client = new Client(
-          { name: `proma-runtime-${name}`, version: '0.1.0' },
+          { name: `proma-runtime-${sanitizeMcpToolName(name)}`, version: '0.1.0' },
           { capabilities: {} },
         )
         await client.connect(transport)
