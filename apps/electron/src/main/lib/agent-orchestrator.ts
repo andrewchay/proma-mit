@@ -527,9 +527,10 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Provider-Agnostic Runtime 实验分支（阶段 1）
+   * Provider-Agnostic Runtime 实验分支（Phase 2）
    *
-   * 仅支持核心工具循环，不处理 resume、MCP、权限模式、子 Agent 等高级能力。
+   * 已支持：多轮历史、错误重试/降级、多模态附件、MCP 工具、Plan 模式、权限回调。
+   * 暂不支持：子 Agent。
    */
   private async runProviderAgnosticAgent(options: {
     sessionId: string
