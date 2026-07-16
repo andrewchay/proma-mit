@@ -556,6 +556,9 @@ export interface ElectronAPI {
   /** 订阅 Agent 标题自动更新事件 */
   onAgentTitleUpdated: (callback: (data: { sessionId: string; title: string }) => void) => () => void
 
+  /** 订阅 MCP OAuth 授权完成事件 */
+  onMcpAuthResolved: (callback: (data: { workspaceSlug: string; serverName: string }) => void) => () => void
+
   // ===== Agent 权限系统 =====
 
   /** 响应权限请求 */
@@ -1568,6 +1571,13 @@ const electronAPI: ElectronAPI = {
     const listener = (_: unknown, data: { sessionId: string; title: string }): void => callback(data)
     ipcRenderer.on(AGENT_IPC_CHANNELS.TITLE_UPDATED, listener)
     return () => { ipcRenderer.removeListener(AGENT_IPC_CHANNELS.TITLE_UPDATED, listener) }
+  },
+
+  // MCP OAuth 授权完成通知
+  onMcpAuthResolved: (callback: (data: { workspaceSlug: string; serverName: string }) => void) => {
+    const listener = (_: unknown, data: { workspaceSlug: string; serverName: string }): void => callback(data)
+    ipcRenderer.on(AGENT_IPC_CHANNELS.MCP_AUTH_RESOLVED, listener)
+    return () => { ipcRenderer.removeListener(AGENT_IPC_CHANNELS.MCP_AUTH_RESOLVED, listener) }
   },
 
   // Agent 权限系统

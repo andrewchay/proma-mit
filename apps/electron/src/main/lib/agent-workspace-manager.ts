@@ -20,6 +20,7 @@ import {
   getDefaultSkillsDir,
   parseSkillVersion,
 } from './config-paths'
+import { getMcpClientSecret, setMcpClientSecret, removeMcpClientSecret } from './agent-runtime/mcp-client-secret-store'
 import type { AgentWorkspace, WorkspaceMcpConfig, SkillMeta, SkillImportSource, OtherWorkspaceSkillsGroup, WorkspaceCapabilities, SkillFileNode, SkillFileContent } from '@proma/shared'
 
 interface AgentWorkspacesIndex {
@@ -453,7 +454,17 @@ export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig
   try {
     const raw = readFileSync(mcpPath, 'utf-8')
     const parsed = safeParseJSON<Partial<WorkspaceMcpConfig>>(raw, {})
-    return { servers: parsed.servers ?? {} }
+    const servers = parsed.servers ?? {}
+    // 将加密存储的 client_secret 注入到内存对象，避免明文落盘
+    for (const [name, entry] of Object.entries(servers)) {
+      if (entry.auth && !entry.auth.clientSecret) {
+        const secret = getMcpClientSecret(workspaceSlug, name)
+        if (secret) {
+          entry.auth.clientSecret = secret
+        }
+      }
+    }
+    return { servers }
   } catch (error) {
     console.error('[Agent 工作区] 读取 MCP 配置失败:', error)
     return { servers: {} }
@@ -464,7 +475,21 @@ export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceM
   const mcpPath = getWorkspaceMcpPath(workspaceSlug)
 
   try {
-    writeFileSync(mcpPath, JSON.stringify(config, null, 2), 'utf-8')
+    // client_secret 单独加密存储，不写入 mcp.json
+    const toSave: WorkspaceMcpConfig = { servers: {} }
+    for (const [name, entry] of Object.entries(config.servers ?? {})) {
+      const cloned = { ...entry }
+      if (cloned.auth?.clientSecret) {
+        setMcpClientSecret(workspaceSlug, name, cloned.auth.clientSecret)
+        cloned.auth = { ...cloned.auth, clientSecret: '' }
+      } else if (cloned.auth?.clientSecret === '') {
+        // 用户清空 secret 时同步删除加密存储
+        removeMcpClientSecret(workspaceSlug, name)
+        cloned.auth = { ...cloned.auth, clientSecret: '' }
+      }
+      toSave.servers[name] = cloned
+    }
+    writeFileSync(mcpPath, JSON.stringify(toSave, null, 2), 'utf-8')
     console.log(`[Agent 工作区] 已保存 MCP 配置: ${workspaceSlug}`)
   } catch (error) {
     console.error('[Agent 工作区] 保存 MCP 配置失败:', error)

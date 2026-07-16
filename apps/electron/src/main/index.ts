@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { AGENT_IPC_CHANNELS } from '@proma/shared'
 
 // Dev 与正式版使用独立的 userData 目录，避免共享 Chromium SingletonLock 导致 dev 启动被静默退出
 // 必须在任何会读取 userData 路径的模块加载之前执行
@@ -31,6 +32,7 @@ function registerProtocolsAndHandlers(): void {
   // 用于内联预览本地文件（renderer 用 iframe 加载 proma-file:// 资源）
   protocol.registerSchemesAsPrivileged([
     { scheme: 'proma-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+    { scheme: 'proma', privileges: { standard: true, secure: true } },
   ])
 
   // Windows: 禁用 LCD 次像素抗锯齿（ClearType），改用灰度 AA。
@@ -51,6 +53,18 @@ function registerProtocolsAndHandlers(): void {
     const fileArg = argv.find((arg) => arg.endsWith('.proma-backup') || arg.endsWith('.proma-share'))
     if (fileArg) {
       handleMigrationFileOpen(fileArg)
+    }
+    const mcpAuthArg = argv.find((arg) => arg.startsWith('proma://mcp-auth'))
+    if (mcpAuthArg) {
+      handleMcpOAuthCallback(mcpAuthArg)
+    }
+  })
+
+  // macOS DeepLink 回调
+  app.on('open-url', (event, url) => {
+    if (url.startsWith('proma://mcp-auth')) {
+      event.preventDefault()
+      handleMcpOAuthCallback(url)
     }
   })
 }
@@ -87,6 +101,7 @@ import { initializeRuntime } from './lib/runtime-init'
 import { seedDefaultSkills } from './lib/config-paths'
 import { upgradeDefaultSkillsInWorkspaces } from './lib/agent-workspace-manager'
 import { stopAllAgents, killOrphanedClaudeSubprocesses } from './lib/agent-service'
+import { takePendingMcpOAuth } from './lib/agent-runtime/mcp-oauth-pending'
 import { stopAllGenerations } from './lib/chat-service'
 import { initAutoUpdater, cleanupUpdater } from './lib/updater/auto-updater'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from './lib/workspace-watcher'
@@ -115,6 +130,32 @@ const MIGRATION_IPC_OPEN = 'migration:open-import-file'
 function handleMigrationFileOpen(filePath: string): void {
   if (filePath.endsWith('.proma-backup') || filePath.endsWith('.proma-share')) {
     sendToMainWindow(MIGRATION_IPC_OPEN, { filePath })
+  }
+}
+
+/** 处理 MCP OAuth 授权码回调（proma://mcp-auth?workspace=&server=&code=） */
+async function handleMcpOAuthCallback(callbackUrl: string): Promise<void> {
+  try {
+    const url = new URL(callbackUrl)
+    const workspaceSlug = url.searchParams.get('workspace')
+    const serverName = url.searchParams.get('server')
+    const code = url.searchParams.get('code')
+    if (!workspaceSlug || !serverName || !code) {
+      console.warn('[MCP OAuth DeepLink] 缺少必要参数:', callbackUrl)
+      return
+    }
+
+    const pending = takePendingMcpOAuth(workspaceSlug, serverName)
+    if (!pending) {
+      console.warn(`[MCP OAuth DeepLink] 未找到 pending 授权会话: ${workspaceSlug}/${serverName}`)
+      return
+    }
+
+    console.log(`[MCP OAuth DeepLink] 完成授权: ${workspaceSlug}/${serverName}`)
+    await pending.finishAuth(code)
+    getMainWindow()?.webContents.send(AGENT_IPC_CHANNELS.MCP_AUTH_RESOLVED, { workspaceSlug, serverName })
+  } catch (error) {
+    console.error('[MCP OAuth DeepLink] 处理回调失败:', error)
   }
 }
 
@@ -393,6 +434,13 @@ async function bootstrap(): Promise<void> {
   // 注册自定义协议 proma-file:// 用于内联预览本地文件。
   // 协议只接受主进程签发的 opaque token，不解析 renderer 提供的绝对路径。
   protocol.handle('proma-file', handlePromaFileRequest)
+
+  // 注册 proma:// DeepLink 协议，用于 MCP OAuth 回调
+  if (!app.isPackaged) {
+    app.setAsDefaultProtocolClient('proma', process.execPath, [process.argv[1] ?? '.'])
+  } else {
+    app.setAsDefaultProtocolClient('proma')
+  }
 
   // 初始化运行时环境（Shell 环境 + Bun + Git 检测）
   // 必须在其他初始化之前执行，确保环境变量正确加载

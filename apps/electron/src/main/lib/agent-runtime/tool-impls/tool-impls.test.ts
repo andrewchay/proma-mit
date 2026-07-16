@@ -13,6 +13,7 @@ import { executeWriteTool, createWriteToolDefinition } from './write-tool'
 import { executeEditTool, createEditToolDefinition } from './edit-tool'
 import { executeBashTool, createBashToolDefinition } from './bash-tool'
 import { executeGrepTool, createGrepToolDefinition } from './grep-tool'
+import { executeAgentTool, createAgentToolDefinition, AGENT_TOOL_NAME } from './agent-tool'
 
 describe('Agent Runtime 核心工具', () => {
   let tempDir: string
@@ -162,5 +163,76 @@ describe('Agent Runtime 核心工具', () => {
     expect(createEditToolDefinition().name).toBe('Edit')
     expect(createBashToolDefinition().name).toBe('Bash')
     expect(createGrepToolDefinition().name).toBe('Grep')
+  })
+
+  test('Agent 工具名称和参数符合预期', () => {
+    const def = createAgentToolDefinition()
+    expect(def.name).toBe(AGENT_TOOL_NAME)
+    expect(def.parameters.properties).toHaveProperty('agent_name')
+    expect(def.parameters.properties).toHaveProperty('task')
+    expect(def.parameters.required).toContain('agent_name')
+    expect(def.parameters.required).toContain('task')
+  })
+
+  test('Agent 工具无 runSubAgent 回调时返回错误', async () => {
+    const result = await executeAgentTool({ agent_name: 'code-reviewer', task: 'review' }, { cwd: tempDir, sessionId })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('未配置 Sub Agent 运行器')
+  })
+
+  test('Agent 工具委派子代理并返回结果', async () => {
+    const result = await executeAgentTool(
+      {
+        agent_name: 'explorer',
+        task: 'find usages',
+        files: ['src/main.ts', 'src/lib.ts'],
+        max_turns: 5,
+      },
+      {
+        cwd: tempDir,
+        sessionId,
+        runSubAgent: async (input) => {
+          expect(input.agentName).toBe('explorer')
+          expect(input.task).toBe('find usages')
+          expect(input.files).toEqual(['src/main.ts', 'src/lib.ts'])
+          expect(input.maxTurns).toBe(5)
+          return 'found 3 usages'
+        },
+      },
+    )
+
+    expect(result.isError).toBe(false)
+    expect(result.content).toBe('found 3 usages')
+  })
+
+  test('Agent 工具参数缺失时返回错误', async () => {
+    const result = await executeAgentTool(
+      { agent_name: 'code-reviewer' },
+      {
+        cwd: tempDir,
+        sessionId,
+        runSubAgent: async () => 'should not run',
+      },
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('agent_name 和 task 参数')
+  })
+
+  test('Agent 工具执行失败时包装错误', async () => {
+    const result = await executeAgentTool(
+      { agent_name: 'researcher', task: 'investigate' },
+      {
+        cwd: tempDir,
+        sessionId,
+        runSubAgent: async () => {
+          throw new Error('sub agent crashed')
+        },
+      },
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('sub agent crashed')
   })
 })

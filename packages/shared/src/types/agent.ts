@@ -519,6 +519,8 @@ export type PromaEvent =
   | { type: 'retry'; status: 'starting' | 'attempt' | 'cleared' | 'failed'; attempt?: number; maxAttempts?: number; delaySeconds?: number; reason?: string; attemptData?: RetryAttempt; error?: TypedError }
   | { type: 'model_resolved'; model: string }
   | { type: 'permission_mode_changed'; mode: PromaPermissionMode }
+  | { type: 'mcp_auth_required'; workspaceSlug: string; serverName: string; authorizationUrl?: string }
+  | { type: 'mcp_auth_resolved'; workspaceSlug: string; serverName: string }
 
 
 /** IPC 传输的统一 payload（替代 AgentEvent） */
@@ -678,6 +680,31 @@ export interface AgentGenerateTitleInput {
 /** MCP 传输类型 */
 export type McpTransportType = 'stdio' | 'http' | 'sse'
 
+/** MCP 认证类型 */
+export type McpServerAuthType = 'none' | 'bearer' | 'oauthAuthorizationCode' | 'oauthClientCredentials'
+
+/** MCP 服务器认证配置 */
+export interface McpServerAuthConfig {
+  /** 认证类型 */
+  type: McpServerAuthType
+  /** 静态 Bearer Token（type=bearer 时使用） */
+  bearerToken?: string
+  /** OAuth client id */
+  clientId?: string
+  /** OAuth client secret（建议加密存储） */
+  clientSecret?: string
+  /** 请求的 scope */
+  scope?: string
+  /** 授权码模式：授权端点 URL */
+  authorizationEndpoint?: string
+  /** 令牌端点 URL */
+  tokenEndpoint?: string
+  /** OAuth 资源元数据地址，用于自动发现 */
+  resourceMetadataUrl?: string
+  /** 授权码模式回调地址 */
+  redirectUri?: string
+}
+
 /** MCP 服务器条目 */
 export interface McpServerEntry {
   type: McpTransportType
@@ -689,8 +716,10 @@ export interface McpServerEntry {
   env?: Record<string, string>
   /** http/sse: 服务端 URL */
   url?: string
-  /** http/sse: 请求头 */
+  /** http/sse: 请求头（静态头，可用于补充认证或自定义头） */
   headers?: Record<string, string>
+  /** 认证配置 */
+  auth?: McpServerAuthConfig
   /** 启动超时（秒），仅 stdio 类型有效，默认 30 */
   timeout?: number
   /** 是否启用 */
@@ -1321,6 +1350,8 @@ export const AGENT_IPC_CHANNELS = {
   STREAM_COMPLETE: 'agent:stream:complete',
   /** Agent 流式错误 */
   STREAM_ERROR: 'agent:stream:error',
+  /** MCP OAuth 授权完成通知 */
+  MCP_AUTH_RESOLVED: 'agent:mcp-auth-resolved',
 
   // 附件
   /** 保存文件到 Agent session 工作目录 */

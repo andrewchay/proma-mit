@@ -18,6 +18,7 @@ import {
   allPendingPermissionRequestsAtom,
   allPendingAskUserRequestsAtom,
   allPendingExitPlanRequestsAtom,
+  allPendingMcpOAuthRequestsAtom,
   agentPromptSuggestionsAtom,
   backgroundTasksAtomFamily,
   fileBrowserAutoRevealAtom,
@@ -516,6 +517,25 @@ export function useGlobalAgentListeners(): void {
           }
         }
 
+        // MCP OAuth 授权请求直接写入专用 atom，不走 legacy 事件
+        if (payload.kind === 'proma_event' && payload.event.type === 'mcp_auth_required') {
+          const evt = payload.event
+          store.set(allPendingMcpOAuthRequestsAtom, (prev) => {
+            const map = new Map(prev)
+            const current = map.get(sessionId) ?? []
+            if (!current.some((r) => r.workspaceSlug === evt.workspaceSlug && r.serverName === evt.serverName)) {
+              map.set(sessionId, [...current, { workspaceSlug: evt.workspaceSlug, serverName: evt.serverName, authorizationUrl: evt.authorizationUrl }])
+            }
+            return map
+          })
+          sendBlockingNotification(
+            sessionId,
+            'MCP 服务器需要授权',
+            `请在浏览器中完成 ${evt.serverName} 的 OAuth 授权`,
+            'permissionRequest'
+          )
+        }
+
         // Phase 1 兼容：将新 AgentStreamPayload 转换为旧 AgentEvent[]
         const legacyEvents = payloadToLegacyEvents(payload)
 
@@ -973,6 +993,23 @@ export function useGlobalAgentListeners(): void {
         .catch(console.error)
     })
 
+    // ===== 5. MCP OAuth 授权完成 =====
+    const cleanupMcpAuthResolved = window.electronAPI.onMcpAuthResolved?.((data: { workspaceSlug: string; serverName: string }) => {
+      store.set(allPendingMcpOAuthRequestsAtom, (prev) => {
+        let changed = false
+        const next = new Map<string, import('@/atoms/agent-atoms').McpOAuthRequest[]>()
+        for (const [sid, requests] of prev) {
+          const filtered = requests.filter((r) => {
+            const match = r.workspaceSlug === data.workspaceSlug && r.serverName === data.serverName
+            if (match) changed = true
+            return !match
+          })
+          if (filtered.length > 0) next.set(sid, filtered)
+        }
+        return changed ? next : prev
+      })
+    })
+
     // 定期清理 60s 前的「最近修改」标记，避免 atom 无限增长
     const pruneTimer = setInterval(() => {
       const cutoff = Date.now() - RECENTLY_MODIFIED_TTL_MS
@@ -1063,6 +1100,7 @@ export function useGlobalAgentListeners(): void {
       cleanupComplete()
       cleanupError()
       cleanupTitleUpdated()
+      cleanupMcpAuthResolved?.()
       clearInterval(pruneTimer)
       window.removeEventListener('focus', onWindowFocus)
     }

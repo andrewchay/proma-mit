@@ -27,7 +27,7 @@ proma-v2/
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.10)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.3)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.9.57)
+    └── electron/   # Electron 桌面应用 (v0.9.58)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -56,7 +56,7 @@ proma-v2/
 - **依赖**：`@proma/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @proma/electron (v0.9.57)
+#### @proma/electron (v0.9.58)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -491,7 +491,7 @@ React UI 更新
 
 - ✅ **多 Provider 支持**：Anthropic、OpenAI、DeepSeek、Kimi、智谱、MiniMax、豆包、通义千问、Google、自定义端点
 - ✅ **Agent SDK 集成**：基于 Codex Agent SDK 的完整 Agent 模式
-- ✅ **Provider-Agnostic Runtime**：不依赖 Claude Agent SDK 的 Agent 运行路径，当前支持 deepseek，具备 MCP 工具、Plan mode、fork/rewind 等能力
+- ✅ **Provider-Agnostic Runtime**：不依赖 Claude Agent SDK 的 Agent 运行路径，当前支持 deepseek，具备 MCP 工具（含 OAuth 2.1 授权码/客户端凭证模式、client_secret 加密存储、资源发现/读取、跨会话连接缓存）、Plan mode、AskUserQuestion、Sub Agent（内置 code-reviewer / explorer / researcher）与 fork/rewind 等能力
 - ✅ **飞书集成**：消息同步、任务通知、OAuth 认证（68KB 核心服务）
 - ✅ **工作区管理**：多工作区隔离、MCP Server 配置、Skills 管理
 - ✅ **权限系统**：工具权限检查、用户确认流程
@@ -510,4 +510,4 @@ React UI 更新
 - **文件监听**：工作区文件、MCP 配置、Chat 工具实时监控
 - **事件流处理**：SDK 消息流式转换与累积
 - **错误映射**：SDK 错误统一转换为应用错误
-- **Provider-Agnostic Runtime**：基于 `@proma/core` Provider 适配器的多轮工具循环；MCP 工具名按 OpenAI function name 规则清洗为 `mcp__${server}__${tool}`，避免非法字符导致请求失败
+- **Provider-Agnostic Runtime**：基于 `@proma/core` Provider 适配器的多轮工具循环；MCP 工具名按 OpenAI function name 规则清洗为 `mcp__${server}__${tool}`，避免非法字符导致请求失败；MCP client_secret 使用 safeStorage 加密单独存放，OAuth token 加密存储，连接按工作区缓存复用

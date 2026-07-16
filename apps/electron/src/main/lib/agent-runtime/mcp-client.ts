@@ -9,6 +9,8 @@
 import type { McpServerEntry } from '@proma/shared'
 import type { ToolResult } from '@proma/core'
 import type { RuntimeToolDefinition, ToolContext } from './types'
+import { McpOAuthProvider } from './mcp-oauth-provider'
+import { registerPendingMcpOAuth } from './mcp-oauth-pending'
 
 interface ConnectedServer {
   name: string
@@ -19,34 +21,54 @@ interface ConnectedServer {
 /** MCP 工具执行结果 */
 export interface McpToolResult extends ToolResult {}
 
+export interface McpAuthRequiredPayload {
+  workspaceSlug: string
+  serverName: string
+}
+
 export class McpClientManager {
   private servers: ConnectedServer[] = []
   private abortSignal?: AbortSignal
+  private disconnected = false
 
   constructor(
     private readonly configs: Record<string, McpServerEntry>,
     private readonly cwd: string,
-    options?: { abortSignal?: AbortSignal },
+    private readonly options?: {
+      abortSignal?: AbortSignal
+      workspaceSlug?: string
+      onMcpAuthRequired?: (payload: McpAuthRequiredPayload) => void
+      /** 是否在 session abort 时自动断开连接（跨 session 缓存时应设为 false） */
+      disconnectOnAbort?: boolean
+    },
   ) {
     this.abortSignal = options?.abortSignal
-    this.abortSignal?.addEventListener('abort', () => this.disconnect(), { once: true })
+    if (options?.disconnectOnAbort !== false) {
+      this.abortSignal?.addEventListener('abort', () => this.disconnect(), { once: true })
+    }
   }
 
   /**
    * 连接所有启用的 MCP 服务器
    *
    * 单个服务器连接失败不会影响其他服务器，失败信息会打印到日志。
+   * 已连接过的实例会跳过，支持跨 session 缓存复用。
    */
   async connectAll(): Promise<void> {
     const entries = Object.entries(this.configs).filter(([, entry]) => entry.enabled)
     if (entries.length === 0) return
+    if (this.servers.length > 0) {
+      // 已连接，仅检查配置是否变化；简单复用当前连接
+      return
+    }
 
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
 
     for (const [name, entry] of entries) {
       if (this.abortSignal?.aborted) break
+      let transport: import('@modelcontextprotocol/sdk/shared/transport.js').Transport | undefined
       try {
-        const transport = await this.createTransport(name, entry)
+        transport = await this.createTransport(name, entry)
         const client = new Client(
           { name: `proma-runtime-${name}`, version: '0.1.0' },
           { capabilities: {} },
@@ -56,6 +78,21 @@ export class McpClientManager {
         console.log(`[MCP 客户端] 已连接服务器: ${name}`)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
+        if (err instanceof Error && err.name === 'UnauthorizedError') {
+          console.warn(`[MCP 客户端] 服务器 ${name} 需要 OAuth 授权:`, message)
+          if (transport && 'finishAuth' in transport && typeof transport.finishAuth === 'function') {
+            const finishTransport = transport
+            registerPendingMcpOAuth(
+              this.options?.workspaceSlug ?? '',
+              name,
+              async (code: string) => {
+                await (finishTransport as unknown as { finishAuth: (code: string) => Promise<void> }).finishAuth(code)
+              },
+            )
+          }
+          this.options?.onMcpAuthRequired?.({ workspaceSlug: this.options?.workspaceSlug ?? '', serverName: name })
+          continue
+        }
         console.error(`[MCP 客户端] 连接服务器 ${name} 失败:`, message)
       }
     }
@@ -64,10 +101,10 @@ export class McpClientManager {
   /**
    * 列出所有已连接服务器的工具，并转换为 RuntimeToolDefinition
    */
-  async listAllTools(): Promise<RuntimeToolDefinition[]> {
+  async listAllTools(abortSignal?: AbortSignal): Promise<RuntimeToolDefinition[]> {
     const tools: RuntimeToolDefinition[] = []
     for (const server of this.servers) {
-      if (this.abortSignal?.aborted) break
+      if ((abortSignal ?? this.abortSignal)?.aborted) break
       try {
         const result = await server.client.listTools()
         for (const tool of result.tools) {
@@ -130,6 +167,8 @@ export class McpClientManager {
 
   /** 断开所有 MCP 服务器连接 */
   async disconnect(): Promise<void> {
+    if (this.disconnected) return
+    this.disconnected = true
     for (const server of this.servers) {
       try {
         await server.client.close()
@@ -138,6 +177,57 @@ export class McpClientManager {
       }
     }
     this.servers = []
+  }
+
+  /**
+   * 列出所有已连接服务器提供的资源
+   */
+  async listAllResources(abortSignal?: AbortSignal): Promise<Array<{ server: string; resources: unknown[] }>> {
+    const result: Array<{ server: string; resources: unknown[] }> = []
+    for (const server of this.servers) {
+      if ((abortSignal ?? this.abortSignal)?.aborted) break
+      try {
+        const response = await server.client.listResources()
+        result.push({ server: server.name, resources: response.resources as unknown[] })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`[MCP 客户端] 列出服务器 ${server.name} 资源失败:`, message)
+      }
+    }
+    return result
+  }
+
+  /**
+   * 读取指定 URI 的资源，按服务器顺序尝试直到成功
+   */
+  async readResource(uri: string, abortSignal?: AbortSignal): Promise<{ server: string; content: string; mimeType?: string } | undefined> {
+    for (const server of this.servers) {
+      if ((abortSignal ?? this.abortSignal)?.aborted) break
+      try {
+        const response = await server.client.readResource({ uri })
+        const contents = (response.contents ?? []) as Array<unknown>
+        for (const item of contents) {
+          if (item && typeof item === 'object') {
+            const obj = item as Record<string, unknown>
+            if (typeof obj.text === 'string') {
+              return { server: server.name, content: obj.text, mimeType: typeof obj.mimeType === 'string' ? obj.mimeType : undefined }
+            }
+            if (typeof obj.blob === 'string') {
+              return { server: server.name, content: obj.blob, mimeType: typeof obj.mimeType === 'string' ? obj.mimeType : 'application/octet-stream' }
+            }
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(`[MCP 客户端] 从服务器 ${server.name} 读取资源 ${uri} 失败:`, message)
+      }
+    }
+    return undefined
+  }
+
+  /** 当前是否已连接任意服务器 */
+  get isConnected(): boolean {
+    return this.servers.length > 0
   }
 
   /** 根据配置创建对应传输层 */
@@ -162,7 +252,8 @@ export class McpClientManager {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js')
       const url = new URL(entry.url)
       return new SSEClientTransport(url, {
-        requestInit: { headers: entry.headers },
+        authProvider: this.createAuthProvider(name, entry),
+        requestInit: { headers: this.buildHeaders(entry) },
       })
     }
 
@@ -171,11 +262,36 @@ export class McpClientManager {
       const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
       const url = new URL(entry.url)
       return new StreamableHTTPClientTransport(url, {
-        requestInit: { headers: entry.headers },
+        authProvider: this.createAuthProvider(name, entry),
+        requestInit: { headers: this.buildHeaders(entry) },
       })
     }
 
     throw new Error(`不支持的 MCP 传输类型: ${(entry as { type: string }).type}`)
+  }
+
+  /** 为 http/sse 传输创建 OAuth provider */
+  private createAuthProvider(name: string, entry: McpServerEntry): McpOAuthProvider | undefined {
+    if (!this.options?.workspaceSlug) return undefined
+    const auth = entry.auth
+    if (!auth) return undefined
+    if (auth.type === 'oauthAuthorizationCode' || auth.type === 'oauthClientCredentials') {
+      return new McpOAuthProvider({
+        workspaceSlug: this.options.workspaceSlug,
+        serverName: name,
+        auth,
+      })
+    }
+    return undefined
+  }
+
+  /** 构建请求头，支持静态 Bearer Token */
+  private buildHeaders(entry: McpServerEntry): Record<string, string> {
+    const headers: Record<string, string> = { ...(entry.headers ?? {}) }
+    if (entry.auth?.type === 'bearer' && entry.auth.bearerToken) {
+      headers['Authorization'] = `Bearer ${entry.auth.bearerToken}`
+    }
+    return headers
   }
 
   /** 将 MCP 工具结果序列化为文本 */

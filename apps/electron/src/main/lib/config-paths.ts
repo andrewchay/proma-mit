@@ -203,6 +203,15 @@ export function getChatToolsConfigPath(): string {
 }
 
 /**
+ * 获取 MCP 服务器 client_secret 加密存储文件路径
+ *
+ * @returns ~/.proma/mcp-client-secrets.json
+ */
+export function getMcpClientSecretsPath(): string {
+  return join(getConfigDir(), 'mcp-client-secrets.json')
+}
+
+/**
  * 获取 Agent 会话索引文件路径
  *
  * @returns ~/.proma/agent-sessions.json

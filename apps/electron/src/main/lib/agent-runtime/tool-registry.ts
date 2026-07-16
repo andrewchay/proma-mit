@@ -42,7 +42,19 @@ import {
   createAskUserQuestionToolDefinition,
   executeAskUserQuestionTool,
 } from './tool-impls/ask-user-tool.ts'
-export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME }
+import {
+  AGENT_TOOL_NAME,
+  createAgentToolDefinition,
+  executeAgentTool,
+} from './tool-impls/agent-tool.ts'
+import {
+  LIST_MCP_RESOURCES_TOOL_NAME,
+  READ_MCP_RESOURCE_TOOL_NAME,
+  createListMcpResourcesToolDefinition,
+  createReadMcpResourceToolDefinition,
+} from './tool-impls/mcp-resource-tools.ts'
+export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, AGENT_TOOL_NAME }
+export { LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME }
 
 /** 阶段 1 核心工具列表 */
 export function createCoreTools(): RuntimeToolDefinition[] {
@@ -55,6 +67,9 @@ export function createCoreTools(): RuntimeToolDefinition[] {
     createEnterPlanModeToolDefinition(),
     createExitPlanModeToolDefinition(),
     { ...createAskUserQuestionToolDefinition(), execute: executeAskUserQuestionTool },
+    { ...createAgentToolDefinition(), execute: executeAgentTool },
+    createListMcpResourcesToolDefinition(),
+    createReadMcpResourceToolDefinition(),
   ]
 }
 
@@ -68,6 +83,9 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,
+  AGENT_TOOL_NAME,
+  LIST_MCP_RESOURCES_TOOL_NAME,
+  READ_MCP_RESOURCE_TOOL_NAME,
 ]
 
 /**

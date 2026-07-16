@@ -75,6 +75,26 @@ export interface ToolContext {
     input: Record<string, unknown>,
     signal: AbortSignal,
   ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
+  /** Sub Agent 运行回调：在独立上下文中执行子任务并返回结果摘要 */
+  runSubAgent?: (input: SubAgentInput) => Promise<string>
+  /** 当前会话的 MCP 客户端管理器（用于 MCP Resource 工具） */
+  mcpManager?: import('./mcp-client').McpClientManager
+}
+
+/** Sub Agent 运行输入 */
+export interface SubAgentInput {
+  /** 子代理名称（内置如 code-reviewer / explorer / researcher） */
+  agentName: string
+  /** 任务描述 */
+  task: string
+  /** 覆盖模型 ID（可选） */
+  model?: string
+  /** 相关文件路径（可选） */
+  files?: string[]
+  /** 最大工具调用轮次（默认 10） */
+  maxTurns?: number
+  /** 中止信号 */
+  abortSignal?: AbortSignal
 }
 
 /** Runtime 工具定义 */

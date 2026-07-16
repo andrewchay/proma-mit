@@ -24,6 +24,7 @@ import { ContextUsageBadge } from './ContextUsageBadge'
 import { PermissionBanner } from './PermissionBanner'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import { AskUserBanner } from './AskUserBanner'
+import { McpOAuthBanner } from './McpOAuthBanner'
 import { ExitPlanModeBanner } from './ExitPlanModeBanner'
 import { PlanModeDashedBorder } from './PlanModeDashedBorder'
 import { ModelSelector } from '@/components/chat/ModelSelector'
@@ -86,6 +87,7 @@ import {
   agentSessionPathMapAtom,
   allPendingAskUserRequestsAtom,
   allPendingExitPlanRequestsAtom,
+  allPendingMcpOAuthRequestsAtom,
   finalizeStreamingActivities,
 } from '@/atoms/agent-atoms'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
@@ -1716,9 +1718,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
   const allAskUserRequests = useAtomValue(allPendingAskUserRequestsAtom)
   const allExitPlanRequests = useAtomValue(allPendingExitPlanRequestsAtom)
+  const allMcpOAuthRequests = useAtomValue(allPendingMcpOAuthRequestsAtom)
   const hasBannerOverlay =
     (allAskUserRequests.get(sessionId)?.length ?? 0) > 0 ||
-    (allExitPlanRequests.get(sessionId)?.length ?? 0) > 0
+    (allExitPlanRequests.get(sessionId)?.length ?? 0) > 0 ||
+    (allMcpOAuthRequests.get(sessionId)?.length ?? 0) > 0
 
   // ===== 预览面板状态（toggle 快捷键 + auto-preview 设置，分屏布局在 MainArea） =====
   const setPreviewOpenMap = useSetAtom(previewPanelOpenMapAtom)
@@ -1921,6 +1925,9 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
         {/* AskUserQuestion 交互式问答横幅 */}
         <AskUserBanner sessionId={sessionId} />
+
+        {/* MCP OAuth 授权提示横幅 */}
+        <McpOAuthBanner sessionId={sessionId} />
 
         {/* Plan 模式指示条 */}
         {isPlanMode && (

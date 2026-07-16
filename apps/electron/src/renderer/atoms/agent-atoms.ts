@@ -421,6 +421,39 @@ export const pendingAskUserRequestsAtom = atom(
 /** 待处理的 ExitPlanMode 请求 Map — 以 sessionId 为 key */
 export const allPendingExitPlanRequestsAtom = atom<Map<string, readonly ExitPlanModeRequest[]>>(new Map())
 
+/** MCP OAuth 授权请求 */
+export interface McpOAuthRequest {
+  workspaceSlug: string
+  serverName: string
+  authorizationUrl?: string
+}
+
+/** 待处理的 MCP OAuth 授权请求 Map — 以 sessionId 为 key */
+export const allPendingMcpOAuthRequestsAtom = atom<Map<string, readonly McpOAuthRequest[]>>(new Map())
+
+type McpOAuthRequestsUpdate = readonly McpOAuthRequest[] | ((prev: readonly McpOAuthRequest[]) => readonly McpOAuthRequest[])
+
+/** 当前会话的 MCP OAuth 授权请求队列（派生读写原子） */
+export const pendingMcpOAuthRequestsAtom = atom(
+  (get): readonly McpOAuthRequest[] => {
+    const currentId = get(currentAgentSessionIdAtom)
+    if (!currentId) return []
+    return get(allPendingMcpOAuthRequestsAtom).get(currentId) ?? []
+  },
+  (get, set, update: McpOAuthRequestsUpdate) => {
+    const currentId = get(currentAgentSessionIdAtom)
+    if (!currentId) return
+    set(allPendingMcpOAuthRequestsAtom, (prev) => {
+      const map = new Map(prev)
+      const current = map.get(currentId) ?? []
+      const newValue = typeof update === 'function' ? update(current) : update
+      if (newValue.length === 0) map.delete(currentId)
+      else map.set(currentId, newValue)
+      return map
+    })
+  }
+)
+
 /** 当前处于 Plan 模式的会话 ID 集合 */
 export const agentPlanModeSessionsAtom = atom<Set<string>>(new Set<string>())
 

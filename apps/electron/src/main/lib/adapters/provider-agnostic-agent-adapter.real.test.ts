@@ -16,6 +16,12 @@ mock.module('electron', () => ({
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
     showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
   },
+  shell: { openExternal: () => {} },
+  safeStorage: {
+    isEncryptionAvailable: () => false,
+    encryptString: (plain: string) => Buffer.from(plain),
+    decryptString: (buf: Buffer) => buf.toString('utf-8'),
+  },
 }))
 
 mock.module('../attachment-service', () => ({

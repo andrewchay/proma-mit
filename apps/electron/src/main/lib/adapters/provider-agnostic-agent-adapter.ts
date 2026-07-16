@@ -35,7 +35,7 @@ import { getAdapter, streamSSE } from '@proma/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME } from '../agent-runtime/tool-registry'
-import { McpClientManager } from '../agent-runtime/mcp-client'
+import { acquireMcpClientManager } from '../agent-runtime/mcp-client-cache'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
 import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
@@ -73,6 +73,10 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   maxRetries?: number
   /** 工作区 MCP 服务器配置 */
   mcpServers?: Record<string, McpServerEntry>
+  /** 工作区 slug，用于 MCP OAuth token 隔离 */
+  workspaceSlug?: string
+  /** MCP OAuth 需要用户授权时回调 */
+  onMcpAuthRequired?: (payload: { workspaceSlug: string; serverName: string }) => void
   /** 进入 Plan 模式通知回调 */
   onEnterPlanMode?: () => void
   /** 退出 Plan 模式审批回调 */
@@ -85,6 +89,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
     input: Record<string, unknown>,
     signal: AbortSignal,
   ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
+  /** Sub Agent 运行回调 */
+  runSubAgent?: import('../agent-runtime/types').ToolContext['runSubAgent']
 }
 
 /** 活跃会话状态 */
@@ -110,9 +116,12 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       systemPrompt,
       attachments,
       mcpServers,
+      workspaceSlug,
+      onMcpAuthRequired,
       onEnterPlanMode,
       onExitPlanMode,
       onAskUser,
+      runSubAgent,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -126,15 +135,16 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     }
     this.activeSessions.set(sessionId, { controller })
 
-    // 加载 MCP 工具
-    const mcpManager = mcpServers && Object.keys(mcpServers).length > 0
-      ? new McpClientManager(mcpServers, cwd, { abortSignal: controller.signal })
-      : undefined
+    // 加载 MCP 工具（优先使用跨会话缓存，减少重复连接）
+    let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
+    let mcpRelease: (() => void) | undefined
     let mcpTools: RuntimeToolDefinition[] = []
-    if (mcpManager) {
+    if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
       try {
-        await mcpManager.connectAll()
-        mcpTools = await mcpManager.listAllTools()
+        const acquired = await acquireMcpClientManager(workspaceSlug, mcpServers, cwd, { onMcpAuthRequired })
+        mcpManager = acquired.manager
+        mcpRelease = acquired.release
+        mcpTools = await mcpManager.listAllTools(controller.signal)
         console.log(`[Agent Runtime] 已加载 ${mcpTools.length} 个 MCP 工具`)
       } catch (err) {
         console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
@@ -314,6 +324,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           },
           onExitPlanMode,
           onAskUser,
+          runSubAgent,
+          mcpManager,
           setPermissionMode: (mode) => {
             currentPermissionMode = mode
             planModeEntered = false
@@ -377,11 +389,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       yield resultMessage as unknown as SDKMessage
     } finally {
       this.activeSessions.delete(sessionId)
-      if (mcpManager) {
-        mcpManager.disconnect().catch((err: unknown) => {
-          console.warn('[Agent Runtime] 断开 MCP 服务器失败:', err)
-        })
-      }
+      // 释放缓存引用（缓存负责实际断开连接）
+      mcpRelease?.()
     }
   }
 
@@ -538,6 +547,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       onEnterPlanMode?: () => void
       onExitPlanMode?: ProviderAgnosticAgentQueryOptions['onExitPlanMode']
       onAskUser?: ProviderAgnosticAgentQueryOptions['onAskUser']
+      runSubAgent?: ProviderAgnosticAgentQueryOptions['runSubAgent']
+      mcpManager?: import('../agent-runtime/mcp-client').McpClientManager
       setPermissionMode?: (mode: PromaPermissionMode) => void
     },
   ): Promise<ToolResult[]> {

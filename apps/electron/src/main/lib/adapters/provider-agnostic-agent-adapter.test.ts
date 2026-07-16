@@ -20,6 +20,12 @@ mock.module('electron', () => ({
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
     showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
   },
+  shell: { openExternal: () => {} },
+  safeStorage: {
+    isEncryptionAvailable: () => false,
+    encryptString: (plain: string) => Buffer.from(plain),
+    decryptString: (buf: Buffer) => buf.toString('utf-8'),
+  },
 }))
 
 // 附件富化依赖真实文件系统，在集成测试中 mock 为可控行为
@@ -528,6 +534,62 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(attempts).toBe(2)
     expect(messages).toHaveLength(2)
     expect(messages[0]?.type).toBe('assistant')
+  })
+
+  test('Agent 工具会调用 runSubAgent 回调并返回结果', async () => {
+    let subAgentCalled = false
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage, continuationCount: (input.continuationMessages ?? []).length }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        streamCallCount++
+        if (streamCallCount === 1) {
+          return makeStreamResult('我派一个子代理去研究', [
+            { id: 'tc_agent', name: 'Agent', arguments: { agent_name: 'researcher', task: '调研 DeepSeek 缓存策略' } },
+          ])
+        }
+        return makeStreamResult('子代理已返回调研结果')
+      },
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's-agent',
+      prompt: '调研 DeepSeek 缓存策略',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'bypassPermissions',
+      runSubAgent: async (input) => {
+        subAgentCalled = true
+        expect(input.agentName).toBe('researcher')
+        expect(input.task).toBe('调研 DeepSeek 缓存策略')
+        return 'DeepSeek 使用自动前缀缓存'
+      },
+    })) {
+      messages.push(msg)
+    }
+
+    expect(subAgentCalled).toBe(true)
+    expect(streamCallCount).toBe(2)
+    expect(messages).toHaveLength(4) // assistant tool_use + user tool_result + assistant final + result
+
+    const toolResultMsg = messages.find((m) => m.type === 'user')
+    expect(toolResultMsg).toBeDefined()
+    expect(JSON.stringify(toolResultMsg)).toContain('DeepSeek 使用自动前缀缓存')
   })
 })
 

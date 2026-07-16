@@ -9,7 +9,7 @@ import * as React from 'react'
 import { ArrowLeft, Loader2, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { McpServerEntry, McpTransportType, WorkspaceMcpConfig } from '@proma/shared'
+import type { McpServerEntry, McpTransportType, McpServerAuthType, McpServerAuthConfig, WorkspaceMcpConfig } from '@proma/shared'
 import {
   SettingsSection,
   SettingsCard,
@@ -38,6 +38,14 @@ const TRANSPORT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'stdio', label: 'stdio（命令行）' },
   { value: 'http', label: 'HTTP（Streamable HTTP）' },
   { value: 'sse', label: 'SSE（Server-Sent Events）' },
+]
+
+/** 认证类型选项 */
+const AUTH_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'none', label: '无' },
+  { value: 'bearer', label: '静态 Bearer Token' },
+  { value: 'oauthAuthorizationCode', label: 'OAuth 2.1 授权码模式' },
+  { value: 'oauthClientCredentials', label: 'OAuth 2.1 客户端凭证模式' },
 ]
 
 /**
@@ -92,6 +100,17 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
   const [url, setUrl] = React.useState(server?.entry.url ?? '')
   const [headersText, setHeadersText] = React.useState(serializeKeyValueText(server?.entry.headers, ':'))
 
+  // 认证字段
+  const [authType, setAuthType] = React.useState<McpServerAuthType>(server?.entry.auth?.type ?? 'none')
+  const [bearerToken, setBearerToken] = React.useState(server?.entry.auth?.bearerToken ?? '')
+  const [oauthClientId, setOauthClientId] = React.useState(server?.entry.auth?.clientId ?? '')
+  const [oauthClientSecret, setOauthClientSecret] = React.useState(server?.entry.auth?.clientSecret ?? '')
+  const [oauthScope, setOauthScope] = React.useState(server?.entry.auth?.scope ?? '')
+  const [oauthAuthorizationEndpoint, setOauthAuthorizationEndpoint] = React.useState(server?.entry.auth?.authorizationEndpoint ?? '')
+  const [oauthTokenEndpoint, setOauthTokenEndpoint] = React.useState(server?.entry.auth?.tokenEndpoint ?? '')
+  const [oauthResourceMetadataUrl, setOauthResourceMetadataUrl] = React.useState(server?.entry.auth?.resourceMetadataUrl ?? '')
+  const [oauthRedirectUri, setOauthRedirectUri] = React.useState(server?.entry.auth?.redirectUri ?? '')
+
   // UI 状态
   const [saving, setSaving] = React.useState(false)
   const [testing, setTesting] = React.useState(false)
@@ -104,19 +123,29 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
     if (!server) return // 新建时不需要清空
 
     // 检查关键配置是否改变（包括连接相关的所有字段）
+    const auth = server.entry.auth
     const configChanged =
       transportType !== server.entry.type ||
       (transportType === 'stdio' && command !== server.entry.command) ||
       (transportType !== 'stdio' && url !== server.entry.url) ||
       argsText !== (server.entry.args?.join(', ') ?? '') ||
       envText !== serializeKeyValueText(server.entry.env, '=') ||
-      headersText !== serializeKeyValueText(server.entry.headers, ':')
+      headersText !== serializeKeyValueText(server.entry.headers, ':') ||
+      authType !== (auth?.type ?? 'none') ||
+      bearerToken !== (auth?.bearerToken ?? '') ||
+      oauthClientId !== (auth?.clientId ?? '') ||
+      oauthClientSecret !== (auth?.clientSecret ?? '') ||
+      oauthScope !== (auth?.scope ?? '') ||
+      oauthAuthorizationEndpoint !== (auth?.authorizationEndpoint ?? '') ||
+      oauthTokenEndpoint !== (auth?.tokenEndpoint ?? '') ||
+      oauthResourceMetadataUrl !== (auth?.resourceMetadataUrl ?? '') ||
+      oauthRedirectUri !== (auth?.redirectUri ?? '')
 
     if (configChanged) {
       setTestResult(null)
       setEnabled(false) // 配置改变时自动关闭开关
     }
-  }, [transportType, command, url, argsText, envText, headersText, server])
+  }, [transportType, command, url, argsText, envText, headersText, authType, bearerToken, oauthClientId, oauthClientSecret, oauthScope, oauthAuthorizationEndpoint, oauthTokenEndpoint, oauthResourceMetadataUrl, oauthRedirectUri, server])
 
   /** 构建 McpServerEntry */
   const buildEntry = (includeTestResult = false): McpServerEntry => {
@@ -150,6 +179,8 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
       base.url = url.trim()
       const headers = parseKeyValueText(headersText, ':')
       if (Object.keys(headers).length > 0) base.headers = headers
+      const auth = buildAuthConfig()
+      if (auth) base.auth = auth
     }
 
     return base
@@ -222,6 +253,28 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
     } finally {
       setSaving(false)
     }
+  }
+
+  /** 构建认证配置 */
+  const buildAuthConfig = (): McpServerAuthConfig | undefined => {
+    if (authType === 'none') return undefined
+    if (authType === 'bearer') {
+      if (!bearerToken.trim()) return undefined
+      return { type: 'bearer', bearerToken: bearerToken.trim() }
+    }
+    const base: McpServerAuthConfig = {
+      type: authType,
+      clientId: oauthClientId.trim() || undefined,
+      clientSecret: oauthClientSecret.trim() || undefined,
+      scope: oauthScope.trim() || undefined,
+      tokenEndpoint: oauthTokenEndpoint.trim() || undefined,
+      resourceMetadataUrl: oauthResourceMetadataUrl.trim() || undefined,
+    }
+    if (authType === 'oauthAuthorizationCode') {
+      base.authorizationEndpoint = oauthAuthorizationEndpoint.trim() || undefined
+      base.redirectUri = oauthRedirectUri.trim() || undefined
+    }
+    return base
   }
 
   /** 判断表单是否可提交 */
@@ -359,6 +412,81 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
                   className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-y font-mono"
                 />
               </div>
+
+              {/* 认证配置 */}
+              <SettingsSelect
+                label="认证方式"
+                value={authType}
+                onValueChange={(v) => setAuthType(v as McpServerAuthType)}
+                options={AUTH_OPTIONS}
+                placeholder="选择认证方式"
+              />
+
+              {authType === 'bearer' && (
+                <SettingsInput
+                  label="Bearer Token"
+                  value={bearerToken}
+                  onChange={setBearerToken}
+                  placeholder="例如: ghp_xxx"
+                  type="password"
+                />
+              )}
+
+              {(authType === 'oauthAuthorizationCode' || authType === 'oauthClientCredentials') && (
+                <div className="px-4 py-3 space-y-3">
+                  <SettingsInput
+                    label="Client ID"
+                    value={oauthClientId}
+                    onChange={setOauthClientId}
+                    placeholder="OAuth client id"
+                  />
+                  <SettingsInput
+                    label="Client Secret"
+                    value={oauthClientSecret}
+                    onChange={setOauthClientSecret}
+                    placeholder="OAuth client secret"
+                    type="password"
+                  />
+                  <SettingsInput
+                    label="Scope"
+                    value={oauthScope}
+                    onChange={setOauthScope}
+                    placeholder="例如: read write（空格分隔）"
+                  />
+                  <SettingsInput
+                    label="Token Endpoint"
+                    value={oauthTokenEndpoint}
+                    onChange={setOauthTokenEndpoint}
+                    placeholder="例如: https://api.example.com/oauth/token"
+                  />
+                  <SettingsInput
+                    label="Resource Metadata URL"
+                    value={oauthResourceMetadataUrl}
+                    onChange={setOauthResourceMetadataUrl}
+                    placeholder="可选，用于自动发现授权服务器"
+                  />
+                </div>
+              )}
+
+              {authType === 'oauthAuthorizationCode' && (
+                <div className="px-4 py-3 space-y-3">
+                  <SettingsInput
+                    label="Authorization Endpoint"
+                    value={oauthAuthorizationEndpoint}
+                    onChange={setOauthAuthorizationEndpoint}
+                    placeholder="例如: https://api.example.com/oauth/authorize"
+                  />
+                  <SettingsInput
+                    label="Redirect URI"
+                    value={oauthRedirectUri}
+                    onChange={setOauthRedirectUri}
+                    placeholder={`默认: proma://mcp-auth?workspace=${workspaceSlug}&server=${name}`}
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    授权码模式会打开系统浏览器完成授权，回调地址建议使用 proma://mcp-auth
+                  </div>
+                </div>
+              )}
             </>
           )}
 

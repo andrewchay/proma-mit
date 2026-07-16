@@ -46,6 +46,7 @@ import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './ag
 import { getRuntimeStatus } from './runtime-init'
 import { getSettings } from './settings-service'
 import { buildSystemPrompt, buildDynamicContext, buildBuiltinAgents } from './agent-prompt-builder'
+import type { SubAgentInput } from './agent-runtime/types'
 import { permissionService } from './agent-permission-service'
 import type { PermissionResult, CanUseToolOptions } from './agent-permission-service'
 import { askUserService } from './agent-ask-user-service'
@@ -552,10 +553,12 @@ export class AgentOrchestrator {
     try {
       // 确定工作目录
       let agentCwd = homedir()
+      let workspaceSlug = ''
       let mcpServerConfigs: Record<string, import('@proma/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
+          workspaceSlug = ws.slug
           agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
           if (!existsSync(agentCwd)) {
             mkdirSync(agentCwd, { recursive: true })
@@ -612,6 +615,13 @@ export class AgentOrchestrator {
         attachments,
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
         mcpServers: mcpServerConfigs,
+        workspaceSlug,
+        onMcpAuthRequired: ({ workspaceSlug: ws, serverName }: { workspaceSlug: string; serverName: string }) => {
+          this.eventBus.emit(sessionId, {
+            kind: 'proma_event',
+            event: { type: 'mcp_auth_required', workspaceSlug: ws, serverName },
+          } as AgentStreamPayload)
+        },
         canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
           const result = await canUseTool(toolName, input, {
             signal,
@@ -657,6 +667,17 @@ export class AgentOrchestrator {
           const answers = (result.updatedInput?.answers as Record<string, string>) ?? {}
           return { behavior: 'allow', answers }
         },
+        runSubAgent: async (input: SubAgentInput): Promise<string> => {
+          return this.runProviderAgnosticSubAgent(sessionId, {
+            provider,
+            apiKey,
+            baseUrl,
+            model: modelId,
+            cwd: agentCwd,
+            mcpServers: mcpServerConfigs,
+            permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+          }, input)
+        },
       }
 
       const iterable = this.providerAgnosticAdapter.query(queryOptions)
@@ -693,6 +714,76 @@ export class AgentOrchestrator {
       // 抛出可降级错误，由 sendMessage 截断用户消息后切到 Claude SDK
       throw new ProviderAgnosticRuntimeError(message, userMessageUuid)
     }
+  }
+
+  /**
+   * 运行 Provider-Agnostic Sub Agent
+   *
+   * 在独立 session 中启动一个子代理，完成指定任务后返回文本摘要。
+   * 子代理不对外发送 UI 事件，避免污染主会话的流式输出。
+   */
+  private async runProviderAgnosticSubAgent(
+    parentSessionId: string,
+    ctx: {
+      provider: ProviderType
+      apiKey: string
+      baseUrl: string
+      model?: string
+      cwd: string
+      mcpServers?: Record<string, import('@proma/shared').McpServerEntry>
+      permissionMode: PromaPermissionMode
+    },
+    input: SubAgentInput,
+  ): Promise<string> {
+    const agents = buildBuiltinAgents(false)
+    const def = agents[input.agentName]
+    if (!def) {
+      throw new Error(`未知子代理: ${input.agentName}`)
+    }
+
+    const childSessionId = `sub-${parentSessionId}-${randomUUID()}`
+    const childAdapter = new ProviderAgnosticAgentAdapter()
+    const filesHint = input.files?.length
+      ? `\n\n重点关注以下文件：\n${input.files.map((f) => `- ${f}`).join('\n')}`
+      : ''
+    const prompt = `${input.task}${filesHint}`
+    const systemPrompt = def.prompt
+      ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
+      : undefined
+
+    const messages: SDKMessage[] = []
+    try {
+      for await (const msg of childAdapter.query({
+        sessionId: childSessionId,
+        prompt,
+        model: input.model || ctx.model || '',
+        provider: ctx.provider,
+        apiKey: ctx.apiKey,
+        baseUrl: ctx.baseUrl,
+        cwd: ctx.cwd,
+        systemPrompt,
+        historyMessages: [],
+        // 子代理在内部全放行，避免向主会话 UI 发送未知 sessionId 的审批请求
+        permissionMode: 'bypassPermissions',
+        mcpServers: ctx.mcpServers,
+        maxTurns: input.maxTurns ?? 10,
+        abortSignal: input.abortSignal,
+      })) {
+        messages.push(msg)
+      }
+    } finally {
+      childAdapter.dispose()
+    }
+
+    const assistantTexts: string[] = []
+    for (const msg of messages) {
+      if (msg.type === 'assistant') {
+        const text = this.extractTextFromSDKMessage(msg as SDKAssistantMessage)
+        if (text) assistantTexts.push(text)
+      }
+    }
+
+    return assistantTexts.join('\n\n') || '子代理已完成任务，但未返回文本结果'
   }
 
   /**
