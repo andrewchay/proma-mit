@@ -70,6 +70,11 @@ export interface ToolContext {
   ) => Promise<{ behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }>
   /** 切换权限模式（由 ExitPlanMode 回调结果触发） */
   setPermissionMode?: (mode: PromaPermissionMode) => void
+  /** AskUserQuestion 工具回调：发送问题到 UI 并等待用户回答 */
+  onAskUser?: (
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
 }
 
 /** Runtime 工具定义 */

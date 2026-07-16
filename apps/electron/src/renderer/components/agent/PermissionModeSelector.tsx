@@ -8,7 +8,7 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { Zap, Compass, Map as MapIcon } from 'lucide-react'
+import { Zap, Compass, Map as MapIcon, Shield } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { agentPermissionModeMapAtom, agentDefaultPermissionModeAtom, sessionPersistedPermissionModeAtom, sessionExistsAtom } from '@/atoms/agent-atoms'
@@ -16,6 +16,7 @@ import type { PromaPermissionMode } from '@proma/shared'
 import { PROMA_PERMISSION_MODE_CONFIG, PROMA_PERMISSION_MODE_ORDER } from '@proma/shared'
 
 const MODE_ICONS: Record<PromaPermissionMode, React.ComponentType<{ className?: string }>> = {
+  safe: Shield,
   auto: Compass,
   bypassPermissions: Zap,
   plan: MapIcon,

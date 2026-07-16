@@ -586,7 +586,7 @@ export class AgentOrchestrator {
       } as unknown as SDKMessage
       appendSDKMessages(sessionId, [userSDKMsg])
 
-      // 创建权限检查回调，复用 AgentPermissionService 的 auto/ask 逻辑
+      // 创建权限检查回调，复用 AgentPermissionService 的 auto/ask/safe 逻辑
       const canUseTool = permissionService.createCanUseTool(
         sessionId,
         (request: PermissionRequest) => {
@@ -596,6 +596,7 @@ export class AgentOrchestrator {
         (request: AskUserRequest) => {
           this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
         },
+        () => permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
       )
 
       const queryOptions = {
@@ -637,6 +638,24 @@ export class AgentOrchestrator {
             this.sessionPermissionModes.set(sessionId, result.targetMode)
           }
           return result as { behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }
+        },
+        onAskUser: async (
+          input: Record<string, unknown>,
+          signal: AbortSignal,
+        ): Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }> => {
+          const result = await askUserService.handleAskUserQuestion(
+            sessionId,
+            input,
+            signal,
+            (request: AskUserRequest) => {
+              this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
+            },
+          )
+          if (result.behavior === 'deny') {
+            return { behavior: 'deny', message: result.message }
+          }
+          const answers = (result.updatedInput?.answers as Record<string, string>) ?? {}
+          return { behavior: 'allow', answers }
         },
       }
 
@@ -1504,7 +1523,7 @@ export class AgentOrchestrator {
         )
       }
 
-      // 始终创建 auto 权限回调（运行中可能切换到 auto）
+      // 始终创建 auto 权限回调（运行中可能切换到 auto/safe）
       const autoCanUseTool = permissionService.createCanUseTool(
         sessionId,
         (request: PermissionRequest) => {
@@ -1514,6 +1533,7 @@ export class AgentOrchestrator {
         (request: AskUserRequest) => {
           this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } })
         },
+        getPermissionMode,
       )
 
       /**

@@ -34,7 +34,7 @@ import type {
 import { getAdapter, streamSSE } from '@proma/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
-import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME } from '../agent-runtime/tool-registry'
+import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME } from '../agent-runtime/tool-registry'
 import { McpClientManager } from '../agent-runtime/mcp-client'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
@@ -80,6 +80,11 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
     input: Record<string, unknown>,
     signal: AbortSignal,
   ) => Promise<{ behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }>
+  /** AskUserQuestion 工具回调：发送问题到 UI 并等待用户回答 */
+  onAskUser?: (
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
 }
 
 /** 活跃会话状态 */
@@ -107,6 +112,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       mcpServers,
       onEnterPlanMode,
       onExitPlanMode,
+      onAskUser,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -307,6 +313,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
             onEnterPlanMode?.()
           },
           onExitPlanMode,
+          onAskUser,
           setPermissionMode: (mode) => {
             currentPermissionMode = mode
             planModeEntered = false
@@ -418,6 +425,36 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       return { allowed: true }
     }
 
+    // Safe 模式本地兜底：仅放行只读工具与只读 Bash，默认拒绝写操作
+    if (ctx.permissionMode === 'safe') {
+      const safeAllowedTools = new Set([
+        'Read',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'TodoRead',
+        'TaskOutput',
+        'TaskList',
+        'TaskGet',
+        'ListMcpResourcesTool',
+        'ReadMcpResourceTool',
+        ASK_USER_QUESTION_TOOL_NAME,
+      ])
+      if (safeAllowedTools.has(toolName)) {
+        return { allowed: true }
+      }
+
+      if (toolName === 'Bash') {
+        const command = typeof input.command === 'string' ? input.command : ''
+        if (isBashCommandReadOnly(command)) {
+          return { allowed: true }
+        }
+      }
+
+      return { allowed: false, message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
+    }
+
     // Plan 模式本地兜底：与旧 Claude SDK 路径保持一致
     if (ctx.permissionMode === 'plan' || ctx.planModeEntered) {
       const planAllowedTools = new Set([
@@ -500,6 +537,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       canUseTool?: CanUseToolCallback
       onEnterPlanMode?: () => void
       onExitPlanMode?: ProviderAgnosticAgentQueryOptions['onExitPlanMode']
+      onAskUser?: ProviderAgnosticAgentQueryOptions['onAskUser']
       setPermissionMode?: (mode: PromaPermissionMode) => void
     },
   ): Promise<ToolResult[]> {
@@ -528,6 +566,29 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           }
         } else {
           results.push({ toolCallId: tc.id, content: '已退出 Plan 模式', isError: false })
+        }
+        continue
+      }
+
+      // AskUserQuestion：直接走交互式问答回调，不经过通用权限检查
+      if (tc.name === ASK_USER_QUESTION_TOOL_NAME) {
+        if (ctx.onAskUser) {
+          const signal = ctx.abortSignal ?? new AbortController().signal
+          const result = await ctx.onAskUser(tc.arguments, signal)
+          if (result.behavior === 'allow') {
+            const answerBlocks = Object.entries(result.answers)
+              .map(([q, a]) => `Q: ${q}\nA: ${a}`)
+              .join('\n\n')
+            results.push({
+              toolCallId: tc.id,
+              content: `用户回答如下：\n\n${answerBlocks}\n\nanswers JSON: ${JSON.stringify(result.answers)}`,
+              isError: false,
+            })
+          } else {
+            results.push({ toolCallId: tc.id, content: result.message || '用户拒绝回答', isError: true })
+          }
+        } else {
+          results.push({ toolCallId: tc.id, content: '当前 Runtime 未配置 AskUser 回调', isError: true })
         }
         continue
       }

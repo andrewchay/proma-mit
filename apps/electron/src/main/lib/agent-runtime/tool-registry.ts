@@ -37,7 +37,12 @@ import {
   createEnterPlanModeToolDefinition,
   createExitPlanModeToolDefinition,
 } from './tool-impls/plan-mode-tools.ts'
-export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME }
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  createAskUserQuestionToolDefinition,
+  executeAskUserQuestionTool,
+} from './tool-impls/ask-user-tool.ts'
+export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME }
 
 /** 阶段 1 核心工具列表 */
 export function createCoreTools(): RuntimeToolDefinition[] {
@@ -49,6 +54,7 @@ export function createCoreTools(): RuntimeToolDefinition[] {
     { ...createGrepToolDefinition(), execute: executeGrepTool },
     createEnterPlanModeToolDefinition(),
     createExitPlanModeToolDefinition(),
+    { ...createAskUserQuestionToolDefinition(), execute: executeAskUserQuestionTool },
   ]
 }
 
@@ -61,6 +67,7 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   GREP_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
+  ASK_USER_QUESTION_TOOL_NAME,
 ]
 
 /**

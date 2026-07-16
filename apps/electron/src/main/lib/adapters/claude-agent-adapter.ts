@@ -31,6 +31,13 @@ import { spawn as spawnChild, execFileSync } from 'node:child_process'
 /** SDK Query 对象类型（从动态导入中推断） */
 type SDKQuery = ReturnType<typeof import('@anthropic-ai/claude-agent-sdk').query>
 
+/** 将 Proma 权限模式映射为 Claude SDK 支持的权限模式 */
+function toSDKPermissionMode(mode: PromaPermissionMode): import('@anthropic-ai/claude-agent-sdk').PermissionMode {
+  // Claude SDK 没有 safe 模式，safe 在 SDK 路径退化为 auto，由 canUseTool 做更严格兜底
+  if (mode === 'safe') return 'auto'
+  return mode as import('@anthropic-ai/claude-agent-sdk').PermissionMode
+}
+
 /** SDK 用户消息类型 */
 type SDKUserMessage = import('@anthropic-ai/claude-agent-sdk').SDKUserMessage
 
@@ -662,7 +669,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         pathToClaudeCodeExecutable: options.sdkCliPath,
         model: options.model || 'claude-sonnet-4-6',
         ...(options.maxTurns != null && { maxTurns: options.maxTurns }),
-        permissionMode: options.sdkPermissionMode,
+        permissionMode: toSDKPermissionMode(options.sdkPermissionMode),
         allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions,
         // 关键：false 获取完整消息，与 v2 stream() 返回格式一致
         includePartialMessages: false,
@@ -894,7 +901,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
       return
     }
     await (query as ReturnType<typeof import('@anthropic-ai/claude-agent-sdk').query>).setPermissionMode(
-      mode as import('@anthropic-ai/claude-agent-sdk').PermissionMode,
+      toSDKPermissionMode(mode as PromaPermissionMode),
     )
     console.log(`[Claude 适配器] 权限模式已切换: sessionId=${sessionId}, mode=${mode}`)
   }

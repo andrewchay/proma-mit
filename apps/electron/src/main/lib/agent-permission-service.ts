@@ -122,6 +122,7 @@ export class AgentPermissionService {
     sendToRenderer: (request: PermissionRequest) => void,
     askUserHandler?: (sessionId: string, input: Record<string, unknown>, signal: AbortSignal, sendToRenderer: (request: AskUserRequest) => void) => Promise<PermissionResult>,
     sendAskUserToRenderer?: (request: AskUserRequest) => void,
+    mode?: PromaPermissionMode | (() => PromaPermissionMode),
   ): (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions) => Promise<PermissionResult> {
     return async (toolName, input, options) => {
       // AskUserQuestion 拦截：委托给交互式问答服务
@@ -143,6 +144,12 @@ export class AgentPermissionService {
       // 原因：CLI 的 --permission-prompt-tool stdio 会把每次 tool 调用都转发给 canUseTool，
       // SDK 的 auto classifier 对只读操作未必真的放行，这里做本地兜底避免用户被无意义的审批打扰
       if (this.isReadOnlyTool(toolName, input)) return allow()
+
+      // safe 模式：非只读操作直接拒绝，不向用户弹审批
+      const currentMode = typeof mode === 'function' ? mode() : mode
+      if (currentMode === 'safe') {
+        return { behavior: 'deny', message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
+      }
 
       // 需要询问用户：构建请求并发送到 UI
       const request = this.buildPermissionRequest(sessionId, toolName, input, options)

@@ -1119,7 +1119,7 @@ export interface ExitPlanModeResponse {
 // ===== 权限系统类型 =====
 
 /** 当前 Proma 支持的权限模式，值直接映射 SDK 原生 permissionMode */
-export const PROMA_PERMISSION_MODES = ['auto', 'bypassPermissions', 'plan'] as const
+export const PROMA_PERMISSION_MODES = ['safe', 'auto', 'bypassPermissions', 'plan'] as const
 
 export type PromaPermissionMode = typeof PROMA_PERMISSION_MODES[number]
 
@@ -1134,6 +1134,11 @@ export interface PromaPermissionModeConfig {
 
 /** Proma 权限模式的单一配置来源 */
 export const PROMA_PERMISSION_MODE_CONFIG = {
+  safe: {
+    sdkMode: 'safe',
+    label: '安全模式',
+    description: '只放行只读工具与命令，默认拒绝写操作',
+  },
   auto: {
     sdkMode: 'auto',
     label: '自动审批',

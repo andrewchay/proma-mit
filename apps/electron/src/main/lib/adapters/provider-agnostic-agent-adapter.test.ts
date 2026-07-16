@@ -373,6 +373,119 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(JSON.stringify(lastToolResult)).toContain('计划模式')
   })
 
+  test('AskUserQuestion 工具会调用 onAskUser 回调并返回答案', async () => {
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        streamCallCount++
+        if (streamCallCount === 1) {
+          return makeStreamResult('我需要先问你一个问题', [
+            {
+              id: 'tc_ask',
+              name: 'AskUserQuestion',
+              arguments: {
+                questions: [{ question: '你最喜欢的颜色是？' }],
+              },
+            },
+          ])
+        }
+        return makeStreamResult('收到你的回答')
+      },
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+    let asked = false
+
+    for await (const msg of adapter.query({
+      sessionId: 's-ask',
+      prompt: '问我一个问题',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'bypassPermissions',
+      onAskUser: async (_input, _signal) => {
+        asked = true
+        return { behavior: 'allow', answers: { '你最喜欢的颜色是？': '蓝色' } }
+      },
+    })) {
+      messages.push(msg)
+    }
+
+    expect(asked).toBe(true)
+    expect(streamCallCount).toBe(2)
+
+    const toolResultMsgs = messages.filter((m) => m.type === 'user')
+    expect(toolResultMsgs.length).toBeGreaterThanOrEqual(1)
+    const lastToolResult = toolResultMsgs[toolResultMsgs.length - 1]
+    expect(JSON.stringify(lastToolResult)).toContain('蓝色')
+    expect(JSON.stringify(lastToolResult)).toContain('answers JSON')
+  })
+
+  test('safe 模式下只读工具通过，写工具被拒绝', async () => {
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        streamCallCount++
+        if (streamCallCount === 1) {
+          return makeStreamResult('我先读取再写入', [
+            { id: 'tc_read', name: 'Read', arguments: { file_path: 'note.txt' } },
+            { id: 'tc_write', name: 'Write', arguments: { file_path: 'note.txt', content: 'x' } },
+          ])
+        }
+        return makeStreamResult('读取完成')
+      },
+    }))
+
+    writeFileSync(join(tempDir, 'note.txt'), 'hello', 'utf-8')
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's-safe',
+      prompt: '读取并覆盖 note.txt',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'safe',
+    })) {
+      messages.push(msg)
+    }
+
+    // 文件不应被覆盖
+    expect(readFileSync(join(tempDir, 'note.txt'), 'utf-8')).toBe('hello')
+
+    const toolResultMsg = messages.find((m) => m.type === 'user')
+    expect(toolResultMsg).toBeDefined()
+    const contents = JSON.stringify(toolResultMsg)
+    expect(contents).toContain('安全模式')
+  })
+
   test('streamSSE 瞬时错误会重试', async () => {
     let attempts = 0
     mock.module('@proma/core', () => ({
