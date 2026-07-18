@@ -117,7 +117,11 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   const streamingModel = streamState?.model ?? null
   const toolActivities = streamState?.toolActivities ?? []
   const chatError = chatStreamErrors.get(conversationId) ?? null
-  const _refreshVersion = refreshMap.get(conversationId) ?? 0
+  const refreshVersion = refreshMap.get(conversationId) ?? 0
+  const messageLoadTarget = React.useMemo(() => ({
+    conversationId,
+    refreshVersion,
+  }), [conversationId, refreshVersion])
 
   // ===== 对话切换时重置状态 =====
   React.useEffect(() => {
@@ -143,9 +147,10 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
 
   // ===== 加载消息 + 上下文分隔线 =====
   React.useEffect(() => {
+    const targetConversationId = messageLoadTarget.conversationId
     setMessagesLoaded(false)
     window.electronAPI
-      .getRecentMessages(conversationId, INITIAL_MESSAGE_LIMIT)
+      .getRecentMessages(targetConversationId, INITIAL_MESSAGE_LIMIT)
       .then((result) => {
         setMessages(result.messages)
         setHasMoreMessages(result.hasMore)
@@ -154,15 +159,15 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
         // 消息加载完成后，清除已完成的流式状态（streaming=false 的过渡气泡）
         // 在同一个微任务中执行，确保 React 在一次渲染中同时显示持久化消息并移除流式气泡
         setStreamingStates((prev) => {
-          const state = prev.get(conversationId)
+          const state = prev.get(targetConversationId)
           if (!state || state.streaming) return prev  // 仍在流式中，不清除
           const map = new Map(prev)
-          map.delete(conversationId)
+          map.delete(targetConversationId)
           return map
         })
       })
       .catch(console.error)
-  }, [conversationId, setStreamingStates])
+  }, [messageLoadTarget, setStreamingStates])
 
   // 从对话元数据加载分隔线
   React.useEffect(() => {

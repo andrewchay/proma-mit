@@ -22,9 +22,35 @@ permissions:
   contents: write
 
 jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 类型检查
+        run: bun run typecheck
+
+      - name: 测试
+        run: bun test
+
+      - name: Lint
+        run: bun run lint
+
   build-mac-arm64:
     name: build (macos-latest, mac, arm64, --arm64)
     runs-on: macos-latest
+    needs: quality-gate
 
     steps:
       - name: 检出代码
@@ -79,7 +105,13 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           for i in 1 2 3; do
-            npx electron-builder --mac --arm64 --publish always && break
+            if npx electron-builder --mac --arm64 --publish always; then
+              break
+            fi
+            if [ "$i" = "3" ]; then
+              echo "Attempt $i failed, no retries left."
+              exit 1
+            fi
             echo "Attempt $i failed, retrying in 10s..."
             sleep 10
           done
@@ -88,6 +120,7 @@ jobs:
   build-mac-x64:
     name: build (macos-15-intel, mac, x64, --x64)
     runs-on: macos-15-intel
+    needs: quality-gate
 
     steps:
       - name: 检出代码
@@ -142,7 +175,13 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           for i in 1 2 3; do
-            npx electron-builder --mac --x64 --publish always && break
+            if npx electron-builder --mac --x64 --publish always; then
+              break
+            fi
+            if [ "$i" = "3" ]; then
+              echo "Attempt $i failed, no retries left."
+              exit 1
+            fi
             echo "Attempt $i failed, retrying in 15s..."
             sleep 15
           done
@@ -287,6 +326,7 @@ jobs:
   build-windows-x64:
     name: build (windows-latest, win, x64, --x64)
     runs-on: windows-latest
+    needs: quality-gate
 
     steps:
       - name: 检出代码

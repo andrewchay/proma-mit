@@ -100,7 +100,7 @@ export async function extractTextFromFile(filePath: string): Promise<string> {
  * 提取 PDF 文本
  */
 async function extractPdf(filePath: string): Promise<string> {
-  const pdfParse = (await import('pdf-parse')).default
+  const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default
   const buffer = readFileSync(filePath)
   const result = await pdfParse(buffer)
   console.log(`[文档解析] PDF 提取完成: ${result.numpages} 页, ${result.text.length} 字符`)

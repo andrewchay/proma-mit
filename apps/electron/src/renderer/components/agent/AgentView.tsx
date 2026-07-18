@@ -617,7 +617,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
   // 监听消息刷新版本号
   const refreshMap = useAtomValue(agentMessageRefreshAtom)
-  const _refreshVersion = refreshMap.get(sessionId) ?? 0
+  const refreshVersion = refreshMap.get(sessionId) ?? 0
+  const messageLoadTarget = React.useMemo(() => ({
+    sessionId,
+    refreshVersion,
+  }), [sessionId, refreshVersion])
 
   // 消息是否已完成首次加载（用于 auto-send 等待）
   const [messagesLoaded, setMessagesLoaded] = React.useState(false)
@@ -625,15 +629,16 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
   // 加载当前会话消息
   React.useEffect(() => {
+    const targetSessionId = messageLoadTarget.sessionId
     // 只有切换会话时才进入 loading 态；同一会话在流式完成后的刷新要保留当前
     // persisted/live 消息，避免“助手气泡先消失、持久化消息再恢复”的空窗跳动。
-    if (loadingSessionIdRef.current !== sessionId) {
-      loadingSessionIdRef.current = sessionId
+    if (loadingSessionIdRef.current !== targetSessionId) {
+      loadingSessionIdRef.current = targetSessionId
       setPersistedSDKMessages([])
       setMessagesLoaded(false)
     }
     let cancelled = false
-    window.electronAPI.getAgentSessionSDKMessages(sessionId)
+    window.electronAPI.getAgentSessionSDKMessages(targetSessionId)
       .then((sdkMsgs) => {
         if (cancelled) return
         unstable_batchedUpdates(() => {
@@ -645,12 +650,12 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
           // 避免「实时消息已清 → 持久化消息未到」的空档闪烁
           // 注意：保留 inputTokens/contextWindow 以维持上下文用量圆环显示
           setStreamingStates((prev) => {
-            const state = prev.get(sessionId)
+            const state = prev.get(targetSessionId)
             if (!state || state.running) return prev  // 仍在运行中，不清除
             const map = new Map(prev)
             if (state.inputTokens !== undefined) {
               // 保留 usage 数据，仅清除流式展示字段
-              map.set(sessionId, {
+              map.set(targetSessionId, {
                 running: false,
                 content: '',
                 toolActivities: [],
@@ -662,24 +667,24 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
                 model: state.model,
               })
             } else {
-              map.delete(sessionId)
+              map.delete(targetSessionId)
             }
             return map
           })
           setLiveMessagesMap((prev) => {
-            if (!prev.has(sessionId)) return prev
+            if (!prev.has(targetSessionId)) return prev
             // 仍在运行中，不清除实时消息（与 streamingStates 保护逻辑一致）
-            const streamingState = store.get(agentStreamingStatesAtom).get(sessionId)
+            const streamingState = store.get(agentStreamingStatesAtom).get(targetSessionId)
             if (streamingState?.running) return prev
             const map = new Map(prev)
-            map.delete(sessionId)
+            map.delete(targetSessionId)
             return map
           })
         })
       })
       .catch(console.error)
     return () => { cancelled = true }
-  }, [sessionId, setStreamingStates, setLiveMessagesMap, store])
+  }, [messageLoadTarget, setStreamingStates, setLiveMessagesMap, store])
 
   // 从会话元数据初始化附加目录（仅冷启动水合，后续由 handleAttachFolder/handleDetachDirectory 实时写入）
   React.useEffect(() => {
