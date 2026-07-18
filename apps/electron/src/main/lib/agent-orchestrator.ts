@@ -28,12 +28,15 @@ import {
   THINKING_SIGNATURE_ERROR_CODE,
   THINKING_SIGNATURE_ERROR_MESSAGE,
   THINKING_SIGNATURE_ERROR_TITLE,
+  getAgentProviderProtocol,
+  isAgentCompatibleProvider,
   normalizeAgentRuntime,
+  resolveAgentRuntimeBaseUrl,
 } from '@proma/shared'
 import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@proma/shared'
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
-import { ProviderAgnosticAgentAdapter } from './adapters/provider-agnostic-agent-adapter'
+import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
 import { isTransientNetworkError } from './error-patterns'
 import type { AgentEventBus } from './agent-event-bus'
 import { decryptApiKey, getChannelById, listChannels } from './channel-manager'
@@ -481,24 +484,8 @@ function collectAttachedDirectories(params: {
 
 // ===== AgentOrchestrator =====
 
-/**
- * Provider-Agnostic Runtime 运行失败错误
- *
- * 携带本次追加的用户消息 UUID，供 sendMessage 截断后降级到 Claude SDK。
- */
-class ProviderAgnosticRuntimeError extends Error {
-  constructor(
-    message: string,
-    public readonly userMessageUuid: string,
-  ) {
-    super(message)
-    this.name = 'ProviderAgnosticRuntimeError'
-  }
-}
-
 export class AgentOrchestrator {
   private adapter: AgentProviderAdapter
-  private providerAgnosticAdapter: ProviderAgnosticAgentAdapter
   private eventBus: AgentEventBus
   private activeSessions = new Map<string, number>()
 
@@ -513,26 +500,13 @@ export class AgentOrchestrator {
 
   constructor(adapter: AgentProviderAdapter, eventBus: AgentEventBus) {
     this.adapter = adapter
-    this.providerAgnosticAdapter = new ProviderAgnosticAgentAdapter()
     this.eventBus = eventBus
   }
 
   /**
-   * Provider-Agnostic Runtime 实验开关
-   *
-   * 默认关闭，需显式设置环境变量 PROMA_ENABLE_AGENT_RUNTIME=1 才会启用。
-   * 阶段 1 先以白名单 + 显式开关控制，避免影响现有用户和权限模型。
-   */
-  private isProviderAgnosticRuntimeEnabled(): boolean {
-    const envFlag = process.env.PROMA_ENABLE_AGENT_RUNTIME
-    return envFlag === '1' || envFlag === 'true'
-  }
-
-  /**
-   * Provider-Agnostic Runtime 实验分支（Phase 2）
+   * Proma Provider-Agnostic Runtime 分支
    *
    * 已支持：多轮历史、错误重试/降级、多模态附件、MCP 工具、Plan 模式、权限回调。
-   * 暂不支持：子 Agent。
    */
   private async runProviderAgnosticAgent(options: {
     sessionId: string
@@ -541,6 +515,7 @@ export class AgentOrchestrator {
     userMessage: string
     modelId?: string
     provider: ProviderType
+    adapterProvider?: ProviderType
     apiKey: string
     baseUrl: string
     callbacks: SessionCallbacks
@@ -548,7 +523,7 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
     let userMessageUuid = ''
 
     try {
@@ -572,14 +547,14 @@ export class AgentOrchestrator {
         }
       }
 
-      console.log(`[Agent Runtime] 启动实验分支 — provider: ${provider}, model: ${modelId}, cwd: ${agentCwd}`)
+      console.log(`[Agent Runtime] 启动 Proma runtime — provider: ${provider}, adapter=${adapterProvider ?? provider}, model: ${modelId}, cwd: ${agentCwd}`)
 
       // 加载历史消息（阶段 2），排除最后一条当前用户消息
       const allHistory = getAgentSessionSDKMessages(sessionId)
       const historyMessages = allHistory.length > 0 ? allHistory.slice(0, -1) : []
       console.log(`[Agent Runtime] 加载历史消息：${historyMessages.length} 条`)
 
-      // 持久化初始用户消息（带 UUID，失败时可用于截断并降级到 Claude SDK）
+      // 持久化初始用户消息（带 UUID，Proma runtime 不依赖 SDK session）
       userMessageUuid = randomUUID()
       const userSDKMsg: SDKMessage = {
         type: 'user',
@@ -603,11 +578,13 @@ export class AgentOrchestrator {
         () => permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
       )
 
-      const queryOptions = {
+      const queryOptions: ProviderAgnosticAgentQueryOptions = {
         sessionId,
+        agentRuntime: 'proma',
         prompt: userMessage,
         model: modelId,
         provider,
+        adapterProvider,
         apiKey,
         baseUrl,
         cwd: agentCwd,
@@ -671,6 +648,7 @@ export class AgentOrchestrator {
         runSubAgent: async (input: SubAgentInput): Promise<string> => {
           return this.runProviderAgnosticSubAgent(sessionId, {
             provider,
+            adapterProvider,
             apiKey,
             baseUrl,
             model: modelId,
@@ -681,7 +659,7 @@ export class AgentOrchestrator {
         },
       }
 
-      const iterable = this.providerAgnosticAdapter.query(queryOptions)
+      const iterable = this.adapter.query(queryOptions)
       const accumulatedMessages: SDKMessage[] = []
 
       for await (const msg of iterable) {
@@ -705,15 +683,21 @@ export class AgentOrchestrator {
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.error('[Agent Runtime] 实验分支运行失败:', error)
+      console.error('[Agent Runtime] Proma runtime 运行失败:', error)
 
       // 用户主动中止时不走降级，直接向上抛出让外层处理
       if (message.includes('中止') || message.includes('aborted')) {
         throw error
       }
 
-      // 抛出可降级错误，由 sendMessage 截断用户消息后切到 Claude SDK
-      throw new ProviderAgnosticRuntimeError(message, userMessageUuid)
+      if (userMessageUuid) {
+        try {
+          truncateSDKMessages(sessionId, userMessageUuid)
+        } catch (truncateError) {
+          console.error('[Agent Runtime] 运行失败后截断 Proma runtime 用户消息失败:', truncateError)
+        }
+      }
+      throw error
     }
   }
 
@@ -727,6 +711,7 @@ export class AgentOrchestrator {
     parentSessionId: string,
     ctx: {
       provider: ProviderType
+      adapterProvider?: ProviderType
       apiKey: string
       baseUrl: string
       model?: string
@@ -759,6 +744,7 @@ export class AgentOrchestrator {
         prompt,
         model: input.model || ctx.model || '',
         provider: ctx.provider,
+        adapterProvider: ctx.adapterProvider,
         apiKey: ctx.apiKey,
         baseUrl: ctx.baseUrl,
         cwd: ctx.cwd,
@@ -1319,49 +1305,6 @@ export class AgentOrchestrator {
       return
     }
 
-    // 阶段 1：Provider-Agnostic Runtime 实验分支（仅 DeepSeek）
-    // 需要显式开启实验开关，默认走原有 Claude SDK 路径，避免绕过权限系统
-    const RUNTIME_PROVIDER_WHITELIST: ProviderType[] = ['deepseek']
-    if (this.isProviderAgnosticRuntimeEnabled() && RUNTIME_PROVIDER_WHITELIST.includes(channel.provider)) {
-      const runGeneration = Date.now()
-      this.activeSessions.set(sessionId, runGeneration)
-      try {
-        // DeepSeek 渠道在 Proma 中注册为 Anthropic 兼容适配器（供 Claude SDK 使用），
-        // Provider-Agnostic Runtime 需要 OpenAI 兼容协议，因此映射到 openai 适配器。
-        const runtimeProvider: ProviderType = channel.provider === 'deepseek' ? 'openai' : channel.provider
-        await this.runProviderAgnosticAgent({
-          sessionId,
-          channelId,
-          workspaceId,
-          userMessage,
-          modelId,
-          provider: runtimeProvider,
-          apiKey,
-          baseUrl: channel.baseUrl,
-          callbacks,
-          startedAt: input.startedAt,
-          permissionMode: permissionModeOverride,
-          attachments,
-        })
-        return
-      } catch (error) {
-        // 可降级错误：截断 Runtime 追加的用户消息，继续走 Claude SDK
-        if (error instanceof ProviderAgnosticRuntimeError) {
-          console.log('[Agent 编排] Provider-Agnostic Runtime 失败，降级到 Claude SDK')
-          try {
-            truncateSDKMessages(sessionId, error.userMessageUuid)
-          } catch (truncateError) {
-            console.error('[Agent 编排] 截断 Runtime 用户消息失败:', truncateError)
-          }
-          // 继续执行下方 Claude SDK 路径
-        } else {
-          throw error
-        }
-      } finally {
-        this.activeSessions.delete(sessionId)
-      }
-    }
-
     // 2.1 立即抢占会话槽位（在所有同步检查通过后、第一个 await 之前）
     // 防止 buildSdkEnv 等 await 期间并发调用绕过上方的检查，导致多条重复消息写入 JSONL
     // finally 块会通过 generation 匹配来安全清理，不影响正常流程
@@ -1370,6 +1313,140 @@ export class AgentOrchestrator {
     // 否则用本地 runGeneration 作为回退（headless 模式等无渲染进程场景）
     const streamStartedAt = input.startedAt ?? runGeneration
     this.activeSessions.set(sessionId, runGeneration)
+
+    try {
+    // 2.2 读取会话 runtime，并在进入 Claude SDK 专用路径前处理非 Claude runtime。
+    const sessionMeta = getAgentSessionMeta(sessionId)
+    let existingSdkSessionId = sessionMeta?.sdkSessionId
+
+    // 检测回退后的 resume 截断点（快照回退功能）
+    let rewindResumeAt: string | undefined
+    if (sessionMeta?.resumeAtMessageUuid) {
+      rewindResumeAt = sessionMeta.resumeAtMessageUuid
+      // 消费一次后清除
+      updateAgentSessionMeta(sessionId, { resumeAtMessageUuid: undefined })
+      console.log(`[Agent 编排] 检测到回退 resume: resumeSessionAt=${rewindResumeAt}`)
+    }
+
+    const appSettings = getSettings()
+    const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+    if (!sessionMeta?.agentRuntime || sessionMeta.agentRuntime !== effectiveAgentRuntime) {
+      try {
+        updateAgentSessionMeta(sessionId, {
+          agentRuntime: effectiveAgentRuntime,
+          ...(effectiveAgentRuntime !== 'claude' ? { sdkSessionId: undefined } : {}),
+        })
+        if (effectiveAgentRuntime !== 'claude') {
+          existingSdkSessionId = undefined
+        }
+      } catch (err) {
+        console.error('[Agent 编排] 保存 Agent runtime 失败:', err)
+      }
+    } else if (effectiveAgentRuntime !== 'claude' && existingSdkSessionId) {
+      try {
+        updateAgentSessionMeta(sessionId, { sdkSessionId: undefined })
+        existingSdkSessionId = undefined
+      } catch (err) {
+        console.error('[Agent 编排] 清除非 Claude runtime 的 SDK session_id 失败:', err)
+      }
+    }
+
+    const initialPermissionMode: PromaPermissionMode = permissionModeOverride
+      ?? PROMA_DEFAULT_PERMISSION_MODE
+    this.sessionPermissionModes.set(sessionId, initialPermissionMode)
+    console.log(`[Agent 编排] 权限模式: ${initialPermissionMode}${permissionModeOverride ? '（外部覆盖）' : ''}`)
+
+    if (initialPermissionMode === 'plan') {
+      this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } })
+    }
+
+    if (effectiveAgentRuntime !== 'claude') {
+      let runtimeAgentCwd = homedir()
+      let runtimeWorkspaceSlug: string | undefined
+      let runtimeWorkspace: import('@proma/shared').AgentWorkspace | undefined
+      if (workspaceId) {
+        const ws = getAgentWorkspace(workspaceId)
+        if (ws) {
+          runtimeAgentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
+          runtimeWorkspaceSlug = ws.slug
+          runtimeWorkspace = ws
+        }
+      }
+
+      const dynamicCtx = buildDynamicContext({
+        workspaceName: runtimeWorkspace?.name,
+        workspaceSlug: runtimeWorkspaceSlug,
+        agentCwd: runtimeAgentCwd,
+      })
+
+      let enrichedMessage = userMessage
+      const referencedSessionsBlock = buildReferencedSessionsPrompt(sessionId, mentionedSessionIds, workspaceId)
+      if (referencedSessionsBlock) {
+        enrichedMessage = `${referencedSessionsBlock}\n\n${enrichedMessage}`
+        console.log(`[Agent 编排] 注入 referenced_sessions: ${mentionedSessionIds?.length ?? 0} sessions`)
+      }
+      if (mentionedSkills?.length || mentionedMcpServers?.length) {
+        const toolLines: string[] = ['用户在消息中明确引用了以下工具，请在本次回复中主动调用：']
+        for (const slug of mentionedSkills ?? []) {
+          const qualifiedName = runtimeWorkspaceSlug
+            ? `proma-workspace-${runtimeWorkspaceSlug}:${slug}`
+            : slug
+          toolLines.push(`- Skill: ${qualifiedName}（请立即调用此 Skill）`)
+        }
+        for (const name of mentionedMcpServers ?? []) {
+          toolLines.push(`- MCP 服务器: ${name}（请使用此 MCP 服务器的工具来完成任务）`)
+        }
+        enrichedMessage = `<mentioned_tools>\n${toolLines.join('\n')}\n</mentioned_tools>\n\n${userMessage}`
+        console.log(`[Agent 编排] 注入 mentioned_tools: ${mentionedSkills?.length ?? 0} skills, ${mentionedMcpServers?.length ?? 0} MCP`)
+      }
+
+      const contextualMessage = `${dynamicCtx}\n\n${enrichedMessage}`
+
+      if (effectiveAgentRuntime === 'pi') {
+        reportPreflightError({
+          code: 'runtime_unavailable',
+          title: 'Pi Runtime 尚未接入',
+          message: 'Pi Agent runtime 的依赖、模型注册和工具桥接还未完成。请先切回 Claude runtime 或等待 Pi runtime 接入完成。',
+          actions: [
+            { key: 's', label: '打开 Agent 设置', action: 'settings' },
+          ],
+          canRetry: false,
+        })
+        return
+      }
+
+      if (!isAgentCompatibleProvider(channel.provider, 'proma')) {
+        reportPreflightError({
+          code: 'provider_error',
+          title: '当前渠道暂不支持 Proma Runtime',
+          message: `供应商 ${channel.provider} 尚未通过 Proma runtime 的 Agent 合约验证，请选择 OpenAI 兼容渠道或切回 Claude runtime。`,
+          actions: [
+            { key: 's', label: '打开渠道设置', action: 'open_channel_settings' },
+          ],
+          canRetry: false,
+        })
+        return
+      }
+
+      const protocol = getAgentProviderProtocol(channel.provider, 'proma')
+      const adapterProvider: ProviderType | undefined = protocol === 'openai-chat' ? 'openai' : undefined
+      await this.runProviderAgnosticAgent({
+        sessionId,
+        channelId,
+        workspaceId,
+        userMessage: contextualMessage,
+        modelId,
+        provider: channel.provider,
+        adapterProvider,
+        apiKey,
+        baseUrl: resolveAgentRuntimeBaseUrl(channel.provider, 'proma', channel.baseUrl),
+        callbacks,
+        startedAt: input.startedAt,
+        permissionMode: initialPermissionMode,
+        attachments,
+      })
+      return
+    }
 
     // 3. 构建环境变量
     // 同步凭证到 process.env（SDK in-process 代码可能直接读取 process.env）
@@ -1395,19 +1472,6 @@ export class AgentOrchestrator {
 
     const sdkEnv = await this.buildSdkEnv(apiKey, channel.baseUrl, channel.provider)
 
-    // 4. 读取已有的 SDK session ID（用于 resume）
-    const sessionMeta = getAgentSessionMeta(sessionId)
-    let existingSdkSessionId = sessionMeta?.sdkSessionId
-
-    // 4.1 检测回退后的 resume 截断点（快照回退功能）
-    let rewindResumeAt: string | undefined
-    if (sessionMeta?.resumeAtMessageUuid) {
-      rewindResumeAt = sessionMeta.resumeAtMessageUuid
-      // 消费一次后清除
-      updateAgentSessionMeta(sessionId, { resumeAtMessageUuid: undefined })
-      console.log(`[Agent 编排] 检测到回退 resume: resumeSessionAt=${rewindResumeAt}`)
-    }
-
     console.log(`[Agent 编排] Resume 状态: sdkSessionId=${existingSdkSessionId || '无'}, proma sessionId=${sessionId}`)
 
     // 5. 持久化用户消息（SDKMessage 格式）
@@ -1429,7 +1493,6 @@ export class AgentOrchestrator {
     let workspaceSlug: string | undefined
     let workspace: import('@proma/shared').AgentWorkspace | undefined
 
-    try {
       // 8. 动态导入 SDK
       const sdk = await import('@anthropic-ai/claude-agent-sdk')
 
@@ -1587,25 +1650,6 @@ export class AgentOrchestrator {
 
       // 12. 读取应用设置并确定权限模式
       // 权限模式只属于当前 session；新会话默认完全自动模式。
-      const appSettings = getSettings()
-      const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
-      if (!sessionMeta?.agentRuntime || sessionMeta.agentRuntime !== effectiveAgentRuntime) {
-        try {
-          updateAgentSessionMeta(sessionId, { agentRuntime: effectiveAgentRuntime })
-        } catch (err) {
-          console.error('[Agent 编排] 保存 Agent runtime 失败:', err)
-        }
-      }
-      const initialPermissionMode: PromaPermissionMode = permissionModeOverride
-        ?? PROMA_DEFAULT_PERMISSION_MODE
-      // 注册到 Map，支持运行中动态切换
-      this.sessionPermissionModes.set(sessionId, initialPermissionMode)
-      console.log(`[Agent 编排] 权限模式: ${initialPermissionMode}${permissionModeOverride ? '（外部覆盖）' : ''}`)
-
-      // 当初始模式为 plan 时，通知渲染进程展示计划模式 UI（如「Agent 正在规划」横幅）
-      if (initialPermissionMode === 'plan') {
-        this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } })
-      }
 
       /** 读取当前会话的实时权限模式（支持运行中切换） */
       const getPermissionMode = (): PromaPermissionMode =>
@@ -2440,7 +2484,6 @@ export class AgentOrchestrator {
     this.stoppedBySessions.add(sessionId)
     this.queuedMessageUuids.delete(sessionId)
     this.adapter.abort(sessionId)
-    this.providerAgnosticAdapter.abort(sessionId)
     console.log(`[Agent 编排] 已中止会话: ${sessionId}`)
   }
 
@@ -2575,7 +2618,6 @@ export class AgentOrchestrator {
     }
     // 即便 activeSessions 为空，也要调 dispose 清理可能残留的 pidMap / 子进程
     this.adapter.dispose()
-    this.providerAgnosticAdapter.dispose()
     this.activeSessions.clear()
     this.sessionPermissionModes.clear()
     this.queuedMessageUuids.clear()

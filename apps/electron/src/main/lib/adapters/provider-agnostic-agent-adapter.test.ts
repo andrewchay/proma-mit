@@ -53,41 +53,46 @@ describe('Provider-Agnostic Agent 适配器', () => {
   let tempDir: string
   let streamCallCount = 0
   let capturedRequests: CapturedRequest[] = []
+  let requestedAdapterProviders: string[] = []
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'proma-paa-adapter-test-'))
     streamCallCount = 0
     capturedRequests = []
+    requestedAdapterProviders = []
 
     // mock @proma/core，用回合制逻辑替代真实 SSE 请求
     mock.module('@proma/core', () => ({
-      getAdapter: (_provider: string): ProviderAdapter => ({
-        providerType: 'deepseek',
-        buildStreamRequest: (input): ProviderRequest => {
-          const body = JSON.parse(
-            JSON.stringify({
-              model: input.modelId,
-              system: input.systemMessage,
-              history: input.history,
-              userMessage: input.userMessage,
-              continuationMessages: input.continuationMessages,
-            }),
-          )
-          capturedRequests.push({
-            userMessage: body.userMessage,
-            historyLength: (body.history ?? []).length,
-            continuationCount: (body.continuationMessages ?? []).length,
-          })
-          return {
-            url: 'http://localhost/mock',
-            headers: { Authorization: 'Bearer mock' },
-            body: JSON.stringify(body),
-          }
-        },
-        parseSSELine: () => [],
-        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
-        parseTitleResponse: () => null,
-      }),
+      getAdapter: (provider: string): ProviderAdapter => {
+        requestedAdapterProviders.push(provider)
+        return {
+          providerType: 'deepseek',
+          buildStreamRequest: (input): ProviderRequest => {
+            const body = JSON.parse(
+              JSON.stringify({
+                model: input.modelId,
+                system: input.systemMessage,
+                history: input.history,
+                userMessage: input.userMessage,
+                continuationMessages: input.continuationMessages,
+              }),
+            )
+            capturedRequests.push({
+              userMessage: body.userMessage,
+              historyLength: (body.history ?? []).length,
+              continuationCount: (body.continuationMessages ?? []).length,
+            })
+            return {
+              url: 'http://localhost/mock',
+              headers: { Authorization: 'Bearer mock' },
+              body: JSON.stringify(body),
+            }
+          },
+          parseSSELine: () => [],
+          buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+          parseTitleResponse: () => null,
+        }
+      },
       streamSSE: async (): Promise<StreamSSEResult> => {
         streamCallCount++
         if (streamCallCount === 1) {
@@ -379,6 +384,65 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(JSON.stringify(lastToolResult)).toContain('计划模式')
   })
 
+  test('ExitPlanMode 批准后会动态切换权限模式并允许后续写工具', async () => {
+    let exitPlanCalled = false
+    mock.module('@proma/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        streamCallCount++
+        if (streamCallCount === 1) {
+          return makeStreamResult('计划如下，等待批准', [
+            { id: 'tc_exit', name: 'ExitPlanMode', arguments: { plan: '写入 approved.txt' } },
+          ])
+        }
+        if (streamCallCount === 2) {
+          return makeStreamResult('开始执行写入', [
+            { id: 'tc_write', name: 'Write', arguments: { file_path: 'approved.txt', content: 'approved' } },
+          ])
+        }
+        return makeStreamResult('写入完成')
+      },
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's-exit-plan',
+      prompt: '批准后写入 approved.txt',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'plan',
+      onExitPlanMode: async (_input, _signal) => {
+        exitPlanCalled = true
+        return { behavior: 'allow', targetMode: 'bypassPermissions' }
+      },
+    })) {
+      messages.push(msg)
+    }
+
+    expect(exitPlanCalled).toBe(true)
+    expect(streamCallCount).toBe(3)
+    expect(readFileSync(join(tempDir, 'approved.txt'), 'utf-8')).toBe('approved')
+
+    const toolResultMessages = messages.filter((m) => m.type === 'user')
+    expect(JSON.stringify(toolResultMessages)).toContain('已退出 Plan 模式')
+    expect(JSON.stringify(toolResultMessages)).toContain('文件已写入')
+  })
+
   test('AskUserQuestion 工具会调用 onAskUser 回调并返回答案', async () => {
     mock.module('@proma/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
@@ -590,6 +654,29 @@ describe('Provider-Agnostic Agent 适配器', () => {
     const toolResultMsg = messages.find((m) => m.type === 'user')
     expect(toolResultMsg).toBeDefined()
     expect(JSON.stringify(toolResultMsg)).toContain('DeepSeek 使用自动前缀缓存')
+  })
+
+  test('adapterProvider 用于选择底层适配器，同时保留真实 providerType', async () => {
+    const adapter = new ProviderAgnosticAgentAdapter()
+
+    const messages: SDKMessage[] = []
+    for await (const msg of adapter.query({
+      sessionId: 'session-adapter-provider',
+      prompt: '读取文件',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      adapterProvider: 'openai',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'bypassPermissions',
+      maxTurns: 1,
+    })) {
+      messages.push(msg)
+    }
+
+    expect(requestedAdapterProviders).toEqual(['openai'])
+    expect(messages.some((msg) => msg.type === 'assistant')).toBe(true)
   })
 })
 

@@ -207,6 +207,24 @@ export function getAgentProviderProtocol(provider: ProviderType, runtime?: Agent
 }
 
 /**
+ * 根据 Agent runtime 解析实际请求使用的 baseUrl。
+ *
+ * DeepSeek 在 Claude runtime 下使用 Anthropic-compatible `/anthropic` 端点；
+ * 在 Proma runtime 下使用 OpenAI-compatible `/chat/completions`，因此需要把
+ * 历史默认值 `https://api.deepseek.com/anthropic` 转成 `https://api.deepseek.com`。
+ */
+export function resolveAgentRuntimeBaseUrl(provider: ProviderType, runtime: AgentRuntime, baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, '')
+  if (provider === 'deepseek' && runtime === 'proma') {
+    return normalized
+      .replace(/\/anthropic\/v\d+\/messages$/, '')
+      .replace(/\/anthropic\/v\d+$/, '')
+      .replace(/\/anthropic$/, '')
+  }
+  return normalized
+}
+
+/**
  * 渠道中的模型配置
  */
 export interface ChannelModel {

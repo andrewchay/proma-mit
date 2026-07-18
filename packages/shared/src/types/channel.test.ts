@@ -4,6 +4,7 @@ import {
   getAgentCompatibleProviders,
   getAgentProviderProtocol,
   isAgentCompatibleProvider,
+  resolveAgentRuntimeBaseUrl,
 } from './channel'
 
 describe('Agent provider runtime capabilities', () => {
@@ -35,5 +36,12 @@ describe('Agent provider runtime capabilities', () => {
     expect(getAgentProviderProtocol('deepseek', 'claude')).toBe('anthropic-messages')
     expect(getAgentProviderProtocol('deepseek', 'proma')).toBe('openai-chat')
     expect(getAgentProviderProtocol('openai', 'proma')).toBe('openai-chat')
+  })
+
+  test('DeepSeek Proma runtime 会把 Anthropic 端点转换为 OpenAI-compatible 根路径', () => {
+    expect(resolveAgentRuntimeBaseUrl('deepseek', 'proma', 'https://api.deepseek.com/anthropic')).toBe('https://api.deepseek.com')
+    expect(resolveAgentRuntimeBaseUrl('deepseek', 'proma', 'https://api.deepseek.com/anthropic/v1')).toBe('https://api.deepseek.com')
+    expect(resolveAgentRuntimeBaseUrl('deepseek', 'claude', 'https://api.deepseek.com/anthropic')).toBe('https://api.deepseek.com/anthropic')
+    expect(resolveAgentRuntimeBaseUrl('openai', 'proma', 'https://api.openai.com/v1/')).toBe('https://api.openai.com/v1')
   })
 })

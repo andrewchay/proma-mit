@@ -344,6 +344,7 @@ export type ErrorCode =
   | 'channel_not_found'
   | 'api_key_decrypt_failed'
   | 'claude_binary_not_found'
+  | 'runtime_unavailable'
   | 'session_busy'
   | 'unknown_error'
 

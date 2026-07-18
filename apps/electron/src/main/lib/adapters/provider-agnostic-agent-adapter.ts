@@ -59,6 +59,8 @@ export type CanUseToolCallback = (
 
 /** Provider-Agnostic 查询选项（扩展通用输入） */
 export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
+  /** 实际选择底层 ProviderAdapter 的供应商；DeepSeek 在 Proma runtime 下使用 OpenAI adapter */
+  adapterProvider?: import('@proma/shared').ProviderType
   /** 最大工具调用轮次 */
   maxTurns?: number
   /** 系统提示词 */
@@ -96,6 +98,7 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
 /** 活跃会话状态 */
 interface ActiveSession {
   controller: AbortController
+  permissionMode: PromaPermissionMode
 }
 
 export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
@@ -108,6 +111,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       prompt,
       model,
       provider,
+      adapterProvider,
       apiKey,
       baseUrl,
       cwd,
@@ -128,12 +132,16 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
 
-    const adapter = getAdapter(provider)
+    const adapter = getAdapter(adapterProvider ?? provider)
     const controller = new AbortController()
     if (abortSignal) {
       abortSignal.addEventListener('abort', () => controller.abort(), { once: true })
     }
-    this.activeSessions.set(sessionId, { controller })
+    const activeSession: ActiveSession = {
+      controller,
+      permissionMode: input.permissionMode ?? 'auto',
+    }
+    this.activeSessions.set(sessionId, activeSession)
 
     // 加载 MCP 工具（优先使用跨会话缓存，减少重复连接）
     let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
@@ -155,8 +163,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
 
     // Plan 模式状态
-    let currentPermissionMode: PromaPermissionMode = input.permissionMode ?? 'auto'
-    let planModeEntered = currentPermissionMode === 'plan'
+    let planModeEntered = activeSession.permissionMode === 'plan'
 
     // 累积本轮所有消息（用于持久化和事件流）
     const runtimeMessages: RuntimeMessage[] = []
@@ -315,7 +322,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           cwd,
           sessionId,
           abortSignal: controller.signal,
-          permissionMode: currentPermissionMode,
+          permissionMode: activeSession.permissionMode,
           planModeEntered,
           canUseTool: input.canUseTool,
           onEnterPlanMode: () => {
@@ -327,7 +334,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           runSubAgent,
           mcpManager,
           setPermissionMode: (mode) => {
-            currentPermissionMode = mode
+            activeSession.permissionMode = mode
             planModeEntered = false
           },
         })
@@ -400,6 +407,15 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     if (session) {
       session.controller.abort()
       this.activeSessions.delete(sessionId)
+    }
+  }
+
+  /** 动态切换活跃查询的权限模式 */
+  async setPermissionMode(sessionId: string, mode: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId)
+    if (!session) return
+    if (mode === 'safe' || mode === 'auto' || mode === 'plan' || mode === 'bypassPermissions') {
+      session.permissionMode = mode
     }
   }
 
