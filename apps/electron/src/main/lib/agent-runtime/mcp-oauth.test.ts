@@ -65,11 +65,11 @@ describe('MCP OAuth Provider', () => {
       auth: { type: 'oauthClientCredentials', clientId: 'id', clientSecret: 'secret', scope: 'read' },
     })
 
-    expect(provider.clientMetadata.client_name).toBe('Proma')
+    expect(provider.clientMetadata.client_name).toBe('proma-mit')
     expect(provider.clientMetadata.grant_types).toEqual(['client_credentials'])
     expect(provider.clientMetadata.token_endpoint_auth_method).toBe('client_secret_basic')
     expect(provider.clientInformation()).toEqual({ client_id: 'id', client_secret: 'secret' })
-    expect(String(provider.redirectUrl)).toContain('proma://mcp-auth')
+    expect(String(provider.redirectUrl)).toContain('proma-mit://mcp-auth')
     expect(String(provider.redirectUrl)).toContain('workspace=ws')
     expect(String(provider.redirectUrl)).toContain('server=srv')
   })

@@ -1,39 +1,40 @@
 /**
  * 配置路径工具
  *
- * 管理 Proma 应用的本地配置文件路径。
- * 所有用户配置存储在 ~/.proma/ 目录下。
+ * 管理 Proma MIT 应用的本地配置文件路径。
+ * 所有用户配置存储在 ~/.proma-mit/ 目录下。
  */
 
 import { join, basename } from 'node:path'
 import { mkdirSync, existsSync, cpSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { APP_CONFIG_DIR_NAME, APP_DEV_CONFIG_DIR_NAME } from './app-identity'
 
 /**
  * 获取配置目录名称
  *
- * 开发模式下返回 '.proma-dev'，正式版本返回 '.proma'。
+ * 开发模式下返回 '.proma-mit-dev'，正式版本返回 '.proma-mit'。
  *
  * 检测优先级：
  * 1. PROMA_DEV=1 环境变量（显式覆盖）
  * 2. Electron app.isPackaged（未打包 = 开发模式）
- * 3. 兜底 '.proma'
+ * 3. 兜底 '.proma-mit'
  */
 let _configDirName: string | undefined
 
 export function getConfigDirName(): string {
   if (_configDirName === undefined) {
     if (process.env.PROMA_DEV === '1') {
-      _configDirName = '.proma-dev'
+      _configDirName = APP_DEV_CONFIG_DIR_NAME
     } else {
       try {
         const { app } = require('electron')
-        _configDirName = app.isPackaged ? '.proma' : '.proma-dev'
+        _configDirName = app.isPackaged ? APP_CONFIG_DIR_NAME : APP_DEV_CONFIG_DIR_NAME
       } catch {
-        _configDirName = '.proma'
+        _configDirName = APP_CONFIG_DIR_NAME
       }
     }
-    const mode = _configDirName === '.proma-dev' ? '开发模式' : '正式版本'
+    const mode = _configDirName === APP_DEV_CONFIG_DIR_NAME ? '开发模式' : '正式版本'
     console.log(`[配置] 配置目录: ~/${_configDirName}/（${mode}）`)
   }
   return _configDirName
@@ -42,7 +43,7 @@ export function getConfigDirName(): string {
 /**
  * 获取配置目录路径
  *
- * 开发模式返回 ~/.proma-dev/，正式版本返回 ~/.proma/。
+ * 开发模式返回 ~/.proma-mit-dev/，正式版本返回 ~/.proma-mit/。
  * 如果目录不存在则自动创建。
  */
 export function getConfigDir(): string {

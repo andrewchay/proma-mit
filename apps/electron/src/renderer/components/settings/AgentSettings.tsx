@@ -198,7 +198,7 @@ export function AgentSettings(): React.ReactElement {
     )
   }
 
-  const configDirName = import.meta.env.DEV ? '.proma-dev' : '.proma'
+  const configDirName = import.meta.env.DEV ? '.proma-mit-dev' : '.proma-mit'
 
   const buildMcpPrompt = (): string => {
     const configPath = `~/${configDirName}/agent-workspaces/${workspaceSlug}/mcp.json`

@@ -28,7 +28,7 @@ describe('文档解析服务', () => {
   })
 
   test('extractTextFromAttachment 支持相对路径', async () => {
-    // 模拟 Chat 附件相对路径：需要在 ~/.proma/attachments/ 下
+    // 模拟 Chat 附件相对路径：需要在配置目录 attachments/ 下
     const configDir = getConfigDir()
     const conversationId = `test-conv-${Date.now()}`
     const attachmentDir = join(configDir, 'attachments', conversationId)
@@ -42,7 +42,7 @@ describe('文档解析服务', () => {
     rmSync(attachmentDir, { recursive: true, force: true })
   })
 
-  test('extractTextFromAttachment 支持 ~/.proma/ 下的绝对路径', async () => {
+  test('extractTextFromAttachment 支持配置目录下的绝对路径', async () => {
     const configDir = getConfigDir()
     const agentDir = join(configDir, 'agent-workspaces', 'test-ws', `test-session-${Date.now()}`)
     mkdirSync(agentDir, { recursive: true })
@@ -55,7 +55,7 @@ describe('文档解析服务', () => {
     rmSync(agentDir, { recursive: true, force: true })
   })
 
-  test('extractTextFromAttachment 拒绝 ~/.proma/ 外的绝对路径', async () => {
+  test('extractTextFromAttachment 拒绝配置目录外的绝对路径', async () => {
     const filePath = join(tempDir, 'note.txt')
     writeFileSync(filePath, '越界内容', 'utf-8')
 

@@ -502,10 +502,10 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
                     label="Redirect URI"
                     value={oauthRedirectUri}
                     onChange={setOauthRedirectUri}
-                    placeholder={`默认: proma://mcp-auth?workspace=${workspaceSlug}&server=${name}`}
+                    placeholder={`默认: proma-mit://mcp-auth?workspace=${workspaceSlug}&server=${name}`}
                   />
                   <div className="text-xs text-muted-foreground">
-                    授权码模式会打开系统浏览器完成授权，回调地址建议使用 proma://mcp-auth
+                    授权码模式会打开系统浏览器完成授权，回调地址建议使用 proma-mit://mcp-auth
                   </div>
                 </div>
               )}

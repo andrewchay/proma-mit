@@ -5,7 +5,7 @@
  * 支持 authorization_code 与 client_credentials 两种 grant type。
  *
  * - token 通过 mcp-oauth-store 加密持久化。
- * - authorization_code 模式会调用系统浏览器打开授权页，并通过 proma://mcp-auth
+ * - authorization_code 模式会调用系统浏览器打开授权页，并通过 proma-mit://mcp-auth
  *   DeepLink 回调完成授权码交换。
  * - client_credentials 模式无用户交互，直接换取 access token。
  *
@@ -21,6 +21,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 import type { McpServerAuthConfig } from '@proma/shared'
 import { loadMcpOAuthTokens, saveMcpOAuthTokens, type McpOAuthTokens } from './mcp-oauth-store'
+import { APP_DEEP_LINK_PROTOCOL, APP_DISPLAY_NAME } from '../app-identity'
 
 export interface McpOAuthProviderOptions {
   workspaceSlug: string
@@ -40,8 +41,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   get redirectUrl(): string | URL | undefined {
-    // 使用 proma 自定义协议回调，URL 中携带 workspace/server 便于主进程路由
-    return `proma://mcp-auth?workspace=${encodeURIComponent(this.options.workspaceSlug)}&server=${encodeURIComponent(this.options.serverName)}`
+    // 使用应用专属自定义协议回调，URL 中携带 workspace/server 便于主进程路由
+    return `${APP_DEEP_LINK_PROTOCOL}://mcp-auth?workspace=${encodeURIComponent(this.options.workspaceSlug)}&server=${encodeURIComponent(this.options.serverName)}`
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -49,7 +50,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       redirect_uris: [String(this.redirectUrl)],
       grant_types: this.grantTypes(),
       token_endpoint_auth_method: this.options.auth.clientSecret ? 'client_secret_basic' : 'none',
-      client_name: 'Proma',
+      client_name: APP_DISPLAY_NAME,
       scope: this.options.auth.scope,
     }
   }

@@ -133,8 +133,8 @@ async function extractOffice(filePath: string): Promise<string> {
  * 安全解析附件路径
  *
  * 支持两种格式：
- * 1. 相对路径 {conversationId}/{uuid}.ext → ~/.proma/attachments/
- * 2. 绝对路径（Agent 工作区附件）→ 需在 ~/.proma/ 目录下
+ * 1. 相对路径 {conversationId}/{uuid}.ext → ~/.proma-mit/attachments/
+ * 2. 绝对路径（Agent 工作区附件）→ 需在 ~/.proma-mit/ 目录下
  */
 function resolveAttachmentPathSafe(localPath: string): string {
   if (isAbsolute(localPath)) {
@@ -153,7 +153,7 @@ function resolveAttachmentPathSafe(localPath: string): string {
  *
  * 将附件的 localPath（相对或绝对）解析为完整路径后提取文本。
  *
- * @param localPath 附件相对路径或 ~/.proma/ 下的绝对路径
+ * @param localPath 附件相对路径或 ~/.proma-mit/ 下的绝对路径
  * @returns 提取的纯文本内容
  */
 export async function extractTextFromAttachment(localPath: string): Promise<string> {

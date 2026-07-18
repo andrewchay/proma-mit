@@ -9,7 +9,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
-// 使用临时 HOME 目录，避免测试污染开发者本机的 ~/.proma-dev
+// 使用临时 HOME 目录，避免测试污染开发者本机的 ~/.proma-mit-dev
 // Bun 的 os.homedir() 不读取 process.env.HOME，因此通过 mock.module 覆盖
 const originalHomedir = homedir()
 const tempHomeDir = mkdtempSync(join(tmpdir(), 'proma-agent-session-test-'))

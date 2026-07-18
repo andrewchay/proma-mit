@@ -2,11 +2,19 @@ import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell 
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { AGENT_IPC_CHANNELS } from '@proma/shared'
+import {
+  APP_DEEP_LINK_PROTOCOL,
+  APP_DEV_USER_DATA_DIR_NAME,
+  APP_DISPLAY_NAME,
+  APP_PROCESS_NAME,
+} from './lib/app-identity'
+
+app.setName(APP_DISPLAY_NAME)
 
 // Dev 与正式版使用独立的 userData 目录，避免共享 Chromium SingletonLock 导致 dev 启动被静默退出
 // 必须在任何会读取 userData 路径的模块加载之前执行
 if (!app.isPackaged) {
-  app.setPath('userData', join(app.getPath('appData'), '@proma/electron-dev'))
+  app.setPath('userData', join(app.getPath('appData'), APP_DEV_USER_DATA_DIR_NAME))
 }
 
 // 单实例锁：防止重复启动同一个版本（dev/prod 因 userData 已隔离，互不影响）
@@ -18,8 +26,8 @@ if (!app.isPackaged) {
 // second-instance 事件，由主实例负责显示窗口。
 if (!app.requestSingleInstanceLock()) {
   console.warn(
-    '[启动] 已有 Proma 进程持有单实例锁，本次启动将退出。\n' +
-      '  如果窗口未出现，可能旧进程已卡死。请运行 `killall Proma` 后重试。',
+    `[启动] 已有 ${APP_DISPLAY_NAME} 进程持有单实例锁，本次启动将退出。\n` +
+      `  如果窗口未出现，可能旧进程已卡死。请运行 \`killall ${APP_PROCESS_NAME}\` 后重试。`,
   )
   app.quit()
 } else {
@@ -32,7 +40,7 @@ function registerProtocolsAndHandlers(): void {
   // 用于内联预览本地文件（renderer 用 iframe 加载 proma-file:// 资源）
   protocol.registerSchemesAsPrivileged([
     { scheme: 'proma-file', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
-    { scheme: 'proma', privileges: { standard: true, secure: true } },
+    { scheme: APP_DEEP_LINK_PROTOCOL, privileges: { standard: true, secure: true } },
   ])
 
   // Windows: 禁用 LCD 次像素抗锯齿（ClearType），改用灰度 AA。
@@ -54,7 +62,7 @@ function registerProtocolsAndHandlers(): void {
     if (fileArg) {
       handleMigrationFileOpen(fileArg)
     }
-    const mcpAuthArg = argv.find((arg) => arg.startsWith('proma://mcp-auth'))
+    const mcpAuthArg = argv.find((arg) => arg.startsWith(`${APP_DEEP_LINK_PROTOCOL}://mcp-auth`))
     if (mcpAuthArg) {
       handleMcpOAuthCallback(mcpAuthArg)
     }
@@ -62,7 +70,7 @@ function registerProtocolsAndHandlers(): void {
 
   // macOS DeepLink 回调
   app.on('open-url', (event, url) => {
-    if (url.startsWith('proma://mcp-auth')) {
+    if (url.startsWith(`${APP_DEEP_LINK_PROTOCOL}://mcp-auth`)) {
       event.preventDefault()
       handleMcpOAuthCallback(url)
     }
@@ -133,7 +141,7 @@ function handleMigrationFileOpen(filePath: string): void {
   }
 }
 
-/** 处理 MCP OAuth 授权码回调（proma://mcp-auth?workspace=&server=&code=） */
+/** 处理 MCP OAuth 授权码回调（proma-mit://mcp-auth?workspace=&server=&code=） */
 async function handleMcpOAuthCallback(callbackUrl: string): Promise<void> {
   try {
     const url = new URL(callbackUrl)
@@ -321,6 +329,7 @@ function createWindow(): void {
 
   mainWindow = new BrowserWindow({
     ...initialBounds,
+    title: APP_DISPLAY_NAME,
     minWidth: 800,
     minHeight: 600,
     icon: iconExists ? iconPath : undefined,
@@ -435,18 +444,18 @@ async function bootstrap(): Promise<void> {
   // 协议只接受主进程签发的 opaque token，不解析 renderer 提供的绝对路径。
   protocol.handle('proma-file', handlePromaFileRequest)
 
-  // 注册 proma:// DeepLink 协议，用于 MCP OAuth 回调
+  // 注册 proma-mit:// DeepLink 协议，用于 MCP OAuth 回调
   if (!app.isPackaged) {
-    app.setAsDefaultProtocolClient('proma', process.execPath, [process.argv[1] ?? '.'])
+    app.setAsDefaultProtocolClient(APP_DEEP_LINK_PROTOCOL, process.execPath, [process.argv[1] ?? '.'])
   } else {
-    app.setAsDefaultProtocolClient('proma')
+    app.setAsDefaultProtocolClient(APP_DEEP_LINK_PROTOCOL)
   }
 
   // 初始化运行时环境（Shell 环境 + Bun + Git 检测）
   // 必须在其他初始化之前执行，确保环境变量正确加载
   await safeAwait('initializeRuntime', () => initializeRuntime())
 
-  // 同步默认 Skills 模板到 ~/.proma/default-skills/
+  // 同步默认 Skills 模板到 ~/.proma-mit/default-skills/
   safeRun('seedDefaultSkills', seedDefaultSkills)
 
   // 升级所有工作区中版本过旧的默认 Skills
@@ -569,13 +578,13 @@ function handleBootstrapFailure(err: unknown): void {
   try {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err)
     dialog.showErrorBox(
-      'Proma 启动遇到错误',
+      `${APP_DISPLAY_NAME} 启动遇到错误`,
       `部分功能可能不可用：\n\n${message}\n\n` +
         `日志位置：${app.getPath('logs')}\n\n` +
         `常见原因与排查：\n` +
-        `1. 旧版 Proma 进程未退出（终端运行 killall Proma 后重试）\n` +
-        `2. ~/.proma/ 配置损坏（重命名 ~/.proma 后重启）\n` +
-        `3. 系统 Keychain 无法解密保存的凭证（删除 ~/.proma/feishu.json 等后重新登录）\n\n` +
+        `1. 旧版 ${APP_DISPLAY_NAME} 进程未退出（终端运行 killall ${APP_PROCESS_NAME} 后重试）\n` +
+        `2. ~/.proma-mit/ 配置损坏（重命名 ~/.proma-mit 后重启）\n` +
+        `3. 系统 Keychain 无法解密保存的凭证（删除 ~/.proma-mit/feishu.json 等后重新登录）\n\n` +
         `如需协助请到 GitHub Issues 反馈。`,
     )
   } catch {
