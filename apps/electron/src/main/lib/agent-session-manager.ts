@@ -37,7 +37,9 @@ import type {
   AgentMessageSearchResult,
   AgentSessionReferenceSearchInput,
   AgentSessionReferenceSearchResult,
+  AgentRuntime,
 } from '@proma/shared'
+import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@proma/shared'
 import { getConversationMessages } from './conversation-manager'
 import { clearNanoBananaAgentHistory } from './chat-tools/nano-banana-mcp'
 
@@ -54,13 +56,25 @@ interface AgentSessionsIndex {
 /** 当前索引版本 */
 const INDEX_VERSION = 1
 
+function normalizeSessionMeta(meta: AgentSessionMeta): AgentSessionMeta {
+  return {
+    ...meta,
+    agentRuntime: normalizeAgentRuntime(meta.agentRuntime),
+  }
+}
+
 /**
  * 读取会话索引文件
  */
 function readIndex(): AgentSessionsIndex {
   const indexPath = getAgentSessionsIndexPath()
   const data = readJsonFileSafe<AgentSessionsIndex>(indexPath)
-  if (data) return data
+  if (data) {
+    return {
+      ...data,
+      sessions: data.sessions.map(normalizeSessionMeta),
+    }
+  }
   return { version: INDEX_VERSION, sessions: [] }
 }
 
@@ -101,6 +115,7 @@ export function createAgentSession(
   title?: string,
   channelId?: string,
   workspaceId?: string,
+  agentRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME,
 ): AgentSessionMeta {
   const index = readIndex()
   const now = Date.now()
@@ -109,6 +124,7 @@ export function createAgentSession(
     id: randomUUID(),
     title: title || '新 Agent 会话',
     channelId,
+    agentRuntime,
     workspaceId,
     createdAt: now,
     updatedAt: now,
@@ -381,7 +397,7 @@ function convertLegacyMessage(legacy: AgentMessage): SDKMessage {
  */
 export function updateAgentSessionMeta(
   id: string,
-  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'sdkSessionId' | 'workspaceId' | 'pinned' | 'archived' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'permissionMode'>>,
+  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'agentRuntime' | 'sdkSessionId' | 'workspaceId' | 'pinned' | 'archived' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'permissionMode'>>,
 ): AgentSessionMeta {
   const index = readIndex()
   const idx = index.sessions.findIndex((s) => s.id === id)
@@ -397,6 +413,7 @@ export function updateAgentSessionMeta(
   const updated: AgentSessionMeta = {
     ...existing,
     ...updates,
+    ...(updates.agentRuntime !== undefined ? { agentRuntime: normalizeAgentRuntime(updates.agentRuntime) } : {}),
     ...(autoUnarchive ? { archived: false } : {}),
     updatedAt: Date.now(),
   }
@@ -649,6 +666,7 @@ async function forkProviderAgnosticAgentSession(input: ForkSessionInput): Promis
     `${sourceMeta.title} (fork)`,
     sourceMeta.channelId,
     sourceMeta.workspaceId,
+    sourceMeta.agentRuntime,
   )
   const destDir = getAgentSessionWorkspacePath(ws.slug, newMeta.id)
 
@@ -798,6 +816,7 @@ export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSe
     forkTitle,
     sourceMeta.channelId,
     sourceMeta.workspaceId,
+    sourceMeta.agentRuntime,
   )
 
   updateAgentSessionMeta(newMeta.id, {

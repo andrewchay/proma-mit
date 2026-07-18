@@ -528,6 +528,78 @@ export type AgentStreamPayload =
   | { kind: 'sdk_message'; message: SDKMessage }
   | { kind: 'proma_event'; event: PromaEvent }
 
+// ===== Agent Runtime =====
+
+/** Agent 运行时类型 */
+export type AgentRuntime = 'claude' | 'proma' | 'pi'
+
+/** 默认 Agent 运行时，旧会话和旧设置统一按 Claude SDK 路径处理 */
+export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'claude'
+
+/** Agent 运行时能力摘要，用于 UI 和编排层显式区分 runtime 语义 */
+export interface AgentRuntimeCapabilities {
+  /** 是否支持工具调用 */
+  supportsTools: boolean
+  /** 是否支持用户配置的 MCP 工具 */
+  supportsMcp: boolean
+  /** 是否支持 Plan 模式 */
+  supportsPlanMode: boolean
+  /** 是否支持 AskUser 交互 */
+  supportsAskUser: boolean
+  /** 是否支持子 Agent / Agent 工具 */
+  supportsSubAgent: boolean
+  /** 是否支持 runtime 原生 resume */
+  supportsNativeResume: boolean
+  /** 是否支持文件快照级 rewind */
+  supportsFileSnapshotRewind: boolean
+  /** 是否支持模型输出的 partial streaming */
+  supportsPartialStreaming: boolean
+}
+
+/** 当前内置 runtime 的能力基线 */
+export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabilities> = {
+  claude: {
+    supportsTools: true,
+    supportsMcp: true,
+    supportsPlanMode: true,
+    supportsAskUser: true,
+    supportsSubAgent: true,
+    supportsNativeResume: true,
+    supportsFileSnapshotRewind: true,
+    supportsPartialStreaming: true,
+  },
+  proma: {
+    supportsTools: true,
+    supportsMcp: true,
+    supportsPlanMode: true,
+    supportsAskUser: true,
+    supportsSubAgent: true,
+    supportsNativeResume: false,
+    supportsFileSnapshotRewind: false,
+    supportsPartialStreaming: false,
+  },
+  pi: {
+    supportsTools: true,
+    supportsMcp: false,
+    supportsPlanMode: false,
+    supportsAskUser: false,
+    supportsSubAgent: false,
+    supportsNativeResume: false,
+    supportsFileSnapshotRewind: false,
+    supportsPartialStreaming: true,
+  },
+}
+
+/** 判断未知值是否为合法 Agent runtime */
+export function isAgentRuntime(value: unknown): value is AgentRuntime {
+  return value === 'claude' || value === 'proma' || value === 'pi'
+}
+
+/** 归一化 runtime，旧数据或非法值回退到 Claude SDK 路径 */
+export function normalizeAgentRuntime(value: unknown): AgentRuntime {
+  return isAgentRuntime(value) ? value : DEFAULT_AGENT_RUNTIME
+}
+
 // ===== Agent 会话管理 =====
 
 /**
@@ -543,6 +615,8 @@ export interface AgentSessionMeta {
   title: string
   /** 使用的渠道 ID */
   channelId?: string
+  /** 本会话使用的 Agent runtime */
+  agentRuntime?: AgentRuntime
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
   /** 所属工作区 ID */
@@ -817,6 +891,8 @@ export interface AgentSendInput {
   channelId: string
   /** 模型 ID */
   modelId?: string
+  /** 本次发送使用的 Agent runtime，未传时继承会话或默认 Claude */
+  agentRuntime?: AgentRuntime
   /** 工作区 ID（用于确定 cwd） */
   workspaceId?: string
   /** 附加的外部目录（绝对路径，传递给 SDK additionalDirectories） */

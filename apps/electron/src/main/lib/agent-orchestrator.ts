@@ -28,6 +28,7 @@ import {
   THINKING_SIGNATURE_ERROR_CODE,
   THINKING_SIGNATURE_ERROR_MESSAGE,
   THINKING_SIGNATURE_ERROR_TITLE,
+  normalizeAgentRuntime,
 } from '@proma/shared'
 import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@proma/shared'
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
@@ -1222,7 +1223,7 @@ export class AgentOrchestrator {
    * 通过 EventBus 分发 AgentEvent，通过 callbacks 发送控制信号。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks): Promise<void> {
-    const { sessionId, userMessage, channelId, modelId, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments } = input
+    const { sessionId, userMessage, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护
@@ -1587,6 +1588,14 @@ export class AgentOrchestrator {
       // 12. 读取应用设置并确定权限模式
       // 权限模式只属于当前 session；新会话默认完全自动模式。
       const appSettings = getSettings()
+      const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+      if (!sessionMeta?.agentRuntime || sessionMeta.agentRuntime !== effectiveAgentRuntime) {
+        try {
+          updateAgentSessionMeta(sessionId, { agentRuntime: effectiveAgentRuntime })
+        } catch (err) {
+          console.error('[Agent 编排] 保存 Agent runtime 失败:', err)
+        }
+      }
       const initialPermissionMode: PromaPermissionMode = permissionModeOverride
         ?? PROMA_DEFAULT_PERMISSION_MODE
       // 注册到 Map，支持运行中动态切换
@@ -1788,6 +1797,9 @@ export class AgentOrchestrator {
         sessionId,
         prompt: finalPrompt,
         model: modelId || DEFAULT_MODEL_ID,
+        // 当前代码块仍是 Claude SDK 专用 queryOptions。runtime 元数据已在上方保存；
+        // 后续阶段会把 proma/pi 的 options 构造拆到各自分支后再按 effectiveAgentRuntime 路由。
+        agentRuntime: 'claude',
         cwd: agentCwd,
         sdkCliPath: cliPath,
         env: sdkEnv,

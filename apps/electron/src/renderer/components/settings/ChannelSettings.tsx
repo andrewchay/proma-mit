@@ -147,7 +147,7 @@ export function ChannelSettings(): React.ReactElement {
       const savedChannel = await window.electronAPI.updateChannel(channel.id, { enabled: !channel.enabled })
       await syncAgentChannelEligibility(
         savedChannel,
-        savedChannel.enabled && isAgentCompatibleProvider(savedChannel.provider),
+        savedChannel.enabled && isAgentCompatibleProvider(savedChannel.provider, 'claude'),
       )
 
       await loadChannels()
@@ -204,9 +204,9 @@ export function ChannelSettings(): React.ReactElement {
     )
   }
 
-  // Agent 兼容渠道（已启用）：Anthropic / DeepSeek / Kimi API / Kimi Coding Plan / MiniMax
+  // Claude runtime 兼容渠道（已启用）：Anthropic / DeepSeek / Kimi API / Kimi Coding Plan / MiniMax
   const agentCapableChannels = channels.filter(
-    (c) => isAgentCompatibleProvider(c.provider) && c.enabled
+    (c) => isAgentCompatibleProvider(c.provider, 'claude') && c.enabled
   )
 
   // 列表视图
@@ -315,7 +315,7 @@ function ChannelRow({ channel, onEdit, onDelete, onToggle }: ChannelRowProps): R
   const description = [
     PROVIDER_LABELS[channel.provider],
     enabledCount > 0 ? `${enabledCount} 个模型已启用` : undefined,
-    isAgentCompatibleProvider(channel.provider) ? '可用于 Agent' : undefined,
+    isAgentCompatibleProvider(channel.provider, 'claude') ? '可用于 Agent' : undefined,
   ]
     .filter(Boolean)
     .join(' · ')

@@ -135,7 +135,7 @@ function buildPreviewUrl(baseUrl: string, provider: ProviderType): string {
 const AUTO_SAVE_DELAY = 600
 
 function isAgentEligibleChannel(channel: Pick<Channel, 'provider' | 'enabled'>): boolean {
-  return channel.enabled && isAgentCompatibleProvider(channel.provider)
+  return channel.enabled && isAgentCompatibleProvider(channel.provider, 'claude')
 }
 
 export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCancel }: ChannelFormProps): React.ReactElement {

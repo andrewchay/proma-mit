@@ -6,7 +6,7 @@
  * 未来可扩展：PiAgentAdapter 等。
  */
 
-import type { SDKMessage } from './agent'
+import type { AgentRuntime, SDKMessage } from './agent'
 import type { FileAttachment } from './chat'
 
 /** SDK 用户消息（队列消息注入用，匹配 SDK SDKUserMessage 结构） */
@@ -32,6 +32,8 @@ export interface AgentQueryInput {
   prompt: string
   /** 模型 ID */
   model?: string
+  /** Agent 运行时 */
+  agentRuntime?: AgentRuntime
   /** Agent 工作目录 */
   cwd?: string
   /** 中止信号 */

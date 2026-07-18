@@ -32,6 +32,7 @@ const {
   getAgentSessionSDKMessages,
   getAgentSessionMeta,
   rewindProviderAgnosticSession,
+  updateAgentSessionMeta,
 } = await import('./agent-session-manager')
 const { getConfigDir, getAgentSessionWorkspacePath, getAgentWorkspacePath } = await import('./config-paths')
 const { createAgentWorkspace } = await import('./agent-workspace-manager')
@@ -67,8 +68,25 @@ describe('Agent 会话管理器', () => {
     }))
   })
 
+  test('新会话默认使用 Claude runtime，也可以显式指定 Proma runtime', () => {
+    const defaultSession = createAgentSession('default runtime', undefined, testWorkspaceId)
+    const promaSession = createAgentSession('proma runtime', undefined, testWorkspaceId, 'proma')
+
+    expect(defaultSession.agentRuntime).toBe('claude')
+    expect(getAgentSessionMeta(defaultSession.id)?.agentRuntime).toBe('claude')
+    expect(promaSession.agentRuntime).toBe('proma')
+    expect(getAgentSessionMeta(promaSession.id)?.agentRuntime).toBe('proma')
+  })
+
+  test('更新会话 runtime 时会归一化非法值', () => {
+    const session = createAgentSession('runtime update', undefined, testWorkspaceId, 'pi')
+
+    expect(updateAgentSessionMeta(session.id, { agentRuntime: 'proma' }).agentRuntime).toBe('proma')
+    expect(updateAgentSessionMeta(session.id, { agentRuntime: 'invalid' as never }).agentRuntime).toBe('claude')
+  })
+
   test('fork Provider-Agnostic 会话：复制工作区文件与 JSONL 历史', async () => {
-    const sourceSession = createAgentSession('source', undefined, testWorkspaceId)
+    const sourceSession = createAgentSession('source', undefined, testWorkspaceId, 'proma')
     const sourceDir = getAgentSessionWorkspacePath(testWorkspaceSlug, sourceSession.id)
     testDirs.push(sourceDir)
     mkdirSync(sourceDir, { recursive: true })
@@ -79,6 +97,7 @@ describe('Agent 会话管理器', () => {
     testDirs.push(destDir)
 
     expect(newFork.title).toContain('fork')
+    expect(newFork.agentRuntime).toBe('proma')
     expect(existsSync(join(destDir, 'note.txt'))).toBe(true)
     expect(getAgentSessionMeta(newFork.id)).toBeDefined()
   })
