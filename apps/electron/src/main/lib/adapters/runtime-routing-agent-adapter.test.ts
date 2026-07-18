@@ -107,6 +107,19 @@ describe('RuntimeRoutingAgentAdapter', () => {
     expect(adapters.pi.calls).toHaveLength(0)
   })
 
+  test('Pi runtime 会路由到 Pi adapter', async () => {
+    const adapters = createAdapters()
+    const router = new RuntimeRoutingAgentAdapter(adapters)
+
+    for await (const _message of router.query({ sessionId: 's-pi', prompt: 'hi', agentRuntime: 'pi' })) {
+      // 消费异步迭代，触发 query 记录。
+    }
+
+    expect(adapters.pi.calls).toEqual([{ method: 'query', sessionId: 's-pi', value: 'pi' }])
+    expect(adapters.claude.calls).toHaveLength(0)
+    expect(adapters.proma.calls).toHaveLength(0)
+  })
+
   test('未知会话 abort 会广播到所有 runtime adapter', () => {
     const adapters = createAdapters()
     const router = new RuntimeRoutingAgentAdapter(adapters)

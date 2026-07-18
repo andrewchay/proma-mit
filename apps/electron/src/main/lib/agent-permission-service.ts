@@ -137,6 +137,13 @@ export class AgentPermissionService {
         return allow()
       }
 
+      const currentMode = typeof mode === 'function' ? mode() : mode
+
+      // safe 模式：非只读操作直接拒绝，不向用户弹审批，也不沿用历史白名单
+      if (currentMode === 'safe' && !this.isReadOnlyTool(toolName, input)) {
+        return { behavior: 'deny', message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
+      }
+
       // 会话白名单检查（用户之前选择了"始终允许"）
       if (this.isWhitelisted(sessionId, toolName, input)) return allow()
 
@@ -144,12 +151,6 @@ export class AgentPermissionService {
       // 原因：CLI 的 --permission-prompt-tool stdio 会把每次 tool 调用都转发给 canUseTool，
       // SDK 的 auto classifier 对只读操作未必真的放行，这里做本地兜底避免用户被无意义的审批打扰
       if (this.isReadOnlyTool(toolName, input)) return allow()
-
-      // safe 模式：非只读操作直接拒绝，不向用户弹审批
-      const currentMode = typeof mode === 'function' ? mode() : mode
-      if (currentMode === 'safe') {
-        return { behavior: 'deny', message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
-      }
 
       // 需要询问用户：构建请求并发送到 UI
       const request = this.buildPermissionRequest(sessionId, toolName, input, options)

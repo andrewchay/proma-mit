@@ -98,8 +98,9 @@ import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
 import type { AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
-import { MAX_ATTACHMENT_SIZE } from '@proma/shared'
+import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
+import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
 
 /** 稳定的空 SDKMessage 数组引用，避免 ?? [] 每次创建新引用 */
 const EMPTY_SDK_MESSAGES: SDKMessage[] = []
@@ -336,12 +337,16 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const globalWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const sessions = useAtomValue(agentSessionsAtom)
+  const sessionMeta = React.useMemo(
+    () => sessions.find((s) => s.id === sessionId) ?? null,
+    [sessions, sessionId],
+  )
+  const sessionAgentRuntime = sessionMeta?.agentRuntime ?? DEFAULT_AGENT_RUNTIME
   // 从会话元数据派生 workspaceId：会话数据已加载时以自身为准，未加载时回退全局 atom
   const currentWorkspaceId = React.useMemo(() => {
-    const meta = sessions.find((s) => s.id === sessionId)
-    if (!meta) return globalWorkspaceId // 数据未加载，回退全局
-    return meta.workspaceId ?? null     // 数据已加载，以会话自身为准
-  }, [sessions, sessionId, globalWorkspaceId])
+    if (!sessionMeta) return globalWorkspaceId // 数据未加载，回退全局
+    return sessionMeta.workspaceId ?? null     // 数据已加载，以会话自身为准
+  }, [sessionMeta, globalWorkspaceId])
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom)
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtomFamily(sessionId))
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -455,20 +460,22 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
   // 渠道已选但模型未选时，自动选择第一个可用模型
   const globalChannels = useAtomValue(channelsAtom)
+  const runtimeChannelIds = React.useMemo(
+    () => getAgentRuntimeChannelIds(globalChannels, agentChannelIds, sessionAgentRuntime),
+    [globalChannels, agentChannelIds, sessionAgentRuntime],
+  )
+  const selectedChannelUsable = React.useMemo(
+    () => isAgentRuntimeChannelUsable(globalChannels, agentChannelId, agentChannelIds, sessionAgentRuntime),
+    [globalChannels, agentChannelId, agentChannelIds, sessionAgentRuntime],
+  )
 
   // 检查 Agent 渠道列表中是否存在可用的模型（渠道 enabled + 模型 enabled）
   const hasAvailableModel = React.useMemo(() => {
-    // Proma 官方渠道（商业版）：只要 enabled 且有可用模型，直接视为可用
-    const promaOfficial = globalChannels.find((c) => c.id === 'proma-official')
-    if (promaOfficial?.enabled && promaOfficial.models.some((m) => m.enabled)) return true
-    // 其他渠道：需在 agentChannelIds 白名单中
-    if (!agentChannelIds || agentChannelIds.length === 0) return false
-    return globalChannels.some(
-      (c) => c.enabled && agentChannelIds.includes(c.id) && c.models.some((m) => m.enabled),
-    )
-  }, [globalChannels, agentChannelIds])
+    return runtimeChannelIds.length > 0
+  }, [runtimeChannelIds])
   React.useEffect(() => {
     if (!agentChannelId || agentModelId) return
+    if (!runtimeChannelIds.includes(agentChannelId)) return
 
     const channel = globalChannels.find((c) => c.id === agentChannelId && c.enabled)
     if (!channel) return
@@ -492,7 +499,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         agentModelId: firstModel.id,
       }).catch(console.error)
     }
-  }, [agentChannelId, agentModelId, globalChannels, sessionId, setSessionModelMap, setDefaultModelId, defaultModelId])
+  }, [agentChannelId, agentModelId, runtimeChannelIds, globalChannels, sessionId, setSessionModelMap, setDefaultModelId, defaultModelId])
 
   // 获取当前 session 的工作路径（文件浏览器需要）
   React.useEffect(() => {
@@ -1742,14 +1749,14 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   }, [togglePreviewPanel])
 
   const hasTextInput = inputContent.trim().length > 0
-  const canSend = (hasTextInput || pendingFiles.length > 0 || !!suggestion) && agentChannelId !== null && hasAvailableModel && (!streaming || hasTextInput)
+  const canSend = (hasTextInput || pendingFiles.length > 0 || !!suggestion) && selectedChannelUsable && hasAvailableModel && (!streaming || hasTextInput)
 
   const inputToolbarItems = React.useMemo<ToolbarItem[]>(() => [
     {
       key: 'model',
       node: (
         <ModelSelector
-          filterChannelIds={agentChannelIds}
+          filterChannelIds={runtimeChannelIds}
           externalSelectedModel={externalSelectedModel}
           onModelSelect={handleModelSelect}
         />
@@ -1839,7 +1846,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       ),
     },
   ], [
-    agentChannelIds,
+    runtimeChannelIds,
     externalSelectedModel,
     handleModelSelect,
     sessionId,
@@ -1956,10 +1963,16 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
           >
             {(isPlanMode || isPermissionPlanMode) && !isDragOver && <PlanModeDashedBorder />}
             {/* 无 Agent 渠道或无可用模型提示 */}
-            {(!agentChannelId || !hasAvailableModel) && (
+            {(!agentChannelId || !selectedChannelUsable || !hasAvailableModel) && (
               <div className="flex items-center gap-2 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
                 <Settings size={14} />
-                <span>{!agentChannelId ? '请在设置中选择 Agent 供应商' : '暂无可用模型，请在设置中启用 Agent 渠道并配置模型'}</span>
+                <span>
+                  {!agentChannelId
+                    ? '请在设置中选择 Agent 供应商'
+                    : !hasAvailableModel
+                      ? '暂无可用模型，请在设置中启用当前 runtime 可用的 Agent 渠道并配置模型'
+                      : '当前渠道不支持此 Agent runtime，请切换可用模型'}
+                </span>
                 <button
                   type="button"
                   className="text-xs underline underline-offset-2 hover:text-foreground transition-colors"
@@ -2027,15 +2040,15 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               onPasteLongText={handlePasteLongText}
               longTextPasteThreshold={LONG_TEXT_ATTACHMENT_THRESHOLD}
               placeholder={
-                agentChannelId && hasAvailableModel
+                agentChannelId && selectedChannelUsable && hasAvailableModel
                   ? sendWithCmdEnter
                     ? '输入消息... (⌘/Ctrl+Enter 发送，Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
                     : '输入消息... (Enter 发送，Shift+Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
                   : !agentChannelId
                     ? '请先在设置中选择 Agent 供应商'
-                    : '暂无可用模型，请先在设置中启用渠道'
+                    : '请先选择当前 runtime 可用的渠道'
               }
-              disabled={!agentChannelId || !hasAvailableModel}
+              disabled={!agentChannelId || !selectedChannelUsable || !hasAvailableModel}
               autoFocusTrigger={sessionId}
               collapsible
               enableMentions

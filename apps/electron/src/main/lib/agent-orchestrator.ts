@@ -1826,6 +1826,9 @@ export class AgentOrchestrator {
           case 'auto':
             return autoCanUseTool(toolName, input, options)
 
+          case 'safe':
+            return autoCanUseTool(toolName, input, options)
+
           default:
             return { behavior: 'allow' as const, updatedInput: input }
         }
@@ -1852,7 +1855,7 @@ export class AgentOrchestrator {
         // 当提供 canUseTool 回调时必须为 false，否则 CLI 同时收到
         // --allow-dangerously-skip-permissions 和 --permission-prompt-tool stdio
         // 两个矛盾的指令，导致 ExitPlanMode/AskUserQuestion 等交互式工具失败。
-        // canUseTool 已完整处理所有权限模式（plan/auto/bypassPermissions），
+        // canUseTool 已完整处理所有权限模式（plan/safe/auto/bypassPermissions），
         // Worker 子代理在 bypassPermissions 模式下也会被自动放行。
         allowDangerouslySkipPermissions: !canUseTool,
         canUseTool,
