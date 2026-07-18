@@ -2,17 +2,17 @@ import { describe, expect, test } from 'bun:test'
 import { PiAgentAdapter } from './pi-agent-adapter'
 
 describe('PiAgentAdapter', () => {
-  test('given Pi runtime is selected before SDK integration then query fails with an explicit unavailable error', async () => {
+  test('given required channel fields are missing then query fails with a helpful error', async () => {
     const adapter = new PiAgentAdapter()
 
     await expect(async () => {
       for await (const _message of adapter.query({ sessionId: 's-pi', prompt: 'hello', agentRuntime: 'pi' })) {
-        // Pi runtime 当前不可用，不应产出消息。
+        // 配置不完整，不应产出消息。
       }
-    }).toThrow('Pi Agent runtime 尚未接入')
+    }).toThrow('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
   })
 
-  test('abort and dispose are safe no-ops before long-lived Pi resources exist', () => {
+  test('abort and dispose are safe when no Pi session is active', () => {
     const adapter = new PiAgentAdapter()
 
     expect(() => adapter.abort('s-pi')).not.toThrow()

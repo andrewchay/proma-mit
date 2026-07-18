@@ -15,7 +15,7 @@ describe('Agent provider runtime capabilities', () => {
     expect(isAgentCompatibleProvider('custom')).toBe(false)
   })
 
-  test('Proma runtime 开放 OpenAI-compatible provider，暂不开放 Google 和 Pi provider', () => {
+  test('Proma runtime 开放 OpenAI-compatible provider，Pi runtime 开放 SDK 可注册 provider', () => {
     expect(getAgentCompatibleProviders('proma').sort()).toEqual([
       'custom',
       'deepseek',
@@ -27,7 +27,19 @@ describe('Agent provider runtime capabilities', () => {
       'zhipu',
     ])
     expect(isAgentCompatibleProvider('google', 'proma')).toBe(false)
-    expect(getAgentCompatibleProviders('pi')).toEqual([])
+    expect(getAgentCompatibleProviders('pi').sort()).toEqual([
+      'anthropic',
+      'custom',
+      'deepseek',
+      'doubao',
+      'google',
+      'kimi-api',
+      'kimi-coding',
+      'minimax',
+      'openai',
+      'qwen',
+      'zhipu',
+    ])
   })
 
   test('旧 AGENT_COMPATIBLE_PROVIDERS 常量等价于 Claude runtime provider 集合', () => {
@@ -42,6 +54,9 @@ describe('Agent provider runtime capabilities', () => {
     expect(getAgentProviderProtocol('kimi-coding', 'claude')).toBe('anthropic-messages')
     expect(getAgentProviderProtocol('kimi-coding', 'proma')).toBe('openai-chat')
     expect(getAgentProviderProtocol('openai', 'proma')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('google', 'pi')).toBe('google-generative')
+    expect(getAgentProviderProtocol('openai', 'pi')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('anthropic', 'pi')).toBe('anthropic-messages')
   })
 
   test('Proma runtime 会把 Anthropic 兼容端点转换为 OpenAI-compatible 根路径', () => {

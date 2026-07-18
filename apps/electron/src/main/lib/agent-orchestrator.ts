@@ -37,6 +37,7 @@ import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanMo
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
 import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
+import type { PiAgentQueryOptions } from './adapters/pi-agent-adapter'
 import { isTransientNetworkError } from './error-patterns'
 import type { AgentEventBus } from './agent-event-bus'
 import { decryptApiKey, getChannelById, listChannels } from './channel-manager'
@@ -695,6 +696,117 @@ export class AgentOrchestrator {
           truncateSDKMessages(sessionId, userMessageUuid)
         } catch (truncateError) {
           console.error('[Agent Runtime] 运行失败后截断 Proma runtime 用户消息失败:', truncateError)
+        }
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Pi Agent SDK runtime 分支。
+   *
+   * v1 复用 Proma 的会话持久化和事件管线，Pi 只负责模型调用与只读 agent loop。
+   * MCP、AskUser、权限桥接后续单独接入，避免第一版绕过现有权限系统。
+   */
+  private async runPiAgent(options: {
+    sessionId: string
+    channelId: string
+    workspaceId?: string
+    userMessage: string
+    modelId?: string
+    provider: ProviderType
+    apiKey: string
+    baseUrl: string
+    callbacks: SessionCallbacks
+    startedAt?: number
+    permissionMode?: PromaPermissionMode
+    attachments?: FileAttachment[]
+  }): Promise<void> {
+    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    let userMessageUuid = ''
+
+    try {
+      let agentCwd = homedir()
+      let workspaceName: string | undefined
+      let workspaceSlug: string | undefined
+      if (workspaceId) {
+        const ws = getAgentWorkspace(workspaceId)
+        if (ws) {
+          workspaceName = ws.name
+          workspaceSlug = ws.slug
+          agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
+          if (!existsSync(agentCwd)) {
+            mkdirSync(agentCwd, { recursive: true })
+          }
+        }
+      }
+
+      console.log(`[Pi Runtime] 启动 Pi runtime — provider: ${provider}, model: ${modelId}, cwd: ${agentCwd}`)
+
+      const historyMessages = getAgentSessionSDKMessages(sessionId)
+
+      userMessageUuid = randomUUID()
+      const userSDKMsg: SDKMessage = {
+        type: 'user',
+        message: { content: [{ type: 'text', text: userMessage }] },
+        parent_tool_use_id: null,
+        uuid: userMessageUuid,
+        _attachments: attachments,
+      } as unknown as SDKMessage
+      appendSDKMessages(sessionId, [userSDKMsg])
+
+      const queryOptions: PiAgentQueryOptions = {
+        sessionId,
+        agentRuntime: 'pi',
+        prompt: userMessage,
+        model: modelId,
+        provider,
+        apiKey,
+        baseUrl,
+        cwd: agentCwd,
+        historyMessages,
+        attachments,
+        systemPrompt: buildSystemPrompt({
+          workspaceName,
+          workspaceSlug,
+          sessionId,
+          permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+          memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
+          claudeAvailable: false,
+        }),
+      }
+
+      const accumulatedMessages: SDKMessage[] = []
+      for await (const msg of this.adapter.query(queryOptions)) {
+        accumulatedMessages.push(msg)
+        this.eventBus.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
+
+        if (msg.type === 'assistant' && !this.hasTitle(sessionId)) {
+          const text = this.extractTextFromSDKMessage(msg as SDKAssistantMessage)
+          if (text) {
+            this.generateTitleAsync(sessionId, userMessage, channelId, modelId, callbacks)
+          }
+        }
+      }
+
+      if (accumulatedMessages.length > 0) {
+        appendSDKMessages(sessionId, accumulatedMessages)
+      }
+
+      callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[Pi Runtime] 运行失败:', error)
+
+      if (message.includes('中止') || message.includes('aborted')) {
+        throw error
+      }
+
+      if (userMessageUuid) {
+        try {
+          truncateSDKMessages(sessionId, userMessageUuid)
+        } catch (truncateError) {
+          console.error('[Pi Runtime] 运行失败后截断用户消息失败:', truncateError)
         }
       }
       throw error
@@ -1402,28 +1514,33 @@ export class AgentOrchestrator {
 
       const contextualMessage = `${dynamicCtx}\n\n${enrichedMessage}`
 
-      if (effectiveAgentRuntime === 'pi') {
+      if (!isAgentCompatibleProvider(channel.provider, effectiveAgentRuntime)) {
         reportPreflightError({
-          code: 'runtime_unavailable',
-          title: 'Pi Runtime 尚未接入',
-          message: 'Pi Agent runtime 的依赖、模型注册和工具桥接还未完成。请先切回 Claude runtime 或等待 Pi runtime 接入完成。',
+          code: 'provider_error',
+          title: `当前渠道暂不支持 ${effectiveAgentRuntime === 'pi' ? 'Pi' : 'Proma'} Runtime`,
+          message: `供应商 ${channel.provider} 尚未通过 ${effectiveAgentRuntime === 'pi' ? 'Pi' : 'Proma'} runtime 的 Agent 合约验证，请选择兼容渠道或切回 Claude runtime。`,
           actions: [
-            { key: 's', label: '打开 Agent 设置', action: 'settings' },
+            { key: 's', label: '打开渠道设置', action: 'open_channel_settings' },
           ],
           canRetry: false,
         })
         return
       }
 
-      if (!isAgentCompatibleProvider(channel.provider, 'proma')) {
-        reportPreflightError({
-          code: 'provider_error',
-          title: '当前渠道暂不支持 Proma Runtime',
-          message: `供应商 ${channel.provider} 尚未通过 Proma runtime 的 Agent 合约验证，请选择 OpenAI 兼容渠道或切回 Claude runtime。`,
-          actions: [
-            { key: 's', label: '打开渠道设置', action: 'open_channel_settings' },
-          ],
-          canRetry: false,
+      if (effectiveAgentRuntime === 'pi') {
+        await this.runPiAgent({
+          sessionId,
+          channelId,
+          workspaceId,
+          userMessage: contextualMessage,
+          modelId,
+          provider: channel.provider,
+          apiKey,
+          baseUrl: channel.baseUrl,
+          callbacks,
+          startedAt: input.startedAt,
+          permissionMode: initialPermissionMode,
+          attachments,
         })
         return
       }

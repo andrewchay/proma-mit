@@ -6,8 +6,6 @@ export function getAgentRuntimeChannelIds(
   claudeRuntimeChannelIds: string[],
   runtime: AgentRuntime = 'claude',
 ): string[] {
-  if (runtime === 'pi') return []
-
   return channels
     .filter((channel) => {
       if (!channel.enabled || !channel.models.some((model) => model.enabled)) return false

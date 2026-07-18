@@ -82,7 +82,7 @@ export interface AgentProviderRuntimeCapability {
 export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProviderRuntimeCapability> = {
   anthropic: {
     protocol: 'anthropic-messages',
-    runtimes: ['claude'],
+    runtimes: ['claude', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -90,7 +90,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   openai: {
     protocol: 'openai-chat',
-    runtimes: ['proma'],
+    runtimes: ['proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: true,
@@ -101,8 +101,9 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     runtimeProtocols: {
       claude: 'anthropic-messages',
       proma: 'openai-chat',
+      pi: 'anthropic-messages',
     },
-    runtimes: ['claude', 'proma'],
+    runtimes: ['claude', 'proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: false,
     supportsStreamUsage: true,
@@ -110,7 +111,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   google: {
     protocol: 'google-generative',
-    runtimes: [],
+    runtimes: ['pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -121,8 +122,9 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     runtimeProtocols: {
       claude: 'anthropic-messages',
       proma: 'openai-chat',
+      pi: 'anthropic-messages',
     },
-    runtimes: ['claude', 'proma'],
+    runtimes: ['claude', 'proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -133,8 +135,9 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     runtimeProtocols: {
       claude: 'anthropic-messages',
       proma: 'openai-chat',
+      pi: 'anthropic-messages',
     },
-    runtimes: ['claude', 'proma'],
+    runtimes: ['claude', 'proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: false,
     supportsStreamUsage: false,
@@ -142,7 +145,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   zhipu: {
     protocol: 'openai-chat',
-    runtimes: ['proma'],
+    runtimes: ['proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -150,7 +153,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   minimax: {
     protocol: 'anthropic-messages',
-    runtimes: ['claude'],
+    runtimes: ['claude', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -158,7 +161,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   doubao: {
     protocol: 'openai-chat',
-    runtimes: ['proma'],
+    runtimes: ['proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -166,7 +169,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   qwen: {
     protocol: 'openai-chat',
-    runtimes: ['proma'],
+    runtimes: ['proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -174,7 +177,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   custom: {
     protocol: 'openai-chat',
-    runtimes: ['proma'],
+    runtimes: ['proma', 'pi'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,

@@ -41,13 +41,14 @@ describe('agent runtime channel filtering', () => {
     expect(getAgentRuntimeChannelIds(channels, [], 'proma')).toEqual(['openai', 'deepseek', 'kimi', 'kimi-coding'])
   })
 
-  test('given Pi runtime while adapter is unavailable then no channels are exposed as usable', () => {
+  test('given Pi runtime when compatible channels exist then enabled channels are returned without Claude whitelist', () => {
     const channels = [
       channel('openai', 'openai'),
       channel('anthropic', 'anthropic'),
+      channel('disabled', 'google', false),
     ]
 
-    expect(getAgentRuntimeChannelIds(channels, ['anthropic'], 'pi')).toEqual([])
-    expect(isAgentRuntimeChannelUsable(channels, 'openai', ['anthropic'], 'pi')).toBe(false)
+    expect(getAgentRuntimeChannelIds(channels, [], 'pi')).toEqual(['openai', 'anthropic'])
+    expect(isAgentRuntimeChannelUsable(channels, 'openai', [], 'pi')).toBe(true)
   })
 })
