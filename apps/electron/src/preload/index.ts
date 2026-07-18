@@ -417,6 +417,9 @@ export interface ElectronAPI {
   /** 更新 Agent 会话标题 */
   updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
 
+  /** 更新 Agent 会话 Runtime */
+  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => Promise<AgentSessionMeta>
+
   /** 删除 Agent 会话 */
   deleteAgentSession: (id: string) => Promise<void>
 
@@ -1365,6 +1368,10 @@ const electronAPI: ElectronAPI = {
 
   updateAgentSessionTitle: (id: string, title: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_TITLE, id, title)
+  },
+
+  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_SESSION_AGENT_RUNTIME, sessionId, runtime)
   },
 
   deleteAgentSession: (id: string) => {

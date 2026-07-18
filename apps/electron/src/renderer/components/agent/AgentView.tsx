@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -97,7 +97,7 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
-import type { AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
+import type { AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
 import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
@@ -236,6 +236,96 @@ function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverP
               className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
             />
           </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; description: string; disabled?: boolean }> = [
+  { value: 'claude', label: 'Claude', description: '使用 Claude Agent SDK' },
+  { value: 'proma', label: 'Proma', description: '使用 Provider-Agnostic Runtime' },
+  { value: 'pi', label: 'Pi', description: 'Pi Agent SDK 尚未接入', disabled: true },
+]
+
+interface AgentRuntimeSelectorProps {
+  runtime: AgentRuntime
+  disabled?: boolean
+  onChange: (runtime: AgentRuntime) => void
+}
+
+function AgentRuntimeSelector({ runtime, disabled = false, onChange }: AgentRuntimeSelectorProps): React.ReactElement {
+  const [open, setOpen] = React.useState(false)
+  const current = AGENT_RUNTIME_OPTIONS.find((option) => option.value === runtime) ?? AGENT_RUNTIME_OPTIONS[0]!
+
+  const handleOpenChange = (nextOpen: boolean): void => {
+    if (disabled && nextOpen) return
+    setOpen(nextOpen)
+  }
+
+  const handleSelect = (nextRuntime: AgentRuntime, optionDisabled?: boolean): void => {
+    if (optionDisabled) return
+    onChange(nextRuntime)
+    setOpen(false)
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={disabled}
+              aria-label={`Agent Runtime：${current.label}`}
+              className={cn(
+                'model-selector-trigger flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground',
+                disabled && 'cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted-foreground',
+              )}
+            >
+              <Box className="size-3.5" />
+              <span>{current.label}</span>
+              <ChevronDown className="size-3" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[220px]">
+          <p>切换当前会话的 Agent Runtime</p>
+        </TooltipContent>
+      </Tooltip>
+
+      <PopoverContent
+        side="top"
+        align="center"
+        sideOffset={8}
+        className="w-[220px] p-2"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <div className="flex flex-col gap-1">
+          {AGENT_RUNTIME_OPTIONS.map((option) => {
+            const selected = option.value === runtime
+            return (
+              <button
+                key={option.value}
+                type="button"
+                disabled={option.disabled}
+                onClick={() => handleSelect(option.value, option.disabled)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors',
+                  selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/70',
+                  option.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent',
+                )}
+              >
+                <Box className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold leading-5">{option.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
+                </span>
+                {selected ? <Check className="size-4 shrink-0 text-primary" /> : null}
+              </button>
+            )
+          })}
         </div>
       </PopoverContent>
     </Popover>
@@ -730,6 +820,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       message: pendingPrompt.message,
       channelId: agentChannelId,
       modelId: agentModelId || undefined,
+      agentRuntime: sessionAgentRuntime,
       workspaceId: currentWorkspaceId || undefined,
       additionalDirectories: Array.from(new Set([...attachedDirs, ...attachedFileDirectories, ...(pendingPrompt.additionalDirectories ?? [])])),
     }
@@ -770,6 +861,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         userMessage: snapshot.message,
         channelId: snapshot.channelId,
         modelId: snapshot.modelId,
+        agentRuntime: snapshot.agentRuntime,
         workspaceId: snapshot.workspaceId,
         startedAt: streamStartedAt,
         permissionModeOverride: permissionMode,
@@ -788,7 +880,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         })
       })
     })
-  }, [messagesLoaded, pendingPrompt, sessionId, agentChannelId, agentModelId, currentWorkspaceId, streaming, setPendingPrompt, setStreamingStates, permissionMode, attachedDirs, attachedFileDirectories])
+  }, [messagesLoaded, pendingPrompt, sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, streaming, setPendingPrompt, setStreamingStates, permissionMode, attachedDirs, attachedFileDirectories])
   // ===== 附件处理 =====
 
   /** 为文件生成唯一文件名（避免粘贴多张图片时文件名重复导致覆盖） */
@@ -1154,6 +1246,42 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     }).catch(console.error)
   }, [sessionId, setSessionChannelMap, setSessionModelMap, setDefaultChannelId, setDefaultModelId, agentChannelIds, setAgentChannelIds])
 
+  const handleAgentRuntimeChange = React.useCallback(async (runtime: AgentRuntime): Promise<void> => {
+    if (runtime === sessionAgentRuntime) {
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-mode="agent"] .ProseMirror')?.focus())
+      return
+    }
+    if (streaming) {
+      toast.info('Agent 运行中，完成后再切换 Runtime')
+      return
+    }
+
+    const previousSessionMeta = sessionMeta
+    if (sessionMeta) {
+      setAgentSessions((prev) => prev.map((item) => (
+        item.id === sessionId
+          ? { ...item, agentRuntime: runtime, sdkSessionId: undefined, updatedAt: Date.now() }
+          : item
+      )))
+    }
+
+    try {
+      const updated = await window.electronAPI.updateSessionAgentRuntime(sessionId, runtime)
+      setAgentSessions((prev) => prev.map((item) => item.id === sessionId ? updated : item))
+      window.electronAPI.updateSettings({ agentRuntime: runtime }).catch((error) => {
+        console.error('[AgentView] 保存 Agent Runtime 默认值失败:', error)
+      })
+    } catch (error) {
+      console.error('[AgentView] 切换 Agent Runtime 失败:', error)
+      if (previousSessionMeta) {
+        setAgentSessions((prev) => prev.map((item) => item.id === sessionId ? previousSessionMeta : item))
+      }
+      toast.error('Agent Runtime 切换失败', { description: String(error) })
+    } finally {
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-mode="agent"] .ProseMirror')?.focus())
+    }
+  }, [sessionAgentRuntime, sessionId, sessionMeta, setAgentSessions, streaming])
+
   /** 构建 externalSelectedModel 给 ModelSelector */
   const externalSelectedModel = React.useMemo(() => {
     if (!agentChannelId || !agentModelId) return null
@@ -1419,6 +1547,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       userMessage: finalMessage,
       channelId: agentChannelId,
       modelId: agentModelId || undefined,
+      agentRuntime: sessionAgentRuntime,
       workspaceId: currentWorkspaceId || undefined,
       startedAt: streamStartedAt,
       permissionModeOverride: permissionMode,
@@ -1450,7 +1579,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         return map
       })
     })
-  }, [inputContent, pendingFiles, attachedDirs, attachedFileDirectories, sessionId, agentChannelId, agentModelId, currentWorkspaceId, workspaces, streaming, suggestion, hasAvailableModel, store, setStreamingStates, setPendingFiles, setAgentStreamErrors, setPromptSuggestions, setInputContent, permissionMode, setInputHtmlContent, // 取消 draft 标记，让会话出现在侧边栏
+  }, [inputContent, pendingFiles, attachedDirs, attachedFileDirectories, sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, workspaces, streaming, suggestion, hasAvailableModel, store, setStreamingStates, setPendingFiles, setAgentStreamErrors, setPromptSuggestions, setInputContent, permissionMode, setInputHtmlContent, // 取消 draft 标记，让会话出现在侧边栏
     setDraftSessionIds])
 
   /** 停止生成 */
@@ -1514,6 +1643,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       userMessage: '/compact',
       channelId: agentChannelId,
       modelId: agentModelId || undefined,
+      agentRuntime: sessionAgentRuntime,
       workspaceId: currentWorkspaceId || undefined,
       startedAt: streamStartedAt,
       permissionModeOverride: permissionMode,
@@ -1536,7 +1666,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         return map
       })
     })
-  }, [sessionId, agentChannelId, agentModelId, currentWorkspaceId, streaming, setStreamingStates, store, permissionMode])
+  }, [sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, streaming, setStreamingStates, store, permissionMode])
 
   /** 重试：在当前会话中重新发送最后一条用户消息 */
   const handleRetry = React.useCallback((): void => {
@@ -1579,11 +1709,12 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       userMessage: lastUserMessage,
       channelId: agentChannelId,
       modelId: agentModelId || undefined,
+      agentRuntime: sessionAgentRuntime,
       workspaceId: currentWorkspaceId || undefined,
       startedAt: streamStartedAt,
       permissionModeOverride: permissionMode,
     }).catch(console.error)
-  }, [persistedSDKMessages, sessionId, agentChannelId, agentModelId, currentWorkspaceId, streaming, setAgentStreamErrors, setStreamingStates, permissionMode])
+  }, [persistedSDKMessages, sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, streaming, setAgentStreamErrors, setStreamingStates, permissionMode])
 
   /** 在新对话继续：创建新会话 + 切换 tab + 使用 &session 引用旧会话 */
   const handleRetryInNewSession = React.useCallback(async (): Promise<void> => {
@@ -1591,7 +1722,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
     try {
       const meta = await window.electronAPI.createAgentSession(
-        undefined, agentChannelId, currentWorkspaceId || undefined,
+        undefined, agentChannelId, currentWorkspaceId || undefined, sessionAgentRuntime,
       )
       setAgentSessions((prev) => [meta, ...prev])
 
@@ -1620,6 +1751,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         userMessage: prompt,
         channelId: agentChannelId,
         modelId: agentModelId || undefined,
+        agentRuntime: sessionAgentRuntime,
         workspaceId: currentWorkspaceId || undefined,
         mentionedSessionIds: [sessionId],
         startedAt: streamStartedAt,
@@ -1628,7 +1760,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     } catch (error) {
       console.error('[AgentView] 在新会话中重试失败:', error)
     }
-  }, [sessionId, agentChannelId, agentModelId, currentWorkspaceId, openSession, setAgentSessions, setStreamingStates, permissionMode])
+  }, [sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, openSession, setAgentSessions, setStreamingStates, permissionMode])
 
   /** 分叉会话：从指定消息处创建新会话并自动切换 */
   const handleFork = React.useCallback(async (upToMessageUuid: string): Promise<void> => {
@@ -1767,6 +1899,16 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         />
       ),
     },
+    {
+      key: 'runtime',
+      node: (
+        <AgentRuntimeSelector
+          runtime={sessionAgentRuntime}
+          disabled={streaming}
+          onChange={handleAgentRuntimeChange}
+        />
+      ),
+    },
     { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} /> },
     {
       key: 'thinking',
@@ -1854,6 +1996,9 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     runtimeChannelIds,
     externalSelectedModel,
     handleModelSelect,
+    sessionAgentRuntime,
+    streaming,
+    handleAgentRuntimeChange,
     sessionId,
     agentThinking,
     setAgentThinking,
@@ -1865,7 +2010,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     contextStatus.cacheCreationTokens,
     contextStatus.contextWindow,
     contextStatus.isCompacting,
-    streaming,
     handleCompact,
     autoPreviewEnabled,
     setAutoPreviewEnabled,

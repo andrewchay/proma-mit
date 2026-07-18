@@ -1253,7 +1253,7 @@ export function registerIpcHandlers(): void {
       if (agentRuntime !== undefined && !isAgentRuntime(agentRuntime)) {
         throw new Error(`非法的 Agent runtime: ${String(agentRuntime)}`)
       }
-      return createAgentSession(title, channelId, workspaceId, agentRuntime)
+      return createAgentSession(title, channelId, workspaceId, agentRuntime ?? getSettings().agentRuntime)
     }
   )
 
@@ -1270,6 +1270,31 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.UPDATE_TITLE,
     async (_, id: string, title: string): Promise<AgentSessionMeta> => {
       return updateAgentSessionMeta(id, { title })
+    }
+  )
+
+  // 更新 Agent 会话 Runtime
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.UPDATE_SESSION_AGENT_RUNTIME,
+    async (_, sessionId: string, runtime: AgentRuntime): Promise<AgentSessionMeta> => {
+      if (!isAgentRuntime(runtime)) {
+        throw new Error(`非法的 Agent runtime: ${String(runtime)}`)
+      }
+      const current = getAgentSessionMeta(sessionId)
+      if (!current) {
+        throw new Error(`Agent 会话不存在: ${sessionId}`)
+      }
+      if (isAgentSessionActive(sessionId)) {
+        throw new Error('Agent 正在运行，完成后再切换 Runtime')
+      }
+
+      const updates: Partial<Pick<AgentSessionMeta, 'agentRuntime' | 'sdkSessionId'>> = {
+        agentRuntime: runtime,
+      }
+      if ((current.agentRuntime ?? 'claude') !== runtime) {
+        updates.sdkSessionId = undefined
+      }
+      return updateAgentSessionMeta(sessionId, updates)
     }
   )
 
