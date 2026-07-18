@@ -20,6 +20,8 @@ describe('Agent provider runtime capabilities', () => {
       'custom',
       'deepseek',
       'doubao',
+      'kimi-api',
+      'kimi-coding',
       'openai',
       'qwen',
       'zhipu',
@@ -35,13 +37,21 @@ describe('Agent provider runtime capabilities', () => {
   test('DeepSeek 在 Claude 和 Proma runtime 下使用不同协议', () => {
     expect(getAgentProviderProtocol('deepseek', 'claude')).toBe('anthropic-messages')
     expect(getAgentProviderProtocol('deepseek', 'proma')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('kimi-api', 'claude')).toBe('anthropic-messages')
+    expect(getAgentProviderProtocol('kimi-api', 'proma')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('kimi-coding', 'claude')).toBe('anthropic-messages')
+    expect(getAgentProviderProtocol('kimi-coding', 'proma')).toBe('openai-chat')
     expect(getAgentProviderProtocol('openai', 'proma')).toBe('openai-chat')
   })
 
-  test('DeepSeek Proma runtime 会把 Anthropic 端点转换为 OpenAI-compatible 根路径', () => {
+  test('Proma runtime 会把 Anthropic 兼容端点转换为 OpenAI-compatible 根路径', () => {
     expect(resolveAgentRuntimeBaseUrl('deepseek', 'proma', 'https://api.deepseek.com/anthropic')).toBe('https://api.deepseek.com')
     expect(resolveAgentRuntimeBaseUrl('deepseek', 'proma', 'https://api.deepseek.com/anthropic/v1')).toBe('https://api.deepseek.com')
     expect(resolveAgentRuntimeBaseUrl('deepseek', 'claude', 'https://api.deepseek.com/anthropic')).toBe('https://api.deepseek.com/anthropic')
+    expect(resolveAgentRuntimeBaseUrl('kimi-api', 'proma', 'https://api.moonshot.cn/anthropic')).toBe('https://api.moonshot.cn')
+    expect(resolveAgentRuntimeBaseUrl('kimi-api', 'proma', 'https://api.moonshot.cn/anthropic/v1/messages')).toBe('https://api.moonshot.cn')
+    expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'proma', 'https://api.kimi.com/coding/v1/messages')).toBe('https://api.kimi.com')
+    expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'claude', 'https://api.kimi.com/coding/v1/messages')).toBe('https://api.kimi.com/coding/v1/messages')
     expect(resolveAgentRuntimeBaseUrl('openai', 'proma', 'https://api.openai.com/v1/')).toBe('https://api.openai.com/v1')
   })
 })

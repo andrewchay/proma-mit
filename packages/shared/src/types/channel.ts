@@ -118,7 +118,11 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   'kimi-api': {
     protocol: 'anthropic-messages',
-    runtimes: ['claude'],
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+    },
+    runtimes: ['claude', 'proma'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -126,7 +130,11 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   'kimi-coding': {
     protocol: 'anthropic-messages',
-    runtimes: ['claude'],
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+    },
+    runtimes: ['claude', 'proma'],
     supportsToolCalling: true,
     supportsImages: false,
     supportsStreamUsage: false,
@@ -220,6 +228,13 @@ export function resolveAgentRuntimeBaseUrl(provider: ProviderType, runtime: Agen
       .replace(/\/anthropic\/v\d+\/messages$/, '')
       .replace(/\/anthropic\/v\d+$/, '')
       .replace(/\/anthropic$/, '')
+  }
+  if ((provider === 'kimi-api' || provider === 'kimi-coding') && runtime === 'proma') {
+    return normalized
+      .replace(/\/messages$/, '')
+      .replace(/\/anthropic\/v\d+$/, '')
+      .replace(/\/anthropic$/, '')
+      .replace(/\/coding\/v\d+$/, '')
   }
   return normalized
 }

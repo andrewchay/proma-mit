@@ -33,10 +33,12 @@ describe('agent runtime channel filtering', () => {
       channel('anthropic', 'anthropic'),
       channel('openai', 'openai'),
       channel('deepseek', 'deepseek'),
+      channel('kimi', 'kimi-api'),
+      channel('kimi-coding', 'kimi-coding'),
       channel('qwen-disabled-model', 'qwen', true, false),
     ]
 
-    expect(getAgentRuntimeChannelIds(channels, [], 'proma')).toEqual(['openai', 'deepseek'])
+    expect(getAgentRuntimeChannelIds(channels, [], 'proma')).toEqual(['openai', 'deepseek', 'kimi', 'kimi-coding'])
   })
 
   test('given Pi runtime while adapter is unavailable then no channels are exposed as usable', () => {
