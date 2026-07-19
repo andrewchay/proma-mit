@@ -512,6 +512,7 @@ export class AgentOrchestrator {
    */
   private async runProviderAgnosticAgent(options: {
     sessionId: string
+    agentRuntime?: 'proma' | 'ai-sdk'
     channelId: string
     workspaceId?: string
     userMessage: string
@@ -525,7 +526,7 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
     let userMessageUuid = ''
 
     try {
@@ -549,7 +550,7 @@ export class AgentOrchestrator {
         }
       }
 
-      console.log(`[Agent Runtime] 启动 Proma runtime — provider: ${provider}, adapter=${adapterProvider ?? provider}, model: ${modelId}, cwd: ${agentCwd}`)
+      console.log(`[Agent Runtime] 启动 ${agentRuntime} runtime — provider: ${provider}, adapter=${adapterProvider ?? provider}, model: ${modelId}, cwd: ${agentCwd}`)
 
       // 加载历史消息（阶段 2），排除最后一条当前用户消息
       const allHistory = getAgentSessionSDKMessages(sessionId)
@@ -582,7 +583,7 @@ export class AgentOrchestrator {
 
       const queryOptions: ProviderAgnosticAgentQueryOptions = {
         sessionId,
-        agentRuntime: 'proma',
+        agentRuntime,
         prompt: userMessage,
         model: modelId,
         provider,
@@ -1529,17 +1530,6 @@ export class AgentOrchestrator {
         return
       }
 
-      if (effectiveAgentRuntime === 'ai-sdk') {
-        reportPreflightError({
-          code: 'runtime_unavailable',
-          title: 'AI SDK Runtime 尚未启用',
-          message: 'AI SDK Runtime 已进入类型、设置与渠道兼容层，真实 Vercel AI SDK adapter 会在下一阶段接入。',
-          actions: [],
-          canRetry: false,
-        })
-        return
-      }
-
       if (effectiveAgentRuntime === 'pi') {
         await this.runPiAgent({
           sessionId,
@@ -1558,10 +1548,11 @@ export class AgentOrchestrator {
         return
       }
 
-      const protocol = getAgentProviderProtocol(channel.provider, 'proma')
+      const protocol = getAgentProviderProtocol(channel.provider, effectiveAgentRuntime)
       const adapterProvider: ProviderType | undefined = protocol === 'openai-chat' ? 'openai' : undefined
       await this.runProviderAgnosticAgent({
         sessionId,
+        agentRuntime: effectiveAgentRuntime,
         channelId,
         workspaceId,
         userMessage: contextualMessage,
@@ -1569,7 +1560,7 @@ export class AgentOrchestrator {
         provider: channel.provider,
         adapterProvider,
         apiKey,
-        baseUrl: resolveAgentRuntimeBaseUrl(channel.provider, 'proma', channel.baseUrl),
+        baseUrl: resolveAgentRuntimeBaseUrl(channel.provider, effectiveAgentRuntime, channel.baseUrl),
         callbacks,
         startedAt: input.startedAt,
         permissionMode: initialPermissionMode,

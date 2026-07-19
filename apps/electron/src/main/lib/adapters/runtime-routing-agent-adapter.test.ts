@@ -8,7 +8,6 @@ import type {
   SDKUserMessageInput,
 } from '@proma/shared'
 import { RuntimeRoutingAgentAdapter } from './runtime-routing-agent-adapter'
-import { UnavailableAgentAdapter } from './unavailable-agent-adapter'
 
 interface RecordedCall {
   method: string
@@ -146,16 +145,6 @@ describe('RuntimeRoutingAgentAdapter', () => {
     expect(adapters.claude.calls).toHaveLength(0)
     expect(adapters.proma.calls).toHaveLength(0)
     expect(adapters.pi.calls).toHaveLength(0)
-  })
-
-  test('尚未启用的 runtime adapter 返回清晰错误', async () => {
-    const adapter = new UnavailableAgentAdapter('AI SDK')
-
-    await expect(async () => {
-      for await (const _message of adapter.query({ sessionId: 's-ai', prompt: 'hi', agentRuntime: 'ai-sdk' })) {
-        // 未启用 runtime 不应产出消息。
-      }
-    }).toThrow('AI SDK Runtime 尚未启用')
   })
 
   test('未知会话 abort 会广播到所有 runtime adapter', () => {

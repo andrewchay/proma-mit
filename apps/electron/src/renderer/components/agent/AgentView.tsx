@@ -246,7 +246,7 @@ const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; descrip
   { value: 'claude', label: 'Claude', description: '使用 Claude Agent SDK' },
   { value: 'proma', label: 'Proma', description: '使用 Provider-Agnostic Runtime' },
   { value: 'pi', label: 'Pi', description: '使用 Pi Agent SDK（v1 只读工具）' },
-  { value: 'ai-sdk', label: 'AI SDK', description: 'Vercel AI SDK Runtime（即将启用）', disabled: true },
+  { value: 'ai-sdk', label: 'AI SDK', description: '使用 Vercel AI SDK Runtime' },
 ]
 
 interface AgentRuntimeSelectorProps {

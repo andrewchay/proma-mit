@@ -1,6 +1,6 @@
 {
   "name": "@proma/electron",
-  "version": "0.9.69",
+  "version": "0.9.70",
   "description": "Proma next gen ai software with general agents - Electron App",
   "license": "Apache-2.0 OR MIT",
   "main": "dist/main.cjs",
@@ -45,6 +45,7 @@
     "@pierre/diffs": "^1.1.20",
     "@xmldom/xmldom": "^0.8.11",
     "adm-zip": "^0.5.17",
+    "ai": "7.0.31",
     "dompurify": "^3.4.5",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^4.10.38"
