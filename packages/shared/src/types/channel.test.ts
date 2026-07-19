@@ -40,6 +40,18 @@ describe('Agent provider runtime capabilities', () => {
       'qwen',
       'zhipu',
     ])
+    expect(getAgentCompatibleProviders('ai-sdk').sort()).toEqual([
+      'anthropic',
+      'custom',
+      'deepseek',
+      'doubao',
+      'google',
+      'kimi-api',
+      'kimi-coding',
+      'openai',
+      'qwen',
+      'zhipu',
+    ])
   })
 
   test('旧 AGENT_COMPATIBLE_PROVIDERS 常量等价于 Claude runtime provider 集合', () => {
@@ -57,6 +69,9 @@ describe('Agent provider runtime capabilities', () => {
     expect(getAgentProviderProtocol('google', 'pi')).toBe('google-generative')
     expect(getAgentProviderProtocol('openai', 'pi')).toBe('openai-chat')
     expect(getAgentProviderProtocol('anthropic', 'pi')).toBe('anthropic-messages')
+    expect(getAgentProviderProtocol('deepseek', 'ai-sdk')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('anthropic', 'ai-sdk')).toBe('anthropic-messages')
+    expect(getAgentProviderProtocol('google', 'ai-sdk')).toBe('google-generative')
   })
 
   test('Proma runtime 会把 Anthropic 兼容端点转换为 OpenAI-compatible 根路径', () => {
@@ -68,5 +83,7 @@ describe('Agent provider runtime capabilities', () => {
     expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'proma', 'https://api.kimi.com/coding/v1/messages')).toBe('https://api.kimi.com')
     expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'claude', 'https://api.kimi.com/coding/v1/messages')).toBe('https://api.kimi.com/coding/v1/messages')
     expect(resolveAgentRuntimeBaseUrl('openai', 'proma', 'https://api.openai.com/v1/')).toBe('https://api.openai.com/v1')
+    expect(resolveAgentRuntimeBaseUrl('deepseek', 'ai-sdk', 'https://api.deepseek.com/anthropic')).toBe('https://api.deepseek.com')
+    expect(resolveAgentRuntimeBaseUrl('kimi-api', 'ai-sdk', 'https://api.moonshot.cn/anthropic/v1/messages')).toBe('https://api.moonshot.cn')
   })
 })

@@ -82,7 +82,7 @@ export interface AgentProviderRuntimeCapability {
 export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProviderRuntimeCapability> = {
   anthropic: {
     protocol: 'anthropic-messages',
-    runtimes: ['claude', 'pi'],
+    runtimes: ['claude', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -90,7 +90,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   openai: {
     protocol: 'openai-chat',
-    runtimes: ['proma', 'pi'],
+    runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: true,
@@ -102,8 +102,9 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
       claude: 'anthropic-messages',
       proma: 'openai-chat',
       pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
     },
-    runtimes: ['claude', 'proma', 'pi'],
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: false,
     supportsStreamUsage: true,
@@ -111,7 +112,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   google: {
     protocol: 'google-generative',
-    runtimes: ['pi'],
+    runtimes: ['pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -123,8 +124,9 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
       claude: 'anthropic-messages',
       proma: 'openai-chat',
       pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
     },
-    runtimes: ['claude', 'proma', 'pi'],
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -136,8 +138,9 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
       claude: 'anthropic-messages',
       proma: 'openai-chat',
       pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
     },
-    runtimes: ['claude', 'proma', 'pi'],
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: false,
     supportsStreamUsage: false,
@@ -145,7 +148,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   zhipu: {
     protocol: 'openai-chat',
-    runtimes: ['proma', 'pi'],
+    runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -161,7 +164,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   doubao: {
     protocol: 'openai-chat',
-    runtimes: ['proma', 'pi'],
+    runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -169,7 +172,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   qwen: {
     protocol: 'openai-chat',
-    runtimes: ['proma', 'pi'],
+    runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -177,7 +180,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   custom: {
     protocol: 'openai-chat',
-    runtimes: ['proma', 'pi'],
+    runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -226,13 +229,13 @@ export function getAgentProviderProtocol(provider: ProviderType, runtime?: Agent
  */
 export function resolveAgentRuntimeBaseUrl(provider: ProviderType, runtime: AgentRuntime, baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, '')
-  if (provider === 'deepseek' && runtime === 'proma') {
+  if (provider === 'deepseek' && (runtime === 'proma' || runtime === 'ai-sdk')) {
     return normalized
       .replace(/\/anthropic\/v\d+\/messages$/, '')
       .replace(/\/anthropic\/v\d+$/, '')
       .replace(/\/anthropic$/, '')
   }
-  if ((provider === 'kimi-api' || provider === 'kimi-coding') && runtime === 'proma') {
+  if ((provider === 'kimi-api' || provider === 'kimi-coding') && (runtime === 'proma' || runtime === 'ai-sdk')) {
     return normalized
       .replace(/\/messages$/, '')
       .replace(/\/anthropic\/v\d+$/, '')

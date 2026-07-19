@@ -32,6 +32,7 @@ import { ClaudeAgentAdapter, scanAndKillOrphanedClaudeSubprocesses } from './ada
 import { ProviderAgnosticAgentAdapter } from './adapters/provider-agnostic-agent-adapter'
 import { PiAgentAdapter } from './adapters/pi-agent-adapter'
 import { RuntimeRoutingAgentAdapter } from './adapters/runtime-routing-agent-adapter'
+import { UnavailableAgentAdapter } from './adapters/unavailable-agent-adapter'
 import { AgentEventBus } from './agent-event-bus'
 import { AgentOrchestrator } from './agent-orchestrator'
 import { getAgentSessionWorkspacePath, getWorkspaceFilesDir } from './config-paths'
@@ -43,6 +44,7 @@ const adapter = new RuntimeRoutingAgentAdapter({
   claude: new ClaudeAgentAdapter(),
   proma: new ProviderAgnosticAgentAdapter(),
   pi: new PiAgentAdapter(),
+  'ai-sdk': new UnavailableAgentAdapter('AI SDK'),
 })
 const orchestrator = new AgentOrchestrator(adapter, eventBus)
 

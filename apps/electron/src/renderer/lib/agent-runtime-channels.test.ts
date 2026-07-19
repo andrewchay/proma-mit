@@ -51,4 +51,18 @@ describe('agent runtime channel filtering', () => {
     expect(getAgentRuntimeChannelIds(channels, [], 'pi')).toEqual(['openai', 'anthropic'])
     expect(isAgentRuntimeChannelUsable(channels, 'openai', [], 'pi')).toBe(true)
   })
+
+  test('given AI SDK runtime when compatible channels exist then enabled channels are returned without Claude whitelist', () => {
+    const channels = [
+      channel('anthropic', 'anthropic'),
+      channel('openai', 'openai'),
+      channel('google', 'google'),
+      channel('minimax', 'minimax'),
+      channel('disabled', 'openai', false),
+      channel('model-disabled', 'custom', true, false),
+    ]
+
+    expect(getAgentRuntimeChannelIds(channels, [], 'ai-sdk')).toEqual(['anthropic', 'openai', 'google'])
+    expect(isAgentRuntimeChannelUsable(channels, 'google', [], 'ai-sdk')).toBe(true)
+  })
 })

@@ -532,10 +532,22 @@ export type AgentStreamPayload =
 // ===== Agent Runtime =====
 
 /** Agent 运行时类型 */
-export type AgentRuntime = 'claude' | 'proma' | 'pi'
+export type AgentRuntime = 'claude' | 'proma' | 'pi' | 'ai-sdk'
 
 /** 默认 Agent 运行时，旧会话和旧设置统一按 Claude SDK 路径处理 */
 export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'claude'
+
+/** Agent runtime 展示名称，避免 UI / 编排层硬编码分支文案 */
+export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
+  claude: 'Claude',
+  proma: 'Proma',
+  pi: 'Pi',
+  'ai-sdk': 'AI SDK',
+}
+
+export function getAgentRuntimeLabel(runtime: AgentRuntime): string {
+  return AGENT_RUNTIME_LABELS[runtime]
+}
 
 /** Agent 运行时能力摘要，用于 UI 和编排层显式区分 runtime 语义 */
 export interface AgentRuntimeCapabilities {
@@ -589,11 +601,21 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
   },
+  'ai-sdk': {
+    supportsTools: true,
+    supportsMcp: false,
+    supportsPlanMode: false,
+    supportsAskUser: false,
+    supportsSubAgent: false,
+    supportsNativeResume: false,
+    supportsFileSnapshotRewind: false,
+    supportsPartialStreaming: true,
+  },
 }
 
 /** 判断未知值是否为合法 Agent runtime */
 export function isAgentRuntime(value: unknown): value is AgentRuntime {
-  return value === 'claude' || value === 'proma' || value === 'pi'
+  return value === 'claude' || value === 'proma' || value === 'pi' || value === 'ai-sdk'
 }
 
 /** 归一化 runtime，旧数据或非法值回退到 Claude SDK 路径 */

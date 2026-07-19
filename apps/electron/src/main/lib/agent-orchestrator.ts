@@ -29,6 +29,7 @@ import {
   THINKING_SIGNATURE_ERROR_MESSAGE,
   THINKING_SIGNATURE_ERROR_TITLE,
   getAgentProviderProtocol,
+  getAgentRuntimeLabel,
   isAgentCompatibleProvider,
   normalizeAgentRuntime,
   resolveAgentRuntimeBaseUrl,
@@ -1515,13 +1516,25 @@ export class AgentOrchestrator {
       const contextualMessage = `${dynamicCtx}\n\n${enrichedMessage}`
 
       if (!isAgentCompatibleProvider(channel.provider, effectiveAgentRuntime)) {
+        const runtimeLabel = getAgentRuntimeLabel(effectiveAgentRuntime)
         reportPreflightError({
           code: 'provider_error',
-          title: `当前渠道暂不支持 ${effectiveAgentRuntime === 'pi' ? 'Pi' : 'Proma'} Runtime`,
-          message: `供应商 ${channel.provider} 尚未通过 ${effectiveAgentRuntime === 'pi' ? 'Pi' : 'Proma'} runtime 的 Agent 合约验证，请选择兼容渠道或切回 Claude runtime。`,
+          title: `当前渠道暂不支持 ${runtimeLabel} Runtime`,
+          message: `供应商 ${channel.provider} 尚未通过 ${runtimeLabel} runtime 的 Agent 合约验证，请选择兼容渠道或切回 Claude runtime。`,
           actions: [
             { key: 's', label: '打开渠道设置', action: 'open_channel_settings' },
           ],
+          canRetry: false,
+        })
+        return
+      }
+
+      if (effectiveAgentRuntime === 'ai-sdk') {
+        reportPreflightError({
+          code: 'runtime_unavailable',
+          title: 'AI SDK Runtime 尚未启用',
+          message: 'AI SDK Runtime 已进入类型、设置与渠道兼容层，真实 Vercel AI SDK adapter 会在下一阶段接入。',
+          actions: [],
           canRetry: false,
         })
         return

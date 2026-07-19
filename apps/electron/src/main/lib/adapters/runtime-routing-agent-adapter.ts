@@ -9,6 +9,7 @@ import type {
   AgentProviderAdapter,
   AgentQueryInput,
   AgentRuntime,
+  SendQueuedMessageOptions,
   SDKMessage,
   SDKUserMessageInput,
 } from '@proma/shared'
@@ -49,12 +50,16 @@ export class RuntimeRoutingAgentAdapter implements AgentProviderAdapter {
     this.sessionRuntimes.clear()
   }
 
-  async sendQueuedMessage(sessionId: string, message: SDKUserMessageInput): Promise<void> {
+  async sendQueuedMessage(
+    sessionId: string,
+    message: SDKUserMessageInput,
+    options?: SendQueuedMessageOptions,
+  ): Promise<void> {
     const adapter = this.getAdapter(sessionId)
     if (!adapter.sendQueuedMessage) {
       throw new Error('当前 Agent runtime 不支持追加消息')
     }
-    await adapter.sendQueuedMessage(sessionId, message)
+    await adapter.sendQueuedMessage(sessionId, message, options)
   }
 
   async cancelQueuedMessage(sessionId: string, messageUuid: string): Promise<void> {
