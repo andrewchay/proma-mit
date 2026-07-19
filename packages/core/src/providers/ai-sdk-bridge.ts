@@ -5,7 +5,10 @@
  * 后续如果要迁移到 Web/Server runtime，可以在这里继续扩展 provider 与工具映射。
  */
 
+import { createAnthropic } from '@ai-sdk/anthropic'
+import { createGoogle } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
+import type { AgentProviderProtocol, ProviderType } from '@proma/shared'
 import type { LanguageModel, LanguageModelUsage, TextStreamPart, ToolSet } from 'ai'
 import { streamText } from 'ai'
 import type { StreamEvent, StreamEventCallback } from './types.ts'
@@ -22,6 +25,13 @@ export interface AISDKOpenAICompatibleModelInput {
   providerName?: string
   /** 额外请求头 */
   headers?: Record<string, string>
+}
+
+export interface AISDKProviderModelInput extends AISDKOpenAICompatibleModelInput {
+  /** Proma 渠道 provider，用于选择 AI SDK provider package */
+  provider: ProviderType
+  /** Agent runtime 下实际使用的协议族 */
+  protocol: AgentProviderProtocol
 }
 
 export interface AISDKStreamTextBridgeInput {
@@ -77,6 +87,47 @@ export function createOpenAICompatibleAISDKModel(input: AISDKOpenAICompatibleMod
   })
 
   return provider.chat(input.modelId)
+}
+
+/** 创建 Anthropic Messages API 的 AI SDK 模型实例。 */
+export function createAnthropicAISDKModel(input: AISDKOpenAICompatibleModelInput): LanguageModel {
+  const provider = createAnthropic({
+    apiKey: input.apiKey,
+    baseURL: normalizeBaseUrl(input.baseUrl),
+    name: input.providerName ?? 'proma-anthropic',
+    headers: input.headers,
+  })
+
+  return provider.messages(input.modelId)
+}
+
+/** 创建 Google Generative Language API 的 AI SDK 模型实例。 */
+export function createGoogleAISDKModel(input: AISDKOpenAICompatibleModelInput): LanguageModel {
+  const provider = createGoogle({
+    apiKey: input.apiKey,
+    baseURL: normalizeGoogleBaseUrl(input.baseUrl),
+    name: input.providerName ?? 'proma-google',
+    headers: input.headers,
+  })
+
+  return provider.chat(input.modelId)
+}
+
+/** 根据 Agent runtime 协议族创建对应的 AI SDK 模型实例。 */
+export function createAgentAISDKModel(input: AISDKProviderModelInput): LanguageModel {
+  if (input.protocol === 'anthropic-messages') {
+    return createAnthropicAISDKModel(input)
+  }
+  if (input.protocol === 'google-generative') {
+    return createGoogleAISDKModel(input)
+  }
+  return createOpenAICompatibleAISDKModel(input)
+}
+
+function normalizeGoogleBaseUrl(baseUrl: string): string {
+  const normalized = normalizeBaseUrl(baseUrl)
+  if (/\/v\d+(?:beta)?$/i.test(normalized)) return normalized
+  return `${normalized}/v1beta`
 }
 
 /**

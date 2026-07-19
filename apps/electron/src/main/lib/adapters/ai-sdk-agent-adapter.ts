@@ -21,8 +21,8 @@ import type {
 import type { LanguageModelUsage, ModelMessage, StepResult, ToolSet } from 'ai'
 import { isStepCount, jsonSchema, streamText, tool } from 'ai'
 import type { ToolCall, ToolResult } from '@proma/core'
-import { createOpenAICompatibleAISDKModel } from '@proma/core/providers/ai-sdk-bridge'
-import { getAgentProviderProtocol, resolveAgentRuntimeBaseUrl } from '@proma/shared'
+import { createAgentAISDKModel } from '@proma/core/providers/ai-sdk-bridge'
+import { getAgentProviderProtocol, isAgentCompatibleProvider, resolveAgentRuntimeBaseUrl } from '@proma/shared'
 import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME } from '../agent-runtime/tool-registry'
 import { acquireMcpClientManager } from '../agent-runtime/mcp-client-cache'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
@@ -116,10 +116,11 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       throw new Error('AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
 
-    const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
-    if (protocol !== 'openai-chat') {
-      throw new Error(`AI SDK Runtime 暂不支持 ${provider} 的 ${protocol} 协议`)
+    if (!isAgentCompatibleProvider(provider, 'ai-sdk')) {
+      throw new Error(`AI SDK Runtime 暂不支持 ${provider}`)
     }
+
+    const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
 
     const controller = new AbortController()
     if (abortSignal) {
@@ -148,7 +149,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         }
       }
 
-      const modelInstance = createOpenAICompatibleAISDKModel({
+      const modelInstance = createAgentAISDKModel({
+        provider,
+        protocol,
         providerName: `proma-${provider}`,
         apiKey,
         baseUrl: resolveAgentRuntimeBaseUrl(provider, 'ai-sdk', baseUrl),

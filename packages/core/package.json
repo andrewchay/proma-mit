@@ -1,6 +1,6 @@
 {
   "name": "@proma/core",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "license": "Apache-2.0 OR MIT",
   "description": "proma core types,storage and core logic with agents",
   "type": "module",
@@ -15,6 +15,8 @@
     "./highlight": "./src/highlight/index.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.16",
+    "@ai-sdk/google": "4.0.18",
     "@ai-sdk/openai": "4.0.16",
     "@proma/shared": "workspace:*",
     "ai": "7.0.31",

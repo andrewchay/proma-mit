@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from 'ai'
-import { AISDKStreamPartConverter, consumeAISDKStream } from './ai-sdk-bridge.ts'
+import { AISDKStreamPartConverter, consumeAISDKStream, createAgentAISDKModel } from './ai-sdk-bridge.ts'
 import type { StreamEvent } from './types.ts'
+
+interface ModelProbe {
+  provider: string
+  modelId: string
+  config?: {
+    baseURL?: string
+  }
+}
 
 function usage(): LanguageModelUsage {
   return {
@@ -25,6 +33,36 @@ async function* parts(items: TextStreamPart<ToolSet>[]): AsyncIterable<TextStrea
 }
 
 describe('AI SDK bridge', () => {
+  test('given supported Agent protocols then provider-specific AI SDK models are created', () => {
+    const anthropic = createAgentAISDKModel({
+      provider: 'anthropic',
+      protocol: 'anthropic-messages',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'key',
+      modelId: 'claude-test',
+    }) as unknown as ModelProbe
+    const google = createAgentAISDKModel({
+      provider: 'google',
+      protocol: 'google-generative',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      apiKey: 'key',
+      modelId: 'gemini-test',
+    }) as unknown as ModelProbe
+    const openai = createAgentAISDKModel({
+      provider: 'openai',
+      protocol: 'openai-chat',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'key',
+      modelId: 'gpt-test',
+    }) as unknown as ModelProbe
+
+    expect(anthropic.provider).toBe('proma-anthropic')
+    expect(anthropic.modelId).toBe('claude-test')
+    expect(google.provider).toBe('proma-google')
+    expect(google.config?.baseURL).toBe('https://generativelanguage.googleapis.com/v1beta')
+    expect(openai.provider).toBe('proma-openai-compatible.chat')
+  })
+
   test('given text and reasoning stream parts then Proma stream events are emitted', () => {
     const converter = new AISDKStreamPartConverter()
 

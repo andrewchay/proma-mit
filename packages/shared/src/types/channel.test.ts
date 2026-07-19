@@ -41,9 +41,11 @@ describe('Agent provider runtime capabilities', () => {
       'zhipu',
     ])
     expect(getAgentCompatibleProviders('ai-sdk').sort()).toEqual([
+      'anthropic',
       'custom',
       'deepseek',
       'doubao',
+      'google',
       'kimi-api',
       'kimi-coding',
       'openai',
@@ -68,8 +70,8 @@ describe('Agent provider runtime capabilities', () => {
     expect(getAgentProviderProtocol('openai', 'pi')).toBe('openai-chat')
     expect(getAgentProviderProtocol('anthropic', 'pi')).toBe('anthropic-messages')
     expect(getAgentProviderProtocol('deepseek', 'ai-sdk')).toBe('openai-chat')
-    expect(isAgentCompatibleProvider('anthropic', 'ai-sdk')).toBe(false)
-    expect(isAgentCompatibleProvider('google', 'ai-sdk')).toBe(false)
+    expect(getAgentProviderProtocol('anthropic', 'ai-sdk')).toBe('anthropic-messages')
+    expect(getAgentProviderProtocol('google', 'ai-sdk')).toBe('google-generative')
   })
 
   test('Proma runtime 会把 Anthropic 兼容端点转换为 OpenAI-compatible 根路径', () => {

@@ -51,7 +51,7 @@ mock.module('../document-parser', () => ({
 }))
 
 mock.module('@proma/core/providers/ai-sdk-bridge', () => ({
-  createOpenAICompatibleAISDKModel: (input: Record<string, unknown>) => ({
+  createAgentAISDKModel: (input: Record<string, unknown>) => ({
     provider: 'mock-ai-sdk',
     input,
   }),
@@ -155,23 +155,67 @@ describe('AISDKAgentAdapter', () => {
     expect(messages.map((message) => message.type)).toEqual(['assistant', 'result'])
   })
 
-  test('当前未启用的非 OpenAI-compatible provider 会被拒绝', async () => {
+  test('Anthropic provider 会通过 AI SDK 生成消息', async () => {
+    const adapter = new AISDKAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const message of adapter.query({
+      sessionId: 's-anthropic',
+      prompt: 'hello',
+      agentRuntime: 'ai-sdk',
+      provider: 'anthropic',
+      apiKey: 'key',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-test',
+      cwd: '/tmp',
+    })) {
+      messages.push(message)
+    }
+
+    expect(capturedInputs).toHaveLength(1)
+    expect(JSON.stringify(capturedInputs[0]?.model)).toContain('anthropic-messages')
+    expect(messages.map((message) => message.type)).toEqual(['assistant', 'result'])
+  })
+
+  test('Google provider 会通过 AI SDK 生成消息', async () => {
+    const adapter = new AISDKAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const message of adapter.query({
+      sessionId: 's-google',
+      prompt: 'hello',
+      agentRuntime: 'ai-sdk',
+      provider: 'google',
+      apiKey: 'key',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-test',
+      cwd: '/tmp',
+    })) {
+      messages.push(message)
+    }
+
+    expect(capturedInputs).toHaveLength(1)
+    expect(JSON.stringify(capturedInputs[0]?.model)).toContain('google-generative')
+    expect(messages.map((message) => message.type)).toEqual(['assistant', 'result'])
+  })
+
+  test('当前未声明 AI SDK 支持的 provider 会被拒绝', async () => {
     const adapter = new AISDKAgentAdapter()
 
     await expect(async () => {
       for await (const _message of adapter.query({
-        sessionId: 's-google',
+        sessionId: 's-minimax',
         prompt: 'hello',
         agentRuntime: 'ai-sdk',
-        provider: 'google',
+        provider: 'minimax',
         apiKey: 'key',
-        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        model: 'gemini-test',
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        model: 'minimax-test',
         cwd: '/tmp',
       })) {
-        // 当前未启用 google provider 包，不应产出消息。
+        // 当前未声明支持，不应产出消息。
       }
-    }).toThrow('AI SDK Runtime 暂不支持 google 的 google-generative 协议')
+    }).toThrow('AI SDK Runtime 暂不支持 minimax')
   })
 
   test('safe 模式会拒绝写工具执行', async () => {
