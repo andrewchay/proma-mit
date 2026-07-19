@@ -9,15 +9,10 @@
 import type { AgentProviderAdapter, AgentQueryInput, SDKMessage } from '@proma/shared'
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core'
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent'
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  SessionManager,
-  SettingsManager,
-} from '@earendil-works/pi-coding-agent'
 import { enrichMessageWithDocuments } from '../agent-runtime/attachment-enrichment'
 import { convertPiMessagesToSDKMessages, convertSDKMessagesToPiMessages } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
+import { loadPiCodingAgent } from './pi-sdk-loader'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 系统提示词 */
@@ -50,6 +45,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       modelId: model,
     })
 
+    const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 2 },

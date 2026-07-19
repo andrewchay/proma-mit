@@ -1,9 +1,10 @@
 import { join } from 'node:path'
 import type { Api, Model } from '@earendil-works/pi-ai'
-import { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ProviderType } from '@proma/shared'
 import { resolveAgentRuntimeBaseUrl } from '@proma/shared'
 import { getConfigDir } from '../config-paths'
+import { loadPiCodingAgent } from './pi-sdk-loader'
 
 export interface PiModelRegistrationInput {
   sessionId: string
@@ -77,6 +78,7 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
   const providerId = resolvePiProviderId(input.provider, input.sessionId)
   const api = resolvePiApi(input.provider)
   const baseUrl = resolvePiBaseUrl(input.provider, input.baseUrl)
+  const { ModelRuntime } = await loadPiCodingAgent()
   const modelRuntime = await ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
     modelsPath: null,
