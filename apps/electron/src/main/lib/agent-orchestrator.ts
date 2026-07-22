@@ -1671,7 +1671,7 @@ export class AgentOrchestrator {
               key: 'i',
               label: '报告问题',
               action: 'open_external',
-              payload: 'https://github.com/ErlichLiu/Proma/issues/new',
+              payload: 'https://github.com/andrewchay/proma-mit/issues/new',
             },
           ],
           canRetry: false,
