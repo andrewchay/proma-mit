@@ -1610,6 +1610,14 @@ export const AGENT_IPC_CHANNELS = {
   GET_WEB_BRIDGE_STATUS: 'agent:get-web-bridge-status',
   /** 关闭当前会话的 Web Bridge */
   STOP_WEB_BRIDGE: 'agent:stop-web-bridge',
+  /** 关闭全部受管 Web Bridge 会话（紧急停止） */
+  STOP_ALL_WEB_BRIDGES: 'agent:stop-all-web-bridges',
+  /** 查询 Computer Use 平台能力 */
+  GET_COMPUTER_USE_CAPABILITIES: 'agent:get-computer-use-capabilities',
+  /** 查询 Computer Use 系统授权状态 */
+  GET_COMPUTER_USE_STATUS: 'agent:get-computer-use-status',
+  /** 请求 Computer Use 所需的系统授权 */
+  REQUEST_COMPUTER_USE_PERMISSIONS: 'agent:request-computer-use-permissions',
   /** 查询本地操作审计 */
   LIST_AUDIT_EVENTS: 'agent:list-audit-events',
   /** 导出筛选后的本地操作审计 */

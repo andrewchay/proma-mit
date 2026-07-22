@@ -172,6 +172,7 @@ import {
 } from './lib/agent-session-manager'
 import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus } from './lib/agent-service'
 import { webBridgeService } from './lib/web-bridge-service'
+import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
 import { permissionService } from './lib/agent-permission-service'
 import { askUserService } from './lib/agent-ask-user-service'
@@ -1668,6 +1669,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_WEB_BRIDGE_STATUS, async (_, sessionId: string) => webBridgeService.getStatus(sessionId))
   ipcMain.handle(AGENT_IPC_CHANNELS.STOP_WEB_BRIDGE, async (_, sessionId: string): Promise<void> => { webBridgeService.close(sessionId) })
+  ipcMain.handle(AGENT_IPC_CHANNELS.STOP_ALL_WEB_BRIDGES, async (): Promise<number> => webBridgeService.closeAll())
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES, async () => computerUseService.getCapabilities())
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_STATUS, async () => computerUseService.getStatus())
+  ipcMain.handle(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS, async () => computerUseService.requestPermissions())
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@proma/shared').AgentAuditQuery) => listAgentAuditEvents(query))
   ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@proma/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
     const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()!, {

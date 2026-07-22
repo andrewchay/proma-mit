@@ -30,6 +30,8 @@ export function createFileMentionSuggestion(
     allowSpaces: false,
 
     items: async ({ query }): Promise<FileIndexEntry[]> => {
+      // @goal 是 Agent 的保留命令，不能被同名文件引用覆盖。
+      if (query.trim().toLowerCase() === 'goal') return []
       const wsPath = workspacePathRef.current
       if (!wsPath) {
         console.warn('[FileMention] workspacePath is null, mention disabled')

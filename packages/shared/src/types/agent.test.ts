@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   AGENT_RUNTIME_CAPABILITIES,
+  AGENT_IPC_CHANNELS,
   createAgentStreamEnvelope,
   getAgentRuntimeHistorySemantics,
   getAgentRuntimeLabel,
@@ -27,6 +28,13 @@ describe('Agent runtime 类型', () => {
       supportsNativeResume: false,
       supportsFileSnapshotRewind: false,
     })
+  })
+
+  test('自动化设置所需的 IPC 通道保持显式且稳定', () => {
+    expect(AGENT_IPC_CHANNELS.STOP_ALL_WEB_BRIDGES).toBe('agent:stop-all-web-bridges')
+    expect(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES).toBe('agent:get-computer-use-capabilities')
+    expect(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_STATUS).toBe('agent:get-computer-use-status')
+    expect(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS).toBe('agent:request-computer-use-permissions')
   })
 
   test('Agent stream envelope 为服务端 SSE/WebSocket 提供稳定事件边界', () => {

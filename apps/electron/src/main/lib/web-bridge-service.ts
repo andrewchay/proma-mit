@@ -203,6 +203,13 @@ class WebBridgeService {
     if (current.window && !current.window.isDestroyed()) current.window.close()
   }
 
+  /** 关闭全部受管浏览器会话，供设置页紧急停止使用。 */
+  closeAll(): number {
+    const sessionIds = [...this.sessions.keys()]
+    for (const sessionId of sessionIds) this.close(sessionId)
+    return sessionIds.length
+  }
+
   getStatus(sessionId: string): { active: boolean; mode?: 'managed' | 'chrome-cdp'; url?: string; accessibilityAvailable: boolean } {
     const current = this.sessions.get(sessionId)
     if (!current) return { active: false, accessibilityAvailable: false }

@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -2182,6 +2182,13 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               </div>
             )}
 
+            {inputContent.trimStart().toLowerCase().startsWith('@goal') && (
+              <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-primary/8 px-3 py-2 text-xs text-primary">
+                <Target className="size-3.5 shrink-0" />
+                <span><code className="font-mono">@goal</code> 将创建持续 Goal；Agent 会在每轮记录检查点，并且只有有验收证据时才能完成。</span>
+              </div>
+            )}
+
             <RichTextInput
               value={inputContent}
               onChange={setInputContent}
@@ -2192,8 +2199,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               placeholder={
                 agentChannelId && selectedChannelUsable && hasAvailableModel
                   ? sendWithCmdEnter
-                    ? '输入消息... (⌘/Ctrl+Enter 发送，Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
-                    : '输入消息... (Enter 发送，Shift+Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
+                    ? '输入消息... (@goal 创建持续目标；⌘/Ctrl+Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
+                    : '输入消息... (@goal 创建持续目标；Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
                   : !agentChannelId
                     ? '请先在设置中选择 Agent 供应商'
                     : '请先选择当前 runtime 可用的渠道'

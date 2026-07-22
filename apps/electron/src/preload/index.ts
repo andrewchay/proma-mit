@@ -469,6 +469,14 @@ export interface ElectronAPI {
   getWebBridgeStatus: (sessionId: string) => Promise<{ active: boolean; mode?: 'managed' | 'chrome-cdp'; url?: string; accessibilityAvailable: boolean }>
   /** 关闭当前会话的 Web Bridge */
   stopWebBridge: (sessionId: string) => Promise<void>
+  /** 紧急关闭全部受管 Web Bridge 会话 */
+  stopAllWebBridges: () => Promise<number>
+  /** 读取 Computer Use 平台能力 */
+  getComputerUseCapabilities: () => Promise<{ platform: string; screenshot: boolean; input: boolean; frontmostWindow: boolean; message: string }>
+  /** 读取 Computer Use 系统授权状态 */
+  getComputerUseStatus: () => Promise<{ supported: boolean; accessibility: boolean; screenRecording: boolean; message: string }>
+  /** 请求 Computer Use 所需系统授权 */
+  requestComputerUsePermissions: () => Promise<{ supported: boolean; accessibility: boolean; screenRecording: boolean; message: string }>
   /** 查询本地 Web Bridge / Computer Use 审计（不会上传） */
   listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
   /** 将当前筛选结果导出为用户选择位置的 JSONL */
@@ -1448,6 +1456,10 @@ const electronAPI: ElectronAPI = {
   },
   getWebBridgeStatus: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_WEB_BRIDGE_STATUS, sessionId),
   stopWebBridge: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.STOP_WEB_BRIDGE, sessionId),
+  stopAllWebBridges: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.STOP_ALL_WEB_BRIDGES),
+  getComputerUseCapabilities: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES),
+  getComputerUseStatus: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_STATUS),
+  requestComputerUsePermissions: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS),
   listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
   exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
 

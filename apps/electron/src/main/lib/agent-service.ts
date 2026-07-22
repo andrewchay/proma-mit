@@ -211,7 +211,7 @@ export async function runAgent(
 
 function prepareGoalInput(input: AgentSendInput, isGoalContinuation: boolean): AgentSendInput {
   if (isGoalContinuation) return input
-  const match = input.userMessage.match(/^\s*@goal\s+([\s\S]+)$/i)
+  const match = input.userMessage.match(/^\s*@goal\b([\s\S]*)$/i)
   if (!match) {
     goalCoordinator.pauseForUserInput(input.sessionId)
     return input
@@ -221,6 +221,7 @@ function prepareGoalInput(input: AgentSendInput, isGoalContinuation: boolean): A
     throw new Error('@goal 当前仅支持 Proma Runtime 或 AI SDK Runtime')
   }
   const objective = (match[1] ?? '').trim()
+  if (!objective) throw new Error('@goal 后需要填写要持续推进的目标')
   const goal = goalCoordinator.create({
     sessionId: input.sessionId,
     workspaceId: input.workspaceId,
