@@ -141,17 +141,9 @@ export function initAutoUpdater(mainWindow: BrowserWindow): void {
     })
   })
 
-  // 启动后延迟 10 秒首次检查
-  setTimeout(() => {
-    console.log('[更新] 首次自动检查更新')
-    checkForUpdates()
-  }, 10_000)
-
-  // 每 4 小时自动检查一次
-  checkInterval = setInterval(() => {
-    console.log('[更新] 定时自动检查更新')
-    checkForUpdates()
-  }, 4 * 60 * 60 * 1000)
+  // 自动检查已按产品策略停用：只保留设置页中的手动检查入口。
+  // setTimeout(() => checkForUpdates(), 10_000)
+  // checkInterval = setInterval(() => checkForUpdates(), 4 * 60 * 60 * 1000)
 
   // 窗口关闭时清理定时器
   mainWindow.on('closed', () => {
@@ -162,5 +154,5 @@ export function initAutoUpdater(mainWindow: BrowserWindow): void {
     win = null
   })
 
-  console.log('[更新] 自动更新模块已初始化（自动下载，用户确认后安装）')
+  console.log('[更新] 更新模块已初始化（自动检查已停用，支持手动检查）')
 }

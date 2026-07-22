@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { LanguageModelUsage, TextStreamPart, ToolSet } from 'ai'
-import { AISDKStreamPartConverter, consumeAISDKStream, createAgentAISDKModel } from './ai-sdk-bridge.ts'
+import { AISDKStreamPartConverter, AISDKStreamStepAccumulator, consumeAISDKStream, createAgentAISDKModel } from './ai-sdk-bridge.ts'
 import type { StreamEvent } from './types.ts'
 
 interface ModelProbe {
@@ -122,5 +122,47 @@ describe('AI SDK bridge', () => {
       { type: 'done', stopReason: 'tool_use' },
       { type: 'error', error: 'boom' },
     ])
+  })
+
+  test('given AI SDK step stream then reusable step snapshots are accumulated', () => {
+    const accumulator = new AISDKStreamStepAccumulator()
+
+    expect(accumulator.consume({ type: 'text-delta', id: 'text-1', text: '先读文件' })).toEqual([])
+    expect(accumulator.consume({
+      type: 'tool-call',
+      toolCallId: 'call-1',
+      toolName: 'Read',
+      input: { file_path: 'README.md' },
+      dynamic: true,
+    })).toEqual([])
+    expect(accumulator.consume({
+      type: 'tool-result',
+      toolCallId: 'call-1',
+      toolName: 'Read',
+      input: { file_path: 'README.md' },
+      output: { content: 'hello' },
+      dynamic: true,
+    })).toEqual([])
+
+    expect(accumulator.consume({
+      type: 'finish-step',
+      finishReason: 'tool-calls',
+      rawFinishReason: 'tool_calls',
+      usage: usage(),
+    } as TextStreamPart<ToolSet>)).toEqual([
+      {
+        text: '先读文件',
+        toolCalls: [{ toolCallId: 'call-1', toolName: 'Read', input: { file_path: 'README.md' } }],
+        toolResults: [{
+          toolCallId: 'call-1',
+          toolName: 'Read',
+          input: { file_path: 'README.md' },
+          output: { content: 'hello' },
+        }],
+        finishReason: 'tool_use',
+        usage: usage(),
+      },
+    ])
+    expect(accumulator.consume({ type: 'finish', finishReason: 'stop', rawFinishReason: 'stop', totalUsage: usage() })).toEqual([])
   })
 })

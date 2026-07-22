@@ -32,6 +32,22 @@ export const MEMORY_IPC_CHANNELS = {
   TEST_CONNECTION: 'memory:test-connection',
 } as const
 
+/** 本地 Computer Use 与 Web Bridge 的审计记录。 */
+export interface AgentAuditEvent {
+  at: string
+  sessionId: string
+  source: 'web-bridge' | 'computer-use'
+  action: string
+  detail: Record<string, unknown>
+}
+
+export interface AgentAuditQuery {
+  source?: AgentAuditEvent['source'] | 'all'
+  sessionId?: string
+  action?: string
+  limit?: number
+}
+
 // ===== Agent 工作区 =====
 
 /** Agent 工作区 */
@@ -42,6 +58,8 @@ export interface AgentWorkspace {
   name: string
   /** URL-safe 目录名（创建后不可变） */
   slug: string
+  /** 已有本地项目的根目录；未设置时使用 Proma 管理的隔离工作区 */
+  rootPath?: string
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
@@ -527,7 +545,61 @@ export type PromaEvent =
 /** IPC 传输的统一 payload（替代 AgentEvent） */
 export type AgentStreamPayload =
   | { kind: 'sdk_message'; message: SDKMessage }
+  | { kind: 'agent_event'; event: AgentEvent }
   | { kind: 'proma_event'; event: PromaEvent }
+
+/**
+ * 面向 SSE / WebSocket 的 Agent 流式事件 envelope。
+ *
+ * Electron IPC 当前仍直接传输 AgentStreamPayload；服务端 Web runtime 可以使用该 envelope
+ * 提供事件 ID、时间戳和 sessionId，便于断线重连、日志追踪和多租户路由。
+ */
+export interface AgentStreamEnvelope {
+  /** 事件 ID，可作为 SSE Last-Event-ID 使用 */
+  id: string
+  /** 会话 ID */
+  sessionId: string
+  /** 事件创建时间 */
+  createdAt: number
+  /** 事件载荷 */
+  payload: AgentStreamPayload
+}
+
+export interface CreateAgentStreamEnvelopeOptions {
+  id?: string
+  createdAt?: number
+}
+
+export function createAgentStreamEnvelope(
+  sessionId: string,
+  payload: AgentStreamPayload,
+  options: CreateAgentStreamEnvelopeOptions = {},
+): AgentStreamEnvelope {
+  return {
+    id: options.id ?? createAgentStreamEventId(),
+    sessionId,
+    createdAt: options.createdAt ?? Date.now(),
+    payload,
+  }
+}
+
+export function serializeAgentStreamEnvelopeForSSE(envelope: AgentStreamEnvelope): string {
+  return [
+    `id: ${envelope.id}`,
+    'event: agent-stream',
+    `data: ${JSON.stringify(envelope)}`,
+    '',
+    '',
+  ].join('\n')
+}
+
+function createAgentStreamEventId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID
+  if (randomUUID) {
+    return randomUUID.call(globalThis.crypto)
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 // ===== Agent Runtime =====
 
@@ -569,6 +641,25 @@ export interface AgentRuntimeCapabilities {
   supportsPartialStreaming: boolean
 }
 
+export type AgentRuntimeForkMode = 'sdk_snapshot' | 'jsonl_history_copy'
+export type AgentRuntimeRewindMode = 'sdk_file_snapshot' | 'history_truncate'
+
+export interface AgentRuntimeHistorySemantics {
+  runtime: AgentRuntime
+  /** fork 的历史来源语义 */
+  forkMode: AgentRuntimeForkMode
+  /** rewind 的恢复语义 */
+  rewindMode: AgentRuntimeRewindMode
+  /** fork 后是否复制工作区文件 */
+  copiesWorkspaceFiles: boolean
+  /** rewind 是否恢复文件系统快照 */
+  restoresFileSnapshot: boolean
+  /** 是否依赖 runtime / SDK 原生 session resume */
+  usesNativeSessionResume: boolean
+  /** 面向 UI / API 的短说明 */
+  description: string
+}
+
 /** 当前内置 runtime 的能力基线 */
 export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabilities> = {
   claude: {
@@ -603,14 +694,58 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
   },
   'ai-sdk': {
     supportsTools: true,
-    supportsMcp: false,
-    supportsPlanMode: false,
-    supportsAskUser: false,
-    supportsSubAgent: false,
+    supportsMcp: true,
+    supportsPlanMode: true,
+    supportsAskUser: true,
+    supportsSubAgent: true,
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
   },
+}
+
+/** 当前内置 runtime 的 fork / rewind 语义，供 UI 和服务端 API 明确展示能力差异 */
+export const AGENT_RUNTIME_HISTORY_SEMANTICS: Record<AgentRuntime, AgentRuntimeHistorySemantics> = {
+  claude: {
+    runtime: 'claude',
+    forkMode: 'sdk_snapshot',
+    rewindMode: 'sdk_file_snapshot',
+    copiesWorkspaceFiles: true,
+    restoresFileSnapshot: true,
+    usesNativeSessionResume: true,
+    description: 'Claude runtime 使用 SDK 原生 session / file-history snapshot；fork 与 rewind 语义最接近完整时间线恢复。',
+  },
+  proma: {
+    runtime: 'proma',
+    forkMode: 'jsonl_history_copy',
+    rewindMode: 'history_truncate',
+    copiesWorkspaceFiles: true,
+    restoresFileSnapshot: false,
+    usesNativeSessionResume: false,
+    description: 'Proma runtime 复制 JSONL 历史与工作区文件；rewind 只截断消息历史，不恢复文件快照。',
+  },
+  pi: {
+    runtime: 'pi',
+    forkMode: 'jsonl_history_copy',
+    rewindMode: 'history_truncate',
+    copiesWorkspaceFiles: true,
+    restoresFileSnapshot: false,
+    usesNativeSessionResume: false,
+    description: 'Pi runtime 使用 JSONL/history replay 语义；当前定位为 SDK 验证 runtime，不提供文件快照级 rewind。',
+  },
+  'ai-sdk': {
+    runtime: 'ai-sdk',
+    forkMode: 'jsonl_history_copy',
+    rewindMode: 'history_truncate',
+    copiesWorkspaceFiles: true,
+    restoresFileSnapshot: false,
+    usesNativeSessionResume: false,
+    description: 'AI SDK runtime 使用 Proma 的 history replay 语义；适合服务端 Web，但不声明 SDK 原生 snapshot restore。',
+  },
+}
+
+export function getAgentRuntimeHistorySemantics(runtime: AgentRuntime): AgentRuntimeHistorySemantics {
+  return AGENT_RUNTIME_HISTORY_SEMANTICS[runtime]
 }
 
 /** 判断未知值是否为合法 Agent runtime */
@@ -1195,6 +1330,8 @@ export interface AskUserRequest {
   requestId: string
   /** 会话 ID */
   sessionId: string
+  /** 交互类型；接管状态使用专用 UI，避免被当作普通问答。 */
+  kind?: 'question' | 'computer_use_takeover'
   /** 问题列表 */
   questions: AskUserQuestion[]
   /** 工具原始输入（用于构建 updatedInput） */
@@ -1397,6 +1534,14 @@ export const AGENT_IPC_CHANNELS = {
   SEND_MESSAGE: 'agent:send-message',
   /** 中止 Agent 执行 */
   STOP_AGENT: 'agent:stop',
+  /** 读取当前会话的 Web Bridge 状态 */
+  GET_WEB_BRIDGE_STATUS: 'agent:get-web-bridge-status',
+  /** 关闭当前会话的 Web Bridge */
+  STOP_WEB_BRIDGE: 'agent:stop-web-bridge',
+  /** 查询本地操作审计 */
+  LIST_AUDIT_EVENTS: 'agent:list-audit-events',
+  /** 导出筛选后的本地操作审计 */
+  EXPORT_AUDIT_EVENTS: 'agent:export-audit-events',
 
   // 后台任务管理
   /** 获取任务输出 */

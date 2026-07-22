@@ -58,6 +58,7 @@ export class AgentAskUserService {
     const request: AskUserRequest = {
       requestId: randomUUID(),
       sessionId,
+      kind: input.interactionType === 'computer_use_takeover' ? 'computer_use_takeover' : 'question',
       questions,
       toolInput: input,
     }

@@ -29,6 +29,7 @@ import {
   THINKING_SIGNATURE_ERROR_MESSAGE,
   THINKING_SIGNATURE_ERROR_TITLE,
   getAgentProviderProtocol,
+  getAgentRuntimeHistorySemantics,
   getAgentRuntimeLabel,
   isAgentCompatibleProvider,
   normalizeAgentRuntime,
@@ -41,12 +42,13 @@ import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } 
 import type { PiAgentQueryOptions } from './adapters/pi-agent-adapter'
 import { isTransientNetworkError } from './error-patterns'
 import type { AgentEventBus } from './agent-event-bus'
-import { decryptApiKey, getChannelById, listChannels } from './channel-manager'
+import { decryptApiKey, getChannelById } from './channel-manager'
 import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@proma/core'
+import { normalizeAgentRuntimeError } from '@proma/shared/utils'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
-import { getAgentWorkspace, getWorkspaceMcpConfig, ensurePluginManifest } from './agent-workspace-manager'
+import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest } from './agent-workspace-manager'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getRuntimeStatus } from './runtime-init'
@@ -61,6 +63,7 @@ import { getMemoryConfig } from './memory-service'
 import { searchMemory, addMemory, formatSearchResult } from './memos-client'
 import { validateToolInput } from './agent-tool-input-validator'
 import { estimateTokenCount, WRITE_CONTENT_TOKEN_THRESHOLD } from './agent-tool-token-estimator'
+import { createElectronRuntimeServices, type RuntimeServices } from './agent-runtime/runtime-services'
 
 // ===== 类型定义 =====
 
@@ -489,6 +492,7 @@ function collectAttachedDirectories(params: {
 export class AgentOrchestrator {
   private adapter: AgentProviderAdapter
   private eventBus: AgentEventBus
+  private runtimeServices: RuntimeServices
   private activeSessions = new Map<string, number>()
 
   /** 队列消息本地记录（sessionId → UUID 集合，用于防重） */
@@ -500,9 +504,10 @@ export class AgentOrchestrator {
   /** 运行中会话的当前权限模式（支持运行时动态切换） */
   private sessionPermissionModes = new Map<string, PromaPermissionMode>()
 
-  constructor(adapter: AgentProviderAdapter, eventBus: AgentEventBus) {
+  constructor(adapter: AgentProviderAdapter, eventBus: AgentEventBus, runtimeServices?: RuntimeServices) {
     this.adapter = adapter
     this.eventBus = eventBus
+    this.runtimeServices = runtimeServices ?? createElectronRuntimeServices(eventBus)
   }
 
   /**
@@ -530,30 +535,16 @@ export class AgentOrchestrator {
     let userMessageUuid = ''
 
     try {
-      // 确定工作目录
-      let agentCwd = homedir()
-      let workspaceSlug = ''
-      let mcpServerConfigs: Record<string, import('@proma/shared').McpServerEntry> | undefined
-      if (workspaceId) {
-        const ws = getAgentWorkspace(workspaceId)
-        if (ws) {
-          workspaceSlug = ws.slug
-          agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
-          if (!existsSync(agentCwd)) {
-            mkdirSync(agentCwd, { recursive: true })
-          }
-          try {
-            mcpServerConfigs = getWorkspaceMcpConfig(ws.slug).servers
-          } catch (err) {
-            console.warn(`[Agent Runtime] 加载 MCP 配置失败:`, err)
-          }
-        }
-      }
+      const runtimeServices = this.runtimeServices
+      const runtimeWorkspace = runtimeServices.workspaces.resolveWorkspaceContext({ workspaceId, sessionId })
+      const agentCwd = runtimeWorkspace.cwd
+      const workspaceSlug = runtimeWorkspace.workspaceSlug ?? ''
+      const mcpServerConfigs = runtimeWorkspace.mcpServers
 
       console.log(`[Agent Runtime] 启动 ${agentRuntime} runtime — provider: ${provider}, adapter=${adapterProvider ?? provider}, model: ${modelId}, cwd: ${agentCwd}`)
 
       // 加载历史消息（阶段 2），排除最后一条当前用户消息
-      const allHistory = getAgentSessionSDKMessages(sessionId)
+      const allHistory = runtimeServices.sessions.getHistoryMessages(sessionId)
       const historyMessages = allHistory.length > 0 ? allHistory.slice(0, -1) : []
       console.log(`[Agent Runtime] 加载历史消息：${historyMessages.length} 条`)
 
@@ -566,17 +557,17 @@ export class AgentOrchestrator {
         uuid: userMessageUuid,
         _attachments: attachments,
       } as unknown as SDKMessage
-      appendSDKMessages(sessionId, [userSDKMsg])
+      runtimeServices.sessions.appendMessages(sessionId, [userSDKMsg])
 
       // 创建权限检查回调，复用 AgentPermissionService 的 auto/ask/safe 逻辑
       const canUseTool = permissionService.createCanUseTool(
         sessionId,
         (request: PermissionRequest) => {
-          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'permission_request', request } } as AgentStreamPayload)
+          runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'permission_request', request } } as AgentStreamPayload)
         },
         (sid, toolInput, signal, sendAskUser) => askUserService.handleAskUserQuestion(sid, toolInput, signal, sendAskUser),
         (request: AskUserRequest) => {
-          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
+          runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
         },
         () => permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
       )
@@ -598,7 +589,7 @@ export class AgentOrchestrator {
         mcpServers: mcpServerConfigs,
         workspaceSlug,
         onMcpAuthRequired: ({ workspaceSlug: ws, serverName }: { workspaceSlug: string; serverName: string }) => {
-          this.eventBus.emit(sessionId, {
+          runtimeServices.events.emit(sessionId, {
             kind: 'proma_event',
             event: { type: 'mcp_auth_required', workspaceSlug: ws, serverName },
           } as AgentStreamPayload)
@@ -611,7 +602,7 @@ export class AgentOrchestrator {
           return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
         },
         onEnterPlanMode: () => {
-          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } } as AgentStreamPayload)
+          runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } } as AgentStreamPayload)
         },
         onExitPlanMode: async (
           input: Record<string, unknown>,
@@ -622,7 +613,7 @@ export class AgentOrchestrator {
             input,
             signal,
             (request: ExitPlanModeRequest) => {
-              this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } } as AgentStreamPayload)
+              runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } } as AgentStreamPayload)
             },
           )
           if (result.behavior === 'allow' && 'targetMode' in result && result.targetMode) {
@@ -639,7 +630,7 @@ export class AgentOrchestrator {
             input,
             signal,
             (request: AskUserRequest) => {
-              this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
+              runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
             },
           )
           if (result.behavior === 'deny') {
@@ -660,6 +651,9 @@ export class AgentOrchestrator {
             permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
           }, input)
         },
+        onAgentEvent: (event) => {
+          runtimeServices.events.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
+        },
       }
 
       const iterable = this.adapter.query(queryOptions)
@@ -667,7 +661,7 @@ export class AgentOrchestrator {
 
       for await (const msg of iterable) {
         accumulatedMessages.push(msg)
-        this.eventBus.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
+        runtimeServices.events.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
 
         // 自动标题生成（第一条 assistant 文本消息）
         if (msg.type === 'assistant' && !this.hasTitle(sessionId)) {
@@ -680,7 +674,7 @@ export class AgentOrchestrator {
 
       // 持久化所有消息
       if (accumulatedMessages.length > 0) {
-        appendSDKMessages(sessionId, accumulatedMessages)
+        runtimeServices.sessions.appendMessages(sessionId, accumulatedMessages)
       }
 
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
@@ -695,10 +689,24 @@ export class AgentOrchestrator {
 
       if (userMessageUuid) {
         try {
-          truncateSDKMessages(sessionId, userMessageUuid)
+          this.runtimeServices.sessions.truncateMessages(sessionId, userMessageUuid)
         } catch (truncateError) {
           console.error('[Agent Runtime] 运行失败后截断 Proma runtime 用户消息失败:', truncateError)
         }
+      }
+      if (agentRuntime !== 'ai-sdk') {
+        this.runtimeServices.events.emit(sessionId, {
+          kind: 'agent_event',
+          event: {
+            type: 'typed_error',
+            error: normalizeAgentRuntimeError({
+              runtime: agentRuntime,
+              provider,
+              model: modelId,
+              error,
+            }),
+          },
+        } as AgentStreamPayload)
       }
       throw error
     }
@@ -736,7 +744,7 @@ export class AgentOrchestrator {
         if (ws) {
           workspaceName = ws.name
           workspaceSlug = ws.slug
-          agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
+          agentCwd = getAgentWorkspaceCwd(ws, sessionId)
           if (!existsSync(agentCwd)) {
             mkdirSync(agentCwd, { recursive: true })
           }
@@ -771,6 +779,7 @@ export class AgentOrchestrator {
         systemPrompt: buildSystemPrompt({
           workspaceName,
           workspaceSlug,
+          agentCwd,
           sessionId,
           permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
           memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
@@ -811,6 +820,18 @@ export class AgentOrchestrator {
           console.error('[Pi Runtime] 运行失败后截断用户消息失败:', truncateError)
         }
       }
+      this.eventBus.emit(sessionId, {
+        kind: 'agent_event',
+        event: {
+          type: 'typed_error',
+          error: normalizeAgentRuntimeError({
+            runtime: 'pi',
+            provider,
+            model: modelId,
+            error,
+          }),
+        },
+      } as AgentStreamPayload)
       throw error
     }
   }
@@ -842,7 +863,7 @@ export class AgentOrchestrator {
     }
 
     const childSessionId = `sub-${parentSessionId}-${randomUUID()}`
-    const childAdapter = new ProviderAgnosticAgentAdapter()
+    const childAdapter = new ProviderAgnosticAgentAdapter(this.runtimeServices.mcp)
     const filesHint = input.files?.length
       ? `\n\n重点关注以下文件：\n${input.files.map((f) => `- ${f}`).join('\n')}`
       : ''
@@ -1154,18 +1175,16 @@ export class AgentOrchestrator {
     console.log('[Agent 标题生成] 开始生成标题:', { channelId, modelId, userMessage: userMessage.slice(0, 50) })
 
     try {
-      const channels = listChannels()
-      const channel = channels.find((c) => c.id === channelId)
+      const channel = await this.runtimeServices.credentials.resolveChannel(channelId)
       if (!channel) {
         console.warn('[Agent 标题生成] 渠道不存在:', channelId)
         return null
       }
 
-      const apiKey = decryptApiKey(channelId)
       const providerAdapter = getAdapter(channel.provider)
       const request = providerAdapter.buildTitleRequest({
         baseUrl: channel.baseUrl,
-        apiKey,
+        apiKey: channel.apiKey,
         modelId,
         prompt: TITLE_PROMPT + userMessage,
       })
@@ -1481,7 +1500,7 @@ export class AgentOrchestrator {
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
-          runtimeAgentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
+          runtimeAgentCwd = getAgentWorkspaceCwd(ws, sessionId)
           runtimeWorkspaceSlug = ws.slug
           runtimeWorkspace = ws
         }
@@ -1662,7 +1681,7 @@ export class AgentOrchestrator {
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
-          agentCwd = getAgentSessionWorkspacePath(ws.slug, sessionId)
+          agentCwd = getAgentWorkspaceCwd(ws, sessionId)
           workspaceSlug = ws.slug
           workspace = ws
           console.log(`[Agent 编排] 使用 session 级别 cwd: ${agentCwd} (${ws.name}/${sessionId})`)
@@ -1989,6 +2008,7 @@ export class AgentOrchestrator {
           append: buildSystemPrompt({
             workspaceName: workspace?.name,
             workspaceSlug,
+            agentCwd,
             sessionId,
             permissionMode: initialPermissionMode,
             memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
@@ -2672,13 +2692,18 @@ export class AgentOrchestrator {
       throw new Error(`会话不存在: ${sessionId}`)
     }
 
-    // Provider-Agnostic Runtime 回退路径：不支持 SDK 级文件快照，仅截断对话历史
+    // 非 SDK snapshot runtime 回退路径：不支持文件快照，仅截断对话历史
     if (!sessionMeta.sdkSessionId) {
+      const runtime = normalizeAgentRuntime(sessionMeta.agentRuntime)
+      const semantics = getAgentRuntimeHistorySemantics(runtime)
       const kept = rewindProviderAgnosticSession(sessionId, assistantMessageUuid)
-      console.log(`[Agent 编排] Provider-Agnostic 回退完成: sessionId=${sessionId}, 保留 ${kept.length} 条消息, 文件状态未恢复`)
+      console.log(`[Agent 编排] ${runtime} 回退完成: sessionId=${sessionId}, 保留 ${kept.length} 条消息, 文件状态未恢复`)
       return {
         remainingMessages: kept.length,
-        fileRewind: { canRewind: false, error: 'Provider-Agnostic Runtime 暂不支持文件快照恢复，已截断对话' },
+        fileRewind: {
+          canRewind: semantics.restoresFileSnapshot,
+          error: `${semantics.description} 已截断对话历史，文件状态未恢复。`,
+        },
       }
     }
 
@@ -2689,7 +2714,7 @@ export class AgentOrchestrator {
       const ws = getAgentWorkspace(sessionMeta.workspaceId)
       if (ws) {
         workspaceSlug = ws.slug
-        projectDir = getAgentSessionWorkspacePath(ws.slug, sessionMeta.id)
+        projectDir = getAgentWorkspaceCwd(ws, sessionMeta.id)
       }
     }
     const userMessageUuid = resolveUserUuidFromSDK(sessionMeta.sdkSessionId, assistantMessageUuid, projectDir, sessionMeta.forkSourceSdkSessionId)

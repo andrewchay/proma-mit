@@ -1,0 +1,5 @@
+# 本地并存验收包：不覆盖正式发布版 com.proma.mit。
+extends: electron-builder.yml
+
+appId: com.proma.mit.dev
+productName: proma-mit-dev

@@ -5,7 +5,7 @@ declare module 'ws' {
     static readonly OPEN: number
     readonly readyState: number
     constructor(url: string, options?: { headers?: Record<string, string> })
-    send(data: Buffer | ArrayBuffer | Uint8Array): void
+    send(data: string | Buffer | ArrayBuffer | Uint8Array): void
     close(code?: number, reason?: string): void
     terminate(): void
   }

@@ -2,48 +2,25 @@
  * MCP 服务器 client_secret 安全存储
  *
  * OAuth client_secret 属于长期凭证，不能明文保存在工作区 mcp.json 中。
- * 这里使用 Electron safeStorage 进行 OS 级加密后，集中存放到
+ * 这里使用 runtime secret codec 进行加密后，集中存放到
  * ~/.proma/mcp-client-secrets.json，按 workspaceSlug → serverName 索引。
- *
- * 通过 createRequire 延迟加载 electron，避免在测试环境静态引入 electron
- * 导致模块解析失败。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { createRequire } from 'node:module'
 import { getMcpClientSecretsPath } from '../config-paths'
 import { safeParseJSON } from '../safe-json'
+import { getRuntimeSecretCodec } from './runtime-secret-codec'
 
 /** 加密存储结构：workspaceSlug → serverName → encryptedSecret */
 type ClientSecretsStore = Record<string, Record<string, string>>
 
-function getSafeStorage(): typeof import('electron').safeStorage | null {
-  try {
-    const require = createRequire(import.meta.url)
-    const electron = require('electron') as typeof import('electron')
-    return electron.safeStorage ?? null
-  } catch {
-    return null
-  }
-}
-
 function encrypt(plain: string): string {
-  const safeStorage = getSafeStorage()
-  if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
-    console.warn('[MCP client_secret] safeStorage 不可用，将以 base64 明文存储')
-    return Buffer.from(plain).toString('base64')
-  }
-  return safeStorage.encryptString(plain).toString('base64')
+  return getRuntimeSecretCodec().encode(plain, 'MCP client_secret')
 }
 
 function decrypt(encoded: string): string {
-  const safeStorage = getSafeStorage()
-  const buffer = Buffer.from(encoded, 'base64')
-  if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
-    return buffer.toString('utf-8')
-  }
-  return safeStorage.decryptString(buffer)
+  return getRuntimeSecretCodec().decode(encoded, 'MCP client_secret')
 }
 
 function loadStore(): ClientSecretsStore {

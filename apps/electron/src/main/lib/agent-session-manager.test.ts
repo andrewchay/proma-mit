@@ -4,7 +4,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
 import type { SDKMessage } from '@proma/shared'
-import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -35,7 +35,7 @@ const {
   updateAgentSessionMeta,
 } = await import('./agent-session-manager')
 const { getConfigDir, getAgentSessionWorkspacePath, getAgentWorkspacePath } = await import('./config-paths')
-const { createAgentWorkspace } = await import('./agent-workspace-manager')
+const { createAgentWorkspace, getAgentWorkspaceCwd } = await import('./agent-workspace-manager')
 
 describe('Agent 会话管理器', () => {
   let testWorkspaceId: string
@@ -76,6 +76,17 @@ describe('Agent 会话管理器', () => {
     expect(getAgentSessionMeta(defaultSession.id)?.agentRuntime).toBe('claude')
     expect(promaSession.agentRuntime).toBe('proma')
     expect(getAgentSessionMeta(promaSession.id)?.agentRuntime).toBe('proma')
+  })
+
+  test('从已有本地文件夹创建工作区时，Agent cwd 直接使用项目根目录', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'proma-local-project-'))
+    testDirs.push(projectDir)
+    const workspace = createAgentWorkspace(`本地项目 ${Date.now()}`, projectDir)
+
+    const canonicalProjectDir = realpathSync(projectDir)
+    expect(workspace.rootPath).toBe(canonicalProjectDir)
+    expect(getAgentWorkspaceCwd(workspace, 'session-1')).toBe(canonicalProjectDir)
+    expect(getAgentSessionWorkspacePath(workspace.slug, 'session-1')).not.toBe(canonicalProjectDir)
   })
 
   test('更新会话 runtime 时会归一化非法值', () => {

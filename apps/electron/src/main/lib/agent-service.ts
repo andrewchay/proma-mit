@@ -36,17 +36,19 @@ import { RuntimeRoutingAgentAdapter } from './adapters/runtime-routing-agent-ada
 import { AgentEventBus } from './agent-event-bus'
 import { AgentOrchestrator } from './agent-orchestrator'
 import { getAgentSessionWorkspacePath, getWorkspaceFilesDir } from './config-paths'
+import { createElectronRuntimeServices } from './agent-runtime/runtime-services'
 
 // ===== 实例创建 =====
 
 const eventBus = new AgentEventBus()
+const runtimeServices = createElectronRuntimeServices(eventBus)
 const adapter = new RuntimeRoutingAgentAdapter({
   claude: new ClaudeAgentAdapter(),
-  proma: new ProviderAgnosticAgentAdapter(),
+  proma: new ProviderAgnosticAgentAdapter(runtimeServices.mcp),
   pi: new PiAgentAdapter(),
-  'ai-sdk': new AISDKAgentAdapter(),
+  'ai-sdk': new AISDKAgentAdapter(runtimeServices.mcp),
 })
-const orchestrator = new AgentOrchestrator(adapter, eventBus)
+const orchestrator = new AgentOrchestrator(adapter, eventBus, runtimeServices)
 
 /** 导出 EventBus 供飞书 Bridge 等外部服务订阅事件 */
 export { eventBus as agentEventBus }

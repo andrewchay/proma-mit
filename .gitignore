@@ -33,6 +33,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
+# macOS Computer Use helper is built from the tracked Objective-C source.
+apps/electron/resources/computer-use/macos/computer_use.node
+
 # ignore craft-agents-oss folder
 craft-agents-oss
 

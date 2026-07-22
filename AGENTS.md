@@ -92,6 +92,8 @@ bun test
 # 打包分发
 cd apps/electron
 bun run dist:mac      # macOS
+bun run dist:mac-dev  # macOS 开发并存包（com.proma.mit.dev）
+bun run dist:mac-dev-zip # macOS 开发并存 ZIP（避免 DMG 工具链）
 bun run dist:win      # Windows
 bun run dist:linux    # Linux
 bun run dist:fast     # 当前架构快速打包
@@ -177,7 +179,7 @@ bun run generate:icons    # 生成应用图标
 | `agent-permission-service.ts` | Agent 权限管理：工具权限检查、权限模式管理 |
 | `agent-ask-user-service.ts` | Agent 用户交互：AskUser 请求处理 |
 | `agent-exit-plan-service.ts` | Agent 退出计划服务 |
-| `agent-workspace-manager.ts` | 工作区管理（16KB）：MCP Server 配置、Skills 配置、工作区 CRUD |
+| `agent-workspace-manager.ts` | 工作区管理（16KB）：MCP Server 配置、Skills 配置、隔离工作区 / 本地项目工作区 CRUD |
 | `chat-service.ts` | Chat 流式调用编排（20KB）：Provider 适配器集成、消息持久化、AbortController |
 | `conversation-manager.ts` | 对话管理（13KB）：对话 CRUD、JSONL 消息存储、置顶、上下文分割 |
 | `channel-manager.ts` | 渠道管理（16KB）：渠道 CRUD、API Key AES-256-GCM 加密（safeStorage）、连接测试、模型获取 |
@@ -196,6 +198,8 @@ bun run generate:icons    # 生成应用图标
 |------|------|
 | `chat-tools/` | Chat 工具实现目录：内置工具函数 |
 | `workspace-watcher.ts` | 工作区文件监听：文件系统变化监控 |
+| `web-bridge-service.ts` | Web Bridge P0：每会话独立、可见、隔离的受管浏览器；仅允许受限 DOM 操作 |
+| `computer-use-service.ts` | macOS Computer Use：权限状态、显示器枚举、指定屏幕截图及系统鼠标/键盘/滚动；输入事件由加载进 Electron 主进程的 N-API 模块发送 |
 | `chat-tools-watcher.ts` | Chat 工具监听：工具配置变化监控 |
 | `attachment-service.ts` | 附件管理：存储/读取/删除、文件对话框 |
 | `document-parser.ts` | 文档解析：PDF/Office/文本文件提取 |
@@ -292,9 +296,9 @@ bun run generate:icons    # 生成应用图标
 ├── agent-sessions.json     # Agent 会话索引
 ├── agent-sessions/         # Agent 会话消息存储
 │   └── {uuid}.jsonl        # 每会话一个 JSONL 文件
-├── agent-workspaces/       # Agent 工作区目录
+├── agent-workspaces/       # Agent 工作区配置与隔离会话私有目录
 │   └── {workspace-slug}/
-│       ├── {session-id}/   # 会话工作目录
+│       ├── {session-id}/   # 隔离工作区的会话工作目录与私有运行状态
 │       ├── workspace-files/# 工作区持久文件
 │       ├── mcp.json        # MCP Server 配置
 │       └── skills/         # Skills 配置目录
@@ -309,7 +313,8 @@ bun run generate:icons    # 生成应用图标
 
 **关键设计**：
 - JSON 配置 + JSONL 追加日志，无本地数据库，文件可移植
-- Agent 工作区按 slug 隔离，每个会话独立目录
+- 默认 Agent 工作区按 slug 隔离，每个会话独立目录；选择已有本地项目时，`AgentWorkspace.rootPath` 保存项目根目录，Agent 的 cwd、文件浏览、`@` 文件引用和变更检测直接使用该目录
+- 本地项目工作区的会话记录、MCP、Skills 和私有运行状态仍保留在 `~/.proma/`；删除工作区索引不会删除用户项目目录
 - MCP 配置和 Skills 按工作区管理
 
 ## 构建工具
@@ -441,7 +446,10 @@ React UI 更新
 - **状态管理**：`applyAgentEvent()` 纯函数更新 `AgentStreamState`，支持流式增量更新
 - **全局 IPC 监听**：`useGlobalAgentListeners`（`renderer/hooks/`）在 `main.tsx` 顶层挂载，通过 `useStore()` 直接操作 atoms，永不销毁。确保页面切换（如设置页）时流式输出、权限请求不丢失
 - **权限请求排队**：权限/AskUser 请求按 sessionId 入队到 Map atoms（`allPendingPermissionRequestsAtom` / `allPendingAskUserRequestsAtom`），不区分当前/后台会话，SDK Promise 等待用户回来响应
-- **工作区隔离**：每个工作区独立的 MCP Server 配置和 cwd，Agent 会话按工作区过滤
+- **工作区隔离 / 本地项目**：每个工作区独立管理 MCP Server、Skills 和会话；默认 cwd 为私有会话目录，`rootPath` 工作区则直接以用户选择的项目目录为 cwd
+- **Web Bridge**：Proma / AI SDK runtime 的核心工具包含受管浏览器导航、结构化 DOM/交互元素快照、截图、点击、输入、滚动、受控下载/上传、状态查询和紧急停止，以及 Chrome CDP Bridge。只读快照/截图/滚动/状态和已显式开放端口的页面列表可自动放行；导航、连接 Chrome、点击、输入、下载和上传必须逐次经权限流程，不能选择“本次会话始终允许”。上传只能经系统文件选择器由用户选取，Agent 不能传入或读取本地路径；单次最多 10 个文件、总计 50MB，绝对路径不会进入工具结果或审计。Web Bridge 操作摘要追加到本地 JSONL；页面正文、截图和下载内容不写入审计。只要当前 Web Bridge 有可用的结构化页面元素，同一会话的 Computer Use 会被拒绝，只有结构化元素不可用时才能降级。受管浏览器每会话使用独立 Electron partition，禁止网页自行弹出未受管窗口，并拒绝非 HTTP(S) 导航；CDP 仅连接用户主动启动的 `127.0.0.1` 调试端口，绝不启动或关闭 Chrome。
+- **操作审计 UI**：设置 > 操作审计可读取本机 `web-bridge-audit/events.jsonl` 与 `computer-use-audit/events.jsonl`，按来源、精确会话 ID 与精确操作类型筛选，默认最多显示 300 条；导出当前筛选结果时由用户选择位置，最多导出 1,000 条 JSONL。不会上传审计数据，也不会显示或导出页面正文、截图、敏感输入、上传文件内容和本地绝对路径。
+- **Computer Use（macOS P0）**：Proma / AI SDK runtime 正式支持权限状态、能力查询、显示器枚举、前台应用/窗口识别、授权请求、截图、点击、移动、双击、拖拽、受限快捷键、输入和滚动；Claude / Pi runtime 仅兼容性验证。截图最大边长 1600px，并返回 `coordinateScale`；操作工具带回该值后自动换算截图像素坐标。高风险操作逐次确认，`ComputerUseRequestTakeover` 会进入带明确提示的专用用户接管状态，暂停 Agent，用户选择完成后才恢复。审计以本地 JSONL 保存操作摘要，不保存截图与敏感输入正文。Windows/Linux 当前以能力查询明确降级，待对应真机实现原生控制与权限验证。
 
 ### SDK 版本升级注意事项
 
@@ -491,9 +499,10 @@ React UI 更新
 
 - ✅ **多 Provider 支持**：Anthropic、OpenAI、DeepSeek、Kimi、智谱、MiniMax、豆包、通义千问、Google、自定义端点
 - ✅ **Agent SDK 集成**：基于 Codex Agent SDK 的完整 Agent 模式
+- ✅ **服务端 Web 路线（P0–P5 基础能力）**：独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；生产 OIDC/JWT、KMS 轮换、管理员审计、完整 Web UI 与真实 provider E2E 仍待推进
 - ✅ **Provider-Agnostic Runtime**：不依赖 Claude Agent SDK 的 Agent 运行路径，当前支持 deepseek，具备 MCP 工具（含 OAuth 2.1 授权码/客户端凭证模式、client_secret 加密存储、资源发现/读取、跨会话连接缓存）、Plan mode、AskUserQuestion、Sub Agent（内置 code-reviewer / explorer / researcher）与 fork/rewind 等能力
 - ✅ **飞书集成**：消息同步、任务通知、OAuth 认证（68KB 核心服务）
-- ✅ **工作区管理**：多工作区隔离、MCP Server 配置、Skills 管理
+- ✅ **工作区管理**：多工作区隔离或直接打开本地项目、MCP Server 配置、Skills 管理
 - ✅ **权限系统**：工具权限检查、用户确认流程
 - ✅ **记忆系统**：跨会话记忆存储与检索
 - ✅ **自动更新**：Electron Updater 集成

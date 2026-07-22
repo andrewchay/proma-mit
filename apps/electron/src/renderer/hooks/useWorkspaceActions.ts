@@ -21,6 +21,8 @@ interface UseWorkspaceActionsResult {
   selectWorkspace: (workspaceId: string) => void
   /** 创建并切到新工作区；成功返回新工作区，失败已 toast 并返回 null */
   createWorkspace: (name: string) => Promise<AgentWorkspace | null>
+  /** 选择已有本地项目文件夹，创建并切换到该项目工作区 */
+  createWorkspaceFromFolder: () => Promise<AgentWorkspace | null>
 }
 
 export function useWorkspaceActions(): UseWorkspaceActionsResult {
@@ -61,5 +63,25 @@ export function useWorkspaceActions(): UseWorkspaceActionsResult {
     [setWorkspaces, setCurrentWorkspaceId],
   )
 
-  return { workspaces, currentWorkspaceId, selectWorkspace, createWorkspace }
+  const createWorkspaceFromFolder = React.useCallback(async (): Promise<AgentWorkspace | null> => {
+    if (createInFlightRef.current) return null
+    createInFlightRef.current = true
+    try {
+      const folder = await window.electronAPI.openFolderDialog()
+      if (!folder) return null
+      const workspace = await window.electronAPI.createAgentWorkspace(folder.name, folder.path)
+      setWorkspaces((prev) => [workspace, ...prev])
+      setCurrentWorkspaceId(workspace.id)
+      window.electronAPI.updateSettings({ agentWorkspaceId: workspace.id }).catch(console.error)
+      return workspace
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '打开本地项目失败'
+      toast.error(msg)
+      return null
+    } finally {
+      createInFlightRef.current = false
+    }
+  }, [setWorkspaces, setCurrentWorkspaceId])
+
+  return { workspaces, currentWorkspaceId, selectWorkspace, createWorkspace, createWorkspaceFromFolder }
 }

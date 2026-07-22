@@ -2,10 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { AgentPermissionService, type CanUseToolOptions } from './agent-permission-service'
 import type { PermissionRequest } from '@proma/shared'
 
-function createOptions(): CanUseToolOptions {
+function createOptions(overrides: Partial<CanUseToolOptions> = {}): CanUseToolOptions {
   return {
     signal: new AbortController().signal,
     toolUseID: 'tool-use-test',
+    ...overrides,
   }
 }
 
@@ -71,5 +72,37 @@ describe('AgentPermissionService safe 权限模式', () => {
 
     expect(safeResult.behavior).toBe('deny')
     expect(requests).toHaveLength(1)
+  })
+
+  test('given Computer Use is approved with always allow when invoked again then every action still requests approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-computer-use', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const first = canUseTool('ComputerUseClick', { x: 10, y: 20 }, createOptions({ agentID: 'child-agent' }))
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    const second = canUseTool('ComputerUseClick', { x: 30, y: 40 }, createOptions())
+    expect(requests).toHaveLength(2)
+    service.respondToPermission(requests[1]!.requestId, 'deny', false)
+    expect((await second).behavior).toBe('deny')
+  })
+
+  test('given Web Bridge navigation is approved with always allow when invoked again then every action still requests approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-web-bridge', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const first = canUseTool('WebBridgeNavigate', { url: 'https://example.com' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    const second = canUseTool('WebBridgeNavigate', { url: 'https://example.org' }, createOptions())
+    expect(requests).toHaveLength(2)
+    service.respondToPermission(requests[1]!.requestId, 'deny', false)
+    expect((await second).behavior).toBe('deny')
   })
 })

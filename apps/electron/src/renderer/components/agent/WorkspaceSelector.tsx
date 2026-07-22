@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { FolderOpen, Plus, Pencil, Trash2, GripVertical } from 'lucide-react'
+import { FolderOpen, FolderPlus, Plus, Pencil, Trash2, GripVertical } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
@@ -26,7 +26,7 @@ import { agentWorkspacesAtom } from '@/atoms/agent-atoms'
 import type { AgentWorkspace } from '@proma/shared'
 
 export function WorkspaceSelector(): React.ReactElement {
-  const { workspaces, currentWorkspaceId, selectWorkspace, createWorkspace } = useWorkspaceActions()
+  const { workspaces, currentWorkspaceId, selectWorkspace, createWorkspace, createWorkspaceFromFolder } = useWorkspaceActions()
   const [, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [listHeight, setListHeight] = useAtom(workspaceListHeightAtom)
 
@@ -268,13 +268,22 @@ export function WorkspaceSelector(): React.ReactElement {
         {/* 头部 */}
         <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-border/40">
           <span className="text-[11px] font-medium text-foreground/50 uppercase tracking-wide">工作区</span>
-          <button
-            onClick={handleStartCreate}
-            className="p-1 rounded hover:bg-foreground/[0.06] text-foreground/35 hover:text-foreground/60 transition-colors titlebar-no-drag"
-            title="新建工作区"
-          >
-            <Plus size={13} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => { void createWorkspaceFromFolder() }}
+              className="p-1 rounded hover:bg-foreground/[0.06] text-foreground/35 hover:text-foreground/60 transition-colors titlebar-no-drag"
+              title="打开本地项目文件夹"
+            >
+              <FolderPlus size={13} />
+            </button>
+            <button
+              onClick={handleStartCreate}
+              className="p-1 rounded hover:bg-foreground/[0.06] text-foreground/35 hover:text-foreground/60 transition-colors titlebar-no-drag"
+              title="新建隔离工作区"
+            >
+              <Plus size={13} />
+            </button>
+          </div>
         </div>
 
         {/* 工作区列表 */}
@@ -325,6 +334,7 @@ export function WorkspaceSelector(): React.ReactElement {
               ) : (
                 <>
                   <span className="flex-1 min-w-0 truncate">{ws.name}</span>
+                  {ws.rootPath && <span className="text-[10px] text-foreground/35">本地</span>}
 
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                     <button

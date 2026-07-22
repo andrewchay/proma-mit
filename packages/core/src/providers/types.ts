@@ -69,6 +69,8 @@ export interface ToolResult {
   content: string
   /** 是否出错 */
   isError?: boolean
+  /** 需要随工具结果传回模型的图片，而非仅供 UI 展示的附件 */
+  imageData?: ImageAttachmentData[]
   /** 工具生成的附件（如生图工具的图片），附加到 assistant 消息展示 */
   generatedAttachments?: FileAttachment[]
 }

@@ -243,7 +243,12 @@ function appendContinuationMessages(
       const content: AnthropicContentBlock[] = contMsg.results.map((result) => ({
         type: 'tool_result' as const,
         tool_use_id: result.toolCallId,
-        content: result.content,
+        content: result.imageData?.length
+          ? [
+              { type: 'text', text: result.content },
+              ...result.imageData.map((image) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: image.mediaType, data: image.data } })),
+            ]
+          : result.content,
         is_error: result.isError ?? false,
       }))
       messages.push({ role: 'user', content })

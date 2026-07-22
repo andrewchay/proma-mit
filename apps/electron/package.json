@@ -1,6 +1,6 @@
 {
   "name": "@proma/electron",
-  "version": "0.9.71",
+  "version": "0.9.73",
   "description": "Proma next gen ai software with general agents - Electron App",
   "license": "Apache-2.0 OR MIT",
   "main": "dist/main.cjs",
@@ -21,7 +21,8 @@
     "watch:main": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --outfile=dist/main.cjs --external:electron --external:@anthropic-ai/claude-agent-sdk --external:@earendil-works/pi-coding-agent --external:@earendil-works/pi-agent-core --external:@earendil-works/pi-ai --watch=forever",
     "watch:preload": "esbuild src/preload/index.ts --bundle --platform=node --format=cjs --outfile=dist/preload.cjs --external:electron --watch=forever",
     "build:renderer": "vite build",
-    "build:resources": "cp -r resources dist/ 2>/dev/null || true",
+    "build:computer-use-helper": "bun run scripts/build-computer-use-helper.ts",
+    "build:resources": "bun run build:computer-use-helper && cp -r resources dist/ 2>/dev/null || true",
     "build": "bun run build:main && bun run build:preload && bun run build:renderer && bun run build:resources",
     "start": "bun run build && bunx electron .",
     "typecheck": "tsc --noEmit",
@@ -29,6 +30,8 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
+    "dist:mac-dev": "electron-builder --mac --config electron-builder.dev.yml",
+    "dist:mac-dev-zip": "electron-builder --mac zip --config electron-builder.dev.yml",
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux",
     "dist:visual": "bun run scripts/dist.ts",
@@ -53,6 +56,10 @@
   "optionalDependencies": {
     "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.143",
     "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.143",
+    "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.143",
+    "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "0.3.143",
+    "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.143",
+    "@anthropic-ai/claude-agent-sdk-linux-x64-musl": "0.3.143",
     "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.143",
     "@anthropic-ai/claude-agent-sdk-win32-arm64": "0.3.143"
   },

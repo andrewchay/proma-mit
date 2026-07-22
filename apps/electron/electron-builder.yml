@@ -47,6 +47,10 @@ files:
   # 宿主平台上 os/cpu 不匹配的包会被 bun 跳过安装，打包时 electron-builder 会对不存在的 glob 静默跳过。
   - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*
   - node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/**/*
+  - node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/**/*
   - node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**/*
   - node_modules/@anthropic-ai/claude-agent-sdk-win32-arm64/**/*
   # Pi Agent SDK runtime（主进程 external，运行时按 Node 解析）
@@ -70,6 +74,11 @@ extraResources:
   # Proma 品牌 Logo 素材（品牌素材下载功能使用）
   - from: resources/proma-logos
     to: proma-logos
+    filter:
+      - "**/*"
+  # Computer Use 的 macOS 原生辅助程序，不依赖用户安装第三方命令。
+  - from: resources/computer-use
+    to: computer-use
     filter:
       - "**/*"
 
@@ -126,6 +135,14 @@ win:
       icon: resources/icon.ico
   target:
     - target: nsis
+      arch:
+        - x64
+
+# Linux 未提供原生 Computer Use 注入时，仍可打包并在运行时通过
+# ComputerUseCapabilities 明确返回只读能力接口与“未实现原生控制”的降级状态。
+linux:
+  target:
+    - target: AppImage
       arch:
         - x64
 

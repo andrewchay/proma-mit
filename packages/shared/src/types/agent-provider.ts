@@ -5,7 +5,7 @@
  * 当前实现：Claude / Proma / Pi / AI SDK 多 runtime 路由。
  */
 
-import type { AgentRuntime, SDKMessage } from './agent'
+import type { AgentEvent, AgentRuntime, SDKMessage } from './agent'
 import type { FileAttachment } from './chat'
 
 /** SDK 用户消息（队列消息注入用，匹配 SDK SDKUserMessage 结构） */
@@ -57,6 +57,8 @@ export interface AgentQueryInput {
   baseUrl?: string
   /** 多模态附件（图片 / 文档） */
   attachments?: FileAttachment[]
+  /** runtime 内部增量事件回调，用于 text/tool/usage 的实时 UI 更新 */
+  onAgentEvent?: (event: AgentEvent) => void
 }
 
 /**

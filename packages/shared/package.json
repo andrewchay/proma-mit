@@ -1,6 +1,6 @@
 {
   "name": "@proma/shared",
-  "version": "0.1.34",
+  "version": "0.1.41",
   "license": "Apache-2.0 OR MIT",
   "description": "Shared types, configs and utilities for proma",
   "type": "module",
@@ -10,7 +10,8 @@
     ".": "./src/index.ts",
     "./types": "./src/types/index.ts",
     "./config": "./src/config/index.ts",
-    "./utils": "./src/utils/index.ts"
+    "./utils": "./src/utils/index.ts",
+    "./utils/node": "./src/utils/node.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

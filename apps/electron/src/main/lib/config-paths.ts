@@ -47,6 +47,14 @@ export function getConfigDirName(): string {
  * 如果目录不存在则自动创建。
  */
 export function getConfigDir(): string {
+  const overrideDir = process.env.PROMA_TEST_CONFIG_DIR?.trim()
+  if (overrideDir) {
+    if (!existsSync(overrideDir)) {
+      mkdirSync(overrideDir, { recursive: true })
+    }
+    return overrideDir
+  }
+
   const configDir = join(homedir(), getConfigDirName())
 
   if (!existsSync(configDir)) {

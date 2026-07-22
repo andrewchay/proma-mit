@@ -132,8 +132,12 @@ export class AgentPermissionService {
 
       const allow = (): PermissionResult => ({ behavior: 'allow' as const, updatedInput: input })
 
+      // 系统级桌面读取/控制不能由子 Agent 自动批准，也不能沿用“始终允许”。
+      // 这类操作可能读取任意屏幕内容或影响前台应用，必须回到用户确认流程。
+      const requiresPerActionApproval = isComputerUseTool(toolName) || isWebBridgeMutation(toolName)
+
       // Worker（子代理）的工具调用自动批准，避免 UI 等待导致超时死锁
-      if (options.agentID) {
+      if (options.agentID && !requiresPerActionApproval) {
         return allow()
       }
 
@@ -145,7 +149,7 @@ export class AgentPermissionService {
       }
 
       // 会话白名单检查（用户之前选择了"始终允许"）
-      if (this.isWhitelisted(sessionId, toolName, input)) return allow()
+      if (!requiresPerActionApproval && this.isWhitelisted(sessionId, toolName, input)) return allow()
 
       // auto 模式本地 classifier：只读工具（Read/Glob/Grep/WebSearch/WebFetch 及只读 Bash 命令）自动放行
       // 原因：CLI 的 --permission-prompt-tool stdio 会把每次 tool 调用都转发给 canUseTool，
@@ -182,7 +186,7 @@ export class AgentPermissionService {
     const sessionId = pending.request.sessionId
 
     // "总是允许"选项：加入会话白名单
-    if (alwaysAllow && behavior === 'allow') {
+    if (alwaysAllow && behavior === 'allow' && !isComputerUseTool(pending.request.toolName) && !isWebBridgeMutation(pending.request.toolName)) {
       this.addToWhitelist(sessionId, pending.request.toolName, pending.request.toolInput)
     }
 
@@ -384,6 +388,22 @@ export class AgentPermissionService {
 
     return 'normal'
   }
+}
+
+function isComputerUseTool(toolName: string): boolean {
+  return toolName.startsWith('ComputerUse') && toolName !== 'ComputerUseStatus'
+}
+
+/** Web Bridge 改变导航、页面或外部状态的操作必须逐次确认，不能加入会话白名单。 */
+function isWebBridgeMutation(toolName: string): boolean {
+  return new Set([
+    'WebBridgeNavigate',
+    'WebBridgeConnectChrome',
+    'WebBridgeClick',
+    'WebBridgeType',
+    'WebBridgeDownload',
+    'WebBridgeUpload',
+  ]).has(toolName)
 }
 
 /** 全局权限服务实例 */

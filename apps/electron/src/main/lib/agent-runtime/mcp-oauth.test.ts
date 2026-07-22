@@ -7,24 +7,50 @@
 process.env.PROMA_DEV = '1'
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadMcpOAuthTokens, saveMcpOAuthTokens, removeMcpOAuthTokens } from './mcp-oauth-store'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth, takePendingMcpOAuth, hasPendingMcpOAuth } from './mcp-oauth-pending'
+import { setRuntimeSecretCodecForTesting, type RuntimeSecretCodec } from './runtime-secret-codec'
 
 let tempDir: string
+let originalTestConfigDir: string | undefined
 let openedUrls: string[] = []
 
 beforeEach(() => {
+  originalTestConfigDir = process.env.PROMA_TEST_CONFIG_DIR
   tempDir = mkdtempSync(join(tmpdir(), 'proma-mcp-oauth-test-'))
+  process.env.PROMA_TEST_CONFIG_DIR = tempDir
   openedUrls = []
+  setRuntimeSecretCodecForTesting()
 })
 
 afterEach(() => {
+  setRuntimeSecretCodecForTesting()
+  if (originalTestConfigDir === undefined) {
+    delete process.env.PROMA_TEST_CONFIG_DIR
+  } else {
+    process.env.PROMA_TEST_CONFIG_DIR = originalTestConfigDir
+  }
   rmSync(tempDir, { recursive: true, force: true })
 })
+
+class PrefixRuntimeSecretCodec implements RuntimeSecretCodec {
+  encode(plain: string, scope: string): string {
+    return Buffer.from(`${scope}:${plain}`).toString('base64')
+  }
+
+  decode(encoded: string, scope: string): string {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf-8')
+    const prefix = `${scope}:`
+    if (!decoded.startsWith(prefix)) {
+      throw new Error(`scope mismatch: ${scope}`)
+    }
+    return decoded.slice(prefix.length)
+  }
+}
 
 describe('MCP OAuth token 存储', () => {
   test('保存并读取 token', async () => {
@@ -54,6 +80,20 @@ describe('MCP OAuth token 存储', () => {
     await removeMcpOAuthTokens('ws2', 'a')
     const tokens = await loadMcpOAuthTokens('ws2')
     expect(tokens).toEqual({ b: { accessToken: 'b' } })
+  })
+
+  test('可注入 runtime secret codec，服务端 Web 可替换 Electron safeStorage', async () => {
+    setRuntimeSecretCodecForTesting(new PrefixRuntimeSecretCodec())
+    await saveMcpOAuthTokens('ws-codec', {
+      github: { accessToken: 'secret-token' },
+    })
+
+    const encoded = readFileSync(join(tempDir, 'agent-workspaces', 'ws-codec', 'mcp-oauth-tokens.enc'), 'utf-8')
+    expect(Buffer.from(encoded, 'base64').toString('utf-8').startsWith('MCP OAuth:')).toBe(true)
+    expect(encoded).not.toContain('secret-token')
+
+    const tokens = await loadMcpOAuthTokens('ws-codec')
+    expect(tokens.github?.accessToken).toBe('secret-token')
   })
 })
 

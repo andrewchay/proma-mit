@@ -28,17 +28,20 @@ interface PiProviderConfigInput {
   api?: Api
   authHeader?: boolean
   headers?: Record<string, string>
+  compat?: Model<Api>['compat']
   models?: Array<{
     id: string
     name: string
     api?: Api
     baseUrl?: string
     reasoning: boolean
+    thinkingLevelMap?: Model<Api>['thinkingLevelMap']
     input: ('text' | 'image')[]
     cost: Model<Api>['cost']
     contextWindow: number
     maxTokens: number
     headers?: Record<string, string>
+    compat?: Model<Api>['compat']
   }>
 }
 
@@ -57,6 +60,15 @@ export function resolvePiApi(provider: ProviderType): Api {
 }
 
 export function resolvePiBaseUrl(provider: ProviderType, baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, '')
+  if (provider === 'google') {
+    return /\/v\d+(beta)?$/.test(normalized) ? normalized : `${normalized}/v1beta`
+  }
+  if (provider === 'kimi-coding') {
+    return normalized
+      .replace(/\/v\d+\/messages$/, '')
+      .replace(/\/v\d+$/, '')
+  }
   if (
     provider === 'openai' ||
     provider === 'zhipu' ||
@@ -66,7 +78,55 @@ export function resolvePiBaseUrl(provider: ProviderType, baseUrl: string): strin
   ) {
     return resolveAgentRuntimeBaseUrl(provider, 'proma', baseUrl)
   }
-  return baseUrl.trim().replace(/\/+$/, '')
+  return normalized
+}
+
+export function shouldUsePiAuthHeader(provider: ProviderType): boolean {
+  return provider !== 'google'
+}
+
+export function resolvePiMaxTokens(provider: ProviderType): number {
+  if (provider === 'qwen') return 16_384
+  if (provider === 'kimi-coding') return 32_768
+  return 64_000
+}
+
+function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string): NonNullable<PiProviderConfigInput['models']>[number] {
+  const model: NonNullable<PiProviderConfigInput['models']>[number] = {
+    id: input.modelId,
+    name: input.modelId,
+    api,
+    baseUrl,
+    reasoning: true,
+    input: input.provider === 'kimi-coding' ? ['text'] : ['text', 'image'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200_000,
+    maxTokens: resolvePiMaxTokens(input.provider),
+  }
+
+  if (input.provider === 'google') {
+    model.thinkingLevelMap = { off: null }
+  }
+
+  if (input.provider === 'kimi-coding') {
+    model.headers = { 'User-Agent': 'KimiCLI/1.5' }
+    model.compat = { allowEmptySignature: true, forceAdaptiveThinking: true } as Model<Api>['compat']
+  }
+
+  if (input.provider === 'qwen') {
+    model.reasoning = input.modelId.startsWith('qwen3')
+    model.compat = {
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsUsageInStreaming: false,
+      supportsStrictMode: false,
+      maxTokensField: 'max_tokens',
+      ...(input.modelId.startsWith('qwen3') ? { thinkingFormat: 'qwen' } : {}),
+    } as Model<Api>['compat']
+  }
+
+  return model
 }
 
 export function resolvePiProviderId(provider: ProviderType, sessionId: string): string {
@@ -90,18 +150,8 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
     baseUrl,
     api,
     apiKey: input.apiKey,
-    authHeader: true,
-    models: [{
-      id: input.modelId,
-      name: input.modelId,
-      api,
-      baseUrl,
-      reasoning: true,
-      input: input.provider === 'kimi-coding' ? ['text'] : ['text', 'image'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 200_000,
-      maxTokens: 64_000,
-    }],
+    authHeader: shouldUsePiAuthHeader(input.provider),
+    models: [buildPiModelConfig(input, api, baseUrl)],
   }
 
   modelRuntime.registerProvider(providerId, config)

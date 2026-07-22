@@ -12,6 +12,16 @@ export const SAFE_TOOLS: readonly string[] = [
   'Grep',            // 内容搜索
   'WebSearch',       // 网络搜索
   'WebFetch',        // 网页获取
+  'WebBridgeSnapshot', // 受管浏览器页面读取
+  'WebBridgeScreenshot', // 受管浏览器截图
+  'WebBridgeScroll', // 受管浏览器滚动
+  'WebBridgeChromeTargets', // 列出用户明确开放的 Chrome 调试页面
+  'WebBridgeStatus', // 仅读取当前 Web Bridge 连接状态
+  'ComputerUseStatus', // 仅读取 Computer Use 授权状态
+  'ComputerUseCapabilities', // 仅读取当前平台能力
+  'ComputerUseFrontmostApplication', // 仅读取当前前台应用元数据
+  'ComputerUseFrontmostWindow', // 仅读取当前聚焦窗口元数据
+  'ComputerUseDisplays', // 仅读取显示器坐标信息
   'TodoRead',        // Todo 列表读取
   'TodoWrite',       // Todo 列表写入（无安全风险）
   'TaskOutput',      // 后台任务输出

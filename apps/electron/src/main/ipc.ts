@@ -171,6 +171,8 @@ import {
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
 import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession } from './lib/agent-service'
+import { webBridgeService } from './lib/web-bridge-service'
+import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
 import { permissionService } from './lib/agent-permission-service'
 import { askUserService } from './lib/agent-ask-user-service'
 import { exitPlanService } from './lib/agent-exit-plan-service'
@@ -180,6 +182,7 @@ import type { CleanupOptions } from './lib/storage-service'
 import {
   listAgentWorkspaces,
   createAgentWorkspace,
+  getAgentWorkspaceCwd,
   updateAgentWorkspace,
   deleteAgentWorkspace,
   reorderAgentWorkspaces,
@@ -284,7 +287,10 @@ function getAuthorizedRoots(options?: FileAccessOptions): string[] {
     }
     if (meta?.workspaceId) {
       const workspace = getAgentWorkspace(meta.workspaceId)
-      if (workspace?.slug) workspaceSlugs.add(workspace.slug)
+      if (workspace?.slug) {
+        workspaceSlugs.add(workspace.slug)
+        if (workspace.rootPath) roots.push(workspace.rootPath)
+      }
     }
   }
 
@@ -293,6 +299,8 @@ function getAuthorizedRoots(options?: FileAccessOptions): string[] {
   }
 
   for (const slug of workspaceSlugs) {
+    const workspace = listAgentWorkspaces().find((item) => item.slug === slug)
+    if (workspace?.rootPath) roots.push(workspace.rootPath)
     roots.push(getWorkspaceFilesDir(slug))
     roots.push(...getWorkspaceAttachedDirectories(slug))
     roots.push(...getWorkspaceAttachedFiles(slug))
@@ -306,11 +314,13 @@ function isUnderRoot(resolvedPath: string, root: string): boolean {
   return resolvedPath === resolvedRoot || resolvedPath.startsWith(resolvedRoot + sep)
 }
 
-/** 校验并解析路径必须位于 Agent 工作区根目录下；返回解析后的真实路径。 */
+/** 校验并解析路径必须位于 Proma 工作区或用户明确选择的本地项目根目录下。 */
 function resolveWorkspacePath(filePath: string): string {
   const safePath = realpathSync(resolve(filePath))
   const workspacesRoot = resolve(getAgentWorkspacesDir())
-  if (!isUnderRoot(safePath, workspacesRoot)) {
+  const localProjectRoots = listAgentWorkspaces()
+    .flatMap((workspace) => workspace.rootPath ? [workspace.rootPath] : [])
+  if (!isUnderRoot(safePath, workspacesRoot) && !localProjectRoots.some((root) => isUnderRoot(safePath, root))) {
     throw new Error('访问路径超出 Agent 工作区范围')
   }
   return safePath
@@ -1446,8 +1456,8 @@ export function registerIpcHandlers(): void {
   // 创建 Agent 工作区
   ipcMain.handle(
     AGENT_IPC_CHANNELS.CREATE_WORKSPACE,
-    async (_, name: string): Promise<AgentWorkspace> => {
-      return createAgentWorkspace(name)
+    async (_, name: string, rootPath?: string): Promise<AgentWorkspace> => {
+      return createAgentWorkspace(name, rootPath)
     }
   )
 
@@ -1643,6 +1653,17 @@ export function registerIpcHandlers(): void {
       stopAgent(sessionId)
     }
   )
+
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_WEB_BRIDGE_STATUS, async (_, sessionId: string) => webBridgeService.getStatus(sessionId))
+  ipcMain.handle(AGENT_IPC_CHANNELS.STOP_WEB_BRIDGE, async (_, sessionId: string): Promise<void> => { webBridgeService.close(sessionId) })
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@proma/shared').AgentAuditQuery) => listAgentAuditEvents(query))
+  ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@proma/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
+    const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()!, {
+      title: '导出操作审计', defaultPath: 'proma-operation-audit.jsonl', filters: [{ name: 'JSON Lines', extensions: ['jsonl'] }],
+    })
+    if (result.canceled || !result.filePath) return { canceled: true, count: 0 }
+    return { canceled: false, count: await exportAgentAuditEvents(result.filePath, query) }
+  })
 
   // ===== Agent 队列消息 =====
 
@@ -2161,7 +2182,7 @@ export function registerIpcHandlers(): void {
     async (_, workspaceId: string, sessionId: string): Promise<string | null> => {
       const ws = getAgentWorkspace(workspaceId)
       if (!ws) return null
-      return getAgentSessionWorkspacePath(ws.slug, sessionId)
+      return getAgentWorkspaceCwd(ws, sessionId)
     }
   )
 

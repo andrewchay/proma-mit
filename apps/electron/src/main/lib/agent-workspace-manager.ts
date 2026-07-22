@@ -6,7 +6,7 @@
  * - 工作区目录：~/.proma/agent-workspaces/{slug}/（Agent 的 cwd）
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, realpathSync } from 'node:fs'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { safeParseJSON } from './safe-json'
 import { randomUUID } from 'node:crypto'
@@ -14,6 +14,7 @@ import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:pat
 import {
   getAgentWorkspacesIndexPath,
   getAgentWorkspacePath,
+  getAgentSessionWorkspacePath,
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir,
   getInactiveSkillsDir,
@@ -174,7 +175,7 @@ function copyDefaultSkills(workspaceSlug: string): void {
   }
 }
 
-export function createAgentWorkspace(name: string): AgentWorkspace {
+export function createAgentWorkspace(name: string, rootPath?: string): AgentWorkspace {
   const index = readIndex()
 
   const duplicate = index.workspaces.find((w) => w.name === name)
@@ -186,10 +187,19 @@ export function createAgentWorkspace(name: string): AgentWorkspace {
   const slug = slugify(name, existingSlugs)
   const now = Date.now()
 
+  const resolvedRootPath = rootPath ? realpathSync(resolve(rootPath)) : undefined
+  if (resolvedRootPath && !statSync(resolvedRootPath).isDirectory()) {
+    throw new Error('所选路径不是文件夹')
+  }
+  if (resolvedRootPath && index.workspaces.some((w) => w.rootPath === resolvedRootPath)) {
+    throw new Error('该本地文件夹已关联到其他工作区')
+  }
+
   const workspace: AgentWorkspace = {
     id: randomUUID(),
     name,
     slug,
+    ...(resolvedRootPath && { rootPath: resolvedRootPath }),
     createdAt: now,
     updatedAt: now,
   }
@@ -203,6 +213,17 @@ export function createAgentWorkspace(name: string): AgentWorkspace {
 
   console.log(`[Agent 工作区] 已创建工作区: ${name} (slug: ${slug})`)
   return workspace
+}
+
+/** 返回 Agent 实际运行目录；已有项目工作区直接在项目根目录运行。 */
+export function getAgentWorkspaceCwd(workspace: AgentWorkspace, sessionId: string): string {
+  if (workspace.rootPath) {
+    if (!existsSync(workspace.rootPath) || !statSync(workspace.rootPath).isDirectory()) {
+      throw new Error(`本地项目文件夹不可用: ${workspace.rootPath}`)
+    }
+    return workspace.rootPath
+  }
+  return getAgentSessionWorkspacePath(workspace.slug, sessionId)
 }
 
 /** 更新工作区名称（slug 和目录不变） */

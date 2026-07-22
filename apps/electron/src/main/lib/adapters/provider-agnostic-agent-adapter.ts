@@ -35,7 +35,6 @@ import { getAdapter, streamSSE } from '@proma/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME } from '../agent-runtime/tool-registry'
-import { acquireMcpClientManager } from '../agent-runtime/mcp-client-cache'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
 import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
@@ -43,6 +42,7 @@ import { withRetry } from '../agent-runtime/retry'
 import { isTransientNetworkError } from '../error-patterns'
 import { isImageAttachment } from '../attachment-service'
 import type { RuntimeMessage } from '../agent-runtime/types'
+import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 
 /** 工具权限检查结果 */
 export interface ToolPermissionResult {
@@ -104,6 +104,8 @@ interface ActiveSession {
 export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
   private readonly activeSessions = new Map<string, ActiveSession>()
 
+  constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
+
   /** 发起查询，返回 SDKMessage 异步迭代流 */
   async *query(input: ProviderAgnosticAgentQueryOptions): AsyncIterable<SDKMessage> {
     const {
@@ -149,7 +151,12 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     let mcpTools: RuntimeToolDefinition[] = []
     if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
       try {
-        const acquired = await acquireMcpClientManager(workspaceSlug, mcpServers, cwd, { onMcpAuthRequired })
+        const acquired = await this.mcpService.acquireClientManager({
+          workspaceSlug,
+          mcpServers,
+          cwd,
+          onMcpAuthRequired,
+        })
         mcpManager = acquired.manager
         mcpRelease = acquired.release
         mcpTools = await mcpManager.listAllTools(controller.signal)
@@ -458,6 +465,15 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         'Grep',
         'WebSearch',
         'WebFetch',
+        'WebBridgeSnapshot',
+        'WebBridgeScreenshot',
+        'WebBridgeScroll',
+        'WebBridgeChromeTargets',
+        'ComputerUseStatus',
+        'ComputerUseCapabilities',
+        'ComputerUseFrontmostApplication',
+        'ComputerUseFrontmostWindow',
+        'ComputerUseDisplays',
         'TodoRead',
         'TaskOutput',
         'TaskList',
@@ -488,6 +504,15 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         'Grep',
         'WebSearch',
         'WebFetch',
+        'WebBridgeSnapshot',
+        'WebBridgeScreenshot',
+        'WebBridgeScroll',
+        'WebBridgeChromeTargets',
+        'ComputerUseStatus',
+        'ComputerUseCapabilities',
+        'ComputerUseFrontmostApplication',
+        'ComputerUseFrontmostWindow',
+        'ComputerUseDisplays',
         'Agent',
         'TodoRead',
         'TodoWrite',

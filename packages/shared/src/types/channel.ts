@@ -235,12 +235,16 @@ export function resolveAgentRuntimeBaseUrl(provider: ProviderType, runtime: Agen
       .replace(/\/anthropic\/v\d+$/, '')
       .replace(/\/anthropic$/, '')
   }
-  if ((provider === 'kimi-api' || provider === 'kimi-coding') && (runtime === 'proma' || runtime === 'ai-sdk')) {
+  if (provider === 'kimi-api' && (runtime === 'proma' || runtime === 'ai-sdk')) {
     return normalized
       .replace(/\/messages$/, '')
       .replace(/\/anthropic\/v\d+$/, '')
       .replace(/\/anthropic$/, '')
-      .replace(/\/coding\/v\d+$/, '')
+  }
+  if (provider === 'kimi-coding' && (runtime === 'proma' || runtime === 'ai-sdk')) {
+    return normalized
+      .replace(/\/chat\/completions$/, '')
+      .replace(/\/messages$/, '')
   }
   return normalized
 }

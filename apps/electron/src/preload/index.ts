@@ -85,6 +85,8 @@ import type {
   AgentMessageSearchResult,
   AgentSessionReferenceSearchInput,
   AgentSessionReferenceSearchResult,
+  AgentAuditEvent,
+  AgentAuditQuery,
   DetachedPreviewWindowData,
   DetachedPreviewWindowInput,
   FeishuConfig,
@@ -458,6 +460,14 @@ export interface ElectronAPI {
 
   /** 中止 Agent 执行 */
   stopAgent: (sessionId: string) => Promise<void>
+  /** 读取当前会话的 Web Bridge 状态 */
+  getWebBridgeStatus: (sessionId: string) => Promise<{ active: boolean; mode?: 'managed' | 'chrome-cdp'; url?: string; accessibilityAvailable: boolean }>
+  /** 关闭当前会话的 Web Bridge */
+  stopWebBridge: (sessionId: string) => Promise<void>
+  /** 查询本地 Web Bridge / Computer Use 审计（不会上传） */
+  listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
+  /** 将当前筛选结果导出为用户选择位置的 JSONL */
+  exportAgentAuditEvents: (query?: AgentAuditQuery) => Promise<{ canceled: boolean; count: number }>
 
   // ===== Agent 队列消息 =====
 
@@ -478,7 +488,7 @@ export interface ElectronAPI {
   listAgentWorkspaces: () => Promise<AgentWorkspace[]>
 
   /** 创建 Agent 工作区 */
-  createAgentWorkspace: (name: string) => Promise<AgentWorkspace>
+  createAgentWorkspace: (name: string, rootPath?: string) => Promise<AgentWorkspace>
 
   /** 更新 Agent 工作区 */
   updateAgentWorkspace: (id: string, updates: { name: string }) => Promise<AgentWorkspace>
@@ -1425,6 +1435,10 @@ const electronAPI: ElectronAPI = {
   stopAgent: (sessionId: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.STOP_AGENT, sessionId)
   },
+  getWebBridgeStatus: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_WEB_BRIDGE_STATUS, sessionId),
+  stopWebBridge: (sessionId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.STOP_WEB_BRIDGE, sessionId),
+  listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
+  exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
 
   // Agent 队列消息
   queueAgentMessage: (input: AgentQueueMessageInput) => {
@@ -1445,8 +1459,8 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_WORKSPACES)
   },
 
-  createAgentWorkspace: (name: string) => {
-    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_WORKSPACE, name)
+  createAgentWorkspace: (name: string, rootPath?: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_WORKSPACE, name, rootPath)
   },
 
   updateAgentWorkspace: (id: string, updates: { name: string }) => {

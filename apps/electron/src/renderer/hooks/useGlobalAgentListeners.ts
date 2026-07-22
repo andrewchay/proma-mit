@@ -116,6 +116,10 @@ function inferContextWindow(model?: string): number | undefined {
 }
 
 function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
+  if (payload.kind === 'agent_event') {
+    return [payload.event]
+  }
+
   if (payload.kind === 'proma_event') {
     const evt = payload.event
     switch (evt.type) {

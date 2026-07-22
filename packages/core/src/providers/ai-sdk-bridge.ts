@@ -42,6 +42,28 @@ export interface AISDKStreamTextBridgeInput {
   onEvent: StreamEventCallback
 }
 
+export interface AISDKStreamToolCallSnapshot {
+  toolCallId: string
+  toolName: string
+  input: unknown
+}
+
+export interface AISDKStreamToolResultSnapshot {
+  toolCallId: string
+  toolName: string
+  input: unknown
+  output: unknown
+}
+
+export interface AISDKStreamStepSnapshot {
+  text: string
+  reasoningText?: string
+  toolCalls: AISDKStreamToolCallSnapshot[]
+  toolResults: AISDKStreamToolResultSnapshot[]
+  finishReason: string
+  usage?: LanguageModelUsage
+}
+
 function formatUnknownError(error: unknown): string {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
@@ -181,6 +203,73 @@ export class AISDKStreamPartConverter {
       default:
         return []
     }
+  }
+}
+
+/**
+ * 从 AI SDK stream 直接累积每个 step 的快照。
+ *
+ * Electron 当前仍以 SDKMessage 驱动 UI；未来 Web/Server runtime 可以复用该快照，
+ * 直接把 text/tool/result/usage 转成自己的传输协议。
+ */
+export class AISDKStreamStepAccumulator {
+  private text = ''
+  private reasoningText = ''
+  private readonly toolCalls = new Map<string, AISDKStreamToolCallSnapshot>()
+  private readonly toolResults: AISDKStreamToolResultSnapshot[] = []
+
+  consume(part: TextStreamPart<ToolSet>): AISDKStreamStepSnapshot[] {
+    switch (part.type) {
+      case 'text-delta':
+        this.text += part.text
+        return []
+      case 'reasoning-delta':
+        this.reasoningText += part.text
+        return []
+      case 'tool-call':
+        this.toolCalls.set(part.toolCallId, {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+        })
+        return []
+      case 'tool-result':
+        this.toolResults.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+          output: part.output,
+        })
+        return []
+      case 'finish-step':
+        return this.flush(part.finishReason, part.usage)
+      case 'finish':
+        return this.flush(toDoneStopReason(part.finishReason), part.totalUsage)
+      default:
+        return []
+    }
+  }
+
+  private flush(finishReason: string, usage?: LanguageModelUsage): AISDKStreamStepSnapshot[] {
+    if (!this.text && !this.reasoningText && this.toolCalls.size === 0 && this.toolResults.length === 0) {
+      return []
+    }
+
+    const snapshot: AISDKStreamStepSnapshot = {
+      text: this.text,
+      ...(this.reasoningText ? { reasoningText: this.reasoningText } : {}),
+      toolCalls: Array.from(this.toolCalls.values()),
+      toolResults: [...this.toolResults],
+      finishReason: toDoneStopReason(finishReason),
+      ...(usage ? { usage } : {}),
+    }
+
+    this.text = ''
+    this.reasoningText = ''
+    this.toolCalls.clear()
+    this.toolResults.length = 0
+
+    return [snapshot]
   }
 }
 

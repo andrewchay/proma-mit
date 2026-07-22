@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Pencil, Check, X, PanelRight } from 'lucide-react'
+import { Pencil, Check, X, PanelRight, Globe2, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { agentSessionsAtom, agentSidePanelOpenAtom, workspaceFilesVersionAtom } from '@/atoms/agent-atoms'
@@ -19,12 +19,21 @@ interface AgentHeaderProps {
   sessionId: string
 }
 
+interface WebBridgeStatus {
+  active: boolean
+  mode?: 'managed' | 'chrome-cdp'
+  url?: string
+  accessibilityAvailable: boolean
+}
+
 export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement | null {
   const sessions = useAtomValue(agentSessionsAtom)
   const session = sessions.find((s) => s.id === sessionId) ?? null
   const setAgentSessions = useSetAtom(agentSessionsAtom)
   const setTabs = useSetAtom(tabsAtom)
   const [editing, setEditing] = React.useState(false)
+  const [webBridgeStatus, setWebBridgeStatus] = React.useState<WebBridgeStatus>({ active: false, accessibilityAvailable: false })
+  const [stoppingWebBridge, setStoppingWebBridge] = React.useState(false)
   const [editTitle, setEditTitle] = React.useState('')
   const inputRef = React.useRef<HTMLInputElement>(null)
 
@@ -40,6 +49,31 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
   React.useEffect(() => {
     return registerShortcut('toggle-right-panel', togglePanel)
   }, [togglePanel])
+
+  React.useEffect(() => {
+    let cancelled = false
+    const refresh = (): void => {
+      window.electronAPI.getWebBridgeStatus(sessionId)
+        .then((status) => { if (!cancelled) setWebBridgeStatus(status) })
+        .catch(() => { if (!cancelled) setWebBridgeStatus({ active: false, accessibilityAvailable: false }) })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 2_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [sessionId])
+
+  const stopWebBridge = async (): Promise<void> => {
+    if (stoppingWebBridge) return
+    setStoppingWebBridge(true)
+    try {
+      await window.electronAPI.stopWebBridge(sessionId)
+      setWebBridgeStatus({ active: false, accessibilityAvailable: false })
+    } catch (error) {
+      console.error('[AgentHeader] 停止 Web Bridge 失败:', error)
+    } finally {
+      setStoppingWebBridge(false)
+    }
+  }
 
   if (!session) return null
 
@@ -131,6 +165,20 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
               <Pencil className="size-3.5" />
             </button>
           </div>
+          {webBridgeStatus.active && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="titlebar-no-drag flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300">
+                  <Globe2 className="size-3" />
+                  <span>{webBridgeStatus.mode === 'chrome-cdp' ? 'Chrome 已连接' : 'Web Bridge 运行中'}</span>
+                  <Button type="button" variant="ghost" size="icon" className="ml-0.5 size-4 hover:bg-emerald-500/20" onClick={stopWebBridge} disabled={stoppingWebBridge} aria-label="停止 Web Bridge">
+                    <Square className="size-2.5 fill-current" />
+                  </Button>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>{webBridgeStatus.url || '当前 Bridge 页面'} · 点击方块立即停止</p></TooltipContent>
+            </Tooltip>
+          )}
           {/* 文件面板打开按钮（面板关闭时显示） */}
           {!isPanelOpen && (
             <Tooltip>
