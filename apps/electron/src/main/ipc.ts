@@ -170,7 +170,7 @@ import {
   searchAgentSessionMessages,
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
-import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession } from './lib/agent-service'
+import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus } from './lib/agent-service'
 import { webBridgeService } from './lib/web-bridge-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
 import { permissionService } from './lib/agent-permission-service'
@@ -1438,6 +1438,18 @@ export function registerIpcHandlers(): void {
         input.assistantMessageUuid,
       )
     }
+  )
+
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.LIST_GOALS,
+    async (_, sessionId: string): Promise<import('@proma/shared').AgentGoal[]> => listAgentGoals(sessionId),
+  )
+
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.UPDATE_GOAL_STATUS,
+    async (_, input: import('@proma/shared').UpdateAgentGoalStatusInput): Promise<import('@proma/shared').AgentGoal> => {
+      return updateAgentGoalStatus(input)
+    },
   )
 
   // ===== Agent 工作区管理相关 =====

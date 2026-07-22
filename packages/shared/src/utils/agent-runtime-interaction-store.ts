@@ -1,15 +1,17 @@
 import type {
   AskUserRequest,
   AskUserResponse,
+  ExitPlanModeRequest,
+  ExitPlanModeResponse,
   PermissionRequest,
   PermissionResponse,
 } from '../types/agent'
 import type { AgentRuntimeScope } from './agent-runtime-server'
 
-export type AgentRuntimeInteractionKind = 'permission' | 'ask_user'
+export type AgentRuntimeInteractionKind = 'permission' | 'ask_user' | 'plan'
 export type AgentRuntimeInteractionStatus = 'pending' | 'resolved' | 'cancelled' | 'expired'
-export type AgentRuntimeInteractionRequest = PermissionRequest | AskUserRequest
-export type AgentRuntimeInteractionResponse = PermissionResponse | AskUserResponse
+export type AgentRuntimeInteractionRequest = PermissionRequest | AskUserRequest | ExitPlanModeRequest
+export type AgentRuntimeInteractionResponse = PermissionResponse | AskUserResponse | ExitPlanModeResponse
 
 export interface AgentRuntimeInteractionRecord extends AgentRuntimeScope {
   requestId: string
@@ -19,6 +21,10 @@ export interface AgentRuntimeInteractionRecord extends AgentRuntimeScope {
   status: AgentRuntimeInteractionStatus
   request: AgentRuntimeInteractionRequest
   response?: AgentRuntimeInteractionResponse
+  /** 乐观并发版本。创建为 1，每次终态转换递增。 */
+  version: number
+  /** 客户端提交的幂等键；同一键可安全重试。 */
+  resolutionId?: string
   createdAt: number
   expiresAt?: number
   resolvedAt?: number
@@ -40,6 +46,12 @@ export interface ListAgentRuntimeInteractionsInput extends AgentRuntimeScope {
   now?: number
 }
 
+export interface ResolveAgentRuntimeInteractionInput {
+  response: AgentRuntimeInteractionResponse
+  expectedVersion: number
+  resolutionId: string
+}
+
 export interface AgentRuntimeInteractionStore {
   createInteraction(input: CreateAgentRuntimeInteractionInput): Promise<AgentRuntimeInteractionRecord>
   getInteraction(scope: AgentRuntimeScope, requestId: string): Promise<AgentRuntimeInteractionRecord | undefined>
@@ -47,7 +59,7 @@ export interface AgentRuntimeInteractionStore {
   resolveInteraction(
     scope: AgentRuntimeScope,
     requestId: string,
-    response: AgentRuntimeInteractionResponse,
+    input: ResolveAgentRuntimeInteractionInput,
   ): Promise<AgentRuntimeInteractionRecord | undefined>
   cancelInteraction(scope: AgentRuntimeScope, requestId: string): Promise<AgentRuntimeInteractionRecord | undefined>
   expireInteractions(scope: AgentRuntimeScope, now: number): Promise<AgentRuntimeInteractionRecord[]>
@@ -66,6 +78,7 @@ export class InMemoryAgentRuntimeInteractionStore implements AgentRuntimeInterac
       kind: input.kind,
       status: 'pending',
       request: cloneInteractionValue(input.request),
+      version: 1,
       createdAt: input.createdAt ?? Date.now(),
       expiresAt: input.expiresAt,
     }
@@ -94,14 +107,16 @@ export class InMemoryAgentRuntimeInteractionStore implements AgentRuntimeInterac
   async resolveInteraction(
     scope: AgentRuntimeScope,
     requestId: string,
-    response: AgentRuntimeInteractionResponse,
+    input: ResolveAgentRuntimeInteractionInput,
   ): Promise<AgentRuntimeInteractionRecord | undefined> {
     const record = this.records.get(scopedInteractionKey(scope, requestId))
-    if (!record || record.status !== 'pending') return undefined
+    if (!record || record.status !== 'pending' || record.version !== input.expectedVersion) return undefined
     const resolved: AgentRuntimeInteractionRecord = {
       ...record,
       status: 'resolved',
-      response: cloneInteractionValue(response),
+      response: cloneInteractionValue(input.response),
+      resolutionId: input.resolutionId,
+      version: record.version + 1,
       resolvedAt: Date.now(),
     }
     this.records.set(scopedInteractionKey(scope, requestId), cloneInteractionValue(resolved))
@@ -114,6 +129,7 @@ export class InMemoryAgentRuntimeInteractionStore implements AgentRuntimeInterac
     const cancelled: AgentRuntimeInteractionRecord = {
       ...record,
       status: 'cancelled',
+      version: record.version + 1,
       resolvedAt: Date.now(),
     }
     this.records.set(scopedInteractionKey(scope, requestId), cloneInteractionValue(cancelled))
@@ -135,6 +151,7 @@ export class InMemoryAgentRuntimeInteractionStore implements AgentRuntimeInterac
       const next: AgentRuntimeInteractionRecord = {
         ...record,
         status: 'expired',
+        version: record.version + 1,
         resolvedAt: now,
       }
       this.records.set(scopedInteractionKey(next, next.requestId), cloneInteractionValue(next))

@@ -229,6 +229,25 @@ export function getAgentSessionsIndexPath(): string {
   return join(getConfigDir(), 'agent-sessions.json')
 }
 
+/** Goal 索引文件路径。Goal 的运行事件单独追加到 goals/ 目录，避免污染会话历史。 */
+export function getAgentGoalsIndexPath(): string {
+  return join(getConfigDir(), 'goals.json')
+}
+
+/** Goal 事件目录；按 Goal ID 保存 append-only JSONL 审计记录。 */
+export function getAgentGoalsDir(): string {
+  const dir = join(getConfigDir(), 'goals')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/** 指定 Goal 的事件日志路径。 */
+export function getAgentGoalEventsPath(goalId: string): string {
+  return join(getAgentGoalsDir(), `${goalId}.jsonl`)
+}
+
 /**
  * 获取 Agent 会话消息目录路径
  *

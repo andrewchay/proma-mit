@@ -9,6 +9,13 @@ export interface WebCryptoEnvelopeSecretCodecOptions {
   crypto?: Crypto
 }
 
+/** activeKeyId 只用于新写入，keys 保留 grace period 内的历史版本。 */
+export interface RotatingWebCryptoEnvelopeSecretCodecOptions {
+  activeKeyId: string
+  keys: Readonly<Record<string, Uint8Array>>
+  crypto?: Crypto
+}
+
 interface WebCryptoEnvelopePayload {
   v: 1
   alg: 'AES-GCM'
@@ -24,24 +31,43 @@ const AES_KEY_LENGTHS = new Set([16, 24, 32])
 export function createWebCryptoEnvelopeSecretCodec(
   options: WebCryptoEnvelopeSecretCodecOptions,
 ): AgentRuntimeWebSecretCodec {
-  if (!AES_KEY_LENGTHS.has(options.keyBytes.byteLength)) {
-    throw new Error('WebCrypto secret codec keyBytes 必须是 16、24 或 32 字节')
+  return createRotatingWebCryptoEnvelopeSecretCodec({
+    activeKeyId: options.keyId,
+    keys: { [options.keyId]: options.keyBytes },
+    crypto: options.crypto,
+  })
+}
+
+/** 创建支持密钥版本轮换的 envelope codec。 */
+export function createRotatingWebCryptoEnvelopeSecretCodec(
+  options: RotatingWebCryptoEnvelopeSecretCodecOptions,
+): AgentRuntimeWebSecretCodec {
+  if (!options.keys[options.activeKeyId]) throw new Error('activeKeyId 必须存在于 keys 中')
+  for (const [keyId, keyBytes] of Object.entries(options.keys)) {
+    if (!keyId || !AES_KEY_LENGTHS.has(keyBytes.byteLength)) {
+      throw new Error('WebCrypto secret codec keyBytes 必须是 16、24 或 32 字节')
+    }
   }
   const cryptoImpl = options.crypto ?? globalThis.crypto
   if (!cryptoImpl?.subtle) {
     throw new Error('当前运行时不支持 WebCrypto subtle API')
   }
 
-  let importedKey: Promise<CryptoKey> | undefined
-  const getKey = (): Promise<CryptoKey> => {
-    importedKey ??= cryptoImpl.subtle.importKey(
+  const importedKeys = new Map<string, Promise<CryptoKey>>()
+  const getKey = (keyId: string): Promise<CryptoKey> => {
+    const keyBytes = options.keys[keyId]
+    if (!keyBytes) throw new Error(`Secret envelope keyId ${keyId} 已撤销或不在 grace period 内`)
+    const imported = importedKeys.get(keyId)
+    if (imported) return imported
+    const next = cryptoImpl.subtle.importKey(
       'raw',
-      bytesToArrayBuffer(options.keyBytes),
+      bytesToArrayBuffer(keyBytes),
       { name: 'AES-GCM' },
       false,
       ['encrypt', 'decrypt'],
     )
-    return importedKey
+    importedKeys.set(keyId, next)
+    return next
   }
 
   return {
@@ -53,13 +79,13 @@ export function createWebCryptoEnvelopeSecretCodec(
           iv: bytesToArrayBuffer(iv),
           additionalData: encodeAAD(context),
         },
-        await getKey(),
+        await getKey(options.activeKeyId),
         new TextEncoder().encode(plain),
       )
       const payload: WebCryptoEnvelopePayload = {
         v: 1,
         alg: 'AES-GCM',
-        kid: options.keyId,
+        kid: options.activeKeyId,
         iv: bytesToBase64Url(iv),
         ct: bytesToBase64Url(new Uint8Array(ciphertext)),
       }
@@ -70,21 +96,28 @@ export function createWebCryptoEnvelopeSecretCodec(
         throw new Error('Secret envelope 格式不正确')
       }
       const payload = parseEnvelopePayload(encoded.slice(ENVELOPE_PREFIX.length))
-      if (payload.kid !== options.keyId) {
-        throw new Error('Secret envelope keyId 不匹配')
-      }
       const plaintext = await cryptoImpl.subtle.decrypt(
         {
           name: 'AES-GCM',
           iv: bytesToArrayBuffer(base64UrlToBytes(payload.iv)),
           additionalData: encodeAAD(context),
         },
-        await getKey(),
+        await getKey(payload.kid),
         bytesToArrayBuffer(base64UrlToBytes(payload.ct)),
       )
       return new TextDecoder().decode(plaintext)
     },
   }
+}
+
+/** 读取旧版本密文后，以当前 active key 重写，供后台 re-encrypt migration 调用。 */
+export async function reencryptWebCryptoEnvelopeSecret(
+  encoded: string,
+  sourceCodec: AgentRuntimeWebSecretCodec,
+  targetCodec: AgentRuntimeWebSecretCodec,
+  context: AgentRuntimeWebSecretContext,
+): Promise<string> {
+  return targetCodec.encode(await sourceCodec.decode(encoded, context), context)
 }
 
 export function parseWebCryptoEnvelopeKey(base64Key: string): Uint8Array {

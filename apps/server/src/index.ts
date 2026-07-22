@@ -21,6 +21,12 @@ const recoveryStaleAfterMs = parsePositiveInteger(process.env.PROMA_WEB_RECOVERY
 const priceCatalog = parsePriceCatalog(process.env.PROMA_WEB_PRICE_CATALOG)
 const tenantBudget = parseTenantBudget(process.env.PROMA_WEB_MONTHLY_BUDGET_MICROUSD, process.env.PROMA_WEB_MODEL_MONTHLY_BUDGET_MICROUSD)
 const rateLimit = parseRateLimit(process.env.PROMA_WEB_RATE_LIMIT_TASKS, process.env.PROMA_WEB_RATE_LIMIT_WINDOW_MS)
+const mcpEgress = parseMcpEgress(process.env.PROMA_WEB_MCP_ALLOWED_ORIGINS, process.env.PROMA_WEB_MCP_MAX_TIMEOUT_MS)
+const executor = parseExecutor(process.env.PROMA_WEB_EXECUTOR_ENDPOINT, process.env.PROMA_WEB_EXECUTOR_TOKEN)
+const mcpOAuthCallbackBaseUrl = process.env.PROMA_WEB_MCP_OAUTH_CALLBACK_BASE_URL
+const operations = parseOperations(process.env.PROMA_WEB_SIEM_WEBHOOK_URL, process.env.PROMA_WEB_ALERT_WEBHOOK_URL)
+const subtaskLimits = parseSubtaskLimits(process.env.PROMA_WEB_SUBTASK_MAX_DEPTH, process.env.PROMA_WEB_SUBTASK_MAX_CHILDREN, process.env.PROMA_WEB_SUBTASK_MAX_OUTPUT_TOKENS)
+const kms = parseKms(process.env.PROMA_WEB_AWS_KMS_KEY_ID, process.env.PROMA_WEB_AWS_REGION, process.env.PROMA_WEB_AWS_KMS_ENDPOINT)
 
 if (!trustedHeaderAuth) {
   requireEnvironment('PROMA_WEB_OIDC_ISSUER')
@@ -42,6 +48,12 @@ const application = createPromaWebServerApplication({
   priceCatalog,
   tenantBudget,
   rateLimit,
+  mcpEgress,
+  executor,
+  mcpOAuthCallbackBaseUrl,
+  operations,
+  subtaskLimits,
+  kms,
 }, trustedHeaderAuth ? {} : { auth: createOidcJwtAuth({
   issuer: requireEnvironment('PROMA_WEB_OIDC_ISSUER'), audience: requireEnvironment('PROMA_WEB_OIDC_AUDIENCE'), jwksUrl: requireEnvironment('PROMA_WEB_OIDC_JWKS_URL'),
   tenantClaim: process.env.PROMA_WEB_OIDC_TENANT_CLAIM, userClaim: process.env.PROMA_WEB_OIDC_USER_CLAIM,
@@ -111,4 +123,54 @@ function parsePositiveInteger(raw: string | undefined, name: string): number | u
   const value = Number.parseInt(raw, 10)
   if (!Number.isSafeInteger(value) || value < 1_000) throw new Error(`${name} 必须是不小于 1000 的正整数`)
   return value
+}
+
+function parseMcpEgress(originsRaw: string | undefined, timeoutRaw: string | undefined): { allowedOrigins: string[]; maxTimeoutMs: number } | undefined {
+  if (!originsRaw) return undefined
+  const allowedOrigins = originsRaw.split(',').map((value) => value.trim()).filter(Boolean).map((value) => new URL(value).origin)
+  if (allowedOrigins.length === 0) throw new Error('PROMA_WEB_MCP_ALLOWED_ORIGINS 至少需要一个 HTTP(S) origin')
+  if (allowedOrigins.some((origin) => !origin.startsWith('https://') && !origin.startsWith('http://'))) {
+    throw new Error('PROMA_WEB_MCP_ALLOWED_ORIGINS 只能包含 HTTP(S) origin')
+  }
+  const maxTimeoutMs = parsePositiveInteger(timeoutRaw, 'PROMA_WEB_MCP_MAX_TIMEOUT_MS') ?? 30_000
+  return { allowedOrigins: [...new Set(allowedOrigins)], maxTimeoutMs }
+}
+
+function parseExecutor(endpoint: string | undefined, token: string | undefined): { endpoint: string; token: string } | undefined {
+  if (!endpoint && !token) return undefined
+  if (!endpoint || !token) throw new Error('PROMA_WEB_EXECUTOR_ENDPOINT 与 PROMA_WEB_EXECUTOR_TOKEN 必须同时配置')
+  const url = new URL(endpoint)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('PROMA_WEB_EXECUTOR_ENDPOINT 必须是 HTTP(S) URL')
+  return { endpoint: url.toString(), token }
+}
+
+function parseOperations(siemWebhookUrl: string | undefined, alertWebhookUrl: string | undefined): { siemWebhookUrl?: string; alertWebhookUrl?: string } | undefined {
+  if (!siemWebhookUrl && !alertWebhookUrl) return undefined
+  for (const value of [siemWebhookUrl, alertWebhookUrl]) {
+    if (!value) continue
+    const url = new URL(value)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('运维 webhook 必须是 HTTP(S) URL')
+  }
+  return { siemWebhookUrl, alertWebhookUrl }
+}
+
+function parseSubtaskLimits(depthRaw: string | undefined, childrenRaw: string | undefined, outputTokensRaw: string | undefined): { maxDepth: number; maxChildrenPerTask: number; maxOutputTokensPerTask: number } {
+  const parse = (value: string | undefined, fallback: number, name: string): number => {
+    if (!value) return fallback
+    const parsed = Number.parseInt(value, 10)
+    if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`${name} 必须是正整数`)
+    return parsed
+  }
+  return {
+    maxDepth: parse(depthRaw, 1, 'PROMA_WEB_SUBTASK_MAX_DEPTH'),
+    maxChildrenPerTask: parse(childrenRaw, 3, 'PROMA_WEB_SUBTASK_MAX_CHILDREN'),
+    maxOutputTokensPerTask: parse(outputTokensRaw, 4_000, 'PROMA_WEB_SUBTASK_MAX_OUTPUT_TOKENS'),
+  }
+}
+
+function parseKms(keyId: string | undefined, region: string | undefined, endpoint: string | undefined): { keyId: string; region: string; endpoint?: string } | undefined {
+  if (!keyId) return undefined
+  if (!region) throw new Error('配置 PROMA_WEB_AWS_KMS_KEY_ID 时必须同时配置 PROMA_WEB_AWS_REGION')
+  if (endpoint) new URL(endpoint)
+  return { keyId, region, endpoint }
 }

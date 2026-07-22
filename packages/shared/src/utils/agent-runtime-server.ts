@@ -10,7 +10,10 @@ import {
 export interface AgentRuntimeScope {
   tenantId: string
   userId: string
+  roles?: AgentRuntimeRole[]
 }
+
+export type AgentRuntimeRole = 'viewer' | 'operator' | 'admin' | 'security-auditor'
 
 export interface ScopedAgentSession extends AgentRuntimeScope {
   sessionId: string
@@ -182,6 +185,9 @@ export type AgentRuntimeTaskStatus = 'running' | 'completed' | 'failed' | 'cance
 
 export interface AgentRuntimeTaskMeta extends ScopedAgentSession {
   taskId: string
+  parentTaskId?: string
+  /** 根任务为 0；子任务在创建时从父任务推导。 */
+  depth: number
   status: AgentRuntimeTaskStatus
   startedAt: number
   completedAt?: number
@@ -196,6 +202,8 @@ export interface AgentRuntimeTaskContext extends ScopedAgentSession {
 
 export interface StartAgentRuntimeTaskInput extends ScopedAgentSession {
   taskId?: string
+  parentTaskId?: string
+  depth?: number
   run: (context: AgentRuntimeTaskContext) => Promise<void>
 }
 
@@ -204,6 +212,7 @@ export class AgentRuntimeTaskRunner {
   private readonly activeBySession = new Map<string, string>()
   private readonly controllers = new Map<string, AbortController>()
   private readonly completions = new Map<string, Promise<AgentRuntimeTaskMeta>>()
+  private readonly childrenByParent = new Map<string, Set<string>>()
 
   constructor(private readonly eventHub: AgentRuntimeEventReplayHub = new AgentRuntimeEventReplayHub()) {}
 
@@ -216,16 +225,24 @@ export class AgentRuntimeTaskRunner {
 
     const taskId = input.taskId ?? createRuntimeTaskId()
     const controller = new AbortController()
+    const parentDepth = input.parentTaskId ? this.tasks.get(input.parentTaskId)?.depth : undefined
     const meta: AgentRuntimeTaskMeta = {
       tenantId: input.tenantId,
       userId: input.userId,
       sessionId: input.sessionId,
       taskId,
+      parentTaskId: input.parentTaskId,
+      depth: parentDepth == null ? (input.depth ?? 0) : parentDepth + 1,
       status: 'running',
       startedAt: Date.now(),
     }
     this.tasks.set(taskId, meta)
     this.controllers.set(taskId, controller)
+    if (input.parentTaskId) {
+      const children = this.childrenByParent.get(input.parentTaskId) ?? new Set<string>()
+      children.add(taskId)
+      this.childrenByParent.set(input.parentTaskId, children)
+    }
     this.activeBySession.set(sessionKey, taskId)
 
     const completion = this.runTask(input, meta, controller, sessionKey)
@@ -234,6 +251,7 @@ export class AgentRuntimeTaskRunner {
   }
 
   cancelTask(taskId: string): boolean {
+    for (const childTaskId of this.childrenByParent.get(taskId) ?? []) this.cancelTask(childTaskId)
     const controller = this.controllers.get(taskId)
     if (!controller) return false
     controller.abort()
@@ -306,6 +324,12 @@ export class AgentRuntimeTaskRunner {
       meta.completedAt = Date.now()
       this.activeBySession.delete(sessionKey)
       this.controllers.delete(meta.taskId)
+      if (meta.parentTaskId) {
+        const siblings = this.childrenByParent.get(meta.parentTaskId)
+        siblings?.delete(meta.taskId)
+        if (siblings?.size === 0) this.childrenByParent.delete(meta.parentTaskId)
+      }
+      this.childrenByParent.delete(meta.taskId)
     }
     return { ...meta }
   }

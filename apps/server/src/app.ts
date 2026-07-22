@@ -2,14 +2,17 @@ import {
   AgentRuntimeEventReplayHub,
   createAgentRuntimeWebServer,
   createWebCryptoEnvelopeSecretCodec,
+  createCloudKmsEnvelopeSecretCodec,
   createAgentRuntimeWorkspaceObjectKey,
   normalizeRelativeObjectPath,
   parseWebCryptoEnvelopeKey,
   PostgresTenantRuntimeStore,
   RedisAgentRuntimeEventStore,
+  ServerMcpConnectionManager,
 } from '@proma/shared/utils'
 import type {
   AgentRuntimePostgresClient,
+  AgentRuntimeRole,
   AgentRuntimeRedisClient,
   AgentRuntimeScope,
   AgentRuntimeWebAgentTurnRunner,
@@ -28,11 +31,19 @@ import { materializeAgentRuntimeWorkspace, syncAgentRuntimeWorkspaceToObjectStor
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { runAISDKWebAgentTurn } from './runtime.ts'
+import { HttpServerMcpConnectionFactory } from './server-mcp-client.ts'
+import { acquireServerMcpTools } from './server-mcp-tools.ts'
+import { HttpIsolatedExecutor } from './isolated-executor.ts'
+import { AwsKmsDataKeyProvider } from './aws-kms.ts'
+import { createMcpOAuthAuthorizationUrl, exchangeMcpAuthorizationCode } from './server-mcp-oauth.ts'
 import { PostgresUsageLedger, usageFromMessages } from './billing.ts'
 import { PostgresAuditLog } from './audit.ts'
+import type { AuditRecord } from './audit.ts'
 import { PostgresRuntimeMetrics } from './metrics.ts'
 import { PostgresTaskRecoveryInspector } from './recovery.ts'
 import { PostgresAgentRuntimeInteractionStore } from './interactions.ts'
+import { HttpOperationsReporter, NoopOperationsReporter, redactOperationalError } from './operations.ts'
+import type { OperationsReporter } from './operations.ts'
 import { WEB_DASHBOARD_HTML } from './dashboard.ts'
 import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
@@ -43,6 +54,7 @@ export interface PromaWebServerConfig {
   s3: PromaWebS3Config
   envelopeKey: string
   envelopeKeyId: string
+  kms?: { keyId: string; region: string; endpoint?: string }
   trustedHeaderAuth: boolean
   workspaceRoot: string
   workerId: string
@@ -51,6 +63,12 @@ export interface PromaWebServerConfig {
   priceCatalog?: UsagePriceEntry[]
   tenantBudget?: TenantBudgetPolicy
   rateLimit?: { maxTasks: number; windowMs: number }
+  /** 未配置时禁用服务端 MCP，防止工作区配置成为 SSRF 入口。 */
+  mcpEgress?: { allowedOrigins: string[]; maxTimeoutMs: number }
+  executor?: { endpoint: string; token: string }
+  mcpOAuthCallbackBaseUrl?: string
+  subtaskLimits?: { maxDepth: number; maxChildrenPerTask: number; maxOutputTokensPerTask: number }
+  operations?: { siemWebhookUrl?: string; alertWebhookUrl?: string }
 }
 
 export interface PromaWebServerDependencies {
@@ -60,6 +78,7 @@ export interface PromaWebServerDependencies {
   auth?: AgentRuntimeWebAuthResolver
   logger?: PromaWebLogger
   agentTurnRunner?: AgentRuntimeWebAgentTurnRunner
+  operationsReporter?: OperationsReporter
 }
 
 export interface PromaWebLogger {
@@ -77,6 +96,7 @@ export interface PromaWebLogEvent {
   status?: number
   durationMs?: number
   error?: string
+  traceId?: string
 }
 
 export interface PromaWebS3Config {
@@ -113,6 +133,13 @@ export function createPromaWebServerApplication(
   const interactionStore = new PostgresAgentRuntimeInteractionStore(postgres)
   const rateLimiter = redis instanceof NodeRedisClient ? new RedisTaskRateLimiter(redis) : undefined
   const auth = dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth)
+  const operationsReporter = dependencies.operationsReporter ?? (config.operations
+    ? new HttpOperationsReporter(config.operations)
+    : new NoopOperationsReporter())
+  const mcpConnections = config.mcpEgress
+    ? new ServerMcpConnectionManager(config.mcpEgress, new HttpServerMcpConnectionFactory(store))
+    : undefined
+  const isolatedExecutor = config.executor ? new HttpIsolatedExecutor(config.executor.endpoint, config.executor.token) : undefined
   const app = createAgentRuntimeWebServer({
     store,
     eventHub: new AgentRuntimeEventReplayHub({
@@ -120,10 +147,9 @@ export function createPromaWebServerApplication(
     }),
     auth,
     interactionStore,
-    secretCodec: createWebCryptoEnvelopeSecretCodec({
-      keyId: config.envelopeKeyId,
-      keyBytes: parseWebCryptoEnvelopeKey(config.envelopeKey),
-    }),
+    secretCodec: config.kms
+      ? createCloudKmsEnvelopeSecretCodec({ activeKeyId: config.kms.keyId, providers: { [config.kms.keyId]: new AwsKmsDataKeyProvider(config.kms.keyId, config.kms) } })
+      : createWebCryptoEnvelopeSecretCodec({ keyId: config.envelopeKeyId, keyBytes: parseWebCryptoEnvelopeKey(config.envelopeKey) }),
     runAgentTurn: async (input) => {
       const acquired = await taskLease.acquire(input.scope, input.session.sessionId, input.taskId)
       if (!acquired) throw new Error('会话已由其他 worker 执行')
@@ -139,10 +165,18 @@ export function createPromaWebServerApplication(
           objectStore,
           localDir,
         })
-        const output = await agentTurnRunner({
-          ...input,
-          workspace: { ...input.workspace, cwd: localDir },
-        })
+        const runtimeInput = { ...input, workspace: { ...input.workspace, cwd: localDir } }
+        const mcp = mcpConnections ? await acquireServerMcpTools(runtimeInput, mcpConnections) : undefined
+        let output
+        try {
+          output = await agentTurnRunner({
+            ...runtimeInput,
+            mcpTools: mcp?.tools,
+            executeIsolatedCommand: isolatedExecutor ? (request, signal) => isolatedExecutor.execute(request, signal) : undefined,
+          })
+        } finally {
+          await mcp?.release()
+        }
         const usage = usageFromMessages(output)
         if (usage) {
           await usageLedger.record({
@@ -163,7 +197,9 @@ export function createPromaWebServerApplication(
         logger.info({ event: 'agent_task_completed', ...input.scope, sessionId: input.session.sessionId, durationMs: Date.now() - startedAt })
         return output
       } catch (error) {
-        logger.error({ event: 'agent_task_failed', ...input.scope, sessionId: input.session.sessionId, durationMs: Date.now() - startedAt, error: getErrorMessage(error) })
+        const errorMessage = redactOperationalError(getErrorMessage(error))
+        logger.error({ event: 'agent_task_failed', ...input.scope, sessionId: input.session.sessionId, durationMs: Date.now() - startedAt, error: errorMessage })
+        void operationsReporter.reportAlert({ severity: 'critical', kind: 'agent_task_failed', tenantId: input.scope.tenantId, userId: input.scope.userId, taskId: input.taskId, message: errorMessage, createdAt: Date.now() }).catch((reportError) => logger.error({ event: 'operations_alert_delivery_failed', error: getErrorMessage(reportError) }))
         throw error
       } finally {
         clearInterval(heartbeat)
@@ -177,34 +213,46 @@ export function createPromaWebServerApplication(
       }
     },
     defaultRuntime: 'ai-sdk',
+    subtaskLimits: config.subtaskLimits,
   })
 
   return {
     async fetch(request) {
       const url = new URL(request.url)
       const requestId = request.headers.get('x-request-id') ?? crypto.randomUUID()
+      const traceId = request.headers.get('traceparent')?.split('-')[1] ?? request.headers.get('x-trace-id') ?? requestId
       const startedAt = Date.now()
       if (request.method === 'GET' && url.pathname === '/healthz') {
-        return Response.json({ status: 'ok' })
+        const response = Response.json({ status: 'ok' })
+        response.headers.set('x-trace-id', traceId)
+        return response
       }
       if (request.method === 'GET' && url.pathname === '/agent/ui') {
         return new Response(WEB_DASHBOARD_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
       }
       const scope = await auth({ request, url })
       const fileRoute = matchWorkspaceFileRoute(request.method, url.pathname)
+      const oauthStartRoute = matchMcpOAuthStartRoute(request.method, url.pathname)
+      const mcpStatusRoute = matchMcpStatusRoute(request.method, url.pathname)
       let response: Response
       if (request.method === 'GET' && url.pathname === '/agent/metrics') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
-          : Response.json({ metrics: await metrics.get(scope) })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : Response.json({ metrics: await metrics.get(scope) })
       } else if (request.method === 'GET' && url.pathname === '/agent/recovery/stale-tasks') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
-          : Response.json({ tasks: await recovery.listStale(scope) })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : Response.json({ tasks: await recovery.listStale(scope) })
       } else if (request.method === 'GET' && url.pathname === '/agent/audit') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
-          : Response.json({ records: await auditLog.list({
+          : !hasAnyRole(scope, ['admin', 'security-auditor'])
+            ? Response.json({ error: '需要 security-auditor 或 admin 角色' }, { status: 403 })
+            : Response.json({ records: await auditLog.list({
             ...scope,
             action: url.searchParams.get('action') ?? undefined,
             result: parseAuditResult(url.searchParams.get('result')),
@@ -215,6 +263,8 @@ export function createPromaWebServerApplication(
       } else if (request.method === 'GET' && url.pathname === '/agent/audit/export') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['admin', 'security-auditor'])
+            ? Response.json({ error: '需要 security-auditor 或 admin 角色' }, { status: 403 })
           : createAuditExportResponse(await auditLog.list({
             ...scope,
             action: url.searchParams.get('action') ?? undefined,
@@ -224,27 +274,72 @@ export function createPromaWebServerApplication(
             to: parseAuditTimestamp(url.searchParams.get('to')),
             limit: 500,
           }), url.searchParams.get('format'))
+      } else if (request.method === 'POST' && url.pathname === '/agent/audit/purge') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['admin'])
+            ? Response.json({ error: '需要 admin 角色' }, { status: 403 })
+            : await purgeAuditRecords(request, scope, auditLog)
+      } else if (request.method === 'POST' && url.pathname === '/agent/audit/holds') {
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['admin']) ? Response.json({ error: '需要 admin 角色' }, { status: 403 })
+            : await createAuditLegalHold(request, scope, auditLog)
+      } else if (request.method === 'DELETE' && url.pathname.startsWith('/agent/audit/holds/')) {
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['admin']) ? Response.json({ error: '需要 admin 角色' }, { status: 403 })
+            : await releaseAuditLegalHold(scope, decodeURIComponent(url.pathname.slice('/agent/audit/holds/'.length)), auditLog)
       } else if (request.method === 'GET' && url.pathname === '/agent/sessions') {
-        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : Response.json({ sessions: (await postgres.query<Record<string, unknown>>('SELECT session_id AS "sessionId", workspace_slug AS "workspaceSlug", channel_id AS "channelId", model_id AS "modelId", COALESCE(title, session_id) AS title, updated_at AS "updatedAt" FROM proma_runtime_sessions WHERE tenant_id = $1 AND user_id = $2 ORDER BY updated_at DESC LIMIT 100', [scope.tenantId, scope.userId])).rows })
+        const sessionsPage = parsePage(url.searchParams.get('page'))
+        const sessionsLimit = parsePageLimit(url.searchParams.get('limit'))
+        const archived = parseArchivedFilter(url.searchParams.get('archived'))
+        const query = url.searchParams.get('q')?.trim() || null
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : Response.json({
+          sessions: (await postgres.query<Record<string, unknown>>(
+            `SELECT session_id AS "sessionId", workspace_slug AS "workspaceSlug", channel_id AS "channelId", model_id AS "modelId", runtime,
+                    permission_mode AS "defaultPermissionMode", archived_at AS "archivedAt", COALESCE(title, session_id) AS title, updated_at AS "updatedAt"
+             FROM proma_runtime_sessions
+             WHERE tenant_id = $1 AND user_id = $2
+               AND ($3::boolean IS NULL OR (archived_at IS NOT NULL) = $3)
+               AND ($4::text IS NULL OR session_id ILIKE '%' || $4 || '%' OR title ILIKE '%' || $4 || '%')
+             ORDER BY updated_at DESC LIMIT $5 OFFSET $6`,
+            [scope.tenantId, scope.userId, archived, query, sessionsLimit, (sessionsPage - 1) * sessionsLimit],
+          )).rows,
+          page: sessionsPage,
+          limit: sessionsLimit,
+        })
       } else if (request.method === 'GET' && url.pathname === '/agent/tasks') {
-        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : Response.json({ tasks: (await postgres.query<Record<string, unknown>>('SELECT task_id, session_id, status, started_at, completed_at, error FROM proma_runtime_tasks WHERE tenant_id = $1 AND user_id = $2 ORDER BY started_at DESC LIMIT 100', [scope.tenantId, scope.userId])).rows })
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : Response.json({ tasks: (await postgres.query<Record<string, unknown>>('SELECT task_id, parent_task_id, session_id, status, started_at, completed_at, error FROM proma_runtime_tasks WHERE tenant_id = $1 AND user_id = $2 ORDER BY started_at DESC LIMIT 100', [scope.tenantId, scope.userId])).rows })
       } else if (fileRoute) {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
           : await handleWorkspaceFile(request, scope, fileRoute, store, objectStore, config.s3.maxUploadBytes)
+      } else if (oauthStartRoute) {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : await startMcpOAuth(scope, oauthStartRoute.workspaceSlug, oauthStartRoute.serverName, store, app.oauthHandler, config.mcpOAuthCallbackBaseUrl)
+      } else if (mcpStatusRoute) {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : await getMcpStatus(scope, mcpStatusRoute.workspaceSlug, store)
       } else {
         response = await app.handleRequest(request)
       }
-      logger.info({ event: 'http_request_completed', requestId, tenantId: scope?.tenantId, userId: scope?.userId, status: response.status, durationMs: Date.now() - startedAt })
+      const durationMs = Date.now() - startedAt
+      logger.info({ event: 'http_request_completed', requestId, traceId, tenantId: scope?.tenantId, userId: scope?.userId, status: response.status, durationMs })
+      void operationsReporter.reportTrace({ traceId, requestId, event: 'http_request_completed', tenantId: scope?.tenantId, userId: scope?.userId, status: response.status, durationMs, createdAt: Date.now() }).catch((error) => logger.error({ event: 'operations_trace_delivery_failed', traceId, error: getErrorMessage(error) }))
       if (scope) {
-        await auditLog.append({
+        const record: AuditRecord = {
           ...scope,
           action: `${request.method} ${url.pathname}`,
           resource: url.pathname,
           result: response.ok ? 'success' : 'failure',
           requestId,
-        })
+          traceId,
+        }
+        await auditLog.append(record)
+        void operationsReporter.reportAudit(record).catch((error) => logger.error({ event: 'operations_audit_delivery_failed', traceId, error: getErrorMessage(error) }))
       }
+      response.headers.set('x-trace-id', traceId)
       return response
     },
     async initialize() {
@@ -259,14 +354,97 @@ export function createPromaWebServerApplication(
       const taskIds = app.taskRunner.cancelAllTasks()
       await Promise.all(taskIds.map((taskId) => app.taskRunner.waitForTask(taskId)))
       await app.taskRunner.flushDurableEventWrites()
+      await mcpConnections?.closeAll()
       if (redis instanceof NodeRedisClient) await redis.close()
       logger.info({ event: 'server_shutdown_completed' })
     },
   }
 }
 
+async function purgeAuditRecords(request: Request, scope: AgentRuntimeScope, auditLog: PostgresAuditLog): Promise<Response> {
+  let body: { before?: unknown }
+  try {
+    body = await request.json() as { before?: unknown }
+  } catch {
+    return Response.json({ error: '请求体必须是 JSON' }, { status: 400 })
+  }
+  const before = typeof body.before === 'number' ? body.before : Number(body.before)
+  if (!Number.isFinite(before) || before < 0) return Response.json({ error: 'before 必须是非负 Unix 毫秒时间戳' }, { status: 400 })
+  try { await auditLog.purgeBefore(scope, before) } catch (error) { return Response.json({ error: getErrorMessage(error) }, { status: 409 }) }
+  return new Response(null, { status: 204 })
+}
+
+async function createAuditLegalHold(request: Request, scope: AgentRuntimeScope, auditLog: PostgresAuditLog): Promise<Response> {
+  let body: { holdId?: unknown; reason?: unknown }
+  try { body = await request.json() as { holdId?: unknown; reason?: unknown } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+  if (typeof body.holdId !== 'string' || body.holdId.trim().length === 0 || typeof body.reason !== 'string' || body.reason.trim().length === 0) {
+    return Response.json({ error: 'holdId 与 reason 必须是非空字符串' }, { status: 400 })
+  }
+  await auditLog.createLegalHold({ ...scope, holdId: body.holdId.trim(), reason: body.reason.trim() })
+  return new Response(null, { status: 201 })
+}
+
+async function releaseAuditLegalHold(scope: AgentRuntimeScope, holdId: string, auditLog: PostgresAuditLog): Promise<Response> {
+  if (!holdId) return Response.json({ error: 'holdId 不能为空' }, { status: 400 })
+  return await auditLog.releaseLegalHold(scope, holdId) ? new Response(null, { status: 204 }) : Response.json({ error: '法律保全不存在或已释放' }, { status: 404 })
+}
+
+async function startMcpOAuth(
+  scope: AgentRuntimeScope,
+  workspaceSlug: string,
+  serverName: string,
+  store: PostgresTenantRuntimeStore,
+  handler: import('@proma/shared/utils').ServerMcpOAuthCallbackHandler,
+  callbackBaseUrl: string | undefined,
+): Promise<Response> {
+  if (!callbackBaseUrl) return Response.json({ error: '服务端未配置 MCP OAuth 回调地址' }, { status: 503 })
+  const workspace = await store.getWorkspace(scope, workspaceSlug)
+  const entry = workspace?.mcpServers[serverName]
+  const auth = entry?.auth
+  if (!entry || auth?.type !== 'oauthAuthorizationCode' || !auth.authorizationEndpoint || !auth.clientId || !auth.redirectUri) {
+    return Response.json({ error: 'MCP OAuth 授权码配置不完整或不可访问' }, { status: 400 })
+  }
+  if (auth.clientSecret) await store.setMcpClientSecret({ ...scope, workspaceSlug, serverName, clientSecret: auth.clientSecret })
+  const registered = handler.registerPending({
+    ...scope,
+    workspaceSlug,
+    serverName,
+    callbackBaseUrl,
+    finishAuth: async (code) => exchangeMcpAuthorizationCode(entry, code, await store.getMcpClientSecret(scope, workspaceSlug, serverName)),
+  })
+  return Response.json({ authorizationUrl: createMcpOAuthAuthorizationUrl({ authorizationEndpoint: auth.authorizationEndpoint, clientId: auth.clientId, redirectUri: auth.redirectUri, scope: auth.scope, state: registered.authorizationState }) })
+}
+
+function matchMcpOAuthStartRoute(method: string, pathname: string): { workspaceSlug: string; serverName: string } | undefined {
+  const segments = pathname.split('/').filter(Boolean)
+  if (method !== 'POST' || segments.length !== 6 || segments[0] !== 'agent' || segments[1] !== 'workspaces' || segments[3] !== 'mcp' || segments[5] !== 'oauth') return undefined
+  return { workspaceSlug: decodeURIComponent(segments[2] ?? ''), serverName: decodeURIComponent(segments[4] ?? '') }
+}
+
+function matchMcpStatusRoute(method: string, pathname: string): { workspaceSlug: string } | undefined {
+  const segments = pathname.split('/').filter(Boolean)
+  if (method !== 'GET' || segments.length !== 4 || segments[0] !== 'agent' || segments[1] !== 'workspaces' || segments[3] !== 'mcp') return undefined
+  return { workspaceSlug: decodeURIComponent(segments[2] ?? '') }
+}
+
+async function getMcpStatus(scope: AgentRuntimeScope, workspaceSlug: string, store: PostgresTenantRuntimeStore): Promise<Response> {
+  const workspace = await store.getWorkspace(scope, workspaceSlug)
+  if (!workspace) return Response.json({ error: '工作区不存在或不可访问' }, { status: 404 })
+  const servers = await Promise.all(Object.entries(workspace.mcpServers).map(async ([serverName, config]) => ({
+    serverName,
+    transport: config.type,
+    authType: config.auth?.type ?? 'none',
+    connected: Boolean(await store.getMcpOAuthTokens(scope, workspaceSlug, serverName)),
+  })))
+  return Response.json({ workspaceSlug, servers })
+}
+
 function parseAuditResult(value: string | null): 'success' | 'failure' | undefined {
   return value === 'success' || value === 'failure' ? value : undefined
+}
+
+function hasAnyRole(scope: AgentRuntimeScope, required: readonly AgentRuntimeRole[]): boolean {
+  return scope.roles?.some((role) => required.includes(role)) ?? false
 }
 
 function parseAuditTimestamp(value: string | null): number | undefined {
@@ -275,13 +453,29 @@ function parseAuditTimestamp(value: string | null): number | undefined {
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : undefined
 }
 
+function parsePage(value: string | null): number {
+  const page = Number(value)
+  return Number.isSafeInteger(page) && page > 0 ? page : 1
+}
+
+function parsePageLimit(value: string | null): number {
+  const limit = Number(value)
+  return Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 100) : 50
+}
+
+function parseArchivedFilter(value: string | null): boolean | null {
+  if (value === 'true') return true
+  if (value === 'all') return null
+  return false
+}
+
 function createAuditExportResponse(records: Awaited<ReturnType<PostgresAuditLog['list']>>, format: string | null): Response {
   if (format === 'json') {
     return new Response(JSON.stringify({ records }), {
       headers: { 'content-type': 'application/json; charset=utf-8', 'content-disposition': 'attachment; filename="proma-audit.json"' },
     })
   }
-  const header = ['createdAt', 'tenantId', 'userId', 'action', 'resource', 'result', 'requestId', 'taskId']
+  const header = ['createdAt', 'tenantId', 'userId', 'action', 'resource', 'result', 'requestId', 'traceId', 'taskId']
   const rows = records.map((record) => header.map((key) => csvValue(record[key as keyof typeof record])).join(','))
   return new Response([header.join(','), ...rows].join('\n'), {
     headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="proma-audit.csv"' },

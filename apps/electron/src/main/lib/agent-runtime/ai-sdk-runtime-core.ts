@@ -7,6 +7,7 @@
 
 import type {
   AgentEvent,
+  AgentGoalCheckpoint,
   AgentProviderProtocol,
   FileAttachment,
   PromaPermissionMode,
@@ -30,7 +31,7 @@ import { isStepCount, jsonSchema, streamText, tool } from 'ai'
 import { isTransientNetworkError } from '../error-patterns'
 import { enrichHistoryWithDocuments, enrichMessageWithDocuments } from './attachment-enrichment'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
-import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME } from './tool-registry'
+import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from './tool-registry'
 import type { RuntimeToolDefinition } from './types'
 
 export interface AISDKRuntimeSessionState {
@@ -67,6 +68,7 @@ export interface AISDKToolExecutionState {
   ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
   runSubAgent?: import('./types').ToolContext['runSubAgent']
   mcpManager?: import('./mcp-client').McpClientManager
+  onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
 }
 
 export interface AISDKRuntimeStreamInput {
@@ -110,6 +112,7 @@ export interface AISDKAgentTurnInput {
   onAskUser?: AISDKToolExecutionState['onAskUser']
   runSubAgent?: AISDKToolExecutionState['runSubAgent']
   mcpManager?: AISDKToolExecutionState['mcpManager']
+  onGoalCheckpoint?: AISDKToolExecutionState['onGoalCheckpoint']
 }
 
 export interface ExecutedAISDKToolResult {
@@ -164,6 +167,7 @@ export class AISDKRuntimeCore {
       onAskUser: input.onAskUser,
       runSubAgent: input.runSubAgent,
       mcpManager: input.mcpManager,
+      onGoalCheckpoint: input.onGoalCheckpoint,
     })
 
     const streamRun = await this.runStreamTextWithRetry({
@@ -322,6 +326,16 @@ export class AISDKRuntimeCore {
         .join('\n\n')
       return {
         content: `用户回答如下：\n\n${answerBlocks}\n\nanswers JSON: ${JSON.stringify(result.answers)}`,
+      }
+    }
+
+    if (runtimeTool.name === GOAL_CHECKPOINT_TOOL_NAME) {
+      if (!state.onGoalCheckpoint) return { content: '当前会话没有激活的 Goal，不能提交检查点。', isError: true }
+      try {
+        await state.onGoalCheckpoint(toGoalCheckpoint(args))
+        return { content: 'Goal 检查点已持久化。' }
+      } catch (error) {
+        return { content: `Goal 检查点无效: ${getErrorMessage(error)}`, isError: true }
       }
     }
 
@@ -603,6 +617,45 @@ function toAgentEventUsage(usage: LanguageModelUsage): NonNullable<Extract<Agent
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error) || '未知错误'
+}
+
+function toGoalCheckpoint(input: Record<string, unknown>): AgentGoalCheckpoint {
+  const outcome = input.outcome
+  const summary = input.summary
+  if (outcome !== 'continue' && outcome !== 'waiting' && outcome !== 'blocked' && outcome !== 'complete') {
+    throw new Error('outcome 必须是 continue、waiting、blocked 或 complete')
+  }
+  if (typeof summary !== 'string') throw new Error('summary 必须是字符串')
+  const completed = Array.isArray(input.completed) ? input.completed.filter((value): value is string => typeof value === 'string') : []
+  const evidence = Array.isArray(input.evidence)
+    ? input.evidence.flatMap((value) => {
+      if (!isRecord(value) || typeof value.kind !== 'string' || typeof value.value !== 'string') return []
+      if (!['test', 'command', 'file', 'tool', 'user'].includes(value.kind)) return []
+      return [{ kind: value.kind as AgentGoalCheckpoint['evidence'][number]['kind'], value: value.value }]
+    })
+    : []
+  return {
+    outcome,
+    summary,
+    completed,
+    evidence,
+    ...(typeof input.nextAction === 'string' ? { nextAction: input.nextAction } : {}),
+    ...(typeof input.blocker === 'string' ? { blocker: input.blocker } : {}),
+    ...(isGoalWakeTrigger(input.wakeTrigger) ? { wakeTrigger: input.wakeTrigger } : {}),
+  }
+}
+
+function isGoalWakeTrigger(value: unknown): value is AgentGoalCheckpoint['wakeTrigger'] {
+  if (!isRecord(value) || typeof value.type !== 'string') return false
+  if (value.type === 'immediate' || value.type === 'user_input') return true
+  if (value.type === 'at') return typeof value.wakeAt === 'number'
+  if (value.type === 'interaction') return typeof value.requestId === 'string'
+  if (value.type === 'external_task') return typeof value.taskId === 'string'
+  return value.type === 'file_change' && Array.isArray(value.paths) && value.paths.every((path) => typeof path === 'string')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

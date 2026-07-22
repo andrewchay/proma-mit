@@ -73,6 +73,16 @@ describe('InMemoryTenantRuntimeStore', () => {
 
     expect(store.getSessionMessages(scopeA, 'session-1').map((message) => (message as { uuid?: string }).uuid)).toEqual(['u1'])
   })
+
+  test('given a session permission decision then it is isolated and removed after expiry', () => {
+    const store = new InMemoryTenantRuntimeStore()
+    store.setPermissionDecision({ ...scopeA, sessionId: 'session-1', fingerprint: 'write:a.txt', expiresAt: 2_000 })
+
+    expect(store.getPermissionDecision(scopeA, 'session-1', 'write:a.txt', 1_000)).toMatchObject({ sessionId: 'session-1' })
+    expect(store.getPermissionDecision(scopeB, 'session-1', 'write:a.txt', 1_000)).toBeUndefined()
+    expect(store.getPermissionDecision(scopeA, 'session-2', 'write:a.txt', 1_000)).toBeUndefined()
+    expect(store.getPermissionDecision(scopeA, 'session-1', 'write:a.txt', 2_000)).toBeUndefined()
+  })
 })
 
 describe('ServerMcpOAuthCallbackHandler', () => {

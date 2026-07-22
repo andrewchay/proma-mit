@@ -44,6 +44,24 @@ describe('Agent runtime Web P0 server', () => {
     expect((await server.store.getSession(otherScope, sessionId))).toBeUndefined()
   })
 
+  test('given an owned session when archiving and setting a default permission mode then it is persisted for later runs', async () => {
+    const server = createTestServer()
+    seedRuntimeConfig(server.store, scope)
+    const sessionId = await createSession(server, scope)
+
+    const response = await server.handleRequest(new Request(`${baseUrl}/agent/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { ...scopeHeaders(scope), 'content-type': 'application/json' },
+      body: JSON.stringify({ archived: true, runtime: 'ai-sdk', permissionMode: 'safe' }),
+    }))
+    const body = await response.json() as { session: { archivedAt?: number; defaultPermissionMode?: string; runtime: string } }
+
+    expect(response.status).toBe(200)
+    expect(body.session.archivedAt).toEqual(expect.any(Number))
+    expect(body.session.defaultPermissionMode).toBe('safe')
+    expect(body.session.runtime).toBe('ai-sdk')
+  })
+
   test('given an owned session when deleting it then its scoped session record is removed', async () => {
     const server = createTestServer()
     seedRuntimeConfig(server.store, scope)
@@ -96,6 +114,52 @@ describe('Agent runtime Web P0 server', () => {
     expect(seen).toEqual(['plain-key'])
     expect(await readSSEReplay(eventsResponse)).toContain('hello world')
     expect(messagesBody.messages.map((message) => message.type)).toEqual(['user', 'assistant'])
+  })
+
+  test('given an agent turn that delegates then the child task is persisted with its parent relationship', async () => {
+    let childTaskId = ''
+    const server = createTestServer({
+      runAgentTurn: async (input) => {
+        const child = await input.startSubtask?.({
+          task: '只读调研',
+          maxOutputTokens: 100,
+          execute: async () => '调研完成',
+        })
+        childTaskId = child?.taskId ?? ''
+        return []
+      },
+    })
+    seedRuntimeConfig(server.store, scope)
+    const sessionId = await createSession(server, scope)
+
+    const response = await server.handleRequest(jsonRequest(`/agent/sessions/${sessionId}/run`, { prompt: '委派' }, scope))
+    const body = await response.json() as { task: { taskId: string } }
+    await server.taskRunner.waitForTask(body.task.taskId)
+    const child = await server.store.getTask(scope, childTaskId)
+
+    expect(childTaskId).not.toBe('')
+    expect(child?.status).toBe('completed')
+    expect(child?.parentTaskId).toBe(body.task.taskId)
+  })
+
+  test('given configured subtask limits when a parent exceeds its child count then the parent task fails before another child starts', async () => {
+    const server = createTestServer({
+      subtaskLimits: { maxDepth: 1, maxChildrenPerTask: 1, maxOutputTokensPerTask: 10 },
+      runAgentTurn: async (input) => {
+        await input.startSubtask?.({ task: 'first', maxOutputTokens: 10, execute: async () => 'ok' })
+        await input.startSubtask?.({ task: 'second', maxOutputTokens: 10, execute: async () => 'nope' })
+        return []
+      },
+    })
+    seedRuntimeConfig(server.store, scope)
+    const sessionId = await createSession(server, scope)
+    const response = await server.handleRequest(jsonRequest(`/agent/sessions/${sessionId}/run`, { prompt: '超过限制' }, scope))
+    const { task } = await response.json() as { task: { taskId: string } }
+
+    const completed = await server.taskRunner.waitForTask(task.taskId)
+
+    expect(completed.status).toBe('failed')
+    expect(completed.error).toContain('最多委派 1')
   })
 
   test('given another tenant when reading session events then access is denied by lookup scope', async () => {
@@ -194,6 +258,8 @@ describe('Agent runtime Web P0 server', () => {
     }))
     const listBody = await listResponse.json() as { interactions: Array<{ requestId: string; status: string }> }
     const resolveResponse = await server.handleRequest(jsonRequest('/agent/interactions/permission-1/respond', {
+      expectedVersion: 1,
+      resolutionId: 'permission-1-response-a',
       response: {
         requestId: 'permission-1',
         behavior: 'allow',
@@ -209,6 +275,21 @@ describe('Agent runtime Web P0 server', () => {
     expect((await server.interactionStore.getInteraction(scope, 'permission-1'))?.status).toBe('resolved')
   })
 
+  test('given a pending Plan interaction then kind=plan returns it for approval recovery', async () => {
+    const server = createTestServer()
+    await server.interactionStore.createInteraction({
+      ...scope,
+      kind: 'plan',
+      request: { requestId: 'plan-1', sessionId: 'session-a', toolInput: { plan: '先分析，再写入。' }, allowedPrompts: [] },
+    })
+
+    const response = await server.handleRequest(new Request(`${baseUrl}/agent/interactions?kind=plan`, { headers: scopeHeaders(scope) }))
+    const body = await response.json() as { interactions: Array<{ requestId: string; kind: string }> }
+
+    expect(response.status).toBe(200)
+    expect(body.interactions).toEqual([expect.objectContaining({ requestId: 'plan-1', kind: 'plan' })])
+  })
+
   test('given an AskUser interaction when submitting a permission response then it is rejected without resolving', async () => {
     const server = createTestServer()
     await server.interactionStore.createInteraction({
@@ -218,21 +299,74 @@ describe('Agent runtime Web P0 server', () => {
     })
 
     const response = await server.handleRequest(jsonRequest('/agent/interactions/ask-1/respond', {
+      expectedVersion: 1,
+      resolutionId: 'ask-1-response-a',
       response: { requestId: 'ask-1', behavior: 'allow', alwaysAllow: false },
     }, scope))
 
     expect(response.status).toBe(400)
     expect((await server.interactionStore.getInteraction(scope, 'ask-1'))?.status).toBe('pending')
   })
+
+  test('given a duplicate interaction response then the same resolution id is idempotent and a stale version conflicts', async () => {
+    const server = createTestServer()
+    await server.interactionStore.createInteraction({
+      ...scope,
+      kind: 'permission',
+      request: permissionRequest('permission-idempotent', 'session-a'),
+    })
+    const body = {
+      expectedVersion: 1,
+      resolutionId: 'permission-idempotent-response-a',
+      response: { requestId: 'permission-idempotent', behavior: 'allow', alwaysAllow: false },
+    }
+
+    const first = await server.handleRequest(jsonRequest('/agent/interactions/permission-idempotent/respond', body, scope))
+    const duplicate = await server.handleRequest(jsonRequest('/agent/interactions/permission-idempotent/respond', body, scope))
+    const stale = await server.handleRequest(jsonRequest('/agent/interactions/permission-idempotent/respond', {
+      ...body,
+      resolutionId: 'permission-idempotent-response-b',
+    }, scope))
+
+    expect(first.status).toBe(200)
+    expect(duplicate.status).toBe(200)
+    expect(stale.status).toBe(409)
+  })
+
+  test('given a plan interaction then only a plan decision can resolve it', async () => {
+    const server = createTestServer()
+    await server.interactionStore.createInteraction({
+      ...scope,
+      kind: 'plan',
+      request: { requestId: 'plan-1', sessionId: 'session-a', toolInput: { plan: '先读取文件' }, allowedPrompts: [] },
+    })
+
+    const invalid = await server.handleRequest(jsonRequest('/agent/interactions/plan-1/respond', {
+      expectedVersion: 1,
+      resolutionId: 'plan-1-invalid',
+      response: { requestId: 'plan-1', behavior: 'allow', alwaysAllow: false },
+    }, scope))
+    const accepted = await server.handleRequest(jsonRequest('/agent/interactions/plan-1/respond', {
+      expectedVersion: 1,
+      resolutionId: 'plan-1-approve',
+      response: { requestId: 'plan-1', action: 'approve_auto' },
+    }, scope))
+
+    expect(invalid.status).toBe(400)
+    expect(accepted.status).toBe(200)
+    expect((await server.interactionStore.getInteraction(scope, 'plan-1'))?.status).toBe('resolved')
+  })
 })
 
 interface CreateTestServerOptions {
   runAgentTurn?: Parameters<typeof createAgentRuntimeWebServer>[0]['runAgentTurn']
+  subtaskLimits?: { maxDepth: number; maxChildrenPerTask: number; maxOutputTokensPerTask: number }
 }
 
 function createTestServer(options: CreateTestServerOptions = {}) {
   return createAgentRuntimeWebServer({
     secretCodec: createBase64AgentRuntimeWebSecretCodec(),
+    subtaskLimits: options.subtaskLimits,
     runAgentTurn: options.runAgentTurn ?? (async (input) => [
       {
         type: 'assistant',

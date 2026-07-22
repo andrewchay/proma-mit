@@ -758,6 +758,72 @@ export function normalizeAgentRuntime(value: unknown): AgentRuntime {
   return isAgentRuntime(value) ? value : DEFAULT_AGENT_RUNTIME
 }
 
+// ===== Goal Runtime =====
+
+/** 可持续跟进目标的状态。Goal 独立于聊天消息，便于重启后恢复调度。 */
+export type AgentGoalStatus = 'active' | 'waiting' | 'blocked' | 'completed' | 'cancelled'
+
+/** Goal 的下一次唤醒条件。 */
+export type AgentGoalWakeTrigger =
+  | { type: 'immediate' }
+  | { type: 'at'; wakeAt: number }
+  | { type: 'user_input' }
+  | { type: 'interaction'; requestId: string }
+  | { type: 'external_task'; taskId: string }
+  | { type: 'file_change'; paths: string[] }
+
+/** 目标检查点附带的可审计证据。 */
+export interface AgentGoalEvidence {
+  kind: 'test' | 'command' | 'file' | 'tool' | 'user'
+  value: string
+}
+
+/** 一轮 Agent 执行结束时提交的结构化检查点。 */
+export interface AgentGoalCheckpoint {
+  outcome: 'continue' | 'waiting' | 'blocked' | 'complete'
+  summary: string
+  completed: string[]
+  evidence: AgentGoalEvidence[]
+  nextAction?: string
+  wakeTrigger?: AgentGoalWakeTrigger
+  blocker?: string
+}
+
+/** 持久化的 Goal 实体；桌面端与服务端使用同一契约。 */
+export interface AgentGoal {
+  id: string
+  sessionId: string
+  workspaceId?: string
+  channelId?: string
+  modelId?: string
+  runtime: Extract<AgentRuntime, 'proma' | 'ai-sdk'>
+  objective: string
+  acceptanceCriteria: string[]
+  status: AgentGoalStatus
+  checkpoint?: AgentGoalCheckpoint
+  activeRunId?: string
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
+/** 显式创建 Goal 的输入。普通消息不得隐式创建 Goal。 */
+export interface CreateAgentGoalInput {
+  sessionId: string
+  workspaceId?: string
+  channelId?: string
+  modelId?: string
+  runtime: Extract<AgentRuntime, 'proma' | 'ai-sdk'>
+  objective: string
+  acceptanceCriteria?: string[]
+}
+
+/** UI 控制 Goal 生命周期的输入。 */
+export interface UpdateAgentGoalStatusInput {
+  goalId: string
+  status: Extract<AgentGoalStatus, 'active' | 'waiting' | 'blocked' | 'cancelled'>
+}
+
 // ===== Agent 会话管理 =====
 
 /**
@@ -1512,6 +1578,12 @@ export const AGENT_IPC_CHANNELS = {
   FORK_SESSION: 'agent:fork-session',
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话） */
   REWIND_SESSION: 'agent:rewind-session',
+
+  // Goal Runtime
+  /** 查询指定会话的 Goal */
+  LIST_GOALS: 'agent:list-goals',
+  /** 更新 Goal 生命周期状态 */
+  UPDATE_GOAL_STATUS: 'agent:update-goal-status',
 
   // 工作区管理
   /** 获取工作区列表 */

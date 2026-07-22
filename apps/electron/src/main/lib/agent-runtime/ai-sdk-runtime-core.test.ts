@@ -132,4 +132,32 @@ describe('AI SDK runtime core', () => {
       ],
     })
   })
+
+  test('given an active goal when GoalCheckpoint executes then it bypasses ordinary tool permission and persists through callback', async () => {
+    const core = new AISDKRuntimeCore()
+    const checkpointTool = createRuntimeTool('GoalCheckpoint', async () => ({
+      toolCallId: 'unexpected',
+      content: '不应调用占位实现',
+    }))
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }
+    let checkpointSummary = ''
+    const toolSet = core.createAISDKTools([checkpointTool], {
+      sessionId: 'session-goal',
+      cwd: '/tmp',
+      signal: activeSession.controller.signal,
+      activeSession,
+      onGoalCheckpoint: async (checkpoint) => { checkpointSummary = checkpoint.summary },
+    })
+    const checkpoint = toolSet.GoalCheckpoint as unknown as ExecutableAITool
+    const result = await checkpoint.execute({
+      outcome: 'waiting',
+      summary: '等待用户授权',
+      completed: [],
+      evidence: [{ kind: 'tool', value: 'AskUserQuestion' }],
+      wakeTrigger: { type: 'user_input' },
+    }, { toolCallId: 'goal-1', messages: [], abortSignal: activeSession.controller.signal, context: {} })
+
+    expect(result).toEqual({ content: 'Goal 检查点已持久化。' })
+    expect(checkpointSummary).toBe('等待用户授权')
+  })
 })

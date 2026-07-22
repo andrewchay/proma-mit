@@ -452,6 +452,11 @@ export interface ElectronAPI {
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话） */
   rewindSession: (input: RewindSessionInput) => Promise<RewindSessionResult>
 
+  /** 获取会话关联的 Goal */
+  listAgentGoals: (sessionId: string) => Promise<import('@proma/shared').AgentGoal[]>
+  /** 暂停、恢复、标记阻塞或取消 Goal */
+  updateAgentGoalStatus: (input: import('@proma/shared').UpdateAgentGoalStatusInput) => Promise<import('@proma/shared').AgentGoal>
+
   /** 生成 Agent 会话标题 */
   generateAgentTitle: (input: AgentGenerateTitleInput) => Promise<string | null>
 
@@ -1422,6 +1427,12 @@ const electronAPI: ElectronAPI = {
 
   rewindSession: (input: RewindSessionInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.REWIND_SESSION, input)
+  },
+  listAgentGoals: (sessionId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_GOALS, sessionId)
+  },
+  updateAgentGoalStatus: (input: import('@proma/shared').UpdateAgentGoalStatusInput) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_GOAL_STATUS, input)
   },
 
   generateAgentTitle: (input: AgentGenerateTitleInput) => {

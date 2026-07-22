@@ -1,0 +1,13 @@
+.git
+.DS_Store
+node_modules
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+**/.turbo
+**/.cache
+apps/electron/release
+apps/electron/out
+apps/electron/.webpack
+*.log

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  createRotatingWebCryptoEnvelopeSecretCodec,
   createWebCryptoEnvelopeSecretCodec,
   parseWebCryptoEnvelopeKey,
+  reencryptWebCryptoEnvelopeSecret,
 } from './agent-runtime-web-secret-codec'
 import type { AgentRuntimeWebSecretContext } from './agent-runtime-web-server'
 
@@ -63,9 +65,26 @@ describe('WebCrypto envelope secret codec', () => {
 
     expect(await codec.decode(await codec.encode('secret', context), context)).toBe('secret')
   })
+
+  test('given a rotated active key then new writes use it while the grace key still decrypts old ciphertext', async () => {
+    const oldKey = testKey()
+    const newKey = new TextEncoder().encode('fedcba9876543210fedcba9876543210')
+    const oldCodec = createWebCryptoEnvelopeSecretCodec({ keyId: 'old', keyBytes: oldKey })
+    const rotating = createRotatingWebCryptoEnvelopeSecretCodec({
+      activeKeyId: 'new',
+      keys: { old: oldKey, new: newKey },
+    })
+    const newOnly = createWebCryptoEnvelopeSecretCodec({ keyId: 'new', keyBytes: newKey })
+    const oldCiphertext = await oldCodec.encode('secret', context)
+    const newCiphertext = await rotating.encode('secret', context)
+
+    expect(await rotating.decode(oldCiphertext, context)).toBe('secret')
+    expect(await newOnly.decode(newCiphertext, context)).toBe('secret')
+    await expect(newOnly.decode(oldCiphertext, context)).rejects.toThrow('keyId')
+    expect(await newOnly.decode(await reencryptWebCryptoEnvelopeSecret(oldCiphertext, rotating, rotating, context), context)).toBe('secret')
+  })
 })
 
 function testKey(): Uint8Array {
   return new TextEncoder().encode('0123456789abcdef0123456789abcdef')
 }
-

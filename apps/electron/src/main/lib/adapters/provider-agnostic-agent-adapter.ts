@@ -20,6 +20,7 @@ import type {
   SDKResultMessage,
   SDKContentBlock,
   FileAttachment,
+  AgentGoalCheckpoint,
   McpServerEntry,
   PromaPermissionMode,
 } from '@proma/shared'
@@ -34,7 +35,7 @@ import type {
 import { getAdapter, streamSSE } from '@proma/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
-import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME } from '../agent-runtime/tool-registry'
+import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
 import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
@@ -93,6 +94,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
   /** Sub Agent 运行回调 */
   runSubAgent?: import('../agent-runtime/types').ToolContext['runSubAgent']
+  /** GoalCheckpoint 回调；存在激活 Goal 时由编排层注入。 */
+  onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
 }
 
 /** 活跃会话状态 */
@@ -128,6 +131,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       onExitPlanMode,
       onAskUser,
       runSubAgent,
+      onGoalCheckpoint,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -165,7 +169,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
       }
     }
-    const tools = [...createCoreTools(), ...mcpTools]
+    const tools = [
+      ...createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
+      ...mcpTools,
+    ]
     const toolMap = new Map(tools.map((t) => [t.name, t]))
     const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
 
@@ -339,6 +346,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           onExitPlanMode,
           onAskUser,
           runSubAgent,
+          onGoalCheckpoint,
           mcpManager,
           setPermissionMode: (mode) => {
             activeSession.permissionMode = mode
@@ -589,6 +597,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       onExitPlanMode?: ProviderAgnosticAgentQueryOptions['onExitPlanMode']
       onAskUser?: ProviderAgnosticAgentQueryOptions['onAskUser']
       runSubAgent?: ProviderAgnosticAgentQueryOptions['runSubAgent']
+      onGoalCheckpoint?: ProviderAgnosticAgentQueryOptions['onGoalCheckpoint']
       mcpManager?: import('../agent-runtime/mcp-client').McpClientManager
       setPermissionMode?: (mode: PromaPermissionMode) => void
     },
@@ -645,6 +654,21 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         continue
       }
 
+      // GoalCheckpoint 不属于权限工具，也不允许进入普通工具实现；由 Goal 控制平面原子持久化。
+      if (tc.name === GOAL_CHECKPOINT_TOOL_NAME) {
+        if (!ctx.onGoalCheckpoint) {
+          results.push({ toolCallId: tc.id, content: '当前会话没有激活的 Goal，不能提交检查点。', isError: true })
+          continue
+        }
+        try {
+          await ctx.onGoalCheckpoint(toGoalCheckpoint(tc.arguments))
+          results.push({ toolCallId: tc.id, content: 'Goal 检查点已持久化。', isError: false })
+        } catch (error) {
+          results.push({ toolCallId: tc.id, content: `Goal 检查点无效: ${getErrorMessage(error)}`, isError: true })
+        }
+        continue
+      }
+
       const tool = toolMap.get(tc.name)
       if (!tool) {
         results.push({
@@ -692,6 +716,45 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error) || '未知错误'
+}
+
+function toGoalCheckpoint(input: Record<string, unknown>): AgentGoalCheckpoint {
+  const outcome = input.outcome
+  const summary = input.summary
+  if (outcome !== 'continue' && outcome !== 'waiting' && outcome !== 'blocked' && outcome !== 'complete') {
+    throw new Error('outcome 必须是 continue、waiting、blocked 或 complete')
+  }
+  if (typeof summary !== 'string') throw new Error('summary 必须是字符串')
+  const completed = Array.isArray(input.completed) ? input.completed.filter((value): value is string => typeof value === 'string') : []
+  const evidence = Array.isArray(input.evidence)
+    ? input.evidence.flatMap((value) => {
+      if (!isRecord(value) || typeof value.kind !== 'string' || typeof value.value !== 'string') return []
+      if (!['test', 'command', 'file', 'tool', 'user'].includes(value.kind)) return []
+      return [{ kind: value.kind as AgentGoalCheckpoint['evidence'][number]['kind'], value: value.value }]
+    })
+    : []
+  return {
+    outcome,
+    summary,
+    completed,
+    evidence,
+    ...(typeof input.nextAction === 'string' ? { nextAction: input.nextAction } : {}),
+    ...(typeof input.blocker === 'string' ? { blocker: input.blocker } : {}),
+    ...(isWakeTrigger(input.wakeTrigger) ? { wakeTrigger: input.wakeTrigger } : {}),
+  }
+}
+
+function isWakeTrigger(value: unknown): value is AgentGoalCheckpoint['wakeTrigger'] {
+  if (!isRecord(value) || typeof value.type !== 'string') return false
+  if (value.type === 'immediate' || value.type === 'user_input') return true
+  if (value.type === 'at') return typeof value.wakeAt === 'number'
+  if (value.type === 'interaction') return typeof value.requestId === 'string'
+  if (value.type === 'external_task') return typeof value.taskId === 'string'
+  return value.type === 'file_change' && Array.isArray(value.paths) && value.paths.every((path) => typeof path === 'string')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 /**

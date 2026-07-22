@@ -65,6 +65,7 @@ describe('RedisAgentRuntimeTaskCache', () => {
       taskId: 'task-a',
       status: 'running',
       startedAt: 1000,
+      depth: 0,
     })
 
     expect((await cache.getTask(scope, 'task-a'))?.status).toBe('running')

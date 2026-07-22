@@ -37,16 +37,20 @@ describe('InMemoryAgentRuntimeInteractionStore', () => {
     })
 
     const resolved = await store.resolveInteraction(scope, 'ask-1', {
-      requestId: 'ask-1',
-      answers: { Continue: 'yes' },
+      expectedVersion: 1,
+      resolutionId: 'response-a',
+      response: { requestId: 'ask-1', answers: { Continue: 'yes' } },
     })
     const secondResolve = await store.resolveInteraction(scope, 'ask-1', {
-      requestId: 'ask-1',
-      answers: { Continue: 'no' },
+      expectedVersion: 1,
+      resolutionId: 'response-b',
+      response: { requestId: 'ask-1', answers: { Continue: 'no' } },
     })
 
     expect(resolved?.status).toBe('resolved')
     expect(resolved?.taskId).toBe('task-a')
+    expect(resolved?.version).toBe(2)
+    expect(resolved?.resolutionId).toBe('response-a')
     expect(secondResolve).toBeUndefined()
   })
 

@@ -33,6 +33,7 @@ export type {
   AgentRuntimeEventReplayInput,
   AgentRuntimeEventSubscribeInput,
   AgentRuntimeScope,
+  AgentRuntimeRole,
   AgentRuntimeTaskContext,
   AgentRuntimeTaskMeta,
   AgentRuntimeTaskStatus,
@@ -57,6 +58,7 @@ export type {
   RegisterServerMcpOAuthInput,
   ServerMcpOAuthPending,
   TenantMcpClientSecret,
+  TenantRuntimePermissionDecision,
   TenantMcpOAuthTokens,
   TenantRuntimeCredential,
   TenantRuntimeSecretEncoding,
@@ -71,6 +73,9 @@ export {
 } from './agent-runtime-web-server'
 export type {
   AgentRuntimeWebAgentTurnInput,
+  AgentRuntimeMcpToolDefinition,
+  AgentRuntimeIsolatedExecutionRequest,
+  AgentRuntimeIsolatedExecutionResult,
   AgentRuntimeWebAgentTurnRunner,
   AgentRuntimeWebTaskPreflight,
   AgentRuntimeWebTaskPreflightInput,
@@ -83,9 +88,17 @@ export type {
 } from './agent-runtime-web-server'
 export {
   createWebCryptoEnvelopeSecretCodec,
+  createRotatingWebCryptoEnvelopeSecretCodec,
   parseWebCryptoEnvelopeKey,
+  reencryptWebCryptoEnvelopeSecret,
 } from './agent-runtime-web-secret-codec'
-export type { WebCryptoEnvelopeSecretCodecOptions } from './agent-runtime-web-secret-codec'
+export type { RotatingWebCryptoEnvelopeSecretCodecOptions, WebCryptoEnvelopeSecretCodecOptions } from './agent-runtime-web-secret-codec'
+export { createCloudKmsEnvelopeSecretCodec } from './agent-runtime-cloud-kms-secret-codec'
+export type { CloudKmsDataKeyProvider, CloudKmsEnvelopeSecretCodecOptions } from './agent-runtime-cloud-kms-secret-codec'
+export { validateServerMcpConfig } from './agent-runtime-server-mcp-policy'
+export type { ServerMcpEgressPolicy, ValidatedServerMcpConfig } from './agent-runtime-server-mcp-policy'
+export { ServerMcpConnectionManager } from './agent-runtime-server-mcp-manager'
+export type { AcquireServerMcpConnectionInput, ServerMcpConnection, ServerMcpConnectionFactory, ServerMcpConnectionFactoryInput } from './agent-runtime-server-mcp-manager'
 export {
   RedisAgentRuntimeEventStore,
   RedisAgentRuntimeTaskCache,
@@ -124,4 +137,5 @@ export type {
   AgentRuntimeInteractionStore,
   CreateAgentRuntimeInteractionInput,
   ListAgentRuntimeInteractionsInput,
+  ResolveAgentRuntimeInteractionInput,
 } from './agent-runtime-interaction-store'

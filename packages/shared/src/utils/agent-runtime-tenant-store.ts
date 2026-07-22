@@ -4,6 +4,7 @@ import type {
   SDKMessage,
 } from '../types/agent'
 import type { ProviderType } from '../types/channel'
+import type { PromaPermissionMode } from '../types/agent'
 import type { AgentRuntimeScope, AgentRuntimeTaskMeta } from './agent-runtime-server'
 
 export type MaybePromise<T> = T | Promise<T>
@@ -38,6 +39,13 @@ export interface TenantMcpClientSecret extends AgentRuntimeScope {
   clientSecret: string
 }
 
+/** 会话内、具体工具输入级别的临时放行记录。 */
+export interface TenantRuntimePermissionDecision extends AgentRuntimeScope {
+  sessionId: string
+  fingerprint: string
+  expiresAt: number
+}
+
 export interface TenantRuntimeSession extends AgentRuntimeScope {
   sessionId: string
   workspaceSlug: string
@@ -45,6 +53,8 @@ export interface TenantRuntimeSession extends AgentRuntimeScope {
   modelId: string
   runtime: AgentRuntime
   title?: string
+  defaultPermissionMode?: PromaPermissionMode
+  archivedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -67,6 +77,8 @@ export interface TenantRuntimeStore {
   getMcpOAuthTokens(scope: AgentRuntimeScope, workspaceSlug: string, serverName: string): MaybePromise<TenantMcpOAuthTokens | undefined>
   setMcpClientSecret(secret: TenantMcpClientSecret): MaybePromise<void>
   getMcpClientSecret(scope: AgentRuntimeScope, workspaceSlug: string, serverName: string): MaybePromise<string | undefined>
+  setPermissionDecision(decision: TenantRuntimePermissionDecision): MaybePromise<void>
+  getPermissionDecision(scope: AgentRuntimeScope, sessionId: string, fingerprint: string, now: number): MaybePromise<TenantRuntimePermissionDecision | undefined>
 }
 
 export class InMemoryTenantRuntimeStore implements TenantRuntimeStore {
@@ -77,6 +89,7 @@ export class InMemoryTenantRuntimeStore implements TenantRuntimeStore {
   private readonly tasks = new Map<string, AgentRuntimeTaskMeta>()
   private readonly mcpTokens = new Map<string, TenantMcpOAuthTokens>()
   private readonly mcpClientSecrets = new Map<string, string>()
+  private readonly permissionDecisions = new Map<string, TenantRuntimePermissionDecision>()
 
   setCredential(credential: TenantRuntimeCredential): void {
     this.credentials.set(scopedKey(credential, credential.channelId), { ...credential })
@@ -168,6 +181,20 @@ export class InMemoryTenantRuntimeStore implements TenantRuntimeStore {
 
   getMcpClientSecret(scope: AgentRuntimeScope, workspaceSlug: string, serverName: string): string | undefined {
     return this.mcpClientSecrets.get(scopedKey(scope, scopedStoreId(workspaceSlug, serverName)))
+  }
+
+  setPermissionDecision(decision: TenantRuntimePermissionDecision): void {
+    this.permissionDecisions.set(scopedKey(decision, scopedStoreId(decision.sessionId, decision.fingerprint)), cloneRuntimeValue(decision))
+  }
+
+  getPermissionDecision(scope: AgentRuntimeScope, sessionId: string, fingerprint: string, now: number): TenantRuntimePermissionDecision | undefined {
+    const key = scopedKey(scope, scopedStoreId(sessionId, fingerprint))
+    const decision = this.permissionDecisions.get(key)
+    if (!decision || decision.expiresAt <= now) {
+      this.permissionDecisions.delete(key)
+      return undefined
+    }
+    return cloneRuntimeValue(decision)
   }
 }
 

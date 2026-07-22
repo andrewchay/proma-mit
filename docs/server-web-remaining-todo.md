@@ -4,6 +4,18 @@
 
 本文档只记录尚未形成可验收闭环的工作。已完成的基础包括：Bun 服务、Postgres/Redis/S3、AI SDK session/run/SSE、OIDC JWT、工作区读写审批、基础 Web 工作台、metrics/audit/recovery，以及 DeepSeek 服务端真实 E2E。
 
+## 暂缓：P8 外部企业端点真实验收
+
+状态：**短期暂不执行**。代码已提供 AWS KMS、SIEM webhook 与告警 webhook 的配置入口、脱敏和本地测试；但真实联通依赖企业外部系统，不应使用占位凭证伪造验收。
+
+恢复时需要提供并验证：
+
+- AWS：`PROMA_WEB_AWS_KMS_KEY_ID`、`PROMA_WEB_AWS_REGION`，以及运行身份的 `kms:GenerateDataKey` / `kms:Decrypt` 权限；可选私有端点 `PROMA_WEB_AWS_KMS_ENDPOINT`。
+- SIEM：`PROMA_WEB_SIEM_WEBHOOK_URL`，验证 trace/audit 事件、脱敏 payload、失败重试与接收端签名要求。
+- 告警：`PROMA_WEB_ALERT_WEBHOOK_URL`，验证 agent task 失败、预算、stale task 和 OAuth/MCP 故障的路由策略。
+
+恢复验收：在生产等价 Docker 环境中，以真实 IAM 身份完成一次 KMS 信封加解密和轮换读取；触发一条失败任务并确认告警与 SIEM 分别收到带 `traceId` 的脱敏事件。
+
 ## P6：完整浏览器 UI 与管理 API
 
 ### P6-1 会话与运行工作台

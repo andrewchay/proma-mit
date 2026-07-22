@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput } from '@proma/shared'
+import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@proma/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -504,7 +504,13 @@ export class AgentOrchestrator {
   /** 运行中会话的当前权限模式（支持运行时动态切换） */
   private sessionPermissionModes = new Map<string, PromaPermissionMode>()
 
-  constructor(adapter: AgentProviderAdapter, eventBus: AgentEventBus, runtimeServices?: RuntimeServices) {
+  constructor(
+    adapter: AgentProviderAdapter,
+    eventBus: AgentEventBus,
+    runtimeServices?: RuntimeServices,
+    private readonly onGoalCheckpoint?: (sessionId: string, checkpoint: AgentGoalCheckpoint) => Promise<void>,
+    private readonly hasActiveGoal?: (sessionId: string) => boolean,
+  ) {
     this.adapter = adapter
     this.eventBus = eventBus
     this.runtimeServices = runtimeServices ?? createElectronRuntimeServices(eventBus)
@@ -654,6 +660,9 @@ export class AgentOrchestrator {
         onAgentEvent: (event) => {
           runtimeServices.events.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
         },
+        onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
+          ? (checkpoint: AgentGoalCheckpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
+          : undefined,
       }
 
       const iterable = this.adapter.query(queryOptions)

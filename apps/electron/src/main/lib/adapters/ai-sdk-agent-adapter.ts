@@ -8,13 +8,14 @@
 import type {
   AgentProviderAdapter,
   AgentQueryInput,
+  AgentGoalCheckpoint,
   McpServerEntry,
   PromaPermissionMode,
   SDKMessage,
   SDKUserMessageInput,
 } from '@proma/shared'
 import { getAgentProviderProtocol, isAgentCompatibleProvider } from '@proma/shared'
-import { createCoreTools } from '../agent-runtime/tool-registry'
+import { createCoreTools, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
 import {
   AISDKRuntimeCore,
   type AISDKCanUseToolCallback,
@@ -55,6 +56,8 @@ export interface AISDKAgentQueryOptions extends AgentQueryInput {
   ) => Promise<{ behavior: 'allow'; answers: Record<string, string> } | { behavior: 'deny'; message: string }>
   /** Sub Agent 运行回调 */
   runSubAgent?: import('../agent-runtime/types').ToolContext['runSubAgent']
+  /** GoalCheckpoint 回调；存在激活 Goal 时由编排层注入。 */
+  onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
 }
 
 interface ActiveAISDKSession {
@@ -112,7 +115,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
     let mcpRelease: (() => void) | undefined
     try {
-      const tools = [...createCoreTools()]
+      const tools = createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint))
       let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
       if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
         try {
@@ -163,6 +166,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             onExitPlanMode: input.onExitPlanMode,
             onAskUser: input.onAskUser,
             runSubAgent: input.runSubAgent,
+            onGoalCheckpoint: input.onGoalCheckpoint,
             mcpManager,
           })
         } catch (error) {

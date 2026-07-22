@@ -6,7 +6,7 @@
  */
 
 import type { ToolDefinition, ToolCall, ToolResult } from '@proma/core'
-import type { ProviderType, PromaPermissionMode } from '@proma/shared'
+import type { AgentGoalCheckpoint, ProviderType, PromaPermissionMode } from '@proma/shared'
 import type { SessionCallbacks } from '../agent-orchestrator'
 
 /** Agent Runtime 输入 */
@@ -79,6 +79,8 @@ export interface ToolContext {
   runSubAgent?: (input: SubAgentInput) => Promise<string>
   /** 当前会话的 MCP 客户端管理器（用于 MCP Resource 工具） */
   mcpManager?: import('./mcp-client').McpClientManager
+  /** GoalCheckpoint 回调；仅在会话存在激活 Goal 时注入。 */
+  onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
 }
 
 /** Sub Agent 运行输入 */

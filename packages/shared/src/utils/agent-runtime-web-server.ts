@@ -66,6 +66,57 @@ export interface AgentRuntimeWebAgentTurnInput {
   signal: AbortSignal
   emit: AgentRuntimeTaskContext['emit']
   interactionStore?: AgentRuntimeInteractionStore
+  store?: TenantRuntimeStore
+  /** 已在服务端 egress 边界验证过的 MCP 工具；执行器仍需逐次走权限审批。 */
+  mcpTools?: AgentRuntimeMcpToolDefinition[]
+  executeIsolatedCommand?: (
+    request: AgentRuntimeIsolatedExecutionRequest,
+    signal: AbortSignal,
+  ) => Promise<AgentRuntimeIsolatedExecutionResult>
+  /** 在独立 TaskRunner 任务中执行只读子代理；父任务取消时会级联取消。 */
+  startSubtask?: (input: AgentRuntimeWebSubtaskInput) => Promise<AgentRuntimeWebSubtaskResult>
+  subtaskLimits?: AgentRuntimeWebSubtaskLimits
+}
+
+export interface AgentRuntimeWebSubtaskLimits {
+  maxDepth: number
+  maxChildrenPerTask: number
+  maxOutputTokensPerTask: number
+}
+
+export interface AgentRuntimeWebSubtaskInput {
+  task: string
+  agentName?: string
+  maxOutputTokens: number
+  execute(signal: AbortSignal): Promise<string>
+}
+
+export interface AgentRuntimeWebSubtaskResult {
+  taskId: string
+  output: string
+}
+
+export interface AgentRuntimeMcpToolDefinition {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+  execute(input: Record<string, unknown>, signal: AbortSignal): Promise<string>
+}
+
+export interface AgentRuntimeIsolatedExecutionRequest {
+  taskId: string
+  workspaceDir: string
+  command: string
+  args: string[]
+  timeoutMs: number
+  maxOutputBytes: number
+}
+
+export interface AgentRuntimeIsolatedExecutionResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+  timedOut: boolean
 }
 
 export type AgentRuntimeWebAgentTurnRunner = (
@@ -93,6 +144,7 @@ export interface CreateAgentRuntimeWebServerOptions {
   oauthHandler?: ServerMcpOAuthCallbackHandler
   defaultRuntime?: TenantRuntimeSession['runtime']
   defaultPermissionMode?: PromaPermissionMode
+  subtaskLimits?: AgentRuntimeWebSubtaskLimits
 }
 
 export interface AgentRuntimeWebServer {
@@ -110,6 +162,8 @@ interface CreateSessionBody {
   channelId?: string
   modelId?: string
   title?: string
+  runtime?: TenantRuntimeSession['runtime']
+  permissionMode?: PromaPermissionMode
 }
 
 interface RunSessionBody {
@@ -124,10 +178,15 @@ interface UpdateSessionBody {
   title?: string
   modelId?: string
   channelId?: string
+  runtime?: TenantRuntimeSession['runtime']
+  permissionMode?: PromaPermissionMode
+  archived?: boolean
 }
 
 interface RespondInteractionBody {
   response?: AgentRuntimeInteractionResponse
+  expectedVersion?: number
+  resolutionId?: string
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' }
@@ -175,6 +234,7 @@ export function createAgentRuntimeWebServer(options: CreateAgentRuntimeWebServer
           runAgentTurn: options.runAgentTurn,
           beforeStartTask: options.beforeStartTask,
           defaultPermissionMode: options.defaultPermissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+          subtaskLimits: options.subtaskLimits ?? { maxDepth: 1, maxChildrenPerTask: 3, maxOutputTokensPerTask: 4_000 },
         })
       }
       if (route.name === 'updateSession') {
@@ -183,6 +243,8 @@ export function createAgentRuntimeWebServer(options: CreateAgentRuntimeWebServer
       if (route.name === 'deleteSession') {
         return handleDeleteSession(scope, route.sessionId, store)
       }
+      if (route.name === 'rewindSession') return handleRewindSession(request, scope, route.sessionId, store)
+      if (route.name === 'forkSession') return handleForkSession(request, scope, route.sessionId, store)
       if (route.name === 'sessionEvents') {
         return handleSessionEvents(request, url, scope, route.sessionId, store, taskRunner)
       }
@@ -222,6 +284,23 @@ async function handleDeleteSession(scope: AgentRuntimeScope, sessionId: string, 
   return deleted ? new Response(null, { status: 204 }) : jsonResponse({ error: '会话不存在或不可访问' }, 404)
 }
 
+async function handleRewindSession(request: Request, scope: AgentRuntimeScope, sessionId: string, store: TenantRuntimeStore): Promise<Response> {
+  if (!await store.getSession(scope, sessionId)) return jsonResponse({ error: '会话不存在或不可访问' }, 404)
+  const body = await readJsonBody<{ messageUuid?: string }>(request)
+  const messageUuid = requireString(body.messageUuid, 'messageUuid')
+  return jsonResponse({ messages: await store.truncateSessionMessages(scope, sessionId, messageUuid) })
+}
+
+async function handleForkSession(request: Request, scope: AgentRuntimeScope, sessionId: string, store: TenantRuntimeStore): Promise<Response> {
+  const source = await store.getSession(scope, sessionId)
+  if (!source) return jsonResponse({ error: '会话不存在或不可访问' }, 404)
+  const body = await readJsonBody<{ sessionId?: string; title?: string }>(request)
+  const now = Date.now(); const forkId = body.sessionId?.trim() || crypto.randomUUID()
+  const session = await store.createSession({ ...source, sessionId: forkId, title: body.title?.trim() || `${source.title ?? source.sessionId}（分叉）`, createdAt: now, updatedAt: now, archivedAt: undefined })
+  await store.appendSessionMessages(scope, forkId, await store.getSessionMessages(scope, sessionId))
+  return jsonResponse({ session }, 201)
+}
+
 async function handleUpdateSession(
   request: Request,
   scope: AgentRuntimeScope,
@@ -240,11 +319,23 @@ async function handleUpdateSession(
   if (body.channelId != null && (typeof body.channelId !== 'string' || body.channelId.trim().length === 0)) {
     return jsonResponse({ error: 'channelId 必须是非空字符串' }, 400)
   }
+  if (body.runtime != null && body.runtime !== 'ai-sdk') {
+    return jsonResponse({ error: '服务端当前仅支持 ai-sdk runtime' }, 400)
+  }
+  if (body.permissionMode != null && !isPermissionMode(body.permissionMode)) {
+    return jsonResponse({ error: 'permissionMode 不受支持' }, 400)
+  }
+  if (body.archived != null && typeof body.archived !== 'boolean') {
+    return jsonResponse({ error: 'archived 必须是布尔值' }, 400)
+  }
   return jsonResponse({ session: await store.updateSession({
     ...existing,
     title: body.title ?? existing.title,
     modelId: body.modelId ?? existing.modelId,
     channelId: body.channelId ?? existing.channelId,
+    runtime: body.runtime ?? existing.runtime,
+    defaultPermissionMode: body.permissionMode ?? existing.defaultPermissionMode,
+    archivedAt: body.archived == null ? existing.archivedAt : body.archived ? Date.now() : undefined,
     updatedAt: Date.now(),
   }) })
 }
@@ -268,6 +359,8 @@ async function handleCreateSession(
   }
 
   const now = Date.now()
+  if (body.runtime != null && body.runtime !== 'ai-sdk') return jsonResponse({ error: '服务端当前仅支持 ai-sdk runtime' }, 400)
+  if (body.permissionMode != null && !isPermissionMode(body.permissionMode)) return jsonResponse({ error: 'permissionMode 不受支持' }, 400)
   const session: TenantRuntimeSession = {
     tenantId: scope.tenantId,
     userId: scope.userId,
@@ -275,8 +368,9 @@ async function handleCreateSession(
     workspaceSlug,
     channelId,
     modelId: body.modelId ?? credential.defaultModel ?? requireString(body.modelId, 'modelId'),
-    runtime: options.defaultRuntime ?? 'ai-sdk',
+    runtime: body.runtime ?? options.defaultRuntime ?? 'ai-sdk',
     title: body.title,
+    defaultPermissionMode: body.permissionMode,
     createdAt: now,
     updatedAt: now,
   }
@@ -292,6 +386,7 @@ interface RunSessionDependencies {
   runAgentTurn: AgentRuntimeWebAgentTurnRunner
   defaultPermissionMode: PromaPermissionMode
   beforeStartTask?: AgentRuntimeWebTaskPreflight
+  subtaskLimits: AgentRuntimeWebSubtaskLimits
 }
 
 async function handleRunSession(
@@ -327,7 +422,7 @@ async function handleRunSession(
         prompt,
         modelId,
         protocol: body.protocol,
-        permissionMode: body.permissionMode ?? deps.defaultPermissionMode,
+        permissionMode: body.permissionMode ?? session.defaultPermissionMode ?? deps.defaultPermissionMode,
         session: {
           ...session,
           channelId,
@@ -370,6 +465,7 @@ async function runAgentTurnTask(input: RunAgentTurnTaskInput): Promise<void> {
   await input.deps.store.appendSessionMessages(scope, input.context.sessionId, [userMessage])
   input.context.emit({ kind: 'sdk_message', message: userMessage })
   const apiKey = await resolveCredentialApiKey(input.credential, input.deps.secretCodec)
+  let childrenStarted = 0
   const outputMessages = await input.deps.runAgentTurn({
     scope,
     session: input.session,
@@ -389,6 +485,30 @@ async function runAgentTurnTask(input: RunAgentTurnTaskInput): Promise<void> {
     signal: input.context.signal,
     emit: input.context.emit,
     interactionStore: input.deps.interactionStore,
+    store: input.deps.store,
+    subtaskLimits: input.deps.subtaskLimits,
+    startSubtask: async (subtask) => {
+      const parent = input.deps.taskRunner.getTask(input.context.taskId)
+      if ((parent?.depth ?? 0) >= input.deps.subtaskLimits.maxDepth) throw new Error(`子代理深度超过上限 ${input.deps.subtaskLimits.maxDepth}`)
+      if (++childrenStarted > input.deps.subtaskLimits.maxChildrenPerTask) throw new Error(`单个父任务最多委派 ${input.deps.subtaskLimits.maxChildrenPerTask} 个子代理`)
+      const childSessionId = `${input.context.sessionId}:subagent:${crypto.randomUUID()}`
+      let output = ''
+      const child = input.deps.taskRunner.startTask({
+        ...scope,
+        sessionId: childSessionId,
+        parentTaskId: input.context.taskId,
+        run: async (context) => {
+          output = await subtask.execute(context.signal)
+          if (estimateTokens(output) > subtask.maxOutputTokens) throw new Error(`子代理输出超过 ${subtask.maxOutputTokens} token 预算`)
+          context.emit({ kind: 'agent_event', event: { type: 'complete', stopReason: 'end_turn' } })
+        },
+      })
+      await input.deps.store.setTask(child)
+      const completed = await input.deps.taskRunner.waitForTask(child.taskId)
+      await input.deps.store.setTask(completed)
+      if (completed.status !== 'completed') throw new Error(completed.error ?? '子代理未完成')
+      return { taskId: completed.taskId, output }
+    },
   })
   await input.deps.store.appendSessionMessages(scope, input.context.sessionId, outputMessages)
   await input.deps.store.updateSession(input.session)
@@ -396,6 +516,8 @@ async function runAgentTurnTask(input: RunAgentTurnTaskInput): Promise<void> {
     input.context.emit({ kind: 'sdk_message', message })
   }
 }
+
+function estimateTokens(value: string): number { return Math.ceil(value.length / 4) }
 
 async function handleSessionEvents(
   request: Request,
@@ -496,8 +618,8 @@ async function handleRespondInteraction(
 ): Promise<Response> {
   const body = await readJsonBody<RespondInteractionBody>(request)
   const response = body.response
-  if (!isRecord(response) || response.requestId !== requestId) {
-    return jsonResponse({ error: '响应体必须包含匹配 requestId 的 response' }, 400)
+  if (!isRecord(response) || response.requestId !== requestId || !isPositiveInteger(body.expectedVersion) || !isNonEmptyString(body.resolutionId)) {
+    return jsonResponse({ error: '响应体必须包含匹配 requestId 的 response、expectedVersion 与 resolutionId' }, 400)
   }
   const interaction = await interactionStore.getInteraction(scope, requestId)
   if (!interaction) {
@@ -506,16 +628,46 @@ async function handleRespondInteraction(
   if (!isValidInteractionResponse(interaction.kind, response)) {
     return jsonResponse({ error: `响应类型与 ${interaction.kind} 交互不匹配` }, 400)
   }
-  const resolved = await interactionStore.resolveInteraction(scope, requestId, response as AgentRuntimeInteractionResponse)
+  if (interaction.status === 'resolved' && interaction.resolutionId === body.resolutionId) {
+    return jsonResponse({ interaction })
+  }
+  if (interaction.status !== 'pending' || interaction.version !== body.expectedVersion) {
+    return jsonResponse({ error: '交互已被其他请求处理或版本已过期', interaction }, 409)
+  }
+  const resolved = await interactionStore.resolveInteraction(scope, requestId, {
+    response: response as AgentRuntimeInteractionResponse,
+    expectedVersion: body.expectedVersion,
+    resolutionId: body.resolutionId,
+  })
   if (!resolved) {
-    return jsonResponse({ error: '交互请求不存在、不可访问或已处理' }, 404)
+    const current = await interactionStore.getInteraction(scope, requestId)
+    if (current?.status === 'resolved' && current.resolutionId === body.resolutionId) {
+      return jsonResponse({ interaction: current })
+    }
+    return jsonResponse({ error: '交互已被其他请求处理或版本已过期', interaction: current }, 409)
   }
   return jsonResponse({ interaction: resolved })
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 200
+}
+
+function isPermissionMode(value: unknown): value is PromaPermissionMode {
+  return value === 'safe' || value === 'auto' || value === 'bypassPermissions' || value === 'plan'
 }
 
 function isValidInteractionResponse(kind: AgentRuntimeInteractionKind, response: Record<string, unknown>): boolean {
   if (kind === 'permission') {
     return (response.behavior === 'allow' || response.behavior === 'deny') && typeof response.alwaysAllow === 'boolean'
+  }
+  if (kind === 'plan') {
+    return (response.action === 'approve_auto' || response.action === 'approve_edit' || response.action === 'deny' || response.action === 'feedback')
+      && (response.feedback == null || typeof response.feedback === 'string')
   }
   if (!isRecord(response.answers)) return false
   return Object.values(response.answers).every((answer) => typeof answer === 'string')
@@ -567,6 +719,8 @@ function matchAgentRoute(method: string, pathname: string):
   | { name: 'listInteractions' }
   | { name: 'respondInteraction'; requestId: string }
   | { name: 'cancelInteraction'; requestId: string }
+  | { name: 'rewindSession'; sessionId: string }
+  | { name: 'forkSession'; sessionId: string }
   | undefined {
   const segments = pathname.split('/').filter(Boolean)
   if (method === 'POST' && segments.length === 2 && segments[0] === 'agent' && segments[1] === 'sessions') {
@@ -578,6 +732,8 @@ function matchAgentRoute(method: string, pathname: string):
     if (method === 'POST' && action === 'run') return { name: 'runSession', sessionId }
     if (method === 'GET' && action === 'events') return { name: 'sessionEvents', sessionId }
     if (method === 'GET' && action === 'messages') return { name: 'sessionMessages', sessionId }
+    if (method === 'POST' && action === 'rewind') return { name: 'rewindSession', sessionId }
+    if (method === 'POST' && action === 'fork') return { name: 'forkSession', sessionId }
   }
   if (method === 'PATCH' && segments.length === 3 && segments[0] === 'agent' && segments[1] === 'sessions') {
     return { name: 'updateSession', sessionId: segments[2] ?? '' }
@@ -601,7 +757,7 @@ function matchAgentRoute(method: string, pathname: string):
 }
 
 function parseInteractionKind(value: string | null): AgentRuntimeInteractionKind | undefined {
-  return value === 'permission' || value === 'ask_user' ? value : undefined
+  return value === 'permission' || value === 'ask_user' || value === 'plan' ? value : undefined
 }
 
 function parseInteractionStatus(value: string | null): AgentRuntimeInteractionStatus | undefined {

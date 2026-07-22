@@ -6,6 +6,7 @@ import type { ProviderType } from '../types/channel'
 import type { AgentRuntimeScope, AgentRuntimeTaskMeta, AgentRuntimeTaskStatus } from './agent-runtime-server'
 import type {
   TenantMcpClientSecret,
+  TenantRuntimePermissionDecision,
   TenantMcpOAuthTokens,
   TenantRuntimeCredential,
   TenantRuntimeSecretEncoding,
@@ -58,6 +59,8 @@ CREATE TABLE IF NOT EXISTS proma_runtime_sessions (
   model_id TEXT NOT NULL,
   runtime TEXT NOT NULL,
   title TEXT,
+  permission_mode TEXT,
+  archived_at BIGINT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, user_id, session_id)
@@ -82,6 +85,8 @@ CREATE TABLE IF NOT EXISTS proma_runtime_tasks (
   user_id TEXT NOT NULL,
   session_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
+  parent_task_id TEXT,
+  depth INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL,
   started_at BIGINT NOT NULL,
   completed_at BIGINT,
@@ -107,6 +112,15 @@ CREATE TABLE IF NOT EXISTS proma_runtime_mcp_client_secrets (
   client_secret TEXT NOT NULL,
   updated_at BIGINT NOT NULL,
   PRIMARY KEY (tenant_id, user_id, workspace_slug, server_name)
+);
+
+CREATE TABLE IF NOT EXISTS proma_runtime_permission_decisions (
+  tenant_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, user_id, session_id, fingerprint)
 );
 `.trim()
 
@@ -138,6 +152,8 @@ interface SessionRow extends Record<string, unknown> {
   model_id: string
   runtime: TenantRuntimeSession['runtime']
   title?: string | null
+  permission_mode?: string | null
+  archived_at?: number | string | null
   created_at: number | string
   updated_at: number | string
 }
@@ -151,6 +167,8 @@ interface TaskRow extends Record<string, unknown> {
   user_id: string
   session_id: string
   task_id: string
+  parent_task_id?: string | null
+  depth?: number | string | null
   status: AgentRuntimeTaskStatus
   started_at: number | string
   completed_at?: number | string | null
@@ -174,6 +192,10 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
 
   async initializeSchema(): Promise<void> {
     await this.client.query(AGENT_RUNTIME_POSTGRES_SCHEMA_SQL)
+    await this.client.query('ALTER TABLE proma_runtime_sessions ADD COLUMN IF NOT EXISTS permission_mode TEXT')
+    await this.client.query('ALTER TABLE proma_runtime_sessions ADD COLUMN IF NOT EXISTS archived_at BIGINT')
+    await this.client.query('ALTER TABLE proma_runtime_tasks ADD COLUMN IF NOT EXISTS parent_task_id TEXT')
+    await this.client.query('ALTER TABLE proma_runtime_tasks ADD COLUMN IF NOT EXISTS depth INTEGER NOT NULL DEFAULT 0')
   }
 
   async setCredential(credential: TenantRuntimeCredential): Promise<void> {
@@ -249,8 +271,8 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
   async createSession(session: TenantRuntimeSession): Promise<TenantRuntimeSession> {
     await this.client.query(
       `INSERT INTO proma_runtime_sessions (
-        tenant_id, user_id, session_id, workspace_slug, channel_id, model_id, runtime, title, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        tenant_id, user_id, session_id, workspace_slug, channel_id, model_id, runtime, title, permission_mode, archived_at, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (tenant_id, user_id, session_id)
       DO UPDATE SET
         workspace_slug = EXCLUDED.workspace_slug,
@@ -258,6 +280,8 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
         model_id = EXCLUDED.model_id,
         runtime = EXCLUDED.runtime,
         title = EXCLUDED.title,
+        permission_mode = EXCLUDED.permission_mode,
+        archived_at = EXCLUDED.archived_at,
         updated_at = EXCLUDED.updated_at`,
       sessionParams(session),
     )
@@ -266,7 +290,7 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
 
   async getSession(scope: AgentRuntimeScope, sessionId: string): Promise<TenantRuntimeSession | undefined> {
     const result = await this.client.query<SessionRow>(
-      `SELECT tenant_id, user_id, session_id, workspace_slug, channel_id, model_id, runtime, title, created_at, updated_at
+      `SELECT tenant_id, user_id, session_id, workspace_slug, channel_id, model_id, runtime, title, permission_mode, archived_at, created_at, updated_at
       FROM proma_runtime_sessions
       WHERE tenant_id = $1 AND user_id = $2 AND session_id = $3`,
       [scope.tenantId, scope.userId, sessionId],
@@ -278,7 +302,7 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
   async updateSession(session: TenantRuntimeSession): Promise<TenantRuntimeSession> {
     await this.client.query(
       `UPDATE proma_runtime_sessions
-      SET workspace_slug = $4, channel_id = $5, model_id = $6, runtime = $7, title = $8, created_at = $9, updated_at = $10
+      SET workspace_slug = $4, channel_id = $5, model_id = $6, runtime = $7, title = $8, permission_mode = $9, archived_at = $10, created_at = $11, updated_at = $12
       WHERE tenant_id = $1 AND user_id = $2 AND session_id = $3`,
       sessionParams(session),
     )
@@ -361,11 +385,13 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
   async setTask(task: AgentRuntimeTaskMeta): Promise<void> {
     await this.client.query(
       `INSERT INTO proma_runtime_tasks (
-        tenant_id, user_id, session_id, task_id, status, started_at, completed_at, error
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        tenant_id, user_id, session_id, task_id, parent_task_id, depth, status, started_at, completed_at, error
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (tenant_id, user_id, task_id)
       DO UPDATE SET
         session_id = EXCLUDED.session_id,
+        parent_task_id = EXCLUDED.parent_task_id,
+        depth = EXCLUDED.depth,
         status = EXCLUDED.status,
         started_at = EXCLUDED.started_at,
         completed_at = EXCLUDED.completed_at,
@@ -375,6 +401,8 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
         task.userId,
         task.sessionId,
         task.taskId,
+        task.parentTaskId ?? null,
+        task.depth,
         task.status,
         task.startedAt,
         task.completedAt ?? null,
@@ -385,7 +413,7 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
 
   async getTask(scope: AgentRuntimeScope, taskId: string): Promise<AgentRuntimeTaskMeta | undefined> {
     const result = await this.client.query<TaskRow>(
-      `SELECT tenant_id, user_id, session_id, task_id, status, started_at, completed_at, error
+      `SELECT tenant_id, user_id, session_id, task_id, parent_task_id, depth, status, started_at, completed_at, error
       FROM proma_runtime_tasks
       WHERE tenant_id = $1 AND user_id = $2 AND task_id = $3`,
       [scope.tenantId, scope.userId, taskId],
@@ -456,6 +484,33 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
     )
     return result.rows[0]?.client_secret
   }
+
+  async setPermissionDecision(decision: TenantRuntimePermissionDecision): Promise<void> {
+    await this.client.query(
+      `INSERT INTO proma_runtime_permission_decisions (tenant_id, user_id, session_id, fingerprint, expires_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (tenant_id, user_id, session_id, fingerprint)
+       DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+      [decision.tenantId, decision.userId, decision.sessionId, decision.fingerprint, decision.expiresAt],
+    )
+  }
+
+  async getPermissionDecision(scope: AgentRuntimeScope, sessionId: string, fingerprint: string, now: number): Promise<TenantRuntimePermissionDecision | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `DELETE FROM proma_runtime_permission_decisions
+       WHERE tenant_id = $1 AND user_id = $2 AND session_id = $3 AND fingerprint = $4 AND expires_at <= $5
+       RETURNING expires_at`,
+      [scope.tenantId, scope.userId, sessionId, fingerprint, now],
+    )
+    if (result.rows.length > 0) return undefined
+    const active = await this.client.query<Record<string, unknown>>(
+      `SELECT expires_at FROM proma_runtime_permission_decisions
+       WHERE tenant_id = $1 AND user_id = $2 AND session_id = $3 AND fingerprint = $4 AND expires_at > $5`,
+      [scope.tenantId, scope.userId, sessionId, fingerprint, now],
+    )
+    const row = active.rows[0]
+    return row ? { ...scope, sessionId, fingerprint, expiresAt: Number(row.expires_at) } : undefined
+  }
 }
 
 function credentialFromRow(row: CredentialRow): TenantRuntimeCredential {
@@ -491,6 +546,8 @@ function sessionFromRow(row: SessionRow): TenantRuntimeSession {
     modelId: row.model_id,
     runtime: row.runtime,
     title: row.title ?? undefined,
+    defaultPermissionMode: normalizePermissionMode(row.permission_mode),
+    archivedAt: row.archived_at == null ? undefined : Number(row.archived_at),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   }
@@ -502,6 +559,8 @@ function taskFromRow(row: TaskRow): AgentRuntimeTaskMeta {
     userId: row.user_id,
     sessionId: row.session_id,
     taskId: row.task_id,
+    parentTaskId: row.parent_task_id ?? undefined,
+    depth: Number(row.depth ?? 0),
     status: row.status,
     startedAt: Number(row.started_at),
     completedAt: row.completed_at == null ? undefined : Number(row.completed_at),
@@ -519,9 +578,15 @@ function sessionParams(session: TenantRuntimeSession): readonly unknown[] {
     session.modelId,
     session.runtime,
     session.title ?? null,
+    session.defaultPermissionMode ?? null,
+    session.archivedAt ?? null,
     session.createdAt,
     session.updatedAt,
   ]
+}
+
+function normalizePermissionMode(value: unknown): TenantRuntimeSession['defaultPermissionMode'] {
+  return value === 'safe' || value === 'auto' || value === 'bypassPermissions' || value === 'plan' ? value : undefined
 }
 
 function normalizeSecretEncoding(value: unknown): TenantRuntimeSecretEncoding {

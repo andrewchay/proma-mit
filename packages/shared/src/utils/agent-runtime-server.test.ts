@@ -93,6 +93,22 @@ describe('AgentRuntimeEventReplayHub', () => {
 })
 
 describe('AgentRuntimeTaskRunner', () => {
+  test('given a parent task when it is cancelled then its child task is cancelled too', async () => {
+    const runner = new AgentRuntimeTaskRunner()
+    runner.startTask({ ...scope, taskId: 'parent', run: async ({ signal }) => await waitForAbort(signal) })
+    runner.startTask({ ...scope, sessionId: 'child-session', taskId: 'child', parentTaskId: 'parent', run: async ({ signal }) => await waitForAbort(signal) })
+    expect(runner.cancelTask('parent')).toBe(true)
+    expect((await runner.waitForTask('child')).status).toBe('cancelled')
+  })
+  test('given nested task metadata when starting a child then its depth is derived from its parent', async () => {
+    const runner = new AgentRuntimeTaskRunner()
+    const parent = runner.startTask({ ...scope, taskId: 'depth-parent', run: async () => await new Promise<void>(() => {}) })
+    const child = runner.startTask({ ...scope, sessionId: 'depth-child', taskId: 'depth-child', parentTaskId: parent.taskId, run: async () => {} })
+    expect(parent.depth).toBe(0)
+    expect(child.depth).toBe(1)
+    runner.cancelTask(parent.taskId)
+    await runner.waitForTask(child.taskId)
+  })
   test('given a running task when starting another task for same scoped session then it is rejected', async () => {
     const runner = new AgentRuntimeTaskRunner()
     const task = runner.startTask({
@@ -154,6 +170,10 @@ describe('AgentRuntimeTaskRunner', () => {
     expect(JSON.stringify(replayed[0]?.payload)).toContain('hello')
   })
 })
+
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))
+}
 
 class MemoryDurableEventStore implements AgentRuntimeDurableEventStore {
   private readonly events: AgentRuntimeEventRecord[] = []

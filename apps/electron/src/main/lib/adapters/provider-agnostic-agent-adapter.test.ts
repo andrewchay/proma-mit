@@ -54,12 +54,14 @@ describe('Provider-Agnostic Agent 适配器', () => {
   let streamCallCount = 0
   let capturedRequests: CapturedRequest[] = []
   let requestedAdapterProviders: string[] = []
+  let firstTurnToolCalls: ToolCall[] | undefined
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'proma-paa-adapter-test-'))
     streamCallCount = 0
     capturedRequests = []
     requestedAdapterProviders = []
+    firstTurnToolCalls = undefined
 
     // mock @proma/core，用回合制逻辑替代真实 SSE 请求
     mock.module('@proma/core', () => ({
@@ -95,6 +97,9 @@ describe('Provider-Agnostic Agent 适配器', () => {
       },
       streamSSE: async (): Promise<StreamSSEResult> => {
         streamCallCount++
+        if (streamCallCount === 1 && firstTurnToolCalls) {
+          return makeStreamResult('提交 Goal 检查点', firstTurnToolCalls)
+        }
         if (streamCallCount === 1) {
           return makeStreamResult('我来读取文件内容', [
             { id: 'tc_1', name: 'Read', arguments: { file_path: 'note.txt' } },
@@ -677,6 +682,32 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
     expect(requestedAdapterProviders).toEqual(['openai'])
     expect(messages.some((msg) => msg.type === 'assistant')).toBe(true)
+  })
+
+  test('given active goal when GoalCheckpoint is called then it reaches the shared callback without permission interception', async () => {
+    firstTurnToolCalls = [{
+      id: 'goal-checkpoint-1',
+      name: 'GoalCheckpoint',
+      arguments: {
+        outcome: 'waiting',
+        summary: '等待用户输入',
+        completed: [],
+        evidence: [{ kind: 'tool', value: 'AskUserQuestion' }],
+        wakeTrigger: { type: 'user_input' },
+      },
+    }]
+    const adapter = new ProviderAgnosticAgentAdapter()
+    let summary = ''
+
+    for await (const _message of adapter.query({
+      sessionId: 'goal-session', prompt: '推进目标', model: 'deepseek-chat', provider: 'deepseek',
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: tempDir, permissionMode: 'safe',
+      onGoalCheckpoint: async (checkpoint) => { summary = checkpoint.summary },
+    })) {
+      // 消费完整工具循环。
+    }
+
+    expect(summary).toBe('等待用户输入')
   })
 })
 

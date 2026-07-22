@@ -1,4 +1,4 @@
-import type { AgentRuntimeWebAuthResolver } from '@proma/shared/utils'
+import type { AgentRuntimeRole, AgentRuntimeWebAuthResolver } from '@proma/shared/utils'
 
 export interface OidcJwtAuthConfig {
   issuer: string
@@ -6,6 +6,7 @@ export interface OidcJwtAuthConfig {
   jwksUrl: string
   tenantClaim?: string
   userClaim?: string
+  rolesClaim?: string
 }
 
 /** 基于 JWKS 的 RS256 Bearer token 验证器；只返回经过签名验证的 scope。 */
@@ -36,7 +37,9 @@ export function createOidcJwtAuth(config: OidcJwtAuthConfig): AgentRuntimeWebAut
     if (claims.iss !== config.issuer || !hasAudience(claims.aud, config.audience) || !isCurrent(claims)) return undefined
     const tenantId = claims[config.tenantClaim ?? 'tenant_id']
     const userId = claims[config.userClaim ?? 'sub']
-    return typeof tenantId === 'string' && typeof userId === 'string' && tenantId && userId ? { tenantId, userId } : undefined
+    return typeof tenantId === 'string' && typeof userId === 'string' && tenantId && userId
+      ? { tenantId, userId, roles: readRoles(claims[config.rolesClaim ?? 'roles']) }
+      : undefined
   }
 }
 
@@ -49,3 +52,4 @@ function decodeBase64Url(value: string): Uint8Array { return Uint8Array.fromBase
 function bytesToArrayBuffer(value: Uint8Array): ArrayBuffer { return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer }
 function hasAudience(value: unknown, audience: string): boolean { return value === audience || Array.isArray(value) && value.includes(audience) }
 function isCurrent(claims: Record<string, unknown>): boolean { const now = Math.floor(Date.now() / 1_000); return (typeof claims.exp !== 'number' || claims.exp > now) && (typeof claims.nbf !== 'number' || claims.nbf <= now) }
+function readRoles(value: unknown): AgentRuntimeRole[] { return Array.isArray(value) ? value.filter((role): role is AgentRuntimeRole => role === 'viewer' || role === 'operator' || role === 'admin' || role === 'security-auditor') : [] }
