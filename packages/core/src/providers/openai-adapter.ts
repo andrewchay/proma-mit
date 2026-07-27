@@ -191,11 +191,22 @@ function appendContinuationMessages(
         })),
       })
     } else if (contMsg.role === 'tool') {
+      const screenshots: ImageAttachmentData[] = []
       for (const result of contMsg.results) {
         messages.push({
           role: 'tool',
           content: result.content,
           tool_call_id: result.toolCallId,
+        })
+        if (result.imageData) screenshots.push(...result.imageData)
+      }
+
+      // Chat Completions 的 tool 消息只承载文本。截图在关联的 tool 结果之后，
+      // 以独立 user 多模态消息传回，既保留 tool_call_id 对应关系，也让视觉模型实际看到图片。
+      if (screenshots.length > 0) {
+        messages.push({
+          role: 'user',
+          content: buildMessageContent('以下是工具返回的截图。请先分析画面，再继续完成当前用户目标。', screenshots),
         })
       }
     }

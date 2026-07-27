@@ -7,10 +7,20 @@ import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-buil
 import type { SDKMessage } from '@proma/shared'
 
 describe('Prompt 构建器', () => {
-  test('buildAgentSystemPrompt 包含 cwd', () => {
+  test('given 默认提示词 when 构建 runtime prompt then 包含 cwd 与自动化工具规则', () => {
     const prompt = buildAgentSystemPrompt(undefined, '/tmp/workspace')
     expect(prompt).toContain('/tmp/workspace')
     expect(prompt).toContain('你可以使用工具')
+    expect(prompt).toContain('优先使用 Web Bridge')
+    expect(prompt).toContain('ComputerUseScreenshot')
+    expect(prompt).toContain('coordinate_scale')
+  })
+
+  test('given 自定义提示词 when 构建 runtime prompt then 保留自动化工具规则', () => {
+    const prompt = buildAgentSystemPrompt('你是一个自定义助手。', '/tmp/workspace')
+
+    expect(prompt).toContain('你是一个自定义助手。')
+    expect(prompt).toContain('调用 WebBridgeScreenshot 或 ComputerUseScreenshot 后，必须先分析截图内容')
   })
 
   test('sdkMessagesToChatMessages 转换文本对话', () => {

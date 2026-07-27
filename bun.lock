@@ -187,7 +187,7 @@
     },
     "packages/core": {
       "name": "@proma/core",
-      "version": "0.2.12",
+      "version": "0.2.13",
       "dependencies": {
         "@ai-sdk/anthropic": "4.0.16",
         "@ai-sdk/google": "4.0.18",

@@ -27,6 +27,16 @@ const DEFAULT_AGENT_SYSTEM_PROMPT = `你是一个高效的编程助手，擅长�
 - 执行 bash 命令时注意工作目录
 - 完成后向用户说明修改内容`
 
+/** Web Bridge 与 Computer Use 的固定操作规则，不能被自定义系统提示词覆盖。 */
+const AUTOMATION_TOOL_GUIDE = `## Web Bridge 与 Computer Use
+
+- 操作网页时，优先使用 Web Bridge；只有当前页面没有可用的结构化元素时，才降级使用 Computer Use。
+- 调用 WebBridgeScreenshot 或 ComputerUseScreenshot 后，必须先分析截图内容，再继续完成用户目标；不要因工具提示“截图已附加”而结束任务。
+- ComputerUseScreenshot 会返回 displayId 和 coordinateScale。若根据截图像素坐标执行点击、移动、双击或拖拽，必须原样传入 display_id 与 coordinate_scale。
+- 截图可能包含敏感信息；只完成用户明确要求的操作，不在回复中泄露截图中的敏感内容。
+- 提交、购买、删除、发布、授权或修改安全设置前，先向用户说明影响并获得确认。
+- 每次工具结果返回后，判断用户目标是否完成；未完成则继续调用合适工具，或明确说明阻塞原因。`
+
 /**
  * 构建 Agent system prompt
  *
@@ -37,7 +47,7 @@ export function buildAgentSystemPrompt(
   cwd: string,
 ): string {
   const base = baseSystemPrompt?.trim() || DEFAULT_AGENT_SYSTEM_PROMPT
-  return `${base}\n\n当前工作目录：${cwd}\n你可以使用工具来完成任务。需要调用工具时，请使用函数调用格式。`
+  return `${base}\n\n${AUTOMATION_TOOL_GUIDE}\n\n当前工作目录：${cwd}\n你可以使用工具来完成任务。需要调用工具时，请使用函数调用格式。`
 }
 
 /**

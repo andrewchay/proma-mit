@@ -4,7 +4,7 @@
  * 实现 Google Generative AI (Gemini) API 的消息转换、请求构建和 SSE 解析。
  * 特点：
  * - 角色：user / model（注意：assistant 映射为 model）
- * - 图片格式：{ inline_data: { mime_type, data } }
+ * - 图片格式：{ inlineData: { mimeType, data } }
  * - SSE 解析：遍历 candidates[0].content.parts，区分 thought 推理和正常文本 + functionCall
  * - 认证：API Key 作为 URL 查询参数
  * - 支持推理内容：Gemini 2.5/3 系列通过 thinkingConfig 启用思考过程回显
@@ -31,9 +31,10 @@ interface GooglePart {
   thought?: boolean
   /** 思考签名（工具调用时由模型生成，续接请求必须原样返回） */
   thoughtSignature?: string
-  inline_data?: {
-    mime_type: string
+  inlineData?: {
+    mimeType: string
     data: string
+    displayName?: string
   }
   functionCall?: {
     name: string
@@ -42,6 +43,7 @@ interface GooglePart {
   functionResponse?: {
     name: string
     response: Record<string, unknown>
+    parts?: GooglePart[]
   }
 }
 
@@ -77,11 +79,22 @@ interface GoogleTitleResponse {
  */
 function buildImageParts(imageData: ImageAttachmentData[]): GooglePart[] {
   return imageData.map((img) => ({
-    inline_data: {
-      mime_type: img.mediaType,
+    inlineData: {
+      mimeType: img.mediaType,
       data: img.data,
     },
   }))
+}
+
+/** Gemini 3 系列支持在 functionResponse 内原生回传多模态结果。 */
+function supportsMultimodalFunctionResponse(modelId: string): boolean {
+  return /^gemini-3(?:[.-]|$)/i.test(modelId)
+}
+
+function screenshotDisplayName(toolCallId: string, index: number, mediaType: string): string {
+  const extension = mediaType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'png'
+  const safeToolCallId = toolCallId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `tool-${safeToolCallId}-${index}.${extension}`
 }
 
 /**
@@ -160,6 +173,7 @@ function toGoogleTools(tools: ToolDefinition[]): Array<Record<string, unknown>> 
 function appendContinuationMessages(
   contents: GoogleContent[],
   continuationMessages: ContinuationMessage[],
+  modelId: string,
 ): void {
   for (const contMsg of continuationMessages) {
     if (contMsg.role === 'assistant') {
@@ -179,12 +193,38 @@ function appendContinuationMessages(
       }
       contents.push({ role: 'model', parts })
     } else if (contMsg.role === 'tool') {
-      const parts: GooglePart[] = contMsg.results.map((r) => ({
-        functionResponse: {
-          name: r.toolCallId,
-          response: { content: r.content },
-        },
-      }))
+      const parts: GooglePart[] = []
+      const supportsNativeImageResult = supportsMultimodalFunctionResponse(modelId)
+
+      for (const result of contMsg.results) {
+        const images = result.imageData ?? []
+        const imageParts = images.map((image, index): GooglePart => ({
+          inlineData: {
+            mimeType: image.mediaType,
+            data: image.data,
+            displayName: screenshotDisplayName(result.toolCallId, index, image.mediaType),
+          },
+        }))
+        const response: Record<string, unknown> = { content: result.content }
+
+        if (supportsNativeImageResult && imageParts.length > 0) {
+          response.screenshots = imageParts.map((part) => ({
+            $ref: part.inlineData?.displayName,
+          }))
+        }
+
+        parts.push({
+          functionResponse: {
+            name: result.toolCallId,
+            response,
+            ...(supportsNativeImageResult && imageParts.length > 0 ? { parts: imageParts } : {}),
+          },
+        })
+
+        // Gemini 2.5 及更早版本不支持 functionResponse 内的二进制数据；
+        // 在同一 user turn 紧随 functionResponse 回传图片，保持视觉上下文可用。
+        if (!supportsNativeImageResult) parts.push(...imageParts)
+      }
       contents.push({ role: 'user', parts })
     }
   }
@@ -234,7 +274,7 @@ export class GoogleAdapter implements ProviderAdapter {
 
     // 工具续接消息
     if (input.continuationMessages && input.continuationMessages.length > 0) {
-      appendContinuationMessages(contents, input.continuationMessages)
+      appendContinuationMessages(contents, input.continuationMessages, input.modelId)
     }
 
     return {
