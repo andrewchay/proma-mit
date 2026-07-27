@@ -14,6 +14,7 @@ describe('Prompt 构建器', () => {
     expect(prompt).toContain('优先使用 Web Bridge')
     expect(prompt).toContain('ComputerUseScreenshot')
     expect(prompt).toContain('coordinate_scale')
+    expect(prompt).toContain('element_id')
   })
 
   test('given 自定义提示词 when 构建 runtime prompt then 保留自动化工具规则', () => {

@@ -31,6 +31,7 @@ const DEFAULT_AGENT_SYSTEM_PROMPT = `你是一个高效的编程助手，擅长�
 const AUTOMATION_TOOL_GUIDE = `## Web Bridge 与 Computer Use
 
 - 操作网页时，优先使用 Web Bridge；只有当前页面没有可用的结构化元素时，才降级使用 Computer Use。
+- WebBridgeSnapshot 返回的可操作元素带有稳定 elementId。点击、输入和上传时必须优先传 element_id，不能凭空猜测 CSS selector；selector 仅用于兼容旧会话。
 - 调用 WebBridgeScreenshot 或 ComputerUseScreenshot 后，必须先分析截图内容，再继续完成用户目标；不要因工具提示“截图已附加”而结束任务。
 - ComputerUseScreenshot 会返回 displayId 和 coordinateScale。若根据截图像素坐标执行点击、移动、双击或拖拽，必须原样传入 display_id 与 coordinate_scale。
 - 截图可能包含敏感信息；只完成用户明确要求的操作，不在回复中泄露截图中的敏感内容。

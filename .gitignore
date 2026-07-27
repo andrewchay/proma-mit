@@ -10,6 +10,9 @@ dist
 coverage
 *.lcov
 
+# Playwright transient artifacts
+test-results
+
 # logs
 logs
 _.log

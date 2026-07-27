@@ -13,6 +13,7 @@ const {
   createWebBridgeNavigateToolDefinition,
   createWebBridgeSnapshotToolDefinition,
   createWebBridgeConnectChromeToolDefinition,
+  createWebBridgeClickToolDefinition,
   createWebBridgeDownloadToolDefinition,
   createWebBridgeUploadToolDefinition,
   executeWebBridgeNavigateTool,
@@ -33,6 +34,7 @@ describe('Web Bridge 工具', () => {
     expect(createWebBridgeConnectChromeToolDefinition().name).toBe('WebBridgeConnectChrome')
     expect(createWebBridgeDownloadToolDefinition().name).toBe('WebBridgeDownload')
     expect(createWebBridgeUploadToolDefinition().name).toBe('WebBridgeUpload')
+    expect(createWebBridgeClickToolDefinition().parameters.properties.element_id).toBeDefined()
   })
 
   test('缺少必要参数时不访问浏览器', async () => {
