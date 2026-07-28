@@ -107,8 +107,21 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          wait_for_mac_zip() {
+            for _ in $(seq 1 60); do
+              ZIP=$(find out -maxdepth 1 -type f -name '*mac*.zip' -print -quit)
+              if [ -n "$ZIP" ] && unzip -t "$ZIP" >/dev/null 2>&1; then
+                echo "Validated $ZIP"
+                return 0
+              fi
+              sleep 2
+            done
+            echo 'macOS ZIP 在 120 秒内未变为可验证归档。' >&2
+            return 1
+          }
           for i in 1 2 3; do
             if npx electron-builder --mac --arm64 --publish always; then
+              wait_for_mac_zip
               break
             fi
             if [ "$i" = "3" ]; then
@@ -177,8 +190,21 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          wait_for_mac_zip() {
+            for _ in $(seq 1 60); do
+              ZIP=$(find out -maxdepth 1 -type f -name '*mac*.zip' -print -quit)
+              if [ -n "$ZIP" ] && unzip -t "$ZIP" >/dev/null 2>&1; then
+                echo "Validated $ZIP"
+                return 0
+              fi
+              sleep 2
+            done
+            echo 'macOS ZIP 在 120 秒内未变为可验证归档。' >&2
+            return 1
+          }
           for i in 1 2 3; do
             if npx electron-builder --mac --x64 --publish always; then
+              wait_for_mac_zip
               break
             fi
             if [ "$i" = "3" ]; then
