@@ -56,6 +56,10 @@
 | Zhipu | 通过 | 通过 | `glm-4-flash` | OpenAI-compatible |
 | Qwen | 通过 | 通过 | `qwen-turbo` | Pi 限制 `max_tokens=16384`，避免 DashScope 参数错误 |
 
+### GitHub Actions 可复核记录
+
+- 2026-07-28：[`DeepSeek / both` Provider E2E #30355159903](https://github.com/andrewchay/proma-mit/actions/runs/30355159903) 通过。AI SDK 与 Pi 均以仓库 Secret 完成最小真实文本请求；日志确认两个 runtime 的真实 API smoke 均实际执行，而非仅配置契约测试。
+
 尚未在本轮真实 smoke 中确认：
 
 | Provider | Runtime | 当前状态 |
