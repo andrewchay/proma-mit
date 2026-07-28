@@ -2,7 +2,7 @@
 
 本文档记录 Proma 当前 Agent runtime 的 provider 支持状态、真实 API smoke 结果和后续服务端 Web 化优先级。
 
-更新时间：2026-07-22
+更新时间：2026-07-28
 
 ## 结论
 
@@ -26,6 +26,25 @@
 
 - AI SDK：`PROMA_AI_SDK_REAL_API=1`
 - Pi：`PROMA_PI_REAL_API=1`
+
+为避免凭证在本地或常规 CI 中泄露，仓库提供手动触发的 GitHub Actions 工作流 **Provider E2E**（`.github/workflows/provider-e2e.yml`）。它按一次一个 provider/runtime 注入对应 GitHub Secret，并运行真实 API smoke。当前工作流已落地，但本次变更没有使用生产凭证发起远程调用，因此不能把工作流本身视为新的真实 provider 通过记录。
+
+推荐按以下顺序在 GitHub Actions 手动运行：
+
+1. `openai / ai-sdk`、`anthropic / ai-sdk`、`google / ai-sdk`、`deepseek / both`
+2. `kimi-api / both`、`kimi-coding / both`、`zhipu / both`、`doubao / both`、`qwen / both`
+3. `minimax / pi`（MiniMax 当前只接受 Pi runtime）
+
+每次记录模型、时间、run URL 和结果；失败时保留错误归一化输出，不记录 API Key。
+
+当前自动化 smoke 验证的是“可鉴权、可请求、可收到文本/流事件”的最小闭环。工具调用、截图续接、权限拒绝、取消和异常归一化已有离线契约测试；它们仍需在每个目标 provider 的真实凭证 run 中按下表补做验收，不能因为最小文本 smoke 通过就标记为全能力通过。
+
+| 验收项 | 自动化基线 | 真实凭证验收 |
+| --- | --- | --- |
+| 最小文本与流事件 | `Provider E2E` workflow | 每个 provider/runtime 一次 |
+| 工具调用与权限拒绝 | runtime 单元/契约测试 | 选定模型实际调用一个低风险工具，并拒绝一次需确认操作 |
+| 截图续接 | Web Bridge / Computer Use 离线续接测试 | 仅对声明支持视觉输入的 provider 执行“截图 → 下一轮描述” |
+| 取消与错误归一化 | runtime 单元/契约测试 | 主动取消一次长响应，并记录归一化错误码 |
 
 当前已手动验证通过的 provider：
 

@@ -9,9 +9,9 @@
  * - TXT/MD/CSV/JSON/XML/HTML/JS/TS/PY 等：直接 UTF-8 读取
  */
 
-import { readFileSync } from 'node:fs'
-import { extname, isAbsolute, normalize } from 'node:path'
-import { getConfigDir, resolveAttachmentPath } from './config-paths'
+import { readFileSync, realpathSync } from 'node:fs'
+import { extname, isAbsolute, relative, sep } from 'node:path'
+import { getAttachmentsDir, getConfigDir, resolveAttachmentPath, resolveConfigPath } from './config-paths'
 
 // ===== 文件类型分类 =====
 
@@ -137,15 +137,17 @@ async function extractOffice(filePath: string): Promise<string> {
  * 2. 绝对路径（Agent 工作区附件）→ 需在 ~/.proma-mit/ 目录下
  */
 function resolveAttachmentPathSafe(localPath: string): string {
-  if (isAbsolute(localPath)) {
-    const configDir = getConfigDir()
-    const normalized = normalize(localPath)
-    if (!normalized.startsWith(configDir)) {
-      throw new Error(`附件路径不在安全目录内: ${localPath}`)
-    }
-    return normalized
+  const rootDir = isAbsolute(localPath) ? getConfigDir() : getAttachmentsDir()
+  const candidate = isAbsolute(localPath)
+    ? resolveConfigPath(localPath)
+    : resolveAttachmentPath(localPath)
+  const realRoot = realpathSync(rootDir)
+  const realPath = realpathSync(candidate)
+  const pathFromRoot = relative(realRoot, realPath)
+  if (!pathFromRoot || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)) {
+    throw new Error(`附件路径不在安全目录内: ${localPath}`)
   }
-  return resolveAttachmentPath(localPath)
+  return realPath
 }
 
 /**

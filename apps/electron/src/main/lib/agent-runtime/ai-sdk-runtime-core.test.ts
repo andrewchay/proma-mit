@@ -2,9 +2,11 @@ import { describe, expect, mock, test } from 'bun:test'
 import type { RuntimeToolDefinition } from './types'
 import type { AISDKRuntimeSessionState, ExecutedAISDKToolResult } from './ai-sdk-runtime-core'
 
+class MockBrowserWindow {}
+
 mock.module('electron', () => ({
   app: { isPackaged: false },
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   clipboard: { readText: () => '', writeText: () => undefined },
   dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
   nativeImage: { createFromDataURL: () => ({}) },

@@ -1,0 +1,89 @@
+name: Provider E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 要验收的 Provider
+        required: true
+        type: choice
+        options:
+          - openai
+          - anthropic
+          - google
+          - deepseek
+          - kimi-api
+          - kimi-coding
+          - zhipu
+          - doubao
+          - qwen
+          - minimax
+      runtime:
+        description: 要运行的 runtime
+        required: true
+        type: choice
+        options:
+          - ai-sdk
+          - pi
+          - both
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ inputs.provider }} / ${{ inputs.runtime }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PROMA_AI_SDK_OPENAI_API_KEY: ${{ inputs.provider == 'openai' && secrets.PROMA_AI_SDK_OPENAI_API_KEY || '' }}
+      PROMA_AI_SDK_ANTHROPIC_API_KEY: ${{ inputs.provider == 'anthropic' && secrets.PROMA_AI_SDK_ANTHROPIC_API_KEY || '' }}
+      PROMA_AI_SDK_GOOGLE_API_KEY: ${{ inputs.provider == 'google' && secrets.PROMA_AI_SDK_GOOGLE_API_KEY || '' }}
+      PROMA_AI_SDK_DEEPSEEK_API_KEY: ${{ inputs.provider == 'deepseek' && secrets.PROMA_AI_SDK_DEEPSEEK_API_KEY || '' }}
+      PROMA_AI_SDK_KIMI_API_KEY: ${{ inputs.provider == 'kimi-api' && secrets.PROMA_AI_SDK_KIMI_API_KEY || '' }}
+      PROMA_AI_SDK_KIMI_CODING_API_KEY: ${{ inputs.provider == 'kimi-coding' && secrets.PROMA_AI_SDK_KIMI_CODING_API_KEY || '' }}
+      PROMA_AI_SDK_ZHIPU_API_KEY: ${{ inputs.provider == 'zhipu' && secrets.PROMA_AI_SDK_ZHIPU_API_KEY || '' }}
+      PROMA_AI_SDK_DOUBAO_API_KEY: ${{ inputs.provider == 'doubao' && secrets.PROMA_AI_SDK_DOUBAO_API_KEY || '' }}
+      PROMA_AI_SDK_QWEN_API_KEY: ${{ inputs.provider == 'qwen' && secrets.PROMA_AI_SDK_QWEN_API_KEY || '' }}
+      PROMA_PI_MINIMAX_API_KEY: ${{ inputs.provider == 'minimax' && secrets.PROMA_PI_MINIMAX_API_KEY || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 验证所需密钥存在
+        run: |
+          if [ '${{ inputs.provider }}' = 'minimax' ] && [ '${{ inputs.runtime }}' != 'pi' ]; then
+            echo 'MiniMax 当前只支持 Pi runtime 验收，请选择 minimax / pi。'
+            exit 2
+          fi
+          case '${{ inputs.provider }}' in
+            openai) test -n "$PROMA_AI_SDK_OPENAI_API_KEY" ;;
+            anthropic) test -n "$PROMA_AI_SDK_ANTHROPIC_API_KEY" ;;
+            google) test -n "$PROMA_AI_SDK_GOOGLE_API_KEY" ;;
+            deepseek) test -n "$PROMA_AI_SDK_DEEPSEEK_API_KEY" ;;
+            kimi-api) test -n "$PROMA_AI_SDK_KIMI_API_KEY" ;;
+            kimi-coding) test -n "$PROMA_AI_SDK_KIMI_CODING_API_KEY" ;;
+            zhipu) test -n "$PROMA_AI_SDK_ZHIPU_API_KEY" ;;
+            doubao) test -n "$PROMA_AI_SDK_DOUBAO_API_KEY" ;;
+            qwen) test -n "$PROMA_AI_SDK_QWEN_API_KEY" ;;
+            minimax) test -n "$PROMA_PI_MINIMAX_API_KEY" ;;
+          esac
+
+      - name: AI SDK smoke
+        if: inputs.runtime == 'ai-sdk' || inputs.runtime == 'both'
+        env:
+          PROMA_AI_SDK_REAL_API: '1'
+        run: bun test apps/electron/src/main/lib/adapters/ai-sdk-agent-adapter.real.test.ts
+
+      - name: Pi smoke
+        if: inputs.runtime == 'pi' || inputs.runtime == 'both'
+        env:
+          PROMA_PI_REAL_API: '1'
+        run: bun test apps/electron/src/main/lib/adapters/pi-agent-adapter.real.test.ts

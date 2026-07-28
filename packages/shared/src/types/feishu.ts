@@ -48,6 +48,8 @@ export interface FeishuBotConfig {
   defaultChannelId?: string
   /** 该 Bot 的默认模型 ID */
   defaultModelId?: string
+  /** 可提升为完整 Agent 权限的可信发送者 open_id 白名单 */
+  trustedSenderIds?: string[]
 }
 
 /** 多 Bot 配置文件（~/.proma/feishu.json 新格式） */
@@ -74,6 +76,8 @@ export interface FeishuBotConfigInput {
   defaultChannelId?: string
   /** 默认模型 ID */
   defaultModelId?: string
+  /** 可提升为完整 Agent 权限的可信发送者 open_id 白名单 */
+  trustedSenderIds?: string[]
 }
 
 // ===== Bridge 连接状态 =====

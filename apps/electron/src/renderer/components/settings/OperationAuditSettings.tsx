@@ -1,4 +1,4 @@
-/** 本地 Web Bridge / Computer Use 操作审计查看器。 */
+/** 本地自动化与外部消息入口审计查看器。 */
 
 import * as React from 'react'
 import { Download, RefreshCw, ShieldCheck } from 'lucide-react'
@@ -14,6 +14,7 @@ type SourceFilter = 'all' | AgentAuditEvent['source']
 const SOURCE_LABEL: Record<AgentAuditEvent['source'], string> = {
   'web-bridge': 'Web Bridge',
   'computer-use': 'Computer Use',
+  'external-bridge': '外部 IM',
 }
 
 export function OperationAuditSettings(): React.ReactElement {
@@ -60,7 +61,7 @@ export function OperationAuditSettings(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <SettingsSection title="操作审计" description="仅显示保存在本机 JSONL 的 Web Bridge 与 Computer Use 操作摘要；不会上传，也不含截图、页面正文、敏感输入或本地绝对路径。">
+      <SettingsSection title="操作审计" description="仅显示保存在本机 JSONL 的 Web Bridge、Computer Use 与外部 IM 入口摘要；不会上传，也不含截图、页面正文、消息正文、敏感输入或原始用户标识。">
         <SettingsCard className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
             <label className="grid gap-1.5 text-sm text-muted-foreground">
@@ -71,6 +72,7 @@ export function OperationAuditSettings(): React.ReactElement {
                   <SelectItem value="all">全部</SelectItem>
                   <SelectItem value="web-bridge">Web Bridge</SelectItem>
                   <SelectItem value="computer-use">Computer Use</SelectItem>
+                  <SelectItem value="external-bridge">外部 IM</SelectItem>
                 </SelectContent>
               </Select>
             </label>

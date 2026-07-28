@@ -9,6 +9,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
+class MockBrowserWindow {}
+
 // 使用临时 HOME 目录，避免测试污染开发者本机的 ~/.proma-mit-dev
 // Bun 的 os.homedir() 不读取 process.env.HOME，因此通过 mock.module 覆盖
 const originalHomedir = homedir()
@@ -21,7 +23,7 @@ mock.module('os', () => ({
 }))
 
 mock.module('electron', () => ({
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   app: { isPackaged: false },
   dialog: {},
 }))

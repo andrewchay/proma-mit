@@ -10,7 +10,7 @@ const MAX_AUDIT_EVENTS = 1_000
 export async function listAgentAuditEvents(query: AgentAuditQuery = {}): Promise<AgentAuditEvent[]> {
   const sources = query.source && query.source !== 'all'
     ? [query.source]
-    : ['web-bridge', 'computer-use'] as const
+    : ['web-bridge', 'computer-use', 'external-bridge'] as const
   const events = (await Promise.all(sources.map(readAuditSource))).flat()
     .filter((event) => (!query.sessionId || event.sessionId === query.sessionId) && (!query.action || event.action === query.action))
     .sort((left, right) => right.at.localeCompare(left.at))

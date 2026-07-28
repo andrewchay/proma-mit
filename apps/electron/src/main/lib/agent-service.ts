@@ -29,6 +29,9 @@ import type {
   AgentSessionMeta,
   AgentGoal,
   UpdateAgentGoalStatusInput,
+  CreateProactiveScheduleInput,
+  ProactiveSchedule,
+  ProactiveTaskRun,
 } from '@proma/shared'
 import { ClaudeAgentAdapter, scanAndKillOrphanedClaudeSubprocesses } from './adapters/claude-agent-adapter'
 import { AISDKAgentAdapter } from './adapters/ai-sdk-agent-adapter'
@@ -40,6 +43,7 @@ import { AgentOrchestrator } from './agent-orchestrator'
 import { getAgentSessionWorkspacePath, getWorkspaceFilesDir } from './config-paths'
 import { createElectronRuntimeServices } from './agent-runtime/runtime-services'
 import { GoalCoordinator } from './goal-runtime/goal-coordinator'
+import { ProactiveScheduler } from './proactive-scheduler'
 
 // ===== 实例创建 =====
 
@@ -52,6 +56,7 @@ const adapter = new RuntimeRoutingAgentAdapter({
   'ai-sdk': new AISDKAgentAdapter(runtimeServices.mcp),
 })
 const goalCoordinator = new GoalCoordinator()
+const proactiveScheduler = new ProactiveScheduler()
 const orchestrator = new AgentOrchestrator(
   adapter,
   eventBus,
@@ -78,9 +83,59 @@ void goalCoordinator.recoverDueGoals().catch((error) => {
   console.error('[Goal] 恢复到期 Goal 失败:', error)
 })
 
+proactiveScheduler.setRunner(async (schedule) => {
+  let runError: string | undefined
+  await runAgentHeadless({
+    sessionId: schedule.sessionId,
+    userMessage: schedule.prompt,
+    channelId: schedule.channelId,
+    modelId: schedule.modelId,
+    workspaceId: schedule.workspaceId,
+    agentRuntime: schedule.runtime,
+    permissionModeOverride: schedule.permissionMode,
+  }, {
+    onError: (error) => { runError = error },
+    onComplete: () => {},
+    onTitleUpdated: () => {},
+  })
+  if (runError) throw new Error(runError)
+  return {}
+})
+void proactiveScheduler.recover().catch((error) => {
+  console.error('[Proactive Scheduler] 恢复到期任务失败:', error)
+})
+
 /** 导出 EventBus 供飞书 Bridge 等外部服务订阅事件 */
 export { eventBus as agentEventBus }
 export { goalCoordinator }
+
+export function createProactiveSchedule(input: CreateProactiveScheduleInput): ProactiveSchedule {
+  return proactiveScheduler.create(input)
+}
+
+export function listProactiveSchedules(): ProactiveSchedule[] {
+  return proactiveScheduler.listSchedules()
+}
+
+export function listProactiveTaskRuns(): ProactiveTaskRun[] {
+  return proactiveScheduler.listRuns()
+}
+
+export function pauseProactiveSchedule(scheduleId: string): ProactiveSchedule {
+  return proactiveScheduler.pause(scheduleId)
+}
+
+export function resumeProactiveSchedule(scheduleId: string): ProactiveSchedule {
+  return proactiveScheduler.resume(scheduleId)
+}
+
+export function deleteProactiveSchedule(scheduleId: string): void {
+  proactiveScheduler.delete(scheduleId)
+}
+
+export async function runProactiveScheduleNow(scheduleId: string): Promise<ProactiveTaskRun> {
+  return proactiveScheduler.runNow(scheduleId)
+}
 
 export function listAgentGoals(sessionId: string): AgentGoal[] {
   return goalCoordinator.listBySession(sessionId)

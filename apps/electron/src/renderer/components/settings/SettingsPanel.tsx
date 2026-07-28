@@ -26,6 +26,7 @@ import {
   HardDrive,
   ShieldCheck,
   MonitorCog,
+  Clock3,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -59,6 +60,7 @@ import { MigrationSettings } from "./MigrationSettings";
 import { StorageSettings } from "./StorageSettings";
 import { OperationAuditSettings } from "./OperationAuditSettings";
 import { AutomationSettings } from "./AutomationSettings";
+import { ProactiveSchedulerSettings } from './ProactiveSchedulerSettings'
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -116,6 +118,11 @@ const AUTOMATION_TAB: TabItem = {
   label: "自动化与设备控制",
   icon: <MonitorCog size={16} />,
 };
+const SCHEDULER_TAB: TabItem = {
+  id: 'scheduler',
+  label: '主动定时任务',
+  icon: <Clock3 size={16} />,
+};
 
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
@@ -160,6 +167,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <OperationAuditSettings />;
     case "automation":
       return <AutomationSettings />;
+    case 'scheduler':
+      return <ProactiveSchedulerSettings />
   }
 }
 
@@ -232,6 +241,7 @@ export function SettingsPanel({
         ...BASE_TABS,
         AGENT_TAB,
         AUTOMATION_TAB,
+        SCHEDULER_TAB,
         OPERATION_AUDIT_TAB,
         TOOLS_TAB,
         VOICE_INPUT_TAB,

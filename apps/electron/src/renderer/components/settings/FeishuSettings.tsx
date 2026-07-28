@@ -489,6 +489,7 @@ function BotConfigCard({ bot, state, onSaved, onRemoved }: BotConfigCardProps): 
   const [name, setName] = React.useState(bot.name)
   const [appId, setAppId] = React.useState(bot.appId)
   const [appSecret, setAppSecret] = React.useState('')
+  const [trustedSenderIds, setTrustedSenderIds] = React.useState((bot.trustedSenderIds ?? []).join(', '))
   const [testing, setTesting] = React.useState(false)
   const [testResult, setTestResult] = React.useState<FeishuTestResult | null>(null)
   const [expanded, setExpanded] = React.useState(!bot.appId) // 新建的 Bot 默认展开
@@ -522,13 +523,14 @@ function BotConfigCard({ bot, state, onSaved, onRemoved }: BotConfigCardProps): 
         defaultWorkspaceId: bot.defaultWorkspaceId,
         defaultChannelId: bot.defaultChannelId,
         defaultModelId: bot.defaultModelId,
+        trustedSenderIds: trustedSenderIds.split(',').map((id) => id.trim()).filter(Boolean),
       })
       toast.success(`Bot "${name}" 已保存`)
       onSaved()
     } catch {
       toast.error('保存配置失败')
     }
-  }, [bot.id, name, appId, appSecret, onSaved, bot.defaultWorkspaceId, bot.defaultModelId, bot.defaultChannelId])
+  }, [bot.id, name, appId, appSecret, trustedSenderIds, onSaved, bot.defaultWorkspaceId, bot.defaultModelId, bot.defaultChannelId])
 
   const handleTest = React.useCallback(async () => {
     if (!appId.trim() || !appSecret.trim()) return
@@ -655,6 +657,15 @@ function BotConfigCard({ bot, state, onSaved, onRemoved }: BotConfigCardProps): 
             onChange={setAppSecret}
             placeholder="输入 App Secret"
           />
+          <SettingsInput
+            label="可信发送者 open_id（可选，逗号分隔）"
+            value={trustedSenderIds}
+            onChange={setTrustedSenderIds}
+            placeholder="ou_xxx, ou_yyy"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            未列入白名单的消息始终以只读安全模式运行；白名单发送者可执行完整 Agent 操作。
+          </p>
 
           <div className="flex items-center gap-3">
             <Button size="sm" variant="outline" onClick={handleTest}

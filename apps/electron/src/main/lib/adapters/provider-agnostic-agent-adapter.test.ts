@@ -12,10 +12,12 @@ import { join } from 'node:path'
 import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@proma/core'
 import type { SDKMessage, SDKResultMessage } from '@proma/shared'
 
+class MockBrowserWindow {}
+
 // 被测模块依赖 attachment-service/document-parser，它们会加载 electron，
 // 因此在测试环境中先 mock electron。
 mock.module('electron', () => ({
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   dialog: {
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
     showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),

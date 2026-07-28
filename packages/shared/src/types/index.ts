@@ -50,3 +50,6 @@ export * from './dingtalk'
 
 // 微信集成相关类型
 export * from './wechat'
+
+// 主动协作与本地调度相关类型
+export * from './proactive'

@@ -1,0 +1,86 @@
+name: Package Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'apps/electron/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/package-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.name }} package smoke
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-latest
+            command: npx electron-builder --mac --arm64 --publish never
+          - name: Windows x64
+            os: windows-latest
+            command: npx electron-builder --win --x64 --publish never
+          - name: Linux x64
+            os: ubuntu-latest
+            command: npx electron-builder --linux --x64 --publish never
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 构建 Electron 应用
+        run: bun run electron:build
+
+      - name: 打包（不发布）
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: ${{ matrix.command }}
+        working-directory: apps/electron
+
+      - name: 验证 macOS ZIP
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=$(find apps/electron/out -maxdepth 1 -type f -name '*mac*.zip' -print -quit)
+          test -n "$ZIP"
+          unzip -t "$ZIP"
+
+      - name: 验证 Windows 安装包
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/electron/out -Filter '*.exe' | Select-Object -First 1
+          if ($null -eq $installer -or $installer.Length -le 0) { throw '未生成 Windows 安装包' }
+          Write-Host "Validated $($installer.Name) ($($installer.Length) bytes)"
+
+      - name: 验证 Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPIMAGE=$(find apps/electron/out -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+          test -n "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+          "$APPIMAGE" --appimage-extract
+          test -x squashfs-root/AppRun
+          rm -rf squashfs-root

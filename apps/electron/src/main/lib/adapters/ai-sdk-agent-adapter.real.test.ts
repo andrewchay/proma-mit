@@ -11,8 +11,10 @@ import { describe, expect, mock, test } from 'bun:test'
 import type { AgentEvent, ProviderType, SDKMessage, SDKResultMessage } from '@proma/shared'
 import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@proma/shared'
 
+class MockBrowserWindow {}
+
 mock.module('electron', () => ({
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   session: { fromPartition: () => ({ setPermissionRequestHandler: () => {} }) },
   app: { isReady: () => true },
   desktopCapturer: { getSources: async () => [] },

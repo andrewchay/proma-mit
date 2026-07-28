@@ -10,14 +10,16 @@
  * - 文件选择对话框：Electron dialog → 小文件读取为 base64，大文件返回本地路径引用
  */
 
-import { readFileSync, writeFileSync, unlinkSync, existsSync, rmSync, statSync } from 'node:fs'
-import { extname, basename, join, isAbsolute, normalize } from 'node:path'
+import { readFileSync, writeFileSync, unlinkSync, existsSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { extname, basename, isAbsolute, join, relative, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { dialog, BrowserWindow } from 'electron'
 import {
   getConfigDir,
+  getAttachmentsDir,
   getConversationAttachmentsDir,
   resolveAttachmentPath,
+  resolveConfigPath,
 } from './config-paths'
 import type {
   FileAttachment,
@@ -154,25 +156,16 @@ export function saveAttachment(input: AttachmentSaveInput): AttachmentSaveResult
  * @returns base64 编码的文件数据
  */
 export function readAttachmentAsBase64(localPath: string): string {
-  let fullPath: string
-
-  if (isAbsolute(localPath)) {
-    // 绝对路径：验证在 ~/.proma/ 目录下，防止路径穿越
-    const configDir = getConfigDir()
-    const normalized = normalize(localPath)
-    if (!normalized.startsWith(configDir)) {
-      throw new Error(`附件路径不在安全目录内: ${localPath}`)
-    }
-    fullPath = normalized
-  } else {
-    fullPath = resolveAttachmentPath(localPath)
-  }
+  const rootDir = isAbsolute(localPath) ? getConfigDir() : getAttachmentsDir()
+  const fullPath = isAbsolute(localPath)
+    ? resolveConfigPath(localPath)
+    : resolveAttachmentPath(localPath)
 
   if (!existsSync(fullPath)) {
     throw new Error(`附件文件不存在: ${localPath}`)
   }
 
-  const buffer = readFileSync(fullPath)
+  const buffer = readFileSync(resolveExistingPathWithinDirectory(rootDir, fullPath, localPath))
   return buffer.toString('base64')
 }
 
@@ -202,7 +195,7 @@ export function deleteAttachment(localPath: string): void {
  * @param conversationId 对话 ID
  */
 export function deleteConversationAttachments(conversationId: string): void {
-  const dir = join(resolveAttachmentPath(''), conversationId)
+  const dir = getConversationAttachmentsDir(conversationId)
 
   if (existsSync(dir)) {
     try {
@@ -212,6 +205,16 @@ export function deleteConversationAttachments(conversationId: string): void {
       console.warn(`[附件服务] 删除对话附件目录失败: ${conversationId}`, error)
     }
   }
+}
+
+function resolveExistingPathWithinDirectory(rootDir: string, filePath: string, originalPath: string): string {
+  const realRoot = realpathSync(rootDir)
+  const realFilePath = realpathSync(filePath)
+  const pathFromRoot = relative(realRoot, realFilePath)
+  if (!pathFromRoot || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)) {
+    throw new Error(`附件路径不在安全目录内: ${originalPath}`)
+  }
+  return realFilePath
 }
 
 /**

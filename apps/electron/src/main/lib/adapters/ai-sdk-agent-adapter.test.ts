@@ -17,7 +17,9 @@ interface CapturedStreamTextInput {
 
 let capturedInputs: CapturedStreamTextInput[] = []
 let streamTextMode: 'text' | 'streamed-text' | 'stream-error-after-text' | 'write-tool' | 'queued-text' = 'text'
-let releaseQueuedStream: (() => void) | undefined
+let _releaseQueuedStream: (() => void) | undefined
+
+class MockBrowserWindow {}
 
 function usage(): LanguageModelUsage {
   return {
@@ -30,7 +32,7 @@ function usage(): LanguageModelUsage {
 }
 
 mock.module('electron', () => ({
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   dialog: {
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
     showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
@@ -104,7 +106,7 @@ mock.module('ai', () => ({
       if (streamTextMode === 'queued-text') {
         if (capturedInputs.length === 1) {
           await new Promise<void>((resolve, reject) => {
-            releaseQueuedStream = resolve
+            _releaseQueuedStream = resolve
             input.abortSignal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
           })
         }
@@ -181,7 +183,7 @@ describe('AISDKAgentAdapter', () => {
   beforeEach(() => {
     capturedInputs = []
     streamTextMode = 'text'
-    releaseQueuedStream = undefined
+    _releaseQueuedStream = undefined
   })
 
   test('缺少必要渠道字段时返回清晰错误', async () => {

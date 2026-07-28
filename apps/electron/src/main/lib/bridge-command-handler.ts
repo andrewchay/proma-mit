@@ -21,6 +21,9 @@ import { getSettings } from './settings-service'
 import { getAgentWorkspacePath } from './config-paths'
 import { buildAttachedFilesBlock } from './bridge-attachment-utils'
 import { readdirSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { appendExternalBridgeAudit } from './external-bridge-audit-service'
+import { resolveExternalBridgePermissionMode } from './external-bridge-policy'
 
 // ===== 接口定义 =====
 
@@ -50,6 +53,8 @@ export interface BridgeCommandHandlerConfig {
   getDefaultWorkspaceId?: () => string | undefined
   /** 工作区切换后的回调 */
   onWorkspaceSwitched?: (workspaceId: string) => void
+  /** 判断外部消息发送者是否被显式授予完整 Agent 权限 */
+  isTrustedSender?: (senderId: string | undefined) => boolean
 }
 
 /** 通用聊天绑定 */
@@ -111,12 +116,13 @@ export class BridgeCommandHandler {
     text: string,
     contextData?: unknown,
     attachments?: BridgeAttachment[],
+    senderId?: string,
   ): Promise<void> {
     if (text.trimStart().startsWith('/')) {
       // 命令消息不携带附件（附件由 Bridge 缓冲，等普通消息触发）
       await this.handleCommand(chatId, text, contextData)
     } else {
-      await this.handleUserMessage(chatId, text, contextData, attachments)
+      await this.handleUserMessage(chatId, text, contextData, attachments, senderId)
     }
   }
 
@@ -550,6 +556,7 @@ export class BridgeCommandHandler {
     text: string,
     contextData?: unknown,
     attachments?: BridgeAttachment[],
+    senderId?: string,
   ): Promise<void> {
     const settings = getSettings()
     const channelId = settings.agentChannelId
@@ -608,23 +615,32 @@ export class BridgeCommandHandler {
     const effectiveText = text.trim() || (attachments?.length ? '请查看上面附加的文件。' : '')
     const userMessage = fileReferences + effectiveText
 
+    const permissionModeOverride = resolveExternalBridgePermissionMode(Boolean(this.config.isTrustedSender?.(senderId)))
+    const requestId = randomUUID()
     const input = {
       sessionId: binding.sessionId,
       userMessage,
       channelId: latestChannelId,
       modelId,
       workspaceId: binding.workspaceId,
-      permissionModeOverride: 'bypassPermissions' as const,
+      // 外部 IM 默认没有本机审批 UI，只有显式白名单发送者才可提升权限。
+      permissionModeOverride,
     }
 
+    void appendExternalBridgeAudit({ sessionId: binding.sessionId, requestId, platform: this.config.platformName, senderId, chatId, permissionMode: permissionModeOverride, outcome: 'received' }).catch(() => undefined)
+
+    let failed = false
     runAgentHeadless(input, {
       onError: (error) => {
+        failed = true
         this.log(`Agent 错误: ${error}`)
         this.send(chatId, `❌ Agent 错误: ${error}`, contextData).catch(console.error)
         this.sessionBuffers.delete(binding!.sessionId)
+        void appendExternalBridgeAudit({ sessionId: binding!.sessionId, requestId, platform: this.config.platformName, senderId, chatId, permissionMode: permissionModeOverride, outcome: 'failed', error }).catch(() => undefined)
       },
       onComplete: () => {
         // complete 由 EventBus listener 处理
+        if (!failed) void appendExternalBridgeAudit({ sessionId: binding!.sessionId, requestId, platform: this.config.platformName, senderId, chatId, permissionMode: permissionModeOverride, outcome: 'completed' }).catch(() => undefined)
       },
       onTitleUpdated: () => {},
     }).catch((error) => {

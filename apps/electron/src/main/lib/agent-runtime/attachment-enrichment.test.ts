@@ -5,8 +5,10 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test'
 import type { FileAttachment } from '@proma/shared'
 
+class MockBrowserWindow {}
+
 mock.module('electron', () => ({
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   dialog: {
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
     showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),

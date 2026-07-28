@@ -1,7 +1,7 @@
 # 安全与稳定性审查修复计划（2026-07）
 
 > 创建时间：2026-07-17
-> 状态：待执行（修复时逐项勾选，并同步更新本文档状态）
+> 状态：部分完成。FIX-01、FIX-02、FIX-03 已有实现与自动化回归；FIX-02 的群聊不可信上下文边界与 sender/chat/task 审计关联已完成本地验证，真实外部平台联调按验收清单执行；其余项目仍按原计划待处理。
 > 范围：全仓安全审查 + 主进程健壮性 + 渲染进程性能 + 构建/CI 配置四个方向发现的 17 项问题
 > 基线：审查时 typecheck ✅ / bun test 107 pass ✅ / biome lint ✅，所有问题均为深层逻辑/配置问题，非表面错误
 
@@ -28,7 +28,7 @@
 
 ## 3. 第一波：安全止血
 
-### FIX-01 【高】safe 权限模式在 Claude SDK 路径完全失效
+### FIX-01 【高】safe 权限模式在 Claude SDK 路径完全失效 — 已完成
 
 - **位置**：`apps/electron/src/main/lib/agent-orchestrator.ts:1741-1778`
 - **问题**：`canUseTool` 的 switch 只处理 `bypassPermissions` / `plan` / `auto`，`safe` 落入 `default` 分支被**无条件 allow**。用户选"安全模式" + Claude 渠道后，Agent 可自由执行任意 Bash/Write，与 UI 承诺（`packages/shared/src/types/agent.ts:1166-1170` "只放行只读工具与命令，默认拒绝写操作"）完全相反。provider-agnostic 路径（`adapters/provider-agnostic-agent-adapter.ts:437-465`）有 safe 兜底，证明 SDK 路径是疏漏。
@@ -39,7 +39,9 @@
   4. 检查子代理路径：`agent-orchestrator.ts:766-767`（provider-agnostic 子代理硬编码 bypassPermissions）与 `agent-permission-service.ts:135-138`（SDK Worker `if (options.agentID) return allow()`）—— 确认子代理权限是产品决策还是疏漏，至少在文档/注释中明确语义。
 - **验证**：单元测试覆盖四种模式 × 读/写工具的判定矩阵；手动用 Claude 渠道 + safe 模式让 Agent 执行 `Write`，应被拒绝。
 
-### FIX-02 【高】外部 IM 桥接以 bypassPermissions 执行消息，无发送者白名单
+### FIX-02 【高】外部 IM 桥接以 bypassPermissions 执行消息，无发送者白名单 — 核心风险已完成
+
+当前实现：外部消息默认使用 `safe`；飞书按 `open_id`、钉钉按 `senderId` 配置每 Bot 可信白名单，只有精确匹配才可提升到完整权限；微信保持只读。飞书群成员、群名称、成员名单和历史消息被包装为 `<untrusted_group_context>`，系统提示词明确禁止将其当作指令或授权。每次外部消息 Agent 执行均生成任务 ID，在本机 `external-bridge-audit/events.jsonl` 写入 `sessionId`、任务 ID、平台、权限决策和 sender/chat 的不可逆短散列；失败仅保存归一化错误码，不写消息正文、附件、原始身份标识或原始错误文本。
 
 - **位置**：`apps/electron/src/main/lib/feishu-bridge.ts:1230`、`bridge-command-handler.ts:617`（钉钉 `dingtalk-bridge.ts:124`、微信 `wechat-bridge.ts:393` 复用同一 handler）
 - **问题**：所有桥接消息 `permissionModeOverride: 'bypassPermissions'` 免审批执行，仅过滤 `sender_type === 'user'`，**任何群成员**发消息即可驱动 Agent 在用户机器执行任意命令。群聊还注入群历史与成员列表（`feishu-bridge.ts:1176-1207`），扩大间接提示注入面。全库无 `allowedUsers` 机制。
@@ -47,9 +49,12 @@
   1. **最小改动**：桥接会话默认 `permissionModeOverride` 改为 `'auto'`（只读自动放行、写操作走权限服务），bypass 仅对显式配置的可信发送者开放。
   2. **完整方案**：桥接配置增加发送者白名单（飞书 open_id / 钉钉 userId / 微信 wxid），非白名单消息只读响应或忽略。
   3. 群聊历史注入的内容用明确边界标记包裹（如 `<untrusted-group-context>`），并在 prompt 中声明不可信。
-- **验证**：模拟群成员消息触发 Agent 写操作，应进入权限审批流而非直接执行。
+- **自动化验证**：`external-bridge-audit-service.test.ts` 覆盖任务关联、身份散列与操作审计读取；类型检查和 lint 通过。
+- **真实平台验证**：按 [`external-bridge-acceptance.md`](external-bridge-acceptance.md) 用飞书/钉钉/微信测试 Bot 完成 safe、白名单、群聊提示注入和审计筛选验收。
 
-### FIX-03 【高】附件服务路径穿越（任意文件读写删）
+### FIX-03 【高】附件服务路径穿越（任意文件读写删）— 已完成
+
+当前实现：附件相对路径、会话 ID 与配置目录绝对路径均做边界校验；读取和文档解析以 `realpath` 防符号链接逃逸，并有路径穿越回归测试。
 
 - **位置**：`apps/electron/src/main/lib/config-paths.ts:147-149`（`resolveAttachmentPath` 无 `..` 校验）；暴露面 `ipc.ts:843-848`（READ_ATTACHMENT）、`ipc.ts:920-925`（DELETE_ATTACHMENT）、`ipc.ts:835-840`（SAVE_ATTACHMENT 的 conversationId 穿越）、`ipc.ts:936-941`（EXTRACT_ATTACHMENT_TEXT）
 - **问题**：`join(getAttachmentsDir(), localPath)` 直接拼接，`'../../channels.json'` 可逃逸。绝对路径分支校验也有弱点（`attachment-service.ts:159-166`：`startsWith(configDir)` 无尾部 sep 可被 `.proma-evil` 绕过，且无 realpath 解析符号链接）。

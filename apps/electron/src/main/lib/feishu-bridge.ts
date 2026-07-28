@@ -10,6 +10,7 @@
  */
 
 import { BrowserWindow } from 'electron'
+import { randomUUID } from 'node:crypto'
 import type {
   AgentStreamPayload,
   AgentSendInput,
@@ -39,6 +40,8 @@ import {
 } from './agent-workspace-manager'
 import { getFeishuBotBindingsPath } from './config-paths'
 import { safeParseJSON } from './safe-json'
+import { appendExternalBridgeAudit } from './external-bridge-audit-service'
+import { resolveExternalBridgePermissionMode } from './external-bridge-policy'
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs'
 import {
   inferImageMediaType as inferImageMediaTypeShared,
@@ -1199,8 +1202,14 @@ class FeishuBridge {
         const historyContext = this.formatChatHistoryContext(chatHistory)
 
         const parts: string[] = []
-        if (contextParts.length > 0) parts.push(contextParts.join(' '))
-        if (historyContext) parts.push(historyContext)
+        if (contextParts.length > 0 || historyContext) {
+          parts.push([
+            '<untrusted_group_context>',
+            contextParts.join(' '),
+            historyContext,
+            '</untrusted_group_context>',
+          ].filter(Boolean).join('\n'))
+        }
         if (fileReferences) parts.push(fileReferences.trimEnd())
         parts.push(userText)
         agentMessage = parts.join('\n')
@@ -1221,18 +1230,25 @@ class FeishuBridge {
       const channelId = this.botConfig.defaultChannelId || latestSettings.agentChannelId || binding.channelId
       const modelId = this.botConfig.defaultModelId || latestSettings.agentModelId || binding.modelId
 
+      const permissionModeOverride = resolveExternalBridgePermissionMode(Boolean(this.botConfig.trustedSenderIds?.includes(msgCtx.senderOpenId)))
+      const requestId = randomUUID()
       const input: AgentSendInput = {
         sessionId: binding.sessionId,
         userMessage: agentMessage,
         channelId,
         modelId,
         workspaceId: binding.workspaceId,
-        permissionModeOverride: 'bypassPermissions',
+        // 外部消息默认只读；仅 Bot 配置中精确匹配的 open_id 可提升权限。
+        permissionModeOverride,
         ...(customMcpServers && { customMcpServers }),
       }
 
+      void appendExternalBridgeAudit({ sessionId: binding.sessionId, requestId, platform: 'feishu', senderId: msgCtx.senderOpenId, chatId, permissionMode: permissionModeOverride, outcome: 'received' }).catch(() => undefined)
+
+      let failed = false
       runAgentHeadless(input, {
         onError: (error) => {
+          failed = true
           const errPrefix = this.resolveContextPrefix(chatId)
           // 优先把错误显示到流式卡上；没有流式卡才发独立错误卡
           if (this.streamingCards.has(binding!.sessionId)) {
@@ -1242,9 +1258,11 @@ class FeishuBridge {
           }
           this.sessionBuffers.delete(binding!.sessionId)
           this.streamingCardsUsedSessions.delete(binding!.sessionId)
+          void appendExternalBridgeAudit({ sessionId: binding!.sessionId, requestId, platform: 'feishu', senderId: msgCtx.senderOpenId, chatId, permissionMode: permissionModeOverride, outcome: 'failed', error }).catch(() => undefined)
         },
         onComplete: () => {
           // complete 事件由 EventBus listener 处理
+          if (!failed) void appendExternalBridgeAudit({ sessionId: binding!.sessionId, requestId, platform: 'feishu', senderId: msgCtx.senderOpenId, chatId, permissionMode: permissionModeOverride, outcome: 'completed' }).catch(() => undefined)
         },
         onTitleUpdated: (_title) => {
           // 标题更新可选通知

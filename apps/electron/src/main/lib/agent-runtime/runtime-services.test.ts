@@ -8,6 +8,8 @@ import type { AgentStreamPayload, McpServerEntry, SDKMessage } from '@proma/shar
 import type { McpClientManager } from './mcp-client'
 import { AgentEventBus } from '../agent-event-bus'
 
+class MockBrowserWindow {}
+
 const originalTestConfigDir = process.env.PROMA_TEST_CONFIG_DIR
 const tempDir = mkdtempSync(join(tmpdir(), 'proma-runtime-services-test-'))
 process.env.PROMA_TEST_CONFIG_DIR = tempDir
@@ -16,7 +18,7 @@ mock.module('electron', () => ({
   app: {
     getPath: () => tempDir,
   },
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   dialog: {
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
     showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),

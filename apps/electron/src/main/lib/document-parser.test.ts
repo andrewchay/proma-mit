@@ -2,12 +2,22 @@
  * 文档解析服务单元测试
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, test, expect, beforeEach, afterAll, afterEach } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getConfigDir } from './config-paths'
 import { extractTextFromAttachment, extractTextFromFile } from './document-parser'
+
+const originalConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+const testConfigDir = mkdtempSync(join(tmpdir(), 'proma-doc-parser-config-'))
+process.env.PROMA_TEST_CONFIG_DIR = testConfigDir
+
+afterAll(() => {
+  if (originalConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = originalConfigDir
+  rmSync(testConfigDir, { recursive: true, force: true })
+})
 
 describe('文档解析服务', () => {
   let tempDir: string

@@ -47,6 +47,7 @@ import type { OperationsReporter } from './operations.ts'
 import { WEB_DASHBOARD_HTML } from './dashboard.ts'
 import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
+import type { UsageLedgerRecord } from './billing.ts'
 
 export interface PromaWebServerConfig {
   databaseUrl: string
@@ -187,6 +188,20 @@ export function createPromaWebServerApplication(
             modelId: input.modelId,
             ...usage,
           })
+          const budgetAlert = await usageLedger.claimMonthlyBudgetThresholdAlert(input.scope, config.tenantBudget)
+          if (budgetAlert) {
+            const severity = budgetAlert.thresholdPercent === 100 ? 'critical' : 'warning'
+            const message = `本月预算已使用 ${budgetAlert.thresholdPercent}%：${budgetAlert.costMicroUsd}/${budgetAlert.budgetMicroUsd} microUSD`
+            void operationsReporter.reportAlert({
+              severity,
+              kind: 'monthly_budget_threshold',
+              tenantId: input.scope.tenantId,
+              userId: input.scope.userId,
+              taskId: input.taskId,
+              message,
+              createdAt: Date.now(),
+            }).catch((reportError) => logger.error({ event: 'operations_alert_delivery_failed', error: getErrorMessage(reportError) }))
+          }
         }
         await syncAgentRuntimeWorkspaceToObjectStore({
           ...input.scope,
@@ -235,7 +250,25 @@ export function createPromaWebServerApplication(
       const oauthStartRoute = matchMcpOAuthStartRoute(request.method, url.pathname)
       const mcpStatusRoute = matchMcpStatusRoute(request.method, url.pathname)
       let response: Response
-      if (request.method === 'GET' && url.pathname === '/agent/metrics') {
+      if (request.method === 'GET' && url.pathname === '/agent/billing') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['admin'])
+            ? Response.json({ error: '需要 admin 角色' }, { status: 403 })
+            : Response.json({
+              summary: await usageLedger.summarize({ ...scope, from: parseAuditTimestamp(url.searchParams.get('from')), to: parseAuditTimestamp(url.searchParams.get('to')) }),
+              records: await usageLedger.list({ ...scope, from: parseAuditTimestamp(url.searchParams.get('from')), to: parseAuditTimestamp(url.searchParams.get('to')), limit: parsePageLimit(url.searchParams.get('limit')) }),
+            })
+      } else if (request.method === 'GET' && url.pathname === '/agent/billing/export') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['admin'])
+            ? Response.json({ error: '需要 admin 角色' }, { status: 403 })
+            : createBillingExportResponse(
+              await usageLedger.list({ ...scope, from: parseAuditTimestamp(url.searchParams.get('from')), to: parseAuditTimestamp(url.searchParams.get('to')), limit: 1_000 }),
+              url.searchParams.get('format'),
+            )
+      } else if (request.method === 'GET' && url.pathname === '/agent/metrics') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
           : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
@@ -479,6 +512,19 @@ function createAuditExportResponse(records: Awaited<ReturnType<PostgresAuditLog[
   const rows = records.map((record) => header.map((key) => csvValue(record[key as keyof typeof record])).join(','))
   return new Response([header.join(','), ...rows].join('\n'), {
     headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="proma-audit.csv"' },
+  })
+}
+
+function createBillingExportResponse(records: UsageLedgerRecord[], format: string | null): Response {
+  if (format === 'json') {
+    return new Response(JSON.stringify({ records }), {
+      headers: { 'content-type': 'application/json; charset=utf-8', 'content-disposition': 'attachment; filename="proma-billing.json"' },
+    })
+  }
+  const header = ['recordedAt', 'tenantId', 'userId', 'taskId', 'sessionId', 'provider', 'modelId', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'priceEffectiveAt', 'costMicroUsd']
+  const rows = records.map((record) => header.map((key) => csvValue(record[key as keyof UsageLedgerRecord])).join(','))
+  return new Response([header.join(','), ...rows].join('\n'), {
+    headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="proma-billing.csv"' },
   })
 }
 

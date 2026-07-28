@@ -87,6 +87,9 @@ import type {
   AgentSessionReferenceSearchResult,
   AgentAuditEvent,
   AgentAuditQuery,
+  CreateProactiveScheduleInput,
+  ProactiveSchedule,
+  ProactiveTaskRun,
   DetachedPreviewWindowData,
   DetachedPreviewWindowInput,
   FeishuConfig,
@@ -481,6 +484,14 @@ export interface ElectronAPI {
   listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
   /** 将当前筛选结果导出为用户选择位置的 JSONL */
   exportAgentAuditEvents: (query?: AgentAuditQuery) => Promise<{ canceled: boolean; count: number }>
+  /** 查询本地定时任务与运行记录 */
+  listProactiveSchedules: () => Promise<ProactiveSchedule[]>
+  listProactiveRuns: () => Promise<ProactiveTaskRun[]>
+  /** 用户明确创建、暂停、恢复、删除或手动运行定时任务 */
+  createProactiveSchedule: (input: CreateProactiveScheduleInput) => Promise<ProactiveSchedule>
+  setProactiveScheduleEnabled: (scheduleId: string, enabled: boolean) => Promise<ProactiveSchedule>
+  deleteProactiveSchedule: (scheduleId: string) => Promise<void>
+  runProactiveSchedule: (scheduleId: string) => Promise<ProactiveTaskRun>
 
   // ===== Agent 队列消息 =====
 
@@ -1462,6 +1473,12 @@ const electronAPI: ElectronAPI = {
   requestComputerUsePermissions: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS),
   listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
   exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
+  listProactiveSchedules: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES),
+  listProactiveRuns: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS),
+  createProactiveSchedule: (input: CreateProactiveScheduleInput) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, input),
+  setProactiveScheduleEnabled: (scheduleId: string, enabled: boolean) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_PROACTIVE_SCHEDULE_ENABLED, scheduleId, enabled),
+  deleteProactiveSchedule: (scheduleId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.DELETE_PROACTIVE_SCHEDULE, scheduleId),
+  runProactiveSchedule: (scheduleId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.RUN_PROACTIVE_SCHEDULE, scheduleId),
 
   // Agent 队列消息
   queueAgentMessage: (input: AgentQueueMessageInput) => {

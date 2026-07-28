@@ -132,6 +132,7 @@ export function saveDingTalkBotConfig(input: DingTalkBotConfigInput): DingTalkBo
       defaultWorkspaceId: input.defaultWorkspaceId,
       defaultChannelId: input.defaultChannelId,
       defaultModelId: input.defaultModelId,
+      trustedSenderIds: input.trustedSenderIds ?? existing.trustedSenderIds,
     }
     config.bots[idx] = updated
     writeMultiConfig(config)
@@ -149,6 +150,7 @@ export function saveDingTalkBotConfig(input: DingTalkBotConfigInput): DingTalkBo
     defaultWorkspaceId: input.defaultWorkspaceId,
     defaultChannelId: input.defaultChannelId,
     defaultModelId: input.defaultModelId,
+    trustedSenderIds: input.trustedSenderIds,
   }
   config.bots.push(bot)
   writeMultiConfig(config)
@@ -202,6 +204,7 @@ export function saveDingTalkConfig(input: DingTalkConfigInput): DingTalkConfig {
     clientId: input.clientId,
     clientSecret: input.clientSecret,
     defaultWorkspaceId: input.defaultWorkspaceId,
+    trustedSenderIds: first?.trustedSenderIds,
   }
   const saved = saveDingTalkBotConfig(botInput)
   return {

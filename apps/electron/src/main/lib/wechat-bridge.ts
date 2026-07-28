@@ -817,7 +817,7 @@ class WeChatBridge {
 
     // 无媒体 → 原有纯文本路径
     if (allImages.length === 0 && allFiles.length === 0) {
-      await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken })
+      await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken }, undefined, msg.from_user_id)
       return
     }
 
@@ -829,7 +829,7 @@ class WeChatBridge {
       if (allFiles.length > 0) {
         this.pendingFiles.set(chatId, { files: allFiles, createdAt: Date.now() })
       }
-      await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken })
+      await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken }, undefined, msg.from_user_id)
       return
     }
 
@@ -884,7 +884,7 @@ class WeChatBridge {
       attachments.push({ absolutePath, label: file.fileName, kind: 'file' as const })
     }
 
-    await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken }, attachments)
+    await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken }, attachments, msg.from_user_id)
   }
 
   // ===== 同步游标持久化 =====

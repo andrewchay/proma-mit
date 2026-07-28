@@ -132,6 +132,7 @@ export function saveFeishuBotConfig(input: FeishuBotConfigInput): FeishuBotConfi
       defaultWorkspaceId: input.defaultWorkspaceId ?? existing.defaultWorkspaceId,
       defaultChannelId: input.defaultChannelId ?? existing.defaultChannelId,
       defaultModelId: input.defaultModelId ?? existing.defaultModelId,
+      trustedSenderIds: input.trustedSenderIds ?? existing.trustedSenderIds,
     }
     config.bots[idx] = updated
     writeMultiConfig(config)
@@ -149,6 +150,7 @@ export function saveFeishuBotConfig(input: FeishuBotConfigInput): FeishuBotConfi
     defaultWorkspaceId: input.defaultWorkspaceId,
     defaultChannelId: input.defaultChannelId,
     defaultModelId: input.defaultModelId,
+    trustedSenderIds: input.trustedSenderIds,
   }
   config.bots.push(bot)
   writeMultiConfig(config)
@@ -204,6 +206,7 @@ export function saveFeishuConfig(input: FeishuConfigInput): FeishuConfig {
     defaultWorkspaceId: input.defaultWorkspaceId,
     defaultChannelId: first?.defaultChannelId,
     defaultModelId: first?.defaultModelId,
+    trustedSenderIds: first?.trustedSenderIds,
   }
   const saved = saveFeishuBotConfig(botInput)
   return {

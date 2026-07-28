@@ -1,8 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test'
 
+class MockBrowserWindow {}
+
 mock.module('electron', () => ({
   app: { isPackaged: false },
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
   desktopCapturer: { getSources: async () => [] },
   screen: { getPrimaryDisplay: () => ({ size: { width: 1, height: 1 }, scaleFactor: 1 }) },

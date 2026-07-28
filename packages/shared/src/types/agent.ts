@@ -32,11 +32,11 @@ export const MEMORY_IPC_CHANNELS = {
   TEST_CONNECTION: 'memory:test-connection',
 } as const
 
-/** 本地 Computer Use 与 Web Bridge 的审计记录。 */
+/** 本地自动化与外部消息入口的审计记录。 */
 export interface AgentAuditEvent {
   at: string
   sessionId: string
-  source: 'web-bridge' | 'computer-use'
+  source: 'web-bridge' | 'computer-use' | 'external-bridge'
   action: string
   detail: Record<string, unknown>
 }
@@ -1622,6 +1622,18 @@ export const AGENT_IPC_CHANNELS = {
   LIST_AUDIT_EVENTS: 'agent:list-audit-events',
   /** 导出筛选后的本地操作审计 */
   EXPORT_AUDIT_EVENTS: 'agent:export-audit-events',
+  /** 查询本地 Proactive 定时任务 */
+  LIST_PROACTIVE_SCHEDULES: 'agent:list-proactive-schedules',
+  /** 创建需用户明确确认的本地 Proactive 定时任务 */
+  CREATE_PROACTIVE_SCHEDULE: 'agent:create-proactive-schedule',
+  /** 暂停或恢复 Proactive 定时任务 */
+  SET_PROACTIVE_SCHEDULE_ENABLED: 'agent:set-proactive-schedule-enabled',
+  /** 删除 Proactive 定时任务 */
+  DELETE_PROACTIVE_SCHEDULE: 'agent:delete-proactive-schedule',
+  /** 手动运行一次 Proactive 定时任务 */
+  RUN_PROACTIVE_SCHEDULE: 'agent:run-proactive-schedule',
+  /** 查询 Proactive TaskRun 历史 */
+  LIST_PROACTIVE_RUNS: 'agent:list-proactive-runs',
 
   // 后台任务管理
   /** 获取任务输出 */

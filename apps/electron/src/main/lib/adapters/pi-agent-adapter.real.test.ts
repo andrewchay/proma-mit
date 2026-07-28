@@ -18,8 +18,10 @@ import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@proma/share
 const tempConfigDir = mkdtempSync(join(tmpdir(), 'proma-pi-real-config-'))
 process.env.PROMA_TEST_CONFIG_DIR = tempConfigDir
 
+class MockBrowserWindow {}
+
 mock.module('electron', () => ({
-  BrowserWindow: class MockBrowserWindow {},
+  BrowserWindow: MockBrowserWindow,
   app: { isPackaged: false },
   dialog: {
     showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),

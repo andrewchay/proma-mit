@@ -5,7 +5,7 @@
  * 所有用户配置存储在 ~/.proma-mit/ 目录下。
  */
 
-import { join, basename } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { mkdirSync, existsSync, cpSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { APP_CONFIG_DIR_NAME, APP_DEV_CONFIG_DIR_NAME } from './app-identity'
@@ -138,6 +138,10 @@ export function getAttachmentsDir(): string {
  * @returns ~/.proma/attachments/{conversationId}/
  */
 export function getConversationAttachmentsDir(conversationId: string): string {
+  if (!conversationId || basename(conversationId) !== conversationId || conversationId === '.' || conversationId === '..') {
+    throw new Error('附件对话 ID 必须是单个安全路径段')
+  }
+
   const dir = join(getAttachmentsDir(), conversationId)
 
   if (!existsSync(dir)) {
@@ -154,7 +158,47 @@ export function getConversationAttachmentsDir(conversationId: string): string {
  * @returns 完整路径 ~/.proma/attachments/{conversationId}/{uuid}.ext
  */
 export function resolveAttachmentPath(localPath: string): string {
-  return join(getAttachmentsDir(), localPath)
+  if (!localPath || isAbsolute(localPath)) {
+    throw new Error('附件路径必须是非空相对路径')
+  }
+
+  return resolvePathWithinDirectory(getAttachmentsDir(), localPath, '附件路径')
+}
+
+/**
+ * 解析目录内的相对路径，并拒绝路径穿越。
+ */
+export function resolvePathWithinDirectory(directory: string, localPath: string, label: string): string {
+  if (isAbsolute(localPath)) {
+    throw new Error(`${label}必须是相对路径`)
+  }
+
+  const root = resolve(directory)
+  const target = resolve(root, localPath)
+  const pathFromRoot = relative(root, target)
+  if (!pathFromRoot || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
+    throw new Error(`${label}不在安全目录内`)
+  }
+
+  return target
+}
+
+/**
+ * 验证绝对路径位于本机 Proma 配置目录内。
+ */
+export function resolveConfigPath(localPath: string): string {
+  if (!isAbsolute(localPath)) {
+    throw new Error('配置附件路径必须是绝对路径')
+  }
+
+  const configDir = resolve(getConfigDir())
+  const target = resolve(localPath)
+  const pathFromConfigDir = relative(configDir, target)
+  if (!pathFromConfigDir || pathFromConfigDir === '..' || pathFromConfigDir.startsWith(`..${sep}`) || isAbsolute(pathFromConfigDir)) {
+    throw new Error(`附件路径不在安全目录内: ${localPath}`)
+  }
+
+  return target
 }
 
 /**
@@ -246,6 +290,21 @@ export function getAgentGoalsDir(): string {
 /** 指定 Goal 的事件日志路径。 */
 export function getAgentGoalEventsPath(goalId: string): string {
   return join(getAgentGoalsDir(), `${goalId}.jsonl`)
+}
+
+/** Proactive Scheduler 的本地持久化目录。 */
+export function getProactiveDir(): string {
+  const dir = join(getConfigDir(), 'proactive')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+export function getProactiveSchedulesPath(): string {
+  return join(getProactiveDir(), 'schedules.json')
+}
+
+export function getProactiveRunsPath(): string {
+  return join(getProactiveDir(), 'runs.json')
 }
 
 /**

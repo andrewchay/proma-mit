@@ -10,20 +10,20 @@ describe('隔离执行器边界', () => {
   })
 
   test('given a configured executor endpoint then API process forwards only the structured request', async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch: async (request) => {
-        expect(request.headers.get('authorization')).toBe('Bearer executor-token')
-        expect(await request.json()).toEqual({ taskId: 'task-1', workspaceDir: '/data/workspaces/a', command: 'git', args: ['status'], timeoutMs: 1_000, maxOutputBytes: 1_024 })
-        return Response.json({ exitCode: 0, stdout: 'clean', stderr: '', timedOut: false })
-      },
-    })
+    const originalFetch = globalThis.fetch
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, writable: true, value: async (input: URL | RequestInfo, init?: RequestInit) => {
+      const request = new Request(input, init)
+      expect(request.url).toBe('http://executor.test/execute')
+      expect(request.headers.get('authorization')).toBe('Bearer executor-token')
+      expect(await request.json()).toEqual({ taskId: 'task-1', workspaceDir: '/data/workspaces/a', command: 'git', args: ['status'], timeoutMs: 1_000, maxOutputBytes: 1_024 })
+      return Response.json({ exitCode: 0, stdout: 'clean', stderr: '', timedOut: false })
+    } })
     try {
-      const executor = new HttpIsolatedExecutor(`http://127.0.0.1:${server.port}`, 'executor-token')
+      const executor = new HttpIsolatedExecutor('http://executor.test', 'executor-token')
       await expect(executor.execute({ taskId: 'task-1', workspaceDir: '/data/workspaces/a', command: 'git', args: ['status'], timeoutMs: 1_000, maxOutputBytes: 1_024 }, new AbortController().signal))
         .resolves.toEqual({ exitCode: 0, stdout: 'clean', stderr: '', timedOut: false })
     } finally {
-      server.stop(true)
+      Object.defineProperty(globalThis, 'fetch', { configurable: true, writable: true, value: originalFetch })
     }
   })
 })

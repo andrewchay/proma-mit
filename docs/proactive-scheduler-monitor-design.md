@@ -4,6 +4,8 @@
 > 日期：2026-05-18  
 > 范围：Proma OSS Electron app 的主动协作、定时任务、Monitor、Memory 插件化与 UI 设计
 
+> 实施进度（2026-07-28）：已完成 Phase 1 的 Scheduler durable 基础：本地 JSON 持久化、一次性/固定间隔、启动时至多补跑一次、暂停/恢复、默认 `safe` 权限和 `TaskRun` 记录，并复用 headless Agent 执行器。设置页已提供显式创建、手动运行、暂停/恢复、删除和运行记录查看。Routine、Approval、Monitor 与 Cron 编辑器仍未实现。
+
 ## 1. 背景
 
 Proma 现在已经具备 Agent 会话、工作区 Skills/MCP、本地 JSON/JSONL 会话持久化、Quick Task、后台 Agent 执行、记忆工具、飞书通知等底座。下一步的关键不是简单加一个 Cron 配置页，而是把 Proma 从“用户发起一次对话”推进到“用户可以委托 Proma 长期关注、定期整理、持续跟进”的主动协作系统。

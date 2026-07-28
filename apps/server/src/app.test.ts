@@ -98,6 +98,18 @@ describe('Proma Web 服务', () => {
     expect((await auditor.fetch(new Request('http://localhost/agent/audit/export'))).status).toBe(200)
   })
 
+  test('账单读取与导出仅允许 admin，并按当前租户用户范围查询', async () => {
+    const config = { databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }
+    const viewer = createPromaWebServerApplication(config, { postgres: new FakePostgresClient(), auth: () => ({ tenantId: 'tenant-a', userId: 'user-a', roles: ['viewer'] }) })
+    const admin = createPromaWebServerApplication(config, { postgres: new FakePostgresClient(), auth: () => ({ tenantId: 'tenant-a', userId: 'user-a', roles: ['admin'] }) })
+
+    expect((await viewer.fetch(new Request('http://localhost/agent/billing'))).status).toBe(403)
+    expect((await admin.fetch(new Request('http://localhost/agent/billing'))).status).toBe(200)
+    const exportResponse = await admin.fetch(new Request('http://localhost/agent/billing/export?format=json'))
+    expect(exportResponse.status).toBe(200)
+    expect(exportResponse.headers.get('content-disposition')).toContain('proma-billing.json')
+  })
+
   test('运维视图遵循最小权限：viewer 不能读取，operator 仅可访问 metrics 与 recovery', async () => {
     const config = { databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }
     const viewer = createPromaWebServerApplication(config, { postgres: new FakePostgresClient(), auth: () => ({ tenantId: 'tenant-a', userId: 'user-a', roles: ['viewer'] }) })

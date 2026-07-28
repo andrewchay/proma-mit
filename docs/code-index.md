@@ -1,10 +1,12 @@
 # Proma 代码索引与说明
 
-> 生成时间：2026-07-15  
-> 版本：v0.2  
+> 事实校准：2026-07-28
+> Electron 包版本：v0.10.4
 > 范围：整个 Monorepo 的源码结构、核心模块职责、数据流与已知问题。
 
 本文档是未来重构与功能扩展的基础地图。阅读前建议先看根目录 `AGENTS.md` 了解项目约定。
+
+仓库版本、测试数量和模块文件数量由 [repository-facts.md](generated/repository-facts.md) 自动生成；发布质量门会校验该摘要与源码一致。
 
 ---
 
@@ -18,14 +20,14 @@ Proma 是一个集成通用 AI Agent 的下一代人工智能桌面应用，基�
   - `apps/electron/src/main/lib/`：约 28,410 行（主进程服务层）
   - `apps/electron/src/renderer/`：约 48,000+ 行（渲染进程 UI / 状态）
   - `packages/*`：约 3,000+ 行（共享类型、Provider 适配器、UI 组件）
-  - **测试文件**：8 个，约 600 行
+  - **测试文件**：68 个（含 Bun 单元/集成测试与 Playwright CDP E2E）
 
 ### 1.1 Monorepo 结构
 
 ```
 proma-mit/
 ├── apps/
-│   └── electron/              # Electron 桌面应用（@proma/electron@0.9.52）
+│   └── electron/              # Electron 桌面应用（@proma/electron@0.10.4）
 │       ├── src/
 │       │   ├── main/          # 主进程 + 服务层
 │       │   ├── preload/       # IPC 上下文桥接
@@ -34,8 +36,8 @@ proma-mit/
 │       ├── resources/         # 图标、音效、主题预览
 │       └── scripts/           # 构建脚本
 ├── packages/
-│   ├── shared/                # 共享类型、IPC 通道常量、工具函数（@proma/shared@0.1.23）
-│   ├── core/                  # AI Provider 适配器、代码高亮服务（@proma/core@0.2.9）
+│   ├── shared/                # 共享类型、IPC 通道常量、工具函数（@proma/shared@0.1.43）
+│   ├── core/                  # AI Provider 适配器、代码高亮服务（@proma/core@0.2.13）
 │   └── ui/                    # 共享 UI 组件（@proma/ui@0.1.4）
 ├── docs/                      # 设计文档与代码索引
 ├── release-notes/             # 版本发布说明
@@ -86,6 +88,8 @@ proma-mit/
 | `agent-permission-service.ts` | ~200 | 工具权限检查、权限模式管理（safe / ask / allow-all） |
 | `agent-ask-user-service.ts` | ~150 | AskUser 请求处理 |
 | `agent-exit-plan-service.ts` | ~120 | Agent 退出计划服务 |
+| `proactive-scheduler.ts` | ~170 | durable Scheduler：一次性/固定间隔、到期恢复、暂停/恢复、默认 safe 权限、TaskRun 调度 |
+| `proactive-scheduler-store.ts` | ~80 | Proactive schedules/runs 的本地 JSON 原子持久化（最多保留 1,000 条运行记录） |
 | `agent-tool-input-validator.ts` | ~200 | Agent 工具输入参数校验 |
 | `agent-tool-token-estimator.ts` | ~180 | Agent 工具 token 估算 |
 | `agent-event-bus.ts` | ~80 | Agent 事件总线 |

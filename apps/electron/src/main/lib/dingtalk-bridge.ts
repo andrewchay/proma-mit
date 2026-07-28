@@ -149,6 +149,7 @@ class DingTalkBridge {
         },
       },
       getDefaultWorkspaceId: () => this.botConfig.defaultWorkspaceId,
+      isTrustedSender: (senderId) => Boolean(senderId && this.botConfig.trustedSenderIds?.includes(senderId)),
       onWorkspaceSwitched: async (workspaceId) => {
         const { saveDingTalkBotConfig } = await import('./dingtalk-config')
         saveDingTalkBotConfig({
@@ -158,6 +159,9 @@ class DingTalkBridge {
           clientId: this.botConfig.clientId,
           clientSecret: '',
           defaultWorkspaceId: workspaceId,
+          defaultChannelId: this.botConfig.defaultChannelId,
+          defaultModelId: this.botConfig.defaultModelId,
+          trustedSenderIds: this.botConfig.trustedSenderIds,
         })
         this.botConfig = { ...this.botConfig, defaultWorkspaceId: workspaceId }
       },
@@ -383,14 +387,14 @@ class DingTalkBridge {
     this.pendingImages.delete(chatId)
 
     if (allImages.length === 0) {
-      await this.commandHandler.handleIncomingMessage(chatId, text, ctx)
+      await this.commandHandler.handleIncomingMessage(chatId, text, ctx, undefined, data.senderId)
       return
     }
 
     // 命令消息携带图片：把图片放回缓冲，仅处理命令
     if (text.startsWith('/')) {
       this.pendingImages.set(chatId, { images: allImages, createdAt: Date.now() })
-      await this.commandHandler.handleIncomingMessage(chatId, text, ctx)
+      await this.commandHandler.handleIncomingMessage(chatId, text, ctx, undefined, data.senderId)
       return
     }
 
@@ -432,7 +436,7 @@ class DingTalkBridge {
       return { absolutePath, label, kind: 'image' as const }
     })
 
-    await this.commandHandler.handleIncomingMessage(chatId, text, ctx, attachments)
+    await this.commandHandler.handleIncomingMessage(chatId, text, ctx, attachments, data.senderId)
   }
 
   /** 通过 sessionWebhook 发送纯文本（用于提示/警告） */

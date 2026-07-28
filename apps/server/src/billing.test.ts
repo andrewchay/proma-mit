@@ -40,4 +40,24 @@ describe('P3 usage ledger', () => {
     await expect(ledger.assertTaskWithinBudget({ tenantId: 'tenant', userId: 'user' }, 'model', { modelMonthlyCostMicroUsd: 80 }))
       .rejects.toThrow('该模型本月额度已用尽')
   })
+
+  test('claims an 80 percent budget alert once per tenant user and month', async () => {
+    let insertAttempts = 0
+    const client = {
+      query: async <Row extends Record<string, unknown>>(sql: string) => {
+        if (sql.includes('SUM(input_tokens)')) {
+          return { rows: [{ input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_microusd: 80, priced_record_count: 1, unpriced_record_count: 0 } as unknown as Row] }
+        }
+        if (sql.includes('proma_runtime_budget_alerts')) {
+          insertAttempts += 1
+          return { rows: (insertAttempts === 1 ? [{ threshold_percent: 80 }] : []) as unknown as Row[] }
+        }
+        return { rows: [] as Row[] }
+      },
+    }
+    const ledger = new PostgresUsageLedger(client, [])
+    await expect(ledger.claimMonthlyBudgetThresholdAlert({ tenantId: 'tenant', userId: 'user' }, { monthlyCostMicroUsd: 100 }))
+      .resolves.toMatchObject({ thresholdPercent: 80, costMicroUsd: 80, budgetMicroUsd: 100 })
+    await expect(ledger.claimMonthlyBudgetThresholdAlert({ tenantId: 'tenant', userId: 'user' }, { monthlyCostMicroUsd: 100 })).resolves.toBeUndefined()
+  })
 })
