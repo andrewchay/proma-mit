@@ -22,14 +22,32 @@ function snapshotResult(snapshot: WebBridgeSnapshot): ToolResult {
   return { toolCallId: '', content: JSON.stringify(snapshot, null, 2) }
 }
 
+/**
+ * 截图结果同时携带结构化快照。
+ *
+ * 部分 OpenAI 兼容 Provider 与 Pi 的 Provider 适配层不会稳定地消费工具结果中的
+ * 图片内容。保留图片供支持视觉的模型使用，并提供同一页面的文本快照作为可靠降级，
+ * 这样模型仍能在截图后继续理解并回答用户。
+ */
+export function createWebBridgeScreenshotResult(
+  snapshot: WebBridgeSnapshot,
+  screenshot: { mediaType: string; data: string },
+): ToolResult {
+  return {
+    toolCallId: '',
+    content: `Web Bridge 页面截图已附加。以下是与截图对应的结构化页面快照，请基于截图和快照理解页面内容：\n${JSON.stringify(snapshot, null, 2)}`,
+    imageData: [{ mediaType: screenshot.mediaType, data: screenshot.data }],
+  }
+}
+
 export function createWebBridgeNavigateToolDefinition() {
   return { name: WEB_BRIDGE_NAVIGATE_TOOL_NAME, description: '在可见且隔离的 Proma Web Bridge 浏览器中打开一个 http/https 网页。导航会请求用户授权。', parameters: { type: 'object' as const, properties: { url: { type: 'string', description: '要打开的完整 http 或 https URL' } }, required: ['url'] } }
 }
 export function createWebBridgeSnapshotToolDefinition() {
-  return { name: WEB_BRIDGE_SNAPSHOT_TOOL_NAME, description: '读取当前 Web Bridge 页面的 URL、标题和可见文本，不改变页面状态。', parameters: { type: 'object' as const, properties: {} } }
+  return { name: WEB_BRIDGE_SNAPSHOT_TOOL_NAME, description: '读取当前 Web Bridge 页面的 URL、标题和可见文本，不改变页面状态。前置条件：必须先成功调用 WebBridgeNavigate 或 WebBridgeConnectChrome；对于“打开 URL 后查看页面”的任务，绝不能把本工具作为第一个网页工具。', parameters: { type: 'object' as const, properties: {} } }
 }
 export function createWebBridgeScreenshotToolDefinition() {
-  return { name: WEB_BRIDGE_SCREENSHOT_TOOL_NAME, description: '获取当前 Web Bridge 页面截图，用于页面文本不足时理解界面，不改变页面状态。', parameters: { type: 'object' as const, properties: {} } }
+  return { name: WEB_BRIDGE_SCREENSHOT_TOOL_NAME, description: '获取当前 Web Bridge 页面截图，用于页面文本不足时理解界面，不改变页面状态。前置条件：必须先成功调用 WebBridgeNavigate 或 WebBridgeConnectChrome；当用户同时提供 URL 并要求截图时，第一步必须是 WebBridgeNavigate，不能先调用本工具。', parameters: { type: 'object' as const, properties: {} } }
 }
 export function createWebBridgeClickToolDefinition() {
   return { name: WEB_BRIDGE_CLICK_TOOL_NAME, description: '点击当前网页快照中指定 element_id 的元素。提交、购买、删除、发布或授权等有后果的操作必须先向用户确认。', parameters: { type: 'object' as const, properties: { element_id: { type: 'string', description: '来自最近 WebBridgeSnapshot 的稳定 elementId' }, selector: { type: 'string', description: '仅兼容旧会话；新调用必须使用 element_id' } }, required: [] } }
@@ -65,7 +83,8 @@ export async function executeWebBridgeNavigateTool(input: unknown, ctx: ToolCont
 export async function executeWebBridgeSnapshotTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> { return snapshotResult(await webBridgeService.snapshot(ctx.sessionId)) }
 export async function executeWebBridgeScreenshotTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const screenshot = await webBridgeService.screenshot(ctx.sessionId)
-  return { toolCallId: '', content: 'Web Bridge 页面截图已附加。', imageData: [{ mediaType: screenshot.mediaType, data: screenshot.data }] }
+  const snapshot = await webBridgeService.snapshot(ctx.sessionId)
+  return createWebBridgeScreenshotResult(snapshot, screenshot)
 }
 export async function executeWebBridgeClickTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const target = readTarget(input)

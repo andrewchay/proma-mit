@@ -14,10 +14,12 @@ mock.module('electron', () => ({
 const {
   createWebBridgeNavigateToolDefinition,
   createWebBridgeSnapshotToolDefinition,
+  createWebBridgeScreenshotToolDefinition,
   createWebBridgeConnectChromeToolDefinition,
   createWebBridgeClickToolDefinition,
   createWebBridgeDownloadToolDefinition,
   createWebBridgeUploadToolDefinition,
+  createWebBridgeScreenshotResult,
   executeWebBridgeNavigateTool,
   executeWebBridgeTypeTool,
 } = await import('./web-bridge-tools')
@@ -37,6 +39,8 @@ describe('Web Bridge 工具', () => {
     expect(createWebBridgeDownloadToolDefinition().name).toBe('WebBridgeDownload')
     expect(createWebBridgeUploadToolDefinition().name).toBe('WebBridgeUpload')
     expect(createWebBridgeClickToolDefinition().parameters.properties.element_id).toBeDefined()
+    expect(createWebBridgeSnapshotToolDefinition().description).toContain('必须先成功调用 WebBridgeNavigate')
+    expect(createWebBridgeScreenshotToolDefinition().description).toContain('第一步必须是 WebBridgeNavigate')
   })
 
   test('缺少必要参数时不访问浏览器', async () => {
@@ -46,5 +50,22 @@ describe('Web Bridge 工具', () => {
 
     expect(navigate.isError).toBe(true)
     expect(type.isError).toBe(true)
+  })
+
+  test('given a screenshot when its result is built then it retains both image and readable page snapshot', () => {
+    const result = createWebBridgeScreenshotResult(
+      {
+        url: 'https://ccunpacked.dev/#agent-loop',
+        title: 'Agent Loop',
+        text: 'Agent loop content',
+        accessibility: [{ elementId: 'main-e-1', role: 'link', name: 'Next', selector: 'a[href="#next"]', disabled: false }],
+        accessibilityTree: [{ elementId: 'main-e-1', role: 'link', name: 'Next', selector: 'a[href="#next"]', disabled: false }],
+      },
+      { mediaType: 'image/png', data: 'AQID' },
+    )
+
+    expect(result.content).toContain('结构化页面快照')
+    expect(result.content).toContain('ccunpacked.dev')
+    expect(result.imageData).toEqual([{ mediaType: 'image/png', data: 'AQID' }])
   })
 })

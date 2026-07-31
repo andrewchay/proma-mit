@@ -114,11 +114,11 @@ describe('AI SDK runtime core', () => {
     })
   })
 
-  test('given a screenshot result when converting tool output then the model receives an image file block', async () => {
+  test('given a screenshot result when converting tool output then the model receives an image file block and readable fallback', async () => {
     const core = new AISDKRuntimeCore()
     const screenshotTool = createRuntimeTool('ComputerUseScreenshot', async () => ({
       toolCallId: 'tool-1',
-      content: '截图已附加',
+      content: '截图已附加。结构化页面快照：{"title":"Agent Loop"}',
       imageData: [{ mediaType: 'image/png', data: 'AQID' }],
     }))
     const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'bypassPermissions', planModeEntered: false }
@@ -129,7 +129,7 @@ describe('AI SDK runtime core', () => {
     expect(screenshot.toModelOutput({ output: result })).toEqual({
       type: 'content',
       value: [
-        { type: 'text', text: '截图已附加' },
+        { type: 'text', text: '截图已附加。结构化页面快照：{"title":"Agent Loop"}' },
         { type: 'file', mediaType: 'image/png', data: { type: 'data', data: new Uint8Array([1, 2, 3]) } },
       ],
     })
