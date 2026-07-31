@@ -9,7 +9,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -33,6 +33,7 @@ import type {
   ChannelTestResult,
   FetchModelsInput,
   FetchModelsResult,
+  ChannelPlanQuotaResult,
   ConversationMeta,
   ChatMessage,
   ChatSendInput,
@@ -121,6 +122,7 @@ import {
   testChannel,
   testChannelDirect,
   fetchModels,
+  getChannelPlanQuota,
 } from './lib/channel-manager'
 import {
   listConversations,
@@ -213,6 +215,7 @@ import {
   detachWorkspaceDirectory,
   detachWorkspaceFile,
 } from './lib/agent-workspace-manager'
+import { getDynamicIslandService } from './lib/dynamic-island/dynamic-island-service'
 import { getMemoryConfig, setMemoryConfig } from './lib/memory-service'
 import { getAllToolInfos } from './lib/chat-tool-registry'
 import { updateToolState, updateToolCredentials, getToolCredentials, addCustomTool, deleteCustomTool } from './lib/chat-tool-config'
@@ -667,6 +670,16 @@ export function registerIpcHandlers(): void {
     CHANNEL_IPC_CHANNELS.FETCH_MODELS,
     async (_, input: FetchModelsInput): Promise<FetchModelsResult> => {
       return fetchModels(input)
+    }
+  )
+
+  // ===== 渠道订阅 Plan 额度 =====
+
+  // 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口）
+  ipcMain.handle(
+    CHANNEL_IPC_CHANNELS.GET_PLAN_QUOTA,
+    async (_, channelId: string): Promise<ChannelPlanQuotaResult> => {
+      return getChannelPlanQuota(channelId)
     }
   )
 
@@ -3626,4 +3639,33 @@ export function registerIpcHandlers(): void {
   // ===== Workflow Mode IPC 处理器 =====
   const { registerWorkflowIpcHandlers } = require('./lib/workflow-ipc-handlers')
   registerWorkflowIpcHandlers()
+
+  // ===== macOS 灵动岛通知 =====
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {
+    return getDynamicIslandService().getState()
+  })
+
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.SET_ENABLED, async (_event, enabled: boolean) => {
+    return getDynamicIslandService().setEnabled(Boolean(enabled))
+  })
+
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.DISMISS, async (_event, id: string) => {
+    return getDynamicIslandService().dismiss(id)
+  })
+
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.TEST, async () => {
+    return getDynamicIslandService().test()
+  })
+
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.NOTIFY, async (_event, input: DynamicIslandNotifyInput) => {
+    return getDynamicIslandService().notify(input, 'ai')
+  })
+
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_PROJECT_MUTED, async (_event, workspace?: string) => {
+    return getDynamicIslandService().getProjectMuted(workspace)
+  })
+
+  ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.SET_PROJECT_MUTED, async (_event, workspace: string, muted: boolean) => {
+    return getDynamicIslandService().setProjectMuted(workspace, muted)
+  })
 }

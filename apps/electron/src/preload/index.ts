@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -248,6 +248,9 @@ export interface ElectronAPI {
 
   /** 从供应商拉取可用模型列表（直接传入凭证，无需已保存渠道） */
   fetchModels: (input: FetchModelsInput) => Promise<FetchModelsResult>
+
+  /** 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口） */
+  getChannelPlanQuota: (channelId: string) => Promise<import('@proma/shared').ChannelPlanQuotaResult>
 
   // ===== 对话管理相关 =====
 
@@ -1088,6 +1091,23 @@ export interface ElectronAPI {
   cleanupTempStorage: () => Promise<unknown>
   /** 取消迁移导入（清理临时解压目录） */
   migrationCancelImport: (tempDir: string) => Promise<void>
+
+  // ===== macOS 灵动岛通知 =====
+
+  /** 获取灵动岛状态（支持/运行中/开关/最近通知） */
+  getDynamicIslandState: () => Promise<import('@proma/shared').DynamicIslandState>
+  /** 设置灵动岛总开关 */
+  setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
+  /** 关闭某条通知 */
+  dismissDynamicIsland: (id: string) => Promise<import('@proma/shared').DynamicIslandActionResult>
+  /** 发送测试通知 */
+  testDynamicIsland: () => Promise<import('@proma/shared').DynamicIslandActionResult>
+  /** AI/外部调用 notify（渲染进程侧暂不直接暴露，保留接口给桥接场景） */
+  notifyDynamicIsland: (input: import('@proma/shared').DynamicIslandNotifyInput) => Promise<import('@proma/shared').DynamicIslandActionResult>
+  /** 查询项目是否静音 */
+  getDynamicIslandProjectMuted: (workspace?: string) => Promise<import('@proma/shared').DynamicIslandProjectMutedResult>
+  /** 设置/取消项目静音 */
+  setDynamicIslandProjectMuted: (workspace: string, muted: boolean) => Promise<import('@proma/shared').DynamicIslandProjectMutedResult>
 }
 
 interface MigrationExportResult {
@@ -1200,6 +1220,10 @@ const electronAPI: ElectronAPI = {
 
   fetchModels: (input: FetchModelsInput) => {
     return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.FETCH_MODELS, input)
+  },
+
+  getChannelPlanQuota: (channelId: string) => {
+    return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.GET_PLAN_QUOTA, channelId)
   },
 
   // 对话管理
@@ -2405,6 +2429,36 @@ const electronAPI: ElectronAPI = {
 
   migrationCancelImport: (tempDir: string) => {
     return ipcRenderer.invoke('migration:cancelImport', tempDir)
+  },
+
+  // ===== macOS 灵动岛通知 =====
+
+  getDynamicIslandState: () => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE)
+  },
+
+  setDynamicIslandEnabled: (enabled: boolean) => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.SET_ENABLED, enabled)
+  },
+
+  dismissDynamicIsland: (id: string) => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.DISMISS, id)
+  },
+
+  testDynamicIsland: () => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.TEST)
+  },
+
+  notifyDynamicIsland: (input: import('@proma/shared').DynamicIslandNotifyInput) => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.NOTIFY, input)
+  },
+
+  getDynamicIslandProjectMuted: (workspace?: string) => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.GET_PROJECT_MUTED, workspace)
+  },
+
+  setDynamicIslandProjectMuted: (workspace: string, muted: boolean) => {
+    return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.SET_PROJECT_MUTED, workspace, muted)
   },
 }
 

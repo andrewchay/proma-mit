@@ -39,6 +39,9 @@ export * from './github'
 // 系统提示词相关类型
 export * from './system-prompt'
 
+// macOS 灵动岛通知相关类型
+export * from './dynamic-island'
+
 // Chat 工具（function calling）相关类型
 export * from './chat-tool'
 

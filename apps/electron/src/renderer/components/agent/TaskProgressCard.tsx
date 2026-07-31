@@ -105,6 +105,7 @@ interface TaskProgressCardProps {
 
 export function TaskProgressCard({ activities, animate = false, streamEnded = false, historicalTaskSubjects }: TaskProgressCardProps): React.ReactElement | null {
   const items = React.useMemo(() => aggregateTaskItems(activities, streamEnded, historicalTaskSubjects), [activities, streamEnded, historicalTaskSubjects])
+  // 默认收起；点击标题行展开查看每一步现状
   const [expanded, setExpanded] = React.useState(false)
 
   if (items.length === 0) return null
@@ -121,34 +122,20 @@ export function TaskProgressCard({ activities, animate = false, streamEnded = fa
         className="rounded-lg bg-muted/40 px-3.5 py-3"
         style={dashedBorderStyle}
       >
-        {/* 标题行 */}
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <ListTodo className="size-3.5 text-muted-foreground" />
-          <span className="text-[13px] font-medium text-muted-foreground">
+        {/* 标题行（可点击展开/收起） */}
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center gap-1.5 mb-1.5 text-left group"
+        >
+          <ListTodo className="size-3.5 text-muted-foreground shrink-0" />
+          <span className="text-[13px] font-medium text-muted-foreground group-hover:text-foreground/80 transition-colors">
             任务进度
           </span>
           <span className="text-[11px] text-muted-foreground/50 tabular-nums">
             {completedCount}/{totalCount}
           </span>
-        </div>
-
-        {/* 进度条 */}
-        <ProgressBar completed={completedCount} total={totalCount} />
-
-        {/* 任务列表 */}
-        <div className="space-y-0">
-          {visibleItems.map((item) => (
-            <TaskRow key={item.id} item={item} />
-          ))}
-        </div>
-
-        {/* 展开/收起按钮 */}
-        {needsCollapse && (
-          <button
-            type="button"
-            onClick={() => setExpanded(!expanded)}
-            className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-foreground/70 transition-colors"
-          >
+          <span className="ml-auto flex items-center gap-0.5 text-[11px] text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors">
             {expanded ? (
               <>
                 <ChevronUp className="size-3" />
@@ -157,9 +144,33 @@ export function TaskProgressCard({ activities, animate = false, streamEnded = fa
             ) : (
               <>
                 <ChevronDown className="size-3" />
-                <span>展开全部 {totalCount} 项</span>
+                <span>展开</span>
               </>
             )}
+          </span>
+        </button>
+
+        {/* 进度条（收起时也保留，直观看到整体进度） */}
+        <ProgressBar completed={completedCount} total={totalCount} />
+
+        {/* 任务列表：仅展开时展示每一步现状 */}
+        {expanded && (
+          <div className="space-y-0 mt-1">
+            {visibleItems.map((item) => (
+              <TaskRow key={item.id} item={item} />
+            ))}
+          </div>
+        )}
+
+        {/* 展开后条目过多时的“展开全部/收起”按钮 */}
+        {expanded && needsCollapse && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-foreground/70 transition-colors"
+          >
+            <ChevronUp className="size-3" />
+            <span>收起全部 {totalCount} 项</span>
           </button>
         )}
       </div>

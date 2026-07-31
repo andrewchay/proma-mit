@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { shortcutOverridesAtom, sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
+import { DynamicIslandConfigBlock } from './DynamicIslandConfigBlock'
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_CATEGORY_LABELS,
@@ -498,6 +499,9 @@ export function ShortcutSettings(): React.ReactElement {
 
   return (
     <div className="space-y-6">
+      {/* 灵动岛通知配置（macOS 专属，嵌入此页） */}
+      <DynamicIslandConfigBlock />
+
       {/* 描述 + 恢复全部按钮 */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">

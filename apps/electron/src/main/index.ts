@@ -537,6 +537,10 @@ async function bootstrap(): Promise<void> {
   safeRun('recoverWorkflowSideEffects', () => {
     import('./lib/workflow-service').then((m) => m.recoverWorkflowSideEffects())
   })
+  // 启动灵动岛通知服务（macOS 专属，非 mac 静默跳过）
+  safeRun('startDynamicIslandService', () => {
+    import('./lib/dynamic-island/dynamic-island-service').then((m) => m.startDynamicIslandService())
+  })
 
   app.on('activate', () => {
     if (shouldSuppressVoiceDictationActivate()) {
@@ -633,6 +637,13 @@ app.on('before-quit', () => {
   try {
     const { stopWorkflowScheduler } = require('./lib/workflow-scheduler')
     stopWorkflowScheduler()
+  } catch (e) {
+    // 忽略，可能在测试环境中不可用
+  }
+  // 停止灵动岛通知服务
+  try {
+    const { stopDynamicIslandService } = require('./lib/dynamic-island/dynamic-island-service')
+    stopDynamicIslandService()
   } catch (e) {
     // 忽略，可能在测试环境中不可用
   }

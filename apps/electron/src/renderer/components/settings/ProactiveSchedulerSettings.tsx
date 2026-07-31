@@ -144,7 +144,7 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
   }
 
   return <div className="space-y-5">
-    <SettingsSection title="主动定时任务" description="任务仅在本机运行；创建属于持久操作，默认安全权限。一次性任务到点最多补跑一次，固定间隔最短为 1 分钟。" action={<Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />刷新</Button>}>
+    <SettingsSection title="定时任务" description="任务仅在本机运行；创建属于持久操作，默认安全权限。一次性任务到点最多补跑一次，固定间隔最短为 1 分钟。" action={<Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />刷新</Button>}>
       <SettingsCard divided={false} className="space-y-4">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1.5 text-sm text-muted-foreground">执行目标

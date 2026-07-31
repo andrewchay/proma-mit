@@ -114,12 +114,12 @@ const OPERATION_AUDIT_TAB: TabItem = {
 };
 const AUTOMATION_TAB: TabItem = {
   id: "automation",
-  label: "自动化与设备控制",
+  label: "设备控制",
   icon: <MonitorCog size={16} />,
 };
 const SCHEDULER_TAB: TabItem = {
   id: 'scheduler',
-  label: '主动定时任务',
+  label: '定时任务',
   icon: <Clock3 size={16} />,
 };
 
