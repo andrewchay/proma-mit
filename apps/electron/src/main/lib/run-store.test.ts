@@ -1,0 +1,62 @@
+import { describe, expect, test, beforeEach, afterAll } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { AppEventEnvelope } from '@proma/shared'
+import { toRunRecord } from './run-store'
+
+const testDir = mkdtempSync(join(tmpdir(), 'proma-run-store-test-'))
+process.env.PROMA_TEST_CONFIG_DIR = testDir
+
+describe('toRunRecord 运行记录映射', () => {
+  test('waiting_action → 含 actionKind', () => {
+    const event: AppEventEnvelope = {
+      id: 'evt-1',
+      type: 'waiting_action',
+      source: 'agent',
+      taskId: 's1',
+      title: '会话',
+      sessionId: 's1',
+      actionKind: 'permission',
+      detail: '等待权限确认',
+      timestamp: 1000,
+    }
+    const record = toRunRecord(event)
+    expect(record.runId).toBe('s1')
+    expect(record.status).toBe('waiting_action')
+    expect(record.actionKind).toBe('permission')
+    expect(record.source).toBe('agent')
+  })
+
+  test('completed → status completed + detail', () => {
+    const event: AppEventEnvelope = {
+      id: 'evt-2',
+      type: 'completed',
+      source: 'workflow',
+      taskId: 'run-1',
+      title: '风险周报',
+      detail: '任务已完成',
+      timestamp: 2000,
+    }
+    const record = toRunRecord(event)
+    expect(record.source).toBe('workflow')
+    expect(record.status).toBe('completed')
+    expect(record.detail).toBe('任务已完成')
+  })
+
+  test('progress → 无 actionKind，保留 detail', () => {
+    const event: AppEventEnvelope = {
+      id: 'evt-3',
+      type: 'progress',
+      source: 'agent',
+      taskId: 's2',
+      title: '会话2',
+      detail: '正在使用 Bash',
+      timestamp: 3000,
+    }
+    const record = toRunRecord(event)
+    expect(record.status).toBe('progress')
+    expect(record.actionKind).toBeUndefined()
+    expect(record.detail).toBe('正在使用 Bash')
+  })
+})

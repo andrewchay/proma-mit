@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1112,6 +1112,13 @@ export interface ElectronAPI {
   listPluginStates: () => Promise<unknown[]>
   /** 启用/停用插件 */
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<unknown>
+
+  // ===== 运行记录（P2-1） =====
+
+  /** 查询运行记录 */
+  listRunRecords: (query?: import('@proma/shared').RunRecordQuery) => Promise<import('@proma/shared').RunRecord[]>
+  /** 清空运行记录 */
+  clearRunRecords: () => Promise<void>
   /** 设置灵动岛总开关 */
   setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
   /** 关闭某条通知 */
@@ -2475,6 +2482,14 @@ const electronAPI: ElectronAPI = {
 
   setPluginEnabled: (pluginId: string, enabled: boolean) => {
     return ipcRenderer.invoke(PLUGIN_IPC_CHANNELS.SET_ENABLED, pluginId, enabled)
+  },
+
+  listRunRecords: (query?: import('@proma/shared').RunRecordQuery) => {
+    return ipcRenderer.invoke(RUN_RECORD_IPC_CHANNELS.LIST, query)
+  },
+
+  clearRunRecords: () => {
+    return ipcRenderer.invoke(RUN_RECORD_IPC_CHANNELS.CLEAR)
   },
 
   setDynamicIslandEnabled: (enabled: boolean) => {

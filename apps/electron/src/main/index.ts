@@ -549,6 +549,10 @@ async function bootstrap(): Promise<void> {
   safeRun('startNotificationCoordinator', () => {
     import('./lib/notification-coordinator').then((m) => m.startNotificationCoordinator())
   })
+  // 启动运行记录存储（P2-1：统一事件 → 本地 JSONL 运行记录）
+  safeRun('startRunStore', () => {
+    import('./lib/run-store').then((m) => m.startRunStore())
+  })
 
   app.on('activate', () => {
     if (shouldSuppressVoiceDictationActivate()) {
@@ -666,6 +670,13 @@ app.on('before-quit', () => {
   try {
     const { stopNotificationCoordinator } = require('./lib/notification-coordinator')
     stopNotificationCoordinator()
+  } catch (e) {
+    // 忽略，可能在测试环境中不可用
+  }
+  // 停止运行记录存储
+  try {
+    const { stopRunStore } = require('./lib/run-store')
+    stopRunStore()
   } catch (e) {
     // 忽略，可能在测试环境中不可用
   }
