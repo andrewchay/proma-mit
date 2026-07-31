@@ -13,7 +13,7 @@ import { SettingsSection } from './primitives/SettingsSection'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { detectIsMac } from '@/lib/platform'
-import type { DynamicIslandRequest, DynamicIslandState } from '@proma/shared'
+import type { DynamicIslandSessionSnapshot, DynamicIslandState } from '@proma/shared'
 
 const LEVEL_LABEL: Record<string, string> = {
   info: '信息',
@@ -21,6 +21,33 @@ const LEVEL_LABEL: Record<string, string> = {
   warning: '警告',
   error: '失败',
   progress: '进行中',
+}
+
+const PHASE_LABEL: Record<string, string> = {
+  idle: '空闲',
+  running: '执行中',
+  'needs-interaction': '待处理',
+  completed: '已完成',
+  error: '需关注',
+}
+
+/** 当前活动摘要文本（用于「当前活动」行 description） */
+function describePill(pill: DynamicIslandState['pill'] | undefined): string {
+  if (!pill) return '暂无 Agent 活动'
+  if (pill.sessionCount === 0) return '暂无 Agent 活动'
+  if (pill.pendingInteractionCount > 0) return `有 ${pill.pendingInteractionCount} 个会话等待处理`
+  if (pill.unreadCompletedCount > 0) return `有 ${pill.unreadCompletedCount} 个已完成/失败待查看`
+  if (pill.activeSessionCount > 0) return `${pill.activeSessionCount} 个会话正在执行`
+  return '暂无 Agent 活动'
+}
+
+/** 当前活动摘要（用于「当前活动」行值） */
+function formatPill(pill: DynamicIslandState['pill']): string {
+  const parts: string[] = []
+  if (pill.pendingInteractionCount > 0) parts.push(`${pill.pendingInteractionCount} 待处理`)
+  if (pill.unreadCompletedCount > 0) parts.push(`${pill.unreadCompletedCount} 未读`)
+  if (pill.activeSessionCount > 0) parts.push(`${pill.activeSessionCount} 执行中`)
+  return parts.length > 0 ? parts.join(' · ') : PHASE_LABEL[pill.priorityStatus] ?? '空闲'
 }
 
 export function DynamicIslandConfigBlock(): React.ReactElement {
@@ -108,6 +135,14 @@ export function DynamicIslandConfigBlock(): React.ReactElement {
                 )}
               </span>
             </SettingsRow>
+            <SettingsRow
+              label="当前活动"
+              description={describePill(state?.pill)}
+            >
+              <span className="text-[13px] tabular-nums text-foreground/70">
+                {state?.pill ? formatPill(state.pill) : '—'}
+              </span>
+            </SettingsRow>
             <SettingsRow label="测试通知" description="向灵动岛发送一条测试通知，验证刘海定位与显示效果">
               <Button
                 variant="secondary"
@@ -125,18 +160,20 @@ export function DynamicIslandConfigBlock(): React.ReactElement {
       {isMac && state && state.recent.length > 0 && (
         <SettingsCard>
           <div className="flex flex-col gap-1">
-                        <div className="text-[13px] font-medium text-foreground mb-1">最近通知（最多 5 条）</div>
-            {state.recent.slice(0, 5).map((item: DynamicIslandRequest) => (
+            <div className="text-[13px] font-medium text-foreground mb-1">最近会话（最多 5 条）</div>
+            {state.recent.slice(0, 5).map((item: DynamicIslandSessionSnapshot) => (
               <div
-                key={item.id}
+                key={item.sessionId}
                 className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-foreground/[0.03] text-[12px]"
               >
-                <span className="text-foreground/40 tabular-nums shrink-0">{formatTime(item.createdAt)}</span>
+                <span className="text-foreground/40 tabular-nums shrink-0">{formatTime(item.lastActivityAt)}</span>
                 <span className="text-foreground/70 truncate flex-1">{item.title}</span>
                 <span className="shrink-0 px-1.5 py-0.5 rounded bg-foreground/[0.06] text-foreground/50">
-                  {LEVEL_LABEL[item.level] ?? item.level}
+                  {PHASE_LABEL[item.phase] ?? item.phase}
                 </span>
-                <span className="shrink-0 text-foreground/30">{item.source}</span>
+                {item.attention && (
+                  <span className="shrink-0 size-1.5 rounded-full bg-amber-400" title="需要处理" />
+                )}
               </div>
             ))}
           </div>

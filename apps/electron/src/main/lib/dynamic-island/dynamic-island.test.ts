@@ -59,6 +59,53 @@ describe('DynamicIslandStore 队列状态机', () => {
   })
 })
 
+/** 会话状态机核心逻辑（与 service 内部一致，独立可测） */
+function attentionScore(phase: string, unread: boolean): number {
+  if (phase === 'needs-interaction') return 3
+  if (phase === 'error') return 2
+  if (phase === 'completed' && unread) return 1
+  return 0
+}
+
+function levelForPhase(phase: string): string {
+  switch (phase) {
+    case 'needs-interaction': return 'warning'
+    case 'error': return 'error'
+    case 'completed': return 'success'
+    case 'running': return 'progress'
+    default: return 'info'
+  }
+}
+
+function summaryForPhase(phase: string): string {
+  switch (phase) {
+    case 'needs-interaction': return '需要你的处理'
+    case 'error': return '任务失败'
+    case 'completed': return '任务已完成'
+    case 'running': return '正在执行'
+    default: return '空闲'
+  }
+}
+
+describe('会话状态机语义', () => {
+  test('attention 优先级：待处理 > 错误 > 完成未读 > 执行中', () => {
+    expect(attentionScore('needs-interaction', false)).toBe(3)
+    expect(attentionScore('error', false)).toBe(2)
+    expect(attentionScore('completed', true)).toBe(1)
+    expect(attentionScore('completed', false)).toBe(0)
+    expect(attentionScore('running', false)).toBe(0)
+  })
+
+  test('phase → 渲染等级/摘要映射', () => {
+    expect(levelForPhase('needs-interaction')).toBe('warning')
+    expect(levelForPhase('error')).toBe('error')
+    expect(levelForPhase('completed')).toBe('success')
+    expect(levelForPhase('running')).toBe('progress')
+    expect(summaryForPhase('needs-interaction')).toBe('需要你的处理')
+    expect(summaryForPhase('completed')).toBe('任务已完成')
+  })
+})
+
 describe('DynamicIslandRendererController 计时编排', () => {
   test('progress 常驻不挂计时器，其余按 timeoutMs 过期', () => {
     const commands: Record<string, unknown>[] = []
