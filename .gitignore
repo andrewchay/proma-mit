@@ -6,6 +6,9 @@ out
 dist
 *.tgz
 
+# electronmon dev bundle
+apps/electron/main.cjs
+
 # code coverage
 coverage
 *.lcov
