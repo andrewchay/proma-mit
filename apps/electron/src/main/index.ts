@@ -541,6 +541,10 @@ async function bootstrap(): Promise<void> {
   safeRun('startDynamicIslandService', () => {
     import('./lib/dynamic-island/dynamic-island-service').then((m) => m.startDynamicIslandService())
   })
+  // 启动统一任务事件总线（P0-2：灵动岛/飞书/托盘/Run Center 统一消费）
+  safeRun('startAppEventBus', () => {
+    import('./lib/app-event-bus').then((m) => m.startAppEventBus())
+  })
 
   app.on('activate', () => {
     if (shouldSuppressVoiceDictationActivate()) {
@@ -644,6 +648,13 @@ app.on('before-quit', () => {
   try {
     const { stopDynamicIslandService } = require('./lib/dynamic-island/dynamic-island-service')
     stopDynamicIslandService()
+  } catch (e) {
+    // 忽略，可能在测试环境中不可用
+  }
+  // 停止统一任务事件总线
+  try {
+    const { stopAppEventBus } = require('./lib/app-event-bus')
+    stopAppEventBus()
   } catch (e) {
     // 忽略，可能在测试环境中不可用
   }

@@ -24,6 +24,12 @@ export * from './chat'
 // Agent 相关类型
 export * from './agent'
 
+// 统一任务事件契约（消费端统一消费）
+export * from './app-event'
+
+// 扩展（Extension）Manifest 与生命周期类型
+export * from './plugin'
+
 // Agent Provider 适配器接口
 export * from './agent-provider'
 
