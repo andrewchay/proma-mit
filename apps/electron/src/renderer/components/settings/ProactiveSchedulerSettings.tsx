@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   proactiveIntervalMinutesAtom,
+  proactiveCronExpressionAtom,
+  proactiveCronTimezoneAtom,
   proactiveLoadingAtom,
   proactivePromptAtom,
   proactiveRunAtAtom,
@@ -37,6 +39,8 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
   const [kind, setKind] = useAtom(proactiveScheduleKindAtom)
   const [runAt, setRunAt] = useAtom(proactiveRunAtAtom)
   const [intervalMinutes, setIntervalMinutes] = useAtom(proactiveIntervalMinutesAtom)
+  const [cronExpression, setCronExpression] = useAtom(proactiveCronExpressionAtom)
+  const [cronTimezone, setCronTimezone] = useAtom(proactiveCronTimezoneAtom)
 
   const refresh = React.useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -72,7 +76,9 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
     }
     const schedule = kind === 'at'
       ? { type: 'at' as const, runAt: new Date(runAt).getTime() }
-      : { type: 'interval' as const, intervalMs: Number(intervalMinutes) * 60_000 }
+      : kind === 'interval'
+        ? { type: 'interval' as const, intervalMs: Number(intervalMinutes) * 60_000 }
+        : { type: 'cron' as const, expression: cronExpression.trim(), timezone: cronTimezone.trim() }
     try {
       await window.electronAPI.createProactiveSchedule({
         title: prompt.trim().slice(0, 48), sessionId: session.id, workspaceId: session.workspaceId,
@@ -108,12 +114,14 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
             </Select>
           </label>
           <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式
-            <Select value={kind} onValueChange={(value: 'at' | 'interval') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem></SelectContent></Select>
+            <Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select>
           </label>
         </div>
         {kind === 'at'
           ? <label className="grid gap-1.5 text-sm text-muted-foreground">执行时间 <Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>
-          : <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1） <Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>}
+          : kind === 'interval'
+            ? <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1） <Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>
+            : <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">Cron 表达式 <Input value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} placeholder="例如：0 9 * * 1-5" /></label><label className="grid gap-1.5 text-sm text-muted-foreground">IANA 时区 <Input value={cronTimezone} onChange={(event) => setCronTimezone(event.target.value)} placeholder="例如：Asia/Shanghai" /></label><p className="md:col-span-2 text-xs text-muted-foreground">采用标准五字段 Cron（分钟 小时 日 月 周）；时区会与任务一同保存。</p></div>}
         <label className="grid gap-1.5 text-sm text-muted-foreground">任务内容 <Input value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：检查当前工作区的未提交变更并总结" /></label>
         {sessions.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400">需要先创建 Proma 或 AI SDK Runtime 会话，并为它配置渠道。</p>}
         <Button onClick={() => void create()} disabled={loading || sessions.length === 0}><Plus className="mr-2 size-4" />创建安全定时任务</Button>
@@ -134,9 +142,19 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
 }
 
 function ScheduleCard({ schedule, onPause, onResume, onRun, onDelete }: { schedule: ProactiveSchedule; onPause: () => void; onResume: () => void; onRun: () => void; onDelete: () => void }): React.ReactElement {
-  return <SettingsCard className="flex flex-wrap items-center gap-3"><Clock3 className="size-4 text-primary" /><div className="min-w-48 flex-1"><p className="font-medium">{schedule.title}</p><p className="text-xs text-muted-foreground">{describeSchedule(schedule)} · {schedule.permissionMode} · 下次 {formatTime(schedule.nextRunAt)}</p></div><Button variant="outline" size="sm" onClick={onRun}><Play className="mr-1 size-3.5" />运行</Button>{schedule.enabled ? <Button variant="outline" size="sm" onClick={onPause}><Pause className="mr-1 size-3.5" />暂停</Button> : <Button variant="outline" size="sm" onClick={onResume}><Play className="mr-1 size-3.5" />恢复</Button>}<Button variant="ghost" size="icon" onClick={onDelete} aria-label="删除定时任务"><Trash2 className="size-4 text-destructive" /></Button></SettingsCard>
+  const failureHint = schedule.consecutiveFailures > 0 ? ` · 连续失败 ${schedule.consecutiveFailures}/3` : ''
+  return <SettingsCard className="flex flex-wrap items-center gap-3"><Clock3 className="size-4 text-primary" /><div className="min-w-48 flex-1"><p className="font-medium">{schedule.title}</p><p className="text-xs text-muted-foreground">{describeSchedule(schedule)} · {schedule.permissionMode} · 下次 {formatScheduleTime(schedule)}{failureHint}</p></div><Button variant="outline" size="sm" onClick={onRun}><Play className="mr-1 size-3.5" />运行</Button>{schedule.enabled ? <Button variant="outline" size="sm" onClick={onPause}><Pause className="mr-1 size-3.5" />暂停</Button> : <Button variant="outline" size="sm" onClick={onResume}><Play className="mr-1 size-3.5" />恢复</Button>}<Button variant="ghost" size="icon" onClick={onDelete} aria-label="删除定时任务"><Trash2 className="size-4 text-destructive" /></Button></SettingsCard>
 }
 
-function describeSchedule(schedule: ProactiveSchedule): string { return schedule.schedule.type === 'at' ? '一次性' : `每 ${schedule.schedule.intervalMs / 60_000} 分钟` }
+function describeSchedule(schedule: ProactiveSchedule): string {
+  if (schedule.schedule.type === 'at') return '一次性'
+  if (schedule.schedule.type === 'interval') return `每 ${schedule.schedule.intervalMs / 60_000} 分钟`
+  return `Cron ${schedule.schedule.expression} · ${schedule.schedule.timezone}`
+}
+function formatScheduleTime(schedule: ProactiveSchedule): string {
+  if (!schedule.nextRunAt) return '—'
+  const timezone = schedule.schedule.type === 'cron' ? schedule.schedule.timezone : undefined
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short', timeZone: timezone }).format(schedule.nextRunAt)
+}
 function formatTime(value: number | undefined): string { return value ? new Date(value).toLocaleString() : '—' }
 function toLocalDateTime(value: number): string { const date = new Date(value - new Date().getTimezoneOffset() * 60_000); return date.toISOString().slice(0, 16) }

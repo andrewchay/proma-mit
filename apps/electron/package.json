@@ -49,6 +49,7 @@
     "@xmldom/xmldom": "^0.8.11",
     "adm-zip": "^0.5.17",
     "ai": "7.0.31",
+    "croner": "10.0.1",
     "dompurify": "^3.4.5",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^4.10.38",

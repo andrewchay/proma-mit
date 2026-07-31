@@ -1,10 +1,12 @@
-/** Proactive Scheduler 的持久化契约。第一阶段仅支持一次性和固定间隔任务。 */
+/** Proactive Scheduler 的持久化契约。 */
 
 import type { AgentRuntime, PromaPermissionMode } from './agent'
 
 export type ProactiveScheduleSpec =
   | { type: 'at'; runAt: number }
   | { type: 'interval'; intervalMs: number }
+  /** Cron 表达式始终配合 IANA 时区保存，避免机器时区变更改变执行语义。 */
+  | { type: 'cron'; expression: string; timezone: string }
 
 export type ProactiveRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled'
 
@@ -21,6 +23,8 @@ export interface ProactiveSchedule {
   /** 主动任务默认安全模式；持久化创建时不得默认提升权限。 */
   permissionMode: Extract<PromaPermissionMode, 'safe' | 'plan'>
   enabled: boolean
+  /** 连续失败计数达到安全阈值后会自动暂停，避免无人值守任务持续消耗额度。 */
+  consecutiveFailures: number
   nextRunAt?: number
   lastRunAt?: number
   createdAt: number

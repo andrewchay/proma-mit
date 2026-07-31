@@ -1,9 +1,10 @@
 /**
  * 本地 durable Scheduler：负责到期恢复、暂停/恢复和运行记录。
- * 不解析 Cron、不启动常驻云端 worker，也不会默认提升 Agent 权限。
+ * Cron 仅用于计算下次执行时间；不启动额外常驻 worker，也不会默认提升 Agent 权限。
  */
 
 import { randomUUID } from 'node:crypto'
+import { Cron } from 'croner'
 import type {
   CreateProactiveScheduleInput,
   ProactiveSchedule,
@@ -13,6 +14,7 @@ import { ProactiveSchedulerStore } from './proactive-scheduler-store'
 
 const MIN_INTERVAL_MS = 60_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+const MAX_CONSECUTIVE_FAILURES = 3
 
 export interface ProactiveRunResult {
   outputSummary?: string
@@ -50,6 +52,7 @@ export class ProactiveScheduler {
       schedule: input.schedule,
       permissionMode: input.permissionMode ?? 'safe',
       enabled: true,
+      consecutiveFailures: 0,
       nextRunAt: initialNextRunAt(input.schedule, now),
       createdAt: now,
       updatedAt: now,
@@ -93,6 +96,7 @@ export class ProactiveScheduler {
     const saved = this.store.saveSchedule({
       ...schedule,
       enabled,
+      consecutiveFailures: enabled ? 0 : schedule.consecutiveFailures ?? 0,
       nextRunAt: enabled ? initialNextRunAt(schedule.schedule, now) : schedule.nextRunAt,
       updatedAt: now,
     })
@@ -127,10 +131,16 @@ export class ProactiveScheduler {
       this.activeScheduleIds.delete(schedule.id)
       const current = this.requireSchedule(schedule.id)
       const consumesSchedule = trigger !== 'manual'
+      const failedScheduledRun = consumesSchedule && run.status === 'failed'
+      const consecutiveFailures = failedScheduledRun
+        ? (current.consecutiveFailures ?? 0) + 1
+        : consumesSchedule ? 0 : current.consecutiveFailures ?? 0
+      const autoPaused = failedScheduledRun && consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
       this.store.saveSchedule({
         ...current,
         lastRunAt: startedAt,
-        enabled: consumesSchedule && current.schedule.type === 'at' ? false : current.enabled,
+        enabled: consumesSchedule && (current.schedule.type === 'at' || autoPaused) ? false : current.enabled,
+        consecutiveFailures,
         nextRunAt: consumesSchedule ? nextRunAt(current.schedule, this.now()) : current.nextRunAt,
         updatedAt: this.now(),
       })
@@ -159,12 +169,42 @@ function validateCreateInput(input: CreateProactiveScheduleInput, now: number): 
   if (!input.sessionId.trim() || !input.channelId.trim() || !input.prompt.trim()) throw new Error('定时任务缺少会话、渠道或执行内容')
   if (input.schedule.type === 'at' && input.schedule.runAt <= now) throw new Error('一次性任务时间必须在未来')
   if (input.schedule.type === 'interval' && input.schedule.intervalMs < MIN_INTERVAL_MS) throw new Error('定时间隔不得小于 1 分钟')
+  if (input.schedule.type === 'cron') {
+    if (!input.schedule.expression.trim()) throw new Error('Cron 表达式不能为空')
+    try {
+      assertValidTimezone(input.schedule.timezone)
+      const next = createCron(input.schedule).nextRun(new Date(now))
+      if (!next) throw new Error('Cron 表达式没有未来执行时间')
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Cron 表达式没有未来执行时间') throw error
+      throw new Error(`Cron 计划无效：${error instanceof Error ? error.message : '未知错误'}`)
+    }
+  }
 }
 
 function initialNextRunAt(schedule: ProactiveSchedule['schedule'], now: number): number {
-  return schedule.type === 'at' ? schedule.runAt : now + schedule.intervalMs
+  if (schedule.type === 'at') return schedule.runAt
+  if (schedule.type === 'interval') return now + schedule.intervalMs
+  return requireNextCronRun(schedule, now)
 }
 
 function nextRunAt(schedule: ProactiveSchedule['schedule'], now: number): number | undefined {
-  return schedule.type === 'at' ? undefined : now + schedule.intervalMs
+  if (schedule.type === 'at') return undefined
+  if (schedule.type === 'interval') return now + schedule.intervalMs
+  return requireNextCronRun(schedule, now)
+}
+
+function createCron(schedule: Extract<ProactiveSchedule['schedule'], { type: 'cron' }>): Cron {
+  return new Cron(schedule.expression, { timezone: schedule.timezone, paused: true })
+}
+
+function requireNextCronRun(schedule: Extract<ProactiveSchedule['schedule'], { type: 'cron' }>, now: number): number {
+  const next = createCron(schedule).nextRun(new Date(now))
+  if (!next) throw new Error('Cron 表达式没有未来执行时间')
+  return next.getTime()
+}
+
+function assertValidTimezone(timezone: string): void {
+  if (!timezone.trim()) throw new Error('时区不能为空')
+  new Intl.DateTimeFormat('en-US', { timeZone: timezone })
 }
