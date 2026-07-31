@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   MonitorCog,
   Clock3,
+  Puzzle,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -60,6 +61,7 @@ import { StorageSettings } from "./StorageSettings";
 import { OperationAuditSettings } from "./OperationAuditSettings";
 import { AutomationSettings } from "./AutomationSettings";
 import { ProactiveSchedulerSettings } from './ProactiveSchedulerSettings'
+import { ExtensionSettings } from './ExtensionSettings'
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -122,6 +124,11 @@ const SCHEDULER_TAB: TabItem = {
   label: '定时任务',
   icon: <Clock3 size={16} />,
 };
+const EXTENSIONS_TAB: TabItem = {
+  id: 'extensions',
+  label: '扩展',
+  icon: <Puzzle size={16} />,
+};
 
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
@@ -168,6 +175,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <AutomationSettings />;
     case 'scheduler':
       return <ProactiveSchedulerSettings />
+    case 'extensions':
+      return <ExtensionSettings />
   }
 }
 
@@ -238,6 +247,7 @@ export function SettingsPanel({
     AGENT_TAB,
     AUTOMATION_TAB,
     SCHEDULER_TAB,
+    EXTENSIONS_TAB,
     OPERATION_AUDIT_TAB,
     TOOLS_TAB,
     VOICE_INPUT_TAB,

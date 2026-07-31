@@ -9,7 +9,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -3643,6 +3643,11 @@ export function registerIpcHandlers(): void {
   // ===== 主进程系统通知（P0-3a） =====
   const { registerSystemNotificationIpc } = require('./lib/system-notification-service')
   registerSystemNotificationIpc()
+
+  // ===== 扩展管理（P1-2） =====
+  const { listPluginStates, setPluginEnabled } = require('./lib/plugin-manager') as { listPluginStates: () => unknown[]; setPluginEnabled: (id: string, enabled: boolean) => Promise<unknown> }
+  ipcMain.handle(PLUGIN_IPC_CHANNELS.LIST, async (): Promise<unknown[]> => listPluginStates())
+  ipcMain.handle(PLUGIN_IPC_CHANNELS.SET_ENABLED, async (_event, id: string, enabled: boolean): Promise<unknown> => setPluginEnabled(id, enabled))
 
   // ===== macOS 灵动岛通知 =====
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {

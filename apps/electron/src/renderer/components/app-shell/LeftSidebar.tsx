@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Plug, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow } from 'lucide-react'
+import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Plug, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, Puzzle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -251,6 +251,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   // 工作区能力（MCP + Skill 计数）
   const [capabilities, setCapabilities] = React.useState<WorkspaceCapabilities | null>(null)
   const _capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom)
+  // 已启用扩展计数（P1-4 统一能力发现）
+  const [enabledExtensionCount, setEnabledExtensionCount] = React.useState(0)
 
   // Tab 状态
   const [tabs, setTabs] = useAtom(tabsAtom)
@@ -409,6 +411,20 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       .then(setCapabilities)
       .catch(console.error)
   }, [currentWorkspaceSlug, mode])
+
+  // 已启用扩展计数（P1-4 统一能力发现）
+  React.useEffect(() => {
+    let cancelled = false
+    window.electronAPI
+      .listPluginStates()
+      .then((plugins) => {
+        if (!cancelled) {
+          setEnabledExtensionCount((plugins as Array<{ enabled: boolean }>).filter((p) => p.enabled).length)
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   /** 置顶对话列表（仅活跃模式显示，排除 draft） */
   const pinnedConversations = React.useMemo(
@@ -1606,7 +1622,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         )}
       </div>
 
-      {/* Agent 模式：工作区能力指示器 */}
+      {/* Agent 模式：工作区能力指示器（P1-4 统一能力发现：MCP · Skills · 扩展） */}
       {mode === 'agent' && capabilities && (
         <div className="px-3 pb-1">
           <Tooltip>
@@ -1627,10 +1643,16 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                     <span className="tabular-nums">{capabilities.skills.length}</span>
                     <span className="text-foreground/30">Skills</span>
                   </span>
+                  <span className="text-foreground/20">·</span>
+                  <span className="flex items-center gap-1">
+                    <Puzzle size={13} className="text-foreground/40" />
+                    <span className="tabular-nums">{enabledExtensionCount}</span>
+                    <span className="text-foreground/30">扩展</span>
+                  </span>
                 </div>
               </button>
             </TooltipTrigger>
-            <TooltipContent side="top">点击配置 MCP 与 Skills</TooltipContent>
+            <TooltipContent side="top">点击管理能力与扩展（MCP / Skills / 扩展）</TooltipContent>
           </Tooltip>
         </div>
       )}

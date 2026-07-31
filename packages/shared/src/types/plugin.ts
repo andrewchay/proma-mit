@@ -122,3 +122,11 @@ export interface PluginInstallInput {
 export const BUILTIN_PLUGINS: Array<{ id: string; name: string; version: string }> = [
   { id: 'com.proma.dynamic-island', name: '灵动岛通知', version: '1.0.0' },
 ]
+
+/** 插件管理 IPC 通道 */
+export const PLUGIN_IPC_CHANNELS = {
+  /** 列出所有插件状态 */
+  LIST: 'plugin:list',
+  /** 启用/停用插件（id, enabled） */
+  SET_ENABLED: 'plugin:set-enabled',
+} as const
