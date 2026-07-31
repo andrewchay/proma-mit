@@ -27,6 +27,7 @@ import { useConversationModelOptional } from '@/hooks/useConversationSettings'
 import { useConversationIdOptional } from '@/contexts/session-context'
 import { getModelLogo, getChannelLogo } from '@/lib/model-logo'
 import { cn } from '@/lib/utils'
+import { ChannelPlanQuotaBadge } from './ChannelPlanQuotaBadge'
 import type { Channel, ModelOption } from '@proma/shared'
 
 /** 从渠道列表构建扁平化的模型选项 */
@@ -79,6 +80,7 @@ interface ModelSelectorProps {
   /** 外部选择回调 */
   onModelSelect?: (option: ModelOption) => void
 }
+
 
 export function ModelSelector({
   filterChannelId,
@@ -292,6 +294,11 @@ export function ModelSelector({
                       <span className="text-sm font-medium text-muted-foreground">
                         {first.channelName}
                       </span>
+                      {/* 订阅 Plan 额度徽标（DeepSeek 余额 / Kimi 5H·周 窗口） */}
+                      {(() => {
+                        const channel = channels.find((c) => c.id === channelId)
+                        return channel ? <ChannelPlanQuotaBadge channel={channel} /> : null
+                      })()}
                     </div>
 
                     {/* 该渠道下的模型列表 */}

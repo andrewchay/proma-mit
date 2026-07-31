@@ -20,6 +20,8 @@ import type {
   FetchModelsInput,
   FetchModelsResult,
   ProviderType,
+  ChannelPlanQuotaResult,
+  ChannelPlanQuotaWindow,
 } from '@proma/shared'
 import { PROVIDER_DEFAULT_URLS } from '@proma/shared'
 import { getFetchFn } from './proxy-fetch'
@@ -666,5 +668,226 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string, proxyUrl?: str
     success: true,
     message: `成功获取 ${models.length} 个模型`,
     models,
+  }
+}
+
+// ===== 渠道订阅 Plan 额度查询 =====
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+function normalizePlanQuotaTimestamp(value?: number | string): number | undefined {
+  if (value == null || value === '') return undefined
+  const timestamp = typeof value === 'number' ? value : new Date(value).getTime()
+  if (!Number.isFinite(timestamp)) return undefined
+  return timestamp > 0 && timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp
+}
+
+function planQuotaResetAt(value?: number | string): Pick<ChannelPlanQuotaWindow, 'resetAt'> {
+  const resetAt = normalizePlanQuotaTimestamp(value)
+  return resetAt ? { resetAt } : {}
+}
+
+function createUnsupportedPlanQuota(provider: ProviderType, message: string): ChannelPlanQuotaResult {
+  return {
+    supported: false,
+    provider,
+    windows: [],
+    updatedAt: Date.now(),
+    message,
+  }
+}
+
+function formatDeepSeekBalanceAmount(currency: string | undefined, value: string | number | undefined): string {
+  const amount = Number(value ?? 0)
+  if (!Number.isFinite(amount)) return '0.00'
+  const normalizedCurrency = (currency ?? '').trim().toUpperCase()
+  if (normalizedCurrency === 'CNY' || normalizedCurrency === 'RMB') return `¥${amount.toFixed(2)}`
+  if (normalizedCurrency === 'USD') return `$${amount.toFixed(2)}`
+  if (normalizedCurrency) return `${normalizedCurrency} ${amount.toFixed(2)}`
+  return amount.toFixed(2)
+}
+
+/** 查询 DeepSeek 账户余额（CNY 优先）。 */
+async function queryDeepSeekPlanQuota(apiKey: string, baseUrl: string, proxyUrl?: string): Promise<ChannelPlanQuotaResult> {
+  const fetchFn = getFetchFn(proxyUrl)
+  let requestUrl = 'https://api.deepseek.com/user/balance'
+  try {
+    requestUrl = `${new URL(baseUrl).origin}/user/balance`
+  } catch {
+    // 保持官方默认查询地址
+  }
+
+  const response = await fetchFn(requestUrl, withQuotaTimeout({
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+  }))
+  const responseText = await response.text()
+  if (!response.ok) {
+    return createUnsupportedPlanQuota('deepseek', `DeepSeek 余额查询失败: HTTP ${response.status}`)
+  }
+
+  let data: {
+    is_available?: boolean
+    balance_infos?: Array<{
+      currency?: string
+      total_balance?: string
+      granted_balance?: string
+      topped_up_balance?: string
+    }>
+    error?: { message?: string }
+  }
+  try {
+    data = JSON.parse(responseText)
+  } catch {
+    return createUnsupportedPlanQuota('deepseek', 'DeepSeek 余额响应格式错误')
+  }
+
+  if (data.error?.message) return createUnsupportedPlanQuota('deepseek', data.error.message)
+
+  const balances = data.balance_infos ?? []
+  if (balances.length === 0) return createUnsupportedPlanQuota('deepseek', 'DeepSeek 未返回余额数据')
+
+  const preferred = balances.find((item) => (item.currency ?? '').toUpperCase() === 'CNY')
+    ?? balances.find((item) => Number(item.total_balance ?? 0) > 0)
+    ?? balances[0]!
+  const amountLabel = formatDeepSeekBalanceAmount(preferred.currency, preferred.total_balance)
+  const granted = Number(preferred.granted_balance ?? 0)
+  const toppedUp = Number(preferred.topped_up_balance ?? 0)
+  const total = Number(preferred.total_balance ?? 0)
+  const denominator = granted + toppedUp
+  const remainingPercent = denominator > 0
+    ? clampPercent((total / denominator) * 100)
+    : data.is_available === false
+      ? 0
+      : 100
+
+  return {
+    supported: true,
+    provider: 'deepseek',
+    planName: 'DeepSeek 账户余额',
+    windows: [{
+      type: 'custom',
+      label: '账户余额',
+      remainingPercent,
+      usedPercent: clampPercent(100 - remainingPercent),
+      remainingLabel: amountLabel,
+      showProgress: denominator > 0,
+    }],
+    updatedAt: Date.now(),
+    message: data.is_available === false ? 'DeepSeek 账户余额不可用' : undefined,
+  }
+}
+
+/** 查询 Kimi For Coding 订阅额度（每 5 小时 / 每周窗口）。 */
+async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<ChannelPlanQuotaResult> {
+  const fetchFn = getFetchFn(proxyUrl)
+  const response = await fetchFn('https://api.kimi.com/coding/v1/usages', withQuotaTimeout({
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+  }))
+  const responseText = await response.text()
+  if (!response.ok) {
+    return createUnsupportedPlanQuota('kimi-coding', `Kimi 额度查询失败: HTTP ${response.status}`)
+  }
+
+  let data: {
+    usage?: { remaining?: string | number; used?: string | number; resetTime?: string }
+    limits?: Array<{
+      window: { duration: number; timeUnit: string }
+      detail: { remaining?: string | number; used?: string | number; resetTime?: string }
+    }>
+    code?: string
+  }
+  try {
+    data = JSON.parse(responseText)
+  } catch {
+    return createUnsupportedPlanQuota('kimi-coding', 'Kimi 额度响应格式错误')
+  }
+
+  if (data.code) return createUnsupportedPlanQuota('kimi-coding', `Kimi 额度查询失败: ${data.code}`)
+  if (!data.usage) return createUnsupportedPlanQuota('kimi-coding', 'Kimi 未返回订阅额度数据')
+
+  const windows: ChannelPlanQuotaWindow[] = []
+  const summaryRemaining = clampPercent(Number(data.usage.remaining ?? 0))
+  const summaryUsed = clampPercent(Number(data.usage.used ?? (100 - summaryRemaining)))
+  windows.push({
+    type: 'weekly',
+    label: '每周额度',
+    remainingPercent: summaryRemaining,
+    usedPercent: summaryUsed,
+    ...planQuotaResetAt(data.usage.resetTime),
+  })
+
+  for (const item of data.limits ?? []) {
+    const remaining = clampPercent(Number(item.detail.remaining ?? 0))
+    const used = clampPercent(Number(item.detail.used ?? (100 - remaining)))
+    const duration = item.window.duration
+    const isFiveHourWindow = (duration === 5 && item.window.timeUnit === 'TIME_UNIT_HOUR')
+      || (duration === 300 && item.window.timeUnit === 'TIME_UNIT_MINUTE')
+    const unitLabel = item.window.timeUnit === 'TIME_UNIT_HOUR'
+      ? '小时'
+      : item.window.timeUnit === 'TIME_UNIT_MINUTE'
+        ? '分钟'
+        : item.window.timeUnit === 'TIME_UNIT_DAY'
+          ? '天'
+          : item.window.timeUnit === 'TIME_UNIT_MONTH'
+            ? '月'
+            : item.window.timeUnit
+    windows.push({
+      type: isFiveHourWindow ? '5h' : 'custom',
+      label: isFiveHourWindow ? '每 5 小时' : `${duration} ${unitLabel}`,
+      remainingPercent: remaining,
+      usedPercent: used,
+      ...planQuotaResetAt(item.detail.resetTime),
+    })
+  }
+
+  return {
+    supported: true,
+    provider: 'kimi-coding',
+    planName: 'Kimi For Coding',
+    windows,
+    updatedAt: Date.now(),
+  }
+}
+
+/** 余额/额度查询超时（10s） */
+function withQuotaTimeout(init: RequestInit, timeoutMs = 10000): RequestInit {
+  return { ...init, signal: AbortSignal.timeout(timeoutMs) }
+}
+
+/**
+ * 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口）。
+ * 仅支持本地已知端点；失败返回 supported:false 供 UI 隐藏。
+ */
+export async function getChannelPlanQuota(channelId: string): Promise<ChannelPlanQuotaResult> {
+  const channel = getChannelById(channelId)
+  if (!channel) return createUnsupportedPlanQuota('custom', '渠道不存在')
+
+  const proxyUrl = await getEffectiveProxyUrl()
+  let apiKey: string
+  try {
+    apiKey = decryptKey(channel.apiKey)
+  } catch {
+    return createUnsupportedPlanQuota(channel.provider, '无法读取渠道 API Key')
+  }
+
+  try {
+    if (channel.provider === 'deepseek') {
+      return await queryDeepSeekPlanQuota(apiKey, channel.baseUrl, proxyUrl)
+    }
+    if (channel.provider === 'kimi-coding' || channel.baseUrl.includes('api.kimi.com/coding')) {
+      return await queryKimiPlanQuota(apiKey, proxyUrl)
+    }
+    return createUnsupportedPlanQuota(channel.provider, '当前渠道不支持订阅 Plan 额度查询')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '订阅额度查询失败'
+    return createUnsupportedPlanQuota(channel.provider, message)
   }
 }
