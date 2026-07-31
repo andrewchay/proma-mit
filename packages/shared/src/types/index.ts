@@ -27,6 +27,9 @@ export * from './agent'
 // 统一任务事件契约（消费端统一消费）
 export * from './app-event'
 
+// 主进程系统通知类型
+export * from './system-notification'
+
 // 扩展（Extension）Manifest 与生命周期类型
 export * from './plugin'
 

@@ -363,6 +363,8 @@ export function useGlobalAgentListeners(): void {
           playSound: enabled && soundEnabled,
           soundType,
           sounds,
+          sessionId,
+          sessionTitle,
           onNavigate: makeNavigateToSession(sessionId, sessionTitle),
         }
       )
@@ -822,6 +824,8 @@ export function useGlobalAgentListeners(): void {
             playSound: enabled && soundEnabled,
             soundType: 'taskComplete',
             sounds,
+            sessionId: data.sessionId,
+            sessionTitle,
             onNavigate: makeNavigateToSession(data.sessionId, sessionTitle),
           }
         )

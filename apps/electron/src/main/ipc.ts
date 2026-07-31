@@ -3640,6 +3640,10 @@ export function registerIpcHandlers(): void {
   const { registerWorkflowIpcHandlers } = require('./lib/workflow-ipc-handlers')
   registerWorkflowIpcHandlers()
 
+  // ===== 主进程系统通知（P0-3a） =====
+  const { registerSystemNotificationIpc } = require('./lib/system-notification-service')
+  registerSystemNotificationIpc()
+
   // ===== macOS 灵动岛通知 =====
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {
     return getDynamicIslandService().getState()

@@ -185,13 +185,29 @@ export interface DesktopNotificationOptions {
   onNavigate?: () => void
   /** 强制弹出通知，无视窗口焦点状态（用于阻塞操作） */
   force?: boolean
+  /** 点击后导航到指定会话（主进程回传点击时使用） */
+  sessionId?: string
+  /** 点击后导航的会话标题 */
+  sessionTitle?: string
+}
+
+/** 当前系统通知点击回调（避免为每个通知都挂全局 listener） */
+let systemNotificationClickedHandler: ((payload: import('@proma/shared').SystemNotificationClickedPayload) => void) | null = null
+let systemNotificationListenerInstalled = false
+
+function ensureSystemNotificationListener(): void {
+  if (systemNotificationListenerInstalled) return
+  systemNotificationListenerInstalled = true
+  window.electronAPI.onSystemNotificationClicked((payload) => {
+    systemNotificationClickedHandler?.(payload)
+  })
 }
 
 /**
  * 发送桌面通知
  *
  * 提示音：无论窗口是否聚焦都会播放（阻塞操作需要立即引起注意）。
- * 桌面通知：仅在窗口未聚焦且通知已启用时发送。
+ * 系统通知：委托主进程 Electron Notification（后台/未聚焦可靠），仅在窗口未聚焦且启用时发送。
  * 点击通知会聚焦应用窗口，并可选导航到对应会话。
  */
 export function sendDesktopNotification(
@@ -210,10 +226,31 @@ export function sendDesktopNotification(
     if (!enabled) return
     if (!options?.force && document.hasFocus()) return
 
-    const notification = new Notification(title, { body, silent: true })
-    notification.onclick = () => {
+    // 委托主进程系统通知（Electron Notification，后台/锁屏可靠）
+    ensureSystemNotificationListener()
+    const callbackId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    // 临时注册点击回调：通知点击后触发导航（一次性的，由主进程回传）
+    const prevHandler = systemNotificationClickedHandler
+    systemNotificationClickedHandler = (payload) => {
+      if (payload.callbackId && payload.callbackId !== callbackId) return
       window.focus()
       options?.onNavigate?.()
+      systemNotificationClickedHandler = prevHandler
     }
+    window.electronAPI.sendSystemNotification({
+      title,
+      body,
+      force: options?.force,
+      callbackId,
+      sessionId: options?.sessionId,
+      sessionTitle: options?.sessionTitle,
+    }).catch(() => {
+      // 主进程不可用（如测试环境）时回退到 Web Notification
+      const notification = new Notification(title, { body, silent: true })
+      notification.onclick = () => {
+        window.focus()
+        options?.onNavigate?.()
+      }
+    })
   }, 0)
 }

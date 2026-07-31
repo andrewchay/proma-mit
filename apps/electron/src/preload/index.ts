@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -926,6 +926,13 @@ export interface ElectronAPI {
   onFeishuStatusChanged: (callback: (state: FeishuBridgeState) => void) => () => void
   /** 订阅飞书通知已发送事件 */
   onFeishuNotificationSent: (callback: (payload: FeishuNotificationSentPayload) => void) => () => void
+
+  // ===== 系统通知（P0-3a） =====
+
+  /** 发送系统通知（委托主进程 Electron Notification） */
+  sendSystemNotification: (input: import('@proma/shared').SystemNotificationInput) => Promise<boolean>
+  /** 订阅系统通知点击事件 */
+  onSystemNotificationClicked: (callback: (payload: import('@proma/shared').SystemNotificationClickedPayload) => void) => () => void
 
   // --- 多 Bot v2 API ---
 
@@ -2117,6 +2124,16 @@ const electronAPI: ElectronAPI = {
     const listener = (_event: Electron.IpcRendererEvent, payload: FeishuNotificationSentPayload): void => callback(payload)
     ipcRenderer.on(FEISHU_IPC_CHANNELS.NOTIFICATION_SENT, listener)
     return () => { ipcRenderer.removeListener(FEISHU_IPC_CHANNELS.NOTIFICATION_SENT, listener) }
+  },
+
+  sendSystemNotification: (input: import('@proma/shared').SystemNotificationInput) => {
+    return ipcRenderer.invoke(SYSTEM_NOTIFICATION_IPC_CHANNELS.NOTIFY, input)
+  },
+
+  onSystemNotificationClicked: (callback: (payload: import('@proma/shared').SystemNotificationClickedPayload) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: import('@proma/shared').SystemNotificationClickedPayload): void => callback(payload)
+    ipcRenderer.on(SYSTEM_NOTIFICATION_IPC_CHANNELS.CLICKED, listener)
+    return () => { ipcRenderer.removeListener(SYSTEM_NOTIFICATION_IPC_CHANNELS.CLICKED, listener) }
   },
 
   // --- 多 Bot v2 API ---
