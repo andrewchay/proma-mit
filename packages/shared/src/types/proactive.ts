@@ -13,13 +13,16 @@ export type ProactiveRunStatus = 'queued' | 'running' | 'success' | 'failed' | '
 export interface ProactiveSchedule {
   id: string
   title: string
-  sessionId: string
+  /** 目标会话 ID；newSession=true 时运行时新建会话后回填 */
+  sessionId?: string
   workspaceId?: string
   channelId: string
   modelId?: string
   runtime: Extract<AgentRuntime, 'proma' | 'ai-sdk'>
   prompt: string
   schedule: ProactiveScheduleSpec
+  /** 是否在每次运行时新建会话执行（默认 false = 复用目标会话） */
+  newSession?: boolean
   /** 主动任务默认安全模式；持久化创建时不得默认提升权限。 */
   permissionMode: Extract<PromaPermissionMode, 'safe' | 'plan'>
   enabled: boolean
@@ -33,13 +36,16 @@ export interface ProactiveSchedule {
 
 export interface CreateProactiveScheduleInput {
   title: string
-  sessionId: string
+  /** newSession=true 时可为空（运行时创建新会话） */
+  sessionId?: string
   workspaceId?: string
   channelId: string
   modelId?: string
   runtime: Extract<AgentRuntime, 'proma' | 'ai-sdk'>
   prompt: string
   schedule: ProactiveScheduleSpec
+  /** 新建会话执行：每次运行时创建新 Agent 会话（默认 false） */
+  newSession?: boolean
   permissionMode?: Extract<PromaPermissionMode, 'safe' | 'plan'>
 }
 
@@ -47,7 +53,8 @@ export interface ProactiveTaskRun {
   id: string
   sourceType: 'schedule' | 'manual'
   sourceId: string
-  sessionId: string
+  /** 实际执行会话 ID；newSession 模式下为运行时新建的会话 */
+  sessionId?: string
   status: ProactiveRunStatus
   trigger: 'scheduled' | 'manual' | 'recovery'
   startedAt?: number

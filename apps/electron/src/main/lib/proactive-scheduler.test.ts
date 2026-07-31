@@ -165,3 +165,39 @@ describe('Proactive Scheduler', () => {
     scheduler.dispose()
   })
 })
+
+describe('Proactive Scheduler newSession 模式', () => {
+  test('given newSession when created then sessionId 可为空且 newSession 被持久化', () => {
+    const scheduler = createScheduler(() => 1_000_000)
+    const schedule = scheduler.create({
+      title: '新会话任务', channelId: 'channel-1', runtime: 'proma', prompt: '在新会话中执行',
+      newSession: true,
+      schedule: { type: 'interval', intervalMs: 60_000 },
+    })
+    expect(schedule.newSession).toBe(true)
+    expect(schedule.sessionId).toBeUndefined()
+    // 新会话模式允许无 sessionId
+    expect(() => scheduler.create({
+      title: '无会话且非新建', channelId: 'channel-1', runtime: 'proma', prompt: '应报错',
+      schedule: { type: 'interval', intervalMs: 60_000 },
+    })).toThrow('定时任务缺少目标会话')
+    scheduler.dispose()
+  })
+
+  test('given a newSession run when runner 回传 sessionId then 运行记录被更新', async () => {
+    let time = 5_000_000
+    const scheduler = createScheduler(() => time)
+    const schedule = scheduler.create({
+      title: '新会话任务', channelId: 'channel-1', runtime: 'proma', prompt: '在新会话中执行',
+      newSession: true,
+      schedule: { type: 'interval', intervalMs: 60_000 },
+    })
+    scheduler.setRunner(async () => ({ outputSummary: '完成', sessionId: 'fresh-session-1' }))
+    time = 5_000_000 + 60_000
+    await scheduler.recover()
+
+    const run = scheduler.listRuns()[0]
+    expect(run).toMatchObject({ sourceId: schedule.id, status: 'success', sessionId: 'fresh-session-1' })
+    scheduler.dispose()
+  })
+})

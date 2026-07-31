@@ -18,6 +18,8 @@ const MAX_CONSECUTIVE_FAILURES = 3
 
 export interface ProactiveRunResult {
   outputSummary?: string
+  /** 实际执行会话 ID（newSession 模式下由 runner 回填新建会话） */
+  sessionId?: string
 }
 
 export type ProactiveScheduleRunner = (schedule: ProactiveSchedule, run: ProactiveTaskRun) => Promise<ProactiveRunResult>
@@ -50,6 +52,7 @@ export class ProactiveScheduler {
       runtime: input.runtime,
       prompt: input.prompt.trim(),
       schedule: input.schedule,
+      newSession: input.newSession ?? false,
       permissionMode: input.permissionMode ?? 'safe',
       enabled: true,
       consecutiveFailures: 0,
@@ -121,7 +124,13 @@ export class ProactiveScheduler {
     try {
       if (!this.runner) throw new Error('Scheduler 执行器未就绪')
       const result = await this.runner(schedule, run)
-      run = this.store.saveRun({ ...run, status: 'success', endedAt: this.now(), outputSummary: result.outputSummary })
+      run = this.store.saveRun({
+        ...run,
+        status: 'success',
+        endedAt: this.now(),
+        outputSummary: result.outputSummary,
+        sessionId: result.sessionId ?? run.sessionId,
+      })
       return run
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误'
@@ -166,7 +175,9 @@ export class ProactiveScheduler {
 
 function validateCreateInput(input: CreateProactiveScheduleInput, now: number): void {
   if (!input.title.trim()) throw new Error('定时任务名称不能为空')
-  if (!input.sessionId.trim() || !input.channelId.trim() || !input.prompt.trim()) throw new Error('定时任务缺少会话、渠道或执行内容')
+  if (!input.channelId.trim() || !input.prompt.trim()) throw new Error('定时任务缺少渠道或执行内容')
+  // 复用已有会话时必须指定目标会话；新建会话模式无需 sessionId
+  if (!input.newSession && !input.sessionId?.trim()) throw new Error('定时任务缺少目标会话')
   if (input.schedule.type === 'at' && input.schedule.runAt <= now) throw new Error('一次性任务时间必须在未来')
   if (input.schedule.type === 'interval' && input.schedule.intervalMs < MIN_INTERVAL_MS) throw new Error('定时间隔不得小于 1 分钟')
   if (input.schedule.type === 'cron') {
