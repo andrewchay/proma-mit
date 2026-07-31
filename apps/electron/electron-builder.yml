@@ -74,6 +74,11 @@ extraResources:
   # 教程文件（教程查看器 + 欢迎对话使用）
   - from: ../../tutorial/tutorial.md
     to: tutorial.md
+  # 版本历史（About 页版本历史优先读取本地 release-notes）
+  - from: ../../release-notes
+    to: release-notes
+    filter:
+      - "**/*.md"
   # Proma 品牌 Logo 素材（品牌素材下载功能使用）
   - from: resources/proma-logos
     to: proma-logos
