@@ -1,6 +1,6 @@
 # habi 对 Proma 的可借鉴设计分析
 
-更新时间：2026-07-31
+更新时间：2026-07-31（含 macOS 灵动岛参考实现逆向分析）
 
 ## 核心结论
 
@@ -15,16 +15,19 @@ Proma 已经有 Chat、Agent、Workflow、Automation、Workspace、Skills、MCP�
 ## 推荐产品分层
 
 1. 入口与任务形态
+
    - Chat：承接模糊需求、探索和澄清。
    - Agent：完成一次有明确结果的复杂任务。
    - Workflow：把稳定方法发布为可重复、可审计的流程。
    - Automation：负责触发 Agent 或 Workflow，不作为第四种一级模式。
 
 2. Context
+
    - Workspace、会话、文件、记忆、任务、日程、产物和运行记录。
    - 工作区是用户拥有的上下文与权限边界；测试目录、会话沙箱、Workflow Run 目录不得作为用户工作区展示。
 
 3. Capability
+
    - Skill 是方法。
    - MCP 是外部连接。
    - Tool 是确定性动作。
@@ -32,9 +35,11 @@ Proma 已经有 Chat、Agent、Workflow、Automation、Workspace、Skills、MCP�
    - Extension 是可安装的产品扩展包。
 
 4. Reach
+
    - 桌面主窗口、Quick Task、菜单栏、系统通知、macOS 刘海浮层、飞书/钉钉/微信等只是同一任务系统的不同触达面。
 
 5. Governance
+
    - 凭据、权限、审批、审计、预算、运行时和插件生命周期统一收敛。
 
 ## 最值得借鉴的 habi 机制
@@ -80,11 +85,11 @@ Proma 需要一个统一 Capability 契约，覆盖发现、授权、调用、�
 
 ## macOS 刘海通知建议
 
-macOS 没有供普通 Mac 应用直接使用的 iPhone Dynamic Island / Live Activity API。实现应是刘海附近的非激活浮层：
+macOS 没有供普通 Mac 应用直接使用的 iPhone Dynamic Island / Live Activity API。实现应是刘海附近的非激活浮层。
 
-- MVP：Electron 透明、无边框、置顶 BrowserWindow。
-- 正式版：Proma 自带并签名的 NSPanel helper，处理准确刘海区域、全屏 Space、多显示器、不抢焦点和点击穿透。
-- 无刘海或非 macOS：降级到顶部 HUD、菜单栏或系统通知。
+- 直接使用原生 NSPanel + SwiftUI（见下方参考实现），而不是 Electron BrowserWindow；JS 只负责业务，原生只管画。
+- 无刘海机型退化为顶部贴顶通知条。
+- 非 macOS / Windows：原生模块不加载，notify 返回 `{ ok: false, reason: "unsupported" }`，降级到系统通知。
 
 推荐状态：
 
@@ -92,15 +97,111 @@ macOS 没有供普通 Mac 应用直接使用的 iPhone Dynamic Island / Live Act
 - waiting_action：展开提示需要审批或回答，点击打开对应会话；敏感审批仍回主应用完成。
 - completed：短暂显示摘要后自动收起。
 - failed：显示错误状态和打开会话入口。
-- 多任务：聚合为运行数量，避免多个浮层竞争。
+- 多任务：同一时刻只显示一条，其余排队；同 id 就地替换（进度刷新不重播入场动画）。
 
 默认不显示完整 Prompt、文件路径或消息正文，防止锁屏、投屏和共享屏幕时泄露。
+
+## macOS 灵动岛参考实现（weavelynx 逆向分析）
+
+以下为已验证落地的插件实现，可作为 Proma 刘海通知扩展的架构蓝图。整体分层：**JS 管业务（队列/计时/配置/路由），Swift 只管画**。
+
+### 1. 后端大脑（defineExtension 注册）
+
+通过 `weavelynx.defineExtension` 注册，`activeOnStart: true` 装完即活。对外暴露：
+
+| 方法 | 作用 |
+| --- | --- |
+| `notify(args)` | AI 主动调用，`source="ai"` |
+| `dismiss({id})` | 关掉某条 |
+| `_getState()` | 给设置面板读「支持/运行中/开关/最近 20 条」 |
+| `_setEnabled` / `_getProjectMuted` / `_setProjectMuted` | 设置面板开关 |
+| `_test()` | 面板「发送测试通知」按钮，`source="manual"` |
+
+### 2. 三源归一
+
+AI 调用、hook 上报、手动测试三处入口统一成同一个 `NotifyRequest` 形状。归一化：
+
+- 默认 `level=info`。
+- 算 `timeoutMs`：`progress` 常驻=0，其余 4500ms。
+- 截断 title 48 字 / body 72 字。
+- 补 `createdAt` 和自动 `id`。
+
+后端只按 `source` 区分来源，处理路径完全一样。
+
+### 3. Hook 入口 = unix socket
+
+`onActivate` 时创建 `net.createServer` 监听 `~/.weavelynx/ext-config/dynamicisland/ipc.sock`。收到一行 JSON 后：
+
+- 带 `hook_event_name` → 按 hook payload 转默认通知：`Stop` → success「任务已完成」，`Notification` → warning「需要你的确认」+ `activateOnClick`。
+- 否则当普通 `{title, ...}` 处理。
+- 通过「总开关开 + 当前项目没静音」判断后才真正弹。
+
+### 4. 通知队列状态机
+
+同一时刻只显示一条，其余排队。`show()` 就地更新：
+
+- `current.id === 新id` → 直接替换 current（不重播入场动画、不重置计时）。
+- 在 queue 里找到同 id → 原地替换 queue 那条。
+- 否则有 current 则推进 queue；没有则成为 current。
+
+这就是「同 id 就地刷新进度」的底层实现。
+
+### 5. 渲染控制器 + 渲染子进程
+
+- 控制器持有队列，每次 `sync()` 把 current（含排队 +N）序列化成 `{type:"render", view}` 发给子进程，并 `setTimeout` 一个 unref 计时器过期；`progress`（timeoutMs=0）不挂计时器。
+- 子进程用 `child_process.spawn` 拉起 `island.fork.js`，启动器优先用宿主提供的 bun / Electron-as-node 路径，找不到回退 PATH 里的 node。
+- 崩溃重启：60s 内最多 3 次，超过放弃到下次 notify。
+- stdin 不可写就丢命令；SIGTERM 后 1.5s 兜底 SIGKILL。
+
+### 6. 渲染胶水进程
+
+`island.fork.js` 只有 3 行有效代码，纯胶水：
+
+```js
+const native = require(.../native/darwin/island.node)
+native.start({ width: 460, height: 140 })  // ISLAND_WIDTH/HEIGHT 环境变量可覆盖
+```
+
+生命周期由后端控制：stdin 写 `JSON\n` 命令（render / clear），stdout 回事件（clicked / log）。
+
+### 7. 原生 Swift 模块（darwin/island.node）
+
+- **窗口**：NSPanel（无边框、置顶、绕过普通窗口层级、非激活态、不抢焦点）。
+- **贴合刘海**：读 NSScreen `safeAreaInsets` / notch / `_notchSize`，把窗口精确叠在物理刘海正上方；无刘海机型走 NotchlessView 退化为贴顶通知条。
+- **UI**：SwiftUI 渲染 DynamicNotch（State / Style / TransitionConfiguration），支持收起/展开过渡和 hover 行为。
+- **图标与颜色**：SF Symbols（`checkmark.circle.fill` 等），info=#0a84ff / success=#30d158 / warning=#ff9f0a / error=#ff453a / progress=#64d2ff。
+- **通信**：`fileHandleWithStandardError` 打日志，stdin 读 JSON（`JSONObjectWithData:`），EOF 退出；stdout 回事件 JSON。
+
+### 8. 自动通知链路（装完即生效，不碰用户配置）
+
+```text
+宿主 Stop/Notification 事件
+  → hooks.json 静态注册（Stop + Notification, async, timeout 5s）
+  → notify.sh（极轻 shell 脚本）
+      - [ -S "$sock" ] || exit 0   # socket 不在 = 扩展没跑/不是 mac，微秒退出
+      - nc -U -w 2 "$sock"          # stdin(hook payload) 原样透传，实测 6ms
+  → unix socket → 后端解析 → 判断开关 → notify()
+```
+
+为什么用 sh + nc 而不是 node：hooks.json 是静态文件，没法写死运行时才知道的 launcher 绝对路径（Electron-as-node / bun 路径因机器而异）；nc 是 macOS 自带、零解析，整条链路 6ms（对比 node 冷启动 60ms+）。三条铁律：永远 exit 0（不阻断会话）、不写 stdout（不干扰宿主）、秒退（扩展没跑立刻退出）。
+
+### 9. 升级清理（防御性保护用户配置）
+
+0.1.0 老版本往用户 `~/.claude/settings.json` 注入 hook；0.2.0 改为插件自带 hook 后，onActivate 会把旧的注入条目摘掉。只删自己注入的条目、用原子 rename 替换、文件不是合法 JSON 就拒绝写入（宁肯留着旧条目）。
+
+### 10. 关键设计点小结
+
+- **职责分离**：JS 管业务（队列/计时/配置/路由），Swift 只管画——Windows 上原生模块根本不加载，notify 直接返回 unsupported。
+- **同 id 就地更新**：队列状态机的「原地替换」语义，进度刷新不闪。
+- **三源同构**：AI / hook / 测试共用一套 NotifyRequest，只按 source 记录来源。
+- **配置隔离**：开关写在扩展自己的 `config.json`，刻意不碰宿主 settings（除升级清理那一个例外）。
+- **崩溃自愈**：渲染进程崩了后端会重启，最多 3 次/分钟，且只有下次 notify 才重新拉起——不空转。
 
 ## 插件安全架构
 
 推荐链路：
 
-```text
+```
 Agent / Workflow / Automation / Bridge
   -> AppEventBus
   -> CapabilityBroker（权限、脱敏、限流）
@@ -129,6 +230,19 @@ Manifest 应至少包含：
 
 第三方插件不能直接注入 Electron 主进程或复用完整 `electronAPI`。插件 UI 使用独立 sandboxed BrowserWindow/WebContentsView 和最小 preload；原生能力由 Proma 签名的平台 adapter 或独立 helper 代理。
 
+参考实现印证：灵动岛插件的原生模块在独立渲染子进程中加载（由后端 spawn），与宿主主进程通过 JSON 协议通信，原生代码不进入主进程、不继承宿主 TCC/凭据权限——这是「第三方不能碰主进程」的可行样板。
+
+### 与参考实现的映射
+
+| 安全建议 | 参考实现做法 |
+| --- | --- |
+| 原生能力隔离在主进程外 | island.node 只在 fork 子进程加载，宿主只 spawn + JSON 通信 |
+| 事件按权限投影 | 后端只把队列状态序列化成 view 发给子进程，不传原始消息 |
+| 插件自愈与降级 | 崩溃重启 3 次/分钟；无 socket / 非 mac / Windows 直接降级 |
+| 配置隔离 | 开关写扩展自己的 config.json，不碰宿主 settings |
+| 用户配置保护 | 升级清理只删自己注入的条目，非法 JSON 拒绝写入 |
+| 零干扰宿主 | notify.sh 永远 exit 0、不写 stdout、秒退 |
+
 ## 分阶段路线
 
 ### P0：先收敛底座
@@ -142,7 +256,12 @@ Manifest 应至少包含：
 
 1. 定义 PluginManifest、权限模型、安装状态和生命周期。
 2. 设置增加“扩展”中心：权限、启停、故障、版本。
-3. 将 macOS 刘海任务通知做成第一方内置扩展，验证事件订阅、surface 和平台降级。
+3. 将 macOS 刘海任务通知做成第一方内置扩展，按参考实现落地：
+   - 三源归一（AI / hook / 手动测试共用 NotifyRequest）；
+   - 通知队列状态机（同 id 就地替换 + 排队）；
+   - 宿主事件 → hooks.json + notify.sh + unix socket 的零侵入链路；
+   - 独立渲染子进程加载原生 island.node（NSPanel 贴合刘海，无刘海退化为贴顶条）；
+   - 配置隔离与崩溃自愈；Windows/非 mac 降级到系统通知。
 4. 统一 Skills、MCP、Tools 与 Extensions 的能力发现体验，但不抹平底层安全差异。
 
 ### P2：形成复利
