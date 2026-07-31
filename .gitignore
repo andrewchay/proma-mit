@@ -53,3 +53,6 @@ vendor
 
 # git worktrees (managed by proma-worktree skill)
 .worktrees
+
+# Dynamic Island macOS native module is built from tracked ObjC source.
+apps/electron/resources/dynamic-island/macos/island.node
