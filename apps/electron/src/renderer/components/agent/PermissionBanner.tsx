@@ -88,13 +88,11 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
 
   const iconColor = DANGER_ICON_STYLES[request.dangerLevel]
   const isDangerous = request.dangerLevel === 'dangerous'
+  // Computer Use 与 Web Bridge 下载/上传（涉及本地文件系统）保持逐次确认；
+  // Web Bridge 导航/点击/输入等页面交互允许"本次会话总是允许"
   const requiresPerActionApproval = (
     request.toolName.startsWith('ComputerUse') && request.toolName !== 'ComputerUseStatus'
   ) || new Set([
-    'WebBridgeNavigate',
-    'WebBridgeConnectChrome',
-    'WebBridgeClick',
-    'WebBridgeType',
     'WebBridgeDownload',
     'WebBridgeUpload',
   ]).has(request.toolName)

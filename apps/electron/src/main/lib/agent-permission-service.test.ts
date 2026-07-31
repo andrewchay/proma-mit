@@ -90,7 +90,7 @@ describe('AgentPermissionService safe 权限模式', () => {
     expect((await second).behavior).toBe('deny')
   })
 
-  test('given Web Bridge navigation is approved with always allow when invoked again then every action still requests approval', async () => {
+  test('given Web Bridge navigation is approved with always allow when invoked again then it is auto allowed by session whitelist', async () => {
     const service = new AgentPermissionService()
     const requests: PermissionRequest[] = []
     const canUseTool = service.createCanUseTool('session-web-bridge', (request) => requests.push(request), undefined, undefined, 'auto')
@@ -100,7 +100,24 @@ describe('AgentPermissionService safe 权限模式', () => {
     service.respondToPermission(requests[0]!.requestId, 'allow', true)
     expect((await first).behavior).toBe('allow')
 
-    const second = canUseTool('WebBridgeNavigate', { url: 'https://example.org' }, createOptions())
+    // 页面交互（导航/点击/输入）加入会话白名单后不再重复弹审批
+    const second = await canUseTool('WebBridgeNavigate', { url: 'https://example.org' }, createOptions())
+    expect(requests).toHaveLength(1)
+    expect(second.behavior).toBe('allow')
+  })
+
+  test('given Web Bridge download is approved with always allow when invoked again then it still requests approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-web-bridge-transfer', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const first = canUseTool('WebBridgeDownload', { url: 'https://example.com/file.zip' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 下载/上传涉及本地文件系统，即使选了"总是允许"也必须逐次确认
+    const second = canUseTool('WebBridgeDownload', { url: 'https://example.org/other.zip' }, createOptions())
     expect(requests).toHaveLength(2)
     service.respondToPermission(requests[1]!.requestId, 'deny', false)
     expect((await second).behavior).toBe('deny')

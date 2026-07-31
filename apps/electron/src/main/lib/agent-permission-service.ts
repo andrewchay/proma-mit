@@ -134,7 +134,9 @@ export class AgentPermissionService {
 
       // 系统级桌面读取/控制不能由子 Agent 自动批准，也不能沿用“始终允许”。
       // 这类操作可能读取任意屏幕内容或影响前台应用，必须回到用户确认流程。
-      const requiresPerActionApproval = isComputerUseTool(toolName) || isWebBridgeMutation(toolName)
+      // Web Bridge 下载/上传涉及本地文件系统，同样保持逐次确认；
+      // 导航/点击/输入等页面交互允许通过会话白名单免确认（对齐 kimi-cli 的 approve_for_session）。
+      const requiresPerActionApproval = isComputerUseTool(toolName) || isWebBridgeFileTransfer(toolName)
 
       // Worker（子代理）的工具调用自动批准，避免 UI 等待导致超时死锁
       if (options.agentID && !requiresPerActionApproval) {
@@ -185,8 +187,8 @@ export class AgentPermissionService {
 
     const sessionId = pending.request.sessionId
 
-    // "总是允许"选项：加入会话白名单
-    if (alwaysAllow && behavior === 'allow' && !isComputerUseTool(pending.request.toolName) && !isWebBridgeMutation(pending.request.toolName)) {
+    // "总是允许"选项：加入会话白名单（Computer Use 与 Web Bridge 下载/上传除外，仍逐次确认）
+    if (alwaysAllow && behavior === 'allow' && !isComputerUseTool(pending.request.toolName) && !isWebBridgeFileTransfer(pending.request.toolName)) {
       this.addToWhitelist(sessionId, pending.request.toolName, pending.request.toolInput)
     }
 
@@ -394,13 +396,13 @@ function isComputerUseTool(toolName: string): boolean {
   return toolName.startsWith('ComputerUse') && toolName !== 'ComputerUseStatus'
 }
 
-/** Web Bridge 改变导航、页面或外部状态的操作必须逐次确认，不能加入会话白名单。 */
-function isWebBridgeMutation(toolName: string): boolean {
+/**
+ * Web Bridge 下载/上传涉及本地文件系统（读取用户文件、写入磁盘），
+ * 必须逐次确认，不能加入会话白名单。
+ * 导航/点击/输入等页面交互不在此列，允许用户选择"本次会话总是允许"。
+ */
+function isWebBridgeFileTransfer(toolName: string): boolean {
   return new Set([
-    'WebBridgeNavigate',
-    'WebBridgeConnectChrome',
-    'WebBridgeClick',
-    'WebBridgeType',
     'WebBridgeDownload',
     'WebBridgeUpload',
   ]).has(toolName)
