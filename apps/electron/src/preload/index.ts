@@ -7,6 +7,39 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS } from '@proma/shared'
+
+// Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
+const WORKFLOW_IPC_CHANNELS = {
+  LIST_DEFINITIONS: 'workflow:list-definitions',
+  GET_DEFINITION: 'workflow:get-definition',
+  SAVE_DEFINITION: 'workflow:save-definition',
+  EXPORT_DEFINITION: 'workflow:export-definition',
+  IMPORT_DEFINITION: 'workflow:import-definition',
+  LIST_TEMPLATES: 'workflow:list-templates',
+  PUBLISH_TEMPLATE: 'workflow:publish-template',
+  INSTALL_TEMPLATE: 'workflow:install-template',
+  INSTALL_TEMPLATE_BATCH: 'workflow:install-template-batch',
+  UPGRADE_TEMPLATE: 'workflow:upgrade-template',
+  PREVIEW_TEMPLATE_UPGRADE: 'workflow:preview-template-upgrade',
+  ROLLBACK_TEMPLATE: 'workflow:rollback-template',
+  RESOLVE_SIDE_EFFECT: 'workflow:resolve-side-effect',
+  EXPORT_DEFINITION_FILE: 'workflow:export-definition-file',
+  IMPORT_DEFINITION_FILE: 'workflow:import-definition-file',
+  PUBLISH_DEFINITION: 'workflow:publish-definition',
+  CREATE_RUN: 'workflow:create-run',
+  GET_RUN: 'workflow:get-run',
+  LIST_RUNS: 'workflow:list-runs',
+  LIST_RUN_EVENTS: 'workflow:list-run-events',
+  EXECUTE_AGENT_NODE: 'workflow:execute-agent-node',
+  EXECUTE_DETERMINISTIC_NODE: 'workflow:execute-deterministic-node',
+  EXECUTE_RUN: 'workflow:execute-run',
+  RESOLVE_APPROVAL: 'workflow:resolve-approval',
+  CANCEL_RUN: 'workflow:cancel-run',
+  PROPOSE_PATCHES: 'workflow:propose-patches',
+  GET_IDENTITY_DIRECTORY: 'workflow:get-identity-directory',
+  SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
+  TRIGGER_EVENT: 'workflow:trigger-event',
+} as const
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   RuntimeStatus,
@@ -492,6 +525,38 @@ export interface ElectronAPI {
   setProactiveScheduleEnabled: (scheduleId: string, enabled: boolean) => Promise<ProactiveSchedule>
   deleteProactiveSchedule: (scheduleId: string) => Promise<void>
   runProactiveSchedule: (scheduleId: string) => Promise<ProactiveTaskRun>
+
+  // ===== Workflow Mode =====
+
+  listWorkflowDefinitions: () => Promise<import('@proma/shared').WorkflowDefinition[]>
+  getWorkflowDefinition: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition | null>
+  saveWorkflowDefinition: (input: unknown) => Promise<import('@proma/shared').WorkflowDefinition>
+  exportWorkflowDefinition: (workflowId: string) => Promise<import('@proma/shared').WorkflowExportFile>
+  importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => Promise<import('@proma/shared').WorkflowDefinition>
+  listWorkflowTemplates: () => Promise<import('@proma/shared').WorkflowTemplate[]>
+  publishWorkflowTemplate: (workflowId: string, input: import('@proma/shared').WorkflowTemplatePublishInput) => Promise<import('@proma/shared').WorkflowTemplate>
+  installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => Promise<import('@proma/shared').WorkflowDefinition>
+  installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => Promise<import('@proma/shared').WorkflowTemplateBatchInstallResult>
+  upgradeWorkflowTemplate: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition>
+  previewWorkflowTemplateUpgrade: (workflowId: string) => Promise<NonNullable<import('@proma/shared').WorkflowTemplateInstallation['pendingUpgrade']>>
+  rollbackWorkflowTemplate: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition>
+  exportWorkflowDefinitionFile: (workflowId: string) => Promise<boolean>
+  importWorkflowDefinitionFile: (workspaceId: string) => Promise<import('@proma/shared').WorkflowDefinition | null>
+  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => Promise<import('@proma/shared').WorkflowRun>
+  publishWorkflowDefinition: (workflowId: string, input: import('@proma/shared').WorkflowPublishInput) => Promise<import('@proma/shared').WorkflowDefinition>
+  createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@proma/shared').WorkflowTriggerKind) => Promise<import('@proma/shared').WorkflowRun>
+  getWorkflowRun: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRun | null>
+  listWorkflowRuns: (workflowId: string) => Promise<import('@proma/shared').WorkflowRun[]>
+  listWorkflowRunEvents: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRunEvent[]>
+  executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowRun>
+  executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => Promise<import('@proma/shared').WorkflowRun>
+  executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowRun>
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@proma/shared').WorkflowRun>
+  cancelWorkflowRun: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRun>
+  proposeWorkflowPatches: (input: { definition: import('@proma/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowPatchProposal>
+  getWorkflowIdentityDirectory: () => Promise<import('@proma/shared').WorkflowIdentityDirectory>
+  saveWorkflowIdentityDirectory: (directory: import('@proma/shared').WorkflowIdentityDirectory) => Promise<import('@proma/shared').WorkflowIdentityDirectory>
+  triggerWorkflowEvent: (input: { eventName: string; payload: Record<string, unknown> }) => Promise<import('@proma/shared').WorkflowRun[]>
 
   // ===== Agent 队列消息 =====
 
@@ -1479,6 +1544,36 @@ const electronAPI: ElectronAPI = {
   setProactiveScheduleEnabled: (scheduleId: string, enabled: boolean) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_PROACTIVE_SCHEDULE_ENABLED, scheduleId, enabled),
   deleteProactiveSchedule: (scheduleId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.DELETE_PROACTIVE_SCHEDULE, scheduleId),
   runProactiveSchedule: (scheduleId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.RUN_PROACTIVE_SCHEDULE, scheduleId),
+
+  listWorkflowDefinitions: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_DEFINITIONS),
+  getWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_DEFINITION, workflowId),
+  saveWorkflowDefinition: (input: unknown) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_DEFINITION, input),
+  exportWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION, workflowId),
+  importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION, input),
+  listWorkflowTemplates: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_TEMPLATES),
+  publishWorkflowTemplate: (workflowId: string, input: import('@proma/shared').WorkflowTemplatePublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_TEMPLATE, workflowId, input),
+  installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE, input),
+  installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE_BATCH, input),
+  upgradeWorkflowTemplate: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.UPGRADE_TEMPLATE, workflowId),
+  previewWorkflowTemplateUpgrade: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PREVIEW_TEMPLATE_UPGRADE, workflowId),
+  rollbackWorkflowTemplate: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.ROLLBACK_TEMPLATE, workflowId),
+  exportWorkflowDefinitionFile: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION_FILE, workflowId),
+  importWorkflowDefinitionFile: (workspaceId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION_FILE, workspaceId),
+  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_SIDE_EFFECT, input),
+  publishWorkflowDefinition: (workflowId: string, input: import('@proma/shared').WorkflowPublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_DEFINITION, workflowId, input),
+  createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@proma/shared').WorkflowTriggerKind) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CREATE_RUN, workflowId, input, trigger),
+  getWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_RUN, workflowId, runId),
+  listWorkflowRuns: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_RUNS, workflowId),
+  listWorkflowRunEvents: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_RUN_EVENTS, workflowId, runId),
+  executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_AGENT_NODE, input),
+  executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_DETERMINISTIC_NODE, input),
+  executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_RUN, input),
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
+  cancelWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, workflowId, runId),
+  proposeWorkflowPatches: (input: { definition: import('@proma/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, input),
+  getWorkflowIdentityDirectory: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_IDENTITY_DIRECTORY),
+  saveWorkflowIdentityDirectory: (directory: import('@proma/shared').WorkflowIdentityDirectory) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_IDENTITY_DIRECTORY, directory),
+  triggerWorkflowEvent: (input: { eventName: string; payload: Record<string, unknown> }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.TRIGGER_EVENT, input),
 
   // Agent 队列消息
   queueAgentMessage: (input: AgentQueueMessageInput) => {

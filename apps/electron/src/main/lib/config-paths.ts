@@ -8,34 +8,20 @@
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { mkdirSync, existsSync, cpSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { APP_CONFIG_DIR_NAME, APP_DEV_CONFIG_DIR_NAME } from './app-identity'
+import { APP_CONFIG_DIR_NAME } from './app-identity'
 
 /**
  * 获取配置目录名称
  *
- * 开发模式下返回 '.proma-mit-dev'，正式版本返回 '.proma-mit'。
- *
- * 检测优先级：
- * 1. PROMA_DEV=1 环境变量（显式覆盖）
- * 2. Electron app.isPackaged（未打包 = 开发模式）
- * 3. 兜底 '.proma-mit'
+ * 统一返回 '.proma-mit'，不区分开发/正式版本。
  */
 let _configDirName: string | undefined
 
 export function getConfigDirName(): string {
   if (_configDirName === undefined) {
-    if (process.env.PROMA_DEV === '1') {
-      _configDirName = APP_DEV_CONFIG_DIR_NAME
-    } else {
-      try {
-        const { app } = require('electron')
-        _configDirName = app.isPackaged ? APP_CONFIG_DIR_NAME : APP_DEV_CONFIG_DIR_NAME
-      } catch {
-        _configDirName = APP_CONFIG_DIR_NAME
-      }
-    }
-    const mode = _configDirName === APP_DEV_CONFIG_DIR_NAME ? '开发模式' : '正式版本'
-    console.log(`[配置] 配置目录: ~/${_configDirName}/（${mode}）`)
+    // 统一使用 ~/.proma-mit/，不再区分开发/正式版本
+    _configDirName = APP_CONFIG_DIR_NAME
+    console.log(`[配置] 配置目录: ~/${_configDirName}/`)
   }
   return _configDirName
 }
@@ -43,7 +29,7 @@ export function getConfigDirName(): string {
 /**
  * 获取配置目录路径
  *
- * 开发模式返回 ~/.proma-mit-dev/，正式版本返回 ~/.proma-mit/。
+ * 统一返回 ~/.proma-mit/。
  * 如果目录不存在则自动创建。
  */
 export function getConfigDir(): string {
@@ -379,6 +365,84 @@ export function getAgentWorkspacePath(slug: string): string {
   }
 
   return dir
+}
+
+/** 获取 Workflow Definition 根目录。 */
+export function getWorkflowsDir(): string {
+  const dir = join(getConfigDir(), 'workflows')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/** 本地 Workflow 模板目录；模板只保存无凭证的 Definition 快照。 */
+export function getWorkflowTemplatesDir(): string {
+  const dir = join(getWorkflowsDir(), 'templates')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** Workflow/Run 标识符会参与本地路径拼接，必须拒绝路径分隔符和相对路径。 */
+function assertWorkflowStorageIdentifier(value: string, label: 'Workflow' | 'Run'): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error(`${label} ID 非法`)
+  }
+}
+
+/** 获取单个 Workflow 的存储目录。 */
+export function getWorkflowDir(workflowId: string): string {
+  assertWorkflowStorageIdentifier(workflowId, 'Workflow')
+  const dir = join(getWorkflowsDir(), workflowId)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/** 获取 Workflow Definition 的原子快照文件。 */
+export function getWorkflowDefinitionPath(workflowId: string): string {
+  return join(getWorkflowDir(workflowId), 'definition.json')
+}
+
+export function getWorkflowTemplatePath(templateId: string): string {
+  assertWorkflowStorageIdentifier(templateId, 'Workflow')
+  return join(getWorkflowTemplatesDir(), `${templateId}.json`)
+}
+
+export function getWorkflowTemplateInstallationPath(workflowId: string): string {
+  return join(getWorkflowDir(workflowId), 'template-installation.json')
+}
+
+/** 获取单个 Workflow 的 Run 目录。 */
+export function getWorkflowRunsDir(workflowId: string): string {
+  const dir = join(getWorkflowDir(workflowId), 'runs')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/** Workflow 定时调度的轻量状态：nextRunAt 仅属于调度器，不污染已发布 Definition。 */
+export function getWorkflowSchedulerStatePath(): string {
+  return join(getWorkflowsDir(), 'scheduler-state.json')
+}
+
+/** Workflow 审批主体与角色目录；未来可由企业 IdP/飞书同步服务覆盖。 */
+export function getWorkflowIdentityDirectoryPath(): string {
+  return join(getWorkflowsDir(), 'identity-directory.json')
+}
+
+/** 获取某次 Run 的快照文件。 */
+export function getWorkflowRunPath(workflowId: string, runId: string): string {
+  assertWorkflowStorageIdentifier(runId, 'Run')
+  return join(getWorkflowRunsDir(workflowId), `${runId}.json`)
+}
+
+/** 获取某次 Run 的审计事件日志。 */
+export function getWorkflowRunEventsPath(workflowId: string, runId: string): string {
+  assertWorkflowStorageIdentifier(runId, 'Run')
+  return join(getWorkflowRunsDir(workflowId), `${runId}.jsonl`)
 }
 
 /**

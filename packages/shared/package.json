@@ -11,7 +11,8 @@
     "./types": "./src/types/index.ts",
     "./config": "./src/config/index.ts",
     "./utils": "./src/utils/index.ts",
-    "./utils/node": "./src/utils/node.ts"
+    "./utils/node": "./src/utils/node.ts",
+    "./workflow": "./src/workflow-runtime.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

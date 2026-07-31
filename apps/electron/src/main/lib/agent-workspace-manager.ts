@@ -463,6 +463,42 @@ export function ensurePluginManifest(workspaceSlug: string, workspaceName: strin
   console.log(`[Agent 工作区] 已创建 plugin manifest: ${workspaceSlug}`)
 }
 
+/**
+ * 为 Workflow 运行生成隔离的 Skill Plugin 目录。
+ *
+ * 仅拷贝 capabilityPolicy 声明的 Skill slug，并生成 .claude-plugin/plugin.json
+ * 供 SDK 发现；不会把整个工作区 Skills 注入执行上下文。
+ */
+export function prepareWorkflowSkillPlugin(
+  workspaceSlug: string,
+  sessionId: string,
+  skillSlugs: readonly string[],
+): string {
+  const sessionDir = getAgentSessionWorkspacePath(workspaceSlug, sessionId)
+  const pluginDir = join(sessionDir, '.workflow-plugin')
+  const pluginSkillsDir = join(pluginDir, 'skills')
+  rmSync(pluginDir, { recursive: true, force: true })
+  mkdirSync(pluginSkillsDir, { recursive: true })
+
+  const sourceSkillsDir = getWorkspaceSkillsDir(workspaceSlug)
+  for (const slug of skillSlugs) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) {
+      throw new Error(`Workflow Skill slug 非法: ${slug}`)
+    }
+    const source = join(sourceSkillsDir, slug)
+    if (!existsSync(source)) throw new Error(`Workflow Skill 不存在: ${slug}`)
+    cpSync(source, join(pluginSkillsDir, slug), { recursive: true, filter: skillCopyFilter })
+  }
+
+  const manifestDir = join(pluginDir, '.claude-plugin')
+  mkdirSync(manifestDir, { recursive: true })
+  writeFileSync(join(manifestDir, 'plugin.json'), JSON.stringify({
+    name: `proma-workflow-${workspaceSlug}-${sessionId}`,
+    version: '1.0.0',
+  }, null, 2), 'utf-8')
+  return pluginDir
+}
+
 // ===== MCP 配置管理 =====
 
 export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig {

@@ -16,12 +16,15 @@ import { previewPanelOpenMapAtom, previewSplitRatioAtom } from '@/atoms/preview-
 import { PreviewPanel } from '@/components/diff/PreviewPanel'
 import { TabBar } from './TabBar'
 import { TabContent } from './TabContent'
+import { activeViewAtom } from '@/atoms/active-view'
+import { WorkflowView } from '@/components/workflow/WorkflowView'
 
 export function MainArea(): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const activeTab = useAtomValue(activeTabAtom)
+  const activeView = useAtomValue(activeViewAtom)
 
   // Tab 内容渲染降级为非紧急：TabBar 立即高亮新 tab，主区域昂贵渲染（含 PreviewPanel 中
   // DiffTabContent → ProseMirror editor mount + Shiki tokenize）让出主线程，避免点击 tab
@@ -127,6 +130,11 @@ export function MainArea(): React.ReactElement {
 
   return (
     <>
+      {activeView === 'workflow' ? (
+        <Panel variant="grow" className="bg-content-area rounded-2xl shadow-xl">
+          <WorkflowView />
+        </Panel>
+      ) : (
       <Panel
         variant="grow"
         className="bg-content-area rounded-2xl shadow-xl"
@@ -172,6 +180,7 @@ export function MainArea(): React.ReactElement {
           )}
         </div>
       </Panel>
+      )}
       <SettingsDialog />
     </>
   )

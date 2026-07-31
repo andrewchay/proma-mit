@@ -17,6 +17,7 @@ import type { WebContents } from 'electron'
 import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, normalizeAgentRuntime } from '@proma/shared'
 import type {
   AgentSendInput,
+  AgentMessage,
   AgentGenerateTitleInput,
   AgentSaveFilesInput,
   AgentSaveWorkspaceFilesInput,
@@ -44,6 +45,7 @@ import { getAgentSessionWorkspacePath, getWorkspaceFilesDir } from './config-pat
 import { createElectronRuntimeServices } from './agent-runtime/runtime-services'
 import { GoalCoordinator } from './goal-runtime/goal-coordinator'
 import { ProactiveScheduler } from './proactive-scheduler'
+import { createAgentSession } from './agent-session-manager'
 
 // ===== 实例创建 =====
 
@@ -87,11 +89,31 @@ void goalCoordinator.recoverDueGoals().catch((error) => {
 
 proactiveScheduler.setRunner(async (schedule) => {
   let runError: string | undefined
+  // 新会话模式：每次运行时创建新 Agent 会话，独立承载本次任务
+  let targetSessionId = schedule.sessionId
+  if (schedule.newSession) {
+    const freshMeta = createAgentSession(
+      `定时任务：${schedule.title.slice(0, 30)}`,
+      schedule.channelId,
+      schedule.workspaceId,
+      schedule.runtime,
+    )
+    targetSessionId = freshMeta.id
+  }
+  if (!targetSessionId) {
+    throw new Error('定时任务缺少目标会话（非新建会话模式且未回填 sessionId）')
+  }
+  // modelId 为空时兜底：从 channel 解析默认模型，避免旧数据/直接 IPC 创建的任务因 model 缺失而 400。
+  let effectiveModelId = schedule.modelId
+  if (!effectiveModelId && schedule.channelId) {
+    const channel = await runtimeServices.credentials.resolveChannel(schedule.channelId)
+    if (channel?.defaultModel) effectiveModelId = channel.defaultModel
+  }
   await runAgentHeadless({
-    sessionId: schedule.sessionId,
+    sessionId: targetSessionId,
     userMessage: schedule.prompt,
     channelId: schedule.channelId,
-    modelId: schedule.modelId,
+    modelId: effectiveModelId,
     workspaceId: schedule.workspaceId,
     agentRuntime: schedule.runtime,
     permissionModeOverride: schedule.permissionMode,
@@ -101,7 +123,7 @@ proactiveScheduler.setRunner(async (schedule) => {
     onTitleUpdated: () => {},
   })
   if (runError) throw new Error(runError)
-  return {}
+  return { sessionId: targetSessionId }
 })
 void proactiveScheduler.recover().catch((error) => {
   console.error('[Proactive Scheduler] 恢复到期任务失败:', error)
@@ -313,8 +335,9 @@ export async function runAgentHeadless(
   input: AgentSendInput,
   callbacks: {
     onError: (error: string) => void
-    onComplete: () => void
+    onComplete: (messages?: AgentMessage[]) => void
     onTitleUpdated: (title: string) => void
+    source?: import('@proma/shared').AgentExternalRunSource
   },
 ): Promise<void> {
   // 尝试注册主窗口 webContents，让流式事件同步推送到桌面端
@@ -337,7 +360,7 @@ export async function runAgentHeadless(
         }
       },
       onComplete: (messages, opts) => {
-        callbacks.onComplete()
+        callbacks.onComplete(messages)
         // 同步到渲染进程
         if (wc && !wc.isDestroyed()) {
           wc.send(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {

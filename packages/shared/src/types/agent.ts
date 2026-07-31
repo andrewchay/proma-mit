@@ -58,6 +58,8 @@ export interface AgentWorkspace {
   name: string
   /** URL-safe 目录名（创建后不可变） */
   slug: string
+  /** 所属 Team；旧工作区迁移时自动归入 personal。 */
+  teamId?: string
   /** 已有本地项目的根目录；未设置时使用 Proma 管理的隔离工作区 */
   rootPath?: string
   /** 创建时间戳 */
@@ -540,6 +542,10 @@ export type PromaEvent =
   | { type: 'permission_mode_changed'; mode: PromaPermissionMode }
   | { type: 'mcp_auth_required'; workspaceSlug: string; serverName: string; authorizationUrl?: string }
   | { type: 'mcp_auth_resolved'; workspaceSlug: string; serverName: string }
+  | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number }
+
+/** 外部入口触发 Agent 运行的来源 */
+export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow'
 
 
 /** IPC 传输的统一 payload（替代 AgentEvent） */
@@ -1136,6 +1142,8 @@ export interface AgentSendInput {
   mentionedMcpServers?: string[]
   /** 用户通过会话引用 mention 指定的 Agent 会话 ID 列表 */
   mentionedSessionIds?: string[]
+  /** Workflow 节点能力上限；主进程据此过滤 MCP、Skill Plugin 和工具调用。 */
+  workflowCapabilityPolicy?: import('./workflow').WorkflowCapabilityPolicy
   /** 渲染进程生成的流式开始时间戳，主进程原样回传到 STREAM_COMPLETE，确保竞态保护比较的是同一个值 */
   startedAt?: number
   /** 多模态附件（图片 / 文档） */

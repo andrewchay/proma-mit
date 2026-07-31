@@ -53,3 +53,6 @@ export * from './wechat'
 
 // 主动协作与本地调度相关类型
 export * from './proactive'
+
+// Workflow 模式相关类型
+export * from './workflow'

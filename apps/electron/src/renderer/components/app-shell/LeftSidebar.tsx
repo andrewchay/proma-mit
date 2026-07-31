@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Plug, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal } from 'lucide-react'
+import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Plug, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -208,7 +208,7 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 }
 
 export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
-  const [_activeView, setActiveView] = useAtom(activeViewAtom)
+  const [activeView, setActiveView] = useAtom(activeViewAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
@@ -874,6 +874,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
   const handleRailModeSwitch = React.useCallback((targetMode: AppMode) => {
     setViewMode('active')
+    setActiveView('conversations')
     if (targetMode === mode) return
 
     const isChatMode = targetMode === 'chat'
@@ -912,6 +913,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     openSession,
     setMode,
     setViewMode,
+    setActiveView,
   ])
 
   const railRecentItems = React.useMemo(() => {
@@ -1097,6 +1099,25 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Chat 模式</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="Workflow 工作台"
+                onClick={() => setActiveView('workflow')}
+                className={cn(
+                  'relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag',
+                  activeView === 'workflow'
+                    ? 'bg-primary/10 text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                    : 'text-foreground/45 hover:bg-foreground/[0.06] hover:text-foreground/75'
+                )}
+              >
+                <Workflow size={17} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Workflow 工作台</TooltipContent>
           </Tooltip>
         </div>
 

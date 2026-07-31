@@ -229,6 +229,7 @@ import {
   listReleases as listGitHubReleases,
   getReleaseByTag,
 } from './lib/github-release-service'
+import { listLocalReleases, mergeReleases } from './lib/local-release-notes'
 import { watchAttachedDirectory, unwatchAttachedDirectory } from './lib/workspace-watcher'
 import {
   getFeishuConfig,
@@ -2910,11 +2911,19 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 获取 Release 列表
+  // 获取 Release 列表：本地 release-notes 优先，GitHub Releases 作补充（fork 仓库可能未发布）
   ipcMain.handle(
     GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES,
     async (_, options?: GitHubReleaseListOptions): Promise<GitHubRelease[]> => {
-      return listGitHubReleases(options)
+      const perPage = options?.perPage ?? 10
+      const local = listLocalReleases()
+      try {
+        const github = await listGitHubReleases(options)
+        return mergeReleases(local, github).slice(0, perPage)
+      } catch (error) {
+        console.warn('[版本历史] GitHub 拉取失败，仅展示本地版本历史:', error)
+        return local.slice(0, perPage)
+      }
     }
   )
 
@@ -3613,4 +3622,8 @@ export function registerIpcHandlers(): void {
       return win && !win.isDestroyed() ? win.isMaximized() : false
     }
   )
+
+  // ===== Workflow Mode IPC 处理器 =====
+  const { registerWorkflowIpcHandlers } = require('./lib/workflow-ipc-handlers')
+  registerWorkflowIpcHandlers()
 }

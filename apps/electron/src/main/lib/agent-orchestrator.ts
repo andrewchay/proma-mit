@@ -34,6 +34,7 @@ import {
   isAgentCompatibleProvider,
   normalizeAgentRuntime,
   resolveAgentRuntimeBaseUrl,
+  isWorkflowToolAllowed,
 } from '@proma/shared'
 import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@proma/shared'
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
@@ -48,7 +49,7 @@ import { normalizeAgentRuntimeError } from '@proma/shared/utils'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
-import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest } from './agent-workspace-manager'
+import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
@@ -1152,12 +1153,18 @@ export class AgentOrchestrator {
   /**
    * 构建工作区 MCP 服务器配置
    */
-  private buildMcpServers(workspaceSlug: string | undefined): Record<string, Record<string, unknown>> {
+  private buildMcpServers(
+    workspaceSlug: string | undefined,
+    allowedServerNames?: readonly string[],
+  ): Record<string, Record<string, unknown>> {
     const mcpServers: Record<string, Record<string, unknown>> = {}
     if (!workspaceSlug) return mcpServers
 
+    const allowed = allowedServerNames ? new Set(allowedServerNames) : undefined
+
     const mcpConfig = getWorkspaceMcpConfig(workspaceSlug)
     for (const [name, entry] of Object.entries(mcpConfig.servers ?? {})) {
+      if (allowed && !allowed.has(name)) continue
       if (!entry.enabled) continue
       if (name === 'memos-cloud') continue
 
@@ -1442,7 +1449,7 @@ export class AgentOrchestrator {
    * 通过 EventBus 分发 AgentEvent，通过 callbacks 发送控制信号。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks): Promise<void> {
-    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments } = input
+    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments, workflowCapabilityPolicy } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护
@@ -1839,12 +1846,18 @@ export class AgentOrchestrator {
       }
 
       // 10. 构建 MCP 服务器配置 + 记忆工具 + 生图工具 + 自定义工具
-      const mcpServers = this.buildMcpServers(workspaceSlug)
+      const workflowMcpNames = workflowCapabilityPolicy
+        ? (workflowCapabilityPolicy.mcpServers ?? []).map((server) => server.name)
+        : undefined
+      const mcpServers = this.buildMcpServers(workspaceSlug, workflowMcpNames)
       await this.injectMemoryTools(sdk, mcpServers)
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
 
       // 合并外部注入的自定义 MCP 服务器（如飞书群聊工具）
       if (customMcpServers) {
+        if (workflowCapabilityPolicy) {
+          throw new Error('Workflow 节点不允许注入未声明的自定义 MCP 服务器')
+        }
         Object.assign(mcpServers, customMcpServers)
         console.log(`[Agent 编排] 已合并 ${Object.keys(customMcpServers).length} 个自定义 MCP 服务器`)
       }
@@ -1965,6 +1978,13 @@ export class AgentOrchestrator {
       // 动态 canUseTool：每次调用读取当前权限模式，支持运行中切换
       const canUseTool = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
         const currentMode = getPermissionMode()
+
+        // Workflow 节点能力集是硬上限；即使运行在 bypassPermissions 下也不能越权。
+        if (workflowCapabilityPolicy) {
+          if (!isWorkflowToolAllowed(toolName, workflowCapabilityPolicy, workflowMcpNames ?? [])) {
+            return { behavior: 'deny' as const, message: `Workflow 节点未授权工具: ${toolName}` }
+          }
+        }
 
         // ── 参数校验守卫（所有模式、所有工具，优先于权限检查） ──
         const validationFailure = validateToolInput(toolName, input)
@@ -2124,7 +2144,14 @@ export class AgentOrchestrator {
         // 回退后 resume：从指定消息处继续（SDK 在同一 JSONL 内创建分支）
         ...(rewindResumeAt && { resumeSessionAt: rewindResumeAt }),
         ...(Object.keys(mcpServers).length > 0 && { mcpServers }),
-        ...(workspaceSlug && { plugins: [{ type: 'local' as const, path: getAgentWorkspacePath(workspaceSlug) }] }),
+        ...(() => {
+          if (!workspaceSlug) return {}
+          if (!workflowCapabilityPolicy) {
+            return { plugins: [{ type: 'local' as const, path: getAgentWorkspacePath(workspaceSlug) }] }
+          }
+          const skillSlugs = (workflowCapabilityPolicy.skills ?? []).map((skill) => skill.slug)
+          return { plugins: [{ type: 'local' as const, path: prepareWorkflowSkillPlugin(workspaceSlug, sessionId, skillSlugs) }] }
+        })(),
         // 合并附加目录：用户当次输入 + 会话级 + 工作区级（详见 collectAttachedDirectories）
         ...(() => {
           const allDirs = collectAttachedDirectories({

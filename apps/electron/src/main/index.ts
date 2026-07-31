@@ -4,18 +4,14 @@ import { existsSync } from 'fs'
 import { AGENT_IPC_CHANNELS } from '@proma/shared'
 import {
   APP_DEEP_LINK_PROTOCOL,
-  APP_DEV_USER_DATA_DIR_NAME,
   APP_DISPLAY_NAME,
   APP_PROCESS_NAME,
 } from './lib/app-identity'
 
 app.setName(APP_DISPLAY_NAME)
 
-// Dev 与正式版使用独立的 userData 目录，避免共享 Chromium SingletonLock 导致 dev 启动被静默退出
-// 必须在任何会读取 userData 路径的模块加载之前执行
-if (!app.isPackaged) {
-  app.setPath('userData', join(app.getPath('appData'), APP_DEV_USER_DATA_DIR_NAME))
-}
+// 统一使用 proma-mit 身份，不再区分 dev/prod userData
+// 注意：本机只应安装一个 proma-mit 版本，避免出现双实例
 
 // 单实例锁：防止重复启动同一个版本（dev/prod 因 userData 已隔离，互不影响）
 //
@@ -534,6 +530,14 @@ async function bootstrap(): Promise<void> {
   // 启动所有已注册的 Bridge（飞书/钉钉/微信等）
   await safeAwait('startAllBridges', () => startAllBridges())
 
+  // 启动 Workflow 调度器并恢复待处理副作用
+  safeRun('startWorkflowScheduler', () => {
+    import('./lib/workflow-scheduler').then((m) => m.startWorkflowScheduler())
+  })
+  safeRun('recoverWorkflowSideEffects', () => {
+    import('./lib/workflow-service').then((m) => m.recoverWorkflowSideEffects())
+  })
+
   app.on('activate', () => {
     if (shouldSuppressVoiceDictationActivate()) {
       return
@@ -625,6 +629,13 @@ app.on('before-quit', () => {
   stopChatToolsWatcher()
   // 停止所有 Bridge
   stopAllBridges()
+  // 停止 Workflow 调度器
+  try {
+    const { stopWorkflowScheduler } = require('./lib/workflow-scheduler')
+    stopWorkflowScheduler()
+  } catch (e) {
+    // 忽略，可能在测试环境中不可用
+  }
   // 注销全局快捷键
   unregisterAllGlobalShortcuts()
   // 销毁快速任务窗口
