@@ -12,7 +12,7 @@ export interface ExternalBridgeAuditInput {
   platform: string
   senderId?: string
   chatId: string
-  permissionMode: 'safe' | 'bypassPermissions'
+  permissionMode: 'auto'
   outcome: 'received' | 'completed' | 'failed'
   /**
    * 仅用于推导错误分类，绝不写入审计文件。

@@ -312,7 +312,7 @@ class DingTalkBridge {
     }
 
     const chatId = data.conversationId
-    const ctx = { sessionWebhook: data.sessionWebhook }
+    const ctx = { sessionWebhook: data.sessionWebhook, conversationType: data.conversationType, senderId: data.senderId }
     this.cacheWebhook(chatId, data.sessionWebhook)
 
     // 根据 msgtype 提取文本 + 图片下载码

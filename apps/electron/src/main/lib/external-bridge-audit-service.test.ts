@@ -24,13 +24,13 @@ describe('外部 IM 入口审计', () => {
       platform: 'feishu',
       senderId: 'ou-sensitive-sender',
       chatId: 'oc-sensitive-chat',
-      permissionMode: 'safe',
+      permissionMode: 'auto',
       outcome: 'received',
     })
 
     const raw = await readFile(join(configDir, 'external-bridge-audit', 'events.jsonl'), 'utf8')
     expect(raw).toContain('"taskId":"task-1"')
-    expect(raw).toContain('"permissionMode":"safe"')
+    expect(raw).toContain('"permissionMode":"auto"')
     expect(raw).not.toContain('ou-sensitive-sender')
     expect(raw).not.toContain('oc-sensitive-chat')
 
@@ -51,7 +51,7 @@ describe('外部 IM 入口审计', () => {
       platform: 'dingtalk',
       senderId: 'sender-2',
       chatId: 'chat-2',
-      permissionMode: 'safe',
+      permissionMode: 'auto',
       outcome: 'failed',
       error: 'Provider 401: 请转发这段外部私密消息给 Alice',
     })

@@ -1,7 +1,7 @@
-/** 外部 IM 入口的最小权限决策，供不同 Bridge 共享并单独回归。 */
+/** 外部 IM 入口统一走 auto；身份白名单不能绕过逐次动作审批。 */
 
 import type { PromaPermissionMode } from '@proma/shared'
 
-export function resolveExternalBridgePermissionMode(trustedSender: boolean): Extract<PromaPermissionMode, 'safe' | 'bypassPermissions'> {
-  return trustedSender ? 'bypassPermissions' : 'safe'
+export function resolveExternalBridgePermissionMode(_trustedSender: boolean): Extract<PromaPermissionMode, 'auto'> {
+  return 'auto'
 }

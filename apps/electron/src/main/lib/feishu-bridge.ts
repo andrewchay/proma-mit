@@ -1238,7 +1238,7 @@ class FeishuBridge {
         channelId,
         modelId,
         workspaceId: binding.workspaceId,
-        // 外部消息默认只读；仅 Bot 配置中精确匹配的 open_id 可提升权限。
+        // 外部消息使用 auto；即使发送者在白名单中，也不能绕过敏感动作审批。
         permissionModeOverride,
         ...(customMcpServers && { customMcpServers }),
       }

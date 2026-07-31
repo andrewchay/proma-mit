@@ -24,6 +24,7 @@ import { readdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { appendExternalBridgeAudit } from './external-bridge-audit-service'
 import { resolveExternalBridgePermissionMode } from './external-bridge-policy'
+import { wrapUntrustedExternalGroupMessage } from './external-bridge-context-policy'
 
 // ===== 接口定义 =====
 
@@ -53,7 +54,7 @@ export interface BridgeCommandHandlerConfig {
   getDefaultWorkspaceId?: () => string | undefined
   /** 工作区切换后的回调 */
   onWorkspaceSwitched?: (workspaceId: string) => void
-  /** 判断外部消息发送者是否被显式授予完整 Agent 权限 */
+  /** 判断外部消息发送者是否在白名单中；不用于绕过 Agent 权限。 */
   isTrustedSender?: (senderId: string | undefined) => boolean
 }
 
@@ -613,7 +614,7 @@ export class BridgeCommandHandler {
       ? buildAttachedFilesBlock(attachments.map(a => ({ label: a.label, path: a.absolutePath })))
       : ''
     const effectiveText = text.trim() || (attachments?.length ? '请查看上面附加的文件。' : '')
-    const userMessage = fileReferences + effectiveText
+    const userMessage = fileReferences + wrapUntrustedExternalGroupMessage(effectiveText, contextData)
 
     const permissionModeOverride = resolveExternalBridgePermissionMode(Boolean(this.config.isTrustedSender?.(senderId)))
     const requestId = randomUUID()
@@ -623,7 +624,7 @@ export class BridgeCommandHandler {
       channelId: latestChannelId,
       modelId,
       workspaceId: binding.workspaceId,
-      // 外部 IM 默认没有本机审批 UI，只有显式白名单发送者才可提升权限。
+      // 外部 IM 使用 auto；写入、网络与其他敏感动作仍进入统一权限审批。
       permissionModeOverride,
     }
 
