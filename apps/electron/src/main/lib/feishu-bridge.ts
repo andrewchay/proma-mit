@@ -1454,10 +1454,26 @@ class FeishuBridge {
     const sessions = await listAgentSessions()
     const session = sessions.find((s) => s.id === sessionId)
     const title = session?.title ?? '未命名会话'
-    const preview = '任务已完成，请在 Proma 中查看详情。'
 
-    // 发送通知卡片到飞书
-    const card = buildNotificationCard(title, preview, [], 0)
+    // 从运行记录查询最近状态：failed → 失败卡片；否则完成卡片（P2-3）
+    let status: import('./feishu-message').NotificationCardStatus = 'completed'
+    let preview = '任务已完成，请在 Proma 中查看详情。'
+    try {
+      const { getRunStore } = require('./run-store') as { getRunStore: () => { query: (q: unknown) => Array<{ status: string; detail?: string; sessionId?: string }> } }
+      const recent = getRunStore().query({ limit: 50 })
+      const latest = recent.find((r) => r.sessionId === sessionId)
+      if (latest?.status === 'failed') {
+        status = 'failed'
+        preview = `任务失败：${latest.detail ?? '请查看详情'}`
+      }
+    } catch {
+      // 运行记录不可用不影响通知
+    }
+
+    // 发送通知卡片到飞书（含状态色；点击按钮跳转主应用）
+    const card = buildNotificationCard(title, preview, [], 0, status, [
+      { text: '查看详情', value: 'open-session' },
+    ])
     await this.sendCard(this.defaultNotifyChatId, card)
 
     // 通知渲染进程（用于 Sonner toast + 桌面通知）

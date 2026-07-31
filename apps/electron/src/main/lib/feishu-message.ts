@@ -47,22 +47,50 @@ export function buildAgentReplyCard(result: FormattedAgentResult, subtitle?: str
   }
 }
 
+/** 通知卡片状态 */
+export type NotificationCardStatus = 'completed' | 'failed' | 'waiting_action'
+
+const NOTIFICATION_CARD_META: Record<NotificationCardStatus, { title: string; template: string }> = {
+  completed: { title: 'Proma 任务完成', template: 'green' },
+  failed: { title: 'Proma 任务失败', template: 'red' },
+  waiting_action: { title: 'Proma 需要你的处理', template: 'orange' },
+}
+
 /**
  * 构建桌面端通知的飞书摘要卡片（非飞书发起的会话）
+ *
+ * @param status 任务状态（默认 completed）
+ * @param extraActions 附加交互按钮（status 相关）
  */
 export function buildNotificationCard(
   sessionTitle: string,
   preview: string,
   toolSummaries: ToolSummary[],
   duration: number,
+  status: NotificationCardStatus = 'completed',
+  extraActions: Array<{ text: string; value: string }> = [],
 ): Record<string, unknown> {
   const toolLine = formatToolSummaryLine(toolSummaries, duration)
+  const meta = NOTIFICATION_CARD_META[status]
+
+  const actions: Array<Record<string, unknown>> = []
+  if (extraActions.length > 0) {
+    actions.push({
+      tag: 'action',
+      actions: extraActions.map((action) => ({
+        tag: 'button',
+        text: { tag: 'plain_text', content: action.text },
+        type: 'primary',
+        value: { action: action.value },
+      })),
+    })
+  }
 
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: 'plain_text', content: 'Proma 任务完成' },
-      template: 'green',
+      title: { tag: 'plain_text', content: meta.title },
+      template: meta.template,
     },
     elements: [
       {
@@ -76,6 +104,7 @@ export function buildNotificationCard(
           elements: [{ tag: 'plain_text', content: `${toolLine} | 在 Proma 中查看完整回复` }],
         },
       ] : []),
+      ...actions,
     ],
   }
 }

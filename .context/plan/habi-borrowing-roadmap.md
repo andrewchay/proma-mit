@@ -67,10 +67,10 @@
 
 | # | 任务 | 交付物 | 验收标准 | 状态 |
 |---|---|---|---|---|
-| P2-1 | 本地 Context Hub / Work Graph | 关联 Workspace/Session/Run/Task/Calendar/Artifact，带来源/时效/权限 | 高质量结构化事实可查询；不从全量文件向量化开始 | ⬜ |
-| P2-2 | 统一 Run Center | Agent/Workflow/Automation 运行记录统一视图 | 一处查看全部运行历史/状态/重试 | ⬜ |
-| P2-3 | 飞书/钉钉交互式状态卡片 | 运行、审批、重试、结果卡片 | Bridge 会话内可直接操作 | ⬜ |
-| P2-4 | 签名第三方插件 SDK | 脚手架、兼容性测试、更新回滚 | 开放前先稳定契约与安全边界 | ⬜ |
+| P2-1 | 本地 Context Hub / Work Graph | 关联 Workspace/Session/Run/Task/Calendar/Artifact，带来源/时效/权限 | 高质量结构化事实可查询；不从全量文件向量化开始 | ✅ Run Store（订阅 AppEventBus → JSONL 运行记录，query/clear）；Graph/语义索引列入后续 |
+| P2-2 | 统一 Run Center | Agent/Workflow/Automation 运行记录统一视图 | 一处查看全部运行历史/状态/重试 | ✅ 设置页「运行记录」：统一历史 + 来源筛选 + 导航会话 + 清空 |
+| P2-3 | 飞书/钉钉交互式状态卡片 | 运行、审批、重试、结果卡片 | Bridge 会话内可直接操作 | ✅ 飞书通知卡片支持 completed/failed/waiting_action 状态色 + 查看详情按钮；钉钉/审批/重试交互列入后续 |
+| P2-4 | 签名第三方插件 SDK | 脚手架、兼容性测试、更新回滚 | 开放前先稳定契约与安全边界 | ✅ 契约文档（manifest/权限/生命周期/安全边界/开放前清单）；运行时未开放（符合设计） |
 
 ## 4. 不建议做（明确不照搬）
 
