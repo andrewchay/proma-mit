@@ -33,6 +33,7 @@ import {
   getLastFocusedVoiceInputId,
   setLastFocusedVoiceInputId,
 } from '@/lib/voice-input-focus'
+import { navigateInputHistory, type InputHistoryDirection, type InputHistoryState } from '@/lib/input-history'
 
 // ===== 行数计算 =====
 
@@ -112,6 +113,8 @@ interface RichTextInputProps {
   onHtmlChange?: (html: string) => void
   /** 是否使用 Cmd/Ctrl+Enter 发送（而非 Enter） */
   sendWithCmdEnter?: boolean
+  /** 当前会话已发送的文本，用于在输入框中通过上下键回溯。 */
+  historyEntries?: readonly string[]
   className?: string
 }
 
@@ -144,6 +147,7 @@ export function RichTextInput({
   htmlValue,
   onHtmlChange,
   sendWithCmdEnter = false,
+  historyEntries = [],
 }: RichTextInputProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false)
   const inputIdRef = useRef(`rich-text-input-${Math.random().toString(36).slice(2)}`)
@@ -174,6 +178,17 @@ export function RichTextInput({
   // 发送模式引用
   const sendWithCmdEnterRef = useRef(sendWithCmdEnter)
   sendWithCmdEnterRef.current = sendWithCmdEnter
+  const valueRef = useRef(value)
+  valueRef.current = value
+  const historyEntriesRef = useRef(historyEntries)
+  historyEntriesRef.current = historyEntries
+  const historyStateRef = useRef<InputHistoryState>({ index: -1, draft: '' })
+  const historyKey = useMemo(() => historyEntries.join('\u0000'), [historyEntries])
+  const historyKeyRef = useRef(historyKey)
+  if (historyKeyRef.current !== historyKey) {
+    historyKeyRef.current = historyKey
+    historyStateRef.current = { index: -1, draft: '' }
+  }
   // Mention 活跃状态（阻止 Enter 发送消息）
   const mentionActiveRef = useRef(false)
   // Mention 弹窗中的可选项数量（0 时 Enter 不阻塞发送）
@@ -386,6 +401,26 @@ export function RichTextInput({
             event.preventDefault()
             editor?.chain().focus().toggleStrike().run()
             return true
+          }
+        }
+
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          const { selection, doc } = view.state
+          const isAtStart = selection.empty && selection.from === 1
+          const isAtEnd = selection.empty && selection.to === doc.content.size
+          const direction: InputHistoryDirection | undefined = event.key === 'ArrowUp' && isAtStart
+            ? 'previous'
+            : event.key === 'ArrowDown' && isAtEnd
+              ? 'next'
+              : undefined
+          if (direction) {
+            const next = navigateInputHistory(historyEntriesRef.current, historyStateRef.current, valueRef.current, direction)
+            if (next) {
+              event.preventDefault()
+              historyStateRef.current = { index: next.index, draft: next.draft }
+              onChange(next.value)
+              return true
+            }
           }
         }
 

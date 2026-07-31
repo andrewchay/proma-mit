@@ -97,7 +97,7 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
-import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
+import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage, SDKTextBlock, SDKUserMessage } from '@proma/shared'
 import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
@@ -105,6 +105,15 @@ import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/ag
 /** 稳定的空 SDKMessage 数组引用，避免 ?? [] 每次创建新引用 */
 const EMPTY_SDK_MESSAGES: SDKMessage[] = []
 const LONG_TEXT_ATTACHMENT_THRESHOLD = 2000
+
+function userMessageText(message: SDKMessage): string | undefined {
+  if (message.type !== 'user') return undefined
+  const content = (message as SDKUserMessage).message?.content ?? []
+  return content
+    .filter((block): block is SDKTextBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+}
 
 function formatClipboardTimestamp(date = new Date()): string {
   const pad = (value: number): string => String(value).padStart(2, '0')
@@ -446,6 +455,10 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const setLiveMessagesMap = useSetAtom(liveMessagesMapAtom)
   // 稳定化空数组引用，避免 ?? [] 每次创建新引用导致下游 useMemo 链不必要重算
   const liveMessages = liveMessagesMap.get(sessionId) ?? EMPTY_SDK_MESSAGES
+  const historyEntries = React.useMemo(
+    () => persistedSDKMessages.map(userMessageText).filter((text): text is string => Boolean(text)),
+    [persistedSDKMessages],
+  )
   // Per-session 渠道/模型配置（优先读 session map，回退到全局默认值）
   const sessionChannelMap = useAtomValue(agentSessionChannelMapAtom)
   const sessionModelMap = useAtomValue(agentSessionModelMapAtom)
@@ -2270,6 +2283,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               workspaceId={currentWorkspaceId}
               workspaceSlug={workspaceSlug}
               sessionId={sessionId}
+              historyEntries={historyEntries}
               attachedDirs={workspaceMentionPaths}
               sessionAttachedDirs={sessionMentionPaths}
               htmlValue={inputHtmlContent}

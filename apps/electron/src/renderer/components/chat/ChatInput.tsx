@@ -32,6 +32,7 @@ import {
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
 import {
   conversationDraftsAtom,
+  currentMessagesAtom,
 } from '@/atoms/chat-atoms'
 import type { PendingAttachment } from '@/atoms/chat-atoms'
 import {
@@ -66,6 +67,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
   const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   // 从 Map atom 读写草稿
   const draftsMap = useAtomValue(conversationDraftsAtom)
+  const currentMessages = useAtomValue(currentMessagesAtom)
   const setDraftsMap = useSetAtom(conversationDraftsAtom)
   const content = draftsMap.get(conversationId) ?? ''
   const setContent = React.useCallback((value: string) => {
@@ -84,6 +86,10 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
   const [thinkingEnabled, setThinkingEnabled] = useConversationThinkingEnabled()
   const setPendingAttachments = onSetPendingAttachments
   const [isDragOver, setIsDragOver] = React.useState(false)
+  const historyEntries = React.useMemo(
+    () => currentMessages.filter((message) => message.role === 'user').map((message) => message.content),
+    [currentMessages],
+  )
 
   const canSend = (content.trim().length > 0 || pendingAttachments.length > 0)
     && selectedModel !== null
@@ -390,6 +396,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
             placeholder={sendWithCmdEnter ? '输入消息... (⌘/Ctrl+Enter 发送，Enter 换行)' : '输入消息... (Enter 发送，Shift+Enter 换行)'}
             autoFocusTrigger={conversationId}
             sendWithCmdEnter={sendWithCmdEnter}
+            historyEntries={historyEntries}
           />
 
           {/* Footer 工具栏 — 容器变窄时尾部按钮自动折叠进「更多」Popover */}
