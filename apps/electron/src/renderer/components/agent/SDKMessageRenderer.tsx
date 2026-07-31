@@ -19,6 +19,7 @@ import { ImageLightbox } from '@/components/ui/image-lightbox'
 import { ContentBlock } from './ContentBlock'
 import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary } from './TurnFileChangesSummary'
+import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
 import { getBlockKey } from './tool-utils'
 import { DurationBadge } from './AgentMessages'
@@ -38,6 +39,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatMessageTime } from '@/components/chat/ChatMessageItem'
 import { getModelLogo, resolveModelDisplayName } from '@/lib/model-logo'
 import { userProfileAtom } from '@/atoms/user-profile'
+import { agentSessionsAtom } from '@/atoms/agent-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { environmentCheckDialogOpenAtom } from '@/atoms/environment'
 import { settingsOpenAtom, settingsTabAtom } from '@/atoms/settings-tab'
@@ -493,6 +495,8 @@ export function buildHistoricalTaskSubjects(allMessages: SDKMessage[]): Map<stri
 
 export interface AssistantTurnRendererProps {
   turn: AssistantTurn
+  /** 当前 Agent 会话 ID（用于保存为工作流等跨模式动作） */
+  sessionId?: string
   /** 所有消息（全局，供工具结果查找跨 turn 的结果） */
   allMessages: SDKMessage[]
   /** 跨 turn 历史 TaskCreate id → subject 映射（由父组件 useMemo 算一次后传入） */
@@ -516,8 +520,14 @@ export interface AssistantTurnRendererProps {
   sessionModelId?: string
 }
 
-export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: AssistantTurnRendererProps): React.ReactElement | null {
+export function AssistantTurnRenderer({ turn, sessionId, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: AssistantTurnRendererProps): React.ReactElement | null {
   const channels = useAtomValue(channelsAtom)
+  const agentSessions = useAtomValue(agentSessionsAtom)
+  // 用于「保存为工作流」的会话标题
+  const sessionTitleForAction = React.useMemo(() => {
+    if (!sessionId) return ''
+    return agentSessions.find((s) => s.id === sessionId)?.title ?? ''
+  }, [sessionId, agentSessions])
   // 收集所有 assistant 消息的内容块，保留 parent_tool_use_id 关联
   interface EnrichedBlock {
     block: SDKContentBlock
@@ -674,10 +684,15 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
         const hasActions = !!(textContent || (onFork && lastUuid) || (onRewind && lastUuid))
         const hasDuration = durationMs != null
         if (!hasDuration && !hasActions && !showStoppedBadge) return null
+        // 判断本 turn 是否成功完成（result success 且无错误）——用于显示「保存为工作流」
+        const turnSucceeded = !hasError && turn.turnMessages.some((m) => m.type === 'result' && (m as SDKResultMessage).subtype === 'success')
         return (
           <MessageActions className="pl-[46px] mt-0.5 min-h-[28px] justify-start">
             {hasDuration && <DurationBadge durationMs={durationMs!} usage={usage} />}
             {textContent && <CopyButton content={textContent} />}
+            {turnSucceeded && sessionId && (
+              <SaveAsWorkflowButton sessionId={sessionId} sessionTitle={sessionTitleForAction} />
+            )}
             {onFork && lastUuid && (
               <MessageAction tooltip="从此处分叉" onClick={() => onFork(lastUuid)}>
                 <Split className="size-3.5" />
@@ -1185,6 +1200,8 @@ function ErrorMessage({ message, onRetry, onRetryInNewSession, onCompact }: Erro
 
 export interface MessageGroupRendererProps {
   group: MessageGroup
+  /** 当前 Agent 会话 ID */
+  sessionId?: string
   allMessages: SDKMessage[]
   /** 跨 turn 历史 TaskCreate id → subject 映射（由父组件 useMemo 算一次后传入） */
   historicalTaskSubjects: Map<string, string>
@@ -1279,7 +1296,7 @@ export function getGroupPreview(group: MessageGroup): string {
   return texts.join(' ').slice(0, 200)
 }
 
-export function MessageGroupRenderer({ group, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: MessageGroupRendererProps): React.ReactElement | null {
+export function MessageGroupRenderer({ group, sessionId, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: MessageGroupRendererProps): React.ReactElement | null {
   const groupId = getGroupId(group)
 
   if (group.type === 'user') {
@@ -1303,6 +1320,7 @@ export function MessageGroupRenderer({ group, allMessages, historicalTaskSubject
     <div data-message-id={groupId} data-message-role="assistant">
       <AssistantTurnRenderer
         turn={group}
+        sessionId={sessionId}
         allMessages={allMessages}
         historicalTaskSubjects={historicalTaskSubjects}
         basePath={basePath}

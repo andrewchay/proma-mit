@@ -627,6 +627,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
                 <MessageGroupRenderer
                   key={getGroupId(group)}
                   group={group}
+                  sessionId={sessionId}
                   allMessages={allSDKMessages}
                   historicalTaskSubjects={historicalTaskSubjects}
                   basePath={sessionPath || undefined}

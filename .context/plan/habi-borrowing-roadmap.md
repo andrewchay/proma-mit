@@ -48,7 +48,7 @@
 | P0-1 | 强化测试/运行沙箱隔离 | 测试不得污染真实配置目录；Workflow Run/会话沙箱目录不得出现在用户工作区 | `bun test` 全量绿；`~/.proma-mit/agent-workspaces` 无测试残留 | ⬜ 部分（已有 env 隔离，需查残留） |
 | P0-2 | 定义统一 AppEventEnvelope | `packages/shared` 新增事件类型：started/progress/waiting_action/completed/failed | 灵动岛/飞书/托盘统一消费同一事件 | ⬜ |
 | P0-3 | renderer 通知收口为主进程 NotificationCoordinator | 主进程通知中心 + 系统通知 fallback | renderer 不再直接 `new Notification`；开关/音效仍可配置 | ⬜ |
-| P0-4 | 明确 Chat/Agent/Workflow 跨模式转换 | 转换动作（澄清→Agent、成功→Workflow、绑定 Automation） | UI 有入口；任务流转有记录 | ⬜ |
+| P0-4 | 明确 Chat/Agent/Workflow 跨模式转换 | 转换动作（澄清→Agent、成功→Workflow、绑定 Automation） | UI 有入口；任务流转有记录 | 🟡 部分：Chat→Agent 已有（MigrateToAgentButton）；Agent→Workflow 草稿已加（SaveAsWorkflowButton）；Workflow→Automation schedule UI 待 Workflow 编辑器支持定时触发后补 |
 
 ### P1：第一方扩展验证
 
