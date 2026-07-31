@@ -10,7 +10,7 @@ import * as React from 'react'
 const DASH_LENGTH = 9    // 每段虚线长度
 const DASH_GAP = 7       // 虚线间距
 const STROKE_WIDTH = 2   // 线宽
-const BORDER_RADIUS = 17 // 圆角半径，与输入框 rounded-[17px] 一致
+const BORDER_RADIUS = 10 // 圆角半径，与输入框 rounded-[10px] 一致
 const OFFSET = 2         // 向外偏移，避免遮盖原有 border
 
 export function PlanModeDashedBorder(): React.ReactElement {

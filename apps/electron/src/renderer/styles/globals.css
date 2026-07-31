@@ -306,8 +306,23 @@
   * {
     @apply border-border;
   }
+
+  /*
+   * 采用中文优先的本机字体栈：安装了阿里普惠体时用于中文阅读；
+   * 未安装时自然回退到 macOS/Windows 的系统中文字体。常规界面基线对齐 Codex 的紧凑 14px 密度。
+   */
   body {
     @apply bg-background text-foreground;
+    font-family: "Alibaba PuHuiTi 3.0", "Alibaba PuHuiTi", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   }
 }
 
@@ -718,8 +733,8 @@
 }
 
 .code-block-wrapper pre.shiki {
-  /* Cascadia Code 是 Windows 11 预装字体，优先级提高；Courier New 作为 Windows 10 最终兜底 */
-  font-family: 'Fira Code', 'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  /* 优先采用 macOS 的 SF Mono，其他平台回退到 JetBrains Mono 和系统等宽字体。 */
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   background-color: hsl(var(--code-bg)) !important;
 }
 
@@ -1143,7 +1158,7 @@
 .ProseMirror pre.markdown-code-block {
   background: hsl(var(--muted) / 0.45) !important;
   color: hsl(var(--foreground)) !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;
@@ -1300,7 +1315,7 @@
 
 .ProseMirror .markdown-code-edit-layer {
   background: transparent !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
   font-size: 13px !important;
   font-variant-ligatures: none;
   font-kerning: none;
