@@ -249,10 +249,10 @@ import { wechatBridge } from './lib/wechat-bridge'
 /** 文件浏览器中需要隐藏的系统文件 */
 const HIDDEN_FS_ENTRIES = new Set(['.DS_Store', 'Thumbs.db'])
 
-/** 已知编辑器应用名称白名单（macOS） */
+/** 已知可打开文件的应用白名单（macOS）。 */
 const KNOWN_EDITORS = [
   'Visual Studio Code', 'Cursor', 'Sublime Text', 'Windsurf',
-  'Zed', 'CotEditor', 'IntelliJ IDEA', 'Xcode', 'TextEdit',
+  'Zed', 'CotEditor', 'IntelliJ IDEA', 'Xcode', 'TextEdit', 'Archive Utility',
 ]
 
 /**
@@ -589,9 +589,11 @@ export function registerIpcHandlers(): void {
       const home = homedir()
 
       const editors = KNOWN_EDITORS.map((name) => {
-        const searchPaths = name === 'Xcode' || name === 'TextEdit'
-          ? [`/Applications/${name}.app`]
-          : [`/Applications/${name}.app`, `${home}/Applications/${name}.app`]
+        const searchPaths = name === 'Archive Utility'
+          ? ['/System/Library/CoreServices/Applications/Archive Utility.app']
+          : name === 'Xcode' || name === 'TextEdit'
+            ? [`/Applications/${name}.app`]
+            : [`/Applications/${name}.app`, `${home}/Applications/${name}.app`]
         return { name, paths: searchPaths }
       })
 

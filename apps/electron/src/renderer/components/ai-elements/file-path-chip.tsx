@@ -8,10 +8,22 @@
 
 import * as React from 'react'
 import { useStore } from 'jotai'
+import { AppWindow, Copy, FileText, FolderSearch } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { previewFileMapAtom, previewPanelOpenMapAtom } from '@/atoms/preview-atoms'
 import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 /** 文件存在性缓存（模块级共享，避免重复 IPC）。key = filePath + basePaths */
 const fileExistsCache = new Map<string, boolean>()
@@ -176,7 +188,92 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
     })
   }, [store, cleanPath, candidateBases])
 
-  return (
+  /**
+   * 将相对路径解析为已授权的绝对路径。文件工具调用会话中的相对路径不能直接交给系统 Shell，
+   * 必须携带当前会话和候选目录，让主进程完成同一套范围校验。
+   */
+  const resolveFileForSystemAction = React.useCallback(async (): Promise<{ resolvedPath: string; content: string } | null> => {
+    const sessionId = store.get(currentAgentSessionIdAtom)
+    const result = await window.electronAPI.resolveAndReadFile(cleanPath, {
+      sessionId: sessionId ?? undefined,
+      candidateBasePaths: candidateBases.length > 0 ? candidateBases : undefined,
+    })
+    if (!result) {
+      toast.error('文件不存在、无法读取或不在当前工作区范围内')
+      return null
+    }
+    return result
+  }, [store, cleanPath, candidateBases])
+
+  const openFile = React.useCallback(async (appName?: string): Promise<void> => {
+    const file = await resolveFileForSystemAction()
+    if (!file) return
+    const sessionId = store.get(currentAgentSessionIdAtom)
+    try {
+      await window.electronAPI.systemOpenFile(file.resolvedPath, appName, {
+        sessionId: sessionId ?? undefined,
+        candidateBasePaths: candidateBases.length > 0 ? candidateBases : undefined,
+      })
+    } catch (error) {
+      console.error('[FilePathChip] 用系统应用打开文件失败:', error)
+      toast.error('打开文件失败')
+    }
+  }, [resolveFileForSystemAction, store, candidateBases])
+
+  const copyPath = React.useCallback(async (): Promise<void> => {
+    const file = await resolveFileForSystemAction()
+    if (!file) return
+    try {
+      await navigator.clipboard.writeText(file.resolvedPath)
+      toast.success('已复制文件路径')
+    } catch (error) {
+      console.error('[FilePathChip] 复制文件路径失败:', error)
+      toast.error('复制文件路径失败')
+    }
+  }, [resolveFileForSystemAction])
+
+  const copyFileContents = React.useCallback(async (): Promise<void> => {
+    const file = await resolveFileForSystemAction()
+    if (!file) return
+    try {
+      await navigator.clipboard.writeText(file.content)
+      toast.success('已复制文件内容')
+    } catch (error) {
+      console.error('[FilePathChip] 复制文件内容失败:', error)
+      toast.error('复制文件内容失败')
+    }
+  }, [resolveFileForSystemAction])
+
+  const revealInFinder = React.useCallback(async (): Promise<void> => {
+    const file = await resolveFileForSystemAction()
+    if (!file) return
+    const sessionId = store.get(currentAgentSessionIdAtom)
+    try {
+      await window.electronAPI.showAttachedInFolder(file.resolvedPath, {
+        sessionId: sessionId ?? undefined,
+        candidateBasePaths: candidateBases.length > 0 ? candidateBases : undefined,
+      })
+    } catch (error) {
+      console.error('[FilePathChip] 在文件夹中显示失败:', error)
+      toast.error('无法在文件夹中显示')
+    }
+  }, [resolveFileForSystemAction, store, candidateBases])
+
+  const [editors, setEditors] = React.useState<import('@proma/shared').EditorApp[]>([])
+  const [editorsLoaded, setEditorsLoaded] = React.useState(false)
+
+  const loadEditors = React.useCallback(async (open: boolean): Promise<void> => {
+    if (!open || editorsLoaded) return
+    try {
+      setEditors(await window.electronAPI.scanEditors())
+    } catch (error) {
+      console.error('[FilePathChip] 读取系统应用失败:', error)
+    } finally {
+      setEditorsLoaded(true)
+    }
+  }, [editorsLoaded])
+
+  const chip = (
     <button
       ref={chipRef}
       type="button"
@@ -195,6 +292,46 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
       <FileTypeIcon name={filename} isDirectory={false} size={14} />
       <span className="truncate max-w-[240px]">{filename}{lineColSuffix}</span>
     </button>
+  )
+
+  return (
+    <ContextMenu onOpenChange={loadEditors}>
+      <ContextMenuTrigger asChild>{chip}</ContextMenuTrigger>
+      <ContextMenuContent className="z-[9999] min-w-[11rem] p-1">
+        <ContextMenuItem onSelect={() => { void openFile() }}>
+          <FileText className="mr-2 size-4" />
+          打开文件
+        </ContextMenuItem>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <AppWindow className="mr-2 size-4" />
+            打开方式
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent className="min-w-[12rem]">
+            {editors.length > 0 ? editors.map((editor) => (
+              <ContextMenuItem key={editor.path} onSelect={() => { void openFile(editor.name) }}>
+                {editor.name}
+              </ContextMenuItem>
+            )) : (
+              <ContextMenuItem disabled>{editorsLoaded ? '未找到支持的应用' : '正在读取应用…'}</ContextMenuItem>
+            )}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => { void copyPath() }}>
+          <Copy className="mr-2 size-4" />
+          复制路径
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => { void copyFileContents() }}>
+          <Copy className="mr-2 size-4" />
+          复制文件内容
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => { void revealInFinder() }}>
+          <FolderSearch className="mr-2 size-4" />
+          在 Finder 中显示
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
