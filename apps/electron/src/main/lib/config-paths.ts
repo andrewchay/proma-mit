@@ -752,3 +752,17 @@ export function getSdkConfigDir(): string {
 export function getScratchPadPath(): string {
   return join(getConfigDir(), 'scratch-pad.md')
 }
+
+/** 灵动岛扩展配置目录（开关/项目静音等，刻意不写入 settings.json）。 */
+export function getDynamicIslandDir(): string {
+  const dir = join(getConfigDir(), 'dynamic-island')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/** 灵动岛配置文件路径。 */
+export function getDynamicIslandConfigPath(): string {
+  return join(getDynamicIslandDir(), 'config.json')
+}

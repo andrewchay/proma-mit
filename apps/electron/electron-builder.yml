@@ -89,6 +89,11 @@ extraResources:
     to: computer-use
     filter:
       - "**/*"
+  # macOS 灵动岛通知原生模块与渲染胶水（非 macOS 平台安装包不包含）。
+  - from: resources/dynamic-island
+    to: dynamic-island
+    filter:
+      - "**/*"
 
 # ============================================
 # macOS 配置
