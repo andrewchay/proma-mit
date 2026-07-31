@@ -84,4 +84,34 @@ describe('GoalCoordinator', () => {
     expect(requests).toEqual([])
     expect(coordinator.getActiveBySession('session-3')?.checkpoint?.wakeTrigger).toEqual({ type: 'user_input' })
   })
+
+  test('given a stopped Goal when a new Goal is created in the same session then the old run no longer blocks it', () => {
+    const coordinator = createCoordinator()
+    const stopped = coordinator.create({ sessionId: 'session-stop', runtime: 'pi', objective: '旧 Goal' })
+
+    coordinator.setStatus(stopped.id, 'cancelled')
+    const replacement = coordinator.create({ sessionId: 'session-stop', runtime: 'pi', objective: '新 Goal' })
+
+    expect(coordinator.get(stopped.id)?.status).toBe('cancelled')
+    expect(coordinator.get(stopped.id)?.activeRunId).toBeUndefined()
+    expect(replacement.objective).toBe('新 Goal')
+  })
+
+  test('given a continuation has been queued when the Goal is paused then it does not start a new run', async () => {
+    const coordinator = createCoordinator()
+    const requests: string[] = []
+    coordinator.setContinuationRunner(async ({ prompt }) => { requests.push(prompt); return true })
+    const goal = coordinator.create({ sessionId: 'session-pause', runtime: 'ai-sdk', objective: '暂停不再续跑' })
+    await coordinator.submitCheckpoint('session-pause', {
+      outcome: 'continue', summary: '等待续跑', completed: [], evidence: [],
+      nextAction: '继续执行', wakeTrigger: { type: 'immediate' },
+    })
+
+    coordinator.setStatus(goal.id, 'waiting')
+    await coordinator.onTurnFinished('session-pause')
+    await Bun.sleep(0)
+
+    expect(requests).toEqual([])
+    expect(coordinator.get(goal.id)?.status).toBe('waiting')
+  })
 })

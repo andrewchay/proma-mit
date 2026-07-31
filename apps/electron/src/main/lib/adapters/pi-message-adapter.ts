@@ -42,12 +42,11 @@ function isSDKAssistantMessage(message: SDKMessage): message is SDKAssistantMess
   return message.type === 'assistant'
 }
 
-function piContentToText(content: string | Array<PiTextContent | PiImageContent>): string {
+function piToolResultContentToSdk(content: string | Array<PiTextContent | PiImageContent>): unknown {
   if (typeof content === 'string') return content
-  return content
-    .filter((block): block is PiTextContent => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
+  return content.map((block) => block.type === 'text'
+    ? { type: 'text', text: block.text }
+    : { type: 'image', data: block.data, mimeType: block.mimeType })
 }
 
 function sdkUserContentToText(content: SDKUserContentBlock[] | undefined): string {
@@ -77,9 +76,22 @@ function sdkAssistantContentToPi(content: SDKContentBlock[]): PiAssistantMessage
   return blocks
 }
 
-function sdkToolResultContentToPi(block: SDKToolResultBlock): PiTextContent[] {
-  const content = stringifyContent(block.content)
-  return [{ type: 'text', text: content }]
+function sdkToolResultContentToPi(block: SDKToolResultBlock): Array<PiTextContent | PiImageContent> {
+  if (Array.isArray(block.content)) {
+    const content: Array<PiTextContent | PiImageContent> = []
+    for (const item of block.content) {
+      if (!isRecord(item)) continue
+      if (item.type === 'text' && typeof item.text === 'string') {
+        content.push({ type: 'text', text: item.text })
+        continue
+      }
+      if (item.type === 'image' && typeof item.data === 'string' && typeof item.mimeType === 'string') {
+        content.push({ type: 'image', data: item.data, mimeType: item.mimeType })
+      }
+    }
+    if (content.length > 0) return content
+  }
+  return [{ type: 'text', text: stringifyContent(block.content) }]
 }
 
 function piUsageToSdk(usage: PiAssistantMessage['usage']): SDKAssistantMessage['message']['usage'] {
@@ -104,7 +116,9 @@ function convertPiAssistantMessage(
   message: PiAssistantMessage,
   sessionId: string,
   channelModelId?: string,
+  options: { final?: boolean; uuid?: string } = {},
 ): SDKAssistantMessage {
+  const final = options.final ?? true
   const content: SDKContentBlock[] = message.content.map((block) => {
     if (block.type === 'text') {
       return { type: 'text', text: block.text }
@@ -126,7 +140,11 @@ function convertPiAssistantMessage(
     parent_tool_use_id: null,
     session_id: sessionId,
     _channelModelId: channelModelId,
-    ...(message.errorMessage ? { error: { message: message.errorMessage, errorType: 'pi_runtime_error' } } : {}),
+    ...(options.uuid ? { uuid: options.uuid } : {}),
+    ...(!final ? { _partial: true } : {}),
+    ...(final && message.stopReason === 'error' && message.errorMessage
+      ? { error: { message: message.errorMessage, errorType: 'pi_runtime_error' } }
+      : {}),
   }
 }
 
@@ -137,7 +155,7 @@ function convertPiToolResultMessage(message: PiToolResultMessage, sessionId: str
       content: [{
         type: 'tool_result',
         tool_use_id: message.toolCallId,
-        content: piContentToText(message.content),
+        content: piToolResultContentToSdk(message.content),
         is_error: message.isError,
       }],
     },
@@ -150,14 +168,19 @@ export function convertPiMessageToSDKMessage(
   message: PiAgentMessage,
   sessionId: string,
   channelModelId?: string,
+  options?: { final?: boolean; uuid?: string },
 ): SDKMessage | null {
   if (message.role === 'assistant') {
-    return convertPiAssistantMessage(message, sessionId, channelModelId) as SDKMessage
+    return convertPiAssistantMessage(message, sessionId, channelModelId, options) as SDKMessage
   }
   if (message.role === 'toolResult') {
     return convertPiToolResultMessage(message, sessionId) as SDKMessage
   }
   return null
+}
+
+export function isAssistantPiMessage(message: PiAgentMessage): message is PiAssistantMessage {
+  return message.role === 'assistant'
 }
 
 export function convertPiMessagesToSDKMessages(

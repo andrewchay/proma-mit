@@ -684,10 +684,10 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
   },
   pi: {
     supportsTools: true,
-    supportsMcp: false,
-    supportsPlanMode: false,
-    supportsAskUser: false,
-    supportsSubAgent: false,
+    supportsMcp: true,
+    supportsPlanMode: true,
+    supportsAskUser: true,
+    supportsSubAgent: true,
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
@@ -796,7 +796,7 @@ export interface AgentGoal {
   workspaceId?: string
   channelId?: string
   modelId?: string
-  runtime: Extract<AgentRuntime, 'proma' | 'ai-sdk'>
+  runtime: Extract<AgentRuntime, 'proma' | 'pi' | 'ai-sdk'>
   objective: string
   acceptanceCriteria: string[]
   status: AgentGoalStatus
@@ -813,7 +813,7 @@ export interface CreateAgentGoalInput {
   workspaceId?: string
   channelId?: string
   modelId?: string
-  runtime: Extract<AgentRuntime, 'proma' | 'ai-sdk'>
+  runtime: Extract<AgentRuntime, 'proma' | 'pi' | 'ai-sdk'>
   objective: string
   acceptanceCriteria?: string[]
 }
@@ -1111,6 +1111,11 @@ export interface AgentSendInput {
   sessionId: string
   /** 用户消息内容 */
   userMessage: string
+  /**
+   * 仅供 runtime 使用的内部提示词；不会作为用户消息展示或写入会话历史。
+   * 用于动态工作区上下文、Goal 控制指令等运行时信息。
+   */
+  runtimeInstruction?: string
   /** 渠道 ID（用于获取 API Key） */
   channelId: string
   /** 模型 ID */

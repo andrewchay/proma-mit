@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { SDKAssistantMessage, SDKMessage } from '@proma/shared'
-import type { AssistantMessage } from '@earendil-works/pi-ai'
-import { convertPiMessagesToSDKMessages, convertSDKMessagesToPiMessages } from './pi-message-adapter'
+import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
+import { convertPiMessageToSDKMessage, convertPiMessagesToSDKMessages, convertSDKMessagesToPiMessages } from './pi-message-adapter'
 
 describe('pi-message-adapter', () => {
   test('converts Pi assistant text, thinking and tool call blocks to SDK assistant messages', () => {
@@ -62,5 +62,32 @@ describe('pi-message-adapter', () => {
     expect(piMessages.map((message) => message.role)).toEqual(['user', 'assistant'])
     expect(piMessages[0]).toMatchObject({ role: 'user', content: '你好' })
     expect(piMessages[1]).toMatchObject({ role: 'assistant', model: 'gpt-5.2' })
+  })
+
+  test('preserves screenshot image blocks when Pi tool results are persisted and restored as history', () => {
+    const piToolResult: ToolResultMessage = {
+      role: 'toolResult',
+      toolCallId: 'screenshot-1',
+      toolName: 'WebBridgeScreenshot',
+      content: [
+        { type: 'text', text: '截图已获取' },
+        { type: 'image', data: 'AQID', mimeType: 'image/png' },
+      ],
+      isError: false,
+      timestamp: 1,
+    }
+
+    const sdkMessage = convertPiMessageToSDKMessage(piToolResult, 's1')
+    if (!sdkMessage) throw new Error('Pi 工具结果未转换为 SDK 消息')
+    const restored = convertSDKMessagesToPiMessages([sdkMessage])
+
+    expect(restored).toEqual([expect.objectContaining({
+      role: 'toolResult',
+      toolCallId: 'screenshot-1',
+      content: [
+        { type: 'text', text: '截图已获取' },
+        { type: 'image', data: 'AQID', mimeType: 'image/png' },
+      ],
+    })])
   })
 })

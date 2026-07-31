@@ -76,7 +76,15 @@ export class GoalCoordinator {
         blocker: undefined,
       }
       : goal.checkpoint
-    const next = this.save({ ...goal, status, checkpoint: resumedCheckpoint, updatedAt: Date.now() })
+    const next = this.save({
+      ...goal,
+      status,
+      checkpoint: resumedCheckpoint,
+      // 停止或暂停后，该 run 已不再属于可恢复的 Goal。清空它可避免 UI
+      // 和恢复逻辑把旧 run 误判成仍在占用当前会话。
+      activeRunId: status === 'active' ? goal.activeRunId : undefined,
+      updatedAt: Date.now(),
+    })
     if (status !== 'active') this.immediateCounts.delete(goalId)
     if (status === 'active') queueMicrotask(() => { void this.schedule(next) })
     return next

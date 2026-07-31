@@ -30,6 +30,19 @@ describe('Agent runtime 类型', () => {
     })
   })
 
+  test('Pi runtime 能力声明匹配 Proma Tool Bridge', () => {
+    expect(AGENT_RUNTIME_CAPABILITIES.pi).toMatchObject({
+      supportsTools: true,
+      supportsMcp: true,
+      supportsPlanMode: true,
+      supportsAskUser: true,
+      supportsSubAgent: true,
+      supportsPartialStreaming: true,
+      supportsNativeResume: false,
+      supportsFileSnapshotRewind: false,
+    })
+  })
+
   test('自动化设置所需的 IPC 通道保持显式且稳定', () => {
     expect(AGENT_IPC_CHANNELS.STOP_ALL_WEB_BRIDGES).toBe('agent:stop-all-web-bridges')
     expect(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES).toBe('agent:get-computer-use-capabilities')

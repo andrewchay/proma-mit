@@ -49,6 +49,7 @@ import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
 import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest } from './agent-workspace-manager'
+import { getWorkspaceSkillsDir } from './config-paths'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getRuntimeStatus } from './runtime-init'
@@ -527,6 +528,8 @@ export class AgentOrchestrator {
     channelId: string
     workspaceId?: string
     userMessage: string
+    /** 仅发送给模型的增强提示词；用户消息仍以 userMessage 原文持久化。 */
+    prompt?: string
     modelId?: string
     provider: ProviderType
     adapterProvider?: ProviderType
@@ -537,7 +540,7 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
     let userMessageUuid = ''
 
     try {
@@ -554,16 +557,19 @@ export class AgentOrchestrator {
       const historyMessages = allHistory.length > 0 ? allHistory.slice(0, -1) : []
       console.log(`[Agent Runtime] 加载历史消息：${historyMessages.length} 条`)
 
-      // 持久化初始用户消息（带 UUID，Proma runtime 不依赖 SDK session）
-      userMessageUuid = randomUUID()
-      const userSDKMsg: SDKMessage = {
-        type: 'user',
-        message: { content: [{ type: 'text', text: userMessage }] },
-        parent_tool_use_id: null,
-        uuid: userMessageUuid,
-        _attachments: attachments,
-      } as unknown as SDKMessage
-      runtimeServices.sessions.appendMessages(sessionId, [userSDKMsg])
+      // 仅持久化真实用户输入。Goal 自动续跑等内部 prompt 只供模型消费，不能生成空白或
+      // 含控制指令的用户气泡。
+      if (userMessage) {
+        userMessageUuid = randomUUID()
+        const userSDKMsg: SDKMessage = {
+          type: 'user',
+          message: { content: [{ type: 'text', text: userMessage }] },
+          parent_tool_use_id: null,
+          uuid: userMessageUuid,
+          _attachments: attachments,
+        } as unknown as SDKMessage
+        runtimeServices.sessions.appendMessages(sessionId, [userSDKMsg])
+      }
 
       // 创建权限检查回调，复用 AgentPermissionService 的 auto/ask/safe 逻辑
       const canUseTool = permissionService.createCanUseTool(
@@ -581,7 +587,7 @@ export class AgentOrchestrator {
       const queryOptions: ProviderAgnosticAgentQueryOptions = {
         sessionId,
         agentRuntime,
-        prompt: userMessage,
+        prompt,
         model: modelId,
         provider,
         adapterProvider,
@@ -732,6 +738,8 @@ export class AgentOrchestrator {
     channelId: string
     workspaceId?: string
     userMessage: string
+    /** 仅发送给模型的增强提示词；用户消息仍以 userMessage 原文持久化。 */
+    prompt?: string
     modelId?: string
     provider: ProviderType
     apiKey: string
@@ -741,18 +749,20 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
     let userMessageUuid = ''
 
     try {
       let agentCwd = homedir()
       let workspaceName: string | undefined
       let workspaceSlug: string | undefined
+      let mcpServers: Record<string, import('@proma/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
           workspaceName = ws.name
           workspaceSlug = ws.slug
+          mcpServers = getWorkspaceMcpConfig(ws.slug).servers
           agentCwd = getAgentWorkspaceCwd(ws, sessionId)
           if (!existsSync(agentCwd)) {
             mkdirSync(agentCwd, { recursive: true })
@@ -764,20 +774,36 @@ export class AgentOrchestrator {
 
       const historyMessages = getAgentSessionSDKMessages(sessionId)
 
-      userMessageUuid = randomUUID()
-      const userSDKMsg: SDKMessage = {
-        type: 'user',
-        message: { content: [{ type: 'text', text: userMessage }] },
-        parent_tool_use_id: null,
-        uuid: userMessageUuid,
-        _attachments: attachments,
-      } as unknown as SDKMessage
-      appendSDKMessages(sessionId, [userSDKMsg])
+      // 自动 Goal 续跑只有内部提示词，不应被渲染为一条空白用户消息。
+      if (userMessage) {
+        userMessageUuid = randomUUID()
+        const userSDKMsg: SDKMessage = {
+          type: 'user',
+          message: { content: [{ type: 'text', text: userMessage }] },
+          parent_tool_use_id: null,
+          uuid: userMessageUuid,
+          _attachments: attachments,
+        } as unknown as SDKMessage
+        appendSDKMessages(sessionId, [userSDKMsg])
+      }
+
+      let currentPiPermissionMode = permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE
+      const piCanUseTool = permissionService.createCanUseTool(
+        sessionId,
+        (request: PermissionRequest) => {
+          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'permission_request', request } } as AgentStreamPayload)
+        },
+        (sid, input, askUserSignal, sendAskUser) => askUserService.handleAskUserQuestion(sid, input, askUserSignal, sendAskUser),
+        (request: AskUserRequest) => {
+          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
+        },
+        () => currentPiPermissionMode,
+      )
 
       const queryOptions: PiAgentQueryOptions = {
         sessionId,
         agentRuntime: 'pi',
-        prompt: userMessage,
+        prompt,
         model: modelId,
         provider,
         apiKey,
@@ -785,6 +811,70 @@ export class AgentOrchestrator {
         cwd: agentCwd,
         historyMessages,
         attachments,
+        permissionMode: currentPiPermissionMode,
+        canUseTool: async (toolName, toolInput, signal) => {
+          const result = await piCanUseTool(toolName, toolInput, {
+            signal,
+            toolUseID: `pi-tool-${Date.now()}`,
+          })
+          return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
+        },
+        toolContextOverrides: {
+          onEnterPlanMode: () => {
+            this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } } as AgentStreamPayload)
+          },
+          onExitPlanMode: async (toolInput, signal) => {
+            const result = await exitPlanService.handleExitPlanMode(
+              sessionId,
+              toolInput,
+              signal,
+              (request: ExitPlanModeRequest) => {
+                this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } } as AgentStreamPayload)
+              },
+            )
+            return result as { behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }
+          },
+          setPermissionMode: (mode) => {
+            currentPiPermissionMode = mode
+            this.sessionPermissionModes.set(sessionId, mode)
+          },
+          onAskUser: async (toolInput, signal) => {
+            const result = await askUserService.handleAskUserQuestion(
+              sessionId,
+              toolInput,
+              signal,
+              (request: AskUserRequest) => {
+                this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
+              },
+            )
+            if (result.behavior === 'deny') return { behavior: 'deny', message: result.message }
+            return { behavior: 'allow', answers: (result.updatedInput?.answers as Record<string, string>) ?? {} }
+          },
+          runSubAgent: async (toolInput) => {
+            const protocol = getAgentProviderProtocol(provider, 'proma')
+            return this.runProviderAgnosticSubAgent(sessionId, {
+              provider,
+              adapterProvider: protocol === 'openai-chat' ? 'openai' : undefined,
+              apiKey,
+              baseUrl,
+              model: modelId,
+              cwd: agentCwd,
+              permissionMode: currentPiPermissionMode,
+            }, toolInput)
+          },
+          onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
+            ? (checkpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
+            : undefined,
+        },
+        mcpServers,
+        workspaceSlug,
+        workspaceSkillsDir: workspaceSlug ? getWorkspaceSkillsDir(workspaceSlug) : undefined,
+        onMcpAuthRequired: ({ workspaceSlug: ws, serverName }) => {
+          this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'mcp_auth_required', workspaceSlug: ws, serverName } } as AgentStreamPayload)
+        },
+        onAgentEvent: (event) => {
+          this.eventBus.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
+        },
         systemPrompt: buildSystemPrompt({
           workspaceName,
           workspaceSlug,
@@ -798,7 +888,8 @@ export class AgentOrchestrator {
 
       const accumulatedMessages: SDKMessage[] = []
       for await (const msg of this.adapter.query(queryOptions)) {
-        accumulatedMessages.push(msg)
+        // Pi 的流式快照只用于即时展示；只持久化最终帧，避免历史中重复累计文本。
+        if (!(msg as Record<string, unknown>)._partial) accumulatedMessages.push(msg)
         this.eventBus.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
 
         if (msg.type === 'assistant' && !this.hasTitle(sessionId)) {
@@ -1351,7 +1442,7 @@ export class AgentOrchestrator {
    * 通过 EventBus 分发 AgentEvent，通过 callbacks 发送控制信号。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks): Promise<void> {
-    const { sessionId, userMessage, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments } = input
+    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护
@@ -1522,6 +1613,9 @@ export class AgentOrchestrator {
       })
 
       let enrichedMessage = userMessage
+      if (runtimeInstruction) {
+        enrichedMessage = `${runtimeInstruction}\n\n${enrichedMessage}`.trim()
+      }
       const referencedSessionsBlock = buildReferencedSessionsPrompt(sessionId, mentionedSessionIds, workspaceId)
       if (referencedSessionsBlock) {
         enrichedMessage = `${referencedSessionsBlock}\n\n${enrichedMessage}`
@@ -1563,7 +1657,8 @@ export class AgentOrchestrator {
           sessionId,
           channelId,
           workspaceId,
-          userMessage: contextualMessage,
+          userMessage,
+          prompt: contextualMessage,
           modelId,
           provider: channel.provider,
           apiKey,
@@ -1583,7 +1678,8 @@ export class AgentOrchestrator {
         agentRuntime: effectiveAgentRuntime,
         channelId,
         workspaceId,
-        userMessage: contextualMessage,
+        userMessage,
+        prompt: contextualMessage,
         modelId,
         provider: channel.provider,
         adapterProvider,

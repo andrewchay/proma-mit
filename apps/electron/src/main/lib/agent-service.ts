@@ -71,7 +71,9 @@ goalCoordinator.setContinuationRunner(async ({ goal, prompt }) => {
   if (!win) return false
   await runAgent({
     sessionId: goal.sessionId,
-    userMessage: prompt,
+    // 自动续跑不是用户新发的一条消息；将调度提示作为内部运行时上下文，避免展示在对话中。
+    userMessage: '',
+    runtimeInstruction: prompt,
     channelId: goal.channelId,
     modelId: goal.modelId,
     workspaceId: goal.workspaceId,
@@ -142,7 +144,12 @@ export function listAgentGoals(sessionId: string): AgentGoal[] {
 }
 
 export function updateAgentGoalStatus(input: UpdateAgentGoalStatusInput): AgentGoal {
-  return goalCoordinator.setStatus(input.goalId, input.status)
+  const goal = goalCoordinator.setStatus(input.goalId, input.status)
+  // Goal 的暂停或取消必须在主进程原子地同时撤销正在执行或已排队的续跑。
+  // 不能依赖渲染层的 streaming 状态：续跑可能已经从 UI 的状态机退出，
+  // 但仍占用编排器并会在当前 turn 结束后再次调度。
+  if (input.status === 'waiting' || input.status === 'cancelled') stopAgent(goal.sessionId)
+  return goal
 }
 
 /**
@@ -272,8 +279,8 @@ function prepareGoalInput(input: AgentSendInput, isGoalContinuation: boolean): A
     return input
   }
   const runtime = normalizeAgentRuntime(input.agentRuntime)
-  if (runtime !== 'proma' && runtime !== 'ai-sdk') {
-    throw new Error('@goal 当前仅支持 Proma Runtime 或 AI SDK Runtime')
+  if (runtime !== 'proma' && runtime !== 'pi' && runtime !== 'ai-sdk') {
+    throw new Error('@goal 当前仅支持 Proma、Pi 或 AI SDK Runtime')
   }
   const objective = (match[1] ?? '').trim()
   if (!objective) throw new Error('@goal 后需要填写要持续推进的目标')
@@ -288,10 +295,9 @@ function prepareGoalInput(input: AgentSendInput, isGoalContinuation: boolean): A
   return {
     ...input,
     agentRuntime: runtime,
-    userMessage: [
-      objective,
-      '',
+    runtimeInstruction: [
       `[Goal Runtime 已激活，Goal ID: ${goal.id}]`,
+      `Goal 目标：${objective}`,
       '这是一个需要持续跟进的目标。基于实际工具结果推进；在每轮结束前必须调用 GoalCheckpoint。只有有验收证据时才能提交 complete。',
     ].join('\n'),
   }

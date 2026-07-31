@@ -97,7 +97,7 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
-import type { AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
+import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage } from '@proma/shared'
 import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
@@ -399,6 +399,8 @@ function AutoPreviewPopover({ enabled, onToggle }: AutoPreviewPopoverProps): Rea
 
 export function AgentView({ sessionId }: { sessionId: string }): React.ReactElement {
   const [persistedSDKMessages, setPersistedSDKMessages] = React.useState<SDKMessage[]>([])
+  const [sessionGoals, setSessionGoals] = React.useState<AgentGoal[]>([])
+  const [goalActionPending, setGoalActionPending] = React.useState(false)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   // 按 sessionId 切片订阅：仅本 session 的 streaming state 变化才让 AgentView 重渲染。
   // 流式期间其他 session 的高频更新（每 token 一次）通过 base map atom 传播但派生
@@ -408,6 +410,38 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const stoppedByUserSessions = useAtomValue(stoppedByUserSessionsAtom)
   const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   const stoppedByUser = stoppedByUserSessions.has(sessionId)
+
+  const refreshGoals = React.useCallback(async (): Promise<void> => {
+    try {
+      setSessionGoals(await window.electronAPI.listAgentGoals(sessionId))
+    } catch (error) {
+      console.error('[AgentView] 读取 Goal 状态失败:', error)
+    }
+  }, [sessionId])
+
+  React.useEffect(() => {
+    void refreshGoals()
+  }, [refreshGoals])
+
+  const activeGoal = React.useMemo(
+    () => sessionGoals.find((goal) => goal.status === 'active' || goal.status === 'waiting' || goal.status === 'blocked'),
+    [sessionGoals],
+  )
+
+  const updateGoalStatus = React.useCallback(async (status: 'active' | 'waiting' | 'cancelled'): Promise<void> => {
+    if (!activeGoal || goalActionPending) return
+    setGoalActionPending(true)
+    try {
+      const updated = await window.electronAPI.updateAgentGoalStatus({ goalId: activeGoal.id, status })
+      setSessionGoals((previous) => previous.map((goal) => goal.id === updated.id ? updated : goal))
+      toast.success(status === 'cancelled' ? 'Goal 已停止' : status === 'waiting' ? 'Goal 已暂停' : 'Goal 已恢复')
+    } catch (error) {
+      console.error('[AgentView] 更新 Goal 状态失败:', error)
+      toast.error('更新 Goal 状态失败')
+    } finally {
+      setGoalActionPending(false)
+    }
+  }, [activeGoal, goalActionPending])
   const liveMessagesMap = useAtomValue(liveMessagesMapAtom)
   const setLiveMessagesMap = useSetAtom(liveMessagesMapAtom)
   // 稳定化空数组引用，避免 ?? [] 每次创建新引用导致下游 useMemo 链不必要重算
@@ -1570,6 +1604,13 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     setInputContent('')
     setInputHtmlContent('')
 
+    // Goal 在主进程解析 @Goal 后创建。发送后主动刷新，避免只在切换会话时才看到
+    // Goal 状态、暂停与停止入口；延迟一个事件循环确保 IPC 已进入主进程处理器。
+    const createsGoal = /^\s*@goal\b/i.test(effectiveText)
+    if (createsGoal) {
+      setTimeout(() => { void refreshGoals() }, 0)
+    }
+
     window.electronAPI.sendAgentMessage(input).catch((error) => {
       console.error('[AgentView] 发送消息失败:', error)
       setStreamingStates((prev) => {
@@ -1579,9 +1620,9 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         map.set(sessionId, { ...current, running: false })
         return map
       })
-    })
+    }).finally(() => { void refreshGoals() })
   }, [inputContent, pendingFiles, attachedDirs, attachedFileDirectories, sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, workspaces, streaming, suggestion, hasAvailableModel, store, setStreamingStates, setPendingFiles, setAgentStreamErrors, setPromptSuggestions, setInputContent, permissionMode, setInputHtmlContent, // 取消 draft 标记，让会话出现在侧边栏
-    setDraftSessionIds])
+    setDraftSessionIds, refreshGoals])
 
   /** 停止生成 */
   const handleStop = React.useCallback((): void => {
@@ -2058,6 +2099,22 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         {/* Agent Header */}
         <AgentHeader sessionId={sessionId} />
 
+        {activeGoal && (
+          <div className="mx-3 mt-2 flex items-center gap-3 rounded-xl bg-primary/10 px-3 py-2 text-sm text-foreground shadow-sm">
+            <Target className="size-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <span className="font-medium">Goal {activeGoal.status === 'active' ? '进行中' : activeGoal.status === 'waiting' ? '已暂停' : '已阻塞'}</span>
+              <span className="ml-2 text-muted-foreground">{activeGoal.objective}</span>
+            </div>
+            {activeGoal.status === 'active' ? (
+              <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} onClick={() => void updateGoalStatus('waiting')}>暂停</Button>
+            ) : (
+              <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} onClick={() => void updateGoalStatus('active')}>继续</Button>
+            )}
+            <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} className="text-destructive hover:text-destructive" onClick={() => void updateGoalStatus('cancelled')}>停止 Goal</Button>
+          </div>
+        )}
+
         {/* 消息区域 */}
         <AgentMessages
           sessionId={sessionId}
@@ -2185,7 +2242,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
             {inputContent.trimStart().toLowerCase().startsWith('@goal') && (
               <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-primary/8 px-3 py-2 text-xs text-primary">
                 <Target className="size-3.5 shrink-0" />
-                <span><code className="font-mono">@goal</code> 将创建持续 Goal；Agent 会在每轮记录检查点，并且只有有验收证据时才能完成。</span>
+                <span><code className="font-mono">@Goal</code> 将创建持续 Goal；Agent 会在每轮记录检查点，并且只有有验收证据时才能完成。</span>
               </div>
             )}
 
@@ -2199,8 +2256,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               placeholder={
                 agentChannelId && selectedChannelUsable && hasAvailableModel
                   ? sendWithCmdEnter
-                    ? '输入消息... (@goal 创建持续目标；⌘/Ctrl+Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
-                    : '输入消息... (@goal 创建持续目标；Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
+                    ? '输入消息... (@Goal 创建持续目标；⌘/Ctrl+Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
+                    : '输入消息... (@Goal 创建持续目标；Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
                   : !agentChannelId
                     ? '请先在设置中选择 Agent 供应商'
                     : '请先选择当前 runtime 可用的渠道'
