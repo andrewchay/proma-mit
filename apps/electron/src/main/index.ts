@@ -545,6 +545,10 @@ async function bootstrap(): Promise<void> {
   safeRun('startAppEventBus', () => {
     import('./lib/app-event-bus').then((m) => m.startAppEventBus())
   })
+  // 启动通知协调器（P0-3：订阅统一事件 → 系统通知 + 提示音）
+  safeRun('startNotificationCoordinator', () => {
+    import('./lib/notification-coordinator').then((m) => m.startNotificationCoordinator())
+  })
 
   app.on('activate', () => {
     if (shouldSuppressVoiceDictationActivate()) {
@@ -655,6 +659,13 @@ app.on('before-quit', () => {
   try {
     const { stopAppEventBus } = require('./lib/app-event-bus')
     stopAppEventBus()
+  } catch (e) {
+    // 忽略，可能在测试环境中不可用
+  }
+  // 停止通知协调器
+  try {
+    const { stopNotificationCoordinator } = require('./lib/notification-coordinator')
+    stopNotificationCoordinator()
   } catch (e) {
     // 忽略，可能在测试环境中不可用
   }

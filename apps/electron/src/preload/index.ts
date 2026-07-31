@@ -933,6 +933,8 @@ export interface ElectronAPI {
   sendSystemNotification: (input: import('@proma/shared').SystemNotificationInput) => Promise<boolean>
   /** 订阅系统通知点击事件 */
   onSystemNotificationClicked: (callback: (payload: import('@proma/shared').SystemNotificationClickedPayload) => void) => () => void
+  /** 订阅主进程通知协调器触发提示音 */
+  onSystemNotificationPlaySound: (callback: (payload: { soundType: string }) => void) => () => void
 
   // --- 多 Bot v2 API ---
 
@@ -2134,6 +2136,12 @@ const electronAPI: ElectronAPI = {
     const listener = (_event: Electron.IpcRendererEvent, payload: import('@proma/shared').SystemNotificationClickedPayload): void => callback(payload)
     ipcRenderer.on(SYSTEM_NOTIFICATION_IPC_CHANNELS.CLICKED, listener)
     return () => { ipcRenderer.removeListener(SYSTEM_NOTIFICATION_IPC_CHANNELS.CLICKED, listener) }
+  },
+
+  onSystemNotificationPlaySound: (callback: (payload: { soundType: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { soundType: string }): void => callback(payload)
+    ipcRenderer.on('system-notification:play-sound', listener)
+    return () => { ipcRenderer.removeListener('system-notification:play-sound', listener) }
   },
 
   // --- 多 Bot v2 API ---

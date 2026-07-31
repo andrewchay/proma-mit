@@ -662,6 +662,17 @@ export function getDynamicIslandService(): DynamicIslandService {
   return service
 }
 
+/** 灵动岛是否应作为通知主力（mac + 开关开启） */
+export function isDynamicIslandPrimary(): boolean {
+  if (!IS_MAC) return false
+  try {
+    const config = loadConfig()
+    return config.enabled
+  } catch {
+    return false
+  }
+}
+
 export function startDynamicIslandService(): void {
   getDynamicIslandService().start()
 }

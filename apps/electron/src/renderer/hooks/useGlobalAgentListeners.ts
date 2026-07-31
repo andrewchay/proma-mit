@@ -48,7 +48,8 @@ import {
   notificationsEnabledAtom,
   notificationSoundEnabledAtom,
   notificationSoundsAtom,
-  sendDesktopNotification,
+  playNotificationSound,
+  DEFAULT_NOTIFICATION_SOUNDS,
 } from '@/atoms/notifications'
 import { appModeAtom } from '@/atoms/app-mode'
 import { tabsAtom, activeTabIdAtom, openTab, updateTabTitle } from '@/atoms/tab-atoms'
@@ -349,25 +350,10 @@ export function useGlobalAgentListeners(): void {
     }
 
     /** 发送阻塞通知（带提示音 + 会话导航） */
-    const sendBlockingNotification = (sessionId: string, title: string, body: string, soundType: NotificationSoundType) => {
-      const enabled = store.get(notificationsEnabledAtom)
-      const soundEnabled = store.get(notificationSoundEnabledAtom)
-      const sounds = store.get(notificationSoundsAtom)
-      const sessionTitle = getSessionTitle(sessionId)
-      sendDesktopNotification(
-        title,
-        `[${sessionTitle}] ${body}`,
-        enabled,
-        {
-          force: true,
-          playSound: enabled && soundEnabled,
-          soundType,
-          sounds,
-          sessionId,
-          sessionTitle,
-          onNavigate: makeNavigateToSession(sessionId, sessionTitle),
-        }
-      )
+    /** 发送阻塞通知（系统通知与提示音已由主进程 NotificationCoordinator 统一处理；
+     *  此函数仅保留调用点的请求入队语义，不再重复发通知避免双发） */
+    const sendBlockingNotification = (_sessionId: string, _title: string, _body: string, _soundType: NotificationSoundType) => {
+      // 入队逻辑在各调用点已处理；这里不再发系统通知/提示音（主进程统一）
     }
 
     const workspaceFilesPathCache = new Map<string, string>()
@@ -811,24 +797,8 @@ export function useGlobalAgentListeners(): void {
     const cleanupComplete = window.electronAPI.onAgentStreamComplete(
       (data: AgentStreamCompletePayload) => {
         unstable_batchedUpdates(() => {
-        // 发送桌面通知（任务完成，始终播放提示音）
-        const enabled = store.get(notificationsEnabledAtom)
-        const soundEnabled = store.get(notificationSoundEnabledAtom)
-        const sounds = store.get(notificationSoundsAtom)
-        const sessionTitle = getSessionTitle(data.sessionId)
-        sendDesktopNotification(
-          'Agent 任务完成',
-          `[${sessionTitle}] 任务已完成`,
-          enabled,
-          {
-            playSound: enabled && soundEnabled,
-            soundType: 'taskComplete',
-            sounds,
-            sessionId: data.sessionId,
-            sessionTitle,
-            onNavigate: makeNavigateToSession(data.sessionId, sessionTitle),
-          }
-        )
+        // 任务完成的系统通知与提示音已由主进程 NotificationCoordinator 统一处理，
+        // 这里仅保留完成态的 UI 状态更新（running: false / 工具活动收尾），避免双发。
 
         // STREAM_COMPLETE 表示后端已完全结束 — 立即标记 running: false
         // 同时将所有未完成的工具活动标记为已完成，防止 subagent spinner 继续转动
@@ -1103,12 +1073,33 @@ export function useGlobalAgentListeners(): void {
     }
     window.addEventListener('focus', onWindowFocus)
 
+    // 主进程通知协调器触发提示音（系统通知由主进程统一发送，renderer 只播音频）
+    const cleanupPlaySound = window.electronAPI.onSystemNotificationPlaySound(({ soundType }) => {
+      const soundEnabled = store.get(notificationSoundEnabledAtom)
+      const sounds = store.get(notificationSoundsAtom)
+      const enabled = store.get(notificationsEnabledAtom)
+      if (!enabled || !soundEnabled) return
+      const id = sounds[soundType as NotificationSoundType] ?? DEFAULT_NOTIFICATION_SOUNDS[soundType as NotificationSoundType]
+      if (id && id !== 'none') {
+        playNotificationSound(id)
+      }
+    })
+
+    // 系统通知点击 → 导航到对应会话（主进程 Coordinator 统一发通知，点击在此处理）
+    const cleanupSystemClicked = window.electronAPI.onSystemNotificationClicked((payload) => {
+      if (!payload.sessionId) return
+      const sessionTitle = payload.sessionTitle ?? getSessionTitle(payload.sessionId)
+      makeNavigateToSession(payload.sessionId, sessionTitle)()
+    })
+
     return () => {
       cleanupEvent()
       cleanupComplete()
       cleanupError()
       cleanupTitleUpdated()
       cleanupMcpAuthResolved?.()
+      cleanupPlaySound()
+      cleanupSystemClicked()
       clearInterval(pruneTimer)
       window.removeEventListener('focus', onWindowFocus)
     }
