@@ -54,6 +54,8 @@ describe.skipIf(!canRun)('Web 多实例本地 E2E', () => {
   afterAll(async () => {
     await alpha.shutdown()
     await beta.shutdown()
+    await sql.unsafe('DELETE FROM proma_runtime_schedule_runs WHERE tenant_id = $1 AND user_id = $2', [scope.tenantId, scope.userId])
+    await sql.unsafe('DELETE FROM proma_runtime_schedules WHERE tenant_id = $1 AND user_id = $2', [scope.tenantId, scope.userId])
     await sql.close()
   })
 
@@ -80,6 +82,31 @@ describe.skipIf(!canRun)('Web 多实例本地 E2E', () => {
     const replay = await readSSEReplay(events)
     expect(replay).toContain('fixture')
     expect(replay).toContain('sdk_message')
+  })
+
+  test('定时任务管理 API 按租户会话创建，并可跨实例暂停与恢复', async () => {
+    const created = await alpha.fetch(new Request('http://alpha/agent/sessions', {
+      method: 'POST', headers, body: JSON.stringify({ sessionId: 'schedule-session', workspaceSlug: 'workspace-a', channelId: 'channel-a' }),
+    }))
+    expect(created.status).toBe(201)
+
+    const scheduleResponse = await alpha.fetch(new Request('http://alpha/agent/schedules', {
+      method: 'POST', headers, body: JSON.stringify({ sessionId: 'schedule-session', prompt: '检查状态', intervalMs: 60_000 }),
+    }))
+    expect(scheduleResponse.status).toBe(201)
+    const { schedule } = await scheduleResponse.json() as { schedule: { scheduleId: string; enabled: boolean } }
+    expect(schedule.enabled).toBe(true)
+
+    const paused = await beta.fetch(new Request(`http://beta/agent/schedules/${schedule.scheduleId}/pause`, { method: 'POST', headers }))
+    expect((await paused.json() as { schedule: { enabled: boolean } }).schedule.enabled).toBe(false)
+    const resumed = await alpha.fetch(new Request(`http://alpha/agent/schedules/${schedule.scheduleId}/resume`, { method: 'POST', headers }))
+    expect((await resumed.json() as { schedule: { enabled: boolean } }).schedule.enabled).toBe(true)
+
+    const cronResponse = await beta.fetch(new Request('http://beta/agent/schedules', {
+      method: 'POST', headers, body: JSON.stringify({ sessionId: 'schedule-session', prompt: 'Cron 检查', schedule: { type: 'cron', expression: '*/5 * * * * *', timezone: 'Asia/Shanghai' } }),
+    }))
+    expect(cronResponse.status).toBe(201)
+    expect((await cronResponse.json() as { schedule: { schedule: unknown } }).schedule.schedule).toEqual({ type: 'cron', expression: '*/5 * * * * *', timezone: 'Asia/Shanghai' })
   })
 
   async function waitForTask(taskId: string): Promise<void> {

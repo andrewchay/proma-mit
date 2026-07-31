@@ -23,13 +23,17 @@ interface Message {
 
 interface Interaction {
   requestId: string
-  kind: 'permission' | 'ask_user' | 'plan'
+  kind: 'permission' | 'ask_user' | 'plan' | 'goal' | 'mcp_oauth' | 'external_action'
   version: number
+  source?: 'runtime' | 'goal' | 'mcp' | 'external_channel'
+  priority?: 'low' | 'normal' | 'high' | 'critical'
   request: {
+    title?: string
     description?: string
     toolName?: string
     toolInput?: { plan?: string }
     questions?: Array<{ question: string; header?: string; options?: Array<{ label: string; description?: string }> }>
+    actions?: string[]
   }
 }
 
@@ -188,12 +192,14 @@ function App(): JSX.Element {
     await loadMessages(); setStatus('会话已回退到所选消息')
   }
 
-  const resolveInteraction = async (item: Interaction, action?: 'approve_auto' | 'approve_edit' | 'deny' | 'feedback'): Promise<void> => {
+  const resolveInteraction = async (item: Interaction, action?: string): Promise<void> => {
     const response = item.kind === 'permission'
       ? { requestId: item.requestId, behavior: action === 'deny' ? 'deny' : 'allow', alwaysAllow: false }
       : item.kind === 'plan'
         ? { requestId: item.requestId, action: action ?? 'approve_auto', feedback: planFeedback[item.requestId] || undefined }
-        : { requestId: item.requestId, answers: Object.fromEntries((item.request.questions ?? []).map((question) => [question.question, answers[`${item.requestId}:${question.question}`] ?? ''])) }
+        : item.kind === 'ask_user'
+          ? { requestId: item.requestId, answers: Object.fromEntries((item.request.questions ?? []).map((question) => [question.question, answers[`${item.requestId}:${question.question}`] ?? ''])) }
+          : { requestId: item.requestId, action: action ?? item.request.actions?.[0] }
     const result = await request(`/agent/interactions/${encodeURIComponent(item.requestId)}/respond`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ response, expectedVersion: item.version, resolutionId: crypto.randomUUID() }),
     })
@@ -224,11 +230,20 @@ function App(): JSX.Element {
   </main>
 }
 
-function InteractionCard(props: { item: Interaction; answers: Record<string, string>; setAnswers: (updater: (state: Record<string, string>) => Record<string, string>) => void; feedback: string; setFeedback: (value: string) => void; onResolve: (item: Interaction, action?: 'approve_auto' | 'approve_edit' | 'deny' | 'feedback') => Promise<void> }): JSX.Element {
+function InteractionCard(props: { item: Interaction; answers: Record<string, string>; setAnswers: (updater: (state: Record<string, string>) => Record<string, string>) => void; feedback: string; setFeedback: (value: string) => void; onResolve: (item: Interaction, action?: string) => Promise<void> }): JSX.Element {
   const { item } = props
   if (item.kind === 'ask_user') return <article className="interaction"><b>需要回答</b>{item.request.questions?.map((question) => <label key={question.question}>{question.header ?? question.question}{question.options?.length ? <select value={props.answers[`${item.requestId}:${question.question}`] ?? ''} onChange={(event) => props.setAnswers((state) => ({ ...state, [`${item.requestId}:${question.question}`]: event.target.value }))}><option value="">请选择</option>{question.options.map((option) => <option key={option.label} value={option.label}>{option.label}{option.description ? ` — ${option.description}` : ''}</option>)}</select> : <input value={props.answers[`${item.requestId}:${question.question}`] ?? ''} onChange={(event) => props.setAnswers((state) => ({ ...state, [`${item.requestId}:${question.question}`]: event.target.value }))} />}</label>)}<button onClick={() => void props.onResolve(item)}>提交回答</button></article>
   if (item.kind === 'plan') return <article className="interaction"><b>Plan 审批</b><pre>{item.request.toolInput?.plan ?? '未提供计划详情'}</pre><textarea placeholder="可选反馈或修改意见" value={props.feedback} onChange={(event) => props.setFeedback(event.target.value)} /><div><button onClick={() => void props.onResolve(item, 'approve_auto')}>批准</button><button className="quiet" onClick={() => void props.onResolve(item, 'feedback')}>请求调整</button><button className="danger" onClick={() => void props.onResolve(item, 'deny')}>拒绝</button></div></article>
+  if (item.kind === 'goal' || item.kind === 'mcp_oauth' || item.kind === 'external_action') return <article className="interaction"><b>{item.request.title ?? interactionLabel(item.kind)}</b><small>{item.source ?? 'runtime'} · {item.priority ?? 'normal'}</small><p>{item.request.description ?? '等待你的处理。'}</p><div>{item.request.actions?.map((action) => <button className={action === 'deny' || action === 'cancel' ? 'danger' : action === 'resume' || action === 'approve' ? '' : 'quiet'} key={action} onClick={() => void props.onResolve(item, action)}>{actionLabel(action)}</button>)}</div></article>
   return <article className="interaction"><b>工具审批：{item.request.toolName}</b><p>{item.request.description ?? 'Agent 请求执行受控操作。'}</p><div><button onClick={() => void props.onResolve(item)}>允许一次</button><button className="danger" onClick={() => void props.onResolve(item, 'deny')}>拒绝</button></div></article>
+}
+
+function interactionLabel(kind: Interaction['kind']): string {
+  return kind === 'goal' ? 'Goal 操作' : kind === 'mcp_oauth' ? 'MCP 授权' : '外部渠道操作'
+}
+
+function actionLabel(action: string): string {
+  return ({ approve: '批准', deny: '拒绝', resume: '恢复', cancel: '取消', open: '打开授权页' } as Record<string, string>)[action] ?? action
 }
 
 function AdminPanel({ value }: { value: unknown }): JSX.Element {

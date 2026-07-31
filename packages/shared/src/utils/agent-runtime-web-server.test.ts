@@ -1,13 +1,22 @@
 import { describe, expect, test } from 'bun:test'
 import type { PermissionRequest, SDKMessage } from '../types/agent'
 import type { AgentRuntimeScope } from './agent-runtime-server'
-import { createAgentRuntimeWebServer, createBase64AgentRuntimeWebSecretCodec } from './agent-runtime-web-server'
+import { createAgentRuntimeWebServer, createBase64AgentRuntimeWebSecretCodec, redactRuntimeWebErrorMessage } from './agent-runtime-web-server'
 
 const scope = { tenantId: 'tenant-a', userId: 'user-a' }
 const otherScope = { tenantId: 'tenant-b', userId: 'user-a' }
 const baseUrl = 'https://proma.example.com'
 
 describe('Agent runtime Web P0 server', () => {
+  test('given a runtime error containing secret-like values then the client-safe message redacts them', () => {
+    const message = redactRuntimeWebErrorMessage('Authorization: Bearer secret-token api_key=provider-key client_secret=oauth-secret')
+
+    expect(message).toContain('[redacted]')
+    expect(message).not.toContain('secret-token')
+    expect(message).not.toContain('provider-key')
+    expect(message).not.toContain('oauth-secret')
+  })
+
   test('given valid scope when creating a session then metadata is stored under tenant scope', async () => {
     const server = createTestServer()
     seedRuntimeConfig(server.store, scope)
@@ -114,6 +123,20 @@ describe('Agent runtime Web P0 server', () => {
     expect(seen).toEqual(['plain-key'])
     expect(await readSSEReplay(eventsResponse)).toContain('hello world')
     expect(messagesBody.messages.map((message) => message.type)).toEqual(['user', 'assistant'])
+  })
+
+  test('given an internal scheduler launch when the session belongs to its scope then it uses the same protected task path', async () => {
+    const server = createTestServer()
+    seedRuntimeConfig(server.store, scope)
+    const sessionId = await createSession(server, scope)
+
+    const task = await server.startSessionTask({ ...scope, sessionId, prompt: '来自 Scheduler 的运行', permissionMode: 'safe' })
+    const completed = await server.taskRunner.waitForTask(task.taskId)
+    const messages = await server.store.getSessionMessages(scope, sessionId)
+
+    expect(completed.status).toBe('completed')
+    expect(messages.map((message) => message.type)).toEqual(['user', 'assistant'])
+    await expect(server.startSessionTask({ ...otherScope, sessionId, prompt: '越权运行' })).rejects.toThrow('会话不存在或不可访问')
   })
 
   test('given an agent turn that delegates then the child task is persisted with its parent relationship', async () => {
@@ -355,6 +378,32 @@ describe('Agent runtime Web P0 server', () => {
     expect(invalid.status).toBe(400)
     expect(accepted.status).toBe(200)
     expect((await server.interactionStore.getInteraction(scope, 'plan-1'))?.status).toBe('resolved')
+  })
+
+  test('given a Goal Inbox action then only an action response can resolve it', async () => {
+    const server = createTestServer()
+    await server.interactionStore.createInteraction({
+      ...scope,
+      kind: 'goal',
+      source: 'goal',
+      priority: 'high',
+      request: { requestId: 'goal-1', sessionId: 'session-a', title: '恢复 Goal', actions: ['resume', 'cancel'] },
+    })
+
+    const invalid = await server.handleRequest(jsonRequest('/agent/interactions/goal-1/respond', {
+      response: { requestId: 'goal-1', answers: {} }, expectedVersion: 1, resolutionId: 'goal-invalid',
+    }, scope))
+    const undeclared = await server.handleRequest(jsonRequest('/agent/interactions/goal-1/respond', {
+      response: { requestId: 'goal-1', action: 'delete_everything' }, expectedVersion: 1, resolutionId: 'goal-undeclared',
+    }, scope))
+    const accepted = await server.handleRequest(jsonRequest('/agent/interactions/goal-1/respond', {
+      response: { requestId: 'goal-1', action: 'resume' }, expectedVersion: 1, resolutionId: 'goal-resume',
+    }, scope))
+
+    expect(invalid.status).toBe(400)
+    expect(undeclared.status).toBe(400)
+    expect(accepted.status).toBe(200)
+    expect((await server.interactionStore.getInteraction(scope, 'goal-1'))?.response).toEqual({ requestId: 'goal-1', action: 'resume' })
   })
 })
 

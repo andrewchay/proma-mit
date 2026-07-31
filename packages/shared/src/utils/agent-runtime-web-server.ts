@@ -7,6 +7,7 @@ import { PROMA_DEFAULT_PERMISSION_MODE, serializeAgentStreamEnvelopeForSSE } fro
 import type { AgentProviderProtocol, ProviderType } from '../types/channel'
 import type {
   AgentRuntimeInteractionKind,
+  AgentRuntimeInteractionRequest,
   AgentRuntimeInteractionResponse,
   AgentRuntimeInteractionStatus,
   AgentRuntimeInteractionStore,
@@ -153,7 +154,18 @@ export interface AgentRuntimeWebServer {
   taskRunner: AgentRuntimeTaskRunner
   oauthHandler: ServerMcpOAuthCallbackHandler
   interactionStore: AgentRuntimeInteractionStore
+  /** 供同进程的受控调度器启动任务；复用 HTTP 路径的会话、凭证和工作区校验。 */
+  startSessionTask(input: StartAgentRuntimeWebSessionTaskInput): Promise<AgentRuntimeTaskMeta>
   handleRequest(request: Request): Promise<Response>
+}
+
+export interface StartAgentRuntimeWebSessionTaskInput extends AgentRuntimeScope {
+  sessionId: string
+  prompt: string
+  channelId?: string
+  modelId?: string
+  protocol?: AgentProviderProtocol
+  permissionMode?: PromaPermissionMode
 }
 
 interface CreateSessionBody {
@@ -204,6 +216,16 @@ export function createAgentRuntimeWebServer(options: CreateAgentRuntimeWebServer
   const interactionStore = options.interactionStore ?? new InMemoryAgentRuntimeInteractionStore()
   const auth = options.auth ?? headerAuthResolver
   const secretCodec = options.secretCodec ?? createPlainAgentRuntimeWebSecretCodec()
+  const runSessionDependencies: RunSessionDependencies = {
+    store,
+    taskRunner,
+    interactionStore,
+    secretCodec,
+    runAgentTurn: options.runAgentTurn,
+    beforeStartTask: options.beforeStartTask,
+    defaultPermissionMode: options.defaultPermissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+    subtaskLimits: options.subtaskLimits ?? { maxDepth: 1, maxChildrenPerTask: 3, maxOutputTokensPerTask: 4_000 },
+  }
 
   async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url)
@@ -226,16 +248,7 @@ export function createAgentRuntimeWebServer(options: CreateAgentRuntimeWebServer
         return await handleCreateSession(request, scope, store, options)
       }
       if (route.name === 'runSession') {
-        return await handleRunSession(request, scope, route.sessionId, {
-          store,
-          taskRunner,
-          interactionStore,
-          secretCodec,
-          runAgentTurn: options.runAgentTurn,
-          beforeStartTask: options.beforeStartTask,
-          defaultPermissionMode: options.defaultPermissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
-          subtaskLimits: options.subtaskLimits ?? { maxDepth: 1, maxChildrenPerTask: 3, maxOutputTokensPerTask: 4_000 },
-        })
+        return await handleRunSession(request, scope, route.sessionId, runSessionDependencies)
       }
       if (route.name === 'updateSession') {
         return handleUpdateSession(request, scope, route.sessionId, store)
@@ -265,7 +278,7 @@ export function createAgentRuntimeWebServer(options: CreateAgentRuntimeWebServer
       }
       return jsonResponse({ error: '未处理的接口' }, 500)
     } catch (error) {
-      return jsonResponse({ error: getRuntimeWebErrorMessage(error) }, 400)
+      return jsonResponse({ error: redactRuntimeWebErrorMessage(error) }, 400)
     }
   }
 
@@ -275,6 +288,7 @@ export function createAgentRuntimeWebServer(options: CreateAgentRuntimeWebServer
     taskRunner,
     oauthHandler,
     interactionStore,
+    startSessionTask: (input) => startSessionTask(input, runSessionDependencies),
     handleRequest,
   }
 }
@@ -395,34 +409,42 @@ async function handleRunSession(
   sessionId: string,
   deps: RunSessionDependencies,
 ): Promise<Response> {
-  const session = await deps.store.getSession(scope, sessionId)
-  if (!session) {
-    return jsonResponse({ error: '会话不存在或不可访问' }, 404)
-  }
   const body = await readJsonBody<RunSessionBody>(request)
-  const prompt = requireString(body.prompt, 'prompt')
-  const channelId = body.channelId ?? session.channelId
-  const modelId = body.modelId ?? session.modelId
-  const credential = await deps.store.getCredential(scope, channelId)
-  if (!credential) {
-    return jsonResponse({ error: '渠道不存在或不可访问' }, 404)
+  const task = await startSessionTask({ ...scope, sessionId, ...body, prompt: requireString(body.prompt, 'prompt') }, deps)
+  return jsonResponse({ task }, 202)
+}
+
+async function startSessionTask(
+  input: StartAgentRuntimeWebSessionTaskInput,
+  deps: RunSessionDependencies,
+): Promise<AgentRuntimeTaskMeta> {
+  const session = await deps.store.getSession(input, input.sessionId)
+  if (!session) {
+    throw new Error('会话不存在或不可访问')
   }
-  const workspace = await deps.store.getWorkspace(scope, session.workspaceSlug)
+  const prompt = requireString(input.prompt, 'prompt')
+  const channelId = input.channelId ?? session.channelId
+  const modelId = input.modelId ?? session.modelId
+  const credential = await deps.store.getCredential(input, channelId)
+  if (!credential) {
+    throw new Error('渠道不存在或不可访问')
+  }
+  const workspace = await deps.store.getWorkspace(input, session.workspaceSlug)
   if (!workspace) {
-    return jsonResponse({ error: '工作区不存在或不可访问' }, 404)
+    throw new Error('工作区不存在或不可访问')
   }
 
   const task = deps.taskRunner.startTask({
-    ...scope,
-    sessionId,
+    ...input,
+    sessionId: input.sessionId,
     run: async (context) => {
-      await deps.beforeStartTask?.({ scope, session, credential, modelId })
+      await deps.beforeStartTask?.({ scope: input, session, credential, modelId })
       await runAgentTurnTask({
         context,
         prompt,
         modelId,
-        protocol: body.protocol,
-        permissionMode: body.permissionMode ?? session.defaultPermissionMode ?? deps.defaultPermissionMode,
+        protocol: input.protocol,
+        permissionMode: input.permissionMode ?? session.defaultPermissionMode ?? deps.defaultPermissionMode,
         session: {
           ...session,
           channelId,
@@ -439,11 +461,10 @@ async function handleRunSession(
   void deps.taskRunner.waitForTask(task.taskId).then(async (completed) => {
     await deps.store.setTask(completed)
     if (completed.status !== 'running') {
-      await cancelPendingInteractionsForTask(deps.interactionStore, scope, completed.taskId)
+      await cancelPendingInteractionsForTask(deps.interactionStore, input, completed.taskId)
     }
   })
-
-  return jsonResponse({ task }, 202)
+  return task
 }
 
 interface RunAgentTurnTaskInput {
@@ -625,7 +646,7 @@ async function handleRespondInteraction(
   if (!interaction) {
     return jsonResponse({ error: '交互请求不存在、不可访问或已处理' }, 404)
   }
-  if (!isValidInteractionResponse(interaction.kind, response)) {
+  if (!isValidInteractionResponse(interaction.kind, interaction.request, response)) {
     return jsonResponse({ error: `响应类型与 ${interaction.kind} 交互不匹配` }, 400)
   }
   if (interaction.status === 'resolved' && interaction.resolutionId === body.resolutionId) {
@@ -661,13 +682,17 @@ function isPermissionMode(value: unknown): value is PromaPermissionMode {
   return value === 'safe' || value === 'auto' || value === 'bypassPermissions' || value === 'plan'
 }
 
-function isValidInteractionResponse(kind: AgentRuntimeInteractionKind, response: Record<string, unknown>): boolean {
+function isValidInteractionResponse(kind: AgentRuntimeInteractionKind, request: AgentRuntimeInteractionRequest, response: Record<string, unknown>): boolean {
   if (kind === 'permission') {
     return (response.behavior === 'allow' || response.behavior === 'deny') && typeof response.alwaysAllow === 'boolean'
   }
   if (kind === 'plan') {
     return (response.action === 'approve_auto' || response.action === 'approve_edit' || response.action === 'deny' || response.action === 'feedback')
       && (response.feedback == null || typeof response.feedback === 'string')
+  }
+  if (kind === 'goal' || kind === 'mcp_oauth' || kind === 'external_action') {
+    return typeof response.action === 'string' && response.action.length > 0 && response.action.length <= 100
+      && 'actions' in request && Array.isArray(request.actions) && request.actions.includes(response.action)
   }
   if (!isRecord(response.answers)) return false
   return Object.values(response.answers).every((answer) => typeof answer === 'string')
@@ -757,7 +782,7 @@ function matchAgentRoute(method: string, pathname: string):
 }
 
 function parseInteractionKind(value: string | null): AgentRuntimeInteractionKind | undefined {
-  return value === 'permission' || value === 'ask_user' || value === 'plan' ? value : undefined
+  return value === 'permission' || value === 'ask_user' || value === 'plan' || value === 'goal' || value === 'mcp_oauth' || value === 'external_action' ? value : undefined
 }
 
 function parseInteractionStatus(value: string | null): AgentRuntimeInteractionStatus | undefined {
@@ -817,9 +842,12 @@ function createRuntimeWebId(prefix: string): string {
   return `${prefix}-${id}`
 }
 
-function getRuntimeWebErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error) || '未知错误'
+export function redactRuntimeWebErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error) || '未知错误'
+  return message
+    .replaceAll(/authorization\s*:\s*bearer\s+[^\s,;]+/gi, 'Authorization: Bearer [redacted]')
+    .replaceAll(/(api[_-]?key|bearer|client_secret|access_token|refresh_token)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .slice(0, 1_000)
 }
 
 export function createPlainAgentRuntimeWebSecretCodec(): AgentRuntimeWebSecretCodec {

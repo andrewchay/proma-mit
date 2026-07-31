@@ -77,6 +77,20 @@ describe('InMemoryAgentRuntimeInteractionStore', () => {
     expect((await store.getInteraction(scope, 'perm-expired'))?.status).toBe('expired')
     expect((await store.getInteraction(otherScope, 'perm-other'))?.status).toBe('pending')
   })
+
+  test('given a Goal action then source, priority, and allowed response are retained in the shared Inbox record', async () => {
+    const store = new InMemoryAgentRuntimeInteractionStore()
+    await store.createInteraction({
+      ...scope,
+      kind: 'goal',
+      source: 'goal',
+      priority: 'high',
+      request: { requestId: 'goal-1', sessionId: 'session-a', title: 'Goal 等待恢复', actions: ['resume', 'cancel'], detail: { goalId: 'goal-a' } },
+    })
+
+    const record = await store.getInteraction(scope, 'goal-1')
+    expect(record).toMatchObject({ kind: 'goal', source: 'goal', priority: 'high', request: { title: 'Goal 等待恢复' } })
+  })
 })
 
 function permissionRequest(requestId: string, sessionId: string): PermissionRequest {

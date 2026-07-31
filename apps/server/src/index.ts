@@ -1,4 +1,5 @@
 import { createPromaWebServerApplication } from './app.ts'
+import { assertTrustedHeaderAuthStartupPolicy } from './auth-startup-policy.ts'
 import { createOidcJwtAuth } from './jwt-auth.ts'
 
 const databaseUrl = requireEnvironment('PROMA_WEB_DATABASE_URL')
@@ -9,11 +10,13 @@ const s3 = {
   endpoint: process.env.PROMA_WEB_S3_ENDPOINT,
   accessKeyId: process.env.PROMA_WEB_S3_ACCESS_KEY_ID,
   secretAccessKey: process.env.PROMA_WEB_S3_SECRET_ACCESS_KEY,
-  maxUploadBytes: Number.parseInt(process.env.PROMA_WEB_MAX_UPLOAD_BYTES ?? '26214400', 10),
+  maxUploadBytes: parsePositiveInteger(process.env.PROMA_WEB_MAX_UPLOAD_BYTES, 'PROMA_WEB_MAX_UPLOAD_BYTES') ?? 26_214_400,
 }
 const envelopeKey = requireEnvironment('PROMA_WEB_ENVELOPE_KEY')
 const envelopeKeyId = process.env.PROMA_WEB_ENVELOPE_KEY_ID ?? 'local-v1'
+const hostname = process.env.PROMA_WEB_HOST ?? '127.0.0.1'
 const trustedHeaderAuth = process.env.PROMA_WEB_TRUSTED_HEADER_AUTH === '1'
+assertTrustedHeaderAuthStartupPolicy({ trustedHeaderAuth, hostname, nodeEnv: process.env.NODE_ENV })
 const workspaceRoot = process.env.PROMA_WEB_WORKSPACE_ROOT ?? '/tmp/proma-web-workspaces'
 const workerId = process.env.PROMA_WEB_WORKER_ID ?? crypto.randomUUID()
 const taskLeaseMs = Number.parseInt(process.env.PROMA_WEB_TASK_LEASE_MS ?? '30000', 10)
@@ -62,7 +65,6 @@ const application = createPromaWebServerApplication({
 await application.initialize()
 
 const port = Number.parseInt(process.env.PROMA_WEB_PORT ?? '3000', 10)
-const hostname = process.env.PROMA_WEB_HOST ?? '127.0.0.1'
 const server = Bun.serve({
   port,
   hostname,

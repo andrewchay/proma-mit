@@ -10,6 +10,7 @@ import type {
   TenantMcpOAuthTokens,
   TenantRuntimeStore,
 } from '@proma/shared/utils'
+import { validateServerMcpOAuthEndpoint } from '@proma/shared/utils'
 
 const MAX_MCP_RESULT_BYTES = 256 * 1024
 const OAUTH_REFRESH_SKEW_MS = 30_000
@@ -108,7 +109,8 @@ async function getUsableOAuthToken(store: TenantRuntimeStore, input: ServerMcpCo
     form.set('refresh_token', current.refreshToken)
   }
   if (clientSecret) form.set('client_secret', clientSecret)
-  const response = await withTimeout(fetch(auth.tokenEndpoint, {
+  const tokenEndpoint = validateServerMcpOAuthEndpoint(input.serverName, auth.tokenEndpoint, input.config)
+  const response = await withTimeout(fetch(tokenEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: form,

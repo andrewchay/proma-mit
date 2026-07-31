@@ -1,5 +1,6 @@
 import type { McpServerEntry } from '@proma/shared'
-import type { TenantMcpOAuthTokens } from '@proma/shared/utils'
+import { validateServerMcpOAuthEndpoint } from '@proma/shared/utils'
+import type { TenantMcpOAuthTokens, ValidatedServerMcpConfig } from '@proma/shared/utils'
 
 export interface ServerMcpOAuthStartInput {
   authorizationEndpoint: string
@@ -20,14 +21,20 @@ export function createMcpOAuthAuthorizationUrl(input: ServerMcpOAuthStartInput):
   return url.toString()
 }
 
-export async function exchangeMcpAuthorizationCode(entry: McpServerEntry, code: string, clientSecret?: string): Promise<TenantMcpOAuthTokens> {
+export async function exchangeMcpAuthorizationCode(entry: McpServerEntry, code: string, config: ValidatedServerMcpConfig, clientSecret?: string): Promise<TenantMcpOAuthTokens> {
   const auth = entry.auth
   if (auth?.type !== 'oauthAuthorizationCode' || !auth.tokenEndpoint || !auth.clientId || !auth.redirectUri) {
     throw new Error('MCP OAuth 授权码配置不完整')
   }
   const form = new URLSearchParams({ grant_type: 'authorization_code', code, client_id: auth.clientId, redirect_uri: auth.redirectUri })
   if (clientSecret) form.set('client_secret', clientSecret)
-  const response = await fetch(auth.tokenEndpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form })
+  const tokenEndpoint = validateServerMcpOAuthEndpoint(config.name, auth.tokenEndpoint, config)
+  const response = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: form,
+    signal: AbortSignal.timeout(config.timeoutMs),
+  })
   if (!response.ok) throw new Error(`MCP OAuth 换取 token 失败: HTTP ${response.status}`)
   const body = await response.json() as unknown
   if (!body || typeof body !== 'object' || !('access_token' in body) || typeof body.access_token !== 'string') throw new Error('MCP OAuth 响应缺少 access_token')

@@ -8,16 +8,39 @@ import type {
 } from '../types/agent'
 import type { AgentRuntimeScope } from './agent-runtime-server'
 
-export type AgentRuntimeInteractionKind = 'permission' | 'ask_user' | 'plan'
+export type AgentRuntimeInteractionKind = 'permission' | 'ask_user' | 'plan' | 'goal' | 'mcp_oauth' | 'external_action'
 export type AgentRuntimeInteractionStatus = 'pending' | 'resolved' | 'cancelled' | 'expired'
-export type AgentRuntimeInteractionRequest = PermissionRequest | AskUserRequest | ExitPlanModeRequest
-export type AgentRuntimeInteractionResponse = PermissionResponse | AskUserResponse | ExitPlanModeResponse
+export type AgentRuntimeInteractionSource = 'runtime' | 'goal' | 'mcp' | 'external_channel'
+export type AgentRuntimeInteractionPriority = 'low' | 'normal' | 'high' | 'critical'
+
+/** Goal、MCP OAuth 与外部渠道共享的可操作交互契约。 */
+export interface AgentRuntimeActionRequest {
+  requestId: string
+  sessionId: string
+  title: string
+  description?: string
+  actions: string[]
+  detail?: Record<string, unknown>
+}
+
+export interface AgentRuntimeActionResponse {
+  requestId: string
+  action: string
+  detail?: Record<string, unknown>
+}
+
+export type AgentRuntimeInteractionRequest = PermissionRequest | AskUserRequest | ExitPlanModeRequest | AgentRuntimeActionRequest
+export type AgentRuntimeInteractionResponse = PermissionResponse | AskUserResponse | ExitPlanModeResponse | AgentRuntimeActionResponse
 
 export interface AgentRuntimeInteractionRecord extends AgentRuntimeScope {
   requestId: string
   sessionId: string
   taskId?: string
   kind: AgentRuntimeInteractionKind
+  /** 交互由 runtime、Goal、MCP 还是外部渠道创建。 */
+  source: AgentRuntimeInteractionSource
+  /** 仅展示与排序用途，不改变权限决策。 */
+  priority: AgentRuntimeInteractionPriority
   status: AgentRuntimeInteractionStatus
   request: AgentRuntimeInteractionRequest
   response?: AgentRuntimeInteractionResponse
@@ -34,6 +57,8 @@ export interface CreateAgentRuntimeInteractionInput extends AgentRuntimeScope {
   taskId?: string
   kind: AgentRuntimeInteractionKind
   request: AgentRuntimeInteractionRequest
+  source?: AgentRuntimeInteractionSource
+  priority?: AgentRuntimeInteractionPriority
   createdAt?: number
   expiresAt?: number
 }
@@ -76,6 +101,8 @@ export class InMemoryAgentRuntimeInteractionStore implements AgentRuntimeInterac
       sessionId: input.request.sessionId,
       taskId: input.taskId,
       kind: input.kind,
+      source: input.source ?? 'runtime',
+      priority: input.priority ?? 'normal',
       status: 'pending',
       request: cloneInteractionValue(input.request),
       version: 1,

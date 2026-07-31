@@ -30,4 +30,20 @@ describe('服务端持久化审批记录', () => {
       tenantId: 'tenant', userId: 'user', status: 'resolved', response: { behavior: 'allow' },
     })
   })
+
+  test('创建通用 Inbox 动作时持久化来源与优先级', async () => {
+    const calls: Array<{ sql: string; params: readonly unknown[] }> = []
+    const store = new PostgresAgentRuntimeInteractionStore({
+      query: async <Row extends Record<string, unknown>>(sql: string, params: readonly unknown[] = []) => {
+        calls.push({ sql, params })
+        return { rows: [] as Row[] }
+      },
+    })
+    await store.createInteraction({
+      tenantId: 'tenant', userId: 'user', kind: 'external_action', source: 'external_channel', priority: 'high',
+      request: { requestId: 'external-1', sessionId: 'session', title: '外部渠道请求发送', actions: ['approve', 'deny'] },
+    })
+
+    expect(calls[0]?.params.slice(5, 9)).toEqual(['external_action', 'external_channel', 'high', JSON.stringify({ requestId: 'external-1', sessionId: 'session', title: '外部渠道请求发送', actions: ['approve', 'deny'] })])
+  })
 })

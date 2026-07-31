@@ -10,6 +10,7 @@ export interface ValidatedServerMcpConfig {
   name: string
   url: string
   timeoutMs: number
+  allowedOrigins: readonly string[]
 }
 
 /**
@@ -30,5 +31,22 @@ export function validateServerMcpConfig(
   if (!policy.allowedOrigins.includes(url.origin)) throw new Error(`MCP ${name} 的目标不在 egress allowlist 中`)
   const configuredTimeoutMs = (entry.timeout ?? 30) * 1_000
   if (!Number.isSafeInteger(configuredTimeoutMs) || configuredTimeoutMs <= 0) throw new Error(`MCP ${name} timeout 不合法`)
-  return { name, url: url.toString(), timeoutMs: Math.min(configuredTimeoutMs, policy.maxTimeoutMs) }
+  return {
+    name,
+    url: url.toString(),
+    timeoutMs: Math.min(configuredTimeoutMs, policy.maxTimeoutMs),
+    allowedOrigins: policy.allowedOrigins,
+  }
+}
+
+/** OAuth 授权与换取 token 同样属于服务端出站请求，必须复用 MCP allowlist。 */
+export function validateServerMcpOAuthEndpoint(
+  name: string,
+  endpoint: string,
+  config: Pick<ValidatedServerMcpConfig, 'allowedOrigins'>,
+): URL {
+  const url = new URL(endpoint)
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(`MCP ${name} OAuth endpoint 只能使用 HTTP(S)`)
+  if (!config.allowedOrigins.includes(url.origin)) throw new Error(`MCP ${name} OAuth endpoint 不在 egress allowlist 中`)
+  return url
 }

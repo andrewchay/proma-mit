@@ -5,6 +5,8 @@ import {
   createCloudKmsEnvelopeSecretCodec,
   createAgentRuntimeWorkspaceObjectKey,
   normalizeRelativeObjectPath,
+  validateServerMcpConfig,
+  validateServerMcpOAuthEndpoint,
   parseWebCryptoEnvelopeKey,
   PostgresTenantRuntimeStore,
   RedisAgentRuntimeEventStore,
@@ -45,6 +47,9 @@ import { PostgresAgentRuntimeInteractionStore } from './interactions.ts'
 import { HttpOperationsReporter, NoopOperationsReporter, redactOperationalError } from './operations.ts'
 import type { OperationsReporter } from './operations.ts'
 import { WEB_DASHBOARD_HTML } from './dashboard.ts'
+import { createWorkspaceFileDownloadResponse } from './workspace-file-response.ts'
+import { nextRunForSchedule, PostgresServerSchedulerStore } from './scheduler-store.ts'
+import { ServerScheduler } from './server-scheduler.ts'
 import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
 import type { UsageLedgerRecord } from './billing.ts'
@@ -230,6 +235,8 @@ export function createPromaWebServerApplication(
     defaultRuntime: 'ai-sdk',
     subtaskLimits: config.subtaskLimits,
   })
+  const schedulerStore = new PostgresServerSchedulerStore(postgres)
+  const scheduler = new ServerScheduler(schedulerStore, app, config.workerId)
 
   return {
     async fetch(request) {
@@ -246,11 +253,14 @@ export function createPromaWebServerApplication(
         return new Response(WEB_DASHBOARD_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
       }
       const scope = await auth({ request, url })
+      const actionAuthorizationError = scope ? requireAgentActionRole(scope, request) : undefined
       const fileRoute = matchWorkspaceFileRoute(request.method, url.pathname)
       const oauthStartRoute = matchMcpOAuthStartRoute(request.method, url.pathname)
       const mcpStatusRoute = matchMcpStatusRoute(request.method, url.pathname)
       let response: Response
-      if (request.method === 'GET' && url.pathname === '/agent/billing') {
+      if (actionAuthorizationError) {
+        response = actionAuthorizationError
+      } else if (request.method === 'GET' && url.pathname === '/agent/billing') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
           : !hasAnyRole(scope, ['admin'])
@@ -342,6 +352,12 @@ export function createPromaWebServerApplication(
         })
       } else if (request.method === 'GET' && url.pathname === '/agent/tasks') {
         response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : Response.json({ tasks: (await postgres.query<Record<string, unknown>>('SELECT task_id, parent_task_id, session_id, status, started_at, completed_at, error FROM proma_runtime_tasks WHERE tenant_id = $1 AND user_id = $2 ORDER BY started_at DESC LIMIT 100', [scope.tenantId, scope.userId])).rows })
+      } else if (request.method === 'GET' && url.pathname === '/agent/schedules') {
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : Response.json({ schedules: await schedulerStore.list(scope) })
+      } else if (request.method === 'POST' && url.pathname === '/agent/schedules') {
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : await createServerSchedule(request, scope, store, schedulerStore)
+      } else if (request.method === 'POST' && url.pathname.startsWith('/agent/schedules/')) {
+        response = !scope ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 }) : await setServerScheduleEnabled(url.pathname, scope, schedulerStore)
       } else if (fileRoute) {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -349,7 +365,7 @@ export function createPromaWebServerApplication(
       } else if (oauthStartRoute) {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
-          : await startMcpOAuth(scope, oauthStartRoute.workspaceSlug, oauthStartRoute.serverName, store, app.oauthHandler, config.mcpOAuthCallbackBaseUrl)
+          : await startMcpOAuth(scope, oauthStartRoute.workspaceSlug, oauthStartRoute.serverName, store, app.oauthHandler, config.mcpOAuthCallbackBaseUrl, config.mcpEgress)
       } else if (mcpStatusRoute) {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -382,8 +398,11 @@ export function createPromaWebServerApplication(
       await usageLedger.initializeSchema()
       await auditLog.initializeSchema()
       await interactionStore.initializeSchema()
+      await schedulerStore.initializeSchema()
+      scheduler.start()
     },
     async shutdown() {
+      scheduler.stop()
       const taskIds = app.taskRunner.cancelAllTasks()
       await Promise.all(taskIds.map((taskId) => app.taskRunner.waitForTask(taskId)))
       await app.taskRunner.flushDurableEventWrites()
@@ -429,13 +448,23 @@ async function startMcpOAuth(
   store: PostgresTenantRuntimeStore,
   handler: import('@proma/shared/utils').ServerMcpOAuthCallbackHandler,
   callbackBaseUrl: string | undefined,
+  egressPolicy: PromaWebServerConfig['mcpEgress'],
 ): Promise<Response> {
-  if (!callbackBaseUrl) return Response.json({ error: '服务端未配置 MCP OAuth 回调地址' }, { status: 503 })
+  if (!callbackBaseUrl || !egressPolicy) return Response.json({ error: '服务端未启用 MCP OAuth egress 或未配置回调地址' }, { status: 503 })
   const workspace = await store.getWorkspace(scope, workspaceSlug)
   const entry = workspace?.mcpServers[serverName]
   const auth = entry?.auth
   if (!entry || auth?.type !== 'oauthAuthorizationCode' || !auth.authorizationEndpoint || !auth.clientId || !auth.redirectUri) {
     return Response.json({ error: 'MCP OAuth 授权码配置不完整或不可访问' }, { status: 400 })
+  }
+  let mcpConfig
+  try {
+    mcpConfig = validateServerMcpConfig(serverName, entry, egressPolicy)
+    validateServerMcpOAuthEndpoint(serverName, auth.authorizationEndpoint, mcpConfig)
+    if (!auth.tokenEndpoint) throw new Error(`MCP ${serverName} OAuth 缺少 token endpoint`)
+    validateServerMcpOAuthEndpoint(serverName, auth.tokenEndpoint, mcpConfig)
+  } catch (error) {
+    return Response.json({ error: redactOperationalError(getErrorMessage(error)) }, { status: 400 })
   }
   if (auth.clientSecret) await store.setMcpClientSecret({ ...scope, workspaceSlug, serverName, clientSecret: auth.clientSecret })
   const registered = handler.registerPending({
@@ -443,7 +472,7 @@ async function startMcpOAuth(
     workspaceSlug,
     serverName,
     callbackBaseUrl,
-    finishAuth: async (code) => exchangeMcpAuthorizationCode(entry, code, await store.getMcpClientSecret(scope, workspaceSlug, serverName)),
+    finishAuth: async (code) => exchangeMcpAuthorizationCode(entry, code, mcpConfig, await store.getMcpClientSecret(scope, workspaceSlug, serverName)),
   })
   return Response.json({ authorizationUrl: createMcpOAuthAuthorizationUrl({ authorizationEndpoint: auth.authorizationEndpoint, clientId: auth.clientId, redirectUri: auth.redirectUri, scope: auth.scope, state: registered.authorizationState }) })
 }
@@ -480,6 +509,19 @@ function hasAnyRole(scope: AgentRuntimeScope, required: readonly AgentRuntimeRol
   return scope.roles?.some((role) => required.includes(role)) ?? false
 }
 
+/** 普通 Agent 写操作只允许 operator 或 admin；viewer 与 security-auditor 保持只读。 */
+function requireAgentActionRole(scope: AgentRuntimeScope, request: Request): Response | undefined {
+  if (request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS') return undefined
+  if (!urlStartsWithAgentApi(request.url)) return undefined
+  return hasAnyRole(scope, ['operator', 'admin'])
+    ? undefined
+    : Response.json({ error: '执行或修改 Agent 资源需要 operator 或 admin 角色' }, { status: 403 })
+}
+
+function urlStartsWithAgentApi(rawUrl: string): boolean {
+  return new URL(rawUrl).pathname.startsWith('/agent/')
+}
+
 function parseAuditTimestamp(value: string | null): number | undefined {
   if (!value) return undefined
   const timestamp = Number(value)
@@ -500,6 +542,42 @@ function parseArchivedFilter(value: string | null): boolean | null {
   if (value === 'true') return true
   if (value === 'all') return null
   return false
+}
+
+async function createServerSchedule(request: Request, scope: AgentRuntimeScope, store: PostgresTenantRuntimeStore, schedulerStore: PostgresServerSchedulerStore): Promise<Response> {
+  let body: { sessionId?: unknown; prompt?: unknown; intervalMs?: unknown; schedule?: unknown }
+  try { body = await request.json() as { sessionId?: unknown; prompt?: unknown; intervalMs?: unknown; schedule?: unknown } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+  if (typeof body.sessionId !== 'string' || !body.sessionId.trim() || typeof body.prompt !== 'string' || !body.prompt.trim()) {
+    return Response.json({ error: 'sessionId 与 prompt 必须是非空字符串' }, { status: 400 })
+  }
+  const schedule = parseServerSchedule(body)
+  if (!schedule) return Response.json({ error: '计划必须是 interval（不小于 60000ms）或带有效 IANA 时区的 cron' }, { status: 400 })
+  try { nextRunForSchedule(schedule) } catch { return Response.json({ error: 'Cron 表达式或时区无效' }, { status: 400 }) }
+  if (!await store.getSession(scope, body.sessionId)) return Response.json({ error: '会话不存在或不可访问' }, { status: 404 })
+  const created = await schedulerStore.create({ ...scope, sessionId: body.sessionId, prompt: body.prompt.trim(), schedule, enabled: true })
+  return Response.json({ schedule: created }, { status: 201 })
+}
+
+function parseServerSchedule(body: { intervalMs?: unknown; schedule?: unknown }): import('./scheduler-store.ts').ServerScheduleSpec | undefined {
+  if (body.schedule && typeof body.schedule === 'object') {
+    const input = body.schedule as { type?: unknown; intervalMs?: unknown; expression?: unknown; timezone?: unknown }
+    if (input.type === 'cron' && typeof input.expression === 'string' && input.expression.trim() && typeof input.timezone === 'string' && input.timezone.trim()) return { type: 'cron', expression: input.expression.trim(), timezone: input.timezone.trim() }
+    if (input.type === 'interval') return intervalSchedule(input.intervalMs)
+    return undefined
+  }
+  return intervalSchedule(body.intervalMs)
+}
+
+function intervalSchedule(value: unknown): import('./scheduler-store.ts').ServerScheduleSpec | undefined {
+  const intervalMs = typeof value === 'number' ? value : Number(value)
+  return Number.isSafeInteger(intervalMs) && intervalMs >= 60_000 ? { type: 'interval', intervalMs } : undefined
+}
+
+async function setServerScheduleEnabled(pathname: string, scope: AgentRuntimeScope, schedulerStore: PostgresServerSchedulerStore): Promise<Response> {
+  const match = /^\/agent\/schedules\/([^/]+)\/(pause|resume)$/.exec(pathname)
+  if (!match) return Response.json({ error: '未知 Scheduler 操作' }, { status: 404 })
+  const schedule = await schedulerStore.setEnabled(scope, decodeURIComponent(match[1] ?? ''), match[2] === 'resume')
+  return schedule ? Response.json({ schedule }) : Response.json({ error: '定时任务不存在或不可访问' }, { status: 404 })
 }
 
 function createAuditExportResponse(records: Awaited<ReturnType<PostgresAuditLog['list']>>, format: string | null): Response {
@@ -647,7 +725,7 @@ async function handleWorkspaceFile(
   }
   const object = await objectStore.getObject(key)
   if (!object) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
-  return new Response(bytesToArrayBuffer(object.body), { headers: { 'content-type': object.contentType ?? 'application/octet-stream' } })
+  return createWorkspaceFileDownloadResponse(object.body, object.contentType)
 }
 
 function matchWorkspaceFileRoute(method: string, pathname: string): { workspaceSlug: string; relativePath: string } | undefined {
@@ -711,12 +789,6 @@ class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
 function isS3NotFound(error: unknown): boolean {
   return typeof error === 'object' && error !== null && '$metadata' in error
     && (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404
-}
-
-function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(bytes.byteLength)
-  copy.set(bytes)
-  return copy.buffer
 }
 
 interface RedisStreamEntry {
@@ -804,6 +876,6 @@ function createTrustedHeaderAuth(enabled: boolean): AgentRuntimeWebAuthResolver 
     if (!enabled) return undefined
     const tenantId = input.request.headers.get('x-proma-tenant-id') ?? ''
     const userId = input.request.headers.get('x-proma-user-id') ?? ''
-    return tenantId && userId ? { tenantId, userId } : undefined
+    return tenantId && userId ? { tenantId, userId, roles: ['operator'] } : undefined
   }
 }

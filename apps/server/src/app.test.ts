@@ -55,6 +55,20 @@ describe('Proma Web 服务', () => {
     expect(response.status).toBe(200)
   })
 
+  test('viewer 与 security-auditor 只能读取，operator 可以执行普通 Agent 操作', async () => {
+    const config = { databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }
+    const create = (role: 'viewer' | 'security-auditor' | 'operator') => createPromaWebServerApplication(config, {
+      postgres: new FakePostgresClient(),
+      auth: () => ({ tenantId: 'tenant-a', userId: 'user-a', roles: [role] }),
+    })
+    const request = () => new Request('http://localhost/agent/tasks/missing/cancel', { method: 'POST' })
+
+    expect((await create('viewer').fetch(request())).status).toBe(403)
+    expect((await create('security-auditor').fetch(request())).status).toBe(403)
+    // 404 说明请求已通过角色层，之后才因任务不属于当前用户而被拒绝。
+    expect((await create('operator').fetch(request())).status).toBe(404)
+  })
+
   test('会话管理 API 默认排除已归档会话，并支持搜索分页参数', async () => {
     const calls: Array<readonly unknown[]> = []
     const auth: AgentRuntimeWebAuthResolver = () => ({ tenantId: 'tenant-a', userId: 'user-a' })

@@ -1,21 +1,36 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { InMemoryAgentRuntimeObjectStore, PostgresTenantRuntimeStore } from '@proma/shared/utils'
+import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@proma/shared'
 import type { ProviderType } from '@proma/shared'
 import { createPromaWebServerApplication } from './app.ts'
+import { PostgresUsageLedger } from './billing.ts'
 
-interface RealCase { provider: ProviderType; apiKey?: string; model: string; baseUrl: string }
+interface RealCase { provider: ProviderType; apiKeyEnv: string; fallbackApiKeyEnv?: string; modelEnv: string; model: string; baseUrlEnv: string; baseUrl: string }
 const databaseUrl = process.env.PROMA_P2_TEST_DATABASE_URL
 const redisUrl = process.env.PROMA_P2_TEST_REDIS_URL
-const cases = [
-  { provider: 'deepseek', apiKey: process.env.PROMA_AI_SDK_DEEPSEEK_API_KEY ?? process.env.DEEPSEEK_API_KEY, model: process.env.PROMA_AI_SDK_DEEPSEEK_MODEL ?? 'deepseek-chat', baseUrl: process.env.PROMA_AI_SDK_DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1' },
-  { provider: 'kimi-coding', apiKey: process.env.PROMA_AI_SDK_KIMI_CODING_API_KEY, model: process.env.PROMA_AI_SDK_KIMI_CODING_MODEL ?? 'kimi-for-coding', baseUrl: process.env.PROMA_AI_SDK_KIMI_CODING_BASE_URL ?? 'https://api.kimi.com/coding/v1' },
-].filter((entry): entry is RealCase & { apiKey: string } => Boolean(entry.apiKey))
+const matrix: readonly RealCase[] = [
+  { provider: 'anthropic', apiKeyEnv: 'PROMA_AI_SDK_ANTHROPIC_API_KEY', fallbackApiKeyEnv: 'ANTHROPIC_API_KEY', modelEnv: 'PROMA_AI_SDK_ANTHROPIC_MODEL', model: 'claude-3-5-haiku-latest', baseUrlEnv: 'PROMA_AI_SDK_ANTHROPIC_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.anthropic },
+  { provider: 'google', apiKeyEnv: 'PROMA_AI_SDK_GOOGLE_API_KEY', fallbackApiKeyEnv: 'GOOGLE_GENERATIVE_AI_API_KEY', modelEnv: 'PROMA_AI_SDK_GOOGLE_MODEL', model: 'gemini-3.5-flash', baseUrlEnv: 'PROMA_AI_SDK_GOOGLE_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.google },
+  { provider: 'openai', apiKeyEnv: 'PROMA_AI_SDK_OPENAI_API_KEY', fallbackApiKeyEnv: 'OPENAI_API_KEY', modelEnv: 'PROMA_AI_SDK_OPENAI_MODEL', model: 'gpt-4o-mini', baseUrlEnv: 'PROMA_AI_SDK_OPENAI_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.openai },
+  { provider: 'deepseek', apiKeyEnv: 'PROMA_AI_SDK_DEEPSEEK_API_KEY', fallbackApiKeyEnv: 'DEEPSEEK_API_KEY', modelEnv: 'PROMA_AI_SDK_DEEPSEEK_MODEL', model: 'deepseek-chat', baseUrlEnv: 'PROMA_AI_SDK_DEEPSEEK_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.deepseek },
+  { provider: 'kimi-api', apiKeyEnv: 'PROMA_AI_SDK_KIMI_API_KEY', fallbackApiKeyEnv: 'MOONSHOT_API_KEY', modelEnv: 'PROMA_AI_SDK_KIMI_API_MODEL', model: 'kimi-k2-0711-preview', baseUrlEnv: 'PROMA_AI_SDK_KIMI_API_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS['kimi-api'] },
+  { provider: 'kimi-coding', apiKeyEnv: 'PROMA_AI_SDK_KIMI_CODING_API_KEY', modelEnv: 'PROMA_AI_SDK_KIMI_CODING_MODEL', model: 'kimi-for-coding', baseUrlEnv: 'PROMA_AI_SDK_KIMI_CODING_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS['kimi-coding'] },
+  { provider: 'zhipu', apiKeyEnv: 'PROMA_AI_SDK_ZHIPU_API_KEY', modelEnv: 'PROMA_AI_SDK_ZHIPU_MODEL', model: 'glm-4-flash', baseUrlEnv: 'PROMA_AI_SDK_ZHIPU_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.zhipu },
+  { provider: 'doubao', apiKeyEnv: 'PROMA_AI_SDK_DOUBAO_API_KEY', modelEnv: 'PROMA_AI_SDK_DOUBAO_MODEL', model: 'doubao-seed-1-6-flash-250615', baseUrlEnv: 'PROMA_AI_SDK_DOUBAO_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.doubao },
+  { provider: 'qwen', apiKeyEnv: 'PROMA_AI_SDK_QWEN_API_KEY', fallbackApiKeyEnv: 'DASHSCOPE_API_KEY', modelEnv: 'PROMA_AI_SDK_QWEN_MODEL', model: 'qwen-turbo', baseUrlEnv: 'PROMA_AI_SDK_QWEN_BASE_URL', baseUrl: PROVIDER_DEFAULT_URLS.qwen },
+]
+const cases = matrix.map((entry) => ({ ...entry, apiKey: process.env[entry.apiKeyEnv] ?? (entry.fallbackApiKeyEnv ? process.env[entry.fallbackApiKeyEnv] : undefined), model: process.env[entry.modelEnv] ?? entry.model, baseUrl: process.env[entry.baseUrlEnv] ?? entry.baseUrl })).filter((entry): entry is RealCase & { apiKey: string } => Boolean(entry.apiKey))
 const canRun = process.env.PROMA_WEB_REAL_E2E === '1' && Boolean(databaseUrl && redisUrl && cases.length)
+
+test('服务端真实 Provider 矩阵覆盖所有 AI SDK 兼容 Provider', () => {
+  expect(matrix.map((entry) => entry.provider).sort()).toEqual(getAgentCompatibleProviders('ai-sdk').filter((provider) => provider !== 'custom').sort())
+})
 
 describe.skipIf(!canRun)('服务端 AI SDK 真实 Provider E2E', () => {
   const sql = new Bun.SQL(databaseUrl!)
   const client = { query: async <Row extends Record<string, unknown>>(statement: string, params: readonly unknown[] = []) => ({ rows: await sql.unsafe<Row[]>(statement, [...params]) }) }
   const store = new PostgresTenantRuntimeStore(client)
+  const usageLedger = new PostgresUsageLedger(client, [])
   const scope = { tenantId: `real-${crypto.randomUUID()}`, userId: 'user-a' }
   const app = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: redisUrl!, s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: true, workspaceRoot: '/private/tmp/proma-web-real-e2e', taskLeaseMs: 30_000, workerId: 'real-worker' }, { objectStore: new InMemoryAgentRuntimeObjectStore() })
   const headers = { 'content-type': 'application/json', 'x-proma-tenant-id': scope.tenantId, 'x-proma-user-id': scope.userId }
@@ -38,5 +53,6 @@ describe.skipIf(!canRun)('服务端 AI SDK 真实 Provider E2E', () => {
     expect(terminal?.status, terminal?.error ?? '任务在 60 秒内未结束').toBe('completed')
     const events = await (await app.fetch(new Request(`http://server/agent/sessions/${sessionId}/events`, { headers }))).text()
     expect(events).toContain('text_delta')
+    expect((await usageLedger.list({ ...scope })).some((record) => record.taskId === task.taskId && record.provider === entry.provider)).toBe(true)
   }, 90_000)
 })

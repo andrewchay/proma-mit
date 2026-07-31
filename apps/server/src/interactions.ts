@@ -16,6 +16,7 @@ export class PostgresAgentRuntimeInteractionStore implements AgentRuntimeInterac
     await this.client.query(`CREATE TABLE IF NOT EXISTS proma_runtime_interactions (
       tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, request_id TEXT NOT NULL,
       session_id TEXT NOT NULL, task_id TEXT, kind TEXT NOT NULL, status TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'runtime', priority TEXT NOT NULL DEFAULT 'normal',
       request_json JSONB NOT NULL, response_json JSONB, created_at BIGINT NOT NULL,
       expires_at BIGINT, resolved_at BIGINT,
       version INTEGER NOT NULL DEFAULT 1, resolution_id TEXT,
@@ -23,16 +24,18 @@ export class PostgresAgentRuntimeInteractionStore implements AgentRuntimeInterac
     )`)
     await this.client.query('ALTER TABLE proma_runtime_interactions ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1')
     await this.client.query('ALTER TABLE proma_runtime_interactions ADD COLUMN IF NOT EXISTS resolution_id TEXT')
+    await this.client.query("ALTER TABLE proma_runtime_interactions ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'runtime'")
+    await this.client.query("ALTER TABLE proma_runtime_interactions ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal'")
   }
 
   async createInteraction(input: CreateAgentRuntimeInteractionInput): Promise<AgentRuntimeInteractionRecord> {
     const createdAt = input.createdAt ?? Date.now()
     await this.client.query(
-      `INSERT INTO proma_runtime_interactions (tenant_id,user_id,request_id,session_id,task_id,kind,status,request_json,created_at,expires_at,version)
-      VALUES ($1,$2,$3,$4,$5,$6,'pending',$7::jsonb,$8,$9,1)`,
-      [input.tenantId, input.userId, input.request.requestId, input.request.sessionId, input.taskId ?? null, input.kind, JSON.stringify(input.request), createdAt, input.expiresAt ?? null],
+      `INSERT INTO proma_runtime_interactions (tenant_id,user_id,request_id,session_id,task_id,kind,status,source,priority,request_json,created_at,expires_at,version)
+      VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9::jsonb,$10,$11,1)`,
+      [input.tenantId, input.userId, input.request.requestId, input.request.sessionId, input.taskId ?? null, input.kind, input.source ?? 'runtime', input.priority ?? 'normal', JSON.stringify(input.request), createdAt, input.expiresAt ?? null],
     )
-    return { ...input, requestId: input.request.requestId, sessionId: input.request.sessionId, status: 'pending', createdAt, version: 1 }
+    return { ...input, requestId: input.request.requestId, sessionId: input.request.sessionId, source: input.source ?? 'runtime', priority: input.priority ?? 'normal', status: 'pending', createdAt, version: 1 }
   }
 
   async getInteraction(scope: AgentRuntimeScope, requestId: string): Promise<AgentRuntimeInteractionRecord | undefined> {
@@ -86,7 +89,7 @@ export class PostgresAgentRuntimeInteractionStore implements AgentRuntimeInterac
 function interactionFromRow(row: Record<string, unknown>): AgentRuntimeInteractionRecord {
   return {
     tenantId: String(row.tenant_id), userId: String(row.user_id), requestId: String(row.request_id), sessionId: String(row.session_id),
-    taskId: stringOrUndefined(row.task_id), kind: interactionKind(row.kind),
+    taskId: stringOrUndefined(row.task_id), kind: interactionKind(row.kind), source: interactionSource(row.source), priority: interactionPriority(row.priority),
     status: interactionStatus(row.status), request: parseJson(row.request_json), response: row.response_json == null ? undefined : parseJson(row.response_json),
     createdAt: Number(row.created_at), expiresAt: numberOrUndefined(row.expires_at), resolvedAt: numberOrUndefined(row.resolved_at),
     version: numberOrUndefined(row.version) ?? 1, resolutionId: stringOrUndefined(row.resolution_id),
@@ -100,5 +103,11 @@ function interactionStatus(value: unknown): AgentRuntimeInteractionRecord['statu
   return value === 'resolved' || value === 'cancelled' || value === 'expired' ? value : 'pending'
 }
 function interactionKind(value: unknown): AgentRuntimeInteractionRecord['kind'] {
-  return value === 'ask_user' || value === 'plan' ? value : 'permission'
+  return value === 'ask_user' || value === 'plan' || value === 'goal' || value === 'mcp_oauth' || value === 'external_action' ? value : 'permission'
+}
+function interactionSource(value: unknown): AgentRuntimeInteractionRecord['source'] {
+  return value === 'goal' || value === 'mcp' || value === 'external_channel' ? value : 'runtime'
+}
+function interactionPriority(value: unknown): AgentRuntimeInteractionRecord['priority'] {
+  return value === 'low' || value === 'high' || value === 'critical' ? value : 'normal'
 }

@@ -95,7 +95,7 @@ export {
 export type { RotatingWebCryptoEnvelopeSecretCodecOptions, WebCryptoEnvelopeSecretCodecOptions } from './agent-runtime-web-secret-codec'
 export { createCloudKmsEnvelopeSecretCodec } from './agent-runtime-cloud-kms-secret-codec'
 export type { CloudKmsDataKeyProvider, CloudKmsEnvelopeSecretCodecOptions } from './agent-runtime-cloud-kms-secret-codec'
-export { validateServerMcpConfig } from './agent-runtime-server-mcp-policy'
+export { validateServerMcpConfig, validateServerMcpOAuthEndpoint } from './agent-runtime-server-mcp-policy'
 export type { ServerMcpEgressPolicy, ValidatedServerMcpConfig } from './agent-runtime-server-mcp-policy'
 export { ServerMcpConnectionManager } from './agent-runtime-server-mcp-manager'
 export type { AcquireServerMcpConnectionInput, ServerMcpConnection, ServerMcpConnectionFactory, ServerMcpConnectionFactoryInput } from './agent-runtime-server-mcp-manager'
