@@ -1,30 +1,39 @@
 /**
- * ModeSwitcher - Chat/Agent 模式切换（带滑动指示器）
+ * ModeSwitcher - Agent / Workflow / Chat 三模式切换（带滑动指示器）
  *
- * 切换模式时自动恢复上一次在该模式下查看的对话/会话：
- * 1. 优先恢复上次选中的对话 ID
- * 2. 其次查找已打开的同类型 Tab
- * 3. 兜底打开最近的对话/会话（列表首项）
- * 4. 都没有则仅切换模式
+ * - Agent / Chat 切换会恢复上次会话并进入 conversations 视图
+ * - Workflow 切换进入 workflow 工作台视图
  */
 
 import * as React from 'react'
-import { useAtom, useAtomValue } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
+import { activeViewAtom } from '@/atoms/active-view'
 import { conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { tabsAtom } from '@/atoms/tab-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
-import { Bot, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const modes: { value: AppMode; label: string; icon: React.ReactNode }[] = [
-  { value: 'agent', label: 'Agent', icon: <Bot size={15} /> },
-  { value: 'chat', label: 'Chat', icon: <MessageSquare size={15} /> },
+type SwitchMode = 'agent' | 'workflow' | 'chat'
+
+const MODES: { value: SwitchMode; label: string }[] = [
+  { value: 'agent', label: '智能体' },
+  { value: 'workflow', label: '工作流' },
+  { value: 'chat', label: '聊天' },
 ]
+
+/** 滑动指示器位置：三等分 */
+const SLIDER_POSITIONS: Record<SwitchMode, string> = {
+  agent: 'translate-x-0',
+  workflow: 'translate-x-full',
+  chat: 'translate-x-[200%]',
+}
 
 export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom)
+  const setActiveView = useSetAtom(activeViewAtom)
+  const activeView = useAtomValue(activeViewAtom)
   const openSession = useOpenSession()
   const conversations = useAtomValue(conversationsAtom)
   const agentSessions = useAtomValue(agentSessionsAtom)
@@ -32,13 +41,15 @@ export function ModeSwitcher(): React.ReactElement {
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const tabs = useAtomValue(tabsAtom)
 
-  /** 尝试恢复目标模式下的上一个对话/会话，按优先级 fallback */
+  /** 当前激活的模式（activeView === 'workflow' 时为 workflow，否则取 appMode） */
+  const activeMode: SwitchMode = activeView === 'workflow' ? 'workflow' : (mode as SwitchMode)
+
+  /** 恢复 Agent/Chat 模式下的上次会话 */
   const restoreSession = React.useCallback((targetMode: AppMode) => {
     const isChatMode = targetMode === 'chat'
     const sessions = isChatMode ? conversations : agentSessions
     const lastId = isChatMode ? currentConversationId : currentAgentSessionId
 
-    // 1. 上次选中的对话仍存在 → 恢复
     if (lastId) {
       const match = sessions.find((s) => s.id === lastId)
       if (match) {
@@ -46,50 +57,52 @@ export function ModeSwitcher(): React.ReactElement {
         return
       }
     }
-    // 2. 已打开的同类型 Tab → 聚焦
     const tab = tabs.find((t) => t.type === targetMode)
     if (tab) {
       openSession(targetMode, tab.sessionId, tab.title)
       return
     }
-    // 3. 最近的未归档对话/会话 → 打开
     const recent = sessions.find((s) => !s.archived)
     if (recent) {
       openSession(targetMode, recent.id, recent.title)
       return
     }
-    // 4. 无任何对话，仅切换模式
     setMode(targetMode)
   }, [openSession, conversations, agentSessions, currentConversationId, currentAgentSessionId, tabs, setMode])
 
-  const handleModeSwitch = React.useCallback((targetMode: AppMode) => {
-    if (targetMode === mode) return
-    restoreSession(targetMode)
-  }, [mode, restoreSession])
+  const handleSwitch = React.useCallback((target: SwitchMode) => {
+    if (target === activeMode) return
+    if (target === 'workflow') {
+      setActiveView('workflow')
+      return
+    }
+    // 切到 Agent/Chat 时回到 conversations 视图
+    setActiveView('conversations')
+    restoreSession(target)
+  }, [activeMode, setActiveView, restoreSession])
 
   return (
     <div className="pt-2 titlebar-drag-region select-none">
       <div className="relative flex rounded-xl bg-muted p-1 titlebar-drag-region">
-        {/* 滑动背景指示器 */}
+        {/* 滑动背景指示器：三等分宽度 */}
         <div
           className={cn(
-            'mode-slider pointer-events-none absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
-            mode === 'agent' ? 'translate-x-0' : 'translate-x-full'
+            'mode-slider pointer-events-none absolute top-1 bottom-1 w-[calc((100%-8px)/3)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
+            SLIDER_POSITIONS[activeMode]
           )}
         />
-        {modes.map(({ value, label, icon }) => (
+        {MODES.map(({ value, label }) => (
           <button
             key={value}
             type="button"
-            onClick={() => handleModeSwitch(value)}
+            onClick={() => handleSwitch(value)}
             className={cn(
-              'mode-btn titlebar-no-drag relative z-[1] h-8 flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-0 text-sm font-medium transition-colors duration-200 select-none',
-              mode === value
+              'mode-btn titlebar-no-drag relative z-[1] flex h-7 flex-1 items-center justify-center rounded-lg px-1 py-0 text-[12px] font-medium transition-all duration-200 select-none',
+              activeMode === value
                 ? 'mode-btn-selected text-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            {icon}
             {label}
           </button>
         ))}

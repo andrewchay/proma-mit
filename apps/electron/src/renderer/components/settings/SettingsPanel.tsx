@@ -31,7 +31,6 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
 import type { SettingsTab } from "@/atoms/settings-tab";
-import { appModeAtom } from "@/atoms/app-mode";
 import { hasUpdateAtom } from "@/atoms/updater";
 import { hasEnvironmentIssuesAtom } from "@/atoms/environment";
 import {
@@ -182,7 +181,6 @@ export function SettingsPanel({
   const [activeTab, setActiveTab] = useAtom(settingsTabAtom);
   const channelFormDirty = useAtomValue(channelFormDirtyAtom);
   const [closeRequested, setCloseRequested] = useAtom(settingsCloseRequestedAtom);
-  const appMode = useAtomValue(appModeAtom);
   const hasUpdate = useAtomValue(hasUpdateAtom);
   const hasEnvironmentIssues = useAtomValue(hasEnvironmentIssuesAtom);
 
@@ -234,33 +232,20 @@ export function SettingsPanel({
     }
   }, [closeRequested, activeTab, setCloseRequested])
 
-  // Agent 模式时在渠道后插入 Agent Tab，工具 tab 两种模式都显示
-  const tabs = React.useMemo(() => {
-    if (appMode === "agent") {
-      return [
-        ...BASE_TABS,
-        AGENT_TAB,
-        AUTOMATION_TAB,
-        SCHEDULER_TAB,
-        OPERATION_AUDIT_TAB,
-        TOOLS_TAB,
-        VOICE_INPUT_TAB,
-        BOTS_TAB,
-        TUTORIAL_TAB,
-        SHORTCUTS_TAB,
-        ...TAIL_TABS,
-      ];
-    }
-    return [
-      ...BASE_TABS,
-      TOOLS_TAB,
-      VOICE_INPUT_TAB,
-      BOTS_TAB,
-      TUTORIAL_TAB,
-      SHORTCUTS_TAB,
-      ...TAIL_TABS,
-    ];
-  }, [appMode]);
+  // 设置属于全局应用配置，所有入口统一展示完整导航。
+  const tabs = React.useMemo(() => [
+    ...BASE_TABS,
+    AGENT_TAB,
+    AUTOMATION_TAB,
+    SCHEDULER_TAB,
+    OPERATION_AUDIT_TAB,
+    TOOLS_TAB,
+    VOICE_INPUT_TAB,
+    BOTS_TAB,
+    TUTORIAL_TAB,
+    SHORTCUTS_TAB,
+    ...TAIL_TABS,
+  ], []);
 
   // 当前 tab 标题
   const activeTabLabel = tabs.find((t) => t.id === activeTab)?.label ?? "设置";
