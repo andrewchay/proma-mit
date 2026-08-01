@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks, Clock3 } from 'lucide-react'
+import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks, Clock3, FolderKanban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -1311,27 +1311,44 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       {/* Agent 模式：简约主导航（项目管理 / 任务 / 日程）+ Agent 配置入口 */}
       {mode === 'agent' && (
         <div className="px-3 pt-2 flex flex-col gap-1">
-          {/* 主导航：紧凑入口（项目管理 / 任务 / 日程） */}
+          {/* 主导航：紧凑入口
+              项目管理 → 独立企业级项目管理主视图（activeView='projects'）
+              任务 / 日程 → 侧边栏视图切换 */}
           <div className="flex items-center gap-1">
             {([
-              { id: 'projects', label: '项目管理', icon: <FolderOpen size={13} /> },
-              { id: 'tasks', label: '任务', icon: <ListChecks size={13} /> },
-              { id: 'calendar', label: '日程', icon: <CalendarDays size={13} /> },
-            ] as const).map(({ id, label, icon }) => (
-              <button
-                key={id}
-                onClick={() => setSidebarNavTab(id)}
-                className={cn(
-                  'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] font-medium transition-colors duration-100 titlebar-no-drag',
-                  sidebarNavTab === id
-                    ? 'bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-                    : 'text-foreground/45 hover:bg-foreground/[0.04] hover:text-foreground/70'
-                )}
-              >
-                {icon}
-                <span className="truncate">{label}</span>
-              </button>
-            ))}
+              { id: 'projects', label: '项目管理', icon: <FolderKanban size={13} />, toMainView: true as const },
+              { id: 'tasks', label: '任务', icon: <ListChecks size={13} />, toMainView: false as const },
+              { id: 'calendar', label: '日程', icon: <CalendarDays size={13} />, toMainView: false as const },
+            ] as const).map(({ id, label, icon, toMainView }) => {
+              const active = toMainView
+                ? activeView === 'projects'
+                : sidebarNavTab === id
+              return (
+                <button
+                  key={id}
+                  onClick={() => {
+                    if (toMainView) {
+                      // 进入独立项目管理主视图；侧边栏保持项目列表默认态
+                      setActiveView('projects')
+                      setSidebarNavTab('projects')
+                    } else {
+                      // 回到对话视图，切换侧边栏内容
+                      setActiveView('conversations')
+                      setSidebarNavTab(id)
+                    }
+                  }}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] font-medium transition-colors duration-100 titlebar-no-drag',
+                    active
+                      ? 'bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                      : 'text-foreground/45 hover:bg-foreground/[0.04] hover:text-foreground/70'
+                  )}
+                >
+                  {icon}
+                  <span className="truncate">{label}</span>
+                </button>
+              )
+            })}
           </div>
 
           {/* Agent 配置入口：Agent 技能 → skill/mcp/记忆配置（单个数量徽标） */}
@@ -1586,7 +1603,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                           {/* 项目下会话列表 */}
                           {wsSessions.length > 0 && (
                             <div className="pb-1">
-                              <div className="flex flex-col gap-0.5 pl-1 border-l-2 border-primary/15 ml-[15px]">
+                              <div className="flex flex-col gap-px pl-1 border-l-2 border-primary/15 ml-[15px]">
                                 {visibleSessions.map((session) => (
                                   <AgentSessionItem
                                     key={session.id}
@@ -1976,7 +1993,7 @@ const ConversationItem = React.memo(function ConversationItem({
             startEdit()
           }}
           className={cn(
-            'group relative w-full flex items-center gap-2 px-3 py-[7px] rounded-md transition-colors duration-100 titlebar-no-drag text-left',
+            'group relative w-full flex items-center gap-2 px-3 py-[4px] rounded-md transition-colors duration-100 titlebar-no-drag text-left',
             active
               ? 'session-item-selected bg-primary/10 shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
               : 'hover:bg-primary/5'
@@ -2185,7 +2202,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
             startEdit()
           }}
           className={cn(
-            'group relative w-full flex items-center gap-2 px-3 py-[7px] rounded-md transition-colors duration-100 titlebar-no-drag text-left',
+            'group relative w-full flex items-center gap-2 px-3 py-[4px] rounded-md transition-colors duration-100 titlebar-no-drag text-left',
             active
               ? 'session-item-selected bg-primary/10 shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
               : 'hover:bg-primary/5'
