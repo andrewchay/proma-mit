@@ -913,6 +913,29 @@
   animation: file-browser-flash 1.2s ease-out;
 }
 
+/* ===== 呼吸灯：项目运行状态指示（蓝色运行 / 橙色阻塞） ===== */
+@keyframes sidebar-breathe {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 hsl(var(--breathe-color, 217 91% 60%) / 0.55);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 5px hsl(var(--breathe-color, 217 91% 60%) / 0);
+  }
+}
+.sidebar-breathe-dot {
+  display: inline-block;
+  border-radius: 9999px;
+  animation: sidebar-breathe 2.2s ease-in-out infinite;
+}
+.sidebar-breathe-running {
+  --breathe-color: 217 91% 60%; /* 蓝色 */
+}
+.sidebar-breathe-blocked {
+  --breathe-color: 24 95% 53%; /* 橙色 */
+}
+
 /* ===== FileBrowser sticky 目录行：每条 sticky 链路最末一行加一道软扩散阴影 =====
    :has() 选择器只能向后看 sticky 行同一父级内的兄弟，所以 "栈最末" 实际语义是
    "本节点子树内不再有更深的 sticky 子行"。

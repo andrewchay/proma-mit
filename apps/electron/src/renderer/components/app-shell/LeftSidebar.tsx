@@ -819,15 +819,23 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     return map
   }, [sessionsByWorkspace, agentIndicatorMap, unviewedCompletedSessionIds])
 
-  /** 项目列表排序：星标优先，再按 updatedAt */
+  /**
+   * 项目列表排序：基于最近聊天记录（会话 updatedAt）降序。
+   * 最上方 = 最后发送消息的项目；无会话的项目按工作区自身 updatedAt 兜底。
+   */
   const projectList = React.useMemo(() => {
+    const lastActivity = new Map<string, number>()
+    for (const [wsId, sessions] of sessionsByWorkspace) {
+      const latest = sessions[0]?.updatedAt
+      if (latest) lastActivity.set(wsId, latest)
+    }
     return [...workspaces].sort((a, b) => {
-      const pa = Number(!!a.pinned)
-      const pb = Number(!!b.pinned)
-      if (pa !== pb) return pb - pa
+      const aTime = lastActivity.get(a.id) ?? a.updatedAt
+      const bTime = lastActivity.get(b.id) ?? b.updatedAt
+      if (aTime !== bTime) return bTime - aTime
       return b.updatedAt - a.updatedAt
     })
-  }, [workspaces])
+  }, [workspaces, sessionsByWorkspace])
 
   /** 切换项目展开（显示全部会话） */
   const toggleProjectExpanded = React.useCallback((id: string): void => {
@@ -1495,15 +1503,21 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                               {ws.name}
                             </span>
 
-                            {/* 运行状态指示 */}
+                            {/* 运行状态指示：呼吸灯（无文字，悬停提示） */}
                             {runStatus && (
-                              <span className="flex-shrink-0 flex items-center gap-1 text-[10px] text-foreground/45 select-none">
-                                <span className={cn(
-                                  'w-1.5 h-1.5 rounded-full',
-                                  runStatus === 'blocked' ? 'bg-orange-500' : 'bg-blue-500 animate-pulse'
-                                )} />
-                                {runStatus === 'blocked' ? '等待确认' : '运行中'}
-                              </span>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span
+                                    className={cn(
+                                      'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
+                                      runStatus === 'blocked' ? 'sidebar-breathe-blocked text-orange-500' : 'sidebar-breathe-running text-blue-500'
+                                    )}
+                                  />
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  {runStatus === 'blocked' ? '等待确认' : '任务运行中'}
+                                </TooltipContent>
+                              </Tooltip>
                             )}
 
                             {/* 项目内新会话按钮 */}
