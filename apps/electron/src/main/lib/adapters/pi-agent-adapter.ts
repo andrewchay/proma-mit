@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { Type } from 'typebox'
-import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage } from '@proma/shared'
+import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@proma/shared'
 import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } from '@proma/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
@@ -54,6 +54,14 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
 interface ActivePiSession {
   session: AgentSession
   unsubscribe: () => void
+  /** interrupt 软中断时等待重发的消息队列（参照上游 pendingInterruptPrompts） */
+  pendingInterruptPrompts: Array<{
+    content: string
+    resolveAccepted: () => void
+    rejectAccepted: (error: unknown) => void
+  }>
+  /** 是否处于 interrupt 软中断状态（abort 产生的错误应被吞掉并继续队列） */
+  interrupting: boolean
 }
 
 interface AsyncQueue<T> {
@@ -64,6 +72,13 @@ interface AsyncQueue<T> {
 }
 
 const PI_PARTIAL_UPDATE_INTERVAL_MS = 50
+
+/** 构造中止错误（interrupt / abort 场景） */
+function createAbortError(): Error {
+  const error = new Error('操作已中止')
+  error.name = 'AbortError'
+  return error
+}
 
 // ===== 上下文压缩（借鉴上游 Proma #1246） =====
 
@@ -385,26 +400,54 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
     })
-    this.activeSessions.set(sessionId, { session, unsubscribe })
+    this.activeSessions.set(sessionId, {
+      session,
+      unsubscribe,
+      pendingInterruptPrompts: [],
+      interrupting: false,
+    })
 
     try {
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
       // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
       const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
-      // 支持 CompactContext 压缩后自动续跑：每个 prompt 完成后检查是否有压缩请求，
-      // 有则执行 session.compact() 并用续跑提示词继续原任务（上限 MAX_AUTOMATIC_COMPACTION_CONTINUATIONS）。
-      const runPromptLoop = async (promptText: string): Promise<void> => {
-        await session.prompt(promptText, { expandPromptTemplates: false })
-        if (compactContextRequested && automaticCompactionContinuations < MAX_AUTOMATIC_COMPACTION_CONTINUATIONS) {
-          compactContextRequested = false
-          const result = await compactCurrentSessionAfterTurn(session, sessionId, (message) => queue.push(message))
-          if (result === 'compacted') {
-            automaticCompactionContinuations += 1
-            await runPromptLoop(PI_COMPACTION_CONTINUATION_PROMPT)
+      // Prompt 链：支持 interrupt 软中断后重发追加消息，以及 CompactContext 压缩后自动续跑。
+      // 非 interrupt 的 steer/followUp 追加由 Pi 原生 agent loop 在 agent_end 前 drain，无需在此处理。
+      const runPromptChain = async (): Promise<void> => {
+        let nextPrompt: string | undefined = promptWithSkills
+        while (nextPrompt !== undefined) {
+          const current = nextPrompt
+          nextPrompt = undefined
+          try {
+            await session.prompt(current, { expandPromptTemplates: false })
+          } catch (error) {
+            // interrupt 软中断：abort 产生的错误被吞掉，继续处理 interrupt 队列
+            const active = this.activeSessions.get(sessionId)
+            if (!active?.interrupting) throw error
+            active.interrupting = false
+          }
+
+          // 1. interrupt 队列：用户打断后要立即处理的新消息
+          const active = this.activeSessions.get(sessionId)
+          const pending = active?.pendingInterruptPrompts.shift()
+          if (pending) {
+            nextPrompt = pending.content
+            pending.resolveAccepted()
+            continue
+          }
+
+          // 2. CompactContext 压缩后续跑
+          if (compactContextRequested && automaticCompactionContinuations < MAX_AUTOMATIC_COMPACTION_CONTINUATIONS) {
+            compactContextRequested = false
+            const result = await compactCurrentSessionAfterTurn(session, sessionId, (message) => queue.push(message))
+            if (result === 'compacted') {
+              automaticCompactionContinuations += 1
+              nextPrompt = PI_COMPACTION_CONTINUATION_PROMPT
+            }
           }
         }
       }
-      void runPromptLoop(promptWithSkills)
+      void runPromptChain()
         .then(() => queue.close())
         .catch((error: unknown) => queue.fail(error))
       while (true) {
@@ -422,10 +465,64 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   abort(sessionId: string): void {
     const active = this.activeSessions.get(sessionId)
     if (!active) return
+    // 取消所有等待中的 interrupt 消息，避免悬挂 promise
+    for (const pending of active.pendingInterruptPrompts) {
+      pending.rejectAccepted(createAbortError())
+    }
+    active.pendingInterruptPrompts = []
     void active.session.abort().catch((error: unknown) => {
       console.error('[Pi Runtime] 中止会话失败:', error)
     })
     this.releaseSession(sessionId)
+  }
+
+  /** 软中断当前 turn：终止本轮流式输出，等待流式追加消息后由 prompt 链继续 */
+  async interruptQuery(sessionId: string): Promise<void> {
+    const active = this.activeSessions.get(sessionId)
+    if (!active) return
+    if (active.session.isStreaming) {
+      active.interrupting = true
+      await active.session.abort().catch(() => {})
+    }
+  }
+
+  /**
+   * 流式期间追加用户消息。
+   * - interrupt：abort 当前 turn，消息进入 pendingInterruptPrompts，由 prompt 链下一轮立即处理；
+   * - priority 'now'：session.steer（打断当前流，turn 工具调用后、下个 LLM 前投递）；
+   * - 其他：session.followUp（当前轮结束后投递）。
+   */
+  async sendQueuedMessage(
+    sessionId: string,
+    message: SDKUserMessageInput,
+    options?: SendQueuedMessageOptions,
+  ): Promise<void> {
+    const active = this.activeSessions.get(sessionId)
+    if (!active) throw new Error(`[Pi Runtime] 当前会话没有正在运行的 Agent: ${sessionId}`)
+
+    const content = message.message.content
+    if (options?.interrupt) {
+      const accepted = new Promise<void>((resolve, reject) => {
+        active.pendingInterruptPrompts.push({ content, resolveAccepted: resolve, rejectAccepted: reject })
+      })
+      accepted.catch(() => {})
+      if (active.session.isStreaming) {
+        // Pi 没有独立的 interrupt()；公开取消 API 是 abort()。
+        // abort 产生的内部错误由 prompt 链吞掉，随后从 pendingInterruptPrompts 取出内容重发。
+        active.interrupting = true
+        await active.session.abort().catch(() => {})
+      }
+      await accepted
+      options.onAccepted?.()
+      return
+    }
+
+    if (message.priority === 'now') {
+      await active.session.steer(content)
+    } else {
+      await active.session.followUp(content)
+    }
+    options?.onAccepted?.()
   }
 
   dispose(): void {

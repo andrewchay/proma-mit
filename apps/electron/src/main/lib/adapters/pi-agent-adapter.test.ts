@@ -19,6 +19,9 @@ mock.module('electron', () => ({
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),
   readAttachmentAsBase64: (localPath: string) => `base64:${localPath}`,
+  deleteAttachment: () => {},
+  deleteConversationAttachments: () => {},
+  saveAttachment: async () => ({ path: '/tmp/mock', fileName: 'mock.png', mimeType: 'image/png', size: 1 }),
 }))
 
 mock.module('../document-parser', () => ({
