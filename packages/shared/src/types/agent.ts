@@ -972,8 +972,8 @@ export interface AgentMessageSearchResult {
  * Agent 会话引用搜索输入
  */
 export interface AgentSessionReferenceSearchInput {
-  /** 当前工作区 ID，仅搜索该工作区下的会话 */
-  workspaceId: string
+  /** 工作区 ID；不传时跨全部工作区搜索（统一命令菜单「引用会话」子页） */
+  workspaceId?: string
   /** 搜索关键词，匹配标题或消息内容 */
   query?: string
   /** 排除当前会话，避免引用自己 */
@@ -990,6 +990,10 @@ export interface AgentSessionReferenceSearchResult {
   sessionId: string
   /** 会话标题 */
   title: string
+  /** 来源工作区的显示名称；遗留或已删除的工作区可为空 */
+  workspaceName?: string
+  /** 来源工作区的 URL-safe slug；用于同名工作区消歧 */
+  workspaceSlug?: string
   /** 更新时间戳 */
   updatedAt: number
   /** 命中消息片段；标题命中时可为空 */

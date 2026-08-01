@@ -34,6 +34,7 @@ const {
   getAgentSessionSDKMessages,
   getAgentSessionMeta,
   rewindProviderAgnosticSession,
+  searchAgentSessionReferences,
   updateAgentSessionMeta,
 } = await import('./agent-session-manager')
 const { getConfigDir, getAgentSessionWorkspacePath, getAgentWorkspacePath } = await import('./config-paths')
@@ -159,5 +160,47 @@ describe('Agent 会话管理器', () => {
     expect(remaining).toHaveLength(2)
     expect((remaining[0] as unknown as { uuid?: string }).uuid).toBe('msg-1')
     expect((remaining[1] as unknown as { uuid?: string }).uuid).toBe('msg-2')
+  })
+
+  test('搜索会话引用：不带 workspaceId 时跨全部工作区搜索', () => {
+    createAgentSession('Alpha 会话', undefined, testWorkspaceId)
+    const wsB = createAgentWorkspace(`Second WS ${Date.now()}`)
+    createAgentSession('Beta 会话', undefined, wsB.id)
+    testDirs.push(getAgentWorkspacePath(wsB.slug))
+
+    const all = searchAgentSessionReferences({})
+    const titles = all.map((s) => s.title)
+    expect(titles).toContain('Alpha 会话')
+    expect(titles).toContain('Beta 会话')
+
+    // 附带工作区名称，供统一命令菜单描述展示
+    const alpha = all.find((s) => s.title === 'Alpha 会话')
+    expect(alpha?.workspaceName).toBeDefined()
+    expect(alpha?.workspaceSlug).toBeDefined()
+  })
+
+  test('搜索会话引用：指定 workspaceId 时仅返回该工作区会话', () => {
+    createAgentSession('Only Me', undefined, testWorkspaceId)
+    const wsB = createAgentWorkspace(`Third WS ${Date.now()}`)
+    createAgentSession('Other WS', undefined, wsB.id)
+    testDirs.push(getAgentWorkspacePath(wsB.slug))
+
+    const result = searchAgentSessionReferences({ workspaceId: testWorkspaceId, limit: 20 })
+    const titles = result.map((s) => s.title)
+    expect(titles).toContain('Only Me')
+    expect(titles).not.toContain('Other WS')
+  })
+
+  test('搜索会话引用：排除当前会话并支持标题/消息匹配', () => {
+    const me = createAgentSession('当前会话标题', undefined, testWorkspaceId)
+    createAgentSession('目标会话标题', undefined, testWorkspaceId)
+
+    const result = searchAgentSessionReferences({
+      excludeSessionId: me.id,
+      query: '目标会话',
+      limit: 10,
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0]?.title).toBe('目标会话标题')
   })
 })

@@ -1020,6 +1020,32 @@ export function truncateSDKMessages(id: string, upToUuidInclusive: string): SDKM
 }
 
 /**
+ * 上下文压缩：删除除最近 keepRecent 条外的早期消息，并在剩余历史前插入一条
+ * system(compact_boundary) 摘要消息。返回新的消息列表（含 boundary）。
+ *
+ * 供 Proma / AI SDK runtime 的自研压缩使用（Pi runtime 走 Pi SDK 原生 session.compact()）。
+ */
+export function compactSDKMessages(id: string, summary: string, keepRecent: number): SDKMessage[] {
+  const messages = getAgentSessionSDKMessages(id)
+  const keepCount = Math.max(0, Math.min(keepRecent, messages.length))
+  const kept = messages.slice(messages.length - keepCount)
+  const boundary: SDKMessage = {
+    type: 'system',
+    subtype: 'compact_boundary',
+    session_id: id,
+    summary,
+  } as unknown as SDKMessage
+  const result = [boundary, ...kept]
+
+  const filePath = getAgentSessionMessagesPath(id)
+  const content = result.map((m) => JSON.stringify(m)).join('\n') + '\n'
+  writeFileSync(filePath, content, 'utf-8')
+
+  console.log(`[Agent 会话] 上下文压缩: sessionId=${id}, 摘要 ${summary.length} chars, 保留 ${keepCount}/${messages.length} 条`)
+  return result
+}
+
+/**
  * 从 SDK session JSONL 中查找指定 assistant message 之后最近的 user message UUID
  *
  * SDK session JSONL（~/.proma/sdk-config/projects/...）中的消息都带有 uuid，
@@ -1550,27 +1576,32 @@ function findSessionMessageSnippet(sessionId: string, query: string): string | u
  */
 export function searchAgentSessionReferences(input: AgentSessionReferenceSearchInput): AgentSessionReferenceSearchResult[] {
   const workspaceId = input?.workspaceId?.trim()
-  if (!workspaceId) return []
 
   const query = (input?.query ?? '').trim()
   const queryLower = query.toLowerCase()
   const requestedLimit = Number.isFinite(input?.limit) ? (input.limit ?? 20) : 20
-  const limit = Math.min(Math.max(requestedLimit, 1), 50)
+  // 统一命令菜单「引用会话」子页在无查询时展示最近会话，需要更大的上限。
+  const limit = Math.min(Math.max(requestedLimit, 1), 200)
 
   const candidates = listAgentSessions()
-    .filter((session) => session.workspaceId === workspaceId)
     .filter((session) => !session.archived)
     .filter((session) => session.id !== input?.excludeSessionId)
+    .filter((session) => !workspaceId || session.workspaceId === workspaceId)
 
   const results: AgentSessionReferenceSearchResult[] = []
 
   for (const session of candidates) {
     if (results.length >= limit) break
 
+    // 会话可能属于已删除/遗留工作区；能解析到工作区时附带名称用于描述。
+    const ws = session.workspaceId ? getAgentWorkspace(session.workspaceId) : undefined
+
     if (!queryLower) {
       results.push({
         sessionId: session.id,
         title: session.title,
+        workspaceName: ws?.name,
+        workspaceSlug: ws?.slug,
         updatedAt: session.updatedAt,
         matchSource: 'recent',
       })
@@ -1581,6 +1612,8 @@ export function searchAgentSessionReferences(input: AgentSessionReferenceSearchI
       results.push({
         sessionId: session.id,
         title: session.title,
+        workspaceName: ws?.name,
+        workspaceSlug: ws?.slug,
         updatedAt: session.updatedAt,
         matchSource: 'title',
       })
@@ -1592,6 +1625,8 @@ export function searchAgentSessionReferences(input: AgentSessionReferenceSearchI
       results.push({
         sessionId: session.id,
         title: session.title,
+        workspaceName: ws?.name,
+        workspaceSlug: ws?.slug,
         updatedAt: session.updatedAt,
         snippet,
         matchSource: 'message',

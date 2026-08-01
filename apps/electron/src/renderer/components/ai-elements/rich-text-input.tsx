@@ -27,7 +27,9 @@ import { cn } from '@/lib/utils'
 import { lowlight } from '@/lib/lowlight'
 import { htmlToMarkdown } from '@/lib/markdown-rich-text'
 import { createFileMentionSuggestion } from '@/components/file-browser/file-mention-suggestion'
-import { createSkillMentionSuggestion, createMcpMentionSuggestion, createSessionMentionSuggestion } from '@/components/agent/mention-suggestions'
+import { createMcpMentionSuggestion, createSessionMentionSuggestion } from '@/components/agent/mention-suggestions'
+import { createAgentCommandSuggestion, type AgentCommandActions } from '@/components/agent/agent-command-suggestion'
+import { resolveMentionSuggestionChar } from './mention-utils'
 import {
   VOICE_DICTATION_INSERT_EVENT,
   getLastFocusedVoiceInputId,
@@ -115,6 +117,10 @@ interface RichTextInputProps {
   sendWithCmdEnter?: boolean
   /** 当前会话已发送的文本，用于在输入框中通过上下键回溯。 */
   historyEntries?: readonly string[]
+  /** 统一命令菜单「添加附件」动作（跨平台文件选择） */
+  onAttachFile?: () => void
+  /** 统一命令菜单「附加文件夹」动作（跨平台文件夹选择） */
+  onAttachFolder?: () => void
   className?: string
 }
 
@@ -148,6 +154,8 @@ export function RichTextInput({
   onHtmlChange,
   sendWithCmdEnter = false,
   historyEntries = [],
+  onAttachFile,
+  onAttachFolder,
 }: RichTextInputProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false)
   const inputIdRef = useRef(`rich-text-input-${Math.random().toString(36).slice(2)}`)
@@ -211,6 +219,9 @@ export function RichTextInput({
   // 工作区 slug 引用（给 Skill/MCP Suggestion 使用）
   const workspaceSlugRef = useRef<string | null>(workspaceSlug ?? null)
   workspaceSlugRef.current = workspaceSlug ?? null
+  // 统一命令菜单动作回调（添加附件/附加文件夹）
+  const commandActionsRef = useRef<AgentCommandActions>({ onAttachFile, onAttachFolder })
+  commandActionsRef.current = { onAttachFile, onAttachFolder }
 
   // 是否启用 Mention 功能：Agent 首帧可能尚未拿到路径/slug/id，但扩展必须先注册。
   const hasMentionSupport = enableMentions ?? (workspacePath !== undefined || workspaceSlug !== undefined || workspaceId !== undefined)
@@ -218,12 +229,6 @@ export function RichTextInput({
   // Mention Suggestion 配置（稳定引用，不随 workspacePath 变化重建）
   const mentionSuggestion = useMemo(
     () => createFileMentionSuggestion(workspacePathRef, mentionActiveRef, attachedDirsRef, mentionItemCountRef, sessionAttachedDirsRef),
-    [],
-  )
-
-  // Skill Suggestion 配置（/ 触发）
-  const skillSuggestion = useMemo(
-    () => createSkillMentionSuggestion(workspaceSlugRef, mentionActiveRef, mentionItemCountRef),
     [],
   )
 
@@ -236,6 +241,19 @@ export function RichTextInput({
   // Agent 会话引用 Suggestion（& 触发）
   const sessionSuggestion = useMemo(
     () => createSessionMentionSuggestion(workspaceIdRef, currentSessionIdRef, mentionActiveRef, mentionItemCountRef),
+    [],
+  )
+
+  // 统一命令菜单 Suggestion（/ 触发：Skills/MCP/会话/文件/附件统一入口）
+  const agentCommandSuggestion = useMemo(
+    () => createAgentCommandSuggestion(
+      workspacePathRef,
+      currentSessionIdRef,
+      workspaceSlugRef,
+      attachedDirsRef,
+      sessionAttachedDirsRef,
+      commandActionsRef,
+    ),
     [],
   )
 
@@ -281,15 +299,47 @@ export function RichTextInput({
                   'data-mention-suggestion-char': attrs.mentionSuggestionChar,
                 }),
               },
+              referenceType: {
+                default: null,
+                parseHTML: (el: HTMLElement) => {
+                  const value = el.getAttribute('data-mention-reference-type')
+                  return value === 'todo' || value === 'calendar_event' ? value : null
+                },
+                renderHTML: (attrs: Record<string, unknown>) => (
+                  attrs.referenceType === 'todo' || attrs.referenceType === 'calendar_event'
+                    ? { 'data-mention-reference-type': attrs.referenceType }
+                    : {}
+                ),
+              },
+              // 文件夹引用（右侧文件面板拖入的目录）：渲染为文件夹样式 chip
+              isDirectory: {
+                default: false,
+                parseHTML: (el: HTMLElement) => el.getAttribute('data-mention-is-directory') === 'true',
+                renderHTML: (attrs: Record<string, unknown>) => attrs.isDirectory
+                  ? { 'data-mention-is-directory': 'true' }
+                  : {},
+              },
+              // 兼容统一命令菜单生成的历史草稿；旧节点按自身属性渲染。
+              commandMenuMention: {
+                default: false,
+                parseHTML: (el: HTMLElement) => el.getAttribute('data-command-menu-mention') === 'true',
+                renderHTML: (attrs: Record<string, unknown>) => attrs.commandMenuMention
+                  ? { 'data-command-menu-mention': 'true' }
+                  : {},
+              },
             }
           },
         }).configure({
           HTMLAttributes: {},
           renderHTML({ node, suggestion }) {
-            const char = suggestion?.char ?? node.attrs.mentionSuggestionChar ?? '@'
+            const char = resolveMentionSuggestionChar(node.attrs.mentionSuggestionChar, suggestion?.char)
             const label = node.attrs.label ?? node.attrs.id
-            let chipClass = 'mention-chip'
-            if (char === '/') chipClass = 'skill-mention-chip'
+            const referenceType = node.attrs.referenceType
+            const isDirectory = node.attrs.isDirectory === true
+            let chipClass = isDirectory ? 'directory-mention-chip' : 'mention-chip'
+            if (referenceType === 'todo') chipClass = 'todo-mention-chip'
+            else if (referenceType === 'calendar_event') chipClass = 'calendar-event-mention-chip'
+            else if (char === '/') chipClass = 'skill-mention-chip'
             else if (char === '#') chipClass = 'mcp-mention-chip'
             else if (char === '&') chipClass = 'session-mention-chip'
             return [
@@ -299,6 +349,11 @@ export function RichTextInput({
                 'data-id': node.attrs.id,
                 'data-label': node.attrs.label,
                 'data-mention-suggestion-char': char,
+                ...(referenceType === 'todo' || referenceType === 'calendar_event'
+                  ? { 'data-mention-reference-type': referenceType }
+                  : {}),
+                ...(node.attrs.commandMenuMention ? { 'data-command-menu-mention': 'true' } : {}),
+                ...(isDirectory ? { 'data-mention-is-directory': 'true' } : {}),
                 class: chipClass,
               },
               `${char === '@' ? '@' : ''}${label}`,
@@ -306,7 +361,7 @@ export function RichTextInput({
           },
           suggestions: [
             mentionSuggestion,
-            skillSuggestion,
+            agentCommandSuggestion,
             mcpSuggestion,
             sessionSuggestion,
           ],
@@ -786,6 +841,78 @@ export function RichTextInput({
           height: 12px;
           background-color: currentColor;
           mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3Cpath d='M8 9h8'/%3E%3Cpath d='M8 13h6'/%3E%3C/svg%3E");
+          mask-size: contain;
+          mask-repeat: no-repeat;
+          flex-shrink: 0;
+        }
+        .directory-mention-chip {
+          background-color: hsl(45 90% 50% / 0.15);
+          color: hsl(45 90% 40%);
+          border-radius: 4px;
+          padding: 1px 4px 1px 2px;
+          font-size: 13px;
+          font-weight: 500;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          vertical-align: baseline;
+        }
+        .directory-mention-chip::before {
+          content: '';
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          background-color: currentColor;
+          mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
+          mask-size: contain;
+          mask-repeat: no-repeat;
+          flex-shrink: 0;
+        }
+        .todo-mention-chip {
+          background-color: hsl(330 80% 55% / 0.14);
+          color: hsl(330 80% 45%);
+          border-radius: 4px;
+          padding: 1px 4px 1px 2px;
+          font-size: 13px;
+          font-weight: 500;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          vertical-align: baseline;
+        }
+        .todo-mention-chip::before {
+          content: '';
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          background-color: currentColor;
+          mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E");
+          mask-size: contain;
+          mask-repeat: no-repeat;
+          flex-shrink: 0;
+        }
+        .calendar-event-mention-chip {
+          background-color: hsl(25 95% 55% / 0.14);
+          color: hsl(25 95% 45%);
+          border-radius: 4px;
+          padding: 1px 4px 1px 2px;
+          font-size: 13px;
+          font-weight: 500;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          vertical-align: baseline;
+        }
+        .calendar-event-mention-chip::before {
+          content: '';
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          background-color: currentColor;
+          mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2v4'/%3E%3Cpath d='M16 2v4'/%3E%3Crect width='18' height='18' x='3' y='4' rx='2'/%3E%3Cpath d='M3 10h18'/%3E%3C/svg%3E");
           mask-size: contain;
           mask-repeat: no-repeat;
           flex-shrink: 0;

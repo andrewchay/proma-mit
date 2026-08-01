@@ -18,8 +18,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { FileBrowser, FileDropZone, FileTypeIcon, computeTreeRowLayout, AncestorGuides, STICKY_ROW_BASE_CLASS, canBeSticky } from '@/components/file-browser'
+import { FileSearchBar } from '@/components/file-browser/FileSearchBar'
 import { DiffPanelTabBar } from '@/components/diff/DiffPanelTabBar'
 import { DiffChangesList } from '@/components/diff/DiffChangesList'
+import { toast } from 'sonner'
 import {
   agentSidePanelOpenAtom,
   workspaceFilesVersionAtom,
@@ -356,6 +358,34 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     window.electronAPI.getWorkspaceFilesPath(workspaceSlug).then(setWorkspaceFilesPath).catch(() => setWorkspaceFilesPath(null))
   }, [workspaceSlug])
 
+  /** 将会话附加文件移入项目文件（工作区文件目录），便于其他会话继续使用 */
+  const handleMoveSessionFileToProject = React.useCallback(async (filePath: string) => {
+    if (!workspaceFilesPath) {
+      toast.warning('暂时无法移入项目文件', {
+        description: '当前工作区还没有可用的项目文件目录',
+      })
+      return
+    }
+    try {
+      await window.electronAPI.moveAttachedFile(filePath, workspaceFilesPath, {
+        sessionId,
+        candidateBasePaths: [sessionPath ?? '', workspaceFilesPath, ...fileAccessPathsMemo].filter(Boolean),
+      })
+      // 移动后原会话附加记录失效，从会话附加列表移除
+      const updated = await window.electronAPI.detachFile({ sessionId, filePath })
+      setAttachedFilesMap((prev) => {
+        const map = new Map(prev)
+        if (updated.length > 0) { map.set(sessionId, updated) } else { map.delete(sessionId) }
+        return map
+      })
+      setFilesVersion((prev) => prev + 1)
+      toast.success('已移入项目文件')
+    } catch (error) {
+      console.error('[SidePanel] 移入项目文件失败:', error)
+      toast.error('移入项目文件失败')
+    }
+  }, [workspaceFilesPath, sessionId, sessionPath, fileAccessPathsMemo, setAttachedFilesMap, setFilesVersion])
+
   // RightSidePanel 完全由用户控制，不因 Agent 文件变更自动打开
 
   // 同步 basePaths ref（供 handleFilePreview 使用，避免 hooks 声明顺序问题）
@@ -400,6 +430,17 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
             )
           ) : (
           <div className="flex-1 min-h-0 flex flex-col pt-0.5">
+                  {/* ===== 统一文件搜索栏（会话 + 项目） ===== */}
+                  <div className="pb-1.5 flex-shrink-0">
+                    <FileSearchBar
+                      workspaceFilesPath={workspaceFilesPath}
+                      sessionPath={sessionPath}
+                      sessionAttachedDirs={attachedDirs}
+                      workspaceAttachedDirs={wsAttachedDirs}
+                      sessionId={sessionId}
+                      onFilePreview={handleFilePreview}
+                    />
+                  </div>
                   {/* ===== 会话文件区（仅当 sessionPath 存在时显示） ===== */}
                   {sessionPath && (
                     <>
@@ -461,6 +502,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                             onFilePreview={handleFilePreview}
                             allowedPaths={basePathsRef.current}
                             sessionId={sessionId}
+                            onMoveToProject={handleMoveSessionFileToProject}
                           />
                         )}
                         {/* 附加目录列表（可展开目录树） */}
@@ -593,9 +635,11 @@ interface AttachedFilesSectionProps {
   onFilePreview?: (filePath: string) => void
   allowedPaths?: string[]
   sessionId: string
+  /** 将会话附加文件移入项目文件目录（工作区） */
+  onMoveToProject?: (filePath: string) => void
 }
 
-function AttachedFilesSection({ attachedFiles, onDetach, onAddToChat, onFilePreview, allowedPaths, sessionId }: AttachedFilesSectionProps): React.ReactElement {
+function AttachedFilesSection({ attachedFiles, onDetach, onAddToChat, onFilePreview, allowedPaths, sessionId, onMoveToProject }: AttachedFilesSectionProps): React.ReactElement {
   return (
     <div className="pt-2.5 pb-1 flex-shrink-0">
       <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3">附加文件（Agent 可以按原路径读取）</div>
@@ -644,6 +688,15 @@ function AttachedFilesSection({ attachedFiles, onDetach, onAddToChat, onFilePrev
                     <FolderSearch />
                     在文件夹中显示
                   </DropdownMenuItem>
+                  {onMoveToProject && (
+                    <DropdownMenuItem
+                      className="text-xs py-1 [&>svg]:size-3.5"
+                      onSelect={() => onMoveToProject(filePath)}
+                    >
+                      <FolderInput />
+                      移入项目文件
+                    </DropdownMenuItem>
+                  )}
                   {onFilePreview && (
                     <DropdownMenuItem
                       className="text-xs py-1 [&>svg]:size-3.5"

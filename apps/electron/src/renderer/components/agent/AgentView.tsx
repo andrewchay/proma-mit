@@ -92,7 +92,7 @@ import {
 } from '@/atoms/agent-atoms'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
-import { channelsAtom, thinkingExpandedAtom } from '@/atoms/chat-atoms'
+import { channelsAtom } from '@/atoms/chat-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
@@ -179,7 +179,6 @@ interface AgentThinkingPopoverProps {
 }
 
 function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverProps): React.ReactElement {
-  const [thinkingExpanded, setThinkingExpanded] = useAtom(thinkingExpandedAtom)
   const [open, setOpen] = React.useState(false)
   const hoverTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -233,15 +232,6 @@ function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverP
             <Switch
               checked={isEnabled}
               onCheckedChange={onToggle}
-              className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
-            />
-          </div>
-          <div className="h-px bg-border" />
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs text-foreground/70">展开思考</span>
-            <Switch
-              checked={thinkingExpanded}
-              onCheckedChange={setThinkingExpanded}
               className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
             />
           </div>
@@ -2269,8 +2259,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               placeholder={
                 agentChannelId && selectedChannelUsable && hasAvailableModel
                   ? sendWithCmdEnter
-                    ? '输入消息... (@Goal 创建持续目标；⌘/Ctrl+Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
-                    : '输入消息... (@Goal 创建持续目标；Enter 发送；@ 引用文件，/ Skill，# MCP，& 会话)'
+                    ? '输入消息... (@Goal 创建持续目标；⌘/Ctrl+Enter 发送；/ 命令菜单，@ 引用文件，# MCP，& 会话)'
+                    : '输入消息... (@Goal 创建持续目标；Enter 发送；/ 命令菜单，@ 引用文件，# MCP，& 会话)'
                   : !agentChannelId
                     ? '请先在设置中选择 Agent 供应商'
                     : '请先选择当前 runtime 可用的渠道'
@@ -2289,6 +2279,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               htmlValue={inputHtmlContent}
               onHtmlChange={setInputHtmlContent}
               sendWithCmdEnter={sendWithCmdEnter}
+              onAttachFile={() => { void handleOpenFileDialog() }}
+              onAttachFolder={() => { void handleAttachFolder() }}
             />
 
             {/* Footer 工具栏 — 容器变窄时尾部按钮自动折叠进「更多」Popover */}

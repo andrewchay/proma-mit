@@ -65,6 +65,10 @@ export interface FileMentionListProps {
   sessionEntries: FileIndexEntry[]
   workspaceEntries: FileIndexEntry[]
   onSelect: (item: { name: string; path: string; type: 'file' | 'dir' }) => void
+  /** 作为统一命令菜单子层时，← 可返回命令根层。 */
+  onBack?: () => void
+  /** 嵌入另一个弹层时，移除自身的卡片容器样式。 */
+  embedded?: boolean
 }
 
 export interface FileMentionRef {
@@ -143,7 +147,7 @@ function flattenVisible(nodes: FileTreeNode[]): FileTreeNode[] {
 // ===== 组件 =====
 
 export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListProps>(
-  function FileMentionList({ sessionEntries, workspaceEntries, onSelect }, ref) {
+  function FileMentionList({ sessionEntries, workspaceEntries, onSelect, onBack, embedded = false }, ref) {
     // 构建树（仅在条目变化时重建）
     const sessionTree = React.useMemo(
       () => buildTree(sessionEntries),
@@ -276,6 +280,8 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
           const node = getNodeAt(selectedIndex)
           if (node && node.type === 'dir' && node.expanded) {
             toggleExpand(node.path)
+          } else {
+            onBack?.()
           }
           return true
         }
@@ -300,7 +306,7 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
     // 无匹配结果
     if (!hasResults) {
       return (
-        <div className="rounded-lg border bg-popover p-2 shadow-lg text-[11px] text-muted-foreground">
+        <div className={cn(!embedded && 'rounded-lg border bg-popover p-2 shadow-lg', 'text-[11px] text-muted-foreground')}>
           无匹配文件
         </div>
       )
@@ -311,7 +317,11 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         <MentionErrorBoundary>
       <div
         ref={containerRef}
-        className="rounded-lg border bg-popover shadow-lg overflow-y-auto max-h-[360px] min-w-[260px]"
+        className={cn(
+          !embedded && 'rounded-lg border bg-popover shadow-lg',
+          embedded ? 'max-h-none min-w-0' : 'max-h-[360px] min-w-[260px]',
+          'overflow-y-auto',
+        )}
       >
         {/* 会话文件 */}
         {hasSession && (
