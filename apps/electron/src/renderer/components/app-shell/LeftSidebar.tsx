@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks } from 'lucide-react'
+import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks, Clock3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -218,6 +218,10 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [sidebarNavTab, setSidebarNavTab] = React.useState<'projects' | 'tasks' | 'calendar'>('projects')
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
+  /** 自动任务区块展开/收起 */
+  const [automationExpanded, setAutomationExpanded] = React.useState(true)
+  /** 自动任务区块：运行中的任务记录 */
+  const [runningTasks, setRunningTasks] = React.useState<import('@proma/shared').RunRecord[]>([])
   /** 正在新建项目的名称输入（项目管理视图内联新建） */
   const [creatingProject, setCreatingProject] = React.useState(false)
   const [newProjectName, setNewProjectName] = React.useState('')
@@ -386,15 +390,37 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setConversations, setUserProfile, setAgentSessions])
 
+  // 自动任务区块：加载运行中的任务（started / progress / waiting_action）
+  const loadRunningTasks = React.useCallback((): void => {
+    window.electronAPI
+      .listRunRecords({ limit: 100 })
+      .then((records) => {
+        const active = records.filter(
+          (r) => r.status === 'started' || r.status === 'progress' || r.status === 'waiting_action'
+        )
+        setRunningTasks((prev) => {
+          // 若两次结果相同则保持引用，避免不必要重渲染
+          if (prev.length === active.length && prev.every((p, i) => p.id === active[i]?.id)) return prev
+          return active
+        })
+      })
+      .catch(console.error)
+  }, [])
+
+  React.useEffect(() => {
+    loadRunningTasks()
+  }, [loadRunningTasks])
+
   // 窗口聚焦时重新同步列表，修复长时间后前后端不一致
   React.useEffect(() => {
     const handleFocus = (): void => {
       window.electronAPI.listConversations().then(setConversations).catch(console.error)
       window.electronAPI.listAgentSessions().then(setAgentSessions).catch(console.error)
+      loadRunningTasks()
     }
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
-  }, [setConversations, setAgentSessions])
+  }, [setConversations, setAgentSessions, loadRunningTasks])
 
   /** 处理导航项点击 */
   const handleItemClick = (item: SidebarItemId): void => {
@@ -1285,8 +1311,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       {/* Agent 模式：简约主导航（项目管理 / 任务 / 日程）+ Agent 配置入口 */}
       {mode === 'agent' && (
         <div className="px-3 pt-2 flex flex-col gap-1">
-          {/* 主导航 Tab */}
-          <div className="flex items-center gap-0.5">
+          {/* 主导航：紧凑入口（项目管理 / 任务 / 日程） */}
+          <div className="flex items-center gap-1">
             {([
               { id: 'projects', label: '项目管理', icon: <FolderOpen size={13} /> },
               { id: 'tasks', label: '任务', icon: <ListChecks size={13} /> },
@@ -1296,10 +1322,10 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                 key={id}
                 onClick={() => setSidebarNavTab(id)}
                 className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[12px] font-medium transition-colors duration-100 titlebar-no-drag',
+                  'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] font-medium transition-colors duration-100 titlebar-no-drag',
                   sidebarNavTab === id
                     ? 'bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-                    : 'text-foreground/50 hover:bg-foreground/[0.04] hover:text-foreground/75'
+                    : 'text-foreground/45 hover:bg-foreground/[0.04] hover:text-foreground/70'
                 )}
               >
                 {icon}
@@ -1308,16 +1334,16 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
             ))}
           </div>
 
-          {/* Agent 配置入口：Agent 技能 → skill/mcp/记忆配置 */}
+          {/* Agent 配置入口：Agent 技能 → skill/mcp/记忆配置（单个数量徽标） */}
           <button
             onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-[10px] text-[12px] text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+            className="group w-full flex items-center gap-2 px-2.5 py-1.5 rounded-[10px] text-[12px] text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
           >
             <Zap size={13} className="text-foreground/40" />
             <span className="flex-1 text-left">Agent 技能</span>
             {capabilities && (
-              <span className="text-[10px] text-foreground/35 tabular-nums">
-                {capabilities.skills.length} Skills · {capabilities.mcpServers.filter((s) => s.enabled).length} MCP
+              <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
+                {capabilities.skills.length}
               </span>
             )}
           </button>
@@ -1447,14 +1473,14 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                 </div>
               )}
 
-              {/* 项目列表 */}
-              <div className="flex-1 overflow-y-auto px-3 pb-3 scrollbar-none min-h-0">
+              {/* 项目列表：扁平树状（无卡片边框） */}
+              <div className="flex-1 overflow-y-auto px-2 pb-3 scrollbar-none min-h-0">
                 {projectList.length === 0 ? (
                   <div className="px-2 py-3 text-[11px] text-foreground/30 text-center select-none">
                     暂无项目，点击上方 + 新建
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col">
                     {projectList.map((ws) => {
                       const wsSessions = sessionsByWorkspace.get(ws.id) ?? []
                       const isCurrent = ws.id === currentWorkspaceId
@@ -1463,8 +1489,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                       const visibleSessions = expanded ? wsSessions : wsSessions.slice(0, 3)
                       const hasMore = wsSessions.length > 3
                       return (
-                        <div key={ws.id} className="rounded-lg border border-border/50 overflow-hidden">
-                          {/* 项目头 */}
+                        <div key={ws.id}>
+                          {/* 项目行（无边框，扁平树） */}
                           <div
                             role="button"
                             tabIndex={0}
@@ -1476,32 +1502,25 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                               toggleProjectExpanded(ws.id)
                             }}
                             className={cn(
-                              'group flex items-center gap-1.5 px-2.5 py-[7px] cursor-pointer titlebar-no-drag transition-colors',
+                              'group flex items-center gap-1.5 pl-1 pr-2 py-[6px] rounded-md cursor-pointer titlebar-no-drag transition-colors',
                               isCurrent
                                 ? 'bg-foreground/[0.07]'
                                 : 'hover:bg-foreground/[0.04]'
                             )}
                           >
-                            {/* 星标按钮 */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void handleTogglePinWorkspace(ws.id)
-                              }}
-                              className={cn(
-                                'p-0.5 rounded transition-colors titlebar-no-drag',
-                                ws.pinned
-                                  ? 'text-amber-500 hover:text-amber-600'
-                                  : 'text-foreground/20 opacity-0 group-hover:opacity-100 hover:text-foreground/50'
-                              )}
-                              title={ws.pinned ? '取消星标' : '星标项目'}
-                            >
-                              <Star size={13} className={ws.pinned ? 'fill-current' : ''} />
-                            </button>
+                            {/* 文件夹图标 */}
+                            <FolderOpen size={13} className={cn('flex-shrink-0', isCurrent ? 'text-foreground/70' : 'text-foreground/40')} />
 
                             <span className={cn('flex-1 min-w-0 truncate text-[13px]', isCurrent ? 'text-foreground font-medium' : 'text-foreground/75')}>
                               {ws.name}
                             </span>
+
+                            {/* 本地项目标签 */}
+                            {ws.rootPath && (
+                              <span className="flex-shrink-0 px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/45 select-none">
+                                本地项目
+                              </span>
+                            )}
 
                             {/* 运行状态指示：呼吸灯（无文字，悬停提示） */}
                             {runStatus && (
@@ -1520,19 +1539,39 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                               </Tooltip>
                             )}
 
-                            {/* 项目内新会话按钮 */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setCurrentAgentWorkspaceId(ws.id)
-                                window.electronAPI.updateSettings({ agentWorkspaceId: ws.id }).catch(console.error)
-                                void handleNewAgentSessionInWorkspace(ws.id)
-                              }}
-                              className="p-1 rounded hover:bg-foreground/[0.08] text-foreground/30 hover:text-foreground/60 transition-colors opacity-0 group-hover:opacity-100 titlebar-no-drag"
-                              title="在该项目新建会话"
-                            >
-                              <Plus size={13} />
-                            </button>
+                            {/* 右侧操作区（hover 时展开） */}
+                            <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {/* 项目星标（右侧，不抢占主行） */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void handleTogglePinWorkspace(ws.id)
+                                }}
+                                className={cn(
+                                  'p-1 rounded hover:bg-foreground/[0.08] transition-colors titlebar-no-drag',
+                                  ws.pinned
+                                    ? 'text-amber-500 hover:text-amber-600'
+                                    : 'text-foreground/30 hover:text-foreground/60'
+                                )}
+                                title={ws.pinned ? '取消星标' : '星标项目'}
+                              >
+                                <Star size={12} className={ws.pinned ? 'fill-current' : ''} />
+                              </button>
+
+                              {/* 项目内新会话按钮 */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setCurrentAgentWorkspaceId(ws.id)
+                                  window.electronAPI.updateSettings({ agentWorkspaceId: ws.id }).catch(console.error)
+                                  void handleNewAgentSessionInWorkspace(ws.id)
+                                }}
+                                className="p-1 rounded hover:bg-foreground/[0.08] text-foreground/30 hover:text-foreground/60 transition-colors titlebar-no-drag"
+                                title="在该项目新建会话"
+                              >
+                                <Plus size={13} />
+                              </button>
+                            </div>
 
                             {/* 展开/收起箭头 */}
                             <ChevronRight
@@ -1546,8 +1585,8 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
                           {/* 项目下会话列表 */}
                           {wsSessions.length > 0 && (
-                            <div className="pb-1.5">
-                              <div className="flex flex-col gap-0.5 pl-1 border-l-2 border-primary/15 ml-[13px]">
+                            <div className="pb-1">
+                              <div className="flex flex-col gap-0.5 pl-1 border-l-2 border-primary/15 ml-[15px]">
                                 {visibleSessions.map((session) => (
                                   <AgentSessionItem
                                     key={session.id}
@@ -1569,7 +1608,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                               {hasMore && (
                                 <button
                                   onClick={() => toggleProjectExpanded(ws.id)}
-                                  className="ml-[13px] mt-0.5 flex items-center gap-1 px-2 py-1 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors titlebar-no-drag"
+                                  className="ml-[15px] mt-0.5 flex items-center gap-1 px-2 py-1 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors titlebar-no-drag"
                                 >
                                   {expanded ? '收起' : `显示更多 (${wsSessions.length - 3})`}
                                   <ChevronDown size={11} className={cn('transition-transform duration-150', expanded && 'rotate-180')} />
@@ -1580,6 +1619,61 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                         </div>
                       )
                     })}
+                  </div>
+                )}
+              </div>
+
+              {/* ===== 自动任务（项目树之后的独立可折叠区块） ===== */}
+              <div className="px-2 pt-2 pb-1 border-t border-border/40 flex-shrink-0">
+                <button
+                  onClick={() => setAutomationExpanded((prev) => !prev)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+                >
+                  <ChevronRight size={13} className={cn('flex-shrink-0 text-foreground/35 transition-transform duration-150', automationExpanded && 'rotate-90')} />
+                  <Clock3 size={13} className="text-foreground/40" />
+                  <span className="flex-1 text-left">自动任务</span>
+                  {runningTasks.length > 0 && (
+                    <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-blue-500/10 text-[10px] text-blue-500 tabular-nums">
+                      {runningTasks.length}
+                    </span>
+                  )}
+                </button>
+                {automationExpanded && (
+                  <div className="ml-[13px] pl-1 border-l-2 border-primary/15 mt-0.5 pb-0.5">
+                    {runningTasks.length === 0 ? (
+                      <div className="px-2 py-2 text-[11px] text-foreground/30 select-none">
+                        暂无运行中的自动任务
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-0.5">
+                        {runningTasks.slice(0, 5).map((task) => (
+                          <button
+                            key={task.id}
+                            onClick={() => { setSettingsTab('run-center'); setSettingsOpen(true) }}
+                            className="group flex items-center gap-2 px-2.5 py-[7px] rounded-md text-left transition-colors titlebar-no-drag hover:bg-foreground/[0.05]"
+                          >
+                            <span
+                              className={cn(
+                                'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
+                                task.status === 'waiting_action' ? 'sidebar-breathe-blocked text-orange-500' : 'sidebar-breathe-running text-blue-500'
+                              )}
+                            />
+                            <span className="flex-1 min-w-0">
+                              <span className="block truncate text-[12px] text-foreground/80">{task.title}</span>
+                              {task.detail && <span className="block truncate text-[10px] text-foreground/40">{task.detail}</span>}
+                            </span>
+                          </button>
+                        ))}
+                        {runningTasks.length > 5 && (
+                          <button
+                            onClick={() => { setSettingsTab('run-center'); setSettingsOpen(true) }}
+                            className="px-2.5 py-1 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors text-left titlebar-no-drag"
+                          >
+                            查看全部 ({runningTasks.length})
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
