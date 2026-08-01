@@ -63,7 +63,7 @@ import { sidebarViewModeAtom } from '@/atoms/sidebar-atoms'
 import { searchDialogOpenAtom } from '@/atoms/search-atoms'
 import { hasUpdateAtom } from '@/atoms/updater'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
-import { workingSessionGroupsAtom, workingSessionIdsSetAtom } from '@/atoms/working-atoms'
+import { workingSessionIdsSetAtom } from '@/atoms/working-atoms'
 import { hasEnvironmentIssuesAtom } from '@/atoms/environment'
 import { promptConfigAtom, selectedPromptIdAtom, conversationPromptIdAtom } from '@/atoms/system-prompt-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
@@ -214,8 +214,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [moveTargetId, setMoveTargetId] = React.useState<string | null>(null)
   /** 置顶区域展开/收起 */
   const [pinnedExpanded, setPinnedExpanded] = React.useState(true)
-  /** 侧边栏主导航 Tab：项目管理 / 任务 / 日程 */
-  const [sidebarNavTab, setSidebarNavTab] = React.useState<'projects' | 'tasks' | 'calendar'>('projects')
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
   /** 自动任务区块展开/收起 */
@@ -318,12 +316,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     return workspaces.find((w) => w.id === currentWorkspaceId)?.slug ?? null
   }, [currentWorkspaceId, workspaces])
 
-  const workspaceNameMap = React.useMemo(() => {
-    const map = new Map<string, string>()
-    for (const w of workspaces) map.set(w.id, w.name)
-    return map
-  }, [workspaces])
-
   React.useEffect(() => {
     if (!currentWorkspaceSlug || mode !== 'agent') {
       setCapabilities(null)
@@ -342,9 +334,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   )
 
   /** Working 区域状态 */
-  const workingGroups = useAtomValue(workingSessionGroupsAtom)
   const workingSessionIds = useAtomValue(workingSessionIdsSetAtom)
-  const hasWorkingSessions = workingGroups.todo.length > 0 || workingGroups.running.length > 0 || workingGroups.done.length > 0
 
   /** 置顶 Agent 会话列表（仅活跃模式显示，按当前工作区过滤，排除 draft 和 Working） */
   // 已迁移到项目管理视图（项目下直接展示），此列表不再需要
@@ -828,23 +818,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     return map
   }, [agentSessions, draftSessionIds])
 
-  /** 项目级运行状态：workspaceId → 'running' | 'blocked' | undefined */
-  const workspaceRunningMap = React.useMemo(() => {
-    const map = new Map<string, 'running' | 'blocked'>()
-    for (const [wsId, sessions] of sessionsByWorkspace) {
-      let hasBlocked = false
-      let hasRunning = false
-      for (const s of sessions) {
-        const st = agentIndicatorMap.get(s.id) ?? (unviewedCompletedSessionIds.has(s.id) ? 'completed' as const : 'idle')
-        if (st === 'blocked') hasBlocked = true
-        else if (st === 'running') hasRunning = true
-      }
-      if (hasBlocked) map.set(wsId, 'blocked')
-      else if (hasRunning) map.set(wsId, 'running')
-    }
-    return map
-  }, [sessionsByWorkspace, agentIndicatorMap, unviewedCompletedSessionIds])
-
   /**
    * 项目列表排序：基于最近聊天记录（会话 updatedAt）降序。
    * 最上方 = 最后发送消息的项目；无会话的项目按工作区自身 updatedAt 兜底。
@@ -1308,34 +1281,25 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </Tooltip>
       </div>
 
-      {/* Agent 模式：简约主导航（项目管理 / 任务 / 日程）+ Agent 配置入口 */}
+      {/* Agent 模式：简约主导航（项目管理 / 任务 / 日程）+ Agent 配置入口
+          三个入口均为独立企业级工作模块主视图（activeView），
+          侧边栏下方项目列表为常驻独立模块，不受入口切换影响 */}
       {mode === 'agent' && (
         <div className="px-3 pt-2 flex flex-col gap-1">
-          {/* 主导航：紧凑入口
-              项目管理 → 独立企业级项目管理主视图（activeView='projects'）
-              任务 / 日程 → 侧边栏视图切换 */}
+          {/* 主导航：紧凑入口 */}
           <div className="flex items-center gap-1">
             {([
-              { id: 'projects', label: '项目管理', icon: <FolderKanban size={13} />, toMainView: true as const },
-              { id: 'tasks', label: '任务', icon: <ListChecks size={13} />, toMainView: false as const },
-              { id: 'calendar', label: '日程', icon: <CalendarDays size={13} />, toMainView: false as const },
-            ] as const).map(({ id, label, icon, toMainView }) => {
-              const active = toMainView
-                ? activeView === 'projects'
-                : sidebarNavTab === id
+              { id: 'projects', label: '项目管理', icon: <FolderKanban size={13} /> },
+              { id: 'tasks', label: '任务', icon: <ListChecks size={13} /> },
+              { id: 'calendar', label: '日程', icon: <CalendarDays size={13} /> },
+            ] as const).map(({ id, label, icon }) => {
+              const active = activeView === id
               return (
                 <button
                   key={id}
                   onClick={() => {
-                    if (toMainView) {
-                      // 进入独立项目管理主视图；侧边栏保持项目列表默认态
-                      setActiveView('projects')
-                      setSidebarNavTab('projects')
-                    } else {
-                      // 回到对话视图，切换侧边栏内容
-                      setActiveView('conversations')
-                      setSidebarNavTab(id)
-                    }
+                    // 切换主视图；侧边栏项目列表保持常驻
+                    setActiveView(id)
                   }}
                   className={cn(
                     'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] font-medium transition-colors duration-100 titlebar-no-drag',
@@ -1429,13 +1393,12 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </div>
       )}
 
-      {/* Agent 模式 active 视图：简约项目管理 / 任务 / 日程 */}
+      {/* Agent 模式 active 视图：项目列表 + 自动任务常驻（独立模块） */}
       {mode === 'agent' && viewMode === 'active' ? (
         <div className="flex-1 flex flex-col min-h-0">
-          {/* ===== 项目管理：项目列表 ===== */}
-          {sidebarNavTab === 'projects' && (
-            <>
-              {/* 标题 + 新建项目 */}
+          {/* ===== 项目列表（常驻） ===== */}
+          <>
+            {/* 标题 + 新建项目 */}
               <div className="px-3 pt-2 pb-1 flex items-center justify-between flex-shrink-0">
                 <span className="text-[11px] font-medium text-foreground/40 select-none">项目</span>
                 <div className="flex items-center gap-0.5">
@@ -1501,7 +1464,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                     {projectList.map((ws) => {
                       const wsSessions = sessionsByWorkspace.get(ws.id) ?? []
                       const isCurrent = ws.id === currentWorkspaceId
-                      const runStatus = workspaceRunningMap.get(ws.id)
                       const expanded = expandedProjectIds.has(ws.id)
                       const visibleSessions = expanded ? wsSessions : wsSessions.slice(0, 3)
                       const hasMore = wsSessions.length > 3
@@ -1537,23 +1499,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                               <span className="flex-shrink-0 px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/45 select-none">
                                 本地项目
                               </span>
-                            )}
-
-                            {/* 运行状态指示：呼吸灯（无文字，悬停提示） */}
-                            {runStatus && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span
-                                    className={cn(
-                                      'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
-                                      runStatus === 'blocked' ? 'sidebar-breathe-blocked text-orange-500' : 'sidebar-breathe-running text-blue-500'
-                                    )}
-                                  />
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  {runStatus === 'blocked' ? '等待确认' : '任务运行中'}
-                                </TooltipContent>
-                              </Tooltip>
                             )}
 
                             {/* 右侧操作区（hover 时展开） */}
@@ -1694,69 +1639,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                   </div>
                 )}
               </div>
-            </>
-          )}
-
-          {/* ===== 任务：工作中任务 ===== */}
-          {sidebarNavTab === 'tasks' && (
-            <div className="flex-1 overflow-y-auto scrollbar-none px-3 pt-2 pb-3 min-h-0">
-              <div className="pb-1 flex items-center justify-between flex-shrink-0">
-                <span className="text-[11px] font-medium text-foreground/40 select-none">任务</span>
-                {(workingGroups.todo.length + workingGroups.running.length + workingGroups.done.length) > 0 && (
-                  <span className="text-[10px] text-foreground/35 tabular-nums">
-                    {workingGroups.todo.length + workingGroups.running.length + workingGroups.done.length} 个进行中
-                  </span>
-                )}
-              </div>
-              {hasWorkingSessions ? (() => {
-                const workingItems: Array<{ session: AgentSessionMeta; accent?: SessionLeftAccent; keyPrefix: string }> = [
-                  ...workingGroups.todo.map((s) => ({ session: s, accent: 'orange' as const, keyPrefix: 'working-todo' })),
-                  ...workingGroups.running.map((s) => ({ session: s, accent: 'blue' as const, keyPrefix: 'working-running' })),
-                  ...workingGroups.done.map((s) => ({ session: s, accent: unviewedCompletedSessionIds.has(s.id) ? 'green' as const : undefined, keyPrefix: 'working-done' })),
-                ]
-                return (
-                  <div className="flex flex-col gap-0.5">
-                    {workingItems.map(({ session, accent, keyPrefix }) => (
-                      <AgentSessionItem
-                        key={`${keyPrefix}-${session.id}`}
-                        session={session}
-                        active={session.id === activeTabId}
-                        indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
-                        isInWorkingSection={workingSessionIds.has(session.id)}
-                        showPinIcon={false}
-                        leftAccent={accent}
-                        workspaceName={session.workspaceId ? workspaceNameMap.get(session.workspaceId) : undefined}
-                        onSelect={handleSelectAgentSession}
-                        onRequestDelete={handleRequestDelete}
-                        onRequestMove={handleRequestMove}
-                        onRename={handleAgentRename}
-                        onTogglePin={handleTogglePinAgent}
-                        onToggleManualWorking={handleToggleManualWorkingAgent}
-                        onToggleArchive={handleToggleArchiveAgent}
-                      />
-                    ))}
-                  </div>
-                )
-              })() : (
-                <div className="px-2 py-3 text-[11px] text-foreground/30 text-center select-none">
-                  暂无进行中的任务
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ===== 日程 ===== */}
-          {sidebarNavTab === 'calendar' && (
-            <div className="flex-1 overflow-y-auto scrollbar-none px-3 pt-2 pb-3 min-h-0">
-              <div className="pb-1 flex items-center justify-between flex-shrink-0">
-                <span className="text-[11px] font-medium text-foreground/40 select-none">日程</span>
-              </div>
-              <div className="px-2 py-6 flex flex-col items-center gap-2 text-foreground/30 select-none">
-                <CalendarDays size={22} className="text-foreground/20" />
-                <span className="text-[11px]">暂无日程安排</span>
-              </div>
-            </div>
-          )}
+          </>
         </div>
       ) : (
         <>
@@ -2245,6 +2128,17 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
               </div>
             )}
           </div>
+
+          {/* 会话级运行状态呼吸灯（running=蓝 / blocked=橙，无文字） */}
+          {(indicatorStatus === 'running' || indicatorStatus === 'blocked') && (
+            <span
+              className={cn(
+                'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
+                indicatorStatus === 'blocked' ? 'sidebar-breathe-blocked text-orange-500' : 'sidebar-breathe-running text-blue-500'
+              )}
+              aria-hidden="true"
+            />
+          )}
 
           {/* 三点菜单按钮（hover 时可见，始终占位避免跳动） */}
           {!editing && (

@@ -18,7 +18,7 @@ import { TabBar } from './TabBar'
 import { TabContent } from './TabContent'
 import { activeViewAtom } from '@/atoms/active-view'
 import { WorkflowView } from '@/components/workflow/WorkflowView'
-import { ProjectManagementView } from '@/components/projects/ProjectManagementView'
+import { ModulePlaceholderView } from '@/components/projects/ModulePlaceholderView'
 
 export function MainArea(): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
@@ -135,9 +135,9 @@ export function MainArea(): React.ReactElement {
         <Panel variant="grow" className="bg-content-area rounded-2xl shadow-xl">
           <WorkflowView />
         </Panel>
-      ) : activeView === 'projects' ? (
+      ) : activeView === 'projects' || activeView === 'tasks' || activeView === 'calendar' ? (
         <Panel variant="grow" className="bg-content-area rounded-2xl shadow-xl">
-          <ProjectManagementView />
+          <ModulePlaceholderView moduleId={activeView} />
         </Panel>
       ) : (
       <Panel

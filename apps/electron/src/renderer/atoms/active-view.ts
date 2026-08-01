@@ -5,11 +5,13 @@
  * - conversations: 对话视图（Chat/Agent 模式内容）
  * - workflow: Workflow 工作台
  * - projects: 企业级项目管理模块（独立工作模块，暂为占位入口）
+ * - tasks: 任务模块（独立工作模块，暂为占位入口）
+ * - calendar: 日程模块（独立工作模块，暂为占位入口）
  */
 
 import { atom } from 'jotai'
 
-export type ActiveView = 'conversations' | 'workflow' | 'projects'
+export type ActiveView = 'conversations' | 'workflow' | 'projects' | 'tasks' | 'calendar'
 
 /** 当前活跃视图（不持久化，每次启动默认显示对话） */
 export const activeViewAtom = atom<ActiveView>('conversations')
