@@ -58,6 +58,13 @@ export interface AISDKAgentQueryOptions extends AgentQueryInput {
   runSubAgent?: import('../agent-runtime/types').ToolContext['runSubAgent']
   /** GoalCheckpoint 回调；存在激活 Goal 时由编排层注入。 */
   onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+  /** 额外内置工具（如 collaboration 协作子会话）；以 name 去重追加到核心工具之后 */
+  extraTools?: Array<{
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+    execute(input: Record<string, unknown>): Promise<string>
+  }>
 }
 
 interface ActiveAISDKSession {
@@ -89,6 +96,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       workspaceSlug,
       onMcpAuthRequired,
       maxTurns = 25,
+      extraTools,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd || !model) {
@@ -115,7 +123,18 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
     let mcpRelease: (() => void) | undefined
     try {
-      const tools = createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint))
+      const tools: import('../agent-runtime/types').RuntimeToolDefinition[] = [
+        ...createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint)),
+        ...(extraTools ?? []).map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: { type: 'object' as const, properties: tool.parameters as Record<string, never>, required: [] },
+          async execute(input: unknown): Promise<import('@proma/core').ToolResult> {
+            const content = await tool.execute((input ?? {}) as Record<string, unknown>)
+            return { toolCallId: '', content, isError: false }
+          },
+        })),
+      ]
       let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
       if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
         try {

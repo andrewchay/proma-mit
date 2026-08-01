@@ -40,6 +40,8 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   onAgentEvent?: (event: AgentEvent) => void
   /** 本次发送的触发来源：用户 / 定时任务 / 协作子会话 */
   triggeredBy?: 'user' | 'automation' | 'delegation'
+  /** 是否为协作子会话（由委派创建或处于协作链）；子会话不注入 collaboration 工具 */
+  isDelegationSession?: boolean
 }
 
 interface ActivePiSession {
@@ -117,7 +119,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy } = input
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession } = input
     if (!provider || !apiKey || !baseUrl || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
@@ -149,7 +151,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       mcpTools,
     })
     // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
-    const collaborationAvailable = !!workspaceId && !!input.channelId && triggeredBy !== 'delegation'
+    const collaborationAvailable = !!workspaceId && !!input.channelId && !isDelegationSession
     if (collaborationAvailable) {
       try {
         const { buildPiCollaborationTools } = await import('../agent-collaboration-tools')

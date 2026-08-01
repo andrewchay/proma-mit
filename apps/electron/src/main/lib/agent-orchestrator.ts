@@ -541,8 +541,9 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
     triggeredBy?: 'user' | 'automation' | 'delegation'
+    isDelegationSession?: boolean
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession } = options
     let userMessageUuid = ''
 
     try {
@@ -672,7 +673,7 @@ export class AgentOrchestrator {
           ? (checkpoint: AgentGoalCheckpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
           : undefined,
         // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
-        extraTools: workspaceId && triggeredBy !== 'delegation'
+        extraTools: workspaceId && !isDelegationSession
           ? (await import('./agent-collaboration-tools')).buildRuntimeCollaborationTools({
               sessionId,
               channelId,
@@ -763,8 +764,9 @@ export class AgentOrchestrator {
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
     triggeredBy?: 'user' | 'automation' | 'delegation'
+    isDelegationSession?: boolean
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession } = options
     let userMessageUuid = ''
 
     try {
@@ -892,6 +894,7 @@ export class AgentOrchestrator {
           this.eventBus.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
         },
         triggeredBy,
+        isDelegationSession,
         systemPrompt: buildSystemPrompt({
           workspaceName,
           workspaceSlug,
@@ -900,7 +903,7 @@ export class AgentOrchestrator {
           permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
           memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
           claudeAvailable: false,
-          collaborationAvailable: !!workspaceId && triggeredBy !== 'delegation',
+          collaborationAvailable: !!workspaceId && !isDelegationSession,
         }),
       }
 
@@ -1695,6 +1698,7 @@ export class AgentOrchestrator {
           permissionMode: initialPermissionMode,
           attachments,
           triggeredBy,
+          isDelegationSession,
         })
         return
       }
@@ -1718,6 +1722,7 @@ export class AgentOrchestrator {
         permissionMode: initialPermissionMode,
         attachments,
         triggeredBy,
+        isDelegationSession,
       })
       return
     }
@@ -1876,7 +1881,7 @@ export class AgentOrchestrator {
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
 
       // 注入内置协作会话工具（collaboration）：仅在绑定了项目的主会话可用
-      const collaborationAvailable = !!workspaceId && triggeredBy !== 'delegation' && (sessionMeta?.delegationDepth ?? 0) === 0
+      const collaborationAvailable = !!workspaceId && !isDelegationSession
       if (collaborationAvailable) {
         const { injectAgentCollaborationMcpServer } = await import('./agent-collaboration-tools')
         await injectAgentCollaborationMcpServer(sdk, mcpServers, {
