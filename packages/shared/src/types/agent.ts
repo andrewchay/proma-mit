@@ -58,6 +58,8 @@ export interface AgentWorkspace {
   name: string
   /** URL-safe 目录名（创建后不可变） */
   slug: string
+  /** 是否星标（项目列表置顶收藏） */
+  pinned?: boolean
   /** 所属 Team；旧工作区迁移时自动归入 personal。 */
   teamId?: string
   /** 已有本地项目的根目录；未设置时使用 Proma 管理的隔离工作区 */
@@ -1609,6 +1611,8 @@ export const AGENT_IPC_CHANNELS = {
   DELETE_WORKSPACE: 'agent:delete-workspace',
   /** 重排工作区顺序 */
   REORDER_WORKSPACES: 'agent:reorder-workspaces',
+  /** 切换工作区星标状态 */
+  TOGGLE_WORKSPACE_PINNED: 'agent:toggle-workspace-pinned',
 
   // 标题生成
   /** 生成 Agent 会话标题 */

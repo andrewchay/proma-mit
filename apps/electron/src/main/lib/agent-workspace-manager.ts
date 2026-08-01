@@ -229,7 +229,7 @@ export function getAgentWorkspaceCwd(workspace: AgentWorkspace, sessionId: strin
 /** 更新工作区名称（slug 和目录不变） */
 export function updateAgentWorkspace(
   id: string,
-  updates: { name: string },
+  updates: { name: string; pinned?: boolean },
 ): AgentWorkspace {
   const index = readIndex()
   const idx = index.workspaces.findIndex((w) => w.id === id)
@@ -240,14 +240,18 @@ export function updateAgentWorkspace(
 
   const existing = index.workspaces[idx]!
 
-  const duplicate = index.workspaces.find((w) => w.id !== id && w.name === updates.name)
-  if (duplicate) {
-    throw new Error(`工作区名称「${updates.name}」已存在`)
+  const name = updates.name
+  if (typeof name === 'string' && name.length > 0) {
+    const duplicate = index.workspaces.find((w) => w.id !== id && w.name === name)
+    if (duplicate) {
+      throw new Error(`工作区名称「${name}」已存在`)
+    }
   }
 
   const updated: AgentWorkspace = {
     ...existing,
-    name: updates.name,
+    ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
+    ...(typeof updates.pinned === 'boolean' ? { pinned: updates.pinned } : {}),
     updatedAt: Date.now(),
   }
 
@@ -255,6 +259,29 @@ export function updateAgentWorkspace(
   writeIndex(index)
 
   console.log(`[Agent 工作区] 已更新工作区: ${updated.name} (${updated.id})`)
+  return updated
+}
+
+/** 切换工作区星标状态 */
+export function togglePinAgentWorkspace(id: string): AgentWorkspace {
+  const index = readIndex()
+  const idx = index.workspaces.findIndex((w) => w.id === id)
+
+  if (idx === -1) {
+    throw new Error(`Agent 工作区不存在: ${id}`)
+  }
+
+  const existing = index.workspaces[idx]!
+  const updated: AgentWorkspace = {
+    ...existing,
+    pinned: !existing.pinned,
+    updatedAt: Date.now(),
+  }
+
+  index.workspaces[idx] = updated
+  writeIndex(index)
+
+  console.log(`[Agent 工作区] 已${updated.pinned ? '星标' : '取消星标'}工作区: ${updated.name} (${updated.id})`)
   return updated
 }
 

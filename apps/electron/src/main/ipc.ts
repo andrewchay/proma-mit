@@ -189,6 +189,7 @@ import {
   updateAgentWorkspace,
   deleteAgentWorkspace,
   reorderAgentWorkspaces,
+  togglePinAgentWorkspace,
   ensureDefaultWorkspace,
   getWorkspaceMcpConfig,
   saveWorkspaceMcpConfig,
@@ -1511,6 +1512,14 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.REORDER_WORKSPACES,
     async (_, orderedIds: string[]): Promise<AgentWorkspace[]> => {
       return reorderAgentWorkspaces(orderedIds)
+    }
+  )
+
+  // 切换工作区星标状态
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.TOGGLE_WORKSPACE_PINNED,
+    async (_, id: string): Promise<AgentWorkspace> => {
+      return togglePinAgentWorkspace(id)
     }
   )
 

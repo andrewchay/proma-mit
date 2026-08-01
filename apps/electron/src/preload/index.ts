@@ -583,7 +583,10 @@ export interface ElectronAPI {
   createAgentWorkspace: (name: string, rootPath?: string) => Promise<AgentWorkspace>
 
   /** 更新 Agent 工作区 */
-  updateAgentWorkspace: (id: string, updates: { name: string }) => Promise<AgentWorkspace>
+  updateAgentWorkspace: (id: string, updates: { name: string; pinned?: boolean }) => Promise<AgentWorkspace>
+
+  /** 切换 Agent 工作区星标状态 */
+  togglePinAgentWorkspace: (id: string) => Promise<AgentWorkspace>
 
   /** 删除 Agent 工作区 */
   deleteAgentWorkspace: (id: string) => Promise<void>
@@ -1645,8 +1648,12 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_WORKSPACE, name, rootPath)
   },
 
-  updateAgentWorkspace: (id: string, updates: { name: string }) => {
+  updateAgentWorkspace: (id: string, updates: { name: string; pinned?: boolean }) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_WORKSPACE, id, updates)
+  },
+
+  togglePinAgentWorkspace: (id: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TOGGLE_WORKSPACE_PINNED, id)
   },
 
   deleteAgentWorkspace: (id: string) => {
