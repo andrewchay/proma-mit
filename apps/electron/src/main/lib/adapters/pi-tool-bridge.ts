@@ -19,6 +19,9 @@ import {
   GOAL_CHECKPOINT_TOOL_NAME,
 } from '../agent-runtime/tool-registry'
 import { BASH_TOOL_NAME } from '../agent-runtime/tool-impls/bash-tool'
+import { WEB_SEARCH_TOOL_NAME } from '../agent-runtime/tool-impls/web-search-tool'
+import { WEB_FETCH_TOOL_NAME } from '../agent-runtime/tool-impls/web-fetch-tool'
+import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME } from '../agent-runtime/tool-impls/memory-tool'
 import { EDIT_TOOL_NAME } from '../agent-runtime/tool-impls/edit-tool'
 import { GREP_TOOL_NAME } from '../agent-runtime/tool-impls/grep-tool'
 import { READ_TOOL_NAME } from '../agent-runtime/tool-impls/read-tool'
@@ -54,6 +57,8 @@ export const PI_RUNTIME_TOOL_CAPABILITIES = {
   goal: true,
   webBridge: true,
   computerUse: true,
+  webSearch: true,
+  memory: true,
 } as const
 
 export interface PiToolPermissionResult {
@@ -243,6 +248,43 @@ export function createPiToolBridge(options: CreatePiToolBridgeOptions): ToolDefi
       }),
       promptSnippet: `${PI_PROMA_BASH_TOOL_NAME}: 通过 Proma 权限策略在工作目录执行命令。`,
     }, getRequiredTool(coreTools, BASH_TOOL_NAME), options))
+  }
+  if (PI_RUNTIME_TOOL_CAPABILITIES.webSearch) {
+    tools.push(createBridgeTool({
+      piName: WEB_SEARCH_TOOL_NAME,
+      runtimeName: WEB_SEARCH_TOOL_NAME,
+      parameters: Type.Object({
+        query: Type.String({ description: '搜索查询词，使用简洁明确的关键词' }),
+      }),
+      promptSnippet: `${WEB_SEARCH_TOOL_NAME}: 通过 Proma 联网搜索互联网获取实时信息。`,
+    }, getRequiredTool(coreTools, WEB_SEARCH_TOOL_NAME), options))
+    tools.push(createBridgeTool({
+      piName: WEB_FETCH_TOOL_NAME,
+      runtimeName: WEB_FETCH_TOOL_NAME,
+      parameters: Type.Object({
+        url: Type.String({ description: '要抓取的完整 URL（http/https）' }),
+      }),
+      promptSnippet: `${WEB_FETCH_TOOL_NAME}: 通过 Proma 抓取指定 URL 的网页可读文本。`,
+    }, getRequiredTool(coreTools, WEB_FETCH_TOOL_NAME), options))
+  }
+  if (PI_RUNTIME_TOOL_CAPABILITIES.memory) {
+    tools.push(createBridgeTool({
+      piName: RECALL_MEMORY_TOOL_NAME,
+      runtimeName: RECALL_MEMORY_TOOL_NAME,
+      parameters: Type.Object({
+        query: Type.String({ description: '记忆检索查询词' }),
+      }),
+      promptSnippet: `${RECALL_MEMORY_TOOL_NAME}: 通过 Proma 搜索用户的跨会话记忆。`,
+    }, getRequiredTool(coreTools, RECALL_MEMORY_TOOL_NAME), options))
+    tools.push(createBridgeTool({
+      piName: ADD_MEMORY_TOOL_NAME,
+      runtimeName: ADD_MEMORY_TOOL_NAME,
+      parameters: Type.Object({
+        userMessage: Type.String({ description: '要记住的用户消息' }),
+        assistantMessage: Type.Optional(Type.String({ description: '对应的助手回复（可选）' })),
+      }),
+      promptSnippet: `${ADD_MEMORY_TOOL_NAME}: 通过 Proma 存储对话到长期记忆。`,
+    }, getRequiredTool(coreTools, ADD_MEMORY_TOOL_NAME), options))
   }
   if (PI_RUNTIME_TOOL_CAPABILITIES.plan) {
     tools.push(createBridgeTool({

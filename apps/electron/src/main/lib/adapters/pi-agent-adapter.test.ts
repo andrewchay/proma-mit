@@ -159,11 +159,14 @@ describe('PiAgentAdapter', () => {
     expect(sessionOptions.customTools?.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'Read', 'Write', 'Edit', 'Grep', 'Bash',
       'EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion', 'Agent',
+      'WebSearch', 'WebFetch',
+      'RecallMemory', 'AddMemory',
       'WebBridgeSnapshot', 'ComputerUseScreenshot',
     ]))
     expect(sessionOptions.customTools?.some((tool) => tool.name === 'bash')).toBe(false)
     expect(getCapturedSettings()?.images?.blockImages).toBe(false)
-    expect(getCapturedSystemPrompt()).toContain('第一个网页工具必须是 WebBridgeNavigate')
+    expect(getCapturedSystemPrompt()).toContain('使用 WebSearch 或 WebFetch')
+    expect(getCapturedSystemPrompt()).toContain('征求同意')
     expect(getCapturedSystemPrompt()).toContain('绝不能先调用 WebBridgeScreenshot')
   })
 

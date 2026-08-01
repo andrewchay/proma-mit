@@ -5,6 +5,9 @@
  * 提供 searchMemory（搜索记忆）和 addMemory（存储记忆）两个核心方法。
  */
 
+import { getFetchFn } from './proxy-fetch'
+import { getEffectiveProxyUrl } from './proxy-settings-service'
+
 const DEFAULT_BASE_URL = 'https://memos.memtensor.cn/api/openmem/v1'
 const TIMEOUT_MS = 8000
 const RETRIES = 1
@@ -43,11 +46,15 @@ async function callApi(
   const baseUrl = credentials.baseUrl || DEFAULT_BASE_URL
   let lastError: Error | undefined
 
+  // 网络请求统一跟随 Proma 代理设置
+  const proxyUrl = await getEffectiveProxyUrl()
+  const fetchFn = getFetchFn(proxyUrl)
+
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-      const res = await fetch(`${baseUrl}${path}`, {
+      const res = await fetchFn(`${baseUrl}${path}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

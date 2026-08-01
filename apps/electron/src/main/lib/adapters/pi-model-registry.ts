@@ -4,6 +4,7 @@ import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ProviderType } from '@proma/shared'
 import { resolveAgentRuntimeBaseUrl } from '@proma/shared'
 import { getConfigDir } from '../config-paths'
+import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { loadPiCodingAgent } from './pi-sdk-loader'
 
 export interface PiModelRegistrationInput {
@@ -139,10 +140,18 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
   const api = resolvePiApi(input.provider)
   const baseUrl = resolvePiBaseUrl(input.provider, input.baseUrl)
   const { ModelRuntime } = await loadPiCodingAgent()
+
+  // Pi 模型请求跟随 Proma 代理设置（Pi SDK 支持通过 env 传递代理变量）
+  const proxyUrl = await getEffectiveProxyUrl()
+  const proxyEnv = proxyUrl?.trim()
+    ? { HTTPS_PROXY: proxyUrl.trim(), HTTP_PROXY: proxyUrl.trim() }
+    : undefined
+
   const modelRuntime = await ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
     modelsPath: null,
     allowModelNetwork: false,
+    ...(proxyEnv ? { env: proxyEnv } : {}),
   })
 
   const config: PiProviderConfigInput = {

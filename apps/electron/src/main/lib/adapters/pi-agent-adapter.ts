@@ -32,11 +32,14 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   toolContextOverrides?: Pick<ToolContext, 'onEnterPlanMode' | 'onExitPlanMode' | 'setPermissionMode' | 'onAskUser' | 'runSubAgent' | 'onGoalCheckpoint'>
   mcpServers?: Record<string, McpServerEntry>
   workspaceSlug?: string
+  workspaceId?: string
   /** Proma 工作区的 Skills 目录；直接加载，不复制到 Pi 临时目录。 */
   workspaceSkillsDir?: string
   onMcpAuthRequired?: (payload: { workspaceSlug: string; serverName: string }) => void
   /** Pi 原生运行状态投影到现有 Agent UI。 */
   onAgentEvent?: (event: AgentEvent) => void
+  /** 本次发送的触发来源：用户 / 定时任务 / 协作子会话 */
+  triggeredBy?: 'user' | 'automation' | 'delegation'
 }
 
 interface ActivePiSession {
@@ -114,7 +117,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent } = input
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy } = input
     if (!provider || !apiKey || !baseUrl || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
@@ -145,6 +148,26 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       canUseTool,
       mcpTools,
     })
+    // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
+    const collaborationAvailable = !!workspaceId && !!input.channelId && triggeredBy !== 'delegation'
+    if (collaborationAvailable) {
+      try {
+        const { buildPiCollaborationTools } = await import('../agent-collaboration-tools')
+        const piSdk = await loadPiCodingAgent()
+        const collaborationTools = buildPiCollaborationTools(piSdk, {
+          sessionId,
+          channelId: input.channelId!,
+          modelId: model,
+          workspaceId,
+          permissionMode,
+          agentRuntime: 'pi',
+          triggeredBy,
+        })
+        customTools.push(...collaborationTools as typeof customTools)
+      } catch (error) {
+        console.error('[Pi Runtime] 注入 collaboration 工具失败:', error)
+      }
+    }
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 2 },
@@ -170,7 +193,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       noContextFiles: true,
       // 以 override 固定 Proma 的系统提示词边界，避免 Pi 资源加载过程中隐式追加或
       // 覆盖工具约束；所有模型可见工具均来自 Proma Bridge。
-      systemPromptOverride: () => `${systemPrompt ?? ''}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得声称工具缺失，也不得调用小写 Pi 内置工具。\n\n网页操作是强制顺序：当用户消息含有 URL 时，第一个网页工具必须是 WebBridgeNavigate({ url })。只有它成功后，才能调用 WebBridgeSnapshot、WebBridgeScreenshot、WebBridgeClick、WebBridgeType 或 WebBridgeScroll。尤其是“打开网页并截图/理解内容”任务，绝不能先调用 WebBridgeScreenshot；若尚未导航，立即调用 WebBridgeNavigate，而不是结束回答。快照返回后，点击或输入必须使用其中的 element_id。除非实际工具结果报错，否则不得声称工具缺失。${goalGuidance}\n${toolPrompt}\n</pi_proma_tools>`,
+      systemPromptOverride: () => `${systemPrompt ?? ''}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得声称工具缺失，也不得调用小写 Pi 内置工具。\n\n绝大多数网页信息需求（天气、新闻、资料、价格等）使用 WebSearch 或 WebFetch，不要为此开启 Web Bridge。只有当用户明确需要爬取特定网站、或代为操作浏览器（点击、填表、下单、登录等有状态操作）时，才使用 Web Bridge；识别到这类意图后，先向用户说明将开启受管浏览器代为操作并征求同意，再调用 WebBridgeNavigate，导航、点击、输入会触发权限确认，等待用户批准后再继续。\n\n若已使用 Web Bridge，请遵守强制顺序：WebBridgeNavigate({ url }) 成功后，才能调用 WebBridgeSnapshot、WebBridgeScreenshot、WebBridgeClick、WebBridgeType 或 WebBridgeScroll。尤其是“打开网页并截图/理解内容”任务，绝不能先调用 WebBridgeScreenshot；若尚未导航，立即调用 WebBridgeNavigate，而不是结束回答。快照返回后，点击或输入必须使用其中的 element_id。除非实际工具结果报错，否则不得声称工具缺失。\n\n记忆能力：你拥有跨会话记忆，用 RecallMemory 回忆（用户提到“之前”“上次”等回溯表述或任务可能与过去相关时），用 AddMemory 记住（出现值得记住的工作方式、偏好、重要决定时）。自然运用，不提及“记忆系统”内部概念。${goalGuidance}\n${toolPrompt}\n</pi_proma_tools>`,
     })
     await resourceLoader.reload()
 

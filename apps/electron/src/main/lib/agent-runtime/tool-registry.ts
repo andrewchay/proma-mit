@@ -138,6 +138,9 @@ import {
   executeComputerUseKeyComboTool,
   executeComputerUseRequestTakeoverTool,
 } from './tool-impls/computer-use-tools.ts'
+import { WEB_SEARCH_TOOL_NAME, createWebSearchToolDefinition, executeWebSearchTool } from './tool-impls/web-search-tool.ts'
+import { WEB_FETCH_TOOL_NAME, createWebFetchToolDefinition, executeWebFetchTool } from './tool-impls/web-fetch-tool.ts'
+import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME, createRecallMemoryToolDefinition, createAddMemoryToolDefinition, executeRecallMemoryTool, executeAddMemoryTool } from './tool-impls/memory-tool.ts'
 import { GOAL_CHECKPOINT_TOOL_NAME, createGoalCheckpointToolDefinition } from './tool-impls/goal-checkpoint-tool.ts'
 export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, AGENT_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME }
 export { LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME }
@@ -150,6 +153,10 @@ export function createCoreTools(): RuntimeToolDefinition[] {
     { ...createEditToolDefinition(), execute: executeEditTool },
     { ...createBashToolDefinition(), execute: executeBashTool },
     { ...createGrepToolDefinition(), execute: executeGrepTool },
+    { ...createWebSearchToolDefinition(), execute: executeWebSearchTool },
+    { ...createWebFetchToolDefinition(), execute: executeWebFetchTool },
+    { ...createRecallMemoryToolDefinition(), execute: executeRecallMemoryTool },
+    { ...createAddMemoryToolDefinition(), execute: executeAddMemoryTool },
     createEnterPlanModeToolDefinition(),
     createExitPlanModeToolDefinition(),
     { ...createAskUserQuestionToolDefinition(), execute: executeAskUserQuestionTool },
@@ -194,6 +201,10 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   EDIT_TOOL_NAME,
   BASH_TOOL_NAME,
   GREP_TOOL_NAME,
+  WEB_SEARCH_TOOL_NAME,
+  WEB_FETCH_TOOL_NAME,
+  RECALL_MEMORY_TOOL_NAME,
+  ADD_MEMORY_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,

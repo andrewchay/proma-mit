@@ -12,6 +12,7 @@ export const SAFE_TOOLS: readonly string[] = [
   'Grep',            // 内容搜索
   'WebSearch',       // 网络搜索
   'WebFetch',        // 网页获取
+  'RecallMemory',    // 跨会话记忆检索（只读）
   'WebBridgeSnapshot', // 受管浏览器页面读取
   'WebBridgeScreenshot', // 受管浏览器截图
   'WebBridgeScroll', // 受管浏览器滚动
