@@ -1,8 +1,8 @@
 # Agent Runtime 系统配置能力差异矩阵（Pi vs Proma vs AI SDK vs Claude）
 
-> 更新于 2026-08-01（第二轮补齐：代理 + 记忆）。基于 `apps/electron/src/main/lib/` 源码梳理。
+> 更新于 2026-08-01（第三轮补齐：Pi 上下文压缩 + Pi 思考模式 API）。基于 `apps/electron/src/main/lib/` 源码梳理。
 > 核心结论：**权限、Plan、AskUser、Goal、SubAgent、MCP、WebSearch/WebFetch、WebBridge/ComputerUse、代理、记忆 四大 runtime 已全部对齐**；
-> 剩余差异：Skills、思考模式、上下文压缩、流式期间追加输入。
+> 剩余差异：Skills 接入 Proma/AI SDK、Proma/AI SDK 上下文压缩、流式期间追加输入、思考模式 UI 入口。
 
 ## 一、工具能力（是否注册/可用）
 
@@ -23,8 +23,8 @@
 |----------|----|-------|--------|--------|------|
 | **代理设置** | ✅ **已补齐**（`registerPiModelFromChannel` 读 `getEffectiveProxyUrl()`，经 `ModelRuntime.create({ env: { HTTPS_PROXY, HTTP_PROXY } })` 传入 Pi provider） | ✅ `getEffectiveProxyUrl`+`getFetchFn` | ✅ 同 Proma | ✅ `HTTPS_PROXY/HTTP_PROXY` env | 此外 WebSearch/WebFetch/记忆请求（memos-client）已统一走 `getFetchFn(proxyUrl)`，跟随代理设置 |
 | **记忆系统** | ✅ **已补齐**（RecallMemory/AddMemory 经 Bridge + 提示词指引） | ✅ **已补齐**（createCoreTools + `AUTOMATION_TOOL_GUIDE` 记忆指引） | ✅ 同 Proma | ✅ `buildSystemPrompt(memoryEnabled)` 注入指引 | 凭据统一 `~/.proma/memory.json`（`getMemoryConfig`）；RecallMemory 加入 SAFE_TOOLS/safe/plan 白名单（只读免审批），AddMemory 走审批 |
-| **思考/推理模式** | ❌ 固定 `thinkingLevel: 'off'` | ⚠️ 依赖 provider（DeepSeek 等有 reasoning） | ⚠️ 同 Proma | ✅ 可配 `ThinkingConfig` | Pi 目前无法开启思考模式 |
-| **上下文压缩** | ❌ 显式关闭 `compaction: { enabled: false }` | ❌ 无压缩（全量历史） | ❌ 同 Proma | ✅ SDK 原生 | Pi 的 compaction 是关闭的，长会话上下文无自动压缩 |
+| **思考/推理模式** | ✅ **API 已补齐**（`AgentThinkingLevel` 类型 + `PiAgentQueryOptions.thinkingLevel`，缺省 off，仅 reasoning 模型生效；UI/配置入口待办） | ⚠️ 依赖 provider（DeepSeek 等有 reasoning） | ⚠️ 同 Proma | ✅ 可配 `ThinkingConfig` | proma-mit 的 Pi 走 openai-completions/anthropic-messages，thinkingLevel 直接传 Pi SDK，无需上游 openai-responses extension |
+| **上下文压缩** | ✅ **已补齐**（借鉴上游 #1246：`compaction: { enabled: true, reserveTokens }` 80% 阈值自动压缩 + `CompactContext` 工具手动压缩 + compaction_start/end 事件投影 + 压缩后自动续跑，上限 20 次） | ❌ 无压缩（全量历史） | ❌ 同 Proma | ✅ SDK 原生 | 阈值计算在 `packages/shared/src/utils/pi-compaction.ts`；`compacting`/`compact_boundary` 消息类型已支持 |
 | **流式期间用户追加输入** | ❌ 每次新 prompt | ❌ 单次 query 内 maxTurns 循环 | ✅ while 循环支持追加 | ✅ SDK 多 turn | AI SDK 支持输出期间继续追问 |
 | **重试策略** | ✅ Pi 内部 `retry: { enabled: true, maxRetries: 2 }` | ✅ `withRetry` 网络错误重试 2 次 | ✅ 同 Proma | ✅ SDK | 两者重试语义独立，但都有 |
 | **Token 用量统计** | ⚠️ Pi 消息自带 usage | ✅ 汇总 input/output/cache | ✅ 同 Proma | ✅ SDK | Proma/AI SDK 会累加每轮 usage |

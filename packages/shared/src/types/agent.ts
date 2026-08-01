@@ -96,6 +96,9 @@ export type ThinkingConfig =
  */
 export type AgentEffort = 'low' | 'medium' | 'high' | 'max'
 
+/** Agent 会话级思考级别（Pi runtime 支持，上游对齐） */
+export type AgentThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 /**
  * 自定义子代理定义
  *

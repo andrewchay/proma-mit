@@ -139,3 +139,10 @@ export type {
   ListAgentRuntimeInteractionsInput,
   ResolveAgentRuntimeInteractionInput,
 } from './agent-runtime-interaction-store'
+export {
+  calculatePiAutoCompactionThresholdTokens,
+  calculatePiAutoCompactionReserveTokens,
+  PI_AUTO_COMPACTION_THRESHOLD_RATIO,
+  PI_DEFAULT_CONTEXT_WINDOW,
+} from './pi-compaction'
+

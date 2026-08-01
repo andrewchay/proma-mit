@@ -7,9 +7,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, McpServerEntry, PromaPermissionMode, SDKMessage } from '@proma/shared'
+import { Type } from 'typebox'
+import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage } from '@proma/shared'
+import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } from '@proma/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
-import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent'
+import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { enrichMessageWithDocuments } from '../agent-runtime/attachment-enrichment'
 import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
@@ -42,6 +44,8 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   triggeredBy?: 'user' | 'automation' | 'delegation'
   /** 是否为协作子会话（由委派创建或处于协作链）；子会话不注入 collaboration 工具 */
   isDelegationSession?: boolean
+  /** 会话级思考级别（Pi runtime 支持）；缺省 off，仅 reasoning 模型生效 */
+  thinkingLevel?: AgentThinkingLevel
 }
 
 interface ActivePiSession {
@@ -57,6 +61,44 @@ interface AsyncQueue<T> {
 }
 
 const PI_PARTIAL_UPDATE_INTERVAL_MS = 50
+
+// ===== 上下文压缩（借鉴上游 Proma #1246） =====
+
+/** 自动压缩续跑上限：压缩后自动继续原任务的最大次数 */
+const MAX_AUTOMATIC_COMPACTION_CONTINUATIONS = 20
+
+/** 压缩完成后自动继续原任务的提示词 */
+const PI_COMPACTION_CONTINUATION_PROMPT = `<proma_compaction_continuation>
+上下文已压缩。若原任务尚未完成，请基于已持久化的状态继续完成原任务；若已全部完成，简要确认即可。
+</proma_compaction_continuation>`
+
+/**
+ * 当前 Agent 回合结束后执行 Pi 原生 session.compact()。
+ * 若没有可压缩内容（nothing to compact / already compacted），投影一条 noop 状态消息。
+ */
+async function compactCurrentSessionAfterTurn(
+  session: Pick<AgentSession, 'compact'>,
+  sessionId: string,
+  onNoop: (message: SDKMessage) => void,
+): Promise<'compacted' | 'noop'> {
+  try {
+    await session.compact()
+    return 'compacted'
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/nothing to compact|already compacted/i.test(message)) throw error
+    onNoop({
+      type: 'system',
+      subtype: 'status',
+      session_id: sessionId,
+      compact_result: 'noop',
+      message: /already compacted/i.test(message)
+        ? '当前上下文已经压缩过，无需重复压缩。'
+        : '当前上下文较小，暂时无需压缩。',
+    } as unknown as SDKMessage)
+    return 'noop'
+  }
+}
 
 /**
  * 把 Pi 订阅事件与异步迭代器解耦。
@@ -119,10 +161,14 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession } = input
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel } = input
     if (!provider || !apiKey || !baseUrl || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
+
+    // 上下文压缩状态：CompactContext 工具请求压缩，当前回合结束后执行 session.compact() 并自动续跑。
+    let compactContextRequested = false
+    let automaticCompactionContinuations = 0
 
     const registration = await registerPiModelFromChannel({
       sessionId,
@@ -170,8 +216,33 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         console.error('[Pi Runtime] 注入 collaboration 工具失败:', error)
       }
     }
+    // 手动压缩工具：当前 Agent 回合结束后压缩上下文并自动续跑（经权限流程）
+    customTools.push({
+      name: 'CompactContext',
+      label: '压缩当前会话上下文',
+      description: 'Compact only the current Pi Agent session after this turn finishes. Before calling, persist a durable handoff or checkpoint to the session workbench or project files as appropriate. Proma will compact the current session, then automatically continue the original task from the compacted context.',
+      promptSnippet: 'CompactContext: after persisting a durable handoff/checkpoint, compact the current session context. Proma will automatically continue the original task after compaction.',
+      parameters: Type.Object({}),
+      async execute(_toolCallId: string, _params: Record<string, unknown>, signal?: AbortSignal): Promise<{ content: Array<{ type: 'text'; text: string }>; details: { toolName: string; isError: boolean } }> {
+        const permission = canUseTool
+          ? await canUseTool('CompactContext', {}, signal ?? new AbortController().signal)
+          : { allowed: false, message: '未配置权限回调' }
+        if (!permission.allowed) {
+          return {
+            content: [{ type: 'text', text: permission.message ?? '权限被拒绝' }],
+            details: { toolName: 'CompactContext', isError: true },
+          }
+        }
+        compactContextRequested = true
+        return {
+          content: [{ type: 'text', text: '将在当前 Agent 回合结束后压缩当前会话上下文，并自动从已持久化的交接状态继续原始任务。' }],
+          details: { toolName: 'CompactContext', isError: false },
+        }
+      },
+    } as unknown as ToolDefinition)
     const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: false },
+      // 借鉴上游 Proma：上下文达到模型窗口约 80% 时由 Pi 原生自动压缩。
+      compaction: { enabled: true, reserveTokens: calculatePiAutoCompactionReserveTokens(registration.model.contextWindow ?? PI_DEFAULT_CONTEXT_WINDOW) },
       retry: { enabled: true, maxRetries: 2 },
       // WebBridge / Computer Use 的截图必须进入模型上下文；blockImages=true
       // 会让 Pi 在工具已成功返回图片后静默丢弃图片本体，表现为“截图没反应”。
@@ -204,7 +275,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       agentDir: registration.agentDir,
       modelRuntime: registration.modelRuntime,
       model: registration.model,
-      thinkingLevel: 'off',
+      thinkingLevel: thinkingLevel ?? 'off',
       // 禁用 Pi 内置文件/Shell 工具，但保留 customTools。Proma Bridge 是唯一工具
       // 执行入口，统一经过权限策略、工作区边界和审计。
       noTools: 'builtin',
@@ -292,13 +363,40 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       if (event.type === 'tool_execution_update') {
         onAgentEvent?.({ type: 'task_progress', toolUseId: event.toolCallId })
+        return
+      }
+      if (event.type === 'compaction_start') {
+        queue.push({ type: 'system', subtype: 'compacting', session_id: sessionId } as unknown as SDKMessage)
+        return
+      }
+      if (event.type === 'compaction_end') {
+        queue.push({
+          type: 'system',
+          subtype: 'compact_boundary',
+          session_id: sessionId,
+          compactionEstimatedTokensAfter: (event as { result?: { estimatedTokensAfter?: number } }).result?.estimatedTokensAfter,
+        } as unknown as SDKMessage)
+        return
       }
     })
     this.activeSessions.set(sessionId, { session, unsubscribe })
 
     try {
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
-      void session.prompt(enrichedPrompt, { expandPromptTemplates: false })
+      // 支持 CompactContext 压缩后自动续跑：每个 prompt 完成后检查是否有压缩请求，
+      // 有则执行 session.compact() 并用续跑提示词继续原任务（上限 MAX_AUTOMATIC_COMPACTION_CONTINUATIONS）。
+      const runPromptLoop = async (promptText: string): Promise<void> => {
+        await session.prompt(promptText, { expandPromptTemplates: false })
+        if (compactContextRequested && automaticCompactionContinuations < MAX_AUTOMATIC_COMPACTION_CONTINUATIONS) {
+          compactContextRequested = false
+          const result = await compactCurrentSessionAfterTurn(session, sessionId, (message) => queue.push(message))
+          if (result === 'compacted') {
+            automaticCompactionContinuations += 1
+            await runPromptLoop(PI_COMPACTION_CONTINUATION_PROMPT)
+          }
+        }
+      }
+      void runPromptLoop(enrichedPrompt)
         .then(() => queue.close())
         .catch((error: unknown) => queue.fail(error))
       while (true) {
