@@ -545,9 +545,17 @@ export type PromaEvent =
   | { type: 'mcp_auth_required'; workspaceSlug: string; serverName: string; authorizationUrl?: string }
   | { type: 'mcp_auth_resolved'; workspaceSlug: string; serverName: string }
   | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number }
+  // 协作子会话阻塞事件上浮
+  | { type: 'delegation_blocked'; delegationId: string; blockedEvent: unknown }
 
 /** 外部入口触发 Agent 运行的来源 */
-export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow'
+export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow' | 'delegation'
+
+/** 协作子会话角色 */
+export type AgentDelegationRole = 'explore' | 'research' | 'implement' | 'review' | 'custom'
+
+/** 协作子会话状态 */
+export type AgentDelegationStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
 
 /** IPC 传输的统一 payload（替代 AgentEvent） */
@@ -847,6 +855,24 @@ export interface AgentSessionMeta {
   title: string
   /** 使用的渠道 ID */
   channelId?: string
+  /** 使用的模型 ID */
+  modelId?: string
+  /** 来源定时任务 ID（该会话由定时任务自动创建/复用时标记） */
+  sourceAutomationId?: string
+  /** 协作父会话 ID（该会话由父会话委派创建时标记） */
+  parentSessionId?: string
+  /** 根会话 ID（协作链的起始会话；仅当存在协作父会话时设置） */
+  rootSessionId?: string
+  /** 来源协作委派 ID */
+  sourceDelegationId?: string
+  /** 协作子会话角色 */
+  delegationRole?: AgentDelegationRole
+  /** 协作子会话状态 */
+  delegationStatus?: AgentDelegationStatus
+  /** 协作委派深度（父会话 0，子会话 1，孙会话 2…） */
+  delegationDepth?: number
+  /** 协作子会话任务目标 */
+  delegationGoal?: string
   /** 本会话使用的 Agent runtime */
   agentRuntime?: AgentRuntime
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
@@ -1150,6 +1176,8 @@ export interface AgentSendInput {
   startedAt?: number
   /** 多模态附件（图片 / 文档） */
   attachments?: FileAttachment[]
+  /** 本次发送的触发来源：用户 / 定时任务 / 协作子会话 */
+  triggeredBy?: 'user' | 'automation' | 'delegation'
 }
 
 // ===== Agent 队列消息 =====

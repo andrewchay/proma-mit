@@ -540,8 +540,9 @@ export class AgentOrchestrator {
     startedAt?: number
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
+    triggeredBy?: 'user' | 'automation' | 'delegation'
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy } = options
     let userMessageUuid = ''
 
     try {
@@ -670,6 +671,18 @@ export class AgentOrchestrator {
         onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
           ? (checkpoint: AgentGoalCheckpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
           : undefined,
+        // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
+        extraTools: workspaceId && triggeredBy !== 'delegation'
+          ? (await import('./agent-collaboration-tools')).buildRuntimeCollaborationTools({
+              sessionId,
+              channelId,
+              modelId: modelId || undefined,
+              workspaceId,
+              permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+              agentRuntime,
+              triggeredBy,
+            })
+          : undefined,
       }
 
       const iterable = this.adapter.query(queryOptions)
@@ -749,8 +762,9 @@ export class AgentOrchestrator {
     startedAt?: number
     permissionMode?: PromaPermissionMode
     attachments?: FileAttachment[]
+    triggeredBy?: 'user' | 'automation' | 'delegation'
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy } = options
     let userMessageUuid = ''
 
     try {
@@ -869,6 +883,7 @@ export class AgentOrchestrator {
         },
         mcpServers,
         workspaceSlug,
+        workspaceId,
         workspaceSkillsDir: workspaceSlug ? getWorkspaceSkillsDir(workspaceSlug) : undefined,
         onMcpAuthRequired: ({ workspaceSlug: ws, serverName }) => {
           this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'mcp_auth_required', workspaceSlug: ws, serverName } } as AgentStreamPayload)
@@ -876,6 +891,7 @@ export class AgentOrchestrator {
         onAgentEvent: (event) => {
           this.eventBus.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
         },
+        triggeredBy,
         systemPrompt: buildSystemPrompt({
           workspaceName,
           workspaceSlug,
@@ -884,6 +900,7 @@ export class AgentOrchestrator {
           permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
           memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
           claudeAvailable: false,
+          collaborationAvailable: !!workspaceId && triggeredBy !== 'delegation',
         }),
       }
 
@@ -1449,7 +1466,7 @@ export class AgentOrchestrator {
    * 通过 EventBus 分发 AgentEvent，通过 callbacks 发送控制信号。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks): Promise<void> {
-    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments, workflowCapabilityPolicy } = input
+    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments, workflowCapabilityPolicy, triggeredBy } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护
@@ -1557,6 +1574,9 @@ export class AgentOrchestrator {
     try {
     // 2.2 读取会话 runtime，并在进入 Claude SDK 专用路径前处理非 Claude runtime。
     const sessionMeta = getAgentSessionMeta(sessionId)
+    // 协作子会话：由委派创建（triggeredBy=delegation）或会话本身处于协作链（delegationDepth>0，如应用重启后用户直接打开子会话）。
+    // 子会话不再注入 collaboration 工具，避免产生嵌套委派。
+    const isDelegationSession = triggeredBy === 'delegation' || (sessionMeta?.delegationDepth ?? 0) > 0
     let existingSdkSessionId = sessionMeta?.sdkSessionId
 
     // 检测回退后的 resume 截断点（快照回退功能）
@@ -1674,6 +1694,7 @@ export class AgentOrchestrator {
           startedAt: input.startedAt,
           permissionMode: initialPermissionMode,
           attachments,
+          triggeredBy,
         })
         return
       }
@@ -1696,6 +1717,7 @@ export class AgentOrchestrator {
         startedAt: input.startedAt,
         permissionMode: initialPermissionMode,
         attachments,
+        triggeredBy,
       })
       return
     }
@@ -1852,6 +1874,21 @@ export class AgentOrchestrator {
       const mcpServers = this.buildMcpServers(workspaceSlug, workflowMcpNames)
       await this.injectMemoryTools(sdk, mcpServers)
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
+
+      // 注入内置协作会话工具（collaboration）：仅在绑定了项目的主会话可用
+      const collaborationAvailable = !!workspaceId && triggeredBy !== 'delegation' && (sessionMeta?.delegationDepth ?? 0) === 0
+      if (collaborationAvailable) {
+        const { injectAgentCollaborationMcpServer } = await import('./agent-collaboration-tools')
+        await injectAgentCollaborationMcpServer(sdk, mcpServers, {
+          sessionId,
+          channelId,
+          modelId: modelId || undefined,
+          workspaceId,
+          permissionMode: permissionModeOverride ?? sessionMeta?.permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+          agentRuntime: effectiveAgentRuntime,
+          triggeredBy,
+        })
+      }
 
       // 合并外部注入的自定义 MCP 服务器（如飞书群聊工具）
       if (customMcpServers) {
@@ -2138,6 +2175,7 @@ export class AgentOrchestrator {
             permissionMode: initialPermissionMode,
             memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
             claudeAvailable,
+            collaborationAvailable,
           }),
         },
         resumeSessionId: existingSdkSessionId,

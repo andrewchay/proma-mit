@@ -96,6 +96,7 @@ proactiveScheduler.setRunner(async (schedule) => {
       `定时任务：${schedule.title.slice(0, 30)}`,
       schedule.channelId,
       schedule.workspaceId,
+      schedule.modelId,
       schedule.runtime,
     )
     targetSessionId = freshMeta.id
@@ -338,12 +339,17 @@ export async function runAgentHeadless(
     onComplete: (messages?: AgentMessage[]) => void
     onTitleUpdated: (title: string) => void
     source?: import('@proma/shared').AgentExternalRunSource
+    /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */
+    originSessionId?: string
   },
 ): Promise<void> {
-  // 尝试注册主窗口 webContents，让流式事件同步推送到桌面端
-  const win = BrowserWindow.getAllWindows()[0]
-  const wc = win && !win.isDestroyed() ? win.webContents : null
-  if (wc) {
+  // 尝试注册目标窗口 webContents，让流式事件同步推送到桌面端。
+  // 委派子会话优先复用父会话所在窗口；没有可用父窗口时才回退通用主窗口。
+  const fallbackWin = BrowserWindow.getAllWindows()[0] ?? null
+  const wc = callbacks.originSessionId
+    ? (sessionWebContents.get(callbacks.originSessionId) ?? fallbackWin?.webContents ?? null)
+    : (fallbackWin?.webContents ?? null)
+  if (wc && !wc.isDestroyed()) {
     registerWebContents(input.sessionId, wc)
   }
 
@@ -412,6 +418,18 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
 export function stopAgent(sessionId: string): void {
   orchestrator.stop(sessionId)
 }
+
+// 注册 headless runner 与 stopper，供 collaboration 等内置工具启动/停止真实 Agent 会话
+import { setAgentStopper, setHeadlessAgentRunner } from './agent-headless-runner-registry'
+setHeadlessAgentRunner(runAgentHeadless)
+setAgentStopper(stopAgent)
+
+// 注册协作子会话阻塞事件监听（AskUser / Permission 冒泡到父会话）
+import('./agent-collaboration-tools').then(({ registerCollaborationEventBus }) => {
+  registerCollaborationEventBus(eventBus)
+}).catch((error) => {
+  console.error('[Agent 服务] 注册 collaboration EventBus 失败:', error)
+})
 
 /**
  * 分叉 Agent 会话

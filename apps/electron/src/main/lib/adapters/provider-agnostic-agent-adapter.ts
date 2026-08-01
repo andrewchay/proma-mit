@@ -96,6 +96,13 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   runSubAgent?: import('../agent-runtime/types').ToolContext['runSubAgent']
   /** GoalCheckpoint 回调；存在激活 Goal 时由编排层注入。 */
   onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+  /** 额外内置工具（如 collaboration 协作子会话）；以 name 去重追加到核心工具之后 */
+  extraTools?: Array<{
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+    execute(input: Record<string, unknown>): Promise<string>
+  }>
 }
 
 /** 活跃会话状态 */
@@ -131,6 +138,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       onExitPlanMode,
       onAskUser,
       runSubAgent,
+      extraTools,
       onGoalCheckpoint,
     } = input
 
@@ -169,9 +177,18 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
       }
     }
-    const tools = [
+    const tools: RuntimeToolDefinition[] = [
       ...createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
       ...mcpTools,
+      ...(extraTools ?? []).map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: { type: 'object' as const, properties: tool.parameters as Record<string, never>, required: [] },
+        async execute(input: unknown): Promise<import('@proma/core').ToolResult> {
+          const content = await tool.execute((input ?? {}) as Record<string, unknown>)
+          return { toolCallId: '', content, isError: false }
+        },
+      })),
     ]
     const toolMap = new Map(tools.map((t) => [t.name, t]))
     const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)

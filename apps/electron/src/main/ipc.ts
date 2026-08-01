@@ -1281,7 +1281,7 @@ export function registerIpcHandlers(): void {
       if (agentRuntime !== undefined && !isAgentRuntime(agentRuntime)) {
         throw new Error(`非法的 Agent runtime: ${String(agentRuntime)}`)
       }
-      return createAgentSession(title, channelId, workspaceId, agentRuntime ?? getSettings().agentRuntime)
+      return createAgentSession(title, channelId, workspaceId, undefined, agentRuntime ?? getSettings().agentRuntime)
     }
   )
 

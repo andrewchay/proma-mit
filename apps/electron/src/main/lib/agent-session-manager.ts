@@ -115,6 +115,7 @@ export function createAgentSession(
   title?: string,
   channelId?: string,
   workspaceId?: string,
+  modelId?: string,
   agentRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME,
 ): AgentSessionMeta {
   const index = readIndex()
@@ -124,6 +125,7 @@ export function createAgentSession(
     id: randomUUID(),
     title: title || '新 Agent 会话',
     channelId,
+    modelId,
     agentRuntime,
     workspaceId,
     createdAt: now,
@@ -397,7 +399,7 @@ function convertLegacyMessage(legacy: AgentMessage): SDKMessage {
  */
 export function updateAgentSessionMeta(
   id: string,
-  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'agentRuntime' | 'sdkSessionId' | 'workspaceId' | 'pinned' | 'archived' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'permissionMode'>>,
+  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'modelId' | 'sourceAutomationId' | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal' | 'agentRuntime' | 'sdkSessionId' | 'workspaceId' | 'pinned' | 'archived' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'permissionMode'>>,
 ): AgentSessionMeta {
   const index = readIndex()
   const idx = index.sessions.findIndex((s) => s.id === id)
@@ -666,6 +668,7 @@ async function forkProviderAgnosticAgentSession(input: ForkSessionInput): Promis
     `${sourceMeta.title} (fork)`,
     sourceMeta.channelId,
     sourceMeta.workspaceId,
+    sourceMeta.modelId,
     sourceMeta.agentRuntime,
   )
   const destDir = getAgentSessionWorkspacePath(ws.slug, newMeta.id)
@@ -816,6 +819,7 @@ export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSe
     forkTitle,
     sourceMeta.channelId,
     sourceMeta.workspaceId,
+    sourceMeta.modelId,
     sourceMeta.agentRuntime,
   )
 

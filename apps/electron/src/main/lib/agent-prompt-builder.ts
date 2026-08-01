@@ -91,6 +91,8 @@ interface SystemPromptContext {
   memoryEnabled: boolean
   /** 用户选用的模型是否为 Claude 系列（影响 SubAgent 模型策略描述，缺省视为 true） */
   claudeAvailable?: boolean
+  /** 是否注入了内置 collaboration 协作会话工具 */
+  collaborationAvailable?: boolean
 }
 
 /**
@@ -252,6 +254,17 @@ Agent 工具支持 \`model\` 参数（可选值：\`sonnet\` / \`opus\` / \`haik
   sections.push(`## 用户信息
 
 - 用户名: ${userName}`)
+
+  // Proma 协作会话
+  if (ctx.collaborationAvailable) {
+    sections.push(`## Proma 协作会话
+
+Proma 提供内置 \`collaboration\` 工具，用来创建真实可见、可追溯、可继续交互的协作子 Agent 会话。
+
+在并行探索、独立验证、长任务拆分、上下文容易变乱或需要更干净专门上下文的场景下，更积极使用 Proma collaboration 通常会得到更好的效果。父会话可以持续与子会话交互：补充信息、追问进展、调整方向，并在合适时机收敛结果。
+
+委派任务要自包含；子会话不要继续创建子会话。`)
+  }
 
   // 工作区信息
   if (ctx.workspaceName && ctx.workspaceSlug) {
