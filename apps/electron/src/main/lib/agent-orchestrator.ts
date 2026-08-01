@@ -542,8 +542,10 @@ export class AgentOrchestrator {
     attachments?: FileAttachment[]
     triggeredBy?: 'user' | 'automation' | 'delegation'
     isDelegationSession?: boolean
+    /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
+    skillMentions?: string[]
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions } = options
     let userMessageUuid = ''
 
     try {
@@ -603,6 +605,7 @@ export class AgentOrchestrator {
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
         mcpServers: mcpServerConfigs,
         workspaceSlug,
+        skillMentions,
         onMcpAuthRequired: ({ workspaceSlug: ws, serverName }: { workspaceSlug: string; serverName: string }) => {
           runtimeServices.events.emit(sessionId, {
             kind: 'proma_event',
@@ -765,8 +768,10 @@ export class AgentOrchestrator {
     attachments?: FileAttachment[]
     triggeredBy?: 'user' | 'automation' | 'delegation'
     isDelegationSession?: boolean
+    /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
+    skillMentions?: string[]
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions } = options
     let userMessageUuid = ''
 
     try {
@@ -887,6 +892,7 @@ export class AgentOrchestrator {
         workspaceSlug,
         workspaceId,
         workspaceSkillsDir: workspaceSlug ? getWorkspaceSkillsDir(workspaceSlug) : undefined,
+        skillMentions,
         onMcpAuthRequired: ({ workspaceSlug: ws, serverName }) => {
           this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'mcp_auth_required', workspaceSlug: ws, serverName } } as AgentStreamPayload)
         },
@@ -1699,6 +1705,7 @@ export class AgentOrchestrator {
           attachments,
           triggeredBy,
           isDelegationSession,
+          skillMentions: mentionedSkills,
         })
         return
       }
@@ -1723,6 +1730,7 @@ export class AgentOrchestrator {
         attachments,
         triggeredBy,
         isDelegationSession,
+        skillMentions: mentionedSkills,
       })
       return
     }

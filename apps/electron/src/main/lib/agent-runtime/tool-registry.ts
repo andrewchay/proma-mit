@@ -141,13 +141,21 @@ import {
 import { WEB_SEARCH_TOOL_NAME, createWebSearchToolDefinition, executeWebSearchTool } from './tool-impls/web-search-tool.ts'
 import { WEB_FETCH_TOOL_NAME, createWebFetchToolDefinition, executeWebFetchTool } from './tool-impls/web-fetch-tool.ts'
 import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME, createRecallMemoryToolDefinition, createAddMemoryToolDefinition, executeRecallMemoryTool, executeAddMemoryTool } from './tool-impls/memory-tool.ts'
+import { COMPACT_CONTEXT_TOOL_NAME, createCompactContextToolDefinition } from './context-compaction'
 import { GOAL_CHECKPOINT_TOOL_NAME, createGoalCheckpointToolDefinition } from './tool-impls/goal-checkpoint-tool.ts'
-export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, AGENT_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME }
+import { READ_SKILL_TOOL_NAME, createSkillToolDefinition, executeSkillTool } from './tool-impls/skill-tool.ts'
+export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, AGENT_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME, READ_SKILL_TOOL_NAME }
 export { LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME }
 
+/** 核心工具注册选项 */
+export interface CreateCoreToolsOptions {
+  /** 当前工作区 slug；有工作区时才注册 ReadSkill 工具 */
+  workspaceSlug?: string
+}
+
 /** 阶段 1 核心工具列表 */
-export function createCoreTools(): RuntimeToolDefinition[] {
-  return [
+export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDefinition[] {
+  const tools: RuntimeToolDefinition[] = [
     { ...createReadToolDefinition(), execute: executeReadTool },
     { ...createWriteToolDefinition(), execute: executeWriteTool },
     { ...createEditToolDefinition(), execute: executeEditTool },
@@ -157,6 +165,7 @@ export function createCoreTools(): RuntimeToolDefinition[] {
     { ...createWebFetchToolDefinition(), execute: executeWebFetchTool },
     { ...createRecallMemoryToolDefinition(), execute: executeRecallMemoryTool },
     { ...createAddMemoryToolDefinition(), execute: executeAddMemoryTool },
+    createCompactContextToolDefinition(),
     createEnterPlanModeToolDefinition(),
     createExitPlanModeToolDefinition(),
     { ...createAskUserQuestionToolDefinition(), execute: executeAskUserQuestionTool },
@@ -192,6 +201,13 @@ export function createCoreTools(): RuntimeToolDefinition[] {
     { ...createComputerUseKeyComboToolDefinition(), execute: executeComputerUseKeyComboTool },
     { ...createComputerUseRequestTakeoverToolDefinition(), execute: executeComputerUseRequestTakeoverTool },
   ]
+
+  // 有工作区时才注册 ReadSkill：无工作区会话没有可读的 Skill，避免暴露无用工具
+  if (options?.workspaceSlug) {
+    tools.push({ ...createSkillToolDefinition(), execute: executeSkillTool })
+  }
+
+  return tools
 }
 
 /** 工具名称集合（用于白名单校验） */
@@ -205,6 +221,8 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   WEB_FETCH_TOOL_NAME,
   RECALL_MEMORY_TOOL_NAME,
   ADD_MEMORY_TOOL_NAME,
+  COMPACT_CONTEXT_TOOL_NAME,
+  READ_SKILL_TOOL_NAME,
   ENTER_PLAN_MODE_TOOL_NAME,
   EXIT_PLAN_MODE_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,

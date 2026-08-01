@@ -11,7 +11,7 @@
  * 工具定义通过 StreamRequestInput.tools 单独传递给 ProviderAdapter，不在 system prompt 中重复。
  */
 
-import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment } from '@proma/shared'
+import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@proma/shared'
 import type { RuntimeMessage } from './types.ts'
 
 /** 最大回填历史消息条数 */
@@ -48,17 +48,48 @@ const AUTOMATION_TOOL_GUIDE = `## Web Bridge 与 Computer Use
 - 当对话中出现值得记住的信息（用户的工作方式、偏好、重要决定、一起解决过的问题）时，调用 AddMemory 存储。
 - 自然运用记忆，不要提及“记忆系统”等内部概念；记忆未配置时工具会返回配置提示，向用户说明即可。`
 
+/** Skill 上下文：供 buildAgentSystemPrompt 注入 available_skills 清单 */
+export interface SkillPromptContext {
+  /** 当前工作区 slug */
+  workspaceSlug: string
+  /** 已启用的 Skill 元信息列表 */
+  skills: SkillMeta[]
+}
+
+/** 将 Skill 清单格式化为 <available_skills> 块（无 skill 时返回空字符串） */
+function formatAvailableSkills(skillContext: SkillPromptContext | undefined): string {
+  if (!skillContext || skillContext.skills.length === 0) return ''
+
+  const lines = skillContext.skills
+    .filter((s) => s.enabled)
+    .map((s) => `- ${s.slug}: ${s.name}${s.description ? `（${s.description}）` : ''}`)
+
+  if (lines.length === 0) return ''
+
+  return [
+    '<available_skills>',
+    '以下 Skill 已在此工作区启用。使用 Skill 前必须先调用 ReadSkill 读取其 SKILL.md 全文，再按其说明执行。',
+    '用户显式提到（/skill:xxx 或通过命令菜单选择）的 Skill 应优先读取并使用。',
+    ...lines,
+    '</available_skills>',
+  ].join('\n')
+}
+
 /**
  * 构建 Agent system prompt
  *
  * 将用户传入的基础提示词与环境信息合并，保持结构稳定以提升缓存命中率。
+ * skillContext 存在时注入 <available_skills> 清单。
  */
 export function buildAgentSystemPrompt(
   baseSystemPrompt: string | undefined,
   cwd: string,
+  skillContext?: SkillPromptContext,
 ): string {
   const base = baseSystemPrompt?.trim() || DEFAULT_AGENT_SYSTEM_PROMPT
-  return `${base}\n\n${AUTOMATION_TOOL_GUIDE}\n\n当前工作目录：${cwd}\n你可以使用工具来完成任务。需要调用工具时，请使用函数调用格式。`
+  const skillsBlock = formatAvailableSkills(skillContext)
+  const skillsSection = skillsBlock ? `\n\n${skillsBlock}` : ''
+  return `${base}\n\n${AUTOMATION_TOOL_GUIDE}${skillsSection}\n\n当前工作目录：${cwd}\n你可以使用工具来完成任务。需要调用工具时，请使用函数调用格式。`
 }
 
 /**

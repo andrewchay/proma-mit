@@ -81,6 +81,8 @@ export interface ToolContext {
   mcpManager?: import('./mcp-client').McpClientManager
   /** GoalCheckpoint 回调；仅在会话存在激活 Goal 时注入。 */
   onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+  /** 当前工作区 slug（ReadSkill 工具读取 Skill 用）；无工作区会话为 undefined */
+  workspaceSlug?: string
 }
 
 /** Sub Agent 运行输入 */

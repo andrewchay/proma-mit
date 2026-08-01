@@ -26,6 +26,7 @@ export const SAFE_TOOLS: readonly string[] = [
   'TodoRead',        // Todo 列表读取
   'TodoWrite',       // Todo 列表写入（无安全风险）
   'TaskOutput',      // 后台任务输出
+  'ReadSkill',       // Skill 文件读取（只读，内置路径逃逸防护）
   // 注意：AskUserQuestion 不在此列表 — 由 canUseTool 拦截并展示交互式 UI
 ]
 

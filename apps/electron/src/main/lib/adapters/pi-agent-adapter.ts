@@ -12,6 +12,7 @@ import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLe
 import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } from '@proma/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
+import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'
 import { enrichMessageWithDocuments } from '../agent-runtime/attachment-enrichment'
 import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
@@ -37,6 +38,8 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   workspaceId?: string
   /** Proma 工作区的 Skills 目录；直接加载，不复制到 Pi 临时目录。 */
   workspaceSkillsDir?: string
+  /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表；优先于 prompt 内 /skill:xxx 提取 */
+  skillMentions?: string[]
   onMcpAuthRequired?: (payload: { workspaceSlug: string; serverName: string }) => void
   /** Pi 原生运行状态投影到现有 Agent UI。 */
   onAgentEvent?: (event: AgentEvent) => void
@@ -259,8 +262,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       agentDir: registration.agentDir,
       settingsManager,
       noExtensions: true,
-      noSkills: false,
+      // 只加载 Proma 工作区 skills 目录内的 Skill；SDK 默认会扫描用户全局/项目目录，
+      // 用 skillsOverride 白名单过滤，防止外部 Skill 混入。
+      noSkills: true,
       additionalSkillPaths: workspaceSkillsDir ? [workspaceSkillsDir] : [],
+      skillsOverride: createPromaSkillsOverride(workspaceSkillsDir ? [workspaceSkillsDir] : []),
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
@@ -383,6 +389,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
     try {
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
+      // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
+      const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
       // 支持 CompactContext 压缩后自动续跑：每个 prompt 完成后检查是否有压缩请求，
       // 有则执行 session.compact() 并用续跑提示词继续原任务（上限 MAX_AUTOMATIC_COMPACTION_CONTINUATIONS）。
       const runPromptLoop = async (promptText: string): Promise<void> => {
@@ -396,7 +404,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           }
         }
       }
-      void runPromptLoop(enrichedPrompt)
+      void runPromptLoop(promptWithSkills)
         .then(() => queue.close())
         .catch((error: unknown) => queue.fail(error))
       while (true) {

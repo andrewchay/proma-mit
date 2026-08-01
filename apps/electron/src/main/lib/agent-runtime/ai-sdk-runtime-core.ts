@@ -32,6 +32,10 @@ import { isTransientNetworkError } from '../error-patterns'
 import { enrichHistoryWithDocuments, enrichMessageWithDocuments } from './attachment-enrichment'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
 import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from './tool-registry'
+import { COMPACT_CONTEXT_TOOL_NAME, compactSessionNow } from './context-compaction'
+import { getAgentSessionSDKMessages } from '../agent-session-manager'
+import { getWorkspaceSkills } from '../agent-workspace-manager'
+import type { SkillMeta } from '@proma/shared'
 import type { RuntimeToolDefinition } from './types'
 
 export interface AISDKRuntimeSessionState {
@@ -69,6 +73,16 @@ export interface AISDKToolExecutionState {
   runSubAgent?: import('./types').ToolContext['runSubAgent']
   mcpManager?: import('./mcp-client').McpClientManager
   onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+  /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
+  workspaceSlug?: string
+  /** 上下文压缩所需的模型凭据（CompactContext 工具拦截时使用） */
+  compaction?: {
+    provider: ProviderType
+    adapterProvider?: ProviderType
+    apiKey: string
+    baseUrl: string
+    model: string
+  }
 }
 
 export interface AISDKRuntimeStreamInput {
@@ -113,6 +127,10 @@ export interface AISDKAgentTurnInput {
   runSubAgent?: AISDKToolExecutionState['runSubAgent']
   mcpManager?: AISDKToolExecutionState['mcpManager']
   onGoalCheckpoint?: AISDKToolExecutionState['onGoalCheckpoint']
+  /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
+  workspaceSlug?: AISDKToolExecutionState['workspaceSlug']
+  /** 上下文压缩所需的模型凭据（CompactContext 工具拦截时使用） */
+  compaction?: AISDKToolExecutionState['compaction']
 }
 
 export interface ExecutedAISDKToolResult {
@@ -150,7 +168,9 @@ export class AISDKRuntimeCore {
       baseUrl: resolveAgentRuntimeBaseUrl(input.provider, 'ai-sdk', input.baseUrl),
       modelId: input.modelId,
     })
-    const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd)
+    const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
+      ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
+      : undefined)
     const history = await enrichHistoryWithDocuments(
       input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : [],
     )
@@ -162,12 +182,14 @@ export class AISDKRuntimeCore {
       signal: input.activeSession.controller.signal,
       activeSession: input.activeSession,
       canUseTool: input.canUseTool,
+      compaction: input.compaction,
       onEnterPlanMode: input.onEnterPlanMode,
       onExitPlanMode: input.onExitPlanMode,
       onAskUser: input.onAskUser,
       runSubAgent: input.runSubAgent,
       mcpManager: input.mcpManager,
       onGoalCheckpoint: input.onGoalCheckpoint,
+      workspaceSlug: input.workspaceSlug,
     })
 
     const streamRun = await this.runStreamTextWithRetry({
@@ -336,6 +358,29 @@ export class AISDKRuntimeCore {
         return { content: 'Goal 检查点已持久化。' }
       } catch (error) {
         return { content: `Goal 检查点无效: ${getErrorMessage(error)}`, isError: true }
+      }
+    }
+
+    if (runtimeTool.name === COMPACT_CONTEXT_TOOL_NAME) {
+      if (!state.compaction) {
+        return { content: '当前 Runtime 未配置上下文压缩参数。', isError: true }
+      }
+      try {
+        const currentHistory = getAgentSessionSDKMessages(state.sessionId)
+        const result = await compactSessionNow({
+          sessionId: state.sessionId,
+          ...state.compaction,
+          historyMessages: currentHistory,
+          signal: state.signal,
+        })
+        if (result.compacted) {
+          return {
+            content: `上下文已压缩。早期历史已摘要（${result.summary?.length ?? 0} 字符），最近 ${Math.max(0, result.history.length - 1)} 条保留；本轮继续，下一轮对话将基于压缩后的摘要。`,
+          }
+        }
+        return { content: '上下文暂不需要压缩（历史较短或过小）。' }
+      } catch (error) {
+        return { content: `上下文压缩失败: ${getErrorMessage(error)}`, isError: true }
       }
     }
 
@@ -684,4 +729,14 @@ function isBashCommandReadOnly(command: string): boolean {
   if (/\b(kill|killall|pkill)\s/.test(command)) return false
   if (/\b(node|python[23]?|ruby|perl|php)\s+[^-]/.test(command)) return false
   return true
+}
+
+/** 读取工作区已启用的 Skill 列表（容错：失败返回空数组，不阻塞主流程） */
+function safeGetWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
+  try {
+    return getWorkspaceSkills(workspaceSlug).filter((s) => s.enabled)
+  } catch (error) {
+    console.warn('[AI SDK Runtime] 读取工作区 Skills 失败:', error)
+    return []
+  }
 }

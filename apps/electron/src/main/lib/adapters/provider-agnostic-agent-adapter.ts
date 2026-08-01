@@ -23,6 +23,7 @@ import type {
   AgentGoalCheckpoint,
   McpServerEntry,
   PromaPermissionMode,
+  ProviderType,
 } from '@proma/shared'
 import type {
   ProviderAdapter,
@@ -38,12 +39,16 @@ import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
+import { maybeAutoCompact, compactSessionNow, COMPACT_CONTEXT_TOOL_NAME } from '../agent-runtime/context-compaction'
+import { getAgentSessionSDKMessages } from '../agent-session-manager'
 import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
 import { withRetry } from '../agent-runtime/retry'
 import { isTransientNetworkError } from '../error-patterns'
 import { isImageAttachment } from '../attachment-service'
 import type { RuntimeMessage } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
+import { getWorkspaceSkills } from '../agent-workspace-manager'
+import type { SkillPromptContext } from '../agent-runtime/prompt-builder'
 
 /** 工具权限检查结果 */
 export interface ToolPermissionResult {
@@ -103,6 +108,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
     parameters: Record<string, unknown>
     execute(input: Record<string, unknown>): Promise<string>
   }>
+  /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表（自研 runtime 按需提示读取） */
+  skillMentions?: string[]
 }
 
 /** 活跃会话状态 */
@@ -140,6 +147,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       runSubAgent,
       extraTools,
       onGoalCheckpoint,
+      skillMentions,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -178,7 +186,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       }
     }
     const tools: RuntimeToolDefinition[] = [
-      ...createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
+      ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
       ...mcpTools,
       ...(extraTools ?? []).map((tool) => ({
         name: tool.name,
@@ -191,7 +199,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       })),
     ]
     const toolMap = new Map(tools.map((t) => [t.name, t]))
-    const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd)
+    const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd, buildSkillPromptContext(workspaceSlug))
+    // 用户在消息中显式要求读取的 Skill：注入指令块引导模型先 ReadSkill 再执行
+    const skillRequestedBlock = buildSkillRequestedBlock(skillMentions, prompt)
 
     // Plan 模式状态
     let planModeEntered = activeSession.permissionMode === 'plan'
@@ -207,19 +217,43 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       const proxyUrl = await getEffectiveProxyUrl()
       const fetchFn = getFetchFn(proxyUrl)
 
+      // 自动上下文压缩：历史条数超过阈值时，用 LLM 摘要早期历史并保留最近消息。
+      // 压缩后以新历史继续本轮；boundary 摘要已持久化，后续 query 自然读到。
+      let effectiveHistoryMessages = input.historyMessages ?? []
+      if (effectiveHistoryMessages.length > 0 && provider && apiKey && baseUrl) {
+        const auto = await maybeAutoCompact({
+          sessionId,
+          provider,
+          adapterProvider,
+          apiKey,
+          baseUrl,
+          model: model || '',
+          historyMessages: effectiveHistoryMessages,
+          signal: controller.signal,
+        })
+        if (auto.compacted) {
+          effectiveHistoryMessages = auto.history
+          console.log(`[Agent Runtime] 已自动压缩上下文: sessionId=${sessionId}, 摘要 ${auto.summary?.length ?? 0} chars`)
+        }
+      }
+
       // 阶段 2：加载历史消息，并提取历史消息中的文档附件文本
-      const rawHistory = input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : []
+      const rawHistory = effectiveHistoryMessages.length > 0 ? sdkMessagesToChatMessages(effectiveHistoryMessages) : []
       const history = await enrichHistoryWithDocuments(rawHistory)
 
       // 处理当前用户消息的多模态附件
       // 文档类附件提取文本后追加到 prompt；图片类附件通过 readImageAttachments 注入
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
+      // 用户显式请求 Skill 时，在 prompt 头部注入指令块引导先 ReadSkill
+      const promptWithSkillRequest = skillRequestedBlock
+        ? `${skillRequestedBlock}\n\n${enrichedPrompt}`
+        : enrichedPrompt
       const currentImageAttachments = attachments?.filter((att) => isImageAttachment(att.mediaType)) ?? []
 
       // 初始用户消息
       const userMessage: RuntimeMessage = {
         role: 'user',
-        content: enrichedPrompt,
+        content: promptWithSkillRequest,
         createdAt: Date.now(),
       }
       runtimeMessages.push(userMessage)
@@ -241,7 +275,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           apiKey,
           modelId: model || '',
           history,
-          userMessage: enrichedPrompt,
+          userMessage: promptWithSkillRequest,
           systemMessage: effectiveSystemPrompt,
           readImageAttachments: () => getImageAttachmentData(currentImageAttachments),
           attachments: currentImageAttachments,
@@ -356,6 +390,13 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           permissionMode: activeSession.permissionMode,
           planModeEntered,
           canUseTool: input.canUseTool,
+          compaction: {
+            provider,
+            adapterProvider,
+            apiKey,
+            baseUrl,
+            model: model || '',
+          },
           onEnterPlanMode: () => {
             planModeEntered = true
             onEnterPlanMode?.()
@@ -365,6 +406,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           runSubAgent,
           onGoalCheckpoint,
           mcpManager,
+          workspaceSlug,
           setPermissionMode: (mode) => {
             activeSession.permissionMode = mode
             planModeEntered = false
@@ -619,11 +661,50 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       onGoalCheckpoint?: ProviderAgnosticAgentQueryOptions['onGoalCheckpoint']
       mcpManager?: import('../agent-runtime/mcp-client').McpClientManager
       setPermissionMode?: (mode: PromaPermissionMode) => void
+      /** 上下文压缩所需的模型凭据（CompactContext 工具拦截时使用） */
+      compaction?: {
+        provider: ProviderType
+        adapterProvider?: ProviderType
+        apiKey: string
+        baseUrl: string
+        model: string
+      }
+      /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
+      workspaceSlug?: string
     },
   ): Promise<ToolResult[]> {
     const results: ToolResult[] = []
 
     for (const tc of toolCalls) {
+      // CompactContext：立即压缩当前会话历史（摘要早期 + 保留最近），下一轮生效
+      if (tc.name === COMPACT_CONTEXT_TOOL_NAME) {
+        if (ctx.compaction) {
+          try {
+            const currentHistory = getAgentSessionSDKMessages(ctx.sessionId)
+            const result = await compactSessionNow({
+              sessionId: ctx.sessionId,
+              ...ctx.compaction,
+              historyMessages: currentHistory,
+              signal: ctx.abortSignal,
+            })
+            if (result.compacted) {
+              results.push({
+                toolCallId: tc.id,
+                content: `上下文已压缩。早期历史已摘要（${result.summary?.length ?? 0} 字符），最近 ${Math.max(0, result.history.length - 1)} 条保留；本轮继续，下一轮对话将基于压缩后的摘要。`,
+                isError: false,
+              })
+            } else {
+              results.push({ toolCallId: tc.id, content: '上下文暂不需要压缩（历史较短或过小）。', isError: false })
+            }
+          } catch (error) {
+            results.push({ toolCallId: tc.id, content: `上下文压缩失败: ${getErrorMessage(error)}`, isError: true })
+          }
+        } else {
+          results.push({ toolCallId: tc.id, content: '当前 Runtime 未配置上下文压缩参数。', isError: true })
+        }
+        continue
+      }
+
       // EnterPlanMode：标记进入 Plan 模式并通知 UI
       if (tc.name === ENTER_PLAN_MODE_TOOL_NAME) {
         ctx.onEnterPlanMode?.()
@@ -802,4 +883,53 @@ function isBashCommandReadOnly(command: string): boolean {
   // 脚本执行
   if (/\b(node|python[23]?|ruby|perl|php)\s+[^-]/.test(command)) return false
   return true
+}
+
+// ===== Skill 支持（自研 runtime：提示词注入 + ReadSkill 引导） =====
+
+/** 用户在 prompt 中显式请求 Skill 的命令模式：/skill:xxx */
+const SKILL_COMMAND_PATTERN = /\/skill:([A-Za-z0-9][A-Za-z0-9._-]*)/g
+
+/**
+ * 构建 Skill 系统提示词上下文（available_skills 清单）。
+ * workspaceSlug 为空或无可读 skills 目录时返回 undefined，不注入 skill 块。
+ */
+function buildSkillPromptContext(workspaceSlug: string | undefined): SkillPromptContext | undefined {
+  if (!workspaceSlug) return undefined
+  try {
+    const skills = getWorkspaceSkills(workspaceSlug).filter((s) => s.enabled)
+    if (skills.length === 0) return undefined
+    return { workspaceSlug, skills }
+  } catch (error) {
+    console.warn('[Agent Runtime] 读取工作区 Skills 失败:', error)
+    return undefined
+  }
+}
+
+/**
+ * 构建 skill 请求指令块。
+ *
+ * 合并两类请求源：显式 skillMentions（命令菜单选择）+ prompt 内 /skill:xxx。
+ * 有请求时才返回非空块，引导模型先用 ReadSkill 读取全文再执行。
+ */
+function buildSkillRequestedBlock(skillMentions: string[] | undefined, prompt: string): string | undefined {
+  const requested = new Set<string>()
+
+  for (const slug of skillMentions ?? []) {
+    if (slug) requested.add(slug)
+  }
+  for (const match of prompt.matchAll(SKILL_COMMAND_PATTERN)) {
+    const name = match[1]?.trim()
+    if (name) requested.add(name)
+  }
+
+  if (requested.size === 0) return undefined
+
+  const lines = [...requested].map((slug) => `- ${slug}`).join('\n')
+  return [
+    '<skill_requested>',
+    '用户在本次消息中明确要求使用以下 Skill。请先调用 ReadSkill 读取对应 SKILL.md 全文，再严格按其说明完成任务。',
+    lines,
+    '</skill_requested>',
+  ].join('\n')
 }

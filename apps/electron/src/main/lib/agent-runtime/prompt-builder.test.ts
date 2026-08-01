@@ -92,3 +92,33 @@ describe('Prompt 构建器', () => {
     expect(history[19]?.content).toBe('msg 24')
   })
 })
+
+describe('buildAgentSystemPrompt 注入 available_skills', () => {
+  test('given skillContext 时注入 available_skills 清单与 ReadSkill 指引', () => {
+    const prompt = buildAgentSystemPrompt(undefined, '/tmp/workspace', {
+      workspaceSlug: 'ws',
+      skills: [
+        { slug: 'code-review', name: '代码审查', description: '审查 diff', enabled: true },
+        { slug: 'bug-hunt', name: 'Bug 排查', enabled: true },
+      ],
+    })
+    expect(prompt).toContain('<available_skills>')
+    expect(prompt).toContain('- code-review: 代码审查（审查 diff）')
+    expect(prompt).toContain('- bug-hunt: Bug 排查')
+    expect(prompt).toContain('必须先调用 ReadSkill 读取其 SKILL.md 全文')
+    expect(prompt).toContain('</available_skills>')
+  })
+
+  test('given 无 enabled skill 时不注入 available_skills', () => {
+    const prompt = buildAgentSystemPrompt(undefined, '/tmp/workspace', {
+      workspaceSlug: 'ws',
+      skills: [{ slug: 'disabled-skill', name: '禁用', enabled: false }],
+    })
+    expect(prompt).not.toContain('<available_skills>')
+  })
+
+  test('given 无 skillContext 时不注入 available_skills', () => {
+    const prompt = buildAgentSystemPrompt(undefined, '/tmp/workspace')
+    expect(prompt).not.toContain('<available_skills>')
+  })
+})

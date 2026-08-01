@@ -1019,10 +1019,10 @@ export function listSkillFiles(workspaceSlug: string, skillSlug: string): SkillF
   return buildSkillFileTree(dir, dir, 0)
 }
 
-export function readSkillFile(workspaceSlug: string, skillSlug: string, relativePath: string): SkillFileContent {
+export function readSkillFile(workspaceSlug: string, skillSlug: string, relativePath: string, opts: { allowSkillMd?: boolean } = {}): SkillFileContent {
   const dir = resolveSkillDir(workspaceSlug, skillSlug)
   if (!dir) throw new Error(`Skill 不存在: ${workspaceSlug}/${skillSlug}`)
-  const abs = resolveSkillChildPath(dir, relativePath)
+  const abs = resolveSkillChildPath(dir, relativePath, opts)
   if (!existsSync(abs)) throw new Error(`文件不存在: ${relativePath}`)
 
   const st = statSync(abs)

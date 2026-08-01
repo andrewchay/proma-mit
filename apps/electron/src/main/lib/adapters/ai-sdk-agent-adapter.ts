@@ -11,11 +11,13 @@ import type {
   AgentGoalCheckpoint,
   McpServerEntry,
   PromaPermissionMode,
+  ProviderType,
   SDKMessage,
   SDKUserMessageInput,
 } from '@proma/shared'
 import { getAgentProviderProtocol, isAgentCompatibleProvider } from '@proma/shared'
 import { createCoreTools, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
+import { maybeAutoCompact } from '../agent-runtime/context-compaction'
 import {
   AISDKRuntimeCore,
   type AISDKCanUseToolCallback,
@@ -65,6 +67,8 @@ export interface AISDKAgentQueryOptions extends AgentQueryInput {
     parameters: Record<string, unknown>
     execute(input: Record<string, unknown>): Promise<string>
   }>
+  /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表（自研 runtime 按需提示读取） */
+  skillMentions?: string[]
 }
 
 interface ActiveAISDKSession {
@@ -97,6 +101,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       onMcpAuthRequired,
       maxTurns = 25,
       extraTools,
+      skillMentions,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd || !model) {
@@ -124,7 +129,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
     let mcpRelease: (() => void) | undefined
     try {
       const tools: import('../agent-runtime/types').RuntimeToolDefinition[] = [
-        ...createCoreTools().filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint)),
+        ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint)),
         ...(extraTools ?? []).map((tool) => ({
           name: tool.name,
           description: tool.description,
@@ -153,9 +158,27 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         }
       }
 
-      let currentPrompt = prompt
+      let currentPrompt = buildAISDKSkillRequestedPrompt(prompt, skillMentions)
       let currentAttachments = attachments
       let historyMessages = input.historyMessages ?? []
+
+      // 自动上下文压缩：历史条数超过阈值时，用 LLM 摘要早期历史并保留最近消息。
+      // 压缩后以新历史继续本轮；boundary 摘要已持久化，后续 query 自然读到。
+      if (historyMessages.length > 0) {
+        const auto = await maybeAutoCompact({
+          sessionId,
+          provider,
+          apiKey,
+          baseUrl,
+          model: model || '',
+          historyMessages,
+          signal: activeSession.state.controller.signal,
+        })
+        if (auto.compacted) {
+          historyMessages = auto.history
+          console.log(`[AI SDK Runtime] 已自动压缩上下文: sessionId=${sessionId}, 摘要 ${auto.summary?.length ?? 0} chars`)
+        }
+      }
 
       // AI SDK 的一次 streamText 调用不能像 Claude SDK 那样直接向活跃 stream 注入输入。
       // 因此把运行中的追加消息排成下一轮 Agent turn，并将刚完成的一轮纳入历史，
@@ -179,6 +202,12 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             historyMessages,
             attachments: currentAttachments,
             systemPrompt: input.systemPrompt,
+            compaction: {
+              provider,
+              apiKey,
+              baseUrl,
+              model: model || '',
+            },
             onAgentEvent: input.onAgentEvent,
             canUseTool: input.canUseTool,
             onEnterPlanMode: input.onEnterPlanMode,
@@ -187,6 +216,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             runSubAgent: input.runSubAgent,
             onGoalCheckpoint: input.onGoalCheckpoint,
             mcpManager,
+            workspaceSlug,
           })
         } catch (error) {
           if (!activeSession.interrupted || activeSession.cancelled) throw error
@@ -305,4 +335,36 @@ function createQueuedHistoryMessage(
     parent_tool_use_id: null,
     ...(attachments ? { _attachments: attachments } : {}),
   } as SDKMessage
+}
+
+// ===== Skill 支持（AI SDK runtime：/skill:xxx + skillMentions 引导） =====
+
+/** 用户在 prompt 中显式请求 Skill 的命令模式：/skill:xxx */
+const AI_SDK_SKILL_COMMAND_PATTERN = /\/skill:([A-Za-z0-9][A-Za-z0-9._-]*)/g
+
+/**
+ * 用户在消息中显式要求 Skill 时，在 prompt 头部注入指令块引导先 ReadSkill。
+ * 无请求时原样返回 prompt。
+ */
+function buildAISDKSkillRequestedPrompt(prompt: string, skillMentions: string[] | undefined): string {
+  const requested = new Set<string>()
+
+  for (const slug of skillMentions ?? []) {
+    if (slug) requested.add(slug)
+  }
+  for (const match of prompt.matchAll(AI_SDK_SKILL_COMMAND_PATTERN)) {
+    const name = match[1]?.trim()
+    if (name) requested.add(name)
+  }
+
+  if (requested.size === 0) return prompt
+
+  const lines = [...requested].map((slug) => `- ${slug}`).join('\n')
+  const block = [
+    '<skill_requested>',
+    '用户在本次消息中明确要求使用以下 Skill。请先调用 ReadSkill 读取对应 SKILL.md 全文，再严格按其说明完成任务。',
+    lines,
+    '</skill_requested>',
+  ].join('\n')
+  return `${block}\n\n${prompt}`
 }
