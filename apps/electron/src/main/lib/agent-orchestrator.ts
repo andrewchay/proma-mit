@@ -834,6 +834,8 @@ export class AgentOrchestrator {
         historyMessages,
         attachments,
         permissionMode: currentPiPermissionMode,
+        // 会话级思考级别：来自全局设置 agentThinkingLevel（Pi 专用；仅 reasoning 模型生效）
+        thinkingLevel: getSettings().agentThinkingLevel,
         canUseTool: async (toolName, toolInput, signal) => {
           const result = await piCanUseTool(toolName, toolInput, {
             signal,

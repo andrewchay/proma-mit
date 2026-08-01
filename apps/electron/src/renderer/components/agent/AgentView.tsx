@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -176,9 +177,22 @@ function getUserTextFromSDKMessage(message: SDKMessage): string | null {
 interface AgentThinkingPopoverProps {
   agentThinking: import('@proma/shared').ThinkingConfig | undefined
   onToggle: () => void
+  /** Pi runtime：会话级思考级别（AgentThinkingLevel），提供时显示档位选择 */
+  piThinkingLevel?: import('@proma/shared').AgentThinkingLevel
+  onPiThinkingLevelChange?: (level: import('@proma/shared').AgentThinkingLevel) => void
 }
 
-function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverProps): React.ReactElement {
+const PI_THINKING_LEVEL_OPTIONS: Array<{ value: import('@proma/shared').AgentThinkingLevel; label: string }> = [
+  { value: 'off', label: '关闭' },
+  { value: 'minimal', label: '极简' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '极高' },
+  { value: 'max', label: '最大' },
+]
+
+function AgentThinkingPopover({ agentThinking, onToggle, piThinkingLevel, onPiThinkingLevelChange }: AgentThinkingPopoverProps): React.ReactElement {
   const [open, setOpen] = React.useState(false)
   const hoverTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -235,6 +249,26 @@ function AgentThinkingPopover({ agentThinking, onToggle }: AgentThinkingPopoverP
               className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
             />
           </div>
+          {piThinkingLevel !== undefined && onPiThinkingLevelChange && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs text-foreground/70">思考深度</span>
+              <Select
+                value={piThinkingLevel}
+                onValueChange={(value) => onPiThinkingLevelChange(value as import('@proma/shared').AgentThinkingLevel)}
+              >
+                <SelectTrigger className="h-7 w-[110px] text-xs">
+                  <SelectValue placeholder="选择" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PI_THINKING_LEVEL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -461,6 +495,16 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const agentChannelIds = useAtomValue(agentChannelIdsAtom)
   const setAgentChannelIds = useSetAtom(agentChannelIdsAtom)
   const [agentThinking, setAgentThinking] = useAtom(agentThinkingAtom)
+
+  // Pi runtime 会话级思考级别（从全局设置读取，选择后写回）
+  const [piThinkingLevel, setPiThinkingLevel] = React.useState<import('@proma/shared').AgentThinkingLevel | undefined>(undefined)
+  React.useEffect(() => {
+    let cancelled = false
+    window.electronAPI.getSettings().then((settings) => {
+      if (!cancelled && settings.agentThinkingLevel) setPiThinkingLevel(settings.agentThinkingLevel)
+    })
+    return () => { cancelled = true }
+  }, [])
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const globalWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
@@ -1966,6 +2010,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               : { type: 'adaptive' as const }
             setAgentThinking(next)
             window.electronAPI.updateSettings({ agentThinking: next })
+          }}
+          piThinkingLevel={sessionAgentRuntime === 'pi' ? (piThinkingLevel ?? 'off') : undefined}
+          onPiThinkingLevelChange={(level) => {
+            setPiThinkingLevel(level)
+            window.electronAPI.updateSettings({ agentThinkingLevel: level })
           }}
         />
       ),

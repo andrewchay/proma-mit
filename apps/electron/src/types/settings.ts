@@ -198,6 +198,8 @@ export interface AppSettings {
   agentThinking?: ThinkingConfig
   /** Agent 推理深度 */
   agentEffort?: AgentEffort
+  /** Pi runtime 会话级思考级别（AgentThinkingLevel；仅 reasoning 模型生效，缺省 off） */
+  agentThinkingLevel?: import('@proma/shared').AgentThinkingLevel
   /** Agent 最大预算（美元/次） */
   agentMaxBudgetUsd?: number
   /** Agent 最大轮次（0 或 undefined = SDK 默认） */
