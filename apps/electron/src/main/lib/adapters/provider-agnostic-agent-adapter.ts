@@ -19,6 +19,7 @@ import type {
   SDKUserMessage,
   SDKResultMessage,
   SDKContentBlock,
+  SDKUserMessageInput,
   FileAttachment,
   AgentGoalCheckpoint,
   McpServerEntry,
@@ -116,6 +117,14 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
 interface ActiveSession {
   controller: AbortController
   permissionMode: PromaPermissionMode
+  /** 是否已取消（abort） */
+  cancelled?: boolean
+  /** 是否软中断（interrupt 后等待追加消息） */
+  interrupted?: boolean
+  /** 流式期间追加的用户消息队列 */
+  queuedMessages?: SDKUserMessageInput[]
+  /** 唤醒等待队列的 resolve（waitForQueuedMessage） */
+  resolveQueuedMessage?: () => void
 }
 
 export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
@@ -237,26 +246,33 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         }
       }
 
-      // 阶段 2：加载历史消息，并提取历史消息中的文档附件文本
-      const rawHistory = effectiveHistoryMessages.length > 0 ? sdkMessagesToChatMessages(effectiveHistoryMessages) : []
-      const history = await enrichHistoryWithDocuments(rawHistory)
+      // 流式追加支持：外层 while 每轮处理一个用户消息（首轮为原始 prompt，追加轮为 queued 文本）。
+      let currentTurnPrompt = prompt
+      let currentTurnImages: FileAttachment[] = attachments?.filter((att) => isImageAttachment(att.mediaType)) ?? []
 
-      // 处理当前用户消息的多模态附件
-      // 文档类附件提取文本后追加到 prompt；图片类附件通过 readImageAttachments 注入
-      const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
-      // 用户显式请求 Skill 时，在 prompt 头部注入指令块引导先 ReadSkill
-      const promptWithSkillRequest = skillRequestedBlock
-        ? `${skillRequestedBlock}\n\n${enrichedPrompt}`
-        : enrichedPrompt
-      const currentImageAttachments = attachments?.filter((att) => isImageAttachment(att.mediaType)) ?? []
+      while (!activeSession.cancelled) {
+        // 本轮产生的 SDKMessage（assistant + tool_result），跨轮追加时纳入历史
+        const turnMessages: SDKMessage[] = []
+        try {
+        // 阶段 2：加载历史消息，并提取历史消息中的文档附件文本（每轮重建）
+        const rawHistory = effectiveHistoryMessages.length > 0 ? sdkMessagesToChatMessages(effectiveHistoryMessages) : []
+        const history = await enrichHistoryWithDocuments(rawHistory)
 
-      // 初始用户消息
-      const userMessage: RuntimeMessage = {
-        role: 'user',
-        content: promptWithSkillRequest,
-        createdAt: Date.now(),
-      }
-      runtimeMessages.push(userMessage)
+        // 处理当前用户消息的多模态附件（首轮有附件；追加轮为纯文本）
+        // 注：enrichMessageWithDocuments 只处理文档附件（提取文本）；图片附件经 readImageAttachments 注入
+        const enrichedPrompt = await enrichMessageWithDocuments(currentTurnPrompt, currentTurnPrompt === prompt ? attachments : undefined)
+        // 用户显式请求 Skill 时，在 prompt 头部注入指令块引导先 ReadSkill（仅首轮）
+        const promptWithSkillRequest = skillRequestedBlock && currentTurnPrompt === prompt
+          ? `${skillRequestedBlock}\n\n${enrichedPrompt}`
+          : enrichedPrompt
+
+        // 初始用户消息
+        const userMessage: RuntimeMessage = {
+          role: 'user',
+          content: promptWithSkillRequest,
+          createdAt: Date.now(),
+        }
+        runtimeMessages.push(userMessage)
 
       // 工具续接循环
       // 关键约定：userMessage 始终为本次用户原始 prompt；
@@ -277,8 +293,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           history,
           userMessage: promptWithSkillRequest,
           systemMessage: effectiveSystemPrompt,
-          readImageAttachments: () => getImageAttachmentData(currentImageAttachments),
-          attachments: currentImageAttachments,
+          readImageAttachments: () => getImageAttachmentData(currentTurnImages),
+          attachments: currentTurnImages,
           tools: tools.map((t) => ({
             name: t.name,
             description: t.description,
@@ -367,6 +383,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           parent_tool_use_id: null,
           session_id: sessionId,
         }
+        turnMessages.push(assistantMessage as unknown as SDKMessage)
         yield assistantMessage as unknown as SDKMessage
 
         // 保存 assistant 消息到 runtime history
@@ -428,6 +445,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           parent_tool_use_id: null,
           session_id: sessionId,
         }
+        turnMessages.push(toolResultMessage as unknown as SDKMessage)
         yield toolResultMessage as unknown as SDKMessage
 
         // 保存 tool 结果到 runtime history
@@ -454,6 +472,27 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           { role: 'tool', results: toolResults },
         ]
       }
+        } catch (error) {
+          // 软中断：controller.abort() 让 streamSSE 抛错；若有追加消息则继续下一轮，否则重新抛出
+          if (!activeSession.interrupted || activeSession.cancelled) throw error
+          activeSession.interrupted = false
+          await this.waitForQueuedMessage(activeSession)
+          if (activeSession.cancelled) break
+          const queuedInterrupt = activeSession.queuedMessages?.shift()
+          if (!queuedInterrupt) break
+          effectiveHistoryMessages = [...effectiveHistoryMessages, ...turnMessages]
+          currentTurnPrompt = queuedInterrupt.message.content
+          currentTurnImages = []
+          continue
+        }
+
+        // 本轮结束：检查流式追加队列；有追加则纳入历史继续下一轮，无则结束
+        const queued = activeSession.queuedMessages?.shift()
+        if (!queued) break
+        effectiveHistoryMessages = [...effectiveHistoryMessages, ...turnMessages]
+        currentTurnPrompt = queued.message.content
+        currentTurnImages = []
+      }
 
       // 结束消息
       const resultMessage: SDKResultMessage = {
@@ -479,9 +518,42 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
   abort(sessionId: string): void {
     const session = this.activeSessions.get(sessionId)
     if (session) {
+      session.cancelled = true
       session.controller.abort()
+      session.resolveQueuedMessage?.()
       this.activeSessions.delete(sessionId)
     }
+  }
+
+  /** 软中断当前 turn：终止本轮流式输出，等待流式追加消息后继续下一轮 */
+  async interruptQuery(sessionId: string): Promise<void> {
+    const session = this.activeSessions.get(sessionId)
+    if (!session) return
+    session.interrupted = true
+    session.controller.abort()
+  }
+
+  /**
+   * 流式期间追加用户消息。
+   * 消息进入队列；query 外层 while 在每轮结束后取出一条作为下一轮用户输入。
+   */
+  async sendQueuedMessage(sessionId: string, message: SDKUserMessageInput): Promise<void> {
+    const session = this.activeSessions.get(sessionId)
+    if (!session) {
+      throw new Error(`[Agent Runtime] 无活跃会话可追加消息: ${sessionId}`)
+    }
+    session.queuedMessages ??= []
+    session.queuedMessages.push(message)
+    session.resolveQueuedMessage?.()
+    session.resolveQueuedMessage = undefined
+  }
+
+  /** 等待流式追加队列出现消息（软中断后 query 等待新输入时使用） */
+  private async waitForQueuedMessage(session: ActiveSession): Promise<void> {
+    if (session.queuedMessages && session.queuedMessages.length > 0) return
+    await new Promise<void>((resolve) => {
+      session.resolveQueuedMessage = resolve
+    })
   }
 
   /** 动态切换活跃查询的权限模式 */
