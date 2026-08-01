@@ -1,6 +1,11 @@
 # Agent Runtime 系统配置能力差异矩阵（Pi vs Proma vs AI SDK vs Claude）
 
-> 更新于 2026-08-01（第五轮：纳入 P0-2/3/4 统一命令菜单/引用体系/统一 Files、思考默认收起；确认 collaboration 四 runtime 对齐；Proma/AI SDK 上下文压缩自研落地）。 基于 `apps/electron/src/main/lib/` 源码梳理，参考 `~/LLM/Proma` 上游（v0.16.5）实现。 核心结论：**权限、Plan、AskUser、Goal、SubAgent、MCP、Collaboration、WebSearch/WebFetch、WebBridge/ComputerUse、代理、记忆、上下文压缩 四大 runtime 已全部对齐**； 剩余差异：Skills 接入 Proma/AI SDK、流式期间追加输入、Pi 思考模式 thinkingLevel 配置入口。 输入交互层已统一：`/` 命令菜单（Skill/MCP/会话/文件/附件）、`@` 文件、`#` MCP、`&` 会话、`～` 待办/日程（P0-1 预留）、统一文件搜索 FileSearchBar 均为四 runtime 共享的 renderer 能力，不构成 runtime 差异。
+> 更新于 2026-08-01（第六轮：Proma/AI SDK Skill 支持自研落地，四 runtime Skill 全部对齐；Pi skill 白名单/按需展开移植完成）。
+> 基于 `apps/electron/src/main/lib/` 源码梳理，参考 `~/LLM/Proma` 上游（v0.16.5）实现。
+> 核心结论：**权限、Plan、AskUser、Goal、SubAgent、MCP、Collaboration、WebSearch/WebFetch、WebBridge/ComputerUse、代理、记忆、上下文压缩、Skills 四大 runtime 已全部对齐**；
+> 剩余差异：流式期间追加输入、Pi 思考模式 thinkingLevel 配置入口。
+> 输入交互层已统一：`/` 命令菜单（Skill/MCP/会话/文件/附件）、`@` 文件、`#` MCP、`&` 会话、`～` 待办/日程（P0-1 预留）、统一文件搜索 FileSearchBar 均为四 runtime 共享的 renderer 能力，不构成 runtime 差异。
+> 注意：自研 runtime（Proma/AI SDK）的 Skill 执行机制与 Pi/Claude 不同——前者靠「提示词 available_skills 清单 + ReadSkill 工具」由模型主动读取，后者靠 SDK 原生资源加载器注入；两者均为按需展开，行为对齐。
 
 ## 一、工具能力（是否注册/可用）
 
@@ -12,7 +17,7 @@
 | WebBridge / ComputerUse | ✅（`PI_RUNTIME_TOOL_CAPABILITIES.webBridge/computerUse` 开关） | ✅ | ✅ | ✅ |
 | MCP | ✅ 经 Proma bridge | ✅ | ✅ | ✅ |
 | Collaboration（协作子会话） | ✅ `buildPiCollaborationTools`（pi-agent-adapter） | ✅ `extraTools` 注入（agent-orchestrator runProviderAgnosticAgent） | ✅ `extraTools` 注入（ai-sdk-agent-adapter） | ✅ `injectAgentCollaborationMcpServer`（agent-orchestrator sendMessage） |
-| Skills | ✅（`workspaceSkillsDir → additionalSkillPaths`） | ❌ **无** | ❌ **无** | ✅ SDK 原生 |
+| Skills | ✅ `workspaceSkillsDir → additionalSkillPaths` + `skillsOverride` 白名单（`pi-skill-loader.ts`）+ `/skill:xxx` 按需展开 | ✅ **已补齐**：`ReadSkill` 工具（`skill-tool.ts`）+ `<available_skills>` 提示词注入 + `/skill:xxx`/skillMentions 指令块 | ✅ **已补齐**：同 Proma | ✅ SDK 原生 |
 | Plan / AskUser / Goal / SubAgent | ✅ 全部（SubAgent 委托 Proma 实现） | ✅ | ✅ | ✅ |
 | Agent 任务（tasks） | `tasks: false`（Pi 内置未启用） | — | — | — |
 
@@ -34,7 +39,7 @@
 
 ## 三、共用能力（四大 runtime 一致）
 
-- **权限模式**：共用 `AgentPermissionService`（auto/safe/plan/bypass + 会话白名单 + WebBridge/ComputerUse 逐次确认）；只读工具白名单含 `RecallMemory`
+- **权限模式**：共用 `AgentPermissionService`（auto/safe/plan/bypass + 会话白名单 + WebBridge/ComputerUse 逐次确认）；只读工具白名单含 `RecallMemory`、`ReadSkill`
 - **会话持久化**：共用 `agent-session-manager`（append/get/truncate SDKMessage）
 - **Plan 模式**：`EnterPlanMode`/`ExitPlanMode` + 本地兜底白名单
 - **AskUser / GoalCheckpoint / SubAgent**：回调注入方式一致
@@ -51,16 +56,14 @@
 
 | Runtime | Adapter | 工具桥/注册 | 系统提示词 |
 | --- | --- | --- | --- |
-| Pi | `adapters/pi-agent-adapter.ts`（含上下文压缩/CompactContext/thinkingLevel/collaboration） | `adapters/pi-tool-bridge.ts`（`PI_RUNTIME_TOOL_CAPABILITIES`）+ `adapters/pi-model-registry.ts`（代理）+ `packages/shared/src/utils/pi-compaction.ts`（压缩阈值） | `systemPromptOverride`（`<pi_proma_tools>`，含网页/记忆规则） |
-| Proma | `adapters/provider-agnostic-agent-adapter.ts` | `agent-runtime/tool-registry.ts`（`createCoreTools`）+ `extraTools`（collaboration） | `buildAgentSystemPrompt`（`AUTOMATION_TOOL_GUIDE`，含网页/记忆规则） |
-| AI SDK | `adapters/ai-sdk-agent-adapter.ts` + `agent-runtime/ai-sdk-runtime-core.ts` | 同上 createCoreTools + `extraTools`（collaboration） | 同上 |
+| Pi | `adapters/pi-agent-adapter.ts`（含上下文压缩/CompactContext/thinkingLevel/collaboration） | `adapters/pi-tool-bridge.ts`（`PI_RUNTIME_TOOL_CAPABILITIES`）+ `adapters/pi-model-registry.ts`（代理）+ `adapters/pi-skill-loader.ts`（skill 白名单/按需展开）+ `packages/shared/src/utils/pi-compaction.ts`（压缩阈值） | `systemPromptOverride`（`<pi_proma_tools>`，含网页/记忆规则） |
+| Proma | `adapters/provider-agnostic-agent-adapter.ts` | `agent-runtime/tool-registry.ts`（`createCoreTools({ workspaceSlug? })` 含 ReadSkill）+ `extraTools`（collaboration）+ `agent-runtime/tool-impls/skill-tool.ts`（ReadSkill 工具） | `buildAgentSystemPrompt`（`AUTOMATION_TOOL_GUIDE` + `<available_skills>`，含网页/记忆/skill 规则） |
+| AI SDK | `adapters/ai-sdk-agent-adapter.ts` + `agent-runtime/ai-sdk-runtime-core.ts` | 同上 createCoreTools({ workspaceSlug? }) + `extraTools`（collaboration）+ `skill-tool.ts` | 同上 buildAgentSystemPrompt（含 `<available_skills>`） |
 | Claude | `adapters/claude-agent-adapter.ts` | SDK 原生 + `agent-prompt-builder.ts` + `injectAgentCollaborationMcpServer` | claude_code preset + `buildSystemPrompt`（含记忆/协作指引） |
 | 协作子会话 | `lib/agent-collaboration-tools.ts`（工具构建/MCP 注入）、`lib/agent-collaboration-utils.ts`、`lib/agent-headless-runner-registry.ts`、`lib/agent-model-selection.ts`；会话元数据：`parentSessionId/rootSessionId/sourceDelegationId/delegationRole/Status/Depth/Goal` |  |  |
 
 ## 五、待办/建议
 
-- [ ] Skills 接入 Proma/AI SDK（目前仅 Pi/Claude 支持；需要 skill 发现 + 注入机制 + 受限读取工具 + 安全边界，独立设计，上游无现成方案）
-
+- [x] **Skills 接入 Proma/AI SDK**（2026-08-01 完成：ReadSkill 工具 + `<available_skills>` 提示词注入 + skillMentions 链路；Pi 侧同步移植 skillsOverride 白名单 + 按需展开）
 - [ ] 流式期间用户追加输入接入 Pi/Proma（当前仅 AI SDK/Claude 支持；Pi SDK 支持 `streamingBehavior`，需 orchestrator 层队列改造）
-
 - [ ] Pi 思考模式 thinkingLevel 配置入口（adapter API 已就绪；需在 Agent 设置/会话配置中暴露 thinkingLevel 选择器；展示层思考块已默认收起，需展开时点「展开思考」）
