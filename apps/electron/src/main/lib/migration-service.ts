@@ -35,6 +35,7 @@ import {
 import { listAgentWorkspaces, getAgentWorkspace, getAllWorkspaceSkills, getWorkspaceMcpConfig } from './agent-workspace-manager'
 import { listChannels, decryptApiKey } from './channel-manager'
 import type { AgentWorkspace } from '@proma/shared'
+import { normalizeProviderType } from '@proma/shared'
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
@@ -1027,6 +1028,8 @@ function _importChannels(tempDir: string, mode: MigrationMode) {
 
   for (const ch of imported.channels) {
     if (currentIds.has(ch['id'])) continue
+    // 归一化旧版 provider 值（anthropic-compatible / proma → custom），避免渲染层崩溃
+    const normalized = { ...ch, provider: normalizeProviderType(ch['provider'] as string | undefined | null) }
     if (mode === 'personal' && ch['apiKey']) {
       let encryptedKey = ''
       try {
@@ -1038,9 +1041,9 @@ function _importChannels(tempDir: string, mode: MigrationMode) {
       } catch {
         encryptedKey = ''
       }
-      current.channels.push({ ...ch, apiKey: encryptedKey })
+      current.channels.push({ ...normalized, apiKey: encryptedKey })
     } else {
-      current.channels.push({ ...ch, apiKey: '' })
+      current.channels.push({ ...normalized, apiKey: '' })
     }
   }
 

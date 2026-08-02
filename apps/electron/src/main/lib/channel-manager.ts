@@ -23,7 +23,7 @@ import type {
   ChannelPlanQuotaResult,
   ChannelPlanQuotaWindow,
 } from '@proma/shared'
-import { PROVIDER_DEFAULT_URLS } from '@proma/shared'
+import { PROVIDER_DEFAULT_URLS, normalizeProviderType } from '@proma/shared'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@proma/core'
@@ -140,7 +140,11 @@ export function listChannels(): Channel[] {
     return config.channels
   }
 
-  return config.channels
+  // 归一化历史/旧版 provider 值（anthropic-compatible / proma → custom），避免渲染层崩溃
+  return config.channels.map((c) => {
+    const normalized = normalizeProviderType(c.provider as string | undefined | null)
+    return normalized === c.provider ? c : { ...c, provider: normalized as ProviderType }
+  })
 }
 
 /**
@@ -150,7 +154,10 @@ export function listChannels(): Channel[] {
  */
 export function getChannelById(id: string): Channel | undefined {
   const config = readConfig()
-  return config.channels.find((c) => c.id === id)
+  const channel = config.channels.find((c) => c.id === id)
+  if (!channel) return undefined
+  const normalized = normalizeProviderType(channel.provider as string | undefined | null)
+  return normalized === channel.provider ? channel : { ...channel, provider: normalized as ProviderType }
 }
 
 /**

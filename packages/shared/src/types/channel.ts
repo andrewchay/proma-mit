@@ -57,6 +57,17 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   custom: 'OpenAI 兼容格式',
 }
 
+/**
+ * 归一化历史/旧版渠道的 provider 值到当前 ProviderType。
+ *
+ * 旧版本曾使用过 'anthropic-compatible'（Anthropic 兼容网关）与 'proma'（Proma 官方/OpenAI 兼容）
+ * 作为 provider 值；当前版本统一归入 custom。未知值原样返回（上层需容错）。
+ */
+export function normalizeProviderType(provider: string | undefined | null): ProviderType | string {
+  if (provider === 'anthropic-compatible' || provider === 'proma') return 'custom'
+  return (provider ?? 'custom') as ProviderType | string
+}
+
 /** Agent runtime 调用供应商时使用的协议族 */
 export type AgentProviderProtocol = 'anthropic-messages' | 'openai-chat' | 'google-generative'
 
@@ -202,9 +213,12 @@ export const AGENT_COMPATIBLE_PROVIDERS: ReadonlySet<ProviderType> = new Set<Pro
 
 /**
  * 判断供应商是否兼容指定 Agent runtime。未传 runtime 时保持旧行为：按 Claude runtime 判断。
+ *
+ * 容错：未知 provider（历史数据中可能残留旧值，如 'anthropic-compatible' / 'proma'）
+ * 一律按不兼容处理，避免 undefined.runtimes 崩溃。
  */
 export function isAgentCompatibleProvider(provider: ProviderType, runtime: AgentRuntime = 'claude'): boolean {
-  return AGENT_PROVIDER_RUNTIME_CAPABILITIES[provider].runtimes.includes(runtime)
+  return AGENT_PROVIDER_RUNTIME_CAPABILITIES[provider]?.runtimes.includes(runtime) ?? false
 }
 
 /** 获取指定 runtime 当前可用的 provider 列表 */
@@ -214,9 +228,10 @@ export function getAgentCompatibleProviders(runtime: AgentRuntime): ProviderType
     .map(([provider]) => provider as ProviderType)
 }
 
-/** 获取 provider 在 Agent runtime 下的协议族 */
+/** 获取 provider 在 Agent runtime 下的协议族；未知 provider 回退到 openai-chat，避免崩溃 */
 export function getAgentProviderProtocol(provider: ProviderType, runtime?: AgentRuntime): AgentProviderProtocol {
   const capability = AGENT_PROVIDER_RUNTIME_CAPABILITIES[provider]
+  if (!capability) return 'openai-chat'
   return runtime ? capability.runtimeProtocols?.[runtime] ?? capability.protocol : capability.protocol
 }
 
