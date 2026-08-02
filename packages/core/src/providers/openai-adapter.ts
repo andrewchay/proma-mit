@@ -23,7 +23,7 @@ import type {
 import { normalizeBaseUrl } from './url-utils.ts'
 
 /** 已知支持 stream_options.include_usage 的供应商 */
-const STREAM_USAGE_SUPPORTED_PROVIDERS = new Set(['openai', 'deepseek'])
+const STREAM_USAGE_SUPPORTED_PROVIDERS = new Set(['openai', 'deepseek', 'deepseek-openai'])
 
 /** 判断供应商是否支持流式 usage 统计 */
 function supportsStreamUsage(providerType?: string): boolean {

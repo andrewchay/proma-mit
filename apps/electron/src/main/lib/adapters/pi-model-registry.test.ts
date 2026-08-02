@@ -4,6 +4,7 @@ import { resolvePiApi, resolvePiBaseUrl, resolvePiMaxTokens, resolvePiProviderId
 describe('pi-model-registry', () => {
   test('maps Proma providers to Pi API families', () => {
     expect(resolvePiApi('openai')).toBe('openai-completions')
+    expect(resolvePiApi('deepseek-openai')).toBe('openai-completions')
     expect(resolvePiApi('zhipu')).toBe('openai-completions')
     expect(resolvePiApi('google')).toBe('google-generative-ai')
     expect(resolvePiApi('anthropic')).toBe('anthropic-messages')
@@ -12,6 +13,7 @@ describe('pi-model-registry', () => {
 
   test('normalizes OpenAI-compatible base URLs for Pi runtime', () => {
     expect(resolvePiBaseUrl('openai', 'https://api.openai.com/v1/')).toBe('https://api.openai.com/v1')
+    expect(resolvePiBaseUrl('deepseek-openai', 'https://api.deepseek.com/')).toBe('https://api.deepseek.com')
     expect(resolvePiBaseUrl('custom', 'https://gateway.example.com/v1/')).toBe('https://gateway.example.com/v1')
     expect(resolvePiBaseUrl('deepseek', 'https://api.deepseek.com/anthropic/')).toBe('https://api.deepseek.com/anthropic')
     expect(resolvePiBaseUrl('google', 'https://generativelanguage.googleapis.com')).toBe('https://generativelanguage.googleapis.com/v1beta')
@@ -27,8 +29,10 @@ describe('pi-model-registry', () => {
   test('applies provider-specific Pi auth and token limits', () => {
     expect(shouldUsePiAuthHeader('google')).toBe(false)
     expect(shouldUsePiAuthHeader('qwen')).toBe(true)
+    expect(shouldUsePiAuthHeader('deepseek-openai')).toBe(true)
     expect(resolvePiMaxTokens('qwen')).toBe(16_384)
     expect(resolvePiMaxTokens('kimi-coding')).toBe(32_768)
     expect(resolvePiMaxTokens('deepseek')).toBe(64_000)
+    expect(resolvePiMaxTokens('deepseek-openai')).toBe(64_000)
   })
 })

@@ -2,18 +2,18 @@
  * 模板与安装副本均只保存 DSL Definition，凭证继续由目标工作区的渠道/MCP 配置托管。
  */
 import { randomUUID } from 'node:crypto'
-import {
-  type WorkflowDefinition,
-  type WorkflowTemplate,
-  type WorkflowTemplateInstallation,
-  type WorkflowTemplatePublishInput,
+import type {
+  WorkflowDefinition,
+  WorkflowTemplate,
+  WorkflowTemplateInstallation,
+  WorkflowTemplatePublishInput,
 } from '@proma/shared'
 import { exportWorkflowDefinition, importWorkflowDefinition } from '@proma/shared/workflow'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getWorkflowTemplateInstallationPath, getWorkflowTemplatePath, getWorkflowTemplatesDir } from './config-paths'
 import { readJsonFileSafe, writeJsonFileAtomic } from './safe-file'
 import { getWorkflowDefinition, saveWorkflowDefinition } from './workflow-service'
-import { readdirSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
 
 function templateId(input?: string): string {
   const value = input?.trim() || `template-${randomUUID()}`
@@ -38,6 +38,14 @@ export function listWorkflowTemplates(): WorkflowTemplate[] {
       try { return [getTemplate(entry.name.slice(0, -5))] } catch (error) { console.error(`[Workflow] 跳过无法读取的 Template: ${entry.name}`, error); return [] }
     })
     .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/** 删除本地模板。已安装的 Workflow 副本不受影响，仍可独立编辑和运行。 */
+export function deleteWorkflowTemplate(templateId: string): void {
+  const path = getWorkflowTemplatePath(templateId)
+  if (!existsSync(path)) throw new Error(`Workflow Template 不存在: ${templateId}`)
+  rmSync(path, { force: true })
+  console.log(`[Workflow] 已删除 Template: ${templateId}`)
 }
 
 /** 从已发布流程发布或更新一个本地模板。 */

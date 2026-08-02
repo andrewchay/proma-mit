@@ -19,7 +19,7 @@ import { executeWorkflowRun } from './workflow-run-executor'
 import { proposeWorkflowPatches } from './workflow-designer-service'
 import { getWorkflowIdentityDirectory, saveWorkflowIdentityDirectory } from './workflow-identity-service'
 import { triggerWorkflowEvent } from './workflow-event-service'
-import { installWorkflowTemplate, installWorkflowTemplateBatch, listWorkflowTemplates, previewWorkflowTemplateUpgrade, publishWorkflowTemplate, rollbackWorkflowTemplate, upgradeWorkflowTemplate } from './workflow-template-service'
+import { deleteWorkflowTemplate, installWorkflowTemplate, installWorkflowTemplateBatch, listWorkflowTemplates, previewWorkflowTemplateUpgrade, publishWorkflowTemplate, rollbackWorkflowTemplate, upgradeWorkflowTemplate } from './workflow-template-service'
 import {
   cancelWorkflowRun,
   createWorkflowRun,
@@ -55,6 +55,7 @@ export function registerWorkflowIpcHandlers(): void {
   })
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.LIST_TEMPLATES, () => listWorkflowTemplates())
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.PUBLISH_TEMPLATE, (_event, workflowId: string, input: WorkflowTemplatePublishInput) => publishWorkflowTemplate(workflowId, input))
+  ipcMain.handle(WORKFLOW_IPC_CHANNELS.DELETE_TEMPLATE, (_event, templateId: string) => deleteWorkflowTemplate(templateId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE, (_event, input: { templateId: string; workspaceId: string; workflowId?: string }) => installWorkflowTemplate(input.templateId, input.workspaceId, input.workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE_BATCH, (_event, input: { templateId: string; workspaceIds: string[] }) => installWorkflowTemplateBatch(input.templateId, input.workspaceIds))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.UPGRADE_TEMPLATE, (_event, workflowId: string) => upgradeWorkflowTemplate(workflowId))

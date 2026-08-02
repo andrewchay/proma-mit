@@ -402,6 +402,7 @@ export const WORKFLOW_IPC_CHANNELS = {
   IMPORT_DEFINITION: 'workflow:import-definition',
   LIST_TEMPLATES: 'workflow:list-templates',
   PUBLISH_TEMPLATE: 'workflow:publish-template',
+  DELETE_TEMPLATE: 'workflow:delete-template',
   INSTALL_TEMPLATE: 'workflow:install-template',
   INSTALL_TEMPLATE_BATCH: 'workflow:install-template-batch',
   UPGRADE_TEMPLATE: 'workflow:upgrade-template',

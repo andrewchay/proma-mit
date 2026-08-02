@@ -1,13 +1,15 @@
 /**
  * AskUserBanner — Agent AskUserQuestion 交互式问答横幅
  *
+ * 视觉参考：选项采用卡片式 Radio / Checkbox 排版，label 与 description 纵向堆叠，
+ * 选中态以蓝色边框 + 浅蓝背景呈现，与单选/多选语义一致。
  * 多问题用顶部 Tab 切换，选项竖向排列。
  * 键盘：↑↓ 选择选项，Enter 确认当前问题（最后一题提交，否则翻页）。
  */
 
 import * as React from 'react'
 import { useAtom, useSetAtom } from 'jotai'
-import { Hand, Send, X } from 'lucide-react'
+import { CheckCircle2, Circle, CheckSquare2, Square, Hand, Send, X, ArrowRight } from 'lucide-react'
 import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
@@ -189,22 +191,27 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
 
   const getAnswer = (idx: number): QuestionAnswer => answers.get(idx) ?? EMPTY_ANSWER
 
-  const handleSubmit = async (): Promise<void> => {
+  const buildAnswersRecord = (): Record<string, string> => {
+    const answersRecord: Record<string, string> = {}
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i]
+      if (!q) continue
+      const answer = getAnswer(i)
+      const key = q.question || String(i)
+      if (answer.showCustom && answer.customText.trim()) {
+        answersRecord[key] = answer.customText.trim()
+      } else if (answer.selected.length > 0) {
+        answersRecord[key] = answer.selected.join(', ')
+      }
+    }
+    return answersRecord
+  }
+
+  const handleSubmit = async (skip = false): Promise<void> => {
     if (submitting) return
     setSubmitting(true)
     try {
-      const answersRecord: Record<string, string> = {}
-      for (let i = 0; i < questions.length; i++) {
-        const q = questions[i]
-        if (!q) continue
-        const answer = getAnswer(i)
-        const key = q.question || String(i)
-        if (answer.showCustom && answer.customText.trim()) {
-          answersRecord[key] = answer.customText.trim()
-        } else if (answer.selected.length > 0) {
-          answersRecord[key] = answer.selected.join(', ')
-        }
-      }
+      const answersRecord = skip ? {} : buildAnswersRecord()
       await window.electronAPI.respondAskUser({ requestId: request.requestId, answers: answersRecord })
       setAllRequests((prev) => {
         const map = new Map(prev)
@@ -221,7 +228,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     }
   }
 
-  submitRef.current = handleSubmit
+  submitRef.current = () => void handleSubmit(false)
 
   const hasValidAnswers = questions.some((_, idx) => {
     const a = getAnswer(idx)
@@ -236,11 +243,11 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   }
 
   return (
-    <div className={`mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200 ${isTakeover ? 'ring-1 ring-amber-500/40' : ''}`}>
+    <div className={`mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200 border border-border/50 ${isTakeover ? 'ring-1 ring-amber-500/40' : ''}`}>
       {/* 头部 + Tab 栏 */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-2">
-          <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {isTakeover && <Hand className="size-4 text-amber-600" />}
             {isTakeover ? '请你接管敏感操作' : 'Proma Agent 需要你的输入'}
           </span>
@@ -320,33 +327,46 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
             map.set(activeTab, { ...cur, customText: text })
             return map
           })}
-          onSubmit={isLastTab ? handleSubmit : goNextTab}
+          onSubmit={isLastTab ? () => void handleSubmit(false) : goNextTab}
         />
       </div>
 
       {/* 底部 */}
-      <div className="flex items-center justify-end gap-1.5 px-4 pb-3">
-        <span className="text-[10px] text-muted-foreground/40 mr-auto">
-          ↑↓ 选择 · Enter {isLastTab ? '确认' : '下一个'}
+      <div className="flex items-center justify-between gap-2 px-4 pb-3">
+        <span className="text-[10px] text-muted-foreground/40">
+          ↑↓ 选择 · Enter {isLastTab ? '提交' : '下一个'}
         </span>
-        {isLastTab && (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleSubmit}
-            disabled={submitting || !hasValidAnswers}
-            className="h-7 px-3 text-xs"
-          >
-            <Send className="size-3 mr-1" />
-            {isTakeover ? '完成并继续' : '确认'}
-          </Button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {isLastTab && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleSubmit(true)}
+                disabled={submitting}
+                className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground"
+              >
+                跳过
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => void handleSubmit(false)}
+                disabled={submitting || !hasValidAnswers}
+                className="h-7 px-3 text-xs"
+              >
+                {isTakeover ? '完成并继续' : '提交'}
+                <ArrowRight className="size-3 ml-1" />
+              </Button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-/** 单个问题卡片（竖向选项） */
+/** 单个问题卡片（卡片式 Radio / Checkbox） */
 function QuestionCard({
   question,
   questionIndex,
@@ -386,56 +406,34 @@ function QuestionCard({
         <p className="text-sm text-foreground">{question.question}</p>
       </div>
 
-      {/* 竖向选项 */}
-      <div className="flex flex-col gap-1">
+      {/* 选项卡片列表 */}
+      <div className="flex flex-col gap-1.5">
         {question.options.map((option, idx) => {
           const isSelected = answer.selected.includes(option.label)
           const isFocused = focusedIndex === idx
           return (
-            <button
+            <OptionRow
               key={option.label}
-              type="button"
-              className={`
-                flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-all outline-none text-left
-                ${isSelected
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'bg-muted/50 text-foreground/80 hover:bg-muted'
-                }
-                ${isFocused ? 'ring-2 ring-primary/50 ring-offset-1 ring-offset-card' : ''}
-              `}
+              index={idx}
+              multiSelect={!!question.multiSelect}
+              selected={isSelected}
+              focused={isFocused}
+              label={option.label}
+              description={option.description}
               onClick={() => onToggleOption(option.label)}
-            >
-              <span className={`text-[10px] shrink-0 ${isSelected ? 'text-primary-foreground/60' : 'text-muted-foreground/50'}`}>
-                {idx + 1}
-              </span>
-              <span className="font-medium">{option.label}</span>
-              {option.description && (
-                <span className={`text-[11px] ${isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                  {option.description}
-                </span>
-              )}
-            </button>
+            />
           )
         })}
 
         {/* "其他" */}
-        <button
-          type="button"
-          className={`
-            flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-all outline-none text-left
-            ${answer.showCustom
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'bg-muted/50 text-foreground/80 hover:bg-muted'
-            }
-            ${focusedIndex === optionCount ? 'ring-2 ring-primary/50 ring-offset-1 ring-offset-card' : ''}
-          `}
+        <OptionRow
+          index={optionCount}
+          multiSelect={!!question.multiSelect}
+          selected={answer.showCustom}
+          focused={focusedIndex === optionCount}
+          label="其他..."
           onClick={onToggleCustom}
-        >
-          <span className={`text-[10px] shrink-0 ${answer.showCustom ? 'text-primary-foreground/60' : 'text-muted-foreground/50'}`}>
-            {optionCount + 1}
-          </span>
-          <span className="font-medium">其他...</span>
-        </button>
+        />
       </div>
 
       {/* 自由文本输入 */}
@@ -466,5 +464,60 @@ function QuestionCard({
         </div>
       )}
     </div>
+  )
+}
+
+/** 选项卡片行（Radio / Checkbox） */
+function OptionRow({
+  index,
+  multiSelect,
+  selected,
+  focused,
+  label,
+  description,
+  onClick,
+}: {
+  index: number
+  multiSelect: boolean
+  selected: boolean
+  focused: boolean
+  label: string
+  description?: string
+  onClick: () => void
+}): React.ReactElement {
+  const Indicator = multiSelect
+    ? (selected ? CheckSquare2 : Square)
+    : (selected ? CheckCircle2 : Circle)
+
+  return (
+    <button
+      type="button"
+      className={`
+        group flex items-start gap-3 w-full px-3 py-2.5 rounded-lg border text-left transition-all outline-none
+        ${selected
+          ? 'bg-primary/5 border-primary text-primary-foreground shadow-sm'
+          : 'bg-card border-border/60 text-foreground/80 hover:border-primary/40 hover:bg-muted/30'
+        }
+        ${focused ? 'ring-2 ring-primary/40 ring-offset-1 ring-offset-card' : ''}
+      `}
+      onClick={onClick}
+    >
+      <span className={`mt-0.5 shrink-0 ${selected ? 'text-primary' : 'text-muted-foreground/50 group-hover:text-primary/60'}`}>
+        <Indicator className="size-4" />
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className={`text-xs font-medium ${selected ? 'text-foreground' : 'text-foreground/90'}`}>
+          {label}
+        </div>
+        {description && (
+          <div className={`text-[11px] mt-0.5 leading-relaxed ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>
+            {description}
+          </div>
+        )}
+      </div>
+      <span className={`text-[10px] shrink-0 mt-0.5 ${selected ? 'text-primary/60' : 'text-muted-foreground/40'}`}>
+        {index + 1}
+      </span>
+    </button>
   )
 }

@@ -69,7 +69,7 @@ export function detectThinkingCapability(
   }
 
   // DeepSeek 其它模型（v3 / reasoner 等）：旧 manual 协议
-  if (providerType === 'deepseek') {
+  if (providerType === 'deepseek' || providerType === 'deepseek-openai') {
     return { mode: 'manual-only', disableStrategy: 'explicit-disabled' }
   }
 

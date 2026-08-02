@@ -116,7 +116,7 @@ export function listChannels(): Channel[] {
 
   // 首次使用：如果没有 DeepSeek 渠道，自动创建预设
   const hasDeepSeek = config.channels.some(
-    (c) => c.provider === 'deepseek' || c.baseUrl.includes('api.deepseek.com'),
+    (c) => c.provider === 'deepseek' || c.provider === 'deepseek-openai' || c.baseUrl.includes('api.deepseek.com'),
   )
   if (!hasDeepSeek) {
     const now = Date.now()
@@ -282,6 +282,7 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
       case 'minimax':
         return await testAnthropicCompatible(channel.baseUrl, apiKey, proxyUrl, channel.provider)
       case 'openai':
+      case 'deepseek-openai':
       case 'zhipu':
       case 'doubao':
       case 'qwen':
@@ -441,6 +442,7 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
       case 'minimax':
         return await testAnthropicCompatible(input.baseUrl, input.apiKey, proxyUrl, input.provider)
       case 'openai':
+      case 'deepseek-openai':
       case 'zhipu':
       case 'doubao':
       case 'qwen':
@@ -477,6 +479,7 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
       case 'minimax':
         return await fetchAnthropicCompatibleModels(input.baseUrl, input.apiKey, proxyUrl, input.provider)
       case 'openai':
+      case 'deepseek-openai':
       case 'zhipu':
       case 'doubao':
       case 'qwen':
@@ -718,7 +721,12 @@ function formatDeepSeekBalanceAmount(currency: string | undefined, value: string
 }
 
 /** 查询 DeepSeek 账户余额（CNY 优先）。 */
-async function queryDeepSeekPlanQuota(apiKey: string, baseUrl: string, proxyUrl?: string): Promise<ChannelPlanQuotaResult> {
+async function queryDeepSeekPlanQuota(
+  apiKey: string,
+  baseUrl: string,
+  provider: ProviderType,
+  proxyUrl?: string,
+): Promise<ChannelPlanQuotaResult> {
   const fetchFn = getFetchFn(proxyUrl)
   let requestUrl = 'https://api.deepseek.com/user/balance'
   try {
@@ -733,7 +741,7 @@ async function queryDeepSeekPlanQuota(apiKey: string, baseUrl: string, proxyUrl?
   }))
   const responseText = await response.text()
   if (!response.ok) {
-    return createUnsupportedPlanQuota('deepseek', `DeepSeek 余额查询失败: HTTP ${response.status}`)
+    return createUnsupportedPlanQuota(provider, `DeepSeek 余额查询失败: HTTP ${response.status}`)
   }
 
   let data: {
@@ -749,13 +757,13 @@ async function queryDeepSeekPlanQuota(apiKey: string, baseUrl: string, proxyUrl?
   try {
     data = JSON.parse(responseText)
   } catch {
-    return createUnsupportedPlanQuota('deepseek', 'DeepSeek 余额响应格式错误')
+    return createUnsupportedPlanQuota(provider, 'DeepSeek 余额响应格式错误')
   }
 
-  if (data.error?.message) return createUnsupportedPlanQuota('deepseek', data.error.message)
+  if (data.error?.message) return createUnsupportedPlanQuota(provider, data.error.message)
 
   const balances = data.balance_infos ?? []
-  if (balances.length === 0) return createUnsupportedPlanQuota('deepseek', 'DeepSeek 未返回余额数据')
+  if (balances.length === 0) return createUnsupportedPlanQuota(provider, 'DeepSeek 未返回余额数据')
 
   const preferred = balances.find((item) => (item.currency ?? '').toUpperCase() === 'CNY')
     ?? balances.find((item) => Number(item.total_balance ?? 0) > 0)
@@ -773,7 +781,7 @@ async function queryDeepSeekPlanQuota(apiKey: string, baseUrl: string, proxyUrl?
 
   return {
     supported: true,
-    provider: 'deepseek',
+    provider,
     planName: 'DeepSeek 账户余额',
     windows: [{
       type: 'custom',
@@ -870,6 +878,14 @@ function withQuotaTimeout(init: RequestInit, timeoutMs = 10000): RequestInit {
 }
 
 /**
+ * 判断 Base URL 是否指向 DeepSeek 官方域名。
+ * 用于自定义 OpenAI 兼容渠道也能识别为 DeepSeek 并查询余额。
+ */
+function isDeepSeekBaseUrl(baseUrl: string): boolean {
+  return /api\.deepseek\.com/i.test(baseUrl)
+}
+
+/**
  * 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口）。
  * 仅支持本地已知端点；失败返回 supported:false 供 UI 隐藏。
  */
@@ -886,8 +902,10 @@ export async function getChannelPlanQuota(channelId: string): Promise<ChannelPla
   }
 
   try {
-    if (channel.provider === 'deepseek') {
-      return await queryDeepSeekPlanQuota(apiKey, channel.baseUrl, proxyUrl)
+    if (channel.provider === 'deepseek' || channel.provider === 'deepseek-openai' || (channel.provider === 'custom' && isDeepSeekBaseUrl(channel.baseUrl))) {
+      // 自定义 OpenAI 兼容渠道使用 DeepSeek 域名时，余额结果按 DeepSeek 展示
+      const providerLabel = channel.provider === 'custom' ? 'deepseek' : channel.provider
+      return await queryDeepSeekPlanQuota(apiKey, channel.baseUrl, providerLabel, proxyUrl)
     }
     if (channel.provider === 'kimi-coding' || channel.baseUrl.includes('api.kimi.com/coding')) {
       return await queryKimiPlanQuota(apiKey, proxyUrl)

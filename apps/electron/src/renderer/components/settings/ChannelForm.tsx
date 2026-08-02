@@ -70,7 +70,7 @@ interface ChannelFormProps {
 }
 
 /** 所有可选供应商 */
-const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'deepseek', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'minimax', 'doubao', 'qwen', 'custom']
+const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'minimax', 'doubao', 'qwen', 'custom']
 
 /** 供应商选项（用于 SettingsSelect） */
 const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((p) => ({
@@ -83,6 +83,7 @@ const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
   anthropic: '/v1/messages',
   openai: '/chat/completions',
   deepseek: '/messages',
+  'deepseek-openai': '/chat/completions',
   google: '/v1beta/models/{model}:generateContent',
   'kimi-api': '/messages',
   'kimi-coding': '/messages',
@@ -264,7 +265,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     setTestResult(null)
     // 预设模型：首次切换到对应 provider 且无模型时自动填充
     if (models.length === 0) {
-      if (p === 'deepseek') {
+      if (p === 'deepseek' || p === 'deepseek-openai') {
         setModels([
           { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', enabled: true },
           { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', enabled: true },

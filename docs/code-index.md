@@ -14,7 +14,7 @@
 
 Proma 是一个集成通用 AI Agent 的下一代人工智能桌面应用，基于 Electron + React + TypeScript + Bun 构建。
 
-- **仓库根目录**：`/Users/chaihao/LLM/proma-mit`
+- **仓库根目录**：`/Users/chaihao/.proma/agent-workspaces/proma-mit/project`
 - **Monorepo 工具**：Bun workspace
 - **总代码规模**：
   - `apps/electron/src/main/lib/`：约 28,410 行（主进程服务层）

@@ -8,13 +8,28 @@ import type { Channel, ChannelPlanQuotaResult, ProviderType } from '@proma/share
 
 const PLAN_QUOTA_PROVIDERS = new Set<ProviderType>([
   'deepseek',
+  'deepseek-openai',
   'kimi-coding',
 ])
+
+/** 判断 Base URL 是否指向 DeepSeek 官方域名 */
+function isDeepSeekBaseUrl(baseUrl: string): boolean {
+  return /api\.deepseek\.com/i.test(baseUrl)
+}
+
+/** 判断 Base URL 是否指向 Kimi Coding Plan */
+function isKimiCodingBaseUrl(baseUrl: string): boolean {
+  return /api\.kimi\.com\/coding/i.test(baseUrl)
+}
 
 export function supportsChannelPlanQuota(channel: Pick<Channel, 'provider' | 'baseUrl'> | null | undefined): boolean {
   if (!channel) return false
   if (PLAN_QUOTA_PROVIDERS.has(channel.provider)) return true
-  return channel.baseUrl.includes('api.kimi.com/coding')
+  // 自定义 OpenAI 兼容渠道若实际是 DeepSeek/Kimi，也支持余额查询
+  if (channel.provider === 'custom') {
+    return isDeepSeekBaseUrl(channel.baseUrl) || isKimiCodingBaseUrl(channel.baseUrl)
+  }
+  return isKimiCodingBaseUrl(channel.baseUrl)
 }
 
 const PLAN_QUOTA_CACHE_MS = 60 * 1000

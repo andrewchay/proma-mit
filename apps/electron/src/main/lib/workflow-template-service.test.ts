@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createAgentWorkspace, saveWorkspaceMcpConfig } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { publishWorkflowDefinition, saveWorkflowDefinition } from './workflow-service'
-import { installWorkflowTemplate, installWorkflowTemplateBatch, previewWorkflowTemplateUpgrade, publishWorkflowTemplate, rollbackWorkflowTemplate, upgradeWorkflowTemplate } from './workflow-template-service'
+import { installWorkflowTemplate, installWorkflowTemplateBatch, previewWorkflowTemplateUpgrade, publishWorkflowTemplate, rollbackWorkflowTemplate, upgradeWorkflowTemplate, deleteWorkflowTemplate } from './workflow-template-service'
 import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@proma/shared'
 
 const TEST_DIR = '/tmp/paa-workflow-template-test'
@@ -53,5 +53,20 @@ describe('Workflow Template 服务', () => {
     const result = installWorkflowTemplateBatch('batch-template', [target.id, 'missing-workspace', target.id])
     expect(result.results).toHaveLength(2)
     expect(result.results.map((item) => item.status)).toEqual(['installed', 'failed'])
+  })
+
+  test('删除模板只移除模板文件，不影响已安装副本', () => {
+    const source = createAgentWorkspace('源'); const skillDir = join(getWorkspaceSkillsDir(source.slug), 'project-review')
+    mkdirSync(skillDir, { recursive: true }); writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: project-review\nversion: 1.0.0\n---\n'); saveWorkspaceMcpConfig(source.slug, { servers: {} })
+    const flow = published(source.id); publishWorkflowTemplate(flow.id, { templateId: 'deletable-template', name: '可删除模板', version: '1.0.0' })
+    const target = createAgentWorkspace('目标')
+    const installed = installWorkflowTemplate('deletable-template', target.id, 'installed-from-deletable')
+
+    deleteWorkflowTemplate('deletable-template')
+
+    // 模板已删除
+    expect(() => publishWorkflowTemplate(flow.id, { templateId: 'deletable-template', name: '可删除模板', version: '1.0.0' })).not.toThrow()
+    // 已安装副本仍在
+    expect(saveWorkflowDefinition({ ...installed, name: '副本仍独立' })).toBeDefined()
   })
 })

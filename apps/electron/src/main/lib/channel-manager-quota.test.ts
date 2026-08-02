@@ -98,6 +98,78 @@ describe('getChannelPlanQuota', () => {
     })
   })
 
+  test('DeepSeek (OpenAI 兼容) 同样可查询 /user/balance', async () => {
+    writeFileSync(
+      join(testDir, 'channels.json'),
+      JSON.stringify({
+        version: 1,
+        channels: [makeChannel('ds-oa', 'deepseek-openai', 'https://api.deepseek.com')],
+      }),
+    )
+
+    let seenUrl = ''
+    const origFetch = globalThis.fetch
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      seenUrl = String(input)
+      void init
+      return Promise.resolve(new Response(JSON.stringify({
+        is_available: true,
+        balance_infos: [
+          { currency: 'CNY', total_balance: '10.00', granted_balance: '10', topped_up_balance: '0' },
+        ],
+      }), { status: 200 }))
+    }) as unknown as typeof fetch
+
+    const mod = await import('./channel-manager')
+    const result = await mod.getChannelPlanQuota('ds-oa')
+    globalThis.fetch = origFetch
+
+    expect(seenUrl).toBe('https://api.deepseek.com/user/balance')
+    expect(result.supported).toBe(true)
+    expect(result.provider).toBe('deepseek-openai')
+    expect(result.windows[0]).toMatchObject({
+      type: 'custom',
+      label: '账户余额',
+      remainingLabel: '¥10.00',
+    })
+  })
+
+  test('自定义 OpenAI 兼容渠道若 Base URL 是 DeepSeek，也能查余额', async () => {
+    writeFileSync(
+      join(testDir, 'channels.json'),
+      JSON.stringify({
+        version: 1,
+        channels: [makeChannel('ds-custom', 'custom', 'https://api.deepseek.com/v1')],
+      }),
+    )
+
+    let seenUrl = ''
+    const origFetch = globalThis.fetch
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      seenUrl = String(input)
+      void init
+      return Promise.resolve(new Response(JSON.stringify({
+        is_available: true,
+        balance_infos: [
+          { currency: 'CNY', total_balance: '5.00', granted_balance: '5', topped_up_balance: '0' },
+        ],
+      }), { status: 200 }))
+    }) as unknown as typeof fetch
+
+    const mod = await import('./channel-manager')
+    const result = await mod.getChannelPlanQuota('ds-custom')
+    globalThis.fetch = origFetch
+
+    expect(seenUrl).toBe('https://api.deepseek.com/user/balance')
+    expect(result.supported).toBe(true)
+    expect(result.provider).toBe('deepseek')
+    expect(result.windows[0]).toMatchObject({
+      type: 'custom',
+      label: '账户余额',
+      remainingLabel: '¥5.00',
+    })
+  })
+
   test('Kimi Coding 查询 /coding/v1/usages，返回 5H/每周窗口', async () => {
     writeFileSync(
       join(testDir, 'channels.json'),

@@ -17,6 +17,7 @@ const WORKFLOW_IPC_CHANNELS = {
   IMPORT_DEFINITION: 'workflow:import-definition',
   LIST_TEMPLATES: 'workflow:list-templates',
   PUBLISH_TEMPLATE: 'workflow:publish-template',
+  DELETE_TEMPLATE: 'workflow:delete-template',
   INSTALL_TEMPLATE: 'workflow:install-template',
   INSTALL_TEMPLATE_BATCH: 'workflow:install-template-batch',
   UPGRADE_TEMPLATE: 'workflow:upgrade-template',
@@ -538,6 +539,7 @@ export interface ElectronAPI {
   importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => Promise<import('@proma/shared').WorkflowDefinition>
   listWorkflowTemplates: () => Promise<import('@proma/shared').WorkflowTemplate[]>
   publishWorkflowTemplate: (workflowId: string, input: import('@proma/shared').WorkflowTemplatePublishInput) => Promise<import('@proma/shared').WorkflowTemplate>
+  deleteWorkflowTemplate: (templateId: string) => Promise<void>
   installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => Promise<import('@proma/shared').WorkflowDefinition>
   installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => Promise<import('@proma/shared').WorkflowTemplateBatchInstallResult>
   upgradeWorkflowTemplate: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition>
@@ -1602,6 +1604,7 @@ const electronAPI: ElectronAPI = {
   importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION, input),
   listWorkflowTemplates: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_TEMPLATES),
   publishWorkflowTemplate: (workflowId: string, input: import('@proma/shared').WorkflowTemplatePublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_TEMPLATE, workflowId, input),
+  deleteWorkflowTemplate: (templateId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.DELETE_TEMPLATE, templateId),
   installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE, input),
   installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE_BATCH, input),
   upgradeWorkflowTemplate: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.UPGRADE_TEMPLATE, workflowId),

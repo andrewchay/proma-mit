@@ -19,6 +19,7 @@ describe('Agent provider runtime capabilities', () => {
     expect(getAgentCompatibleProviders('proma').sort()).toEqual([
       'custom',
       'deepseek',
+      'deepseek-openai',
       'doubao',
       'kimi-api',
       'kimi-coding',
@@ -31,6 +32,7 @@ describe('Agent provider runtime capabilities', () => {
       'anthropic',
       'custom',
       'deepseek',
+      'deepseek-openai',
       'doubao',
       'google',
       'kimi-api',
@@ -44,6 +46,7 @@ describe('Agent provider runtime capabilities', () => {
       'anthropic',
       'custom',
       'deepseek',
+      'deepseek-openai',
       'doubao',
       'google',
       'kimi-api',
@@ -61,6 +64,9 @@ describe('Agent provider runtime capabilities', () => {
   test('DeepSeek 在 Claude 和 Proma runtime 下使用不同协议', () => {
     expect(getAgentProviderProtocol('deepseek', 'claude')).toBe('anthropic-messages')
     expect(getAgentProviderProtocol('deepseek', 'proma')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('deepseek-openai', 'proma')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('deepseek-openai', 'pi')).toBe('openai-chat')
+    expect(getAgentProviderProtocol('deepseek-openai', 'ai-sdk')).toBe('openai-chat')
     expect(getAgentProviderProtocol('kimi-api', 'claude')).toBe('anthropic-messages')
     expect(getAgentProviderProtocol('kimi-api', 'proma')).toBe('openai-chat')
     expect(getAgentProviderProtocol('kimi-coding', 'claude')).toBe('anthropic-messages')
@@ -85,6 +91,8 @@ describe('Agent provider runtime capabilities', () => {
     expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'claude', 'https://api.kimi.com/coding/v1/messages')).toBe('https://api.kimi.com/coding/v1/messages')
     expect(resolveAgentRuntimeBaseUrl('openai', 'proma', 'https://api.openai.com/v1/')).toBe('https://api.openai.com/v1')
     expect(resolveAgentRuntimeBaseUrl('deepseek', 'ai-sdk', 'https://api.deepseek.com/anthropic')).toBe('https://api.deepseek.com')
+    expect(resolveAgentRuntimeBaseUrl('deepseek-openai', 'proma', 'https://api.deepseek.com/')).toBe('https://api.deepseek.com')
+    expect(resolveAgentRuntimeBaseUrl('deepseek-openai', 'ai-sdk', 'https://api.deepseek.com/')).toBe('https://api.deepseek.com')
     expect(resolveAgentRuntimeBaseUrl('kimi-api', 'ai-sdk', 'https://api.moonshot.cn/anthropic/v1/messages')).toBe('https://api.moonshot.cn')
     expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'ai-sdk', 'https://api.kimi.com/coding/v1')).toBe('https://api.kimi.com/coding/v1')
     expect(resolveAgentRuntimeBaseUrl('kimi-coding', 'ai-sdk', 'https://api.kimi.com/coding/v1/chat/completions')).toBe('https://api.kimi.com/coding/v1')

@@ -14,6 +14,7 @@ export type ProviderType =
   | 'anthropic'
   | 'openai'
   | 'deepseek'
+  | 'deepseek-openai'
   | 'google'
   | 'kimi-api'
   | 'kimi-coding'
@@ -30,6 +31,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
   deepseek: 'https://api.deepseek.com/anthropic',
+  'deepseek-openai': 'https://api.deepseek.com',
   google: 'https://generativelanguage.googleapis.com',
   'kimi-api': 'https://api.moonshot.cn/anthropic',
   'kimi-coding': 'https://api.kimi.com/coding/v1',
@@ -47,6 +49,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
   deepseek: 'DeepSeek',
+  'deepseek-openai': 'DeepSeek (OpenAI 兼容)',
   google: 'Google',
   'kimi-api': 'Kimi API (Anthropic 协议)',
   'kimi-coding': 'Kimi Coding Plan',
@@ -116,6 +119,14 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
       'ai-sdk': 'openai-chat',
     },
     runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: false,
+    supportsStreamUsage: true,
+    verifiedForAgentRuntime: false,
+  },
+  'deepseek-openai': {
+    protocol: 'openai-chat',
+    runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: false,
     supportsStreamUsage: true,

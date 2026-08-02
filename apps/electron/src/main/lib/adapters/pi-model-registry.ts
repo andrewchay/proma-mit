@@ -50,6 +50,7 @@ export function resolvePiApi(provider: ProviderType): Api {
   if (provider === 'google') return 'google-generative-ai'
   if (
     provider === 'openai' ||
+    provider === 'deepseek-openai' ||
     provider === 'zhipu' ||
     provider === 'doubao' ||
     provider === 'qwen' ||
@@ -72,6 +73,7 @@ export function resolvePiBaseUrl(provider: ProviderType, baseUrl: string): strin
   }
   if (
     provider === 'openai' ||
+    provider === 'deepseek-openai' ||
     provider === 'zhipu' ||
     provider === 'doubao' ||
     provider === 'qwen' ||
