@@ -7,11 +7,12 @@
  * - projects: 企业级项目管理模块（独立工作模块，暂为占位入口）
  * - tasks: 任务模块（独立工作模块，暂为占位入口）
  * - calendar: 日程模块（独立工作模块，暂为占位入口）
+ * - automation: 自动任务 / 运行中心（独立工作模块）
  */
 
 import { atom } from 'jotai'
 
-export type ActiveView = 'conversations' | 'workflow' | 'projects' | 'tasks' | 'calendar'
+export type ActiveView = 'conversations' | 'workflow' | 'projects' | 'tasks' | 'calendar' | 'automation'
 
 /** 当前活跃视图（不持久化，每次启动默认显示对话） */
 export const activeViewAtom = atom<ActiveView>('conversations')

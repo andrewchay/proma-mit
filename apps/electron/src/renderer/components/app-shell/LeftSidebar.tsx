@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks, Clock3, FolderKanban } from 'lucide-react'
+import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks, FolderKanban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -216,10 +216,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [pinnedExpanded, setPinnedExpanded] = React.useState(true)
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
-  /** 自动任务区块展开/收起 */
-  const [automationExpanded, setAutomationExpanded] = React.useState(true)
-  /** 自动任务区块：运行中的任务记录 */
-  const [runningTasks, setRunningTasks] = React.useState<import('@proma/shared').RunRecord[]>([])
   /** 正在新建项目的名称输入（项目管理视图内联新建） */
   const [creatingProject, setCreatingProject] = React.useState(false)
   const [newProjectName, setNewProjectName] = React.useState('')
@@ -381,36 +377,15 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   }, [setConversations, setUserProfile, setAgentSessions])
 
   // 自动任务区块：加载运行中的任务（started / progress / waiting_action）
-  const loadRunningTasks = React.useCallback((): void => {
-    window.electronAPI
-      .listRunRecords({ limit: 100 })
-      .then((records) => {
-        const active = records.filter(
-          (r) => r.status === 'started' || r.status === 'progress' || r.status === 'waiting_action'
-        )
-        setRunningTasks((prev) => {
-          // 若两次结果相同则保持引用，避免不必要重渲染
-          if (prev.length === active.length && prev.every((p, i) => p.id === active[i]?.id)) return prev
-          return active
-        })
-      })
-      .catch(console.error)
-  }, [])
-
-  React.useEffect(() => {
-    loadRunningTasks()
-  }, [loadRunningTasks])
-
-  // 窗口聚焦时重新同步列表，修复长时间后前后端不一致
+  // 窗口聚焦时重新同步会话列表，修复长时间后前后端不一致
   React.useEffect(() => {
     const handleFocus = (): void => {
       window.electronAPI.listConversations().then(setConversations).catch(console.error)
       window.electronAPI.listAgentSessions().then(setAgentSessions).catch(console.error)
-      loadRunningTasks()
     }
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
-  }, [setConversations, setAgentSessions, loadRunningTasks])
+  }, [setConversations, setAgentSessions])
 
   /** 处理导航项点击 */
   const handleItemClick = (item: SidebarItemId): void => {
@@ -1281,55 +1256,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </Tooltip>
       </div>
 
-      {/* Agent 模式：简约主导航（项目管理 / 任务 / 日程）+ Agent 配置入口
-          三个入口均为独立企业级工作模块主视图（activeView），
-          侧边栏下方项目列表为常驻独立模块，不受入口切换影响 */}
-      {mode === 'agent' && (
-        <div className="px-3 pt-2 flex flex-col gap-1">
-          {/* 主导航：紧凑入口 */}
-          <div className="flex items-center gap-1">
-            {([
-              { id: 'projects', label: '项目管理', icon: <FolderKanban size={13} /> },
-              { id: 'tasks', label: '任务', icon: <ListChecks size={13} /> },
-              { id: 'calendar', label: '日程', icon: <CalendarDays size={13} /> },
-            ] as const).map(({ id, label, icon }) => {
-              const active = activeView === id
-              return (
-                <button
-                  key={id}
-                  onClick={() => {
-                    // 切换主视图；侧边栏项目列表保持常驻
-                    setActiveView(id)
-                  }}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[12px] font-medium transition-colors duration-100 titlebar-no-drag',
-                    active
-                      ? 'bg-foreground/[0.08] text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-                      : 'text-foreground/45 hover:bg-foreground/[0.04] hover:text-foreground/70'
-                  )}
-                >
-                  {icon}
-                  <span className="truncate">{label}</span>
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Agent 配置入口：Agent 技能 → skill/mcp/记忆配置（单个数量徽标） */}
-          <button
-            onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
-            className="group w-full flex items-center gap-2 px-2.5 py-1.5 rounded-[10px] text-[12px] text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
-          >
-            <Zap size={13} className="text-foreground/40" />
-            <span className="flex-1 text-left">Agent 技能</span>
-            {capabilities && (
-              <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
-                {capabilities.skills.length}
-              </span>
-            )}
-          </button>
-        </div>
-      )}
+      {/* 工作模块已移至侧边栏底部项目列表下方 */}
 
       {/* 新对话/新会话按钮 + 搜索按钮 */}
       <div className="px-3 pt-2 flex items-center gap-1.5">
@@ -1400,7 +1327,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           <>
             {/* 标题 + 新建项目 */}
               <div className="px-3 pt-2 pb-1 flex items-center justify-between flex-shrink-0">
-                <span className="text-[11px] font-medium text-foreground/40 select-none">项目</span>
+                <span className="text-[11px] font-medium text-foreground/40 select-none">进行中的项目</span>
                 <div className="flex items-center gap-0.5">
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1585,59 +1512,48 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                 )}
               </div>
 
-              {/* ===== 自动任务（项目树之后的独立可折叠区块） ===== */}
+              {/* ===== 工作模块 ===== */}
               <div className="px-2 pt-2 pb-1 border-t border-border/40 flex-shrink-0">
-                <button
-                  onClick={() => setAutomationExpanded((prev) => !prev)}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
-                >
-                  <ChevronRight size={13} className={cn('flex-shrink-0 text-foreground/35 transition-transform duration-150', automationExpanded && 'rotate-90')} />
-                  <Clock3 size={13} className="text-foreground/40" />
-                  <span className="flex-1 text-left">自动任务</span>
-                  {runningTasks.length > 0 && (
-                    <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-blue-500/10 text-[10px] text-blue-500 tabular-nums">
-                      {runningTasks.length}
-                    </span>
-                  )}
-                </button>
-                {automationExpanded && (
-                  <div className="ml-[13px] pl-1 border-l-2 border-primary/15 mt-0.5 pb-0.5">
-                    {runningTasks.length === 0 ? (
-                      <div className="px-2 py-2 text-[11px] text-foreground/30 select-none">
-                        暂无运行中的自动任务
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-0.5">
-                        {runningTasks.slice(0, 5).map((task) => (
-                          <button
-                            key={task.id}
-                            onClick={() => { setSettingsTab('run-center'); setSettingsOpen(true) }}
-                            className="group flex items-center gap-2 px-2.5 py-[7px] rounded-md text-left transition-colors titlebar-no-drag hover:bg-foreground/[0.05]"
-                          >
-                            <span
-                              className={cn(
-                                'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
-                                task.status === 'waiting_action' ? 'sidebar-breathe-blocked text-orange-500' : 'sidebar-breathe-running text-blue-500'
-                              )}
-                            />
-                            <span className="flex-1 min-w-0">
-                              <span className="block truncate text-[12px] text-foreground/80">{task.title}</span>
-                              {task.detail && <span className="block truncate text-[10px] text-foreground/40">{task.detail}</span>}
-                            </span>
-                          </button>
-                        ))}
-                        {runningTasks.length > 5 && (
-                          <button
-                            onClick={() => { setSettingsTab('run-center'); setSettingsOpen(true) }}
-                            className="px-2.5 py-1 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors text-left titlebar-no-drag"
-                          >
-                            查看全部 ({runningTasks.length})
-                          </button>
+                <div className="px-2 py-1 text-[11px] font-medium text-foreground/40 select-none">
+                  工作模块
+                </div>
+                <div className="flex flex-col gap-0.5 mt-1">
+                  {([
+                    { id: 'calendar', label: '日程管家', icon: CalendarDays },
+                    { id: 'projects', label: '项目管理', icon: FolderKanban },
+                    { id: 'tasks', label: '任务', icon: ListChecks },
+                    { id: 'automation', label: '自动任务', icon: Zap },
+                  ] as const).map(({ id, label, icon: Icon }) => {
+                    const active = activeView === id
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => setActiveView(id)}
+                        className={cn(
+                          'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                          active
+                            ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                            : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
                         )}
-                      </div>
+                      >
+                        <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
+                        <span className="flex-1 text-left">{label}</span>
+                      </button>
+                    )
+                  })}
+                  <button
+                    onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
+                    className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+                  >
+                    <Bot size={16} className="text-foreground/40" />
+                    <span className="flex-1 text-left">Agent 技能</span>
+                    {capabilities && (
+                      <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
+                        {capabilities.skills.length}
+                      </span>
                     )}
-                  </div>
-                )}
+                  </button>
+                </div>
               </div>
           </>
         </div>
