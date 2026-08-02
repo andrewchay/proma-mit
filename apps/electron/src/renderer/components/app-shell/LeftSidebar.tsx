@@ -216,6 +216,49 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [pinnedExpanded, setPinnedExpanded] = React.useState(true)
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
+  /** 工作模块区域高度（px，可拖分隔条调整） */
+  const [workModuleHeight, setWorkModuleHeight] = React.useState(190)
+  /** 工作模块是否折叠（收到底部只剩分隔条） */
+  const [workModuleCollapsed, setWorkModuleCollapsed] = React.useState(false)
+  /** 拖动分隔条时记录起始位置，避免 drag 抖动 */
+  const workModuleDragRef = React.useRef<{ startY: number; startHeight: number } | null>(null)
+
+  /** 工作模块分隔条拖动开始 */
+  const handleWorkModuleResizeStart = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    workModuleDragRef.current = { startY: e.clientY, startHeight: workModuleHeight }
+    const onMove = (ev: MouseEvent): void => {
+      const drag = workModuleDragRef.current
+      if (!drag) return
+      // 工作模块贴底（外层 p-2=8px），高度 = 窗口底部 - 8px padding - 当前鼠标 Y；受窗口高度约束
+      const newHeight = Math.max(0, Math.min(window.innerHeight - 8 - ev.clientY, window.innerHeight - 128))
+      setWorkModuleHeight(newHeight)
+      // 拖到接近底部（高度过小）自动进入折叠态
+      setWorkModuleCollapsed(newHeight < 24)
+    }
+    const onUp = (): void => {
+      workModuleDragRef.current = null
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'row-resize'
+  }, [workModuleHeight])
+
+  /** 切换工作模块折叠/展开（点击分隔条箭头） */
+  const handleToggleWorkModule = React.useCallback(() => {
+    setWorkModuleCollapsed((prev) => {
+      const next = !prev
+      if (!next) setWorkModuleHeight(190)
+      return next
+    })
+  }, [])
+
   /** 正在新建项目的名称输入（项目管理视图内联新建） */
   const [creatingProject, setCreatingProject] = React.useState(false)
   const [newProjectName, setNewProjectName] = React.useState('')
@@ -1512,47 +1555,73 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                 )}
               </div>
 
-              {/* ===== 工作模块 ===== */}
-              <div className="px-2 pt-2 pb-1 border-t border-border/40 flex-shrink-0">
-                <div className="px-2 py-1 text-[11px] font-medium text-foreground/40 select-none">
-                  工作模块
-                </div>
-                <div className="flex flex-col gap-0.5 mt-1">
-                  {([
-                    { id: 'calendar', label: '日程管家', icon: CalendarDays },
-                    { id: 'projects', label: '项目管理', icon: FolderKanban },
-                    { id: 'tasks', label: '任务', icon: ListChecks },
-                    { id: 'automation', label: '自动任务', icon: Zap },
-                  ] as const).map(({ id, label, icon: Icon }) => {
-                    const active = activeView === id
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => setActiveView(id)}
-                        className={cn(
-                          'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
-                          active
-                            ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-                            : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
-                        )}
-                      >
-                        <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
-                        <span className="flex-1 text-left">{label}</span>
-                      </button>
-                    )
-                  })}
+              {/* ===== 工作模块（可拖动分隔条调整高度 / 收到底部 / 点击箭头展开） ===== */}
+              <div className="flex-shrink-0">
+                {/* 分隔条：可拖动 + 点击箭头折叠/展开 */}
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  onMouseDown={handleWorkModuleResizeStart}
+                  className="group/resize relative flex items-center justify-center h-[7px] cursor-row-resize select-none titlebar-no-drag"
+                >
+                  <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-border/50 group-hover/resize:bg-primary/40 transition-colors" />
                   <button
-                    onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
-                    className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleToggleWorkModule() }}
+                    className="relative z-10 flex items-center justify-center size-4 rounded-full bg-background border border-border/60 text-foreground/35 hover:text-foreground/70 hover:border-primary/40 transition-colors shadow-sm"
+                    title={workModuleCollapsed ? '展开工作模块' : '收起到底部'}
                   >
-                    <Bot size={16} className="text-foreground/40" />
-                    <span className="flex-1 text-left">Agent 技能</span>
-                    {capabilities && (
-                      <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
-                        {capabilities.skills.length}
-                      </span>
-                    )}
+                    <ChevronDown size={10} className={cn('transition-transform duration-150', workModuleCollapsed && 'rotate-180')} />
                   </button>
+                </div>
+
+                {/* 工作模块内容：折叠时高度 0 隐藏，拖动时按高度撑开 */}
+                <div
+                  className="overflow-hidden"
+                  style={{ height: workModuleCollapsed ? 0 : Math.max(workModuleHeight, 64) }}
+                >
+                  <div className="px-2 pt-1 pb-1">
+                    <div className="px-2 py-1 text-[11px] font-medium text-foreground/40 select-none">
+                      工作模块
+                    </div>
+                    <div className="flex flex-col gap-0.5 mt-1">
+                      {([
+                        { id: 'calendar', label: '日程管家', icon: CalendarDays },
+                        { id: 'projects', label: '项目管理', icon: FolderKanban },
+                        { id: 'tasks', label: '任务', icon: ListChecks },
+                        { id: 'automation', label: '自动任务', icon: Zap },
+                      ] as const).map(({ id, label, icon: Icon }) => {
+                        const active = activeView === id
+                        return (
+                          <button
+                            key={id}
+                            onClick={() => setActiveView(id)}
+                            className={cn(
+                              'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                              active
+                                ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                                : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+                            )}
+                          >
+                            <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
+                            <span className="flex-1 text-left">{label}</span>
+                          </button>
+                        )
+                      })}
+                      <button
+                        onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
+                        className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+                      >
+                        <Bot size={16} className="text-foreground/40" />
+                        <span className="flex-1 text-left">Agent 技能</span>
+                        {capabilities && (
+                          <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
+                            {capabilities.skills.length}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
           </>
