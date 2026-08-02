@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSetAtom } from 'jotai'
+import { agentSessionsAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
+import { conversationsAtom } from '@/atoms/chat-atoms'
 
 type MigrationComponent = 'sessions' | 'skills' | 'mcp' | 'channels' | 'chattools'
 
@@ -75,6 +78,10 @@ export function useMigrationImport(initialFilePath?: string | null): UseMigratio
   const [conflictResolution, setConflictResolution] = useState<'overwrite' | 'skip'>('overwrite')
   const [importConfirming, setImportConfirming] = useState(false)
   const [importResult, setImportResult] = useState<{ success: boolean; error?: string } | null>(null)
+
+  const setAgentSessions = useSetAtom(agentSessionsAtom)
+  const setAgentWorkspaces = useSetAtom(agentWorkspacesAtom)
+  const setConversations = useSetAtom(conversationsAtom)
 
   const isV2 = importPreview?.manifest.version === '2.0' && !!importPreview.workspaces
 
@@ -159,6 +166,19 @@ export function useMigrationImport(initialFilePath?: string | null): UseMigratio
         conflictResolution: hasConflicts ? conflictResolution : undefined,
         ...(isV2 ? { workspaceMappings } : {}),
       })
+      // 导入成功后立即刷新侧边栏数据（workspaces / agent sessions / chat conversations）
+      try {
+        const [workspaces, sessions, conversations] = await Promise.all([
+          window.electronAPI.listAgentWorkspaces(),
+          window.electronAPI.listAgentSessions(),
+          window.electronAPI.listConversations(),
+        ])
+        setAgentWorkspaces(workspaces)
+        setAgentSessions(sessions)
+        setConversations(conversations)
+      } catch (refreshErr) {
+        console.error('[迁移] 导入成功后刷新数据失败:', refreshErr)
+      }
       setImportResult({ success: true })
       setImportPreview(null)
     } catch (err) {
@@ -166,7 +186,7 @@ export function useMigrationImport(initialFilePath?: string | null): UseMigratio
     } finally {
       setImportConfirming(false)
     }
-  }, [importPreview, pathMappings, workspaceMappings, isV2, conflictResolution, hasConflicts])
+  }, [importPreview, pathMappings, workspaceMappings, isV2, conflictResolution, hasConflicts, setAgentWorkspaces, setAgentSessions, setConversations])
 
   const handlePathMapping = useCallback((originalPath: string, newValue: string | null) => {
     setPathMappings((prev) => ({ ...prev, [originalPath]: newValue }))
