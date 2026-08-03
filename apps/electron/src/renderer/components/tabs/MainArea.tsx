@@ -10,6 +10,7 @@ import * as React from 'react'
 import { useAtomValue, useSetAtom, useAtom } from 'jotai'
 import { tabsAtom, activeTabIdAtom, activeTabAtom } from '@/atoms/tab-atoms'
 import { Panel } from '@/components/app-shell/Panel'
+import { cn } from '@/lib/utils'
 import { SettingsDialog } from '@/components/settings'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { previewPanelOpenMapAtom, previewSplitRatioAtom } from '@/atoms/preview-atoms'
@@ -17,8 +18,13 @@ import { PreviewPanel } from '@/components/diff/PreviewPanel'
 import { TabBar } from './TabBar'
 import { TabContent } from './TabContent'
 import { activeViewAtom } from '@/atoms/active-view'
+import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
+import { appModeAtom } from '@/atoms/app-mode'
+import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
 import { WorkflowView } from '@/components/workflow/WorkflowView'
 import { ModulePlaceholderView } from '@/components/projects/ModulePlaceholderView'
+import { ProjectView } from '@/components/projects/ProjectView'
+import { CalendarModuleView } from '@/components/calendar/CalendarModuleView'
 import { AutomationCenterView } from '@/components/automation/AutomationCenterView'
 
 export function MainArea(): React.ReactElement {
@@ -27,6 +33,20 @@ export function MainArea(): React.ReactElement {
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const activeTab = useAtomValue(activeTabAtom)
   const activeView = useAtomValue(activeViewAtom)
+  const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
+  const appMode = useAtomValue(appModeAtom)
+  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const sidePanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
+
+  // 左右两侧贴边规则：
+  // - 侧边栏展开时主区左侧无间隔，不留左圆角；折叠（rail）时保留圆角
+  // - 右侧文件面板打开时主区右侧无间隔，不留右圆角；否则保留圆角（窗口边缘）
+  const rightPanelActive = appMode === 'agent' && !!currentSessionId && sidePanelOpen
+  const mainPanelClassName = cn(
+    'bg-content-area shadow-xl',
+    sidebarCollapsed ? 'rounded-l-2xl' : 'rounded-l-none',
+    rightPanelActive ? 'rounded-r-none' : 'rounded-r-2xl'
+  )
 
   // Tab 内容渲染降级为非紧急：TabBar 立即高亮新 tab，主区域昂贵渲染（含 PreviewPanel 中
   // DiffTabContent → ProseMirror editor mount + Shiki tokenize）让出主线程，避免点击 tab
@@ -133,21 +153,29 @@ export function MainArea(): React.ReactElement {
   return (
     <>
       {activeView === 'workflow' ? (
-        <Panel variant="grow" className="bg-content-area rounded-2xl shadow-xl">
+        <Panel variant="grow" className={mainPanelClassName}>
           <WorkflowView />
         </Panel>
-      ) : activeView === 'projects' || activeView === 'tasks' || activeView === 'calendar' ? (
-        <Panel variant="grow" className="bg-content-area rounded-2xl shadow-xl">
-          <ModulePlaceholderView moduleId={activeView} />
+      ) : activeView === 'projects' ? (
+        <Panel variant="grow" className={mainPanelClassName}>
+          <ProjectView />
+        </Panel>
+      ) : activeView === 'calendar' ? (
+        <Panel variant="grow" className={mainPanelClassName}>
+          <CalendarModuleView />
+        </Panel>
+      ) : activeView === 'tasks' ? (
+        <Panel variant="grow" className={mainPanelClassName}>
+          <ModulePlaceholderView moduleId="tasks" />
         </Panel>
       ) : activeView === 'automation' ? (
-        <Panel variant="grow" className="bg-content-area rounded-2xl shadow-xl">
+        <Panel variant="grow" className={mainPanelClassName}>
           <AutomationCenterView />
         </Panel>
       ) : (
       <Panel
         variant="grow"
-        className="bg-content-area rounded-2xl shadow-xl"
+        className={mainPanelClassName}
       >
         <div className="flex flex-1 min-h-0 relative overflow-hidden" data-split-container>
           {/* 左侧：TabBar + TabContent（始终保持在同一 DOM 位置，避免 Tab 切换时 unmount）

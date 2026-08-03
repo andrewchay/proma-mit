@@ -1,7 +1,7 @@
 # Proma 代码索引与说明
 
-> 事实校准：2026-07-28
-> Electron 包版本：v0.10.4
+> 事实校准：2026-08-04
+> Electron 包版本：v0.11.1
 > 范围：整个 Monorepo 的源码结构、核心模块职责、数据流与已知问题。
 
 本文档是未来重构与功能扩展的基础地图。阅读前建议先看根目录 `AGENTS.md` 了解项目约定。
@@ -27,7 +27,7 @@ Proma 是一个集成通用 AI Agent 的下一代人工智能桌面应用，基�
 ```
 proma-mit/
 ├── apps/
-│   └── electron/              # Electron 桌面应用（@proma/electron@0.10.4）
+│   └── electron/              # Electron 桌面应用（@proma/electron@0.11.1）
 │       ├── src/
 │       │   ├── main/          # 主进程 + 服务层
 │       │   ├── preload/       # IPC 上下文桥接
@@ -218,6 +218,33 @@ proma-mit/
 | `git-diff-service.ts` | ~300 | Git diff 生成与解析 |
 | `error-patterns.ts` | ~150 | 常见错误模式匹配 |
 
+#### 工作模块（项目管理 / 日程管家 / 日历同步）
+
+> 由 ~/LLM/PAA 迁移接入（2026-08-04）。IPC 注册见 `work-module-ipc-handlers.ts`，渲染层见下方 §3.4「工作模块」。
+
+| 文件 | 职责 |
+|---|---|
+| `work-module-ipc-handlers.ts` | 工作模块 IPC 注册：schedule / calendar-sync / project 三组通道，含 Todo Provider（飞书/钉钉）初始化、外部状态轮询、任务自动同步、设置变更重初始化 |
+| `schedule-service.ts` | 日程管家：事件/任务 CRUD（JSONL）、重复事件展开、冲突检测、Agent 自然语言查询 |
+| `schedule-nlp.ts` | 日程自然语言解析（时间/地点/类别提取）→ 结构化事件 |
+| `calendar-sync-service.ts` | 多日历源（Google/Apple/Outlook/本地）同步配置、冲突策略、增量同步 |
+| `calendar-eventkit-bridge.ts` | macOS EventKit 桥接：权限请求、系统日历读取、双向同步（依赖 `resources/read-calendar.swift`） |
+| `reminder-service.ts` / `reminder-ipc-handlers.ts` | 智能提醒：日程冲突 / Deadline 分级提醒 / 去重，扫描启动/停止 IPC |
+| `project-types.ts` | 项目/任务/子任务/会议纪要/用户映射/Brief 回执类型定义 |
+| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.proma/projects/paa.db`） |
+| `project-service.ts` | 项目管理主服务：项目/任务/子任务 CRUD、会议纪要导入与 AI 提取、看板、进度、模板、摘要发送 |
+| `project-summary-service.ts` | 项目周报/摘要生成 |
+| `project-alert-service.ts` | 项目告警（高风险任务等） |
+| `project-agent-service.ts` | 会议纪要 → 任务草稿提取（复用渠道 LLM） |
+| `project-sync-service.ts` / `project-auto-sync.ts` | 飞书/钉钉 Todo 同步与本地自动回写 |
+| `project-polling-service.ts` | 外部任务状态轮询与定时风险评估 |
+| `project-risk-service.ts` / `project-risk-report-service.ts` | 任务风险评估 / 项目风险报告（LLM 生成） |
+| `dingtalk-todo-provider.ts` / `feishu-todo-provider.ts` | 钉钉/飞书 Todo Provider 工厂 |
+| `dingtalk-doc-fetcher.ts` | 钉钉云文档拉取 → 任务提取 |
+| `brief-service.ts` / `brief-callback-server.ts` | 核心任务 Brief 回执（H5 表单 + 回调服务，默认端口 8765） |
+| `dingtalk-connectivity.ts` | 钉钉/飞书连通性自检 |
+| `contact-search-service.ts` | 飞书/钉钉通讯录搜索（负责人选择器） |
+
 ---
 
 ## 3. 渲染进程代码索引（`apps/electron/src/renderer/`）
@@ -246,6 +273,7 @@ proma-mit/
 | `useScrollPositionMemory.ts` | 滚动位置记忆 |
 | `useSyncActiveTabSideEffects.ts` | Tab 切换副作用同步 |
 | `useWorkspaceActions.ts` | 工作区操作 |
+| `useProjectActions.ts` | 项目切换与创建共享逻辑（工作区 → 项目语义收敛） |
 | `useMigrationImport.ts` | 数据迁移导入 |
 
 ### 3.3 状态管理（`atoms/`）
@@ -253,6 +281,7 @@ proma-mit/
 | 文件 | 职责 |
 |---|---|
 | `active-view.ts` | 主面板视图 |
+| `paa-atoms.ts` | 工作模块状态：日程事件/任务/冲突、日历同步源/事件/日志 |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态、模型选择、附件 |
 | `agent-atoms.ts` | Agent 会话、流式状态、工作区、权限/AskUser 请求队列 |
@@ -440,6 +469,8 @@ proma-mit/
 |---|---|
 | `components/ui/` | shadcn/ui + Radix UI 原始组件（~30 个） |
 | `components/welcome/` | 欢迎页 |
+| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告）、`ModulePlaceholderView.tsx`（任务占位） |
+| `components/calendar/` | 工作模块-日程管家：`CalendarModuleView.tsx`（子视图切换）、`ScheduleView.tsx`、`EventCreatePanel.tsx`、`CalendarSyncView.tsx` |
 | `components/onboarding/` | 新手引导 |
 | `components/tutorial/` | 教程 |
 | `components/quick-task/` | 快速任务窗口 |
@@ -489,6 +520,7 @@ proma-mit/
 | `types/chat-tool.ts` | Chat 工具类型 |
 | `types/github.ts` | GitHub 类型 |
 | `types/installer.ts` | 安装包类型 |
+| `types/work-module.ts` | 工作模块 IPC 通道常量与类型（schedule / calendar-sync / project） |
 | `agent/index.ts` | Agent 工具匹配、事件转换、流状态应用 |
 | `config/index.ts` | 配置常量 |
 | `constants/permission-rules.ts` | 权限规则 |
@@ -599,6 +631,8 @@ proma-mit/
 ├── attachments/{convId}/      # 附件
 ├── user-profile.json          # 用户档案
 ├── settings.json              # 应用设置
+├── calendar/                  # 日程管家：events.jsonl / tasks.jsonl
+├── projects/                  # 项目管理：paa.db（sql.js SQLite，写后落盘）
 └── default-skills/            # 默认 Skills 缓存
 ```
 
@@ -756,11 +790,11 @@ bun run dist:fast
 
 ## 9. 版本信息
 
-- `@proma/electron`: `0.9.46`
-- `@proma/core`: `0.2.9`
-- `@proma/shared`: `0.1.19`
+- `@proma/electron`: `0.11.1`
+- `@proma/core`: `0.2.13`
+- `@proma/shared`: `0.1.46`
 - `@proma/ui`: `0.1.4`
-- Electron: `^39.5.1`
+- Electron: `^39.8.10`
 - React: `^18.3.1`
 - Bun: `1.3.14`（当前环境）
 

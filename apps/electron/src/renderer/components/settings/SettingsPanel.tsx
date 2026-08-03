@@ -30,6 +30,7 @@ import {
   Clock3,
   Puzzle,
   History,
+  CalendarDays,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -66,6 +67,7 @@ import { AutomationSettings } from "./AutomationSettings";
 import { ProactiveSchedulerSettings } from './ProactiveSchedulerSettings'
 import { ExtensionSettings } from './ExtensionSettings'
 import { RunCenterSettings } from './RunCenterSettings'
+import { CalendarSyncSettings } from './CalendarSyncSettings'
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -143,6 +145,11 @@ const RUN_CENTER_TAB: TabItem = {
   label: '运行记录',
   icon: <History size={16} />,
 };
+const CALENDAR_TAB: TabItem = {
+  id: 'calendar',
+  label: '日历同步',
+  icon: <CalendarDays size={16} />,
+};
 
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
@@ -195,6 +202,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ExtensionSettings />
     case 'run-center':
       return <RunCenterSettings />
+    case 'calendar':
+      return <CalendarSyncSettings />
   }
 }
 
@@ -268,6 +277,7 @@ export function SettingsPanel({
     SCHEDULER_TAB,
     EXTENSIONS_TAB,
     RUN_CENTER_TAB,
+    CALENDAR_TAB,
     OPERATION_AUDIT_TAB,
     TOOLS_TAB,
     VOICE_INPUT_TAB,

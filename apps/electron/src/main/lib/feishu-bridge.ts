@@ -2095,6 +2095,12 @@ class FeishuBridge {
     }
   }
 
+  /** 项目摘要仅允许发送到当前 Bot 已绑定的 chatId，避免误投递到未知会话。 */
+  async sendProjectSummary(chatId: string, markdown: string): Promise<void> {
+    if (!this.chatBindings.has(chatId)) throw new Error('飞书目标未绑定到当前 Bot')
+    await this.sendTextMessage(chatId, markdown)
+  }
+
   // ===== 状态更新与广播 =====
 
   private updateStatus(partial: Partial<FeishuBridgeState>): void {

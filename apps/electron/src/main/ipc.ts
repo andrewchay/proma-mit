@@ -3691,4 +3691,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.SET_PROJECT_MUTED, async (_event, workspace: string, muted: boolean) => {
     return getDynamicIslandService().setProjectMuted(workspace, muted)
   })
+
+  // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
+  const { registerWorkModuleIpcHandlers } = require('./lib/work-module-ipc-handlers') as { registerWorkModuleIpcHandlers: () => void }
+  registerWorkModuleIpcHandlers()
+
+  // ===== 智能提醒系统 =====
+  const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }
+  registerReminderIpcHandlers()
 }

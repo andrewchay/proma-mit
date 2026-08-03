@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1140,6 +1140,112 @@ export interface ElectronAPI {
   getDynamicIslandProjectMuted: (workspace?: string) => Promise<import('@proma/shared').DynamicIslandProjectMutedResult>
   /** 设置/取消项目静音 */
   setDynamicIslandProjectMuted: (workspace: string, muted: boolean) => Promise<import('@proma/shared').DynamicIslandProjectMutedResult>
+
+  // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
+  paa: {
+    // --- 日程管家 ---
+    schedule: {
+      listEvents: (filter?: unknown) => Promise<unknown[]>
+      getEvent: (id: string) => Promise<unknown | null>
+      createEvent: (input: unknown) => Promise<unknown>
+      updateEvent: (id: string, patch: unknown) => Promise<unknown | null>
+      deleteEvent: (id: string) => Promise<boolean>
+      bulkCreateEvents: (inputs: unknown[]) => Promise<unknown[]>
+      getUpcomingEvents: (minutesAhead?: number) => Promise<unknown[]>
+      agentQuery: (query: string, context: unknown) => Promise<string>
+      // 任务管理
+      listTasks: (filter?: unknown) => Promise<unknown[]>
+      getTask: (id: string) => Promise<unknown | null>
+      createTask: (input: unknown) => Promise<unknown>
+      updateTask: (id: string, patch: unknown) => Promise<unknown | null>
+      updateTaskStatus: (id: string, status: string) => Promise<unknown | null>
+      deleteTask: (id: string) => Promise<boolean>
+      // 冲突检测
+      detectConflicts: (event: unknown, excludeId?: string) => Promise<unknown>
+      listEventsExpanded: (filter?: unknown, maxInstances?: number) => Promise<unknown[]>
+      // NLP 自然语言解析
+      parseNlp: (text: string) => Promise<unknown>
+      createFromNlp: (text: string) => Promise<unknown>
+    }
+    // --- 日历同步 ---
+    calendarSync: {
+      listSources: () => Promise<unknown[]>
+      getSource: (id: string) => Promise<unknown | null>
+      createSource: (input: unknown) => Promise<unknown>
+      updateSource: (id: string, patch: unknown) => Promise<unknown | null>
+      deleteSource: (id: string) => Promise<boolean>
+      syncSource: (sourceId: string) => Promise<unknown>
+      syncAll: () => Promise<unknown[]>
+      resolveConflict: (eventId: string, strategy: string) => Promise<unknown>
+      getLastSync: (sourceId: string) => Promise<unknown>
+      checkPermission: () => Promise<unknown>
+      requestPermission: () => Promise<unknown>
+      readSystemCalendar: (options: unknown) => Promise<unknown>
+      syncFromSystem: (options: unknown) => Promise<unknown>
+    }
+    // --- 项目管理 ---
+    project: {
+      listProjects: () => Promise<unknown[]>
+      getProject: (id: string) => Promise<unknown | null>
+      createProject: (input: unknown) => Promise<unknown>
+      updateProject: (id: string, patch: unknown) => Promise<unknown | null>
+      deleteProject: (id: string) => Promise<boolean>
+      listTasks: (projectId: string, filter?: unknown) => Promise<unknown[]>
+      getTask: (id: string) => Promise<unknown | null>
+      createTask: (projectId: string, input: unknown) => Promise<unknown>
+      createSubTask: (parentId: string, input: unknown) => Promise<unknown | null>
+      listSubTasks: (parentId: string) => Promise<unknown[]>
+      createExecutionSubTask: (taskId: string, input: unknown) => Promise<unknown | null>
+      listExecutionSubTasks: (taskId: string) => Promise<unknown[]>
+      updateExecutionSubTask: (id: string, patch: unknown) => Promise<unknown | null>
+      deleteExecutionSubTask: (id: string) => Promise<boolean>
+      listDingTalkTodoRetries: (projectId: string) => Promise<unknown[]>
+      retryDingTalkTodo: (eventId: string) => Promise<boolean>
+      listTaskDependencies: (projectId: string) => Promise<unknown[]>
+      createTaskDependency: (taskId: string, dependsOnTaskId: string, type?: string) => Promise<unknown>
+      deleteTaskDependency: (id: string) => Promise<boolean>
+      listTaskBlockers: (projectId: string) => Promise<unknown[]>
+      listProjectWorkItems: (projectId: string) => Promise<unknown[]>
+      listMyWork: (assigneeUserId: string) => Promise<unknown[]>
+      listProjectAlerts: (projectId: string) => Promise<unknown[]>
+      listProjectActivities: (projectId: string) => Promise<unknown[]>
+      generateProjectSummary: (projectId: string) => Promise<unknown>
+      listProjectTemplates: () => Promise<unknown[]>
+      createProjectTemplate: (projectId: string, name: string, description?: string) => Promise<unknown>
+      applyProjectTemplate: (templateId: string, projectName: string) => Promise<unknown>
+      sendProjectSummaryToDingTalk: (projectId: string) => Promise<unknown>
+      sendProjectSummaryToFeishu: (projectId: string, chatId: string) => Promise<unknown>
+      updateTask: (id: string, patch: unknown) => Promise<unknown | null>
+      deleteTask: (id: string) => Promise<boolean>
+      createTaskDraft: (projectId: string, input: unknown) => Promise<unknown>
+      confirmTaskDraft: (id: string) => Promise<unknown | null>
+      rejectTaskDraft: (id: string) => Promise<boolean>
+      importMeetingNote: (projectId: string, input: unknown) => Promise<unknown>
+      listMeetingNotes: (projectId: string) => Promise<unknown[]>
+      getMeetingNote: (id: string) => Promise<unknown | null>
+      importAndExtract: (projectId: string, title: string, content: string) => Promise<unknown>
+      fetchDingTalkDoc: (projectId: string, docUrl: string) => Promise<unknown>
+      listBriefReceipts: (projectId: string) => Promise<unknown[]>
+      listBriefReceiptsByTask: (taskId: string) => Promise<unknown[]>
+      sendBrief: (taskId: string) => Promise<unknown>
+      testDingTalkConnection: (sendTestMessage?: boolean) => Promise<unknown>
+      testFeishuConnection: () => Promise<unknown>
+      getKanbanBoard: (projectId: string) => Promise<unknown>
+      getProjectProgress: (projectId: string) => Promise<unknown>
+      saveUserMapping: (input: unknown) => Promise<unknown>
+      getUserMapping: (paaUserId: string) => Promise<unknown | null>
+      listUserMappings: () => Promise<unknown[]>
+      deleteUserMapping: (paaUserId: string) => Promise<boolean>
+      syncTask: (taskId: string, platform: 'feishu' | 'dingtalk') => Promise<unknown>
+      getSyncStatus: (taskId: string, platform: 'feishu' | 'dingtalk') => Promise<unknown>
+      assessTaskRisk: (taskId: string) => Promise<unknown>
+      saveCompletionNotes: (taskId: string, notes: string) => Promise<unknown>
+      startPolling: (projectId: string, platform: 'feishu' | 'dingtalk', intervalMs?: number) => Promise<unknown>
+      stopPolling: (projectId: string, platform: 'feishu' | 'dingtalk') => Promise<unknown>
+      generateRiskReport: (projectId: string) => Promise<unknown>
+      searchContactsAll: (keyword?: string) => Promise<unknown>
+    }
+  }
 }
 
 interface MigrationExportResult {
@@ -2530,6 +2636,109 @@ const electronAPI: ElectronAPI = {
 
   setDynamicIslandProjectMuted: (workspace: string, muted: boolean) => {
     return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.SET_PROJECT_MUTED, workspace, muted)
+  },
+
+  // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
+  paa: {
+    // --- 日程管家 ---
+    schedule: {
+      listEvents: (filter) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.LIST_EVENTS, filter),
+      getEvent: (id) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.GET_EVENT, id),
+      createEvent: (input) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.CREATE_EVENT, input),
+      updateEvent: (id, patch) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.UPDATE_EVENT, id, patch),
+      deleteEvent: (id) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.DELETE_EVENT, id),
+      bulkCreateEvents: (inputs) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.BULK_CREATE_EVENTS, inputs),
+      getUpcomingEvents: (minutesAhead) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.GET_UPCOMING_EVENTS, minutesAhead),
+      agentQuery: (query, context) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.AGENT_QUERY, query, context),
+      listTasks: (filter) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.LIST_TASKS, filter),
+      getTask: (id) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.GET_TASK, id),
+      createTask: (input) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.CREATE_TASK, input),
+      updateTask: (id, patch) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.UPDATE_TASK, id, patch),
+      updateTaskStatus: (id, status) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.UPDATE_TASK_STATUS, id, status),
+      deleteTask: (id) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.DELETE_TASK, id),
+      detectConflicts: (event, excludeId) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.DETECT_CONFLICTS, event, excludeId),
+      listEventsExpanded: (filter, maxInstances) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.LIST_EVENTS_EXPANDED, filter, maxInstances),
+      parseNlp: (text) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.PARSE_NLP, text),
+      createFromNlp: (text) => ipcRenderer.invoke(SCHEDULE_IPC_CHANNELS.CREATE_FROM_NLP, text),
+    },
+    // --- 日历同步 ---
+    calendarSync: {
+      listSources: () => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.LIST_SOURCES),
+      getSource: (id) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.GET_SOURCE, id),
+      createSource: (input) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.CREATE_SOURCE, input),
+      updateSource: (id, patch) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.UPDATE_SOURCE, id, patch),
+      deleteSource: (id) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.DELETE_SOURCE, id),
+      syncSource: (sourceId) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.SYNC_SOURCE, sourceId),
+      syncAll: () => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.SYNC_ALL),
+      resolveConflict: (eventId, strategy) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.RESOLVE_CONFLICT, eventId, strategy),
+      getLastSync: (sourceId) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.GET_LAST_SYNC, sourceId),
+      checkPermission: () => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.CHECK_PERMISSION),
+      requestPermission: () => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.REQUEST_PERMISSION),
+      readSystemCalendar: (options) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.READ_SYSTEM_CALENDAR, options),
+      syncFromSystem: (options) => ipcRenderer.invoke(CALENDAR_SYNC_IPC_CHANNELS.SYNC_FROM_SYSTEM, options),
+    },
+    // --- 项目管理 ---
+    project: {
+      listProjects: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECTS),
+      getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      createProject: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_PROJECT, input),
+      updateProject: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_PROJECT, id, patch),
+      deleteProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_PROJECT, id),
+      listTasks: (projectId, filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASKS, projectId, filter),
+      getTask: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_TASK, id),
+      createTask: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK, projectId, input),
+      createSubTask: (parentId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_SUB_TASK, parentId, input),
+      listSubTasks: (parentId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_SUB_TASKS, parentId),
+      createExecutionSubTask: (taskId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_EXECUTION_SUB_TASK, taskId, input),
+      listExecutionSubTasks: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_EXECUTION_SUB_TASKS, taskId),
+      updateExecutionSubTask: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_EXECUTION_SUB_TASK, id, patch),
+      deleteExecutionSubTask: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_EXECUTION_SUB_TASK, id),
+      listDingTalkTodoRetries: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_DINGTALK_TODO_RETRIES, projectId),
+      retryDingTalkTodo: (eventId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RETRY_DINGTALK_TODO, eventId),
+      listTaskDependencies: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASK_DEPENDENCIES, projectId),
+      createTaskDependency: (taskId, dependsOnTaskId, type) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK_DEPENDENCY, taskId, dependsOnTaskId, type),
+      deleteTaskDependency: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_TASK_DEPENDENCY, id),
+      listTaskBlockers: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASK_BLOCKERS, projectId),
+      listProjectWorkItems: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORK_ITEMS, projectId),
+      listMyWork: (assigneeUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MY_WORK, assigneeUserId),
+      listProjectAlerts: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ALERTS, projectId),
+      listProjectActivities: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ACTIVITIES, projectId),
+      generateProjectSummary: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GENERATE_PROJECT_SUMMARY, projectId),
+      listProjectTemplates: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_TEMPLATES),
+      createProjectTemplate: (projectId, name, description) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_PROJECT_TEMPLATE, projectId, name, description),
+      applyProjectTemplate: (templateId, projectName) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.APPLY_PROJECT_TEMPLATE, templateId, projectName),
+      sendProjectSummaryToDingTalk: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEND_PROJECT_SUMMARY_DINGTALK, projectId),
+      sendProjectSummaryToFeishu: (projectId, chatId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEND_PROJECT_SUMMARY_FEISHU, projectId, chatId),
+      updateTask: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_TASK, id, patch),
+      deleteTask: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_TASK, id),
+      createTaskDraft: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK_DRAFT, projectId, input),
+      confirmTaskDraft: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_TASK_DRAFT, id),
+      rejectTaskDraft: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REJECT_TASK_DRAFT, id),
+      importMeetingNote: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.IMPORT_MEETING_NOTE, projectId, input),
+      listMeetingNotes: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEETING_NOTES, projectId),
+      getMeetingNote: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEETING_NOTE, id),
+      importAndExtract: (projectId, title, content) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.IMPORT_AND_EXTRACT, projectId, title, content),
+      fetchDingTalkDoc: (projectId, docUrl) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.FETCH_DINGTALK_DOC, projectId, docUrl),
+      listBriefReceipts: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_BRIEF_RECEIPTS, projectId),
+      listBriefReceiptsByTask: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_BRIEF_RECEIPTS_BY_TASK, taskId),
+      sendBrief: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEND_BRIEF, taskId),
+      testDingTalkConnection: (sendTestMessage) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.TEST_DINGTALK_CONNECTION, sendTestMessage),
+      testFeishuConnection: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.TEST_FEISHU_CONNECTION),
+      getKanbanBoard: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_KANBAN_BOARD, projectId),
+      getProjectProgress: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT_PROGRESS, projectId),
+      saveUserMapping: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_USER_MAPPING, input),
+      getUserMapping: (paaUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_USER_MAPPING, paaUserId),
+      listUserMappings: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_USER_MAPPINGS),
+      deleteUserMapping: (paaUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_USER_MAPPING, paaUserId),
+      syncTask: (taskId, platform) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_TASK, taskId, platform),
+      getSyncStatus: (taskId, platform) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_SYNC_STATUS, taskId, platform),
+      assessTaskRisk: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.ASSESS_TASK_RISK, taskId),
+      saveCompletionNotes: (taskId, notes) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_COMPLETION_NOTES, taskId, notes),
+      startPolling: (projectId, platform, intervalMs) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.POLL_START, projectId, platform, intervalMs),
+      stopPolling: (projectId, platform) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.POLL_STOP, projectId, platform),
+      generateRiskReport: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GENERATE_RISK_REPORT, projectId),
+      searchContactsAll: (keyword) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEARCH_CONTACTS_ALL, keyword),
+    },
   },
 }
 

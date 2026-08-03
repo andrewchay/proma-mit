@@ -23,6 +23,7 @@ Proma 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agen
 - **SubAgent / Tasks**：复杂任务可以通过 Agent 工具拆分为子 Agent / Task，并在消息流中展示调用过程和结果；Proma / AI SDK runtime 已复用同一套核心工具体系。
 - **服务端 Web 路线（P0–P5 基础能力）**：提供独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；生产 OIDC/JWT、KMS 轮换、管理员审计、完整 Web UI 与真实 provider E2E 仍待后续阶段。
 - **Skills & MCP**：每个工作区可以独立配置 Skills、MCP Server 和工作区文件，适合沉淀可复用能力。
+- **工作模块（项目管理 / 日程管家）**：左侧工作模块提供企业级项目管理（项目 / 任务 / 子任务 / 看板 / 会议纪要导入与 AI 提取 / 风险报告，支持飞书 / 钉钉待办同步）与日程管家（月视图日历 + 任务看板 + 自然语言创建 + 冲突检测 + 多日历源同步，含 macOS EventKit 桥接与智能提醒）。
 - **远程机器人**：支持飞书 / Lark 机器人桥接，并已提供钉钉、微信桥接入口，用手机或群聊触发本机 Agent 工作流。
 - **记忆与工具**：Chat 和 Agent 可共享记忆能力，并支持联网搜索、内置 Chat 工具、Agent 推荐等辅助能力。
 - **本地优先**：会话、工作区、附件、配置、Skills 等默认存储在 `~/.proma/`，使用 JSON / JSONL 文件组织，不依赖本地数据库。
@@ -187,10 +188,12 @@ Proma 采用本地文件存储，方便备份、迁移和排查问题。
 ├── attachments/
 ├── user-profile.json
 ├── settings.json
+├── calendar/                    # 日程管家：events.jsonl / tasks.jsonl
+├── projects/                    # 项目管理：paa.db（sql.js SQLite）
 └── sdk-config/
 ```
 
-API Key 会通过 Electron `safeStorage` 加密后写入 `channels.json`。Proma 不使用本地数据库，核心数据结构以 JSON 配置和 JSONL 追加日志为主。
+API Key 会通过 Electron `safeStorage` 加密后写入 `channels.json`。核心数据结构以 JSON 配置和 JSONL 追加日志为主；项目管理模块使用 sql.js（内存 SQLite，写后落盘到 `~/.proma/projects/paa.db`）。
 
 ## 开发
 

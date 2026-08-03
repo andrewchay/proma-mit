@@ -5,7 +5,7 @@
  * - 当前所有工作区列表，点击即切换
  * - 顶部 `+` 按钮支持 inline 新建
  *
- * 不包含重命名/删除/拖拽/高度调整等低频操作——这些留给展开态的 WorkspaceSelector。
+ * 不包含重命名/删除/拖拽/高度调整等低频操作——这些在展开态项目列表里操作。
  * 切换/创建逻辑通过 useWorkspaceActions 与展开态共享，确保行为一致。
  * 悬停控制复用 ContextUsageBadge 中的 cancelClose / scheduleClose 模式。
  */

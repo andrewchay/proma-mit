@@ -1,9 +1,14 @@
 /**
  * AppShell - 应用主布局容器
  *
- * 布局结构：[LeftSidebar 可折叠] | [MainArea: TabBar + TabContent] | [RightSidePanel 可折叠]
+ * 布局结构：[LeftSidebar 可折叠/可拖宽] | [MainArea: TabBar + TabContent] | [RightSidePanel 可折叠/可拖宽]
  *
  * MainArea 支持多标签页，Settings 视图为独立覆盖。
+ *
+ * 布局规则：
+ * - 左侧边栏、中间主区、右侧文件面板两两之间无视觉间隔（不设 padding）。
+ * - 左侧边栏宽度可拖拽调整（min 200 / max 440），持久化到 localStorage。
+ * - 右侧文件面板打开时紧贴主区右侧，关闭时主区保留窗口右缘 padding。
  */
 
 import * as React from 'react'
@@ -14,6 +19,8 @@ import { MainArea } from '@/components/tabs/MainArea'
 import { AppShellProvider, type AppShellContextType } from '@/contexts/AppShellContext'
 import { appModeAtom } from '@/atoms/app-mode'
 import { agentSidePanelWidthAtom, currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
+import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
+import { sidebarWidthAtom } from '@/atoms/sidebar-atoms'
 import { WindowControls } from '@/components/WindowControls'
 import { detectIsWindows } from '@/lib/platform'
 import { cn } from '@/lib/utils'
@@ -21,8 +28,15 @@ import { cn } from '@/lib/utils'
 const MIN_RIGHT_PANEL_WIDTH = 220
 const MAX_RIGHT_PANEL_WIDTH = 420
 
+const MIN_LEFT_SIDEBAR_WIDTH = 200
+const MAX_LEFT_SIDEBAR_WIDTH = 440
+
 function clampRightPanelWidth(width: number): number {
   return Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(MAX_RIGHT_PANEL_WIDTH, width))
+}
+
+function clampLeftSidebarWidth(width: number): number {
+  return Math.max(MIN_LEFT_SIDEBAR_WIDTH, Math.min(MAX_LEFT_SIDEBAR_WIDTH, width))
 }
 
 export interface AppShellProps {
@@ -36,11 +50,18 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
   const isPanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
   const showRightPanel = appMode === 'agent' && !!currentSessionId
   const isWindows = React.useMemo(() => detectIsWindows(), [])
+  const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
 
   // 右侧面板可拖拽宽度
   const [rightPanelWidth, setRightPanelWidth] = useAtom(agentSidePanelWidthAtom)
-  const dragging = React.useRef(false)
+  const draggingRight = React.useRef(false)
   const clampedRightPanelWidth = clampRightPanelWidth(rightPanelWidth)
+
+  // 左侧边栏可拖拽宽度
+  const [sidebarWidth, setSidebarWidth] = useAtom(sidebarWidthAtom)
+  const [sidebarResizing, setSidebarResizing] = React.useState(false)
+  const draggingLeft = React.useRef(false)
+  const clampedSidebarWidth = clampLeftSidebarWidth(sidebarWidth)
 
   React.useEffect(() => {
     if (clampedRightPanelWidth !== rightPanelWidth) {
@@ -48,15 +69,21 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
     }
   }, [clampedRightPanelWidth, rightPanelWidth, setRightPanelWidth])
 
-  const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
+  React.useEffect(() => {
+    if (clampedSidebarWidth !== sidebarWidth) {
+      setSidebarWidth(clampedSidebarWidth)
+    }
+  }, [clampedSidebarWidth, sidebarWidth, setSidebarWidth])
+
+  const handleRightMouseDown = React.useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    dragging.current = true
+    draggingRight.current = true
     const startX = e.clientX
     const startWidth = clampedRightPanelWidth
     let rafId = 0
 
     const onMouseMove = (ev: MouseEvent) => {
-      if (!dragging.current) return
+      if (!draggingRight.current) return
       if (rafId) return
       rafId = requestAnimationFrame(() => {
         rafId = 0
@@ -67,7 +94,7 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
     }
 
     const onMouseUp = () => {
-      dragging.current = false
+      draggingRight.current = false
       if (rafId) cancelAnimationFrame(rafId)
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
@@ -76,6 +103,43 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
   }, [clampedRightPanelWidth, setRightPanelWidth])
+
+  const handleLeftMouseDown = React.useCallback((e: React.MouseEvent) => {
+    if (sidebarCollapsed) return
+    e.preventDefault()
+    e.stopPropagation()
+    draggingLeft.current = true
+    setSidebarResizing(true)
+    const startX = e.clientX
+    const startWidth = clampedSidebarWidth
+    let rafId = 0
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!draggingLeft.current) return
+      if (rafId) return
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        const delta = ev.clientX - startX
+        const newWidth = clampLeftSidebarWidth(startWidth + delta)
+        setSidebarWidth(newWidth)
+      })
+    }
+
+    const onMouseUp = () => {
+      draggingLeft.current = false
+      setSidebarResizing(false)
+      if (rafId) cancelAnimationFrame(rafId)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+  }, [sidebarCollapsed, clampedSidebarWidth, setSidebarWidth])
 
   return (
     <AppShellProvider value={contextValue}>
@@ -93,14 +157,33 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
       {/* Windows 自定义窗口控制按钮（最小化/最大化/关闭） */}
       <WindowControls />
 
-      <div className="shell-bg h-screen w-screen flex overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-950 dark:to-zinc-900">
-        {/* 左侧边栏：可折叠，带圆角和内边距 */}
+      <div className="shell-bg relative h-screen w-screen flex overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-950 dark:to-zinc-900">
+        {/* 左侧边栏：可折叠、可拖宽。仅保留窗口边缘 padding（p-2 左右），右侧与主区无间隔 */}
         <div className="p-2 pr-0 relative z-[60]">
-          <LeftSidebar />
+          <LeftSidebar width={clampedSidebarWidth} resizing={sidebarResizing} />
         </div>
 
-        {/* 中间容器：relative z-[60] 使其在 z-50 拖动区域之上 */}
-        <div className="flex-1 min-w-0 p-2 relative z-[60]">
+        {/* 左侧拖拽手柄 — 位于侧边栏与主区之间（侧边栏展开时可用） */}
+        {!sidebarCollapsed && (
+          <div
+            className={cn(
+              'absolute z-[70] top-0 bottom-0 w-[8px] -translate-x-1/2 cursor-col-resize transition-colors',
+              sidebarResizing ? 'bg-primary/50' : 'hover:bg-primary/30'
+            )}
+            style={{ left: 8 + clampedSidebarWidth }}
+            onMouseDown={handleLeftMouseDown}
+            title="拖拽调整侧边栏宽度"
+          />
+        )}
+
+        {/* 中间容器：侧边栏展开时左侧无间隔；右侧面板打开时右侧无间隔 */}
+        <div
+          className={cn(
+            'flex-1 min-w-0 relative z-[60] p-2',
+            sidebarCollapsed ? 'pl-2' : 'pl-0',
+            showRightPanel && isPanelOpen ? 'pr-0' : 'pr-2'
+          )}
+        >
           {/* 主内容区域（TabBar + TabContent） */}
           <MainArea />
         </div>
@@ -112,7 +195,7 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
             {isPanelOpen && (
               <div
                 className="absolute left-0 top-0 bottom-0 w-[8px] -translate-x-1/2 cursor-col-resize active:bg-primary/50 transition-colors z-10"
-                onMouseDown={handleMouseDown}
+                onMouseDown={handleRightMouseDown}
               />
             )}
             <RightSidePanel width={clampedRightPanelWidth} />

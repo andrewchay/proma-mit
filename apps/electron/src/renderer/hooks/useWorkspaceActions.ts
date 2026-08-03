@@ -1,8 +1,7 @@
 /**
  * useWorkspaceActions — 工作区切换与创建的共享逻辑
  *
- * 抽离 WorkspaceSelector 与 CollapsedWorkspacePopover 共用的切换/创建逻辑，
- * 避免两处实现漂移。重命名 / 删除 / 拖拽排序仅展开态需要，留在 WorkspaceSelector 内。
+ * 供 Agent 模式展开态项目列表与折叠态快速切换共用，避免两处实现漂移。
  */
 
 import * as React from 'react'

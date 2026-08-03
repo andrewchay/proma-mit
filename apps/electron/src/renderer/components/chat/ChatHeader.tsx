@@ -1,12 +1,12 @@
 /**
  * ChatHeader - 对话头部
  *
- * 显示对话标题（可点击编辑）+ 置顶按钮 + 并排模式切换按钮。
+ * 显示对话标题（可点击编辑）+ 星标按钮 + 并排模式切换按钮。
  */
 
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
-import { Pencil, Check, X, Pin, Columns2 } from 'lucide-react'
+import { Pencil, Check, X, Star, Columns2 } from 'lucide-react'
 import { conversationsAtom } from '@/atoms/chat-atoms'
 import { useConversationParallelMode } from '@/hooks/useConversationSettings'
 import type { ConversationMeta } from '@proma/shared'
@@ -129,10 +129,10 @@ export function ChatHeader({ conversation }: ChatHeaderProps): React.ReactElemen
                 setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
               }}
             >
-              <Pin className="size-3.5" />
+              <Star className={cn('size-3.5', conversation.pinned && 'fill-current text-amber-500')} />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom"><p>{conversation.pinned ? '取消置顶' : '置顶对话'}</p></TooltipContent>
+          <TooltipContent side="bottom"><p>{conversation.pinned ? '取消星标' : '星标对话'}</p></TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

@@ -14,6 +14,7 @@ It is not just another chat box. Proma is meant to become a long-lived Agent wor
 - **Agent mode**: general-purpose Agent powered by `@anthropic-ai/claude-agent-sdk`, with workspace isolation, permission modes, file operations, streaming output, plan confirmation, and ask-user interactions.
 - **SubAgents / Tasks**: complex tasks can be delegated through the Claude Agent SDK Agent tool, with sub-agent calls and results shown in the message stream.
 - **Skills & MCP**: each workspace can manage its own Skills, MCP servers, and workspace files.
+- **Work modules (Project Management / Schedule)**: the left work-module area provides enterprise project management (projects / tasks / subtasks / kanban / meeting-note import with AI extraction / risk reports, with Feishu / DingTalk todo sync) and a schedule manager (month calendar + task kanban + natural-language creation + conflict detection + multi-calendar-source sync, including macOS EventKit bridging and smart reminders).
 - **Remote bots**: Lark / Feishu bot bridging is supported, with DingTalk and WeChat bridge entry points also present in the app.
 - **Memory and tools**: Chat and Agent can share memory, with web search, built-in Chat tools, and Agent recommendation helpers.
 - **Local-first data**: conversations, workspaces, attachments, settings, and Skills are stored under `~/.proma/` as JSON / JSONL files, without a local database.
@@ -128,10 +129,12 @@ Proma stores data in local files so it is easy to back up, migrate, and inspect.
 ├── attachments/
 ├── user-profile.json
 ├── settings.json
+├── calendar/                    # schedule: events.jsonl / tasks.jsonl
+├── projects/                    # project management: paa.db (sql.js SQLite)
 └── sdk-config/
 ```
 
-API keys are encrypted through Electron `safeStorage` before being written to `channels.json`. Proma does not use a local database; core data is represented as JSON configuration and append-only JSONL logs.
+API keys are encrypted through Electron `safeStorage` before being written to `channels.json`. Core data is represented as JSON configuration and append-only JSONL logs; the project management module uses sql.js (in-memory SQLite persisted to `~/.proma/projects/paa.db`).
 
 ## Development
 

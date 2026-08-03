@@ -230,6 +230,33 @@ export interface AppSettings {
   mainWindowState?: MainWindowState
   /** 视觉助手（Vision Relay）：为纯文本 Pi 模型（如 DeepSeek V4）中转图片请求到支持视觉的渠道 */
   visionRelay?: VisionRelayConfig
+  /** 飞书 Todo 同步配置（项目管理模块外部同步） */
+  feishuTodo?: {
+    enabled: boolean
+    /** 使用哪个 Bot 的凭证（Bot ID） */
+    botId?: string
+  }
+  /** 钉钉 Todo 同步配置（项目管理模块外部同步） */
+  dingtalkTodo?: {
+    enabled: boolean
+    /** 用于项目 Todo 的钉钉 Bot。凭证只保存在钉钉 Bot 的安全存储中，不在 settings.json 重复保存。 */
+    botId?: string
+    /** 群机器人 Webhook（发送项目摘要等通知）；加签版需同时配置 robotWebhookSecret */
+    robotWebhook?: string
+    /** 群机器人加签密钥（选填，未配置则按未加签 webhook 发送） */
+    robotWebhookSecret?: string
+    /** @deprecated 仅兼容旧版本配置，新的配置不可再写入。 */
+    appKey?: string
+    /** @deprecated 仅兼容旧版本配置，新的配置不可再写入。 */
+    appSecret?: string
+  }
+  /** Brief 回执服务配置 */
+  briefCallback?: {
+    /** 内网穿透后的公网地址（如 https://xxx.trycloudflare.com） */
+    tunnelUrl?: string
+    /** 本地监听端口，默认 8765 */
+    port?: number
+  }
 }
 
 /** 视觉助手（Vision Relay）配置 */

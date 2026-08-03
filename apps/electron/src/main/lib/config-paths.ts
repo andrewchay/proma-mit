@@ -766,3 +766,50 @@ export function getDynamicIslandDir(): string {
 export function getDynamicIslandConfigPath(): string {
   return join(getDynamicIslandDir(), 'config.json')
 }
+
+// ==================== 工作模块（项目管理 / 日程管家）路径 ====================
+
+/**
+ * 获取日程事件文件路径
+ *
+ * @returns ~/.proma-mit/calendar/events.jsonl
+ */
+export function getCalendarEventsPath(): string {
+  return join(getConfigDir(), 'calendar', 'events.jsonl')
+}
+
+/**
+ * 获取日程事件目录路径
+ *
+ * @returns ~/.proma-mit/calendar/
+ */
+export function getCalendarDir(): string {
+  const dir = join(getConfigDir(), 'calendar')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取日程任务文件路径
+ *
+ * @returns ~/.proma-mit/calendar/tasks.jsonl
+ */
+export function getTasksPath(): string {
+  return join(getConfigDir(), 'calendar', 'tasks.jsonl')
+}
+
+/**
+ * 获取项目管理目录路径
+ *
+ * @returns ~/.proma-mit/projects/
+ */
+export function getProjectsDir(): string {
+  const dir = join(getConfigDir(), 'projects')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建项目管理目录: ${dir}`)
+  }
+  return dir
+}

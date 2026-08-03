@@ -74,5 +74,32 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
     throw new Error('写入应用设置失败')
   }
 
+  notifySettingsChange(updated, updates)
   return updated
+}
+
+type SettingsChangeListener = (settings: AppSettings, updates: Partial<AppSettings>) => void
+
+const settingsChangeListeners: SettingsChangeListener[] = []
+
+/** 注册设置变更监听器 */
+export function onSettingsChange(listener: SettingsChangeListener): () => void {
+  settingsChangeListeners.push(listener)
+  return () => {
+    const idx = settingsChangeListeners.indexOf(listener)
+    if (idx !== -1) {
+      settingsChangeListeners.splice(idx, 1)
+    }
+  }
+}
+
+/** 通知设置变更监听器 */
+function notifySettingsChange(settings: AppSettings, updates: Partial<AppSettings>): void {
+  for (const listener of settingsChangeListeners) {
+    try {
+      listener(settings, updates)
+    } catch (error) {
+      console.error('[设置] 变更监听器执行失败:', error)
+    }
+  }
 }

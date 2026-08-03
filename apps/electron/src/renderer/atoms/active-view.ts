@@ -4,9 +4,9 @@
  * 控制 MainArea 显示的内容：
  * - conversations: 对话视图（Chat/Agent 模式内容）
  * - workflow: Workflow 工作台
- * - projects: 企业级项目管理模块（独立工作模块，暂为占位入口）
+ * - projects: 项目管理模块（由 ~/LLM/PAA 迁移接入）
  * - tasks: 任务模块（独立工作模块，暂为占位入口）
- * - calendar: 日程模块（独立工作模块，暂为占位入口）
+ * - calendar: 日程管家模块（由 ~/LLM/PAA 迁移接入）
  * - automation: 自动任务 / 运行中心（独立工作模块）
  */
 

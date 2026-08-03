@@ -71,3 +71,6 @@ export * from './proactive'
 
 // Workflow 模式相关类型
 export * from './workflow'
+
+// 工作模块（项目管理 / 日程管家 / 日历同步）IPC 通道与类型
+export * from './work-module'

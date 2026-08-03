@@ -4,10 +4,10 @@
 
 | 项目 | 当前值 |
 |---|---:|
-| @proma/electron | 0.10.4 |
-| @proma/shared | 0.1.43 |
+| @proma/electron | 0.11.1 |
+| @proma/shared | 0.1.46 |
 | @proma/core | 0.2.13 |
 | @proma/ui | 0.1.4 |
-| Bun 测试 / Playwright 测试文件 | 68 |
-| Electron 主进程 lib TypeScript 文件 | 170 |
-| Electron 渲染进程 TypeScript/TSX 文件 | 258 |
+| Bun 测试 / Playwright 测试文件 | 114 |
+| Electron 主进程 lib TypeScript 文件 | 262 |
+| Electron 渲染进程 TypeScript/TSX 文件 | 285 |

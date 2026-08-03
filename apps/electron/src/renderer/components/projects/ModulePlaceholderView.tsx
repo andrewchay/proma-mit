@@ -1,35 +1,25 @@
 /**
- * ModulePlaceholderView - 企业级工作模块占位视图（项目管理 / 任务 / 日程）
+ * ModulePlaceholderView - 工作模块占位视图（任务）
  *
- * 这些模块参考 ~/LLM/PAA 的实现，待 PAA 侧完成后迁移接入。
- * 本视图保持独立挂载点，确保后续接入无需改动左侧导航结构。
+ * 项目管理 / 日程管家 已由 ~/LLM/PAA 迁移接入（见 components/projects/ProjectView.tsx
+ * 与 components/calendar/CalendarModuleView.tsx），本视图仅保留「任务」模块占位。
  */
 
 import type * as React from 'react'
 import { useAtom } from 'jotai'
-import { FolderKanban, ListChecks, CalendarDays, Construction, ArrowLeft, type LucideIcon } from 'lucide-react'
+import { ListChecks, Construction, ArrowLeft, type LucideIcon } from 'lucide-react'
 import { activeViewAtom } from '@/atoms/active-view'
 
-const MODULE_META: Record<'projects' | 'tasks' | 'calendar', { label: string; icon: LucideIcon; description: string }> = {
-  projects: {
-    label: '项目管理',
-    icon: FolderKanban,
-    description: '项目 / 任务 / 子任务 / 看板 / 会议纪要，参考 PAA 的 project 模块实现，待完成后接入。',
-  },
+const MODULE_META: Record<'tasks', { label: string; icon: LucideIcon; description: string }> = {
   tasks: {
     label: '任务',
     icon: ListChecks,
     description: '任务中心与待办管理，参考 PAA 的任务模块实现，待完成后接入。',
   },
-  calendar: {
-    label: '日程',
-    icon: CalendarDays,
-    description: '日程安排与日历视图，参考 PAA 的 schedule 模块实现，待完成后接入。',
-  },
 }
 
 interface ModulePlaceholderViewProps {
-  moduleId: 'projects' | 'tasks' | 'calendar'
+  moduleId: 'tasks'
 }
 
 export function ModulePlaceholderView({ moduleId }: ModulePlaceholderViewProps): React.ReactElement {

@@ -4,14 +4,14 @@
  * 包含：
  * - Chat/Agent 模式切换器
  * - 导航菜单项（点击切换主内容区视图）
- * - 置顶对话区域（可展开/收起）
+ * - 星标对话区域（可展开/收起）
  * - 对话列表（新对话按钮 + 右键菜单 + 按 updatedAt 降序排列）
  */
 
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Pin, PinOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Star, CalendarDays, ListChecks, FolderKanban } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, CalendarDays, ListChecks, FolderKanban } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -130,6 +130,8 @@ function SidebarItem({ icon, label, active, suffix, onClick }: SidebarItemProps)
 export interface LeftSidebarProps {
   /** 可选固定宽度，默认使用 CSS 响应式宽度 */
   width?: number
+  /** 正在被拖拽调整宽度（禁用宽度 transition，保证跟手） */
+  resizing?: boolean
 }
 
 /** 侧边栏导航项标识 */
@@ -199,7 +201,7 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
   )
 }
 
-export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
+export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
@@ -210,9 +212,11 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
   /** 待删除对话 ID，非空时显示确认弹窗 */
   const [pendingDeleteId, setPendingDeleteId] = React.useState<string | null>(null)
+  /** 待删除项目（工作区）ID，非空时显示确认弹窗 */
+  const [pendingDeleteWorkspaceId, setPendingDeleteWorkspaceId] = React.useState<string | null>(null)
   /** 待迁移会话 ID，非空时显示迁移对话框 */
   const [moveTargetId, setMoveTargetId] = React.useState<string | null>(null)
-  /** 置顶区域展开/收起 */
+  /** 星标区域展开/收起 */
   const [pinnedExpanded, setPinnedExpanded] = React.useState(true)
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
@@ -366,7 +370,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       .catch(console.error)
   }, [currentWorkspaceSlug, mode])
 
-  /** 置顶对话列表（仅活跃模式显示，排除 draft） */
+  /** 星标对话列表（仅活跃模式显示，排除 draft） */
   const pinnedConversations = React.useMemo(
     () => viewMode === 'active' ? conversations.filter((c) => c.pinned && !draftSessionIds.has(c.id)) : [],
     [conversations, viewMode, draftSessionIds]
@@ -375,7 +379,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   /** Working 区域状态 */
   const workingSessionIds = useAtomValue(workingSessionIdsSetAtom)
 
-  /** 置顶 Agent 会话列表（仅活跃模式显示，按当前工作区过滤，排除 draft 和 Working） */
+  /** 星标 Agent 会话列表（仅活跃模式显示，按当前工作区过滤，排除 draft 和 Working） */
   // 已迁移到项目管理视图（项目下直接展示），此列表不再需要
   /** 对话按日期分组（根据 viewMode 过滤归档状态，排除 draft） */
   const conversationGroups = React.useMemo(
@@ -433,7 +437,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   /** 处理导航项点击 */
   const handleItemClick = (item: SidebarItemId): void => {
     if (item === 'pinned') {
-      // 置顶按钮仅切换展开/收起，不改变 activeView
+      // 星标按钮仅切换展开/收起，不改变 activeView
       setPinnedExpanded((prev) => !prev)
       return
     }
@@ -498,7 +502,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
   }
 
-  /** 切换对话置顶状态 */
+  /** 切换对话星标状态 */
   const handleTogglePin = async (id: string): Promise<void> => {
     try {
       const original = conversations.find((c) => c.id === id)
@@ -506,12 +510,12 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       setConversations((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c))
       )
-      // 归档会话被置顶时会自动取消归档
+      // 归档会话被星标时会自动取消归档
       if (original?.archived && updated.pinned && !updated.archived) {
-        toast.success('已取消归档并置顶')
+        toast.success('已取消归档并星标')
       }
     } catch (error) {
-      console.error('[侧边栏] 切换置顶失败:', error)
+      console.error('[侧边栏] 切换星标失败:', error)
     }
   }
 
@@ -708,7 +712,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
   }
 
-  /** 切换 Agent 会话置顶状态 */
+  /** 切换 Agent 会话星标状态 */
   const handleTogglePinAgent = async (id: string): Promise<void> => {
     try {
       const original = agentSessions.find((s) => s.id === id)
@@ -716,12 +720,12 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       setAgentSessions((prev) =>
         prev.map((s) => (s.id === updated.id ? updated : s))
       )
-      // 归档会话被置顶时会自动取消归档
+      // 归档会话被星标时会自动取消归档
       if (original?.archived && updated.pinned && !updated.archived) {
-        toast.success('已取消归档并置顶')
+        toast.success('已取消归档并星标')
       }
     } catch (error) {
-      console.error('[侧边栏] 切换 Agent 会话置顶失败:', error)
+      console.error('[侧边栏] 切换 Agent 会话星标失败:', error)
     }
   }
 
@@ -887,15 +891,43 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     })
   }, [])
 
-  /** 切换项目星标 */
-  const handleTogglePinWorkspace = React.useCallback(async (id: string): Promise<void> => {
+  /** 项目（工作区）是否允许删除：非默认工作区且至少保留一个 */
+  const canDeleteWorkspace = React.useCallback(
+    (ws: { id: string; slug: string }): boolean => ws.slug !== 'default' && workspaces.length > 1,
+    [workspaces]
+  )
+
+  /** 请求删除项目（弹出确认框） */
+  const handleRequestDeleteWorkspace = React.useCallback((id: string): void => {
+    setPendingDeleteWorkspaceId(id)
+  }, [])
+
+  /** 确认删除项目 */
+  const handleConfirmDeleteWorkspace = async (): Promise<void> => {
+    if (!pendingDeleteWorkspaceId) return
+
     try {
-      const updated = await window.electronAPI.togglePinAgentWorkspace(id)
-      setWorkspaces((prev) => prev.map((w) => (w.id === updated.id ? updated : w)))
+      await window.electronAPI.deleteAgentWorkspace(pendingDeleteWorkspaceId)
+      const remaining = workspaces.filter((w) => w.id !== pendingDeleteWorkspaceId)
+      setWorkspaces(remaining)
+
+      // 若删除的是当前工作区，切换到剩余第一个；无剩余则清空当前指针
+      if (pendingDeleteWorkspaceId === currentWorkspaceId) {
+        if (remaining.length > 0) {
+          setCurrentAgentWorkspaceId(remaining[0]!.id)
+          window.electronAPI.updateSettings({ agentWorkspaceId: remaining[0]!.id }).catch(console.error)
+        } else {
+          setCurrentAgentWorkspaceId(null)
+        }
+      }
+      toast.success('项目已删除')
     } catch (error) {
-      console.error('[侧边栏] 切换项目星标失败:', error)
+      console.error('[侧边栏] 删除项目失败:', error)
+      toast.error('删除项目失败')
+    } finally {
+      setPendingDeleteWorkspaceId(null)
     }
-  }, [setWorkspaces])
+  }
 
   /** 新建项目：内联输入 */
   const handleStartCreateProject = (): void => {
@@ -1076,6 +1108,39 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
           <AlertDialogCancel>取消</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirmDelete}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
+  // 删除项目确认弹窗（仅展开态项目列表可见）
+  const deleteWorkspaceDialog = (
+    <AlertDialog
+      open={pendingDeleteWorkspaceId !== null}
+      onOpenChange={(open) => { if (!open) setPendingDeleteWorkspaceId(null) }}
+    >
+      <AlertDialogContent
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            handleConfirmDeleteWorkspace()
+          }
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认删除项目</AlertDialogTitle>
+          <AlertDialogDescription>
+            删除后工作区配置将被移除，但本地目录文件会保留。确定要删除这个项目吗？
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleConfirmDeleteWorkspace}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
             删除
@@ -1294,8 +1359,11 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   // ===== 展开状态：完整侧边栏 =====
   return (
     <div
-      className="relative h-full flex flex-col bg-background rounded-2xl shadow-xl transition-[width] duration-300"
-      style={{ width: width ?? 240, minWidth: 170, flexShrink: 1 }}
+      className={cn(
+        'relative h-full flex flex-col bg-background rounded-l-2xl rounded-r-none shadow-xl',
+        resizing ? '' : 'transition-[width] duration-300'
+      )}
+      style={{ width: width ?? 260, minWidth: 180, flexShrink: 0 }}
     >
       <SidebarWindowDragStrip
         height={isMac ? SIDEBAR_DRAG_STRIP_HEIGHT.expandedMac : SIDEBAR_DRAG_STRIP_HEIGHT.expanded}
@@ -1346,12 +1414,12 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </Tooltip>
       </div>
 
-      {/* Chat 模式：导航菜单（置顶区域） */}
+      {/* Chat 模式：导航菜单（星标区域） */}
       {mode === 'chat' && (
         <div className="flex flex-col gap-1 pt-3 px-3">
           <SidebarItem
-            icon={<Pin size={16} />}
-            label="置顶对话"
+            icon={<Star size={16} />}
+            label="星标对话"
             suffix={
               pinnedConversations.length > 0 ? (
                 pinnedExpanded
@@ -1364,7 +1432,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
         </div>
       )}
 
-      {/* Chat 模式：置顶对话区域 */}
+      {/* Chat 模式：星标对话区域 */}
       {mode === 'chat' && pinnedExpanded && pinnedConversations.length > 0 && (
         <div className="px-3 pt-1 pb-1">
           <div className="flex flex-col gap-0.5 pl-1 border-l-2 border-primary/20 ml-2">
@@ -1497,23 +1565,6 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
 
                             {/* 右侧操作区（hover 时展开） */}
                             <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              {/* 项目星标（右侧，不抢占主行） */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void handleTogglePinWorkspace(ws.id)
-                                }}
-                                className={cn(
-                                  'p-1 rounded hover:bg-foreground/[0.08] transition-colors titlebar-no-drag',
-                                  ws.pinned
-                                    ? 'text-amber-500 hover:text-amber-600'
-                                    : 'text-foreground/30 hover:text-foreground/60'
-                                )}
-                                title={ws.pinned ? '取消星标' : '星标项目'}
-                              >
-                                <Star size={12} className={ws.pinned ? 'fill-current' : ''} />
-                              </button>
-
                               {/* 项目内新会话按钮 */}
                               <button
                                 onClick={(e) => {
@@ -1527,6 +1578,20 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                               >
                                 <Plus size={13} />
                               </button>
+
+                              {/* 删除项目 */}
+                              {canDeleteWorkspace(ws) && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleRequestDeleteWorkspace(ws.id)
+                                  }}
+                                  className="p-1 rounded hover:bg-destructive/10 text-foreground/30 hover:text-destructive transition-colors titlebar-no-drag"
+                                  title="删除项目"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              )}
                             </div>
 
                             {/* 展开/收起箭头 */}
@@ -1776,6 +1841,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       </div>
 
       {deleteDialog}
+      {deleteWorkspaceDialog}
       {moveDialog}
       <SearchDialog />
     </div>
@@ -1788,7 +1854,7 @@ interface ConversationItemProps {
   conversation: ConversationMeta
   active: boolean
   streaming: boolean
-  /** 是否在标题旁显示 Pin 图标 */
+  /** 是否在标题旁显示星标图标 */
   showPinIcon: boolean
   onSelect: (id: string, title: string) => void
   /** 双击 → 常驻标签打开（VS Code 风格） */
@@ -1860,8 +1926,8 @@ const ConversationItem = React.memo(function ConversationItem({
   ) => (
     <>
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onTogglePin(conversation.id)}>
-        {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
-        {isPinned ? '取消置顶' : '置顶对话'}
+        {isPinned ? <StarOff size={14} /> : <Star size={14} />}
+        {isPinned ? '取消星标' : '星标对话'}
       </MenuItem>
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => startEdit()}>
         <Pencil size={14} />
@@ -1921,9 +1987,9 @@ const ConversationItem = React.memo(function ConversationItem({
                 'truncate text-[13px] leading-5 flex items-center gap-1.5',
                 active ? 'text-foreground' : 'text-foreground/80'
               )}>
-                {/* 置顶标记 */}
+                {/* 星标标记 */}
                 {showPinIcon && (
-                  <Pin size={11} className="flex-shrink-0 text-primary/60" />
+                  <Star size={11} className="flex-shrink-0 text-amber-500 fill-current" />
                 )}
                 <span className="truncate">{conversation.title}</span>
               </div>
@@ -2058,8 +2124,8 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
   ) => (
     <>
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onTogglePin(session.id)}>
-        {session.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-        {session.pinned ? '取消置顶' : '置顶会话'}
+        {session.pinned ? <StarOff size={14} /> : <Star size={14} />}
+        {session.pinned ? '取消星标' : '星标会话'}
       </MenuItem>
       <MenuItem
         className="text-xs py-1 [&>svg]:size-3.5"
@@ -2135,7 +2201,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
                 active ? 'text-foreground' : 'text-foreground/80'
               )}>
                 {showPinIcon && (
-                  <Pin size={11} className="flex-shrink-0 text-primary/60" />
+                  <Star size={11} className="flex-shrink-0 text-amber-500 fill-current" />
                 )}
                 <span className="truncate">{session.title}</span>
                 {workspaceName && (

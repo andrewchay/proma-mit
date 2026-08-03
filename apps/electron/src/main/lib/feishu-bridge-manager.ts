@@ -145,6 +145,12 @@ class FeishuBridgeManager {
     return undefined
   }
 
+  async sendProjectSummary(chatId: string, markdown: string): Promise<void> {
+    const bridge = this.findBridgeByChatId(chatId)
+    if (!bridge) throw new Error('未找到已绑定的飞书目标，请先在飞书设置中绑定群聊或会话')
+    await bridge.sendProjectSummary(chatId, markdown)
+  }
+
   // ===== 连接测试（静态，不影响运行中的 Bridge） =====
 
   async testConnection(appId: string, appSecret: string): Promise<FeishuTestResult> {

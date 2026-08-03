@@ -470,6 +470,19 @@ async function bootstrap(): Promise<void> {
   // Register IPC handlers
   registerIpcHandlers()
 
+  // 初始化项目管理 SQLite 数据库（本地唯一数据源）
+  await safeAwait('initProjectDb', async () => {
+    const { initProjectDb } = await import('./lib/project-sqlite-store')
+    await initProjectDb()
+  })
+
+  // 启动 Brief 回执服务（H5 表单 + 回调，供核心任务回执使用）
+  await safeAwait('startBriefCallbackServer', async () => {
+    const { startBriefCallbackServer } = await import('./lib/brief-callback-server')
+    const settings = getSettings()
+    await startBriefCallbackServer(settings.briefCallback?.port ?? 8765)
+  })
+
   // Set dock icon on macOS (required for dev mode, bundled apps use Info.plist)
   // 如果用户有保存的图标偏好则使用，否则用默认图标
   if (process.platform === 'darwin' && app.dock) {
@@ -647,6 +660,13 @@ app.on('before-quit', () => {
   cleanupUpdater()
   // 停止工作区文件监听
   stopWorkspaceWatcher()
+  // 关闭项目管理 SQLite 数据库（持久化未写入的数据）
+  try {
+    const { closeProjectDb } = require('./lib/project-sqlite-store') as { closeProjectDb: () => void }
+    closeProjectDb()
+  } catch {
+    // 数据库未初始化时忽略
+  }
   // 停止 Chat 工具配置文件监听
   stopChatToolsWatcher()
   // 停止所有 Bridge
