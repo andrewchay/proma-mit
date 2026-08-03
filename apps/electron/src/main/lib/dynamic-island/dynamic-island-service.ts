@@ -228,7 +228,9 @@ class DynamicIslandService {
       level: levelForPhase(priority.phase),
       // 需要用户注意的常驻（直到点击处理）；running 显示 2s 执行脉冲后自动收起
       timeoutMs: needsAttention ? 0 : 2000,
-      activateOnClick: needsAttention,
+      // 所有会话显示都可点击：点击引导进入会话，避免“看得见点不动”。
+      // 原生层 clickable=true 时整个灵动岛区域可点（见 island_addon.mm）。
+      activateOnClick: true,
       sessionId: priority.sessionId,
       createdAt: now,
       source: 'agent_event',
@@ -566,11 +568,12 @@ class DynamicIslandService {
       }
       this.pushNow()
 
-      // 打开对应会话（复用托盘打开逻辑）
+      // 打开对应会话（复用托盘打开逻辑）：优先可见窗口，回退到任意主窗口
       const win = BrowserWindow.getAllWindows().find(
         (w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized()
-      )
+      ) ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
       if (win) {
+        if (win.isMinimized()) win.restore()
         win.show()
         win.focus()
         win.webContents.send(TRAY_IPC_CHANNELS.OPEN_AGENT_SESSION, {
@@ -581,8 +584,9 @@ class DynamicIslandService {
       return
     }
 
-    // 非会话通知（测试/手动）：仅 dismiss
-    this.controller?.dismiss(id)
+    // 非会话通知（测试/手动/其它）：点击 → 直接关闭整个灵动岛
+    // （用户点击灵动岛区域后，要么引导进入会话，要么关闭，不留残余）
+    this.controller?.dismissAll()
   }
 
   private handleRendererEvent(event: Record<string, unknown>): void {
