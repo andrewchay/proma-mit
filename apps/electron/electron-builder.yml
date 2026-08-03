@@ -89,6 +89,9 @@ extraResources:
     to: computer-use
     filter:
       - "**/*"
+  # macOS EventKit 桥接脚本（日程管家系统日历同步，打包模式从 Contents/Resources 读取）。
+  - from: resources/read-calendar.swift
+    to: read-calendar.swift
   # macOS 灵动岛通知原生模块与渲染胶水（非 macOS 平台安装包不包含）。
   - from: resources/dynamic-island
     to: dynamic-island
