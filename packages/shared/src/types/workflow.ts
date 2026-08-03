@@ -422,6 +422,7 @@ export const WORKFLOW_IPC_CHANNELS = {
   EXECUTE_RUN: 'workflow:execute-run',
   RESOLVE_APPROVAL: 'workflow:resolve-approval',
   CANCEL_RUN: 'workflow:cancel-run',
+  STOP_RUN: 'workflow:stop-run',
   PROPOSE_PATCHES: 'workflow:propose-patches',
   GET_IDENTITY_DIRECTORY: 'workflow:get-identity-directory',
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',

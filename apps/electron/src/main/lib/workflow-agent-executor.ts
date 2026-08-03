@@ -9,7 +9,49 @@ import {
   getWorkflowRun,
   startWorkflowNode,
   requireWorkflowSideEffectIntervention,
+  cancelWorkflowRun,
 } from './workflow-service'
+
+/**
+ * 活跃 Workflow Agent 会话注册表：runId → agent sessionId。
+ * 在 agent 节点执行期间注册，执行结束（成功/失败/异常）后清理。
+ * 用于「停止运行中的 Workflow」——主进程可以据此中止正在执行的 agent 会话。
+ */
+const activeAgentSessions = new Map<string, { workflowId: string; sessionId: string }>()
+
+/** 查询某个 Run 当前是否正在执行 agent 节点；是则返回其 agent sessionId。 */
+export function getActiveWorkflowAgentSession(runId: string): { workflowId: string; sessionId: string } | undefined {
+  return activeAgentSessions.get(runId)
+}
+
+/**
+ * 停止正在运行的 Workflow Run：中止当前 agent 会话并把 Run 状态置为 cancelled。
+ * 返回是否成功；Run 不在运行/没有活跃 agent 时返回 false。
+ */
+export async function stopActiveWorkflowRun(workflowId: string, runId: string): Promise<{ stopped: boolean; message?: string }> {
+  const active = activeAgentSessions.get(runId)
+  if (active) {
+    try {
+      // 中止底层 agent 执行（与手动停止 Agent 同一路径）
+      const { stopAgent } = await import('./agent-service')
+      stopAgent(active.sessionId)
+    } catch (error) {
+      console.error('[Workflow] 停止 agent 会话失败:', error)
+    }
+  }
+
+  // 更新 Run 状态为 cancelled（幂等：已完成/已取消的 Run 会抛错，这里吞掉）
+  try {
+    const cancelled = cancelWorkflowRun(workflowId, runId)
+    return { stopped: true, message: `Run 已停止（${cancelled.status}）` }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '停止失败'
+    // Run 可能已完成或已取消——如果还有活跃 agent，说明状态文件与执行不一致，
+    // 此时 agent 已被 stopAgent 中止，视为已停止。
+    if (active) return { stopped: true, message: `agent 已中止（${message}）` }
+    return { stopped: false, message }
+  }
+}
 
 interface WorkflowAgentCallbacks {
   onError: (error: string) => void
@@ -105,20 +147,26 @@ export async function executeWorkflowAgentNode(
   if (!leased) startWorkflowNode(workflowId, runId, nodeId)
   let error: string | undefined
   let messages: AgentMessage[] = []
-  await runner.run({
-    sessionId: session.id,
-    userMessage: prompt,
-    channelId,
-    ...(modelId && { modelId }),
-    workspaceId: initial.workspaceId,
-    permissionModeOverride: 'auto',
-    workflowCapabilityPolicy: policy,
-  }, {
-    onError: (message) => { error = message },
-    onComplete: (completedMessages) => { messages = completedMessages ?? [] },
-    onTitleUpdated: () => {},
-    source: 'workflow',
-  })
+  // 注册当前 agent 会话，供「停止运行中的 Workflow」中止执行
+  activeAgentSessions.set(runId, { workflowId, sessionId: session.id })
+  try {
+    await runner.run({
+      sessionId: session.id,
+      userMessage: prompt,
+      channelId,
+      ...(modelId && { modelId }),
+      workspaceId: initial.workspaceId,
+      permissionModeOverride: 'auto',
+      workflowCapabilityPolicy: policy,
+    }, {
+      onError: (message) => { error = message },
+      onComplete: (completedMessages) => { messages = completedMessages ?? [] },
+      onTitleUpdated: () => {},
+      source: 'workflow',
+    })
+  } finally {
+    activeAgentSessions.delete(runId)
+  }
 
   if (error) {
     if (node?.kind === 'tool') return requireWorkflowSideEffectIntervention(workflowId, runId, nodeId, `工具执行返回错误，无法确认远端是否已生效：${error}`)

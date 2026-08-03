@@ -13,7 +13,7 @@ import {
   type WorkflowImportInput,
   type WorkflowTemplatePublishInput,
 } from '@proma/shared'
-import { executeWorkflowAgentNode } from './workflow-agent-executor'
+import { executeWorkflowAgentNode, stopActiveWorkflowRun } from './workflow-agent-executor'
 import { executeWorkflowDeterministicNode } from './workflow-deterministic-executor'
 import { executeWorkflowRun } from './workflow-run-executor'
 import { proposeWorkflowPatches } from './workflow-designer-service'
@@ -89,6 +89,7 @@ export function registerWorkflowIpcHandlers(): void {
     decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> }
   }): WorkflowRun => resolveWorkflowApproval(input.workflowId, input.runId, input.approvalId, input.decision))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, (_event, workflowId: string, runId: string): WorkflowRun => cancelWorkflowRun(workflowId, runId))
+  ipcMain.handle(WORKFLOW_IPC_CHANNELS.STOP_RUN, (_event, workflowId: string, runId: string): Promise<{ stopped: boolean; message?: string }> => stopActiveWorkflowRun(workflowId, runId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, async (_event, input: { definition: WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => proposeWorkflowPatches(input.definition, input.instruction, input.channelId, input.modelId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.GET_IDENTITY_DIRECTORY, (): WorkflowIdentityDirectory => getWorkflowIdentityDirectory())
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.SAVE_IDENTITY_DIRECTORY, (_event, directory: WorkflowIdentityDirectory): WorkflowIdentityDirectory => saveWorkflowIdentityDirectory(directory))

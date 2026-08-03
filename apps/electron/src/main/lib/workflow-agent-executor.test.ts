@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { WORKFLOW_FORMAT, type AgentSendInput, type WorkflowDefinition } from '@proma/shared'
 import { createAgentWorkspace, saveWorkspaceMcpConfig } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
-import { executeWorkflowAgentNode, type WorkflowAgentRunner } from './workflow-agent-executor'
+import { executeWorkflowAgentNode, getActiveWorkflowAgentSession, type WorkflowAgentRunner } from './workflow-agent-executor'
 import { createWorkflowRun, publishWorkflowDefinition, saveWorkflowDefinition } from './workflow-service'
 
 const TEST_DIR = '/tmp/paa-workflow-agent-executor-test'
@@ -142,5 +142,32 @@ describe('Workflow Agent 节点执行器', () => {
     })
     expect(result.nodeRuns?.collect?.error?.code).toBe('output_schema_invalid')
     expect(result.nodeRuns?.collect?.error?.retryable).toBe(true)
+  })
+
+  test('getActiveWorkflowAgentSession 在执行 agent 节点期间可查询，结束后清理', async () => {
+    const published = setupWorkflow()
+    const run = createWorkflowRun(published.id, {})
+    let releaseRun: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseRun = resolve })
+    let seenDuringRun: unknown = 'not-called'
+    const execution = executeWorkflowAgentNode(published.id, run.id, 'collect', 'channel-1', undefined, {
+      runner: {
+        async run(_input, callbacks) {
+          // 执行期间应注册活跃会话
+          seenDuringRun = getActiveWorkflowAgentSession(run.id)
+          await gate
+          callbacks.onComplete([{ id: 'message-3', role: 'assistant', content: 'ok', createdAt: 1 }])
+        },
+      },
+      sessionFactory: { create: () => ({ id: 'agent-session-stop-1' }) },
+    })
+    // 等待 runner 已进入执行（注册已生效）
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(seenDuringRun).toEqual({ workflowId: published.id, sessionId: 'agent-session-stop-1' })
+    expect(getActiveWorkflowAgentSession(run.id)).toEqual({ workflowId: published.id, sessionId: 'agent-session-stop-1' })
+    releaseRun?.()
+    await execution
+    // 结束后清理
+    expect(getActiveWorkflowAgentSession(run.id)).toBeUndefined()
   })
 })

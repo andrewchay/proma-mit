@@ -9,7 +9,7 @@ import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import {
-  Bot, CheckCircle2, CirclePlay, Download, GitBranch, Hand, LayoutTemplate, Plus, RefreshCcw, RotateCcw, Save, Send, Sparkles, Upload, Wrench, X,
+  Bot, CheckCircle2, CirclePlay, Download, GitBranch, Hand, LayoutTemplate, Plus, RefreshCcw, RotateCcw, Save, Send, Sparkles, Square, Upload, Wrench, X,
 } from 'lucide-react'
 import type {
   WorkflowDefinition,
@@ -387,6 +387,26 @@ export function WorkflowView(): React.ReactElement {
     }
   }
 
+  const stopWorkflow = async (): Promise<void> => {
+    if (!draft || !latestRun) return
+    const confirmed = window.confirm(`确定停止 Run ${latestRun.id.slice(0, 8)} 吗？将中止当前正在执行的节点。`)
+    if (!confirmed) return
+    try {
+      const result = await window.electronAPI.stopWorkflowRun(draft.id, latestRun.id)
+      if (!result.stopped) {
+        toast.error(result.message ?? '停止失败')
+        return
+      }
+      const refreshed = await window.electronAPI.getWorkflowRun(draft.id, latestRun.id)
+      if (refreshed) setLatestRun(refreshed)
+      await loadRunHistory(draft.id, latestRun.id)
+      toast.success(result.message ?? 'Run 已停止')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '停止 Workflow 失败')
+    }
+  }
+
+
   const resolveLatestApproval = async (approved: boolean): Promise<void> => {
     if (!draft || !latestRun || !agentChannelId) return
     const approval = latestRun.approvals.find((item) => item.status === 'pending')
@@ -438,7 +458,7 @@ export function WorkflowView(): React.ReactElement {
             <header className="flex items-center gap-2 border-b border-border/60 bg-background/65 px-4 py-2.5">
               <Input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value, updatedAt: Date.now() })} className="max-w-sm border-0 bg-transparent text-base font-semibold shadow-none" aria-label="Workflow 名称" />
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{draft.status} · v{draft.version}</span>
-              <div className="ml-auto flex gap-2">{latestRun && <span className="self-center text-xs text-muted-foreground">最近 Run：{latestRun.status}</span>}<Button size="sm" variant="ghost" onClick={() => void exportFile()}><Download />导出</Button><Button size="sm" variant="ghost" onClick={() => void publishTemplate()}><LayoutTemplate />模板</Button><Button size="sm" variant={templateUpgradePending ? 'default' : 'ghost'} onClick={() => void upgradeTemplate()}><RefreshCcw />{templateUpgradePending ? '确认升级' : '升级'}</Button><Button size="sm" variant="ghost" onClick={() => void rollbackTemplate()}><RotateCcw />回滚</Button><Button size="sm" variant="secondary" onClick={() => void save()} disabled={saving}><Save />保存</Button><Button size="sm" onClick={() => void publish()} disabled={saving}><CheckCircle2 />发布</Button><Button size="sm" variant="outline" onClick={() => void runWorkflow()}><CirclePlay />运行</Button></div>
+              <div className="ml-auto flex gap-2">{latestRun && <span className="self-center text-xs text-muted-foreground">最近 Run：{latestRun.status}</span>}<Button size="sm" variant="ghost" onClick={() => void exportFile()}><Download />导出</Button><Button size="sm" variant="ghost" onClick={() => void publishTemplate()}><LayoutTemplate />模板</Button><Button size="sm" variant={templateUpgradePending ? 'default' : 'ghost'} onClick={() => void upgradeTemplate()}><RefreshCcw />{templateUpgradePending ? '确认升级' : '升级'}</Button><Button size="sm" variant="ghost" onClick={() => void rollbackTemplate()}><RotateCcw />回滚</Button><Button size="sm" variant="secondary" onClick={() => void save()} disabled={saving}><Save />保存</Button><Button size="sm" onClick={() => void publish()} disabled={saving}><CheckCircle2 />发布</Button>{latestRun && (latestRun.status === 'running' || latestRun.status === 'waiting_approval' || latestRun.status === 'blocked') && <Button size="sm" variant="destructive" onClick={() => void stopWorkflow()} title="停止当前 Run，中止正在执行的节点"><Square />停止</Button>}<Button size="sm" variant="outline" onClick={() => void runWorkflow()}><CirclePlay />运行</Button></div>
             </header>
             <div className="flex min-h-0 flex-1">
               <section className="w-32 shrink-0 border-r border-border/60 bg-background/35 p-2"><div className="mb-2 px-1 text-xs font-medium text-muted-foreground">拖入节点</div>{PALETTE.map((item) => <button key={item.kind} draggable onDragStart={(event) => event.dataTransfer.setData('application/paa-workflow-node', item.kind)} className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-2 text-xs hover:bg-muted" type="button">{item.icon}{item.label}</button>)}</section>

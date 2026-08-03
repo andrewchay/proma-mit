@@ -37,6 +37,7 @@ const WORKFLOW_IPC_CHANNELS = {
   EXECUTE_RUN: 'workflow:execute-run',
   RESOLVE_APPROVAL: 'workflow:resolve-approval',
   CANCEL_RUN: 'workflow:cancel-run',
+  STOP_RUN: 'workflow:stop-run',
   PROPOSE_PATCHES: 'workflow:propose-patches',
   GET_IDENTITY_DIRECTORY: 'workflow:get-identity-directory',
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
@@ -560,6 +561,7 @@ export interface ElectronAPI {
   executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowRun>
   resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@proma/shared').WorkflowRun>
   cancelWorkflowRun: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRun>
+  stopWorkflowRun: (workflowId: string, runId: string) => Promise<{ stopped: boolean; message?: string }>
   proposeWorkflowPatches: (input: { definition: import('@proma/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowPatchProposal>
   getWorkflowIdentityDirectory: () => Promise<import('@proma/shared').WorkflowIdentityDirectory>
   saveWorkflowIdentityDirectory: (directory: import('@proma/shared').WorkflowIdentityDirectory) => Promise<import('@proma/shared').WorkflowIdentityDirectory>
@@ -1626,6 +1628,7 @@ const electronAPI: ElectronAPI = {
   executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_RUN, input),
   resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
   cancelWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, workflowId, runId),
+  stopWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.STOP_RUN, workflowId, runId),
   proposeWorkflowPatches: (input: { definition: import('@proma/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, input),
   getWorkflowIdentityDirectory: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_IDENTITY_DIRECTORY),
   saveWorkflowIdentityDirectory: (directory: import('@proma/shared').WorkflowIdentityDirectory) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_IDENTITY_DIRECTORY, directory),
