@@ -10,6 +10,7 @@ import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
   PROJECT_IPC_CHANNELS,
+  AGENT_EMPLOYEE_IPC_CHANNELS,
 } from '@proma/shared'
 
 // ===== 日程管家服务 =====
@@ -132,6 +133,16 @@ import {
 } from './dingtalk-todo-provider'
 import { createLlmCaller } from './project-agent-service'
 import { registerProjectAutoSync } from './project-auto-sync'
+import {
+  registerAgentEmployeeProvider,
+  listAgentEmployees,
+  getAgentEmployee,
+  createAgentEmployee,
+  updateAgentEmployee,
+  deleteAgentEmployee,
+  listAgentExecutionsByEntity,
+  listAgentExecutionsByAgent,
+} from './agent-employee-service'
 import { onSettingsChange } from './settings-service'
 import {
   listChannels,
@@ -695,9 +706,20 @@ export function registerWorkModuleIpcHandlers(): void {
     return searchContactsAll(keyword ?? '')
   })
 
+  // ===== AI 员工（Agent Employee）=====
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EMPLOYEES, () => listAgentEmployees())
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EMPLOYEE, (_, id: string) => getAgentEmployee(id))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CREATE_EMPLOYEE, (_, input) => createAgentEmployee(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_EMPLOYEE, (_, id: string, patch) => updateAgentEmployee(id, patch))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, (_, id: string) => deleteAgentEmployee(id))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, (_, entityType: 'task' | 'subTask', entityId: string) => listAgentExecutionsByEntity(entityType, entityId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, (_, agentId: string, limit?: number) => listAgentExecutionsByAgent(agentId, limit ?? 50))
+
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()
 
+  // 注册 AI 员工 TodoProvider（agent）+ 启动心跳扫描
+  registerAgentEmployeeProvider()
   // 本地自动同步：任务创建/状态变更 → 钉钉待办推送/回写（替代原 NocoBase 插件 hook）
   registerProjectAutoSync()
 

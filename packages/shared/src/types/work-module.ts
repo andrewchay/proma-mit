@@ -325,3 +325,91 @@ export interface ProjectProgressResult {
   completed: number
   percentage: number
 }
+
+// ============================================
+// 4. AI 员工（Agent Employee）— P0
+// ============================================
+
+export const AGENT_EMPLOYEE_IPC_CHANNELS = {
+  /** AI 员工列表 */
+  LIST_EMPLOYEES: 'agent-employee:list',
+  /** 获取单个 AI 员工 */
+  GET_EMPLOYEE: 'agent-employee:get',
+  /** 创建 AI 员工 */
+  CREATE_EMPLOYEE: 'agent-employee:create',
+  /** 更新 AI 员工 */
+  UPDATE_EMPLOYEE: 'agent-employee:update',
+  /** 删除 AI 员工 */
+  DELETE_EMPLOYEE: 'agent-employee:delete',
+  /** 查询某任务/子任务的执行记录 */
+  LIST_EXECUTIONS_BY_ENTITY: 'agent-employee:list-executions-by-entity',
+  /** 查询某 AI 员工的执行记录 */
+  LIST_EXECUTIONS_BY_AGENT: 'agent-employee:list-executions-by-agent',
+} as const
+
+export interface CreateAgentEmployeeInput {
+  name: string
+  role: string
+  avatar?: string
+  description: string
+  runtime?: 'proma' | 'ai-sdk' | 'pi' | 'claude'
+  channelId: string
+  modelId?: string
+  workspaceId?: string
+  systemPrompt?: string
+  skills?: string[]
+}
+
+export interface UpdateAgentEmployeeInput {
+  name?: string
+  role?: string
+  avatar?: string | null
+  description?: string
+  runtime?: 'proma' | 'ai-sdk' | 'pi' | 'claude'
+  channelId?: string
+  modelId?: string | null
+  workspaceId?: string | null
+  systemPrompt?: string | null
+  skills?: string[]
+  enabled?: boolean
+}
+
+export interface AgentEmployeeResult {
+  id: string
+  name: string
+  role: string
+  avatar?: string
+  description: string
+  runtime: string
+  channelId: string
+  modelId?: string
+  workspaceId?: string
+  systemPrompt?: string
+  skills: string[]
+  enabled: boolean
+  totalTasks: number
+  completedTasks: number
+  avgDurationMs?: number
+  failureCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface AgentExecutionResult {
+  id: string
+  projectId: string
+  entityType: 'task' | 'subTask'
+  entityId: string
+  agentId: string
+  sessionId: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'
+  prompt: string
+  resultSummary?: string
+  outputFiles: string[]
+  riskLevel?: string
+  error?: string
+  requestedPermissions: string[]
+  lastHeartbeatAt?: number
+  startedAt: number
+  completedAt?: number
+}

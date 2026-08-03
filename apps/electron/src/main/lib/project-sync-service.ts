@@ -51,7 +51,7 @@ export function hasTodoProvider(platform: string): boolean {
 
 export interface TodoProvider {
   /** 平台标识 */
-  name: 'feishu' | 'dingtalk'
+  name: 'feishu' | 'dingtalk' | 'agent'
   /** 创建 Todo，返回外部 taskId */
   createTodo(
     task: Task,

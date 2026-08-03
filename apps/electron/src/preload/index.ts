@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1244,6 +1244,16 @@ export interface ElectronAPI {
       stopPolling: (projectId: string, platform: 'feishu' | 'dingtalk') => Promise<unknown>
       generateRiskReport: (projectId: string) => Promise<unknown>
       searchContactsAll: (keyword?: string) => Promise<unknown>
+    }
+    // --- AI 员工（Agent Employee） ---
+    agentEmployees: {
+      list: () => Promise<import('@proma/shared').AgentEmployeeResult[]>
+      get: (id: string) => Promise<import('@proma/shared').AgentEmployeeResult | null>
+      create: (input: import('@proma/shared').CreateAgentEmployeeInput) => Promise<import('@proma/shared').AgentEmployeeResult>
+      update: (id: string, patch: import('@proma/shared').UpdateAgentEmployeeInput) => Promise<import('@proma/shared').AgentEmployeeResult | null>
+      delete: (id: string) => Promise<boolean>
+      listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@proma/shared').AgentExecutionResult[]>
+      listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@proma/shared').AgentExecutionResult[]>
     }
   }
 }
@@ -2738,6 +2748,16 @@ const electronAPI: ElectronAPI = {
       stopPolling: (projectId, platform) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.POLL_STOP, projectId, platform),
       generateRiskReport: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GENERATE_RISK_REPORT, projectId),
       searchContactsAll: (keyword) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEARCH_CONTACTS_ALL, keyword),
+    },
+    // --- AI 员工（Agent Employee） ---
+    agentEmployees: {
+      list: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EMPLOYEES),
+      get: (id) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EMPLOYEE, id),
+      create: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CREATE_EMPLOYEE, input),
+      update: (id, patch) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_EMPLOYEE, id, patch),
+      delete: (id) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, id),
+      listExecutionsByEntity: (entityType, entityId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, entityType, entityId),
+      listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
     },
   },
 }

@@ -231,8 +231,9 @@ proma-mit/
 | `calendar-eventkit-bridge.ts` | macOS EventKit 桥接：权限请求、系统日历读取、双向同步（依赖 `resources/read-calendar.swift`） |
 | `reminder-service.ts` / `reminder-ipc-handlers.ts` | 智能提醒：日程冲突 / Deadline 分级提醒 / 去重，扫描启动/停止 IPC |
 | `project-types.ts` | 项目/任务/子任务/会议纪要/用户映射/Brief 回执类型定义 |
-| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.proma/projects/paa.db`） |
+| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.proma/projects/paa.db`；含 agent_employees / agent_executions 两表） |
 | `project-service.ts` | 项目管理主服务：项目/任务/子任务 CRUD、会议纪要导入与 AI 提取、看板、进度、模板、摘要发送 |
+| `agent-employee-service.ts` | AI 员工（P0）：员工 CRUD、AgentTodoProvider（第三种 TodoProvider）、headless 执行编排、60s 心跳保活/超时/stale 回退 |
 | `project-summary-service.ts` | 项目周报/摘要生成 |
 | `project-alert-service.ts` | 项目告警（高风险任务等） |
 | `project-agent-service.ts` | 会议纪要 → 任务草稿提取（复用渠道 LLM） |
@@ -469,7 +470,7 @@ proma-mit/
 |---|---|
 | `components/ui/` | shadcn/ui + Radix UI 原始组件（~30 个） |
 | `components/welcome/` | 欢迎页 |
-| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告） |
+| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告）、`AgentTeamPanel.tsx`（AI 员工团队管理） |
 | `components/calendar/` | 工作模块-日程管家：`CalendarModuleView.tsx`（子视图切换）、`ScheduleView.tsx`、`EventCreatePanel.tsx`、`CalendarSyncView.tsx` |
 | `components/automation/` | 工作模块-自动化：`AutomationModuleView.tsx`（子视图：运行中/定时任务/运行记录）、`AutomationRunningPanel.tsx` |
 | `components/onboarding/` | 新手引导 |
@@ -791,7 +792,7 @@ bun run dist:fast
 
 ## 9. 版本信息
 
-- `@proma/electron`: `0.11.2`
+- `@proma/electron`: `0.11.3`
 - `@proma/core`: `0.2.13`
 - `@proma/shared`: `0.1.46`
 - `@proma/ui`: `0.1.4`

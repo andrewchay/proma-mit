@@ -660,6 +660,13 @@ app.on('before-quit', () => {
   cleanupUpdater()
   // 停止工作区文件监听
   stopWorkspaceWatcher()
+  // 停止 AI 员工心跳扫描
+  try {
+    const { stopAgentEmployeeHeartbeat } = require('./lib/agent-employee-service') as { stopAgentEmployeeHeartbeat: () => void }
+    stopAgentEmployeeHeartbeat()
+  } catch {
+    // 未初始化时忽略
+  }
   // 关闭项目管理 SQLite 数据库（持久化未写入的数据）
   try {
     const { closeProjectDb } = require('./lib/project-sqlite-store') as { closeProjectDb: () => void }

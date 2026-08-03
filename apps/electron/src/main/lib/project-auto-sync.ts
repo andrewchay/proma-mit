@@ -47,8 +47,25 @@ export function registerProjectAutoSync(): () => void {
   return unsubscribe
 }
 
-/** 任务创建/确认：推送到所有已注册平台 */
+/** 任务创建/确认：按指派类型分流（AI 员工 → agent；真人 → 飞书/钉钉） */
 async function syncCreatedTask(task: Task): Promise<void> {
+  // 指派给 AI 员工：走 AgentTodoProvider（headless 执行），不推到外部待办
+  const { isAgentAssignee, dispatchTaskToAgent } = await import('./agent-employee-service')
+  if (isAgentAssignee(task)) {
+    try {
+      await dispatchTaskToAgent(task)
+    } catch (error) {
+      enqueueOutboxEvent({
+        projectId: task.projectId,
+        entityType: 'task',
+        entityId: task.id,
+        eventType: 'agent.dispatch' as TodoRetryEvent['eventType'],
+        errorMessage: `[agent] ${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+    return
+  }
+
   for (const platform of PLATFORMS) {
     const provider = getTodoProvider(platform)
     if (!provider) continue

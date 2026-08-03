@@ -8,6 +8,8 @@ import * as React from 'react'
 import { useState, useEffect, useCallback } from "react"
 import { useAtomValue } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
+import type { AgentEmployeeResult, AgentExecutionResult } from '@proma/shared'
+import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 
 /** 外部通讯录联系人（飞书/钉钉）候选结果。 */
 interface ExternalContact {
@@ -302,7 +304,7 @@ async function callProjectAPI<T>(method: string, ...args: unknown[]): Promise<T>
 // ===== UI 组件 =====
 
 export function ProjectView(): React.ReactElement {
-  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'settings'>('projects')
+  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team'>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -341,7 +343,7 @@ export function ProjectView(): React.ReactElement {
           )}
           {activeTab === 'my-work' && <MyWorkPanel assigneeUserId={`paa-${userProfile.userName}`} />}
           {activeTab === 'board' && <BoardOverview projects={projects} />}
-          {activeTab === 'settings' && <SettingsPlaceholder />}
+          {activeTab === 'team' && <AgentTeamPanel />}
         </div>
       </div>
     )
@@ -365,7 +367,7 @@ function ProjectHeader({
   onRefresh,
 }: {
   activeTab: string
-  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'settings') => void
+  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'team') => void
   onRefresh: () => void
 }): React.ReactElement {
   return (
@@ -381,7 +383,7 @@ function ProjectHeader({
           { key: 'projects', label: '项目' },
           { key: 'my-work', label: '我的工作' },
           { key: 'board', label: '看板' },
-          { key: 'settings', label: '设置' },
+          { key: 'team', label: '团队' },
         ] as const).map((tab) => (
           <button key={tab.key} onClick={() => onTabChange(tab.key)} className={`rounded px-2 py-1 text-xs titlebar-no-drag ${activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{tab.label}</button>
         ))}
@@ -1291,8 +1293,16 @@ function TaskList({
   const [newDesc, setNewDesc] = useState('')
   const [newPriority, setNewPriority] = useState<Task['priority']>('medium')
   const [newAssigneeName, setNewAssigneeName] = useState('')
+  const [newAgentId, setNewAgentId] = useState('')
+  const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
+
+  React.useEffect(() => {
+    window.electronAPI.paa.agentEmployees.list()
+      .then((emps) => setAgentEmployees(emps.filter((e) => e.enabled)))
+      .catch(() => setAgentEmployees([]))
+  }, [])
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return
@@ -1308,7 +1318,10 @@ function TaskList({
         description: newDesc.trim(),
         priority: newPriority,
       }
-      if (newAssigneeName.trim()) {
+      if (newAgentId) {
+        const emp = agentEmployees.find((e) => e.id === newAgentId)
+        input.assignee = { userId: `agent-${newAgentId}`, displayName: emp ? `🤖 ${emp.name}` : 'AI 员工' }
+      } else if (newAssigneeName.trim()) {
         input.assignee = {
           userId: `paa-${newAssigneeName.trim()}`,
           displayName: newAssigneeName.trim(),
@@ -1323,6 +1336,7 @@ function TaskList({
       setNewDesc('')
       setNewPriority('medium')
       setNewAssigneeName('')
+      setNewAgentId('')
       setNewDueDate('')
       setShowCreate(false)
     } catch (err) {
@@ -1421,6 +1435,21 @@ function TaskList({
               <label className="text-xs text-muted-foreground">负责人</label>
               <ContactPicker value={newAssigneeName} onChange={setNewAssigneeName} placeholder="搜索通讯录负责人（飞书/钉钉）" />
             </div>
+            {agentEmployees.length > 0 && (
+              <div>
+                <label className="text-xs text-muted-foreground">AI 员工（可选，优先于真人负责人）</label>
+                <select
+                  value={newAgentId}
+                  onChange={(e) => { setNewAgentId(e.target.value); if (e.target.value) setNewAssigneeName('') }}
+                  className="w-full px-3 py-2 text-sm border rounded-md bg-background"
+                >
+                  <option value="">不指派 AI 员工</option>
+                  {agentEmployees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>🤖 {emp.name} · {emp.role}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground">截止日期</label>
               <input
@@ -1509,6 +1538,18 @@ function TaskItem({
   const [executionSubTaskEdit, setExecutionSubTaskEdit] = useState({ title: '', assigneeName: '', startDate: '', dueDate: '', completionNotes: '' })
   const [isSavingExecutionSubTask, setIsSavingExecutionSubTask] = useState(false)
 
+  // AI 员工任务：查询最新执行状态（P0）
+  const isAgentTask = task.assignee?.userId?.startsWith('agent-') ?? false
+  const [agentExecStatus, setAgentExecStatus] = useState<AgentExecutionResult['status'] | null>(null)
+  useEffect(() => {
+    if (!isAgentTask) return
+    let cancelled = false
+    window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', task.id)
+      .then((execs) => { if (!cancelled && execs.length > 0) setAgentExecStatus(execs[0]?.status ?? null) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [isAgentTask, task.id])
+
   // 展开时异步加载子任务
   useEffect(() => {
     if (!subTasksExpanded) return
@@ -1593,12 +1634,16 @@ function TaskItem({
         description: editForm.description,
         priority: editForm.priority,
       }
-      if (editForm.assigneeName.trim()) {
-        // 负责人 userId 统一使用 paa-{名称}，与用户映射表中的 paaUserId 保持一致
+      if (editForm.assigneeName.trim() && !(task.assignee?.userId?.startsWith('agent-') && editForm.assigneeName.trim().startsWith('🤖'))) {
+        // 负责人 userId 统一使用 paa-{名称}，与用户映射表中的 paaUserId 保持一致；
+        // AI 员工任务（agent- 前缀 + 🤖 显示名）保持原指派，避免被覆盖为真人
         updates.assignee = {
           userId: `paa-${editForm.assigneeName.trim()}`,
           displayName: editForm.assigneeName.trim(),
         }
+      } else if (editForm.assigneeName.trim()) {
+        // AI 员工：保留原 assignee
+        updates.assignee = task.assignee
       } else {
         updates.assignee = undefined
       }
@@ -1752,6 +1797,10 @@ function TaskItem({
             <span className={`font-medium text-sm truncate ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>
               {task.title}
             </span>
+            {/* AI 员工执行状态（P0） */}
+            {isAgentTask && agentExecStatus && (
+              <AgentExecutionBadge status={agentExecStatus} />
+            )}
             {/* 风险等级指示器 */}
             {hasRisk && (
               <span
@@ -2529,24 +2578,6 @@ function ProjectCardOverview({ project }: { project: Project }): React.ReactElem
 }
 
 // ===== 设置 =====
-
-function SettingsPlaceholder(): React.ReactElement {
-  return (
-    <div className="space-y-6 max-w-2xl">
-      <h2 className="text-lg font-medium">项目管理设置</h2>
-      <div className="space-y-4">
-        <div className="p-4 bg-muted/30 rounded-lg border">
-          <h3 className="text-sm font-medium mb-2">IM 集成</h3>
-          <p className="text-sm text-muted-foreground">飞书/钉钉 Todo 同步（P1.2 开发中）</p>
-        </div>
-        <div className="p-4 bg-muted/30 rounded-lg border">
-          <h3 className="text-sm font-medium mb-2">Agent 设置</h3>
-          <p className="text-sm text-muted-foreground">会议纪要自动提取已启用</p>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ===== Brief 回执面板 =====
 

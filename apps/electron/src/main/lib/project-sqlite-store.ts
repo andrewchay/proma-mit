@@ -37,6 +37,11 @@ import type {
   ProjectActivity,
   ProjectTemplate,
   BriefReceipt,
+  AgentEmployee,
+  CreateAgentEmployeeInput,
+  UpdateAgentEmployeeInput,
+  AgentExecution,
+  CreateAgentExecutionInput,
 } from './project-types'
 
 // ===== 数据库连接 =====
@@ -352,6 +357,49 @@ function migrate(database: any): void {
       responded_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_briefs_task ON brief_receipts(task_id);
+
+    CREATE TABLE IF NOT EXISTS agent_employees (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT '通用',
+      avatar TEXT,
+      description TEXT NOT NULL DEFAULT '',
+      runtime TEXT NOT NULL DEFAULT 'proma',
+      channel_id TEXT NOT NULL,
+      model_id TEXT,
+      workspace_id TEXT,
+      system_prompt TEXT,
+      skills TEXT NOT NULL DEFAULT '[]',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      total_tasks INTEGER NOT NULL DEFAULT 0,
+      completed_tasks INTEGER NOT NULL DEFAULT 0,
+      avg_duration_ms INTEGER,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_employees_enabled ON agent_employees(enabled);
+
+    CREATE TABLE IF NOT EXISTS agent_executions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      prompt TEXT NOT NULL DEFAULT '',
+      result_summary TEXT,
+      output_files TEXT NOT NULL DEFAULT '[]',
+      risk_level TEXT,
+      error TEXT,
+      requested_permissions TEXT NOT NULL DEFAULT '[]',
+      last_heartbeat_at INTEGER,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_exec_entity ON agent_executions(entity_type, entity_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_exec_status ON agent_executions(status);
   `)
 }
 
@@ -1334,4 +1382,242 @@ function rowToBriefReceipt(row: BriefReceiptRow): BriefReceipt {
     createdAt: row.created_at,
     respondedAt: row.responded_at ?? undefined,
   }
+}
+
+// ===== AI 员工（Agent Employee） =====
+
+type AgentEmployeeRow = {
+  id: string; name: string; role: string; avatar: string | null; description: string;
+  runtime: string; channel_id: string; model_id: string | null; workspace_id: string | null;
+  system_prompt: string | null; skills: string | null; enabled: number; total_tasks: number;
+  completed_tasks: number; avg_duration_ms: number | null; failure_count: number;
+  created_at: number; updated_at: number;
+}
+
+type AgentExecutionRow = {
+  id: string; project_id: string; entity_type: string; entity_id: string; agent_id: string;
+  session_id: string; status: string; prompt: string; result_summary: string | null;
+  output_files: string | null; risk_level: string | null; error: string | null;
+  requested_permissions: string | null; last_heartbeat_at: number | null;
+  started_at: number; completed_at: number | null;
+}
+
+function rowToAgentEmployee(row: AgentEmployeeRow): AgentEmployee {
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    avatar: row.avatar ?? undefined,
+    description: row.description,
+    runtime: row.runtime as AgentEmployee['runtime'],
+    channelId: row.channel_id,
+    modelId: row.model_id ?? undefined,
+    workspaceId: row.workspace_id ?? undefined,
+    systemPrompt: row.system_prompt ?? undefined,
+    skills: parseJsonArray(row.skills),
+    enabled: row.enabled === 1,
+    totalTasks: row.total_tasks,
+    completedTasks: row.completed_tasks,
+    avgDurationMs: row.avg_duration_ms ?? undefined,
+    failureCount: row.failure_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    entityType: row.entity_type as AgentExecution['entityType'],
+    entityId: row.entity_id,
+    agentId: row.agent_id,
+    sessionId: row.session_id,
+    status: row.status as AgentExecution['status'],
+    prompt: row.prompt,
+    resultSummary: row.result_summary ?? undefined,
+    outputFiles: parseJsonArray(row.output_files),
+    riskLevel: (row.risk_level as AgentExecution['riskLevel']) ?? undefined,
+    error: row.error ?? undefined,
+    requestedPermissions: parseJsonArray(row.requested_permissions),
+    lastHeartbeatAt: row.last_heartbeat_at ?? undefined,
+    startedAt: row.started_at,
+    completedAt: row.completed_at ?? undefined,
+  }
+}
+
+function parseJsonArray(value: string | null): string[] {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function listAgentEmployees(): AgentEmployee[] {
+  const database = getProjectDb()
+  const rows = database.prepare(`SELECT * FROM agent_employees ORDER BY created_at DESC`).all() as AgentEmployeeRow[]
+  return rows.map(rowToAgentEmployee)
+}
+
+export function getAgentEmployee(id: string): AgentEmployee | null {
+  const database = getProjectDb()
+  const row = database.prepare(`SELECT * FROM agent_employees WHERE id = ?`).get(id) as AgentEmployeeRow | undefined
+  return row ? rowToAgentEmployee(row) : null
+}
+
+export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmployee {
+  const database = getProjectDb()
+  const id = randomUUID()
+  const now = Date.now()
+  database.prepare(
+    `INSERT INTO agent_employees
+     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, system_prompt, skills, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
+  ).run(
+    id,
+    input.name,
+    input.role ?? '通用',
+    input.avatar ?? null,
+    input.description ?? '',
+    input.runtime ?? 'proma',
+    input.channelId,
+    input.modelId ?? null,
+    input.workspaceId ?? null,
+    input.systemPrompt ?? null,
+    JSON.stringify(input.skills ?? []),
+    now,
+    now,
+  )
+  return getAgentEmployee(id)!
+}
+
+export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput): AgentEmployee | null {
+  const database = getProjectDb()
+  const existing = getAgentEmployee(id)
+  if (!existing) return null
+  const merged: AgentEmployee = { ...existing, ...patch, id, createdAt: existing.createdAt, updatedAt: Date.now() }
+  database.prepare(
+    `UPDATE agent_employees SET
+       name = ?, role = ?, avatar = ?, description = ?, runtime = ?, channel_id = ?, model_id = ?,
+       workspace_id = ?, system_prompt = ?, skills = ?, enabled = ?, updated_at = ?
+     WHERE id = ?`
+  ).run(
+    merged.name,
+    merged.role,
+    merged.avatar ?? null,
+    merged.description,
+    merged.runtime,
+    merged.channelId,
+    merged.modelId ?? null,
+    merged.workspaceId ?? null,
+    merged.systemPrompt ?? null,
+    JSON.stringify(merged.skills ?? []),
+    merged.enabled ? 1 : 0,
+    merged.updatedAt,
+    id,
+  )
+  return getAgentEmployee(id)
+}
+
+export function deleteAgentEmployee(id: string): boolean {
+  return getProjectDb().prepare(`DELETE FROM agent_employees WHERE id = ?`).run(id).changes > 0
+}
+
+/** 执行完成后更新员工统计（不覆盖手动编辑字段）。 */
+export function bumpAgentEmployeeStats(id: string, input: { completed?: boolean; failed?: boolean; durationMs?: number }): void {
+  const existing = getAgentEmployee(id)
+  if (!existing) return
+  const completedTasks = existing.completedTasks + (input.completed ? 1 : 0)
+  const failureCount = existing.failureCount + (input.failed ? 1 : 0)
+  let avgDurationMs = existing.avgDurationMs
+  if (input.durationMs !== undefined && input.durationMs > 0) {
+    const base = existing.totalTasks
+    avgDurationMs = base > 0
+      ? Math.round(((existing.avgDurationMs ?? 0) * base + input.durationMs) / (base + 1))
+      : input.durationMs
+  }
+  getProjectDb().prepare(
+    `UPDATE agent_employees SET total_tasks = ?, completed_tasks = ?, avg_duration_ms = ?, failure_count = ?, updated_at = ? WHERE id = ?`
+  ).run(existing.totalTasks + 1, completedTasks, avgDurationMs ?? null, failureCount, Date.now(), id)
+}
+
+// ===== AI 员工执行记录 =====
+
+export function createAgentExecution(input: CreateAgentExecutionInput): AgentExecution {
+  const database = getProjectDb()
+  const now = input.startedAt ?? Date.now()
+  database.prepare(
+    `INSERT INTO agent_executions
+     (id, project_id, entity_type, entity_id, agent_id, session_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, NULL)`
+  ).run(
+    input.id,
+    input.projectId,
+    input.entityType,
+    input.entityId,
+    input.agentId,
+    input.sessionId,
+    input.status ?? 'queued',
+    input.prompt,
+    JSON.stringify(input.requestedPermissions ?? []),
+    now,
+  )
+  return getAgentExecution(input.id)!
+}
+
+export function getAgentExecution(id: string): AgentExecution | null {
+  const database = getProjectDb()
+  const row = database.prepare(`SELECT * FROM agent_executions WHERE id = ?`).get(id) as AgentExecutionRow | undefined
+  return row ? rowToAgentExecution(row) : null
+}
+
+export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecution, 'id' | 'projectId' | 'entityType' | 'entityId' | 'agentId' | 'sessionId' | 'startedAt'>>): AgentExecution | null {
+  const database = getProjectDb()
+  const existing = getAgentExecution(id)
+  if (!existing) return null
+  const merged: AgentExecution = { ...existing, ...patch, id: existing.id }
+  database.prepare(
+    `UPDATE agent_executions SET
+       status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
+       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?
+     WHERE id = ?`
+  ).run(
+    merged.status,
+    merged.resultSummary ?? null,
+    JSON.stringify(merged.outputFiles ?? []),
+    merged.riskLevel ?? null,
+    merged.error ?? null,
+    JSON.stringify(merged.requestedPermissions ?? []),
+    merged.lastHeartbeatAt ?? null,
+    merged.completedAt ?? null,
+    id,
+  )
+  return getAgentExecution(id)
+}
+
+export function listAgentExecutionsByEntity(entityType: 'task' | 'subTask', entityId: string): AgentExecution[] {
+  const database = getProjectDb()
+  const rows = database.prepare(
+    `SELECT * FROM agent_executions WHERE entity_type = ? AND entity_id = ? ORDER BY started_at DESC`
+  ).all(entityType, entityId) as AgentExecutionRow[]
+  return rows.map(rowToAgentExecution)
+}
+
+export function listRunningAgentExecutions(): AgentExecution[] {
+  const database = getProjectDb()
+  const rows = database.prepare(
+    `SELECT * FROM agent_executions WHERE status IN ('queued', 'running') ORDER BY started_at ASC`
+  ).all() as AgentExecutionRow[]
+  return rows.map(rowToAgentExecution)
+}
+
+export function listAgentExecutionsByAgent(agentId: string, limit = 50): AgentExecution[] {
+  const database = getProjectDb()
+  const rows = database.prepare(
+    `SELECT * FROM agent_executions WHERE agent_id = ? ORDER BY started_at DESC LIMIT ?`
+  ).all(agentId, limit) as AgentExecutionRow[]
+  return rows.map(rowToAgentExecution)
 }

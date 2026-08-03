@@ -246,3 +246,87 @@ export interface BriefReceipt {
   createdAt: number
   respondedAt?: number
 }
+
+// ============================================
+// AI 员工（Agent Employee）— P0
+// ============================================
+
+/** AI 员工执行运行时 */
+export type AgentEmployeeRuntime = 'proma' | 'ai-sdk' | 'pi' | 'claude'
+
+/** AI 员工档案 */
+export interface AgentEmployee {
+  id: string
+  name: string
+  role: string
+  avatar?: string
+  description: string
+  runtime: AgentEmployeeRuntime
+  channelId: string
+  modelId?: string
+  /** 默认工作区 ID；缺省时使用当前全局工作区 */
+  workspaceId?: string
+  /** 自定义角色 system prompt */
+  systemPrompt?: string
+  /** 可用 Skill slug 列表 */
+  skills?: string[]
+  enabled: boolean
+  totalTasks: number
+  completedTasks: number
+  avgDurationMs?: number
+  failureCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateAgentEmployeeInput {
+  name: string
+  role: string
+  avatar?: string
+  description: string
+  runtime?: AgentEmployeeRuntime
+  channelId: string
+  modelId?: string
+  workspaceId?: string
+  systemPrompt?: string
+  skills?: string[]
+}
+
+export type UpdateAgentEmployeeInput = Partial<Omit<AgentEmployee, 'id' | 'createdAt' | 'totalTasks' | 'completedTasks' | 'avgDurationMs' | 'failureCount'>>
+
+/** AI 员工执行状态 */
+export type AgentExecutionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'
+
+/** AI 员工执行记录 */
+export interface AgentExecution {
+  id: string
+  projectId: string
+  entityType: 'task' | 'subTask'
+  entityId: string
+  agentId: string
+  sessionId: string
+  status: AgentExecutionStatus
+  prompt: string
+  resultSummary?: string
+  outputFiles?: string[]
+  riskLevel?: 'low' | 'medium' | 'high' | 'critical'
+  error?: string
+  /** by-task 申请的权限（P1 使用，P0 预留） */
+  requestedPermissions?: string[]
+  lastHeartbeatAt?: number
+  startedAt: number
+  completedAt?: number
+}
+
+export interface CreateAgentExecutionInput {
+  id: string
+  projectId: string
+  entityType: 'task' | 'subTask'
+  entityId: string
+  agentId: string
+  sessionId: string
+  prompt: string
+  status?: AgentExecutionStatus
+  requestedPermissions?: string[]
+  startedAt?: number
+}
