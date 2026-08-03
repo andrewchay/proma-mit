@@ -177,4 +177,59 @@ describe('AgentPermissionService safe 权限模式', () => {
     service.respondToPermission(requests[1]!.requestId, 'deny', false)
     expect((await second).behavior).toBe('deny')
   })
+
+  test('given Bash bun install is always allowed when bun run dev is invoked then it is auto allowed by command family whitelist', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-bash-family', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    // 第一次：bun install 需要确认，用户选择"总是允许"
+    const first = canUseTool('Bash', { command: 'bun install' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 同一命令族的不同子命令：不应再弹窗
+    const second = await canUseTool('Bash', { command: 'bun run dev' }, createOptions())
+    expect(requests).toHaveLength(1)
+    expect(second.behavior).toBe('allow')
+
+    const third = await canUseTool('Bash', { command: 'bun add lodash' }, createOptions())
+    expect(requests).toHaveLength(1)
+    expect(third.behavior).toBe('allow')
+  })
+
+  test('given Bash command with && chain when its command family is whitelisted then it is auto allowed', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-bash-chain', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const first = canUseTool('Bash', { command: 'bun install' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 带 && 的常见组合命令：命令族已白名单，不应再弹窗
+    const chained = await canUseTool('Bash', { command: 'bun run dev && echo ok' }, createOptions())
+    expect(requests).toHaveLength(1)
+    expect(chained.behavior).toBe('allow')
+  })
+
+  test('given Bash dangerous command when its command family is whitelisted then it still requests approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-bash-dangerous', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    // 第一次：git stash list 非只读（不在 SAFE_BASH_PATTERNS），需要确认
+    const first = canUseTool('Bash', { command: 'git stash list' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // git 命令族在白名单中，但 git push 是危险命令，仍需确认
+    const push = canUseTool('Bash', { command: 'git push' }, createOptions())
+    expect(requests).toHaveLength(2)
+    service.respondToPermission(requests[1]!.requestId, 'deny', false)
+    expect((await push).behavior).toBe('deny')
+  })
 })

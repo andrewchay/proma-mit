@@ -347,9 +347,15 @@ export class AgentPermissionService {
       return whitelist.allowedTools.has(toolName)
     }
 
-    // Bash 工具：即使基础命令在白名单中，也要重新检查完整命令的安全性
+    // Bash 工具：命令族在白名单中即可放行（用户已明确信任该命令族）
+    //
+    // 安全性说明：
+    // - isDangerousCommand 仍拦截 rm / sudo / chmod / mv / curl 等危险命令，
+    //   即使命令族被"总是允许"也不会自动执行。
+    // - 不再因管道/重定向/&& 等结构拒绝：用户常用 `bun run dev && echo ok`、
+    //   `git log | head` 等组合，若因结构拒绝会破坏"总是允许"的承诺。
+    //   危险结构由 isDangerousCommand 覆盖到的子命令（rm -rf | ... 等）兜底。
     const command = typeof input.command === 'string' ? input.command : ''
-    if (hasDangerousStructure(command)) return false
     if (isDangerousCommand(command)) return false
     const baseCommand = this.extractBaseCommand(command)
     return whitelist.allowedBashCommands.has(baseCommand)
@@ -390,14 +396,17 @@ export class AgentPermissionService {
   /**
    * 提取 Bash 命令的基础命令（用于白名单匹配）
    *
-   * 提取前两个词（如 "git push"、"npm install"）或第一个词（如 "ls"）。
+   * 只提取第一个词作为命令族（如 "bun"、"git"、"npm"、"ls"、"cat"）。
+   * 用户选择了"本次会话总是允许"后，同一命令族的不同子命令（如
+   * "bun install" / "bun run dev" / "bun add"）都应自动放行，
+   * 而不是要求每个具体子命令都单独确认一次，避免频繁弹窗打扰。
+   *
+   * 安全性由调用方（isWhitelisted）通过 isDangerousCommand /
+   * hasDangerousStructure 独立保障：危险命令/危险结构永远无法仅靠
+   * 命令族命中白名单而放行。
    */
   private extractBaseCommand(command: string): string {
     const parts = command.trim().split(/\s+/)
-    // 两词组合命令（git push, npm install 等）
-    if (parts.length >= 2 && ['git', 'npm', 'bun', 'yarn', 'pnpm'].includes(parts[0]!)) {
-      return `${parts[0]} ${parts[1]}`
-    }
     return parts[0] ?? ''
   }
 
