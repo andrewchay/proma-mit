@@ -22,10 +22,7 @@ import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
 import { WorkflowView } from '@/components/workflow/WorkflowView'
-import { ModulePlaceholderView } from '@/components/projects/ModulePlaceholderView'
-import { ProjectView } from '@/components/projects/ProjectView'
-import { CalendarModuleView } from '@/components/calendar/CalendarModuleView'
-import { AutomationCenterView } from '@/components/automation/AutomationCenterView'
+import { WORK_MODULE_VIEWS } from '@/atoms/work-module-registry'
 
 export function MainArea(): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
@@ -150,27 +147,18 @@ export function MainArea(): React.ReactElement {
     ? { flex: `0 0 calc(${splitRatio * 100}% - 4px)` }
     : { flex: '1 1 auto' }
 
+  // 工作模块视图：由模块注册表驱动（projects / calendar / automation）
+  const WorkModuleComponent = activeView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[activeView] : null
+
   return (
     <>
       {activeView === 'workflow' ? (
         <Panel variant="grow" className={mainPanelClassName}>
           <WorkflowView />
         </Panel>
-      ) : activeView === 'projects' ? (
+      ) : WorkModuleComponent ? (
         <Panel variant="grow" className={mainPanelClassName}>
-          <ProjectView />
-        </Panel>
-      ) : activeView === 'calendar' ? (
-        <Panel variant="grow" className={mainPanelClassName}>
-          <CalendarModuleView />
-        </Panel>
-      ) : activeView === 'tasks' ? (
-        <Panel variant="grow" className={mainPanelClassName}>
-          <ModulePlaceholderView moduleId="tasks" />
-        </Panel>
-      ) : activeView === 'automation' ? (
-        <Panel variant="grow" className={mainPanelClassName}>
-          <AutomationCenterView />
+          <WorkModuleComponent />
         </Panel>
       ) : (
       <Panel

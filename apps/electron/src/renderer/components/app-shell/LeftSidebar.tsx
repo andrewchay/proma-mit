@@ -11,13 +11,14 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Zap, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, CalendarDays, ListChecks, FolderKanban } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
 import { SearchDialog } from './SearchDialog'
 import { UserAvatar } from '@/components/chat/UserAvatar'
 import { activeViewAtom } from '@/atoms/active-view'
+import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
 import {
@@ -1675,12 +1676,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                       工作模块
                     </div>
                     <div className="flex flex-col gap-0.5 mt-1">
-                      {([
-                        { id: 'calendar', label: '日程管家', icon: CalendarDays },
-                        { id: 'projects', label: '项目管理', icon: FolderKanban },
-                        { id: 'tasks', label: '任务', icon: ListChecks },
-                        { id: 'automation', label: '自动任务', icon: Zap },
-                      ] as const).map(({ id, label, icon: Icon }) => {
+                      {CORE_WORK_MODULES.map(({ id, label, icon: Icon }) => {
                         const active = activeView === id
                         return (
                           <button

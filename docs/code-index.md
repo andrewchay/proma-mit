@@ -281,6 +281,7 @@ proma-mit/
 | 文件 | 职责 |
 |---|---|
 | `active-view.ts` | 主面板视图 |
+| `work-module-registry.ts` | 工作模块注册表（4.3 模块框架）：元数据 + 视图映射，LeftSidebar / MainArea 注册表驱动 |
 | `paa-atoms.ts` | 工作模块状态：日程事件/任务/冲突、日历同步源/事件/日志 |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态、模型选择、附件 |
@@ -353,7 +354,6 @@ proma-mit/
 | `PermissionBanner.tsx` | 权限请求横幅 |
 | `AskUserBanner.tsx` | AskUser 横幅 |
 | `ExitPlanModeBanner.tsx` | 退出计划模式横幅 |
-| `WorkspaceSelector.tsx` | 工作区选择器 |
 | `BackgroundTasksPanel.tsx` | 后台任务面板 |
 | `TaskProgressCard.tsx` / `TaskBadge.tsx` | 任务进度 |
 | `ActiveTasksBar.tsx` | 活动任务栏 |
@@ -469,8 +469,9 @@ proma-mit/
 |---|---|
 | `components/ui/` | shadcn/ui + Radix UI 原始组件（~30 个） |
 | `components/welcome/` | 欢迎页 |
-| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告）、`ModulePlaceholderView.tsx`（任务占位） |
+| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告） |
 | `components/calendar/` | 工作模块-日程管家：`CalendarModuleView.tsx`（子视图切换）、`ScheduleView.tsx`、`EventCreatePanel.tsx`、`CalendarSyncView.tsx` |
+| `components/automation/` | 工作模块-自动化：`AutomationModuleView.tsx`（子视图：运行中/定时任务/运行记录）、`AutomationRunningPanel.tsx` |
 | `components/onboarding/` | 新手引导 |
 | `components/tutorial/` | 教程 |
 | `components/quick-task/` | 快速任务窗口 |
@@ -790,7 +791,7 @@ bun run dist:fast
 
 ## 9. 版本信息
 
-- `@proma/electron`: `0.11.1`
+- `@proma/electron`: `0.11.2`
 - `@proma/core`: `0.2.13`
 - `@proma/shared`: `0.1.46`
 - `@proma/ui`: `0.1.4`

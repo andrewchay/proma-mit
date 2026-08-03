@@ -27,10 +27,9 @@ import {
   HardDrive,
   ShieldCheck,
   MonitorCog,
-  Clock3,
   Puzzle,
-  History,
   CalendarDays,
+  ChevronDown,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -64,9 +63,7 @@ import { MigrationSettings } from "./MigrationSettings";
 import { StorageSettings } from "./StorageSettings";
 import { OperationAuditSettings } from "./OperationAuditSettings";
 import { AutomationSettings } from "./AutomationSettings";
-import { ProactiveSchedulerSettings } from './ProactiveSchedulerSettings'
 import { ExtensionSettings } from './ExtensionSettings'
-import { RunCenterSettings } from './RunCenterSettings'
 import { CalendarSyncSettings } from './CalendarSyncSettings'
 
 /** 设置 Tab 定义 */
@@ -130,20 +127,10 @@ const AUTOMATION_TAB: TabItem = {
   label: "设备控制",
   icon: <MonitorCog size={16} />,
 };
-const SCHEDULER_TAB: TabItem = {
-  id: 'scheduler',
-  label: '定时任务',
-  icon: <Clock3 size={16} />,
-};
 const EXTENSIONS_TAB: TabItem = {
   id: 'extensions',
   label: '扩展',
   icon: <Puzzle size={16} />,
-};
-const RUN_CENTER_TAB: TabItem = {
-  id: 'run-center',
-  label: '运行记录',
-  icon: <History size={16} />,
 };
 const CALENDAR_TAB: TabItem = {
   id: 'calendar',
@@ -158,6 +145,64 @@ const TAIL_TABS: TabItem[] = [
   { id: "appearance", label: "外观设置", icon: <Palette size={16} /> },
   { id: "about", label: "关于/更新", icon: <Info size={16} /> },
 ];
+
+/** 设置分组（4.1 模块合并：21 Tab → 分组导航，低频组默认折叠） */
+interface SettingsGroup {
+  id: string
+  label: string
+  tabs: TabItem[]
+}
+
+const SETTINGS_GROUPS: SettingsGroup[] = [
+  {
+    id: 'basic',
+    label: '基础配置',
+    tabs: [
+      BASE_TABS[0]!, // 通用设置
+      TAIL_TABS[2]!, // 外观设置
+      SHORTCUTS_TAB,
+      VOICE_INPUT_TAB,
+      TAIL_TABS[3]!, // 关于/更新
+    ],
+  },
+  {
+    id: 'model',
+    label: '模型与智能体',
+    tabs: [
+      BASE_TABS[1]!, // 模型配置
+      AGENT_TAB,
+      VISION_TAB,
+      TOOLS_TAB,
+      BASE_TABS[2]!, // 提示词管理
+      EXTENSIONS_TAB,
+      AUTOMATION_TAB, // 设备控制
+    ],
+  },
+  {
+    id: 'connect',
+    label: '连接与同步',
+    tabs: [
+      BOTS_TAB,
+      BASE_TABS[3]!, // 代理设置
+      CALENDAR_TAB,
+    ],
+  },
+  {
+    id: 'system',
+    label: '系统与隐私',
+    tabs: [
+      TAIL_TABS[0]!, // 数据迁移
+      TAIL_TABS[1]!, // 磁盘管理
+      OPERATION_AUDIT_TAB,
+      TUTORIAL_TAB,
+    ],
+  },
+]
+
+/** 默认折叠低频组（系统与隐私） */
+const DEFAULT_COLLAPSED_GROUPS: Record<string, boolean> = {
+  system: true,
+}
 
 /** 根据标签页 id 渲染对应内容 */
 function renderTabContent(tab: SettingsTab): React.ReactElement {
@@ -196,12 +241,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <OperationAuditSettings />;
     case "automation":
       return <AutomationSettings />;
-    case 'scheduler':
-      return <ProactiveSchedulerSettings />
     case 'extensions':
       return <ExtensionSettings />
-    case 'run-center':
-      return <RunCenterSettings />
     case 'calendar':
       return <CalendarSyncSettings />
   }
@@ -268,27 +309,12 @@ export function SettingsPanel({
     }
   }, [closeRequested, activeTab, setCloseRequested])
 
-  // 设置属于全局应用配置，所有入口统一展示完整导航。
-  const tabs = React.useMemo(() => [
-    ...BASE_TABS,
-    AGENT_TAB,
-    VISION_TAB,
-    AUTOMATION_TAB,
-    SCHEDULER_TAB,
-    EXTENSIONS_TAB,
-    RUN_CENTER_TAB,
-    CALENDAR_TAB,
-    OPERATION_AUDIT_TAB,
-    TOOLS_TAB,
-    VOICE_INPUT_TAB,
-    BOTS_TAB,
-    TUTORIAL_TAB,
-    SHORTCUTS_TAB,
-    ...TAIL_TABS,
-  ], []);
+  // 设置属于全局应用配置，所有入口统一展示完整导航（分组结构）。
+  const allTabs = React.useMemo(() => SETTINGS_GROUPS.flatMap((g) => g.tabs), [])
+  const [collapsedGroups, setCollapsedGroups] = React.useState<Record<string, boolean>>(DEFAULT_COLLAPSED_GROUPS)
 
   // 当前 tab 标题
-  const activeTabLabel = tabs.find((t) => t.id === activeTab)?.label ?? "设置";
+  const activeTabLabel = allTabs.find((t) => t.id === activeTab)?.label ?? "设置";
 
   return (
     <div className="flex flex-col h-full">
@@ -309,27 +335,42 @@ export function SettingsPanel({
 
       {/* 下方主体：左导航 + 右内容 */}
       <div className="flex flex-1 min-h-0">
-        {/* 左侧 Tab 导航 */}
-        <div className="w-[160px] border-r border-border/50 pt-3 px-2 flex-shrink-0 overflow-y-auto">
-          <nav className="flex flex-col gap-0.5">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => handleTabChange(tab.id)}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
-                  activeTab === tab.id
-                    ? "bg-muted text-foreground font-medium"
-                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                )}
-              >
-                {tab.icon}
-                <span>{tab.label}</span>
-                {tab.id === "about" && (hasUpdate || hasEnvironmentIssues) && (
-                  <span className="w-2 h-2 rounded-full bg-red-500" />
-                )}
-              </button>
-            ))}
+        {/* 左侧 Tab 导航（分组结构） */}
+        <div className="w-[176px] border-r border-border/50 pt-3 px-2 flex-shrink-0 overflow-y-auto">
+          <nav className="flex flex-col gap-1">
+            {SETTINGS_GROUPS.map((group) => {
+              const collapsed = collapsedGroups[group.id] ?? false
+              return (
+                <div key={group.id} className="flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setCollapsedGroups((prev) => ({ ...prev, [group.id]: !collapsed }))}
+                    className="flex items-center justify-between px-2 py-1.5 rounded-md text-[11px] font-medium text-foreground/40 hover:text-foreground/70 transition-colors"
+                  >
+                    <span>{group.label}</span>
+                    <ChevronDown size={12} className={cn('transition-transform duration-150', collapsed && '-rotate-90')} />
+                  </button>
+                  {!collapsed && group.tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleTabChange(tab.id)}
+                      className={cn(
+                        "flex items-center gap-2 pl-4 pr-3 py-1.5 rounded-md text-sm transition-colors",
+                        activeTab === tab.id
+                          ? "bg-muted text-foreground font-medium"
+                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                      )}
+                    >
+                      <span className="text-foreground/45">{tab.icon}</span>
+                      <span>{tab.label}</span>
+                      {tab.id === "about" && (hasUpdate || hasEnvironmentIssues) && (
+                        <span className="w-2 h-2 rounded-full bg-red-500" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )
+            })}
           </nav>
         </div>
 
