@@ -265,6 +265,12 @@ export interface ProviderAdapter {
   readonly providerType: ProviderType
 
   /**
+   * 流式响应是否需要显式终止信号（[DONE] 哨兵或 done 事件）。
+   * 默认 true。Google 等供应商以流自然结束为终止，无需该信号。
+   */
+  readonly requiresTerminator?: boolean
+
+  /**
    * 构建流式请求的 HTTP 配置
    *
    * 将通用输入转换为供应商特定的 HTTP 请求，

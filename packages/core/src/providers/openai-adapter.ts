@@ -290,10 +290,13 @@ export class OpenAIAdapter implements ProviderAdapter {
         }
       }
 
-      // 检查 finish_reason
+      // 检查 finish_reason（OpenAI 协议正常以 finish_reason 或 [DONE] 哨兵结束）
       const finishReason = chunk.choices?.[0]?.finish_reason
-      if (finishReason === 'tool_calls') {
-        events.push({ type: 'done', stopReason: 'tool_use' })
+      if (finishReason) {
+        events.push({
+          type: 'done',
+          stopReason: finishReason === 'tool_calls' ? 'tool_use' : finishReason,
+        })
       }
 
       // 用量统计（stream_options.include_usage 在最后一条 chunk 返回）

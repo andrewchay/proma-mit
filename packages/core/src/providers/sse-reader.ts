@@ -101,6 +101,14 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   // 用量统计追踪
   let lastUsage: StreamUsageEvent['usage'] | undefined
 
+  // 终止信号追踪：
+  // OpenAI 协议以 data: [DONE] 哨兵结束；Anthropic 协议以 message_delta 的
+  // stop_reason（done 事件）结束。若流在收到这些终止信号前就被服务端/网络
+  // 提前关闭（reader 返回 done），则视为“断流”，应抛错让上层重试，而不是
+  // 静默返回不完整内容。Google 等供应商以流自然结束为终止，不要求该信号。
+  const requiresTerminator = adapter.requiresTerminator !== false
+  let sawTerminator = false
+
   try {
     while (true) {
       const { done, value } = await reader.read()
@@ -121,7 +129,11 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
         } else {
           continue
         }
-        if (data === '[DONE]' || !data) continue
+        if (data === '[DONE]') {
+          sawTerminator = true
+          continue
+        }
+        if (!data) continue
 
         // 4. 委托给 adapter 解析供应商特定 JSON
         const events = adapter.parseSSELine(data)
@@ -168,8 +180,11 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
                 pending.args += event.argumentsDelta
               }
             }
-          } else if (event.type === 'done' && event.stopReason) {
-            stopReason = event.stopReason
+          } else if (event.type === 'done') {
+            sawTerminator = true
+            if (event.stopReason) {
+              stopReason = event.stopReason
+            }
           } else if (event.type === 'usage') {
             lastUsage = event.usage
           }
@@ -179,6 +194,13 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
     }
   } finally {
     reader.releaseLock()
+  }
+
+  // 提前终止检测：需要终止信号的供应商在 EOF 时未收到任何终止信号 → 断流
+  if (requiresTerminator && !sawTerminator) {
+    throw new Error(
+      `stream ended prematurely: ${adapter.providerType} SSE 流在收到终止信号前被提前关闭（已收到 ${content.length} 字符）`
+    )
   }
 
   // 将 pending 工具调用解析为最终结果

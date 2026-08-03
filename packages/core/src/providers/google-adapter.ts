@@ -235,6 +235,9 @@ function appendContinuationMessages(
 export class GoogleAdapter implements ProviderAdapter {
   readonly providerType = 'google' as const
 
+  /** Google SSE 流以流自然结束为终止，无 [DONE] 哨兵 */
+  readonly requiresTerminator = false
+
   buildStreamRequest(input: StreamRequestInput): ProviderRequest {
     const url = normalizeBaseUrl(input.baseUrl)
     const contents = toGoogleContents(input)

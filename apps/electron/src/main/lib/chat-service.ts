@@ -22,6 +22,8 @@ import {
   fetchTitle,
 } from '@proma/core'
 import type { ImageAttachmentData, ContinuationMessage } from '@proma/core'
+import { withRetry } from './agent-runtime/retry'
+import { isTransientNetworkError } from './error-patterns'
 import { listChannels, decryptApiKey } from './channel-manager'
 import { appendMessage, updateConversationMeta, getConversationMessages } from './conversation-manager'
 import { readAttachmentAsBase64, isImageAttachment } from './attachment-service'
@@ -36,6 +38,9 @@ const activeControllers = new Map<string, AbortController>()
 
 /** 最大工具续接轮数（安全上限，防止极端情况下的无限循环） */
 const MAX_TOOL_ROUNDS = 999
+
+/** 聊天模式 streamSSE 瞬时断流最大重试次数（不含首次尝试） */
+const CHAT_STREAM_MAX_RETRIES = 3
 
 // ===== 平台相关：图片附件读取器 =====
 
@@ -324,13 +329,25 @@ export async function sendMessage(
         continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined,
       })
 
-      const { content, reasoning, thinkingBlocks, toolCalls, stopReason } = await streamSSE({
-        request,
-        adapter,
-        signal: controller.signal,
-        fetchFn,
-        onEvent: handleStreamEvent,
-      })
+      const { content, reasoning, thinkingBlocks, toolCalls, stopReason } = await withRetry(
+        () =>
+          streamSSE({
+            request,
+            adapter,
+            signal: controller.signal,
+            fetchFn,
+            onEvent: handleStreamEvent,
+          }),
+        {
+          maxRetries: CHAT_STREAM_MAX_RETRIES,
+          baseDelayMs: 1000,
+          shouldRetry: (error) => isTransientNetworkError(getErrorMessage(error)),
+          onRetry: (attempt, error, delayMs) => {
+            console.warn(`[聊天服务] 第 ${attempt} 次重试 streamSSE（${delayMs}ms）: ${getErrorMessage(error)}`)
+          },
+          signal: controller.signal,
+        },
+      )
 
       // 如果没有工具调用或不是 tool_use 停止，退出循环
       if (!toolCalls || toolCalls.length === 0 || stopReason !== 'tool_use') {
@@ -401,13 +418,25 @@ export async function sendMessage(
         continuationMessages,
       })
 
-      await streamSSE({
-        request: finalRequest,
-        adapter,
-        signal: controller.signal,
-        fetchFn,
-        onEvent: handleStreamEvent,
-      })
+      await withRetry(
+        () =>
+          streamSSE({
+            request: finalRequest,
+            adapter,
+            signal: controller.signal,
+            fetchFn,
+            onEvent: handleStreamEvent,
+          }),
+        {
+          maxRetries: CHAT_STREAM_MAX_RETRIES,
+          baseDelayMs: 1000,
+          shouldRetry: (error) => isTransientNetworkError(getErrorMessage(error)),
+          onRetry: (attempt, error, delayMs) => {
+            console.warn(`[聊天服务] 最终响应轮第 ${attempt} 次重试 streamSSE（${delayMs}ms）: ${getErrorMessage(error)}`)
+          },
+          signal: controller.signal,
+        },
+      )
     }
 
     // 10. 保存 assistant 消息（空内容不保存，除非有生成的附件）
@@ -613,4 +642,10 @@ export async function generateTitle(input: GenerateTitleInput): Promise<string |
     console.warn('[标题生成] 请求失败:', error)
     return null
   }
+}
+
+/** 从任意错误中提取可读消息（瞬时断流重试判断用） */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error) || '未知错误'
 }
