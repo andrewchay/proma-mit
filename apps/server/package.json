@@ -1,6 +1,6 @@
 {
   "name": "@proma/server",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,12 +9,12 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:p2-live": "bun test src/p2-live.test.ts",
-    "test:web-e2e": "bun test src/web-e2e.test.ts"
-    ,"test:real-e2e": "bun test src/real-e2e.test.ts"
+    "test:web-e2e": "bun test src/web-e2e.test.ts",
+    "test:real-e2e": "bun test src/real-e2e.test.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.957.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@aws-sdk/client-s3": "^3.1101.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@proma/core": "workspace:*",
     "@proma/shared": "workspace:*",
     "ai": "7.0.31",

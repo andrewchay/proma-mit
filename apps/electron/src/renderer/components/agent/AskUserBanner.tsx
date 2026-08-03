@@ -91,7 +91,13 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   // 组件卸载时清理未触发的跳转定时器
   React.useEffect(() => clearAutoAdvanceTimer, [clearAutoAdvanceTimer])
 
+  // 仅在切换到新请求（requestId 变化）时重置表单，避免同一请求被重新渲染
+  // （对象引用变化）时意外清空用户已填写的内容。
+  const lastRequestIdRef = React.useRef<string | null>(null)
   React.useEffect(() => {
+    const rid = request?.requestId ?? null
+    if (rid === lastRequestIdRef.current) return
+    lastRequestIdRef.current = rid
     clearAutoAdvanceTimer()
     setActiveTab(0)
     setFocusedOptIdx(-1)
@@ -99,7 +105,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     setAnswers(firstOpt
       ? new Map([[0, { ...EMPTY_ANSWER, selected: [firstOpt.label] }]])
       : new Map())
-  }, [clearAutoAdvanceTimer, questions[0]?.options[0]])
+  }, [clearAutoAdvanceTimer, request?.requestId, questions])
 
   // 切换 Tab 时重置焦点并默认选中第一个选项
   React.useEffect(() => {

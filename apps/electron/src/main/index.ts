@@ -137,13 +137,14 @@ function handleMigrationFileOpen(filePath: string): void {
   }
 }
 
-/** 处理 MCP OAuth 授权码回调（proma-mit://mcp-auth?workspace=&server=&code=） */
+/** 处理 MCP OAuth 授权码回调（proma-mit://mcp-auth?workspace=&server=&code=&state=） */
 async function handleMcpOAuthCallback(callbackUrl: string): Promise<void> {
   try {
     const url = new URL(callbackUrl)
     const workspaceSlug = url.searchParams.get('workspace')
     const serverName = url.searchParams.get('server')
     const code = url.searchParams.get('code')
+    const state = url.searchParams.get('state')
     if (!workspaceSlug || !serverName || !code) {
       console.warn('[MCP OAuth DeepLink] 缺少必要参数:', callbackUrl)
       return
@@ -152,6 +153,11 @@ async function handleMcpOAuthCallback(callbackUrl: string): Promise<void> {
     const pending = takePendingMcpOAuth(workspaceSlug, serverName)
     if (!pending) {
       console.warn(`[MCP OAuth DeepLink] 未找到 pending 授权会话: ${workspaceSlug}/${serverName}`)
+      return
+    }
+
+    if (pending.expectedState && pending.expectedState !== state) {
+      console.warn(`[MCP OAuth DeepLink] state 校验失败: ${workspaceSlug}/${serverName}`)
       return
     }
 

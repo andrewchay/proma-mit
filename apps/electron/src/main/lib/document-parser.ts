@@ -5,7 +5,7 @@
  * 支持的格式：
  * - PDF：使用 pdf-parse 提取文本
  * - DOC：使用 word-extractor 提取文本（旧版 Word）
- * - DOCX/XLSX/PPTX/ODP/ODS/ODT：使用 officeparser 提取文本
+ * - DOCX/XLSX/PPTX/ODP/ODS/ODT：使用 office-text-extractor 提取文本
  * - TXT/MD/CSV/JSON/XML/HTML/JS/TS/PY 等：直接 UTF-8 读取
  */
 
@@ -15,7 +15,7 @@ import { getAttachmentsDir, getConfigDir, resolveAttachmentPath, resolveConfigPa
 
 // ===== 文件类型分类 =====
 
-/** officeparser 支持的格式 */
+/** office-text-extractor 支持的格式 */
 const OFFICE_EXTENSIONS = new Set([
   '.docx', '.xlsx', '.pptx',
   '.odt', '.odp', '.ods',
@@ -61,7 +61,7 @@ export function isDocumentAttachment(mediaType: string): boolean {
  * 根据文件扩展名选择合适的解析器：
  * - .pdf → pdf-parse
  * - .doc → word-extractor
- * - .docx/.xlsx/.pptx/.odt/.odp/.ods → officeparser
+ * - .docx/.xlsx/.pptx/.odt/.odp/.ods → office-text-extractor
  * - .txt/.md/... → 直接 UTF-8 读取
  *
  * @param filePath 文件的完整路径
@@ -123,8 +123,9 @@ async function extractDoc(filePath: string): Promise<string> {
  * 提取 Office/OpenDocument 文本（DOCX, XLSX, PPTX, ODT, ODP, ODS）
  */
 async function extractOffice(filePath: string): Promise<string> {
-  const officeParser = await import('officeparser')
-  const text = await officeParser.parseOfficeAsync(filePath)
+  const { getTextExtractor } = await import('office-text-extractor')
+  const extractor = getTextExtractor()
+  const text = await extractor.extractText({ input: filePath, type: 'file' })
   console.log(`[文档解析] Office 提取完成: ${text.length} 字符`)
   return text
 }

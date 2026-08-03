@@ -33,7 +33,7 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
 
 export function RunCenterSettings(): React.ReactElement {
   const store = useStore()
-  const openSession = useOpenSession()
+  const { openSession } = useOpenSession()
   const [records, setRecords] = React.useState<RunRecord[]>([])
   const [sourceFilter, setSourceFilter] = React.useState<string>('all')
   const [loading, setLoading] = React.useState(true)

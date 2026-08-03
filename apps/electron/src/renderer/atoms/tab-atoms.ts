@@ -39,6 +39,8 @@ export interface TabItem {
   sessionId: string
   /** 标签页显示标题 */
   title: string
+  /** 是否为临时预览标签（VS Code 风格：单击打开，斜体显示，打开其他会话时自动替换） */
+  preview?: boolean
 }
 
 /** Tab 持久化数据（保存到 settings.json） */
@@ -135,7 +137,13 @@ export function openTab(
   const existingTab = tabs.find((t) => t.sessionId === item.sessionId && t.type === item.type)
 
   if (existingTab) {
-    return { tabs, activeTabId: existingTab.id }
+    // 若已有标签是临时预览，显式打开时提升为常驻标签
+    return {
+      tabs: existingTab.preview
+        ? tabs.map((t) => (t.id === existingTab.id ? { ...t, preview: false } : t))
+        : tabs,
+      activeTabId: existingTab.id,
+    }
   }
 
   // 创建新标签
@@ -150,6 +158,71 @@ export function openTab(
     tabs: [...tabs, newTab],
     activeTabId: newTab.id,
   }
+}
+
+/**
+ * 以临时预览方式打开标签（VS Code 风格）。
+ *
+ * - 已存在同会话标签 → 聚焦（保持原有临时/常驻属性）
+ * - 已存在其他临时预览标签 → 原地替换为新的临时标签
+ * - 否则 → 新建临时预览标签
+ */
+export function openTabPreview(
+  tabs: TabItem[],
+  item: { type: TabType; sessionId: string; title: string },
+): { tabs: TabItem[]; activeTabId: string } {
+  const existingTab = tabs.find((t) => t.sessionId === item.sessionId && t.type === item.type)
+  if (existingTab) {
+    return { tabs, activeTabId: existingTab.id }
+  }
+
+  const newTab: TabItem = {
+    id: item.sessionId,
+    type: item.type,
+    sessionId: item.sessionId,
+    title: item.title,
+    preview: true,
+  }
+
+  // 已有临时预览标签 → 原地替换（保持其位置，避免标签栏跳动）
+  const previewIdx = tabs.findIndex((t) => t.preview)
+  if (previewIdx !== -1) {
+    const next = [...tabs]
+    next[previewIdx] = newTab
+    return { tabs: next, activeTabId: newTab.id }
+  }
+
+  return { tabs: [...tabs, newTab], activeTabId: newTab.id }
+}
+
+/**
+ * 以常驻方式打开标签（双击会话）。
+ *
+ * - 已存在同会话标签 → 提升为常驻并聚焦
+ * - 否则 → 新建常驻标签
+ */
+export function openTabPermanent(
+  tabs: TabItem[],
+  item: { type: TabType; sessionId: string; title: string },
+): { tabs: TabItem[]; activeTabId: string } {
+  const existingTab = tabs.find((t) => t.sessionId === item.sessionId && t.type === item.type)
+  if (existingTab) {
+    return {
+      tabs: existingTab.preview
+        ? tabs.map((t) => (t.id === existingTab.id ? { ...t, preview: false } : t))
+        : tabs,
+      activeTabId: existingTab.id,
+    }
+  }
+
+  const newTab: TabItem = {
+    id: item.sessionId,
+    type: item.type,
+    sessionId: item.sessionId,
+    title: item.title,
+  }
+
+  return { tabs: [...tabs, newTab], activeTabId: newTab.id }
 }
 
 /** 关闭标签页（scratch tab 不可关闭） */

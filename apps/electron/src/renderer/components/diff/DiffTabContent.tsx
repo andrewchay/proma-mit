@@ -183,9 +183,11 @@ interface DiffTabContentProps {
   basePaths?: string[]
   /** diff 模式下检测到内容为空（无差异）时回调，用于自动关闭预览面板 */
   onEmptyDiff?: () => void
+  /** 隐藏顶部路径/工具栏；独立预览窗口自身已提供标题栏时使用 */
+  hideHeader?: boolean
 }
 
-export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewOnly, readOnly, basePaths, onEmptyDiff }: DiffTabContentProps): React.ReactElement {
+export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewOnly, readOnly, basePaths, onEmptyDiff, hideHeader }: DiffTabContentProps): React.ReactElement {
   const [viewMode, setViewMode] = useAtom(agentDiffViewModeAtom)
   const [oldContent, setOldContent] = React.useState('')
   const [newContent, setNewContent] = React.useState('')
@@ -775,6 +777,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
 
   return (
     <div className="flex flex-col h-full">
+      {!hideHeader && (
       <div className="flex items-center gap-2 px-3 py-1.5 flex-shrink-0">
         <span className="text-[12px] text-foreground/60 truncate" title={filePath}>
           {filePath}
@@ -856,6 +859,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
           <RefreshCw className="size-3.5" />
         </button>
       </div>
+      )}
 
       <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-auto scrollbar-thin relative">
         {loading ? (

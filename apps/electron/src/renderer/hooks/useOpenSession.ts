@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { tabsAtom, activeTabIdAtom, openTab, type TabType } from '@/atoms/tab-atoms'
+import { tabsAtom, activeTabIdAtom, openTabPreview, openTabPermanent, type TabType } from '@/atoms/tab-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { currentConversationIdAtom } from '@/atoms/chat-atoms'
 import {
@@ -19,7 +19,16 @@ import {
 
 type OpenSessionFn = (type: TabType, sessionId: string, title: string) => void
 
-export function useOpenSession(): OpenSessionFn {
+export interface OpenSessionActions {
+  /** 以临时预览标签打开（单击，斜体，打开其他会话时自动替换） */
+  openSessionPreview: OpenSessionFn
+  /** 以常驻标签打开（双击，正体，需要手动关闭） */
+  openSessionPermanent: OpenSessionFn
+  /** 以常驻标签打开（默认行为，兼容现有调用方） */
+  openSession: OpenSessionFn
+}
+
+export function useOpenSession(): OpenSessionActions {
   const [tabs, setTabs] = useAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setAppMode = useSetAtom(appModeAtom)
@@ -29,11 +38,8 @@ export function useOpenSession(): OpenSessionFn {
   const setCurrentAgentWorkspaceId = useSetAtom(currentAgentWorkspaceIdAtom)
   const setUnviewedCompleted = useSetAtom(unviewedCompletedSessionIdsAtom)
 
-  return React.useCallback(
-    (type: TabType, sessionId: string, title: string): void => {
-      const result = openTab(tabs, { type, sessionId, title })
-      setTabs(result.tabs)
-      setActiveTabId(result.activeTabId)
+  const activateSession = React.useCallback(
+    (type: TabType, sessionId: string): void => {
       setAppMode(type)
 
       if (type === 'chat') {
@@ -59,6 +65,38 @@ export function useOpenSession(): OpenSessionFn {
         }
       }
     },
-    [tabs, setTabs, setActiveTabId, setAppMode, setCurrentConversationId, setCurrentAgentSessionId, agentSessions, setCurrentAgentWorkspaceId, setUnviewedCompleted],
+    [setAppMode, setCurrentConversationId, setCurrentAgentSessionId, agentSessions, setCurrentAgentWorkspaceId, setUnviewedCompleted],
   )
+
+  const openSession = React.useCallback<OpenSessionFn>(
+    (type, sessionId, title) => {
+      const result = openTabPermanent(tabs, { type, sessionId, title })
+      setTabs(result.tabs)
+      setActiveTabId(result.activeTabId)
+      activateSession(type, sessionId)
+    },
+    [tabs, setTabs, setActiveTabId, activateSession],
+  )
+
+  const openSessionPreview = React.useCallback<OpenSessionFn>(
+    (type, sessionId, title) => {
+      const result = openTabPreview(tabs, { type, sessionId, title })
+      setTabs(result.tabs)
+      setActiveTabId(result.activeTabId)
+      activateSession(type, sessionId)
+    },
+    [tabs, setTabs, setActiveTabId, activateSession],
+  )
+
+  const openSessionPermanent = React.useCallback<OpenSessionFn>(
+    (type, sessionId, title) => {
+      const result = openTabPermanent(tabs, { type, sessionId, title })
+      setTabs(result.tabs)
+      setActiveTabId(result.activeTabId)
+      activateSession(type, sessionId)
+    },
+    [tabs, setTabs, setActiveTabId, activateSession],
+  )
+
+  return { openSessionPreview, openSessionPermanent, openSession }
 }

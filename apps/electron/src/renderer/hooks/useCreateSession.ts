@@ -32,7 +32,7 @@ interface CreateSessionActions {
 }
 
 export function useCreateSession(): CreateSessionActions {
-  const openSession = useOpenSession()
+  const { openSession } = useOpenSession()
   const setActiveView = useSetAtom(activeViewAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
 

@@ -244,6 +244,7 @@ function TabBarInner({
             id={tab.id}
             type={tab.type}
             title={tab.title}
+            preview={tab.preview}
             isActive={tab.id === activeTabId}
             isStreaming={streamingMap.get(tab.id) ?? 'idle'}
             isHovered={hoveredTabId === tab.id}

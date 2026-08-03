@@ -49,8 +49,8 @@ export async function executeGrepTool(input: unknown, ctx: ToolContext): Promise
   try {
     const hasRg = await commandExists('rg')
     const args = hasRg
-      ? ['-n', '--max-count', '50', params.regex, path]
-      : ['-rn', '--max-count=50', params.regex, path]
+      ? ['-n', '--max-count', '50', '--', params.regex, path]
+      : ['-rn', '--max-count=50', '--', params.regex, path]
     const command = hasRg ? 'rg' : 'grep'
 
     const { stdout, stderr, exitCode } = await runCommand(command, args, { cwd: ctx.cwd, timeout: 30_000 })

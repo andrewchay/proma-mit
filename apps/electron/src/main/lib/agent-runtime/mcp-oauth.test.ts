@@ -190,7 +190,7 @@ describe('MCP OAuth Provider', () => {
 
 describe('MCP OAuth pending 注册表', () => {
   test('注册、查询、取出 pending 会话', () => {
-    registerPendingMcpOAuth('ws', 'srv', async (code: string) => {
+    registerPendingMcpOAuth('ws', 'srv', 'state-123', async (code: string) => {
       expect(code).toBe('authcode')
     })
 
@@ -199,6 +199,7 @@ describe('MCP OAuth pending 注册表', () => {
     expect(pending).toBeDefined()
     expect(pending?.workspaceSlug).toBe('ws')
     expect(pending?.serverName).toBe('srv')
+    expect(pending?.expectedState).toBe('state-123')
     expect(hasPendingMcpOAuth('ws', 'srv')).toBe(false)
   })
 })

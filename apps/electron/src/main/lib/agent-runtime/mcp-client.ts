@@ -67,8 +67,9 @@ export class McpClientManager {
     for (const [name, entry] of entries) {
       if (this.abortSignal?.aborted) break
       let transport: import('@modelcontextprotocol/sdk/shared/transport.js').Transport | undefined
+      const authProvider = entry.type === 'sse' || entry.type === 'http' ? this.createAuthProvider(name, entry) : undefined
       try {
-        transport = await this.createTransport(name, entry)
+        transport = await this.createTransport(name, entry, authProvider)
         const client = new Client(
           { name: `proma-runtime-${sanitizeMcpToolName(name)}`, version: '0.1.0' },
           { capabilities: {} },
@@ -82,9 +83,11 @@ export class McpClientManager {
           console.warn(`[MCP 客户端] 服务器 ${name} 需要 OAuth 授权:`, message)
           if (transport && 'finishAuth' in transport && typeof transport.finishAuth === 'function') {
             const finishTransport = transport
+            const expectedState = authProvider ? await authProvider.state() : ''
             registerPendingMcpOAuth(
               this.options?.workspaceSlug ?? '',
               name,
+              expectedState,
               async (code: string) => {
                 await (finishTransport as unknown as { finishAuth: (code: string) => Promise<void> }).finishAuth(code)
               },
@@ -234,6 +237,7 @@ export class McpClientManager {
   private async createTransport(
     name: string,
     entry: McpServerEntry,
+    authProvider?: McpOAuthProvider,
   ): Promise<import('@modelcontextprotocol/sdk/shared/transport.js').Transport> {
     if (entry.type === 'stdio') {
       if (!entry.command) throw new Error(`MCP 服务器 ${name} 缺少 command`)
@@ -252,7 +256,7 @@ export class McpClientManager {
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js')
       const url = new URL(entry.url)
       return new SSEClientTransport(url, {
-        authProvider: this.createAuthProvider(name, entry),
+        authProvider: authProvider ?? this.createAuthProvider(name, entry),
         requestInit: { headers: this.buildHeaders(entry) },
       })
     }
@@ -262,7 +266,7 @@ export class McpClientManager {
       const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
       const url = new URL(entry.url)
       return new StreamableHTTPClientTransport(url, {
-        authProvider: this.createAuthProvider(name, entry),
+        authProvider: authProvider ?? this.createAuthProvider(name, entry),
         requestInit: { headers: this.buildHeaders(entry) },
       })
     }

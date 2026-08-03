@@ -20,6 +20,8 @@ export interface TabBarItemProps {
   id: string
   type: TabType
   title: string
+  /** 临时预览标签（斜体显示，打开其他会话时自动替换） */
+  preview?: boolean
   isActive: boolean
   isStreaming: SessionIndicatorStatus
   /** 是否显示 hover 预览面板（由父级管理） */
@@ -44,6 +46,7 @@ export function TabBarItem({
   id,
   type,
   title,
+  preview,
   isActive,
   isStreaming,
   isHovered,
@@ -161,7 +164,7 @@ export function TabBarItem({
         {isNarrow ? (
           <span className="flex-1" />
         ) : (
-          <span className="flex-1 min-w-0 truncate text-left">{title}</span>
+          <span className={cn('flex-1 min-w-0 truncate text-left', preview && 'italic text-foreground/70')}>{title}</span>
         )}
 
         {/* 关闭按钮（scratch 类型不显示） */}

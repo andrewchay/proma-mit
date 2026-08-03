@@ -10,7 +10,7 @@
  * 所有业务逻辑已委托给 AgentOrchestrator。
  */
 
-import { join, dirname } from 'node:path'
+import { dirname } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { BrowserWindow } from 'electron'
 import type { WebContents } from 'electron'
@@ -41,7 +41,7 @@ import { PiAgentAdapter } from './adapters/pi-agent-adapter'
 import { RuntimeRoutingAgentAdapter } from './adapters/runtime-routing-agent-adapter'
 import { AgentEventBus } from './agent-event-bus'
 import { AgentOrchestrator } from './agent-orchestrator'
-import { getAgentSessionWorkspacePath, getWorkspaceFilesDir } from './config-paths'
+import { getAgentSessionWorkspacePath, getWorkspaceFilesDir, resolvePathWithinDirectory } from './config-paths'
 import { createElectronRuntimeServices } from './agent-runtime/runtime-services'
 import { GoalCoordinator } from './goal-runtime/goal-coordinator'
 import { ProactiveScheduler } from './proactive-scheduler'
@@ -504,6 +504,43 @@ export async function queueAgentMessage(
 // ===== 文件操作 =====
 
 /**
+ * 在安全根目录内解析文件路径，并自动处理同名文件重命名。
+ *
+ * @returns 解析后的绝对路径；若文件名非法（如包含 .. 或绝对路径）返回 null
+ */
+function resolveAgentSavePath(rootDir: string, filename: string, usedPaths: Set<string>): string | null {
+  let targetPath: string
+  try {
+    targetPath = resolvePathWithinDirectory(rootDir, filename, 'Agent 文件')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[Agent 服务] 拒绝非法文件名: ${filename} (${message})`)
+    return null
+  }
+
+  if (usedPaths.has(targetPath) || existsSync(targetPath)) {
+    const dotIdx = filename.lastIndexOf('.')
+    const baseName = dotIdx > 0 ? filename.slice(0, dotIdx) : filename
+    const ext = dotIdx > 0 ? filename.slice(dotIdx) : ''
+    let counter = 1
+    while (true) {
+      const candidate = `${baseName}-${counter}${ext}`
+      try {
+        targetPath = resolvePathWithinDirectory(rootDir, candidate, 'Agent 文件')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.warn(`[Agent 服务] 拒绝非法文件名: ${candidate} (${message})`)
+        return null
+      }
+      if (!usedPaths.has(targetPath) && !existsSync(targetPath)) break
+      counter++
+    }
+  }
+
+  return targetPath
+}
+
+/**
  * 保存文件到 Agent session 工作目录
  *
  * 将 base64 编码的文件写入 session 的 cwd，供 Agent 通过 Read 工具读取。
@@ -514,21 +551,8 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
   const usedPaths = new Set<string>()
 
   for (const file of input.files) {
-    let targetPath = join(sessionDir, file.filename)
-
-    // 防止同名文件覆盖
-    if (usedPaths.has(targetPath) || existsSync(targetPath)) {
-      const dotIdx = file.filename.lastIndexOf('.')
-      const baseName = dotIdx > 0 ? file.filename.slice(0, dotIdx) : file.filename
-      const ext = dotIdx > 0 ? file.filename.slice(dotIdx) : ''
-      let counter = 1
-      let candidate = join(sessionDir, `${baseName}-${counter}${ext}`)
-      while (usedPaths.has(candidate) || existsSync(candidate)) {
-        counter++
-        candidate = join(sessionDir, `${baseName}-${counter}${ext}`)
-      }
-      targetPath = candidate
-    }
+    const targetPath = resolveAgentSavePath(sessionDir, file.filename, usedPaths)
+    if (!targetPath) continue
     usedPaths.add(targetPath)
 
     mkdirSync(dirname(targetPath), { recursive: true })
@@ -562,21 +586,8 @@ export function saveFilesToWorkspaceFiles(input: AgentSaveWorkspaceFilesInput): 
   const usedPaths = new Set<string>()
 
   for (const file of input.files) {
-    let targetPath = join(wsFilesDir, file.filename)
-
-    // 防止同名文件覆盖
-    if (usedPaths.has(targetPath) || existsSync(targetPath)) {
-      const dotIdx = file.filename.lastIndexOf('.')
-      const baseName = dotIdx > 0 ? file.filename.slice(0, dotIdx) : file.filename
-      const ext = dotIdx > 0 ? file.filename.slice(dotIdx) : ''
-      let counter = 1
-      let candidate = join(wsFilesDir, `${baseName}-${counter}${ext}`)
-      while (usedPaths.has(candidate) || existsSync(candidate)) {
-        counter++
-        candidate = join(wsFilesDir, `${baseName}-${counter}${ext}`)
-      }
-      targetPath = candidate
-    }
+    const targetPath = resolveAgentSavePath(wsFilesDir, file.filename, usedPaths)
+    if (!targetPath) continue
     usedPaths.add(targetPath)
 
     mkdirSync(dirname(targetPath), { recursive: true })

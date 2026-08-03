@@ -109,6 +109,7 @@ export function DetachedPreviewApp(): React.ReactElement {
           previewOnly={data.previewOnly}
           readOnly={data.readOnly}
           basePaths={data.basePaths}
+          hideHeader
         />
       </div>
     </div>

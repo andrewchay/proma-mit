@@ -169,10 +169,11 @@ class DynamicIslandService {
     return session
   }
 
-  /** 会话是否应出现在灵动岛（running 常驻脉冲；terminal 保留未读窗口） */
+  /** 会话是否应出现在灵动岛（running 常驻脉冲；needs-interaction/error 仅在 attention 为 true 时显示；completed 保留未读窗口） */
   private isIslandSession(session: InternalSessionSnapshot, now: number): boolean {
     if (now - session.lastActivityAt >= 24 * 60 * 60_000) return false
-    if (session.phase === 'running' || session.phase === 'needs-interaction' || session.phase === 'error') return true
+    if (session.phase === 'running') return true
+    if ((session.phase === 'needs-interaction' || session.phase === 'error') && session.attention) return true
     return session.phase === 'completed'
       && session.unread
       && session.terminalAt !== undefined

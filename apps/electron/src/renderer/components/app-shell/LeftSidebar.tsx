@@ -296,7 +296,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
   const [tabs, setTabs] = useAtom(tabsAtom)
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
   const [sidebarCollapsed, setSidebarCollapsed] = useAtom(sidebarCollapsedAtom)
-  const openSession = useOpenSession()
+  const { openSession, openSessionPreview, openSessionPermanent } = useOpenSession()
   const syncActiveTabSideEffects = useSyncActiveTabSideEffects()
 
   // 归档 & 搜索状态
@@ -467,11 +467,17 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
   }
 
-  /** 选择对话（打开或聚焦标签页） */
+  /** 选择对话（单击 → 临时预览标签，VS Code 风格） */
   const handleSelectConversation = React.useCallback((id: string, title: string): void => {
-    openSession('chat', id, title)
+    openSessionPreview('chat', id, title)
     setActiveView('conversations')
-  }, [openSession, setActiveView])
+  }, [openSessionPreview, setActiveView])
+
+  /** 双击对话 → 常驻标签 */
+  const handlePermanentConversation = React.useCallback((id: string, title: string): void => {
+    openSessionPermanent('chat', id, title)
+    setActiveView('conversations')
+  }, [openSessionPermanent, setActiveView])
 
   /** 请求删除对话（弹出确认框） */
   const handleRequestDelete = React.useCallback((id: string): void => {
@@ -652,7 +658,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
     }
   }
 
-  /** 选择 Agent 会话（打开或聚焦标签页） */
+  /** 选择 Agent 会话（单击 → 临时预览标签，VS Code 风格） */
   const handleSelectAgentSession = React.useCallback((id: string, title: string): void => {
     const session = agentSessions.find((s) => s.id === id)
     // 新项目管理视图：点击项目下的会话时同步切换当前工作区
@@ -660,7 +666,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       setCurrentAgentWorkspaceId(session.workspaceId)
       window.electronAPI.updateSettings({ agentWorkspaceId: session.workspaceId }).catch(console.error)
     }
-    openSession('agent', id, title)
+    openSessionPreview('agent', id, title)
     setActiveView('conversations')
     // 清除该会话的"已完成未查看"标记
     setUnviewedCompleted((prev: Set<string>) => {
@@ -669,7 +675,24 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
       next.delete(id)
       return next
     })
-  }, [openSession, setActiveView, setUnviewedCompleted, agentSessions, currentWorkspaceId, setCurrentAgentWorkspaceId])
+  }, [openSessionPreview, setActiveView, setUnviewedCompleted, agentSessions, currentWorkspaceId, setCurrentAgentWorkspaceId])
+
+  /** 双击 Agent 会话 → 常驻标签 */
+  const handlePermanentAgentSession = React.useCallback((id: string, title: string): void => {
+    const session = agentSessions.find((s) => s.id === id)
+    if (session?.workspaceId && session.workspaceId !== currentWorkspaceId) {
+      setCurrentAgentWorkspaceId(session.workspaceId)
+      window.electronAPI.updateSettings({ agentWorkspaceId: session.workspaceId }).catch(console.error)
+    }
+    openSessionPermanent('agent', id, title)
+    setActiveView('conversations')
+    setUnviewedCompleted((prev: Set<string>) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [openSessionPermanent, setActiveView, setUnviewedCompleted, agentSessions, currentWorkspaceId, setCurrentAgentWorkspaceId])
 
   /** 重命名 Agent 会话标题 */
   const handleAgentRename = async (id: string, newTitle: string): Promise<void> => {
@@ -1353,6 +1376,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                 streaming={streamingIds.has(conv.id)}
                 showPinIcon={false}
                 onSelect={handleSelectConversation}
+                onOpenPermanent={handlePermanentConversation}
                 onRequestDelete={handleRequestDelete}
                 onRename={handleRename}
                 onTogglePin={handleTogglePin}
@@ -1528,6 +1552,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                                     isInWorkingSection={workingSessionIds.has(session.id)}
                                     showPinIcon={!!session.pinned}
                                     onSelect={handleSelectAgentSession}
+                                    onOpenPermanent={handlePermanentAgentSession}
                                     onRequestDelete={handleRequestDelete}
                                     onRequestMove={handleRequestMove}
                                     onRename={handleAgentRename}
@@ -1655,6 +1680,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                         streaming={streamingIds.has(conv.id)}
                         showPinIcon={!!conv.pinned}
                         onSelect={handleSelectConversation}
+                        onOpenPermanent={handlePermanentConversation}
                         onRequestDelete={handleRequestDelete}
                         onRename={handleRename}
                         onTogglePin={handleTogglePin}
@@ -1681,6 +1707,7 @@ export function LeftSidebar({ width }: LeftSidebarProps): React.ReactElement {
                         isInWorkingSection={workingSessionIds.has(session.id)}
                         showPinIcon={!!session.pinned}
                         onSelect={handleSelectAgentSession}
+                        onOpenPermanent={handlePermanentAgentSession}
                         onRequestDelete={handleRequestDelete}
                         onRequestMove={handleRequestMove}
                         onRename={handleAgentRename}
@@ -1764,6 +1791,8 @@ interface ConversationItemProps {
   /** 是否在标题旁显示 Pin 图标 */
   showPinIcon: boolean
   onSelect: (id: string, title: string) => void
+  /** 双击 → 常驻标签打开（VS Code 风格） */
+  onOpenPermanent: (id: string, title: string) => void
   onRequestDelete: (id: string) => void
   onRename: (id: string, newTitle: string) => Promise<void>
   onTogglePin: (id: string) => Promise<void>
@@ -1776,6 +1805,7 @@ const ConversationItem = React.memo(function ConversationItem({
   streaming,
   showPinIcon,
   onSelect,
+  onOpenPermanent,
   onRequestDelete,
   onRename,
   onTogglePin,
@@ -1858,7 +1888,7 @@ const ConversationItem = React.memo(function ConversationItem({
           onClick={() => onSelect(conversation.id, conversation.title)}
           onDoubleClick={(e) => {
             e.stopPropagation()
-            startEdit()
+            onOpenPermanent(conversation.id, conversation.title)
           }}
           className={cn(
             'group relative w-full flex items-center gap-2 px-3 py-[4px] rounded-md transition-colors duration-100 titlebar-no-drag text-left',
@@ -1956,6 +1986,8 @@ interface AgentSessionItemProps {
   /** 工作区名称 Badge（跨工作区列表时显示） */
   workspaceName?: string
   onSelect: (id: string, title: string) => void
+  /** 双击 → 常驻标签打开（VS Code 风格） */
+  onOpenPermanent: (id: string, title: string) => void
   onRequestDelete: (id: string) => void
   onRequestMove: (id: string) => void
   onRename: (id: string, newTitle: string) => Promise<void>
@@ -1973,6 +2005,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
   leftAccent,
   workspaceName,
   onSelect,
+  onOpenPermanent,
   onRequestDelete,
   onRequestMove,
   onRename,
@@ -2067,7 +2100,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
           onClick={() => onSelect(session.id, session.title)}
           onDoubleClick={(e) => {
             e.stopPropagation()
-            startEdit()
+            onOpenPermanent(session.id, session.title)
           }}
           className={cn(
             'group relative w-full flex items-center gap-2 px-3 py-[4px] rounded-md transition-colors duration-100 titlebar-no-drag text-left',

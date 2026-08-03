@@ -149,6 +149,19 @@ function createBridgeTool<TSchemaType extends TSchema>(
         return toolResult(config.runtimeName, 'Goal 检查点已保存', false)
       }
 
+      // AskUserQuestion 是交互式提问工具，授权完全由 onAskUser 回调负责（内部会等待用户回答）。
+      // 不能先走通用 canUseTool 门禁——permissionService 会把 AskUserQuestion 路由到 askUserHandler
+      // 再发一次提问，随后工具执行阶段 executeAskUserQuestionTool 又会调用 onAskUser 发第二次提问，
+      // 导致用户被重复询问两遍（第一次提交被当作门禁响应，第二次带着空表单再次弹出）。
+      // 这里与 ProviderAgnosticAgentAdapter / AI SDK runtime core 一致：直接执行工具（内部走 onAskUser）。
+      if (config.runtimeName === ASK_USER_QUESTION_TOOL_NAME) {
+        const result = await runtimeTool.execute(input, {
+          ...options.toolContext,
+          abortSignal: signal ?? options.toolContext.abortSignal,
+        })
+        return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)
+      }
+
       const permission = options.canUseTool
         ? await options.canUseTool(config.runtimeName, input, signal ?? new AbortController().signal)
         : { allowed: false, message: 'Pi 工具桥未配置 Proma 权限回调' }

@@ -10,6 +10,8 @@
 export interface PendingMcpOAuth {
   workspaceSlug: string
   serverName: string
+  /** OAuth state 期望值，用于回调时校验 */
+  expectedState: string
   finishAuth: (authorizationCode: string) => Promise<void>
 }
 
@@ -20,8 +22,13 @@ function makeKey(workspaceSlug: string, serverName: string): string {
 }
 
 /** 注册一个等待授权的 MCP OAuth 会话 */
-export function registerPendingMcpOAuth(workspaceSlug: string, serverName: string, finishAuth: (code: string) => Promise<void>): void {
-  pending.set(makeKey(workspaceSlug, serverName), { workspaceSlug, serverName, finishAuth })
+export function registerPendingMcpOAuth(
+  workspaceSlug: string,
+  serverName: string,
+  expectedState: string,
+  finishAuth: (code: string) => Promise<void>,
+): void {
+  pending.set(makeKey(workspaceSlug, serverName), { workspaceSlug, serverName, expectedState, finishAuth })
 }
 
 /** 获取并移除 pending 授权会话 */

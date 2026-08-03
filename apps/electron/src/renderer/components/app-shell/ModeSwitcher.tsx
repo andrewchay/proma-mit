@@ -34,7 +34,7 @@ export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom)
   const setActiveView = useSetAtom(activeViewAtom)
   const activeView = useAtomValue(activeViewAtom)
-  const openSession = useOpenSession()
+  const { openSession } = useOpenSession()
   const conversations = useAtomValue(conversationsAtom)
   const agentSessions = useAtomValue(agentSessionsAtom)
   const currentConversationId = useAtomValue(currentConversationIdAtom)

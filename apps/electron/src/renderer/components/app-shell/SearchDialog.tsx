@@ -107,7 +107,7 @@ export function SearchDialog(): React.ReactElement {
   const agentSessions = useAtomValue(agentSessionsAtom)
   const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
   const setActiveView = useSetAtom(activeViewAtom)
-  const openSession = useOpenSession()
+  const { openSession } = useOpenSession()
 
   const workspaceNameMap = React.useMemo(() => {
     const map = new Map<string, string>()

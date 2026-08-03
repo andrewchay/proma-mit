@@ -640,7 +640,11 @@ export async function preparePdfPreview(filePath: string, basePaths?: string[]):
       }).promise;
       await renderAll();
     } catch (err) {
-      container.innerHTML = '<div class="error">PDF 加载失败: ' + err.message + '<\\/div>';
+      container.innerHTML = '';
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'error';
+      errorDiv.textContent = 'PDF 加载失败: ' + (err.message || String(err));
+      container.appendChild(errorDiv);
     }
   <\/script>
 <\/body><\/html>`
@@ -693,8 +697,9 @@ export async function convertOfficeToHtml(filePath: string, basePaths?: string[]
   } catch (err) {
     console.error('[file-preview] convertOfficeToHtml structured preview failed:', err)
     try {
-      const officeParser = await import('officeparser')
-      const text = await officeParser.parseOfficeAsync(safePath)
+      const { getTextExtractor } = await import('office-text-extractor')
+      const extractor = getTextExtractor()
+      const text = await extractor.extractText({ input: safePath, type: 'file' })
       const ext = extname(safePath).toLowerCase()
       const kind: OfficePreviewResult['kind'] = ext === '.pptx' ? 'presentation' : 'spreadsheet'
       return {
