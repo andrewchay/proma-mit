@@ -80,12 +80,28 @@ export function parseAgentId(assigneeUserId: string | undefined): string | null 
   return assigneeUserId.slice(AGENT_ASSIGNEE_PREFIX.length) || null
 }
 
-/** 构建 AI 员工执行 prompt（角色 + 任务上下文 + 输出要求） */
+/** 构建 AI 员工执行 prompt（角色 + 任务上下文 + 权限 + 输出要求） */
 export function buildAgentTaskPrompt(task: Task, employee: AgentEmployee): string {
   const deadline = task.dueDate ? new Date(task.dueDate).toLocaleString('zh-CN') : '未设置'
   const rolePrompt = employee.systemPrompt?.trim()
     ? employee.systemPrompt.trim()
     : `你是一名「${employee.role}」AI 员工（${employee.name}）。${employee.description || '请根据角色描述完成任务。'}`
+
+  // by-task 权限声明（P1）
+  const perms = task.permissionRequests ?? []
+  const permLines = perms.length > 0
+    ? [
+        '',
+        '## 本次任务已获权限',
+        ...perms.map((p) => `- ${p}`),
+      ]
+    : [
+        '',
+        '## 本次任务权限',
+        '- 默认安全模式：只读操作（读文件、搜索、联网只读）可用',
+        '- 如需写文件/执行命令但未获授权，请说明并停止，不要强行执行',
+      ]
+
   return [
     rolePrompt,
     '',
@@ -94,6 +110,9 @@ export function buildAgentTaskPrompt(task: Task, employee: AgentEmployee): strin
     `- 描述：${task.description || '（无）'}`,
     `- 优先级：${task.priority}  截止：${deadline}`,
     task.parentId ? `- 父任务：${store.getTask(task.parentId)?.title ?? task.parentId}` : '',
+    '',
+    '## 工作区约定',
+    `- 工作区根目录为你的 cwd；如产出交付文件，请在 workspace-files/agents/${employee.id}/ 目录下创建，避免与其他员工冲突`,    ...permLines,
     '',
     '## 输出要求',
     '完成任务后，请最后输出一段「完成说明」：',
@@ -130,7 +149,10 @@ function recordActivity(execution: AgentExecution, action: string, summary: stri
 // 执行编排
 // ============================================
 
-/** 任务指派给 AI 员工：入队并启动 headless 执行（异步，立即返回 executionId） */
+/** 同项目 AI 员工并发执行上限（P1 并发控制） */
+export const PROJECT_CONCURRENCY_LIMIT = 3
+
+/** 任务指派给 AI 员工：入队（异步，立即返回 executionId）；并发有额度时立即启动，否则排队等待心跳调度 */
 export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string } | null> {
   const agentId = parseAgentId(task.assignee?.userId)
   if (!agentId) return null
@@ -145,14 +167,60 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
   }
 
   const executionId = randomUUID()
-  const workspaceId = employee.workspaceId ?? getSettings().agentWorkspaceId
   const prompt = buildAgentTaskPrompt(task, employee)
 
-  // 1. 创建独立 Agent 会话（可在对话列表查看/继续）
+  // 1. 记录执行（queued，等并发调度）
+  store.createAgentExecution({
+    id: executionId,
+    projectId: task.projectId,
+    entityType: 'task',
+    entityId: task.id,
+    agentId,
+    sessionId: '',
+    prompt,
+    status: 'queued',
+    requestedPermissions: task.permissionRequests ?? [],
+    startedAt: Date.now(),
+  })
+  const execution = store.getAgentExecution(executionId)
+  if (execution) recordActivity(execution, 'agent_queued', `AI 员工 ${employee.name} 已接收任务「${task.title}」，等待调度`)
+
+  // 2. 尝试启动（并发有额度才真正建会话执行）
+  void tryStartExecution(executionId)
+
+  return { taskId: executionId }
+}
+
+/** 尝试启动一个 queued 执行：同项目并发未超限时才启动 */
+export async function tryStartExecution(executionId: string): Promise<boolean> {
+  const execution = store.getAgentExecution(executionId)
+  if (!execution || execution.status !== 'queued') return false
+  const employee = store.getAgentEmployee(execution.agentId)
+  if (!employee || !employee.enabled) return false
+
+  // 并发控制：同项目运行中数量上限
+  const runningCount = store.listRunningAgentExecutions().filter((e) => e.projectId === execution.projectId).length
+  if (runningCount >= PROJECT_CONCURRENCY_LIMIT) {
+    console.log(`[AgentEmployee] 项目 ${execution.projectId} 并发已达上限（${PROJECT_CONCURRENCY_LIMIT}），任务 ${executionId} 保持排队`)
+    return false
+  }
+
+  return startAgentHeadless(executionId, employee)
+}
+
+/** 真正启动 headless Agent 执行（创建会话 + 启动） */
+async function startAgentHeadless(executionId: string, employee: AgentEmployee): Promise<boolean> {
+  const execution = store.getAgentExecution(executionId)
+  if (!execution || execution.status !== 'queued') return false
+
+  const workspaceId = employee.workspaceId ?? getSettings().agentWorkspaceId
+
+  // 1. 创建独立 Agent 会话
   let sessionId: string
   try {
+    const task = store.getTask(execution.entityId)
     const session = createAgentSession(
-      `[AI员工] ${employee.name} · ${task.title.slice(0, 30)}`,
+      `[AI员工] ${employee.name} · ${task?.title.slice(0, 30) ?? execution.entityId}`,
       employee.channelId,
       workspaceId,
       employee.modelId,
@@ -161,36 +229,29 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
     sessionId = session.id
   } catch (error) {
     console.error('[AgentEmployee] 创建会话失败:', error)
-    return null
+    handleExecutionError(executionId, '创建 Agent 会话失败', execution.startedAt)
+    return false
   }
 
-  // 2. 记录执行（queued → running）
-  store.createAgentExecution({
-    id: executionId,
-    projectId: task.projectId,
-    entityType: 'task',
-    entityId: task.id,
-    agentId,
-    sessionId,
-    prompt,
-    status: 'queued',
-    startedAt: Date.now(),
-  })
-  store.updateAgentExecution(executionId, { status: 'running', lastHeartbeatAt: Date.now() })
-  const execution = store.getAgentExecution(executionId)
-  if (execution) recordActivity(execution, 'agent_started', `AI 员工 ${employee.name} 开始执行任务「${task.title}」`)
+  // 2. 更新执行：sessionId + running
+  store.updateAgentExecution(executionId, { sessionId, status: 'running', lastHeartbeatAt: Date.now() })
+  const updated = store.getAgentExecution(executionId)!
+  recordActivity(updated, 'agent_started', `AI 员工 ${employee.name} 开始执行任务`)
 
-  // 3. 启动 headless Agent（默认 safe 权限，by-task 权限在 P1 支持）
+  // 3. 启动 headless Agent
+  // by-task 权限：任务申请了 bash/write/web/mcp → bypassPermissions（无人值守真正干活）；默认 safe（只读）
+  const hasPermissions = (execution.requestedPermissions?.length ?? 0) > 0
+  const permissionModeOverride = hasPermissions ? 'bypassPermissions' : 'safe'
   const startedAt = Date.now()
   runRegisteredHeadlessAgent(
     {
       sessionId,
-      userMessage: prompt,
+      userMessage: execution.prompt,
       channelId: employee.channelId,
       modelId: employee.modelId,
       agentRuntime: employee.runtime,
       workspaceId,
-      permissionModeOverride: 'safe',
+      permissionModeOverride,
       triggeredBy: 'automation',
       startedAt,
     },
@@ -211,7 +272,7 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
     handleExecutionError(executionId, error instanceof Error ? error.message : '未知错误', startedAt)
   })
 
-  return { taskId: executionId }
+  return true
 }
 
 /** 执行完成回写 */
@@ -310,12 +371,18 @@ export function stopAgentEmployeeHeartbeat(): void {
   }
 }
 
-/** 心跳扫描：探测 running 执行，处理失联（stale）与超时 */
+/** 心跳扫描：调度 queued 执行 + 探测 running 执行（失联/超时） */
 export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_DURATION_MS): void {
   const running = store.listRunningAgentExecutions()
   const now = Date.now()
 
-  for (const execution of running) {
+  // 1. 先调度 queued 执行（并发额度释放后启动）
+  for (const execution of running.filter((e) => e.status === 'queued')) {
+    void tryStartExecution(execution.id)
+  }
+
+  // 2. 探测 running 执行
+  for (const execution of running.filter((e) => e.status === 'running')) {
     // 1. 会话仍活跃 → 更新心跳
     try {
       if (isAgentSessionActive(execution.sessionId)) {

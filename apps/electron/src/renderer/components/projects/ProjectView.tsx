@@ -11,6 +11,13 @@ import { userProfileAtom } from "@/atoms/user-profile"
 import type { AgentEmployeeResult, AgentExecutionResult } from '@proma/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 
+/** by-task 权限申请选项（P1） */
+const PERMISSION_OPTIONS: { value: string; label: string }[] = [
+  { value: 'bash', label: '⚡ 执行命令 (Bash)' },
+  { value: 'write', label: '✏️ 写文件 (Write)' },
+  { value: 'web', label: '🌐 联网 (Web)' },
+]
+
 /** 外部通讯录联系人（飞书/钉钉）候选结果。 */
 interface ExternalContact {
   platform: "feishu" | "dingtalk"
@@ -199,6 +206,7 @@ interface Task {
   externalSync?: Record<string, { taskId: string; status: string; syncedAt: number }>
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   completionNotes?: string
+  permissionRequests?: string[]
   /** @deprecated 子任务已升级为独立 Task，请使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -1294,6 +1302,7 @@ function TaskList({
   const [newPriority, setNewPriority] = useState<Task['priority']>('medium')
   const [newAssigneeName, setNewAssigneeName] = useState('')
   const [newAgentId, setNewAgentId] = useState('')
+  const [newPermissions, setNewPermissions] = useState<string[]>([])
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
@@ -1313,6 +1322,7 @@ function TaskList({
         priority?: Task['priority']
         assignee?: { userId: string; displayName: string }
         dueDate?: number
+        permissionRequests?: string[]
       } = {
         title: newTitle.trim(),
         description: newDesc.trim(),
@@ -1330,6 +1340,9 @@ function TaskList({
       if (newDueDate) {
         input.dueDate = new Date(`${newDueDate}T00:00:00`).getTime()
       }
+      if (newPermissions.length > 0) {
+        input.permissionRequests = newPermissions
+      }
       const task = await callProjectAPI<Task>('createTask', projectId, input)
       onTasksChange([...tasks, task])
       setNewTitle('')
@@ -1337,6 +1350,7 @@ function TaskList({
       setNewPriority('medium')
       setNewAssigneeName('')
       setNewAgentId('')
+      setNewPermissions([])
       setNewDueDate('')
       setShowCreate(false)
     } catch (err) {
@@ -1460,6 +1474,21 @@ function TaskList({
               />
             </div>
           </div>
+          <div>
+            <label className="text-xs text-muted-foreground">权限申请（AI 员工执行时生效；默认只读安全模式）</label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {PERMISSION_OPTIONS.map((perm) => (
+                <label key={perm.value} className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border cursor-pointer hover:bg-muted/40">
+                  <input
+                    type="checkbox"
+                    checked={newPermissions.includes(perm.value)}
+                    onChange={(e) => setNewPermissions((prev) => e.target.checked ? [...prev, perm.value] : prev.filter((p) => p !== perm.value))}
+                  />
+                  {perm.label}
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md">创建</button>
             <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-sm border rounded-md">取消</button>
@@ -1523,6 +1552,8 @@ function TaskItem({
     description: task.description,
     priority: task.priority,
     assigneeName: task.assignee?.displayName ?? '',
+    agentAssigneeId: task.assignee?.userId?.startsWith('agent-') ? task.assignee.userId.slice('agent-'.length) : '',
+    permissions: task.permissionRequests ?? [],
     startDate: task.startDate ? new Date(task.startDate).toISOString().split('T')[0] : '',
     dueDate: task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '',
   })
@@ -1541,6 +1572,12 @@ function TaskItem({
   // AI 员工任务：查询最新执行状态（P0）
   const isAgentTask = task.assignee?.userId?.startsWith('agent-') ?? false
   const [agentExecStatus, setAgentExecStatus] = useState<AgentExecutionResult['status'] | null>(null)
+  const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
+  useEffect(() => {
+    window.electronAPI.paa.agentEmployees.list()
+      .then((emps) => setAgentEmployees(emps.filter((e) => e.enabled)))
+      .catch(() => setAgentEmployees([]))
+  }, [])
   useEffect(() => {
     if (!isAgentTask) return
     let cancelled = false
@@ -1633,17 +1670,17 @@ function TaskItem({
         title: editForm.title,
         description: editForm.description,
         priority: editForm.priority,
+        permissionRequests: editForm.permissions,
       }
-      if (editForm.assigneeName.trim() && !(task.assignee?.userId?.startsWith('agent-') && editForm.assigneeName.trim().startsWith('🤖'))) {
-        // 负责人 userId 统一使用 paa-{名称}，与用户映射表中的 paaUserId 保持一致；
-        // AI 员工任务（agent- 前缀 + 🤖 显示名）保持原指派，避免被覆盖为真人
+      // assignee：AI 员工优先；否则真人（或清空）
+      if (editForm.agentAssigneeId) {
+        const emp = agentEmployees.find((e) => e.id === editForm.agentAssigneeId)
+        updates.assignee = { userId: `agent-${editForm.agentAssigneeId}`, displayName: emp ? `🤖 ${emp.name}` : 'AI 员工' }
+      } else if (editForm.assigneeName.trim()) {
         updates.assignee = {
           userId: `paa-${editForm.assigneeName.trim()}`,
           displayName: editForm.assigneeName.trim(),
         }
-      } else if (editForm.assigneeName.trim()) {
-        // AI 员工：保留原 assignee
-        updates.assignee = task.assignee
       } else {
         updates.assignee = undefined
       }
@@ -2151,7 +2188,36 @@ function TaskItem({
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">负责人</label>
-                <ContactPicker value={editForm.assigneeName} onChange={(name) => setEditForm((f) => ({ ...f, assigneeName: name }))} />
+                <ContactPicker value={editForm.assigneeName} onChange={(name) => setEditForm((f) => ({ ...f, assigneeName: name, agentAssigneeId: '' }))} />
+                {agentEmployees.length > 0 && (
+                  <div className="mt-2">
+                    <select
+                      value={editForm.agentAssigneeId}
+                      onChange={(e) => setEditForm((f) => ({ ...f, agentAssigneeId: e.target.value, assigneeName: '' }))}
+                      className="w-full px-3 py-2 text-sm border rounded-md bg-background"
+                    >
+                      <option value="">不指派 AI 员工</option>
+                      {agentEmployees.map((emp) => (
+                        <option key={emp.id} value={emp.id}>🤖 {emp.name} · {emp.role}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">权限申请（AI 员工执行时生效）</label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {PERMISSION_OPTIONS.map((perm) => (
+                    <label key={perm.value} className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border cursor-pointer hover:bg-muted/40">
+                      <input
+                        type="checkbox"
+                        checked={editForm.permissions.includes(perm.value)}
+                        onChange={(e) => setEditForm((f) => ({ ...f, permissions: e.target.checked ? [...f.permissions, perm.value] : f.permissions.filter((p) => p !== perm.value) }))}
+                      />
+                      {perm.label}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">

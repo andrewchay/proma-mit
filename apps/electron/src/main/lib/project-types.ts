@@ -69,6 +69,8 @@ export interface Task {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   /** 完成纪要 */
   completionNotes?: string
+  /** by-task 申请的额外权限（P1）：'bash' | 'write' | 'web' | 'mcp:<name>'；获批后执行用对应权限模式 */
+  permissionRequests?: string[]
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -109,6 +111,8 @@ export interface CreateTaskInput {
   dueDate?: number
   /** 父任务 ID，存在时创建为子任务 */
   parentId?: string
+  /** by-task 权限申请（P1） */
+  permissionRequests?: string[]
 }
 
 /** 创建独立执行 subTask 的输入；它通过 taskId 归属 Task，不使用 WBS parentId。 */

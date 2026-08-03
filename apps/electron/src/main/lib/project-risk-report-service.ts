@@ -51,6 +51,13 @@ interface NoteSummary {
   rawContent: string
 }
 
+interface AgentExecSummary {
+  id: string
+  status: string
+  error?: string
+  resultSummary?: string
+}
+
 // ===== Prompt 构建 =====
 
 /**
@@ -59,7 +66,8 @@ interface NoteSummary {
 export function buildProjectRiskReportPrompt(
   project: Project,
   tasks: TaskSummary[],
-  notes: NoteSummary[]
+  notes: NoteSummary[],
+  agentExecs: AgentExecSummary[] = []
 ): string {
   const totalTasks = tasks.length
   const completedTasks = tasks.filter((t) => t.status === 'completed').length
@@ -114,6 +122,20 @@ export function buildProjectRiskReportPrompt(
     notes.forEach((note, index) => {
       prompt += `### 纪要 ${index + 1}: ${note.title}\n${note.rawContent}\n\n`
     })
+  }
+
+  // AI 员工执行情况（P1 效能分析）
+  const agentFailed = agentExecs.filter((e) => e.status === 'failed' || e.status === 'stale')
+  const agentRunning = agentExecs.filter((e) => e.status === 'running' || e.status === 'queued')
+  if (agentExecs.length > 0) {
+    prompt += `\n**AI 员工执行情况**:\n`
+    prompt += `- 总执行: ${agentExecs.length}（完成 ${agentExecs.filter((e) => e.status === 'completed').length}，失败/失联 ${agentFailed.length}，运行中/排队 ${agentRunning.length}）\n`
+    if (agentFailed.length > 0) {
+      prompt += `\n**AI 员工失败/失联执行**:\n`
+      agentFailed.forEach((e) => {
+        prompt += `- 执行 ${e.id.slice(0, 8)}：${e.error?.slice(0, 120) ?? '未回写结果'}\n`
+      })
+    }
   }
 
   prompt += `\n## 风险报告要求
@@ -321,8 +343,17 @@ export async function generateProjectRiskReport(
     rawContent: n.rawContent,
   }))
 
+  // 3.5 获取 AI 员工执行记录（P1 效能分析）
+  const { listAgentExecutionsByProject } = await import('./project-sqlite-store')
+  const agentExecs = listAgentExecutionsByProject(projectId).map((e) => ({
+    id: e.id,
+    status: e.status,
+    error: e.error,
+    resultSummary: e.resultSummary,
+  }))
+
   // 4. 构建 Prompt
-  const prompt = buildProjectRiskReportPrompt(project, taskSummaries, noteSummaries)
+  const prompt = buildProjectRiskReportPrompt(project, taskSummaries, noteSummaries, agentExecs)
 
   // 5. 调用 LLM
   let rawResponse: string

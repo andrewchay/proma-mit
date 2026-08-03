@@ -245,6 +245,7 @@ function migrate(database: any): void {
       completion_notes TEXT,
       risk_level TEXT,
       external_sync TEXT,
+      permission_requests TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -401,6 +402,12 @@ function migrate(database: any): void {
     CREATE INDEX IF NOT EXISTS idx_agent_exec_entity ON agent_executions(entity_type, entity_id);
     CREATE INDEX IF NOT EXISTS idx_agent_exec_status ON agent_executions(status);
   `)
+
+  // P1：tasks 表新增 permission_requests 列（兼容旧库）
+  const columns = (database.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>)
+  if (!columns.some((col) => col.name === 'permission_requests')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN permission_requests TEXT NOT NULL DEFAULT '[]'`)
+  }
 }
 
 // ===== 行映射工具 =====
@@ -416,6 +423,7 @@ type TaskRow = {
   assignee_user_id: string | null; assignee_display_name: string | null;
   start_date: number | null; due_date: number | null; completed_at: number | null;
   completion_notes: string | null; risk_level: string | null; external_sync: string | null;
+  permission_requests: string | null;
   created_at: number; updated_at: number;
 }
 
@@ -460,6 +468,7 @@ function rowToTask(row: TaskRow): Task {
     completionNotes: row.completion_notes ?? undefined,
     riskLevel: (row.risk_level as Task['riskLevel'] | undefined) ?? undefined,
     externalSync: row.external_sync ? JSON.parse(row.external_sync) : undefined,
+    permissionRequests: parseJsonArray(row.permission_requests),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -555,13 +564,14 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, start_date, due_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, start_date, due_date, permission_requests, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
-    input.startDate ?? null, input.dueDate ?? null, timestamp, timestamp
+    input.startDate ?? null, input.dueDate ?? null,
+    JSON.stringify(input.permissionRequests ?? []), timestamp, timestamp
   )
   recordProjectActivity({
     projectId,
@@ -623,19 +633,20 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     completion_notes: updates.completionNotes !== undefined ? updates.completionNotes : existing.completion_notes,
     risk_level: updates.riskLevel !== undefined ? updates.riskLevel : existing.risk_level,
     external_sync: updates.externalSync !== undefined ? JSON.stringify(updates.externalSync) : existing.external_sync,
+    permission_requests: updates.permissionRequests !== undefined ? JSON.stringify(updates.permissionRequests) : existing.permission_requests,
     updated_at: now(),
   }
   database.prepare(
     `UPDATE tasks SET
       title = ?, description = ?, status = ?, priority = ?,
       parent_id = ?, assignee_user_id = ?, assignee_display_name = ?,
-      start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?,
+      start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?,
       updated_at = ?
      WHERE id = ?`
   ).run(
     next.title, next.description, next.status, next.priority,
     next.parent_id, next.assignee_user_id, next.assignee_display_name,
-    next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync,
+    next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests,
     next.updated_at, id
   )
   recordProjectActivity({
@@ -1574,17 +1585,18 @@ export function getAgentExecution(id: string): AgentExecution | null {
   return row ? rowToAgentExecution(row) : null
 }
 
-export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecution, 'id' | 'projectId' | 'entityType' | 'entityId' | 'agentId' | 'sessionId' | 'startedAt'>>): AgentExecution | null {
+export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecution, 'id' | 'projectId' | 'entityType' | 'entityId' | 'agentId' | 'startedAt'>>): AgentExecution | null {
   const database = getProjectDb()
   const existing = getAgentExecution(id)
   if (!existing) return null
   const merged: AgentExecution = { ...existing, ...patch, id: existing.id }
   database.prepare(
     `UPDATE agent_executions SET
-       status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
+       session_id = ?, status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
        requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?
      WHERE id = ?`
   ).run(
+    merged.sessionId,
     merged.status,
     merged.resultSummary ?? null,
     JSON.stringify(merged.outputFiles ?? []),
@@ -1619,5 +1631,13 @@ export function listAgentExecutionsByAgent(agentId: string, limit = 50): AgentEx
   const rows = database.prepare(
     `SELECT * FROM agent_executions WHERE agent_id = ? ORDER BY started_at DESC LIMIT ?`
   ).all(agentId, limit) as AgentExecutionRow[]
+  return rows.map(rowToAgentExecution)
+}
+
+export function listAgentExecutionsByProject(projectId: string): AgentExecution[] {
+  const database = getProjectDb()
+  const rows = database.prepare(
+    `SELECT * FROM agent_executions WHERE project_id = ? ORDER BY started_at DESC`
+  ).all(projectId) as AgentExecutionRow[]
   return rows.map(rowToAgentExecution)
 }
