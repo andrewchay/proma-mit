@@ -56,6 +56,49 @@ export function finalizeStreamingActivities(
   }
 }
 
+/**
+ * 将一条新到达的 SDKMessage 合并进实时消息列表（liveMessages）。
+ *
+ * 流式 partial 快照（message_update）会带同一 uuid 推送多次，每次是完整累积文本；
+ * final 消息同 uuid 到达时同样需要覆盖旧快照。若简单地“跳过已存在 uuid”，后续
+ * 更新会丢失，表现为流式输出不全（只显示第一条 partial）。
+ *
+ * 规则：
+ * - assistant 消息带 uuid：同 uuid 已存在时替换旧消息（保持顺序），否则追加
+ * - 其他消息带 uuid（如乐观注入的用户消息）：同 uuid 已存在时跳过
+ * - 无 uuid 消息：直接追加
+ */
+export function mergeLiveMessage(current: SDKMessage[], incoming: SDKMessage): SDKMessage[] {
+  const record = incoming as Record<string, unknown>
+  const incomingUuid = typeof record.uuid === 'string' && record.uuid.length > 0
+    ? record.uuid
+    : undefined
+
+  if (!incomingUuid) {
+    return [...current, incoming]
+  }
+
+  if (record.type === 'assistant') {
+    const existingIdx = current.findIndex((m) => {
+      const r = m as Record<string, unknown>
+      return r.uuid === incomingUuid && r.type === 'assistant'
+    })
+    if (existingIdx >= 0) {
+      const next = [...current]
+      next[existingIdx] = incoming
+      return next
+    }
+    return [...current, incoming]
+  }
+
+  // 非 assistant：同 uuid 已存在则跳过（乐观注入去重）
+  if (current.some((m) => (m as Record<string, unknown>).uuid === incomingUuid)) {
+    return current
+  }
+  return [...current, incoming]
+}
+
+
 /** Agent 会话的流式状态 */
 export interface AgentStreamState {
   running: boolean

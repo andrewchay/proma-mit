@@ -494,8 +494,40 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
     const keyOf = (message: SDKMessage): string =>
       (message as Record<string, unknown>)._promaStableKey as string
 
+    /**
+     * 流式 partial 合并：Pi/自研 runtime 在 message_update 阶段会推送多条
+     * 携带同一 uuid 的 partial assistant 快照（每次都是完整累积文本），
+     * message_end 时再推送同 uuid 的 final 消息。渲染端不应把每条快照都当
+     * 独立消息展示，否则会出现“输出不全/片段化”。这里对同 uuid 的 assistant
+     * 消息只保留最后一条（内容最新最完整），既避免重复片段，也不丢失终态文本。
+     */
+    const dedupeByUuid = (messages: SDKMessage[]): SDKMessage[] => {
+      const lastIndexByUuid = new Map<string, number>()
+      for (let i = 0; i < messages.length; i++) {
+        const record = messages[i] as Record<string, unknown>
+        const uuid = typeof record.uuid === 'string' && record.uuid.length > 0 ? record.uuid : undefined
+        if (!uuid || record.type !== 'assistant') continue
+        lastIndexByUuid.set(uuid, i)
+      }
+      if (lastIndexByUuid.size === 0) return messages
+      const seen = new Set<string>()
+      const result: SDKMessage[] = []
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const record = messages[i] as Record<string, unknown>
+        const uuid = typeof record.uuid === 'string' && record.uuid.length > 0 ? record.uuid : undefined
+        if (uuid && record.type === 'assistant' && lastIndexByUuid.has(uuid)) {
+          if (seen.has(uuid)) continue // 非最后一条的同 uuid partial，跳过
+          seen.add(uuid)
+        }
+        result.unshift(messages[i]!)
+      }
+      return result
+    }
+
+    // 实时消息先按 uuid 去重（partial 快照只留最新），再与持久化合并
+    const dedupedLive = dedupeByUuid(live)
     const persistedWithKeys = persisted.map(stampStableKey)
-    const liveWithKeys = live.map(stampStableKey)
+    const liveWithKeys = dedupedLive.map(stampStableKey)
     if (streaming || liveWithKeys.length === 0 || persistedWithKeys.length === 0) {
       return [...persistedWithKeys, ...liveWithKeys]
     }

@@ -25,6 +25,7 @@ import {
   recentlyModifiedPathsAtom,
   RECENTLY_MODIFIED_TTL_MS,
   applyAgentEvent,
+  mergeLiveMessage,
   liveMessagesMapAtom,
   agentSessionModelMapAtom,
   agentModelIdAtom,
@@ -496,14 +497,7 @@ export function useGlobalAgentListeners(): void {
             store.set(liveMessagesMapAtom, (prev) => {
               const map = new Map(prev)
               const current = map.get(sessionId) ?? []
-
-              // UUID 去重：队列消息已被乐观注入，SDK 再次推送时跳过
-              const incomingUuid = msgRecord.uuid as string | undefined
-              if (incomingUuid && current.some((m) => (m as Record<string, unknown>).uuid === incomingUuid)) {
-                return prev
-              }
-
-              map.set(sessionId, [...current, payload.message])
+              map.set(sessionId, mergeLiveMessage(current, payload.message))
               return map
             })
           }
