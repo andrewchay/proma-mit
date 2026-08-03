@@ -13,6 +13,7 @@ const WORKFLOW_IPC_CHANNELS = {
   LIST_DEFINITIONS: 'workflow:list-definitions',
   GET_DEFINITION: 'workflow:get-definition',
   SAVE_DEFINITION: 'workflow:save-definition',
+  DELETE_DEFINITION: 'workflow:delete-definition',
   EXPORT_DEFINITION: 'workflow:export-definition',
   IMPORT_DEFINITION: 'workflow:import-definition',
   LIST_TEMPLATES: 'workflow:list-templates',
@@ -535,6 +536,7 @@ export interface ElectronAPI {
   listWorkflowDefinitions: () => Promise<import('@proma/shared').WorkflowDefinition[]>
   getWorkflowDefinition: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition | null>
   saveWorkflowDefinition: (input: unknown) => Promise<import('@proma/shared').WorkflowDefinition>
+  deleteWorkflowDefinition: (workflowId: string) => Promise<{ deleted: boolean; reason?: string }>
   exportWorkflowDefinition: (workflowId: string) => Promise<import('@proma/shared').WorkflowExportFile>
   importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => Promise<import('@proma/shared').WorkflowDefinition>
   listWorkflowTemplates: () => Promise<import('@proma/shared').WorkflowTemplate[]>
@@ -1600,6 +1602,7 @@ const electronAPI: ElectronAPI = {
   listWorkflowDefinitions: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_DEFINITIONS),
   getWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_DEFINITION, workflowId),
   saveWorkflowDefinition: (input: unknown) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_DEFINITION, input),
+  deleteWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.DELETE_DEFINITION, workflowId),
   exportWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION, workflowId),
   importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION, input),
   listWorkflowTemplates: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_TEMPLATES),

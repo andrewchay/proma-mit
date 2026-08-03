@@ -398,6 +398,7 @@ export const WORKFLOW_IPC_CHANNELS = {
   LIST_DEFINITIONS: 'workflow:list-definitions',
   GET_DEFINITION: 'workflow:get-definition',
   SAVE_DEFINITION: 'workflow:save-definition',
+  DELETE_DEFINITION: 'workflow:delete-definition',
   EXPORT_DEFINITION: 'workflow:export-definition',
   IMPORT_DEFINITION: 'workflow:import-definition',
   LIST_TEMPLATES: 'workflow:list-templates',

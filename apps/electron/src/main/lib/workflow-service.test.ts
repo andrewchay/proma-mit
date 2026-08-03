@@ -7,6 +7,7 @@ import {
   cancelWorkflowRun,
   completeWorkflowNode,
   createWorkflowRun,
+  deleteWorkflowDefinition,
   failWorkflowNode,
   getWorkflowRun,
   listRecoverableWorkflowRuns,
@@ -216,5 +217,39 @@ describe('Workflow Run 服务', () => {
 
   test('Given 非法工作流 ID When 读取 Run Then 拒绝路径穿越', () => {
     expect(() => getWorkflowRun('../outside', 'run-1')).toThrow('Workflow ID 非法')
+  })
+
+  test('删除 Workflow：取消进行中的 Run 后可以删除定义与 Run 文件', () => {
+    saveAndPublishWorkflow()
+    const run = createWorkflowRun('project-risk-review', {})
+    startWorkflowNode('project-risk-review', run.id, 'collect')
+    expect(existsSync(`${TEST_DIR}/workflows/project-risk-review`)).toBe(true)
+
+    // 有进行中的 Run：删除被拦截
+    const blocked = deleteWorkflowDefinition('project-risk-review')
+    expect(blocked.deleted).toBe(false)
+    expect(blocked.reason).toContain('进行中')
+
+    // 取消 Run 后：可以删除
+    cancelWorkflowRun('project-risk-review', run.id)
+    const result = deleteWorkflowDefinition('project-risk-review')
+    expect(result.deleted).toBe(true)
+    expect(existsSync(`${TEST_DIR}/workflows/project-risk-review`)).toBe(false)
+    expect(deleteWorkflowDefinition('project-risk-review').deleted).toBe(false)
+  })
+
+  test('删除 Workflow：存在进行中的 Run 时拒绝删除', () => {
+    saveAndPublishWorkflow()
+    const run = createWorkflowRun('project-risk-review', {})
+    startWorkflowNode('project-risk-review', run.id, 'collect')
+    completeWorkflowNode('project-risk-review', run.id, 'collect')
+    // 使 Run 进入 waiting_approval（未完成）状态
+    requestWorkflowApproval('project-risk-review', run.id, 'approval')
+
+    const result = deleteWorkflowDefinition('project-risk-review')
+
+    expect(result.deleted).toBe(false)
+    expect(result.reason).toContain('进行中')
+    expect(existsSync(`${TEST_DIR}/workflows/project-risk-review`)).toBe(true)
   })
 })

@@ -316,6 +316,26 @@ export function WorkflowView(): React.ReactElement {
     }
   }
 
+  const deleteDefinition = async (definition: WorkflowDefinition): Promise<void> => {
+    const confirmed = window.confirm(`确定删除 Workflow「${definition.name}」吗？\n将同时删除其全部 Run 快照与审计事件，此操作不可恢复。`)
+    if (!confirmed) return
+    try {
+      const result = await window.electronAPI.deleteWorkflowDefinition(definition.id)
+      if (!result.deleted) {
+        toast.error(result.reason ?? 'Workflow 删除失败')
+        return
+      }
+      setDefinitions((items) => items.filter((item) => item.id !== definition.id))
+      if (selectedId === definition.id) {
+        setSelectedId(null)
+        setDraft(null)
+      }
+      toast.success('Workflow 已删除')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Workflow 删除失败')
+    }
+  }
+
   const upgradeTemplate = async (): Promise<void> => { if (!draft) return; try { if (!templateUpgradePending) { const preview = await window.electronAPI.previewWorkflowTemplateUpgrade(draft.id); setTemplateUpgradePending(true); toast.message(`已生成升级差异：新增 ${preview.diff.addedNodeIds.length}、删除 ${preview.diff.removedNodeIds.length}、修改 ${preview.diff.changedNodeIds.length} 个节点；再次点击确认升级`); return } const next = await window.electronAPI.upgradeWorkflowTemplate(draft.id); setDraft(next); setTemplateUpgradePending(false); toast.success('已升级模板安装副本') } catch (error) { setTemplateUpgradePending(false); toast.error(error instanceof Error ? error.message : '没有可用升级') } }
   const rollbackTemplate = async (): Promise<void> => { if (!draft) return; try { const next = await window.electronAPI.rollbackWorkflowTemplate(draft.id); setDraft(next); toast.success('已回滚模板安装副本') } catch (error) { toast.error(error instanceof Error ? error.message : '没有可回滚版本') } }
 
@@ -397,10 +417,13 @@ export function WorkflowView(): React.ReactElement {
         <div className="space-y-1 overflow-y-auto">
           {loading && <div className="text-xs text-muted-foreground px-2">正在读取…</div>}
           {definitions.map((definition) => (
-            <button key={definition.id} onClick={() => void selectDefinition(definition.id)} className={cn('w-full rounded-lg px-2.5 py-2 text-left transition-colors', selectedId === definition.id ? 'bg-primary/10' : 'hover:bg-muted/70')}>
-              <div className="truncate text-sm font-medium">{definition.name}</div>
-              <div className="text-[11px] text-muted-foreground">{definition.status} · v{definition.version}</div>
-            </button>
+            <div key={definition.id} className="group flex items-center gap-1 rounded-lg hover:bg-muted/70 transition-colors">
+              <button onClick={() => void selectDefinition(definition.id)} className={cn('min-w-0 flex-1 rounded-lg px-2.5 py-2 text-left transition-colors', selectedId === definition.id ? 'bg-primary/10' : '')}>
+                <div className="truncate text-sm font-medium">{definition.name}</div>
+                <div className="text-[11px] text-muted-foreground">{definition.status} · v{definition.version}</div>
+              </button>
+              <button type="button" onClick={() => void deleteDefinition(definition)} className="shrink-0 p-1 mr-1 text-muted-foreground/50 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity" title="删除 Workflow"><X size={12} /></button>
+            </div>
           ))}
         </div>
         {draft && <div className="border-t border-border/60 pt-2"><div className="px-1 pb-1 text-xs font-medium text-muted-foreground">运行历史</div><div className="max-h-36 space-y-1 overflow-y-auto">{runs.length === 0 ? <div className="px-1 text-[11px] text-muted-foreground">尚无 Run</div> : runs.map((run) => <button key={run.id} type="button" onClick={() => void selectRun(run.id)} className={cn('w-full rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted', selectedRunId === run.id && 'bg-primary/10')}><div className="flex items-center justify-between gap-2"><span className="truncate">{run.id.slice(0, 8)}</span><span>{run.status}</span></div><div className="mt-0.5 text-[10px] text-muted-foreground">{new Date(run.updatedAt).toLocaleString()}</div></button>)}</div></div>}

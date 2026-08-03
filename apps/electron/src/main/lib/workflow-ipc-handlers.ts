@@ -31,6 +31,7 @@ import {
   publishWorkflowDefinition,
   resolveWorkflowApproval,
   saveWorkflowDefinition,
+  deleteWorkflowDefinition,
   exportWorkflowDefinition,
   importWorkflowDefinition,
   resolveWorkflowSideEffect,
@@ -40,6 +41,7 @@ export function registerWorkflowIpcHandlers(): void {
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.LIST_DEFINITIONS, (): WorkflowDefinition[] => listWorkflowDefinitions())
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.GET_DEFINITION, (_event, workflowId: string): WorkflowDefinition | null => getWorkflowDefinition(workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.SAVE_DEFINITION, (_event, input: unknown): WorkflowDefinition => saveWorkflowDefinition(input))
+  ipcMain.handle(WORKFLOW_IPC_CHANNELS.DELETE_DEFINITION, (_event, workflowId: string): { deleted: boolean; reason?: string } => deleteWorkflowDefinition(workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION, (_event, workflowId: string) => exportWorkflowDefinition(workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION, (_event, input: WorkflowImportInput): WorkflowDefinition => importWorkflowDefinition(input))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION_FILE, async (_event, workflowId: string): Promise<boolean> => {

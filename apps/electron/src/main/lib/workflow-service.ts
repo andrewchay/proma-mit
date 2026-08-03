@@ -5,7 +5,7 @@
  * Run 使用原子 JSON 快照恢复状态，并用 JSONL 记录审计事件。
  */
 
-import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import {
   type WorkflowApprovalRecord,
@@ -25,6 +25,7 @@ import {
 import { parseWorkflowDefinition, exportWorkflowDefinition as buildWorkflowExportFile, importWorkflowDefinition as parseWorkflowImportFile } from '@proma/shared/workflow'
 import {
   getWorkflowDefinitionPath,
+  getWorkflowDir,
   getWorkflowRunEventsPath,
   getWorkflowRunPath,
   getWorkflowRunsDir,
@@ -261,6 +262,33 @@ export function listWorkflowDefinitions(): WorkflowDefinition[] {
     }
   }
   return definitions.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+/**
+ * 删除一个 Workflow Definition（含其全部 Run 快照、审计事件与模板安装关系）。
+ *
+ * 安全约束：存在正在进行的 Run（queued / running / waiting_approval / blocked）
+ * 时拒绝删除，避免销毁正在执行的流程。模板源本身不受影响（模板是独立文件）。
+ */
+export function deleteWorkflowDefinition(workflowId: string): { deleted: boolean; reason?: string } {
+  const definition = getWorkflowDefinition(workflowId)
+  if (!definition) return { deleted: false, reason: 'Workflow 不存在' }
+
+  const activeRun = listWorkflowRuns(workflowId).find((run) =>
+    ['queued', 'running', 'waiting_approval', 'blocked'].includes(run.status),
+  )
+  if (activeRun) {
+    return { deleted: false, reason: `存在进行中的 Run（${activeRun.status}），请先取消或等待其完成` }
+  }
+
+  try {
+    rmSync(getWorkflowDir(workflowId), { recursive: true, force: true })
+    console.log(`[Workflow] 已删除 Definition: ${workflowId}`)
+    return { deleted: true }
+  } catch (error) {
+    console.error(`[Workflow] 删除 Definition 失败: ${workflowId}`, error)
+    return { deleted: false, reason: error instanceof Error ? error.message : '删除失败' }
+  }
 }
 
 /** 创建 Run 时冻结已发布 Definition 与能力引用。 */
