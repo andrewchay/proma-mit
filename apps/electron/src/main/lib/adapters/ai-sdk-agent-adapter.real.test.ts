@@ -33,7 +33,12 @@ mock.module('electron', () => ({
 
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),
+  getMimeType: (ext: string) => `image/${ext.replace('.', '')}`,
   readAttachmentAsBase64: (localPath: string) => `base64:${localPath}`,
+  deleteAttachment: () => {},
+  deleteConversationAttachments: () => {},
+  saveAttachment: async () => ({ path: '/tmp/mock', fileName: 'mock.png', mimeType: 'image/png', size: 1 }),
+  openFileDialog: async () => null,
 }))
 
 mock.module('../document-parser', () => ({
@@ -95,6 +100,15 @@ const AI_SDK_SMOKE_MATRIX: readonly AISDKSmokeProviderCase[] = [
     defaultModel: 'deepseek-chat',
     baseUrlEnv: 'PROMA_AI_SDK_DEEPSEEK_BASE_URL',
     defaultBaseUrl: PROVIDER_DEFAULT_URLS.deepseek,
+  },
+  {
+    provider: 'deepseek-openai',
+    apiKeyEnv: 'PROMA_AI_SDK_DEEPSEEK_API_KEY',
+    fallbackApiKeyEnv: 'DEEPSEEK_API_KEY',
+    modelEnv: 'PROMA_AI_SDK_DEEPSEEK_OPENAI_MODEL',
+    defaultModel: 'deepseek-chat',
+    baseUrlEnv: 'PROMA_AI_SDK_DEEPSEEK_OPENAI_BASE_URL',
+    defaultBaseUrl: PROVIDER_DEFAULT_URLS['deepseek-openai'],
   },
   {
     provider: 'kimi-api',
