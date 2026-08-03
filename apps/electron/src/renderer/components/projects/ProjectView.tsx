@@ -383,11 +383,11 @@ function ProjectHeader({
           { key: 'board', label: '看板' },
           { key: 'settings', label: '设置' },
         ] as const).map((tab) => (
-          <button key={tab.key} onClick={() => onTabChange(tab.key)} className={`rounded px-2 py-1 text-xs ${activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{tab.label}</button>
+          <button key={tab.key} onClick={() => onTabChange(tab.key)} className={`rounded px-2 py-1 text-xs titlebar-no-drag ${activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{tab.label}</button>
         ))}
         <button
           onClick={onRefresh}
-          className="px-3 py-1.5 text-sm border rounded-md hover:bg-muted transition-colors"
+          className="px-3 py-1.5 text-sm border rounded-md hover:bg-muted transition-colors titlebar-no-drag"
         >
           刷新
         </button>
@@ -864,7 +864,7 @@ function ProjectDetail({
       <div className="flex items-center gap-4 px-6 py-4 border-b">
         <button
           onClick={onBack}
-          className="text-sm text-muted-foreground hover:text-foreground"
+          className="text-sm text-muted-foreground hover:text-foreground titlebar-no-drag"
         >
           ← 返回
         </button>

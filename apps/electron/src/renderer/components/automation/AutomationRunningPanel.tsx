@@ -12,6 +12,14 @@ import type { RunRecord } from '@proma/shared'
 
 const REFRESH_INTERVAL = 3000
 
+const SOURCE_LABEL: Record<string, string> = {
+  agent: 'Agent',
+  workflow: 'Workflow',
+  automation: '定时任务',
+  bridge: '外部',
+  external: '外部',
+}
+
 function statusBadge(record: RunRecord): { label: string; icon: React.ReactNode; className: string } {
   switch (record.status) {
     case 'started':
@@ -99,6 +107,9 @@ export function AutomationRunningPanel(): React.ReactElement {
                 <div className="mt-0.5">{badge.icon}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
+                    <span className="shrink-0 px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">
+                      {SOURCE_LABEL[record.source] ?? record.source}
+                    </span>
                     <span className="text-[13px] font-medium text-foreground/85 truncate">{record.title}</span>
                     <span className={cn('px-1.5 py-[1px] rounded-full text-[10px] font-medium', badge.className)}>
                       {badge.label}

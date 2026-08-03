@@ -32,7 +32,7 @@ export function CalendarModuleView(): React.ReactElement {
           <button
             onClick={() => setSubView('schedule')}
             className={cn(
-              'px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors',
+              'px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors titlebar-no-drag',
               subView === 'schedule'
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-foreground/50 hover:text-foreground/80'
@@ -43,7 +43,7 @@ export function CalendarModuleView(): React.ReactElement {
           <button
             onClick={() => setSubView('sync')}
             className={cn(
-              'px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors',
+              'px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors titlebar-no-drag',
               subView === 'sync'
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-foreground/50 hover:text-foreground/80'

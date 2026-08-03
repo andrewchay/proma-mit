@@ -16,25 +16,26 @@ import { AutomationRunningPanel } from './AutomationRunningPanel'
 import { ProactiveSchedulerSettings } from '@/components/settings/ProactiveSchedulerSettings'
 import { RunCenterSettings } from '@/components/settings/RunCenterSettings'
 
-type AutomationSubView = 'running' | 'schedules' | 'runs'
+type AutomationSubView = 'schedules' | 'running' | 'runs'
 
 const SUB_VIEWS: { id: AutomationSubView; label: string; icon: React.ReactNode }[] = [
-  { id: 'running', label: '运行中', icon: <ListChecks size={11} /> },
   { id: 'schedules', label: '定时任务', icon: <Clock3 size={11} /> },
+  { id: 'running', label: '运行中', icon: <ListChecks size={11} /> },
   { id: 'runs', label: '运行记录', icon: <History size={11} /> },
 ]
 
 export function AutomationModuleView(): React.ReactElement {
   const setActiveView = useSetAtom(activeViewAtom)
-  const [subView, setSubView] = React.useState<AutomationSubView>('running')
+  // 默认展示「定时任务」：自动任务应是自己创建的定时任务（能定时开启来跑）
+  const [subView, setSubView] = React.useState<AutomationSubView>('schedules')
 
   return (
     <div className="flex flex-col h-full">
-      {/* 顶栏：返回对话 + 子视图切换 */}
+      {/* 顶栏：返回对话 + 子视图切换（顶部在全局 50px 拖拽区内，按钮需 titlebar-no-drag） */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
         <button
           onClick={() => setActiveView('conversations')}
-          className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors"
+          className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors titlebar-no-drag"
         >
           <ArrowLeft size={15} />
           返回对话
@@ -50,7 +51,7 @@ export function AutomationModuleView(): React.ReactElement {
               key={id}
               onClick={() => setSubView(id)}
               className={cn(
-                'px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors inline-flex items-center gap-1',
+                'px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors inline-flex items-center gap-1 titlebar-no-drag',
                 subView === id
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-foreground/50 hover:text-foreground/80'
@@ -65,12 +66,12 @@ export function AutomationModuleView(): React.ReactElement {
 
       {/* 子视图内容 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {subView === 'running' && <AutomationRunningPanel />}
         {subView === 'schedules' && (
           <div className="p-4">
             <ProactiveSchedulerSettings />
           </div>
         )}
+        {subView === 'running' && <AutomationRunningPanel />}
         {subView === 'runs' && (
           <div className="p-4">
             <RunCenterSettings />
