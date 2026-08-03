@@ -6,7 +6,7 @@
  * 内置的 2 次重试无法完全消化时，会穿透到 Orchestrator 应用层兜底。
  */
 export const TRANSIENT_NETWORK_PATTERN =
-  /terminated|socket hang up|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|fetch failed|network error|stream (?:closed|ended|disconnected) prematurely|premature close/i
+  /terminated|socket hang up|ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|fetch failed|network error|connection (?:closed|lost|refused|reset)|AbortError|aborted|timed out|stream (?:closed|ended|disconnected) prematurely|premature close|other side closed/i
 
 /** 判断错误消息/stderr 是否为瞬时网络错误 */
 export function isTransientNetworkError(message?: string, stderr?: string): boolean {

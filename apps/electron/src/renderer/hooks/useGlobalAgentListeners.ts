@@ -239,7 +239,13 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
     case 'result': {
       const rMsg = msg as { subtype: string; usage?: { input_tokens: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; modelUsage?: Record<string, { contextWindow?: number }> }
       const usage = rMsg.usage
-      const contextWindow = rMsg.modelUsage ? Object.values(rMsg.modelUsage)[0]?.contextWindow : undefined
+      // 子 Agent 模型（如 Haiku 200K）的 contextWindow 可能先到达并覆盖主模型
+      // （如 Opus 1M），导致上下文指示器在 1M 与 200K 之间跳动、触发误压缩。
+      // 与官方 v0.14.3 修复对齐：所有模型取 contextWindow 最大值。
+      const contextWindow = rMsg.modelUsage
+        ? Math.max(0, ...Object.values(rMsg.modelUsage).map((m) => m.contextWindow ?? 0))
+        : undefined
+      const resolvedContextWindow = contextWindow && contextWindow > 0 ? contextWindow : undefined
       return [{
         type: 'complete',
         stopReason: rMsg.subtype === 'success' ? 'end_turn' : 'error',
@@ -249,7 +255,7 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
           cacheReadTokens: usage.cache_read_input_tokens,
           cacheCreationTokens: usage.cache_creation_input_tokens,
           costUsd: rMsg.total_cost_usd,
-          contextWindow,
+          contextWindow: resolvedContextWindow,
         } : undefined,
       }]
     }

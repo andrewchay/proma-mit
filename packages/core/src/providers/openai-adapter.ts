@@ -300,14 +300,19 @@ export class OpenAIAdapter implements ProviderAdapter {
       }
 
       // 用量统计（stream_options.include_usage 在最后一条 chunk 返回）
+      // 注意：OpenAI 协议的 prompt_tokens 已包含缓存命中部分；若同时输出
+      // cached_tokens（prompt_tokens_details.cached_tokens），input_tokens 必须
+      // 扣减它，否则渲染端“input + cache_read”会把缓存计两次，占用显示虚高约
+      // 1.5–2 倍（与官方 v0.12.23 修复对齐）。
       if (chunk.usage) {
+        const cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0
         events.push({
           type: 'usage',
           usage: {
-            input_tokens: chunk.usage.prompt_tokens,
+            input_tokens: Math.max(0, (chunk.usage.prompt_tokens ?? 0) - cachedTokens),
             output_tokens: chunk.usage.completion_tokens,
             total_tokens: chunk.usage.total_tokens,
-            cache_read_input_tokens: chunk.usage.prompt_tokens_details?.cached_tokens,
+            cache_read_input_tokens: cachedTokens || undefined,
             prompt_cache_hit_tokens: chunk.usage.prompt_cache_hit_tokens,
             prompt_cache_miss_tokens: chunk.usage.prompt_cache_miss_tokens,
           },

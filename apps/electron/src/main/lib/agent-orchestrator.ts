@@ -42,6 +42,7 @@ import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, m
 import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
 import type { PiAgentQueryOptions } from './adapters/pi-agent-adapter'
 import { isTransientNetworkError } from './error-patterns'
+import { isClaudeFamilyModel } from './model-family'
 import type { AgentEventBus } from './agent-event-bus'
 import { decryptApiKey, getChannelById } from './channel-manager'
 import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@proma/core'
@@ -1106,14 +1107,19 @@ export class AgentOrchestrator {
 
     const sdkEnv: Record<string, string | undefined> = {
       ...cleanEnv,
-      // 提升输出 token 上限，避免 "exceeded 32000 output token maximum" 错误
-      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '64000',
       // 启用 Tasks 功能
       CLAUDE_CODE_ENABLE_TASKS: 'true',
       // 禁用实验性 beta 功能，使用稳定模式
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
       // 配置隔离：让 SDK 使用独立的配置目录，不读取用户的 ~/.claude.json
       CLAUDE_CONFIG_DIR: getSdkConfigDir(),
+    }
+
+    // 提升输出 token 上限，避免 "exceeded 32000 output token maximum" 错误。
+    // 仅对真正的 Anthropic Claude 渠道注入；DeepSeek/Kimi/MiniMax 等兼容渠道
+    // 误注入会导致上游按非 Claude 语义解析失败（与官方 v0.16.8 修复对齐）。
+    if (provider === 'anthropic' || isClaudeFamilyModel(sdkEnv.ANTHROPIC_MODEL)) {
+      sdkEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '64000'
     }
 
     // 认证方式按 provider 分支
@@ -2152,8 +2158,10 @@ export class AgentOrchestrator {
       }
 
       // 13. 构建 Adapter 查询选项
-      // 检测用户选用的模型是否为 Claude 系列，决定 SubAgent 是否使用独立模型分层
-      const claudeAvailable = (modelId || DEFAULT_MODEL_ID).toLowerCase().includes('claude')
+      // 检测用户选用的模型是否为真正的 Claude 系列，决定 SubAgent 是否使用独立模型分层。
+      // 不能用 includes('claude')，否则自定义 fork/代理别名（如 gateway/claude-proxy）
+      // 会被误判，导致 SubAgent 误用 Claude 模型分层（与官方 v0.16.8 修复对齐）。
+      const claudeAvailable = isClaudeFamilyModel(modelId || DEFAULT_MODEL_ID)
       const maxTurns = appSettings.agentMaxTurns && appSettings.agentMaxTurns > 0
         ? appSettings.agentMaxTurns
         : undefined
@@ -2743,15 +2751,22 @@ export class AgentOrchestrator {
           callbacks.onError(userFacingError)
           callbacks.onComplete(getAgentSessionMessages(sessionId), { startedAt: streamStartedAt })
 
-          // 根据错误类型决定是否保留 sdkSessionId
-          const shouldClearSession = !apiError || apiError.statusCode >= 500
-          if (existingSdkSessionId && shouldClearSession) {
-            try {
-              updateAgentSessionMeta(sessionId, { sdkSessionId: undefined })
-              console.log(`[Agent 编排] 已清除失效的 sdkSessionId`)
-            } catch { /* 忽略 */ }
-          } else if (existingSdkSessionId && !shouldClearSession) {
-            console.log(`[Agent 编排] 保留 sdkSessionId (API 错误 ${apiError?.statusCode})`)
+          // 根据错误类型决定是否保留 sdkSessionId。
+          // 与官方 v0.13.4 修复对齐：网络断连（apiError=null）、5xx、未知错误
+          // 都不代表会话失效——SDK 的磁盘 JSONL 历史仍在，可正常 resume。
+          // 旧逻辑 `!apiError || statusCode>=500` 会把普通断连误判为会话失效，
+          // 误清 resume 指针后下一轮退化为冷启动，上下文全部丢失。
+          // 真正需要清除的场景（thinking-signature 跨模型不兼容）已在上方单独处理。
+          if (existingSdkSessionId) {
+            const shouldClearSession = apiError?.statusCode === 401 || apiError?.statusCode === 403
+            if (shouldClearSession) {
+              try {
+                updateAgentSessionMeta(sessionId, { sdkSessionId: undefined })
+                console.log(`[Agent 编排] 已清除失效的 sdkSessionId (HTTP ${apiError?.statusCode})`)
+              } catch { /* 忽略 */ }
+            } else {
+              console.log(`[Agent 编排] 保留 sdkSessionId (断连/错误可 resume，apiError=${apiError?.statusCode ?? 'null'})`)
+            }
           }
 
           return
