@@ -22,6 +22,7 @@ import type { ToolContext } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
+import { isTransientNetworkError } from '../error-patterns'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 系统提示词 */
@@ -79,6 +80,11 @@ function createAbortError(): Error {
   const error = new Error('操作已中止')
   error.name = 'AbortError'
   return error
+}
+
+/** 简易延迟（断流重试退避用） */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // ===== 上下文压缩（借鉴上游 Proma #1246） =====
@@ -477,7 +483,39 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           }
         }
       }
-      void runPromptChain()
+
+      // Pi 会话级断流重试：Pi SDK 内部 retry 耗尽后抛出的瞬时网络/断流错误
+      // （如 "Stream ended without finish_reason" / "Anthropic stream ended before
+      // message_stop"），在这里对同一条 prompt 再次驱动 Pi session。Pi 会话状态
+      // 保留在 session 中，重试会续传而非重放，避免用户消息重复。
+      const retryablePromptChain = async (): Promise<void> => {
+        let attempts = 0
+        const MAX_PROMPT_RETRIES = 3
+        for (;;) {
+          try {
+            await runPromptChain()
+            return
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            const active = this.activeSessions.get(sessionId)
+            // active 不存在说明会话已被 abort/release；interrupting 时由 interrupt 路径处理
+            if (!active || active.interrupting) throw error
+            if (!isTransientNetworkError(message) || attempts >= MAX_PROMPT_RETRIES) throw error
+            attempts += 1
+            const delayMs = 1000 * attempts
+            console.warn(`[Pi Runtime] 断流重试 ${attempts}/${MAX_PROMPT_RETRIES}（${delayMs}ms）: ${message}`)
+            onAgentEvent?.({
+              type: 'retrying',
+              attempt: attempts,
+              maxAttempts: MAX_PROMPT_RETRIES,
+              delaySeconds: delayMs / 1000,
+              reason: message,
+            })
+            await sleep(delayMs)
+          }
+        }
+      }
+      void retryablePromptChain()
         .then(() => queue.close())
         .catch((error: unknown) => queue.fail(error))
       while (true) {
