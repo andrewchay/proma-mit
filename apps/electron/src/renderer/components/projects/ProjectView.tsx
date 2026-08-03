@@ -2561,15 +2561,41 @@ function MeetingNotesPanel({
 // ===== 看板 =====
 
 function KanbanView({ board }: { board: KanbanBoard }): React.ReactElement {
+  const [filter, setFilter] = useState<'all' | 'human' | 'agent'>('all')
+
+  const applyFilter = (tasks: Task[]): Task[] => {
+    if (filter === 'all') return tasks
+    return tasks.filter((t) => filter === 'agent'
+      ? (t.assignee?.userId?.startsWith('agent-') ?? false)
+      : !(t.assignee?.userId?.startsWith('agent-') ?? false))
+  }
+
   const columns = [
-    { title: '待处理', tasks: board.pending, color: 'bg-gray-50' },
-    { title: '进行中', tasks: board.in_progress, color: 'bg-blue-50' },
-    { title: '已完成', tasks: board.completed, color: 'bg-green-50' },
+    { title: '待处理', tasks: applyFilter(board.pending), color: 'bg-gray-50' },
+    { title: '进行中', tasks: applyFilter(board.in_progress), color: 'bg-blue-50' },
+    { title: '已完成', tasks: applyFilter(board.completed), color: 'bg-green-50' },
   ]
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-medium">任务看板</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-medium">任务看板</h2>
+        <div className="flex items-center gap-1 rounded-lg bg-foreground/[0.04] p-0.5">
+          {([
+            { value: 'all', label: '全部' },
+            { value: 'human', label: '真人' },
+            { value: 'agent', label: '🤖 AI 员工' },
+          ] as const).map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setFilter(opt.value)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filter === opt.value ? 'bg-background text-foreground shadow-sm' : 'text-foreground/50 hover:text-foreground/80'}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid grid-cols-3 gap-4">
         {columns.map((col) => (
           <div key={col.title} className={`${col.color} rounded-lg p-4 border`}>

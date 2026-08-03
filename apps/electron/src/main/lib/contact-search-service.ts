@@ -135,13 +135,14 @@ async function listFeishuDeptMembers(token: string, deptId: number): Promise<Con
   if (data.code !== 0) {
     throw new Error(`飞书获取部门成员失败: ${data.msg} (code: ${data.code})`)
   }
-  const items = data.data?.items as Array<{ open_id?: string; union_id?: string; name?: string }> | undefined
+  // 注意：飞书 v3 部门成员接口返回的成员字段是 member_id（配合 member_id_type=open_id 时为 open_id），
+  // 不是 open_id 字段；用错字段会导致全部成员被过滤为空。
+  const items = data.data?.items as Array<{ member_id?: string; member_id_type?: string; name?: string; tenant_key?: string }> | undefined
   return (items ?? [])
-    .filter((m) => m.open_id && m.name)
+    .filter((m) => m.member_id && m.name)
     .map((m) => ({
       platform: 'feishu' as const,
-      userId: m.open_id!,
-      unionId: m.union_id,
+      userId: m.member_id!,
       name: m.name!,
     }))
 }
@@ -156,11 +157,15 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
   const token = await getFeishuTenantToken(cred.appId, cred.appSecret)
   const kw = keyword.trim().toLowerCase()
 
+  // 收集遍历过程中的错误：如果最终一个成员都没有，把错误暴露给用户（而非静默空结果）
+  const errors: string[] = []
+
   // 遍历根部门（0）及一层子部门
   const deptIds = [0]
   try {
     deptIds.push(...(await listFeishuSubDeptIds(token, 0)))
   } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err))
     console.warn('[ContactSearch] 获取飞书子部门失败，仅搜索根部门:', err)
   }
 
@@ -178,8 +183,14 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
         if (collected.length >= 20) break
       }
     } catch (err) {
+      errors.push(`部门${deptId}: ${err instanceof Error ? err.message : String(err)}`)
       console.warn(`[ContactSearch] 飞书部门 ${deptId} 成员获取失败，跳过:`, err)
     }
+  }
+
+  // 一个成员都没有但有错误 → 抛出，让前端显示具体原因（否则用户只看到「未找到匹配成员」）
+  if (collected.length === 0 && errors.length > 0) {
+    throw new Error(`飞书通讯录获取失败: ${errors.join('; ')}`)
   }
   return collected
 }

@@ -470,7 +470,7 @@ proma-mit/
 |---|---|
 | `components/ui/` | shadcn/ui + Radix UI 原始组件（~30 个） |
 | `components/welcome/` | 欢迎页 |
-| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告）、`AgentTeamPanel.tsx`（AI 员工团队管理） |
+| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告）、`AgentTeamPanel.tsx`（AI 员工团队管理 + 效能总览） |
 | `components/calendar/` | 工作模块-日程管家：`CalendarModuleView.tsx`（子视图切换）、`ScheduleView.tsx`、`EventCreatePanel.tsx`、`CalendarSyncView.tsx` |
 | `components/automation/` | 工作模块-自动化：`AutomationModuleView.tsx`（子视图：运行中/定时任务/运行记录）、`AutomationRunningPanel.tsx` |
 | `components/onboarding/` | 新手引导 |
@@ -792,7 +792,7 @@ bun run dist:fast
 
 ## 9. 版本信息
 
-- `@proma/electron`: `0.11.4`
+- `@proma/electron`: `0.11.5`
 - `@proma/core`: `0.2.13`
 - `@proma/shared`: `0.1.46`
 - `@proma/ui`: `0.1.4`

@@ -149,6 +149,9 @@ export function AgentTeamPanel(): React.ReactElement {
         </button>
       </div>
 
+      {/* AI 团队效能总览（P2） */}
+      {!loading && employees.length > 0 && <AgentTeamOverview employees={employees} />}
+
       {loading ? (
         <div className="py-12 text-center text-sm text-muted-foreground">加载中…</div>
       ) : employees.length === 0 && !showForm ? (
@@ -293,6 +296,54 @@ export function AgentTeamPanel(): React.ReactElement {
             </button>
             <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm border rounded-md">取消</button>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** AI 团队效能总览（P2）：聚合员工统计字段 */
+function AgentTeamOverview({ employees }: { employees: AgentEmployeeResult[] }): React.ReactElement {
+  const totalTasks = employees.reduce((sum, e) => sum + e.totalTasks, 0)
+  const completedTasks = employees.reduce((sum, e) => sum + e.completedTasks, 0)
+  const failedTasks = employees.reduce((sum, e) => sum + e.failureCount, 0)
+  const activeCount = employees.filter((e) => e.enabled).length
+  const avgDurations = employees.map((e) => e.avgDurationMs).filter((d): d is number => !!d)
+  const avgDuration = avgDurations.length > 0 ? Math.round(avgDurations.reduce((a, b) => a + b, 0) / avgDurations.length / 60_000) : 0
+  const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
+
+  const ranked = [...employees].sort((a, b) => (b.completedTasks - a.completedTasks) || ((a.avgDurationMs ?? 0) - (b.avgDurationMs ?? 0)))
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-gradient-to-br from-foreground/[0.03] to-transparent p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Bot size={14} className="text-primary/70" />
+        <span className="text-sm font-medium">AI 团队效能</span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-lg bg-background/60 p-3">
+          <div className="text-[11px] text-foreground/40">累计任务</div>
+          <div className="text-lg font-semibold mt-0.5">{totalTasks}<span className="text-xs font-normal text-foreground/40"> · {activeCount} 名启用</span></div>
+        </div>
+        <div className="rounded-lg bg-background/60 p-3">
+          <div className="text-[11px] text-foreground/40">完成率</div>
+          <div className="text-lg font-semibold mt-0.5">{totalTasks > 0 ? `${completionRate}%` : '—'}</div>
+        </div>
+        <div className="rounded-lg bg-background/60 p-3">
+          <div className="text-[11px] text-foreground/40">失败 / 失联</div>
+          <div className="text-lg font-semibold mt-0.5">{failedTasks}</div>
+        </div>
+        <div className="rounded-lg bg-background/60 p-3">
+          <div className="text-[11px] text-foreground/40">平均执行时长</div>
+          <div className="text-lg font-semibold mt-0.5">{avgDuration > 0 ? `${avgDuration}min` : '—'}</div>
+        </div>
+      </div>
+      {ranked.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-foreground/45">
+          <span className="text-foreground/35">员工排行（按完成任务）：</span>
+          {ranked.slice(0, 5).map((e, i) => (
+            <span key={e.id}>{i + 1}. {e.name} <span className="text-foreground/30">({e.completedTasks})</span></span>
+          ))}
         </div>
       )}
     </div>
