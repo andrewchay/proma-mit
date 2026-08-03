@@ -94,6 +94,22 @@ export function resolvePiMaxTokens(provider: ProviderType): number {
   return 64_000
 }
 
+/**
+ * 按模型 ID 推断 contextWindow（Pi SDK 自动压缩阈值依赖此值）。
+ *
+ * 与渲染端 inferContextWindow 保持一致，避免 DeepSeek V4（1M）/ Claude
+ * Sonnet 4.6 / Opus 4.6+（1M）被 200K 兜底值错误降级，导致上下文过早触发
+ * 自动压缩（对齐官方 v0.13.x 的 1M 模型窗口修复）。
+ */
+export function inferPiContextWindow(modelId: string | undefined | null): number {
+  if (!modelId) return 200_000
+  const m = modelId.toLowerCase()
+  if (m.includes('claude-haiku')) return 200_000
+  if (m.includes('claude-sonnet-4-6') || m.includes('claude-opus-4-6') || m.includes('claude-opus-4-7')) return 1_000_000
+  if (m.includes('deepseek-v4')) return 1_000_000
+  return 200_000
+}
+
 function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string): NonNullable<PiProviderConfigInput['models']>[number] {
   const model: NonNullable<PiProviderConfigInput['models']>[number] = {
     id: input.modelId,
@@ -103,7 +119,7 @@ function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: 
     reasoning: true,
     input: input.provider === 'kimi-coding' ? ['text'] : ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200_000,
+    contextWindow: inferPiContextWindow(input.modelId),
     maxTokens: resolvePiMaxTokens(input.provider),
   }
 

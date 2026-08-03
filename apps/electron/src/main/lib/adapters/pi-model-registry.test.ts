@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolvePiApi, resolvePiBaseUrl, resolvePiMaxTokens, resolvePiProviderId, shouldUsePiAuthHeader } from './pi-model-registry'
+import { resolvePiApi, resolvePiBaseUrl, resolvePiMaxTokens, resolvePiProviderId, shouldUsePiAuthHeader, inferPiContextWindow } from './pi-model-registry'
 
 describe('pi-model-registry', () => {
   test('maps Proma providers to Pi API families', () => {
@@ -34,5 +34,16 @@ describe('pi-model-registry', () => {
     expect(resolvePiMaxTokens('kimi-coding')).toBe(32_768)
     expect(resolvePiMaxTokens('deepseek')).toBe(64_000)
     expect(resolvePiMaxTokens('deepseek-openai')).toBe(64_000)
+  })
+
+  test('infers Pi context window per model family (1M vs 200K)', () => {
+    expect(inferPiContextWindow('deepseek-v4-pro')).toBe(1_000_000)
+    expect(inferPiContextWindow('deepseek-v4-flash')).toBe(1_000_000)
+    expect(inferPiContextWindow('claude-sonnet-4-6')).toBe(1_000_000)
+    expect(inferPiContextWindow('claude-opus-4-7')).toBe(1_000_000)
+    expect(inferPiContextWindow('claude-haiku-4-5')).toBe(200_000)
+    expect(inferPiContextWindow('claude-sonnet-4-5')).toBe(200_000)
+    expect(inferPiContextWindow('gpt-4o')).toBe(200_000)
+    expect(inferPiContextWindow(undefined)).toBe(200_000)
   })
 })
