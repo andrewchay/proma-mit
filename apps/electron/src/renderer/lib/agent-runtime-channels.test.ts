@@ -38,7 +38,7 @@ describe('agent runtime channel filtering', () => {
       channel('qwen-disabled-model', 'qwen', true, false),
     ]
 
-    expect(getAgentRuntimeChannelIds(channels, [], 'proma')).toEqual(['openai', 'deepseek', 'kimi', 'kimi-coding'])
+    expect(getAgentRuntimeChannelIds(channels, [], 'proma')).toEqual(['anthropic', 'openai', 'deepseek', 'kimi', 'kimi-coding'])
   })
 
   test('given Pi runtime when compatible channels exist then enabled channels are returned without Claude whitelist', () => {

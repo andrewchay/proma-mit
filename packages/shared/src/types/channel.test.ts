@@ -17,17 +17,22 @@ describe('Agent provider runtime capabilities', () => {
 
   test('Proma runtime 开放 OpenAI-compatible provider，Pi runtime 开放 SDK 可注册 provider', () => {
     expect(getAgentCompatibleProviders('proma').sort()).toEqual([
+      'anthropic',
       'custom',
       'deepseek',
       'deepseek-openai',
       'doubao',
+      'google',
       'kimi-api',
       'kimi-coding',
+      'minimax',
       'openai',
       'qwen',
       'zhipu',
     ])
-    expect(isAgentCompatibleProvider('google', 'proma')).toBe(false)
+    expect(isAgentCompatibleProvider('google', 'proma')).toBe(true)
+    expect(isAgentCompatibleProvider('anthropic', 'proma')).toBe(true)
+    expect(isAgentCompatibleProvider('minimax', 'proma')).toBe(true)
     expect(getAgentCompatibleProviders('pi').sort()).toEqual([
       'anthropic',
       'custom',

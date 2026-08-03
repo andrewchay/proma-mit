@@ -96,7 +96,7 @@ export interface AgentProviderRuntimeCapability {
 export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProviderRuntimeCapability> = {
   anthropic: {
     protocol: 'anthropic-messages',
-    runtimes: ['claude', 'pi', 'ai-sdk'],
+    runtimes: ['claude', 'pi', 'proma', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -134,7 +134,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   google: {
     protocol: 'google-generative',
-    runtimes: ['pi', 'ai-sdk'],
+    runtimes: ['pi', 'proma', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
@@ -178,7 +178,7 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
   },
   minimax: {
     protocol: 'anthropic-messages',
-    runtimes: ['claude', 'pi'],
+    runtimes: ['claude', 'pi', 'proma'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
