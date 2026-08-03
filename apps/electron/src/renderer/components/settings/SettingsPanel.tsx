@@ -22,6 +22,7 @@ import {
   X,
   Keyboard,
   Mic,
+  Eye,
   HardDriveDownload,
   HardDrive,
   ShieldCheck,
@@ -47,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ChannelSettings } from "./ChannelSettings";
 import { GeneralSettings } from "./GeneralSettings";
+import { VisionRelaySettings } from "./VisionRelaySettings";
 import { ProxySettings } from "./ProxySettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { AboutSettings } from "./AboutSettings";
@@ -85,6 +87,11 @@ const AGENT_TAB: TabItem = {
   id: "agent",
   label: "Agent 配置",
   icon: <Plug size={16} />,
+};
+const VISION_TAB: TabItem = {
+  id: "vision",
+  label: "视觉助手",
+  icon: <Eye size={16} />,
 };
 const TOOLS_TAB: TabItem = {
   id: "tools",
@@ -158,6 +165,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ProxySettings />;
     case "agent":
       return <AgentSettings />;
+    case "vision":
+      return <VisionRelaySettings />;
     case "tools":
       return <ToolSettings />;
     case "appearance":
@@ -254,6 +263,7 @@ export function SettingsPanel({
   const tabs = React.useMemo(() => [
     ...BASE_TABS,
     AGENT_TAB,
+    VISION_TAB,
     AUTOMATION_TAB,
     SCHEDULER_TAB,
     EXTENSIONS_TAB,

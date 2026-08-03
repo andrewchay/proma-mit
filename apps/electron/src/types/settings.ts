@@ -228,6 +228,18 @@ export interface AppSettings {
   autoCleanupArchivedDays?: number
   /** 主窗口状态（大小、位置、是否最大化） */
   mainWindowState?: MainWindowState
+  /** 视觉助手（Vision Relay）：为纯文本 Pi 模型（如 DeepSeek V4）中转图片请求到支持视觉的渠道 */
+  visionRelay?: VisionRelayConfig
+}
+
+/** 视觉助手（Vision Relay）配置 */
+export interface VisionRelayConfig {
+  /** 是否启用 */
+  enabled: boolean
+  /** 支持视觉输入的渠道 ID */
+  channelId: string
+  /** 视觉渠道的模型 ID */
+  modelId: string
 }
 
 /** 主窗口大小、位置和最大化状态 */
