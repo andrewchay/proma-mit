@@ -158,6 +158,26 @@ export class AgentPermissionService {
       // SDK 的 auto classifier 对只读操作未必真的放行，这里做本地兜底避免用户被无意义的审批打扰
       if (this.isReadOnlyTool(toolName, input)) return allow()
 
+      // auto 模式下 SDK classifier 已判定安全的操作（classifierApprovable）自动放行
+      // 例如常规文件写入、常见构建命令等。仅在高风险场景（危险等级 dangerous）仍回退人工确认。
+      if (
+        currentMode === 'auto' &&
+        options.classifierApprovable === true &&
+        this.assessDangerLevel(toolName, input) !== 'dangerous'
+      ) {
+        return allow()
+      }
+
+      // auto 模式下常规文件写入（Write/Edit/NotebookEdit 到工作区内的常规路径）自动放行，
+      // 避免每个文件改动都弹窗。危险路径（系统目录、隐藏敏感文件）仍走人工确认。
+      if (
+        currentMode === 'auto' &&
+        ['Write', 'Edit', 'NotebookEdit'].includes(toolName) &&
+        this.isRegularProjectPath(input)
+      ) {
+        return allow()
+      }
+
       // 需要询问用户：构建请求并发送到 UI
       const request = this.buildPermissionRequest(sessionId, toolName, input, options)
       sendToRenderer(request)
@@ -243,6 +263,76 @@ export class AgentPermissionService {
     }
 
     return false
+  }
+
+  /**
+   * 判断文件写入路径是否属于"常规项目路径"（auto 模式下自动放行）
+   *
+   * 放行条件：
+   * - 非隐藏敏感文件（.env、.ssh、密钥文件等）
+   * - 非系统关键目录（/etc、/usr、/Library、/Applications 等）
+   * - 非根目录/家目录根
+   * 返回 true 时允许 Write/Edit/NotebookEdit 自动放行。
+   */
+  private isRegularProjectPath(input: Record<string, unknown>): boolean {
+    const filePath = (
+      typeof input.file_path === 'string'
+        ? input.file_path
+        : typeof input.notebook_path === 'string'
+          ? input.notebook_path
+          : typeof input.path === 'string'
+            ? input.path
+            : ''
+    ).trim()
+
+    if (!filePath) return false
+
+    // 敏感文件名/路径片段（.env、凭据、密钥、配置令牌）
+    const SENSITIVE_PATTERNS = [
+      /\.env(?:\.[a-zA-Z0-9]+)?$/,       // .env / .env.local
+      /\.ssh\//,                          // SSH 私钥目录
+      /\.aws\//,                          // AWS 凭据
+      /\.git-credentials$/,               // Git 凭据
+      /\.npmrc$/,                         // npm 配置（可能含 token）
+      /\.pypirc$/,                        // pip 凭据
+      /\.netrc$/,                         // 通用凭据
+      /\.zshrc$|\.bashrc$|\.bash_profile$/, // shell 配置
+      /\.pem$|\.key$|\.crt$/,           // 证书/私钥
+      /\.kube\//,                         // Kubernetes 配置
+      /\.gradle\//,                       // Gradle 凭据
+      /\.m2\//,                           // Maven 凭据
+      /\.docker\//,                       // Docker 配置
+      /\.npm\//,                          // npm 缓存
+    ]
+    if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(filePath))) return false
+
+    // 系统关键目录（不允许自动放行写入）
+    const SYSTEM_PATH_PREFIXES = [
+      '/etc/',
+      '/usr/',
+      '/bin/',
+      '/sbin/',
+      '/var/',
+      '/Library/',
+      '/Applications/',
+      '/System/',
+      '/private/',
+      '/opt/',
+      '/root/',
+      '/dev/',
+      '/proc/',
+    ]
+    if (SYSTEM_PATH_PREFIXES.some((prefix) => filePath.startsWith(prefix))) return false
+
+    // 家目录根的直接配置文件（~/ 下不带子目录的隐藏文件，如 ~/.gitconfig）
+    const home = process.env.HOME || ''
+    if (home && filePath.startsWith(home)) {
+      const rel = filePath.slice(home.length).replace(/^\/+/, '')
+      // 只放行家目录下项目子目录中的写入；家目录根的直接文件仍需确认
+      if (!rel.includes('/') || rel.startsWith('.')) return false
+    }
+
+    return true
   }
 
   /**

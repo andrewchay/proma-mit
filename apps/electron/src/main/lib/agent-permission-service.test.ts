@@ -61,17 +61,72 @@ describe('AgentPermissionService safe 权限模式', () => {
       () => currentMode,
     )
 
-    const pendingPermission = canUseTool('Write', { file_path: 'note.txt', content: 'hello' }, createOptions())
+    // auto 模式下写敏感路径（.env）仍需人工确认，可用来建立白名单
+    const pendingPermission = canUseTool('Write', { file_path: 'config/.env', content: 'hello' }, createOptions())
     expect(requests).toHaveLength(1)
     const sessionId = service.respondToPermission(requests[0]!.requestId, 'allow', true)
     expect(sessionId).toBe('session-safe-whitelist')
     expect((await pendingPermission).behavior).toBe('allow')
 
     currentMode = 'safe'
-    const safeResult = await canUseTool('Write', { file_path: 'note.txt', content: 'hello' }, createOptions())
+    const safeResult = await canUseTool('Write', { file_path: 'config/.env', content: 'hello' }, createOptions())
 
     expect(safeResult.behavior).toBe('deny')
     expect(requests).toHaveLength(1)
+  })
+
+  test('given auto mode when writing to a regular project path then permission is allowed without prompting', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-auto-write', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const writeResult = await canUseTool('Write', { file_path: '/workspace/src/app.ts', content: 'export {}' }, createOptions())
+    const editResult = await canUseTool('Edit', { file_path: '/workspace/src/app.ts', old_string: 'a', new_string: 'b' }, createOptions())
+
+    expect(writeResult.behavior).toBe('allow')
+    expect(editResult.behavior).toBe('allow')
+    expect(requests).toHaveLength(0)
+  })
+
+  test('given auto mode when writing to a sensitive path then permission still requests approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-auto-sensitive', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const envResult = canUseTool('Write', { file_path: '/workspace/.env', content: 'SECRET=1' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', false)
+    expect((await envResult).behavior).toBe('allow')
+  })
+
+  test('given auto mode when classifier approves a safe operation then permission is allowed without prompting', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-auto-classifier', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const result = await canUseTool(
+      'Bash',
+      { command: 'npm run build' },
+      createOptions({ classifierApprovable: true }),
+    )
+
+    expect(result.behavior).toBe('allow')
+    expect(requests).toHaveLength(0)
+  })
+
+  test('given auto mode when classifier approves a dangerous operation then permission still requests approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-auto-classifier-dangerous', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const result = canUseTool(
+      'Bash',
+      { command: 'rm -rf /tmp/x' },
+      createOptions({ classifierApprovable: true }),
+    )
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', false)
+    expect((await result).behavior).toBe('allow')
   })
 
   test('given Computer Use is approved with always allow when invoked again then every action still requests approval', async () => {
