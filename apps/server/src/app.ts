@@ -47,6 +47,7 @@ import { PostgresRuntimeMetrics } from './metrics.ts'
 import { PostgresSignalStore } from './signals.ts'
 import { PostgresSignalDataSource, SignalScanner } from './signal-scan.ts'
 import type { SignalMatcher } from './signals.ts'
+import { PostgresEvalDatasetStore } from './eval-dataset.ts'
 import { PostgresTaskRecoveryInspector } from './recovery.ts'
 import { PostgresAgentRuntimeInteractionStore } from './interactions.ts'
 import { HttpOperationsReporter, NoopOperationsReporter, redactOperationalError } from './operations.ts'
@@ -140,6 +141,10 @@ export function createPromaWebServerApplication(
   const usageLedger = new PostgresUsageLedger(postgres, config.priceCatalog ?? [])
   const auditLog = new PostgresAuditLog(postgres)
   const spanStore = new PostgresRuntimeSpanStore(postgres)
+  const evalDatasetStore = new PostgresEvalDatasetStore(postgres, {
+    querySpansInWindow: (scope, input) => spanStore.querySpansInWindow(scope, input),
+    listTaskTree: (scope, taskId) => spanStore.listTask({ ...scope, taskId }),
+  })
   const signalStore = new PostgresSignalStore(postgres)
   const signalScanner = new SignalScanner({
     store: signalStore,
@@ -363,6 +368,39 @@ export function createPromaWebServerApplication(
               to: parseAuditTimestamp(url.searchParams.get('to')),
               limit: parsePageLimit(url.searchParams.get('limit')),
             }) })
+      } else if (request.method === 'GET' && url.pathname === '/agent/datasets') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : Response.json({ datasets: await evalDatasetStore.listDatasets(scope) })
+      } else if (request.method === 'POST' && url.pathname === '/agent/datasets') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : await createEvalDataset(request, scope, evalDatasetStore)
+      } else if (request.method === 'POST' && url.pathname === '/agent/datasets/from-run') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : await archiveRunToDataset(request, scope, evalDatasetStore)
+      } else if (request.method === 'DELETE' && url.pathname.startsWith('/agent/datasets/')) {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : (await evalDatasetStore.deleteDataset(scope, decodeURIComponent(url.pathname.slice('/agent/datasets/'.length)))
+              ? new Response(null, { status: 204 })
+              : Response.json({ error: '数据集不存在' }, { status: 404 }))
+      } else if (request.method === 'GET' && url.pathname.startsWith('/agent/datasets/') && url.pathname.endsWith('/samples')) {
+        const datasetId = decodeURIComponent(url.pathname.slice('/agent/datasets/'.length, -'/samples'.length))
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : Response.json({ samples: await evalDatasetStore.listSamples({ ...scope, datasetId, limit: parsePageLimit(url.searchParams.get('limit')) }) })
       } else if (request.method === 'GET' && url.pathname === '/agent/audit') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -472,6 +510,7 @@ export function createPromaWebServerApplication(
       await auditLog.initializeSchema()
       await spanStore.initializeSchema()
       await signalStore.initializeSchema()
+      await evalDatasetStore.initializeSchema()
       await interactionStore.initializeSchema()
       await schedulerStore.initializeSchema()
       scheduler.start()
@@ -685,6 +724,32 @@ function numberIn(value: unknown, min?: number, max?: number): number | undefine
   if (min != null && n < min) return undefined
   if (max != null && n > max) return undefined
   return n
+}
+
+async function createEvalDataset(request: Request, scope: AgentRuntimeScope, evalDatasetStore: PostgresEvalDatasetStore): Promise<Response> {
+  let body: { name?: unknown; description?: unknown; windowMs?: unknown; sampleRate?: unknown }
+  try { body = await request.json() as { name?: unknown; description?: unknown; windowMs?: unknown; sampleRate?: unknown } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+  if (typeof body.name !== 'string' || !body.name.trim()) return Response.json({ error: 'name 必须是非空字符串' }, { status: 400 })
+  const windowMs = numberIn(body.windowMs, 1_000, undefined)
+  if (windowMs == null) return Response.json({ error: 'windowMs 必须是不小于 1s 的数' }, { status: 400 })
+  let sampleRate = 1
+  if (body.sampleRate != null) {
+    const rate = numberIn(body.sampleRate, 0.001, 1)
+    if (rate == null) return Response.json({ error: 'sampleRate 必须在 0..1 之间' }, { status: 400 })
+    sampleRate = rate
+  }
+  const dataset = await evalDatasetStore.createDatasetFromWindow({
+    scope, name: body.name.trim(), description: typeof body.description === 'string' ? body.description : undefined, windowMs, sampleRate,
+  })
+  return Response.json({ dataset }, { status: 201 })
+}
+
+async function archiveRunToDataset(request: Request, scope: AgentRuntimeScope, evalDatasetStore: PostgresEvalDatasetStore): Promise<Response> {
+  let body: { datasetId?: unknown; taskId?: unknown }
+  try { body = await request.json() as { datasetId?: unknown; taskId?: unknown } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+  if (typeof body.datasetId !== 'string' || !body.datasetId.trim() || typeof body.taskId !== 'string' || !body.taskId.trim()) return Response.json({ error: 'datasetId 与 taskId 必须是非空字符串' }, { status: 400 })
+  const sample = await evalDatasetStore.archiveRun({ scope, datasetId: body.datasetId.trim(), taskId: body.taskId.trim() })
+  return sample ? Response.json({ sample }, { status: 201 }) : Response.json({ error: '数据集不存在或无对应 span' }, { status: 404 })
 }
 
 function parseServerSchedule(body: { intervalMs?: unknown; schedule?: unknown }): import('./scheduler-store.ts').ServerScheduleSpec | undefined {

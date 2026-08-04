@@ -145,3 +145,19 @@ P-III（Agent 自查 span，运行档案只读工具）已完成，交付如下�
 **验证**：项目全量 typecheck 通过（含 shared+electron，确认并行 Goal 会话未冲突）；biome 无问题；server 60 tests 过（新增 5 个 P-III 测试）；唯一失败仍是既有的 provider 矩阵测试（与 P-III 无关）。
 
 **后续**：P-IV evals/datasets 飞轮；Web/桌面端运行档案 + Signal 列表的可视化呈现（P6-3）。
+
+## 十、P-IV 实施记录（2026-08-04）
+
+P-IV（评估数据集 Eval Datasets 飞轮）已完成，交付如下：
+
+| 文件 | 职责 |
+|---|---|
+| `apps/server/src/eval-dataset.ts`（新增） | `EvalDataset`/`EvalSample` 类型 + `PostgresEvalDatasetStore`（2 张新表 `proma_runtime_eval_datasets` + `proma_runtime_eval_samples`），能力：createDatasetFromWindow（采样）/ archiveRun（固化单 run）/ listDatasets / listSamples / deleteDataset |
+| `apps/server/src/app.ts`（改） | 装配 store（spanStore 适配为 EvalSpanSource）；initialize 建表；API：`GET/POST /agent/datasets`、`DELETE /agent/datasets/{id}`、`GET /agent/datasets/{id}/samples`、`POST /agent/datasets/from-run` |
+| `apps/server/src/eval-dataset.test.ts`（新增） | 6 个单测：schema、采样生成样本+count、空窗口、archiveRun 固化、listSamples/scope 过滤、listDatasets |
+
+**架构取舍**：P-I 刻意不存完整 prompt/output → P-IV 做**轻量结构化评估采样**（工具链/失败点/耗时/token/成本），不存完整对话回放。样本 `status` 若 task 内任一 span 错误则为 error，聚合 provider 根 span 的 duration/meta，取首个 error span 的错误信息。dataset+task 唯一防重复采样。
+
+**验证**：全项目 typecheck 通过；biome 干净；server 66 tests 过（新增 6 个 P-IV）；唯一失败仍是既有的 provider 矩阵测试（与 P-IV 无关）。
+
+**四阶段全部完成**：P-I 运行档案（span 底座）→ P-II Signals（消费 span 检测）→ P-III 自查工具（消费 span 查询）→ P-IV 数据集资产（span 固化回归），复用同一 span 底座闭环，均为 Laminar 设计思想（D1/D2/D3/D4）的本地化。
