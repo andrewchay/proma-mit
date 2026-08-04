@@ -141,6 +141,8 @@ const TURN_DECISION_META: Record<string, { label: string; className: string }> =
   quota_exhausted: { label: 'Goal 配额耗尽', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
   goal_terminated: { label: 'Goal 已终止', className: 'bg-foreground/5 text-foreground/50' },
   no_goal: { label: '未绑定 Goal', className: 'bg-foreground/[0.04] text-muted-foreground' },
+  replan_required: { label: '需重规划', className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400' },
+  repair_required: { label: '需自修复', className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
 }
 
 function TurnDecisionNotice({ decision }: { decision: NonNullable<AgentStreamState['turnDecision']> }): React.ReactElement | null {

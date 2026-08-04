@@ -884,6 +884,10 @@ export interface AgentSessionMeta {
   agentRuntime?: AgentRuntime
   /** 绑定的 Goal id（长生命周期目标） */
   goalId?: string
+  /** 会话级可选配额上限（USD）；未绑定 Goal 时也可限制自动化消耗 */
+  maxBudgetUsd?: number
+  /** 会话已消耗预算（USD） */
+  spentBudgetUsd?: number
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
   /** 所属工作区 ID */

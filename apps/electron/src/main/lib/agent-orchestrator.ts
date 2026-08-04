@@ -1516,33 +1516,51 @@ export class AgentOrchestrator {
     // 0.5 清除上一轮中断标记
     try { updateAgentSessionMeta(sessionId, { stoppedByUser: false }) } catch { /* 会话可能已删除 */ }
 
-    // P2-1/A5 Turn 前置决策：若会话绑定 Goal，给出路由提示；自动触发（automation）时对不可推进的情况硬阻断
+    // P2-1/A5/E7 Turn 前置决策：绑定 Goal 或会话级配额时给出路由提示；自动化触发不可推进时硬阻断
     try {
-      const goalId = getAgentSessionMeta(sessionId)?.goalId
-      if (goalId) {
-        const decision = preTickTurn(goalId, userMessage)
-        const isAutomation = triggeredBy === 'automation'
-        if (!decision.shouldRun || (isAutomation && decision.route !== 'ready')) {
-          this.eventBus.emit(sessionId, {
-            kind: 'proma_event',
-            event: {
-              type: 'turn_decision',
-              route: decision.route,
-              reason: decision.reason,
-            },
-          } as AgentStreamPayload)
+      const meta = getAgentSessionMeta(sessionId)
+      const goalId = meta?.goalId
+      const sessionBudget = meta?.maxBudgetUsd !== undefined && meta.maxBudgetUsd > 0
+        ? { maxBudgetUsd: meta.maxBudgetUsd, spentUsd: meta.spentBudgetUsd ?? 0 }
+        : undefined
+      const decision = preTickTurn(goalId, userMessage, undefined, sessionBudget)
+      const isAutomation = triggeredBy === 'automation'
+      const relevant = goalId !== undefined || sessionBudget !== undefined
+      if (relevant && (!decision.shouldRun || (isAutomation && decision.route !== 'ready'))) {
+        this.eventBus.emit(sessionId, {
+          kind: 'proma_event',
+          event: {
+            type: 'turn_decision',
+            route: decision.route,
+            reason: decision.reason,
+          },
+        } as AgentStreamPayload)
+      }
+      // 自动化无人值守：不可推进时直接阻断，避免盲目消耗
+      if (isAutomation && relevant && decision.route !== 'ready') {
+        const msg = `[Goal 阻断] ${decision.reason ?? '当前状态不可推进'}（route=${decision.route}）`
+        console.warn(`[Agent 编排] ${msg}`)
+        // E8: 配额耗尽时发系统通知提醒用户
+        if (decision.route === 'quota_exhausted') {
+          try {
+            const { sendSystemNotification } = require('./system-notification-service') as { sendSystemNotification: (i: import('@proma/shared').SystemNotificationInput) => boolean }
+            const isSessionQuota = goalId === undefined
+            sendSystemNotification({
+              title: isSessionQuota ? '会话配额已耗尽' : 'Goal 配额已耗尽',
+              body: decision.reason ?? '配额已用完，自动化已暂停，请在「目标」或会话设置中调整配额',
+              force: true,
+              sessionId,
+            })
+          } catch (notifyError) {
+            console.warn('[Agent 编排] Goal 配额通知失败:', notifyError)
+          }
         }
-        // 自动化无人值守：不可推进时直接阻断，避免盲目消耗
-        if (isAutomation && decision.route !== 'ready') {
-          const msg = `[Goal 阻断] ${decision.reason ?? '当前状态不可推进'}（route=${decision.route}）`
-          console.warn(`[Agent 编排] ${msg}`)
-          callbacks.onError(msg)
-          callbacks.onComplete([], { startedAt: input.startedAt })
-          return
-        }
-        if (decision.route !== 'ready') {
-          console.log(`[Agent 编排] Turn 决策 (${sessionId}): route=${decision.route}, reason=${decision.reason ?? ''}`)
-        }
+        callbacks.onError(msg)
+        callbacks.onComplete([], { startedAt: input.startedAt })
+        return
+      }
+      if (relevant && decision.route !== 'ready') {
+        console.log(`[Agent 编排] Turn 决策 (${sessionId}): route=${decision.route}, reason=${decision.reason ?? ''}`)
       }
     } catch (turnError) {
       // 决策失败不影响执行

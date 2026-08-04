@@ -18,6 +18,8 @@ export type TurnRoute =
   | 'blocked' // 被阻塞（无活跃 todo / goal 不存在）
   | 'quota_exhausted' // 配额耗尽
   | 'goal_terminated' // goal 已完成/归档
+  | 'replan_required' // 需要重规划（目标/范围已变化，todo 不再匹配）
+  | 'repair_required' // 需要自修复（上轮失败/状态损坏）
   | 'no_goal' // 会话未绑定 Goal，无约束
 
 /** 轮次决策结果 */
@@ -42,10 +44,18 @@ export function preTickTurn(
   goalId: string | undefined,
   userMessage: string | undefined = undefined,
   deps: { getGoal: (id: string) => Goal | undefined } = { getGoal },
+  sessionBudget?: { maxBudgetUsd: number; spentUsd: number },
 ): TurnDecision {
   const goalProvider = deps.getGoal
-  // 未绑定 Goal → 无约束，直接执行
+  // 未绑定 Goal：有会话级配额则按配额判断，否则无约束
   if (!goalId) {
+    if (sessionBudget && sessionBudget.maxBudgetUsd > 0 && sessionBudget.spentUsd >= sessionBudget.maxBudgetUsd) {
+      return {
+        route: 'quota_exhausted',
+        shouldRun: false,
+        reason: `会话配额已耗尽（$${sessionBudget.spentUsd.toFixed(2)} / $${sessionBudget.maxBudgetUsd.toFixed(2)}）`,
+      }
+    }
     return { route: 'no_goal', shouldRun: true }
   }
 
@@ -143,6 +153,8 @@ export function routeLabel(route: TurnRoute): string {
     blocked: '被阻塞',
     quota_exhausted: '配额耗尽',
     goal_terminated: '目标终止',
+    replan_required: '需重规划',
+    repair_required: '需修复',
     no_goal: '无约束',
   }
   return map[route] ?? route

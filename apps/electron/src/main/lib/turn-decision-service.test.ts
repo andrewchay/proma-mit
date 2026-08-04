@@ -50,6 +50,18 @@ describe('TurnDecisionService', () => {
     expect(d.shouldRun).toBe(true)
   })
 
+  test('E7: 未绑定 Goal 但有会话配额耗尽 → quota_exhausted', () => {
+    const d = preTickTurn(undefined, undefined, undefined, { maxBudgetUsd: 1, spentUsd: 1 })
+    expect(d.route).toBe('quota_exhausted')
+    expect(d.shouldRun).toBe(false)
+  })
+
+  test('E7: 未绑定 Goal 且会话配额未耗尽 → 可执行', () => {
+    const d = preTickTurn(undefined, undefined, undefined, { maxBudgetUsd: 1, spentUsd: 0.5 })
+    expect(d.route).toBe('no_goal')
+    expect(d.shouldRun).toBe(true)
+  })
+
   test('Goal 不存在 → 降级为无约束', () => {
     const { deps } = makeDeps()
     const d = preTickTurn('missing', undefined, deps)

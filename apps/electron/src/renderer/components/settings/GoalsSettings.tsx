@@ -69,6 +69,8 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
   const [editObjective, setEditObjective] = React.useState(goal.objective)
   const [editScope, setEditScope] = React.useState(goal.scope.join(','))
   const [editBudget, setEditBudget] = React.useState(goal.quota?.maxBudgetUsd?.toString() ?? '')
+  /** E6：证据折叠 */
+  const [evidenceExpanded, setEvidenceExpanded] = React.useState(false)
 
   React.useEffect(() => {
     void window.electronAPI.goalListSessions(goal.id).then(setBoundSessions).catch(() => {})
@@ -340,19 +342,43 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
         </div>
       </SettingsCard>
 
-      {/* 证据 Evidence */}
+      {/* 证据 Evidence（E6：折叠 + 导出） */}
       <SettingsCard>
         <div className="px-4 py-2 text-sm font-medium text-foreground/80 border-b border-border/30 flex items-center gap-2">
           <FileText size={14} />
           证据
-          <span className="text-[11px] text-muted-foreground">{goal.evidence.length} 条</span>
+          <span className="text-[11px] text-muted-foreground flex-1">{goal.evidence.length} 条</span>
+          {goal.evidence.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const text = [...goal.evidence].reverse().join('\n')
+                void navigator.clipboard.writeText(text).then(() => toast.success('证据已复制')).catch(() => toast.error('复制失败'))
+              }}
+              className="shrink-0 px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-muted-foreground hover:bg-foreground/10"
+            >
+              导出
+            </button>
+          )}
         </div>
         <div className="flex flex-col">
-          {[...goal.evidence].reverse().map((ev, idx) => (
-            <div key={idx} className="px-4 py-2 border-b border-border/30 last:border-b-0 text-[12px] text-muted-foreground/85 whitespace-pre-wrap">
-              {ev}
-            </div>
-          ))}
+          {[...goal.evidence].reverse().map((ev, idx) => {
+            if (!evidenceExpanded && idx >= 20) return null
+            return (
+              <div key={idx} className="px-4 py-2 border-b border-border/30 last:border-b-0 text-[12px] text-muted-foreground/85 whitespace-pre-wrap">
+                {ev}
+              </div>
+            )
+          })}
+          {!evidenceExpanded && goal.evidence.length > 20 && (
+            <button
+              type="button"
+              onClick={() => setEvidenceExpanded(true)}
+              className="px-4 py-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              展开全部 {goal.evidence.length - 20} 条 ↓
+            </button>
+          )}
           {goal.evidence.length === 0 && (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">暂无证据</div>
           )}
