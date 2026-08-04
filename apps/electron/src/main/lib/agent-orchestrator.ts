@@ -1316,10 +1316,11 @@ export class AgentOrchestrator {
   private async injectGoalTools(
     sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
     mcpServers: Record<string, Record<string, unknown>>,
+    sessionId?: string,
   ): Promise<void> {
     try {
       const { injectGoalMcpServer } = await import('./chat-tools/goal-mcp')
-      await injectGoalMcpServer(sdk, mcpServers)
+      await injectGoalMcpServer(sdk, mcpServers, sessionId)
     } catch (err) {
       console.error(`[Agent 编排] 注入 Goal MCP 失败:`, err)
     }
@@ -1965,7 +1966,7 @@ export class AgentOrchestrator {
       const mcpServers = this.buildMcpServers(workspaceSlug, workflowMcpNames)
       await this.injectMemoryTools(sdk, mcpServers)
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
-      await this.injectGoalTools(sdk, mcpServers)
+      await this.injectGoalTools(sdk, mcpServers, sessionId)
 
       // 注入内置协作会话工具（collaboration）：仅在绑定了项目的主会话可用
       const collaborationAvailable = !!workspaceId && !isDelegationSession

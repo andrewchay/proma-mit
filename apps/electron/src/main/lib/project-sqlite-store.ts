@@ -1602,6 +1602,13 @@ export function getAgentExecution(id: string): AgentExecution | null {
   return row ? rowToAgentExecution(row) : null
 }
 
+/** 按 sessionId 反查 AI 员工执行（workflow 执行 sessionId 形如 `workflow:<runId>`）。 */
+export function getAgentExecutionBySessionId(sessionId: string): AgentExecution | null {
+  const database = getProjectDb()
+  const row = database.prepare(`SELECT * FROM agent_executions WHERE session_id = ? LIMIT 1`).get(sessionId) as AgentExecutionRow | undefined
+  return row ? rowToAgentExecution(row) : null
+}
+
 export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecution, 'id' | 'projectId' | 'entityType' | 'entityId' | 'agentId' | 'startedAt'>>): AgentExecution | null {
   const database = getProjectDb()
   const existing = getAgentExecution(id)

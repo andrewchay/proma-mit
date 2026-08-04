@@ -38,8 +38,25 @@ export function registerProjectAutoSync(): () => void {
     }
 
     if (action === 'updated') {
-      syncUpdatedTaskStatus(task).catch((error) => {
-        console.error('[ProjectAutoSync] 回写外部状态失败:', error)
+      // 改派给 AI 员工：无进行中执行时才幂等派发（避免重复 execution），否则仍回写外部状态
+      import('./agent-employee-service').then(({ isAgentAssignee, dispatchTaskToAgentIfIdle }) => {
+        if (!isAgentAssignee(task)) {
+          syncUpdatedTaskStatus(task).catch((error) => {
+            console.error('[ProjectAutoSync] 回写外部状态失败:', error)
+          })
+          return
+        }
+        dispatchTaskToAgentIfIdle(task).catch((error) => {
+          enqueueOutboxEvent({
+            projectId: task.projectId,
+            entityType: 'task',
+            entityId: task.id,
+            eventType: 'agent.dispatch' as TodoRetryEvent['eventType'],
+            errorMessage: `[agent] ${error instanceof Error ? error.message : String(error)}`,
+          })
+        })
+      }).catch((error) => {
+        console.error('[ProjectAutoSync] 加载 agent 派发模块失败:', error)
       })
     }
   })

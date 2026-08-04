@@ -82,12 +82,20 @@ export function registerWorkflowIpcHandlers(): void {
   }): Promise<WorkflowRun> => executeWorkflowAgentNode(input.workflowId, input.runId, input.nodeId, input.channelId, input.modelId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.EXECUTE_DETERMINISTIC_NODE, (_event, input: { workflowId: string; runId: string; nodeId: string }): WorkflowRun => executeWorkflowDeterministicNode(input.workflowId, input.runId, input.nodeId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.EXECUTE_RUN, async (_event, input: { workflowId: string; runId: string; channelId: string; modelId?: string }): Promise<WorkflowRun> => executeWorkflowRun(input.workflowId, input.runId, input.channelId, input.modelId))
-  ipcMain.handle(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, (_event, input: {
+  ipcMain.handle(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, async (_event, input: {
     workflowId: string
     runId: string
     approvalId: string
     decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> }
-  }): WorkflowRun => resolveWorkflowApproval(input.workflowId, input.runId, input.approvalId, input.decision))
+  }): Promise<WorkflowRun> => {
+    const run = resolveWorkflowApproval(input.workflowId, input.runId, input.approvalId, input.decision)
+    // 审批推进 run 到终态后，联动回写对应 AI 员工 execution / Task（幂等）
+    try {
+      const { reconcileWorkflowApprovalRun } = await import('./agent-employee-service')
+      reconcileWorkflowApprovalRun(input.workflowId, input.runId)
+    } catch { /* 非 AI 员工的 workflow 无对应 execution，可安全忽略 */ }
+    return run
+  })
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, (_event, workflowId: string, runId: string): WorkflowRun => cancelWorkflowRun(workflowId, runId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.STOP_RUN, (_event, workflowId: string, runId: string): Promise<{ stopped: boolean; message?: string }> => stopActiveWorkflowRun(workflowId, runId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, async (_event, input: { definition: WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => proposeWorkflowPatches(input.definition, input.instruction, input.channelId, input.modelId))

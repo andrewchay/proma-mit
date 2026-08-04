@@ -224,7 +224,7 @@ export class TokenUsageService {
     this.handleEvent(sessionId, payload)
   }
 
-  private handleEvent(sessionId: string, payload: AgentStreamPayload): void {
+  private async handleEvent(sessionId: string, payload: AgentStreamPayload): Promise<void> {
     if (payload.kind !== 'sdk_message') return
     const message = payload.message as SDKMessage | undefined
     if (!message || typeof message !== 'object') return
@@ -269,6 +269,28 @@ export class TokenUsageService {
     }
 
     this.appendRecord(record)
+
+    // 配额自动闭环：若该会话绑定了 Goal，把本轮真实成本累加到 Goal 的 spentUsd。
+    // 此前 spendGoalBudget 仅通过 IPC 暴露，运行流程从不调用，导致配额“只挡不扣”。
+    if (meta?.goalId && record.costTotal > 0) {
+      try {
+        const { spendGoalBudget } = await import('./goal-service')
+        spendGoalBudget(meta.goalId, record.costTotal)
+      } catch (err) {
+        console.warn('[TokenUsage] 累加 Goal 配额失败:', err)
+      }
+    }
+
+    // 会话级预算回填：真实消耗累计到 session meta.spentBudgetUsd，
+    // 使 turn 决策层的会话配额分支（preTickTurn sessionBudget）真正生效。
+    if (record.costTotal > 0 && sessionId) {
+      try {
+        const { updateAgentSessionMeta } = await import('./agent-session-manager')
+        updateAgentSessionMeta(sessionId, { spentBudgetUsd: (meta?.spentBudgetUsd ?? 0) + record.costTotal })
+      } catch (err) {
+        console.warn('[TokenUsage] 回填会话预算失败:', err)
+      }
+    }
   }
 
   private resolveWorkspaceId(sessionId: string): string | undefined {

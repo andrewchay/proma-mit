@@ -77,6 +77,9 @@ function derivePhase(goal: Goal): void {
     goal.phase = 'waiting_user'
   } else if (hasActiveTodo) {
     goal.phase = 'active'
+  } else if (goal.phase === 'draft') {
+    // 草稿阶段无任何 todo 属正常（尚未启动），不要误标为 blocked
+    goal.phase = 'draft'
   } else {
     goal.phase = 'blocked'
   }
@@ -314,6 +317,32 @@ export const goalService = {
  * - 没有需要执行的 open todo（无工作可推进）；
  * - 配额已耗尽。
  */
+/**
+ * 判断一个 todo 是否可执行：除了 status 在 open/claimed/in_progress，
+ * 还需其解锁依赖（unblocksTodoId 指向的前置 todo）已完成。递归处理链式依赖，带循环防护。
+ */
+function isTodoUnblocked(goal: Goal, todo: GoalTodo, visiting: Set<string> = new Set()): boolean {
+  // 无依赖 → 可执行
+  if (!todo.unblocksTodoId) return true
+  // 循环依赖防护
+  if (visiting.has(todo.id)) return true
+  const dep = goal.todos.find((t) => t.id === todo.unblocksTodoId)
+  // 前置 todo 不存在 → 视作无阻塞，正常执行
+  if (!dep) return true
+  // 前置 todo 已完成 → 本 todo 解锁，可执行
+  if (dep.status === 'done') return true
+  // 前置未完成 → 递归看前置是否被更早的依赖阻塞；前置自身也不是 done 则本 todo 不可执行
+  visiting.add(todo.id)
+  return isTodoUnblocked(goal, dep, visiting)
+}
+
+/** 列出可执行的 todo（状态为 open/claimed/in_progress，且其解锁依赖链已完成）。 */
+export function listActionableTodos(goal: Goal): GoalTodo[] {
+  return goal.todos.filter((t) =>
+    ['open', 'claimed', 'in_progress'].includes(t.status) && isTodoUnblocked(goal, t)
+  )
+}
+
 export function shouldGoalRun(goalId: string): { shouldRun: boolean; reason?: string } {
   const goal = readGoal(goalId)
   if (!goal) return { shouldRun: false, reason: 'goal_not_found' }
@@ -329,8 +358,8 @@ export function shouldGoalRun(goalId: string): { shouldRun: boolean; reason?: st
     return { shouldRun: false, reason: 'waiting_user' }
   }
 
-  // 没有需要执行的 todo
-  const hasActionableTodo = goal.todos.some((t) => ['open', 'claimed', 'in_progress'].includes(t.status))
+  // 没有需要执行的 todo（考虑解锁依赖）
+  const hasActionableTodo = listActionableTodos(goal).length > 0
   if (!hasActionableTodo) {
     return { shouldRun: false, reason: 'no_actionable_todo' }
   }

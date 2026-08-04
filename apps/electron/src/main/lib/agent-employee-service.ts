@@ -24,7 +24,7 @@ import { runRegisteredHeadlessAgent, stopRegisteredAgent } from './agent-headles
 import { isAgentSessionActive } from './agent-service'
 import { updateTask, getTask } from './project-service'
 import { getSettings } from './settings-service'
-import { createWorkflowRun } from './workflow-service'
+import { createWorkflowRun, getWorkflowRun, cancelWorkflowRun } from './workflow-service'
 import { executeWorkflowRun } from './workflow-run-executor'
 import type { AgentMessage } from '@proma/shared'
 
@@ -195,6 +195,18 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
   return { taskId: executionId }
 }
 
+/**
+ * 幂等派发：仅当任务当前没有进行中（queued/running）的 AI 执行时才 dispatch。
+ * 供“任务改派给 AI 员工”/“任务重新指派”场景使用，避免每次 updated 都重复创建执行。
+ */
+export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: string } | null> {
+  if (!isAgentAssignee(task)) return null
+  const running = store.listAgentExecutionsByEntity('task', task.id)
+    .some((e) => e.status === 'queued' || e.status === 'running')
+  if (running) return null
+  return dispatchTaskToAgent(task)
+}
+
 /** 尝试启动一个 queued 执行：同项目并发未超限时才启动 */
 export async function tryStartExecution(executionId: string): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
@@ -202,8 +214,8 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   const employee = store.getAgentEmployee(execution.agentId)
   if (!employee || !employee.enabled) return false
 
-  // 并发控制：同项目运行中数量上限
-  const runningCount = store.listRunningAgentExecutions().filter((e) => e.projectId === execution.projectId).length
+  // 并发控制：同项目运行中数量上限（仅统计真正 running，排队中的不占用额度，避免同项目多个排队互相死锁）
+  const runningCount = store.listRunningAgentExecutions().filter((e) => e.projectId === execution.projectId && e.status === 'running').length
   if (runningCount >= PROJECT_CONCURRENCY_LIMIT) {
     console.log(`[AgentEmployee] 项目 ${execution.projectId} 并发已达上限（${PROJECT_CONCURRENCY_LIMIT}），任务 ${executionId} 保持排队`)
     return false
@@ -317,6 +329,11 @@ async function startAgentWorkflow(executionId: string, employee: AgentEmployee):
     )
 
     const completedAt = Date.now()
+    // 防覆盖：await 期间用户可能已手动改任务状态（updateTodoStatus 会把 execution 置 cancelled），
+    // 此时应放弃 workflow 回写，避免把用户的取消/完成覆盖回”进行中→completed”
+    const live = store.getAgentExecution(executionId)
+    if (live?.status === 'cancelled') return true
+
     if (finalRun.status === 'completed') {
       const summary = extractWorkflowSummary(finalRun)
       store.updateAgentExecution(executionId, {
@@ -418,7 +435,7 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
 /** 执行失败回写 */
 function handleExecutionError(executionId: string, error: string, startedAt: number): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status === 'completed') return
+  if (!execution || execution.status === 'completed' || execution.status === 'cancelled') return
 
   const failedAt = Date.now()
   store.updateAgentExecution(executionId, {
@@ -551,10 +568,25 @@ export function registerAgentEmployeeProvider(): () => void {
       // 任务被手动改状态 → 中止对应执行
       const execution = store.getAgentExecution(taskId)
       if (execution && (execution.status === 'queued' || execution.status === 'running')) {
-        try {
-          stopRegisteredAgent(execution.sessionId)
-        } catch {
-          // 会话可能已结束
+        // Workflow 执行（sessionId=workflow:<runId>）：真正取消背后的 Workflow Run；
+        // stopRegisteredAgent 只能中止真实 Agent 会话，对 workflow 无效。
+        const runMatch = /^workflow:(.+)$/.exec(execution.sessionId ?? '')
+        if (runMatch) {
+          const runId = runMatch[1]!
+          const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
+          if (workflowId) {
+            try {
+              cancelWorkflowRun(workflowId, runId)
+            } catch (err) {
+              console.warn('[AgentEmployee] 取消 Workflow Run 失败:', err)
+            }
+          }
+        } else {
+          try {
+            stopRegisteredAgent(execution.sessionId)
+          } catch {
+            // 会话可能已结束
+          }
         }
         store.updateAgentExecution(execution.id, {
           status: 'cancelled',
@@ -584,5 +616,54 @@ export function registerAgentEmployeeProvider(): () => void {
 
   return () => {
     stopAgentEmployeeHeartbeat()
+  }
+}
+
+/**
+ * 审批通过/拒绝后的回写联动：Workflow 在等待审批时把 execution 置为 stale、task 置为 paused，
+ * 之后审批在 Workflow 侧被 resolver，run 会推进到 completed/failed，但没有 hook 回写对应的
+ * agent_execution 与 Task，导致任务永远悬挂在 paused/stale。
+ * 此函数供 Workflow 审批/终态变化处调用，幂等：execution 非 stale（已被用户处理）则跳过。
+ */
+export function reconcileWorkflowApprovalRun(workflowId: string, runId: string): void {
+  try {
+    const run = getWorkflowRun(workflowId, runId)
+    if (!run) return
+    if (run.status !== 'completed' && run.status !== 'failed') return
+
+    const execution = store.getAgentExecutionBySessionId(`workflow:${runId}`)
+    // 只推进“等待审批”的 execution；已被取消/完成/其它状态的不打扰
+    if (!execution || execution.status !== 'stale') return
+
+    const now = Date.now()
+    if (run.status === 'completed') {
+      const summary = extractWorkflowSummary(run)
+      store.updateAgentExecution(execution.id, {
+        status: 'completed',
+        resultSummary: summary,
+        lastHeartbeatAt: now,
+        completedAt: now,
+      })
+      try {
+        updateTask(execution.entityId, { status: 'completed', completionNotes: summary, completedAt: now })
+      } catch { /* ignore */ }
+      store.bumpAgentEmployeeStats(execution.agentId, { completed: true })
+      recordActivity(store.getAgentExecution(execution.id)!, 'agent_completed', `AI 员工任务审批完成后完成：${summary.slice(0, 80)}`)
+    } else {
+      const errMsg = '审批后 Workflow 执行失败'
+      store.updateAgentExecution(execution.id, {
+        status: 'failed',
+        error: errMsg,
+        lastHeartbeatAt: now,
+        completedAt: now,
+      })
+      try {
+        updateTask(execution.entityId, { status: 'paused', completionNotes: `【AI 执行失败】${errMsg}` })
+      } catch { /* ignore */ }
+      store.bumpAgentEmployeeStats(execution.agentId, { failed: true })
+      recordActivity(store.getAgentExecution(execution.id)!, 'agent_failed', `AI 员工任务审批后失败：${errMsg}`)
+    }
+  } catch (err) {
+    console.warn('[AgentEmployee] 审批后回写失败:', err)
   }
 }

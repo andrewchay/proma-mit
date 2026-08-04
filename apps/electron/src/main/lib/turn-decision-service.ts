@@ -10,7 +10,7 @@
  */
 
 import type { Goal, GoalTodo } from '@proma/shared'
-import { getGoal, shouldGoalRun } from './goal-service'
+import { getGoal, shouldGoalRun, listActionableTodos } from './goal-service'
 /** 轮次决策路由 */
 export type TurnRoute =
   | 'ready' // 可以执行
@@ -80,8 +80,8 @@ export function preTickTurn(
     }
   }
 
-  // todo 分析
-  const actionable = goal.todos.filter((t) => ['open', 'claimed', 'in_progress'].includes(t.status))
+  // todo 分析（含解锁依赖：被未完成前置 todo 阻挡的不算可执行）
+  const actionable = listActionableTodos(goal)
   if (actionable.length === 0) {
     return {
       route: 'blocked',
