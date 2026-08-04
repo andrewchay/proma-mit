@@ -15,7 +15,7 @@ export interface OperationalTraceEvent {
 
 export interface OperationalAlert {
   severity: 'warning' | 'critical'
-  kind: 'agent_task_failed' | 'monthly_budget_threshold'
+  kind: 'agent_task_failed' | 'monthly_budget_threshold' | 'signal_hit'
   traceId?: string
   tenantId: string
   userId: string

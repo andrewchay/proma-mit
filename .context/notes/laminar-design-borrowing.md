@@ -104,3 +104,24 @@ P-I（trace_id 闭环 + Runtime Span 运行档案层）已完成，交付如下�
 **验证**：项目全量 typecheck 通过；spans 5 个单测 + metrics/audit/billing 共 14 tests 全过；服务端真实 Provider 矩阵测试为**既有失败**（clean checkout 同样失败，与本次改动无关）。
 
 **后续**：P-II 自然语言 Signals（装进 Proactive Center）；P-III Agent 自查 span（只读工具/MCP）；P-IV evals/datasets 飞轮。
+
+## 八、P-II 实施记录（2026-08-04）
+
+P-II（自然语言 Signals，基于 span 树的确定性监测）已完成，交付如下：
+
+| 文件 | 职责 |
+|---|---|
+| `apps/server/src/spans.ts`（改） | 跨 task 窗口查询：`querySpansInWindow` / `countErrorsInWindow` / `toolFailureRuns`（P-II 检测依赖） |
+| `apps/server/src/signals.ts`（新增） | `Signal`/`SignalMatcher`/`SignalHit` 类型 + `PostgresSignalStore`（表 `proma_runtime_signals` + `proma_runtime_signal_hits`，含 listScopes/listEnabled/markChecked/appendHit/listHits） |
+| `apps/server/src/signal-scan.ts`（新增） | `SignalScanner`（evaluate 各 matcher + scan 落 hit）+ `PostgresSignalDataSource`（task 失败率/成本/stale 查询） |
+| `apps/server/src/app.ts`（改） | 装配 store+scanner+DataSource；新增 `GET/POST /agent/signals`、`DELETE /agent/signals/{id}`、`GET /agent/signals/hits`；`initialize` 建表 + `startSignalScanner`（30s 周期），shutdown 停；命中可选 `reportAlert({kind:'signal_hit'})` |
+| `apps/server/src/operations.ts`（改） | OperationalAlert kind 增加 `'signal_hit'` |
+| `apps/server/src/signals.test.ts`（新增） | 10 个单测：5 种 matcher 命中/不命中、scan 落 hit+推进 lastCheckedAt、store schema |
+
+**5 种 SignalMatcher（确定性 SQL 判定，不跑 per-run LLM）**：`task_failure_rate`、`tool_repeat_failure`（循环/卡死检测）、`task_cost_threshold`、`stale_task`（复用 recovery 逻辑）、`provider_error`。
+
+**验证**：项目全量 typecheck 通过；biome 无问题；server 55 tests 过（含新增 10 个 signal 测试）；唯一失败仍是既有的 provider 矩阵测试（与 P-II 无关）。
+
+**说明**：P-II 刻意不碰 `packages/shared`（当时有并行会话在改 Goal/Token），所有类型都放在 server 本地。
+
+**后续**：P-III Agent 自查 span（只读 MCP/工具）；P-IV evals/datasets；桌面/Web 端 Signal 列表呈现（数据层+API 已就绪，UI 见 P6-3）。

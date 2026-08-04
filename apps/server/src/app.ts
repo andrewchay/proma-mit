@@ -43,6 +43,9 @@ import { PostgresAuditLog } from './audit.ts'
 import type { AuditRecord } from './audit.ts'
 import { PostgresRuntimeSpanStore } from './spans.ts'
 import { PostgresRuntimeMetrics } from './metrics.ts'
+import { PostgresSignalStore } from './signals.ts'
+import { PostgresSignalDataSource, SignalScanner } from './signal-scan.ts'
+import type { SignalMatcher } from './signals.ts'
 import { PostgresTaskRecoveryInspector } from './recovery.ts'
 import { PostgresAgentRuntimeInteractionStore } from './interactions.ts'
 import { HttpOperationsReporter, NoopOperationsReporter, redactOperationalError } from './operations.ts'
@@ -136,6 +139,11 @@ export function createPromaWebServerApplication(
   const usageLedger = new PostgresUsageLedger(postgres, config.priceCatalog ?? [])
   const auditLog = new PostgresAuditLog(postgres)
   const spanStore = new PostgresRuntimeSpanStore(postgres)
+  const signalStore = new PostgresSignalStore(postgres)
+  const signalScanner = new SignalScanner({
+    store: signalStore,
+    data: new PostgresSignalDataSource(postgres, spanStore),
+  })
   const metrics = new PostgresRuntimeMetrics(postgres)
   const recovery = new PostgresTaskRecoveryInspector(postgres, config.recoveryStaleAfterMs ?? config.taskLeaseMs * 2)
   const interactionStore = new PostgresAgentRuntimeInteractionStore(postgres)
@@ -240,6 +248,25 @@ export function createPromaWebServerApplication(
   })
   const schedulerStore = new PostgresServerSchedulerStore(postgres)
   const scheduler = new ServerScheduler(schedulerStore, app, config.workerId)
+  let signalTimer: ReturnType<typeof setInterval> | undefined
+  const startSignalScanner = (intervalMs = 30_000) => {
+    if (signalTimer) return
+    signalTimer = setInterval(() => { void signalTick() }, intervalMs)
+    void signalTick()
+  }
+  const signalTick = async () => {
+    try {
+      const scopes = await signalStore.listScopes()
+      for (const scope of scopes) {
+        const hits = await signalScanner.scan(scope)
+        for (const hit of hits) {
+          void operationsReporter.reportAlert({ severity: 'warning', kind: 'signal_hit', tenantId: hit.tenantId, userId: hit.userId, taskId: typeof hit.evidence.taskId === 'string' ? hit.evidence.taskId : undefined, message: hit.message, createdAt: Date.now() }).catch((error) => logger.error({ event: 'operations_alert_delivery_failed', error: getErrorMessage(error) }))
+        }
+      }
+    } catch (error) {
+      logger.error({ event: 'signal_scan_failed', error: getErrorMessage(error) })
+    }
+  }
 
   return {
     async fetch(request) {
@@ -302,6 +329,38 @@ export function createPromaWebServerApplication(
             : !taskId
               ? Response.json({ error: '缺少 taskId 参数' }, { status: 400 })
               : Response.json({ trace: await spanStore.listTask({ ...scope, taskId }) })
+      } else if (request.method === 'GET' && url.pathname === '/agent/signals') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : Response.json({ signals: await signalStore.list(scope) })
+      } else if (request.method === 'POST' && url.pathname === '/agent/signals') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : await createSignal(request, scope, signalStore)
+      } else if (request.method === 'DELETE' && url.pathname.startsWith('/agent/signals/')) {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : (await signalStore.delete(scope, decodeURIComponent(url.pathname.slice('/agent/signals/'.length)))
+              ? new Response(null, { status: 204 })
+              : Response.json({ error: 'Signal 不存在或不可访问' }, { status: 404 }))
+      } else if (request.method === 'GET' && url.pathname === '/agent/signals/hits') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : Response.json({ hits: await signalStore.listHits({
+              ...scope,
+              signalId: url.searchParams.get('signalId') ?? undefined,
+              from: parseAuditTimestamp(url.searchParams.get('from')),
+              to: parseAuditTimestamp(url.searchParams.get('to')),
+              limit: parsePageLimit(url.searchParams.get('limit')),
+            }) })
       } else if (request.method === 'GET' && url.pathname === '/agent/audit') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -410,12 +469,15 @@ export function createPromaWebServerApplication(
       await usageLedger.initializeSchema()
       await auditLog.initializeSchema()
       await spanStore.initializeSchema()
+      await signalStore.initializeSchema()
       await interactionStore.initializeSchema()
       await schedulerStore.initializeSchema()
       scheduler.start()
+      startSignalScanner()
     },
     async shutdown() {
       scheduler.stop()
+      if (signalTimer) clearInterval(signalTimer)
       const taskIds = app.taskRunner.cancelAllTasks()
       await Promise.all(taskIds.map((taskId) => app.taskRunner.waitForTask(taskId)))
       await app.taskRunner.flushDurableEventWrites()
@@ -569,6 +631,58 @@ async function createServerSchedule(request: Request, scope: AgentRuntimeScope, 
   if (!await store.getSession(scope, body.sessionId)) return Response.json({ error: '会话不存在或不可访问' }, { status: 404 })
   const created = await schedulerStore.create({ ...scope, sessionId: body.sessionId, prompt: body.prompt.trim(), schedule, enabled: true })
   return Response.json({ schedule: created }, { status: 201 })
+}
+
+async function createSignal(request: Request, scope: AgentRuntimeScope, signalStore: PostgresSignalStore): Promise<Response> {
+  let body: { description?: unknown; matcher?: unknown; enabled?: unknown }
+  try { body = await request.json() as { description?: unknown; matcher?: unknown; enabled?: unknown } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+  if (typeof body.description !== 'string' || !body.description.trim()) return Response.json({ error: 'description 必须是非空字符串（用自然语言描述要监测的行为）' }, { status: 400 })
+  const matcher = parseSignalMatcher(body.matcher)
+  if (!matcher) return Response.json({ error: 'matcher 无效或缺少必填字段' }, { status: 400 })
+  const enabled = body.enabled === undefined ? true : Boolean(body.enabled)
+  const signal = await signalStore.create({ ...scope, description: body.description.trim(), matcher, enabled })
+  return Response.json({ signal }, { status: 201 })
+}
+
+function parseSignalMatcher(value: unknown): SignalMatcher | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const m = value as Record<string, unknown>
+  const type = m.type
+  if (type === 'task_failure_rate') {
+    const minFailRate = numberIn(m.minFailRate, 0, 1)
+    const windowMs = numberIn(m.windowMs, 1_000, undefined)
+    return minFailRate != null && windowMs != null && windowMs >= 1_000 ? { type: 'task_failure_rate', minFailRate, windowMs } : undefined
+  }
+  if (type === 'tool_repeat_failure') {
+    const namePrefix = typeof m.namePrefix === 'string' && m.namePrefix.trim() ? m.namePrefix.trim() : 'tool:'
+    const minFailures = numberIn(m.minFailures, 1, undefined)
+    const windowMs = numberIn(m.windowMs, 1_000, undefined)
+    return minFailures != null && minFailures >= 1 && windowMs != null && windowMs >= 1_000 ? { type: 'tool_repeat_failure', namePrefix, minFailures, windowMs } : undefined
+  }
+  if (type === 'task_cost_threshold') {
+    const thresholdMicroUsd = numberIn(m.thresholdMicroUsd, 1, undefined)
+    const windowMs = numberIn(m.windowMs, 1_000, undefined)
+    return thresholdMicroUsd != null && thresholdMicroUsd >= 1 && windowMs != null && windowMs >= 1_000 ? { type: 'task_cost_threshold', thresholdMicroUsd, windowMs } : undefined
+  }
+  if (type === 'stale_task') {
+    const staleAfterMs = numberIn(m.staleAfterMs, 1_000, undefined)
+    return staleAfterMs != null && staleAfterMs >= 1_000 ? { type: 'stale_task', staleAfterMs } : undefined
+  }
+  if (type === 'provider_error') {
+    const namePrefix = typeof m.namePrefix === 'string' && m.namePrefix.trim() ? m.namePrefix.trim() : 'provider:'
+    const minErrors = numberIn(m.minErrors, 1, undefined)
+    const windowMs = numberIn(m.windowMs, 1_000, undefined)
+    return minErrors != null && minErrors >= 1 && windowMs != null && windowMs >= 1_000 ? { type: 'provider_error', namePrefix, minErrors, windowMs } : undefined
+  }
+  return undefined
+}
+
+function numberIn(value: unknown, min?: number, max?: number): number | undefined {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return undefined
+  if (min != null && n < min) return undefined
+  if (max != null && n > max) return undefined
+  return n
 }
 
 function parseServerSchedule(body: { intervalMs?: unknown; schedule?: unknown }): import('./scheduler-store.ts').ServerScheduleSpec | undefined {

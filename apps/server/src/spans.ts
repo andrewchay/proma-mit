@@ -70,6 +70,68 @@ export class PostgresRuntimeSpanStore implements RuntimeSpanSink {
     return buildSpanTree(spans)
   }
 
+  /**
+   * 跨 task 扫描窗口内的 span（P-II Signals 检测依赖）。
+   * 可按 kind / status / toolName(name 前缀) 过滤。
+   */
+  async querySpansInWindow(scope: AgentRuntimeScope, input: {
+    from: number
+    kind?: RuntimeSpan['kind']
+    status?: RuntimeSpanStatus
+    /** 完全匹配 tool:xxx 或 provider:xxx 的 name 前缀（如 'tool:Bash'）。 */
+    namePrefix?: string
+    limit?: number
+  }): Promise<RuntimeSpan[]> {
+    const limit = Math.min(input.limit ?? 1_000, 5_000)
+    const conditions = ['tenant_id = $1', 'user_id = $2', 'started_at >= $3']
+    const params: unknown[] = [scope.tenantId, scope.userId, input.from]
+    if (input.kind) { conditions.push(`kind = $${params.length + 1}`); params.push(input.kind) }
+    if (input.status) { conditions.push(`status = $${params.length + 1}`); params.push(input.status) }
+    if (input.namePrefix) { conditions.push(`name LIKE $${params.length + 1}`); params.push(`${input.namePrefix}%`) }
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT trace_id, tenant_id, user_id, session_id, task_id, parent_span_id, span_id,
+              kind, name, started_at, ended_at, status, error, meta
+       FROM proma_runtime_spans
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY started_at ASC LIMIT $${params.length + 1}`,
+      [...params, limit],
+    )
+    return result.rows.map(toRuntimeSpan)
+  }
+
+  /** 窗口内指定 name 前缀的 span 错误计数（provider / tool 失败频率检测）。 */
+  async countErrorsInWindow(scope: AgentRuntimeScope, input: { from: number; namePrefix?: string; kind?: RuntimeSpan['kind'] }): Promise<number> {
+    const conditions = ['tenant_id = $1', 'user_id = $2', 'started_at >= $3', "status = 'error'"]
+    const params: unknown[] = [scope.tenantId, scope.userId, input.from]
+    if (input.kind) { conditions.push(`kind = $${params.length + 1}`); params.push(input.kind) }
+    if (input.namePrefix) { conditions.push(`name LIKE $${params.length + 1}`); params.push(`${input.namePrefix}%`) }
+    const result = await this.client.query<{ count: number | string | null }>(
+      `SELECT COUNT(*) AS count FROM proma_runtime_spans WHERE ${conditions.join(' AND ')}`,
+      params,
+    )
+    return toSafeNumber(result.rows[0]?.count)
+  }
+
+  /** 同一 name 前缀在窗口内不同 task/session 是否重复出现错误（循环/卡死雏形——简化：按错误次数聚合）。 */
+  async toolFailureRuns(scope: AgentRuntimeScope, input: {
+    from: number
+    namePrefix: string
+    minFailures: number
+  }): Promise<{ spanValues: Array<{ taskId: string; count: number }> }> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT task_id, COUNT(*) AS cnt
+       FROM proma_runtime_spans
+       WHERE tenant_id = $1 AND user_id = $2 AND started_at >= $3 AND status = 'error'
+         AND name LIKE $4
+       GROUP BY task_id HAVING COUNT(*) >= $5
+       ORDER BY cnt DESC LIMIT 100`,
+      [scope.tenantId, scope.userId, input.from, `${input.namePrefix}%`, input.minFailures],
+    )
+    return {
+      spanValues: result.rows.map((row) => ({ taskId: String(row.task_id), count: toSafeNumber(row.cnt) })),
+    }
+  }
+
   private async querySpans(query: RuntimeSpanQuery): Promise<RuntimeSpan[]> {
     const limit = 2_000
     const result = await this.client.query<Record<string, unknown>>(
