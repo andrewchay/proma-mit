@@ -9,7 +9,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -3662,6 +3662,13 @@ export function registerIpcHandlers(): void {
   const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@proma/shared').RunRecordQuery) => import('@proma/shared').RunRecord[]; clear: () => void } }
   ipcMain.handle(RUN_RECORD_IPC_CHANNELS.LIST, async (_event, query: import('@proma/shared').RunRecordQuery = {}): Promise<import('@proma/shared').RunRecord[]> => getRunStore().query(query))
   ipcMain.handle(RUN_RECORD_IPC_CHANNELS.CLEAR, async (): Promise<void> => getRunStore().clear())
+
+  // ===== Token 消耗统计 =====
+  const { tokenUsageService } = require('./lib/token-usage-service') as { tokenUsageService: { query: (q: import('@proma/shared').TokenUsageQuery) => import('@proma/shared').TokenUsageRecord[]; aggregate: (q: import('@proma/shared').TokenUsageQuery) => import('@proma/shared').TokenUsageAggregate; listSessions: () => import('@proma/shared').TokenUsageSessionSummary[]; clear: () => void } }
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST, async (_event, query: import('@proma/shared').TokenUsageQuery = {}): Promise<import('@proma/shared').TokenUsageRecord[]> => tokenUsageService.query(query))
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, async (_event, query: import('@proma/shared').TokenUsageQuery = {}): Promise<import('@proma/shared').TokenUsageAggregate> => tokenUsageService.aggregate(query))
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS, async (): Promise<import('@proma/shared').TokenUsageSessionSummary[]> => tokenUsageService.listSessions())
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.CLEAR, async (): Promise<void> => tokenUsageService.clear())
 
   // ===== macOS 灵动岛通知 =======
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {

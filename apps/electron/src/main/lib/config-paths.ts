@@ -98,6 +98,41 @@ export function getConversationMessagesPath(id: string): string {
 }
 
 /**
+ * 获取 Token 使用统计目录路径
+ *
+ * @returns ~/.proma-mit/token-usage/
+ */
+export function getTokenUsageDir(): string {
+  const dir = join(getConfigDir(), 'token-usage')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建 Token 统计目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取指定时间所在月份的 Token 使用统计文件路径
+ *
+ * @param ts 毫秒时间戳
+ * @returns ~/.proma-mit/token-usage/{YYYY-MM}.jsonl
+ */
+export function getTokenUsageMonthPath(ts: number): string {
+  const d = new Date(ts)
+  const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  return join(getTokenUsageDir(), `${month}.jsonl`)
+}
+
+/**
+ * 获取 Token 使用统计索引文件路径
+ *
+ * @returns ~/.proma-mit/token-usage/index.json
+ */
+export function getTokenUsageIndexPath(): string {
+  return join(getTokenUsageDir(), 'index.json')
+}
+
+/**
  * 获取附件存储根目录
  *
  * 如果目录不存在则自动创建。

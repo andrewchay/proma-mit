@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1128,6 +1128,18 @@ export interface ElectronAPI {
   listRunRecords: (query?: import('@proma/shared').RunRecordQuery) => Promise<import('@proma/shared').RunRecord[]>
   /** 清空运行记录 */
   clearRunRecords: () => Promise<void>
+
+  // ===== Token 消耗统计 =====
+
+  /** 查询 Token 使用明细 */
+  listTokenUsageRecords: (query?: import('@proma/shared').TokenUsageQuery) => Promise<import('@proma/shared').TokenUsageRecord[]>
+  /** 查询 Token 聚合统计 */
+  aggregateTokenUsage: (query?: import('@proma/shared').TokenUsageQuery) => Promise<import('@proma/shared').TokenUsageAggregate>
+  /** 查询 Token 会话汇总 */
+  listTokenUsageSessions: () => Promise<import('@proma/shared').TokenUsageSessionSummary[]>
+  /** 清空 Token 使用记录 */
+  clearTokenUsageRecords: () => Promise<void>
+
   /** 设置灵动岛总开关 */
   setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
   /** 关闭某条通知 */
@@ -2622,6 +2634,24 @@ const electronAPI: ElectronAPI = {
 
   clearRunRecords: () => {
     return ipcRenderer.invoke(RUN_RECORD_IPC_CHANNELS.CLEAR)
+  },
+
+  // ===== Token 消耗统计 =====
+
+  listTokenUsageRecords: (query?: import('@proma/shared').TokenUsageQuery) => {
+    return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.LIST, query)
+  },
+
+  aggregateTokenUsage: (query?: import('@proma/shared').TokenUsageQuery) => {
+    return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, query)
+  },
+
+  listTokenUsageSessions: () => {
+    return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS)
+  },
+
+  clearTokenUsageRecords: () => {
+    return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.CLEAR)
   },
 
   setDynamicIslandEnabled: (enabled: boolean) => {

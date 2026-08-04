@@ -30,6 +30,7 @@ import {
   Puzzle,
   CalendarDays,
   ChevronDown,
+  BarChart3,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -65,6 +66,7 @@ import { OperationAuditSettings } from "./OperationAuditSettings";
 import { AutomationSettings } from "./AutomationSettings";
 import { ExtensionSettings } from './ExtensionSettings'
 import { CalendarSyncSettings } from './CalendarSyncSettings'
+import { TokenUsageSettings } from './TokenUsageSettings'
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -137,6 +139,11 @@ const CALENDAR_TAB: TabItem = {
   label: '日历同步',
   icon: <CalendarDays size={16} />,
 };
+const TOKEN_USAGE_TAB: TabItem = {
+  id: 'token-usage',
+  label: 'Token 统计',
+  icon: <BarChart3 size={16} />,
+};
 
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
@@ -194,6 +201,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
       TAIL_TABS[0]!, // 数据迁移
       TAIL_TABS[1]!, // 磁盘管理
       OPERATION_AUDIT_TAB,
+      TOKEN_USAGE_TAB,
       TUTORIAL_TAB,
     ],
   },
@@ -245,6 +253,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ExtensionSettings />
     case 'calendar':
       return <CalendarSyncSettings />
+    case 'token-usage':
+      return <TokenUsageSettings />
   }
 }
 

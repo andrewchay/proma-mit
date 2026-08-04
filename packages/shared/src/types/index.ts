@@ -33,6 +33,9 @@ export * from './system-notification'
 // 运行记录（Context Hub 起点）
 export * from './run-record'
 
+// Token 消耗统计类型
+export * from './token-usage'
+
 // 扩展（Extension）Manifest 与生命周期类型
 export * from './plugin'
 

@@ -67,6 +67,7 @@ import { searchMemory, addMemory, formatSearchResult } from './memos-client'
 import { validateToolInput } from './agent-tool-input-validator'
 import { estimateTokenCount, WRITE_CONTENT_TOKEN_THRESHOLD } from './agent-tool-token-estimator'
 import { createElectronRuntimeServices, type RuntimeServices } from './agent-runtime/runtime-services'
+import { tokenUsageService } from './token-usage-service'
 
 // ===== 类型定义 =====
 
@@ -517,6 +518,8 @@ export class AgentOrchestrator {
     this.adapter = adapter
     this.eventBus = eventBus
     this.runtimeServices = runtimeServices ?? createElectronRuntimeServices(eventBus)
+    this.eventBus.use(tokenUsageService.middleware)
+    tokenUsageService.start()
   }
 
   /**
