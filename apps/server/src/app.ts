@@ -43,6 +43,7 @@ import { PostgresAuditLog } from './audit.ts'
 import type { AuditRecord } from './audit.ts'
 import { PostgresRuntimeSpanStore } from './spans.ts'
 import { createSpanQueryToolAdapter } from './span-query-tools.ts'
+import { PostgresRunProfileAggregator } from './run-profile.ts'
 import { PostgresRuntimeMetrics } from './metrics.ts'
 import { PostgresSignalStore } from './signals.ts'
 import { PostgresSignalDataSource, SignalScanner } from './signal-scan.ts'
@@ -141,6 +142,7 @@ export function createPromaWebServerApplication(
   const usageLedger = new PostgresUsageLedger(postgres, config.priceCatalog ?? [])
   const auditLog = new PostgresAuditLog(postgres)
   const spanStore = new PostgresRuntimeSpanStore(postgres)
+  const runProfileAggregator = new PostgresRunProfileAggregator(postgres, spanStore)
   const evalDatasetStore = new PostgresEvalDatasetStore(postgres, {
     querySpansInWindow: (scope, input) => spanStore.querySpansInWindow(scope, input),
     listTaskTree: (scope, taskId) => spanStore.listTask({ ...scope, taskId }),
@@ -203,7 +205,7 @@ export function createPromaWebServerApplication(
         }
         const usage = usageFromMessages(output)
         if (usage) {
-          await usageLedger.record({
+          const usageRecord = await usageLedger.record({
             ...input.scope,
             taskId: input.taskId,
             sessionId: input.session.sessionId,
@@ -211,6 +213,9 @@ export function createPromaWebServerApplication(
             modelId: input.modelId,
             ...usage,
           })
+          if (usageRecord.costMicroUsd != null) {
+            await spanStore.attachCost(input.scope, input.taskId, usageRecord.costMicroUsd)
+          }
           const budgetAlert = await usageLedger.claimMonthlyBudgetThresholdAlert(input.scope, config.tenantBudget)
           if (budgetAlert) {
             const severity = budgetAlert.thresholdPercent === 100 ? 'critical' : 'warning'
@@ -336,6 +341,15 @@ export function createPromaWebServerApplication(
             : !taskId
               ? Response.json({ error: '缺少 taskId 参数' }, { status: 400 })
               : Response.json({ trace: await spanStore.listTask({ ...scope, taskId }) })
+      } else if (request.method === 'GET' && url.pathname.startsWith('/agent/runs/')) {
+        const runTaskId = decodeURIComponent(url.pathname.slice('/agent/runs/'.length))
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : !runTaskId
+              ? Response.json({ error: '缺少任务 ID' }, { status: 400 })
+              : Response.json(await runProfileAggregator.profile(scope, runTaskId))
       } else if (request.method === 'GET' && url.pathname === '/agent/signals') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })

@@ -498,6 +498,7 @@ async function runAgentTurnTask(input: RunAgentTurnTaskInput): Promise<void> {
     scope,
     session: input.session,
     taskId: input.context.taskId,
+    traceId: input.context.taskId,
     credential: {
       ...input.credential,
       apiKey,

@@ -28,13 +28,21 @@ class MemorySpanClient {
       return { rows: [] }
     }
     if (sql.includes('UPDATE proma_runtime_spans')) {
-      const [status, endedAt, error, meta, spanId] = params
-      const target = this.rows.find((row) => row.span_id === spanId)
-      if (target) {
-        target.status = status
-        target.ended_at = endedAt
-        target.error = error
-        target.meta = meta
+      // end(): SET status=$1,ended_at=$2,error=$3,meta=$4 WHERE span_id=$5
+      // attachCost(): SET meta=$4 WHERE tenant_id=$1 AND user_id=$2 AND span_id=$3
+      if (sql.includes('WHERE span_id = $5')) {
+        const [status, endedAt, error, meta, spanId] = params
+        const target = this.rows.find((row) => row.span_id === spanId)
+        if (target) {
+          target.status = status
+          target.ended_at = endedAt
+          target.error = error
+          target.meta = meta
+        }
+      } else {
+        const [tenantId, userId, spanId, meta] = params
+        const target = this.rows.find((row) => row.tenant_id === tenantId && row.user_id === userId && row.span_id === spanId)
+        if (target) target.meta = meta
       }
       return { rows: [] }
     }
@@ -125,5 +133,17 @@ describe('PostgresRuntimeSpanStore (P1 run profile)', () => {
     // meta 在 begin 阶段必须为 null；完整 prompt/output 不应进入。
     expect(stored.meta).toBeNull()
     expect(stored.error).toBeNull()
+  })
+
+  test('attachCost 把 cost 回填到该 task 的 provider span meta', async () => {
+    const client = new MemorySpanClient()
+    const store = new PostgresRuntimeSpanStore(client)
+    const taskId = 'task-cost'
+    await store.begin({ ...scope, traceId: 't', taskId, sessionId: 's', spanId: 'p1', kind: 'provider', name: 'provider:openai:gpt-4o', startedAt: 1 })
+    await store.end('p1', { status: 'ok', meta: { inputTokens: 5 } })
+    await store.attachCost(scope, taskId, 1234)
+    const target = client.rows.find((row) => row.span_id === 'p1')
+    expect(target?.meta).toContain('"costMicroUsd":1234')
+    expect(target?.meta).toContain('"inputTokens":5')
   })
 })

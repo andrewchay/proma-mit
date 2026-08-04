@@ -65,6 +65,24 @@ export class PostgresRuntimeSpanStore implements RuntimeSpanSink {
     )
   }
 
+  /** 把该 task 的 cost 回填到其 provider span 的 meta.costMicroUsd（P-I 缺口 B）。 */
+  async attachCost(scope: AgentRuntimeScope, taskId: string, costMicroUsd: number): Promise<void> {
+    const result = await this.client.query<{ span_id: string; meta: unknown }>(
+      `SELECT span_id, meta FROM proma_runtime_spans
+       WHERE tenant_id = $1 AND user_id = $2 AND task_id = $3 AND kind = 'provider'
+       ORDER BY started_at ASC LIMIT 1`,
+      [scope.tenantId, scope.userId, taskId],
+    )
+    const row = result.rows[0]
+    if (!row) return
+    const meta = parseJsonObject(row.meta)
+    meta.costMicroUsd = costMicroUsd
+    await this.client.query(
+      `UPDATE proma_runtime_spans SET meta = $4 WHERE tenant_id = $1 AND user_id = $2 AND span_id = $3`,
+      [scope.tenantId, scope.userId, String(row.span_id), JSON.stringify(meta)],
+    )
+  }
+
   async listTask(query: RuntimeSpanQuery): Promise<RuntimeSpanNode[]> {
     const spans = await this.querySpans(query)
     return buildSpanTree(spans)

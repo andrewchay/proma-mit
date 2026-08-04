@@ -49,6 +49,8 @@ export interface RuntimeSpanSink {
   begin(span: RuntimeSpanBegin): Promise<void> | void
   /** 结束 span 时带 status + 可选 error/meta。 */
   end(spanId: string, patch: { status: RuntimeSpanStatus; error?: string; meta?: Record<string, unknown> }): Promise<void> | void
+  /** 追加成本：把该任务（provider span）的 cost 回填进 meta.costMicroUsd（P-I 缺口 B）。 */
+  attachCost(scope: AgentRuntimeScope, taskId: string, costMicroUsd: number): Promise<void> | void
 }
 
 /** P-III：Agent 自查运行档案的只读能力契约（按当前 scope 严格隔离）。 */
