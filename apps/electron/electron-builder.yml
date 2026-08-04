@@ -110,6 +110,7 @@ mac:
   entitlementsInherit: resources/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: "Proma 需要访问麦克风，用于将你的语音实时转写为文本。"
+    NSCalendarsUsageDescription: "Proma 需要访问你的日历，用于日程管理与多日历源同步。"
   fileAssociations:
     - ext: proma-backup
       name: Proma Personal Backup
