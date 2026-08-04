@@ -42,7 +42,7 @@ import {
   checkCalendarPermission,
   requestCalendarPermission,
   readSystemCalendar,
-  syncSystemCalendarToPaa,
+  syncSystemCalendarToProma,
 } from './calendar-eventkit-bridge'
 import {
   listCalendarSources,
@@ -357,7 +357,7 @@ export function registerWorkModuleIpcHandlers(): void {
   })
 
   ipcMain.handle(CALENDAR_SYNC_IPC_CHANNELS.SYNC_FROM_SYSTEM, async (_, options) => {
-    return syncSystemCalendarToPaa(options)
+    return syncSystemCalendarToProma(options)
   })
 
   // ============================================

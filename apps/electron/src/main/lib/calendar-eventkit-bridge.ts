@@ -4,7 +4,7 @@
  * 通过 child_process 调用 Swift 脚本读取系统日历事件。
  * 提供权限请求、事件读取、双向同步基础功能。
  *
- * v0.1：读取系统日历 → 转换为 PAA ScheduleEvent 格式
+ * v0.1：读取系统日历 → 转换为 Proma MIT 日程格式
  */
 
 import { execFile } from 'node:child_process'
@@ -77,12 +77,12 @@ export async function checkCalendarPermission(): Promise<string> {
 /**
  * 请求日历权限
  * 由于 macOS 限制，后台进程无法触发权限对话框。
- * 首次使用需要用户在 系统设置 > 隐私与安全性 > 日历 中手动允许 PAA。
+ * 首次使用需要用户在 系统设置 > 隐私与安全性 > 日历 中手动允许 Proma MIT。
  */
 export async function requestCalendarPermission(): Promise<boolean> {
   try {
     const scriptPath = getSwiftScriptPath()
-    const { stdout, stderr } = await execFileAsync('swift', [scriptPath, '0', '0'], {
+    const { stdout } = await execFileAsync('swift', [scriptPath, '0', '0'], {
       timeout: 30000,
       encoding: 'utf-8',
     })
@@ -129,7 +129,7 @@ export async function readSystemCalendar(options: CalendarSyncOptions = {}): Pro
 }
 
 /**
- * 将 EventKit 事件转换为 PAA ScheduleEventInput
+ * 将 EventKit 事件转换为 Proma MIT 日程事件输入
  */
 export function convertEventKitToScheduleEvent(ekEvent: EventKitEvent): ScheduleEventInput {
   return {
@@ -160,10 +160,10 @@ function inferCategoryFromCalendar(calendarName: string): ScheduleCategory {
 // ===== 同步功能 =====
 
 /**
- * 同步系统日历到 PAA
- * 读取系统日历事件，转换为 PAA 格式，批量创建
+ * 同步系统日历到 Proma MIT
+ * 读取系统日历事件，转换为 Proma MIT 日程格式，批量创建
  */
-export async function syncSystemCalendarToPaa(options: CalendarSyncOptions = {}): Promise<{
+export async function syncSystemCalendarToProma(options: CalendarSyncOptions = {}): Promise<{
   success: boolean
   imported: number
   errors: string[]
@@ -173,7 +173,7 @@ export async function syncSystemCalendarToPaa(options: CalendarSyncOptions = {})
     return { success: false, imported: 0, errors: [readResult.error || '读取失败'] }
   }
 
-  // 转换为 PAA 格式（但不直接创建，由调用方决定）
+  // 转换为 Proma MIT 日程格式（但不直接创建，由调用方决定）
   const inputs = readResult.events.map(convertEventKitToScheduleEvent)
 
   return {
