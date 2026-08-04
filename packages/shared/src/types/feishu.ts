@@ -80,6 +80,36 @@ export interface FeishuBotConfigInput {
   trustedSenderIds?: string[]
 }
 
+// ===== 扫码创建（注册）机器人 =====
+
+/** 扫码注册二维码信息 */
+export interface FeishuRegisterAppQRCode {
+  /** 扫码 URL（用户可直接用浏览器打开） */
+  url: string
+  /** PNG dataURL（主进程预生成，渲染层用 <img> 渲染） */
+  dataUrl: string
+  /** 有效期秒数 */
+  expireIn: number
+}
+
+/** 扫码注册轮询状态 */
+export interface FeishuRegisterAppStatus {
+  status: 'polling' | 'slow_down' | 'domain_switched'
+  interval?: number
+}
+
+/** 扫码注册完成后返回的 App 凭证（Secret 仅一次性返回） */
+export interface FeishuRegisterAppResult {
+  /** 创建出的飞书应用 App ID */
+  appId: string
+  /** App Secret（明文，仅一次性返回） */
+  appSecret: string
+  /** 租户品牌（feishu / lark） */
+  tenantBrand?: 'feishu' | 'lark'
+  /** 扫码用户的 open_id */
+  operatorOpenId?: string
+}
+
 // ===== Bridge 连接状态 =====
 
 /** 飞书 Bridge 连接状态 */
@@ -302,4 +332,15 @@ export const FEISHU_IPC_CHANNELS = {
   GET_MULTI_STATUS: 'feishu:get-multi-status',
   /** 多 Bot 状态变化推送 */
   MULTI_STATUS_CHANGED: 'feishu:multi-status-changed',
+
+  // ===== 扫码创建（注册）机器人 =====
+
+  /** 启动扫码注册流程（内部循环至二维码生成），返回最终创建的 App ID/Secret */
+  REGISTER_APP_START: 'feishu:register-app-start',
+  /** 主进程 → 渲染进程：二维码已生成 */
+  REGISTER_APP_QRCODE: 'feishu:register-app-qrcode',
+  /** 主进程 → 渲染进程：注册轮询状态变化 */
+  REGISTER_APP_STATUS: 'feishu:register-app-status',
+  /** 取消进行中的扫码注册流程 */
+  REGISTER_APP_CANCEL: 'feishu:register-app-cancel',
 } as const

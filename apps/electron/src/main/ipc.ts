@@ -95,6 +95,9 @@ import type {
   FeishuPresenceReport,
   FeishuNotifyMode,
   FeishuUpdateBindingInput,
+  FeishuRegisterAppResult,
+  FeishuRegisterAppQRCode,
+  FeishuRegisterAppStatus,
   DingTalkConfigInput,
   DingTalkConfig,
   DingTalkBridgeState,
@@ -3097,6 +3100,69 @@ export function registerIpcHandlers(): void {
     FEISHU_IPC_CHANNELS.GET_MULTI_STATUS,
     async () => {
       return feishuBridgeManager.getStates()
+    }
+  )
+
+  // ===== 飞书扫码创建（注册）机器人 =====
+
+  /** 当前进行中的注册流程 AbortController（同一时间只允许一个） */
+  let activeRegisterAbort: AbortController | null = null
+
+  // 启动扫码注册流程
+  ipcMain.handle(
+    FEISHU_IPC_CHANNELS.REGISTER_APP_START,
+    async (event): Promise<FeishuRegisterAppResult> => {
+      // 同一时间只允许一个注册流程；重复启动时先中断前一个
+      if (activeRegisterAbort) {
+        activeRegisterAbort.abort()
+      }
+      const abort = new AbortController()
+      activeRegisterAbort = abort
+
+      try {
+        const lark = await import('@larksuiteoapi/node-sdk')
+        const QRCode = (await import('qrcode')).default
+        const result = await lark.registerApp({
+          source: 'proma-mit',
+          signal: abort.signal,
+          onQRCodeReady: async (info) => {
+            if (event.sender.isDestroyed()) return
+            let dataUrl = ''
+            try {
+              dataUrl = await QRCode.toDataURL(info.url, { width: 280, margin: 2, errorCorrectionLevel: 'M' })
+            } catch (err) {
+              console.error('[飞书扫码注册] 二维码生成失败:', err)
+            }
+            if (event.sender.isDestroyed()) return
+            const payload: FeishuRegisterAppQRCode = { url: info.url, dataUrl, expireIn: info.expireIn }
+            event.sender.send(FEISHU_IPC_CHANNELS.REGISTER_APP_QRCODE, payload)
+          },
+          onStatusChange: (info) => {
+            if (event.sender.isDestroyed()) return
+            const payload: FeishuRegisterAppStatus = { status: info.status, interval: info.interval }
+            event.sender.send(FEISHU_IPC_CHANNELS.REGISTER_APP_STATUS, payload)
+          },
+        })
+        return {
+          appId: result.client_id,
+          appSecret: result.client_secret,
+          tenantBrand: result.user_info?.tenant_brand,
+          operatorOpenId: result.user_info?.open_id,
+        }
+      } finally {
+        if (activeRegisterAbort === abort) {
+          activeRegisterAbort = null
+        }
+      }
+    }
+  )
+
+  // 取消扫码注册流程
+  ipcMain.handle(
+    FEISHU_IPC_CHANNELS.REGISTER_APP_CANCEL,
+    async (): Promise<void> => {
+      activeRegisterAbort?.abort()
+      activeRegisterAbort = null
     }
   )
 

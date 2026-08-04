@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
-import { Loader2, CheckCircle2, XCircle, ExternalLink, Users, User, Trash2, RefreshCw, Copy, Check, Power, PowerOff, Plus, ChevronRight, Cloud } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle, ExternalLink, Users, User, Trash2, RefreshCw, Copy, Check, Power, PowerOff, Plus, ChevronRight, Cloud, QrCode, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -38,7 +38,7 @@ import { feishuBotStatesAtom, feishuBindingsAtom } from '@/atoms/feishu-atoms'
 import { agentWorkspacesAtom, agentSessionsAtom } from '@/atoms/agent-atoms'
 import type { AppSettings } from '@/types/settings'
 import { cn } from '@/lib/utils'
-import type { FeishuTestResult, FeishuChatBinding, FeishuBotConfig, FeishuBotBridgeState } from '@proma/shared'
+import type { FeishuTestResult, FeishuChatBinding, FeishuBotConfig, FeishuBotBridgeState, FeishuRegisterAppQRCode, FeishuRegisterAppStatus } from '@proma/shared'
 
 // ===== 常量 =====
 
@@ -844,6 +844,161 @@ function FeishuTodoSection(): React.ReactElement {
   )
 }
 
+// ===== 飞书扫码创建（注册）机器人 Dialog =====
+
+type ScanPhase = 'loading' | 'qrcode' | 'error' | 'success'
+
+/**
+ * 用飞书官方 registerApp 接口生成二维码，用户扫码后自动创建 PersonalAgent 应用，
+ * 成功后保存凭证并启动 Bot。全程无需手工复制 App ID / Secret。
+ */
+function FeishuScanRegisterDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean
+  onClose: () => void
+  onCreated: () => void
+}): React.ReactElement | null {
+  const [phase, setPhase] = React.useState<ScanPhase>('loading')
+  const [qr, setQr] = React.useState<FeishuRegisterAppQRCode | null>(null)
+  const [status, setStatus] = React.useState<FeishuRegisterAppStatus['status'] | ''>('')
+  const [error, setError] = React.useState('')
+  const startedRef = React.useRef(false)
+
+  // 订阅主进程推送的二维码与状态
+  React.useEffect(() => {
+    if (!open) return undefined
+    const offQr = window.electronAPI.onFeishuRegisterQrCode?.((next) => {
+      setQr(next)
+      setPhase(next.dataUrl ? 'qrcode' : 'qrcode')
+      setError('')
+    })
+    const offStatus = window.electronAPI.onFeishuRegisterStatus?.((s) => {
+      setStatus(s.status)
+    })
+    return () => {
+      offQr?.()
+      offStatus?.()
+    }
+  }, [open])
+
+  // 打开时启动注册流程
+  React.useEffect(() => {
+    if (!open || startedRef.current) return
+    startedRef.current = true
+    setPhase('loading')
+    setQr(null)
+    setStatus('')
+    setError('')
+    window.electronAPI.startFeishuRegistration()
+      .then((result) => {
+        // 注册成功：自动保存为 Bot 并启动
+        return window.electronAPI.saveFeishuBotConfig({
+          name: '飞书扫码创建',
+          enabled: true,
+          appId: result.appId,
+          appSecret: result.appSecret,
+        }).then(() => {
+          setPhase('success')
+          toast.success('飞书 Bot 已创建并接入')
+          onCreated()
+          // 成功后自动关闭弹窗
+          setTimeout(() => onClose(), 1200)
+        })
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        if (message.includes('aborted') || message.includes('AbortError') || message.includes('cancel')) {
+          return // 用户主动取消，不报错
+        }
+        setPhase('error')
+        setError(message)
+      })
+  }, [open, onClose, onCreated])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="w-[420px] max-w-[92vw] rounded-2xl bg-card border p-6 shadow-xl space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <QrCode size={18} className="text-primary" />
+          <h3 className="text-base font-medium">扫码创建飞书 Bot</h3>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          飞书将自动创建一个 PersonalAgent 应用，扫码完成后自动保存凭证并接入，无需手动复制 App ID / Secret。
+        </p>
+
+        <div className="flex flex-col items-center gap-3 py-2">
+          {phase === 'loading' && (
+            <div className="flex flex-col items-center gap-2 py-8 text-sm text-muted-foreground">
+              <Loader2 size={22} className="animate-spin" />
+              <span>正在生成二维码…</span>
+            </div>
+          )}
+
+          {phase === 'qrcode' && qr && (
+            <>
+              <div className="rounded-xl border p-3 bg-white">
+                {qr.dataUrl ? (
+                  <img src={qr.dataUrl} alt="飞书扫码注册二维码" className="w-[260px] h-[260px]" />
+                ) : (
+                  <div className="w-[260px] h-[260px] flex flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground px-4">
+                    <QrCode size={32} />
+                    <span>二维码生成失败，请在浏览器中打开下方链接</span>
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                onClick={() => window.electronAPI.openExternal(qr.url)}
+              >
+                <ExternalLink size={12} />
+                在浏览器中打开注册页
+              </button>
+            </>
+          )}
+
+          {phase === 'error' && (
+            <div className="flex items-start gap-2 rounded-lg bg-red-500/10 px-3 py-3 text-sm text-red-600 w-full">
+              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              <div className="min-w-0">
+                <div className="font-medium">注册失败</div>
+                <div className="break-words text-xs">{error}</div>
+              </div>
+            </div>
+          )}
+
+          {phase === 'success' && (
+            <div className="flex flex-col items-center gap-2 py-8 text-sm text-green-600">
+              <CheckCircle2 size={24} />
+              <span>创建成功，正在关闭…</span>
+            </div>
+          )}
+        </div>
+
+        {status && phase === 'qrcode' && (
+          <div className="text-center text-xs text-muted-foreground">
+            {status === 'slow_down' ? '请求过于频繁，稍作等待…' : status === 'domain_switched' ? '已切换域名…' : '等待扫码确认…'}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button size="sm" variant="outline" onClick={() => { void window.electronAPI.cancelFeishuRegistration?.(); onClose() }}>
+            取消
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ===== Bot 配置 Tab（多 Bot 版本）=====
 
 function FeishuConfigTab(): React.ReactElement {
@@ -851,6 +1006,7 @@ function FeishuConfigTab(): React.ReactElement {
   const setBotStates = useSetAtom(feishuBotStatesAtom)
   const [bots, setBots] = React.useState<FeishuBotConfig[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [scanOpen, setScanOpen] = React.useState(false)
 
   const loadBots = React.useCallback(async () => {
     try {
@@ -925,16 +1081,22 @@ function FeishuConfigTab(): React.ReactElement {
         title="飞书 Bot 列表"
         description="管理多个飞书机器人，每个 Bot 可绑定不同的工作区和模型"
         action={
-          <Button size="sm" variant="outline" onClick={handleAddBot}>
-            <Plus size={14} className="mr-1.5" />
-            添加 Bot
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="default" onClick={() => setScanOpen(true)}>
+              <QrCode size={14} className="mr-1.5" />
+              扫码创建
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleAddBot}>
+              <Plus size={14} className="mr-1.5" />
+              添加 Bot
+            </Button>
+          </div>
         }
       >
         {bots.length === 0 ? (
           <SettingsCard divided={false}>
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              还没有配置飞书 Bot。点击「添加 Bot」开始。
+              还没有配置飞书 Bot。点击「扫码创建」一键接入，或「添加 Bot」手动填写 App ID / Secret。
             </div>
           </SettingsCard>
         ) : (
@@ -1053,6 +1215,13 @@ function FeishuConfigTab(): React.ReactElement {
 
       {/* 飞书 CLI 配置引导 */}
       <FeishuCliSection />
+
+      {/* 扫码创建弹窗 */}
+      <FeishuScanRegisterDialog
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onCreated={loadBots}
+      />
 
     </div>
   )
