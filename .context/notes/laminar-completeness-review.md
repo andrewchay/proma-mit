@@ -112,3 +112,15 @@
 新增 `apps/server/src/dashboard.test.ts`（4 个：导航包含、渲染函数存在、API 端点、JS 引用平衡）。biome 干净；server 75 tests 过；唯一失败仍是既有 provider 矩阵测试。
 
 **至此 P-I~P-IV 全部规格（含 UI 呈现层）已闭环落库。**
+
+## 十四、两个交互 UI 更新（2026-08-04）
+
+按用户反馈调整两块交互：
+
+### 1. 星标对话 → 独立常驻区块
+`LeftSidebar.tsx`：移除原「星标对话」可折叠导航项 + 条件展开缩进列表，改为**常驻独立 section**——星标图标 + 标题 + 数量 + 直接平铺列表（`max-h-[40vh]` 可滚动，空态提示）。清理了 `SidebarItem` / `SidebarItemId` / `ITEM_TO_VIEW` / `handleItemClick` / `pinnedExpanded` 等死代码。
+
+### 2. 子代理(SubAgent) → 嵌套层级
+`ContentBlock.tsx`：新增 `depth` prop（默认 0，递归时 +1），Thread 到 ContentBlock→ToolUseBlock→childBlocks.map。完成后的嵌套子代理在折叠头部显示「子代理 · N」层级徽标，且外层套 `border-primary/10` 圆角容器，与顶层/并排块明确区分，呈现父→子层级树而非扁平平铺。
+
+typecheck + biome 均通过。

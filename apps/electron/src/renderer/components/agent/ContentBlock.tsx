@@ -207,6 +207,8 @@ export interface ContentBlockProps {
   childBlocks?: SDKContentBlock[]
   /** 是否正在流式输出中（仅流式中的未完成工具调用才显示 spinner） */
   isStreaming?: boolean
+  /** 子代理嵌套层级（0=顶层，通过 childBlocks 递归时递增） */
+  depth?: number
 }
 
 // ===== 提示词折叠行 =====
@@ -345,9 +347,11 @@ interface ToolUseBlockProps {
   basePath?: string
   /** 是否正在流式输出中 */
   isStreaming?: boolean
+  /** 子代理嵌套层级（0=顶层，1=子代理，2=子代理的子代理…） */
+  depth?: number
 }
 
-function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed = false, childBlocks, basePath, isStreaming }: ToolUseBlockProps): React.ReactElement {
+function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed = false, childBlocks, basePath, isStreaming, depth = 0 }: ToolUseBlockProps): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false)
   const toolResult = useToolResult(block.id, allMessages)
   const resultText = toolResult?.result
@@ -394,14 +398,16 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
 
   // ===== Agent/Task 工具：特殊渲染 =====
   if (isAgentTool) {
+    const isNestedSub = depth > 0
     return (
       <div
         className={cn(
           animate && 'animate-in fade-in duration-150 fill-mode-both',
+          isNestedSub && 'rounded-lg border border-primary/10 bg-primary/[0.02] px-1.5 py-1',
         )}
         style={animate ? { animationDelay: delay } : undefined}
       >
-        {/* 头部行：折叠箭头 + 状态 + 语义短语 */}
+        {/* 头部行：折叠箭头 + 状态 + 语义短语 + 层级徽标 */}
         <button
           type="button"
           className="w-full flex items-center gap-2 py-0.5 text-left hover:opacity-70 transition-opacity group"
@@ -427,6 +433,13 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
             'truncate text-[14px]',
             dimmed ? 'text-muted-foreground/70' : 'text-muted-foreground',
           )}>{displayLabel}</span>
+
+          {/* 层级徽标：顶层代理 / 嵌套子代理（指示层级深度） */}
+          {isCompleted && isNestedSub && (
+            <span className="shrink-0 inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary/70 tabular-nums">
+              子代理 · {depth}
+            </span>
+          )}
 
           {/* 子工具计数（折叠时显示） */}
           {childToolCount > 0 && !childrenExpanded && (
@@ -456,6 +469,7 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
                 index={ci}
                 dimmed
                 isStreaming={isStreaming}
+                depth={depth + 1}
               />
             ))}
 
@@ -641,7 +655,7 @@ function ThinkingBlock({ block, dimmed = false }: ThinkingBlockProps): React.Rea
 
 // ===== ContentBlock 主组件 =====
 
-export function ContentBlock({ block, allMessages, basePath, animate = false, index = 0, dimmed = false, childBlocks, isStreaming }: ContentBlockProps): React.ReactElement | null {
+export function ContentBlock({ block, allMessages, basePath, animate = false, index = 0, dimmed = false, childBlocks, isStreaming, depth = 0 }: ContentBlockProps): React.ReactElement | null {
   // text 块 — 主要内容，不受 dimmed 影响
   if (block.type === 'text') {
     const textBlock = block as SDKTextBlock
@@ -664,6 +678,7 @@ export function ContentBlock({ block, allMessages, basePath, animate = false, in
         childBlocks={childBlocks}
         basePath={basePath}
         isStreaming={isStreaming}
+        depth={depth}
       />
     )
   }

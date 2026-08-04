@@ -96,52 +96,13 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import type { ActiveView } from '@/atoms/active-view'
 import type { ConversationMeta, AgentSessionMeta, WorkspaceCapabilities } from '@proma/shared'
-
-interface SidebarItemProps {
-  icon: React.ReactNode
-  label: string
-  active?: boolean
-  /** 右侧额外元素（如展开/收起箭头） */
-  suffix?: React.ReactNode
-  onClick?: () => void
-}
-
-function SidebarItem({ icon, label, active, suffix, onClick }: SidebarItemProps): React.ReactElement {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'w-full flex items-center justify-between px-3 py-2 rounded-md text-[13px] transition-colors duration-100 titlebar-no-drag',
-        active
-          ? 'bg-primary/10 text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-          : 'text-foreground/60 hover:bg-primary/5 hover:text-foreground'
-      )}
-    >
-      <div className="flex items-center gap-3">
-        <span className="flex-shrink-0 w-[18px] h-[18px]">{icon}</span>
-        <span>{label}</span>
-      </div>
-      {suffix}
-    </button>
-  )
-}
 
 export interface LeftSidebarProps {
   /** 可选固定宽度，默认使用 CSS 响应式宽度 */
   width?: number
   /** 正在被拖拽调整宽度（禁用宽度 transition，保证跟手） */
   resizing?: boolean
-}
-
-/** 侧边栏导航项标识 */
-type SidebarItemId = 'pinned' | 'all-chats'
-
-/** 导航项到视图的映射 */
-const ITEM_TO_VIEW: Record<SidebarItemId, ActiveView> = {
-  pinned: 'conversations',
-  'all-chats': 'conversations',
 }
 
 /** 日期分组标签 */
@@ -217,8 +178,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const [pendingDeleteWorkspaceId, setPendingDeleteWorkspaceId] = React.useState<string | null>(null)
   /** 待迁移会话 ID，非空时显示迁移对话框 */
   const [moveTargetId, setMoveTargetId] = React.useState<string | null>(null)
-  /** 星标区域展开/收起 */
-  const [pinnedExpanded, setPinnedExpanded] = React.useState(true)
+  /** 星标对话已改为独立常驻区块，不再需要折叠 state。 */
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
   /** 工作模块区域高度（px，可拖分隔条调整） */
@@ -436,15 +396,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   }, [setConversations, setAgentSessions])
 
   /** 处理导航项点击 */
-  const handleItemClick = (item: SidebarItemId): void => {
-    if (item === 'pinned') {
-      // 星标按钮仅切换展开/收起，不改变 activeView
-      setPinnedExpanded((prev) => !prev)
-      return
-    }
-    setActiveView(ITEM_TO_VIEW[item])
-  }
-
   // 切换模式时重置归档视图
   React.useEffect(() => {
     setViewMode('active')
@@ -1415,43 +1366,36 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         </Tooltip>
       </div>
 
-      {/* Chat 模式：导航菜单（星标区域） */}
+      {/* Chat 模式：星标对话独立区块（常驻展示，不依赖折叠） */}
       {mode === 'chat' && (
-        <div className="flex flex-col gap-1 pt-3 px-3">
-          <SidebarItem
-            icon={<Star size={16} />}
-            label="星标对话"
-            suffix={
-              pinnedConversations.length > 0 ? (
-                pinnedExpanded
-                  ? <ChevronDown size={14} className="text-foreground/40" />
-                  : <ChevronRight size={14} className="text-foreground/40" />
-              ) : undefined
-            }
-            onClick={() => handleItemClick('pinned')}
-          />
-        </div>
-      )}
-
-      {/* Chat 模式：星标对话区域 */}
-      {mode === 'chat' && pinnedExpanded && pinnedConversations.length > 0 && (
-        <div className="px-3 pt-1 pb-1">
-          <div className="flex flex-col gap-0.5 pl-1 border-l-2 border-primary/20 ml-2">
-            {pinnedConversations.map((conv) => (
-              <ConversationItem
-                key={`pinned-${conv.id}`}
-                conversation={conv}
-                active={conv.id === activeTabId}
-                streaming={streamingIds.has(conv.id)}
-                showPinIcon={false}
-                onSelect={handleSelectConversation}
-                onOpenPermanent={handlePermanentConversation}
-                onRequestDelete={handleRequestDelete}
-                onRename={handleRename}
-                onTogglePin={handleTogglePin}
-                onToggleArchive={handleToggleArchive}
-              />
-            ))}
+        <div className="px-3 pt-3 pb-1">
+          <div className="rounded-xl bg-foreground/[0.03] border border-primary/10 overflow-hidden">
+            <div className="px-3 py-1.5 flex items-center gap-1.5">
+              <Star size={12} className="text-foreground/50" />
+              <span className="text-[11px] font-medium text-foreground/50 select-none flex-1">星标对话</span>
+              <span className="text-[10px] text-foreground/30 tabular-nums">{pinnedConversations.length}</span>
+            </div>
+            <div className="max-h-[40vh] overflow-y-auto flex flex-col gap-0.5 px-1 pb-1">
+              {pinnedConversations.length > 0 ? (
+                pinnedConversations.map((conv) => (
+                  <ConversationItem
+                    key={`pinned-${conv.id}`}
+                    conversation={conv}
+                    active={conv.id === activeTabId}
+                    streaming={streamingIds.has(conv.id)}
+                    showPinIcon={false}
+                    onSelect={handleSelectConversation}
+                    onOpenPermanent={handlePermanentConversation}
+                    onRequestDelete={handleRequestDelete}
+                    onRename={handleRename}
+                    onTogglePin={handleTogglePin}
+                    onToggleArchive={handleToggleArchive}
+                  />
+                ))
+              ) : (
+                <div className="px-3 py-2 text-[11px] text-foreground/30">没有星标对话，点会话旁的星标收藏</div>
+              )}
+            </div>
           </div>
         </div>
       )}
