@@ -1311,6 +1311,21 @@ export class AgentOrchestrator {
   }
 
   /**
+   * 注入 Goal 工具（A4）：让 Agent 能主动查看目标、领取 todo、追加证据、判断推进
+   */
+  private async injectGoalTools(
+    sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
+    mcpServers: Record<string, Record<string, unknown>>,
+  ): Promise<void> {
+    try {
+      const { injectGoalMcpServer } = await import('./chat-tools/goal-mcp')
+      await injectGoalMcpServer(sdk, mcpServers)
+    } catch (err) {
+      console.error(`[Agent 编排] 注入 Goal MCP 失败:`, err)
+    }
+  }
+
+  /**
    * 生成 Agent 会话标题
    *
    * 使用 Provider 适配器系统，支持所有渠道。任何错误返回 null。
@@ -1501,13 +1516,13 @@ export class AgentOrchestrator {
     // 0.5 清除上一轮中断标记
     try { updateAgentSessionMeta(sessionId, { stoppedByUser: false }) } catch { /* 会话可能已删除 */ }
 
-    // P2-1 Turn 前置决策：若会话绑定 Goal，给出路由提示（不强阻断用户手动触发）
+    // P2-1/A5 Turn 前置决策：若会话绑定 Goal，给出路由提示；自动触发（automation）时对不可推进的情况硬阻断
     try {
       const goalId = getAgentSessionMeta(sessionId)?.goalId
       if (goalId) {
         const decision = preTickTurn(goalId, userMessage)
-        if (!decision.shouldRun) {
-          console.log(`[Agent 编排] Turn 决策 (${sessionId}): route=${decision.route}, reason=${decision.reason ?? ''}`)
+        const isAutomation = triggeredBy === 'automation'
+        if (!decision.shouldRun || (isAutomation && decision.route !== 'ready')) {
           this.eventBus.emit(sessionId, {
             kind: 'proma_event',
             event: {
@@ -1516,6 +1531,17 @@ export class AgentOrchestrator {
               reason: decision.reason,
             },
           } as AgentStreamPayload)
+        }
+        // 自动化无人值守：不可推进时直接阻断，避免盲目消耗
+        if (isAutomation && decision.route !== 'ready') {
+          const msg = `[Goal 阻断] ${decision.reason ?? '当前状态不可推进'}（route=${decision.route}）`
+          console.warn(`[Agent 编排] ${msg}`)
+          callbacks.onError(msg)
+          callbacks.onComplete([], { startedAt: input.startedAt })
+          return
+        }
+        if (decision.route !== 'ready') {
+          console.log(`[Agent 编排] Turn 决策 (${sessionId}): route=${decision.route}, reason=${decision.reason ?? ''}`)
         }
       }
     } catch (turnError) {
@@ -1921,6 +1947,7 @@ export class AgentOrchestrator {
       const mcpServers = this.buildMcpServers(workspaceSlug, workflowMcpNames)
       await this.injectMemoryTools(sdk, mcpServers)
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
+      await this.injectGoalTools(sdk, mcpServers)
 
       // 注入内置协作会话工具（collaboration）：仅在绑定了项目的主会话可用
       const collaborationAvailable = !!workspaceId && !isDelegationSession

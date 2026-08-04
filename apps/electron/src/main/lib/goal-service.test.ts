@@ -16,7 +16,14 @@ mock.module('os', () => ({
   tmpdir,
 }))
 
-const { createGoal, getGoal, listGoals, updateGoal, deleteGoal, upsertGoalTodo, updateGoalTodoStatus, addGoalGate, resolveGoalGate, appendGoalEvidence, shouldGoalRun, canGoalSpend, spendGoalBudget } = await import('./goal-service')
+// 顶部不 mock agent-session-manager；bind 测试用注入的会话依赖（避免加载 electron）
+
+/** 生成兼容 AgentSessionMeta 的测试会话 */
+function makeTestSession(id: string, title: string) {
+  return { id, title, goalId: undefined as string | undefined, createdAt: Date.now(), updatedAt: Date.now() }
+}
+
+const { createGoal, getGoal, listGoals, updateGoal, deleteGoal, upsertGoalTodo, updateGoalTodoStatus, addGoalGate, resolveGoalGate, appendGoalEvidence, shouldGoalRun, canGoalSpend, spendGoalBudget, bindSessionToGoal, unbindSessionGoal, getSessionGoal, listGoalSessions } = await import('./goal-service')
 
 describe('Goal 服务', () => {
   let configDir: string
@@ -169,5 +176,57 @@ describe('Goal 服务', () => {
     const res = shouldGoalRun(goal.id)
     expect(res.shouldRun).toBe(false)
     expect(res.reason).toBe('quota_exhausted')
+  })
+
+  test('A2: 绑定会话到 Goal，绑定后证据沉淀且可查询', () => {
+    const goal = createGoal({ title: 'A', objective: 'o' })
+    const store = new Map<string, ReturnType<typeof makeTestSession>>()
+    const deps = {
+      getAgentSessionMeta: (id: string) => store.get(id),
+      updateAgentSessionMeta: (id: string, updates: Record<string, string | undefined>) => {
+        const existing = store.get(id) ?? makeTestSession(id, '会话语')
+        store.set(id, { ...existing, ...(updates.goalId !== undefined ? { goalId: updates.goalId } : { goalId: undefined }) })
+        return existing
+      },
+      listAgentSessions: () => [...store.values()],
+    }
+    store.set('session-1', makeTestSession('session-1', '会话语'))
+
+    const bound = bindSessionToGoal('session-1', goal.id, deps)
+    expect(bound.goalId).toBe(goal.id)
+    expect(getGoal(goal.id)?.evidence.some((e) => e.includes('绑定会话'))).toBe(true)
+    expect(getSessionGoal('session-1', deps)?.id).toBe(goal.id)
+    expect(listGoalSessions(goal.id, deps).some((s) => s.sessionId === 'session-1')).toBe(true)
+  })
+
+  test('A2: 解绑会话清除 goalId，goal 不再关联', () => {
+    const goal = createGoal({ title: 'A', objective: 'o' })
+    const store = new Map<string, ReturnType<typeof makeTestSession>>()
+    const deps = {
+      getAgentSessionMeta: (id: string) => store.get(id),
+      updateAgentSessionMeta: (id: string, updates: Record<string, string | undefined>) => {
+        const existing = store.get(id) ?? makeTestSession(id, '会话语')
+        store.set(id, { ...existing, ...(updates.goalId !== undefined ? { goalId: updates.goalId } : { goalId: undefined }) })
+        return existing
+      },
+      listAgentSessions: () => [...store.values()],
+    }
+    store.set('session-1', makeTestSession('session-1', '会话语'))
+    bindSessionToGoal('session-1', goal.id, deps)
+
+    unbindSessionGoal('session-1', deps)
+    expect(getSessionGoal('session-1', deps)).toBeUndefined()
+    expect(listGoalSessions(goal.id, deps).length).toBe(0)
+  })
+
+  test('A2: 绑定到不存在的 Goal 时报错', () => {
+    const store = new Map<string, ReturnType<typeof makeTestSession>>()
+    const deps = {
+      getAgentSessionMeta: (id: string) => store.get(id),
+      updateAgentSessionMeta: (id: string, updates: Record<string, string | undefined>) => store.get(id) ?? makeTestSession(id, 'x'),
+      listAgentSessions: () => [...store.values()],
+    }
+    store.set('session-1', makeTestSession('session-1', 'x'))
+    expect(() => bindSessionToGoal('session-1', 'missing', deps)).toThrow(/Goal 不存在/)
   })
 })

@@ -3683,6 +3683,10 @@ export function registerIpcHandlers(): void {
     shouldGoalRun: (goalId: string) => { shouldRun: boolean; reason?: string }
     canGoalSpend: (goalId: string, usd: number) => { allowed: boolean; reason?: string }
     spendGoalBudget: (goalId: string, usd: number) => import('@proma/shared').Goal
+    bindSessionToGoal: (sessionId: string, goalId: string) => { sessionId: string; goalId: string }
+    unbindSessionGoal: (sessionId: string) => { sessionId: string }
+    getSessionGoal: (sessionId: string) => import('@proma/shared').Goal | undefined
+    listGoalSessions: (goalId: string) => Array<{ sessionId: string; title: string }>
   }
   ipcMain.handle(GOAL_IPC_CHANNELS.CREATE, async (_event, input: import('@proma/shared').GoalCreateInput): Promise<import('@proma/shared').Goal> => goalSvc.createGoal(input))
   ipcMain.handle(GOAL_IPC_CHANNELS.GET, async (_event, id: string): Promise<import('@proma/shared').Goal | null> => goalSvc.getGoal(id) ?? null)
@@ -3697,6 +3701,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(GOAL_IPC_CHANNELS.SHOULD_RUN, async (_event, goalId: string): Promise<{ shouldRun: boolean; reason?: string }> => goalSvc.shouldGoalRun(goalId))
   ipcMain.handle(GOAL_IPC_CHANNELS.CAN_SPEND, async (_event, goalId: string, usd: number): Promise<{ allowed: boolean; reason?: string }> => goalSvc.canGoalSpend(goalId, usd))
   ipcMain.handle(GOAL_IPC_CHANNELS.SPEND_BUDGET, async (_event, goalId: string, usd: number): Promise<import('@proma/shared').Goal> => goalSvc.spendGoalBudget(goalId, usd))
+  ipcMain.handle(GOAL_IPC_CHANNELS.BIND_SESSION, async (_event, sessionId: string, goalId: string): Promise<{ sessionId: string; goalId: string }> => goalSvc.bindSessionToGoal(sessionId, goalId))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UNBIND_SESSION, async (_event, sessionId: string): Promise<{ sessionId: string }> => goalSvc.unbindSessionGoal(sessionId))
+  ipcMain.handle(GOAL_IPC_CHANNELS.GET_SESSION_GOAL, async (_event, sessionId: string): Promise<import('@proma/shared').Goal | null> => goalSvc.getSessionGoal(sessionId) ?? null)
+  ipcMain.handle(GOAL_IPC_CHANNELS.LIST_SESSIONS, async (_event, goalId: string): Promise<Array<{ sessionId: string; title: string }>> => goalSvc.listGoalSessions(goalId))
 
   // ===== macOS 灵动岛通知 =======
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {

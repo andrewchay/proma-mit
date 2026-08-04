@@ -1168,6 +1168,14 @@ export interface ElectronAPI {
   goalCanSpend: (goalId: string, usd: number) => Promise<{ allowed: boolean; reason?: string }>
   /** 记录 Goal 花费 */
   goalSpendBudget: (goalId: string, usd: number) => Promise<import('@proma/shared').Goal>
+  /** 绑定会话到 Goal */
+  goalBindSession: (sessionId: string, goalId: string) => Promise<{ sessionId: string; goalId: string }>
+  /** 解绑会话 */
+  goalUnbindSession: (sessionId: string) => Promise<{ sessionId: string }>
+  /** 查询会话绑定的 Goal */
+  goalGetSessionGoal: (sessionId: string) => Promise<import('@proma/shared').Goal | null>
+  /** 查询绑定到 Goal 的会话列表 */
+  goalListSessions: (goalId: string) => Promise<Array<{ sessionId: string; title: string }>>
 
   /** 设置灵动岛总开关 */
   setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
@@ -2735,6 +2743,22 @@ const electronAPI: ElectronAPI = {
 
   goalSpendBudget: (goalId: string, usd: number) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.SPEND_BUDGET, goalId, usd)
+  },
+
+  goalBindSession: (sessionId: string, goalId: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.BIND_SESSION, sessionId, goalId)
+  },
+
+  goalUnbindSession: (sessionId: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UNBIND_SESSION, sessionId)
+  },
+
+  goalGetSessionGoal: (sessionId: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.GET_SESSION_GOAL, sessionId)
+  },
+
+  goalListSessions: (goalId: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.LIST_SESSIONS, goalId)
   },
 
   setDynamicIslandEnabled: (enabled: boolean) => {

@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Bot, RotateCw, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Bot, RotateCw, AlertTriangle, ChevronDown, ChevronRight, Target } from 'lucide-react'
 import { WelcomeEmptyState } from '@/components/welcome/WelcomeEmptyState'
 import {
   Message,
@@ -133,6 +133,27 @@ function AssistantLogo({ model }: { model?: string }): React.ReactElement {
 }
 
 /** 重试提示组件 - 折叠式 */
+/** Goal 轮次前置决策提示条（A3） */
+const TURN_DECISION_META: Record<string, { label: string; className: string }> = {
+  ready: { label: 'Goal 可推进', className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400' },
+  wait_user_action: { label: '等待用户门控', className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+  blocked: { label: 'Goal 被阻塞', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  quota_exhausted: { label: 'Goal 配额耗尽', className: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+  goal_terminated: { label: 'Goal 已终止', className: 'bg-foreground/5 text-foreground/50' },
+  no_goal: { label: '未绑定 Goal', className: 'bg-foreground/[0.04] text-muted-foreground' },
+}
+
+function TurnDecisionNotice({ decision }: { decision: NonNullable<AgentStreamState['turnDecision']> }): React.ReactElement | null {
+  const meta = TURN_DECISION_META[decision.route] ?? { label: decision.route, className: 'bg-foreground/[0.04] text-muted-foreground' }
+  return (
+    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11.5px] ${meta.className} mx-4 mt-2`}>
+      <Target className="size-3.5 shrink-0" />
+      <span className="font-medium shrink-0">{meta.label}</span>
+      {decision.reason && <span className="truncate opacity-80">{decision.reason}</span>}
+    </div>
+  )
+}
+
 function RetryingNotice({ retrying }: { retrying: NonNullable<AgentStreamState['retrying']> }): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false)
   const [countdown, setCountdown] = React.useState(0)
@@ -645,6 +666,10 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
           <EmptyState />
         ) : (
           <>
+            {/* Goal 轮次前置决策提示条（A3） */}
+            {streamState?.turnDecision && (
+              <TurnDecisionNotice decision={streamState.turnDecision} />
+            )}
             {/* 统一消息渲染（持久化 + 实时合并为一个列表，确保 system 消息位置正确） */}
             {allGroups.map((group, idx) => {
               const isLive = liveGroupSet.has(group)

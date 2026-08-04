@@ -172,4 +172,12 @@ export const GOAL_IPC_CHANNELS = {
   CAN_SPEND: 'goal:can-spend',
   /** 记录花费 */
   SPEND_BUDGET: 'goal:spend-budget',
+  /** 绑定会话到 Goal */
+  BIND_SESSION: 'goal:bind-session',
+  /** 解绑会话 */
+  UNBIND_SESSION: 'goal:unbind-session',
+  /** 查询会话绑定的 Goal */
+  GET_SESSION_GOAL: 'goal:get-session-goal',
+  /** 查询绑定到 Goal 的会话列表 */
+  LIST_SESSIONS: 'goal:list-sessions',
 } as const

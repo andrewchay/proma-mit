@@ -138,6 +138,8 @@ export interface AgentStreamState {
     /** 是否已失败 */
     failed: boolean
   }
+  /** Goal 轮次前置决策提示（A3） */
+  turnDecision?: { route: string; reason?: string }
 }
 
 /** 从 ToolActivity 派生状态 */
@@ -758,6 +760,10 @@ export function applyAgentEvent(
       // 不用 SDK 返回的实际模型名覆盖，保持用户选择的 modelId
       // 以确保 resolveModelDisplayName 能匹配到渠道配置的显示名
       return prev
+
+    case 'turn_decision':
+      // Goal 轮次前置决策提示（A3）
+      return { ...prev, turnDecision: { route: event.route, reason: event.reason } }
 
     case 'retrying':
       // 向后兼容：保留原有的简单 retrying 事件

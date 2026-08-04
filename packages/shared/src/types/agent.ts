@@ -530,6 +530,8 @@ export type AgentEvent =
   | { type: 'model_resolved'; model: string }
   // 权限模式变更（Plan → bypassPermissions 等）
   | { type: 'permission_mode_changed'; mode: PromaPermissionMode }
+  // Goal 轮次前置决策提示（A3）
+  | { type: 'turn_decision'; route: string; reason?: string }
 
 // ===== Proma 内部事件（SDK 不覆盖的场景） =====
 

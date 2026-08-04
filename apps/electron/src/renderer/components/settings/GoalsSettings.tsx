@@ -60,7 +60,13 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
   const [newTodo, setNewTodo] = React.useState('')
   const [newGate, setNewGate] = React.useState('')
   const [newEvidence, setNewEvidence] = React.useState('')
+  /** A2：关联的会话列表 */
+  const [boundSessions, setBoundSessions] = React.useState<Array<{ sessionId: string; title: string }>>([])
+  const [bindSessionId, setBindSessionId] = React.useState('')
 
+  React.useEffect(() => {
+    void window.electronAPI.goalListSessions(goal.id).then(setBoundSessions).catch(() => {})
+  }, [goal.id])
   const handle = async <T,>(fn: () => Promise<T>): Promise<void> => {
     try {
       await fn()
@@ -308,6 +314,81 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
                 onChange(updated)
                 setNewEvidence('')
               })
+            }}
+          >
+            <Plus size={14} />
+          </Button>
+        </div>
+      </SettingsCard>
+
+      {/* 关联会话（A2） */}
+      <SettingsCard>
+        <div className="px-4 py-2 text-sm font-medium text-foreground/80 border-b border-border/30 flex items-center gap-2">
+          <Target size={14} />
+          关联会话
+          <span className="text-[11px] text-muted-foreground">{boundSessions.length} 个会话</span>
+        </div>
+        <div className="flex flex-col">
+          {boundSessions.map((s) => (
+            <div key={s.sessionId} className="flex items-center gap-2.5 px-4 py-2 border-b border-border/30 last:border-b-0 text-[12px]">
+              <span className="flex-1 truncate text-foreground/85" title={s.sessionId}>{s.title || s.sessionId}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground/60 tabular-nums">{s.sessionId.slice(0, 8)}</span>
+              <button
+                type="button"
+                onClick={async () => {
+                  await window.electronAPI.goalUnbindSession(s.sessionId)
+                  setBoundSessions((prev) => prev.filter((x) => x.sessionId !== s.sessionId))
+                  void reload()
+                }}
+                className="shrink-0 px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
+              >
+                解绑
+              </button>
+            </div>
+          ))}
+          {boundSessions.length === 0 && (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">尚未绑定任何会话</div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 px-4 py-2">
+          <input
+            type="text"
+            value={bindSessionId}
+            onChange={(e) => setBindSessionId(e.target.value)}
+            placeholder="输入 Agent 会话 ID 绑定到本目标…"
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && bindSessionId.trim()) {
+                void (async () => {
+                  try {
+                    await window.electronAPI.goalBindSession(bindSessionId.trim(), goal.id)
+                    setBindSessionId('')
+                    setBoundSessions(await window.electronAPI.goalListSessions(goal.id))
+                    toast.success('会话已绑定')
+                    void reload()
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : '绑定失败')
+                  }
+                })()
+              }
+            }}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!bindSessionId.trim()}
+            onClick={() => {
+              void (async () => {
+                try {
+                  await window.electronAPI.goalBindSession(bindSessionId.trim(), goal.id)
+                  setBindSessionId('')
+                  setBoundSessions(await window.electronAPI.goalListSessions(goal.id))
+                  toast.success('会话已绑定')
+                  void reload()
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : '绑定失败')
+                }
+              })()
             }}
           >
             <Plus size={14} />

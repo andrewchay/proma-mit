@@ -298,6 +298,9 @@ export const goalService = {
   shouldRun: shouldGoalRun,
   spendBudget: spendGoalBudget,
   canSpend: canGoalSpend,
+  bindSession: bindSessionToGoal,
+  unbindSession: unbindSessionGoal,
+  getSessionGoal: getSessionGoal,
 }
 
 // ===== 配额（P1） =====
@@ -371,4 +374,76 @@ export function spendGoalBudget(goalId: string, usd: number): Goal {
   writeGoal(goal)
   rebuildIndex()
   return goal
+}
+
+// ===== 会话绑定（A2） =====
+
+/** 会话依赖（可注入，避免测试时加载 electron；运行默认惰性 require 真实实现） */
+export interface SessionDeps {
+  getAgentSessionMeta: (id: string) => import('@proma/shared').AgentSessionMeta | undefined
+  updateAgentSessionMeta: (id: string, updates: Record<string, string | undefined>) => import('@proma/shared').AgentSessionMeta
+  listAgentSessions: () => import('@proma/shared').AgentSessionMeta[]
+}
+
+/** 惰性加载 session-manager，避免 goal-service 编译期依赖 electron */
+function sessionManager(): SessionDeps {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('./agent-session-manager') as SessionDeps
+}
+
+/**
+ * 把某个 Agent 会话绑定到 Goal（A2）
+ *
+ * 会话绑定后，会话运行结束会自动把证据沉淀到该 Goal，并在运行时进行 turn 决策。
+ *
+ * @param sessionId 会话 ID
+ * @param goalId 目标 Goal ID
+ * @param deps 可注入会话依赖（测试用）
+ */
+export function bindSessionToGoal(
+  sessionId: string,
+  goalId: string,
+  deps: SessionDeps = sessionManager(),
+): { sessionId: string; goalId: string } {
+  const goal = readGoal(goalId)
+  if (!goal) throw new Error(`Goal 不存在: ${goalId}`)
+  const sm = deps
+  const meta = sm.getAgentSessionMeta(sessionId)
+  if (!meta) throw new Error(`Agent 会话不存在: ${sessionId}`)
+
+  sm.updateAgentSessionMeta(sessionId, { goalId })
+  // 记录绑定事件到证据
+  appendGoalEvidence(goalId, `绑定会话 ${sessionId.slice(0, 8)}`)
+  return { sessionId, goalId }
+}
+
+/**
+ * 解除某个 Agent 会话与 Goal 的绑定（A2）
+ */
+export function unbindSessionGoal(sessionId: string, deps: SessionDeps = sessionManager()): { sessionId: string } {
+  const sm = deps
+  const meta = sm.getAgentSessionMeta(sessionId)
+  if (!meta) throw new Error(`Agent 会话不存在: ${sessionId}`)
+  sm.updateAgentSessionMeta(sessionId, { goalId: undefined })
+  return { sessionId }
+}
+
+/**
+ * 查询某会话当前绑定的 Goal（A2）
+ */
+export function getSessionGoal(sessionId: string, deps: SessionDeps = sessionManager()): Goal | undefined {
+  const sm = deps
+  const goalId = sm.getAgentSessionMeta(sessionId)?.goalId
+  if (!goalId) return undefined
+  return readGoal(goalId)
+}
+
+/**
+ * 查询绑定到某 Goal 的会话列表（A2）
+ */
+export function listGoalSessions(goalId: string, deps: SessionDeps = sessionManager()): Array<{ sessionId: string; title: string }> {
+  return deps
+    .listAgentSessions()
+    .filter((s) => s.goalId === goalId)
+    .map((s) => ({ sessionId: s.id, title: s.title }))
 }
