@@ -68,6 +68,27 @@ export async function injectGoalMcpServer(
             return { content: [{ type: 'text' as const, text: `已领取 todo [${args.todoId}]: ${todo.text}` }] }
           },
         ),
+        // 完成 todo（E4）
+        sdk.tool(
+          'goal_complete_todo',
+          '将某个 Goal 下的一个 todo 标记为已完成。在确认某项目标工作确实交付完成、且通过验证后调用；谨慎使用，避免误标记。',
+          {
+            goalId: z.string().describe('Goal ID'),
+            todoId: z.string().describe('要完成的 todo ID'),
+            summary: z.string().optional().describe('完成摘要（可选，会被追加到 Goal 证据）'),
+          },
+          async (args) => {
+            const todo = getGoal(args.goalId)?.todos.find((t) => t.id === args.todoId)
+            if (!todo) return { content: [{ type: 'text' as const, text: `未找到 todo: ${args.todoId}` }] }
+            updateGoalTodoStatus(args.goalId, args.todoId, 'done')
+            if (args.summary) {
+              try {
+                appendGoalEvidence(args.goalId, `完成 [${args.todoId}] ${todo.text}: ${args.summary}`)
+              } catch (_err) { /* 证据失败不影响完成 */ }
+            }
+            return { content: [{ type: 'text' as const, text: `已完成 todo [${args.todoId}]: ${todo.text}` }] }
+          },
+        ),
         // 追加证据
         sdk.tool(
           'goal_append_evidence',

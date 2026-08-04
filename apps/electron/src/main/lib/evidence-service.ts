@@ -33,15 +33,45 @@ function isWriteTool(toolName: string): boolean {
   return false
 }
 
-/** 从工具调用名推断"关键决策"（非写操作且有信息价值的工具） */
+/** 工具 → 中文动作短语（E5 语义化增强，无联网） */
+const TOOL_ACTION_LABELS: Record<string, string> = {
+  Read: '阅读文件',
+  Grep: '搜索代码',
+  Glob: '查找文件',
+  List: '查看目录',
+  Bash: '执行命令',
+  Shell: '执行命令',
+  Write: '写入文件',
+  Edit: '修改代码',
+  MultiEdit: '批量修改代码',
+  WebSearch: '网络搜索',
+  WebFetch: '抓取网页',
+  TaskCreate: '创建任务',
+  TaskUpdate: '更新任务进度',
+  TodoWrite: '记录待办',
+  TodoCreate: '创建待办',
+  recall_memory: '检索记忆',
+  add_memory: '写入记忆',
+  skill_open: '调用技能',
+  proma_skill: '调用技能',
+}
+
+/** 把工具名转为语义动作短语（E5） */
+function toolActionLabel(toolName: string): string {
+  if (TOOL_ACTION_LABELS[toolName]) return TOOL_ACTION_LABELS[toolName]!
+  if (toolName.startsWith('mcp__')) {
+    const server = toolName.split('__')[1]
+    return server ? `MCP(${server})` : toolName
+  }
+  return toolName
+}
+
+/** 从工具调用名推断"关键决策"（E5 语义化：转中文动作短语） */
 function toDecisionText(toolNames: string[]): string {
   if (toolNames.length === 0) return '未调用工具'
-  const nonWrite = toolNames.filter((name) => !isWriteTool(name))
-  const write = toolNames.filter((name) => isWriteTool(name))
-  const parts: string[] = []
-  if (write.length > 0) parts.push(`写操作工具：${[...new Set(write)].join(', ')}`)
-  if (nonWrite.length > 0) parts.push(`调研/分析工具：${[...new Set(nonWrite)].slice(0, 4).join(', ')}`)
-  return parts.join('；')
+  const labels = [...new Set(toolNames.map(toolActionLabel))]
+  const uniqueLabels = [...new Set(labels)]
+  return `完成：${uniqueLabels.slice(0, 6).join('、')}${uniqueLabels.length > 6 ? ` 等 ${uniqueLabels.length} 项操作` : ''}`
 }
 
 /**
@@ -86,9 +116,12 @@ export function buildSessionEvidence(
       ? `运行成功完成（${totalTurns} 轮，${totalTokens.toLocaleString()} tokens）`
       : '运行失败，需人工检查'
 
+  // E5：语义化动作描述（决策用）
+  const semanticActions = [...new Set(uniqueTools.map(toolActionLabel))].slice(0, 6)
   const summaryParts = [
     userMessage ? `目标：${userMessage.slice(0, 60)}` : `会话 ${sessionId}`,
-    `${totalTurns} 轮，${totalTokens.toLocaleString()} tokens，${uniqueTools.length} 个工具`,
+    `${totalTurns} 轮，${totalTokens.toLocaleString()} tokens`,
+    semanticActions.length > 0 ? `操作：${semanticActions.join('、')}` : '无工具调用',
     terminalState === 'completed' ? '运行成功' : '运行失败',
   ]
 
@@ -96,6 +129,7 @@ export function buildSessionEvidence(
     decisions: uniqueTools.length > 0 ? [decisionText] : undefined,
     validation,
     writeback: writeback.length > 0 ? [...new Set(writeback)] : undefined,
+    // E5：evidence 用语义动作描述，替代纯工具名堆砌
     evidence: summaryParts.join(' · '),
   }
 }
@@ -107,6 +141,23 @@ export function formatEvidenceSummary(evidence: RunEvidence): string {
   if (evidence.validation) parts.push(evidence.validation)
   if (evidence.writeback?.length) parts.push(`改动了 ${evidence.writeback.length} 类目标`)
   return parts.join(' | ')
+}
+
+/**
+ * 预留：LLM 语义级证据增强扩展口（E5）
+ *
+ * 当前为 no-op 占位（返回原 evidence），避免引入模型调用基础设施与联网副作用。
+ * 未来接入方式：
+ * 1. 通过 proma-cloud 获取 LLM 凭据（主进程需新增凭据注入/渠道密钥读取）
+ * 2. 把 rawEvidence（decisions/writeback/validation）发送给便宜的模型
+ * 3. 让模型生成更贴切的"决策/验证/阻塞"一句话描述，仍带配额与降级
+ */
+export async function enrichEvidenceWithLLM(
+  evidence: RunEvidence,
+  _options: { model?: string; apiKey?: string; baseUrl?: string } = {},
+): Promise<RunEvidence> {
+  // 暂不调 LLM：返回原始 evidence，等基础设施就绪后在此实现
+  return evidence
 }
 
 /** 全局单例入口 */

@@ -7,12 +7,13 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Pencil, Check, X, PanelRight, Globe2, Square } from 'lucide-react'
+import { Pencil, Check, X, PanelRight, Globe2, Square, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { agentSessionsAtom, agentSidePanelOpenAtom, workspaceFilesVersionAtom } from '@/atoms/agent-atoms'
 import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import { registerShortcut } from '@/lib/shortcut-registry'
+import type { Goal } from '@proma/shared'
 
 /** AgentHeader 属性接口 */
 interface AgentHeaderProps {
@@ -165,6 +166,7 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
               <Pencil className="size-3.5" />
             </button>
           </div>
+          <GoalBindingControl sessionId={sessionId} />
           {webBridgeStatus.active && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -202,6 +204,112 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
             </Tooltip>
           )}
         </>
+      )}
+    </div>
+  )
+}
+
+/** E2：Goal 快速绑定控件（会话头部下拉） */
+function GoalBindingControl({ sessionId }: { sessionId: string }): React.ReactElement | null {
+  const [open, setOpen] = React.useState(false)
+  const [goals, setGoals] = React.useState<Goal[]>([])
+  const [currentGoal, setCurrentGoal] = React.useState<Goal | null>(null)
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  const refresh = React.useCallback(async (): Promise<void> => {
+    try {
+      const [list, cur] = await Promise.all([
+        window.electronAPI.listGoals(),
+        window.electronAPI.goalGetSessionGoal(sessionId),
+      ])
+      setGoals(list)
+      setCurrentGoal(cur)
+    } catch (_err) {
+      setGoals([])
+      setCurrentGoal(null)
+    }
+  }, [sessionId])
+
+  React.useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  // 点击外部关闭下拉
+  React.useEffect(() => {
+    if (!open) return
+    const onDocClick = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const bind = async (goalId: string): Promise<void> => {
+    try {
+      await window.electronAPI.goalBindSession(sessionId, goalId)
+      await refresh()
+      setOpen(false)
+    } catch (_err) {
+      // 绑定失败静默
+    }
+  }
+
+  const unbind = async (): Promise<void> => {
+    try {
+      await window.electronAPI.goalUnbindSession(sessionId)
+      await refresh()
+      setOpen(false)
+    } catch (_err) { /* 静默 */ }
+  }
+
+  return (
+    <div ref={ref} className="relative titlebar-no-drag">
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => void refresh().then(() => setOpen((v) => !v))}
+        className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors ${
+          currentGoal
+            ? 'bg-primary/10 text-primary hover:bg-primary/15'
+            : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
+        }`}
+        title={currentGoal ? `绑定到：${currentGoal.title}` : '绑定目标'}
+      >
+        <Target className="size-3.5" />
+        <span className="max-w-[120px] truncate">
+          {currentGoal ? currentGoal.title : '绑定目标'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-[60] w-64 rounded-lg border border-border/40 bg-popover shadow-lg p-1.5">
+          {currentGoal && (
+            <div className="px-2 py-1.5 mb-1 rounded-md bg-primary/5 text-xs text-primary flex items-center gap-1.5">
+              <Target className="size-3" />
+              <span className="truncate flex-1">{currentGoal.title}</span>
+              <button type="button" onClick={() => void unbind()} className="text-muted-foreground hover:text-red-500">解绑</button>
+            </div>
+          )}
+          <div className="px-2 py-1 text-[11px] text-muted-foreground">绑定到目标</div>
+          <div className="max-h-52 overflow-y-auto flex flex-col">
+            {goals
+              .filter((g) => !['completed', 'archived'].includes(g.phase))
+              .map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => void bind(g.id)}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs hover:bg-foreground/5 text-left"
+                >
+                  <span className="truncate flex-1">{g.title}</span>
+                  {g.id === currentGoal?.id && <span className="text-primary">✓</span>}
+                </button>
+              ))}
+            {goals.filter((g) => !['completed', 'archived'].includes(g.phase)).length === 0 && (
+              <div className="px-2 py-3 text-center text-xs text-muted-foreground">暂无活跃目标</div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

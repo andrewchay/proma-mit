@@ -63,6 +63,12 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
   /** A2：关联的会话列表 */
   const [boundSessions, setBoundSessions] = React.useState<Array<{ sessionId: string; title: string }>>([])
   const [bindSessionId, setBindSessionId] = React.useState('')
+  /** E1：编辑态 */
+  const [editing, setEditing] = React.useState(false)
+  const [editTitle, setEditTitle] = React.useState(goal.title)
+  const [editObjective, setEditObjective] = React.useState(goal.objective)
+  const [editScope, setEditScope] = React.useState(goal.scope.join(','))
+  const [editBudget, setEditBudget] = React.useState(goal.quota?.maxBudgetUsd?.toString() ?? '')
 
   React.useEffect(() => {
     void window.electronAPI.goalListSessions(goal.id).then(setBoundSessions).catch(() => {})
@@ -82,27 +88,91 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
 
   return (
     <div className="space-y-4">
-      {/* 目标头部 */}
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h3 className="text-base font-semibold text-foreground">{goal.title}</h3>
-          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{goal.objective}</p>
-          {goal.scope.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-1">
-              {goal.scope.map((scope) => (
-                <span key={scope} className="px-1.5 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-muted-foreground">
-                  {scope}
-                </span>
-              ))}
-            </div>
-          )}
+      {/* 目标头部（E1：支持编辑） */}
+      {editing ? (
+        <div className="space-y-3 p-3 rounded-xl bg-muted/40 border border-border/40">
+          <input
+            type="text"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            placeholder="目标标题"
+            className="w-full bg-transparent text-base font-semibold outline-none placeholder:text-muted-foreground/50"
+          />
+          <textarea
+            value={editObjective}
+            onChange={(e) => setEditObjective(e.target.value)}
+            placeholder="目标描述"
+            rows={3}
+            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 resize-none"
+          />
+          <input
+            type="text"
+            value={editScope}
+            onChange={(e) => setEditScope(e.target.value)}
+            placeholder="作用域（逗号分隔）"
+            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 border-b border-border/40 pb-1"
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground shrink-0">配额上限 (USD)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={editBudget}
+              onChange={(e) => setEditBudget(e.target.value)}
+              placeholder="留空不限制"
+              className="w-28 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 border-b border-border/40 pb-1"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>取消</Button>
+            <Button size="sm" onClick={() => {
+              void handle(async () => {
+                const scope = editScope.split(',').map((s) => s.trim()).filter(Boolean)
+                const quota = editBudget.trim() && Number(editBudget) > 0
+                  ? { maxBudgetUsd: Number(editBudget), spentUsd: goal.quota?.spentUsd ?? 0 }
+                  : undefined
+                const updated = await window.electronAPI.updateGoal(goal.id, {
+                  title: editTitle.trim() || goal.title,
+                  objective: editObjective.trim(),
+                  scope,
+                  ...(quota ? { quota } : {}),
+                } as import('@proma/shared').GoalUpdateInput)
+                onChange(updated)
+                setEditing(false)
+              })
+            }}>保存</Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={`px-2 py-0.5 rounded text-xs font-medium ${(PHASE_LABEL[goal.phase] ?? PHASE_LABEL.draft).className}`}>
-            {(PHASE_LABEL[goal.phase] ?? PHASE_LABEL.draft).label}
-          </span>
+      ) : (
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold text-foreground">{goal.title}</h3>
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{goal.objective}</p>
+            {goal.scope.length > 0 && (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {goal.scope.map((scope) => (
+                  <span key={scope} className="px-1.5 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-muted-foreground">
+                    {scope}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => { setEditTitle(goal.title); setEditObjective(goal.objective); setEditScope(goal.scope.join(',')); setEditBudget(goal.quota?.maxBudgetUsd?.toString() ?? ''); setEditing(true) }}
+              className="px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+            >
+              编辑
+            </button>
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${(PHASE_LABEL[goal.phase] ?? PHASE_LABEL.draft).className}`}>
+              {(PHASE_LABEL[goal.phase] ?? PHASE_LABEL.draft).label}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 配额展示（P1） */}
       {goal.quota?.maxBudgetUsd !== undefined && (
@@ -450,6 +520,9 @@ export function GoalsSettings(): React.ReactElement {
   const [creating, setCreating] = React.useState(false)
   const [title, setTitle] = React.useState('')
   const [objective, setObjective] = React.useState('')
+  /** E1: 创建表单增强 */
+  const [scopeText, setScopeText] = React.useState('')
+  const [maxBudgetUsd, setMaxBudgetUsd] = React.useState('')
   /** 概览聚合数据（P2-4） */
   const [overview, setOverview] = React.useState<{
     activeGoals: number
@@ -509,10 +582,21 @@ export function GoalsSettings(): React.ReactElement {
       return
     }
     try {
-      const goal = await window.electronAPI.createGoal({ title: title.trim(), objective: objective.trim() })
+      const scope = scopeText.split(',').map((s) => s.trim()).filter(Boolean)
+      const quota = maxBudgetUsd.trim() && Number(maxBudgetUsd) > 0
+        ? { maxBudgetUsd: Number(maxBudgetUsd) }
+        : undefined
+      const goal = await window.electronAPI.createGoal({
+        title: title.trim(),
+        objective: objective.trim(),
+        ...(scope.length > 0 ? { scope } : {}),
+        ...(quota ? { quota } : {}),
+      } as import('@proma/shared').GoalCreateInput)
       setCreating(false)
       setTitle('')
       setObjective('')
+      setScopeText('')
+      setMaxBudgetUsd('')
       setGoals((prev) => [goal, ...prev])
       setSelectedId(goal.id)
       toast.success('目标已创建')
@@ -599,6 +683,25 @@ export function GoalsSettings(): React.ReactElement {
               rows={3}
               className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 resize-none"
             />
+            <input
+              type="text"
+              value={scopeText}
+              onChange={(e) => setScopeText(e.target.value)}
+              placeholder="作用域 / 允许操作的路径（逗号分隔，可选）"
+              className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 border-b border-border/40 pb-1.5"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">配额上限 (USD)</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={maxBudgetUsd}
+                onChange={(e) => setMaxBudgetUsd(e.target.value)}
+                placeholder="留空不限制"
+                className="w-28 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 border-b border-border/40 pb-1"
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>
                 取消

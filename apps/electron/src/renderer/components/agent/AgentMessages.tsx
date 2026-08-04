@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Bot, RotateCw, AlertTriangle, ChevronDown, ChevronRight, Target } from 'lucide-react'
+import { Bot, RotateCw, AlertTriangle, ChevronDown, ChevronRight, Target, X } from 'lucide-react'
 import { WelcomeEmptyState } from '@/components/welcome/WelcomeEmptyState'
 import {
   Message,
@@ -145,11 +145,30 @@ const TURN_DECISION_META: Record<string, { label: string; className: string }> =
 
 function TurnDecisionNotice({ decision }: { decision: NonNullable<AgentStreamState['turnDecision']> }): React.ReactElement | null {
   const meta = TURN_DECISION_META[decision.route] ?? { label: decision.route, className: 'bg-foreground/[0.04] text-muted-foreground' }
+  const [dismissed, setDismissed] = React.useState(false)
+  // 决策内容变化时重置关闭状态（E3）
+  const lastKey = React.useRef(`${decision.route}|${decision.reason ?? ''}`)
+  React.useEffect(() => {
+    const key = `${decision.route}|${decision.reason ?? ''}`
+    if (key !== lastKey.current) {
+      lastKey.current = key
+      setDismissed(false)
+    }
+  }, [decision.route, decision.reason])
+  if (dismissed) return null
   return (
     <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11.5px] ${meta.className} mx-4 mt-2`}>
       <Target className="size-3.5 shrink-0" />
       <span className="font-medium shrink-0">{meta.label}</span>
-      {decision.reason && <span className="truncate opacity-80">{decision.reason}</span>}
+      {decision.reason && <span className="truncate opacity-80 flex-1">{decision.reason}</span>}
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+        aria-label="关闭提示"
+      >
+        <X className="size-3" />
+      </button>
     </div>
   )
 }
