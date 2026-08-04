@@ -39,6 +39,9 @@ export * from './run-record'
 // Token 消耗统计类型
 export * from './token-usage'
 
+// Goal（目标）状态层类型
+export * from './goal'
+
 // 扩展（Extension）Manifest 与生命周期类型
 export * from './plugin'
 

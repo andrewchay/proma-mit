@@ -56,6 +56,8 @@ export interface TokenUsageRecord {
   sessionTitle?: string
   /** 工作区 ID */
   workspaceId?: string
+  /** 绑定的 Goal id（长生命周期目标） */
+  goalId?: string
 }
 
 /** Token 使用查询条件 */

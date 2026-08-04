@@ -878,6 +878,8 @@ export interface AgentSessionMeta {
   delegationGoal?: string
   /** 本会话使用的 Agent runtime */
   agentRuntime?: AgentRuntime
+  /** 绑定的 Goal id（长生命周期目标） */
+  goalId?: string
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
   /** 所属工作区 ID */

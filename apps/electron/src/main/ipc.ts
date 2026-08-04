@@ -9,7 +9,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -3667,6 +3667,30 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, async (_event, query: import('@proma/shared').TokenUsageQuery = {}): Promise<import('@proma/shared').TokenUsageAggregate> => tokenUsageService.aggregate(query))
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS, async (): Promise<import('@proma/shared').TokenUsageSessionSummary[]> => tokenUsageService.listSessions())
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.CLEAR, async (): Promise<void> => tokenUsageService.clear())
+
+  // ===== Goal 状态层（P0） =====
+  const goalSvc = require('./lib/goal-service') as {
+    createGoal: (input: import('@proma/shared').GoalCreateInput) => import('@proma/shared').Goal
+    getGoal: (id: string) => import('@proma/shared').Goal | undefined
+    listGoals: (query: import('@proma/shared').GoalQuery) => import('@proma/shared').Goal[]
+    updateGoal: (id: string, input: import('@proma/shared').GoalUpdateInput) => import('@proma/shared').Goal
+    deleteGoal: (id: string) => void
+    upsertGoalTodo: (goalId: string, input: import('@proma/shared').UpsertTodoInput) => import('@proma/shared').Goal
+    updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']) => import('@proma/shared').Goal
+    addGoalGate: (goalId: string, question: string) => import('@proma/shared').Goal
+    resolveGoalGate: (goalId: string, gateId: string, resolution: string) => import('@proma/shared').Goal
+    appendGoalEvidence: (goalId: string, evidence: string) => import('@proma/shared').Goal
+  }
+  ipcMain.handle(GOAL_IPC_CHANNELS.CREATE, async (_event, input: import('@proma/shared').GoalCreateInput): Promise<import('@proma/shared').Goal> => goalSvc.createGoal(input))
+  ipcMain.handle(GOAL_IPC_CHANNELS.GET, async (_event, id: string): Promise<import('@proma/shared').Goal | null> => goalSvc.getGoal(id) ?? null)
+  ipcMain.handle(GOAL_IPC_CHANNELS.LIST, async (_event, query: import('@proma/shared').GoalQuery = {}): Promise<import('@proma/shared').Goal[]> => goalSvc.listGoals(query))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UPDATE, async (_event, id: string, input: import('@proma/shared').GoalUpdateInput): Promise<import('@proma/shared').Goal> => goalSvc.updateGoal(id, input))
+  ipcMain.handle(GOAL_IPC_CHANNELS.DELETE, async (_event, id: string): Promise<void> => goalSvc.deleteGoal(id))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UPSERT_TODO, async (_event, goalId: string, input: import('@proma/shared').UpsertTodoInput): Promise<import('@proma/shared').Goal> => goalSvc.upsertGoalTodo(goalId, input))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UPDATE_TODO_STATUS, async (_event, goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']): Promise<import('@proma/shared').Goal> => goalSvc.updateGoalTodoStatus(goalId, todoId, status))
+  ipcMain.handle(GOAL_IPC_CHANNELS.ADD_GATE, async (_event, goalId: string, question: string): Promise<import('@proma/shared').Goal> => goalSvc.addGoalGate(goalId, question))
+  ipcMain.handle(GOAL_IPC_CHANNELS.RESOLVE_GATE, async (_event, goalId: string, gateId: string, resolution: string): Promise<import('@proma/shared').Goal> => goalSvc.resolveGoalGate(goalId, gateId, resolution))
+  ipcMain.handle(GOAL_IPC_CHANNELS.APPEND_EVIDENCE, async (_event, goalId: string, evidence: string): Promise<import('@proma/shared').Goal> => goalSvc.appendGoalEvidence(goalId, evidence))
 
   // ===== macOS 灵动岛通知 =======
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {

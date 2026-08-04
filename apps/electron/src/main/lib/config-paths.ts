@@ -133,6 +133,38 @@ export function getTokenUsageIndexPath(): string {
 }
 
 /**
+ * 获取 Goal 状态目录路径
+ *
+ * @returns ~/.proma-mit/goals/
+ */
+export function getGoalsDir(): string {
+  const dir = join(getConfigDir(), 'goals')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建 Goal 目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取单个 Goal 状态文件路径
+ *
+ * @returns ~/.proma-mit/goals/{goalId}.json
+ */
+export function getGoalPath(id: string): string {
+  return join(getGoalsDir(), `${id}.json`)
+}
+
+/**
+ * 获取 Goal 索引文件路径
+ *
+ * @returns ~/.proma-mit/goals/index.json
+ */
+export function getGoalIndexPath(): string {
+  return join(getGoalsDir(), 'index.json')
+}
+
+/**
  * 获取附件存储根目录
  *
  * 如果目录不存在则自动创建。

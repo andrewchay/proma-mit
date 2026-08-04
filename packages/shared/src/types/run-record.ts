@@ -22,6 +22,8 @@ export interface RunRecord {
   detail?: string
   /** 关联会话 ID（打开/导航用） */
   sessionId?: string
+  /** 关联 Goal id（长生命周期目标） */
+  goalId?: string
   /** 时间戳 */
   timestamp: number
 }

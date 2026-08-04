@@ -265,6 +265,7 @@ export class TokenUsageService {
       mcpServers,
       sessionTitle: meta?.title,
       workspaceId,
+      goalId: meta?.goalId,
     }
 
     this.appendRecord(record)

@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@proma/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1139,6 +1139,29 @@ export interface ElectronAPI {
   listTokenUsageSessions: () => Promise<import('@proma/shared').TokenUsageSessionSummary[]>
   /** 清空 Token 使用记录 */
   clearTokenUsageRecords: () => Promise<void>
+
+  // ===== Goal 状态层（P0） =====
+
+  /** 创建 Goal */
+  createGoal: (input: import('@proma/shared').GoalCreateInput) => Promise<import('@proma/shared').Goal>
+  /** 读取单个 Goal */
+  getGoal: (id: string) => Promise<import('@proma/shared').Goal | null>
+  /** 列表查询 Goal */
+  listGoals: (query?: import('@proma/shared').GoalQuery) => Promise<import('@proma/shared').Goal[]>
+  /** 更新 Goal 字段 */
+  updateGoal: (id: string, input: import('@proma/shared').GoalUpdateInput) => Promise<import('@proma/shared').Goal>
+  /** 删除 Goal */
+  deleteGoal: (id: string) => Promise<void>
+  /** 新增/更新 todo */
+  upsertGoalTodo: (goalId: string, input: import('@proma/shared').UpsertTodoInput) => Promise<import('@proma/shared').Goal>
+  /** 更新 todo 状态 */
+  updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']) => Promise<import('@proma/shared').Goal>
+  /** 新增门控 */
+  addGoalGate: (goalId: string, question: string) => Promise<import('@proma/shared').Goal>
+  /** 解决门控 */
+  resolveGoalGate: (goalId: string, gateId: string, resolution: string) => Promise<import('@proma/shared').Goal>
+  /** 追加证据 */
+  appendGoalEvidence: (goalId: string, evidence: string) => Promise<import('@proma/shared').Goal>
 
   /** 设置灵动岛总开关 */
   setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
@@ -2652,6 +2675,48 @@ const electronAPI: ElectronAPI = {
 
   clearTokenUsageRecords: () => {
     return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.CLEAR)
+  },
+
+  // ===== Goal 状态层（P0） =====
+
+  createGoal: (input: import('@proma/shared').GoalCreateInput) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.CREATE, input)
+  },
+
+  getGoal: (id: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.GET, id)
+  },
+
+  listGoals: (query?: import('@proma/shared').GoalQuery) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.LIST, query)
+  },
+
+  updateGoal: (id: string, input: import('@proma/shared').GoalUpdateInput) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UPDATE, id, input)
+  },
+
+  deleteGoal: (id: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.DELETE, id)
+  },
+
+  upsertGoalTodo: (goalId: string, input: import('@proma/shared').UpsertTodoInput) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UPSERT_TODO, goalId, input)
+  },
+
+  updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UPDATE_TODO_STATUS, goalId, todoId, status)
+  },
+
+  addGoalGate: (goalId: string, question: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.ADD_GATE, goalId, question)
+  },
+
+  resolveGoalGate: (goalId: string, gateId: string, resolution: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.RESOLVE_GATE, goalId, gateId, resolution)
+  },
+
+  appendGoalEvidence: (goalId: string, evidence: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.APPEND_EVIDENCE, goalId, evidence)
   },
 
   setDynamicIslandEnabled: (enabled: boolean) => {
