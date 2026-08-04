@@ -166,4 +166,10 @@ export const GOAL_IPC_CHANNELS = {
   RESOLVE_GATE: 'goal:resolve-gate',
   /** 追加证据 */
   APPEND_EVIDENCE: 'goal:append-evidence',
+  /** 判断 Goal 当前是否应推进（should-run） */
+  SHOULD_RUN: 'goal:should-run',
+  /** 检查是否允许花费 */
+  CAN_SPEND: 'goal:can-spend',
+  /** 记录花费 */
+  SPEND_BUDGET: 'goal:spend-budget',
 } as const

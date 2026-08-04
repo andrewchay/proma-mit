@@ -16,7 +16,7 @@ mock.module('os', () => ({
   tmpdir,
 }))
 
-const { createGoal, getGoal, listGoals, updateGoal, deleteGoal, upsertGoalTodo, updateGoalTodoStatus, addGoalGate, resolveGoalGate, appendGoalEvidence } = await import('./goal-service')
+const { createGoal, getGoal, listGoals, updateGoal, deleteGoal, upsertGoalTodo, updateGoalTodoStatus, addGoalGate, resolveGoalGate, appendGoalEvidence, shouldGoalRun, canGoalSpend, spendGoalBudget } = await import('./goal-service')
 
 describe('Goal 服务', () => {
   let configDir: string
@@ -126,5 +126,48 @@ describe('Goal 服务', () => {
     // 即使加 todo 也不覆盖 completed
     goal = upsertGoalTodo(goal.id, { text: '迟到任务' })
     expect(goal.phase).toBe('completed')
+  })
+
+  test('should-run：有 todo 且无 gate 时允许推进', () => {
+    let goal = createGoal({ title: 'A', objective: 'o' })
+    goal = upsertGoalTodo(goal.id, { text: '任务' })
+    expect(shouldGoalRun(goal.id)).toEqual({ shouldRun: true })
+  })
+
+  test('should-run：有待处理 gate 时等待用户', () => {
+    let goal = createGoal({ title: 'A', objective: 'o' })
+    goal = upsertGoalTodo(goal.id, { text: '任务' })
+    goal = addGoalGate(goal.id, '是否允许执行？')
+    const res = shouldGoalRun(goal.id)
+    expect(res.shouldRun).toBe(false)
+    expect(res.reason).toBe('waiting_user')
+  })
+
+  test('should-run：无 todo 时不推进', () => {
+    const goal = createGoal({ title: 'A', objective: 'o' })
+    const res = shouldGoalRun(goal.id)
+    expect(res.shouldRun).toBe(false)
+    expect(res.reason).toBe('no_actionable_todo')
+  })
+
+  test('配额：超限后 can-spend / should-run 返回 false', () => {
+    let goal = createGoal({ title: 'A', objective: 'o' })
+    goal = upsertGoalTodo(goal.id, { text: '任务' })
+    goal = updateGoal(goal.id, { quota: { maxBudgetUsd: 1, spentUsd: 0 } })
+
+    // 未超过配额
+    expect(canGoalSpend(goal.id, 0.5).allowed).toBe(true)
+    expect(shouldGoalRun(goal.id).shouldRun).toBe(true)
+
+    // 花费 0.8（累计 0.8），再请求 0.5 → 超限
+    spendGoalBudget(goal.id, 0.8)
+    expect(canGoalSpend(goal.id, 0.5).allowed).toBe(false)
+    expect(canGoalSpend(goal.id, 0.2).allowed).toBe(true)
+
+    // 累计 1.0 耗尽 → should-run 停止
+    spendGoalBudget(goal.id, 0.2)
+    const res = shouldGoalRun(goal.id)
+    expect(res.shouldRun).toBe(false)
+    expect(res.reason).toBe('quota_exhausted')
   })
 })

@@ -1162,6 +1162,12 @@ export interface ElectronAPI {
   resolveGoalGate: (goalId: string, gateId: string, resolution: string) => Promise<import('@proma/shared').Goal>
   /** 追加证据 */
   appendGoalEvidence: (goalId: string, evidence: string) => Promise<import('@proma/shared').Goal>
+  /** 判断 Goal 当前是否应推进 */
+  goalShouldRun: (goalId: string) => Promise<{ shouldRun: boolean; reason?: string }>
+  /** 检查是否允许花费 */
+  goalCanSpend: (goalId: string, usd: number) => Promise<{ allowed: boolean; reason?: string }>
+  /** 记录 Goal 花费 */
+  goalSpendBudget: (goalId: string, usd: number) => Promise<import('@proma/shared').Goal>
 
   /** 设置灵动岛总开关 */
   setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
@@ -2717,6 +2723,18 @@ const electronAPI: ElectronAPI = {
 
   appendGoalEvidence: (goalId: string, evidence: string) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.APPEND_EVIDENCE, goalId, evidence)
+  },
+
+  goalShouldRun: (goalId: string) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.SHOULD_RUN, goalId)
+  },
+
+  goalCanSpend: (goalId: string, usd: number) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.CAN_SPEND, goalId, usd)
+  },
+
+  goalSpendBudget: (goalId: string, usd: number) => {
+    return ipcRenderer.invoke(GOAL_IPC_CHANNELS.SPEND_BUDGET, goalId, usd)
   },
 
   setDynamicIslandEnabled: (enabled: boolean) => {

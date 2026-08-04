@@ -295,4 +295,80 @@ export const goalService = {
   addGate: addGoalGate,
   resolveGate: resolveGoalGate,
   appendEvidence: appendGoalEvidence,
+  shouldRun: shouldGoalRun,
+  spendBudget: spendGoalBudget,
+  canSpend: canGoalSpend,
+}
+
+// ===== 配额（P1） =====
+
+/**
+ * 判断某个 Goal 当前是否应推进（should-run）
+ *
+ * 返回 false 的场景：
+ * - 未设置配额时默认可得；
+ * - 有未解决的用户门控（等待用户，不自动执行）；
+ * - 没有需要执行的 open todo（无工作可推进）；
+ * - 配额已耗尽。
+ */
+export function shouldGoalRun(goalId: string): { shouldRun: boolean; reason?: string } {
+  const goal = readGoal(goalId)
+  if (!goal) return { shouldRun: false, reason: 'goal_not_found' }
+
+  // 已完成/已归档不再推进
+  if (goal.phase === 'completed' || goal.phase === 'archived') {
+    return { shouldRun: false, reason: 'goal_terminated' }
+  }
+
+  // 有未解决的用户门控 → 等待用户，不自动执行
+  const openGate = goal.gates.some((g) => g.status === 'open')
+  if (openGate) {
+    return { shouldRun: false, reason: 'waiting_user' }
+  }
+
+  // 没有需要执行的 todo
+  const hasActionableTodo = goal.todos.some((t) => ['open', 'claimed', 'in_progress'].includes(t.status))
+  if (!hasActionableTodo) {
+    return { shouldRun: false, reason: 'no_actionable_todo' }
+  }
+
+  // 配额检查
+  const quota = goal.quota
+  if (quota?.maxBudgetUsd && (quota.spentUsd ?? 0) >= quota.maxBudgetUsd) {
+    return { shouldRun: false, reason: 'quota_exhausted' }
+  }
+
+  return { shouldRun: true }
+}
+
+/**
+ * 检查 Goal 是否允许花费（配额足够）
+ */
+export function canGoalSpend(goalId: string, usd: number): { allowed: boolean; reason?: string } {
+  const goal = readGoal(goalId)
+  if (!goal) return { allowed: false, reason: 'goal_not_found' }
+  const quota = goal.quota
+  if (!quota?.maxBudgetUsd) return { allowed: true } // 未设置配额 → 不限制
+  const spent = quota.spentUsd ?? 0
+  if (spent + usd > quota.maxBudgetUsd) {
+    return { allowed: false, reason: 'quota_exhausted' }
+  }
+  return { allowed: true, reason: 'quota_available' }
+}
+
+/**
+ * 记录 Goal 已花费（spend-budget）
+ */
+export function spendGoalBudget(goalId: string, usd: number): Goal {
+  const goal = readGoal(goalId)
+  if (!goal) throw new Error(`Goal 不存在: ${goalId}`)
+  if (usd <= 0) return goal
+  goal.quota = {
+    maxBudgetUsd: goal.quota?.maxBudgetUsd,
+    spentUsd: (goal.quota?.spentUsd ?? 0) + usd,
+  }
+  goal.updatedAt = now()
+  writeGoal(goal)
+  rebuildIndex()
+  return goal
 }

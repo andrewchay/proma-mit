@@ -140,6 +140,8 @@ class AppEventBus {
   dispatch(sessionId: string, payload: AgentStreamPayload): void {
     const event = toAppEvent(sessionId, payload)
     if (!event) return
+    // P1-3: Goal 证据自动沉淀（completed/failed 且会话绑定 Goal 时）
+    this.sinkGoalEvidence(event)
     this.recent.unshift(event)
     if (this.recent.length > this.maxRecent) this.recent.length = this.maxRecent
     for (const handler of this.handlers) {
@@ -148,6 +150,28 @@ class AppEventBus {
       } catch (error) {
         console.error('[AppEventBus] 事件处理器错误:', error)
       }
+    }
+  }
+
+  /** 把运行证据沉淀到关联 Goal（P1-3） */
+  private sinkGoalEvidence(event: AppEventEnvelope): void {
+    if (event.type !== 'completed' && event.type !== 'failed') return
+    if (!event.sessionId) return
+    try {
+      // 延迟 require，避免模块加载期循环依赖
+      const { getAgentSessionMeta } = require('./agent-session-manager') as { getAgentSessionMeta: (id: string) => { goalId?: string } | undefined }
+      const goalId = getAgentSessionMeta(event.sessionId)?.goalId
+      if (!goalId) return
+      const { buildSessionEvidence, formatEvidenceSummary } = require('./evidence-service') as {
+        buildSessionEvidence: (sid: string, state: 'completed' | 'failed') => import('@proma/shared').RunEvidence
+        formatEvidenceSummary: (e: import('@proma/shared').RunEvidence) => string
+      }
+      const { appendGoalEvidence } = require('./goal-service') as { appendGoalEvidence: (goalId: string, e: string) => unknown }
+      const evidence = buildSessionEvidence(event.sessionId, event.type === 'completed' ? 'completed' : 'failed')
+      const summary = formatEvidenceSummary(evidence)
+      appendGoalEvidence(goalId, summary)
+    } catch (error) {
+      console.error('[AppEventBus] Goal 证据沉淀失败:', error)
     }
   }
 

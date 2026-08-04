@@ -39,6 +39,8 @@ export function toRunRecord(event: AppEventEnvelope): RunRecord {
     ...(event.type === 'waiting_action' ? { actionKind: event.actionKind } : {}),
     ...('detail' in event && event.detail ? { detail: event.detail } : {}),
     ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+    ...('goalId' in event && event.goalId ? { goalId: event.goalId } : {}),
+    ...('evidence' in event && event.evidence ? { evidence: event.evidence } : {}),
     timestamp: event.timestamp,
   }
 }
@@ -63,7 +65,6 @@ class RunStore {
   /** 查询运行记录（按时间倒序） */
   query(query: RunRecordQuery = {}): RunRecord[] {
     const { source, status, limit = 100, from } = query
-    const now = Date.now()
     const results = this.cache.filter((r) => {
       if (source && r.source !== source) return false
       if (status && r.status !== status) return false

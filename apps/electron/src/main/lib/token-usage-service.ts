@@ -631,3 +631,8 @@ export const tokenUsageService = new TokenUsageService()
 export function createTokenUsageService(): TokenUsageService {
   return new TokenUsageService()
 }
+
+/** 便捷查询：供证据服务等按条件读取 token 使用记录 */
+export function getTokenUsageRecords(query: import('@proma/shared').TokenUsageQuery): import('@proma/shared').TokenUsageRecord[] {
+  return tokenUsageService.query(query)
+}

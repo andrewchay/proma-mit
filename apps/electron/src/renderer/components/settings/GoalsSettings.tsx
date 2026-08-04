@@ -98,6 +98,24 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
         </div>
       </div>
 
+      {/* 配额展示（P1） */}
+      {goal.quota?.maxBudgetUsd !== undefined && (
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground px-1">
+          <span>配额</span>
+          <div className="flex-1 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-blue-500/60"
+              style={{
+                width: `${Math.min(100, ((goal.quota.spentUsd ?? 0) / goal.quota.maxBudgetUsd) * 100)}%`,
+              }}
+            />
+          </div>
+          <span className="tabular-nums">
+            ${(goal.quota.spentUsd ?? 0).toFixed(3)} / ${goal.quota.maxBudgetUsd.toFixed(3)}
+          </span>
+        </div>
+      )}
+
       {/* Todos */}
       <SettingsCard>
         <div className="px-4 py-2 text-sm font-medium text-foreground/80 border-b border-border/30 flex items-center gap-2">

@@ -69,6 +69,10 @@ export type AppEventEnvelope =
       sessionId?: string
       /** 结果摘要 */
       detail?: string
+      /** 关联 Goal id */
+      goalId?: string
+      /** 本次运行的结构化证据 */
+      evidence?: import('./run-record').RunEvidence
       timestamp: number
     }
   | {
@@ -81,6 +85,8 @@ export type AppEventEnvelope =
       detail: string
       /** 是否可重试 */
       retryable?: boolean
+      /** 关联 Goal id */
+      goalId?: string
       timestamp: number
     }
 

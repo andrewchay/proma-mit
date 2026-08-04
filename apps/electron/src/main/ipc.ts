@@ -3680,6 +3680,9 @@ export function registerIpcHandlers(): void {
     addGoalGate: (goalId: string, question: string) => import('@proma/shared').Goal
     resolveGoalGate: (goalId: string, gateId: string, resolution: string) => import('@proma/shared').Goal
     appendGoalEvidence: (goalId: string, evidence: string) => import('@proma/shared').Goal
+    shouldGoalRun: (goalId: string) => { shouldRun: boolean; reason?: string }
+    canGoalSpend: (goalId: string, usd: number) => { allowed: boolean; reason?: string }
+    spendGoalBudget: (goalId: string, usd: number) => import('@proma/shared').Goal
   }
   ipcMain.handle(GOAL_IPC_CHANNELS.CREATE, async (_event, input: import('@proma/shared').GoalCreateInput): Promise<import('@proma/shared').Goal> => goalSvc.createGoal(input))
   ipcMain.handle(GOAL_IPC_CHANNELS.GET, async (_event, id: string): Promise<import('@proma/shared').Goal | null> => goalSvc.getGoal(id) ?? null)
@@ -3691,6 +3694,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(GOAL_IPC_CHANNELS.ADD_GATE, async (_event, goalId: string, question: string): Promise<import('@proma/shared').Goal> => goalSvc.addGoalGate(goalId, question))
   ipcMain.handle(GOAL_IPC_CHANNELS.RESOLVE_GATE, async (_event, goalId: string, gateId: string, resolution: string): Promise<import('@proma/shared').Goal> => goalSvc.resolveGoalGate(goalId, gateId, resolution))
   ipcMain.handle(GOAL_IPC_CHANNELS.APPEND_EVIDENCE, async (_event, goalId: string, evidence: string): Promise<import('@proma/shared').Goal> => goalSvc.appendGoalEvidence(goalId, evidence))
+  ipcMain.handle(GOAL_IPC_CHANNELS.SHOULD_RUN, async (_event, goalId: string): Promise<{ shouldRun: boolean; reason?: string }> => goalSvc.shouldGoalRun(goalId))
+  ipcMain.handle(GOAL_IPC_CHANNELS.CAN_SPEND, async (_event, goalId: string, usd: number): Promise<{ allowed: boolean; reason?: string }> => goalSvc.canGoalSpend(goalId, usd))
+  ipcMain.handle(GOAL_IPC_CHANNELS.SPEND_BUDGET, async (_event, goalId: string, usd: number): Promise<import('@proma/shared').Goal> => goalSvc.spendGoalBudget(goalId, usd))
 
   // ===== macOS 灵动岛通知 =======
   ipcMain.handle(DYNAMIC_ISLAND_IPC_CHANNELS.GET_STATE, async () => {
