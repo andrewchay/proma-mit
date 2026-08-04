@@ -5,7 +5,7 @@ import type {
 } from '../types/agent'
 import { PROMA_DEFAULT_PERMISSION_MODE, serializeAgentStreamEnvelopeForSSE } from '../types/agent'
 import type { AgentProviderProtocol, ProviderType } from '../types/channel'
-import type { RuntimeSpanSink } from '../types/runtime-span'
+import type { RuntimeSpanQueryTool, RuntimeSpanSink } from '../types/runtime-span'
 import type {
   AgentRuntimeInteractionKind,
   AgentRuntimeInteractionRequest,
@@ -82,6 +82,8 @@ export interface AgentRuntimeWebAgentTurnInput {
   spanSink?: RuntimeSpanSink
   /** 逻辑 trace 标识；缺省回退为 taskId，P-II/III 与 HTTP trace 贯穿。 */
   traceId?: string
+  /** P-III：Agent 自查运行档案的只读查询能力（按 scope 隔离）；未注入则相关工具不注册。 */
+  spanQuery?: RuntimeSpanQueryTool
 }
 
 export interface AgentRuntimeWebSubtaskLimits {

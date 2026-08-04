@@ -42,6 +42,7 @@ import { PostgresUsageLedger, usageFromMessages } from './billing.ts'
 import { PostgresAuditLog } from './audit.ts'
 import type { AuditRecord } from './audit.ts'
 import { PostgresRuntimeSpanStore } from './spans.ts'
+import { createSpanQueryToolAdapter } from './span-query-tools.ts'
 import { PostgresRuntimeMetrics } from './metrics.ts'
 import { PostgresSignalStore } from './signals.ts'
 import { PostgresSignalDataSource, SignalScanner } from './signal-scan.ts'
@@ -189,6 +190,7 @@ export function createPromaWebServerApplication(
             ...runtimeInput,
             mcpTools: mcp?.tools,
             spanSink: spanStore,
+            spanQuery: createSpanQueryToolAdapter(spanStore),
             executeIsolatedCommand: isolatedExecutor ? (request, signal) => isolatedExecutor.execute(request, signal) : undefined,
           })
         } finally {

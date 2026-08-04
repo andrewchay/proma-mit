@@ -5,6 +5,7 @@ import { AGENT_PROVIDER_RUNTIME_CAPABILITIES, resolveAgentRuntimeBaseUrl } from 
 import { generateText, isStepCount, jsonSchema, streamText, tool } from 'ai'
 import { createWorkspaceReadTools } from './workspace-tools.ts'
 import { createWorkspaceWriteTool, writeWorkspaceFile } from './workspace-tools.ts'
+import { createSpanQueryTools } from './span-query-tools.ts'
 import { createServerMcpToolSet } from './server-mcp-tools.ts'
 import type { AskUserRequest, AskUserResponse, ExitPlanModeRequest, ExitPlanModeResponse, PermissionRequest, PermissionResponse } from '@proma/shared'
 
@@ -115,11 +116,12 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
       }),
     } : {}),
   }
+  const spanQueryTools = input.spanQuery ? createSpanQueryTools(input.spanQuery, input.scope) : {}
   const result = streamText({
     model,
     prompt: createPromptWithHistory(input.historyMessages, input.prompt),
     abortSignal: input.signal,
-    tools: { ...readTools, ...interactionTools, ...mutableTools },
+    tools: { ...readTools, ...interactionTools, ...mutableTools, ...spanQueryTools },
     stopWhen: isStepCount(8),
   })
 

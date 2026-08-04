@@ -125,3 +125,23 @@ P-II（自然语言 Signals，基于 span 树的确定性监测）已完成，�
 **说明**：P-II 刻意不碰 `packages/shared`（当时有并行会话在改 Goal/Token），所有类型都放在 server 本地。
 
 **后续**：P-III Agent 自查 span（只读 MCP/工具）；P-IV evals/datasets；桌面/Web 端 Signal 列表呈现（数据层+API 已就绪，UI 见 P6-3）。
+
+## 九、P-III 实施记录（2026-08-04）
+
+P-III（Agent 自查 span，运行档案只读工具）已完成，交付如下：
+
+| 文件 | 职责 |
+|---|---|
+| `packages/shared/src/types/runtime-span.ts`（改） | 新增 `RuntimeSpanQueryTool`（getTaskTree/listRecentRuns/searchSpans）与 `AgentRunSummary` 只读契约 |
+| `packages/shared/src/utils/agent-runtime-web-server.ts`（改） | `AgentRuntimeWebAgentTurnInput` 增加可选 `spanQuery`（未注入则相关工具不注册） |
+| `apps/server/src/spans.ts`（改） | `listRecentTasks` + `searchSpans`（关键字/类型/状态/时间窗） |
+| `apps/server/src/span-query-tools.ts`（新增） | `createSpanQueryToolAdapter`（spanStore→RuntimeSpanQueryTool）+ `createSpanQueryTools`（RunInspect/ListRecentRuns/RunSearch 三只读工具） |
+| `apps/server/src/runtime.ts`（改） | `input.spanQuery` 追加只读自查工具到工具集 |
+| `apps/server/src/app.ts`（改） | 装配 `spanQuery=createSpanQueryToolAdapter(spanStore)` |
+| `apps/server/src/span-query.test.ts`（新增） | 5 个单测：工具注册、scope 隔离、scope+taskId 透传、search 参数、非法 status 不透传 |
+
+**核心设计**：工具严格只读、强制构造时的 scope（tenant/user）隔离，不跨租户；未注入 spanQuery 时不注册（向后兼容）；不建新表。让 Agent 失败后自查 RunInspect/ListRecentRuns/RunSearch 做溯源与自我复盘，形成自调试闭环（Laminar D3 本地化）。
+
+**验证**：项目全量 typecheck 通过（含 shared+electron，确认并行 Goal 会话未冲突）；biome 无问题；server 60 tests 过（新增 5 个 P-III 测试）；唯一失败仍是既有的 provider 矩阵测试（与 P-III 无关）。
+
+**后续**：P-IV evals/datasets 飞轮；Web/桌面端运行档案 + Signal 列表的可视化呈现（P6-3）。

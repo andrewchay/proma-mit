@@ -50,3 +50,27 @@ export interface RuntimeSpanSink {
   /** 结束 span 时带 status + 可选 error/meta。 */
   end(spanId: string, patch: { status: RuntimeSpanStatus; error?: string; meta?: Record<string, unknown> }): Promise<void> | void
 }
+
+/** P-III：Agent 自查运行档案的只读能力契约（按当前 scope 严格隔离）。 */
+export interface RuntimeSpanQueryTool {
+  /** 按 taskId 返回该 task 的 span 嵌套树（可空表示无记录）。 */
+  getTaskTree(scope: AgentRuntimeScope, taskId: string): Promise<RuntimeSpanNode[]>
+  /** 列出当前 scope 最近任务的最小元数据（id/session/status/startedAt）。 */
+  listRecentRuns(scope: AgentRuntimeScope, limit?: number): Promise<AgentRunSummary[]>
+  /** 按关键字/类型/状态/时间窗搜索 span 扁平列表。 */
+  searchSpans(scope: AgentRuntimeScope, input: {
+    query?: string
+    kind?: RuntimeSpanKind
+    status?: RuntimeSpanStatus
+    sinceMs?: number
+    limit?: number
+  }): Promise<RuntimeSpan[]>
+}
+
+export interface AgentRunSummary extends AgentRuntimeScope {
+  taskId: string
+  sessionId: string
+  status: string
+  startedAt: number
+  completedAt?: number
+}

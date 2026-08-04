@@ -132,6 +132,50 @@ export class PostgresRuntimeSpanStore implements RuntimeSpanSink {
     }
   }
 
+  /** P-III：列出当前 scope 最近任务最小元数据（供 Agent 自查 ListRecentRuns）。 */
+  async listRecentTasks(scope: AgentRuntimeScope, limit = 20): Promise<Array<{ taskId: string; sessionId: string; status: string; startedAt: number; completedAt?: number }>> {
+    const limited = Math.min(limit, 100)
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT task_id, session_id, status, started_at, completed_at
+       FROM proma_runtime_tasks
+       WHERE tenant_id = $1 AND user_id = $2
+       ORDER BY started_at DESC LIMIT $3`,
+      [scope.tenantId, scope.userId, limited],
+    )
+    return result.rows.map((row) => ({
+      taskId: String(row.task_id),
+      sessionId: String(row.session_id),
+      status: String(row.status),
+      startedAt: toSafeNumber(row.started_at),
+      ...(row.completed_at == null ? {} : { completedAt: toSafeNumber(row.completed_at) }),
+    }))
+  }
+
+  /** P-III：按关键字（name/error）搜索 window 内 span。 */
+  async searchSpans(scope: AgentRuntimeScope, input: {
+    query?: string
+    kind?: RuntimeSpan['kind']
+    status?: RuntimeSpanStatus
+    sinceMs?: number
+    limit?: number
+  }): Promise<RuntimeSpan[]> {
+    const limited = Math.min(input.limit ?? 50, 200)
+    const from = input.sinceMs == null ? 0 : Date.now() - input.sinceMs
+    const conditions = ['tenant_id = $1', 'user_id = $2', 'started_at >= $3']
+    const params: unknown[] = [scope.tenantId, scope.userId, from]
+    if (input.kind) { conditions.push(`kind = $${params.length + 1}`); params.push(input.kind) }
+    if (input.status) { conditions.push(`status = $${params.length + 1}`); params.push(input.status) }
+    if (input.query) { conditions.push(`(name ILIKE $${params.length + 1} OR COALESCE(error,'') ILIKE $${params.length + 1})`); params.push(`%${input.query}%`) }
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT trace_id, tenant_id, user_id, session_id, task_id, parent_span_id, span_id,
+              kind, name, started_at, ended_at, status, error, meta
+       FROM proma_runtime_spans WHERE ${conditions.join(' AND ')}
+       ORDER BY started_at DESC LIMIT $${params.length + 1}`,
+      [...params, limited],
+    )
+    return result.rows.map(toRuntimeSpan)
+  }
+
   private async querySpans(query: RuntimeSpanQuery): Promise<RuntimeSpan[]> {
     const limit = 2_000
     const result = await this.client.query<Record<string, unknown>>(
