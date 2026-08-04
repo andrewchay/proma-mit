@@ -23,7 +23,7 @@ class MemoryClient {
       this.samples.push({
         tenant_id: params[0], user_id: params[1], sample_id: params[2], dataset_id: params[3], task_id: params[4],
         kind: params[5], name: params[6], status: params[7], duration_ms: params[8], input_tokens: params[9],
-        output_tokens: params[10], cost_microusd: params[11], error: params[12], rooted_at: params[13],
+        output_tokens: params[10], cost_microusd: params[11], input: params[12], output: params[13], error: params[14], rooted_at: params[15],
       })
       return { rows: [] }
     }
@@ -84,6 +84,23 @@ describe('PostgresEvalDatasetStore（P-IV 评估数据集）', () => {
     const store = new PostgresEvalDatasetStore(client as never, emptySource)
     await store.createDatasetFromWindow({ scope, name: '空集', windowMs: 60_000, sampleRate: 1 })
     expect(client.samples.length).toBe(0)
+  })
+
+  test('带 meta.sample 的 provider span 被抽取为 input/output', async () => {
+    const sampleSource: EvalSpanSource = {
+      ...spanSource,
+      querySpansInWindow: async () => [{
+        traceId: 't', tenantId: 'tenant', userId: 'user', sessionId: 's', taskId: 'task-sample', spanId: 'p',
+        kind: 'provider', name: 'provider:openai:gpt-4o', startedAt: 100, endedAt: 500, status: 'ok',
+        meta: { inputTokens: 3, outputTokens: 4, sample: { input: '用户问题：在文件里找 bug', output: '已修复' } },
+      } as RuntimeSpan],
+    }
+    const client = new MemoryClient()
+    const store = new PostgresEvalDatasetStore(client as never, sampleSource)
+    await store.createDatasetFromWindow({ scope, name: '采样集', windowMs: 60_000, sampleRate: 1 })
+    expect(client.samples).toHaveLength(1)
+    expect(client.samples[0]?.input).toBe('用户问题：在文件里找 bug')
+    expect(client.samples[0]?.output).toBe('已修复')
   })
 
   test('archiveRun 把一个 run 的 provider span 固化为样本', async () => {

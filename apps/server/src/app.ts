@@ -82,6 +82,8 @@ export interface PromaWebServerConfig {
   mcpOAuthCallbackBaseUrl?: string
   subtaskLimits?: { maxDepth: number; maxChildrenPerTask: number; maxOutputTokensPerTask: number }
   operations?: { siemWebhookUrl?: string; alertWebhookUrl?: string }
+  /** P-IV：运行时输入/输出采样；不配置则不采集内容快照（local-first）。 */
+  spanSampling?: { enabled: boolean; rate?: number; maxBytes?: number }
 }
 
 export interface PromaWebServerDependencies {
@@ -198,6 +200,7 @@ export function createPromaWebServerApplication(
             mcpTools: mcp?.tools,
             spanSink: spanStore,
             spanQuery: createSpanQueryToolAdapter(spanStore),
+            spanSampling: config.spanSampling ? { enabled: config.spanSampling.enabled, rate: config.spanSampling.rate ?? 0.1, maxBytes: config.spanSampling.maxBytes ?? 512 } : undefined,
             executeIsolatedCommand: isolatedExecutor ? (request, signal) => isolatedExecutor.execute(request, signal) : undefined,
           })
         } finally {

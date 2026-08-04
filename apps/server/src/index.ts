@@ -29,6 +29,7 @@ const executor = parseExecutor(process.env.PROMA_WEB_EXECUTOR_ENDPOINT, process.
 const mcpOAuthCallbackBaseUrl = process.env.PROMA_WEB_MCP_OAUTH_CALLBACK_BASE_URL
 const operations = parseOperations(process.env.PROMA_WEB_SIEM_WEBHOOK_URL, process.env.PROMA_WEB_ALERT_WEBHOOK_URL)
 const subtaskLimits = parseSubtaskLimits(process.env.PROMA_WEB_SUBTASK_MAX_DEPTH, process.env.PROMA_WEB_SUBTASK_MAX_CHILDREN, process.env.PROMA_WEB_SUBTASK_MAX_OUTPUT_TOKENS)
+const spanSampling = parseSpanSampling(process.env.PROMA_WEB_SPAN_SAMPLING, process.env.PROMA_WEB_SPAN_SAMPLE_RATE, process.env.PROMA_WEB_SPAN_SAMPLE_MAX_BYTES)
 const kms = parseKms(process.env.PROMA_WEB_AWS_KMS_KEY_ID, process.env.PROMA_WEB_AWS_REGION, process.env.PROMA_WEB_AWS_KMS_ENDPOINT)
 
 if (!trustedHeaderAuth) {
@@ -56,6 +57,7 @@ const application = createPromaWebServerApplication({
   mcpOAuthCallbackBaseUrl,
   operations,
   subtaskLimits,
+  spanSampling,
   kms,
 }, trustedHeaderAuth ? {} : { auth: createOidcJwtAuth({
   issuer: requireEnvironment('PROMA_WEB_OIDC_ISSUER'), audience: requireEnvironment('PROMA_WEB_OIDC_AUDIENCE'), jwksUrl: requireEnvironment('PROMA_WEB_OIDC_JWKS_URL'),
@@ -175,4 +177,20 @@ function parseKms(keyId: string | undefined, region: string | undefined, endpoin
   if (!region) throw new Error('配置 PROMA_WEB_AWS_KMS_KEY_ID 时必须同时配置 PROMA_WEB_AWS_REGION')
   if (endpoint) new URL(endpoint)
   return { keyId, region, endpoint }
+}
+
+function parseSpanSampling(enabledRaw: string | undefined, rateRaw: string | undefined, maxBytesRaw: string | undefined): { enabled: boolean; rate: number; maxBytes: number } | undefined {
+  if (enabledRaw === undefined || enabledRaw === '') return undefined
+  const enabled = enabledRaw === '1' || enabledRaw.toLowerCase() === 'true'
+  if (!enabled) return undefined
+  const rate = parseInRange(rateRaw, 0.1, 0, 1, 'PROMA_WEB_SPAN_SAMPLE_RATE')
+  const maxBytes = parseInRange(maxBytesRaw, 512, 32, 16_384, 'PROMA_WEB_SPAN_SAMPLE_MAX_BYTES')
+  return { enabled, rate, maxBytes }
+}
+
+function parseInRange(value: string | undefined, fallback: number, min: number, max: number, name: string): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) throw new Error(`${name} 必须在 ${min}..${max} 之间`)
+  return parsed
 }

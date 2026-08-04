@@ -29,6 +29,10 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
   const spanSink = input.spanSink
   const traceId = input.traceId ?? input.taskId
   const providerSpanId = spanSink ? crypto.randomUUID() : undefined
+  // P-IV：本 run 是否命中输入/输出采样（仅采样开启且概率命中时保留快照，默认不开启）。
+  const sampling = input.spanSampling
+  const sampleRun = Boolean(sampling?.enabled && Math.random() < (sampling?.rate ?? 0))
+  const maxBytes = sampling?.maxBytes ?? 512
   if (providerSpanId && spanSink) {
     await spanSink.begin({
       traceId,
@@ -151,6 +155,11 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
     activeToolSpans.delete(toolUseId)
     void spanSink.end(spanId, { status, meta })
   }
+  // 仅采样命中本 run 时，把截断的 tool input/output 附到 span meta，供 EvalDataset 抽取。
+  const sampleIfActive = (inputValue: unknown, outputValue: unknown): Record<string, unknown> | undefined => {
+    if (!sampleRun) return undefined
+    return { sample: { input: truncateMeta(JSON.stringify(inputValue ?? ''), maxBytes), output: truncateMeta(JSON.stringify(outputValue ?? ''), maxBytes) } }
+  }
   try { for await (const part of result.fullStream) {
     if (part.type === 'text-delta') {
       text += part.text
@@ -162,13 +171,13 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
       beginToolSpan(part.toolCallId, part.toolName)
       input.emit({ kind: 'agent_event', event: { type: 'tool_start', toolName: part.toolName, toolUseId: part.toolCallId, input: toolInput(part.input) } })
     } else if (part.type === 'tool-result') {
-      endToolSpan(part.toolCallId, 'ok', { resultTruncated: truncateMeta(toolOutput(part.output)) })
+      endToolSpan(part.toolCallId, 'ok', { ...sampleIfActive(part.input, part.output), resultTruncated: truncateMeta(toolOutput(part.output)) })
       input.emit({ kind: 'agent_event', event: {
         type: 'tool_result', toolName: part.toolName, toolUseId: part.toolCallId, input: toolInput(part.input),
         result: toolOutput(part.output), isError: false,
       } })
     } else if (part.type === 'tool-error') {
-      endToolSpan(part.toolCallId, 'error', { error: truncateMeta(errorMessage(part.error)) })
+      endToolSpan(part.toolCallId, 'error', { ...sampleIfActive(part.input, errorMessage(part.error)), error: truncateMeta(errorMessage(part.error)) })
       input.emit({ kind: 'agent_event', event: {
         type: 'tool_result', toolName: part.toolName, toolUseId: part.toolCallId, input: toolInput(part.input),
         result: errorMessage(part.error), isError: true,
@@ -196,6 +205,7 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
         outputTokens: usage.outputTokens ?? 0,
         cacheReadTokens: usage.inputTokenDetails.cacheReadTokens,
         cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens,
+        ...(sampleRun ? { sample: { input: truncateMeta(createPromptWithHistory(input.historyMessages, input.prompt), maxBytes), output: truncateMeta(text, maxBytes) } } : {}),
       },
     })
   }

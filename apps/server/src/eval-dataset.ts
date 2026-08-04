@@ -33,6 +33,9 @@ export interface EvalSample extends AgentRuntimeScope {
   inputTokens?: number
   outputTokens?: number
   costMicroUsd?: number
+  /** P-IV 路线1：采样命中的截断输入/输出内容快照。 */
+  input?: string
+  output?: string
   error?: string
   rootedAt: number
 }
@@ -66,6 +69,7 @@ export class PostgresEvalDatasetStore {
       dataset_id TEXT NOT NULL, task_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
       status TEXT NOT NULL, duration_ms BIGINT NOT NULL,
       input_tokens BIGINT, output_tokens BIGINT, cost_microusd BIGINT,
+      input TEXT, output TEXT,
       error TEXT, rooted_at BIGINT NOT NULL,
       PRIMARY KEY (tenant_id, user_id, dataset_id, task_id, sample_id))`)
   }
@@ -161,7 +165,7 @@ export class PostgresEvalDatasetStore {
   async listSamples(query: EvalSampleQuery): Promise<EvalSample[]> {
     const limit = Math.min(query.limit ?? 200, 1_000)
     const result = await this.client.query<Record<string, unknown>>(
-      `SELECT tenant_id,user_id,sample_id,dataset_id,task_id,kind,name,status,duration_ms,input_tokens,output_tokens,cost_microusd,error,rooted_at
+      `SELECT tenant_id,user_id,sample_id,dataset_id,task_id,kind,name,status,duration_ms,input_tokens,output_tokens,cost_microusd,input,output,error,rooted_at
        FROM proma_runtime_eval_samples WHERE tenant_id = $1 AND user_id = $2 AND dataset_id = $3
        ORDER BY rooted_at DESC LIMIT $4`,
       [query.tenantId, query.userId, query.datasetId, limit],
@@ -188,11 +192,12 @@ export class PostgresEvalDatasetStore {
 
   private async insertSample(dataset: EvalDataset, sampleId: string, sample: EvalSample): Promise<void> {
     await this.client.query(
-      `INSERT INTO proma_runtime_eval_samples (tenant_id,user_id,sample_id,dataset_id,task_id,kind,name,status,duration_ms,input_tokens,output_tokens,cost_microusd,error,rooted_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      `INSERT INTO proma_runtime_eval_samples (tenant_id,user_id,sample_id,dataset_id,task_id,kind,name,status,duration_ms,input_tokens,output_tokens,cost_microusd,input,output,error,rooted_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (tenant_id, user_id, dataset_id, task_id, sample_id) DO NOTHING`,
       [sample.tenantId, sample.userId, sampleId, sample.datasetId, sample.taskId, sample.kind, sample.name, sample.status,
         sample.durationMs, sample.inputTokens ?? null, sample.outputTokens ?? null, sample.costMicroUsd ?? null,
+        sample.input ?? null, sample.output ?? null,
         sample.error ?? null, sample.rootedAt],
     )
   }
@@ -203,6 +208,7 @@ function aggregateTaskSpans(dataset: EvalDataset, taskId: string, spans: Runtime
   if (!root) return undefined
   const durationMs = root.endedAt >= root.startedAt ? root.endedAt - root.startedAt : 0
   const meta = isRecord(root.meta) ? root.meta : {}
+  const sampleObject = isRecord(meta.sample) ? meta.sample : {}
   const firstError = spans.find((span) => span.status === 'error' && span.error)?.error
   return {
     ...dataset,
@@ -215,6 +221,8 @@ function aggregateTaskSpans(dataset: EvalDataset, taskId: string, spans: Runtime
     ...(meta.inputTokens != null ? { inputTokens: toNum(meta.inputTokens) } : {}),
     ...(meta.outputTokens != null ? { outputTokens: toNum(meta.outputTokens) } : {}),
     ...(meta.costMicroUsd != null ? { costMicroUsd: toNum(meta.costMicroUsd) } : {}),
+    ...(typeof sampleObject.input === 'string' ? { input: sampleObject.input } : {}),
+    ...(typeof sampleObject.output === 'string' ? { output: sampleObject.output } : {}),
     ...(firstError ? { error: firstError } : {}),
     rootedAt: root.startedAt,
   }
@@ -222,6 +230,7 @@ function aggregateTaskSpans(dataset: EvalDataset, taskId: string, spans: Runtime
 
 function flattenSample(dataset: EvalDataset, node: import('@proma/shared').RuntimeSpanNode): EvalSample {
   const meta = isRecord(node.meta) ? node.meta : {}
+  const sampleObject = isRecord(meta.sample) ? meta.sample : {}
   return {
     ...dataset,
     sampleId: randomUUID(),
@@ -232,6 +241,8 @@ function flattenSample(dataset: EvalDataset, node: import('@proma/shared').Runti
     durationMs: node.endedAt >= node.startedAt ? node.endedAt - node.startedAt : 0,
     ...(meta.inputTokens != null ? { inputTokens: toNum(meta.inputTokens) } : {}),
     ...(meta.outputTokens != null ? { outputTokens: toNum(meta.outputTokens) } : {}),
+    ...(typeof sampleObject.input === 'string' ? { input: sampleObject.input } : {}),
+    ...(typeof sampleObject.output === 'string' ? { output: sampleObject.output } : {}),
     ...(node.error ? { error: node.error } : {}),
     rootedAt: node.startedAt,
   }
@@ -265,6 +276,8 @@ function toSample(row: Record<string, unknown>): EvalSample {
     ...(row.input_tokens == null ? {} : { inputTokens: toNum(row.input_tokens) }),
     ...(row.output_tokens == null ? {} : { outputTokens: toNum(row.output_tokens) }),
     ...(row.cost_microusd == null ? {} : { costMicroUsd: toNum(row.cost_microusd) }),
+    ...(row.input == null ? {} : { input: String(row.input) }),
+    ...(row.output == null ? {} : { output: String(row.output) }),
     ...(row.error == null ? {} : { error: String(row.error) }),
     rootedAt: toNum(row.rooted_at),
   }

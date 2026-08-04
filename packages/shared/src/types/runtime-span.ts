@@ -37,6 +37,15 @@ export interface RuntimeSpan extends AgentRuntimeScope {
   meta?: Record<string, unknown>
 }
 
+export interface SpanSamplingConfig {
+  /** 采样开关；默认 false 时不采集任何内容快照（保住 local-first 轻量）。 */
+  enabled: boolean
+  /** 采样命中率 0..1；仅命中时保存截断的 input/output。 */
+  rate: number
+  /** 单段内容截断上限（字符）。 */
+  maxBytes: number
+}
+
 /** 创建 span 时尚未确定 endedAt/status，begin 阶段的数据契约。 */
 export type RuntimeSpanBegin = Omit<RuntimeSpan, 'endedAt' | 'status'>
 

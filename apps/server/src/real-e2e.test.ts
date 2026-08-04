@@ -54,5 +54,12 @@ describe.skipIf(!canRun)('服务端 AI SDK 真实 Provider E2E', () => {
     const events = await (await app.fetch(new Request(`http://server/agent/sessions/${sessionId}/events`, { headers }))).text()
     expect(events).toContain('text_delta')
     expect((await usageLedger.list({ ...scope })).some((record) => record.taskId === task.taskId && record.provider === entry.provider)).toBe(true)
+    // P-IV 真实数据挂钩：把本次真实 run 采样成评估数据集，断言样本归属于该 task。
+    const datasetRes = await app.fetch(new Request('http://server/agent/datasets', { method: 'POST', headers, body: JSON.stringify({ name: `real-e2e-${entry.provider}`, windowMs: 3_600_000, sampleRate: 1 }) }))
+    const { dataset } = await datasetRes.json() as { dataset: { datasetId: string; count: number } | { error: string } }
+    expect((dataset as { datasetId?: string }).datasetId).toBeTruthy()
+    const samplesRes = await app.fetch(new Request(`http://server/agent/datasets/${(dataset as { datasetId: string }).datasetId}/samples`, { headers }))
+    const { samples } = await samplesRes.json() as { samples: Array<{ taskId: string }> }
+    expect(samples.some((sample) => sample.taskId === task.taskId), '运行档案应能采样出本次 run').toBe(true)
   }, 90_000)
 })

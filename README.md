@@ -95,6 +95,8 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 如需启用 Redis 固定窗口限速，同时设置 `PROMA_WEB_RATE_LIMIT_TASKS` 与 `PROMA_WEB_RATE_LIMIT_WINDOW_MS`；限额按 tenant/user/model 生效，并在调用模型前拒绝超额请求。
 
+如需把运行时的真实输入/输出采样成评估数据集以形成「追踪→评估→再追踪」飞轮，可设置 `PROMA_WEB_SPAN_SAMPLING=1`（可选 `PROMA_WEB_SPAN_SAMPLE_RATE` 采样率 0..1 默认 0.1，`PROMA_WEB_SPAN_SAMPLE_MAX_BYTES` 单段截断上限默认 512）；默认关闭且不采集任何内容快照，`EvalSample` 仅含轻量结构化元数据与 token/成本。
+
 运行指标可通过 `GET /agent/metrics` 查询；`GET /agent/recovery/stale-tasks` 仅列出已超过 `PROMA_WEB_RECOVERY_STALE_AFTER_MS`（默认两倍任务租约）且没有有效租约的运行中任务。该诊断接口不会跨 worker 强制改写任务状态，避免误杀收尾中的任务。
 
 ## 模式选择

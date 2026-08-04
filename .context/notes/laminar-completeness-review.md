@@ -75,3 +75,24 @@
 验证：全项目 typecheck 通过；biome 干净；server 70 tests 过（新增 4 个）；唯一失败仍是既有的 provider 矩阵测试。
 
 **完成度更新**：P-I 从 70% 提升至 ~90%（trace 闭环+span cost 已补齐；剩余「运行档案 View UI」属 P6-3 呈现层）。
+
+## 十二、P-IV 路线1 补充记录（2026-08-04）
+
+按「路线1」补齐 P-IV 规格两点缺口（真实 input/output 采样 + 测试挂钩）：
+
+### 缺口① 真实 input/output 采样
+- `AgentRuntimeWebAgentTurnInput.spanSampling`（enabled/rate/maxBytes，默认关闭）。
+- runtime：采样命中本 run（`Math.random()<rate`）时，tool span meta 追加 `sample:{input,output}`（截断），provider span end 时追加 `sample`（input=prompt 摘要，output=生成的 text）。
+- `EvalSample` 增加 `input?`/`output?`，聚合/归档时从 span meta.sample 抽取。
+- 新表列 `input`/`output`（TEXT），insert/select/toSample 同步。
+
+### 缺口② 测试挂钩
+- `real-e2e.test.ts`：真实 provider run 后 `POST /agent/datasets` + 断言 sample 归属该 taskId——真实数据进飞轮的常驻挂钩。
+- `eval-dataset.test.ts` +1：带 meta.sample 的 provider span 被抽取为 input/output。
+
+### 装配 + 运维
+- `PromaWebServerConfig.spanSampling` → app 传 runtime；env `PROMA_WEB_SPAN_SAMPLING` / `PROMA_WEB_SPAN_SAMPLE_RATE` / `PROMA_WEB_SPAN_SAMPLE_MAX_BYTES`；READMe 记录。默认全关，不吃掉 local-first。
+
+验证：全项目 typecheck 通过；biome 干净；server 71 tests 过（新增 2 个：eval-dataset input/output + real-e2e hook）；唯一失败仍是既有 provider 矩阵测试。
+
+**完成度更新**：P-IV 从 60% 提升至 ~95%（input/output 采样 + 测试挂钩已补齐；剩余「完整 eval 打分/离群对比」属 P-IV 之后）。
