@@ -369,12 +369,36 @@ export function GoalsSettings(): React.ReactElement {
   const [creating, setCreating] = React.useState(false)
   const [title, setTitle] = React.useState('')
   const [objective, setObjective] = React.useState('')
+  /** 概览聚合数据（P2-4） */
+  const [overview, setOverview] = React.useState<{
+    activeGoals: number
+    openGates: number
+    todayTokens: number
+    totalCost: number
+  }>({ activeGoals: 0, openGates: 0, todayTokens: 0, totalCost: 0 })
 
   const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const list = await window.electronAPI.listGoals()
       setGoals(list)
+
+      // 概览：活跃 goag、未处理 gate、今日 token、总费用
+      const activeGoals = list.filter((g) => ['active', 'waiting_user', 'blocked'].includes(g.phase)).length
+      const openGates = list.reduce((acc, g) => acc + g.gates.filter((gate) => gate.status === 'open').length, 0)
+
+      let todayTokens = 0
+      let totalCost = 0
+      try {
+        const dayStart = new Date()
+        dayStart.setHours(0, 0, 0, 0)
+        const agg = await window.electronAPI.aggregateTokenUsage({ from: dayStart.getTime() })
+        todayTokens = agg.totalTokens
+        totalCost = agg.totalCost
+      } catch (_err) {
+        // token 统计可能未启用，忽略
+      }
+      setOverview({ activeGoals, openGates, todayTokens, totalCost })
     } catch (err) {
       console.error('[目标] 加载失败:', err)
       toast.error('加载目标失败')
@@ -452,6 +476,30 @@ export function GoalsSettings(): React.ReactElement {
         </Button>
       }
     >
+      {loading ? null : (
+        // P2-4 Goal Dashboard 首屏：概览卡片
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+          <div className="rounded-xl bg-card border border-border/40 p-3 shadow-sm">
+            <div className="text-[11px] text-muted-foreground mb-1">活跃目标</div>
+            <div className="text-xl font-semibold tabular-nums">{overview.activeGoals}</div>
+          </div>
+          <div className="rounded-xl bg-card border border-border/40 p-3 shadow-sm">
+            <div className="text-[11px] text-muted-foreground mb-1">待处理门控</div>
+            <div className="text-xl font-semibold tabular-nums text-amber-600">{overview.openGates}</div>
+          </div>
+          <div className="rounded-xl bg-card border border-border/40 p-3 shadow-sm">
+            <div className="text-[11px] text-muted-foreground mb-1">今日 Token</div>
+            <div className="text-xl font-semibold tabular-nums">{overview.todayTokens.toLocaleString()}</div>
+          </div>
+          <div className="rounded-xl bg-card border border-border/40 p-3 shadow-sm">
+            <div className="text-[11px] text-muted-foreground mb-1">总费用</div>
+            <div className="text-xl font-semibold tabular-nums">
+              {overview.totalCost === 0 ? '$0.00' : `$${overview.totalCost.toFixed(4)}`}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 新建表单 */}
       {creating && (
         <SettingsCard className="mb-3">

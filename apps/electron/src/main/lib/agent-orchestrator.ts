@@ -68,6 +68,7 @@ import { validateToolInput } from './agent-tool-input-validator'
 import { estimateTokenCount, WRITE_CONTENT_TOKEN_THRESHOLD } from './agent-tool-token-estimator'
 import { createElectronRuntimeServices, type RuntimeServices } from './agent-runtime/runtime-services'
 import { tokenUsageService } from './token-usage-service'
+import { preTickTurn } from './turn-decision-service'
 
 // ===== 类型定义 =====
 
@@ -1499,6 +1500,28 @@ export class AgentOrchestrator {
 
     // 0.5 清除上一轮中断标记
     try { updateAgentSessionMeta(sessionId, { stoppedByUser: false }) } catch { /* 会话可能已删除 */ }
+
+    // P2-1 Turn 前置决策：若会话绑定 Goal，给出路由提示（不强阻断用户手动触发）
+    try {
+      const goalId = getAgentSessionMeta(sessionId)?.goalId
+      if (goalId) {
+        const decision = preTickTurn(goalId, userMessage)
+        if (!decision.shouldRun) {
+          console.log(`[Agent 编排] Turn 决策 (${sessionId}): route=${decision.route}, reason=${decision.reason ?? ''}`)
+          this.eventBus.emit(sessionId, {
+            kind: 'proma_event',
+            event: {
+              type: 'turn_decision',
+              route: decision.route,
+              reason: decision.reason,
+            },
+          } as AgentStreamPayload)
+        }
+      }
+    } catch (turnError) {
+      // 决策失败不影响执行
+      console.warn('[Agent 编排] Turn 决策失败:', turnError)
+    }
 
     // 环境 / 配置类错误的统一上报：持久化为 TypedError 消息，由 SDKMessageRenderer 渲染
     const reportPreflightError = (typedError: TypedError) => {

@@ -7,6 +7,7 @@
 
 import type { ToolResult } from '@proma/core'
 import type { ToolContext } from '../types'
+import { enforceHandoffBudget } from '../../handoff-budget'
 
 export const AGENT_TOOL_NAME = 'Agent'
 
@@ -76,9 +77,15 @@ export async function executeAgentTool(input: unknown, ctx: ToolContext): Promis
       abortSignal: ctx.abortSignal,
     })
 
+    // P2-3 交接预算：子代理返回结果超过上限时做预算压缩（借鉴 LoopX handoff budget）
+    const budget = enforceHandoffBudget(String(result))
+    if (budget.truncated) {
+      console.warn(`[Agent 工具] SubAgent 交接结果超预算：${budget.result.lineCount} 行 / ${budget.result.charCount} 字符，已按预算压缩`)
+    }
+
     return {
       toolCallId: '',
-      content: result,
+      content: budget.text,
       isError: false,
     }
   } catch (error) {

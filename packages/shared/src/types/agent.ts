@@ -550,6 +550,8 @@ export type PromaEvent =
   | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number }
   // 协作子会话阻塞事件上浮
   | { type: 'delegation_blocked'; delegationId: string; blockedEvent: unknown }
+  // Goal 轮次前置决策（P2）
+  | { type: 'turn_decision'; route: string; reason?: string }
 
 /** 外部入口触发 Agent 运行的来源 */
 export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow' | 'delegation'
