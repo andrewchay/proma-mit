@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3, Loader2 } from 'lucide-react'
-import type { AgentEmployeeResult, AgentExecutionResult, Channel } from '@proma/shared'
+import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition } from '@proma/shared'
 import { cn } from '@/lib/utils'
 
 const RUNTIME_LABEL: Record<string, string> = {
@@ -42,18 +42,22 @@ export function AgentTeamPanel(): React.ReactElement {
     runtime: 'proma' as string,
     channelId: '',
     modelId: '',
+    workflowId: '',
     systemPrompt: '',
   })
   const [saving, setSaving] = React.useState(false)
+  const [workflows, setWorkflows] = React.useState<WorkflowDefinition[]>([])
 
   const load = React.useCallback(async (): Promise<void> => {
     try {
-      const [emps, chs] = await Promise.all([
+      const [emps, chs, wfs] = await Promise.all([
         window.electronAPI.paa.agentEmployees.list(),
         window.electronAPI.listChannels(),
+        window.electronAPI.listWorkflowDefinitions().catch(() => []),
       ])
       setEmployees(emps)
       setChannels(chs.filter((c) => c.enabled))
+      setWorkflows(wfs.filter((w) => w.status === 'published'))
     } catch (err) {
       console.error('[AI员工] 加载失败:', err)
     } finally {
@@ -76,7 +80,7 @@ export function AgentTeamPanel(): React.ReactElement {
 
   const openCreate = (): void => {
     setEditingId(null)
-    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', systemPrompt: '' })
+    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', systemPrompt: '' })
     setShowForm(true)
   }
 
@@ -89,6 +93,7 @@ export function AgentTeamPanel(): React.ReactElement {
       runtime: emp.runtime,
       channelId: emp.channelId,
       modelId: emp.modelId ?? '',
+      workflowId: emp.workflowId ?? '',
       systemPrompt: emp.systemPrompt ?? '',
     })
     setShowForm(true)
@@ -105,6 +110,7 @@ export function AgentTeamPanel(): React.ReactElement {
         runtime: form.runtime as 'proma' | 'ai-sdk' | 'pi' | 'claude',
         channelId: form.channelId,
         modelId: form.modelId.trim() || undefined,
+        workflowId: form.workflowId || undefined,
         systemPrompt: form.systemPrompt.trim() || undefined,
       }
       if (editingId) {
@@ -177,6 +183,9 @@ export function AgentTeamPanel(): React.ReactElement {
                       <span className="font-medium text-sm">{emp.name}</span>
                       <span className="px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">{emp.role}</span>
                       <span className="px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">{RUNTIME_LABEL[emp.runtime] ?? emp.runtime}</span>
+                      {emp.workflowId && (
+                        <span className="px-1.5 py-[1px] rounded-full bg-violet-500/10 text-violet-600 text-[10px]" title="绑定 Workflow SOP，任务用 Workflow 执行">SOP</span>
+                      )}
                       <span className={cn('px-1.5 py-[1px] rounded-full text-[10px]', emp.enabled ? 'bg-green-500/10 text-green-600' : 'bg-foreground/[0.06] text-foreground/50')}>
                         {emp.enabled ? '启用' : '停用'}
                       </span>
@@ -281,6 +290,22 @@ export function AgentTeamPanel(): React.ReactElement {
                 onChange={(e) => setForm({ ...form, modelId: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">绑定 Workflow SOP（可选）</label>
+              <select
+                value={form.workflowId}
+                onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
+                className="w-full px-3 py-2 text-sm border rounded-md bg-background"
+              >
+                <option value="">不绑定（headless 执行）</option>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>{w.name} · v{w.publication?.version ?? '?'}</option>
+                ))}
+              </select>
+              {workflows.length === 0 && (
+                <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">暂无已发布的 Workflow，请在「工作流」工作台先发布一个 SOP。</p>
+              )}
             </div>
           </div>
           <textarea

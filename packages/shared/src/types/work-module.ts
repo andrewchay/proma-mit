@@ -356,6 +356,7 @@ export interface CreateAgentEmployeeInput {
   channelId: string
   modelId?: string
   workspaceId?: string
+  workflowId?: string
   systemPrompt?: string
   skills?: string[]
 }
@@ -369,6 +370,7 @@ export interface UpdateAgentEmployeeInput {
   channelId?: string
   modelId?: string | null
   workspaceId?: string | null
+  workflowId?: string | null
   systemPrompt?: string | null
   skills?: string[]
   enabled?: boolean
@@ -384,6 +386,7 @@ export interface AgentEmployeeResult {
   channelId: string
   modelId?: string
   workspaceId?: string
+  workflowId?: string
   systemPrompt?: string
   skills: string[]
   enabled: boolean

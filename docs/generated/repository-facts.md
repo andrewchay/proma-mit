@@ -4,7 +4,7 @@
 
 | 项目 | 当前值 |
 |---|---:|
-| @proma/electron | 0.11.5 |
+| @proma/electron | 0.11.6 |
 | @proma/shared | 0.1.46 |
 | @proma/core | 0.2.13 |
 | @proma/ui | 0.1.4 |

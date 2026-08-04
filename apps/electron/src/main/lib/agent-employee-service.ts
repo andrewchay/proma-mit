@@ -24,6 +24,8 @@ import { runRegisteredHeadlessAgent, stopRegisteredAgent } from './agent-headles
 import { isAgentSessionActive } from './agent-service'
 import { updateTask, getTask } from './project-service'
 import { getSettings } from './settings-service'
+import { createWorkflowRun } from './workflow-service'
+import { executeWorkflowRun } from './workflow-run-executor'
 import type { AgentMessage } from '@proma/shared'
 
 // ============================================
@@ -168,8 +170,9 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
 
   const executionId = randomUUID()
   const prompt = buildAgentTaskPrompt(task, employee)
+  const usesWorkflow = Boolean(employee.workflowId)
 
-  // 1. 记录执行（queued，等并发调度）
+  // 1. 记录执行（queued，等并发调度；executor 标记 headless / workflow）
   store.createAgentExecution({
     id: executionId,
     projectId: task.projectId,
@@ -177,6 +180,7 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
     entityId: task.id,
     agentId,
     sessionId: '',
+    executor: usesWorkflow ? 'workflow' : 'headless',
     prompt,
     status: 'queued',
     requestedPermissions: task.permissionRequests ?? [],
@@ -205,6 +209,10 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
     return false
   }
 
+  // P3：员工绑定 Workflow SOP → 走 Workflow 执行；否则 headless
+  if (employee.workflowId) {
+    return startAgentWorkflow(executionId, employee)
+  }
   return startAgentHeadless(executionId, employee)
 }
 
@@ -273,6 +281,100 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
   })
 
   return true
+}
+
+/** 通过 Workflow SOP 执行（P3）：createWorkflowRun + executeWorkflowRun，完成后回写 */
+async function startAgentWorkflow(executionId: string, employee: AgentEmployee): Promise<boolean> {
+  const execution = store.getAgentExecution(executionId)
+  if (!execution || execution.status !== 'queued' || !employee.workflowId) return false
+
+  const startedAt = Date.now()
+  store.updateAgentExecution(executionId, { status: 'running', lastHeartbeatAt: startedAt })
+  const updated = store.getAgentExecution(executionId)!
+  recordActivity(updated, 'agent_started', `AI 员工 ${employee.name} 开始执行任务（Workflow SOP）`)
+
+  try {
+    // run.input 注入任务上下文（agent 节点 prompt 可用 <workflow_input> 引用）
+    const task = store.getTask(execution.entityId)
+    const run = createWorkflowRun(employee.workflowId, {
+      taskId: execution.entityId,
+      taskTitle: task?.title ?? execution.entityId,
+      taskDescription: task?.description ?? '',
+      agentId: execution.agentId,
+      agentName: employee.name,
+      projectId: execution.projectId,
+    }, 'event')
+
+    // sessionId 标记 workflow:<runId>，供心跳与诊断
+    store.updateAgentExecution(executionId, { sessionId: `workflow:${run.id}` })
+
+    // 串行执行到无 ready 节点（可能遇到审批/失败）
+    const finalRun = await executeWorkflowRun(
+      employee.workflowId,
+      run.id,
+      employee.channelId,
+      employee.modelId,
+    )
+
+    const completedAt = Date.now()
+    if (finalRun.status === 'completed') {
+      const summary = extractWorkflowSummary(finalRun)
+      store.updateAgentExecution(executionId, {
+        status: 'completed',
+        resultSummary: summary,
+        lastHeartbeatAt: completedAt,
+        completedAt,
+      })
+      try {
+        updateTask(execution.entityId, { status: 'completed', completionNotes: summary, completedAt })
+      } catch { /* 任务可能已删除 */ }
+      store.bumpAgentEmployeeStats(execution.agentId, { completed: true, durationMs: completedAt - startedAt })
+      recordActivity(store.getAgentExecution(executionId)!, 'agent_completed', `AI 员工完成任务（Workflow）：${summary.slice(0, 80)}`)
+    } else if (finalRun.status === 'waiting_approval') {
+      // SOP 含人工审批：任务回退 paused，等待审批后重试
+      store.updateAgentExecution(executionId, {
+        status: 'stale',
+        error: 'Workflow 等待人工审批',
+        lastHeartbeatAt: completedAt,
+        completedAt,
+      })
+      try {
+        updateTask(execution.entityId, { status: 'paused', completionNotes: '【AI 执行】Workflow 等待人工审批' })
+      } catch { /* ignore */ }
+      recordActivity(store.getAgentExecution(executionId)!, 'agent_stale', 'AI 员工执行：Workflow 等待人工审批')
+    } else {
+      // failed / cancelled / blocked
+      const errMsg = finalRun.status === 'failed' ? 'Workflow 执行失败' : `Workflow ${finalRun.status}`
+      store.updateAgentExecution(executionId, {
+        status: 'failed',
+        error: errMsg,
+        lastHeartbeatAt: completedAt,
+        completedAt,
+      })
+      try {
+        updateTask(execution.entityId, { status: 'paused', completionNotes: `【AI 执行失败】${errMsg}` })
+      } catch { /* ignore */ }
+      store.bumpAgentEmployeeStats(execution.agentId, { failed: true, durationMs: completedAt - startedAt })
+      recordActivity(store.getAgentExecution(executionId)!, 'agent_failed', `AI 员工执行失败：${errMsg}`)
+    }
+  } catch (error) {
+    handleExecutionError(executionId, error instanceof Error ? error.message : 'Workflow 执行异常', startedAt)
+  }
+
+  return true
+}
+
+/** 从 Workflow Run 提取结果摘要（聚合各节点 output） */
+function extractWorkflowSummary(run: { nodeRuns: Record<string, { output?: Record<string, unknown> }> }): string {
+  const outputs = Object.values(run.nodeRuns)
+    .map((n) => n.output)
+    .filter((o): o is Record<string, unknown> => Boolean(o && Object.keys(o).length > 0))
+  if (outputs.length === 0) return 'Workflow SOP 执行完成'
+  const parts = outputs.map((o) => {
+    const text = Object.values(o).find((v) => typeof v === 'string' && v.length > 0)
+    return typeof text === 'string' ? text : JSON.stringify(o).slice(0, 200)
+  })
+  return parts.filter(Boolean).join('\n').slice(0, 2000) || 'Workflow SOP 执行完成'
 }
 
 /** 执行完成回写 */
@@ -383,6 +485,22 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
 
   // 2. 探测 running 执行
   for (const execution of running.filter((e) => e.status === 'running')) {
+    // Workflow 执行（sessionId=workflow:runId）不是 Agent 会话：不做 isActive 探测，仅超时检查
+    if (execution.executor === 'workflow') {
+      const duration = now - execution.startedAt
+      if (duration > maxDurationMs) {
+        store.updateAgentExecution(execution.id, {
+          status: 'failed',
+          error: `Workflow 执行超时（${Math.round(duration / 60_000)}min > ${Math.round(maxDurationMs / 60_000)}min）`,
+          lastHeartbeatAt: now,
+          completedAt: now,
+        })
+        try { updateTask(execution.entityId, { status: 'paused', completionNotes: '【AI 执行超时】Workflow 已中止' }) } catch { /* ignore */ }
+        recordActivity(store.getAgentExecution(execution.id)!, 'agent_timed_out', 'AI 员工 Workflow 执行超时')
+      }
+      continue
+    }
+
     // 1. 会话仍活跃 → 更新心跳
     try {
       if (isAgentSessionActive(execution.sessionId)) {

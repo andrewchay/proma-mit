@@ -369,6 +369,7 @@ function migrate(database: any): void {
       channel_id TEXT NOT NULL,
       model_id TEXT,
       workspace_id TEXT,
+      workflow_id TEXT,
       system_prompt TEXT,
       skills TEXT NOT NULL DEFAULT '[]',
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -388,6 +389,7 @@ function migrate(database: any): void {
       entity_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
+      executor TEXT NOT NULL DEFAULT 'headless',
       status TEXT NOT NULL DEFAULT 'queued',
       prompt TEXT NOT NULL DEFAULT '',
       result_summary TEXT,
@@ -407,6 +409,16 @@ function migrate(database: any): void {
   const columns = (database.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>)
   if (!columns.some((col) => col.name === 'permission_requests')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN permission_requests TEXT NOT NULL DEFAULT '[]'`)
+  }
+  // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
+  const empColumns = (database.prepare(`PRAGMA table_info(agent_employees)`).all() as Array<{ name: string }>)
+  if (!empColumns.some((col) => col.name === 'workflow_id')) {
+    database.exec(`ALTER TABLE agent_employees ADD COLUMN workflow_id TEXT`)
+  }
+  // P3：agent_executions 表新增 executor 列（兼容旧库）
+  const execColumns = (database.prepare(`PRAGMA table_info(agent_executions)`).all() as Array<{ name: string }>)
+  if (!execColumns.some((col) => col.name === 'executor')) {
+    database.exec(`ALTER TABLE agent_executions ADD COLUMN executor TEXT NOT NULL DEFAULT 'headless'`)
   }
 }
 
@@ -1400,14 +1412,14 @@ function rowToBriefReceipt(row: BriefReceiptRow): BriefReceipt {
 type AgentEmployeeRow = {
   id: string; name: string; role: string; avatar: string | null; description: string;
   runtime: string; channel_id: string; model_id: string | null; workspace_id: string | null;
-  system_prompt: string | null; skills: string | null; enabled: number; total_tasks: number;
+  workflow_id: string | null; system_prompt: string | null; skills: string | null; enabled: number; total_tasks: number;
   completed_tasks: number; avg_duration_ms: number | null; failure_count: number;
   created_at: number; updated_at: number;
 }
 
 type AgentExecutionRow = {
   id: string; project_id: string; entity_type: string; entity_id: string; agent_id: string;
-  session_id: string; status: string; prompt: string; result_summary: string | null;
+  session_id: string; executor: string | null; status: string; prompt: string; result_summary: string | null;
   output_files: string | null; risk_level: string | null; error: string | null;
   requested_permissions: string | null; last_heartbeat_at: number | null;
   started_at: number; completed_at: number | null;
@@ -1424,6 +1436,7 @@ function rowToAgentEmployee(row: AgentEmployeeRow): AgentEmployee {
     channelId: row.channel_id,
     modelId: row.model_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
+    workflowId: row.workflow_id ?? undefined,
     systemPrompt: row.system_prompt ?? undefined,
     skills: parseJsonArray(row.skills),
     enabled: row.enabled === 1,
@@ -1444,6 +1457,7 @@ function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
     entityId: row.entity_id,
     agentId: row.agent_id,
     sessionId: row.session_id,
+    executor: (row.executor as AgentExecution['executor']) ?? 'headless',
     status: row.status as AgentExecution['status'],
     prompt: row.prompt,
     resultSummary: row.result_summary ?? undefined,
@@ -1485,8 +1499,8 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
   const now = Date.now()
   database.prepare(
     `INSERT INTO agent_employees
-     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, system_prompt, skills, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
+     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, workflow_id, system_prompt, skills, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
   ).run(
     id,
     input.name,
@@ -1497,6 +1511,7 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
     input.channelId,
     input.modelId ?? null,
     input.workspaceId ?? null,
+    input.workflowId ?? null,
     input.systemPrompt ?? null,
     JSON.stringify(input.skills ?? []),
     now,
@@ -1513,7 +1528,7 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
   database.prepare(
     `UPDATE agent_employees SET
        name = ?, role = ?, avatar = ?, description = ?, runtime = ?, channel_id = ?, model_id = ?,
-       workspace_id = ?, system_prompt = ?, skills = ?, enabled = ?, updated_at = ?
+       workspace_id = ?, workflow_id = ?, system_prompt = ?, skills = ?, enabled = ?, updated_at = ?
      WHERE id = ?`
   ).run(
     merged.name,
@@ -1524,6 +1539,7 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
     merged.channelId,
     merged.modelId ?? null,
     merged.workspaceId ?? null,
+    merged.workflowId ?? null,
     merged.systemPrompt ?? null,
     JSON.stringify(merged.skills ?? []),
     merged.enabled ? 1 : 0,
@@ -1562,8 +1578,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   const now = input.startedAt ?? Date.now()
   database.prepare(
     `INSERT INTO agent_executions
-     (id, project_id, entity_type, entity_id, agent_id, session_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, NULL)`
+     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
@@ -1571,6 +1587,7 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
     input.entityId,
     input.agentId,
     input.sessionId,
+    input.executor ?? 'headless',
     input.status ?? 'queued',
     input.prompt,
     JSON.stringify(input.requestedPermissions ?? []),

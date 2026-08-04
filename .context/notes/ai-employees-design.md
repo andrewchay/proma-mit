@@ -1,7 +1,7 @@
 # 项目管理「AI 员工（Agent Employee）」方案设计
 
 > 2026-08-04 v2 · 已按决策更新：执行器默认 headless（P3 补 Workflow）；权限默认 safe + by-task 申请；
-> 共享项目工作区；异步队列 + 心跳检查保活。状态：P0（v0.11.3）+ P1（v0.11.4）+ P2（v0.11.5）已实施：两表 + AgentTodoProvider + headless 执行 + 60s 心跳 + 团队 UI + by-task 权限 + 并发排队 + assignee 整合 + 摘要/风险 AI 维度 + AI 团队效能总览 + 看板 AI/真人过滤。P3 待办：Workflow SOP 绑定。
+> 共享项目工作区；异步队列 + 心跳检查保活。状态：P0-P3 全部实施（v0.11.3-v0.11.6）：两表 + AgentTodoProvider + headless 执行 + 60s 心跳 + 团队 UI + by-task 权限 + 并发排队 + assignee 整合 + 摘要/风险 AI 维度 + AI 团队效能总览 + 看板 AI/真人过滤 + Workflow SOP 绑定（员工绑定已发布 Workflow 后用 Workflow 执行）。
 
 ---
 

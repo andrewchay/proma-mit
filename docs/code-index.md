@@ -233,7 +233,7 @@ proma-mit/
 | `project-types.ts` | 项目/任务/子任务/会议纪要/用户映射/Brief 回执类型定义 |
 | `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.proma/projects/paa.db`；含 agent_employees / agent_executions 两表） |
 | `project-service.ts` | 项目管理主服务：项目/任务/子任务 CRUD、会议纪要导入与 AI 提取、看板、进度、模板、摘要发送 |
-| `agent-employee-service.ts` | AI 员工（P0/P1）：员工 CRUD、AgentTodoProvider、headless 执行编排、60s 心跳保活/超时/stale 回退、by-task 权限（safe/bypassPermissions）、并发排队 |
+| `agent-employee-service.ts` | AI 员工（P0-P3）：员工 CRUD、AgentTodoProvider、headless + Workflow SOP 双执行器、60s 心跳保活/超时/stale 回退、by-task 权限（safe/bypassPermissions）、并发排队 |
 | `project-summary-service.ts` | 项目周报/摘要生成 |
 | `project-alert-service.ts` | 项目告警（高风险任务等） |
 | `project-agent-service.ts` | 会议纪要 → 任务草稿提取（复用渠道 LLM） |
@@ -792,7 +792,7 @@ bun run dist:fast
 
 ## 9. 版本信息
 
-- `@proma/electron`: `0.11.5`
+- `@proma/electron`: `0.11.6`
 - `@proma/core`: `0.2.13`
 - `@proma/shared`: `0.1.46`
 - `@proma/ui`: `0.1.4`
