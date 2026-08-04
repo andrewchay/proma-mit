@@ -217,6 +217,7 @@ import {
   detachWorkspaceFile,
 } from './lib/agent-workspace-manager'
 import { getDynamicIslandService } from './lib/dynamic-island/dynamic-island-service'
+import { agentEventBus } from './lib/agent-service'
 import { getMemoryConfig, setMemoryConfig } from './lib/memory-service'
 import { getAllToolInfos } from './lib/chat-tool-registry'
 import { updateToolState, updateToolCredentials, getToolCredentials, addCustomTool, deleteCustomTool } from './lib/chat-tool-config'
@@ -1764,12 +1765,11 @@ export function registerIpcHandlers(): void {
       const { requestId, behavior, alwaysAllow } = response
       const sessionId = permissionService.respondToPermission(requestId, behavior, alwaysAllow)
 
-      // 发送 permission_resolved 事件给渲染进程
+      // 发送 permission_resolved 事件给渲染进程和灵动岛（agentEventBus）
       if (sessionId) {
-        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, {
-          sessionId,
-          payload: { kind: 'proma_event', event: { type: 'permission_resolved', requestId, behavior } },
-        })
+        const payload = { kind: 'proma_event', event: { type: 'permission_resolved', requestId, behavior } } as const
+        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
+        agentEventBus.emit(sessionId, payload)
       }
     }
   )
@@ -2000,10 +2000,9 @@ export function registerIpcHandlers(): void {
       const sessionId = askUserService.respondToAskUser(requestId, answers)
 
       if (sessionId) {
-        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, {
-          sessionId,
-          payload: { kind: 'proma_event', event: { type: 'ask_user_resolved', requestId } },
-        })
+        const payload = { kind: 'proma_event', event: { type: 'ask_user_resolved', requestId } } as const
+        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
+        agentEventBus.emit(sessionId, payload)
       }
     }
   )
@@ -2018,12 +2017,11 @@ export function registerIpcHandlers(): void {
 
       if (result) {
         const { sessionId, targetMode } = result
+        const payload = { kind: 'proma_event', event: { type: 'exit_plan_mode_resolved', requestId: response.requestId } } as const
 
-        // 通知渲染进程请求已处理
-        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, {
-          sessionId,
-          payload: { kind: 'proma_event', event: { type: 'exit_plan_mode_resolved', requestId: response.requestId } },
-        })
+        // 通知渲染进程和灵动岛（agentEventBus）请求已处理
+        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
+        agentEventBus.emit(sessionId, payload)
 
         // 如果用户选择了新的权限模式，通知渲染进程更新 UI
         if (targetMode) {
