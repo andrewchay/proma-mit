@@ -99,6 +99,8 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 运行指标可通过 `GET /agent/metrics` 查询；`GET /agent/recovery/stale-tasks` 仅列出已超过 `PROMA_WEB_RECOVERY_STALE_AFTER_MS`（默认两倍任务租约）且没有有效租约的运行中任务。该诊断接口不会跨 worker 强制改写任务状态，避免误杀收尾中的任务。
 
+服务端还提供 Agent 运行时可观测 API（运行档案 span 树、Signals、评估数据集）及对应的 `/agent/ui` 工作台可视化 tab，端点与数据模型见 [docs/server-observability-api.md](./docs/server-observability-api.md)。
+
 ## 模式选择
 
 ### Chat 适合

@@ -96,3 +96,19 @@
 验证：全项目 typecheck 通过；biome 干净；server 71 tests 过（新增 2 个：eval-dataset input/output + real-e2e hook）；唯一失败仍是既有 provider 矩阵测试。
 
 **完成度更新**：P-IV 从 60% 提升至 ~95%（input/output 采样 + 测试挂钩已补齐；剩余「完整 eval 打分/离群对比」属 P-IV 之后）。
+
+## 十三、Web 可视化 tab（2026-08-04）
+
+在无构建依赖的 `WEB_DASHBOARD_HTML`（`apps/server/src/dashboard.ts`）新增三个可视化视图，兑现 P-I/P-II/P-IV 的「呈现层」：
+
+| 视图 | 内容 |
+|---|---|
+| **运行档案** | 列出任务 → 点击调 `/agent/runs/{taskId}` → 递归渲染 span 树（每层 latency · token · cost），错误标红，附 audit 摘要与 cost |
+| **Signals** | 列表 + 命中记录 + 新建（人话描述 + tool_repeat_failure matcher） |
+| **评估数据集** | 列表 + 采样新建（窗口）+ 样本（含 input/output/error） |
+
+实现：nav 新增 3 按钮；`loadRuns`/`loadSignals`/`loadDatasets`/`loadRun`/`spanTree`/`loadSamples` 等函数；`viz()` 容器 + `setTab()` 高亮。内嵌 JS 通过 `node --check` 语法校验；span 树数据结构确认可被可视化消费。
+
+新增 `apps/server/src/dashboard.test.ts`（4 个：导航包含、渲染函数存在、API 端点、JS 引用平衡）。biome 干净；server 75 tests 过；唯一失败仍是既有 provider 矩阵测试。
+
+**至此 P-I~P-IV 全部规格（含 UI 呈现层）已闭环落库。**
