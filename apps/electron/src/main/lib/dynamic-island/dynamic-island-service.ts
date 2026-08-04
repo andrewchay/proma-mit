@@ -14,7 +14,7 @@
 
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import type {
   DynamicIslandLevel,
   DynamicIslandNotifyInput,
@@ -33,7 +33,6 @@ import type {
   SDKSystemMessage,
   PromaEvent,
 } from '@proma/shared'
-import { TRAY_IPC_CHANNELS } from '../../../types/settings'
 import { getDynamicIslandConfigPath } from '../config-paths'
 import { DynamicIslandRendererController } from './renderer-controller'
 import { DynamicIslandRendererProcess } from './renderer-process'
@@ -60,6 +59,8 @@ interface InternalSessionSnapshot extends DynamicIslandSessionSnapshot {
   unread: boolean
   /** 完成/错误的时间戳 */
   terminalAt?: number
+  /** 用户点击 dismiss 过（非 attention 态下不再自动重新显示，避免 running 反复刷屏） */
+  dismissed?: boolean
 }
 
 function normalizePath(p: string): string {
@@ -172,6 +173,8 @@ class DynamicIslandService {
   /** 会话是否应出现在灵动岛（running 常驻脉冲；needs-interaction/error 仅在 attention 为 true 时显示；completed 保留未读窗口） */
   private isIslandSession(session: InternalSessionSnapshot, now: number): boolean {
     if (now - session.lastActivityAt >= 24 * 60 * 60_000) return false
+    // 用户点击 dismiss 过、且当前无需注意的会话不再自动重新显示（避免 running 反复刷屏“关不掉”）
+    if (session.dismissed && !session.attention) return false
     if (session.phase === 'running') return true
     if ((session.phase === 'needs-interaction' || session.phase === 'error') && session.attention) return true
     return session.phase === 'completed'
@@ -439,7 +442,7 @@ class DynamicIslandService {
 
   private requiresImmediatePush(payload: AgentStreamPayload): boolean {
     if (payload.kind === 'proma_event') {
-      return ['permission_request', 'ask_user_request', 'exit_plan_mode_request'].includes(payload.event.type)
+      return ['permission_request', 'ask_user_request', 'exit_plan_mode_request', 'permission_resolved', 'ask_user_resolved', 'exit_plan_mode_resolved'].includes(payload.event.type)
     }
     if (payload.kind === 'agent_event') {
       return payload.event.type === 'complete' || payload.event.type === 'error' || payload.event.type === 'typed_error'
@@ -552,41 +555,25 @@ class DynamicIslandService {
 
   // ===== 渲染事件 =====
 
-  /** 点击 → dismiss 当前会话 attention；若有下一个 attention 会话则切到它，否则隐藏 */
+  /** 点击 → 默认关闭整个灵动岛（用户明确的诉求：点击后不残留、不弹窗打断） */
   private handleClicked(event: Record<string, unknown>): void {
     const id = typeof event.id === 'string' ? event.id : ''
     const sessionId = id.startsWith('session:') ? id.slice('session:'.length) : ''
 
     if (sessionId) {
-      // 会话点击：清除该会话 attention/unread，再重新渲染（切到下一个或隐藏）
+      // 会话点击：标记 dismissed（非 attention 态下不再自动重新显示），清除未读/终端态
       const session = this.sessions.get(sessionId)
       if (session) {
+        session.dismissed = true
         session.attention = false
         session.unread = false
         if (session.phase === 'completed' || session.phase === 'error') {
           session.terminalAt = undefined
         }
       }
-      this.pushNow()
-
-      // 打开对应会话（复用托盘打开逻辑）：优先可见窗口，回退到任意主窗口
-      const win = BrowserWindow.getAllWindows().find(
-        (w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized()
-      ) ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed())
-      if (win) {
-        if (win.isMinimized()) win.restore()
-        win.show()
-        win.focus()
-        win.webContents.send(TRAY_IPC_CHANNELS.OPEN_AGENT_SESSION, {
-          sessionId,
-          title: session?.title ?? '',
-        })
-      }
-      return
     }
 
-    // 非会话通知（测试/手动/其它）：点击 → 直接关闭整个灵动岛
-    // （用户点击灵动岛区域后，要么引导进入会话，要么关闭，不留残余）
+    // 无论会话还是普通通知：直接收起整个灵动岛，不残留、不重复渲染、不弹窗打断
     this.controller?.dismissAll()
   }
 
