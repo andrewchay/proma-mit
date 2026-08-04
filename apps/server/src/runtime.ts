@@ -1,5 +1,5 @@
 import { createAgentAISDKModel } from '@proma/core/providers/ai-sdk-bridge'
-import type { SDKMessage } from '@proma/shared'
+import type { RuntimeSpanStatus, SDKMessage } from '@proma/shared'
 import type { AgentRuntimeWebAgentTurnRunner } from '@proma/shared/utils'
 import { AGENT_PROVIDER_RUNTIME_CAPABILITIES, resolveAgentRuntimeBaseUrl } from '@proma/shared'
 import { generateText, isStepCount, jsonSchema, streamText, tool } from 'ai'
@@ -25,6 +25,23 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
     apiKey: input.credential.apiKey,
     modelId: input.modelId,
   })
+  const spanSink = input.spanSink
+  const traceId = input.traceId ?? input.taskId
+  const providerSpanId = spanSink ? crypto.randomUUID() : undefined
+  if (providerSpanId && spanSink) {
+    await spanSink.begin({
+      traceId,
+      tenantId: input.scope.tenantId,
+      userId: input.scope.userId,
+      sessionId: input.session.sessionId,
+      taskId: input.taskId,
+      parentSpanId: undefined,
+      spanId: providerSpanId,
+      kind: 'provider',
+      name: `provider:${input.provider}:${input.modelId}`,
+      startedAt: Date.now(),
+    })
+  }
   const readTools = createWorkspaceReadTools(input.workspace.cwd)
   const isolatedCommand = input.executeIsolatedCommand
   const interactionTools = {
@@ -108,20 +125,48 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
 
   let text = ''
   let providerStreamError: unknown
+  const activeToolSpans = new Map<string, string>()
+  const beginToolSpan = (toolUseId: string, toolName: string) => {
+    if (!spanSink || !providerSpanId) return
+    const spanId = crypto.randomUUID()
+    activeToolSpans.set(toolUseId, spanId)
+    void spanSink.begin({
+      traceId,
+      tenantId: input.scope.tenantId,
+      userId: input.scope.userId,
+      sessionId: input.session.sessionId,
+      taskId: input.taskId,
+      parentSpanId: providerSpanId,
+      spanId,
+      kind: 'tool',
+      name: `tool:${toolName}`,
+      startedAt: Date.now(),
+    })
+  }
+  const endToolSpan = (toolUseId: string, status: RuntimeSpanStatus, meta?: Record<string, unknown>) => {
+    const spanId = activeToolSpans.get(toolUseId)
+    if (!spanSink || !spanId) return
+    activeToolSpans.delete(toolUseId)
+    void spanSink.end(spanId, { status, meta })
+  }
   try { for await (const part of result.fullStream) {
     if (part.type === 'text-delta') {
       text += part.text
       input.emit({ kind: 'agent_event', event: { type: 'text_delta', text: part.text } })
     } else if (part.type === 'tool-input-start') {
+      beginToolSpan(part.id, part.toolName)
       input.emit({ kind: 'agent_event', event: { type: 'tool_start', toolName: part.toolName, toolUseId: part.id, input: {} } })
     } else if (part.type === 'tool-call') {
+      beginToolSpan(part.toolCallId, part.toolName)
       input.emit({ kind: 'agent_event', event: { type: 'tool_start', toolName: part.toolName, toolUseId: part.toolCallId, input: toolInput(part.input) } })
     } else if (part.type === 'tool-result') {
+      endToolSpan(part.toolCallId, 'ok', { resultTruncated: truncateMeta(toolOutput(part.output)) })
       input.emit({ kind: 'agent_event', event: {
         type: 'tool_result', toolName: part.toolName, toolUseId: part.toolCallId, input: toolInput(part.input),
         result: toolOutput(part.output), isError: false,
       } })
     } else if (part.type === 'tool-error') {
+      endToolSpan(part.toolCallId, 'error', { error: truncateMeta(errorMessage(part.error)) })
       input.emit({ kind: 'agent_event', event: {
         type: 'tool_result', toolName: part.toolName, toolUseId: part.toolCallId, input: toolInput(part.input),
         result: errorMessage(part.error), isError: true,
@@ -130,11 +175,28 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
       providerStreamError = part.error
       input.emit({ kind: 'agent_event', event: { type: 'error', message: describeProviderError(part.error) } })
     }
-  } } catch (error) { throw new Error(describeProviderError(error)) }
+  } } catch (error) {
+    if (providerSpanId && spanSink) void spanSink.end(providerSpanId, { status: 'error', error: truncateMeta(errorMessage(error)) })
+    throw new Error(describeProviderError(error))
+  }
 
-  if (providerStreamError) throw new Error(describeProviderError(providerStreamError))
+  if (providerStreamError) {
+    if (providerSpanId && spanSink) void spanSink.end(providerSpanId, { status: 'error', error: truncateMeta(errorMessage(providerStreamError)) })
+    throw new Error(describeProviderError(providerStreamError))
+  }
 
   const usage = await result.usage
+  if (providerSpanId && spanSink) {
+    void spanSink.end(providerSpanId, {
+      status: 'ok',
+      meta: {
+        inputTokens: usage.inputTokens ?? 0,
+        outputTokens: usage.outputTokens ?? 0,
+        cacheReadTokens: usage.inputTokenDetails.cacheReadTokens,
+        cacheWriteTokens: usage.inputTokenDetails.cacheWriteTokens,
+      },
+    })
+  }
   input.emit({
     kind: 'agent_event',
     event: {
@@ -207,6 +269,11 @@ function toolOutput(value: unknown): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** 轻量 meta 一律截断，避免把完整输入/输出写入 span 表。 */
+function truncateMeta(value: string, maxLength = 512): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`
 }
 
 function describeProviderError(error: unknown): string {

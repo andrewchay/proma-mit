@@ -12,6 +12,9 @@ export interface Workspace {
 // 运行时相关类型
 export * from './runtime'
 
+// 运行档案（Runtime Span）类型
+export * from './runtime-span'
+
 // 渠道（AI 供应商）相关类型
 export * from './channel'
 

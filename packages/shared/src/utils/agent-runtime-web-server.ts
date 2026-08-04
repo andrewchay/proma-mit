@@ -5,6 +5,7 @@ import type {
 } from '../types/agent'
 import { PROMA_DEFAULT_PERMISSION_MODE, serializeAgentStreamEnvelopeForSSE } from '../types/agent'
 import type { AgentProviderProtocol, ProviderType } from '../types/channel'
+import type { RuntimeSpanSink } from '../types/runtime-span'
 import type {
   AgentRuntimeInteractionKind,
   AgentRuntimeInteractionRequest,
@@ -77,6 +78,10 @@ export interface AgentRuntimeWebAgentTurnInput {
   /** 在独立 TaskRunner 任务中执行只读子代理；父任务取消时会级联取消。 */
   startSubtask?: (input: AgentRuntimeWebSubtaskInput) => Promise<AgentRuntimeWebSubtaskResult>
   subtaskLimits?: AgentRuntimeWebSubtaskLimits
+  /** 运行档案（Runtime Span）写入 sink；由服务端注入，runner 保持纯函数、不直接依赖 Postgres。 */
+  spanSink?: RuntimeSpanSink
+  /** 逻辑 trace 标识；缺省回退为 taskId，P-II/III 与 HTTP trace 贯穿。 */
+  traceId?: string
 }
 
 export interface AgentRuntimeWebSubtaskLimits {

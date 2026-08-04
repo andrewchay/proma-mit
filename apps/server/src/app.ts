@@ -41,6 +41,7 @@ import { createMcpOAuthAuthorizationUrl, exchangeMcpAuthorizationCode } from './
 import { PostgresUsageLedger, usageFromMessages } from './billing.ts'
 import { PostgresAuditLog } from './audit.ts'
 import type { AuditRecord } from './audit.ts'
+import { PostgresRuntimeSpanStore } from './spans.ts'
 import { PostgresRuntimeMetrics } from './metrics.ts'
 import { PostgresTaskRecoveryInspector } from './recovery.ts'
 import { PostgresAgentRuntimeInteractionStore } from './interactions.ts'
@@ -134,6 +135,7 @@ export function createPromaWebServerApplication(
   const taskLease = new PostgresTaskLease(postgres, config.workerId, config.taskLeaseMs)
   const usageLedger = new PostgresUsageLedger(postgres, config.priceCatalog ?? [])
   const auditLog = new PostgresAuditLog(postgres)
+  const spanStore = new PostgresRuntimeSpanStore(postgres)
   const metrics = new PostgresRuntimeMetrics(postgres)
   const recovery = new PostgresTaskRecoveryInspector(postgres, config.recoveryStaleAfterMs ?? config.taskLeaseMs * 2)
   const interactionStore = new PostgresAgentRuntimeInteractionStore(postgres)
@@ -178,6 +180,7 @@ export function createPromaWebServerApplication(
           output = await agentTurnRunner({
             ...runtimeInput,
             mcpTools: mcp?.tools,
+            spanSink: spanStore,
             executeIsolatedCommand: isolatedExecutor ? (request, signal) => isolatedExecutor.execute(request, signal) : undefined,
           })
         } finally {
@@ -290,6 +293,15 @@ export function createPromaWebServerApplication(
           : !hasAnyRole(scope, ['operator', 'admin'])
             ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
             : Response.json({ tasks: await recovery.listStale(scope) })
+      } else if (request.method === 'GET' && url.pathname === '/agent/traces') {
+        const taskId = url.searchParams.get('taskId')
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
+            ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+            : !taskId
+              ? Response.json({ error: '缺少 taskId 参数' }, { status: 400 })
+              : Response.json({ trace: await spanStore.listTask({ ...scope, taskId }) })
       } else if (request.method === 'GET' && url.pathname === '/agent/audit') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -397,6 +409,7 @@ export function createPromaWebServerApplication(
       await taskLease.initializeSchema()
       await usageLedger.initializeSchema()
       await auditLog.initializeSchema()
+      await spanStore.initializeSchema()
       await interactionStore.initializeSchema()
       await schedulerStore.initializeSchema()
       scheduler.start()
