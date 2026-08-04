@@ -1560,7 +1560,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                                     active={session.id === activeTabId}
                                     indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
                                     isInWorkingSection={workingSessionIds.has(session.id)}
-                                    showPinIcon={!!session.pinned}
                                     onSelect={handleSelectAgentSession}
                                     onOpenPermanent={handlePermanentAgentSession}
                                     onRequestDelete={handleRequestDelete}
@@ -1710,7 +1709,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                         active={session.id === activeTabId}
                         indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
                         isInWorkingSection={workingSessionIds.has(session.id)}
-                        showPinIcon={!!session.pinned}
                         onSelect={handleSelectAgentSession}
                         onOpenPermanent={handlePermanentAgentSession}
                         onRequestDelete={handleRequestDelete}
@@ -1984,7 +1982,6 @@ interface AgentSessionItemProps {
   session: AgentSessionMeta
   active: boolean
   indicatorStatus: SessionIndicatorStatus
-  showPinIcon?: boolean
   /** 是否在工作中分区（auto 或 manual） */
   isInWorkingSection?: boolean
   /** 行左侧状态色块；未传则不显示 */
@@ -2006,7 +2003,6 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
   session,
   active,
   indicatorStatus,
-  showPinIcon,
   isInWorkingSection,
   leftAccent,
   workspaceName,
@@ -2063,10 +2059,6 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
     MenuSeparator: typeof ContextMenuSeparator | typeof DropdownMenuSeparator,
   ) => (
     <>
-      <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onTogglePin(session.id)}>
-        {session.pinned ? <StarOff size={14} /> : <Star size={14} />}
-        {session.pinned ? '取消星标' : '星标会话'}
-      </MenuItem>
       <MenuItem
         className="text-xs py-1 [&>svg]:size-3.5"
         disabled={indicatorStatus === 'running'}
@@ -2140,10 +2132,25 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
                 'truncate text-[13px] leading-5 flex items-center gap-1.5',
                 active ? 'text-foreground' : 'text-foreground/80'
               )}>
-                {showPinIcon && (
-                  <Star size={11} className="flex-shrink-0 text-amber-500 fill-current" />
-                )}
                 <span className="truncate">{session.title}</span>
+                {/* 星标按钮：直接点击切换，已星标=实心琥珀 ⭐，未星标=弱化空星 */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void onTogglePin(session.id)
+                  }}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  title={session.pinned ? '取消星标' : '星标会话'}
+                  className={cn(
+                    'flex-shrink-0 rounded p-0.5 transition-colors',
+                    session.pinned
+                      ? 'text-amber-500 hover:text-amber-400'
+                      : 'text-foreground/20 hover:text-foreground/50 opacity-0 group-hover:opacity-100'
+                  )}
+                >
+                  <Star size={11} className={cn(session.pinned && 'fill-current')} />
+                </button>
                 {workspaceName && (
                   <span className="flex-shrink-0 px-1.5 py-0 rounded-full bg-primary/10 text-[10px] leading-4 workspace-badge font-medium truncate max-w-[80px]">
                     {workspaceName}
