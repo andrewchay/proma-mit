@@ -200,6 +200,17 @@ bun run generate:icons    # 生成应用图标
 | `attachment-service.ts` | 附件管理：存储/读取/删除、文件对话框 |
 | `document-parser.ts` | 文档解析：PDF/Office/文本文件提取 |
 
+#### Goal / 统计服务（借鉴 LoopX 控制平面）
+
+| 服务 | 职责 |
+|------|------|
+| `goal-service.ts` | Goal 状态层：Goal CRUD、todos（所有权/声明）、用户门控、证据、配额（shouldRun/spendBudget）、会话绑定（惰性依赖 session-manager） |
+| `turn-decision-service.ts` | Turn 前置路由决策：ready/wait_user_action/blocked/quota_exhausted/goal_terminated/replan/repair/no_goal；支持会话级配额 |
+| `token-usage-service.ts` | Token 统计：按会话/轮/工具/Skill/MCP/模型聚合，`~/.proma-mit/token-usage/` |
+| `evidence-service.ts` | 从 token 记录解析结构化证据（decisions/validation/writeback/evidence），语义化摘要 |
+| `handoff-budget.ts` | SubAgent 交接预算（16 行 / 1800 字符） |
+| `chat-tools/goal-mcp.ts` | 注入 Goal 工具到 Agent（status/claim/complete/evidence/should_run） |
+
 #### 系统服务
 
 | 服务 | 职责 |
@@ -497,6 +508,11 @@ React UI 更新
 - ✅ **文档解析**：PDF、Office、文本文件提取
 - ✅ **多模态支持**：图片、文档附件
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
+- ✅ **Goal 状态层（借鉴 LoopX）**：长生命周期目标跨会话追踪，含 todos（所有权/声明）、用户门控（gate）、证据、配额；Goal 可绑定会话，会话完成自动沉淀证据
+- ✅ **Token 统计**：按会话/轮次/工具/Skill/MCP/模型维度统计 token 消耗（`~/.proma-mit/token-usage/`）
+- ✅ **Turn 决策层**：Agent 每轮前置路由判断（ready/wait/blocked/quota/goal_terminated/replan/repair），自动化不可推进时硬阻断
+- ✅ **SubAgent 交接预算**：SubAgent 交接文本限 16 行/1800 字符，超限自动压缩
+- ✅ **运行记录**：Agent/Workflow/Automation 统一运行记录（Run Center）
 
 ### 架构亮点
 
