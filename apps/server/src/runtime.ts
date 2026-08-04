@@ -134,6 +134,10 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
   const activeToolSpans = new Map<string, string>()
   const beginToolSpan = (toolUseId: string, toolName: string) => {
     if (!spanSink || !providerSpanId) return
+    // 同一工具调用会先后经过 tool-input-start 与 tool-call：若已有活跃 span，复用而非重开，
+    // 避免产生永不关闭的悬空 span（此前用新 spanId 覆盖导致旧 span 失联）
+    const existing = activeToolSpans.get(toolUseId)
+    if (existing) return
     const spanId = crypto.randomUUID()
     activeToolSpans.set(toolUseId, spanId)
     void spanSink.begin({
@@ -165,7 +169,9 @@ export const runAISDKWebAgentTurn: AgentRuntimeWebAgentTurnRunner = async (input
       text += part.text
       input.emit({ kind: 'agent_event', event: { type: 'text_delta', text: part.text } })
     } else if (part.type === 'tool-input-start') {
-      beginToolSpan(part.id, part.toolName)
+      // 不在 tool-input-start 创建 span：它与后续 tool-call 属于同一工具调用（其 id = toolCallId），
+      // 但此处只有 `id` 字段，无法与 tool-result/error 的 toolCallId 精确对齐，避免产生悬空 span。
+      // span 统一在 tool-call 时创建。
       input.emit({ kind: 'agent_event', event: { type: 'tool_start', toolName: part.toolName, toolUseId: part.id, input: {} } })
     } else if (part.type === 'tool-call') {
       beginToolSpan(part.toolCallId, part.toolName)
