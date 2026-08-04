@@ -1472,8 +1472,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                       const wsSessions = sessionsByWorkspace.get(ws.id) ?? []
                       const isCurrent = ws.id === currentWorkspaceId
                       const expanded = expandedProjectIds.has(ws.id)
-                      const visibleSessions = expanded ? wsSessions : wsSessions.slice(0, 3)
-                      const hasMore = wsSessions.length > 3
+                      const visibleSessions = expanded ? wsSessions : wsSessions.slice(0, 5)
+                      const hasMore = wsSessions.length > 5
                       return (
                         <div key={ws.id}>
                           {/* 项目行（无边框，扁平树） */}
@@ -1577,7 +1577,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                                   onClick={() => toggleProjectExpanded(ws.id)}
                                   className="ml-[15px] mt-0.5 flex items-center gap-1 px-2 py-1 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors titlebar-no-drag"
                                 >
-                                  {expanded ? '收起' : `显示更多 (${wsSessions.length - 3})`}
+                                  {expanded ? '收起' : `更多 (${wsSessions.length - 5})`}
                                   <ChevronDown size={11} className={cn('transition-transform duration-150', expanded && 'rotate-180')} />
                                 </button>
                               )}
