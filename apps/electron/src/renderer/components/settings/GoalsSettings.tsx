@@ -556,6 +556,8 @@ export function GoalsSettings(): React.ReactElement {
     todayTokens: number
     totalCost: number
   }>({ activeGoals: 0, openGates: 0, todayTokens: 0, totalCost: 0 })
+  /** E10：列表阶段筛选 */
+  const [phaseFilter, setPhaseFilter] = React.useState<'all' | 'active' | 'completed' | 'archived'>('all')
 
   const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -656,6 +658,11 @@ export function GoalsSettings(): React.ReactElement {
     }
   }
 
+  // E10：按阶段筛选列表
+  const filteredGoals = phaseFilter === 'all'
+    ? goals
+    : goals.filter((g) => g.phase === phaseFilter)
+
   return (
     <SettingsSection
       title="目标（Goals）"
@@ -743,16 +750,31 @@ export function GoalsSettings(): React.ReactElement {
       <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4">
         {/* Goal 列表 */}
         <SettingsCard divided={false}>
+          {/* E10：阶段筛选 */}
+          <div className="flex items-center gap-1 px-2 pt-2 pb-1 border-b border-border/30">
+            {(['all', 'active', 'completed', 'archived'] as const).map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setPhaseFilter(key)}
+                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+                  phaseFilter === key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {key === 'all' ? '全部' : PHASE_LABEL[key]?.label ?? key}
+              </button>
+            ))}
+          </div>
           {loading ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
-          ) : goals.length === 0 ? (
+          ) : filteredGoals.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              暂无目标
-              <div className="mt-1 text-xs">点击右上角「新建目标」开始</div>
+              {goals.length === 0 ? '暂无目标' : '该筛选下暂无目标'}
+              {goals.length === 0 && <div className="mt-1 text-xs">点击右上角「新建目标」开始</div>}
             </div>
           ) : (
-            <div className="flex flex-col max-h-[70vh] overflow-y-auto">
-              {goals.map((goal) => {
+            <div className="flex flex-col max-h-[62vh] overflow-y-auto">
+              {filteredGoals.map((goal) => {
                 const isSelected = goal.id === selectedId
                 const meta = PHASE_LABEL[goal.phase] ?? PHASE_LABEL.draft
                 return (
@@ -767,8 +789,13 @@ export function GoalsSettings(): React.ReactElement {
                     <span className={`shrink-0 w-2 h-2 rounded-full ${meta.className.includes('bg-red') ? 'bg-red-500' : meta.className.includes('bg-amber') ? 'bg-amber-500' : meta.className.includes('bg-blue') ? 'bg-blue-500' : meta.className.includes('bg-green') ? 'bg-green-500' : 'bg-foreground/30'}`} />
                     <div className="flex-1 min-w-0">
                       <div className="truncate text-[13px] font-medium text-foreground/90">{goal.title}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {formatTime(goal.updatedAt)}
+                      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>{formatTime(goal.updatedAt)}</span>
+                        {goal.workspaceId && (
+                          <span className="px-1 py-0.5 rounded bg-foreground/[0.05] text-[10px] text-muted-foreground/70 truncate max-w-[90px]">
+                            {goal.workspaceId.slice(0, 12)}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {goal.gates.some((g) => g.status === 'open') && (
