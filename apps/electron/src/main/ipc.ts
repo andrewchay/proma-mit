@@ -3043,6 +3043,12 @@ export function registerIpcHandlers(): void {
       } else {
         feishuBridgeManager.stopBot(saved.id)
       }
+      // 若该 Bot 正被项目管理 Todo 使用且凭证已不完整，则关闭飞书 Todo，避免同步时静默失败
+      const s = getSettings()
+      if (s.feishuTodo?.enabled && s.feishuTodo.botId === saved.id && (!saved.enabled || !saved.appId || !saved.appSecret)) {
+        updateSettings({ feishuTodo: { enabled: false, botId: saved.id } })
+        console.warn(`[飞书 IPC] Todo 使用的 Bot "${saved.name}" 凭证不完整，飞书 Todo 同步已关闭`)
+      }
       return saved
     }
   )
@@ -3052,7 +3058,13 @@ export function registerIpcHandlers(): void {
     FEISHU_IPC_CHANNELS.REMOVE_BOT,
     async (_, botId: string) => {
       feishuBridgeManager.stopBot(botId)
-      return removeFeishuBot(botId)
+      const removed = removeFeishuBot(botId)
+      // 若被删除的 Bot 正被项目管理 Todo 使用，重置飞书 Todo 配置，避免悬空引用
+      const settings = getSettings()
+      if (settings.feishuTodo?.enabled && settings.feishuTodo.botId === botId) {
+        updateSettings({ feishuTodo: { enabled: false } })
+      }
+      return removed
     }
   )
 
@@ -3224,6 +3236,16 @@ export function registerIpcHandlers(): void {
       } else {
         dingtalkBridgeManager.stopBot(saved.id)
       }
+      // 若该 Bot 正被项目管理 Todo 使用，保存后校验凭证完整性
+      const s = getSettings()
+      if (s.dingtalkTodo?.enabled && s.dingtalkTodo.botId === saved.id) {
+        try {
+          const { syncProjectDingTalkTodoConfig } = await import('./lib/project-service')
+          await syncProjectDingTalkTodoConfig()
+        } catch (error) {
+          console.error(`[项目钉钉 Todo] Bot "${saved.name}" 保存后校验失败:`, error)
+        }
+      }
       return saved
     }
   )
@@ -3233,7 +3255,13 @@ export function registerIpcHandlers(): void {
     DINGTALK_IPC_CHANNELS.REMOVE_BOT,
     async (_, botId: string) => {
       dingtalkBridgeManager.stopBot(botId)
-      return removeDingTalkBot(botId)
+      const removed = removeDingTalkBot(botId)
+      // 若被删除的 Bot 正被项目管理 Todo 使用，重置钉钉 Todo 配置，避免悬空引用
+      const settings = getSettings()
+      if (settings.dingtalkTodo?.enabled && settings.dingtalkTodo.botId === botId) {
+        updateSettings({ dingtalkTodo: { enabled: false } })
+      }
+      return removed
     }
   )
 

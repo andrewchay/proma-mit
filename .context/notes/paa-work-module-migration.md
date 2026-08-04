@@ -56,3 +56,7 @@
 ## 后续待办
 - 「任务」模块仍为占位，PAA 侧任务模块完成后可参考本迁移方式接入
 - 项目管理视图内「设置」Tab 为 `SettingsPlaceholder`，外部同步配置主要走 设置 → 日历同步 / 远程连接
+
+## 补充（2026-08-04 修复）
+- **根因**：`contact-search-service` / `feishu-todo-provider` / `dingtalk-todo-provider` 依赖 `settings.feishuTodo`/`settings.dingtalkTodo`（enabled + botId），但迁移时漏迁了 PAA 的「设置 → 外部平台」配置页（`ExternalPlatformSettings.tsx`），导致该项配置永远为空 → 项目管理「选负责人」报「未找到已连接的飞书/钉钉 Bot 凭证」。
+- **修复**：在「远程连接(Bot Hub)」的 `FeishuSettings.tsx` / `DingTalkSettings.tsx` 顶部各自新增「飞书 Todo 同步」/「钉钉 Todo 同步」配置段（启用开关 + 选择已配置 Bot，写 `feishuTodo`/`dingtalkTodo`）；`ipc.ts` 的 `REMOVE_BOT`/`SAVE_BOT` handler 增加联动：删除当前 Todo Bot 时重置配置，保存 Todo Bot 时校验凭证完整性。`work-module-ipc-handlers` 的 `onSettingsChange` 已自动重初始化 Provider。

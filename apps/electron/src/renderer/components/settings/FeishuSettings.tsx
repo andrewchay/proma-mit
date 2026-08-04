@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
-import { Loader2, CheckCircle2, XCircle, ExternalLink, Users, User, Trash2, RefreshCw, Copy, Check, Power, PowerOff, Plus, ChevronRight } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle, ExternalLink, Users, User, Trash2, RefreshCw, Copy, Check, Power, PowerOff, Plus, ChevronRight, Cloud } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -36,6 +36,7 @@ import { SettingsSecretInput } from './primitives/SettingsSecretInput'
 import { SettingsRow } from './primitives/SettingsRow'
 import { feishuBotStatesAtom, feishuBindingsAtom } from '@/atoms/feishu-atoms'
 import { agentWorkspacesAtom, agentSessionsAtom } from '@/atoms/agent-atoms'
+import type { AppSettings } from '@/types/settings'
 import { cn } from '@/lib/utils'
 import type { FeishuTestResult, FeishuChatBinding, FeishuBotConfig, FeishuBotBridgeState } from '@proma/shared'
 
@@ -722,6 +723,127 @@ function BotConfigCard({ bot, state, onSaved, onRemoved }: BotConfigCardProps): 
   )
 }
 
+// ===== 飞书 Todo 同步配置段 =====
+
+/**
+ * 飞书 Todo 同步配置：选择已配置的飞书 Bot 作为项目管理的外部待办同步载体。
+ * 凭证仅保存在 Bot 的安全存储中，这里只写 `feishuTodo.enabled` + `botId`。
+ */
+function FeishuTodoSection(): React.ReactElement {
+  const botStates = useAtomValue(feishuBotStatesAtom)
+  const [settings, setSettings] = React.useState<AppSettings | null>(null)
+  const [bots, setBots] = React.useState<FeishuBotConfig[]>([])
+  const [isSaving, setIsSaving] = React.useState(false)
+
+  const load = React.useCallback(async () => {
+    try {
+      const [s, config] = await Promise.all([
+        window.electronAPI.getSettings(),
+        window.electronAPI.getFeishuMultiConfig(),
+      ])
+      setSettings(s as AppSettings)
+      setBots(config.bots)
+    } catch {
+      toast.error('加载飞书 Todo 配置失败')
+    }
+  }, [])
+
+  React.useEffect(() => { load() }, [load])
+
+  const enabled = settings?.feishuTodo?.enabled ?? false
+  const botId = settings?.feishuTodo?.botId ?? ''
+  const selectedBot = bots.find((b) => b.id === botId)
+  // 已配置凭证（appId）的 Bot 才可作为 Todo 载体
+  const readyBots = bots.filter((b) => b.appId)
+
+  const handleUpdate = React.useCallback(async (patch: Partial<NonNullable<AppSettings['feishuTodo']>>) => {
+    setIsSaving(true)
+    try {
+      const next = await window.electronAPI.updateSettings({
+        feishuTodo: { enabled, botId, ...patch } as NonNullable<AppSettings['feishuTodo']>,
+      })
+      setSettings(next as AppSettings)
+    } catch {
+      toast.error('保存失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [enabled, botId])
+
+  return (
+    <SettingsSection
+      title="飞书 Todo 同步"
+      description="将项目任务同步到飞书任务（Todo），成员在飞书完成后自动反馈到项目管理系统"
+    >
+      <SettingsCard divided={false}>
+        <div className="px-4 py-4 space-y-4">
+          {/* 启用开关 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-foreground">启用飞书 Todo 同步</div>
+              <div className="text-xs text-muted-foreground">需要先在本页下方配置一个飞书 Bot</div>
+            </div>
+            <Button
+              size="sm"
+              variant={enabled ? 'default' : 'outline'}
+              onClick={() => void handleUpdate({ enabled: !enabled })}
+              disabled={isSaving || readyBots.length === 0}
+            >
+              {isSaving && <Loader2 size={14} className="mr-1 animate-spin" />}
+              {enabled ? <><Check size={14} className="mr-1" /> 已启用</> : '启用'}
+            </Button>
+          </div>
+
+          {/* Bot 选择 */}
+          {readyBots.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
+              <div className="text-sm font-medium text-foreground">选择飞书 Bot</div>
+              <Select
+                value={botId || undefined}
+                disabled={!enabled || isSaving}
+                onValueChange={(id) => void handleUpdate({ botId: id })}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="选择已配置的飞书 Bot" />
+                </SelectTrigger>
+                <SelectContent>
+                  {readyBots.map((bot) => {
+                    const st = botStates[bot.id]
+                    const connected = st?.status === 'connected'
+                    return (
+                      <SelectItem key={bot.id} value={bot.id}>
+                        <span className={cn('flex items-center gap-2')}>
+                          {bot.name}
+                          <span className={`inline-block w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 px-3 py-3 text-xs text-amber-800 dark:text-amber-300">
+              <Cloud size={15} className="mt-0.5 flex-shrink-0" />
+              <div>暂无可用的飞书 Bot。请先在下方 Bot 列表填写并保存 App ID 与 App Secret。</div>
+            </div>
+          )}
+
+          {/* 状态提示 */}
+          {enabled && selectedBot && (
+            <div className="flex items-start gap-2 rounded-lg bg-blue-500/10 px-3 py-3 text-xs text-blue-700 dark:text-blue-300">
+              <Cloud size={15} className="mt-0.5 flex-shrink-0" />
+              <div>
+                已使用「{selectedBot.name}」同步到飞书 Todo。回到项目管理「选负责人」即可搜索飞书通讯录。
+              </div>
+            </div>
+          )}
+        </div>
+      </SettingsCard>
+    </SettingsSection>
+  )
+}
+
 // ===== Bot 配置 Tab（多 Bot 版本）=====
 
 function FeishuConfigTab(): React.ReactElement {
@@ -795,6 +917,9 @@ function FeishuConfigTab(): React.ReactElement {
 
   return (
     <div className="space-y-8">
+      {/* 飞书 Todo 同步配置 */}
+      <FeishuTodoSection />
+
       {/* Bot 列表 */}
       <SettingsSection
         title="飞书 Bot 列表"

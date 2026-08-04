@@ -8,12 +8,20 @@
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Loader2, ExternalLink, Power, PowerOff, Plus, Trash2, CheckCircle2, XCircle } from 'lucide-react'
+import { Loader2, ExternalLink, Power, PowerOff, Plus, Trash2, CheckCircle2, XCircle, Cloud, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { SettingsSection } from './primitives/SettingsSection'
 import { SettingsCard } from './primitives/SettingsCard'
 import { SettingsInput } from './primitives/SettingsInput'
 import { SettingsSecretInput } from './primitives/SettingsSecretInput'
+import type { AppSettings } from '@/types/settings'
 import { dingtalkBotStatesAtom } from '@/atoms/dingtalk-atoms'
 import {
   AlertDialog,
@@ -54,6 +62,127 @@ const STATUS_CONFIG: Record<DingTalkBridgeStatus, { color: string; label: string
   connecting: { color: 'bg-amber-400 animate-pulse', label: '连接中...' },
   connected: { color: 'bg-green-500', label: '已连接' },
   error: { color: 'bg-red-500', label: '连接错误' },
+}
+
+// ===== 钉钉 Todo 同步配置段 =====
+
+/**
+ * 钉钉 Todo 同步配置：选择已配置的钉钉 Bot 作为项目管理的外部待办同步载体。
+ * 凭证仅保存在 Bot 的安全存储中，这里只写 `dingtalkTodo.enabled` + `botId`。
+ */
+function DingTalkTodoSection(): React.ReactElement {
+  const botStates = useAtomValue(dingtalkBotStatesAtom)
+  const [settings, setSettings] = React.useState<AppSettings | null>(null)
+  const [bots, setBots] = React.useState<DingTalkBotConfig[]>([])
+  const [isSaving, setIsSaving] = React.useState(false)
+
+  const load = React.useCallback(async () => {
+    try {
+      const [s, config] = await Promise.all([
+        window.electronAPI.getSettings(),
+        window.electronAPI.getDingTalkMultiConfig(),
+      ])
+      setSettings(s as AppSettings)
+      setBots(config.bots)
+    } catch {
+      toast.error('加载钉钉 Todo 配置失败')
+    }
+  }, [])
+
+  React.useEffect(() => { load() }, [load])
+
+  const enabled = settings?.dingtalkTodo?.enabled ?? false
+  const botId = settings?.dingtalkTodo?.botId ?? ''
+  const selectedBot = bots.find((b) => b.id === botId)
+  // 已配置凭证（clientId + clientSecret）的 Bot 才可作为 Todo 载体
+  const readyBots = bots.filter((b) => b.clientId && b.clientSecret)
+
+  const handleUpdate = React.useCallback(async (patch: Partial<AppSettings['dingtalkTodo']>) => {
+    setIsSaving(true)
+    try {
+      const next = await window.electronAPI.updateSettings({
+        dingtalkTodo: { enabled, botId, ...patch } as NonNullable<AppSettings['dingtalkTodo']>,
+      })
+      setSettings(next as AppSettings)
+    } catch {
+      toast.error('保存失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [enabled, botId])
+
+  return (
+    <SettingsSection
+      title="钉钉 Todo 同步"
+      description="将项目任务同步到钉钉待办，团队成员在钉钉完成后自动反馈到项目管理系统"
+    >
+      <SettingsCard divided={false}>
+        <div className="px-4 py-4 space-y-4">
+          {/* 启用开关 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-foreground">启用钉钉 Todo 同步</div>
+              <div className="text-xs text-muted-foreground">需要先在本页下方配置一个钉钉 Bot</div>
+            </div>
+            <Button
+              size="sm"
+              variant={enabled ? 'default' : 'outline'}
+              onClick={() => void handleUpdate({ enabled: !enabled })}
+              disabled={isSaving || readyBots.length === 0}
+            >
+              {isSaving && <Loader2 size={14} className="mr-1 animate-spin" />}
+              {enabled ? <><Check size={14} className="mr-1" /> 已启用</> : '启用'}
+            </Button>
+          </div>
+
+          {/* Bot 选择 */}
+          {readyBots.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-[180px_1fr] md:items-center">
+              <div className="text-sm font-medium text-foreground">选择钉钉 Bot</div>
+              <Select
+                value={botId || undefined}
+                disabled={!enabled || isSaving}
+                onValueChange={(id) => void handleUpdate({ botId: id })}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="选择已配置的钉钉 Bot" />
+                </SelectTrigger>
+                <SelectContent>
+                  {readyBots.map((bot) => {
+                    const st = botStates[bot.id]
+                    const connected = st?.status === 'connected'
+                    return (
+                      <SelectItem key={bot.id} value={bot.id}>
+                        <span className={cn('flex items-center gap-2')}>
+                          {bot.name} · {bot.clientId?.slice(0, 12)}...
+                          <span className={`inline-block w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-gray-400'}`} />
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 px-3 py-3 text-xs text-amber-800 dark:text-amber-300">
+              <Cloud size={15} className="mt-0.5 flex-shrink-0" />
+              <div>暂无可用的钉钉 Bot。请先在下方 Bot 列表填写并保存 Client ID 与 Client Secret。</div>
+            </div>
+          )}
+
+          {/* 状态提示 */}
+          {enabled && selectedBot && (
+            <div className="flex items-start gap-2 rounded-lg bg-orange-500/10 px-3 py-3 text-xs text-orange-700 dark:text-orange-300">
+              <Cloud size={15} className="mt-0.5 flex-shrink-0" />
+              <div>
+                已使用「{selectedBot.name}」同步到钉钉待办。回到项目管理「选负责人」即可搜索钉钉通讯录。
+              </div>
+            </div>
+          )}
+        </div>
+      </SettingsCard>
+    </SettingsSection>
+  )
 }
 
 // ===== 主组件 =====
@@ -112,6 +241,9 @@ export function DingTalkSettings(): React.ReactElement {
 
   return (
     <div className="space-y-8">
+      {/* 钉钉 Todo 同步配置 */}
+      <DingTalkTodoSection />
+
       {/* Bot 列表 */}
       <SettingsSection
         title="钉钉 Bot 列表"
