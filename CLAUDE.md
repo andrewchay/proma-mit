@@ -318,6 +318,18 @@ bun run generate:icons    # 生成应用图标
 - Agent 工作区按 slug 隔离，每个会话独立目录
 - MCP 配置和 Skills 按工作区管理
 
+### 营销工作流资产（MAPro 提取）
+
+从 ma-proma 提取的社交营销 Campaign 工作流（14 步）已落地为 PAA 可导入资产，**入口索引**见：
+`project/.context/notes/ma-marketing-workflow-assets.md`
+
+关键落地物：
+- PAA 可导入模板：`~/.proma-mit/workflows/templates/template-ma-marketing.json`（16 节点，已过 DSL 校验）
+- 提取包与流程定义：`~/.proma-mit/workflows/ma-marketing-workflow/`
+- 工作区 `skills/` 现有 24 个 `ma-*` skill（含补建的 `ma-market-analysis`、`ma-creative-pilot`）
+
+若修改模板/流程，注意 Definition 内严禁写入凭证，skill 引用以工作区名称为主。
+
 ## 构建工具
 
 - **主进程/Preload**：esbuild (`--bundle --platform=node --format=cjs --external:electron --external:@anthropic-ai/claude-agent-sdk`)
