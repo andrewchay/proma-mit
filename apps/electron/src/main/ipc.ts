@@ -394,7 +394,7 @@ export function resolveAppIconPath(variantId: string): string | null {
   if (!variantId || variantId === 'default') {
     return join(resourcesDir, 'icon.png')
   }
-  return join(resourcesDir, 'proma-logos', `proma-${variantId}.png`)
+  return join(resourcesDir, 'gravitas-logos', `gravitas-${variantId}.png`)
 }
 
 export function registerIpcHandlers(): void {

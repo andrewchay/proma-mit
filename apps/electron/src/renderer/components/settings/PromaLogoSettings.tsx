@@ -12,27 +12,17 @@ import { SettingsSection } from './primitives/SettingsSection'
 import { SettingsCard } from './primitives/SettingsCard'
 import { Button } from '@/components/ui/button'
 
-// ===== Logo 资源导入 =====
-
-// 基础色系
-import promaBlackLogo from '@/assets/bots/proma-logos/proma-black.png'
-import promaWhiteLogo from '@/assets/bots/proma-logos/proma-white.png'
-import promaBlueLogo from '@/assets/bots/proma-logos/proma-blue.png'
-import promaPurpleLogo from '@/assets/bots/proma-logos/proma-purple.png'
-import promaGradientLogo from '@/assets/bots/proma-logos/proma-gradient.png'
-import promaTransparentLogo from '@/assets/bots/proma-logos/proma-transparent.png'
-
-// 潘通年度色
-import promaCoralLogo from '@/assets/bots/proma-logos/proma-coral.png'
-import promaVeriPeriLogo from '@/assets/bots/proma-logos/proma-veri-peri.png'
-import promaVivaMagentaLogo from '@/assets/bots/proma-logos/proma-viva-magenta.png'
-import promaMochaMousseLogo from '@/assets/bots/proma-logos/proma-mocha-mousse.png'
-import promaEmeraldLogo from '@/assets/bots/proma-logos/proma-emerald.png'
-
-// 科技风格
-import proma8bitLogo from '@/assets/bots/proma-logos/proma-8bit.png'
-import promaCyberpunkLogo from '@/assets/bots/proma-logos/proma-cyberpunk.png'
-import promaFuturisticLogo from '@/assets/bots/proma-logos/proma-futuristic.png'
+// ===== Logo 资源导入（10 变体） =====
+import grav01Default from '@/assets/bots/gravitas-logos/gravitas-01-default.png'
+import grav02Black from '@/assets/bots/gravitas-logos/gravitas-02-black.png'
+import grav03White from '@/assets/bots/gravitas-logos/gravitas-03-white.png'
+import grav04Coral from '@/assets/bots/gravitas-logos/gravitas-04-coral.png'
+import grav05BrandBlue from '@/assets/bots/gravitas-logos/gravitas-05-brand-blue.png'
+import grav06Periwinkle from '@/assets/bots/gravitas-logos/gravitas-06-periwinkle.png'
+import grav07VivaMagenta from '@/assets/bots/gravitas-logos/gravitas-07-viva-magenta.png'
+import grav08Mocha from '@/assets/bots/gravitas-logos/gravitas-08-mocha.png'
+import grav09Emerald from '@/assets/bots/gravitas-logos/gravitas-09-emerald.png'
+import grav10Gradient from '@/assets/bots/gravitas-logos/gravitas-10-gradient.png'
 
 // ===== 类型 =====
 
@@ -45,123 +35,88 @@ interface LogoVariant {
   previewBg: string
 }
 
-// ===== Logo 变体定义 =====
+// ===== Logo 变体定义（10 变体，id 与文件名一致，供 app 图标切换复用） =====
 
 const LOGO_VARIANTS: readonly LogoVariant[] = [
-  // 基础色系
   {
-    id: 'black',
+    id: '01-default',
+    name: '深炭白标',
+    description: '深炭底色，经典默认',
+    src: grav01Default,
+    resourcePath: 'gravitas-logos/gravitas-01-default.png',
+    previewBg: 'bg-[#141416]',
+  },
+  {
+    id: '02-black',
     name: '经典黑',
-    description: '黑色背景，适合浅色界面',
-    src: promaBlackLogo,
-    resourcePath: 'proma-logos/proma-black.png',
+    description: '纯黑底白标，内敛',
+    src: grav02Black,
+    resourcePath: 'gravitas-logos/gravitas-02-black.png',
     previewBg: 'bg-neutral-900',
   },
   {
-    id: 'white',
+    id: '03-white',
     name: '纯白版',
-    description: '白色背景，适合深色界面',
-    src: promaWhiteLogo,
-    resourcePath: 'proma-logos/proma-white.png',
+    description: '白底深标，适合深色界面',
+    src: grav03White,
+    resourcePath: 'gravitas-logos/gravitas-03-white.png',
     previewBg: 'bg-white',
   },
   {
-    id: 'blue',
-    name: '品牌蓝',
-    description: '深蓝背景，适合正式场合',
-    src: promaBlueLogo,
-    resourcePath: 'proma-logos/proma-blue.png',
-    previewBg: 'bg-blue-900',
-  },
-  {
-    id: 'purple',
-    name: '紫色版',
-    description: '紫色调，个性风格',
-    src: promaPurpleLogo,
-    resourcePath: 'proma-logos/proma-purple.png',
-    previewBg: 'bg-purple-900',
-  },
-  {
-    id: 'gradient',
-    name: '渐变版',
-    description: '蓝紫渐变背景',
-    src: promaGradientLogo,
-    resourcePath: 'proma-logos/proma-gradient.png',
-    previewBg: 'bg-gradient-to-br from-blue-600 to-purple-600',
-  },
-  {
-    id: 'transparent',
-    name: '透明底',
-    description: '无背景，可叠加任意颜色',
-    src: promaTransparentLogo,
-    resourcePath: 'proma-logos/proma-transparent.png',
-    previewBg: 'bg-[repeating-conic-gradient(#e5e7eb_0%_25%,#fff_0%_50%)] bg-[length:16px_16px]',
-  },
-  // 潘通年度色
-  {
-    id: 'coral',
+    id: '04-coral',
     name: '珊瑚橘',
-    description: 'Pantone 2019 Living Coral',
-    src: promaCoralLogo,
-    resourcePath: 'proma-logos/proma-coral.png',
-    previewBg: 'bg-[#FF6F61]',
+    description: '温暖珊瑚珊瑚橙',
+    src: grav04Coral,
+    resourcePath: 'gravitas-logos/gravitas-04-coral.png',
+    previewBg: 'bg-[#FF6B4A]',
   },
   {
-    id: 'veri-peri',
+    id: '05-brand-blue',
+    name: '品牌蓝',
+    description: '沉稳品牌蓝',
+    src: grav05BrandBlue,
+    resourcePath: 'gravitas-logos/gravitas-05-brand-blue.png',
+    previewBg: 'bg-[#2B5CE6]',
+  },
+  {
+    id: '06-periwinkle',
     name: '长春花蓝',
-    description: 'Pantone 2022 Very Peri',
-    src: promaVeriPeriLogo,
-    resourcePath: 'proma-logos/proma-veri-peri.png',
-    previewBg: 'bg-[#6667AB]',
+    description: '柔和长春花基调',
+    src: grav06Periwinkle,
+    resourcePath: 'gravitas-logos/gravitas-06-periwinkle.png',
+    previewBg: 'bg-[#8B93E8]',
   },
   {
-    id: 'viva-magenta',
+    id: '07-viva-magenta',
     name: '非凡洋红',
-    description: 'Pantone 2023 Viva Magenta',
-    src: promaVivaMagentaLogo,
-    resourcePath: 'proma-logos/proma-viva-magenta.png',
+    description: 'Pantone Viva Magenta',
+    src: grav07VivaMagenta,
+    resourcePath: 'gravitas-logos/gravitas-07-viva-magenta.png',
     previewBg: 'bg-[#BB2649]',
   },
   {
-    id: 'mocha-mousse',
+    id: '08-mocha',
     name: '摩卡慕斯',
-    description: 'Pantone 2025 Mocha Mousse',
-    src: promaMochaMousseLogo,
-    resourcePath: 'proma-logos/proma-mocha-mousse.png',
-    previewBg: 'bg-[#A47764]',
+    description: 'Pantone Mocha Mousse',
+    src: grav08Mocha,
+    resourcePath: 'gravitas-logos/gravitas-08-mocha.png',
+    previewBg: 'bg-[#A47864]',
   },
   {
-    id: 'emerald',
+    id: '09-emerald',
     name: '翡翠绿',
-    description: 'Pantone 2013 Emerald',
-    src: promaEmeraldLogo,
-    resourcePath: 'proma-logos/proma-emerald.png',
-    previewBg: 'bg-[#009473]',
-  },
-  // 科技风格
-  {
-    id: '8bit',
-    name: '8bit 像素风',
-    description: '复古像素游戏风格',
-    src: proma8bitLogo,
-    resourcePath: 'proma-logos/proma-8bit.png',
-    previewBg: 'bg-[#1a1a2e]',
+    description: '沉稳翡翠绿',
+    src: grav09Emerald,
+    resourcePath: 'gravitas-logos/gravitas-09-emerald.png',
+    previewBg: 'bg-[#1F8A70]',
   },
   {
-    id: 'cyberpunk',
-    name: '赛博朋克',
-    description: '霓虹赛博风格',
-    src: promaCyberpunkLogo,
-    resourcePath: 'proma-logos/proma-cyberpunk.png',
-    previewBg: 'bg-[#0d0221]',
-  },
-  {
-    id: 'futuristic',
-    name: '未来质感',
-    description: '金属全息科技风',
-    src: promaFuturisticLogo,
-    resourcePath: 'proma-logos/proma-futuristic.png',
-    previewBg: 'bg-[#4a4a4a]',
+    id: '10-gradient',
+    name: '渐变色',
+    description: '珊瑚→紫渐变，主应用图标',
+    src: grav10Gradient,
+    resourcePath: 'gravitas-logos/gravitas-10-gradient.png',
+    previewBg: 'bg-gradient-to-r from-[#FF6B4A] to-[#7A5CFF]',
   },
 ] as const
 
@@ -172,7 +127,7 @@ function LogoCard({ logo }: { logo: LogoVariant }): React.ReactElement {
     try {
       const saved = await window.electronAPI.saveResourceFileAs(
         logo.resourcePath,
-        `proma-${logo.id}.png`,
+        `gravitas-${logo.id}.png`,
       )
       if (saved) {
         toast.success(`${logo.name} 已保存`)
@@ -237,8 +192,8 @@ export function PromaLogoSettings(): React.ReactElement {
         <SettingsCard divided={false}>
           <div className="px-4 py-3 space-y-1.5 text-sm text-muted-foreground">
             <p>建议使用 PNG 格式，飞书/钉钉头像推荐 200x200 以上。</p>
-            <p>透明背景版本适合需要自定义背景色的平台。</p>
-            <p>渐变版和科技风格在社交平台头像中辨识度最高。</p>
+            <p>主应用图标为渐变色版本，其余变体可用于不同场景。</p>
+            <p>渐变版在社交平台头像中辨识度最高。</p>
           </div>
         </SettingsCard>
       </SettingsSection>

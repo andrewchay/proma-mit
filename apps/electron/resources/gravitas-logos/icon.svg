@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gravitas 托盘 Template（无底色单色 mark，供 macOS 菜单栏自动适配深/浅色） -->
+  <g fill="none" stroke="#000000" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- G 圆弧 -->
+    <path d="M 21.32 22.81 A 8.64 8.64 0 1 1 21.32 9.19"/>
+    <!-- 轨道环（倾角 16°） -->
+    <ellipse cx="22.74" cy="16" rx="4.37" ry="1.14" transform="rotate(16 22.74 16)" stroke-width="0.57"/>
+  </g>
+  <!-- 短横笔 -->
+  <rect x="15.57" y="15.16" width="2.89" height="1.68" fill="#000000"/>
+  <!-- 星球 -->
+  <circle cx="22.74" cy="16" r="1.68" fill="#000000"/>
+</svg>

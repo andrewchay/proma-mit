@@ -80,8 +80,8 @@ extraResources:
     filter:
       - "**/*.md"
   # Proma 品牌 Logo 素材（品牌素材下载功能使用）
-  - from: resources/proma-logos
-    to: proma-logos
+  - from: resources/gravitas-logos
+    to: gravitas-logos
     filter:
       - "**/*"
   # Computer Use 的 macOS 原生辅助程序，不依赖用户安装第三方命令。
