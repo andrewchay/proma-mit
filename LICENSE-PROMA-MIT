@@ -1,0 +1,36 @@
+MIT License — 上游 Proma 原始版权与许可声明
+
+Gravitas 是 Proma 桌面应用的改造衍生版本，fork 起始于 2026 年 1 月下旬
+（上游版本 v0.10.x）。当时上游 Proma 以 Apache-2.0 或 MIT 双许可发布，
+本改造版本选择在 MIT 许可条款下行使其权利。此文件保存原始上游的 MIT
+版权与许可声明（MIT License 要求衍生作品的副本与实质部分必须保留原版权
+和许可声明）。
+
+-----------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2024-2026 Erlich Liu（Proma 原始作者 / 上游项目 proma-ai/Proma）
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+
+注：上游原始版权归属为 Erlich Liu（proma-ai/Proma 作者）。
+本衍生作 Gravitas 的后续改造版权归属 Andrew Chai。

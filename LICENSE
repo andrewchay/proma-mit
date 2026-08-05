@@ -5,12 +5,30 @@ License text copyright (c) 2020 MariaDB plc, All Rights Reserved.
 
 -----------------------------------------------------------------------------
 
+Derivative Work / 衍生来源声明
+
+Gravitas（下称 "Licensed Work"）是 Proma 桌面应用（Proma，开源仓库
+proma-ai/Proma，原 ErlichLiu/Proma）的改造衍生版本。
+
+本项目 fork 起始于 2026 年 1 月下旬（上游版本 v0.10.x）。**当时上游 Proma
+以 Apache-2.0 或 MIT 双许可（Dual-licensed under Apache-2.0 OR MIT）发布**，
+本改造版本在 MIT 许可条款下行使其选择权，对 fork 起点代码行权，
+并在其基础上进行了深度改造与扩展。原始上游的 MIT 版权与许可声明完整保留，
+详见仓库根目录 LICENSE-PROMA-MIT。
+
+说明：上游 Proma 在 2026 年 5 月 25 日后切换至 AGPL-3.0 与商业双许可；该变更
+不影响本衍生作品在 fork 起点（MIT 阶段）已取得的权利。本仓库后续引入的、
+可能源自 AGPL 时期的资产（如部分同步的 skills/CLAUDE.md）不在 BSL 本条款
+的 MIT 基础保证范围内，使用前需单独核验其来源许可。
+
+-----------------------------------------------------------------------------
+
 Parameters
 
-Licensor:             <Licensor — 请在替换为版权归属的公司/个人名称>
+Licensor:             Andrew Chai
 
-Licensed Work:        Proma
-                      The Licensed Work is (c) 2026 <Licensor — 与上方一致>
+Licensed Work:        Gravitas（前称 Proma）
+                      The Licensed Work is (c) 2026 Andrew Chai
 
 Additional Use Grant: The Licensed Work may be used for evaluation, testing,
                       personal, non-commercial, and internal development
