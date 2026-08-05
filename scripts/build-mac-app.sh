@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# 构建 macOS 版 Proma MIT 应用（当前架构 DMG）
+# 构建 macOS 版 Gravitas 应用（当前架构 DMG）
 #
 # 用法：
 #   ./scripts/build-mac-app.sh           # 从 scripts/ 子目录运行
