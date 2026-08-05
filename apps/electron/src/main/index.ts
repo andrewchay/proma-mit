@@ -488,6 +488,7 @@ async function bootstrap(): Promise<void> {
   // 标准圆角遮罩（setIcon 的 PNG 不会被套该遮罩，易显示为直角方形）。
   // 仅用户自定义了图标变体时才用 setIcon 覆盖。
   if (process.platform === 'darwin' && app.dock) {
+    await app.dock.show()
     const { resolveAppIconPath } = require('./ipc')
     const settings = getSettings()
     const variantId = settings.appIconVariant
