@@ -4,6 +4,7 @@
   "description": "The next gen ai software with general agents",
   "type": "module",
   "private": true,
+  "license": "BUSL-1.1",
   "workspaces": [
     "packages/*",
     "apps/*"

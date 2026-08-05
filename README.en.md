@@ -286,9 +286,9 @@ Proma currently has a PR bounty program. You can leave your email in the PR desc
 
 ## License
 
-This project is dual-licensed under **Apache-2.0 or MIT**, at your option:
+This project is licensed under the **Business Source License 1.1 (BSL-1.1)**. See the `LICENSE` file in the repository root.
 
-- Apache License, Version 2.0: see `LICENSE-APACHE` in the repository root or https://www.apache.org/licenses/LICENSE-2.0
-- MIT License: see `LICENSE-MIT` in the repository root or https://opensource.org/licenses/MIT
+- Before the **Change Date (2030-06-22)**, unless covered by an Additional Use Grant, the Licensed Work and its derivative works are restricted to non-production use (see the Additional Use Grant in `LICENSE`);
+- Upon the **Change Date**, it automatically converts to the **Apache License, Version 2.0** (see `LICENSE-APACHE` in the repository root or https://www.apache.org/licenses/LICENSE-2.0).
 
-The root `LICENSE` file also describes how to choose between the two licenses.
+For commercial / production licensing, please contact the Licensor.

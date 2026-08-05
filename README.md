@@ -357,9 +357,9 @@ Proma 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱
 
 ## 许可证
 
-本项目采用 **Apache-2.0 或 MIT 双许可**，你可任选其一：
+本项目采用 **Business Source License 1.1 (BSL-1.1)**，详见根目录 `LICENSE`。
 
-- Apache License, Version 2.0：详见根目录 `LICENSE-APACHE` 或 https://www.apache.org/licenses/LICENSE-2.0
-- MIT License：详见根目录 `LICENSE-MIT` 或 https://opensource.org/licenses/MIT
+- 在 **Change Date（2030-06-22）** 之前，除非获得附加使用许可，源码及派生作品仅限非生产用途（详见 LICENSE 中的 Additional Use Grant）；
+- 到达 **Change Date** 后，自动转为 **Apache License, Version 2.0**（见根目录 `LICENSE-APACHE` / https://www.apache.org/licenses/LICENSE-2.0）。
 
-根目录 `LICENSE` 文件亦说明了双许可的选择方式。
+如需商业/生产授权，请联系许可方。

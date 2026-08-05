@@ -1,4 +1,58 @@
-Proma is dual-licensed under either of the following licenses at your option:
+Business Source License 1.1
 
-- Apache License, Version 2.0 (see LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0)
-- MIT License (see LICENSE-MIT or https://opensource.org/licenses/MIT)
+License text copyright (c) 2020 MariaDB plc, All Rights Reserved.
+"Business Source License" is a trademark of MariaDB plc.
+
+-----------------------------------------------------------------------------
+
+Parameters
+
+Licensor:             <Licensor — 请在替换为版权归属的公司/个人名称>
+
+Licensed Work:        Proma
+                      The Licensed Work is (c) 2026 <Licensor — 与上方一致>
+
+Additional Use Grant: The Licensed Work may be used for evaluation, testing,
+                      personal, non-commercial, and internal development
+                      purposes, and for production use by an entity providing
+                      the Licensed Work to fewer than <N — 请替换为生产使用规模阈值> end
+                      users, without a separate license from the Licensor. Any
+                      other production use, resale, sublicensing, or offering of
+                      the Licensed Work (or any derivative work thereof) as a
+                      hosted service to third parties, requires a separate
+                      license from the Licensor.
+
+Change Date:          2030-06-22
+
+Change License:       Apache License, Version 2.0
+
+-----------------------------------------------------------------------------
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative
+works, redistribute, and make non-production use of the Licensed Work. The
+Licensor may make an Additional Use Grant, above, permitting limited
+production use.
+
+Effective on the Change Date, or the fourth anniversary of the first
+publicly available distribution of a specific version of the Licensed Work
+under this License, whichever comes first, the Licensor hereby grants you
+rights under the terms of the Change License, and the rights granted in the
+paragraph above terminate.
+
+If your use of the Licensed Work does not comply with the requirements
+currently in effect as described in this License, you must purchase a
+commercial license from the Licensor, its affiliated entities, or
+authorized resellers, or you must refrain from using the Licensed Work.
+
+All copies of the original and modified Licensed Work, and derivative works
+of the Licensed Work, are subject to this License. This License applies
+separately for each version of the Licensed Work that is disclosed. The
+Licensor retains all rights to the Licensed Work not expressly granted by
+this License.
+
+Except as otherwise provided herein, this License shall be governed by the
+laws of the jurisdiction in which the Licensor is domiciled. Your use of the
+Licensed Work, including the Additional Use Grant, is subject to applicable
+export control laws and regulations.
