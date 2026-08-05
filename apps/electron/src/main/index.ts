@@ -484,16 +484,18 @@ async function bootstrap(): Promise<void> {
   })
 
   // Set dock icon on macOS (required for dev mode, bundled apps use Info.plist)
-  // 如果用户有保存的图标偏好则使用，否则用默认图标
+  // default 变体不使用 setIcon：让 macOS 使用 Info.plist 的 icon.icns，自动应用 Big Sur
+  // 标准圆角遮罩（setIcon 的 PNG 不会被套该遮罩，易显示为直角方形）。
+  // 仅用户自定义了图标变体时才用 setIcon 覆盖。
   if (process.platform === 'darwin' && app.dock) {
     const { resolveAppIconPath } = require('./ipc')
     const settings = getSettings()
     const variantId = settings.appIconVariant
-    const dockIconPath = variantId
-      ? resolveAppIconPath(variantId)
-      : join(__dirname, 'resources/icon.png')
-    if (dockIconPath && existsSync(dockIconPath)) {
-      app.dock.setIcon(dockIconPath)
+    if (variantId && variantId !== 'default') {
+      const dockIconPath = resolveAppIconPath(variantId)
+      if (dockIconPath && existsSync(dockIconPath)) {
+        app.dock.setIcon(dockIconPath)
+      }
     }
   }
 
