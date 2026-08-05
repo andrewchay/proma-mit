@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { PROVIDER_LABELS, isAgentCompatibleProvider } from '@gravitas/shared'
 import type { Channel } from '@gravitas/shared'
-import { getChannelLogo, PromaLogo } from '@/lib/model-logo'
+import { getChannelLogo } from '@/lib/model-logo'
 import { agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom } from '@/atoms/agent-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
@@ -224,9 +224,7 @@ export function ChannelSettings(): React.ReactElement {
         }
       >
         <SettingsCard>
-          <PromaProviderCard />
-        </SettingsCard>
-        {loading ? (
+          {loading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">加载中...</div>
         ) : channels.length === 0 ? (
           <SettingsCard divided={false}>
@@ -258,9 +256,7 @@ export function ChannelSettings(): React.ReactElement {
         description="启用 Agent 模式可用的供应商，支持同时开启多个渠道，在 Agent 模式下可直接切换"
       >
         <SettingsCard>
-          <PromaProviderCard />
-        </SettingsCard>
-        {loading ? (
+          {loading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">加载中...</div>
         ) : agentCapableChannels.length === 0 ? (
           <SettingsCard divided={false}>
@@ -381,27 +377,6 @@ function AgentProviderRow({ channel, enabled, onToggle }: AgentProviderRowProps)
         checked={enabled}
         onCheckedChange={onToggle}
       />
-    </SettingsRow>
-  )
-}
-
-// ===== Proma 官方供应商推广卡片 =====
-
-function PromaProviderCard(): React.ReactElement {
-  const handleDownload = (): void => {
-    window.open('http://proma.cool/download', '_blank')
-  }
-
-  return (
-    <SettingsRow
-      label="Proma"
-      icon={<img src={PromaLogo} alt="Proma" className="w-8 h-8 rounded" />}
-      description="Proma 官方供应｜稳定｜靠谱｜丝滑｜简单｜优惠套餐｜可用于 Agent"
-    >
-      <Button size="sm" variant="outline" className="gap-1.5" onClick={handleDownload}>
-        <ExternalLink size={13} />
-        <span>下载后启动</span>
-      </Button>
     </SettingsRow>
   )
 }

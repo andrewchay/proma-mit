@@ -20,7 +20,7 @@ import { PromaLogoSettings } from './PromaLogoSettings'
 import feishuLogo from '@/assets/bots/feishu.png'
 import dingtalkLogo from '@/assets/bots/dingding.png'
 import wechatLogo from '@/assets/bots/wechat.png'
-import promaLogo from '@/assets/models/proma.png'
+import gravitasLogo from '@/assets/bots/gravitas-logos/gravitas-10-gradient.png'
 
 // ===== 类型 =====
 
@@ -68,7 +68,7 @@ const PLATFORMS: readonly BotPlatformDef[] = [
   {
     id: 'logos',
     name: '品牌素材',
-    iconSrc: promaLogo,
+    iconSrc: gravitasLogo,
     iconBgClass: 'bg-muted',
   },
 ] as const

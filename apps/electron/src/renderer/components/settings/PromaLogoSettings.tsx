@@ -23,6 +23,9 @@ import grav07VivaMagenta from '@/assets/bots/gravitas-logos/gravitas-07-viva-mag
 import grav08Mocha from '@/assets/bots/gravitas-logos/gravitas-08-mocha.png'
 import grav09Emerald from '@/assets/bots/gravitas-logos/gravitas-09-emerald.png'
 import grav10Gradient from '@/assets/bots/gravitas-logos/gravitas-10-gradient.png'
+import grav11Porcelain from '@/assets/bots/gravitas-logos/gravitas-11-porcelain.png'
+import grav12Impressionist from '@/assets/bots/gravitas-logos/gravitas-12-impressionist.png'
+import grav13Landscape from '@/assets/bots/gravitas-logos/gravitas-13-landscape.png'
 
 // ===== 类型 =====
 
@@ -117,6 +120,30 @@ const LOGO_VARIANTS: readonly LogoVariant[] = [
     src: grav10Gradient,
     resourcePath: 'gravitas-logos/gravitas-10-gradient.png',
     previewBg: 'bg-gradient-to-r from-[#FF6B4A] to-[#7A5CFF]',
+  },
+  {
+    id: '11-porcelain',
+    name: '青花瓷',
+    description: '蓝白瓷盘水墨风',
+    src: grav11Porcelain,
+    resourcePath: 'gravitas-logos/gravitas-11-porcelain.png',
+    previewBg: 'bg-[#F5F5F5]',
+  },
+  {
+    id: '12-impressionist',
+    name: '印象派',
+    description: '莫奈油画风格',
+    src: grav12Impressionist,
+    resourcePath: 'gravitas-logos/gravitas-12-impressionist.png',
+    previewBg: 'bg-[#E8D5B7]',
+  },
+  {
+    id: '13-landscape',
+    name: '青绿山水',
+    description: '中国画山水风格',
+    src: grav13Landscape,
+    resourcePath: 'gravitas-logos/gravitas-13-landscape.png',
+    previewBg: 'bg-[#D4C4A8]',
   },
 ] as const
 
