@@ -5,7 +5,8 @@
       <stop offset="1" stop-color="#7A5CFF"/>
     </linearGradient>
   </defs>
-  <rect width="1024" height="1024" rx="230" fill="#141428"/>
+  <!-- macOS 图标：自带圆角版，四角透明，不依赖系统遮罩（参考 paa 规范 rx≈22.5%） -->
+  <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230" fill="#141428"/>
   <g fill="none" stroke="url(#gm)">
     <path d="M 682.2 729.9 A 276.5 276.5 0 1 1 682.2 294.1" stroke-width="107.5"/>
     <ellipse cx="727.7" cy="512.0" rx="139.8" ry="36.6" stroke-width="18.3" transform="rotate(16.0 727.7 512.0)"/>
