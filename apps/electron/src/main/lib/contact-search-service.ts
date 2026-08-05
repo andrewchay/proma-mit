@@ -139,49 +139,9 @@ async function getFeishuTenantToken(appId: string, appSecret: string): Promise<s
 
 const FEISHU_BASE = 'https://open.feishu.cn'
 
-/** 飞书：获取某部门下的直属子部门。根部门 id 传 0。 */
-async function listFeishuSubDeptIds(token: string, deptId: number): Promise<number[]> {
-  const resp = await fetch(`${FEISHU_BASE}/open-apis/contact/v3/departments/${deptId}/children?fetch_child=false`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  const data = await safeJson<any>(resp)
-  if (data.code !== 0) {
-    // 99991672 = 无通讯录权限；99991663 = token 无效；40004 = 无部门访问权限
-    throw feishuError(data.code, `获取子部门失败: ${data.msg ?? '未知错误'}`)
-  }
-  return (data.data?.children as Array<{ department_id?: number }> | undefined)
-    ?.map((d) => d.department_id)
-    .filter((id): id is number => typeof id === 'number') ?? []
-}
-
-/** 飞书：获取某部门下的直属成员（open_id）。 */
-async function listFeishuDeptMembers(token: string, deptId: number): Promise<ContactSearchResult[]> {
-  const resp = await fetch(
-    `${FEISHU_BASE}/open-apis/contact/v3/departments/${deptId}/members?page_size=50&member_id_type=open_id`,
-    {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  )
-  const data = await safeJson<any>(resp)
-  if (data.code !== 0) {
-    throw feishuError(data.code, `获取部门成员失败: ${data.msg ?? '未知错误'}`)
-  }
-  // 注意：飞书 v3 部门成员接口返回的成员字段是 member_id（配合 member_id_type=open_id 时为 open_id），
-  // 不是 open_id 字段；用错字段会导致全部成员被过滤为空。
-  const items = data.data?.items as Array<{ member_id?: string; member_id_type?: string; name?: string; tenant_key?: string }> | undefined
-  return (items ?? [])
-    .filter((m) => m.member_id && m.name)
-    .map((m) => ({
-      platform: 'feishu' as const,
-      userId: m.member_id!,
-      name: m.name!,
-    }))
-}
-
-/** 飞书：遍历根部门及子部门成员，本地按姓名关键字过滤。
- * 使用 tenant_access_token 可访问的部门成员接口（users/search 需要 user_access_token）。 */
+/** 飞书：分页拉取全部用户（用 tenant_access_token），按姓名关键字本地过滤。
+ * 使用 GET /contact/v3/users，可一次遍历全企业成员，避免按部门遍历时
+ * 根部门(0)成员接口 404 且子部门层级/分页不全导致漏人的问题。 */
 async function searchFeishuContacts(keyword: string): Promise<ContactSearchResult[]> {
   const cred = getFeishuCredential()
   if (!cred?.appId || !cred.appSecret) {
@@ -190,41 +150,41 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
   const token = await getFeishuTenantToken(cred.appId, cred.appSecret)
   const kw = keyword.trim().toLowerCase()
 
-  // 收集遍历过程中的错误：如果最终一个成员都没有，把错误暴露给用户（而非静默空结果）
-  const errors: string[] = []
-
-  // 遍历根部门（0）及一层子部门。注意：飞书 v3 的
-  // /departments/0/members 接口不接受 dept_id=0（返回 404 page not found），
-  // 根部门通常也没有直属成员，因此成员接口只遍历真实子部门 ID，跳过 0。
-  const deptIds = [0]
-  try {
-    deptIds.push(...(await listFeishuSubDeptIds(token, 0)))
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err))
-    console.warn('[ContactSearch] 获取飞书子部门失败，仅搜索根部门:', err)
-  }
-
   const collected: ContactSearchResult[] = []
   const seen = new Set<string>()
-  // slice(1) 跳过根部门 0（其成员接口对 0 返回 404）
-  for (const deptId of deptIds.slice(1, 31)) {
+  const errors: string[] = []
+
+  // 分页拉取全企业用户（最多拉 5 页 × 50 = 250 人，超过则截断）
+  let pageToken = ''
+  for (let page = 0; page < 5; page++) {
     try {
-      const members = await listFeishuDeptMembers(token, deptId)
-      for (const m of members) {
-        if (seen.has(m.userId)) continue
-        seen.add(m.userId)
-        if (!kw || m.name.toLowerCase().includes(kw)) {
-          collected.push(m)
-        }
-        if (collected.length >= 20) break
+      const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
+      const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
+      const data = await safeJson<any>(resp)
+      if (data.code !== 0) {
+        throw feishuError(data.code, `获取用户失败: ${data.msg ?? '未知错误'}`)
       }
+      const items = data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string; department_ids?: string[] }> | undefined
+      for (const u of items ?? []) {
+        if (!u.name) continue
+        const userId = u.open_id || u.union_id
+        if (!userId || seen.has(userId)) continue
+        seen.add(userId)
+        if (!kw || u.name.toLowerCase().includes(kw)) {
+          collected.push({ platform: 'feishu', userId, name: u.name })
+        }
+        if (collected.length >= 20) return collected
+      }
+      pageToken = data.data?.page_token ?? ''
+      if (!pageToken || !data.data?.has_more) break
     } catch (err) {
-      errors.push(`部门${deptId}: ${err instanceof Error ? err.message : String(err)}`)
-      console.warn(`[ContactSearch] 飞书部门 ${deptId} 成员获取失败，跳过:`, err)
+      errors.push(err instanceof Error ? err.message : String(err))
+      console.warn('[ContactSearch] 飞书用户分页获取失败，暂停:', err)
+      break
     }
   }
 
-  // 一个成员都没有但有错误 → 抛出，让前端显示具体原因（否则用户只看到「未找到匹配成员」）
+  // 一个成员都没有但有错误 → 抛出，让前端显示具体原因
   if (collected.length === 0 && errors.length > 0) {
     throw new Error(`飞书通讯录获取失败: ${errors.join('; ')}`)
   }
