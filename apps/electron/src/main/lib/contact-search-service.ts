@@ -193,7 +193,9 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
   // 收集遍历过程中的错误：如果最终一个成员都没有，把错误暴露给用户（而非静默空结果）
   const errors: string[] = []
 
-  // 遍历根部门（0）及一层子部门
+  // 遍历根部门（0）及一层子部门。注意：飞书 v3 的
+  // /departments/0/members 接口不接受 dept_id=0（返回 404 page not found），
+  // 根部门通常也没有直属成员，因此成员接口只遍历真实子部门 ID，跳过 0。
   const deptIds = [0]
   try {
     deptIds.push(...(await listFeishuSubDeptIds(token, 0)))
@@ -204,7 +206,8 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
 
   const collected: ContactSearchResult[] = []
   const seen = new Set<string>()
-  for (const deptId of deptIds.slice(0, 30)) {
+  // slice(1) 跳过根部门 0（其成员接口对 0 返回 404）
+  for (const deptId of deptIds.slice(1, 31)) {
     try {
       const members = await listFeishuDeptMembers(token, deptId)
       for (const m of members) {

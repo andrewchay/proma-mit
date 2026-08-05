@@ -223,7 +223,6 @@ export function ChannelSettings(): React.ReactElement {
           </Button>
         }
       >
-        <SettingsCard>
           {loading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">加载中...</div>
         ) : channels.length === 0 ? (
@@ -255,7 +254,6 @@ export function ChannelSettings(): React.ReactElement {
         title="Agent 供应商"
         description="启用 Agent 模式可用的供应商，支持同时开启多个渠道，在 Agent 模式下可直接切换"
       >
-        <SettingsCard>
           {loading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">加载中...</div>
         ) : agentCapableChannels.length === 0 ? (
