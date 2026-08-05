@@ -416,6 +416,66 @@ Gravitas 基于 Claude Agent SDK 的 Agent 工具支持 SubAgent。复杂任务�
 
 你可以在右侧看到 Team 侧边栏，了解到 Agent Team 的运行情况，以及 Agent 间相互的通信信息。Gravitas 接下来还会继续迭代这个部分的设计。
 
+## Computer Use（电脑控制）
+
+Gravitas 支持 Computer Use 功能，让 Agent 能够直接控制你的电脑，完成需要图形界面操作的复杂任务。
+
+### 核心能力
+
+Computer Use 基于 Claude Agent SDK 的电脑控制工具，支持：
+
+- **屏幕截图**：Agent 可以查看当前屏幕内容，理解界面状态
+- **鼠标操作**：点击、移动、拖拽、双击
+- **键盘输入**：输入文本、快捷键（复制/粘贴/保存等）
+- **应用切换**：识别当前前台应用，切换窗口
+
+### 使用场景
+
+Computer Use 特别适合以下场景：
+
+- **网页操作**：自动填写表单、下载文件、抓取网页数据
+- **数据处理**：操作 Excel、整理文件、批量重命名
+- **设计协作**：在 Figma、Sketch 等设计工具中执行操作
+- **软件测试**：自动执行 UI 测试流程
+- **跨应用工作流**：在多个应用间协调完成复杂任务
+
+### 权限管理
+
+Computer Use 涉及高风险操作，Gravitas 实现了严格的权限控制：
+
+1. **截图权限**：每次截图前会请求确认，你可以选择"始终允许"当前会话
+2. **点击/输入权限**：每次操作前需要确认，防止误操作
+3. **敏感区域保护**：涉及密码输入、支付页面等敏感操作时，会额外提示
+4. **紧急停止**：随时可以通过快捷键或界面按钮停止 Agent 操作
+
+### 如何启用
+
+1. 在 Agent 模式下，直接描述需要电脑控制的任务，例如：
+   - "帮我在 Safari 里打开 GitHub，找到我的最新 PR 并截图"
+   - "把这个 Excel 文件里的数据整理成图表"
+   - "帮我在 Figma 里把 logo 移动到右上角"
+
+2. Agent 会自动判断是否需要 Computer Use，并请求相应权限
+
+3. 确认权限后，Agent 会开始执行操作，你可以在右侧看到操作日志
+
+### 注意事项
+
+- **macOS 优先**：Computer Use 目前对 macOS 支持最完善，Windows/Linux 部分功能受限
+- **保持屏幕可见**：Agent 操作时需要屏幕内容可见，不要锁屏或睡眠
+- **谨慎授权**：涉及文件删除、支付、敏感信息输入等操作时，请仔细确认
+- **网络要求**：部分操作需要访问互联网，确保网络连接正常
+
+### 与 Agent 模式的配合
+
+Computer Use 通常与 Agent 模式的其他工具配合使用：
+
+- **Bash + Computer Use**：先用 Bash 处理文件，再用 Computer Use 操作图形界面
+- **Skills + Computer Use**：通过 Skills 定义复杂的工作流，Computer Use 执行 UI 操作
+- **MCP + Computer Use**：结合 Gmail、飞书等 MCP 工具，实现端到端自动化
+
+---
+
 ### 飞书-远程使用 Gravitas Agent / 支持群聊和私聊
 
 ![image-20260308171044380](https://img.erlich.fun/personal-blog/uPic/image-20260308171044380.png)
