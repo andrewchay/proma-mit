@@ -2,7 +2,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { AgentAuditEvent, AgentAuditQuery } from '@proma/shared'
+import type { AgentAuditEvent, AgentAuditQuery } from '@gravitas/shared'
 import { getConfigDir } from './config-paths'
 
 const MAX_AUDIT_EVENTS = 1_000

@@ -12,9 +12,9 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import DOMPurify from 'dompurify'
 import katex from 'katex'
-import { highlightCode, highlightToTokens, getDisplayName } from '@proma/core'
-import type { HighlightTokensResult } from '@proma/core'
-import type { FileAccessOptions } from '@proma/shared'
+import { highlightCode, highlightToTokens, getDisplayName } from '@gravitas/core'
+import type { HighlightTokensResult } from '@gravitas/core'
+import type { FileAccessOptions } from '@gravitas/shared'
 import { extractCodeText } from '../../lib/markdown-rich-text'
 
 type FileAccessRef = { current: FileAccessOptions | undefined }

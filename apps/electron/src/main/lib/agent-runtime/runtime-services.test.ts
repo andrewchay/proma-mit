@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentStreamPayload, McpServerEntry, SDKMessage } from '@proma/shared'
+import type { AgentStreamPayload, McpServerEntry, SDKMessage } from '@gravitas/shared'
 import type { McpClientManager } from './mcp-client'
 import { AgentEventBus } from '../agent-event-bus'
 

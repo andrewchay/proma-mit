@@ -2,7 +2,7 @@
  * 通知策略纯函数（P0-3）—— 无 electron 依赖，可单测。
  */
 
-import type { AppEventEnvelope, SystemNotificationInput } from '@proma/shared'
+import type { AppEventEnvelope, SystemNotificationInput } from '@gravitas/shared'
 
 /** waiting_action 类型 → 提示音场景 */
 export function soundForActionKind(kind: string): 'permissionRequest' | 'exitPlanMode' {

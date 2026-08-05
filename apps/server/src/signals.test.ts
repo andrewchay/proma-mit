@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentRuntimeScope } from '@proma/shared/utils'
+import type { AgentRuntimeScope } from '@gravitas/shared/utils'
 import { SignalScanner } from './signal-scan.ts'
 import { PostgresSignalStore } from './signals.ts'
 import type { Signal, SignalHit, SignalMatcher } from './signals.ts'
-import type { RuntimeSpan, RuntimeSpanStatus } from '@proma/shared'
+import type { RuntimeSpan, RuntimeSpanStatus } from '@gravitas/shared'
 
 const scope: AgentRuntimeScope = { tenantId: 'tenant', userId: 'user' }
 

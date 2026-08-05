@@ -8,8 +8,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { Type } from 'typebox'
-import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@proma/shared'
-import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } from '@proma/shared'
+import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@gravitas/shared'
+import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } from '@gravitas/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'

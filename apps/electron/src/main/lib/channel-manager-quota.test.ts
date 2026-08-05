@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterAll, mock } from 'bun:test'
-import type { Channel } from '@proma/shared'
+import type { Channel } from '@gravitas/shared'
 
 // mock channel-manager 的 electron 依赖：避免真实 safeStorage。
 // 注意：bun 的 mock.module('electron') 是跨文件共享的，必须同时提供其他测试文件

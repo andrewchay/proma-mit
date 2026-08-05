@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterAll } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AppEventEnvelope } from '@proma/shared'
+import type { AppEventEnvelope } from '@gravitas/shared'
 import { toRunRecord } from './run-store'
 
 const testDir = mkdtempSync(join(tmpdir(), 'proma-run-store-test-'))

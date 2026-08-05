@@ -2,11 +2,11 @@
  * Agent Runtime 类型定义
  *
  * 定义 Provider-Agnostic Agent Runtime 所需的输入、工具、消息等类型。
- * 该层不依赖任何特定 SDK，只依赖 @proma/core 的 ProviderAdapter 和 @proma/shared 的公共类型。
+ * 该层不依赖任何特定 SDK，只依赖 @gravitas/core 的 ProviderAdapter 和 @gravitas/shared 的公共类型。
  */
 
-import type { ToolDefinition, ToolCall, ToolResult } from '@proma/core'
-import type { AgentGoalCheckpoint, ProviderType, PromaPermissionMode } from '@proma/shared'
+import type { ToolDefinition, ToolCall, ToolResult } from '@gravitas/core'
+import type { AgentGoalCheckpoint, ProviderType, PromaPermissionMode } from '@gravitas/shared'
 import type { SessionCallbacks } from '../agent-orchestrator'
 
 /** Agent Runtime 输入 */

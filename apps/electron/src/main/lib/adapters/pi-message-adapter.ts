@@ -5,7 +5,7 @@ import type {
   SDKToolResultBlock,
   SDKUserContentBlock,
   SDKUserMessage,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type {
   AssistantMessage as PiAssistantMessage,
   ImageContent as PiImageContent,

@@ -8,7 +8,7 @@
  * 未配置时工具返回可读错误，引导用户在 设置 > 记忆 中配置。
  */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { getMemoryConfig } from '../../memory-service'
 import { searchMemory, addMemory, formatSearchResult, type MemosCredentials } from '../../memos-client'

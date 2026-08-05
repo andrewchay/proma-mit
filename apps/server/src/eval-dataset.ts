@@ -1,5 +1,5 @@
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
-import type { RuntimeSpan } from '@proma/shared'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
+import type { RuntimeSpan } from '@gravitas/shared'
 
 /**
  * P-IV：评估数据集（Eval Datasets）。
@@ -52,7 +52,7 @@ export interface EvalSampleQuery extends AgentRuntimeScope {
 /** 采样需要的跨 task span 数据源（复用 span store，保持解耦）。 */
 export interface EvalSpanSource {
   querySpansInWindow(scope: AgentRuntimeScope, input: { from: number; kind?: RuntimeSpan['kind']; status?: RuntimeSpan['status']; namePrefix?: string; limit?: number }): Promise<RuntimeSpan[]>
-  listTaskTree(scope: AgentRuntimeScope, taskId: string): Promise<import('@proma/shared').RuntimeSpanNode[]>
+  listTaskTree(scope: AgentRuntimeScope, taskId: string): Promise<import('@gravitas/shared').RuntimeSpanNode[]>
 }
 
 export class PostgresEvalDatasetStore {
@@ -228,7 +228,7 @@ function aggregateTaskSpans(dataset: EvalDataset, taskId: string, spans: Runtime
   }
 }
 
-function flattenSample(dataset: EvalDataset, node: import('@proma/shared').RuntimeSpanNode): EvalSample {
+function flattenSample(dataset: EvalDataset, node: import('@gravitas/shared').RuntimeSpanNode): EvalSample {
   const meta = isRecord(node.meta) ? node.meta : {}
   const sampleObject = isRecord(meta.sample) ? meta.sample : {}
   return {

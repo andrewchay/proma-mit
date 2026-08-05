@@ -2,14 +2,14 @@
  * Proma / AI SDK 上下文压缩单元测试
  *
  * 验证自动压缩判断、历史文本转换、摘要调用与持久化压缩。
- * 通过 mock.module 隔离 @proma/core 的 LLM 调用；会话文件用临时配置目录。
+ * 通过 mock.module 隔离 @gravitas/core 的 LLM 调用；会话文件用临时配置目录。
  */
 
 import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { SDKMessage } from '@proma/shared'
+import type { SDKMessage } from '@gravitas/shared'
 import { getAgentSessionMessagesPath } from '../config-paths'
 
 class MockBrowserWindow {}
@@ -26,7 +26,7 @@ mock.module('electron', () => ({
 }))
 
 let capturedSummaryPrompt = ''
-mock.module('@proma/core', () => ({
+mock.module('@gravitas/core', () => ({
   getAdapter: () => ({
     providerType: 'deepseek',
     buildStreamRequest: (input: { userMessage: string }) => ({

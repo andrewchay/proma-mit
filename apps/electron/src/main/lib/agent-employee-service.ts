@@ -26,7 +26,7 @@ import { updateTask, getTask } from './project-service'
 import { getSettings } from './settings-service'
 import { createWorkflowRun, getWorkflowRun, cancelWorkflowRun } from './workflow-service'
 import { executeWorkflowRun } from './workflow-run-executor'
-import type { AgentMessage } from '@proma/shared'
+import type { AgentMessage } from '@gravitas/shared'
 
 // ============================================
 // 员工 CRUD（服务层薄封装）

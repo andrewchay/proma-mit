@@ -8,7 +8,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { GitHubRelease } from '@proma/shared'
+import type { GitHubRelease } from '@gravitas/shared'
 import { mergeReleases } from './release-notes-merge'
 
 export { mergeReleases }

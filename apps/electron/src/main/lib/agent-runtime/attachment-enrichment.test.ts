@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, mock, beforeEach } from 'bun:test'
-import type { FileAttachment } from '@proma/shared'
+import type { FileAttachment } from '@gravitas/shared'
 
 class MockBrowserWindow {}
 

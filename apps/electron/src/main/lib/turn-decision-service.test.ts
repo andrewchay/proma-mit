@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import type { Goal } from '@proma/shared'
+import type { Goal } from '@gravitas/shared'
 
 const { preTickTurn, shouldAutoAdvanceGoal, routeLabel, nextActionableTodo } = await import('./turn-decision-service')
 

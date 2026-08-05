@@ -4,7 +4,7 @@
  * 主题模式、IPC 通道等设置相关定义。
  */
 
-import type { AgentRuntime, EnvironmentCheckResult, ThinkingConfig, AgentEffort } from '@proma/shared'
+import type { AgentRuntime, EnvironmentCheckResult, ThinkingConfig, AgentEffort } from '@gravitas/shared'
 
 /** 通知音场景类型 */
 export type NotificationSoundType = 'taskComplete' | 'permissionRequest' | 'exitPlanMode'
@@ -199,7 +199,7 @@ export interface AppSettings {
   /** Agent 推理深度 */
   agentEffort?: AgentEffort
   /** Pi runtime 会话级思考级别（AgentThinkingLevel；仅 reasoning 模型生效，缺省 off） */
-  agentThinkingLevel?: import('@proma/shared').AgentThinkingLevel
+  agentThinkingLevel?: import('@gravitas/shared').AgentThinkingLevel
   /** Agent 最大预算（美元/次） */
   agentMaxBudgetUsd?: number
   /** Agent 最大轮次（0 或 undefined = SDK 默认） */
@@ -222,7 +222,7 @@ export interface AppSettings {
   appIconVariant?: string
   /** 语音输入设置（Access Token 以加密态存储，由专用服务解密后返回渲染进程） */
   voiceDictation?: VoiceDictationPersistedSettings
-  /** 启动时自动清理临时文件（proma-preview、proma-installers），默认 true */
+  /** 启动时自动清理临时文件（gravitas-preview、gravitas-installers），默认 true */
   autoCleanupTempOnStart?: boolean
   /** 自动清理 N 天前已归档会话的 SDK 数据（0 = 禁用，默认 0） */
   autoCleanupArchivedDays?: number

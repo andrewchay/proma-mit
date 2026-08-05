@@ -5,8 +5,8 @@
  * 结果以 JSON 形式返回给模型，便于模型解析 answers 字段。
  */
 
-import type { ToolResult } from '@proma/core'
-import type { AskUserQuestion, AskUserQuestionOption } from '@proma/shared'
+import type { ToolResult } from '@gravitas/core'
+import type { AskUserQuestion, AskUserQuestionOption } from '@gravitas/shared'
 import type { ToolContext } from '../types'
 
 export const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion'

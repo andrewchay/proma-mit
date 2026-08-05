@@ -9,7 +9,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -110,7 +110,7 @@ import type {
   RevertFileInput,
   FileAccessOptions,
   ResolvedFileUrl,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
 import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents } from './lib/git-diff-service'
@@ -591,7 +591,7 @@ export function registerIpcHandlers(): void {
   // 扫描系统中的编辑器应用（仅 macOS）
   ipcMain.handle(
     IPC_CHANNELS.SCAN_EDITORS,
-    async (): Promise<import('@proma/shared').EditorApp[]> => {
+    async (): Promise<import('@gravitas/shared').EditorApp[]> => {
       if (process.platform !== 'darwin') return []
       const { existsSync } = await import('node:fs')
       const { homedir } = await import('node:os')
@@ -1464,12 +1464,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.LIST_GOALS,
-    async (_, sessionId: string): Promise<import('@proma/shared').AgentGoal[]> => listAgentGoals(sessionId),
+    async (_, sessionId: string): Promise<import('@gravitas/shared').AgentGoal[]> => listAgentGoals(sessionId),
   )
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.UPDATE_GOAL_STATUS,
-    async (_, input: import('@proma/shared').UpdateAgentGoalStatusInput): Promise<import('@proma/shared').AgentGoal> => {
+    async (_, input: import('@gravitas/shared').UpdateAgentGoalStatusInput): Promise<import('@gravitas/shared').AgentGoal> => {
       return updateAgentGoalStatus(input)
     },
   )
@@ -1556,7 +1556,7 @@ export function registerIpcHandlers(): void {
   // 测试 MCP 服务器连接
   ipcMain.handle(
     AGENT_IPC_CHANNELS.TEST_MCP_SERVER,
-    async (_, name: string, entry: import('@proma/shared').McpServerEntry): Promise<{ success: boolean; message: string }> => {
+    async (_, name: string, entry: import('@gravitas/shared').McpServerEntry): Promise<{ success: boolean; message: string }> => {
       const { validateMcpServer } = await import('./lib/mcp-validator')
       const result = await validateMcpServer(name, entry)
       return {
@@ -1702,8 +1702,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES, async () => computerUseService.getCapabilities())
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_STATUS, async () => computerUseService.getStatus())
   ipcMain.handle(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS, async () => computerUseService.requestPermissions())
-  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@proma/shared').AgentAuditQuery) => listAgentAuditEvents(query))
-  ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@proma/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@gravitas/shared').AgentAuditQuery) => listAgentAuditEvents(query))
+  ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@gravitas/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
     const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()!, {
       title: '导出操作审计', defaultPath: 'proma-operation-audit.jsonl', filters: [{ name: 'JSON Lines', extensions: ['jsonl'] }],
     })
@@ -1712,7 +1712,7 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES, async () => listProactiveSchedules())
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS, async () => listProactiveTaskRuns())
-  ipcMain.handle(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, async (_, input: import('@proma/shared').CreateProactiveScheduleInput) => {
+  ipcMain.handle(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, async (_, input: import('@gravitas/shared').CreateProactiveScheduleInput) => {
     if (!input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务仅支持 Proma 或 AI SDK Runtime')
     return createProactiveSchedule(input)
   })
@@ -1734,7 +1734,7 @@ export function registerIpcHandlers(): void {
   // 排队发送消息
   ipcMain.handle(
     AGENT_IPC_CHANNELS.QUEUE_MESSAGE,
-    async (event, input: import('@proma/shared').AgentQueueMessageInput): Promise<string> => {
+    async (event, input: import('@gravitas/shared').AgentQueueMessageInput): Promise<string> => {
       return queueAgentMessage(input, event.sender)
     }
   )
@@ -2052,7 +2052,7 @@ export function registerIpcHandlers(): void {
   // 获取所有待处理的交互请求快照（渲染进程重载后恢复状态）
   ipcMain.handle(
     AGENT_IPC_CHANNELS.GET_PENDING_REQUESTS,
-    async (): Promise<import('@proma/shared').PendingRequestsSnapshot> => {
+    async (): Promise<import('@gravitas/shared').PendingRequestsSnapshot> => {
       return {
         permissions: permissionService.getPendingRequests(),
         askUsers: askUserService.getPendingRequests(),
@@ -2443,7 +2443,7 @@ export function registerIpcHandlers(): void {
   // XLSX/PPTX 转 HTML（内联预览使用 OOXML 解析）
   ipcMain.handle(
     'file:office-to-html',
-    async (_, filePath: string, access?: FileAccessOptions | string[]): Promise<import('@proma/shared').OfficePreviewResult | null> => {
+    async (_, filePath: string, access?: FileAccessOptions | string[]): Promise<import('@gravitas/shared').OfficePreviewResult | null> => {
       const { convertOfficeToHtml, resolveFilePath } = await import('./lib/file-preview-service')
       const options = normalizeFileAccessOptions(access)
       const allowedBasePaths = getAllowedCandidateBasePaths(options)
@@ -3036,7 +3036,7 @@ export function registerIpcHandlers(): void {
   // 保存单个 Bot 配置
   ipcMain.handle(
     FEISHU_IPC_CHANNELS.SAVE_BOT_CONFIG,
-    async (_, input: import('@proma/shared').FeishuBotConfigInput) => {
+    async (_, input: import('@gravitas/shared').FeishuBotConfigInput) => {
       const saved = saveFeishuBotConfig(input)
       // 配置变更后自动重启或停止（不阻塞保存结果）
       if (saved.enabled && saved.appId && saved.appSecret) {
@@ -3292,7 +3292,7 @@ export function registerIpcHandlers(): void {
   // 保存单个 Bot 配置
   ipcMain.handle(
     DINGTALK_IPC_CHANNELS.SAVE_BOT_CONFIG,
-    async (_, input: import('@proma/shared').DingTalkBotConfigInput) => {
+    async (_, input: import('@gravitas/shared').DingTalkBotConfigInput) => {
       const saved = saveDingTalkBotConfig(input)
       // 配置变更后自动重启或停止（不阻塞保存结果）
       if (saved.enabled && saved.clientId && saved.clientSecret) {
@@ -3751,53 +3751,53 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(PLUGIN_IPC_CHANNELS.SET_ENABLED, async (_event, id: string, enabled: boolean): Promise<unknown> => setPluginEnabled(id, enabled))
 
   // ===== 运行记录（P2-1） =====
-  const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@proma/shared').RunRecordQuery) => import('@proma/shared').RunRecord[]; clear: () => void } }
-  ipcMain.handle(RUN_RECORD_IPC_CHANNELS.LIST, async (_event, query: import('@proma/shared').RunRecordQuery = {}): Promise<import('@proma/shared').RunRecord[]> => getRunStore().query(query))
+  const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@gravitas/shared').RunRecordQuery) => import('@gravitas/shared').RunRecord[]; clear: () => void } }
+  ipcMain.handle(RUN_RECORD_IPC_CHANNELS.LIST, async (_event, query: import('@gravitas/shared').RunRecordQuery = {}): Promise<import('@gravitas/shared').RunRecord[]> => getRunStore().query(query))
   ipcMain.handle(RUN_RECORD_IPC_CHANNELS.CLEAR, async (): Promise<void> => getRunStore().clear())
 
   // ===== Token 消耗统计 =====
-  const { tokenUsageService } = require('./lib/token-usage-service') as { tokenUsageService: { query: (q: import('@proma/shared').TokenUsageQuery) => import('@proma/shared').TokenUsageRecord[]; aggregate: (q: import('@proma/shared').TokenUsageQuery) => import('@proma/shared').TokenUsageAggregate; listSessions: () => import('@proma/shared').TokenUsageSessionSummary[]; clear: () => void } }
-  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST, async (_event, query: import('@proma/shared').TokenUsageQuery = {}): Promise<import('@proma/shared').TokenUsageRecord[]> => tokenUsageService.query(query))
-  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, async (_event, query: import('@proma/shared').TokenUsageQuery = {}): Promise<import('@proma/shared').TokenUsageAggregate> => tokenUsageService.aggregate(query))
-  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS, async (): Promise<import('@proma/shared').TokenUsageSessionSummary[]> => tokenUsageService.listSessions())
+  const { tokenUsageService } = require('./lib/token-usage-service') as { tokenUsageService: { query: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[]; aggregate: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageAggregate; listSessions: () => import('@gravitas/shared').TokenUsageSessionSummary[]; clear: () => void } }
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST, async (_event, query: import('@gravitas/shared').TokenUsageQuery = {}): Promise<import('@gravitas/shared').TokenUsageRecord[]> => tokenUsageService.query(query))
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, async (_event, query: import('@gravitas/shared').TokenUsageQuery = {}): Promise<import('@gravitas/shared').TokenUsageAggregate> => tokenUsageService.aggregate(query))
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS, async (): Promise<import('@gravitas/shared').TokenUsageSessionSummary[]> => tokenUsageService.listSessions())
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.CLEAR, async (): Promise<void> => tokenUsageService.clear())
 
   // ===== Goal 状态层（P0） =====
   const goalSvc = require('./lib/goal-service') as {
-    createGoal: (input: import('@proma/shared').GoalCreateInput) => import('@proma/shared').Goal
-    getGoal: (id: string) => import('@proma/shared').Goal | undefined
-    listGoals: (query: import('@proma/shared').GoalQuery) => import('@proma/shared').Goal[]
-    updateGoal: (id: string, input: import('@proma/shared').GoalUpdateInput) => import('@proma/shared').Goal
+    createGoal: (input: import('@gravitas/shared').GoalCreateInput) => import('@gravitas/shared').Goal
+    getGoal: (id: string) => import('@gravitas/shared').Goal | undefined
+    listGoals: (query: import('@gravitas/shared').GoalQuery) => import('@gravitas/shared').Goal[]
+    updateGoal: (id: string, input: import('@gravitas/shared').GoalUpdateInput) => import('@gravitas/shared').Goal
     deleteGoal: (id: string) => void
-    upsertGoalTodo: (goalId: string, input: import('@proma/shared').UpsertTodoInput) => import('@proma/shared').Goal
-    updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']) => import('@proma/shared').Goal
-    addGoalGate: (goalId: string, question: string) => import('@proma/shared').Goal
-    resolveGoalGate: (goalId: string, gateId: string, resolution: string) => import('@proma/shared').Goal
-    appendGoalEvidence: (goalId: string, evidence: string) => import('@proma/shared').Goal
+    upsertGoalTodo: (goalId: string, input: import('@gravitas/shared').UpsertTodoInput) => import('@gravitas/shared').Goal
+    updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@gravitas/shared').GoalTodo['status']) => import('@gravitas/shared').Goal
+    addGoalGate: (goalId: string, question: string) => import('@gravitas/shared').Goal
+    resolveGoalGate: (goalId: string, gateId: string, resolution: string) => import('@gravitas/shared').Goal
+    appendGoalEvidence: (goalId: string, evidence: string) => import('@gravitas/shared').Goal
     shouldGoalRun: (goalId: string) => { shouldRun: boolean; reason?: string }
     canGoalSpend: (goalId: string, usd: number) => { allowed: boolean; reason?: string }
-    spendGoalBudget: (goalId: string, usd: number) => import('@proma/shared').Goal
+    spendGoalBudget: (goalId: string, usd: number) => import('@gravitas/shared').Goal
     bindSessionToGoal: (sessionId: string, goalId: string) => { sessionId: string; goalId: string }
     unbindSessionGoal: (sessionId: string) => { sessionId: string }
-    getSessionGoal: (sessionId: string) => import('@proma/shared').Goal | undefined
+    getSessionGoal: (sessionId: string) => import('@gravitas/shared').Goal | undefined
     listGoalSessions: (goalId: string) => Array<{ sessionId: string; title: string }>
   }
-  ipcMain.handle(GOAL_IPC_CHANNELS.CREATE, async (_event, input: import('@proma/shared').GoalCreateInput): Promise<import('@proma/shared').Goal> => goalSvc.createGoal(input))
-  ipcMain.handle(GOAL_IPC_CHANNELS.GET, async (_event, id: string): Promise<import('@proma/shared').Goal | null> => goalSvc.getGoal(id) ?? null)
-  ipcMain.handle(GOAL_IPC_CHANNELS.LIST, async (_event, query: import('@proma/shared').GoalQuery = {}): Promise<import('@proma/shared').Goal[]> => goalSvc.listGoals(query))
-  ipcMain.handle(GOAL_IPC_CHANNELS.UPDATE, async (_event, id: string, input: import('@proma/shared').GoalUpdateInput): Promise<import('@proma/shared').Goal> => goalSvc.updateGoal(id, input))
+  ipcMain.handle(GOAL_IPC_CHANNELS.CREATE, async (_event, input: import('@gravitas/shared').GoalCreateInput): Promise<import('@gravitas/shared').Goal> => goalSvc.createGoal(input))
+  ipcMain.handle(GOAL_IPC_CHANNELS.GET, async (_event, id: string): Promise<import('@gravitas/shared').Goal | null> => goalSvc.getGoal(id) ?? null)
+  ipcMain.handle(GOAL_IPC_CHANNELS.LIST, async (_event, query: import('@gravitas/shared').GoalQuery = {}): Promise<import('@gravitas/shared').Goal[]> => goalSvc.listGoals(query))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UPDATE, async (_event, id: string, input: import('@gravitas/shared').GoalUpdateInput): Promise<import('@gravitas/shared').Goal> => goalSvc.updateGoal(id, input))
   ipcMain.handle(GOAL_IPC_CHANNELS.DELETE, async (_event, id: string): Promise<void> => goalSvc.deleteGoal(id))
-  ipcMain.handle(GOAL_IPC_CHANNELS.UPSERT_TODO, async (_event, goalId: string, input: import('@proma/shared').UpsertTodoInput): Promise<import('@proma/shared').Goal> => goalSvc.upsertGoalTodo(goalId, input))
-  ipcMain.handle(GOAL_IPC_CHANNELS.UPDATE_TODO_STATUS, async (_event, goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']): Promise<import('@proma/shared').Goal> => goalSvc.updateGoalTodoStatus(goalId, todoId, status))
-  ipcMain.handle(GOAL_IPC_CHANNELS.ADD_GATE, async (_event, goalId: string, question: string): Promise<import('@proma/shared').Goal> => goalSvc.addGoalGate(goalId, question))
-  ipcMain.handle(GOAL_IPC_CHANNELS.RESOLVE_GATE, async (_event, goalId: string, gateId: string, resolution: string): Promise<import('@proma/shared').Goal> => goalSvc.resolveGoalGate(goalId, gateId, resolution))
-  ipcMain.handle(GOAL_IPC_CHANNELS.APPEND_EVIDENCE, async (_event, goalId: string, evidence: string): Promise<import('@proma/shared').Goal> => goalSvc.appendGoalEvidence(goalId, evidence))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UPSERT_TODO, async (_event, goalId: string, input: import('@gravitas/shared').UpsertTodoInput): Promise<import('@gravitas/shared').Goal> => goalSvc.upsertGoalTodo(goalId, input))
+  ipcMain.handle(GOAL_IPC_CHANNELS.UPDATE_TODO_STATUS, async (_event, goalId: string, todoId: string, status: import('@gravitas/shared').GoalTodo['status']): Promise<import('@gravitas/shared').Goal> => goalSvc.updateGoalTodoStatus(goalId, todoId, status))
+  ipcMain.handle(GOAL_IPC_CHANNELS.ADD_GATE, async (_event, goalId: string, question: string): Promise<import('@gravitas/shared').Goal> => goalSvc.addGoalGate(goalId, question))
+  ipcMain.handle(GOAL_IPC_CHANNELS.RESOLVE_GATE, async (_event, goalId: string, gateId: string, resolution: string): Promise<import('@gravitas/shared').Goal> => goalSvc.resolveGoalGate(goalId, gateId, resolution))
+  ipcMain.handle(GOAL_IPC_CHANNELS.APPEND_EVIDENCE, async (_event, goalId: string, evidence: string): Promise<import('@gravitas/shared').Goal> => goalSvc.appendGoalEvidence(goalId, evidence))
   ipcMain.handle(GOAL_IPC_CHANNELS.SHOULD_RUN, async (_event, goalId: string): Promise<{ shouldRun: boolean; reason?: string }> => goalSvc.shouldGoalRun(goalId))
   ipcMain.handle(GOAL_IPC_CHANNELS.CAN_SPEND, async (_event, goalId: string, usd: number): Promise<{ allowed: boolean; reason?: string }> => goalSvc.canGoalSpend(goalId, usd))
-  ipcMain.handle(GOAL_IPC_CHANNELS.SPEND_BUDGET, async (_event, goalId: string, usd: number): Promise<import('@proma/shared').Goal> => goalSvc.spendGoalBudget(goalId, usd))
+  ipcMain.handle(GOAL_IPC_CHANNELS.SPEND_BUDGET, async (_event, goalId: string, usd: number): Promise<import('@gravitas/shared').Goal> => goalSvc.spendGoalBudget(goalId, usd))
   ipcMain.handle(GOAL_IPC_CHANNELS.BIND_SESSION, async (_event, sessionId: string, goalId: string): Promise<{ sessionId: string; goalId: string }> => goalSvc.bindSessionToGoal(sessionId, goalId))
   ipcMain.handle(GOAL_IPC_CHANNELS.UNBIND_SESSION, async (_event, sessionId: string): Promise<{ sessionId: string }> => goalSvc.unbindSessionGoal(sessionId))
-  ipcMain.handle(GOAL_IPC_CHANNELS.GET_SESSION_GOAL, async (_event, sessionId: string): Promise<import('@proma/shared').Goal | null> => goalSvc.getSessionGoal(sessionId) ?? null)
+  ipcMain.handle(GOAL_IPC_CHANNELS.GET_SESSION_GOAL, async (_event, sessionId: string): Promise<import('@gravitas/shared').Goal | null> => goalSvc.getSessionGoal(sessionId) ?? null)
   ipcMain.handle(GOAL_IPC_CHANNELS.LIST_SESSIONS, async (_event, goalId: string): Promise<Array<{ sessionId: string; title: string }>> => goalSvc.listGoalSessions(goalId))
 
   // ===== macOS 灵动岛通知 =======

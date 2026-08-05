@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentStreamPayload, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, PromaEvent } from '@proma/shared'
+import type { AgentStreamPayload, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, PromaEvent } from '@gravitas/shared'
 
 import { toAppEvent } from './app-event-bus'
 

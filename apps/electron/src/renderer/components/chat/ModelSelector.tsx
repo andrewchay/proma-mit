@@ -28,7 +28,7 @@ import { useConversationIdOptional } from '@/contexts/session-context'
 import { getModelLogo, getChannelLogo } from '@/lib/model-logo'
 import { cn } from '@/lib/utils'
 import { ChannelPlanQuotaBadge } from './ChannelPlanQuotaBadge'
-import type { Channel, ModelOption } from '@proma/shared'
+import type { Channel, ModelOption } from '@gravitas/shared'
 
 /** 从渠道列表构建扁平化的模型选项 */
 function buildModelOptions(channels: Channel[], filterChannelId?: string, filterChannelIds?: string[]): ModelOption[] {

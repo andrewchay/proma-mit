@@ -14,7 +14,7 @@ import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
 import { allPendingAskUserRequestsAtom, agentStreamingStatesAtom, finalizeStreamingActivities } from '@/atoms/agent-atoms'
-import type { AskUserQuestion } from '@proma/shared'
+import type { AskUserQuestion } from '@gravitas/shared'
 
 interface QuestionAnswer {
   selected: string[]
@@ -255,7 +255,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
         <div className="flex items-center justify-between mb-2">
           <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {isTakeover && <Hand className="size-4 text-amber-600" />}
-            {isTakeover ? '请你接管敏感操作' : 'Proma Agent 需要你的输入'}
+            {isTakeover ? '请你接管敏感操作' : 'Gravitas Agent 需要你的输入'}
           </span>
           <div className="flex items-center gap-1.5">
             {requests.length > 1 && (

@@ -15,8 +15,8 @@ import type {
   DingTalkBotBridgeState,
   DingTalkBotConfig,
   DingTalkTestResult,
-} from '@proma/shared'
-import { DINGTALK_IPC_CHANNELS } from '@proma/shared'
+} from '@gravitas/shared'
+import { DINGTALK_IPC_CHANNELS } from '@gravitas/shared'
 import { getDecryptedBotClientSecret } from './dingtalk-config'
 import { BridgeCommandHandler, type BridgeAttachment } from './bridge-command-handler'
 import { inferImageMediaType, saveImageToSession, inferExtension, MAX_IMAGE_SIZE } from './bridge-attachment-utils'

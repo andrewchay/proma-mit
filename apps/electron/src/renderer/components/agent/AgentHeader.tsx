@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { agentSessionsAtom, agentSidePanelOpenAtom, workspaceFilesVersionAtom } from '@/atoms/agent-atoms'
 import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import { registerShortcut } from '@/lib/shortcut-registry'
-import type { Goal } from '@proma/shared'
+import type { Goal } from '@gravitas/shared'
 
 /** AgentHeader 属性接口 */
 interface AgentHeaderProps {

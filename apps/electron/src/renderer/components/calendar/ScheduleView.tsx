@@ -681,7 +681,7 @@ export function ScheduleView(): React.ReactElement {
         if (!granted) {
           setSyncState({
             isSyncing: false,
-            lastSyncResult: { success: false, imported: 0, message: '日历权限未授权。请打开 系统设置 > 隐私与安全性 > 日历，勾选 Proma MIT 后重试。' },
+            lastSyncResult: { success: false, imported: 0, message: '日历权限未授权。请打开 系统设置 > 隐私与安全性 > 日历，勾选 Gravitas MIT 后重试。' },
           })
           return
         }
@@ -729,7 +729,7 @@ export function ScheduleView(): React.ReactElement {
         return
       }
 
-      // 4. 转换为 Proma MIT 日程格式并批量创建（去重：按标题+开始时间+结束时间）
+      // 4. 转换为 Gravitas MIT 日程格式并批量创建（去重：按标题+开始时间+结束时间）
       const existingEvents = await window.electronAPI.paa.schedule.listEvents()
       const existingKeys = new Set(existingEvents.map((e: any) => `${e.title}|${e.startTime}|${e.endTime}`))
       

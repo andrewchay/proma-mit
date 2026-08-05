@@ -1,4 +1,6 @@
-# Proma
+# Gravitas
+
+> Gravitas is a derivative fork of the open-source AI desktop app **Proma** (github.com/ErlichLiu/Proma). Unless noted, the wording reflects this project.
 
 Proma is a local-first AI desktop app that brings multi-model Chat, general-purpose Agent workflows, workspaces, Skills, MCP, remote bots, and memory into one open-source client.
 

@@ -1,4 +1,4 @@
-import type { AgentRuntimeRole, AgentRuntimeWebAuthResolver } from '@proma/shared/utils'
+import type { AgentRuntimeRole, AgentRuntimeWebAuthResolver } from '@gravitas/shared/utils'
 
 export interface OidcJwtAuthConfig {
   issuer: string

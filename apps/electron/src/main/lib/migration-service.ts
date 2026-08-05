@@ -2,8 +2,8 @@
  * 数据迁移服务
  *
  * 支持两种导出模式：
- * - personal (.proma-backup)：个人全量备份，含解密后的 API Key 明文
- * - share (.proma-share)：团队分发，自由选择组件，凭据自动剥离
+ * - personal (.gravitas-backup)：个人全量备份，含解密后的 API Key 明文
+ * - share (.gravitas-share)：团队分发，自由选择组件，凭据自动剥离
  *
  * 导入时自动检测跨平台差异并提示用户处理路径映射。
  */
@@ -34,8 +34,8 @@ import {
 } from './config-paths'
 import { listAgentWorkspaces, getAgentWorkspace, getAllWorkspaceSkills, getWorkspaceMcpConfig } from './agent-workspace-manager'
 import { listChannels, decryptApiKey } from './channel-manager'
-import type { AgentWorkspace } from '@proma/shared'
-import { normalizeProviderType } from '@proma/shared'
+import type { AgentWorkspace } from '@gravitas/shared'
+import { normalizeProviderType } from '@gravitas/shared'
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 

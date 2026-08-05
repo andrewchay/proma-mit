@@ -1,12 +1,12 @@
 /**
- * ChannelPlanQuotaBadge — 渠道订阅 Plan 额度徽标（移植自本地 Proma）。
+ * ChannelPlanQuotaBadge — 渠道订阅 Plan 额度徽标（移植自本地 Gravitas）。
  *
  * 在模型选择弹窗的供应商标题行右侧显示「5H 100% · 周 99%」等额度摘要，
  * hover 展示详细窗口与重置时间。
  */
 
 import * as React from 'react'
-import type { Channel, ChannelPlanQuotaResult, ChannelPlanQuotaWindow } from '@proma/shared'
+import type { Channel, ChannelPlanQuotaResult, ChannelPlanQuotaWindow } from '@gravitas/shared'
 import { cn } from '@/lib/utils'
 import { supportsChannelPlanQuota, fetchChannelPlanQuota } from '@/lib/channel-plan-quota'
 

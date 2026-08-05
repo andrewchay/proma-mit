@@ -20,7 +20,7 @@ import type {
   TokenUsageDayItem,
   TokenUsageRecord,
   TokenUsageSessionSummary,
-} from '@proma/shared'
+} from '@gravitas/shared'
 
 interface UsageOverviewCardProps {
   label: string

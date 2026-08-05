@@ -1,4 +1,4 @@
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
 
 export interface RuntimeMetrics {
   runningTasks: number

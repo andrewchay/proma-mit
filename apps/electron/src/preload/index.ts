@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -145,7 +145,7 @@ import type {
   WeChatBridgeState,
   AgentQueueMessageInput,
   PendingRequestsSnapshot,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type {
   UserProfile,
   AppSettings,
@@ -194,15 +194,15 @@ export interface ElectronAPI {
   getGitRepoStatus: (dirPath: string) => Promise<GitRepoStatus | null>
 
   /** 获取未暂存的变更文件列表 */
-  getUnstagedChanges: (dirPath: string, sessionPath?: string, workspaceFilesPath?: string, extraPaths?: string[], sessionId?: string) => Promise<import('@proma/shared').UnstagedChangesResult>
+  getUnstagedChanges: (dirPath: string, sessionPath?: string, workspaceFilesPath?: string, extraPaths?: string[], sessionId?: string) => Promise<import('@gravitas/shared').UnstagedChangesResult>
   /** 获取单个文件的 diff */
-  getFileDiff: (input: import('@proma/shared').GetFileDiffInput) => Promise<string>
+  getFileDiff: (input: import('@gravitas/shared').GetFileDiffInput) => Promise<string>
   /** 获取未追踪文件内容 */
-  getUntrackedContent: (input: import('@proma/shared').GetFileDiffInput) => Promise<string>
+  getUntrackedContent: (input: import('@gravitas/shared').GetFileDiffInput) => Promise<string>
   /** 还原文件变更 */
-  revertFile: (input: import('@proma/shared').RevertFileInput) => Promise<void>
+  revertFile: (input: import('@gravitas/shared').RevertFileInput) => Promise<void>
   /** 获取文件新旧版本内容 */
-  getDiffContents: (input: import('@proma/shared').GetFileDiffInput) => Promise<{ oldContent: string; newContent: string } | null>
+  getDiffContents: (input: import('@gravitas/shared').GetFileDiffInput) => Promise<{ oldContent: string; newContent: string } | null>
   /** 在独立窗口打开当前文件预览 */
   openDetachedPreview: (input: DetachedPreviewWindowInput) => Promise<string | null>
   /** 获取独立预览窗口数据 */
@@ -253,7 +253,7 @@ export interface ElectronAPI {
   fetchModels: (input: FetchModelsInput) => Promise<FetchModelsResult>
 
   /** 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口） */
-  getChannelPlanQuota: (channelId: string) => Promise<import('@proma/shared').ChannelPlanQuotaResult>
+  getChannelPlanQuota: (channelId: string) => Promise<import('@gravitas/shared').ChannelPlanQuotaResult>
 
   // ===== 对话管理相关 =====
 
@@ -495,9 +495,9 @@ export interface ElectronAPI {
   rewindSession: (input: RewindSessionInput) => Promise<RewindSessionResult>
 
   /** 获取会话关联的 Goal */
-  listAgentGoals: (sessionId: string) => Promise<import('@proma/shared').AgentGoal[]>
+  listAgentGoals: (sessionId: string) => Promise<import('@gravitas/shared').AgentGoal[]>
   /** 暂停、恢复、标记阻塞或取消 Goal */
-  updateAgentGoalStatus: (input: import('@proma/shared').UpdateAgentGoalStatusInput) => Promise<import('@proma/shared').AgentGoal>
+  updateAgentGoalStatus: (input: import('@gravitas/shared').UpdateAgentGoalStatusInput) => Promise<import('@gravitas/shared').AgentGoal>
 
   /** 生成 Agent 会话标题 */
   generateAgentTitle: (input: AgentGenerateTitleInput) => Promise<string | null>
@@ -534,38 +534,38 @@ export interface ElectronAPI {
 
   // ===== Workflow Mode =====
 
-  listWorkflowDefinitions: () => Promise<import('@proma/shared').WorkflowDefinition[]>
-  getWorkflowDefinition: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition | null>
-  saveWorkflowDefinition: (input: unknown) => Promise<import('@proma/shared').WorkflowDefinition>
+  listWorkflowDefinitions: () => Promise<import('@gravitas/shared').WorkflowDefinition[]>
+  getWorkflowDefinition: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowDefinition | null>
+  saveWorkflowDefinition: (input: unknown) => Promise<import('@gravitas/shared').WorkflowDefinition>
   deleteWorkflowDefinition: (workflowId: string) => Promise<{ deleted: boolean; reason?: string }>
-  exportWorkflowDefinition: (workflowId: string) => Promise<import('@proma/shared').WorkflowExportFile>
-  importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => Promise<import('@proma/shared').WorkflowDefinition>
-  listWorkflowTemplates: () => Promise<import('@proma/shared').WorkflowTemplate[]>
-  publishWorkflowTemplate: (workflowId: string, input: import('@proma/shared').WorkflowTemplatePublishInput) => Promise<import('@proma/shared').WorkflowTemplate>
+  exportWorkflowDefinition: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowExportFile>
+  importWorkflowDefinition: (input: import('@gravitas/shared').WorkflowImportInput) => Promise<import('@gravitas/shared').WorkflowDefinition>
+  listWorkflowTemplates: () => Promise<import('@gravitas/shared').WorkflowTemplate[]>
+  publishWorkflowTemplate: (workflowId: string, input: import('@gravitas/shared').WorkflowTemplatePublishInput) => Promise<import('@gravitas/shared').WorkflowTemplate>
   deleteWorkflowTemplate: (templateId: string) => Promise<void>
-  installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => Promise<import('@proma/shared').WorkflowDefinition>
-  installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => Promise<import('@proma/shared').WorkflowTemplateBatchInstallResult>
-  upgradeWorkflowTemplate: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition>
-  previewWorkflowTemplateUpgrade: (workflowId: string) => Promise<NonNullable<import('@proma/shared').WorkflowTemplateInstallation['pendingUpgrade']>>
-  rollbackWorkflowTemplate: (workflowId: string) => Promise<import('@proma/shared').WorkflowDefinition>
+  installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => Promise<import('@gravitas/shared').WorkflowDefinition>
+  installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => Promise<import('@gravitas/shared').WorkflowTemplateBatchInstallResult>
+  upgradeWorkflowTemplate: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowDefinition>
+  previewWorkflowTemplateUpgrade: (workflowId: string) => Promise<NonNullable<import('@gravitas/shared').WorkflowTemplateInstallation['pendingUpgrade']>>
+  rollbackWorkflowTemplate: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowDefinition>
   exportWorkflowDefinitionFile: (workflowId: string) => Promise<boolean>
-  importWorkflowDefinitionFile: (workspaceId: string) => Promise<import('@proma/shared').WorkflowDefinition | null>
-  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => Promise<import('@proma/shared').WorkflowRun>
-  publishWorkflowDefinition: (workflowId: string, input: import('@proma/shared').WorkflowPublishInput) => Promise<import('@proma/shared').WorkflowDefinition>
-  createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@proma/shared').WorkflowTriggerKind) => Promise<import('@proma/shared').WorkflowRun>
-  getWorkflowRun: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRun | null>
-  listWorkflowRuns: (workflowId: string) => Promise<import('@proma/shared').WorkflowRun[]>
-  listWorkflowRunEvents: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRunEvent[]>
-  executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowRun>
-  executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => Promise<import('@proma/shared').WorkflowRun>
-  executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowRun>
-  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@proma/shared').WorkflowRun>
-  cancelWorkflowRun: (workflowId: string, runId: string) => Promise<import('@proma/shared').WorkflowRun>
+  importWorkflowDefinitionFile: (workspaceId: string) => Promise<import('@gravitas/shared').WorkflowDefinition | null>
+  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => Promise<import('@gravitas/shared').WorkflowRun>
+  publishWorkflowDefinition: (workflowId: string, input: import('@gravitas/shared').WorkflowPublishInput) => Promise<import('@gravitas/shared').WorkflowDefinition>
+  createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@gravitas/shared').WorkflowTriggerKind) => Promise<import('@gravitas/shared').WorkflowRun>
+  getWorkflowRun: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRun | null>
+  listWorkflowRuns: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowRun[]>
+  listWorkflowRunEvents: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRunEvent[]>
+  executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
+  executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => Promise<import('@gravitas/shared').WorkflowRun>
+  executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@gravitas/shared').WorkflowRun>
+  cancelWorkflowRun: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRun>
   stopWorkflowRun: (workflowId: string, runId: string) => Promise<{ stopped: boolean; message?: string }>
-  proposeWorkflowPatches: (input: { definition: import('@proma/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => Promise<import('@proma/shared').WorkflowPatchProposal>
-  getWorkflowIdentityDirectory: () => Promise<import('@proma/shared').WorkflowIdentityDirectory>
-  saveWorkflowIdentityDirectory: (directory: import('@proma/shared').WorkflowIdentityDirectory) => Promise<import('@proma/shared').WorkflowIdentityDirectory>
-  triggerWorkflowEvent: (input: { eventName: string; payload: Record<string, unknown> }) => Promise<import('@proma/shared').WorkflowRun[]>
+  proposeWorkflowPatches: (input: { definition: import('@gravitas/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowPatchProposal>
+  getWorkflowIdentityDirectory: () => Promise<import('@gravitas/shared').WorkflowIdentityDirectory>
+  saveWorkflowIdentityDirectory: (directory: import('@gravitas/shared').WorkflowIdentityDirectory) => Promise<import('@gravitas/shared').WorkflowIdentityDirectory>
+  triggerWorkflowEvent: (input: { eventName: string; payload: Record<string, unknown> }) => Promise<import('@gravitas/shared').WorkflowRun[]>
 
   // ===== Agent 队列消息 =====
 
@@ -612,7 +612,7 @@ export interface ElectronAPI {
   saveWorkspaceMcpConfig: (workspaceSlug: string, config: WorkspaceMcpConfig) => Promise<void>
 
   /** 测试 MCP 服务器连接 */
-  testMcpServer: (name: string, entry: import('@proma/shared').McpServerEntry) => Promise<{ success: boolean; message: string }>
+  testMcpServer: (name: string, entry: import('@gravitas/shared').McpServerEntry) => Promise<{ success: boolean; message: string }>
 
   /** 获取工作区 Skill 列表（含活跃和不活跃） */
   getWorkspaceSkills: (workspaceSlug: string) => Promise<SkillMeta[]>
@@ -642,10 +642,10 @@ export interface ElectronAPI {
   writeSkillContent: (workspaceSlug: string, skillSlug: string, content: string) => Promise<void>
 
   /** 列出 Skill 目录下的子文件树（不含 SKILL.md） */
-  listSkillFiles: (workspaceSlug: string, skillSlug: string) => Promise<import('@proma/shared').SkillFileNode[]>
+  listSkillFiles: (workspaceSlug: string, skillSlug: string) => Promise<import('@gravitas/shared').SkillFileNode[]>
 
   /** 读取 Skill 目录下的子文件内容 */
-  readSkillFile: (workspaceSlug: string, skillSlug: string, relativePath: string) => Promise<import('@proma/shared').SkillFileContent>
+  readSkillFile: (workspaceSlug: string, skillSlug: string, relativePath: string) => Promise<import('@gravitas/shared').SkillFileContent>
 
   /** 写入 Skill 目录下的子文件内容（文本） */
   writeSkillFile: (workspaceSlug: string, skillSlug: string, relativePath: string, content: string) => Promise<void>
@@ -792,34 +792,34 @@ export interface ElectronAPI {
   writeClipboardPreview: (filename: string, content: string) => Promise<string>
 
   /** 用系统默认应用打开任意文件（无工作区限制） */
-  systemOpenFile: (filePath: string, appName?: string, access?: import('@proma/shared').FileAccessOptions) => Promise<void>
+  systemOpenFile: (filePath: string, appName?: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<void>
 
   /** 扫描系统中可用的编辑器应用（仅 macOS） */
-  scanEditors: () => Promise<import('@proma/shared').EditorApp[]>
+  scanEditors: () => Promise<import('@gravitas/shared').EditorApp[]>
 
   /** 在系统文件管理器中显示文件 */
   showInFolder: (filePath: string) => Promise<void>
 
   /** 解析文件路径并读取内容（供内联预览使用） */
-  resolveAndReadFile: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string } | null>
+  resolveAndReadFile: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string } | null>
 
   /** 写入文本文件（供 Markdown 内联编辑使用） */
-  writeTextFile: (filePath: string, content: string, access?: import('@proma/shared').FileAccessOptions) => Promise<boolean>
+  writeTextFile: (filePath: string, content: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<boolean>
 
   /** 仅解析文件路径（供 PDF/图片等用 file:// 加载） */
-  resolveFilePath: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<import('@proma/shared').ResolvedFileUrl | null>
+  resolveFilePath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<import('@gravitas/shared').ResolvedFileUrl | null>
 
   /** 为内联 PDF 预览生成临时 HTML 文件，返回文件路径 */
-  preparePdfPreview: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<{ tmpHtmlUrl: string } | null>
+  preparePdfPreview: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<{ tmpHtmlUrl: string } | null>
 
   /** 读取文件为 base64（带路径校验，供内联图片预览等） */
-  readBinaryBase64: (filePath: string, access?: import('@proma/shared').FileAccessOptions, maxSize?: number) => Promise<string | null>
+  readBinaryBase64: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions, maxSize?: number) => Promise<string | null>
 
   /** DOCX 转 HTML（内联预览） */
-  docxToHtml: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<{ resolvedPath: string; html: string } | null>
+  docxToHtml: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<{ resolvedPath: string; html: string } | null>
 
   /** XLSX/PPTX 转 HTML（内联预览） */
-  officeToHtml: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<import('@proma/shared').OfficePreviewResult | null>
+  officeToHtml: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<import('@gravitas/shared').OfficePreviewResult | null>
 
   /** 截图导出：将 HTML 渲染为 PNG 并复制到剪贴板或保存文件 */
   screenshotCapture: (input: { html: string; isDark: boolean; width?: number; mode: 'clipboard' | 'file'; css?: string; themeClass?: string }) => Promise<{ success: boolean; message: string; filePath?: string }>
@@ -831,19 +831,19 @@ export interface ElectronAPI {
   moveFile: (filePath: string, targetDir: string) => Promise<void>
 
   /** 列出附加目录内容 */
-  listAttachedDirectory: (dirPath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<FileEntry[]>
+  listAttachedDirectory: (dirPath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<FileEntry[]>
 
   /** 读取附加目录文件内容为 base64（限制在已附加目录范围内） */
   readAttachedFile: (filePath: string, sessionId?: string, workspaceSlug?: string) => Promise<string>
 
   /** 在文件管理器中显示附加目录文件 */
-  showAttachedInFolder: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => Promise<void>
+  showAttachedInFolder: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<void>
 
   /** 重命名附加目录文件/目录（无工作区路径限制） */
-  renameAttachedFile: (filePath: string, newName: string, access?: import('@proma/shared').FileAccessOptions) => Promise<void>
+  renameAttachedFile: (filePath: string, newName: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<void>
 
   /** 移动附加目录文件/目录（无工作区路径限制） */
-  moveAttachedFile: (filePath: string, targetDir: string, access?: import('@proma/shared').FileAccessOptions) => Promise<void>
+  moveAttachedFile: (filePath: string, targetDir: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<void>
 
   /** 检查路径类型（文件 or 目录），用于拖拽检测 */
   checkPathsType: (paths: string[]) => Promise<{ directories: string[]; files: string[] }>
@@ -939,18 +939,18 @@ export interface ElectronAPI {
   // ===== 系统通知（P0-3a） =====
 
   /** 发送系统通知（委托主进程 Electron Notification） */
-  sendSystemNotification: (input: import('@proma/shared').SystemNotificationInput) => Promise<boolean>
+  sendSystemNotification: (input: import('@gravitas/shared').SystemNotificationInput) => Promise<boolean>
   /** 订阅系统通知点击事件 */
-  onSystemNotificationClicked: (callback: (payload: import('@proma/shared').SystemNotificationClickedPayload) => void) => () => void
+  onSystemNotificationClicked: (callback: (payload: import('@gravitas/shared').SystemNotificationClickedPayload) => void) => () => void
   /** 订阅主进程通知协调器触发提示音 */
   onSystemNotificationPlaySound: (callback: (payload: { soundType: string }) => void) => () => void
 
   // --- 多 Bot v2 API ---
 
   /** 获取多 Bot 配置 */
-  getFeishuMultiConfig: () => Promise<import('@proma/shared').FeishuMultiBotConfig>
+  getFeishuMultiConfig: () => Promise<import('@gravitas/shared').FeishuMultiBotConfig>
   /** 保存单个 Bot 配置 */
-  saveFeishuBotConfig: (input: import('@proma/shared').FeishuBotConfigInput) => Promise<import('@proma/shared').FeishuBotConfig>
+  saveFeishuBotConfig: (input: import('@gravitas/shared').FeishuBotConfigInput) => Promise<import('@gravitas/shared').FeishuBotConfig>
   /** 获取单个 Bot 解密后的 App Secret */
   getDecryptedFeishuBotSecret: (botId: string) => Promise<string>
   /** 删除 Bot */
@@ -960,15 +960,15 @@ export interface ElectronAPI {
   /** 停止单个 Bot */
   stopFeishuBot: (botId: string) => Promise<void>
   /** 获取多 Bot 状态 */
-  getFeishuMultiStatus: () => Promise<import('@proma/shared').FeishuMultiBridgeState>
+  getFeishuMultiStatus: () => Promise<import('@gravitas/shared').FeishuMultiBridgeState>
   /** 启动飞书扫码创建（注册）机器人，返回创建的 App ID/Secret */
-  startFeishuRegistration: () => Promise<import('@proma/shared').FeishuRegisterAppResult>
+  startFeishuRegistration: () => Promise<import('@gravitas/shared').FeishuRegisterAppResult>
   /** 取消进行中的飞书扫码注册 */
   cancelFeishuRegistration: () => Promise<void>
   /** 订阅扫码注册二维码事件 */
-  onFeishuRegisterQrCode: (callback: (qr: import('@proma/shared').FeishuRegisterAppQRCode) => void) => () => void
+  onFeishuRegisterQrCode: (callback: (qr: import('@gravitas/shared').FeishuRegisterAppQRCode) => void) => () => void
   /** 订阅扫码注册轮询状态事件 */
-  onFeishuRegisterStatus: (callback: (status: import('@proma/shared').FeishuRegisterAppStatus) => void) => () => void
+  onFeishuRegisterStatus: (callback: (status: import('@gravitas/shared').FeishuRegisterAppStatus) => void) => () => void
 
   // ===== 钉钉集成 =====
 
@@ -992,9 +992,9 @@ export interface ElectronAPI {
   // --- 钉钉多 Bot v2 API ---
 
   /** 获取多 Bot 配置 */
-  getDingTalkMultiConfig: () => Promise<import('@proma/shared').DingTalkMultiBotConfig>
+  getDingTalkMultiConfig: () => Promise<import('@gravitas/shared').DingTalkMultiBotConfig>
   /** 保存单个 Bot 配置 */
-  saveDingTalkBotConfig: (input: import('@proma/shared').DingTalkBotConfigInput) => Promise<import('@proma/shared').DingTalkBotConfig>
+  saveDingTalkBotConfig: (input: import('@gravitas/shared').DingTalkBotConfigInput) => Promise<import('@gravitas/shared').DingTalkBotConfig>
   /** 获取单个 Bot 解密后的 Client Secret */
   getDecryptedDingTalkBotSecret: (botId: string) => Promise<string>
   /** 删除 Bot */
@@ -1004,7 +1004,7 @@ export interface ElectronAPI {
   /** 停止单个 Bot */
   stopDingTalkBot: (botId: string) => Promise<void>
   /** 获取多 Bot 状态 */
-  getDingTalkMultiStatus: () => Promise<import('@proma/shared').DingTalkMultiBridgeState>
+  getDingTalkMultiStatus: () => Promise<import('@gravitas/shared').DingTalkMultiBridgeState>
 
   // ===== 微信集成 =====
 
@@ -1100,7 +1100,7 @@ export interface ElectronAPI {
   migrationParseImportFile: (filePath: string) => Promise<unknown>
   /** 确认导入 */
   migrationConfirmImport: (options: unknown) => Promise<{ success: boolean }>
-  /** 打开文件选择对话框（选择 .proma-backup 或 .proma-share） */
+  /** 打开文件选择对话框（选择 .gravitas-backup 或 .gravitas-share） */
   migrationOpenFileDialog: () => Promise<string | null>
   /** 打开文件保存对话框（选择导出路径） */
   migrationSaveFileDialog: (mode: string) => Promise<string | null>
@@ -1121,7 +1121,7 @@ export interface ElectronAPI {
   // ===== macOS 灵动岛通知 =====
 
   /** 获取灵动岛状态（支持/运行中/开关/最近通知） */
-  getDynamicIslandState: () => Promise<import('@proma/shared').DynamicIslandState>
+  getDynamicIslandState: () => Promise<import('@gravitas/shared').DynamicIslandState>
 
   // ===== 扩展管理（P1-2） =====
 
@@ -1133,70 +1133,70 @@ export interface ElectronAPI {
   // ===== 运行记录（P2-1） =====
 
   /** 查询运行记录 */
-  listRunRecords: (query?: import('@proma/shared').RunRecordQuery) => Promise<import('@proma/shared').RunRecord[]>
+  listRunRecords: (query?: import('@gravitas/shared').RunRecordQuery) => Promise<import('@gravitas/shared').RunRecord[]>
   /** 清空运行记录 */
   clearRunRecords: () => Promise<void>
 
   // ===== Token 消耗统计 =====
 
   /** 查询 Token 使用明细 */
-  listTokenUsageRecords: (query?: import('@proma/shared').TokenUsageQuery) => Promise<import('@proma/shared').TokenUsageRecord[]>
+  listTokenUsageRecords: (query?: import('@gravitas/shared').TokenUsageQuery) => Promise<import('@gravitas/shared').TokenUsageRecord[]>
   /** 查询 Token 聚合统计 */
-  aggregateTokenUsage: (query?: import('@proma/shared').TokenUsageQuery) => Promise<import('@proma/shared').TokenUsageAggregate>
+  aggregateTokenUsage: (query?: import('@gravitas/shared').TokenUsageQuery) => Promise<import('@gravitas/shared').TokenUsageAggregate>
   /** 查询 Token 会话汇总 */
-  listTokenUsageSessions: () => Promise<import('@proma/shared').TokenUsageSessionSummary[]>
+  listTokenUsageSessions: () => Promise<import('@gravitas/shared').TokenUsageSessionSummary[]>
   /** 清空 Token 使用记录 */
   clearTokenUsageRecords: () => Promise<void>
 
   // ===== Goal 状态层（P0） =====
 
   /** 创建 Goal */
-  createGoal: (input: import('@proma/shared').GoalCreateInput) => Promise<import('@proma/shared').Goal>
+  createGoal: (input: import('@gravitas/shared').GoalCreateInput) => Promise<import('@gravitas/shared').Goal>
   /** 读取单个 Goal */
-  getGoal: (id: string) => Promise<import('@proma/shared').Goal | null>
+  getGoal: (id: string) => Promise<import('@gravitas/shared').Goal | null>
   /** 列表查询 Goal */
-  listGoals: (query?: import('@proma/shared').GoalQuery) => Promise<import('@proma/shared').Goal[]>
+  listGoals: (query?: import('@gravitas/shared').GoalQuery) => Promise<import('@gravitas/shared').Goal[]>
   /** 更新 Goal 字段 */
-  updateGoal: (id: string, input: import('@proma/shared').GoalUpdateInput) => Promise<import('@proma/shared').Goal>
+  updateGoal: (id: string, input: import('@gravitas/shared').GoalUpdateInput) => Promise<import('@gravitas/shared').Goal>
   /** 删除 Goal */
   deleteGoal: (id: string) => Promise<void>
   /** 新增/更新 todo */
-  upsertGoalTodo: (goalId: string, input: import('@proma/shared').UpsertTodoInput) => Promise<import('@proma/shared').Goal>
+  upsertGoalTodo: (goalId: string, input: import('@gravitas/shared').UpsertTodoInput) => Promise<import('@gravitas/shared').Goal>
   /** 更新 todo 状态 */
-  updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']) => Promise<import('@proma/shared').Goal>
+  updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@gravitas/shared').GoalTodo['status']) => Promise<import('@gravitas/shared').Goal>
   /** 新增门控 */
-  addGoalGate: (goalId: string, question: string) => Promise<import('@proma/shared').Goal>
+  addGoalGate: (goalId: string, question: string) => Promise<import('@gravitas/shared').Goal>
   /** 解决门控 */
-  resolveGoalGate: (goalId: string, gateId: string, resolution: string) => Promise<import('@proma/shared').Goal>
+  resolveGoalGate: (goalId: string, gateId: string, resolution: string) => Promise<import('@gravitas/shared').Goal>
   /** 追加证据 */
-  appendGoalEvidence: (goalId: string, evidence: string) => Promise<import('@proma/shared').Goal>
+  appendGoalEvidence: (goalId: string, evidence: string) => Promise<import('@gravitas/shared').Goal>
   /** 判断 Goal 当前是否应推进 */
   goalShouldRun: (goalId: string) => Promise<{ shouldRun: boolean; reason?: string }>
   /** 检查是否允许花费 */
   goalCanSpend: (goalId: string, usd: number) => Promise<{ allowed: boolean; reason?: string }>
   /** 记录 Goal 花费 */
-  goalSpendBudget: (goalId: string, usd: number) => Promise<import('@proma/shared').Goal>
+  goalSpendBudget: (goalId: string, usd: number) => Promise<import('@gravitas/shared').Goal>
   /** 绑定会话到 Goal */
   goalBindSession: (sessionId: string, goalId: string) => Promise<{ sessionId: string; goalId: string }>
   /** 解绑会话 */
   goalUnbindSession: (sessionId: string) => Promise<{ sessionId: string }>
   /** 查询会话绑定的 Goal */
-  goalGetSessionGoal: (sessionId: string) => Promise<import('@proma/shared').Goal | null>
+  goalGetSessionGoal: (sessionId: string) => Promise<import('@gravitas/shared').Goal | null>
   /** 查询绑定到 Goal 的会话列表 */
   goalListSessions: (goalId: string) => Promise<Array<{ sessionId: string; title: string }>>
 
   /** 设置灵动岛总开关 */
-  setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@proma/shared').DynamicIslandState>
+  setDynamicIslandEnabled: (enabled: boolean) => Promise<import('@gravitas/shared').DynamicIslandState>
   /** 关闭某条通知 */
-  dismissDynamicIsland: (id: string) => Promise<import('@proma/shared').DynamicIslandActionResult>
+  dismissDynamicIsland: (id: string) => Promise<import('@gravitas/shared').DynamicIslandActionResult>
   /** 发送测试通知 */
-  testDynamicIsland: () => Promise<import('@proma/shared').DynamicIslandActionResult>
+  testDynamicIsland: () => Promise<import('@gravitas/shared').DynamicIslandActionResult>
   /** AI/外部调用 notify（渲染进程侧暂不直接暴露，保留接口给桥接场景） */
-  notifyDynamicIsland: (input: import('@proma/shared').DynamicIslandNotifyInput) => Promise<import('@proma/shared').DynamicIslandActionResult>
+  notifyDynamicIsland: (input: import('@gravitas/shared').DynamicIslandNotifyInput) => Promise<import('@gravitas/shared').DynamicIslandActionResult>
   /** 查询项目是否静音 */
-  getDynamicIslandProjectMuted: (workspace?: string) => Promise<import('@proma/shared').DynamicIslandProjectMutedResult>
+  getDynamicIslandProjectMuted: (workspace?: string) => Promise<import('@gravitas/shared').DynamicIslandProjectMutedResult>
   /** 设置/取消项目静音 */
-  setDynamicIslandProjectMuted: (workspace: string, muted: boolean) => Promise<import('@proma/shared').DynamicIslandProjectMutedResult>
+  setDynamicIslandProjectMuted: (workspace: string, muted: boolean) => Promise<import('@gravitas/shared').DynamicIslandProjectMutedResult>
 
   // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
   paa: {
@@ -1304,13 +1304,13 @@ export interface ElectronAPI {
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
-      list: () => Promise<import('@proma/shared').AgentEmployeeResult[]>
-      get: (id: string) => Promise<import('@proma/shared').AgentEmployeeResult | null>
-      create: (input: import('@proma/shared').CreateAgentEmployeeInput) => Promise<import('@proma/shared').AgentEmployeeResult>
-      update: (id: string, patch: import('@proma/shared').UpdateAgentEmployeeInput) => Promise<import('@proma/shared').AgentEmployeeResult | null>
+      list: () => Promise<import('@gravitas/shared').AgentEmployeeResult[]>
+      get: (id: string) => Promise<import('@gravitas/shared').AgentEmployeeResult | null>
+      create: (input: import('@gravitas/shared').CreateAgentEmployeeInput) => Promise<import('@gravitas/shared').AgentEmployeeResult>
+      update: (id: string, patch: import('@gravitas/shared').UpdateAgentEmployeeInput) => Promise<import('@gravitas/shared').AgentEmployeeResult | null>
       delete: (id: string) => Promise<boolean>
-      listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@proma/shared').AgentExecutionResult[]>
-      listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@proma/shared').AgentExecutionResult[]>
+      listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
+      listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
     }
   }
 }
@@ -1342,19 +1342,19 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_UNSTAGED_CHANGES, dirPath, sessionPath, workspaceFilesPath, extraPaths, sessionId)
   },
 
-  getFileDiff: (input: import('@proma/shared').GetFileDiffInput) => {
+  getFileDiff: (input: import('@gravitas/shared').GetFileDiffInput) => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_FILE_DIFF, input)
   },
 
-  getUntrackedContent: (input: import('@proma/shared').GetFileDiffInput) => {
+  getUntrackedContent: (input: import('@gravitas/shared').GetFileDiffInput) => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_UNTRACKED_CONTENT, input)
   },
 
-  revertFile: (input: import('@proma/shared').RevertFileInput) => {
+  revertFile: (input: import('@gravitas/shared').RevertFileInput) => {
     return ipcRenderer.invoke(IPC_CHANNELS.REVERT_FILE, input)
   },
 
-  getDiffContents: (input: import('@proma/shared').GetFileDiffInput) => {
+  getDiffContents: (input: import('@gravitas/shared').GetFileDiffInput) => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_DIFF_CONTENTS, input)
   },
 
@@ -1744,7 +1744,7 @@ const electronAPI: ElectronAPI = {
   listAgentGoals: (sessionId: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_GOALS, sessionId)
   },
-  updateAgentGoalStatus: (input: import('@proma/shared').UpdateAgentGoalStatusInput) => {
+  updateAgentGoalStatus: (input: import('@gravitas/shared').UpdateAgentGoalStatusInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_GOAL_STATUS, input)
   },
 
@@ -1779,9 +1779,9 @@ const electronAPI: ElectronAPI = {
   saveWorkflowDefinition: (input: unknown) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_DEFINITION, input),
   deleteWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.DELETE_DEFINITION, workflowId),
   exportWorkflowDefinition: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION, workflowId),
-  importWorkflowDefinition: (input: import('@proma/shared').WorkflowImportInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION, input),
+  importWorkflowDefinition: (input: import('@gravitas/shared').WorkflowImportInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION, input),
   listWorkflowTemplates: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_TEMPLATES),
-  publishWorkflowTemplate: (workflowId: string, input: import('@proma/shared').WorkflowTemplatePublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_TEMPLATE, workflowId, input),
+  publishWorkflowTemplate: (workflowId: string, input: import('@gravitas/shared').WorkflowTemplatePublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_TEMPLATE, workflowId, input),
   deleteWorkflowTemplate: (templateId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.DELETE_TEMPLATE, templateId),
   installWorkflowTemplate: (input: { templateId: string; workspaceId: string; workflowId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE, input),
   installWorkflowTemplateBatch: (input: { templateId: string; workspaceIds: string[] }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.INSTALL_TEMPLATE_BATCH, input),
@@ -1791,8 +1791,8 @@ const electronAPI: ElectronAPI = {
   exportWorkflowDefinitionFile: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION_FILE, workflowId),
   importWorkflowDefinitionFile: (workspaceId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION_FILE, workspaceId),
   resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_SIDE_EFFECT, input),
-  publishWorkflowDefinition: (workflowId: string, input: import('@proma/shared').WorkflowPublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_DEFINITION, workflowId, input),
-  createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@proma/shared').WorkflowTriggerKind) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CREATE_RUN, workflowId, input, trigger),
+  publishWorkflowDefinition: (workflowId: string, input: import('@gravitas/shared').WorkflowPublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_DEFINITION, workflowId, input),
+  createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@gravitas/shared').WorkflowTriggerKind) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CREATE_RUN, workflowId, input, trigger),
   getWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_RUN, workflowId, runId),
   listWorkflowRuns: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_RUNS, workflowId),
   listWorkflowRunEvents: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_RUN_EVENTS, workflowId, runId),
@@ -1802,9 +1802,9 @@ const electronAPI: ElectronAPI = {
   resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
   cancelWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, workflowId, runId),
   stopWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.STOP_RUN, workflowId, runId),
-  proposeWorkflowPatches: (input: { definition: import('@proma/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, input),
+  proposeWorkflowPatches: (input: { definition: import('@gravitas/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, input),
   getWorkflowIdentityDirectory: () => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_IDENTITY_DIRECTORY),
-  saveWorkflowIdentityDirectory: (directory: import('@proma/shared').WorkflowIdentityDirectory) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_IDENTITY_DIRECTORY, directory),
+  saveWorkflowIdentityDirectory: (directory: import('@gravitas/shared').WorkflowIdentityDirectory) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SAVE_IDENTITY_DIRECTORY, directory),
   triggerWorkflowEvent: (input: { eventName: string; payload: Record<string, unknown> }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.TRIGGER_EVENT, input),
 
   // Agent 队列消息
@@ -1859,7 +1859,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.SAVE_MCP_CONFIG, workspaceSlug, config)
   },
 
-  testMcpServer: (name: string, entry: import('@proma/shared').McpServerEntry) => {
+  testMcpServer: (name: string, entry: import('@gravitas/shared').McpServerEntry) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TEST_MCP_SERVER, name, entry) as Promise<{ success: boolean; message: string }>
   },
 
@@ -2135,7 +2135,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.WRITE_CLIPBOARD_PREVIEW, filename, content)
   },
 
-  systemOpenFile: (filePath: string, appName?: string, access?: import('@proma/shared').FileAccessOptions) => {
+  systemOpenFile: (filePath: string, appName?: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_OPEN_FILE, filePath, appName, access)
   },
 
@@ -2147,32 +2147,32 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.SHOW_IN_FOLDER, filePath)
   },
 
-  resolveAndReadFile: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => {
+  resolveAndReadFile: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke('file:resolve-and-read', filePath, access) as Promise<{ resolvedPath: string; content: string } | null>
   },
 
-  writeTextFile: (filePath: string, content: string, access?: import('@proma/shared').FileAccessOptions) => {
+  writeTextFile: (filePath: string, content: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke('file:write-text', filePath, content, access) as Promise<boolean>
   },
 
-  resolveFilePath: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => {
-    return ipcRenderer.invoke('file:resolve-path', filePath, access) as Promise<import('@proma/shared').ResolvedFileUrl | null>
+  resolveFilePath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
+    return ipcRenderer.invoke('file:resolve-path', filePath, access) as Promise<import('@gravitas/shared').ResolvedFileUrl | null>
   },
 
-  preparePdfPreview: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => {
+  preparePdfPreview: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke('file:prepare-pdf-preview', filePath, access) as Promise<{ tmpHtmlUrl: string } | null>
   },
 
-  readBinaryBase64: (filePath: string, access?: import('@proma/shared').FileAccessOptions, maxSize?: number) => {
+  readBinaryBase64: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions, maxSize?: number) => {
     return ipcRenderer.invoke('file:read-binary-base64', filePath, access, maxSize) as Promise<string | null>
   },
 
-  docxToHtml: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => {
+  docxToHtml: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke('file:docx-to-html', filePath, access) as Promise<{ resolvedPath: string; html: string } | null>
   },
 
-  officeToHtml: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => {
-    return ipcRenderer.invoke('file:office-to-html', filePath, access) as Promise<import('@proma/shared').OfficePreviewResult | null>
+  officeToHtml: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
+    return ipcRenderer.invoke('file:office-to-html', filePath, access) as Promise<import('@gravitas/shared').OfficePreviewResult | null>
   },
 
   screenshotCapture: (input: { html: string; isDark: boolean; width?: number; mode: 'clipboard' | 'file'; css?: string; themeClass?: string }) => {
@@ -2187,7 +2187,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.MOVE_FILE, filePath, targetDir)
   },
 
-  listAttachedDirectory: (dirPath: string, access?: import('@proma/shared').FileAccessOptions) => {
+  listAttachedDirectory: (dirPath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY, dirPath, access)
   },
 
@@ -2195,15 +2195,15 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.READ_ATTACHED_FILE, filePath, sessionId, workspaceSlug)
   },
 
-  showAttachedInFolder: (filePath: string, access?: import('@proma/shared').FileAccessOptions) => {
+  showAttachedInFolder: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.SHOW_ATTACHED_IN_FOLDER, filePath, access)
   },
 
-  renameAttachedFile: (filePath: string, newName: string, access?: import('@proma/shared').FileAccessOptions) => {
+  renameAttachedFile: (filePath: string, newName: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.RENAME_ATTACHED_FILE, filePath, newName, access)
   },
 
-  moveAttachedFile: (filePath: string, targetDir: string, access?: import('@proma/shared').FileAccessOptions) => {
+  moveAttachedFile: (filePath: string, targetDir: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.MOVE_ATTACHED_FILE, filePath, targetDir, access)
   },
 
@@ -2331,12 +2331,12 @@ const electronAPI: ElectronAPI = {
     return () => { ipcRenderer.removeListener(FEISHU_IPC_CHANNELS.NOTIFICATION_SENT, listener) }
   },
 
-  sendSystemNotification: (input: import('@proma/shared').SystemNotificationInput) => {
+  sendSystemNotification: (input: import('@gravitas/shared').SystemNotificationInput) => {
     return ipcRenderer.invoke(SYSTEM_NOTIFICATION_IPC_CHANNELS.NOTIFY, input)
   },
 
-  onSystemNotificationClicked: (callback: (payload: import('@proma/shared').SystemNotificationClickedPayload) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: import('@proma/shared').SystemNotificationClickedPayload): void => callback(payload)
+  onSystemNotificationClicked: (callback: (payload: import('@gravitas/shared').SystemNotificationClickedPayload) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: import('@gravitas/shared').SystemNotificationClickedPayload): void => callback(payload)
     ipcRenderer.on(SYSTEM_NOTIFICATION_IPC_CHANNELS.CLICKED, listener)
     return () => { ipcRenderer.removeListener(SYSTEM_NOTIFICATION_IPC_CHANNELS.CLICKED, listener) }
   },
@@ -2353,7 +2353,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(FEISHU_IPC_CHANNELS.GET_MULTI_CONFIG)
   },
 
-  saveFeishuBotConfig: (input: import('@proma/shared').FeishuBotConfigInput) => {
+  saveFeishuBotConfig: (input: import('@gravitas/shared').FeishuBotConfigInput) => {
     return ipcRenderer.invoke(FEISHU_IPC_CHANNELS.SAVE_BOT_CONFIG, input)
   },
 
@@ -2385,14 +2385,14 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(FEISHU_IPC_CHANNELS.REGISTER_APP_CANCEL)
   },
 
-  onFeishuRegisterQrCode: (callback: (qr: import('@proma/shared').FeishuRegisterAppQRCode) => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, qr: import('@proma/shared').FeishuRegisterAppQRCode): void => callback(qr)
+  onFeishuRegisterQrCode: (callback: (qr: import('@gravitas/shared').FeishuRegisterAppQRCode) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, qr: import('@gravitas/shared').FeishuRegisterAppQRCode): void => callback(qr)
     ipcRenderer.on(FEISHU_IPC_CHANNELS.REGISTER_APP_QRCODE, listener)
     return () => { ipcRenderer.removeListener(FEISHU_IPC_CHANNELS.REGISTER_APP_QRCODE, listener) }
   },
 
-  onFeishuRegisterStatus: (callback: (status: import('@proma/shared').FeishuRegisterAppStatus) => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, status: import('@proma/shared').FeishuRegisterAppStatus): void => callback(status)
+  onFeishuRegisterStatus: (callback: (status: import('@gravitas/shared').FeishuRegisterAppStatus) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, status: import('@gravitas/shared').FeishuRegisterAppStatus): void => callback(status)
     ipcRenderer.on(FEISHU_IPC_CHANNELS.REGISTER_APP_STATUS, listener)
     return () => { ipcRenderer.removeListener(FEISHU_IPC_CHANNELS.REGISTER_APP_STATUS, listener) }
   },
@@ -2471,7 +2471,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(DINGTALK_IPC_CHANNELS.GET_MULTI_CONFIG)
   },
 
-  saveDingTalkBotConfig: (input: import('@proma/shared').DingTalkBotConfigInput) => {
+  saveDingTalkBotConfig: (input: import('@gravitas/shared').DingTalkBotConfigInput) => {
     return ipcRenderer.invoke(DINGTALK_IPC_CHANNELS.SAVE_BOT_CONFIG, input)
   },
 
@@ -2693,7 +2693,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(PLUGIN_IPC_CHANNELS.SET_ENABLED, pluginId, enabled)
   },
 
-  listRunRecords: (query?: import('@proma/shared').RunRecordQuery) => {
+  listRunRecords: (query?: import('@gravitas/shared').RunRecordQuery) => {
     return ipcRenderer.invoke(RUN_RECORD_IPC_CHANNELS.LIST, query)
   },
 
@@ -2703,11 +2703,11 @@ const electronAPI: ElectronAPI = {
 
   // ===== Token 消耗统计 =====
 
-  listTokenUsageRecords: (query?: import('@proma/shared').TokenUsageQuery) => {
+  listTokenUsageRecords: (query?: import('@gravitas/shared').TokenUsageQuery) => {
     return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.LIST, query)
   },
 
-  aggregateTokenUsage: (query?: import('@proma/shared').TokenUsageQuery) => {
+  aggregateTokenUsage: (query?: import('@gravitas/shared').TokenUsageQuery) => {
     return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, query)
   },
 
@@ -2721,7 +2721,7 @@ const electronAPI: ElectronAPI = {
 
   // ===== Goal 状态层（P0） =====
 
-  createGoal: (input: import('@proma/shared').GoalCreateInput) => {
+  createGoal: (input: import('@gravitas/shared').GoalCreateInput) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.CREATE, input)
   },
 
@@ -2729,11 +2729,11 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.GET, id)
   },
 
-  listGoals: (query?: import('@proma/shared').GoalQuery) => {
+  listGoals: (query?: import('@gravitas/shared').GoalQuery) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.LIST, query)
   },
 
-  updateGoal: (id: string, input: import('@proma/shared').GoalUpdateInput) => {
+  updateGoal: (id: string, input: import('@gravitas/shared').GoalUpdateInput) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UPDATE, id, input)
   },
 
@@ -2741,11 +2741,11 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.DELETE, id)
   },
 
-  upsertGoalTodo: (goalId: string, input: import('@proma/shared').UpsertTodoInput) => {
+  upsertGoalTodo: (goalId: string, input: import('@gravitas/shared').UpsertTodoInput) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UPSERT_TODO, goalId, input)
   },
 
-  updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@proma/shared').GoalTodo['status']) => {
+  updateGoalTodoStatus: (goalId: string, todoId: string, status: import('@gravitas/shared').GoalTodo['status']) => {
     return ipcRenderer.invoke(GOAL_IPC_CHANNELS.UPDATE_TODO_STATUS, goalId, todoId, status)
   },
 
@@ -2801,7 +2801,7 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.TEST)
   },
 
-  notifyDynamicIsland: (input: import('@proma/shared').DynamicIslandNotifyInput) => {
+  notifyDynamicIsland: (input: import('@gravitas/shared').DynamicIslandNotifyInput) => {
     return ipcRenderer.invoke(DYNAMIC_ISLAND_IPC_CHANNELS.NOTIFY, input)
   },
 

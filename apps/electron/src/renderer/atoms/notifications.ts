@@ -192,7 +192,7 @@ export interface DesktopNotificationOptions {
 }
 
 /** 当前系统通知点击回调（避免为每个通知都挂全局 listener） */
-let systemNotificationClickedHandler: ((payload: import('@proma/shared').SystemNotificationClickedPayload) => void) | null = null
+let systemNotificationClickedHandler: ((payload: import('@gravitas/shared').SystemNotificationClickedPayload) => void) | null = null
 let systemNotificationListenerInstalled = false
 
 function ensureSystemNotificationListener(): void {

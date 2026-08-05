@@ -1,6 +1,6 @@
-# 本地验收包：与正式版统一使用 com.proma.mit 标识。
-# 注意：本机只应安装一个 proma-mit 版本，避免与正式版并存导致数据/实例冲突。
+# 本地验收包：与正式版统一使用 com.gravitas.app 标识。
+# 注意：本机只应安装一个 Gravitas 版本，避免与正式版并存导致数据/实例冲突。
 extends: electron-builder.yml
 
-appId: com.proma.mit
-productName: proma-mit
+appId: com.gravitas.app
+productName: Gravitas

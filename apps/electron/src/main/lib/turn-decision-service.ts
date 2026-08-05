@@ -9,7 +9,7 @@
  * 给自动化/定时任务提供"是否应继续"的依据，避免盲目连续消耗。
  */
 
-import type { Goal, GoalTodo } from '@proma/shared'
+import type { Goal, GoalTodo } from '@gravitas/shared'
 import { getGoal, shouldGoalRun, listActionableTodos } from './goal-service'
 /** 轮次决策路由 */
 export type TurnRoute =

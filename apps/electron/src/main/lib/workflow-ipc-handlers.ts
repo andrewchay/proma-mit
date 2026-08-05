@@ -12,7 +12,7 @@ import {
   type WorkflowIdentityDirectory,
   type WorkflowImportInput,
   type WorkflowTemplatePublishInput,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { executeWorkflowAgentNode, stopActiveWorkflowRun } from './workflow-agent-executor'
 import { executeWorkflowDeterministicNode } from './workflow-deterministic-executor'
 import { executeWorkflowRun } from './workflow-run-executor'

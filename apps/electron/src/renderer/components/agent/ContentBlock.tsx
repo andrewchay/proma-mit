@@ -35,7 +35,7 @@ import type {
   SDKUserMessage,
   SDKToolResultBlock,
   SDKSystemMessage,
-} from '@proma/shared'
+} from '@gravitas/shared'
 
 // ===== useToolResult Hook =====
 

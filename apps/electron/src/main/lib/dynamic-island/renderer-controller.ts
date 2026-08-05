@@ -8,7 +8,7 @@
  */
 
 import { DynamicIslandStore } from './island-store'
-import type { DynamicIslandLevel, DynamicIslandRequest } from '@proma/shared'
+import type { DynamicIslandLevel, DynamicIslandRequest } from '@gravitas/shared'
 
 export interface RendererControllerDeps {
   send: (cmd: Record<string, unknown>) => void

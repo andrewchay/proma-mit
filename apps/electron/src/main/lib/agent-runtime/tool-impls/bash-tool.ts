@@ -6,7 +6,7 @@
 
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { formatToolError, truncateOutput } from './tool-utils.ts'
 

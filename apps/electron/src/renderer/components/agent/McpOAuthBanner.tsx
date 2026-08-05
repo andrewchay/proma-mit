@@ -77,7 +77,7 @@ export function McpOAuthBanner({ sessionId }: McpOAuthBannerProps): React.ReactE
       <div className="px-3 pb-2 space-y-1.5">
         <p className="text-xs text-foreground">
           请在浏览器中完成 <span className="font-medium">{request.serverName}</span> 的 OAuth 授权。
-          授权完成后 Proma 会自动继续。
+          授权完成后 Gravitas 会自动继续。
         </p>
         {request.authorizationUrl && (
           <button

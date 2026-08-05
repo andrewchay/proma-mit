@@ -42,7 +42,7 @@ import {
 import { FeishuNotifyToggle } from './FeishuNotifyToggle'
 import { cn } from '@/lib/utils'
 import { fileToBase64, formatFileNames } from '@/lib/file-utils'
-import { MAX_ATTACHMENT_SIZE } from '@proma/shared'
+import { MAX_ATTACHMENT_SIZE } from '@gravitas/shared'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
 import { toast } from 'sonner'
 

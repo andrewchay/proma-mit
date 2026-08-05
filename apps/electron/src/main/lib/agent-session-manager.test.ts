@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
-import type { SDKMessage } from '@proma/shared'
+import type { SDKMessage } from '@gravitas/shared'
 import { mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'

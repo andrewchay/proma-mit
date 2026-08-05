@@ -1,5 +1,5 @@
 {
-  "name": "@proma/server",
+  "name": "@gravitas/server",
   "version": "0.1.6",
   "private": true,
   "type": "module",
@@ -15,8 +15,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@proma/core": "workspace:*",
-    "@proma/shared": "workspace:*",
+    "@gravitas/core": "workspace:*",
+    "@gravitas/shared": "workspace:*",
     "ai": "7.0.31",
     "croner": "10.0.1",
     "redis": "5.11.0"

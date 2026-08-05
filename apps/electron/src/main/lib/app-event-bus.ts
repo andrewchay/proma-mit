@@ -9,7 +9,7 @@
  * 统一从这里订阅高层任务事件。
  */
 
-import type { AppEventEnvelope, AgentStreamPayload } from '@proma/shared'
+import type { AppEventEnvelope, AgentStreamPayload } from '@gravitas/shared'
 
 type AppEventHandler = (event: AppEventEnvelope) => void
 
@@ -76,7 +76,7 @@ export function toAppEvent(sessionId: string, payload: AgentStreamPayload): AppE
   if (payload.kind === 'sdk_message') {
     const message = payload.message
     if (message.type === 'assistant') {
-      const aMsg = message as import('@proma/shared').SDKAssistantMessage
+      const aMsg = message as import('@gravitas/shared').SDKAssistantMessage
       if (aMsg.isReplay) return null
       if (aMsg.error) {
         return { ...base, type: 'failed', detail: aMsg.error.message ?? '发生错误' }
@@ -95,14 +95,14 @@ export function toAppEvent(sessionId: string, payload: AgentStreamPayload): AppE
       return { ...base, type: 'progress', detail: detail || '正在执行' }
     }
     if (message.type === 'result') {
-      const rMsg = message as import('@proma/shared').SDKResultMessage
+      const rMsg = message as import('@gravitas/shared').SDKResultMessage
       if (rMsg.subtype === 'success') {
         return { ...base, type: 'completed', detail: '已完成' }
       }
       return { ...base, type: 'failed', detail: rMsg.errors?.[0] ?? '执行出错' }
     }
     if (message.type === 'system') {
-      const sMsg = message as import('@proma/shared').SDKSystemMessage
+      const sMsg = message as import('@gravitas/shared').SDKSystemMessage
       if (sMsg.subtype === 'task_started') {
         return { ...base, type: 'progress', detail: `子任务：${sMsg.description ?? ''}` }
       }
@@ -163,8 +163,8 @@ class AppEventBus {
       const goalId = getAgentSessionMeta(event.sessionId)?.goalId
       if (!goalId) return
       const { buildSessionEvidence, formatEvidenceSummary } = require('./evidence-service') as {
-        buildSessionEvidence: (sid: string, state: 'completed' | 'failed') => import('@proma/shared').RunEvidence
-        formatEvidenceSummary: (e: import('@proma/shared').RunEvidence) => string
+        buildSessionEvidence: (sid: string, state: 'completed' | 'failed') => import('@gravitas/shared').RunEvidence
+        formatEvidenceSummary: (e: import('@gravitas/shared').RunEvidence) => string
       }
       const { appendGoalEvidence } = require('./goal-service') as { appendGoalEvidence: (goalId: string, e: string) => unknown }
       const evidence = buildSessionEvidence(event.sessionId, event.type === 'completed' ? 'completed' : 'failed')

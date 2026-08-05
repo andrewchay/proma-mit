@@ -2,7 +2,7 @@
  * Provider-Agnostic Agent 适配器
  *
  * 实现 AgentProviderAdapter 接口，不依赖 Claude Agent SDK。
- * 基于 @proma/core 的 ProviderAdapter 实现多轮工具调用循环。
+ * 基于 @gravitas/core 的 ProviderAdapter 实现多轮工具调用循环。
  *
  * 阶段 1 能力：
  * - 支持 Read / Write / Edit / Bash / Grep 五个核心工具
@@ -25,7 +25,7 @@ import type {
   McpServerEntry,
   PromaPermissionMode,
   ProviderType,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type {
   ProviderAdapter,
   ToolCall,
@@ -33,8 +33,8 @@ import type {
   ContinuationMessage,
   StreamEvent,
   ThinkingBlock,
-} from '@proma/core'
-import { getAdapter, streamSSE } from '@proma/core'
+} from '@gravitas/core'
+import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
@@ -67,17 +67,17 @@ export type CanUseToolCallback = (
 /** Provider-Agnostic 查询选项（扩展通用输入） */
 export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   /** 实际选择底层 ProviderAdapter 的供应商；DeepSeek 在 Proma runtime 下使用 OpenAI adapter */
-  adapterProvider?: import('@proma/shared').ProviderType
+  adapterProvider?: import('@gravitas/shared').ProviderType
   /** 最大工具调用轮次 */
   maxTurns?: number
   /** 系统提示词 */
   systemPrompt?: string
   /** 权限模式 */
-  permissionMode?: import('@proma/shared').PromaPermissionMode
+  permissionMode?: import('@gravitas/shared').PromaPermissionMode
   /** 自定义权限检查回调；未提供时按 permissionMode 做本地兜底判断 */
   canUseTool?: CanUseToolCallback
   /** 历史 SDKMessage（阶段 2：多轮会话上下文） */
-  historyMessages?: import('@proma/shared').SDKMessage[]
+  historyMessages?: import('@gravitas/shared').SDKMessage[]
   /** 最大 LLM 请求重试次数 */
   maxRetries?: number
   /** 工作区 MCP 服务器配置 */
@@ -201,7 +201,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         name: tool.name,
         description: tool.description,
         parameters: { type: 'object' as const, properties: tool.parameters as Record<string, never>, required: [] },
-        async execute(input: unknown): Promise<import('@proma/core').ToolResult> {
+        async execute(input: unknown): Promise<import('@gravitas/core').ToolResult> {
           const content = await tool.execute((input ?? {}) as Record<string, unknown>)
           return { toolCallId: '', content, isError: false }
         },
@@ -307,7 +307,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         let currentReasoning = ''
         let currentThinkingBlocks: ThinkingBlock[] = []
         let currentToolCalls: ToolCall[] = []
-        let roundUsage: import('@proma/core').StreamUsageEvent['usage'] | undefined
+        let roundUsage: import('@gravitas/core').StreamUsageEvent['usage'] | undefined
 
         const handleStreamEvent = (event: StreamEvent): void => {
           if (event.type === 'chunk') {
@@ -441,7 +441,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
         const toolResultMessage: SDKUserMessage = {
           type: 'user',
-          message: { content: toolResultBlocks as unknown as import('@proma/shared').SDKUserContentBlock[] },
+          message: { content: toolResultBlocks as unknown as import('@gravitas/shared').SDKUserContentBlock[] },
           parent_tool_use_id: null,
           session_id: sessionId,
         }

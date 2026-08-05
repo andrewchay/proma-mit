@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
-import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@proma/shared'
+import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@gravitas/shared'
 import {
   cancelWorkflowRun,
   completeWorkflowNode,

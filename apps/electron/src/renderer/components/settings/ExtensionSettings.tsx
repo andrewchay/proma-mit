@@ -82,7 +82,7 @@ export function ExtensionSettings(): React.ReactElement {
   return (
     <SettingsSection
       title="扩展"
-      description="管理 Proma 的第一方扩展。扩展可以贡献系统浮层、通知、菜单栏等能力"
+      description="管理 Gravitas 的第一方扩展。扩展可以贡献系统浮层、通知、菜单栏等能力"
     >
       <SettingsCard>
         {loading ? (

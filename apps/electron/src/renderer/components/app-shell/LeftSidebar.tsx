@@ -96,7 +96,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-import type { ConversationMeta, AgentSessionMeta, WorkspaceCapabilities } from '@proma/shared'
+import type { ConversationMeta, AgentSessionMeta, WorkspaceCapabilities } from '@gravitas/shared'
 
 export interface LeftSidebarProps {
   /** 可选固定宽度，默认使用 CSS 响应式宽度 */

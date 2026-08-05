@@ -11,7 +11,7 @@
  * 工具定义通过 StreamRequestInput.tools 单独传递给 ProviderAdapter，不在 system prompt 中重复。
  */
 
-import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@proma/shared'
+import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@gravitas/shared'
 import type { RuntimeMessage } from './types.ts'
 
 /** 最大回填历史消息条数 */

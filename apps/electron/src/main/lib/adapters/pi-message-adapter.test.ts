@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { SDKAssistantMessage, SDKMessage } from '@proma/shared'
+import type { SDKAssistantMessage, SDKMessage } from '@gravitas/shared'
 import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
 import { convertPiMessageToSDKMessage, convertPiMessagesToSDKMessages, convertSDKMessagesToPiMessages } from './pi-message-adapter'
 

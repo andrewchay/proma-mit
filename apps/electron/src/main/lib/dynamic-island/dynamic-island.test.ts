@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { DynamicIslandStore } from './island-store'
 import { DynamicIslandRendererController } from './renderer-controller'
 import { parseStdout, serializeCmd } from './renderer-protocol'
-import type { DynamicIslandRequest } from '@proma/shared'
+import type { DynamicIslandRequest } from '@gravitas/shared'
 
 function req(partial: Partial<DynamicIslandRequest> = {}): DynamicIslandRequest {
   return {

@@ -6,7 +6,7 @@ import type {
   AgentGoalCheckpoint,
   AgentGoalStatus,
   CreateAgentGoalInput,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { ElectronGoalStore } from './goal-store'
 
 const MAX_IMMEDIATE_CONTINUATIONS = 3

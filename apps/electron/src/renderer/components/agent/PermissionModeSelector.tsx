@@ -12,8 +12,8 @@ import { Zap, Compass, Map as MapIcon, Shield } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { agentPermissionModeMapAtom, agentDefaultPermissionModeAtom, sessionPersistedPermissionModeAtom, sessionExistsAtom } from '@/atoms/agent-atoms'
-import type { PromaPermissionMode } from '@proma/shared'
-import { PROMA_PERMISSION_MODE_CONFIG, PROMA_PERMISSION_MODE_ORDER } from '@proma/shared'
+import type { PromaPermissionMode } from '@gravitas/shared'
+import { PROMA_PERMISSION_MODE_CONFIG, PROMA_PERMISSION_MODE_ORDER } from '@gravitas/shared'
 
 const MODE_ICONS: Record<PromaPermissionMode, React.ComponentType<{ className?: string }>> = {
   safe: Shield,

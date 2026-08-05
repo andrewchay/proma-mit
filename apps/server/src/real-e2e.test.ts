@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { InMemoryAgentRuntimeObjectStore, PostgresTenantRuntimeStore } from '@proma/shared/utils'
-import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@proma/shared'
-import type { ProviderType } from '@proma/shared'
+import { InMemoryAgentRuntimeObjectStore, PostgresTenantRuntimeStore } from '@gravitas/shared/utils'
+import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@gravitas/shared'
+import type { ProviderType } from '@gravitas/shared'
 import { createPromaWebServerApplication } from './app.ts'
 import { PostgresUsageLedger } from './billing.ts'
 

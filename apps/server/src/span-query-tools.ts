@@ -1,6 +1,6 @@
 import { jsonSchema, tool } from 'ai'
 import type { ToolSet } from 'ai'
-import type { AgentRuntimeScope, RuntimeSpanQueryTool } from '@proma/shared'
+import type { AgentRuntimeScope, RuntimeSpanQueryTool } from '@gravitas/shared'
 import type { PostgresRuntimeSpanStore } from './spans.ts'
 
 /** 把 PostgresRuntimeSpanStore 适配为 RuntimeSpanQueryTool（P-III 只读查询）。 */

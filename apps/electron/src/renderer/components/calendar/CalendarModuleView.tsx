@@ -1,7 +1,7 @@
 /**
  * CalendarModuleView — 工作模块「日程管家」入口
  *
- * 由 ~/LLM/PAA 的 schedule / calendar 两个子视图迁移而来（已重命名为 Proma MIT 日程管家）：
+ * 由 ~/LLM/PAA 的 schedule / calendar 两个子视图迁移而来（已重命名为 Gravitas MIT 日程管家）：
  * - 日程管家：月视图日历 + 任务看板 + 自然语言创建
  * - 日历同步：多日历源管理（Google / Apple / Outlook / 本地）+ 同步日志
  *

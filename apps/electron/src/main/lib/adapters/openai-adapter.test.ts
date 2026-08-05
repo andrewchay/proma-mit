@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
-import { OpenAIAdapter } from '@proma/core'
-import type { StreamRequestInput } from '@proma/core'
+import { OpenAIAdapter } from '@gravitas/core'
+import type { StreamRequestInput } from '@gravitas/core'
 
 function makeInput(providerType: string): StreamRequestInput {
   return {

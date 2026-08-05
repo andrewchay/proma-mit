@@ -5,7 +5,7 @@
  * 结果使用相对路径，供 FileBrowser 自动定位（fileBrowserAutoRevealAtom）。
  * 搜索结果带来源徽标（会话文件 / 工作区文件），点击后自动定位 + 打开预览。
  *
- * 设计参考上游 Proma v0.15.7（#1322 unified Files）。
+ * 设计参考上游 Gravitas v0.15.7（#1322 unified Files）。
  */
 
 import * as React from 'react'
@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import { FileTypeIcon } from './FileTypeIcon'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { fileBrowserAutoRevealAtom } from '@/atoms/agent-atoms'
-import type { FileIndexEntry } from '@proma/shared'
+import type { FileIndexEntry } from '@gravitas/shared'
 
 interface FileSearchBarProps {
   workspaceFilesPath: string | null

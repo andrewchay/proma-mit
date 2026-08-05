@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { allPendingPermissionRequestsAtom, agentStreamingStatesAtom, finalizeStreamingActivities } from '@/atoms/agent-atoms'
-import type { DangerLevel } from '@proma/shared'
+import type { DangerLevel } from '@gravitas/shared'
 
 /** 危险等级对应的样式 */
 const DANGER_STYLES: Record<DangerLevel, { icon: typeof Shield; iconColor: string; badgeClass: string; label: string }> = {

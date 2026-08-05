@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useAtom } from 'jotai'
 import { Clock3, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AgentSessionMeta, ProactiveSchedule } from '@proma/shared'
+import type { AgentSessionMeta, ProactiveSchedule } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -24,7 +24,7 @@ import {
   proactiveSessionsAtom,
 } from '@/atoms/proactive-scheduler'
 import { SettingsCard, SettingsSection } from './primitives'
-import type { AgentRuntime, Channel } from '@proma/shared'
+import type { AgentRuntime, Channel } from '@gravitas/shared'
 
 type SchedulableSession = AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
 
@@ -94,12 +94,12 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
     const session = sessions.find((item) => item.id === sessionId)
     if (newSession) {
       if (!channel || !isSchedulableRuntime(selectedRuntime)) {
-        toast.error('请选择已启用渠道和 Proma / AI SDK Runtime')
+        toast.error('请选择已启用渠道和 Gravitas / AI SDK Runtime')
         return
       }
     } else {
       if (!session?.channelId || !eligibleRuntime(session)) {
-        toast.error('请选择已配置渠道的 Proma 或 AI SDK 会话，并填写任务内容')
+        toast.error('请选择已配置渠道的 Gravitas 或 AI SDK 会话，并填写任务内容')
         return
       }
     }
@@ -167,7 +167,7 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
           <label className="grid gap-1.5 text-sm text-muted-foreground">Runtime
             <Select value={selectedRuntime} onValueChange={(value: 'proma' | 'ai-sdk') => setSelectedRuntime(value)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="proma">Proma</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent>
+              <SelectContent><SelectItem value="proma">Gravitas</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent>
             </Select>
           </label>
         </div> : <div className="grid gap-3 md:grid-cols-2">
@@ -187,7 +187,7 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
             ? <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1） <Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>
             : <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">Cron 表达式 <Input value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} placeholder="例如：0 9 * * 1-5" /></label><label className="grid gap-1.5 text-sm text-muted-foreground">IANA 时区 <Input value={cronTimezone} onChange={(event) => setCronTimezone(event.target.value)} placeholder="例如：Asia/Shanghai" /></label><p className="md:col-span-2 text-xs text-muted-foreground">采用标准五字段 Cron（分钟 小时 日 月 周）；时区会与任务一同保存。</p></div>}
         <label className="grid gap-1.5 text-sm text-muted-foreground">任务内容 <Input value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：检查当前工作区的未提交变更并总结" /></label>
-        {!newSession && sessions.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400">没有可复用的 Proma / AI SDK 会话；可切换为「新建会话执行」。</p>}
+        {!newSession && sessions.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400">没有可复用的 Gravitas / AI SDK 会话；可切换为「新建会话执行」。</p>}
         {newSession && channels.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400">请先在模型配置中启用至少一个渠道。</p>}
         <Button onClick={() => void create()} disabled={loading || (newSession ? channels.length === 0 : sessions.length === 0)}><Plus className="mr-2 size-4" />创建安全定时任务</Button>
       </SettingsCard>

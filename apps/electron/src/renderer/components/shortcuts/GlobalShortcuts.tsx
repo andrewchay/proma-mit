@@ -291,7 +291,7 @@ export function GlobalShortcuts(): null {
           store.set(currentConversationIdAtom, meta.id)
 
           // 处理附件：保存到磁盘，收集 FileAttachment[]
-          const savedAttachments: import('@proma/shared').FileAttachment[] = []
+          const savedAttachments: import('@gravitas/shared').FileAttachment[] = []
           if (data.files && data.files.length > 0) {
             for (const file of data.files) {
               if (!file.base64) {
@@ -336,7 +336,7 @@ export function GlobalShortcuts(): null {
     return cleanup
   }, [store])
 
-  // ===== 语音输入 → 写入当前 Proma 输入框 =====
+  // ===== 语音输入 → 写入当前 Gravitas 输入框 =====
 
   useEffect(() => {
     const cleanup = window.electronAPI.onVoiceDictationInsertText(({ text }) => {

@@ -1,5 +1,5 @@
 {
-  "name": "@proma/executor",
+  "name": "@gravitas/executor",
   "version": "0.1.0",
   "private": true,
   "type": "module",

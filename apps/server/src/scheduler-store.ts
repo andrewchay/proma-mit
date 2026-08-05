@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Cron } from 'croner'
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
 
 export type ServerScheduleSpec =
   | { type: 'interval'; intervalMs: number }

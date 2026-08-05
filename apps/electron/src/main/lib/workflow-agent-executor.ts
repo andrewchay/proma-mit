@@ -1,7 +1,7 @@
 /** Workflow Agent/Skill 节点执行适配器。 */
 
-import type { AgentExternalRunSource, AgentMessage, AgentSendInput, WorkflowCapabilityPolicy, WorkflowRun } from '@proma/shared'
-import { validateWorkflowOutput } from '@proma/shared/workflow'
+import type { AgentExternalRunSource, AgentMessage, AgentSendInput, WorkflowCapabilityPolicy, WorkflowRun } from '@gravitas/shared'
+import { validateWorkflowOutput } from '@gravitas/shared/workflow'
 import {
   completeWorkflowNode,
   acquireWorkflowSideEffectLease,

@@ -1,11 +1,11 @@
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
 import type {
   RuntimeSpan,
   RuntimeSpanBegin,
   RuntimeSpanNode,
   RuntimeSpanSink,
   RuntimeSpanStatus,
-} from '@proma/shared'
+} from '@gravitas/shared'
 
 export interface RuntimeSpanQuery extends AgentRuntimeScope {
   /** 按 task 聚合查询；P-I 阶段稳定 key。 */

@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@proma/shared'
+import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -35,8 +35,8 @@ import {
   normalizeAgentRuntime,
   resolveAgentRuntimeBaseUrl,
   isWorkflowToolAllowed,
-} from '@proma/shared'
-import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@proma/shared'
+} from '@gravitas/shared'
+import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@gravitas/shared'
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
 import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
@@ -45,8 +45,8 @@ import { isTransientNetworkError } from './error-patterns'
 import { isClaudeFamilyModel } from './model-family'
 import type { AgentEventBus } from './agent-event-bus'
 import { decryptApiKey, getChannelById } from './channel-manager'
-import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@proma/core'
-import { normalizeAgentRuntimeError } from '@proma/shared/utils'
+import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@gravitas/core'
+import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
@@ -783,7 +783,7 @@ export class AgentOrchestrator {
       let agentCwd = homedir()
       let workspaceName: string | undefined
       let workspaceSlug: string | undefined
-      let mcpServers: Record<string, import('@proma/shared').McpServerEntry> | undefined
+      let mcpServers: Record<string, import('@gravitas/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
@@ -985,7 +985,7 @@ export class AgentOrchestrator {
       baseUrl: string
       model?: string
       cwd: string
-      mcpServers?: Record<string, import('@proma/shared').McpServerEntry>
+      mcpServers?: Record<string, import('@gravitas/shared').McpServerEntry>
       permissionMode: PromaPermissionMode
     },
     input: SubAgentInput,
@@ -1468,7 +1468,7 @@ export class AgentOrchestrator {
 
     const toPersist = accumulatedMessages.filter(
       (m) => m.type === 'assistant' || m.type === 'user' || m.type === 'result'
-        || (m.type === 'system' && ['compact_boundary', 'permission_denied'].includes((m as import('@proma/shared').SDKSystemMessage).subtype ?? ''))
+        || (m.type === 'system' && ['compact_boundary', 'permission_denied'].includes((m as import('@gravitas/shared').SDKSystemMessage).subtype ?? ''))
     ).filter((m) => {
       // 过滤 SDK 内部生成的 user 文本消息（如 Skill 展开 prompt），与实时流过滤逻辑一致
       if (m.type === 'user') {
@@ -1544,7 +1544,7 @@ export class AgentOrchestrator {
         // E8: 配额耗尽时发系统通知提醒用户
         if (decision.route === 'quota_exhausted') {
           try {
-            const { sendSystemNotification } = require('./system-notification-service') as { sendSystemNotification: (i: import('@proma/shared').SystemNotificationInput) => boolean }
+            const { sendSystemNotification } = require('./system-notification-service') as { sendSystemNotification: (i: import('@gravitas/shared').SystemNotificationInput) => boolean }
             const isSessionQuota = goalId === undefined
             sendSystemNotification({
               title: isSessionQuota ? '会话配额已耗尽' : 'Goal 配额已耗尽',
@@ -1711,7 +1711,7 @@ export class AgentOrchestrator {
     if (effectiveAgentRuntime !== 'claude') {
       let runtimeAgentCwd = homedir()
       let runtimeWorkspaceSlug: string | undefined
-      let runtimeWorkspace: import('@proma/shared').AgentWorkspace | undefined
+      let runtimeWorkspace: import('@gravitas/shared').AgentWorkspace | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (ws) {
@@ -1857,7 +1857,7 @@ export class AgentOrchestrator {
     let titleGenerationStarted = false
     let agentCwd: string | undefined
     let workspaceSlug: string | undefined
-    let workspace: import('@proma/shared').AgentWorkspace | undefined
+    let workspace: import('@gravitas/shared').AgentWorkspace | undefined
 
       // 8. 动态导入 SDK
       const sdk = await import('@anthropic-ai/claude-agent-sdk')
@@ -2581,7 +2581,7 @@ export class AgentOrchestrator {
                 }
               }
             } else if (msg.type === 'system') {
-              const sysMsg = msg as import('@proma/shared').SDKSystemMessage
+              const sysMsg = msg as import('@gravitas/shared').SDKSystemMessage
               if (sysMsg.subtype === 'compact_boundary' || sysMsg.subtype === 'permission_denied') {
                 accumulatedMessages.push(msg)
               }

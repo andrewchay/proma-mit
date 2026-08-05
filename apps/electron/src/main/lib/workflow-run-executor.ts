@@ -1,6 +1,6 @@
 /** Workflow Run 的串行调度器：只自动执行已就绪、可恢复且没有并发歧义的节点。 */
 
-import type { WorkflowRun } from '@proma/shared'
+import type { WorkflowRun } from '@gravitas/shared'
 import { executeWorkflowAgentNode } from './workflow-agent-executor'
 import { executeWorkflowDeterministicNode } from './workflow-deterministic-executor'
 import { completeWorkflowNode, getWorkflowRun, requestWorkflowApproval, startWorkflowNode } from './workflow-service'

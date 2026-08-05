@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { resolveToolPath, formatToolError, truncateOutput } from './tool-utils.ts'
 

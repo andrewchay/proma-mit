@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
 import type { LanguageModelUsage } from 'ai'
-import type { AgentEvent, SDKMessage } from '@proma/shared'
+import type { AgentEvent, SDKMessage } from '@gravitas/shared'
 import type { RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import type { McpClientManager } from '../agent-runtime/mcp-client'
 
@@ -65,7 +65,7 @@ mock.module('../document-parser', () => ({
   extractTextFromAttachment: async (localPath: string) => `文档内容：${localPath}`,
 }))
 
-mock.module('@proma/core/providers/ai-sdk-bridge', () => ({
+mock.module('@gravitas/core/providers/ai-sdk-bridge', () => ({
   AISDKStreamStepAccumulator: class MockAISDKStreamStepAccumulator {
     private text = ''
 

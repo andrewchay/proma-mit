@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, mock, test } from 'bun:test'
-import type { AgentEvent, ProviderType, SDKMessage, SDKResultMessage } from '@proma/shared'
-import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@proma/shared'
+import type { AgentEvent, ProviderType, SDKMessage, SDKResultMessage } from '@gravitas/shared'
+import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@gravitas/shared'
 
 class MockBrowserWindow {}
 

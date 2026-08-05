@@ -18,14 +18,14 @@ import type {
   SDKResultMessage,
   SDKUserContentBlock,
   SDKUserMessage,
-} from '@proma/shared'
-import { resolveAgentRuntimeBaseUrl } from '@proma/shared'
-import { normalizeAgentRuntimeError } from '@proma/shared/utils'
+} from '@gravitas/shared'
+import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
+import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
 import {
   AISDKStreamStepAccumulator,
   createAgentAISDKModel,
   type AISDKStreamStepSnapshot,
-} from '@proma/core/providers/ai-sdk-bridge'
+} from '@gravitas/core/providers/ai-sdk-bridge'
 import type { LanguageModel, LanguageModelUsage, ModelMessage, TextStreamPart, ToolSet } from 'ai'
 import { isStepCount, jsonSchema, streamText, tool } from 'ai'
 import { isTransientNetworkError } from '../error-patterns'
@@ -35,7 +35,7 @@ import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_
 import { COMPACT_CONTEXT_TOOL_NAME, compactSessionNow } from './context-compaction'
 import { getAgentSessionSDKMessages } from '../agent-session-manager'
 import { getWorkspaceSkills } from '../agent-workspace-manager'
-import type { SkillMeta } from '@proma/shared'
+import type { SkillMeta } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './types'
 
 export interface AISDKRuntimeSessionState {

@@ -4,7 +4,7 @@
 
 import { describe, test, expect } from 'bun:test'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
-import type { SDKMessage } from '@proma/shared'
+import type { SDKMessage } from '@gravitas/shared'
 
 describe('Prompt 构建器', () => {
   test('given 默认提示词 when 构建 runtime prompt then 包含 cwd 与自动化工具规则', () => {

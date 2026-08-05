@@ -9,7 +9,7 @@
  * 最后一次使用后 5 分钟自动断开，避免长期占用。
  */
 
-import type { McpServerEntry } from '@proma/shared'
+import type { McpServerEntry } from '@gravitas/shared'
 import { McpClientManager, type McpAuthRequiredPayload } from './mcp-client'
 
 interface CachedEntry {

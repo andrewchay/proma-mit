@@ -6,7 +6,7 @@ import { describe, test, expect, afterAll, mock } from 'bun:test'
 import { mkdirSync, rmSync, existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
-import type { TokenUsageRecord, TokenUsageQuery } from '@proma/shared'
+import type { TokenUsageRecord, TokenUsageQuery } from '@gravitas/shared'
 
 // 覆盖 os 与 electron，避免 import 链（token-usage-service → agent-session-manager）拉入真实依赖
 const originalHomedir = homedir()

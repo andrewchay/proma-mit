@@ -6,8 +6,8 @@
  * 命名空间化，避免不同服务器之间重名。
  */
 
-import type { McpServerEntry } from '@proma/shared'
-import type { ToolResult } from '@proma/core'
+import type { McpServerEntry } from '@gravitas/shared'
+import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'

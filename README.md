@@ -1,4 +1,6 @@
-# Proma
+# Gravitas
+
+> Gravitas 是开源 AI 桌面应用 **Proma**（github.com/ErlichLiu/Proma）的改造衍生版本。除特别注明外，内容表述为本项目视角。
 
 Proma 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agent、工作区、Skills、MCP、远程机器人和记忆能力放在同一个开源客户端里。
 

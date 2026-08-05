@@ -5,7 +5,7 @@
  * 应用重启时也不会因内存状态丢失而立即重复执行。
  */
 
-import type { WorkflowDefinition, WorkflowRun, WorkflowScheduleTriggerConfig } from '@proma/shared'
+import type { WorkflowDefinition, WorkflowRun, WorkflowScheduleTriggerConfig } from '@gravitas/shared'
 import { getWorkflowSchedulerStatePath } from './config-paths'
 import { readJsonFileSafe, writeJsonFileAtomic } from './safe-file'
 import { executeWorkflowRun } from './workflow-run-executor'

@@ -55,7 +55,7 @@ class MemorySpanClient {
 
 const scope = { tenantId: 'tenant', userId: 'user' }
 
-function sqlClient(sqls: string[]): import('@proma/shared/utils').AgentRuntimePostgresClient {
+function sqlClient(sqls: string[]): import('@gravitas/shared/utils').AgentRuntimePostgresClient {
   return {
     query: async <RowType extends Record<string, unknown> = Record<string, unknown>>(_sql: string): Promise<{ rows: RowType[] }> => {
       sqls.push(_sql)

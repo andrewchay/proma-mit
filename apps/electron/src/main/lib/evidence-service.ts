@@ -7,7 +7,7 @@
  */
 
 import { getTokenUsageRecords } from './token-usage-service'
-import type { RunEvidence } from '@proma/shared'
+import type { RunEvidence } from '@gravitas/shared'
 
 /** 写操作类工具（近似判定：这些工具可能改变本地状态/文件/外部系统） */
 const WRITE_TOOLS = new Set([
@@ -86,7 +86,7 @@ export function buildSessionEvidence(
   sessionId: string,
   terminalState: 'completed' | 'failed' = 'completed',
   userMessage?: string,
-  recordSource?: (q: import('@proma/shared').TokenUsageQuery) => import('@proma/shared').TokenUsageRecord[],
+  recordSource?: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[],
 ): RunEvidence {
   // 读取该会话的 token 使用记录（含每轮工具调用）
   const getRecords = recordSource ?? getTokenUsageRecords

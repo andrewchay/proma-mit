@@ -1,13 +1,13 @@
-import { createAgentAISDKModel } from '@proma/core/providers/ai-sdk-bridge'
-import type { RuntimeSpanStatus, SDKMessage } from '@proma/shared'
-import type { AgentRuntimeWebAgentTurnRunner } from '@proma/shared/utils'
-import { AGENT_PROVIDER_RUNTIME_CAPABILITIES, resolveAgentRuntimeBaseUrl } from '@proma/shared'
+import { createAgentAISDKModel } from '@gravitas/core/providers/ai-sdk-bridge'
+import type { RuntimeSpanStatus, SDKMessage } from '@gravitas/shared'
+import type { AgentRuntimeWebAgentTurnRunner } from '@gravitas/shared/utils'
+import { AGENT_PROVIDER_RUNTIME_CAPABILITIES, resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { generateText, isStepCount, jsonSchema, streamText, tool } from 'ai'
 import { createWorkspaceReadTools } from './workspace-tools.ts'
 import { createWorkspaceWriteTool, writeWorkspaceFile } from './workspace-tools.ts'
 import { createSpanQueryTools } from './span-query-tools.ts'
 import { createServerMcpToolSet } from './server-mcp-tools.ts'
-import type { AskUserRequest, AskUserResponse, ExitPlanModeRequest, ExitPlanModeResponse, PermissionRequest, PermissionResponse } from '@proma/shared'
+import type { AskUserRequest, AskUserResponse, ExitPlanModeRequest, ExitPlanModeResponse, PermissionRequest, PermissionResponse } from '@gravitas/shared'
 
 /**
  * 服务端 AI SDK 执行器。

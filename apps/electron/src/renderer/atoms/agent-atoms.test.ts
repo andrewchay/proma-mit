@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { mergeLiveMessage } from './agent-atoms'
-import type { SDKAssistantMessage, SDKMessage } from '@proma/shared'
+import type { SDKAssistantMessage, SDKMessage } from '@gravitas/shared'
 
 function assistantMessage(uuid: string, text: string, extra: Record<string, unknown> = {}): SDKMessage {
   return {

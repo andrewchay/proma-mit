@@ -1,7 +1,7 @@
 /** Workflow 工作台状态。Definition 的草稿始终是画布与配置面板的单一数据源。 */
 
 import { atom } from 'jotai'
-import type { WorkflowDefinition, WorkflowPatchProposal, WorkflowRun, WorkflowRunEvent } from '@proma/shared'
+import type { WorkflowDefinition, WorkflowPatchProposal, WorkflowRun, WorkflowRunEvent } from '@gravitas/shared'
 
 export const workflowDefinitionsAtom = atom<WorkflowDefinition[]>([])
 export const selectedWorkflowIdAtom = atom<string | null>(null)

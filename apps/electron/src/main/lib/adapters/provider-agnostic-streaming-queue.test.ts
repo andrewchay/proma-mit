@@ -2,15 +2,15 @@
  * Provider-Agnostic Agent 适配器：流式期间用户追加输入
  *
  * 验证 query 运行中调用 sendQueuedMessage 后，追加消息会在下一轮作为用户输入处理。
- * 独立 mock @proma/core，避免与既有适配器测试相互干扰。
+ * 独立 mock @gravitas/core，避免与既有适配器测试相互干扰。
  */
 
 import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@proma/core'
-import type { SDKMessage } from '@proma/shared'
+import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@gravitas/core'
+import type { SDKMessage } from '@gravitas/shared'
 
 class MockBrowserWindow {}
 mock.module('electron', () => ({
@@ -59,7 +59,7 @@ describe('Provider-Agnostic 流式追加', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'proma-paa-queue-test-'))
     capturedUserMessages = []
 
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => {

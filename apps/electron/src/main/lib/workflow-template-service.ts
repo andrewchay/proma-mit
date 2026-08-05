@@ -7,8 +7,8 @@ import type {
   WorkflowTemplate,
   WorkflowTemplateInstallation,
   WorkflowTemplatePublishInput,
-} from '@proma/shared'
-import { exportWorkflowDefinition, importWorkflowDefinition } from '@proma/shared/workflow'
+} from '@gravitas/shared'
+import { exportWorkflowDefinition, importWorkflowDefinition } from '@gravitas/shared/workflow'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getWorkflowTemplateInstallationPath, getWorkflowTemplatePath, getWorkflowTemplatesDir } from './config-paths'
 import { readJsonFileSafe, writeJsonFileAtomic } from './safe-file'
@@ -101,7 +101,7 @@ export function installWorkflowTemplate(templateId: string, workspaceId: string,
 }
 
 /** 批量安装对每个工作区独立提交，返回完整状态而非遇错整体回滚。 */
-export function installWorkflowTemplateBatch(templateId: string, workspaceIds: string[]): import('@proma/shared').WorkflowTemplateBatchInstallResult {
+export function installWorkflowTemplateBatch(templateId: string, workspaceIds: string[]): import('@gravitas/shared').WorkflowTemplateBatchInstallResult {
   const template = getTemplate(templateId)
   const uniqueWorkspaceIds = [...new Set(workspaceIds)]
   const results = uniqueWorkspaceIds.map((workspaceId) => {

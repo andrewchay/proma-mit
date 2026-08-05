@@ -10,7 +10,7 @@
  * 复用 SDK 的 createSdkMcpServer 注入模式（同 memory / nano-banana 工具）。
  */
 
-import type { Goal } from '@proma/shared'
+import type { Goal } from '@gravitas/shared'
 import { getGoal, updateGoalTodoStatus, appendGoalEvidence, shouldGoalRun } from '../goal-service'
 import { getAgentSessionMeta } from '../agent-session-manager'
 

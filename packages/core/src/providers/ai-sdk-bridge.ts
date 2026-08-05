@@ -8,7 +8,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogle } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
-import type { AgentProviderProtocol, ProviderType } from '@proma/shared'
+import type { AgentProviderProtocol, ProviderType } from '@gravitas/shared'
 import type { LanguageModel, LanguageModelUsage, TextStreamPart, ToolSet } from 'ai'
 import { streamText } from 'ai'
 import type { StreamEvent, StreamEventCallback } from './types.ts'

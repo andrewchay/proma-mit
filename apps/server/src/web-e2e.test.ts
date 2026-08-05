@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import {
   InMemoryAgentRuntimeObjectStore,
   PostgresTenantRuntimeStore,
-} from '@proma/shared/utils'
-import type { AgentRuntimeWebAgentTurnRunner } from '@proma/shared/utils'
+} from '@gravitas/shared/utils'
+import type { AgentRuntimeWebAgentTurnRunner } from '@gravitas/shared/utils'
 import { createPromaWebServerApplication } from './app.ts'
 
 const databaseUrl = process.env.PROMA_P2_TEST_DATABASE_URL

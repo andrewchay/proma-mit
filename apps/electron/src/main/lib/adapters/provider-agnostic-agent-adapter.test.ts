@@ -1,7 +1,7 @@
 /**
  * Provider-Agnostic Agent 适配器集成测试
  *
- * 使用 mock 模拟 @proma/core 的 SSE 流，验证 DeepSeek 路由下
+ * 使用 mock 模拟 @gravitas/core 的 SSE 流，验证 DeepSeek 路由下
  * Agent 能够完成"读取文件 → 编辑文件 → 返回结果"的完整循环。
  */
 
@@ -9,8 +9,8 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@proma/core'
-import type { SDKMessage, SDKResultMessage } from '@proma/shared'
+import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@gravitas/core'
+import type { SDKMessage, SDKResultMessage } from '@gravitas/shared'
 
 class MockBrowserWindow {}
 
@@ -73,8 +73,8 @@ describe('Provider-Agnostic Agent 适配器', () => {
     requestedAdapterProviders = []
     firstTurnToolCalls = undefined
 
-    // mock @proma/core，用回合制逻辑替代真实 SSE 请求
-    mock.module('@proma/core', () => ({
+    // mock @gravitas/core，用回合制逻辑替代真实 SSE 请求
+    mock.module('@gravitas/core', () => ({
       getAdapter: (provider: string): ProviderAdapter => {
         requestedAdapterProviders.push(provider)
         return {
@@ -217,7 +217,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   })
 
   test('无工具调用时直接结束', async () => {
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({
@@ -253,7 +253,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   })
 
   test('附件会进入 buildStreamRequest', async () => {
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => {
@@ -302,7 +302,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   })
 
   test('历史消息会传入 buildStreamRequest', async () => {
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => {
@@ -350,7 +350,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
   test('plan 模式下写工具被拒绝', async () => {
     let round = 0
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({
@@ -401,7 +401,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
   test('ExitPlanMode 批准后会动态切换权限模式并允许后续写工具', async () => {
     let exitPlanCalled = false
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({
@@ -459,7 +459,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   })
 
   test('AskUserQuestion 工具会调用 onAskUser 回调并返回答案', async () => {
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({
@@ -520,7 +520,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   })
 
   test('safe 模式下只读工具通过，写工具被拒绝', async () => {
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({
@@ -573,7 +573,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
   test('streamSSE 瞬时错误会重试', async () => {
     let attempts = 0
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({
@@ -617,7 +617,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
   test('Agent 工具会调用 runSubAgent 回调并返回结果', async () => {
     let subAgentCalled = false
-    mock.module('@proma/core', () => ({
+    mock.module('@gravitas/core', () => ({
       getAdapter: (_provider: string): ProviderAdapter => ({
         providerType: 'deepseek',
         buildStreamRequest: (input): ProviderRequest => ({

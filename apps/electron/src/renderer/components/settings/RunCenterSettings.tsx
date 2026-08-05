@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
-import type { RunRecord } from '@proma/shared'
+import type { RunRecord } from '@gravitas/shared'
 
 const SOURCE_LABEL: Record<string, string> = {
   agent: 'Agent',

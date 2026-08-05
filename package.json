@@ -1,5 +1,5 @@
 {
-  "name": "proma-mit",
+  "name": "gravitas",
   "version": "0.1.2",
   "description": "The next gen ai software with general agents",
   "type": "module",
@@ -10,10 +10,10 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "bun run --filter='@proma/electron' dev",
-    "electron:dev": "bun run --filter='@proma/electron' dev",
-    "electron:build": "bun run --filter='@proma/electron' build",
-    "electron:start": "bun run --filter='@proma/electron' start",
+    "dev": "bun run --filter='@gravitas/electron' dev",
+    "electron:dev": "bun run --filter='@gravitas/electron' dev",
+    "electron:build": "bun run --filter='@gravitas/electron' build",
+    "electron:start": "bun run --filter='@gravitas/electron' start",
     "build": "bun run --filter='*' build",
     "typecheck": "bun run --filter='*' typecheck",
     "test": "bun test --max-concurrency=1",

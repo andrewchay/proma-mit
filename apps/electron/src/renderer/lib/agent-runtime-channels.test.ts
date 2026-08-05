@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Channel } from '@proma/shared'
+import type { Channel } from '@gravitas/shared'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from './agent-runtime-channels'
 
 function channel(id: string, provider: Channel['provider'], enabled = true, modelEnabled = true): Channel {

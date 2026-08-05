@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { WORKFLOW_FORMAT, type AgentSendInput, type WorkflowDefinition } from '@proma/shared'
+import { WORKFLOW_FORMAT, type AgentSendInput, type WorkflowDefinition } from '@gravitas/shared'
 import { createAgentWorkspace, saveWorkspaceMcpConfig } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { executeWorkflowAgentNode, getActiveWorkflowAgentSession, type WorkflowAgentRunner } from './workflow-agent-executor'

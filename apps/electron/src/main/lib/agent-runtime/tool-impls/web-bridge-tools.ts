@@ -1,6 +1,6 @@
 /** Web Bridge 工具：受管浏览器的导航、读取和受限 DOM 操作。 */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types'
 import { webBridgeService, type WebBridgeSnapshot } from '../../web-bridge-service'
 import { appendWebBridgeAudit } from '../../web-bridge-audit-service'

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentRuntimePostgresClient, AgentRuntimeWebAuthResolver } from '@proma/shared/utils'
+import type { AgentRuntimePostgresClient, AgentRuntimeWebAuthResolver } from '@gravitas/shared/utils'
 import { createPromaWebServerApplication } from './app.ts'
 
 describe('Proma Web 服务', () => {

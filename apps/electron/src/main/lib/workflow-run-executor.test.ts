@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, rmSync } from 'node:fs'
-import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@proma/shared'
+import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@gravitas/shared'
 import { createAgentWorkspace } from './agent-workspace-manager'
 import { createWorkflowRun, publishWorkflowDefinition, saveWorkflowDefinition } from './workflow-service'
 import { executeWorkflowRun } from './workflow-run-executor'

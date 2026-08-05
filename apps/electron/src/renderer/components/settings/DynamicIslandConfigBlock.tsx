@@ -13,7 +13,7 @@ import { SettingsSection } from './primitives/SettingsSection'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { detectIsMac } from '@/lib/platform'
-import type { DynamicIslandSessionSnapshot, DynamicIslandState } from '@proma/shared'
+import type { DynamicIslandSessionSnapshot, DynamicIslandState } from '@gravitas/shared'
 
 const LEVEL_LABEL: Record<string, string> = {
   info: '信息',

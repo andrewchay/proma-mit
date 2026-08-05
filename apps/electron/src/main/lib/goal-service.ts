@@ -17,7 +17,7 @@ import type {
   GoalTodo,
   GoalUpdateInput,
   UpsertTodoInput,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { getGoalPath, getGoalIndexPath, getGoalsDir } from './config-paths'
 
 /** 索引内最多保留的 Goal 摘要数 */
@@ -409,9 +409,9 @@ export function spendGoalBudget(goalId: string, usd: number): Goal {
 
 /** 会话依赖（可注入，避免测试时加载 electron；运行默认惰性 require 真实实现） */
 export interface SessionDeps {
-  getAgentSessionMeta: (id: string) => import('@proma/shared').AgentSessionMeta | undefined
-  updateAgentSessionMeta: (id: string, updates: Record<string, string | undefined>) => import('@proma/shared').AgentSessionMeta
-  listAgentSessions: () => import('@proma/shared').AgentSessionMeta[]
+  getAgentSessionMeta: (id: string) => import('@gravitas/shared').AgentSessionMeta | undefined
+  updateAgentSessionMeta: (id: string, updates: Record<string, string | undefined>) => import('@gravitas/shared').AgentSessionMeta
+  listAgentSessions: () => import('@gravitas/shared').AgentSessionMeta[]
 }
 
 /** 惰性加载 session-manager，避免 goal-service 编译期依赖 electron */

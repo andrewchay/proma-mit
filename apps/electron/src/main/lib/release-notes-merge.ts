@@ -1,6 +1,6 @@
 /** release-notes 合并逻辑（纯函数，无 Electron 依赖，便于单测）。 */
 
-import type { GitHubRelease } from '@proma/shared'
+import type { GitHubRelease } from '@gravitas/shared'
 
 function versionParts(tag: string): number[] {
   return tag.replace(/^v/i, '').split('.').map(Number)

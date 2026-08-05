@@ -1,6 +1,6 @@
 /** 系统级 Computer Use 工具。所有桌面读取和控制均需要用户明确授权。 */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import { appendComputerUseAudit } from '../../computer-use-audit-service'
 import { computerUseService } from '../../computer-use-service'
 import { webBridgeService } from '../../web-bridge-service'

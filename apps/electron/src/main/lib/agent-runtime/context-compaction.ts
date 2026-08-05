@@ -10,9 +10,9 @@
  * 后续 query 读取历史时会自然看到摘要。
  */
 
-import type { ProviderType, SDKMessage } from '@proma/shared'
-import { getAdapter, streamSSE } from '@proma/core'
-import type { StreamEvent, ToolResult } from '@proma/core'
+import type { ProviderType, SDKMessage } from '@gravitas/shared'
+import { getAdapter, streamSSE } from '@gravitas/core'
+import type { StreamEvent, ToolResult } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { compactSDKMessages } from '../agent-session-manager'
@@ -108,7 +108,7 @@ function extractMessageText(msg: SDKMessage): string {
 
 /**
  * 用当前渠道的 LLM 生成历史摘要。
- * 复用 @proma/core 的 ProviderAdapter + streamSSE（与 provider-agnostic adapter 同路径）。
+ * 复用 @gravitas/core 的 ProviderAdapter + streamSSE（与 provider-agnostic adapter 同路径）。
  */
 export async function summarizeHistory(options: ContextCompactionOptions): Promise<string> {
   const { provider, adapterProvider, apiKey, baseUrl, model, historyMessages, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES, signal } = options

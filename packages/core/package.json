@@ -1,5 +1,5 @@
 {
-  "name": "@proma/core",
+  "name": "@gravitas/core",
   "version": "0.2.13",
   "license": "BUSL-1.1",
   "description": "proma core types,storage and core logic with agents",
@@ -18,7 +18,7 @@
     "@ai-sdk/anthropic": "4.0.16",
     "@ai-sdk/google": "4.0.18",
     "@ai-sdk/openai": "4.0.16",
-    "@proma/shared": "workspace:*",
+    "@gravitas/shared": "workspace:*",
     "ai": "7.0.31",
     "shiki": "^3.22.0"
   },

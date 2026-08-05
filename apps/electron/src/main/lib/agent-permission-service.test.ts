@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { AgentPermissionService, type CanUseToolOptions } from './agent-permission-service'
-import type { PermissionRequest } from '@proma/shared'
+import type { PermissionRequest } from '@gravitas/shared'
 
 function createOptions(overrides: Partial<CanUseToolOptions> = {}): CanUseToolOptions {
   return {

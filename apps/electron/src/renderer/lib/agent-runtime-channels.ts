@@ -1,5 +1,5 @@
-import type { AgentRuntime, Channel } from '@proma/shared'
-import { isAgentCompatibleProvider } from '@proma/shared'
+import type { AgentRuntime, Channel } from '@gravitas/shared'
+import { isAgentCompatibleProvider } from '@gravitas/shared'
 
 export function getAgentRuntimeChannelIds(
   channels: Channel[],

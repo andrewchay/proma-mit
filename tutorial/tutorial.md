@@ -1,4 +1,6 @@
-# Proma 教程
+# Gravitas 教程（源自 Proma）
+
+> 本教程改编自上游开源项目 **Proma**（github.com/ErlichLiu/Proma）的使用指南，由 Erlich Liu 编写；Gravitas 为其衍生版本。
 
 编辑时间：2026年3月9日
 编辑时版本：v0.7.0

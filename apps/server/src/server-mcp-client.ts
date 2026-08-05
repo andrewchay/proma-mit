@@ -2,15 +2,15 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import type { McpServerEntry } from '@proma/shared'
+import type { McpServerEntry } from '@gravitas/shared'
 import type {
   ServerMcpConnection,
   ServerMcpConnectionFactory,
   ServerMcpConnectionFactoryInput,
   TenantMcpOAuthTokens,
   TenantRuntimeStore,
-} from '@proma/shared/utils'
-import { validateServerMcpOAuthEndpoint } from '@proma/shared/utils'
+} from '@gravitas/shared/utils'
+import { validateServerMcpOAuthEndpoint } from '@gravitas/shared/utils'
 
 const MAX_MCP_RESULT_BYTES = 256 * 1024
 const OAUTH_REFRESH_SKEW_MS = 30_000

@@ -38,8 +38,8 @@ import type {
   AgentSessionReferenceSearchInput,
   AgentSessionReferenceSearchResult,
   AgentRuntime,
-} from '@proma/shared'
-import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@proma/shared'
+} from '@gravitas/shared'
+import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@gravitas/shared'
 import { getConversationMessages } from './conversation-manager'
 import { clearNanoBananaAgentHistory } from './chat-tools/nano-banana-mcp'
 

@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, isAbsolute, relative, resolve } from 'node:path'
-import { getAdapter, streamSSE } from '@proma/core'
+import { getAdapter, streamSSE } from '@gravitas/core'
 import { decryptApiKey, getChannelById } from './channel-manager'
 import { getSettings } from './settings-service'
 import { getFetchFn } from './proxy-fetch'

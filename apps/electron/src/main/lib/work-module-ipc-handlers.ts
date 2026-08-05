@@ -11,7 +11,7 @@ import {
   CALENDAR_SYNC_IPC_CHANNELS,
   PROJECT_IPC_CHANNELS,
   AGENT_EMPLOYEE_IPC_CHANNELS,
-} from '@proma/shared'
+} from '@gravitas/shared'
 
 // ===== 日程管家服务 =====
 import {

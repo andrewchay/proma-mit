@@ -5,7 +5,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { resolveToolPath, formatToolError, truncateOutput } from './tool-utils.ts'
 

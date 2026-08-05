@@ -1,7 +1,7 @@
 {
-  "name": "@proma/electron",
+  "name": "@gravitas/electron",
   "version": "0.11.17",
-  "description": "Proma next gen ai software with general agents - Electron App",
+  "description": "Gravitas next gen ai software with general agents - Electron App",
   "license": "BUSL-1.1",
   "main": "dist/main.cjs",
   "author": {
@@ -72,9 +72,9 @@
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@larksuiteoapi/node-sdk": "^1.72.0",
-    "@proma/core": "workspace:*",
-    "@proma/shared": "workspace:*",
-    "@proma/ui": "workspace:*",
+    "@gravitas/core": "workspace:*",
+    "@gravitas/shared": "workspace:*",
+    "@gravitas/ui": "workspace:*",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-context-menu": "^2.2.16",

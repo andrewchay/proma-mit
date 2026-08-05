@@ -5,7 +5,7 @@
  * 或自定义子代理。子代理在独立上下文中运行，返回结果摘要。
  */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types'
 import { enforceHandoffBudget } from '../../handoff-budget'
 

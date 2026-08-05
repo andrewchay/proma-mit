@@ -12,8 +12,8 @@ import type {
   SendQueuedMessageOptions,
   SDKMessage,
   SDKUserMessageInput,
-} from '@proma/shared'
-import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@proma/shared'
+} from '@gravitas/shared'
+import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@gravitas/shared'
 
 export class RuntimeRoutingAgentAdapter implements AgentProviderAdapter {
   private readonly sessionRuntimes = new Map<string, AgentRuntime>()

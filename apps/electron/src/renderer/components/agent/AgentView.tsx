@@ -98,8 +98,8 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
-import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage, SDKTextBlock, SDKUserMessage } from '@proma/shared'
-import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@proma/shared'
+import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage, SDKTextBlock, SDKUserMessage } from '@gravitas/shared'
+import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@gravitas/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
 
@@ -175,14 +175,14 @@ function getUserTextFromSDKMessage(message: SDKMessage): string | null {
 // ===== 思考模式 Hover Popover =====
 
 interface AgentThinkingPopoverProps {
-  agentThinking: import('@proma/shared').ThinkingConfig | undefined
+  agentThinking: import('@gravitas/shared').ThinkingConfig | undefined
   onToggle: () => void
   /** Pi runtime：会话级思考级别（AgentThinkingLevel），提供时显示档位选择 */
-  piThinkingLevel?: import('@proma/shared').AgentThinkingLevel
-  onPiThinkingLevelChange?: (level: import('@proma/shared').AgentThinkingLevel) => void
+  piThinkingLevel?: import('@gravitas/shared').AgentThinkingLevel
+  onPiThinkingLevelChange?: (level: import('@gravitas/shared').AgentThinkingLevel) => void
 }
 
-const PI_THINKING_LEVEL_OPTIONS: Array<{ value: import('@proma/shared').AgentThinkingLevel; label: string }> = [
+const PI_THINKING_LEVEL_OPTIONS: Array<{ value: import('@gravitas/shared').AgentThinkingLevel; label: string }> = [
   { value: 'off', label: '关闭' },
   { value: 'minimal', label: '极简' },
   { value: 'low', label: '低' },
@@ -254,7 +254,7 @@ function AgentThinkingPopover({ agentThinking, onToggle, piThinkingLevel, onPiTh
               <span className="text-xs text-foreground/70">思考深度</span>
               <Select
                 value={piThinkingLevel}
-                onValueChange={(value) => onPiThinkingLevelChange(value as import('@proma/shared').AgentThinkingLevel)}
+                onValueChange={(value) => onPiThinkingLevelChange(value as import('@gravitas/shared').AgentThinkingLevel)}
               >
                 <SelectTrigger className="h-7 w-[110px] text-xs">
                   <SelectValue placeholder="选择" />
@@ -277,7 +277,7 @@ function AgentThinkingPopover({ agentThinking, onToggle, piThinkingLevel, onPiTh
 
 const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; description: string; disabled?: boolean }> = [
   { value: 'claude', label: 'Claude', description: '使用 Claude Agent SDK' },
-  { value: 'proma', label: 'Proma', description: '使用 Provider-Agnostic Runtime' },
+  { value: 'proma', label: 'Gravitas', description: '使用 Provider-Agnostic Runtime' },
   { value: 'pi', label: 'Pi', description: '使用 Pi Agent SDK（v1 只读工具）' },
   { value: 'ai-sdk', label: 'AI SDK', description: '使用 Vercel AI SDK Runtime' },
 ]
@@ -497,7 +497,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const [agentThinking, setAgentThinking] = useAtom(agentThinkingAtom)
 
   // Pi runtime 会话级思考级别（从全局设置读取，选择后写回）
-  const [piThinkingLevel, setPiThinkingLevel] = React.useState<import('@proma/shared').AgentThinkingLevel | undefined>(undefined)
+  const [piThinkingLevel, setPiThinkingLevel] = React.useState<import('@gravitas/shared').AgentThinkingLevel | undefined>(undefined)
   React.useEffect(() => {
     let cancelled = false
     window.electronAPI.getSettings().then((settings) => {
@@ -1394,7 +1394,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       const localUuid = crypto.randomUUID()
 
       // 1. 立即注入 liveMessages（作为普通用户消息显示）
-      const syntheticMsg: import('@proma/shared').SDKMessage = {
+      const syntheticMsg: import('@gravitas/shared').SDKMessage = {
         type: 'user',
         uuid: localUuid,
         message: {
@@ -1402,7 +1402,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         },
         parent_tool_use_id: null,
         _createdAt: Date.now(),
-      } as unknown as import('@proma/shared').SDKMessage
+      } as unknown as import('@gravitas/shared').SDKMessage
 
       store.set(liveMessagesMapAtom, (prev) => {
         const map = new Map(prev)
@@ -1696,7 +1696,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     const localUuid = crypto.randomUUID()
 
     // 1. 立即注入合成用户消息（/compact 气泡立刻可见，与普通发送路径一致）
-    const syntheticMsg: import('@proma/shared').SDKMessage = {
+    const syntheticMsg: import('@gravitas/shared').SDKMessage = {
       type: 'user',
       uuid: localUuid,
       message: {
@@ -1704,7 +1704,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       },
       parent_tool_use_id: null,
       _createdAt: streamStartedAt,
-    } as unknown as import('@proma/shared').SDKMessage
+    } as unknown as import('@gravitas/shared').SDKMessage
 
     store.set(liveMessagesMapAtom, (prev) => {
       const map = new Map(prev)

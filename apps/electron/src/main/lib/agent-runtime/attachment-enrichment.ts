@@ -8,8 +8,8 @@
  * 因此从 prompt-builder.ts 中拆出，避免纯 prompt 单元测试加载 electron。
  */
 
-import type { ChatMessage, FileAttachment } from '@proma/shared'
-import type { ImageAttachmentData } from '@proma/core'
+import type { ChatMessage, FileAttachment } from '@gravitas/shared'
+import type { ImageAttachmentData } from '@gravitas/core'
 import { readAttachmentAsBase64, isImageAttachment } from '../attachment-service'
 import { extractTextFromAttachment, isDocumentAttachment } from '../document-parser'
 
@@ -82,7 +82,7 @@ export async function enrichMessageWithDocuments(
  * 批量为历史消息提取文档附件文本
  */
 export async function enrichHistoryWithDocuments(history: ChatMessage[]): Promise<ChatMessage[]> {
-  const enriched: import('@proma/shared').ChatMessage[] = []
+  const enriched: import('@gravitas/shared').ChatMessage[] = []
   for (const msg of history) {
     if (msg.role === 'user' && msg.attachments && msg.attachments.length > 0) {
       const hasDocuments = msg.attachments.some((att) => isDocumentAttachment(att.mediaType))

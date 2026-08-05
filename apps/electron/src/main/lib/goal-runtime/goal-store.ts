@@ -5,7 +5,7 @@
  */
 
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import type { AgentGoal } from '@proma/shared'
+import type { AgentGoal } from '@gravitas/shared'
 import { getAgentGoalEventsPath, getAgentGoalsIndexPath } from '../config-paths'
 
 export interface AgentGoalEvent {

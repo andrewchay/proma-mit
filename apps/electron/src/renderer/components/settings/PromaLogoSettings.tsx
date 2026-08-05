@@ -1,7 +1,7 @@
 /**
- * PromaLogoSettings - Proma 品牌 Logo 下载
+ * PromaLogoSettings - Gravitas 品牌 Logo 下载
  *
- * 展示多个 Proma Logo 颜色变体网格，用户可下载用作机器人头像。
+ * 展示多个 Gravitas Logo 颜色变体网格，用户可下载用作机器人头像。
  */
 
 import * as React from 'react'
@@ -219,7 +219,7 @@ export function PromaLogoSettings(): React.ReactElement {
     <>
       <SettingsSection
         title="品牌 Logo"
-        description="下载 Proma Logo 用作机器人头像，让用户一眼认出你的 AI 助手"
+        description="下载 Gravitas Logo 用作机器人头像，让用户一眼认出你的 AI 助手"
       >
         <div className="grid grid-cols-3 gap-4">
           {LOGO_VARIANTS.map((logo) => (

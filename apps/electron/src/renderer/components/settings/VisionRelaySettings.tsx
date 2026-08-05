@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
-import type { Channel } from '@proma/shared'
+import type { Channel } from '@gravitas/shared'
 import type { VisionRelayConfig } from '@/types/settings'
 
 /** 已知支持图片输入的供应商（用于过滤可选渠道） */

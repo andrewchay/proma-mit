@@ -12,8 +12,8 @@ import { afterAll, describe, expect, mock, test } from 'bun:test'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ProviderType, SDKMessage } from '@proma/shared'
-import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@proma/shared'
+import type { ProviderType, SDKMessage } from '@gravitas/shared'
+import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@gravitas/shared'
 
 const tempConfigDir = mkdtempSync(join(tmpdir(), 'proma-pi-real-config-'))
 process.env.PROMA_TEST_CONFIG_DIR = tempConfigDir

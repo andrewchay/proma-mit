@@ -33,7 +33,7 @@ import {
   PROVIDER_DEFAULT_URLS,
   PROVIDER_LABELS,
   isAgentCompatibleProvider,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type {
   Channel,
   ChannelCreateInput,
@@ -41,7 +41,7 @@ import type {
   ChannelTestResult,
   FetchModelsResult,
   ProviderType,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   AlertDialog,

@@ -6,7 +6,7 @@
 
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { resolveToolPath, formatToolError } from './tool-utils.ts'
 

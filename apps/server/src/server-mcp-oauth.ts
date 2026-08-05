@@ -1,6 +1,6 @@
-import type { McpServerEntry } from '@proma/shared'
-import { validateServerMcpOAuthEndpoint } from '@proma/shared/utils'
-import type { TenantMcpOAuthTokens, ValidatedServerMcpConfig } from '@proma/shared/utils'
+import type { McpServerEntry } from '@gravitas/shared'
+import { validateServerMcpOAuthEndpoint } from '@gravitas/shared/utils'
+import type { TenantMcpOAuthTokens, ValidatedServerMcpConfig } from '@gravitas/shared/utils'
 
 export interface ServerMcpOAuthStartInput {
   authorizationEndpoint: string

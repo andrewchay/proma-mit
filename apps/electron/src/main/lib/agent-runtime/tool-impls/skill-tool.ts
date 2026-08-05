@@ -11,7 +11,7 @@
  * - skill_slug 用工作区已启用的 Skill 标识（<available_skills> 清单）
  */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { readSkillFile } from '../../agent-workspace-manager'
 import { formatToolError, truncateOutput } from './tool-utils.ts'

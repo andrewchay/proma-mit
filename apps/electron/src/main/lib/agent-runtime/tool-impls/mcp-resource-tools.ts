@@ -5,7 +5,7 @@
  * 这些工具只读，默认在 safe / plan 模式下放行。
  */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition } from '../types'
 
 export const LIST_MCP_RESOURCES_TOOL_NAME = 'ListMcpResourcesTool'

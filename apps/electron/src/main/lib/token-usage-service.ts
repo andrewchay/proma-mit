@@ -21,7 +21,7 @@ import type {
   TokenUsageQuery,
   TokenUsageRecord,
   TokenUsageSessionSummary,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type { AgentEventMiddleware } from './agent-event-bus'
 import { getTokenUsageIndexPath, getTokenUsageMonthPath, getDefaultSkillsDir } from './config-paths'
 import { getAgentSessionMeta } from './agent-session-manager'
@@ -655,6 +655,6 @@ export function createTokenUsageService(): TokenUsageService {
 }
 
 /** 便捷查询：供证据服务等按条件读取 token 使用记录 */
-export function getTokenUsageRecords(query: import('@proma/shared').TokenUsageQuery): import('@proma/shared').TokenUsageRecord[] {
+export function getTokenUsageRecords(query: import('@gravitas/shared').TokenUsageQuery): import('@gravitas/shared').TokenUsageRecord[] {
   return tokenUsageService.query(query)
 }

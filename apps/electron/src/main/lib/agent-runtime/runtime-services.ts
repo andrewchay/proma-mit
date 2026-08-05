@@ -14,7 +14,7 @@ import type {
   McpServerEntry,
   ProviderType,
   SDKMessage,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { appendSDKMessages, getAgentSessionSDKMessages, truncateSDKMessages } from '../agent-session-manager'
 import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig } from '../agent-workspace-manager'
 import { getAgentSessionWorkspacePath } from '../config-paths'

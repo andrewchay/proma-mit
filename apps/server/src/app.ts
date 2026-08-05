@@ -11,7 +11,7 @@ import {
   PostgresTenantRuntimeStore,
   RedisAgentRuntimeEventStore,
   ServerMcpConnectionManager,
-} from '@proma/shared/utils'
+} from '@gravitas/shared/utils'
 import type {
   AgentRuntimePostgresClient,
   AgentRuntimeRole,
@@ -19,7 +19,7 @@ import type {
   AgentRuntimeScope,
   AgentRuntimeWebAgentTurnRunner,
   AgentRuntimeWebAuthResolver,
-} from '@proma/shared/utils'
+} from '@gravitas/shared/utils'
 import { createClient } from 'redis'
 import {
   DeleteObjectCommand,
@@ -28,8 +28,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
-import type { AgentRuntimeObjectStore } from '@proma/shared/utils'
-import { materializeAgentRuntimeWorkspace, syncAgentRuntimeWorkspaceToObjectStore } from '@proma/shared/utils/node'
+import type { AgentRuntimeObjectStore } from '@gravitas/shared/utils'
+import { materializeAgentRuntimeWorkspace, syncAgentRuntimeWorkspaceToObjectStore } from '@gravitas/shared/utils/node'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { runAISDKWebAgentTurn } from './runtime.ts'
@@ -579,7 +579,7 @@ async function startMcpOAuth(
   workspaceSlug: string,
   serverName: string,
   store: PostgresTenantRuntimeStore,
-  handler: import('@proma/shared/utils').ServerMcpOAuthCallbackHandler,
+  handler: import('@gravitas/shared/utils').ServerMcpOAuthCallbackHandler,
   callbackBaseUrl: string | undefined,
   egressPolicy: PromaWebServerConfig['mcpEgress'],
 ): Promise<Response> {

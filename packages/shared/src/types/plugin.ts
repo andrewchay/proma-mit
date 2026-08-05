@@ -64,7 +64,7 @@ export interface PluginPermissions {
 /** 插件 Manifest */
 export interface PluginManifest {
   schemaVersion: 1
-  /** 反向域名 ID（如 com.proma.dynamic-island） */
+  /** 反向域名 ID（如 com.gravitas.dynamic-island） */
   id: string
   /** semver 版本 */
   version: string
@@ -120,7 +120,7 @@ export interface PluginInstallInput {
 
 /** 第一方内置插件清单（当前仅灵动岛作为样板） */
 export const BUILTIN_PLUGINS: Array<{ id: string; name: string; version: string }> = [
-  { id: 'com.proma.dynamic-island', name: '灵动岛通知', version: '1.0.0' },
+  { id: 'com.gravitas.dynamic-island', name: '灵动岛通知', version: '1.0.0' },
 ]
 
 /** 插件管理 IPC 通道 */

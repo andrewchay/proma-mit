@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, rmSync } from 'node:fs'
-import type { WorkflowDefinition } from '@proma/shared'
+import type { WorkflowDefinition } from '@gravitas/shared'
 import { getWorkflowIdentityDirectory, resolveWorkflowApprovalAssignees, saveWorkflowIdentityDirectory } from './workflow-identity-service'
 
 const TEST_DIR = '/tmp/paa-workflow-identity-test'

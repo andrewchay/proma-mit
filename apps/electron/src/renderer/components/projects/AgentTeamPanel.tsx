@@ -7,11 +7,11 @@
 
 import * as React from 'react'
 import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3, Loader2 } from 'lucide-react'
-import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition } from '@proma/shared'
+import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition } from '@gravitas/shared'
 import { cn } from '@/lib/utils'
 
 const RUNTIME_LABEL: Record<string, string> = {
-  proma: 'Proma',
+  proma: 'Gravitas',
   'ai-sdk': 'AI SDK',
   pi: 'Pi',
   claude: 'Claude',

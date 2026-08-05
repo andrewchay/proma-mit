@@ -8,7 +8,7 @@
 import * as React from 'react'
 import { Zap, Play, Clock3, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { RunRecord } from '@proma/shared'
+import type { RunRecord } from '@gravitas/shared'
 
 const REFRESH_INTERVAL = 3000
 

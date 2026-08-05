@@ -14,7 +14,7 @@ import { dirname } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { BrowserWindow } from 'electron'
 import type { WebContents } from 'electron'
-import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, normalizeAgentRuntime } from '@proma/shared'
+import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, normalizeAgentRuntime } from '@gravitas/shared'
 import type {
   AgentSendInput,
   AgentMessage,
@@ -33,7 +33,7 @@ import type {
   CreateProactiveScheduleInput,
   ProactiveSchedule,
   ProactiveTaskRun,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { ClaudeAgentAdapter, scanAndKillOrphanedClaudeSubprocesses } from './adapters/claude-agent-adapter'
 import { AISDKAgentAdapter } from './adapters/ai-sdk-agent-adapter'
 import { ProviderAgnosticAgentAdapter } from './adapters/provider-agnostic-agent-adapter'
@@ -338,7 +338,7 @@ export async function runAgentHeadless(
     onError: (error: string) => void
     onComplete: (messages?: AgentMessage[]) => void
     onTitleUpdated: (title: string) => void
-    source?: import('@proma/shared').AgentExternalRunSource
+    source?: import('@gravitas/shared').AgentExternalRunSource
     /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */
     originSessionId?: string
   },
@@ -446,7 +446,7 @@ export async function forkAgentSession(input: ForkSessionInput): Promise<AgentSe
 export async function rewindAgentSession(
   sessionId: string,
   assistantMessageUuid: string,
-): Promise<import('@proma/shared').RewindSessionResult> {
+): Promise<import('@gravitas/shared').RewindSessionResult> {
   return orchestrator.rewindSession(sessionId, assistantMessageUuid)
 }
 

@@ -1,5 +1,5 @@
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
-import type { RuntimeSpan, RuntimeSpanStatus } from '@proma/shared'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
+import type { RuntimeSpan, RuntimeSpanStatus } from '@gravitas/shared'
 import type { PostgresSignalStore, Signal, SignalHit, SignalMatcher } from './signals.ts'
 import type { PostgresRuntimeSpanStore } from './spans.ts'
 

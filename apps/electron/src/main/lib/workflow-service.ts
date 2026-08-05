@@ -21,8 +21,8 @@ import {
   type WorkflowTriggerKind,
   WORKFLOW_PERMISSION_PROFILES,
   validateWorkflowCapabilities,
-} from '@proma/shared'
-import { parseWorkflowDefinition, exportWorkflowDefinition as buildWorkflowExportFile, importWorkflowDefinition as parseWorkflowImportFile } from '@proma/shared/workflow'
+} from '@gravitas/shared'
+import { parseWorkflowDefinition, exportWorkflowDefinition as buildWorkflowExportFile, importWorkflowDefinition as parseWorkflowImportFile } from '@gravitas/shared/workflow'
 import {
   getWorkflowDefinitionPath,
   getWorkflowDir,
@@ -563,7 +563,7 @@ export function requestWorkflowApproval(workflowId: string, runId: string, nodeI
   const node = run.snapshot.definition.nodes.find((item) => item.id === nodeId)
   const nodeRun = getNodeRun(run, nodeId)
   if (node?.kind !== 'approval' || nodeRun.status !== 'ready') throw new Error('只有就绪的 approval 节点可以请求审批')
-  const config = node.config as import('@proma/shared').WorkflowApprovalConfig
+  const config = node.config as import('@gravitas/shared').WorkflowApprovalConfig
   const assigneeIds = resolveWorkflowApprovalAssignees(run.snapshot.definition, config)
 
   const approval: WorkflowApprovalRecord = {

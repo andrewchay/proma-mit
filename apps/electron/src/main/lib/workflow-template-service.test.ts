@@ -5,7 +5,7 @@ import { createAgentWorkspace, saveWorkspaceMcpConfig } from './agent-workspace-
 import { getWorkspaceSkillsDir } from './config-paths'
 import { publishWorkflowDefinition, saveWorkflowDefinition } from './workflow-service'
 import { installWorkflowTemplate, installWorkflowTemplateBatch, previewWorkflowTemplateUpgrade, publishWorkflowTemplate, rollbackWorkflowTemplate, upgradeWorkflowTemplate, deleteWorkflowTemplate } from './workflow-template-service'
-import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@proma/shared'
+import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@gravitas/shared'
 
 const TEST_DIR = '/tmp/paa-workflow-template-test'
 

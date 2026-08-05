@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AppEventEnvelope } from '@proma/shared'
+import type { AppEventEnvelope } from '@gravitas/shared'
 import { toSystemNotification, soundForEvent } from './notification-policy'
 
 function makeEvent(partial: Partial<AppEventEnvelope> & { type: AppEventEnvelope['type'] }): AppEventEnvelope {

@@ -9,7 +9,7 @@ import type {
   CreateProactiveScheduleInput,
   ProactiveSchedule,
   ProactiveTaskRun,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
 
 const MIN_INTERVAL_MS = 60_000

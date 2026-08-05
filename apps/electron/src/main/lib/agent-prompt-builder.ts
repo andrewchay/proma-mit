@@ -9,7 +9,7 @@
  * - 动态 per-message 上下文（buildDynamicContext）：注入到用户消息前，每次实时读取磁盘
  */
 
-import type { PromaPermissionMode, AgentDefinition } from '@proma/shared'
+import type { PromaPermissionMode, AgentDefinition } from '@gravitas/shared'
 import { getUserProfile } from './user-profile-service'
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from './agent-workspace-manager'
 import { getConfigDirName } from './config-paths'

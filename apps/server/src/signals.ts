@@ -1,4 +1,4 @@
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
 
 /**
  * P-II Signals：自然语言描述 + 确定性监测谓词。

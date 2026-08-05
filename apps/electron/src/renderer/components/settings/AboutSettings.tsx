@@ -8,7 +8,7 @@
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { RefreshCw, Loader2, CheckCircle2, AlertCircle, Info, Terminal, ChevronDown, ChevronUp, ExternalLink, RotateCw } from 'lucide-react'
-import type { EnvironmentCheckResult, RuntimeStatus } from '@proma/shared'
+import type { EnvironmentCheckResult, RuntimeStatus } from '@gravitas/shared'
 import {
   SettingsSection,
   SettingsCard,
@@ -37,7 +37,7 @@ function UpdateCard(): React.ReactElement | null {
   const status = useAtomValue(updateStatusAtom)
   const [checking, setChecking] = React.useState(false)
   const [showReleaseNotes, setShowReleaseNotes] = React.useState(false)
-  const [release, setRelease] = React.useState<import('@proma/shared').GitHubRelease | null>(null)
+  const [release, setRelease] = React.useState<import('@gravitas/shared').GitHubRelease | null>(null)
 
   // updater 不可用时不渲染
   if (!available) return null
@@ -442,7 +442,7 @@ function ShellEnvironmentCard(): React.ReactElement | null {
 export function AboutSettings(): React.ReactElement {
   return (
     <SettingsSection
-      title="关于 Proma"
+      title="关于 Gravitas"
       description="集成通用 AI Agent 的下一代人工智能软件"
     >
       <SettingsCard>
@@ -456,7 +456,7 @@ export function AboutSettings(): React.ReactElement {
           label="开源协议"
           description="本项目遵循开源协议发布"
         >
-          <span className="text-sm text-muted-foreground">MIT</span>
+          <span className="text-sm text-muted-foreground">BSL-1.1</span>
         </SettingsRow>
         <SettingsRow label="项目地址">
           <a

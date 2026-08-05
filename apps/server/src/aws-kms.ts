@@ -1,5 +1,5 @@
 import { DecryptCommand, GenerateDataKeyCommand, KMSClient } from '@aws-sdk/client-kms'
-import type { CloudKmsDataKeyProvider, AgentRuntimeWebSecretContext } from '@proma/shared/utils'
+import type { CloudKmsDataKeyProvider, AgentRuntimeWebSecretContext } from '@gravitas/shared/utils'
 
 /** AWS KMS data-key provider；凭证由标准 AWS credential provider chain 提供。 */
 export class AwsKmsDataKeyProvider implements CloudKmsDataKeyProvider {

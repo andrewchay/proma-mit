@@ -12,7 +12,7 @@
  */
 
 import { BrowserWindow } from 'electron'
-import type { SystemNotificationInput } from '@proma/shared'
+import type { SystemNotificationInput } from '@gravitas/shared'
 import { sendSystemNotification } from './system-notification-service'
 import { getAppEventBus } from './app-event-bus'
 import { getSettings } from './settings-service'

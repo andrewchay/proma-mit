@@ -7,7 +7,7 @@ import { mkdirSync, rmSync, existsSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
-import type { SDKAssistantMessage, SDKMessage, AgentStreamPayload } from '@proma/shared'
+import type { SDKAssistantMessage, SDKMessage, AgentStreamPayload } from '@gravitas/shared'
 
 const originalHomedir = homedir()
 const tempHomeDir = mkdtempSync(join(tmpdir(), 'proma-token-usage-test-'))

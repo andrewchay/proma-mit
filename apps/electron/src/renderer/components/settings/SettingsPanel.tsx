@@ -108,7 +108,7 @@ const BOTS_TAB: TabItem = {
 };
 const TUTORIAL_TAB: TabItem = {
   id: "tutorial",
-  label: "Proma 教程",
+  label: "Gravitas 教程",
   icon: <GraduationCap size={16} />,
 };
 const SHORTCUTS_TAB: TabItem = {

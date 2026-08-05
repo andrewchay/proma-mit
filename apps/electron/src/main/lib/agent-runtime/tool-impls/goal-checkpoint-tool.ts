@@ -1,6 +1,6 @@
 /** GoalCheckpoint 是 Goal Runtime 的控制面工具，不执行工作区副作用。 */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 
 export const GOAL_CHECKPOINT_TOOL_NAME = 'GoalCheckpoint'

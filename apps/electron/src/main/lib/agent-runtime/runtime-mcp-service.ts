@@ -5,7 +5,7 @@
  * 远端 token store 或无状态 MCP 网关。
  */
 
-import type { McpServerEntry } from '@proma/shared'
+import type { McpServerEntry } from '@gravitas/shared'
 import { acquireMcpClientManager } from './mcp-client-cache'
 import type { McpAuthRequiredPayload, McpClientManager } from './mcp-client'
 

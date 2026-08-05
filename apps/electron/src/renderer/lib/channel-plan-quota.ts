@@ -4,7 +4,7 @@
  * 带缓存（60s 成功 / 15s 失败）+ in-flight 去重 + 渠道凭据变更失效。
  */
 
-import type { Channel, ChannelPlanQuotaResult, ProviderType } from '@proma/shared'
+import type { Channel, ChannelPlanQuotaResult, ProviderType } from '@gravitas/shared'
 
 const PLAN_QUOTA_PROVIDERS = new Set<ProviderType>([
   'deepseek',

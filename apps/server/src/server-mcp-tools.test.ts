@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { AgentRuntimeEventReplayHub, ServerMcpConnectionManager } from '@proma/shared/utils'
+import { AgentRuntimeEventReplayHub, ServerMcpConnectionManager } from '@gravitas/shared/utils'
 import { acquireServerMcpTools } from './server-mcp-tools.ts'
 
 describe('服务端 MCP 工具桥接', () => {

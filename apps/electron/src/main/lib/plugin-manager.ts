@@ -11,8 +11,8 @@
  * - 插件状态不写入宿主 settings，由各插件自己的 config 管理（配置隔离）。
  */
 
-import { BUILTIN_PLUGINS } from '@proma/shared'
-import type { PluginLifecycleState, PluginManifest, PluginPermissions, PluginSurfaceType, PluginSubscription } from '@proma/shared'
+import { BUILTIN_PLUGINS } from '@gravitas/shared'
+import type { PluginLifecycleState, PluginManifest, PluginPermissions, PluginSurfaceType, PluginSubscription } from '@gravitas/shared'
 
 /** 插件运行状态（面向设置 UI） */
 export interface PluginStateView {
@@ -52,7 +52,7 @@ interface BuiltinPluginRuntime {
 function dynamicIslandRuntime(): BuiltinPluginRuntime {
   const manifest: PluginManifest = {
     schemaVersion: 1,
-    id: 'com.proma.dynamic-island',
+    id: 'com.gravitas.dynamic-island',
     version: '1.0.0',
     name: '灵动岛通知',
     description: '在 macOS 刘海下方显示 Agent 任务状态、审批提醒与完成通知',
@@ -94,7 +94,7 @@ function dynamicIslandRuntime(): BuiltinPluginRuntime {
 
 /** 内置插件注册表（按 id） */
 const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
-  ['com.proma.dynamic-island', dynamicIslandRuntime],
+  ['com.gravitas.dynamic-island', dynamicIslandRuntime],
 ])
 
 // ===== 对外 API =====

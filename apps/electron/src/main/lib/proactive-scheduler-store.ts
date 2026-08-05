@@ -1,7 +1,7 @@
 /** Proactive Scheduler 本地 JSON 存储；索引原子替换，运行记录单独保存。 */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import type { ProactiveSchedule, ProactiveTaskRun } from '@proma/shared'
+import type { ProactiveSchedule, ProactiveTaskRun } from '@gravitas/shared'
 import { getProactiveRunsPath, getProactiveSchedulesPath } from './config-paths'
 
 interface ScheduleIndexFile { version: 1; schedules: ProactiveSchedule[] }

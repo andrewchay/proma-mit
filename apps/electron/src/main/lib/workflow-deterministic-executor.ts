@@ -1,6 +1,6 @@
 /** 无副作用的 Workflow 变换与条件节点执行器，禁止使用 eval/new Function。 */
 
-import type { WorkflowRun } from '@proma/shared'
+import type { WorkflowRun } from '@gravitas/shared'
 import { completeWorkflowNode, failWorkflowNode, getWorkflowRun, startWorkflowNode } from './workflow-service'
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }

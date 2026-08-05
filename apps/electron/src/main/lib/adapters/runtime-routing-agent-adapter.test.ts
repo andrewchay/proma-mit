@@ -6,7 +6,7 @@ import type {
   SendQueuedMessageOptions,
   SDKMessage,
   SDKUserMessageInput,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { RuntimeRoutingAgentAdapter } from './runtime-routing-agent-adapter'
 
 interface RecordedCall {

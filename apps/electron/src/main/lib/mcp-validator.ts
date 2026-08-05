@@ -10,7 +10,7 @@
 
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import type { McpServerEntry } from '@proma/shared'
+import type { McpServerEntry } from '@gravitas/shared'
 
 /**
  * MCP 验证结果

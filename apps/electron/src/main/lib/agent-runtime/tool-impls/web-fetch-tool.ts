@@ -8,7 +8,7 @@
  * 与 Web Bridge 的区别：WebFetch 不启动受管浏览器、不加载登录态、无有状态操作。
  */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { truncateOutput } from './tool-utils.ts'
 import { getFetchFn } from '../../proxy-fetch'

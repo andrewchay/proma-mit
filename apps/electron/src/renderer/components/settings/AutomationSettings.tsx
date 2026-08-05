@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useAtom } from 'jotai'
 import { CircleAlert, CircleCheck, LoaderCircle, MonitorCog, RefreshCw, ShieldAlert, Square, Terminal } from 'lucide-react'
 import { toast } from 'sonner'
-import { AGENT_PROVIDER_RUNTIME_CAPABILITIES, getAgentCompatibleProviders } from '@proma/shared'
+import { AGENT_PROVIDER_RUNTIME_CAPABILITIES, getAgentCompatibleProviders } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
 import { settingsTabAtom } from '@/atoms/settings-tab'
 import {

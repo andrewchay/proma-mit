@@ -1,6 +1,6 @@
 /** Workflow 审批身份目录。当前采用本地 JSON，可由企业同步连接器替换。 */
 
-import type { WorkflowApprovalConfig, WorkflowDefinition, WorkflowIdentityDirectory } from '@proma/shared'
+import type { WorkflowApprovalConfig, WorkflowDefinition, WorkflowIdentityDirectory } from '@gravitas/shared'
 import { getWorkflowIdentityDirectoryPath } from './config-paths'
 import { readJsonFileSafe, writeJsonFileAtomic } from './safe-file'
 

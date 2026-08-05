@@ -5,7 +5,7 @@
  * 移植自 weavelynx DynamicIsland 插件（island store）。
  */
 
-import type { DynamicIslandRequest } from '@proma/shared'
+import type { DynamicIslandRequest } from '@gravitas/shared'
 
 export type DynamicIslandRemoveReason = 'user' | 'timeout' | 'replaced'
 

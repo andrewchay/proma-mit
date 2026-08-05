@@ -11,7 +11,7 @@ import {
   type AgentRuntime,
   type AgentSessionMeta,
   type PromaPermissionMode,
-} from '@proma/shared'
+} from '@gravitas/shared'
 
 const PERMISSION_RANK: Record<PromaPermissionMode, number> = {
   plan: 0,

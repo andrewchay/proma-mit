@@ -17,7 +17,7 @@ import type {
   GoalPhase,
   GoalTodo,
   GoalTodoStatus,
-} from '@proma/shared'
+} from '@gravitas/shared'
 
 const PHASE_LABEL: Record<GoalPhase, { label: string; className: string }> = {
   draft: { label: '草稿', className: 'bg-foreground/[0.06] text-foreground/60' },
@@ -139,7 +139,7 @@ function GoalDetail({ goal, onChange }: GoalDetailProps): React.ReactElement {
                   objective: editObjective.trim(),
                   scope,
                   ...(quota ? { quota } : {}),
-                } as import('@proma/shared').GoalUpdateInput)
+                } as import('@gravitas/shared').GoalUpdateInput)
                 onChange(updated)
                 setEditing(false)
               })
@@ -619,7 +619,7 @@ export function GoalsSettings(): React.ReactElement {
         objective: objective.trim(),
         ...(scope.length > 0 ? { scope } : {}),
         ...(quota ? { quota } : {}),
-      } as import('@proma/shared').GoalCreateInput)
+      } as import('@gravitas/shared').GoalCreateInput)
       setCreating(false)
       setTitle('')
       setObjective('')

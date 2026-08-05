@@ -5,8 +5,8 @@ import type {
   CreateAgentRuntimeInteractionInput,
   ListAgentRuntimeInteractionsInput,
   ResolveAgentRuntimeInteractionInput,
-} from '@proma/shared/utils'
-import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@proma/shared/utils'
+} from '@gravitas/shared/utils'
+import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
 
 /** Postgres 持久化审批记录，供跨 worker 的 Web 权限/问答流程恢复。 */
 export class PostgresAgentRuntimeInteractionStore implements AgentRuntimeInteractionStore {

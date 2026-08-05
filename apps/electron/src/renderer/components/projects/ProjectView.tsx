@@ -8,7 +8,7 @@ import * as React from 'react'
 import { useState, useEffect, useCallback } from "react"
 import { useAtomValue } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
-import type { AgentEmployeeResult, AgentExecutionResult } from '@proma/shared'
+import type { AgentEmployeeResult, AgentExecutionResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 
 /** by-task 权限申请选项（P1） */

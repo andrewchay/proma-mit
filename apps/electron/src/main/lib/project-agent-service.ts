@@ -1,5 +1,5 @@
-import { getAdapter } from '@proma/core'
-import type { ProviderType } from '@proma/shared'
+import { getAdapter } from '@gravitas/core'
+import type { ProviderType } from '@gravitas/shared'
 
 // ===== 类型定义 =====
 

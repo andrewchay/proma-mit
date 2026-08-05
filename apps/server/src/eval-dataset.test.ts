@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentRuntimeScope } from '@proma/shared/utils'
-import type { RuntimeSpan, RuntimeSpanNode } from '@proma/shared'
+import type { AgentRuntimeScope } from '@gravitas/shared/utils'
+import type { RuntimeSpan, RuntimeSpanNode } from '@gravitas/shared'
 import { PostgresEvalDatasetStore } from './eval-dataset.ts'
 import type { EvalSpanSource } from './eval-dataset.ts'
 

@@ -22,11 +22,11 @@ import type {
   ProviderType,
   ChannelPlanQuotaResult,
   ChannelPlanQuotaWindow,
-} from '@proma/shared'
-import { PROVIDER_DEFAULT_URLS, normalizeProviderType } from '@proma/shared'
+} from '@gravitas/shared'
+import { PROVIDER_DEFAULT_URLS, normalizeProviderType } from '@gravitas/shared'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
-import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@proma/core'
+import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@gravitas/core'
 
 /** 当前配置版本 */
 const CONFIG_VERSION = 1

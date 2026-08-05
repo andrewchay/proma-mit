@@ -1,4 +1,4 @@
-import type { AgentRuntimeWebServer } from '@proma/shared/utils'
+import type { AgentRuntimeWebServer } from '@gravitas/shared/utils'
 import { nextRunForSchedule } from './scheduler-store.ts'
 import type { PostgresServerSchedulerStore } from './scheduler-store.ts'
 

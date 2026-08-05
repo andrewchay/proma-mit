@@ -15,7 +15,7 @@
  * 而不是 Web Bridge；Web Bridge 仅用于用户明确要求爬取特定网站或代为操作浏览器。
  */
 
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { getToolCredentials } from '../../chat-tool-config'
 import { getFetchFn } from '../../proxy-fetch'

@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import { Workflow, Loader2 } from 'lucide-react'
 import { MessageAction } from '@/components/ai-elements/message'
 import { activeViewAtom } from '@/atoms/active-view'
-import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@proma/shared'
+import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@gravitas/shared'
 
 interface SaveAsWorkflowButtonProps {
   /** 当前会话 ID */

@@ -22,7 +22,7 @@ import {
   parseSkillVersion,
 } from './config-paths'
 import { getMcpClientSecret, setMcpClientSecret, removeMcpClientSecret } from './agent-runtime/mcp-client-secret-store'
-import type { AgentWorkspace, WorkspaceMcpConfig, SkillMeta, SkillImportSource, OtherWorkspaceSkillsGroup, WorkspaceCapabilities, SkillFileNode, SkillFileContent } from '@proma/shared'
+import type { AgentWorkspace, WorkspaceMcpConfig, SkillMeta, SkillImportSource, OtherWorkspaceSkillsGroup, WorkspaceCapabilities, SkillFileNode, SkillFileContent } from '@gravitas/shared'
 
 interface AgentWorkspacesIndex {
   version: number

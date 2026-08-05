@@ -14,8 +14,8 @@ import type {
   ProviderType,
   SDKMessage,
   SDKUserMessageInput,
-} from '@proma/shared'
-import { getAgentProviderProtocol, isAgentCompatibleProvider } from '@proma/shared'
+} from '@gravitas/shared'
+import { getAgentProviderProtocol, isAgentCompatibleProvider } from '@gravitas/shared'
 import { createCoreTools, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
 import { maybeAutoCompact } from '../agent-runtime/context-compaction'
 import {
@@ -134,7 +134,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           name: tool.name,
           description: tool.description,
           parameters: { type: 'object' as const, properties: tool.parameters as Record<string, never>, required: [] },
-          async execute(input: unknown): Promise<import('@proma/core').ToolResult> {
+          async execute(input: unknown): Promise<import('@gravitas/core').ToolResult> {
             const content = await tool.execute((input ?? {}) as Record<string, unknown>)
             return { toolCallId: '', content, isError: false }
           },

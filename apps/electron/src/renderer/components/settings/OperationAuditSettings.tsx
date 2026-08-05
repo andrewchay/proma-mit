@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { Download, RefreshCw, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AgentAuditEvent, AgentAuditQuery } from '@proma/shared'
+import type { AgentAuditEvent, AgentAuditQuery } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'

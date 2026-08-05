@@ -16,8 +16,8 @@ import type {
   WorkflowNode,
   WorkflowNodeKind,
   WorkflowTemplate,
-} from '@proma/shared'
-import { applyWorkflowPatches } from '@proma/shared/workflow'
+} from '@gravitas/shared'
+import { applyWorkflowPatches } from '@gravitas/shared/workflow'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'

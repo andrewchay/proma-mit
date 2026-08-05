@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { mergeReleases } from './release-notes-merge'
-import type { GitHubRelease } from '@proma/shared'
+import type { GitHubRelease } from '@gravitas/shared'
 
 function release(tag: string, body = ''): GitHubRelease {
   return {

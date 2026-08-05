@@ -259,7 +259,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
     }
   }, [resolveFileForSystemAction, store, candidateBases])
 
-  const [editors, setEditors] = React.useState<import('@proma/shared').EditorApp[]>([])
+  const [editors, setEditors] = React.useState<import('@gravitas/shared').EditorApp[]>([])
   const [editorsLoaded, setEditorsLoaded] = React.useState(false)
 
   const loadEditors = React.useCallback(async (open: boolean): Promise<void> => {

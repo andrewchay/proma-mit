@@ -6,7 +6,7 @@
  * - 子页：Skills / MCP 工具 / 会话 支持继续输入过滤；文件页复用 FileMentionList 树
  * - 保留 legacy 前缀（@/#/&）不受影响；路径/URL 中的 `/` 不误触发
  *
- * 设计参考上游 Proma v0.16.1（#1326 unified command menu），
+ * 设计参考上游 Gravitas v0.16.1（#1326 unified command menu），
  * 复用 proma-mit 现有 mention-popup-utils / FileMentionList / agent-command-menu-state。
  */
 
@@ -24,7 +24,7 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react'
-import type { FileIndexEntry, FileSearchResult, AgentSessionReferenceSearchResult } from '@proma/shared'
+import type { FileIndexEntry, FileSearchResult, AgentSessionReferenceSearchResult } from '@gravitas/shared'
 import { FileMentionList } from '@/components/file-browser/FileMentionList'
 import type { FileMentionRef } from '@/components/file-browser/FileMentionList'
 import { cn } from '@/lib/utils'

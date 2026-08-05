@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { getSettingsPath } from './config-paths'
 import { DEFAULT_THEME_MODE } from '../../types'
-import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@proma/shared'
+import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@gravitas/shared'
 import type { AppSettings } from '../../types'
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ToolSet } from 'ai'
-import type { AgentRuntimeScope, RuntimeSpanQueryTool } from '@proma/shared'
+import type { AgentRuntimeScope, RuntimeSpanQueryTool } from '@gravitas/shared'
 import { createSpanQueryTools } from './span-query-tools.ts'
 
 const scope: AgentRuntimeScope = { tenantId: 'tenant-a', userId: 'user-1' }

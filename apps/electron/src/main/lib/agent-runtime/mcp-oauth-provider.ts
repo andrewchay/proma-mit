@@ -19,7 +19,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
-import type { McpServerAuthConfig } from '@proma/shared'
+import type { McpServerAuthConfig } from '@gravitas/shared'
 import { loadMcpOAuthTokens, saveMcpOAuthTokens, type McpOAuthTokens } from './mcp-oauth-store'
 import { APP_DEEP_LINK_PROTOCOL, APP_DISPLAY_NAME } from '../app-identity'
 

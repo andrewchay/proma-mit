@@ -1,7 +1,7 @@
 import { jsonSchema, tool } from 'ai'
 import type { ToolSet } from 'ai'
-import type { AgentRuntimeMcpToolDefinition, AgentRuntimeWebAgentTurnInput } from '@proma/shared/utils'
-import type { ServerMcpConnectionManager } from '@proma/shared/utils'
+import type { AgentRuntimeMcpToolDefinition, AgentRuntimeWebAgentTurnInput } from '@gravitas/shared/utils'
+import type { ServerMcpConnectionManager } from '@gravitas/shared/utils'
 import type { ServerMcpClientConnection } from './server-mcp-client.ts'
 
 /**

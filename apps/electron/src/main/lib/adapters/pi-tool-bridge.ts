@@ -145,7 +145,7 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // 否则 safe 模式会把一个已激活 Goal 的检查点错误拒绝，导致 Goal 无法进入下一状态。
       if (config.runtimeName === GOAL_CHECKPOINT_TOOL_NAME) {
         if (!options.toolContext.onGoalCheckpoint) return errorResult(config.runtimeName, '当前会话没有激活的 Goal')
-        await options.toolContext.onGoalCheckpoint(input as unknown as import('@proma/shared').AgentGoalCheckpoint)
+        await options.toolContext.onGoalCheckpoint(input as unknown as import('@gravitas/shared').AgentGoalCheckpoint)
         return toolResult(config.runtimeName, 'Goal 检查点已保存', false)
       }
 

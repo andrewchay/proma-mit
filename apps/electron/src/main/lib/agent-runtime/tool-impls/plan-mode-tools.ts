@@ -7,7 +7,7 @@
  */
 
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
-import type { ToolResult } from '@proma/core'
+import type { ToolResult } from '@gravitas/core'
 
 export const ENTER_PLAN_MODE_TOOL_NAME = 'EnterPlanMode'
 export const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode'

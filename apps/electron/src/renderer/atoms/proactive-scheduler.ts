@@ -1,7 +1,7 @@
 /** Proactive Scheduler 设置页状态。 */
 
 import { atom } from 'jotai'
-import type { AgentSessionMeta, ProactiveSchedule, ProactiveTaskRun } from '@proma/shared'
+import type { AgentSessionMeta, ProactiveSchedule, ProactiveTaskRun } from '@gravitas/shared'
 
 export const proactiveSchedulesAtom = atom<ProactiveSchedule[]>([])
 export const proactiveRunsAtom = atom<ProactiveTaskRun[]>([])

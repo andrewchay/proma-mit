@@ -32,7 +32,7 @@ import type {
   SDKResultMessage,
   SDKSystemMessage,
   PromaEvent,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import { getDynamicIslandConfigPath } from '../config-paths'
 import { DynamicIslandRendererController } from './renderer-controller'
 import { DynamicIslandRendererProcess } from './renderer-process'

@@ -18,12 +18,12 @@ import type {
   JsonSchemaOutputFormat,
   SDKMessage,
   PromaPermissionMode,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import {
   THINKING_SIGNATURE_ERROR_MESSAGE,
   THINKING_SIGNATURE_ERROR_TITLE,
   isThinkingSignatureError as matchesThinkingSignatureError,
-} from '@proma/shared'
+} from '@gravitas/shared'
 import type { CanUseToolOptions, PermissionResult } from '../agent-permission-service'
 import { TRANSIENT_NETWORK_PATTERN } from '../error-patterns'
 import { spawn as spawnChild, execFileSync } from 'node:child_process'

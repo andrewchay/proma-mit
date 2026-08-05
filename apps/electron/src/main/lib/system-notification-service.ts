@@ -8,8 +8,8 @@
 
 import { Notification, BrowserWindow, app } from 'electron'
 import { ipcMain } from 'electron'
-import { SYSTEM_NOTIFICATION_IPC_CHANNELS } from '@proma/shared'
-import type { SystemNotificationInput, SystemNotificationClickedPayload } from '@proma/shared'
+import { SYSTEM_NOTIFICATION_IPC_CHANNELS } from '@gravitas/shared'
+import type { SystemNotificationInput, SystemNotificationClickedPayload } from '@gravitas/shared'
 
 /** 发送系统通知；返回是否真正弹出 */
 export function sendSystemNotification(input: SystemNotificationInput): boolean {

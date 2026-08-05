@@ -12,7 +12,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { getConfigDir } from './config-paths'
-import type { AppEventEnvelope, RunRecord, RunRecordQuery } from '@proma/shared'
+import type { AppEventEnvelope, RunRecord, RunRecordQuery } from '@gravitas/shared'
 
 const MAX_RECORDS = 2000
 

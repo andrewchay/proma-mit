@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentRuntimeScope } from '@proma/shared/utils'
+import type { AgentRuntimeScope } from '@gravitas/shared/utils'
 import { PostgresRunProfileAggregator } from './run-profile.ts'
 
 const scope: AgentRuntimeScope = { tenantId: 'tenant', userId: 'user' }

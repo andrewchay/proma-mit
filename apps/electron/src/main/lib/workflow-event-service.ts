@@ -1,6 +1,6 @@
 /** 命名事件入口。供 Bridge/Webhook 接入复用，不让外部调用方直接构造 Run。 */
 
-import type { WorkflowEventTriggerConfig, WorkflowRun } from '@proma/shared'
+import type { WorkflowEventTriggerConfig, WorkflowRun } from '@gravitas/shared'
 import { executeWorkflowRun } from './workflow-run-executor'
 import { createWorkflowRun, listWorkflowDefinitions, listWorkflowRuns } from './workflow-service'
 

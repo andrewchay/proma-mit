@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { RedisAgentRuntimeEventStore } from '@proma/shared/utils'
+import { RedisAgentRuntimeEventStore } from '@gravitas/shared/utils'
 import { createClient } from 'redis'
 import { PostgresTaskLease } from './app.ts'
 
