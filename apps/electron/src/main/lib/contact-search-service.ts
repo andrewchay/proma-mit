@@ -77,6 +77,39 @@ function getDingtalkCredential(): BotCredential | null {
   }
 }
 
+// ===== 响应解析容错 =====
+
+/** 安全解析飞书/钉钉响应：先读原文再 JSON.parse。
+ * 部分被网关拦截/权限异常的路径可能返回非 JSON（如 HTML、纯文本、空响应），
+ * 直接 `resp.json()` 会二次抛 `SyntaxError` 掩盖真实原因；这里改为抛出包含
+ * HTTP 状态码 + 原文前段的可读错误，方便一线排查。
+ */
+async function safeJson<T = any>(res: Response): Promise<T> {
+  const text = await res.text().catch(() => '')
+  if (!text) {
+    throw new Error(`接口返回空响应 (HTTP ${res.status})`)
+  }
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(`接口返回非 JSON (HTTP ${res.status}, ${res.url})\n原始内容: ${text.slice(0, 160)}`)
+  }
+}
+
+/** 飞书业务错误统一包装：code=40004 时补充可操作排查提示。 */
+function feishuError(code: number | undefined, detail: string): Error {
+  const base = `飞书${detail} (code: ${code ?? '?'})`
+  if (code === 40004) {
+    return new Error(
+      `${base}\n提示：该飞书应用无此部门的访问权限。请在飞书开放平台确认：` +
+        `① 权限管理已勾选 contact:department.base:readonly 与 contact:contact.base:readonly；` +
+        `② 在「版本管理与发布」提交新版本并由企业管理员审核通过（改权限后必须重新发布才生效）；` +
+        `③ 企业管理员已为该应用授权通讯录可见范围（至少包含根部门/目标部门）。`
+    )
+  }
+  return new Error(base)
+}
+
 // ===== 飞书实现 =====
 
 const feishuTokenCache = new Map<string, { token: string; expiresAt: number }>()
@@ -93,7 +126,7 @@ async function getFeishuTenantToken(appId: string, appSecret: string): Promise<s
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
   })
-  const data = (await resp.json()) as { code?: number; msg?: string; tenant_access_token?: string; expire?: number }
+  const data = await safeJson<{ code?: number; msg?: string; tenant_access_token?: string; expire?: number }>(resp)
   if (data.code !== 0) {
     throw new Error(`飞书 Token 获取失败: ${data.msg} (code: ${data.code})`)
   }
@@ -112,10 +145,10 @@ async function listFeishuSubDeptIds(token: string, deptId: number): Promise<numb
     method: 'GET',
     headers: { Authorization: `Bearer ${token}` },
   })
-  const data = (await resp.json()) as any
+  const data = await safeJson<any>(resp)
   if (data.code !== 0) {
-    // 99991672 = 无通讯录权限；99991663 = token 无效
-    throw new Error(`飞书获取子部门失败: ${data.msg} (code: ${data.code})`)
+    // 99991672 = 无通讯录权限；99991663 = token 无效；40004 = 无部门访问权限
+    throw feishuError(data.code, `获取子部门失败: ${data.msg ?? '未知错误'}`)
   }
   return (data.data?.children as Array<{ department_id?: number }> | undefined)
     ?.map((d) => d.department_id)
@@ -131,9 +164,9 @@ async function listFeishuDeptMembers(token: string, deptId: number): Promise<Con
       headers: { Authorization: `Bearer ${token}` },
     }
   )
-  const data = (await resp.json()) as any
+  const data = await safeJson<any>(resp)
   if (data.code !== 0) {
-    throw new Error(`飞书获取部门成员失败: ${data.msg} (code: ${data.code})`)
+    throw feishuError(data.code, `获取部门成员失败: ${data.msg ?? '未知错误'}`)
   }
   // 注意：飞书 v3 部门成员接口返回的成员字段是 member_id（配合 member_id_type=open_id 时为 open_id），
   // 不是 open_id 字段；用错字段会导致全部成员被过滤为空。
@@ -205,7 +238,7 @@ async function getDingtalkToken(appKey: string, appSecret: string): Promise<stri
 
   const url = `${DINGTALK_OAPI_BASE}/gettoken?appkey=${encodeURIComponent(appKey)}&appsecret=${encodeURIComponent(appSecret)}`
   const resp = await fetch(url, { method: 'GET' })
-  const data = (await resp.json()) as { errcode: number; errmsg: string; access_token?: string; expires_in?: number }
+  const data = await safeJson<{ errcode: number; errmsg: string; access_token?: string; expires_in?: number }>(resp)
   if (data.errcode !== 0) {
     throw new Error(`钉钉 Token 获取失败: ${data.errmsg} (errcode: ${data.errcode})`)
   }
@@ -221,7 +254,7 @@ async function listDingtalkSubDeptIds(token: string, deptId: number): Promise<nu
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dept_id: deptId }),
   })
-  const data = (await resp.json()) as any
+  const data = await safeJson<any>(resp)
   if (data.errcode !== 0) {
     throw new Error(`钉钉获取子部门失败: ${data.errmsg} (errcode: ${data.errcode})`)
   }
@@ -235,7 +268,7 @@ async function listDingtalkDeptUsers(token: string, deptId: number): Promise<Arr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dept_id: deptId, cursor: 0, size: 100 }),
   })
-  const data = (await resp.json()) as any
+  const data = await safeJson<any>(resp)
   if (data.errcode !== 0) {
     throw new Error(`钉钉获取部门成员失败: ${data.errmsg} (errcode: ${data.errcode})`)
   }
@@ -250,7 +283,7 @@ async function resolveDingtalkUnionId(token: string, userid: string): Promise<st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userid }),
   })
-  const data = (await resp.json()) as any
+  const data = await safeJson<any>(resp)
   if (data.errcode !== 0) return undefined
   return data.result?.unionid as string | undefined
 }
