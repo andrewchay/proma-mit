@@ -42,6 +42,9 @@ import grav07VivaMagenta from '@/assets/bots/gravitas-logos/gravitas-07-viva-mag
 import grav08Mocha from '@/assets/bots/gravitas-logos/gravitas-08-mocha.png'
 import grav09Emerald from '@/assets/bots/gravitas-logos/gravitas-09-emerald.png'
 import grav10Gradient from '@/assets/bots/gravitas-logos/gravitas-10-gradient.png'
+import grav11Porcelain from '@/assets/bots/gravitas-logos/gravitas-11-porcelain.png'
+import grav12Impressionist from '@/assets/bots/gravitas-logos/gravitas-12-impressionist.png'
+import grav13Landscape from '@/assets/bots/gravitas-logos/gravitas-13-landscape.png'
 
 // ===== 主题预览图片导入 =====
 import themeCloudDancer from '@/assets/theme-previews/theme-cloud-dancer.webp'
@@ -155,6 +158,9 @@ const ICON_VARIANTS: readonly IconVariant[] = [
   { id: '08-mocha', name: '摩卡慕斯', src: grav08Mocha, previewBg: 'bg-[#A47864]' },
   { id: '09-emerald', name: '翡翠绿', src: grav09Emerald, previewBg: 'bg-[#1F8A70]' },
   { id: '10-gradient', name: '渐变色', src: grav10Gradient, previewBg: 'bg-gradient-to-r from-[#FF6B4A] to-[#7A5CFF]' },
+  { id: '11-porcelain', name: '青花瓷', src: grav11Porcelain, previewBg: 'bg-[#F5F5F5]' },
+  { id: '12-impressionist', name: '印象派', src: grav12Impressionist, previewBg: 'bg-[#E8D5B7]' },
+  { id: '13-landscape', name: '青绿山水', src: grav13Landscape, previewBg: 'bg-[#D4C4A8]' },
 ] as const
 
 /** 根据平台返回缩放快捷键提示 */
