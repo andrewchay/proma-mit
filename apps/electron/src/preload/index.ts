@@ -1100,7 +1100,7 @@ export interface ElectronAPI {
   migrationParseImportFile: (filePath: string) => Promise<unknown>
   /** 确认导入 */
   migrationConfirmImport: (options: unknown) => Promise<{ success: boolean }>
-  /** 打开文件选择对话框（选择 .gravitas-backup 或 .gravitas-share） */
+  /** 打开文件选择对话框（选择 .gravi-backup 或 .gravi-team） */
   migrationOpenFileDialog: () => Promise<string | null>
   /** 打开文件保存对话框（选择导出路径） */
   migrationSaveFileDialog: (mode: string) => Promise<string | null>

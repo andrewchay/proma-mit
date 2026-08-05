@@ -2,8 +2,8 @@
  * 数据迁移服务
  *
  * 支持两种导出模式：
- * - personal (.gravitas-backup)：个人全量备份，含解密后的 API Key 明文
- * - share (.gravitas-share)：团队分发，自由选择组件，凭据自动剥离
+ * - personal (.gravi-backup)：个人全量备份，含解密后的 API Key 明文
+ * - share (.gravi-team)：团队分发，自由选择组件，凭据自动剥离
  *
  * 导入时自动检测跨平台差异并提示用户处理路径映射。
  */

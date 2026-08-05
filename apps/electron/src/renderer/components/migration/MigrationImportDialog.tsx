@@ -69,7 +69,7 @@ export function MigrationImportDialog(): React.ReactElement {
         <DialogHeader>
           <DialogTitle>导入配置</DialogTitle>
           <DialogDescription>
-            从备份文件导入数据，支持 .gravitas-backup 和 .gravitas-share 格式
+            从备份文件导入数据，支持 .gravi-backup 和 .gravi-team 格式
           </DialogDescription>
         </DialogHeader>
 
@@ -81,7 +81,7 @@ export function MigrationImportDialog(): React.ReactElement {
                 <FolderOpen size={28} className="text-muted-foreground" />
               </div>
               <p className="text-sm text-muted-foreground text-center">
-                选择 .gravitas-backup 或 .gravitas-share 文件开始导入
+                选择 .gravi-backup 或 .gravi-team 文件开始导入
               </p>
               <button
                 onClick={handleSelectImportFile}

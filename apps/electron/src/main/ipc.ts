@@ -3679,7 +3679,7 @@ export function registerIpcHandlers(): void {
     const result = await dialog.showOpenDialog({
       title: '选择迁移文件',
       filters: [
-        { name: 'Proma 迁移文件', extensions: ['proma-backup', 'proma-share'] },
+        { name: 'Gravitas 迁移文件', extensions: ['gravi-backup', 'gravi-team'] },
         { name: '所有文件', extensions: ['*'] },
       ],
       properties: ['openFile'],
@@ -3689,13 +3689,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('migration:saveFileDialog', async (_, mode: string) => {
     const { dialog } = await import('electron')
-    const ext = mode === 'personal' ? 'proma-backup' : 'proma-share'
-    const defaultName = `proma-migration-${new Date().toISOString().slice(0, 10)}.${ext}`
+    const ext = mode === 'personal' ? 'gravi-backup' : 'gravi-team'
+    const defaultName = `gravitas-migration-${new Date().toISOString().slice(0, 10)}.${ext}`
     const result = await dialog.showSaveDialog({
       title: '保存迁移文件',
       defaultPath: defaultName,
       filters: [
-        { name: mode === 'personal' ? 'Proma 个人备份' : 'Proma 分享包', extensions: [ext] },
+        { name: mode === 'personal' ? 'Gravitas 个人备份' : 'Gravitas 团队包', extensions: [ext] },
       ],
     })
     return result.canceled ? null : result.filePath

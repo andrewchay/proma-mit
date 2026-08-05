@@ -112,10 +112,10 @@ mac:
     NSMicrophoneUsageDescription: "Gravitas 需要访问麦克风，用于将你的语音实时转写为文本。"
     NSCalendarsUsageDescription: "Gravitas 需要访问你的日历，用于日程管理与多日历源同步。"
   fileAssociations:
-    - ext: gravitas-backup
+    - ext: gravi-backup
       name: Gravitas Personal Backup
       role: Editor
-    - ext: gravitas-share
+    - ext: gravi-team
       name: Gravitas Share Package
       role: Editor
   # 架构由 CLI 参数控制（CI 矩阵分别传 --arm64 / --x64），
@@ -144,10 +144,10 @@ dmg:
 win:
   icon: resources/icon.ico
   fileAssociations:
-    - ext: gravitas-backup
+    - ext: gravi-backup
       name: Gravitas Personal Backup
       icon: resources/icon.ico
-    - ext: gravitas-share
+    - ext: gravi-team
       name: Gravitas Share Package
       icon: resources/icon.ico
   target:
