@@ -163,7 +163,7 @@ function inferCategoryFromCalendar(calendarName: string): ScheduleCategory {
  * 同步系统日历到 Proma MIT
  * 读取系统日历事件，转换为 Proma MIT 日程格式，批量创建
  */
-export async function syncSystemCalendarToProma(options: CalendarSyncOptions = {}): Promise<{
+export async function syncSystemCalendarToGravitas(options: CalendarSyncOptions = {}): Promise<{
   success: boolean
   imported: number
   errors: string[]

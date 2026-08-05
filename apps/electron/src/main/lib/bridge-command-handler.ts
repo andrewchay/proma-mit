@@ -272,7 +272,7 @@ export class BridgeCommandHandler {
     const settings = getSettings()
     const channelId = settings.agentChannelId
     if (!channelId) {
-      await this.send(chatId, '请先在 Proma 设置中选择 Agent 渠道。', contextData)
+      await this.send(chatId, '请先在 Gravitas 设置中选择 Agent 渠道。', contextData)
       return
     }
 
@@ -562,7 +562,7 @@ export class BridgeCommandHandler {
     const settings = getSettings()
     const channelId = settings.agentChannelId
     if (!channelId) {
-      await this.send(chatId, '请先在 Proma 设置中选择 Agent 渠道。', contextData)
+      await this.send(chatId, '请先在 Gravitas 设置中选择 Agent 渠道。', contextData)
       return
     }
 
@@ -572,7 +572,7 @@ export class BridgeCommandHandler {
     if (!binding) {
       const result = this.ensureBinding(chatId)
       if (!result) {
-        await this.send(chatId, '请先在 Proma 设置中选择 Agent 渠道。', contextData)
+        await this.send(chatId, '请先在 Gravitas 设置中选择 Agent 渠道。', contextData)
         return
       }
       binding = result

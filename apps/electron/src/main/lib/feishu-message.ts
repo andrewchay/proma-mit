@@ -30,7 +30,7 @@ export function buildAgentReplyCard(result: FormattedAgentResult, subtitle?: str
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: 'plain_text', content: 'Proma Agent' },
+      title: { tag: 'plain_text', content: 'Gravitas Agent' },
       ...(subtitle ? { subtitle: { tag: 'plain_text', content: subtitle } } : {}),
       template: 'blue',
     },

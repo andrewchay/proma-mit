@@ -12,7 +12,7 @@ import { pasteTextAtCurrentCursor } from './text-insertion-service'
 
 let targetWasPromaInput = false
 
-/** 在显示语音浮窗前记录目标是否为 Proma 主窗口。 */
+/** 在显示语音浮窗前记录目标是否为 Gravitas 主窗口。 */
 export function captureVoiceDictationTarget(forcePromaInput?: boolean): boolean {
   const mainWindow = getMainWindow()
   targetWasPromaInput = forcePromaInput ?? BrowserWindow.getFocusedWindow() === mainWindow
