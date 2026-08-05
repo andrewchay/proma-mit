@@ -303,13 +303,6 @@ function saveMainWindowState(): void {
 }
 
 function createWindow(): void {
-  const iconPath = getIconPath()
-  const iconExists = existsSync(iconPath)
-
-  if (!iconExists) {
-    console.warn('App icon not found at:', iconPath)
-  }
-
   const isMac = process.platform === 'darwin'
   const isWindows = process.platform === 'win32'
 
@@ -334,7 +327,6 @@ function createWindow(): void {
     title: APP_DISPLAY_NAME,
     minWidth: 800,
     minHeight: 600,
-    icon: iconExists ? iconPath : undefined,
     show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
