@@ -47,6 +47,10 @@ import { GoalCoordinator } from './goal-runtime/goal-coordinator'
 import { ProactiveScheduler } from './proactive-scheduler'
 import { createAgentSession, getAgentSessionMeta } from './agent-session-manager'
 import { createCollaborationDelegations, resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
+import { getAdapter, streamSSE } from '@gravitas/core'
+import { getFetchFn } from './proxy-fetch'
+import { getEffectiveProxyUrl } from './proxy-settings-service'
+import type { ProviderType } from '@gravitas/shared'
 
 // ===== 实例创建 =====
 
@@ -557,6 +561,108 @@ export function createAgentCollabDelegations(
   }
 
   return createCollaborationDelegations(ctx, tasks as Array<{ title?: string; task: string; role?: 'explore' | 'research' | 'implement' | 'review' | 'custom'; expectedOutput?: string }>)
+}
+
+// ===== 自动拆分子任务（用模型把主任务拆成多个并行协作子任务） =====
+
+/** 从 LLM 输出中尽力解析 JSON 任务数组；解析失败返回 [] */
+function parseSplitTasksOutput(raw: string): Array<{ task: string }> {
+  let text = raw.trim()
+  // 1. 剥离 markdown 代码块围栏
+  text = text.replace(/```(?:json)?/gi, '')
+  // 2. 提取第一个 [ ... ] 数组
+  const start = text.indexOf('[')
+  const end = text.lastIndexOf(']')
+  if (start !== -1 && end > start) {
+    text = text.slice(start, end + 1)
+  }
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => {
+          if (typeof item === 'string') return { task: item.trim() }
+          if (item && typeof item === 'object') {
+            const t = (item as { task?: unknown; task_desc?: unknown; title?: unknown }).task
+              ?? (item as { task?: unknown; task_desc?: unknown }).task_desc
+              ?? (item as { title?: unknown }).title
+            if (typeof t === 'string' && t.trim()) return { task: t.trim() }
+          }
+          return null
+        })
+        .filter((t): t is { task: string } => t !== null)
+    }
+  } catch {
+    // 继续尝试按行切分
+  }
+  // 3. 兜底：按换行/分号切分为若干任务行
+  const lines = text.split(/\n|；|;/).map((l) => l.trim()).filter((l) => l.length > 0)
+  return lines.map((l) => ({ task: l }))
+}
+
+/**
+ * 用模型把主任务自动拆分为多个自包含协作子任务（供「并行协作子任务」按钮使用）。
+ *
+ * 使用父会话的渠道/模型发起一次流式请求，prompt 要求输出 JSON 数组；对模型输出做
+ * 多层容错解析，解析失败则兜底为「单任务 = 原主任务」，保证不报错、不跑偏。
+ */
+export async function splitCollabMainTask(
+  parentSessionId: string,
+  mainTask: string,
+): Promise<Array<{ task: string }>> {
+  const parent = getAgentSessionMeta(parentSessionId)
+  if (!parent || !parent.channelId) return [{ task: mainTask }]
+  if (!mainTask.trim()) return [{ task: mainTask }]
+
+  const channel = await runtimeServices.credentials.resolveChannel(parent.channelId)
+  if (!channel) return [{ task: mainTask }]
+
+  const modelId = parent.modelId || (channel as { defaultModel?: string }).defaultModel || undefined
+  const providerAdapter = getAdapter(channel.provider as ProviderType)
+  const request = providerAdapter.buildStreamRequest({
+    baseUrl: channel.baseUrl,
+    apiKey: channel.apiKey,
+    modelId: modelId as string,
+    history: [],
+    readImageAttachments: () => [],
+    // 系统提示：拆分子任务，只输出 JSON
+    systemMessage:
+      '你是任务分解助手。把用户的主任务拆分成若干自包含、可并行执行的子任务。' +
+      '每个子任务要独立完整、不依赖其他子任务即可执行。只输出 JSON 数组，' +
+      '格式为 [{"task": "子任务描述"}]。不要输出任何其他文字、不要加解释、不要加markdown围栏。' +
+      '根据主任务复杂度决定拆成几个子任务（一般 2~6 个）。',
+    userMessage: `主任务：${mainTask}`,
+  })
+
+  const proxyUrl = await getEffectiveProxyUrl()
+  const fetchFn = getFetchFn(proxyUrl)
+  try {
+    const result = await streamSSE({
+      request,
+      adapter: providerAdapter,
+      signal: undefined,
+      fetchFn,
+      onEvent: () => {},
+    })
+    const tasks = parseSplitTasksOutput(result.content)
+    const valid = tasks.map((t) => t.task.trim()).filter(Boolean).slice(0, 12)
+    return valid.length > 0 ? valid.map((task) => ({ task })) : [{ task: mainTask }]
+  } catch (error) {
+    console.warn('[Agent 服务] 自动拆分子任务失败，回退为主任务:', error)
+    return [{ task: mainTask }]
+  }
+}
+
+/**
+ * 「自动拆分子任务并并行创建协作子会话」组合入口：
+ * 模型先拆主任务 → 并行创建协作子会话 → 返回创建结果。
+ */
+export async function splitAndCreateCollabDelegations(
+  parentSessionId: string,
+  mainTask: string,
+): Promise<import('@gravitas/shared').CreateCollabDelegationsResult> {
+  const tasks = await splitCollabMainTask(parentSessionId, mainTask)
+  return createAgentCollabDelegations(parentSessionId, tasks)
 }
 
 // ===== 文件操作 =====

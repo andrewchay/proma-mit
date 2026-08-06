@@ -1259,6 +1259,14 @@ export interface CreateCollabDelegationsResult {
   failures: Array<{ index: number; title?: string; error: string }>
 }
 
+/** 自动拆分子任务后创建协作子会话的输入 */
+export interface SplitAndCreateCollabInput {
+  /** 父会话 ID */
+  parentSessionId: string
+  /** 主任务描述（模型会拆成多个子任务） */
+  mainTask: string
+}
+
 // ===== 会话迁移输入 =====
 
 /**
@@ -1878,6 +1886,8 @@ export const AGENT_IPC_CHANNELS = {
   // 协作子会话（手动并发创建，让侧栏父子树面板有内容可展示）
   /** 手动创建多个并行协作子会话（渲染进程 → 主进程） */
   CREATE_COLLAB_DELEGATIONS: 'agent:create-collab-delegations',
+  /** 用模型把主任务自动拆成子任务后并行创建协作子会话（渲染进程 → 主进程） */
+  SPLIT_AND_CREATE_COLLAB: 'agent:split-and-create-collab',
 
   // AskUserQuestion 交互式问答
   /** AskUser 响应（渲染进程 → 主进程） */

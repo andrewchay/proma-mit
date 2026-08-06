@@ -1997,24 +1997,26 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   // ===== 协作子任务（并行创建，侧栏父子树面板） =====
   const [collabDialogOpen, setCollabDialogOpen] = React.useState(false)
 
-  /** 创建并并行执行多个协作子会话；创建成功后关闭弹窗，侧栏树会自动刷新显示 */
-  const handleCreateCollabDelegations = React.useCallback(async (tasks: Array<{ title?: string; task: string }>): Promise<void> => {
-    if (tasks.length === 0) {
-      toast.error('请至少填写一个子任务')
+  /** 用模型自动拆主任务为子任务并并行创建协作子会话；成功后侧栏树自动刷新 */
+  const handleCreateCollabDelegations = React.useCallback(async (mainTask: string): Promise<void> => {
+    if (!mainTask.trim()) {
+      toast.error('请填写主任务')
       return
     }
     try {
-      const result = await window.electronAPI.createCollabDelegations({ parentSessionId: sessionId, tasks })
+      const result = await window.electronAPI.splitAndCreateCollabDelegations({ parentSessionId: sessionId, mainTask })
       const created = result.delegations ?? []
       if (created.length > 0) {
-        toast.success(`已并行创建 ${created.length} 个协作子会话`, {
-          description: '它们已在运行中，可在左侧栏对应项目下展开查看。',
+        toast.success(`已自动拆分并并行创建 ${created.length} 个协作子会话`, {
+          description: '它们已在运行中，可在左侧栏对应项目下展开查看子任务树。',
         })
         setCollabDialogOpen(false)
         // 刷新会话列表使子树最新
         window.electronAPI.listAgentSessions().then((sessions) => store.set(agentSessionsAtom, sessions)).catch(console.error)
       } else if ((result.failures ?? []).length > 0) {
-        toast.error('协作子会话创建失败', { description: result.failures[0]?.error ?? '未知错误' })
+        toast.error('协子会话创建失败', { description: result.failures[0]?.error ?? '未知错误' })
+      } else {
+        toast.warning('未拆出子任务，可能是模型未返回有效结果', { description: '请调整主任务描述后重试' })
       }
     } catch (error) {
       toast.error('创建协作子会话失败', { description: error instanceof Error ? error.message : String(error) })

@@ -148,6 +148,7 @@ import type {
   AgentQueueStateEvent,
   CreateCollabDelegationsInput,
   CreateCollabDelegationsResult,
+  SplitAndCreateCollabInput,
   PendingRequestsSnapshot,
 } from '@gravitas/shared'
 import type {
@@ -596,6 +597,9 @@ export interface ElectronAPI {
 
   /** 手动创建多个并行协作子会话（侧栏父子树面板） */
   createCollabDelegations: (input: CreateCollabDelegationsInput) => Promise<CreateCollabDelegationsResult>
+
+  /** 用模型自动拆主干任务为子任务并并行创建协作子会话 */
+  splitAndCreateCollabDelegations: (input: SplitAndCreateCollabInput) => Promise<CreateCollabDelegationsResult>
 
   // ===== Agent 后台任务管理 =====
 
@@ -1863,6 +1867,9 @@ const electronAPI: ElectronAPI = {
   },
   createCollabDelegations: (input: CreateCollabDelegationsInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_COLLAB_DELEGATIONS, input)
+  },
+  splitAndCreateCollabDelegations: (input: SplitAndCreateCollabInput) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.SPLIT_AND_CREATE_COLLAB, input)
   },
 
   // Agent 后台任务管理
