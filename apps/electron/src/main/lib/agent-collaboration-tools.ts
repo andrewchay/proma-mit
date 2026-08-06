@@ -49,15 +49,20 @@ import { getSettings } from './settings-service'
  * 这样大部分 Agent 会话默认都能注入 collaboration 子会话工具。
  */
 export function resolveCollaborationWorkspaceId(fallbackWorkspaceId?: string): string | undefined {
-  const tryValid = (id?: string): string | undefined => (id && getAgentWorkspace(id) ? id : undefined)
-  const direct = tryValid(fallbackWorkspaceId)
-  if (direct) return direct
-  const defaultId = tryValid(getSettings()?.agentWorkspaceId as string | undefined)
-  if (defaultId) return defaultId
-  const all = listAgentWorkspaces()
-  const newest = all[0]
-  if (newest && tryValid(newest.id)) return newest.id
-  return undefined
+  try {
+    const tryValid = (id?: string): string | undefined => (id && getAgentWorkspace(id) ? id : undefined)
+    const direct = tryValid(fallbackWorkspaceId)
+    if (direct) return direct
+    const defaultId = tryValid(getSettings()?.agentWorkspaceId as string | undefined)
+    if (defaultId) return defaultId
+    const all = listAgentWorkspaces()
+    const newest = all[0]
+    if (newest && tryValid(newest.id)) return newest.id
+    return undefined
+  } catch (err) {
+    console.warn('[Collaboration] 解析协作工作区失败，本次跳过注入:', err)
+    return undefined
+  }
 }
 
 interface CollaborationToolContext {
