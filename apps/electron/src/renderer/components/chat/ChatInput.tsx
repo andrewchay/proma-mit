@@ -42,7 +42,7 @@ import {
 import { FeishuNotifyToggle } from './FeishuNotifyToggle'
 import { cn } from '@/lib/utils'
 import { fileToBase64, formatFileNames } from '@/lib/file-utils'
-import { MAX_ATTACHMENT_SIZE } from '@gravitas/shared'
+import { MAX_ATTACHMENT_SIZE, type ChatMessage } from '@gravitas/shared'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
 import { toast } from 'sonner'
 
@@ -67,9 +67,11 @@ interface ChatInputProps {
   onWithdrawQueue?: (queueId: string) => void
   /** 立即执行排队中的消息 */
   onExecuteQueue?: (queueId: string) => void
+  /** 当前对话的真实消息列表（用于上下键回溯历史） */
+  messages?: ChatMessage[]
 }
 
-export function ChatInput({ conversationId, streaming, pendingAttachments, onSetPendingAttachments, onSend, onStop, onClearContext, queuedMessages = [], onWithdrawQueue, onExecuteQueue }: ChatInputProps): React.ReactElement {
+export function ChatInput({ conversationId, streaming, pendingAttachments, onSetPendingAttachments, onSend, onStop, onClearContext, queuedMessages = [], onWithdrawQueue, onExecuteQueue, messages }: ChatInputProps): React.ReactElement {
   const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   // 从 Map atom 读写草稿
   const draftsMap = useAtomValue(conversationDraftsAtom)
@@ -92,9 +94,11 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
   const [thinkingEnabled, setThinkingEnabled] = useConversationThinkingEnabled()
   const setPendingAttachments = onSetPendingAttachments
   const [isDragOver, setIsDragOver] = React.useState(false)
+  // 优先使用上层传入的真实消息列表；currentMessagesAtom 保留作为回退来源
+  const historyMessages = messages ?? currentMessages
   const historyEntries = React.useMemo(
-    () => currentMessages.filter((message) => message.role === 'user').map((message) => message.content),
-    [currentMessages],
+    () => historyMessages.filter((message) => message.role === 'user').map((message) => message.content),
+    [historyMessages],
   )
 
   // 流式期间也允许发送（进入排队）；canSend 不再需要 !streaming

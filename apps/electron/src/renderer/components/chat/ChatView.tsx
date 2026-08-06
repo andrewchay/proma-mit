@@ -668,6 +668,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
             onSend={handleSend}
             onStop={handleStop}
             onClearContext={handleClearContext}
+            messages={messages}
           />
         </div>
       </div>
