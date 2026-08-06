@@ -1029,6 +1029,11 @@ export class AgentOrchestrator {
 
     const messages: SDKMessage[] = []
     try {
+      // 子代理总是走 Provider-Agnostic（Proma runtime）。
+      // 若父会话是 Pi/Claude runtime 且渠道 baseUrl 为 Anthropic/Claude 风格端点（如
+      // api.deepseek.com/anthropic），需按 proma runtime 转换为 OpenAI-compatible 端点，
+      // 否则用 openai adapter 请求会命中不存在的 /anthropic/chat/completions → 404。
+      const effectiveBaseUrl = resolveAgentRuntimeBaseUrl(ctx.provider, 'proma', ctx.baseUrl)
       for await (const msg of childAdapter.query({
         sessionId: childSessionId,
         prompt,
@@ -1036,7 +1041,7 @@ export class AgentOrchestrator {
         provider: ctx.provider,
         adapterProvider: ctx.adapterProvider,
         apiKey: ctx.apiKey,
-        baseUrl: ctx.baseUrl,
+        baseUrl: effectiveBaseUrl,
         cwd: ctx.cwd,
         systemPrompt,
         historyMessages: [],
