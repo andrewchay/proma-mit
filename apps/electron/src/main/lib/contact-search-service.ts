@@ -189,12 +189,35 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
   if (collected.length === 0 && errors.length > 0) {
     throw new Error(`飞书通讯录获取失败: ${errors.join('; ')}`)
   }
-  // 一个成员都没有且无错误 → 说明接口通了但确实没有可访问的用户，给出诊断提示
+  // 一个成员都没有但无错误 → 探针诊断：拉取根部门子部门，区分是「可见范围」还是「权限」问题
   if (collected.length === 0) {
-    throw new Error(
-      '飞书通讯录为空：接口已连通但未返回任何用户。请确认该飞书应用的通讯录可见范围已授权（至少包含根部门），' +
-        '且在权限管理中已授予 contact:user.base:readonly 并重新发布版本。'
-    )
+    try {
+      const deptResp = await fetch(`${FEISHU_BASE}/open-apis/contact/v3/departments/0/children?fetch_child=false&page_size=50`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const deptData = await safeJson<any>(deptResp)
+      console.log(`[ContactSearch] 探针: 根部门子部门接口 code=${deptData.code} children=${(deptData.data?.children ?? []).length}`)
+      if (deptData.code !== 0) {
+        throw feishuError(deptData.code, `读取根部门/部门失败: ${deptData.msg ?? '未知错误'}`)
+      }
+      const childrenCount = (deptData.data?.children ?? []).length
+      if (childrenCount === 0) {
+        throw new Error(
+          '飞书通讯录为空：接口已连通，但根部门下子部门为 0。请到飞书开放平台该应用的「数据权限/通讯录可见范围」中，' +
+            '把可见范围授予包含你所在部门的组织架构节点（至少根部门），并重新发布审核通过。'
+        )
+      }
+      throw new Error(
+        '飞书通讯录为空：users 接口返回 0 个用户，但根部门下有子部门。请到飞书开放平台确认 contact:user.base:readonly 权限已' +
+            '授予并发布审核通过，且可见范围包含这些部门节点。'
+      )
+    } catch (err) {
+      if (err instanceof Error && /飞书通讯录为空/.test(err.message)) {
+        throw err
+      }
+      throw new Error(`飞书通讯录获取失败: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
   return collected
 }
