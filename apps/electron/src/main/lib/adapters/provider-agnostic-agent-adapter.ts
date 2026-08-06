@@ -64,6 +64,49 @@ export type CanUseToolCallback = (
   signal: AbortSignal,
 ) => Promise<ToolPermissionResult>
 
+/**
+ * 工具调用执行上下文（executeTools 系列方法共用）
+ */
+interface ToolCallExecutionCtx {
+  cwd: string
+  sessionId: string
+  abortSignal?: AbortSignal
+  permissionMode?: PromaPermissionMode
+  planModeEntered?: boolean
+  canUseTool?: CanUseToolCallback
+  onEnterPlanMode?: () => void
+  onExitPlanMode?: ProviderAgnosticAgentQueryOptions['onExitPlanMode']
+  onAskUser?: ProviderAgnosticAgentQueryOptions['onAskUser']
+  runSubAgent?: ProviderAgnosticAgentQueryOptions['runSubAgent']
+  onGoalCheckpoint?: ProviderAgnosticAgentQueryOptions['onGoalCheckpoint']
+  mcpManager?: import('../agent-runtime/mcp-client').McpClientManager
+  setPermissionMode?: (mode: PromaPermissionMode) => void
+  /** 上下文压缩所需的模型凭据（CompactContext 工具拦截时使用） */
+  compaction?: {
+    provider: ProviderType
+    adapterProvider?: ProviderType
+    apiKey: string
+    baseUrl: string
+    model: string
+  }
+  /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
+  workspaceSlug?: string
+}
+
+/**
+ * 必须串行执行的工具：有副作用 / 顺序依赖 / 交互阻塞 / 修改会话状态。
+ * 这类工具不能与其他工具并发，否则会破坏语义（如 AskUser 阻塞等待用户、
+ * ExitPlan 提交审批、CompactContext 改写会话历史、GoalCheckpoint 原子持久化）。
+ * 其余普通工具（含 Agent/SubAgent 委派、Read/Write/Bash/Web 等）可靠并行执行。
+ */
+const SEQUENTIAL_TOOL_NAMES = new Set<string>([
+  ENTER_PLAN_MODE_TOOL_NAME,
+  EXIT_PLAN_MODE_TOOL_NAME,
+  ASK_USER_QUESTION_TOOL_NAME,
+  GOAL_CHECKPOINT_TOOL_NAME,
+  COMPACT_CONTEXT_TOOL_NAME,
+])
+
 /** Provider-Agnostic 查询选项（扩展通用输入） */
 export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   /** 实际选择底层 ProviderAdapter 的供应商；DeepSeek 在 Proma runtime 下使用 OpenAI adapter */
@@ -715,172 +758,173 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /**
    * 执行工具调用列表
+   *
+   * 智能分组并行：同一轮中，可并行的独立工具（含 Agent/SubAgent 委派、
+   * Read/Write/Bash/Web 等普通工具）并发执行以提升总耗时；必须串行执行的
+   * 工具（AskUser/Plan/CompactContext/GoalCheckpoint，见 SEQUENTIAL_TOOL_NAMES）
+   * 保持逐个顺序执行，避免破坏交互或会话状态语义。
+   *
+   * 例如主 Agent 在同一轮委托多个 SubAgent 时，它们会并行运行并各自返回摘要。
    */
   private async executeToolCalls(
     toolCalls: ToolCall[],
     toolMap: Map<string, RuntimeToolDefinition>,
-    ctx: {
-      cwd: string
-      sessionId: string
-      abortSignal?: AbortSignal
-      permissionMode?: PromaPermissionMode
-      planModeEntered?: boolean
-      canUseTool?: CanUseToolCallback
-      onEnterPlanMode?: () => void
-      onExitPlanMode?: ProviderAgnosticAgentQueryOptions['onExitPlanMode']
-      onAskUser?: ProviderAgnosticAgentQueryOptions['onAskUser']
-      runSubAgent?: ProviderAgnosticAgentQueryOptions['runSubAgent']
-      onGoalCheckpoint?: ProviderAgnosticAgentQueryOptions['onGoalCheckpoint']
-      mcpManager?: import('../agent-runtime/mcp-client').McpClientManager
-      setPermissionMode?: (mode: PromaPermissionMode) => void
-      /** 上下文压缩所需的模型凭据（CompactContext 工具拦截时使用） */
-      compaction?: {
-        provider: ProviderType
-        adapterProvider?: ProviderType
-        apiKey: string
-        baseUrl: string
-        model: string
-      }
-      /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
-      workspaceSlug?: string
-    },
+    ctx: ToolCallExecutionCtx,
   ): Promise<ToolResult[]> {
     const results: ToolResult[] = []
+    // 可并行执行的工具调用批量缓冲
+    let parallelBatch: ToolCall[] = []
+
+    /** 将当前累积的可并行工具 batch 并发执行，结果暂存到 results */
+    const flushParallelBatch = async (): Promise<void> => {
+      if (parallelBatch.length === 0) return
+      const batch = parallelBatch
+      parallelBatch = []
+      // 并发放飞所有可并行的单工具执行；各工具通过 tool_use_id 关联，相互独立
+      const outcomes = await Promise.all(
+        batch.map(async (tc) => ({ result: await this.executeSingleToolCall(tc, toolMap, ctx) })),
+      )
+      for (const { result } of outcomes) results.push(result)
+    }
 
     for (const tc of toolCalls) {
-      // CompactContext：立即压缩当前会话历史（摘要早期 + 保留最近），下一轮生效
-      if (tc.name === COMPACT_CONTEXT_TOOL_NAME) {
-        if (ctx.compaction) {
-          try {
-            const currentHistory = getAgentSessionSDKMessages(ctx.sessionId)
-            const result = await compactSessionNow({
-              sessionId: ctx.sessionId,
-              ...ctx.compaction,
-              historyMessages: currentHistory,
-              signal: ctx.abortSignal,
-            })
-            if (result.compacted) {
-              results.push({
-                toolCallId: tc.id,
-                content: `上下文已压缩。早期历史已摘要（${result.summary?.length ?? 0} 字符），最近 ${Math.max(0, result.history.length - 1)} 条保留；本轮继续，下一轮对话将基于压缩后的摘要。`,
-                isError: false,
-              })
-            } else {
-              results.push({ toolCallId: tc.id, content: '上下文暂不需要压缩（历史较短或过小）。', isError: false })
-            }
-          } catch (error) {
-            results.push({ toolCallId: tc.id, content: `上下文压缩失败: ${getErrorMessage(error)}`, isError: true })
-          }
-        } else {
-          results.push({ toolCallId: tc.id, content: '当前 Runtime 未配置上下文压缩参数。', isError: true })
-        }
-        continue
+      if (SEQUENTIAL_TOOL_NAMES.has(tc.name)) {
+        // 遇到必须串行的工具：先按序清空之前累积的并行 batch，再执行本工具
+        await flushParallelBatch()
+        results.push(await this.executeSingleToolCall(tc, toolMap, ctx))
+      } else {
+        parallelBatch.push(tc)
       }
+    }
+    await flushParallelBatch()
 
-      // EnterPlanMode：标记进入 Plan 模式并通知 UI
-      if (tc.name === ENTER_PLAN_MODE_TOOL_NAME) {
-        ctx.onEnterPlanMode?.()
-        results.push({ toolCallId: tc.id, content: '已进入 Plan 模式', isError: false })
-        continue
-      }
+    return results
+  }
 
-      // ExitPlanMode：提交计划审批，等待用户响应
-      if (tc.name === EXIT_PLAN_MODE_TOOL_NAME) {
-        if (ctx.onExitPlanMode) {
-          const signal = ctx.abortSignal ?? new AbortController().signal
-          const result = await ctx.onExitPlanMode(tc.arguments, signal)
-          if (result.behavior === 'allow') {
-            if (result.targetMode) {
-              ctx.setPermissionMode?.(result.targetMode)
-            }
-            results.push({ toolCallId: tc.id, content: `已退出 Plan 模式，切换到 ${result.targetMode ?? '默认'} 模式`, isError: false })
-          } else {
-            results.push({ toolCallId: tc.id, content: result.message || '用户拒绝了计划', isError: true })
-          }
-        } else {
-          results.push({ toolCallId: tc.id, content: '已退出 Plan 模式', isError: false })
-        }
-        continue
-      }
-
-      // AskUserQuestion：直接走交互式问答回调，不经过通用权限检查
-      if (tc.name === ASK_USER_QUESTION_TOOL_NAME) {
-        if (ctx.onAskUser) {
-          const signal = ctx.abortSignal ?? new AbortController().signal
-          const result = await ctx.onAskUser(tc.arguments, signal)
-          if (result.behavior === 'allow') {
-            const answerBlocks = Object.entries(result.answers)
-              .map(([q, a]) => `Q: ${q}\nA: ${a}`)
-              .join('\n\n')
-            results.push({
-              toolCallId: tc.id,
-              content: `用户回答如下：\n\n${answerBlocks}\n\nanswers JSON: ${JSON.stringify(result.answers)}`,
-              isError: false,
-            })
-          } else {
-            results.push({ toolCallId: tc.id, content: result.message || '用户拒绝回答', isError: true })
-          }
-        } else {
-          results.push({ toolCallId: tc.id, content: '当前 Runtime 未配置 AskUser 回调', isError: true })
-        }
-        continue
-      }
-
-      // GoalCheckpoint 不属于权限工具，也不允许进入普通工具实现；由 Goal 控制平面原子持久化。
-      if (tc.name === GOAL_CHECKPOINT_TOOL_NAME) {
-        if (!ctx.onGoalCheckpoint) {
-          results.push({ toolCallId: tc.id, content: '当前会话没有激活的 Goal，不能提交检查点。', isError: true })
-          continue
-        }
+  /**
+   * 执行单个工具调用（并行批中逐个发起；串行工具有序调用）
+   */
+  private async executeSingleToolCall(
+    tc: ToolCall,
+    toolMap: Map<string, RuntimeToolDefinition>,
+    ctx: ToolCallExecutionCtx,
+  ): Promise<ToolResult> {
+    // CompactContext：立即压缩当前会话历史（摘要早期 + 保留最近），下一轮生效
+    if (tc.name === COMPACT_CONTEXT_TOOL_NAME) {
+      if (ctx.compaction) {
         try {
-          await ctx.onGoalCheckpoint(toGoalCheckpoint(tc.arguments))
-          results.push({ toolCallId: tc.id, content: 'Goal 检查点已持久化。', isError: false })
+          const currentHistory = getAgentSessionSDKMessages(ctx.sessionId)
+          const result = await compactSessionNow({
+            sessionId: ctx.sessionId,
+            ...ctx.compaction,
+            historyMessages: currentHistory,
+            signal: ctx.abortSignal,
+          })
+          if (result.compacted) {
+            return {
+              toolCallId: tc.id,
+              content: `上下文已压缩。早期历史已摘要（${result.summary?.length ?? 0} 字符），最近 ${Math.max(0, result.history.length - 1)} 条保留；本轮继续，下一轮对话将基于压缩后的摘要。`,
+              isError: false,
+            }
+          }
+          return { toolCallId: tc.id, content: '上下文暂不需要压缩（历史较短或过小）。', isError: false }
         } catch (error) {
-          results.push({ toolCallId: tc.id, content: `Goal 检查点无效: ${getErrorMessage(error)}`, isError: true })
+          return { toolCallId: tc.id, content: `上下文压缩失败: ${getErrorMessage(error)}`, isError: true }
         }
-        continue
       }
+      return { toolCallId: tc.id, content: '当前 Runtime 未配置上下文压缩参数。', isError: true }
+    }
 
-      const tool = toolMap.get(tc.name)
-      if (!tool) {
-        results.push({
-          toolCallId: tc.id,
-          content: `未知工具: ${tc.name}`,
-          isError: true,
-        })
-        continue
+    // EnterPlanMode：标记进入 Plan 模式并通知 UI
+    if (tc.name === ENTER_PLAN_MODE_TOOL_NAME) {
+      ctx.onEnterPlanMode?.()
+      return { toolCallId: tc.id, content: '已进入 Plan 模式', isError: false }
+    }
+
+    // ExitPlanMode：提交计划审批，等待用户响应
+    if (tc.name === EXIT_PLAN_MODE_TOOL_NAME) {
+      if (ctx.onExitPlanMode) {
+        const signal = ctx.abortSignal ?? new AbortController().signal
+        const result = await ctx.onExitPlanMode(tc.arguments, signal)
+        if (result.behavior === 'allow') {
+          if (result.targetMode) {
+            ctx.setPermissionMode?.(result.targetMode)
+          }
+          return { toolCallId: tc.id, content: `已退出 Plan 模式，切换到 ${result.targetMode ?? '默认'} 模式`, isError: false }
+        }
+        return { toolCallId: tc.id, content: result.message || '用户拒绝了计划', isError: true }
       }
+      return { toolCallId: tc.id, content: '已退出 Plan 模式', isError: false }
+    }
 
-      // 权限检查
-      const permission = await this.checkToolPermission(tc.name, tc.arguments, ctx)
-      if (!permission.allowed) {
-        results.push({
-          toolCallId: tc.id,
-          content: permission.message || `权限被拒绝：${tc.name}`,
-          isError: true,
-        })
-        continue
+    // AskUserQuestion：直接走交互式问答回调，不经过通用权限检查
+    if (tc.name === ASK_USER_QUESTION_TOOL_NAME) {
+      if (ctx.onAskUser) {
+        const signal = ctx.abortSignal ?? new AbortController().signal
+        const result = await ctx.onAskUser(tc.arguments, signal)
+        if (result.behavior === 'allow') {
+          const answerBlocks = Object.entries(result.answers)
+            .map(([q, a]) => `Q: ${q}\nA: ${a}`)
+            .join('\n\n')
+          return {
+            toolCallId: tc.id,
+            content: `用户回答如下：\n\n${answerBlocks}\n\nanswers JSON: ${JSON.stringify(result.answers)}`,
+            isError: false,
+          }
+        }
+        return { toolCallId: tc.id, content: result.message || '用户拒绝回答', isError: true }
       }
+      return { toolCallId: tc.id, content: '当前 Runtime 未配置 AskUser 回调', isError: true }
+    }
 
+    // GoalCheckpoint 不属于权限工具，也不允许进入普通工具实现；由 Goal 控制平面原子持久化。
+    if (tc.name === GOAL_CHECKPOINT_TOOL_NAME) {
+      if (!ctx.onGoalCheckpoint) {
+        return { toolCallId: tc.id, content: '当前会话没有激活的 Goal，不能提交检查点。', isError: true }
+      }
       try {
-        const result = await tool.execute(tc.arguments, ctx)
-        results.push({
-          toolCallId: tc.id,
-          content: result.content,
-          isError: result.isError,
-          generatedAttachments: result.generatedAttachments,
-        })
+        await ctx.onGoalCheckpoint(toGoalCheckpoint(tc.arguments))
+        return { toolCallId: tc.id, content: 'Goal 检查点已持久化。', isError: false }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        results.push({
-          toolCallId: tc.id,
-          content: `工具执行失败: ${message}`,
-          isError: true,
-        })
+        return { toolCallId: tc.id, content: `Goal 检查点无效: ${getErrorMessage(error)}`, isError: true }
       }
     }
 
-    return results
+    const tool = toolMap.get(tc.name)
+    if (!tool) {
+      return {
+        toolCallId: tc.id,
+        content: `未知工具: ${tc.name}`,
+        isError: true,
+      }
+    }
+
+    // 权限检查
+    const permission = await this.checkToolPermission(tc.name, tc.arguments, ctx)
+    if (!permission.allowed) {
+      return {
+        toolCallId: tc.id,
+        content: permission.message || `权限被拒绝：${tc.name}`,
+        isError: true,
+      }
+    }
+
+    try {
+      const result = await tool.execute(tc.arguments, ctx)
+      return {
+        toolCallId: tc.id,
+        content: result.content,
+        isError: result.isError,
+        generatedAttachments: result.generatedAttachments,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        toolCallId: tc.id,
+        content: `工具执行失败: ${message}`,
+        isError: true,
+      }
+    }
   }
 }
 

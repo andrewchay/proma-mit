@@ -719,6 +719,147 @@ describe('Provider-Agnostic Agent 适配器', () => {
 
     expect(summary).toBe('等待用户输入')
   })
+
+  test('同一轮多个 Agent 委派会被并行执行且结果齐全', async () => {
+    // 记录 runSubAgent 的并发水位与每个子代理的起止时间
+    let active = 0
+    let maxConcurrent = 0
+    const subAgentActive = new Map<string, boolean>()
+
+    mock.module('@gravitas/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        streamCallCount++
+        if (streamCallCount === 1) {
+          // 同一轮同时委派 3 个子代理
+          return makeStreamResult('我同时派出三个子代理研究', [
+            { id: 'tc_a', name: 'Agent', arguments: { agent_name: 'explorer', task: '探索模块 A' } },
+            { id: 'tc_b', name: 'Agent', arguments: { agent_name: 'researcher', task: '调研方案 B' } },
+            { id: 'tc_c', name: 'Agent', arguments: { agent_name: 'code-reviewer', task: '审查模块 C' } },
+          ])
+        }
+        return makeStreamResult('三个子代理都已返回结果')
+      },
+    }))
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    await (async () => {
+      let pending = 0
+      for await (const msg of adapter.query({
+        sessionId: 's-parallel-sub',
+        prompt: '并行调研 A、B、C',
+        model: 'deepseek-chat',
+        provider: 'deepseek',
+        apiKey: 'mock-key',
+        baseUrl: 'http://localhost/mock',
+        cwd: tempDir,
+        permissionMode: 'bypassPermissions',
+        runSubAgent: async (input) => {
+          active++
+          maxConcurrent = Math.max(maxConcurrent, active)
+          subAgentActive.set(input.agentName, true)
+          // 每个子代理延时 40ms，模拟真实耗时；并发时该轮总耗时约 40ms，串行则约 120ms
+          await new Promise((resolve) => setTimeout(resolve, 40))
+          active--
+          pending++
+          return `【${input.agentName} 结果】已处理 ${input.task}`
+        },
+      })) {
+        messages.push(msg)
+      }
+      // 确保异步流已完全消费
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      // 记录最终 pending 数供断言
+      ;(messages as unknown as { _pending?: number })._pending = pending
+    })()
+
+    expect(streamCallCount).toBe(2)
+    // 三个子代理都被调用
+    expect(subAgentActive.get('explorer')).toBe(true)
+    expect(subAgentActive.get('researcher')).toBe(true)
+    expect(subAgentActive.get('code-reviewer')).toBe(true)
+    // 关键断言：并发水位达到 3，证明三个委派是并行执行的
+    expect(maxConcurrent).toBe(3)
+    // 结果齐全：一条 user tool_result 消息，且含三个子代理的结果文本
+    const toolResultMsg = messages.find((m) => m.type === 'user')
+    expect(toolResultMsg).toBeDefined()
+    const serialized = JSON.stringify(toolResultMsg)
+    expect(serialized).toContain('explorer 结果')
+    expect(serialized).toContain('researcher 结果')
+    expect(serialized).toContain('code-reviewer 结果')
+  })
+
+  test('AskUser 串行工具与普通工具混发时仍能完整执行', async () => {
+    // 同一轮中 AskUserQuestion（串行）与 Read（可并行）混发：
+    // 验证交互工具语义不被并行破坏，且普通工具仍正常返回结果。
+    let askCalled = false
+
+    mock.module('@gravitas/core', () => ({
+      getAdapter: (_provider: string): ProviderAdapter => ({
+        providerType: 'deepseek',
+        buildStreamRequest: (input): ProviderRequest => ({
+          url: 'http://localhost/mock',
+          headers: {},
+          body: JSON.stringify({ userMessage: input.userMessage }),
+        }),
+        parseSSELine: () => [],
+        buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
+        parseTitleResponse: () => null,
+      }),
+      streamSSE: async (): Promise<StreamSSEResult> => {
+        streamCallCount++
+        if (streamCallCount === 1) {
+          return makeStreamResult('我先问并读取', [
+            { id: 'tc_ask', name: 'AskUserQuestion', arguments: { questions: [{ question: '确认？' }] } },
+            { id: 'tc_read', name: 'Read', arguments: { file_path: 'note.txt' } },
+          ])
+        }
+        return makeStreamResult('完成')
+      },
+    }))
+
+    writeFileSync(join(tempDir, 'note.txt'), 'note-content', 'utf-8')
+
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+
+    for await (const msg of adapter.query({
+      sessionId: 's-seq-ask',
+      prompt: '问并读',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'bypassPermissions',
+      onAskUser: async (_input, _signal) => {
+        askCalled = true
+        return { behavior: 'allow', answers: { 确认: '是' } }
+      },
+    })) {
+      messages.push(msg)
+    }
+
+    expect(streamCallCount).toBe(2)
+    expect(askCalled).toBe(true)
+    // AskUser 与 Read 的结果都在返还给模型的 user 消息里
+    const toolResultMsg = messages.find((m) => m.type === 'user')
+    const serialized = JSON.stringify(toolResultMsg)
+    expect(serialized).toContain('用户回答如下')
+    expect(serialized).toContain('note-content')
+  })
 })
 
 function makeStreamResult(content: string, toolCalls: ToolCall[] = []): StreamSSEResult {
