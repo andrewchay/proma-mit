@@ -182,6 +182,10 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   /** 星标对话已改为独立常驻区块，不再需要折叠 state。 */
   /** 展开全部会话的项目 ID 集合 */
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<Set<string>>(new Set())
+  /** 协作子会话树的展开状态：默认展开的父会话（子会话当前活跃、且用户未手动折叠） */
+  const [expandedDelegationParentIds, setExpandedDelegationParentIds] = React.useState<Set<string>>(new Set())
+  /** 协作子会话树的手动折叠状态（用户显式折叠的父会话） */
+  const [collapsedDelegationParentIds, setCollapsedDelegationParentIds] = React.useState<Set<string>>(new Set())
   /** 工作模块区域高度（px，可拖分隔条调整） */
   const [workModuleHeight, setWorkModuleHeight] = React.useState(190)
   /** 工作模块是否折叠（收到底部只剩分隔条） */
@@ -849,6 +853,35 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     (ws: { id: string; slug: string }): boolean => ws.slug !== 'default' && workspaces.length > 1,
     [workspaces]
   )
+
+  /** 切换协作子会话树展开/折叠 */
+  const handleToggleDelegationParent = React.useCallback((sessionId: string, expanded: boolean): void => {
+    if (expanded) {
+      // 当前展开 → 折叠：记录手动折叠
+      setCollapsedDelegationParentIds((prev) => {
+        const next = new Set(prev)
+        next.add(sessionId)
+        return next
+      })
+      setExpandedDelegationParentIds((prev) => {
+        const next = new Set(prev)
+        next.delete(sessionId)
+        return next
+      })
+    } else {
+      // 当前折叠 → 展开：解除折叠标记
+      setCollapsedDelegationParentIds((prev) => {
+        const next = new Set(prev)
+        next.delete(sessionId)
+        return next
+      })
+      setExpandedDelegationParentIds((prev) => {
+        const next = new Set(prev)
+        next.add(sessionId)
+        return next
+      })
+    }
+  }, [])
 
   /** 请求删除项目（弹出确认框） */
   const handleRequestDeleteWorkspace = React.useCallback((id: string): void => {
@@ -1551,8 +1584,12 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                       const wsSessions = sessionsByWorkspace.get(ws.id) ?? []
                       const isCurrent = ws.id === currentWorkspaceId
                       const expanded = expandedProjectIds.has(ws.id)
-                      const visibleSessions = expanded ? wsSessions : wsSessions.slice(0, 5)
-                      const hasMore = wsSessions.length > 5
+                      // 协作子会话树：把子会话挂到父会话下（根会话出现在列表，子会话跟随父会话缩进）
+                      const wsTreeItems = buildAgentSessionTrees(wsSessions)
+                      // 「显示更多」基于根会话计数；若有子会话的父会话语义为需要展示，则保持展开
+                      const rootCount = wsTreeItems.length
+                      const visibleRoots = expanded ? wsTreeItems : wsTreeItems.slice(0, 5)
+                      const hasMore = rootCount > 5
                       return (
                         <div key={ws.id}>
                           {/* 项目行（无边框，扁平树） */}
@@ -1628,34 +1665,71 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                             />
                           </div>
 
-                          {/* 项目下会话列表 */}
+                          {/* 项目下会话列表（父子树） */}
                           {wsSessions.length > 0 && (
                             <div className="pb-1">
                               <div className="flex flex-col gap-px pl-1 border-l-2 border-primary/15 ml-[15px]">
-                                {visibleSessions.map((session) => (
-                                  <AgentSessionItem
-                                    key={session.id}
-                                    session={session}
-                                    active={session.id === activeTabId}
-                                    indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
-                                    isInWorkingSection={workingSessionIds.has(session.id)}
-                                    onSelect={handleSelectAgentSession}
-                                    onOpenPermanent={handlePermanentAgentSession}
-                                    onRequestDelete={handleRequestDelete}
-                                    onRequestMove={handleRequestMove}
-                                    onRename={handleAgentRename}
-                                    onTogglePin={handleTogglePinAgent}
-                                    onToggleManualWorking={handleToggleManualWorkingAgent}
-                                    onToggleArchive={handleToggleArchiveAgent}
-                                  />
-                                ))}
+                                {visibleRoots.map((item) => {
+                                  const childCount = item.childSessions.length
+                                  const treeActive = treeContainsSessionId(item, activeTabId)
+                                  const activeChildVisible = item.childSessions.some((child) => child.id === activeTabId)
+                                  const expandedChildren = expandedDelegationParentIds.has(item.session.id)
+                                    || (activeChildVisible && !collapsedDelegationParentIds.has(item.session.id))
+                                  return (
+                                    <div key={item.session.id} className="flex flex-col gap-px">
+                                      <AgentSessionItem
+                                        session={item.session}
+                                        active={treeActive}
+                                        indicatorStatus={getSessionTreeStatus(item, agentIndicatorMap)}
+                                        isInWorkingSection={workingSessionIds.has(item.session.id)}
+                                        delegationSummary={childCount > 0
+                                          ? {
+                                            total: childCount,
+                                            completed: countCompletedDelegatedChildren(item.childSessions),
+                                            expanded: expandedChildren,
+                                            onToggle: () => handleToggleDelegationParent(item.session.id, expandedChildren),
+                                          }
+                                          : undefined}
+                                        onSelect={handleSelectAgentSession}
+                                        onOpenPermanent={handlePermanentAgentSession}
+                                        onRequestDelete={handleRequestDelete}
+                                        onRequestMove={handleRequestMove}
+                                        onRename={handleAgentRename}
+                                        onTogglePin={handleTogglePinAgent}
+                                        onToggleManualWorking={handleToggleManualWorkingAgent}
+                                        onToggleArchive={handleToggleArchiveAgent}
+                                      />
+                                      {childCount > 0 && expandedChildren && (
+                                        <div className="ml-3 border-l border-foreground/10 pl-2 flex flex-col gap-px">
+                                          {item.childSessions.map((child) => (
+                                            <DelegatedChildSessionItem
+                                              key={child.id}
+                                              session={child}
+                                              activeSessionId={activeTabId}
+                                              agentIndicatorMap={agentIndicatorMap}
+                                              workspaceName={undefined}
+                                              onSelect={handleSelectAgentSession}
+                                              onOpenPermanent={handlePermanentAgentSession}
+                                              onRequestDelete={handleRequestDelete}
+                                              onRequestMove={handleRequestMove}
+                                              onRename={handleAgentRename}
+                                              onTogglePin={handleTogglePinAgent}
+                                              onToggleManualWorking={handleToggleManualWorkingAgent}
+                                              onToggleArchive={handleToggleArchiveAgent}
+                                            />
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
                               </div>
                               {hasMore && (
                                 <button
                                   onClick={() => toggleProjectExpanded(ws.id)}
                                   className="ml-[15px] mt-0.5 flex items-center gap-1 px-2 py-1 text-[11px] text-foreground/40 hover:text-foreground/70 transition-colors titlebar-no-drag"
                                 >
-                                  {expanded ? '收起' : `更多 (${wsSessions.length - 5})`}
+                                  {expanded ? '收起' : `更多 (${wsTreeItems.length - 5})`}
                                   <ChevronDown size={11} className={cn('transition-transform duration-150', expanded && 'rotate-180')} />
                                 </button>
                               )}
@@ -2005,6 +2079,17 @@ interface AgentSessionItemProps {
   leftAccent?: SessionLeftAccent
   /** 工作区名称 Badge（跨工作区列表时显示） */
   workspaceName?: string
+  /** collaboration 协作子会话树折叠摘要；父会话有子会话时传入以显示折叠钮 */
+  delegationSummary?: {
+    /** 子会话数量 */
+    total: number
+    /** 已完成的子会话数 */
+    completed: number
+    /** 当前是否展开 */
+    expanded: boolean
+    /** 切换展开/折叠 */
+    onToggle: () => void
+  }
   onSelect: (id: string, title: string) => void
   /** 双击 → 常驻标签打开（VS Code 风格） */
   onOpenPermanent: (id: string, title: string) => void
@@ -2023,6 +2108,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
   isInWorkingSection,
   leftAccent,
   workspaceName,
+  delegationSummary,
   onSelect,
   onOpenPermanent,
   onRequestDelete,
@@ -2173,6 +2259,26 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
                     {workspaceName}
                   </span>
                 )}
+                {delegationSummary && delegationSummary.total > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      delegationSummary.onToggle()
+                    }}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    title={delegationSummary.expanded ? '折叠协作子会话' : '展开协作子会话'}
+                    className="flex-shrink-0 flex items-center gap-0.5 rounded px-1 py-0 text-[10px] leading-4 text-foreground/50 hover:bg-foreground/[0.07] hover:text-foreground/80 transition-colors"
+                  >
+                    <ChevronRight
+                      size={11}
+                      className={cn('transition-transform duration-150', delegationSummary.expanded && 'rotate-90')}
+                    />
+                    <span className="tabular-nums">
+                      {delegationSummary.completed}/{delegationSummary.total}
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -2219,5 +2325,122 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
         {menuItems(ContextMenuItem, ContextMenuSeparator)}
       </ContextMenuContent>
     </ContextMenu>
+  )
+})
+
+// ===== Collaboration 协作子会话树 =====
+
+/** 识别协作子会话（由父会话委派创建、可追踪的真实会话节点） */
+function isDelegatedChildSession(session: AgentSessionMeta): boolean {
+  return !!session.parentSessionId && !!session.sourceDelegationId
+}
+
+interface AgentSessionTreeItem {
+  session: AgentSessionMeta
+  childSessions: AgentSessionMeta[]
+}
+
+/** 把平铺会话列表按父子关系构建为树（子会话挂到其父会话下） */
+function buildAgentSessionTrees(sessions: AgentSessionMeta[]): AgentSessionTreeItem[] {
+  const sessionIds = new Set(sessions.map((s) => s.id))
+  const childrenByParentId = new Map<string, AgentSessionMeta[]>()
+  const roots: AgentSessionMeta[] = []
+
+  for (const session of sessions) {
+    if (isDelegatedChildSession(session) && session.parentSessionId && sessionIds.has(session.parentSessionId)) {
+      const children = childrenByParentId.get(session.parentSessionId) ?? []
+      children.push(session)
+      childrenByParentId.set(session.parentSessionId, children)
+      continue
+    }
+    roots.push(session)
+  }
+
+  return roots.map((session) => ({
+    session,
+    childSessions: childrenByParentId.get(session.id) ?? [],
+  }))
+}
+
+/** 获取协作子会话状态（优先 indicatorMap，其次 delegationStatus=running） */
+function getDelegatedChildStatus(
+  session: AgentSessionMeta,
+  agentIndicatorMap: Map<string, SessionIndicatorStatus>,
+): SessionIndicatorStatus {
+  const status = agentIndicatorMap.get(session.id)
+  if (status) return status
+  return session.delegationStatus === 'running' ? 'running' : 'idle'
+}
+
+/** 聚合父会话 + 其子会话整体状态（blocked > running > completed > idle） */
+function getSessionTreeStatus(
+  item: AgentSessionTreeItem,
+  agentIndicatorMap: Map<string, SessionIndicatorStatus>,
+): SessionIndicatorStatus {
+  const statuses = [
+    agentIndicatorMap.get(item.session.id) ?? 'idle',
+    ...item.childSessions.map((s) => getDelegatedChildStatus(s, agentIndicatorMap)),
+  ]
+  if (statuses.includes('blocked')) return 'blocked'
+  if (statuses.includes('running')) return 'running'
+  if (statuses.includes('completed')) return 'completed'
+  return 'idle'
+}
+
+/** 统计已完成子会话数量 */
+function countCompletedDelegatedChildren(childSessions: AgentSessionMeta[]): number {
+  return childSessions.filter((s) => s.delegationStatus === 'completed').length
+}
+
+/** 判断某会话是否出现在树的父/子节点中 */
+function treeContainsSessionId(item: AgentSessionTreeItem, sessionId: string | null): boolean {
+  if (!sessionId) return false
+  return item.session.id === sessionId || item.childSessions.some((s) => s.id === sessionId)
+}
+
+/** 协作子会话行：复用 AgentSessionItem，通过 delegation 状态与缩进区分 */
+const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem({
+  session,
+  activeSessionId,
+  agentIndicatorMap,
+  workspaceName,
+  onSelect,
+  onOpenPermanent,
+  onRequestDelete,
+  onRequestMove,
+  onRename,
+  onTogglePin,
+  onToggleManualWorking,
+  onToggleArchive,
+}: {
+  session: AgentSessionMeta
+  activeSessionId: string | null
+  agentIndicatorMap: Map<string, SessionIndicatorStatus>
+  workspaceName?: string
+  onSelect: (id: string, title: string) => void
+  onOpenPermanent: (id: string, title: string) => void
+  onRequestDelete: (id: string) => void
+  onRequestMove: (id: string) => void
+  onRename: (id: string, newTitle: string) => Promise<void>
+  onTogglePin: (id: string) => Promise<void>
+  onToggleManualWorking: (id: string) => Promise<void>
+  onToggleArchive: (id: string) => Promise<void>
+}): React.ReactElement {
+  return (
+    <AgentSessionItem
+      session={session}
+      active={session.id === activeSessionId}
+      indicatorStatus={getDelegatedChildStatus(session, agentIndicatorMap)}
+      leftAccent="blue"
+      workspaceName={workspaceName}
+      onSelect={onSelect}
+      onOpenPermanent={onOpenPermanent}
+      onRequestDelete={onRequestDelete}
+      onRequestMove={onRequestMove}
+      onRename={onRename}
+      onTogglePin={onTogglePin}
+      onToggleManualWorking={onToggleManualWorking}
+      onToggleArchive={onToggleArchive}
+    />
   )
 })
