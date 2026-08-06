@@ -139,9 +139,15 @@ async function getFeishuTenantToken(appId: string, appSecret: string): Promise<s
 
 const FEISHU_BASE = 'https://open.feishu.cn'
 
-/** 飞书：分页拉取全部用户（用 tenant_access_token），按姓名关键字本地过滤。
- * 使用 GET /contact/v3/users，可一次遍历全企业成员，避免按部门遍历时
- * 根部门(0)成员接口 404 且子部门层级/分页不全导致漏人的问题。 */
+/** 飞书：按可见部门遍历直属用户（用 tenant_access_token），按姓名关键字本地过滤。
+ *
+ * 明确的接口语义（依据 @larksuiteoapi/node-sdk 1.72.0 官方类型注释）：
+ * - 历史接口 `GET /contact/v3/users` 已废弃；**不带 department_id 时只返回「权限范围内的独立用户」**，
+ *   即被单独加入可见范围的人，通常为空——因此不能靠它做「全量拉全企业」。
+ * - 应改按部门遍历，每部门用推荐接口 `GET /contact/v3/user/find_by_department?department_id=X`
+ *   拉取该部门直属用户；部门树从根部门 `0` 用 `GET /contact/v3/departments/0/children` 递归枚举。
+ * - 若部门树为空（可见范围未覆盖任何组织架构节点），fallback 到裸 `/users`（独立用户语义）作为兜底。
+ */
 async function searchFeishuContacts(keyword: string): Promise<ContactSearchResult[]> {
   const cred = getFeishuCredential()
   if (!cred?.appId || !cred.appSecret) {
@@ -152,83 +158,151 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
 
   const collected: ContactSearchResult[] = []
   const seen = new Set<string>()
+  const deptSeen = new Set<string>()
   const errors: string[] = []
+  const deptRawSamples: string[] = []
 
-  // 分页拉取全企业用户（最多拉 5 页 × 50 = 250 人，超过则截断）
-  let pageToken = ''
-  let feishuUsersRaw = ''
-  for (let page = 0; page < 5; page++) {
-    try {
-      const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
-      const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
-      const data = await safeJson<any>(resp)
-      if (page === 0) feishuUsersRaw = JSON.stringify(data).slice(0, 400)
-      if (data.code !== 0) {
-        throw feishuError(data.code, `获取用户失败: ${data.msg ?? '未知错误'}`)
-      }
-      const items = (data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string; department_ids?: string[] }> | undefined) ?? []
-      console.log(`[ContactSearch] 飞书用户分页第${page + 1}页: code=${data.code} items=${items.length} has_more=${data.data?.has_more} total=${data.data?.total}`)
-      console.log('[ContactSearch] users 原始响应:', JSON.stringify(data).slice(0, 600))
-      for (const u of items) {
-        if (!u.name) continue
-        const userId = u.open_id || u.union_id
-        if (!userId || seen.has(userId)) continue
-        seen.add(userId)
-        if (!kw || u.name.toLowerCase().includes(kw)) {
-          collected.push({ platform: 'feishu', userId, name: u.name })
-        }
-        if (collected.length >= 20) return collected
-      }
-      pageToken = data.data?.page_token ?? ''
-      if (!pageToken || !data.data?.has_more) break
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err))
-      console.warn('[ContactSearch] 飞书用户分页获取失败，暂停:', err)
-      break
+  // ===== 1) 枚举可见部门树（从根部门 0 起 BFS 若干层）=====
+  // 飞书返回结构统一为 data.items[]；每项 department 位于 item.department。
+  const deptIds: Array<{ id: string; openId?: string; name: string }> = []
+  const deptQueue: Array<{ id: string; openId?: string; name: string }> = []
+  try {
+    const rootResp = await fetch(`${FEISHU_BASE}/open-apis/contact/v3/departments/0/children?fetch_child=false&page_size=50`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const rootData = await safeJson<any>(rootResp)
+    deptRawSamples.push(`dept(0)响应[${JSON.stringify(rootData).slice(0, 300)}]`)
+    if (rootData.code !== 0) {
+      throw feishuError(rootData.code, `读取根部门失败: ${rootData.msg ?? '未知错误'}`)
     }
+    const rootItems = ((rootData.data?.items ?? []) as Array<{ department?: { department_id?: string; open_department_id?: string; name?: string } }>)
+    for (const it of rootItems) {
+      const rid = String(it.department?.department_id ?? '')
+      if (rid) deptQueue.push({ id: rid, openId: it.department?.open_department_id, name: it.department?.name ?? '' })
+    }
+    console.log(`[ContactSearch] 根部门(0)子部门数=${deptQueue.length} 部门=${deptQueue.map((d) => d.name).join(',')}`)
+
+    // 递归往深处枚举（最多 8 层 × 每层 50 部门，控制请求量）
+    let layers = 0
+    while (deptQueue.length > 0 && layers < 8) {
+      const current = deptQueue.splice(0, deptQueue.length)
+      for (const d of current) {
+        if (deptSeen.has(d.id)) continue
+        deptSeen.add(d.id)
+        deptIds.push(d)
+        // 拉其子部门，继续入队
+        try {
+          const childResp = await fetch(`${FEISHU_BASE}/open-apis/contact/v3/departments/${encodeURIComponent(d.id)}/children?fetch_child=false&page_size=50`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          const childData = await safeJson<any>(childResp)
+          if (childData.code === 0) {
+            const childItems = ((childData.data?.items ?? []) as Array<{ department?: { department_id?: string; name?: string } }>)
+            for (const ci of childItems) {
+              const cid = String(ci.department?.department_id ?? '')
+              if (cid) deptQueue.push({ id: cid, name: ci.department?.name ?? '' })
+            }
+          }
+        } catch (err) {
+          console.warn(`[ContactSearch] 部门 ${d.name}(${d.id}) 子部门获取失败，跳过:` , err)
+        }
+      }
+      layers++
+    }
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err))
+    console.warn('[ContactSearch] 枚举部门树失败（将走兜底）:', err)
   }
 
-  // 一个成员都没有但有错误 → 抛出，让前端显示具体原因
-  if (collected.length === 0 && errors.length > 0) {
-    throw new Error(`飞书通讯录获取失败: ${errors.join('; ')}`)
+  // ===== 2) 按部门用 find_by_department 拉直属用户 =====
+  // 兼容两种部门 ID：枚举得的 department_id（数字）为主；若企业走 open_department_id（od- 前缀）
+  // 或应用仅对 open 版本有权限，则用 openId + department_id_type=open_department_id 再拉一次，
+  // 结果按 open_id/union_id 去重并集。
+  const rawProbe: string[] = []
+  const targetDepts = deptIds.length > 0 ? deptIds : [{ id: '0', name: '根部门' }]
+  for (const dept of targetDepts.slice(0, 60)) {
+    for (const idKey of [{ idType: 'department_id', value: dept.id }, ...(dept.openId && dept.openId !== dept.id ? [{ idType: 'open_department_id' as const, value: dept.openId }] : [])]) {
+      let pageToken = ''
+      try {
+        for (let page = 0; page < 6; page++) {
+          const url = `${FEISHU_BASE}/open-apis/contact/v3/user/find_by_department?department_id_type=${idKey.idType}&department_id=${encodeURIComponent(idKey.value)}&page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
+          const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
+          const data = await safeJson<any>(resp)
+          if (page === 0) rawProbe.push(`${dept.name}(${idKey.idType}=${idKey.value})[${JSON.stringify(data).slice(0, 220)}]`)
+          if (data.code !== 0) {
+            errors.push(`部门${dept.name}(${idKey.idType}=${idKey.value}) 获取用户失败: code=${data.code} ${data.msg ?? ''}`)
+            break
+          }
+          const items = (data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string }> | undefined) ?? []
+          for (const u of items) {
+            if (!u.name) continue
+            const userId = u.open_id || u.union_id
+            if (!userId || seen.has(userId)) continue
+            seen.add(userId)
+            if (!kw || u.name.toLowerCase().includes(kw)) {
+              collected.push({ platform: 'feishu', userId, name: u.name })
+            }
+            if (collected.length >= 30) break
+          }
+          if (collected.length >= 30) break
+          pageToken = data.data?.page_token ?? ''
+          if (!pageToken || !data.data?.has_more) break
+        }
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : String(err))
+        console.warn(`[ContactSearch] 部门 ${dept.name}(${idKey.idType}=${idKey.value}) 用户获取失败:`, err)
+      }
+      if (collected.length >= 30) break
+    }
+    if (collected.length >= 30) break
   }
-  // 一个成员都没有但无错误 → 探针诊断：拉取根部门子部门，区分是「可见范围」还是「权限」问题
+  if (collected.length > 0) return collected
+
+  // 未拉取到任何用户时，额外用裸 /users（独立用户语义）兜底
   if (collected.length === 0) {
     try {
-      const deptResp = await fetch(`${FEISHU_BASE}/open-apis/contact/v3/departments/0/children?fetch_child=false&page_size=50`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const deptData = await safeJson<any>(deptResp)
-      // 飞书 v3 /departments/children 返回结构：data.items[]（每项含 department），不是 data.children
-      const deptItems = ((deptData.data?.items ?? []) as Array<{ department?: { department_id?: string | number; name?: string } }>)
-      const deptNames = deptItems.map((i) => i.department?.name).filter(Boolean) as string[]
-      console.log(`[ContactSearch] 探针: 根部门子部门接口 code=${deptData.code} 子部门数=${deptItems.length} 部门=${deptNames.join(',')}`)
-      console.log('[ContactSearch] departments 原始响应:', JSON.stringify(deptData).slice(0, 600))
-      if (deptData.code !== 0) {
-        throw feishuError(deptData.code, `读取根部门/部门失败: ${deptData.msg ?? '未知错误'}`)
+      let pageToken = ''
+      for (let page = 0; page < 5; page++) {
+        const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
+        const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
+        const data = await safeJson<any>(resp)
+        rawProbe.push(`users[${JSON.stringify(data).slice(0, 200)}]`)
+        if (data.code !== 0) break
+        const items = (data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string }> | undefined) ?? []
+        for (const u of items) {
+          if (!u.name) continue
+          const userId = u.open_id || u.union_id
+          if (!userId || seen.has(userId)) continue
+          seen.add(userId)
+          if (!kw || u.name.toLowerCase().includes(kw)) collected.push({ platform: 'feishu', userId, name: u.name })
+        }
+        pageToken = data.data?.page_token ?? ''
+        if (!pageToken || !data.data?.has_more) break
       }
-      const childrenCount = deptItems.length
-      const probeInfo = `users响应[${feishuUsersRaw}] dept响应[${JSON.stringify(deptData).slice(0, 200)}]`
-      if (childrenCount === 0) {
-        throw new Error(
-          `飞书通讯录为空：接口已连通，但根部门下子部门为 0。${probeInfo} ` +
-            `说明应用在通讯录数据层面看不到任何部门 → 多为「通讯录数据权限范围」未覆盖组织架构：` +
-            `请到飞书开放平台该应用权限设置中，找到通讯录相关权限的数据范围/可见范围，授予包含你所在部门的组织架构节点（至少根部门），重新发布审核。`
-        )
-      }
-      throw new Error(
-        `飞书通讯录为空：users 接口返回 0 个用户，但根部门下有子部门。${probeInfo} ` +
-            `请到飞书开放平台确认 contact:user.base:readonly 权限已授予并发布审核通过，且可见范围包含这些部门节点。`
-      )
     } catch (err) {
-      if (err instanceof Error && /飞书通讯录为空/.test(err.message)) {
-        throw err
-      }
-      throw new Error(`飞书通讯录获取失败: ${err instanceof Error ? err.message : String(err)}`)
+      errors.push(err instanceof Error ? err.message : String(err))
     }
   }
-  return collected
+  if (collected.length > 0) return collected
+
+  // ===== 3) 空结果诊断 =====
+  const probeInfo = rawProbe.join(' ') || deptRawSamples.join(' ')
+  if (errors.length > 0) {
+    throw new Error(`飞书通讯录拉取失败：${errors.slice(0, 3).join('; ')}\n诊断：${probeInfo}`)
+  }
+  if (deptIds.length === 0) {
+    throw new Error(
+      `飞书通讯录为空：部门树为空（连根部门子部门都拉不到 0 个）。${probeInfo} ` +
+        `多为「通讯录数据权限范围」未覆盖组织架构节点：请到飞书开放平台该应用「权限管理 → 通讯录相关权限的数据范围/可见范围」` +
+        `勾选包含你的部门的组织架构节点（至少根部门），保存后重新发布新版本并由管理员审核通过。`
+    )
+  }
+  throw new Error(
+    `飞书通讯录为空：已找到 ${deptIds.length} 个可见部门，但每个部门直属用户均为空。${probeInfo} ` +
+      `请确认 contact:user.base:readonly（应用身份）已授权并发布审核，且通讯录数据权限范围包含这些部门节点。`
+  )
 }
 
 // ===== 钉钉实现 =====
