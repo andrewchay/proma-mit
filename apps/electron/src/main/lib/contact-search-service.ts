@@ -166,6 +166,7 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
       }
       const items = (data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string; department_ids?: string[] }> | undefined) ?? []
       console.log(`[ContactSearch] 飞书用户分页第${page + 1}页: code=${data.code} items=${items.length} has_more=${data.data?.has_more} total=${data.data?.total}`)
+      console.log('[ContactSearch] users 原始响应:', JSON.stringify(data).slice(0, 600))
       for (const u of items) {
         if (!u.name) continue
         const userId = u.open_id || u.union_id
@@ -197,15 +198,18 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
         headers: { Authorization: `Bearer ${token}` },
       })
       const deptData = await safeJson<any>(deptResp)
-      console.log(`[ContactSearch] 探针: 根部门子部门接口 code=${deptData.code} children=${(deptData.data?.children ?? []).length}`)
+      const deptChildren = (deptData.data?.children ?? []) as Array<Record<string, unknown>>
+      console.log(`[ContactSearch] 探针: 根部门子部门接口 code=${deptData.code} children=${deptChildren.length}`)
+      console.log('[ContactSearch] departments 原始响应:', JSON.stringify(deptData).slice(0, 600))
       if (deptData.code !== 0) {
         throw feishuError(deptData.code, `读取根部门/部门失败: ${deptData.msg ?? '未知错误'}`)
       }
-      const childrenCount = (deptData.data?.children ?? []).length
+      const childrenCount = deptChildren.length
       if (childrenCount === 0) {
         throw new Error(
-          '飞书通讯录为空：接口已连通，但根部门下子部门为 0。请到飞书开放平台该应用的「数据权限/通讯录可见范围」中，' +
-            '把可见范围授予包含你所在部门的组织架构节点（至少根部门），并重新发布审核通过。'
+          `飞书通讯录为空：接口已连通，但根部门下子部门为 0（可用范围=所有员工时仍为空，说明通讯录数据权限范围未覆盖组织架构）。` +
+            `原始: ${JSON.stringify(deptData).slice(0, 200)} ` +
+            `请到飞书开放平台该应用权限设置中，找到「通讯录数据权限范围」并授予包含你所在部门的组织架构节点（至少根部门），重新发布审核。`
         )
       }
       throw new Error(
