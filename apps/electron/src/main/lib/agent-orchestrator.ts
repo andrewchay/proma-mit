@@ -682,14 +682,17 @@ export class AgentOrchestrator {
           : undefined,
         // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
         extraTools: workspaceId && !isDelegationSession
-          ? (await import('./agent-collaboration-tools')).buildRuntimeCollaborationTools({
-              sessionId,
-              channelId,
-              modelId: modelId || undefined,
-              workspaceId,
-              permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
-              agentRuntime,
-              triggeredBy,
+          ? await import('./agent-collaboration-tools').then(async (m) => {
+              console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, channelId, isDelegationSession })
+              return m.buildRuntimeCollaborationTools({
+                sessionId,
+                channelId,
+                modelId: modelId || undefined,
+                workspaceId,
+                permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+                agentRuntime,
+                triggeredBy,
+              })
             })
           : undefined,
       }

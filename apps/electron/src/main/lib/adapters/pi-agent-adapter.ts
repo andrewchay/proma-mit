@@ -223,6 +223,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     })
     // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
     const collaborationAvailable = !!workspaceId && !!input.channelId && !isDelegationSession
+    console.log('[Pi Runtime] collaboration 注入判定:', {
+      sessionId, workspaceId, channelId: input.channelId, isDelegationSession, collaborationAvailable,
+    })
     if (collaborationAvailable) {
       try {
         const { buildPiCollaborationTools } = await import('../agent-collaboration-tools')
