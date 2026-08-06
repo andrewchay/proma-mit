@@ -463,11 +463,15 @@ export function RichTextInput({
           const { selection, doc } = view.state
           const isAtStart = selection.empty && selection.from === 1
           const isAtEnd = selection.empty && selection.to === doc.content.size
-          const direction: InputHistoryDirection | undefined = event.key === 'ArrowUp' && isAtStart
-            ? 'previous'
-            : event.key === 'ArrowDown' && isAtEnd
-              ? 'next'
-              : undefined
+          // 一旦进入历史回溯（index !== -1），↑/↓ 无条件触发历史导航；
+          // 仅在草稿态下才需要依赖光标是否在首/尾来判定（避免与多行光标移动冲突）。
+          const inHistoryNav = historyStateRef.current.index !== -1
+          const direction: InputHistoryDirection | undefined =
+            event.key === 'ArrowUp' && (isAtStart || inHistoryNav)
+              ? 'previous'
+              : event.key === 'ArrowDown' && (isAtEnd || inHistoryNav)
+                ? 'next'
+                : undefined
           if (direction) {
             const next = navigateInputHistory(historyEntriesRef.current, historyStateRef.current, valueRef.current, direction)
             if (next) {

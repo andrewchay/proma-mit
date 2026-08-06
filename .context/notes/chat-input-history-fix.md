@@ -26,3 +26,26 @@ const historyEntries = React.useMemo(
 ## 未改动的相关点
 - `rich-text-input.tsx` 的键盘处理与 `navigateInputHistory` 逻辑本身正确（有单测覆盖），无需改动。
 - `currentMessagesAtom` 保留为回退来源，未清理（最小变更）。
+
+---
+
+# 补充修复：方向键回溯需多次按键 / 向下「恢复成空」交互不畅
+
+> 2026-08-06（同议题续报）
+
+## 新症状
+Chat 面板输入框：向上一条条找回历史正常；但向下逐级返回时，**第一下 ↓ 往往被当成单纯的『光标移动』吃掉**，需要连按多次才能一步步走回，最后走到草稿态变成空，体验很差。用户直观感受是「向下没法恢复」。
+
+## 根因
+`navigateInputHistory` 纯函数状态机本身是**正确的**（已补多级上下、草稿恢复等单测覆盖，见 `input-history.test.ts`，5 例全绿）。
+
+问题在**组件层的光标边界判定**：`rich-text-input.tsx` 的 `handleKeyDown` 里，`↑`/`↓` 触发历史导航的前提是 `isAtStart`/`isAtEnd`（光标必须在文档首/尾）。但每次 `onChange` 驱动 `setContent` 后，TipTap 会把**光标重置到文档开头**，导致：
+- `↓` 时 `isAtEnd` 不成立 → 第一下只移动光标、不导航；
+- 多行历史时更严重，用户要按多次才走一级。
+
+## 修复（`rich-text-input.tsx`）
+引入 `inHistoryNav = historyStateRef.current.index !== -1`：
+- **一旦进入历史回溯（index 非 -1），`↑`/`↓` 无条件触发历史导航**，不再依赖光标是否在首/尾。
+- 仅在草稿态（index === -1）下保留 `isAtStart`/`isAtEnd` 边界判定，避免干扰正常的多行光标移动。
+
+效果：向上逐级找回、向下逐级返回都一次按键即可，走到最末恢复草稿（空输入框下即空）。状态机与光标视觉解耦，无需额外光标 hack。
