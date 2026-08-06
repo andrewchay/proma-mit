@@ -175,7 +175,7 @@ import {
   searchAgentSessionMessages,
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
-import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
+import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
@@ -1752,6 +1752,22 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.QUEUE_MESSAGE,
     async (event, input: import('@gravitas/shared').AgentQueueMessageInput): Promise<string> => {
       return queueAgentMessage(input, event.sender)
+    }
+  )
+
+  // 撤回排队消息
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.CANCEL_QUEUED_MESSAGE,
+    async (_, payload: { sessionId: string; queueId: string }): Promise<boolean> => {
+      return cancelQueuedAgentMessage(payload.sessionId, payload.queueId)
+    }
+  )
+
+  // 立即执行排队消息（插队）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE,
+    async (_, payload: { sessionId: string; queueId: string }): Promise<boolean> => {
+      return promoteQueuedAgentMessage(payload.sessionId, payload.queueId)
     }
   )
 

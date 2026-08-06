@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
+import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -86,6 +86,16 @@ export interface SessionCallbacks {
   onComplete: (messages?: AgentMessage[], opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string }) => void
   /** 发送标题更新 */
   onTitleUpdated: (title: string) => void
+}
+
+/** 会话级待发送队列条目（对应 AgentSendInput 的一次排队发送） */
+interface QueuedAgentSend {
+  /** 前端预生成的队列 ID（乐观更新去重） */
+  queueId: string
+  /** 待发送输入 */
+  input: AgentSendInput
+  /** 执行本次发回馈的子回调 */
+  callbacks: SessionCallbacks
 }
 
 // ===== 工具函数 =====
@@ -499,7 +509,11 @@ export class AgentOrchestrator {
   private adapter: AgentProviderAdapter
   private eventBus: AgentEventBus
   private runtimeServices: RuntimeServices
+  /** 活跃执行会话（sessionId → runGeneration），同一会话同时只允许一个执行 */
   private activeSessions = new Map<string, number>()
+
+  /** 会话级待发送队列条目（sessionId → FIFO 排队） */
+  private sessionSendQueue = new Map<string, QueuedAgentSend[]>()
 
   /** 队列消息本地记录（sessionId → UUID 集合，用于防重） */
   private queuedMessageUuids = new Map<string, Set<string>>()
@@ -1508,14 +1522,30 @@ export class AgentOrchestrator {
    *
    * 核心编排方法，从 agent-service.ts 的 runAgent 提取。
    * 通过 EventBus 分发 AgentEvent，通过 callbacks 发送控制信号。
+   *
+   * 支持会话级发送排队：若目标会话当前正在执行（activeSessions 含该 session），
+   * 本次输入会进入该会话的待发送队列（FIFO），待当前消息执行完毕后由 pumpNext
+   * 自动取出下一条执行。pumpNext 驱动时需传 opts.skipQueueCheck=true 跳过入队判断。
    */
-  async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks): Promise<void> {
+  async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks, opts?: { skipQueueCheck?: boolean }): Promise<void> {
     const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments, workflowCapabilityPolicy, triggeredBy } = input
     const stderrChunks: string[] = []
 
-    // 0. 并发保护
-    if (this.activeSessions.has(sessionId)) {
-      console.warn(`[Agent 编排] 会话 ${sessionId} 正在处理中，拒绝新请求`)
+    // 0. 并发保护 + 会话级发送排队
+    // 用户主动发送（triggeredBy 缺省或 'user'）在会话运行时进入待发送队列；
+    // 后台触发（automation / delegation）保持拒绝，避免改变其无人值守语义。
+    const isUserSend = triggeredBy === undefined || triggeredBy === 'user'
+    if (!opts?.skipQueueCheck && isUserSend && this.activeSessions.has(sessionId)) {
+      const queueId = input.clientQueueId ?? randomUUID()
+      const queue = this.sessionSendQueue.get(sessionId) ?? []
+      queue.push({ queueId, input, callbacks })
+      this.sessionSendQueue.set(sessionId, queue)
+      this.broadcastQueueState(sessionId)
+      console.log(`[Agent 编排] 会话 ${sessionId} 消息已排队: queueId=${queueId}, queuedCount=${queue.length}`)
+      return
+    }
+    if (!opts?.skipQueueCheck && !isUserSend && this.activeSessions.has(sessionId)) {
+      console.warn(`[Agent 编排] 会话 ${sessionId} 正在处理中，拒绝后台请求 (${triggeredBy})`)
       callbacks.onError('上一条消息仍在处理中，请稍候再试')
       callbacks.onComplete([], { startedAt: input.startedAt })
       return
@@ -2892,7 +2922,89 @@ export class AgentOrchestrator {
       // askUserService 不在 turn 结束时清理——AskUserQuestion 的生命周期由用户交互决定，
       // 仅在会话真正删除时（DELETE_SESSION IPC）才清理。
       exitPlanService.clearSessionPending(sessionId)
+      // 当前消息执行结束：驱动该会话待发送队列中的下一条（若有则继续执行，否则无事发生）
+      this.pumpNext(sessionId)
     }
+  }
+
+  /** 广播某会话的发送队列状态（推送给渲染进程 UI） */
+  private broadcastQueueState(sessionId: string): void {
+    const queue = this.sessionSendQueue.get(sessionId) ?? []
+    const executing = this.activeSessions.has(sessionId)
+    this.eventBus.emit(sessionId, {
+      kind: 'queue_state',
+      event: {
+        sessionId,
+        executing,
+        queuedCount: queue.length,
+      },
+    })
+  }
+
+  /**
+   * 取会话待发送队列下一条并执行（会话级 FIFO）。
+   * - 队列有下一条 → 立即以 skipQueueCheck=true 执行
+   * - 队列空 → 仅广播状态
+   */
+  private async pumpNext(sessionId: string): Promise<void> {
+    const queue = this.sessionSendQueue.get(sessionId) ?? []
+    if (queue.length === 0) return
+    const item = queue.shift()!
+    if ((this.sessionSendQueue.get(sessionId)?.length ?? 0) === 0) {
+      this.sessionSendQueue.delete(sessionId)
+    }
+    this.broadcastQueueState(sessionId)
+    try {
+      await this.sendMessage(item.input, item.callbacks, { skipQueueCheck: true })
+    } catch (err) {
+      console.error(`[Agent 编排] 执行排队消息失败 (${sessionId}):`, err)
+      item.callbacks.onError(err instanceof Error ? err.message : String(err))
+      item.callbacks.onComplete([], { startedAt: item.input.startedAt })
+    }
+  }
+
+  /**
+   * 立即执行排队的某条消息：把目标提到队首并打断当前生成。
+   * 打断后，当前 sendMessage 的 finally 会调 pumpNext，执行的正是队首这条。
+   * @returns true 表示已找到并处理；false 表示该 queueId 不在队列
+   */
+  promoteQueuedMessage(sessionId: string, queueId: string): boolean {
+    const queue = this.sessionSendQueue.get(sessionId)
+    if (!queue) return false
+    const idx = queue.findIndex((q) => q.queueId === queueId)
+    if (idx === -1) return false
+    const [item] = queue.splice(idx, 1)
+    if (!item) return false
+    queue.unshift(item) // 提到队首
+    this.broadcastQueueState(sessionId)
+    // 打断当前正在生成的；pumpNext 会从队首取出这条执行
+    if (this.adapter.abort) this.adapter.abort(sessionId)
+    return true
+  }
+
+  /**
+   * 撤回排队中的某条消息（未开始执行前移除）。
+   * @returns true 表示已移除；false 表示不在队列
+   */
+  cancelQueuedMessage(sessionId: string, queueId: string): boolean {
+    const queue = this.sessionSendQueue.get(sessionId)
+    if (!queue) return false
+    const filtered = queue.filter((q) => q.queueId !== queueId)
+    const removed = filtered.length !== queue.length
+    if (removed) {
+      if (filtered.length === 0) {
+        this.sessionSendQueue.delete(sessionId)
+      } else {
+        this.sessionSendQueue.set(sessionId, filtered)
+      }
+    }
+    this.broadcastQueueState(sessionId)
+    return removed
+  }
+
+  /** 获取会话当前排队消息数（不含正在执行中的那一条） */
+  getQueuedMessageCount(sessionId: string): number {
+    return this.sessionSendQueue.get(sessionId)?.length ?? 0
   }
 
   /**
@@ -2906,6 +3018,10 @@ export class AgentOrchestrator {
     this.sessionPermissionModes.delete(sessionId)
     this.stoppedBySessions.add(sessionId)
     this.queuedMessageUuids.delete(sessionId)
+    // 清空该会话待发送队列（停止所有排队，停止生成即停止后续执行）
+    if (this.sessionSendQueue.delete(sessionId)) {
+      console.log(`[Agent 编排] 已清空会话 ${sessionId} 的待发送队列`)
+    }
     this.adapter.abort(sessionId)
     console.log(`[Agent 编排] 已中止会话: ${sessionId}`)
   }

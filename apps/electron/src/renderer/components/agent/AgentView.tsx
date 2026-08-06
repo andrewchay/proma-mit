@@ -89,6 +89,7 @@ import {
   allPendingAskUserRequestsAtom,
   allPendingExitPlanRequestsAtom,
   allPendingMcpOAuthRequestsAtom,
+  queuedAgentMessagesAtom,
   finalizeStreamingActivities,
 } from '@/atoms/agent-atoms'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
@@ -1383,31 +1384,21 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
     // 上一条消息仍在处理中，直接追加发送
     if (streaming) {
-      // 流式追加时不处理附件（仅支持纯文本）
+      // 流式追加时暂不支持附件（仅支持纯文本），排队等待处理
       if (pendingFiles.length > 0) {
-        toast.info('Agent 运行中暂不支持追加发送附件', {
+        toast.info('Agent 运行中暂不支持发送附件', {
           description: '请等待完成后再发送附件，或先撤除附件仅发送文本',
         })
         return
       }
 
-      const localUuid = crypto.randomUUID()
+      const queueId = `aq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-      // 1. 立即注入 liveMessages（作为普通用户消息显示）
-      const syntheticMsg: import('@gravitas/shared').SDKMessage = {
-        type: 'user',
-        uuid: localUuid,
-        message: {
-          content: [{ type: 'text', text: effectiveText }],
-        },
-        parent_tool_use_id: null,
-        _createdAt: Date.now(),
-      } as unknown as import('@gravitas/shared').SDKMessage
-
-      store.set(liveMessagesMapAtom, (prev) => {
+      // 1. 入队展示（乐观），等主进程排到执行时再进入流式
+      store.set(queuedAgentMessagesAtom, (prev) => {
         const map = new Map(prev)
-        const current = map.get(sessionId) ?? []
-        map.set(sessionId, [...current, syntheticMsg])
+        const cur = map.get(sessionId) ?? []
+        map.set(sessionId, [...cur, { queueId, content: effectiveText }])
         return map
       })
 
@@ -1421,22 +1412,27 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         return map
       })
 
-      // 3. 异步发送到后端（立即软中断当前 turn，再注入消息作为新一轮输入）
-      window.electronAPI.queueAgentMessage({
+      // 3. 正常发送：后端 detect 会话运行中会将此消息进 FIFO 队列（clientQueueId 关联贴片）
+      const queuedInput: AgentSendInput = {
         sessionId,
         userMessage: effectiveText,
-        uuid: localUuid,
-        interrupt: true,
-      }).catch((error) => {
-        console.error('[AgentView] 追加消息失败:', error)
-        toast.error('追加消息失败', { description: String(error) })
-        // 回滚：从 liveMessages 移除
-        store.set(liveMessagesMapAtom, (prev) => {
+        channelId: agentChannelId,
+        modelId: agentModelId || undefined,
+        agentRuntime: sessionAgentRuntime,
+        workspaceId: currentWorkspaceId || undefined,
+        startedAt: Date.now(),
+        permissionModeOverride: permissionMode,
+        clientQueueId: queueId,
+      }
+      window.electronAPI.sendAgentMessage(queuedInput).catch((error) => {
+        console.error('[AgentView] 排队发送失败:', error)
+        toast.error('排队发送失败', { description: String(error) })
+        // 回滚：从排队贴片移除
+        store.set(queuedAgentMessagesAtom, (prev) => {
           const map = new Map(prev)
-          const current = (map.get(sessionId) ?? []).filter(
-            (m) => (m as unknown as { uuid?: string }).uuid !== localUuid
-          )
-          map.set(sessionId, current)
+          const cur = (map.get(sessionId) ?? []).filter((q) => q.queueId !== queueId)
+          if (cur.length === 0) map.delete(sessionId)
+          else map.set(sessionId, cur)
           return map
         })
       })
@@ -1977,6 +1973,26 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const hasTextInput = inputContent.trim().length > 0
   const canSend = (hasTextInput || pendingFiles.length > 0 || !!suggestion) && selectedChannelUsable && hasAvailableModel && (!streaming || hasTextInput)
 
+  // 当前会话的待发送排队消息（流式期间连续发送）
+  const queuedMessages = useAtomValue(queuedAgentMessagesAtom).get(sessionId) ?? []
+
+  /** 撤回排队中的消息（未开始执行前移除） */
+  const handleWithdrawQueue = React.useCallback((queueId: string): void => {
+    window.electronAPI.cancelQueuedAgentMessage(sessionId, queueId).catch(console.error)
+    store.set(queuedAgentMessagesAtom, (prev) => {
+      const map = new Map(prev)
+      const cur = (map.get(sessionId) ?? []).filter((q) => q.queueId !== queueId)
+      if (cur.length === 0) map.delete(sessionId)
+      else map.set(sessionId, cur)
+      return map
+    })
+  }, [sessionId, store])
+
+  /** 立即执行排队中的消息（打断当前，插队执行） */
+  const handleExecuteQueue = React.useCallback((queueId: string): void => {
+    window.electronAPI.promoteQueuedAgentMessage(sessionId, queueId).catch(console.error)
+  }, [sessionId])
+
   const inputToolbarItems = React.useMemo<ToolbarItem[]>(() => [
     {
       key: 'model',
@@ -2295,6 +2311,37 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               <div className="mx-3 mt-2 flex items-center gap-2 rounded-lg bg-primary/8 px-3 py-2 text-xs text-primary">
                 <Target className="size-3.5 shrink-0" />
                 <span><code className="font-mono">@Goal</code> 将创建持续 Goal；Agent 会在每轮记录检查点，并且只有有验收证据时才能完成。</span>
+              </div>
+            )}
+
+            {/* Agent 待发送队列贴片（流式期间连续发送） */}
+            {queuedMessages.length > 0 && (
+              <div className="mx-3 mb-2 space-y-1">
+                {queuedMessages.map((q, idx) => (
+                  <div
+                    key={q.queueId}
+                    className="group flex items-center gap-2 rounded-[8px] border border-border/60 bg-background/60 px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] text-muted-foreground">
+                      {idx + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{q.content.slice(0, 60)}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10"
+                      onClick={() => handleExecuteQueue(q.queueId)}
+                    >
+                      立即执行
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                      onClick={() => handleWithdrawQueue(q.queueId)}
+                    >
+                      撤回
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 

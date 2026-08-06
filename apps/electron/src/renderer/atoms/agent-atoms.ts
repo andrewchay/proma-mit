@@ -307,6 +307,20 @@ export const agentPendingFilesAtomFamily = atomFamily((sessionId: string) =>
   ),
 )
 
+/** Agent 会话待发送队列条目（Agent 运行时发起的、尚未执行的消息） */
+export interface QueuedAgentMessage {
+  /** 前端预生成的队列 ID（乐观更新，与主进程 clientQueueId 对齐） */
+  queueId: string
+  /** 消息文本 */
+  content: string
+}
+
+/**
+ * Agent 会话级待发送队列（sessionId → 排队条目，数组顺序即 FIFO 顺序）。
+ * 用于 Agent 运行时用户连续发送时展示排队贴片（编号/内容/立即执行/撤回）。
+ */
+export const queuedAgentMessagesAtom = atom<Map<string, QueuedAgentMessage[]>>(new Map())
+
 /** 工作区能力版本号 — 每次修改 MCP/Skills 后自增，触发侧边栏重新获取 */
 export const workspaceCapabilitiesVersionAtom = atom(0)
 

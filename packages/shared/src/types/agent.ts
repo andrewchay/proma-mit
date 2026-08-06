@@ -570,6 +570,7 @@ export type AgentStreamPayload =
   | { kind: 'sdk_message'; message: SDKMessage }
   | { kind: 'agent_event'; event: AgentEvent }
   | { kind: 'proma_event'; event: PromaEvent }
+  | { kind: 'queue_state'; event: AgentQueueStateEvent }
 
 /**
  * 面向 SSE / WebSocket 的 Agent 流式事件 envelope。
@@ -1195,6 +1196,21 @@ export interface AgentSendInput {
   attachments?: FileAttachment[]
   /** 本次发送的触发来源：用户 / 定时任务 / 协作子会话 */
   triggeredBy?: 'user' | 'automation' | 'delegation'
+  /**
+   * 渲染进程预生成的发送队列 ID（用于乐观更新去重）。
+   * 会话运行时发送本消息会进入该会话的待发送队列，前端凭此 ID 展示/撤回/插队。
+   */
+  clientQueueId?: string
+}
+
+/** Agent 发送队列状态事件（渲染进程 → 主进程，主进程广播给 UI） */
+export interface AgentQueueStateEvent {
+  /** 会话 ID */
+  sessionId: string
+  /** 是否正在执行某条消息 */
+  executing: boolean
+  /** 待发送队列中排队的消息数（不含当前执行中的那一条） */
+  queuedCount: number
 }
 
 // ===== Agent 队列消息 =====

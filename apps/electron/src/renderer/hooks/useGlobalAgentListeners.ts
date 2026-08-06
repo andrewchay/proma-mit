@@ -12,6 +12,7 @@ import { unstable_batchedUpdates } from 'react-dom'
 import { useStore } from 'jotai'
 import {
   agentStreamingStatesAtom,
+  queuedAgentMessagesAtom,
   agentStreamErrorsAtom,
   agentSessionsAtom,
   agentMessageRefreshAtom,
@@ -120,6 +121,11 @@ function inferContextWindow(model?: string): number | undefined {
 function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
   if (payload.kind === 'agent_event') {
     return [payload.event]
+  }
+
+  if (payload.kind === 'queue_state') {
+    // 发送队列状态由独立的 QUEUED_MESSAGE_STATUS 通道推送给 UI，不转为 legacy AgentEvent
+    return []
   }
 
   if (payload.kind === 'proma_event') {
@@ -1094,6 +1100,20 @@ export function useGlobalAgentListeners(): void {
       makeNavigateToSession(payload.sessionId, sessionTitle)()
     })
 
+    // Agent 发送队列状态订阅：主进程按 FIFO 驱动排队消息执行时同步队列长度，
+    // 前端用它校正乐观渲染的排队贴片（主进程出队/入队会广播 queuedCount）。
+    const cleanupQueueState = window.electronAPI.onAgentQueueMessageStatus((event) => {
+      store.set(queuedAgentMessagesAtom, (prev) => {
+        const cur = prev.get(event.sessionId) ?? []
+        if (event.queuedCount === cur.length) return prev
+        const map = new Map(prev)
+        if (event.queuedCount > cur.length) return prev // 新入队由本地乐观添加，主进程只做兜底收缩
+        map.set(event.sessionId, cur.slice(0, event.queuedCount))
+        if (event.queuedCount === 0) map.delete(event.sessionId)
+        return map
+      })
+    })
+
     return () => {
       cleanupEvent()
       cleanupComplete()
@@ -1102,6 +1122,7 @@ export function useGlobalAgentListeners(): void {
       cleanupMcpAuthResolved?.()
       cleanupPlaySound()
       cleanupSystemClicked()
+      cleanupQueueState()
       clearInterval(pruneTimer)
       window.removeEventListener('focus', onWindowFocus)
     }

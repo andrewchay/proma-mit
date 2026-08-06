@@ -145,6 +145,7 @@ import type {
   WeChatConfig,
   WeChatBridgeState,
   AgentQueueMessageInput,
+  AgentQueueStateEvent,
   PendingRequestsSnapshot,
 } from '@gravitas/shared'
 import type {
@@ -581,6 +582,15 @@ export interface ElectronAPI {
 
   /** 流式追加发送 Agent 消息（Agent 运行中） */
   queueAgentMessage: (input: AgentQueueMessageInput) => Promise<string>
+
+  /** 撤回排队中的 Agent 消息（未开始执行前移除） */
+  cancelQueuedAgentMessage: (sessionId: string, queueId: string) => Promise<boolean>
+
+  /** 立即执行排队中的 Agent 消息（插队到队首并打断当前生成） */
+  promoteQueuedAgentMessage: (sessionId: string, queueId: string) => Promise<boolean>
+
+  /** 监听 Agent 发送队列状态变化 */
+  onAgentQueueMessageStatus: (callback: (event: AgentQueueStateEvent) => void) => () => void
 
   // ===== Agent 后台任务管理 =====
 
@@ -1834,6 +1844,17 @@ const electronAPI: ElectronAPI = {
   // Agent 队列消息
   queueAgentMessage: (input: AgentQueueMessageInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.QUEUE_MESSAGE, input)
+  },
+  cancelQueuedAgentMessage: (sessionId: string, queueId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.CANCEL_QUEUED_MESSAGE, { sessionId, queueId })
+  },
+  promoteQueuedAgentMessage: (sessionId: string, queueId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE, { sessionId, queueId })
+  },
+  onAgentQueueMessageStatus: (callback: (event: AgentQueueStateEvent) => void) => {
+    const listener = (_: unknown, event: AgentQueueStateEvent): void => callback(event)
+    ipcRenderer.on(AGENT_IPC_CHANNELS.QUEUED_MESSAGE_STATUS, listener)
+    return () => { ipcRenderer.removeListener(AGENT_IPC_CHANNELS.QUEUED_MESSAGE_STATUS, listener) }
   },
 
   // Agent 后台任务管理

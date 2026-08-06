@@ -454,6 +454,9 @@ class DynamicIslandService {
     if (payload.kind === 'agent_event') {
       return payload.event.type === 'complete' || payload.event.type === 'error' || payload.event.type === 'typed_error'
     }
+    if (payload.kind === 'queue_state') {
+      return false
+    }
     const message = payload.message
     return message.type === 'result' || (message.type === 'assistant' && Boolean(message.error))
   }

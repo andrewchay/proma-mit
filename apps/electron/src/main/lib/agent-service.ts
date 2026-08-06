@@ -217,7 +217,12 @@ eventBus.use((sessionId, payload, next) => {
   const wc = sessionWebContents.get(sessionId)
   if (wc && !wc.isDestroyed()) {
     try {
-      wc.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload } as AgentStreamEvent)
+      if (payload.kind === 'queue_state') {
+        // 发送队列状态走独立通道，供 UI 展示排队贴片（编号/内容/立即执行/撤回）
+        wc.send(AGENT_IPC_CHANNELS.QUEUED_MESSAGE_STATUS, payload.event)
+      } else {
+        wc.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload } as AgentStreamEvent)
+      }
     } catch (err) {
       console.error(`[EventBus] wc.send 失败: sessionId=${sessionId}, payload.kind=${(payload as Record<string, unknown>)?.kind}`, err)
     }
@@ -499,6 +504,27 @@ export async function queueAgentMessage(
     input.uuid,
     { interrupt: input.interrupt },
   )
+}
+
+/**
+ * 立即执行排队的某条消息：把目标提到队首并打断当前生成。
+ * @returns true 表示已找到并处理；false 表示该 queueId 不在队列
+ */
+export function promoteQueuedAgentMessage(sessionId: string, queueId: string): boolean {
+  return orchestrator.promoteQueuedMessage(sessionId, queueId)
+}
+
+/**
+ * 撤回排队中的某条消息（未开始执行前移除）。
+ * @returns true 表示已移除；false 表示不在队列
+ */
+export function cancelQueuedAgentMessage(sessionId: string, queueId: string): boolean {
+  return orchestrator.cancelQueuedMessage(sessionId, queueId)
+}
+
+/** 获取会话当前排队消息数（不含正在执行中的那一条） */
+export function getQueuedAgentMessageCount(sessionId: string): number {
+  return orchestrator.getQueuedMessageCount(sessionId)
 }
 
 // ===== 文件操作 =====
