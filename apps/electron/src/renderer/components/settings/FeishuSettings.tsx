@@ -65,7 +65,6 @@ const FEISHU_SCOPES_JSON = JSON.stringify({
       'contact:contact.base:readonly',
       'contact:user.base:readonly',
       'contact:department.base:readonly',
-      'contact:user.search:readonly',
       'task:task',
       'im:chat:readonly',
       'im:chat.members:read',
@@ -150,7 +149,6 @@ function PermissionsStep(): React.ReactElement {
             <div><span className="text-foreground/70">contact:contact.base:readonly</span> — 获取通讯录基本信息</div>
             <div><span className="text-foreground/70">contact:user.base:readonly</span> — 读取用户信息（通讯录负责人搜索）</div>
             <div><span className="text-foreground/70">contact:department.base:readonly</span> — 读取部门信息</div>
-            <div><span className="text-foreground/70">contact:user.search:readonly</span> — 搜索用户</div>
             <div><span className="text-foreground/70">task:task</span> — 飞书任务管理（Todo 同步）</div>
           </div>
         )}

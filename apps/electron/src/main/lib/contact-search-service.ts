@@ -12,7 +12,7 @@
  *   与 todo-provider 工厂完全同源，避免 settings.json 留存第二份明文 Secret。
  *
  * API 方案：
- * - 飞书：POST /open-apis/contact/v3/users/search 按姓名关键字搜，返回 open_id/union_id。
+ * - 飞书：GET /open-apis/contact/v3/users 分页拉取全企业成员，本地按关键词过滤，返回 open_id/union_id。
  * - 钉钉：遍历部门 topapi/v2/department/listsub + topapi/v2/user/list，本地按 name 过滤；
  *   再用 topapi/v2/user/get 解析 unionid。
  */
