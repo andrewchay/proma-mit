@@ -30,6 +30,7 @@ import {
   pendingAgentRecommendationAtom,
   conversationModelsAtom,
   chatPendingMessageAtom,
+  queuedChatMessagesAtom,
   INITIAL_MESSAGE_LIMIT,
 } from '@/atoms/chat-atoms'
 import type { PendingAttachment, ChatPendingMessage } from '@/atoms/chat-atoms'
@@ -85,6 +86,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const streamingStates = useAtomValue(streamingStatesAtom)
   const setStreamingStates = useSetAtom(streamingStatesAtom)
+  const setQueuedChatMessages = useSetAtom(queuedChatMessagesAtom)
   const setConversationModels = useSetAtom(conversationModelsAtom)
   const setChatStreamErrors = useSetAtom(chatStreamErrorsAtom)
   const chatStreamErrors = useAtomValue(chatStreamErrorsAtom)
@@ -286,19 +288,35 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
       setPendingAttachments([])
     }
 
-    // 初始化当前对话的流式状态
-    setStreamingStates((prev) => {
-      const map = new Map(prev)
-      map.set(conversationId, {
-        streaming: true,
-        content: '',
-        reasoning: '',
-        model: selectedModel.modelId,
-        toolActivities: [],
-        startedAt: Date.now(),
+    const queueId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    // 若该会话已在流式生成中 → 本条进入发送队列（不覆盖当前流式状态）
+    if (isStreaming) {
+      setStreamingStates((prev) => prev) // 保持当前流式状态
+      setQueuedChatMessages((prev) => {
+        const cur = prev.get(conversationId) ?? []
+        const next = new Map(prev)
+        next.set(conversationId, [
+          ...cur,
+          { queueId, content, hasAttachments: savedAttachments.length > 0 },
+        ])
+        return next
       })
-      return map
-    })
+    } else {
+      // 正常发送：初始化当前对话的流式状态
+      setStreamingStates((prev) => {
+        const map = new Map(prev)
+        map.set(conversationId, {
+          streaming: true,
+          content: '',
+          reasoning: '',
+          model: selectedModel.modelId,
+          toolActivities: [],
+          startedAt: Date.now(),
+        })
+        return map
+      })
+    }
 
     const input: ChatSendInput = {
       conversationId,
@@ -312,6 +330,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
       thinkingEnabled: thinkingEnabled || undefined,
       systemMessage: resolveSystemMessage(conversationPromptId, promptConfig, userProfile.userName),
       enabledToolIds: activeToolIds.length > 0 ? activeToolIds : undefined,
+      clientQueueId: queueId,
     }
 
     // 乐观更新：立即在 UI 中显示用户消息
@@ -358,7 +377,8 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   React.useEffect(() => {
     if (!chatPendingMessage) return
     if (chatPendingMessage.conversationId !== conversationId) return
-    if (!selectedModel || isStreaming) return
+    // isStreaming 时也允许发送：后端会进入会话队列排队
+    if (!selectedModel) return
 
     const pending = chatPendingMessage
     setChatPendingMessage(null)
@@ -424,6 +444,28 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     })
     window.electronAPI.stopGeneration(conversationId).catch(console.error)
   }, [conversationId, setStreamingStates])
+
+  /** 撤回排队中的消息 */
+  const handleWithdrawQueue = React.useCallback((queueId: string): void => {
+    window.electronAPI.withdrawQueuedMessage(conversationId, queueId).catch(console.error)
+    // 前端即时移除（后端也会广播校正）
+    setQueuedChatMessages((prev) => {
+      const cur = prev.get(conversationId)
+      if (!cur) return prev
+      const next = new Map(prev)
+      next.set(conversationId, cur.filter((q) => q.queueId !== queueId))
+      if (next.get(conversationId)?.length === 0) next.delete(conversationId)
+      return next
+    })
+  }, [conversationId, setQueuedChatMessages])
+
+  /** 立即执行排队中的消息（打断当前，插队执行） */
+  const handleExecuteQueue = React.useCallback((queueId: string): void => {
+    window.electronAPI.executeQueuedMessage(conversationId, queueId).catch(console.error)
+  }, [conversationId])
+
+  // 当前会话的排队消息
+  const queuedMessages = useAtomValue(queuedChatMessagesAtom).get(conversationId) ?? []
 
   // 监听快捷键系统分发的 stop-generation 事件
   React.useEffect(() => {
@@ -618,6 +660,9 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
           <ChatInput
             conversationId={conversationId}
             streaming={isStreaming}
+            queuedMessages={queuedMessages}
+            onWithdrawQueue={handleWithdrawQueue}
+            onExecuteQueue={handleExecuteQueue}
             pendingAttachments={pendingAttachments}
             onSetPendingAttachments={setPendingAttachments}
             onSend={handleSend}

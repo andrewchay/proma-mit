@@ -33,8 +33,38 @@ import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { getEnabledTools } from './chat-tool-registry'
 import { executeToolCalls } from './chat-tool-executor'
 
-/** 活跃的 AbortController 映射（conversationId → controller） */
+/** 活跃的 AbortController 映射（conversationId → controller，仅当前串行执行项） */
 const activeControllers = new Map<string, AbortController>()
+
+/** 会话级发送队列条目 */
+interface QueuedChatSend {
+  queueId: string
+  input: ChatSendInput
+  webContents: WebContents
+}
+
+/** 会话级待发送队列（conversationId → FIFO 排队条目） */
+const sessionQueue = new Map<string, QueuedChatSend[]>()
+
+/** 正在通过 pump 串行执行的会话（避免重复启动 pump） */
+const executingConversations = new Set<string>()
+
+/** 广播会话队列变化（前端用于展示排队状态） */
+function broadcastQueueState(conversationId: string): void {
+  const queue = sessionQueue.get(conversationId) ?? []
+  const executing = executingConversations.has(conversationId)
+  // 发送给该会话窗口（取任一排队条目的 webContents；无则跳过）
+  const first = queue[0]
+  const wc = first ? first.webContents : undefined
+  if (wc && !wc.isDestroyed()) {
+    // 已排队的条目（不含当前执行中的那一条，因 shift 后已出队）
+    wc.send(CHAT_IPC_CHANNELS.STREAM_QUEUE_STATE, {
+      conversationId,
+      executing,
+      queuedCount: queue.length,
+    })
+  }
+}
 
 /** 最大工具续接轮数（安全上限，防止极端情况下的无限循环） */
 const MAX_TOOL_ROUNDS = 999
@@ -197,12 +227,29 @@ function filterHistory(
 export async function sendMessage(
   input: ChatSendInput,
   webContents: WebContents,
+  opts?: { skipQueueCheck?: boolean },
 ): Promise<void> {
   const {
     conversationId, userMessage, channelId,
     modelId, systemMessage, contextLength, contextDividers, attachments,
     thinkingEnabled, enabledToolIds,
   } = input
+
+  // 会话级串行化：同一会话只能有一个正在执行的流
+  //  - 首个（执行者）：标记 executingConversations，直接走下执行体
+  //  - 后续（排队者）：入队并立即返回，等 pumpNext 依次执行
+  //  - pumpNext 驱动的执行（skipQueueCheck=true）跳过入队判断
+  if (!opts?.skipQueueCheck) {
+    if (!executingConversations.has(conversationId)) {
+      executingConversations.add(conversationId)
+    } else {
+      const queue = sessionQueue.get(conversationId) ?? []
+      queue.push({ queueId: input.clientQueueId ?? randomUUID(), input, webContents })
+      sessionQueue.set(conversationId, queue)
+      broadcastQueueState(conversationId)
+      return
+    }
+  }
 
   // 1. 查找渠道
   const channels = listChannels()
@@ -541,12 +588,47 @@ export async function sendMessage(
     })
   } finally {
     activeControllers.delete(conversationId)
+    // 当前执行结束：驱动队列中的下一条（若存在则继续，否则结束执行者状态）
+    pumpNext(conversationId)
   }
 }
 
 /**
- * 中止指定对话的生成
+ * 取队列下一条并执行（会话级 FIFO）。
+ * - 队列有下一条 → 立即执行
+ * - 队列空 → 移除执行者标记并广播
  */
+async function pumpNext(conversationId: string): Promise<void> {
+  const queue = sessionQueue.get(conversationId) ?? []
+  if (queue.length > 0) {
+    const item = queue.shift()!
+    if (sessionQueue.get(conversationId)?.length === 0) {
+      sessionQueue.delete(conversationId)
+    }
+    broadcastQueueState(conversationId)
+    try {
+      await sendMessage(item.input, item.webContents, { skipQueueCheck: true })
+    } catch (err) {
+      console.error(`[聊天服务] 执行排队消息失败 (${conversationId}):`, err)
+      if (item.webContents && !item.webContents.isDestroyed()) {
+        item.webContents.send(CHAT_IPC_CHANNELS.STREAM_ERROR, {
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  } else {
+    sessionQueue.delete(conversationId)
+    executingConversations.delete(conversationId)
+    const first = activeControllers.get(conversationId)
+    // 广播结束状态（仅当一个都没有排出时才需要）
+    if (!first || first.signal.aborted) {
+      broadcastQueueState(conversationId)
+    }
+  }
+}
+
+/** 中止指定对话的生成（中止当前流 + 清空该会话待发送队列） */
 export function stopGeneration(conversationId: string): void {
   const controller = activeControllers.get(conversationId)
   if (controller) {
@@ -554,6 +636,47 @@ export function stopGeneration(conversationId: string): void {
     activeControllers.delete(conversationId)
     console.log(`[聊天服务] 已中止对话: ${conversationId}`)
   }
+  // 清空该会话的待发送队列（停止所有排队）
+  if (sessionQueue.delete(conversationId)) {
+    console.log(`[聊天服务] 已清空对话 ${conversationId} 的待发送队列`)
+  }
+  broadcastQueueState(conversationId)
+}
+
+/**
+ * 立即执行排队的某条消息：把目标提到队首并打断当前生成。
+ * 打断后，当前 sendMessage 的 finally 会调 pumpNext，执行的正是队首这条。
+ * @returns true 表示已找到并处理；false 表示该 queueId 不在队列中
+ */
+export function executeQueuedMessage(conversationId: string, queueId: string): boolean {
+  const queue = sessionQueue.get(conversationId)
+  if (!queue) return false
+  const idx = queue.findIndex((q) => q.queueId === queueId)
+  if (idx === -1) return false
+  const [item] = queue.splice(idx, 1)
+  if (!item) return false
+  queue.unshift(item) // 提到队首
+  broadcastQueueState(conversationId)
+  // 打断当前正在生成的；pumpNext 会从队首取出这条执行
+  activeControllers.get(conversationId)?.abort()
+  return true
+}
+
+/**
+ * 撤回排队中的某条消息（未开始执行前移除）。
+ * @returns true 表示已移除；false 表示不在队列中
+ */
+export function withdrawQueuedMessage(conversationId: string, queueId: string): boolean {
+  const queue = sessionQueue.get(conversationId)
+  if (!queue) return false
+  const before = queue.length
+  sessionQueue.set(conversationId, queue.filter((q) => q.queueId !== queueId))
+  const removed = queue.length !== before
+  if (removed && (sessionQueue.get(conversationId)?.length ?? 0) === 0) {
+    sessionQueue.delete(conversationId)
+  }
+  broadcastQueueState(conversationId)
+  return removed
 }
 
 /** 中止所有活跃的聊天流（应用退出时调用） */

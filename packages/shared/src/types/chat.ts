@@ -213,6 +213,8 @@ export interface ChatSendInput {
   thinkingEnabled?: boolean
   /** 本次请求启用的工具 ID 列表（由前端工具选择器决定） */
   enabledToolIds?: string[]
+  /** 前端生成的排队标识（用于撤回/立即执行该排队消息） */
+  clientQueueId?: string
 }
 
 // ===== 标题生成 =====
@@ -301,6 +303,18 @@ export interface StreamToolActivityEvent {
   activity: ChatToolActivity
 }
 
+/**
+ * 会话发送队列状态事件（主进程 → 渲染进程）
+ */
+export interface StreamQueueStateEvent {
+  /** 对话 ID */
+  conversationId: string
+  /** 当前是否正在流式生成 */
+  executing: boolean
+  /** 排队等待发送的消息数量（不含当前正在执行的） */
+  queuedCount: number
+}
+
 // ===== 模型选项 =====
 
 /**
@@ -363,7 +377,11 @@ export const CHAT_IPC_CHANNELS = {
   // 消息发送
   /** 发送消息（触发 AI 流式响应） */
   SEND_MESSAGE: 'chat:send-message',
-  /** 中止生成 */
+  /** 立即执行排队的消息（打断当前生成，插队执行） */
+  EXECUTE_QUEUED: 'chat:execute-queued',
+  /** 撤回排队中的消息 */
+  WITHDRAW_QUEUED: 'chat:withdraw-queued',
+  /** 中止生成（同时清空该会话待发送队列） */
   STOP_GENERATION: 'chat:stop-generation',
   /** 删除消息 */
   DELETE_MESSAGE: 'chat:delete-message',
@@ -415,4 +433,6 @@ export const CHAT_IPC_CHANNELS = {
   STREAM_ERROR: 'chat:stream:error',
   /** 工具活动事件（记忆工具调用/结果指示） */
   STREAM_TOOL_ACTIVITY: 'chat:stream:tool-activity',
+  /** 队列状态（主进程 → 渲染进程：排队数量/是否执行中） */
+  STREAM_QUEUE_STATE: 'chat:stream:queue-state',
 } as const

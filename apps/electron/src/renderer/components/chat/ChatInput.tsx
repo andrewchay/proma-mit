@@ -34,7 +34,7 @@ import {
   conversationDraftsAtom,
   currentMessagesAtom,
 } from '@/atoms/chat-atoms'
-import type { PendingAttachment } from '@/atoms/chat-atoms'
+import type { PendingAttachment, QueuedChatMessage } from '@/atoms/chat-atoms'
 import {
   useConversationModel,
   useConversationThinkingEnabled,
@@ -61,9 +61,15 @@ interface ChatInputProps {
   onStop: () => void
   /** 清除上下文回调 */
   onClearContext?: () => void
+  /** 排队中的消息列表（流式期间发起的、尚未执行的） */
+  queuedMessages?: QueuedChatMessage[]
+  /** 撤回排队中的消息 */
+  onWithdrawQueue?: (queueId: string) => void
+  /** 立即执行排队中的消息 */
+  onExecuteQueue?: (queueId: string) => void
 }
 
-export function ChatInput({ conversationId, streaming, pendingAttachments, onSetPendingAttachments, onSend, onStop, onClearContext }: ChatInputProps): React.ReactElement {
+export function ChatInput({ conversationId, streaming, pendingAttachments, onSetPendingAttachments, onSend, onStop, onClearContext, queuedMessages = [], onWithdrawQueue, onExecuteQueue }: ChatInputProps): React.ReactElement {
   const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   // 从 Map atom 读写草稿
   const draftsMap = useAtomValue(conversationDraftsAtom)
@@ -91,9 +97,9 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     [currentMessages],
   )
 
+  // 流式期间也允许发送（进入排队）；canSend 不再需要 !streaming
   const canSend = (content.trim().length > 0 || pendingAttachments.length > 0)
     && selectedModel !== null
-    && !streaming
 
   /**
    * 将文件列表添加为附件
@@ -361,6 +367,38 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
 
   return (
     <div className="px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]" data-input-mode="chat">
+        {/* 排队中的待发送消息（流式期间发起的） */}
+        {queuedMessages.length > 0 && (
+          <div className="mb-2 space-y-1">
+            {queuedMessages.map((q, idx) => (
+              <div
+                key={q.queueId}
+                className="group flex items-center gap-2 rounded-[8px] border border-border/60 bg-background/60 px-2.5 py-1.5 text-xs"
+              >
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] text-muted-foreground">
+                  {idx + 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  {q.content || (q.hasAttachments ? '(附件)' : '').slice(0, 60)}
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10"
+                  onClick={() => onExecuteQueue?.(q.queueId)}
+                >
+                  立即执行
+                </button>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                  onClick={() => onWithdrawQueue?.(q.queueId)}
+                >
+                  撤回
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {/* 卡片式输入容器：10px 圆角，0.5px border */}
         <div
           className={cn(

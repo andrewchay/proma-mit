@@ -140,7 +140,7 @@ import {
   autoArchiveConversations,
   searchConversationMessages,
 } from './lib/conversation-manager'
-import { sendMessage, stopGeneration, generateTitle } from './lib/chat-service'
+import { sendMessage, stopGeneration, generateTitle, executeQueuedMessage, withdrawQueuedMessage } from './lib/chat-service'
 import {
   saveAttachment,
   readAttachmentAsBase64,
@@ -818,6 +818,22 @@ export function registerIpcHandlers(): void {
     CHAT_IPC_CHANNELS.STOP_GENERATION,
     async (_, conversationId: string): Promise<void> => {
       stopGeneration(conversationId)
+    }
+  )
+
+  // 立即执行排队的消息（打断当前生成，插队执行）
+  ipcMain.handle(
+    CHAT_IPC_CHANNELS.EXECUTE_QUEUED,
+    async (_: unknown, payload: { conversationId: string; queueId: string }): Promise<boolean> => {
+      return executeQueuedMessage(payload.conversationId, payload.queueId)
+    }
+  )
+
+  // 撤回排队中的消息
+  ipcMain.handle(
+    CHAT_IPC_CHANNELS.WITHDRAW_QUEUED,
+    async (_: unknown, payload: { conversationId: string; queueId: string }): Promise<boolean> => {
+      return withdrawQueuedMessage(payload.conversationId, payload.queueId)
     }
   )
 

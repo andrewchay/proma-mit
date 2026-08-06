@@ -15,6 +15,7 @@ import {
   conversationsAtom,
   chatMessageRefreshAtom,
   pendingAgentRecommendationAtom,
+  queuedChatMessagesAtom,
 } from '@/atoms/chat-atoms'
 import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import type { ConversationStreamState } from '@/atoms/chat-atoms'
@@ -24,6 +25,7 @@ import type {
   StreamCompleteEvent,
   StreamErrorEvent,
   StreamToolActivityEvent,
+  StreamQueueStateEvent,
   GenerateTitleInput,
 } from '@gravitas/shared'
 
@@ -189,12 +191,31 @@ export function useGlobalChatListeners(): void {
       }
     )
 
+    // ===== 6. 会话发送队列状态 =====
+    const cleanupQueueState = window.electronAPI.onStreamQueueState(
+      (event: StreamQueueStateEvent) => {
+        // 后端广播排队数量，校正前端队列（撤回/立即执行后对齐）
+        store.set(queuedChatMessagesAtom, (prev) => {
+          const cur = prev.get(event.conversationId) ?? []
+          if (event.queuedCount === cur.length) return prev
+          // 以主进程实际排队数为准截断（保留靠前的条目）
+          if (event.queuedCount < cur.length) {
+            const next = new Map(prev)
+            next.set(event.conversationId, cur.slice(0, event.queuedCount))
+            return next
+          }
+          return prev
+        })
+      }
+    )
+
     return () => {
       cleanupChunk()
       cleanupReasoning()
       cleanupComplete()
       cleanupError()
       cleanupToolActivity()
+      cleanupQueueState()
     }
   }, [store]) // store 引用稳定，effect 只执行一次
 }

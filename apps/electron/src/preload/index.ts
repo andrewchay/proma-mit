@@ -62,6 +62,7 @@ import type {
   StreamCompleteEvent,
   StreamErrorEvent,
   StreamToolActivityEvent,
+  StreamQueueStateEvent,
   AttachmentSaveInput,
   AttachmentSaveResult,
   FileDialogResult,
@@ -300,8 +301,14 @@ export interface ElectronAPI {
   /** 发送消息（触发 AI 流式响应） */
   sendMessage: (input: ChatSendInput) => Promise<void>
 
-  /** 中止生成 */
+  /** 中止生成（同时清空待发送队列） */
   stopGeneration: (conversationId: string) => Promise<void>
+
+  /** 立即执行排队的消息（打断当前，插队执行） */
+  executeQueuedMessage: (conversationId: string, queueId: string) => Promise<boolean>
+
+  /** 撤回排队中的消息 */
+  withdrawQueuedMessage: (conversationId: string, queueId: string) => Promise<boolean>
 
   /** 删除指定消息 */
   deleteMessage: (conversationId: string, messageId: string) => Promise<ChatMessage[]>
@@ -446,6 +453,9 @@ export interface ElectronAPI {
 
   /** 订阅流式工具活动事件 */
   onStreamToolActivity: (callback: (event: StreamToolActivityEvent) => void) => () => void
+
+  /** 订阅会话发送队列状态（排队数量 / 是否执行中） */
+  onStreamQueueState: (callback: (event: StreamQueueStateEvent) => void) => () => void
 
   // ===== Agent 会话管理相关 =====
 
@@ -1490,6 +1500,14 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(CHAT_IPC_CHANNELS.STOP_GENERATION, conversationId)
   },
 
+  executeQueuedMessage: (conversationId: string, queueId: string) => {
+    return ipcRenderer.invoke(CHAT_IPC_CHANNELS.EXECUTE_QUEUED, { conversationId, queueId })
+  },
+
+  withdrawQueuedMessage: (conversationId: string, queueId: string) => {
+    return ipcRenderer.invoke(CHAT_IPC_CHANNELS.WITHDRAW_QUEUED, { conversationId, queueId })
+  },
+
   deleteMessage: (conversationId: string, messageId: string) => {
     return ipcRenderer.invoke(CHAT_IPC_CHANNELS.DELETE_MESSAGE, conversationId, messageId)
   },
@@ -1679,6 +1697,12 @@ const electronAPI: ElectronAPI = {
     const listener = (_: unknown, event: StreamToolActivityEvent): void => callback(event)
     ipcRenderer.on(CHAT_IPC_CHANNELS.STREAM_TOOL_ACTIVITY, listener)
     return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_TOOL_ACTIVITY, listener) }
+  },
+
+  onStreamQueueState: (callback: (event: StreamQueueStateEvent) => void) => {
+    const listener = (_: unknown, event: StreamQueueStateEvent): void => callback(event)
+    ipcRenderer.on(CHAT_IPC_CHANNELS.STREAM_QUEUE_STATE, listener)
+    return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_QUEUE_STATE, listener) }
   },
 
   // Agent 会话管理

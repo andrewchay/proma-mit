@@ -55,6 +55,19 @@ export interface ConversationStreamState {
  */
 export const streamingStatesAtom = atom<Map<string, ConversationStreamState>>(new Map())
 
+/** 某条排队待发送的消息（供前端展示排队贴片） */
+export interface QueuedChatMessage {
+  /** 主进程会话队列的 queueId，用于撤回/立即执行 */
+  queueId: string
+  content: string
+  hasAttachments: boolean
+}
+
+/**
+ * 会话级排队消息（conversationId → 排队条目，数组顺序即 FIFO 顺序）
+ */
+export const queuedChatMessagesAtom = atom<Map<string, QueuedChatMessage[]>>(new Map())
+
 /**
  * 当前正在流式输出的对话 ID 集合（派生只读原子）
  * 用于侧边栏绿色呼吸点指示器
