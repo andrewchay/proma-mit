@@ -542,19 +542,30 @@ export function getQueuedAgentMessageCount(sessionId: string): number {
  * 子会话（parentSessionId / delegationStatus=running），从而在侧栏父子树面板显示。
  * 不依赖父 Agent 自发调用 delegate_agents。
  */
-export function createAgentCollabDelegations(
+export async function createAgentCollabDelegations(
   parentSessionId: string,
   tasks: Array<{ title?: string; task: string; role?: string; expectedOutput?: string }>,
-): { delegations: Array<{ delegationId: string; childSessionId: string; title: string; status: string }>; failures: Array<{ index: number; title?: string; error: string }> } {
+): Promise<{ delegations: Array<{ delegationId: string; childSessionId: string; title: string; status: string }>; failures: Array<{ index: number; title?: string; error: string }> }> {
   const parent = getAgentSessionMeta(parentSessionId)
   if (!parent) return { delegations: [], failures: [{ index: 0, error: '父会话不存在' }] }
 
   const workspaceId = resolveCollaborationWorkspaceId(parent.workspaceId)
+  // 子会话需要有效 model；父会话 meta 未存 model 时，回退到渠道默认模型，
+  // 否则子会话因缺模型而无法真正运行（会创建成功但 status=failed、无输出）。
+  let modelId = parent.modelId || undefined
+  if (!modelId && parent.channelId) {
+    try {
+      const ch = await runtimeServices.credentials.resolveChannel(parent.channelId)
+      modelId = ch?.defaultModel || undefined
+    } catch {
+      /* 忽略，继续 */
+    }
+  }
   const ctx = {
     sessionId: parentSessionId,
     channelId: parent.channelId!,
     workspaceId,
-    modelId: parent.modelId || undefined,
+    modelId,
     agentRuntime: (parent.agentRuntime as 'proma' | 'pi' | 'ai-sdk' | 'claude' | undefined) ?? 'pi',
     permissionMode: (parent.permissionMode as PromaPermissionMode | undefined) ?? 'bypassPermissions',
     triggeredBy: 'user' as const,
@@ -662,9 +673,8 @@ export async function splitAndCreateCollabDelegations(
   mainTask: string,
 ): Promise<import('@gravitas/shared').CreateCollabDelegationsResult> {
   const tasks = await splitCollabMainTask(parentSessionId, mainTask)
-  return createAgentCollabDelegations(parentSessionId, tasks)
+  return await createAgentCollabDelegations(parentSessionId, tasks)
 }
-
 // ===== 文件操作 =====
 
 /**

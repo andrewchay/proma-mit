@@ -1775,7 +1775,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.CREATE_COLLAB_DELEGATIONS,
     async (_, input: import('@gravitas/shared').CreateCollabDelegationsInput): Promise<import('@gravitas/shared').CreateCollabDelegationsResult> => {
-      return createAgentCollabDelegations(input.parentSessionId, input.tasks)
+      return await createAgentCollabDelegations(input.parentSessionId, input.tasks)
     }
   )
 
