@@ -156,11 +156,13 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
 
   // 分页拉取全企业用户（最多拉 5 页 × 50 = 250 人，超过则截断）
   let pageToken = ''
+  let feishuUsersRaw = ''
   for (let page = 0; page < 5; page++) {
     try {
       const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
       const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
       const data = await safeJson<any>(resp)
+      if (page === 0) feishuUsersRaw = JSON.stringify(data).slice(0, 400)
       if (data.code !== 0) {
         throw feishuError(data.code, `获取用户失败: ${data.msg ?? '未知错误'}`)
       }
@@ -205,16 +207,17 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
         throw feishuError(deptData.code, `读取根部门/部门失败: ${deptData.msg ?? '未知错误'}`)
       }
       const childrenCount = deptChildren.length
+      const probeInfo = `users响应[${feishuUsersRaw}] dept响应[${JSON.stringify(deptData).slice(0, 200)}]`
       if (childrenCount === 0) {
         throw new Error(
-          `飞书通讯录为空：接口已连通，但根部门下子部门为 0（可用范围=所有员工时仍为空，说明通讯录数据权限范围未覆盖组织架构）。` +
-            `原始: ${JSON.stringify(deptData).slice(0, 200)} ` +
-            `请到飞书开放平台该应用权限设置中，找到「通讯录数据权限范围」并授予包含你所在部门的组织架构节点（至少根部门），重新发布审核。`
+          `飞书通讯录为空：接口已连通，但根部门下子部门为 0。${probeInfo} ` +
+            `若 users code=0 且 items 为空，多为「通讯录数据权限范围」未覆盖组织架构：` +
+            `请到飞书开放平台该应用权限设置中，找到通讯录相关权限的数据范围/可见范围，授予包含你所在部门的组织架构节点（至少根部门），重新发布审核。`
         )
       }
       throw new Error(
-        '飞书通讯录为空：users 接口返回 0 个用户，但根部门下有子部门。请到飞书开放平台确认 contact:user.base:readonly 权限已' +
-            '授予并发布审核通过，且可见范围包含这些部门节点。'
+        `飞书通讯录为空：users 接口返回 0 个用户，但根部门下有子部门。${probeInfo} ` +
+            `请到飞书开放平台确认 contact:user.base:readonly 权限已授予并发布审核通过，且可见范围包含这些部门节点。`
       )
     } catch (err) {
       if (err instanceof Error && /飞书通讯录为空/.test(err.message)) {
