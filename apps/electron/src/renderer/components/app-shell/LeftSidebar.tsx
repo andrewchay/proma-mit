@@ -97,6 +97,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import type { ConversationMeta, AgentSessionMeta, WorkspaceCapabilities } from '@gravitas/shared'
+import { WorkflowSidebarList } from '@/components/workflow/WorkflowSidebarList'
 
 export interface LeftSidebarProps {
   /** 可选固定宽度，默认使用 CSS 响应式宽度 */
@@ -1189,7 +1190,11 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               <button
                 type="button"
                 aria-label="Workflow 工作台"
-                onClick={() => setActiveView('workflow')}
+                onClick={() => {
+                  setActiveView('workflow')
+                  // 折叠态下展开侧边栏，露出 workflow 列表（模板/我的 Workflow/运行历史）与新建入口
+                  setSidebarCollapsed(false)
+                }}
                 className={cn(
                   'relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag',
                   activeView === 'workflow'
@@ -1308,6 +1313,73 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     )
   }
 
+  /** 工作模块区块（可拖动分隔条 / 收到底部 / 点击箭头展开），供项目列表与 workflow 列表两种视图复用 */
+  const renderWorkModule = (): React.ReactElement => (
+    <div className="flex-shrink-0">
+      {/* 分隔条：可拖动 + 点击箭头折叠/展开 */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        onMouseDown={handleWorkModuleResizeStart}
+        className="group/resize relative flex items-center justify-center h-[7px] cursor-row-resize select-none titlebar-no-drag"
+      >
+        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-border/50 group-hover/resize:bg-primary/40 transition-colors" />
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); handleToggleWorkModule() }}
+          className="relative z-10 flex items-center justify-center size-4 rounded-full bg-background border border-border/60 text-foreground/35 hover:text-foreground/70 hover:border-primary/40 transition-colors shadow-sm"
+          title={workModuleCollapsed ? '展开工作模块' : '收起到底部'}
+        >
+          <ChevronDown size={10} className={cn('transition-transform duration-150', workModuleCollapsed && 'rotate-180')} />
+        </button>
+      </div>
+
+      {/* 工作模块内容：折叠时高度 0 隐藏，拖动时按高度撑开 */}
+      <div
+        className="overflow-hidden"
+        style={{ height: workModuleCollapsed ? 0 : Math.max(workModuleHeight, 64) }}
+      >
+        <div className="px-2 pt-1 pb-1">
+          <div className="px-2 py-1 text-[11px] font-medium text-foreground/40 select-none">
+            工作模块
+          </div>
+          <div className="flex flex-col gap-0.5 mt-1">
+            {CORE_WORK_MODULES.map(({ id, label, icon: Icon }) => {
+              const active = activeView === id
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveView(id)}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                    active
+                      ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                      : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+                  )}
+                >
+                  <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
+                  <span className="flex-1 text-left">{label}</span>
+                </button>
+              )
+            })}
+            <button
+              onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
+              className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+            >
+              <Bot size={16} className="text-foreground/40" />
+              <span className="flex-1 text-left">Agent 技能</span>
+              {capabilities && (
+                <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
+                  {capabilities.skills.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   // ===== 展开状态：完整侧边栏 =====
   return (
     <div
@@ -1400,8 +1472,15 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         </div>
       )}
 
-      {/* Agent 模式 active 视图：项目列表 + 自动任务常驻（独立模块） */}
-      {mode === 'agent' && viewMode === 'active' ? (
+      {/* Workflow 模式：侧边栏显示工作流列表（模板 / 我的 Workflow / 运行历史），底部工作模块常驻 */}
+      {activeView === 'workflow' ? (
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="px-3 pt-3 pb-2 flex-1 min-h-0">
+            <WorkflowSidebarList />
+          </div>
+          {renderWorkModule()}
+        </div>
+      ) : mode === 'agent' && viewMode === 'active' ? (
         <div className="flex-1 flex flex-col min-h-0">
           {/* ===== 项目列表（常驻） ===== */}
           <>
@@ -1589,70 +1668,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 )}
               </div>
 
-              {/* ===== 工作模块（可拖动分隔条调整高度 / 收到底部 / 点击箭头展开） ===== */}
-              <div className="flex-shrink-0">
-                {/* 分隔条：可拖动 + 点击箭头折叠/展开 */}
-                <div
-                  role="separator"
-                  aria-orientation="horizontal"
-                  onMouseDown={handleWorkModuleResizeStart}
-                  className="group/resize relative flex items-center justify-center h-[7px] cursor-row-resize select-none titlebar-no-drag"
-                >
-                  <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-px bg-border/50 group-hover/resize:bg-primary/40 transition-colors" />
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleToggleWorkModule() }}
-                    className="relative z-10 flex items-center justify-center size-4 rounded-full bg-background border border-border/60 text-foreground/35 hover:text-foreground/70 hover:border-primary/40 transition-colors shadow-sm"
-                    title={workModuleCollapsed ? '展开工作模块' : '收起到底部'}
-                  >
-                    <ChevronDown size={10} className={cn('transition-transform duration-150', workModuleCollapsed && 'rotate-180')} />
-                  </button>
-                </div>
-
-                {/* 工作模块内容：折叠时高度 0 隐藏，拖动时按高度撑开 */}
-                <div
-                  className="overflow-hidden"
-                  style={{ height: workModuleCollapsed ? 0 : Math.max(workModuleHeight, 64) }}
-                >
-                  <div className="px-2 pt-1 pb-1">
-                    <div className="px-2 py-1 text-[11px] font-medium text-foreground/40 select-none">
-                      工作模块
-                    </div>
-                    <div className="flex flex-col gap-0.5 mt-1">
-                      {CORE_WORK_MODULES.map(({ id, label, icon: Icon }) => {
-                        const active = activeView === id
-                        return (
-                          <button
-                            key={id}
-                            onClick={() => setActiveView(id)}
-                            className={cn(
-                              'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
-                              active
-                                ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-                                : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
-                            )}
-                          >
-                            <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
-                            <span className="flex-1 text-left">{label}</span>
-                          </button>
-                        )
-                      })}
-                      <button
-                        onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
-                        className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
-                      >
-                        <Bot size={16} className="text-foreground/40" />
-                        <span className="flex-1 text-left">Agent 技能</span>
-                        {capabilities && (
-                          <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
-                            {capabilities.skills.length}
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* 工作模块（复用 renderWorkModule，项目列表与 workflow 列表共用底部区块） */}
+              {renderWorkModule()}
           </>
         </div>
       ) : (
