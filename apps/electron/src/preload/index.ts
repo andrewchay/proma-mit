@@ -146,6 +146,8 @@ import type {
   WeChatBridgeState,
   AgentQueueMessageInput,
   AgentQueueStateEvent,
+  CreateCollabDelegationsInput,
+  CreateCollabDelegationsResult,
   PendingRequestsSnapshot,
 } from '@gravitas/shared'
 import type {
@@ -591,6 +593,9 @@ export interface ElectronAPI {
 
   /** 监听 Agent 发送队列状态变化 */
   onAgentQueueMessageStatus: (callback: (event: AgentQueueStateEvent) => void) => () => void
+
+  /** 手动创建多个并行协作子会话（侧栏父子树面板） */
+  createCollabDelegations: (input: CreateCollabDelegationsInput) => Promise<CreateCollabDelegationsResult>
 
   // ===== Agent 后台任务管理 =====
 
@@ -1855,6 +1860,9 @@ const electronAPI: ElectronAPI = {
     const listener = (_: unknown, event: AgentQueueStateEvent): void => callback(event)
     ipcRenderer.on(AGENT_IPC_CHANNELS.QUEUED_MESSAGE_STATUS, listener)
     return () => { ipcRenderer.removeListener(AGENT_IPC_CHANNELS.QUEUED_MESSAGE_STATUS, listener) }
+  },
+  createCollabDelegations: (input: CreateCollabDelegationsInput) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_COLLAB_DELEGATIONS, input)
   },
 
   // Agent 后台任务管理

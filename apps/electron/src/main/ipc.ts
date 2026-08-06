@@ -175,7 +175,7 @@ import {
   searchAgentSessionMessages,
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
-import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
+import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, createAgentCollabDelegations, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
@@ -1768,6 +1768,14 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE,
     async (_, payload: { sessionId: string; queueId: string }): Promise<boolean> => {
       return promoteQueuedAgentMessage(payload.sessionId, payload.queueId)
+    }
+  )
+
+  // 手动创建多个并行协作子会话（侧栏父子树面板）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.CREATE_COLLAB_DELEGATIONS,
+    async (_, input: import('@gravitas/shared').CreateCollabDelegationsInput): Promise<import('@gravitas/shared').CreateCollabDelegationsResult> => {
+      return createAgentCollabDelegations(input.parentSessionId, input.tasks)
     }
   )
 

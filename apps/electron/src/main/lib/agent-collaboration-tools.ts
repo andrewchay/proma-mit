@@ -1767,3 +1767,54 @@ export function buildRuntimeCollaborationTools(ctx: CollaborationToolContext): A
 
   return tools
 }
+
+// ===== 供前端手动触发「协作子任务」的导出入口 =====
+
+/** 一次前端触发的协作子会话创建结果 */
+export interface CollabDelegationCreateResult {
+  delegationId: string
+  childSessionId: string
+  title: string
+  status: AgentDelegationStatus
+}
+
+/**
+ * 手动创建多个并行协作子会话（供前端「发起协作子任务」入口直接调用）。
+ *
+ * 复用与内置 delegate_agents 工具完全相同的 startDelegation 底层，但由前端 IPC
+ * 显式驱动，避免「父 Agent 是否自发调用 collaboration 工具」的不确定性。
+ * 逐条创建并容错：单条失败不影响其余。
+ */
+export function createCollaborationDelegations(
+  ctx: CollaborationToolContext,
+  tasks: Array<{ title?: string; task: string; role?: AgentDelegationRole; expectedOutput?: string }>,
+): { delegations: CollabDelegationCreateResult[]; failures: Array<{ index: number; title?: string; error: string }> } {
+  const parent = getAgentSessionMeta(ctx.sessionId)
+  const delegationsOut: CollabDelegationCreateResult[] = []
+  const failures: Array<{ index: number; title?: string; error: string }> = []
+
+  tasks.forEach((item, index) => {
+    try {
+      const created = startDelegation(ctx, parent, {
+        title: item.title,
+        task: item.task,
+        role: item.role,
+        expectedOutput: item.expectedOutput,
+      })
+      delegationsOut.push({
+        delegationId: created.record.delegationId,
+        childSessionId: created.record.childSessionId,
+        title: created.record.title,
+        status: created.record.status,
+      })
+    } catch (error) {
+      failures.push({
+        index,
+        title: item.title,
+        error: error instanceof Error ? error.message : '未知错误',
+      })
+    }
+  })
+
+  return { delegations: delegationsOut, failures }
+}

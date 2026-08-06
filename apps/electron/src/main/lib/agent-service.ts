@@ -45,7 +45,8 @@ import { getAgentSessionWorkspacePath, getWorkspaceFilesDir, resolvePathWithinDi
 import { createElectronRuntimeServices } from './agent-runtime/runtime-services'
 import { GoalCoordinator } from './goal-runtime/goal-coordinator'
 import { ProactiveScheduler } from './proactive-scheduler'
-import { createAgentSession } from './agent-session-manager'
+import { createAgentSession, getAgentSessionMeta } from './agent-session-manager'
+import { createCollaborationDelegations, resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
 
 // ===== 实例创建 =====
 
@@ -525,6 +526,37 @@ export function cancelQueuedAgentMessage(sessionId: string, queueId: string): bo
 /** 获取会话当前排队消息数（不含正在执行中的那一条） */
 export function getQueuedAgentMessageCount(sessionId: string): number {
   return orchestrator.getQueuedMessageCount(sessionId)
+}
+
+// ===== 协作子会话（手动并发创建入口） =====
+
+/**
+ * 从前端「发起协作子任务」入口手动创建多个并行协作子会话。
+ *
+ * 从父会话元数据推导 CollaborationToolContext（channelId / workspaceId /
+ * agentRuntime / modelId / permissionMode），复用 collaboration 底层创建真实
+ * 子会话（parentSessionId / delegationStatus=running），从而在侧栏父子树面板显示。
+ * 不依赖父 Agent 自发调用 delegate_agents。
+ */
+export function createAgentCollabDelegations(
+  parentSessionId: string,
+  tasks: Array<{ title?: string; task: string; role?: string; expectedOutput?: string }>,
+): { delegations: Array<{ delegationId: string; childSessionId: string; title: string; status: string }>; failures: Array<{ index: number; title?: string; error: string }> } {
+  const parent = getAgentSessionMeta(parentSessionId)
+  if (!parent) return { delegations: [], failures: [{ index: 0, error: '父会话不存在' }] }
+
+  const workspaceId = resolveCollaborationWorkspaceId(parent.workspaceId)
+  const ctx = {
+    sessionId: parentSessionId,
+    channelId: parent.channelId!,
+    workspaceId,
+    modelId: parent.modelId || undefined,
+    agentRuntime: (parent.agentRuntime as 'proma' | 'pi' | 'ai-sdk' | 'claude' | undefined) ?? 'pi',
+    permissionMode: (parent.permissionMode as PromaPermissionMode | undefined) ?? 'bypassPermissions',
+    triggeredBy: 'user' as const,
+  }
+
+  return createCollaborationDelegations(ctx, tasks as Array<{ title?: string; task: string; role?: 'explore' | 'research' | 'implement' | 'review' | 'custom'; expectedOutput?: string }>)
 }
 
 // ===== 文件操作 =====

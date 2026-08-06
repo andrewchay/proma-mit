@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/shared",
-  "version": "0.1.53",
+  "version": "0.1.54",
   "license": "BUSL-1.1",
   "description": "Shared types, configs and utilities for proma",
   "type": "module",

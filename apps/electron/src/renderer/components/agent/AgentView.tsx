@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target, Network } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -99,6 +99,7 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
+import { CollaborateDelegationDialog } from './CollaborateDelegationDialog'
 import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage, SDKTextBlock, SDKUserMessage } from '@gravitas/shared'
 import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@gravitas/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
@@ -1993,6 +1994,33 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     window.electronAPI.promoteQueuedAgentMessage(sessionId, queueId).catch(console.error)
   }, [sessionId])
 
+  // ===== 协作子任务（并行创建，侧栏父子树面板） =====
+  const [collabDialogOpen, setCollabDialogOpen] = React.useState(false)
+
+  /** 创建并并行执行多个协作子会话；创建成功后关闭弹窗，侧栏树会自动刷新显示 */
+  const handleCreateCollabDelegations = React.useCallback(async (tasks: Array<{ title?: string; task: string }>): Promise<void> => {
+    if (tasks.length === 0) {
+      toast.error('请至少填写一个子任务')
+      return
+    }
+    try {
+      const result = await window.electronAPI.createCollabDelegations({ parentSessionId: sessionId, tasks })
+      const created = result.delegations ?? []
+      if (created.length > 0) {
+        toast.success(`已并行创建 ${created.length} 个协作子会话`, {
+          description: '它们已在运行中，可在左侧栏对应项目下展开查看。',
+        })
+        setCollabDialogOpen(false)
+        // 刷新会话列表使子树最新
+        window.electronAPI.listAgentSessions().then((sessions) => store.set(agentSessionsAtom, sessions)).catch(console.error)
+      } else if ((result.failures ?? []).length > 0) {
+        toast.error('协作子会话创建失败', { description: result.failures[0]?.error ?? '未知错误' })
+      }
+    } catch (error) {
+      toast.error('创建协作子会话失败', { description: error instanceof Error ? error.message : String(error) })
+    }
+  }, [sessionId, store])
+
   const inputToolbarItems = React.useMemo<ToolbarItem[]>(() => [
     {
       key: 'model',
@@ -2036,6 +2064,28 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       ),
     },
     { key: 'speech', node: <SpeechButton className="size-[36px] shrink-0 rounded-full" /> },
+    {
+      key: 'collaboration',
+      node: (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-[36px] shrink-0 rounded-full text-foreground/60 hover:text-foreground"
+              onClick={() => setCollabDialogOpen(true)}
+              title="并行协作子任务"
+            >
+              <Network size={18} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>并行协作子任务（创建可追踪的协作子会话树）</p>
+          </TooltipContent>
+        </Tooltip>
+      ),
+    },
     {
       key: 'attach-file',
       node: (
@@ -2410,6 +2460,13 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+
+    {/* 并行协作子任务弹窗（创建可追踪的子会话树） */}
+    <CollaborateDelegationDialog
+      open={collabDialogOpen}
+      onOpenChange={setCollabDialogOpen}
+      onSubmit={handleCreateCollabDelegations}
+    />
     </>
   )
 }

@@ -1231,6 +1231,34 @@ export interface AgentQueueMessageInput {
   interrupt?: boolean
 }
 
+/** 协作子会话任务项（手动并发创建入口） */
+export interface CollabDelegationTask {
+  /** 子会话标题（可选，缺省用协作：任务） */
+  title?: string
+  /** 子任务说明（发给子 Agent 的完整任务） */
+  task: string
+  /** 子任务角色（explore/research/implement/review/custom） */
+  role?: 'explore' | 'research' | 'implement' | 'review' | 'custom'
+  /** 期望输出格式提示 */
+  expectedOutput?: string
+}
+
+/** 手动创建协作子会话的输入 */
+export interface CreateCollabDelegationsInput {
+  /** 父会话 ID */
+  parentSessionId: string
+  /** 要并行创建的子任务列表 */
+  tasks: CollabDelegationTask[]
+}
+
+/** 手动创建协作子会话的结果 */
+export interface CreateCollabDelegationsResult {
+  /** 成功创建的协作子会话 */
+  delegations: Array<{ delegationId: string; childSessionId: string; title: string; status: string }>
+  /** 创建失败项 */
+  failures: Array<{ index: number; title?: string; error: string }>
+}
+
 // ===== 会话迁移输入 =====
 
 /**
@@ -1846,6 +1874,10 @@ export const AGENT_IPC_CHANNELS = {
   PERMISSION_RESPOND: 'agent:permission:respond',
   /** 热切换指定会话的权限模式（运行中生效，不广播到其他会话） */
   UPDATE_SESSION_PERMISSION_MODE: 'agent:update-session-permission-mode',
+
+  // 协作子会话（手动并发创建，让侧栏父子树面板有内容可展示）
+  /** 手动创建多个并行协作子会话（渲染进程 → 主进程） */
+  CREATE_COLLAB_DELEGATIONS: 'agent:create-collab-delegations',
 
   // AskUserQuestion 交互式问答
   /** AskUser 响应（渲染进程 → 主进程） */
