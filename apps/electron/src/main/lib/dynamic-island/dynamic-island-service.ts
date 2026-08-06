@@ -4,8 +4,8 @@
  * 架构基于官方 Proma Agent Island 的会话状态机升级：
  * - 主进程状态机拥有全部产品状态（session → phase/detail/attention），
  *   原生渲染层只负责画；
- * - phase 语义：running 是执行脉冲，needs-interaction 需用户处理，
- *   completed/error 保留未读窗口后消失；
+ * - phase 语义：running 记录在案但不主动弹窗，needs-interaction/completed/error
+ *   这类"需要关注"的会话才会触发灵动岛弹窗（弹窗只服务于需用户注意的场景）；
  * - 同一时刻渲染 attention 最高的会话（常驻胶囊），点击 dismiss 后切到下一个或隐藏；
  * - 三源归一：AI 主动调用、Agent 事件自动通知、手动测试共用 NotifyRequest；
  * - 渲染子进程隔离（island.fork.js + island.node），原生不进入主进程；
@@ -170,10 +170,14 @@ class DynamicIslandService {
     return session
   }
 
-  /** 会话是否应出现在灵动岛（running 常驻脉冲；needs-interaction/error 仅在 attention 为 true 时显示；completed 保留未读窗口） */
+  /**
+   * 会话是否仍被灵动岛跟踪（用于 pill 聚合与面板统计）。
+   * 注意：是否真正弹窗由 renderPrioritySession 再叠加 attentionScore>0 过滤——
+   * 也就是说 running 会话只在统计里可见，不触发弹窗。
+   */
   private isIslandSession(session: InternalSessionSnapshot, now: number): boolean {
     if (now - session.lastActivityAt >= 24 * 60 * 60_000) return false
-    // 用户点击 dismiss 过、且当前无需注意的会话不再自动重新显示（避免 running 反复刷屏“关不掉”）
+    // 用户点击 dismiss 过、且当前无需注意的会话不再自动重新显示
     if (session.dismissed && !session.attention) return false
     if (session.phase === 'running') return true
     if ((session.phase === 'needs-interaction' || session.phase === 'error') && session.attention) return true
@@ -210,8 +214,10 @@ class DynamicIslandService {
   /** 渲染 priority 会话为常驻胶囊；无需要用户注意的会话则 clear */
   private renderPrioritySession(): void {
     const now = Date.now()
+    // 仅在"需要用户注意"（审批/提问/计划、失败、完成未读）时才触发灵动岛弹窗；
+    // 任务执行中（running）纯执行脉冲不再弹窗打扰，避免刷屏。
     const visible = [...this.sessions.values()]
-      .filter((session) => this.isIslandSession(session, now))
+      .filter((session) => this.isIslandSession(session, now) && this.attentionScore(session) > 0)
       .sort((a, b) => {
         const score = this.attentionScore(b) - this.attentionScore(a)
         if (score !== 0) return score
@@ -223,15 +229,16 @@ class DynamicIslandService {
       return
     }
 
+    // 能走到这里的一定是 needs-interaction / error / completed 未读（attentionScore > 0），
+    // 需要用户处理时常驻（直到点击/pending 处理），不再有 running 的 2s 执行脉冲。
     const priority = visible[0]!
-    const needsAttention = this.attentionScore(priority) > 0
     const request: DynamicIslandRequest = {
       id: `session:${priority.sessionId}`,
       title: truncate(priority.title || summaryForPhase(priority.phase), 48),
       body: truncate(priority.detail || summaryForPhase(priority.phase), 72),
       level: levelForPhase(priority.phase),
-      // 需要用户注意的常驻（直到点击处理）；running 显示 2s 执行脉冲后自动收起
-      timeoutMs: needsAttention ? 0 : 2000,
+      // 需要用户注意的常驻（直到点击处理）
+      timeoutMs: 0,
       // 所有会话显示都可点击：点击引导进入会话，避免“看得见点不动”。
       // 原生层 clickable=true 时整个灵动岛区域可点（见 island_addon.mm）。
       activateOnClick: true,

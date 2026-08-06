@@ -67,6 +67,14 @@ function attentionScore(phase: string, unread: boolean): number {
   return 0
 }
 
+/**
+ * 是否触发灵动岛弹窗（与 renderPrioritySession 一致）：只有当注意力分值大于 0
+ * （needs-interaction/error/completed 未读）才弹窗；running 执行中（无需审批）不触发。
+ */
+function shouldRenderPill(phase: string, unread: boolean): boolean {
+  return attentionScore(phase, unread) > 0
+}
+
 function levelForPhase(phase: string): string {
   switch (phase) {
     case 'needs-interaction': return 'warning'
@@ -103,6 +111,15 @@ describe('会话状态机语义', () => {
     expect(levelForPhase('running')).toBe('progress')
     expect(summaryForPhase('needs-interaction')).toBe('需要你的处理')
     expect(summaryForPhase('completed')).toBe('任务已完成')
+  })
+
+  test('无需审批（running 执行中）不触发灵动岛弹窗', () => {
+    expect(shouldRenderPill('needs-interaction', false)).toBe(true)
+    expect(shouldRenderPill('error', true)).toBe(true)
+    expect(shouldRenderPill('completed', true)).toBe(true)
+    // running / completed 无未读：不触发弹窗
+    expect(shouldRenderPill('running', false)).toBe(false)
+    expect(shouldRenderPill('completed', false)).toBe(false)
   })
 })
 
