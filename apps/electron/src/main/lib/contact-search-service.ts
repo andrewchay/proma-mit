@@ -164,8 +164,9 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
       if (data.code !== 0) {
         throw feishuError(data.code, `获取用户失败: ${data.msg ?? '未知错误'}`)
       }
-      const items = data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string; department_ids?: string[] }> | undefined
-      for (const u of items ?? []) {
+      const items = (data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string; department_ids?: string[] }> | undefined) ?? []
+      console.log(`[ContactSearch] 飞书用户分页第${page + 1}页: code=${data.code} items=${items.length} has_more=${data.data?.has_more} total=${data.data?.total}`)
+      for (const u of items) {
         if (!u.name) continue
         const userId = u.open_id || u.union_id
         if (!userId || seen.has(userId)) continue
@@ -187,6 +188,13 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
   // 一个成员都没有但有错误 → 抛出，让前端显示具体原因
   if (collected.length === 0 && errors.length > 0) {
     throw new Error(`飞书通讯录获取失败: ${errors.join('; ')}`)
+  }
+  // 一个成员都没有且无错误 → 说明接口通了但确实没有可访问的用户，给出诊断提示
+  if (collected.length === 0) {
+    throw new Error(
+      '飞书通讯录为空：接口已连通但未返回任何用户。请确认该飞书应用的通讯录可见范围已授权（至少包含根部门），' +
+        '且在权限管理中已授予 contact:user.base:readonly 并重新发布版本。'
+    )
   }
   return collected
 }
