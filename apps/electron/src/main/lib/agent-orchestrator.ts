@@ -56,6 +56,7 @@ import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, g
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getRuntimeStatus } from './runtime-init'
 import { getSettings } from './settings-service'
+import { resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
 import { buildSystemPrompt, buildDynamicContext, buildBuiltinAgents } from './agent-prompt-builder'
 import type { SubAgentInput } from './agent-runtime/types'
 import { permissionService } from './agent-permission-service'
@@ -594,6 +595,22 @@ export class AgentOrchestrator {
         () => permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
       )
 
+      // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
+      const collabWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
+      const collabExtraTools = collabWorkspaceId && !isDelegationSession
+        ? await import('./agent-collaboration-tools').then((m) => {
+            console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, collabWs: collabWorkspaceId, isDelegationSession })
+            return m.buildRuntimeCollaborationTools({
+              sessionId,
+              channelId,
+              modelId: modelId || undefined,
+              workspaceId: collabWorkspaceId,
+              permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+              agentRuntime,
+              triggeredBy,
+            })
+          })
+        : undefined
       const queryOptions: ProviderAgnosticAgentQueryOptions = {
         sessionId,
         agentRuntime,
@@ -680,21 +697,8 @@ export class AgentOrchestrator {
         onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
           ? (checkpoint: AgentGoalCheckpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
           : undefined,
-        // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
-        extraTools: workspaceId && !isDelegationSession
-          ? await import('./agent-collaboration-tools').then(async (m) => {
-              console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, channelId, isDelegationSession })
-              return m.buildRuntimeCollaborationTools({
-                sessionId,
-                channelId,
-                modelId: modelId || undefined,
-                workspaceId,
-                permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
-                agentRuntime,
-                triggeredBy,
-              })
-            })
-          : undefined,
+        // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区
+        extraTools: collabExtraTools,
       }
 
       const iterable = this.adapter.query(queryOptions)

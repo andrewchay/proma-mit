@@ -13,6 +13,7 @@ import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } fro
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'
+import { resolveCollaborationWorkspaceId } from '../agent-collaboration-tools'
 import { enrichMessageWithDocuments } from '../agent-runtime/attachment-enrichment'
 import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
@@ -221,10 +222,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       canUseTool,
       mcpTools,
     })
-    // 内置 collaboration 协作子会话工具：仅在绑定项目的父会话可用
-    const collaborationAvailable = !!workspaceId && !!input.channelId && !isDelegationSession
+    // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
+    const collaborationWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
+    const collaborationAvailable = !!collaborationWorkspaceId && !!input.channelId && !isDelegationSession
     console.log('[Pi Runtime] collaboration 注入判定:', {
-      sessionId, workspaceId, channelId: input.channelId, isDelegationSession, collaborationAvailable,
+      sessionId, workspaceId, collabWs: collaborationWorkspaceId, channelId: input.channelId, isDelegationSession, collaborationAvailable,
     })
     if (collaborationAvailable) {
       try {
@@ -234,7 +236,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           sessionId,
           channelId: input.channelId!,
           modelId: model,
-          workspaceId,
+          workspaceId: collaborationWorkspaceId,
           permissionMode,
           agentRuntime: 'pi',
           triggeredBy,

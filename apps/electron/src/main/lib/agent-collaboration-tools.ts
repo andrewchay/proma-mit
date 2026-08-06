@@ -38,6 +38,27 @@ import {
   resolveDelegationPermissionMode,
 } from './agent-collaboration-utils'
 import { assertEnabledModelForChannel, listEnabledAgentModelsForChannel } from './agent-model-selection'
+import { getAgentWorkspace, listAgentWorkspaces } from './agent-workspace-manager'
+import { getSettings } from './settings-service'
+
+/**
+ * 解析用于 collaboration 子会话的有效 workspaceId。
+ * 优先使用会话绑定/传入的 workspaceId；为空或无效时依次 fallback：
+ *   1. 全局默认工作区（settings.agentWorkspaceId）
+ *   2. 最近使用的最新工作区
+ * 这样大部分 Agent 会话默认都能注入 collaboration 子会话工具。
+ */
+export function resolveCollaborationWorkspaceId(fallbackWorkspaceId?: string): string | undefined {
+  const tryValid = (id?: string): string | undefined => (id && getAgentWorkspace(id) ? id : undefined)
+  const direct = tryValid(fallbackWorkspaceId)
+  if (direct) return direct
+  const defaultId = tryValid(getSettings()?.agentWorkspaceId as string | undefined)
+  if (defaultId) return defaultId
+  const all = listAgentWorkspaces()
+  const newest = all[0]
+  if (newest && tryValid(newest.id)) return newest.id
+  return undefined
+}
 
 interface CollaborationToolContext {
   sessionId: string
