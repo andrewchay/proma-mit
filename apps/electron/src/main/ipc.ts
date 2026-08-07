@@ -1660,6 +1660,15 @@ export function registerIpcHandlers(): void {
     const { listTodoEvents } = await import('./lib/todo-event-service')
     return listTodoEvents(query)
   })
+  // 团队档案（PH2-A）
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_TEAM_PROFILE, async (_ev, workspaceSlug: string) => {
+    const { getTeamProfile } = await import('./lib/team-profile-service')
+    return getTeamProfile(workspaceSlug)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.UPDATE_TEAM_PROFILE, async (_ev, workspaceSlug: string, patch: import('@gravitas/shared').TeamProfilePatch) => {
+    const { updateTeamProfile } = await import('./lib/team-profile-service')
+    return updateTeamProfile(workspaceSlug, patch)
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,

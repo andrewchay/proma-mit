@@ -509,5 +509,16 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     sections.push(`<working_directory>${ctx.agentCwd}</working_directory>`)
   }
 
+  // PH2-A：团队档案上下文（最简大上下文同步）
+  if (ctx.workspaceSlug) {
+    try {
+      const { buildTeamProfileContext } = require('./team-profile-service')
+      const teamCtx = buildTeamProfileContext(ctx.workspaceSlug)
+      if (teamCtx) sections.push(teamCtx)
+    } catch {
+      // 团队档案读取失败静默
+    }
+  }
+
   return sections.join('\n\n')
 }

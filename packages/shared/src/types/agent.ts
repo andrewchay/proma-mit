@@ -1182,6 +1182,17 @@ export interface TodoEventQuery {
   limit?: number
 }
 
+/** 团队档案（PH2-A） */
+export interface TeamProfile {
+  teamName: string
+  membersSummary: string
+  focusAreas: string
+  preferences: string
+  updatedAt: number
+}
+
+export type TeamProfilePatch = Partial<Pick<TeamProfile, 'teamName' | 'membersSummary' | 'focusAreas' | 'preferences'>>
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1848,6 +1859,9 @@ export const AGENT_IPC_CHANNELS = {
   LIST_FILE_EVENTS: 'agent:list-file-events',
   /** Todo 事件流（PH2-A） */
   LIST_TODO_EVENTS: 'agent:list-todo-events',
+  /** 团队档案（PH2-A） */
+  GET_TEAM_PROFILE: 'agent:get-team-profile',
+  UPDATE_TEAM_PROFILE: 'agent:update-team-profile',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

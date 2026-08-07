@@ -671,6 +671,9 @@ export interface ElectronAPI {
   listFileEvents: (query?: import('@gravitas/shared').FileEventQuery) => Promise<import('@gravitas/shared').WorkspaceFileEvent[]>
   /** Todo 事件流（PH2-A） */
   listTodoEvents: (query?: import('@gravitas/shared').TodoEventQuery) => Promise<import('@gravitas/shared').TodoEvent[]>
+  /** 团队档案（PH2-A） */
+  getTeamProfile: (workspaceSlug: string) => Promise<import('@gravitas/shared').TeamProfile>
+  updateTeamProfile: (workspaceSlug: string, patch: import('@gravitas/shared').TeamProfilePatch) => Promise<import('@gravitas/shared').TeamProfile>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -1991,6 +1994,14 @@ const electronAPI: ElectronAPI = {
 
   listTodoEvents: (query?: import('@gravitas/shared').TodoEventQuery) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_TODO_EVENTS, query)
+  },
+
+  getTeamProfile: (workspaceSlug: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_TEAM_PROFILE, workspaceSlug)
+  },
+
+  updateTeamProfile: (workspaceSlug: string, patch: import('@gravitas/shared').TeamProfilePatch) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_TEAM_PROFILE, workspaceSlug, patch)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

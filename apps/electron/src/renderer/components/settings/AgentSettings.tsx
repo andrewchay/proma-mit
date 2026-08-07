@@ -37,6 +37,7 @@ import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
 import { McpServerForm } from './McpServerForm'
 import { SkillFilesPanel } from './SkillFilesPanel'
 import { TeamSkillDirectoryPanel } from './TeamSkillDirectoryPanel'
+import { TeamProfilePanel } from './TeamProfilePanel'
 
 // ===== Types =====
 
@@ -516,6 +517,9 @@ ${skillList}
 
           {/* 团队 Skills 目录（PH2-A） */}
           <TeamSkillDirectoryPanel />
+
+          {/* 团队档案（PH2-A） */}
+          {workspaceSlug && <TeamProfilePanel workspaceSlug={workspaceSlug} />}
         </TabsContent>
 
         {/* ===== MCP Tab ===== */}
