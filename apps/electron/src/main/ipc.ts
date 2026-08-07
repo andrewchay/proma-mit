@@ -1655,6 +1655,11 @@ export function registerIpcHandlers(): void {
     const { listFileEvents } = await import('./lib/workspace-file-event-service')
     return listFileEvents(query)
   })
+  // Todo 事件流（PH2-A）
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_TODO_EVENTS, async (_ev, query: import('@gravitas/shared').TodoEventQuery = {}) => {
+    const { listTodoEvents } = await import('./lib/todo-event-service')
+    return listTodoEvents(query)
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,

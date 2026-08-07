@@ -10,6 +10,7 @@ import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3,
 import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition, MemberResult, MemberSyncAllResult } from '@gravitas/shared'
 import { cn } from '@/lib/utils'
 import { FileEventPanel } from './FileEventPanel'
+import { TodoEventPanel } from './TodoEventPanel'
 
 const RUNTIME_LABEL: Record<string, string> = {
   proma: 'Gravitas',
@@ -146,6 +147,9 @@ export function AgentTeamPanel(): React.ReactElement {
 
       {/* 文件共享事件流（PH2-A） */}
       <FileEventPanel />
+
+      {/* Todo 事件流（PH2-A） */}
+      <TodoEventPanel />
 
       <div className="flex items-center justify-between">
         <div>

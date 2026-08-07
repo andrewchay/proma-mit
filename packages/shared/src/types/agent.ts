@@ -1160,6 +1160,28 @@ export interface FileEventQuery {
   limit?: number
 }
 
+/** Todo 事件流（PH2-A） */
+export interface TodoEvent {
+  id: string
+  at: number
+  source: 'project' | 'goal'
+  action: 'created' | 'updated' | 'completed' | 'deleted' | 'assigned'
+  todoId: string
+  title: string
+  status?: string
+  memberId?: string
+  assigneeName?: string
+  projectId?: string
+  dueAt?: number
+}
+
+export interface TodoEventQuery {
+  memberId?: string
+  action?: TodoEvent['action']
+  source?: 'project' | 'goal'
+  limit?: number
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1824,6 +1846,8 @@ export const AGENT_IPC_CHANNELS = {
   SYNC_TEAM_SKILL_UPDATES: 'agent:sync-team-skill-updates',
   /** 工作区文件共享事件流（PH2-A）：列出成员写文件事件 */
   LIST_FILE_EVENTS: 'agent:list-file-events',
+  /** Todo 事件流（PH2-A） */
+  LIST_TODO_EVENTS: 'agent:list-todo-events',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

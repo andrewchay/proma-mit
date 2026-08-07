@@ -669,6 +669,8 @@ export interface ElectronAPI {
   syncTeamSkillUpdates: () => Promise<{ updated: string[]; failed: string[]; errors: string[] }>
   /** 工作区文件共享事件流（PH2-A） */
   listFileEvents: (query?: import('@gravitas/shared').FileEventQuery) => Promise<import('@gravitas/shared').WorkspaceFileEvent[]>
+  /** Todo 事件流（PH2-A） */
+  listTodoEvents: (query?: import('@gravitas/shared').TodoEventQuery) => Promise<import('@gravitas/shared').TodoEvent[]>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -1985,6 +1987,10 @@ const electronAPI: ElectronAPI = {
 
   listFileEvents: (query?: import('@gravitas/shared').FileEventQuery) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_FILE_EVENTS, query)
+  },
+
+  listTodoEvents: (query?: import('@gravitas/shared').TodoEventQuery) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_TODO_EVENTS, query)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

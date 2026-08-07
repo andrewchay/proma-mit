@@ -13,6 +13,7 @@
 import { onTaskChange, type Task } from './project-service'
 import { getTodoProvider, syncTaskToExternal } from './project-sync-service'
 import { enqueueOutboxEvent } from './project-sqlite-store'
+import { recordTodoEvent } from './todo-event-service'
 import type { TodoRetryEvent } from './project-types'
 
 /** 已支持的外部平台 */
@@ -22,6 +23,9 @@ type Platform = (typeof PLATFORMS)[number]
 /** 注册自动同步（返回取消函数）。应用启动时调用一次。 */
 export function registerProjectAutoSync(): () => void {
   const unsubscribe = onTaskChange((task, action) => {
+    // PH2-A：Todo 事件流（团队可订阅语义流）
+    recordTaskTodoEvent(task, action)
+
     if (!task) return
 
     // 草稿创建不推送；确认后才推送，避免半成品进入同学待办
@@ -203,4 +207,29 @@ async function maybeCreateBrief(task: Task): Promise<void> {
   const { getBriefCallbackBaseUrl } = await import('./brief-callback-server')
   const baseUrl = getBriefCallbackBaseUrl()
   await createBriefForTask(task, undefined, baseUrl)
+}
+
+/** 把项目管理任务(Todo)生命周期映射为语义事件，写入 todo-events 流（PH2-A）。 */
+function recordTaskTodoEvent(task: Task | null, action: Parameters<Parameters<typeof onTaskChange>[0]>[1]): void {
+  if (!task) return
+  const memberId = task.assignee?.userId
+  // 由 assignee 推断动作语义：updated 且已完成 → completed；改派 → assigned；删除 → deleted
+  let action_: import('./todo-event-service').TodoEventAction
+  if (action === 'created' || action === 'draft_confirmed') action_ = 'created'
+  else if (action === 'deleted') action_ = 'deleted'
+  else if (task.status === 'completed') action_ = 'completed'
+  else if (task.assignee?.userId) action_ = 'assigned'
+  else action_ = 'updated'
+
+  recordTodoEvent({
+    source: 'project',
+    action: action_,
+    todoId: task.id,
+    title: task.title,
+    status: task.status,
+    memberId,
+    assigneeName: task.assignee?.displayName,
+    projectId: task.projectId,
+    dueAt: task.dueDate,
+  })
 }
