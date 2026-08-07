@@ -885,6 +885,7 @@ export class AgentOrchestrator {
         provider,
         apiKey,
         baseUrl,
+        channelId,
         cwd: agentCwd,
         historyMessages,
         attachments,
