@@ -66,10 +66,11 @@ class RunStore {
 
   /** 查询运行记录（按时间倒序） */
   query(query: RunRecordQuery = {}): RunRecord[] {
-    const { source, status, limit = 100, from } = query
+    const { source, status, memberId, limit = 100, from } = query
     const results = this.cache.filter((r) => {
       if (source && r.source !== source) return false
       if (status && r.status !== status) return false
+      if (memberId && r.memberId !== memberId) return false
       if (from && r.timestamp < from) return false
       return true
     })

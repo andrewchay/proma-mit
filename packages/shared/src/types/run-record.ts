@@ -52,6 +52,8 @@ export interface RunEvidence {
 export interface RunRecordQuery {
   source?: 'agent' | 'workflow' | 'automation' | 'bridge' | 'external'
   status?: RunRecord['status']
+  /** 执行者成员归属（PH1-C：memberId=paa-<name>/agent-<id>/bot） */
+  memberId?: string
   /** 限制条数 */
   limit?: number
   /** 起始时间（毫秒） */

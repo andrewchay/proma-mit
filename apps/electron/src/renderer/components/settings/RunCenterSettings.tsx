@@ -36,7 +36,14 @@ export function RunCenterSettings(): React.ReactElement {
   const { openSession } = useOpenSession()
   const [records, setRecords] = React.useState<RunRecord[]>([])
   const [sourceFilter, setSourceFilter] = React.useState<string>('all')
+  const [memberFilter, setMemberFilter] = React.useState('')
   const [loading, setLoading] = React.useState(true)
+
+  const visibleRecords = React.useMemo(() => {
+    const kw = memberFilter.trim().toLowerCase()
+    if (!kw) return records
+    return records.filter((r) => (r.memberId ?? '').toLowerCase().includes(kw))
+  }, [records, memberFilter])
 
   const load = React.useCallback(async (): Promise<void> => {
     try {
@@ -79,6 +86,14 @@ export function RunCenterSettings(): React.ReactElement {
     return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
 
+  // 把 memberId 前缀转成友好显示（agent-<id> → 🤖 <id>；paa-<name> → <name>；bot:* → <platform>）
+  const renderMember = (memberId: string): string => {
+    if (memberId.startsWith('agent-')) return `🤖 ${memberId.slice('agent-'.length).slice(0, 12)}`
+    if (memberId.startsWith('paa-')) return memberId.slice('paa-'.length)
+    if (memberId.startsWith('bot:')) return '🤖 机器人'
+    return memberId
+  }
+
   return (
     <SettingsSection
       title="运行记录"
@@ -90,31 +105,39 @@ export function RunCenterSettings(): React.ReactElement {
       }
     >
       <SettingsCard>
-        {/* 来源筛选 */}
-        <div className="flex items-center gap-1.5 px-4 pt-3 pb-2">
-          {['all', 'agent', 'workflow', 'automation', 'bridge'].map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => { setSourceFilter(key); setLoading(true) }}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                sourceFilter === key
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {key === 'all' ? '全部' : SOURCE_LABEL[key]}
-            </button>
-          ))}
+        {/* 来源筛选 + 成员归属过滤（PH2-B） */}
+        <div className="flex flex-col gap-2 px-4 pt-3 pb-2">
+          <div className="flex items-center gap-1.5">
+            {['all', 'agent', 'workflow', 'automation', 'bridge'].map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { setSourceFilter(key); setLoading(true) }}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  sourceFilter === key
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {key === 'all' ? '全部' : SOURCE_LABEL[key]}
+              </button>
+            ))}
+          </div>
+          <input
+            value={memberFilter}
+            onChange={(e) => setMemberFilter(e.target.value)}
+            placeholder="按成员过滤（memberId：agent-… / paa-姓名）"
+            className="w-full px-2.5 py-1.5 rounded-md border bg-background text-xs placeholder:text-foreground/40"
+          />
         </div>
 
         {loading ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
-        ) : records.length === 0 ? (
+        ) : visibleRecords.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无运行记录</div>
         ) : (
           <div className="flex flex-col">
-            {records.slice(0, 50).map((record) => {
+            {visibleRecords.slice(0, 50).map((record) => {
               const meta = STATUS_META[record.status] ?? { label: record.status, className: 'bg-foreground/[0.06] text-foreground/60' }
               return (
                 <div
@@ -126,6 +149,9 @@ export function RunCenterSettings(): React.ReactElement {
                     {SOURCE_LABEL[record.source] ?? record.source}
                   </span>
                   <span className={`shrink-0 px-1.5 py-0.5 rounded ${meta.className}`}>{meta.label}</span>
+                  <span className="shrink-0 truncate max-w-[120px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-500" title={record.memberId ?? ''}>
+                    {record.memberId ? renderMember(record.memberId) : '—'}
+                  </span>
                   <span className="truncate flex-1 text-foreground/80">{record.title}</span>
                   {record.detail && (
                     <span className="shrink-0 max-w-[220px] truncate text-foreground/40">{record.detail}</span>

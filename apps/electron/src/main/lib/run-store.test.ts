@@ -77,4 +77,16 @@ describe('toRunRecord 运行记录映射', () => {
     expect(record.memberId).toBe('agent-abc123')
     expect(record.workspaceId).toBe('ws-1')
   })
+
+  test('query 支持按 memberId 过滤（PH2-B）', () => {
+    const { getRunStore } = require('./run-store')
+    const store = getRunStore()
+    store.record({ id: 'q-1', type: 'completed', source: 'agent', taskId: 's-a', title: 'A 会话', memberId: 'agent-a', timestamp: 5000 })
+    store.record({ id: 'q-2', type: 'completed', source: 'agent', taskId: 's-b', title: 'B 会话', memberId: 'agent-b', timestamp: 5001 })
+    const forA = store.query({ memberId: 'agent-a', limit: 50 })
+    expect(forA.length).toBeGreaterThan(0)
+    expect(forA.every((r: import('@gravitas/shared').RunRecord) => r.memberId === 'agent-a')).toBe(true)
+    const none = store.query({ memberId: 'agent-zzz', limit: 50 })
+    expect(none.some((r: import('@gravitas/shared').RunRecord) => r.memberId === 'agent-zzz')).toBe(false)
+  })
 })
