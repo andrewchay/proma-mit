@@ -75,9 +75,10 @@
 - [ ] 团队级 User/Project Profile（最简大上下文同步）
 
 ### PH2-B. 统一 Run 事件总线（完整版）+ 运行中心
-- [ ] Agent/Workflow/Automation/AI员工 全部运行记录收敛统一 `RunEventEnvelope`
-- [ ] 全量事件可回放（按 member/workspace/time 重建时间线）
-- [ ] Run Center：一个视图可查/可重试/可导出（含成员维度过滤）
+- [x] Run Center：`RunRecordQuery` 补 memberId?，`run-store.query` 按成员过滤（`f9463d6`）
+- [x] Run Center UI：成员过滤输入 + 每条记录显示执行者徽标（agent-<id>→🤖 / paa-姓名）
+- [ ] Agent/Workflow/Automation/AI员工 全部运行记录收敛统一 `RunEventEnvelope`（部分已有）
+- [ ] 全量事件可回放（按 member/workspace/time 重建时间线）+ 可导出
 
 ### PH2-C. Proactive 与注意力
 - [ ] Proactive 动作可回放（"它为什么这么主动"，凭据=PH1-C 事件）

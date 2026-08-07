@@ -1,0 +1,114 @@
+# Gravitas「中小公司 Agentic OS」— 交接与进度总览
+
+> 更新：2026-08-08 01:35 GMT+8
+> 项目：Gravitas（=/Users/chaihao/LLM/proma-mit，当前工作区 project/ 同源，HEAD `f9463d6`）
+> 本文件：跨会话接续入口。请先读此文件 + `plan/gravitas-agentic-os-phased-plan.md`。
+
+---
+
+## 1. 一句话背景
+
+把 Gravitas 从"本地优先 AI 桌面客户端"演进为"中小公司内部团队 + Agent 协作的 Agentic OS"。
+方法：以 Buzz（Nostr 团队协作中继）的一心智模型（统一事件 / 人机对等身份 / 统一审计 / workspace 即边界）
+为参考，落为本仓库的演进。已在第一批（PH1-A~D）完成，第二批（PH2）进行中。
+
+---
+
+## 2. 当前进度（2026-08-08）
+
+### ✅ 第一批：已完成（必须先完成的地基）
+
+| 阶段 | commit | 内容 |
+|---|---|---|
+| **PH1-A** | `947f13d` | 飞书/钉钉成员同步 + 双向 mapping：`members` 表（真人员工稳定档案）+ `member-sync-service`（全量拉取、unionId/姓名跨平台对齐、幂等 upsert）+ `user_mappings` 加 feishu_union_id + IPC + 团队 Tab「同步通讯录」UI + ContactPicker 接成员目录 + 定时增量同步(启动+每6h) + TodoProvider 反向查询 |
+| **PH1-B** | `ca48c41` `87afad9` | 统一成员视图：`member-directory-service`（真人 members / AI员工 agent_employees / bot 飞书钉钉 聚合）、团队 Tab 统一成员面板、负责人选择器同处选真人/AI员工 |
+| **PH1-C** | `141642f` | 统一事件事实源带成员归属：`AppEventEnvelope`/`RunRecord` 补 `memberId?`/`workspaceId?`；`resolveMemberForSession`(sessionId→agent-<id>)；run-store 透传 |
+| **PH1-D** | `b65229a` | 审计收口带成员归属：`AgentAuditEvent` 补 memberId?；三个审计服务(web-bridge/computer-use/external-bridge)写入时反查执行者；网络边界确认(server mcpEgress 已防 SSRF) |
+
+### 🔵 第二批：进行中
+
+| 阶段 | 状态 | 内容 |
+|---|---|---|
+| **PH2-B** | `f9463d6` ✅ 已提交 | Run Center 增强：`RunRecordQuery` 补 memberId?、`run-store.query` 按成员过滤、`RunCenterSettings` 加成员过滤输入框 + 每条记录显示执行者徽标 |
+| PH2-A | ☐ | 团队协作共享：Skills 包分发(版本+权限)、工作区文件共享事件流、Todo 事件流化+Agent解压缩、团队级 Profile |
+| PH2-C | ☐ | Proactive & mailbox：动作可回放(凭据=PH1-C事件)、自动服务器/费用审计、mailbox 抽象 |
+| PH2-D | ☐ | 数据复利用：本地 Context Hub/Work Graph、成功输出转资产、Token/成本记账收敛 |
+| PH2-E | ☐ | 触达面：server Web UI 补全、Bridge 即远程入口 |
+| PH2-F | ☐ | 长期：Agent 互调协议、多租户精细化、插件/SDK |
+
+---
+
+## 3. 关键架构决策（记住，避免重复踩坑）
+
+1. **members 表是"真人员工稳定身份真源"**（PH1-A）。`user_mappings` 是兼容层（local→platform ID）。
+2. **memberId 编码规则**：真人=`paa-<name>`、AI员工=`agent-<id>`、bot=`bot:<平台>:<id>`。
+3. **统一事件总线已存在**：`AppEventBus`(app-event.ts) + `run-store`(JSONL, 订阅 AppEventBus)。PH1-C 是给它加归属，不是重造。
+4. **`resolveMemberForSession(sessionId)`**：按 sessionId 反查 `agent_executions` → `agent-<id>`。AI员工会话能归属；真人/普通会话暂无稳定归属（待办：后续按 workspace/当前用户）。
+5. **IPC 位置**：项目管理类方法在 `paa.project` 组（不是 `paa` 顶层）！renderer 用 `window.electronAPI.paa.project.*`。
+6. **三位审计服务**（web-bridge/computer-use/external-bridge）都写各自 JSONL，`agent-audit-service` 聚合查询。
+7. **网络边界**：server `mcpEgress.allowedOrigins`（未配置禁用 MCP）+ Web Bridge 权限门控 → 无需额外 is_private_ip。
+
+---
+
+## 4. 关键文件索引
+
+| 文件 | 职责 |
+|---|---|
+| `apps/electron/src/main/lib/member-sync-service.ts` | 飞书/钉钉全量拉取 + 跨平台对齐 + 增量同步冷却 + 反查 |
+| `apps/electron/src/main/lib/member-directory-service.ts` | 统一成员视图聚合(真人/AI/bot) |
+| `apps/electron/src/main/lib/project-sqlite-store.ts` | members 表 + CRUD + user_mappings(含 feishu_union_id) |
+| `apps/electron/src/main/lib/app-event-bus.ts` | 统一任务事件总线 + `resolveMemberForSession` |
+| `apps/electron/src/main/lib/run-store.ts` | 运行记录 JSONL 存储 + query(含 memberId) |
+| `apps/electron/src/main/lib/agent-audit-service.ts` + 三个 append*Audit | 审计聚合/写入 |
+| `packages/shared/src/types/work-module.ts` | PROJECT_IPC_CHANNELS + Member/MemberResult/MemberSync 类型 |
+| `packages/shared/src/types/app-event.ts` / `run-record.ts` / `agent.ts` | AppEventEnvelope/RunRecord/AgentAuditEvent(memberId) |
+| `apps/electron/src/renderer/components/projects/AgentTeamPanel.tsx` | 统一成员面板 + 同步通讯录 |
+| `apps/electron/src/renderer/components/projects/ProjectView.tsx` | ContactPicker(includeAgents) |
+| `apps/electron/src/renderer/components/settings/RunCenterSettings.tsx` | 运行中心(成员过滤) |
+
+---
+
+## 5. 测试
+
+相关测试全绿（35 用例），分布在 `apps/electron/src/main/lib/`：
+- `member-store.test.ts`(9) `member-sync-service.test.ts`(7) `member-directory-service.test.ts`(3)
+- `app-event-attribution.test.ts`(3) `run-store.test.ts`(5) `audit-member.test.ts`(1)
+- `external-bridge-audit-service.test.ts`(2) `contact-search-service.test.ts`(2) `feishu-todo-provider.test.ts`(3)
+- 隔离方式：`PROMA_TEST_CONFIG_DIR` 指到临时目录，不污染真实 `~/.gravitas/projects/paa.db`
+
+运行：`cd apps/electron && bun test src/main/lib/<file>.test.ts`
+全量相关：`bun test src/main/lib/member-store.test.ts src/main/lib/member-sync-service.test.ts src/main/lib/member-directory-service.test.ts src/main/lib/run-store.test.ts src/main/lib/app-event-attribution.test.ts src/main/lib/audit-member.test.ts src/main/lib/external-bridge-audit-service.test.ts src/main/lib/contact-search-service.test.ts src/main/lib/feishu-todo-provider.test.ts`
+
+typecheck：`cd apps/electron && npx tsc --noEmit`；`cd packages/shared && npx tsc --noEmit`
+
+---
+
+## 6. 当前的待办/风险（下次接续先看）
+
+- **PH2-A~F 各项**（见 §2 第二批）。
+- **真人员工归因**（PH1-C/D）：Run Center 里真人会话 memberId 为空(null→显示"—")，后续按 workspace/当前用户归属。
+- **飞书通讯录可见范围**：真实拉取依赖飞书后台应用数据权限范围（至少根部门），UI 有提示。
+- **producer 生态**：memberId 目前主要落在 AI员工会话；Workflow/Automation run 的事件是否带 memberId 还需在各自 emit 处补（run-store 已透传，但源头 source=workflow/automation 时未归因）。
+- 用户工作区有**未提交的无关改动**（LeftSidebar 呼吸灯 completed、globals.css、CLAUDE.md、.context/todo.md、fix-collaboration-analysis.md、report-gacha-games-2025.md）—— 与本次主线无关，勿误提交。
+
+---
+
+## 7. 相关借鉴文档索引
+
+| 文档 | 主题 |
+|---|---|
+| `plan/gravitas-agentic-os-phased-plan.md` | 分批施工总计划（本交接的权威来源） |
+| `notes/buzz-gravitas-borrowing.md` | Buzz 心智映射（聚焦 5 高杠杆） |
+| `notes/buzz-gravitas-full-leverage.md` | 34 动作全库 |
+| `plan/ph1a-member-sync-implementation.md` | PH1-A 实施详录（步骤1-7） |
+| `notes/habi-proma-borrowing.md` | 生态 / 统一能力契约 / 五层分层 |
+| `notes/proma-agent-island.md` | 官方灵动岛=会话状态机 |
+
+---
+
+## 8. 上手建议
+
+1. 先读 `plan/gravitas-agentic-os-phased-plan.md` 定位当前阶段。
+2. 动手改动前先 `npx tsc --noEmit`（electron+shared）+ 跑相关测试，确保绿。
+3. 涉及成员/事件/审计归属的改动，用 §3 决策 + §4 索引对齐，勿另起一套。
+4. `bun run dev` 实测：团队 Tab 同步通讯录 → 负责人选择器 → Run Center 看成员归属。
