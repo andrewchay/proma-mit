@@ -76,9 +76,10 @@
 
 ### PH2-B. 统一 Run 事件总线（完整版）+ 运行中心
 - [x] Run Center：`RunRecordQuery` 补 memberId?，`run-store.query` 按成员过滤（`f9463d6`）
-- [x] Run Center UI：成员过滤输入 + 每条记录显示执行者徽标（agent-<id>→🤖 / paa-姓名）
-- [ ] Agent/Workflow/Automation/AI员工 全部运行记录收敛统一 `RunEventEnvelope`（部分已有）
-- [ ] 全量事件可回放（按 member/workspace/time 重建时间线）+ 可导出
+- [x] Run Center UI：成员过滤输入 + 每条记录显示执行者徽标（agent-<id>→🤖 / paa-姓名）（`f9463d6`）
+- [x] Run Center 导出：`exportToFile` + IPC EXPORT + 保存框 + UI 导出按钮（`de38be4`）
+- [ ] Agent/Workflow/Automation/AI员工 全部运行记录收敛统一 `RunEventEnvelope`（部分已有；纯非-agent 源 run 不带 memberId 待补）
+- [ ] 全量事件可回放（按 member/workspace/time 重建时间线）
 
 ### PH2-C. Proactive 与注意力
 - [ ] Proactive 动作可回放（"它为什么这么主动"，凭据=PH1-C 事件）
