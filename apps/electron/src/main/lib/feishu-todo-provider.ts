@@ -43,6 +43,10 @@ export class FeishuTodoProvider implements TodoProvider {
   ): Promise<{ taskId: string; status: string }> {
     const token = await this.getTenantAccessToken()
 
+    // ⚠ 飞书 Task v2 的负责人不是顶级 assignee 字段，而是 members 列表中的
+    //    role='assignee' 项；直接传 assignee 会导致任务创建后无执行者，
+    //    从而不出现在任何人的飞书 Todo「我的任务」里（用户反映"同步了但飞书看不到"）。
+    //    user_id_type=open_id 与用户映射中保存的 feishuUserId(ou_...) 呼应。
     const body = {
       summary: task.title,
       description: task.description,
@@ -53,11 +57,12 @@ export class FeishuTodoProvider implements TodoProvider {
         },
       }),
       ...(userId && {
-        assignee: { id: userId, type: 'user' },
+        members: [{ id: userId, role: 'assignee' }],
       }),
     }
 
-    const resp = await this.feishuApi('POST', '/open-apis/task/v2/tasks', token, body)
+    // user_id_type=open_id 显式声明 userId 为 open_id，避免飞书按默认 user_id 解析导致成员无法匹配
+    const resp = await this.feishuApi('POST', '/open-apis/task/v2/tasks?user_id_type=open_id', token, body)
 
     if (resp.code !== 0) {
       throw new Error(`飞书创建任务失败: ${resp.msg} (code: ${resp.code})`)
@@ -82,19 +87,26 @@ export class FeishuTodoProvider implements TodoProvider {
         `/open-apis/task/v2/tasks/${taskId}/complete`,
         token
       )
-      return resp.code === 0
+      if (resp.code !== 0) {
+        throw new Error(`飞书完成任务失败: ${resp.msg} (code: ${resp.code})`)
+      }
+      return true
     }
 
-    // 其他状态：使用 PATCH 更新
-    const completedAt = status === 'completed' ? String(Math.floor(Date.now() / 1000)) : null
-    const updateFields = ['completed_at']
-
+    // 其他状态：使用 PATCH 更新（把任务恢复为未完成，清空 completed_at）。
+    // ⚠ 飞书 Task v2 更新接口要求用 task 字段包裹新值：{ task: {...}, update_fields: [...] }。
+    //   直接平铺 completed_at/update_fields 会报 "Invalid Param 'task', must not be empty"。
+    //   update_fields 列出字段但 task 中不给新值 = 清空该字段（官方"关于资源的更新"语义）。
     const resp = await this.feishuApi('PATCH', `/open-apis/task/v2/tasks/${taskId}`, token, {
-      completed_at: completedAt,
-      update_fields: updateFields,
+      task: {},
+      update_fields: ['completed_at'],
     })
 
-    return resp.code === 0
+    if (resp.code !== 0) {
+      throw new Error(`飞书更新任务状态失败: ${resp.msg} (code: ${resp.code})`)
+    }
+
+    return true
   }
 
   // ===== 查询 Todo 状态 =====
@@ -104,8 +116,7 @@ export class FeishuTodoProvider implements TodoProvider {
     const resp = await this.feishuApi('GET', `/open-apis/task/v2/tasks/${taskId}`, token)
 
     if (resp.code !== 0) {
-      console.error(`[FeishuTodoProvider] 查询任务失败: ${resp.msg}`)
-      return null
+      throw new Error(`飞书查询任务失败: ${resp.msg} (code: ${resp.code})`)
     }
 
     const taskData = resp.data?.task
@@ -129,7 +140,8 @@ export class FeishuTodoProvider implements TodoProvider {
     method: string,
     path: string,
     token: string,
-    body?: unknown
+    body?: unknown,
+    isRetry = false
   ): Promise<any> {
     const url = `https://open.feishu.cn${path}`
     const headers: Record<string, string> = {
@@ -144,6 +156,16 @@ export class FeishuTodoProvider implements TodoProvider {
     })
 
     const data = await resp.json()
+
+    // 权限不足（99991672）：通常是权限刚开通但 token 缓存还是旧的。
+    // 自动清除缓存并换取新 token 重试一次，避免用户开通权限后仍需等 2 小时。
+    if (!isRetry && data?.code === 99991672) {
+      console.warn(`[FeishuTodoProvider] 权限不足（code=99991672），清除 token 缓存后重试一次: ${data?.msg}`)
+      tokenCacheMap.delete(this.appId)
+      const freshToken = await this.getTenantAccessToken()
+      return this.feishuApi(method, path, freshToken, body, true)
+    }
+
     return data
   }
 
