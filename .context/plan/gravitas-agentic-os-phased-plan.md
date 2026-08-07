@@ -74,8 +74,8 @@
 - [ ] **工作区文件共享事件流**：`workspace-file-event-service`（JSONL + memberId 归因）已建，Write/Edit 工具成功后记录，IPC `LIST_FILE_EVENTS` 已接；UI 展示面板待补
 - [x] **Todo 事件流化**：`todo-event-service`（JSONL 语义流），订阅 `project-service.onTaskChange` 记录创建/完成/改派/删除，memberId 归因（assignee）；IPC `LIST_TODO_EVENTS` + 团队 Tab `TodoEventPanel` 动态展示
 - [ ] Todo 事件流：Goal todo 也并入同流（当前仅项目管理 Task）
-- [ ] **Agent 解压缩**：用 LLM 帮队友解释 Todo / 发现关联 / 预警（基于项目上下文）——待做
-- [ ] 团队级 Profile
+- [x] **Agent 解压缩**：`InspectTodo` 核心工具（agent-runtime tool-registry 注册），取 Todo 完整上下文+同项目相关待办，Agent 据此解释/发现关联/预警
+- [x] **团队级 Profile**：`team-profile-service`（每工作区 JSON），注入 `buildDynamicContext` 的【团队上下文】；IPC get/update + Settings 编辑面板
 
 ### PH2-B. 统一 Run 事件总线（完整版）+ 运行中心
 - [x] Run Center：`RunRecordQuery` 补 memberId?，`run-store.query` 按成员过滤（`f9463d6`）
