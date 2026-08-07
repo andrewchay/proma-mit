@@ -71,6 +71,13 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
 
     const newContent = content.replace(params.old_string, params.new_string)
     writeFileSync(path, newContent, 'utf-8')
+    // PH2-A：文件共享事件流
+    try {
+      const { recordFileEvent } = await import('../../workspace-file-event-service')
+      recordFileEvent(ctx.sessionId, 'edit', params.file_path)
+    } catch {
+      // 记录失败静默
+    }
 
     return {
       toolCallId: '',

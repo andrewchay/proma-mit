@@ -1650,6 +1650,11 @@ export function registerIpcHandlers(): void {
     const { syncAllTeamSkillUpdates } = await import('./lib/team-skill-directory-service')
     return syncAllTeamSkillUpdates()
   })
+  // 工作区文件共享事件流（PH2-A）
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_FILE_EVENTS, async (_ev, query: import('@gravitas/shared').FileEventQuery = {}) => {
+    const { listFileEvents } = await import('./lib/workspace-file-event-service')
+    return listFileEvents(query)
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,

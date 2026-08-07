@@ -71,7 +71,7 @@
 ### PH2-A. 团队协作共享
 - [x] **团队 Skills 目录（轻）**：`team-skill-directory-service` 汇总所有工作区从别处导入的 Skill（来源/版本/待同步），一键同步全部过期；AGENT_IPC 增 `LIST_TEAM_SKILL_UPSTREAMS`/`SYNC_TEAM_SKILL_UPDATES`；设置页 Skills Tab 新增 `TeamSkillDirectoryPanel`。复用既有 importSkillFromWorkspace/updateSkillFromSource（`de38be4` 后续批次）
 - [ ] Skills 包分发（团队实体 / 版本+权限，跨真团队）——若未来建团队实体再补
-- [ ] 工作区文件共享事件流（谁改了什么成员可见）
+- [ ] **工作区文件共享事件流**：`workspace-file-event-service`（JSONL + memberId 归因）已建，Write/Edit 工具成功后记录，IPC `LIST_FILE_EVENTS` 已接；UI 展示面板待补
 - [ ] Todo 事件流化 + Agent 解压缩
 - [ ] 团队级 Profile
 

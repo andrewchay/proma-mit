@@ -51,6 +51,13 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
       mkdirSync(dir, { recursive: true })
     }
     writeFileSync(path, params.content, 'utf-8')
+    // PH2-A：文件共享事件流（谁改了什么，团队成员可见）
+    try {
+      const { recordFileEvent } = await import('../../workspace-file-event-service')
+      recordFileEvent(ctx.sessionId, 'write', params.file_path)
+    } catch {
+      // 记录失败静默
+    }
     return {
       toolCallId: '',
       content: `文件已写入：${params.file_path}`,
