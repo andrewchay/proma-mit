@@ -9,6 +9,7 @@ import * as React from 'react'
 import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3, Loader2, Users, RefreshCw } from 'lucide-react'
 import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition, MemberResult, MemberSyncAllResult } from '@gravitas/shared'
 import { cn } from '@/lib/utils'
+import { FileEventPanel } from './FileEventPanel'
 
 const RUNTIME_LABEL: Record<string, string> = {
   proma: 'Gravitas',
@@ -142,6 +143,9 @@ export function AgentTeamPanel(): React.ReactElement {
     <div className="space-y-4">
       {/* 通讯录成员同步（PH1-A） */}
       <MemberSyncPanel />
+
+      {/* 文件共享事件流（PH2-A） */}
+      <FileEventPanel />
 
       <div className="flex items-center justify-between">
         <div>
