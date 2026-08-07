@@ -1330,6 +1330,11 @@ export interface ElectronAPI {
       stopPolling: (projectId: string, platform: 'feishu' | 'dingtalk') => Promise<unknown>
       generateRiskReport: (projectId: string) => Promise<unknown>
       searchContactsAll: (keyword?: string) => Promise<unknown>
+      syncMembersAll: () => Promise<import('@gravitas/shared').MemberSyncAllResult>
+      syncMembersFeishu: () => Promise<import('@gravitas/shared').MemberSyncResult>
+      syncMembersDingtalk: () => Promise<import('@gravitas/shared').MemberSyncResult>
+      listMembers: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
+      getMember: (memberId: string) => Promise<import('@gravitas/shared').MemberResult | null>
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
@@ -2973,6 +2978,12 @@ const electronAPI: ElectronAPI = {
       stopPolling: (projectId, platform) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.POLL_STOP, projectId, platform),
       generateRiskReport: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GENERATE_RISK_REPORT, projectId),
       searchContactsAll: (keyword) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEARCH_CONTACTS_ALL, keyword),
+      // 成员同步（PH1-A）
+      syncMembersAll: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_ALL),
+      syncMembersFeishu: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_FEISHU),
+      syncMembersDingtalk: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_DINGTALK),
+      listMembers: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBERS, filter),
+      getMember: (memberId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEMBER, memberId),
     },
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {

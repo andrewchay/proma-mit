@@ -42,6 +42,12 @@ import type {
   UpdateAgentEmployeeInput,
   AgentExecution,
   CreateAgentExecutionInput,
+  Member,
+  MemberKind,
+  MemberSource,
+  CreateMemberInput,
+  UpdateMemberInput,
+  ListMembersFilter,
 } from './project-types'
 
 // ===== 数据库连接 =====
@@ -218,6 +224,25 @@ class StmtCompat {
 
 // ===== Schema 迁移 =====
 
+/**
+ * 读取某表现有列名。
+ * 说明：sql.js 原生 Statement 没有 .all()，需用 step + getAsObject 手动遍历。
+ * （旧实现直接 database.prepare(...).all() 会在 raw Statement 上抛错，属潜在 bug。）
+ */
+function readColumnNames(database: any, table: string): string[] {
+  const stmt = database.prepare(`PRAGMA table_info(${table})`)
+  try {
+    const names: string[] = []
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as { name?: string }
+      if (row.name) names.push(row.name)
+    }
+    return names
+  } finally {
+    stmt.free()
+  }
+}
+
 function migrate(database: any): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS projects (
@@ -284,11 +309,31 @@ function migrate(database: any): void {
       paa_user_id TEXT PRIMARY KEY,
       display_name TEXT NOT NULL DEFAULT '',
       feishu_user_id TEXT,
+      feishu_union_id TEXT,
       dingtalk_user_id TEXT,
       dingtalk_union_id TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS members (
+      member_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'human',
+      display_name TEXT NOT NULL DEFAULT '',
+      plain_name TEXT,
+      feishu_user_id TEXT,
+      feishu_union_id TEXT,
+      dingtalk_user_id TEXT,
+      dingtalk_union_id TEXT,
+      department TEXT,
+      source TEXT NOT NULL DEFAULT 'sync',
+      active INTEGER NOT NULL DEFAULT 1,
+      last_synced_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_members_fu_id ON members(feishu_union_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_members_du_id ON members(dingtalk_union_id);
+    CREATE INDEX IF NOT EXISTS idx_members_name ON members(plain_name);
 
     CREATE TABLE IF NOT EXISTS outbox_events (
       id TEXT PRIMARY KEY,
@@ -406,19 +451,24 @@ function migrate(database: any): void {
   `)
 
   // P1：tasks 表新增 permission_requests 列（兼容旧库）
-  const columns = (database.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>)
-  if (!columns.some((col) => col.name === 'permission_requests')) {
+  const columns = readColumnNames(database, 'tasks')
+  if (!columns.includes('permission_requests')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN permission_requests TEXT NOT NULL DEFAULT '[]'`)
   }
   // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
-  const empColumns = (database.prepare(`PRAGMA table_info(agent_employees)`).all() as Array<{ name: string }>)
-  if (!empColumns.some((col) => col.name === 'workflow_id')) {
+  const empColumns = readColumnNames(database, 'agent_employees')
+  if (!empColumns.includes('workflow_id')) {
     database.exec(`ALTER TABLE agent_employees ADD COLUMN workflow_id TEXT`)
   }
   // P3：agent_executions 表新增 executor 列（兼容旧库）
-  const execColumns = (database.prepare(`PRAGMA table_info(agent_executions)`).all() as Array<{ name: string }>)
-  if (!execColumns.some((col) => col.name === 'executor')) {
+  const execColumns = readColumnNames(database, 'agent_executions')
+  if (!execColumns.includes('executor')) {
     database.exec(`ALTER TABLE agent_executions ADD COLUMN executor TEXT NOT NULL DEFAULT 'headless'`)
+  }
+  // PH1-A：user_mappings 表新增 feishu_union_id 列（兼容旧库）
+  const umCols = readColumnNames(database, 'user_mappings')
+  if (!umCols.includes('feishu_union_id')) {
+    database.exec(`ALTER TABLE user_mappings ADD COLUMN feishu_union_id TEXT`)
   }
 }
 
@@ -1151,31 +1201,33 @@ export function applyProjectTemplate(templateId: string, projectName: string): P
 export function saveUserMapping(input: SaveUserMappingInput): UserMapping {
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM user_mappings WHERE paa_user_id = ?`).get(input.paaUserId) as {
-    paa_user_id: string; display_name: string; feishu_user_id: string | null;
+    paa_user_id: string; display_name: string; feishu_user_id: string | null; feishu_union_id: string | null;
     dingtalk_user_id: string | null; dingtalk_union_id: string | null; source: string; updated_at: number;
   } | undefined
   const mapping: UserMapping = {
     paaUserId: input.paaUserId,
     displayName: input.displayName,
-    feishuUserId: input.feishuUserId ?? undefined,
-    dingtalkUserId: input.dingtalkUserId ?? undefined,
-    dingTalkUnionId: input.dingTalkUnionId ?? undefined,
+    // 仅覆盖入参提供的字段；未提供的保留既有值（避免把另一平台、同名的旧映射清空）
+    feishuUserId: input.feishuUserId ?? existing?.feishu_user_id ?? undefined,
+    feishuUnionId: input.feishuUnionId ?? existing?.feishu_union_id ?? undefined,
+    dingtalkUserId: input.dingtalkUserId ?? existing?.dingtalk_user_id ?? undefined,
+    dingTalkUnionId: input.dingTalkUnionId ?? existing?.dingtalk_union_id ?? undefined,
     source: 'manual',
     updatedAt: now(),
   }
   if (existing) {
     database.prepare(
-      `UPDATE user_mappings SET display_name = ?, feishu_user_id = ?, dingtalk_user_id = ?, dingtalk_union_id = ?, updated_at = ? WHERE paa_user_id = ?`
+      `UPDATE user_mappings SET display_name = ?, feishu_user_id = ?, feishu_union_id = ?, dingtalk_user_id = ?, dingtalk_union_id = ?, updated_at = ? WHERE paa_user_id = ?`
     ).run(
-      mapping.displayName, mapping.feishuUserId ?? null, mapping.dingtalkUserId ?? null,
-      mapping.dingTalkUnionId ?? null, mapping.updatedAt, input.paaUserId
+      mapping.displayName, mapping.feishuUserId ?? null, mapping.feishuUnionId ?? null,
+      mapping.dingtalkUserId ?? null, mapping.dingTalkUnionId ?? null, mapping.updatedAt, input.paaUserId
     )
   } else {
     database.prepare(
-      `INSERT INTO user_mappings (paa_user_id, display_name, feishu_user_id, dingtalk_user_id, dingtalk_union_id, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO user_mappings (paa_user_id, display_name, feishu_user_id, feishu_union_id, dingtalk_user_id, dingtalk_union_id, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      mapping.paaUserId, mapping.displayName, mapping.feishuUserId ?? null, mapping.dingtalkUserId ?? null,
-      mapping.dingTalkUnionId ?? null, 'manual', mapping.updatedAt
+      mapping.paaUserId, mapping.displayName, mapping.feishuUserId ?? null, mapping.feishuUnionId ?? null,
+      mapping.dingtalkUserId ?? null, mapping.dingTalkUnionId ?? null, 'manual', mapping.updatedAt
     )
   }
   return mapping
@@ -1184,7 +1236,7 @@ export function saveUserMapping(input: SaveUserMappingInput): UserMapping {
 export function getUserMapping(paaUserId: string): UserMapping | null {
   const database = getProjectDb()
   const row = database.prepare(`SELECT * FROM user_mappings WHERE paa_user_id = ?`).get(paaUserId) as {
-    paa_user_id: string; display_name: string; feishu_user_id: string | null;
+    paa_user_id: string; display_name: string; feishu_user_id: string | null; feishu_union_id: string | null;
     dingtalk_user_id: string | null; dingtalk_union_id: string | null; source: string; updated_at: number;
   } | undefined
   if (!row) return null
@@ -1192,6 +1244,7 @@ export function getUserMapping(paaUserId: string): UserMapping | null {
     paaUserId: row.paa_user_id,
     displayName: row.display_name,
     feishuUserId: row.feishu_user_id ?? undefined,
+    feishuUnionId: row.feishu_union_id ?? undefined,
     dingtalkUserId: row.dingtalk_user_id ?? undefined,
     dingTalkUnionId: row.dingtalk_union_id ?? undefined,
     source: row.source as UserMapping['source'],
@@ -1202,13 +1255,14 @@ export function getUserMapping(paaUserId: string): UserMapping | null {
 export function listUserMappings(): UserMapping[] {
   const database = getProjectDb()
   const rows = database.prepare(`SELECT * FROM user_mappings ORDER BY updated_at DESC`).all() as Array<{
-    paa_user_id: string; display_name: string; feishu_user_id: string | null;
+    paa_user_id: string; display_name: string; feishu_user_id: string | null; feishu_union_id: string | null;
     dingtalk_user_id: string | null; dingtalk_union_id: string | null; source: string; updated_at: number;
   }>
   return rows.map((row) => ({
     paaUserId: row.paa_user_id,
     displayName: row.display_name,
     feishuUserId: row.feishu_user_id ?? undefined,
+    feishuUnionId: row.feishu_union_id ?? undefined,
     dingtalkUserId: row.dingtalk_user_id ?? undefined,
     dingTalkUnionId: row.dingtalk_union_id ?? undefined,
     source: row.source as UserMapping['source'],
@@ -1218,6 +1272,158 @@ export function listUserMappings(): UserMapping[] {
 
 export function deleteUserMapping(paaUserId: string): boolean {
   return getProjectDb().prepare(`DELETE FROM user_mappings WHERE paa_user_id = ?`).run(paaUserId).changes > 0
+}
+
+// ===== Members（成员档案） =====
+
+function mapMemberRow(row: {
+  member_id: string; kind: string; display_name: string; plain_name: string | null;
+  feishu_user_id: string | null; feishu_union_id: string | null;
+  dingtalk_user_id: string | null; dingtalk_union_id: string | null;
+  department: string | null; source: string; active: number; last_synced_at: number | null; created_at: number;
+}): Member {
+  return {
+    memberId: row.member_id,
+    kind: row.kind as MemberKind,
+    displayName: row.display_name,
+    plainName: row.plain_name ?? undefined,
+    feishuUserId: row.feishu_user_id ?? undefined,
+    feishuUnionId: row.feishu_union_id ?? undefined,
+    dingtalkUserId: row.dingtalk_user_id ?? undefined,
+    dingtalkUnionId: row.dingtalk_union_id ?? undefined,
+    department: row.department ?? undefined,
+    source: row.source as MemberSource,
+    active: row.active === 1,
+    lastSyncedAt: row.last_synced_at ?? undefined,
+    createdAt: row.created_at,
+  }
+}
+
+/** 新建成员；memberId 省略自动生成，plain_name 自动小写。 */
+export function createMember(input: CreateMemberInput): Member {
+  const database = getProjectDb()
+  const memberId = input.memberId ?? randomUUID()
+  const nowTs = now()
+  database.prepare(
+    `INSERT INTO members
+      (member_id, kind, display_name, plain_name, feishu_user_id, feishu_union_id, dingtalk_user_id, dingtalk_union_id, department, source, active, last_synced_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+  ).run(
+    memberId, input.kind ?? 'human', input.displayName,
+    normalizePlainName(input.displayName),
+    input.feishuUserId ?? null, input.feishuUnionId ?? null,
+    input.dingtalkUserId ?? null, input.dingtalkUnionId ?? null,
+    input.department ?? null, input.source ?? 'sync', nowTs, nowTs
+  )
+  return getMember(memberId)!
+}
+
+function normalizePlainName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+/** 按主键读成员；不存在返回 null。 */
+export function getMember(memberId: string): Member | null {
+  const database = getProjectDb()
+  const row = database.prepare(`SELECT * FROM members WHERE member_id = ?`).get(memberId)
+  if (!row) return null
+  return mapMemberRow(row as Parameters<typeof mapMemberRow>[0])
+}
+
+/** 按唯一平台字段查询（union_id 优先级最高）。 */
+export function findMember(query: {
+  feishuUnionId?: string
+  dingtalkUnionId?: string
+  feishuUserId?: string
+  dingtalkUserId?: string
+  displayName?: string
+}): Member | null {
+  const database = getProjectDb()
+  if (query.feishuUnionId) {
+    const r = database.prepare(`SELECT * FROM members WHERE feishu_union_id = ?`).get(query.feishuUnionId)
+    if (r) return mapMemberRow(r as Parameters<typeof mapMemberRow>[0])
+  }
+  if (query.dingtalkUnionId) {
+    const r = database.prepare(`SELECT * FROM members WHERE dingtalk_union_id = ?`).get(query.dingtalkUnionId)
+    if (r) return mapMemberRow(r as Parameters<typeof mapMemberRow>[0])
+  }
+  if (query.feishuUserId) {
+    const r = database.prepare(`SELECT * FROM members WHERE feishu_user_id = ?`).get(query.feishuUserId)
+    if (r) return mapMemberRow(r as Parameters<typeof mapMemberRow>[0])
+  }
+  if (query.dingtalkUserId) {
+    const r = database.prepare(`SELECT * FROM members WHERE dingtalk_user_id = ?`).get(query.dingtalkUserId)
+    if (r) return mapMemberRow(r as Parameters<typeof mapMemberRow>[0])
+  }
+  if (query.displayName) {
+    const r = database.prepare(`SELECT * FROM members WHERE plain_name = ? LIMIT 1`).get(normalizePlainName(query.displayName))
+    if (r) return mapMemberRow(r as Parameters<typeof mapMemberRow>[0])
+  }
+  return null
+}
+
+/** 更新成员（未提供的字段保留原值；如需清空请显式处理）。 */
+export function updateMember(memberId: string, patch: UpdateMemberInput): Member | null {
+  const database = getProjectDb()
+  const existing = getMember(memberId)
+  if (!existing) return null
+  const next: Member = {
+    ...existing,
+    displayName: patch.displayName ?? existing.displayName,
+    feishuUserId: patch.feishuUserId ?? existing.feishuUserId,
+    feishuUnionId: patch.feishuUnionId ?? existing.feishuUnionId,
+    dingtalkUserId: patch.dingtalkUserId ?? existing.dingtalkUserId,
+    dingtalkUnionId: patch.dingtalkUnionId ?? existing.dingtalkUnionId,
+    department: patch.department ?? existing.department,
+    kind: patch.kind ?? existing.kind,
+    source: patch.source ?? existing.source,
+    active: patch.active ?? existing.active,
+  }
+  if (patch.displayName) next.plainName = normalizePlainName(patch.displayName)
+  database.prepare(
+    `UPDATE members SET
+       kind = ?, display_name = ?, plain_name = ?,
+       feishu_user_id = ?, feishu_union_id = ?, dingtalk_user_id = ?, dingtalk_union_id = ?,
+       department = ?, source = ?, active = ?
+     WHERE member_id = ?`
+  ).run(
+    next.kind, next.displayName, next.plainName ?? null,
+    next.feishuUserId ?? null, next.feishuUnionId ?? null,
+    next.dingtalkUserId ?? null, next.dingtalkUnionId ?? null,
+    next.department ?? null, next.source, next.active ? 1 : 0, memberId
+  )
+  return getMember(memberId)
+}
+
+/** 更新同步时间戳（用于增量同步）。 */
+export function touchMemberSync(memberId: string): void {
+  getProjectDb().prepare(`UPDATE members SET last_synced_at = ? WHERE member_id = ?`).run(now(), memberId)
+}
+
+/** 列出成员（支持 kind / activeOnly / 关键字过滤）。 */
+export function listMembers(filter: ListMembersFilter = {}): Member[] {
+  const database = getProjectDb()
+  const conds: string[] = []
+  const params: Array<string | number | null> = []
+  if (filter.kind) {
+    conds.push(`kind = ?`)
+    params.push(filter.kind)
+  }
+  if (filter.activeOnly) {
+    conds.push(`active = 1`)
+  }
+  if (filter.q) {
+    conds.push(`plain_name LIKE ?`)
+    params.push(`%${normalizePlainName(filter.q)}%`)
+  }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : ''
+  const rows = database.prepare(`SELECT * FROM members ${where} ORDER BY display_name ASC`).all(...params) as Array<Parameters<typeof mapMemberRow>[0]>
+  return rows.map(mapMemberRow)
+}
+
+/** 删除成员（物理删除）。 */
+export function deleteMember(memberId: string): boolean {
+  return getProjectDb().prepare(`DELETE FROM members WHERE member_id = ?`).run(memberId).changes > 0
 }
 
 // ===== Outbox（钉钉调用失败重试） =====

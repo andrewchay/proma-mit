@@ -12,7 +12,8 @@
  *   与 todo-provider 工厂完全同源，避免 settings.json 留存第二份明文 Secret。
  *
  * API 方案：
- * - 飞书：GET /open-apis/contact/v3/users 分页拉取全企业成员，本地按关键词过滤，返回 open_id/union_id。
+ * - 飞书：枚举可见部门树，逐部门用 GET /open-apis/contact/v3/users/find_by_department 拉直属用户，
+ *   本地按关键词过滤，返回 open_id/union_id。
  * - 钉钉：遍历部门 topapi/v2/department/listsub + topapi/v2/user/list，本地按 name 过滤；
  *   再用 topapi/v2/user/get 解析 unionid。
  */
@@ -35,7 +36,7 @@ interface BotCredential {
 // ===== 凭证获取 =====
 
 /** 解析 settings 中已连接的飞书 Bot 凭证（appId + 解密后的 appSecret）。 */
-function getFeishuCredential(): BotCredential | null {
+export function getFeishuCredential(): BotCredential | null {
   try {
     const { getFeishuMultiBotConfig, getDecryptedBotAppSecret } = require('./feishu-config')
     const { getSettings } = require('./settings-service')
@@ -59,7 +60,7 @@ function getFeishuCredential(): BotCredential | null {
 }
 
 /** 解析 settings 中已连接的钉钉 Bot 凭证（clientId + 解密后的 clientSecret）。 */
-function getDingtalkCredential(): BotCredential | null {
+export function getDingtalkCredential(): BotCredential | null {
   try {
     const { getDingTalkBotById, getDecryptedBotClientSecret } = require('./dingtalk-config')
     const { getSettings } = require('./settings-service')
@@ -84,7 +85,7 @@ function getDingtalkCredential(): BotCredential | null {
  * 直接 `resp.json()` 会二次抛 `SyntaxError` 掩盖真实原因；这里改为抛出包含
  * HTTP 状态码 + 原文前段的可读错误，方便一线排查。
  */
-async function safeJson<T = any>(res: Response): Promise<T> {
+export async function safeJson<T = any>(res: Response): Promise<T> {
   const text = await res.text().catch(() => '')
   if (!text) {
     throw new Error(`接口返回空响应 (HTTP ${res.status})`)
@@ -97,7 +98,7 @@ async function safeJson<T = any>(res: Response): Promise<T> {
 }
 
 /** 飞书业务错误统一包装：code=40004 时补充可操作排查提示。 */
-function feishuError(code: number | undefined, detail: string): Error {
+export function feishuError(code: number | undefined, detail: string): Error {
   const base = `飞书${detail} (code: ${code ?? '?'})`
   if (code === 40004) {
     return new Error(
@@ -115,7 +116,7 @@ function feishuError(code: number | undefined, detail: string): Error {
 const feishuTokenCache = new Map<string, { token: string; expiresAt: number }>()
 const dingtalkTokenCache = new Map<string, { token: string; expiresAt: number }>()
 
-async function getFeishuTenantToken(appId: string, appSecret: string): Promise<string> {
+export async function getFeishuTenantToken(appId: string, appSecret: string): Promise<string> {
   const cached = feishuTokenCache.get(appId)
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
 
@@ -137,15 +138,37 @@ async function getFeishuTenantToken(appId: string, appSecret: string): Promise<s
   return token
 }
 
-const FEISHU_BASE = 'https://open.feishu.cn'
+export const FEISHU_BASE = 'https://open.feishu.cn'
+
+/**
+ * 构造飞书「获取部门直属用户列表」URL。
+ * ⚠ 网关路径必须是复数 `users/find_by_department`（单数 `user/` 会返回 HTTP 404 page not found）。
+ * 导出以便单测锁定路径拼写，防止回归。
+ */
+export function buildFeishuFindByDepartmentUrl(opts: {
+  idType: string
+  value: string
+  pageSize?: number
+  pageToken?: string
+}): string {
+  const { idType, value, pageSize = 50, pageToken } = opts
+  const params = new URLSearchParams({
+    department_id_type: idType,
+    department_id: value,
+    page_size: String(pageSize),
+  })
+  if (pageToken) params.set('page_token', pageToken)
+  return `${FEISHU_BASE}/open-apis/contact/v3/users/find_by_department?${params.toString()}`
+}
 
 /** 飞书：按可见部门遍历直属用户（用 tenant_access_token），按姓名关键字本地过滤。
  *
  * 明确的接口语义（依据 @larksuiteoapi/node-sdk 1.72.0 官方类型注释）：
  * - 历史接口 `GET /contact/v3/users` 已废弃；**不带 department_id 时只返回「权限范围内的独立用户」**，
  *   即被单独加入可见范围的人，通常为空——因此不能靠它做「全量拉全企业」。
- * - 应改按部门遍历，每部门用推荐接口 `GET /contact/v3/user/find_by_department?department_id=X`
+ * - 应改按部门遍历，每部门用推荐接口 `GET /contact/v3/users/find_by_department?department_id=X`
  *   拉取该部门直属用户；部门树从根部门 `0` 用 `GET /contact/v3/departments/0/children` 递归枚举。
+ *   ⚠ 路径必须是复数 `users`（单数 `user/find_by_department` 会被飞书网关直接 404）。
  * - 若部门树为空（可见范围未覆盖任何组织架构节点），fallback 到裸 `/users`（独立用户语义）作为兜底。
  */
 async function searchFeishuContacts(keyword: string): Promise<ContactSearchResult[]> {
@@ -227,7 +250,11 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
       let pageToken = ''
       try {
         for (let page = 0; page < 6; page++) {
-          const url = `${FEISHU_BASE}/open-apis/contact/v3/user/find_by_department?department_id_type=${idKey.idType}&department_id=${encodeURIComponent(idKey.value)}&page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
+          const url = buildFeishuFindByDepartmentUrl({
+            idType: idKey.idType,
+            value: idKey.value,
+            pageToken: pageToken || undefined,
+          })
           const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
           const data = await safeJson<any>(resp)
           if (page === 0) rawProbe.push(`${dept.name}(${idKey.idType}=${idKey.value})[${JSON.stringify(data).slice(0, 220)}]`)
@@ -309,7 +336,7 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
 
 const DINGTALK_OAPI_BASE = 'https://oapi.dingtalk.com'
 
-async function getDingtalkToken(appKey: string, appSecret: string): Promise<string> {
+export async function getDingtalkToken(appKey: string, appSecret: string): Promise<string> {
   const cached = dingtalkTokenCache.get(appKey)
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
 
@@ -325,7 +352,7 @@ async function getDingtalkToken(appKey: string, appSecret: string): Promise<stri
 }
 
 /** 钉钉：取某部门下所有直属子部门 ID。 */
-async function listDingtalkSubDeptIds(token: string, deptId: number): Promise<number[]> {
+export async function listDingtalkSubDeptIds(token: string, deptId: number): Promise<number[]> {
   const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/department/listsub`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -339,7 +366,7 @@ async function listDingtalkSubDeptIds(token: string, deptId: number): Promise<nu
 }
 
 /** 钉钉：取某部门下所有直属成员。 */
-async function listDingtalkDeptUsers(token: string, deptId: number): Promise<Array<{ userid: string; name: string }>> {
+export async function listDingtalkDeptUsers(token: string, deptId: number): Promise<Array<{ userid: string; name: string }>> {
   const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/user/list`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -354,7 +381,7 @@ async function listDingtalkDeptUsers(token: string, deptId: number): Promise<Arr
 }
 
 /** 钉钉：用 userid 解析 unionid。 */
-async function resolveDingtalkUnionId(token: string, userid: string): Promise<string | undefined> {
+export async function resolveDingtalkUnionId(token: string, userid: string): Promise<string | undefined> {
   const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/user/get`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -706,6 +706,28 @@ export function registerWorkModuleIpcHandlers(): void {
     return searchContactsAll(keyword ?? '')
   })
 
+  // ===== 成员同步（PH1-A） =====
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_ALL, async () => {
+    const { syncAllMembers } = await import('./member-sync-service')
+    return syncAllMembers()
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_FEISHU, async () => {
+    const { syncMembersFromFeishu } = await import('./member-sync-service')
+    return syncMembersFromFeishu()
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_DINGTALK, async () => {
+    const { syncMembersFromDingtalk } = await import('./member-sync-service')
+    return syncMembersFromDingtalk()
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_MEMBERS, (_: unknown, filter?: { kind?: string; q?: string; activeOnly?: boolean }) => {
+    const { listMembers } = require('./project-sqlite-store')
+    return listMembers(filter ?? {})
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_MEMBER, (_: unknown, memberId: string) => {
+    const { getMember } = require('./project-sqlite-store')
+    return getMember(memberId)
+  })
+
   // ===== AI 员工（Agent Employee）=====
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EMPLOYEES, () => listAgentEmployees())
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EMPLOYEE, (_, id: string) => getAgentEmployee(id))

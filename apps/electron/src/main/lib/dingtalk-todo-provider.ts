@@ -108,7 +108,14 @@ export class DingtalkTodoProvider implements TodoProvider {
 
   // ===== 用户 ID 映射 =====
   async getUserIdByPaaUserId(paaUserId: string): Promise<string | null> {
-    return paaUserId
+    // PH1-A：优先从成员目录反向解析钉钉 unionid（工作待办用）；找不到则回退原值
+    try {
+      const { resolvePlatformForPaaUser } = await import('./member-sync-service')
+      const resolved = resolvePlatformForPaaUser(paaUserId, 'dingtalk')
+      return resolved ?? paaUserId
+    } catch {
+      return paaUserId
+    }
   }
 
   // ===== 工作待办创建 =====

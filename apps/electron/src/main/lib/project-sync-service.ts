@@ -102,14 +102,18 @@ export async function syncTaskToExternal(
 
     // 2. 查找用户映射
     const userMapping = await getUserMapping(task.assignee.userId)
-    if (!userMapping) {
-      return { success: false, error: `未找到用户映射: ${task.assignee.userId}` }
-    }
 
-    // 3. 获取平台用户 ID（优先使用用户映射中保存的平台真实 ID）
-    const platformUserId = platform === 'feishu'
-      ? userMapping.feishuUserId
-      : (userMapping.dingTalkUnionId ?? userMapping.dingtalkUserId)
+    // 3. 获取平台用户 ID：优先映射表，缺则回退到成员目录（PH1-A 稳定成员档案）反向查询
+    let platformUserId: string | undefined
+    if (userMapping) {
+      platformUserId = platform === 'feishu'
+        ? (userMapping.feishuUserId ?? userMapping.feishuUnionId)
+        : (userMapping.dingTalkUnionId ?? userMapping.dingtalkUserId)
+    }
+    if (!platformUserId) {
+      const { resolvePlatformForPaaUser } = await import('./member-sync-service')
+      platformUserId = resolvePlatformForPaaUser(task.assignee.userId, platform) ?? undefined
+    }
 
     if (!platformUserId) {
       return { success: false, error: `未找到 ${platform} 用户映射` }
@@ -117,7 +121,7 @@ export async function syncTaskToExternal(
 
     // 4. 创建外部 Todo（钉钉优先使用 unionId 调用工作待办接口）
     const createOptions = platform === 'dingtalk'
-      ? { unionId: userMapping.dingTalkUnionId }
+      ? { unionId: userMapping?.dingTalkUnionId }
       : undefined
     const result = await provider.createTodo(task, platformUserId, createOptions)
 
@@ -125,7 +129,7 @@ export async function syncTaskToExternal(
     const existingTask = await getTask(task.id)
     if (existingTask) {
       const externalSync = { ...(existingTask.externalSync || {}) }
-      const dingTalkUnionId = result.unionId ?? userMapping.dingTalkUnionId
+      const dingTalkUnionId = result.unionId ?? userMapping?.dingTalkUnionId
       externalSync[platform] = {
         taskId: result.taskId,
         status: result.status,

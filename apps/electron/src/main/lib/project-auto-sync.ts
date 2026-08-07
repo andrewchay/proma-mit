@@ -11,7 +11,7 @@
  */
 
 import { onTaskChange, type Task } from './project-service'
-import { getTodoProvider, syncTaskToExternal, updateExternalTaskStatus } from './project-sync-service'
+import { getTodoProvider, syncTaskToExternal } from './project-sync-service'
 import { enqueueOutboxEvent } from './project-sqlite-store'
 import type { TodoRetryEvent } from './project-types'
 
@@ -61,7 +61,36 @@ export function registerProjectAutoSync(): () => void {
     }
   })
 
-  return unsubscribe
+  // PH1-A：定时增量同步通讯录成员（启动 + 每 6 小时，带冷却与并发保护，幂等）
+  const memberSyncTimer = setInterval(() => {
+    void runPeriodicMemberSync()
+  }, MEMBER_SYNC_INTERVAL_MS)
+  void runPeriodicMemberSync()
+
+  function cleanup(): void {
+    clearInterval(memberSyncTimer)
+    unsubscribe()
+  }
+  return cleanup
+}
+
+const MEMBER_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 小时
+
+/** 定时成员同步：只同步已配置平台（有 Bot 凭证才拉），冷却期内自动跳过。 */
+async function runPeriodicMemberSync(): Promise<void> {
+  for (const platform of ['feishu', 'dingtalk'] as const) {
+    try {
+      // 调用带冷却/并发保护的入口；凭证缺失时 syncPlatform 内部抛错并忽略
+      const { syncMembersIfCooldownElapsed } = await import('./member-sync-service')
+      const result = await syncMembersIfCooldownElapsed(platform)
+      if (result) {
+        console.log(`[ProjectAutoSync] 通讯录成员增量同步 ${platform}: 拉取 ${result.pulled} 新增 ${result.inserted} 合并 ${result.merged} 失败 ${result.failed}`)
+      }
+    } catch (error) {
+      // 未配置 Bot / 网络失败：静默，避免启动噪音
+      console.debug(`[ProjectAutoSync] ${platform} 成员同步跳过:`, error instanceof Error ? error.message : error)
+    }
+  }
 }
 
 /** 任务创建/确认：按指派类型分流（AI 员工 → agent；真人 → 飞书/钉钉） */
@@ -116,7 +145,8 @@ async function syncUpdatedTaskStatus(task: Task): Promise<void> {
     const external = task.externalSync?.[platform]
     if (!provider || !external?.taskId) continue
     try {
-      const ok = await updateExternalTaskStatus(external.taskId, task.status, provider, {
+      // 直接调用 provider，让具体错误（含授权链接）能透传到 outbox 供用户查看
+      const ok = await provider.updateTodoStatus(external.taskId, task.status, {
         unionId: (external as { unionId?: string }).unionId,
       })
       if (!ok) {

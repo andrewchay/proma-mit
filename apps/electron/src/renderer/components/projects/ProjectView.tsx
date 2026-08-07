@@ -8,7 +8,7 @@ import * as React from 'react'
 import { useState, useEffect, useCallback } from "react"
 import { useAtomValue } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
-import type { AgentEmployeeResult, AgentExecutionResult } from '@gravitas/shared'
+import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 
 /** by-task 权限申请选项（P1） */
@@ -41,6 +41,7 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
+  const [members, setMembers] = useState<MemberResult[]>([])
   const [feishuUsers, setFeishuUsers] = useState<ExternalContact[]>([])
   const [dingtalkUsers, setDingtalkUsers] = useState<ExternalContact[]>([])
   const [feishuError, setFeishuError] = useState("")
@@ -48,9 +49,21 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
   const inputRef = React.useRef<HTMLInputElement | null>(null)
   const wrapRef = React.useRef<HTMLDivElement | null>(null)
 
+  // 优先加载本地成员目录（PH1-A），打开即展示已同步的团队
+  const loadMembers = useCallback(async (kw?: string) => {
+    try {
+      const list = await window.electronAPI.paa.project.listMembers({ activeOnly: true, q: kw })
+      setMembers(list.filter((m) => m.kind === "human"))
+    } catch {
+      setMembers([])
+    }
+  }, [])
+
   const runSearch = useCallback(async (kw: string) => {
     setLoading(true)
     setSearching(true)
+    // 同步刷新本地成员目录 + 实时搜通讯录
+    void loadMembers(kw)
     try {
       const res: { feishu: { ok: boolean; users: ExternalContact[]; error?: string }; dingtalk: { ok: boolean; users: ExternalContact[]; error?: string } } =
         await callProjectAPI("searchContactsAll", kw)
@@ -66,7 +79,7 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
       setLoading(false)
       setSearching(false)
     }
-  }, [])
+  }, [loadMembers])
 
   // 关闭下拉：点击外部
   useEffect(() => {
@@ -81,13 +94,13 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
     const name = c.name
     const paaUserId = `paa-${name}`
     try {
-      // 合并写入用户映射：若已有另一平台映射，保持原字段，仅覆盖当前平台 ID
       const existing = await callProjectAPI<any>("getUserMapping", paaUserId)
       const base = existing && typeof existing === "object" ? existing : {}
       const mapping = {
         paaUserId,
         displayName: name,
         feishuUserId: c.platform === "feishu" ? c.userId : (base.feishuUserId ?? undefined),
+        feishuUnionId: c.platform === "feishu" ? (c.unionId ?? base.feishuUnionId ?? undefined) : (base.feishuUnionId ?? undefined),
         dingtalkUserId: c.platform === "dingtalk" ? c.userId : (base.dingtalkUserId ?? undefined),
         dingTalkUnionId: c.platform === "dingtalk" ? (c.unionId ?? base.dingTalkUnionId ?? undefined) : (base.dingTalkUnionId ?? undefined),
       }
@@ -99,13 +112,34 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
     setOpen(false)
   }
 
-  // 展开首搜：聚焦且无关键字时列出前若干成员
-  const handleFocus = () => {
-    setOpen(true)
-    if (!value.trim()) runSearch("")
+  // 从成员目录选中：一次性补全该成员两个平台的映射（若都有）
+  const pickMember = async (m: MemberResult) => {
+    const name = m.displayName
+    const paaUserId = `paa-${name}`
+    try {
+      const existing = await callProjectAPI<any>("getUserMapping", paaUserId)
+      const base = existing && typeof existing === "object" ? existing : {}
+      await callProjectAPI("saveUserMapping", {
+        paaUserId,
+        displayName: name,
+        feishuUserId: m.feishuUserId ?? base.feishuUserId ?? undefined,
+        feishuUnionId: m.feishuUnionId ?? base.feishuUnionId ?? undefined,
+        dingtalkUserId: m.dingtalkUserId ?? base.dingtalkUserId ?? undefined,
+        dingTalkUnionId: m.dingtalkUnionId ?? base.dingTalkUnionId ?? undefined,
+      })
+    } catch (err) {
+      console.error("写入成员映射失败:", err)
+    }
+    onChange(name)
+    setOpen(false)
   }
 
-  const hasAny = feishuUsers.length > 0 || dingtalkUsers.length > 0
+  // 展开首搜：聚焦时加载本地成员目录，无关键字时同步搜索通讯录
+  const handleFocus = () => {
+    setOpen(true)
+    void loadMembers(value.trim())
+    if (!value.trim()) runSearch("")
+  }
 
   return (
     <div ref={wrapRef} className="relative">
@@ -121,13 +155,23 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-64 overflow-auto rounded-md border bg-card shadow-lg">
           {loading && <div className="px-3 py-2 text-xs text-muted-foreground">搜索通讯录中…</div>}
-          {!loading && !hasAny && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">
-              未找到匹配成员。{feishuError && <div>飞书：{feishuError}</div>}{dingtalkError && <div>钉钉：{dingtalkError}</div>}
-            </div>
-          )}
           {!loading && (
             <>
+              {/* 本地成员目录（PH1-A） */}
+              {members.length > 0 && (
+                <>
+                  <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground bg-accent/50">团队成员</div>
+                  {members.map((m) => (
+                    <button key={`mem-${m.memberId}`} onClick={() => pickMember(m)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent">
+                      <span className="inline-block h-5 w-5 shrink-0 rounded-full bg-foreground/15 text-center text-[10px] leading-5 text-foreground/60">{m.displayName.slice(0, 1)}</span>
+                      <span className="truncate">{m.displayName}</span>
+                      {(m.feishuUserId || m.dingtalkUserId) && (
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{[m.feishuUserId && '飞书', m.dingtalkUserId && '钉钉'].filter(Boolean).join('·')}</span>
+                      )}
+                    </button>
+                  ))}
+                </>
+              )}
               {feishuUsers.length > 0 && (
                 <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground bg-accent/50">飞书</div>
               )}
@@ -147,6 +191,11 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
                 </button>
               ))}
             </>
+          )}
+          {!loading && (feishuUsers.length === 0 && dingtalkUsers.length === 0 && members.length === 0) && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              未找到匹配成员。{feishuError && <div>飞书：{feishuError}</div>}{dingtalkError && <div>钉钉：{dingtalkError}</div>}
+            </div>
           )}
         </div>
       )}
@@ -823,11 +872,23 @@ function ProjectDetail({
     }
   }
 
+  /** 将 outbox 事件类型映射为人类可读标签（区分平台与动作） */
+  const outboxEventLabel = (eventType: string): string => {
+    const map: Record<string, string> = {
+      'dingtalk.create_todo': '钉钉 · 创建 Todo',
+      'dingtalk.update_todo_status': '钉钉 · 更新 Todo 状态',
+      'feishu.create_todo': '飞书 · 创建 Todo',
+      'feishu.update_todo_status': '飞书 · 更新 Todo 状态',
+      'agent.dispatch': 'AI 员工 · 派发执行',
+    }
+    return map[eventType] ?? eventType
+  }
+
   const handleRetryTodo = async (eventId: string) => {
     setRetryingEventIds((previous) => new Set(previous).add(eventId))
     try {
       const success = await callProjectAPI<boolean>('retryDingTalkTodo', eventId)
-      if (!success) throw new Error('钉钉待办重试未成功')
+      if (!success) throw new Error('外部平台待办重试未成功')
       await loadData()
     } catch (err) {
       alert('重试失败: ' + (err instanceof Error ? err.message : String(err)))
@@ -1025,11 +1086,11 @@ function ProjectDetail({
 
       {todoRetries.length > 0 && (
         <div className="mx-6 mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-          <div className="mb-2 font-medium">钉钉 Todo 有 {todoRetries.length} 条待重试同步</div>
+          <div className="mb-2 font-medium">外部平台 Todo 有 {todoRetries.length} 条待重试同步</div>
           <div className="space-y-1">
             {todoRetries.map((event) => (
               <div key={event.id} className="flex items-center gap-2 text-xs">
-                <span className="flex-1">{event.entityType === 'task' ? 'Task' : 'subTask'} #{event.entityId} · {event.eventType === 'dingtalk.create_todo' ? '创建 Todo' : '更新 Todo 状态'} · 已尝试 {event.retryCount} 次{event.errorMessage ? ` · ${event.errorMessage}` : ''}</span>
+                <span className="flex-1">{event.entityType === 'task' ? 'Task' : 'subTask'} #{event.entityId} · {outboxEventLabel(event.eventType)} · 已尝试 {event.retryCount} 次{event.errorMessage ? ` · ${event.errorMessage}` : ''}</span>
                 <button
                   onClick={() => void handleRetryTodo(event.id)}
                   disabled={retryingEventIds.has(event.id)}

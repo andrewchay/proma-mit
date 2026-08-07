@@ -90,6 +90,7 @@ export interface UserMapping {
   paaUserId: string
   displayName: string
   feishuUserId?: string
+  feishuUnionId?: string
   dingtalkUserId?: string
   dingTalkUnionId?: string
   source: 'auto-sync' | 'manual'
@@ -149,6 +150,7 @@ export interface SaveUserMappingInput {
   paaUserId: string
   displayName: string
   feishuUserId?: string
+  feishuUnionId?: string
   dingtalkUserId?: string
   dingTalkUnionId?: string
 }
@@ -339,4 +341,60 @@ export interface CreateAgentExecutionInput {
   status?: AgentExecutionStatus
   requestedPermissions?: string[]
   startedAt?: number
+}
+
+// ===== 成员（Member）档案 =====
+
+/** 成员类型：真人 / AI 员工 / 外部 bot（为 PH1-B 成员统一预留） */
+export type MemberKind = 'human' | 'agent' | 'bot'
+
+/** 成员来源 */
+export type MemberSource = 'sync' | 'manual'
+
+/** 团队成员档案 — 从飞书/钉钉回拉 + 双向映射后的稳定成员身份真源 */
+export interface Member {
+  /** 稳定成员 ID（UUID） */
+  memberId: string
+  kind: MemberKind
+  displayName: string
+  /** 小写规范化名，用于匹配 */
+  plainName?: string
+  /** 飞书 open_id */
+  feishuUserId?: string
+  /** 飞书 union_id（跨平台对齐依据之一） */
+  feishuUnionId?: string
+  /** 钉钉 userid */
+  dingtalkUserId?: string
+  /** 钉钉 unionid */
+  dingtalkUnionId?: string
+  department?: string
+  source: MemberSource
+  active: boolean
+  lastSyncedAt?: number
+  createdAt: number
+}
+
+/** 新建成员输入（memberId 省略时自动生成） */
+export interface CreateMemberInput {
+  memberId?: string
+  kind?: MemberKind
+  displayName: string
+  feishuUserId?: string
+  feishuUnionId?: string
+  dingtalkUserId?: string
+  dingtalkUnionId?: string
+  department?: string
+  source?: MemberSource
+}
+
+/** 更新成员输入 */
+export type UpdateMemberInput = Partial<
+  Pick<Member, 'displayName' | 'feishuUserId' | 'feishuUnionId' | 'dingtalkUserId' | 'dingtalkUnionId' | 'department' | 'kind' | 'source' | 'active'>
+>
+
+/** 成员查询过滤 */
+export interface ListMembersFilter {
+  kind?: MemberKind
+  activeOnly?: boolean
+  q?: string
 }

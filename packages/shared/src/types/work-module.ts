@@ -246,6 +246,12 @@ export const PROJECT_IPC_CHANNELS = {
   GENERATE_RISK_REPORT: 'project:generate-risk-report',
   // 外部通讯录搜索
   SEARCH_CONTACTS_ALL: 'project:search-contacts-all',
+  // 成员同步（PH1-A）
+  SYNC_MEMBERS_ALL: 'project:sync-members-all',
+  SYNC_MEMBERS_FEISHU: 'project:sync-members-feishu',
+  SYNC_MEMBERS_DINGTALK: 'project:sync-members-dingtalk',
+  LIST_MEMBERS: 'project:list-members',
+  GET_MEMBER: 'project:get-member',
 } as const
 
 export interface ProjectInput {
@@ -416,3 +422,37 @@ export interface AgentExecutionResult {
   startedAt: number
   completedAt?: number
 }
+
+// ===== 成员（PH1-A） =====
+
+export interface MemberResult {
+  memberId: string
+  kind: 'human' | 'agent' | 'bot'
+  displayName: string
+  feishuUserId?: string
+  feishuUnionId?: string
+  dingtalkUserId?: string
+  dingtalkUnionId?: string
+  department?: string
+  source: 'sync' | 'manual'
+  active: boolean
+  lastSyncedAt?: number
+  createdAt: number
+}
+
+export interface MemberSyncResult {
+  platform: 'feishu' | 'dingtalk'
+  pulled: number
+  inserted: number
+  merged: number
+  failed: number
+  error?: string
+}
+
+export interface MemberSyncAllResult {
+  feishu: MemberSyncResult
+  dingtalk: MemberSyncResult
+  startedAt: number
+  finishedAt: number
+}
+

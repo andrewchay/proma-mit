@@ -6,8 +6,8 @@
  */
 
 import * as React from 'react'
-import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3, Loader2 } from 'lucide-react'
-import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition } from '@gravitas/shared'
+import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3, Loader2, Users, RefreshCw } from 'lucide-react'
+import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition, MemberResult, MemberSyncAllResult } from '@gravitas/shared'
 import { cn } from '@/lib/utils'
 
 const RUNTIME_LABEL: Record<string, string> = {
@@ -140,6 +140,9 @@ export function AgentTeamPanel(): React.ReactElement {
 
   return (
     <div className="space-y-4">
+      {/* 通讯录成员同步（PH1-A） */}
+      <MemberSyncPanel />
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-medium">AI 员工</h2>
@@ -328,6 +331,89 @@ export function AgentTeamPanel(): React.ReactElement {
 }
 
 /** AI 团队效能总览（P2）：聚合员工统计字段 */
+function MemberSyncPanel(): React.ReactElement {
+  const [result, setResult] = React.useState<MemberSyncAllResult | null>(null)
+  const [members, setMembers] = React.useState<MemberResult[]>([])
+  const [syncing, setSyncing] = React.useState(false)
+  const [error, setError] = React.useState('')
+
+  const loadMembers = React.useCallback(async (): Promise<void> => {
+    try {
+      const list = await window.electronAPI.paa.project.listMembers({ activeOnly: true })
+      setMembers(list)
+    } catch {
+      // 忽略
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void loadMembers()
+  }, [loadMembers])
+
+  const handleSync = async (): Promise<void> => {
+    if (syncing) return
+    setSyncing(true)
+    setError('')
+    setResult(null)
+    try {
+      const res = await window.electronAPI.paa.project.syncMembersAll()
+      setResult(res)
+      await loadMembers()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const humans = members.filter((m) => m.kind === 'human')
+  const row = (r?: { pulled: number; inserted: number; merged: number; failed: number }): string | null => {
+    if (!r) return null
+    return `拉取 ${r.pulled} · 新增 ${r.inserted} · 合并 ${r.merged} · 失败 ${r.failed}`
+  }
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-foreground/[0.02] p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users size={16} className="text-muted-foreground" />
+          <div>
+            <h3 className="text-sm font-medium">通讯录成员</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              从飞书 / 钉钉拉回团队成员（当前 {humans.length} 人）。
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => void handleSync()}
+          disabled={syncing}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-secondary text-secondary-foreground rounded-md hover:bg-secondary/80 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+          {syncing ? '同步中…' : '同步通讯录'}
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-md bg-destructive/10 text-destructive px-3 py-2 text-xs whitespace-pre-wrap">{error}</div>
+      )}
+
+      {result && (
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-md bg-foreground/[0.04] px-3 py-2">
+            <div className="font-medium mb-0.5">飞书 {result.feishu.error ? '失败' : '完成'}</div>
+            {result.feishu.error ? <div className="text-destructive whitespace-pre-wrap">{result.feishu.error}</div> : <div className="text-muted-foreground">{row(result.feishu)}</div>}
+          </div>
+          <div className="rounded-md bg-foreground/[0.04] px-3 py-2">
+            <div className="font-medium mb-0.5">钉钉 {result.dingtalk.error ? '失败' : '完成'}</div>
+            {result.dingtalk.error ? <div className="text-destructive whitespace-pre-wrap">{result.dingtalk.error}</div> : <div className="text-muted-foreground">{row(result.dingtalk)}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AgentTeamOverview({ employees }: { employees: AgentEmployeeResult[] }): React.ReactElement {
   const totalTasks = employees.reduce((sum, e) => sum + e.totalTasks, 0)
   const completedTasks = employees.reduce((sum, e) => sum + e.completedTasks, 0)

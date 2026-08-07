@@ -129,10 +129,14 @@ export class FeishuTodoProvider implements TodoProvider {
 
   // ===== 用户 ID 映射 =====
   async getUserIdByPaaUserId(paaUserId: string): Promise<string | null> {
-    // 假设用户映射中存储的就是飞书 open_id
-    // 如果存储的是其他格式，需要在这里转换
-    // 目前直接返回用户映射中的 feishuUserId
-    return paaUserId
+    // PH1-A：优先从成员目录（稳定档案）按 paa-<name> 反向解析飞书 open_id；找不到则回退原值
+    try {
+      const { resolvePlatformForPaaUser } = await import('./member-sync-service')
+      const resolved = resolvePlatformForPaaUser(paaUserId, 'feishu')
+      return resolved ?? paaUserId
+    } catch {
+      return paaUserId
+    }
   }
 
   // ===== 内部 HTTP 请求 =====
