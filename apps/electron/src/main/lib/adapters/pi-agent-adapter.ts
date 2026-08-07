@@ -14,6 +14,7 @@ import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'
 import { resolveCollaborationWorkspaceId } from '../agent-collaboration-tools'
+import { logWarn } from '../file-logger'
 import { enrichMessageWithDocuments } from '../agent-runtime/attachment-enrichment'
 import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
@@ -509,6 +510,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             attempts += 1
             const delayMs = 1000 * attempts
             console.warn(`[Pi Runtime] 断流重试 ${attempts}/${MAX_PROMPT_RETRIES}（${delayMs}ms）: ${message}`)
+            logWarn(sessionId, `[Pi Runtime] 断流重试 ${attempts}/${MAX_PROMPT_RETRIES}（${delayMs}ms）: ${message.slice(0, 200)}`)
             onAgentEvent?.({
               type: 'retrying',
               attempt: attempts,

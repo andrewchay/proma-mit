@@ -57,6 +57,7 @@ import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './ag
 import { getRuntimeStatus } from './runtime-init'
 import { getSettings } from './settings-service'
 import { resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
+import { logInfo, logError } from './file-logger'
 import { buildSystemPrompt, buildDynamicContext, buildBuiltinAgents } from './agent-prompt-builder'
 import type { SubAgentInput } from './agent-runtime/types'
 import { permissionService } from './agent-permission-service'
@@ -568,6 +569,8 @@ export class AgentOrchestrator {
     const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions } = options
     let userMessageUuid = ''
 
+    logInfo(sessionId, `[${agentRuntime} runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
+
     try {
       const runtimeServices = this.runtimeServices
       const runtimeWorkspace = runtimeServices.workspaces.resolveWorkspaceContext({ workspaceId, sessionId })
@@ -747,9 +750,13 @@ export class AgentOrchestrator {
         runtimeServices.sessions.appendMessages(sessionId, accumulatedMessages)
       }
 
+      const durationMs = startedAt ? Date.now() - startedAt : 0
+      logInfo(sessionId, `[${agentRuntime} runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const durationMs = startedAt ? Date.now() - startedAt : 0
+      logError(sessionId, `[${agentRuntime} runtime] 运行失败 模型=${modelId ?? '-'} 耗时=${durationMs}ms 错误=${message.slice(0, 300)}`)
       console.error('[Agent Runtime] Proma runtime 运行失败:', error)
 
       // 用户主动中止时不走降级，直接向上抛出让外层处理
@@ -810,6 +817,8 @@ export class AgentOrchestrator {
   }): Promise<void> {
     const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions } = options
     let userMessageUuid = ''
+
+    logInfo(sessionId, `[Pi Runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
 
     try {
       let agentCwd = homedir()
@@ -989,9 +998,13 @@ export class AgentOrchestrator {
         appendSDKMessages(sessionId, accumulatedMessages)
       }
 
+      const durationMs = startedAt ? Date.now() - startedAt : 0
+      logInfo(sessionId, `[Pi Runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const durationMs = startedAt ? Date.now() - startedAt : 0
+      logError(sessionId, `[Pi Runtime] 运行失败 模型=${modelId ?? '-'} 耗时=${durationMs}ms 错误=${message.slice(0, 300)}`)
       console.error('[Pi Runtime] 运行失败:', error)
 
       if (message.includes('中止') || message.includes('aborted')) {
