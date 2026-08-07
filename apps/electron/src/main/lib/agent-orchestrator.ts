@@ -820,6 +820,12 @@ export class AgentOrchestrator {
 
       console.log(`[Pi Runtime] 启动 Pi runtime — provider: ${provider}, model: ${modelId}, cwd: ${agentCwd}`)
 
+      // Pi runtime 模型 fallback：input.modelId 为空时尝试从会话元数据恢复
+      const resolvedModelId = modelId || getAgentSessionMeta(sessionId)?.modelId || undefined
+      if (!resolvedModelId) {
+        console.warn(`[Pi Runtime] 会话 ${sessionId} 未提供 modelId，尝试使用渠道默认模型`)
+      }
+
       const historyMessages = getAgentSessionSDKMessages(sessionId)
 
       // 自动 Goal 续跑只有内部提示词，不应被渲染为一条空白用户消息。
@@ -852,7 +858,7 @@ export class AgentOrchestrator {
         sessionId,
         agentRuntime: 'pi',
         prompt,
-        model: modelId,
+        model: resolvedModelId,
         provider,
         apiKey,
         baseUrl,
