@@ -680,7 +680,14 @@ function startDelegation(
         modelId: args.modelId,
         purpose: '创建协作子会话',
       })
-    : ctx.modelId?.trim() || undefined
+    : ctx.modelId?.trim() || parent?.modelId?.trim() || undefined
+  
+  if (!effectiveModelId) {
+    throw new Error(
+      '无法确定子会话模型：父会话和上下文均未提供 modelId。' +
+      '请确保父会话已选择模型，或在 delegate_agent/delegate_agents 中显式传入 modelId。'
+    )
+  }
 
   const { completion, resolveCompletion } = createDelegationCompletion()
 
