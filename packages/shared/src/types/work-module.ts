@@ -252,6 +252,9 @@ export const PROJECT_IPC_CHANNELS = {
   SYNC_MEMBERS_DINGTALK: 'project:sync-members-dingtalk',
   LIST_MEMBERS: 'project:list-members',
   GET_MEMBER: 'project:get-member',
+  // 成员目录聚合（PH1-B）
+  LIST_MEMBER_DIRECTORY: 'project:list-member-directory',
+  COUNT_MEMBER_DIRECTORY: 'project:count-member-directory',
 } as const
 
 export interface ProjectInput {
@@ -429,6 +432,10 @@ export interface MemberResult {
   memberId: string
   kind: 'human' | 'agent' | 'bot'
   displayName: string
+  /** 角色/描述（AI 员工 role / bot 平台等） */
+  role?: string
+  /** 来源平台标识（bot 用） */
+  platform?: 'feishu' | 'dingtalk' | 'wechat'
   feishuUserId?: string
   feishuUnionId?: string
   dingtalkUserId?: string

@@ -1335,6 +1335,8 @@ export interface ElectronAPI {
       syncMembersDingtalk: () => Promise<import('@gravitas/shared').MemberSyncResult>
       listMembers: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
       getMember: (memberId: string) => Promise<import('@gravitas/shared').MemberResult | null>
+      listMemberDirectory: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
+      countMemberDirectory: () => Promise<{ human: number; agent: number; bot: number }>
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
@@ -2984,6 +2986,8 @@ const electronAPI: ElectronAPI = {
       syncMembersDingtalk: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_DINGTALK),
       listMembers: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBERS, filter),
       getMember: (memberId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEMBER, memberId),
+      listMemberDirectory: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, filter),
+      countMemberDirectory: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.COUNT_MEMBER_DIRECTORY),
     },
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {

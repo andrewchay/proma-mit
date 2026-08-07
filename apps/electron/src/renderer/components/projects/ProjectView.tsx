@@ -49,7 +49,8 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
   const inputRef = React.useRef<HTMLInputElement | null>(null)
   const wrapRef = React.useRef<HTMLDivElement | null>(null)
 
-  // 优先加载本地成员目录（PH1-A），打开即展示已同步的团队
+  // 优先加载本地真人成员目录（PH1-A），打开即展示已同步的团队真人；
+  // AI 员工指派走独立的选择器，不在此混合，避免输入框返回的只是展示名无法表达 agent-id。
   const loadMembers = useCallback(async (kw?: string) => {
     try {
       const list = await window.electronAPI.paa.project.listMembers({ activeOnly: true, q: kw })

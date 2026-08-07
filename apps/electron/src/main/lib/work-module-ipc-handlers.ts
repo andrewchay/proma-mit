@@ -728,6 +728,16 @@ export function registerWorkModuleIpcHandlers(): void {
     return getMember(memberId)
   })
 
+  // ===== 成员目录聚合（PH1-B） =====
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, (_: unknown, filter?: { kind?: string; q?: string; activeOnly?: boolean }) => {
+    const { listMemberDirectory } = require('./member-directory-service')
+    return listMemberDirectory(filter ?? {})
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.COUNT_MEMBER_DIRECTORY, () => {
+    const { countMemberDirectory } = require('./member-directory-service')
+    return countMemberDirectory()
+  })
+
   // ===== AI 员工（Agent Employee）=====
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EMPLOYEES, () => listAgentEmployees())
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EMPLOYEE, (_, id: string) => getAgentEmployee(id))

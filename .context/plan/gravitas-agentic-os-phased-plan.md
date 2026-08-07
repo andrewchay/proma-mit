@@ -40,10 +40,11 @@
 - [ ] **手动 mapping 保留**：无法自动匹配的成员，支持手动关联（source='manual'）
 
 ### PH1-B. 成员身份一等公民化（统一真人/AI员工/bot）
-- [ ] 定义统一 `Member` 抽象：`{ id, kind: 'human'|'agent'|'bot', profile, roles, assignable, presence }`
-- [ ] AI 员工（AgentEmployee）接入 Member 模型（仍是 `agent-<id>`，但归一到 Member 心智）
-- [ ] 外部 bot（飞书/钉钉/微信 bridge）接入 Member 模型
-- [ ] 指派 select 整合：真人 + AI 员工 + bot 同一成员目录选择
+- [x] 新建 `member-directory-service.ts` 统一**成员视图**：真人(members)+AI员工(agent_employees)+外部bot(飞书/钉钉)，聚合返回统一 `MemberResult`（kind 区分）
+- [x] `MemberResult` 共享类型补 `role`/`platform`
+- [x] IPC `LIST_MEMBER_DIRECTORY`/`COUNT_MEMBER_DIRECTORY` + preload `paa.project`
+- [x] 团队 Tab 成员面板改为统一视图：真人/AI员工/Bot 分组计数 + 列表
+- [ ] 负责人选择器：统一目录（真人+AI+bot 同处可选，需处理 agent/bot 指派语义）——当前保留真人；AI 走独立选择器
 
 ### PH1-C. 统一基础事件事实源（最小版）
 - [ ] 定义最小 `RunEventEnvelope`（started/progress/waiting_action/completed/failed + source + workspace + **memberId**）

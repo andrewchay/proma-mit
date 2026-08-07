@@ -331,6 +331,7 @@ export function AgentTeamPanel(): React.ReactElement {
 }
 
 /** AI 团队效能总览（P2）：聚合员工统计字段 */
+/** 统一成员视图 + 通讯录同步（PH1-A/B） */
 function MemberSyncPanel(): React.ReactElement {
   const [result, setResult] = React.useState<MemberSyncAllResult | null>(null)
   const [members, setMembers] = React.useState<MemberResult[]>([])
@@ -339,10 +340,17 @@ function MemberSyncPanel(): React.ReactElement {
 
   const loadMembers = React.useCallback(async (): Promise<void> => {
     try {
-      const list = await window.electronAPI.paa.project.listMembers({ activeOnly: true })
+      // 统一成员视图：真人 + AI 员工 + bot
+      const list = await window.electronAPI.paa.project.listMemberDirectory({ activeOnly: true })
       setMembers(list)
     } catch {
-      // 忽略
+      // 旧通道回退：仅真人
+      try {
+        const list = await window.electronAPI.paa.project.listMembers({ activeOnly: true })
+        setMembers(list)
+      } catch {
+        setMembers([])
+      }
     }
   }, [])
 
@@ -367,6 +375,8 @@ function MemberSyncPanel(): React.ReactElement {
   }
 
   const humans = members.filter((m) => m.kind === 'human')
+  const agents = members.filter((m) => m.kind === 'agent')
+  const bots = members.filter((m) => m.kind === 'bot')
   const row = (r?: { pulled: number; inserted: number; merged: number; failed: number }): string | null => {
     if (!r) return null
     return `拉取 ${r.pulled} · 新增 ${r.inserted} · 合并 ${r.merged} · 失败 ${r.failed}`
@@ -378,9 +388,9 @@ function MemberSyncPanel(): React.ReactElement {
         <div className="flex items-center gap-2">
           <Users size={16} className="text-muted-foreground" />
           <div>
-            <h3 className="text-sm font-medium">通讯录成员</h3>
+            <h3 className="text-sm font-medium">团队 / 通讯录成员</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              从飞书 / 钉钉拉回团队成员（当前 {humans.length} 人）。
+              真人 {humans.length} · AI 员工 {agents.length} · Bot {bots.length}
             </p>
           </div>
         </div>
@@ -393,6 +403,27 @@ function MemberSyncPanel(): React.ReactElement {
           {syncing ? '同步中…' : '同步通讯录'}
         </button>
       </div>
+
+      {/* 统一成员列表（真人 / AI 员工 / Bot） */}
+      {members.length > 0 && (
+        <div className="max-h-40 overflow-auto space-y-1">
+          {members.map((m) => (
+            <div key={m.memberId} className="flex items-center gap-2 text-xs">
+              <span className={
+                m.kind === 'human'
+                  ? 'px-1.5 py-[1px] rounded bg-foreground/[0.06] text-foreground/50'
+                  : m.kind === 'agent'
+                    ? 'px-1.5 py-[1px] rounded bg-primary/10 text-primary'
+                    : 'px-1.5 py-[1px] rounded bg-amber-500/15 text-amber-600'
+              }>
+                {m.kind === 'human' ? '真人' : m.kind === 'agent' ? 'AI' : 'Bot'}
+              </span>
+              <span className="truncate">{m.displayName}</span>
+              {m.role && <span className="ml-auto shrink-0 text-muted-foreground">{m.role}</span>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md bg-destructive/10 text-destructive px-3 py-2 text-xs whitespace-pre-wrap">{error}</div>
