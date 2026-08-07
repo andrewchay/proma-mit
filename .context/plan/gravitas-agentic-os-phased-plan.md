@@ -44,7 +44,7 @@
 - [x] `MemberResult` 共享类型补 `role`/`platform`
 - [x] IPC `LIST_MEMBER_DIRECTORY`/`COUNT_MEMBER_DIRECTORY` + preload `paa.project`
 - [x] 团队 Tab 成员面板改为统一视图：真人/AI员工/Bot 分组计数 + 列表
-- [ ] 负责人选择器：统一目录（真人+AI+bot 同处可选，需处理 agent/bot 指派语义）——当前保留真人；AI 走独立选择器
+- [x] 负责人选择器统一：ContactPicker 增加 `includeAgents`/`onMemberSelect`，新任务表单可同处选真人/AI员工（AI走 agent-<id>，真人走 paa-<name>）
 
 ### PH1-C. 统一基础事件事实源（最小版）
 - [ ] 定义最小 `RunEventEnvelope`（started/progress/waiting_action/completed/failed + source + workspace + **memberId**）

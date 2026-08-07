@@ -30,6 +30,10 @@ interface ContactPickerProps {
   value: string
   onChange: (name: string) => void
   placeholder?: string
+  /** PH1-B：是否把 AI 员工也纳入统一选择（与真人互斥） */
+  includeAgents?: boolean
+  /** PH1-B：选中统一成员（AI 员工等非真人）时回调；真人仍走 onChange */
+  onMemberSelect?: (member: MemberResult) => void
 }
 
 /**
@@ -37,7 +41,7 @@ interface ContactPickerProps {
  * assignee.userId 仍使用 paa-<name>，映射表在新选时写入平台真实 ID，
  * 保证任务同步(SYNC_TASK)无需再手工配置平台 ID。
  */
-function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): React.ReactElement {
+function ContactPicker({ value, onChange, placeholder, includeAgents, onMemberSelect }: ContactPickerProps): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -49,16 +53,20 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
   const inputRef = React.useRef<HTMLInputElement | null>(null)
   const wrapRef = React.useRef<HTMLDivElement | null>(null)
 
-  // 优先加载本地真人成员目录（PH1-A），打开即展示已同步的团队真人；
-  // AI 员工指派走独立的选择器，不在此混合，避免输入框返回的只是展示名无法表达 agent-id。
+  // 加载成员目录：默认仅真人；includeAgents 时统一列出真人 + AI 员工（PH1-B）
   const loadMembers = useCallback(async (kw?: string) => {
     try {
+      if (includeAgents) {
+        const list = await window.electronAPI.paa.project.listMemberDirectory({ activeOnly: true, q: kw })
+        setMembers(list)
+        return
+      }
       const list = await window.electronAPI.paa.project.listMembers({ activeOnly: true, q: kw })
       setMembers(list.filter((m) => m.kind === "human"))
     } catch {
       setMembers([])
     }
-  }, [])
+  }, [includeAgents])
 
   const runSearch = useCallback(async (kw: string) => {
     setLoading(true)
@@ -113,9 +121,16 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
     setOpen(false)
   }
 
-  // 从成员目录选中：一次性补全该成员两个平台的映射（若都有）
+  // 从成员目录选中：真人写映射 + onChange；AI员工走 onMemberSelect（由父级设 agent-<id>）
   const pickMember = async (m: MemberResult) => {
     const name = m.displayName
+    if (m.kind === 'agent') {
+      // 先 onChange（内部可能清 agentId），再 onMemberSelect 设 agentId，避免被清掉
+      onChange(name)
+      onMemberSelect?.(m)
+      setOpen(false)
+      return
+    }
     const paaUserId = `paa-${name}`
     try {
       const existing = await callProjectAPI<any>("getUserMapping", paaUserId)
@@ -158,19 +173,35 @@ function ContactPicker({ value, onChange, placeholder }: ContactPickerProps): Re
           {loading && <div className="px-3 py-2 text-xs text-muted-foreground">搜索通讯录中…</div>}
           {!loading && (
             <>
-              {/* 本地成员目录（PH1-A） */}
+              {/* 本地成员目录（PH1-A/B）：includeAgents 时统一列出真人 + AI员工；否则仅真人 */}
               {members.length > 0 && (
                 <>
-                  <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground bg-accent/50">团队成员</div>
-                  {members.map((m) => (
-                    <button key={`mem-${m.memberId}`} onClick={() => pickMember(m)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent">
-                      <span className="inline-block h-5 w-5 shrink-0 rounded-full bg-foreground/15 text-center text-[10px] leading-5 text-foreground/60">{m.displayName.slice(0, 1)}</span>
-                      <span className="truncate">{m.displayName}</span>
-                      {(m.feishuUserId || m.dingtalkUserId) && (
-                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{[m.feishuUserId && '飞书', m.dingtalkUserId && '钉钉'].filter(Boolean).join('·')}</span>
-                      )}
-                    </button>
-                  ))}
+                  {includeAgents && members.some((m) => m.kind === 'human') && (
+                    <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground bg-accent/50">团队成员</div>
+                  )}
+                  {members
+                    .filter((m) => m.kind === 'human')
+                    .map((m) => (
+                      <button key={`mem-${m.memberId}`} onClick={() => pickMember(m)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent">
+                        <span className="inline-block h-5 w-5 shrink-0 rounded-full bg-foreground/15 text-center text-[10px] leading-5 text-foreground/60">{m.displayName.slice(0, 1)}</span>
+                        <span className="truncate">{m.displayName}</span>
+                        {(m.feishuUserId || m.dingtalkUserId) && (
+                          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{[m.feishuUserId && '飞书', m.dingtalkUserId && '钉钉'].filter(Boolean).join('·')}</span>
+                        )}
+                      </button>
+                    ))}
+                  {includeAgents && members.some((m) => m.kind === 'agent') && (
+                    <div className="px-3 py-1 text-[10px] font-medium text-muted-foreground bg-accent/50">AI 员工</div>
+                  )}
+                  {members
+                    .filter((m) => m.kind === 'agent')
+                    .map((m) => (
+                      <button key={`mem-${m.memberId}`} onClick={() => pickMember(m)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent">
+                        <span className="inline-block h-5 w-5 shrink-0 rounded-full bg-primary/10 text-primary text-center text-[10px] leading-5">{m.displayName.slice(0, 1)}</span>
+                        <span className="truncate">🤖 {m.displayName}</span>
+                        {m.role && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{m.role}</span>}
+                      </button>
+                    ))}
                 </>
               )}
               {feishuUsers.length > 0 && (
@@ -1509,7 +1540,19 @@ function TaskList({
             </div>
             <div>
               <label className="text-xs text-muted-foreground">负责人</label>
-              <ContactPicker value={newAssigneeName} onChange={setNewAssigneeName} placeholder="搜索通讯录负责人（飞书/钉钉）" />
+              <ContactPicker
+                value={newAssigneeName}
+                onChange={(name) => { setNewAssigneeName(name); setNewAgentId('') }}
+                placeholder="搜索负责人（真人 / AI员工）"
+                includeAgents
+                onMemberSelect={(m) => {
+                  // 选中 AI 员工：设 agentId 并清空真人名
+                  if (m.kind === 'agent') {
+                    const id = m.memberId.replace(/^agent-/, '')
+                    setNewAgentId(id)
+                  }
+                }}
+              />
             </div>
             {agentEmployees.length > 0 && (
               <div>
