@@ -1301,7 +1301,9 @@ export function registerIpcHandlers(): void {
       if (agentRuntime !== undefined && !isAgentRuntime(agentRuntime)) {
         throw new Error(`非法的 Agent runtime: ${String(agentRuntime)}`)
       }
-      return createAgentSession(title, channelId, workspaceId, undefined, agentRuntime ?? getSettings().agentRuntime)
+      // modelId 缺省时兜底到全局默认模型，确保会话元数据始终带模型（子会话继承了会话模型）
+      const fallbackModelId = getSettings().agentModelId || undefined
+      return createAgentSession(title, channelId, workspaceId, fallbackModelId, agentRuntime ?? getSettings().agentRuntime)
     }
   )
 

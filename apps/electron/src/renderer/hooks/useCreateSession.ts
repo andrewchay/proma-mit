@@ -72,6 +72,7 @@ export function useCreateSession(): CreateSessionActions {
 
   const createAgent = async (options?: CreateSessionOptions): Promise<string | undefined> => {
     try {
+      // modelId 不显式传，由 IPC 处理器 / createAgentSession 内部兜底到全局默认模型
       const meta = await window.electronAPI.createAgentSession(
         undefined,
         agentChannelId || undefined,

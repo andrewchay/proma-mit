@@ -121,11 +121,24 @@ export function createAgentSession(
   const index = readIndex()
   const now = Date.now()
 
+  // modelId 缺省时兜底到全局默认模型，保证会话元数据始终带模型
+  // （子会话/协作委派依赖会话 modelId 作为 fallback，缺失会导致子任务无法运行）
+  // 用动态 require 避免与 settings-service 的循环依赖
+  let effectiveModelId = modelId || undefined
+  if (!effectiveModelId) {
+    try {
+      const { getSettings } = require('./settings-service') as typeof import('./settings-service')
+      effectiveModelId = getSettings()?.agentModelId || undefined
+    } catch {
+      // 忽略 settings 读取失败，保持空 modelId
+    }
+  }
+
   const meta: AgentSessionMeta = {
     id: randomUUID(),
     title: title || '新 Agent 会话',
     channelId,
-    modelId,
+    modelId: effectiveModelId,
     agentRuntime,
     workspaceId,
     createdAt: now,

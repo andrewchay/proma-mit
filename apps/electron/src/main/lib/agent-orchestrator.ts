@@ -611,6 +611,17 @@ export class AgentOrchestrator {
 
       // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
       const collabWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
+      // 将最终有效模型回写会话元数据，保证协作子会话能继承到模型（缺失会导致子任务无法运行）
+      if (modelId) {
+        try {
+          const currentMeta = getAgentSessionMeta(sessionId)
+          if (currentMeta && currentMeta.modelId !== modelId) {
+            updateAgentSessionMeta(sessionId, { modelId })
+          }
+        } catch (err) {
+          console.warn('[Agent Runtime] 回写会话 modelId 失败:', err)
+        }
+      }
       const collabExtraTools = collabWorkspaceId && !isDelegationSession
         ? await import('./agent-collaboration-tools').then((m) => {
             console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, collabWs: collabWorkspaceId, isDelegationSession })
@@ -824,6 +835,18 @@ export class AgentOrchestrator {
       const resolvedModelId = modelId || getAgentSessionMeta(sessionId)?.modelId || undefined
       if (!resolvedModelId) {
         console.warn(`[Pi Runtime] 会话 ${sessionId} 未提供 modelId，尝试使用渠道默认模型`)
+      }
+
+      // 将最终解析出的 modelId 回写会话元数据，保证后续子会话/协作战能继承到有效模型
+      if (resolvedModelId) {
+        try {
+          const currentMeta = getAgentSessionMeta(sessionId)
+          if (currentMeta && currentMeta.modelId !== resolvedModelId) {
+            updateAgentSessionMeta(sessionId, { modelId: resolvedModelId })
+          }
+        } catch (err) {
+          console.warn('[Pi Runtime] 回写会话 modelId 失败:', err)
+        }
       }
 
       const historyMessages = getAgentSessionSDKMessages(sessionId)
