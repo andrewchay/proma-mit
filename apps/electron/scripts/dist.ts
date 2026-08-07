@@ -19,6 +19,22 @@
 
 import { spawnSync } from 'child_process'
 import { join } from 'path'
+import { readdirSync, rmSync, statSync, existsSync } from 'fs'
+
+/** 递归删除路径及其子目录下所有 .DS_Store（electron-builder rmdir 前避免 ENOTEMPTY） */
+function removeDsStoreRecursively(dir: string): void {
+  if (!existsSync(dir)) return
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name)
+    let stat: ReturnType<typeof statSync> | undefined
+    try { stat = statSync(full) } catch { continue }
+    if (stat.isDirectory()) {
+      removeDsStoreRecursively(full)
+    } else if (name === '.DS_Store') {
+      try { rmSync(full, { force: true }) } catch { /* ignore */ }
+    }
+  }
+}
 
 // ============================================
 // 类型定义
@@ -208,6 +224,10 @@ function main(): void {
   // ── 步骤 5: electron-builder 打包 ──
   step++
   printStepStart(step, totalSteps, 'Electron Builder 打包')
+
+  // electron-builder 会先 rmdir appOutDir；Finder 生成的 .DS_Store 会让其报
+  // ENOTEMPTY。打包前递归清理 out/ 下的 .DS_Store，避免反复撞车。
+  removeDsStoreRecursively(join(process.cwd(), 'out'))
 
   const builderArgs = ['electron-builder', `--${opts.platform}`]
 
