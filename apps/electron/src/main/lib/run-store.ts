@@ -40,6 +40,8 @@ export function toRunRecord(event: AppEventEnvelope): RunRecord {
     ...('detail' in event && event.detail ? { detail: event.detail } : {}),
     ...(event.sessionId ? { sessionId: event.sessionId } : {}),
     ...('goalId' in event && event.goalId ? { goalId: event.goalId } : {}),
+    ...('memberId' in event && event.memberId ? { memberId: event.memberId } : {}),
+    ...('workspaceId' in event && event.workspaceId ? { workspaceId: event.workspaceId } : {}),
     ...('evidence' in event && event.evidence ? { evidence: event.evidence } : {}),
     timestamp: event.timestamp,
   }

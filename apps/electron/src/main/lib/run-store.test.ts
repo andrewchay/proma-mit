@@ -59,4 +59,22 @@ describe('toRunRecord 运行记录映射', () => {
     expect(record.actionKind).toBeUndefined()
     expect(record.detail).toBe('正在使用 Bash')
   })
+
+  test('带 memberId/workspaceId 的事件 → 运行记录保留归属（PH1-C）', () => {
+    const event: AppEventEnvelope = {
+      id: 'evt-4',
+      type: 'completed',
+      source: 'agent',
+      taskId: 's3',
+      title: 'AI 员工执行',
+      sessionId: 's3',
+      memberId: 'agent-abc123',
+      workspaceId: 'ws-1',
+      detail: '已完成',
+      timestamp: 4000,
+    }
+    const record = toRunRecord(event)
+    expect(record.memberId).toBe('agent-abc123')
+    expect(record.workspaceId).toBe('ws-1')
+  })
 })

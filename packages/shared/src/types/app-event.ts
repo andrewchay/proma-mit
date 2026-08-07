@@ -33,6 +33,10 @@ export type AppEventEnvelope =
       /** 关联会话 ID（打开/导航用） */
       sessionId?: string
       timestamp: number
+      /** 执行者成员归属（PH1-C） */
+      memberId?: string
+      /** 会话所属工作区 */
+      workspaceId?: string
     }
   | {
       id: string
@@ -46,6 +50,10 @@ export type AppEventEnvelope =
       /** 阶段进度 0-100（可选） */
       progress?: number
       timestamp: number
+      /** 执行者成员归属（PH1-C） */
+      memberId?: string
+      /** 会话所属工作区 */
+      workspaceId?: string
     }
   | {
       id: string
@@ -59,6 +67,10 @@ export type AppEventEnvelope =
       /** 交互详情（权限描述/问题/计划摘要） */
       detail: string
       timestamp: number
+      /** 执行者成员归属（PH1-C） */
+      memberId?: string
+      /** 会话所属工作区 */
+      workspaceId?: string
     }
   | {
       id: string
@@ -74,6 +86,10 @@ export type AppEventEnvelope =
       /** 本次运行的结构化证据 */
       evidence?: import('./run-record').RunEvidence
       timestamp: number
+      /** 执行者成员归属（PH1-C） */
+      memberId?: string
+      /** 会话所属工作区 */
+      workspaceId?: string
     }
   | {
       id: string
@@ -88,6 +104,10 @@ export type AppEventEnvelope =
       /** 关联 Goal id */
       goalId?: string
       timestamp: number
+      /** 执行者成员归属（PH1-C） */
+      memberId?: string
+      /** 会话所属工作区 */
+      workspaceId?: string
     }
 
 /** 便捷构造：生成带 id/timestamp 的 envelope 基础字段 */
@@ -96,13 +116,16 @@ export function createAppEventBase(
   taskId: string,
   title: string,
   sessionId?: string,
-): Pick<AppEventEnvelope, 'id' | 'source' | 'taskId' | 'title' | 'sessionId' | 'timestamp'> {
+  options?: { memberId?: string; workspaceId?: string },
+): Pick<AppEventEnvelope, 'id' | 'source' | 'taskId' | 'title' | 'sessionId' | 'memberId' | 'workspaceId' | 'timestamp'> {
   return {
     id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     source,
     taskId,
     title,
     ...(sessionId ? { sessionId } : {}),
+    ...(options?.memberId ? { memberId: options.memberId } : {}),
+    ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
     timestamp: Date.now(),
   }
 }

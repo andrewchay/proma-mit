@@ -13,13 +13,30 @@ import type { AppEventEnvelope, AgentStreamPayload } from '@gravitas/shared'
 
 type AppEventHandler = (event: AppEventEnvelope) => void
 
+/**
+ * 成员归属：根据会话反查是否为 AI 员工执行；是则返回 memberId=`agent-<id>`。
+ * 真人员工/普通会话暂无稳定归属，返回 undefined（后续可扩展按 workspace/当前用户归因）。
+ */
+export function resolveMemberForSession(sessionId: string): string | undefined {
+  try {
+    const { getAgentExecutionBySessionId } = require('./project-sqlite-store')
+    const execution = getAgentExecutionBySessionId(sessionId)
+    if (execution?.agentId) return `agent-${execution.agentId}`
+  } catch {
+    // 项目库未初始化或不适用（非 AI 员工会话）
+  }
+  return undefined
+}
+
 /** 从 sessionId + AgentStreamPayload 归一化为 AppEventEnvelope；无法归一化返回 null */
 export function toAppEvent(sessionId: string, payload: AgentStreamPayload): AppEventEnvelope | null {
+  const memberId = resolveMemberForSession(sessionId)
   const base = {
     source: 'agent' as const,
     taskId: sessionId,
     title: sessionId.slice(0, 8),
     sessionId,
+    ...(memberId ? { memberId } : {}),
     timestamp: Date.now(),
     id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   }

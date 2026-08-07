@@ -47,9 +47,11 @@
 - [x] 负责人选择器统一：ContactPicker 增加 `includeAgents`/`onMemberSelect`，新任务表单可同处选真人/AI员工（AI走 agent-<id>，真人走 paa-<name>）
 
 ### PH1-C. 统一基础事件事实源（最小版）
-- [ ] 定义最小 `RunEventEnvelope`（started/progress/waiting_action/completed/failed + source + workspace + **memberId**）
-- [ ] 事件带 memberId（归属到人/Agent/bot），为后续归属与协同打底
-- [ ] 与已有 `agent-event-bus.ts`、`agent_executions`、`workflow-service` 对齐，先统一 schema，不强切
+- [x] `AppEventEnvelope` 补 `memberId?`/`workspaceId?`（五态全加）+ `createAppEventBase` 支持携带
+- [x] `RunRecord` 同步补 memberId/workspaceId；`run-store.toRunRecord` 透传
+- [x] `app-event-bus` 新增 `resolveMemberForSession`：按 sessionId 反查 AI 员工执行 → memberId=`agent-<id>`；`toAppEvent` 归一化时自动带上
+- [x] 测试：run-store 透传 + app-event-attribution（resolveMemberForSession / toAppEvent / 非AI不带）
+- [ ] 真人员工/普通会话归因到具体真人（当前无稳定归属，后续可按 workspace/当前用户）
 
 ### PH1-D. 审计最小收口 + 网络边界
 - [ ] 新成员/同步/指派事件进审计，审计字段统一（who(memberId)/what/when/workspace）

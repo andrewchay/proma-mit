@@ -24,6 +24,10 @@ export interface RunRecord {
   sessionId?: string
   /** 关联 Goal id（长生命周期目标） */
   goalId?: string
+  /** 执行者成员归属（PH1-C：human=paa-<name> / agent=agent-<id> / bot=bot:<platform>:<id>） */
+  memberId?: string
+  /** 会话所属工作区 */
+  workspaceId?: string
   /** 结构化运行证据（P1） */
   evidence?: RunEvidence
   /** 时间戳 */
