@@ -32,8 +32,18 @@ export async function appendExternalBridgeAudit(input: ExternalBridgeAuditInput)
     outcome: input.outcome,
     ...(input.error ? { errorCode: classifyError(input.error) } : {}),
   }
+  const memberId = resolveMemberForSessionSafe(input.sessionId)
   await mkdir(directory, { recursive: true })
-  await appendFile(join(directory, 'events.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), sessionId: input.sessionId, action: 'external_message', detail })}\n`, 'utf8')
+  await appendFile(join(directory, 'events.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), sessionId: input.sessionId, action: 'external_message', detail, ...(memberId ? { memberId } : {}) })}\n`, 'utf8')
+}
+
+function resolveMemberForSessionSafe(sessionId: string): string | undefined {
+  try {
+    const { resolveMemberForSession } = require('./app-event-bus')
+    return resolveMemberForSession(sessionId)
+  } catch {
+    return undefined
+  }
 }
 
 function classifyError(error: string): string {

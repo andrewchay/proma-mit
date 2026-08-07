@@ -5,7 +5,17 @@ import { join } from 'node:path'
 import { getConfigDir } from './config-paths'
 
 export async function appendWebBridgeAudit(sessionId: string, action: string, detail: Record<string, unknown>): Promise<void> {
+  const memberId = resolveMemberForSessionSafe(sessionId)
   const directory = join(getConfigDir(), 'web-bridge-audit')
   await mkdir(directory, { recursive: true })
-  await appendFile(join(directory, 'events.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), sessionId, action, detail })}\n`, 'utf8')
+  await appendFile(join(directory, 'events.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), sessionId, action, detail, ...(memberId ? { memberId } : {}) })}\n`, 'utf8')
+}
+
+function resolveMemberForSessionSafe(sessionId: string): string | undefined {
+  try {
+    const { resolveMemberForSession } = require('./app-event-bus')
+    return resolveMemberForSession(sessionId)
+  } catch {
+    return undefined
+  }
 }

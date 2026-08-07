@@ -39,6 +39,8 @@ export interface AgentAuditEvent {
   source: 'web-bridge' | 'computer-use' | 'external-bridge'
   action: string
   detail: Record<string, unknown>
+  /** 执行者成员归属（PH1-C/D：memberId=paa-<name>/agent-<id>/bot:<平台>:<id>） */
+  memberId?: string
 }
 
 export interface AgentAuditQuery {

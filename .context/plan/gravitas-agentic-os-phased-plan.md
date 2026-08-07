@@ -54,8 +54,9 @@
 - [ ] 真人员工/普通会话归因到具体真人（当前无稳定归属，后续可按 workspace/当前用户）
 
 ### PH1-D. 审计最小收口 + 网络边界
-- [ ] 新成员/同步/指派事件进审计，审计字段统一（who(memberId)/what/when/workspace）
-- [ ] 对齐 server 侧网络边界（SSRF `is_private_ip` 心智）——已有雏形，收口即可
+- [x] 审计带成员归属：`AgentAuditEvent` 补 `memberId?`；web-bridge/computer-use/external-bridge 三个审计写入时通过 `resolveMemberForSession` 补执行者归属；`agent-audit-service` 聚合自然带出
+- [x] 测试：audit-member + 既有 external-bridge-audit（共 34 用例全过）
+- [x] 网络边界确认：server 侧已有 `mcpEgress.allowedOrigins` 防 SSRF（未配置即禁用 MCP）；Web Bridge 导航依 README 走逐次权限确认，无绕过点 → 无需额外加 is_private_ip
 
 ### 第一批验收标准
 - 从飞书、钉钉各拉回一批通讯录成员，成功落成成员档案
