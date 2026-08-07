@@ -66,4 +66,6 @@ export const RUN_RECORD_IPC_CHANNELS = {
   LIST: 'run-record:list',
   /** 清空运行记录 */
   CLEAR: 'run-record:clear',
+  /** 导出运行记录 */
+  EXPORT: 'run-record:export',
 } as const

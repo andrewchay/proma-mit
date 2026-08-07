@@ -74,6 +74,19 @@ export function RunCenterSettings(): React.ReactElement {
     }
   }
 
+  const handleExport = async (): Promise<void> => {
+    try {
+      const res = await window.electronAPI.exportRunRecords({
+        ...(sourceFilter !== 'all' ? { source: sourceFilter as RunRecord['source'] } : {}),
+      })
+      if (res.ok) toast.success(`已导出 ${res.count} 条运行记录`)
+      else if (!res.canceled) toast.error(res.error ?? '导出失败')
+    } catch (err) {
+      toast.error('导出失败')
+      console.error(err)
+    }
+  }
+
   const handleNavigate = (record: RunRecord): void => {
     if (!record.sessionId) return
     // 关闭设置面板并打开对应会话（切回主界面）
@@ -99,9 +112,14 @@ export function RunCenterSettings(): React.ReactElement {
       title="运行记录"
       description="统一查看 Agent / Workflow / 定时任务的运行历史（本地存储，最近 2000 条）"
       action={
-        <Button variant="outline" size="sm" onClick={() => void handleClear()} disabled={records.length === 0}>
-          清空
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void handleExport()} disabled={records.length === 0}>
+            导出
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void handleClear()} disabled={records.length === 0}>
+            清空
+          </Button>
+        </div>
       }
     >
       <SettingsCard>

@@ -88,6 +88,14 @@ class RunStore {
     }
   }
 
+  /** 导出查询结果到指定文件（JSONL），返回导出条数 */
+  exportToFile(filePath: string, query: RunRecordQuery = {}): number {
+    const records = this.query({ ...query, limit: MAX_RECORDS })
+    const lines = records.map((r) => JSON.stringify(r)).join('\n')
+    appendFileSync(filePath, lines ? lines + '\n' : '', 'utf-8')
+    return records.length
+  }
+
   /** 启动时加载最近记录到内存（从各月文件读尾部） */
   start(): void {
     if (this.started) return

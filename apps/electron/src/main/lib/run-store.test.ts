@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterAll } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AppEventEnvelope } from '@gravitas/shared'
@@ -88,5 +88,16 @@ describe('toRunRecord 运行记录映射', () => {
     expect(forA.every((r: import('@gravitas/shared').RunRecord) => r.memberId === 'agent-a')).toBe(true)
     const none = store.query({ memberId: 'agent-zzz', limit: 50 })
     expect(none.some((r: import('@gravitas/shared').RunRecord) => r.memberId === 'agent-zzz')).toBe(false)
+  })
+
+  test('exportToFile 导出 JSONL', () => {
+    const { getRunStore } = require('./run-store')
+    const store = getRunStore()
+    store.record({ id: 'e-1', type: 'completed', source: 'agent', taskId: 's-e', title: '导出会话', memberId: 'agent-e', timestamp: 6000 })
+    const path = join(testDir, 'export-test.jsonl')
+    const count = store.exportToFile(path, { memberId: 'agent-e', limit: 50 })
+    expect(count).toBeGreaterThan(0)
+    const content = readFileSync(path, 'utf8')
+    expect(content).toContain('s-e')
   })
 })

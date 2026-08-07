@@ -1165,6 +1165,8 @@ export interface ElectronAPI {
   listRunRecords: (query?: import('@gravitas/shared').RunRecordQuery) => Promise<import('@gravitas/shared').RunRecord[]>
   /** 清空运行记录 */
   clearRunRecords: () => Promise<void>
+  /** 导出运行记录（弹保存框，返回导出条数） */
+  exportRunRecords: (query?: import('@gravitas/shared').RunRecordQuery) => Promise<{ ok: boolean; count?: number; canceled?: boolean; error?: string }>
 
   // ===== Token 消耗统计 =====
 
@@ -2766,6 +2768,10 @@ const electronAPI: ElectronAPI = {
 
   clearRunRecords: () => {
     return ipcRenderer.invoke(RUN_RECORD_IPC_CHANNELS.CLEAR)
+  },
+
+  exportRunRecords: (query?: import('@gravitas/shared').RunRecordQuery) => {
+    return ipcRenderer.invoke(RUN_RECORD_IPC_CHANNELS.EXPORT, query)
   },
 
   // ===== Token 消耗统计 =====

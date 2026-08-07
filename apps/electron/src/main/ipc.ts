@@ -3801,9 +3801,25 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(PLUGIN_IPC_CHANNELS.SET_ENABLED, async (_event, id: string, enabled: boolean): Promise<unknown> => setPluginEnabled(id, enabled))
 
   // ===== 运行记录（P2-1） =====
-  const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@gravitas/shared').RunRecordQuery) => import('@gravitas/shared').RunRecord[]; clear: () => void } }
+  const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@gravitas/shared').RunRecordQuery) => import('@gravitas/shared').RunRecord[]; clear: () => void; exportToFile: (p: string, q?: import('@gravitas/shared').RunRecordQuery) => number } }
   ipcMain.handle(RUN_RECORD_IPC_CHANNELS.LIST, async (_event, query: import('@gravitas/shared').RunRecordQuery = {}): Promise<import('@gravitas/shared').RunRecord[]> => getRunStore().query(query))
   ipcMain.handle(RUN_RECORD_IPC_CHANNELS.CLEAR, async (): Promise<void> => getRunStore().clear())
+  ipcMain.handle(RUN_RECORD_IPC_CHANNELS.EXPORT, async (event, query: import('@gravitas/shared').RunRecordQuery = {}): Promise<{ ok: boolean; count?: number; canceled?: boolean; error?: string }> => {
+    const { dialog, BrowserWindow } = await import('electron')
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()
+    const result = await dialog.showSaveDialog(win!, {
+      title: '导出运行记录',
+      defaultPath: `runs-${new Date().toISOString().slice(0, 10)}.jsonl`,
+      filters: [{ name: 'JSONL 运行记录', extensions: ['jsonl'] }],
+    })
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+    try {
+      const count = getRunStore().exportToFile(result.filePath, query)
+      return { ok: true, count }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
 
   // ===== Token 消耗统计 =====
   const { tokenUsageService } = require('./lib/token-usage-service') as { tokenUsageService: { query: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[]; aggregate: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageAggregate; listSessions: () => import('@gravitas/shared').TokenUsageSessionSummary[]; clear: () => void } }
