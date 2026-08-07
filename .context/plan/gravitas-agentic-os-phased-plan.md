@@ -69,10 +69,11 @@
 ## 第二批：后续可完成（在地基之上迭代）
 
 ### PH2-A. 团队协作共享
-- [ ] Skills 包分发（项目/团队工作区为单位，带版本+权限）
-- [ ] 工作区文件共享事件流（"谁改了什么"成员可见）
-- [ ] Todo 事件流化 + Agent 解压缩（Agent 帮队友解释别人 Todo）
-- [ ] 团队级 User/Project Profile（最简大上下文同步）
+- [x] **团队 Skills 目录（轻）**：`team-skill-directory-service` 汇总所有工作区从别处导入的 Skill（来源/版本/待同步），一键同步全部过期；AGENT_IPC 增 `LIST_TEAM_SKILL_UPSTREAMS`/`SYNC_TEAM_SKILL_UPDATES`；设置页 Skills Tab 新增 `TeamSkillDirectoryPanel`。复用既有 importSkillFromWorkspace/updateSkillFromSource（`de38be4` 后续批次）
+- [ ] Skills 包分发（团队实体 / 版本+权限，跨真团队）——若未来建团队实体再补
+- [ ] 工作区文件共享事件流（谁改了什么成员可见）
+- [ ] Todo 事件流化 + Agent 解压缩
+- [ ] 团队级 Profile
 
 ### PH2-B. 统一 Run 事件总线（完整版）+ 运行中心
 - [x] Run Center：`RunRecordQuery` 补 memberId?，`run-store.query` 按成员过滤（`f9463d6`）

@@ -1640,6 +1640,17 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 团队 Skills 目录（PH2-A）：汇总从别处导入的 Skill
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_TEAM_SKILL_UPSTREAMS, async () => {
+    const { listTeamSkillUpstreams, countTeamSkillUpdates } = await import('./lib/team-skill-directory-service')
+    return { groups: listTeamSkillUpstreams(), pending: countTeamSkillUpdates() }
+  })
+  // 团队 Skills 目录：一键同步所有过期导入
+  ipcMain.handle(AGENT_IPC_CHANNELS.SYNC_TEAM_SKILL_UPDATES, async () => {
+    const { syncAllTeamSkillUpdates } = await import('./lib/team-skill-directory-service')
+    return syncAllTeamSkillUpdates()
+  })
+
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,
     async (_, workspaceSlug: string, skillSlug: string): Promise<string> => {

@@ -1122,6 +1122,27 @@ export interface OtherWorkspaceSkillsGroup {
   skills: SkillMeta[]
 }
 
+/** 团队 Skills 目录：某工作区从别处导入的 Skill 条目（PH2-A） */
+export interface TeamSkillUpstream {
+  workspaceSlug: string
+  workspaceName: string
+  imported: ImportedSkillEntry[]
+}
+
+export interface ImportedSkillEntry {
+  slug: string
+  name: string
+  version?: string
+  enabled: boolean
+  importSource: {
+    sourceWorkspaceName: string
+    importedAt: string
+    sourceVersion?: string
+  }
+  /** 源有更新但本地未同步 */
+  hasUpdate: boolean
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1780,6 +1801,10 @@ export const AGENT_IPC_CHANNELS = {
   IMPORT_SKILL_FROM_WORKSPACE: 'agent:import-skill-from-workspace',
   /** 从源工作区同步更新已导入的 Skill */
   UPDATE_SKILL_FROM_SOURCE: 'agent:update-skill-from-source',
+  /** 团队 Skills 目录（PH2-A）：汇总所有工作区从别处导入的 Skill */
+  LIST_TEAM_SKILL_UPSTREAMS: 'agent:list-team-skill-upstreams',
+  /** 团队 Skills 目录：一键同步所有过期导入 */
+  SYNC_TEAM_SKILL_UPDATES: 'agent:sync-team-skill-updates',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

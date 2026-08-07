@@ -663,6 +663,10 @@ export interface ElectronAPI {
 
   /** 从源工作区同步更新已导入的 Skill */
   updateSkillFromSource: (targetSlug: string, skillSlug: string) => Promise<SkillMeta>
+  /** 团队 Skills 目录：汇总从别处导入的 Skill + 待同步数 */
+  listTeamSkillUpstreams: () => Promise<{ groups: import('@gravitas/shared').TeamSkillUpstream[]; pending: number }>
+  /** 团队 Skills 目录：一键同步所有过期导入 */
+  syncTeamSkillUpdates: () => Promise<{ updated: string[]; failed: string[]; errors: string[] }>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -1967,6 +1971,14 @@ const electronAPI: ElectronAPI = {
       targetSlug,
       skillSlug,
     )
+  },
+
+  listTeamSkillUpstreams: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_TEAM_SKILL_UPSTREAMS)
+  },
+
+  syncTeamSkillUpdates: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.SYNC_TEAM_SKILL_UPDATES)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

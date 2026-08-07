@@ -36,6 +36,7 @@ import type { McpServerEntry, SkillMeta, OtherWorkspaceSkillsGroup, WorkspaceMcp
 import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
 import { McpServerForm } from './McpServerForm'
 import { SkillFilesPanel } from './SkillFilesPanel'
+import { TeamSkillDirectoryPanel } from './TeamSkillDirectoryPanel'
 
 // ===== Types =====
 
@@ -512,6 +513,9 @@ ${skillList}
               </div>
             )}
           </SettingsSection>
+
+          {/* 团队 Skills 目录（PH2-A） */}
+          <TeamSkillDirectoryPanel />
         </TabsContent>
 
         {/* ===== MCP Tab ===== */}
