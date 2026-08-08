@@ -360,6 +360,13 @@ interface ProjectAlert {
   description: string
 }
 
+/** Agent 工作区（新建任务指定 AI 员工执行工作区用） */
+interface AgentWorkspaceResult {
+  id?: string
+  name: string
+  slug: string
+}
+
 interface ProjectActivity {
   id: string
   entityType: 'task' | 'subTask'
@@ -1435,12 +1442,17 @@ function TaskList({
   const [newDependsOnTaskIds, setNewDependsOnTaskIds] = useState<string[]>([])
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
+  const [workspaces, setWorkspaces] = useState<AgentWorkspaceResult[]>([])
+  const [newWorkspaceId, setNewWorkspaceId] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
 
   React.useEffect(() => {
     window.electronAPI.paa.agentEmployees.list()
       .then((emps) => setAgentEmployees(emps.filter((e) => e.enabled)))
       .catch(() => setAgentEmployees([]))
+    window.electronAPI.listAgentWorkspaces()
+      .then((ws) => setWorkspaces(ws))
+      .catch(() => setWorkspaces([]))
   }, [])
 
   const handleCreate = async () => {
@@ -1454,11 +1466,13 @@ function TaskList({
         dueDate?: number
         permissionRequests?: string[]
         createdByUserId?: string
+        workspaceId?: string
       } = {
         title: newTitle.trim(),
         description: newDesc.trim(),
         priority: newPriority,
         createdByUserId: `paa-${currentUserProfile.userName}`,
+        ...(newWorkspaceId ? { workspaceId: newWorkspaceId } : {}),
       }
       if (newAgentId) {
         const emp = agentEmployees.find((e) => e.id === newAgentId)
@@ -1488,6 +1502,7 @@ function TaskList({
       setNewAgentId('')
       setNewPermissions([])
       setNewDependsOnTaskIds([])
+      setNewWorkspaceId('')
       setNewDueDate('')
       setShowCreate(false)
     } catch (err) {
@@ -1613,6 +1628,19 @@ function TaskList({
                 </select>
               </div>
             )}
+            <div>
+              <label className="text-xs text-muted-foreground">执行工作区（AI 员工在此工作区执行；可选，缺省用员工/全局）</label>
+              <select
+                value={newWorkspaceId}
+                onChange={(e) => setNewWorkspaceId(e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded-md bg-background"
+              >
+                <option value="">（默认工作区）</option>
+                {workspaces.map((ws) => (
+                  <option key={ws.id ?? ws.slug} value={ws.id ?? ws.slug}>{ws.name}</option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="text-xs text-muted-foreground">截止日期</label>
               <input

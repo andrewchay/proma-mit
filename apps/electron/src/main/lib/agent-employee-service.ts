@@ -256,7 +256,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
 
-  const workspaceId = employee.workspaceId ?? getSettings().agentWorkspaceId
+  // PH2-③：执行工作区优先级 = 任务指定的 workspaceId → 员工档案 → 全局默认
+  const task = execution.entityType === 'task' ? store.getTask(execution.entityId) : null
+  const workspaceId = task?.workspaceId ?? employee.workspaceId ?? getSettings().agentWorkspaceId
 
   // 1. 创建独立 Agent 会话
   let sessionId: string

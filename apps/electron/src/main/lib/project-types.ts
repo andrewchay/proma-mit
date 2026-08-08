@@ -71,6 +71,10 @@ export interface Task {
   completionNotes?: string
   /** by-task 申请的额外权限（P1）：'bash' | 'write' | 'web' | 'mcp:<name>'；获批后执行用对应权限模式 */
   permissionRequests?: string[]
+  /** 发起/创建者（PH2-⑤） */
+  createdByUserId?: string
+  /** AI 员工执行目标工作区（PH2-③：指定执行落在哪个工作区，缺省用员工/全局） */
+  workspaceId?: string
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -116,6 +120,8 @@ export interface CreateTaskInput {
   permissionRequests?: string[]
   /** 发起/创建者（PH2-⑤：“我指派的”视图用） */
   createdByUserId?: string
+  /** AI 员工执行目标工作区（可选；缺省用员工/全局默认） */
+  workspaceId?: string
 }
 
 /** 创建独立执行 subTask 的输入；它通过 taskId 归属 Task，不使用 WBS parentId。 */

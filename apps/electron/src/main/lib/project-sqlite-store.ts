@@ -265,6 +265,7 @@ function migrate(database: any): void {
       assignee_user_id TEXT,
       assignee_display_name TEXT,
       created_by_user_id TEXT,
+      workspace_id TEXT,
       start_date INTEGER,
       due_date INTEGER,
       completed_at INTEGER,
@@ -460,6 +461,10 @@ function migrate(database: any): void {
   if (!columns.includes('created_by_user_id')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN created_by_user_id TEXT`)
   }
+  // PH2-③：tasks 表新增 workspace_id 列（AI 员工执行目标工作区）
+  if (!columns.includes('workspace_id')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN workspace_id TEXT`)
+  }
   // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('workflow_id')) {
@@ -488,6 +493,7 @@ type TaskRow = {
   id: string; project_id: string; parent_id: string | null;
   title: string; description: string; status: string; priority: string;
   assignee_user_id: string | null; assignee_display_name: string | null;
+  created_by_user_id: string | null; workspace_id: string | null;
   start_date: number | null; due_date: number | null; completed_at: number | null;
   completion_notes: string | null; risk_level: string | null; external_sync: string | null;
   permission_requests: string | null;
@@ -536,6 +542,8 @@ function rowToTask(row: TaskRow): Task {
     riskLevel: (row.risk_level as Task['riskLevel'] | undefined) ?? undefined,
     externalSync: row.external_sync ? JSON.parse(row.external_sync) : undefined,
     permissionRequests: parseJsonArray(row.permission_requests),
+    createdByUserId: row.created_by_user_id ?? undefined,
+    workspaceId: row.workspace_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -631,13 +639,13 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, created_by_user_id, start_date, due_date, permission_requests, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, created_by_user_id, workspace_id, start_date, due_date, permission_requests, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
-    input.createdByUserId ?? null,
+    input.createdByUserId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
     JSON.stringify(input.permissionRequests ?? []), timestamp, timestamp
   )
