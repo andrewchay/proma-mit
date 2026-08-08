@@ -258,8 +258,7 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   // P3：员工绑定 Workflow SOP → 走 Workflow 执行；否则 headless
   if (employee.workflowId) {
     return startAgentWorkflow(executionId, employee)
-  }
-  return startAgentHeadless(executionId, employee)
+  }  return startAgentHeadless(executionId, employee)
 }
 
 /** 真正启动 headless Agent 执行（创建会话 + 启动） */
@@ -270,6 +269,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
   // PH2-③：执行工作区优先级 = 任务指定的 workspaceId → 员工档案 → 全局默认
   const task = execution.entityType === 'task' ? store.getTask(execution.entityId) : null
   const workspaceId = task?.workspaceId ?? employee.workspaceId ?? getSettings().agentWorkspaceId
+  console.log(`[Diag][agent-employee] 执行 ${execution.id} task=${execution.entityId} 工作区=${
+    task?.workspaceId ? `任务指定:${task.workspaceId}` : (employee.workspaceId ? `员工:${employee.workspaceId}` : `全局:${workspaceId}`)
+  } 最终=${workspaceId}`)
 
   // 1. 创建独立 Agent 会话
   let sessionId: string
