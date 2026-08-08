@@ -121,6 +121,8 @@ export class ProactiveScheduler {
       id: randomUUID(), sourceType: trigger === 'manual' ? 'manual' : 'schedule', sourceId: schedule.id,
       sessionId: schedule.sessionId, status: 'running', trigger, startedAt,
     })
+    // PH2-C：把 Proactive 运行沉淀进统一运行事实源（Run Center 可回放）
+    this.emitRunEvent(schedule, run, 'started')
     try {
       if (!this.runner) throw new Error('Scheduler 执行器未就绪')
       const result = await this.runner(schedule, run)
@@ -131,10 +133,12 @@ export class ProactiveScheduler {
         outputSummary: result.outputSummary,
         sessionId: result.sessionId ?? run.sessionId,
       })
+      this.emitRunEvent(schedule, run, 'completed')
       return run
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误'
       run = this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: message })
+      this.emitRunEvent(schedule, run, 'failed')
       return run
     } finally {
       this.activeScheduleIds.delete(schedule.id)
@@ -154,6 +158,32 @@ export class ProactiveScheduler {
         updatedAt: this.now(),
       })
       this.arm()
+    }
+  }
+
+  /**
+   * PH2-C：把一次 Proactive 运行记为统一运行事件（Run Center 可回放）。
+   * 不阻塞执行，失败静默。
+   */
+  private emitRunEvent(schedule: ProactiveSchedule, run: ProactiveTaskRun, type: 'started' | 'completed' | 'failed'): void {
+    try {
+      const { getRunStore } = require('./run-store') as { getRunStore: () => { record: (e: import('@gravitas/shared').AppEventEnvelope) => void } }
+      const triggerLabel = run.trigger === 'manual' ? '手动触发' : run.trigger === 'recovery' ? '恢复触发' : '定时触发'
+      const base: import('@gravitas/shared').AppEventEnvelope = {
+        id: `arun-${run.id}`,
+        source: 'automation',
+        taskId: run.id,
+        title: schedule.title,
+        timestamp: this.now(),
+        ...(type === 'started'
+          ? { type: 'started' as const }
+          : type === 'failed'
+            ? { type: 'failed' as const, detail: `${triggerLabel} · ${run.error ?? '执行失败'}` }
+            : { type: 'completed' as const, detail: `${triggerLabel} · ${run.outputSummary ?? '已完成'}` }),
+      } as import('@gravitas/shared').AppEventEnvelope
+      getRunStore().record(base)
+    } catch {
+      // 记录失败静默，不阻塞定时任务
     }
   }
 
