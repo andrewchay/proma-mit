@@ -14,6 +14,7 @@ import { FileMentionList } from './FileMentionList'
 import type { FileMentionRef } from './FileMentionList'
 import type { FileIndexEntry, FileSearchResult } from '@gravitas/shared'
 import { createMentionPopup, positionPopup } from '@/components/agent/mention-popup-utils'
+import { resolveTriggerContext, shouldAllowMentionTrigger } from '@/components/ai-elements/mention-utils'
 
 export function createFileMentionSuggestion(
   workspacePathRef: React.RefObject<string | null>,
@@ -28,6 +29,19 @@ export function createFileMentionSuggestion(
   return {
     char: '@',
     allowSpaces: false,
+
+    // 防误触发：输入/粘贴邮箱或 npm scope 等场景中，@ 是普通字符，不弹文件引用。
+    shouldShow: ({ transaction, range }) => {
+      const uiEvent = transaction.getMeta('uiEvent')
+      if (uiEvent === 'paste' || uiEvent === 'drop') return false
+      const ctx = resolveTriggerContext(transaction.doc, range.from)
+      if (!ctx) return true
+      return shouldAllowMentionTrigger({
+        paragraphText: ctx.paragraphText,
+        triggerOffset: ctx.triggerOffset,
+        trigger: '@',
+      })
+    },
 
     items: async ({ query }): Promise<FileIndexEntry[]> => {
       // @goal 是 Agent 的保留命令，不能被同名文件引用覆盖。

@@ -12,6 +12,7 @@ import { MessageSquareText, Sparkles, Server } from 'lucide-react'
 import { MentionList } from './MentionList'
 import type { MentionListRef } from './MentionList'
 import { createMentionPopup, positionPopup } from './mention-popup-utils'
+import { resolveTriggerContext, shouldAllowMentionTrigger } from '@/components/ai-elements/mention-utils'
 import type { AgentSessionReferenceSearchResult } from '@gravitas/shared'
 
 // ===== 泛型工厂 =====
@@ -40,6 +41,20 @@ function createMentionSuggestion<T>(
   return {
     char: config.char,
     allowSpaces: false,
+
+    // 防误触发：粘贴/拖入、以及落在 URL/标题/色值/HTML 实体等普通文本中的
+    // 触发符都不该弹出引用菜单（避免在输入合法文本时被 @ # & 打断）。
+    shouldShow: ({ transaction, range }) => {
+      const uiEvent = transaction.getMeta('uiEvent')
+      if (uiEvent === 'paste' || uiEvent === 'drop') return false
+      const ctx = resolveTriggerContext(transaction.doc, range.from)
+      if (!ctx) return true
+      return shouldAllowMentionTrigger({
+        paragraphText: ctx.paragraphText,
+        triggerOffset: ctx.triggerOffset,
+        trigger: config.char,
+      })
+    },
 
     items: async ({ query }): Promise<T[]> => {
       const slug = workspaceSlugRef.current
