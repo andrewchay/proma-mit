@@ -33,6 +33,7 @@ import {
   MAX_RUNNING_DELEGATIONS_PER_PARENT,
   buildRecoveredDelegationState,
   buildDelegationTaskWithSharedContext,
+
   buildDelegationPrompt,
   createToolCallIdempotencyCache,
   resolveDelegationPermissionMode,
@@ -305,6 +306,11 @@ function createDelegationCompletion(): Pick<DelegationRecord, 'completion' | 're
   return { completion, resolveCompletion }
 }
 
+/** 每个根会话累计可创建的协作子会话总数上限（防 AI 员工/父会话失控爆会话） */
+const MAX_TOTAL_DELEGATIONS_PER_ROOT = 16
+/** 按根会话累计已创建子会话数 */
+const rootDelegationCount: Map<string, number> = new Map()
+
 function assertCanCreateDelegation(
   ctx: CollaborationToolContext,
   requestedCount = 1,
@@ -314,6 +320,13 @@ function assertCanCreateDelegation(
 
   if (ctx.triggeredBy === 'delegation' || delegationDepth > 0) {
     throw new Error('协作子会话不能继续创建新的子会话')
+  }
+
+  // 防失控：每根会话累计创建子会话总数硬上限（不管运行状态/是否已释放额度）
+  const rootId = (parent?.rootSessionId ?? parent?.id ?? ctx.sessionId) as string
+  const cumulative = rootDelegationCount.get(rootId) ?? 0
+  if (cumulative + requestedCount > MAX_TOTAL_DELEGATIONS_PER_ROOT) {
+    throw new Error(`本会话最多累计创建 ${MAX_TOTAL_DELEGATIONS_PER_ROOT} 个协作子会话，已达到上限；请收敛任务或改用其他方式`)
   }
 
   const runningCount = getRunningDelegationCount(ctx.sessionId)
@@ -327,6 +340,9 @@ function assertCanCreateDelegation(
   if (!ctx.workspaceId) {
     throw new Error('创建协作子会话需要绑定项目')
   }
+
+  // 通过全部校验：占用累计配额
+  rootDelegationCount.set(rootId, cumulative + requestedCount)
 
   return parent
 }
