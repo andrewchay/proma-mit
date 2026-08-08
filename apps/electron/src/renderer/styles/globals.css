@@ -913,7 +913,7 @@
   animation: file-browser-flash 1.2s ease-out;
 }
 
-/* ===== 呼吸灯：项目运行状态指示（蓝色运行 / 橙色阻塞） ===== */
+/* ===== 呼吸灯：项目运行状态指示（蓝色运行 / 橙色阻塞 / 绿色完成未查看） ===== */
 @keyframes sidebar-breathe {
   0%, 100% {
     opacity: 1;
@@ -934,6 +934,9 @@
 }
 .sidebar-breathe-blocked {
   --breathe-color: 24 95% 53%; /* 橙色 */
+}
+.sidebar-breathe-completed {
+  --breathe-color: 142 71% 45%; /* 绿色：会话已完成但用户尚未查看 */
 }
 
 /* ===== FileBrowser sticky 目录行：每条 sticky 链路最末一行加一道软扩散阴影 =====

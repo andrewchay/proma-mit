@@ -2283,12 +2283,16 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
             )}
           </div>
 
-          {/* 会话级运行状态呼吸灯（running=蓝 / blocked=橙，无文字） */}
-          {(indicatorStatus === 'running' || indicatorStatus === 'blocked') && (
+          {/* 会话级运行状态呼吸灯（running=蓝 / blocked=橙 / completed=绿，无文字；completed 点击会话后消失） */}
+          {(indicatorStatus === 'running' || indicatorStatus === 'blocked' || indicatorStatus === 'completed') && (
             <span
               className={cn(
                 'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
-                indicatorStatus === 'blocked' ? 'sidebar-breathe-blocked text-orange-500' : 'sidebar-breathe-running text-blue-500'
+                indicatorStatus === 'blocked'
+                  ? 'sidebar-breathe-blocked text-orange-500'
+                  : indicatorStatus === 'completed'
+                    ? 'sidebar-breathe-completed text-green-500'
+                    : 'sidebar-breathe-running text-blue-500'
               )}
               aria-hidden="true"
             />
