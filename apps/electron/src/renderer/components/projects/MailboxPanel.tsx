@@ -9,7 +9,7 @@ import * as React from 'react'
 import { useStore } from 'jotai'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
-import { Inbox, RefreshCw, ShieldCheck, HelpCircle, ClipboardCheck, ListTodo } from 'lucide-react'
+import { Inbox, RefreshCw, ShieldCheck, HelpCircle, ClipboardCheck, ListTodo, Send } from 'lucide-react'
 import type { MailboxItem } from '@gravitas/shared'
 
 const KINDS: Record<MailboxItem['kind'], { label: string; icon: React.ReactNode; cls: string }> = {
@@ -17,6 +17,7 @@ const KINDS: Record<MailboxItem['kind'], { label: string; icon: React.ReactNode;
   ask: { label: '提问', icon: <HelpCircle size={12} />, cls: 'bg-blue-500/10 text-blue-500' },
   plan_review: { label: '审批', icon: <ClipboardCheck size={12} />, cls: 'bg-violet-500/10 text-violet-600' },
   todo: { label: '待办', icon: <ListTodo size={12} />, cls: 'bg-emerald-500/10 text-emerald-600' },
+  invoke: { label: '互调', icon: <Send size={12} />, cls: 'bg-pink-500/10 text-pink-500' },
 }
 
 function renderMember(memberId?: string): string {
@@ -65,7 +66,7 @@ export function MailboxPanel(): React.ReactElement {
           <div>
             <h3 className="text-sm font-medium">团队收件箱</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              需要确认：权限 / 提问 / 计划审批 / 待办（{items.length} 条）
+              需要确认：权限 / 提问 / 审批 / 待办 / 互调（{items.length} 条）
             </p>
           </div>
         </div>

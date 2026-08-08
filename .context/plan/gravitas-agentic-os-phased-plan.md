@@ -104,9 +104,9 @@
 - [ ] 多 surface 统一任务状态
 
 ### PH2-F. 长期/可选
-- [ ] 成员间 Agent 互调协议（他人调你的 Agent 做确认）
-- [ ] 多社区/多租户精细化（URL 即边界）
-- [ ] 插件/SDK 开放（统一扩展契约）
+- [x] **成员间 Agent 互调协议**：`agent-invoke-service`（跨成员请求队列 JSONL，send/list/respond）+ `InvokeAgent` Agent 工具（发任务/确认给真人或 AI 员工）+ 收件箱 MailboxPanel 展示互调请求（'invoke' kind）——他人可调用你的 Agent 做确认/小任务
+- [ ] 多租户精细化（URL 即边界）
+- [ ] 插件/SDK 开放
 
 ---
 

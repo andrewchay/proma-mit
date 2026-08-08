@@ -683,6 +683,10 @@ export interface ElectronAPI {
   getContextGraph: (entityType: import('@gravitas/shared').ContextEntityType, entityId: string) => Promise<{ graph: import('@gravitas/shared').ContextGraph; text: string } | null>
   /** 凭据统一治理（PH2-D） */
   listCredentialRegistry: () => Promise<{ registry: import('@gravitas/shared').CredentialRegistry; text: string }>
+  /** Agent 互调请求（PH2-F） */
+  sendAgentInvoke: (fromMemberId: string, toMemberId: string, task: string) => Promise<import('@gravitas/shared').AgentInvokeRequest>
+  listAgentInvokes: (toMemberId: string, status?: import('@gravitas/shared').InvokeRequestStatus) => Promise<import('@gravitas/shared').AgentInvokeRequest[]>
+  respondAgentInvoke: (id: string, status: import('@gravitas/shared').InvokeRequestStatus, result?: string) => Promise<import('@gravitas/shared').AgentInvokeRequest | null>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -2033,6 +2037,18 @@ const electronAPI: ElectronAPI = {
 
   listCredentialRegistry: () => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_CREDENTIAL_REGISTRY)
+  },
+
+  sendAgentInvoke: (fromMemberId: string, toMemberId: string, task: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.SEND_AGENT_INVOKE, fromMemberId, toMemberId, task)
+  },
+
+  listAgentInvokes: (toMemberId: string, status?: import('@gravitas/shared').InvokeRequestStatus) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AGENT_INVOKES, toMemberId, status)
+  },
+
+  respondAgentInvoke: (id: string, status: import('@gravitas/shared').InvokeRequestStatus, result?: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.RESPOND_AGENT_INVOKE, id, status, result)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

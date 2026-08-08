@@ -1196,13 +1196,27 @@ export type TeamProfilePatch = Partial<Pick<TeamProfile, 'teamName' | 'membersSu
 /** 团队收件箱条目（PH2-C） */
 export interface MailboxItem {
   id: string
-  kind: 'permission' | 'ask' | 'plan_review' | 'todo'
+  kind: 'permission' | 'ask' | 'plan_review' | 'todo' | 'invoke'
   sessionId: string
   memberId?: string
   title: string
   summary: string
   requestId: string
   at: number
+}
+
+/** Agent 互调请求（PH2-F） */
+export type InvokeRequestStatus = 'open' | 'accepted' | 'done' | 'declined'
+
+export interface AgentInvokeRequest {
+  id: string
+  fromMemberId: string
+  toMemberId: string
+  task: string
+  status: InvokeRequestStatus
+  result?: string
+  createdAt: number
+  updatedAt: number
 }
 
 /** 费用审计（PH2-C） */
@@ -1949,6 +1963,10 @@ export const AGENT_IPC_CHANNELS = {
   GET_CONTEXT_GRAPH: 'agent:get-context-graph',
   /** 凭据统一治理（PH2-D） */
   LIST_CREDENTIAL_REGISTRY: 'agent:list-credential-registry',
+  /** Agent 互调请求（PH2-F） */
+  SEND_AGENT_INVOKE: 'agent:send-invoke',
+  LIST_AGENT_INVOKES: 'agent:list-invokes',
+  RESPOND_AGENT_INVOKE: 'agent:respond-invoke',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

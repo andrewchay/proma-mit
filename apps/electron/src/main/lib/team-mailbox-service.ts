@@ -21,7 +21,7 @@ import type { PermissionRequest, AskUserRequest } from '@gravitas/shared'
 /** 收件箱条目 */
 export interface MailboxItem {
   id: string
-  kind: 'permission' | 'ask' | 'plan_review' | 'todo'
+  kind: 'permission' | 'ask' | 'plan_review' | 'todo' | 'invoke'
   sessionId: string
   memberId?: string
   /** 人类可读标题 */
@@ -97,9 +97,50 @@ export function listMailboxItems(): MailboxItem[] {
   // 4) 指派给成员的待办（Todo/看板并入 mailbox）
   items.push(...collectAssignedTodos(at))
 
+  // 5) Agent 互调请求（PH2-F：他人调你的 Agent 做确认/小任务）
+  items.push(...collectIncomingInvokes(at))
+
   mailboxCache = items
   mailboxCacheAt = at
   return items
+}
+
+/** 汇集所有 open 的 Agent 互调请求为收件箱条目（带 from→to 归属）。 */
+function collectIncomingInvokes(at: number): MailboxItem[] {
+  try {
+    const { listIncomingInvokes } = require('./agent-invoke-service') as {
+      listIncomingInvokes: (toMember: string) => Array<{ id: string; fromMemberId: string; toMemberId: string; task: string; status: string }>
+    }
+    // 本机「拥有」的成员：从既有事件里出现的 memberId 推断 + 常见前缀；简单起见列出所有 open invite
+    const items: MailboxItem[] = []
+    // 由于无单一 self 身份，展示所有 open 互调请求，便于团队可见
+    const seen = new Set<string>()
+    for (const member of collectKnownMembers()) {
+      for (const invoke of listIncomingInvokes(member)) {
+        if (invoke.status !== 'open' || seen.has(invoke.id)) continue
+        seen.add(invoke.id)
+        items.push({
+          id: `invoke-${invoke.id}`,
+          kind: 'invoke',
+          sessionId: '',
+          memberId: invoke.toMemberId,
+          title: '互调请求',
+          summary: `来自 ${invoke.fromMemberId}：${invoke.task.slice(0, 60)}`,
+          requestId: invoke.id,
+          at,
+        })
+      }
+    }
+    return items
+  } catch {
+    return []
+  }
+}
+
+function collectKnownMembers(): string[] {
+  const { listAgentEmployees } = require('./project-sqlite-store') as { listAgentEmployees: () => Array<{ id: string }> }
+  const agents = listAgentEmployees().map((a) => `agent-${a.id}`)
+  return [...agents, 'paa-self']
 }
 
 const TERMINAL_TODO_STATUS = new Set(['completed', 'cancelled'])

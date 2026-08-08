@@ -1696,6 +1696,19 @@ export function registerIpcHandlers(): void {
     const registry = listCredentials()
     return { registry, text: credentialRegistryToText(registry) }
   })
+  // Agent 互调请求（PH2-F）
+  ipcMain.handle(AGENT_IPC_CHANNELS.SEND_AGENT_INVOKE, async (_ev, fromMemberId: string, toMemberId: string, task: string) => {
+    const { sendAgentInvoke } = await import('./lib/agent-invoke-service')
+    return sendAgentInvoke(fromMemberId, toMemberId, task)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AGENT_INVOKES, async (_ev, toMemberId: string, status?: import('@gravitas/shared').InvokeRequestStatus) => {
+    const { listIncomingInvokes } = await import('./lib/agent-invoke-service')
+    return listIncomingInvokes(toMemberId, status)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.RESPOND_AGENT_INVOKE, async (_ev, id: string, status: import('@gravitas/shared').InvokeRequestStatus, result?: string) => {
+    const { respondToInvoke } = await import('./lib/agent-invoke-service')
+    return respondToInvoke(id, status, result)
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,
