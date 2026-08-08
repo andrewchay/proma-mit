@@ -254,6 +254,7 @@ bun run generate:icons    # 生成应用图标
 |-----------|-----------|
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态（Map 结构支持多对话并行）、模型选择、上下文设置、并排模式、思考模式、待上传附件 |
 | `agent-atoms.ts` | Agent 会话列表、当前会话、流式状态（`AgentStreamState`）、工作区选择、渠道选择、权限/AskUser 请求队列（按 sessionId Map） |
+| 会话指示状态（`agent-atoms.ts` + `LeftSidebar`） | `SessionIndicatorStatus` = `idle/running/blocked/completed`。优先级 blocked>running>completed。侧边栏呼吸灯：running=蓝、blocked=橙、**completed=绿（会话完成且用户未查看）**。`unviewedCompletedSessionIdsAtom` 存"完成未查看"集合，点击/打开会话时由 `useOpenSession`/`useSyncActiveTabSideEffects` 清除，绿点随之消失。修改呼吸灯渲染时务必同时覆盖 completed，勿只看 running/blocked |
 | `active-view.ts` | 主面板视图切换（'conversations' / 'settings'） |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
 | `settings-tab.ts` | 设置面板当前标签页 |
@@ -534,3 +535,31 @@ React UI 更新
 - **文件监听**：工作区文件、MCP 配置、Chat 工具实时监控
 - **事件流处理**：SDK 消息流式转换与累积
 - **错误映射**：SDK 错误统一转换为应用错误
+
+### 协作子会话（collaboration delegation）关键踩坑
+
+- **工具注入判定**（`pi-agent-adapter.ts` / `agent-orchestrator.ts`）：
+  `collaborationAvailable = !!collabWs && !!input.channelId && !isDelegationSession`。
+  三个条件任意不满足则 collaboration 工具不注入，模型永远看不到 `mcp__collaboration__*`。
+- **`runPiAgent` 必须把 `channelId` 传给 PiAgentQueryOptions**——构建 queryOptions 时遗漏
+  channelId 会导致 `input.channelId` 恒为 undefined，collaborationAvailable=false 且委派子会话
+  无 channelId，子会话 headless Pi runtime 无法初始化模型，表现为"子任务创建成功但一直 running 无输出"（git `70319ed`）。
+- **modelId 兜底链**：`startDelegation` 的 `effectiveModelId` 依次取 `args.modelId → ctx.modelId → parent?.modelId`，
+  再取不到会显式 throw（不静默创建无模型子会话）。配合 `createAgentSession` 内部兜底
+  `getSettings().agentModelId` + orchestrator 运行时把解析出的 modelId 回写会话元数据（git `eab9ab1`/`2c7239b`）。
+  会话元数据 modelId 缺失会导致协作子会话无法运行。
+- **子会话只有 1 行 JSONL + status 卡 running = headless 未真正启动模型**；排查顺序：
+  是否 `input.channelId` undefined（→ 注入失败）、模型是否可注册、provider 是否兼容 Pi runtime。
+
+### 飞书 Task v2 同步 Todo 关键踩坑
+
+- **创建任务的执行者字段是 `members`，不是 `assignee`**。Task v2 创建任务 `POST /open-apis/task/v2/tasks`
+  请求体用 `members: [{ id, role: 'assignee' }]` 设置负责人。若误用顶级 `assignee:{id,type}`，
+  飞书静默忽略 → 任务创建成功（返回 task.guid）但**无执行者**，不出现在任何人的飞书 Todo「我的任务」里
+  （git `17c1ee5`）。
+- **open_id 需配 `?user_id_type=open_id`**：用户映射的 `feishuUserId` 是 open_id（`ou_` 开头），
+  创建任务路径需带 `user_id_type=open_id`，否则飞书按默认 user_id 解析可能无法匹配成员。
+- **实现位置**：`feishu-todo-provider.ts` 的 `createTodo`；同步链路 `project-sync-service.ts` 的
+  `syncTaskToExternal` 会先查用户映射（`paaUserId → feishuUserId`），缺映射或缺 assignee 会返回失败。
+- **Task v2 更新状态**：PATCH 需用 `{ task: {...}, update_fields: [...] }` 包裹（防 1470400 `Invalid Param 'task'`）；
+  `completed` 走 `POST .../complete`；恢复未完成用 `{ task: {}, update_fields: ['completed_at'] }`。

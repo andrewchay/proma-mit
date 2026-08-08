@@ -2,19 +2,16 @@
 
 > Gravitas 是开源 AI 桌面应用 **Proma**（github.com/ErlichLiu/Proma）的改造衍生版本。除特别注明外，内容表述为本项目视角。
 
-Proma 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agent、工作区、Skills、MCP、远程机器人和记忆能力放在同一个开源客户端里。
+Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agent、工作区、Skills、MCP、远程机器人和记忆能力放在同一个开源客户端里。
 
 它不是只面向闲聊的聊天框，而是一个可以长期沉淀个人工作流的 Agent 工作台：简单问题用 Chat，复杂任务交给 Agent，数据和配置尽量留在本地。
 
-![Gravitas 品牌海报](./generated-images/gravitas-brand-doc-v2.png)
+![Gravitas 品牌海报](<./generated-images/gravitas-brand-doc-v2.png>)
 
 <video width="560" controls>
-  <source src="https://img.erlich.fun/personal-blog/uPic/%E7%AE%80%E5%8D%95%E4%BB%8B%E7%BB%8D%20Proma.mp4" type="video/mp4">
+
+<source src="https://img.erlich.fun/personal-blog/uPic/%E7%AE%80%E5%8D%95%E4%BB%8B%E7%BB%8D%20Proma.mp4" type="video/mp4">
 </video>
-
-[English README](./README.en.md) | [新手教程](./tutorial/tutorial.md) | [下载开源版](https://github.com/ErlichLiu/Proma/releases) | [下载商业版](https://proma.cool/download)
-
-> **最新思考 ｜ 2026 Q2–Q3**：[勇敢地解决真实的问题 — Proactive · 个人注意力 · 团队协作](./proma-thinking/proma-2026-q2-q3-thinking.md) ｜ 往期思考：[2026 Q1](./proma-thinking/proma-2026-q1-thinking.md)
 
 ## 现在能做什么
 
@@ -45,10 +42,10 @@ Proma 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agen
 ### 首次配置
 
 1. 打开 Proma，先完成环境检查。Agent 模式依赖本机基础环境，尤其是 Git、Node.js / Bun 以及可用的 Shell。
-2. 进入 **设置 > 渠道**，添加至少一个 AI 供应商渠道，填写 Base URL、API Key 和模型列表。
+2. 进入 **设置 &gt; 渠道**，添加至少一个 AI 供应商渠道，填写 Base URL、API Key 和模型列表。
 3. Chat 模式可以使用 OpenAI、Anthropic、Google 或 OpenAI 兼容协议的渠道。
 4. Agent 模式默认可使用 Claude / Proma / AI SDK / Pi runtime。Claude runtime 需要 Anthropic 或 Anthropic 兼容协议；AI SDK runtime 支持 OpenAI-compatible 以及 Anthropic、Google provider package。
-5. 进入 **设置 > Agent**，选择默认 Agent 渠道、模型和工作区。
+5. 进入 **设置 &gt; Agent**，选择默认 Agent 渠道、模型和工作区。
 6. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接，在设置页对应 Tab 中继续配置。
 
 ### 使用已有本地项目
@@ -63,13 +60,13 @@ Proma 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agen
 
 如需复用已有 Chrome 的登录态，可由用户自行以 `--remote-debugging-port=9222` 启动 Chrome，然后让 Agent 使用 `WebBridgeChromeTargets` 和 `WebBridgeConnectChrome` 连接指定页面。该 Bridge 仅连接 `127.0.0.1` 的调试端口，不会启动或关闭 Chrome；连接与所有有状态操作均走权限确认。
 
-在 **设置 > 操作审计** 可查看本机 Web Bridge 与 Computer Use 的 JSONL 操作摘要，按来源、会话 ID、操作类型筛选，并导出当前筛选结果为 JSONL。审计不会上传，且不包含页面正文、截图、敏感输入、上传文件内容或本地绝对路径。
+在 **设置 &gt; 操作审计** 可查看本机 Web Bridge 与 Computer Use 的 JSONL 操作摘要，按来源、会话 ID、操作类型筛选，并导出当前筛选结果为 JSONL。审计不会上传，且不包含页面正文、截图、敏感输入、上传文件内容或本地绝对路径。
 
 ### 使用 Computer Use（macOS）
 
 Computer Use 的正式支持范围为 Proma runtime 与 AI SDK runtime；Claude runtime 和 Pi runtime 仅做工具发现、权限拒绝与文本降级的兼容性验证，不承诺完整视觉输入或用户接管语义。
 
-Computer Use 目前仅在 macOS 提供原生系统控制，包含状态/能力查询、显示器枚举、前台应用和窗口识别、授权请求、截图、移动、点击、双击、拖拽、受限快捷键、输入与滚动。`ComputerUseScreenshot` 返回 `display_id` 和 `coordinateScale`；后续操作带回该缩放值即可自动将截图像素坐标换算为显示器逻辑坐标，适用于 Retina 和多显示器布局。敏感输入、支付、授权、发布、删除和最终提交会进入专用“用户接管”状态，Agent 暂停，用户完成后才继续。Windows/Linux 已保留相同工具接口和跨平台安装包资源，但 `ComputerUseCapabilities` 会明确报告未实现原生控制的降级状态；实际输入注入与权限流程须在对应系统真机验收。首次使用时，Agent 会通过 `ComputerUseRequestPermissions` 请求系统授权；在 macOS **系统设置 > 隐私与安全性** 中为 Proma 打开：
+Computer Use 目前仅在 macOS 提供原生系统控制，包含状态/能力查询、显示器枚举、前台应用和窗口识别、授权请求、截图、移动、点击、双击、拖拽、受限快捷键、输入与滚动。`ComputerUseScreenshot` 返回 `display_id` 和 `coordinateScale`；后续操作带回该缩放值即可自动将截图像素坐标换算为显示器逻辑坐标，适用于 Retina 和多显示器布局。敏感输入、支付、授权、发布、删除和最终提交会进入专用“用户接管”状态，Agent 暂停，用户完成后才继续。Windows/Linux 已保留相同工具接口和跨平台安装包资源，但 `ComputerUseCapabilities` 会明确报告未实现原生控制的降级状态；实际输入注入与权限流程须在对应系统真机验收。首次使用时，Agent 会通过 `ComputerUseRequestPermissions` 请求系统授权；在 macOS **系统设置 &gt; 隐私与安全性** 中为 Proma 打开：
 
 Windows 与 Linux 安装包会保留 Computer Use 能力查询，但当前会明确显示“控制不可用”；在对应平台完成原生输入实现和真机权限验收前，不会启用鼠标、键盘或窗口控制。
 
@@ -130,32 +127,35 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 用 Chat 处理轻量但真实的分析任务：整理读者关注点、生成对比表，并把首屏文案快速定稿。
 
-![Proma Chat 快速分析](./docs/assets/screenshots/proma-chat-demo.png)
+![Proma Chat 快速分析](<./docs/assets/screenshots/proma-chat-demo.png>)
 
 ### Agent 工作台
 
 Agent 在工作区里读取文件、推进任务、输出表格化结论，并把可复用文件保留在右侧工作区面板中。
 
-![Proma Agent 工作台](./docs/assets/screenshots/proma-agent-demo.png)
+![Proma Agent 工作台](<./docs/assets/screenshots/proma-agent-demo.png>)
 
 ### Skills
 
 每个工作区都可以沉淀专属 Skills。截图中的 `feedback-synthesis` 用于把用户反馈、访谈记录和 issue 聚合成主题、证据与优先级建议。
 
-![Proma 工作区 Skills](./docs/assets/screenshots/proma-skills-demo.png)
+![Proma 工作区 Skills](<./docs/assets/screenshots/proma-skills-demo.png>)
 
 ### Skills & MCP
 
 同一个工作区可以管理 stdio / HTTP MCP Server，按需启用或关闭，让 Agent 在不同项目里获得不同的外部上下文。
 
-![Proma MCP 配置](./docs/assets/screenshots/proma-mcp-demo.png)
+![Proma MCP 配置](<./docs/assets/screenshots/proma-mcp-demo.png>)
 
 ### 流式语音输入(支持全局输入)
+
 Proma 支持豆包的流式语音输入功能，并且支持在 Proma 内使用和 Proma 外部使用：
-- Proma 内部使用：Ctrl + ` 触发识别，再次按下结束自动输入到 Proma 内对应的输入框
-- Proma 外部使用：Ctrl + ` 触发识别，再次按下结束自动输入到当前的光标所在处，如无光标则默认写入到剪贴板
+
+- Proma 内部使用：Ctrl + \` 触发识别，再次按下结束自动输入到 Proma 内对应的输入框
+- Proma 外部使用：Ctrl + \` 触发识别，再次按下结束自动输入到当前的光标所在处，如无光标则默认写入到剪贴板
 - 
-![Proma 语音输入](./docs/assets/screenshots/proma-typeless-input.png)
+
+![Proma 语音输入](<./docs/assets/screenshots/proma-typeless-input.png>)
 
 ## 支持的模型渠道
 
@@ -179,7 +179,7 @@ Claude runtime 仍保留 SDK 原生 session / snapshot 能力；Proma runtime �
 
 Proma 采用本地文件存储，方便备份、迁移和排查问题。
 
-```text
+```
 ~/.proma/
 ├── channels.json
 ├── conversations.json
@@ -210,7 +210,7 @@ API Key 会通过 Electron `safeStorage` 加密后写入 `channels.json`。核�
 
 Proma 是 Bun workspace monorepo。
 
-```text
+```
 proma-v2/
 ├── packages/
 │   ├── shared/     # 共享类型、IPC 常量、配置、工具函数
@@ -284,7 +284,7 @@ bun run dist:fast
 
 Proma 的核心通信路径是：
 
-```text
+```
 shared 类型和 IPC 常量
   -> main/ipc.ts 注册处理器
   -> preload/index.ts 暴露 window.electronAPI
@@ -335,8 +335,7 @@ shared 类型和 IPC 常量
 
 Proma 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱，方便后续发放。
 
-![Proma PR Bounty](https://img.erlich.fun/personal-blog/uPic/PR%20%E8%B5%A0%E9%87%91%201.png)
-
+![Proma PR Bounty](<https://img.erlich.fun/personal-blog/uPic/PR%20%E8%B5%A0%E9%87%91%201.png>)
 
 ## Star History
 
@@ -345,9 +344,9 @@ Proma 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ErlichLiu/Proma&type=date&theme=dark&legend=top-left" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ErlichLiu/Proma&type=date&legend=top-left" />
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=ErlichLiu/Proma&type=date&legend=top-left" />
- </picture>
-</a>
 
+</picture>
+</a>
 
 ## 致谢
 
@@ -363,6 +362,6 @@ Proma 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱
 本项目采用 **Business Source License 1.1 (BSL-1.1)**，详见根目录 `LICENSE`。
 
 - 在 **Change Date（2030-06-22）** 之前，除非获得附加使用许可，源码及派生作品仅限非生产用途（详见 LICENSE 中的 Additional Use Grant）；
-- 到达 **Change Date** 后，自动转为 **Apache License, Version 2.0**（见根目录 `LICENSE-APACHE` / https://www.apache.org/licenses/LICENSE-2.0）。
+- 到达 **Change Date** 后，自动转为 **Apache License, Version 2.0**（见根目录 `LICENSE-APACHE` / [https://www.apache.org/licenses/LICENSE-2.0）。](https://www.apache.org/licenses/LICENSE-2.0%EF%BC%89%E3%80%82)
 
 如需商业/生产授权，请联系许可方。
