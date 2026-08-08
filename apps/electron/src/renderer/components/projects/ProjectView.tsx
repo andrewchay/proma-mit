@@ -814,7 +814,7 @@ function ProjectDetail({
     // 兜底轮询：即使 activity 推送被错过/mount 在别的视图，也让看板/任务列表随后台真实状态收敛
     const timer = window.setInterval(() => {
       void loadData()
-    }, 6000)
+    }, 5 * 60 * 1000)
     return () => {
       off?.()
       window.clearInterval(timer)
