@@ -3867,11 +3867,12 @@ export function registerIpcHandlers(): void {
   })
 
   // ===== Token 消耗统计 =====
-  const { tokenUsageService } = require('./lib/token-usage-service') as { tokenUsageService: { query: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[]; aggregate: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageAggregate; listSessions: () => import('@gravitas/shared').TokenUsageSessionSummary[]; clear: () => void } }
+  const { tokenUsageService } = require('./lib/token-usage-service') as { tokenUsageService: { query: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[]; aggregate: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageAggregate; listSessions: () => import('@gravitas/shared').TokenUsageSessionSummary[]; clear: () => void; getCostMiniLedger: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').CostMiniLedger } }
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST, async (_event, query: import('@gravitas/shared').TokenUsageQuery = {}): Promise<import('@gravitas/shared').TokenUsageRecord[]> => tokenUsageService.query(query))
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.AGGREGATE, async (_event, query: import('@gravitas/shared').TokenUsageQuery = {}): Promise<import('@gravitas/shared').TokenUsageAggregate> => tokenUsageService.aggregate(query))
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS, async (): Promise<import('@gravitas/shared').TokenUsageSessionSummary[]> => tokenUsageService.listSessions())
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.CLEAR, async (): Promise<void> => tokenUsageService.clear())
+  ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.COST_MINI_LEDGER, async (_event, query: import('@gravitas/shared').TokenUsageQuery = {}): Promise<import('@gravitas/shared').CostMiniLedger> => tokenUsageService.getCostMiniLedger(query))
 
   // ===== Goal 状态层（P0） =====
   const goalSvc = require('./lib/goal-service') as {

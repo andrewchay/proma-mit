@@ -1194,6 +1194,8 @@ export interface ElectronAPI {
   listTokenUsageSessions: () => Promise<import('@gravitas/shared').TokenUsageSessionSummary[]>
   /** 清空 Token 使用记录 */
   clearTokenUsageRecords: () => Promise<void>
+  /** 统一成本记账小账本（PH2-D） */
+  getCostMiniLedger: (query?: import('@gravitas/shared').TokenUsageQuery) => Promise<import('@gravitas/shared').CostMiniLedger>
 
   // ===== Goal 状态层（P0） =====
 
@@ -2842,6 +2844,10 @@ const electronAPI: ElectronAPI = {
 
   clearTokenUsageRecords: () => {
     return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.CLEAR)
+  },
+
+  getCostMiniLedger: (query?: import('@gravitas/shared').TokenUsageQuery) => {
+    return ipcRenderer.invoke(TOKEN_USAGE_IPC_CHANNELS.COST_MINI_LEDGER, query)
   },
 
   // ===== Goal 状态层（P0） =====

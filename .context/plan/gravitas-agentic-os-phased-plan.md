@@ -94,7 +94,7 @@
 ### PH2-D. 数据复利与安全增强
 - [x] **成功输出转资产**：`asset-proposal-service`（从会话证据提炼 Workflow/Skill 提案：决策/写回/验证→步骤+提示词+关键工具，`proposalToText`）+ `ProposeAssetFromRun` Agent 工具；evidence-service 改为懒加载数据源（可注入 stub 便于测试）
 - [ ] 本地 Context Hub / Work Graph（Session/Run/Task/Calendar/Artifact 关联）
-- [ ] Token/成本记账收敛（server ledger + 本地统计统一）
+- [x] **Token/成本记账收敛**：`token-usage-service.getCostMiniLedger`（单一成本口径：总费用USD/token + byDay/byModel/bySession），IPC `COST_MINI_LEDGER`；cost-audit、Token 统计 UI、预算统一从该账本取数避免双轨漂移
 - [ ] 凭据统一治理、审批门收敛
 
 ### PH2-E. 触达面扩大（团队真正可用）

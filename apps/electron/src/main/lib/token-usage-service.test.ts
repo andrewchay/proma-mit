@@ -208,4 +208,18 @@ describe('TokenUsageService', () => {
     expect(sessions[0]?.title).toBe('测试会话')
     expect(sessions[0]?.totalTokens).toBe(1200)
   })
+
+  test('统一成本记账小账本 getCostMiniLedger（PH2-D）', () => {
+    service.middleware('session-1', buildPayload(buildAssistantMessage({ input: 1000, output: 200, totalTokens: 1200, cost: { input: 0.001, output: 0.002, total: 0.003 } }, ['Read'])), () => {})
+    service.middleware('session-2', buildPayload(buildAssistantMessage({ input: 500, output: 100, totalTokens: 600, cost: { input: 0.001, output: 0.001, total: 0.002 } }, ['Write'])), () => {})
+
+    const ledger = service.getCostMiniLedger({ from: 0 })
+    expect(ledger.totalTokens).toBe(1800)
+    expect(ledger.totalCostUsd).toBeCloseTo(0.005, 5)
+    expect(ledger.recordCount).toBe(2)
+    expect(ledger.bySession.length).toBe(2)
+    expect(ledger.byDay.length).toBeGreaterThan(0)
+    // bySession 按费用降序：session-1(0.003) > session-2(0.002)
+    expect(ledger.bySession[0]?.sessionId).toBe('session-1')
+  })
 })

@@ -156,4 +156,25 @@ export const TOKEN_USAGE_IPC_CHANNELS = {
   LIST_SESSIONS: 'token-usage:list-sessions',
   /** 清空所有 token 记录 */
   CLEAR: 'token-usage:clear',
+  /** 统一成本记账小账本（PH2-D 收敛：单一成本口径） */
+  COST_MINI_LEDGER: 'token-usage:cost-mini-ledger',
 } as const
+
+/** 统一成本记账小账本（PH2-D） */
+export interface CostMiniLedger {
+  /** 起止时间 */
+  from: number
+  to: number
+  /** 总费用（USD） */
+  totalCostUsd: number
+  /** 总 token */
+  totalTokens: number
+  /** 记录条数 */
+  recordCount: number
+  /** 按天分布 */
+  byDay: Array<{ date: string; costUsd: number; tokens: number }>
+  /** 按模型分布 */
+  byModel: Array<{ modelId: string; costUsd: number; tokens: number }>
+  /** 按会话分布 */
+  bySession: Array<{ sessionId: string; costUsd: number; tokens: number }>
+}

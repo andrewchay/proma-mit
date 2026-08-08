@@ -20,6 +20,7 @@ import type {
   TokenUsageIndex,
   TokenUsageQuery,
   TokenUsageRecord,
+  CostMiniLedger,
   TokenUsageSessionSummary,
 } from '@gravitas/shared'
 import type { AgentEventMiddleware } from './agent-event-bus'
@@ -584,6 +585,59 @@ export class TokenUsageService {
   }
 
   /** 查询会话汇总列表 */
+  /**
+   * PH2-D：统一成本记账小账本——单一成本口径。
+   * 供 Token 统计 UI、费用审计、预算/凭据等一切需要成本数字的地方统一取数，避免双轨漂移。
+   */
+  getCostMiniLedger(query: TokenUsageQuery = {}): CostMiniLedger {
+    this.ensureStarted()
+    const to = query.to ?? Date.now()
+    const from = query.from ?? 0
+    const records = this.query({ ...query, from, to, limit: Number.MAX_SAFE_INTEGER })
+
+    let totalCostUsd = 0
+    let totalTokens = 0
+    const byDay = new Map<string, { date: string; costUsd: number; tokens: number }>()
+    const byModel = new Map<string, { modelId: string; costUsd: number; tokens: number }>()
+    const bySession = new Map<string, { sessionId: string; costUsd: number; tokens: number }>()
+
+    for (const r of records) {
+      const cost = r.costTotal ?? 0
+      const tokens = r.totalTokens ?? 0
+      totalCostUsd += cost
+      totalTokens += tokens
+
+      const dayKey = toDateString(r.timestamp)
+      byDay.set(dayKey, {
+        date: dayKey,
+        costUsd: (byDay.get(dayKey)?.costUsd ?? 0) + cost,
+        tokens: (byDay.get(dayKey)?.tokens ?? 0) + tokens,
+      })
+      const modelKey = r.modelId ?? 'unknown'
+      byModel.set(modelKey, {
+        modelId: modelKey,
+        costUsd: (byModel.get(modelKey)?.costUsd ?? 0) + cost,
+        tokens: (byModel.get(modelKey)?.tokens ?? 0) + tokens,
+      })
+      bySession.set(r.sessionId, {
+        sessionId: r.sessionId,
+        costUsd: (bySession.get(r.sessionId)?.costUsd ?? 0) + cost,
+        tokens: (bySession.get(r.sessionId)?.tokens ?? 0) + tokens,
+      })
+    }
+
+    return {
+      from,
+      to,
+      totalCostUsd,
+      totalTokens,
+      recordCount: records.length,
+      byDay: [...byDay.values()].sort((a, b) => (a.date < b.date ? -1 : 1)),
+      byModel: [...byModel.values()].sort((a, b) => b.costUsd - a.costUsd),
+      bySession: [...bySession.values()].sort((a, b) => b.costUsd - a.costUsd).slice(0, 50),
+    }
+  }
+
   listSessions(): TokenUsageSessionSummary[] {
     this.ensureStarted()
     const sessionMap = new Map<string, TokenUsageSessionSummary>()
@@ -657,4 +711,9 @@ export function createTokenUsageService(): TokenUsageService {
 /** 便捷查询：供证据服务等按条件读取 token 使用记录 */
 export function getTokenUsageRecords(query: import('@gravitas/shared').TokenUsageQuery): import('@gravitas/shared').TokenUsageRecord[] {
   return tokenUsageService.query(query)
+}
+
+/** PH2-D：统一成本记账小账本（单一成本口径）。 */
+export function getCostMiniLedger(query: import('@gravitas/shared').TokenUsageQuery = {}): CostMiniLedger {
+  return tokenUsageService.getCostMiniLedger(query)
 }
