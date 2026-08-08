@@ -99,8 +99,8 @@
 - [x] **审批门收敛**：确认 by-task（AI员工 headless/bypassPermissions）与交互（permissionService）两套门已在统一权限框架下收敛；Mailbox 已聚合待审批事项，无需另建机制
 
 ### PH2-E. 触达面扩大（团队真正可用）
-- [ ] server Web UI 补全（团队浏览器也能用）
-- [ ] Bridge 即远程入口（飞书/钉钉/微信 = 手持远程入口，复用成员 mapping）
+- [x] **Bridge 即远程入口**：bridge-command-handler 新增 `/workflow`（列表+`run <名称>`触发已发布 Workflow）与 `/proactive`（列表+`run <名称>`手动触发定时）——飞书/钉钉/微信可手持远程触发可复用流程/Proactive
+- [x] **server Web UI**：确认 `/agent/ui` 已是较完整 Agent 运维工作台（会话/运行/审计/恢复/运行档案/Signals/数据集），暂无大改
 - [ ] 多 surface 统一任务状态
 
 ### PH2-F. 长期/可选

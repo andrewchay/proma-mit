@@ -244,6 +244,14 @@ export class BridgeCommandHandler {
         await this.handleNowCommand(chatId, contextData)
         break
 
+      case '/workflow':
+        await this.handleWorkflowCommand(chatId, arg, contextData)
+        break
+
+      case '/proactive':
+        await this.handleProactiveCommand(chatId, arg, contextData)
+        break
+
       default:
         await this.send(chatId, `未知命令: ${command}。输入 /help 查看帮助。`, contextData)
     }
@@ -548,6 +556,83 @@ export class BridgeCommandHandler {
     }
 
     await this.send(chatId, lines.join('\n'), contextData)
+  }
+
+  // PH2-E：Bridge 即远程入口——从 IM 触发可复用 Workflow / Proactive
+
+  private async handleWorkflowCommand(chatId: string, arg: string, contextData?: unknown): Promise<void> {
+    const { listWorkflowDefinitions } = await import('./workflow-service')
+    const published = listWorkflowDefinitions().filter((w) => w.status === 'published')
+    if (!arg) {
+      // 列出已发布 Workflow
+      if (published.length === 0) {
+        await this.send(chatId, '暂无已发布的 Workflow。', contextData)
+        return
+      }
+      const lines = ['⚙️ 已发布 Workflow（/workflow run <名称> 触发）:']
+      for (const w of published) lines.push(`  · ${w.name}`)
+      await this.send(chatId, lines.join('\n'), contextData)
+      return
+    }
+
+    if (/^run\s+/i.test(arg)) {
+      const name = arg.replace(/^run\s+/i, '').trim()
+      const target = published.find((w) => w.name === name || w.name.includes(name))
+      if (!target) {
+        await this.send(chatId, `未找到已发布 Workflow「${name}」。/workflow 查看列表。`, contextData)
+        return
+      }
+      try {
+        const { randomUUID } = await import('node:crypto')
+        const { executeWorkflowRun } = await import('./workflow-run-executor')
+        const runId = randomUUID()
+        await executeWorkflowRun(target.id, runId, this.bindingChannelId(chatId))
+        await this.send(chatId, `🚀 已触发 Workflow「${target.name}」（run ${runId.slice(0, 8)}）。`, contextData)
+      } catch (error) {
+        await this.send(chatId, `触发 Workflow 失败: ${error instanceof Error ? error.message : String(error)}`, contextData)
+      }
+      return
+    }
+
+    await this.send(chatId, '用法: /workflow（列表）或 /workflow run <名称>（触发）', contextData)
+  }
+
+  private async handleProactiveCommand(chatId: string, arg: string, contextData?: unknown): Promise<void> {
+    const { listProactiveSchedules, runProactiveScheduleNow } = await import('./agent-service')
+    const schedules = listProactiveSchedules().filter((s) => s.enabled)
+    if (!arg) {
+      if (schedules.length === 0) {
+        await this.send(chatId, '暂无可运行的定时任务。/proactive run <名称> 触发。', contextData)
+        return
+      }
+      const lines = ['⏱️ 可运行定时任务（/proactive run <名称>）:']
+      for (const s of schedules) lines.push(`  · ${s.title}`)
+      await this.send(chatId, lines.join('\n'), contextData)
+      return
+    }
+
+    if (/^run\s+/i.test(arg)) {
+      const name = arg.replace(/^run\s+/i, '').trim()
+      const target = schedules.find((s) => s.title === name || s.title.includes(name))
+      if (!target) {
+        await this.send(chatId, `未找到定时任务「${name}」。/proactive 查看列表。`, contextData)
+        return
+      }
+      try {
+        await runProactiveScheduleNow(target.id)
+        await this.send(chatId, `🚀 已手动触发定时任务「${target.title}」。`, contextData)
+      } catch (error) {
+        await this.send(chatId, `触发失败: ${error instanceof Error ? error.message : String(error)}`, contextData)
+      }
+      return
+    }
+
+    await this.send(chatId, '用法: /proactive（列表）或 /proactive run <名称>（触发）', contextData)
+  }
+
+  private bindingChannelId(chatId: string): string {
+    const binding = this.chatBindings.get(chatId)
+    return binding?.channelId ?? ''
   }
 
   // ===== Agent 消息路由 =====
