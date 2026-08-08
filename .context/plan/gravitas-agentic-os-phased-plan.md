@@ -104,9 +104,9 @@
 - [ ] 多 surface 统一任务状态
 
 ### PH2-F. 长期/可选
-- [x] **成员间 Agent 互调协议**：`agent-invoke-service`（跨成员请求队列 JSONL，send/list/respond）+ `InvokeAgent` Agent 工具（发任务/确认给真人或 AI 员工）+ 收件箱 MailboxPanel 展示互调请求（'invoke' kind）——他人可调用你的 Agent 做确认/小任务
-- [ ] 多租户精细化（URL 即边界）
-- [ ] 插件/SDK 开放
+- [x] **成员间 Agent 互调协议**：`agent-invoke-service`（跨成员请求队列）+ `InvokeAgent` 工具 + Mailbox 互调展示（`8baccb55`）
+- [x] **插件/SDK 开放**：`plugin-manager.registerPlugin/importPluginFromManifest`（第三方按 manifest 导入，不覆盖内置），IPC `PLUGIN:IMPORT` + 扩展中心「导入插件」按钮
+- [x] **多租户精细化（URL 即边界）**：`agent-runtime-web-server.resolveTenantFromHostname`（子域前缀/显式 host 映射 → tenant，fallback 到 header 缺失时），`AuthResolverInput.tenantHostMap`
 
 ---
 

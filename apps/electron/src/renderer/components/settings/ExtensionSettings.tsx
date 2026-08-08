@@ -7,6 +7,7 @@
 
 import * as React from 'react'
 import { SettingsSection } from './primitives/SettingsSection'
+import { Button } from '@/components/ui/button'
 import { SettingsCard } from './primitives/SettingsCard'
 import { SettingsRow } from './primitives/SettingsRow'
 import { SettingsToggle } from './primitives/SettingsToggle'
@@ -50,6 +51,24 @@ export function ExtensionSettings(): React.ReactElement {
   const [plugins, setPlugins] = React.useState<PluginStateView[]>([])
   const [loading, setLoading] = React.useState(true)
 
+  // PH2-F：插件/SDK 开放——按 manifest 导入第三方插件
+  const handleImport = async (): Promise<void> => {
+    const raw = window.prompt('粘贴第三方插件 manifest JSON（{ id, name, version, surfaces, permissions, ... }）：')
+    if (!raw) return
+    try {
+      const manifest = JSON.parse(raw)
+      const ok = await window.electronAPI.importPlugin(manifest)
+      if (ok) {
+        toast.success(`已导入插件「${manifest.name ?? manifest.id}」`)
+        await load()
+      } else {
+        toast.error('导入失败（id 已存在或 manifest 不完整）')
+      }
+    } catch (err) {
+      toast.error(`manifest 解析失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const load = React.useCallback(async (): Promise<void> => {
     try {
       const result = await window.electronAPI.listPluginStates()
@@ -82,7 +101,16 @@ export function ExtensionSettings(): React.ReactElement {
   return (
     <SettingsSection
       title="扩展"
-      description="管理 Gravitas 的第一方扩展。扩展可以贡献系统浮层、通知、菜单栏等能力"
+      description="管理 Gravitas 的扩展（第一方内置 + 第三方按 manifest 导入）。扩展可贡献系统浮层、通知、菜单栏等能力"
+      action={
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleImport()}
+        >
+          导入插件
+        </Button>
+      }
     >
       <SettingsCard>
         {loading ? (

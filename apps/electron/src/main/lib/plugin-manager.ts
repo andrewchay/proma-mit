@@ -97,6 +97,36 @@ const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.dynamic-island', dynamicIslandRuntime],
 ])
 
+/**
+ * PH2-F：导入/注册一个第三方插件（SDK 开放）。
+ * 提供 manifest + 启停句柄；未提供句柄时默认启用态写入内存（无持久能力）。
+ * 平台不支持的插件仍可注册，但扩展中心会标记「不支持」。
+ */
+export function registerPlugin(
+  manifest: PluginManifest,
+  runtime?: { isEnabled?: () => boolean; setEnabled?: (enabled: boolean) => Promise<boolean>; isSupported?: () => boolean },
+): boolean {
+  if (!manifest.id || !manifest.name) return false
+  if (BUILTIN_RUNTIMES.has(manifest.id) || IMPORTED_RUNTIMES.has(manifest.id)) return false // 不允许覆盖内置或重复导入
+  IMPORTED_RUNTIMES.set(manifest.id, () => ({
+    manifest,
+    isEnabled: runtime?.isEnabled ?? (() => true),
+    setEnabled: runtime?.setEnabled ?? (async (enabled) => { enabledFlag.set(manifest.id, enabled); return true }),
+    isSupported: runtime?.isSupported ?? (() => true),
+  }))
+  return true
+}
+
+/** 按 manifest 注册（供 IPC/SDK 便捷导入，不覆盖内置）。 */
+export function importPluginFromManifest(manifest: PluginManifest): boolean {
+  return registerPlugin(manifest)
+}
+
+/** 第三方导入插件注册表 */
+const IMPORTED_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>()
+/** 简单启停标记（无能力句柄时用） */
+const enabledFlag = new Map<string, boolean>()
+
 // ===== 对外 API =====
 
 /** 列出所有内置插件状态 */
@@ -105,28 +135,36 @@ export function listPluginStates(): PluginStateView[] {
   for (const entry of BUILTIN_PLUGINS) {
     const runtimeFactory = BUILTIN_RUNTIMES.get(entry.id)
     if (!runtimeFactory) continue
-    const runtime = runtimeFactory()
-    const enabled = runtime.isEnabled()
-    views.push({
-      id: entry.id,
-      name: entry.name,
-      version: entry.version,
-      description: runtime.manifest.description,
-      publisher: runtime.manifest.publisher,
-      supported: runtime.isSupported(),
-      state: enabled ? 'enabled' : 'disabled',
-      enabled,
-      surfaces: runtime.manifest.surfaces,
-      subscriptions: runtime.manifest.subscriptions,
-      permissions: runtime.manifest.permissions,
-    })
+    views.push(runtimeToView(entry.id, runtimeFactory()))
+  }
+  // PH2-F：第三方导入插件
+  for (const [id, factory] of IMPORTED_RUNTIMES) {
+    views.push(runtimeToView(id, factory()))
   }
   return views
 }
 
+function runtimeToView(id: string, runtime: BuiltinPluginRuntime): PluginStateView {
+  const enabled = runtime.isEnabled()
+  return {
+    id,
+    name: runtime.manifest.name,
+    version: runtime.manifest.version,
+    description: runtime.manifest.description,
+    publisher: runtime.manifest.publisher,
+    supported: runtime.isSupported(),
+    state: enabled ? 'enabled' : 'disabled',
+    enabled,
+    surfaces: runtime.manifest.surfaces,
+    subscriptions: runtime.manifest.subscriptions,
+    permissions: runtime.manifest.permissions,
+  }
+}
+
 /** 启用/停用插件 */
 export async function setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginStateView | null> {
-  const runtimeFactory = BUILTIN_RUNTIMES.get(pluginId)
+  let runtimeFactory = BUILTIN_RUNTIMES.get(pluginId)
+  if (!runtimeFactory) runtimeFactory = IMPORTED_RUNTIMES.get(pluginId)
   if (!runtimeFactory) return null
   const runtime = runtimeFactory()
   const ok = await runtime.setEnabled(enabled)

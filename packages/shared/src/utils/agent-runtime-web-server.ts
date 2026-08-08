@@ -37,6 +37,8 @@ import {
 export interface AgentRuntimeWebAuthResolverInput {
   request: Request
   url: URL
+  /** PH2-F：可选 host→tenant 显式映射（配合「URL 即边界」） */
+  tenantHostMap?: Record<string, string>
 }
 
 export type AgentRuntimeWebAuthResolver = (
@@ -802,10 +804,26 @@ function parseInteractionStatus(value: string | null): AgentRuntimeInteractionSt
 }
 
 function headerAuthResolver(input: AgentRuntimeWebAuthResolverInput): AgentRuntimeScope | undefined {
-  const tenantId = input.request.headers.get('x-proma-tenant-id') ?? ''
+  const tenantId = input.request.headers.get('x-proma-tenant-id') ?? resolveTenantFromHostname(input.request.headers.get('host'), input.tenantHostMap)
   const userId = input.request.headers.get('x-proma-user-id') ?? ''
   if (!tenantId || !userId) return undefined
   return { tenantId, userId }
+}
+
+/**
+ * PH2-F：多租户精细化——URL 即边界。
+ * 从 Host 头解析租户：「{tenant}.{rootDomain}」→ tenantId；也支持显式「{tenant}.localhost」等。
+ * tenantHostMap 显式覆盖（host → tenantId）；否则取子域前缀（跳过 www）。无匹配返回空串。
+ */
+export function resolveTenantFromHostname(host: string | null, tenantHostMap?: Record<string, string>): string {
+  if (!host) return ''
+  const hostname = host.split(':')[0]!.toLowerCase()
+  if (tenantHostMap?.[hostname]) return tenantHostMap[hostname]!
+  const parts = hostname.split('.')
+  // 单段 host（如 localhost）无子域 → 无租户
+  if (parts.length <= 1) return ''
+  const sub = parts[0]!
+  return sub === 'www' ? '' : sub
 }
 
 async function readJsonBody<T extends object>(request: Request): Promise<T> {

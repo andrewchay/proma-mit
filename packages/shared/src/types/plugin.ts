@@ -129,4 +129,6 @@ export const PLUGIN_IPC_CHANNELS = {
   LIST: 'plugin:list',
   /** 启用/停用插件（id, enabled） */
   SET_ENABLED: 'plugin:set-enabled',
+  /** 导入第三方插件（PH2-F：按 manifest 注册） */
+  IMPORT: 'plugin:import',
 } as const

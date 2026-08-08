@@ -3869,6 +3869,10 @@ export function registerIpcHandlers(): void {
   const { listPluginStates, setPluginEnabled } = require('./lib/plugin-manager') as { listPluginStates: () => unknown[]; setPluginEnabled: (id: string, enabled: boolean) => Promise<unknown> }
   ipcMain.handle(PLUGIN_IPC_CHANNELS.LIST, async (): Promise<unknown[]> => listPluginStates())
   ipcMain.handle(PLUGIN_IPC_CHANNELS.SET_ENABLED, async (_event, id: string, enabled: boolean): Promise<unknown> => setPluginEnabled(id, enabled))
+  ipcMain.handle(PLUGIN_IPC_CHANNELS.IMPORT, async (_event, manifest: import('@gravitas/shared').PluginManifest): Promise<boolean> =>{
+    const { importPluginFromManifest } = await import('./lib/plugin-manager')
+    return importPluginFromManifest(manifest)
+  })
 
   // ===== 运行记录（P2-1） =====
   const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@gravitas/shared').RunRecordQuery) => import('@gravitas/shared').RunRecord[]; clear: () => void; exportToFile: (p: string, q?: import('@gravitas/shared').RunRecordQuery) => number } }
