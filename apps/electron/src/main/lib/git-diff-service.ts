@@ -7,7 +7,7 @@
 
 import { spawnSync } from 'child_process'
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs'
-import { basename, isAbsolute, join, resolve, sep } from 'path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'path'
 import type { ChangedFileEntry, UnstagedChangesResult, UntrackedFileEntry } from '@gravitas/shared'
 import type { ChangeSource, ChangedFileStatus } from '@gravitas/shared'
 
@@ -165,6 +165,10 @@ export async function getUnstagedChanges(
   }
 
   if (gitRoots.length === 0) {
+    // 非 Git 项目：无基线可对比，改为枚举主工作目录下的用户文件，
+    // 让 Agent 会话产物（新建/编辑的文件）在改动面板可见。
+    const fallback = collectNonGitFiles(dirPath)
+    if (fallback) return fallback
     return { isGitRepo: false, files: [], untrackedFiles: [], gitRootNames: [] }
   }
 
@@ -301,6 +305,73 @@ function findAllGitRoots(baseDir: string): string[] {
 /** 查找 Git 仓库根目录，先向上后向下搜索，失败返回 null */
 function findGitRoot(baseDir: string): string | null {
   return findAllGitRoots(baseDir)[0] ?? null
+}
+
+// ===== 非 Git 项目会话产物兜底 =====
+//
+// 当会话工作目录不是 Git 仓库时，没有 git 基线可做 diff，但 Agent 在本目录新建/编辑的
+// 文件仍然值得让用户看到。这里做一次有界的递归枚举，把主工作目录下的用户文件当作
+// 「未追踪/新增」列出，让改动面板不至于空无一物。
+
+/** 递归扫描时跳过的目录段（避免 node_modules / 构建产物 / 版本库内部文件风暴） */
+const NON_GIT_SKIP_SEGMENTS = new Set([
+  'node_modules', '.git', '.next', '.nuxt', 'dist', 'build', 'out',
+  '.cache', '__pycache__', '.turbo', '.parcel-cache', '.svelte-kit',
+  '.proma', '.context', 'coverage', '.venv', 'venv',
+])
+
+/** 递归扫描时跳过的具体文件名 */
+const NON_GIT_SKIP_NAMES = new Set(['.DS_Store', 'Thumbs.db', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock'])
+
+/** 扫描上限：超过则放弃，避免在大目录上反复扫描拖慢面板 */
+const NON_GIT_MAX_FILES = 500
+const NON_GIT_MAX_DEPTH = 12
+
+function isNonGitSkipped(name: string): boolean {
+  return NON_GIT_SKIP_NAMES.has(name) || NON_GIT_SKIP_SEGMENTS.has(name)
+}
+
+/**
+ * 有界地枚举 dir 下的用户文件，返回「未追踪新增」形式的条目。
+ * 只在目录规模可控时返回；目录过大或不可读则返回 null（让上层走常规空结果）。
+ */
+function collectNonGitFiles(dir: string): UnstagedChangesResult | null {
+  if (!dir || !existsSync(dir)) return null
+
+  const result: UntrackedFileEntry[] = []
+  let scannedCount = 0
+
+  const walk = (current: string, depth: number): boolean => {
+    if (depth > NON_GIT_MAX_DEPTH || scannedCount >= NON_GIT_MAX_FILES) return false
+    let entries
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      return true
+    }
+    for (const entry of entries) {
+      if (scannedCount >= NON_GIT_MAX_FILES) return false
+      if (isNonGitSkipped(entry.name)) continue
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) {
+        if (!walk(full, depth + 1)) return false
+        continue
+      }
+      // 只关心常规文件；符号链接/特殊文件跳过，避免误读系统文件。
+      if (!entry.isFile()) continue
+      const rel = relative(dir, full)
+      if (rel.startsWith('..') || rel.includes(`${sep}..`)) continue
+      result.push({ filePath: rel, gitRoot: dir })
+      scannedCount += 1
+    }
+    return true
+  }
+
+  walk(dir, 0)
+  if (result.length === 0) return null
+  // 按路径排序，保证展示稳定。
+  result.sort((a, b) => a.filePath.localeCompare(b.filePath))
+  return { isGitRepo: false, files: [], untrackedFiles: result, gitRootNames: [] }
 }
 
 /**

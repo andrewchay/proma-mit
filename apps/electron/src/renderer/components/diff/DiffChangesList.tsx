@@ -165,11 +165,11 @@ export const DiffChangesList = React.memo(function DiffChangesList({
 
   const isEmpty = fileGroups.length === 0 && filteredUntrackedFiles.length === 0
 
-  // 非 Git 仓库
-  if (!isGitRepo) {
+  // 非 Git 仓库：若有兜底的会话文件则展示；否则提示。
+  if (!isGitRepo && filteredUntrackedFiles.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
-        <p className="text-[12px] text-center">当前目录不是 Git 仓库或暂无改动</p>
+        <p className="text-[12px] text-center">当前目录不是 Git 仓库且无 Agent 会话文件</p>
       </div>
     )
   }
@@ -271,16 +271,17 @@ export const DiffChangesList = React.memo(function DiffChangesList({
             )
           })}
 
-          {/* 未追踪文件分组 */}
+          {/* 未追踪文件分组（非 Git 项目时是 Agent 会话产物兜底列表） */}
           {filteredUntrackedFiles.length > 0 && (
             <div>
               <div className="flex items-center px-2 py-2 text-[13px] font-medium text-muted-foreground border-t border-border/30">
-                未追踪文件
+                {isGitRepo ? '未追踪文件' : '会话文件（非 Git 项目）'}
               </div>
               {filteredUntrackedFiles.map((file) => (
                 <UntrackedFileRow
                   key={`${file.gitRoot}:${file.filePath}`}
                   file={file}
+                  showNewBadge={isGitRepo}
                   onClick={() => onFileClick(file.filePath, true, file.gitRoot)}
                 />
               ))}
@@ -378,9 +379,12 @@ function FileRow({
 function UntrackedFileRow({
   file,
   onClick,
+  showNewBadge = true,
 }: {
   file: UntrackedFileEntry
   onClick: () => void
+  /** 是否显示「新文件」徽标——Git 未追踪文件显示；非 Git 会话文件不显示（避免误导） */
+  showNewBadge?: boolean
 }): React.ReactElement {
   const filePath = file.filePath
   const parts = filePath.split('/')
@@ -407,9 +411,11 @@ function UntrackedFileRow({
         </TooltipTrigger>
         <TooltipContent side="bottom" className="max-w-[400px] break-all">{fullPath}</TooltipContent>
       </Tooltip>
-      <span className="ml-1.5 rounded px-1 py-0.5 text-[12px] leading-none shrink-0 bg-amber-500/10 text-amber-500">
-        新文件
-      </span>
+      {showNewBadge && (
+        <span className="ml-1.5 rounded px-1 py-0.5 text-[12px] leading-none shrink-0 bg-amber-500/10 text-amber-500">
+          新文件
+        </span>
+      )}
     </div>
   )
 }
