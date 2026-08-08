@@ -48,7 +48,7 @@
 
 - [x] Todo 事件流（团队 Tab）：建/完成任务 → TodoEventPanel 出现「谁做了什么」
 
-- [ ] Agent 解压缩：新会话让 Agent「解释任务 X 在做什么」→ 调 `InspectTodo` 通俗解释+相关待办
+- [x] Agent 解压缩：新会话让 Agent「解释任务 X 在做什么」→ 调 `InspectTodo` 通俗解释+相关待办
 
 - [x] 团队 Profile（TeamProfilePanel）：填/保存后 Agent 消息含【团队上下文】
 
@@ -62,7 +62,7 @@
 
 ## 5. Context Hub（PH2-D）
 
-- [ ] 新会话让 Agent「查 xxx/某个会话还关联什么」→ 调 `ExploreContext` 返回运行/文件/Todo 关联
+- [x] 新会话让 Agent「查 xxx/某个会话还关联什么」→ 调 `ExploreContext` 返回运行/文件/Todo 关联
 
 ## 6. 插件开放（PH2-F）
 
@@ -70,11 +70,11 @@
 
 ## 7. Bridge 远程入口（PH2-E）
 
-- [ ] 飞书/钉钉群：`/workflow`（列出）→ `/workflow run <名>` 触发
+- [x] 飞书/钉钉群：`/workflow`（列出）→ `/workflow run <名>` 触发
 
 - [ ] `/proactive`（列出）→ `/proactive run <名>` 手动触发
 
-- [ ] `/help` 见新命令；`/now` 看状态
+- [x] `/help` 见新命令；`/now` 看状态
 
 ## 8. Agent 互调（PH2-F）
 
@@ -182,10 +182,6 @@
 
 ### 第六轮（2026-08-08 17:43）—— 完成回显派发死循环（非委派）
 
-- ✅ **“AI员工还在后台默默生成子会话”实锤为完成回显派发死循环**：
-  OptiMed 单个会话工作区 17:09→17:43 每分钟写一个新 `工作记录/100字` 文件（61 个，全同一任务变体），仍在继续。
-  - 链路：AI 员工完成 → updateTask(completed) → onTaskChange('updated')
-    → project-auto-sync 见是 agent 指派 → dispatchTaskToAgentIfIdle
-    → 任务已 completed 但“无 running execution”→ 重新派发 → 又跑一遍又写文件又完成 → 无限循环。
-  - 修复：`dispatchTaskToAgent` / `dispatchTaskToAgentIfIdle` 顶部硬闸——completed/draft 任务绝不重派
-    （`[Diag][agent-employee] 跳过已完成任务 dispatch`）。
+- ✅ **“AI员工还在后台默默生成子会话”实锤为完成回显派发死循环**： OptiMed 单个会话工作区 17:09→17:43 每分钟写一个新 `工作记录/100字` 文件（61 个，全同一任务变体），仍在继续。
+  - 链路：AI 员工完成 → updateTask(completed) → onTaskChange('updated') → project-auto-sync 见是 agent 指派 → dispatchTaskToAgentIfIdle → 任务已 completed 但“无 running execution”→ 重新派发 → 又跑一遍又写文件又完成 → 无限循环。
+  - 修复：`dispatchTaskToAgent` / `dispatchTaskToAgentIfIdle` 顶部硬闸——completed/draft 任务绝不重派 （`[Diag][agent-employee] 跳过已完成任务 dispatch`）。
