@@ -6,9 +6,12 @@
 ## 0. 一次性结论
 
 1. 系统**本身**允许「委派协作子会话」（delegate_agent/delegate_agents），这是**有意设计**的功能，不是 bug。
-2. 失控的根因是：**多个与会话创建的入口没有统一走同一道闸门**，导致“简单任务被误触发大量委派”时不设防地无限建子会话。
-3. 我已在**唯一收口点 `startDelegation`** 加了硬闸（`assertCanCreateDelegation`），现在无论从哪个入口（工具或前端直调）建子会话都会被兜底拦截。
-4. 但仍要理解：**“session”不等于“子会话”**。某些计数（Run Center 的会话数）把 AI 员工的每次执行/重试/心跳都算进去，可能与“真正开子会话”是两回事。
+2. 失控有**两类来源**：
+   - **委派旁路**（工具/前端直调未统一收口）——已封死（见 §3 L2/L3）。
+   - **完成回显派发死循环**（本轮实锤）——**真正的“后台默默生成”**：见 §4。简单任务在 OptiMed 工作区 17:09→17:43 持续每分钟写一个新日志文件，本质是同一个已完成任务被 `updated` 事件反复重新派发。
+3. 我现在把**所有** `dispatchTaskToAgent` 都加了「已完成/草稿任务绝不重派」硬闸，彻底切断该循环。
+
+> 更正：早前结论把“默默生成”归因于委派旁路；结合 OptiMed 目录证据（`工作记录-20260808-17xx.md` 每分钟递增），真实主因是完成回显派发循环。委派收口仍是必要的第二道防，但已不是主因。
 
 ---
 
@@ -55,6 +58,23 @@
 但**漏了 `createCollaborationDelegations` 这条前端直调旁路**，它绕过所有闸直接 `startDelegation`。这就是为什么“还在默默生成”。现在已封死。
 
 同时要提醒：**后台默默生成的可能不是“子会话”，而是“AI 员工的重复执行会话”**。见下节。
+
+## 4.1 实锤：完成回显派发死循环（本轮主因）
+
+OptiMed 工作区 `workspace-files/agents/<session>/` 61 个文件全是一个任务的变体（`100字`/`工作记录-20260808-17xx.md`），时间戳 17:09→17:43 **每分钟递增、编译仍继续**。这不是子会话爆炸，而是**同一个已完成任务被反复重新执行**。
+
+**循环链路**：
+```
+AI员工完成 → writebackExecutionResult → updateTask(id,{status:'completed'})
+  → 触发 onTaskChange(task,'updated')
+    → project-auto-sync: isAgentAssignee? yes → dispatchTaskToAgentIfIdle(task)
+      → 任务已 completed，其 executions 均为 completed（非 running）→ 幂等闸放行
+        → dispatchTaskToAgent → 新建 execution → 重新跑“建100字文件”→写新文件
+          → 再次完成 → updateTask(completed) → …无限循环
+```
+
+**修复**：`dispatchTaskToAgent` 顶部硬闸——`status==='completed' || 'draft'` 一律拒绝重派；
+`dispatchTaskToAgentIfIdle` 同样先判 status。循环在“完成后不再重派”处被切断。
 
 ---
 

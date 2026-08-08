@@ -175,6 +175,15 @@ export const GLOBAL_CONCURRENCY_LIMIT = 5
 export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string } | null> {
   const agentId = parseAgentId(task.assignee?.userId)
   if (!agentId) return null
+
+  // PH2-③ 根本修复：已完成/草稿任务不派发（防“完成任务→回写→onTaskChange→再派发”死循环，
+  //   每轮写一个新工作日志/100字文件）。只派发可执行态。
+  if (task.status === 'completed') {
+    console.log(`[Diag][agent-employee] 跳过已完成任务 dispatch: task=${task.id} status=${task.status}`)
+    return null
+  }
+  if (task.status === 'draft') return null
+
   const employee = store.getAgentEmployee(agentId)
   if (!employee) {
     console.error(`[AgentEmployee] 员工不存在: ${agentId}`)
@@ -218,6 +227,8 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
  */
 export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: string } | null> {
   if (!isAgentAssignee(task)) return null
+  // 已完成/草稿任务绝不重派（防完成回写→onTaskChange→再派发的死循环）
+  if (task.status === 'completed' || task.status === 'draft') return null
   const running = store.listAgentExecutionsByEntity('task', task.id)
     .some((e) => e.status === 'queued' || e.status === 'running')
   if (running) return null

@@ -66,7 +66,7 @@
 
 ## 6. 插件开放（PH2-F）
 
-- [ ] 设置 → 扩展 → 导入插件：粘最小 manifest `{id,name,version,surfaces:[],permissions:{events:false},entrypoints:{}}` → 成功；可启停；重复导入被拒
+- [x] 设置 → 扩展 → 导入插件：粘最小 manifest `{id,name,version,surfaces:[],permissions:{events:false},entrypoints:{}}` → 成功；可启停；重复导入被拒
 
 ## 7. Bridge 远程入口（PH2-E）
 
@@ -126,18 +126,18 @@
 ## 扩展 & Bridge 测试指南
 
 ### 🧩 导入第三方扩展（测 §6）
-示例 manifest 在 `.context/samples/test-plugin.manifest.json`——打开，复制全文，
-到「设置 → 扩展 → 导入插件」粘贴 JSON → 导入。预期：列表出现「测试扩展 · 示例」，可启停；再导入同 id 会被拒。
+
+示例 manifest 在 `.context/samples/test-plugin.manifest.json`——打开，复制全文， 到「设置 → 扩展 → 导入插件」粘贴 JSON → 导入。预期：列表出现「测试扩展 · 示例」，可启停；再导入同 id 会被拒。
 
 ### 🔗 Bridge 远程入口怎么测（测 §7）
-前置：设置 → 飞书/钉钉 Todo 已连接 Bot，且已在飞书/钉钉群/单聊和该 Bot 开启会话。
-然后在聊天里发：
+
+前置：设置 → 飞书/钉钉 Todo 已连接 Bot，且已在飞书/钉钉群/单聊和该 Bot 开启会话。 然后在聊天里发：
+
 - `/help` → 应看到斜杠命令列表（含 /workflow、/proactive）
 - `/workflow` → 列出已发布的 Workflow；`/workflow run <名称>`（需先有已发布 Workflow，如在 Workflow 里发布一个）
 - `/proactive` → 列出可用定时任务；`/proactive run <名称>`（需先有 enabled 的定时任务）
 - `/now` → 当前会话/工作区/MCP/Skills 状态
-- 直接发一句任务描述（非斜杠命令）→ 触发当前绑定会话的 Agent 执行并回复
-若某命令无反应，先确认 Bot 权限/是否已连接、`/now` 是否显示会话与工作区。
+- 直接发一句任务描述（非斜杠命令）→ 触发当前绑定会话的 Agent 执行并回复 若某命令无反应，先确认 Bot 权限/是否已连接、`/now` 是否显示会话与工作区。
 
 ---
 
@@ -179,3 +179,13 @@
 
 - ✅ **新建任务依赖应为可选多选**：改为 checkbox 多选 + 明确“可选；不选则创建无依赖任务”（原 <select multiple> 空框 UX 差且易误导）
 - ✅ **任务已完成但显示进行中**：①回写按 entityType 区分（上轮）；②加 AI 员工执行活动变化→前端自动刷新（TASK_ACTIVITY_CHANGED 推送 + ProjectDetail 订阅 reload）
+
+### 第六轮（2026-08-08 17:43）—— 完成回显派发死循环（非委派）
+
+- ✅ **“AI员工还在后台默默生成子会话”实锤为完成回显派发死循环**：
+  OptiMed 单个会话工作区 17:09→17:43 每分钟写一个新 `工作记录/100字` 文件（61 个，全同一任务变体），仍在继续。
+  - 链路：AI 员工完成 → updateTask(completed) → onTaskChange('updated')
+    → project-auto-sync 见是 agent 指派 → dispatchTaskToAgentIfIdle
+    → 任务已 completed 但“无 running execution”→ 重新派发 → 又跑一遍又写文件又完成 → 无限循环。
+  - 修复：`dispatchTaskToAgent` / `dispatchTaskToAgentIfIdle` 顶部硬闸——completed/draft 任务绝不重派
+    （`[Diag][agent-employee] 跳过已完成任务 dispatch`）。
