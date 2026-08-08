@@ -102,7 +102,7 @@ export function listMailboxItems(): MailboxItem[] {
 
   mailboxCache = items
   mailboxCacheAt = at
-  console.log(`[Diag][mailbox] 聚合 ${items.length} 条 inBox`)
+  console.log(`[Diag][mailbox] 聚合 ${items.length} 条 inBox；permission ${items.filter((i) => i.kind === 'permission').length} · ask ${items.filter((i) => i.kind === 'ask').length} · plan ${items.filter((i) => i.kind === 'plan_review').length} · todo ${items.filter((i) => i.kind === 'todo').length} · invoke ${items.filter((i) => i.kind === 'invoke').length}`)
   return items
 }
 
