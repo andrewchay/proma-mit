@@ -24,6 +24,7 @@ import {
 import {
   createMember,
   findMember,
+  findMembersByName,
   updateMember,
   touchMemberSync,
 } from './project-sqlite-store'
@@ -68,6 +69,37 @@ interface FeishuMemberRaw {
   name?: string
 }
 
+/**
+ * 带轻量重试的 JSON GET（供飞书/钉钉全量拉取用）。
+ * - 失败（网络异常 / 非 JSON / HTTP 非 2xx）重试最多 RETRY 次（指数退避 200ms 起步）；
+ * - 全部重试仍失败则抛错，让上层把整轮同步记为 failed（而不是静默"空成功"或半途断掉）。
+ */
+const FEISHU_HTTP_RETRY = 2
+const RETRY_BASE_DELAY_MS = 200
+
+async function fetchJsonWithRetry(url: string, headers: Record<string, string>): Promise<any> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= FEISHU_HTTP_RETRY; attempt++) {
+    try {
+      const resp = await fetch(url, { method: 'GET', headers })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      return await resp.json()
+    } catch (err) {
+      lastErr = err
+      if (attempt < FEISHU_HTTP_RETRY) {
+        await new Promise((r) => setTimeout(r, RETRY_BASE_DELAY_MS * Math.pow(2, attempt)))
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+}
+
+/** 读飞书响应，返回 data；code!==0 或 data 缺失返回 null（业务层据此决定是否走兜底）。 */
+function feishuDataOrNull(data: any): any | null {
+  if (!data || typeof data.code !== 'number' || data.code !== 0) return null
+  return data.data ?? null
+}
+
 // ============================================
 // 飞书全量拉取
 // ============================================
@@ -86,12 +118,15 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
   // 1) 枚举可见部门树（BFS，最多 8 层）
   const deptQueue: Array<{ id: string; openId?: string; name: string }> = []
   const deptIds: Array<{ id: string; openId?: string; name: string }> = []
-  const rootResp = await fetch(
+  const authHeaders = { Authorization: `Bearer ${token}` }
+  const rootData = await fetchJsonWithRetry(
     `${FEISHU_BASE}/open-apis/contact/v3/departments/0/children?fetch_child=false&page_size=50`,
-    { method: 'GET', headers: { Authorization: `Bearer ${token}` } }
+    authHeaders,
   )
-  const rootData = await rootResp.json()
-  const rootItems = ((rootData?.data?.items ?? []) as Array<{ department?: { department_id?: string; open_department_id?: string; name?: string } }>)
+  const rootDataBody = feishuDataOrNull(rootData)
+  // 根部门拉取失败（token 无效/权限不足）不应静默当"空成功"——抛错让整轮记为 failed
+  if (!rootDataBody) throw new Error(`飞书根部门拉取失败: code=${rootData?.code ?? '?'} ${rootData?.msg ?? ''}`)
+  const rootItems = ((rootDataBody?.items ?? []) as Array<{ department?: { department_id?: string; open_department_id?: string; name?: string } }>)
   for (const it of rootItems) {
     const rid = String(it.department?.department_id ?? '')
     if (rid) deptQueue.push({ id: rid, openId: it.department?.open_department_id, name: it.department?.name ?? '' })
@@ -104,18 +139,22 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
       if (seenDept.has(dept.id)) continue
       seenDept.add(dept.id)
       deptIds.push(dept)
-      // 子部门入队
-      const childResp = await fetch(
-        `${FEISHU_BASE}/open-apis/contact/v3/departments/${encodeURIComponent(dept.id)}/children?fetch_child=false&page_size=50`,
-        { method: 'GET', headers: { Authorization: `Bearer ${token}` } }
-      )
-      const childData = await childResp.json()
-      if (childData?.code === 0) {
-        const childItems = ((childData?.data?.items ?? []) as Array<{ department?: { department_id?: string; name?: string } }>)
-        for (const ci of childItems) {
-          const cid = String(ci.department?.department_id ?? '')
-          if (cid) deptQueue.push({ id: cid, name: ci.department?.name ?? '' })
+      // 子部门入队（带重试；单棵子树失败跳过，不阻断整体）
+      try {
+        const childData = await fetchJsonWithRetry(
+          `${FEISHU_BASE}/open-apis/contact/v3/departments/${encodeURIComponent(dept.id)}/children?fetch_child=false&page_size=50`,
+          authHeaders,
+        )
+        const childBody = feishuDataOrNull(childData)
+        if (childBody) {
+          const childItems = ((childBody?.items ?? []) as Array<{ department?: { department_id?: string; open_department_id?: string; name?: string } }>)
+          for (const ci of childItems) {
+            const cid = String(ci.department?.department_id ?? '')
+            if (cid) deptQueue.push({ id: cid, openId: ci.department?.open_department_id, name: ci.department?.name ?? '' })
+          }
         }
+      } catch (err) {
+        console.warn(`[MemberSync] 枚举子部门失败 dept=${dept.id}:`, err instanceof Error ? err.message : err)
       }
     }
     layers++
@@ -135,11 +174,18 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
       // eslint-disable-next-line no-loop-func
       while (guard < 50) {
         guard++
-        const url = buildFeishuFindByDepartmentUrl({ idType: idKey.idType, value: idKey.value, pageToken: pageToken || undefined })
-        const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
-        const data = await resp.json()
-        if ((data as any)?.code !== 0) break
-        const items = ((data?.data?.items ?? []) as FeishuMemberRaw[])
+        let data: any
+        try {
+          const url = buildFeishuFindByDepartmentUrl({ idType: idKey.idType, value: idKey.value, pageToken: pageToken || undefined })
+          data = await fetchJsonWithRetry(url, authHeaders)
+        } catch (err) {
+          // 单个部门分页失败：跳过该部门，避免整轮因一次性限流失败
+          console.warn(`[MemberSync] 飞书拉取部门成员失败 ${idKey.value} page=${pageToken || '(首页)'}:`, err instanceof Error ? err.message : err)
+          break
+        }
+        const body = feishuDataOrNull(data)
+        if (!body) break
+        const items = ((body?.items ?? []) as FeishuMemberRaw[])
         for (const u of items) {
           if (!u.name) continue
           const externalId = u.open_id || u.union_id
@@ -153,8 +199,8 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
             department: deptName,
           })
         }
-        pageToken = (data as any)?.data?.page_token ?? ''
-        if (!pageToken || !(data as any)?.data?.has_more) break
+        pageToken = body?.page_token ?? ''
+        if (!pageToken || !body?.has_more) break
       }
     }
   }
@@ -165,11 +211,17 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
     let guard = 0
     while (guard < 50) {
       guard++
-      const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
-      const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
-      const data = await resp.json()
-      if ((data as any)?.code !== 0) break
-      const items = ((data?.data?.items ?? []) as FeishuMemberRaw[])
+      let data: any
+      try {
+        const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
+        data = await fetchJsonWithRetry(url, authHeaders)
+      } catch (err) {
+        console.warn(`[MemberSync] 飞书裸 /users 拉取失败 page=${pageToken || '(首页)'}:`, err instanceof Error ? err.message : err)
+        break
+      }
+      const body = feishuDataOrNull(data)
+      if (!body) break
+      const items = ((body?.items ?? []) as FeishuMemberRaw[])
       for (const u of items) {
         if (!u.name) continue
         const externalId = u.open_id || u.union_id
@@ -177,8 +229,8 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
         seenUser.add(externalId)
         drafts.push({ platform: 'feishu', externalId, unionId: u.union_id, name: u.name })
       }
-      pageToken = (data as any)?.data?.page_token ?? ''
-      if (!pageToken || !(data as any)?.data?.has_more) break
+      pageToken = body?.page_token ?? ''
+      if (!pageToken || !body?.has_more) break
     }
   }
 
@@ -256,17 +308,24 @@ function upsertDraft(draft: MemberDraft): 'inserted' | 'merged' {  const unionKe
     }
   }
 
-  // ② 按姓名匹配（plain_name 精确），有 union 字段的空缺才补
-  const byName = findMember({ displayName: draft.name })
-  if (byName) {
+  // ② 按姓名匹配（plain_name 精确）。改用 findMembersByName 拿全部同名候选消歧，
+  //    避免旧 findMember({displayName}) 的 `LIMIT 1` 无排序在重名时随机合并串线。
+  const nameCandidates = findMembersByName(draft.name)
+  for (const candidate of nameCandidates) {
     const hasSamePlatformField =
-      (draft.platform === 'feishu' && byName.feishuUserId) ||
-      (draft.platform === 'dingtalk' && byName.dingtalkUserId)
+      (draft.platform === 'feishu' && candidate.feishuUserId) ||
+      (draft.platform === 'dingtalk' && candidate.dingtalkUserId)
     // 同平台已有 field：视为同一人重复，直接补 union 缺失字段
-    if (hasSamePlatformField || platformFieldEmpty(byName, draft.platform)) {
-      mergeInto(byName, draft)
+    if (hasSamePlatformField) {
+      mergeInto(candidate, draft)
       return 'merged'
     }
+    // 该平台字段空缺且非另一平台的同名者：可安全补本平台字段（同一人跨平台建档）
+    if (platformFieldEmpty(candidate, draft.platform)) {
+      mergeInto(candidate, draft)
+      return 'merged'
+    }
+    // 其余情形（该平台字段已被占用 = 是另一个重名人）：不合并，继续看下一个候选
   }
 
   // ③ 新建
@@ -354,9 +413,9 @@ export async function syncAllMembers(): Promise<SyncAllResult> {
   syncInFlight = true
   try {
     const feishu = await syncPlatform('feishu')
-    lastSyncAt['feishu'] = Date.now()
+    persistLastSyncAt('feishu')
     const dingtalk = await syncPlatform('dingtalk')
-    lastSyncAt['dingtalk'] = Date.now()
+    persistLastSyncAt('dingtalk')
     return { feishu, dingtalk, startedAt, finishedAt: Date.now() }
   } finally {
     syncInFlight = false
@@ -397,6 +456,36 @@ export function resolvePlatformForPaaUser(paaUserId: string, platform: 'feishu' 
 
 const lastSyncAt: Record<'feishu' | 'dingtalk', number> = { feishu: 0, dingtalk: 0 }
 let syncInFlight = false
+let syncMetaLoaded = false
+
+/** 同步元信息的 DB key 前缀（持久化到 paa.db 的 sync_meta 表，防重启丢冷却）。 */
+const SYNC_META_KEY = (platform: 'feishu' | 'dingtalk') => `member_last_sync:${platform}`
+
+/** 启动/首次访问时从 DB 加载各平台上次同步时间（幂等）。 */
+function ensureSyncMetaLoaded(): void {
+  if (syncMetaLoaded) return
+  syncMetaLoaded = true
+  try {
+    const { getSyncMeta } = require('./project-sqlite-store') as { getSyncMeta: (k: string) => string | null }
+    const feishu = getSyncMeta(SYNC_META_KEY('feishu'))
+    const dingtalk = getSyncMeta(SYNC_META_KEY('dingtalk'))
+    if (feishu) lastSyncAt.feishu = Number(feishu) || 0
+    if (dingtalk) lastSyncAt.dingtalk = Number(dingtalk) || 0
+  } catch {
+    // DB 未就绪：保持 0（本次进程退化为首次全量，可接受）
+  }
+}
+
+/** 成功同步后落盘冷却时间。 */
+function persistLastSyncAt(platform: 'feishu' | 'dingtalk'): void {
+  lastSyncAt[platform] = Date.now()
+  try {
+    const { setSyncMeta } = require('./project-sqlite-store') as { setSyncMeta: (k: string, v: string) => void }
+    setSyncMeta(SYNC_META_KEY(platform), String(lastSyncAt[platform]))
+  } catch {
+    // 落盘失败仅影响下次启动的冷却，不影响当前同步结果
+  }
+}
 
 /**
  * 带节流的定时/启动同步：
@@ -408,6 +497,7 @@ export const MEMBER_SYNC_COOLDOWN_MS = 6 * 60 * 60 * 1000 // 6 小时
 
 /** 距上次同步是否仍在冷却期内。 */
 export function isMemberSyncCooldownActive(platform: 'feishu' | 'dingtalk'): boolean {
+  ensureSyncMetaLoaded()
   return Date.now() - lastSyncAt[platform] < MEMBER_SYNC_COOLDOWN_MS
 }
 
@@ -418,6 +508,7 @@ export function isMemberSyncInFlight(): boolean {
 
 /** 最近一次各平台同步时间戳（用于状态展示）。 */
 export function getLastMemberSyncAt(platform: 'feishu' | 'dingtalk'): number {
+  ensureSyncMetaLoaded()
   return lastSyncAt[platform]
 }
 
@@ -426,6 +517,7 @@ export function getLastMemberSyncAt(platform: 'feishu' | 'dingtalk'): number {
  * 若在冷却期内则跳过（返回 null）；否则执行并刷新时间戳。
  */
 export async function syncMembersIfCooldownElapsed(platform: 'feishu' | 'dingtalk'): Promise<MemberSyncResult | null> {
+  ensureSyncMetaLoaded()
   if (isMemberSyncCooldownActive(platform)) return null
   return performGuardedSync(platform)
 }
@@ -440,7 +532,7 @@ async function performGuardedSync(platform: 'feishu' | 'dingtalk'): Promise<Memb
   syncInFlight = true
   try {
     const result = platform === 'feishu' ? await syncPlatform('feishu') : await syncPlatform('dingtalk')
-    lastSyncAt[platform] = Date.now()
+    persistLastSyncAt(platform)
     return result
   } finally {
     syncInFlight = false

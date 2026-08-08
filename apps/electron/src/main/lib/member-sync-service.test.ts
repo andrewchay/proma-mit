@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { initProjectDb, closeProjectDb, listMembers } from './project-sqlite-store'
+import { initProjectDb, closeProjectDb, listMembers, getSyncMeta, setSyncMeta, createMember, findMembersByName } from './project-sqlite-store'
 import { upsertMemberDraft, findMemberByPaaUserId, resolvePlatformForPaaUser, isMemberSyncCooldownActive, MEMBER_SYNC_COOLDOWN_MS } from './member-sync-service'
 import type { MemberDraft } from './member-sync-service'
 
@@ -84,6 +84,18 @@ describe('跨平台对齐 upsertMemberDraft', () => {
     expect(m.dingtalkUserId).toBe('u_ding_zl')
     expect(m.department).toBeUndefined() // 未提供不引入脏部门
   })
+
+  test('同名多候选：findMembersByName 返回全部且确定性（不依赖 LIMIT 1 随机）', () => {
+    // 直接用 createMember 造两条同名"张三"（绕过 upsertDraft 的"单平台空缺即刻合并"，模拟飞书里确实存在两条重名者）
+    createMember({ displayName: '张三', source: 'manual', feishuUserId: 'ou_zhangsan_x' })
+    createMember({ displayName: '张三', source: 'manual', dingtalkUserId: 'u_ding_zhangsan_y' })
+
+    const candidates = findMembersByName('张三')
+    // 返回全部同名候选，且按 created_at 稳定排序（确定性，而非取随机一条）
+    expect(candidates.length).toBeGreaterThanOrEqual(2)
+    const ids = candidates.map((c) => c.memberId)
+    expect(new Set(ids).size).toBe(ids.length) // 无重复
+  })
 })
 
 describe('成员反向查询（paa-<name> → 平台 ID）', () => {
@@ -110,5 +122,16 @@ describe('增量同步冷却判定', () => {
     expect(MEMBER_SYNC_COOLDOWN_MS).toBeGreaterThan(0)
     // 模块未执行过同步：lastSyncAt=0 → 不在冷却，允许同步
     expect(isMemberSyncCooldownActive('feishu')).toBe(false)
+  })
+
+  test('sync_meta 持久化：set 后能 get 回（冷却跨重启靠它）', () => {
+    const now = Date.now()
+    setSyncMeta('member_last_sync:feishu', String(now))
+    expect(getSyncMeta('member_last_sync:feishu')).toBe(String(now))
+    // 覆盖写入
+    setSyncMeta('member_last_sync:feishu', String(now + 1000))
+    expect(getSyncMeta('member_last_sync:feishu')).toBe(String(now + 1000))
+    // 不存在的 key → null
+    expect(getSyncMeta('member_last_sync:no_such_platform')).toBeNull()
   })
 })

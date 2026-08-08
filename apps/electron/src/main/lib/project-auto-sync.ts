@@ -20,8 +20,10 @@ import type { TodoRetryEvent } from './project-types'
 const PLATFORMS = ['dingtalk', 'feishu'] as const
 type Platform = (typeof PLATFORMS)[number]
 
-/** 注册自动同步（返回取消函数）。应用启动时调用一次。 */
+/** 注册自动同步（返回取消函数）。应用启动时调用一次（幂等）。 */
 export function registerProjectAutoSync(): () => void {
+  // 幂等：重复注册先释放旧的，避免 dev 热重载/重复初始化叠加定时器与监听器
+  stopProjectAutoSync()
   const unsubscribe = onTaskChange((task, action) => {
     // PH2-A：Todo 事件流（团队可订阅语义流）
     recordTaskTodoEvent(task, action)
@@ -74,8 +76,24 @@ export function registerProjectAutoSync(): () => void {
   function cleanup(): void {
     clearInterval(memberSyncTimer)
     unsubscribe()
+    autoSyncCleanup = null
   }
+  autoSyncCleanup = cleanup
   return cleanup
+}
+
+/** 保存最近一次生效的 cleanup（供 stopProjectAutoSync 调用）。 */
+let autoSyncCleanup: (() => void) | null = null
+
+/**
+ * 释放自动同步（清定时器 + 退订 onTaskChange）。幂等。
+ * 供应用退出（before-quit）与热重载时调用，避免监听器/定时器泄漏。
+ */
+export function stopProjectAutoSync(): void {
+  if (autoSyncCleanup) {
+    autoSyncCleanup()
+    autoSyncCleanup = null
+  }
 }
 
 const MEMBER_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 小时

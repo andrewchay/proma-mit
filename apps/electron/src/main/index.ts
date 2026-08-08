@@ -662,6 +662,13 @@ app.on('before-quit', () => {
   } catch {
     // 未初始化时忽略
   }
+  // 释放本地自动同步（成员同步定时器 + onTaskChange 监听），避免退出残留
+  try {
+    const { stopProjectAutoSync } = require('./lib/project-auto-sync') as { stopProjectAutoSync: () => void }
+    stopProjectAutoSync()
+  } catch {
+    // 未初始化时忽略
+  }
   // 关闭项目管理 SQLite 数据库（持久化未写入的数据）
   try {
     const { closeProjectDb } = require('./lib/project-sqlite-store') as { closeProjectDb: () => void }

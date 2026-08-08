@@ -450,6 +450,12 @@ function migrate(database: any): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_exec_entity ON agent_executions(entity_type, entity_id);
     CREATE INDEX IF NOT EXISTS idx_agent_exec_status ON agent_executions(status);
+
+    CREATE TABLE IF NOT EXISTS sync_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `)
 
   // P1：tasks 表新增 permission_requests 列（兼容旧库）
@@ -1407,6 +1413,13 @@ export function findMember(query: {
   return null
 }
 
+/** 按显示名查所有同名成员（返回全部、按创建时间稳定排序，供成员同步消歧用）。 */
+export function findMembersByName(displayName: string): Member[] {
+  const database = getProjectDb()
+  const rows = database.prepare(`SELECT * FROM members WHERE plain_name = ? ORDER BY created_at ASC`).all(normalizePlainName(displayName)) as Array<Parameters<typeof mapMemberRow>[0]>
+  return rows.map(mapMemberRow)
+}
+
 /** 更新成员（未提供的字段保留原值；如需清空请显式处理）。 */
 export function updateMember(memberId: string, patch: UpdateMemberInput): Member | null {
   const database = getProjectDb()
@@ -1915,4 +1928,22 @@ export function listAgentExecutionsByProject(projectId: string): AgentExecution[
     `SELECT * FROM agent_executions WHERE project_id = ? ORDER BY started_at DESC`
   ).all(projectId) as AgentExecutionRow[]
   return rows.map(rowToAgentExecution)
+}
+
+// ===== sync_meta（跨平台同步元信息，持久化到 DB 防重启丢失） =====
+
+/** 读取一条同步元信息（不存在返回 null）。 */
+export function getSyncMeta(key: string): string | null {
+  const database = getProjectDb()
+  const row = database.prepare(`SELECT value FROM sync_meta WHERE key = ?`).get(key) as { value: string } | undefined
+  return row?.value ?? null
+}
+
+/** 写入一条同步元信息（存在则覆盖）。 */
+export function setSyncMeta(key: string, value: string): void {
+  const database = getProjectDb()
+  database.prepare(
+    `INSERT INTO sync_meta (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(key, value, Date.now())
 }
