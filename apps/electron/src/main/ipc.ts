@@ -1669,6 +1669,15 @@ export function registerIpcHandlers(): void {
     const { updateTeamProfile } = await import('./lib/team-profile-service')
     return updateTeamProfile(workspaceSlug, patch)
   })
+  // 团队收件箱（PH2-C）
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_MAILBOX, async () => {
+    const { listMailboxItems } = await import('./lib/team-mailbox-service')
+    return listMailboxItems()
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.COUNT_MAILBOX_PENDING, async () => {
+    const { countMailboxPending } = await import('./lib/team-mailbox-service')
+    return countMailboxPending()
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,

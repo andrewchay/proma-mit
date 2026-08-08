@@ -11,6 +11,7 @@ import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefini
 import { cn } from '@/lib/utils'
 import { FileEventPanel } from './FileEventPanel'
 import { TodoEventPanel } from './TodoEventPanel'
+import { MailboxPanel } from './MailboxPanel'
 
 const RUNTIME_LABEL: Record<string, string> = {
   proma: 'Gravitas',
@@ -150,6 +151,9 @@ export function AgentTeamPanel(): React.ReactElement {
 
       {/* Todo 事件流（PH2-A） */}
       <TodoEventPanel />
+
+      {/* 团队收件箱（PH2-C） */}
+      <MailboxPanel />
 
       <div className="flex items-center justify-between">
         <div>

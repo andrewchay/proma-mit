@@ -85,9 +85,10 @@
 - [ ] 全量事件可回放（按 member/workspace/time 重建时间线）
 
 ### PH2-C. Proactive 与注意力
+- [x] **mailbox 抽象（首版）**：`team-mailbox-service` 聚合 Agent 需人工确认（权限 permissionService / 提问 askUserService / 计划审批 exitPlanService）为统一收件箱，带成员归属；IPC `LIST_MAILBOX`/`COUNT_MAILBOX_PENDING` + 团队 Tab `MailboxPanel`（可打开会话处理）。
+- [ ] mailbox 扩源：待办/看板/指派给成员的件事项并入 inbox（当前仅 agent 需确认）
 - [ ] Proactive 动作可回放（"它为什么这么主动"，凭据=PH1-C 事件）
 - [ ] 自动服务器/费用 Audit
-- [ ] mailbox 抽象（Todo+看板+需人工确认收敛为一条可流转、可指派到成员的事件）
 - [ ] 灵动岛会话状态机完善（phase+attention/unread）+ 注意力分级/节流
 
 ### PH2-D. 数据复利与安全增强

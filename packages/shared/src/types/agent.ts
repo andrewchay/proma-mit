@@ -1193,6 +1193,18 @@ export interface TeamProfile {
 
 export type TeamProfilePatch = Partial<Pick<TeamProfile, 'teamName' | 'membersSummary' | 'focusAreas' | 'preferences'>>
 
+/** 团队收件箱条目（PH2-C） */
+export interface MailboxItem {
+  id: string
+  kind: 'permission' | 'ask' | 'plan_review'
+  sessionId: string
+  memberId?: string
+  title: string
+  summary: string
+  requestId: string
+  at: number
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1862,6 +1874,9 @@ export const AGENT_IPC_CHANNELS = {
   /** 团队档案（PH2-A） */
   GET_TEAM_PROFILE: 'agent:get-team-profile',
   UPDATE_TEAM_PROFILE: 'agent:update-team-profile',
+  /** 团队收件箱（PH2-C） */
+  LIST_MAILBOX: 'agent:list-mailbox',
+  COUNT_MAILBOX_PENDING: 'agent:count-mailbox-pending',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

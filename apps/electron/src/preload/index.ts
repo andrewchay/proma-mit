@@ -674,6 +674,9 @@ export interface ElectronAPI {
   /** 团队档案（PH2-A） */
   getTeamProfile: (workspaceSlug: string) => Promise<import('@gravitas/shared').TeamProfile>
   updateTeamProfile: (workspaceSlug: string, patch: import('@gravitas/shared').TeamProfilePatch) => Promise<import('@gravitas/shared').TeamProfile>
+  /** 团队收件箱（PH2-C） */
+  listMailbox: () => Promise<import('@gravitas/shared').MailboxItem[]>
+  countMailboxPending: () => Promise<number>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -2002,6 +2005,14 @@ const electronAPI: ElectronAPI = {
 
   updateTeamProfile: (workspaceSlug: string, patch: import('@gravitas/shared').TeamProfilePatch) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_TEAM_PROFILE, workspaceSlug, patch)
+  },
+
+  listMailbox: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_MAILBOX)
+  },
+
+  countMailboxPending: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.COUNT_MAILBOX_PENDING)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {
