@@ -201,6 +201,8 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_TASK_BLOCKERS: 'project:list-task-blockers',
   LIST_PROJECT_WORK_ITEMS: 'project:list-project-work-items',
   LIST_MY_WORK: 'project:list-my-work',
+  /** PH2-⑤：我发起/指派的任务 */
+  LIST_TASKS_CREATED_BY: 'project:list-tasks-created-by',
   LIST_PROJECT_ALERTS: 'project:list-project-alerts',
   LIST_PROJECT_ACTIVITIES: 'project:list-project-activities',
   GENERATE_PROJECT_SUMMARY: 'project:generate-summary',

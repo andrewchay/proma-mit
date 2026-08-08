@@ -172,7 +172,15 @@ export class FeishuTodoProvider implements TodoProvider {
       body: body ? JSON.stringify(body) : undefined,
     })
 
-    const data = await resp.json()
+    // 飞书网关偶尔返回非 JSON（如网关文本/超限页），resp.json() 会抛
+    // "Unexpected non-whitespace character after JSON"。读原文后稳控解析。
+    const rawText = await resp.text()
+    let data: any
+    try {
+      data = JSON.parse(rawText)
+    } catch (parseError) {
+      throw new Error(`飞书接口返回非 JSON（HTTP ${resp.status}）：${rawText.slice(0, 120)}`)
+    }
 
     // 权限不足（99991672）：通常是权限刚开通但 token 缓存还是旧的。
     // 自动清除缓存并换取新 token 重试一次，避免用户开通权限后仍需等 2 小时。

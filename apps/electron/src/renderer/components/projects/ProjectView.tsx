@@ -492,31 +492,41 @@ function ProjectHeader({
 
 function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.ReactElement {
   const [items, setItems] = useState<MyWorkItem[]>([])
+  const [mode, setMode] = useState<'received' | 'created'>('received')
   const [isLoading, setIsLoading] = useState(true)
   const [status, setStatus] = useState<'all' | MyWorkItem['status']>('all')
 
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      setItems(await callProjectAPI<MyWorkItem[]>('listMyWork', assigneeUserId))
+      // PH2-⑤：received=分派给我的；created=我发起的（“我指派给 Andrew 的”）
+      setItems(mode === 'received'
+        ? await callProjectAPI<MyWorkItem[]>('listMyWork', assigneeUserId)
+        : await callProjectAPI<MyWorkItem[]>('listTasksCreatedBy', assigneeUserId))
     } catch (error) {
       console.error('加载我的工作失败:', error)
     } finally {
       setIsLoading(false)
     }
-  }, [assigneeUserId])
+  }, [assigneeUserId, mode])
 
   useEffect(() => { void load() }, [load])
   const visible = status === 'all' ? items : items.filter((item) => item.status === status)
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-lg font-medium">我的工作</h2><p className="text-sm text-muted-foreground">按负责人聚合 Task 与执行 subTask，逾期项优先显示。</p></div>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-medium">我的工作</h2>
+          <div className="flex rounded-lg bg-muted p-0.5">
+            <button onClick={() => setMode('received')} className={`rounded-md px-2.5 py-1 text-xs ${mode === 'received' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>指派给我</button>
+            <button onClick={() => setMode('created')} className={`rounded-md px-2.5 py-1 text-xs ${mode === 'created' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground'}`}>我指派的</button>
+          </div>
+        </div>
         <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="rounded border bg-background px-2 py-1 text-sm">
           <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option>
         </select>
       </div>
-      {isLoading ? <p className="text-sm text-muted-foreground">加载中...</p> : visible.length === 0 ? <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">当前没有分配给你的工作项</p> : (
+      {isLoading ? <p className="text-sm text-muted-foreground">加载中...</p> : visible.length === 0 ? <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{mode === 'received' ? '当前没有分配给你的工作项' : '你还没有发起/指派任何任务'}</p> : (
         <div className="space-y-2">{visible.map((item) => (
           <div key={`${item.entityType}-${item.id}`} className={`flex items-center gap-3 rounded-lg border p-3 ${item.isOverdue ? 'border-red-200 bg-red-50/40' : 'bg-card'}`}>
             <span className={`rounded px-1.5 py-0.5 text-xs ${item.entityType === 'task' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.entityType === 'task' ? 'Task' : 'subTask'}</span>
@@ -1404,6 +1414,7 @@ function TaskList({
   tasks: Task[]
   onTasksChange: (tasks: Task[]) => void
 }): React.ReactElement {
+  const currentUserProfile = useAtomValue(userProfileAtom)
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
@@ -1431,10 +1442,12 @@ function TaskList({
         assignee?: { userId: string; displayName: string }
         dueDate?: number
         permissionRequests?: string[]
+        createdByUserId?: string
       } = {
         title: newTitle.trim(),
         description: newDesc.trim(),
         priority: newPriority,
+        createdByUserId: `paa-${currentUserProfile.userName}`,
       }
       if (newAgentId) {
         const emp = agentEmployees.find((e) => e.id === newAgentId)

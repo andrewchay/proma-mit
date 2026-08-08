@@ -1325,6 +1325,8 @@ export interface ElectronAPI {
       listTaskBlockers: (projectId: string) => Promise<unknown[]>
       listProjectWorkItems: (projectId: string) => Promise<unknown[]>
       listMyWork: (assigneeUserId: string) => Promise<unknown[]>
+      /** PH2-⑤：我发起/指派的任务 */
+      listTasksCreatedBy: (creatorUserId: string) => Promise<unknown[]>
       listProjectAlerts: (projectId: string) => Promise<unknown[]>
       listProjectActivities: (projectId: string) => Promise<unknown[]>
       generateProjectSummary: (projectId: string) => Promise<unknown>
@@ -3044,6 +3046,7 @@ const electronAPI: ElectronAPI = {
       listTaskBlockers: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASK_BLOCKERS, projectId),
       listProjectWorkItems: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORK_ITEMS, projectId),
       listMyWork: (assigneeUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MY_WORK, assigneeUserId),
+      listTasksCreatedBy: (creatorUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASKS_CREATED_BY, creatorUserId),
       listProjectAlerts: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ALERTS, projectId),
       listProjectActivities: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ACTIVITIES, projectId),
       generateProjectSummary: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GENERATE_PROJECT_SUMMARY, projectId),

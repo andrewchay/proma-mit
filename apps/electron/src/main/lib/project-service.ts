@@ -326,6 +326,11 @@ export async function listMyWork(assigneeUserId: string): Promise<MyWorkItem[]> 
   return store.listMyWork(assigneeUserId)
 }
 
+/** PH2-⑤：我发起/指派的任务（“我指派的”视图） */
+export async function listTasksCreatedBy(creatorUserId: string): Promise<MyWorkItem[]> {
+  return store.listTasksCreatedBy(creatorUserId)
+}
+
 export async function listProjectActivities(projectId: string): Promise<ProjectActivity[]> {
   return store.listProjectActivities(projectId)
 }

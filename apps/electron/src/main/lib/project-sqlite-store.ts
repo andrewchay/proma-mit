@@ -264,6 +264,7 @@ function migrate(database: any): void {
       priority TEXT NOT NULL DEFAULT 'medium',
       assignee_user_id TEXT,
       assignee_display_name TEXT,
+      created_by_user_id TEXT,
       start_date INTEGER,
       due_date INTEGER,
       completed_at INTEGER,
@@ -455,6 +456,10 @@ function migrate(database: any): void {
   if (!columns.includes('permission_requests')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN permission_requests TEXT NOT NULL DEFAULT '[]'`)
   }
+  // PH2-⑤：tasks 表新增 created_by_user_id 列（兼容旧库）
+  if (!columns.includes('created_by_user_id')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN created_by_user_id TEXT`)
+  }
   // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('workflow_id')) {
@@ -626,12 +631,13 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, start_date, due_date, permission_requests, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, created_by_user_id, start_date, due_date, permission_requests, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
+    input.createdByUserId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
     JSON.stringify(input.permissionRequests ?? []), timestamp, timestamp
   )
@@ -1076,6 +1082,34 @@ export function listMyWork(assigneeUserId: string): MyWorkItem[] {
   return items
     .filter((item) => item.assignee?.userId === assigneeUserId)
     .sort((left, right) => (left.dueDate ?? Number.MAX_SAFE_INTEGER) - (right.dueDate ?? Number.MAX_SAFE_INTEGER))
+}
+
+/** PH2-⑤：“我指派的”视图——找出由该用户发起/创建的任务（含项目名）。 */
+export function listTasksCreatedBy(creatorUserId: string): MyWorkItem[] {
+  const database = getProjectDb()
+  const projects = listProjects()
+  const result: MyWorkItem[] = []
+  for (const project of projects) {
+    const rows = database.prepare(`SELECT * FROM tasks WHERE created_by_user_id = ? ORDER BY created_at DESC`).all(creatorUserId) as TaskRow[]
+    for (const row of rows) {
+      const task = rowToTask(row)
+      result.push({
+        entityType: 'task',
+        id: task.id,
+        projectId: task.projectId,
+        projectTitle: project.title,
+        title: task.title,
+        status: task.status,
+        assignee: task.assignee,
+        startDate: task.startDate,
+        dueDate: task.dueDate,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        isOverdue: task.status !== 'completed' && !!task.dueDate && task.dueDate < Date.now(),
+      })
+    }
+  }
+  return result.sort((a, b) => (a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER))
 }
 
 // ===== 项目活动 =====

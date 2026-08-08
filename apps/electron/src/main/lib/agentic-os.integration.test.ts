@@ -88,6 +88,15 @@ describe('Agentic OS 主链路集成（PH1+PH2）', () => {
     expect(done?.status).toBe('done')
   })
 
+  test('5b) 我指派的视图（listTasksCreatedBy）', async () => {
+    const { createProject, createTask, listTasksCreatedBy } = await import('./project-sqlite-store')
+    const project = createProject({ title: '分工项目', description: '' })
+    createTask(project.id, { title: '交给 Andrew 做UI', description: 'x', assignee: { userId: 'paa-Andrew', displayName: 'Andrew' }, createdByUserId: 'paa-我自己' })
+    createTask(project.id, { title: '我自己做', description: 'x', assignee: { userId: 'paa-我自己', displayName: '我' }, createdByUserId: 'paa-我自己' })
+    const mine = listTasksCreatedBy('paa-我自己')
+    expect(mine.some((t) => t.title === '交给 Andrew 做UI')).toBe(true)
+  })
+
   test('6) 团队 Profile 读写', () => {
     updateTeamProfile('ws-alpha', { teamName: '前端组', focusAreas: '性能' })
     const p = getTeamProfile('ws-alpha')

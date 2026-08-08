@@ -114,6 +114,8 @@ export interface CreateTaskInput {
   parentId?: string
   /** by-task 权限申请（P1） */
   permissionRequests?: string[]
+  /** 发起/创建者（PH2-⑤：“我指派的”视图用） */
+  createdByUserId?: string
 }
 
 /** 创建独立执行 subTask 的输入；它通过 taskId 归属 Task，不使用 WBS parentId。 */

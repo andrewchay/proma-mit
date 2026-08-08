@@ -27,20 +27,17 @@ function installFetchMock(): void {
 
     // 换取 tenant_access_token
     if (url.includes('/auth/v3/tenant_access_token/internal')) {
-      return {
-        ok: true,
-        json: async () => ({ code: 0, tenant_access_token: 'test-token', expire: 7200 }),
-      } as Response
+      const payload = { code: 0, tenant_access_token: 'test-token', expire: 7200 }
+      return { ok: true, json: async () => payload, text: async () => JSON.stringify(payload) } as Response
     }
     // 创建任务返回 task.guid
     if (method === 'POST' && url.includes('/open-apis/task/v2/tasks')) {
-      return {
-        ok: true,
-        json: async () => ({ code: 0, data: { task: { guid: 'created-guid-123' } } }),
-      } as Response
+      const payload = { code: 0, data: { task: { guid: 'created-guid-123' } } }
+      return { ok: true, json: async () => payload, text: async () => JSON.stringify(payload) } as Response
     }
     // 其余业务接口默认成功
-    return { ok: true, json: async () => ({ code: 0, data: {} }) } as Response
+    const okPayload = { code: 0, data: {} }
+    return { ok: true, json: async () => okPayload, text: async () => JSON.stringify(okPayload) } as Response
   }) as typeof fetch
 }
 

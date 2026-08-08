@@ -550,6 +550,12 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_MY_WORK, async (_, assigneeUserId: string) => {
     return listMyWork(assigneeUserId)
   })
+
+  // PH2-⑤：我发起/指派的任务
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASKS_CREATED_BY, async (_, creatorUserId: string) => {
+    const { listTasksCreatedBy } = await import('./project-service')
+    return listTasksCreatedBy(creatorUserId)
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PROJECT_ALERTS, async (_, projectId: string) => {
     return listProjectAlerts(projectId)
   })
