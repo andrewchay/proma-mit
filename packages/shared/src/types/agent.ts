@@ -1225,6 +1225,18 @@ export interface CostAuditReport {
   hasAlerts: boolean
 }
 
+/** 可复用资产提案（PH2-D） */
+export interface AssetProposal {
+  type: 'workflow' | 'skill'
+  title: string
+  description: string
+  steps: string[]
+  prompt: string
+  keyTools: string[]
+  sessionId: string
+  evidenceSummary: string
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */

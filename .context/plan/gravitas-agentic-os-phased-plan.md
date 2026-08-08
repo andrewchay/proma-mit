@@ -92,8 +92,8 @@
 - [x] ~~灵动岛会话状态机完善~~：**已达成**（动态岛已是会话状态机：phase running/needs-interaction/completed/error + attention/unread + attentionScore 优先级 + 三级节流 PUSH_THROTTLE=80ms / AGENT_STREAM_PUSH_THROTTLE=2000ms + 无变化跳过）。本次补**状态无变化跳过**（pushKey 一致时不重复推送，避免 running 流对常驻 needs-interaction 的重复重绘）
 
 ### PH2-D. 数据复利与安全增强
+- [x] **成功输出转资产**：`asset-proposal-service`（从会话证据提炼 Workflow/Skill 提案：决策/写回/验证→步骤+提示词+关键工具，`proposalToText`）+ `ProposeAssetFromRun` Agent 工具；evidence-service 改为懒加载数据源（可注入 stub 便于测试）
 - [ ] 本地 Context Hub / Work Graph（Session/Run/Task/Calendar/Artifact 关联）
-- [ ] 成功输出转资产（成功运行 → Skill/Workflow/项目事实）
 - [ ] Token/成本记账收敛（server ledger + 本地统计统一）
 - [ ] 凭据统一治理、审批门收敛
 

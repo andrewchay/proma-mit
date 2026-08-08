@@ -6,7 +6,6 @@
  * 不做空洞的"完成"宣称。
  */
 
-import { getTokenUsageRecords } from './token-usage-service'
 import type { RunEvidence } from '@gravitas/shared'
 
 /** 写操作类工具（近似判定：这些工具可能改变本地状态/文件/外部系统） */
@@ -89,7 +88,11 @@ export function buildSessionEvidence(
   recordSource?: (q: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[],
 ): RunEvidence {
   // 读取该会话的 token 使用记录（含每轮工具调用）
-  const getRecords = recordSource ?? getTokenUsageRecords
+  const getRecords = recordSource ?? ((q: import('@gravitas/shared').TokenUsageQuery) => {
+    // 懒加载，避免证据服务在无 electron 环境加载时崩溃
+    const { getTokenUsageRecords } = require('./token-usage-service') as { getTokenUsageRecords: (qq: import('@gravitas/shared').TokenUsageQuery) => import('@gravitas/shared').TokenUsageRecord[] }
+    return getTokenUsageRecords(q)
+  })
   const records = getRecords({ sessionId })
 
   const allToolNames: string[] = []
