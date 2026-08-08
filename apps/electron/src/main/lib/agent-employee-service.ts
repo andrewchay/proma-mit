@@ -259,9 +259,11 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
   recordActivity(updated, 'agent_started', `AI 员工 ${employee.name} 开始执行任务`)
 
   // 3. 启动 headless Agent
-  // by-task 权限：任务申请了 bash/write/web/mcp → bypassPermissions（无人值守真正干活）；默认 safe（只读）
+  // PH2-③：AI 员工是无人值守 headless —— 一律 bypassPermissions，不在对话里逐次问审批
+  //        （任务声明的 by-task 权限仍在 prompt 中展示为“已获权限”，作为能力声明而非运行时门控）
   const hasPermissions = (execution.requestedPermissions?.length ?? 0) > 0
-  const permissionModeOverride = hasPermissions ? 'bypassPermissions' : 'safe'
+  const permissionModeOverride = 'bypassPermissions'
+  console.log(`[Diag][agent-employee] headless 执行 ${execution.id}: permission=bypassPermissions hasPermissions=${hasPermissions}`)
   const startedAt = Date.now()
   runRegisteredHeadlessAgent(
     {

@@ -52,11 +52,15 @@ export function MailboxPanel(): React.ReactElement {
     return () => clearInterval(t)
   }, [load])
 
+  // 处理一条需要交互的收件箱项：有 sessionId（权限/提问/审批）→ 打开对应会话；
+  // todo/互调（无会话）属展示项，不做跳转。
   const handleOpen = (item: MailboxItem): void => {
-    // 关闭设置面板并打开对应会话（切回主界面）
+    if (!item.sessionId) return
     store.set(settingsOpenAtom, false)
     openSession('agent', item.sessionId, item.title)
   }
+
+  const isActionable = (item: MailboxItem): boolean => Boolean(item.sessionId) && (item.kind === 'permission' || item.kind === 'ask' || item.kind === 'plan_review')
 
   return (
     <div className="rounded-lg border border-border/50 bg-foreground/[0.02] p-4 space-y-3">
@@ -88,20 +92,27 @@ export function MailboxPanel(): React.ReactElement {
         <div className="max-h-56 overflow-auto space-y-1">
           {items.map((item) => {
             const kind = KINDS[item.kind]
+            const actionable = isActionable(item)
             return (
-              <div key={item.id} className="flex items-center gap-2 text-xs py-1">
+              <div
+                key={item.id}
+                onClick={actionable ? () => handleOpen(item) : undefined}
+                className={`flex items-center gap-2 text-xs py-1 ${actionable ? 'cursor-pointer hover:bg-accent/40 rounded px-1' : ''}`}
+              >
                 <span className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${kind.cls}`}>
                   {kind.icon} {kind.label}
                 </span>
                 <span className="shrink-0 max-w-[80px] truncate text-foreground/60">{renderMember(item.memberId)}</span>
                 <span className="truncate flex-1 text-foreground/80" title={item.summary}>{item.summary}</span>
-                {item.sessionId && (
+                {actionable ? (
                   <button
-                    onClick={() => handleOpen(item)}
+                    onClick={(e) => { e.stopPropagation(); handleOpen(item) }}
                     className="shrink-0 text-[11px] text-primary/70 hover:text-primary"
                   >
                     处理
                   </button>
+                ) : (
+                  <span className="shrink-0 text-[10px] text-foreground/30">只读</span>
                 )}
               </div>
             )
