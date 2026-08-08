@@ -632,9 +632,9 @@ function createAgentStreamEventId(): string {
 /** Agent 运行时类型 */
 export type AgentRuntime = 'claude' | 'proma' | 'pi' | 'ai-sdk'
 
-/** 默认 Agent 运行时，旧会话和旧设置统一按 Claude SDK 路径处理 */
-export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'claude'
-
+/** 默认 Agent 运行时。旧会话/旧设置无显式 runtime 时，新会话默认 Pi Runtime（支持像
+ * deepseek-v4-flash 这类 pi 模型），而非 Claude SDK——否则会报“selected model 不存在”。 */
+export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'pi'
 /** Agent runtime 展示名称，避免 UI / 编排层硬编码分支文案 */
 export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
   claude: 'Claude',

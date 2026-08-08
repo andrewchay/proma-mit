@@ -71,12 +71,12 @@ describe('Agent 会话管理器', () => {
     }))
   })
 
-  test('新会话默认使用 Claude runtime，也可以显式指定 Proma runtime', () => {
+  test('新会话默认使用 Pi runtime（支持 deepseek-v4-flash 等 pi 模型），也可以显式指定其他 runtime', () => {
     const defaultSession = createAgentSession('default runtime', undefined, testWorkspaceId)
     const promaSession = createAgentSession('proma runtime', undefined, testWorkspaceId, undefined, 'proma')
 
-    expect(defaultSession.agentRuntime).toBe('claude')
-    expect(getAgentSessionMeta(defaultSession.id)?.agentRuntime).toBe('claude')
+    expect(defaultSession.agentRuntime).toBe('pi')
+    expect(getAgentSessionMeta(defaultSession.id)?.agentRuntime).toBe('pi')
     expect(promaSession.agentRuntime).toBe('proma')
     expect(getAgentSessionMeta(promaSession.id)?.agentRuntime).toBe('proma')
   })
@@ -96,7 +96,7 @@ describe('Agent 会话管理器', () => {
     const session = createAgentSession('runtime update', undefined, testWorkspaceId, undefined, 'pi')
 
     expect(updateAgentSessionMeta(session.id, { agentRuntime: 'proma' }).agentRuntime).toBe('proma')
-    expect(updateAgentSessionMeta(session.id, { agentRuntime: 'invalid' as never }).agentRuntime).toBe('claude')
+    expect(updateAgentSessionMeta(session.id, { agentRuntime: 'invalid' as never }).agentRuntime).toBe('pi')
   })
 
   test('fork Provider-Agnostic 会话：复制工作区文件与 JSONL 历史', async () => {
