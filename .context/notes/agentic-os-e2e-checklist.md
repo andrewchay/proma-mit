@@ -153,5 +153,10 @@
 - ✅ **新建任务直接选依赖**：新建弹窗多选依赖任务（d96b7b1a）
 
 ### 第四轮（2026-08-08 16:26）
+
 - ✅ **AI 员工完成但子任务仍显示运行中**：writebackExecutionResult 按 entityType 区分 task/subTask 回写（此前无条件 updateTask 导致 subTask 卡 running）
 - ✅ **AI 员工一次性开 60+ 子会话**：新增 GLOBAL_CONCURRENCY_LIMIT=5 全局并发上限，防跨项目/批量爆会话（同项目仍 3）
+
+### 第五轮（2026-08-08 16:36）
+- ✅ **新建任务依赖应为可选多选**：改为 checkbox 多选 + 明确“可选；不选则创建无依赖任务”（原 <select multiple> 空框 UX 差且易误导）
+- ✅ **任务已完成但显示进行中**：①回写按 entityType 区分（上轮）；②加 AI 员工执行活动变化→前端自动刷新（TASK_ACTIVITY_CHANGED 推送 + ProjectDetail 订阅 reload）

@@ -27,6 +27,7 @@ import { getSettings } from './settings-service'
 import { createWorkflowRun, getWorkflowRun, cancelWorkflowRun } from './workflow-service'
 import { executeWorkflowRun } from './workflow-run-executor'
 import type { AgentMessage } from '@gravitas/shared'
+import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
 // ============================================
 // 员工 CRUD（服务层薄封装）
@@ -145,6 +146,20 @@ function recordActivity(execution: AgentExecution, action: string, summary: stri
     payload: extra ?? undefined,
     actor: `agent-${execution.agentId}`,
   })
+  // PH2-③：AI 员工执行活动变化 → 通知前端刷新项目数据（任务/看板/状态）
+  try {
+    const { BrowserWindow } = require('electron') as typeof import('electron')
+    const win = BrowserWindow.getAllWindows().find((c) => !c.isDestroyed())
+    if (win) {
+      win.webContents.send(PROJECT_IPC_CHANNELS.TASK_ACTIVITY_CHANGED, {
+        projectId: execution.projectId,
+        action,
+        summary,
+      })
+    }
+  } catch {
+    // 通知失败静默，不影响执行记录
+  }
 }
 
 // ============================================

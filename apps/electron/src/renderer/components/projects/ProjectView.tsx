@@ -797,6 +797,16 @@ function ProjectDetail({
     }
   }, [project.id])
 
+  // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”）
+  React.useEffect(() => {
+    const off = window.electronAPI?.paa?.project?.onProjectActivityChanged?.((payload) => {
+      if (!payload?.projectId || payload.projectId === project.id) {
+        void loadData()
+      }
+    })
+    return off
+  }, [loadData, project.id])
+
   const handleSaveProject = async () => {
     if (!editTitle.trim()) return
     try {
@@ -1629,18 +1639,20 @@ function TaskList({
             </div>
           </div>
           <div>
-            <label className="text-xs text-muted-foreground">依赖任务（此任务需在这些任务完成后开始）</label>
-            <select
-              multiple
-              value={newDependsOnTaskIds}
-              onChange={(e) => {
-                const options = e.target.selectedOptions
-                setNewDependsOnTaskIds(Array.from(options, (o) => o.value))
-              }}
-              className="w-full px-3 py-2 text-sm border rounded-md bg-background h-24"
-            >
-              {tasks.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
-            </select>
+            <label className="text-xs text-muted-foreground">依赖任务（可选，多选；不选则创建无依赖任务）</label>
+            <div className="flex flex-wrap gap-1.5 mt-1 max-h-28 overflow-auto">
+              {tasks.length === 0 && <span className="text-xs text-muted-foreground">（暂无已有任务可依赖）</span>}
+              {tasks.map((t) => (
+                <label key={t.id} className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border cursor-pointer hover:bg-muted/40">
+                  <input
+                    type="checkbox"
+                    checked={newDependsOnTaskIds.includes(t.id)}
+                    onChange={(e) => setNewDependsOnTaskIds((prev) => e.target.checked ? [...prev, t.id] : prev.filter((id) => id !== t.id))}
+                  />
+                  <span className="max-w-[160px] truncate">{t.title}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md">创建</button>
