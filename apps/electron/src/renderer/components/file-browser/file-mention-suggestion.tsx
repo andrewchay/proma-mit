@@ -12,7 +12,7 @@ import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion'
 import { toast } from 'sonner'
 import { FileMentionList } from './FileMentionList'
 import type { FileMentionRef } from './FileMentionList'
-import type { FileIndexEntry, FileSearchResult } from '@gravitas/shared'
+import type { FileIndexEntry, FileSearchResult, MemberResult } from '@gravitas/shared'
 import { createMentionPopup, positionPopup } from '@/components/agent/mention-popup-utils'
 import { resolveTriggerContext, shouldAllowMentionTrigger } from '@/components/ai-elements/mention-utils'
 
@@ -24,6 +24,7 @@ export function createFileMentionSuggestion(
   sessionAttachedDirsRef?: React.RefObject<string[]>,
 ): Omit<SuggestionOptions<FileIndexEntry>, 'editor'> {
   let lastResult: FileSearchResult | null = null
+  let lastEmployees: MemberResult[] = []
   let missingWorkspaceToastShown = false
 
   return {
@@ -63,18 +64,24 @@ export function createFileMentionSuggestion(
         const additionalPaths = attachedDirsRef?.current ?? []
         const sessionPaths = sessionAttachedDirsRef?.current ?? []
 
-        const result = await window.electronAPI.searchWorkspaceFiles(
-          wsPath,
-          query ?? '',
-          200,
-          additionalPaths.length > 0 ? additionalPaths : undefined,
-          sessionPaths.length > 0 ? sessionPaths : undefined,
-        )
+        const [result, employees] = await Promise.all([
+          window.electronAPI.searchWorkspaceFiles(
+            wsPath,
+            query ?? '',
+            200,
+            additionalPaths.length > 0 ? additionalPaths : undefined,
+            sessionPaths.length > 0 ? sessionPaths : undefined,
+          ),
+          // AI 员工作为 @ 引用的另一种来源；名称/角色按查询词过滤。
+          window.electronAPI.paa.project.listMemberDirectory({ kind: 'agent', q: query ?? '' }).catch(() => [] as MemberResult[]),
+        ])
         lastResult = result
+        lastEmployees = employees
         return result.entries
       } catch(e) {
         console.error('[FileMention] search failed:', e)
         lastResult = null
+        lastEmployees = []
         return []
       }
     },
@@ -98,8 +105,18 @@ export function createFileMentionSuggestion(
           props: {
             sessionEntries,
             workspaceEntries,
+            employeeEntries: lastEmployees,
             onSelect: (item: { name: string; path: string; type: 'file' | 'dir' }) => {
               props.command({ id: item.path, label: item.name })
+            },
+            onSelectEmployee: (member: MemberResult) => {
+              // 员工引用：id = memberId（agent-*），referenceType 标记为 agent_employee。
+              props.command({
+                id: member.memberId,
+                label: member.displayName,
+                mentionSuggestionChar: '@',
+                referenceType: 'agent_employee',
+              } as Record<string, unknown>)
             },
           },
           editor: props.editor,
@@ -139,8 +156,17 @@ export function createFileMentionSuggestion(
           renderer?.updateProps({
             sessionEntries,
             workspaceEntries,
+            employeeEntries: lastEmployees,
             onSelect: (item: { name: string; path: string; type: 'file' | 'dir' }) => {
               props.command({ id: item.path, label: item.name })
+            },
+            onSelectEmployee: (member: MemberResult) => {
+              props.command({
+                id: member.memberId,
+                label: member.displayName,
+                mentionSuggestionChar: '@',
+                referenceType: 'agent_employee',
+              } as Record<string, unknown>)
             },
           })
           anchorPopup()
@@ -157,6 +183,7 @@ export function createFileMentionSuggestion(
           mentionActiveRef.current = false
           if (mentionItemCountRef) mentionItemCountRef.current = 0
           lastResult = null
+          lastEmployees = []
           latestClientRect = null
           resizeObserver?.disconnect()
           resizeObserver = null

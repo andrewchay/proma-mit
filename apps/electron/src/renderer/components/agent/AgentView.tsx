@@ -1637,10 +1637,12 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         const skills = [...effectiveText.matchAll(/\/skill:(\S+)/g)].map(m => m[1]).filter(Boolean) as string[]
         const mcps = [...effectiveText.matchAll(/#mcp:(\S+)/g)].map(m => m[1]).filter(Boolean) as string[]
         const sessionIds = [...effectiveText.matchAll(/&session:(\S+)/g)].map(m => m[1]).filter(Boolean) as string[]
+        const agentEmployees = [...effectiveText.matchAll(/@member:(\S+)/g)].map(m => m[1]).filter(Boolean) as string[]
         return {
           ...(skills.length > 0 && { mentionedSkills: skills }),
           ...(mcps.length > 0 && { mentionedMcpServers: mcps }),
           ...(sessionIds.length > 0 && { mentionedSessionIds: sessionIds }),
+          ...(agentEmployees.length > 0 && { mentionedAgentEmployees: agentEmployees }),
         }
       })(),
     }

@@ -17,8 +17,9 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 import type { FileIndexEntry } from '@gravitas/shared'
+import type { MemberResult } from '@gravitas/shared'
 import { FileTypeIcon } from './FileTypeIcon'
-import { ChevronRight, Folder } from 'lucide-react'
+import { ChevronRight, Folder, Bot } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 
 // ===== Error Boundary =====
@@ -64,7 +65,11 @@ interface FileTreeNode {
 export interface FileMentionListProps {
   sessionEntries: FileIndexEntry[]
   workspaceEntries: FileIndexEntry[]
+  /** AI 员工（@ 引用的另一种来源） */
+  employeeEntries?: MemberResult[]
   onSelect: (item: { name: string; path: string; type: 'file' | 'dir' }) => void
+  /** 选中 AI 员工的回调 */
+  onSelectEmployee?: (member: MemberResult) => void
   /** 作为统一命令菜单子层时，← 可返回命令根层。 */
   onBack?: () => void
   /** 嵌入另一个弹层时，移除自身的卡片容器样式。 */
@@ -147,7 +152,7 @@ function flattenVisible(nodes: FileTreeNode[]): FileTreeNode[] {
 // ===== 组件 =====
 
 export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListProps>(
-  function FileMentionList({ sessionEntries, workspaceEntries, onSelect, onBack, embedded = false }, ref) {
+  function FileMentionList({ sessionEntries, workspaceEntries, employeeEntries = [], onSelect, onSelectEmployee, onBack, embedded = false }, ref) {
     // 构建树（仅在条目变化时重建）
     const sessionTree = React.useMemo(
       () => buildTree(sessionEntries),
@@ -194,8 +199,8 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
       [workspaceTreeWithState],
     )
 
-    // 选中索引
-    const totalItems = sessionVisible.length + workspaceVisible.length
+    // 选中索引（会话文件 + 工作区文件 + AI 员工）
+    const totalItems = sessionVisible.length + workspaceVisible.length + employeeEntries.length
     const [selectedIndex, setSelectedIndex] = React.useState(0)
     const containerRef = React.useRef<HTMLDivElement>(null)
 
@@ -214,10 +219,24 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
     }, [selectedIndex])
 
     // 获取指定索引对应的实际节点（跨 session 和 workspace 列表）
-    function getNodeAt(index: number): FileTreeNode | null {
-      if (index < sessionVisible.length) return sessionVisible[index] ?? null
-      const wsIdx = index - sessionVisible.length
-      return workspaceVisible[wsIdx] ?? null
+    type NavTarget =
+      | { kind: 'file'; node: FileTreeNode }
+      | { kind: 'employee'; member: MemberResult }
+      | null
+
+    function getNodeAt(index: number): NavTarget {
+      if (index < sessionVisible.length) {
+        const node = sessionVisible[index]
+        return node ? { kind: 'file', node } : null
+      }
+      const afterSession = index - sessionVisible.length
+      if (afterSession < workspaceVisible.length) {
+        const node = workspaceVisible[afterSession]
+        return node ? { kind: 'file', node } : null
+      }
+      const empIdx = afterSession - workspaceVisible.length
+      const member = employeeEntries[empIdx]
+      return member ? { kind: 'employee', member } : null
     }
 
     function toggleExpand(path: string) {
@@ -237,6 +256,13 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         onSelect({ name: node.name, path: node.path, type: node.type })
       },
       [onSelect],
+    )
+
+    const handleSelectEmployee = React.useCallback(
+      (member: MemberResult) => {
+        onSelectEmployee?.(member)
+      },
+      [onSelectEmployee],
     )
 
     const handleSetIndex = React.useCallback(
@@ -261,25 +287,25 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         }
         if (event.key === 'Tab') {
           event.preventDefault()
-          const node = getNodeAt(selectedIndex)
-          if (node && node.type === 'dir' && node.children.length > 0) {
-            toggleExpand(node.path)
+          const target = getNodeAt(selectedIndex)
+          if (target?.kind === 'file' && target.node.type === 'dir' && target.node.children.length > 0) {
+            toggleExpand(target.node.path)
           }
           return true
         }
         if (event.key === 'ArrowRight') {
           event.preventDefault()
-          const node = getNodeAt(selectedIndex)
-          if (node && node.type === 'dir' && node.children.length > 0 && !node.expanded) {
-            toggleExpand(node.path)
+          const target = getNodeAt(selectedIndex)
+          if (target?.kind === 'file' && target.node.type === 'dir' && target.node.children.length > 0 && !target.node.expanded) {
+            toggleExpand(target.node.path)
           }
           return true
         }
         if (event.key === 'ArrowLeft') {
           event.preventDefault()
-          const node = getNodeAt(selectedIndex)
-          if (node && node.type === 'dir' && node.expanded) {
-            toggleExpand(node.path)
+          const target = getNodeAt(selectedIndex)
+          if (target?.kind === 'file' && target.node.type === 'dir' && target.node.expanded) {
+            toggleExpand(target.node.path)
           } else {
             onBack?.()
           }
@@ -288,8 +314,9 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         if (event.key === 'Enter') {
           if (totalItems === 0) return false
           event.preventDefault()
-          const node = getNodeAt(selectedIndex)
-          if (node) handleSelect(node)
+          const target = getNodeAt(selectedIndex)
+          if (target?.kind === 'file') handleSelect(target.node)
+          else if (target?.kind === 'employee') handleSelectEmployee(target.member)
           return true
         }
         if (event.key === 'Escape') {
@@ -301,13 +328,14 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
 
     const hasSession = sessionEntries.length > 0
     const hasWorkspace = workspaceEntries.length > 0
-    const hasResults = hasSession || hasWorkspace
+    const hasEmployees = employeeEntries.length > 0
+    const hasResults = hasSession || hasWorkspace || hasEmployees
 
     // 无匹配结果
     if (!hasResults) {
       return (
         <div className={cn(!embedded && 'rounded-lg border bg-popover p-2 shadow-lg', 'text-[11px] text-muted-foreground')}>
-          无匹配文件
+          无匹配文件或 AI 员工
         </div>
       )
     }
@@ -345,6 +373,17 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
             baseIndex={sessionVisible.length}
             onSelect={handleSelect}
             onToggle={toggleExpand}
+            setSelectedIndex={handleSetIndex}
+          />
+        )}
+
+        {/* AI 员工 */}
+        {hasEmployees && (
+          <EmployeeSection
+            members={employeeEntries}
+            selectedIndex={selectedIndex}
+            baseIndex={sessionVisible.length + workspaceVisible.length}
+            onSelect={handleSelectEmployee}
             setSelectedIndex={handleSetIndex}
           />
         )}
@@ -389,6 +428,68 @@ function FileSection({
         onToggle={onToggle}
         setSelectedIndex={setSelectedIndex}
       />
+    </div>
+  )
+}
+
+/** AI 员工分组区域（扁平列表，非文件树） */
+function EmployeeSection({
+  members,
+  selectedIndex,
+  baseIndex,
+  onSelect,
+  setSelectedIndex,
+}: {
+  members: MemberResult[]
+  selectedIndex: number
+  baseIndex: number
+  onSelect: (member: MemberResult) => void
+  setSelectedIndex: (index: number) => void
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium bg-violet-500/10 text-violet-600 border-b border-border/50">
+        <Bot className="size-3" />
+        <span>AI 员工</span>
+      </div>
+      {members.map((member, i) => {
+        const idx = baseIndex + i
+        const isSelected = idx === selectedIndex
+        return (
+          <Tooltip key={member.memberId} delayDuration={300}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-mention-item=""
+                className={cn(
+                  'w-full flex items-center gap-1.5 px-2.5 py-1 text-left text-xs transition-colors',
+                  isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                )}
+                onClick={() => {
+                  setSelectedIndex(idx)
+                  onSelect(member)
+                }}
+              >
+                <span className="w-3 shrink-0" />
+                <Bot className="size-3 shrink-0 text-violet-500" />
+                <span className="truncate flex-1">{member.displayName}</span>
+                {member.role && (
+                  <span className="text-[10px] text-muted-foreground/60 truncate max-w-[140px] shrink-[2]">
+                    {member.role}
+                  </span>
+                )}
+                {isSelected && (
+                  <span className="text-[10px] text-violet-500/70 shrink-0">@ 引用</span>
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="z-[10000] max-w-xs break-all">
+              <p>{member.displayName}{member.role ? ` · ${member.role}` : ''}</p>
+              <p className="text-[10px] text-muted-foreground">{member.memberId}</p>
+            </TooltipContent>
+          </Tooltip>
+        )
+      })}
     </div>
   )
 }

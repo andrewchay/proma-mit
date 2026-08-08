@@ -303,10 +303,10 @@ export function RichTextInput({
                 default: null,
                 parseHTML: (el: HTMLElement) => {
                   const value = el.getAttribute('data-mention-reference-type')
-                  return value === 'todo' || value === 'calendar_event' ? value : null
+                  return value === 'todo' || value === 'calendar_event' || value === 'agent_employee' ? value : null
                 },
                 renderHTML: (attrs: Record<string, unknown>) => (
-                  attrs.referenceType === 'todo' || attrs.referenceType === 'calendar_event'
+                  attrs.referenceType === 'todo' || attrs.referenceType === 'calendar_event' || attrs.referenceType === 'agent_employee'
                     ? { 'data-mention-reference-type': attrs.referenceType }
                     : {}
                 ),
@@ -339,6 +339,7 @@ export function RichTextInput({
             let chipClass = isDirectory ? 'directory-mention-chip' : 'mention-chip'
             if (referenceType === 'todo') chipClass = 'todo-mention-chip'
             else if (referenceType === 'calendar_event') chipClass = 'calendar-event-mention-chip'
+            else if (referenceType === 'agent_employee') chipClass = 'agent-employee-mention-chip'
             else if (char === '/') chipClass = 'skill-mention-chip'
             else if (char === '#') chipClass = 'mcp-mention-chip'
             else if (char === '&') chipClass = 'session-mention-chip'
@@ -349,7 +350,7 @@ export function RichTextInput({
                 'data-id': node.attrs.id,
                 'data-label': node.attrs.label,
                 'data-mention-suggestion-char': char,
-                ...(referenceType === 'todo' || referenceType === 'calendar_event'
+                ...(referenceType === 'todo' || referenceType === 'calendar_event' || referenceType === 'agent_employee'
                   ? { 'data-mention-reference-type': referenceType }
                   : {}),
                 ...(node.attrs.commandMenuMention ? { 'data-command-menu-mention': 'true' } : {}),
@@ -845,6 +846,30 @@ export function RichTextInput({
           height: 12px;
           background-color: currentColor;
           mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3Cpath d='M8 9h8'/%3E%3Cpath d='M8 13h6'/%3E%3C/svg%3E");
+          mask-size: contain;
+          mask-repeat: no-repeat;
+          flex-shrink: 0;
+        }
+        .agent-employee-mention-chip {
+          background-color: hsl(270 70% 55% / 0.15);
+          color: hsl(270 70% 48%);
+          border-radius: 4px;
+          padding: 1px 4px 1px 2px;
+          font-size: 13px;
+          font-weight: 500;
+          white-space: nowrap;
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+          vertical-align: baseline;
+        }
+        .agent-employee-mention-chip::before {
+          content: '';
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          background-color: currentColor;
+          mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8V4H8'/%3E%3Crect width='16' height='12' x='4' y='8' rx='2'/%3E%3Cpath d='M2 14h2'/%3E%3Cpath d='M20 14h2'/%3E%3Cpath d='M15 13v2'/%3E%3Cpath d='M9 13v2'/%3E%3C/svg%3E");
           mask-size: contain;
           mask-repeat: no-repeat;
           flex-shrink: 0;

@@ -1353,6 +1353,8 @@ export interface AgentSendInput {
   mentionedMcpServers?: string[]
   /** 用户通过会话引用 mention 指定的 Agent 会话 ID 列表 */
   mentionedSessionIds?: string[]
+  /** 用户通过 @member:xxx 引用的 AI 员工 memberId 列表 */
+  mentionedAgentEmployees?: string[]
   /** Workflow 节点能力上限；主进程据此过滤 MCP、Skill Plugin 和工具调用。 */
   workflowCapabilityPolicy?: import('./workflow').WorkflowCapabilityPolicy
   /** 渲染进程生成的流式开始时间戳，主进程原样回传到 STREAM_COMPLETE，确保竞态保护比较的是同一个值 */

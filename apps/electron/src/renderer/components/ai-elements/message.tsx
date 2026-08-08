@@ -22,7 +22,7 @@ import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import { ChevronDown, ChevronUp, Paperclip, FileText, Sparkles, Server, Download, MessageSquareText } from 'lucide-react'
+import { ChevronDown, ChevronUp, Paperclip, FileText, Sparkles, Server, Download, MessageSquareText, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ImageLightbox } from '@/components/ui/image-lightbox'
@@ -251,13 +251,14 @@ function walkMdastText(
 
 // ----- MentionChip 组件 -----
 
-type MentionType = 'file' | 'skill' | 'mcp' | 'session'
+type MentionType = 'file' | 'skill' | 'mcp' | 'session' | 'member'
 
 const MENTION_STYLES: Record<MentionType, { icon: typeof FileText; className: string }> = {
   file: { icon: FileText, className: 'bg-primary/10 text-primary' },
   skill: { icon: Sparkles, className: 'bg-[hsl(270_60%_60%/0.15)] text-[hsl(270_60%_50%)]' },
   mcp: { icon: Server, className: 'bg-[hsl(160_60%_45%/0.15)] text-[hsl(160_60%_35%)]' },
   session: { icon: MessageSquareText, className: 'bg-[hsl(200_80%_50%/0.14)] text-[hsl(200_80%_40%)]' },
+  member: { icon: Bot, className: 'bg-[hsl(270_70%_55%/0.15)] text-[hsl(270_70%_48%)]' },
 }
 
 function safeDecode(raw: string): string {
@@ -283,7 +284,7 @@ function MentionChip({ type, value }: { type: MentionType; value: string }): Rea
         'inline-flex items-center gap-0.5 rounded px-1 py-[1px] text-[13px] font-medium whitespace-nowrap align-baseline',
         style.className
       )}
-      title={type === 'file' || type === 'session' ? decoded : undefined}
+      title={type === 'file' || type === 'session' || type === 'member' ? decoded : undefined}
     >
       <Icon className="size-3 inline shrink-0" />
       {display}
@@ -298,7 +299,7 @@ export function remarkMentions() {
     walkMdastText(tree, (node, index, parent) => {
       const text = node.value
       // 每次调用创建独立正则实例，避免 /g 状态在并发 remark pipeline 间互相干扰
-      const mentionPattern = /@file:(\S+)|\/skill:(\S+)|#mcp:(\S+)|&session:(\S+)/g
+      const mentionPattern = /@file:(\S+)|\/skill:(\S+)|#mcp:(\S+)|&session:(\S+)|@member:(\S+)/g
       if (!mentionPattern.test(text)) return
       mentionPattern.lastIndex = 0
 
@@ -310,8 +311,8 @@ export function remarkMentions() {
         if (m.index > lastIdx) {
           parts.push({ type: 'text', value: text.slice(lastIdx, m.index) })
         }
-        const mType: MentionType = m[1] ? 'file' : m[2] ? 'skill' : m[3] ? 'mcp' : 'session'
-        const mValue = m[1] ?? m[2] ?? m[3] ?? m[4] ?? ''
+        const mType: MentionType = m[1] ? 'file' : m[2] ? 'skill' : m[3] ? 'mcp' : m[4] ? 'session' : 'member'
+        const mValue = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? ''
         // 新版 htmlToMarkdown 已 encodeURIComponent，旧消息是原始路径
         const alreadyEncoded = /%[0-9A-Fa-f]{2}/.test(mValue)
         const safeValue = alreadyEncoded ? mValue : encodeURIComponent(mValue)

@@ -446,10 +446,12 @@ export function htmlToMarkdown(html: string): string {
         const dataType = el.getAttribute('data-type')
         const dataId = el.getAttribute('data-id') || ''
         const suggestionChar = el.getAttribute('data-mention-suggestion-char') || '@'
+        const referenceType = el.getAttribute('data-mention-reference-type')
         if (dataType === 'mention') {
           if (suggestionChar === '/') return `/skill:${dataId}`
           if (suggestionChar === '#') return `#mcp:${dataId}`
           if (suggestionChar === '&') return `&session:${dataId}`
+          if (referenceType === 'agent_employee') return `@member:${dataId}`
           return `@file:${dataId}`
         }
         return children

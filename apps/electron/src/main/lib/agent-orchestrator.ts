@@ -432,7 +432,37 @@ function buildReferencedSessionsPrompt(
 
   if (sessionBlocks.length === 0) return ''
 
-  return `<referenced_sessions>\n用户在消息中明确引用了以下同工作区 Agent 会话。不要假设这些会话的内容；需要上下文时，请先读取对应的 History path，再基于读取结果继续完成任务。\n${sessionBlocks.join('\n\n')}\n</referenced_sessions>`
+  return `<referenced_sessions>
+用户在消息中明确引用了以下同工作区 Agent 会话。不要假设这些会话的内容；需要上下文时，请先读取对应的 History path，再基于读取结果继续完成任务。\n${sessionBlocks.join('\n\n')}\n</referenced_sessions>`
+}
+
+/**
+ * 为用户 @member:agent-<id> 引用的 AI 员工构造提示块。
+ * 带出员工姓名/角色/描述，并提示可用 InvokeAgent 工具把任务发给对方。
+ */
+function buildMentionedAgentsPrompt(mentionedAgentEmployees?: string[]): string {
+  const uniqueIds = [...new Set((mentionedAgentEmployees ?? []).filter(Boolean))]
+  if (uniqueIds.length === 0) return ''
+
+  let employees: Array<{ id: string; name: string; role?: string; description?: string }> = []
+  try {
+    // 懒加载避免 electron 环境缺失（单测）下崩溃。
+    const { listAgentEmployees } = require('./agent-employee-service')
+    employees = listAgentEmployees() as Array<{ id: string; name: string; role?: string; description?: string }>
+  } catch {
+    employees = []
+  }
+
+  const lines: string[] = ['用户在消息中明确 @ 引用了以下 AI 员工（你自己的同事）。当你需要把子任务/确认请求交给某个员工时，请使用 InvokeAgent 工具，并以对应成员 ID（memberId）作为 toMemberId：']
+  for (const memberId of uniqueIds) {
+    const employeeId = memberId.startsWith('agent-') ? memberId.slice('agent-'.length) : memberId
+    const emp = employees.find((e) => e.id === employeeId)
+    const name = emp?.name ?? memberId
+    const role = emp?.role ? ` [${emp.role}]` : ''
+    const desc = emp?.description ? `\n  描述: ${emp.description}` : ''
+    lines.push(`- ${name}${role}（memberId: ${memberId}）${desc}`)
+  }
+  return `<mentioned_agent_employees>\n${lines.join('\n')}\n</mentioned_agent_employees>`
 }
 
 /** 标题生成 Prompt */
@@ -1576,7 +1606,7 @@ export class AgentOrchestrator {
    * 自动取出下一条执行。pumpNext 驱动时需传 opts.skipQueueCheck=true 跳过入队判断。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks, opts?: { skipQueueCheck?: boolean }): Promise<void> {
-    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, attachments, workflowCapabilityPolicy, triggeredBy } = input
+    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, mentionedAgentEmployees, attachments, workflowCapabilityPolicy, triggeredBy } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护 + 会话级发送排队
@@ -1834,6 +1864,11 @@ export class AgentOrchestrator {
         }
         enrichedMessage = `<mentioned_tools>\n${toolLines.join('\n')}\n</mentioned_tools>\n\n${userMessage}`
         console.log(`[Agent 编排] 注入 mentioned_tools: ${mentionedSkills?.length ?? 0} skills, ${mentionedMcpServers?.length ?? 0} MCP`)
+      }
+      const mentionedAgentsBlock = buildMentionedAgentsPrompt(mentionedAgentEmployees)
+      if (mentionedAgentsBlock) {
+        enrichedMessage = `${mentionedAgentsBlock}\n\n${enrichedMessage}`
+        console.log(`[Agent 编排] 注入 mentioned_agent_employees: ${mentionedAgentEmployees?.length ?? 0}`)
       }
 
       const contextualMessage = `${dynamicCtx}\n\n${enrichedMessage}`
@@ -2104,6 +2139,11 @@ export class AgentOrchestrator {
         }
         enrichedMessage = `<mentioned_tools>\n${toolLines.join('\n')}\n</mentioned_tools>\n\n${userMessage}`
         console.log(`[Agent 编排] 注入 mentioned_tools: ${mentionedSkills?.length ?? 0} skills, ${mentionedMcpServers?.length ?? 0} MCP`)
+      }
+      const mentionedAgentsBlock = buildMentionedAgentsPrompt(mentionedAgentEmployees)
+      if (mentionedAgentsBlock) {
+        enrichedMessage = `${mentionedAgentsBlock}\n\n${enrichedMessage}`
+        console.log(`[Agent 编排] 注入 mentioned_agent_employees: ${mentionedAgentEmployees?.length ?? 0}`)
       }
 
       const contextualMessage = `${dynamicCtx}\n\n${enrichedMessage}`
