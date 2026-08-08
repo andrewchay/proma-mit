@@ -122,6 +122,7 @@ typecheck：`cd apps/electron && npx tsc --noEmit`；`cd packages/shared && npx 
 | `plan/gravitas-agentic-os-phased-plan.md` | 分批施工总计划（本交接的权威来源） |
 | `notes/buzz-gravitas-borrowing.md` | Buzz 心智映射（聚焦 5 高杠杆） |
 | `notes/buzz-gravitas-full-leverage.md` | 34 动作全库 |
+| `notes/agentic-os-e2e-checklist.md` | 端到端测试清单（回归用） |
 | `plan/ph1a-member-sync-implementation.md` | PH1-A 实施详录（步骤1-7） |
 | `notes/habi-proma-borrowing.md` | 生态 / 统一能力契约 / 五层分层 |
 | `notes/proma-agent-island.md` | 官方灵动岛=会话状态机 |
