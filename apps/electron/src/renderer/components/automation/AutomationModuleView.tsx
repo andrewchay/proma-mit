@@ -15,6 +15,7 @@ import { useSetAtom } from 'jotai'
 import { AutomationRunningPanel } from './AutomationRunningPanel'
 import { ProactiveSchedulerSettings } from '@/components/settings/ProactiveSchedulerSettings'
 import { RunCenterSettings } from '@/components/settings/RunCenterSettings'
+import { CostAuditPanel } from './CostAuditPanel'
 
 type AutomationSubView = 'schedules' | 'running' | 'runs'
 
@@ -67,8 +68,10 @@ export function AutomationModuleView(): React.ReactElement {
       {/* 子视图内容 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {subView === 'schedules' && (
-          <div className="p-4">
+          <div className="p-4 space-y-4">
             <ProactiveSchedulerSettings />
+            {/* PH2-C：费用审计 */}
+            <CostAuditPanel />
           </div>
         )}
         {subView === 'running' && <AutomationRunningPanel />}

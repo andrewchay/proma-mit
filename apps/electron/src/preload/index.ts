@@ -677,6 +677,8 @@ export interface ElectronAPI {
   /** 团队收件箱（PH2-C） */
   listMailbox: () => Promise<import('@gravitas/shared').MailboxItem[]>
   countMailboxPending: () => Promise<number>
+  /** 费用审计（PH2-C） */
+  runCostAudit: (input?: import('@gravitas/shared').CostAuditInput) => Promise<{ report: import('@gravitas/shared').CostAuditReport; text: string }>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -2013,6 +2015,10 @@ const electronAPI: ElectronAPI = {
 
   countMailboxPending: () => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.COUNT_MAILBOX_PENDING)
+  },
+
+  runCostAudit: (input?: import('@gravitas/shared').CostAuditInput) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.RUN_COST_AUDIT, input)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

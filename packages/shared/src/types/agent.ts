@@ -1205,6 +1205,26 @@ export interface MailboxItem {
   at: number
 }
 
+/** 费用审计（PH2-C） */
+export interface CostAuditInput {
+  windowMs?: number
+  spikeRatio?: number
+}
+
+export interface CostAuditReport {
+  windowStart: number
+  windowEnd: number
+  totalCost: number
+  totalTokens: number
+  previousTotalCost: number
+  costChangeRatio: number | null
+  byModel: Array<{ modelId: string; costTotal: number }>
+  byWorkspace: Array<{ workspaceId: string; costTotal: number }>
+  topSessions: Array<{ sessionId: string; costTotal: number }>
+  alerts: string[]
+  hasAlerts: boolean
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1877,6 +1897,8 @@ export const AGENT_IPC_CHANNELS = {
   /** 团队收件箱（PH2-C） */
   LIST_MAILBOX: 'agent:list-mailbox',
   COUNT_MAILBOX_PENDING: 'agent:count-mailbox-pending',
+  /** 费用审计（PH2-C） */
+  RUN_COST_AUDIT: 'agent:run-cost-audit',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

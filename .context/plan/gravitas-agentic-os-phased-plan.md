@@ -88,7 +88,7 @@
 - [x] **mailbox 抽象（首版）**：`team-mailbox-service` 聚合 Agent 需人工确认（权限 permissionService / 提问 askUserService / 计划审批 exitPlanService）为统一收件箱，带成员归属；IPC `LIST_MAILBOX`/`COUNT_MAILBOX_PENDING` + 团队 Tab `MailboxPanel`（可打开会话处理）。
 - [x] **mailbox 扩源**：指派给成员的待办（项目管理 `listProjectWorkItems`，未完成+有 assignee）并入 inbox（kind='todo'，memberId=assignee），MailboxPanel 展示
 - [x] **Proactive 动作可回放**：`ProactiveScheduler.execute` 每次运行沉淀进统一运行事实源（Run Center `source:'automation'`，标题=任务标题，detail=触发方式+结果）；自动化模块已有 `ProactiveSchedulerSettings` 展示定时任务+运行(trigger/status)
-- [ ] 自动服务器/费用 Audit
+- [x] **自动服务器/费用 Audit**：`cost-audit-service`（近7天窗口：总费用/token、按模型/工作区分布、Top会话、环比、异常告警），IPC `RUN_COST_AUDIT` + 自动化模块 `CostAuditPanel` 手动触发展示；`RunCostAudit` Agent 工具（可自动/按需审计并在会话中主动报告）
 - [ ] 灵动岛会话状态机完善（phase+attention/unread）+ 注意力分级/节流
 
 ### PH2-D. 数据复利与安全增强

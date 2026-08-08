@@ -48,6 +48,11 @@ import {
   executeTodoContextTool,
 } from './tool-impls/todo-context-tool.ts'
 import {
+  COST_AUDIT_TOOL_NAME,
+  createCostAuditToolDefinition,
+  executeCostAuditTool,
+} from './tool-impls/cost-audit-tool.ts'
+import {
   AGENT_TOOL_NAME,
   createAgentToolDefinition,
   executeAgentTool,
@@ -149,7 +154,7 @@ import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME, createRecallMemoryToolDe
 import { COMPACT_CONTEXT_TOOL_NAME, createCompactContextToolDefinition } from './context-compaction'
 import { GOAL_CHECKPOINT_TOOL_NAME, createGoalCheckpointToolDefinition } from './tool-impls/goal-checkpoint-tool.ts'
 import { READ_SKILL_TOOL_NAME, createSkillToolDefinition, executeSkillTool } from './tool-impls/skill-tool.ts'
-export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, AGENT_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME, READ_SKILL_TOOL_NAME, TODO_CONTEXT_TOOL_NAME }
+export { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME, AGENT_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME, READ_SKILL_TOOL_NAME, TODO_CONTEXT_TOOL_NAME, COST_AUDIT_TOOL_NAME }
 export { LIST_MCP_RESOURCES_TOOL_NAME, READ_MCP_RESOURCE_TOOL_NAME }
 
 /** 核心工具注册选项 */
@@ -215,6 +220,9 @@ export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDe
   // PH2-A：Todo 解压缩工具（Agent 可解释队友的待办）
   tools.push({ ...createTodoContextToolDefinition(), execute: executeTodoContextTool })
 
+  // PH2-C：费用审计工具（Agent 可自动/按需审计费用）
+  tools.push({ ...createCostAuditToolDefinition(), execute: executeCostAuditTool })
+
   return tools
 }
 
@@ -239,6 +247,7 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   READ_MCP_RESOURCE_TOOL_NAME,
   GOAL_CHECKPOINT_TOOL_NAME,
   TODO_CONTEXT_TOOL_NAME,
+  COST_AUDIT_TOOL_NAME,
   WEB_BRIDGE_NAVIGATE_TOOL_NAME,
   WEB_BRIDGE_SNAPSHOT_TOOL_NAME,
   WEB_BRIDGE_SCREENSHOT_TOOL_NAME,

@@ -1678,6 +1678,12 @@ export function registerIpcHandlers(): void {
     const { countMailboxPending } = await import('./lib/team-mailbox-service')
     return countMailboxPending()
   })
+  // 费用审计（PH2-C）
+  ipcMain.handle(AGENT_IPC_CHANNELS.RUN_COST_AUDIT, async (_ev, input: import('@gravitas/shared').CostAuditInput = {}) => {
+    const { runCostAudit, costAuditToText } = await import('./lib/cost-audit-service')
+    const report = runCostAudit(input)
+    return { report, text: costAuditToText(report) }
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,
