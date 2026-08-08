@@ -84,10 +84,24 @@ function normalizeUsage(message: SDKAssistantMessage): {
   const costOutput = typeof rawCost?.output === 'number' ? rawCost.output : 0
   const costCacheRead = typeof rawCost?.cacheRead === 'number' ? rawCost.cacheRead : 0
   const costCacheCreation = typeof rawCost?.cacheWrite === 'number' ? rawCost.cacheWrite : 0
-  const costTotal =
+  const providerCostTotal =
     typeof rawCost?.total === 'number'
       ? rawCost.total
       : costInput + costOutput + costCacheRead + costCacheCreation
+  // PH2-①：provider 未返回 cost（恒 0）但有 token 时，用本地价格目录估算
+  let costTotal = providerCostTotal
+  if (costTotal === 0 && totalTokens > 0) {
+    try {
+      const { estimateCost } = require('./price-estimator')
+      costTotal = estimateCost(modelName(message), {
+        inputTokens,
+        outputTokens,
+        cacheReadTokens,
+      })
+    } catch {
+      costTotal = providerCostTotal
+    }
+  }
 
   return {
     inputTokens,
@@ -103,6 +117,11 @@ function normalizeUsage(message: SDKAssistantMessage): {
   }
 }
 
+/** 提取 usage 对应的 modelId（用于价格估算）。 */
+function modelName(message: SDKAssistantMessage): string | undefined {
+  const msg = message.message as Record<string, unknown> | undefined
+  return typeof msg?.model === 'string' ? msg.model : undefined
+}
 /** 从 content blocks 中提取所有 tool_use 块 */
 function extractToolUseBlocks(content: SDKContentBlock[] | undefined): SDKToolUseBlock[] {
   if (!Array.isArray(content)) return []

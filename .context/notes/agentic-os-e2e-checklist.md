@@ -44,7 +44,7 @@
 
 - [x] 团队 Skills 目录（设置→Agent→Skills 底）：跨工作区导入 Skill 后出现「待同步」；改源→同步→「已最新」
 
-- [ ] 文件共享事件流（团队 Tab）：AI 员工写文件 → FileEventPanel 出现成员/动作/路径
+- [x] 文件共享事件流（团队 Tab）：AI 员工写文件 → FileEventPanel 出现成员/动作/路径
 
 - [x] Todo 事件流（团队 Tab）：建/完成任务 → TodoEventPanel 出现「谁做了什么」
 
@@ -120,3 +120,27 @@
 | `[Diag][plugin]` | 插件 | 注册拒绝原因 |
 
 遇到问题时：把 `[Diag]` 相关的终端输出（或截图）发我，我据此反推根因。
+
+---
+
+## 实测问题与修复记录（持续维护）
+
+> 每轮 e2e 实测发现的 bug 与修复情况，便于回归。状态：✅=已修复 ☐=待办
+
+### 第一轮（§0-2，2026-08-08）—— 已修复
+- ✅ AI 员工表单「模型」无下拉 → 改 datalist（从渠道拉取+可手输）
+- ✅ task 无法同步/删除 + outbox 孤儿重试"任务不存在" → deleteTask 级联清 outbox/executions + 孤儿自动丢弃 + UI「关闭」按钮
+- ✅ 编辑任务两个「开始日期」→ 移除重复字段（误放执行 subTask）；截止改后同步到飞书（updateTodoDue）
+
+### 第二轮（2026-08-08）—— 已修复
+- ✅ 飞书同步 `getTenantAccessToken undefined` → updateTodoDue 解构丢 this，改为 provider.updateTodoDue(...)（e5cfd4d2）
+- ✅ 飞书二次报错 `Unexpected non-whitespace character after JSON` → feishuApi 读原文稳控 JSON.parse（cb2c0983）
+- ✅ Agent 解释成员读不到上下文 → ExploreContext 支持按成员展示名解析（e5cfd4d2）
+- ✅ 团队档案协作偏好无引导 → 加示例文案
+- ✅ “I 指派的”视图 → tasks.created_by_user_id + MyWorkPanel toggle（cb2c0983）
+
+### 第三轮（2026-08-08 15:58）—— 待修复 ☐
+- ☐ **费用审计 总 token 9m 但费用 0**：costTotal 未记录/统计为 0 → 待查 token-usage 的 cost 字段是否落盘
+- ☐ **Mailbox 无消息**：应收件箱没有任何条目 → 待查聚合链（mailbox → sources）
+- ☐ **AI 员工权限审批不弹窗**：只在团队邮箱出现、提示弱、点击处理无反应 → 待查审批触发面 + Mailbox 处理动作
+- ☐ **导入插件无反应**：点击「导入插件」没反应 → 待查 ExtensionSettings 按钮链路 + IPC

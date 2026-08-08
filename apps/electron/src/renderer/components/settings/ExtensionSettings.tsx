@@ -52,14 +52,19 @@ export function ExtensionSettings(): React.ReactElement {
   const [loading, setLoading] = React.useState(true)
 
   // PH2-F：插件/SDK 开放——按 manifest 导入第三方插件
+  const [importDraft, setImportDraft] = React.useState('')
+  const [showImport, setShowImport] = React.useState(false)
+
   const handleImport = async (): Promise<void> => {
-    const raw = window.prompt('粘贴第三方插件 manifest JSON（{ id, name, version, surfaces, permissions, ... }）：')
+    const raw = importDraft
     if (!raw) return
     try {
       const manifest = JSON.parse(raw)
       const ok = await window.electronAPI.importPlugin(manifest)
       if (ok) {
         toast.success(`已导入插件「${manifest.name ?? manifest.id}」`)
+        setImportDraft('')
+        setShowImport(false)
         await load()
       } else {
         toast.error('导入失败（id 已存在或 manifest 不完整）')
@@ -103,15 +108,25 @@ export function ExtensionSettings(): React.ReactElement {
       title="扩展"
       description="管理 Gravitas 的扩展（第一方内置 + 第三方按 manifest 导入）。扩展可贡献系统浮层、通知、菜单栏等能力"
       action={
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void handleImport()}
-        >
-          导入插件
+        <Button variant="outline" size="sm" onClick={() => setShowImport((v) => !v)}>
+          {showImport ? '收起' : '导入插件'}
         </Button>
       }
     >
+      {showImport && (
+        <div className="border-b border-border/50 px-4 py-3 space-y-2">
+          <textarea
+            value={importDraft}
+            onChange={(e) => setImportDraft(e.target.value)}
+            rows={5}
+            placeholder={'粘贴第三方插件 manifest JSON，例如：\n{ "id": "com.xxx.plugin", "name": "我的插件", "version": "1.0.0", "surfaces": [], "permissions": { "events": false }, "entrypoints": {} }'}
+            className="w-full rounded-md border bg-background px-3 py-2 text-xs font-mono resize-none"
+          />
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => void handleImport()} disabled={!importDraft.trim()}>导入</Button>
+          </div>
+        </div>
+      )}
       <SettingsCard>
         {loading ? (
           <SettingsRow label="加载中…">
