@@ -128,11 +128,13 @@
 > 每轮 e2e 实测发现的 bug 与修复情况，便于回归。状态：✅=已修复 ☐=待办
 
 ### 第一轮（§0-2，2026-08-08）—— 已修复
+
 - ✅ AI 员工表单「模型」无下拉 → 改 datalist（从渠道拉取+可手输）
 - ✅ task 无法同步/删除 + outbox 孤儿重试"任务不存在" → deleteTask 级联清 outbox/executions + 孤儿自动丢弃 + UI「关闭」按钮
 - ✅ 编辑任务两个「开始日期」→ 移除重复字段（误放执行 subTask）；截止改后同步到飞书（updateTodoDue）
 
 ### 第二轮（2026-08-08）—— 已修复
+
 - ✅ 飞书同步 `getTenantAccessToken undefined` → updateTodoDue 解构丢 this，改为 provider.updateTodoDue(...)（e5cfd4d2）
 - ✅ 飞书二次报错 `Unexpected non-whitespace character after JSON` → feishuApi 读原文稳控 JSON.parse（cb2c0983）
 - ✅ Agent 解释成员读不到上下文 → ExploreContext 支持按成员展示名解析（e5cfd4d2）
@@ -140,6 +142,7 @@
 - ✅ “I 指派的”视图 → tasks.created_by_user_id + MyWorkPanel toggle（cb2c0983）
 
 ### 第三轮（2026-08-08 15:58）—— 部分修复
+
 - ✅ **费用审计 总 token 9m 但费用 0**：根因 Provider SDK 不返回 cost → 新增 price-estimator（本地价格目录估算）落在 token-usage（5157d366）
 - ✅ **导入插件无反应**：根因 Electron window.prompt 不工作 → 改内联 JSON textarea + 导入按钮（5157d366）
 - ☐ **Mailbox 无消息**：疑似无数据（未触发 pending 审批/无已指派未完成任务）。已加各来源细分日志，`[Diag][mailbox]` 可定位。待用户核对

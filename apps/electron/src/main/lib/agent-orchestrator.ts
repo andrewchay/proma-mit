@@ -2272,8 +2272,18 @@ export class AgentOrchestrator {
         // ── 普通工具的权限分派 ──
 
         switch (currentMode) {
-          case 'bypassPermissions':
+          case 'bypassPermissions': {
+            // PH2-③：无人值守放行普通操作，但高危（危险 Bash / ComputerUse / WebBridge 上传下载）仍需克制
+            try {
+              const { permissionService } = await import('./agent-permission-service')
+              if (permissionService.isHighRiskTool(toolName, input)) {
+                return { behavior: 'deny' as const, message: '高危操作未获授权，请在任务 by-task 权限中显式申请（如 bash 高危命令 / 桌面控制），或先手动完成' }
+              }
+            } catch {
+              // 权限服务不可用时退回放行
+            }
             return { behavior: 'allow' as const, updatedInput: input }
+          }
 
           case 'plan': {
             // Plan 模式：只允许只读工具 + Write/Edit 任意 .md 文件（计划文档）

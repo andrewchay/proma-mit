@@ -489,6 +489,17 @@ export class AgentPermissionService {
 
     return 'normal'
   }
+
+  /**
+   * PH2-③：是否高危工具——无人值守(bypassPermissions)下仍需克制/回退的操作。
+   * 高危 Bash 命令、Computer Use、Web Bridge 上传/下载。这类操作不自动放行。
+   */
+  isHighRiskTool(toolName: string, input: Record<string, unknown>): boolean {
+    if (this.assessDangerLevel(toolName, input) === 'dangerous') return true
+    if (isComputerUseTool(toolName)) return true
+    if (isWebBridgeFileTransfer(toolName)) return true
+    return false
+  }
 }
 
 function isComputerUseTool(toolName: string): boolean {

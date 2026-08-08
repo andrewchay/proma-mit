@@ -1422,6 +1422,7 @@ function TaskList({
   const [newAssigneeName, setNewAssigneeName] = useState('')
   const [newAgentId, setNewAgentId] = useState('')
   const [newPermissions, setNewPermissions] = useState<string[]>([])
+  const [newDependsOnTaskIds, setNewDependsOnTaskIds] = useState<string[]>([])
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
@@ -1465,6 +1466,10 @@ function TaskList({
         input.permissionRequests = newPermissions
       }
       const task = await callProjectAPI<Task>('createTask', projectId, input)
+      // PH2-④：新建任务时选择的依赖（depends upon 已有任务）
+      for (const dependsOnId of newDependsOnTaskIds) {
+        await callProjectAPI('createTaskDependency', task.id, dependsOnId, 'finish_to_start').catch((err) => console.error('创建依赖失败:', err))
+      }
       onTasksChange([...tasks, task])
       setNewTitle('')
       setNewDesc('')
@@ -1472,6 +1477,7 @@ function TaskList({
       setNewAssigneeName('')
       setNewAgentId('')
       setNewPermissions([])
+      setNewDependsOnTaskIds([])
       setNewDueDate('')
       setShowCreate(false)
     } catch (err) {
@@ -1621,6 +1627,20 @@ function TaskList({
                 </label>
               ))}
             </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">依赖任务（此任务需在这些任务完成后开始）</label>
+            <select
+              multiple
+              value={newDependsOnTaskIds}
+              onChange={(e) => {
+                const options = e.target.selectedOptions
+                setNewDependsOnTaskIds(Array.from(options, (o) => o.value))
+              }}
+              className="w-full px-3 py-2 text-sm border rounded-md bg-background h-24"
+            >
+              {tasks.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+            </select>
           </div>
           <div className="flex gap-2">
             <button onClick={handleCreate} className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md">创建</button>
