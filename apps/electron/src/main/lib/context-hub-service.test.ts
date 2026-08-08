@@ -6,6 +6,7 @@ import { getEntityGraph, graphToText } from './context-hub-service'
 import { getRunStore } from './run-store'
 import { recordTodoEvent } from './todo-event-service'
 import { recordFileEvent } from './workspace-file-event-service'
+import { initProjectDb, closeProjectDb } from './project-sqlite-store'
 
 /**
  * PH2-D Context Hub / Work Graph 测试。
@@ -18,9 +19,11 @@ const testDir = join(tmpdir(), `gravitas-contexthub-test-${Date.now()}`)
 
 beforeAll(async () => {
   process.env.PROMA_TEST_CONFIG_DIR = testDir
+  await initProjectDb()
 })
 
 afterAll(() => {
+  closeProjectDb()
   try {
     rmSync(testDir, { recursive: true, force: true })
   } catch {
@@ -60,5 +63,17 @@ describe('Context Hub / Work Graph（PH2-D）', () => {
     const graph = getEntityGraph('member', 'agent-z')
     expect(graph).not.toBeNull()
     expect(graph!.related.length).toBe(0)
+  })
+
+  test('按成员展示名解析（“Andrew”→ paa-<名> 找到其 Todo）', () => {
+    // 真人成员 Andrew 的待办（memberId=paa-Andrew）
+    const { upsertMemberDraft } = require('./member-sync-service')
+    upsertMemberDraft({ platform: 'feishu', externalId: 'ou-andrew', name: 'Andrew' })
+    const { recordTodoEvent } = require('./todo-event-service')
+    recordTodoEvent({ source: 'project', action: 'created', todoId: 't-andrew', title: '交付 Q3 报告', memberId: 'paa-Andrew' })
+
+    const graph = getEntityGraph('member', 'Andrew')
+    expect(graph).not.toBeNull()
+    expect(graph!.related.some((n) => n.type === 'todo_event')).toBe(true)
   })
 })

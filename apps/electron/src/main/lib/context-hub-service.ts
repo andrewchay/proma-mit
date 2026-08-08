@@ -46,6 +46,18 @@ export function getEntityGraph(entityType: ContextEntityType, entityId: string):
     const fileEvents = listFileEvents({ limit: 500 })
 
     // 从「目标实体」价值：找出与其关联的其他实体
+    // PH2-F/⑥：支持按成员展示名解析 memberId（如传入「Andrew」→ paa-<name>）
+    let resolvedMemberId = entityId
+    if (entityType === 'member' && !isPrefixedMember(entityId)) {
+      try {
+        const { findMemberByPaaUserId } = require('./member-sync-service') as { findMemberByPaaUserId: (s: string) => { memberId?: string } | null }
+        const byName = findMemberByPaaUserId(`paa-${entityId.trim()}`)
+        resolvedMemberId = byName ? `paa-${entityId.trim()}` : `paa-${entityId.trim()}`
+      } catch {
+        resolvedMemberId = `paa-${entityId.trim()}`
+      }
+    }
+    const effectiveMemberId = resolvedMemberId
     switch (entityType) {
       case 'run': {
         const run = runs.find((r) => r.runId === entityId || r.sessionId === entityId)
@@ -65,10 +77,10 @@ export function getEntityGraph(entityType: ContextEntityType, entityId: string):
         break
       }
       case 'member': {
-        // 该成员的运行 / 文件改动 / Todo
-        for (const r of runs.filter((r) => r.memberId === entityId)) related.push({ type: 'run', id: r.runId, title: r.title, detail: r.status })
-        for (const fe of fileEvents.filter((f) => f.memberId === entityId)) related.push({ type: 'file_event', id: fe.id, title: fe.filePath, detail: fe.action })
-        for (const te of todoEvents.filter((t) => t.memberId === entityId)) related.push({ type: 'todo_event', id: te.todoId, title: te.title, detail: te.action })
+        // 该成员的运行 / 文件改动 / Todo（effectiveMemberId 支持按名解析）
+        for (const r of runs.filter((r) => r.memberId === effectiveMemberId)) related.push({ type: 'run', id: r.runId, title: r.title, detail: r.status })
+        for (const fe of fileEvents.filter((f) => f.memberId === effectiveMemberId)) related.push({ type: 'file_event', id: fe.id, title: fe.filePath, detail: fe.action })
+        for (const te of todoEvents.filter((t) => t.memberId === effectiveMemberId)) related.push({ type: 'todo_event', id: te.todoId, title: te.title, detail: te.action })
         break
       }
       case 'session': {
@@ -126,6 +138,10 @@ function memberTitle(memberId: string): string {
   if (memberId.startsWith('agent-')) return `AI 员工 ${memberId.slice(6).slice(0, 12)}`
   if (memberId.startsWith('paa-')) return memberId.slice(4)
   return memberId
+}
+
+function isPrefixedMember(id: string): boolean {
+  return id.startsWith('paa-') || id.startsWith('agent-') || id.startsWith('bot:')
 }
 
 /** 生成可读的关联图摘要（给 Agent/UI 用）。 */

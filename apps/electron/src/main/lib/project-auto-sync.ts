@@ -153,10 +153,10 @@ async function syncUpdatedTaskStatus(task: Task): Promise<void> {
       const ok = await provider.updateTodoStatus(external.taskId, task.status, {
         unionId: (external as { unionId?: string }).unionId,
       })
-      // PH2 修复：编辑任务改截止日期后，同步更新飞书 Todo 的 due（provider 支持时）
-      const dueUpdater = (provider as unknown as { updateTodoDue?: (tid: string, t: number) => Promise<boolean> }).updateTodoDue
-      if (task.dueDate && typeof dueUpdater === 'function') {
-        await dueUpdater(external.taskId, task.dueDate)
+      // PH2 修复：编辑任务改截止日期后，同步更新飞书 Todo 的 due（provider 支持时，保持 this 绑定）
+      const providerWithDue = provider as unknown as { updateTodoDue?: (...args: [string, number]) => Promise<boolean> }
+      if (task.dueDate && typeof providerWithDue.updateTodoDue === 'function') {
+        await providerWithDue.updateTodoDue(external.taskId, task.dueDate)
       }
       if (!ok) {
         enqueueOutboxEvent({

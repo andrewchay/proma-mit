@@ -30,7 +30,7 @@ export function createExploreContextToolDefinition(): Omit<RuntimeToolDefinition
           enum: ['run', 'session', 'task', 'member', 'file_event', 'todo_event', 'calendar'],
           description: '起点实体类型',
         },
-        entityId: { type: 'string', description: '起点实体 ID（如 sessionId / memberId=agent-<id> / 文件事件 id）' },
+        entityId: { type: 'string', description: '起点实体 ID（如 sessionId / memberId=agent-<id>；member 类型可直接传成员展示名如 “Andrew”，会自动解析）' },
       },
       required: ['entityType', 'entityId'],
     },

@@ -73,6 +73,7 @@ export function TeamProfilePanel({ workspaceSlug }: { workspaceSlug: string }): 
         <div className="grid grid-cols-2 gap-3 p-4">
           {field('团队名', 'teamName')}
           {field('协作偏好', 'preferences')}
+          <div className="col-span-2 text-xs text-muted-foreground -mt-2">协作偏好示例：结果用中文、重要交付发飞书、代码用 TypeScript、周报每周五下午。会注入 Agent 提示词让协作更贴合团队。</div>
           <div className="col-span-2">{field('团队构成（成员：职责）', 'membersSummary', true)}</div>
           <div className="col-span-2">{field('当前方向/关注', 'focusAreas', true)}</div>
         </div>
