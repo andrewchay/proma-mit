@@ -28,6 +28,9 @@ export interface AgentInvokeRequest {
 }
 
 const MAX_INVOKES = 2000
+/** 单条请求 task / result 文本长度上限（防超长文本使 JSONL 膨胀 / 刷屏 Mailbox）。 */
+const TASK_CHAR_LIMIT = 10_000
+const RESULT_CHAR_LIMIT = 10_000
 
 function file(): string {
   const dir = join(getConfigDir(), 'agent-invokes')
@@ -70,7 +73,7 @@ export function sendAgentInvoke(fromMemberId: string, toMemberId: string, task: 
     id: `invoke-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     fromMemberId,
     toMemberId,
-    task,
+    task: task.slice(0, TASK_CHAR_LIMIT),
     status: 'open',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -94,7 +97,12 @@ export function respondToInvoke(id: string, status: InvokeRequestStatus, result?
   const all = readAll()
   const idx = all.findIndex((r) => r.id === id)
   if (idx === -1) return null
-  const updated: AgentInvokeRequest = { ...all[idx]!, status, ...(result ? { result } : {}), updatedAt: Date.now() }
+  const updated: AgentInvokeRequest = {
+    ...all[idx]!,
+    status,
+    ...(result ? { result: result.slice(0, RESULT_CHAR_LIMIT) } : {}),
+    updatedAt: Date.now(),
+  }
   all[idx] = updated
   writeAll(all)
   console.log(`[Diag][agent-invoke] respond ${id} → ${status}`)

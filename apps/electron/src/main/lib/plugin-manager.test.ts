@@ -66,4 +66,20 @@ describe('插件/SDK 开放（PH2-F）', () => {
   test('内置插件不可删除（removePlugin 拒绝）', () => {
     expect(removePlugin('com.gravitas.dynamic-island')).toBe(false)
   })
+
+  test('非法/缺字段 manifest 被拒（PH2 结构校验）', () => {
+    expect(importPluginFromManifest(null)).toBe(false)
+    expect(importPluginFromManifest({ name: 'no-id' })).toBe(false)
+    expect(importPluginFromManifest({ id: 'com.test.no-name' })).toBe(false)
+    expect(importPluginFromManifest('not-an-object')).toBe(false)
+  })
+
+  test('surfaces 传非数组不会崩渲染（规整为空数组），id 超限被拒', () => {
+    // surfaces 传字符串（非数组）— 规整为 []，注册成功但 listPluginStates 不抛错
+    const ok = registerPlugin({ ...makeManifest('com.test.bad-surfaces'), surfaces: 'overlay' as unknown as never } as unknown as PluginManifest)
+    expect(ok).toBe(true)
+    // id 过长被拒
+    expect(importPluginFromManifest({ ...makeManifest('x'.repeat(300)) })).toBe(false)
+    expect(removePlugin('com.test.bad-surfaces')).toBe(true)
+  })
 })

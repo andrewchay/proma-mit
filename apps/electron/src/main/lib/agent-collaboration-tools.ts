@@ -318,6 +318,22 @@ const MAX_TOTAL_DELEGATIONS_PER_ROOT = 16
 /** 按根会话累计已创建子会话数 */
 const rootDelegationCount: Map<string, number> = new Map()
 
+/**
+ * 只解析父会话元数据并做「子会话不能再造子会话」的层级校验，不占用委派配额。
+ *
+ * 委派配额（rootDelegationCount / 全局并发 / 单父运行数）统一由 startDelegation
+ * 内部的 assertCanCreateDelegation(ctx, 1) 单点占用，避免外层批量(assertCanCreateDelegation(ctx,N))
+ * 与内层逐条(assertCanCreateDelegation(ctx,1)) 双重计数：修复「单根实际只能建约 MAX/2 个委派、
+ * 批量申请 16 个时整批失败且配额占满不再回收」的回归（见 maxDepth 回归分析）。
+ */
+function resolveParentForDelegation(ctx: CollaborationToolContext): AgentSessionMeta | undefined {
+  const parent = getAgentSessionMeta(ctx.sessionId)
+  if (ctx.triggeredBy === 'delegation' || (parent?.delegationDepth ?? 0) > 0) {
+    throw new Error('协作子会话不能继续创建新的子会话')
+  }
+  return parent
+}
+
 function assertCanCreateDelegation(
   ctx: CollaborationToolContext,
   requestedCount = 1,
@@ -881,7 +897,7 @@ export async function injectAgentCollaborationMcpServer(
         '创建一个真实可见的 Gravitas 协作子 Agent 会话来并行处理独立子任务。只用于长耗时、可并行、需要追踪的任务；简单搜索由父会话直接使用普通工具完成。',
         schemas.delegate,
         async (args) => {
-          const parent = assertCanCreateDelegation(ctx)
+          const parent = resolveParentForDelegation(ctx)
           const result = startDelegation(ctx, parent, args)
 
           return jsonResult({
@@ -897,7 +913,7 @@ export async function injectAgentCollaborationMcpServer(
         '批量创建多个真实可见的 Gravitas 协作子 Agent 会话。适合把同一大任务拆成多片并行处理，单个父会话运行中子会话最多 50 个。',
         schemas.delegateBatch,
         async (args) => {
-          const parent = assertCanCreateDelegation(ctx, args.items.length)
+          const parent = resolveParentForDelegation(ctx)
           // 逐个创建并容错：单个失败不影响其余，避免整体抛错导致已创建的子会话成孤儿
           const created: StartDelegationResult[] = []
           const failures: Array<{ index: number; title?: string; error: string }> = []
@@ -1196,7 +1212,7 @@ export function buildPiCollaborationTools(
       async execute(toolCallId: string, params: unknown) {
         const args = params as DelegateAgentArgs
         const result = piDelegateAgentCalls.getOrCreate(ctx.sessionId, toolCallId, () => {
-          const parent = assertCanCreateDelegation(ctx)
+          const parent = resolveParentForDelegation(ctx)
           const created = startDelegation(ctx, parent, args)
           return {
             delegationId: created.record.delegationId,
@@ -1223,7 +1239,7 @@ export function buildPiCollaborationTools(
       async execute(toolCallId: string, params: unknown) {
         const args = params as { sharedContext?: string; items: DelegateAgentArgs[] }
         const batch = piDelegateAgentsCalls.getOrCreate(ctx.sessionId, toolCallId, () => {
-          const parent = assertCanCreateDelegation(ctx, args.items.length)
+          const parent = resolveParentForDelegation(ctx)
           const created: PiDelegationToolResult[] = []
           const failures: Array<{ index: number; title?: string; error: string }> = []
           args.items.forEach((item, index) => {
@@ -1528,7 +1544,7 @@ export function buildRuntimeCollaborationTools(ctx: CollaborationToolContext): A
       },
       async execute(input) {
         const args = input as unknown as DelegateAgentArgs
-        const parent = assertCanCreateDelegation(ctx)
+        const parent = resolveParentForDelegation(ctx)
         const result = startDelegation(ctx, parent, args)
         return jsonText({
           delegation: getDelegationSummary(result.record),
@@ -1560,7 +1576,7 @@ export function buildRuntimeCollaborationTools(ctx: CollaborationToolContext): A
       },
       async execute(input) {
         const args = input as unknown as { sharedContext?: string; items: DelegateAgentArgs[] }
-        const parent = assertCanCreateDelegation(ctx, args.items.length)
+        const parent = resolveParentForDelegation(ctx)
         const created: StartDelegationResult[] = []
         const failures: Array<{ index: number; title?: string; error: string }> = []
         args.items.forEach((item, index) => {

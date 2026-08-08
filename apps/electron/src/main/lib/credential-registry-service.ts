@@ -30,10 +30,29 @@ export interface CredentialRegistry {
   risks: string[]
 }
 
+/**
+ * Bot 凭据（feishu/dingtalk）经 Electron safeStorage 加密保存；
+ * 但 safeStorage 不可用（如部分 Linux/CI 环境）时按代码注释会以明文落盘。
+ * 这里动态读取真实加密可用性，避免无条件标 encrypted:true 造成"假加密"安全感。
+ */
+function safeStorageAvailable(): boolean {
+  try {
+    const { safeStorage } = require('electron') as { safeStorage?: { isEncryptionAvailable: () => boolean } }
+    return safeStorage?.isEncryptionAvailable?.() === true
+  } catch {
+    return false
+  }
+}
+
+function botEncryptedFlag(): boolean {
+  return safeStorageAvailable()
+}
+
 /** 枚举所有已配置凭据（统一可见性）。数据源懒加载（部分依赖 electron）。 */
 export function listCredentials(): CredentialRegistry {
   const entries: CredentialEntry[] = []
   const risks: string[] = []
+  const botEncrypted = botEncryptedFlag()
 
   // 1) MCP client_secret（runtime-secret-codec 加密）
   try {
@@ -65,10 +84,11 @@ export function listCredentials(): CredentialRegistry {
         id: bot.id,
         label: `飞书 Bot · ${bot.name}`,
         hasSecret: Boolean(bot.appSecret),
-        encrypted: true,
+        encrypted: botEncrypted,
         source: '飞书 Todo',
       })
       if (!bot.appSecret) risks.push(`飞书 Bot「${bot.name}」未配置 appSecret`)
+      else if (!botEncrypted) risks.push(`飞书 Bot「${bot.name}」secret 在 safeStorage 不可用环境下以明文保存`)
     }
   } catch { /* 忽略 */ }
 
@@ -83,10 +103,11 @@ export function listCredentials(): CredentialRegistry {
         id: bot.id,
         label: `钉钉 Bot · ${bot.name}`,
         hasSecret: Boolean(bot.clientSecret),
-        encrypted: true,
+        encrypted: botEncrypted,
         source: '钉钉 Todo',
       })
       if (!bot.clientSecret) risks.push(`钉钉 Bot「${bot.name}」未配置 clientSecret`)
+      else if (!botEncrypted) risks.push(`钉钉 Bot「${bot.name}」secret 在 safeStorage 不可用环境下以明文保存`)
     }
   } catch { /* 忽略 */ }
 

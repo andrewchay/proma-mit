@@ -344,8 +344,23 @@ export function syncMembersFromDingtalk(): Promise<MemberSyncResult> {
 /** 同时同步飞书与钉钉（各自独立失败不影响整体）。 */
 export async function syncAllMembers(): Promise<SyncAllResult> {
   const startedAt = Date.now()
-  const [feishu, dingtalk] = await Promise.all([syncPlatform('feishu'), syncPlatform('dingtalk')])
-  return { feishu, dingtalk, startedAt, finishedAt: Date.now() }
+  // 受 syncInFlight 门闩保护，且两平台串行执行：避免手动触发与定时/启动同步并发写库，
+  // 也避免两平台并行经姓名合并同时写同一条 member 行造成 RMW 竞态丢更新。
+  if (syncInFlight) {
+    // 已有同步在跑：返回占位空结果（不计为失败，避免上层误报"同步失败"）。
+    const skipped: MemberSyncResult = { platform: 'feishu', pulled: 0, inserted: 0, merged: 0, failed: 0 }
+    return { feishu: skipped, dingtalk: { ...skipped, platform: 'dingtalk' }, startedAt, finishedAt: Date.now() }
+  }
+  syncInFlight = true
+  try {
+    const feishu = await syncPlatform('feishu')
+    lastSyncAt['feishu'] = Date.now()
+    const dingtalk = await syncPlatform('dingtalk')
+    lastSyncAt['dingtalk'] = Date.now()
+    return { feishu, dingtalk, startedAt, finishedAt: Date.now() }
+  } finally {
+    syncInFlight = false
+  }
 }
 
 // ============================================

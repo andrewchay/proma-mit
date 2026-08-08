@@ -55,4 +55,15 @@ describe('团队档案（PH2-A）', () => {
     expect(ctx).toContain('结果中文')
     expect(buildTeamProfileContext('ws-empty')).toBe('')
   })
+
+  test('超长字段被截断（防撑爆上下文）', () => {
+    const big = 'a'.repeat(10_000)
+    updateTeamProfile('ws-big', { preferences: big })
+    const p = getTeamProfile('ws-big')
+    // 单个字段上限 FIELD_CHAR_LIMIT=4000
+    expect(p.preferences!.length).toBe(4000)
+    // 整体上下文也有限额，可安全生成而不膨胀
+    const ctx = buildTeamProfileContext('ws-big')
+    expect(ctx.length).toBeLessThan(13000)
+  })
 })

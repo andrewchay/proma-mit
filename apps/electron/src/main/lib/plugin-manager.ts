@@ -99,16 +99,51 @@ const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.dynamic-island', dynamicIslandRuntime],
 ])
 
+/** 安全的字符串字段取值（仅接受 mini 长度以下的用户可控字符串） */
+const MANIFEST_TEXT_LIMIT = 200
+
+function isPlainObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/** 规整第三方 manifest：强制类型、限长、把关键数组字段归一化为数组，非法结构返回 false。 */
+function sanitizePluginManifest(raw: unknown): PluginManifest | null {
+  if (!isPlainObj(raw)) return null
+  const r = raw as Record<string, unknown>
+  const id = r.id
+  const name = r.name
+  // id/name 必须是短字符串（name 不应为空展示）
+  if (typeof id !== 'string' || !id || id.length > MANIFEST_TEXT_LIMIT) return null
+  if (typeof name !== 'string' || !name.trim()) return null
+
+  const manifest = {
+    ...(r as unknown as PluginManifest),
+    id,
+    name: name.slice(0, MANIFEST_TEXT_LIMIT),
+    version: typeof r.version === 'string' ? r.version.slice(0, 50) : '0.0.0',
+    description: typeof r.description === 'string' ? r.description.slice(0, 2000) : '',
+    publisher: typeof r.publisher === 'string' ? r.publisher.slice(0, 200) : '',
+    // surfaces / subscriptions / platforms 规整为字符串数组，避免渲染层对非数组 `.map` 抛错
+    surfaces: Array.isArray(r.surfaces) ? r.surfaces.filter((s): s is string => typeof s === 'string').slice(0, 32) : [],
+    subscriptions: Array.isArray(r.subscriptions) ? r.subscriptions.filter((s): s is string => typeof s === 'string').slice(0, 32) : [],
+    platforms: Array.isArray(r.platforms) ? r.platforms.filter((s): s is string => typeof s === 'string').slice(0, 16) : [],
+    permissions: isPlainObj(r.permissions) ? (r.permissions as unknown as PluginManifest['permissions']) : {},
+    entrypoints: isPlainObj(r.entrypoints) ? (r.entrypoints as unknown as PluginManifest['entrypoints']) : {},
+  } as unknown as PluginManifest
+  return manifest
+}
+
 /**
  * PH2-F：导入/注册一个第三方插件（SDK 开放）。
  * 提供 manifest + 启停句柄；未提供句柄时默认启用态写入内存（无持久能力）。
  * 平台不支持的插件仍可注册，但扩展中心会标记「不支持」。
  */
 export function registerPlugin(
-  manifest: PluginManifest,
+  rawManifest: unknown,
   runtime?: { isEnabled?: () => boolean; setEnabled?: (enabled: boolean) => Promise<boolean>; isSupported?: () => boolean },
 ): boolean {
-  if (!manifest.id || !manifest.name) { console.warn(`[Diag][plugin] 拒绝注册：manifest 缺 id/name`); return false }
+  const manifest = sanitizePluginManifest(rawManifest)
+  if (!manifest) { console.warn(`[Diag][plugin] 拒绝注册：manifest 非法/缺 id/name`); return false }
   if (BUILTIN_RUNTIMES.has(manifest.id) || IMPORTED_RUNTIMES.has(manifest.id)) { console.warn(`[Diag][plugin] 拒绝注册：id 已存在 ${manifest.id}`); return false }
   IMPORTED_RUNTIMES.set(manifest.id, () => ({
     manifest,
@@ -131,8 +166,8 @@ export function removePlugin(pluginId: string): boolean {
   return true
 }
 
-/** 按 manifest 注册（供 IPC/SDK 便捷导入，不覆盖内置）。 */
-export function importPluginFromManifest(manifest: PluginManifest): boolean {
+/** 按 manifest 注册（供 IPC/SDK 便捷导入，不覆盖内置）。空/非法 manifest 安全返回 false。 */
+export function importPluginFromManifest(manifest: unknown): boolean {
   return registerPlugin(manifest)
 }
 

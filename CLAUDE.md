@@ -550,6 +550,19 @@ React UI 更新
   会话元数据 modelId 缺失会导致协作子会话无法运行。
 - **子会话只有 1 行 JSONL + status 卡 running = headless 未真正启动模型**；排查顺序：
   是否 `input.channelId` undefined（→ 注入失败）、模型是否可注册、provider 是否兼容 Pi runtime。
+- **委派配额只能有一个占用点，严禁"外层收口 + 内层开始"双重 assert 计数**（回归坑）：
+  `startDelegation` 内 `assertCanCreateDelegation(ctx,1)`（`rootDelegationCount` 逐条 +1）已是唯一配额闸；
+  各入口（`delegate_agent`/`delegate_agents`/前端 `createCollaborationDelegations`）若在调用
+  `startDelegation` 前**又各自** `assertCanCreateDelegation(ctx[,N])`，会导致每个委派被计入 2 次，
+  `MAX_TOTAL_DELEGATIONS_PER_ROOT=16` 实际只建约 8 个，且批量(外层先占 N)会因越界整批失败、
+  配额占满后该根会话**后续再也无法委派（功能锁死）**。修复：外层改成只解析父会话的
+  `resolveParentForDelegation(ctx)`（校验层级、不占配额），配额统一由 `startDelegation` 内单点累加。
+  排查「某根会话委派到一定数量就抛上限」时先查是否多入口重复 `assertCanCreateDelegation`。
+- **`agent_executions` 表签名坑：主键 `id` 是 executionId，任务关联字段是 `entityId`，二者不是一回事**。
+  `store.getAgentExecution(id)` 按主键 `id`(executionId) 查；若以任务 id 传入会查不到（静默 null）。
+  `updateTodoStatus`/`queryTodoStatus` 等按任务语义查询执行时，应改用
+  `store.listAgentExecutionsByEntity('task', taskId)` 取最近一条非终态，而非 `getAgentExecution(taskId)`。
+  凡看到「按 task 查 execution 却恒 null / 取消执行无效」，先确认是否把 taskId 当 executionId 用了。
 
 ### 飞书 Task v2 同步 Todo 关键踩坑
 

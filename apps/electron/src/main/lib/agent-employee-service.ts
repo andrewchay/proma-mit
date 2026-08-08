@@ -171,18 +171,36 @@ export const PROJECT_CONCURRENCY_LIMIT = 3
 /** 全局 AI 员工并发执行上限（PH2-③ 防一次性爆会话） */
 export const GLOBAL_CONCURRENCY_LIMIT = 5
 
+/**
+ * 进程内 per-task 派发锁：防止同一任务在「running 检查→插入 execution」之间被并发
+ * （多个 onTaskChange('updated') / 手动入口）重复派发。锁在 dispatchTaskToAgent 的
+ * 检查-创建关键段持有，执行完释放，避免同任务产生两条 queued/running execution。
+ */
+const dispatchInFlight = new Set<string>()
+
 /** 任务指派给 AI 员工：入队（异步，立即返回 executionId）；并发有额度时立即启动，否则排队等待心跳调度 */
 export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string } | null> {
   const agentId = parseAgentId(task.assignee?.userId)
   if (!agentId) return null
 
-  // PH2-③ 根本修复：已完成/草稿任务不派发（防“完成任务→回写→onTaskChange→再派发”死循环，
-  //   每轮写一个新工作日志/100字文件）。只派发可执行态。
-  if (task.status === 'completed') {
-    console.log(`[Diag][agent-employee] 跳过已完成任务 dispatch: task=${task.id} status=${task.status}`)
+  // 幂等派发锁：同一任务同时在派发中则跳过（防止并发 updated 双派发）
+  if (dispatchInFlight.has(task.id)) return null
+  dispatchInFlight.add(task.id)
+  try {
+    return await dispatchTaskToAgentLocked(task, agentId)
+  } finally {
+    dispatchInFlight.delete(task.id)
+  }
+}
+
+async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{ taskId: string } | null> {
+  // PH2-③ 统一只派发可执行态（pending / in_progress），completed/draft/paused 一律不派发：
+  //   - completed/draft：防“完成任务→回写→onTaskChange→再派发”死循环（每轮写一个新工作日志/100字文件）
+  //   - paused：任务处于人工暂停/失败回退态，不应自动重跑（否则失败回写置 paused 后又会被重派，形成类死循环变体）
+  if (task.status !== 'pending' && task.status !== 'in_progress') {
+    if (task.status === 'completed') console.log(`[Diag][agent-employee] 跳过已完成任务 dispatch: task=${task.id} status=${task.status}`)
     return null
   }
-  if (task.status === 'draft') return null
 
   const employee = store.getAgentEmployee(agentId)
   if (!employee) {
@@ -227,8 +245,10 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
  */
 export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: string } | null> {
   if (!isAgentAssignee(task)) return null
-  // 已完成/草稿任务绝不重派（防完成回写→onTaskChange→再派发的死循环）
-  if (task.status === 'completed' || task.status === 'draft') return null
+  // 只有可执行态（pending / in_progress）才允许派发；completed/draft/paused 均拒绝：
+  // - completed/draft：防完成回写→onTaskChange→再派发的死循环
+  // - paused：任务处于人工暂停/失败回退态，不应自动重跑（否则失败回写置 paused 后又会被重派，形成类死循环变体）
+  if (task.status !== 'pending' && task.status !== 'in_progress') return null
   const running = store.listAgentExecutionsByEntity('task', task.id)
     .some((e) => e.status === 'queued' || e.status === 'running')
   if (running) return null
@@ -466,7 +486,7 @@ function writebackExecutionResult(
 /** 执行完成回写 */
 function handleExecutionComplete(executionId: string, messages: AgentMessage[] | undefined, startedAt: number): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status === 'completed' || execution.status === 'failed') return
+  if (!execution || execution.status === 'completed' || execution.status === 'failed' || execution.status === 'cancelled') return
 
   const summary = extractExecutionSummary(messages)
   const completedAt = Date.now()
@@ -497,10 +517,10 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
   )
 }
 
-/** 执行失败回写 */
+/** 执行失败回写（幂等：终态 failed/cancelled/stale 均拒绝重入，避免 onError 与 .catch 双路径重复回写） */
 function handleExecutionError(executionId: string, error: string, startedAt: number): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status === 'completed' || execution.status === 'cancelled') return
+  if (!execution || execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return
 
   const failedAt = Date.now()
   store.updateAgentExecution(executionId, {
@@ -627,8 +647,10 @@ export function registerAgentEmployeeProvider(): () => void {
       return { taskId: result?.taskId ?? '', status: 'in_progress' }
     },
     async updateTodoStatus(taskId, status) {
-      // 任务被手动改状态 → 中止对应执行
-      const execution = store.getAgentExecution(taskId)
+      // 任务被手动改状态 → 中止对应执行。
+      // 注意：getAgentExecution 按执行记录主键 id(executionId) 查询，而这里的 taskId 是任务 id；
+      // execution 通过 entityId=taskId 关联。按 entityId 取最近一条非终态执行，并回退兼容 executionId。
+      const execution = getTaskExecutionByTaskId(taskId)
       if (execution && (execution.status === 'queued' || execution.status === 'running')) {
         // Workflow 执行（sessionId=workflow:<runId>）：真正取消背后的 Workflow Run；
         // stopRegisteredAgent 只能中止真实 Agent 会话，对 workflow 无效。
@@ -659,7 +681,7 @@ export function registerAgentEmployeeProvider(): () => void {
       return true
     },
     async queryTodoStatus(taskId) {
-      const execution = store.getAgentExecution(taskId)
+      const execution = getTaskExecutionByTaskId(taskId)
       if (!execution) return null
       if (execution.status === 'running') return 'in_progress'
       if (execution.status === 'completed') return 'completed'
@@ -679,6 +701,23 @@ export function registerAgentEmployeeProvider(): () => void {
   return () => {
     stopAgentEmployeeHeartbeat()
   }
+}
+
+/**
+ * 按任务 id 取关联的最近一条执行记录（用于 updateTodoStatus/queryTodoStatus）。
+ *
+ * execution 通过 entityId=taskId 与任务关联，而其主键 id 是独立的 executionId；
+ * 这里优先按 entityId 取最近一条（started_at DESC），并回退兼容按 executionId 查询
+ * （兼容某些上层直接传入 executionId 的容错语义）。取最近一条非终态执行以反映任务当前真实进度的执行。
+ */
+function getTaskExecutionByTaskId(taskId: string): AgentExecution | null {
+  const byEntity = store.listAgentExecutionsByEntity('task', taskId)
+  if (byEntity.length > 0) {
+    // 优先返回最近一条仍活跃（queued/running）的执行，否则返回最新一条
+    return byEntity.find((e) => e.status === 'queued' || e.status === 'running') ?? byEntity[0]!
+  }
+  // 兼容按 executionId 直查
+  return store.getAgentExecution(taskId)
 }
 
 /**
