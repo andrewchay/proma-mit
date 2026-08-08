@@ -131,6 +131,7 @@ class DynamicIslandService {
   private idCounter = 0
   private pushTimer: ReturnType<typeof setTimeout> | null = null
   private lastPushAt = 0
+  private lastPushedKey = ''
   private unsubscribeEventBus: (() => void) | null = null
 
   private genId(): string {
@@ -225,6 +226,7 @@ class DynamicIslandService {
       })
 
     if (visible.length === 0) {
+      this.lastPushedKey = ''
       this.controller?.dismissAll()
       return
     }
@@ -232,6 +234,14 @@ class DynamicIslandService {
     // 能走到这里的一定是 needs-interaction / error / completed 未读（attentionScore > 0），
     // 需要用户处理时常驻（直到点击/pending 处理），不再有 running 的 2s 执行脉冲。
     const priority = visible[0]!
+    // PH2-C：状态无变化跳过——同一会话 phase/detail/attention 未变时不再重复推送，
+    // 避免 running 流事件对常驻 needs-interaction 会话的重复重绘打扰。
+    const pushKey = `${priority.sessionId}::${priority.phase}::${priority.detail ?? ''}::${priority.attention ? 1 : 0}`
+    if (pushKey === this.lastPushedKey) {
+      return
+    }
+    this.lastPushedKey = pushKey
+
     const request: DynamicIslandRequest = {
       id: `session:${priority.sessionId}`,
       title: truncate(priority.title || summaryForPhase(priority.phase), 48),
