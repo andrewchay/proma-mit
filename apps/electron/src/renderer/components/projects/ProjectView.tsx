@@ -804,14 +804,21 @@ function ProjectDetail({
     }
   }, [project.id])
 
-  // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”）
+  // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”)
   React.useEffect(() => {
     const off = window.electronAPI?.paa?.project?.onProjectActivityChanged?.((payload) => {
       if (!payload?.projectId || payload.projectId === project.id) {
         void loadData()
       }
     })
-    return off
+    // 兜底轮询：即使 activity 推送被错过/mount 在别的视图，也让看板/任务列表随后台真实状态收敛
+    const timer = window.setInterval(() => {
+      void loadData()
+    }, 6000)
+    return () => {
+      off?.()
+      window.clearInterval(timer)
+    }
   }, [loadData, project.id])
 
   const handleSaveProject = async () => {
