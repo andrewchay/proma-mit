@@ -1,7 +1,7 @@
 # Gravitas「中小公司 Agentic OS」— 交接与进度总览
 
-> 更新：2026-08-08 10:05 GMT+8
-> 项目：Gravitas（=/Users/chaihao/LLM/proma-mit，当前工作区 project/ 同源，HEAD `e32ecaf4`）
+> 更新：2026-08-08 13:25 GMT+8
+> 项目：Gravitas（=/Users/chaihao/LLM/proma-mit，当前工作区 project/ 同源，HEAD `61f244d6`）
 > 本文件：跨会话接续入口。请先读此文件 + `plan/gravitas-agentic-os-phased-plan.md`。
 
 ---
@@ -32,9 +32,12 @@
 | **PH2-B** | `f9463d6` `de38be4` ✅ 已提交 | Run Center：`RunRecordQuery` 补 memberId?、`run-store.query` 按成员过滤、`RunCenterSettings` 加成员过滤输入框+执行者徽标、**导出**(exportToFile + IPC EXPORT + 保存框 + UI 导出按钮)。调研确认：AI 员工绑定的 Workflow agent 节点走 agent 流，已能通过 resolveMemberForSession 归因 |
 | **PH2-A** | `81fce2c` `bd6c1db` `46471ce` `c40e2b2` `1260485` `1616412` ✅ 已提交 | 团队协作共享全部完成：团队 Skills 目录(汇总+一键同步)、文件共享事件流(工具写/编辑→归因成员→JSONL+团队Tab)、Todo 事件流化(订阅onTaskChange→语义流)、Agent 解压缩(InspectTodo 核心工具)、团队级 Profile(每工作区JSON+注入buildDynamicContext+编辑面板) |
 | PH2-C | `71b82418` `b747216f` `5c07e49b` `2f0a96d6` `e32ecaf4` ✅ | Proactive & mailbox 完成：Mailbox(聚合需确认+待办)、Proactive 动作可回放(进 Run Center)、自动费用 Audit(工具+面板)、灵动岛无变化跳过 |
-| PH2-D | ☐ | 数据复利用：本地 Context Hub/Work Graph、成功输出转资产、Token/成本记账收敛 |
-| PH2-E | ☐ | 触达面：server Web UI 补全、Bridge 即远程入口 |
-| PH2-F | ☐ | 长期：Agent 互调协议、多租户精细化、插件/SDK |
+| **PH2-B** | `f9463d6` `de38be4` `18a2f94` ✅ | Run Center 完成：按成员过滤+导出（见上）。Run Center = 统一运行事实源界面 |
+| **PH2-D** | `737070b7` `2aa98cbc` `ecaead2e` `e321e5bd` ✅ | 数据复利完成：成功输出转资产(ProposeAssetFromRun)、Token成本收敛(getCostMiniLedger)、Context Hub/Work Graph(ExploreContext)、凭据统一治理+审批门收敛 |
+| **PH2-E** | `d3b5d9a9` ✅ | 触达面：Bridge 远程入口(/workflow + /proactive 远程触发)；server /agent/ui 已是较完整运维工作台 |
+| **PH2-F** | `8baccb55` `61f244d6` ✅ | 长期项完成：Agent 互调协议(agent-invoke+InvokeAgent+Mailbox)、插件/SDK开放(registerPlugin+导入)、多租户精细化(host→tenant) |
+
+> ✅ **第一批(PH1-A~D) + 第二批(PH2-A~F) 全部完成。**
 
 ---
 
@@ -68,6 +71,12 @@
 | `apps/electron/src/main/lib/cost-audit-service.ts` | 费用审计(PH2-C) |
 | `apps/electron/src/main/lib/agent-runtime/tool-impls/cost-audit-tool.ts` | RunCostAudit 工具(PH2-C) |
 | `apps/electron/src/main/lib/dynamic-island/dynamic-island-service.ts` | 灵动岛会话状态机(phase+attention+节流) |
+| `apps/electron/src/main/lib/asset-proposal-service.ts` | 成功输出→Workflow/Skill 提案(PH2-D) |
+| `apps/electron/src/main/lib/context-hub-service.ts` | Context Hub/Work Graph(PH2-D) |
+| `apps/electron/src/main/lib/credential-registry-service.ts` | 凭据统一治理(PH2-D) |
+| `apps/electron/src/main/lib/agent-invoke-service.ts` | Agent 互调协议(PH2-F) |
+| `apps/electron/src/main/lib/plugin-manager.ts` | 插件管理器(registerPlugin/import)(PH2-F) |
+| `packages/shared/src/utils/agent-runtime-web-server.ts` | server 多租户(resolveTenantFromHostname)(PH2-F) |
 | `apps/electron/src/main/lib/agent-runtime/tool-registry.ts` | 核心工具注册(含 InspectTodo) |
 | `apps/electron/src/main/lib/agent-audit-service.ts` + 三个 append*Audit | 审计聚合/写入 |
 | `packages/shared/src/types/work-module.ts` | PROJECT_IPC_CHANNELS + Member/MemberResult/MemberSync 类型 |
@@ -100,7 +109,8 @@ typecheck：`cd apps/electron && npx tsc --noEmit`；`cd packages/shared && npx 
 - **飞书通讯录可见范围**：真实拉取依赖飞书后台应用数据权限范围（至少根部门），UI 有提示。
 - **producer 生态（已确认）**：AI 员工绑定的 Workflow agent 节点走 agent 流，已能通过 resolveMemberForSession 归因（`de38be4` 调研确认）。剩余的是：纯 workflow/automation（无 agent 节点、非 AI员工）的独立 run 事件本身不带 memberId，如需完整覆盖后续在各自 emit 处补。
 - **Run Center 导出已完成**（`de38be4`）；断点续做时可达：全量事件可回放（按 member/workspace/time 重建时间线）仍待做。
-- **PH2-A/B/C 已完成**。待办：PH2-D/E/F（§2）。注意点：`InspectTodo`/`RunCostAudit`/`TodoContext` 工具已注入所有 Agent 会话，若上下文膨胀可在 tool-registry 按需裁剪；Goal todo 尚未并入 todo-events 流；灵动岛已是完整会话状态机（仅补了无变化跳过）。
+- **PH2-A~F 全部完成**。注意事项：`InspectTodo`/`RunCostAudit`/`ProposeAssetFromRun`/`ExploreContext`/`InvokeAgent` 等工具已注入所有 Agent 会话，若上下文膨胀可在 tool-registry 按需裁剪；Goal todo 尚未并入 todo-events 流；灵动岛已是完整会话状态机。
+- **下游可做**（超出本次）：第三方插件真实 sandbox/签名/分发、server Web UI 进一步产品化、多租户 host 落库校验、跨实例 Agent 互调（当前为单实例内跨成员）。
 - 用户工作区有**未提交的无关改动**（LeftSidebar 呼吸灯 completed、globals.css、CLAUDE.md、.context/todo.md、fix-collaboration-analysis.md、report-gacha-games-2025.md）—— 与本次主线无关，勿误提交。
 
 ---
