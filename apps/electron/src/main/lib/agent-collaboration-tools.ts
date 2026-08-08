@@ -298,6 +298,13 @@ function getRunningDelegationCount(parentSessionId: string): number {
     .length
 }
 
+/** 进程内所有父会话正在运行的委派子会话总数上限（跨根兜底，防多父会话同时失控） */
+const MAX_GLOBAL_RUNNING_DELEGATIONS = 24
+
+function getGlobalRunningDelegationCount(): number {
+  return Array.from(delegations.values()).filter((item) => item.status === 'running').length
+}
+
 function createDelegationCompletion(): Pick<DelegationRecord, 'completion' | 'resolveCompletion'> {
   let resolveCompletion: () => void = () => {}
   const completion = new Promise<void>((resolve) => {
@@ -320,6 +327,12 @@ function assertCanCreateDelegation(
 
   if (ctx.triggeredBy === 'delegation' || delegationDepth > 0) {
     throw new Error('协作子会话不能继续创建新的子会话')
+  }
+
+  // 进程内跨根并发兜底：所有父会话正在运行的子会话总数硬上限
+  const globalRunning = getGlobalRunningDelegationCount()
+  if (globalRunning + requestedCount > MAX_GLOBAL_RUNNING_DELEGATIONS) {
+    throw new Error(`进程内协作子会话运行总数已达上限 ${MAX_GLOBAL_RUNNING_DELEGATIONS}，请等待部分子会话完成后再创建`)
   }
 
   // 防失控：每根会话累计创建子会话总数硬上限（不管运行状态/是否已释放额度）
@@ -680,6 +693,9 @@ function startDelegation(
   args: DelegateAgentArgs,
 ): StartDelegationResult {
   const task = assertNonBlank(args.task, 'task')
+  // 单点硬闸：所有委派创建（工具 或 前端 createCollaborationDelegations 直调）都经过这里，
+  // 强制 delegationDepth/运行并发/根累计上限，杜绝“旁路 startDelegation 无限建子会话”。
+  assertCanCreateDelegation(ctx, 1)
   const delegationId = randomUUID()
   const role = args.role ?? 'custom'
   const title = normalizeTitle(args.title, `协作：${task}`)
