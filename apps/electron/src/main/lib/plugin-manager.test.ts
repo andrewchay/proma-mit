@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { registerPlugin, importPluginFromManifest, listPluginStates } from './plugin-manager'
+import { registerPlugin, importPluginFromManifest, listPluginStates, setPluginEnabled, removePlugin, type PluginStateView } from './plugin-manager'
 import type { PluginManifest } from '@gravitas/shared'
 
 /**
@@ -42,5 +42,28 @@ describe('插件/SDK 开放（PH2-F）', () => {
   test('不允许覆盖内置插件或重复 id', () => {
     expect(importPluginFromManifest(makeManifest('com.gravitas.dynamic-island'))).toBe(false)
     expect(importPluginFromManifest(makeManifest('com.test.plugin-b'))).toBe(false) // 已存在
+  })
+
+  test('第三方插件停用后 isEnabled 应为 false（修“停用无效”）', async () => {
+    registerPlugin(makeManifest('com.test.plugin-c'))
+    const view = listPluginStates().find((s) => s.id === 'com.test.plugin-c')
+    expect(view?.enabled).toBe(true)
+    const updated = await setPluginEnabled('com.test.plugin-c', false)
+    expect(updated?.enabled).toBe(false)
+    // 重新列出仍为停用（enabledFlag 生效，而非恒 true）
+    expect(listPluginStates().find((s) => s.id === 'com.test.plugin-c')?.enabled).toBe(false)
+  })
+
+  test('第三方插件可删除（仅 local）', () => {
+    registerPlugin(makeManifest('com.test.plugin-d'))
+    expect(listPluginStates().some((s) => s.id === 'com.test.plugin-d')).toBe(true)
+    expect(removePlugin('com.test.plugin-d')).toBe(true)
+    expect(listPluginStates().some((s) => s.id === 'com.test.plugin-d')).toBe(false)
+    // 已删除的不能再删
+    expect(removePlugin('com.test.plugin-d')).toBe(false)
+  })
+
+  test('内置插件不可删除（removePlugin 拒绝）', () => {
+    expect(removePlugin('com.gravitas.dynamic-island')).toBe(false)
   })
 })

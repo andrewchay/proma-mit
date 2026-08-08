@@ -131,4 +131,6 @@ export const PLUGIN_IPC_CHANNELS = {
   SET_ENABLED: 'plugin:set-enabled',
   /** 导入第三方插件（PH2-F：按 manifest 注册） */
   IMPORT: 'plugin:import',
+  /** 删除/卸载第三方插件（仅 local；内置不可删） */
+  DELETE: 'plugin:delete',
 } as const

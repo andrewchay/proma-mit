@@ -26,6 +26,7 @@ interface PluginStateView {
   surfaces: string[]
   subscriptions: string[]
   permissions: Record<string, unknown>
+  source?: 'bundled' | 'local'
   error?: string
 }
 
@@ -103,6 +104,20 @@ export function ExtensionSettings(): React.ReactElement {
     }
   }
 
+  const handleDelete = async (plugin: PluginStateView): Promise<void> => {
+    try {
+      const ok = await window.electronAPI.deletePlugin(plugin.id)
+      if (ok) {
+        setPlugins((prev) => prev.filter((p) => p.id !== plugin.id))
+        toast.success(`已删除「${plugin.name}」`)
+      } else {
+        toast.error('删除失败（仅第三方导入插件可删除）')
+      }
+    } catch (err) {
+      toast.error(`删除失败：${err instanceof Error ? err.message : '未知原因'}`)
+    }
+  }
+
   return (
     <SettingsSection
       title="扩展"
@@ -160,6 +175,14 @@ export function ExtensionSettings(): React.ReactElement {
                     {SUBSCRIPTION_LABEL[sub] ?? sub}
                   </span>
                 ))}
+                {plugin.source === 'local' && (
+                  <button
+                    onClick={() => void handleDelete(plugin)}
+                    className="ml-auto px-2 py-0.5 rounded border border-destructive/40 text-[11px] text-destructive hover:bg-destructive/10"
+                  >
+                    删除
+                  </button>
+                )}
                 {plugin.error && (
                   <span className="px-1.5 py-0.5 rounded bg-destructive/10 text-[11px] text-destructive">
                     {plugin.error}

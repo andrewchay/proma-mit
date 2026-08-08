@@ -3873,6 +3873,10 @@ export function registerIpcHandlers(): void {
     const { importPluginFromManifest } = await import('./lib/plugin-manager')
     return importPluginFromManifest(manifest)
   })
+  ipcMain.handle(PLUGIN_IPC_CHANNELS.DELETE, async (_event, id: string): Promise<boolean> => {
+    const { removePlugin } = await import('./lib/plugin-manager')
+    return removePlugin(id)
+  })
 
   // ===== 运行记录（P2-1） =====
   const { getRunStore } = require('./lib/run-store') as { getRunStore: () => { query: (q: import('@gravitas/shared').RunRecordQuery) => import('@gravitas/shared').RunRecord[]; clear: () => void; exportToFile: (p: string, q?: import('@gravitas/shared').RunRecordQuery) => number } }

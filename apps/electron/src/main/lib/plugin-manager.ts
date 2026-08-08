@@ -31,6 +31,8 @@ export interface PluginStateView {
   subscriptions: PluginSubscription[]
   /** 权限摘要（声明式，UI 只读展示） */
   permissions: PluginPermissions
+  /** 来源：内置 bundled / 第三方导入 local（UI 据此是否显示“删除”） */
+  source: 'bundled' | 'local'
   /** 最近错误信息 */
   error?: string
 }
@@ -110,10 +112,22 @@ export function registerPlugin(
   if (BUILTIN_RUNTIMES.has(manifest.id) || IMPORTED_RUNTIMES.has(manifest.id)) { console.warn(`[Diag][plugin] 拒绝注册：id 已存在 ${manifest.id}`); return false }
   IMPORTED_RUNTIMES.set(manifest.id, () => ({
     manifest,
-    isEnabled: runtime?.isEnabled ?? (() => true),
+    isEnabled: runtime?.isEnabled ?? (() => enabledFlag.get(manifest.id) ?? true),
     setEnabled: runtime?.setEnabled ?? (async (enabled) => { enabledFlag.set(manifest.id, enabled); return true }),
     isSupported: runtime?.isSupported ?? (() => true),
   }))
+  return true
+}
+
+/**
+ * 卸载第三方插件（仅 IMPORTED，内置插件不可删）。
+ * PH2-F：扩展中心「删除」入口。
+ */
+export function removePlugin(pluginId: string): boolean {
+  if (!IMPORTED_RUNTIMES.has(pluginId)) return false
+  IMPORTED_RUNTIMES.delete(pluginId)
+  enabledFlag.delete(pluginId)
+  console.log(`[Diag][plugin] 已卸载第三方插件 ${pluginId}`)
   return true
 }
 
@@ -135,16 +149,16 @@ export function listPluginStates(): PluginStateView[] {
   for (const entry of BUILTIN_PLUGINS) {
     const runtimeFactory = BUILTIN_RUNTIMES.get(entry.id)
     if (!runtimeFactory) continue
-    views.push(runtimeToView(entry.id, runtimeFactory()))
+    views.push(runtimeToView(entry.id, runtimeFactory(), 'bundled'))
   }
   // PH2-F：第三方导入插件
   for (const [id, factory] of IMPORTED_RUNTIMES) {
-    views.push(runtimeToView(id, factory()))
+    views.push(runtimeToView(id, factory(), 'local'))
   }
   return views
 }
 
-function runtimeToView(id: string, runtime: BuiltinPluginRuntime): PluginStateView {
+function runtimeToView(id: string, runtime: BuiltinPluginRuntime, source: 'bundled' | 'local' = 'bundled'): PluginStateView {
   const enabled = runtime.isEnabled()
   return {
     id,
@@ -158,6 +172,7 @@ function runtimeToView(id: string, runtime: BuiltinPluginRuntime): PluginStateVi
     surfaces: runtime.manifest.surfaces,
     subscriptions: runtime.manifest.subscriptions,
     permissions: runtime.manifest.permissions,
+    source,
   }
 }
 

@@ -1184,6 +1184,8 @@ export interface ElectronAPI {
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<unknown>
   /** 导入第三方插件（PH2-F） */
   importPlugin: (manifest: import('@gravitas/shared').PluginManifest) => Promise<boolean>
+  /** 删除/卸载第三方插件（仅 local；内置不可删） */
+  deletePlugin: (pluginId: string) => Promise<boolean>
 
   // ===== 运行记录（P2-1） =====
 
@@ -2854,6 +2856,9 @@ const electronAPI: ElectronAPI = {
 
   importPlugin: (manifest: import('@gravitas/shared').PluginManifest) => {
     return ipcRenderer.invoke(PLUGIN_IPC_CHANNELS.IMPORT, manifest)
+  },
+  deletePlugin: (pluginId: string) => {
+    return ipcRenderer.invoke(PLUGIN_IPC_CHANNELS.DELETE, pluginId)
   },
 
   listRunRecords: (query?: import('@gravitas/shared').RunRecordQuery) => {
