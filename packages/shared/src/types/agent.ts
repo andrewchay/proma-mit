@@ -1196,7 +1196,7 @@ export type TeamProfilePatch = Partial<Pick<TeamProfile, 'teamName' | 'membersSu
 /** 团队收件箱条目（PH2-C） */
 export interface MailboxItem {
   id: string
-  kind: 'permission' | 'ask' | 'plan_review'
+  kind: 'permission' | 'ask' | 'plan_review' | 'todo'
   sessionId: string
   memberId?: string
   title: string

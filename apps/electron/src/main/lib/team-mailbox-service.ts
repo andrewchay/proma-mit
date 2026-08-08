@@ -21,14 +21,14 @@ import type { PermissionRequest, AskUserRequest } from '@gravitas/shared'
 /** 收件箱条目 */
 export interface MailboxItem {
   id: string
-  kind: 'permission' | 'ask' | 'plan_review'
+  kind: 'permission' | 'ask' | 'plan_review' | 'todo'
   sessionId: string
   memberId?: string
   /** 人类可读标题 */
   title: string
   /** 简要说明 */
   summary: string
-  /** 原始请求 ID（处理时回传） */
+  /** 原始请求 ID（处理时回传）；todo 类无 */
   requestId: string
   at: number
 }
@@ -94,9 +94,45 @@ export function listMailboxItems(): MailboxItem[] {
     })
   }
 
+  // 4) 指派给成员的待办（Todo/看板并入 mailbox）
+  items.push(...collectAssignedTodos(at))
+
   mailboxCache = items
   mailboxCacheAt = at
   return items
+}
+
+const TERMINAL_TODO_STATUS = new Set(['completed', 'cancelled'])
+
+/** 聚合所有项目管理里「已指派且未完成」的任务/子任务为待办收件箱条目。 */
+function collectAssignedTodos(at: number): MailboxItem[] {
+  try {
+    const { listProjects, listProjectWorkItems } = require('./project-sqlite-store') as {
+      listProjects: () => Array<{ id: string }>
+      listProjectWorkItems: (projectId: string) => Array<{ id: string; entityType: 'task' | 'subtask' | 'subTask'; title: string; status: string; assignee?: { userId: string; displayName?: string }; projectTitle?: string; dueDate?: number }>
+    }
+    {
+      const items: MailboxItem[] = []
+      for (const project of listProjects()) {
+        for (const work of listProjectWorkItems(project.id)) {
+          if (TERMINAL_TODO_STATUS.has(work.status) || !work.assignee?.userId) continue
+          items.push({
+            id: `todo-${work.entityType}-${work.id}`,
+            kind: 'todo',
+            sessionId: '',
+            memberId: work.assignee.userId,
+            title: '待办',
+            summary: `${work.title}${work.projectTitle ? `（${work.projectTitle}）` : ''}`,
+            requestId: '',
+            at,
+          })
+        }
+      }
+      return items
+    }
+  } catch {
+    return []
+  }
 }
 
 type ExitPlanModeRequestLoose = { requestId: string; sessionId: string; planSummary?: string }

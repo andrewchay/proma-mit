@@ -9,13 +9,14 @@ import * as React from 'react'
 import { useStore } from 'jotai'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
-import { Inbox, RefreshCw, ShieldCheck, HelpCircle, ClipboardCheck } from 'lucide-react'
+import { Inbox, RefreshCw, ShieldCheck, HelpCircle, ClipboardCheck, ListTodo } from 'lucide-react'
 import type { MailboxItem } from '@gravitas/shared'
 
 const KINDS: Record<MailboxItem['kind'], { label: string; icon: React.ReactNode; cls: string }> = {
   permission: { label: '权限', icon: <ShieldCheck size={12} />, cls: 'bg-amber-500/10 text-amber-600' },
   ask: { label: '提问', icon: <HelpCircle size={12} />, cls: 'bg-blue-500/10 text-blue-500' },
   plan_review: { label: '审批', icon: <ClipboardCheck size={12} />, cls: 'bg-violet-500/10 text-violet-600' },
+  todo: { label: '待办', icon: <ListTodo size={12} />, cls: 'bg-emerald-500/10 text-emerald-600' },
 }
 
 function renderMember(memberId?: string): string {
@@ -64,7 +65,7 @@ export function MailboxPanel(): React.ReactElement {
           <div>
             <h3 className="text-sm font-medium">团队收件箱</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              需要确认：权限 / 提问 / 计划审批（{items.length} 条）
+              需要确认：权限 / 提问 / 计划审批 / 待办（{items.length} 条）
             </p>
           </div>
         </div>
@@ -93,12 +94,14 @@ export function MailboxPanel(): React.ReactElement {
                 </span>
                 <span className="shrink-0 max-w-[80px] truncate text-foreground/60">{renderMember(item.memberId)}</span>
                 <span className="truncate flex-1 text-foreground/80" title={item.summary}>{item.summary}</span>
-                <button
-                  onClick={() => handleOpen(item)}
-                  className="shrink-0 text-[11px] text-primary/70 hover:text-primary"
-                >
-                  处理
-                </button>
+                {item.sessionId && (
+                  <button
+                    onClick={() => handleOpen(item)}
+                    className="shrink-0 text-[11px] text-primary/70 hover:text-primary"
+                  >
+                    处理
+                  </button>
+                )}
               </div>
             )
           })}
