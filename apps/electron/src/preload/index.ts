@@ -679,6 +679,8 @@ export interface ElectronAPI {
   countMailboxPending: () => Promise<number>
   /** 费用审计（PH2-C） */
   runCostAudit: (input?: import('@gravitas/shared').CostAuditInput) => Promise<{ report: import('@gravitas/shared').CostAuditReport; text: string }>
+  /** Context Hub 工作图（PH2-D） */
+  getContextGraph: (entityType: import('@gravitas/shared').ContextEntityType, entityId: string) => Promise<{ graph: import('@gravitas/shared').ContextGraph; text: string } | null>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -2021,6 +2023,10 @@ const electronAPI: ElectronAPI = {
 
   runCostAudit: (input?: import('@gravitas/shared').CostAuditInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.RUN_COST_AUDIT, input)
+  },
+
+  getContextGraph: (entityType: import('@gravitas/shared').ContextEntityType, entityId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_CONTEXT_GRAPH, entityType, entityId)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

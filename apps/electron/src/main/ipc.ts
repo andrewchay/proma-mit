@@ -1684,6 +1684,12 @@ export function registerIpcHandlers(): void {
     const report = runCostAudit(input)
     return { report, text: costAuditToText(report) }
   })
+  // Context Hub 工作图（PH2-D）
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_CONTEXT_GRAPH, async (_ev, entityType: import('@gravitas/shared').ContextEntityType, entityId: string) => {
+    const { getEntityGraph, graphToText } = await import('./lib/context-hub-service')
+    const graph = getEntityGraph(entityType, entityId)
+    return graph ? { graph, text: graphToText(graph) } : null
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,

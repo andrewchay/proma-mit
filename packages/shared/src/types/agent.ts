@@ -1237,6 +1237,21 @@ export interface AssetProposal {
   evidenceSummary: string
 }
 
+/** Context Hub / Work Graph 节点（PH2-D） */
+export type ContextEntityType = 'run' | 'session' | 'task' | 'file_event' | 'todo_event' | 'calendar' | 'member'
+
+export interface ContextGraphNode {
+  type: ContextEntityType
+  id: string
+  title: string
+  detail?: string
+}
+
+export interface ContextGraph {
+  entity: ContextGraphNode
+  related: ContextGraphNode[]
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1911,6 +1926,8 @@ export const AGENT_IPC_CHANNELS = {
   COUNT_MAILBOX_PENDING: 'agent:count-mailbox-pending',
   /** 费用审计（PH2-C） */
   RUN_COST_AUDIT: 'agent:run-cost-audit',
+  /** Context Hub 工作图（PH2-D） */
+  GET_CONTEXT_GRAPH: 'agent:get-context-graph',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */
