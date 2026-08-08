@@ -615,9 +615,13 @@ class DynamicIslandService {
   /** 懒初始化渲染栈（首次 push 时才建） */
   private ensureRenderer(): void {
     if (this.rendererProc && this.controller) return
+    // 修 dev 下 cwd 已是 apps/electron 导致 double-append 的路径 bug：
+    //   join(process.cwd(),'apps/electron/dist/...') → apps/electron/apps/electron/dist/...
+    // 改由 app.getAppPath()（包根）推导，dev 为 <repo>/apps/electron。
+    const appPath = app.getAppPath()
     const root = app.isPackaged
       ? join(process.resourcesPath, 'dynamic-island')
-      : join(process.cwd(), 'apps/electron/dist/resources/dynamic-island')
+      : join(appPath, 'dist', 'resources', 'dynamic-island')
 
     this.rendererProc = new DynamicIslandRendererProcess({
       root,

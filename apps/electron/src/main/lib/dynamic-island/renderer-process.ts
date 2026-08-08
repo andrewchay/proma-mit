@@ -48,6 +48,7 @@ export class DynamicIslandRendererProcess {
   private stdoutBuffer = ''
   private restarts: number[] = []
   private disposed = false
+  private startFailCooldownUntil = 0
   private options: RendererProcessOptions
 
   constructor(options: RendererProcessOptions) {
@@ -71,6 +72,8 @@ export class DynamicIslandRendererProcess {
 
   async ensure(): Promise<void> {
     if (this.running || this.disposed) return
+    // 脚本缺失导致启动失败时，冷却 30s 内不反复重试刷屏
+    if (Date.now() < this.startFailCooldownUntil) return
     this.starting ??= this.start().finally(() => {
       this.starting = null
     })
@@ -81,6 +84,8 @@ export class DynamicIslandRendererProcess {
     const { cmd, env, spawnOptions } = resolveLauncher()
     const script = getIslandForkScript(this.options.root)
     if (!existsSync(script)) {
+      // 冷启动 30s 内不再重试，避免每次 agent 事件都刷“script not found”
+      this.startFailCooldownUntil = Date.now() + 30_000
       this.options.logger.error(`island: fork script not found: ${script}`)
       return
     }
@@ -112,6 +117,7 @@ export class DynamicIslandRendererProcess {
     })
 
     child.once('error', (err) => {
+      this.startFailCooldownUntil = Date.now() + 15_000
       this.options.logger.error(`island: spawn failed: ${err.message}`, { cmd })
       this.child = null
       this.options.onRunningChange?.(false)
