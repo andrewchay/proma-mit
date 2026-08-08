@@ -289,7 +289,7 @@ export function AgentTeamPanel(): React.ReactElement {
               <label className="text-xs text-muted-foreground">渠道</label>
               <select
                 value={form.channelId}
-                onChange={(e) => setForm({ ...form, channelId: e.target.value })}
+                onChange={(e) => { setForm({ ...form, channelId: e.target.value, modelId: '' }) }}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
                 {channels.length === 0 && <option value="">无可用渠道</option>}
@@ -297,14 +297,20 @@ export function AgentTeamPanel(): React.ReactElement {
               </select>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">模型（可选）</label>
+              <label className="text-xs text-muted-foreground">模型</label>
               <input
+                list="agent-employee-models"
                 type="text"
-                placeholder="默认渠道首个启用模型"
+                placeholder="从渠道拉取或手动输入"
                 value={form.modelId}
                 onChange={(e) => setForm({ ...form, modelId: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               />
+              <datalist id="agent-employee-models">
+                {channels
+                  .find((c) => c.id === form.channelId)
+                  ?.models?.map((m) => <option key={m.id} value={m.id} />)}
+              </datalist>
             </div>
             <div>
               <label className="text-xs text-muted-foreground">绑定 Workflow SOP（可选）</label>

@@ -1317,6 +1317,8 @@ export interface ElectronAPI {
       deleteExecutionSubTask: (id: string) => Promise<boolean>
       listDingTalkTodoRetries: (projectId: string) => Promise<unknown[]>
       retryDingTalkTodo: (eventId: string) => Promise<boolean>
+      /** 丢弃一条卡死/孤儿的重试（PH2 修复） */
+      dismissRetryTodo: (eventId: string) => Promise<boolean>
       listTaskDependencies: (projectId: string) => Promise<unknown[]>
       createTaskDependency: (taskId: string, dependsOnTaskId: string, type?: string) => Promise<unknown>
       deleteTaskDependency: (id: string) => Promise<boolean>
@@ -3035,6 +3037,7 @@ const electronAPI: ElectronAPI = {
       deleteExecutionSubTask: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_EXECUTION_SUB_TASK, id),
       listDingTalkTodoRetries: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_DINGTALK_TODO_RETRIES, projectId),
       retryDingTalkTodo: (eventId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RETRY_DINGTALK_TODO, eventId),
+      dismissRetryTodo: (eventId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DISMISS_OUTBOX_EVENT, eventId),
       listTaskDependencies: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASK_DEPENDENCIES, projectId),
       createTaskDependency: (taskId, dependsOnTaskId, type) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK_DEPENDENCY, taskId, dependsOnTaskId, type),
       deleteTaskDependency: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_TASK_DEPENDENCY, id),

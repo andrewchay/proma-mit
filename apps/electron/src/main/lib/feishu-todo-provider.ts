@@ -109,6 +109,19 @@ export class FeishuTodoProvider implements TodoProvider {
     return true
   }
 
+  /** PH2 修复：更新飞书 Todo 的截止时间（编辑任务改截止日期后同步生效） */
+  async updateTodoDue(taskId: string, dueTimestampMs: number): Promise<boolean> {
+    const token = await this.getTenantAccessToken()
+    const resp = await this.feishuApi('PATCH', `/open-apis/task/v2/tasks/${taskId}`, token, {
+      task: { due: { timestamp: String(Math.floor(dueTimestampMs / 1000)), is_all_day: true } },
+      update_fields: ['due'],
+    })
+    if (resp.code !== 0) {
+      throw new Error(`飞书更新截止失败: ${resp.msg} (code: ${resp.code})`)
+    }
+    return true
+  }
+
   // ===== 查询 Todo 状态 =====
   async queryTodoStatus(taskId: string, _options?: { unionId?: string }): Promise<string | null> {
     const token = await this.getTenantAccessToken()

@@ -735,6 +735,9 @@ export function deleteTask(id: string): boolean {
     database.prepare(`DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?`).run(id, id)
     // 删除风险与回执
     database.prepare(`DELETE FROM risk_assessments WHERE task_id = ?`).run(id)
+    // PH2 修复：删除该任务的 outbox 重试事件与 AI 员工执行记录（避免孤儿"任务不存在"无限重试）
+    database.prepare(`DELETE FROM outbox_events WHERE entity_id = ?`).run(id)
+    database.prepare(`DELETE FROM agent_executions WHERE entity_id = ?`).run(id)
     database.prepare(`DELETE FROM tasks WHERE id = ?`).run(id)
   })
   tx()

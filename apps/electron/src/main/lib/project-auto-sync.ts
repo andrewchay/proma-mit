@@ -153,6 +153,11 @@ async function syncUpdatedTaskStatus(task: Task): Promise<void> {
       const ok = await provider.updateTodoStatus(external.taskId, task.status, {
         unionId: (external as { unionId?: string }).unionId,
       })
+      // PH2 修复：编辑任务改截止日期后，同步更新飞书 Todo 的 due（provider 支持时）
+      const dueUpdater = (provider as unknown as { updateTodoDue?: (tid: string, t: number) => Promise<boolean> }).updateTodoDue
+      if (task.dueDate && typeof dueUpdater === 'function') {
+        await dueUpdater(external.taskId, task.dueDate)
+      }
       if (!ok) {
         enqueueOutboxEvent({
           projectId: task.projectId,
@@ -182,15 +187,17 @@ export async function retryOutboxEvent(eventId: string): Promise<boolean> {
 
   markOutboxEvent(eventId, 'processing')
   try {
+    // 若任务/子任务已不存在 → 该 outbox 事件已孤儿，直接丢弃（不再反复重试"任务不存在"）
+    const { getTask } = await import('./project-service')
+    const task = await getTask(event.entityId)
+    if (!task) {
+      markOutboxEvent(eventId, 'completed')
+      console.log(`[Diag][outbox] 实体已不存在，清除孤儿重试 ${entryDesc(event)}`)
+      return true
+    }
     if (event.eventType.endsWith('create_todo')) {
-      const { getTask } = await import('./project-service')
-      const task = await getTask(event.entityId)
-      if (!task) throw new Error('任务不存在，无法重试')
       await syncCreatedTask(task)
     } else {
-      const { getTask } = await import('./project-service')
-      const task = await getTask(event.entityId)
-      if (!task) throw new Error('任务不存在，无法重试')
       await syncUpdatedTaskStatus(task)
     }
     markOutboxEvent(eventId, 'completed')
@@ -199,6 +206,10 @@ export async function retryOutboxEvent(eventId: string): Promise<boolean> {
     markOutboxEvent(eventId, 'failed', error instanceof Error ? error.message : String(error))
     return false
   }
+}
+
+function entryDesc(event: { entityType?: string; entityId: string; eventType: string }): string {
+  return `[${event.entityType ?? 'entity'}#${event.entityId.slice(0, 8)} ${event.eventType}]`
 }
 
 async function maybeCreateBrief(task: Task): Promise<void> {

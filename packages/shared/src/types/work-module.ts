@@ -192,6 +192,8 @@ export const PROJECT_IPC_CHANNELS = {
   DELETE_EXECUTION_SUB_TASK: 'project:delete-execution-sub-task',
   LIST_DINGTALK_TODO_RETRIES: 'project:list-dingtalk-todo-retries',
   RETRY_DINGTALK_TODO: 'project:retry-dingtalk-todo',
+  /** 丢弃一条孤儿/卡死的 outbox 重试（PH2 修复） */
+  DISMISS_OUTBOX_EVENT: 'project:dismiss-outbox-event',
   // 任务依赖与阻塞
   LIST_TASK_DEPENDENCIES: 'project:list-task-dependencies',
   CREATE_TASK_DEPENDENCY: 'project:create-task-dependency',

@@ -415,6 +415,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.RETRY_DINGTALK_TODO, async (_, eventId: string) => {
     return retryDingTalkTodo(eventId)
   })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.DISMISS_OUTBOX_EVENT, async (_, eventId: string) => {
+    const { markOutboxEvent } = await import('./project-sqlite-store')
+    return markOutboxEvent(eventId, 'completed')
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.UPDATE_TASK, async (_, id: string, patch) => {
     return updateTask(id, patch)
   })

@@ -933,6 +933,17 @@ function ProjectDetail({
     }
   }
 
+  // PH2 修复：任务/实体已不存在时，丢弃这条卡死的重试（而非无限"任务不存在"）
+  const handleDismissRetryTodo = async (eventId: string): Promise<void> => {
+    if (!confirm('确定丢弃这条待重试同步？任务或实体已不存在时会卡死在这里。')) return
+    try {
+      await callProjectAPI<boolean>('dismissRetryTodo', eventId)
+      await loadData()
+    } catch (err) {
+      alert('操作失败: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
   const hasExternalCompletedTasks = tasks.some(
     (t) =>
       t.status !== 'completed' &&
@@ -1128,6 +1139,10 @@ function ProjectDetail({
                   disabled={retryingEventIds.has(event.id)}
                   className="rounded bg-amber-600 px-2 py-1 text-white disabled:opacity-50"
                 >{retryingEventIds.has(event.id) ? '重试中...' : '重试'}</button>
+                <button
+                  onClick={() => void handleDismissRetryTodo(event.id)}
+                  className="rounded bg-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-400"
+                >关闭</button>
               </div>
             ))}
           </div>
@@ -2278,10 +2293,6 @@ function TaskItem({
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">开始日期</label>
-                  <input type="date" value={executionSubTaskEdit.startDate} onChange={(event) => setExecutionSubTaskEdit((value) => ({ ...value, startDate: event.target.value }))} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
-                </div>
-                <div>
                   <label className="text-xs text-muted-foreground">截止日期</label>
                   <input
                     type="date"
@@ -2357,6 +2368,10 @@ function TaskItem({
                 <div>
                   <label className="text-xs text-muted-foreground">负责人</label>
                   <ContactPicker value={executionSubTaskEdit.assigneeName} onChange={(name) => setExecutionSubTaskEdit((value) => ({ ...value, assigneeName: name }))} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">开始日期</label>
+                  <input type="date" value={executionSubTaskEdit.startDate} onChange={(event) => setExecutionSubTaskEdit((value) => ({ ...value, startDate: event.target.value }))} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground">截止日期</label>
