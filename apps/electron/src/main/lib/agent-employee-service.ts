@@ -19,7 +19,7 @@ import type {
   Task,
 } from './project-types'
 import { registerTodoProvider } from './project-sync-service'
-import { createAgentSession } from './agent-session-manager'
+import { createAgentSession, updateAgentSessionMeta } from './agent-session-manager'
 import { runRegisteredHeadlessAgent, stopRegisteredAgent } from './agent-headless-runner-registry'
 import { isAgentSessionActive } from './agent-service'
 import { updateTask, getTask, updateExecutionSubTask } from './project-service'
@@ -255,6 +255,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
       employee.runtime,
     )
     sessionId = session.id
+    // PH2-③ 追根因：AI 员工是无人值守执行，强制 delegationDepth=1 使其不能自我委派（
+    //   协作子会话工具会因 delegationDepth>0 拒绝创建），从根上杜绝"创建100字文件却爆60+子会话"。
+    updateAgentSessionMeta(sessionId, { delegationDepth: 1 })
   } catch (error) {
     console.error('[AgentEmployee] 创建会话失败:', error)
     handleExecutionError(executionId, '创建 Agent 会话失败', execution.startedAt)
