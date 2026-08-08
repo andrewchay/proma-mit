@@ -6,7 +6,7 @@ Proma 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agen
 
 它不是只面向闲聊的聊天框，而是一个可以长期沉淀个人工作流的 Agent 工作台：简单问题用 Chat，复杂任务交给 Agent，数据和配置尽量留在本地。
 
-![Proma 海报](https://img.erlich.fun/personal-blog/uPic/pb.png)
+![Gravitas 品牌海报](./generated-images/gravitas-brand-doc-v2.png)
 
 <video width="560" controls>
   <source src="https://img.erlich.fun/personal-blog/uPic/%E7%AE%80%E5%8D%95%E4%BB%8B%E7%BB%8D%20Proma.mp4" type="video/mp4">
