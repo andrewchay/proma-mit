@@ -139,8 +139,8 @@
 - ✅ 团队档案协作偏好无引导 → 加示例文案
 - ✅ “I 指派的”视图 → tasks.created_by_user_id + MyWorkPanel toggle（cb2c0983）
 
-### 第三轮（2026-08-08 15:58）—— 待修复 ☐
-- ☐ **费用审计 总 token 9m 但费用 0**：costTotal 未记录/统计为 0 → 待查 token-usage 的 cost 字段是否落盘
-- ☐ **Mailbox 无消息**：应收件箱没有任何条目 → 待查聚合链（mailbox → sources）
-- ☐ **AI 员工权限审批不弹窗**：只在团队邮箱出现、提示弱、点击处理无反应 → 待查审批触发面 + Mailbox 处理动作
-- ☐ **导入插件无反应**：点击「导入插件」没反应 → 待查 ExtensionSettings 按钮链路 + IPC
+### 第三轮（2026-08-08 15:58）—— 部分修复
+- ✅ **费用审计 总 token 9m 但费用 0**：根因 Provider SDK 不返回 cost → 新增 price-estimator（本地价格目录估算）落在 token-usage（5157d366）
+- ✅ **导入插件无反应**：根因 Electron window.prompt 不工作 → 改内联 JSON textarea + 导入按钮（5157d366）
+- ☐ **Mailbox 无消息**：疑似无数据（未触发 pending 审批/无已指派未完成任务）。已加各来源细分日志，`[Diag][mailbox]` 可定位。待用户核对
+- ☐ **AI 员工权限审批不弹窗 + 点击处理无反应**：headless 无人值守安全模式（不弹运行时审批，by design）；Mailbox 处理按钮需路由到审批 UI —— 待做 HITL 交互增强
