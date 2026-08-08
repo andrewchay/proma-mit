@@ -60,6 +60,7 @@ export function runCostAudit(input: CostAuditInput = {}): CostAuditReport {
   const get = records()
   const current = get({ from: windowStart, to: now, limit: 5000 }) as UsageRow[]
   const previous = get({ from: prevStart, to: windowStart, limit: 5000 }) as UsageRow[]
+  console.log(`[Diag][cost-audit] 窗口 ${windowMs}ms: 当前 ${current.length} 条 / 上一 ${previous.length} 条`)
 
   const totalCost = sumCost(current)
   const totalTokens = current.reduce((s, r) => s + (r.totalTokens ?? 0), 0)

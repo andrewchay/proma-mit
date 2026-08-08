@@ -307,12 +307,14 @@ function mergeInto(m: Member, draft: MemberDraft): void {
 // ============================================
 
 async function syncPlatform(platform: 'feishu' | 'dingtalk'): Promise<MemberSyncResult> {
+  console.log(`[Diag][member-sync] 开始同步 ${platform}`)
   const result: MemberSyncResult = { platform, pulled: 0, inserted: 0, merged: 0, failed: 0 }
   let drafts: MemberDraft[] = []
   try {
     drafts = platform === 'feishu' ? await pullFeishuMembers() : await pullDingtalkMembers()
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err)
+    console.error(`[Diag][member-sync] ${platform} 同步拉取失败: ${result.error}`)
     return result
   }
   result.pulled = drafts.length
@@ -325,6 +327,7 @@ async function syncPlatform(platform: 'feishu' | 'dingtalk'): Promise<MemberSync
       result.failed++
     }
   }
+  console.log(`[Diag][member-sync] ${platform} 完成: 拉取 ${result.pulled} 新增 ${result.inserted} 合并 ${result.merged} 失败 ${result.failed}`)
   return result
 }
 

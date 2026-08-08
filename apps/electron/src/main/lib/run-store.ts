@@ -60,7 +60,7 @@ class RunStore {
       this.cache.unshift(record)
       if (this.cache.length > MAX_RECORDS) this.cache.length = MAX_RECORDS
     } catch (error) {
-      console.error('[RunStore] 写入运行记录失败:', error)
+      console.error('[Diag][run-store] 写入运行记录失败:', error)
     }
   }
 

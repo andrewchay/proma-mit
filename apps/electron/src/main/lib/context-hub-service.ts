@@ -103,6 +103,7 @@ export function getEntityGraph(entityType: ContextEntityType, entityId: string):
       return true
     }).slice(0, 40)
 
+    console.log(`[Diag][context-hub] ${entityType}:${entityId} → 相关 ${unique.length} 条`)
     return { entity, related: unique }
   } catch (error) {
     console.debug('[ContextHub] 查询失败:', error)

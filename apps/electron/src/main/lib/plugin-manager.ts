@@ -106,8 +106,8 @@ export function registerPlugin(
   manifest: PluginManifest,
   runtime?: { isEnabled?: () => boolean; setEnabled?: (enabled: boolean) => Promise<boolean>; isSupported?: () => boolean },
 ): boolean {
-  if (!manifest.id || !manifest.name) return false
-  if (BUILTIN_RUNTIMES.has(manifest.id) || IMPORTED_RUNTIMES.has(manifest.id)) return false // 不允许覆盖内置或重复导入
+  if (!manifest.id || !manifest.name) { console.warn(`[Diag][plugin] 拒绝注册：manifest 缺 id/name`); return false }
+  if (BUILTIN_RUNTIMES.has(manifest.id) || IMPORTED_RUNTIMES.has(manifest.id)) { console.warn(`[Diag][plugin] 拒绝注册：id 已存在 ${manifest.id}`); return false }
   IMPORTED_RUNTIMES.set(manifest.id, () => ({
     manifest,
     isEnabled: runtime?.isEnabled ?? (() => true),

@@ -78,6 +78,7 @@ export function sendAgentInvoke(fromMemberId: string, toMemberId: string, task: 
   const all = readAll()
   all.unshift(req)
   writeAll(all.slice(0, MAX_INVOKES))
+  console.log(`[Diag][agent-invoke] send ${req.fromMemberId} → ${req.toMemberId}: ${req.task.slice(0, 40)}`)
   return req
 }
 
@@ -96,6 +97,7 @@ export function respondToInvoke(id: string, status: InvokeRequestStatus, result?
   const updated: AgentInvokeRequest = { ...all[idx]!, status, ...(result ? { result } : {}), updatedAt: Date.now() }
   all[idx] = updated
   writeAll(all)
+  console.log(`[Diag][agent-invoke] respond ${id} → ${status}`)
   return updated
 }
 

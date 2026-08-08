@@ -102,6 +102,7 @@ export function listMailboxItems(): MailboxItem[] {
 
   mailboxCache = items
   mailboxCacheAt = at
+  console.log(`[Diag][mailbox] 聚合 ${items.length} 条 inBox`)
   return items
 }
 

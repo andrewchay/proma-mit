@@ -84,3 +84,21 @@
 2. §2 Run Center 成员过滤 + 导出（事件事实源）
 3. §4 费用审计与 Token 统计金额一致（记账收敛）
 4. 自动化单测：`cd apps/electron && bun test src/main/lib/member-store.test.ts src/main/lib/run-store.test.ts src/main/lib/context-hub-service.test.ts src/main/lib/agent-invoke-service.test.ts src/main/lib/agent-runtime/tool-impls/tool-impls.test.ts`
+
+---
+
+## 诊断模式（大迭代排查用）
+
+关键链路已埋 `[Diag]` 前缀日志，`bun run dev` 的终端/Console 里 `grep '[Diag]'` 即可筛出：
+
+| 前缀 | 模块 | 会看到什么 |
+|---|---|---|
+| `[Diag][member-sync]` | 成员同步 | 同步开始/结束、拉取/新增/合并/失败数、失败原因 |
+| `[Diag][mailbox]` | 收件箱 | 聚合条目数 |
+| `[Diag][run-store]` | 运行记录 | 写入失败原因 |
+| `[Diag][cost-audit]` | 费用审计 | 窗口 + 当前/上一记录条数 |
+| `[Diag][context-hub]` | Work Graph | 查询实体 + 相关条数 |
+| `[Diag][agent-invoke]` | Agent 互调 | send/respond 记录 |
+| `[Diag][plugin]` | 插件 | 注册拒绝原因 |
+
+遇到问题时：把 `[Diag]` 相关的终端输出（或截图）发我，我据此反推根因。
