@@ -2,14 +2,14 @@
 
 > 本教程基于上游开源项目 **Proma**（github.com/ErlichLiu/Proma）的使用指南改编，由 Erlich Liu 编写；Gravitas 为其衍生版本，由 Andrew Chai 维护。
 
-编辑时间：2026年8月5日
-编辑时版本：v0.11.17
+编辑时间：2026年8月8日
+编辑时版本：v0.11.25
 原作者：Erlich Liu
 Gravitas 维护者：Andrew Chai
 
 ## 在开始之前（推荐看）
 
-![Gravitas 海报](https://img.erlich.fun/personal-blog/uPic/pb.png)
+![Gravitas 品牌海报](./images/gravitas-brand-doc-v2.png)
 
 大家好，感谢大家关注 **Gravitas**——一个基于开源通用 Agent 项目 Proma 衍生的个人生产力工具。我是 Gravitas 的维护者 Andrew Chai。
 
@@ -42,7 +42,7 @@ Gravitas 是基于 Proma 开源项目衍生的个人生产力工具，我们的�
 
 ### 版本
 
-Gravitas 当前版本为 **v0.11.17**，基于 Proma 开源项目持续迭代优化。
+Gravitas 当前版本为 **v0.11.25**，基于 Proma 开源项目持续迭代优化。
 
 Proma 上游也提供商业版本，内置官方 AI 供应商渠道，无需配置即可直接使用：
 - **Proma 商业版本地址**：https://proma.cool/download
