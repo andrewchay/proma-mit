@@ -28,4 +28,12 @@
   - R2 find_by_department 的 department_id 类型与枚举 ID 不匹配
   - R3 权限范围（需在飞书后台配「部门节点」）
 - [x] 代码加固：部门枚举 8 层 + open_department_id + find_by_department 双 ID 类型并集（已提交 `6715297`，electron 0.11.20）
-- [ ] **待实测**：在项目管理「指定责任人」复现一次，把错误/诊断文本发来精确判定 R1/R2/R3
+- [x] 复数路径修正：`/contact/v3/user/find_by_department`（单数）→ `/contact/v3/users/find_by_department`（复数），
+      单数会被飞书网关直接 404；提取 `buildFeishuFindByDepartmentUrl` + 单测 2 用例锁定路径拼写（⚠ 未提交）
+- [x] **实测通过**（2026-08-07）：项目管理「指定责任人」已能拉到用户 ✅
+      —— 关键根因正是复数路径（单数 `user/find_by_department` 被飞书网关 404）。
+      部门枚举+双ID并集+复数路径三层加固叠加生效。
+- [x] **任务状态回写修复**（2026-08-07，⚠ 未提交）：同步报 `Invalid Param 'task', must not be empty (1470400)`
+      —— 根因：飞书 Task v2 更新接口 `PATCH /open-apis/task/v2/tasks/:id` 请求体必须用 `task` 字段包裹新值
+      `{ task: {...}, update_fields: [...] }`，原代码直接平铺 `completed_at/update_fields` 导致飞书校验失败。
+      已修正 PATCH body + 新增 `feishu-todo-provider.test.ts` 单测 2 用例锁定请求体结构防回归。
