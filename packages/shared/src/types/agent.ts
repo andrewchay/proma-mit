@@ -1252,6 +1252,25 @@ export interface ContextGraph {
   related: ContextGraphNode[]
 }
 
+/** 凭据统一治理（PH2-D） */
+export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret'
+
+export interface CredentialEntry {
+  kind: CredentialKind
+  id: string
+  label: string
+  hasSecret: boolean
+  encrypted: boolean
+  source: string
+}
+
+export interface CredentialRegistry {
+  entries: CredentialEntry[]
+  count: number
+  riskCount: number
+  risks: string[]
+}
+
 /** Skill 目录下的文件/子目录节点（递归树） */
 export interface SkillFileNode {
   /** 相对于 Skill 根目录的相对路径，使用 POSIX 分隔符 */
@@ -1928,6 +1947,8 @@ export const AGENT_IPC_CHANNELS = {
   RUN_COST_AUDIT: 'agent:run-cost-audit',
   /** Context Hub 工作图（PH2-D） */
   GET_CONTEXT_GRAPH: 'agent:get-context-graph',
+  /** 凭据统一治理（PH2-D） */
+  LIST_CREDENTIAL_REGISTRY: 'agent:list-credential-registry',
   /** 读取 SKILL.md 全文内容 */
   READ_SKILL_CONTENT: 'agent:read-skill-content',
   /** 写入 SKILL.md 全文内容 */

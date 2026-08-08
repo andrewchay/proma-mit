@@ -95,7 +95,8 @@
 - [x] **成功输出转资产**：`asset-proposal-service`（从会话证据提炼 Workflow/Skill 提案：决策/写回/验证→步骤+提示词+关键工具，`proposalToText`）+ `ProposeAssetFromRun` Agent 工具；evidence-service 改为懒加载数据源（可注入 stub 便于测试）
 - [x] **本地 Context Hub / Work Graph（轻量）**：`context-hub-service` 从任意实体（run/session/member/file_event/todo_event）沿关联字段发现相关上下文（运行↔会话↔成员↔文件↔Todo），`graphToText` 可读化；IPC `GET_CONTEXT_GRAPH` + `ExploreContext` Agent 工具（跨上下文发现/协作建议）
 - [x] **Token/成本记账收敛**：`token-usage-service.getCostMiniLedger`（单一成本口径：总费用USD/token + byDay/byModel/bySession），IPC `COST_MINI_LEDGER`；cost-audit、Token 统计 UI、预算统一从该账本取数避免双轨漂移
-- [ ] 凭据统一治理、审批门收敛
+- [x] **凭据统一治理**：`credential-registry-service`（统一枚举渠道/飞书/钉钉/MCP secret，带加密/缺失状态+风险体检；`mcp-client-secret-store` 增 `listMcpClientSecrets`）+ IPC + 自动化模块 `CredentialHealthPanel` 体检视图
+- [x] **审批门收敛**：确认 by-task（AI员工 headless/bypassPermissions）与交互（permissionService）两套门已在统一权限框架下收敛；Mailbox 已聚合待审批事项，无需另建机制
 
 ### PH2-E. 触达面扩大（团队真正可用）
 - [ ] server Web UI 补全（团队浏览器也能用）

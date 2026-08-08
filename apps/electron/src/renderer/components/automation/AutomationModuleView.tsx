@@ -16,6 +16,7 @@ import { AutomationRunningPanel } from './AutomationRunningPanel'
 import { ProactiveSchedulerSettings } from '@/components/settings/ProactiveSchedulerSettings'
 import { RunCenterSettings } from '@/components/settings/RunCenterSettings'
 import { CostAuditPanel } from './CostAuditPanel'
+import { CredentialHealthPanel } from './CredentialHealthPanel'
 
 type AutomationSubView = 'schedules' | 'running' | 'runs'
 
@@ -72,6 +73,9 @@ export function AutomationModuleView(): React.ReactElement {
             <ProactiveSchedulerSettings />
             {/* PH2-C：费用审计 */}
             <CostAuditPanel />
+
+            {/* PH2-D：凭据统一体检 */}
+            <CredentialHealthPanel />
           </div>
         )}
         {subView === 'running' && <AutomationRunningPanel />}

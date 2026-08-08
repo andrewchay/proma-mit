@@ -1690,6 +1690,12 @@ export function registerIpcHandlers(): void {
     const graph = getEntityGraph(entityType, entityId)
     return graph ? { graph, text: graphToText(graph) } : null
   })
+  // 凭据统一治理（PH2-D）
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_CREDENTIAL_REGISTRY, async () => {
+    const { listCredentials, credentialRegistryToText } = await import('./lib/credential-registry-service')
+    const registry = listCredentials()
+    return { registry, text: credentialRegistryToText(registry) }
+  })
 
   ipcMain.handle(
     AGENT_IPC_CHANNELS.READ_SKILL_CONTENT,

@@ -681,6 +681,8 @@ export interface ElectronAPI {
   runCostAudit: (input?: import('@gravitas/shared').CostAuditInput) => Promise<{ report: import('@gravitas/shared').CostAuditReport; text: string }>
   /** Context Hub 工作图（PH2-D） */
   getContextGraph: (entityType: import('@gravitas/shared').ContextEntityType, entityId: string) => Promise<{ graph: import('@gravitas/shared').ContextGraph; text: string } | null>
+  /** 凭据统一治理（PH2-D） */
+  listCredentialRegistry: () => Promise<{ registry: import('@gravitas/shared').CredentialRegistry; text: string }>
 
   /** 读取 SKILL.md 全文内容 */
   readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
@@ -2027,6 +2029,10 @@ const electronAPI: ElectronAPI = {
 
   getContextGraph: (entityType: import('@gravitas/shared').ContextEntityType, entityId: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_CONTEXT_GRAPH, entityType, entityId)
+  },
+
+  listCredentialRegistry: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_CREDENTIAL_REGISTRY)
   },
 
   readSkillContent: (workspaceSlug: string, skillSlug: string) => {

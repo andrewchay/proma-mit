@@ -61,6 +61,18 @@ export function getMcpClientSecret(workspaceSlug: string, serverName: string): s
   }
 }
 
+/** 枚举所有已保存的 MCP client_secret（供凭据体检，不返回明文）。 */
+export function listMcpClientSecrets(): Array<{ workspaceSlug: string; serverName: string; hasSecret: boolean }> {
+  const store = loadStore()
+  const result: Array<{ workspaceSlug: string; serverName: string; hasSecret: boolean }> = []
+  for (const [workspaceSlug, servers] of Object.entries(store)) {
+    for (const serverName of Object.keys(servers ?? {})) {
+      result.push({ workspaceSlug, serverName, hasSecret: Boolean(servers?.[serverName]) })
+    }
+  }
+  return result
+}
+
 /** 保存指定工作区/服务器的 client_secret（加密后） */
 export function setMcpClientSecret(workspaceSlug: string, serverName: string, secret: string): void {
   const store = loadStore()
