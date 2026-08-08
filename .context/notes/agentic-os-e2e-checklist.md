@@ -56,9 +56,9 @@
 
 - [x] Mailbox（团队 Tab 收件箱）：Agent 触发权限/提问 → 出现条目；处理后消失；指派待办也进 Mailbox
 
-- [ ] 费用审计（自动化 → CostAuditPanel）：运行审计显示总费用/Token/环比/Top；无异常绿标
+- [x] 费用审计（自动化 → CostAuditPanel）：运行审计显示总费用/Token/环比/Top；无异常绿标
 
-- [ ] Token 统计与 CostAuditPanel 金额一致（同一 getCostMiniLedger 口径）
+- [x] Token 统计与 CostAuditPanel 金额一致（同一 getCostMiniLedger 口径）
 
 ## 5. Context Hub（PH2-D）
 
@@ -78,9 +78,9 @@
 
 ## 8. Agent 互调（PH2-F）
 
-- [ ] 新会话让 Agent「用 InvokeAgent 给 AI 员工 xx 发任务：审 PR」→ 发送成功
+- [x] 新会话让 Agent「用 InvokeAgent 给 AI 员工 xx 发任务：审 PR」→ 发送成功
 
-- [ ] Mailbox 出现「互调」条目（来自→给 + 任务）
+- [x] Mailbox 出现「互调」条目（来自→给 + 任务）
 
 ---
 
@@ -123,6 +123,24 @@
 
 ---
 
+## 扩展 & Bridge 测试指南
+
+### 🧩 导入第三方扩展（测 §6）
+示例 manifest 在 `.context/samples/test-plugin.manifest.json`——打开，复制全文，
+到「设置 → 扩展 → 导入插件」粘贴 JSON → 导入。预期：列表出现「测试扩展 · 示例」，可启停；再导入同 id 会被拒。
+
+### 🔗 Bridge 远程入口怎么测（测 §7）
+前置：设置 → 飞书/钉钉 Todo 已连接 Bot，且已在飞书/钉钉群/单聊和该 Bot 开启会话。
+然后在聊天里发：
+- `/help` → 应看到斜杠命令列表（含 /workflow、/proactive）
+- `/workflow` → 列出已发布的 Workflow；`/workflow run <名称>`（需先有已发布 Workflow，如在 Workflow 里发布一个）
+- `/proactive` → 列出可用定时任务；`/proactive run <名称>`（需先有 enabled 的定时任务）
+- `/now` → 当前会话/工作区/MCP/Skills 状态
+- 直接发一句任务描述（非斜杠命令）→ 触发当前绑定会话的 Agent 执行并回复
+若某命令无反应，先确认 Bot 权限/是否已连接、`/now` 是否显示会话与工作区。
+
+---
+
 ## 实测问题与修复记录（持续维护）
 
 > 每轮 e2e 实测发现的 bug 与修复情况，便于回归。状态：✅=已修复 ☐=待办
@@ -158,5 +176,6 @@
 - ✅ **AI 员工一次性开 60+ 子会话**：新增 GLOBAL_CONCURRENCY_LIMIT=5 全局并发上限，防跨项目/批量爆会话（同项目仍 3）
 
 ### 第五轮（2026-08-08 16:36）
+
 - ✅ **新建任务依赖应为可选多选**：改为 checkbox 多选 + 明确“可选；不选则创建无依赖任务”（原 <select multiple> 空框 UX 差且易误导）
 - ✅ **任务已完成但显示进行中**：①回写按 entityType 区分（上轮）；②加 AI 员工执行活动变化→前端自动刷新（TASK_ACTIVITY_CHANGED 推送 + ProjectDetail 订阅 reload）

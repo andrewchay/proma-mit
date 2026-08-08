@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "com.gravitas.test-plugin",
+  "version": "1.0.0",
+  "name": "测试扩展 · 示例",
+  "description": "用于验证「导入插件」功能的示例扩展：声明一个上报事件订阅与 settings surface，无副作用。",
+  "publisher": "Gravitas Samples",
+  "platforms": ["darwin", "win32", "linux"],
+  "activationEvents": ["onAppReady"],
+  "subscriptions": ["app.started", "app.completed"],
+  "surfaces": ["settings"],
+  "permissions": { "events": true, "overlay": false, "openSession": false },
+  "entrypoints": {}
+}

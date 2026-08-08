@@ -26,7 +26,8 @@ export function createTodoContextToolDefinition(): Omit<RuntimeToolDefinition, '
     name: TODO_CONTEXT_TOOL_NAME,
     description:
       '解压缩一个待办(Todo/任务)：返回它的标题、描述、状态、负责人、截止时间、所属项目，以及同项目的相关进行中待办。' +
-      '当被问及或需要理解队友/他人的某个待办在做什么、存在什么关联或风险时使用；' +
+      '当被问及或需要理解队友/他人的某个待办在做什么、存在什么关联或风险时，**务必优先调用本工具查真实任务数据**（而不是靠猜测或泛泛解释机制）；' +
+      '如果不知道确切的 todoId，先用 listTasks 或询问用户该任务标题所属的项目，再定位 todoId 查询。' +
       '拿到上下文后请用通俗语言向用户解释清楚（做了什么、为什么、卡在哪、是否延期、谁负责、与其他待办的关联）。',
     parameters: {
       type: 'object',
