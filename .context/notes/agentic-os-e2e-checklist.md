@@ -54,7 +54,7 @@
 
 ## 4. Proactive & 费用（PH2-C + PH2-D 记账）
 
-- [ ] Mailbox（团队 Tab 收件箱）：Agent 触发权限/提问 → 出现条目；处理后消失；指派待办也进 Mailbox
+- [x] Mailbox（团队 Tab 收件箱）：Agent 触发权限/提问 → 出现条目；处理后消失；指派待办也进 Mailbox
 
 - [ ] 费用审计（自动化 → CostAuditPanel）：运行审计显示总费用/Token/环比/Top；无异常绿标
 
@@ -147,3 +147,11 @@
 - ✅ **导入插件无反应**：根因 Electron window.prompt 不工作 → 改内联 JSON textarea + 导入按钮（5157d366）
 - ☐ **Mailbox 无消息**：疑似无数据（未触发 pending 审批/无已指派未完成任务）。已加各来源细分日志，`[Diag][mailbox]` 可定位。待用户核对
 - ☐ **AI 员工权限审批不弹窗 + 点击处理无反应**：headless 无人值守安全模式（不弹运行时审批，by design）；Mailbox 处理按钮需路由到审批 UI —— 待做 HITL 交互增强
+- ✅ **邮件箱点击处理无反应**：permission/ask/plan 整行可点+处理按钮，todo/互调标只读（c3911c26）
+- ✅ **AI 员工写文件被逐次问同意**：headless 一律 bypassPermissions（c3911c26）
+- ✅ **AI 员工高危仍需克制**：isHighRiskTool(危险Bash/ComputerUse/WB上传下载) 在 bypass 下 deny，需 by-task 显式申请（d96b7b1a）
+- ✅ **新建任务直接选依赖**：新建弹窗多选依赖任务（d96b7b1a）
+
+### 第四轮（2026-08-08 16:26）
+- ✅ **AI 员工完成但子任务仍显示运行中**：writebackExecutionResult 按 entityType 区分 task/subTask 回写（此前无条件 updateTask 导致 subTask 卡 running）
+- ✅ **AI 员工一次性开 60+ 子会话**：新增 GLOBAL_CONCURRENCY_LIMIT=5 全局并发上限，防跨项目/批量爆会话（同项目仍 3）

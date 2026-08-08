@@ -22,7 +22,7 @@ import { registerTodoProvider } from './project-sync-service'
 import { createAgentSession } from './agent-session-manager'
 import { runRegisteredHeadlessAgent, stopRegisteredAgent } from './agent-headless-runner-registry'
 import { isAgentSessionActive } from './agent-service'
-import { updateTask, getTask } from './project-service'
+import { updateTask, getTask, updateExecutionSubTask } from './project-service'
 import { getSettings } from './settings-service'
 import { createWorkflowRun, getWorkflowRun, cancelWorkflowRun } from './workflow-service'
 import { executeWorkflowRun } from './workflow-run-executor'
@@ -153,6 +153,8 @@ function recordActivity(execution: AgentExecution, action: string, summary: stri
 
 /** 同项目 AI 员工并发执行上限（P1 并发控制） */
 export const PROJECT_CONCURRENCY_LIMIT = 3
+/** 全局 AI 员工并发执行上限（PH2-③ 防一次性爆会话） */
+export const GLOBAL_CONCURRENCY_LIMIT = 5
 
 /** 任务指派给 AI 员工：入队（异步，立即返回 executionId）；并发有额度时立即启动，否则排队等待心跳调度 */
 export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string } | null> {
@@ -218,6 +220,12 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   const runningCount = store.listRunningAgentExecutions().filter((e) => e.projectId === execution.projectId && e.status === 'running').length
   if (runningCount >= PROJECT_CONCURRENCY_LIMIT) {
     console.log(`[AgentEmployee] 项目 ${execution.projectId} 并发已达上限（${PROJECT_CONCURRENCY_LIMIT}），任务 ${executionId} 保持排队`)
+    return false
+  }
+  // PH2-③：全局并发上限，防一次性爆开大量子会话
+  const globalRunning = store.listRunningAgentExecutions().filter((e) => e.status === 'running').length
+  if (globalRunning >= GLOBAL_CONCURRENCY_LIMIT) {
+    console.log(`[AgentEmployee] 全局并发已达上限（${GLOBAL_CONCURRENCY_LIMIT}），任务 ${executionId} 保持排队`)
     return false
   }
 
@@ -396,6 +404,32 @@ function extractWorkflowSummary(run: { nodeRuns: Record<string, { output?: Recor
   return parts.filter(Boolean).join('\n').slice(0, 2000) || 'Workflow SOP 执行完成'
 }
 
+/**
+ * 按执行实体类型回写结果状态：entityType='task' → 更新 Task；'subTask' → 更新执行子任务。
+ * 修复：AI 员工执行子任务完成后 subTask 卡在 running（此前无条件 updateTask）。
+ */
+function writebackExecutionResult(
+  execution: import('./project-types').AgentExecution,
+  status: 'completed' | 'paused',
+  summary: string,
+  ts: number,
+): void {
+  if (execution.entityType === 'subTask') {
+    return void updateExecutionSubTask(execution.entityId, {
+      status: status as 'completed' | 'paused',
+      completionNotes: summary,
+      ...(status === 'completed' ? { completedAt: ts } : {}),
+    }).catch(() => {
+      console.warn(`[AgentEmployee] 回写子任务状态失败: ${execution.entityId}`)
+    })
+  }
+  updateTask(execution.entityId, {
+    status,
+    completionNotes: summary,
+    ...(status === 'completed' ? { completedAt: ts } : {}),
+  })
+}
+
 /** 执行完成回写 */
 function handleExecutionComplete(executionId: string, messages: AgentMessage[] | undefined, startedAt: number): void {
   const execution = store.getAgentExecution(executionId)
@@ -410,13 +444,9 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
     completedAt,
   })
 
-  // 回写任务
+  // 回写任务/子任务（按 entityType 区分，否则 subTask 会卡在 running）
   try {
-    updateTask(execution.entityId, {
-      status: 'completed',
-      completionNotes: summary,
-      completedAt,
-    })
+    writebackExecutionResult(execution as import('./project-types').AgentExecution, 'completed', summary, completedAt)
   } catch (error) {
     console.error('[AgentEmployee] 回写任务状态失败:', error)
   }
@@ -447,12 +477,9 @@ function handleExecutionError(executionId: string, error: string, startedAt: num
     completedAt: failedAt,
   })
 
-  // 任务回退 paused，保留上下文可重试
+  // 任务/子任务回退 paused，保留上下文可重试
   try {
-    updateTask(execution.entityId, {
-      status: 'paused',
-      completionNotes: `【AI 执行失败】${error.slice(0, 200)}`,
-    })
+    writebackExecutionResult(execution as import('./project-types').AgentExecution, 'paused', `【AI 执行失败】${error.slice(0, 200)}`, failedAt)
   } catch (error_) {
     console.error('[AgentEmployee] 回写任务失败状态失败:', error_)
   }
