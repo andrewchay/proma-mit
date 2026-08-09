@@ -37,3 +37,17 @@
       —— 根因：飞书 Task v2 更新接口 `PATCH /open-apis/task/v2/tasks/:id` 请求体必须用 `task` 字段包裹新值
       `{ task: {...}, update_fields: [...] }`，原代码直接平铺 `completed_at/update_fields` 导致飞书校验失败。
       已修正 PATCH body + 新增 `feishu-todo-provider.test.ts` 单测 2 用例锁定请求体结构防回归。
+
+## 需求4：飞书文档拉取会议纪要 ✅（已完成，未提交）
+
+> 对齐已有「钉钉文档拉取」，为飞书增加同等能力。
+> 按用户确认：支持 docx / sheets / wiki（含 bitable）/ 完整 URL 输入 / UI 与钉钉合并为一个「云文档拉取」入口。
+
+- [x] `feishu-doc-fetcher.ts` 新建：docx（/docx/v1/documents/{id}/raw_content）、sheets（查工作表列表+读首表 A1:K200）、wiki（get_node 拿 obj_token 再路由）、bitable（多维表格首表记录）；tenant_access_token 缓存；复用飞书 Bot 凭证（getFeishuBotById + getDecryptedBotAppSecret）
+- [x] `feishu-doc-fetcher.test.ts` 单测 7 用例锁定 URL 解析（docx/sheets/wiki + 查询参数 + larksuite 国际版 + 非飞书链接拒绝）
+- [x] `project-service.ts` 新增 `importFeishuDocAndExtractTasks`
+- [x] `work-module.ts` 新增 `FETCH_FEISHU_DOC` 常量；`work-module-ipc-handlers.ts` 注册 handler（复用渠道 LLM）
+- [x] `preload/index.ts` 新增 `fetchFeishuDoc` 桥接 + 类型
+- [x] `ProjectView.tsx` MeetingNotesPanel：「钉钉文档拉取」→「云文档拉取」，加钉钉/飞书平台切换
+- [x] typecheck 全绿 + 单测 7 通过
+- [ ] **待用户：真实飞书链接实测（需企业应用开通文档/表格/知识库读取权限）**
