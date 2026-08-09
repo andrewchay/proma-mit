@@ -107,7 +107,8 @@ export class FeishuDocFetcher {
   private async fetchDocx(token: string, documentId: string, sourceUrl: string): Promise<FeishuDocFetchResult> {
     const url = `${FEISHU_API_BASE}/docx/v1/documents/${encodeURIComponent(documentId)}/raw_content`
     const data = await this.getWithError(token, url, '新版文档')
-    const content = typeof data.content === 'string' ? data.content : ''
+    // raw_content 接口返回结构为 { code, data: { content } }，content 在 data 内层
+    const content = typeof asRecord(data.data).content === 'string' ? String(asRecord(data.data).content) : ''
     if (!content) throw new Error('飞书文档返回内容为空')
     return { title: documentId, content, sourceUrl }
   }
