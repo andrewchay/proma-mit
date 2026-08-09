@@ -2534,6 +2534,7 @@ function MeetingNotesPanel({
   const [noteTitle, setNoteTitle] = useState('')
   const [noteContent, setNoteContent] = useState('')
   const [docUrl, setDocUrl] = useState('')
+  const [fetchPlatform, setFetchPlatform] = useState<'dingtalk' | 'feishu'>('dingtalk')
   const [isExtracting, setIsExtracting] = useState(false)
   const [isFetchingDoc, setIsFetchingDoc] = useState(false)
   const [drafts, setDrafts] = useState<Task[]>([])
@@ -2542,8 +2543,9 @@ function MeetingNotesPanel({
     if (!docUrl.trim()) return
     setIsFetchingDoc(true)
     try {
+      const method = fetchPlatform === 'feishu' ? 'fetchFeishuDoc' : 'fetchDingTalkDoc'
       const result = await callProjectAPI<{ note: MeetingNote; drafts: Task[] }>(
-        'fetchDingTalkDoc',
+        method,
         projectId,
         docUrl.trim()
       )
@@ -2552,7 +2554,7 @@ function MeetingNotesPanel({
       setDocUrl('')
       setShowFetchDoc(false)
     } catch (err) {
-      console.error('拉取钉钉文档失败:', err)
+      console.error(`拉取${fetchPlatform === 'feishu' ? '飞书' : '钉钉'}文档失败:`, err)
       alert('拉取失败: ' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setIsFetchingDoc(false)
@@ -2613,7 +2615,7 @@ function MeetingNotesPanel({
             onClick={() => setShowFetchDoc(true)}
             className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors"
           >
-            + 钉钉文档拉取
+            + 云文档拉取
           </button>
           <button
             onClick={() => setShowImport(true)}
@@ -2624,16 +2626,38 @@ function MeetingNotesPanel({
         </div>
       </div>
 
-      {/* 钉钉文档拉取表单 */}
+      {/* 云文档拉取表单 */}
       {showFetchDoc && (
         <div className="p-4 bg-card rounded-lg border space-y-3">
-          <h3 className="text-sm font-medium">从钉钉文档拉取并提取任务</h3>
+          <h3 className="text-sm font-medium">从云文档拉取并提取任务</h3>
+          <div className="flex gap-2">
+            {(
+              [
+                { key: 'dingtalk', label: '钉钉', hint: '如 https://alidocs.dingtalk.com/i/nodes/xxx' },
+                { key: 'feishu', label: '飞书', hint: '支持 docx / 表格 / 知识库链接（域名 feishu.cn）' },
+              ] as const
+            ).map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setFetchPlatform(p.key)}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  fetchPlatform === p.key
+                    ? 'bg-emerald-600 text-white'
+                    : 'border hover:bg-muted'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <p className="text-xs text-muted-foreground">
-            粘贴钉钉在线文档链接（如 https://alidocs.dingtalk.com/i/nodes/xxx），Agent 将自动拉取内容并提取 Action Items 为任务草稿。
+            粘贴{fetchPlatform === 'feishu' ? '飞书' : '钉钉'}
+            在线文档链接（{fetchPlatform === 'feishu' ? '支持新版文档 docx、电子表格、知识库，域名 feishu.cn' : '如 https://alidocs.dingtalk.com/i/nodes/xxx'}
+            ），Agent 将自动拉取内容并提取 Action Items 为任务草稿。
           </p>
           <input
             type="text"
-            placeholder="钉钉在线文档链接"
+            placeholder={fetchPlatform === 'feishu' ? 'https://xxx.feishu.cn/{docx|sheets|wiki}/xxx' : '钉钉在线文档链接'}
             value={docUrl}
             onChange={(e) => setDocUrl(e.target.value)}
             className="w-full px-3 py-2 text-sm border rounded-md bg-background"

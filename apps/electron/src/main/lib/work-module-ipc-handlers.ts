@@ -491,6 +491,28 @@ export function registerWorkModuleIpcHandlers(): void {
     return importDingTalkDocAndExtractTasks(projectId, docUrl, llmCaller)
   })
 
+  // 飞书文档自动拉取 → 任务提取
+  ipcMain.handle(PROJECT_IPC_CHANNELS.FETCH_FEISHU_DOC, async (_, projectId: string, docUrl: string) => {
+    const channels = listChannels()
+    const channel = channels.find((c) => c.enabled)
+    if (!channel) {
+      throw new Error('没有可用的 AI 渠道，请先配置渠道')
+    }
+    const modelId = channel.models.find((m) => m.enabled)?.id ?? channel.models[0]?.id
+    if (!modelId) {
+      throw new Error('渠道没有配置模型')
+    }
+    const apiKey = decryptApiKey(channel.id)
+    const llmCaller = createLlmCaller({
+      provider: channel.provider,
+      baseUrl: channel.baseUrl,
+      apiKey,
+      modelId,
+    })
+    const { importFeishuDocAndExtractTasks } = await import('./project-service')
+    return importFeishuDocAndExtractTasks(projectId, docUrl, llmCaller)
+  })
+
   // Brief 回执：按项目查询
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_BRIEF_RECEIPTS, async (_, projectId: string) => {
     const { listBriefReceiptsByProject } = await import('./project-sqlite-store')

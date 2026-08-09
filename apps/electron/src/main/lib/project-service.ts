@@ -292,6 +292,28 @@ export async function importDingTalkDocAndExtractTasks(
   return importMeetingNoteAndExtractTasks(projectId, { title: doc.title, rawContent: doc.content }, llmCaller)
 }
 
+/**
+ * 从飞书文档自动拉取内容并提取任务草稿（会议文档 → tasks/subtasks）。
+ *
+ * @param projectId 目标项目
+ * @param docUrl 飞书文档链接（docx / sheets / wiki）
+ * @param llmCaller LLM 调用器
+ * @returns 导入的会议纪要 + 生成的任务草稿
+ */
+export async function importFeishuDocAndExtractTasks(
+  projectId: string,
+  docUrl: string,
+  llmCaller: import('./project-agent-service.ts').LLMCaller
+): Promise<ImportAndExtractResult> {
+  const { createFeishuDocFetcherFromConfig } = await import('./feishu-doc-fetcher')
+  const fetcher = await createFeishuDocFetcherFromConfig()
+  if (!fetcher) {
+    throw new Error('飞书文档拉取器未就绪：请先在「Bot Hub → 飞书」配置并启用飞书 Todo 同步（使用 Bot 凭证），并在飞书开放平台为企业应用开通文档/表格/知识库读取权限')
+  }
+  const doc = await fetcher.fetchDoc(docUrl)
+  return importMeetingNoteAndExtractTasks(projectId, { title: doc.title, rawContent: doc.content }, llmCaller)
+}
+
 // ===== 看板与进度 =====
 
 export async function getKanbanBoard(projectId: string): Promise<KanbanBoard> {

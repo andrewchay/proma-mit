@@ -224,6 +224,7 @@ export const PROJECT_IPC_CHANNELS = {
   IMPORT_AND_EXTRACT: 'project:import-and-extract',
   // 钉钉文档自动拉取 → 任务提取
   FETCH_DINGTALK_DOC: 'project:fetch-dingtalk-doc',
+  FETCH_FEISHU_DOC: 'project:fetch-feishu-doc',
   // Brief 回执
   LIST_BRIEF_RECEIPTS: 'project:list-brief-receipts',
   LIST_BRIEF_RECEIPTS_BY_TASK: 'project:list-brief-receipts-by-task',

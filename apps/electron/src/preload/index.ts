@@ -1349,6 +1349,7 @@ export interface ElectronAPI {
       getMeetingNote: (id: string) => Promise<unknown | null>
       importAndExtract: (projectId: string, title: string, content: string) => Promise<unknown>
       fetchDingTalkDoc: (projectId: string, docUrl: string) => Promise<unknown>
+      fetchFeishuDoc: (projectId: string, docUrl: string) => Promise<unknown>
       listBriefReceipts: (projectId: string) => Promise<unknown[]>
       listBriefReceiptsByTask: (taskId: string) => Promise<unknown[]>
       sendBrief: (taskId: string) => Promise<unknown>
@@ -3077,6 +3078,7 @@ const electronAPI: ElectronAPI = {
       getMeetingNote: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEETING_NOTE, id),
       importAndExtract: (projectId, title, content) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.IMPORT_AND_EXTRACT, projectId, title, content),
       fetchDingTalkDoc: (projectId, docUrl) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.FETCH_DINGTALK_DOC, projectId, docUrl),
+      fetchFeishuDoc: (projectId, docUrl) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.FETCH_FEISHU_DOC, projectId, docUrl),
       listBriefReceipts: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_BRIEF_RECEIPTS, projectId),
       listBriefReceiptsByTask: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_BRIEF_RECEIPTS_BY_TASK, taskId),
       sendBrief: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEND_BRIEF, taskId),
