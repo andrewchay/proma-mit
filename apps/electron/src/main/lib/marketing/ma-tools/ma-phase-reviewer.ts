@@ -103,7 +103,7 @@ export async function executePhaseReviewerTool(toolCall: ToolCall): Promise<Tool
     const engagementTarget = args.engagement_target !== undefined ? Number(args.engagement_target) : undefined
 
     // 调用主进程服务生成报告
-    const { generatePhaseReport } = await import('../campaign-manager')
+    const { generatePhaseReport } = await import('../../campaign-manager')
     const report = await generatePhaseReport({
       campaignId,
       phase,

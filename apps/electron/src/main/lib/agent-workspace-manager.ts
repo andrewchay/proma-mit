@@ -175,7 +175,7 @@ function copyDefaultSkills(workspaceSlug: string): void {
   }
 }
 
-export function createAgentWorkspace(name: string, rootPath?: string): AgentWorkspace {
+export function createAgentWorkspace(name: string, rootPath?: string, slugOverride?: string): AgentWorkspace {
   const index = readIndex()
 
   const duplicate = index.workspaces.find((w) => w.name === name)
@@ -184,7 +184,7 @@ export function createAgentWorkspace(name: string, rootPath?: string): AgentWork
   }
 
   const existingSlugs = new Set(index.workspaces.map((w) => w.slug))
-  const slug = slugify(name, existingSlugs)
+  const slug = slugOverride ?? slugify(name, existingSlugs)
   const now = Date.now()
 
   const resolvedRootPath = rootPath ? realpathSync(resolve(rootPath)) : undefined
