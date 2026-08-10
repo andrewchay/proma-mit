@@ -32,6 +32,7 @@ import {
   ChevronDown,
   BarChart3,
   Target,
+  Layers,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -69,6 +70,7 @@ import { ExtensionSettings } from './ExtensionSettings'
 import { CalendarSyncSettings } from './CalendarSyncSettings'
 import { TokenUsageSettings } from './TokenUsageSettings'
 import { GoalsSettings } from './GoalsSettings'
+import { CapabilityCenterPanel } from './CapabilityCenterPanel'
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -151,6 +153,11 @@ const GOALS_TAB: TabItem = {
   label: '目标（Goals）',
   icon: <Target size={16} />,
 };
+const CAPABILITIES_TAB: TabItem = {
+  id: 'capabilities',
+  label: '能力中心',
+  icon: <Layers size={16} />,
+};
 
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
@@ -210,6 +217,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
       OPERATION_AUDIT_TAB,
       TOKEN_USAGE_TAB,
       GOALS_TAB,
+      CAPABILITIES_TAB,
       TUTORIAL_TAB,
     ],
   },
@@ -265,6 +273,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <TokenUsageSettings />
     case 'goals':
       return <GoalsSettings />
+    case 'capabilities':
+      return <CapabilityCenterPanel />
   }
 }
 

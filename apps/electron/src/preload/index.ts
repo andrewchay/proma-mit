@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1386,6 +1386,46 @@ export interface ElectronAPI {
       delete: (id: string) => Promise<boolean>
       listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
+    }
+
+    // --- 营销能力包 ---
+    marketing: {
+      // 共享素材
+      creative: {
+        listProjects: () => Promise<import('@gravitas/shared').CreativeProject[]>
+        createProject: (input: unknown) => Promise<import('@gravitas/shared').CreativeProject>
+        listAssets: () => Promise<import('@gravitas/shared').CreativeAsset[]>
+        createAsset: (input: unknown) => Promise<import('@gravitas/shared').CreativeAsset>
+        deleteAsset: (id: string) => Promise<void>
+      }
+      // 达人 influencer
+      influencer: {
+        listTalents: () => Promise<import('@gravitas/shared').InfluencerTalent[]>
+        getTalent: (id: string) => Promise<import('@gravitas/shared').InfluencerTalent | null>
+        createTalent: (input: unknown) => Promise<import('@gravitas/shared').InfluencerTalent>
+        updateTalent: (id: string, patch: unknown) => Promise<import('@gravitas/shared').InfluencerTalent | null>
+        deleteTalent: (id: string) => Promise<void>
+        listBriefs: () => Promise<import('@gravitas/shared').InfluencerBrief[]>
+        createBrief: (input: unknown) => Promise<import('@gravitas/shared').InfluencerBrief>
+        listDrafts: () => Promise<import('@gravitas/shared').InfluencerDraft[]>
+        getDraft: (id: string) => Promise<import('@gravitas/shared').InfluencerDraft | null>
+        createDraft: (input: unknown) => Promise<import('@gravitas/shared').InfluencerDraft>
+        updateDraft: (id: string, patch: unknown) => Promise<import('@gravitas/shared').InfluencerDraft | null>
+        deleteDraft: (id: string) => Promise<void>
+      }
+      // 广告投放 paid-media
+      paidMedia: {
+        listCampaigns: () => Promise<import('@gravitas/shared').PaidCampaign[]>
+        getCampaign: (id: string) => Promise<import('@gravitas/shared').PaidCampaign | null>
+        createCampaign: (input: unknown) => Promise<import('@gravitas/shared').PaidCampaign>
+        updateCampaign: (id: string, patch: unknown) => Promise<import('@gravitas/shared').PaidCampaign | null>
+        deleteCampaign: (id: string) => Promise<void>
+        listControlActions: () => Promise<import('@gravitas/shared').PaidControlAction[]>
+        createControlAction: (input: unknown) => Promise<import('@gravitas/shared').PaidControlAction>
+        listRules: () => Promise<import('@gravitas/shared').PaidRule[]>
+        createRule: (input: unknown) => Promise<import('@gravitas/shared').PaidRule>
+        updateRule: (id: string, patch: unknown) => Promise<import('@gravitas/shared').PaidRule | null>
+      }
     }
   }
 }
@@ -3116,6 +3156,42 @@ const electronAPI: ElectronAPI = {
       delete: (id) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, id),
       listExecutionsByEntity: (entityType, entityId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, entityType, entityId),
       listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
+    },
+    // --- 营销能力包 ---
+    marketing: {
+      creative: {
+        listProjects: () => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.LIST_PROJECTS),
+        createProject: (input) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.CREATE_PROJECT, input),
+        listAssets: () => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.LIST_ASSETS),
+        createAsset: (input) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.CREATE_TASK, input),
+        deleteAsset: (id) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.DELETE_ASSET, id),
+      },
+      influencer: {
+        listTalents: () => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.LIST_TALENTS),
+        getTalent: (id) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.GET_TALENT, id),
+        createTalent: (input) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.CREATE_TALENT, input),
+        updateTalent: (id, patch) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.UPDATE_TALENT, id, patch),
+        deleteTalent: (id) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.DELETE_TALENT, id),
+        listBriefs: () => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.LIST_BRIEFS),
+        createBrief: (input) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.CREATE_BRIEF, input),
+        listDrafts: () => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.LIST_DRAFTS),
+        getDraft: (id) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.GET_DRAFT, id),
+        createDraft: (input) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.CREATE_DRAFT, input),
+        updateDraft: (id, patch) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.UPDATE_DRAFT, id, patch),
+        deleteDraft: (id) => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.DELETE_DRAFT, id),
+      },
+      paidMedia: {
+        listCampaigns: () => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.LIST_CAMPAIGNS),
+        getCampaign: (id) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.GET_CAMPAIGN, id),
+        createCampaign: (input) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.CREATE_CAMPAIGN, input),
+        updateCampaign: (id, patch) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.UPDATE_CAMPAIGN, id, patch),
+        deleteCampaign: (id) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.DELETE_CAMPAIGN, id),
+        listControlActions: () => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.LIST_CONTROL_ACTIONS),
+        createControlAction: (input) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.CREATE_CONTROL_ACTION, input),
+        listRules: () => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.LIST_RULES),
+        createRule: (input) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.CREATE_RULE, input),
+        updateRule: (id, patch) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.UPDATE_RULE, id, patch),
+      },
     },
   },
 }

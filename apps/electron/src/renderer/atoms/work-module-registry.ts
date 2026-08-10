@@ -10,11 +10,13 @@
  */
 
 import type { ComponentType } from 'react'
-import { CalendarDays, FolderKanban, Zap, type LucideIcon } from 'lucide-react'
+import { CalendarDays, FolderKanban, Zap, Users, Megaphone, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 import { CalendarModuleView } from '@/components/calendar/CalendarModuleView'
 import { ProjectView } from '@/components/projects/ProjectView'
 import { AutomationModuleView } from '@/components/automation/AutomationModuleView'
+import { InfluencerModuleView } from '@/components/influencer/InfluencerModuleView'
+import { PaidMediaModuleView } from '@/components/paid-media/PaidMediaModuleView'
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -50,6 +52,22 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     core: true,
     description: '定时任务、运行记录、自动任务运行中心',
   },
+  {
+    id: 'influencer',
+    label: '达人',
+    icon: Users,
+    core: false,
+    group: 'marketing',
+    description: '达人库 / 稿件审核 / 内容追踪（订阅式领域包）',
+  },
+  {
+    id: 'paid-media',
+    label: '广告投放',
+    icon: Megaphone,
+    core: false,
+    group: 'marketing',
+    description: '投放计划 / 调控审批 / 调控规则（订阅式领域包）',
+  },
 ]
 
 /** 核心模块（按注册表顺序展示） */
@@ -63,4 +81,6 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   calendar: CalendarModuleView,
   projects: ProjectView,
   automation: AutomationModuleView,
+  influencer: InfluencerModuleView,
+  'paid-media': PaidMediaModuleView,
 }

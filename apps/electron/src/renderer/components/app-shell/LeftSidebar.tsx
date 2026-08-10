@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -21,6 +21,7 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
+import { CAPABILITY_MANIFEST, enabledCapabilitiesAtom, isCapabilityEnabled, type CapabilityId } from '@/atoms/marketing-atoms'
 import {
   conversationsAtom,
   currentConversationIdAtom,
@@ -1395,6 +1396,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 </button>
               )
             })}
+            {/* 领域能力包（订阅式，依赖 marketing-atoms） */}
+            <SubscribedCapabilities />
             <button
               onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
               className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
@@ -2448,3 +2451,60 @@ const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem(
     />
   )
 })
+
+/**
+ * SubscribedCapabilities — 已订阅领域能力包导航区
+ *
+ * 在 core 工作模块下方展示已订阅的领域包（influencer/paid-media），
+ * 点击切换视图；末尾提供「能力中心」入口打开订阅面板。
+ */
+function SubscribedCapabilities(): React.ReactElement {
+  const [enabled] = useAtom(enabledCapabilitiesAtom)
+  const activeView = useAtomValue(activeViewAtom)
+  const setActiveView = useSetAtom(activeViewAtom)
+  const setSettingsTab = useSetAtom(settingsTabAtom)
+  const setSettingsOpen = useSetAtom(settingsOpenAtom)
+
+  const subscribedBusiness = CAPABILITY_MANIFEST.filter(
+    (c) => c.kind === 'business' && isCapabilityEnabled(enabled, c.id as CapabilityId)
+  )
+
+  const iconFor = (id: string): React.ReactNode => {
+    if (id === 'paid-media') return <Megaphone size={16} className="text-foreground/40" />
+    return <Users size={16} className="text-foreground/40" />
+  }
+
+  return (
+    <>
+      {subscribedBusiness.length > 0 && (
+        <div className="mt-1 px-2 pt-1.5 text-[11px] font-medium text-foreground/40 select-none">领域能力包</div>
+      )}
+      {subscribedBusiness.map((cap) => {
+        const capabilityId = cap.id as CapabilityId
+        const active = activeView === capabilityId
+        return (
+          <button
+            key={cap.id}
+            onClick={() => setActiveView(capabilityId)}
+            className={cn(
+              'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+              active
+                ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+            )}
+          >
+            {iconFor(cap.id)}
+            <span className="flex-1 text-left">{cap.label}</span>
+          </button>
+        )
+      })}
+      <button
+        onClick={() => { setSettingsTab('capabilities'); setSettingsOpen(true) }}
+        className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+      >
+        <Layers size={16} className="text-foreground/40" />
+        <span className="flex-1 text-left">能力中心</span>
+      </button>
+    </>
+  )
+}

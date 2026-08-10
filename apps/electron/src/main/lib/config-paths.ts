@@ -880,3 +880,17 @@ export function getProjectsDir(): string {
   }
   return dir
 }
+
+/**
+ * 获取营销能力目录（领域包数据 / 订阅状态）
+ *
+ * @returns ~/.proma-mit/marketing/
+ */
+export function getMarketingDir(): string {
+  const dir = join(getConfigDir(), 'marketing')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建营销能力目录: ${dir}`)
+  }
+  return dir
+}

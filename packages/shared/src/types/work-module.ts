@@ -470,3 +470,164 @@ export interface MemberSyncAllResult {
   finishedAt: number
 }
 
+
+// ============================================
+// 营销能力 — Influencer（达人）包
+// ============================================
+
+export const INFLUENCER_IPC_CHANNELS = {
+  /** 获取订阅状态 */
+  GET_SUBSCRIBED: 'influencer:get-subscribed',
+  /** 了解达人库 */
+  LIST_TALENTS: 'influencer:list-talents',
+  GET_TALENT: 'influencer:get-talent',
+  CREATE_TALENT: 'influencer:create-talent',
+  UPDATE_TALENT: 'influencer:update-talent',
+  DELETE_TALENT: 'influencer:delete-talent',
+  /** brief */
+  LIST_BRIEFS: 'influencer:list-briefs',
+  CREATE_BRIEF: 'influencer:create-brief',
+  /** 达人稿件审核 */
+  LIST_DRAFTS: 'influencer:list-drafts',
+  GET_DRAFT: 'influencer:get-draft',
+  CREATE_DRAFT: 'influencer:create-draft',
+  UPDATE_DRAFT: 'influencer:update-draft',
+  DELETE_DRAFT: 'influencer:delete-draft',
+} as const
+
+export interface InfluencerTalent {
+  id: string
+  name: string
+  platform: string
+  handle?: string
+  region?: string
+  tags?: string[]
+  status: 'active' | 'paused' | 'blacklist'
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InfluencerBrief {
+  id: string
+  talentId: string
+  version?: string
+  product: string
+  direction?: unknown
+  accept: 'pending' | 'accepted' | 'rejected'
+  createdAt: string
+  updatedAt: string
+}
+
+/** 达人稿件（含三态审核卡） */
+export interface InfluencerDraft {
+  id: string
+  briefId: string
+  talentId: string
+  source: string
+  sourceRef?: string
+  draftType: string
+  reviewCard: 'red' | 'yellow' | 'green'
+  reviewDetail?: unknown
+  status: 'submitted' | 'reviewing' | 'approved' | 'rejected' | 'rework'
+  reviewer?: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ============================================
+// 营销能力 — Paid Media（广告投放）包
+// ============================================
+
+export const PAID_MEDIA_IPC_CHANNELS = {
+  /** 获取订阅状态 */
+  GET_SUBSCRIBED: 'paid-media:get-subscribed',
+  /** 投放 Campaign */
+  LIST_CAMPAIGNS: 'paid-media:list-campaigns',
+  GET_CAMPAIGN: 'paid-media:get-campaign',
+  CREATE_CAMPAIGN: 'paid-media:create-campaign',
+  UPDATE_CAMPAIGN: 'paid-media:update-campaign',
+  DELETE_CAMPAIGN: 'paid-media:delete-campaign',
+  /** 调控建议 + 审批 */
+  LIST_CONTROL_ACTIONS: 'paid-media:list-control-actions',
+  CREATE_CONTROL_ACTION: 'paid-media:create-control-action',
+  UPDATE_CONTROL_ACTION: 'paid-media:update-control-action',
+  /** 调控规则 */
+  LIST_RULES: 'paid-media:list-rules',
+  CREATE_RULE: 'paid-media:create-rule',
+  UPDATE_RULE: 'paid-media:update-rule',
+} as const
+
+export interface PaidCampaign {
+  id: string
+  name: string
+  channel?: string
+  region?: string
+  platform?: string
+  adType?: string
+  deliverTarget?: string
+  budgetDay?: number
+  budgetStatus: 'pending' | 'approved' | 'rejected'
+  status: 'draft' | 'active' | 'paused' | 'archived'
+  goalRoi?: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PaidControlAction {
+  id: string
+  campaignId: string
+  actionType: string
+  detail?: unknown
+  status: 'pending' | 'approved' | 'rejected' | 'executed'
+  reviewer?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PaidRule {
+  id: string
+  channel?: string
+  kind: 'redline' | 'business' | 'hint'
+  name: string
+  params?: unknown
+  enabled: boolean
+  updatedAt: string
+}
+
+// ============================================
+// 营销能力 — 共享素材生产
+// ============================================
+
+export const CREATIVE_IPC_CHANNELS = {
+  /** 素材项目 */
+  LIST_PROJECTS: 'creative:list-projects',
+  CREATE_PROJECT: 'creative:create-project',
+  /** 素材成品 */
+  LIST_ASSETS: 'creative:list-assets',
+  DELETE_ASSET: 'creative:delete-asset',
+  RENAME_ASSET: 'creative:rename-asset',
+  /** 生成任务 */
+  LIST_TASKS: 'creative:list-tasks',
+  CREATE_TASK: 'creative:create-task',
+  GET_TASK: 'creative:get-task',
+} as const
+
+export interface CreativeProject {
+  id: string
+  name: string
+  client: 'influencer' | 'paid' | 'general'
+  version?: string
+  tags?: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreativeAsset {
+  id: string
+  projectId?: string
+  media: 'image' | 'video'
+  platform?: string
+  resolution?: string
+  status: 'ready' | 'processing' | 'failed'
+  createdAt: string
+}
