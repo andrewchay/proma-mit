@@ -83,3 +83,6 @@ export * from './workflow'
 
 // 工作模块（项目管理 / 日程管家 / 日历同步）IPC 通道与类型
 export * from './work-module'
+
+// 营销 Campaign / KOL 类型（ma-tools 迁移用）
+export * from './campaign-types'

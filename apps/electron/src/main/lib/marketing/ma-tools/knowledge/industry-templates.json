@@ -1,0 +1,72 @@
+{
+  "_base": {
+    "core_objective": "品牌认知 + 种草转化",
+    "platforms_cn": [
+      {"name": "小红书", "goal": "口碑种草", "content_format": "图文/短视频"},
+      {"name": "抖音", "goal": "高频触达", "content_format": "短视频/直播"},
+      {"name": "B站", "goal": "深度解释", "content_format": "中长视频"}
+    ],
+    "platforms_overseas": [
+      {"name": "TikTok", "goal": "规模化触达", "content_format": "短视频"},
+      {"name": "Instagram", "goal": "视觉种草", "content_format": "Reels/图文"},
+      {"name": "YouTube", "goal": "深度评测", "content_format": "长视频/Shorts"}
+    ],
+    "tier_mix": {"TOP": 0.35, "MID": 0.5, "BTM": 0.15},
+    "content_pillars": ["产品价值", "真实场景", "用户证据"],
+    "must_track_metrics": ["曝光量", "互动率", "CPE", "转化率", "ROI"],
+    "creative_must_include": ["真实体验场景", "核心卖点解释", "明确CTA"],
+    "creative_forbidden": ["绝对化宣传", "虚假承诺"]
+  },
+  "通用": {},
+  "美妆": {
+    "core_objective": "新品种草 + 成分心智",
+    "content_pillars": ["成分科普", "妆效前后对比", "肤质场景实测", "口碑复购证明"],
+    "tier_mix": {"TOP": 0.3, "MID": 0.55, "BTM": 0.15},
+    "must_track_metrics": ["收藏率", "评论问询率", "站内搜索指数", "GMV", "ROI"],
+    "creative_must_include": ["肤质说明", "使用前后对比", "色号/成分信息"]
+  },
+  "3C": {
+    "core_objective": "技术认知 + 参数信任 + 场景转化",
+    "platforms_cn": [
+      {"name": "B站", "goal": "专业测评", "content_format": "中长视频"},
+      {"name": "抖音", "goal": "功能演示", "content_format": "短视频"},
+      {"name": "小红书", "goal": "生活化种草", "content_format": "图文/视频"}
+    ],
+    "content_pillars": ["参数对比", "场景化体验", "专业评测", "用户口碑复盘"],
+    "creative_must_include": ["核心参数", "对比场景", "使用条件声明"]
+  },
+  "快消": {
+    "core_objective": "心智占位 + 高频复购",
+    "content_pillars": ["场景化消费", "口味/功效体验", "热点借势", "UGC挑战"],
+    "tier_mix": {"TOP": 0.25, "MID": 0.5, "BTM": 0.25}
+  },
+  "母婴": {
+    "core_objective": "信任建立 + 安全转化",
+    "content_pillars": ["育儿痛点解法", "安全与成分说明", "真实家庭场景", "专业背书"],
+    "tier_mix": {"TOP": 0.3, "MID": 0.45, "BTM": 0.25},
+    "creative_must_include": ["适龄说明", "使用安全提示", "家庭场景示范"],
+    "creative_forbidden": ["医疗疗效承诺", "绝对安全表达"]
+  },
+  "时尚": {
+    "core_objective": "风格心智 + 趋势带动",
+    "content_pillars": ["穿搭灵感", "风格改造", "场景lookbook", "明星/达人同款"],
+    "tier_mix": {"TOP": 0.35, "MID": 0.45, "BTM": 0.2}
+  },
+  "宠物科技": {
+    "core_objective": "痛点教育 + 技术信任 + 订阅转化",
+    "platforms_overseas": [
+      {"name": "TikTok", "goal": "情绪化案例扩散", "content_format": "短视频"},
+      {"name": "Instagram", "goal": "宠物日常与UGC", "content_format": "Reels/图文"},
+      {"name": "YouTube", "goal": "深度评测与科普", "content_format": "评测/案例"}
+    ],
+    "content_pillars": ["分离焦虑痛点", "功能机制科普", "真实找回/预警案例", "事件节点联动"],
+    "must_track_metrics": ["完播率", "评论共鸣率", "订阅转化率", "留存率", "ROI"],
+    "creative_must_include": ["宠物主体视角", "情绪场景", "技术依据与使用边界"]
+  },
+  "运动鞋服": {
+    "core_objective": "功能认知 + 训练场景种草 + 赛事moment放大",
+    "content_pillars": ["运动科学科普", "赛事moment借势", "训练/通勤场景", "鞋款机制讲解"],
+    "tier_mix": {"TOP": 0.3, "MID": 0.5, "BTM": 0.2},
+    "creative_must_include": ["动作/训练场景", "功能点可视化", "人群适配建议"]
+  }
+}

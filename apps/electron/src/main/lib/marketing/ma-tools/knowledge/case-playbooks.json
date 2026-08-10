@@ -1,0 +1,41 @@
+{
+  "Petphone1127": {
+    "name": "Petphone1127",
+    "core_patterns": [
+      "痛点锚点（分离焦虑/安全焦虑）驱动内容主线",
+      "事件锚点（如CES）集中爆发，缩短预热链路",
+      "双阵营KOL（前线现场组 + Homebase场景组）并行叙事",
+      "认知-信任-订阅的全链路转化"
+    ],
+    "channel_roles": {
+      "TikTok/Instagram": "情绪化短视频与话题扩散",
+      "YouTube": "深度评测与科技背书",
+      "PR/Tech Media": "权威信任建设"
+    },
+    "content_pillars": [
+      {"name": "痛点解决型", "objective": "把核心焦虑映射到产品功能", "formats": ["真实案例复盘", "前后对比", "UGC共鸣故事"]},
+      {"name": "功能科普型", "objective": "降低技术理解门槛与决策门槛", "formats": ["技术拆解", "图解说明", "专家背书"]},
+      {"name": "事件现场型", "objective": "借重大节点放大前沿感和讨论度", "formats": ["展会现场vlog", "新品首发", "KOL联动挑战"]}
+    ]
+  },
+  "Mind social": {
+    "name": "Mind social",
+    "core_patterns": [
+      "多平台 content pillar 管理（科普/赛事moment/FOP植入/线下活动）",
+      "按 TOP/MID/BTM 分层配置达人池与预算",
+      "Creator Brief Book 标准化下发，提高执行一致性",
+      "过程追踪表驱动（提报-合作-发布-复盘）"
+    ],
+    "channel_roles": {
+      "小红书": "种草与生活方式内容沉淀",
+      "抖音": "高频触达与热点扩散",
+      "B站": "深度内容与专业解释"
+    },
+    "content_pillars": [
+      {"name": "科普认知", "objective": "解释科学原理和产品机制", "formats": ["机制拆解", "专业测评", "图文知识卡"]},
+      {"name": "赛事Moment", "objective": "借赛事/热点提升相关性与传播效率", "formats": ["事件快评", "热点借势短视频", "运动员素材二创"]},
+      {"name": "场景化植入", "objective": "把产品放进真实场景降低理解成本", "formats": ["vlog", "开箱体验", "日常场景脚本"]},
+      {"name": "线下活动联动", "objective": "放大品牌在真实世界的存在感", "formats": ["活动探店", "快闪记录", "现场采访"]}
+    ]
+  }
+}

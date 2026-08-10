@@ -1,0 +1,97 @@
+{
+  "小红书": {
+    "title_formulas": [
+      "数字+结果+方法：30天瘦10斤，我是这样做的",
+      "痛点+解决方案：毛孔粗大怎么办？亲测有效的3个方法",
+      "对比+反差：月薪3千 vs 月薪3万的妆容区别",
+      "悬念+揭秘：大牌柜姐不会告诉你的省钱秘籍"
+    ],
+    "content_structure": [
+      "开头：痛点共鸣/结果预告（3行内）",
+      "正文：分点说明，每点配emoji",
+      "结尾：总结+互动提问"
+    ],
+    "image_tips": [
+      "封面图要美观吸睛，建议3:4竖图",
+      "内页图要信息密度高，可拼接",
+      "配色统一，符合品牌调性",
+      "文字不要太多，关键信息突出"
+    ],
+    "hashtag_strategy": "3-5个精准标签 + 1-2个热门标签 + 品牌标签",
+    "optimal_length": "300-800字",
+    "forbidden_words": ["最", "第一", "国家级", "纯天然", "100%"]
+  },
+  "抖音": {
+    "hook_templates": [
+      "你知道吗？...",
+      "千万不要...",
+      "我花了X万才学到的...",
+      "为什么你...",
+      "挑战..."
+    ],
+    "video_structure": [
+      "0-3秒：黄金3秒抓眼球",
+      "3-15秒：核心内容输出",
+      "15-30秒：详细展开",
+      "30-60秒：结尾+CTA"
+    ],
+    "shooting_tips": [
+      "光线充足，画面清晰",
+      "背景简洁不杂乱",
+      "收音清晰，可用领夹麦",
+      "镜头稳定，可用云台"
+    ],
+    "bgm_tips": "使用平台热门音乐，增强算法推荐",
+    "optimal_length": "15-60秒",
+    "caption_tips": "字幕要大而清晰，关键词突出"
+  },
+  "微博": {
+    "content_types": ["图文", "视频", "长微博", "投票"],
+    "hashtag_strategy": "1个主话题 + 2-3个相关话题",
+    "timing_tips": "早8-9点，午12-13点，晚8-10点",
+    "interaction_tips": "多@相关账号，增加曝光",
+    "optimal_length": "100-500字"
+  },
+  "B站": {
+    "video_structure": [
+      "0-30秒：开场+内容预告",
+      "30秒-3分钟：引入+背景",
+      "3-10分钟：核心内容",
+      "10-15分钟：总结+升华"
+    ],
+    "thumbnail_tips": "标题党封面，高对比度配色",
+    "title_tips": "包含关键词，适当使用【】强调",
+    "bullet_comments": "引导弹幕互动，增加完播率",
+    "optimal_length": "5-15分钟"
+  },
+  "快手": {
+    "style": "老铁经济，真实接地气",
+    "optimal_length": "15-60秒",
+    "interaction": "评论区互动频繁，重视粉丝关系"
+  },
+  "TikTok": {
+    "hook_templates": [
+      "POV: ...",
+      "Wait for it...",
+      "The secret to ...",
+      "How I ... in X days"
+    ],
+    "optimal_length": "15-60秒",
+    "trending": "紧跟热门音乐和挑战"
+  },
+  "Instagram": {
+    "content_types": ["Reels", "Stories", "Carousel", "Feed"],
+    "optimal_length": "Reels 15-90秒，Carousel 5-10张",
+    "hashtag_strategy": "20-30个标签，混合大中小标签"
+  },
+  "YouTube": {
+    "video_structure": [
+      "0-30秒：Hook + 价值预告",
+      "1-3分钟：问题/背景引入",
+      "3-10分钟：核心内容交付",
+      "结尾：CTA + 订阅引导"
+    ],
+    "optimal_length": "8-20分钟",
+    "seo_tips": "标题包含关键词，描述前2行最重要"
+  }
+}

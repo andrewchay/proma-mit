@@ -9,5 +9,6 @@
       "@/types/*": ["./src/types/*"]
     }
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/main/lib/marketing/ma-tools-pending/**"]
 }
