@@ -1,0 +1,123 @@
+{
+  "version": "1.0",
+  "description": "达人圈选校验规则配置（可维护，不写死）。业务提供各类目完整价格带规则后，只改本文件即可。",
+  "updated_at": "2026-08-01",
+
+  "brand": {
+    "name": "忘本",
+    "platform": "小红书",
+    "tone_profile": {
+      "adjectives": ["新鲜", "真诚", "有温度", "生活化", "品质感"],
+      "avoid": ["浮夸", "油腻", "廉价感", "纯广告"],
+      "reference": "线下水果店，当日鲜切、冷链配送、价格带 29-99 元，主打性价比与品质"
+    },
+    "target_audience": {
+      "cities": ["上海", "杭州", "北京"],
+      "gender": "以女性为主",
+      "consume_signal": ["品质生鲜消费", "家庭采购", "健康饮食"],
+      "note": "业务可后续补充 TA 完整画像"
+    }
+  },
+
+  "rules": {
+    "price_band": {
+      "enabled": true,
+      "weight": 0.30,
+      "categories": {
+        "美食探店": {
+          "reference_cities": { "杭州": 80, "上海": 90 },
+          "fallback_min": 80,
+          "fallback_max": 500,
+          "note": "业务已定：打卡餐厅人均 杭州≥80 / 上海≥90"
+        },
+        "咖啡": {
+          "reference_cities": {},
+          "fallback_min": 25,
+          "fallback_max": 120,
+          "note": "待业务提供完整规则，当前为占位参考"
+        },
+        "水果生鲜": {
+          "reference_cities": {},
+          "fallback_min": 20,
+          "fallback_max": 300,
+          "note": "水果类目参考：线下门店客单价通常 20-300 元，待业务确认"
+        },
+        "default": {
+          "reference_cities": {},
+          "fallback_min": 20,
+          "fallback_max": 500,
+          "note": "未分类目默认宽区间，业务补充后收紧"
+        }
+      },
+      "score": {
+        "match_band": 100,
+        "within_20pct": 85,
+        "within_50pct": 65,
+        "outside": 40,
+        "no_data": 50,
+        "no_data_note": "未识别到客单价信息，默认给中等分并标记待人工复核"
+      }
+    },
+
+    "style_tone": {
+      "enabled": true,
+      "weight": 0.25,
+      "score": {
+        "llm_based": true,
+        "no_data": 55,
+        "no_data_note": "抽样笔记文本不足时，退回用内容标签/擅长标签做粗评"
+      }
+    },
+
+    "comment_profile": {
+      "enabled": true,
+      "weight": 0.20,
+      "score": {
+        "city_match_bonus": 10,
+        "gender_penalty": "female_ratio < 0.4 → -15",
+        "comment_signal_geo": 20,
+        "comment_signal_gender": 15,
+        "comment_signal_consume": 15,
+        "comment_signal_negative": -12,
+        "no_data": 50,
+        "note": "优先消费评论明细（grab_comments=true）；无明细时降级用粉丝画像代理并标注 degraded"
+      }
+    },
+
+    "engagement_cpm_cpe": {
+      "enabled": true,
+      "weight": 0.25,
+      "cpm": {
+        "good_max": 300,
+        "ok_max": 800,
+        "note": "CPM 低于 good_max 计满分，高于 ok_max 计低分；参考行业基准可配置"
+      },
+      "cpe": {
+        "good_max": 5,
+        "ok_max": 15
+      },
+      "score": {
+        "no_data": 50
+      }
+    }
+  },
+
+  "scorecard": {
+    "pass_threshold": 80,
+    "review_threshold": 60,
+    "conclusions": {
+      "pass": "通过",
+      "review": "待复核",
+      "reject": "拒绝"
+    },
+    "weights_sum_check": "price_band 0.30 + style_tone 0.25 + comment_profile 0.20 + engagement_cpm_cpe 0.25 = 1.00"
+  },
+
+  "llm": {
+    "enabled": true,
+    "provider": "proma-cloud",
+    "style_tone_prompt": "你是达人内容风格评估专家。给定品牌调性画像和达人抽样笔记，评估达人内容风格与品牌调性的匹配度，输出 0-100 分和理由。",
+    "price_extract_prompt": "你是线下消费价格分析专家。给定达人笔记文本，识别其中提到的门店客单价/人均消费/套餐价格信息，输出结构化 JSON（是否识别到、客单价数值、证据片段、置信度）。",
+    "comment_profile_prompt": "你是用户画像分析师。给定达人评论样本，分析评论用户的地理分布、性别特征和消费信号，评估与品牌目标受众的一致性，输出 0-100 分和理由。"
+  }
+}
