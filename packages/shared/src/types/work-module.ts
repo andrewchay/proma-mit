@@ -610,6 +610,14 @@ export const CREATIVE_IPC_CHANNELS = {
   LIST_TASKS: 'creative:list-tasks',
   CREATE_TASK: 'creative:create-task',
   GET_TASK: 'creative:get-task',
+  /** 视频：分镜生成 */
+  GEN_STORYBOARD: 'creative:gen-storyboard',
+  /** 视频：运行生成流水线 */
+  RUN_PIPELINE: 'creative:run-pipeline',
+  /** 视频：探测元数据 */
+  PROBE_ASSET: 'creative:probe-asset',
+  /** 视频：校验引擎凭据 */
+  CHECK_CREDENTIAL: 'creative:check-credential',
 } as const
 
 export interface CreativeProject {

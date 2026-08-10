@@ -18,6 +18,7 @@ import {
 
 // ===== 日程管家服务 =====
 import { marketingService, ensureMarketingReady } from './marketing/marketing-service'
+import { creativeVideoService } from './marketing/marketing-service'
 import {
   listScheduleEvents,
   getScheduleEvent,
@@ -821,6 +822,20 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(CREATIVE_IPC_CHANNELS.DELETE_ASSET, async (_: unknown, id: string) => {
     await ensureMarketingReady()
     return marketingService.deleteCreativeAsset(id)
+  })
+
+  // ===== 视频生成（共享素材）=====
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.GEN_STORYBOARD, (_: unknown, input) => {
+    return creativeVideoService.generateStoryboard(input)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.RUN_PIPELINE, async (_: unknown, options) => {
+    return creativeVideoService.runPipeline(options)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.PROBE_ASSET, async (_: unknown, videoPath: string) => {
+    return creativeVideoService.probeAsset(videoPath)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.CHECK_CREDENTIAL, (_: unknown, engine: 'seedance' | 'minimax-h3') => {
+    return creativeVideoService.checkCredential(engine)
   })
 
   // ============================================

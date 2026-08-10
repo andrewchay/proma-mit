@@ -1397,6 +1397,11 @@ export interface ElectronAPI {
         listAssets: () => Promise<import('@gravitas/shared').CreativeAsset[]>
         createAsset: (input: unknown) => Promise<import('@gravitas/shared').CreativeAsset>
         deleteAsset: (id: string) => Promise<void>
+        // 视频生成
+        genStoryboard: (input: unknown) => Promise<unknown>
+        runPipeline: (options: unknown) => Promise<unknown>
+        probeAsset: (videoPath: string) => Promise<unknown>
+        checkCredential: (engine: string) => Promise<unknown>
       }
       // 达人 influencer
       influencer: {
@@ -3165,6 +3170,10 @@ const electronAPI: ElectronAPI = {
         listAssets: () => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.LIST_ASSETS),
         createAsset: (input) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.CREATE_TASK, input),
         deleteAsset: (id) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.DELETE_ASSET, id),
+        genStoryboard: (input) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.GEN_STORYBOARD, input),
+        runPipeline: (options) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.RUN_PIPELINE, options),
+        probeAsset: (videoPath) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.PROBE_ASSET, videoPath),
+        checkCredential: (engine) => ipcRenderer.invoke(CREATIVE_IPC_CHANNELS.CHECK_CREDENTIAL, engine),
       },
       influencer: {
         listTalents: () => ipcRenderer.invoke(INFLUENCER_IPC_CHANNELS.LIST_TALENTS),

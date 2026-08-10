@@ -76,3 +76,34 @@ export const marketingService = {
 } as const
 
 export default marketingService
+
+// ============================================
+// 创意素材 — 视频生成能力
+// ============================================
+
+import {
+  generateCreativeStoryboard,
+  runCreativeVideoPipeline,
+  probeVideoAsset,
+  ensureVideoCredential,
+  type CreativeVideoPipelineOptions,
+} from './creative-video-service'
+import type { VideoInput } from './video'
+
+export const creativeVideoService = {
+  /** 生成分镜（纯本地） */
+  generateStoryboard: (input: VideoInput) => generateCreativeStoryboard(input),
+  /** 运行视频生成流水线 */
+  runPipeline: (options: CreativeVideoPipelineOptions) => runCreativeVideoPipeline(options),
+  /** 探测视频元数据 */
+  probeAsset: (videoPath: string) => probeVideoAsset(videoPath),
+  /** 校验视频引擎凭据 */
+  checkCredential: (engine: 'seedance' | 'minimax-h3') => {
+    try {
+      ensureVideoCredential(engine)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  },
+} as const
