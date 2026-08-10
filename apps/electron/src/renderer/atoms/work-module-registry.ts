@@ -17,6 +17,7 @@ import { ProjectView } from '@/components/projects/ProjectView'
 import { AutomationModuleView } from '@/components/automation/AutomationModuleView'
 import { InfluencerModuleView } from '@/components/influencer/InfluencerModuleView'
 import { PaidMediaModuleView } from '@/components/paid-media/PaidMediaModuleView'
+import { CapabilitiesView } from '@/components/marketing/CapabilitiesView'
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -83,4 +84,5 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   automation: AutomationModuleView,
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
+  capabilities: CapabilitiesView,
 }

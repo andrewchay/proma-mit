@@ -2462,8 +2462,6 @@ function SubscribedCapabilities(): React.ReactElement {
   const [enabled] = useAtom(enabledCapabilitiesAtom)
   const activeView = useAtomValue(activeViewAtom)
   const setActiveView = useSetAtom(activeViewAtom)
-  const setSettingsTab = useSetAtom(settingsTabAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
 
   const subscribedBusiness = CAPABILITY_MANIFEST.filter(
     (c) => c.kind === 'business' && isCapabilityEnabled(enabled, c.id as CapabilityId)
@@ -2499,11 +2497,11 @@ function SubscribedCapabilities(): React.ReactElement {
         )
       })}
       <button
-        onClick={() => { setSettingsTab('capabilities'); setSettingsOpen(true) }}
+        onClick={() => setActiveView('capabilities')}
         className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
       >
         <Layers size={16} className="text-foreground/40" />
-        <span className="flex-1 text-left">能力中心</span>
+        <span className="flex-1 text-left">应用中心</span>
       </button>
     </>
   )

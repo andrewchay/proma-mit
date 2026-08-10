@@ -1078,6 +1078,8 @@ export interface ElectronAPI {
 
   /** 订阅菜单关闭标签页事件（Cmd+W 被菜单拦截后转发） */
   onMenuCloseTab: (callback: () => void) => () => void
+  /** 订阅菜单「应用中心→领域工作台」事件（打开能力中心面板） */
+  onMenuOpenCapabilities: (callback: () => void) => () => void
 
   // ===== 快速任务窗口 =====
 
@@ -2706,6 +2708,11 @@ const electronAPI: ElectronAPI = {
     const listener = (): void => callback()
     ipcRenderer.on('menu:close-tab', listener)
     return () => { ipcRenderer.removeListener('menu:close-tab', listener) }
+  },
+  onMenuOpenCapabilities: (callback: () => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on('menu:open-capabilities', listener)
+    return () => { ipcRenderer.removeListener('menu:open-capabilities', listener) }
   },
 
   // ===== 快速任务窗口 =====

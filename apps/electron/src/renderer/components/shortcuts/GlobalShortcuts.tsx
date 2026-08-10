@@ -57,6 +57,7 @@ import { getFileParentPath } from '@/lib/file-utils'
 export function GlobalShortcuts(): null {
   const [appMode, setAppMode] = useAtom(appModeAtom)
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom)
+  const setActiveView = useSetAtom(activeViewAtom)
   const channelFormDirty = useAtomValue(channelFormDirtyAtom)
   const setSettingsCloseRequested = useSetAtom(settingsCloseRequestedAtom)
   const [searchOpen, setSearchOpen] = useAtom(searchDialogOpenAtom)
@@ -118,6 +119,14 @@ export function GlobalShortcuts(): null {
     const cleanup = window.electronAPI.onMenuCloseTab(handleCloseTab)
     return cleanup
   }, [handleCloseTab])
+
+  // 监听「应用中心 → 领域工作台」菜单事件，切到应用中心视图
+  useEffect(() => {
+    const cleanup = window.electronAPI.onMenuOpenCapabilities(() => {
+      setActiveView('capabilities')
+    })
+    return cleanup
+  }, [setActiveView])
 
   // 同时注册到快捷键系统（用于设置面板展示和自定义，实际触发走 IPC）
   useShortcut('close-tab', handleCloseTab)
