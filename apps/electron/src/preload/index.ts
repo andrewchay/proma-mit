@@ -1429,6 +1429,7 @@ export interface ElectronAPI {
         deleteCampaign: (id: string) => Promise<void>
         listControlActions: () => Promise<import('@gravitas/shared').PaidControlAction[]>
         createControlAction: (input: unknown) => Promise<import('@gravitas/shared').PaidControlAction>
+        updateControlAction: (id: string, patch: unknown) => Promise<import('@gravitas/shared').PaidControlAction | null>
         listRules: () => Promise<import('@gravitas/shared').PaidRule[]>
         createRule: (input: unknown) => Promise<import('@gravitas/shared').PaidRule>
         updateRule: (id: string, patch: unknown) => Promise<import('@gravitas/shared').PaidRule | null>
@@ -3204,6 +3205,7 @@ const electronAPI: ElectronAPI = {
         deleteCampaign: (id) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.DELETE_CAMPAIGN, id),
         listControlActions: () => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.LIST_CONTROL_ACTIONS),
         createControlAction: (input) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.CREATE_CONTROL_ACTION, input),
+        updateControlAction: (id, patch) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.UPDATE_CONTROL_ACTION, id, patch),
         listRules: () => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.LIST_RULES),
         createRule: (input) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.CREATE_RULE, input),
         updateRule: (id, patch) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.UPDATE_RULE, id, patch),

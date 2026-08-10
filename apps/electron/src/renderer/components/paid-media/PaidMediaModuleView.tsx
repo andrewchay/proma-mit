@@ -11,6 +11,9 @@ import { ArrowLeft, Megaphone, Gauge, ClipboardCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { activeViewAtom } from '@/atoms/active-view'
 import { useSetAtom } from 'jotai'
+import { PaidCampaignsPanel } from './PaidCampaignsPanel'
+import { PaidControlPanel } from './PaidControlPanel'
+import { PaidRulesPanel } from './PaidRulesPanel'
 
 type PaidSubView = 'campaigns' | 'control' | 'rules'
 
@@ -58,20 +61,11 @@ export function PaidMediaModuleView(): React.ReactElement {
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-4 space-y-4 text-[13px] text-foreground/70">
-          {subView === 'campaigns' && <PaidPlaceholder title="投放计划" desc="广告 / 预算 / 数据看板（首期只读+建议，无 API 写钱）" />}
-          {subView === 'control' && <PaidPlaceholder title="调控审批" desc="Agent 调控建议（换素材/调预算/暂停）→ 人工审批 → 执行记录" />}
-          {subView === 'rules' && <PaidPlaceholder title="调控规则" desc="红线 / 业务规则 / 软提示 三档规则引擎" />}
+          {subView === 'campaigns' && <PaidCampaignsPanel />}
+          {subView === 'control' && <PaidControlPanel />}
+          {subView === 'rules' && <PaidRulesPanel />}
         </div>
       </div>
-    </div>
-  )
-}
-
-function PaidPlaceholder({ title, desc }: { title: string; desc: string }): React.ReactElement {
-  return (
-    <div className="rounded-lg border border-border/50 p-4">
-      <div className="font-medium text-foreground/85 mb-1">{title}</div>
-      <div className="text-foreground/50">{desc}</div>
     </div>
   )
 }

@@ -100,18 +100,47 @@ interface RawDatabase {
   export(): Uint8Array
 }
 
+function bindParams(stmt: Stmt, params: unknown[]): void {
+  if (params.length === 0) return
+  // sql.js Statement.bind 接受数组
+  ;(stmt as unknown as { bind(p: unknown[]): unknown }).bind(params)
+}
+
 function wrap(raw: RawDatabase, dbPath: string): Compat {
   const prepareStmt = (sql: string): Stmt => raw.prepare(sql)
   return {
     prepare: prepareStmt,
     run(sql: string, ...params: unknown[]) {
-      prepareStmt(sql).run(...params)
+      const stmt = prepareStmt(sql)
+      try {
+        bindParams(stmt, params)
+        ;(stmt as unknown as { step(): boolean }).step()
+      } finally {
+        ;(stmt as unknown as { free(): void }).free()
+      }
     },
     get(sql: string, ...params: unknown[]) {
-      return prepareStmt(sql).get(...params)
+      const stmt = prepareStmt(sql)
+      try {
+        bindParams(stmt, params)
+        const has = (stmt as unknown as { step(): boolean }).step()
+        if (!has) return undefined
+        return camelizeRow((stmt as unknown as { getAsObject(): Row }).getAsObject())
+      } finally {
+        ;(stmt as unknown as { free(): void }).free()
+      }
     },
     all(sql: string, ...params: unknown[]) {
-      return prepareStmt(sql).all(...params)
+      const stmt = prepareStmt(sql)
+      const rows: Row[] = []
+      try {
+        bindParams(stmt, params)
+        const s = stmt as unknown as { step(): boolean; getAsObject(): Row }
+        while (s.step()) rows.push(camelizeRow(s.getAsObject()))
+        return rows
+      } finally {
+        ;(stmt as unknown as { free(): void }).free()
+      }
     },
     persist() {
       const data = raw.export()
@@ -232,14 +261,27 @@ CREATE TABLE IF NOT EXISTS paid_rule (
   name TEXT NOT NULL,
   params TEXT,
   enabled INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
 `
 
 // ===== 行→对象映射辅助 =====
 
+/** snake_case 键 → camelCase（SQLite 列名 → TS 接口字段） */
+function snakeToCamel(key: string): string {
+  return key.replace(/_([a-z])/g, (_m, c) => c.toUpperCase()).replace(/^(.)/, (_m, c) => c.toLowerCase())
+}
+
+/** 把行的键名从 snake_case 转为 camelCase */
+function camelizeRow(row: Row): Row {
+  const out: Row = {}
+  for (const [k, v] of Object.entries(row)) out[snakeToCamel(k)] = v
+  return out
+}
+
 function rowTo<T>(r: Row | undefined): T | null {
-  return r ? (r as unknown as T) : null
+  return r ? (camelizeRow(r) as unknown as T) : null
 }
 
 // ============================================
@@ -525,6 +567,27 @@ export function createPaidControlAction(input: Omit<PaidControlAction, 'id' | 'c
   d.persist()
   const row = d.get('SELECT * FROM paid_control_action WHERE id = ?', id)
   return rowTo<PaidControlAction>(row)!
+}
+
+export function updatePaidControlAction(
+  id: string,
+  patch: Partial<Omit<PaidControlAction, 'id' | 'createdAt'>>,
+): PaidControlAction | null {
+  const d = getMarketingDb()
+  const existing = d.get('SELECT * FROM paid_control_action WHERE id = ?', id)
+  if (!existing) return null
+  const cur = existing as unknown as PaidControlAction
+  const nextStatus = (patch.status as PaidControlAction['status']) ?? cur.status
+  const nextReviewer = patch.reviewer ?? cur.reviewer
+  d.run(
+    `UPDATE paid_control_action SET status=?, reviewer=?, updated_at=datetime('now') WHERE id=?`,
+    nextStatus,
+    nextReviewer,
+    id
+  )
+  d.persist()
+  const row = d.get('SELECT * FROM paid_control_action WHERE id = ?', id)
+  return rowTo<PaidControlAction>(row)
 }
 
 export function listPaidRules(): PaidRule[] {

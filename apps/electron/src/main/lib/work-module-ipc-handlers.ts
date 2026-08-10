@@ -921,6 +921,10 @@ export function registerWorkModuleIpcHandlers(): void {
     await ensureMarketingReady()
     return marketingService.createPaidControlAction(input)
   })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.UPDATE_CONTROL_ACTION, async (_: unknown, id: string, patch) => {
+    await ensureMarketingReady()
+    return marketingService.updatePaidControlAction(id, patch)
+  })
   ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.LIST_RULES, async () => {
     await ensureMarketingReady()
     return marketingService.listPaidRules()
