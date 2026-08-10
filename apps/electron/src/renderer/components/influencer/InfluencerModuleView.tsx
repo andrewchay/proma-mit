@@ -11,6 +11,9 @@ import { ArrowLeft, Users, FileCheck2, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { activeViewAtom } from '@/atoms/active-view'
 import { CreativeVideoPanel } from '@/components/marketing/CreativeVideoPanel'
+import { InfluencerTalentsPanel } from './InfluencerTalentsPanel'
+import { InfluencerReviewsPanel } from './InfluencerReviewsPanel'
+import { InfluencerTrackingPanel } from './InfluencerTrackingPanel'
 import { useSetAtom } from 'jotai'
 
 type InfluencerSubView = 'talents' | 'reviews' | 'tracking'
@@ -62,24 +65,16 @@ export function InfluencerModuleView(): React.ReactElement {
           {subView === 'talents' && (
             <div className="space-y-4">
               <CreativeVideoPanel />
-              <InfluencerPlaceholder title="达人库" desc="KOL / influencer 库、圈选、CRM（能力包已订阅）" />
+              <InfluencerTalentsPanel />
             </div>
           )}
-          {subView === 'reviews' && <InfluencerPlaceholder title="稿件审核" desc="达人稿件三态审核（红/黄/绿）机器人，飞书桥接" />}
-          {subView === 'tracking' && <InfluencerPlaceholder title="内容追踪" desc="达人内容数据追踪与效果记录" />}
+          {subView === 'reviews' && <InfluencerReviewsPanel />}
+          {subView === 'tracking' && <InfluencerTrackingPanel />}
         </div>
       </div>
     </div>
   )
 }
 
-function InfluencerPlaceholder({ title, desc }: { title: string; desc: string }): React.ReactElement {
-  return (
-    <div className="rounded-lg border border-border/50 p-4">
-      <div className="font-medium text-foreground/85 mb-1">{title}</div>
-      <div className="text-foreground/50">{desc}</div>
-    </div>
-  )
-}
 
 export default InfluencerModuleView
