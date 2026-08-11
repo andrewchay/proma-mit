@@ -5,9 +5,8 @@
       <stop offset="1" stop-color="#7A5CFF"/>
     </linearGradient>
   </defs>
-  <!-- Dock 安全区：缩小至约 72%，使视觉尺寸与常见 macOS 应用图标一致。 -->
-  <g transform="translate(144 144) scale(0.71875)">
-    <!-- macOS 图标：自带圆角版，四角透明，不依赖系统遮罩（参考 paa 规范 rx≈22.5%） -->
+  <!-- macOS 图标：素材自身控制圆角和留白，不再额外缩放。 -->
+  <g>
     <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230" fill="#141428"/>
     <g fill="none" stroke="url(#gm)">
       <path d="M 682.2 729.9 A 276.5 276.5 0 1 1 682.2 294.1" stroke-width="107.5"/>
