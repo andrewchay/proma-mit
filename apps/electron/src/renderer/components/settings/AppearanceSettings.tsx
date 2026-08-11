@@ -163,6 +163,22 @@ const ICON_VARIANTS: readonly IconVariant[] = [
   { id: '13-landscape', name: '青绿山水', src: grav13Landscape, previewBg: 'bg-[#D4C4A8]' },
 ] as const
 
+function normalizeAppIconVariantId(variantId: string): string {
+  const legacyVariantIds: Record<string, string> = {
+    black: '02-black',
+    white: '03-white',
+    coral: '04-coral',
+    blue: '05-brand-blue',
+    'veri-peri': '06-periwinkle',
+    periwinkle: '06-periwinkle',
+    magenta: '07-viva-magenta',
+    mocha: '08-mocha',
+    emerald: '09-emerald',
+    gradient: '10-gradient',
+  }
+  return legacyVariantIds[variantId] ?? variantId
+}
+
 /** 根据平台返回缩放快捷键提示 */
 const isMac = navigator.userAgent.includes('Mac')
 const ZOOM_HINT = isMac
@@ -264,7 +280,7 @@ function AppIconPicker(): React.ReactElement {
   // 初始化时读取当前设置
   React.useEffect(() => {
     window.electronAPI.getSettings().then((settings) => {
-      setActiveIcon(settings.appIconVariant ?? 'default')
+      setActiveIcon(normalizeAppIconVariantId(settings.appIconVariant ?? 'default'))
     })
   }, [])
 

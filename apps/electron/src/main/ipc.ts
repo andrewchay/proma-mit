@@ -394,7 +394,24 @@ export function resolveAppIconPath(variantId: string): string | null {
   if (!variantId || variantId === 'default') {
     return join(resourcesDir, 'icon.png')
   }
-  return join(resourcesDir, 'gravitas-logos', `gravitas-${variantId}.png`)
+  const normalizedVariantId = normalizeAppIconVariantId(variantId)
+  return join(resourcesDir, 'gravitas-logos', `gravitas-${normalizedVariantId}.png`)
+}
+
+function normalizeAppIconVariantId(variantId: string): string {
+  const legacyVariantIds: Record<string, string> = {
+    black: '02-black',
+    white: '03-white',
+    coral: '04-coral',
+    blue: '05-brand-blue',
+    'veri-peri': '06-periwinkle',
+    periwinkle: '06-periwinkle',
+    magenta: '07-viva-magenta',
+    mocha: '08-mocha',
+    emerald: '09-emerald',
+    gradient: '10-gradient',
+  }
+  return legacyVariantIds[variantId] ?? variantId
 }
 
 export function registerIpcHandlers(): void {
