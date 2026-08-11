@@ -64,6 +64,20 @@ proma-v2/
   - Radix UI、TipTap、Tailwind CSS
   - 文件解析：`pdf-parse`、`officeparser`、`word-extractor`
 
+### app 服务端 Web Agent 运行时（`@gravitas/*`，apps/server）
+
+当前仓库还包含独立的 Web Agent 运行时空（与上面的桌面端并行）：
+
+- **命名空间**：`@gravitas/shared`、`@gravitas/server`（注意与桌面端 `@proma/*` 不同）。
+- **MCP 服务端执行器**：`apps/server/src/server-mcp-client.ts`（streamable HTTP / SSE 客户端，OAuth 刷新、结果截断）+ `server-mcp-tools.ts`（桥接为 AI SDK 工具）+ OAuth 流程 `server-mcp-oauth.ts`。
+- **连接池 + 工具目录缓存**：`packages/shared/src/utils/agent-runtime-server-mcp-manager.ts`
+  - 连接级复用（按 tenant/user/workspace/server，refCount 归零才 close）。
+  - **工具目录缓存**（借鉴 OpenAI Codex #37970）：同「连接身份 + 条目指纹」命中时跳过 `listTools` 网络往返，TTL 默认 60s。
+  - **指纹规则**：`none`/`bearer`（静态 token 入指纹）可缓存；**OAuth（authorization code / client credentials）返回 null、不缓存**，避免动态凭证/过期 token 泄漏。
+  - `catalogCacheTtlMs=0` 可关闭目录缓存；`clearToolCatalogs()` 清目录（不动连接）。
+- **重度懒连接**（`acquireServerMcpTools`）：任务不预先建连接；工具定义从目录缓存拿（命中 → 零连接），连接仅在真正调用工具时懒建（`ensureConnected` Map+Promise 缓存并发去重），同任务内复用，任务结束 `release()` 统一释放。
+- **Egress 边界**：每次任务遍历所有启用的 HTTP MCP；stdio 只在隔离 worker（`executor`）运行。
+
 ## 常用命令
 
 ```bash
@@ -175,6 +189,9 @@ bun run generate:icons    # 生成应用图标
 | `agent-session-manager.ts` | Agent 会话管理：SDK 消息持久化、会话元数据 CRUD、JSONL 存储 |
 | `agent-prompt-builder.ts` | Agent 系统提示词构建（18KB）：动态上下文构建、内置 Agent 构建、工作区上下文注入 |
 | `agent-permission-service.ts` | Agent 权限管理：工具权限检查、权限模式管理 |
+| `plugin-manager.ts` | 插件管理器：内置/第三方插件启停、`collectContributingTools()` 收集贡献给 Agent 的工具 |
+| `plugins/computer-use-plugin.ts` | Computer Use 插件（`com.gravitas.computer-use`）：把桌面控制工具族以 `agent-tools` surface 贡献；`isSupported()=darwin`，`contributeTools()` 按宿主 `AppSettings.computerUse.{enabled,readOnlyOnly}` 分档裁剪；`isEnabled/setEnabled` 委托宿主配置 |
+| `tool-registry.ts` | 核心工具注册：`createCoreTools()` 已不再硬编码 Computer Use，改由 `appendPluginTools()` 从插件收集（name 去重） |
 | `agent-ask-user-service.ts` | Agent 用户交互：AskUser 请求处理 |
 | `agent-exit-plan-service.ts` | Agent 退出计划服务 |
 | `agent-workspace-manager.ts` | 工作区管理（16KB）：MCP Server 配置、Skills 配置、工作区 CRUD |
