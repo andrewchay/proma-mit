@@ -11,9 +11,14 @@ import {
   CALENDAR_SYNC_IPC_CHANNELS,
   PROJECT_IPC_CHANNELS,
   AGENT_EMPLOYEE_IPC_CHANNELS,
+  INFLUENCER_IPC_CHANNELS,
+  PAID_MEDIA_IPC_CHANNELS,
+  CREATIVE_IPC_CHANNELS,
 } from '@gravitas/shared'
 
 // ===== 日程管家服务 =====
+import { marketingService, ensureMarketingReady } from './marketing/marketing-service'
+import { creativeVideoService } from './marketing/marketing-service'
 import {
   listScheduleEvents,
   getScheduleEvent,
@@ -793,5 +798,143 @@ export function registerWorkModuleIpcHandlers(): void {
       console.log('[ProjectTodoProviders] 检测到外部平台配置变更，重新初始化 Provider')
       initProjectTodoProviders()
     }
+  })
+
+  // ============================================
+  // 营销能力包 — 共享素材 creative
+  // ============================================
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.LIST_PROJECTS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listCreativeProjects()
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.CREATE_PROJECT, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createCreativeProject(input)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.LIST_ASSETS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listCreativeAssets()
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.CREATE_TASK, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createCreativeAsset(input)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.DELETE_ASSET, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.deleteCreativeAsset(id)
+  })
+
+  // ===== 视频生成（共享素材）=====
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.GEN_STORYBOARD, (_: unknown, input) => {
+    return creativeVideoService.generateStoryboard(input)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.RUN_PIPELINE, async (_: unknown, options) => {
+    return creativeVideoService.runPipeline(options)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.PROBE_ASSET, async (_: unknown, videoPath: string) => {
+    return creativeVideoService.probeAsset(videoPath)
+  })
+  ipcMain.handle(CREATIVE_IPC_CHANNELS.CHECK_CREDENTIAL, (_: unknown, engine: 'seedance' | 'minimax-h3') => {
+    return creativeVideoService.checkCredential(engine)
+  })
+
+  // ============================================
+  // 营销能力包 — 达人 influencer
+  // ============================================
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.LIST_TALENTS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listInfluencerTalents()
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.GET_TALENT, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.getInfluencerTalent(id)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.CREATE_TALENT, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createInfluencerTalent(input)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.UPDATE_TALENT, async (_: unknown, id: string, patch) => {
+    await ensureMarketingReady()
+    return marketingService.updateInfluencerTalent(id, patch)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.DELETE_TALENT, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.deleteInfluencerTalent(id)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.LIST_BRIEFS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listInfluencerBriefs()
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.CREATE_BRIEF, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createInfluencerBrief(input)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.LIST_DRAFTS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listInfluencerDrafts()
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.GET_DRAFT, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.getInfluencerDraft(id)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.CREATE_DRAFT, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createInfluencerDraft(input)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.UPDATE_DRAFT, async (_: unknown, id: string, patch) => {
+    await ensureMarketingReady()
+    return marketingService.updateInfluencerDraft(id, patch)
+  })
+  ipcMain.handle(INFLUENCER_IPC_CHANNELS.DELETE_DRAFT, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.deleteInfluencerDraft(id)
+  })
+
+  // ============================================
+  // 营销能力包 — 广告投放 paid-media
+  // ============================================
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.LIST_CAMPAIGNS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listPaidCampaigns()
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.GET_CAMPAIGN, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.getPaidCampaign(id)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.CREATE_CAMPAIGN, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createPaidCampaign(input)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.UPDATE_CAMPAIGN, async (_: unknown, id: string, patch) => {
+    await ensureMarketingReady()
+    return marketingService.updatePaidCampaign(id, patch)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.DELETE_CAMPAIGN, async (_: unknown, id: string) => {
+    await ensureMarketingReady()
+    return marketingService.deletePaidCampaign(id)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.LIST_CONTROL_ACTIONS, async () => {
+    await ensureMarketingReady()
+    return marketingService.listPaidControlActions()
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.CREATE_CONTROL_ACTION, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createPaidControlAction(input)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.UPDATE_CONTROL_ACTION, async (_: unknown, id: string, patch) => {
+    await ensureMarketingReady()
+    return marketingService.updatePaidControlAction(id, patch)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.LIST_RULES, async () => {
+    await ensureMarketingReady()
+    return marketingService.listPaidRules()
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.CREATE_RULE, async (_: unknown, input) => {
+    await ensureMarketingReady()
+    return marketingService.createPaidRule(input)
+  })
+  ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.UPDATE_RULE, async (_: unknown, id: string, patch) => {
+    await ensureMarketingReady()
+    return marketingService.updatePaidRule(id, patch)
   })
 }

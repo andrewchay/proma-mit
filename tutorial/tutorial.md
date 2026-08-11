@@ -183,7 +183,22 @@ Chat 模式不适合用来做深度研究、不适合修改文件、不适合处
 
 #### 渠道配置
 
-Agent 模式目前的内核是 Claude Agent SDK，因此需要在设置里包含至少一个 `Anthropic 协议`的渠道，并且处于开启状态。**Gravitas 商业版本已经默认内置 Gravitas 官方渠道，无需配置，可以跳过配置部分直接开始**。
+Agent 模式需要至少一个可用的 AI 供应商渠道。过去 Agent 内核只能走 Claude SDK，因此必须使用 `Anthropic 协议`渠道；现在 Gravitas 默认使用 **Pi Runtime**（推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime），它们对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）都更友好，不再被强制绑定到单一的 Anthropic 协议。**Gravitas 商业版本已经默认内置 Gravitas 官方渠道，无需配置，可以跳过配置部分直接开始**。
+
+```text
+小贴士：如果你不确定选哪个 runtime，直接用默认的 Pi 即可；Pi 是当前默认 runtime，搭配 deepseek-v4-flash 等模型开箱即用。
+```
+
+#### 如何选择 runtime（Pi / AI SDK / ...）
+
+Gravitas 的 Agent 模式有几种可选的执行 runtime，各自侧重不同：
+
+- **Pi（推荐，默认）**：当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与部分流式输出（partial streaming），对多种模型渠道兼容性好，推荐大多数个人使用场景直接使用。
+- **AI SDK（推荐）**：与 Pi 类似具备完整能力，也是后续服务端 Web 化的优先路径，适合需要面向服务端/多端一致行为的场景。
+- **Proma**：较早的 provider-agnostic runtime，仍可使用，但能力相对有限（不支持 partial streaming），建议新任务优先选 Pi 或 AI SDK。
+- **Claude**：基于 Anthropic Claude Agent SDK 的 runtime，保留 SDK 原生 session / file-history snapshot 能力（fork / rewind 最接近完整时间线恢复），适合需要 SDK 原生快照与历史恢复的场景；通常和其他 runtime 配合使用。
+
+**简单建议**：日常 Agent 任务直接保持默认的 Pi runtime；涉及服务端/多端或偏好 OpenAI-compatible / Google provider 时选 AI SDK；需要 SDK 原生 session 快照恢复时选 Claude。
 
 #### 环境配置
 
@@ -293,7 +308,7 @@ Gravitas Agent 也内置 PPTX 的 Skills，使用前可以打开方便生成对�
 
 ### SubAgent 是如何使用的？
 
-Gravitas 基于 Claude Agent SDK 的 Agent 工具支持 SubAgent。复杂任务中，主 Agent 可以把探索、调研、代码审查等子任务委派给不同 SubAgent，并在消息流中展示调用过程和最终结果。
+Gravitas 的 Agent 工具支持 SubAgent（Pi / AI SDK / Claude runtime 均支持）。复杂任务中，主 Agent 可以把探索、调研、代码审查等子任务委派给不同 SubAgent，并在消息流中展示调用过程和最终结果。
 
 你可以直接描述复杂目标，或明确要求使用某个内置 SubAgent，例如 explorer、researcher、code-reviewer。Gravitas 不再使用旧的团队收件箱和自动续跑机制。
 
@@ -309,7 +324,7 @@ Gravitas 基于 Claude Agent SDK 的 Agent 工具支持 SubAgent。复杂任务�
 
 Workflow 是"**定义一个流程（Definition）→ 发布 → 运行（Run）**"的过程：
 
-- **Definition（流程定义）**：你自己在画布上编排的、可编辑的流程，由**节点 + 连线**组成，像一张流程图。未发布的定义只是草稿，只有\*\*发布（published）\*\*后的流程才能实际运行。
+- **Definition（流程定义）**：你自己在画布上编排的、可编辑的流程，由**节点 + 连线**组成，像一张流程图。未发布的定义只是草稿，只有**发布（published）**后的流程才能实际运行。
 - **Run（一次运行）**：每次真正执行时，Gravitas 会基于已发布的定义生成一份**不可变的执行快照**，逐节点记录状态、审批结果和审计事件，方便你回顾和排查。
 
 画布上可用的**节点种类**包括：

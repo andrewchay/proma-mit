@@ -88,6 +88,28 @@ export function createApplicationMenu(): Menu {
       ],
     },
 
+    // 应用中心菜单（领域能力包 / 工作台入口）
+    {
+      label: '应用中心',
+      submenu: [
+        {
+          label: '领域工作台',
+          accelerator: 'CmdOrCtrl+Shift+D',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow()
+            if (win) {
+              win.webContents.send('menu:open-capabilities')
+            }
+          },
+        },
+        { type: 'separator' as const },
+        {
+          label: '已启用应用',
+          enabled: false,
+        },
+      ],
+    },
+
     // 窗口菜单
     {
       label: '窗口',
