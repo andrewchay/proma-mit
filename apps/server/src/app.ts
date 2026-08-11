@@ -77,7 +77,7 @@ export interface PromaWebServerConfig {
   tenantBudget?: TenantBudgetPolicy
   rateLimit?: { maxTasks: number; windowMs: number }
   /** 未配置时禁用服务端 MCP，防止工作区配置成为 SSRF 入口。 */
-  mcpEgress?: { allowedOrigins: string[]; maxTimeoutMs: number }
+  mcpEgress?: { allowedOrigins: string[]; maxTimeoutMs: number; catalogCacheTtlMs?: number }
   executor?: { endpoint: string; token: string }
   mcpOAuthCallbackBaseUrl?: string
   subtaskLimits?: { maxDepth: number; maxChildrenPerTask: number; maxOutputTokensPerTask: number }
@@ -163,7 +163,7 @@ export function createPromaWebServerApplication(
     ? new HttpOperationsReporter(config.operations)
     : new NoopOperationsReporter())
   const mcpConnections = config.mcpEgress
-    ? new ServerMcpConnectionManager(config.mcpEgress, new HttpServerMcpConnectionFactory(store))
+    ? new ServerMcpConnectionManager(config.mcpEgress, new HttpServerMcpConnectionFactory(store), config.mcpEgress.catalogCacheTtlMs)
     : undefined
   const isolatedExecutor = config.executor ? new HttpIsolatedExecutor(config.executor.endpoint, config.executor.token) : undefined
   const app = createAgentRuntimeWebServer({

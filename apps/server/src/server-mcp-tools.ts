@@ -1,23 +1,38 @@
 import { jsonSchema, tool } from 'ai'
 import type { ToolSet } from 'ai'
+import type { McpServerEntry } from '@gravitas/shared'
 import type { AgentRuntimeMcpToolDefinition, AgentRuntimeWebAgentTurnInput } from '@gravitas/shared/utils'
 import type { ServerMcpConnectionManager } from '@gravitas/shared/utils'
 import type { ServerMcpClientConnection } from './server-mcp-client.ts'
 
 /**
  * 在任务生命周期内取得 MCP 工具，并在任务结束时释放连接引用。
- * 重名工具不会覆盖先注册的服务，避免模型调用被静默路由到另一台服务器。
+ *
+ * 「重度懒连接」（对齐 OpenAI Codex #37970）：
+ * - 工具目录定义优先从进程级缓存读取——命中时任务无需建立任何 MCP 连接。
+ * - 连接仅在真正调用某服务器的某个工具时才懒建立；同一任务内同一服务器
+ *   的后续工具调用复用该连接（Promise 缓存做并发去重），任务结束统一释放。
+ * - 重名工具不会覆盖先注册的服务，避免模型调用被静默路由到另一台服务器。
  */
 export async function acquireServerMcpTools(
   input: AgentRuntimeWebAgentTurnInput,
   manager: ServerMcpConnectionManager,
 ): Promise<{ tools: AgentRuntimeMcpToolDefinition[]; release(): Promise<void> }> {
-  const acquired: Array<{ release(): Promise<void>; connection: ServerMcpClientConnection; serverName: string }> = []
   const tools: AgentRuntimeMcpToolDefinition[] = []
   const names = new Set<string>()
-  try {
-    for (const [serverName, entry] of Object.entries(input.workspace.mcpServers)) {
-      if (!entry.enabled || input.signal.aborted) continue
+  const scopeKey = JSON.stringify([input.scope.tenantId, input.scope.userId, input.workspace.workspaceSlug])
+
+  // 任务级懒连接状态：serverName -> 尚未解析的连接、已解析连接、已 acquire 的 handle。
+  const lazyConnections = new Map<string, ServerMcpClientConnection>()
+  const lazyPromises = new Map<string, Promise<ServerMcpClientConnection>>()
+  const lazyHandles: Array<{ release(): Promise<void> }> = []
+
+  const ensureConnected = (serverName: string, entry: McpServerEntry) => {
+    const cached = lazyConnections.get(serverName)
+    if (cached) return Promise.resolve(cached)
+    const pending = lazyPromises.get(serverName)
+    if (pending) return pending
+    const connecting = (async (): Promise<ServerMcpClientConnection> => {
       const handle = await manager.acquire({
         ...input.scope,
         workspaceSlug: input.workspace.workspaceSlug,
@@ -29,9 +44,27 @@ export async function acquireServerMcpTools(
         await handle.release()
         throw new Error(`MCP ${serverName} 未提供服务端工具调用能力`)
       }
-      const connection = handle.connection
-      acquired.push({ ...handle, connection, serverName })
-      for (const definition of await connection.listTools(input.signal)) {
+      lazyHandles.push(handle)
+      lazyConnections.set(serverName, handle.connection)
+      return handle.connection
+    })().finally(() => lazyPromises.delete(serverName))
+    lazyPromises.set(serverName, connecting)
+    return connecting
+  }
+
+  try {
+    for (const [serverName, entry] of Object.entries(input.workspace.mcpServers)) {
+      if (!entry.enabled || input.signal.aborted) continue
+      const fingerprint = manager.catalogFingerprint(serverName, entry)
+      // 工具目录从进程级缓存读取；未命中时懒建连接做一次 listTools 并写缓存。
+      const { tools: definitions } = await manager.resolveToolCatalog(
+        scopeKey,
+        serverName,
+        fingerprint,
+        input.signal,
+        async () => (await ensureConnected(serverName, entry)).listTools(input.signal),
+      )
+      for (const definition of definitions) {
         const name = sanitizeMcpToolName(`mcp__${serverName}__${definition.name}`)
         if (names.has(name)) throw new Error(`MCP 工具名冲突: ${name}`)
         names.add(name)
@@ -39,13 +72,17 @@ export async function acquireServerMcpTools(
           name,
           description: definition.description,
           inputSchema: definition.inputSchema,
-          execute: (argumentsValue, signal) => connection.callTool(definition.name, argumentsValue, signal),
+          execute: async (argumentsValue, signal) => {
+            const connection = await ensureConnected(serverName, entry)
+            return connection.callTool(definition.name, argumentsValue, signal)
+          },
         })
       }
     }
-    return { tools, release: () => releaseAll(acquired) }
+    // 仅释放本任务懒建立的连接；目录缓存（纯数据）持续跨任务复用。
+    return { tools, release: () => releaseAll(lazyHandles) }
   } catch (error) {
-    await releaseAll(acquired)
+    await releaseAll(lazyHandles)
     throw error
   }
 }

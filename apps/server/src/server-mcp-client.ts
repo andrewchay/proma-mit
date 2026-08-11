@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { McpServerEntry } from '@gravitas/shared'
 import type {
+  McpCatalogToolDefinition,
   ServerMcpConnection,
   ServerMcpConnectionFactory,
   ServerMcpConnectionFactoryInput,
@@ -15,14 +16,8 @@ import { validateServerMcpOAuthEndpoint } from '@gravitas/shared/utils'
 const MAX_MCP_RESULT_BYTES = 256 * 1024
 const OAUTH_REFRESH_SKEW_MS = 30_000
 
-export interface ServerMcpToolDefinition {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown>
-}
-
 export interface ServerMcpClientConnection extends ServerMcpConnection {
-  listTools(signal: AbortSignal): Promise<ServerMcpToolDefinition[]>
+  listTools(signal: AbortSignal): Promise<McpCatalogToolDefinition[]>
   callTool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string>
 }
 
@@ -51,7 +46,7 @@ class HttpServerMcpClientConnection implements ServerMcpClientConnection {
     private readonly timeoutMs: number,
   ) {}
 
-  async listTools(signal: AbortSignal): Promise<ServerMcpToolDefinition[]> {
+  async listTools(signal: AbortSignal): Promise<McpCatalogToolDefinition[]> {
     const result = await withTimeout(this.client.listTools(undefined, { signal }), this.timeoutMs, signal)
     return result.tools.map((tool) => ({
       name: tool.name,
