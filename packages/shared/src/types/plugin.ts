@@ -33,6 +33,7 @@ export type PluginSurfaceType =
   | 'preview'          // 文件预览渲染器
   | 'workflow-node'    // Workflow 节点
   | 'bridge-connector' // 外部平台连接
+  | 'agent-tools'      // 向 Agent 注入工具（如 Computer Use 工具族）
 
 /** 插件订阅的事件类型（基于 P0-2 AppEventEnvelope 五态） */
 export type PluginSubscription =
@@ -41,6 +42,21 @@ export type PluginSubscription =
   | 'app.waiting_action'
   | 'app.completed'
   | 'app.failed'
+
+/**
+ * Computer Use 分档权限声明。
+ *
+ * 该字段是「插件所需/所用的 Computer Use 能力级别上限」，具体运行时启用
+ * 级别由宿主配置（settings）控制，二者互不覆盖：manifest 声明上限，宿主门控决定实际放行。
+ */
+export interface ComputerUsePluginPermissions {
+  /** 是否启用 Computer Use（总开关） */
+  enabled?: boolean
+  /** 仅只读子集：Status / Capabilities / FrontmostApplication / FrontmostWindow / Displays */
+  readOnly?: boolean
+  /** 是否允许写操作：Screenshot / Click / Type / Scroll / Drag / KeyCombo / RequestTakeover */
+  allowWrite?: boolean
+}
 
 /** 声明式权限（细分到最小粒度） */
 export interface PluginPermissions {
@@ -58,7 +74,12 @@ export interface PluginPermissions {
   storage?: boolean
   /** 全局快捷键 */
   globalShortcut?: boolean
-  // 默认禁止：文件系统、Shell、任意 IPC、渠道凭据、麦克风、Computer Use、主进程原生模块
+  /**
+   * Computer Use 分档权限（声明上限）。
+   * 未声明此字段（undefined）视为默认禁止（与历史约定一致）。
+   */
+  computerUse?: ComputerUsePluginPermissions
+  // 默认禁止（不可在此声明即获得，需宿主显式门控）：文件系统、Shell、任意 IPC、渠道凭据、麦克风、主进程原生模块
 }
 
 /** 插件 Manifest */
@@ -118,9 +139,10 @@ export interface PluginInstallInput {
   source: 'bundled' | 'marketplace' | 'local'
 }
 
-/** 第一方内置插件清单（当前仅灵动岛作为样板） */
+/** 第一方内置插件清单（当前含灵动岛、Computer Use） */
 export const BUILTIN_PLUGINS: Array<{ id: string; name: string; version: string }> = [
   { id: 'com.gravitas.dynamic-island', name: '灵动岛通知', version: '1.0.0' },
+  { id: 'com.gravitas.computer-use', name: 'Computer Use', version: '1.0.0' },
 ]
 
 /** 插件管理 IPC 通道 */

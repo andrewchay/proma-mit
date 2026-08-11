@@ -22,7 +22,7 @@ describe('Prompt 构建器', () => {
     const prompt = buildAgentSystemPrompt('你是一个自定义助手。', '/tmp/workspace')
 
     expect(prompt).toContain('你是一个自定义助手。')
-    expect(prompt).toContain('调用 WebBridgeScreenshot 或 ComputerUseScreenshot 后，必须先分析截图内容')
+    expect(prompt).toContain('调用 WebBridgeScreenshot 后，必须先分析截图内容')
   })
 
   test('sdkMessagesToChatMessages 转换文本对话', () => {

@@ -669,6 +669,7 @@ export class AgentOrchestrator {
             })
           })
         : undefined
+
       const queryOptions: ProviderAgnosticAgentQueryOptions = {
         sessionId,
         agentRuntime,

@@ -230,6 +230,17 @@ export interface AppSettings {
   mainWindowState?: MainWindowState
   /** 视觉助手（Vision Relay）：为纯文本 Pi 模型（如 DeepSeek V4）中转图片请求到支持视觉的渠道 */
   visionRelay?: VisionRelayConfig
+  /**
+   * Computer Use 宿主分档配置（host-level gate）。
+   * 决定本机 Agent 会话实际可用的 Computer Use 级别；与插件 manifest 声明的上限配合：
+   * manifest 声明「插件能力上限」，此处是「宿主实际放行级别」，取两者交集。
+   */
+  computerUse?: {
+    /** 是否全局启用 Computer Use（false 则不注册任何 CU 工具） */
+    enabled?: boolean
+    /** 仅只读子集（Status/Capabilities/FrontmostApp/Window/Displays）；true 时禁用写操作 */
+    readOnlyOnly?: boolean
+  }
   /** 飞书 Todo 同步配置（项目管理模块外部同步） */
   feishuTodo?: {
     enabled: boolean

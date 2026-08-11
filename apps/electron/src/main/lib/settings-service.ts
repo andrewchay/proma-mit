@@ -55,14 +55,12 @@ export function getSettings(): AppSettings {
 /**
  * 更新应用设置
  *
- * 合并更新字段并写入文件。
+ * 浅合并顶层字段；对嵌套对象（如 computerUse）做深度合并，避免更新子字段时
+ * 意外丢掉其余子字段。
  */
 export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   const current = getSettings()
-  const updated: AppSettings = {
-    ...current,
-    ...updates,
-  }
+  const updated: AppSettings = mergeNestedSettings(current, updates)
 
   const filePath = getSettingsPath()
 
@@ -76,6 +74,37 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
 
   notifySettingsChange(updated, updates)
   return updated
+}
+
+/** 需要深度合并的嵌套对象字段（更新子字段时保留其余子字段，避免整块替换丢失）。 */
+export const NESTED_MERGE_FIELDS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>([
+  'computerUse',
+  'feishuTodo',
+  'dingtalkTodo',
+  'briefCallback',
+  'visionRelay',
+  'voiceDictation',
+  'mainWindowState',
+  'shortcutOverrides',
+])
+
+/** 纯函数：对嵌套对象字段做深合并（其余字段浅合并）。导出便于单测。 */
+export function mergeNestedSettings(current: AppSettings, updates: Partial<AppSettings>): AppSettings {
+  const merged: Record<string, unknown> = { ...current as unknown as Record<string, unknown> }
+  for (const [key, value] of Object.entries(updates)) {
+    if (NESTED_MERGE_FIELDS.has(key as keyof AppSettings) && isPlainObject(value)) {
+      const currentValue = merged[key]
+      const next = { ...(isPlainObject(currentValue) ? currentValue : {}), ...value }
+      merged[key] = next
+      continue
+    }
+    merged[key] = value
+  }
+  return merged as unknown as AppSettings
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 type SettingsChangeListener = (settings: AppSettings, updates: Partial<AppSettings>) => void

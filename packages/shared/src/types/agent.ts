@@ -1899,6 +1899,10 @@ export const AGENT_IPC_CHANNELS = {
   GET_COMPUTER_USE_STATUS: 'agent:get-computer-use-status',
   /** 请求 Computer Use 所需的系统授权 */
   REQUEST_COMPUTER_USE_PERMISSIONS: 'agent:request-computer-use-permissions',
+  /** 读取宿主 Computer Use 分档配置（settings.computerUse.{enabled,readOnlyOnly}） */
+  GET_COMPUTER_USE_SETTINGS: 'agent:get-computer-use-settings',
+  /** 写入宿主 Computer Use 分档配置 */
+  SET_COMPUTER_USE_SETTINGS: 'agent:set-computer-use-settings',
   /** 查询本地操作审计 */
   LIST_AUDIT_EVENTS: 'agent:list-audit-events',
   /** 导出筛选后的本地操作审计 */

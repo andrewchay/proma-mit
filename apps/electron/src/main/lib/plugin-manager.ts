@@ -13,6 +13,7 @@
 
 import { BUILTIN_PLUGINS } from '@gravitas/shared'
 import type { PluginLifecycleState, PluginManifest, PluginPermissions, PluginSurfaceType, PluginSubscription } from '@gravitas/shared'
+import type { RuntimeToolDefinition } from './agent-runtime/types'
 
 /** 插件运行状态（面向设置 UI） */
 export interface PluginStateView {
@@ -38,7 +39,7 @@ export interface PluginStateView {
 }
 
 /** 内置插件运行时描述（manifest + 能力句柄） */
-interface BuiltinPluginRuntime {
+export interface BuiltinPluginRuntime {
   manifest: PluginManifest
   /** 当前是否启用（联动插件自身 config） */
   isEnabled: () => boolean
@@ -46,6 +47,12 @@ interface BuiltinPluginRuntime {
   setEnabled: (enabled: boolean) => Promise<boolean>
   /** 是否支持当前平台 */
   isSupported: () => boolean
+  /**
+   * 声明式向 Agent 贡献工具（surface: 'agent-tools'）。
+   * 由主进程安全代码以闭包形式提供，避免第三方插件直接加载任意 JS 注入主进程。
+   * 未提供则视为不贡献工具。
+   */
+  contributeTools?: () => RuntimeToolDefinition[]
 }
 
 // ===== 内置插件注册表 =====
@@ -97,6 +104,8 @@ function dynamicIslandRuntime(): BuiltinPluginRuntime {
 /** 内置插件注册表（按 id） */
 const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.dynamic-island', dynamicIslandRuntime],
+  // Computer Use 插件：把系统级桌面控制工具以「插件贡献 agent-tools」方式提供
+  ['com.gravitas.computer-use', () => require('./plugins/computer-use-plugin').computerUsePluginRuntime()],
 ])
 
 /** 安全的字符串字段取值（仅接受 mini 长度以下的用户可控字符串） */
@@ -140,7 +149,7 @@ function sanitizePluginManifest(raw: unknown): PluginManifest | null {
  */
 export function registerPlugin(
   rawManifest: unknown,
-  runtime?: { isEnabled?: () => boolean; setEnabled?: (enabled: boolean) => Promise<boolean>; isSupported?: () => boolean },
+  runtime?: { isEnabled?: () => boolean; setEnabled?: (enabled: boolean) => Promise<boolean>; isSupported?: () => boolean; contributeTools?: () => RuntimeToolDefinition[] },
 ): boolean {
   const manifest = sanitizePluginManifest(rawManifest)
   if (!manifest) { console.warn(`[Diag][plugin] 拒绝注册：manifest 非法/缺 id/name`); return false }
@@ -150,6 +159,7 @@ export function registerPlugin(
     isEnabled: runtime?.isEnabled ?? (() => enabledFlag.get(manifest.id) ?? true),
     setEnabled: runtime?.setEnabled ?? (async (enabled) => { enabledFlag.set(manifest.id, enabled); return true }),
     isSupported: runtime?.isSupported ?? (() => true),
+    contributeTools: runtime?.contributeTools,
   }))
   return true
 }
@@ -221,4 +231,37 @@ export async function setPluginEnabled(pluginId: string, enabled: boolean): Prom
   if (!ok) return null
   const views = listPluginStates()
   return views.find((v) => v.id === pluginId) ?? null
+}
+
+/**
+ * 收集所有「已启用 + 平台支持 且 贡献了 agent-tools」的插件工具。
+ *
+ * 供 Agent 编排器在构建工具集时汇入 `extraTools`。遵循声明式安全边界：
+ * - 仅调用插件自身的 contributeTools 闭包（内置插件安全代码或第三方受管句柄）；
+ * - 未启用 / 平台不支持 / 未贡献工具 的插件直接跳过；
+ * - 空结果返回空数组（无副作用）。
+ */
+export function collectContributingTools(): RuntimeToolDefinition[] {
+  const tools: RuntimeToolDefinition[] = []
+  const factories: Array<{ id: string; factory: () => BuiltinPluginRuntime }> = []
+  for (const [id, factory] of BUILTIN_RUNTIMES) factories.push({ id, factory })
+  for (const [id, factory] of IMPORTED_RUNTIMES) factories.push({ id, factory })
+
+  for (const { id, factory } of factories) {
+    try {
+      const runtime = factory()
+      if (!runtime.isEnabled() || !runtime.isSupported()) continue
+      const contributed = runtime.contributeTools?.()
+      if (contributed) tools.push(...contributed)
+    } catch (error) {
+      console.warn(`[Diag][plugin] 收集 ${id} 的工具失败：`, error)
+    }
+  }
+  return tools
+}
+
+/** 重置插件管理器内部状态（仅测试用，避免跨用例污染全局注册表）。 */
+export function _resetPluginManagerForTests(): void {
+  IMPORTED_RUNTIMES.clear()
+  enabledFlag.clear()
 }

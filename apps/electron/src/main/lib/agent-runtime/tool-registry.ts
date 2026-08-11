@@ -132,36 +132,6 @@ import {
   COMPUTER_USE_DRAG_TOOL_NAME,
   COMPUTER_USE_KEY_COMBO_TOOL_NAME,
   COMPUTER_USE_REQUEST_TAKEOVER_TOOL_NAME,
-  createComputerUseStatusToolDefinition,
-  createComputerUseCapabilitiesToolDefinition,
-  createComputerUseFrontmostApplicationToolDefinition,
-  createComputerUseFrontmostWindowToolDefinition,
-  createComputerUseDisplaysToolDefinition,
-  createComputerUseRequestPermissionsToolDefinition,
-  createComputerUseScreenshotToolDefinition,
-  createComputerUseClickToolDefinition,
-  createComputerUseMoveToolDefinition,
-  createComputerUseDoubleClickToolDefinition,
-  createComputerUseTypeToolDefinition,
-  createComputerUseScrollToolDefinition,
-  createComputerUseDragToolDefinition,
-  createComputerUseKeyComboToolDefinition,
-  createComputerUseRequestTakeoverToolDefinition,
-  executeComputerUseStatusTool,
-  executeComputerUseCapabilitiesTool,
-  executeComputerUseFrontmostApplicationTool,
-  executeComputerUseFrontmostWindowTool,
-  executeComputerUseDisplaysTool,
-  executeComputerUseRequestPermissionsTool,
-  executeComputerUseScreenshotTool,
-  executeComputerUseClickTool,
-  executeComputerUseMoveTool,
-  executeComputerUseDoubleClickTool,
-  executeComputerUseTypeTool,
-  executeComputerUseScrollTool,
-  executeComputerUseDragTool,
-  executeComputerUseKeyComboTool,
-  executeComputerUseRequestTakeoverTool,
 } from './tool-impls/computer-use-tools.ts'
 import { WEB_SEARCH_TOOL_NAME, createWebSearchToolDefinition, executeWebSearchTool } from './tool-impls/web-search-tool.ts'
 import { WEB_FETCH_TOOL_NAME, createWebFetchToolDefinition, executeWebFetchTool } from './tool-impls/web-fetch-tool.ts'
@@ -210,21 +180,6 @@ export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDe
     { ...createWebBridgeUploadToolDefinition(), execute: executeWebBridgeUploadTool },
     { ...createWebBridgeStatusToolDefinition(), execute: executeWebBridgeStatusTool },
     { ...createWebBridgeStopToolDefinition(), execute: executeWebBridgeStopTool },
-    { ...createComputerUseStatusToolDefinition(), execute: executeComputerUseStatusTool },
-    { ...createComputerUseCapabilitiesToolDefinition(), execute: executeComputerUseCapabilitiesTool },
-    { ...createComputerUseFrontmostApplicationToolDefinition(), execute: executeComputerUseFrontmostApplicationTool },
-    { ...createComputerUseFrontmostWindowToolDefinition(), execute: executeComputerUseFrontmostWindowTool },
-    { ...createComputerUseDisplaysToolDefinition(), execute: executeComputerUseDisplaysTool },
-    { ...createComputerUseRequestPermissionsToolDefinition(), execute: executeComputerUseRequestPermissionsTool },
-    { ...createComputerUseScreenshotToolDefinition(), execute: executeComputerUseScreenshotTool },
-    { ...createComputerUseClickToolDefinition(), execute: executeComputerUseClickTool },
-    { ...createComputerUseMoveToolDefinition(), execute: executeComputerUseMoveTool },
-    { ...createComputerUseDoubleClickToolDefinition(), execute: executeComputerUseDoubleClickTool },
-    { ...createComputerUseTypeToolDefinition(), execute: executeComputerUseTypeTool },
-    { ...createComputerUseScrollToolDefinition(), execute: executeComputerUseScrollTool },
-    { ...createComputerUseDragToolDefinition(), execute: executeComputerUseDragTool },
-    { ...createComputerUseKeyComboToolDefinition(), execute: executeComputerUseKeyComboTool },
-    { ...createComputerUseRequestTakeoverToolDefinition(), execute: executeComputerUseRequestTakeoverTool },
   ]
 
   // 有工作区时才注册 ReadSkill：无工作区会话没有可读的 Skill，避免暴露无用工具
@@ -247,7 +202,24 @@ export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDe
   // PH2-F：Agent 互调（他人可调用你的 Agent 做确认/小任务）
   tools.push({ ...createInvokeAgentToolDefinition(), execute: executeInvokeAgentTool })
 
+  // 插件贡献的 agent-tools（如 Computer Use 插件）：已启用 + 平台支持才被收集；
+  // 以 name 去重，避免与核心工具重名冲突。默认启用时保持 historical 行为（在 darwin 上贡献全部 Computer Use 工具）。
+  appendPluginTools(tools)
+
   return tools
+}
+
+/** 把插件贡献的工具并入核心工具集（name 去重，保留先注册者）。 */
+function appendPluginTools(tools: RuntimeToolDefinition[]): void {
+  const existing = new Set(tools.map((tool) => tool.name))
+  // 延迟 require 避免与 plugin-manager / computer-use-plugin 形成初始化阶段循环依赖
+  const { collectContributingTools } = require('../plugin-manager') as { collectContributingTools: () => RuntimeToolDefinition[] }
+  const contributed = collectContributingTools()
+  for (const tool of contributed) {
+    if (existing.has(tool.name)) continue
+    existing.add(tool.name)
+    tools.push(tool)
+  }
 }
 
 /** 工具名称集合（用于白名单校验） */

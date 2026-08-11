@@ -1790,6 +1790,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES, async () => computerUseService.getCapabilities())
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_STATUS, async () => computerUseService.getStatus())
   ipcMain.handle(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS, async () => computerUseService.requestPermissions())
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_SETTINGS, async () => {
+    const settings = getSettings()
+    return settings.computerUse ?? { enabled: true, readOnlyOnly: false }
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.SET_COMPUTER_USE_SETTINGS, async (_event, updates: { enabled?: boolean; readOnlyOnly?: boolean }) => {
+    const settings = getSettings()
+    const next = updateSettings({ computerUse: { ...(settings.computerUse ?? {}), ...updates } })
+    return next.computerUse ?? { enabled: true, readOnlyOnly: false }
+  })
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@gravitas/shared').AgentAuditQuery) => listAgentAuditEvents(query))
   ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@gravitas/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
     const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()!, {

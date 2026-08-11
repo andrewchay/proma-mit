@@ -16,22 +16,34 @@ import { SettingsCard, SettingsSection } from './primitives'
 
 const AI_SDK_PROVIDERS = getAgentCompatibleProviders('ai-sdk')
 
+/** Computer Use 宿主启用级别（写 settings.computerUse.{enabled,readOnlyOnly}） */
+type ComputerUseLevel = 'disabled' | 'readonly' | 'full'
+
+const COMPUTER_USE_LEVELS: Array<{ value: ComputerUseLevel; label: string; description: string }> = [
+  { value: 'disabled', label: '关闭', description: '不注册任何 Computer Use 工具' },
+  { value: 'readonly', label: '只读', description: '仅状态查询与窗口/显示器信息，禁用点击输入等写操作' },
+  { value: 'full', label: '完整', description: '含截图/点击/输入/滚动/拖拽等全部操作（写操作仍需逐次授权）' },
+]
+
 export function AutomationSettings(): React.ReactElement {
   const [, setActiveTab] = useAtom(settingsTabAtom)
   const [capabilities, setCapabilities] = useAtom(computerUseCapabilitiesAtom)
   const [permissionStatus, setPermissionStatus] = useAtom(computerUsePermissionStatusAtom)
   const [loading, setLoading] = useAtom(automationSettingsLoadingAtom)
   const [stopping, setStopping] = React.useState(false)
+  const [level, setLevel] = React.useState<ComputerUseLevel>('full')
 
   const refresh = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [nextCapabilities, nextStatus] = await Promise.all([
+      const [nextCapabilities, nextStatus, nextSettings] = await Promise.all([
         window.electronAPI.getComputerUseCapabilities(),
         window.electronAPI.getComputerUseStatus(),
+        window.electronAPI.getComputerUseSettings(),
       ])
       setCapabilities(nextCapabilities)
       setPermissionStatus(nextStatus)
+      setLevel(!nextSettings.enabled ? 'disabled' : nextSettings.readOnlyOnly ? 'readonly' : 'full')
     } catch (error) {
       console.error('[自动化设置] 读取 Computer Use 状态失败:', error)
       toast.error('读取 Computer Use 状态失败')
@@ -41,6 +53,22 @@ export function AutomationSettings(): React.ReactElement {
   }, [setCapabilities, setLoading, setPermissionStatus])
 
   React.useEffect(() => { void refresh() }, [refresh])
+
+  const changeLevel = async (nextLevel: ComputerUseLevel): Promise<void> => {
+    setLevel(nextLevel)
+    try {
+      const saved = await window.electronAPI.setComputerUseSettings({
+        enabled: nextLevel !== 'disabled',
+        readOnlyOnly: nextLevel === 'readonly',
+      })
+      setLevel(!saved.enabled ? 'disabled' : saved.readOnlyOnly ? 'readonly' : 'full')
+      toast.success(`Computer Use 已切换为：${COMPUTER_USE_LEVELS.find((l) => l.value === (!saved.enabled ? 'disabled' : saved.readOnlyOnly ? 'readonly' : 'full'))?.label}`)
+    } catch (error) {
+      console.error('[自动化设置] 更新 Computer Use 级别失败:', error)
+      toast.error('更新 Computer Use 级别失败')
+      void refresh()
+    }
+  }
 
   const requestPermissions = async (): Promise<void> => {
     setLoading(true)
@@ -99,6 +127,25 @@ export function AutomationSettings(): React.ReactElement {
           <StatusBadge label="窗口识别" value={capabilities?.frontmostWindow} pending={!capabilities} />
         </div>
         {capabilities && <p className="text-xs text-muted-foreground">{capabilities.message} · 截图：{capabilities.screenshot ? '可用' : '不可用'} · 系统输入：{capabilities.input ? '可用' : '不可用'}</p>}
+
+        <div className="border-t pt-4">
+          <div className="mb-2 text-sm font-medium">Computer Use 启用级别</div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {COMPUTER_USE_LEVELS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => void changeLevel(item.value)}
+                disabled={loading}
+                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${level === item.value ? 'border-primary bg-primary/10' : 'border-border bg-muted/40 hover:bg-muted'}`}
+              >
+                <div className="text-sm font-medium">{item.label}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{item.description}</div>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">最高级别会注册全部电脑操作工具；任何写操作仍需通过 Agent 权限逐次确认。级别在此保存到本机设置。</p>
+        </div>
       </SettingsCard>
     </SettingsSection>
 

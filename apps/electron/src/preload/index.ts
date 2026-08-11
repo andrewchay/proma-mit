@@ -533,6 +533,10 @@ export interface ElectronAPI {
   getComputerUseStatus: () => Promise<{ supported: boolean; accessibility: boolean; screenRecording: boolean; message: string }>
   /** 请求 Computer Use 所需系统授权 */
   requestComputerUsePermissions: () => Promise<{ supported: boolean; accessibility: boolean; screenRecording: boolean; message: string }>
+  /** 读取宿主 Computer Use 分档配置 */
+  getComputerUseSettings: () => Promise<{ enabled: boolean; readOnlyOnly: boolean }>
+  /** 写入宿主 Computer Use 分档配置 */
+  setComputerUseSettings: (updates: { enabled?: boolean; readOnlyOnly?: boolean }) => Promise<{ enabled: boolean; readOnlyOnly: boolean }>
   /** 查询本地 Web Bridge / Computer Use 审计（不会上传） */
   listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
   /** 将当前筛选结果导出为用户选择位置的 JSONL */
@@ -1902,6 +1906,8 @@ const electronAPI: ElectronAPI = {
   getComputerUseCapabilities: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES),
   getComputerUseStatus: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_STATUS),
   requestComputerUsePermissions: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.REQUEST_COMPUTER_USE_PERMISSIONS),
+  getComputerUseSettings: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_SETTINGS),
+  setComputerUseSettings: (updates: { enabled?: boolean; readOnlyOnly?: boolean }) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_COMPUTER_USE_SETTINGS, updates),
   listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
   exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
   listProactiveSchedules: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES),
