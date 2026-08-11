@@ -2,21 +2,22 @@
 
 > Gravitas is a derivative fork of the open-source AI desktop app **Proma** (github.com/ErlichLiu/Proma). Unless noted, the wording reflects this project.
 
-Proma is a local-first AI desktop app that brings multi-model Chat, general-purpose Agent workflows, workspaces, Skills, MCP, remote bots, and memory into one open-source client.
+Gravitas is a local-first AI desktop app that brings multi-model Chat, general-purpose Agent workflows, workspaces, Skills, MCP, remote bots, and memory into one open-source client.
 
-It is not just another chat box. Proma is meant to become a long-lived Agent workbench for your personal workflows: use Chat for simple answers, use Agent when the task needs to act on files, tools, projects, and longer context.
+It is not just another chat box. Gravitas is meant to become a long-lived Agent workbench for your personal workflows: use Chat for simple answers, use Agent when the task needs to act on files, tools, projects, and longer context.
 
 ![Proma Poster](https://img.erlich.fun/personal-blog/uPic/pb.png)
 
 [中文 README](./README.md) | [Beginner Tutorial](./tutorial/tutorial.md) | [Open-Source Release](https://github.com/ErlichLiu/Proma/releases) | [Commercial Version](https://proma.cool/download)
 
-## What Proma Can Do
+## What Gravitas Can Do
 
 - **Chat mode**: multi-model conversations, attachments, image input, Markdown / Mermaid / KaTeX / code highlighting, parallel conversations, system prompts, and context controls.
-- **Agent mode**: general-purpose Agent powered by `@anthropic-ai/claude-agent-sdk`, with workspace isolation, permission modes, file operations, streaming output, plan confirmation, and ask-user interactions.
+- **Agent mode**: general-purpose Agent with Pi, AI SDK, Claude, and Proma runtimes (default **Pi**, recommended **Pi** and **AI SDK**), workspace isolation or opening a local project directly, permission modes, file operations, long-running streaming output, plan confirmation, and ask-user interactions.
 - **SubAgents / Tasks**: complex tasks can be delegated through the Claude Agent SDK Agent tool, with sub-agent calls and results shown in the message stream.
+- **Workflow mode**: turn a recurring process into a reusable visual flow on a canvas (start / end, agent, tool, skill, transform, condition, and approval nodes), publish it, and run it manually, on a schedule, or on an event trigger. It supports node-level capability allowlists frozen at publish time, failure/retry and error routing, human approvals, and credential-free template distribution / upgrade / rollback. Once orchestrated, the flow runs on your terms without re-describing it each time.
 - **Skills & MCP**: each workspace can manage its own Skills, MCP servers, and workspace files.
-- **Work modules (Project Management / Schedule / Automation)**: the left work-module area provides enterprise project management (projects / tasks / subtasks / kanban / meeting-note import with AI extraction / risk reports, with Feishu / DingTalk sync, one-click pull of meeting notes from DingTalk / Feishu / Lark cloud docs (docx / sheets / wiki / bitable) with AI task-draft extraction, and **AI Employees** — tasks assigned to an AI employee run unattended and write results back: safe-by-default permissions with per-task Bash/write/web requests, same-project concurrency queueing, 60s heartbeat, optional Workflow SOP binding as executor, and AI dimensions in project summary / risk report / team efficiency overview), a schedule manager (month calendar + task kanban + natural-language creation + conflict detection + multi-calendar-source sync, including macOS EventKit bridging and smart reminders), and an automation hub (schedules + run history + running-task center). Both work modules and the settings panel use grouped navigation driven by a module registry to avoid entry sprawl.
+- **Work modules (Project Management / Schedule / Automation)**: the left work-module area provides enterprise project management and task tracking (projects / tasks / subtasks / kanban / meeting-note import with AI extraction / risk reports, with Feishu / DingTalk sync, one-click pull of meeting notes from DingTalk / Feishu / Lark cloud docs with AI task-draft extraction, and **AI Employees** — tasks assigned to an AI employee run unattended and write results back: safe-by-default permissions with per-task Bash/write/web requests, same-project concurrency queueing, 60s heartbeat, optional Workflow SOP binding as executor, and AI dimensions in project summary / risk report / team efficiency overview), a schedule manager (month calendar + task kanban + natural-language creation + conflict detection + multi-calendar-source sync, including macOS EventKit bridging and smart reminders), and an automation hub (schedules + run history + running-task center). Project management supports two modes — a **project-workspace mode** (bind an Agent workspace directly to a local project directory so the Agent reads and writes files rooted at that project) and a **task-tracking mode** (the projects / tasks / kanban system above). Both work modules and the settings panel use grouped navigation driven by a module registry to avoid entry sprawl.
 - **Remote bots**: Lark / Feishu bot bridging is supported, with DingTalk and WeChat bridge entry points also present in the app.
 - **Memory and tools**: Chat and Agent can share memory, with web search, built-in Chat tools, and Agent recommendation helpers.
 - **Local-first data**: conversations, workspaces, attachments, settings, and Skills are stored under `~/.proma/` as JSON / JSONL files, without a local database.
@@ -32,10 +33,10 @@ If you want fewer API setup steps, you can also use the [Proma commercial versio
 
 ### First Setup
 
-1. Open Proma and finish the environment check. Agent mode depends on local tooling, especially Git, Node.js / Bun, and a usable shell.
+1. Open Gravitas and finish the environment check. Agent mode depends on local tooling, especially Git, Node.js / Bun, and a usable shell.
 2. Go to **Settings > Channels**, add at least one AI provider channel, and fill in Base URL, API Key, and model list.
 3. Chat mode can use OpenAI, Anthropic, Google, or OpenAI-compatible channels.
-4. Agent mode requires an Anthropic or Anthropic-compatible channel, such as Anthropic, DeepSeek, Kimi API, or Kimi Coding Plan.
+4. Agent mode defaults to the **Pi runtime**, and we recommend using **Pi** and **AI SDK**. Pi works out of the box with many channel protocols (Anthropic, OpenAI-compatible, Google, and more); AI SDK also supports OpenAI-compatible as well as Anthropic and Google provider packages, and is the priority path for the upcoming server/Web direction. The Claude runtime requires an Anthropic or Anthropic-compatible channel; Proma remains usable as an earlier provider-agnostic runtime but is not the first choice.
 5. Go to **Settings > Agent** and choose the default Agent channel, model, and workspace.
 6. Configure memory, web search, or Feishu / DingTalk / WeChat bridges from their corresponding settings tabs if needed.
 
@@ -55,7 +56,13 @@ If you want fewer API setup steps, you can also use the [Proma commercial versio
 - Work that needs MCP, Skills, Shell, Git, project files, or external context.
 - Tasks that benefit from permissions, plan mode, background execution, or remote bot follow-up.
 
-In short: **use Chat when you need an answer; use Agent when you need work to be done.**
+### Use Workflow For
+
+- Turning a recurring process into a reusable visual flow (agent, skill, MCP tool, condition, and approval nodes included) so future runs only need a trigger.
+- Scheduled, event-driven, or human-approval-gated processes, such as digest roundups, scheduled report generation, or multi-step processing followed by manual confirmation.
+- Flows you want to crystallize and reuse across workspaces with consistent execution (capability convergence and credential-free template distribution).
+
+In short: **use Chat when you need an answer; use Agent when you need work to be done; use Workflow when you want to harden a process and run it repeatedly on your terms.**
 
 ## Screenshots
 
@@ -63,34 +70,34 @@ In short: **use Chat when you need an answer; use Agent when you need work to be
 
 Use Chat for lightweight but practical analysis: compare audience needs, generate a table, and shape first-screen README copy quickly.
 
-![Proma Chat analysis](./docs/assets/screenshots/proma-chat-demo.png)
+![Gravitas Chat analysis](./docs/assets/screenshots/proma-chat-demo.png)
 
 ### Agent Workbench
 
 Agent works inside a workspace, reads project files, progresses through tasks, outputs structured findings, and keeps reusable files visible in the right-side workspace panel.
 
-![Proma Agent workbench](./docs/assets/screenshots/proma-agent-demo.png)
+![Gravitas Agent workbench](./docs/assets/screenshots/proma-agent-demo.png)
 
 ### Skills
 
 Each workspace can keep its own reusable Skills. The `feedback-synthesis` Skill shown here turns scattered feedback, interviews, and issues into themes, evidence, and priority suggestions.
 
-![Proma workspace Skills](./docs/assets/screenshots/proma-skills-demo.png)
+![Gravitas workspace Skills](./docs/assets/screenshots/proma-skills-demo.png)
 
 ### Skills & MCP
 
 The same workspace can manage stdio and HTTP MCP servers, enabling or disabling external context per project.
 
-![Proma MCP settings](./docs/assets/screenshots/proma-mcp-demo.png)
+![Gravitas MCP settings](./docs/assets/screenshots/proma-mcp-demo.png)
 
 ### Streaming Voice Input
 
-Proma supports Doubao-powered streaming voice input, both inside Proma and across the desktop:
+Gravitas supports Doubao-powered streaming voice input, both inside Gravitas and across the desktop:
 
-- Inside Proma: press Ctrl + Backtick to start recognition, then press it again to finish and insert the transcript into the active Proma input box.
-- Outside Proma: press Ctrl + Backtick to start recognition, then press it again to finish and insert the transcript at the current cursor position. If there is no active cursor, Proma writes the transcript to the clipboard.
+- Inside Gravitas: press Ctrl + Backtick to start recognition, then press it again to finish and insert the transcript into the active Gravitas input box.
+- Outside Gravitas: press Ctrl + Backtick to start recognition, then press it again to finish and insert the transcript at the current cursor position. If there is no active cursor, Gravitas writes the transcript to the clipboard.
 
-![Proma voice input](./docs/assets/screenshots/proma-typeless-input.png)
+![Gravitas voice input](./docs/assets/screenshots/proma-typeless-input.png)
 
 ## Supported Providers
 
@@ -108,11 +115,11 @@ Proma supports Doubao-powered streaming voice input, both inside Proma and acros
 | Qwen | Supported | Supported | Anthropic-compatible protocol |
 | Custom endpoint | Supported | Not yet | OpenAI-compatible protocol |
 
-Agent mode is powered by Claude Agent SDK, so it currently requires an Anthropic or Anthropic-compatible channel. Chat mode uses Provider Adapters from `@proma/core` to support different protocols.
+**We recommend using Pi and AI SDK.** Pi is the current default runtime and supports tools, MCP, Plan, AskUser, sub-agents, and partial streaming across many channel protocols, making it a good fit for most everyday personal tasks; AI SDK offers similar capabilities and is also the priority path for the upcoming server/Web direction. The Claude runtime still retains native SDK session / snapshot capabilities (fork / rewind closest to full timeline recovery); Proma remains usable as an earlier provider-agnostic runtime but is more limited and new tasks should prefer Pi or AI SDK. Chat mode uses Provider Adapters from `@proma/core` to support different protocols.
 
 ## Local Data
 
-Proma stores data in local files so it is easy to back up, migrate, and inspect.
+Gravitas stores data in local files so it is easy to back up, migrate, and inspect.
 
 ```text
 ~/.proma/
@@ -140,7 +147,7 @@ API keys are encrypted through Electron `safeStorage` before being written to `c
 
 ## Development
 
-Proma is a Bun workspace monorepo.
+Gravitas is a Bun workspace monorepo.
 
 ```text
 proma-v2/
@@ -214,7 +221,7 @@ bun run dist:fast
 
 ## Architecture
 
-Proma's core communication path is:
+Gravitas's core communication path is:
 
 ```text
 shared types and IPC constants
@@ -238,7 +245,7 @@ Renderer state is managed with Jotai. Key atoms live in `apps/electron/src/rende
 
 ## Packaging Notes
 
-`@anthropic-ai/claude-agent-sdk` uses platform native binaries since `0.2.113+`. Proma marks the SDK as external in esbuild and includes the SDK main package plus platform subpackages in `electron-builder.yml`.
+`@anthropic-ai/claude-agent-sdk` uses platform native binaries since `0.2.113+`. Gravitas marks the SDK as external in esbuild and includes the SDK main package plus platform subpackages in `electron-builder.yml`.
 
 When changing packaging configuration, make sure:
 
@@ -263,7 +270,7 @@ Before opening a PR, please check:
 - Bump the patch version of affected packages when behavior changes.
 - Add focused tests where possible, especially for shared logic, IPC contracts, and persistence formats.
 
-Proma currently has a PR bounty program. You can leave your email in the PR description for follow-up.
+Gravitas currently has a PR bounty program. You can leave your email in the PR description for follow-up.
 
 ![Proma PR Bounty](https://img.erlich.fun/personal-blog/uPic/PR%20%E8%B5%A0%E9%87%91%201.png)
 

@@ -16,13 +16,14 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 ## 现在能做什么
 
 - **Chat 模式**：多模型对话、附件解析、图片输入、Markdown / Mermaid / KaTeX / 代码高亮、并排对话、系统提示词、上下文管理。
-- **Agent 模式**：支持 Claude、Proma provider-agnostic、AI SDK、Pi 等 runtime，提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问。
+- **Agent 模式**：支持 Pi、AI SDK、Claude、Proma 等 runtime（默认 **Pi**，推荐 **Pi** 与 **AI SDK**），提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问。
 - **Web Bridge（P0）**：Proma / AI SDK runtime 可打开独立、可见且隔离的受管浏览器，读取页面与结构化交互元素、截图、滚动、受控下载，并按逐次确认执行导航、Chrome CDP 接入、点击和输入；运行中的 Bridge 会在 Agent 标题栏显示状态并可一键停止，网页不能自行打开未受管窗口。
 - **Computer Use（macOS P0）**：Proma / AI SDK runtime 可在用户授权后列出显示器、读取指定屏幕截图、识别前台应用/窗口，并控制鼠标、键盘和滚动；屏幕读取和每一项桌面操作均经过 Agent 权限流程。
-- **SubAgent / Tasks**：复杂任务可以通过 Agent 工具拆分为子 Agent / Task，并在消息流中展示调用过程和结果；Proma / AI SDK runtime 已复用同一套核心工具体系。
+- **SubAgent / Tasks**：复杂任务可以通过 Agent 工具拆分为子 Agent / Task，并在消息流中展示调用过程和结果；Pi / AI SDK / Claude runtime 均已复用同一套核心工具体系。
+- **Workflow 模式**：把反复要做的流程在画布上编排成可视化执行链（start / end、agent、tool、skill、transform、condition、approval 等节点），发布后可手动、定时或事件触发运行；支持节点能力白名单发布冻结、失败重试与错误路由、人工审批、无凭证模板的分发 / 升级 / 回滚，把可复用的工作流沉淀下来按设定的方式和时机反复执行。
 - **服务端 Web 路线（P0–P5 基础能力）**：提供独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；生产 OIDC/JWT、KMS 轮换、管理员审计、完整 Web UI 与真实 provider E2E 仍待后续阶段。
 - **Skills & MCP**：每个工作区可以独立配置 Skills、MCP Server 和工作区文件，适合沉淀可复用能力。
-- **工作模块（项目管理 / 日程管家 / 自动化）**：左侧工作模块提供企业级项目管理（项目 / 任务 / 子任务 / 看板 / 会议纪要导入与 AI 提取 / 风险报告，支持飞书 / 钉钉同步，会议纪要可从钉钉 / 飞书 / Lark 云文档（docx / 表格 / 知识库 / 多维表格）一键拉取并由 AI 自动提取任务草稿，并可定义 **AI 员工**——指派任务后由 Agent 无人值守执行并回写结果：默认安全模式、按任务申请 Bash/写文件/联网权限、同项目并发排队、60s 心跳保活、可绑定 Workflow SOP 作为执行器、项目摘要/风险报告/AI 团队效能看板纳入 AI 维度）、日程管家（月视图日历 + 任务看板 + 自然语言创建 + 冲突检测 + 多日历源同步，含 macOS EventKit 桥接与智能提醒）与自动化（定时任务 + 运行记录 + 自动任务运行中心聚合）。工作模块与设置面板均为分组导航（模块注册表驱动），避免入口膨胀。
+- **工作模块（项目管理 / 日程管家 / 自动化）**：左侧工作模块提供企业级项目管理与任务跟踪（项目 / 任务 / 子任务 / 看板 / 会议纪要导入与 AI 提取 / 风险报告，支持飞书 / 钉钉同步，会议纪要可从钉钉 / 飞书 / Lark 云文档一键拉取并由 AI 自动提取任务草稿，并可定义 **AI 员工**——指派任务后由 Agent 无人值守执行并回写结果：默认安全模式、按任务申请 Bash/写文件/联网权限、同项目并发排队、60s 心跳保活、可绑定 Workflow SOP 作为执行器、项目摘要/风险报告/AI 团队效能看板纳入 AI 维度），与管理性子模块并行的还有日程管家（月视图日历 + 任务看板 + 自然语言创建 + 冲突检测 + 多日历源同步，含 macOS EventKit 桥接与智能提醒）与自动化（定时任务 + 运行记录 + 自动任务运行中心聚合）。工作模块与设置面板均为分组导航（模块注册表驱动），避免入口膨胀。项目管理同时支持 **项目工作区模式**（把 Agent 工作区直接绑定到本地项目目录，Agent 以该项目为根目录读写文件）与 **项目任务跟踪模式**（上面的项目 / 任务 / 看板体系），更多说明见下方「使用已有本地项目」与教程。
 - **远程机器人**：支持飞书 / Lark 机器人桥接，并已提供钉钉、微信桥接入口，用手机或群聊触发本机 Agent 工作流。
 - **记忆与工具**：Chat 和 Agent 可共享记忆能力，并支持联网搜索、内置 Chat 工具、Agent 推荐等辅助能力。
 - **目标管理（Goal，借鉴 LoopX）**：长生命周期目标跨会话追踪，支持 todos（所有权 / 声明）、用户门控（Gate）、证据沉淀与配额上限；会话可一键绑定到目标，Agent 运行中可主动读取 / 领取 / 完成 todo、追加证据，会话完成自动沉淀证据，自动化不可推进时自动阻断。后台 **目标（Goals）** 看板提供跨工作区聚合、阶段筛选、证据折叠导出与配额展示。
@@ -41,22 +42,22 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 
 ### 首次配置
 
-1. 打开 Proma，先完成环境检查。Agent 模式依赖本机基础环境，尤其是 Git、Node.js / Bun 以及可用的 Shell。
+1. 打开 Gravitas，先完成环境检查。Agent 模式依赖本机基础环境，尤其是 Git、Node.js / Bun 以及可用的 Shell。
 2. 进入 **设置 &gt; 渠道**，添加至少一个 AI 供应商渠道，填写 Base URL、API Key 和模型列表。
 3. Chat 模式可以使用 OpenAI、Anthropic、Google 或 OpenAI 兼容协议的渠道。
-4. Agent 模式默认可使用 Claude / Proma / AI SDK / Pi runtime。Claude runtime 需要 Anthropic 或 Anthropic 兼容协议；AI SDK runtime 支持 OpenAI-compatible 以及 Anthropic、Google provider package。
+4. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）都兼容，开箱即用；AI SDK 支持 OpenAI-compatible 以及 Anthropic、Google provider package，也是后续服务端 Web 化的优先路径。Claude runtime 需要 Anthropic 或 Anthropic 兼容协议；Proma 作为较早的 provider-agnostic runtime 仍可使用但非首选。
 5. 进入 **设置 &gt; Agent**，选择默认 Agent 渠道、模型和工作区。
 6. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接，在设置页对应 Tab 中继续配置。
 
 ### 使用已有本地项目
 
-在 Agent 左侧的“工作区”栏点击文件夹加号，选择已有项目目录。Proma 会把该目录作为 Agent 的实际工作目录（cwd）：文件浏览、`@` 文件引用和变更检测都会指向该项目，Agent 可以直接读写项目文件。
+在 Agent 左侧的“工作区”栏点击文件夹加号，选择已有项目目录。Gravitas 会把该目录作为 Agent 的实际工作目录（cwd）：文件浏览、`@` 文件引用和变更检测都会指向该项目，Agent 可以直接读写项目文件。
 
-选择本地项目不会把会话记录、MCP 配置或 Skills 写入项目根目录；这些仍保存在 Proma 的私有配置目录。普通“+”按钮则继续创建原有的隔离工作区。删除本地项目工作区只会移除 Proma 中的关联，不会删除项目文件夹。
+选择本地项目不会把会话记录、MCP 配置或 Skills 写入项目根目录；这些仍保存在 Gravitas 的私有配置目录。普通“+”按钮则继续创建原有的隔离工作区。删除本地项目工作区只会移除 Gravitas 中的关联，不会删除项目文件夹。
 
 ### 使用 Web Bridge
 
-在 Proma 或 AI SDK runtime 中，Agent 可通过 `WebBridgeNavigate` 打开网页，并用 `WebBridgeSnapshot`、`WebBridgeScreenshot`、`WebBridgeScroll` 查看页面。`WebBridgeNavigate`、`WebBridgeClick`、`WebBridgeType`、`WebBridgeDownload` 和 `WebBridgeUpload` 均需要逐次经过 Agent 权限流程，不能“始终允许”。上传时会额外弹出系统文件选择器：Agent 不能传入或读取本地路径，最多选择 10 个文件、总计 50MB，且绝对路径不会返回给模型。登录凭据、敏感信息、提交表单、支付、删除或授权等操作仍应由用户在最后一步确认或接管。
+在 Gravitas 或 AI SDK runtime 中，Agent 可通过 `WebBridgeNavigate` 打开网页，并用 `WebBridgeSnapshot`、`WebBridgeScreenshot`、`WebBridgeScroll` 查看页面。`WebBridgeNavigate`、`WebBridgeClick`、`WebBridgeType`、`WebBridgeDownload` 和 `WebBridgeUpload` 均需要逐次经过 Agent 权限流程，不能“始终允许”。上传时会额外弹出系统文件选择器：Agent 不能传入或读取本地路径，最多选择 10 个文件、总计 50MB，且绝对路径不会返回给模型。登录凭据、敏感信息、提交表单、支付、删除或授权等操作仍应由用户在最后一步确认或接管。
 
 如需复用已有 Chrome 的登录态，可由用户自行以 `--remote-debugging-port=9222` 启动 Chrome，然后让 Agent 使用 `WebBridgeChromeTargets` 和 `WebBridgeConnectChrome` 连接指定页面。该 Bridge 仅连接 `127.0.0.1` 的调试端口，不会启动或关闭 Chrome；连接与所有有状态操作均走权限确认。
 
@@ -66,14 +67,14 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 
 Computer Use 的正式支持范围为 Proma runtime 与 AI SDK runtime；Claude runtime 和 Pi runtime 仅做工具发现、权限拒绝与文本降级的兼容性验证，不承诺完整视觉输入或用户接管语义。
 
-Computer Use 目前仅在 macOS 提供原生系统控制，包含状态/能力查询、显示器枚举、前台应用和窗口识别、授权请求、截图、移动、点击、双击、拖拽、受限快捷键、输入与滚动。`ComputerUseScreenshot` 返回 `display_id` 和 `coordinateScale`；后续操作带回该缩放值即可自动将截图像素坐标换算为显示器逻辑坐标，适用于 Retina 和多显示器布局。敏感输入、支付、授权、发布、删除和最终提交会进入专用“用户接管”状态，Agent 暂停，用户完成后才继续。Windows/Linux 已保留相同工具接口和跨平台安装包资源，但 `ComputerUseCapabilities` 会明确报告未实现原生控制的降级状态；实际输入注入与权限流程须在对应系统真机验收。首次使用时，Agent 会通过 `ComputerUseRequestPermissions` 请求系统授权；在 macOS **系统设置 &gt; 隐私与安全性** 中为 Proma 打开：
+Computer Use 目前仅在 macOS 提供原生系统控制，包含状态/能力查询、显示器枚举、前台应用和窗口识别、授权请求、截图、移动、点击、双击、拖拽、受限快捷键、输入与滚动。`ComputerUseScreenshot` 返回 `display_id` 和 `coordinateScale`；后续操作带回该缩放值即可自动将截图像素坐标换算为显示器逻辑坐标，适用于 Retina 和多显示器布局。敏感输入、支付、授权、发布、删除和最终提交会进入专用“用户接管”状态，Agent 暂停，用户完成后才继续。Windows/Linux 已保留相同工具接口和跨平台安装包资源，但 `ComputerUseCapabilities` 会明确报告未实现原生控制的降级状态；实际输入注入与权限流程须在对应系统真机验收。首次使用时，Agent 会通过 `ComputerUseRequestPermissions` 请求系统授权；在 macOS **系统设置 &gt; 隐私与安全性** 中为 Gravitas 打开：
 
 Windows 与 Linux 安装包会保留 Computer Use 能力查询，但当前会明确显示“控制不可用”；在对应平台完成原生输入实现和真机权限验收前，不会启用鼠标、键盘或窗口控制。
 
 1. **辅助功能**：允许鼠标点击、键盘输入和滚动；
 2. **屏幕与系统音频录制**：允许读取屏幕画面。
 
-无需管理员密码、完全磁盘访问或输入监控权限。权限只允许 Proma 具备系统能力；Agent 每次读取屏幕或控制桌面仍会显示应用内确认，不能选择“本次会话总是允许”，子 Agent 也不能自动批准。密码、验证码、密钥、支付和最终提交等敏感步骤必须由用户接管。
+无需管理员密码、完全磁盘访问或输入监控权限。权限只允许 Gravitas 具备系统能力；Agent 每次读取屏幕或控制桌面仍会显示应用内确认，不能选择“本次会话总是允许”，子 Agent 也不能自动批准。密码、验证码、密钥、支付和最终提交等敏感步骤必须由用户接管。
 
 ### 服务端 Web 本地验收
 
@@ -119,7 +120,13 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 - 使用 MCP、Skills、Shell、Git、项目文件等外部上下文。
 - 需要权限确认、计划模式、后台任务或远程机器人持续跟进的工作。
 
-简单说：**只需要回答时用 Chat，需要行动和交付结果时用 Agent。**
+### Workflow 适合
+
+- 把反复要做的流程一次性编排成可视化流程（含 Agent、Skill、MCP 工具、条件分支、人工审批等节点），以后只需按设定触发。
+- 定时、事件驱动或需要人工审批流转的业务，例如订阅整理、定时出报告、多步处理后再人工确认。
+- 需要沉淀、复用到多个工作区并保证执行一致（能力收敛、无凭证模板分发）的流程。
+
+简单说：**只需要回答时用 Chat，需要行动和交付结果时用 Agent，需要把流程固化下来反复执行时用 Workflow。**
 
 ## 截图
 
@@ -127,35 +134,35 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 用 Chat 处理轻量但真实的分析任务：整理读者关注点、生成对比表，并把首屏文案快速定稿。
 
-![Proma Chat 快速分析](<./docs/assets/screenshots/proma-chat-demo.png>)
+![Gravitas Chat 快速分析](<./docs/assets/screenshots/proma-chat-demo.png>)
 
 ### Agent 工作台
 
 Agent 在工作区里读取文件、推进任务、输出表格化结论，并把可复用文件保留在右侧工作区面板中。
 
-![Proma Agent 工作台](<./docs/assets/screenshots/proma-agent-demo.png>)
+![Gravitas Agent 工作台](<./docs/assets/screenshots/proma-agent-demo.png>)
 
 ### Skills
 
 每个工作区都可以沉淀专属 Skills。截图中的 `feedback-synthesis` 用于把用户反馈、访谈记录和 issue 聚合成主题、证据与优先级建议。
 
-![Proma 工作区 Skills](<./docs/assets/screenshots/proma-skills-demo.png>)
+![Gravitas 工作区 Skills](<./docs/assets/screenshots/proma-skills-demo.png>)
 
 ### Skills & MCP
 
 同一个工作区可以管理 stdio / HTTP MCP Server，按需启用或关闭，让 Agent 在不同项目里获得不同的外部上下文。
 
-![Proma MCP 配置](<./docs/assets/screenshots/proma-mcp-demo.png>)
+![Gravitas MCP 配置](<./docs/assets/screenshots/proma-mcp-demo.png>)
 
 ### 流式语音输入(支持全局输入)
 
-Proma 支持豆包的流式语音输入功能，并且支持在 Proma 内使用和 Proma 外部使用：
+Gravitas 支持豆包的流式语音输入功能，并且支持在 Gravitas 内使用和 Gravitas 外部使用：
 
-- Proma 内部使用：Ctrl + \` 触发识别，再次按下结束自动输入到 Proma 内对应的输入框
-- Proma 外部使用：Ctrl + \` 触发识别，再次按下结束自动输入到当前的光标所在处，如无光标则默认写入到剪贴板
+- Gravitas 内部使用：Ctrl + \` 触发识别，再次按下结束自动输入到 Gravitas 内对应的输入框
+- Gravitas 外部使用：Ctrl + \` 触发识别，再次按下结束自动输入到当前的光标所在处，如无光标则默认写入到剪贴板
 - 
 
-![Proma 语音输入](<./docs/assets/screenshots/proma-typeless-input.png>)
+![Gravitas 语音输入](<./docs/assets/screenshots/proma-typeless-input.png>)
 
 ## 支持的模型渠道
 
@@ -173,11 +180,11 @@ Proma 支持豆包的流式语音输入功能，并且支持在 Proma 内使用�
 | 通义千问 | 支持 | 支持 | Anthropic 兼容协议 |
 | 自定义端点 | 支持 | 支持 | OpenAI 兼容协议 / AI SDK runtime |
 
-Claude runtime 仍保留 SDK 原生 session / snapshot 能力；Proma runtime 当前工具能力最完整；AI SDK runtime 是后续服务端 Web 化优先路径；Pi runtime 用作 SDK 对照与多 provider 验证。
+**推荐使用 Pi 和 AI SDK**。Pi 是当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与部分流式输出，对多种渠道协议兼容，适合大多数个人日常任务；AI SDK 能力相近，也是后续服务端 Web 化优先路径。Claude runtime 仍保留 SDK 原生 session / snapshot 能力（fork / rewind 最接近完整时间线恢复）；Proma 作为较早的 provider-agnostic runtime 仍可用但能力相对有限，新任务建议优先 Pi 或 AI SDK。
 
 ## 本地数据
 
-Proma 采用本地文件存储，方便备份、迁移和排查问题。
+Gravitas 采用本地文件存储，方便备份、迁移和排查问题。
 
 ```
 ~/.proma/
@@ -208,7 +215,7 @@ API Key 会通过 Electron `safeStorage` 加密后写入 `channels.json`。核�
 
 ## 开发
 
-Proma 是 Bun workspace monorepo。
+Gravitas 是 Bun workspace monorepo。
 
 ```
 proma-v2/
@@ -282,7 +289,7 @@ bun run dist:fast
 
 ## 架构概览
 
-Proma 的核心通信路径是：
+Gravitas 的核心通信路径是：
 
 ```
 shared 类型和 IPC 常量
@@ -308,7 +315,7 @@ shared 类型和 IPC 常量
 
 如需与正式版并存进行本地验收，可在 `apps/electron/` 执行 `CSC_IDENTITY_AUTO_DISCOVERY=false bun run dist:mac-dev-zip`。该命令使用 `com.proma.mit.dev` 和 `proma-mit-dev.app`，不会覆盖正式版 `com.proma.mit`；macOS 的辅助功能、屏幕录制等隐私授权也需要为该开发版单独开启。`dist:mac-dev` 则同时尝试生成 DMG 和 ZIP。
 
-`@anthropic-ai/claude-agent-sdk` 在 `0.2.113+` 后改为平台 native binary 分发。Proma 的 esbuild 配置会把 SDK 标记为 external，`electron-builder.yml` 会把 SDK 主包和平台子包一起打进安装包。
+`@anthropic-ai/claude-agent-sdk` 在 `0.2.113+` 后改为平台 native binary 分发。Gravitas 的 esbuild 配置会把 SDK 标记为 external，`electron-builder.yml` 会把 SDK 主包和平台子包一起打进安装包。
 
 修改打包配置时请特别确认：
 
@@ -333,7 +340,7 @@ shared 类型和 IPC 常量
 - 影响包行为时递增对应 package 的 patch 版本。
 - 能用测试覆盖的行为尽量补上测试，尤其是共享逻辑、IPC 契约和持久化格式。
 
-Proma 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱，方便后续发放。
+Gravitas 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮箱，方便后续发放。
 
 ![Proma PR Bounty](<https://img.erlich.fun/personal-blog/uPic/PR%20%E8%B5%A0%E9%87%91%201.png>)
 
