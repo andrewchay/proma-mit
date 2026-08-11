@@ -2068,28 +2068,29 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       ),
     },
     { key: 'speech', node: <SpeechButton className="size-[36px] shrink-0 rounded-full" /> },
-    {
-      key: 'collaboration',
-      node: (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-[36px] shrink-0 rounded-full text-foreground/60 hover:text-foreground"
-              onClick={() => setCollabDialogOpen(true)}
-              title="并行协作子任务"
-            >
-              <Network size={18} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            <p>并行协作子任务（创建可追踪的协作子会话树）</p>
-          </TooltipContent>
-        </Tooltip>
-      ),
-    },
+    // [临时禁用-用户试用无协作子会话模式] 并行协作子任务按钮已注释
+    // {
+    //   key: 'collaboration',
+    //   node: (
+    //     <Tooltip>
+    //       <TooltipTrigger asChild>
+    //         <Button
+    //           type="button"
+    //           variant="ghost"
+    //           size="icon"
+    //           className="size-[36px] shrink-0 rounded-full text-foreground/60 hover:text-foreground"
+    //           onClick={() => setCollabDialogOpen(true)}
+    //           title="并行协作子任务"
+    //         >
+    //           <Network size={18} />
+    //         </Button>
+    //       </TooltipTrigger>
+    //       <TooltipContent side="top">
+    //         <p>并行协作子任务（创建可追踪的协作子会话树）</p>
+    //       </TooltipContent>
+    //     </Tooltip>
+    //   ),
+    // },
     {
       key: 'attach-file',
       node: (

@@ -223,30 +223,33 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       canUseTool,
       mcpTools,
     })
-    // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
-    const collaborationWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
-    const collaborationAvailable = !!collaborationWorkspaceId && !!input.channelId && !isDelegationSession
-    console.log('[Pi Runtime] collaboration 注入判定:', {
-      sessionId, workspaceId, collabWs: collaborationWorkspaceId, channelId: input.channelId, isDelegationSession, collaborationAvailable,
-    })
-    if (collaborationAvailable) {
-      try {
-        const { buildPiCollaborationTools } = await import('../agent-collaboration-tools')
-        const piSdk = await loadPiCodingAgent()
-        const collaborationTools = buildPiCollaborationTools(piSdk, {
-          sessionId,
-          channelId: input.channelId!,
-          modelId: model,
-          workspaceId: collaborationWorkspaceId,
-          permissionMode,
-          agentRuntime: 'pi',
-          triggeredBy,
-        })
-        customTools.push(...collaborationTools as typeof customTools)
-      } catch (error) {
-        console.error('[Pi Runtime] 注入 collaboration 工具失败:', error)
-      }
-    }
+    // [临时禁用-用户试用无协作子会话模式] 协作工具已注释，以下 void 用于消解被注释块释放的 unused 变量
+    void workspaceId
+    void isDelegationSession
+    // [临时禁用-用户试用无协作子会话模式] 内置 collaboration 协作子会话工具已注释
+    // const collaborationWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
+    // const collaborationAvailable = !!collaborationWorkspaceId && !!input.channelId && !isDelegationSession
+    // console.log('[Pi Runtime] collaboration 注入判定:', {
+    //   sessionId, workspaceId, collabWs: collaborationWorkspaceId, channelId: input.channelId, isDelegationSession, collaborationAvailable,
+    // })
+    // if (collaborationAvailable) {
+    //   try {
+    //     const { buildPiCollaborationTools } = await import('../agent-collaboration-tools')
+    //     const piSdk = await loadPiCodingAgent()
+    //     const collaborationTools = buildPiCollaborationTools(piSdk, {
+    //       sessionId,
+    //       channelId: input.channelId!,
+    //       modelId: model,
+    //       workspaceId: collaborationWorkspaceId,
+    //       permissionMode,
+    //       agentRuntime: 'pi',
+    //       triggeredBy,
+    //     })
+    //     customTools.push(...collaborationTools as typeof customTools)
+    //   } catch (error) {
+    //     console.error('[Pi Runtime] 注入 collaboration 工具失败:', error)
+    //   }
+    // }
     // 视觉助手（Vision Relay）：DeepSeek V4 等纯文本 Pi 模型需要看图时，
     // 中转给已配置的视觉渠道。仅当模型匹配且配置了视觉渠道时注册。
     if (isVisionRelayConfigured() && isVisionRelayEligibleForModel(model) && triggeredBy !== 'automation' && triggeredBy !== 'delegation') {
