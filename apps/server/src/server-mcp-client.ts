@@ -4,13 +4,15 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type { McpServerEntry } from '@gravitas/shared'
 import type {
+  TenantMcpOAuthTokens,
+  TenantRuntimeStore,
+} from '@gravitas/shared/utils'
+import type {
   McpCatalogToolDefinition,
   ServerMcpConnection,
   ServerMcpConnectionFactory,
   ServerMcpConnectionFactoryInput,
-  TenantMcpOAuthTokens,
-  TenantRuntimeStore,
-} from '@gravitas/shared/utils'
+} from '@gravitas/shared/utils/node'
 import { validateServerMcpOAuthEndpoint } from '@gravitas/shared/utils'
 
 const MAX_MCP_RESULT_BYTES = 256 * 1024

@@ -10,8 +10,8 @@ import {
   parseWebCryptoEnvelopeKey,
   PostgresTenantRuntimeStore,
   RedisAgentRuntimeEventStore,
-  ServerMcpConnectionManager,
 } from '@gravitas/shared/utils'
+import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
 import type {
   AgentRuntimePostgresClient,
   AgentRuntimeRole,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { AgentRuntimeEventReplayHub, ServerMcpConnectionManager } from '@gravitas/shared/utils'
+import { AgentRuntimeEventReplayHub } from '@gravitas/shared/utils'
+import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
 import type { AgentRuntimeWebAgentTurnInput } from '@gravitas/shared/utils'
 import { acquireServerMcpTools } from './server-mcp-tools.ts'
 

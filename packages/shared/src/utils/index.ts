@@ -97,8 +97,6 @@ export { createCloudKmsEnvelopeSecretCodec } from './agent-runtime-cloud-kms-sec
 export type { CloudKmsDataKeyProvider, CloudKmsEnvelopeSecretCodecOptions } from './agent-runtime-cloud-kms-secret-codec'
 export { validateServerMcpConfig, validateServerMcpOAuthEndpoint } from './agent-runtime-server-mcp-policy'
 export type { ServerMcpEgressPolicy, ValidatedServerMcpConfig } from './agent-runtime-server-mcp-policy'
-export { ServerMcpConnectionManager } from './agent-runtime-server-mcp-manager'
-export type { AcquireServerMcpConnectionInput, McpCatalogToolDefinition, ServerMcpConnection, ServerMcpConnectionFactory, ServerMcpConnectionFactoryInput } from './agent-runtime-server-mcp-manager'
 export {
   RedisAgentRuntimeEventStore,
   RedisAgentRuntimeTaskCache,
