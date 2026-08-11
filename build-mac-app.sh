@@ -30,6 +30,12 @@ echo "   项目根目录: $PROJECT_ROOT"
 
 cd apps/electron
 
+echo "🧹 清理打包残留（避免 electron-builder ENOTEMPTY）..."
+# electron-builder 会先 rmdir out/mac-arm64 等 appOutDir；Finder 生成的 .DS_Store
+# 或上次中断的临时目录会让它报 ENOTEMPTY。打包前统一清理，但保留历史 DMG/zip 产物。
+find out -name ".DS_Store" -delete 2>/dev/null || true
+rm -rf out/mac-arm64 out/mac-arm64.tmp out/mac-arm64-unpacked
+
 if [[ "$1" == "--signed" ]]; then
   echo "🔏 启用代码签名（自动发现证书）"
   bun run dist:fast
