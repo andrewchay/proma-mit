@@ -74,8 +74,12 @@ if command -v iconutil &> /dev/null; then
     sips -z 512 512   icon.png --out icon.iconset/icon_512x512.png    > /dev/null 2>&1
     sips -z 1024 1024 icon.png --out icon.iconset/icon_512x512@2x.png > /dev/null 2>&1
 
-    # Convert to .icns
-    iconutil -c icns icon.iconset -o icon.icns
+    # Convert to .icns。部分新版 macOS 的 iconutil 会拒绝有效 PNG iconset，
+    # 此时使用本地封装器写入同一套标准 ICNS PNG chunk。
+    if ! iconutil -c icns icon.iconset -o icon.icns; then
+        echo "⚠️  iconutil 无法封装 iconset，使用内置 ICNS 封装器..."
+        bun generate-icns.mjs icon.iconset icon.icns
+    fi
 
     # Clean up
     rm -rf icon.iconset
