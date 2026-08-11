@@ -643,7 +643,7 @@ export class AgentOrchestrator {
       )
 
       // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
-      // [临时禁用-协作委派入口] //      const collabWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
+      const collabWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
       // 将最终有效模型回写会话元数据，保证协作子会话能继承到模型（缺失会导致子任务无法运行）
       if (modelId) {
         try {
@@ -655,20 +655,20 @@ export class AgentOrchestrator {
           console.warn('[Agent Runtime] 回写会话 modelId 失败:', err)
         }
       }
-//      const collabExtraTools = collabWorkspaceId && !isDelegationSession
-//        ? await import('./agent-collaboration-tools').then((m) => {
-//            console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, collabWs: collabWorkspaceId, isDelegationSession })
-//            return m.buildRuntimeCollaborationTools({
-//              sessionId,
-//              channelId,
-//              modelId: modelId || undefined,
-//              workspaceId: collabWorkspaceId,
-//              permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
-//              agentRuntime,
-//              triggeredBy,
-//            })
-//          })
-//        : undefined
+      const collabExtraTools = collabWorkspaceId && !isDelegationSession
+        ? await import('./agent-collaboration-tools').then((m) => {
+            console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, collabWs: collabWorkspaceId, isDelegationSession })
+            return m.buildRuntimeCollaborationTools({
+              sessionId,
+              channelId,
+              modelId: modelId || undefined,
+              workspaceId: collabWorkspaceId,
+              permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+              agentRuntime,
+              triggeredBy,
+            })
+          })
+        : undefined
 
       const queryOptions: ProviderAgnosticAgentQueryOptions = {
         sessionId,
@@ -756,8 +756,8 @@ export class AgentOrchestrator {
         onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
           ? (checkpoint: AgentGoalCheckpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
           : undefined,
-        // // [临时禁用] 内置 collaboration 协作子会话工具已禁用
-// [临时禁用]         extraTools: collabExtraTools,
+        // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区
+        extraTools: collabExtraTools,
       }
 
       const iterable = this.adapter.query(queryOptions)
@@ -1007,7 +1007,7 @@ export class AgentOrchestrator {
           permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
           memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
           claudeAvailable: false,
-          collaborationAvailable: false, // [临时禁用] 并行协作子会话
+          collaborationAvailable: !!workspaceId && !isDelegationSession,
         }),
       }
 
@@ -2089,20 +2089,20 @@ export class AgentOrchestrator {
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
       await this.injectGoalTools(sdk, mcpServers, sessionId)
 
-      // [临时禁用] 注入内置协作会话工具（collaboration）：用户试用无协作子会话模式，已注释
-      // const collaborationAvailable = !!workspaceId && !isDelegationSession
-      // if (collaborationAvailable) {
-      //   const { injectAgentCollaborationMcpServer } = await import('./agent-collaboration-tools')
-      //   await injectAgentCollaborationMcpServer(sdk, mcpServers, {
-      //     sessionId,
-      //     channelId,
-      //     modelId: modelId || undefined,
-      //     workspaceId,
-      //     permissionMode: permissionModeOverride ?? sessionMeta?.permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
-      //     agentRuntime: effectiveAgentRuntime,
-      //     triggeredBy,
-      //   })
-      // }
+      // 注入内置协作会话工具（collaboration）：仅在绑定了项目的主会话可用
+      const collaborationAvailable = !!workspaceId && !isDelegationSession
+      if (collaborationAvailable) {
+        const { injectAgentCollaborationMcpServer } = await import('./agent-collaboration-tools')
+        await injectAgentCollaborationMcpServer(sdk, mcpServers, {
+          sessionId,
+          channelId,
+          modelId: modelId || undefined,
+          workspaceId,
+          permissionMode: permissionModeOverride ?? sessionMeta?.permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+          agentRuntime: effectiveAgentRuntime,
+          triggeredBy,
+        })
+      }
 
       // 合并外部注入的自定义 MCP 服务器（如飞书群聊工具）
       if (customMcpServers) {
@@ -2406,7 +2406,7 @@ export class AgentOrchestrator {
             permissionMode: initialPermissionMode,
             memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
             claudeAvailable,
-            collaborationAvailable: false, // [临时禁用] 并行协作子会话
+            collaborationAvailable,
           }),
         },
         resumeSessionId: existingSdkSessionId,
