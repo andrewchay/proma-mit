@@ -135,6 +135,58 @@ describe('Proma Web 服务', () => {
     expect((await operator.fetch(new Request('http://localhost/agent/recovery/stale-tasks'))).status).toBe(200)
     expect((await operator.fetch(new Request('http://localhost/agent/audit'))).status).toBe(403)
   })
+
+  test('浏览器 HTML 表单用 urlencoded 提交 /auth/login 能成功（不再 400）', async () => {
+    // 构造 local 模式 + localAdmin，模拟私有部署
+    const app = createPromaWebServerApplication({
+      databaseUrl: 'postgres://unused',
+      redisUrl: 'redis://unused',
+      s3: testS3Config,
+      envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg',
+      envelopeKeyId: 'test-v1',
+      trustedHeaderAuth: false,
+      authMode: 'local',
+      localAdmin: { username: 'admin', tenantId: 'tenant-a', password: 'pw-test' },
+      workspaceRoot: '/private/tmp/proma-web-test',
+      workerId: 'test-worker',
+      taskLeaseMs: 30_000,
+    }, {
+      postgres: new FakePostgresClient(),
+      auth: () => undefined,
+    })
+
+    // 真实浏览器：application/x-www-form-urlencoded，无 JSON content-type
+    const res = await app.fetch(new Request('http://localhost/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'username=admin&password=pw-test',
+    }))
+    // 登录成功应为 302（重定向到 dashboard）而非 400（请求体必须是 JSON）
+    expect(res.status).toBe(302)
+    expect(res.headers.get('set-cookie')).toContain('proma_session=')
+  })
+
+  test('登录页 GET /auth/login 可访问', async () => {
+    const app = createPromaWebServerApplication({
+      databaseUrl: 'postgres://unused',
+      redisUrl: 'redis://unused',
+      s3: testS3Config,
+      envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg',
+      envelopeKeyId: 'test-v1',
+      trustedHeaderAuth: false,
+      authMode: 'local',
+      localAdmin: { username: 'admin', tenantId: 'tenant-a', password: 'pw-test' },
+      workspaceRoot: '/private/tmp/proma-web-test',
+      workerId: 'test-worker',
+      taskLeaseMs: 30_000,
+    }, {
+      postgres: new FakePostgresClient(),
+      auth: () => undefined,
+    })
+    const res = await app.fetch(new Request('http://localhost/auth/login'))
+    expect(res.status).toBe(200)
+    expect((await res.text()).includes('登录')).toBe(true)
+  })
 })
 
 class FakePostgresClient implements AgentRuntimePostgresClient {
