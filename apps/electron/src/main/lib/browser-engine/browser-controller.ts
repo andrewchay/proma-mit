@@ -368,7 +368,8 @@ export class BrowserController {
     const tab = this.getAgentTab(session, tabId)
     return this.enqueueTab(tab, async () => {
       const generation = tab.generation
-      const target = this.resolveRef(tab, ref)
+      // 校验 ref 存在且代际有效；实际坐标由 centerForRef（内部也 resolveRef）取得。
+      this.resolveRef(tab, ref)
       const { x, y } = await this.centerForRef(tab, ref, generation)
       this.assertCurrentDocument(tab, generation)
       await this.cdp(tab, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, undefined, signal)
