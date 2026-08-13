@@ -1,130 +1,81 @@
-# Codex 调研报告：MCP / Computer Use / Browser Control
+# 调研：Proma vs Gravitas 的 in-app-browser 实现差异（源码级）
 
-> 调研对象：OpenAI Codex 官方仓库 `/Users/chaihao/LLM/Codex`（Rust 代码在 `codex-rs/`）
-> 调研窗口：2026 年 6 月 – 8 月 11 日（Git log 近期迭代）
-> 调研日期：2026-08-11
+> 2026-08-13 更新。
+> - Proma 源码：`/Users/chaihao/LLM/Proma`（上游 `github.com/ErlichLiu/Proma`，MIT）
+> - Gravitas 源码：`/Users/chaihao/LLM/proma-mit`（用户 fork `github.com/andrewchay/proma-mit`，package name=`gravitas`，License BUSL-1.1）
+> 本报告为源码级对比，已修正此前基于闭源推断的部分。
 
----
+## 仓库关系
+`proma-mit` 是从 Proma fork 出来的变体（产品名 Gravitas），但 in-app-browser 已被完全重写为不同的实现。
 
-## 一、总体结论
+## 核心结论
+两者底层都是 Electron/Chromium，但**驱动机制与语义抽象完全不同**：
+- **Proma**：Electron 原生 `webContents.debugger`（CDP）+ `Accessibility.getFullAXTree`，**无障碍语义（AX）驱动**，元素用可回溯的 `backendNodeId`，ref 带代际防错位。
+- **Gravitas**：独立 `BrowserWindow` + **注入 DOM 脚本**（`executeJavaScript` 执行固定模板），**DOM 驱动**（非 AX），元素用「写入 `data-proxima-web-element-id` 属性生成的 id」。
 
-**架构要点：Computer Use 和 Browser Control 的实际执行层不在 codex-rs 开源 Rust 代码中**，而是分别由「`computer-use` bundled 插件 + 服务端 Responses API `computer` namespace」和「桌面应用 app shell 的浏览器面板/WebView + CDP」承载。codex-rs 仓库只负责**配置门控（requirements gate）、feature 标志、协议下发层**，以及配套的本地图像工具（`view_image`）。MCP 则是 codex-rs 中非常活跃、迭代密集的能力面。
+## Gravitas 实现细节（reading web-bridge-service.ts / web-automation-backend.ts / web-bridge-tools.ts）
 
----
+### 底层结构
+- 每个 Agent 会话一个**独立可见的 Electron `BrowserWindow`**（1200×800，sandbox 开、nodeIntegration 关、contextIsolation 开）。
+- 两种 backend（`WebAutomationBackend` 接口统一）：
+  - `ManagedElectronBackend`（mode=`managed`）：`window.webContents.executeJavaScript(...)` 注入 DOM 脚本控制页面。
+  - `PlaywrightCdpBackend`（mode=`chrome-cdp`）：用 `chromium.connectOverCDP`（playwright-core）连接**用户主动开启远程调试的真实 Chrome**，复用其登录态与页面——Proma 完全没有此能力。
+- 不需要任意脚本工具：只有固定的 navigate/snapshot/click/type/scroll/setFileInput 模板脚本。
 
-## 二、MCP 能力近期迭代（6月–8月，重点）
+### Snapshot（`SNAPSHOT_SCRIPT` DOM 注入）
+- 遍历 `document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"]')`，可见性过滤后取前 **200** 个，生成可交互 `accessibility[]`。
+- 另递归生成树形 `accessibilityTree`（上限 500、深度上限 6，含 shadow DOM）。
+- 返回 `url / title / text(innerText≤16000) / accessibility / accessibilityTree`。
+- **元素 id**：`frameId + '-e-' + N`，通过 `element.setAttribute('data-prom-web-element-id', ...)` 持久化；selector 兜底 `id/#name/[role]/tag`。
+- 注意：**不用 CDP AX tree**，纯粹 DOM 遍历 + 可见性启发式（offsetParent / getClientRects）。
 
-MCP 客户端基于 `rmcp`（已升级到 3.0.0），传输支持 **stdio + streamable HTTP（含 SSE/JSON）**。近期迭代集中在 OAuth 健壮性、事件订阅、性能缓存与安全边界。
+### 交互（DOM 模板脚本）
+- Click：`element.click()`。
+- Type：`focus()` → 对 input/textarea 用原型 value setter 写入 / contenteditable 写 textContent → 派发 `InputEvent('input')` + `Event('change')`；`submit=true` 时补派发 Enter keydown。
+- Scroll：`window.scrollBy({top:~,instant})`，clamp 100–2000。
+- Upload：`DataTransfer` 注入 `input.files`，不落盘。
+- 全部经 `executeJavaScript`，参数 JSON 序列化（数据非代码）。
 
-### 近期重要提交（按时间）
+### 文件
+- Download：`fetch(url,{redirect:'error'})` → 落盘 `{configDir}/web-bridge-downloads/{sessionId}`，≤50MB。
+- Upload：**通过系统文件选择器**（`dialog.showOpenDialog`）选文件，Agent 不能传本地路径；内容注入当前页面，不暴露绝对路径。
 
-| Commit | 日期 | PR | 功能 |
-|---|---|---|---|
-| `0ca439900e` | 8-11 | #37970 | **Cache tool catalogs for streamable HTTP MCP servers**：子代理无需先建连接即可用已知的 HTTP MCP 工具定义；对 transport 设置、环境变量、协议模式、插件状态、客户端能力做指纹，仅等价连接间复用缓存；OAuth/动态凭证配置不进共享缓存 |
-| `4b0e2a0bff` | 8-10 | #37864 | **MCP form input（full-access 线程）**：识别 `openai/standard-form-input` 客户端扩展，在 full-access 用户根线程中展示非审批表单；client-only 能力不向服务端广播，会话启动后启用以免阻塞启动 |
-| `dd22460869` | 8-10 | #37866 | MCP OAuth 凭证竞争（contention）回归测试 |
-| `afcc95b431` / `8b1b065719` | 8-10 | #37860/#37842 | 加速 MCP OAuth 凭证读取 |
-| `78d3665d15` | 8-11 | #37850 | 在 MCP server status 中暴露插件归属（plugin ownership） |
-| `41014b11bd` | 8-07 | #37494 | **MCP event discovery & subscriptions**：`McpResourceClient::list_events` 暴露托管 Plugin Runtime 事件定义；可取消的 `events/stream` 订阅；限制事件通知/队列大小、超时 stalled response headers |
-| `248d8c0e22` | 8-06 | #37477 | MCP 请求中包含 call IDs，明确 metadata 配置 |
-| `9daa491f7c` | 8-05 | #37366 | 加固本地 MCP server 进程树清理 |
-| `81b9bc2109` | 8-07 | #37363 | 识别 MCP tool hook 配置 |
-| `b3ffe3d001` | 8-06 | #37337 | OAuth 重新认证后恢复 MCP server |
-| `e1831db7c3` / `952e87d3f2` | 8-03 | #37273/#37101 | 跨采样步骤复用 MCP handler 与稳定 bindings |
-| `1151b23f01` | 8-03 | #37261 | 子代理懒启动缓存的 MCP server |
-| `3bbf1fe757` | 7月下旬 | #35590 | server 启动前先暴露已缓存的 MCP 工具 |
-| `d9e1c9cd55` / `fbf666fa98` | 7月 | #35742/#35937 | 选项性 MCP 启动不阻塞 turn，让无关工具先跑 |
-| `5548c95d66` | 7月 | #36339 | **在 MCP server 中启用 skills**（Codex 以 MCP server 形式暴露能力） |
-| `bd12b3a9ec` | 8-03 | #36796 | Agent Plugins MCP 配置解析 |
-| `51c9ed6d4f` | 8-03 | #36781 | per-surface MCP 工具暴露控制 |
-| `5825699981` | 8-01 | #36534 | MCP catalog 条目上限提到 2,048 |
-| `a05bcda3db` / `61de0d8fe8` | 7月 | #36001/#35720 | **rmcp 升级到 3.0.0** |
-| `be2e4afcd7` / `f2bee854a7` | 7-28 | #35724/#35725 | **MCP 2026-07-28 协议 discovery 支持** |
-| `84ccb2938b` | 7月 | #35777 | 并发解析 MCP 工具目录 |
-| `709283b432` / `9ea975a2dc` | 7月 | #35814/#35806 | MCP OAuth 走配置的 HTTP client |
-| `164b3bfeab` / `bf4d3f51ea` | 7月 | #36310/#36306 | 按环境隔离 MCP OAuth 凭证；托管 MCP 凭证限制在本地环境 |
-| `9daa491f7c` | 8-05 | #37366 | 本地 MCP server 进程树清理加固 |
+### 安全边界
+- `normalizeWebUrl`：仅 http/https，拒绝带用户名密码。
+- `will-navigate` / `will-redirect` 拦截非 http/https；`setWindowOpenHandler` deny（不新建未受管窗口）。
+- 无 Proma 的 proma-file:// 本地预览协议；也不做文件系统/局域网白名单（Chromium 决定）。
 
-### MCP 关键 feature 摘要
+### Profile / 登录态
+- partition `persist:proma-web-bridge-{sessionId}`，**按会话隔离**（Proma 按工作区隔离）。
+- 可 `connectChrome` 桥接到用户真实 Chrome 复用登录态。
 
-1. **streamable HTTP tool catalog 缓存**（最重要）：通过 transport 指纹实现安全缓存，子代理/多线程复用工具定义而无需重复握手。
-2. **OAuth 稳定性**：速度优化、重新认证后恢复、环境隔离、走统一 HTTP client。
-3. **Event discovery + 订阅**：MCP 从 request/response 扩展到 event 流，支持可取消订阅。
-4. **Form input**：full-access 会话中也能弹出需要用户填写的标准 MCP 表单。
-5. **传输与协议演进**：rmcp 3.0、2026-07-28 协议 discovery、stdio + streamable HTTP。
+### 权限模型（agent-permission-service.ts）
+- `requiresPerActionApproval = isComputerUseTool || isWebBridgeFileTransfer(Download/Upload)`——**只有文件传输逐次确认**。
+- 导航/点击/输入等页面交互：auto 模式下走 SDK classifier / 会话白名单（`"始终允许"`，对齐 kimi-cli `approve_for_session`），可免逐次确认。
+- Worker 子代理工具调用自动批准（除需逐次确认的 CUse/文件传输）。
 
----
+### 审计
+- `appendWebBridgeAudit` 写 `~/.gravitas/web-bridge-audit/events.jsonl`，记录 navigate/click/type/scroll/download/upload/connect_chrome/stop（含 elementId、length、bytes）。
 
-## 三、Computer Use（CUA）近期迭代
+## Proma 实现要点（回顾）
+- 见本文件下方旧条目；核心差异快速对照见下。
 
-**架构**：由三部分构成——
-1. **`computer-use@openai-bundled` 插件**（实际 Computer Use 工具的载体，通过 tool suggestion 提供/安装，见 `core-plugins/src/discoverable.rs:47`）；
-2. **`view_image` 本地工具**（配套的截图/图像查看，`Feature::ViewImage` 门控）；
-3. **Enterprise Requirement gate**（`computer_use.allow_locked_computer_use` + `Feature::ComputerUse`）。
+## 快速对照表
 
-实际截图/点击/键盘控制由服务端 Responses API `computer` namespace 执行（不在本仓库）。
+| 维度 | Proma | Gravitas |
+|------|-------|----------|
+| 驱动 | Electron `Debugger`(CDP) + `Accessibility.getFullAXTree` | `BrowserWindow` + 注入 DOM 脚本 / Playwright-core 连真实 Chrome |
+| 语义 | AX 无障碍树（backendNodeId） | DOM 遍历 + 可见性启发式（写属性生成 id） |
+| 元素引用 | `ref=r{g}-{i}` 带代际，失效校验 | `element_id`（data 属性）+ selector 兜底，重快照刷新 |
+| 交互 | CDP `Input.dispatchMouseEvent`/`insertText`（真实输入事件） | DOM `element.click()`/value setter + 派发事件 |
+| 任意 JS | 有受控 `BrowserExecuteJavaScript`(≤20KB) | 无任意 JS 工具，仅固定模板脚本 |
+| 本地预览 | `BrowserPreviewOpen` + `proma-file://` 授权目录 | 无 |
+| 外部 Chrome | 无（完全隔离） | `WebBridgeConnectChrome` 复用登录态 |
+| 文件收发 | 禁下载 | Download/Upload（文件传输逐次授权） |
+| 权限 | 首次风险声明 + 操作可 abort，按会话白名单 | 导航确认 + 文件传输/ComputerUse 逐次确认，页面交互走白名单 |
+| 登录态隔离粒度 | 按工作区 | 按会话 |
+| Tab 管理 | 多 tab（Agent/用户分离，上限20） | 单 BrowserWindow 单页（无多 tab 工具） |
+| 快照内容 | 结构 AX 元素 | DOM 元素 + innerText + 通用 selector |
 
-### 核心文件
-- `features/src/lib.rs:221,1271` — `Feature::ComputerUse`（requirements-only gate，`default_enabled: true`）
-- `config/src/config_requirements.rs:796` — `ComputerUseRequirementsToml { allow_locked_computer_use: Option<bool> }`
-- `app-server/src/request_processors/config_processor.rs:405,444` — `map_computer_use_requirements_to_api`
-- `app-server-protocol/src/protocol/v2/config.rs:398,454` — `ComputerUseRequirements`
-- `core/src/tools/handlers/view_image.rs` — view_image 工具
-- `core/src/config/mod.rs:3158` — `computer` 为保留 namespace
-
-### 近期迭代（8月重点关注）
-| Commit | 日期 | PR | 功能 |
-|---|---|---|---|
-| `0a0ebb8535` | 8-06 | #37206 | 新增 unified image budget（6000px/10000-patch 统一上限），隐藏 view_image detail 控件 |
-| `78f00743f9` | 8-04 | #36966 | 允许禁用内置 image viewer（稳定 `features.view_image` 开关） |
-| `7a18a5c528` | 8-10 | #37892 | view_image handler 解码校验，无效图像报错 |
-| `260261ed8f` | 8-11 | #37902 | 图像字节透传 history-insertion 统一解码 |
-| `41ece455b7` | 8-11 | #37939 | 最终版：tool 输出前拒绝无效/非图像，防泄露；保留 EXIF/元数据 |
-| `758a2a7052` | 6-15 | — | Windows computer use requirement → runtime feature（`windows_computer_use`） |
-
-### 历史演进（背景）
-- `5f5b4fabbd`（4-30）首次 Computer Use requirements，当时含 `allow_persistent_approval` + `macos.denied_bundle_ids`/`allowed_bundle_ids`；后续**简化为单一 `allow_locked_computer_use`**（`d86352d520`，#23555）。
-- `dd00efe781`（4-16，#18219）Computer Use tool suggestion 移入 core。
-
-### 概念辨析
-- **Computer Use（CUA）**：模型操作桌面 → `computer` namespace 工具 + `view_image` + `computer-use` 插件。
-- **Remote Control**：`app-server-transport/src/transport/remote_control/` 的远程控制 relay（配对 controller 设备远端控制 Codex），`allow_remote_control` gate，与 CUA 独立。
-- **Appshots**：app-server 应用截图能力，`allow_appshots` gate。
-
----
-
-## 四、Browser Control（CDP / 浏览器）近期迭代
-
-**架构**：Browser control 的执行层**不在本仓库** —— 由 Codex 桌面应用 app shell 内置浏览器面板/WebView 通过 CDP 驱动 `toolbar`/`web_use` 浏览器或连接外部浏览器。codex-rs 只负责 feature 门控 + requirements 解析 + app-server 协议下发，并校验 `browser` 保留 namespace。
-
-### Feature 标志（均 requirements-only、stable、default_enabled true）
-| Feature | Key | 用途 |
-|---|---|---|
-| `InAppBrowser` | `in_app_browser` | 桌面应用内建浏览器面板 |
-| `BrowserUse` | `browser_use` | 桌面 Browser Use agent 集成 |
-| `BrowserUseFullCdpAccess` | `browser_use_full_cdp_access` | 允许访问完整 CDP 表面 |
-| `BrowserUseExternal` | `browser_use_external` | 允许连接外部浏览器（复用登录态） |
-
-### Requirements 结构
-`BrowserUseRequirementsToml { disable_auto_review: Option<bool> }`（`config_requirements.rs:807`），经 `requirements_layers/stack.rs` 分层合并，由 `config_processor.rs:408,452` 下发为 `browserUse.disableAutoReview`（`configRequirements/read` RPC）。
-
-### 近期提交
-| Commit | 日期 | PR | 功能 |
-|---|---|---|---|
-| `41775559ca` | 7-23 | #35033 | 通过 app-server 暴露 Browser Use requirements（disable_auto_review） |
-| `ff37f4a6ef` | 6-22 | #28769 | **注册 `browser_use_full_cdp_access` requirements feature**（CDP 全量访问门控） |
-| `719431da6e` | 4-30 | #20245 | browser_use_external feature 标志 |
-| `568cdacc7e` | 4-22 | #18956 | 首次注册 `in_app_browser` + `browser_use` 为 stable feature key |
-
-`browser` 是 Responses API 保留 namespace（`core/src/config/mod.rs:3157`，与 `computer`、`terminal`、`web` 等并列），multi_agent_v2 自定义 tool namespace 不得占用。
-
-### CDP Full Access vs External
-- **Full CDP Access**：解锁浏览器工具可调用的完整 CDP 命令（DOM 深度操作、网络拦截、性能追踪等），关闭时只能基础子集。6 月引入。
-- **External Browser**：连接系统已装外部浏览器实例，复用登录态。与 CDP full access 正交。
-
----
-
-## 五、附注
-
-- computer use / browser control 的实际执行引擎（CDP 客户端、截图控制、桌面 app shell）不在开源仓库，需查看桌面应用层才能看到完整实现。
-- MCP catalog 上限 2048 条、工具目录并发解析、缓存前置暴露等说明 MCP 正在向"大规模工具目录"方向演进。
+## 一句话
+Proma 用 CDP AX 语义做稳定的 Agent 自动化（多 tab、本地预览、工作区隔离、受控 JS）；Gravitas 的 WebBridge 更轻——用 DOM 脚本注入 + 可桥接用户真实 Chrome，聚焦"看得见、可人工介入、能发文件"，权限在导航与文件层面把关，页面交互交给白名单。
