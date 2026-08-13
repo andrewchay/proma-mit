@@ -97,16 +97,23 @@ export function resolvePiMaxTokens(provider: ProviderType): number {
 /**
  * 按模型 ID 推断 contextWindow（Pi SDK 自动压缩阈值依赖此值）。
  *
- * 与渲染端 inferContextWindow 保持一致，避免 DeepSeek V4（1M）/ Claude
- * Sonnet 4.6 / Opus 4.6+（1M）被 200K 兜底值错误降级，导致上下文过早触发
- * 自动压缩（对齐官方 v0.13.x 的 1M 模型窗口修复）。
+ * 与渲染端 inferContextWindow 保持一致。核心供应商中 Claude Opus、
+ * OpenAI 5.6、Kimi/Moonshot、DeepSeek、GLM，以及原有 Claude Sonnet 4.6
+ * 按 1M 处理；其他未知模型继续使用保守的 200K fallback。
  */
 export function inferPiContextWindow(modelId: string | undefined | null): number {
   if (!modelId) return 200_000
   const m = modelId.toLowerCase()
   if (m.includes('claude-haiku')) return 200_000
-  if (m.includes('claude-sonnet-4-6') || m.includes('claude-opus-4-6') || m.includes('claude-opus-4-7')) return 1_000_000
-  if (m.includes('deepseek-v4')) return 1_000_000
+  if (
+    m.includes('claude-opus')
+    || m.includes('claude-sonnet-4-6')
+    || m.includes('gpt-5.6')
+    || m.includes('kimi')
+    || m.includes('moonshot')
+    || m.includes('deepseek')
+    || m.includes('glm')
+  ) return 1_000_000
   return 200_000
 }
 

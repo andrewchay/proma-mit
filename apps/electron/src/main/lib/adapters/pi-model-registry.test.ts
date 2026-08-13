@@ -36,11 +36,17 @@ describe('pi-model-registry', () => {
     expect(resolvePiMaxTokens('deepseek-openai')).toBe(64_000)
   })
 
-  test('infers Pi context window per model family (1M vs 200K)', () => {
-    expect(inferPiContextWindow('deepseek-v4-pro')).toBe(1_000_000)
-    expect(inferPiContextWindow('deepseek-v4-flash')).toBe(1_000_000)
-    expect(inferPiContextWindow('claude-sonnet-4-6')).toBe(1_000_000)
+  test('核心供应商模型使用 1M context window，其他模型保持 200K fallback', () => {
+    expect(inferPiContextWindow('claude-opus-4-5')).toBe(1_000_000)
     expect(inferPiContextWindow('claude-opus-4-7')).toBe(1_000_000)
+    expect(inferPiContextWindow('claude-sonnet-4-6')).toBe(1_000_000)
+    expect(inferPiContextWindow('gpt-5.6')).toBe(1_000_000)
+    expect(inferPiContextWindow('gpt-5.6-sol')).toBe(1_000_000)
+    expect(inferPiContextWindow('kimi-k2.5')).toBe(1_000_000)
+    expect(inferPiContextWindow('moonshot-v1-auto')).toBe(1_000_000)
+    expect(inferPiContextWindow('deepseek-chat')).toBe(1_000_000)
+    expect(inferPiContextWindow('deepseek-v4-flash')).toBe(1_000_000)
+    expect(inferPiContextWindow('glm-4.5')).toBe(1_000_000)
     expect(inferPiContextWindow('claude-haiku-4-5')).toBe(200_000)
     expect(inferPiContextWindow('claude-sonnet-4-5')).toBe(200_000)
     expect(inferPiContextWindow('gpt-4o')).toBe(200_000)

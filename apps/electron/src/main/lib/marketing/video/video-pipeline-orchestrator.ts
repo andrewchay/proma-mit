@@ -14,15 +14,21 @@
  * - 产物落盘到 campaign 的 video-assets/ 目录
  */
 
-import { mkdirSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, existsSync, readFileSync } from 'node:fs'
+import { join, extname } from 'node:path'
 import type { Storyboard, StoryboardShot } from './storyboard-engine'
 import { validateStoryboard } from './storyboard-engine'
 import {
   generateVideo,
   downloadVideo,
   type VideoGenerationRequest,
+  type VideoEngineConfig,
 } from './video-generation-service'
+import {
+  generateFrames,
+  type FrameGeneratorConfig,
+  type FrameResult,
+} from './frame-generator'
 import {
   composeVideo,
   generateSubtitlesFromStoryboard,
@@ -84,6 +90,12 @@ export interface VideoPipelineConfig {
   aspectRatio: '9:16' | '16:9' | '1:1' | '3:4'
   /** 生成引擎 */
   engine: 'seedance' | 'minimax-h3'
+  /** 引擎凭据配置（渠道优先，未传则使用环境变量兜底） */
+  engineConfig?: VideoEngineConfig
+  /** 首帧图生成器凭据（Proma Cloud GPT Image 2，用于 image_to_video 镜头；未传则降级文生视频） */
+  frameGeneratorConfig?: FrameGeneratorConfig
+  /** 是否为 image_to_video 镜头生成首帧图（默认 true，无凭据自动降级） */
+  generateFirstFrames?: boolean
   /** 并发上限（默认 2） */
   concurrency?: number
   /** 单镜最大重试次数（默认 2，仅瞬时错误重试） */
@@ -119,6 +131,17 @@ export interface VideoPipelineResult {
 const DEFAULT_CONCURRENCY = 2
 const DEFAULT_MAX_RETRIES = 2
 
+/** 首帧图扩展名 → MIME 映射（转 base64 data URL 用） */
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+}
+
+/** 首帧图 base64 data URL 映射：shotId → data URL（仅 image_to_video 镜头） */
+type FirstFrameMap = Map<string, string>
+
 // ============================================================
 // 编排器实现
 // ============================================================
@@ -142,14 +165,19 @@ export async function runVideoPipeline(
     // 1. 准备目录
     const rawDir = join(config.assetsRoot, 'video-assets', 'raw')
     const finalDir = join(config.assetsRoot, 'video-assets', 'final')
+    const framesDir = join(config.assetsRoot, 'video-assets', 'frames')
     ensureDir(rawDir)
     ensureDir(finalDir)
+    ensureDir(framesDir)
 
-    // 2. 逐镜生成（受限并发）
+    // 2. 生成首帧图（可选，仅 image_to_video 镜头；无凭据自动降级文生视频）
     progress.phase = 'generate'
     emit()
 
-    const resolvedShots = await runShotsWithConcurrency(config, progress, emit)
+    const firstFrameMap = await generateFirstFrames(config, progress, emit)
+
+    // 3. 逐镜生成（受限并发）
+    const resolvedShots = await runShotsWithConcurrency(config, firstFrameMap, progress, emit)
 
     const succeeded = resolvedShots.filter((s) => s.status === 'succeeded')
     const failed = resolvedShots.filter((s) => s.status === 'failed')
@@ -262,10 +290,63 @@ function createInitialProgress(storyboard: Storyboard): PipelineProgress {
 }
 
 /**
+ * 为 image_to_video 镜头批量生成首帧图。
+ *
+ * 依赖 Proma Cloud 凭据（config.frameGeneratorConfig）：
+ * - 无凭据 / 生成失败 / 读取失败 → 该镜头不写入 map，后续在 generateSingleShot 降级文生视频
+ *
+ * 产物落盘 video-assets/frames/，返回 base64 data URL 供视频引擎消费
+ * （读本地文件转 base64，避免依赖外部图片 URL 的可达性与时效性）。
+ */
+async function generateFirstFrames(
+  config: VideoPipelineConfig,
+  _progress: PipelineProgress,
+  _emit: () => void,
+): Promise<FirstFrameMap> {
+  const map: FirstFrameMap = new Map()
+  if (config.generateFirstFrames === false) return map
+
+  const imageShots = config.storyboard.shots.filter(
+    (s) => s.generationMethod === 'image_to_video',
+  )
+  if (imageShots.length === 0) return map
+
+  const fg = config.frameGeneratorConfig
+  if (!fg || !fg.apiKey) return map // 无 Proma Cloud 凭据 → 全部降级文生视频
+
+  const framesDir = join(config.assetsRoot, 'video-assets', 'frames')
+  const requests = imageShots.map((s) => ({
+    shotId: s.shotId,
+    prompt: s.firstFramePrompt,
+  }))
+
+  let results: FrameResult[]
+  try {
+    results = await generateFrames(requests, framesDir, fg)
+  } catch (e) {
+    console.warn('[视频流水线] 首帧图生成失败，降级文生视频:', (e as Error).message)
+    return map
+  }
+
+  for (const r of results) {
+    if (!r.success || !r.path) continue
+    try {
+      const buf = readFileSync(r.path)
+      const mime = MIME_BY_EXT[extname(r.path).toLowerCase()] ?? 'image/png'
+      map.set(r.shotId, `data:${mime};base64,${buf.toString('base64')}`)
+    } catch (e) {
+      console.warn(`[视频流水线] 首帧图读取失败 ${r.shotId}:`, (e as Error).message)
+    }
+  }
+  return map
+}
+
+/**
  * 受限并发生成所有镜头
  */
 async function runShotsWithConcurrency(
   config: VideoPipelineConfig,
+  firstFrameMap: FirstFrameMap,
   progress: PipelineProgress,
   emit: () => void,
 ): Promise<ShotProgress[]> {
@@ -285,6 +366,7 @@ async function runShotsWithConcurrency(
       const result = await generateSingleShot(
         config,
         shot,
+        firstFrameMap.get(shot.shotId),
         maxRetries,
         idx,
         progress,
@@ -310,16 +392,21 @@ async function runShotsWithConcurrency(
 async function generateSingleShot(
   config: VideoPipelineConfig,
   shot: StoryboardShot,
+  firstFrame: string | undefined,
   maxRetries: number,
   shotIndex: number,
   progress: PipelineProgress,
   emit: () => void,
 ): Promise<ShotProgress> {
+  // image_to_video 需首帧图；缺首帧图时自动降级为 text_to_video
+  const useImageToVideo = shot.generationMethod === 'image_to_video' && !!firstFrame
+  const method = useImageToVideo ? 'image_to_video' : 'text_to_video'
+
   const shotProgress: ShotProgress = {
     shotId: shot.shotId,
     status: 'pending',
     attempts: 0,
-    method: shot.generationMethod,
+    method,
     engine: config.engine,
   }
   progress.shots[shot.shotId] = shotProgress
@@ -337,14 +424,13 @@ async function generateSingleShot(
       const request: VideoGenerationRequest = {
         prompt: shot.videoPrompt,
         engine: config.engine,
-        method: shot.generationMethod,
+        method,
         duration: Math.max(5, Math.min(10, shot.duration)) as 5 | 10,
         aspectRatio: config.aspectRatio,
-        // 首帧图可选：pipeline 阶段暂不生成，交给任务 2 接
-        // firstFrameImage: undefined,
+        ...(useImageToVideo && firstFrame ? { firstFrameImage: firstFrame } : {}),
       }
 
-      const result = await generateVideo(request)
+      const result = await generateVideo(request, config.engineConfig)
 
       if (result.status !== 'success' || !result.videoUrl) {
         // 鉴权错误不重试，直接失败

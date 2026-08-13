@@ -110,11 +110,18 @@ function uniqueTruthyPaths(paths: Array<string | null | undefined>): string[] {
 function inferContextWindow(model?: string): number | undefined {
   if (!model) return undefined
   const m = model.toLowerCase()
-  // Claude Haiku 为 200k
+  // Claude Haiku 明确保留 200K；其余未知模型也继续使用保守 fallback。
   if (m.includes('claude-haiku')) return 200_000
-  // Claude Sonnet 4+、Opus 4.6+、DeepSeek V4 系列均为 1M 上下文
-  if (m.includes('claude-sonnet-4-6') || m.includes('claude-opus-4-6') || m.includes('claude-opus-4-7')) return 1_000_000
-  if (m.includes('deepseek-v4')) return 1_000_000
+  // 核心供应商模型按 1M 上下文处理，与 Pi 模型注册规则保持一致。
+  if (
+    m.includes('claude-opus')
+    || m.includes('claude-sonnet-4-6')
+    || m.includes('gpt-5.6')
+    || m.includes('kimi')
+    || m.includes('moonshot')
+    || m.includes('deepseek')
+    || m.includes('glm')
+  ) return 1_000_000
   return 200_000
 }
 

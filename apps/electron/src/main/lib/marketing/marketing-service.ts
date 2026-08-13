@@ -88,6 +88,7 @@ import {
   runCreativeVideoPipeline,
   probeVideoAsset,
   ensureVideoCredential,
+  resolveVideoCredential,
   type CreativeVideoPipelineOptions,
 } from './creative-video-service'
 import type { VideoInput } from './video'
@@ -103,9 +104,15 @@ export const creativeVideoService = {
   checkCredential: (engine: 'seedance' | 'minimax-h3') => {
     try {
       ensureVideoCredential(engine)
-      return { ok: true }
     } catch (e) {
-      return { ok: false, error: (e as Error).message }
+      return { ok: false, error: (e as Error).message, source: null }
+    }
+    const info = resolveVideoCredential(engine)
+    return {
+      ok: true,
+      source: info.source,
+      channelId: info.channelId,
+      channelName: info.channelName,
     }
   },
 } as const
