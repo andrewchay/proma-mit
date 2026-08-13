@@ -361,6 +361,11 @@ export function createPromaWebServerApplication(
         const state = url.searchParams.get('state') ?? ''
         return authHandler.oidcCallback({ code, state })
       }
+      // 认证元信息（供工作台按 authMode 呈现 UI，公开、不含敏感信息）
+      if (url.pathname === '/auth/status') {
+        const normalized = (config.authMode ?? 'none') === 'local' || (config.authMode ?? 'none') === 'both' || (config.authMode ?? 'none') === 'oidc' ? config.authMode : 'none'
+        return Response.json({ authMode: normalized, hasOidc: Boolean(config.oidc) })
+      }
       const scope = await auth({ request, url })
       const actionAuthorizationError = scope ? requireAgentActionRole(scope, request) : undefined
       const fileRoute = matchWorkspaceFileRoute(request.method, url.pathname)

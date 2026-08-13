@@ -187,6 +187,30 @@ describe('Proma Web 服务', () => {
     expect(res.status).toBe(200)
     expect((await res.text()).includes('登录')).toBe(true)
   })
+
+  test('GET /auth/status 暴露 authMode（local 模式）', async () => {
+    const app = createPromaWebServerApplication({
+      databaseUrl: 'postgres://unused',
+      redisUrl: 'redis://unused',
+      s3: testS3Config,
+      envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg',
+      envelopeKeyId: 'test-v1',
+      trustedHeaderAuth: false,
+      authMode: 'local',
+      localAdmin: { username: 'admin', tenantId: 'tenant-a', password: 'pw-test' },
+      workspaceRoot: '/private/tmp/proma-web-test',
+      workerId: 'test-worker',
+      taskLeaseMs: 30_000,
+    }, {
+      postgres: new FakePostgresClient(),
+      auth: () => undefined,
+    })
+    const res = await app.fetch(new Request('http://localhost/auth/status'))
+    expect(res.status).toBe(200)
+    const body = await res.json() as { authMode?: string; hasOidc?: boolean }
+    expect(body.authMode).toBe('local')
+    expect(body.hasOidc).toBe(false)
+  })
 })
 
 class FakePostgresClient implements AgentRuntimePostgresClient {

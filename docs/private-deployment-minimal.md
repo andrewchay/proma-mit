@@ -91,6 +91,12 @@
 - 产出：`auth-session-store.ts`（Postgres 会话表）、`local-admin-auth.ts`（scrypt）、`auth-resolvers.ts`（cookie→scope 复合 resolver）、`auth-routes.ts`（/auth/login|logout|oidc/start|oidc/callback）、`index.ts`/`app.ts` 接线。
 - 解死锁：**移除"非 trusted-header 必须配 OIDC 才能启动"的硬要求**；无 OIDC 用 local 模式可启动。
 - 验收（真实 server 验证）：无 OIDC local 启动→登录页 200→错误密码 401→正确密码 302+HttpOnly cookie→带 cookie 访问 /agent/metrics 200、无 cookie 401→logout 清 cookie。测试 119 pass（新增 ~30 登录相关）。
+- **审查修复（2026-08-13）**：
+  - 真实浏览器表单（urlencoded）登录曾因只读 JSON 而 400 → 兼容 JSON+urlencoded（commit `607e6b9b`）。
+  - OIDC id_token 曾不验签 → 复用 JWKS 验签（`verifyJwtWithJwks`）。
+  - OIDC 回调加 state 校验（防 login CSRF/重放）。
+  - **local 模式认证口径（H-3b）**：`authMode=local/none` 只提供会话 cookie 认证，**不提供 Bearer JWT**（local 无 IdP 无法验签）。dashboard 的「OIDC Bearer token」输入框 local 模式自动隐藏，`GET /auth/status` 暴露 authMode 供 UI 判断。需要 Bearer/API token → 配 oidc/both。
+  - server 测试基线 127 pass / 0 fail。
 
 ### M2 Web 工作台补全 health/registry + 会话管理 ✅ 已完成（2026-08-13）
 - 目标：让新能力在 UI 可见，满足 P6-1 基础。

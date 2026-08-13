@@ -96,7 +96,7 @@
 | **S-XSS** sessionId 未转义 | `data-session-id`（转义）+ `data-op` + `sessOp(this)` 事件委托 | node --check 通过，真实 server 加载正常 |
 
 ### ⚠️ 待处理 / 需决策（H-3b + P2）
-- **H-3b local 模式 Bearer API 回归**：`authMode=local`（无 OIDC）时 `bearerAuth=undefined`，唯一认证是 cookie 会话，**既有 Bearer 集成被 401 切断**。这是**设计取舍**（local 无 IdP 无法验签 JWT），需：① 文档明确标注 local 模式只能用 cookie 会话；② dashboard 的 Bearer 输入框在 local 模式应隐藏/说明。**建议处理方式**：加文档 + dashboard 按 authMode 提示，不强行造不安全 Bearer。
+- **H-3b local 模式 Bearer 回归** → ✅ **已处理（document + UI）**：`GET /auth/status` 暴露 authMode，dashboard 在 local/none 模式隐藏 Bearer 输入框并提示；`.env.example` 与 private-deployment-minimal 文档明确 local 模式仅会话 cookie。需要 Bearer/API token → 配 oidc/both。
 - **M-1 契约 stale 语义矛盾**（`isExecutionContractTerminal('stale')` vs `VALID_TRANSITIONS.stale=['running']`）：契约层未接入生产，可留待接入时统一为 `isRecoverable()`。
 - **M-2 binder 幂等兜底失真**（queued 直通终态）：同上，接入时修。
 - **M-4 audit append 并发安全**（两次查询无事务）：已知取舍，单节点低风险；多 worker 需事务/触发器（P8-3）。
@@ -104,6 +104,6 @@
 - **M-6/M-7/L 系列**：低风险，可后续再议。
 
 ### 修复后的测试基线
-- server 全量 **126 pass / 0 fail**，typecheck 干净
-- 新增覆盖：urlencoded 登录、OIDC state CSRF、state 重放拒绝、app 层 HTTP 登录
+- server 全量 **127 pass / 0 fail**，typecheck 干净
+- 新增覆盖：urlencoded 登录、OIDC state CSRF、state 重放拒绝、app 层 HTTP 登录、`/auth/status`
 - shared 唯一失败仍为 pre-existing（`agent.test.ts` normalizeAgentRuntime，与本轮无关）
