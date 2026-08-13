@@ -46,6 +46,7 @@ const oidcClientBase = oidcConfigured ? {
   authorizationEndpoint: process.env.PROMA_WEB_OIDC_AUTHORIZATION_ENDPOINT ?? `${oidcIssuer}/authorize`,
   tokenEndpoint: process.env.PROMA_WEB_OIDC_TOKEN_ENDPOINT ?? `${oidcIssuer}/token`,
   jwksUrl: process.env.PROMA_WEB_OIDC_JWKS_URL!,
+  audience: process.env.PROMA_WEB_OIDC_AUDIENCE!,
   clientId: process.env.PROMA_WEB_OIDC_CLIENT_ID ?? '',
   clientSecret: process.env.PROMA_WEB_OIDC_CLIENT_SECRET,
   redirectUri: `${process.env.PROMA_WEB_PUBLIC_BASE_URL ?? `http://${hostname}:${process.env.PROMA_WEB_PORT ?? '3000'}`}/auth/oidc/callback`,

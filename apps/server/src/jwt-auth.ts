@@ -16,31 +16,59 @@ export function createOidcJwtAuth(config: OidcJwtAuthConfig): AgentRuntimeWebAut
   return async ({ request }) => {
     const token = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]
     if (!token) return undefined
-    const [encodedHeader, encodedClaims, encodedSignature] = token.split('.')
-    if (!encodedHeader || !encodedClaims || !encodedSignature) return undefined
-    const header = decodeJson(encodedHeader)
-    const claims = decodeJson(encodedClaims)
-    if (header?.alg !== 'RS256' || typeof header.kid !== 'string' || !claims) return undefined
-    if (Date.now() >= expiresAt) {
-      const response = await fetch(config.jwksUrl)
-      if (!response.ok) throw new Error(`获取 OIDC JWKS 失败: ${response.status}`)
-      const body = await response.json() as { keys?: OidcJwk[] }
-      cachedKeys = body.keys ?? []
-      expiresAt = Date.now() + 5 * 60_000
-    }
-    const jwk = cachedKeys.find((key) => key.kid === header.kid && key.kty === 'RSA')
-    if (!jwk) return undefined
-    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
-    const signed = new TextEncoder().encode(`${encodedHeader}.${encodedClaims}`)
-    const signature = decodeBase64Url(encodedSignature)
-    if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, bytesToArrayBuffer(signature), bytesToArrayBuffer(signed))) return undefined
-    if (claims.iss !== config.issuer || !hasAudience(claims.aud, config.audience) || !isCurrent(claims)) return undefined
-    const tenantId = claims[config.tenantClaim ?? 'tenant_id']
-    const userId = claims[config.userClaim ?? 'sub']
-    return typeof tenantId === 'string' && typeof userId === 'string' && tenantId && userId
-      ? { tenantId, userId, roles: readRoles(claims[config.rolesClaim ?? 'roles']) }
-      : undefined
+    return verifyJwtWithJwks(token, config, { cachedKeys, expiresAt, refetchCache: (keys, at) => { cachedKeys = keys; expiresAt = at } })
   }
+}
+
+export interface OidcIdTokenValidationConfig {
+  issuer: string
+  audience: string
+  jwksUrl: string
+  tenantClaim?: string
+  userClaim?: string
+  rolesClaim?: string
+}
+
+/**
+ * 用 JWKS 校验一个 RS256 JWT 的签名并返回 claims 中可用于 scope 的内容。
+ * 校验 iss/aud/exp/nbf 与签名；不校验则返回 undefined。
+ * 复用于 Bearer header（createOidcJwtAuth）与 OIDC id_token（auth-routes.defaultOidcTokenFromCode）。
+ */
+export async function verifyJwtWithJwks(
+  rawToken: string,
+  config: OidcIdTokenValidationConfig,
+  cache?: { cachedKeys: OidcJwk[]; expiresAt: number; refetchCache: (keys: OidcJwk[], expiresAt: number) => void },
+): Promise<{ tenantId: string; userId: string; roles: AgentRuntimeRole[] } | undefined> {
+  const [encodedHeader, encodedClaims, encodedSignature] = rawToken.split('.')
+  if (!encodedHeader || !encodedClaims || !encodedSignature) return undefined
+  const header = decodeJson(encodedHeader)
+  const claims = decodeJson(encodedClaims)
+  if (header?.alg !== 'RS256' || typeof header.kid !== 'string' || !claims) return undefined
+
+  const keys = cache ?? { cachedKeys: [], expiresAt: 0, refetchCache: (_keys: OidcJwk[], _at: number) => {} }
+  if (Date.now() >= keys.expiresAt) {
+    const response = await fetch(config.jwksUrl)
+    if (!response.ok) throw new Error(`获取 OIDC JWKS 失败: ${response.status}`)
+    const body = await response.json() as { keys?: OidcJwk[] }
+    const fetched = body.keys ?? []
+    const at = Date.now() + 5 * 60_000
+    keys.cachedKeys = fetched
+    keys.expiresAt = at
+    keys.refetchCache(fetched, at)
+  }
+  const jwk = keys.cachedKeys.find((key) => key.kid === header.kid && key.kty === 'RSA')
+  if (!jwk) return undefined
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify'])
+  const signed = new TextEncoder().encode(`${encodedHeader}.${encodedClaims}`)
+  const signature = decodeBase64Url(encodedSignature)
+  if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, bytesToArrayBuffer(signature), bytesToArrayBuffer(signed))) return undefined
+  if (claims.iss !== config.issuer || !hasAudience(claims.aud, config.audience) || !isCurrent(claims)) return undefined
+
+  const tenantId = claims[config.tenantClaim ?? 'tenant_id']
+  const userId = claims[config.userClaim ?? 'sub']
+  return typeof tenantId === 'string' && typeof userId === 'string' && tenantId && userId
+    ? { tenantId, userId, roles: readRoles(claims[config.rolesClaim ?? 'roles']) }
+    : undefined
 }
 
 interface OidcJwk extends JsonWebKey { kid?: string }

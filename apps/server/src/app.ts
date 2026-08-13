@@ -64,7 +64,7 @@ import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
 import type { UsageLedgerRecord } from './billing.ts'
 import { PostgresAuthSessionStore } from './auth-session-store.ts'
-import { createAuthHandler, type AuthRoutesDeps } from './auth-routes.ts'
+import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes.ts'
 import { createCookieSessionAuthResolver, createCompositeAuthResolver } from './auth-resolvers.ts'
 import { hashPassword, verifyPassword } from './local-admin-auth.ts'
 
@@ -349,16 +349,17 @@ export function createPromaWebServerApplication(
       if (url.pathname === '/auth/login') {
         if (request.method === 'GET') return authHandler.loginPage()
         if (request.method === 'POST') {
-          let body: { username?: string; password?: string }
-          try { body = await request.json() as { username?: string; password?: string } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
-          return authHandler.loginForm({ username: body.username ?? '', password: body.password ?? '' })
+          const parsed = await readLoginCredentials(request)
+          if (parsed.error || !parsed.credentials) return Response.json({ error: parsed.error ?? '请求体无效' }, { status: 400 })
+          return authHandler.loginForm(parsed.credentials)
         }
       }
       if (url.pathname === '/auth/logout') return authHandler.logout()
       if (url.pathname === '/auth/oidc/start') return authHandler.oidcStart()
       if (url.pathname === '/auth/oidc/callback') {
         const code = url.searchParams.get('code') ?? ''
-        return authHandler.oidcCallback(code)
+        const state = url.searchParams.get('state') ?? ''
+        return authHandler.oidcCallback({ code, state })
       }
       const scope = await auth({ request, url })
       const actionAuthorizationError = scope ? requireAgentActionRole(scope, request) : undefined

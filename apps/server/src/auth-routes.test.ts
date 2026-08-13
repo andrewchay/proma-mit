@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { createAuthHandler, type AuthRoutesDeps } from './auth-routes'
+import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes'
 import type { AgentRuntimeRole } from '@gravitas/shared/utils'
 
 function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
@@ -70,19 +70,67 @@ describe('auth-routes', () => {
     expect(setCookie).toContain('Max-Age=0')
   })
 
-  it('oidcCallback 用 code 交换 token 并设会话 cookie', async () => {
+  it('oidcCallback 用 code 交换 token 并设会话 cookie（含 state 校验）', async () => {
     const h = makeHandler({
       oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', clientSecret: 'sec', redirectUri: 'http://x/auth/oidc/callback' },
       oidcTokenFromCode: async () => ({ tenantId: 'tenant-oidc', userId: 'oidc-user', roles: ['operator'] as AgentRuntimeRole[] }),
     })
-    const res = await h.oidcCallback('code123')
-    expect(res.status).toBe(302) // 成功后重定向到 dashboard
+    // 先 oidcStart 取得合法 state
+    const startRes = await h.oidcStart()
+    const loc = startRes.headers.get('location') ?? ''
+    const state = new URL(loc).searchParams.get('state') ?? ''
+    expect(state).toBeTruthy()
+    // 用合法 state 回调
+    const res = await h.oidcCallback({ code: 'code123', state })
+    expect(res.status).toBe(302)
     expect(res.headers.get('set-cookie')).toContain('proma_session=')
+  })
+
+  it('oidcCallback 缺少/伪造 state 时拒绝（防 login CSRF）', async () => {
+    const h = makeHandler({
+      oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'http://x/auth/oidc/callback' },
+      oidcTokenFromCode: async () => ({ tenantId: 'tenant-oidc', userId: 'oidc-user', roles: ['operator'] as AgentRuntimeRole[] }),
+    })
+    // 无 state
+    expect((await h.oidcCallback({ code: 'code' })).status).toBe(400)
+    // 伪造 state
+    expect((await h.oidcCallback({ code: 'code', state: 'forged' })).status).toBe(400)
+  })
+
+  it('oidcStateStore verify 一次性（重放被拒）', async () => {
+    const h = makeHandler({
+      oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'http://x/auth/oidc/callback' },
+      oidcTokenFromCode: async () => ({ tenantId: 'tenant-oidc', userId: 'oidc-user', roles: ['operator'] as AgentRuntimeRole[] }),
+    })
+    const startRes = await h.oidcStart()
+    const state = new URL(startRes.headers.get('location') ?? '').searchParams.get('state') ?? ''
+    expect((await h.oidcCallback({ code: 'c1', state })).status).toBe(302) // 首次成功
+    expect((await h.oidcCallback({ code: 'c2', state })).status).toBe(400) // 重放被拒（state 已消耗）
   })
 
   it('oidcCallback 无配置时返回 400', async () => {
     const h = makeHandler()
-    const res = await h.oidcCallback('code')
+    const res = await h.oidcCallback({ code: 'code' })
     expect(res.status).toBe(400)
+  })
+})
+
+describe('readLoginCredentials', () => {
+  it('解析 JSON 请求体', async () => {
+    const req = new Request('http://x/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'pw' }) })
+    const { credentials } = await readLoginCredentials(req)
+    expect(credentials).toEqual({ username: 'admin', password: 'pw' })
+  })
+
+  it('解析浏览器表单 urlencoded 请求体（无 content-type 或 form 提交）', async () => {
+    const req = new Request('http://x/auth/login', { method: 'POST', body: 'username=admin&password=form-pw' })
+    const { credentials } = await readLoginCredentials(req)
+    expect(credentials).toEqual({ username: 'admin', password: 'form-pw' })
+  })
+
+  it('解析显式 urlencoded content-type', async () => {
+    const req = new Request('http://x/auth/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'username=u&password=p' })
+    const { credentials } = await readLoginCredentials(req)
+    expect(credentials).toEqual({ username: 'u', password: 'p' })
   })
 })
