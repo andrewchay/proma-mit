@@ -85,12 +85,13 @@
 - **M1 登录闭环**（`13288ece`+`7e5088a0`+`7d40a6c9`+`d0fba83c`）：本地 scrypt 登录（默认）+ OIDC（可配置），HTTP-only 会话 cookie；**解 compose/index 层"无 OIDC 不能启动"死锁**。
 - **M3 一键部署**（`c6face9d`）：nginx 反代 `/auth/`、compose OIDC 改可选 + authMode/admin env、`.env.example`、`scripts/smoke-private-deploy.sh`；修复两类部署 bug（Dockerfile `@proma/*`→`@gravitas/*`、server 缺 `@aws-sdk/client-kms`）。
 **真实 compose E2E 已验证**：全服务 healthy → nginx 登录闭环 → cookie→health 200 → 工作台 200。
-**待办**：M4（可选 Sub Agent 串联）。真实模型调用需用户配 provider 渠道。
+**待办**：私有部署最小集 M1-M4 已全部完成（见 §2.7）。剩余属 SaaS 轨道：完整 Sub Agent 多 worker 隔离（P7-4 完整项）、多租户计费、P8 全套（OTel/Prometheus/SIEM/生产 KMS 轮换）。真实模型调用需用户配 provider 渠道。
 
-## 2.7 私有部署最小集（2026-08-13，M1+M2+M3 全部完成）
+## 2.7 私有部署最小集（2026-08-13，M1+M2+M3+M4 全部完成）
 
 - **M2 Web 工作台补全**（`beeeb9aa`）：`dashboard.ts` 追加「健康度」（/agent/health）与「Agent 注册」（/agent/registry）视图；会话列表加改名/归档/取消（复用服务端 `updateSession`/`cancelTask`，未新增后端）；cookie 认证兼容。实测：health 返回贵慢重准、registry PUT+GET 正常。
-- **工程注意**：`dashboard.ts` 是超长反引号模板字符串，用 Edit 工具增量修改极易损坏（模板字符串内的 `</script>` 会被误匹配）。**稳妥做法是用 Python/Bash 做行级精确插入**（本项目已验证该方法 100% 可靠），避免 Edit 的模糊匹配导致 `</script>` 重复泄漏。
+- **M4 Sub Agent 串联**（`f836f5b7`）：确认 `startSubtask` 核心编排已实现（depth/children/token limits + parent_task_id），补 dashboard 任务树（`renderTasks`/`loadRuns` 按 parent 分组展开）。完整多 worker 隔离仍属 SaaS。
+- **工程注意**：`dashboard.ts` 是超长反引号模板字符串，用 Edit 工具增量修改极易损坏（模板字符串内的 `</script>` 会被误匹配）。**稳妥做法是用 Python/Bash 做行级精确插入**（已验证 100% 可靠），避免 Edit 的模糊匹配导致 `</script>` 重复泄漏。
 
 ---
 

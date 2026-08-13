@@ -60,8 +60,8 @@
 
 ## 3. 最小集的验收闭环（定义：什么叫"能跑起来、守住底线"）
 
-> **进度（2026-08-13）**：M1（登录闭环）✅ · M2（Web 工作台补全）✅ · M3（一键部署+冒烟）✅ · M4（可选项）⏳
-> 端到端已验证闭合：compose 起全套 → nginx 登录 → cookie → 建会话 → health/registry 视图 → 工作台（真实 compose E2E 通过）。
+> **进度（2026-08-13）**：M1（登录闭环）✅ · M2（Web 工作台补全）✅ · M3（一键部署+冒烟）✅ · M4（Sub Agent 串联）✅
+> 端到端已验证闭合：compose 起全套 → nginx 登录 → cookie → 建会话 → health/registry 视图 → 子代理父子树 → 工作台（真实 compose E2E 通过）。
 
 一条端到端路径，全部必须走通才算最小集闭环：
 
@@ -118,6 +118,7 @@
 ### M4（可选，若时间允许）Sub Agent server 端串联
 - 目标：task 聚合 child 事件到 parent，UI 可展开（复用 `parent_task_id`，不做多 worker 隔离）。
 - 接受标准：本项可留待 SaaS，最小集不强依赖。
+- **实现确认（2026-08-13）**：核心编排 `startSubtask`（`packages/shared/src/utils/agent-runtime-web-server.ts:523`）**已完整实现**——深度限制（maxDepth）、子代理数限制（maxChildrenPerTask）、独立子会话、`parent_task_id` 落库、子输出 token 预算、`taskRunner.startTask` 并发编排 + 失败传播。M4 增量 = dashboard 任务树展示（`f836f5b7`）：`renderTasks`/`loadRuns` 按 `parent_task_id` 组织成可展开树，标注 `[父+N]`/`[子]`。已通过树逻辑抽验；完整 Sub Agent 多 worker 隔离仍属 SaaS 轨道（P7-4 完整项）。
 
 ---
 
