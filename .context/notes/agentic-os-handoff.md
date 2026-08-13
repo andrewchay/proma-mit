@@ -164,6 +164,7 @@ typecheck：`cd apps/electron && npx tsc --noEmit`；`cd packages/shared && npx 
 | `notes/agentic-os-e2e-checklist.md` | 端到端测试清单（回归用） |
 | `plan/ph1a-member-sync-implementation.md` | PH1-A 实施详录（步骤1-7） |
 | `docs/plans/2026-08-13-agentic-architecture-seeds.md` | 架构种子落地施工计划（§2.5 的逐 Task 权威来源，含全部决策） |
+| `docs/private-deployment-minimal.md` | **私有部署最小集范围定义 v0.1**（三轨之「短期私有部署」轨道，M1-M4 缺口 + 排除项，接续首读此文件） |
 | `notes/habi-proma-borrowing.md` | 生态 / 统一能力契约 / 五层分层 |
 | `notes/proma-agent-island.md` | 官方灵动岛=会话状态机 |
 
