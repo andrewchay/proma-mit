@@ -89,3 +89,6 @@ export * from './campaign-types'
 
 // Agent Card 统一身份模型（身份层种子，兼容 AI 员工档案与通用 Agent）
 export * from './agent-card'
+
+// Execution Contract 统一执行契约（契约层种子，任务无关的状态机）
+export * from './execution-contract'
