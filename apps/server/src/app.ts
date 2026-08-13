@@ -63,6 +63,10 @@ import { ServerScheduler } from './server-scheduler.ts'
 import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
 import type { UsageLedgerRecord } from './billing.ts'
+import { PostgresAuthSessionStore } from './auth-session-store.ts'
+import { createAuthHandler, type AuthRoutesDeps } from './auth-routes.ts'
+import { createCookieSessionAuthResolver, createCompositeAuthResolver } from './auth-resolvers.ts'
+import { hashPassword, verifyPassword } from './local-admin-auth.ts'
 
 export interface PromaWebServerConfig {
   databaseUrl: string
@@ -72,6 +76,12 @@ export interface PromaWebServerConfig {
   envelopeKeyId: string
   kms?: { keyId: string; region: string; endpoint?: string }
   trustedHeaderAuth: boolean
+  /** 浏览器登录：local（本地用户名/密码）/ oidc / both / none（仅 Bearer/trusted-header） */
+  authMode?: 'local' | 'oidc' | 'both' | 'none'
+  /** OIDC Authorization Code 客户端配置（authMode=oidc|both 时需要） */
+  oidc?: { authorizationEndpoint: string; tokenEndpoint: string; clientId: string; clientSecret?: string; redirectUri: string; scope?: string }
+  /** 本地 bootstrap 管理员（authMode=local|both 时需要） */
+  localAdmin?: { username: string; tenantId: string; password: string }
   workspaceRoot: string
   workerId: string
   taskLeaseMs: number
@@ -162,7 +172,41 @@ export function createPromaWebServerApplication(
   const interactionStore = new PostgresAgentRuntimeInteractionStore(postgres)
   const agentRegistry = new AgentRegistryStore(postgres)
   const rateLimiter = redis instanceof NodeRedisClient ? new RedisTaskRateLimiter(redis) : undefined
-  const auth = dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth)
+  const authSessionStore = new PostgresAuthSessionStore(postgres)
+  // cookie 会话 resolver：authMode=local/oidc/both 时启用
+  const cookieAuthCookieName = 'proma_session'
+  const cookieAuthResolver = config.authMode && config.authMode !== 'none'
+    ? createCookieSessionAuthResolver({ store: authSessionStore, cookieName: cookieAuthCookieName })
+    : undefined
+  // 现有 Bearer/trusted-header 链路（dependencies.auth 来自 index.ts 的 OIDC JWT，或 trustedHeaderAuth）
+  const baseAuth = dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth)
+  // 复合：cookie 会话优先，回退 Bearer/trusted-header
+  const auth: AgentRuntimeWebAuthResolver = createCompositeAuthResolver(cookieAuthResolver, baseAuth)
+  // 浏览器登录 handler（/auth/*）
+  // localAdminResolver：启动时把明文口令 scrypt 哈希一次，之后每次登录用 timing-safe 校验
+  const localAdmin = config.localAdmin
+  const localAdminHashPromise = localAdmin ? hashPassword(localAdmin.password) : Promise.resolve(null)
+  const authRoutesDeps: AuthRoutesDeps = {
+    // 适配：AuthRoutesDeps 用对象形会话，store 用 4 参数形
+    sessionStore: {
+      create: async (session) => {
+        await authSessionStore.create({ tenantId: session.tenantId, userId: session.userId }, session.sessionId, session.roles, session.expiresAt)
+      },
+      destroy: (sessionId) => authSessionStore.destroy(sessionId),
+    },
+    sessionCookieName: cookieAuthCookieName,
+    verifyAdmin: localAdmin
+      ? async (username, password) => {
+          if (username !== localAdmin.username) return null
+          const hash = await localAdminHashPromise
+          if (!hash) return null
+          const ok = await verifyPassword(password, hash)
+          return ok ? { tenantId: localAdmin.tenantId, roles: ['admin'] as const } : null
+        }
+      : async () => null,
+    oidc: config.oidc,
+  }
+  const authHandler = createAuthHandler(authRoutesDeps)
   const operationsReporter = dependencies.operationsReporter ?? (config.operations
     ? new HttpOperationsReporter(config.operations)
     : new NoopOperationsReporter())
@@ -300,6 +344,21 @@ export function createPromaWebServerApplication(
       }
       if (request.method === 'GET' && url.pathname === '/agent/ui') {
         return new Response(WEB_DASHBOARD_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
+      }
+      // /auth/* 浏览器登录闭环（本地表单 + OIDC）
+      if (url.pathname === '/auth/login') {
+        if (request.method === 'GET') return authHandler.loginPage()
+        if (request.method === 'POST') {
+          let body: { username?: string; password?: string }
+          try { body = await request.json() as { username?: string; password?: string } } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+          return authHandler.loginForm({ username: body.username ?? '', password: body.password ?? '' })
+        }
+      }
+      if (url.pathname === '/auth/logout') return authHandler.logout()
+      if (url.pathname === '/auth/oidc/start') return authHandler.oidcStart()
+      if (url.pathname === '/auth/oidc/callback') {
+        const code = url.searchParams.get('code') ?? ''
+        return authHandler.oidcCallback(code)
       }
       const scope = await auth({ request, url })
       const actionAuthorizationError = scope ? requireAgentActionRole(scope, request) : undefined
@@ -547,6 +606,7 @@ export function createPromaWebServerApplication(
       await evalDatasetStore.initializeSchema()
       await interactionStore.initializeSchema()
       await agentRegistry.initializeSchema()
+      await authSessionStore.initializeSchema()
       await schedulerStore.initializeSchema()
       scheduler.start()
       startSignalScanner()
