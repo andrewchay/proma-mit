@@ -82,11 +82,12 @@
 
 按依赖排序，全部 TDD + 真实部署验证：
 
-### M1 浏览器登录闭环（最高优先）
+### M1 浏览器登录闭环（最高优先）✅ 已完成（2026-08-13）
 - 目标：私有部署下运维/成员能浏览器登录，而非手动填 token。
-- 方案：为私有部署提供两条路径——① OIDC Authorization Code 登录页 + `/auth/login` + `/auth/callback` + 会话 cookie（对应 `createOidcJwtAuth`）；② 无第三方 IdP 的 **fallback 本地用户名/密码**（scrypt/bcrypt 哈希 + JWT session），满足"单团队无企业 IdP"。
-- 产出：`auth-login.ts` + `auth-local.ts` + 登录 UI + 会话中间件（HTTP-only cookie）。
-- 验收：未登录访问 `/agent/*` 302/401；登录后可访问；RBAC 角色从登录身份解析。
+- 方案：本地用户名/密码（默认，scrypt 哈希 + HTTP-only 会话 cookie）与 OIDC Authorization Code（可配置）双路径；`PROMA_WEB_AUTH_MODE=local|oidc|both|none`。
+- 产出：`auth-session-store.ts`（Postgres 会话表）、`local-admin-auth.ts`（scrypt）、`auth-resolvers.ts`（cookie→scope 复合 resolver）、`auth-routes.ts`（/auth/login|logout|oidc/start|oidc/callback）、`index.ts`/`app.ts` 接线。
+- 解死锁：**移除"非 trusted-header 必须配 OIDC 才能启动"的硬要求**；无 OIDC 用 local 模式可启动。
+- 验收（真实 server 验证）：无 OIDC local 启动→登录页 200→错误密码 401→正确密码 302+HttpOnly cookie→带 cookie 访问 /agent/metrics 200、无 cookie 401→logout 清 cookie。测试 119 pass（新增 ~30 登录相关）。
 
 ### M2 Web 工作台补全 health/registry + 会话管理
 - 目标：让新能力在 UI 可见，满足 P6-1 基础。
