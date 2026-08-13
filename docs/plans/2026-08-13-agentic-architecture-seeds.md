@@ -18,7 +18,8 @@
 - [ ] **Task 2.3**：S2 验收
 - [x] **Sprint 3 核心完成（Task 3.1 类型 + Task 3.2 service + binder）**：Execution Contract 类型、状态机服务、执行生命周期 binder 已实现并测试（commit `0f92adc6` + 后续）
 - [ ] **Task 3.3** S3 验收 + 持久化接入决策
-- [ ] **Sprint 4**：审计 hash chain + 贵慢重准看板
+- [x] **Sprint 4 完成（Task 4.1 + 4.2）**：审计 hash chain（commit `d7aef88d`）+ 贵慢重准看板
+- [ ] **Sprint 4 全局验收**
 
 ## 执行中发现与记录
 
@@ -36,6 +37,14 @@
 - **契约层三件套**：① shared 类型（`execution-contract.ts`，source/status/executor + 工具）；② `execution-contract-service.ts`（状态机 service + 可注入 store + onCreated/onTransition hooks）；③ `execution-contract-binder.ts`（把 execution 生命周期 dispatch/start/complete/fail/retry 桥到契约）。
 - **关键设计**：`ExecutionContractStore` 收敛为同步接口（当前内存实现）；`CreateExecutionContractInput` 支持调用方传入契约稳定 ID（从外部实体派生）；binder 返回快照避免别名污染。
 - **后续 Sprint（持久化接入）**：需要一个 SQLite-backed `ExecutionContractStore`，才可将契约与 `agent_executions` 联动且重启不丢——不在本次范围。
+
+## Sprint 4 设计决策记录（2026-08-13）
+
+- **审计 hash chain 采用按 tenant（非 user）分链**：从链尾回溯重算；每条记录存 `prev_hash` + `hash`；篡改 → `verifyChain.valid=false`。对真实 Postgres 验证（篡改 action 被检出）。
+- **append 的并发安全取舍**：当前为"先 SELECT 链尾 hash → 再 INSERT"两次查询，极端并发下可能断链；生产绝对安全需事务/触发器（P8-3）。文档已注释说明。
+- **hash chain 与合规性清理（purgeBefore/legal-hold）的冲突**：删除记录会断链 → verifyChain 判定 invalid。这是"任何非常规改动都会被审计器察觉"的预期设计，legal-hold 正是配套约束。
+- **看板 latency 维度暂无数据源**：`metrics.get` 无 p95 延迟、spans 无现成聚合。`computeHealthDashboard` 为纯函数，latency 先以 0 占位，接入 spans p95 后替换；不影响贵/重/准/预算维度。
+- **看板数据源组装**：月在成本来自 `usageLedger.summarize`（近30天窗口）、token/任务/success 来自 `metrics.get`，预算来自 `config.tenantBudget.monthlyCostMicroUsd`。`GET /agent/health` 需要 operator/admin/security-auditor。
 
 
 

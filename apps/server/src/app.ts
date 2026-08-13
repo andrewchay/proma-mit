@@ -45,6 +45,7 @@ import { PostgresRuntimeSpanStore } from './spans.ts'
 import { createSpanQueryToolAdapter } from './span-query-tools.ts'
 import { PostgresRunProfileAggregator } from './run-profile.ts'
 import { PostgresRuntimeMetrics } from './metrics.ts'
+import { computeHealthDashboard } from './health-dashboard.ts'
 import { PostgresSignalStore } from './signals.ts'
 import { PostgresSignalDataSource, SignalScanner } from './signal-scan.ts'
 import type { SignalMatcher } from './signals.ts'
@@ -332,6 +333,8 @@ export function createPromaWebServerApplication(
           : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
             ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
             : Response.json({ metrics: await metrics.get(scope) })
+      } else if (request.method === 'GET' && url.pathname === '/agent/health') {
+        response = await getHealthDashboard(scope, metrics, usageLedger, config.tenantBudget)
       } else if (request.method === 'GET' && url.pathname === '/agent/registry') {
         const list = parseRegistryListQuery(scope ?? { tenantId: '', userId: '' }, url.searchParams)
         response = !scope
@@ -704,6 +707,31 @@ async function createServerSchedule(request: Request, scope: AgentRuntimeScope, 
   if (!await store.getSession(scope, body.sessionId)) return Response.json({ error: '会话不存在或不可访问' }, { status: 404 })
   const created = await schedulerStore.create({ ...scope, sessionId: body.sessionId, prompt: body.prompt.trim(), schedule, enabled: true })
   return Response.json({ schedule: created }, { status: 201 })
+}
+
+async function getHealthDashboard(
+  scope: AgentRuntimeScope | undefined,
+  metrics: PostgresRuntimeMetrics,
+  usageLedger: PostgresUsageLedger,
+  budget: TenantBudgetPolicy | undefined,
+): Promise<Response> {
+  if (!scope) return Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+  if (!hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])) {
+    return Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
+  }
+  const m = await metrics.get(scope)
+  const monthStart = Date.now() - 30 * 24 * 60 * 60 * 1_000
+  const usage = await usageLedger.summarize({ ...scope, from: monthStart })
+  const health = computeHealthDashboard({
+    monthlyCostMicroUsd: usage.costMicroUsd,
+    // 慢：暂无 spans latency 聚合，先以 0 占位；接入 spans p95 后替换
+    p95LatencyMs: 0,
+    totalTokens: usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
+    totalRuns: m.runningTasks + m.completedTasks24h + m.failedTasks24h + m.cancelledTasks24h,
+    successRuns: m.completedTasks24h,
+    monthlyBudgetMicroUsd: budget?.monthlyCostMicroUsd,
+  })
+  return Response.json({ health })
 }
 
 async function putAgentRegistry(request: Request, scope: AgentRuntimeScope | undefined, store: AgentRegistryStore): Promise<Response> {
