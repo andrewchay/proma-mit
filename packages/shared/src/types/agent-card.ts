@@ -5,7 +5,6 @@
  * 是 Agent Registry 与 Execution Contract 层的公共身份单元。
  * 对应文档「AI 员工 + 通用 Agent 融合」设计中的身份层种子。
  */
-import type { AgentEmployeeResult } from './work-module'
 
 export const AGENT_CARD_SOURCE_EMPLOYEE = 'employee'
 export const AGENT_CARD_SOURCE_WORKFLOW = 'workflow'
@@ -44,8 +43,25 @@ export interface AgentCard {
   updatedAt: number
 }
 
+/** buildAgentCardFromEmployee 的最小入参：兼容本地 AgentEmployee 与 shared AgentEmployeeResult 的结构子集 */
+export interface AgentCardEmployeeInput {
+  id: string
+  name: string
+  role: string
+  description: string
+  workflowId?: string
+  skills?: string[]
+  enabled: boolean
+  totalTasks: number
+  completedTasks: number
+  avgDurationMs?: number
+  failureCount: number
+  createdAt: number
+  updatedAt: number
+}
+
 /** 从 AI 员工档案构建 Agent Card（后续服务端同步与契约派发的基础） */
-export function buildAgentCardFromEmployee(emp: AgentEmployeeResult): AgentCard {
+export function buildAgentCardFromEmployee(emp: AgentCardEmployeeInput): AgentCard {
   return {
     cardId: emp.id,
     source: AGENT_CARD_SOURCE_EMPLOYEE,
