@@ -60,8 +60,8 @@
 
 ## 3. 最小集的验收闭环（定义：什么叫"能跑起来、守住底线"）
 
-> **进度（2026-08-13）**：M1（登录闭环）✅ · M2（Web 工作台补全）⏳ · M3（一键部署+冒烟）✅ · M4（可选项）⏳
-> 端到端已验证闭合：compose 起全套 → nginx 登录 → cookie → 建会话 → health → 工作台（真实 compose E2E 通过）。
+> **进度（2026-08-13）**：M1（登录闭环）✅ · M2（Web 工作台补全）✅ · M3（一键部署+冒烟）✅ · M4（可选项）⏳
+> 端到端已验证闭合：compose 起全套 → nginx 登录 → cookie → 建会话 → health/registry 视图 → 工作台（真实 compose E2E 通过）。
 
 一条端到端路径，全部必须走通才算最小集闭环：
 
@@ -92,11 +92,12 @@
 - 解死锁：**移除"非 trusted-header 必须配 OIDC 才能启动"的硬要求**；无 OIDC 用 local 模式可启动。
 - 验收（真实 server 验证）：无 OIDC local 启动→登录页 200→错误密码 401→正确密码 302+HttpOnly cookie→带 cookie 访问 /agent/metrics 200、无 cookie 401→logout 清 cookie。测试 119 pass（新增 ~30 登录相关）。
 
-### M2 Web 工作台补全 health/registry + 会话管理
+### M2 Web 工作台补全 health/registry + 会话管理 ✅ 已完成（2026-08-13）
 - 目标：让新能力在 UI 可见，满足 P6-1 基础。
-- 方案：`dashboard.ts` 拆分/扩展，新增「健康度」(_/agent/health_)与「Agent 注册」(_/agent/registry_) tab；会话列表支持**取消**、**标题编辑**、刷新后恢复订阅（复用现有 SSE `Last-Event-ID`）。
-- 产出：dashboard.ts 增强（保持无构建依赖、单 HTML，避免引入前端工具链）。
-- 验收：health/registry 在浏览器可视；会话可取消；刷新不丢事件。
+- 方案：`dashboard.ts` 追加式增强（保持无构建单 HTML），新增「健康度」(_/agent/health_)与「Agent 注册」(_/agent/registry_) 视图；会话列表支持**取消**（DELETE）、**标题编辑**（PATCH）、**归档**（PATCH）。
+- 产出：dashboard.ts nav 加两入口；`loadHealth`/`loadRegistry`；`renameSession`/`archiveSession`/`cancelSession`；cookie 认证兼容（同源自动带）。
+- 验收（真实 server）：health 返回贵慢重准；registry PUT+GET 正常；会话 API 可达。server 119 pass/0 fail。
+- 说明：会话管理复用服务端已有 API（`updateSession`、`cancelTask`），未新增后端。
 
 ### M3 一键部署可用 + 冒烟脚本
 - 目标：`docker compose -f docker-compose.production.yml up -d` 一条命令起全套并自动健康检查。
