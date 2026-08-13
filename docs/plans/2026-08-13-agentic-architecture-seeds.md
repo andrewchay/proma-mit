@@ -10,16 +10,16 @@
 
 ---
 
-## 执行进度（2026-08-13）
+## 执行进度（全部完成 ✅ 2026-08-13）
 
 - [x] **S1 完成**：Agent Card 类型 + 本地 Registry（commit `53bb8d03`、`5f1d0241`）
 - [x] **Task 2.1 完成**：服务端 Agent Registry + 租户隔离（commit `92576ae6`），已对真实 Postgres 冒烟验证（建表/upsert/list/租户隔离/数字类型修正）
 - [x] **Task 2.2 已存在**：KMS 版本化种子已有成熟实现（rotating codec + reencrypt + 云KMS接线），跳过
-- [ ] **Task 2.3**：S2 验收
-- [x] **Sprint 3 核心完成（Task 3.1 类型 + Task 3.2 service + binder）**：Execution Contract 类型、状态机服务、执行生命周期 binder 已实现并测试（commit `0f92adc6` + 后续）
-- [ ] **Task 3.3** S3 验收 + 持久化接入决策
-- [x] **Sprint 4 完成（Task 4.1 + 4.2）**：审计 hash chain（commit `d7aef88d`）+ 贵慢重准看板
-- [ ] **Sprint 4 全局验收**
+- [x] **Task 2.3 验收通过**：真实 Postgres 冒烟 + mock 4 pass + server 全量无回归
+- [x] **Sprint 3 完成**：Execution Contract 类型 + 状态机 service + 执行生命周期 binder，11 测试通过（commit `0f92adc6` + `254f0049`）
+- [x] **Task 3.3 验收通过**：契约状态机合法/非法迁移、binder 生命周期闭环测试通过；持久化接入列为后续（决策见 Sprint 3 记录）
+- [x] **Sprint 4 完成**：审计 hash chain（`d7aef88d`）+ 贵慢重准看板（`1e2f903a`）
+- [x] **Sprint 4 全局验收通过**：server 90 / electron 15 / shared 125 pass，唯一失败为 pre-existing 无关技术债
 
 ## 执行中发现与记录
 
@@ -48,16 +48,33 @@
 
 
 
-## 阶段总览
+## 阶段总览（全部完成 ✅ 2026-08-13）
 
-| Sprint | 种子 | 交付 |
-|---|---|---|
-| S1 | Agent Card + 本地 Registry 融合 | Electron 侧：AI 员工档案升级为 Agent Card 兼容；`agent-card.ts` / `agent-registry-service.ts` |
-| S2 | 服务端 Registry + 租户隔离 + KMS 版本化 | server 侧：`agent-registry.ts`(Postgres) + `agent-registry-api.ts` + envelope 版本字段 |
-| S3 | Execution Contract 契约层 | Electron 侧：从 `agent-employee-service` 抽 `execution-contract-service.ts` |
-| S4 | 审计 hash chain + 贵慢重准看板 | server：`audit.ts` 增强 hash chain；server dashboard 新增四维看板聚合 |
+| Sprint | 种子 | 状态 | 提交 |
+|---|---|---|---|
+| S1 | Agent Card + 本地 Registry 融合 | ✅ | `53bb8d03`, `5f1d0241` |
+| S2 | 服务端 Registry + 租户隔离 + KMS 版本化 | ✅（Task 2.2 KMS 已存在） | `92576ae6` |
+| S3 | Execution Contract 契约层 | ✅ 独立可复用 | `0f92adc6`, `254f0049` |
+| S4 | 审计 hash chain + 贵慢重准看板 | ✅ | `d7aef88d`, `1e2f903a` |
 
-每 Sprint 独立可合并、可验收。S1→S3 有强依赖（身份先于契约），S4 独立可并行。
+每 Sprint 独立合入、独立验收。S1→S3 有强依赖（身份先于契约），S4 独立可并行。
+
+### 全局验收结果（2026-08-13）
+
+- ✅ Electron：AI 员工档案 ↔ Agent Card 互转；`listAgentCards()`/`getAgentCard()` 返回在编员工卡片
+- ✅ Server：`GET/PUT /agent/registry` 按租户读写，真实 Postgres 验证多租户隔离（其他租户查不到）
+- ✅ 契约层：状态机合法/非法迁移 + 执行生命周期 binder（dispatch/start/complete/fail/retry）测试通过
+- ✅ 安全：审计 hash chain 可检测篡改（真实 Postgres 验证）；KMS 版本化能力已确认存在（rotating codec + reencrypt + 云KMS接线）
+- ✅ 治理：`GET /agent/health` 输出贵慢重准 + 预算占用
+- ✅ 全量回归：server 90 pass / electron 15 pass / shared 125 pass（唯一失败为 pre-existing `normalizeAgentRuntime` 技术债，与本次无关）
+- ✅ 测试策略：每 Task 先写失败测试（TDD），mock + 真实 Postgres 双验证，无回归
+
+### 后续（不在本次范围，见各 Sprint 决策记录）
+
+- 契约层 SQLite-backed `ExecutionContractStore` 持久化接入
+- 审计 hash chain 并发绝对安全（事务/触发器）+ 生产级 KMS 轮换验收（P8-3）
+- 看板 latency p95 聚合数据源（spans）
+- OIDC RBAC 到 Agent Card 权限映射、服务端 MCP 池多 worker 隔离、隔离执行器容器化验收
 
 ---
 
