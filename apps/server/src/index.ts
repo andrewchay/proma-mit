@@ -1,6 +1,8 @@
 import { createPromaWebServerApplication } from './app.ts'
-import { assertTrustedHeaderAuthStartupPolicy } from './auth-startup-policy.ts'
+import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy } from './auth-startup-policy.ts'
 import { createOidcJwtAuth } from './jwt-auth.ts'
+import { parseAdminAccount } from './local-admin-auth.ts'
+import type { AgentRuntimeWebAuthResolver } from '@gravitas/shared/utils'
 
 const databaseUrl = requireEnvironment('PROMA_WEB_DATABASE_URL')
 const redisUrl = requireEnvironment('PROMA_WEB_REDIS_URL')
@@ -32,10 +34,41 @@ const subtaskLimits = parseSubtaskLimits(process.env.PROMA_WEB_SUBTASK_MAX_DEPTH
 const spanSampling = parseSpanSampling(process.env.PROMA_WEB_SPAN_SAMPLING, process.env.PROMA_WEB_SPAN_SAMPLE_RATE, process.env.PROMA_WEB_SPAN_SAMPLE_MAX_BYTES)
 const kms = parseKms(process.env.PROMA_WEB_AWS_KMS_KEY_ID, process.env.PROMA_WEB_AWS_REGION, process.env.PROMA_WEB_AWS_KMS_ENDPOINT)
 
-if (!trustedHeaderAuth) {
-  requireEnvironment('PROMA_WEB_OIDC_ISSUER')
-  requireEnvironment('PROMA_WEB_OIDC_AUDIENCE')
-  requireEnvironment('PROMA_WEB_OIDC_JWKS_URL')
+// ---- 浏览器登录（authMode）解析：local / oidc / both / none ----
+const oidcIssuer = process.env.PROMA_WEB_OIDC_ISSUER
+const oidcConfigured = Boolean(oidcIssuer && process.env.PROMA_WEB_OIDC_AUDIENCE && process.env.PROMA_WEB_OIDC_JWKS_URL)
+const adminRaw = process.env.PROMA_WEB_ADMIN
+// 默认 authMode：配了 OIDC → both（若也配 admin）；否则 admin → local；否则 none
+const authMode = (process.env.PROMA_WEB_AUTH_MODE ?? (oidcConfigured ? 'both' : adminRaw ? 'local' : 'none')) as 'local' | 'oidc' | 'both' | 'none'
+const localAdmin = (authMode === 'local' || authMode === 'both') && adminRaw ? parseAdminAccount(adminRaw) : undefined
+const oidcClientBase = oidcConfigured ? {
+  issuer: oidcIssuer!,
+  authorizationEndpoint: process.env.PROMA_WEB_OIDC_AUTHORIZATION_ENDPOINT ?? `${oidcIssuer}/authorize`,
+  tokenEndpoint: process.env.PROMA_WEB_OIDC_TOKEN_ENDPOINT ?? `${oidcIssuer}/token`,
+  jwksUrl: process.env.PROMA_WEB_OIDC_JWKS_URL!,
+  clientId: process.env.PROMA_WEB_OIDC_CLIENT_ID ?? '',
+  clientSecret: process.env.PROMA_WEB_OIDC_CLIENT_SECRET,
+  redirectUri: `${process.env.PROMA_WEB_PUBLIC_BASE_URL ?? `http://${hostname}:${process.env.PROMA_WEB_PORT ?? '3000'}`}/auth/oidc/callback`,
+  scope: process.env.PROMA_WEB_OIDC_SCOPE,
+} : undefined
+
+assertAuthModeStartupPolicy({
+  trustedHeaderAuth,
+  authMode,
+  hasLocalAdmin: Boolean(localAdmin),
+  hasOidcClient: Boolean(oidcClientBase && oidcClientBase.clientId),
+})
+
+// 现有 Bearer-JWT 链路（仍用 createOidcJwtAuth），作为 cookie 会话之外的 API 认证回退
+let bearerAuth: AgentRuntimeWebAuthResolver | undefined
+if (!trustedHeaderAuth && oidcConfigured) {
+  bearerAuth = createOidcJwtAuth({
+    issuer: oidcIssuer!,
+    audience: requireEnvironment('PROMA_WEB_OIDC_AUDIENCE'),
+    jwksUrl: oidcClientBase!.jwksUrl,
+    tenantClaim: process.env.PROMA_WEB_OIDC_TENANT_CLAIM,
+    userClaim: process.env.PROMA_WEB_OIDC_USER_CLAIM,
+  })
 }
 
 const application = createPromaWebServerApplication({
@@ -45,6 +78,9 @@ const application = createPromaWebServerApplication({
   envelopeKey,
   envelopeKeyId,
   trustedHeaderAuth,
+  authMode,
+  oidc: authMode === 'oidc' || authMode === 'both' ? oidcClientBase : undefined,
+  localAdmin,
   workspaceRoot,
   workerId,
   taskLeaseMs,
@@ -59,10 +95,7 @@ const application = createPromaWebServerApplication({
   subtaskLimits,
   spanSampling,
   kms,
-}, trustedHeaderAuth ? {} : { auth: createOidcJwtAuth({
-  issuer: requireEnvironment('PROMA_WEB_OIDC_ISSUER'), audience: requireEnvironment('PROMA_WEB_OIDC_AUDIENCE'), jwksUrl: requireEnvironment('PROMA_WEB_OIDC_JWKS_URL'),
-  tenantClaim: process.env.PROMA_WEB_OIDC_TENANT_CLAIM, userClaim: process.env.PROMA_WEB_OIDC_USER_CLAIM,
-}) })
+}, bearerAuth ? { auth: bearerAuth } : {})
 
 await application.initialize()
 
