@@ -86,3 +86,6 @@ export * from './work-module'
 
 // 营销 Campaign / KOL 类型（ma-tools 迁移用）
 export * from './campaign-types'
+
+// Agent Card 统一身份模型（身份层种子，兼容 AI 员工档案与通用 Agent）
+export * from './agent-card'
