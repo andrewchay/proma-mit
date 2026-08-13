@@ -30,6 +30,8 @@ export interface ExecutionContract<TPayload = unknown, TResult = unknown> {
 }
 
 export interface CreateExecutionContractInput<TPayload = unknown> {
+  /** 可选：调用方可传入稳定契约 ID（如从外部实体 ID 派生）；缺省由服务端生成 UUID */
+  contractId?: string
   agentId: string
   source: string
   sourceId?: string
