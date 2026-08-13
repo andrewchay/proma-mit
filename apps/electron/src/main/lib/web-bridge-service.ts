@@ -6,12 +6,10 @@
  */
 
 import * as electron from 'electron'
-import type { BrowserWindow } from 'electron'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getConfigDir } from './config-paths'
 import {
-  ManagedElectronBackend,
   PlaywrightCdpBackend,
   type SelectedUploadFile,
   type WebAutomationBackend,
@@ -19,6 +17,9 @@ import {
   type WebBridgeSnapshot,
   type WebElementTarget,
 } from './web-automation-backend'
+import { BrowserEngineBackend, type BrowserEngineTab } from './browser-engine-backend'
+import { browserController, type BrowserController } from './browser-engine/browser-controller'
+import { permissionService } from './agent-permission-service'
 
 export type {
   WebBridgeAccessibilityNode,
@@ -26,7 +27,6 @@ export type {
   WebBridgeSnapshot,
 } from './web-automation-backend'
 
-const WEB_BRIDGE_PARTITION_PREFIX = 'persist:proma-web-bridge-'
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const MAX_UPLOAD_FILES = 10
 
@@ -42,7 +42,6 @@ export interface WebBridgeUpload {
 }
 
 interface WebBridgeSession {
-  window?: BrowserWindow
   backend?: WebAutomationBackend
   lastSnapshot?: WebBridgeSnapshot
 }
@@ -94,7 +93,7 @@ class WebBridgeService {
    */
   async selectAndUpload(sessionId: string, target: WebElementTarget): Promise<WebBridgeUpload> {
     this.requireActiveSession(sessionId)
-    const owner = this.sessions.get(sessionId)?.window ?? electron.BrowserWindow.getFocusedWindow()
+    const owner = electron.BrowserWindow.getFocusedWindow()
     const result = owner
       ? await electron.dialog.showOpenDialog(owner, { title: '选择要上传到当前网页的文件', properties: ['openFile', 'multiSelections'] })
       : await electron.dialog.showOpenDialog({ title: '选择要上传到当前网页的文件', properties: ['openFile', 'multiSelections'] })
@@ -123,7 +122,8 @@ class WebBridgeService {
     if (!current) return
     this.sessions.delete(sessionId)
     void current.backend?.close()
-    if (current.window && !current.window.isDestroyed()) current.window.close()
+    // 浏览器引擎的 hostWindow 由 browserController 管理，一并关闭。
+    try { browserController.close(sessionId) } catch { /* 已关闭 */ }
   }
 
   /** 关闭全部受管浏览器会话，供设置页紧急停止使用。 */
@@ -166,48 +166,48 @@ class WebBridgeService {
     return targets.map(({ id, title, url }) => ({ id, title, url }))
   }
 
-  private getOrCreateWindow(sessionId: string): BrowserWindow {
-    const current = this.sessions.get(sessionId)
-    if (current?.window && !current.window.isDestroyed()) {
-      current.window.show()
-      current.window.focus()
-      return current.window
-    }
+  // ---- 多标签 + AX 观察（新增工具透传）----
 
-    const browserSession = electron.session.fromPartition(`${WEB_BRIDGE_PARTITION_PREFIX}${sessionId}`, { cache: true })
-    const window = new electron.BrowserWindow({
-      width: 1200,
-      height: 800,
-      minWidth: 720,
-      minHeight: 480,
-      title: 'Proma Web Bridge',
-      show: true,
-      webPreferences: {
-        session: browserSession,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-    })
-    window.setMenuBarVisibility(false)
-    // 不让网页自行创建未受管的新窗口；需要访问新页面时由 Agent 显式导航。
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    window.webContents.on('will-navigate', (event, url) => {
-      if (!isSafeWebUrl(url)) event.preventDefault()
-    })
-    window.webContents.on('will-redirect', (event, url) => {
-      if (!isSafeWebUrl(url)) event.preventDefault()
-    })
-    window.on('closed', () => this.sessions.delete(sessionId))
-    this.sessions.set(sessionId, { window, backend: new ManagedElectronBackend(window) })
-    return window
+  /** 创建 Agent 工作标签并激活为可见（用户能看到操作）。 */
+  createNewTab(sessionId: string, url?: string): BrowserEngineTab {
+    return this.engineBackend(sessionId).createNewTab(url)
+  }
+
+  /** 列出当前会话所有标签。 */
+  listTabs(sessionId: string): BrowserEngineTab[] {
+    if (!this.sessions.has(sessionId)) return []
+    const backend = this.sessions.get(sessionId)?.backend
+    if (!(backend instanceof BrowserEngineBackend)) return []
+    return backend.listTabs()
+  }
+
+  async selectTab(sessionId: string, tabId: string): Promise<BrowserEngineTab> {
+    return this.engineBackend(sessionId).selectTab(tabId)
+  }
+
+  async closeTab(sessionId: string, tabId: string): Promise<void> {
+    const backend = this.sessions.get(sessionId)?.backend
+    if (backend instanceof BrowserEngineBackend) await backend.closeTab(tabId)
+  }
+
+  /** AX 结构化观察（Observe 工具）。 */
+  async observe(sessionId: string): Promise<{ tabId: string; url: string; title: string; elements: Array<{ ref: string; role: string; name: string; editable: boolean }> }> {
+    return this.engineBackend(sessionId).observeElements()
+  }
+
+  private engineBackend(sessionId: string): BrowserEngineBackend {
+    const backend = this.getOrCreateManagedBackend(sessionId)
+    if (!(backend instanceof BrowserEngineBackend)) throw new Error('当前会话尚未使用浏览器引擎')
+    return backend
   }
 
   private getOrCreateManagedBackend(sessionId: string): WebAutomationBackend {
     const current = this.sessions.get(sessionId)
     if (current?.backend) return current.backend
-    this.getOrCreateWindow(sessionId)
-    return this.requireBackend(sessionId)
+    // 浏览器引擎：多标签 WebContentsView + CDP（window 由 browserController 内部管理）
+    const backend = new BrowserEngineBackend(sessionId, browserController)
+    this.sessions.set(sessionId, { backend })
+    return backend
   }
 
   private requireBackend(sessionId: string): WebAutomationBackend {
@@ -222,7 +222,11 @@ class WebBridgeService {
 
   private rememberSnapshot(sessionId: string, snapshot: WebBridgeSnapshot): WebBridgeSnapshot {
     const current = this.sessions.get(sessionId)
-    if (current) current.lastSnapshot = snapshot
+    if (current) {
+      current.lastSnapshot = snapshot
+      // 让权限服务知道当前站点，用于站点信任判断（下载/点击在可信域名下自动放行）。
+      if (snapshot.url) permissionService.noteWebBridgeHost(sessionId, snapshot.url)
+    }
     return snapshot
   }
 

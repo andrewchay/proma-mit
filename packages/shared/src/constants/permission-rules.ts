@@ -18,6 +18,8 @@ export const SAFE_TOOLS: readonly string[] = [
   'WebBridgeScroll', // 受管浏览器滚动
   'WebBridgeChromeTargets', // 列出用户明确开放的 Chrome 调试页面
   'WebBridgeStatus', // 仅读取当前 Web Bridge 连接状态
+  'WebBridgeObserve', // 读取受管浏览器工作标签的结构化 AX 元素列表
+  'WebBridgeListTabs', // 列出受管浏览器标签（只读）
   'ComputerUseStatus', // 仅读取 Computer Use 授权状态
   'ComputerUseCapabilities', // 仅读取当前平台能力
   'ComputerUseFrontmostApplication', // 仅读取当前前台应用元数据

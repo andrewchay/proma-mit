@@ -1,10 +1,12 @@
 import { describe, expect, mock, test } from 'bun:test'
 
 class MockBrowserWindow {}
+class MockWebContentsView {}
 
 mock.module('electron', () => ({
   app: { isPackaged: false },
   BrowserWindow: MockBrowserWindow,
+  WebContentsView: MockWebContentsView,
   dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
   desktopCapturer: { getSources: async () => [] },
   screen: { getPrimaryDisplay: () => ({ size: { width: 1, height: 1 }, scaleFactor: 1 }) },
@@ -20,6 +22,11 @@ const {
   createWebBridgeDownloadToolDefinition,
   createWebBridgeUploadToolDefinition,
   createWebBridgeScreenshotResult,
+  createWebBridgeObserveToolDefinition,
+  createWebBridgeNewTabToolDefinition,
+  createWebBridgeListTabsToolDefinition,
+  createWebBridgeSelectTabToolDefinition,
+  createWebBridgeCloseTabToolDefinition,
   executeWebBridgeNavigateTool,
   executeWebBridgeTypeTool,
 } = await import('./web-bridge-tools')
@@ -67,5 +74,18 @@ describe('Web Bridge 工具', () => {
     expect(result.content).toContain('结构化页面快照')
     expect(result.content).toContain('ccunpacked.dev')
     expect(result.imageData).toEqual([{ mediaType: 'image/png', data: 'AQID' }])
+  })
+
+  test('工具定义包含 AX 观察与多标签工具', () => {
+    expect(createWebBridgeObserveToolDefinition().name).toBe('WebBridgeObserve')
+    expect(createWebBridgeNewTabToolDefinition().name).toBe('WebBridgeNewTab')
+    expect(createWebBridgeListTabsToolDefinition().name).toBe('WebBridgeListTabs')
+    expect(createWebBridgeSelectTabToolDefinition().name).toBe('WebBridgeSelectTab')
+    expect(createWebBridgeCloseTabToolDefinition().name).toBe('WebBridgeCloseTab')
+
+    // SelectTab / CloseTab 需要 tab_id；Observe / NewTab 可选
+    expect(createWebBridgeSelectTabToolDefinition().parameters.required).toEqual(['tab_id'])
+    expect(createWebBridgeCloseTabToolDefinition().parameters.required).toEqual(['tab_id'])
+    expect(createWebBridgeNewTabToolDefinition().parameters.properties.url).toBeDefined()
   })
 })

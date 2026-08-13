@@ -17,6 +17,11 @@ export const WEB_BRIDGE_DOWNLOAD_TOOL_NAME = 'WebBridgeDownload'
 export const WEB_BRIDGE_UPLOAD_TOOL_NAME = 'WebBridgeUpload'
 export const WEB_BRIDGE_STATUS_TOOL_NAME = 'WebBridgeStatus'
 export const WEB_BRIDGE_STOP_TOOL_NAME = 'WebBridgeStop'
+export const WEB_BRIDGE_OBSERVE_TOOL_NAME = 'WebBridgeObserve'
+export const WEB_BRIDGE_NEW_TAB_TOOL_NAME = 'WebBridgeNewTab'
+export const WEB_BRIDGE_LIST_TABS_TOOL_NAME = 'WebBridgeListTabs'
+export const WEB_BRIDGE_SELECT_TAB_TOOL_NAME = 'WebBridgeSelectTab'
+export const WEB_BRIDGE_CLOSE_TAB_TOOL_NAME = 'WebBridgeCloseTab'
 
 function snapshotResult(snapshot: WebBridgeSnapshot): ToolResult {
   return { toolCallId: '', content: JSON.stringify(snapshot, null, 2) }
@@ -50,10 +55,10 @@ export function createWebBridgeScreenshotToolDefinition() {
   return { name: WEB_BRIDGE_SCREENSHOT_TOOL_NAME, description: '获取当前 Web Bridge 页面截图，用于页面文本不足时理解界面，不改变页面状态。前置条件：必须先成功调用 WebBridgeNavigate 或 WebBridgeConnectChrome；当用户同时提供 URL 并要求截图时，第一步必须是 WebBridgeNavigate，不能先调用本工具。', parameters: { type: 'object' as const, properties: {} } }
 }
 export function createWebBridgeClickToolDefinition() {
-  return { name: WEB_BRIDGE_CLICK_TOOL_NAME, description: '点击当前网页快照中指定 element_id 的元素。提交、购买、删除、发布或授权等有后果的操作必须先向用户确认。', parameters: { type: 'object' as const, properties: { element_id: { type: 'string', description: '来自最近 WebBridgeSnapshot 的稳定 elementId' }, selector: { type: 'string', description: '仅兼容旧会话；新调用必须使用 element_id' } }, required: [] } }
+  return { name: WEB_BRIDGE_CLICK_TOOL_NAME, description: '点击当前网页中由 WebBridgeObserve 返回的 AX ref 元素，走 CDP 真实输入。提交、购买、删除、发布或授权等有后果的操作必须先向用户确认。', parameters: { type: 'object' as const, properties: { element_id: { type: 'string', description: '来自最近 WebBridgeObserve 的 AX ref（形如 r{g}-{i}）。导航或重新观察后失效，需重新 Observe。' } }, required: ['element_id'] } }
 }
 export function createWebBridgeTypeToolDefinition() {
-  return { name: WEB_BRIDGE_TYPE_TOOL_NAME, description: '向当前网页快照中指定 element_id 的输入框或 contenteditable 元素输入文本。敏感信息、登录凭据或表单提交前必须先向用户确认。', parameters: { type: 'object' as const, properties: { element_id: { type: 'string', description: '来自最近 WebBridgeSnapshot 的稳定 elementId' }, selector: { type: 'string', description: '仅兼容旧会话；新调用必须使用 element_id' }, text: { type: 'string', description: '要输入的文本' }, submit: { type: 'boolean', description: '是否在输入后按 Enter；默认 false' } }, required: ['text'] } }
+  return { name: WEB_BRIDGE_TYPE_TOOL_NAME, description: '向当前网页中由 WebBridgeObserve 返回的 AX ref 元素输入文本（CDP insertText 整段替换）。敏感信息、登录凭据或表单提交前必须先向用户确认。', parameters: { type: 'object' as const, properties: { element_id: { type: 'string', description: '来自最近 WebBridgeObserve 的 AX ref（形如 r{g}-{i}）。' }, text: { type: 'string', description: '要输入的文本' }, submit: { type: 'boolean', description: '是否在输入后按 Enter；默认 false' } }, required: ['element_id', 'text'] } }
 }
 export function createWebBridgeScrollToolDefinition() {
   return { name: WEB_BRIDGE_SCROLL_TOOL_NAME, description: '滚动当前 Web Bridge 页面，不改变外部状态。', parameters: { type: 'object' as const, properties: { direction: { type: 'string', enum: ['up', 'down'], description: '滚动方向' }, amount: { type: 'number', description: '滚动像素，100 到 2000，默认 700' } }, required: ['direction'] } }
@@ -72,6 +77,21 @@ export function createWebBridgeUploadToolDefinition() {
 }
 export function createWebBridgeStatusToolDefinition() { return { name: WEB_BRIDGE_STATUS_TOOL_NAME, description: '读取当前 Web Bridge 的连接模式、页面地址和结构化页面可用状态，不改变页面状态。', parameters: { type: 'object' as const, properties: {} } } }
 export function createWebBridgeStopToolDefinition() { return { name: WEB_BRIDGE_STOP_TOOL_NAME, description: '立即关闭当前会话的受管浏览器或 Chrome CDP 连接，不会关闭用户的 Chrome。', parameters: { type: 'object' as const, properties: {} } } }
+export function createWebBridgeObserveToolDefinition() {
+  return { name: WEB_BRIDGE_OBSERVE_TOOL_NAME, description: '读取当前 Web Bridge 工作标签的结构化无障碍（AX）元素列表（ref/role/name/editable），可交互元素优先。ref 会在导航或重新观察后失效，操作前需重新 Observe。', parameters: { type: 'object' as const, properties: {} } }
+}
+export function createWebBridgeNewTabToolDefinition() {
+  return { name: WEB_BRIDGE_NEW_TAB_TOOL_NAME, description: '创建一个新的 Agent 工作标签并激活为可见（用户能看到接下来的操作）。可选导航到指定 URL。', parameters: { type: 'object' as const, properties: { url: { type: 'string', description: '可选：新标签要打开的 URL' } } } }
+}
+export function createWebBridgeListTabsToolDefinition() {
+  return { name: WEB_BRIDGE_LIST_TABS_TOOL_NAME, description: '列出当前 Web Bridge 会话的所有标签及其 URL、标题。用于多标签并行操作时确认 tabId。', parameters: { type: 'object' as const, properties: {} } }
+}
+export function createWebBridgeSelectTabToolDefinition() {
+  return { name: WEB_BRIDGE_SELECT_TAB_TOOL_NAME, description: '把指定 tabId 设为当前工作标签并激活为可见。tabId 来自 WebBridgeListTabs 或 WebBridgeNewTab。', parameters: { type: 'object' as const, properties: { tab_id: { type: 'string', description: '要切换到的标签 ID' } }, required: ['tab_id'] } }
+}
+export function createWebBridgeCloseTabToolDefinition() {
+  return { name: WEB_BRIDGE_CLOSE_TAB_TOOL_NAME, description: '关闭指定 tabId 的标签。tabId 来自 WebBridgeListTabs。', parameters: { type: 'object' as const, properties: { tab_id: { type: 'string', description: '要关闭的标签 ID' } }, required: ['tab_id'] } }
+}
 
 export async function executeWebBridgeNavigateTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const url = readString(input, 'url')
@@ -136,6 +156,36 @@ export async function executeWebBridgeUploadTool(input: unknown, ctx: ToolContex
 }
 export async function executeWebBridgeStatusTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> { return { toolCallId: '', content: JSON.stringify(webBridgeService.getStatus(ctx.sessionId), null, 2) } }
 export async function executeWebBridgeStopTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> { webBridgeService.close(ctx.sessionId); audit(ctx, 'stop', {}); return { toolCallId: '', content: JSON.stringify({ stopped: true }) } }
+export async function executeWebBridgeObserveTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const observation = await webBridgeService.observe(ctx.sessionId)
+  audit(ctx, 'observe', { url: observation.url, tabId: observation.tabId })
+  return { toolCallId: '', content: JSON.stringify(observation, null, 2) }
+}
+export async function executeWebBridgeNewTabTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const url = readString(input, 'url')
+  const tab = webBridgeService.createNewTab(ctx.sessionId, url)
+  audit(ctx, 'new_tab', { tabId: tab.tabId, url: tab.url })
+  return { toolCallId: '', content: JSON.stringify(tab, null, 2) }
+}
+export async function executeWebBridgeListTabsTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const tabs = webBridgeService.listTabs(ctx.sessionId)
+  audit(ctx, 'list_tabs', { count: tabs.length })
+  return { toolCallId: '', content: JSON.stringify({ tabs }, null, 2) }
+}
+export async function executeWebBridgeSelectTabTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const tabId = readString(input, 'tab_id')
+  if (!tabId) return error('tab_id 必须是非空字符串')
+  const tab = await webBridgeService.selectTab(ctx.sessionId, tabId)
+  audit(ctx, 'select_tab', { tabId })
+  return { toolCallId: '', content: JSON.stringify(tab, null, 2) }
+}
+export async function executeWebBridgeCloseTabTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+  const tabId = readString(input, 'tab_id')
+  if (!tabId) return error('tab_id 必须是非空字符串')
+  await webBridgeService.closeTab(ctx.sessionId, tabId)
+  audit(ctx, 'close_tab', { tabId })
+  return { toolCallId: '', content: JSON.stringify({ closed: true, tabId }, null, 2) }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null }
 function readString(value: unknown, key: string): string | undefined { return isRecord(value) && typeof value[key] === 'string' ? value[key] : undefined }

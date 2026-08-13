@@ -232,4 +232,34 @@ describe('AgentPermissionService safe 权限模式', () => {
     service.respondToPermission(requests[1]!.requestId, 'deny', false)
     expect((await push).behavior).toBe('deny')
   })
+
+  test('given a trusted Web Bridge site when downloading again then it is auto allowed without re-prompt', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-site-trust', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    // 导航到 example.com，并让权限服务记录当前 host
+    await service.noteWebBridgeHost('session-site-trust', 'https://example.com/page')
+    // 用户对 example.com 的下载点“总是允许”→ 信任该站点
+    service.trustWebBridgeHost('session-site-trust', 'https://example.com/')
+
+    // 下载：站点已信任 → 自动放行，不进入审批
+    const download = await canUseTool('WebBridgeDownload', { url: 'https://example.com/file.zip' }, createOptions())
+    expect(requests).toHaveLength(0)
+    expect(download.behavior).toBe('allow')
+  })
+
+  test('given an untrusted Web Bridge site when downloading then it still requests per-action approval', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-site-untrusted', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    // 导航到 example.com 记录 host，但未信任
+    await service.noteWebBridgeHost('session-site-untrusted', 'https://example.com/page')
+
+    const download = canUseTool('WebBridgeDownload', { url: 'https://example.com/file.zip' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'deny', false)
+    expect((await download).behavior).toBe('deny')
+  })
 })

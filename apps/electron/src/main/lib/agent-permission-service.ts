@@ -97,6 +97,12 @@ interface SessionWhitelist {
   allowedTools: Set<string>
   /** 总是允许的 Bash 基础命令（如 'git push', 'npm install'） */
   allowedBashCommands: Set<string>
+  /**
+   * 受信任的 Web Bridge 站点域名（如 'example.com'）。
+   * 用户对某站点的 WebBridge 操作点过「总是允许」后，该站点下的导航/点击/输入/下载
+   * 在本会话内自动放行；WebBridgeUpload 永远逐次确认（涉及本地文件选择）。
+   */
+  trustedWebBridgeHosts: Set<string>
 }
 
 /**
@@ -110,6 +116,9 @@ export class AgentPermissionService {
 
   /** 会话级白名单 Map（sessionId → SessionWhitelist） */
   private sessionWhitelists = new Map<string, SessionWhitelist>()
+
+  /** 会话当前 WebBridge 页面 host（sessionId → host），由 noteWebBridgeHost 维护 */
+  private webBridgeCurrentHosts = new Map<string, string>()
 
   /**
    * 创建 canUseTool 回调（auto 模式及 escalation 场景使用）
@@ -134,14 +143,21 @@ export class AgentPermissionService {
 
       // 系统级桌面读取/控制不能由子 Agent 自动批准，也不能沿用“始终允许”。
       // 这类操作可能读取任意屏幕内容或影响前台应用，必须回到用户确认流程。
-      // Web Bridge 下载/上传涉及本地文件系统，同样保持逐次确认；
-      // 导航/点击/输入等页面交互允许通过会话白名单免确认（对齐 kimi-cli 的 approve_for_session）。
-      const requiresPerActionApproval = isComputerUseTool(toolName) || isWebBridgeFileTransfer(toolName)
+      // Web Bridge 上传涉及本地文件选择/内容注入，永远逐次确认。
+      // Web Bridge 下载：若当前站点已被信任（用户对该域名点过“总是允许”），则自动放行；
+      // 否则仍逐次确认。导航/点击/输入等页面交互沿用“加工具白名单”机制（可一次放行）…
+      const computerUse = isComputerUseTool(toolName)
+      const webBridgeUploadOnly = toolName === WEB_BRIDGE_UPLOAD_TOOL_NAME
+      const webBridgeDownloadTrusted = toolName === WEB_BRIDGE_DOWNLOAD_TOOL_NAME && this.isWebBridgeSiteTrusted(sessionId)
+      const requiresPerActionApproval = computerUse || webBridgeUploadOnly || (toolName === WEB_BRIDGE_DOWNLOAD_TOOL_NAME && !webBridgeDownloadTrusted)
 
       // Worker（子代理）的工具调用自动批准，避免 UI 等待导致超时死锁
+      // （Computer Use 与 Web Bridge 上传仍需逐次确认；下载在站点未信任时需确认）
       if (options.agentID && !requiresPerActionApproval) {
         return allow()
       }
+      // 站点已信任的下载直接放行
+      if (webBridgeDownloadTrusted) return allow()
 
       const currentMode = typeof mode === 'function' ? mode() : mode
 
@@ -207,9 +223,17 @@ export class AgentPermissionService {
 
     const sessionId = pending.request.sessionId
 
-    // "总是允许"选项：加入会话白名单（Computer Use 与 Web Bridge 下载/上传除外，仍逐次确认）
-    if (alwaysAllow && behavior === 'allow' && !isComputerUseTool(pending.request.toolName) && !isWebBridgeFileTransfer(pending.request.toolName)) {
-      this.addToWhitelist(sessionId, pending.request.toolName, pending.request.toolInput)
+    // "总是允许"选项：
+    // - Web Bridge 上传除外（仍逐次确认）；其余 WebBridge 工具把「当前站点域名」加入信任
+    //   集合，而不是把整个工具加白名单——这样下载/点击等在可信站点下自动放行。
+    // - Computer Use 始终逐次确认，不加入白名单。
+    if (alwaysAllow && behavior === 'allow') {
+      if (!isComputerUseTool(pending.request.toolName) && !isWebBridgeFileTransfer(pending.request.toolName)) {
+        this.addToWhitelist(sessionId, pending.request.toolName, pending.request.toolInput)
+      } else if (isWebBridgeFileTransfer(pending.request.toolName) && pending.request.toolName !== WEB_BRIDGE_UPLOAD_TOOL_NAME) {
+        // WebBridgeDownload：用户点“总是允许”= 信任当前站点域名
+        this.trustCurrentWebBridgeHost(sessionId)
+      }
     }
 
     pending.resolve(
@@ -245,6 +269,7 @@ export class AgentPermissionService {
    */
   clearSessionWhitelist(sessionId: string): void {
     this.sessionWhitelists.delete(sessionId)
+    this.webBridgeCurrentHosts.delete(sessionId)
   }
 
   // ===== 工具分类判断 =====
@@ -388,9 +413,43 @@ export class AgentPermissionService {
     const whitelist: SessionWhitelist = {
       allowedTools: new Set(),
       allowedBashCommands: new Set(),
+      trustedWebBridgeHosts: new Set(),
     }
     this.sessionWhitelists.set(sessionId, whitelist)
     return whitelist
+  }
+
+  /**
+   * 记录某会话当前 WebBridge 页面的 host（供站点信任判断与展示用，不改变信任状态）。
+   * 由 web-bridge-service 在导航成功后调用。
+   */
+  noteWebBridgeHost(sessionId: string, url: string): void {
+    const host = extractUrlHost(url)
+    if (!host) return
+    this.getOrCreateWhitelist(sessionId)
+    this.webBridgeCurrentHosts.set(sessionId, host)
+  }
+
+  /**
+   * 把某会话的站点域名加入信任集合。用户对 WebBridge 操作点「总是允许」时调用。
+   */
+  trustWebBridgeHost(sessionId: string, url: string): void {
+    const host = extractUrlHost(url)
+    if (!host) return
+    this.getOrCreateWhitelist(sessionId).trustedWebBridgeHosts.add(host)
+  }
+
+  /** 信任当前会话 WebBridge 页面的 host（无则忽略）。 */
+  trustCurrentWebBridgeHost(sessionId: string): void {
+    const host = this.webBridgeCurrentHosts.get(sessionId)
+    if (host) this.getOrCreateWhitelist(sessionId).trustedWebBridgeHosts.add(host)
+  }
+
+  /** 判断某会话当前 WebBridge 站点的域名是否已被用户信任。 */
+  isWebBridgeSiteTrusted(sessionId: string): boolean {
+    const currentHost = this.webBridgeCurrentHosts.get(sessionId)
+    if (!currentHost) return false
+    return this.sessionWhitelists.get(sessionId)?.trustedWebBridgeHosts.has(currentHost) ?? false
   }
 
   /**
@@ -506,16 +565,31 @@ function isComputerUseTool(toolName: string): boolean {
   return toolName.startsWith('ComputerUse') && toolName !== 'ComputerUseStatus'
 }
 
+/** Web Bridge 上传工具名（本地文件选择/内容注入，永远逐次确认）。 */
+const WEB_BRIDGE_UPLOAD_TOOL_NAME = 'WebBridgeUpload'
+
+/** Web Bridge 下载工具名（站点信任后自动放行）。 */
+const WEB_BRIDGE_DOWNLOAD_TOOL_NAME = 'WebBridgeDownload'
+
 /**
  * Web Bridge 下载/上传涉及本地文件系统（读取用户文件、写入磁盘），
- * 必须逐次确认，不能加入会话白名单。
- * 导航/点击/输入等页面交互不在此列，允许用户选择"本次会话总是允许"。
+ * 需逐次确认，不能仅靠工具名白名单放行。
  */
 function isWebBridgeFileTransfer(toolName: string): boolean {
   return new Set([
     'WebBridgeDownload',
     'WebBridgeUpload',
   ]).has(toolName)
+}
+
+/** 从 URL 提取 host（用于站点信任粒度）。无 host 返回 undefined。 */
+function extractUrlHost(rawUrl: string | undefined): string | undefined {
+  if (!rawUrl) return undefined
+  try {
+    return new URL(rawUrl).hostname.toLowerCase() || undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** 全局权限服务实例 */
