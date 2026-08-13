@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
 
 export interface AuditRecord extends AgentRuntimeScope {
@@ -26,6 +27,27 @@ export interface AuditLegalHold extends AgentRuntimeScope {
   releasedAt?: number
 }
 
+export interface AuditChainRecord {
+  id: number
+  tenantId: string
+  userId: string
+  action: string
+  resource: string
+  result: string
+  createdAt: number
+  prevHash: string
+  hash: string
+}
+
+export interface AuditChainVerification {
+  /** 全部按 id 升序排列的审计记录（仅含链字段） */
+  records: AuditChainRecord[]
+  /** 链是否完整且未被篡改 */
+  valid: boolean
+  /** 首个不匹配位置的索引（valid 为 false 时有效，-1 表示链为空） */
+  firstMismatchIndex: number
+}
+
 /** 仅追加的审计记录；不保存请求体、凭证或模型输出。 */
 export class PostgresAuditLog {
   constructor(private readonly client: AgentRuntimePostgresClient) {}
@@ -41,9 +63,13 @@ export class PostgresAuditLog {
       request_id TEXT,
       trace_id TEXT,
       task_id TEXT,
-      created_at BIGINT NOT NULL
+      created_at BIGINT NOT NULL,
+      prev_hash TEXT NOT NULL DEFAULT '',
+      hash TEXT NOT NULL DEFAULT ''
     )`)
     await this.client.query('ALTER TABLE proma_runtime_audit_log ADD COLUMN IF NOT EXISTS trace_id TEXT')
+    await this.client.query('ALTER TABLE proma_runtime_audit_log ADD COLUMN IF NOT EXISTS prev_hash TEXT DEFAULT \'\'')
+    await this.client.query('ALTER TABLE proma_runtime_audit_log ADD COLUMN IF NOT EXISTS hash TEXT DEFAULT \'\'')
     await this.client.query(`CREATE TABLE IF NOT EXISTS proma_runtime_audit_legal_holds (
       tenant_id TEXT NOT NULL, user_id TEXT NOT NULL, hold_id TEXT NOT NULL,
       reason TEXT NOT NULL, created_at BIGINT NOT NULL, released_at BIGINT,
@@ -51,11 +77,45 @@ export class PostgresAuditLog {
     )`)
   }
 
+  /** 计算审计记录的 hash：对审计内容（不含 hash/prev_hash 本身）做 SHA-256 */
+  static computeHash(input: {
+    tenantId: string
+    userId: string
+    action: string
+    resource: string
+    result: string
+    createdAt: number
+    prevHash: string
+    seq: number
+  }): string {
+    const payload = [
+      'v1', input.tenantId, input.userId, input.action, input.resource, input.result,
+      String(input.createdAt), input.prevHash, String(input.seq),
+    ].join('\x1f')
+    return createHash('sha256').update(payload).digest('hex')
+  }
+
+  /**
+   * 追加审计记录；自动计算与租户链尾相连的 hash 链。
+   * 会先查询该 tenant 的最新 hash 作为 prev_hash，再插入并写入本行 hash。
+   * 注意：此实现为两次查询（先读链尾再写），极端并发下可能断链；
+   * 生产如需绝对并发安全应改用事务或数据库触发器（P8-3 阶段完善）。
+   */
   async append(record: AuditRecord): Promise<void> {
+    const createdAt = record.createdAt ?? Date.now()
+    const prevRow = await this.client.query<Record<string, unknown>>(
+      'SELECT hash FROM proma_runtime_audit_log WHERE tenant_id = $1 ORDER BY id DESC LIMIT 1',
+      [record.tenantId],
+    )
+    const prevHash = prevRow.rows[0] && typeof prevRow.rows[0].hash === 'string' ? String(prevRow.rows[0].hash) : ''
+    const hash = PostgresAuditLog.computeHash({
+      tenantId: record.tenantId, userId: record.userId, action: record.action, resource: record.resource,
+      result: record.result, createdAt, prevHash, seq: 1,
+    })
     await this.client.query(
-      `INSERT INTO proma_runtime_audit_log (tenant_id, user_id, action, resource, result, request_id, trace_id, task_id, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [record.tenantId, record.userId, record.action, record.resource, record.result, record.requestId ?? null, record.traceId ?? null, record.taskId ?? null, record.createdAt ?? Date.now()],
+      `INSERT INTO proma_runtime_audit_log (tenant_id, user_id, action, resource, result, request_id, trace_id, task_id, created_at, prev_hash, hash)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [record.tenantId, record.userId, record.action, record.resource, record.result, record.requestId ?? null, record.traceId ?? null, record.taskId ?? null, createdAt, prevHash, hash],
     )
   }
 
@@ -78,9 +138,59 @@ export class PostgresAuditLog {
     }))
   }
 
+  /**
+   * 校验该租户的审计 hash 链完整性（篡改检测）。
+   * 从链尾回溯：逐条重算本行 hash 并校验其等于存储值，同时校验本行 prev_hash 等于前一条的 hash。
+   * 若某条记录被篡改（action/resource 等被改），重算 hash 不匹配 → 判定 invalid。
+   * 注意：首条记录 prev_hash 应为空；若首条 prev_hash 非空视为链不完整（历史被裁）。
+   *
+   * 与 purgeBefore 的关系：合规性清理会删掉链中记录，导致 verifyChain 判定 invalid。
+   * 这是设计上"任何对审计日志的非常规改动都会被审计器察觉"的预期行为；法律保全期禁止清理正是配套约束。
+   */
+  async verifyChain(scope: AgentRuntimeScope): Promise<AuditChainVerification> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT id, tenant_id, user_id, action, resource, result, created_at, prev_hash, hash
+       FROM proma_runtime_audit_log WHERE tenant_id = $1 ORDER BY id ASC`,
+      [scope.tenantId],
+    )
+    const records: AuditChainRecord[] = result.rows.map((row) => ({
+      id: Number(row.id),
+      tenantId: String(row.tenant_id),
+      userId: String(row.user_id),
+      action: String(row.action),
+      resource: String(row.resource),
+      result: String(row.result),
+      createdAt: Number(row.created_at),
+      prevHash: typeof row.prev_hash === 'string' ? String(row.prev_hash) : '',
+      hash: typeof row.hash === 'string' ? String(row.hash) : '',
+    }))
+
+    if (records.length === 0) return { records, valid: true, firstMismatchIndex: -1 }
+
+    // 连锁：第一条必须 prev_hash 为空（链头），否则视为被裁
+    if (records[0]?.prevHash !== '') {
+      return { records, valid: false, firstMismatchIndex: 0 }
+    }
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i]!
+      // 校验本行 prev_hash 等于前一条 hash（i>0 时）
+      if (i > 0 && record.prevHash !== records[i - 1]!.hash) {
+        return { records, valid: false, firstMismatchIndex: i }
+      }
+      // 重算本行 hash 校验是否被篡改
+      const recomputed = PostgresAuditLog.computeHash({
+        tenantId: record.tenantId, userId: record.userId, action: record.action, resource: record.resource,
+        result: record.result, createdAt: record.createdAt, prevHash: record.prevHash, seq: 1,
+      })
+      if (recomputed !== record.hash) {
+        return { records, valid: false, firstMismatchIndex: i }
+      }
+    }
+    return { records, valid: true, firstMismatchIndex: -1 }
+  }
+
   /** 按保留期清理旧审计记录；调用方必须先完成管理员授权。 */
-  async purgeBefore(scope: AgentRuntimeScope, timestamp: number): Promise<void> {
-    if (await this.hasActiveLegalHold(scope)) throw new Error('当前租户存在有效法律保全，禁止清理审计记录')
+  async purgeBefore(scope: AgentRuntimeScope, timestamp: number): Promise<void> {    if (await this.hasActiveLegalHold(scope)) throw new Error('当前租户存在有效法律保全，禁止清理审计记录')
     await this.client.query(
       'DELETE FROM proma_runtime_audit_log WHERE tenant_id = $1 AND user_id = $2 AND created_at < $3',
       [scope.tenantId, scope.userId, timestamp],

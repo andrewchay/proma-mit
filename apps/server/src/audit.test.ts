@@ -9,8 +9,10 @@ describe('P4 audit log', () => {
       return { rows: [] }
     } })
     await audit.append({ tenantId: 'tenant', userId: 'user', action: 'POST /agent/sessions', resource: '/agent/sessions', result: 'success', requestId: 'request' })
-    expect(calls[0]).toContain('POST /agent/sessions')
-    expect(calls[0]).not.toContain('api-key')
+    // append 现在含一次链尾 SELECT（只传 tenant）与一次 INSERT（含 action），校验 INSERT 不含敏感载荷
+    const insertCall = calls.find((c) => c.includes('POST /agent/sessions'))
+    expect(insertCall).toBeDefined()
+    expect(insertCall).not.toContain('api-key')
   })
 
   test('scopes audit queries and caps result size', async () => {
