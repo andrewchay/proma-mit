@@ -25,7 +25,7 @@
     },
     "apps/electron": {
       "name": "@gravitas/electron",
-      "version": "0.11.0",
+      "version": "0.11.31",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.143",
         "@anthropic-ai/sdk": "^0.93.0",
@@ -48,10 +48,10 @@
       "devDependencies": {
         "@emoji-mart/data": "^1.2.1",
         "@emoji-mart/react": "^1.1.1",
-        "@larksuiteoapi/node-sdk": "^1.72.0",
         "@gravitas/core": "workspace:*",
         "@gravitas/shared": "workspace:*",
         "@gravitas/ui": "workspace:*",
+        "@larksuiteoapi/node-sdk": "^1.72.0",
         "@radix-ui/react-alert-dialog": "^1.1.15",
         "@radix-ui/react-collapsible": "^1.1.12",
         "@radix-ui/react-context-menu": "^2.2.16",
@@ -163,10 +163,11 @@
       "name": "@gravitas/server",
       "version": "0.1.6",
       "dependencies": {
+        "@aws-sdk/client-kms": "^3.1101.0",
         "@aws-sdk/client-s3": "^3.1101.0",
-        "@modelcontextprotocol/sdk": "^1.30.0",
         "@gravitas/core": "workspace:*",
         "@gravitas/shared": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.30.0",
         "ai": "7.0.31",
         "croner": "10.0.1",
         "redis": "5.11.0",
@@ -216,7 +217,7 @@
     },
     "packages/shared": {
       "name": "@gravitas/shared",
-      "version": "0.1.46",
+      "version": "0.1.57",
       "devDependencies": {
         "typescript": "^5.0.0",
       },
@@ -512,6 +513,20 @@
 
     "@google/genai": ["@google/genai@1.52.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q=="],
 
+    "@gravitas/core": ["@gravitas/core@workspace:packages/core"],
+
+    "@gravitas/electron": ["@gravitas/electron@workspace:apps/electron"],
+
+    "@gravitas/executor": ["@gravitas/executor@workspace:apps/executor"],
+
+    "@gravitas/server": ["@gravitas/server@workspace:apps/server"],
+
+    "@gravitas/shared": ["@gravitas/shared@workspace:packages/shared"],
+
+    "@gravitas/ui": ["@gravitas/ui@workspace:packages/ui"],
+
+    "@gravitas/web": ["@gravitas/web@workspace:apps/web"],
+
     "@hono/node-server": ["@hono/node-server@2.0.12", "", { "peerDependencies": { "hono": "^4" } }, "sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg=="],
 
     "@isaacs/fs-minipass": ["@isaacs/fs-minipass@4.0.1", "", { "dependencies": { "minipass": "^7.0.4" } }, "sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w=="],
@@ -609,20 +624,6 @@
     "@pierre/theme": ["@pierre/theme@0.0.28", "", {}, "sha512-1j/H/fECBuc9dEvntdWI+l435HZapw+RCJTlqCA6BboQ5TjlnE005j/ROWutXIs8aq5OAc82JI2Kwk4A1WWBgw=="],
 
     "@playwright/test": ["@playwright/test@1.61.0", "", { "dependencies": { "playwright": "1.61.0" }, "bin": { "playwright": "cli.js" } }, "sha512-cKA5B6lpFEMyMGjxF54QihfYpB4FkEGH+qZhtArDEG+wezQAJY8Pq6C7T1SjWz+FFzt3TbyoXBQYk/0292TdJA=="],
-
-    "@gravitas/core": ["@gravitas/core@workspace:packages/core"],
-
-    "@gravitas/electron": ["@gravitas/electron@workspace:apps/electron"],
-
-    "@gravitas/executor": ["@gravitas/executor@workspace:apps/executor"],
-
-    "@gravitas/server": ["@gravitas/server@workspace:apps/server"],
-
-    "@gravitas/shared": ["@gravitas/shared@workspace:packages/shared"],
-
-    "@gravitas/ui": ["@gravitas/ui@workspace:packages/ui"],
-
-    "@gravitas/web": ["@gravitas/web@workspace:apps/web"],
 
     "@protobufjs/aspromise": ["@protobufjs/aspromise@1.1.2", "", {}, "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ=="],
 
