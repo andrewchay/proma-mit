@@ -51,6 +51,8 @@ import type { SignalMatcher } from './signals.ts'
 import { PostgresEvalDatasetStore } from './eval-dataset.ts'
 import { PostgresTaskRecoveryInspector } from './recovery.ts'
 import { PostgresAgentRuntimeInteractionStore } from './interactions.ts'
+import { AgentRegistryStore } from './agent-registry.ts'
+import { parseAgentCardFromBody, parseRegistryListQuery } from './agent-registry-api.ts'
 import { HttpOperationsReporter, NoopOperationsReporter, redactOperationalError } from './operations.ts'
 import type { OperationsReporter } from './operations.ts'
 import { WEB_DASHBOARD_HTML } from './dashboard.ts'
@@ -157,6 +159,7 @@ export function createPromaWebServerApplication(
   const metrics = new PostgresRuntimeMetrics(postgres)
   const recovery = new PostgresTaskRecoveryInspector(postgres, config.recoveryStaleAfterMs ?? config.taskLeaseMs * 2)
   const interactionStore = new PostgresAgentRuntimeInteractionStore(postgres)
+  const agentRegistry = new AgentRegistryStore(postgres)
   const rateLimiter = redis instanceof NodeRedisClient ? new RedisTaskRateLimiter(redis) : undefined
   const auth = dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth)
   const operationsReporter = dependencies.operationsReporter ?? (config.operations
@@ -329,6 +332,17 @@ export function createPromaWebServerApplication(
           : !hasAnyRole(scope, ['operator', 'admin', 'security-auditor'])
             ? Response.json({ error: '需要 operator、admin 或 security-auditor 角色' }, { status: 403 })
             : Response.json({ metrics: await metrics.get(scope) })
+      } else if (request.method === 'GET' && url.pathname === '/agent/registry') {
+        const list = parseRegistryListQuery(scope ?? { tenantId: '', userId: '' }, url.searchParams)
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : list.error
+              ? Response.json({ error: list.error }, { status: 400 })
+              : Response.json({ cards: await agentRegistry.list(scope, list.query) })
+      } else if (request.method === 'PUT' && url.pathname === '/agent/registry') {
+        response = await putAgentRegistry(request, scope, agentRegistry)
       } else if (request.method === 'GET' && url.pathname === '/agent/recovery/stale-tasks') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -529,6 +543,7 @@ export function createPromaWebServerApplication(
       await signalStore.initializeSchema()
       await evalDatasetStore.initializeSchema()
       await interactionStore.initializeSchema()
+      await agentRegistry.initializeSchema()
       await schedulerStore.initializeSchema()
       scheduler.start()
       startSignalScanner()
@@ -689,6 +704,17 @@ async function createServerSchedule(request: Request, scope: AgentRuntimeScope, 
   if (!await store.getSession(scope, body.sessionId)) return Response.json({ error: '会话不存在或不可访问' }, { status: 404 })
   const created = await schedulerStore.create({ ...scope, sessionId: body.sessionId, prompt: body.prompt.trim(), schedule, enabled: true })
   return Response.json({ schedule: created }, { status: 201 })
+}
+
+async function putAgentRegistry(request: Request, scope: AgentRuntimeScope | undefined, store: AgentRegistryStore): Promise<Response> {
+  let body: unknown
+  try { body = await request.json() } catch { return Response.json({ error: '请求体必须是 JSON' }, { status: 400 }) }
+  if (!scope) return Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+  if (!hasAnyRole(scope, ['admin'])) return Response.json({ error: '需要 admin 角色' }, { status: 403 })
+  const parsed = parseAgentCardFromBody(body)
+  if (parsed.error) return Response.json({ error: parsed.error }, { status: 400 })
+  await store.upsert(scope, parsed.card!)
+  return Response.json({ ok: true })
 }
 
 async function createSignal(request: Request, scope: AgentRuntimeScope, signalStore: PostgresSignalStore): Promise<Response> {
