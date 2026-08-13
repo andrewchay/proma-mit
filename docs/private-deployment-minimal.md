@@ -60,6 +60,9 @@
 
 ## 3. 最小集的验收闭环（定义：什么叫"能跑起来、守住底线"）
 
+> **进度（2026-08-13）**：M1（登录闭环）✅ · M2（Web 工作台补全）⏳ · M3（一键部署+冒烟）✅ · M4（可选项）⏳
+> 端到端已验证闭合：compose 起全套 → nginx 登录 → cookie → 建会话 → health → 工作台（真实 compose E2E 通过）。
+
 一条端到端路径，全部必须走通才算最小集闭环：
 
 ```
@@ -100,6 +103,16 @@
 - 方案：补 `.env.example` 完整模板（含本地 fallback 认证所需的 `PROMA_WEB_ADMIN_*`）、健康检查覆盖、一个 `scripts/smoke-private-deploy.sh`（起服务→登录→建会话→跑任务→查 health→可退出）。
 - 产出：部署快照脚本 + README「私有部署」章节。
 - 验收：全新机器.clone → 配置 .env → up → smoke 脚本全绿。
+
+### M3 一键部署可用 + 冒烟脚本 ✅ 已完成（2026-08-13）
+- 目标：`docker compose -f docker-compose.production.yml up -d` 一条命令起全套并自动健康检查。
+- 方案：`.env.example` 完整模板（复制即跑）、nginx 反代 `/auth/`、compose 解 OIDC 死锁（`:-` 可选）、`scripts/smoke-private-deploy.sh` 一键冒烟。
+- 产出：`.env.example`、nginx `/auth/` 代理、compose `PROMA_WEB_AUTH_MODE/ADMIN/PUBLIC_BASE_URL`、`scripts/smoke-private-deploy.sh`。
+- **修复部署阻断 bug**：
+  1. 各 Dockerfile `bun install --filter='@proma/*'` → 包名实为 `@gravitas/*`（`@proma/*` 不存在导致构建失败）。
+  2. server 缺 `@aws-sdk/client-kms` 显式依赖（`aws-kms.ts` 运行时 import 失败），已加入并更新 lockfile。
+- 验收（真实 compose 端到端）：postgres/redis/minio/server/executor/web 全 healthy；nginx(8080) 登录页 200→错误密码 401→正确密码 302+HttpOnly cookie→带 cookie /agent/health 200（含贵慢重准数据）→/agent/ui 200。
+- **剩余外部依赖**：真实 Agent 任务执行需用户配置 AI provider 渠道（如 channel 凭证），部署冒烟不含真实模型调用。
 
 ### M4（可选，若时间允许）Sub Agent server 端串联
 - 目标：task 聚合 child 事件到 parent，UI 可展开（复用 `parent_task_id`，不做多 worker 隔离）。

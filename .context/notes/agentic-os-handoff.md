@@ -78,6 +78,15 @@
 回归：server 90 pass / electron 15 pass / shared 125 pass（唯一失败为 pre-existing `normalizeAgentRuntime` 技术债，与本次无关）。
 真实 Postgres 验证过：registry 租户隔离、hash chain 篡改检测、health 聚合。
 
+## 2.6 私有部署最小集（2026-08-13，M1+M3 已完成）
+
+**范围定义**：`docs/private-deployment-minimal.md`（三轨之「短期私有部署」轨道）。
+**已完成**：
+- **M1 登录闭环**（`13288ece`+`7e5088a0`+`7d40a6c9`+`d0fba83c`）：本地 scrypt 登录（默认）+ OIDC（可配置），HTTP-only 会话 cookie；**解 compose/index 层"无 OIDC 不能启动"死锁**。
+- **M3 一键部署**（`c6face9d`）：nginx 反代 `/auth/`、compose OIDC 改可选 + authMode/admin env、`.env.example`、`scripts/smoke-private-deploy.sh`；修复两类部署 bug（Dockerfile `@proma/*`→`@gravitas/*`、server 缺 `@aws-sdk/client-kms`）。
+**真实 compose E2E 已验证**：全服务 healthy → nginx 登录闭环 → cookie→health 200 → 工作台 200。
+**待办**：M2（Web 工作台补全 health/registry 视图）；M4（可选 Sub Agent 串联）。真实模型调用需用户配 provider 渠道。
+
 ---
 
 ## 3. 关键架构决策（记住，避免重复踩坑）
