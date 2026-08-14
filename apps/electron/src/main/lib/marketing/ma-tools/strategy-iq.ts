@@ -6,7 +6,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 import industryTemplates from './knowledge/industry-templates.json'
 import casePlaybooks from './knowledge/case-playbooks.json'
@@ -15,40 +14,6 @@ import casePlaybooks from './knowledge/case-playbooks.json'
 // 工具元数据
 // =====================================================================
 
-export const STRATEGY_IQ_TOOL_META: ChatToolMeta = {
-  id: 'ma-strategy-iq',
-  name: 'MA策略生成',
-  description: '解析品牌Brief并生成完整的社交营销策略提案，包括平台矩阵、KOL策略、内容规划和KPI设定',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称/系列', required: true },
-    { name: 'industry', type: 'string', description: '行业类别（美妆/3C/快消/母婴/时尚/食品/运动鞋服/宠物科技等）', required: false },
-    { name: 'goal', type: 'string', description: '营销目标（品牌曝光/产品认知/种草/转化/销售）', required: false },
-    { name: 'budget', type: 'string', description: '预算范围（如：100万、50-80万）', required: false },
-    { name: 'timeline', type: 'string', description: '执行周期（如：2026年6月-8月）', required: false },
-    { name: 'target_audience', type: 'string', description: '目标受众描述', required: false },
-    { name: 'key_messages', type: 'string', description: '关键传播信息，逗号分隔', required: false },
-    { name: 'preferred_platforms', type: 'string', description: '首选平台，逗号分隔（小红书/抖音/B站/微博/快手）', required: false },
-    { name: 'is_overseas', type: 'boolean', description: '是否海外投放', required: false },
-  ],
-  icon: 'Brain',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_strategy_iq_instructions>
-你拥有 **MA策略生成** 能力（StrategyIQ）。
-
-**ma_generate_strategy — 生成社交营销策略：**
-当用户需要制定营销方案、解析Brief、规划传播策略时调用：
-- 品牌新品上市推广方案
-- 社交平台营销规划
-- KOL合作策略
-- 内容创意方向
-- 预算分配建议
-
-工具会返回结构化的策略提案，包含：平台矩阵、KOL配比、内容规划、KPI等。
-</ma_strategy_iq_instructions>`,
-}
 
 export const STRATEGY_IQ_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -74,23 +39,10 @@ export const STRATEGY_IQ_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isStrategyIQAvailable(): boolean {
-  // 只要有配置好的渠道即可使用
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_generate_strategy'
 
-export function isStrategyIQToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeStrategyIQTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

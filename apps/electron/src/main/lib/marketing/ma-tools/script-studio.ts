@@ -6,45 +6,12 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 
 // =====================================================================
 // 工具元数据
 // =====================================================================
 
-export const SCRIPT_STUDIO_TOOL_META: ChatToolMeta = {
-  id: 'ma-script-studio',
-  name: 'MA脚本工坊',
-  description: '为达人内容创作生成详细的故事脚本、分镜脚本和视频拍摄指导，支持故事脚本/分镜脚本/拍摄指南三种模式',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'platform', type: 'string', description: '内容平台（小红书/抖音/B站/微博/快手/TikTok/Instagram/YouTube）', required: true },
-    { name: 'script_type', type: 'string', description: '脚本类型（story/分镜/video_guide，默认story）', required: false },
-    { name: 'duration', type: 'number', description: '视频时长（秒，默认60）', required: false },
-    { name: 'style', type: 'string', description: '风格（真实体验/剧情/测评/教程，默认真实体验）', required: false },
-    { name: 'key_messages', type: 'string', description: '必须传递的关键信息，逗号分隔', required: false },
-    { name: 'target_audience', type: 'string', description: '目标受众', required: false },
-    { name: 'hook_idea', type: 'string', description: '开头钩子创意（可选）', required: false },
-  ],
-  icon: 'Clapperboard',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_script_studio_instructions>
-你拥有 **MA脚本工坊** 能力（ScriptStudio）。
-
-**ma_generate_script — 生成内容脚本：**
-当用户需要为 KOL 创作生成详细脚本时调用：
-- 生成故事脚本（story_arc、scene_breakdown、dialogue_script）
-- 生成分镜脚本（storyboard、lighting_setup、prop_list）
-- 生成拍摄指导（shooting_guide、editing_guide、platform_specific_tips）
-
-支持 story / 分镜 / video_guide 三种脚本类型，根据用户需求自动选择或明确指定。
-工具会返回详细的脚本内容、分镜描述、拍摄建议和平台-specific技巧。
-</ma_script_studio_instructions>`,
-}
 
 export const SCRIPT_STUDIO_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -69,22 +36,10 @@ export const SCRIPT_STUDIO_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isScriptStudioAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_generate_script'
 
-export function isScriptStudioToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeScriptStudioTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

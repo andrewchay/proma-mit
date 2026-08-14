@@ -13,7 +13,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import {
   getCampaignById,
   getPoolKOLs,
@@ -27,46 +26,6 @@ import {
 // 工具元数据
 // =====================================================================
 
-export const CAMPAIGN_AGENT_TOOL_META: ChatToolMeta = {
-  id: 'ma-campaign-agent',
-  name: 'MA Campaign 管理',
-  description: '通过对话读取和修改 Campaign 数据：获取详情、修改信息、管理KOL Brief、导入KOL、触发审核等。专为 Campaign 内嵌聊天面板设计。',
-  params: [
-    { name: 'action', type: 'string', description: '操作类型：get_campaign/update_campaign/get_brief/update_brief/get_kols/add_kols/update_kol_status/audit_content', required: true },
-    { name: 'campaign_id', type: 'string', description: 'Campaign ID', required: true },
-    { name: 'data', type: 'string', description: 'JSON 格式的操作数据', required: false },
-  ],
-  icon: 'Target',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_campaign_agent_instructions>
-你拥有 **MA Campaign 管理** 能力（CampaignAgent）。
-
-你可以通过对话直接读取和修改 Campaign 数据：
-- **ma_campaign_get** — 获取 Campaign 详情
-- **ma_campaign_update** — 修改 Campaign 名称、品牌、品类、预算、周期、阶段、状态
-- **ma_campaign_brief_get** — 获取 KOL 的 Brief
-- **ma_campaign_brief_update** — 修改 KOL 的 Brief
-- **ma_campaign_kol_list** — 获取 KOL 候选池列表
-- **ma_campaign_kol_add** — 将 KOL 从数据库导入到 Campaign 候选池（插入新记录）
-- **ma_campaign_kol_status** — 修改已有 KOL 在候选池中的状态
-- **ma_campaign_audit** — 触发内容审核
-
-当用户要求导入 KOL 到候选池时，使用 ma_campaign_kol_add 工具批量导入（提供 kol_id 数组）。
-当用户要求修改 Campaign 数据时，先读取当前数据，然后执行修改，最后确认修改结果。
-
-**信息补全规则**：
-用户新建 Campaign 时可能只填写了项目名称和品牌名，其余字段（投放平台、预算、投放周期、目标城市、目标人群）可能尚未提供。在协助用户推进 Campaign 之前，请先通过 **ma_campaign_get** 检查这些关键信息是否完整。若发现以下情况，应主动、一次性地向用户提问补充，而不是直接假设或编造：
-- 平台未指定或显示为默认值：询问计划投放小红书、抖音还是双平台。
-- 预算为 0 或未填写：询问总预算金额（元）。
-- 投放周期为 0 或未填写：询问计划投放几个月。
-- 目标城市为空：询问重点投放哪些城市。
-- 目标人群为空：询问目标受众画像（年龄、性别、兴趣、生活状态等）。
-
-提问时语气友好简洁，一次可以问 1-3 个相关问题，并在用户回答后使用 **ma_campaign_update** 更新到 Campaign 中。
-</ma_campaign_agent_instructions>`,
-}
 
 export const CAMPAIGN_AGENT_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -179,31 +138,10 @@ export const CAMPAIGN_AGENT_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isCampaignAgentAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAMES = [
-  'ma_campaign_get',
-  'ma_campaign_update',
-  'ma_campaign_brief_get',
-  'ma_campaign_brief_update',
-  'ma_campaign_kol_list',
-  'ma_campaign_kol_add',
-  'ma_campaign_kol_status',
-  'ma_campaign_audit',
-]
 
-export function isCampaignAgentToolCall(toolName: string): boolean {
-  return TOOL_NAMES.includes(toolName)
-}
 
 export async function executeCampaignAgentTool(tc: ToolCall): Promise<ToolResult> {
   try {

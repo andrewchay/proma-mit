@@ -93,6 +93,8 @@ interface SystemPromptContext {
   claudeAvailable?: boolean
   /** 是否注入了内置 collaboration 协作会话工具 */
   collaborationAvailable?: boolean
+  /** 插件贡献的能力引导片段（由 plugin-manager.collectContributingPrompts 汇总）；每段作为独立 section 注入 */
+  pluginToolPrompts?: string[]
 }
 
 /**
@@ -417,6 +419,13 @@ Gravitas 提供内置 \`collaboration\` 工具，用来创建真实可见、可�
 4. 日常交流简洁直接；但当任务的交付物本身就是文本输出时（分析报告、文档、方案对比），完整输出内容，不要压缩
 5. **会话恢复**：每次收到新任务时，先检查会话级和工作区级两个 \`.context/\` 目录（note.md、todo.md）以及当前目录的 CLAUDE.md
 6. **自检习惯**：复杂任务执行过程中，定期回顾 CLAUDE.md 和两级 .context/ 中的内容，确保行为与已记录的规范和计划保持一致`)
+
+  // 插件贡献的能力引导（如营销工具的调用时机指令集）——由 agent-orchestrator 组装时注入
+  if (ctx.pluginToolPrompts && ctx.pluginToolPrompts.length > 0) {
+    sections.push(`## 能力引导指令
+
+以下是你当前挂载的领域能力插件的调用引导。遵循各指令的描述在合适的时机调用对应工具。\n\n${ctx.pluginToolPrompts.join('\n\n')}`)
+  }
 
   return sections.join('\n\n')
 }

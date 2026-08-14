@@ -5,7 +5,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 import platformGuidelines from './knowledge/platform-guidelines.json'
 import industryTemplates from './knowledge/industry-templates.json'
@@ -14,39 +13,6 @@ import industryTemplates from './knowledge/industry-templates.json'
 // 工具元数据
 // =====================================================================
 
-export const CREATIVE_PILOT_TOOL_META: ChatToolMeta = {
-  id: 'ma-creative-pilot',
-  name: 'MA创意指导',
-  description: '为KOL内容创作提供个性化创意Brief、脚本建议、平台规范指导和合规性审核',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'platform', type: 'string', description: '内容平台（小红书/抖音/B站/微博/快手/TikTok/Instagram/YouTube）', required: true },
-    { name: 'kol_style', type: 'string', description: 'KOL风格（专业型/娱乐型/生活型/测评型）', required: false },
-    { name: 'campaign_goal', type: 'string', description: '活动目标', required: false },
-    { name: 'key_messages', type: 'string', description: '必须传递的关键信息，逗号分隔', required: false },
-    { name: 'must_include', type: 'string', description: '内容必须包含的元素，逗号分隔', required: false },
-    { name: 'forbidden', type: 'string', description: '禁止出现的内容，逗号分隔', required: false },
-    { name: 'target_audience', type: 'string', description: '目标受众', required: false },
-    { name: 'industry', type: 'string', description: '行业类别', required: false },
-  ],
-  icon: 'Sparkles',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_creative_pilot_instructions>
-你拥有 **MA创意指导** 能力（CreativePilot）。
-
-**ma_generate_creative_brief — 生成创意 Brief：**
-当用户需要为 KOL 创作提供指导时调用：
-- 生成个性化创意 Brief
-- 提供平台-specific 的内容脚本建议
-- 审核内容合规性
-- 生成参考样稿
-
-工具会返回详细的创意 Brief、平台规范、脚本建议和合规检查清单。
-</ma_creative_pilot_instructions>`,
-}
 
 export const CREATIVE_PILOT_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -72,22 +38,10 @@ export const CREATIVE_PILOT_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isCreativePilotAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_generate_creative_brief'
 
-export function isCreativePilotToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeCreativePilotTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

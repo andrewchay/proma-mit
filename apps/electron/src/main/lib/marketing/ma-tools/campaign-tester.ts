@@ -5,45 +5,12 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 
 // =====================================================================
 // 工具元数据
 // =====================================================================
 
-export const CAMPAIGN_TESTER_TOOL_META: ChatToolMeta = {
-  id: 'ma-campaign-tester',
-  name: 'MA投放测试',
-  description: '设计小规模投放测试方案（A/B测试），帮助媒介总监在正式投放前验证达人组合和内容策略效果',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'budget', type: 'string', description: '测试预算（单位：万元）', required: true },
-    { name: 'platforms', type: 'string', description: '测试平台（逗号分隔，如：小红书,抖音）', required: true },
-    { name: 'kol_count', type: 'string', description: '测试达人数量（默认3-5）', required: false },
-    { name: 'test_duration', type: 'string', description: '测试天数（默认7）', required: false },
-    { name: 'target_metrics', type: 'string', description: '目标指标（曝光/互动/转化，默认"互动"）', required: false },
-    { name: 'content_type', type: 'string', description: '内容类型（默认"图文+视频"）', required: false },
-  ],
-  icon: 'FlaskConical',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_campaign_tester_instructions>
-你拥有 **MA投放测试** 能力（CampaignTester）。
-
-**ma_design_campaign_test — 设计投放测试方案：**
-当用户需要在正式大规模投放前进行小规模验证时调用：
-- 设计科学的 A/B 测试方案，控制变量验证不同策略
-- 合理分配测试预算到不同平台和达人层级
-- 制定明确的测试时间线和阶段目标
-- 设定可量化的成功指标和判定标准
-- 识别潜在风险并提供应对措施
-
-工具会返回完整的测试设计方案，包含预算分配、达人选择标准、内容策略、时间线和成功标准。
-</ma_campaign_tester_instructions>`,
-}
 
 export const CAMPAIGN_TESTER_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -67,22 +34,10 @@ export const CAMPAIGN_TESTER_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isCampaignTesterAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_design_campaign_test'
 
-export function isCampaignTesterToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeCampaignTesterTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

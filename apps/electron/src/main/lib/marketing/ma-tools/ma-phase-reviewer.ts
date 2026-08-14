@@ -6,49 +6,11 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 
 // =====================================================================
 // 工具元数据
 // =====================================================================
 
-export const PHASE_REVIEWER_TOOL_META: ChatToolMeta = {
-  id: 'ma-phase-reviewer',
-  name: 'MA阶段复盘',
-  description: '基于 Campaign 阶段投放数据，自动生成复盘报告（汇总数据、AI 分析、优化建议、放量建议）',
-  params: [
-    { name: 'campaign_id', type: 'string', description: 'Campaign ID', required: true },
-    { name: 'phase', type: 'string', description: '阶段序号 (1/2/3)', required: true },
-    { name: 'start_date', type: 'string', description: '复盘开始日期 (YYYY-MM-DD)', required: true },
-    { name: 'end_date', type: 'string', description: '复盘结束日期 (YYYY-MM-DD)', required: true },
-    { name: 'cpm_target', type: 'number', description: 'CPM 目标值（可选）', required: false },
-    { name: 'engagement_target', type: 'number', description: '互动率目标值（可选，百分比）', required: false },
-  ],
-  icon: 'TrendingUp',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_phase_reviewer_instructions>
-你拥有 **MA阶段复盘** 能力（PhaseReviewer）。
-
-**ma_generate_phase_report — 生成阶段复盘报告：**
-当用户需要复盘某阶段投放数据时调用：
-- 自动汇总该阶段所有 KOL 内容数据
-- 计算核心指标：CPM、CPE、CTR、互动率
-- 与基准数据对比，判定性能等级
-- 识别表现最佳/最差的内容和 KOL
-- 输出结构化复盘报告（含 AI 分析、核心发现、优化建议、放量建议）
-
-**参数说明：**
-- campaign_id: Campaign 的唯一 ID
-- phase: 阶段序号（1/2/3，对应 campaign.phasePlans 中的阶段定义）
-- start_date / end_date: 复盘的时间范围
-- cpm_target: 可选，CPM 目标值（如 100）
-- engagement_target: 可选，互动率目标值（如 5 表示 5%）
-
-工具会返回完整的复盘报告，包含数据汇总、AI 分析、优化建议和放量建议。
-</ma_phase_reviewer_instructions>`,
-}
 
 export const PHASE_REVIEWER_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -70,22 +32,10 @@ export const PHASE_REVIEWER_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isPhaseReviewerAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_generate_phase_report'
 
-export function isPhaseReviewerToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executePhaseReviewerTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

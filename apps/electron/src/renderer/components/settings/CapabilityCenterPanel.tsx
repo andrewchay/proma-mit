@@ -12,6 +12,7 @@ import {
   enabledCapabilitiesAtom,
   isCapabilityEnabled,
   toggleCapability,
+  persistMarketingCapabilities,
   type CapabilityId,
   type CapabilityKind,
 } from '@/atoms/marketing-atoms'
@@ -32,7 +33,10 @@ export function CapabilityCenterPanel(): React.ReactElement {
   const handleToggle = (cap: (typeof CAPABILITY_MANIFEST)[number], ev: React.MouseEvent) => {
     ev.stopPropagation()
     if (cap.kind !== 'business') return
-    setEnabled(toggleCapability(enabled, cap.id as CapabilityId))
+    const next = toggleCapability(enabled, cap.id as CapabilityId)
+    setEnabled(next)
+    // 持久化到 main settings.json，使营销工具/指令的注入随订阅联动
+    void persistMarketingCapabilities(next)
   }
 
   return (

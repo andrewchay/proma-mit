@@ -9,7 +9,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { getConfigDir } from '../../config-paths'
 import { join } from 'node:path'
 
@@ -137,41 +136,6 @@ function getDb(): Database {
 // 工具元数据
 // =====================================================================
 
-export const KOL_PORTAL_TOOL_META: ChatToolMeta = {
-  id: 'ma-kol-portal',
-  name: 'MA达人端',
-  description: '达人端自助服务：入会资料管理、内容创作指导、个人效果看板、平台分层查询',
-  params: [
-    { name: 'action', type: 'string', description: '操作类型：get_profile(查看资料)/update_profile(更新资料)/get_content_guidance(获取内容指导)/get_my_performance(个人效果看板)/get_platform_tier(平台分层信息)/list_my_campaigns(我的合作活动)', required: true },
-    { name: 'kol_id', type: 'string', description: '达人ID（必填）', required: true },
-    { name: 'data', type: 'string', description: '更新数据JSON字符串（update_profile时需要）', required: false },
-    { name: 'campaign_id', type: 'string', description: '活动ID（获取内容指导时需要）', required: false },
-    { name: 'limit', type: 'number', description: '返回数量限制（默认10）', required: false },
-  ],
-  icon: 'UserCircle',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_kol_portal_instructions>
-你拥有 **MA达人端** 能力（KOLPortal）。
-
-**ma_kol_portal — 达人端自助服务：**
-当达人需要查看自己的资料、获取内容创作指导、查看合作效果或了解平台分层时调用。
-
-支持的操作：
-- \`get_profile\` — 查看达人完整资料（基础信息 + CRM + 达人端资料）
-- \`update_profile\` — 更新达人端资料（专长、内容风格、受众画像等）
-- \`get_content_guidance\` — 获取指定活动的内容创作指导（brief解读、创作建议）
-- \`get_my_performance\` — 查看个人效果数据看板（历史合作、数据汇总）
-- \`get_platform_tier\` — 查看平台分层信息和当前等级权益
-- \`list_my_campaigns\` — 列出达人参与的所有合作活动
-
-注意：
-- \`data\` 参数必须是有效的JSON字符串
-- 达人端面向外部达人用户，语气应友好、专业
-- 本工具直接操作本地数据库，无需调用外部API
-</ma_kol_portal_instructions>`,
-}
 
 export const KOL_PORTAL_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -196,22 +160,10 @@ export const KOL_PORTAL_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isKOLPortalAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_kol_portal'
 
-export function isKOLPortalToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeKOLPortalTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

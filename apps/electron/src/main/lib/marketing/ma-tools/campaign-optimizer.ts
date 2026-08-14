@@ -5,42 +5,12 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 
 // =====================================================================
 // 工具元数据
 // =====================================================================
 
-export const CAMPAIGN_OPTIMIZER_TOOL_META: ChatToolMeta = {
-  id: 'ma-campaign-optimizer',
-  name: 'MA投放优化',
-  description: '基于小规模投放测试结果，优化达人组合和投放策略，生成正式投放方案与预算分配建议',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'test_results', type: 'string', description: '测试结果JSON或描述（包含各组合ROI、CTR、CPE等数据）', required: true },
-    { name: 'total_budget', type: 'number', description: '正式投放总预算（单位：万元）', required: true },
-    { name: 'platforms', type: 'string', description: '投放平台（小红书/抖音/B站/微博/快手等，多个用逗号分隔）', required: true },
-    { name: 'optimization_goal', type: 'string', description: '优化目标（ROI最大化/曝光最大化/互动最大化/转化最大化）', required: false },
-  ],
-  icon: 'TrendingUp',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_campaign_optimizer_instructions>
-你拥有 **MA投放优化** 能力（CampaignOptimizer）。
-
-**ma_optimize_campaign — 投放策略优化：**
-当用户需要基于测试数据优化正式投放方案时调用：
-- 分析小规模测试结果，识别表现最佳/最差的组合
-- 重新分配预算到头部达人、腰部达人和KOC
-- 优化平台组合和内容策略
-- 提供投放时机和风险评估建议
-
-工具会返回详细的测试分析、优化策略、预算重分配方案、内容优化建议和预期提升数据。
-</ma_campaign_optimizer_instructions>`,
-}
 
 export const CAMPAIGN_OPTIMIZER_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -62,22 +32,10 @@ export const CAMPAIGN_OPTIMIZER_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isCampaignOptimizerAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_optimize_campaign'
 
-export function isCampaignOptimizerToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeCampaignOptimizerTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

@@ -5,7 +5,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import {
   searchKOLs,
   getKOLStats,
@@ -19,39 +18,6 @@ import { getToolCredentials } from '../../chat-tool-config'
 // 工具元数据
 // =====================================================================
 
-export const KOL_SEARCH_TOOL_META: ChatToolMeta = {
-  id: 'ma-kol-search',
-  name: 'MAKOL搜索',
-  description: '从本地KOL数据库搜索达人，或从外部API（新榜/JustOne）拉取新数据并存入数据库',
-  params: [
-    { name: 'action', type: 'string', description: '操作类型（search/search-all/collect-from-api/seed-mock/stats）', required: true, enum: ['search', 'search-all', 'collect-from-api', 'seed-mock', 'stats'] },
-    { name: 'platform', type: 'string', description: '平台（小红书/抖音/B站/微博/快手/TikTok/Instagram/YouTube）', required: false },
-    { name: 'category', type: 'string', description: '内容领域', required: false },
-    { name: 'keywords', type: 'string', description: '搜索关键词，逗号分隔', required: false },
-    { name: 'source', type: 'string', description: '数据源（justone/newrank）', required: false, enum: ['justone', 'newrank'] },
-    { name: 'limit', type: 'number', description: '数量限制（默认20）', required: false },
-  ],
-  icon: 'Search',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_kol_search_instructions>
-你拥有 **MAKOL搜索** 能力。
-
-**ma_search_kols — KOL 数据搜索与采集：**
-当用户需要查找 KOL、获取达人数据时调用：
-- 从本地数据库搜索 KOL
-- 从外部 API 拉取新 KOL 数据
-- 查看数据库统计信息
-
-**操作类型：**
-- search：本地数据库搜索
-- search-all：查看所有 KOL
-- collect-from-api：从 API 数据源采集（justone/newrank）
-- seed-mock：填充 Mock 示例数据
-- stats：查看数据库统计
-</ma_kol_search_instructions>`,
-}
 
 export const KOL_SEARCH_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -73,22 +39,10 @@ export const KOL_SEARCH_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isKOLSearchAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_search_kols'
 
-export function isKOLSearchToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeKOLSearchTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

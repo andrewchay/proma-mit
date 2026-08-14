@@ -48,6 +48,10 @@ import {
   markdownFontSizeAtom,
   initializeMarkdownFontSize,
 } from './atoms/markdown-font-size'
+import {
+  enabledCapabilitiesAtom as marketingEnabledCapabilitiesAtom,
+  initializeMarketingCapabilities,
+} from './atoms/marketing-atoms'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
 import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
@@ -407,6 +411,21 @@ function MarkdownFontSizeInitializer(): null {
   useEffect(() => {
     initializeMarkdownFontSize(setMarkdownFontSize)
   }, [setMarkdownFontSize])
+
+  return null
+}
+
+/**
+ * 营销订阅状态初始化组件
+ *
+ * 从主进程 settings.json 加载已订阅的营销领域业务包，供能力中心与侧边栏导航显隐使用。
+ */
+function MarketingCapabilitiesInitializer(): null {
+  const setEnabled = useSetAtom(marketingEnabledCapabilitiesAtom)
+
+  useEffect(() => {
+    initializeMarketingCapabilities(setEnabled)
+  }, [setEnabled])
 
   return null
 }
@@ -883,6 +902,7 @@ if (isQuickTaskWindow) {
       <DockBadgeInitializer />
       <UiPreferencesInitializer />
       <MarkdownFontSizeInitializer />
+      <MarketingCapabilitiesInitializer />
       <ChatListenersInitializer />
       <AgentListenersInitializer />
       <ChatToolInitializer />

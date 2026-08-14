@@ -53,6 +53,12 @@ export interface BuiltinPluginRuntime {
    * 未提供则视为不贡献工具。
    */
   contributeTools?: () => RuntimeToolDefinition[]
+  /**
+   * 声明式向 Agent 贡献系统提示片段（模型调用能力引导，如「营销工具何时使用」）。
+   * 与 contributeTools 对称；返回的每段文本会作为独立 section 注入系统提示。
+   * 未提供则视为不贡献。
+   */
+  contributePrompts?: () => string[]
 }
 
 // ===== 内置插件注册表 =====
@@ -106,6 +112,8 @@ const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.dynamic-island', dynamicIslandRuntime],
   // Computer Use 插件：把系统级桌面控制工具以「插件贡献 agent-tools」方式提供
   ['com.gravitas.computer-use', () => require('./plugins/computer-use-plugin').computerUsePluginRuntime()],
+  // Marketing 插件：把营销领域工具以「插件贡献 agent-tools」方式提供（试点）
+  ['com.gravitas.marketing', () => require('./plugins/marketing-plugin').marketingPluginRuntime()],
 ])
 
 /** 安全的字符串字段取值（仅接受 mini 长度以下的用户可控字符串） */
@@ -258,6 +266,31 @@ export function collectContributingTools(): RuntimeToolDefinition[] {
     }
   }
   return tools
+}
+
+/**
+ * 收集所有「已启用 + 平台支持 且 贡献了提示片段」的插件系统提示。
+ *
+ * 与 collectContributingTools 对称：供 buildSystemPrompt 在组装系统提示时注入插件能力引导。
+ * 同遵循声明式安全边界，空结果返回空数组。
+ */
+export function collectContributingPrompts(): string[] {
+  const prompts: string[] = []
+  const factories: Array<{ id: string; factory: () => BuiltinPluginRuntime }> = []
+  for (const [id, factory] of BUILTIN_RUNTIMES) factories.push({ id, factory })
+  for (const [id, factory] of IMPORTED_RUNTIMES) factories.push({ id, factory })
+
+  for (const { id, factory } of factories) {
+    try {
+      const runtime = factory()
+      if (!runtime.isEnabled() || !runtime.isSupported()) continue
+      const contributed = runtime.contributePrompts?.()
+      if (contributed) prompts.push(...contributed)
+    } catch (error) {
+      console.warn(`[Diag][plugin] 收集 ${id} 的提示失败：`, error)
+    }
+  }
+  return prompts
 }
 
 /** 重置插件管理器内部状态（仅测试用，避免跨用例污染全局注册表）。 */

@@ -72,6 +72,24 @@ import { createElectronRuntimeServices, type RuntimeServices } from './agent-run
 import { tokenUsageService } from './token-usage-service'
 import { preTickTurn } from './turn-decision-service'
 
+// ===== 插件能力引导收集 =====
+
+/**
+ * 汇总插件贡献的系统提示引导片段（如营销工具的调用时机指令）。
+ * 延迟 require plugin-manager，避免与插件实现形成初始化阶段循环依赖。
+ * 取不到（非 electron 或异常）时安全返回空数组。
+ */
+function collectPluginPrompts(): string[] {
+  try {
+    const { collectContributingPrompts } = createRequire(__filename)('../plugin-manager') as {
+      collectContributingPrompts: () => string[]
+    }
+    return collectContributingPrompts()
+  } catch {
+    return []
+  }
+}
+
 // ===== 类型定义 =====
 
 /**
@@ -1008,6 +1026,7 @@ export class AgentOrchestrator {
           memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
           claudeAvailable: false,
           collaborationAvailable: !!workspaceId && !isDelegationSession,
+          pluginToolPrompts: collectPluginPrompts(),
         }),
       }
 
@@ -2407,6 +2426,7 @@ export class AgentOrchestrator {
             memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
             claudeAvailable,
             collaborationAvailable,
+            pluginToolPrompts: collectPluginPrompts(),
           }),
         },
         resumeSessionId: existingSdkSessionId,

@@ -5,43 +5,12 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 
 // =====================================================================
 // 工具元数据
 // =====================================================================
 
-export const CONTENT_AUDIT_TOOL_META: ChatToolMeta = {
-  id: 'ma-content-audit',
-  name: 'MA内容审核',
-  description: '审核达人提交的内容（视频/图文/直播），从合规性、品牌契合度、内容质量三个维度评分并给出修改建议',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'platform', type: 'string', description: '平台（小红书/抖音/B站/微博/快手）', required: false },
-    { name: 'content_type', type: 'string', description: '内容类型（视频/图文/直播）', required: false },
-    { name: 'content_description', type: 'string', description: '内容描述或脚本文本', required: true },
-    { name: 'kol_id', type: 'string', description: '达人ID（可选，关联CRM）', required: false },
-    { name: 'content_url', type: 'string', description: '内容链接（可选）', required: false },
-  ],
-  icon: 'ShieldCheck',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_content_audit_instructions>
-你拥有 **MA内容审核** 能力（ContentAudit）。
-
-**ma_audit_content — 审核达人内容：**
-当用户需要审核 KOL 提交的内容稿件时调用：
-- 从合规性维度检查内容是否符合平台规范和广告法
-- 从品牌契合度维度评估内容是否准确传达品牌信息
-- 从内容质量维度评估创意水平和用户吸引力
-- 给出明确的审核结论和具体修改建议
-
-工具会返回详细的审核报告，包含各维度评分、问题清单和修改建议。
-</ma_content_audit_instructions>`,
-}
 
 export const CONTENT_AUDIT_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -64,22 +33,10 @@ export const CONTENT_AUDIT_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isContentAuditAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_audit_content'
 
-export function isContentAuditToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeContentAuditTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

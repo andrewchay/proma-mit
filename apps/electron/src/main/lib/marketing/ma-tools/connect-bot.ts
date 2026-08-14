@@ -5,7 +5,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 import { getKOLById } from './kol-data-service'
 
@@ -13,38 +12,6 @@ import { getKOLById } from './kol-data-service'
 // 工具元数据
 // =====================================================================
 
-export const CONNECT_BOT_TOOL_META: ChatToolMeta = {
-  id: 'ma-connect-bot',
-  name: 'MA智能建联',
-  description: '生成个性化的KOL合作邀约话术、谈判策略和合同条款建议',
-  params: [
-    { name: 'kol_name', type: 'string', description: 'KOL名称', required: true },
-    { name: 'kol_id', type: 'string', description: 'KOL ID（可选，用于从数据库读取详情）', required: false },
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'platform', type: 'string', description: '合作平台', required: false },
-    { name: 'cooperation_type', type: 'string', description: '合作形式（内容合作/直播带货/品牌代言）', required: false },
-    { name: 'budget_range', type: 'string', description: '预算范围', required: false },
-    { name: 'style', type: 'string', description: '话术风格（formal/casual/professional）', required: false },
-    { name: 'strategy_context', type: 'string', description: '传播策略背景（如Big Idea、传播主题）', required: false },
-  ],
-  icon: 'MessageSquare',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_connect_bot_instructions>
-你拥有 **MA智能建联** 能力（ConnectBot）。
-
-**ma_generate_outreach — 生成建联话术：**
-当用户需要联系 KOL、生成邀约话术时调用：
-- 生成个性化的 KOL 合作邀约
-- 提供谈判策略建议
-- 生成合同条款模板
-- 提供跟进计划
-
-工具会返回完整的邀约话术（主题/开场/正文/谈判/收尾）和谈判建议。
-</ma_connect_bot_instructions>`,
-}
 
 export const CONNECT_BOT_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -69,22 +36,10 @@ export const CONNECT_BOT_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isConnectBotAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_generate_outreach'
 
-export function isConnectBotToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeConnectBotTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

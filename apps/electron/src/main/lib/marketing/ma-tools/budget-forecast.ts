@@ -7,49 +7,12 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 
 // =====================================================================
 // 工具元数据
 // =====================================================================
 
-export const BUDGET_FORECAST_TOOL_META: ChatToolMeta = {
-  id: 'ma-budget-forecast',
-  name: 'MA预算预估',
-  description: '为没有专业市场部的客户进行市场投放预算的科学计算。基于目标人群规模、曝光渠道、竞对稀释、曝光转化、销售占比五步法，输出预算预估报告和达人组合建议',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称/系列', required: true },
-    { name: 'market_size', type: 'number', description: '目标市场总规模（人/户），如 1000000', required: true },
-    { name: 'ta_description', type: 'string', description: '目标人群描述（如：25-35岁一二线城市精致妈妈）', required: true },
-    { name: 'ta_penetration_rate', type: 'number', description: '目标人群渗透率（百分比，如 5 表示 5%）', required: true },
-    { name: 'annual_sales_target', type: 'number', description: '年度销售目标（万元）', required: true },
-    { name: 'competitor_spend_estimate', type: 'number', description: '主要竞品预估年度投放额（万元，可选）', required: false },
-    { name: 'exposure_frequency', type: 'number', description: '单人有效曝光频次（默认6次）', required: false },
-    { name: 'conversion_rate', type: 'number', description: '曝光到购买的预估转化率（百分比，如 2 表示 2%）', required: false },
-    { name: 'budget_ratio', type: 'number', description: '投放占销售额比例（百分比，默认 15-20，如 18 表示 18%）', required: false },
-    { name: 'preferred_platforms', type: 'string', description: '首选投放平台（小红书/抖音/B站/微博/快手，多个用逗号分隔）', required: false },
-  ],
-  icon: 'Calculator',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_budget_forecast_instructions>
-你拥有 **MA预算预估** 能力（BudgetForecast）。
-
-**ma_forecast_budget — 市场投放预算预估：**
-当用户需要计算市场投放预算、评估投放规模、规划预算分配时调用：
-- 目标人群规模测算与市场规模预估
-- 覆盖TA所需达人博主组合预估
-- 竞品稀释系数计算（忠诚转化人群排除）
-- 曝光转化预估（有效频次与转化率）
-- 销售占比校验（投放占销售额 15-20%）
-- 输出总预算预估和达人配比建议
-
-工具会返回详细的预算预估报告，包含人群规模、曝光需求、转化预估、预算建议、达人组合方案。
-</ma_budget_forecast_instructions>`,
-}
 
 export const BUDGET_FORECAST_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -76,22 +39,10 @@ export const BUDGET_FORECAST_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isBudgetForecastAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_forecast_budget'
 
-export function isBudgetForecastToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeBudgetForecastTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

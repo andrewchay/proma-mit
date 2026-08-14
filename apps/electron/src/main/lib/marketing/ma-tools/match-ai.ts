@@ -5,7 +5,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { completePrompt, extractJSON } from './llm-service'
 import { searchKOLs, getKOLStats, type KOLRecord } from './kol-data-service'
 import industryTemplates from './knowledge/industry-templates.json'
@@ -14,38 +13,6 @@ import industryTemplates from './knowledge/industry-templates.json'
 // 工具元数据
 // =====================================================================
 
-export const MATCH_AI_TOOL_META: ChatToolMeta = {
-  id: 'ma-match-ai',
-  name: 'MAKOL匹配',
-  description: '基于品牌需求和本地KOL数据库，智能筛选并推荐合适的KOL/KOC组合，含匹配度评分和风险预警',
-  params: [
-    { name: 'brand', type: 'string', description: '品牌名称', required: true },
-    { name: 'product', type: 'string', description: '产品名称', required: true },
-    { name: 'platform', type: 'string', description: '平台（小红书/抖音/B站/微博/快手/多平台）', required: false },
-    { name: 'category', type: 'string', description: 'KOL内容领域（美妆/3C/母婴/时尚/生活方式等）', required: false },
-    { name: 'follower_range', type: 'string', description: '粉丝量范围（如：10万-100万）', required: false },
-    { name: 'budget_per_kol', type: 'string', description: '单个KOL预算范围', required: false },
-    { name: 'target_audience', type: 'string', description: '目标受众', required: false },
-    { name: 'key_messages', type: 'string', description: '关键传播信息', required: false },
-    { name: 'limit', type: 'number', description: '推荐数量（默认10）', required: false },
-  ],
-  icon: 'Target',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_match_ai_instructions>
-你拥有 **MAKOL匹配** 能力（MatchAI）。
-
-**ma_match_kols — KOL 智能匹配：**
-当用户需要筛选推荐 KOL/KOC 时调用：
-- 为品牌推荐合适的 KOL 组合
-- 筛选特定平台/粉丝量/领域的 KOL
-- 评估 KOL 与品牌的匹配度
-- 获取 KOL 风险预警
-
-工具会返回推荐的 KOL 列表（含匹配度评分、推荐理由、风险提示）。
-</ma_match_ai_instructions>`,
-}
 
 export const MATCH_AI_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -70,22 +37,10 @@ export const MATCH_AI_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isMatchAIAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_match_kols'
 
-export function isMatchAIToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeMatchAITool(toolCall: ToolCall): Promise<ToolResult> {
   try {

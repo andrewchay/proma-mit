@@ -9,7 +9,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import { getConfigDir } from '../../config-paths'
 import { join } from 'node:path'
 
@@ -140,42 +139,6 @@ function getDb(): Database {
 // 工具元数据
 // =====================================================================
 
-export const KOL_CRM_TOOL_META: ChatToolMeta = {
-  id: 'ma-kol-crm',
-  name: 'MA达人CRM',
-  description: '管理达人CRM信息，包括入会信息、标签管理、效果记录查询、平台分层分析',
-  params: [
-    { name: 'action', type: 'string', description: '操作类型：get_kol_crm(获取CRM)/update_kol_crm(更新CRM)/list_kols_by_tier(按分层查询)/record_performance(记录效果)/get_performance_history(查询效果历史)/analyze_kol_value(分析达人价值)', required: true },
-    { name: 'kol_id', type: 'string', description: '达人ID（get/update/record/analyze时需要）', required: false },
-    { name: 'data', type: 'string', description: '更新数据JSON字符串（update时需要，如{"tags":"美妆,护肤","loyalty_tier":"loyal"})', required: false },
-    { name: 'tier', type: 'string', description: '分层筛选（list时需要：loyal/returning/churned/new）', required: false },
-    { name: 'platform', type: 'string', description: '平台筛选（可选：小红书/抖音/B站/微博/快手等）', required: false },
-    { name: 'limit', type: 'number', description: '返回数量限制（默认20）', required: false },
-  ],
-  icon: 'Users',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_kol_crm_instructions>
-你拥有 **MA达人CRM** 能力（KOLCRM）。
-
-**ma_kol_crm — 达人CRM管理：**
-当用户需要管理达人信息、查询CRM数据、记录合作效果或分析达人价值时调用。
-
-支持的操作：
-- \`get_kol_crm\` — 获取单个达人的完整CRM信息
-- \`update_kol_crm\` — 更新达人CRM字段（标签、分层、备注等）
-- \`list_kols_by_tier\` — 按忠诚度分层查询达人列表
-- \`record_performance\` — 记录一次合作效果数据
-- \`get_performance_history\` — 查询达人的历史合作效果
-- \`analyze_kol_value\` — 综合分析达人的CRM数据和效果历史，输出价值评估
-
-注意：
-- \`data\` 参数必须是有效的JSON字符串
-- \`tier\` 有效值：loyal(忠诚)/returning(回流)/churned(流失)/new(新客)
-- 本工具直接操作本地数据库，无需调用外部API
-</ma_kol_crm_instructions>`,
-}
 
 export const KOL_CRM_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -201,22 +164,10 @@ export const KOL_CRM_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isKOLCRMAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
-const TOOL_NAME = 'ma_kol_crm'
 
-export function isKOLCRMToolCall(toolName: string): boolean {
-  return toolName === TOOL_NAME
-}
 
 export async function executeKOLCRMTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

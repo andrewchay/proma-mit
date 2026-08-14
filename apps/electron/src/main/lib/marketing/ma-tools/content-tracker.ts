@@ -5,7 +5,6 @@
  */
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
-import type { ChatToolMeta } from '@gravitas/shared'
 import {
   analyzeContentPerformanceAI,
   createContentTracking,
@@ -18,57 +17,6 @@ import { completePrompt, extractJSON } from './llm-service'
 // 工具元数据
 // =====================================================================
 
-export const CONTENT_TRACKER_TOOL_META: ChatToolMeta = {
-  id: 'ma-content-tracker',
-  name: 'MA内容数据追踪',
-  description: '分析 KOL 投放内容的自然流数据表现，判断性能等级（excellent/good/normal/poor），给出投流加热建议（薯条/评论区维护/DOU+）和优化策略',
-  params: [
-    { name: 'campaign_id', type: 'string', description: 'Campaign ID', required: false },
-    { name: 'content_id', type: 'string', description: '内容追踪记录 ID', required: false },
-    { name: 'kol_id', type: 'string', description: 'KOL ID', required: false },
-    { name: 'kol_name', type: 'string', description: 'KOL 名称', required: false },
-    { name: 'platform', type: 'string', description: '平台（小红书/抖音/微博）', required: false },
-    { name: 'price_tier', type: 'string', description: '价格带（budget/mid/premium/luxury）', required: false },
-    { name: 'followers_range', type: 'string', description: '粉丝范围（1k-10k/10k-100k/100k-1m/1m+）', required: false },
-    { name: 'content_url', type: 'string', description: '内容链接', required: false },
-    { name: 'content_type', type: 'string', description: '内容类型（organic/paid/mixed）', required: false },
-    { name: 'publish_date', type: 'string', description: '发布日期（YYYY-MM-DD）', required: false },
-    { name: 'exposure', type: 'number', description: '曝光量', required: false },
-    { name: 'views', type: 'number', description: '浏览量/小眼睛', required: false },
-    { name: 'likes', type: 'number', description: '点赞数', required: false },
-    { name: 'saves', type: 'number', description: '收藏数', required: false },
-    { name: 'comments', type: 'number', description: '评论数', required: false },
-    { name: 'shares', type: 'number', description: '转发数', required: false },
-    { name: 'completion_rate', type: 'number', description: '完播率', required: false },
-    { name: 'data_source', type: 'string', description: '数据来源（api/manual/screenshot/estimated）', required: false },
-    { name: 'paid_spend', type: 'number', description: '投流花费', required: false },
-    { name: 'budget', type: 'number', description: '可用预算', required: false },
-  ],
-  icon: 'TrendingUp',
-  category: 'builtin',
-  executorType: 'builtin',
-  systemPromptAppend: `
-<ma_content_tracker_instructions>
-你拥有 **MA内容数据追踪** 能力（ContentTracker）。
-
-**ma_analyze_content_performance — 分析内容数据表现：**
-当用户需要分析已投放内容的自然流数据表现时调用：
-- 输入 content_id 或 campaign_id + kol_id
-- 系统会自动计算 CTR、互动率、CPM、CPE 等核心指标
-- 与内置数据基准对比，判断性能等级（excellent/good/normal/poor）
-- 给出投流加热建议（薯条/评论区维护/DOU+）和优化策略
-
-**ma_add_content_tracking — 添加内容追踪记录：**
-当用户需要新增一条内容数据追踪记录时调用：
-- 输入 campaign_id, kol_id, platform, content_url 等基础信息
-- 系统会自动计算 CPM/CPE/CTR/Engagement Rate
-
-**ma_get_content_benchmarks — 获取数据标准基准：**
-当用户需要查询某个平台/价格带/粉丝范围的基准数据时调用。
-
-工具会返回详细的分析报告，包含指标对比、等级判定和优化建议。
-</ma_content_tracker_instructions>`,
-}
 
 export const CONTENT_TRACKER_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -145,14 +93,6 @@ export const CONTENT_TRACKER_TOOL_DEFINITIONS: ToolDefinition[] = [
 ]
 
 // =====================================================================
-// 可用性检查
-// =====================================================================
-
-export function isContentTrackerAvailable(): boolean {
-  return true
-}
-
-// =====================================================================
 // 工具执行
 // =====================================================================
 
@@ -161,9 +101,6 @@ const STRATEGY_TOOL = 'ma_suggest_traffic_strategy'
 const ADD_TRACKING_TOOL = 'ma_add_content_tracking'
 const GET_BENCHMARKS_TOOL = 'ma_get_content_benchmarks'
 
-export function isContentTrackerToolCall(toolName: string): boolean {
-  return toolName === ANALYZE_TOOL || toolName === STRATEGY_TOOL || toolName === ADD_TRACKING_TOOL || toolName === GET_BENCHMARKS_TOOL
-}
 
 export async function executeContentTrackerTool(toolCall: ToolCall): Promise<ToolResult> {
   try {

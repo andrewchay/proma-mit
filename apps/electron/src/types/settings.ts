@@ -220,6 +220,8 @@ export interface AppSettings {
   scratchPadActive?: boolean
   /** 应用图标变体 ID（dock + window icon），'default' 或 logo 变体 id */
   appIconVariant?: string
+  /** 已订阅的营销领域业务包 id（如 influencer / paid-media）。空数组 = 未启用营销，此时营销工具与指令不注入 Agent */
+  marketingCapabilities?: string[]
   /** 语音输入设置（Access Token 以加密态存储，由专用服务解密后返回渲染进程） */
   voiceDictation?: VoiceDictationPersistedSettings
   /** 启动时自动清理临时文件（gravitas-preview、gravitas-installers），默认 true */
