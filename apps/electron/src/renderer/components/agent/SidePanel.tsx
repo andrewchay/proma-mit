@@ -93,6 +93,25 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     setPreviewOpenMap((prev) => { const m = new Map(prev); m.set(sessionId, true); return m })
   }, [sessionId, sessionPath, setPreviewFileMap, setPreviewOpenMap])
 
+  /** 双击文件：在独立预览窗口打开（同一文件可同时开多个文档） */
+  const handleOpenDetachedPreview = React.useCallback((filePath: string) => {
+    const bp = basePathsRef.current
+    const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+    window.electronAPI
+      .openDetachedPreview({
+        sessionId,
+        filePath,
+        dirPath: slash > 0 ? filePath.slice(0, slash) : (sessionPath || filePath),
+        previewOnly: true,
+        readOnly: true,
+        basePaths: bp.length > 0 ? bp : undefined,
+        title: filePath.split('/').pop()?.split('\\').pop() ?? filePath,
+      })
+      .catch((err) => {
+        console.error('[SidePanel] 打开独立预览窗口失败:', err)
+      })
+  }, [sessionId, sessionPath])
+
   // 动画标志：isOpen 变化时启用过渡动画，切换会话时即时显示
   const prevIsOpenRef = React.useRef(isOpen)
   const prevSessionIdRef = React.useRef(sessionId)
@@ -522,7 +541,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           {hasSessionAttachedItems && (
                             <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3 pt-2">工作文件（存储于该工作区目录）</div>
                           )}
-                          <FileBrowser rootPath={sessionPath} hideToolbar embedded hideEmpty={hasSessionAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} />
+                          <FileBrowser rootPath={sessionPath} hideToolbar embedded hideEmpty={hasSessionAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
                         </>
                         {/* 会话文件拖拽上传区域 */}
                         <FileDropZone
@@ -605,7 +624,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           {hasWorkspaceAttachedItems && (
                             <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3 pt-2">工作文件（存储于该工作区目录）</div>
                           )}
-                          <FileBrowser rootPath={workspaceFilesPath} hideToolbar embedded hideEmpty={hasWorkspaceAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} />
+                          <FileBrowser rootPath={workspaceFilesPath} hideToolbar embedded hideEmpty={hasWorkspaceAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
                         </>
                       )}
                       {/* 工作区文件拖拽上传区域 */}

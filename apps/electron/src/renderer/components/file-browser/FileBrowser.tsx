@@ -94,9 +94,11 @@ interface FileBrowserProps {
   onAddToChat?: (entry: FileEntry) => void
   /** 单击文件时在内联预览面板中显示（替代外部窗口预览） */
   onFilePreview?: (filePath: string) => void
+  /** 双击文件时打开独立预览窗口（多个文档可并排查看） */
+  onOpenDetachedPreview?: (filePath: string) => void
 }
 
-export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddToChat, onFilePreview }: FileBrowserProps): React.ReactElement {
+export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddToChat, onFilePreview, onOpenDetachedPreview }: FileBrowserProps): React.ReactElement {
   const [entries, setEntries] = React.useState<FileEntry[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -321,6 +323,7 @@ export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddT
           onClearSelection={() => setSelectedPaths(new Set())}
           onAddToChat={onAddToChat}
           onFilePreview={onFilePreview}
+          onOpenDetachedPreview={onOpenDetachedPreview}
         />
       ))}
     </div>
@@ -423,6 +426,8 @@ interface FileTreeItemProps {
   onClearSelection: () => void
   onAddToChat?: (entry: FileEntry) => void
   onFilePreview?: (filePath: string) => void
+  /** 双击文件时打开独立预览窗口 */
+  onOpenDetachedPreview?: (filePath: string) => void
 }
 
 function FileTreeItem({
@@ -448,6 +453,7 @@ function FileTreeItem({
   onClearSelection,
   onAddToChat,
   onFilePreview,
+  onOpenDetachedPreview,
 }: FileTreeItemProps): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false)
   const [children, setChildren] = React.useState<FileEntry[]>([])
@@ -547,6 +553,15 @@ function FileTreeItem({
     } else {
       onFilePreview?.(entry.path)
     }
+  }
+
+  /** 双击行为：文件直接打开独立预览窗口（目录仍走 toggleDir，由两次单击自然抵消） */
+  const handleDoubleClick = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (isRenaming || moving) return
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    if (entry.isDirectory) return
+    onOpenDetachedPreview?.(entry.path)
   }
 
   /** 删除后刷新子目录 */
@@ -657,6 +672,7 @@ function FileTreeItem({
           zIndex: isSticky ? stickyZIndex : undefined,
         }}
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
       >
         {/* sticky 行祖先链竖线，逻辑见 tree-row-layout.tsx 的 AncestorGuides */}
         {isSticky && <AncestorGuides depth={depth} isSelected={isSelected} />}
@@ -824,6 +840,7 @@ function FileTreeItem({
               onClearSelection={onClearSelection}
               onAddToChat={onAddToChat}
               onFilePreview={onFilePreview}
+              onOpenDetachedPreview={onOpenDetachedPreview}
             />
           ))}
         </div>
