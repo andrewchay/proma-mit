@@ -591,6 +591,18 @@ export function getEvalRunWorkspaceDir(runId: string): string {
   return dir
 }
 
+/** 评测 trace 根目录（per-run 决策序列 JSONL）。 */
+export function getEvalTracesDir(): string {
+  const dir = join(getEvalDir(), 'traces')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** 某次评测运行的 trace 文件路径。 */
+export function getEvalTracePath(runId: string): string {
+  return join(getEvalTracesDir(), `${assertBenchmarkId(runId)}.jsonl`)
+}
+
 /**
  * 获取指定工作区的 MCP 配置文件路径
  *

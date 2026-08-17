@@ -20,6 +20,8 @@ export interface CaseEval {
   costUsd?: number | null
   durationMs?: number | null
   sessionId?: string
+  /** 该评估的 trace 文件路径（决策序列 JSONL） */
+  tracePath?: string
 }
 
 /** 评测一次状态（def）的 delegate：对 benchmark 内所有 case 各跑一次固定 run 数。 */
@@ -84,7 +86,7 @@ function buildEvaluation(
       score: c.score ?? 0,
       costUsd: c.costUsd ?? null,
       durationMs: c.durationMs ?? null,
-      runs: c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId }] : [],
+      runs: c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId, tracePath: c.tracePath }] : [],
     })),
   }
 }

@@ -68,6 +68,8 @@ export interface EvalRunResult {
   costUsd?: number
   durationMs?: number
   sessionId?: string
+  /** 该 run 的决策 trace 文件路径（append-only JSONL，含完整工具序列） */
+  tracePath?: string
   /** failed 时的稳定错误码 */
   failureCode?: 'invalid_request' | 'benchmark_invalid' | 'version_changed' | 'evaluation_failed'
 }
@@ -78,6 +80,8 @@ export interface ScoreboardCaseRun {
   costUsd?: number | null
   durationMs?: number | null
   sessionId: string
+  /** 该 run 的 trace 文件路径（可选） */
+  tracePath?: string
 }
 
 /** 单个 Case 的汇总（scoreboard 内）。 */

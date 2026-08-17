@@ -20,6 +20,7 @@ import { buildBuiltinAgents } from '../../agent-prompt-builder'
 import type { ProviderType } from '@gravitas/shared'
 import type { SubAgentDelegate } from './evaluator'
 import type { BenchmarkConfig } from './types'
+import { openTrace } from './trace-writer'
 
 // 内置 sub-agent 状态快照/回滚（纯逻辑）
 import { readBuiltinPrompt } from './builtin-agent-state'
@@ -54,7 +55,7 @@ export function resolveEvalChannel(benchmark: BenchmarkConfig): EvalChannelInfo 
 }
 
 /**
- * 生成真实 SubAgentDelegate：在隔离沙箱里运行被测子代理。
+ * 生成真实 SubAgentDelegate：在隔离沙箱里运行被测子代理，并把完整决策序列写入 per-run trace。
  * 系统提示 = 内置子代理 prompt + 评测任务（协议返回在 prompt 内已要求）。
  */
 export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
@@ -63,9 +64,21 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
   return async (input) => {
     const ctx = { provider: channel.provider, apiKey: channel.apiKey, baseUrl: channel.baseUrl, model: channel.modelId }
     const messages: import('@gravitas/shared').SDKMessage[] = []
+    const runId = input.runId ?? `eval-${Date.now()}`
+    // 打开 per-run trace（写入完整决策序列，供回放/诊断/自演化 evidence）
+    const trace = openTrace({
+      runId,
+      benchmarkId: '',
+      caseId: '',
+      run: 0,
+      agentVersion: 0,
+      model: ctx.model,
+      systemPrompt: input.systemPrompt ?? readBuiltinPrompt(input.agentName),
+      createdAt: new Date().toISOString(),
+    })
     try {
       for await (const msg of adapter.query({
-        sessionId: `eval-${Date.now()}`,
+        sessionId: runId,
         prompt: input.task,
         model: ctx.model,
         provider: ctx.provider,
@@ -80,6 +93,8 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
         abortSignal: input.abortSignal,
       })) {
         messages.push(msg)
+        // 逐条写入 trace（含 tool_use / tool_result 决策序列）
+        trace.append(msg)
       }
       // 回收集合 assistant 文本
       const texts: string[] = []
@@ -93,8 +108,9 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
           }
         }
       }
-      return { text: texts.join('\n\n') || '（评测：子代理未返回文本）' }
+      return { text: texts.join('\n\n') || '（评测：子代理未返回文本）', trace: { runId, tracePath: trace.tracePath } }
     } finally {
+      trace.close()
       if (running) {
         running = false
         adapter.dispose()

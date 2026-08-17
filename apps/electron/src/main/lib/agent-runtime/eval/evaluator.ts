@@ -27,8 +27,18 @@ export interface SubAgentDelegateInput {
   systemPrompt?: string
   maxTurns?: number
   abortSignal?: AbortSignal
+  /** 评测运行时：delegate 把本次运行 trace 信息写回（runId + trace 路径） */
+  runId?: string
 }
-export type SubAgentDelegate = (input: SubAgentDelegateInput) => Promise<{ text: string }>
+
+/** Delegate 返回：被测文本 + 可选 trace 信息。 */
+export interface SubAgentDelegateResult {
+  text: string
+  /** 本次运行的 trace（决策序列）信息 */
+  trace?: { runId: string; tracePath: string }
+}
+
+export type SubAgentDelegate = (input: SubAgentDelegateInput) => Promise<SubAgentDelegateResult>
 
 /** 可选的 LLM 打分回调：把 rubric + statement + 被测输出 交给更准的评分。 */
 export type ScoreDelegate = (input: {
@@ -89,6 +99,7 @@ export async function evaluateCaseRun(
   const startedAt = Date.now()
   const prompt = buildEvalPrompt(statement)
   let text = ''
+  let runTracePath: string | undefined
   let failed = false
   let failureCode: EvalRunResult['failureCode']
   try {
@@ -96,11 +107,15 @@ export async function evaluateCaseRun(
       agentName: benchmark.targetAgentId,
       task: prompt,
       workspaceDir,
+      runId,
       maxTurns: opts.maxTurns ?? 12,
       abortSignal: opts.abortSignal,
       systemPrompt: opts.systemPrompt,
     })
     text = result.text
+    if (result.trace) {
+      runTracePath = result.trace.tracePath
+    }
   } catch (error) {
     failed = true
     failureCode = 'evaluation_failed'
@@ -108,7 +123,7 @@ export async function evaluateCaseRun(
   }
   const durationMs = Date.now() - startedAt
   if (failed) {
-    return { protocolVersion: 1, caseId, run: runIndex, agentVersion, status: 'failed', score: 0, durationMs, failureCode }
+    return { protocolVersion: 1, caseId, run: runIndex, agentVersion, status: 'failed', score: 0, durationMs, failureCode, tracePath: runTracePath }
   }
 
   // 3) 评分：优先 LLM 打分回调，否则规则打分 + 协议分补充
@@ -122,6 +137,8 @@ export async function evaluateCaseRun(
     status: 'ok',
     score,
     durationMs,
+    sessionId: runId,
+    tracePath: runTracePath,
     failureCode: undefined,
   }
 }

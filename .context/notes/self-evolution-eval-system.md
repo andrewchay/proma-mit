@@ -92,3 +92,14 @@
 3. **候选策略精细化**：Builder 分段指令微调、单 Case 定向优化，而非全局 prompt 改写。
 4. **评分准确度**：接入 LLM scoreDelegate + rubric 设计最佳实践。
 5. 有缘时把 `builtin-agent-overrides.json`（legacy 迁移残留读写）彻底移除。
+6. **自演化适用范围泛化**：目前只对内置 3 个 sub-agent；要让 Optimed 这类已有项目也能评测/优化/采纳，需把「被测对象」从内置泛化到任意 agent/项目。
+
+## 八、Trace 可观测性（2026-08-17 落地）
+- **动力**：评测此前是黑盒（只有分数）；自演化 evidence 需要 score-linked trace（对齐 penguin trace）。
+- **实现**：
+  - `agent-runtime/eval/trace-writer.ts`：per-run append-only JSONL（同步持久化），`<config>/eval/traces/<runId>.jsonl`，首行元信息、其后逐条 SDKMessage（含 tool_use/tool_result 决策序列），支持 appendRaw。
+  - `eval-runner.ts` `buildEvalDelegate`：评测运行把完整 message 流写入 trace，返回 `{ text, trace:{runId,tracePath} }`。
+  - `evaluator.ts`：把 runId 传给 delegate；把 tracePath 透传到 `EvalRunResult.tracePath`。
+  - `commands.ts` / `self-evolver.ts`：tracePath 写入 scoreboard `cases[].runs[].tracePath`。
+- **迁移排除**：`eval/traces/` 与 `eval/runs/` 都不进备份/分发（运行诊断产物，scoreboard 保留引用）。
+- **单测**：trace-writer 3 + evaluator 2，eval 会话 40 全绿。

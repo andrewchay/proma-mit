@@ -108,6 +108,29 @@ describe('evaluateCaseRun', () => {
     expect(sawWorkspace!.startsWith(testDir)).toBe(true)
   })
 
+  it('delegate 返回的 trace 信息透传进 EvalRunResult（runId + tracePath）', async () => {
+    const traceThrowing: SubAgentDelegate = async (input) => ({
+      text: 'file:line 修复',
+      trace: { runId: input.runId ?? 'x', tracePath: `/trace-dir/${input.runId ?? 'x'}.jsonl` },
+    })
+    const result = await evaluateCaseRun(config, 'CASE-001', 1, 1, traceThrowing)
+    expect(result.status).toBe('ok')
+    expect(result.sessionId).toBeDefined()
+    expect(result.tracePath).toContain('.jsonl')
+    expect(result.tracePath).toContain('eval-')
+  })
+
+  it('评测运行时给 delegate 传 runId（用于 trace 落盘文件命名）', async () => {
+    let seenRunId: string | undefined
+    const captureRunId: SubAgentDelegate = async (input) => {
+      seenRunId = input.runId
+      return { text: 'file:line' }
+    }
+    await evaluateCaseRun(config, 'CASE-001', 1, 1, captureRunId)
+    expect(seenRunId).toBeDefined()
+    expect(seenRunId!).toContain('eval-')
+  })
+
   it('不存在 case 返回 failed（invalid_request）', async () => {
     const missing = await evaluateCaseRun({ ...config, cases: ['NOPE'] }, 'NOPE', 1, 1, (input) => delegateStub({ text: 'x', workspaceDir: input.workspaceDir }))
     expect(missing.status).toBe('failed')

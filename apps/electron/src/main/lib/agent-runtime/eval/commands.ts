@@ -39,7 +39,7 @@ async function evaluateCaseAcrossRuns(
   agentVersion: number,
   delegate: SubAgentDelegate,
   opts: { scoreDelegate?: ScoreDelegate; abortSignal?: AbortSignal; systemPrompt?: string } = {},
-): Promise<{ score: number; runs: Array<{ score: number; run: number; sessionId?: string }> }> {
+): Promise<{ score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
   const runsCount = Math.max(1, benchmark.runsPerCase ?? 1)
   const allRuns = await Promise.all(
     Array.from({ length: runsCount }, (_, i) =>
@@ -51,7 +51,7 @@ async function evaluateCaseAcrossRuns(
     ),
   )
   const scored = allRuns.filter((r) => r.status === 'ok')
-  const runs = allRuns.map((r) => ({ score: r.status === 'ok' ? r.score : 0, run: r.run, sessionId: r.sessionId }))
+  const runs = allRuns.map((r) => ({ score: r.status === 'ok' ? r.score : 0, run: r.run, sessionId: r.sessionId, tracePath: r.tracePath }))
   const caseScore = scored.length === 0
     ? 0
     : scored.reduce((s, r) => s + r.score, 0) / scored.length
@@ -84,7 +84,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
     cases: byCase.map((c) => ({
       caseId: c.caseId,
       score: c.score,
-      runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '' })),
+      runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath })),
     })),
   }
   appendEvaluation(opts.benchmark.id, evaluation)
@@ -132,7 +132,7 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           def && typeof def === 'object'
             ? (def as Record<string, unknown>).prompt as string | undefined
             : undefined
-        const { score } = await evaluateCaseAcrossRuns(
+        const { score, runs } = await evaluateCaseAcrossRuns(
           benchmark,
           caseId,
           version,
@@ -144,7 +144,8 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           score: score >= 0 ? score : null,
           costUsd: null,
           durationMs: null,
-          sessionId: undefined,
+          sessionId: runs[0]?.sessionId,
+          tracePath: runs[0]?.tracePath,
         }
       }),
     )
