@@ -38,6 +38,8 @@ import { McpServerForm } from './McpServerForm'
 import { SkillFilesPanel } from './SkillFilesPanel'
 import { TeamSkillDirectoryPanel } from './TeamSkillDirectoryPanel'
 import { TeamProfilePanel } from './TeamProfilePanel'
+import { AgentAllowlistPanel } from './AgentAllowlistPanel'
+import { EvalPanel } from './EvalPanel'
 
 // ===== Types =====
 
@@ -417,16 +419,18 @@ ${skillList}
         <div className="relative flex rounded-xl bg-muted p-1">
           <div
             className={cn(
-              'mode-slider absolute top-1 bottom-1 w-[calc(33.333%-3px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
+              'mode-slider absolute top-1 bottom-1 w-[calc(25%-2px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
               activeTab === 'skills' && 'translate-x-0',
               activeTab === 'mcp' && 'translate-x-[100%]',
               activeTab === 'tools' && 'translate-x-[200%]',
+              activeTab === 'eval' && 'translate-x-[300%]',
             )}
           />
           {[
             { value: 'skills', label: 'Skills' },
             { value: 'mcp', label: 'MCP' },
             { value: 'tools', label: '内置工具' },
+            { value: 'eval', label: '评测' },
           ].map(({ value, label }) => (
             <button
               key={value}
@@ -520,6 +524,9 @@ ${skillList}
 
           {/* 团队档案（PH2-A） */}
           {workspaceSlug && <TeamProfilePanel workspaceSlug={workspaceSlug} />}
+
+          {/* 跨会话「始终允许」白名单管理 */}
+          <AgentAllowlistPanel />
         </TabsContent>
 
         {/* ===== MCP Tab ===== */}
@@ -575,6 +582,11 @@ ${skillList}
         {/* ===== Built-in Tools Tab ===== */}
         <TabsContent value="tools" className="mt-4">
           <BuiltinAgentTools />
+        </TabsContent>
+
+        {/* ===== Eval Tab ===== */}
+        <TabsContent value="eval" className="mt-4">
+          <EvalPanel />
         </TabsContent>
       </Tabs>
 

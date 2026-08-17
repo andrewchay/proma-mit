@@ -79,6 +79,7 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
 /** 需要深度合并的嵌套对象字段（更新子字段时保留其余子字段，避免整块替换丢失）。 */
 export const NESTED_MERGE_FIELDS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>([
   'computerUse',
+  'agentAllowlist',
   'feishuTodo',
   'dingtalkTodo',
   'briefCallback',

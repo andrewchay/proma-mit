@@ -512,6 +512,85 @@ export function getWorkflowRunEventsPath(workflowId: string, runId: string): str
   return join(getWorkflowRunsDir(workflowId), `${runId}.jsonl`)
 }
 
+// ===== 评测（Benchmark / Self-Evolution）路径 =====
+
+/** 评测根目录（全局，不绑定具体用户工作区）。 */
+export function getEvalDir(): string {
+  const dir = join(getConfigDir(), 'eval')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** Benchmark 标识符会参与路径拼接，须拒绝路径分隔符/相对路径。 */
+function assertBenchmarkId(value: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error(`Benchmark ID 非法: ${value}`)
+  }
+  return value
+}
+
+/** 单个 Benchmark 的目录。 */
+export function getBenchmarkDir(benchmarkId: string): string {
+  const dir = join(getEvalDir(), 'benchmarks', assertBenchmarkId(benchmarkId))
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** benchmarks 根目录。 */
+export function getBenchmarksRootDir(): string {
+  const dir = join(getEvalDir(), 'benchmarks')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** Benchmark 配置文件路径。 */
+export function getBenchmarkConfigPath(benchmarkId: string): string {
+  return join(getBenchmarkDir(benchmarkId), 'benchmark.json')
+}
+
+/** Benchmark scoreboard 路径。 */
+export function getBenchmarkScoreboardPath(benchmarkId: string): string {
+  return join(getBenchmarkDir(benchmarkId), 'scoreboard.json')
+}
+
+/** 单个 Case 目录（一个 Case 含 statement + rubric）。 */
+export function getBenchmarkCaseDir(benchmarkId: string, caseId: string): string {
+  const dir = join(getBenchmarkDir(benchmarkId), 'cases', assertBenchmarkId(caseId))
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** Case 公开 statement 路径（正文）。 */
+export function getBenchmarkCaseStatementPath(benchmarkId: string, caseId: string): string {
+  return join(getBenchmarkCaseDir(benchmarkId, caseId), 'statement.md')
+}
+
+/** Case 公开素材子目录（可选样例文件，送入被测沙箱）。 */
+export function getBenchmarkCaseStatementAssetsDir(benchmarkId: string, caseId: string): string {
+  const dir = join(getBenchmarkCaseDir(benchmarkId, caseId), 'statement')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** Case 私有 rubric 路径（绝不进入被测上下文）。 */
+export function getBenchmarkCaseRubricPath(benchmarkId: string, caseId: string): string {
+  return join(getBenchmarkCaseDir(benchmarkId, caseId), 'rubric.json')
+}
+
+/** 评测运行根目录（每次评测的隔离沙箱都放这里）。 */
+export function getEvalRunsDir(): string {
+  const dir = join(getEvalDir(), 'runs')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** 某次评测运行的隔离沙箱目录。 */
+export function getEvalRunWorkspaceDir(runId: string): string {
+  const dir = join(getEvalRunsDir(), assertBenchmarkId(runId))
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
 /**
  * 获取指定工作区的 MCP 配置文件路径
  *
@@ -652,6 +731,99 @@ const DEFAULT_SKILL_COPY_BLOCKLIST = new Set([
 
 function defaultSkillCopyFilter(src: string): boolean {
   return !DEFAULT_SKILL_COPY_BLOCKLIST.has(basename(src))
+}
+
+// ===== Agent 即目录（default-agents）=====
+
+/** 内置 agent 目录不受复制污染限制的防御性基名集合。 */
+const DEFAULT_AGENT_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
+
+/** 内置 agent id 集合（也是目录可 seed 的白名单）。 */
+export const BUILTIN_AGENT_IDS = ['code-reviewer', 'explorer', 'researcher'] as const
+
+/**
+ * 用户可写的 default-agents 根目录。
+ * @returns ~/.proma/default-agents/
+ */
+export function getDefaultAgentsUserDir(): string {
+  const dir = join(getConfigDir(), 'default-agents')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
+ * 某个内置 agent 的用户目录（agent 即目录）。
+ * @returns ~/.proma/default-agents/<id>/
+ */
+export function getAgentDir(agentId: string): string {
+  const dir = join(getDefaultAgentsUserDir(), agentId)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
+ * 读取内置 agent 目录的 version（system_config.json 的整数字段，缺省 1）。
+ * 供 semver 比较同步与目录级快照使用。
+ */
+export function parseAgentDirVersion(agentDir: string): number {
+  const cfgPath = join(agentDir, 'system_config.json')
+  if (!existsSync(cfgPath)) return 1
+  try {
+    const raw = readFileSync(cfgPath, 'utf-8')
+    const cfg = JSON.parse(raw) as { version?: unknown }
+    const v = typeof cfg.version === 'number' ? cfg.version : Number(cfg.version)
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : 1
+  } catch {
+    return 1
+  }
+}
+
+/**
+ * 从 app bundle 同步默认 Agents 到用户目录（镜像 seedDefaultSkills）。
+ * - 缺失的 agent：直接复制目录
+ * - 已存在的：比较 system_config.version，bundled 更新时才覆盖（避免每次启动读盘）
+ */
+export function seedDefaultAgents(): void {
+  const { app } = require('electron')
+  const bundledDir = app.isPackaged
+    ? join(process.resourcesPath, 'default-agents')
+    : join(__dirname, '../default-agents')
+
+  if (!existsSync(bundledDir)) {
+    console.log('[配置] 未找到内置 default-agents 目录，跳过')
+    return
+  }
+
+  const userDir = getDefaultAgentsUserDir()
+  try {
+    const entries = readdirSync(bundledDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (!(BUILTIN_AGENT_IDS as readonly string[]).includes(entry.name)) continue
+
+      const source = join(bundledDir, entry.name)
+      const target = join(userDir, entry.name)
+
+      try {
+        if (!existsSync(target)) {
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已同步默认 Agent: ${entry.name}`)
+          continue
+        }
+        const bundledVer = parseAgentDirVersion(source)
+        const existingVer = parseAgentDirVersion(target)
+        if (bundledVer > existingVer) {
+          rmSync(target, { recursive: true, force: true })
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已升级默认 Agent: ${entry.name} v${existingVer}→v${bundledVer}`)
+        }
+      } catch (error) {
+        console.error(`[配置] 同步默认 Agent 失败: ${entry.name}`, error)
+      }
+    }
+  } catch (error) {
+    console.error('[配置] 同步默认 Agents 异常:', error)
+  }
 }
 
 /**

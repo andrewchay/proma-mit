@@ -164,6 +164,33 @@ export type MarkdownFontSize = 'small' | 'medium' | 'large'
 /** 默认 Markdown 字号档位 */
 export const DEFAULT_MARKDOWN_FONT_SIZE: MarkdownFontSize = 'medium'
 
+/**
+ * 持久化 Allowlist（用户主动选择「始终允许」后的跨会话白名单）。
+ *
+ * 与会话级白名单（AgentPermissionService 的 SessionWhitelist）互补：
+ * - 会话级：本次会话内不再询问，会话结束即清除；
+ * - 持久化：用户点「始终允许」后跨会话沿用，写入 settings.json。
+ *
+ * 安全边界：危险 Bash 命令（rm / sudo / chmod / mv / curl 等，由 @gravitas/shared 的
+ * isDangerousCommand 判定）、Computer Use 与 Web Bridge 上传/下载始终逐次确认，
+ * 绝不进入这里——持久化白名单命中前一律过危险命令/逐次确认拦截。
+ */
+export interface AgentAllowlist {
+  /** 总是允许的工具名（如 'Write'、'Edit'、'WebBridgeNavigate'） */
+  allowedTools: string[]
+  /** 总是允许的 Bash 命令族（如 'bun'、'git'、'npm'、'ls'） */
+  allowedBashCommands: string[]
+  /** 受信任的 Web Bridge 站点域名（域名下的导航/点击/输入/下载在本机自动放行） */
+  trustedWebBridgeHosts: string[]
+}
+
+/** 空的持久化 Allowlist（读不到或未配置时使用） */
+export const DEFAULT_AGENT_ALLOWLIST: AgentAllowlist = {
+  allowedTools: [],
+  allowedBashCommands: [],
+  trustedWebBridgeHosts: [],
+}
+
 /** 应用设置 */
 export interface AppSettings {
   /** 主题模式 */
@@ -243,6 +270,11 @@ export interface AppSettings {
     /** 仅只读子集（Status/Capabilities/FrontmostApp/Window/Displays）；true 时禁用写操作 */
     readOnlyOnly?: boolean
   }
+  /**
+   * 持久化 Allowlist（用户主动「始终允许」的跨会话白名单）。
+   * 仅存放经安全守卫过滤后的工具/命令族/WebBridge 站点；高危操作不落地。
+   */
+  agentAllowlist?: AgentAllowlist
   /** 飞书 Todo 同步配置（项目管理模块外部同步） */
   feishuTodo?: {
     enabled: boolean

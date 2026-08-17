@@ -28,7 +28,7 @@ import { migrationImportDialogOpenAtom } from '@/atoms/migration-atoms'
 import { cn } from '@/lib/utils'
 
 type MigrationMode = 'personal' | 'share'
-type MigrationComponent = 'sessions' | 'skills' | 'mcp' | 'channels' | 'chattools'
+type MigrationComponent = 'sessions' | 'skills' | 'mcp' | 'channels' | 'chattools' | 'evalsystems'
 type ShareDetailMode = 'default' | 'custom'
 
 interface ShareExportWorkspacePreview {
@@ -61,6 +61,7 @@ const COMPONENT_LABELS: Record<MigrationComponent, string> = {
   mcp: 'MCP 配置',
   channels: '模型渠道',
   chattools: 'Chat 工具',
+  evalsystems: '评测与 Agent 定义',
 }
 
 export function MigrationSettings(): React.ReactElement {
@@ -128,7 +129,7 @@ export function MigrationSettings(): React.ReactElement {
 
       const components: MigrationComponent[] =
         exportMode === 'personal'
-          ? ['sessions', 'skills', 'mcp', 'channels', 'chattools']
+          ? ['sessions', 'skills', 'mcp', 'channels', 'chattools', 'evalsystems']
           : Array.from(shareComponents)
 
       if (exportMode === 'share') {

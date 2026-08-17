@@ -2207,6 +2207,101 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ===== 跨会话持久化 Allowlist =====
+
+  // 获取跨会话持久化 Allowlist（设置页展示）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.GET_ALLOWLIST,
+    async (): Promise<import('../types').AgentAllowlist> => {
+      return permissionService.getPersistentAllowlist()
+    }
+  )
+
+  // 移除一条跨会话持久化 Allowlist 记录（工具名或命令族）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.REMOVE_ALLOWLIST_ENTRY,
+    async (_event, entry: string): Promise<import('../types').AgentAllowlist> => {
+      permissionService.removePersistentAllow(entry)
+      return permissionService.getPersistentAllowlist()
+    }
+  )
+
+  // ===== 评测 / 自演化 =====
+
+  // 跑一次 Baseline 评测
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_RUN_BASELINE,
+    async (_event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').BaselineSummary> => {
+      const { runEvalBaseline } = await import('./lib/agent-runtime/eval/eval-service')
+      return runEvalBaseline(benchmarkId)
+    }
+  )
+
+  // 跑一次 Improve 优化闭环
+  // 安全：默认不 autoAdopt——Improve 只把被接受候选分数与 prompt 记入 scoreboard/返回，
+  // 不自动写回内置 sub-agent 行为；是否采纳由 UI 的「审阅并采纳」显式触发。
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_RUN_IMPROVE,
+    async (_event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').ImproveSummary> => {
+      const { runEvalImprove } = await import('./lib/agent-runtime/eval/eval-service')
+      return runEvalImprove(benchmarkId, { autoAdopt: false })
+    }
+  )
+
+  // 采纳写回：给内置 sub-agent 持久化 prompt 覆盖
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_ADOPT_PROMPT,
+    async (_event, agentId: string, prompt: string): Promise<import('./lib/agent-runtime/eval/eval-service').AdoptResult> => {
+      const { adoptBuiltinPrompt } = await import('./lib/agent-runtime/eval/eval-service')
+      return adoptBuiltinPrompt(agentId, prompt)
+    }
+  )
+
+  // 清除内置 sub-agent 的持久化覆盖
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_CLEAR_PROMPT,
+    async (_event, agentId: string): Promise<import('./lib/agent-runtime/eval/eval-service').AdoptResult> => {
+      const { clearBuiltinPrompt } = await import('./lib/agent-runtime/eval/eval-service')
+      return clearBuiltinPrompt(agentId)
+    }
+  )
+
+  // 列出所有内置 sub-agent 的持久化覆盖
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_LIST_PROMPTS,
+    async (): Promise<import('./lib/agent-runtime/eval/builtin-agent-overrides').BuiltinOverridesMap> => {
+      const { listBuiltinPrompts } = await import('./lib/agent-runtime/eval/eval-service')
+      return listBuiltinPrompts()
+    }
+  )
+
+  // 列出所有已创建的 Benchmark
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_LIST_BENCHMARKS,
+    async () => {
+      const { listBenchmarks } = await import('./lib/agent-runtime/eval/benchmark-store')
+      return listBenchmarks()
+    }
+  )
+
+  // 读取某个 Benchmark 的配置 + scoreboard
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_GET_BENCHMARK,
+    async (_event, benchmarkId: string) => {
+      const { getBenchmarkDetail } = await import('./lib/agent-runtime/eval/benchmark-store')
+      return getBenchmarkDetail(benchmarkId)
+    }
+  )
+
+  // 创建一个 Benchmark（含 Cases）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_CREATE_BENCHMARK,
+    async (_event, input: import('./lib/agent-runtime/eval/benchmark-store').CreateBenchmarkRequest) => {
+      const { createBenchmarkForUI } = await import('./lib/agent-runtime/eval/benchmark-store')
+      return createBenchmarkForUI(input)
+    }
+  )
+
   // ===== Agent 附件 =====
 
   // 保存文件到 Agent session 工作目录

@@ -1,0 +1,9 @@
+{
+  "id": "code-reviewer",
+  "name": "Code Reviewer",
+  "description": "代码审查子代理。在完成代码修改后调用，审查代码质量、发现潜在问题、提出改进建议。适合在任务完成后做最终质量检查。",
+  "version": 1,
+  "tools": ["Read", "Glob", "Grep", "Bash"],
+  "createdAt": "2026-08-17T00:00:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z"
+}

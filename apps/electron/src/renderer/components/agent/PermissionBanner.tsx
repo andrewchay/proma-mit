@@ -90,7 +90,13 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
       { value: 'allow', label: '允许', description: '仅允许本次操作' },
     ]
     if (!requiresPerActionApproval) {
-      items.push({ value: 'allowAlways', label: '本次会话总是允许', description: '本会话内不再询问同类操作' })
+    if (!requiresPerActionApproval) {
+      items.push({
+        value: 'allowAlways',
+        label: '始终允许',
+        description: '本会话与后续会话不再询问同类操作（可在设置中移除）',
+      })
+    }
     }
     items.push({ value: 'deny', label: '拒绝', description: '拒绝本次操作并继续' })
     return items
@@ -294,7 +300,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
               <div className="flex-1 min-w-0">
                 <div className={`text-xs font-medium ${selected ? 'text-foreground' : 'text-foreground/90'}`}>
                   {decision.label}
-                  {isAllowAlways && <span className="ml-1.5 text-[10px] text-muted-foreground/70 font-normal">本会话记忆</span>}
+                  {isAllowAlways && <span className="ml-1.5 text-[10px] text-muted-foreground/70 font-normal">跨会话生效</span>}
                 </div>
                 <div className={`text-[11px] mt-0.5 leading-relaxed ${selected ? 'text-primary/80' : 'text-muted-foreground'}`}>
                   {decision.description}
@@ -323,7 +329,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
               className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground"
             >
               <ShieldCheck className="size-3 mr-1" />
-              总是允许
+              始终允许
             </Button>
           )}
           <Button

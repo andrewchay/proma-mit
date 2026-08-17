@@ -23,6 +23,76 @@ import {
   isDangerousCommand,
   hasDangerousStructure,
 } from '@gravitas/shared'
+import { getSettings, updateSettings } from './settings-service'
+import {
+  DEFAULT_AGENT_ALLOWLIST,
+  type AgentAllowlist,
+} from '../../types'
+
+/**
+ * 持久化 Allowlist 存储抽象。
+ *
+ * 默认实现是内存态（进程内跨会话、重启后失效），供单测与隔离实例使用，
+ * 避免单测写入真实配置文件；生产单例注入 settings.json 后端，真正跨应用重启。
+ */
+export interface PersistentAllowlistStore {
+  read(): AgentAllowlist
+  update(fn: (current: AgentAllowlist) => AgentAllowlist): void
+}
+
+/**
+ * 默认内存存储：进程内共享一份可变副本，跨会话生效但不落盘。
+ * 单测与显式构造的隔离实例默认使用它，确保不触碰 ~/.proma/settings.json。
+ */
+function createMemoryAllowlistStore(): PersistentAllowlistStore {
+  let value = { ...DEFAULT_AGENT_ALLOWLIST }
+  return {
+    read: () => ({ ...value }),
+    update: (fn) => {
+      value = fn({ ...value })
+    },
+  }
+}
+
+/**
+ * settings.json 后端存储：真正跨应用重启持久化。
+ * 由单例（生产路径）注入；不写入本次会话的高危操作。
+ */
+function createSettingsAllowlistStore(): PersistentAllowlistStore {
+  return {
+    read: () => {
+      const allowlist = getSettings().agentAllowlist
+      if (!allowlist) return { ...DEFAULT_AGENT_ALLOWLIST }
+      return {
+        allowedTools: Array.isArray(allowlist.allowedTools) ? [...allowlist.allowedTools] : [],
+        allowedBashCommands: Array.isArray(allowlist.allowedBashCommands)
+          ? [...allowlist.allowedBashCommands]
+          : [],
+        trustedWebBridgeHosts: Array.isArray(allowlist.trustedWebBridgeHosts)
+          ? [...allowlist.trustedWebBridgeHosts]
+          : [],
+      }
+    },
+    update: (fn) => {
+      const current = getSettings().agentAllowlist
+      const next = fn(current && current.allowedTools
+        ? current
+        : { ...DEFAULT_AGENT_ALLOWLIST })
+      // 归一化：数组默认空，去重，排序保证稳定 diff
+      const normalized: AgentAllowlist = {
+        allowedTools: dedupe(next.allowedTools),
+        allowedBashCommands: dedupe(next.allowedBashCommands),
+        trustedWebBridgeHosts: dedupe(next.trustedWebBridgeHosts),
+      }
+      updateSettings({ agentAllowlist: normalized })
+    },
+  }
+}
+
+/** 去重并排序（保持稳定、可比较） */
+function dedupe(items: string[] | undefined): string[] {
+  return [...new Set((items ?? []).filter((x) => typeof x === 'string' && x.length > 0))].sort()
+}
 
 /** SDK PermissionBehavior */
 type PermissionBehavior = 'allow' | 'deny'
@@ -113,6 +183,13 @@ interface SessionWhitelist {
 export class AgentPermissionService {
   /** 待处理的权限请求 Map（requestId → PendingPermission） */
   private pendingPermissions = new Map<string, PendingPermission>()
+
+  /** 持久化 Allowlist 存储（跨会话白名单）。未注入时默认内存态。 */
+  private readonly persistentStore: PersistentAllowlistStore
+
+  constructor(persistentStore?: PersistentAllowlistStore) {
+    this.persistentStore = persistentStore ?? createMemoryAllowlistStore()
+  }
 
   /** 会话级白名单 Map（sessionId → SessionWhitelist） */
   private sessionWhitelists = new Map<string, SessionWhitelist>()
@@ -230,6 +307,9 @@ export class AgentPermissionService {
     if (alwaysAllow && behavior === 'allow') {
       if (!isComputerUseTool(pending.request.toolName) && !isWebBridgeFileTransfer(pending.request.toolName)) {
         this.addToWhitelist(sessionId, pending.request.toolName, pending.request.toolInput)
+        // 同步持久化：用户主动"始终允许"的工具/命令族跨会话沿用。
+        // 危险命令（rm/sudo 等）不会进入（isWhitelisted 命中前仍经 isDangerousCommand 拦截）。
+        this.persistAllow(pending.request.toolName, pending.request.toolInput)
       } else if (isWebBridgeFileTransfer(pending.request.toolName) && pending.request.toolName !== WEB_BRIDGE_UPLOAD_TOOL_NAME) {
         // WebBridgeDownload：用户点“总是允许”= 信任当前站点域名
         this.trustCurrentWebBridgeHost(sessionId)
@@ -361,18 +441,20 @@ export class AgentPermissionService {
   }
 
   /**
-   * 判断工具/命令是否在会话白名单中
+   * 判断工具/命令是否在白名单中：会话级或跨会话持久化级别命中即放行。
+   * 危险命令在任何一级都不会因命令族命中而放行。
    */
   private isWhitelisted(sessionId: string, toolName: string, input: Record<string, unknown>): boolean {
     const whitelist = this.sessionWhitelists.get(sessionId)
-    if (!whitelist) return false
+    const persistent = this.persistentStore.read()
 
-    // 非 Bash 工具：检查工具名是否在白名单中
+    // 非 Bash 工具：工具名在任一级白名单即放行
     if (toolName !== 'Bash') {
-      return whitelist.allowedTools.has(toolName)
+      if (whitelist?.allowedTools.has(toolName)) return true
+      return persistent.allowedTools.includes(toolName)
     }
 
-    // Bash 工具：命令族在白名单中即可放行（用户已明确信任该命令族）
+    // Bash 工具：命令族在任一级白名单中即可放行（用户已明确信任该命令族）
     //
     // 安全性说明：
     // - isDangerousCommand 仍拦截 rm / sudo / chmod / mv / curl 等危险命令，
@@ -383,7 +465,55 @@ export class AgentPermissionService {
     const command = typeof input.command === 'string' ? input.command : ''
     if (isDangerousCommand(command)) return false
     const baseCommand = this.extractBaseCommand(command)
-    return whitelist.allowedBashCommands.has(baseCommand)
+    if (!baseCommand) return false
+    if (whitelist?.allowedBashCommands.has(baseCommand)) return true
+    return persistent.allowedBashCommands.includes(baseCommand)
+  }
+
+  /**
+   * 把用户主动「始终允许」的工具/命令族写入跨会话持久化 Allowlist。
+   *
+   * 安全边界与 addToWhitelist 一致：
+   * - 危险 Bash 命令绝不入库（由 isDangerousCommand 拦截），
+   *   即使用户误选也只生效于本次会话且不持久化；
+   * - Computer Use / Web Bridge 上传/下载由调用方先行拦截，不会走到这里。
+   */
+  private persistAllow(toolName: string, input: Record<string, unknown>): void {
+    this.persistentStore.update((current) => {
+      if (toolName !== 'Bash') {
+        if (current.allowedTools.includes(toolName)) return current
+        return {
+          ...current,
+          allowedTools: [...current.allowedTools, toolName],
+        }
+      }
+      const command = typeof input.command === 'string' ? input.command : ''
+      // 危险命令绝不持久化：白名单只能收容经过校验的安全命令族
+      if (isDangerousCommand(command)) return current
+      const baseCommand = this.extractBaseCommand(command)
+      if (!baseCommand || current.allowedBashCommands.includes(baseCommand)) return current
+      return {
+        ...current,
+        allowedBashCommands: [...current.allowedBashCommands, baseCommand],
+      }
+    })
+  }
+
+  /**
+   * 移除一条跨会话持久化 Allowlist 记录（工具名或命令族）。
+   * 用于设置页的"移除始终允许项"。
+   */
+  removePersistentAllow(entry: string): void {
+    this.persistentStore.update((current) => ({
+      allowedTools: current.allowedTools.filter((t) => t !== entry),
+      allowedBashCommands: current.allowedBashCommands.filter((c) => c !== entry),
+      trustedWebBridgeHosts: current.trustedWebBridgeHosts,
+    }))
+  }
+
+  /** 读取当前跨会话持久化 Allowlist（用于设置页展示与审计）。 */
+  getPersistentAllowlist(): AgentAllowlist {
+    return this.persistentStore.read()
   }
 
   /**
@@ -432,24 +562,40 @@ export class AgentPermissionService {
 
   /**
    * 把某会话的站点域名加入信任集合。用户对 WebBridge 操作点「总是允许」时调用。
+   * 同步写入跨会话持久化 Allowlist，后续会话对同域名自动放行。
    */
   trustWebBridgeHost(sessionId: string, url: string): void {
     const host = extractUrlHost(url)
     if (!host) return
     this.getOrCreateWhitelist(sessionId).trustedWebBridgeHosts.add(host)
+    this.persistTrustedWebBridgeHost(host)
   }
 
-  /** 信任当前会话 WebBridge 页面的 host（无则忽略）。 */
+  /** 信任当前会话 WebBridge 页面的 host（无则忽略），并跨会话持久化。 */
   trustCurrentWebBridgeHost(sessionId: string): void {
     const host = this.webBridgeCurrentHosts.get(sessionId)
-    if (host) this.getOrCreateWhitelist(sessionId).trustedWebBridgeHosts.add(host)
+    if (!host) return
+    this.getOrCreateWhitelist(sessionId).trustedWebBridgeHosts.add(host)
+    this.persistTrustedWebBridgeHost(host)
   }
 
-  /** 判断某会话当前 WebBridge 站点的域名是否已被用户信任。 */
+  /** 把站点域名写入跨会话持久化 WebBridge 信任集（去重）。 */
+  private persistTrustedWebBridgeHost(host: string): void {
+    this.persistentStore.update((current) => {
+      if (current.trustedWebBridgeHosts.includes(host)) return current
+      return {
+        ...current,
+        trustedWebBridgeHosts: [...current.trustedWebBridgeHosts, host],
+      }
+    })
+  }
+
+  /** 判断某会话当前 WebBridge 站点的域名是否已被用户信任（会话级或跨会话级）。 */
   isWebBridgeSiteTrusted(sessionId: string): boolean {
     const currentHost = this.webBridgeCurrentHosts.get(sessionId)
     if (!currentHost) return false
-    return this.sessionWhitelists.get(sessionId)?.trustedWebBridgeHosts.has(currentHost) ?? false
+    if (this.sessionWhitelists.get(sessionId)?.trustedWebBridgeHosts.has(currentHost)) return true
+    return this.persistentStore.read().trustedWebBridgeHosts.includes(currentHost)
   }
 
   /**
@@ -592,5 +738,5 @@ function extractUrlHost(rawUrl: string | undefined): string | undefined {
   }
 }
 
-/** 全局权限服务实例 */
-export const permissionService = new AgentPermissionService()
+/** 全局权限服务实例（持久化白名单使用 settings.json 后端，跨应用重启生效） */
+export const permissionService = new AgentPermissionService(createSettingsAllowlistStore())

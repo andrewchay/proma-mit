@@ -263,3 +263,82 @@ describe('AgentPermissionService safe 权限模式', () => {
     expect((await download).behavior).toBe('deny')
   })
 })
+
+describe('AgentPermissionService 跨会话持久化 Allowlist', () => {
+  test('given a tool was always-allowed then a NEW session auto-allows it without prompting', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-persist-1', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    // 工具（WebBridgeNavigate）非逐次确认：允许 + 始终允许
+    const first = canUseTool('WebBridgeNavigate', { url: 'https://example.com' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 新会话：当前会话白名单已清空，持久化白名单应自动放行
+    const requests2: PermissionRequest[] = []
+    const canUseTool2 = service.createCanUseTool('session-persist-2', (request) => requests2.push(request), undefined, undefined, 'auto')
+    const second = await canUseTool2('WebBridgeNavigate', { url: 'https://example.org' }, createOptions())
+    expect(requests2).toHaveLength(0)
+    expect(second.behavior).toBe('allow')
+  })
+
+  test('given a command family was always-allowed then a NEW session auto-allows it', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-persist-bash', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const first = canUseTool('Bash', { command: 'bun install' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 新会话：命令族自动放行
+    const requests2: PermissionRequest[] = []
+    const canUseTool2 = service.createCanUseTool('session-persist-bash2', (request) => requests2.push(request), undefined, undefined, 'auto')
+    const second = await canUseTool2('Bash', { command: 'bun run dev' }, createOptions())
+    expect(requests2).toHaveLength(0)
+    expect(second.behavior).toBe('allow')
+  })
+
+  test('given a dangerous command when always-allowed then it NEVER persists across sessions', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-persist-danger', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    // git stash list 非只读，需确认；用户始终允许
+    const first = canUseTool('Bash', { command: 'git stash list' }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 新会话：git 命令族已在会话内信任，但持久化层不应放行 git push（危险命令）
+    const requests2: PermissionRequest[] = []
+    const canUseTool2 = service.createCanUseTool('session-persist-danger2', (request) => requests2.push(request), undefined, undefined, 'auto')
+    // isDangerousCommand(git push) 拦截，无论持久化与否都需确认
+    const push = canUseTool2('Bash', { command: 'git push' }, createOptions())
+    expect(requests2).toHaveLength(1)
+    service.respondToPermission(requests2[0]!.requestId, 'deny', false)
+    expect((await push).behavior).toBe('deny')
+  })
+
+  test('given Computer Use always-allowed then it NEVER persists across sessions', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-persist-cu', (request) => requests.push(request), undefined, undefined, 'auto')
+
+    const first = canUseTool('ComputerUseClick', { x: 1, y: 2 }, createOptions())
+    expect(requests).toHaveLength(1)
+    service.respondToPermission(requests[0]!.requestId, 'allow', true)
+    expect((await first).behavior).toBe('allow')
+
+    // 新会话：Computer Use 仍逐次确认（不落持久化）
+    const requests2: PermissionRequest[] = []
+    const canUseTool2 = service.createCanUseTool('session-persist-cu2', (request) => requests2.push(request), undefined, undefined, 'auto')
+    const second = canUseTool2('ComputerUseClick', { x: 3, y: 4 }, createOptions())
+    expect(requests2).toHaveLength(1)
+    service.respondToPermission(requests2[0]!.requestId, 'deny', false)
+    expect((await second).behavior).toBe('deny')
+  })
+})

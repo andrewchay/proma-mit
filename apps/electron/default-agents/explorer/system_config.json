@@ -1,0 +1,9 @@
+{
+  "id": "explorer",
+  "name": "Explorer",
+  "description": "代码库探索子代理。用于快速搜索文件、理解项目结构、查找相关代码。适合在动手修改前收集上下文。",
+  "version": 1,
+  "tools": ["Read", "Glob", "Grep", "Bash"],
+  "createdAt": "2026-08-17T00:00:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z"
+}

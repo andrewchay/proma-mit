@@ -2105,6 +2105,30 @@ export const AGENT_IPC_CHANNELS = {
   // 待处理请求恢复（渲染进程重载后查询主进程状态）
   /** 获取所有待处理的交互请求快照 */
   GET_PENDING_REQUESTS: 'agent:get-pending-requests',
+
+  // 跨会话持久化 Allowlist
+  /** 获取跨会话持久化 Allowlist */
+  GET_ALLOWLIST: 'agent:get-allowlist',
+  /** 移除一条跨会话持久化 Allowlist 记录（工具名或命令族） */
+  REMOVE_ALLOWLIST_ENTRY: 'agent:remove-allowlist-entry',
+
+  // 评测 / 自演化
+  /** 跑一次 Baseline 评测（给定 benchmarkId、渠道） */
+  EVAL_RUN_BASELINE: 'agent:eval-run-baseline',
+  /** 跑一次 Improve 优化闭环 */
+  EVAL_RUN_IMPROVE: 'agent:eval-run-improve',
+  /** 采纳写回：给内置 sub-agent 持久化一个 prompt 覆盖 */
+  EVAL_ADOPT_PROMPT: 'agent:eval-adopt-prompt',
+  /** 清除内置 sub-agent 的持久化覆盖 */
+  EVAL_CLEAR_PROMPT: 'agent:eval-clear-prompt',
+  /** 列出所有内置 sub-agent 的持久化覆盖 */
+  EVAL_LIST_PROMPTS: 'agent:eval-list-prompts',
+  /** 列出所有已创建的 Benchmark */
+  EVAL_LIST_BENCHMARKS: 'agent:eval-list-benchmarks',
+  /** 读取某个 Benchmark 的配置与 scoreboard */
+  EVAL_GET_BENCHMARK: 'agent:eval-get-benchmark',
+  /** 创建一个 Benchmark（含 Cases） */
+  EVAL_CREATE_BENCHMARK: 'agent:eval-create-benchmark',
 } as const
 
 /**

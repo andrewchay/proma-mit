@@ -99,6 +99,11 @@ export interface SubAgentInput {
   maxTurns?: number
   /** 中止信号 */
   abortSignal?: AbortSignal
+  /**
+   * 隔离工作区（评测沙箱）：子代理 cwd 指向独立目录，仅拷入该 Case 的公开素材。
+   * 缺省 = 继承父会话 cwd（现有行为不变）。
+   */
+  workspaceDir?: string
 }
 
 /** Runtime 工具定义 */

@@ -1,0 +1,9 @@
+{
+  "id": "researcher",
+  "name": "Researcher",
+  "description": "技术调研子代理。用于对比技术方案、评估依赖库、分析架构选型。适合在做技术决策前收集充分信息。",
+  "version": 1,
+  "tools": ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"],
+  "createdAt": "2026-08-17T00:00:00Z",
+  "updatedAt": "2026-08-17T00:00:00Z"
+}

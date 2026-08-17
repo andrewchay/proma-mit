@@ -154,6 +154,7 @@ import type {
 import type {
   UserProfile,
   AppSettings,
+  AgentAllowlist,
   QuickTaskSubmitInput,
   QuickTaskOpenSessionData,
   VoiceDictationAudioChunkInput,
@@ -172,6 +173,81 @@ import type {
   TrayOpenAgentSessionData,
 } from '../types'
 import { QUICK_TASK_IPC_CHANNELS, TRAY_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS } from '../types'
+
+/** Benchmark Baseline 评测摘要（preload 本地形状，避免把 main 侧模块拉进 preload bundle）。 */
+export interface EvalBaselineSummary {
+  benchmarkId: string
+  agentVersion: number
+  score: number
+  byCase: Array<{ caseId: string; score: number }>
+  evaluationsBefore: number
+}
+
+/** Benchmark Improve 优化摘要。 */
+export interface EvalImproveSummary {
+  baselineScore: number
+  finalScore: number
+  acceptedRounds: number
+  totalRounds: number
+  finalVersion: number
+  bestAcceptedPrompt?: string
+}
+
+/** 采纳写回结果（preload 本地形状）。 */
+export interface AdoptPromptResult {
+  agentId: string
+  applied: boolean
+  reason?: string
+}
+
+/** Benchmark 列表项（preload 本地形状）。 */
+export interface EvalBenchmarkSummary {
+  id: string
+  title: string
+  description: string
+  targetAgentId: string
+  targetScore: number
+  latestScore: number | null
+  lastEvaluationTime: string | null
+  createdAt: string
+  updatedAt: string
+  cases: string[]
+}
+
+/** Benchmark 详情（配置 + scoreboard + cases）。 */
+export interface EvalBenchmarkDetail {
+  config: {
+    id: string
+    title: string
+    description: string
+    targetAgentId: string
+    targetScore: number
+    cases: string[]
+  }
+  scoreboard: {
+    evaluations: Array<{
+      time: string
+      agentVersion: number
+      score: number
+      costUsd?: number | null
+      durationMs?: number | null
+    }>
+  }
+  cases: Array<{ caseId: string; statement: string | null }>
+}
+
+/** 创建 Benchmark 的请求（preload 本地形状）。 */
+export interface EvalCreateBenchmarkRequest {
+  id: string
+  title: string
+  description: string
+  targetAgentId: string
+  provider: string
+  modelId: string
+  channelId?: string
+  targetScore: number
+  cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
+}
 
 /**
  * 暴露给渲染进程的 API 接口定义
@@ -786,6 +862,36 @@ export interface ElectronAPI {
 
   /** 获取所有待处理的交互请求快照（渲染进程重载后恢复状态） */
   getPendingRequests: () => Promise<PendingRequestsSnapshot>
+
+  /** 获取跨会话持久化 Allowlist（设置页展示） */
+  getAgentAllowlist: () => Promise<AgentAllowlist>
+
+  /** 移除一条跨会话持久化 Allowlist 记录（工具名或命令族） */
+  removeAgentAllowlistEntry: (entry: string) => Promise<AgentAllowlist>
+
+  /** 跑一次 Benchmark Baseline 评测 */
+  runEvalBaseline: (benchmarkId: string) => Promise<EvalBaselineSummary>
+
+  /** 跑一次 Benchmark Improve 优化闭环 */
+  runEvalImprove: (benchmarkId: string) => Promise<EvalImproveSummary>
+
+  /** 采纳写回：给内置 sub-agent 持久化 prompt 覆盖 */
+  adoptEvalPrompt: (agentId: string, prompt: string) => Promise<AdoptPromptResult>
+
+  /** 清除内置 sub-agent 的持久化覆盖 */
+  clearEvalPrompt: (agentId: string) => Promise<AdoptPromptResult>
+
+  /** 列出所有内置 sub-agent 的持久化覆盖 */
+  listEvalPrompts: () => Promise<Record<string, { prompt?: string }>>
+
+  /** 列出所有已创建的 Benchmark */
+  listEvalBenchmarks: () => Promise<Array<EvalBenchmarkSummary>>
+
+  /** 读取某个 Benchmark 的配置 + scoreboard */
+  getEvalBenchmark: (benchmarkId: string) => Promise<EvalBenchmarkDetail | null>
+
+  /** 创建一个 Benchmark（含 Cases） */
+  createEvalBenchmark: (input: EvalCreateBenchmarkRequest) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
 
   // ===== Agent 附件 =====
 
@@ -2258,6 +2364,51 @@ const electronAPI: ElectronAPI = {
   // 待处理请求恢复
   getPendingRequests: () => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_PENDING_REQUESTS)
+  },
+
+  // 跨会话持久化 Allowlist
+  getAgentAllowlist: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_ALLOWLIST)
+  },
+
+  removeAgentAllowlistEntry: (entry: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.REMOVE_ALLOWLIST_ENTRY, entry)
+  },
+
+  // 评测 / 自演化
+  runEvalBaseline: (benchmarkId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_RUN_BASELINE, benchmarkId)
+  },
+
+  runEvalImprove: (benchmarkId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_RUN_IMPROVE, benchmarkId)
+  },
+
+  adoptEvalPrompt: (agentId: string, prompt: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_ADOPT_PROMPT, agentId, prompt)
+  },
+
+  clearEvalPrompt: (agentId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_CLEAR_PROMPT, agentId)
+  },
+
+  listEvalPrompts: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_LIST_PROMPTS)
+  },
+
+  listEvalBenchmarks: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_LIST_BENCHMARKS)
+  },
+
+  getEvalBenchmark: (benchmarkId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_GET_BENCHMARK, benchmarkId)
+  },
+
+  createEvalBenchmark: (input) => {
+    return ipcRenderer
+      .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_BENCHMARK, input)
+      .then((benchmark) => ({ ok: true, benchmarkId: (benchmark as { id?: string } | null)?.id }))
+      .catch((error: unknown) => ({ ok: false, error: String(error instanceof Error ? error.message : error) }))
   },
 
   // 工作区文件变化通知

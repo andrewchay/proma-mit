@@ -102,7 +102,7 @@ import { createApplicationMenu } from './menu'
 import { registerIpcHandlers } from './ipc'
 import { createTray, destroyTray } from './tray'
 import { initializeRuntime } from './lib/runtime-init'
-import { seedDefaultSkills } from './lib/config-paths'
+import { seedDefaultSkills, seedDefaultAgents } from './lib/config-paths'
 import { upgradeDefaultSkillsInWorkspaces } from './lib/agent-workspace-manager'
 import { stopAllAgents, killOrphanedClaudeSubprocesses } from './lib/agent-service'
 import { takePendingMcpOAuth } from './lib/agent-runtime/mcp-oauth-pending'
@@ -451,6 +451,8 @@ async function bootstrap(): Promise<void> {
 
   // 同步默认 Skills 模板到 ~/.proma-mit/default-skills/
   safeRun('seedDefaultSkills', seedDefaultSkills)
+  safeRun('seedDefaultAgents', seedDefaultAgents)
+  safeRun('foldLegacyAgentOverrides', () => void import('./lib/agent-definition-store').then((m) => m.foldLegacyAgentOverridesIntoDirs()))
 
   // 升级所有工作区中版本过旧的默认 Skills
   safeRun('upgradeDefaultSkillsInWorkspaces', upgradeDefaultSkillsInWorkspaces)

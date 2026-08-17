@@ -31,7 +31,10 @@ import {
   getSettingsPath,
   getUserProfilePath,
   getChatToolsConfigPath,
+  getEvalDir,
+  getDefaultAgentsUserDir,
 } from './config-paths'
+import { getSettings } from './settings-service'
 import { listAgentWorkspaces, getAgentWorkspace, getAllWorkspaceSkills, getWorkspaceMcpConfig } from './agent-workspace-manager'
 import { listChannels, decryptApiKey } from './channel-manager'
 import type { AgentWorkspace } from '@gravitas/shared'
@@ -40,7 +43,7 @@ import { normalizeProviderType } from '@gravitas/shared'
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
 export type MigrationMode = 'personal' | 'share'
-export type MigrationComponent = 'sessions' | 'skills' | 'mcp' | 'channels' | 'chattools'
+export type MigrationComponent = 'sessions' | 'skills' | 'mcp' | 'channels' | 'chattools' | 'evalsystems'
 
 export interface ExportOptions {
   mode: MigrationMode
@@ -289,6 +292,7 @@ export async function exportData(options: ExportOptions): Promise<ExportResult> 
   if (components.includes('mcp')) _addMcp(zip, workspace, mode)
   if (components.includes('channels')) _addChannels(zip, mode)
   if (components.includes('chattools')) _addChatTools(zip, mode)
+  if (components.includes('evalsystems')) _addEvalSystems(zip, mode)
   _addWorkspaceConfig(zip, workspace)
   if (mode === 'personal') _addPersonalFiles(zip)
 
@@ -363,6 +367,7 @@ export async function exportDataV2(options: ExportOptionsV2): Promise<ExportResu
 
   if (components.includes('channels')) _addChannels(zip, mode)
   if (components.includes('chattools')) _addChatTools(zip, mode)
+  if (components.includes('evalsystems')) _addEvalSystems(zip, mode)
   if (mode === 'personal') _addPersonalFiles(zip)
 
   zip.writeZip(outputPath)
@@ -603,6 +608,56 @@ function _addPersonalFiles(zip: AdmZip) {
   }
 }
 
+/**
+ * 评测与 Agent 定义（evalsystems）：导出到 zip 的 evalsystems/ 根下。
+ * - eval/benchmarks/**（不含 throwaway 的 eval/runs/ 沙箱）
+ * - default-agents/**（用户采纳的 sub-agent 定义：system_config.json + AGENTS.md）
+ * - settings.json 的 agentAllowlist（持久化「始终允许」）子集
+ * 均不含 API Key 等凭据，个人备份与团队分发都可安全携带。
+ */
+function _addEvalSystems(zip: AdmZip, _mode: MigrationMode) {
+  // 1) benchmarks
+  const benchmarksRoot = join(getEvalDir(), 'benchmarks')
+  if (existsSync(benchmarksRoot)) {
+    const benchIds = readdirSync(benchmarksRoot, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    for (const benchId of benchIds) {
+      _addBenchmarkDirToZip(zip, join(benchmarksRoot, benchId), `evalsystems/benchmarks/${benchId}`)
+    }
+  }
+  // 2) default-agents（用户采纳定义）
+  const agentsRoot = getDefaultAgentsUserDir()
+  if (existsSync(agentsRoot)) {
+    const agentIds = readdirSync(agentsRoot, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    for (const agentId of agentIds) {
+      _addDirToZip(zip, join(agentsRoot, agentId), `evalsystems/agents/${agentId}`, [])
+    }
+  }
+  // 3) allowlist 子集
+  try {
+    const settings = getSettings()
+    if (settings.agentAllowlist) {
+      zip.addFile('evalsystems/allowlist.json', Buffer.from(JSON.stringify(settings.agentAllowlist, null, 2), 'utf-8'))
+    }
+  } catch (error) {
+    console.warn('[迁移] 导出 eval 时读取 allowlist 失败:', error)
+  }
+}
+
+/** 把一个 benchmark 目录（benchmark.json + scoreboard.json + cases/）递归加入 zip，排除非法/大产物。 */
+function _addBenchmarkDirToZip(zip: AdmZip, srcDir: string, prefix: string) {
+  if (!existsSync(srcDir)) return
+  const entries = readdirSync(srcDir, { withFileTypes: true })
+  for (const entry of entries) {
+    const src = join(srcDir, entry.name)
+    if (entry.isDirectory()) {
+      // 递归（cases/<case>/statement、statement 素材等）
+      _addBenchmarkDirToZip(zip, src, `${prefix}/${entry.name}`)
+    } else {
+      zip.addLocalFile(src, prefix, entry.name)
+    }
+  }
+}
+
 // ─── 导入（解析预览）────────────────────────────────────────────────────────
 
 export async function parseImportFile(filePath: string): Promise<ImportPreview | ImportPreviewV2> {
@@ -822,6 +877,9 @@ export async function confirmImport(options: ConfirmImportOptions | ConfirmImpor
     if (manifest.components.includes('chattools')) {
       _importChatTools(tempDir)
     }
+    if (manifest.components.includes('evalsystems')) {
+      _importEvalSystems(tempDir)
+    }
     _importWorkspaceConfig(tempDir, targetWorkspace, pathMappings)
     if (manifest.mode === 'personal') {
       _importPersonalFiles(tempDir)
@@ -900,6 +958,9 @@ async function _confirmImportV2(options: ConfirmImportOptionsV2): Promise<{ succ
   }
   if (v2Manifest.components.includes('chattools')) {
     _importChatTools(tempDir)
+  }
+  if (v2Manifest.components.includes('evalsystems')) {
+    _importEvalSystems(tempDir)
   }
   if (v2Manifest.mode === 'personal') {
     _importPersonalFiles(tempDir)
@@ -1129,6 +1190,50 @@ function _importPersonalFiles(tempDir: string) {
         cpSync(dest, backupPath)
       }
       cpSync(src, dest)
+    }
+  }
+}
+
+/** 导入评测与 Agent 定义（evalsystems）：恢复 eval/benchmarks、default-agents、allowlist。 */
+function _importEvalSystems(tempDir: string) {
+  // 1) benchmarks → eval/benchmarks/
+  const benchSrc = join(tempDir, 'evalsystems/benchmarks')
+  if (existsSync(benchSrc)) {
+    const benchIds = readdirSync(benchSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    for (const benchId of benchIds) {
+      const target = join(getEvalDir(), 'benchmarks', benchId)
+      if (existsSync(target)) {
+        rmSync(target, { recursive: true, force: true })
+      }
+      mkdirSync(join(getEvalDir(), 'benchmarks'), { recursive: true })
+      cpSync(join(benchSrc, benchId), target, { recursive: true })
+    }
+  }
+  // 2) default-agents → 用户目录
+  const agentsSrc = join(tempDir, 'evalsystems/agents')
+  if (existsSync(agentsSrc)) {
+    const agentIds = readdirSync(agentsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    for (const agentId of agentIds) {
+      const target = join(getDefaultAgentsUserDir(), agentId)
+      if (existsSync(target)) {
+        rmSync(target, { recursive: true, force: true })
+      }
+      mkdirSync(getDefaultAgentsUserDir(), { recursive: true })
+      cpSync(join(agentsSrc, agentId), target, { recursive: true })
+    }
+  }
+  // 3) allowlist 合并进 settings（不覆盖其它设置字段）
+  const allowlistPath = join(tempDir, 'evalsystems/allowlist.json')
+  if (existsSync(allowlistPath)) {
+    try {
+      const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf-8'))
+      if (allowlist && typeof allowlist === 'object') {
+        // 备份旧 settings 后合并 agentAllowlist
+        const { updateSettings } = require('./settings-service') as typeof import('./settings-service')
+        updateSettings({ agentAllowlist: allowlist })
+      }
+    } catch (error) {
+      console.warn('[迁移] 导入 allowlist 失败:', error)
     }
   }
 }

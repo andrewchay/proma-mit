@@ -71,6 +71,11 @@ extraResources:
     to: default-skills
     filter:
       - "**/*"
+  # 默认 Agents（agent 即目录；首次启动时同步到 ~/.gravitas/default-agents/）
+  - from: default-agents
+    to: default-agents
+    filter:
+      - "**/*"
   # 教程文件（教程查看器 + 欢迎对话使用）
   - from: ../../tutorial/tutorial.md
     to: tutorial.md

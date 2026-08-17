@@ -12,6 +12,21 @@
 import type { PromaPermissionMode, AgentDefinition } from '@gravitas/shared'
 import { getUserProfile } from './user-profile-service'
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from './agent-workspace-manager'
+import { readBuiltinOverrides } from './agent-runtime/eval/builtin-agent-overrides'
+import { getBuiltinAgentDefinition } from './agent-definition-store'
+
+/** 把持久化的内置 sub-agent prompt 覆盖合并到默认定义（只覆盖存在的 id 与 prompt）。 */
+function applyBuiltinOverrides(agents: Record<string, AgentDefinition>): Record<string, AgentDefinition> {
+  const overrides = readBuiltinOverrides()
+  if (Object.keys(overrides).length === 0) return agents
+  const next: Record<string, AgentDefinition> = { ...agents }
+  for (const [id, override] of Object.entries(overrides)) {
+    if (next[id] && override.prompt) {
+      next[id] = { ...next[id]!, prompt: override.prompt }
+    }
+  }
+  return next
+}
 import { getConfigDirName } from './config-paths'
 
 // ===== 内置 SubAgent 定义 =====
@@ -25,7 +40,7 @@ import { getConfigDirName } from './config-paths'
 export function buildBuiltinAgents(claudeAvailable = true): Record<string, AgentDefinition> {
   // 非 Claude 渠道时省略 model，让 SubAgent 继承主 Agent 的模型
   const light = claudeAvailable ? 'haiku' : undefined
-  return {
+  const agents: Record<string, AgentDefinition> = {
     'code-reviewer': {
       description: '代码审查子代理。在完成代码修改后调用，审查代码质量、发现潜在问题、提出改进建议。适合在任务完成后做最终质量检查。',
       prompt: `你是一个专注于代码质量的审查员。你的职责是：
@@ -78,6 +93,16 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
       ...(light && { model: light }),
     },
   }
+
+  // 采纳写回：把已采纳/持久化的内置 sub-agent prompt 覆盖合并到默认定义上，
+  // 使所有调用点（runSubAgent / SDK agents 注册）自动生效。代码默认只在无覆盖时兜底。
+  const withOverrides = applyBuiltinOverrides(agents)
+
+  // Agent 即目录：目录定义优先于 override 与代码默认（需求层 AGENTS.md = prompt）。
+  for (const agentId of Object.keys(withOverrides)) {
+    withOverrides[agentId] = getBuiltinAgentDefinition(agentId, withOverrides[agentId]!)
+  }
+  return withOverrides
 }
 
 /** buildSystemPrompt 所需的上下文 */

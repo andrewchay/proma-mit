@@ -1135,7 +1135,8 @@ export class AgentOrchestrator {
         adapterProvider: ctx.adapterProvider,
         apiKey: ctx.apiKey,
         baseUrl: effectiveBaseUrl,
-        cwd: ctx.cwd,
+        // 评测沙箱：子代理 cwd 指向隔离目录；缺省继承父 cwd（现有行为不变）
+        cwd: input.workspaceDir ?? ctx.cwd,
         systemPrompt,
         historyMessages: [],
         // 子代理在内部全放行，避免向主会话 UI 发送未知 sessionId 的审批请求
