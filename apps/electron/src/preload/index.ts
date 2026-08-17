@@ -88,6 +88,7 @@ import type {
   StopTaskInput,
   WorkspaceMcpConfig,
   SkillMeta,
+
   OtherWorkspaceSkillsGroup,
   WorkspaceCapabilities,
   FileEntry,
@@ -247,6 +248,29 @@ export interface EvalCreateBenchmarkRequest {
   channelId?: string
   targetScore: number
   cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
+}
+
+/** Port 外部 skill 的选项。 */
+export interface PortSkillOptions {
+  rev?: string
+  subdir?: string
+  enabled?: boolean
+  force?: boolean
+}
+
+/** Port skill 的结果类型（preload 本地形状）。 */
+export interface PortSkillResult {
+  workspaceSlug: string
+  skillSlug: string
+  audit: {
+    verdict: 'safe' | 'review' | 'blocked'
+    findings: Array<{ file: string; severity: string; rule: string; detail: string }>
+    auditedFiles: number
+  }
+  installed: boolean
+  installPath?: string
+  pinnedRev?: string
+  requestedSpec: string
 }
 
 /**
@@ -740,6 +764,8 @@ export interface ElectronAPI {
 
   /** 从其他工作区导入 Skill */
   importSkillFromWorkspace: (targetSlug: string, sourceSlug: string, skillSlug: string) => Promise<SkillMeta>
+  /** Port 外部 skill 到工作区（含安全审计） */
+  portSkill: (workspaceSlug: string, spec: string, opts?: PortSkillOptions) => Promise<PortSkillResult>
 
   /** 从源工作区同步更新已导入的 Skill */
   updateSkillFromSource: (targetSlug: string, skillSlug: string) => Promise<SkillMeta>
@@ -2156,6 +2182,10 @@ const electronAPI: ElectronAPI = {
       sourceSlug,
       skillSlug,
     )
+  },
+
+  portSkill: (workspaceSlug: string, spec: string, opts?: PortSkillOptions) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.PORT_SKILL, workspaceSlug, spec, opts ?? {})
   },
 
   updateSkillFromSource: (targetSlug: string, skillSlug: string) => {

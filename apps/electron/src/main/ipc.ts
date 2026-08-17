@@ -1649,6 +1649,15 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // Port 外部 skill（GitHub / skills.sh / SKILL.md URL）到工作区（含安全审计）
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.PORT_SKILL,
+    async (_event, workspaceSlug: string, spec: string, opts?: { rev?: string; subdir?: string; enabled?: boolean; force?: boolean }): Promise<import('./lib/agent-runtime/skill-porting/index').PortSkillResult> => {
+      const { portSkill } = await import('./lib/agent-runtime/skill-porting/index')
+      return portSkill(workspaceSlug, { spec, rev: opts?.rev, subdir: opts?.subdir, enabled: opts?.enabled }, { force: opts?.force })
+    }
+  )
+
   // 从源工作区同步更新已导入的 Skill
   ipcMain.handle(
     AGENT_IPC_CHANNELS.UPDATE_SKILL_FROM_SOURCE,

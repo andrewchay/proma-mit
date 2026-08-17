@@ -1101,6 +1101,28 @@ export interface SkillImportSource {
   sourceVersion: string     // 导入时源 Skill 的 version，无则 '0.0.0'
 }
 
+/** 外部已发表 Skill 的来源类型。 */
+export type SkillExternalSourceKind =
+  | 'github'          // GitHub repo 或子目录
+  | 'skills'          // skills.sh / npx skills registry
+  | 'marketplace'     // Claude/Codex marketplace（未解析时保留为 spec）
+  | 'raw'             // 直接 SKILL.md URL
+
+/** 外部 skill 来源信息（用于 pinned revision 追踪 + 更新检查）。 */
+export interface SkillExternalSource {
+  /** GitHub 仓库（owner/repo）；skills/raw 时为空 */
+  repo?: string
+  /** repo 内子目录（可选） */
+  subdir?: string
+  /** 抓取时固定的 revision（commit sha 或 tag）；保证可复现 */
+  rev: string
+  /** 原始 spec（如 skills.sh 名或 URL）用于 human trace */
+  originalSpec: string
+  /** 来源类型 */
+  kind: SkillExternalSourceKind
+  importedAt: string
+}
+
 /** 工作区 Skill 元数据 */
 export interface SkillMeta {
   slug: string
@@ -1111,6 +1133,8 @@ export interface SkillMeta {
   enabled: boolean
   /** 如果此 Skill 是从其他工作区导入的，则携带来源信息 */
   importSource?: SkillImportSource
+  /** 如果此 Skill 是从外部生态导入的（GitHub/skills.sh/…），携带来源信息 */
+  externalSource?: SkillExternalSource
   /** 是否有可用更新（源 Skill 版本 > importSource.sourceVersion） */
   hasUpdate?: boolean
 }
@@ -1947,6 +1971,9 @@ export const AGENT_IPC_CHANNELS = {
   GET_OTHER_WORKSPACE_SKILLS: 'agent:get-other-workspace-skills',
   /** 从其他工作区导入 Skill 到当前工作区 */
   IMPORT_SKILL_FROM_WORKSPACE: 'agent:import-skill-from-workspace',
+
+  /** Port 外部 skill（GitHub/skills.sh/URL）到工作区（含安全审计） */
+  PORT_SKILL: 'agent:port-skill',
   /** 从源工作区同步更新已导入的 Skill */
   UPDATE_SKILL_FROM_SOURCE: 'agent:update-skill-from-source',
   /** 团队 Skills 目录（PH2-A）：汇总所有工作区从别处导入的 Skill */
