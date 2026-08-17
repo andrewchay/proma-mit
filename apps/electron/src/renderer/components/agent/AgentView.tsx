@@ -551,6 +551,9 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const contextStatus: AgentContextStatus = {
     isCompacting: streamState?.isCompacting ?? false,
     inputTokens: streamState?.inputTokens,
+    outputTokens: streamState?.outputTokens,
+    cacheReadTokens: streamState?.cacheReadTokens,
+    cacheCreationTokens: streamState?.cacheCreationTokens,
     contextWindow: streamState?.contextWindow,
   }
   const setAgentStreamErrors = useSetAtom(agentStreamErrorsAtom)
@@ -641,6 +644,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   const selectedChannelUsable = React.useMemo(
     () => isAgentRuntimeChannelUsable(globalChannels, agentChannelId, agentChannelIds, sessionAgentRuntime),
     [globalChannels, agentChannelId, agentChannelIds, sessionAgentRuntime],
+  )
+  // 当前选中渠道对象（用于 ContextUsageBadge 的订阅额度查询）
+  const currentChannel = React.useMemo(
+    () => globalChannels.find((c) => c.id === agentChannelId) ?? null,
+    [globalChannels, agentChannelId],
   )
 
   // 检查 Agent 渠道列表中是否存在可用的模型（渠道 enabled + 模型 enabled）
@@ -2145,6 +2153,10 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
           isCompacting={contextStatus.isCompacting}
           isProcessing={streaming}
           onCompact={handleCompact}
+          channelId={currentChannel?.id}
+          channelUpdatedAt={currentChannel?.updatedAt}
+          channelProvider={currentChannel?.provider}
+          channelBaseUrl={currentChannel?.baseUrl}
         />
       ),
     },

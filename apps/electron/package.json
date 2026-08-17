@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/electron",
-  "version": "0.11.34",
+  "version": "0.11.35",
   "description": "Gravitas next gen ai software with general agents - Electron App",
   "license": "BUSL-1.1",
   "main": "dist/main.cjs",

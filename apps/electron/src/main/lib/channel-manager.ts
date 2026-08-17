@@ -829,13 +829,14 @@ async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<Ch
   if (!data.usage) return createUnsupportedPlanQuota('kimi-coding', 'Kimi 未返回订阅额度数据')
 
   const windows: ChannelPlanQuotaWindow[] = []
-  const summaryRemaining = clampPercent(Number(data.usage.remaining ?? 0))
-  const summaryUsed = clampPercent(Number(data.usage.used ?? (100 - summaryRemaining)))
+  // data.usage 是月度总量窗口
+  const monthlyRemaining = clampPercent(Number(data.usage.remaining ?? 0))
+  const monthlyUsed = clampPercent(Number(data.usage.used ?? (100 - monthlyRemaining)))
   windows.push({
-    type: 'weekly',
-    label: '每周额度',
-    remainingPercent: summaryRemaining,
-    usedPercent: summaryUsed,
+    type: 'monthly',
+    label: '每月额度',
+    remainingPercent: monthlyRemaining,
+    usedPercent: monthlyUsed,
     ...planQuotaResetAt(data.usage.resetTime),
   })
 
@@ -845,6 +846,7 @@ async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<Ch
     const duration = item.window.duration
     const isFiveHourWindow = (duration === 5 && item.window.timeUnit === 'TIME_UNIT_HOUR')
       || (duration === 300 && item.window.timeUnit === 'TIME_UNIT_MINUTE')
+    const isWeeklyWindow = (duration === 7 && item.window.timeUnit === 'TIME_UNIT_DAY')
     const unitLabel = item.window.timeUnit === 'TIME_UNIT_HOUR'
       ? '小时'
       : item.window.timeUnit === 'TIME_UNIT_MINUTE'
@@ -855,8 +857,8 @@ async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<Ch
             ? '月'
             : item.window.timeUnit
     windows.push({
-      type: isFiveHourWindow ? '5h' : 'custom',
-      label: isFiveHourWindow ? '每 5 小时' : `${duration} ${unitLabel}`,
+      type: isFiveHourWindow ? '5h' : isWeeklyWindow ? 'weekly' : 'custom',
+      label: isFiveHourWindow ? '每 5 小时' : isWeeklyWindow ? '每周额度' : `${duration} ${unitLabel}`,
       remainingPercent: remaining,
       usedPercent: used,
       ...planQuotaResetAt(item.detail.resetTime),

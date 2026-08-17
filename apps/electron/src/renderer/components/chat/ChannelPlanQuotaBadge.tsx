@@ -15,15 +15,19 @@ function formatWindow(window: ChannelPlanQuotaWindow): string {
     ? '5H'
     : window.type === 'weekly'
       ? '周'
-      : window.label.replace(/\s+/g, '')
+      : window.type === 'monthly'
+        ? '月'
+        : window.label.replace(/\s+/g, '')
   return `${label} ${window.remainingLabel ?? `${window.remainingPercent}%`}`
 }
 
 function buildSummary(result: ChannelPlanQuotaResult): string {
-  const fiveHour = result.windows.find((window) => window.type === '5h')
+  const monthly = result.windows.find((window) => window.type === 'monthly')
   const weekly = result.windows.find((window) => window.type === 'weekly')
+  const fiveHour = result.windows.find((window) => window.type === '5h')
   const custom = result.windows.find((window) => window.type === 'custom')
-  const primary = [fiveHour, weekly].filter(Boolean) as ChannelPlanQuotaWindow[]
+  // 优先展示 月/周/5H 三级，否则回退到前两个窗口
+  const primary = [monthly, weekly, fiveHour].filter(Boolean) as ChannelPlanQuotaWindow[]
   const windows = primary.length > 0 ? primary : result.windows.slice(0, 2)
   if (windows.length === 0 && custom) return formatWindow(custom)
   return windows.map(formatWindow).join(' · ')

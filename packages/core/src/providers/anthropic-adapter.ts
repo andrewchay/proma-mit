@@ -77,6 +77,15 @@ interface AnthropicSSEEvent {
     id?: string
     name?: string
   }
+  /** message_start 携带的消息（含 usage，Anthropic 协议在此返回缓存 token） */
+  message?: {
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cache_creation_input_tokens?: number
+      cache_read_input_tokens?: number
+    }
+  }
   delta?: {
     type?: string
     /** 普通文本增量 (text_delta) */
@@ -400,6 +409,25 @@ export class AnthropicAdapter implements ProviderAdapter {
       const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
       if (proc?.env?.PROMA_DEBUG_SSE) {
         console.log('[SSE]', jsonLine.slice(0, 400))
+      }
+
+      // message_start 携带 message.usage：Anthropic 协议在此返回输入/输出 token 与
+      // 缓存命中( cache_read_input_tokens )与缓存写入( cache_creation_input_tokens )。
+      // DeepSeek / MiniMax 等 Anthropic 兼容端点在 message_start 里同样返回这些字段，
+      // 透出后 provider-agnostic runtime 与 Agent usage 才能统计真实缓存命中率。
+      if (event.type === 'message_start' && event.message?.usage) {
+        const u = event.message.usage
+        events.push({
+          type: 'usage',
+          usage: {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            total_tokens:
+              u.input_tokens && u.output_tokens ? u.input_tokens + u.output_tokens : undefined,
+            cache_read_input_tokens: u.cache_read_input_tokens,
+            cache_creation_input_tokens: u.cache_creation_input_tokens,
+          },
+        })
       }
 
       // 内容块开始

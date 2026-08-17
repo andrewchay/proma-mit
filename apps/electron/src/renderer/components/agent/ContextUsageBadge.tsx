@@ -3,7 +3,10 @@
  *
  * 输入框工具栏上的一个 36×36 圆形按钮：
  * - 内部为 16px 圆环，按 displayTokens / displayWindow 比例渲染
- * - hover / click 弹出 Popover，内含 token 明细 + 手动压缩按钮
+ * - hover / click 弹出 Popover，内含：
+ *   1) 订阅额度区（Kimi/DeepSeek 等支持 Plan Quota 的渠道）
+ *   2) 当前会话 token 明细
+ *   3) 手动压缩按钮
  * - 压缩中时按钮位置显示 Loader2 旋转图标
  * - 占用接近压缩阈值（窗口 × 0.775 × 80%）时圆环变琥珀色
  * - 无数据时不显示
@@ -14,6 +17,8 @@ import { Loader2, Minimize2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import type { ChannelPlanQuotaResult, ChannelPlanQuotaWindow } from '@gravitas/shared'
+import { supportsChannelPlanQuota, fetchChannelPlanQuota } from '@/lib/channel-plan-quota'
 
 /** 压缩阈值比例（SDK 在 ~77.5% 窗口大小时自动压缩） */
 const COMPACT_THRESHOLD_RATIO = 0.775
@@ -32,6 +37,13 @@ interface ContextUsageBadgeProps {
   isCompacting: boolean
   isProcessing: boolean
   onCompact: () => void
+  /** 当前渠道 ID（用于查询订阅额度） */
+  channelId?: string
+  /** 当前渠道更新时间（用于缓存失效） */
+  channelUpdatedAt?: number
+  /** 当前渠道 provider / baseUrl（用于判断是否支持额度查询） */
+  channelProvider?: string
+  channelBaseUrl?: string
 }
 
 /** 格式化 token 数为可读字符串（如 1234 → "1.2k"） */
@@ -110,6 +122,109 @@ function DetailRow({ label, value, emphasized }: DetailRowProps): React.ReactEle
   )
 }
 
+// ===== 订阅额度卡片 =====
+
+/** 格式化重置时间为相对或绝对时间 */
+function formatResetTime(resetAt?: number): string | null {
+  if (!resetAt) return null
+  const now = Date.now()
+  const diff = resetAt - now
+  if (diff <= 0) return null
+  if (diff < 60 * 60 * 1000) return `${Math.ceil(diff / (60 * 1000))}分钟后`
+  if (diff < 24 * 60 * 60 * 1000) return `${Math.ceil(diff / (60 * 60 * 1000))}小时后`
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(resetAt))
+}
+
+/** 单个额度窗口卡片 */
+interface QuotaWindowCardProps {
+  window: ChannelPlanQuotaWindow
+}
+
+function QuotaWindowCard({ window: w }: QuotaWindowCardProps): React.ReactElement {
+  const isLow = w.remainingPercent <= 20
+  const resetText = formatResetTime(w.resetAt)
+  const shortLabel = w.type === '5h'
+    ? '5H'
+    : w.type === 'weekly'
+      ? '每周'
+      : w.type === 'monthly'
+        ? '每月'
+        : w.label
+
+  return (
+    <div className="flex flex-col items-center gap-1 rounded-lg border border-border/40 bg-background/60 px-2.5 py-2 min-w-[72px]">
+      <span className="text-[10px] text-muted-foreground">{shortLabel}</span>
+      <span className={cn(
+        'text-sm font-semibold tabular-nums',
+        isLow ? 'text-red-500' : 'text-foreground',
+      )}>
+        {w.remainingLabel ?? `${w.remainingPercent}%`}
+      </span>
+      {/* 迷你进度条 */}
+      <div className="h-1 w-full rounded-full bg-foreground/10 overflow-hidden">
+        <div
+          className={cn(
+            'h-full rounded-full transition-all',
+            isLow ? 'bg-red-500' : w.remainingPercent <= 50 ? 'bg-amber-500' : 'bg-emerald-500',
+          )}
+          style={{ width: `${w.remainingPercent}%` }}
+        />
+      </div>
+      {resetText && (
+        <span className="text-[9px] text-muted-foreground/70">{resetText}</span>
+      )}
+    </div>
+  )
+}
+
+/** 订阅额度区域 */
+interface PlanQuotaSectionProps {
+  channelId: string
+  channelUpdatedAt?: number
+}
+
+function PlanQuotaSection({ channelId, channelUpdatedAt }: PlanQuotaSectionProps): React.ReactElement | null {
+  const [quota, setQuota] = React.useState<ChannelPlanQuotaResult | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    fetchChannelPlanQuota(channelId, channelUpdatedAt)
+      .then((result) => {
+        if (!cancelled) setQuota(result)
+      })
+      .catch(() => {
+        // 静默失败，不影响主面板
+      })
+    return () => { cancelled = true }
+  }, [channelId, channelUpdatedAt])
+
+  if (!quota?.supported || quota.windows.length === 0) return null
+
+  // 按优先级排序：monthly > weekly > 5h > custom
+  const order: Record<string, number> = { monthly: 0, weekly: 1, '5h': 2, custom: 3 }
+  const sortedWindows = [...quota.windows].sort((a, b) =>
+    (order[a.type] ?? 99) - (order[b.type] ?? 99),
+  )
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/60">
+        {quota.planName ?? '订阅额度'}
+      </div>
+      <div className="flex gap-1.5">
+        {sortedWindows.map((w, i) => (
+          <QuotaWindowCard key={`${w.type}-${i}`} window={w} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function ContextUsageBadge({
   inputTokens,
   outputTokens,
@@ -119,6 +234,10 @@ export function ContextUsageBadge({
   isCompacting,
   isProcessing,
   onCompact,
+  channelId,
+  channelUpdatedAt,
+  channelProvider,
+  channelBaseUrl,
 }: ContextUsageBadgeProps): React.ReactElement | null {
   // 保留最近一次有效的 token 值，避免切换会话时闪烁消失
   const stableRef = React.useRef<{
@@ -199,6 +318,13 @@ export function ContextUsageBadge({
     setOpen(false)
   }
 
+  // 判断当前渠道是否支持订阅额度查询
+  const hasPlanQuota = channelId && supportsChannelPlanQuota(
+    channelProvider || channelBaseUrl
+      ? { provider: channelProvider as never, baseUrl: channelBaseUrl ?? '' }
+      : null,
+  )
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -223,34 +349,46 @@ export function ContextUsageBadge({
         side="top"
         align="center"
         sideOffset={8}
-        className="w-auto min-w-[220px] p-2.5"
+        className="w-auto min-w-[240px] max-w-[320px] p-2.5"
         onMouseEnter={cancelClose}
         onMouseLeave={scheduleClose}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <div className="flex flex-col gap-1.5">
-          {pureInput > 0 && <DetailRow label="输入" value={pureInput.toLocaleString()} />}
-          {displayOutput ? <DetailRow label="输出" value={displayOutput.toLocaleString()} /> : null}
-          {displayCacheCreation ? <DetailRow label="缓存写入" value={displayCacheCreation.toLocaleString()} /> : null}
-          {displayCacheRead ? <DetailRow label="缓存读取" value={displayCacheRead.toLocaleString()} /> : null}
-
-          {displayWindow ? (
+        <div className="flex flex-col gap-2">
+          {/* 订阅额度区 */}
+          {hasPlanQuota && channelId && (
             <>
+              <PlanQuotaSection channelId={channelId} channelUpdatedAt={channelUpdatedAt} />
               <div className="h-px bg-border my-0.5" />
-              <DetailRow
-                label="上下文"
-                value={`${formatTokens(displayTokens)} / ${formatTokens(displayWindow)}`}
-                emphasized
-              />
-              {percent != null && (
-                <DetailRow
-                  label="占用"
-                  value={`${percent}%`}
-                  emphasized={isWarning}
-                />
-              )}
             </>
-          ) : null}
+          )}
+
+          {/* 当前会话 token 明细 */}
+          <div className="flex flex-col gap-1.5">
+            <div className="text-[11px] font-medium text-foreground/60">当前会话</div>
+            {pureInput > 0 && <DetailRow label="输入" value={pureInput.toLocaleString()} />}
+            {displayOutput ? <DetailRow label="输出" value={displayOutput.toLocaleString()} /> : null}
+            {displayCacheCreation ? <DetailRow label="缓存写入" value={displayCacheCreation.toLocaleString()} /> : null}
+            {displayCacheRead ? <DetailRow label="缓存读取" value={displayCacheRead.toLocaleString()} /> : null}
+
+            {displayWindow ? (
+              <>
+                <div className="h-px bg-border my-0.5" />
+                <DetailRow
+                  label="上下文"
+                  value={`${formatTokens(displayTokens)} / ${formatTokens(displayWindow)}`}
+                  emphasized
+                />
+                {percent != null && (
+                  <DetailRow
+                    label="占用"
+                    value={`${percent}%`}
+                    emphasized={isWarning}
+                  />
+                )}
+              </>
+            ) : null}
+          </div>
 
           <div className="h-px bg-border my-0.5" />
           <Button
