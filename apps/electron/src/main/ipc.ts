@@ -2311,6 +2311,60 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 列出所有预置 Benchmark 模板
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_LIST_TEMPLATES,
+    async () => {
+      const { getBuiltinTemplates } = await import('./lib/agent-runtime/eval/benchmark-store')
+      return getBuiltinTemplates()
+    }
+  )
+
+  // 从预置模板创建 Benchmark
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE,
+    async (_event, templateId: string) => {
+      const { createBenchmarkFromTemplate } = await import('./lib/agent-runtime/eval/benchmark-store')
+      return createBenchmarkFromTemplate(templateId)
+    }
+  )
+
+  // 估算 Baseline 成本
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_ESTIMATE_BASELINE_COST,
+    async (_event, benchmarkId: string) => {
+      const { estimateBaselineCost } = await import('./lib/agent-runtime/eval/cost-estimator')
+      const { getBenchmarkDetail } = await import('./lib/agent-runtime/eval/benchmark-store')
+      const detail = getBenchmarkDetail(benchmarkId)
+      if (!detail) return null
+      const rubricItems: Record<string, number> = {}
+      for (const c of detail.cases) {
+        if (c.statement) {
+          rubricItems[c.caseId] = 5 // 默认 5 项
+        }
+      }
+      return estimateBaselineCost(detail.config, rubricItems)
+    }
+  )
+
+  // 估算 Improve 成本
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_ESTIMATE_IMPROVE_COST,
+    async (_event, benchmarkId: string, maxRounds?: number) => {
+      const { estimateImproveCost } = await import('./lib/agent-runtime/eval/cost-estimator')
+      const { getBenchmarkDetail } = await import('./lib/agent-runtime/eval/benchmark-store')
+      const detail = getBenchmarkDetail(benchmarkId)
+      if (!detail) return null
+      const rubricItems: Record<string, number> = {}
+      for (const c of detail.cases) {
+        if (c.statement) {
+          rubricItems[c.caseId] = 5 // 默认 5 项
+        }
+      }
+      return estimateImproveCost(detail.config, maxRounds ?? 2, rubricItems)
+    }
+  )
+
   // ===== Agent 附件 =====
 
   // 保存文件到 Agent session 工作目录

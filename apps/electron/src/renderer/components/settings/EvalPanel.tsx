@@ -2,7 +2,7 @@
  * EvalPanel — 评测 / 自演化面板。
  *
  * 能力：查看 Benchmark 列表与 scoreboard、新建 Benchmark（含 Cases + Rubric）、
- * 触发真实评测（Baseline / Improve）、审阅与消除内置 sub-agent 的持久化覆盖（采纳写回）。
+ * 从预置模板一键创建、触发真实评测（Baseline / Improve）、审阅与消除内置 sub-agent 的持久化覆盖（采纳写回）。
  *
  * 数据全部来自主进程 IPC（window.electronAPI.eval*）。
  */
@@ -15,6 +15,8 @@ import {
   Trash2,
   RefreshCw,
   RotateCcw,
+  LayoutTemplate,
+  Sparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SettingsSection, SettingsCard, SettingsRow, SettingsInput } from './primitives'
@@ -48,8 +50,16 @@ interface EvalDetail {
   cases: Array<{ caseId: string; statement: string | null }>
 }
 
+interface BenchmarkTemplate {
+  id: string
+  title: string
+  description: string
+  targetAgentId: string
+}
+
 export function EvalPanel(): React.ReactElement {
   const [benchmarks, setBenchmarks] = React.useState<EvalBench[]>([])
+  const [templates, setTemplates] = React.useState<BenchmarkTemplate[]>([])
   const [selected, setSelected] = React.useState<string | null>(null)
   const [detail, setDetail] = React.useState<EvalDetail | null>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
@@ -58,15 +68,24 @@ export function EvalPanel(): React.ReactElement {
   const [pendingAdopt, setPendingAdopt] = React.useState<{ agentId: string; prompt: string } | null>(null)
 
   const [showCreate, setShowCreate] = React.useState(false)
+  const [showTemplates, setShowTemplates] = React.useState(false)
+
+  const [costEstimate, setCostEstimate] = React.useState<{
+    benchmarkId: string
+    type: 'baseline' | 'improve'
+    cost: import('../../../../../main/lib/agent-runtime/eval/cost-estimator').CostEstimate
+  } | null>(null)
 
   const refresh = React.useCallback(async () => {
     try {
-      const [benches, overrides] = await Promise.all([
+      const [benches, overrides, templateList] = await Promise.all([
         window.electronAPI.listEvalBenchmarks(),
         window.electronAPI.listEvalPrompts(),
+        window.electronAPI.listEvalTemplates(),
       ])
       setBenchmarks(benches)
       setPrompts(overrides)
+      setTemplates(templateList)
     } catch (error) {
       setNotice(`载入评测数据失败: ${String(error)}`)
     }
@@ -89,6 +108,23 @@ export function EvalPanel(): React.ReactElement {
   }, [])
 
   const runBaseline = async (id: string): Promise<void> => {
+    // 先估算成本
+    setBusy(`estimate-baseline-${id}`)
+    try {
+      const estimate = await window.electronAPI.estimateBaselineCost(id)
+      if (estimate && estimate.totalUsd > 0.05) {
+        setCostEstimate({ benchmarkId: id, type: 'baseline', cost: estimate })
+        setBusy(null)
+        return // 等待用户确认
+      }
+    } catch {
+      // 估算失败继续执行
+    }
+    setBusy(null)
+    await executeBaseline(id)
+  }
+
+  const executeBaseline = async (id: string): Promise<void> => {
     setBusy(`baseline-${id}`)
     setNotice(null)
     try {
@@ -104,6 +140,23 @@ export function EvalPanel(): React.ReactElement {
   }
 
   const runImprove = async (id: string): Promise<void> => {
+    // 先估算成本
+    setBusy(`estimate-improve-${id}`)
+    try {
+      const estimate = await window.electronAPI.estimateImproveCost(id, 2)
+      if (estimate && estimate.totalUsd > 0.1) {
+        setCostEstimate({ benchmarkId: id, type: 'improve', cost: estimate })
+        setBusy(null)
+        return // 等待用户确认
+      }
+    } catch {
+      // 估算失败继续执行
+    }
+    setBusy(null)
+    await executeImprove(id)
+  }
+
+  const executeImprove = async (id: string): Promise<void> => {
     setBusy(`improve-${id}`)
     setNotice(null)
     setPendingAdopt(null)
@@ -151,6 +204,26 @@ export function EvalPanel(): React.ReactElement {
     }
   }
 
+  const createFromTemplate = async (templateId: string): Promise<void> => {
+    setBusy(`template-${templateId}`)
+    setNotice(null)
+    try {
+      const res = await window.electronAPI.createEvalBenchmarkFromTemplate(templateId)
+      if (!res.ok || !res.benchmarkId) {
+        setNotice(`从模板创建失败: ${res.error ?? '未知错误'}`)
+        return
+      }
+      setNotice(`已从模板创建 Benchmark: ${res.benchmarkId}`)
+      setShowTemplates(false)
+      await refresh()
+      await loadDetail(res.benchmarkId)
+    } catch (error) {
+      setNotice(`从模板创建失败: ${String(error)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* 采纳写回状态 */}
@@ -181,7 +254,10 @@ export function EvalPanel(): React.ReactElement {
         description="对内置 sub-agent 的能力评测基准"
         action={
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={() => { setShowCreate(true); setNotice(null) }}>
+            <Button size="sm" variant="secondary" onClick={() => { setShowTemplates(true); setShowCreate(false); setNotice(null) }}>
+              <LayoutTemplate size={14} /><span>从模板创建</span>
+            </Button>
+            <Button size="sm" onClick={() => { setShowCreate(true); setShowTemplates(false); setNotice(null) }}>
               <Plus size={14} /><span>新建</span>
             </Button>
             <Button size="sm" variant="outline" onClick={() => void refresh()}>
@@ -192,7 +268,31 @@ export function EvalPanel(): React.ReactElement {
       >
         {benchmarks.length === 0 ? (
           <SettingsCard divided={false}>
-            <div className="text-sm text-muted-foreground p-6 text-center">还没有 Benchmark，点「新建」创建一个。</div>
+            <div className="text-sm text-muted-foreground p-6 text-center space-y-4">
+              <div className="flex justify-center">
+                <Sparkles className="size-8 text-primary/40" />
+              </div>
+              <div className="space-y-1">
+                <div className="font-medium text-foreground">还没有 Benchmark</div>
+                <div className="text-xs">评测内置 sub-agent 的能力，持续优化它们的 prompt 和表现</div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-3 text-left space-y-2">
+                <div className="text-xs font-medium text-foreground">💡 什么时候该创建 Benchmark？</div>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <div>• 刚完成一次代码审查任务 → 评测 <span className="text-primary">code-reviewer</span> 的审查能力</div>
+                  <div>• 让 Agent 探索了代码库 → 评测 <span className="text-primary">explorer</span> 的信息收集能力</div>
+                  <div>• 做了技术方案调研 → 评测 <span className="text-primary">researcher</span> 的分析推荐能力</div>
+                </div>
+              </div>
+              <div className="flex justify-center gap-2">
+                <Button size="sm" variant="secondary" onClick={() => setShowTemplates(true)}>
+                  <Sparkles className="size-3 mr-1" />从模板创建
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>
+                  <Plus className="size-3 mr-1" />手动创建
+                </Button>
+              </div>
+            </div>
           </SettingsCard>
         ) : (
           <SettingsCard divided>
@@ -264,6 +364,49 @@ export function EvalPanel(): React.ReactElement {
         </SettingsCard>
       )}
 
+      {costEstimate && (
+        <SettingsCard divided={false}>
+          <div className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-foreground">
+                确认运行 {costEstimate.type === 'baseline' ? 'Baseline' : 'Improve'} 评测？
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setCostEstimate(null)} disabled={busy !== null}>取消</Button>
+            </div>
+            <div className="bg-muted/30 rounded-lg p-3 space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">预估成本</span>
+                <span className="font-medium text-foreground">${costEstimate.cost.totalUsd.toFixed(2)} USD</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">调用次数</span>
+                <span className="text-foreground">{costEstimate.cost.callCount} 次</span>
+              </div>
+              {!costEstimate.cost.hasPricing && (
+                <div className="text-xs text-amber-600 dark:text-amber-400">
+                  ⚠️ 该模型暂无定价数据，以上为保守估算
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setCostEstimate(null)} disabled={busy !== null}>取消</Button>
+              <Button size="sm" onClick={() => {
+                const { benchmarkId, type } = costEstimate
+                setCostEstimate(null)
+                if (type === 'baseline') {
+                  void executeBaseline(benchmarkId)
+                } else {
+                  void executeImprove(benchmarkId)
+                }
+              }} disabled={busy !== null}>
+                确认运行
+              </Button>
+            </div>
+          </div>
+        </SettingsCard>
+      )}
+
+      {showTemplates && <TemplateSelector templates={templates} onSelect={(id) => void createFromTemplate(id)} onCancel={() => setShowTemplates(false)} busy={busy !== null} />}
       {showCreate && <CreateBenchmarkForm onCancelled={() => setShowCreate(false)} onCreated={(id) => { setShowCreate(false); void loadDetail(id); void refresh() }} />}
     </div>
   )
@@ -288,6 +431,57 @@ function ScoreTrend({ detail }: { detail: EvalDetail }): React.ReactElement {
         </div>
       ))}
     </div>
+  )
+}
+
+/** 预置模板选择器 */
+function TemplateSelector({
+  templates,
+  onSelect,
+  onCancel,
+  busy,
+}: {
+  templates: BenchmarkTemplate[]
+  onSelect: (templateId: string) => void
+  onCancel: () => void
+  busy: boolean
+}): React.ReactElement {
+  return (
+    <SettingsSection title="从预置模板创建" description="选择内置 sub-agent 的评测模板，一键创建 Benchmark。">
+      <SettingsCard divided={false}>
+        <div className="space-y-3 p-4">
+          {templates.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-4">加载模板中…</div>
+          ) : (
+            <div className="space-y-2">
+              {templates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => onSelect(t.id)}
+                  disabled={busy}
+                  className="w-full text-left p-3 rounded-lg border border-border/50 hover:bg-muted/40 transition-colors disabled:opacity-50"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">{t.title}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{t.description}</div>
+                      <div className="text-xs text-muted-foreground/60 mt-1">
+                        目标: {TARGET_LABELS[t.targetAgentId] ?? t.targetAgentId}
+                      </div>
+                    </div>
+                    <Sparkles className="size-4 text-primary/60 shrink-0 ml-2" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>取消</Button>
+          </div>
+        </div>
+      </SettingsCard>
+    </SettingsSection>
   )
 }
 

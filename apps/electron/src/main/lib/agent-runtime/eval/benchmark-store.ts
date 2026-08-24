@@ -30,6 +30,7 @@ import type {
   Scoreboard,
   ScoreboardCase,
 } from './types'
+import { getBenchmarkTemplate, listBenchmarkTemplates } from './templates'
 
 /** 新建一个 Benchmark（含 cases）；已存在则抛错避免覆盖。 */
 export function createBenchmark(
@@ -185,4 +186,28 @@ export function createBenchmarkForUI(input: CreateBenchmarkRequest): BenchmarkCo
     rubric: { version: 1, items: c.rubricItems },
   }))
   return createBenchmark(config, caseDefs)
+}
+
+// ===== 预置模板相关 =====
+
+export { listBenchmarkTemplates, getBenchmarkTemplate }
+
+/** 从预置模板创建 Benchmark（自动添加后缀避免冲突） */
+export function createBenchmarkFromTemplate(templateId: string, suffix?: string): BenchmarkConfig {
+  const template = getBenchmarkTemplate(templateId)
+  if (!template) {
+    throw new Error(`预置模板不存在: ${templateId}`)
+  }
+  // 自动添加实例后缀避免 ID 冲突（如 builtin-code-reviewer → builtin-code-reviewer-001）
+  const instanceId = suffix ? `${template.id}-${suffix}` : `${template.id}-${Date.now()}`
+  const input: CreateBenchmarkRequest = {
+    ...template,
+    id: instanceId,
+  }
+  return createBenchmarkForUI(input)
+}
+
+/** 获取所有预置模板列表（用于 UI 展示） */
+export function getBuiltinTemplates() {
+  return listBenchmarkTemplates()
 }

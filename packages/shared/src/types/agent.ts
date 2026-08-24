@@ -2156,6 +2156,14 @@ export const AGENT_IPC_CHANNELS = {
   EVAL_GET_BENCHMARK: 'agent:eval-get-benchmark',
   /** 创建一个 Benchmark（含 Cases） */
   EVAL_CREATE_BENCHMARK: 'agent:eval-create-benchmark',
+  /** 列出所有预置 Benchmark 模板 */
+  EVAL_LIST_TEMPLATES: 'agent:eval-list-templates',
+  /** 从预置模板创建 Benchmark */
+  EVAL_CREATE_FROM_TEMPLATE: 'agent:eval-create-from-template',
+  /** 估算 Baseline 成本 */
+  EVAL_ESTIMATE_BASELINE_COST: 'agent:eval-estimate-baseline-cost',
+  /** 估算 Improve 成本 */
+  EVAL_ESTIMATE_IMPROVE_COST: 'agent:eval-estimate-improve-cost',
 } as const
 
 /**

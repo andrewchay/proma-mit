@@ -919,6 +919,18 @@ export interface ElectronAPI {
   /** 创建一个 Benchmark（含 Cases） */
   createEvalBenchmark: (input: EvalCreateBenchmarkRequest) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
 
+  /** 列出所有预置 Benchmark 模板 */
+  listEvalTemplates: () => Promise<Array<{ id: string; title: string; description: string; targetAgentId: string }>>
+
+  /** 从预置模板创建 Benchmark */
+  createEvalBenchmarkFromTemplate: (templateId: string) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
+
+  /** 估算 Baseline 成本 */
+  estimateBaselineCost: (benchmarkId: string) => Promise<import('./lib/agent-runtime/eval/cost-estimator').CostEstimate | null>
+
+  /** 估算 Improve 成本 */
+  estimateImproveCost: (benchmarkId: string, maxRounds?: number) => Promise<import('./lib/agent-runtime/eval/cost-estimator').CostEstimate | null>
+
   // ===== Agent 附件 =====
 
   /** 保存文件到 Agent session 工作目录 */
@@ -2439,6 +2451,29 @@ const electronAPI: ElectronAPI = {
       .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_BENCHMARK, input)
       .then((benchmark) => ({ ok: true, benchmarkId: (benchmark as { id?: string } | null)?.id }))
       .catch((error: unknown) => ({ ok: false, error: String(error instanceof Error ? error.message : error) }))
+  },
+
+  /** 列出所有预置 Benchmark 模板 */
+  listEvalTemplates: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_LIST_TEMPLATES)
+  },
+
+  /** 从预置模板创建 Benchmark */
+  createEvalBenchmarkFromTemplate: (templateId: string) => {
+    return ipcRenderer
+      .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE, templateId)
+      .then((benchmark) => ({ ok: true, benchmarkId: (benchmark as { id?: string } | null)?.id }))
+      .catch((error: unknown) => ({ ok: false, error: String(error instanceof Error ? error.message : error) }))
+  },
+
+  /** 估算 Baseline 成本 */
+  estimateBaselineCost: (benchmarkId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_ESTIMATE_BASELINE_COST, benchmarkId)
+  },
+
+  /** 估算 Improve 成本 */
+  estimateImproveCost: (benchmarkId: string, maxRounds?: number) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_ESTIMATE_IMPROVE_COST, benchmarkId, maxRounds)
   },
 
   // 工作区文件变化通知
