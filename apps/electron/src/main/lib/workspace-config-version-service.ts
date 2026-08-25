@@ -221,7 +221,9 @@ function cleanupOldSnapshots(workspaceSlug: string): void {
 
   // 只删除超出限制的最旧的 auto 快照
   const autoSnapshots = snapshots.filter((s) => s.triggeredBy === 'auto')
-  const toDelete = autoSnapshots.slice(MAX_SNAPSHOTS_PER_WORKSPACE - snapshots.length)
+  const manualCount = snapshots.filter((s) => s.triggeredBy !== 'auto').length
+  const maxAutoToKeep = Math.max(0, MAX_SNAPSHOTS_PER_WORKSPACE - manualCount)
+  const toDelete = autoSnapshots.slice(maxAutoToKeep)
 
   for (const snapshot of toDelete) {
     deleteWorkspaceSnapshot(workspaceSlug, snapshot.id)
