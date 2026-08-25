@@ -352,6 +352,10 @@ export function getProactiveDir(): string {
   return dir
 }
 
+export function getProactiveConfigPath(): string {
+  return getProactiveDir()
+}
+
 export function getProactiveSchedulesPath(): string {
   return join(getProactiveDir(), 'schedules.json')
 }
@@ -527,6 +531,11 @@ function assertBenchmarkId(value: string): string {
     throw new Error(`Benchmark ID 非法: ${value}`)
   }
   return value
+}
+
+/** 评测自动调度配置路径。 */
+export function getEvalAutoSchedulePath(): string {
+  return join(getEvalDir(), 'auto-schedule.json')
 }
 
 /** 单个 Benchmark 的目录。 */

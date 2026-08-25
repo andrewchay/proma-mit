@@ -530,6 +530,12 @@ async function bootstrap(): Promise<void> {
     safeRun('createVoiceDictationWindow', createVoiceDictationWindow)
   }
 
+  // 恢复自动评测定时任务（benchmark 自动跑 baseline）
+  safeRun('recoverAutoEvaluations', async () => {
+    const { recoverAutoEvaluations } = await import('./lib/agent-runtime/eval/eval-scheduler')
+    await recoverAutoEvaluations()
+  })
+
   // 注册全局快捷键
   safeRun('registerGlobalShortcut:quick-task', () =>
     registerGlobalShortcut('quick-task', toggleQuickTaskWindow),

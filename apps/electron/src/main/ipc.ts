@@ -2365,6 +2365,33 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 获取 benchmark 自动评测配置
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_GET_AUTO_SCHEDULE,
+    async (_event, benchmarkId: string) => {
+      const { getBenchmarkAutoSchedule } = await import('./lib/agent-runtime/eval/eval-scheduler')
+      return getBenchmarkAutoSchedule(benchmarkId)
+    }
+  )
+
+  // 更新 benchmark 自动评测配置
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_SET_AUTO_SCHEDULE,
+    async (_event, benchmarkId: string, enabled: boolean, intervalDays?: number) => {
+      const { updateBenchmarkAutoSchedule } = await import('./lib/agent-runtime/eval/eval-scheduler')
+      return updateBenchmarkAutoSchedule(benchmarkId, { enabled, intervalDays })
+    }
+  )
+
+  // 列出所有自动评测配置
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.EVAL_LIST_AUTO_SCHEDULES,
+    async () => {
+      const { listBenchmarkAutoSchedules } = await import('./lib/agent-runtime/eval/eval-scheduler')
+      return listBenchmarkAutoSchedules()
+    }
+  )
+
   // ===== Agent 附件 =====
 
   // 保存文件到 Agent session 工作目录

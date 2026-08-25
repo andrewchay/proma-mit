@@ -2164,6 +2164,12 @@ export const AGENT_IPC_CHANNELS = {
   EVAL_ESTIMATE_BASELINE_COST: 'agent:eval-estimate-baseline-cost',
   /** 估算 Improve 成本 */
   EVAL_ESTIMATE_IMPROVE_COST: 'agent:eval-estimate-improve-cost',
+  /** 获取 benchmark 自动评测配置 */
+  EVAL_GET_AUTO_SCHEDULE: 'agent:eval-get-auto-schedule',
+  /** 更新 benchmark 自动评测配置 */
+  EVAL_SET_AUTO_SCHEDULE: 'agent:eval-set-auto-schedule',
+  /** 列出所有自动评测配置 */
+  EVAL_LIST_AUTO_SCHEDULES: 'agent:eval-list-auto-schedules',
 } as const
 
 /**

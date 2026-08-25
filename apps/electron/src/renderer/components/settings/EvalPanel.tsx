@@ -73,19 +73,27 @@ export function EvalPanel(): React.ReactElement {
   const [costEstimate, setCostEstimate] = React.useState<{
     benchmarkId: string
     type: 'baseline' | 'improve'
-    cost: import('../../../../../main/lib/agent-runtime/eval/cost-estimator').CostEstimate
+    cost: { totalUsd: number; inputTokens: number; outputTokens: number; callCount: number; hasPricing: boolean; pricing?: { input: number; output: number }; fallbackUsd?: number }
   } | null>(null)
+
+  const [autoSchedules, setAutoSchedules] = React.useState<Record<string, { benchmarkId: string; enabled: boolean; intervalDays: number; lastRunAt?: string; nextRunAt?: string; proactiveScheduleId?: string }>>({})
 
   const refresh = React.useCallback(async () => {
     try {
-      const [benches, overrides, templateList] = await Promise.all([
+      const [benches, overrides, templateList, schedules] = await Promise.all([
         window.electronAPI.listEvalBenchmarks(),
         window.electronAPI.listEvalPrompts(),
         window.electronAPI.listEvalTemplates(),
+        window.electronAPI.listBenchmarkAutoSchedules(),
       ])
       setBenchmarks(benches)
       setPrompts(overrides)
       setTemplates(templateList)
+      const scheduleMap: Record<string, { benchmarkId: string; enabled: boolean; intervalDays: number; lastRunAt?: string; nextRunAt?: string; proactiveScheduleId?: string }> = {}
+      for (const s of schedules) {
+        scheduleMap[s.benchmarkId] = s
+      }
+      setAutoSchedules(scheduleMap)
     } catch (error) {
       setNotice(`载入评测数据失败: ${String(error)}`)
     }
@@ -199,6 +207,19 @@ export function EvalPanel(): React.ReactElement {
       await refresh()
     } catch (error) {
       setNotice(`清除失败: ${String(error)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const toggleAutoSchedule = async (benchmarkId: string, enabled: boolean): Promise<void> => {
+    setBusy(`auto-schedule-${benchmarkId}`)
+    try {
+      const updated = await window.electronAPI.setBenchmarkAutoSchedule(benchmarkId, enabled)
+      setAutoSchedules((prev) => ({ ...prev, [benchmarkId]: updated }))
+      setNotice(`${enabled ? '已启用' : '已禁用'} ${benchmarkId} 的自动评测`)
+    } catch (error) {
+      setNotice(`自动评测设置失败: ${String(error)}`)
     } finally {
       setBusy(null)
     }
@@ -328,6 +349,28 @@ export function EvalPanel(): React.ReactElement {
                       <Button size="sm" variant="outline" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); void runImprove(b.id) }}>
                         <TrendingUp className="size-3 mr-1" />Improve
                       </Button>
+                    </div>
+                  )}
+                  {selectedBench && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={autoSchedules[b.id]?.enabled ?? false}
+                          onChange={(e) => {
+                            e.stopPropagation()
+                            void toggleAutoSchedule(b.id, e.target.checked)
+                          }}
+                          disabled={busy !== null}
+                          className="rounded border-border"
+                        />
+                        自动评测（每{autoSchedules[b.id]?.intervalDays ?? 7}天）
+                      </label>
+                      {autoSchedules[b.id]?.enabled && autoSchedules[b.id]?.nextRunAt && (
+                        <span className="text-[10px] text-muted-foreground/60">
+                          下次: {new Date(autoSchedules[b.id]!.nextRunAt!).toLocaleDateString()}
+                        </span>
+                      )}
                     </div>
                   )}
                   {selectedBench && detail && (

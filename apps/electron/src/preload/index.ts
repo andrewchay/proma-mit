@@ -926,10 +926,19 @@ export interface ElectronAPI {
   createEvalBenchmarkFromTemplate: (templateId: string) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
 
   /** 估算 Baseline 成本 */
-  estimateBaselineCost: (benchmarkId: string) => Promise<import('./lib/agent-runtime/eval/cost-estimator').CostEstimate | null>
+  estimateBaselineCost: (benchmarkId: string) => Promise<{ totalUsd: number; inputTokens: number; outputTokens: number; callCount: number; hasPricing: boolean; pricing?: { input: number; output: number }; fallbackUsd?: number } | null>
 
   /** 估算 Improve 成本 */
-  estimateImproveCost: (benchmarkId: string, maxRounds?: number) => Promise<import('./lib/agent-runtime/eval/cost-estimator').CostEstimate | null>
+  estimateImproveCost: (benchmarkId: string, maxRounds?: number) => Promise<{ totalUsd: number; inputTokens: number; outputTokens: number; callCount: number; hasPricing: boolean; pricing?: { input: number; output: number }; fallbackUsd?: number } | null>
+
+  /** 获取 benchmark 自动评测配置 */
+  getBenchmarkAutoSchedule: (benchmarkId: string) => Promise<{ benchmarkId: string; enabled: boolean; intervalDays: number; lastRunAt?: string; nextRunAt?: string; proactiveScheduleId?: string }>
+
+  /** 更新 benchmark 自动评测配置 */
+  setBenchmarkAutoSchedule: (benchmarkId: string, enabled: boolean, intervalDays?: number) => Promise<{ benchmarkId: string; enabled: boolean; intervalDays: number; lastRunAt?: string; nextRunAt?: string; proactiveScheduleId?: string }>
+
+  /** 列出所有自动评测配置 */
+  listBenchmarkAutoSchedules: () => Promise<Array<{ benchmarkId: string; enabled: boolean; intervalDays: number; lastRunAt?: string; nextRunAt?: string; proactiveScheduleId?: string }>>
 
   // ===== Agent 附件 =====
 
@@ -2474,6 +2483,21 @@ const electronAPI: ElectronAPI = {
   /** 估算 Improve 成本 */
   estimateImproveCost: (benchmarkId: string, maxRounds?: number) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_ESTIMATE_IMPROVE_COST, benchmarkId, maxRounds)
+  },
+
+  /** 获取 benchmark 自动评测配置 */
+  getBenchmarkAutoSchedule: (benchmarkId: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_GET_AUTO_SCHEDULE, benchmarkId)
+  },
+
+  /** 更新 benchmark 自动评测配置 */
+  setBenchmarkAutoSchedule: (benchmarkId: string, enabled: boolean, intervalDays?: number) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_SET_AUTO_SCHEDULE, benchmarkId, enabled, intervalDays)
+  },
+
+  /** 列出所有自动评测配置 */
+  listBenchmarkAutoSchedules: () => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_LIST_AUTO_SCHEDULES)
   },
 
   // 工作区文件变化通知
