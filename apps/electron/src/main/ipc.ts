@@ -4240,4 +4240,45 @@ export function registerIpcHandlers(): void {
   registerRoutineIPCHandlers()
   const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
   registerMemoryPluginIPCHandlers()
+
+  // ===== 企业版连接 =====
+  const { connectToServer, disconnectFromServer, getActiveConnection, migrateLocalToServer } = require('./lib/server-connection-service') as {
+    connectToServer: (config: { serverUrl: string; authMode: 'none' | 'local' | 'oidc'; username?: string; password?: string }) => Promise<{ serverUrl: string; authMode: string; scope: { tenantId: string; userId: string; roles: string[] } }>
+    disconnectFromServer: () => void
+    getActiveConnection: () => { serverUrl: string; authMode: string; scope: { tenantId: string; userId: string; roles: string[] } } | undefined
+    migrateLocalToServer: (options: { serverUrl: string; authToken?: string; dryRun?: boolean }) => Promise<{ success: boolean; migrated: { channels: number; workspaces: number; sessions: number; messages: number; mcpConfigs: number }; errors: string[] }>
+  }
+
+  ipcMain.handle('enterprise:connect', async (_event, config) => {
+    return connectToServer(config)
+  })
+
+  ipcMain.handle('enterprise:disconnect', async () => {
+    disconnectFromServer()
+  })
+
+  ipcMain.handle('enterprise:getConnection', async () => {
+    const conn = getActiveConnection()
+    if (!conn) return null
+    return {
+      serverUrl: conn.serverUrl,
+      authMode: conn.authMode,
+      scope: conn.scope,
+    }
+  })
+
+  ipcMain.handle('enterprise:migrate', async (_event, options: { phase: string; dryRun?: boolean }) => {
+    const conn = getActiveConnection()
+    if (!conn) throw new Error('未连接到服务端')
+    // 简化：直接调用完整迁移
+    const result = await migrateLocalToServer({
+      serverUrl: conn.serverUrl,
+      dryRun: options.dryRun,
+    })
+    return {
+      success: result.success,
+      migrated: result.migrated.channels + result.migrated.workspaces + result.migrated.sessions + result.migrated.messages + result.migrated.mcpConfigs,
+      errors: result.errors,
+    }
+  })
 }

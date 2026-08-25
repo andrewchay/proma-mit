@@ -67,6 +67,7 @@ import { PostgresAuthSessionStore } from './auth-session-store.ts'
 import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes.ts'
 import { createCookieSessionAuthResolver, createCompositeAuthResolver } from './auth-resolvers.ts'
 import { hashPassword, verifyPassword } from './local-admin-auth.ts'
+import { createNoneAuthResolver } from './none-auth.ts'
 
 export interface PromaWebServerConfig {
   databaseUrl: string
@@ -179,7 +180,10 @@ export function createPromaWebServerApplication(
     ? createCookieSessionAuthResolver({ store: authSessionStore, cookieName: cookieAuthCookieName })
     : undefined
   // 现有 Bearer/trusted-header 链路（dependencies.auth 来自 index.ts 的 OIDC JWT，或 trustedHeaderAuth）
-  const baseAuth = dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth)
+  // authMode='none' 时：使用无鉴权 resolver，所有请求自动获得默认租户上下文
+  const baseAuth = config.authMode === 'none'
+    ? createNoneAuthResolver()
+    : (dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth))
   // 复合：cookie 会话优先，回退 Bearer/trusted-header
   const auth: AgentRuntimeWebAuthResolver = createCompositeAuthResolver(cookieAuthResolver, baseAuth)
   // 浏览器登录 handler（/auth/*）

@@ -11,6 +11,8 @@ import { Separator } from '@/components/ui/separator'
 import { CARD_CLASS, DIVIDER_CLASS } from './SettingsUIConstants'
 
 interface SettingsCardProps {
+  /** 卡片标题（可选） */
+  title?: string
   /** 子内容 */
   children: React.ReactNode
   /** 额外 className */
@@ -20,6 +22,7 @@ interface SettingsCardProps {
 }
 
 export function SettingsCard({
+  title,
   children,
   className,
   divided = true,
@@ -28,6 +31,11 @@ export function SettingsCard({
 
   return (
     <div className={cn(CARD_CLASS, className)}>
+      {title && (
+        <div className="px-1 pb-3">
+          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        </div>
+      )}
       {divided
         ? childArray.map((child, index) => (
             <React.Fragment key={index}>

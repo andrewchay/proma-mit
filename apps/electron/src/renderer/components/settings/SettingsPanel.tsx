@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   MonitorCog,
   Puzzle,
+  Server,
   CalendarDays,
   ChevronDown,
   BarChart3,
@@ -68,6 +69,7 @@ import { AutomationSettings } from "./AutomationSettings";
 import { ExtensionSettings } from './ExtensionSettings'
 import { CalendarSyncSettings } from './CalendarSyncSettings'
 import { TokenUsageSettings } from './TokenUsageSettings'
+import { EnterpriseSettings } from './EnterpriseSettings'
 import { GoalsSettings } from './GoalsSettings'
 
 /** 设置 Tab 定义 */
@@ -152,6 +154,13 @@ const GOALS_TAB: TabItem = {
   icon: <Target size={16} />,
 };
 
+/** 企业版 Tab */
+const ENTERPRISE_TAB: TabItem = {
+  id: 'enterprise',
+  label: '企业版',
+  icon: <Server size={16} />,
+};
+
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
   { id: "migration", label: "数据迁移", icon: <HardDriveDownload size={16} /> },
@@ -211,6 +220,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
       TOKEN_USAGE_TAB,
       GOALS_TAB,
       TUTORIAL_TAB,
+      ENTERPRISE_TAB,
     ],
   },
 ]
@@ -265,6 +275,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <TokenUsageSettings />
     case 'goals':
       return <GoalsSettings />
+    case 'enterprise':
+      return <EnterpriseSettings />
   }
 }
 

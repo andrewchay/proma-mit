@@ -1634,6 +1634,16 @@ export interface ElectronAPI {
     searchMemoryItems: (query: string) => Promise<unknown[]>
     getMemoryStats: () => Promise<unknown>
   }
+
+  // ===== 企业版连接 =====
+  /** 连接到企业版服务端 */
+  connectToServer: (config: { serverUrl: string; authMode: 'none' | 'local' | 'oidc'; username?: string; password?: string }) => Promise<{ serverUrl: string; authMode: string; scope: { tenantId: string; userId: string; roles: string[] } }>
+  /** 断开企业版服务端连接 */
+  disconnectFromServer: () => Promise<void>
+  /** 获取当前企业版连接状态 */
+  getServerConnection: () => Promise<{ serverUrl: string; authMode: string; scope: { tenantId: string; userId: string; roles: string[] } } | null>
+  /** 迁移本地数据到服务端 */
+  migrateToServer: (options: { phase: string; dryRun?: boolean }) => Promise<{ success: boolean; migrated: number; errors: string[] }>
 }
 
 interface MigrationExportResult {
@@ -3538,6 +3548,12 @@ const electronAPI: ElectronAPI = {
     searchMemoryItems: (query: string) => ipcRenderer.invoke('memory:searchItems', query),
     getMemoryStats: () => ipcRenderer.invoke('memory:getStats'),
   },
+
+  // 企业版连接
+  connectToServer: (config) => ipcRenderer.invoke('enterprise:connect', config),
+  disconnectFromServer: () => ipcRenderer.invoke('enterprise:disconnect'),
+  getServerConnection: () => ipcRenderer.invoke('enterprise:getConnection'),
+  migrateToServer: (options) => ipcRenderer.invoke('enterprise:migrate', options),
 }
 
 // 将 API 暴露到渲染进程的 window 对象上
