@@ -15,6 +15,7 @@ const SOURCE_LABEL: Record<AgentAuditEvent['source'], string> = {
   'web-bridge': 'Web Bridge',
   'computer-use': 'Computer Use',
   'external-bridge': '外部 IM',
+  'config': '配置变更',
 }
 
 export function OperationAuditSettings(): React.ReactElement {
@@ -73,6 +74,7 @@ export function OperationAuditSettings(): React.ReactElement {
                   <SelectItem value="web-bridge">Web Bridge</SelectItem>
                   <SelectItem value="computer-use">Computer Use</SelectItem>
                   <SelectItem value="external-bridge">外部 IM</SelectItem>
+              <SelectItem value="config">配置变更</SelectItem>
                 </SelectContent>
               </Select>
             </label>

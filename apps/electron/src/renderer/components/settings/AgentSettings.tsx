@@ -40,6 +40,7 @@ import { TeamSkillDirectoryPanel } from './TeamSkillDirectoryPanel'
 import { TeamProfilePanel } from './TeamProfilePanel'
 import { AgentAllowlistPanel } from './AgentAllowlistPanel'
 import { EvalPanel } from './EvalPanel'
+import { WorkspaceSnapshotSettings } from './WorkspaceSnapshotSettings'
 
 // ===== Types =====
 
@@ -419,17 +420,19 @@ ${skillList}
         <div className="relative flex rounded-xl bg-muted p-1">
           <div
             className={cn(
-              'mode-slider absolute top-1 bottom-1 w-[calc(25%-2px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
+              'mode-slider absolute top-1 bottom-1 w-[calc(20%-2px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
               activeTab === 'skills' && 'translate-x-0',
               activeTab === 'mcp' && 'translate-x-[100%]',
               activeTab === 'tools' && 'translate-x-[200%]',
-              activeTab === 'eval' && 'translate-x-[300%]',
+              activeTab === 'snapshots' && 'translate-x-[300%]',
+              activeTab === 'eval' && 'translate-x-[400%]',
             )}
           />
           {[
             { value: 'skills', label: 'Skills' },
             { value: 'mcp', label: 'MCP' },
             { value: 'tools', label: '内置工具' },
+            { value: 'snapshots', label: '配置快照' },
             { value: 'eval', label: '评测' },
           ].map(({ value, label }) => (
             <button
@@ -582,6 +585,11 @@ ${skillList}
         {/* ===== Built-in Tools Tab ===== */}
         <TabsContent value="tools" className="mt-4">
           <BuiltinAgentTools />
+        </TabsContent>
+
+        {/* ===== Snapshots Tab ===== */}
+        <TabsContent value="snapshots" className="mt-4">
+          <WorkspaceSnapshotSettings workspaceSlug={workspaceSlug} />
         </TabsContent>
 
         {/* ===== Eval Tab ===== */}

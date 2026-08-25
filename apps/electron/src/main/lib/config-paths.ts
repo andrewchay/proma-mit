@@ -909,6 +909,29 @@ export function seedDefaultSkills(): void {
 }
 
 /**
+ * 获取配置变更审计目录路径
+ *
+ * @returns ~/.proma-mit/config-audit/
+ */
+export function getConfigAuditDir(): string {
+  const dir = join(getConfigDir(), 'config-audit')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建配置审计目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取配置变更审计文件路径
+ *
+ * @returns ~/.proma-mit/config-audit/events.jsonl
+ */
+export function getConfigAuditPath(): string {
+  return join(getConfigAuditDir(), 'events.jsonl')
+}
+
+/**
  * 获取微信配置文件路径
  *
  * @returns ~/.proma/wechat.json
@@ -962,11 +985,24 @@ export function getFeishuBotBindingsPath(botId: string): string {
   return join(getConfigDir(), `feishu-bindings-${botId}.json`)
 }
 
+/** 获取工作区配置快照目录路径 */
+export function getWorkspaceSnapshotsDir(slug: string): string {
+  const dir = join(getAgentWorkspacePath(slug), 'snapshots')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/** 获取指定快照文件路径 */
+export function getWorkspaceSnapshotPath(slug: string, snapshotId: string): string {
+  return join(getWorkspaceSnapshotsDir(slug), `${snapshotId}.json`)
+}
+
 /**
- * 获取指定 Agent 会话的工作路径
+ * 获取指定 Agent 工作区中某会话的隔离工作目录
  *
- * 在工作区目录下创建以 sessionId 命名的子文件夹，
- * 作为该会话的独立 Agent cwd。如果目录不存在则自动创建。
+ * 如果目录不存在则自动创建。
  *
  * @param workspaceSlug 工作区 slug
  * @param sessionId 会话 ID

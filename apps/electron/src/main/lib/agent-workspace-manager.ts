@@ -24,6 +24,9 @@ import {
 import { getMcpClientSecret, setMcpClientSecret, removeMcpClientSecret } from './agent-runtime/mcp-client-secret-store'
 import type { AgentWorkspace, WorkspaceMcpConfig, SkillMeta, SkillImportSource, OtherWorkspaceSkillsGroup, WorkspaceCapabilities, SkillFileNode, SkillFileContent } from '@gravitas/shared'
 
+import { appendConfigAudit, redactSensitive } from './config-audit-service'
+import { autoSnapshotBeforeUpdate } from './workspace-config-version-service'
+
 interface AgentWorkspacesIndex {
   version: number
   workspaces: AgentWorkspace[]
@@ -211,6 +214,15 @@ export function createAgentWorkspace(name: string, rootPath?: string, slugOverri
   index.workspaces.unshift(workspace)
   writeIndex(index)
 
+  // 审计：工作区创建
+  void appendConfigAudit({
+    category: 'workspace',
+    action: 'create',
+    targetId: workspace.id,
+    targetName: workspace.name,
+    afterSnapshot: { slug: workspace.slug, rootPath: workspace.rootPath },
+  })
+
   console.log(`[Agent 工作区] 已创建工作区: ${name} (slug: ${slug})`)
   return workspace
 }
@@ -240,6 +252,9 @@ export function updateAgentWorkspace(
 
   const existing = index.workspaces[idx]!
 
+  // 自动快照：更新工作区前备份配置
+  try { autoSnapshotBeforeUpdate(existing.slug, '更新工作区前') } catch {}
+
   const name = updates.name
   if (typeof name === 'string' && name.length > 0) {
     const duplicate = index.workspaces.find((w) => w.id !== id && w.name === name)
@@ -257,6 +272,16 @@ export function updateAgentWorkspace(
 
   index.workspaces[idx] = updated
   writeIndex(index)
+
+  // 审计：工作区更新
+  void appendConfigAudit({
+    category: 'workspace',
+    action: 'update',
+    targetId: updated.id,
+    targetName: updated.name,
+    beforeSnapshot: { name: existing.name, pinned: existing.pinned },
+    afterSnapshot: { name: updated.name, pinned: updated.pinned },
+  })
 
   console.log(`[Agent 工作区] 已更新工作区: ${updated.name} (${updated.id})`)
   return updated
@@ -295,7 +320,20 @@ export function deleteAgentWorkspace(id: string): void {
   }
 
   const removed = index.workspaces.splice(idx, 1)[0]!
+
+  // 自动快照：删除工作区前备份配置
+  try { autoSnapshotBeforeUpdate(removed.slug, `删除工作区 ${removed.name} 前`) } catch {}
+
   writeIndex(index)
+
+  // 审计：工作区删除
+  void appendConfigAudit({
+    category: 'workspace',
+    action: 'delete',
+    targetId: removed.id,
+    targetName: removed.name,
+    beforeSnapshot: { slug: removed.slug, rootPath: removed.rootPath },
+  })
 
   console.log(`[Agent 工作区] 已删除工作区索引: ${removed.name} (slug: ${removed.slug}，目录已保留)`)
 }
@@ -556,6 +594,9 @@ export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig
 }
 
 export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceMcpConfig): void {
+  // 自动快照：保存 MCP 配置前备份当前配置
+  try { autoSnapshotBeforeUpdate(workspaceSlug, '保存 MCP 配置前') } catch {}
+
   const mcpPath = getWorkspaceMcpPath(workspaceSlug)
 
   try {
@@ -575,6 +616,16 @@ export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceM
     }
     writeFileSync(mcpPath, JSON.stringify(toSave, null, 2), 'utf-8')
     console.log(`[Agent 工作区] 已保存 MCP 配置: ${workspaceSlug}`)
+
+    // 审计：MCP 配置保存
+    void appendConfigAudit({
+      category: 'mcp',
+      action: 'save',
+      targetId: workspaceSlug,
+      targetName: workspaceSlug,
+      afterSnapshot: { serverNames: Object.keys(toSave.servers) },
+      metadata: { serverCount: Object.keys(toSave.servers).length },
+    })
   } catch (error) {
     console.error('[Agent 工作区] 保存 MCP 配置失败:', error)
     throw new Error('保存 MCP 配置失败')
@@ -657,6 +708,9 @@ export function getWorkspaceCapabilities(workspaceSlug: string): WorkspaceCapabi
 }
 
 export function deleteWorkspaceSkill(workspaceSlug: string, skillSlug: string): void {
+  // 自动快照：删除 Skill 前备份
+  try { autoSnapshotBeforeUpdate(workspaceSlug, `删除 Skill ${skillSlug} 前`) } catch {}
+
   const skillsDir = getWorkspaceSkillsDir(workspaceSlug)
   const skillPath = join(skillsDir, skillSlug)
 
@@ -666,6 +720,14 @@ export function deleteWorkspaceSkill(workspaceSlug: string, skillSlug: string): 
 
   rmSync(skillPath, { recursive: true, force: true })
   console.log(`[Agent 工作区] 已删除 Skill: ${workspaceSlug}/${skillSlug}`)
+
+  // 审计：Skill 删除
+  void appendConfigAudit({
+    category: 'skill',
+    action: 'delete',
+    targetId: `${workspaceSlug}/${skillSlug}`,
+    targetName: skillSlug,
+  })
 }
 
 /** 扫描指定目录下的 Skills，供 getWorkspaceSkills 和 getAllWorkspaceSkills 复用 */
@@ -718,6 +780,9 @@ export function getAllWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
 
 /** 在 skills/ 和 skills-inactive/ 之间移动来切换启用/禁用 */
 export function toggleWorkspaceSkill(workspaceSlug: string, skillSlug: string, enabled: boolean): void {
+  // 自动快照：切换 Skill 状态前备份
+  try { autoSnapshotBeforeUpdate(workspaceSlug, `${enabled ? '启用' : '禁用'} Skill ${skillSlug} 前`) } catch {}
+
   const activeDir = getWorkspaceSkillsDir(workspaceSlug)
   const inactiveDir = getInactiveSkillsDir(workspaceSlug)
 
@@ -737,6 +802,14 @@ export function toggleWorkspaceSkill(workspaceSlug: string, skillSlug: string, e
 
   renameSync(srcPath, destPath)
   console.log(`[Agent 工作区] Skill ${enabled ? '启用' : '禁用'}: ${workspaceSlug}/${skillSlug}`)
+
+  // 审计：Skill 启用/禁用
+  void appendConfigAudit({
+    category: 'skill',
+    action: enabled ? 'enable' : 'disable',
+    targetId: `${workspaceSlug}/${skillSlug}`,
+    targetName: skillSlug,
+  })
 }
 
 /**
@@ -772,6 +845,9 @@ export function importSkillFromWorkspace(
   sourceSlug: string,
   skillSlug: string,
 ): SkillMeta {
+  // 自动快照：导入 Skill 前备份
+  try { autoSnapshotBeforeUpdate(targetSlug, `导入 Skill ${skillSlug} 前`) } catch {}
+
   const sourcePath = resolveSkillDir(sourceSlug, skillSlug)
 
   if (!sourcePath) {
@@ -805,6 +881,16 @@ export function importSkillFromWorkspace(
 
   console.log(`[Agent 工作区] 已从 ${sourceSlug} 导入 Skill: ${targetSlug}/${skillSlug}`)
 
+  // 审计：Skill 导入
+  void appendConfigAudit({
+    category: 'skill',
+    action: 'import',
+    targetId: `${targetSlug}/${skillSlug}`,
+    targetName: skillSlug,
+    afterSnapshot: { sourceWorkspace: sourceSlug, targetWorkspace: targetSlug },
+    metadata: { sourceVersion: importSource.sourceVersion },
+  })
+
   const content = readFileSync(join(targetPath, 'SKILL.md'), 'utf-8')
   const meta = parseSkillFrontmatter(content, skillSlug, true)
   meta.importSource = importSource
@@ -821,6 +907,9 @@ export function updateSkillFromSource(
   targetSlug: string,
   skillSlug: string,
 ): SkillMeta {
+  // 自动快照：更新 Skill 前备份
+  try { autoSnapshotBeforeUpdate(targetSlug, `更新 Skill ${skillSlug} 前`) } catch {}
+
   const activeDir = getWorkspaceSkillsDir(targetSlug)
   const inactiveDir = getInactiveSkillsDir(targetSlug)
 
@@ -878,6 +967,17 @@ export function updateSkillFromSource(
   meta.hasUpdate = false
 
   console.log(`[Agent 工作区] 已从源更新 Skill: ${targetSlug}/${skillSlug}`)
+
+  // 审计：Skill 更新
+  void appendConfigAudit({
+    category: 'skill',
+    action: 'update',
+    targetId: `${targetSlug}/${skillSlug}`,
+    targetName: skillSlug,
+    afterSnapshot: { sourceWorkspace: existingSource.sourceWorkspaceSlug, sourceVersion: updatedSource.sourceVersion },
+    metadata: { enabled, previousVersion: existingSource.sourceVersion },
+  })
+
   return meta
 }
 
@@ -1167,6 +1267,9 @@ function readWorkspaceConfig(workspaceSlug: string): WorkspaceConfig {
 }
 
 function writeWorkspaceConfig(workspaceSlug: string, config: WorkspaceConfig): void {
+  // 自动快照：工作区配置变更前备份
+  try { autoSnapshotBeforeUpdate(workspaceSlug, '工作区配置变更前') } catch {}
+
   const configPath = getWorkspaceConfigPath(workspaceSlug)
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
 }

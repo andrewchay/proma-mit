@@ -111,6 +111,7 @@ import type {
   FileAccessOptions,
   ResolvedFileUrl,
 } from '@gravitas/shared'
+import { CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
 import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents } from './lib/git-diff-service'
@@ -179,6 +180,13 @@ import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveF
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
+import {
+  createWorkspaceSnapshot,
+  listWorkspaceSnapshots,
+  getWorkspaceSnapshot,
+  restoreWorkspaceSnapshot,
+  deleteWorkspaceSnapshot,
+} from './lib/workspace-config-version-service'
 import { permissionService } from './lib/agent-permission-service'
 import { askUserService } from './lib/agent-ask-user-service'
 import { exitPlanService } from './lib/agent-exit-plan-service'
@@ -1833,6 +1841,34 @@ export function registerIpcHandlers(): void {
     if (result.canceled || !result.filePath) return { canceled: true, count: 0 }
     return { canceled: false, count: await exportAgentAuditEvents(result.filePath, query) }
   })
+
+  // ===== 配置版本化（工作区配置快照）=====
+
+  // 创建工作区配置快照
+  ipcMain.handle(CONFIG_VERSION_IPC_CHANNELS.CREATE_SNAPSHOT, async (_, workspaceSlug: string, input: import('@gravitas/shared').CreateWorkspaceSnapshotInput) => {
+    return createWorkspaceSnapshot(workspaceSlug, input)
+  })
+
+  // 列出工作区所有快照
+  ipcMain.handle(CONFIG_VERSION_IPC_CHANNELS.LIST_SNAPSHOTS, async (_, workspaceSlug: string) => {
+    return listWorkspaceSnapshots(workspaceSlug)
+  })
+
+  // 获取指定快照
+  ipcMain.handle(CONFIG_VERSION_IPC_CHANNELS.GET_SNAPSHOT, async (_, workspaceSlug: string, snapshotId: string) => {
+    return getWorkspaceSnapshot(workspaceSlug, snapshotId)
+  })
+
+  // 恢复快照
+  ipcMain.handle(CONFIG_VERSION_IPC_CHANNELS.RESTORE_SNAPSHOT, async (_, workspaceSlug: string, snapshotId: string) => {
+    return restoreWorkspaceSnapshot(workspaceSlug, snapshotId)
+  })
+
+  // 删除快照
+  ipcMain.handle(CONFIG_VERSION_IPC_CHANNELS.DELETE_SNAPSHOT, async (_, workspaceSlug: string, snapshotId: string) => {
+    return deleteWorkspaceSnapshot(workspaceSlug, snapshotId)
+  })
+
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES, async () => listProactiveSchedules())
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS, async () => listProactiveTaskRuns())
   ipcMain.handle(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, async (_, input: import('@gravitas/shared').CreateProactiveScheduleInput) => {
@@ -4192,4 +4228,16 @@ export function registerIpcHandlers(): void {
   // ===== 智能提醒系统 =====
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }
   registerReminderIpcHandlers()
+
+  // ===== Proactive Center =====
+  const { registerMonitorIPCHandlers } = require('./lib/monitor-service') as { registerMonitorIPCHandlers: () => void }
+  registerMonitorIPCHandlers()
+  const { registerRecommendationIPCHandlers } = require('./lib/recommendation-service') as { registerRecommendationIPCHandlers: () => void }
+  registerRecommendationIPCHandlers()
+  const { registerApprovalIPCHandlers } = require('./lib/approval-service') as { registerApprovalIPCHandlers: () => void }
+  registerApprovalIPCHandlers()
+  const { registerRoutineIPCHandlers } = require('./lib/routine-service') as { registerRoutineIPCHandlers: () => void }
+  registerRoutineIPCHandlers()
+  const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
+  registerMemoryPluginIPCHandlers()
 }

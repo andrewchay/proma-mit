@@ -92,3 +92,6 @@ export * from './agent-card'
 
 // Execution Contract 统一执行契约（契约层种子，任务无关的状态机）
 export * from './execution-contract'
+
+// 配置版本化类型
+export * from './config-version'

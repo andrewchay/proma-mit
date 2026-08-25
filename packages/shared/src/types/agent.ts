@@ -32,11 +32,32 @@ export const MEMORY_IPC_CHANNELS = {
   TEST_CONNECTION: 'memory:test-connection',
 } as const
 
+/** 配置变更审计事件 */
+export interface ConfigAuditEvent {
+  at: string
+  category: string
+  action: string
+  actor: string
+  targetId: string
+  targetName?: string
+  beforeSnapshot?: Record<string, unknown>
+  afterSnapshot?: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+/** 配置变更审计查询 */
+export interface ConfigAuditQuery {
+  category?: string
+  action?: string
+  targetId?: string
+  limit?: number
+}
+
 /** 本地自动化与外部消息入口的审计记录。 */
 export interface AgentAuditEvent {
   at: string
   sessionId: string
-  source: 'web-bridge' | 'computer-use' | 'external-bridge'
+  source: 'web-bridge' | 'computer-use' | 'external-bridge' | 'config'
   action: string
   detail: Record<string, unknown>
   /** 执行者成员归属（PH1-C/D：memberId=paa-<name>/agent-<id>/bot:<平台>:<id>） */

@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -641,6 +641,16 @@ export interface ElectronAPI {
   listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
   /** 将当前筛选结果导出为用户选择位置的 JSONL */
   exportAgentAuditEvents: (query?: AgentAuditQuery) => Promise<{ canceled: boolean; count: number }>
+  /** 创建配置快照 */
+  createWorkspaceSnapshot: (workspaceSlug: string, input?: import('@gravitas/shared').CreateWorkspaceSnapshotInput) => Promise<import('@gravitas/shared').WorkspaceConfigSnapshot>
+  /** 列出工作区快照 */
+  listWorkspaceSnapshots: (workspaceSlug: string) => Promise<import('@gravitas/shared').WorkspaceConfigSnapshot[]>
+  /** 获取指定快照 */
+  getWorkspaceSnapshot: (workspaceSlug: string, snapshotId: string) => Promise<import('@gravitas/shared').WorkspaceConfigSnapshot | null>
+  /** 恢复快照 */
+  restoreWorkspaceSnapshot: (workspaceSlug: string, snapshotId: string) => Promise<import('@gravitas/shared').RestoreSnapshotResult>
+  /** 删除快照 */
+  deleteWorkspaceSnapshot: (workspaceSlug: string, snapshotId: string) => Promise<boolean>
   /** 查询本地定时任务与运行记录 */
   listProactiveSchedules: () => Promise<ProactiveSchedule[]>
   listProactiveRuns: () => Promise<ProactiveTaskRun[]>
@@ -1593,6 +1603,37 @@ export interface ElectronAPI {
       }
     }
   }
+
+  // ===== Proactive Center =====
+  proactive: {
+    // Schedules
+    listSchedules: () => Promise<import('@gravitas/shared').ProactiveSchedule[]>
+    listRuns: () => Promise<import('@gravitas/shared').ProactiveTaskRun[]>
+    // Monitors
+    listMonitors: () => Promise<import('@gravitas/shared').ProactiveMonitor[]>
+    createMonitor: (input: unknown) => Promise<import('@gravitas/shared').ProactiveMonitor>
+    updateMonitor: (id: string, updates: unknown) => Promise<import('@gravitas/shared').ProactiveMonitor | null>
+    deleteMonitor: (id: string) => Promise<boolean>
+    setMonitorEnabled: (id: string, enabled: boolean) => Promise<boolean>
+    // Recommendations
+    listRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
+    getPendingRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
+    acceptRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
+    dismissRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
+    deleteRecommendation: (id: string) => Promise<boolean>
+    // Approvals
+    listApprovals: () => Promise<import('@gravitas/shared').ProactiveApproval[]>
+    getPendingApprovals: () => Promise<import('@gravitas/shared').ProactiveApproval[]>
+    approveApproval: (id: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
+    rejectApproval: (id: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
+    // Routines
+    listRoutineManifests: () => Promise<unknown[]>
+    listRoutineInstances: () => Promise<unknown[]>
+    // Memory Plugin
+    listMemoryItems: (kind?: string) => Promise<unknown[]>
+    searchMemoryItems: (query: string) => Promise<unknown[]>
+    getMemoryStats: () => Promise<unknown>
+  }
 }
 
 interface MigrationExportResult {
@@ -2063,6 +2104,14 @@ const electronAPI: ElectronAPI = {
   setComputerUseSettings: (updates: { enabled?: boolean; readOnlyOnly?: boolean }) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_COMPUTER_USE_SETTINGS, updates),
   listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
   exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
+
+  // ===== 配置版本化（工作区配置快照）=====
+  createWorkspaceSnapshot: (workspaceSlug: string, input: import('@gravitas/shared').CreateWorkspaceSnapshotInput = {}) => ipcRenderer.invoke(CONFIG_VERSION_IPC_CHANNELS.CREATE_SNAPSHOT, workspaceSlug, input),
+  listWorkspaceSnapshots: (workspaceSlug: string) => ipcRenderer.invoke(CONFIG_VERSION_IPC_CHANNELS.LIST_SNAPSHOTS, workspaceSlug),
+  getWorkspaceSnapshot: (workspaceSlug: string, snapshotId: string) => ipcRenderer.invoke(CONFIG_VERSION_IPC_CHANNELS.GET_SNAPSHOT, workspaceSlug, snapshotId),
+  restoreWorkspaceSnapshot: (workspaceSlug: string, snapshotId: string) => ipcRenderer.invoke(CONFIG_VERSION_IPC_CHANNELS.RESTORE_SNAPSHOT, workspaceSlug, snapshotId),
+  deleteWorkspaceSnapshot: (workspaceSlug: string, snapshotId: string) => ipcRenderer.invoke(CONFIG_VERSION_IPC_CHANNELS.DELETE_SNAPSHOT, workspaceSlug, snapshotId),
+
   listProactiveSchedules: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES),
   listProactiveRuns: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS),
   createProactiveSchedule: (input: CreateProactiveScheduleInput) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, input),
@@ -3457,6 +3506,37 @@ const electronAPI: ElectronAPI = {
         updateRule: (id, patch) => ipcRenderer.invoke(PAID_MEDIA_IPC_CHANNELS.UPDATE_RULE, id, patch),
       },
     },
+  },
+
+  // ===== Proactive Center =====
+  proactive: {
+    // Schedules (复用 AGENT_IPC_CHANNELS)
+    listSchedules: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES),
+    listRuns: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS),
+    // Monitors
+    listMonitors: () => ipcRenderer.invoke('proactive:listMonitors'),
+    createMonitor: (input: unknown) => ipcRenderer.invoke('proactive:createMonitor', input),
+    updateMonitor: (id: string, updates: unknown) => ipcRenderer.invoke('proactive:updateMonitor', id, updates),
+    deleteMonitor: (id: string) => ipcRenderer.invoke('proactive:deleteMonitor', id),
+    setMonitorEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('proactive:setMonitorEnabled', id, enabled),
+    // Recommendations
+    listRecommendations: () => ipcRenderer.invoke('proactive:listRecommendations'),
+    getPendingRecommendations: () => ipcRenderer.invoke('proactive:getPendingRecommendations'),
+    acceptRecommendation: (id: string) => ipcRenderer.invoke('proactive:acceptRecommendation', id),
+    dismissRecommendation: (id: string) => ipcRenderer.invoke('proactive:dismissRecommendation', id),
+    deleteRecommendation: (id: string) => ipcRenderer.invoke('proactive:deleteRecommendation', id),
+    // Approvals
+    listApprovals: () => ipcRenderer.invoke('proactive:listApprovals'),
+    getPendingApprovals: () => ipcRenderer.invoke('proactive:getPendingApprovals'),
+    approveApproval: (id: string) => ipcRenderer.invoke('proactive:approveApproval', id),
+    rejectApproval: (id: string) => ipcRenderer.invoke('proactive:rejectApproval', id),
+    // Routines
+    listRoutineManifests: () => ipcRenderer.invoke('proactive:listRoutineManifests'),
+    listRoutineInstances: () => ipcRenderer.invoke('proactive:listRoutineInstances'),
+    // Memory Plugin
+    listMemoryItems: (kind?: string) => ipcRenderer.invoke('memory:listItems', kind),
+    searchMemoryItems: (query: string) => ipcRenderer.invoke('memory:searchItems', query),
+    getMemoryStats: () => ipcRenderer.invoke('memory:getStats'),
   },
 }
 
