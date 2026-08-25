@@ -68,6 +68,14 @@ import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './
 import { createCookieSessionAuthResolver, createCompositeAuthResolver } from './auth-resolvers.ts'
 import { hashPassword, verifyPassword } from './local-admin-auth.ts'
 import { createNoneAuthResolver } from './none-auth.ts'
+import {
+  hasWorkspaceRole,
+  canAccessWorkspace,
+  canModifyWorkspace,
+  canManageMembers,
+  type WorkspaceMember,
+  type WorkspaceRole,
+} from './workspace-permission.ts'
 
 export interface PromaWebServerConfig {
   databaseUrl: string
