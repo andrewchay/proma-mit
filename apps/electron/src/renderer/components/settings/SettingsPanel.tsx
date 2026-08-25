@@ -33,6 +33,7 @@ import {
   ChevronDown,
   BarChart3,
   Target,
+  Users,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -69,6 +70,7 @@ import { AutomationSettings } from "./AutomationSettings";
 import { ExtensionSettings } from './ExtensionSettings'
 import { CalendarSyncSettings } from './CalendarSyncSettings'
 import { TokenUsageSettings } from './TokenUsageSettings'
+import { WorkspaceMembersSettings } from './WorkspaceMembersSettings'
 import { EnterpriseSettings } from './EnterpriseSettings'
 import { GoalsSettings } from './GoalsSettings'
 
@@ -161,6 +163,13 @@ const ENTERPRISE_TAB: TabItem = {
   icon: <Server size={16} />,
 };
 
+/** 工作区成员 Tab */
+const WORKSPACE_MEMBERS_TAB: TabItem = {
+  id: 'workspace-members',
+  label: '工作区成员',
+  icon: <Users size={16} />,
+};
+
 /** 尾部 Tabs */
 const TAIL_TABS: TabItem[] = [
   { id: "migration", label: "数据迁移", icon: <HardDriveDownload size={16} /> },
@@ -221,6 +230,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
       GOALS_TAB,
       TUTORIAL_TAB,
       ENTERPRISE_TAB,
+      WORKSPACE_MEMBERS_TAB,
     ],
   },
 ]
@@ -277,6 +287,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <GoalsSettings />
     case 'enterprise':
       return <EnterpriseSettings />
+    case 'workspace-members':
+      return <WorkspaceMembersSettings />
   }
 }
 
