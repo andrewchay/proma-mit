@@ -258,7 +258,15 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
       entrypoints: {},
     },
     isEnabled: () => isMarketingEnabled(readSubscribedCapabilities()),
-    setEnabled: async () => true,
+    setEnabled: async (enabled: boolean) => {
+      try {
+        const { updateSettings } = require('../settings-service') as { updateSettings: (s: { marketingCapabilities?: string[] }) => void }
+        updateSettings({ marketingCapabilities: enabled ? [...DEFAULT_ENABLED_CAPABILITIES] : [] })
+        return true
+      } catch {
+        return false
+      }
+    },
     isSupported: () => true,
     // 向 Agent 注入营销工具（按订阅的领域子域过滤；storyboard/shared 随任一订阅启用）
     contributeTools: () => allMarketingToolDefinitions(readSubscribedCapabilities()),
