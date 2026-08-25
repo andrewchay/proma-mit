@@ -1,6 +1,24 @@
-import { describe, expect, test } from 'bun:test'
-import { registerPlugin, importPluginFromManifest, listPluginStates, setPluginEnabled, removePlugin, type PluginStateView } from './plugin-manager'
+import { describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import type { PluginManifest } from '@gravitas/shared'
+
+// 纯 Bun/单测环境没有真实 Electron runtime。`listPluginStates()` 会遍历内置
+// BUILTIN_RUNTIMES，其中的 computer-use 插件经 `require('./plugins/computer-use-plugin')`
+// 触发 computer-use-service 的 `import * as electron`——非 Electron 进程下解析
+// node_modules/electron 启动器命名导出会报 `WebContentsView not found`。
+// 参照 web-bridge-tools.test.ts / computer-use-plugin.test.ts 的做法：加载前把
+// electron mock 成最小可用实现，并用「顶层动态 import」确保 mock 先注册生效。
+
+mock.module('electron', () => buildElectronMock())
+
+const {
+  registerPlugin,
+  importPluginFromManifest,
+  listPluginStates,
+  setPluginEnabled,
+  removePlugin,
+} = await import('./plugin-manager')
+import type { PluginStateView } from './plugin-manager'
 
 /**
  * PH2-F 插件/SDK 开放测试：

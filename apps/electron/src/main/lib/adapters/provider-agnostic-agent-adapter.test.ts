@@ -6,29 +6,17 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@gravitas/core'
 import type { SDKMessage, SDKResultMessage } from '@gravitas/shared'
 
-class MockBrowserWindow {}
 
 // 被测模块依赖 attachment-service/document-parser，它们会加载 electron，
 // 因此在测试环境中先 mock electron。
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
-  },
-  shell: { openExternal: () => {} },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (plain: string) => Buffer.from(plain),
-    decryptString: (buf: Buffer) => buf.toString('utf-8'),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 
 // 附件富化依赖真实文件系统，在集成测试中 mock 为可控行为
 mock.module('../attachment-service', () => ({

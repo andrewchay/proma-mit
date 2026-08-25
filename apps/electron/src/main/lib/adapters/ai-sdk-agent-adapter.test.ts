@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import type { LanguageModelUsage } from 'ai'
 import type { AgentEvent, SDKMessage } from '@gravitas/shared'
 import type { RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
@@ -19,7 +20,6 @@ let capturedInputs: CapturedStreamTextInput[] = []
 let streamTextMode: 'text' | 'streamed-text' | 'stream-error-after-text' | 'write-tool' | 'queued-text' = 'text'
 let _releaseQueuedStream: (() => void) | undefined
 
-class MockBrowserWindow {}
 
 function usage(): LanguageModelUsage {
   return {
@@ -31,19 +31,7 @@ function usage(): LanguageModelUsage {
   }
 }
 
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
-  },
-  shell: { openExternal: () => {} },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (plain: string) => Buffer.from(plain),
-    decryptString: (buf: Buffer) => buf.toString('utf-8'),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),

@@ -6,25 +6,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-class MockBrowserWindow {}
 
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
-  },
-  shell: { openExternal: () => {} },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (plain: string) => Buffer.from(plain),
-    decryptString: (buf: Buffer) => buf.toString('utf-8'),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),

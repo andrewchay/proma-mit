@@ -28,6 +28,8 @@ import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@gravitas/core'
 
+import { appendConfigAudit, redactSensitive } from './config-audit-service'
+
 /** 当前配置版本 */
 const CONFIG_VERSION = 1
 
@@ -185,6 +187,15 @@ export function createChannel(input: ChannelCreateInput): Channel {
   config.channels.push(channel)
   writeConfig(config)
 
+  // 审计：渠道创建
+  void appendConfigAudit({
+    category: 'channel',
+    action: 'create',
+    targetId: channel.id,
+    targetName: channel.name,
+    afterSnapshot: redactSensitive(channel as unknown as Record<string, unknown>),
+  })
+
   console.log(`[渠道管理] 已创建渠道: ${channel.name} (${channel.id})`)
   return channel
 }
@@ -220,6 +231,16 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
   config.channels[index] = updated
   writeConfig(config)
 
+  // 审计：渠道更新
+  void appendConfigAudit({
+    category: 'channel',
+    action: 'update',
+    targetId: updated.id,
+    targetName: updated.name,
+    beforeSnapshot: redactSensitive(existing as unknown as Record<string, unknown>),
+    afterSnapshot: redactSensitive(updated as unknown as Record<string, unknown>),
+  })
+
   console.log(`[渠道管理] 已更新渠道: ${updated.name} (${updated.id})`)
   return updated
 }
@@ -237,6 +258,15 @@ export function deleteChannel(id: string): void {
 
   const removed = config.channels.splice(index, 1)[0]!
   writeConfig(config)
+
+  // 审计：渠道删除
+  void appendConfigAudit({
+    category: 'channel',
+    action: 'delete',
+    targetId: removed.id,
+    targetName: removed.name,
+    beforeSnapshot: redactSensitive(removed as unknown as Record<string, unknown>),
+  })
 
   console.log(`[渠道管理] 已删除渠道: ${removed.name} (${removed.id})`)
 }
@@ -829,9 +859,17 @@ async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<Ch
   if (!data.usage) return createUnsupportedPlanQuota('kimi-coding', 'Kimi 未返回订阅额度数据')
 
   const windows: ChannelPlanQuotaWindow[] = []
-  // data.usage 是月度总量窗口
-  const monthlyRemaining = clampPercent(Number(data.usage.remaining ?? 0))
-  const monthlyUsed = clampPercent(Number(data.usage.used ?? (100 - monthlyRemaining)))
+  // data.usage 是月度总量窗口；remaining / used 可能是百分比也可能是绝对值，
+  // 统一按 (remaining / (remaining + used)) 计算百分比，避免绝对值被直接当成百分比。
+  const monthlyRemainingRaw = Number(data.usage.remaining ?? 0)
+  const monthlyUsedRaw = Number(data.usage.used ?? 0)
+  const monthlyTotal = monthlyRemainingRaw + monthlyUsedRaw
+  const monthlyRemaining = monthlyTotal > 0
+    ? clampPercent((monthlyRemainingRaw / monthlyTotal) * 100)
+    : clampPercent(monthlyRemainingRaw)
+  const monthlyUsed = monthlyTotal > 0
+    ? clampPercent((monthlyUsedRaw / monthlyTotal) * 100)
+    : clampPercent(100 - monthlyRemaining)
   windows.push({
     type: 'monthly',
     label: '每月额度',
@@ -841,8 +879,11 @@ async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<Ch
   })
 
   for (const item of data.limits ?? []) {
-    const remaining = clampPercent(Number(item.detail.remaining ?? 0))
-    const used = clampPercent(Number(item.detail.used ?? (100 - remaining)))
+    const remainingRaw = Number(item.detail.remaining ?? 0)
+    const usedRaw = Number(item.detail.used ?? 0)
+    const total = remainingRaw + usedRaw
+    const remaining = total > 0 ? clampPercent((remainingRaw / total) * 100) : clampPercent(remainingRaw)
+    const used = total > 0 ? clampPercent((usedRaw / total) * 100) : clampPercent(100 - remaining)
     const duration = item.window.duration
     const isFiveHourWindow = (duration === 5 && item.window.timeUnit === 'TIME_UNIT_HOUR')
       || (duration === 300 && item.window.timeUnit === 'TIME_UNIT_MINUTE')

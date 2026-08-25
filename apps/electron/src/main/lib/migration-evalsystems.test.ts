@@ -1,19 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test, mock } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { existsSync, mkdirSync, rmSync, readFileSync } from 'node:fs'
 
 // ── mock electron + 子服务，避免真实 safeStorage / 网络 ──
-mock.module('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (s: string) => Buffer.from(s, 'utf-8'),
-    decryptString: (b: Buffer) => b.toString('utf-8'),
-  },
-  app: { isPackaged: false, getPath: () => '/tmp' },
-  BrowserWindow: class {},
-  dialog: {},
-}))
+mock.module('electron', () => buildElectronMock())
 
 mock.module('./proxy-fetch', () => ({ getFetchFn: () => globalThis.fetch }))
 mock.module('./proxy-settings-service', () => ({ getEffectiveProxyUrl: async () => undefined }))

@@ -10,7 +10,7 @@ const MAX_AUDIT_EVENTS = 1_000
 export async function listAgentAuditEvents(query: AgentAuditQuery = {}): Promise<AgentAuditEvent[]> {
   const sources = query.source && query.source !== 'all'
     ? [query.source]
-    : ['web-bridge', 'computer-use', 'external-bridge'] as const
+    : ['web-bridge', 'computer-use', 'external-bridge', 'config'] as const
   const events = (await Promise.all(sources.map(readAuditSource))).flat()
     .filter((event) => (!query.sessionId || event.sessionId === query.sessionId) && (!query.action || event.action === query.action))
     .sort((left, right) => right.at.localeCompare(left.at))
@@ -31,7 +31,7 @@ async function readAuditSource(source: AgentAuditEvent['source']): Promise<Agent
       if (!line.trim()) return []
       try {
         const parsed: unknown = JSON.parse(line)
-        if (!isAuditEvent(parsed)) return []
+        if (!isAuditEvent(parsed, source)) return []
         return [{ ...parsed, source }]
       } catch {
         return []
@@ -43,13 +43,18 @@ async function readAuditSource(source: AgentAuditEvent['source']): Promise<Agent
   }
 }
 
-function isAuditEvent(value: unknown): value is Omit<AgentAuditEvent, 'source'> {
-  return typeof value === 'object' && value !== null
-    && typeof (value as Record<string, unknown>).at === 'string'
-    && typeof (value as Record<string, unknown>).sessionId === 'string'
-    && typeof (value as Record<string, unknown>).action === 'string'
-    && typeof (value as Record<string, unknown>).detail === 'object'
-    && (value as Record<string, unknown>).detail !== null
+function isAuditEvent(value: unknown, source: AgentAuditEvent['source']): value is Omit<AgentAuditEvent, 'source'> {
+  if (typeof value !== 'object' || value === null) return false
+  const obj = value as Record<string, unknown>
+  if (typeof obj.at !== 'string') return false
+  if (typeof obj.action !== 'string') return false
+
+  // config 源不需要 sessionId，使用 targetId 替代
+  if (source === 'config') {
+    return typeof obj.targetId === 'string'
+  }
+
+  return typeof obj.sessionId === 'string' && typeof obj.detail === 'object' && obj.detail !== null
 }
 
 function isNotFound(error: unknown): boolean { return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'ENOENT' }

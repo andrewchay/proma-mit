@@ -1,0 +1,2 @@
+[2026-08-24T11:46:10] 启动 ma-media-crawler，配置: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/examples/xhs-detail-config.json
+[2026-08-24T11:46:10] ERROR: 无法连接到 Chrome CDP 端口 9222。请确保 Chrome 已使用 --remote-debugging-port={cdp_port} 启动。

@@ -118,3 +118,60 @@ describe('streamSSE 提前终止检测', () => {
     ).rejects.toThrow(/stream ended prematurely/)
   })
 })
+
+describe('streamSSE 空闲看门狗', () => {
+  /** 构造一个「发出首 chunk 后永久停滞」的流：既不再发数据也不关闭，模拟静默挂起 */
+  function makeHangingFetch(after: number): typeof globalThis.fetch {
+    return (async () => {
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: {"text":"开场"}\n\n`))
+          // 之后不再 enqueue 也不再 close → reader.read() 永久 pending
+          void after
+        },
+      })
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof globalThis.fetch
+  }
+
+  test('空闲超时后抛出可重试的瞬时错误，而不是永远挂起', async () => {
+    const fetchFn = makeHangingFetch(50)
+    await expect(
+      streamSSE({
+        request: { url: 'http://x', headers: {}, body: '' },
+        adapter: googleAdapter,
+        fetchFn,
+        onEvent: () => {},
+        idleTimeoutMs: 80,
+      }),
+    ).rejects.toThrow(/空闲超时|ended without data/i)
+  })
+
+  test('常规数据流在 idleTimeoutMs 内完成时不触发看门狗', async () => {
+    const fetchFn = makeFetch([
+      new TextEncoder().encode('data: {"text":"快速"}\n\n'),
+      new TextEncoder().encode('data: {"text":"完成"}\n\n'),
+    ])
+    const result = await streamSSE({
+      request: { url: 'http://x', headers: {}, body: '' },
+      adapter: googleAdapter,
+      fetchFn,
+      onEvent: () => {},
+      idleTimeoutMs: 2000,
+    })
+    expect(result.content).toBe('快速完成')
+  })
+
+  test('idleTimeoutMs=0 时禁用看门狗（保持旧行为，流挂起则由调用方处理）', async () => {
+    // 这里不等待真实挂起，只验证正常流不受影响
+    const fetchFn = makeFetch([new TextEncoder().encode('data: {"text":"ok"}\n\n')])
+    const result = await streamSSE({
+      request: { url: 'http://x', headers: {}, body: '' },
+      adapter: googleAdapter,
+      fetchFn,
+      onEvent: () => {},
+      idleTimeoutMs: 0,
+    })
+    expect(result.content).toBe('ok')
+  })
+})

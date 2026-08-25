@@ -3,6 +3,7 @@
  */
 
 import { describe, test, expect, afterAll, mock } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import { mkdirSync, rmSync, existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -17,11 +18,7 @@ mock.module('os', () => ({
   tmpdir,
 }))
 
-mock.module('electron', () => ({
-  BrowserWindow: class {},
-  app: { isPackaged: false },
-  dialog: {},
-}))
+mock.module('electron', () => buildElectronMock())
 
 const { buildSessionEvidence, formatEvidenceSummary } = await import('./evidence-service')
 

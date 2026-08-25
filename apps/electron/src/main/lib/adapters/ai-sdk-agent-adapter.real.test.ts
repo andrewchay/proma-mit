@@ -8,28 +8,12 @@
  */
 
 import { describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import type { AgentEvent, ProviderType, SDKMessage, SDKResultMessage } from '@gravitas/shared'
 import { getAgentCompatibleProviders, PROVIDER_DEFAULT_URLS } from '@gravitas/shared'
 
-class MockBrowserWindow {}
 
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  session: { fromPartition: () => ({ setPermissionRequestHandler: () => {} }) },
-  app: { isReady: () => true },
-  desktopCapturer: { getSources: async () => [] },
-  screen: { getPrimaryDisplay: () => ({ bounds: { width: 0, height: 0 } }) },
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
-  },
-  shell: { openExternal: () => {} },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (plain: string) => Buffer.from(plain),
-    decryptString: (buf: Buffer) => buf.toString('utf-8'),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),

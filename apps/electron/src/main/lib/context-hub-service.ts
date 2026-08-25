@@ -6,16 +6,19 @@
  *
  * 关联（by 字段）：
  *   Run  ↔  sessionId / workspaceId / memberId / goalId
+ *   WorkflowRun ↔  workflowId / sessionId / triggerEvent
+ *   AutomationRun ↔  scheduleId / sessionId
  *   FileEvent ↔ sessionId / memberId
  *   TodoEvent  ↔ todoId / memberId
  *   Task        ↔ projectId / assignee
  *   日程        ↔ 时间
+ *   Artifact    ↔ sessionId / runId / workflowRunId
  *
  * 设计：单入口 getEntityGraph(entityType, entityId)，返回「该实体 + 它的相关上下文」。
  * 数据源懒加载（避免无 electron 单测崩溃）。
  */
 
-export type ContextEntityType = 'run' | 'session' | 'task' | 'file_event' | 'todo_event' | 'calendar' | 'member'
+export type ContextEntityType = 'run' | 'session' | 'task' | 'file_event' | 'todo_event' | 'calendar' | 'member' | 'workflow_run' | 'automation_run' | 'artifact'
 
 export interface ContextNode {
   type: ContextEntityType
@@ -23,6 +26,10 @@ export interface ContextNode {
   title: string
   /** 附加信息（如 run 状态、file 路径、member 名） */
   detail?: string
+  /** 来源系统 */
+  source?: string
+  /** 最后更新时间 */
+  updatedAt?: number
 }
 
 export interface ContextGraph {
@@ -37,6 +44,48 @@ export function getEntityGraph(entityType: ContextEntityType, entityId: string):
     const { getRunStore } = require('./run-store') as { getRunStore: () => { query: (q: object) => Array<{ runId: string; sessionId?: string; workspaceId?: string; memberId?: string; goalId?: string; source: string; status: string; title: string }> } }
     const listTodoEvents = (require('./todo-event-service') as { listTodoEvents: (q: object) => Array<{ todoId: string; memberId?: string; title: string; action: string; status?: string }> }).listTodoEvents
     const listFileEvents = (require('./workspace-file-event-service') as { listFileEvents: (q: object) => Array<{ id: string; sessionId: string; memberId?: string; filePath: string; action: string }> }).listFileEvents
+    // PH2-D 增强：Workflow Run 与 Automation Run
+    const listWorkflowRuns = (() => {
+      try {
+        const ws = require('./workflow-service') as { listWorkflowRuns: (workflowId: string) => Array<{ id: string; status: string; title?: string; sessionId?: string; trigger?: string; createdAt: number }> }
+        const defs = (require('./workflow-service') as { listWorkflowDefinitions: () => Array<{ id: string }> }).listWorkflowDefinitions()
+        const all: Array<{ id: string; workflowId: string; status: string; title: string; sessionId?: string; trigger?: string; createdAt: number }> = []
+        for (const def of defs) {
+          for (const run of ws.listWorkflowRuns(def.id)) {
+            all.push({ ...run, workflowId: def.id, title: run.title ?? `Workflow Run ${run.id.slice(0, 8)}` })
+          }
+        }
+        return all
+      } catch { return [] }
+    })()
+    const listAutomationRuns = (() => {
+      try {
+        const { listRuns } = require('./proactive-scheduler-store') as { listRuns: () => Array<{ id: string; scheduleId: string; status: string; startedAt?: number; completedAt?: number; outputSummary?: string }> }
+        return listRuns().map((r) => ({ ...r, title: r.outputSummary ?? `Automation Run ${r.id.slice(0, 8)}` }))
+      } catch { return [] }
+    })()
+    // PH2-D 增强：Artifact（产物）扫描
+    const listArtifacts = (() => {
+      try {
+        const { getConfigDir } = require('./config-paths') as { getConfigDir: () => string }
+        const { readdirSync, existsSync, statSync } = require('node:fs') as typeof import('node:fs')
+        const { join } = require('node:path') as typeof import('node:path')
+        const artifactDir = join(getConfigDir(), 'artifacts')
+        if (!existsSync(artifactDir)) return []
+        const artifacts: Array<{ id: string; name: string; path: string; mtime: number }> = []
+        for (const entry of readdirSync(artifactDir, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            const subDir = join(artifactDir, entry.name)
+            for (const file of readdirSync(subDir)) {
+              const fp = join(subDir, file)
+              const st = statSync(fp)
+              artifacts.push({ id: `${entry.name}/${file}`, name: file, path: fp, mtime: st.mtimeMs })
+            }
+          }
+        }
+        return artifacts
+      } catch { return [] }
+    })()
 
     const entity: ContextNode = { type: entityType, id: entityId, title: entityTitle(entityType, entityId) }
     const related: ContextNode[] = []
@@ -102,6 +151,38 @@ export function getEntityGraph(entityType: ContextEntityType, entityId: string):
         if (te?.memberId) related.push({ type: 'member', id: te.memberId, title: memberTitle(te.memberId) })
         break
       }
+      case 'workflow_run': {
+        const wr = listWorkflowRuns.find((r) => r.id === entityId)
+        if (wr) {
+          related.push({ type: 'session', id: wr.sessionId ?? wr.id, title: `会话 ${(wr.sessionId ?? wr.id).slice(0, 12)}`, source: 'workflow', updatedAt: wr.createdAt })
+          // 关联到同 session 的 Agent Run
+          for (const r of runs.filter((r) => r.sessionId && r.sessionId === wr.sessionId)) {
+            related.push({ type: 'run', id: r.runId, title: r.title, detail: r.status, source: r.source })
+          }
+        }
+        break
+      }
+      case 'automation_run': {
+        const ar = listAutomationRuns.find((r) => r.id === entityId)
+        if (ar) {
+          related.push({ type: 'run', id: ar.id, title: ar.title, detail: ar.status, source: 'automation', updatedAt: ar.startedAt })
+          // 关联到同 schedule 的其他 run
+          for (const other of listAutomationRuns.filter((r) => r.scheduleId === ar.scheduleId && r.id !== ar.id).slice(0, 5)) {
+            related.push({ type: 'automation_run', id: other.id, title: other.title, detail: other.status, source: 'automation', updatedAt: other.startedAt })
+          }
+        }
+        break
+      }
+      case 'artifact': {
+        const art = listArtifacts.find((a: { id: string }) => a.id === entityId)
+        if (art) {
+          related.push({ type: 'file_event', id: art.id, title: art.name, detail: art.path, updatedAt: art.mtime })
+          // 从文件路径反推可能关联的 session（按路径中的 sessionId 片段）
+          const sessionMatch = art.path.match(/session[_-]?([a-f0-9-]{8,})/i)
+          if (sessionMatch && sessionMatch[1]) related.push({ type: 'session', id: sessionMatch[1], title: `会话 ${sessionMatch[1].slice(0, 12)}` })
+        }
+        break
+      }
       default:
         break
     }
@@ -130,6 +211,9 @@ function entityTitle(type: ContextEntityType, id: string): string {
     case 'run': return `运行 ${id.slice(0, 12)}`
     case 'file_event': return `文件事件 ${id.slice(0, 12)}`
     case 'todo_event': return `待办 ${id.slice(0, 12)}`
+    case 'workflow_run': return `Workflow ${id.slice(0, 12)}`
+    case 'automation_run': return `Automation ${id.slice(0, 12)}`
+    case 'artifact': return `产物 ${id.slice(0, 20)}`
     default: return id
   }
 }

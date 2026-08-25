@@ -1,19 +1,11 @@
 import { describe, expect, test, beforeEach, afterAll, mock } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import type { Channel } from '@gravitas/shared'
 
 // mock channel-manager 的 electron 依赖：避免真实 safeStorage。
 // 注意：bun 的 mock.module('electron') 是跨文件共享的，必须同时提供其他测试文件
 //（agent-session-manager / runtime-services）所需的字段，否则并发执行会互相破坏。
-mock.module('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (s: string) => Buffer.from(s, 'utf-8'),
-    decryptString: (b: Buffer) => b.toString('utf-8'),
-  },
-  app: { isPackaged: false },
-  BrowserWindow: class {},
-  dialog: {},
-}))
+mock.module('electron', () => buildElectronMock())
 
 mock.module('./proxy-fetch', () => ({
   getFetchFn: () => globalThis.fetch,

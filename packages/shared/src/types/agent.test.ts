@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   AGENT_RUNTIME_CAPABILITIES,
   AGENT_IPC_CHANNELS,
+  DEFAULT_AGENT_RUNTIME,
   createAgentStreamEnvelope,
   getAgentRuntimeHistorySemantics,
   getAgentRuntimeLabel,
@@ -11,10 +12,11 @@ import {
 } from './agent'
 
 describe('Agent runtime 类型', () => {
-  test('识别 AI SDK runtime 并保留旧值回退行为', () => {
+  test('识别 AI SDK runtime 并回退到默认 runtime', () => {
     expect(isAgentRuntime('ai-sdk')).toBe(true)
     expect(getAgentRuntimeLabel('ai-sdk')).toBe('AI SDK')
-    expect(normalizeAgentRuntime('unknown')).toBe('claude')
+    // DEFAULT_AGENT_RUNTIME 已由 claude 改为 pi（fix(runtime)），未知值回退到默认 runtime
+    expect(normalizeAgentRuntime('unknown')).toBe(DEFAULT_AGENT_RUNTIME)
   })
 
   test('AI SDK runtime 能力声明匹配当前工具体系接入状态', () => {

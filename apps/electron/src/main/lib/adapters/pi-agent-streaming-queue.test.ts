@@ -6,21 +6,9 @@
  */
 
 import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 
-class MockBrowserWindow {}
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
-  },
-  shell: { openExternal: () => {} },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (s: string) => Buffer.from(s),
-    decryptString: (b: Buffer) => b.toString('utf-8'),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 mock.module('../attachment-service', () => ({
   isImageAttachment: () => false,
   readAttachmentAsBase64: () => 'base64:mock',

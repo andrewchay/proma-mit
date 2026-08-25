@@ -6,23 +6,36 @@
  */
 
 import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
+import { buildElectronMock } from '../testing/electron-mock'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SDKMessage } from '@gravitas/shared'
-import { getAgentSessionMessagesPath } from '../config-paths'
 
-class MockBrowserWindow {}
-mock.module('electron', () => ({
-  app: { isPackaged: false },
-  BrowserWindow: MockBrowserWindow,
-  dialog: {},
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (s: string) => Buffer.from(s),
-    decryptString: (b: Buffer) => b.toString('utf-8'),
+mock.module('electron', () => buildElectronMock())
+
+// 内存版 SDK 会话存储：隔离真实 JSONL 文件 I/O。
+// 背景：bun 全量高并发下，对同一路径「先写后立即读」存在 fs 可见性 flaky，
+// 导致 compactSDKMessages 内 getAgentSessionSDKMessages 读到空、压缩后文件只剩 1 行。
+// 这里用内存 Map 实现相同语义，验证 maybeAutoCompact 的摘要/编排逻辑；
+// 真实 JSONL 读写在 agent-session-manager 自身测试已覆盖。
+const inMemorySdk = new Map<string, SDKMessage[]>()
+mock.module('../agent-session-manager', () => ({
+  getAgentSessionSDKMessages: (id: string): SDKMessage[] => inMemorySdk.get(id) ?? [],
+  compactSDKMessages: (id: string, summary: string, keepRecent: number): SDKMessage[] => {
+    const all = inMemorySdk.get(id) ?? []
+    const keepCount = Math.max(0, Math.min(keepRecent, all.length))
+    const kept = all.slice(all.length - keepCount)
+    const boundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: id,
+      summary,
+    } as unknown as SDKMessage
+    const result = [boundary, ...kept]
+    inMemorySdk.set(id, result)
+    return result
   },
-  shell: { openExternal: () => {} },
 }))
 
 let capturedSummaryPrompt = ''
@@ -107,12 +120,10 @@ describe('上下文压缩（Proma / AI SDK）', () => {
   })
 
   test('maybeAutoCompact：超过阈值时压缩并持久化 boundary', async () => {
-    // 先写入会话消息文件（compactSDKMessages 会读它）
+    // 写入内存会话历史（compactSDKMessages 内存版会读它），隔离真实文件 I/O
     const sessionId = 's2'
-    const messagesPath = getAgentSessionMessagesPath(sessionId)
-    mkdirSync(join(tempDir, 'agent-workspaces', 'sessions'), { recursive: true })
     const history = makeHistory(65)
-    writeFileSync(messagesPath, history.map((m) => JSON.stringify(m)).join('\n') + '\n', 'utf-8')
+    inMemorySdk.set(sessionId, history)
 
     const result = await maybeAutoCompact({
       sessionId,
@@ -128,15 +139,17 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     // 摘要 prompt 应包含早期历史
     expect(capturedSummaryPrompt).toContain('消息 0')
 
-    // 持久化：文件应为 boundary + 最近 20 条
-    const persisted = readFileSync(messagesPath, 'utf-8').trim().split('\n')
+    // 持久化（内存版）：应为 boundary + 最近 20 条
+    const persisted = inMemorySdk.get(sessionId) ?? []
     expect(persisted.length).toBe(DEFAULT_KEEP_RECENT_MESSAGES + 1)
-    const boundary = JSON.parse(persisted[0]!)
-    expect(boundary.type).toBe('system')
-    expect(boundary.subtype).toBe('compact_boundary')
-    expect(boundary.summary).toContain('【摘要】')
+    const boundary = persisted[0] as { type?: string; subtype?: string; summary?: string }
+    expect(boundary?.type).toBe('system')
+    expect(boundary?.subtype).toBe('compact_boundary')
+    expect(boundary?.summary).toContain('【摘要】')
     // 最近消息仍在
-    expect(JSON.stringify(persisted[persisted.length - 1]!)).toContain('消息 64')
+    expect(JSON.stringify(persisted[persisted.length - 1])).toContain('消息 64')
+    // result.history 与持久化一致
+    expect(result.history.length).toBe(persisted.length)
   })
 
   test('maybeAutoCompact：早期文本过小不压缩', async () => {

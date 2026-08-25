@@ -1,13 +1,8 @@
 import { describe, expect, test, mock } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 
 // 拦截 electron 依赖（channel-manager 需要 safeStorage）
-mock.module('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (plain: string) => Buffer.from(plain),
-    decryptString: (buf: Buffer) => buf.toString('utf-8'),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 
 const { isVisionRelayEligibleForModel } = await import('./vision-relay-service')
 

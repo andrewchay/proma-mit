@@ -3,6 +3,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import { mkdirSync, rmSync, existsSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
@@ -12,18 +13,13 @@ import type { SDKAssistantMessage, SDKMessage, AgentStreamPayload } from '@gravi
 const originalHomedir = homedir()
 const tempHomeDir = mkdtempSync(join(tmpdir(), 'proma-token-usage-test-'))
 
-class MockBrowserWindow {}
 
 mock.module('os', () => ({
   homedir: () => tempHomeDir,
   tmpdir,
 }))
 
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  app: { isPackaged: false },
-  dialog: {},
-}))
+mock.module('electron', () => buildElectronMock())
 
 mock.module('./agent-session-manager', () => ({
   getAgentSessionMeta: () => ({

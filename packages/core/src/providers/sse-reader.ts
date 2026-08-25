@@ -26,6 +26,17 @@ export interface StreamSSEOptions {
   signal?: AbortSignal
   /** 自定义 fetch 函数（代理等场景下由调用方注入） */
   fetchFn?: typeof globalThis.fetch
+  /**
+   * 流式读取的空闲看门狗超时（毫秒）。
+   *
+   * 解决「SSE 中途无任何数据、连接也不报错 → 静默挂起」问题：
+   * 若在 idleTimeoutMs 内 `reader.read()` 从未返回任何数据，判定为挂起/断流，
+   * 自动 abort 底层 fetch 并抛出一个可重试的瞬时网络错误，让上层 withRetry /
+   * Pi 断流重试接管，避免会话永远卡死。任何实际数据到达都会重置计时。
+   *
+   * 默认 120_000（120s）。传入 0 或负数可禁用看门狗（保持旧行为）。
+   */
+  idleTimeoutMs?: number
 }
 
 /** streamSSE 的返回结果 */
@@ -64,12 +75,25 @@ export interface StreamSSEResult {
 export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSEResult> {
   const { request, adapter, onEvent, signal, fetchFn = fetch } = options
 
+  // 空闲看门狗：在「流无任何数据到达」时判定挂起并中断，避免静默卡死。
+  const idleTimeoutMs = options.idleTimeoutMs ?? 120_000
+  const idleEnabled = idleTimeoutMs > 0
+  const idleEnabledRef = { enabled: idleEnabled, ms: idleTimeoutMs }
+
+  // 内部 controller：既响应外部 abort，也负责超时自中断（fetch 只能绑定一个 signal）。
+  const idleController = new AbortController()
+  if (idleEnabled && signal) {
+    if (signal.aborted) idleController.abort()
+    else signal.addEventListener('abort', () => idleController.abort(), { once: true })
+  }
+  const effectiveSignal = idleEnabled ? idleController.signal : signal
+
   // 1. 发起请求（支持通过 fetchFn 注入代理）
   const response = await fetchFn(request.url, {
     method: 'POST',
     headers: request.headers,
     body: request.body,
-    signal,
+    signal: effectiveSignal,
   })
 
   // 2. 错误检查
@@ -110,8 +134,47 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
   let sawTerminator = false
 
   try {
+    // 空闲看门狗：对每次 reader.read() 单独计时——若某次 read 在 idleTimeoutMs 内
+    // 没有任何数据返回（读挂起），判定为静默挂起：取消底层 fetch 并抛可重试的
+    // 瞬时网络错误，让上层 withRetry / Pi 断流重试接管，避免会话永远卡死。
+    type ReadResult = Awaited<ReturnType<typeof reader.read>>
+    const readWithIdleGuard = async (): Promise<ReadResult> => {
+      if (!idleEnabledRef.enabled) return reader.read()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let rejectRead: ((e: Error) => void) | null = null
+      // 标记本次 read 是否因看门狗空闲超时而被中断（区别于用户/外部 abort）。
+      let idleTimedOut = false
+      const readPromise = reader.read().catch((e: unknown) => {
+        const err = e instanceof Error ? e : new Error(String(e))
+        // 仅当本次中断确由看门狗超时触发时才吞掉 AbortError（交由下方竞态中的拒绝分支
+        // 抛出统一的空闲超时错误）；外部 abort（用户中断）应原样抛出，交给上层 abort 处理。
+        if (err.name === 'AbortError' && idleTimedOut) return { done: true, value: undefined } as unknown as ReadResult
+        throw err
+      })
+      timer = setTimeout(() => {
+        idleTimedOut = true
+        const err = new Error(
+          `${adapter.providerType} SSE 流空闲超时 (no data for ${idleEnabledRef.ms}ms): stream ended without data`
+        )
+        err.name = 'AbortError'
+        idleController.abort()
+        rejectRead?.(err)
+      }, idleEnabledRef.ms)
+      try {
+        return await Promise.race<ReadResult>([
+          readPromise,
+          new Promise<ReadResult>((_resolve, reject) => {
+            rejectRead = reject
+          }),
+        ])
+      } finally {
+        if (timer) clearTimeout(timer)
+        rejectRead = null
+      }
+    }
+
     while (true) {
-      const { done, value } = await reader.read()
+      const { done, value } = await readWithIdleGuard()
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })

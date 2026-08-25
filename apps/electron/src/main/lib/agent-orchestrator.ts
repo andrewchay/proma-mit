@@ -56,6 +56,7 @@ import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, g
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getRuntimeStatus } from './runtime-init'
 import { getSettings } from './settings-service'
+import { getContextStoreService } from './context-store-service'
 import { resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
 import { logInfo, logError } from './file-logger'
 import { buildSystemPrompt, buildDynamicContext, buildBuiltinAgents } from './agent-prompt-builder'
@@ -918,6 +919,7 @@ export class AgentOrchestrator {
           parent_tool_use_id: null,
           uuid: userMessageUuid,
           _attachments: attachments,
+          _createdAt: Date.now(),
         } as unknown as SDKMessage
         appendSDKMessages(sessionId, [userSDKMsg])
       }
@@ -1024,6 +1026,7 @@ export class AgentOrchestrator {
           sessionId,
           permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
           memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
+          localContextStoreEnabled: getSettings().localContextStore?.enabled !== false && !!workspaceSlug,
           claudeAvailable: false,
           collaborationAvailable: !!workspaceId && !isDelegationSession,
           pluginToolPrompts: collectPluginPrompts(),
@@ -1034,6 +1037,12 @@ export class AgentOrchestrator {
       for await (const msg of this.adapter.query(queryOptions)) {
         // Pi 的流式快照只用于即时展示；只持久化最终帧，避免历史中重复累计文本。
         if (!(msg as Record<string, unknown>)._partial) accumulatedMessages.push(msg)
+        // 为消息补充真实的 _createdAt 时间戳（Pi 产出的消息不携带时间），
+        // 保证实时渲染与持久化历史都能显示"当时对话发生时间"。
+        // 注意：需在 emit 之前设置，使实时流在渲染层也能拿到同一时间（liveMessages 已带 _createdAt 则不再覆盖）。
+        if (typeof (msg as Record<string, unknown>)._createdAt !== 'number') {
+          ;(msg as Record<string, unknown>)._createdAt = Date.now()
+        }
         this.eventBus.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
 
         if (msg.type === 'assistant' && !this.hasTitle(sessionId)) {
@@ -1046,6 +1055,28 @@ export class AgentOrchestrator {
 
       if (accumulatedMessages.length > 0) {
         appendSDKMessages(sessionId, accumulatedMessages)
+        // 本地上下文存储：自动索引会话消息
+        const localCtxEnabled = getSettings().localContextStore?.enabled !== false
+        if (localCtxEnabled && workspaceSlug) {
+          try {
+            const ctxService = getContextStoreService()
+            for (const msg of accumulatedMessages) {
+              const role = msg.type === 'user' ? 'user' : msg.type === 'assistant' ? 'assistant' : 'tool'
+              const content = this.extractTextFromSDKMessage(msg as SDKAssistantMessage) ?? ''
+              if (content) {
+                await ctxService.indexMessage(
+                  workspaceSlug,
+                  sessionId,
+                  role,
+                  content,
+                  (msg as Record<string, unknown>)._createdAt as number ?? Date.now(),
+                )
+              }
+            }
+          } catch (err) {
+            console.error('[Agent 编排] 本地上下文索引失败:', err)
+          }
+        }
       }
 
       const durationMs = startedAt ? Date.now() - startedAt : 0
@@ -1410,6 +1441,60 @@ export class AgentOrchestrator {
       console.log(`[Agent 编排] 已注入内置记忆工具 (mem)`)
     } catch (err) {
       console.error(`[Agent 编排] 注入记忆工具失败:`, err)
+    }
+  }
+
+  /**
+   * 注入本地上下文存储 MCP 工具（agent 主动召回工作区历史）。
+   *
+   * 与 MemOS Cloud 记忆（injectMemoryTools）并行：云端记长期偏好，
+   * 本地 context-store 记工作区历史（消息、工具调用），都可被 Agent 主动召回。
+   * 受 AppSettings.localContextStore.enabled 控制（默认启用）。
+   */
+  private async injectLocalContextTools(
+    sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
+    mcpServers: Record<string, Record<string, unknown>>,
+    workspaceSlug?: string,
+  ): Promise<void> {
+    if (getSettings().localContextStore?.enabled === false) return
+    if (!workspaceSlug) return
+
+    try {
+      const { z } = await import('zod')
+      const ctxService = getContextStoreService()
+      const localServer = sdk.createSdkMcpServer({
+        name: 'local_context',
+        version: '1.0.0',
+        tools: [
+          sdk.tool(
+            'local_context_recall',
+            'Search the local workspace context store (indexed session history, tool call results) for relevant past records. Use this to actively recall what was discussed or done in this workspace before, complementing cloud memory. Scoped to the current workspace.',
+            {
+              query: z.string().describe('Search query for local context recall'),
+              limit: z.number().optional().describe('Max results (default 5)'),
+            },
+            async (args) => {
+              const result = await ctxService.recall(workspaceSlug, args.query, args.limit)
+              if (result.hits.length === 0) {
+                return { content: [{ type: 'text' as const, text: '（本地上下文存储未检索到相关记录）' }] }
+              }
+              const lines = result.hits.map((hit, i) => {
+                const e = hit.entity
+                const when = new Date(e.occurredAt).toISOString().slice(0, 16).replace('T', ' ')
+                const text = (e.content ?? e.title ?? '').slice(0, 200)
+                return `[${String(i + 1)}] ${when} ${e.title}\n${text}`
+              })
+              const note = result.relaxed ? '（已放宽词序匹配，相关性可能略低）\n' : ''
+              return { content: [{ type: 'text' as const, text: note + lines.join('\n---\n') }] }
+            },
+            { annotations: { readOnlyHint: true } },
+          ),
+        ],
+      })
+      mcpServers['local_context'] = localServer as unknown as Record<string, unknown>
+      console.log(`[Agent 编排] 已注入本地上下文工具 (local_context)`)
+    } catch (err) {
+      console.error(`[Agent 编排] 注入本地上下文工具失败:`, err)
     }
   }
 
@@ -1857,10 +1942,31 @@ export class AgentOrchestrator {
         }
       }
 
+      // 本地上下文召回（context-store）
+      let recalledContext: string | undefined
+      const localCtxEnabled = getSettings().localContextStore?.enabled !== false
+      if (localCtxEnabled && runtimeWorkspaceSlug) {
+        try {
+          const ctxService = getContextStoreService()
+          const recallResult = await ctxService.recall(runtimeWorkspaceSlug, userMessage, 5)
+          if (recallResult.hits.length > 0) {
+            const lines = recallResult.hits.map((hit, i) => {
+              const e = hit.entity
+              const when = new Date(e.occurredAt).toISOString().slice(0, 16).replace('T', ' ')
+              return `[${i + 1}] ${when} ${e.title}`
+            })
+            recalledContext = `<recalled_context>\n以下是从本地上下文存储召回的相关历史记录：\n${lines.join('\n')}\n</recalled_context>`
+          }
+        } catch (err) {
+          console.error('[Agent 编排] 本地上下文召回失败:', err)
+        }
+      }
+
       const dynamicCtx = buildDynamicContext({
         workspaceName: runtimeWorkspace?.name,
         workspaceSlug: runtimeWorkspaceSlug,
         agentCwd: runtimeAgentCwd,
+        recalledContext,
       })
 
       let enrichedMessage = userMessage
@@ -2106,6 +2212,7 @@ export class AgentOrchestrator {
         : undefined
       const mcpServers = this.buildMcpServers(workspaceSlug, workflowMcpNames)
       await this.injectMemoryTools(sdk, mcpServers)
+      await this.injectLocalContextTools(sdk, mcpServers, workspaceSlug)
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
       await this.injectGoalTools(sdk, mcpServers, sessionId)
 
@@ -2134,10 +2241,31 @@ export class AgentOrchestrator {
       }
 
       // 11. 构建动态上下文和最终 prompt
+      // 本地上下文召回（context-store）
+      let recalledContext: string | undefined
+      const localCtxEnabled = getSettings().localContextStore?.enabled !== false
+      if (localCtxEnabled && workspaceSlug) {
+        try {
+          const ctxService = getContextStoreService()
+          const recallResult = await ctxService.recall(workspaceSlug, userMessage, 5)
+          if (recallResult.hits.length > 0) {
+            const lines = recallResult.hits.map((hit, i) => {
+              const e = hit.entity
+              const when = new Date(e.occurredAt).toISOString().slice(0, 16).replace('T', ' ')
+              return `[${i + 1}] ${when} ${e.title}`
+            })
+            recalledContext = `<recalled_context>\n以下是从本地上下文存储召回的相关历史记录：\n${lines.join('\n')}\n</recalled_context>`
+          }
+        } catch (err) {
+          console.error('[Agent 编排] 本地上下文召回失败:', err)
+        }
+      }
+
       const dynamicCtx = buildDynamicContext({
         workspaceName: workspace?.name,
         workspaceSlug,
         agentCwd,
+        recalledContext,
       })
 
       // 11.5 注入 mention 引用指令（Skill/MCP/会话）— 仅影响 prompt，不影响持久化
@@ -2425,6 +2553,7 @@ export class AgentOrchestrator {
             sessionId,
             permissionMode: initialPermissionMode,
             memoryEnabled: (() => { const mc = getMemoryConfig(); return mc.enabled && !!mc.apiKey })(),
+            localContextStoreEnabled: getSettings().localContextStore?.enabled !== false && !!workspaceSlug,
             claudeAvailable,
             collaborationAvailable,
             pluginToolPrompts: collectPluginPrompts(),

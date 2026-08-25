@@ -77,6 +77,19 @@ interface AsyncQueue<T> {
 
 const PI_PARTIAL_UPDATE_INTERVAL_MS = 50
 
+/**
+ * Pi 会话级空闲看门狗阈值（毫秒）。
+ *
+ * 若一次 session.prompt() 执行期间，Pi 在 idleTimeoutMs 内未发出任何
+ * message_update / message_end / agent_end / tool 等事件，判定为静默挂起：
+ * abort 底层会话并抛出可重试的瞬时错误，交由断流重试接管，避免会话永远卡死。
+ * 与 @gravitas/core streamSSE 的空闲看门狗阈值保持一致。
+ */
+const PI_PROMPT_IDLE_TIMEOUT_MS = 120_000
+
+/** 看门狗活动轮询间隔（毫秒） */
+const PI_PROMPT_IDLE_POLL_MS = 2_000
+
 /** 构造中止错误（interrupt / abort 场景） */
 function createAbortError(): Error {
   const error = new Error('操作已中止')
@@ -359,6 +372,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const queue = createAsyncQueue<SDKMessage>()
     let assistantUuid: string | undefined
     let deferredRetryError: SDKMessage | undefined
+    // 「流活动」时间戳：Pi 事件（message_update/message_end/agent_end/tool 等）到达时刷新。
+    // 供看门狗判断会话是否仍在产出；长时间无任何事件则判定静默挂起。
+    let lastActivityAt = Date.now()
+    const touchActivity = (): void => { lastActivityAt = Date.now() }
     const assistantUuidFor = (): string => {
       assistantUuid ??= randomUUID()
       return assistantUuid
@@ -375,10 +392,12 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       if (event.type === 'message_update' && isAssistantPiMessage(event.message)) {
         // 原生 retry 前的 error assistant 只是暂态；不能先显示再等待 agent_end.willRetry。
         if (event.message.stopReason === 'error') return
+        touchActivity()
         partialAssistantCoalescer.schedule(event.message)
         return
       }
       if (event.type === 'message_end') {
+        touchActivity()
         partialAssistantCoalescer.flush()
         const message = convertPiMessageToSDKMessage(event.message, sessionId, model, {
           final: true,
@@ -395,12 +414,14 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'agent_end') {
+        touchActivity()
         if (!event.willRetry && deferredRetryError) queue.push(deferredRetryError)
         deferredRetryError = undefined
         if (!event.willRetry) resetAssistantUuid()
         return
       }
       if (event.type === 'auto_retry_start') {
+        touchActivity()
         onAgentEvent?.({
           type: 'retrying',
           attempt: event.attempt,
@@ -425,6 +446,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'tool_execution_update') {
+        touchActivity()
         onAgentEvent?.({ type: 'task_progress', toolUseId: event.toolCallId })
         return
       }
@@ -453,6 +475,51 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
       // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
       const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
+
+      /**
+       * 带空闲看门狗的 Pi prompt 执行。
+       *
+       * Pi 的 session.prompt() 在「SSE 中途无数据但连接未断」时会永久挂起、既不
+       * resolve 也不 reject（日志表现为『会话开始后长时间无完成』）。这里轮询
+       * lastActivityAt（由 session.subscribe 事件刷新），若 idleTimeoutMs 内无任何
+       * 活动则 abort 底层会话并抛出可重试的瞬时错误，交由 retryablePromptChain 重试，
+       * 避免会话永远卡死。
+       */
+      const promptWithIdleWatchdog = async (promptText: string): Promise<void> => {
+        // 每次 prompt 开始时重置活动时钟，避免沿用上一轮的旧时间戳导致立即误判超时。
+        lastActivityAt = Date.now()
+        let timer: ReturnType<typeof setInterval> | undefined
+        let rejectExec: ((e: Error) => void) | null = null
+        if (PI_PROMPT_IDLE_TIMEOUT_MS > 0) {
+          timer = setInterval(() => {
+            // 距离最后一次 Pi 活动超过阈值 → 判定挂起
+            if (Date.now() - lastActivityAt >= PI_PROMPT_IDLE_TIMEOUT_MS) {
+              const err = new Error(
+                `Pi prompt 流空闲超时 (no agent activity for ${PI_PROMPT_IDLE_TIMEOUT_MS}ms): stream ended without data`
+              )
+              err.name = 'AbortError'
+              void session.abort().catch(() => {})
+              rejectExec?.(err)
+            }
+          }, PI_PROMPT_IDLE_POLL_MS)
+        }
+        try {
+          if (!timer) {
+            await session.prompt(promptText, { expandPromptTemplates: false })
+            return
+          }
+          // Promise.race 会同时为两个输入挂接 rejection 处理，因此看门狗超时 abort 后
+          // 遗留 prompt 的 AbortError 不会产生 unhandled rejection，无需额外 catch。
+          await Promise.race([
+            session.prompt(promptText, { expandPromptTemplates: false }),
+            new Promise<void>((_resolve, reject) => { rejectExec = reject }),
+          ])
+        } finally {
+          if (timer) clearInterval(timer)
+          rejectExec = null
+        }
+      }
+
       // Prompt 链：支持 interrupt 软中断后重发追加消息，以及 CompactContext 压缩后自动续跑。
       // 非 interrupt 的 steer/followUp 追加由 Pi 原生 agent loop 在 agent_end 前 drain，无需在此处理。
       const runPromptChain = async (): Promise<void> => {
@@ -461,7 +528,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           const current = nextPrompt
           nextPrompt = undefined
           try {
-            await session.prompt(current, { expandPromptTemplates: false })
+            await promptWithIdleWatchdog(current)
           } catch (error) {
             // interrupt 软中断：abort 产生的错误被吞掉，继续处理 interrupt 队列
             const active = this.activeSessions.get(sessionId)

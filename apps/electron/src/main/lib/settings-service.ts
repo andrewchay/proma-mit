@@ -11,6 +11,8 @@ import { DEFAULT_THEME_MODE } from '../../types'
 import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@gravitas/shared'
 import type { AppSettings } from '../../types'
 
+import { appendConfigAudit, redactSensitive } from './config-audit-service'
+
 /**
  * 获取应用设置
  *
@@ -71,6 +73,16 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
     console.error('[设置] 写入失败:', error)
     throw new Error('写入应用设置失败')
   }
+
+  // 审计：设置更新
+  void appendConfigAudit({
+    category: 'settings',
+    action: 'update',
+    targetId: 'app-settings',
+    beforeSnapshot: redactSensitive(current as unknown as Record<string, unknown>),
+    afterSnapshot: redactSensitive(updated as unknown as Record<string, unknown>),
+    metadata: { changedKeys: Object.keys(updates) },
+  })
 
   notifySettingsChange(updated, updates)
   return updated

@@ -1,0 +1,86 @@
+[2026-08-24T11:48:51] 启动 ma-media-crawler，配置: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/examples/xhs-detail-config.json
+[2026-08-24T11:48:51] 执行命令: uv run main.py --platform xhs --lt cdp --type detail --save_data_option csv --headless false --specified_id https://www.xiaohongshu.com/explore/64b95d01000000000c034587?xsec_token=AB0EFqJvINCkj6xOCKCQgfNNh8GdnBC_6XecG4QOddo3Q=&xsec_source=pc_cfeed --get_comment true --get_sub_comment false --max_comments_count_singlenotes 20 --crawler_max_sleep_sec 2 --crawler_max_notes_count 1 --max_concurrency_num 1
+[2026-08-24T11:48:51] 工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler
+Using CPython 3.11.15 interpreter at: /opt/homebrew/opt/python@3.11/bin/python3.11
+Creating virtual environment at: .venv
+Downloading playwright (40.2MiB)
+Downloading opencv-python (35.6MiB)
+Downloading matplotlib (8.8MiB)
+Downloading pandas (10.8MiB)
+Downloading lxml (8.0MiB)
+Downloading cryptography (6.7MiB)
+Downloading virtualenv (5.7MiB)
+Downloading numpy (5.1MiB)
+Downloading pillow (4.6MiB)
+Downloading fonttools (2.6MiB)
+Downloading pycryptodome (2.4MiB)
+Downloading sqlalchemy (2.0MiB)
+Downloading pydantic-core (1.9MiB)
+Downloading asyncmy (1.7MiB)
+Downloading pygments (1.2MiB)
+   Building pyexecjs==1.5.1
+ Downloaded pygments
+ Downloaded pycryptodome
+ Downloaded asyncmy
+ Downloaded sqlalchemy
+ Downloaded pillow
+ Downloaded pydantic-core
+ Downloaded fonttools
+      Built pyexecjs==1.5.1
+ Downloaded virtualenv
+ Downloaded numpy
+ Downloaded cryptography
+ Downloaded lxml
+ Downloaded matplotlib
+ Downloaded pandas
+   Building jieba==0.42.1
+      Built jieba==0.42.1
+ Downloaded opencv-python
+ Downloaded playwright
+Installed 89 packages in 150ms
+Traceback (most recent call last):
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/main.py", line 161, in <module>
+    run(main, async_cleanup, cleanup_timeout_seconds=15.0, on_first_interrupt=_force_stop)
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/tools/app_runner.py", line 109, in run
+    asyncio.run(_runner())
+  File "/opt/homebrew/Cellar/python@3.11/3.11.15_4/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.11/3.11.15_4/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.11/3.11.15_4/Frameworks/Python.framework/Versions/3.11/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/tools/app_runner.py", line 96, in _runner
+    await app_main()
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/main.py", line 103, in main
+    args = await cmd_arg.parse_cmd()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/cmd_arg/arg.py", line 426, in parse_cmd
+    result = command.main(args=cli_args, standalone_mode=False)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/typer/core.py", line 784, in main
+    return _main(
+           ^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/typer/core.py", line 191, in _main
+    with self.make_context(prog_name, args, **extra) as ctx:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/core.py", line 1186, in make_context
+    self.parse_args(ctx, args)
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/core.py", line 1786, in parse_args
+    rest = super().parse_args(ctx, args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/core.py", line 1194, in parse_args
+    opts, args, param_order = parser.parse_args(args=args)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/parser.py", line 307, in parse_args
+    self._process_args_for_options(state)
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/parser.py", line 334, in _process_args_for_options
+    self._process_opts(arg, state)
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/parser.py", line 484, in _process_opts
+    self._match_long_opt(norm_long_opt, explicit_value, state)
+  File "/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/default-skills/ma-media-crawler/MediaCrawler/.venv/lib/python3.11/site-packages/click/parser.py", line 368, in _match_long_opt
+    raise NoSuchOption(opt, possibilities=possibilities, ctx=self.ctx)
+click.exceptions.NoSuchOption: No such option: --crawler_max_sleep_sec
+[2026-08-24T11:49:52] ERROR: MediaCrawler 进程退出码 1，请查看日志: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/workspace-files/ma-media-crawler/run_20260824_114851.log

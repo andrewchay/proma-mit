@@ -24,6 +24,25 @@ import {
 } from './config-paths'
 import { getAgentWorkspace } from './agent-workspace-manager'
 
+/** 进程级会话数量软上限（防爆护栏） */
+const PROCESS_SESSION_SOFT_LIMIT = 500
+/** 进程级会话数量硬上限 */
+const PROCESS_SESSION_HARD_LIMIT = 1000
+
+// 进程级会话计数器（不持久化，进程重启重置）
+let processSessionCount = 0
+
+/** 检查并递增进程级会话计数 */
+function checkProcessSessionLimit(): void {
+  processSessionCount++
+  if (processSessionCount >= PROCESS_SESSION_HARD_LIMIT) {
+    throw new Error(`进程级会话数量已达硬上限 ${PROCESS_SESSION_HARD_LIMIT}，拒绝创建新会话。请重启应用或清理旧会话。`)
+  }
+  if (processSessionCount >= PROCESS_SESSION_SOFT_LIMIT) {
+    console.warn(`[SessionGuard] 进程级会话数量已达软上限 ${PROCESS_SESSION_SOFT_LIMIT}（当前 ${processSessionCount}），建议清理旧会话。`)
+  }
+}
+
 // 在模块加载时一次性设置 SDK 配置目录，避免在 forkSession 等异步调用中临时修改/恢复
 // process.env 导致的并发安全问题（异步操作的 await 间隙其他代码可能读到错误值）
 if (!process.env.CLAUDE_CONFIG_DIR) {
@@ -118,6 +137,8 @@ export function createAgentSession(
   modelId?: string,
   agentRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME,
 ): AgentSessionMeta {
+  // 进程级防爆护栏
+  checkProcessSessionLimit()
   const index = readIndex()
   const now = Date.now()
 

@@ -1,0 +1,4 @@
+# Bun 测试全局配置
+# preload: 测试进程启动前注入完整 electron mock，避免多个测试文件残缺 mock 互相覆盖
+[test]
+preload = ["./tests/electron-mock.preload.ts"]

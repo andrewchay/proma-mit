@@ -1,6 +1,17 @@
-import { describe, expect, test } from 'bun:test'
-import { collectContributingTools, registerPlugin, _resetPluginManagerForTests } from '../plugin-manager'
-import { computerUsePluginRuntime } from './computer-use-plugin'
+import { describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
+
+// 纯 Bun/单测环境没有真实 Electron runtime，而 computer-use-plugin 的导入链
+// （computer-use-tools → computer-use-service 会 `import * as electron`）
+// 在解析 `node_modules/electron` 二进制启动器的命名导出时，非 Electron 进程下
+// 找不到 `WebContentsView` 等真实导出，导致 `Export named ... not found`。
+// 参照 web-bridge-tools.test.ts 的做法：在加载被测模块前把 electron mock 成
+// 最小可用实现，并改用「顶层动态 import」确保 mock 先注册生效。
+
+mock.module('electron', () => buildElectronMock())
+
+const { collectContributingTools, registerPlugin, _resetPluginManagerForTests } = await import('../plugin-manager')
+const { computerUsePluginRuntime } = await import('./computer-use-plugin')
 
 describe('Computer Use 插件', () => {
   const runtime = computerUsePluginRuntime()

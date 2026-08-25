@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { MemorySettings } from './MemorySettings'
+import { LocalContextStoreSettings } from './LocalContextStoreSettings'
 import { SettingsSection, SettingsCard } from './primitives'
 import { chatToolsAtom } from '@/atoms/chat-tool-atoms'
 
@@ -469,6 +470,9 @@ export function ToolSettings(): React.ReactElement {
     <div className="space-y-8">
       {/* 记忆工具（复用现有 MemorySettings 组件） */}
       <MemorySettings />
+
+      {/* 本地上下文存储（与云端记忆并行，本地优先） */}
+      <LocalContextStoreSettings />
 
       {/* 联网搜索工具 */}
       <WebSearchSettings />

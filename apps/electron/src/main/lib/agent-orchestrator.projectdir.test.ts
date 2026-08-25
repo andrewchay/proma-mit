@@ -1,17 +1,12 @@
 import { describe, test, expect, mock, beforeAll, afterAll } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import type { SDKMessage, AgentStreamPayload, AgentProviderAdapter } from '@gravitas/shared'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 // mock electron：orchestrator 顶层及相关服务依赖真实 Electron，测试环境无
-mock.module('electron', () => ({
-  app: { getPath: () => '/tmp', whenReady: async () => {}, on: () => {}, getAppPath: () => '/tmp' },
-  BrowserWindow: class {},
-  dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showSaveDialog: async () => ({ canceled: true, filePath: '' }) },
-  shell: { openExternal: () => {} },
-  safeStorage: { isEncryptionAvailable: () => false, encryptString: (s: string) => Buffer.from(s), decryptString: (b: Buffer) => b.toString('utf-8') },
-}))
+mock.module('electron', () => buildElectronMock())
 
 const { AgentOrchestrator } = await import('./agent-orchestrator')
 const { AgentEventBus } = await import('./agent-event-bus')

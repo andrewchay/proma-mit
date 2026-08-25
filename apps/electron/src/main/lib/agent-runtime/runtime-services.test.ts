@@ -1,6 +1,7 @@
 process.env.PROMA_DEV = '1'
 
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,27 +9,33 @@ import type { AgentStreamPayload, McpServerEntry, SDKMessage } from '@gravitas/s
 import type { McpClientManager } from './mcp-client'
 import { AgentEventBus } from '../agent-event-bus'
 
-class MockBrowserWindow {}
 
 const originalTestConfigDir = process.env.PROMA_TEST_CONFIG_DIR
 const tempDir = mkdtempSync(join(tmpdir(), 'proma-runtime-services-test-'))
 process.env.PROMA_TEST_CONFIG_DIR = tempDir
 
-mock.module('electron', () => ({
-  app: {
-    getPath: () => tempDir,
+mock.module('electron', () => buildElectronMock())
+
+// 内存版 SDK 会话存储：隔离真实 JSONL 文件 I/O，避免全量高并发下 bun 对
+// appendFileSync 写入的读可见性偶发延迟导致 append→read 不一致（该用例在全量
+// 下偶发 `getHistoryMessages` 读空）。ElectronSessionStore 只验证「正确委托到
+// session-manager」，实际 JSONL 读写在 agent-session-manager 自身测试已覆盖。
+const inMemorySdkMessages = new Map<string, SDKMessage[]>()
+mock.module('../agent-session-manager', () => ({
+  appendSDKMessages: (id: string, messages: SDKMessage[]): void => {
+    inMemorySdkMessages.set(id, [...(inMemorySdkMessages.get(id) ?? []), ...messages])
   },
-  BrowserWindow: MockBrowserWindow,
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
+  getAgentSessionSDKMessages: (id: string): SDKMessage[] => {
+    return inMemorySdkMessages.get(id) ?? []
   },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (plain: string) => Buffer.from(plain),
-    decryptString: (buf: Buffer) => buf.toString('utf-8'),
+  truncateSDKMessages: (id: string, upToUuidInclusive: string): SDKMessage[] => {
+    const messages = inMemorySdkMessages.get(id) ?? []
+    const cutIndex = messages.findIndex((m) => 'uuid' in m && (m as { uuid?: string }).uuid === upToUuidInclusive)
+    if (cutIndex < 0) throw new Error(`[Agent 会话] 截断失败: 未找到 uuid=${upToUuidInclusive}, sessionId=${id}`)
+    const kept = messages.slice(0, cutIndex + 1)
+    inMemorySdkMessages.set(id, kept)
+    return kept
   },
-  shell: { openExternal: () => {} },
 }))
 
 const { createElectronRuntimeServices } = await import('./runtime-services')
@@ -38,6 +45,7 @@ beforeEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
   mkdirSync(tempDir, { recursive: true })
   process.env.PROMA_TEST_CONFIG_DIR = tempDir
+  inMemorySdkMessages.clear()
 })
 
 afterAll(() => {

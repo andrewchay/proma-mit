@@ -62,3 +62,71 @@ export interface ProactiveTaskRun {
   outputSummary?: string
   error?: string
 }
+
+// ===== Monitor =====
+
+export type MonitorTriggerType = 'file' | 'session' | 'webhook' | 'github' | 'command'
+
+export type MonitorTrigger =
+  | { type: 'file'; path: string; events: ('create' | 'modify' | 'delete')[] }
+  | { type: 'session'; condition: 'stale'; maxIdleMs: number }
+  | { type: 'webhook'; endpoint: string; secret?: string }
+  | { type: 'github'; repo: string; events: string[] }
+  | { type: 'command'; command: string; intervalMs: number }
+
+export interface ProactiveMonitor {
+  id: string
+  title: string
+  routineId: string
+  trigger: MonitorTrigger
+  enabled: boolean
+  debounceMs: number
+  lastEventAt?: number
+  lastRunAt?: number
+  createdAt: number
+  updatedAt: number
+}
+
+// ===== Recommendation =====
+
+export type RecommendationKind = 'schedule' | 'monitor' | 'memory' | 'skill' | 'follow_up'
+export type RecommendationSafetyLevel = 'read_only' | 'writes_memory' | 'writes_files' | 'runs_commands'
+export type RecommendationStatus = 'suggested' | 'accepted' | 'dismissed'
+
+export interface ProactiveRecommendation {
+  id: string
+  kind: RecommendationKind
+  title: string
+  reason: string
+  scope: string
+  confidence: number
+  safetyLevel: RecommendationSafetyLevel
+  duplicateKey: string
+  evidence: Array<{
+    label: string
+    detail: string
+    sourceId?: string
+    sourceKind?: 'run' | 'memory' | 'approval' | 'schedule' | 'monitor'
+  }>
+  action: unknown
+  status: RecommendationStatus
+  createdAt: number
+  updatedAt: number
+}
+
+// ===== Approval =====
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'edited'
+export type ApprovalSourceType = 'memory' | 'skill' | 'file' | 'command' | 'schedule' | 'monitor'
+
+export interface ProactiveApproval {
+  id: string
+  runId?: string
+  sourceType: ApprovalSourceType
+  title: string
+  summary: string
+  proposedChange: unknown
+  status: ApprovalStatus
+  createdAt: number
+  resolvedAt?: number
+}

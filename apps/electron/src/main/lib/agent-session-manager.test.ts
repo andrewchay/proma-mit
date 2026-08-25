@@ -3,13 +3,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
 import type { SDKMessage } from '@gravitas/shared'
 import { mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
-class MockBrowserWindow {}
 
 // 使用临时 HOME 目录，避免测试污染开发者本机的 ~/.proma-mit-dev
 // Bun 的 os.homedir() 不读取 process.env.HOME，因此通过 mock.module 覆盖
@@ -22,11 +22,7 @@ mock.module('os', () => ({
   tmpdir,
 }))
 
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  app: { isPackaged: false },
-  dialog: {},
-}))
+mock.module('electron', () => buildElectronMock())
 
 const {
   createAgentSession,

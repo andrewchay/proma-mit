@@ -22,6 +22,7 @@ import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
 import { WorkflowView } from '@/components/workflow/WorkflowView'
+import { ProactiveCenter } from '@/components/proactive/ProactiveCenter'
 import { WORK_MODULE_VIEWS } from '@/atoms/work-module-registry'
 
 export function MainArea(): React.ReactElement {
@@ -155,6 +156,10 @@ export function MainArea(): React.ReactElement {
       {activeView === 'workflow' ? (
         <Panel variant="grow" className={mainPanelClassName}>
           <WorkflowView />
+        </Panel>
+      ) : activeView === 'proactive' ? (
+        <Panel variant="grow" className={mainPanelClassName}>
+          <ProactiveCenter />
         </Panel>
       ) : WorkModuleComponent ? (
         <Panel variant="grow" className={mainPanelClassName}>

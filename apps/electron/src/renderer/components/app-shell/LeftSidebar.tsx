@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -1223,6 +1223,28 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             <TooltipTrigger asChild>
               <button
                 type="button"
+                aria-label="Proactive Center"
+                onClick={() => {
+                  setActiveView('proactive')
+                  setSidebarCollapsed(false)
+                }}
+                className={cn(
+                  'relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag',
+                  activeView === 'proactive'
+                    ? 'bg-primary/10 text-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                    : 'text-foreground/45 hover:bg-foreground/[0.06] hover:text-foreground/75'
+                )}
+              >
+                <Zap size={17} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Proactive Center</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
                 aria-label="Workflow 工作台"
                 onClick={() => {
                   setActiveView('workflow')
@@ -1398,6 +1420,18 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             })}
             {/* 领域能力包（订阅式，依赖 marketing-atoms） */}
             <SubscribedCapabilities />
+            <button
+              onClick={() => setActiveView('proactive')}
+              className={cn(
+                'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                activeView === 'proactive'
+                  ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                  : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+              )}
+            >
+              <Zap size={16} className={activeView === 'proactive' ? 'text-primary-foreground' : 'text-foreground/40'} />
+              <span className="flex-1 text-left">Proactive Center</span>
+            </button>
             <button
               onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
               className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"

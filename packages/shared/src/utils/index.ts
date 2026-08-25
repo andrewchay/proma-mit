@@ -133,6 +133,8 @@ export type {
   AgentRuntimeInteractionResponse,
   AgentRuntimeInteractionStatus,
   AgentRuntimeInteractionStore,
+  AgentRuntimeActionRequest,
+  AgentRuntimeActionResponse,
   CreateAgentRuntimeInteractionInput,
   ListAgentRuntimeInteractionsInput,
   ResolveAgentRuntimeInteractionInput,

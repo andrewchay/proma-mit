@@ -1,19 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import type { RuntimeToolDefinition } from './types'
 import type { AISDKRuntimeSessionState, ExecutedAISDKToolResult } from './ai-sdk-runtime-core'
 
-class MockBrowserWindow {}
 
-mock.module('electron', () => ({
-  app: { isPackaged: false },
-  BrowserWindow: MockBrowserWindow,
-  clipboard: { readText: () => '', writeText: () => undefined },
-  dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
-  nativeImage: { createFromDataURL: () => ({}) },
-  desktopCapturer: { getSources: async () => [] },
-  screen: { getPrimaryDisplay: () => ({ id: 1, size: { width: 1, height: 1 }, bounds: { x: 0, y: 0 }, scaleFactor: 1 }), getAllDisplays: () => [] },
-  session: { fromPartition: () => ({ setPermissionRequestHandler: () => undefined }) },
-}))
+mock.module('electron', () => buildElectronMock())
 
 const { AISDKRuntimeCore, buildAISDKMessagesFromSteps, buildAISDKModelMessages } = await import('./ai-sdk-runtime-core')
 

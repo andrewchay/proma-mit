@@ -295,6 +295,11 @@ export interface AppSettings {
     /** @deprecated 仅兼容旧版本配置，新的配置不可再写入。 */
     appSecret?: string
   }
+  /** 本地上下文存储配置 */
+  localContextStore?: {
+    /** 是否启用本地上下文存储（默认 true） */
+    enabled: boolean
+  }
   /** Brief 回执服务配置 */
   briefCallback?: {
     /** 内网穿透后的公网地址（如 https://xxx.trycloudflare.com） */

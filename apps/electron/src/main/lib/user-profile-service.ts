@@ -10,6 +10,12 @@ import { getUserProfilePath } from './config-paths'
 import { DEFAULT_USER_AVATAR, DEFAULT_USER_NAME } from '../../types'
 import type { UserProfile } from '../../types'
 
+import { appendConfigAudit } from './config-audit-service'
+import { setLocalTenantUserProfileGetter } from './local-tenant-scope'
+
+// 注册用户档案 getter，供本地租户 scope 使用
+setLocalTenantUserProfileGetter(() => getUserProfile())
+
 /**
  * 获取用户档案
  *
@@ -62,6 +68,15 @@ export function updateUserProfile(updates: Partial<UserProfile>): UserProfile {
     console.error('[用户档案] 写入失败:', error)
     throw new Error('写入用户档案失败')
   }
+
+  // 审计：用户档案更新
+  void appendConfigAudit({
+    category: 'user-profile',
+    action: 'update',
+    targetId: 'user-profile',
+    beforeSnapshot: { userName: current.userName, hasAvatar: !!current.avatar },
+    afterSnapshot: { userName: updated.userName, hasAvatar: !!updated.avatar },
+  })
 
   return updated
 }

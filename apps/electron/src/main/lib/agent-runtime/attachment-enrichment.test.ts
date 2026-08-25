@@ -3,17 +3,11 @@
  */
 
 import { describe, test, expect, mock, beforeEach } from 'bun:test'
+import { buildElectronMock } from '../testing/electron-mock'
 import type { FileAttachment } from '@gravitas/shared'
 
-class MockBrowserWindow {}
 
-mock.module('electron', () => ({
-  BrowserWindow: MockBrowserWindow,
-  dialog: {
-    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
-    showSaveDialog: () => Promise.resolve({ canceled: true, filePath: '' }),
-  },
-}))
+mock.module('electron', () => buildElectronMock())
 
 const { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } = await import('./attachment-enrichment')
 

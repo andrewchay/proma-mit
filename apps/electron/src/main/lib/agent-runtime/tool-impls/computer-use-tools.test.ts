@@ -1,15 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from '../../testing/electron-mock'
 
-class MockBrowserWindow {}
 
-mock.module('electron', () => ({
-  app: { isPackaged: false },
-  BrowserWindow: MockBrowserWindow,
-  dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
-  desktopCapturer: { getSources: async () => [] },
-  screen: { getPrimaryDisplay: () => ({ size: { width: 1, height: 1 }, scaleFactor: 1 }) },
-  session: { fromPartition: () => ({}) },
-}))
+mock.module('electron', () => buildElectronMock())
 
 const {
   createComputerUseStatusToolDefinition,

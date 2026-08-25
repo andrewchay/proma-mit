@@ -479,6 +479,30 @@ React UI 更新
 - **权限请求排队**：权限/AskUser 请求按 sessionId 入队到 Map atoms（`allPendingPermissionRequestsAtom` / `allPendingAskUserRequestsAtom`），不区分当前/后台会话，SDK Promise 等待用户回来响应
 - **工作区隔离**：每个工作区独立的 MCP Server 配置和 cwd，Agent 会话按工作区过滤
 
+### Agent 消息时间戳（`_createdAt`）持久化约定
+
+- UI 通过 `SDKMessageRenderer.extractMeta()` 读取消息的 `_createdAt` 字段显示"对话发生时间"；该字段缺失则 `time` 为 `undefined`，头部时间不显示。
+- Pi Runtime 产出的消息（user + assistant/tool）不携带时间，必须在持久化时补 `_createdAt`。缺这条会导致**历史消息不显示时间，仅最新一轮有时间**。
+- 关键点：
+  - `agent-orchestrator.ts` 的 **Pi Runtime 分支**（`accumulatedMessages` 循环）在 `emit`/`append` 前给每条消息补 `_createdAt = Date.now()`；**Pi 分支不经过 `persistSDKMessages`**（后者只在 claude/ai-sdk 分支/resume fallback 调用），这是历史缺时间的根因。
+  - 用户消息（Pi 分支 `sendMessage` 前端）立即 `appendSDKMessages` 持久化时也需带 `_createdAt`。
+  - claude/ai-sdk 分支及各类错误消息已带 `_createdAt`，无需改。
+  - 渲染层 `useGlobalAgentListeners` 对实时 `sdk_message` 只在 `_createdAt` 缺失时补 `Date.now()`，若持久化端已补真实值则不会被覆盖。
+- **历史存量（磁盘 JSONL 中无 `_createdAt` 的旧消息）不在持久化时回填**（用户决策：仅新消息带真实时间，存量暂不显示）。
+
+### Stream 静默挂起看门狗（流空闲超时）
+
+**问题背景**：Gravitas(Pi Runtime) 的「经常断」主因是**静默挂起**——SSE 流中途既无数据也不报错、连接未断，`reader.read()`/`session.prompt()` 永久 pending，日志只表现为「会话开始后长时间无完成」，无 error、无断流重试。旧代码只有「抛出异常才触发」的断流重试，对挂起无效。
+
+**修复（两处，2016-08-24）**：
+1. `packages/core/src/providers/sse-reader.ts` 的 `streamSSE` 新增 `idleTimeoutMs` 选项（默认 120s，0=禁用）。对每次 `reader.read()` 用 `readWithIdleGuard` + Promise.race 单独计时；超时抛 `SSE 流空闲超时...stream ended without data`（AbortError，命中 `isTransientNetworkError`）→ 上层 `withRetry` 重试。覆盖所有 streamSSE 调用方（provider-agnostic / chat-service / vision-relay / context-compaction）。外部 abort（用户中断）用 `idleTimedOut` 标志区分并原样抛出。
+2. `apps/electron/src/main/lib/adapters/pi-agent-adapter.ts`：`session.prompt()` 用 `promptWithIdleWatchdog` 轮询 `lastActivityAt`（subscribe 事件刷新），120s 无活动 → `session.abort()` + 抛同款可重试错误，交 `retryablePromptChain`(3 次) 重试。
+
+**要点**：
+- 时间戳消息若是 AbortError 且由看门狗超时触发才吞并统一抛；外部 abort 必须原样传给上层处理「操作已中止」。
+- 看门狗在新一轮 prompt/read 开始时重置时钟，避免沿用旧时间戳立即误判。
+- 改这两处需跑 `packages/core` 的 `sse-reader.test.ts`（含挂起/正常/禁用用例）且 `apps/electron` typecheck。
+
 ### SDK 版本升级注意事项
 
 **`@anthropic-ai/claude-agent-sdk` 0.2.113+ `options.env` 语义为"替换"**
@@ -554,6 +578,76 @@ React UI 更新
 - **错误映射**：SDK 错误统一转换为应用错误
 
 ### 协作子会话（collaboration delegation）关键踩坑
+
+- **工具注入判定**（`pi-agent-adapter.ts` / `agent-orchestrator.ts`）：
+  `collaborationAvailable = !!collabWs && !!input.channelId && !isDelegationSession`。
+  三个条件任意不满足则 collaboration 工具不注入，模型永远看不到 `mcp__collaboration__*`。
+- **`runPiAgent` 必须把 `channelId` 传给 PiAgentQueryOptions**——构建 queryOptions 时遗漏
+  channelId 会导致 `input.channelId` 恒为 undefined，collaborationAvailable=false 且委派子会话
+  无 channelId，子会话 headless Pi runtime 无法初始化模型，表现为"子任务创建成功但一直 running 无输出"（git `70319ed`）。
+- **modelId 兜底链**：`startDelegation` 的 `effectiveModelId` 依次取 `args.modelId → ctx.modelId → parent?.modelId`，
+  再取不到会显式 throw（不静默创建无模型子会话）。配合 `createAgentSession` 内部兜底
+  `getSettings().agentModelId` + orchestrator 运行时把解析出的 modelId 回写会话元数据（git `eab9ab1`/`2c7239b`）。
+  会话元数据 modelId 缺失会导致协作子会话无法运行。
+- **子会话只有 1 行 JSONL + status 卡 running = headless 未真正启动模型**；排查顺序：
+  是否 `input.channelId` undefined（→ 注入失败）、模型是否可注册、provider 是否兼容 Pi runtime。
+- **委派配额只能有一个占用点，严禁"外层收口 + 内层开始"双重 assert 计数**（回归坑）：
+  `startDelegation` 内 `assertCanCreateDelegation(ctx,1)`（`rootDelegationCount` 逐条 +1）已是唯一配额闸；
+  各入口（`delegate_agent`/`delegate_agents`/前端 `createCollaborationDelegations`）若在调用
+  `startDelegation` 前**又各自** `assertCanCreateDelegation(ctx[,N])`，会导致每个委派被计入 2 次，
+  `MAX_TOTAL_DELEGATIONS_PER_ROOT=16` 实际只建约 8 个，且批量(外层先占 N)会因越界整批失败、
+  配额占满后该根会话**后续再也无法委派（功能锁死）**。修复：外层改成只解析父会话的
+  `resolveParentForDelegation(ctx)`（校验层级、不占配额），配额统一由 `startDelegation` 内单点累加。
+  排查「某根会话委派到一定数量就抛上限」时先查是否多入口重复 `assertCanCreateDelegation`。
+- **`agent_executions` 表签名坑：主键 `id` 是 executionId，任务关联字段是 `entityId`，二者不是一回事**。
+  `store.getAgentExecution(id)` 按主键 `id`(executionId) 查；若以任务 id 传入会查不到（静默 null）。
+  `updateTodoStatus`/`queryTodoStatus` 等按任务语义查询执行时，应改用
+  `store.listAgentExecutionsByEntity('task', taskId)` 取最近一条非终态，而非 `getAgentExecution(taskId)`。
+  凡看到「按 task 查 execution 却恒 null / 取消执行无效」，先确认是否把 taskId 当 executionId 用了。
+
+### context-store（packages/context-store）设计规范
+
+**定位**：本地优先的上下文图存储，为 Agent 运行时提供实体-关系-事实三元组 + 全文检索能力。
+
+**借鉴 mycontext 的核心设计**：
+- **双判据迁移校验**：`schemaChecksum`（剥注释/规范化空白）+ `rawChecksum`（原文）。
+  三级判据：`current` → `legacy` → `mismatch`（报错）。注释/缩进变更不再导致迁移失败。
+- **词法扫描剥注释**：状态机处理 `'...'`、`"..."`、`[...]` 三种引号上下文，避免字符串字面量内的 `--` 被误删。
+- **显式事务**：`withTransaction<T>(db, fn)` 统一原子性写入。
+- **Repository 模式**：按领域拆分 Entity/Edge/Fact/Search Repository，store.ts 委托给 Repository，同时保持顶层 API 向后兼容。
+- **两档词元召回**（Phase 2）：
+  - CJK bigram 分词：「沙箱环境」→ `沙 沙箱 箱 环境 境`
+  - 严格档：全部 token AND（含 bigram）
+  - 放宽档：去掉 CJK bigram，只留单字 + ASCII 词
+  - 策略：严格档优先，0 结果时才跑放宽档 —— 解决换词序搜不到的问题
+- **RRF 多路融合**：`fuseRrf(lists)` 用排名代替分数，天然偏好多路认可的结果。
+- **存储引擎**：sql.js（零 native 依赖，WASM/内存+文件导出模式）
+
+**接入 Proma 运行时**：
+- **ContextStoreService**（`apps/electron/src/main/lib/context-store-service.ts`）：
+  - 按工作区管理 store 实例（`~/.proma/workspaces/{slug}/context-store.db`）
+  - 自动索引：Pi Runtime 的 `accumulatedMessages` 持久化后自动写入 context-store
+  - DynamicContext 注入：每条用户消息前自动召回相关上下文，格式化为 `<recalled_context>` 注入 prompt
+  - `local_context_recall` MCP 工具（`local_context` server）：Agent 可主动召回当前工作区历史（仿 injectMemoryTools，受 enabled + 工作区限制）
+  - 设置面板 UI：`LocalContextStoreSettings.tsx`（位于 ToolSettings，云端记忆下方）提供开关
+- **配置**：`settings.ts` 新增 `localContextStore?: { enabled: boolean }`，默认启用
+
+**API 契约**：
+- `openContextStore(options?) → Promise<ContextStoreHandle>`
+- 顶层 API：`upsertEntity`/`getEntity`/`listEntities`/`link`/`unlink`/`getRelated`/`upsertFact`/`getFacts`/`searchFullText`/`recall`/`deleteEntity`
+- Repository 访问点：`handle.entities` / `handle.edges` / `handle.facts` / `handle.search`
+- Retrieval：`tokenize(text)` / `toQueryTokenTiers(query)` / `fuseRrf(lists)`
+
+**关键文件**：
+- `src/migration-checksum.ts`：双判据 checksum
+- `src/migrations.ts`：迁移执行 + 三级校验
+- `src/tx.ts`：事务包装
+- `src/repositories/*.ts`：领域 Repository
+- `src/retrieval/tokenizer.ts`：CJK bigram 分词 + 两档词元
+- `src/retrieval/fuse.ts`：RRF 多路融合
+- `apps/electron/src/main/lib/context-store-service.ts`：Proma 运行时接入层
+
+### 飞书 Task v2 同步 Todo 关键踩坑
 
 - **工具注入判定**（`pi-agent-adapter.ts` / `agent-orchestrator.ts`）：
   `collaborationAvailable = !!collabWs && !!input.channelId && !isDelegationSession`。

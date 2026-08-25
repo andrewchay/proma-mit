@@ -114,6 +114,8 @@ interface SystemPromptContext {
   permissionMode: PromaPermissionMode
   /** 记忆服务是否已启用且配置了 API Key */
   memoryEnabled: boolean
+  /** 本地上下文存储是否启用（context-store，Agent 可主动召回工作区历史） */
+  localContextStoreEnabled?: boolean
   /** 用户选用的模型是否为 Claude 系列（影响 SubAgent 模型策略描述，缺省视为 true） */
   claudeAvailable?: boolean
   /** 是否注入了内置 collaboration 协作会话工具 */
@@ -445,6 +447,20 @@ Gravitas 提供内置 \`collaboration\` 工具，用来创建真实可见、可�
 5. **会话恢复**：每次收到新任务时，先检查会话级和工作区级两个 \`.context/\` 目录（note.md、todo.md）以及当前目录的 CLAUDE.md
 6. **自检习惯**：复杂任务执行过程中，定期回顾 CLAUDE.md 和两级 .context/ 中的内容，确保行为与已记录的规范和计划保持一致`)
 
+  // 本地上下文存储指引（Agent 主动召回工作区历史）
+  if (ctx.localContextStoreEnabled) {
+    sections.push(`## 本地上下文存储
+
+你还可以通过 **mcp__local_context__local_context_recall** 主动召回当前工作区此前索引过的会话历史、工具调用结果等本地记录（仅限当前工作区）。
+
+它和云端记忆互补：
+- **云端记忆（mcp__mem__recall_memory）**：跨会话的长期偏好与共同经历
+- **本地上下文（local_context_recall）**：当前工作区的详细历史记录
+
+**local_context_recall — 主动召回工作区历史：**
+当你需要回顾本工作区之前做过什么、讨论过什么、某个工具/文件相关的历史时调用，查询词用简短精准的关键词。返回的记录可直接引用（带序号与时间）。`)
+  }
+
   // 插件贡献的能力引导（如营销工具的调用时机指令集）——由 agent-orchestrator 组装时注入
   if (ctx.pluginToolPrompts && ctx.pluginToolPrompts.length > 0) {
     sections.push(`## 能力引导指令
@@ -462,6 +478,8 @@ interface DynamicContext {
   workspaceName?: string
   workspaceSlug?: string
   agentCwd?: string
+  /** 从本地 context-store 召回的相关上下文 */
+  recalledContext?: string
 }
 
 /**
@@ -485,6 +503,11 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     timeZoneName: 'short',
   })
   sections.push(`**当前时间: ${timeStr}**`)
+
+  // 本地上下文召回（来自 context-store）
+  if (ctx.recalledContext) {
+    sections.push(ctx.recalledContext)
+  }
 
   // 工作区实时状态
   if (ctx.workspaceSlug) {
