@@ -859,25 +859,8 @@ async function queryKimiPlanQuota(apiKey: string, proxyUrl?: string): Promise<Ch
   if (!data.usage) return createUnsupportedPlanQuota('kimi-coding', 'Kimi 未返回订阅额度数据')
 
   const windows: ChannelPlanQuotaWindow[] = []
-  // data.usage 是月度总量窗口；remaining / used 可能是百分比也可能是绝对值，
-  // 统一按 (remaining / (remaining + used)) 计算百分比，避免绝对值被直接当成百分比。
-  const monthlyRemainingRaw = Number(data.usage.remaining ?? 0)
-  const monthlyUsedRaw = Number(data.usage.used ?? 0)
-  const monthlyTotal = monthlyRemainingRaw + monthlyUsedRaw
-  const monthlyRemaining = monthlyTotal > 0
-    ? clampPercent((monthlyRemainingRaw / monthlyTotal) * 100)
-    : clampPercent(monthlyRemainingRaw)
-  const monthlyUsed = monthlyTotal > 0
-    ? clampPercent((monthlyUsedRaw / monthlyTotal) * 100)
-    : clampPercent(100 - monthlyRemaining)
-  windows.push({
-    type: 'monthly',
-    label: '每月额度',
-    remainingPercent: monthlyRemaining,
-    usedPercent: monthlyUsed,
-    ...planQuotaResetAt(data.usage.resetTime),
-  })
-
+  // Kimi For Coding 按窗口限流（5 小时 / 每周）对用户才有意义；
+  // data.usage 是月度总量，不代表可操作的订阅窗口，不作为展示项。
   for (const item of data.limits ?? []) {
     const remainingRaw = Number(item.detail.remaining ?? 0)
     const usedRaw = Number(item.detail.used ?? 0)

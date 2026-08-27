@@ -162,7 +162,7 @@ describe('getChannelPlanQuota', () => {
     })
   })
 
-  test('Kimi Coding 查询 /coding/v1/usages，返回 月度/每周/5H 窗口', async () => {
+  test('Kimi Coding 查询 /coding/v1/usages，返回 每周/5H 窗口（不带月度）', async () => {
     writeFileSync(
       join(testDir, 'channels.json'),
       JSON.stringify({
@@ -191,13 +191,11 @@ describe('getChannelPlanQuota', () => {
 
     expect(seenUrl).toBe('https://api.kimi.com/coding/v1/usages')
     expect(result.supported).toBe(true)
-    expect(result.windows).toHaveLength(3)
-    // data.usage → monthly
-    expect(result.windows[0]).toMatchObject({ type: 'monthly', remainingPercent: 80 })
-    // 5h window
-    expect(result.windows[1]).toMatchObject({ type: '5h', remainingPercent: 60 })
+    expect(result.windows).toHaveLength(2)
+    // 5h window（data.usage 的月度总量不作为窗口展示）
+    expect(result.windows[0]).toMatchObject({ type: '5h', remainingPercent: 60 })
     // 7 day window → weekly
-    expect(result.windows[2]).toMatchObject({ type: 'weekly', remainingPercent: 90 })
+    expect(result.windows[1]).toMatchObject({ type: 'weekly', remainingPercent: 90 })
   })
 
   test('不支持的 provider（anthropic）返回 supported:false', async () => {
