@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "正确调用搜索工具", "points": 30,
+      "check": "必须调用 ma_search_kols 或 mcp__kol_data__search_kols" },
+    { "name": "优雅处理空数据", "points": 40,
+      "check": "数据库为空时，应提示用户同步数据，而非崩溃" },
+    { "name": "提供解决方案", "points": 30,
+      "check": "应引导用户调用 sync_kol_data 或 seed_mock_data" }
+  ]
+}

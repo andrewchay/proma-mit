@@ -1,0 +1,14 @@
+{
+  "id": "computer_use_type",
+  "name": "键盘输入",
+  "description": "在焦点位置输入文本或执行特殊按键。",
+  "domain": "core",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "text": { "type": "string", "description": "要输入的文本" },
+      "key": { "type": "string", "description": "特殊按键（如 Return, Escape, Tab）" }
+    },
+    "required": []
+  }
+}

@@ -12,11 +12,13 @@
 import { runBaseline, runImprove } from './commands'
 import { requireBenchmark } from './commands'
 import { buildEvalDelegate, buildBuiltinStateGuard, resolveEvalChannel, type EvalChannelInfo } from './eval-runner'
+import { buildEvalTargetStateGuard, isEvalTargetId } from './eval-target-state'
+import { writeToolAgentsMd } from './toolset-state'
 import { generateCandidatePrompt } from './builder'
 import { writeAgentAgentsMd } from '../../agent-definition-store'
 import { clearBuiltinOverride, isBuiltinAgentId, readBuiltinOverrides } from './builtin-agent-overrides'
 import type { BaselineSummary, ImproveSummary } from './commands'
-import type { ScoreDelegate } from './evaluator'
+import type { EvalProgressCallback, ScoreDelegate } from './evaluator'
 import type { ProposeChange } from './self-evolver'
 import type { BenchmarkConfig } from './types'
 
@@ -28,19 +30,29 @@ export interface AdoptResult {
 }
 
 /**
- * 采纳一个改进后的内置 sub-agent prompt（agent 即目录：写入 AGENTS.md + bump version）。
- * 仅允许内置 sub-agent id，避免误写其他对象；同时清除旧版 legacy override。
+ * 采纳一个改进后的评测目标 prompt（agent 即目录 / toolset 即目录）。
+ * 仅允许内置 sub-agent id 或已目录化的 toolset id，避免误写其他对象；同时清除旧版 legacy override。
  */
+export function adoptEvalTarget(type: 'agent' | 'toolset', targetId: string, content: string): AdoptResult {
+  if (!isEvalTargetId(type, targetId)) {
+    return { agentId: targetId, applied: false, reason: `非有效评测目标 id: ${targetId}（类型: ${type}）` }
+  }
+  if (!content || !content.trim()) {
+    return { agentId: targetId, applied: false, reason: 'content 不能为空' }
+  }
+
+  if (type === 'agent') {
+    writeAgentAgentsMd(targetId, content.trim())
+    clearBuiltinOverride(targetId)
+  } else {
+    writeToolAgentsMd(targetId, content.trim())
+  }
+  return { agentId: targetId, applied: true }
+}
+
+/** 兼容旧接口：采纳一个改进后的内置 sub-agent prompt */
 export function adoptBuiltinPrompt(agentId: string, prompt: string): AdoptResult {
-  if (!isBuiltinAgentId(agentId)) {
-    return { agentId, applied: false, reason: `非内置子代理 id: ${agentId}（仅支持 code-reviewer/explorer/researcher）` }
-  }
-  if (!prompt || !prompt.trim()) {
-    return { agentId, applied: false, reason: 'prompt 不能为空' }
-  }
-  writeAgentAgentsMd(agentId, prompt.trim())
-  clearBuiltinOverride(agentId)
-  return { agentId, applied: true }
+  return adoptEvalTarget('agent', agentId, prompt)
 }
 
 /** 清除某个内置 sub-agent 的持久化覆盖（恢复代码默认；目录置回 bundled seed 在 D2 seed 同步时处理）。 */
@@ -60,6 +72,8 @@ export function listBuiltinPrompts(): import('./builtin-agent-overrides').Builti
 /** 可选：注入更准的 LLM 打分（默认规则打分）。 */
 export interface EvalServiceOptions {
   scoreDelegate?: ScoreDelegate
+  /** Case 级运行进度，供 IPC/Renderer 反馈真实评测状态。 */
+  onProgress?: EvalProgressCallback
   maxRounds?: number
   /** 是否启用 Builder 候选生成（默认 true）；false = 只产出 baseline */
   useBuilder?: boolean
@@ -113,12 +127,16 @@ export async function runEvalBaseline(benchmarkId: string, opts: EvalServiceOpti
   const benchmark = requireBenchmark(benchmarkId)
   const channel = resolveEvalChannel(benchmark)
   const delegate = buildEvalDelegate(channel)
-  const guard = buildBuiltinStateGuard(benchmark.targetAgentId)
+  const guard = buildEvalTargetStateGuard({
+    type: benchmark.targetType ?? 'agent',
+    id: benchmark.targetAgentId,
+  })
   return runBaseline({
     benchmark,
     delegate,
     scoreDelegate: opts.scoreDelegate,
     agentVersion: guard.version(),
+    onProgress: opts.onProgress,
   })
 }
 
@@ -127,10 +145,13 @@ export async function runEvalImprove(benchmarkId: string, opts: EvalServiceOptio
   const benchmark = requireBenchmark(benchmarkId)
   const channel = resolveEvalChannel(benchmark)
   const delegate = buildEvalDelegate(channel)
-  const guard = buildBuiltinStateGuard(benchmark.targetAgentId)
+  const guard = buildEvalTargetStateGuard({
+    type: benchmark.targetType ?? 'agent',
+    id: benchmark.targetAgentId,
+  })
   const maxRounds = opts.maxRounds ?? 2
   const autoAdopt = opts.autoAdopt === true
-  let adoptedPrompt: string | undefined
+  let adoptedContent: string | undefined
   return runImprove({
     benchmark,
     delegate,
@@ -140,28 +161,34 @@ export async function runEvalImprove(benchmarkId: string, opts: EvalServiceOptio
     // useBuilder=false 时保守：只产出 baseline，不自动生成候选
     propose: opts.useBuilder === false
       ? async () => null
-      : buildBuilderProposer(channel, benchmark, () => guard.currentPrompt(), maxRounds),
-    // autoAdopt：把最后一个被接受候选的 prompt 写回 agent 目录（AGENTS.md + bump version）
+      : buildBuilderProposer(channel, benchmark, () => guard.currentContent(), maxRounds),
+    // autoAdopt：把最后一个被接受候选的 content 写回目录（AGENTS.md 或 TOOLS.md）
     onAcceptedCandidate: autoAdopt
       ? (candidate) => {
-        const p = extractPrompt(candidate.afterState)
-        if (p) adoptedPrompt = p
+        const c = extractContent(candidate.afterState)
+        if (c) adoptedContent = c
       }
       : undefined,
   }).then(async (summary) => {
-    if (autoAdopt && adoptedPrompt) {
-      writeAgentAgentsMd(benchmark.targetAgentId, adoptedPrompt)
+    if (autoAdopt && adoptedContent) {
+      adoptEvalTarget(benchmark.targetType ?? 'agent', benchmark.targetAgentId, adoptedContent)
     }
     return summary
   })
 }
 
-/** 从候选 afterState 提取 prompt 字符串（支持 { prompt } 或直接字符串）。 */
-function extractPrompt(afterState: unknown): string | undefined {
+/** 从候选 afterState 提取内容字符串（支持 { prompt/toolsMd } 或直接字符串）。 */
+function extractContent(afterState: unknown): string | undefined {
   if (typeof afterState === 'string') return afterState.trim()
   if (afterState && typeof afterState === 'object') {
-    const p = (afterState as Record<string, unknown>).prompt
+    const obj = afterState as Record<string, unknown>
+    const p = obj.prompt ?? obj.toolsMd
     if (typeof p === 'string' && p.trim()) return p.trim()
   }
   return undefined
+}
+
+/** 兼容旧接口：从候选 afterState 提取 prompt 字符串 */
+function extractPrompt(afterState: unknown): string | undefined {
+  return extractContent(afterState)
 }

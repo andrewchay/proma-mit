@@ -2210,12 +2210,25 @@ export function registerIpcHandlers(): void {
       const result = exitPlanService.respondToExitPlanMode(response)
 
       if (result) {
-        const { sessionId, targetMode } = result
+        const { sessionId, targetMode, goalId } = result
         const payload = { kind: 'proma_event', event: { type: 'exit_plan_mode_resolved', requestId: response.requestId } } as const
 
         // 通知渲染进程和灵动岛（agentEventBus）请求已处理
         event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
         agentEventBus.emit(sessionId, payload)
+
+        // 如果创建了 Goal，发送额外通知（使用 permission_mode_changed 事件类型，UI 可监听）
+        if (goalId) {
+          const goalPayload = {
+            kind: 'proma_event' as const,
+            event: {
+              type: 'permission_mode_changed' as const,
+              mode: targetMode ?? 'auto',
+            },
+          }
+          event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload: goalPayload })
+          agentEventBus.emit(sessionId, goalPayload)
+        }
 
         // 如果用户选择了新的权限模式，通知渲染进程更新 UI
         if (targetMode) {
@@ -2276,9 +2289,11 @@ export function registerIpcHandlers(): void {
   // 跑一次 Baseline 评测
   ipcMain.handle(
     AGENT_IPC_CHANNELS.EVAL_RUN_BASELINE,
-    async (_event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').BaselineSummary> => {
+    async (event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').BaselineSummary> => {
       const { runEvalBaseline } = await import('./lib/agent-runtime/eval/eval-service')
-      return runEvalBaseline(benchmarkId)
+      return runEvalBaseline(benchmarkId, {
+        onProgress: (progress) => event.sender.send(AGENT_IPC_CHANNELS.EVAL_PROGRESS, progress),
+      })
     }
   )
 
@@ -2293,12 +2308,23 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 采纳写回：给内置 sub-agent 持久化 prompt 覆盖
+  // 采纳写回：给内置 sub-agent 或 toolset 持久化 prompt/TOOLS.md 覆盖
+  // 支持两种调用方式：
+  //   1. 旧兼容: adoptEvalPrompt(agentId, prompt) → 自动识别为 agent
+  //   2. 新完整: adoptEvalPrompt({ type, targetId, content }) → 支持 agent/toolset
   ipcMain.handle(
     AGENT_IPC_CHANNELS.EVAL_ADOPT_PROMPT,
-    async (_event, agentId: string, prompt: string): Promise<import('./lib/agent-runtime/eval/eval-service').AdoptResult> => {
-      const { adoptBuiltinPrompt } = await import('./lib/agent-runtime/eval/eval-service')
-      return adoptBuiltinPrompt(agentId, prompt)
+    async (_event, arg1: string | { type: 'agent' | 'toolset'; targetId: string; content: string }, arg2?: string): Promise<import('./lib/agent-runtime/eval/eval-service').AdoptResult> => {
+      const { adoptEvalTarget, adoptBuiltinPrompt } = await import('./lib/agent-runtime/eval/eval-service')
+      // 新格式：对象参数
+      if (arg1 && typeof arg1 === 'object' && 'type' in arg1 && 'targetId' in arg1 && 'content' in arg1) {
+        return adoptEvalTarget(arg1.type, arg1.targetId, arg1.content)
+      }
+      // 旧格式：字符串参数 (agentId, prompt)
+      if (typeof arg1 === 'string' && typeof arg2 === 'string') {
+        return adoptBuiltinPrompt(arg1, arg2)
+      }
+      return { agentId: String(arg1), applied: false, reason: '参数格式错误：需要 (agentId, prompt) 或 ({ type, targetId, content })' }
     }
   )
 

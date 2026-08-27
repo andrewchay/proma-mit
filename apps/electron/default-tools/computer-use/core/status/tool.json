@@ -1,0 +1,11 @@
+{
+  "id": "computer_use_status",
+  "name": "查询 Computer Use 状态",
+  "description": "查询当前 Computer Use 权限状态，包括是否启用、是否有权限、是否只读模式。",
+  "domain": "core",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+}

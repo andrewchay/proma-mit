@@ -1,0 +1,18 @@
+{
+  "id": "ma_generate_phase_report",
+  "name": "阶段复盘报告",
+  "description": "复盘某阶段投放数据，汇总 KOL 内容数据，计算 CPM、CPE、CTR、互动率，与基准对比，输出结构化复盘报告。",
+  "domain": "paid-media",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "campaign_id": { "type": "string", "description": "Campaign ID" },
+      "phase": { "type": "number", "description": "阶段序号（1/2/3）" },
+      "start_date": { "type": "string", "description": "开始日期（YYYY-MM-DD）" },
+      "end_date": { "type": "string", "description": "结束日期（YYYY-MM-DD）" },
+      "cpm_target": { "type": "number", "description": "CPM 目标值" },
+      "engagement_target": { "type": "number", "description": "互动率目标值（%）" }
+    },
+    "required": ["campaign_id", "phase"]
+  }
+}

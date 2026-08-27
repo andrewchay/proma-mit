@@ -1,0 +1,13 @@
+{
+  "id": "computer_use_request_takeover",
+  "name": "请求用户接管",
+  "description": "在高风险操作前请求用户接管控制权。用户确认后才继续执行。",
+  "domain": "core",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "reason": { "type": "string", "description": "请求接管的原因" }
+    },
+    "required": ["reason"]
+  }
+}

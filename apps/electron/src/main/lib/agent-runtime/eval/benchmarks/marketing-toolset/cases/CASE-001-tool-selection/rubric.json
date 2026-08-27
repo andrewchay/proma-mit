@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "正确识别场景并选择工具", "points": 40,
+      "check": "必须调用 ma_generate_strategy 工具，而非其他工具" },
+    { "name": "参数填充完整准确", "points": 35,
+      "check": "brand、product、platform、budget 等关键参数必须正确填充" },
+    { "name": "无多余或错误调用", "points": 25,
+      "check": "不应调用无关工具（如 ma_search_kols / ma_audit_content）" }
+  ]
+}

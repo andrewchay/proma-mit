@@ -1,0 +1,22 @@
+{
+  "id": "ma_generate_strategy",
+  "name": "营销策略生成",
+  "description": "基于品牌 Brief 生成完整的社交营销策略提案，包含平台矩阵、KOL策略、内容规划和KPI。当用户需要制定营销方案、传播策略或KOL合作计划时使用。",
+  "domain": "paid-media",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "brand": { "type": "string", "description": "品牌名称" },
+      "product": { "type": "string", "description": "产品名称或系列" },
+      "industry": { "type": "string", "description": "行业类别（美妆/3C/快消/母婴/时尚/食品/运动鞋服/宠物科技等）" },
+      "goal": { "type": "string", "description": "营销目标（品牌曝光/产品认知/种草/转化/销售）" },
+      "budget": { "type": "string", "description": "预算范围（如：100万、50-80万）" },
+      "timeline": { "type": "string", "description": "活动周期（如：2026年6-8月）" },
+      "target_audience": { "type": "string", "description": "目标受众描述" },
+      "key_messages": { "type": "string", "description": "关键信息，逗号分隔" },
+      "preferred_platforms": { "type": "string", "description": "首选平台，逗号分隔（小红书/抖音/B站/微博/快手）" },
+      "is_overseas": { "type": "boolean", "description": "是否海外投放" }
+    },
+    "required": ["brand", "product"]
+  }
+}

@@ -59,9 +59,10 @@ export function resolveEvalChannel(benchmark: BenchmarkConfig): EvalChannelInfo 
  * 系统提示 = 内置子代理 prompt + 评测任务（协议返回在 prompt 内已要求）。
  */
 export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
-  const adapter = new ProviderAgnosticAgentAdapter()
-  let running = true
   return async (input) => {
+    // 每个 Case 都创建独立 adapter。评测会连续执行多个 Case，复用已 dispose 的 adapter
+    // 会导致后续 Case 在模型请求前失败并被误记为 0 分。
+    const adapter = new ProviderAgnosticAgentAdapter()
     const ctx = { provider: channel.provider, apiKey: channel.apiKey, baseUrl: channel.baseUrl, model: channel.modelId }
     const messages: import('@gravitas/shared').SDKMessage[] = []
     const runId = input.runId ?? `eval-${Date.now()}`
@@ -111,10 +112,7 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
       return { text: texts.join('\n\n') || '（评测：子代理未返回文本）', trace: { runId, tracePath: trace.tracePath } }
     } finally {
       trace.close()
-      if (running) {
-        running = false
-        adapter.dispose()
-      }
+      adapter.dispose()
     }
   }
 }

@@ -7,7 +7,7 @@
  */
 
 import { appendEvaluation, readBenchmark, readScoreboard } from './benchmark-store'
-import { evaluateCaseRun, type ScoreDelegate, type SubAgentDelegate } from './evaluator'
+import { evaluateCaseRun, type EvalProgressCallback, type ScoreDelegate, type SubAgentDelegate } from './evaluator'
 import { selfEvolve, type ProposeChange, type StateGuard } from './self-evolver'
 import type { BenchmarkConfig, BenchmarkEvaluation, SelfEvolveChange } from './types'
 
@@ -19,6 +19,8 @@ export interface RunBaselineOptions {
   /** 当前被测 Agent 状态版本（快照层维护） */
   agentVersion: number
   abortSignal?: AbortSignal
+  /** 每个 Case 的运行状态，用于 UI 显示进度。 */
+  onProgress?: EvalProgressCallback
 }
 
 export interface BaselineSummary {
@@ -41,15 +43,15 @@ async function evaluateCaseAcrossRuns(
   opts: { scoreDelegate?: ScoreDelegate; abortSignal?: AbortSignal; systemPrompt?: string } = {},
 ): Promise<{ score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
   const runsCount = Math.max(1, benchmark.runsPerCase ?? 1)
-  const allRuns = await Promise.all(
-    Array.from({ length: runsCount }, (_, i) =>
-      evaluateCaseRun(benchmark, caseId, i + 1, agentVersion, delegate, {
-        scoreDelegate: opts.scoreDelegate,
-        abortSignal: opts.abortSignal,
-        systemPrompt: opts.systemPrompt,
-      }),
-    ),
-  )
+  const allRuns = []
+  for (let i = 0; i < runsCount; i++) {
+    const run = await evaluateCaseRun(benchmark, caseId, i + 1, agentVersion, delegate, {
+      scoreDelegate: opts.scoreDelegate,
+      abortSignal: opts.abortSignal,
+      systemPrompt: opts.systemPrompt,
+    })
+    allRuns.push(run)
+  }
   const scored = allRuns.filter((r) => r.status === 'ok')
   const runs = allRuns.map((r) => ({ score: r.status === 'ok' ? r.score : 0, run: r.run, sessionId: r.sessionId, tracePath: r.tracePath }))
   const caseScore = scored.length === 0
@@ -61,18 +63,32 @@ async function evaluateCaseAcrossRuns(
 /** 跑一次 Baseline：对 benchmark 内所有 case 各跑 runsPerCase 次，取平均并写入 scoreboard。 */
 export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSummary> {
   const before = readScoreboard(opts.benchmark.id).evaluations.length
-  const byCase = await Promise.all(
-    opts.benchmark.cases.map(async (caseId) => {
-      const { score, runs } = await evaluateCaseAcrossRuns(
-        opts.benchmark,
-        caseId,
-        opts.agentVersion,
-        opts.delegate,
-        { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
-      )
-      return { caseId, score, runs }
-    }),
-  )
+  const byCase: Array<{ caseId: string; score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> = []
+  for (const [index, caseId] of opts.benchmark.cases.entries()) {
+    opts.onProgress?.({
+      benchmarkId: opts.benchmark.id,
+      caseId,
+      phase: 'case_start',
+      completedCases: index,
+      totalCases: opts.benchmark.cases.length,
+    })
+    const result = await evaluateCaseAcrossRuns(
+      opts.benchmark,
+      caseId,
+      opts.agentVersion,
+      opts.delegate,
+      { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
+    )
+    byCase.push({ caseId, ...result })
+    opts.onProgress?.({
+      benchmarkId: opts.benchmark.id,
+      caseId,
+      phase: 'case_complete',
+      completedCases: index + 1,
+      totalCases: opts.benchmark.cases.length,
+      score: result.score,
+    })
+  }
   const total = byCase.length === 0
     ? 0
     : byCase.reduce((s, c) => s + c.score, 0) / byCase.length

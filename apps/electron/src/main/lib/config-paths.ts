@@ -760,7 +760,7 @@ function defaultSkillCopyFilter(src: string): boolean {
 const DEFAULT_AGENT_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
 
 /** 内置 agent id 集合（也是目录可 seed 的白名单）。 */
-export const BUILTIN_AGENT_IDS = ['code-reviewer', 'explorer', 'researcher'] as const
+export const BUILTIN_AGENT_IDS = ['code-reviewer', 'explorer', 'researcher', 'marketing-campaign'] as const
 
 /**
  * 用户可写的 default-agents 根目录。
@@ -1063,7 +1063,92 @@ export function getDynamicIslandConfigPath(): string {
   return join(getDynamicIslandDir(), 'config.json')
 }
 
-// ==================== 工作模块（项目管理 / 日程管家）路径 ====================
+// ===== 工具即目录（default-tools）=====
+
+/** 内置工具目录不受复制污染限制的防御性基名集合。 */
+const DEFAULT_TOOL_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
+
+/** 用户可写的 default-tools 根目录。
+ * @returns ~/.proma/default-tools/
+ */
+export function getDefaultToolsUserDir(): string {
+  const dir = join(getConfigDir(), 'default-tools')
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
+ * 某个插件工具的用户目录（工具即目录）。
+ * @returns ~/.proma/default-tools/<plugin-id>/
+ */
+export function getPluginToolsDir(pluginId: string): string {
+  const dir = join(getDefaultToolsUserDir(), pluginId)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/**
+ * 读取插件工具目录的 version（system_config.json 的整数字段，缺省 1）。
+ */
+export function parseToolDirVersion(toolDir: string): number {
+  const cfgPath = join(toolDir, 'system_config.json')
+  if (!existsSync(cfgPath)) return 1
+  try {
+    const raw = readFileSync(cfgPath, 'utf-8')
+    const cfg = JSON.parse(raw) as { version?: unknown }
+    const v = typeof cfg.version === 'number' ? cfg.version : Number(cfg.version)
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : 1
+  } catch {
+    return 1
+  }
+}
+
+/**
+ * 从 app bundle 同步默认 Tools 到用户目录（镜像 seedDefaultSkills/seedDefaultAgents）。
+ * - 缺失的插件工具目录：直接复制
+ * - 已存在的：比较 system_config.version，bundled 更新时才覆盖
+ */
+export function seedDefaultTools(): void {
+  const { app } = require('electron')
+  const bundledDir = app.isPackaged
+    ? join(process.resourcesPath, 'default-tools')
+    : join(__dirname, '../default-tools')
+
+  if (!existsSync(bundledDir)) {
+    console.log('[配置] 未找到内置 default-tools 目录，跳过')
+    return
+  }
+
+  const userDir = getDefaultToolsUserDir()
+  try {
+    const entries = readdirSync(bundledDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+
+      const source = join(bundledDir, entry.name)
+      const target = join(userDir, entry.name)
+
+      try {
+        if (!existsSync(target)) {
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已同步默认 Tools: ${entry.name}`)
+          continue
+        }
+        const bundledVer = parseToolDirVersion(source)
+        const existingVer = parseToolDirVersion(target)
+        if (bundledVer > existingVer) {
+          rmSync(target, { recursive: true, force: true })
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已升级默认 Tools: ${entry.name} v${existingVer}→v${bundledVer}`)
+        }
+      } catch (error) {
+        console.error(`[配置] 同步默认 Tools 失败: ${entry.name}`, error)
+      }
+    }
+  } catch (error) {
+    console.error('[配置] 同步默认 Tools 异常:', error)
+  }
+}
 
 /**
  * 获取日程事件文件路径

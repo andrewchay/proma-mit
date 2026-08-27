@@ -1759,7 +1759,7 @@ export interface ExitPlanModeRequest {
 }
 
 /** ExitPlanMode 用户选择行为 */
-export type ExitPlanModeAction = 'approve_auto' | 'approve_edit' | 'deny' | 'feedback'
+export type ExitPlanModeAction = 'approve_auto' | 'approve_edit' | 'approve_goal' | 'approve_goal_no_run' | 'deny' | 'feedback'
 
 /** ExitPlanMode 响应（渲染进程 → 主进程） */
 export interface ExitPlanModeResponse {
@@ -1769,6 +1769,29 @@ export interface ExitPlanModeResponse {
   action: ExitPlanModeAction
   /** 用户反馈内容（action 为 feedback 时有值） */
   feedback?: string
+  /** Goal 转换结果（action 为 approve_goal 或 approve_goal_no_run 时由主进程填充） */
+  goalConversion?: {
+    /** 创建的 Goal ID */
+    goalId: string
+    /** 是否绑定到当前会话 */
+    bindSession: boolean
+    /** 转换后的权限模式 */
+    targetMode: PromaPermissionMode
+  }
+}
+
+/** Plan → Goal 转换结果 */
+export interface PlanToGoalConversion {
+  /** 是否适合转换为 Goal */
+  suitable: boolean
+  /** 转换理由（为什么适合或不适合） */
+  reason: string
+  /** 建议的 Goal 目标描述（从计划内容提取） */
+  suggestedObjective?: string
+  /** 建议的验收标准（从 allowedPrompts 生成） */
+  suggestedAcceptanceCriteria?: string[]
+  /** 建议的初始状态 */
+  suggestedStatus?: 'active' | 'waiting'
 }
 
 // ===== 权限系统类型 =====
@@ -2163,6 +2186,8 @@ export const AGENT_IPC_CHANNELS = {
   // 评测 / 自演化
   /** 跑一次 Baseline 评测（给定 benchmarkId、渠道） */
   EVAL_RUN_BASELINE: 'agent:eval-run-baseline',
+  /** Baseline 运行过程事件（当前 Case 与完成进度） */
+  EVAL_PROGRESS: 'agent:eval-progress',
   /** 跑一次 Improve 优化闭环 */
   EVAL_RUN_IMPROVE: 'agent:eval-run-improve',
   /** 采纳写回：给内置 sub-agent 持久化一个 prompt 覆盖 */

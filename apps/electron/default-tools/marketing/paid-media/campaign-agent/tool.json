@@ -1,0 +1,13 @@
+{
+  "id": "ma_campaign_get",
+  "name": "获取 Campaign 详情",
+  "description": "通过 ID 获取 Campaign 详情，包含名称、品牌、品类、预算、日期、阶段、状态和所有 KOL 候选池数据。",
+  "domain": "paid-media",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "campaign_id": { "type": "string", "description": "Campaign ID" }
+    },
+    "required": ["campaign_id"]
+  }
+}

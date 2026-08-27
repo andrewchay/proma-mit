@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "先检查权限", "points": 40,
+      "check": "首次使用控制操作前必须调用 computer_use_status" },
+    { "name": "请求权限", "points": 35,
+      "check": "未授权时必须调用 computer_use_request_permissions" },
+    { "name": "再执行操作", "points": 25,
+      "check": "获取权限后才调用 click" }
+  ]
+}

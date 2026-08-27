@@ -241,6 +241,10 @@ export async function setPluginEnabled(pluginId: string, enabled: boolean): Prom
   return views.find((v) => v.id === pluginId) ?? null
 }
 
+import { collectDirectoryTools, collectDirectoryToolPrompts } from './tool-definition-store'
+
+// ... existing code ...
+
 /**
  * 收集所有「已启用 + 平台支持 且 贡献了 agent-tools」的插件工具。
  *
@@ -251,6 +255,16 @@ export async function setPluginEnabled(pluginId: string, enabled: boolean): Prom
  */
 export function collectContributingTools(): RuntimeToolDefinition[] {
   const tools: RuntimeToolDefinition[] = []
+
+  // ★ Phase 1: 优先收集目录化工具
+  try {
+    const directoryTools = collectDirectoryTools()
+    tools.push(...directoryTools)
+  } catch (error) {
+    console.warn('[PluginManager] 收集目录化工具失败:', error)
+  }
+
+  // Phase 2: 收集代码硬编码工具（向后兼容，去重）
   const factories: Array<{ id: string; factory: () => BuiltinPluginRuntime }> = []
   for (const [id, factory] of BUILTIN_RUNTIMES) factories.push({ id, factory })
   for (const [id, factory] of IMPORTED_RUNTIMES) factories.push({ id, factory })
@@ -260,7 +274,14 @@ export function collectContributingTools(): RuntimeToolDefinition[] {
       const runtime = factory()
       if (!runtime.isEnabled() || !runtime.isSupported()) continue
       const contributed = runtime.contributeTools?.()
-      if (contributed) tools.push(...contributed)
+      if (contributed) {
+        // 去重：目录化工具已存在时跳过代码版本
+        for (const tool of contributed) {
+          if (!tools.some((t) => t.name === tool.name)) {
+            tools.push(tool)
+          }
+        }
+      }
     } catch (error) {
       console.warn(`[Diag][plugin] 收集 ${id} 的工具失败：`, error)
     }
@@ -276,6 +297,16 @@ export function collectContributingTools(): RuntimeToolDefinition[] {
  */
 export function collectContributingPrompts(): string[] {
   const prompts: string[] = []
+
+  // ★ Phase 1: 优先收集目录化工具提示
+  try {
+    const directoryPrompts = collectDirectoryToolPrompts()
+    prompts.push(...directoryPrompts)
+  } catch (error) {
+    console.warn('[PluginManager] 收集目录化工具提示失败:', error)
+  }
+
+  // Phase 2: 收集代码硬编码提示（向后兼容）
   const factories: Array<{ id: string; factory: () => BuiltinPluginRuntime }> = []
   for (const [id, factory] of BUILTIN_RUNTIMES) factories.push({ id, factory })
   for (const [id, factory] of IMPORTED_RUNTIMES) factories.push({ id, factory })

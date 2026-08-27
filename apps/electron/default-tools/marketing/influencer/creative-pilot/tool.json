@@ -1,0 +1,18 @@
+{
+  "id": "ma_generate_creative_brief",
+  "name": "生成创意 Brief",
+  "description": "为 KOL 创作生成个性化创意 Brief，包含内容方向、平台规范、脚本建议和合规检查清单。",
+  "domain": "influencer",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "brand": { "type": "string", "description": "品牌名称" },
+      "product": { "type": "string", "description": "产品名称" },
+      "platform": { "type": "string", "description": "平台（小红书/抖音/B站/微博）" },
+      "kol_style": { "type": "string", "description": "KOL 风格描述" },
+      "key_messages": { "type": "string", "description": "关键信息" },
+      "content_type": { "type": "string", "description": "内容类型（图文/视频/直播）" }
+    },
+    "required": ["brand", "product", "platform"]
+  }
+}

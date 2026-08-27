@@ -10,13 +10,25 @@
  * 本模块为纯新增；不直接依赖 SDK，只依赖注入的委派函数，便于单测。
  */
 
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readBenchmark, readCaseRubric, readCaseStatement } from './benchmark-store'
 import { assertRubricTotals100 } from './benchmark-store'
 import { getBenchmarkCaseStatementAssetsDir, getEvalRunWorkspaceDir } from '../../config-paths'
 import type { EvalRunResult, Rubric, RubricItem, BenchmarkConfig } from './types'
+
+/** 评测用的可观测执行事件。 */
+export interface EvalProgressEvent {
+  benchmarkId: string
+  caseId: string
+  phase: 'case_start' | 'case_complete'
+  completedCases: number
+  totalCases: number
+  score?: number
+}
+
+export type EvalProgressCallback = (event: EvalProgressEvent) => void
 
 /** 被测子代理委派函数（由调用方注入，通常是项目内 runSubAgent）。 */
 export interface SubAgentDelegateInput {
@@ -82,7 +94,7 @@ export async function evaluateCaseRun(
   runIndex: number,
   agentVersion: number,
   delegate: SubAgentDelegate,
-  opts: { abortSignal?: AbortSignal; maxTurns?: number; scoreDelegate?: ScoreDelegate; systemPrompt?: string } = {},
+  opts: { abortSignal?: AbortSignal; maxTurns?: number; scoreDelegate?: ScoreDelegate; systemPrompt?: string; traceText?: string } = {},
 ): Promise<EvalRunResult> {
   const statement = readCaseStatement(benchmark.id, caseId)
   const rubric = readCaseRubric(benchmark.id, caseId)
@@ -100,6 +112,7 @@ export async function evaluateCaseRun(
   const prompt = buildEvalPrompt(statement)
   let text = ''
   let runTracePath: string | undefined
+  let score = 0
   let failed = false
   let failureCode: EvalRunResult['failureCode']
   try {
@@ -116,6 +129,10 @@ export async function evaluateCaseRun(
     if (result.trace) {
       runTracePath = result.trace.tracePath
     }
+    const traceText = runTracePath && existsSync(runTracePath)
+      ? readFileSync(runTracePath, 'utf-8')
+      : undefined
+    score = await computeScores(rubric, statement, text, opts.scoreDelegate, traceText)
   } catch (error) {
     failed = true
     failureCode = 'evaluation_failed'
@@ -125,9 +142,6 @@ export async function evaluateCaseRun(
   if (failed) {
     return { protocolVersion: 1, caseId, run: runIndex, agentVersion, status: 'failed', score: 0, durationMs, failureCode, tracePath: runTracePath }
   }
-
-  // 3) 评分：优先 LLM 打分回调，否则规则打分 + 协议分补充
-  const score = await computeScores(rubric, statement, text, opts.scoreDelegate)
 
   return {
     protocolVersion: 1,
@@ -179,6 +193,7 @@ async function computeScores(
   statement: string,
   agentOutput: string,
   scoreDelegate?: ScoreDelegate,
+  traceText?: string,
 ): Promise<number> {
   // 1) 若注入 LLM 打分，优先使用
   if (scoreDelegate) {
@@ -186,16 +201,16 @@ async function computeScores(
     if (llmScore !== null) return clamp(llmScore)
   }
   // 2) 否则规则打分逐项加权
-  return clamp(ruleScore(rubric, agentOutput))
+  return clamp(ruleScore(rubric, agentOutput, traceText))
 }
 
 /** 规则打分：每项按关键词命中给加权分。 */
-function ruleScore(rubric: Rubric, output: string): number {
-  const totalPoints = rubric.items.reduce((s, i) => s + i.points, 0) || 1
+function ruleScore(rubric: Rubric, output: string, traceText?: string): number {
+  const evidence = `${output}\n${traceText ?? ''}`.toLowerCase()
   let earned = 0
   for (const item of rubric.items) {
     const keywords = keywordsFor(item)
-    const matched = keywords.filter((k) => output.toLowerCase().includes(k.toLowerCase()))
+    const matched = keywords.filter((keyword) => evidence.includes(keyword.toLowerCase()))
     const ratio = keywords.length === 0 ? 1 : matched.length / keywords.length
     earned += item.points * ratio
   }
@@ -204,13 +219,20 @@ function ruleScore(rubric: Rubric, output: string): number {
   return Math.round(earned)
 }
 
-/** ruby keyword 解析：rubric item 没有独立 keyword 字段时，用 name/check 分词匹配。 */
+/**
+ * 从 rubric 的 `check` 中提取可审计的行为证据：工具名、参数名和关键中文短语。
+ * 标题只表达评判维度，不能作为唯一评分依据；真实运行的工具调用会写入 trace。
+ */
 function keywordsFor(item: RubricItem): string[] {
-  const fromName = RULE_KEYWORDS[item.name] ?? []
-  if (fromName.length > 0) return fromName
-  // 从 name 里的中文/英文实词粗取
-  const tokens = item.name.match(/[\u4e00-\u9fa5]+|[A-Za-z][A-Za-z ]+/g) ?? []
-  return tokens.map((t) => t.trim()).filter((t) => t.length > 1)
+  const known = RULE_KEYWORDS[item.name] ?? []
+  const check = item.check ?? ''
+  const codeTokens = check.match(/`([^`]+)`|\b(?:ma_|computer_use_|ComputerUse)[A-Za-z0-9_]+\b/g) ?? []
+  const fieldTokens = check.match(/\b(?:brand|product|platform|budget|content|source|category|text_input)\b/g) ?? []
+  const actionTokens = item.name.match(/[\u4e00-\u9fa5]{2,}/g) ?? []
+  const checkPhrases = check.match(/[\u4e00-\u9fa5]{2,}/g) ?? []
+  return [...new Set([...known, ...codeTokens, ...fieldTokens, ...actionTokens, ...checkPhrases]
+    .map((token) => token.replace(/`/g, '').trim())
+    .filter((token) => token.length > 1))]
 }
 
 function clamp(n: number): number {

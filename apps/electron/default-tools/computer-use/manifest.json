@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "com.gravitas.computer-use",
+  "version": "1.0.0",
+  "name": "Computer Use",
+  "description": "提供系统级桌面控制（截图/点击/输入/滚动/拖拽）与计算机状态读取工具",
+  "publisher": "Proma",
+  "platforms": ["darwin"],
+  "permissions": {
+    "computerUse": { "enabled": true, "readOnly": true, "allowWrite": true }
+  },
+  "entrypoints": {}
+}

@@ -63,6 +63,8 @@ export function EvalPanel(): React.ReactElement {
   const [selected, setSelected] = React.useState<string | null>(null)
   const [detail, setDetail] = React.useState<EvalDetail | null>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
+  const [runningEval, setRunningEval] = React.useState<{ benchmarkId: string; caseId: string; completedCases: number; totalCases: number; startedAt: number; lastScore?: number } | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = React.useState(0)
   const [notice, setNotice] = React.useState<string | null>(null)
   const [prompts, setPrompts] = React.useState<Record<string, { prompt?: string }>>({})
   const [pendingAdopt, setPendingAdopt] = React.useState<{ agentId: string; prompt: string } | null>(null)
@@ -103,6 +105,31 @@ export function EvalPanel(): React.ReactElement {
     void refresh()
   }, [refresh])
 
+  React.useEffect(() => {
+    const unsubscribe = window.electronAPI.onEvalProgress((progress) => {
+      setRunningEval((current) => ({
+        benchmarkId: progress.benchmarkId,
+        caseId: progress.caseId,
+        completedCases: progress.completedCases,
+        totalCases: progress.totalCases,
+        startedAt: current?.benchmarkId === progress.benchmarkId ? current.startedAt : Date.now(),
+        lastScore: progress.score,
+      }))
+    })
+    return unsubscribe
+  }, [])
+
+  React.useEffect(() => {
+    if (!runningEval) {
+      setElapsedSeconds(0)
+      return
+    }
+    const tick = () => setElapsedSeconds(Math.floor((Date.now() - runningEval.startedAt) / 1000))
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [runningEval])
+
   const loadDetail = React.useCallback(async (id: string) => {
     setBusy(`load-${id}`)
     try {
@@ -134,7 +161,8 @@ export function EvalPanel(): React.ReactElement {
 
   const executeBaseline = async (id: string): Promise<void> => {
     setBusy(`baseline-${id}`)
-    setNotice(null)
+    setRunningEval({ benchmarkId: id, caseId: '', completedCases: 0, totalCases: 0, startedAt: Date.now() })
+    setNotice('Baseline 正在启动…')
     try {
       const r = await window.electronAPI.runEvalBaseline(id)
       setNotice(`Baseline 完成：score=${r.score}`)
@@ -144,6 +172,7 @@ export function EvalPanel(): React.ReactElement {
       setNotice(`Baseline 失败: ${String(error)}`)
     } finally {
       setBusy(null)
+      setRunningEval(null)
     }
   }
 
@@ -384,6 +413,22 @@ export function EvalPanel(): React.ReactElement {
           </SettingsCard>
         )}
       </SettingsSection>
+
+      {runningEval && (
+        <div className="text-xs bg-primary/10 border border-primary/20 rounded-lg px-3 py-2 text-foreground">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="size-3 animate-spin text-primary" />
+            <span>正在运行 {benchmarks.find((benchmark) => benchmark.id === runningEval.benchmarkId)?.title ?? runningEval.benchmarkId}</span>
+            <span className="text-muted-foreground">已耗时 {elapsedSeconds}s</span>
+          </div>
+          {runningEval.totalCases > 0 && (
+            <div className="mt-1 text-muted-foreground">
+              Case {runningEval.completedCases + (runningEval.caseId ? 1 : 0)}/{runningEval.totalCases}: {runningEval.caseId}
+              {runningEval.lastScore != null ? `，刚完成得分 ${runningEval.lastScore}` : ''}
+            </div>
+          )}
+        </div>
+      )}
 
       {notice && (
         <div className="text-xs text-muted-foreground bg-muted/30 border border-border/50 rounded-lg px-3 py-2">{notice}</div>

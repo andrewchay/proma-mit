@@ -6,6 +6,7 @@
  * - 解析 allowedPrompts，发送到渲染进程展示审批 UI
  * - 等待用户选择（批准/拒绝/反馈），返回对应 PermissionResult
  * - 根据用户选择切换权限模式
+ * - 支持 Plan → Goal 转换（新增）
  *
  * 复用 AskUserService 的 Promise + Map 异步等待模式。
  */
@@ -16,7 +17,9 @@ import type {
   ExitPlanModeResponse,
   ExitPlanAllowedPrompt,
   PromaPermissionMode,
+  PlanToGoalConversion,
 } from '@gravitas/shared'
+import { createGoal, bindSessionToGoal, upsertGoalTodo } from './goal-service'
 
 /** ExitPlanMode 审批结果（扩展 SDK PermissionResult，附加 targetMode） */
 export type ExitPlanPermissionResult = {
@@ -50,6 +53,97 @@ export interface ExitPlanModeCallbacks {
 export class AgentExitPlanService {
   /** 待处理的请求 Map（requestId → PendingExitPlan） */
   private pendingRequests = new Map<string, PendingExitPlan>()
+
+  /**
+   * 分析计划内容是否适合转换为 Goal
+   *
+   * 基于 allowedPrompts 和计划摘要判断：
+   * - 适合：多步骤、长期性、需要跟踪的任务
+   * - 不适合：单次性、即时完成的操作
+   */
+  analyzePlanForGoalConversion(request: ExitPlanModeRequest): PlanToGoalConversion {
+    const { allowedPrompts, toolInput } = request
+    const summary = (toolInput.summary as string) || ''
+
+    // 判断标准：
+    // 1. allowedPrompts 数量 >= 3（多步骤）
+    // 2. 包含长期性关键词（track, monitor, implement, build, refactor）
+    // 3. 不包含明显单次性关键词（quick, one-time, temporary）
+
+    const longTermKeywords = ['track', 'monitor', 'implement', 'build', 'refactor', 'migrate', 'upgrade', 'optimize', 'setup', 'configure']
+    const shortTermKeywords = ['quick', 'one-time', 'temporary', 'immediate', 'just once']
+
+    const hasLongTerm = longTermKeywords.some(kw => summary.toLowerCase().includes(kw))
+    const hasShortTerm = shortTermKeywords.some(kw => summary.toLowerCase().includes(kw))
+    const isMultiStep = allowedPrompts.length >= 3
+
+    // 如果明确是短期任务，不适合转换
+    if (hasShortTerm && !hasLongTerm) {
+      return {
+        suitable: false,
+        reason: '计划内容为短期/一次性操作，不适合作为长期 Goal 跟踪',
+      }
+    }
+
+    // 多步骤或包含长期关键词，适合转换
+    if (isMultiStep || hasLongTerm) {
+      const suggestedObjective = summary || `执行计划：${allowedPrompts.map(p => p.prompt).join('、')}`
+      const suggestedAcceptanceCriteria = allowedPrompts.map(p =>
+        `完成操作：${p.tool} - ${p.prompt}`
+      )
+
+      return {
+        suitable: true,
+        reason: `计划包含 ${allowedPrompts.length} 个步骤，适合转换为长期跟踪的 Goal`,
+        suggestedObjective,
+        suggestedAcceptanceCriteria,
+        suggestedStatus: 'active',
+      }
+    }
+
+    // 默认：不适合
+    return {
+      suitable: false,
+      reason: '计划步骤较少，作为单次执行更合适',
+    }
+  }
+
+  /**
+   * 执行 Plan → Goal 转换
+   *
+   * 创建 Goal，绑定会话，添加 todos
+   */
+  convertPlanToGoal(
+    request: ExitPlanModeRequest,
+    conversion: PlanToGoalConversion,
+    bindSession: boolean,
+  ): { goalId: string; bindSession: boolean } {
+    if (!conversion.suitable || !conversion.suggestedObjective) {
+      throw new Error('计划不适合转换为 Goal')
+    }
+
+    // 创建 Goal（使用 goal-service 的 createGoal）
+    const goal = createGoal({
+      title: conversion.suggestedObjective.slice(0, 100), // 取前100字符作为标题
+      objective: conversion.suggestedObjective,
+      scope: [],
+    })
+
+    // 添加 todos（从 allowedPrompts 生成）
+    for (const prompt of request.allowedPrompts) {
+      upsertGoalTodo(goal.id, {
+        text: `${prompt.tool}: ${prompt.prompt}`,
+        class: 'agent_work',
+      })
+    }
+
+    // 绑定会话（如果需要）
+    if (bindSession) {
+      bindSessionToGoal(request.sessionId, goal.id)
+    }
+
+    return { goalId: goal.id, bindSession }
+  }
 
   /**
    * 处理 ExitPlanMode 工具调用
@@ -92,7 +186,7 @@ export class AgentExitPlanService {
    *
    * @returns { sessionId, targetMode } 用于通知编排层；未找到返回 null
    */
-  respondToExitPlanMode(response: ExitPlanModeResponse): { sessionId: string; targetMode: PromaPermissionMode | null } | null {
+  respondToExitPlanMode(response: ExitPlanModeResponse): { sessionId: string; targetMode: PromaPermissionMode | null; goalId?: string } | null {
     const pending = this.pendingRequests.get(response.requestId)
     if (!pending) return null
 
@@ -117,6 +211,61 @@ export class AgentExitPlanService {
           targetMode: 'auto',
         })
         return { sessionId, targetMode: 'auto' }
+      }
+      case 'approve_goal': {
+        // 批准转换为 Goal 并执行
+        try {
+          const conversion = this.analyzePlanForGoalConversion(pending.request)
+          if (!conversion.suitable) {
+            pending.resolve({
+              behavior: 'deny' as const,
+              message: `计划不适合转换为 Goal：${conversion.reason}`,
+            })
+            return { sessionId, targetMode: null }
+          }
+
+          const result = this.convertPlanToGoal(pending.request, conversion, true)
+          pending.resolve({
+            behavior: 'allow' as const,
+            updatedInput: pending.toolInput,
+            targetMode: 'auto',
+          })
+          return { sessionId, targetMode: 'auto', goalId: result.goalId }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Goal 转换失败'
+          pending.resolve({
+            behavior: 'deny' as const,
+            message,
+          })
+          return { sessionId, targetMode: null }
+        }
+      }
+      case 'approve_goal_no_run': {
+        // 批准转换为 Goal 但不执行
+        try {
+          const conversion = this.analyzePlanForGoalConversion(pending.request)
+          if (!conversion.suitable) {
+            pending.resolve({
+              behavior: 'deny' as const,
+              message: `计划不适合转换为 Goal：${conversion.reason}`,
+            })
+            return { sessionId, targetMode: null }
+          }
+
+          const result = this.convertPlanToGoal(pending.request, conversion, false)
+          pending.resolve({
+            behavior: 'deny' as const,
+            message: `已创建 Goal (${result.goalId})，但不执行当前计划`,
+          })
+          return { sessionId, targetMode: null, goalId: result.goalId }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Goal 转换失败'
+          pending.resolve({
+            behavior: 'deny' as const,
+            message,
+          })
+          return { sessionId, targetMode: null }
+        }
       }
       case 'deny': {
         // 拒绝计划

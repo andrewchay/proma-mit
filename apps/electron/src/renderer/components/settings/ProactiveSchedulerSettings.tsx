@@ -1,30 +1,20 @@
-/** 本地 Proactive Scheduler 的最小管理界面。 */
+/** 本地 Proactive Scheduler 的管理界面（卡片式改版）。 */
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { Clock3, LoaderCircle, Pause, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Activity, Clock3, LoaderCircle, Pause, Play, Plus, RefreshCw, SlidersHorizontal, Trash2, ZapOff } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AgentSessionMeta, ProactiveSchedule } from '@gravitas/shared'
+import type { AgentSessionMeta, Channel, ProactiveSchedule } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 import {
-  proactiveIntervalMinutesAtom,
-  proactiveCronExpressionAtom,
-  proactiveCronTimezoneAtom,
   proactiveLoadingAtom,
-  proactivePromptAtom,
-  proactiveRunAtAtom,
   proactiveRunsAtom,
-  proactiveScheduleKindAtom,
   proactiveSchedulesAtom,
-  proactiveSelectedSessionIdAtom,
-  proactiveNewSessionAtom,
-  proactiveSelectedChannelIdAtom,
   proactiveSessionsAtom,
 } from '@/atoms/proactive-scheduler'
 import { SettingsCard, SettingsSection } from './primitives'
-import type { AgentRuntime, Channel } from '@gravitas/shared'
+import { ProactiveScheduleCreateDialog } from './ProactiveScheduleCreateDialog'
 
 type SchedulableSession = AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
 
@@ -32,8 +22,13 @@ function eligibleRuntime(session: AgentSessionMeta): session is SchedulableSessi
   return Boolean(session.channelId) && (session.agentRuntime === 'proma' || session.agentRuntime === 'ai-sdk')
 }
 
-function isSchedulableRuntime(runtime: string): runtime is 'proma' | 'ai-sdk' {
-  return runtime === 'proma' || runtime === 'ai-sdk'
+type ScheduleFilter = 'all' | 'enabled' | 'paused' | 'failing'
+
+const FILTER_LABEL: Record<ScheduleFilter, string> = {
+  all: '全部',
+  enabled: '已启用',
+  paused: '已暂停',
+  failing: '需关注',
 }
 
 export function ProactiveSchedulerSettings(): React.ReactElement {
@@ -41,17 +36,9 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
   const [runs, setRuns] = useAtom(proactiveRunsAtom)
   const [sessions, setSessions] = useAtom(proactiveSessionsAtom)
   const [loading, setLoading] = useAtom(proactiveLoadingAtom)
-  const [sessionId, setSessionId] = useAtom(proactiveSelectedSessionIdAtom)
-  const [newSession, setNewSession] = useAtom(proactiveNewSessionAtom)
-  const [selectedChannelId, setSelectedChannelId] = useAtom(proactiveSelectedChannelIdAtom)
-  const [prompt, setPrompt] = useAtom(proactivePromptAtom)
-  const [kind, setKind] = useAtom(proactiveScheduleKindAtom)
-  const [runAt, setRunAt] = useAtom(proactiveRunAtAtom)
-  const [intervalMinutes, setIntervalMinutes] = useAtom(proactiveIntervalMinutesAtom)
-  const [cronExpression, setCronExpression] = useAtom(proactiveCronExpressionAtom)
-  const [cronTimezone, setCronTimezone] = useAtom(proactiveCronTimezoneAtom)
   const [channels, setChannels] = React.useState<Channel[]>([])
-  const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('proma')
+  const [createOpen, setCreateOpen] = React.useState(false)
+  const [filter, setFilter] = React.useState<ScheduleFilter>('all')
 
   const refresh = React.useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -62,76 +49,19 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
         window.electronAPI.listAgentSessions(),
         window.electronAPI.listChannels(),
       ])
-      const eligible = nextSessions.filter(eligibleRuntime)
       setSchedules(nextSchedules)
       setRuns(nextRuns)
-      setSessions(eligible)
+      setSessions(nextSessions.filter(eligibleRuntime))
       setChannels(nextChannels)
-      setSessionId((current) => eligible.some((item) => item.id === current) ? current : eligible[0]?.id ?? '')
-      setSelectedChannelId((current) => nextChannels.some((item) => item.id === current && item.enabled) ? current : nextChannels.find((item) => item.enabled)?.id ?? '')
     } catch (error) {
       console.error('[Proactive Scheduler] 读取失败:', error)
       toast.error('读取定时任务失败')
     } finally {
       setLoading(false)
     }
-  }, [setLoading, setRuns, setSchedules, setSessionId, setSessions])
+  }, [setLoading, setRuns, setSchedules, setSessions])
 
-  React.useEffect(() => {
-    if (!runAt) setRunAt(toLocalDateTime(Date.now() + 60_000))
-    void refresh()
-  }, [refresh, runAt, setRunAt])
-
-  const create = async (): Promise<void> => {
-    if (!prompt.trim()) {
-      toast.error('请填写任务内容')
-      return
-    }
-    const enabledChannels = channels.filter((item) => item.enabled)
-    // 新会话模式：选择渠道 + runtime，运行时自动创建新会话执行
-    const channel = enabledChannels.find((item) => item.id === selectedChannelId)
-    const runtime = newSession ? (selectedRuntime as 'proma' | 'ai-sdk') : undefined
-    const session = sessions.find((item) => item.id === sessionId)
-    if (newSession) {
-      if (!channel || !isSchedulableRuntime(selectedRuntime)) {
-        toast.error('请选择已启用渠道和 Gravitas / AI SDK Runtime')
-        return
-      }
-    } else {
-      if (!session?.channelId || !eligibleRuntime(session)) {
-        toast.error('请选择已配置渠道的 Gravitas 或 AI SDK 会话，并填写任务内容')
-        return
-      }
-    }
-    const modelId = channel?.models.find((model) => model.enabled)?.id ?? channel?.models[0]?.id
-    if (!modelId) {
-      toast.error('所选渠道没有可用模型，请先在模型配置中启用模型')
-      return
-    }
-    const schedule = kind === 'at'
-      ? { type: 'at' as const, runAt: new Date(runAt).getTime() }
-      : kind === 'interval'
-        ? { type: 'interval' as const, intervalMs: Number(intervalMinutes) * 60_000 }
-        : { type: 'cron' as const, expression: cronExpression.trim(), timezone: cronTimezone.trim() }
-    try {
-      await window.electronAPI.createProactiveSchedule({
-        title: prompt.trim().slice(0, 48),
-        sessionId: newSession ? undefined : session?.id,
-        workspaceId: newSession ? undefined : session?.workspaceId,
-        channelId: newSession ? (channel?.id ?? '') : (session?.channelId ?? ''),
-        runtime: newSession ? (selectedRuntime as 'proma' | 'ai-sdk') : ((session?.agentRuntime ?? 'proma') as 'proma' | 'ai-sdk'),
-        modelId,
-        prompt: prompt.trim(),
-        schedule,
-        newSession,
-      })
-      setPrompt('')
-      toast.success('定时任务已创建，默认使用安全权限')
-      await refresh()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '创建定时任务失败')
-    }
-  }
+  React.useEffect(() => { void refresh() }, [refresh])
 
   const mutate = async (action: () => Promise<unknown>, success: string): Promise<void> => {
     try {
@@ -143,76 +73,224 @@ export function ProactiveSchedulerSettings(): React.ReactElement {
     }
   }
 
-  return <div className="space-y-5">
-    <SettingsSection title="定时任务" description="任务仅在本机运行；创建属于持久操作，默认安全权限。一次性任务到点最多补跑一次，固定间隔最短为 1 分钟。" action={<Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}><RefreshCw className={loading ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />刷新</Button>}>
-      <SettingsCard divided={false} className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="grid gap-1.5 text-sm text-muted-foreground">执行目标
-            <Select value={newSession ? 'new' : 'existing'} onValueChange={(value) => setNewSession(value === 'new')}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="existing">复用已有会话</SelectItem><SelectItem value="new">新建会话执行</SelectItem></SelectContent>
-            </Select>
-          </label>
-          <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式
-            <Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select>
-          </label>
+  const filteredSchedules = React.useMemo(() => {
+    switch (filter) {
+      case 'all': return schedules
+      case 'enabled': return schedules.filter((s) => s.enabled && s.consecutiveFailures < 3)
+      case 'paused': return schedules.filter((s) => !s.enabled)
+      case 'failing': return schedules.filter((s) => s.consecutiveFailures >= 3)
+    }
+  }, [schedules, filter])
+
+  const countEnabled = schedules.filter((s) => s.enabled && s.consecutiveFailures < 3).length
+  const countPaused = schedules.filter((s) => !s.enabled).length
+  const countFailing = schedules.filter((s) => s.consecutiveFailures >= 3).length
+
+  return (
+    <div className="space-y-5">
+      {/* 头部：标题 + 新建/刷新 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="rounded-xl bg-primary/10 p-2 text-primary"><SlidersHorizontal className="size-4" /></div>
+          <div>
+            <div className="text-sm font-semibold">定时任务</div>
+            <div className="text-xs text-muted-foreground">只在本机运行的无人值守任务，默认安全权限</div>
+          </div>
         </div>
-        {newSession ? <div className="grid gap-3 md:grid-cols-2">
-          <label className="grid gap-1.5 text-sm text-muted-foreground">渠道
-            <Select value={selectedChannelId} onValueChange={setSelectedChannelId} disabled={channels.length === 0}>
-              <SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger>
-              <SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent>
-            </Select>
-          </label>
-          <label className="grid gap-1.5 text-sm text-muted-foreground">Runtime
-            <Select value={selectedRuntime} onValueChange={(value: 'proma' | 'ai-sdk') => setSelectedRuntime(value)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="proma">Gravitas</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent>
-            </Select>
-          </label>
-        </div> : <div className="grid gap-3 md:grid-cols-2">
-          <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话
-            <Select value={sessionId} onValueChange={setSessionId} disabled={sessions.length === 0}>
-              <SelectTrigger><SelectValue placeholder="选择已配置渠道的会话" /></SelectTrigger>
-              <SelectContent>{sessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent>
-            </Select>
-          </label>
-          <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式
-            <Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select>
-          </label>
-        </div>}
-        {kind === 'at'
-          ? <label className="grid gap-1.5 text-sm text-muted-foreground">执行时间 <Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>
-          : kind === 'interval'
-            ? <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1） <Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>
-            : <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">Cron 表达式 <Input value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} placeholder="例如：0 9 * * 1-5" /></label><label className="grid gap-1.5 text-sm text-muted-foreground">IANA 时区 <Input value={cronTimezone} onChange={(event) => setCronTimezone(event.target.value)} placeholder="例如：Asia/Shanghai" /></label><p className="md:col-span-2 text-xs text-muted-foreground">采用标准五字段 Cron（分钟 小时 日 月 周）；时区会与任务一同保存。</p></div>}
-        <label className="grid gap-1.5 text-sm text-muted-foreground">任务内容 <Input value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：检查当前工作区的未提交变更并总结" /></label>
-        {!newSession && sessions.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400">没有可复用的 Gravitas / AI SDK 会话；可切换为「新建会话执行」。</p>}
-        {newSession && channels.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400">请先在模型配置中启用至少一个渠道。</p>}
-        <Button onClick={() => void create()} disabled={loading || (newSession ? channels.length === 0 : sessions.length === 0)}><Plus className="mr-2 size-4" />创建安全定时任务</Button>
-      </SettingsCard>
-    </SettingsSection>
-
-    <SettingsSection title="已创建任务">
-      <div className="space-y-2">
-        {!loading && schedules.length === 0 && <SettingsCard className="py-8 text-center text-sm text-muted-foreground">暂无定时任务。</SettingsCard>}
-        {schedules.map((schedule) => <ScheduleCard key={schedule.id} schedule={schedule} onPause={() => mutate(() => window.electronAPI.setProactiveScheduleEnabled(schedule.id, false), '已暂停定时任务')} onResume={() => mutate(() => window.electronAPI.setProactiveScheduleEnabled(schedule.id, true), '已恢复定时任务')} onRun={() => mutate(() => window.electronAPI.runProactiveSchedule(schedule.id), '已完成手动运行')} onDelete={() => mutate(() => window.electronAPI.deleteProactiveSchedule(schedule.id), '已删除定时任务')} />)}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={cn('mr-2 size-4', loading && 'animate-spin')} />刷新
+          </Button>
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-2 size-4" />新建任务
+          </Button>
+        </div>
       </div>
-    </SettingsSection>
 
-    <SettingsSection title="最近运行">
-      <div className="space-y-2">{runs.slice(0, 8).map((run) => <SettingsCard key={run.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"><span className={run.status === 'success' ? 'font-medium text-emerald-600 dark:text-emerald-400' : run.status === 'failed' ? 'font-medium text-destructive' : 'font-medium'}>{run.status}</span><span className="text-muted-foreground">{run.trigger} · {formatTime(run.startedAt)}</span>{run.sessionId && <span className="font-mono text-xs text-muted-foreground">会话 {run.sessionId.slice(0, 8)}</span>}{run.outputSummary && <span className="text-muted-foreground">{run.outputSummary}</span>}{run.error && <span className="text-destructive">{run.error}</span>}</SettingsCard>)}{runs.length === 0 && <SettingsCard className="py-6 text-center text-sm text-muted-foreground">暂无运行记录。</SettingsCard>}</div>
-    </SettingsSection>
-  </div>
+      {/* 状态过滤 */}
+      <div className="flex items-center gap-0.5 rounded-lg bg-foreground/[0.04] p-0.5 w-fit">
+        {(['all', 'enabled', 'paused', 'failing'] as ScheduleFilter[]).map((key) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setFilter(key)}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors inline-flex items-center gap-1',
+              filter === key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground/80'
+            )}
+          >
+            {FILTER_LABEL[key]}
+            {key === 'enabled' && countEnabled > 0 && <span className="text-[10px] text-muted-foreground tabular-nums">{countEnabled}</span>}
+            {key === 'paused' && countPaused > 0 && <span className="text-[10px] text-muted-foreground tabular-nums">{countPaused}</span>}
+            {key === 'failing' && countFailing > 0 && <span className="text-[10px] text-red-500 tabular-nums">{countFailing}</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* 任务卡片网格 */}
+      {loading ? (
+        <div className="py-14 text-center text-sm text-muted-foreground"><LoaderCircle className="mx-auto mb-2 size-5 animate-spin" />加载中…</div>
+      ) : filteredSchedules.length === 0 ? (
+        <EmptyState
+          filter={filter}
+          hasAny={schedules.length > 0}
+          onCreate={() => setCreateOpen(true)}
+        />
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          {filteredSchedules.map((schedule) => (
+            <ScheduleCard
+              key={schedule.id}
+              schedule={schedule}
+              onPause={() => mutate(() => window.electronAPI.setProactiveScheduleEnabled(schedule.id, false), '已暂停定时任务')}
+              onResume={() => mutate(() => window.electronAPI.setProactiveScheduleEnabled(schedule.id, true), '已恢复定时任务')}
+              onRun={() => mutate(() => window.electronAPI.runProactiveSchedule(schedule.id), '已完成手动运行')}
+              onDelete={() => mutate(() => window.electronAPI.deleteProactiveSchedule(schedule.id), '已删除定时任务')}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 最近运行 */}
+      <SettingsSection title="最近运行" description={runs.length > 0 ? `最近 ${Math.min(runs.length, 8)} 次执行` : undefined}>
+        <div className="space-y-2">
+          {runs.slice(0, 8).map((run) => (
+            <SettingsCard key={run.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <span className={cn(
+                'shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium',
+                run.status === 'success' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : run.status === 'failed' ? 'bg-red-500/10 text-red-500'
+                    : run.status === 'running' ? 'bg-blue-500/10 text-blue-500'
+                      : run.status === 'cancelled' ? 'bg-muted text-muted-foreground'
+                        : 'bg-amber-500/10 text-amber-600'
+              )}>{run.status}</span>
+              <span className="text-muted-foreground">{run.trigger} · {formatTime(run.startedAt)}</span>
+              {run.sessionId && <span className="font-mono text-xs text-muted-foreground">会话 {run.sessionId.slice(0, 8)}</span>}
+              {run.outputSummary && <span className="truncate text-muted-foreground">{run.outputSummary}</span>}
+              {run.error && <span className="text-destructive">{run.error}</span>}
+            </SettingsCard>
+          ))}
+          {runs.length === 0 && <SettingsCard className="py-6 text-center text-sm text-muted-foreground">暂无运行记录。</SettingsCard>}
+        </div>
+      </SettingsSection>
+
+      <ProactiveScheduleCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        channels={channels}
+        sessions={sessions}
+        loading={loading}
+        onCreated={() => void refresh()}
+      />
+    </div>
+  )
 }
 
-function ScheduleCard({ schedule, onPause, onResume, onRun, onDelete }: { schedule: ProactiveSchedule; onPause: () => void; onResume: () => void; onRun: () => void; onDelete: () => void }): React.ReactElement {
-  const failureHint = schedule.consecutiveFailures > 0 ? ` · 连续失败 ${schedule.consecutiveFailures}/3` : ''
-  return <SettingsCard className="flex flex-wrap items-center gap-3"><Clock3 className="size-4 text-primary" /><div className="min-w-48 flex-1"><p className="font-medium">{schedule.title}</p><p className="text-xs text-muted-foreground">{describeSchedule(schedule)} · {schedule.permissionMode} · {schedule.newSession ? '新建会话执行' : '复用会话'} · 下次 {formatScheduleTime(schedule)}{failureHint}</p></div><Button variant="outline" size="sm" onClick={onRun}><Play className="mr-1 size-3.5" />运行</Button>{schedule.enabled ? <Button variant="outline" size="sm" onClick={onPause}><Pause className="mr-1 size-3.5" />暂停</Button> : <Button variant="outline" size="sm" onClick={onResume}><Play className="mr-1 size-3.5" />恢复</Button>}<Button variant="ghost" size="icon" onClick={onDelete} aria-label="删除定时任务"><Trash2 className="size-4 text-destructive" /></Button></SettingsCard>
+function ScheduleCard({
+  schedule, onPause, onResume, onRun, onDelete,
+}: {
+  schedule: ProactiveSchedule
+  onPause: () => void
+  onResume: () => void
+  onRun: () => void
+  onDelete: () => void
+}): React.ReactElement {
+  const failing = schedule.consecutiveFailures >= 3
+  const running = schedule.enabled && !failing
+  const paused = !schedule.enabled
+
+  return (
+    <div className="group relative flex flex-col gap-3 rounded-xl border border-border/50 bg-card p-4 shadow-sm transition-colors hover:border-primary/30">
+      {/* 顶行：状态 + 标题 + 操作 */}
+      <div className="flex items-start gap-2">
+        <span
+          className={cn(
+            'mt-1.5 size-2 shrink-0 rounded-full',
+            running ? 'bg-emerald-500' : paused ? 'bg-muted-foreground/40' : 'bg-red-500 animate-pulse'
+          )}
+          title={running ? '运行中' : paused ? '已暂停' : '连续失败'}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-medium text-foreground" title={schedule.title}>{schedule.title}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{describeSchedule(schedule)}</p>
+        </div>
+        <div className="flex items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+          <IconButton title="手动运行" onClick={onRun}><Play className="size-3.5" /></IconButton>
+          {schedule.enabled
+            ? <IconButton title="暂停" onClick={onPause}><Pause className="size-3.5" /></IconButton>
+            : <IconButton title="恢复" onClick={onResume}><Play className="size-3.5" /></IconButton>}
+          <IconButton title="删除" destructive onClick={onDelete}><Trash2 className="size-3.5" /></IconButton>
+        </div>
+      </div>
+
+      {/* 元信息 */}
+      <div className="flex flex-wrap gap-1.5">
+        <MetaBadge>{schedule.permissionMode === 'plan' ? 'Plan' : '安全'}</MetaBadge>
+        <MetaBadge>{schedule.newSession ? '新建会话' : '复用会话'}</MetaBadge>
+        <MetaBadge>{schedule.runtime === 'ai-sdk' ? 'AI SDK' : 'Gravitas'}</MetaBadge>
+        {schedule.channelId && <MetaBadge className="truncate max-w-[120px]" title={schedule.channelId}>{schedule.channelId.slice(0, 10)}</MetaBadge>}
+      </div>
+
+      {/* 底部：下次运行 / 健康 */}
+      <div className="flex items-center justify-between gap-2 border-t border-border/40 pt-2.5 text-xs">
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <Clock3 className="size-3.5" />下次 {formatScheduleTime(schedule)}
+        </span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <Activity className="size-3.5" />最近 {formatDelta(schedule.lastRunAt)}
+        </span>
+      </div>
+
+      {failing && (
+        <p className="text-[11px] font-medium text-red-500">
+          连续失败 {schedule.consecutiveFailures}/3，已自动暂停
+        </p>
+      )}
+    </div>
+  )
+}
+
+function IconButton({
+  children, title, destructive, onClick,
+}: {
+  children: React.ReactNode
+  title: string
+  destructive?: boolean
+  onClick: () => void
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={cn(
+        'rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground',
+        destructive && 'hover:text-destructive'
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function MetaBadge({ children, className, title }: { children: React.ReactNode; className?: string; title?: string }): React.ReactElement {
+  return <span className={cn('rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground', className)} title={title}>{children}</span>
+}
+
+function EmptyState({ filter, hasAny, onCreate }: { filter: ScheduleFilter; hasAny: boolean; onCreate: () => void }): React.ReactElement {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/70 bg-muted/20 py-14 text-center">
+      <div className="rounded-2xl bg-muted p-3">{hasAny ? <ZapOff className="size-6 text-muted-foreground" /> : <Clock3 className="size-6 text-muted-foreground" />}</div>
+      <p className="text-sm text-muted-foreground">
+        {hasAny ? `「${FILTER_LABEL[filter]}」下暂无任务` : '还没有定时任务，创建一个让你的工作自动跑起来'}
+      </p>
+      {!hasAny && <Button size="sm" onClick={onCreate}><Plus className="mr-2 size-4" />新建任务</Button>}
+    </div>
+  )
 }
 
 function describeSchedule(schedule: ProactiveSchedule): string {
-  if (schedule.schedule.type === 'at') return '一次性'
+  if (schedule.schedule.type === 'at') return '一次性执行'
   if (schedule.schedule.type === 'interval') return `每 ${schedule.schedule.intervalMs / 60_000} 分钟`
   return `Cron ${schedule.schedule.expression} · ${schedule.schedule.timezone}`
 }
@@ -221,5 +299,14 @@ function formatScheduleTime(schedule: ProactiveSchedule): string {
   const timezone = schedule.schedule.type === 'cron' ? schedule.schedule.timezone : undefined
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short', timeZone: timezone }).format(schedule.nextRunAt)
 }
+function formatDelta(value: number | undefined): string {
+  if (!value) return '—'
+  const diff = Date.now() - value
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return `${Math.floor(hours / 24)} 天前`
+}
 function formatTime(value: number | undefined): string { return value ? new Date(value).toLocaleString() : '—' }
-function toLocalDateTime(value: number): string { const date = new Date(value - new Date().getTimezoneOffset() * 60_000); return date.toISOString().slice(0, 16) }

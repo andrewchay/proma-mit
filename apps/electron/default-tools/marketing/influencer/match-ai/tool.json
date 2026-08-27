@@ -1,0 +1,21 @@
+{
+  "id": "ma_match_kols",
+  "name": "KOL 智能匹配",
+  "description": "基于品牌需求和本地 KOL 数据库，智能筛选并推荐合适的 KOL 组合。返回带匹配度评分、推荐理由和风险提示的排序列表。",
+  "domain": "influencer",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "brand": { "type": "string", "description": "品牌名称" },
+      "product": { "type": "string", "description": "产品名称" },
+      "platform": { "type": "string", "description": "平台（小红书/抖音/B站/微博/快手/多平台）" },
+      "category": { "type": "string", "description": "KOL 内容领域（美妆/3C/母婴/时尚/生活方式等）" },
+      "follower_range": { "type": "string", "description": "粉丝量范围（如：10万-100万）" },
+      "budget_per_kol": { "type": "string", "description": "单个 KOL 预算" },
+      "target_audience": { "type": "string", "description": "目标受众描述" },
+      "key_messages": { "type": "string", "description": "关键营销信息" },
+      "limit": { "type": "number", "description": "推荐数量（默认10）" }
+    },
+    "required": ["brand", "product"]
+  }
+}

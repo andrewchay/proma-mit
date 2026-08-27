@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "操作前截图", "points": 40,
+      "check": "输入前必须调用 computer_use_screenshot 确认状态" },
+    { "name": "执行输入", "points": 30,
+      "check": "正确调用 computer_use_type" },
+    { "name": "操作后验证", "points": 30,
+      "check": "输入后必须再次截图验证结果" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "ma_search_kols",
+  "name": "KOL 数据搜索",
+  "description": "从本地数据库搜索 KOL，支持按关键词、平台、领域、城市筛选。",
+  "domain": "influencer",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "搜索关键词（空格分隔多词）" },
+      "platform": { "type": "string", "description": "平台：小红书、抖音、微博、B站、快手" },
+      "category": { "type": "string", "description": "领域：美妆、3C、美食、时尚、母婴等" },
+      "city": { "type": "string", "description": "城市：上海、北京、杭州等" },
+      "limit": { "type": "number", "description": "最大结果数（默认20，最大100）" }
+    },
+    "required": []
+  }
+}

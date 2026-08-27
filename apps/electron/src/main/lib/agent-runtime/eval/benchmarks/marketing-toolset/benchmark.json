@@ -1,0 +1,13 @@
+{
+  "id": "marketing-toolset",
+  "title": "营销工具集调用能力",
+  "description": "衡量营销工具集在正确场景调用正确工具、参数使用准确、错误处理得当的能力",
+  "targetType": "toolset",
+  "targetAgentId": "marketing",
+  "runtime": { "provider": "deepseek", "modelId": "deepseek-v4-flash" },
+  "runsPerCase": 1,
+  "targetScore": 75,
+  "cases": ["CASE-001-tool-selection", "CASE-002-parameter-usage", "CASE-003-error-handling"],
+  "createdAt": "2026-08-26T00:00:00Z",
+  "updatedAt": "2026-08-26T00:00:00Z"
+}

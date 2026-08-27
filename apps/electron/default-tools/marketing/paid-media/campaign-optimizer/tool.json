@@ -1,0 +1,16 @@
+{
+  "id": "ma_optimize_campaign",
+  "name": "投放策略优化",
+  "description": "基于测试数据优化正式投放方案，分析最佳/最差组合，重新分配预算，优化平台组合和内容策略。",
+  "domain": "paid-media",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "campaign_id": { "type": "string", "description": "Campaign ID" },
+      "test_data": { "type": "string", "description": "测试数据摘要" },
+      "budget": { "type": "number", "description": "总预算" },
+      "goal": { "type": "string", "description": "优化目标" }
+    },
+    "required": ["campaign_id"]
+  }
+}

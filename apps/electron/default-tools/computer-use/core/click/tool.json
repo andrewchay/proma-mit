@@ -1,0 +1,16 @@
+{
+  "id": "computer_use_click",
+  "name": "鼠标点击",
+  "description": "在指定坐标执行鼠标点击操作。坐标为逻辑坐标，需根据 screenshot 返回的 coordinateScale 换算。",
+  "domain": "core",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "x": { "type": "number", "description": "X 坐标（逻辑坐标）" },
+      "y": { "type": "number", "description": "Y 坐标（逻辑坐标）" },
+      "button": { "type": "string", "enum": ["left", "right", "middle"], "description": "鼠标按钮（默认 left）" },
+      "displayId": { "type": "number", "description": "显示器 ID" }
+    },
+    "required": ["x", "y"]
+  }
+}

@@ -403,11 +403,11 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
             ))}
           </div>
         )}
-        {/* 卡片式输入容器：10px 圆角，0.5px border */}
+        {/* 卡片式输入容器：实线边框，背景与页面背景稍有差异 */}
         <div
           className={cn(
-            'rounded-[10px] border-[0.5px] border-border bg-background/70 backdrop-blur-sm transition-all duration-200',
-            'focus-within:border-foreground/20',
+            'rounded-[10px] border border-solid border-border/80 bg-muted/30 backdrop-blur-sm transition-all duration-200',
+            'focus-within:border-foreground/30 focus-within:bg-muted/50',
             isDragOver && 'border-[2px] border-dashed border-[#2ecc71] bg-[#2ecc71]/[0.03]'
           )}
           onDragOver={handleDragOver}

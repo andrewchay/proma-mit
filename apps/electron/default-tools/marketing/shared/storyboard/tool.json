@@ -1,0 +1,20 @@
+{
+  "id": "ma_generate_storyboard",
+  "name": "生成广告视频分镜脚本",
+  "description": "为品牌/产品生成广告视频分镜脚本（shot by shot：画面描述、镜头运动、旁白、字幕、视频生成提示词），纯本地、无需视频引擎凭据。当用户需要为投放/达人内容制定视频分镜脚本时使用。",
+  "domain": "shared",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "product": { "type": "string", "description": "产品/服务名称" },
+      "category": { "type": "string", "description": "品类" },
+      "selling_points": { "type": "string", "description": "核心卖点（逗号分隔，如 \"持久续航,轻量便携\"）" },
+      "target_audience": { "type": "string", "description": "目标人群" },
+      "platform": { "type": "string", "enum": ["xiaohongshu", "douyin", "bilibili", "weibo"], "description": "投放平台" },
+      "duration": { "type": "number", "description": "目标时长（秒）" },
+      "style": { "type": "string", "description": "风格偏好（可选）" },
+      "text_input": { "type": "string", "description": "原始输入文本" }
+    },
+    "required": ["product", "category", "platform", "text_input"]
+  }
+}

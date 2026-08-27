@@ -58,8 +58,10 @@ export function clearBuiltinOverride(agentId: string): BuiltinOverridesMap {
 /**
  * 是否为「内置子代理 id」。用于采纳前校验，避免误写非内置 id。
  */
+export const BUILTIN_AGENT_IDS = ['code-reviewer', 'explorer', 'researcher', 'marketing-campaign'] as const
+
 export function isBuiltinAgentId(agentId: string): boolean {
-  return agentId === 'code-reviewer' || agentId === 'explorer' || agentId === 'researcher'
+  return (BUILTIN_AGENT_IDS as readonly string[]).includes(agentId)
 }
 
 /** 占位导出避免未使用 existsSync 警告（实际用于路径存在判断，保留供调用方）。 */

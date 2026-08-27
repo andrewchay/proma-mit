@@ -1,0 +1,11 @@
+{
+  "id": "computer_use_request_permissions",
+  "name": "请求 Computer Use 权限",
+  "description": "请求用户授权 Computer Use 权限。首次使用控制操作前必须调用。",
+  "domain": "core",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+}

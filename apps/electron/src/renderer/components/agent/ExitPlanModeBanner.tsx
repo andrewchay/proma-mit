@@ -1,11 +1,13 @@
 /**
  * ExitPlanModeBanner — Agent ExitPlanMode 计划审批横幅
  *
- * 仿照 Claude Code 的计划审批 UI，提供 4 个选项：
+ * 仿照 Claude Code 的计划审批 UI，提供 6 个选项：
  * 1. 批准并完全自动执行 — 切换到 bypassPermissions
  * 2. 批准并自动审批 — 切换到 auto
- * 3. 拒绝计划 — deny
- * 4. 提供反馈 — 自由输入修改意见
+ * 3. 批准并转为 Goal 执行 — 创建 Goal，绑定会话，切换到 auto
+ * 4. 批准转为 Goal 但不执行 — 仅创建 Goal，不绑定会话
+ * 5. 拒绝计划 — deny
+ * 6. 提供反馈 — 自由输入修改意见
  *
  * 键盘：↑↓ 选择，Enter 确认，数字键快速选择。
  */
@@ -19,10 +21,12 @@ import {
   MessageSquare,
   Send,
   FileText,
+  Target,
+  Goal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { allPendingExitPlanRequestsAtom, agentStreamingStatesAtom, finalizeStreamingActivities } from '@/atoms/agent-atoms'
-import type { ExitPlanModeAction, ExitPlanAllowedPrompt } from '@gravitas/shared'
+import type { ExitPlanModeAction, ExitPlanAllowedPrompt, PlanToGoalConversion } from '@gravitas/shared'
 
 /** 选项定义 */
 interface PlanOption {
@@ -30,7 +34,7 @@ interface PlanOption {
   label: string
   description: string
   icon: React.ReactNode
-  variant: 'default' | 'secondary' | 'destructive'
+  variant: 'default' | 'secondary' | 'destructive' | 'goal'
 }
 
 const PLAN_OPTIONS: PlanOption[] = [
@@ -47,6 +51,20 @@ const PLAN_OPTIONS: PlanOption[] = [
     description: '使用 SDK 自动审批器判断后续操作',
     icon: <ShieldCheck className="size-3.5" />,
     variant: 'secondary',
+  },
+  {
+    action: 'approve_goal',
+    label: '转为 Goal 并执行',
+    description: '创建长期跟踪目标，绑定会话并继续执行',
+    icon: <Goal className="size-3.5" />,
+    variant: 'goal',
+  },
+  {
+    action: 'approve_goal_no_run',
+    label: '转为 Goal 不执行',
+    description: '仅创建目标，稍后手动启动',
+    icon: <Target className="size-3.5" />,
+    variant: 'goal',
   },
   {
     action: 'deny',
@@ -181,7 +199,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
             handleActionRef.current?.(option.action)
           }
         }
-      } else if (e.key >= '1' && e.key <= '4') {
+      } else if (e.key >= '1' && e.key <= '6') {
         const idx = parseInt(e.key) - 1
         const option = PLAN_OPTIONS[idx]
         if (option) {
@@ -240,6 +258,8 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
                   flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-all outline-none text-left
                   ${option.variant === 'destructive'
                     ? 'bg-muted/50 text-foreground/80 hover:bg-destructive/10 hover:text-destructive'
+                    : option.variant === 'goal'
+                    ? 'bg-muted/50 text-foreground/80 hover:bg-primary/10 hover:text-primary'
                     : 'bg-muted/50 text-foreground/80 hover:bg-muted'
                   }
                   ${isFocused ? 'ring-2 ring-primary/50 ring-offset-1 ring-offset-card' : ''}
@@ -306,7 +326,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
       {/* 底部提示 */}
       <div className="flex items-center px-4 pb-3">
         <span className="text-[10px] text-muted-foreground/40">
-          点击选择 · ↑↓ Enter 确认 · 1-4 快速选择
+          点击选择 · ↑↓ Enter 确认 · 1-6 快速选择
         </span>
       </div>
     </div>

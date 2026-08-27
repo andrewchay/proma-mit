@@ -1,0 +1,8 @@
+{
+  "id": "computer-use",
+  "version": 1,
+  "domains": ["core"],
+  "defaultEnabled": ["core"],
+  "createdAt": "2026-08-26T00:00:00Z",
+  "updatedAt": "2026-08-26T00:00:00Z"
+}

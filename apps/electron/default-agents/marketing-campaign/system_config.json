@@ -1,0 +1,30 @@
+{
+  "id": "marketing-campaign",
+  "name": "Marketing Campaign Manager",
+  "description": "营销 Campaign 全流程管理子代理。从策略制定、KOL筛选、内容生产到投放执行和复盘，提供端到端的营销项目管理。",
+  "version": 1,
+  "tools": [
+    "Read",
+    "Glob",
+    "Grep",
+    "Bash",
+    "WebSearch",
+    "WebFetch",
+    "ma_generate_strategy",
+    "ma_forecast_budget",
+    "ma_search_kols",
+    "ma_match_kols",
+    "ma_generate_creative_brief",
+    "ma_campaign_get",
+    "ma_campaign_update",
+    "ma_campaign_kol_add",
+    "ma_audit_content",
+    "ma_add_content_tracking",
+    "ma_generate_phase_report",
+    "mcp__kol_data__search_kols",
+    "mcp__kol_data__sync_kol_data"
+  ],
+  "model": "sonnet",
+  "createdAt": "2026-08-26T00:00:00Z",
+  "updatedAt": "2026-08-26T00:00:00Z"
+}

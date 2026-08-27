@@ -9,6 +9,15 @@
  * 本层为纯新增，不侵入现有 Agent/SDK/UI 主路径。
  */
 
+/** 评测目标类型 */
+export type EvalTargetType = 'agent' | 'toolset'
+
+/** 被测目标 */
+export interface EvalTarget {
+  type: EvalTargetType
+  id: string
+}
+
 /** 被测目标：先针对内置 sub-agent（code-reviewer 等），后续可扩展到任意 Agent 状态。 */
 export type EvalTargetAgentId = string
 
@@ -26,6 +35,8 @@ export interface BenchmarkConfig {
   id: string
   title: string
   description: string
+  /** 被测目标类型（默认 agent） */
+  targetType?: EvalTargetType
   /** 被测 Agent id（内置 sub-agent 或用例名） */
   targetAgentId: EvalTargetAgentId
   /** 评测运行时（provider + model） */

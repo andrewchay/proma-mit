@@ -1,0 +1,18 @@
+{
+  "id": "ma_forecast_budget",
+  "name": "预算预估",
+  "description": "计算市场投放预算，评估投放规模，规划预算分配，包含人群规模测算、曝光转化预估、销售占比校验。",
+  "domain": "paid-media",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "product": { "type": "string", "description": "产品名称" },
+      "category": { "type": "string", "description": "品类" },
+      "target_audience": { "type": "string", "description": "目标受众" },
+      "platforms": { "type": "string", "description": "投放平台" },
+      "duration_months": { "type": "number", "description": "投放周期（月）" },
+      "expected_sales": { "type": "number", "description": "预期销售额（万元）" }
+    },
+    "required": ["product", "category"]
+  }
+}

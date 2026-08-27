@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "正确选择审核工具", "points": 30,
+      "check": "必须调用 ma_audit_content 工具" },
+    { "name": "参数完整", "points": 40,
+      "check": "content、brand、platform 参数必须正确填充" },
+    { "name": "识别合规问题", "points": 30,
+      "check": "应识别出'白了一个度'等夸大宣传用语" }
+  ]
+}

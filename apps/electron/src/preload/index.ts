@@ -908,6 +908,9 @@ export interface ElectronAPI {
   /** 跑一次 Benchmark Baseline 评测 */
   runEvalBaseline: (benchmarkId: string) => Promise<EvalBaselineSummary>
 
+  /** 订阅 Baseline Case 级进度；返回取消订阅函数。 */
+  onEvalProgress: (callback: (event: { benchmarkId: string; caseId: string; phase: 'case_start' | 'case_complete'; completedCases: number; totalCases: number; score?: number }) => void) => () => void
+
   /** 跑一次 Benchmark Improve 优化闭环 */
   runEvalImprove: (benchmarkId: string) => Promise<EvalImproveSummary>
 
@@ -2490,12 +2493,18 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_RUN_BASELINE, benchmarkId)
   },
 
+  onEvalProgress: (callback: (event: { benchmarkId: string; caseId: string; phase: 'case_start' | 'case_complete'; completedCases: number; totalCases: number; score?: number }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: { benchmarkId: string; caseId: string; phase: 'case_start' | 'case_complete'; completedCases: number; totalCases: number; score?: number }) => callback(progress)
+    ipcRenderer.on(AGENT_IPC_CHANNELS.EVAL_PROGRESS, listener)
+    return () => ipcRenderer.removeListener(AGENT_IPC_CHANNELS.EVAL_PROGRESS, listener)
+  },
+
   runEvalImprove: (benchmarkId: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_RUN_IMPROVE, benchmarkId)
   },
 
-  adoptEvalPrompt: (agentId: string, prompt: string) => {
-    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_ADOPT_PROMPT, agentId, prompt)
+  adoptEvalPrompt: (arg1: string | { type: 'agent' | 'toolset'; targetId: string; content: string }, arg2?: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.EVAL_ADOPT_PROMPT, arg1, arg2)
   },
 
   clearEvalPrompt: (agentId: string) => {

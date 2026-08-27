@@ -1,0 +1,13 @@
+{
+  "id": "computer_use_screenshot",
+  "name": "屏幕截图",
+  "description": "截取指定显示器的屏幕图像。返回截图数据和坐标缩放比例，用于后续操作坐标换算。",
+  "domain": "core",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "displayId": { "type": "number", "description": "显示器 ID（从 computer_use_displays 获取，默认主显示器）" }
+    },
+    "required": []
+  }
+}
