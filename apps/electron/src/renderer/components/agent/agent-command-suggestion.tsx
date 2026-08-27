@@ -44,11 +44,11 @@ type MentionCharacter = '@' | '/' | '&' | '#'
 type CommandAction = 'attach-file' | 'attach-folder'
 
 interface RootMenuItem {
-  id: CommandPage | CommandAction
+  id: string
   label: string
   description: string
   icon: React.ComponentType<{ className?: string }>
-  kind: 'page' | 'action'
+  kind: 'page' | 'action' | 'skill' | 'tool'
   disabled?: boolean
 }
 
@@ -221,40 +221,31 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
       let disposed = false
       let retryTimer: number | null = null
 
-      if (page === 'root') {
-        setLoading(false)
-        return () => { disposed = true }
-      }
-
       const loadPage = async (): Promise<void> => {
         setLoading(true)
         try {
-          if (page === 'skills' || page === 'tools') {
+          // root 页也加载启用的 skills + tools，供 `/` 后继续输入时自动填充候选
+          if (page === 'root' || page === 'skills' || page === 'tools') {
             const slug = workspaceSlugRef.current
             if (!slug) return
             const capabilities = await window.electronAPI.getWorkspaceCapabilities(slug)
             if (disposed) return
-            if (page === 'skills') {
-              setSkills(
-                capabilities.skills
-                  .filter((skill) => skill.enabled)
-                  .map((skill) => ({
-                    id: skill.slug,
-                    label: skill.name,
-                    description: skill.description,
-                  })),
-              )
-            } else {
-              setTools(
-                capabilities.mcpServers
-                  .filter((server) => server.enabled)
-                  .map((server) => ({
-                    id: server.name,
-                    label: server.name,
-                    description: server.type,
-                  })),
-              )
-            }
+            const enabledSkills = capabilities.skills
+              .filter((skill) => skill.enabled)
+              .map((skill) => ({
+                id: skill.slug,
+                label: skill.name,
+                description: skill.description,
+              }))
+            const enabledTools = capabilities.mcpServers
+              .filter((server) => server.enabled)
+              .map((server) => ({
+                id: server.name,
+                label: server.name,
+                description: server.type,
+              }))
+            setSkills(enabledSkills)
+            setTools(enabledTools)
             return
           }
 
@@ -324,10 +315,34 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
       sessionAttachedDirsRef,
     ])
 
-    const rootItems = React.useMemo(
-      () => filterCommandMenuItems(getRootMenuItems(), query),
-      [query],
-    )
+    const rootItems = React.useMemo(() => {
+      const entries = getRootMenuItems()
+      const q = query.trim()
+      // `/` 后继续输入：把匹配的启用 skills / MCP tools 直接作为可选中候选，
+      // 排在功能入口之前，实现“自动填充”，无需先进子页。
+      if (q) {
+        const matchedResources = [
+          ...filterCommandMenuItems(skills, q).map((s) => ({
+            id: s.id,
+            label: s.label,
+            description: s.description,
+            icon: Sparkles,
+            kind: 'skill' as const,
+          })),
+          ...filterCommandMenuItems(tools, q).map((t) => ({
+            id: t.id,
+            label: t.label,
+            description: t.description,
+            icon: Wrench,
+            kind: 'tool' as const,
+          })),
+        ]
+        if (matchedResources.length > 0) {
+          return [...matchedResources, ...filterCommandMenuItems(entries, q)]
+        }
+      }
+      return filterCommandMenuItems(entries, query)
+    }, [query, skills, tools])
     const referenceItems = React.useMemo(() => {
       const source = page === 'skills' ? skills : page === 'tools' ? tools : sessions
       return filterCommandMenuItems(source, pageQuery)
@@ -341,9 +356,17 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
           changePage(item.id as CommandPage)
           return
         }
+        if (item.kind === 'skill') {
+          onInsertMention('/', item.id, item.label)
+          return
+        }
+        if (item.kind === 'tool') {
+          onInsertMention('#', item.id, item.label)
+          return
+        }
         onRunAction(item.id as CommandAction)
       },
-      [onRunAction, query, changePage],
+      [onRunAction, onInsertMention, query, changePage],
     )
 
     const selectReferenceItem = React.useCallback(
@@ -533,6 +556,10 @@ export function createAgentCommandSuggestion(
   attachedDirsRef: React.RefObject<string[]>,
   sessionAttachedDirsRef: React.RefObject<string[]>,
   actionsRef: React.RefObject<AgentCommandActions>,
+  /** 命令菜单活跃标记：菜单打开期间由编辑器用它阻止 Enter 发送（与其它 mention 一致） */
+  mentionActiveRef: React.MutableRefObject<boolean>,
+  /** 命令菜单可选项计数：打开期间置 1 以便 Enter 守卫生效，关闭复位 0 */
+  mentionItemCountRef: React.MutableRefObject<number>,
 ): Omit<SuggestionOptions<SlashSuggestionItem>, 'editor'> {
   return {
     char: '/',
@@ -604,6 +631,9 @@ export function createAgentCommandSuggestion(
         popup = null
         renderer?.destroy()
         renderer = null
+        // 命令菜单关闭（含 blur）后立即解除 Enter 拦截，避免误吞后续回车
+        mentionActiveRef.current = false
+        mentionItemCountRef.current = 0
       }
 
       const getRendererProps = (props: SuggestionProps<SlashSuggestionItem>) => ({
@@ -623,6 +653,10 @@ export function createAgentCommandSuggestion(
           if (popup || renderer) cleanup()
           if (!isSuggestionTriggerPresent(props.editor, props.range, '/')) return
 
+          // 命令菜单打开期间阻止编辑器 Enter 发送（与 @/#/& 的 mention 一致）
+          mentionActiveRef.current = true
+          mentionItemCountRef.current = 1
+
           activeProps = props
           editorDom = props.editor.view.dom
           renderer = new ReactRenderer(AgentCommandMenu, {
@@ -640,6 +674,9 @@ export function createAgentCommandSuggestion(
           editorDom.addEventListener('blur', blurHandler, true)
         },
         onUpdate(props) {
+          // 命令菜单打开期间保持 Enter 拦截（菜单内 items 数量由内部状态管理，非 suggestion props.items）
+          mentionActiveRef.current = true
+          mentionItemCountRef.current = 1
           activeProps = props
           renderer?.updateProps(getRendererProps(props))
           positionPopup(popup, props.clientRect?.())

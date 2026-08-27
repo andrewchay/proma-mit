@@ -221,8 +221,8 @@ export function contributePromptsForSubscribed(subscribed: string[]): string[] {
 // 订阅判定
 // =====================================================================
 
-/** 默认订阅（未设置时保持现状：默认启用 influencer） */
-export const DEFAULT_ENABLED_CAPABILITIES: readonly string[] = ['influencer']
+/** 默认订阅（未设置时默认不开启任何业务包；用户可在领域工作台手动启用） */
+export const DEFAULT_ENABLED_CAPABILITIES: readonly string[] = []
 
 /**
  * 依据营销订阅状态判定营销能力是否启用。

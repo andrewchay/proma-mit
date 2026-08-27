@@ -47,8 +47,8 @@ export const CAPABILITY_MANIFEST: CapabilityMeta[] = [
   },
 ]
 
-/** 默认订阅（M0 默认启用 influencer 便于首个用例验证）；与 main 侧 isEnabled 兜底一致 */
-export const DEFAULT_ENABLED_CAPABILITIES: CapabilityId[] = ['influencer']
+/** 默认订阅（默认不开启任何业务包；用户可在领域工作台手动启用）；与 main 侧 isEnabled 兜底一致 */
+export const DEFAULT_ENABLED_CAPABILITIES: CapabilityId[] = []
 
 /** 已订阅的业务能力包 id（内存态；初始化自 main settings，toggle 后写回） */
 export const enabledCapabilitiesAtom = atom<CapabilityId[]>(DEFAULT_ENABLED_CAPABILITIES)
@@ -63,7 +63,7 @@ export function toggleCapability(enabled: CapabilityId[], id: CapabilityId): Cap
   return enabled.includes(id) ? enabled.filter((c) => c !== id) : [...enabled, id]
 }
 
-/** 从主进程加载营销订阅状态（settings.json 权威；未设置回退默认 influencer） */
+/** 从主进程加载营销订阅状态（settings.json 权威；未设置回退默认不开启） */
 export async function initializeMarketingCapabilities(
   setEnabled: (enabled: CapabilityId[]) => void,
 ): Promise<void> {

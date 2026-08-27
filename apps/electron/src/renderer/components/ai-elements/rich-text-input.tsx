@@ -253,6 +253,8 @@ export function RichTextInput({
       attachedDirsRef,
       sessionAttachedDirsRef,
       commandActionsRef,
+      mentionActiveRef,
+      mentionItemCountRef,
     ),
     [],
   )

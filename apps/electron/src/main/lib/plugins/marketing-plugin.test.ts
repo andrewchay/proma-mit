@@ -1,6 +1,24 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { collectContributingTools, collectContributingPrompts, _resetPluginManagerForTests } from '../plugin-manager'
 import { marketingPluginRuntime, isMarketingEnabled, allMarketingToolDefinitions, contributePromptsForSubscribed } from './marketing-plugin'
+import { updateSettings } from '../settings-service'
+
+/**
+ * 本测试避免写真实 ~/.proma。需要驱动营销订阅状态时，
+ * 用临时 PROMA_TEST_CONFIG_DIR 隔离并在测试后清理。
+ */
+const tmpConfigDir = mkdtempSync(join(tmpdir(), 'gravitas-marketing-test-'))
+beforeAll(() => {
+  process.env.PROMA_TEST_CONFIG_DIR = tmpConfigDir
+})
+afterAll(() => {
+  delete process.env.PROMA_TEST_CONFIG_DIR
+  rmSync(tmpConfigDir, { recursive: true, force: true })
+})
+
 
 describe('Marketing 插件', () => {
   const runtime = marketingPluginRuntime()
@@ -65,38 +83,65 @@ describe('Marketing 插件', () => {
     expect(result.content).toContain('必填')
   })
 
-  test('collectContributingTools 经 BUILTIN_RUNTIMES 收集到营销本地工具', () => {
+  test('collectContributingTools 默认不收集营销工具，订阅后收集', () => {
     _resetPluginManagerForTests()
-    const tools = collectContributingTools()
-    // 内置插件含 marketing（isEnabled 恒 true、平台全支持）
-    expect(tools.map((t) => t.name)).toContain('ma_generate_storyboard')
+    // 默认未订阅任何领域包 → 营销 isEnabled false → 不收集营销工具
+    const toolsOff = collectContributingTools()
+    expect(toolsOff.map((t) => t.name)).not.toContain('ma_generate_storyboard')
     _resetPluginManagerForTests()
-  })
 
-  test('contributePrompts 按默认订阅(influencer)贡献达人域指令', () => {
-    const prompts = runtime.contributePrompts?.() ?? []
-    // 默认订阅 influencer：达人域 8 条指令（storyboard 无指令）
-    expect(prompts.length).toBeGreaterThanOrEqual(8)
-    // 均为领域能力引导文本
-    for (const p of prompts) {
-      expect(typeof p).toBe('string')
-      expect(p.length).toBeGreaterThan(20)
+    // 订阅 influencer 后 → 营销启用 → 收集到 shared storyboard + 达人域工具
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    try {
+      const toolsOn = collectContributingTools()
+      expect(toolsOn.map((t) => t.name)).toContain('ma_generate_storyboard')
+      expect(toolsOn.map((t) => t.name)).toContain('ma_search_kols')
+    } finally {
+      updateSettings({ marketingCapabilities: [] })
+      _resetPluginManagerForTests()
     }
   })
 
-  test('collectContributingPrompts 经 BUILTIN_RUNTIMES 收集到营销指令（按默认订阅影响）', () => {
+  test('contributePrompts 订阅 influencer 后贡献达人域指令', () => {
+    // 默认未订阅 → 无营销指令
+    const promptsOff = runtime.contributePrompts?.() ?? []
+    expect(promptsOff.length).toBe(0)
+
+    // 订阅 influencer 后 → 达人域指令存在且为领域引导文本
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    try {
+      const prompts = runtime.contributePrompts?.() ?? []
+      expect(prompts.length).toBeGreaterThanOrEqual(8)
+      for (const p of prompts) {
+        expect(typeof p).toBe('string')
+        expect(p.length).toBeGreaterThan(20)
+      }
+    } finally {
+      updateSettings({ marketingCapabilities: [] })
+    }
+  })
+
+  test('collectContributingPrompts 订阅 influencer 后收集达人域指令并过滤投放域', () => {
     _resetPluginManagerForTests()
-    const prompts = collectContributingPrompts()
-    // 默认订阅 influencer：达人域指令存在，投放域指令被过滤
-    expect(prompts.some((p) => p.includes('MAKOL搜索'))).toBe(true)
-    expect(prompts.some((p) => p.includes('MA达人CRM'))).toBe(true)
-    expect(prompts.some((p) => p.includes('MA策略生成'))).toBe(false)
+    // 默认未订阅 → 无营销指令
+    expect(collectContributingPrompts().some((p) => p.includes('MAKOL搜索'))).toBe(false)
     _resetPluginManagerForTests()
+
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    try {
+      const prompts = collectContributingPrompts()
+      expect(prompts.some((p) => p.includes('MAKOL搜索'))).toBe(true)
+      expect(prompts.some((p) => p.includes('MA达人CRM'))).toBe(true)
+      expect(prompts.some((p) => p.includes('MA策略生成'))).toBe(false)
+    } finally {
+      updateSettings({ marketingCapabilities: [] })
+      _resetPluginManagerForTests()
+    }
   })
 
   test('isMarketingEnabled 依据订阅状态判定启用', () => {
-    // 未设置（undefined）→ 默认启用
-    expect(isMarketingEnabled(undefined)).toBe(true)
+    // 未设置（undefined）→ 默认不启用
+    expect(isMarketingEnabled(undefined)).toBe(false)
     // 有订阅业务包 → 启用
     expect(isMarketingEnabled(['influencer'])).toBe(true)
     expect(isMarketingEnabled(['paid-media'])).toBe(true)

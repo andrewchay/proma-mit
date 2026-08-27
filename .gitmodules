@@ -1,3 +1,0 @@
-[submodule "apps/electron/default-skills/ma-media-crawler/MediaCrawler"]
-	path = apps/electron/default-skills/ma-media-crawler/MediaCrawler
-	url = https://github.com/NanmiCoder/MediaCrawler.git
