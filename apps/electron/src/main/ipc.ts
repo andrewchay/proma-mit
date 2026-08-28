@@ -214,6 +214,7 @@ import {
   readWorkspaceSkillContent,
   writeWorkspaceSkillContent,
   toggleWorkspaceSkill,
+  toggleSkillSet,
   listSkillFiles,
   readSkillFile,
   writeSkillFile,
@@ -227,6 +228,7 @@ import {
   detachWorkspaceDirectory,
   detachWorkspaceFile,
 } from './lib/agent-workspace-manager'
+import { getSkillMarketplace, installMarketplaceSkill } from "./lib/skill-marketplace-service"
 import { getDynamicIslandService } from './lib/dynamic-island/dynamic-island-service'
 import { agentEventBus } from './lib/agent-service'
 import { getMemoryConfig, setMemoryConfig } from './lib/memory-service'
@@ -1638,6 +1640,28 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.TOGGLE_SKILL,
     async (_, workspaceSlug: string, skillSlug: string, enabled: boolean): Promise<void> => {
       return toggleWorkspaceSkill(workspaceSlug, skillSlug, enabled)
+    }
+  )
+
+  // 批量切换一个 Skill Set；空前缀代表当前工作区的全部 Skills
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.TOGGLE_SKILL_SET,
+    async (_, workspaceSlug: string, prefix: string, enabled: boolean): Promise<string[]> => {
+      return toggleSkillSet(workspaceSlug, prefix, enabled)
+    }
+  )
+
+  // 获取 Skills 集市目录
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.GET_SKILL_MARKETPLACE,
+    async (_, workspaceSlug: string) => getSkillMarketplace(workspaceSlug)
+  )
+
+  // 从 Skills 集市安装或更新；更新保留本地启用/禁用状态
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.INSTALL_MARKETPLACE_SKILL,
+    async (_, workspaceSlug: string, source: import("./lib/skill-marketplace-service").MarketplaceSkillSource, skillSlug: string): Promise<SkillMeta> => {
+      return installMarketplaceSkill(workspaceSlug, source, skillSlug)
     }
   )
 

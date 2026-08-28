@@ -9,7 +9,7 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Plus, Plug, Pencil, Trash2, Sparkles, FolderOpen, MessageSquare, ShieldCheck, ChevronDown, ChevronRight, Brain, ImagePlus, Search, RefreshCw, Save, X } from 'lucide-react'
+import { Plus, Plug, Pencil, Trash2, Sparkles, FolderOpen, MessageSquare, ShieldCheck, ChevronDown, ChevronRight, Brain, ImagePlus, Search, RefreshCw, Save, X, Store, Power, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -32,7 +32,7 @@ import {
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
 import { appModeAtom } from '@/atoms/app-mode'
 import { chatToolsAtom } from '@/atoms/chat-tool-atoms'
-import type { McpServerEntry, SkillMeta, OtherWorkspaceSkillsGroup, WorkspaceMcpConfig } from '@gravitas/shared'
+import type { McpServerEntry, SkillMeta, SkillMarketplaceItem, OtherWorkspaceSkillsGroup, WorkspaceMcpConfig } from '@gravitas/shared'
 import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
 import { McpServerForm } from './McpServerForm'
 import { SkillFilesPanel } from './SkillFilesPanel'
@@ -150,6 +150,10 @@ export function AgentSettings(): React.ReactElement {
   const [skillsDir, setSkillsDir] = React.useState('')
   const [otherWorkspaces, setOtherWorkspaces] = React.useState<OtherWorkspaceSkillsGroup[]>([])
   const [showImportDialog, setShowImportDialog] = React.useState(false)
+  const [showMarketplaceDialog, setShowMarketplaceDialog] = React.useState(false)
+  const [marketplaceItems, setMarketplaceItems] = React.useState<SkillMarketplaceItem[]>([])
+  const [marketplaceQuery, setMarketplaceQuery] = React.useState("")
+  const [installingMarketplaceSkill, setInstallingMarketplaceSkill] = React.useState<string | null>(null)
   const [importingSkill, setImportingSkill] = React.useState<string | null>(null)
   const [updatingSkill, setUpdatingSkill] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -344,6 +348,42 @@ ${skillList}
     }
   }
 
+  const handleToggleAllSkills = async (enabled: boolean): Promise<void> => {
+    if (!workspaceSlug || !confirm("确定" + (enabled ? "启用" : "禁用") + "当前工作区全部 " + skills.length + " 个 Skill 吗？")) return
+    try {
+      const changed = await window.electronAPI.toggleSkillSet(workspaceSlug, "", enabled)
+      await loadData()
+      bumpCapabilitiesVersion((version) => version + 1)
+      toast.success("已" + (enabled ? "启用" : "禁用") + " " + changed.length + " 个 Skill")
+    } catch (error) {
+      console.error("[Agent 设置] 批量切换 Skills 失败:", error)
+      toast.error("批量切换失败", { description: error instanceof Error ? error.message : "未知错误" })
+    }
+  }
+
+  const loadMarketplace = React.useCallback(async (): Promise<void> => {
+    if (!workspaceSlug) return
+    try { setMarketplaceItems(await window.electronAPI.getSkillMarketplace(workspaceSlug)) }
+    catch (error) { console.error("[Agent 设置] 加载 Skills 集市失败:", error) }
+  }, [workspaceSlug])
+
+  React.useEffect(() => { if (showMarketplaceDialog) void loadMarketplace() }, [showMarketplaceDialog, loadMarketplace])
+
+  const handleInstallMarketplaceSkill = async (item: SkillMarketplaceItem): Promise<void> => {
+    if (!workspaceSlug || installingMarketplaceSkill) return
+    setInstallingMarketplaceSkill(item.id)
+    try {
+      const installed = await window.electronAPI.installMarketplaceSkill(workspaceSlug, { source: item.source, sourceWorkspaceSlug: item.sourceWorkspaceSlug, sourceRelativePath: item.sourceRelativePath }, item.slug)
+      setSkills((previous) => previous.some((skill) => skill.slug === installed.slug) ? previous.map((skill) => skill.slug === installed.slug ? installed : skill) : [...previous, installed])
+      bumpCapabilitiesVersion((version) => version + 1)
+      await loadMarketplace()
+      toast.success((item.installStatus === "update_available" ? "已更新 Skill: " : "已安装 Skill: ") + installed.name)
+    } catch (error) {
+      console.error("[Agent 设置] 从集市安装 Skill 失败:", error)
+      toast.error("Skill 安装失败", { description: error instanceof Error ? error.message : "未知错误" })
+    } finally { setInstallingMarketplaceSkill(null) }
+  }
+
   const handleImportSkill = async (sourceSlug: string, skillSlug: string): Promise<void> => {
     if (!workspaceSlug || importingSkill) return
     setImportingSkill(skillSlug)
@@ -468,6 +508,10 @@ ${skillList}
                     Gravitas Agent 内置 Skills Finder，你可以在 Agent 模式下要求 Gravitas 帮你联网查找某类 Skills 并安装到当前的工作区使用；也可以跟 Gravitas Agent 一起探讨，利用 Gravitas Agent 内置的 Skills Creator 来一起创建高质量可复用的 Skills 到当前的工作区
                   </TooltipContent>
                 </Tooltip>
+                <Button size="sm" variant="outline" onClick={() => setShowMarketplaceDialog(true)}>
+                  <Store size={16} />
+                  <span>Skills 集市</span>
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => setShowImportDialog(true)}>
                   <Plus size={16} />
                   <span>从其他工作区导入</span>
@@ -488,6 +532,15 @@ ${skillList}
               </div>
             }
           >
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => void handleToggleAllSkills(true)} disabled={skills.length === 0}>
+                <Power size={14} /> 全部启用
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void handleToggleAllSkills(false)} disabled={skills.length === 0}>
+                <Power size={14} /> 全部禁用
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => void loadData()}><RotateCcw size={14} /> 刷新</Button>
+            </div>
             {loading ? (
               <div className="text-sm text-muted-foreground py-8 text-center">加载中...</div>
             ) : skills.length === 0 ? (
@@ -597,6 +650,16 @@ ${skillList}
           <EvalPanel />
         </TabsContent>
       </Tabs>
+
+      <SkillMarketplaceDialog
+        open={showMarketplaceDialog}
+        onOpenChange={setShowMarketplaceDialog}
+        items={marketplaceItems}
+        query={marketplaceQuery}
+        onQueryChange={setMarketplaceQuery}
+        installingId={installingMarketplaceSkill}
+        onInstall={handleInstallMarketplaceSkill}
+      />
 
       <ImportSkillFromWorkspaceDialog
         open={showImportDialog}
@@ -1280,6 +1343,96 @@ function ImportSkillFromWorkspaceDialog({
                     </div>
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+
+// ===== Skills Marketplace =====
+
+interface SkillMarketplaceDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  items: SkillMarketplaceItem[]
+  query: string
+  onQueryChange: (value: string) => void
+  installingId: string | null
+  onInstall: (item: SkillMarketplaceItem) => Promise<void>
+}
+
+function SkillMarketplaceDialog({ open, onOpenChange, items, query, onQueryChange, installingId, onInstall }: SkillMarketplaceDialogProps): React.ReactElement {
+  const [category, setCategory] = React.useState("全部")
+  const [skillSet, setSkillSet] = React.useState("全部")
+  const [skillSubSet, setSkillSubSet] = React.useState("全部")
+  const categories = React.useMemo(() => ["全部", ...Array.from(new Set(items.map((item) => item.category || "未分类"))).sort((a, b) => a.localeCompare(b, "zh-CN"))], [items])
+  const skillSets = React.useMemo(() => ["全部", ...Array.from(new Set(items.map((item) => item.skillSet || "通用效率"))).sort((a, b) => a.localeCompare(b, "zh-CN"))], [items])
+  const skillSubSets = React.useMemo(() => ["全部", ...Array.from(new Set(items.filter((item) => skillSet === "全部" || (item.skillSet || "通用效率") === skillSet).map((item) => item.skillSubSet || "通用工具"))).sort((a, b) => a.localeCompare(b, "zh-CN"))], [items, skillSet])
+  const visibleItems = React.useMemo(() => {
+    const keyword = query.trim().toLowerCase()
+    return items.filter((item) => {
+      const matchCategory = category === "全部" || (item.category || "未分类") === category
+      const matchSkillSet = skillSet === "全部" || (item.skillSet || "通用效率") === skillSet
+      const matchSkillSubSet = skillSubSet === "全部" || (item.skillSubSet || "通用工具") === skillSubSet
+      const searchable = [item.name, item.slug, item.description, item.sourceWorkspaceName].filter(Boolean).join(" ").toLowerCase()
+      return matchCategory && matchSkillSet && matchSkillSubSet && (!keyword || searchable.includes(keyword))
+    })
+  }, [items, query, category, skillSet, skillSubSet])
+
+  React.useEffect(() => {
+    if (!categories.includes(category)) setCategory("全部")
+  }, [categories, category])
+  React.useEffect(() => { if (!skillSets.includes(skillSet)) setSkillSet("全部") }, [skillSets, skillSet])
+  React.useEffect(() => { if (!skillSubSets.includes(skillSubSet)) setSkillSubSet("全部") }, [skillSubSets, skillSubSet])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b bg-muted/30 px-6 pb-4 pt-6">
+          <DialogTitle className="flex items-center gap-2"><Store size={18} /> Skills 集市</DialogTitle>
+          <DialogDescription>浏览内置模板和其他工作区的可复用 Skills；安装会保留当前同名 Skill 的启用状态。</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 overflow-y-auto px-6 py-5 max-h-[65vh]">
+          <div className="flex flex-wrap gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜索名称、描述或来源..." className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring" />
+            </div>
+            {categories.map((value) => <Button key={value} size="sm" variant={category === value ? "default" : "outline"} onClick={() => setCategory(value)}>{value}</Button>)}
+            <div className="flex w-full flex-wrap gap-2 border-t pt-3">
+              {skillSets.map((value) => <Button key={value} size="sm" variant={skillSet === value ? "default" : "outline"} onClick={() => setSkillSet(value)}>{value}</Button>)}
+            </div>
+            <div className="flex w-full flex-wrap gap-2">
+              {skillSubSets.map((value) => <Button key={value} size="sm" variant={skillSubSet === value ? "secondary" : "ghost"} onClick={() => setSkillSubSet(value)}>{value}</Button>)}
+            </div>
+          </div>
+          {visibleItems.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">没有符合条件的 Skill</div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {visibleItems.map((item) => (
+                <SettingsCard key={item.id} divided={false} className="overflow-hidden">
+                  <div className="flex h-full flex-col gap-3 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-xl bg-amber-500/12 p-2 text-amber-500 shadow-sm"><Sparkles size={18} /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2"><span className="truncate text-sm font-medium">{item.name}</span>{item.version && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">v{item.version}</span>}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{item.skillSet || "通用效率"} / {item.skillSubSet || "通用工具"} · {item.source === "builtin" ? "内置" : item.sourceWorkspaceName}</div>
+                      </div>
+                    </div>
+                    <p className="line-clamp-2 min-h-[40px] text-sm leading-5 text-muted-foreground">{item.description || "暂无描述"}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-xs text-muted-foreground">{item.slug}</span>
+                      <Button size="sm" variant={item.installStatus === "update_available" ? "default" : "outline"} disabled={installingId !== null || item.installStatus === "installed"} onClick={() => void onInstall(item)}>
+                        {installingId === item.id ? "处理中..." : item.installStatus === "update_available" ? "更新" : item.installStatus === "installed" ? "已安装" : "安装"}
+                      </Button>
+                    </div>
+                  </div>
+                </SettingsCard>
               ))}
             </div>
           )}

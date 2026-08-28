@@ -1151,7 +1151,13 @@ export interface SkillMeta {
   description?: string
   icon?: string
   version?: string
+  /** Skill 集市分类，来自 SKILL.md frontmatter。 */
+  category?: string
   enabled: boolean
+  /** 按能力与使用场景推导的 Skill Set。 */
+  skillSet?: string
+  /** Skill Set 下按具体能力域归类的二级集合。 */
+  skillSubSet?: string
   /** 如果此 Skill 是从其他工作区导入的，则携带来源信息 */
   importSource?: SkillImportSource
   /** 如果此 Skill 是从外部生态导入的（GitHub/skills.sh/…），携带来源信息 */
@@ -1165,6 +1171,18 @@ export interface OtherWorkspaceSkillsGroup {
   workspaceName: string
   workspaceSlug: string
   skills: SkillMeta[]
+}
+
+/** Skills 集市中的一个可安装条目。 */
+export interface SkillMarketplaceItem extends SkillMeta {
+  id: string
+  source: "builtin" | "workspace" | "personal" | "claude"
+  sourceWorkspaceSlug?: string
+  sourceWorkspaceName?: string
+  /** 外部本地来源中 Skill 目录的受限相对路径。 */
+  sourceRelativePath?: string
+  /** 当前工作区的同 slug Skill 状态。 */
+  installStatus: "available" | "installed" | "update_available"
 }
 
 /** 团队 Skills 目录：某工作区从别处导入的 Skill 条目（PH2-A） */
@@ -2009,8 +2027,14 @@ export const AGENT_IPC_CHANNELS = {
   GET_SKILLS_DIR: 'agent:get-skills-dir',
   /** 删除工作区 Skill */
   DELETE_SKILL: 'agent:delete-skill',
-  /** 切换工作区 Skill 启用/禁用 */
+  /** 切换单个工作区 Skill 启用/禁用 */
   TOGGLE_SKILL: 'agent:toggle-skill',
+  /** 切换整个 Skill Set 的启用/禁用 */
+  TOGGLE_SKILL_SET: 'agent:toggle-skill-set',
+  /** 获取 Skills 集市目录 */
+  GET_SKILL_MARKETPLACE: 'agent:get-skill-marketplace',
+  /** 从 Skills 集市安装或更新 Skill */
+  INSTALL_MARKETPLACE_SKILL: 'agent:install-marketplace-skill',
   /** 获取其他工作区的 Skill 列表 */
   GET_OTHER_WORKSPACE_SKILLS: 'agent:get-other-workspace-skills',
   /** 从其他工作区导入 Skill 到当前工作区 */

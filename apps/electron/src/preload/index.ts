@@ -88,6 +88,7 @@ import type {
   StopTaskInput,
   WorkspaceMcpConfig,
   SkillMeta,
+  SkillMarketplaceItem,
 
   OtherWorkspaceSkillsGroup,
   WorkspaceCapabilities,
@@ -768,6 +769,15 @@ export interface ElectronAPI {
 
   /** 切换工作区 Skill 启用/禁用 */
   toggleWorkspaceSkill: (workspaceSlug: string, skillSlug: string, enabled: boolean) => Promise<void>
+
+  /** 批量切换一个 Skill Set；空前缀代表全部 Skills */
+  toggleSkillSet: (workspaceSlug: string, prefix: string, enabled: boolean) => Promise<string[]>
+
+  /** 获取 Skills 集市目录 */
+  getSkillMarketplace: (workspaceSlug: string) => Promise<SkillMarketplaceItem[]>
+
+  /** 从 Skills 集市安装或更新 Skill */
+  installMarketplaceSkill: (workspaceSlug: string, source: { source: "builtin" | "workspace" | "personal" | "claude"; sourceWorkspaceSlug?: string; sourceRelativePath?: string }, skillSlug: string) => Promise<SkillMeta>
 
   /** 获取其他工作区的 Skill 列表 */
   getOtherWorkspaceSkills: (currentSlug: string) => Promise<OtherWorkspaceSkillsGroup[]>
@@ -2252,6 +2262,18 @@ const electronAPI: ElectronAPI = {
 
   toggleWorkspaceSkill: (workspaceSlug: string, skillSlug: string, enabled: boolean) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TOGGLE_SKILL, workspaceSlug, skillSlug, enabled)
+  },
+
+  toggleSkillSet: (workspaceSlug: string, prefix: string, enabled: boolean) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TOGGLE_SKILL_SET, workspaceSlug, prefix, enabled)
+  },
+
+  getSkillMarketplace: (workspaceSlug: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_SKILL_MARKETPLACE, workspaceSlug)
+  },
+
+  installMarketplaceSkill: (workspaceSlug: string, source: { source: "builtin" | "workspace" | "personal" | "claude"; sourceWorkspaceSlug?: string; sourceRelativePath?: string }, skillSlug: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.INSTALL_MARKETPLACE_SKILL, workspaceSlug, source, skillSlug)
   },
 
   getOtherWorkspaceSkills: (currentSlug: string) => {

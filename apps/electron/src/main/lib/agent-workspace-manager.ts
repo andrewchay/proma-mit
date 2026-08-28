@@ -778,6 +778,58 @@ export function getAllWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
   return [...activeSkills, ...inactiveSkills]
 }
 
+/**
+ * 切换整个 Skill Set（按前缀分组）的启用/禁用状态。
+ * 将指定前缀的所有 Skill 统一移动到 active 或 inactive 目录。
+ */
+export function toggleSkillSet(workspaceSlug: string, prefix: string, enabled: boolean): string[] {
+  // 自动快照：批量切换前备份
+  try { autoSnapshotBeforeUpdate(workspaceSlug, `${enabled ? '启用' : '禁用'} Skill Set ${prefix} 前`) } catch {}
+
+  const activeDir = getWorkspaceSkillsDir(workspaceSlug)
+  const inactiveDir = getInactiveSkillsDir(workspaceSlug)
+
+  const srcDir = enabled ? inactiveDir : activeDir
+  const destDir = enabled ? activeDir : inactiveDir
+
+  const changed: string[] = []
+
+  try {
+    const entries = readdirSync(srcDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      // 匹配前缀：prefix 为空字符串时匹配所有
+      if (prefix && !entry.name.startsWith(prefix + '-')) continue
+
+      const srcPath = join(srcDir, entry.name)
+      const destPath = join(destDir, entry.name)
+
+      if (existsSync(destPath)) {
+        console.warn(`[Agent 工作区] Skill Set 切换跳过: ${entry.name} 目标已存在`)
+        continue
+      }
+
+      renameSync(srcPath, destPath)
+      changed.push(entry.name)
+    }
+  } catch {
+    // 目录可能不存在，忽略
+  }
+
+  console.log(`[Agent 工作区] Skill Set ${enabled ? '启用' : '禁用'}: ${workspaceSlug}/${prefix} (${changed.length} 个)`)
+
+  // 审计：批量 Skill 启用/禁用
+  void appendConfigAudit({
+    category: 'skill',
+    action: enabled ? 'enable_set' : 'disable_set',
+    targetId: `${workspaceSlug}/${prefix}`,
+    targetName: prefix || 'all',
+    metadata: { count: changed.length, skills: changed },
+  })
+
+  return changed
+}
+
 /** 在 skills/ 和 skills-inactive/ 之间移动来切换启用/禁用 */
 export function toggleWorkspaceSkill(workspaceSlug: string, skillSlug: string, enabled: boolean): void {
   // 自动快照：切换 Skill 状态前备份
