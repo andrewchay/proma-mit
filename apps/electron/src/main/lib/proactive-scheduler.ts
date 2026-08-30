@@ -9,6 +9,7 @@ import type {
   CreateProactiveScheduleInput,
   ProactiveSchedule,
   ProactiveTaskRun,
+  UpdateProactiveScheduleInput,
 } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
 
@@ -51,6 +52,7 @@ export class ProactiveScheduler {
       modelId: input.modelId,
       runtime: input.runtime,
       prompt: input.prompt.trim(),
+      routineInstanceId: input.routineInstanceId,
       schedule: input.schedule,
       newSession: input.newSession ?? false,
       permissionMode: input.permissionMode ?? 'safe',
@@ -61,6 +63,34 @@ export class ProactiveScheduler {
       updatedAt: now,
     }
     const saved = this.store.saveSchedule(schedule)
+    this.arm()
+    return saved
+  }
+
+  /** 编辑任务定义；运行历史保持追加式，不会被改写。 */
+  update(scheduleId: string, input: UpdateProactiveScheduleInput): ProactiveSchedule {
+    if (this.activeScheduleIds.has(scheduleId)) throw new Error('定时任务正在运行，无法编辑')
+    validateCreateInput(input, this.now(), !input.enabled)
+    const current = this.requireSchedule(scheduleId)
+    const now = this.now()
+    const saved = this.store.saveSchedule({
+      ...current,
+      title: input.title.trim(),
+      sessionId: input.sessionId,
+      workspaceId: input.workspaceId,
+      channelId: input.channelId,
+      modelId: input.modelId,
+      runtime: input.runtime,
+      prompt: input.prompt.trim(),
+      routineInstanceId: input.routineInstanceId,
+      schedule: input.schedule,
+      newSession: input.newSession ?? false,
+      permissionMode: input.permissionMode,
+      enabled: input.enabled,
+      consecutiveFailures: input.enabled ? 0 : current.consecutiveFailures,
+      nextRunAt: input.enabled ? initialNextRunAt(input.schedule, now) : undefined,
+      updatedAt: now,
+    })
     this.arm()
     return saved
   }
@@ -203,12 +233,12 @@ export class ProactiveScheduler {
   }
 }
 
-function validateCreateInput(input: CreateProactiveScheduleInput, now: number): void {
+function validateCreateInput(input: CreateProactiveScheduleInput, now: number, allowPastOneTime = false): void {
   if (!input.title.trim()) throw new Error('定时任务名称不能为空')
   if (!input.channelId.trim() || !input.prompt.trim()) throw new Error('定时任务缺少渠道或执行内容')
   // 复用已有会话时必须指定目标会话；新建会话模式无需 sessionId
   if (!input.newSession && !input.sessionId?.trim()) throw new Error('定时任务缺少目标会话')
-  if (input.schedule.type === 'at' && input.schedule.runAt <= now) throw new Error('一次性任务时间必须在未来')
+  if (input.schedule.type === 'at' && input.schedule.runAt <= now && !allowPastOneTime) throw new Error('一次性任务时间必须在未来')
   if (input.schedule.type === 'interval' && input.schedule.intervalMs < MIN_INTERVAL_MS) throw new Error('定时间隔不得小于 1 分钟')
   if (input.schedule.type === 'cron') {
     if (!input.schedule.expression.trim()) throw new Error('Cron 表达式不能为空')

@@ -516,6 +516,12 @@ export function getWorkflowRunEventsPath(workflowId: string, runId: string): str
   return join(getWorkflowRunsDir(workflowId), `${runId}.jsonl`)
 }
 
+/** 获取某次 Run 的不可变 checkpoint 日志。 */
+export function getWorkflowRunCheckpointsPath(workflowId: string, runId: string): string {
+  assertWorkflowStorageIdentifier(runId, 'Run')
+  return join(getWorkflowRunsDir(workflowId), `${runId}.checkpoints.jsonl`)
+}
+
 // ===== 评测（Benchmark / Self-Evolution）路径 =====
 
 /** 评测根目录（全局，不绑定具体用户工作区）。 */

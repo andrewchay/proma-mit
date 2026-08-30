@@ -20,13 +20,16 @@ app.setName(APP_DISPLAY_NAME)
 // 卡在启动期，second-instance 也唤不起窗口，用户表现就是"双击应用没反应"。
 // 改为：留下 stderr 排查线索后正常退出，让 Electron 触发已存在实例的
 // second-instance 事件，由主实例负责显示窗口。
-if (!app.requestSingleInstanceLock()) {
+const allowMultipleInstancesForTest = process.env.PROMA_ALLOW_MULTI_INSTANCE === '1'
+
+if (!allowMultipleInstancesForTest && !app.requestSingleInstanceLock()) {
   console.warn(
     `[启动] 已有 ${APP_DISPLAY_NAME} 进程持有单实例锁，本次启动将退出。\n` +
       `  如果窗口未出现，可能旧进程已卡死。请运行 \`killall ${APP_PROCESS_NAME}\` 后重试。`,
   )
   app.quit()
 } else {
+  if (allowMultipleInstancesForTest) console.warn('[启动] 开发/测试多实例模式已启用')
   // 主流程：正常启动（单实例锁已获取）
   registerProtocolsAndHandlers()
 }

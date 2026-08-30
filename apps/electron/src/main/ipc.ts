@@ -176,7 +176,7 @@ import {
   searchAgentSessionMessages,
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
-import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, createAgentCollabDelegations, splitAndCreateCollabDelegations, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
+import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, createAgentCollabDelegations, splitAndCreateCollabDelegations, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, updateProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
@@ -1898,6 +1898,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, async (_, input: import('@gravitas/shared').CreateProactiveScheduleInput) => {
     if (!input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务仅支持 Proma 或 AI SDK Runtime')
     return createProactiveSchedule(input)
+  })
+  ipcMain.handle(AGENT_IPC_CHANNELS.UPDATE_PROACTIVE_SCHEDULE, async (_, scheduleId: string, input: import('@gravitas/shared').UpdateProactiveScheduleInput) => {
+    if (typeof scheduleId !== 'string' || !input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务参数无效')
+    return updateProactiveSchedule(scheduleId, input)
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.SET_PROACTIVE_SCHEDULE_ENABLED, async (_, scheduleId: string, enabled: boolean) => {
     if (typeof scheduleId !== 'string' || typeof enabled !== 'boolean') throw new Error('定时任务参数无效')

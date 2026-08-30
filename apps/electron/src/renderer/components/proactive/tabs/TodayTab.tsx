@@ -7,28 +7,35 @@ import { useAtom } from 'jotai'
 import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { useProactiveDataSync } from '@/atoms/proactive-sync'
 import { proactiveSchedulesAtom, proactiveRunsAtom, proactiveRecommendationsAtom, proactiveApprovalsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
+import { proactiveCenterTabAtom, proactiveConfigurationRecommendationAtom } from '@/atoms/proactive-center'
 import type { ProactiveSchedule, ProactiveTaskRun, ProactiveRecommendation, ProactiveApproval } from '@gravitas/shared'
 
 export function TodayTab(): React.ReactElement {
-  // 启动数据同步
-  useProactiveDataSync()
-
   const [schedules] = useAtom(proactiveSchedulesAtom)
   const [runs] = useAtom(proactiveRunsAtom)
-  const [recommendations] = useAtom(proactiveRecommendationsAtom)
+  const [recommendations, setRecommendations] = useAtom(proactiveRecommendationsAtom)
   const [approvals] = useAtom(proactiveApprovalsAtom)
   const [loading] = useAtom(proactiveLoadingAtom)
+  const [, setActiveTab] = useAtom(proactiveCenterTabAtom)
+  const [, setConfigurationRecommendation] = useAtom(proactiveConfigurationRecommendationAtom)
 
   const activeSchedules = schedules.filter((s) => s.enabled)
-  const pendingApprovals = approvals.filter((a) => a.status === 'pending')
+  const pendingApprovals = approvals.filter((a) => a.status === 'pending' || a.status === 'edited')
   const suggestedRecommendations = recommendations.filter((r) => r.status === 'suggested')
   const recentRuns = runs.slice(0, 5)
 
   const handleAcceptRecommendation = async (id: string): Promise<void> => {
     try {
-      await window.electronAPI.proactive?.acceptRecommendation?.(id)
+      const recommendation = recommendations.find((item) => item.id === id)
+      if (!recommendation) return
+      if (recommendation.kind === 'schedule' || recommendation.kind === 'monitor') {
+        setConfigurationRecommendation(recommendation)
+        setActiveTab(recommendation.kind === 'schedule' ? 'schedules' : 'monitors')
+        return
+      }
+      const accepted = await window.electronAPI.proactive?.acceptRecommendation?.(id)
+      if (accepted) setRecommendations((current) => current.map((item) => item.id === accepted.id ? accepted : item))
     } catch (error) {
       console.error('接受推荐失败:', error)
     }
@@ -36,7 +43,9 @@ export function TodayTab(): React.ReactElement {
 
   const handleDismissRecommendation = async (id: string): Promise<void> => {
     try {
-      await window.electronAPI.proactive?.dismissRecommendation?.(id)
+      const dismissed = await window.electronAPI.proactive?.dismissRecommendation?.(id)
+      if (!dismissed) return
+      setRecommendations((current) => current.map((recommendation) => recommendation.id === dismissed.id ? dismissed : recommendation))
     } catch (error) {
       console.error('忽略推荐失败:', error)
     }
@@ -168,7 +177,7 @@ function RecommendationCard({ recommendation, onAccept, onDismiss }: { recommend
         <div className="flex items-center gap-2 mt-2">
           <Button size="sm" variant="default" className="h-7 text-xs" onClick={() => onAccept(recommendation.id)}>
             <CheckCircle className="mr-1 size-3" />
-            创建
+            {recommendation.kind === 'schedule' || recommendation.kind === 'monitor' ? '开始配置' : '采纳'}
           </Button>
           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onDismiss(recommendation.id)}>
             <XCircle className="mr-1 size-3" />

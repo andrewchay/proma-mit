@@ -12,15 +12,17 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { Zap, Calendar, Monitor, CheckCircle, History, Brain, Sparkles } from 'lucide-react'
+import { Zap, Calendar, Monitor, CheckCircle, History, Brain, Sparkles, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { proactiveCenterTabAtom, type ProactiveTab } from '@/atoms/proactive-center'
+import { useProactiveDataSync } from '@/atoms/proactive-sync'
 import { TodayTab } from './tabs/TodayTab'
 import { SchedulesTab } from './tabs/SchedulesTab'
 import { MonitorsTab } from './tabs/MonitorsTab'
 import { ApprovalsTab } from './tabs/ApprovalsTab'
 import { RunsTab } from './tabs/RunsTab'
 import { MemoryTab } from './tabs/MemoryTab'
+import { RoutinesTab } from './tabs/RoutinesTab'
 
 const TABS: Array<{ id: ProactiveTab; label: string; icon: React.ElementType }> = [
   { id: 'today', label: 'Today', icon: Sparkles },
@@ -29,10 +31,12 @@ const TABS: Array<{ id: ProactiveTab; label: string; icon: React.ElementType }> 
   { id: 'approvals', label: '审批', icon: CheckCircle },
   { id: 'runs', label: '运行记录', icon: History },
   { id: 'memory', label: '记忆', icon: Brain },
+  { id: 'routines', label: 'Routines', icon: Workflow },
 ]
 
 export function ProactiveCenter(): React.ReactElement {
   const [activeTab, setActiveTab] = useAtom(proactiveCenterTabAtom)
+  useProactiveDataSync()
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -74,6 +78,7 @@ export function ProactiveCenter(): React.ReactElement {
         {activeTab === 'approvals' && <ApprovalsTab />}
         {activeTab === 'runs' && <RunsTab />}
         {activeTab === 'memory' && <MemoryTab />}
+        {activeTab === 'routines' && <RoutinesTab />}
       </div>
     </div>
   )

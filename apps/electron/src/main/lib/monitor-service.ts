@@ -11,7 +11,8 @@ import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import { watch, type FSWatcher } from 'chokidar'
 import { getProactiveConfigPath } from './config-paths'
-import type { ProactiveMonitor, MonitorTrigger, ProactiveTaskRun } from '@gravitas/shared'
+import type { ProactiveMonitor, MonitorTrigger, ProactiveTaskRun, ProactiveExecutionTarget } from '@gravitas/shared'
+import { ProactiveSchedulerStore } from './proactive-scheduler-store'
 
 const MONITORS_FILE = 'monitors.json'
 
@@ -24,11 +25,36 @@ const fileWatchers = new Map<string, FSWatcher>()
 /** 命令轮询计时器映射 */
 const commandTimers = new Map<string, NodeJS.Timeout>()
 
+/** GitHub monitor 的本地轮询计时器。 */
+const githubTimers = new Map<string, NodeJS.Timeout>()
+const GITHUB_POLL_INTERVAL_MS = 5 * 60 * 1000
+
 /** 防抖计时器 */
 const debounceTimers = new Map<string, NodeJS.Timeout>()
 
 /** 上次命令输出缓存（用于检测变化） */
 const lastCommandOutput = new Map<string, string>()
+
+/** Monitor 与 Scheduler 共用同一个本地运行事实源。 */
+const runStore = new ProactiveSchedulerStore()
+
+export interface MonitorRunResult {
+  outputSummary?: string
+  sessionId?: string
+}
+
+export type MonitorRunner = (
+  monitor: ProactiveMonitor,
+  run: ProactiveTaskRun,
+  eventData?: unknown,
+) => Promise<MonitorRunResult>
+
+let monitorRunner: MonitorRunner | undefined
+
+/** 由 Agent 服务注入，避免 Monitor 层自行猜测渠道或权限。 */
+export function setMonitorRunner(runner: MonitorRunner): void {
+  monitorRunner = runner
+}
 
 function getMonitorsFilePath(): string {
   return join(getProactiveConfigPath(), MONITORS_FILE)
@@ -73,15 +99,24 @@ export function getMonitor(id: string): ProactiveMonitor | undefined {
 export interface CreateMonitorInput {
   title: string
   routineId: string
+  routineInstanceId?: string
+  execution: ProactiveExecutionTarget
   trigger: MonitorTrigger
   debounceMs?: number
 }
 
 export function createMonitor(input: CreateMonitorInput): ProactiveMonitor {
+  validateExecutionTarget(input.execution)
   const monitor: ProactiveMonitor = {
     id: randomUUID(),
     title: input.title,
     routineId: input.routineId,
+    routineInstanceId: input.routineInstanceId,
+    execution: {
+      ...input.execution,
+      permissionMode: input.execution.permissionMode ?? 'safe',
+      newSession: input.execution.newSession ?? false,
+    },
     trigger: input.trigger,
     enabled: true,
     debounceMs: input.debounceMs ?? 5000,
@@ -140,6 +175,11 @@ function stopMonitorResources(monitorId: string): void {
     clearInterval(timer)
     commandTimers.delete(monitorId)
   }
+  const githubTimer = githubTimers.get(monitorId)
+  if (githubTimer) {
+    clearInterval(githubTimer)
+    githubTimers.delete(monitorId)
+  }
   // 清理防抖计时器
   if (debounceTimers.has(monitorId)) {
     clearTimeout(debounceTimers.get(monitorId)!)
@@ -179,36 +219,74 @@ async function handleMonitorEvent(monitor: ProactiveMonitor, eventData?: unknown
   console.log(`[MonitorService] 事件触发: ${monitor.title} (${monitor.id})`)
 
   const now = Date.now()
-  updateMonitor(monitor.id, { lastEventAt: now })
+  updateMonitor(monitor.id, { lastEventAt: now, lastRunAt: now })
 
-  // 创建 TaskRun
-  const run = createMonitorTaskRun(monitor, eventData)
+  let run = createMonitorTaskRun(monitor)
+  emitMonitorRunEvent(monitor, run, 'started', eventData)
 
-  // 通过 AppEventBus 发布事件，触发执行
   try {
-    const { getAppEventBus } = require('./app-event-bus') as { getAppEventBus: () => { emit: (event: import('@gravitas/shared').AppEventEnvelope) => void } }
-    getAppEventBus().emit({
-      id: `mon-${run.id}`,
-      source: 'automation' as const,
-      taskId: run.id,
-      title: monitor.title,
-      type: 'progress' as const,
-      detail: `Monitor 触发: ${monitor.trigger.type}${eventData ? ` · ${JSON.stringify(eventData).slice(0, 200)}` : ''}`,
-      timestamp: now,
+    if (!monitorRunner) throw new Error('Monitor 执行器未就绪')
+    const result = await monitorRunner(monitor, run, eventData)
+    run = runStore.saveRun({
+      ...run,
+      status: 'success',
+      endedAt: Date.now(),
+      outputSummary: result.outputSummary,
+      sessionId: result.sessionId ?? run.sessionId,
     })
+    emitMonitorRunEvent(monitor, run, 'completed', eventData)
   } catch (error) {
-    console.error('[MonitorService] 发布事件失败:', error)
+    const message = error instanceof Error ? error.message : 'Monitor 执行失败'
+    run = runStore.saveRun({ ...run, status: 'failed', endedAt: Date.now(), error: message })
+    emitMonitorRunEvent(monitor, run, 'failed', eventData)
+    console.error('[MonitorService] 执行失败:', error)
   }
 }
 
-function createMonitorTaskRun(monitor: ProactiveMonitor, _eventData?: unknown): ProactiveTaskRun {
-  return {
+function createMonitorTaskRun(monitor: ProactiveMonitor): ProactiveTaskRun {
+  return runStore.saveRun({
     id: randomUUID(),
-    sourceType: 'schedule', // monitor 触发视为 schedule 类型
+    sourceType: 'monitor',
     sourceId: monitor.id,
-    status: 'queued',
-    trigger: 'scheduled',
+    sessionId: monitor.execution.sessionId,
+    status: 'running',
+    trigger: 'event',
     startedAt: Date.now(),
+  })
+}
+
+function emitMonitorRunEvent(
+  monitor: ProactiveMonitor,
+  run: ProactiveTaskRun,
+  type: 'started' | 'completed' | 'failed',
+  eventData?: unknown,
+): void {
+  try {
+    const { getRunStore } = require('./run-store') as { getRunStore: () => { record: (event: import('@gravitas/shared').AppEventEnvelope) => void } }
+    const eventDetail = eventData ? ` · ${JSON.stringify(eventData).slice(0, 200)}` : ''
+    getRunStore().record({
+      id: `monitor-run-${run.id}`,
+      source: 'automation',
+      taskId: run.id,
+      title: monitor.title,
+      timestamp: Date.now(),
+      ...(type === 'started'
+        ? { type: 'started' as const, detail: `监听触发: ${monitor.trigger.type}${eventDetail}` }
+        : type === 'completed'
+          ? { type: 'completed' as const, detail: run.outputSummary ?? `监听执行完成${eventDetail}` }
+          : { type: 'failed' as const, detail: run.error ?? `监听执行失败${eventDetail}` }),
+    })
+  } catch {
+    // 统一运行中心不可用时不阻塞本地执行和持久化。
+  }
+}
+
+function validateExecutionTarget(target: ProactiveExecutionTarget): void {
+  if (!target.channelId.trim() || !target.prompt.trim()) {
+    throw new Error('Monitor 缺少渠道或执行内容')
+  }
+  if (!target.newSession && !target.sessionId?.trim()) {
+    throw new Error('复用会话的 Monitor 缺少目标会话')
   }
 }
 
@@ -317,6 +395,24 @@ export function verifyWebhookSignature(monitorId: string, payload: string, signa
   }
 }
 
+/**
+ * 供受管 HTTP/IPC bridge 转发 Webhook。
+ * 不在 Electron 主进程直接开放网络端口；bridge 必须显式传入 monitor ID，
+ * 并在配置了 secret 时通过 HMAC 校验后才能触发执行。
+ */
+export function receiveWebhookEvent(
+  monitorId: string,
+  payload: string,
+  signature?: string,
+): { accepted: boolean; error?: string } {
+  const monitor = getMonitor(monitorId)
+  if (!monitor || monitor.trigger.type !== 'webhook') return { accepted: false, error: 'Webhook monitor 不存在' }
+  if (!monitor.enabled) return { accepted: false, error: 'Webhook monitor 已停用' }
+  if (!verifyWebhookSignature(monitorId, payload, signature)) return { accepted: false, error: 'Webhook 签名无效' }
+  triggerMonitorEvent(monitorId, { webhook: true, payloadLength: payload.length })
+  return { accepted: true }
+}
+
 function timingSafeEqual(a: Buffer, b: Buffer): boolean {
   if (a.length !== b.length) return false
   let result = 0
@@ -334,8 +430,12 @@ function timingSafeEqual(a: Buffer, b: Buffer): boolean {
  */
 export function startGitHubMonitor(monitor: ProactiveMonitor): void {
   if (monitor.trigger.type !== 'github') return
+  stopMonitorResources(monitor.id)
   console.log(`[MonitorService] GitHub monitor 已注册: ${monitor.trigger.repo} (${monitor.id})`)
-  console.log('[MonitorService] 提示: GitHub 监听建议使用 Webhook 方式（更实时）')
+  void pollGitHubMonitor(monitor.id)
+  githubTimers.set(monitor.id, setInterval(() => {
+    void pollGitHubMonitor(monitor.id)
+  }, GITHUB_POLL_INTERVAL_MS))
 }
 
 /**
@@ -480,6 +580,12 @@ export function stopAllMonitors(): void {
   }
   commandTimers.clear()
 
+  for (const [id, timer] of githubTimers) {
+    clearInterval(timer)
+    console.log(`[MonitorService] GitHub 监听已停止: ${id}`)
+  }
+  githubTimers.clear()
+
   // 停止全局定时器
   if (monitorInterval) {
     clearInterval(monitorInterval)
@@ -493,6 +599,13 @@ export function stopAllMonitors(): void {
   debounceTimers.clear()
 
   lastCommandOutput.clear()
+}
+
+/** 仅用于行为测试，清理模块级缓存和计时器。 */
+export function resetMonitorServiceForTests(): void {
+  stopAllMonitors()
+  monitorsCache = null
+  monitorRunner = undefined
 }
 
 function checkAllSessionMonitors(): void {
@@ -512,4 +625,5 @@ export function registerMonitorIPCHandlers(): void {
   ipcMain.handle('proactive:updateMonitor', (_event: unknown, id: string, updates: Partial<Omit<ProactiveMonitor, 'id' | 'createdAt'>>) => updateMonitor(id, updates))
   ipcMain.handle('proactive:deleteMonitor', (_event: unknown, id: string) => deleteMonitor(id))
   ipcMain.handle('proactive:setMonitorEnabled', (_event: unknown, id: string, enabled: boolean) => setMonitorEnabled(id, enabled))
+  ipcMain.handle('proactive:receiveWebhook', (_event: unknown, id: string, payload: string, signature?: string) => receiveWebhookEvent(id, payload, signature))
 }

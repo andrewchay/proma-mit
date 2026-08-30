@@ -33,6 +33,8 @@ import type {
   CreateProactiveScheduleInput,
   ProactiveSchedule,
   ProactiveTaskRun,
+  ProactiveExecutionTarget,
+  UpdateProactiveScheduleInput,
 } from '@gravitas/shared'
 import { ClaudeAgentAdapter, scanAndKillOrphanedClaudeSubprocesses } from './adapters/claude-agent-adapter'
 import { AISDKAgentAdapter } from './adapters/ai-sdk-agent-adapter'
@@ -45,8 +47,12 @@ import { getAgentSessionWorkspacePath, getWorkspaceFilesDir, resolvePathWithinDi
 import { createElectronRuntimeServices } from './agent-runtime/runtime-services'
 import { GoalCoordinator } from './goal-runtime/goal-coordinator'
 import { ProactiveScheduler } from './proactive-scheduler'
+import { setMonitorRunner, startAllMonitors } from './monitor-service'
+import { setApprovedChangeExecutor } from './approval-service'
+import { runRoutineInstance, setRoutineRunner } from './routine-service'
 import { createAgentSession, getAgentSessionMeta } from './agent-session-manager'
 import { createCollaborationDelegations, resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
+import { executeApprovedChange } from './proactive-approved-change-executor'
 import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
@@ -93,47 +99,81 @@ void goalCoordinator.recoverDueGoals().catch((error) => {
 })
 
 proactiveScheduler.setRunner(async (schedule) => {
-  let runError: string | undefined
-  // 新会话模式：每次运行时创建新 Agent 会话，独立承载本次任务
-  let targetSessionId = schedule.sessionId
-  if (schedule.newSession) {
-    const freshMeta = createAgentSession(
-      `定时任务：${schedule.title.slice(0, 30)}`,
-      schedule.channelId,
-      schedule.workspaceId,
-      schedule.modelId,
-      schedule.runtime,
-    )
-    targetSessionId = freshMeta.id
+  if (schedule.routineInstanceId) {
+    const run = await runRoutineInstance(schedule.routineInstanceId, schedule)
+    if (run.status !== 'success') throw new Error(run.error ?? 'Routine 调度执行失败')
+    return { sessionId: run.sessionId, outputSummary: run.outputSummary }
   }
-  if (!targetSessionId) {
-    throw new Error('定时任务缺少目标会话（非新建会话模式且未回填 sessionId）')
-  }
-  // modelId 为空时兜底：从 channel 解析默认模型，避免旧数据/直接 IPC 创建的任务因 model 缺失而 400。
-  let effectiveModelId = schedule.modelId
-  if (!effectiveModelId && schedule.channelId) {
-    const channel = await runtimeServices.credentials.resolveChannel(schedule.channelId)
-    if (channel?.defaultModel) effectiveModelId = channel.defaultModel
-  }
-  await runAgentHeadless({
-    sessionId: targetSessionId,
-    userMessage: schedule.prompt,
-    channelId: schedule.channelId,
-    modelId: effectiveModelId,
-    workspaceId: schedule.workspaceId,
-    agentRuntime: schedule.runtime,
-    permissionModeOverride: schedule.permissionMode,
-  }, {
-    onError: (error) => { runError = error },
-    onComplete: () => {},
-    onTitleUpdated: () => {},
-  })
-  if (runError) throw new Error(runError)
-  return { sessionId: targetSessionId }
+  return runProactiveTarget(schedule.title, schedule)
 })
 void proactiveScheduler.recover().catch((error) => {
   console.error('[Proactive Scheduler] 恢复到期任务失败:', error)
 })
+
+setMonitorRunner(async (monitor) => {
+  if (monitor.routineInstanceId) {
+    const run = await runRoutineInstance(monitor.routineInstanceId, monitor.execution)
+    if (run.status !== 'success') throw new Error(run.error ?? 'Routine 监听执行失败')
+    return { sessionId: run.sessionId, outputSummary: run.outputSummary }
+  }
+  return runProactiveTarget(monitor.title, monitor.execution)
+})
+startAllMonitors()
+setRoutineRunner(async (_instance, target) => runProactiveTarget('Routine', target))
+setApprovedChangeExecutor((approval) => executeApprovedChange(approval, { createSchedule: createProactiveSchedule }))
+
+/**
+ * Scheduler 与 Monitor 共同使用的 headless 执行入口。
+ * 所有主动任务都必须携带显式 execution target，且默认 safe 权限。
+ */
+async function runProactiveTarget(
+  title: string,
+  target: Pick<ProactiveExecutionTarget, 'sessionId' | 'workspaceId' | 'channelId' | 'modelId' | 'runtime' | 'prompt' | 'newSession' | 'permissionMode'>,
+): Promise<{ sessionId: string; outputSummary?: string; output?: string }> {
+  let runError: string | undefined
+  let outputSummary: string | undefined
+  let output: string | undefined
+  let targetSessionId = target.sessionId
+  if (target.newSession) {
+    const freshMeta = createAgentSession(
+      `主动任务：${title.slice(0, 30)}`,
+      target.channelId,
+      target.workspaceId,
+      target.modelId,
+      target.runtime,
+    )
+    targetSessionId = freshMeta.id
+  }
+  if (!targetSessionId) {
+    throw new Error('主动任务缺少目标会话（非新建会话模式且未回填 sessionId）')
+  }
+
+  let effectiveModelId = target.modelId
+  if (!effectiveModelId) {
+    const channel = await runtimeServices.credentials.resolveChannel(target.channelId)
+    if (channel?.defaultModel) effectiveModelId = channel.defaultModel
+  }
+  await runAgentHeadless({
+    sessionId: targetSessionId,
+    userMessage: target.prompt,
+    channelId: target.channelId,
+    modelId: effectiveModelId,
+    workspaceId: target.workspaceId,
+    agentRuntime: target.runtime,
+    permissionModeOverride: target.permissionMode ?? 'safe',
+  }, {
+    onError: (error) => { runError = error },
+    onComplete: (messages) => { output = extractProactiveOutput(messages); outputSummary = output?.replace(/\s+/g, ' ').trim().slice(0, 500) },
+    onTitleUpdated: () => {},
+  })
+  if (runError) throw new Error(runError)
+  return { sessionId: targetSessionId, outputSummary, output }
+}
+
+function extractProactiveOutput(messages?: AgentMessage[]): string | undefined {
+  const lastAssistant = [...(messages ?? [])].reverse().find((message) => message.role === 'assistant' && message.content.trim())
+  return lastAssistant?.content.trim() || undefined
+}
 
 /** 导出 EventBus 供飞书 Bridge 等外部服务订阅事件 */
 export { eventBus as agentEventBus }
@@ -141,6 +181,10 @@ export { goalCoordinator }
 
 export function createProactiveSchedule(input: CreateProactiveScheduleInput): ProactiveSchedule {
   return proactiveScheduler.create(input)
+}
+
+export function updateProactiveSchedule(scheduleId: string, input: UpdateProactiveScheduleInput): ProactiveSchedule {
+  return proactiveScheduler.update(scheduleId, input)
 }
 
 export function listProactiveSchedules(): ProactiveSchedule[] {

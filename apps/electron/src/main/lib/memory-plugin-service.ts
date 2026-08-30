@@ -171,17 +171,21 @@ export function deleteMemoryItem(id: string): boolean {
 // ===== 从 Agent 输出解析 =====
 
 /**
- * 从 Agent 输出中解析 proma-memory-items JSON block
+ * 解析模型输出为尚未写入的记忆候选。
+ * 主动 Routine 只能使用这个函数，必须经 ApprovalService 才能持久化。
  */
-export function parseMemoryItemsFromOutput(output: string, runId?: string, sessionId?: string): MemoryItem[] {
+export function extractMemoryCandidatesFromOutput(
+  output: string,
+  runId?: string,
+  sessionId?: string,
+): Array<Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'>> {
   const regex = /```proma-memory-items\n([\s\S]*?)\n```/
   const match = output.match(regex)
   if (!match) return []
 
   try {
     const block: MemoryItemsBlock = JSON.parse(match[1]!)
-    return block.items.map((item) => {
-      const memoryItem: Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'> = {
+    return block.items.map((item) => ({
         title: item.title,
         content: item.content,
         kind: normalizeKind(item.kind),
@@ -189,9 +193,7 @@ export function parseMemoryItemsFromOutput(output: string, runId?: string, sessi
         confidence: item.confidence ?? 0.8,
         sourceRunId: runId ?? null,
         sourceSessionId: sessionId ?? null,
-      }
-      return createMemoryItem(memoryItem)
-    })
+      }))
   } catch {
     return []
   }

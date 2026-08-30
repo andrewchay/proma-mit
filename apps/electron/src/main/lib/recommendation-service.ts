@@ -21,6 +21,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { getProactiveConfigPath } from './config-paths'
 import type { ProactiveRecommendation, RecommendationKind, RecommendationSafetyLevel } from '@gravitas/shared'
+import { ProactiveSchedulerStore } from './proactive-scheduler-store'
+import { listMonitors } from './monitor-service'
+import { getPendingApprovals } from './approval-service'
+import { listMemoryItems } from './memory-plugin-service'
 
 const RECOMMENDATIONS_FILE = 'recommendations.json'
 
@@ -142,6 +146,11 @@ export function deleteRecommendation(id: string): boolean {
   return true
 }
 
+/** 仅用于行为测试，清理模块级缓存。 */
+export function resetRecommendationServiceForTests(): void {
+  recommendationsCache = null
+}
+
 // ===== 规则引擎 =====
 
 export interface SignalContext {
@@ -255,6 +264,45 @@ export function runRecommendationEngine(context: SignalContext): ProactiveRecomm
   return newRecommendations
 }
 
+/**
+ * 从本地事实源构建推荐信号。这里不读取模型文本，也不上传会话内容；
+ * 仅使用本地运行、配置、审批和记忆条目的元数据。
+ */
+export function collectRecommendationSignals(): SignalContext {
+  const store = new ProactiveSchedulerStore()
+  const schedules = store.listSchedules()
+  const runs = store.listRuns()
+  const monitors = listMonitors()
+  const hasMemoryDailySchedule = schedules.some((schedule) => {
+    const text = `${schedule.title}\n${schedule.prompt}`.toLowerCase()
+    return text.includes('memory') || text.includes('记忆')
+  })
+  const hasReleaseMonitor = monitors.some((monitor) =>
+    monitor.trigger.type === 'github' || monitor.routineId.toLowerCase().includes('release')
+  )
+  const recentReleaseRuns = runs.filter((run) => {
+    const text = `${run.outputSummary ?? ''}\n${run.error ?? ''}`.toLowerCase()
+    return text.includes('release') || text.includes('发布') || text.includes('ci')
+  }).length
+
+  return {
+    recentRuns: runs.slice(0, 50).map((run) => ({
+      status: run.status,
+      startedAt: run.startedAt,
+    })),
+    hasMemoryDailySchedule,
+    hasReleaseMonitor,
+    pendingApprovalCount: getPendingApprovals().length,
+    sopCandidateCount: listMemoryItems('sop').length,
+    recentReleaseRuns,
+  }
+}
+
+/** 刷新本地推荐；duplicateKey 保证重复刷新不会制造卡片堆积。 */
+export function refreshRecommendations(): ProactiveRecommendation[] {
+  return runRecommendationEngine(collectRecommendationSignals())
+}
+
 // ===== IPC 处理器注册 =====
 
 export function registerRecommendationIPCHandlers(): void {
@@ -266,4 +314,5 @@ export function registerRecommendationIPCHandlers(): void {
   ipcMain.handle('proactive:dismissRecommendation', (_event: unknown, id: string) => dismissRecommendation(id))
   ipcMain.handle('proactive:deleteRecommendation', (_event: unknown, id: string) => deleteRecommendation(id))
   ipcMain.handle('proactive:runRecommendationEngine', (_event: unknown, context: SignalContext) => runRecommendationEngine(context))
+  ipcMain.handle('proactive:refreshRecommendations', () => refreshRecommendations())
 }

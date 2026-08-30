@@ -39,6 +39,17 @@ describe('Proactive Scheduler', () => {
     scheduler.dispose()
   })
 
+  test('given a bound Routine instance when scheduled then its binding is persisted for later recovery', () => {
+    const scheduler = createScheduler(() => 1_500_000)
+    const schedule = scheduler.create({
+      title: '每日记忆整理', sessionId: 'session-routine', channelId: 'channel-1', runtime: 'proma', prompt: '整理记忆',
+      routineInstanceId: 'routine-instance-1', schedule: { type: 'interval', intervalMs: 60_000 },
+    })
+
+    expect(new ProactiveSchedulerStore().getSchedule(schedule.id)).toEqual(expect.objectContaining({ routineInstanceId: 'routine-instance-1', permissionMode: 'safe' }))
+    scheduler.dispose()
+  })
+
   test('given a due interval schedule on recovery then it runs once and persists a successful TaskRun', async () => {
     let time = 2_000_000
     const scheduler = createScheduler(() => time)
@@ -85,6 +96,26 @@ describe('Proactive Scheduler', () => {
     scheduler.pause(schedule.id)
     scheduler.delete(schedule.id)
     expect(scheduler.listSchedules()).toHaveLength(0)
+    scheduler.dispose()
+  })
+
+  test('given an existing schedule when edited then it recalculates its next run without changing prior run history', async () => {
+    let time = 4_500_000
+    const scheduler = createScheduler(() => time)
+    const schedule = scheduler.create({
+      title: '原始任务', sessionId: 'session-edit', channelId: 'channel-1', runtime: 'proma', prompt: '原始内容',
+      schedule: { type: 'interval', intervalMs: 60_000 },
+    })
+    scheduler.setRunner(async () => ({ outputSummary: '手动运行' }))
+    await scheduler.runNow(schedule.id)
+    time = 4_530_000
+    const updated = scheduler.update(schedule.id, {
+      title: '已编辑任务', sessionId: 'session-edit', channelId: 'channel-2', modelId: 'model-2', runtime: 'ai-sdk', prompt: '已编辑内容',
+      schedule: { type: 'interval', intervalMs: 120_000 }, permissionMode: 'safe', enabled: true,
+    })
+
+    expect(updated).toMatchObject({ title: '已编辑任务', channelId: 'channel-2', runtime: 'ai-sdk', nextRunAt: 4_650_000, consecutiveFailures: 0 })
+    expect(scheduler.listRuns()).toHaveLength(1)
     scheduler.dispose()
   })
 

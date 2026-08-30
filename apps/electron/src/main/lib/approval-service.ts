@@ -24,6 +24,17 @@ const APPROVALS_FILE = 'approvals.json'
 /** 内存缓存 */
 let approvalsCache: ProactiveApproval[] | null = null
 
+/**
+ * 主进程在启动时注册实际变更执行器。ApprovalService 不自行执行文件、
+ * 命令或 Agent 操作，避免审批数据绕过既有权限与工作区边界。
+ */
+export type ApprovedChangeExecutor = (approval: ProactiveApproval) => Promise<void>
+let approvedChangeExecutor: ApprovedChangeExecutor | undefined
+
+export function setApprovedChangeExecutor(executor: ApprovedChangeExecutor): void {
+  approvedChangeExecutor = executor
+}
+
 function getApprovalsFilePath(): string {
   return join(getProactiveConfigPath(), APPROVALS_FILE)
 }
@@ -61,7 +72,8 @@ export function listApprovals(): ProactiveApproval[] {
 }
 
 export function getPendingApprovals(): ProactiveApproval[] {
-  return loadApprovals().filter((a) => a.status === 'pending')
+  // 编辑后的提案必须再次回到待确认队列，不能因为已编辑而绕过审批。
+  return loadApprovals().filter((a) => a.status === 'pending' || a.status === 'edited')
 }
 
 export function getApproval(id: string): ProactiveApproval | undefined {
@@ -93,18 +105,32 @@ export function createApproval(input: CreateApprovalInput): ProactiveApproval {
   return approval
 }
 
-export function approveApproval(id: string): ProactiveApproval | null {
+export async function approveApproval(id: string): Promise<ProactiveApproval | null> {
   const approvals = loadApprovals()
   const idx = approvals.findIndex((a) => a.id === id)
   if (idx === -1) return null
-  const updated = { ...approvals[idx], status: 'approved' as const, resolvedAt: Date.now() }
+  const current = approvals[idx]!
+  if (current.status !== 'pending' && current.status !== 'edited') return current
+
+  const updated: ProactiveApproval = {
+    ...current,
+    status: 'approved',
+    resolvedAt: Date.now(),
+    executionStatus: 'pending',
+    executionError: undefined,
+    executedAt: undefined,
+  }
   approvals[idx] = updated as ProactiveApproval
   saveApprovals(approvals)
 
-  // TODO: 执行批准的变更
-  // executeApprovedChange(approvals[idx])
-
-  return approvals[idx]
+  try {
+    if (!approvedChangeExecutor) throw new Error('审批执行器未就绪')
+    await approvedChangeExecutor(updated)
+    return updateApprovalExecution(updated.id, 'succeeded')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '批准的变更执行失败'
+    return updateApprovalExecution(updated.id, 'failed', message)
+  }
 }
 
 export function rejectApproval(id: string): ProactiveApproval | null {
@@ -125,15 +151,53 @@ export function editApproval(id: string, editedChange: unknown): ProactiveApprov
     ...approvals[idx],
     proposedChange: editedChange,
     status: 'edited' as const,
-    resolvedAt: Date.now(),
+    resolvedAt: undefined,
+    executionStatus: undefined,
+    executionError: undefined,
+    executedAt: undefined,
   }
   approvals[idx] = updated as ProactiveApproval
   saveApprovals(approvals)
 
-  // TODO: 执行编辑后的变更
-  // executeApprovedChange(approvals[idx])
-
   return approvals[idx]
+}
+
+function updateApprovalExecution(
+  id: string,
+  executionStatus: 'succeeded' | 'failed',
+  executionError?: string,
+): ProactiveApproval | null {
+  const approvals = loadApprovals()
+  const idx = approvals.findIndex((approval) => approval.id === id)
+  if (idx === -1) return null
+  const updated: ProactiveApproval = {
+    ...approvals[idx]!,
+    executionStatus,
+    executionError,
+    executedAt: Date.now(),
+  }
+  approvals[idx] = updated
+  saveApprovals(approvals)
+  emitApprovalExecutionEvent(updated)
+  return updated
+}
+
+function emitApprovalExecutionEvent(approval: ProactiveApproval): void {
+  try {
+    const { getRunStore } = require('./run-store') as { getRunStore: () => { record: (event: import('@gravitas/shared').AppEventEnvelope) => void } }
+    getRunStore().record({
+      id: `approval-${approval.id}-${approval.executionStatus}`,
+      source: 'automation',
+      taskId: approval.runId ?? approval.id,
+      title: approval.title,
+      timestamp: Date.now(),
+      ...(approval.executionStatus === 'succeeded'
+        ? { type: 'completed' as const, detail: '已批准并执行' }
+        : { type: 'failed' as const, detail: approval.executionError ?? '批准后执行失败' }),
+    })
+  } catch {
+    // 运行中心不可用时保留本地审批事实，不阻塞决策结果落盘。
+  }
 }
 
 export function deleteApproval(id: string): boolean {
@@ -146,18 +210,10 @@ export function deleteApproval(id: string): boolean {
 
 // ===== 批量操作 =====
 
-export function approveAllPending(): number {
-  const approvals = loadApprovals()
-  let count = 0
-  for (const approval of approvals) {
-    if (approval.status === 'pending') {
-      approval.status = 'approved'
-      approval.resolvedAt = Date.now()
-      count++
-    }
-  }
-  if (count > 0) saveApprovals(approvals)
-  return count
+export async function approveAllPending(): Promise<number> {
+  const pendingIds = getPendingApprovals().map((approval) => approval.id)
+  for (const id of pendingIds) await approveApproval(id)
+  return pendingIds.length
 }
 
 export function rejectAllPending(): number {
@@ -198,26 +254,31 @@ export function getApprovalStats(): {
 /**
  * 为记忆写入创建审批
  */
-export function createMemoryApproval(runId: string | undefined, memoryTitle: string, proposedContent: string): ProactiveApproval {
+export function createMemoryApproval(
+  runId: string | undefined,
+  memoryTitle: string,
+  proposedContent: string,
+  metadata?: { kind?: string; tags?: string[]; confidence?: number; sourceSessionId?: string | null },
+): ProactiveApproval {
   return createApproval({
     runId,
     sourceType: 'memory',
     title: `记忆写入: ${memoryTitle}`,
     summary: `建议将以下内容写入长期记忆`,
-    proposedChange: { type: 'memory_write', title: memoryTitle, content: proposedContent },
+    proposedChange: { type: 'memory_write', title: memoryTitle, content: proposedContent, ...metadata },
   })
 }
 
 /**
  * 为 Skill 创建审批
  */
-export function createSkillApproval(runId: string | undefined, skillName: string, skillContent: string): ProactiveApproval {
+export function createSkillApproval(runId: string | undefined, workspaceId: string, skillName: string, skillContent: string): ProactiveApproval {
   return createApproval({
     runId,
     sourceType: 'skill',
     title: `创建 Skill: ${skillName}`,
     summary: `建议创建新 Skill`,
-    proposedChange: { type: 'skill_create', name: skillName, content: skillContent },
+    proposedChange: { type: 'skill_create', workspaceId, name: skillName, content: skillContent },
   })
 }
 

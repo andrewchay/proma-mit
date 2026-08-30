@@ -346,7 +346,12 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     }
   }
 
-  /** 测试连接（直接使用表单当前值，无需先保存） */
+  /**
+   * 测试连接成功后立即保存当前凭证。
+   *
+   * 测试请求直接使用表单明文；若只依赖 600ms 防抖保存，用户测试后立即返回会
+   * 取消保存，使 Proactive 继续读取旧密文并在解密阶段失败。
+   */
   const handleTest = async (): Promise<void> => {
     if (!apiKey.trim() || !baseUrl.trim()) return
 
@@ -360,8 +365,26 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
         apiKey,
       })
       setTestResult(result)
-    } catch {
-      setTestResult({ success: false, message: '测试请求失败' })
+      if (result.success && isEdit && channel) {
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+        const savedChannel = await window.electronAPI.updateChannel(channel.id, {
+          name,
+          provider,
+          baseUrl,
+          apiKey,
+          models,
+          enabled,
+        })
+        const eligible = isAgentEligibleChannel(savedChannel)
+        if (eligible !== lastAgentEligibleRef.current) {
+          lastAgentEligibleRef.current = eligible
+          await onAgentEligibilityChange?.(savedChannel, eligible)
+        }
+        toast.success('测试成功，API Key 已重新加密保存')
+      }
+    } catch (error) {
+      console.error('[模型配置表单] 测试或保存失败:', error)
+      setTestResult({ success: false, message: '测试或保存 API Key 失败' })
     } finally {
       setTesting(false)
     }

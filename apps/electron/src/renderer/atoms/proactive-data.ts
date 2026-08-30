@@ -5,7 +5,7 @@
  */
 
 import { atom } from 'jotai'
-import type { ProactiveSchedule, ProactiveTaskRun, ProactiveRecommendation, ProactiveApproval } from '@gravitas/shared'
+import type { ProactiveSchedule, ProactiveTaskRun, ProactiveRecommendation, ProactiveApproval, ProactiveMonitor } from '@gravitas/shared'
 
 /** 定时任务列表 */
 export const proactiveSchedulesAtom = atom<ProactiveSchedule[]>([])
@@ -18,6 +18,9 @@ export const proactiveRecommendationsAtom = atom<ProactiveRecommendation[]>([])
 
 /** 审批列表 */
 export const proactiveApprovalsAtom = atom<ProactiveApproval[]>([])
+
+/** 监听任务列表 */
+export const proactiveMonitorsAtom = atom<ProactiveMonitor[]>([])
 
 /** 加载状态 */
 export const proactiveLoadingAtom = atom<boolean>(false)

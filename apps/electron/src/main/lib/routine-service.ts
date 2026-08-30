@@ -20,6 +20,11 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { getProactiveConfigPath, getConfigDir } from './config-paths'
+import type { ProactiveExecutionTarget, ProactiveTaskRun } from '@gravitas/shared'
+import { ProactiveSchedulerStore } from './proactive-scheduler-store'
+import { extractMemoryCandidatesFromOutput } from './memory-plugin-service'
+import { createMemoryApproval } from './approval-service'
+import { createSkillApproval } from './approval-service'
 
 // ===== 类型定义 =====
 
@@ -158,6 +163,32 @@ const ROUTINES_FILE = 'routine-instances.json'
 const PLUGINS_DIR = 'plugins'
 
 let instancesCache: RoutineInstance[] | null = null
+const runStore = new ProactiveSchedulerStore()
+
+export interface RoutineRunResult {
+  outputSummary?: string
+  output?: string
+  sessionId?: string
+}
+
+export type RoutineRunner = (
+  instance: RoutineInstance,
+  target: ProactiveExecutionTarget,
+  prompt: string,
+) => Promise<RoutineRunResult>
+
+let routineRunner: RoutineRunner | undefined
+
+/** 由 Agent 服务注入，确保 Routine 不能跳过渠道、会话和权限边界。 */
+export function setRoutineRunner(runner: RoutineRunner): void {
+  routineRunner = runner
+}
+
+/** 仅用于行为测试，清理模块级状态。 */
+export function resetRoutineServiceForTests(): void {
+  instancesCache = null
+  routineRunner = undefined
+}
 
 function getRoutinesFilePath(): string {
   return join(getProactiveConfigPath(), ROUTINES_FILE)
@@ -185,6 +216,8 @@ function loadInstances(): RoutineInstance[] {
 }
 
 function saveInstances(instances: RoutineInstance[]): void {
+  const dir = getProactiveConfigPath()
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   writeFileSync(getRoutinesFilePath(), JSON.stringify(instances, null, 2))
   instancesCache = instances
 }
@@ -309,6 +342,52 @@ export function renderRoutinePrompt(instance: RoutineInstance): string {
   return prompt
 }
 
+/**
+ * 手动运行 Routine 实例，并将结果写入与 Scheduler/Monitor 共享的 Run store。
+ * Routine 本身不持有隐式执行上下文，调用者必须显式提供受控 target。
+ */
+export async function runRoutineInstance(
+  instanceId: string,
+  target: ProactiveExecutionTarget,
+): Promise<ProactiveTaskRun> {
+  const instance = getRoutineInstance(instanceId)
+  if (!instance) throw new Error('Routine 实例不存在')
+  if (!instance.enabled) throw new Error('Routine 实例已停用')
+  if (!target.channelId.trim() || !target.prompt.trim()) throw new Error('Routine 缺少渠道或执行内容')
+  if (!target.newSession && !target.sessionId?.trim()) throw new Error('复用会话的 Routine 缺少目标会话')
+
+  const prompt = `${renderRoutinePrompt(instance)}\n\n${target.prompt}`.trim()
+  let run = runStore.saveRun({
+    id: randomUUID(),
+    sourceType: 'routine',
+    sourceId: instance.id,
+    sessionId: target.sessionId,
+    status: 'running',
+    trigger: 'manual',
+    startedAt: Date.now(),
+  })
+  try {
+    if (!routineRunner) throw new Error('Routine 执行器未就绪')
+    const result = await routineRunner(instance, { ...target, prompt }, prompt)
+    run = runStore.saveRun({ ...run, status: 'success', endedAt: Date.now(), outputSummary: result.outputSummary, sessionId: result.sessionId ?? run.sessionId })
+    if (instance.manifestId.startsWith('proma-memory:') && result.output) {
+      for (const candidate of extractMemoryCandidatesFromOutput(result.output, run.id, run.sessionId)) {
+        createMemoryApproval(run.id, candidate.title, candidate.content, {
+          kind: candidate.kind,
+          tags: candidate.tags,
+          confidence: candidate.confidence,
+          sourceSessionId: candidate.sourceSessionId,
+        })
+      }
+    }
+    return run
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Routine 执行失败'
+    run = runStore.saveRun({ ...run, status: 'failed', endedAt: Date.now(), error: message })
+    return run
+  }
+}
+
 // ===== SOP Candidate → Skill 审批流 =====
 
 export interface SOPCandidate {
@@ -323,11 +402,18 @@ export interface SOPCandidate {
 /**
  * 提交 SOP 候选为 Skill（需要审批）
  */
-export function submitSOPCandidate(candidate: SOPCandidate): { approvalId: string } | null {
-  // TODO: 创建 Approval 请求，等待用户确认
-  // const approval = createSkillApproval(undefined, candidate.title, generateSkillContent(candidate))
-  // return { approvalId: approval.id }
-  return null
+export function submitSOPCandidate(candidate: SOPCandidate, workspaceId: string): { approvalId: string } | null {
+  if (!candidate.title.trim() || candidate.steps.length === 0 || !workspaceId.trim()) return null
+  const content = [
+    `# ${candidate.title}`,
+    '',
+    candidate.description.trim(),
+    '',
+    '## 步骤',
+    ...candidate.steps.map((step, index) => `${index + 1}. ${step}`),
+  ].join('\n')
+  const approval = createSkillApproval(undefined, workspaceId, candidate.title, content)
+  return { approvalId: approval.id }
 }
 
 // ===== IPC 处理器注册 =====
@@ -342,6 +428,8 @@ export function registerRoutineIPCHandlers(): void {
   ipcMain.handle('proactive:updateRoutineInstance', (_event: unknown, id: string, updates: Partial<Omit<RoutineInstance, 'id' | 'createdAt'>>) => updateRoutineInstance(id, updates))
   ipcMain.handle('proactive:deleteRoutineInstance', (_event: unknown, id: string) => deleteRoutineInstance(id))
   ipcMain.handle('proactive:setRoutineInstanceEnabled', (_event: unknown, id: string, enabled: boolean) => setRoutineInstanceEnabled(id, enabled))
+  ipcMain.handle('proactive:runRoutineInstance', (_event: unknown, instanceId: string, target: ProactiveExecutionTarget) => runRoutineInstance(instanceId, target))
+  ipcMain.handle('proactive:submitSOPCandidate', (_event: unknown, candidate: SOPCandidate, workspaceId: string) => submitSOPCandidate(candidate, workspaceId))
   ipcMain.handle('proactive:renderRoutinePrompt', (_event: unknown, instanceId: string) => {
     const instance = getRoutineInstance(instanceId)
     return instance ? renderRoutinePrompt(instance) : null

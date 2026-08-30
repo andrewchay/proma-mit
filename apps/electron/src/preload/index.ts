@@ -35,6 +35,7 @@ const WORKFLOW_IPC_CHANNELS = {
   EXECUTE_AGENT_NODE: 'workflow:execute-agent-node',
   EXECUTE_DETERMINISTIC_NODE: 'workflow:execute-deterministic-node',
   EXECUTE_RUN: 'workflow:execute-run',
+  SIMULATE_RUN: 'workflow:simulate-run',
   RESOLVE_APPROVAL: 'workflow:resolve-approval',
   CANCEL_RUN: 'workflow:cancel-run',
   STOP_RUN: 'workflow:stop-run',
@@ -127,6 +128,7 @@ import type {
   AgentAuditEvent,
   AgentAuditQuery,
   CreateProactiveScheduleInput,
+  UpdateProactiveScheduleInput,
   ProactiveSchedule,
   ProactiveTaskRun,
   DetachedPreviewWindowData,
@@ -657,6 +659,7 @@ export interface ElectronAPI {
   listProactiveRuns: () => Promise<ProactiveTaskRun[]>
   /** 用户明确创建、暂停、恢复、删除或手动运行定时任务 */
   createProactiveSchedule: (input: CreateProactiveScheduleInput) => Promise<ProactiveSchedule>
+  updateProactiveSchedule: (scheduleId: string, input: UpdateProactiveScheduleInput) => Promise<ProactiveSchedule>
   setProactiveScheduleEnabled: (scheduleId: string, enabled: boolean) => Promise<ProactiveSchedule>
   deleteProactiveSchedule: (scheduleId: string) => Promise<void>
   runProactiveSchedule: (scheduleId: string) => Promise<ProactiveTaskRun>
@@ -679,11 +682,12 @@ export interface ElectronAPI {
   rollbackWorkflowTemplate: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowDefinition>
   exportWorkflowDefinitionFile: (workflowId: string) => Promise<boolean>
   importWorkflowDefinitionFile: (workspaceId: string) => Promise<import('@gravitas/shared').WorkflowDefinition | null>
-  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => Promise<import('@gravitas/shared').WorkflowRun>
+  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'compensate' | 'abandon' }) => Promise<import('@gravitas/shared').WorkflowRun>
   publishWorkflowDefinition: (workflowId: string, input: import('@gravitas/shared').WorkflowPublishInput) => Promise<import('@gravitas/shared').WorkflowDefinition>
   createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@gravitas/shared').WorkflowTriggerKind) => Promise<import('@gravitas/shared').WorkflowRun>
   getWorkflowRun: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRun | null>
   listWorkflowRuns: (workflowId: string) => Promise<import('@gravitas/shared').WorkflowRun[]>
+  simulateWorkflowRun: (workflowId: string, runId: string) => Promise<import('../main/lib/workflow-simulation-service').WorkflowSimulationResult>
   listWorkflowRunEvents: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRunEvent[]>
   executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
   executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => Promise<import('@gravitas/shared').WorkflowRun>
@@ -1631,6 +1635,7 @@ export interface ElectronAPI {
     // Recommendations
     listRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     getPendingRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
+    refreshRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     acceptRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     dismissRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     deleteRecommendation: (id: string) => Promise<boolean>
@@ -1642,6 +1647,11 @@ export interface ElectronAPI {
     // Routines
     listRoutineManifests: () => Promise<unknown[]>
     listRoutineInstances: () => Promise<unknown[]>
+    createRoutineInstance: (input: { manifestId: string; title: string; inputs?: Record<string, unknown> }) => Promise<unknown | null>
+    deleteRoutineInstance: (instanceId: string) => Promise<boolean>
+    setRoutineInstanceEnabled: (instanceId: string, enabled: boolean) => Promise<boolean>
+    runRoutineInstance: (instanceId: string, target: import('@gravitas/shared').ProactiveExecutionTarget) => Promise<import('@gravitas/shared').ProactiveTaskRun>
+    submitSOPCandidate: (candidate: { id: string; title: string; description: string; steps: string[]; sourceSessionId?: string; createdAt: number }, workspaceId: string) => Promise<{ approvalId: string } | null>
     // Memory Plugin
     listMemoryItems: (kind?: string) => Promise<unknown[]>
     searchMemoryItems: (query: string) => Promise<unknown[]>
@@ -2138,6 +2148,7 @@ const electronAPI: ElectronAPI = {
   listProactiveSchedules: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES),
   listProactiveRuns: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS),
   createProactiveSchedule: (input: CreateProactiveScheduleInput) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, input),
+  updateProactiveSchedule: (scheduleId: string, input: UpdateProactiveScheduleInput) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_PROACTIVE_SCHEDULE, scheduleId, input),
   setProactiveScheduleEnabled: (scheduleId: string, enabled: boolean) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_PROACTIVE_SCHEDULE_ENABLED, scheduleId, enabled),
   deleteProactiveSchedule: (scheduleId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.DELETE_PROACTIVE_SCHEDULE, scheduleId),
   runProactiveSchedule: (scheduleId: string) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.RUN_PROACTIVE_SCHEDULE, scheduleId),
@@ -2158,10 +2169,11 @@ const electronAPI: ElectronAPI = {
   rollbackWorkflowTemplate: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.ROLLBACK_TEMPLATE, workflowId),
   exportWorkflowDefinitionFile: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXPORT_DEFINITION_FILE, workflowId),
   importWorkflowDefinitionFile: (workspaceId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.IMPORT_DEFINITION_FILE, workspaceId),
-  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_SIDE_EFFECT, input),
+  resolveWorkflowSideEffect: (input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'compensate' | 'abandon' }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_SIDE_EFFECT, input),
   publishWorkflowDefinition: (workflowId: string, input: import('@gravitas/shared').WorkflowPublishInput) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PUBLISH_DEFINITION, workflowId, input),
   createWorkflowRun: (workflowId: string, input: Record<string, unknown>, trigger?: import('@gravitas/shared').WorkflowTriggerKind) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CREATE_RUN, workflowId, input, trigger),
   getWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.GET_RUN, workflowId, runId),
+  simulateWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.SIMULATE_RUN, workflowId, runId),
   listWorkflowRuns: (workflowId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_RUNS, workflowId),
   listWorkflowRunEvents: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.LIST_RUN_EVENTS, workflowId, runId),
   executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_AGENT_NODE, input),
@@ -3563,6 +3575,7 @@ const electronAPI: ElectronAPI = {
     // Recommendations
     listRecommendations: () => ipcRenderer.invoke('proactive:listRecommendations'),
     getPendingRecommendations: () => ipcRenderer.invoke('proactive:getPendingRecommendations'),
+    refreshRecommendations: () => ipcRenderer.invoke('proactive:refreshRecommendations'),
     acceptRecommendation: (id: string) => ipcRenderer.invoke('proactive:acceptRecommendation', id),
     dismissRecommendation: (id: string) => ipcRenderer.invoke('proactive:dismissRecommendation', id),
     deleteRecommendation: (id: string) => ipcRenderer.invoke('proactive:deleteRecommendation', id),
@@ -3574,6 +3587,11 @@ const electronAPI: ElectronAPI = {
     // Routines
     listRoutineManifests: () => ipcRenderer.invoke('proactive:listRoutineManifests'),
     listRoutineInstances: () => ipcRenderer.invoke('proactive:listRoutineInstances'),
+    createRoutineInstance: (input: { manifestId: string; title: string; inputs?: Record<string, unknown> }) => ipcRenderer.invoke('proactive:createRoutineInstance', input),
+    deleteRoutineInstance: (instanceId: string) => ipcRenderer.invoke('proactive:deleteRoutineInstance', instanceId),
+    setRoutineInstanceEnabled: (instanceId: string, enabled: boolean) => ipcRenderer.invoke('proactive:setRoutineInstanceEnabled', instanceId, enabled),
+    runRoutineInstance: (instanceId: string, target: import('@gravitas/shared').ProactiveExecutionTarget) => ipcRenderer.invoke('proactive:runRoutineInstance', instanceId, target),
+    submitSOPCandidate: (candidate: { id: string; title: string; description: string; steps: string[]; sourceSessionId?: string; createdAt: number }, workspaceId: string) => ipcRenderer.invoke('proactive:submitSOPCandidate', candidate, workspaceId),
     // Memory Plugin
     listMemoryItems: (kind?: string) => ipcRenderer.invoke('memory:listItems', kind),
     searchMemoryItems: (query: string) => ipcRenderer.invoke('memory:searchItems', query),

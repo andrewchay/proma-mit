@@ -242,6 +242,21 @@ export async function setPluginEnabled(pluginId: string, enabled: boolean): Prom
 }
 
 import { collectDirectoryTools, collectDirectoryToolPrompts } from './tool-definition-store'
+/** 目录名与内置插件 runtime ID 的稳定映射；未知目录不得绕过插件启用状态。 */
+const DIRECTORY_TOOLSET_RUNTIME_IDS: Record<string, string> = {
+  marketing: 'com.gravitas.marketing',
+  'computer-use': 'com.gravitas.computer-use',
+}
+
+function isDirectoryToolsetEnabled(directoryId: string): boolean {
+  const runtimeId = DIRECTORY_TOOLSET_RUNTIME_IDS[directoryId]
+  if (!runtimeId) return false
+  const factory = BUILTIN_RUNTIMES.get(runtimeId) ?? IMPORTED_RUNTIMES.get(runtimeId)
+  if (!factory) return false
+  const runtime = factory()
+  return runtime.isEnabled() && runtime.isSupported()
+}
+
 
 // ... existing code ...
 
@@ -258,7 +273,7 @@ export function collectContributingTools(): RuntimeToolDefinition[] {
 
   // ★ Phase 1: 优先收集目录化工具
   try {
-    const directoryTools = collectDirectoryTools()
+    const directoryTools = collectDirectoryTools(isDirectoryToolsetEnabled)
     tools.push(...directoryTools)
   } catch (error) {
     console.warn('[PluginManager] 收集目录化工具失败:', error)
@@ -300,7 +315,7 @@ export function collectContributingPrompts(): string[] {
 
   // ★ Phase 1: 优先收集目录化工具提示
   try {
-    const directoryPrompts = collectDirectoryToolPrompts()
+    const directoryPrompts = collectDirectoryToolPrompts((directoryId) => directoryId !== 'marketing' && isDirectoryToolsetEnabled(directoryId))
     prompts.push(...directoryPrompts)
   } catch (error) {
     console.warn('[PluginManager] 收集目录化工具提示失败:', error)

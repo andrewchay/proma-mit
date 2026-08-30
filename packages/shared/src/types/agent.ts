@@ -1997,6 +1997,8 @@ export const AGENT_IPC_CHANNELS = {
   LIST_PROACTIVE_SCHEDULES: 'agent:list-proactive-schedules',
   /** 创建需用户明确确认的本地 Proactive 定时任务 */
   CREATE_PROACTIVE_SCHEDULE: 'agent:create-proactive-schedule',
+  /** 编辑已创建的 Proactive 定时任务（不改写运行历史） */
+  UPDATE_PROACTIVE_SCHEDULE: 'agent:update-proactive-schedule',
   /** 暂停或恢复 Proactive 定时任务 */
   SET_PROACTIVE_SCHEDULE_ENABLED: 'agent:set-proactive-schedule-enabled',
   /** 删除 Proactive 定时任务 */
