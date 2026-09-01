@@ -76,14 +76,35 @@ function resolveExternalSkillPath(source: "personal" | "claude", relativePath?: 
   return root ? join(root, relativePath) : null
 }
 
+/**
+ * 集市按能力展示，而不是按目录镜像展示。来源优先级由调用方传入顺序决定。
+ * growth-copilot 只负责在 growth-scout 前澄清问题，两者同时存在时保留可直接完成分析的后者。
+ */
+const REDUNDANT_SKILL_NAMES = new Map([["growth-copilot", "growth-scout"]])
+
+function normalizeSkillName(item: SkillMeta): string {
+  return item.name.normalize("NFKC").trim().replaceAll(/\s+/g, " ").toLocaleLowerCase()
+}
+
+export function deduplicateMarketplaceSkills(items: SkillMarketplaceItem[]): SkillMarketplaceItem[] {
+  const availableNames = new Set(items.map(normalizeSkillName))
+  const seenNames = new Set<string>()
+  return items.filter((item) => {
+    const name = normalizeSkillName(item)
+    const replacement = REDUNDANT_SKILL_NAMES.get(name)
+    if (replacement && availableNames.has(replacement)) return false
+    if (seenNames.has(name)) return false
+    seenNames.add(name)
+    return true
+  })
+}
+
 export function getSkillMarketplace(workspaceSlug: string): SkillMarketplaceItem[] {
   const installed = new Map(getAllWorkspaceSkills(workspaceSlug).map((skill) => [skill.slug, skill]))
   const items = scanDirectory(getDefaultSkillsDir(), { source: "builtin" }, "内置 Skills")
-  const externalPaths = new Set<string>()
   for (const external of EXTERNAL_SKILL_SOURCES) {
     for (const item of scanExternalDirectory(external.root, external.source, external.name)) {
-      const path = item.sourceRelativePath ?? item.slug
-      if (!externalPaths.has(path)) { externalPaths.add(path); items.push(item) }
+      items.push(item)
     }
   }
   for (const workspace of listAgentWorkspaces()) {
@@ -94,7 +115,7 @@ export function getSkillMarketplace(workspaceSlug: string): SkillMarketplaceItem
       if (meta) items.push({ ...meta, id: `workspace:${workspace.slug}:${skill.slug}`, source: "workspace", sourceWorkspaceSlug: workspace.slug, sourceWorkspaceName: workspace.name, installStatus: "available" })
     }
   }
-  return items.map((item) => {
+  return deduplicateMarketplaceSkills(items).map((item) => {
     const categorized = { ...item, ...classifySkillSet(item) }
     const current = installed.get(item.slug)
     return current ? { ...categorized, installStatus: isNewer(item.version, current.version) ? "update_available" as const : "installed" as const } : categorized

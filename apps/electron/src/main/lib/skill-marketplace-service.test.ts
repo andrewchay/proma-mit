@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAgentWorkspace, getAllWorkspaceSkills, toggleSkillSet, toggleWorkspaceSkill } from "./agent-workspace-manager"
 import { getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
-import { getSkillMarketplace, installMarketplaceSkill } from "./skill-marketplace-service"
+import { deduplicateMarketplaceSkills, getSkillMarketplace, installMarketplaceSkill } from "./skill-marketplace-service"
+import type { SkillMarketplaceItem } from "@gravitas/shared"
 
 const TEST_DIR = "/tmp/proma-skill-marketplace-test"
 
@@ -12,6 +13,17 @@ function writeSkill(dir: string, slug: string, version: string, category: string
   const skillDir = join(dir, slug)
   mkdirSync(skillDir, { recursive: true })
   writeFileSync(join(skillDir, "SKILL.md"), "---\nname: " + slug + "\ndescription: " + slug + " 描述\nversion: " + version + "\ncategory: " + category + "\n---\n内容\n", "utf-8")
+}
+
+function marketplaceSkill(name: string, source: SkillMarketplaceItem["source"]): SkillMarketplaceItem {
+  return {
+    id: source + ":" + name,
+    slug: name,
+    name,
+    source,
+    installStatus: "available",
+    enabled: true,
+  }
 }
 
 describe("Skills 集市与 Skill Set", () => {
@@ -48,5 +60,17 @@ describe("Skills 集市与 Skill Set", () => {
     const installed = getAllWorkspaceSkills(target.slug).find((skill) => skill.slug === "marketing-brand")
     expect(installed?.enabled).toBe(false)
     expect(installed?.version).toBe("1.1.0")
+  })
+
+  test("Given 同名镜像和增长调度包装 When 构建集市 Then 只保留优先来源与可执行 Skill", () => {
+    const items = deduplicateMarketplaceSkills([
+      marketplaceSkill("pdf", "builtin"),
+      marketplaceSkill("pdf", "claude"),
+      marketplaceSkill("pdf", "personal"),
+      marketplaceSkill("growth-copilot", "personal"),
+      marketplaceSkill("growth-scout", "personal"),
+    ])
+    expect(items.map((item) => item.name)).toEqual(["pdf", "growth-scout"])
+    expect(items[0]?.source).toBe("builtin")
   })
 })
