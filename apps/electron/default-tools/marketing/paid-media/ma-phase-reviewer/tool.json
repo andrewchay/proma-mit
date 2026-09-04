@@ -7,12 +7,12 @@
     "type": "object",
     "properties": {
       "campaign_id": { "type": "string", "description": "Campaign ID" },
-      "phase": { "type": "number", "description": "阶段序号（1/2/3）" },
+      "phase": { "type": "string", "description": "阶段序号（1/2/3）" },
       "start_date": { "type": "string", "description": "开始日期（YYYY-MM-DD）" },
       "end_date": { "type": "string", "description": "结束日期（YYYY-MM-DD）" },
       "cpm_target": { "type": "number", "description": "CPM 目标值" },
       "engagement_target": { "type": "number", "description": "互动率目标值（%）" }
     },
-    "required": ["campaign_id", "phase"]
+    "required": ["campaign_id", "phase", "start_date", "end_date"]
   }
 }

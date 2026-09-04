@@ -1,0 +1,1 @@
+{"id":"ma_campaign_brief_get","name":"获取 Campaign Brief","description":"按 Campaign 和达人 ID 获取 Brief。","domain":"paid-media","parameters":{"type":"object","properties":{"campaign_id":{"type":"string","description":"Campaign ID"},"kol_id":{"type":"string","description":"达人 ID"}},"required":["campaign_id","kol_id"]}}

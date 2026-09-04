@@ -1,8 +1,12 @@
 {
   "id": "marketing",
-  "version": 1,
-  "domains": ["shared", "influencer", "paid-media"],
+  "version": 6,
+  "domains": [
+    "shared",
+    "influencer",
+    "paid-media"
+  ],
   "defaultEnabled": [],
   "createdAt": "2026-08-26T00:00:00Z",
-  "updatedAt": "2026-08-26T00:00:00Z"
+  "updatedAt": "2026-08-29T00:00:00Z"
 }

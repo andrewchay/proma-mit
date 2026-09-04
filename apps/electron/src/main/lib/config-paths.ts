@@ -9,6 +9,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { mkdirSync, existsSync, cpSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { APP_CONFIG_DIR_NAME } from './app-identity'
+import { readJsonFileSafe } from './safe-file'
 
 /**
  * 获取配置目录名称
@@ -1153,6 +1154,71 @@ export function seedDefaultTools(): void {
     }
   } catch (error) {
     console.error('[配置] 同步默认 Tools 异常:', error)
+  }
+}
+
+
+/** 打包内领域包所携带的 Workflow 模板最小元数据。 */
+interface BundledWorkflowTemplateMeta {
+  id: string
+  version: string
+  definition: unknown
+}
+
+function compareTemplateVersions(left: string, right: string): number {
+  const parse = (value: string): number[] => value.split('.').map((part) => {
+    const parsed = Number.parseInt(part, 10)
+    return Number.isFinite(parsed) ? parsed : 0
+  })
+  const a = parse(left)
+  const b = parse(right)
+  const length = Math.max(a.length, b.length)
+  for (let index = 0; index < length; index++) {
+    const delta = (a[index] ?? 0) - (b[index] ?? 0)
+    if (delta !== 0) return delta
+  }
+  return 0
+}
+
+/**
+ * 从每个 default-tools 领域包发现并同步 Workflow 模板。
+ *
+ * 模板只包含可移植的 DSL Definition；安装时仍由 workflow-template-service
+ * 重新绑定目标 workspace，并完成能力与权限预检。用户已有更高版本不会被覆盖。
+ */
+export function seedBundledWorkflowTemplates(): void {
+  const { app } = require('electron') as { app: { isPackaged: boolean } }
+  const bundledToolsDir = app.isPackaged
+    ? join(process.resourcesPath, 'default-tools')
+    : join(__dirname, '../default-tools')
+
+  if (!existsSync(bundledToolsDir)) return
+
+  try {
+    for (const pluginEntry of readdirSync(bundledToolsDir, { withFileTypes: true })) {
+      if (!pluginEntry.isDirectory()) continue
+      const workflowsDir = join(bundledToolsDir, pluginEntry.name, 'workflows')
+      if (!existsSync(workflowsDir)) continue
+
+      for (const entry of readdirSync(workflowsDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+        const source = join(workflowsDir, entry.name)
+        const template = readJsonFileSafe<BundledWorkflowTemplateMeta>(source)
+        if (!template || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(template.id) || !template.version || !template.definition) {
+          console.warn(`[配置] 跳过无效的领域 Workflow 模板: ${pluginEntry.name}/${entry.name}`)
+          continue
+        }
+
+        const target = getWorkflowTemplatePath(template.id)
+        const existing = readJsonFileSafe<BundledWorkflowTemplateMeta>(target)
+        if (existing && compareTemplateVersions(template.version, existing.version) <= 0) continue
+
+        cpSync(source, target)
+        console.log(`[配置] 已同步领域 Workflow 模板: ${pluginEntry.name}/${template.id} v${template.version}`)
+      }
+    }
+  } catch (error) {
+    console.error('[配置] 同步领域 Workflow 模板异常:', error)
   }
 }
 

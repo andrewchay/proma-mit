@@ -6,11 +6,13 @@
   "parameters": {
     "type": "object",
     "properties": {
-      "campaign_id": { "type": "string", "description": "Campaign ID" },
-      "test_data": { "type": "string", "description": "测试数据摘要" },
-      "budget": { "type": "number", "description": "总预算" },
-      "goal": { "type": "string", "description": "优化目标" }
+      "brand": { "type": "string", "description": "品牌名称" },
+      "product": { "type": "string", "description": "产品名称" },
+      "test_results": { "type": "string", "description": "测试结果数据" },
+      "total_budget": { "type": "number", "description": "正式投放总预算（万元）" },
+      "platforms": { "type": "string", "description": "目标平台，逗号分隔" },
+      "optimization_goal": { "type": "string", "description": "优化目标" }
     },
-    "required": ["campaign_id"]
+    "required": ["brand", "product", "test_results", "total_budget", "platforms"]
   }
 }

@@ -1,0 +1,1 @@
+{"id":"ma_campaign_kol_add","name":"加入 Campaign 达人","description":"将数据库达人导入 Campaign 候选池。","domain":"paid-media","parameters":{"type":"object","properties":{"campaign_id":{"type":"string","description":"Campaign ID"},"kol_ids":{"type":"string","description":"逗号分隔的达人 ID"}},"required":["campaign_id","kol_ids"]}}

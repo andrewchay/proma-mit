@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { collectContributingTools, collectContributingPrompts, _resetPluginManagerForTests } from '../plugin-manager'
@@ -11,10 +11,13 @@ import { updateSettings } from '../settings-service'
  * 用临时 PROMA_TEST_CONFIG_DIR 隔离并在测试后清理。
  */
 const tmpConfigDir = mkdtempSync(join(tmpdir(), 'gravitas-marketing-test-'))
+const bundledMarketingToolsDir = join(import.meta.dir, '../../../../default-tools/marketing')
 beforeAll(() => {
   process.env.PROMA_TEST_CONFIG_DIR = tmpConfigDir
+  cpSync(bundledMarketingToolsDir, join(tmpConfigDir, 'default-tools', 'marketing'), { recursive: true })
 })
-afterAll(() => {
+afterAll(async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 100))
   delete process.env.PROMA_TEST_CONFIG_DIR
   rmSync(tmpConfigDir, { recursive: true, force: true })
 })
@@ -100,6 +103,40 @@ describe('Marketing 插件', () => {
       updateSettings({ marketingCapabilities: [] })
       _resetPluginManagerForTests()
     }
+  })
+  test('Given 已目录化营销工具 When 切换订阅 Then Runtime 仅注入对应子域且不重复', () => {
+    _resetPluginManagerForTests()
+    updateSettings({ marketingCapabilities: [] })
+    expect(collectContributingTools().some((tool) => tool.name.startsWith('ma_'))).toBe(false)
+
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    const influencerTools = collectContributingTools().map((tool) => tool.name)
+    expect(influencerTools).toEqual(expect.arrayContaining([
+      'ma_generate_storyboard', 'ma_generate_outreach', 'ma_kol_crm', 'ma_kol_portal', 'ma_generate_script',
+    ]))
+    expect(influencerTools).not.toContain('ma_design_campaign_test')
+    expect(influencerTools).not.toContain('ma_campaign_update')
+
+    updateSettings({ marketingCapabilities: ['paid-media'] })
+    const paidMediaTools = collectContributingTools().map((tool) => tool.name)
+    expect(paidMediaTools).toEqual(expect.arrayContaining([
+      'ma_generate_storyboard', 'ma_design_campaign_test', 'ma_campaign_update', 'ma_campaign_brief_get',
+      'ma_campaign_kol_status', 'ma_analyze_content_performance', 'ma_suggest_traffic_strategy',
+    ]))
+    expect(paidMediaTools).not.toContain('ma_generate_outreach')
+    expect(paidMediaTools).not.toContain('ma_kol_crm')
+
+    updateSettings({ marketingCapabilities: ['influencer', 'paid-media'] })
+    const allNames = collectContributingTools().map((tool) => tool.name)
+    expect(allNames.filter((name) => name.startsWith('ma_'))).toHaveLength(26)
+    expect(new Set(allNames).size).toBe(allNames.length)
+
+    const prompts = collectContributingPrompts().join('\n')
+    expect(prompts).toContain('MAKOL搜索')
+    expect(prompts).toContain('MA策略生成')
+
+    updateSettings({ marketingCapabilities: [] })
+    _resetPluginManagerForTests()
   })
 
   test('contributePrompts 订阅 influencer 后贡献达人域指令', () => {

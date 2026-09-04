@@ -1,0 +1,1 @@
+{"id":"ma_get_content_benchmarks","name":"获取内容基准","description":"按平台、价格层级和粉丝量级查询内容表现基准。","domain":"paid-media","parameters":{"type":"object","properties":{"platform":{"type":"string","description":"平台"},"price_tier":{"type":"string","description":"价格层级"},"followers_range":{"type":"string","description":"粉丝量级"}},"required":["platform"]}}

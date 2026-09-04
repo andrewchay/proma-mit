@@ -140,7 +140,9 @@ function readToolDirState(
  * - 目录化工具优先
  * - 代码默认兜底
  */
-export function collectDirectoryTools(): RuntimeToolDefinition[] {
+export type DirectoryToolsetFilter = (pluginId: string) => boolean
+
+export function collectDirectoryTools(shouldInclude?: DirectoryToolsetFilter): RuntimeToolDefinition[] {
   const tools: RuntimeToolDefinition[] = []
   const toolsDir = getDefaultToolsUserDir()
   if (!existsSync(toolsDir)) return tools
@@ -151,6 +153,7 @@ export function collectDirectoryTools(): RuntimeToolDefinition[] {
     if (!state) continue
 
     for (const toolState of state.tools) {
+    if (shouldInclude && !shouldInclude(pluginId)) continue
       try {
         const tool = loadToolFromDirState(toolState)
         if (tool) tools.push(tool)
@@ -160,6 +163,28 @@ export function collectDirectoryTools(): RuntimeToolDefinition[] {
     }
   }
 
+  return tools
+}
+
+/**
+ * 收集指定工具集的目录化运行时工具。
+ *
+ * 评测不能注入全局目录工具，否则被测 Toolset 会获得未声明能力。这里复用与生产
+ * 相同的「目录 execute.ts → 代码 fallback」执行绑定，但只返回目标目录声明的工具。
+ */
+export function collectDirectoryToolsForPlugin(pluginId: string): RuntimeToolDefinition[] {
+  const state = readPluginToolsDirState(pluginId)
+  if (!state) return []
+
+  const tools: RuntimeToolDefinition[] = []
+  for (const toolState of state.tools) {
+    try {
+      const tool = loadToolFromDirState(toolState)
+      if (tool) tools.push(tool)
+    } catch (error) {
+      console.warn(`[ToolDir] 加载工具集工具失败: ${pluginId}/${toolState.domain}/${toolState.id}`, error)
+    }
+  }
   return tools
 }
 
@@ -176,6 +201,10 @@ function loadToolFromDirState(state: ToolDirState): RuntimeToolDefinition | null
           parameters: state.parameters,
           execute: async (input, _ctx) => {
             const result = await mod.execute!(input)
+            if (result && typeof result === 'object' && 'content' in result) {
+              const output = result as { toolCallId?: string; content: string; isError?: boolean }
+              return { toolCallId: output.toolCallId ?? '', content: output.content, isError: output.isError }
+            }
             return { toolCallId: '', content: String(result ?? '') }
           },
         }
@@ -263,7 +292,7 @@ function loadToolFromModule(relPath: string, defsKey: string, execKey: string): 
  * 收集所有已启用插件的 TOOLS.md 内容。
  * 供 buildSystemPrompt 注入工具调用引导。
  */
-export function collectDirectoryToolPrompts(): string[] {
+export function collectDirectoryToolPrompts(shouldInclude?: DirectoryToolsetFilter): string[] {
   const prompts: string[] = []
   const toolsDir = getDefaultToolsUserDir()
   if (!existsSync(toolsDir)) return prompts
@@ -271,6 +300,7 @@ export function collectDirectoryToolPrompts(): string[] {
   const pluginDirs = readDirNames(toolsDir)
   for (const pluginId of pluginDirs) {
     const state = readPluginToolsDirState(pluginId)
+    if (shouldInclude && !shouldInclude(pluginId)) continue
     if (state?.toolsMd) {
       prompts.push(`<plugin_tools plugin="${pluginId}">\n${state.toolsMd}\n</plugin_tools>`)
     }

@@ -6,13 +6,18 @@
   "parameters": {
     "type": "object",
     "properties": {
+      "brand": { "type": "string", "description": "品牌名称" },
       "product": { "type": "string", "description": "产品名称" },
-      "category": { "type": "string", "description": "品类" },
-      "target_audience": { "type": "string", "description": "目标受众" },
-      "platforms": { "type": "string", "description": "投放平台" },
-      "duration_months": { "type": "number", "description": "投放周期（月）" },
-      "expected_sales": { "type": "number", "description": "预期销售额（万元）" }
+      "market_size": { "type": "number", "description": "目标市场总规模" },
+      "ta_description": { "type": "string", "description": "目标受众描述" },
+      "ta_penetration_rate": { "type": "number", "description": "目标受众渗透率（百分比）" },
+      "annual_sales_target": { "type": "number", "description": "年度销售目标（万元）" },
+      "competitor_spend_estimate": { "type": "number", "description": "竞品年投放预估（万元）" },
+      "exposure_frequency": { "type": "number", "description": "有效曝光频次" },
+      "conversion_rate": { "type": "number", "description": "曝光至购买转化率（百分比）" },
+      "budget_ratio": { "type": "number", "description": "营销费用占销售额比例（百分比）" },
+      "preferred_platforms": { "type": "string", "description": "首选投放平台，逗号分隔" }
     },
-    "required": ["product", "category"]
+    "required": ["brand", "product", "market_size", "ta_description", "ta_penetration_rate", "annual_sales_target"]
   }
 }

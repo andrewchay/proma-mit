@@ -1,11 +1,28 @@
 {
   "schemaVersion": 1,
   "id": "com.gravitas.marketing",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "营销应用中心",
   "description": "提供营销领域 Agent 工具（内容审核 / 视频分镜 / 策略 / 达人 / 投放）",
   "publisher": "Proma",
-  "platforms": ["darwin", "win32", "linux"],
+  "platforms": [
+    "darwin",
+    "win32",
+    "linux"
+  ],
   "permissions": {},
-  "entrypoints": {}
+  "entrypoints": {},
+  "workflowTemplates": [
+    "workflows/marketing-campaign.json"
+  ],
+  "skills": [
+    "ma-brand-dna",
+    "ma-brand-house",
+    "ma-campaign-optimizer",
+    "ma-campaign-tester",
+    "ma-content-audit",
+    "ma-content-calendar",
+    "ma-creative-roi",
+    "ma-ugc-campaign"
+  ]
 }

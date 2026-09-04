@@ -1,0 +1,1057 @@
+{
+  "id": "marketing-campaign",
+  "teamId": "personal",
+  "name": "营销 Campaign 全流程",
+  "description": "从市场与品牌洞察到内容、测试和受控执行计划的 15 步 Campaign 模板。外部写操作必须另经工作流审批。",
+  "version": "1.0.0",
+  "definition": {
+    "format": "paa.workflow",
+    "formatVersion": "1.0",
+    "id": "marketing-campaign-template",
+    "workspaceId": "template",
+    "teamId": "personal",
+    "name": "营销 Campaign 全流程",
+    "description": "从市场与品牌洞察到内容、测试和受控执行计划的 15 步 Campaign 模板。外部写操作必须另经工作流审批。",
+    "status": "published",
+    "version": "1.0.0",
+    "trigger": {
+      "kind": "manual"
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "brand": {
+          "type": "string"
+        },
+        "product": {
+          "type": "string"
+        },
+        "targetAudience": {
+          "type": "string"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": {
+          "type": "number"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "brand",
+        "product",
+        "objective"
+      ]
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "kind": "start",
+        "title": "Campaign Brief 输入"
+      },
+      {
+        "id": "market-analysis",
+        "kind": "agent",
+        "title": "市场分析",
+        "description": "分析市场规模、品类趋势和未被满足的需求；结论必须区分已验证证据、待验证假设与建议，并记录来源。",
+        "config": {
+          "prompt": "分析市场规模、品类趋势和未被满足的需求；结论必须区分已验证证据、待验证假设与建议，并记录来源。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised"
+        }
+      },
+      {
+        "id": "competitor-analysis",
+        "kind": "agent",
+        "title": "竞品分析",
+        "description": "建立直接和间接竞品矩阵，覆盖定位、核心卖点、营销动作与空白机会；没有证据的市场份额不得写成事实。",
+        "config": {
+          "prompt": "建立直接和间接竞品矩阵，覆盖定位、核心卖点、营销动作与空白机会；没有证据的市场份额不得写成事实。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised"
+        }
+      },
+      {
+        "id": "audience-insight",
+        "kind": "agent",
+        "title": "用户分析",
+        "description": "产出 TA 画像、搜索/内容消费习惯、需求痛点与消费者洞察，并明确哪些结论需要后续数据验证。",
+        "config": {
+          "prompt": "产出 TA 画像、搜索/内容消费习惯、需求痛点与消费者洞察，并明确哪些结论需要后续数据验证。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised"
+        }
+      },
+      {
+        "id": "brand-dna",
+        "kind": "skill",
+        "title": "品牌 DNA 与诊断",
+        "description": "使用品牌 DNA 方法沉淀品牌传承、核心与附加价值、人格、产品定位、品牌阶段和差异化优势。",
+        "config": {
+          "prompt": "使用品牌 DNA 方法沉淀品牌传承、核心与附加价值、人格、产品定位、品牌阶段和差异化优势。",
+          "skill": {
+            "slug": "ma-brand-dna"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-brand-dna"
+            }
+          ]
+        }
+      },
+      {
+        "id": "brand-fact-check",
+        "kind": "agent",
+        "title": "品牌信息核实",
+        "description": "核实品牌历史、产品线、价格带和核心声明；逐条标记确认、无法确认和冲突项，不能以模型推断替代来源。",
+        "config": {
+          "prompt": "核实品牌历史、产品线、价格带和核心声明；逐条标记确认、无法确认和冲突项，不能以模型推断替代来源。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised"
+        }
+      },
+      {
+        "id": "brand-house",
+        "kind": "skill",
+        "title": "Brand Concept 产出",
+        "description": "以品牌 DNA、用户洞察和竞品差异为输入，形成愿景、使命、品牌意念、主张、RTB 与品牌屋。",
+        "config": {
+          "prompt": "以品牌 DNA、用户洞察和竞品差异为输入，形成愿景、使命、品牌意念、主张、RTB 与品牌屋。",
+          "skill": {
+            "slug": "ma-brand-house"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-brand-house"
+            }
+          ]
+        }
+      },
+      {
+        "id": "goal-setting",
+        "kind": "agent",
+        "title": "目标与指标设定",
+        "description": "将业务目标拆成品牌、内容、转化三层指标，写清统计口径、基线、目标值、观察周期和止损条件。",
+        "config": {
+          "prompt": "将业务目标拆成品牌、内容、转化三层指标，写清统计口径、基线、目标值、观察周期和止损条件。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised"
+        }
+      },
+      {
+        "id": "big-idea",
+        "kind": "skill",
+        "title": "Big Idea 与创意评估",
+        "description": "生成不少于三个创意方向，并用 Relevance、Originality、Impact 与 Inherent Drama 评分，说明取舍。",
+        "config": {
+          "prompt": "生成不少于三个创意方向，并用 Relevance、Originality、Impact 与 Inherent Drama 评分，说明取舍。",
+          "skill": {
+            "slug": "ma-creative-roi"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-creative-roi"
+            }
+          ]
+        }
+      },
+      {
+        "id": "platform-matrix",
+        "kind": "skill",
+        "title": "平台矩阵与内容日历",
+        "description": "给出平台角色、内容支柱、发布节奏、关键节点与产能约束；不同平台不得简单一稿多发。",
+        "config": {
+          "prompt": "给出平台角色、内容支柱、发布节奏、关键节点与产能约束；不同平台不得简单一稿多发。",
+          "skill": {
+            "slug": "ma-content-calendar"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-content-calendar"
+            }
+          ]
+        }
+      },
+      {
+        "id": "kol-strategy",
+        "kind": "agent",
+        "title": "KOL 金字塔与筛选标准",
+        "description": "按预算、平台、品牌人格和目标定义 KOL 层级配比、形象角色、筛选规则和排除条件。",
+        "config": {
+          "prompt": "按预算、平台、品牌人格和目标定义 KOL 层级配比、形象角色、筛选规则和排除条件。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": [
+            "ma_search_kols"
+          ]
+        }
+      },
+      {
+        "id": "candidate-selection",
+        "kind": "agent",
+        "title": "候选达人筛选",
+        "description": "仅检索并评估候选达人，输出证据、匹配理由、风险与待确认项；不得写入 Campaign 或对外联络。",
+        "config": {
+          "prompt": "仅检索并评估候选达人，输出证据、匹配理由、风险与待确认项；不得写入 Campaign 或对外联络。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": [
+            "ma_search_kols"
+          ]
+        }
+      },
+      {
+        "id": "strategy-approval",
+        "kind": "approval",
+        "title": "策略与候选池审批",
+        "description": "请负责人审核品牌结论、目标、创意、预算假设、平台矩阵和候选达人。审批前不得创建投放、写回外部系统或联系达人。",
+        "config": {
+          "assigneePolicy": "workflow_owner",
+          "timeout": "P2D",
+          "onTimeout": "fail",
+          "allowEditOutput": true
+        }
+      },
+      {
+        "id": "briefs",
+        "kind": "agent",
+        "title": "达人 Brief 与内容草案",
+        "description": "为已批准的达人生成个性化 Brief，包含内容方向、品牌调性、合规限制、交付物、修改轮次和验收条件。",
+        "config": {
+          "prompt": "为已批准的达人生成个性化 Brief，包含内容方向、品牌调性、合规限制、交付物、修改轮次和验收条件。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": [
+            "ma_generate_creative_brief"
+          ]
+        }
+      },
+      {
+        "id": "content-audit",
+        "kind": "skill",
+        "title": "内容合规与品牌审核",
+        "description": "从合规、品牌契合与内容质量三维审核草案；critical 问题必须阻断进入测试，并给出可执行修改建议。",
+        "config": {
+          "prompt": "从合规、品牌契合与内容质量三维审核草案；critical 问题必须阻断进入测试，并给出可执行修改建议。",
+          "skill": {
+            "slug": "ma-content-audit"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-content-audit"
+            }
+          ],
+          "allowedTools": [
+            "ma_audit_content"
+          ]
+        }
+      },
+      {
+        "id": "ab-test",
+        "kind": "skill",
+        "title": "A/B 测试与阶段复盘设计",
+        "description": "设计单变量测试、对照组、预算、观察窗口、成功阈值、止损线及放量/暂停判定，不能把预测当成结果。",
+        "config": {
+          "prompt": "设计单变量测试、对照组、预算、观察窗口、成功阈值、止损线及放量/暂停判定，不能把预测当成结果。",
+          "skill": {
+            "slug": "ma-campaign-tester"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-campaign-tester"
+            }
+          ],
+          "allowedTools": [
+            "ma_design_campaign_test"
+          ]
+        }
+      },
+      {
+        "id": "ugc-plan",
+        "kind": "skill",
+        "title": "UGC 与社区互动方案",
+        "description": "如 Campaign 目标包含用户共创，设计低门槛玩法、激励、参与路径、审核与负面内容应对；否则明确跳过原因。",
+        "config": {
+          "prompt": "如 Campaign 目标包含用户共创，设计低门槛玩法、激励、参与路径、审核与负面内容应对；否则明确跳过原因。",
+          "skill": {
+            "slug": "ma-ugc-campaign"
+          }
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "skills": [
+            {
+              "slug": "ma-ugc-campaign"
+            }
+          ]
+        }
+      },
+      {
+        "id": "execution-plan",
+        "kind": "agent",
+        "title": "受控执行计划",
+        "description": "汇总已批准策略，输出可执行的投放/发布计划、负责人、依赖、预算上限、回滚方式和复盘节奏。该节点只生成计划，不执行外部写操作。",
+        "config": {
+          "prompt": "汇总已批准策略，输出可执行的投放/发布计划、负责人、依赖、预算上限、回滚方式和复盘节奏。该节点只生成计划，不执行外部写操作。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": [
+            "ma_generate_storyboard",
+            "ma_forecast_budget"
+          ]
+        }
+      },
+      {
+        "id": "end",
+        "kind": "end",
+        "title": "Campaign 计划包完成"
+      }
+    ],
+    "edges": [
+      {
+        "id": "start-to-market-analysis",
+        "from": "start",
+        "to": "market-analysis"
+      },
+      {
+        "id": "market-analysis-to-competitor-analysis",
+        "from": "market-analysis",
+        "to": "competitor-analysis"
+      },
+      {
+        "id": "competitor-analysis-to-audience-insight",
+        "from": "competitor-analysis",
+        "to": "audience-insight"
+      },
+      {
+        "id": "audience-insight-to-brand-dna",
+        "from": "audience-insight",
+        "to": "brand-dna"
+      },
+      {
+        "id": "brand-dna-to-brand-fact-check",
+        "from": "brand-dna",
+        "to": "brand-fact-check"
+      },
+      {
+        "id": "brand-fact-check-to-brand-house",
+        "from": "brand-fact-check",
+        "to": "brand-house"
+      },
+      {
+        "id": "brand-house-to-goal-setting",
+        "from": "brand-house",
+        "to": "goal-setting"
+      },
+      {
+        "id": "goal-setting-to-big-idea",
+        "from": "goal-setting",
+        "to": "big-idea"
+      },
+      {
+        "id": "big-idea-to-platform-matrix",
+        "from": "big-idea",
+        "to": "platform-matrix"
+      },
+      {
+        "id": "platform-matrix-to-kol-strategy",
+        "from": "platform-matrix",
+        "to": "kol-strategy"
+      },
+      {
+        "id": "kol-strategy-to-candidate-selection",
+        "from": "kol-strategy",
+        "to": "candidate-selection"
+      },
+      {
+        "id": "candidate-selection-to-strategy-approval",
+        "from": "candidate-selection",
+        "to": "strategy-approval"
+      },
+      {
+        "id": "strategy-approval-to-briefs",
+        "from": "strategy-approval",
+        "to": "briefs"
+      },
+      {
+        "id": "briefs-to-content-audit",
+        "from": "briefs",
+        "to": "content-audit"
+      },
+      {
+        "id": "content-audit-to-ab-test",
+        "from": "content-audit",
+        "to": "ab-test"
+      },
+      {
+        "id": "ab-test-to-ugc-plan",
+        "from": "ab-test",
+        "to": "ugc-plan"
+      },
+      {
+        "id": "ugc-plan-to-execution-plan",
+        "from": "ugc-plan",
+        "to": "execution-plan"
+      },
+      {
+        "id": "execution-plan-to-end",
+        "from": "execution-plan",
+        "to": "end"
+      }
+    ],
+    "layout": {
+      "nodes": {
+        "start": {
+          "x": 0,
+          "y": 0
+        },
+        "market-analysis": {
+          "x": 280,
+          "y": 0
+        },
+        "competitor-analysis": {
+          "x": 560,
+          "y": 0
+        },
+        "audience-insight": {
+          "x": 840,
+          "y": 0
+        },
+        "brand-dna": {
+          "x": 1120,
+          "y": 0
+        },
+        "brand-fact-check": {
+          "x": 1400,
+          "y": 0
+        },
+        "brand-house": {
+          "x": 1680,
+          "y": 0
+        },
+        "goal-setting": {
+          "x": 1960,
+          "y": 0
+        },
+        "big-idea": {
+          "x": 2240,
+          "y": 0
+        },
+        "platform-matrix": {
+          "x": 2520,
+          "y": 0
+        },
+        "kol-strategy": {
+          "x": 2800,
+          "y": 0
+        },
+        "candidate-selection": {
+          "x": 3080,
+          "y": 0
+        },
+        "strategy-approval": {
+          "x": 3360,
+          "y": 0
+        },
+        "briefs": {
+          "x": 3640,
+          "y": 0
+        },
+        "content-audit": {
+          "x": 3920,
+          "y": 0
+        },
+        "ab-test": {
+          "x": 4200,
+          "y": 0
+        },
+        "ugc-plan": {
+          "x": 4480,
+          "y": 0
+        },
+        "execution-plan": {
+          "x": 4760,
+          "y": 0
+        },
+        "end": {
+          "x": 5040,
+          "y": 0
+        }
+      }
+    },
+    "publication": {
+      "version": "1.0.0",
+      "publishedAt": 0,
+      "changeSummary": "从 ma-proma Campaign Mode 迁移的受控领域模板"
+    },
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  "revisions": [
+    {
+      "version": "1.0.0",
+      "definition": {
+        "format": "paa.workflow",
+        "formatVersion": "1.0",
+        "id": "marketing-campaign-template",
+        "workspaceId": "template",
+        "teamId": "personal",
+        "name": "营销 Campaign 全流程",
+        "description": "从市场与品牌洞察到内容、测试和受控执行计划的 15 步 Campaign 模板。外部写操作必须另经工作流审批。",
+        "status": "published",
+        "version": "1.0.0",
+        "trigger": {
+          "kind": "manual"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "brand": {
+              "type": "string"
+            },
+            "product": {
+              "type": "string"
+            },
+            "targetAudience": {
+              "type": "string"
+            },
+            "platforms": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "budget": {
+              "type": "number"
+            },
+            "objective": {
+              "type": "string"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "brand",
+            "product",
+            "objective"
+          ]
+        },
+        "nodes": [
+          {
+            "id": "start",
+            "kind": "start",
+            "title": "Campaign Brief 输入"
+          },
+          {
+            "id": "market-analysis",
+            "kind": "agent",
+            "title": "市场分析",
+            "description": "分析市场规模、品类趋势和未被满足的需求；结论必须区分已验证证据、待验证假设与建议，并记录来源。",
+            "config": {
+              "prompt": "分析市场规模、品类趋势和未被满足的需求；结论必须区分已验证证据、待验证假设与建议，并记录来源。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised"
+            }
+          },
+          {
+            "id": "competitor-analysis",
+            "kind": "agent",
+            "title": "竞品分析",
+            "description": "建立直接和间接竞品矩阵，覆盖定位、核心卖点、营销动作与空白机会；没有证据的市场份额不得写成事实。",
+            "config": {
+              "prompt": "建立直接和间接竞品矩阵，覆盖定位、核心卖点、营销动作与空白机会；没有证据的市场份额不得写成事实。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised"
+            }
+          },
+          {
+            "id": "audience-insight",
+            "kind": "agent",
+            "title": "用户分析",
+            "description": "产出 TA 画像、搜索/内容消费习惯、需求痛点与消费者洞察，并明确哪些结论需要后续数据验证。",
+            "config": {
+              "prompt": "产出 TA 画像、搜索/内容消费习惯、需求痛点与消费者洞察，并明确哪些结论需要后续数据验证。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised"
+            }
+          },
+          {
+            "id": "brand-dna",
+            "kind": "skill",
+            "title": "品牌 DNA 与诊断",
+            "description": "使用品牌 DNA 方法沉淀品牌传承、核心与附加价值、人格、产品定位、品牌阶段和差异化优势。",
+            "config": {
+              "prompt": "使用品牌 DNA 方法沉淀品牌传承、核心与附加价值、人格、产品定位、品牌阶段和差异化优势。",
+              "skill": {
+                "slug": "ma-brand-dna"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-brand-dna"
+                }
+              ]
+            }
+          },
+          {
+            "id": "brand-fact-check",
+            "kind": "agent",
+            "title": "品牌信息核实",
+            "description": "核实品牌历史、产品线、价格带和核心声明；逐条标记确认、无法确认和冲突项，不能以模型推断替代来源。",
+            "config": {
+              "prompt": "核实品牌历史、产品线、价格带和核心声明；逐条标记确认、无法确认和冲突项，不能以模型推断替代来源。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised"
+            }
+          },
+          {
+            "id": "brand-house",
+            "kind": "skill",
+            "title": "Brand Concept 产出",
+            "description": "以品牌 DNA、用户洞察和竞品差异为输入，形成愿景、使命、品牌意念、主张、RTB 与品牌屋。",
+            "config": {
+              "prompt": "以品牌 DNA、用户洞察和竞品差异为输入，形成愿景、使命、品牌意念、主张、RTB 与品牌屋。",
+              "skill": {
+                "slug": "ma-brand-house"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-brand-house"
+                }
+              ]
+            }
+          },
+          {
+            "id": "goal-setting",
+            "kind": "agent",
+            "title": "目标与指标设定",
+            "description": "将业务目标拆成品牌、内容、转化三层指标，写清统计口径、基线、目标值、观察周期和止损条件。",
+            "config": {
+              "prompt": "将业务目标拆成品牌、内容、转化三层指标，写清统计口径、基线、目标值、观察周期和止损条件。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised"
+            }
+          },
+          {
+            "id": "big-idea",
+            "kind": "skill",
+            "title": "Big Idea 与创意评估",
+            "description": "生成不少于三个创意方向，并用 Relevance、Originality、Impact 与 Inherent Drama 评分，说明取舍。",
+            "config": {
+              "prompt": "生成不少于三个创意方向，并用 Relevance、Originality、Impact 与 Inherent Drama 评分，说明取舍。",
+              "skill": {
+                "slug": "ma-creative-roi"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-creative-roi"
+                }
+              ]
+            }
+          },
+          {
+            "id": "platform-matrix",
+            "kind": "skill",
+            "title": "平台矩阵与内容日历",
+            "description": "给出平台角色、内容支柱、发布节奏、关键节点与产能约束；不同平台不得简单一稿多发。",
+            "config": {
+              "prompt": "给出平台角色、内容支柱、发布节奏、关键节点与产能约束；不同平台不得简单一稿多发。",
+              "skill": {
+                "slug": "ma-content-calendar"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-content-calendar"
+                }
+              ]
+            }
+          },
+          {
+            "id": "kol-strategy",
+            "kind": "agent",
+            "title": "KOL 金字塔与筛选标准",
+            "description": "按预算、平台、品牌人格和目标定义 KOL 层级配比、形象角色、筛选规则和排除条件。",
+            "config": {
+              "prompt": "按预算、平台、品牌人格和目标定义 KOL 层级配比、形象角色、筛选规则和排除条件。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "allowedTools": [
+                "ma_search_kols"
+              ]
+            }
+          },
+          {
+            "id": "candidate-selection",
+            "kind": "agent",
+            "title": "候选达人筛选",
+            "description": "仅检索并评估候选达人，输出证据、匹配理由、风险与待确认项；不得写入 Campaign 或对外联络。",
+            "config": {
+              "prompt": "仅检索并评估候选达人，输出证据、匹配理由、风险与待确认项；不得写入 Campaign 或对外联络。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "allowedTools": [
+                "ma_search_kols"
+              ]
+            }
+          },
+          {
+            "id": "strategy-approval",
+            "kind": "approval",
+            "title": "策略与候选池审批",
+            "description": "请负责人审核品牌结论、目标、创意、预算假设、平台矩阵和候选达人。审批前不得创建投放、写回外部系统或联系达人。",
+            "config": {
+              "assigneePolicy": "workflow_owner",
+              "timeout": "P2D",
+              "onTimeout": "fail",
+              "allowEditOutput": true
+            }
+          },
+          {
+            "id": "briefs",
+            "kind": "agent",
+            "title": "达人 Brief 与内容草案",
+            "description": "为已批准的达人生成个性化 Brief，包含内容方向、品牌调性、合规限制、交付物、修改轮次和验收条件。",
+            "config": {
+              "prompt": "为已批准的达人生成个性化 Brief，包含内容方向、品牌调性、合规限制、交付物、修改轮次和验收条件。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "allowedTools": [
+                "ma_generate_creative_brief"
+              ]
+            }
+          },
+          {
+            "id": "content-audit",
+            "kind": "skill",
+            "title": "内容合规与品牌审核",
+            "description": "从合规、品牌契合与内容质量三维审核草案；critical 问题必须阻断进入测试，并给出可执行修改建议。",
+            "config": {
+              "prompt": "从合规、品牌契合与内容质量三维审核草案；critical 问题必须阻断进入测试，并给出可执行修改建议。",
+              "skill": {
+                "slug": "ma-content-audit"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-content-audit"
+                }
+              ],
+              "allowedTools": [
+                "ma_audit_content"
+              ]
+            }
+          },
+          {
+            "id": "ab-test",
+            "kind": "skill",
+            "title": "A/B 测试与阶段复盘设计",
+            "description": "设计单变量测试、对照组、预算、观察窗口、成功阈值、止损线及放量/暂停判定，不能把预测当成结果。",
+            "config": {
+              "prompt": "设计单变量测试、对照组、预算、观察窗口、成功阈值、止损线及放量/暂停判定，不能把预测当成结果。",
+              "skill": {
+                "slug": "ma-campaign-tester"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-campaign-tester"
+                }
+              ],
+              "allowedTools": [
+                "ma_design_campaign_test"
+              ]
+            }
+          },
+          {
+            "id": "ugc-plan",
+            "kind": "skill",
+            "title": "UGC 与社区互动方案",
+            "description": "如 Campaign 目标包含用户共创，设计低门槛玩法、激励、参与路径、审核与负面内容应对；否则明确跳过原因。",
+            "config": {
+              "prompt": "如 Campaign 目标包含用户共创，设计低门槛玩法、激励、参与路径、审核与负面内容应对；否则明确跳过原因。",
+              "skill": {
+                "slug": "ma-ugc-campaign"
+              }
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "skills": [
+                {
+                  "slug": "ma-ugc-campaign"
+                }
+              ]
+            }
+          },
+          {
+            "id": "execution-plan",
+            "kind": "agent",
+            "title": "受控执行计划",
+            "description": "汇总已批准策略，输出可执行的投放/发布计划、负责人、依赖、预算上限、回滚方式和复盘节奏。该节点只生成计划，不执行外部写操作。",
+            "config": {
+              "prompt": "汇总已批准策略，输出可执行的投放/发布计划、负责人、依赖、预算上限、回滚方式和复盘节奏。该节点只生成计划，不执行外部写操作。"
+            },
+            "capabilityPolicy": {
+              "permissionProfileId": "workflow-supervised",
+              "allowedTools": [
+                "ma_generate_storyboard",
+                "ma_forecast_budget"
+              ]
+            }
+          },
+          {
+            "id": "end",
+            "kind": "end",
+            "title": "Campaign 计划包完成"
+          }
+        ],
+        "edges": [
+          {
+            "id": "start-to-market-analysis",
+            "from": "start",
+            "to": "market-analysis"
+          },
+          {
+            "id": "market-analysis-to-competitor-analysis",
+            "from": "market-analysis",
+            "to": "competitor-analysis"
+          },
+          {
+            "id": "competitor-analysis-to-audience-insight",
+            "from": "competitor-analysis",
+            "to": "audience-insight"
+          },
+          {
+            "id": "audience-insight-to-brand-dna",
+            "from": "audience-insight",
+            "to": "brand-dna"
+          },
+          {
+            "id": "brand-dna-to-brand-fact-check",
+            "from": "brand-dna",
+            "to": "brand-fact-check"
+          },
+          {
+            "id": "brand-fact-check-to-brand-house",
+            "from": "brand-fact-check",
+            "to": "brand-house"
+          },
+          {
+            "id": "brand-house-to-goal-setting",
+            "from": "brand-house",
+            "to": "goal-setting"
+          },
+          {
+            "id": "goal-setting-to-big-idea",
+            "from": "goal-setting",
+            "to": "big-idea"
+          },
+          {
+            "id": "big-idea-to-platform-matrix",
+            "from": "big-idea",
+            "to": "platform-matrix"
+          },
+          {
+            "id": "platform-matrix-to-kol-strategy",
+            "from": "platform-matrix",
+            "to": "kol-strategy"
+          },
+          {
+            "id": "kol-strategy-to-candidate-selection",
+            "from": "kol-strategy",
+            "to": "candidate-selection"
+          },
+          {
+            "id": "candidate-selection-to-strategy-approval",
+            "from": "candidate-selection",
+            "to": "strategy-approval"
+          },
+          {
+            "id": "strategy-approval-to-briefs",
+            "from": "strategy-approval",
+            "to": "briefs"
+          },
+          {
+            "id": "briefs-to-content-audit",
+            "from": "briefs",
+            "to": "content-audit"
+          },
+          {
+            "id": "content-audit-to-ab-test",
+            "from": "content-audit",
+            "to": "ab-test"
+          },
+          {
+            "id": "ab-test-to-ugc-plan",
+            "from": "ab-test",
+            "to": "ugc-plan"
+          },
+          {
+            "id": "ugc-plan-to-execution-plan",
+            "from": "ugc-plan",
+            "to": "execution-plan"
+          },
+          {
+            "id": "execution-plan-to-end",
+            "from": "execution-plan",
+            "to": "end"
+          }
+        ],
+        "layout": {
+          "nodes": {
+            "start": {
+              "x": 0,
+              "y": 0
+            },
+            "market-analysis": {
+              "x": 280,
+              "y": 0
+            },
+            "competitor-analysis": {
+              "x": 560,
+              "y": 0
+            },
+            "audience-insight": {
+              "x": 840,
+              "y": 0
+            },
+            "brand-dna": {
+              "x": 1120,
+              "y": 0
+            },
+            "brand-fact-check": {
+              "x": 1400,
+              "y": 0
+            },
+            "brand-house": {
+              "x": 1680,
+              "y": 0
+            },
+            "goal-setting": {
+              "x": 1960,
+              "y": 0
+            },
+            "big-idea": {
+              "x": 2240,
+              "y": 0
+            },
+            "platform-matrix": {
+              "x": 2520,
+              "y": 0
+            },
+            "kol-strategy": {
+              "x": 2800,
+              "y": 0
+            },
+            "candidate-selection": {
+              "x": 3080,
+              "y": 0
+            },
+            "strategy-approval": {
+              "x": 3360,
+              "y": 0
+            },
+            "briefs": {
+              "x": 3640,
+              "y": 0
+            },
+            "content-audit": {
+              "x": 3920,
+              "y": 0
+            },
+            "ab-test": {
+              "x": 4200,
+              "y": 0
+            },
+            "ugc-plan": {
+              "x": 4480,
+              "y": 0
+            },
+            "execution-plan": {
+              "x": 4760,
+              "y": 0
+            },
+            "end": {
+              "x": 5040,
+              "y": 0
+            }
+          }
+        },
+        "publication": {
+          "version": "1.0.0",
+          "publishedAt": 0,
+          "changeSummary": "从 ma-proma Campaign Mode 迁移的受控领域模板"
+        },
+        "createdAt": 0,
+        "updatedAt": 0
+      },
+      "publishedAt": 0
+    }
+  ],
+  "createdAt": 0,
+  "updatedAt": 0
+}

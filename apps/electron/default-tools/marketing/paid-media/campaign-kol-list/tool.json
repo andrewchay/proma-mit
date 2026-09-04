@@ -1,0 +1,1 @@
+{"id":"ma_campaign_kol_list","name":"列出 Campaign 达人池","description":"获取 Campaign 候选达人池。","domain":"paid-media","parameters":{"type":"object","properties":{"campaign_id":{"type":"string","description":"Campaign ID"}},"required":["campaign_id"]}}

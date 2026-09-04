@@ -1,0 +1,1 @@
+{"id":"ma_campaign_brief_update","name":"更新 Campaign Brief","description":"更新达人 Brief 内容。","domain":"paid-media","parameters":{"type":"object","properties":{"campaign_id":{"type":"string","description":"Campaign ID"},"kol_id":{"type":"string","description":"达人 ID"},"content":{"type":"string","description":"Brief Markdown"}},"required":["campaign_id","kol_id","content"]}}
