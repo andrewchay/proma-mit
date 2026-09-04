@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { proactiveRunsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
 import type { ProactiveTaskRun } from '@gravitas/shared'
 
-export function RunsTab(): React.ReactElement {
+export function RunsTab({ onRefresh }: { onRefresh: () => Promise<void> }): React.ReactElement {
   const [runs] = useAtom(proactiveRunsAtom)
   const [loading] = useAtom(proactiveLoadingAtom)
 
@@ -36,7 +36,7 @@ export function RunsTab(): React.ReactElement {
             <History size={14} className="text-primary" />
             运行历史
           </h3>
-          <Button variant="outline" size="sm" disabled={loading}>
+          <Button variant="outline" size="sm" disabled={loading} onClick={() => void onRefresh()}>
             <RefreshCw className={loading ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />
             刷新
           </Button>
@@ -50,7 +50,7 @@ export function RunsTab(): React.ReactElement {
                 <div key={run.id} className="flex items-center gap-3 p-3 rounded-lg bg-foreground/[0.02] border border-border/40">
                   {statusIcon(run.status)}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{run.sourceType === 'schedule' ? '定时任务' : run.sourceType === 'monitor' ? '监听任务' : run.sourceType === 'routine' ? 'Routine' : '手动运行'} · {run.status}</p>
+                    <p className="text-sm font-medium">{run.sourceTitle ?? (run.sourceType === 'schedule' ? '定时任务' : run.sourceType === 'monitor' ? '监听任务' : run.sourceType === 'routine' ? 'Routine' : '手动运行')} · {run.status}</p>
                     <p className="text-xs text-muted-foreground">
                       {run.trigger} · {run.startedAt ? new Date(run.startedAt).toLocaleString() : '—'}
                       {run.endedAt && ` → ${new Date(run.endedAt).toLocaleTimeString()}`}

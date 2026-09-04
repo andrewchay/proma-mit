@@ -10,11 +10,10 @@
  */
 
 import type { ComponentType } from 'react'
-import { CalendarDays, FolderKanban, Zap, Users, Megaphone, type LucideIcon } from 'lucide-react'
+import { CalendarDays, FolderKanban, Users, Megaphone, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 import { CalendarModuleView } from '@/components/calendar/CalendarModuleView'
 import { ProjectView } from '@/components/projects/ProjectView'
-import { AutomationModuleView } from '@/components/automation/AutomationModuleView'
 import { InfluencerModuleView } from '@/components/influencer/InfluencerModuleView'
 import { PaidMediaModuleView } from '@/components/paid-media/PaidMediaModuleView'
 import { CapabilitiesView } from '@/components/marketing/CapabilitiesView'
@@ -30,7 +29,7 @@ export interface WorkModuleMeta {
   description?: string
 }
 
-/** 工作模块注册表（当前 3 个核心模块） */
+/** 工作模块注册表（当前 2 个核心模块；主动协作统一收敛到 Proactive Center） */
 export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
   {
     id: 'calendar',
@@ -45,13 +44,6 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     icon: FolderKanban,
     core: true,
     description: '项目 / 任务 / 看板 / 会议纪要 / 风险报告',
-  },
-  {
-    id: 'automation',
-    label: '自动化',
-    icon: Zap,
-    core: true,
-    description: '定时任务、运行记录、自动任务运行中心',
   },
   {
     id: 'influencer',
@@ -81,7 +73,6 @@ export const EXTENDED_WORK_MODULES: WorkModuleMeta[] = WORK_MODULE_REGISTRY.filt
 export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   calendar: CalendarModuleView,
   projects: ProjectView,
-  automation: AutomationModuleView,
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
   capabilities: CapabilitiesView,

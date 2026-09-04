@@ -4,7 +4,7 @@
  * 从主进程加载真实数据，保持 atoms 同步
  */
 
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useSetAtom } from 'jotai'
 import {
   proactiveSchedulesAtom,
@@ -15,7 +15,7 @@ import {
   proactiveLoadingAtom,
 } from './proactive-data'
 
-export function useProactiveDataSync(): void {
+export function useProactiveDataSync(): () => Promise<void> {
   const setSchedules = useSetAtom(proactiveSchedulesAtom)
   const setRuns = useSetAtom(proactiveRunsAtom)
   const setRecommendations = useSetAtom(proactiveRecommendationsAtom)
@@ -23,10 +23,7 @@ export function useProactiveDataSync(): void {
   const setMonitors = useSetAtom(proactiveMonitorsAtom)
   const setLoading = useSetAtom(proactiveLoadingAtom)
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadAll(): Promise<void> {
+  const loadAll = useCallback(async (): Promise<void> => {
       setLoading(true)
       try {
         await window.electronAPI.proactive?.refreshRecommendations?.()
@@ -39,8 +36,6 @@ export function useProactiveDataSync(): void {
           window.electronAPI.proactive?.listMonitors?.() ?? Promise.resolve([]),
         ])
 
-        if (cancelled) return
-
         setSchedules(schedules)
         setRuns(runs)
         setRecommendations(recommendations)
@@ -48,11 +43,10 @@ export function useProactiveDataSync(): void {
         setMonitors(monitors)
       } catch (error) {
         console.error('[ProactiveDataSync] 加载数据失败:', error)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
+      } finally { setLoading(false) }
+  }, [setApprovals, setLoading, setMonitors, setRecommendations, setRuns, setSchedules])
 
+  useEffect(() => {
     void loadAll()
 
     // 定期刷新（每 30 秒）
@@ -61,8 +55,9 @@ export function useProactiveDataSync(): void {
     }, 30_000)
 
     return () => {
-      cancelled = true
       clearInterval(interval)
     }
-  }, [setSchedules, setRuns, setRecommendations, setApprovals, setMonitors, setLoading])
+  }, [loadAll])
+
+  return loadAll
 }

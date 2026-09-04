@@ -1418,8 +1418,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 </button>
               )
             })}
-            {/* 领域能力包（订阅式，依赖 marketing-atoms） */}
-            <SubscribedCapabilities />
             <button
               onClick={() => setActiveView('proactive')}
               className={cn(
@@ -1444,6 +1442,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 </span>
               )}
             </button>
+            {/* 已激活领域能力包固定在侧栏工作模块的最底部。 */}
+            <SubscribedCapabilities />
           </div>
         </div>
       </div>

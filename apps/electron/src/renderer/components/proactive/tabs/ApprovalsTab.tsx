@@ -1,12 +1,12 @@
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { AlertCircle, CheckCircle, CircleAlert, LoaderCircle, XCircle } from 'lucide-react'
+import { AlertCircle, CheckCircle, CircleAlert, LoaderCircle, Plus, RefreshCw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { proactiveApprovalsAtom } from '@/atoms/proactive-data'
 import type { ProactiveApproval } from '@gravitas/shared'
 
-export function ApprovalsTab(): React.ReactElement {
+export function ApprovalsTab({ onRefresh }: { onRefresh: () => Promise<void> }): React.ReactElement {
   const [approvals, setApprovals] = useAtom(proactiveApprovalsAtom)
   const [resolvingId, setResolvingId] = React.useState<string | null>(null)
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending' || approval.status === 'edited')
@@ -43,10 +43,21 @@ export function ApprovalsTab(): React.ReactElement {
     }
   }
 
+  const createTestApproval = async (): Promise<void> => {
+    try {
+      const approval = await window.electronAPI.proactive?.createTestMemoryApproval?.()
+      if (!approval) return
+      setApprovals((current) => [approval, ...current])
+      toast.success('已创建测试记忆审批；同意前不会写入记忆')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '创建测试审批失败')
+    }
+  }
+
   return (
     <div className="p-4 space-y-4 max-w-4xl mx-auto">
       <section className="rounded-xl border border-border/50 bg-background shadow-sm">
-        <div className="px-4 py-3 border-b border-border/50"><h3 className="text-sm font-medium flex items-center gap-2"><AlertCircle size={14} className="text-orange-500" />待审批 ({pendingApprovals.length})</h3></div>
+        <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between"><h3 className="text-sm font-medium flex items-center gap-2"><AlertCircle size={14} className="text-orange-500" />待审批 ({pendingApprovals.length})</h3><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void onRefresh()}><RefreshCw className="mr-1 size-3.5" />刷新</Button><Button variant="outline" size="sm" onClick={() => void createTestApproval()}><Plus className="mr-1 size-3.5" />创建测试审批</Button></div></div>
         <div className="p-4 space-y-2">
           {pendingApprovals.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">没有等待确认的主动变更。</p> : pendingApprovals.map((approval) => {
             const resolving = resolvingId === approval.id

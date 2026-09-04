@@ -76,6 +76,8 @@ export interface ProactiveTaskRun {
   /** 运行来源。Monitor 与 Schedule 统一写入同一运行事实源。 */
   sourceType: 'schedule' | 'monitor' | 'routine' | 'manual'
   sourceId: string
+  /** 运行开始时固化的来源名称；即使来源后来重命名或删除，审计记录仍可读。 */
+  sourceTitle?: string
   /** 实际执行会话 ID；newSession 模式下为运行时新建的会话 */
   sessionId?: string
   status: ProactiveRunStatus

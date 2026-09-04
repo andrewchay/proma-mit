@@ -5,7 +5,7 @@
 import { atom } from 'jotai'
 import type { ProactiveRecommendation } from '@gravitas/shared'
 
-export type ProactiveTab = 'today' | 'schedules' | 'monitors' | 'approvals' | 'runs' | 'memory' | 'routines'
+export type ProactiveTab = 'today' | 'schedules' | 'monitors' | 'approvals' | 'running' | 'runs' | 'memory' | 'routines' | 'cost-audit' | 'credential-health'
 
 /** Proactive Center 当前活跃 Tab */
 export const proactiveCenterTabAtom = atom<ProactiveTab>('today')

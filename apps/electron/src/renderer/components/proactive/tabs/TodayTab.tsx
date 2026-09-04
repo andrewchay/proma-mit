@@ -4,14 +4,14 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause } from 'lucide-react'
+import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { proactiveSchedulesAtom, proactiveRunsAtom, proactiveRecommendationsAtom, proactiveApprovalsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
 import { proactiveCenterTabAtom, proactiveConfigurationRecommendationAtom } from '@/atoms/proactive-center'
 import type { ProactiveSchedule, ProactiveTaskRun, ProactiveRecommendation, ProactiveApproval } from '@gravitas/shared'
 
-export function TodayTab(): React.ReactElement {
+export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): React.ReactElement {
   const [schedules] = useAtom(proactiveSchedulesAtom)
   const [runs] = useAtom(proactiveRunsAtom)
   const [recommendations, setRecommendations] = useAtom(proactiveRecommendationsAtom)
@@ -69,6 +69,11 @@ export function TodayTab(): React.ReactElement {
 
   return (
     <div className="p-4 space-y-4 max-w-4xl mx-auto">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" disabled={loading} onClick={() => void onRefresh()}>
+          <RefreshCw className={loading ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />刷新
+        </Button>
+      </div>
       {/* 加载指示器 */}
       {loading && (
         <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
@@ -228,6 +233,7 @@ function RunRow({ run }: { run: ProactiveTaskRun }): React.ReactElement {
   return (
     <div className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-foreground/[0.02]">
       {statusIcon}
+      <span className="text-xs truncate max-w-40">{run.sourceTitle ?? (run.sourceType === 'schedule' ? '定时任务' : run.sourceType === 'monitor' ? '监听任务' : run.sourceType === 'routine' ? 'Routine' : '手动运行')}</span>
       <span className="text-xs capitalize">{run.status}</span>
       <span className="text-xs text-muted-foreground">{run.trigger}</span>
       <span className="text-xs text-muted-foreground ml-auto">

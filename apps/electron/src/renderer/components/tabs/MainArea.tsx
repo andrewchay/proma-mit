@@ -148,7 +148,7 @@ export function MainArea(): React.ReactElement {
     ? { flex: `0 0 calc(${splitRatio * 100}% - 4px)` }
     : { flex: '1 1 auto' }
 
-  // 工作模块视图：由模块注册表驱动（projects / calendar / automation）
+  // 工作模块视图：由模块注册表驱动（projects / calendar）
   const WorkModuleComponent = activeView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[activeView] : null
 
   return (
