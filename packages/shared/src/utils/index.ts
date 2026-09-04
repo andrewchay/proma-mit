@@ -145,4 +145,19 @@ export {
   PI_AUTO_COMPACTION_THRESHOLD_RATIO,
   PI_DEFAULT_CONTEXT_WINDOW,
 } from './pi-compaction'
-
+export {
+  DEFAULT_UNKNOWN_CONTEXT_WINDOW,
+  resolveModelContextCapability,
+} from './model-context-capabilities'
+export type {
+  ContextWindowSource,
+  ModelContextCapability,
+  ResolveModelContextCapabilityInput,
+} from './model-context-capabilities'
+export {
+  calculateContextBudget,
+} from './context-budget'
+export type {
+  ContextBudget,
+  ContextBudgetInput,
+} from './context-budget'

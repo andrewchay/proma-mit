@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ProviderType } from '@gravitas/shared'
-import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
+import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveAgentRuntimeBaseUrl, resolveModelContextCapability } from '@gravitas/shared'
 import { getConfigDir } from '../config-paths'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { loadPiCodingAgent } from './pi-sdk-loader'
@@ -97,24 +97,23 @@ export function resolvePiMaxTokens(provider: ProviderType): number {
 /**
  * 按模型 ID 推断 contextWindow（Pi SDK 自动压缩阈值依赖此值）。
  *
- * 与渲染端 inferContextWindow 保持一致。核心供应商中 Claude Opus、
- * OpenAI 5.6、Kimi/Moonshot、DeepSeek、GLM，以及原有 Claude Sonnet 4.6
- * 按 1M 处理；其他未知模型继续使用保守的 200K fallback。
+ * Kimi 优先走共享目录；其他已验证的模型保留显式规则，未知模型保守回退到 256K。
  */
 export function inferPiContextWindow(modelId: string | undefined | null): number {
-  if (!modelId) return 200_000
+  const kimiCapability = resolveModelContextCapability({ provider: 'kimi-api', modelId })
+  if (kimiCapability.source === 'catalog') return kimiCapability.contextWindow
+
+  if (!modelId) return DEFAULT_UNKNOWN_CONTEXT_WINDOW
   const m = modelId.toLowerCase()
   if (m.includes('claude-haiku')) return 200_000
   if (
     m.includes('claude-opus')
     || m.includes('claude-sonnet-4-6')
     || m.includes('gpt-5.6')
-    || m.includes('kimi')
-    || m.includes('moonshot')
     || m.includes('deepseek')
     || m.includes('glm')
   ) return 1_000_000
-  return 200_000
+  return DEFAULT_UNKNOWN_CONTEXT_WINDOW
 }
 
 function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string): NonNullable<PiProviderConfigInput['models']>[number] {

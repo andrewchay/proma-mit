@@ -9,7 +9,7 @@
 export const PI_AUTO_COMPACTION_THRESHOLD_RATIO = 0.8
 
 /** Pi 会话的上下文窗口兜底值（模型未声明时使用） */
-export const PI_DEFAULT_CONTEXT_WINDOW = 200_000
+export const PI_DEFAULT_CONTEXT_WINDOW = 256_000
 
 /**
  * 返回 Pi SDK 会开始自动压缩的上下文 token 阈值（占用窗口的阈值比例）。

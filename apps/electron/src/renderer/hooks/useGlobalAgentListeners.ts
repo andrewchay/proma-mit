@@ -60,6 +60,7 @@ import { agentDiffUnseenChangesAtom, agentDiffUnseenFilesAtom, agentDiffPanelTab
 import { autoPreviewEnabledAtom, previewPanelOpenMapAtom, previewFileMapAtom } from '@/atoms/preview-atoms'
 import type { NotificationSoundType } from '@/types/settings'
 import { toast } from 'sonner'
+import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveModelContextCapability } from '@gravitas/shared'
 import type { AgentStreamEvent, AgentStreamCompletePayload, AgentEvent, AgentStreamPayload, SDKAssistantMessage, SDKUserMessage, SDKSystemMessage, SDKContentBlock, SDKUserContentBlock } from '@gravitas/shared'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
@@ -109,20 +110,21 @@ function uniqueTruthyPaths(paths: Array<string | null | undefined>): string[] {
  */
 function inferContextWindow(model?: string): number | undefined {
   if (!model) return undefined
+  const kimiCapability = resolveModelContextCapability({ provider: 'kimi-api', modelId: model })
+  if (kimiCapability.source === 'catalog') return kimiCapability.contextWindow
+
   const m = model.toLowerCase()
-  // Claude Haiku 明确保留 200K；其余未知模型也继续使用保守 fallback。
+  // Claude Haiku 明确保留 200K；其余未知模型使用共享的 256K 兜底。
   if (m.includes('claude-haiku')) return 200_000
-  // 核心供应商模型按 1M 上下文处理，与 Pi 模型注册规则保持一致。
+  // 已验证的核心模型按 1M 上下文处理；未收录的模型保守回退。
   if (
     m.includes('claude-opus')
     || m.includes('claude-sonnet-4-6')
     || m.includes('gpt-5.6')
-    || m.includes('kimi')
-    || m.includes('moonshot')
     || m.includes('deepseek')
     || m.includes('glm')
   ) return 1_000_000
-  return 200_000
+  return DEFAULT_UNKNOWN_CONTEXT_WINDOW
 }
 
 function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {

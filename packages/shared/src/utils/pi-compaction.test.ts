@@ -7,6 +7,7 @@ import {
   calculatePiAutoCompactionReserveTokens,
   calculatePiAutoCompactionThresholdTokens,
   PI_AUTO_COMPACTION_THRESHOLD_RATIO,
+  PI_DEFAULT_CONTEXT_WINDOW,
 } from './pi-compaction'
 
 describe('Pi 上下文压缩阈值', () => {
@@ -19,6 +20,10 @@ describe('Pi 上下文压缩阈值', () => {
   test('触发阈值 = contextWindow - reserveTokens（即 80%）', () => {
     expect(calculatePiAutoCompactionThresholdTokens(200_000)).toBe(160_000)
     expect(calculatePiAutoCompactionThresholdTokens(100_000)).toBe(80_000)
+  })
+
+  test('未知模型的 Pi 会话默认窗口为 256K', () => {
+    expect(PI_DEFAULT_CONTEXT_WINDOW).toBe(256_000)
   })
 
   test('非法窗口抛错', () => {
