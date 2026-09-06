@@ -1,12 +1,18 @@
 /** 构建 macOS 灵动岛原生 N-API 模块（island.node）。 */
 
+import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 const source = resolve(import.meta.dir, '../resources/dynamic-island/macos/island_addon.mm')
 const output = resolve(import.meta.dir, '../resources/dynamic-island/macos/island.node')
-// 与 computer-use 相同：复用已安装的 N-API C 头文件，只使用稳定 N-API ABI。
-const napiHeaders = resolve(import.meta.dir, '../../../node_modules/node-addon-api/external-napi')
+// 与 computer-use 相同：只使用稳定 N-API ABI，优先使用 CI 的 Node 开发头文件。
+const bundledNapiHeaders = resolve(import.meta.dir, '../../../node_modules/node-addon-api/external-napi')
+const nodeExecutable = Bun.which('node')
+const nodeHeaders = nodeExecutable ? resolve(dirname(nodeExecutable), '../include/node') : ''
+const napiHeaders = existsSync(join(bundledNapiHeaders, 'node_api.h'))
+  ? bundledNapiHeaders
+  : nodeHeaders
 
 if (process.platform !== 'darwin') {
   console.log('[Dynamic Island] 非 macOS 平台跳过原生模块构建')
@@ -14,6 +20,9 @@ if (process.platform !== 'darwin') {
 }
 
 await mkdir(dirname(output), { recursive: true })
+if (!napiHeaders || !existsSync(join(napiHeaders, 'node_api.h'))) {
+  throw new Error('未找到 N-API 头文件；请安装 Node.js 开发头文件')
+}
 const proc = Bun.spawn([
   '/usr/bin/xcrun', '--sdk', 'macosx', 'clang++', '-fobjc-arc', '-O', '-dynamiclib', '-undefined', 'dynamic_lookup', source,
   '-I', napiHeaders,

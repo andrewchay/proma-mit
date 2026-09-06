@@ -232,7 +232,7 @@ gravitas/
 
 | 包 | 版本 | 职责 |
 | --- | --- | --- |
-| `@gravitas/electron` | `0.11.48` | Electron 桌面应用 |
+| `@gravitas/electron` | `0.11.49` | Electron 桌面应用 |
 | `@gravitas/shared` | `0.1.65` | 共享类型、IPC 常量、配置和工具 |
 | `@gravitas/core` | `0.2.14` | Provider Adapter、SSE、Shiki 高亮 |
 | `@gravitas/ui` | `0.1.4` | 共享 React UI 组件 |
