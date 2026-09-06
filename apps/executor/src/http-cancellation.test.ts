@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-test.skipIf(process.platform !== 'linux' || !existsSync('/usr/bin/bwrap'))('Given HTTP 长任务 When 客户端断开 Then 后代进程不能继续写入', async () => {
+test.skipIf(
+  process.platform !== 'linux'
+  || !existsSync('/usr/bin/bwrap')
+  || process.env.GRAVITAS_EXECUTOR_SANDBOX_AVAILABLE === '0',
+)('Given HTTP 长任务 When 客户端断开 Then 后代进程不能继续写入', async () => {
   const root = mkdtempSync(join(tmpdir(), 'executor-http-'))
   const workspace = join(root, 'workspace')
   mkdirSync(workspace)

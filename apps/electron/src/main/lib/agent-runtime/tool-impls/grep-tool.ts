@@ -123,8 +123,8 @@ function runCommand(
  */
 async function commandExists(command: string): Promise<boolean> {
   try {
-    await runCommand('command', ['-v', command], { cwd: process.cwd(), timeout: 5_000 })
-    return true
+    const { exitCode } = await runCommand('which', [command], { cwd: process.cwd(), timeout: 5_000 })
+    return exitCode === 0
   } catch {
     return false
   }

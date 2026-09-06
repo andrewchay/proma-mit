@@ -17,6 +17,7 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 
 - **Chat 模式**：多模型对话、附件解析、图片输入、Markdown / Mermaid / KaTeX / 代码高亮、并排对话、系统提示词、上下文管理。
 - **Agent 模式**：支持 Pi、AI SDK、Claude、Proma 等 runtime（默认 **Pi**，推荐 **Pi** 与 **AI SDK**），提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问。
+- **服务端 Executor**：仅在具备 Linux namespace 能力的 runner 上执行隔离工作负载；托管 CI 无法提供该能力时只验证请求边界和沙箱参数契约，并明确报告未完成实际隔离验收。
 - **Web Bridge（P0）**：Proma / AI SDK runtime 可打开独立、可见且隔离的受管浏览器，读取页面与结构化交互元素、截图、滚动、受控下载，并按逐次确认执行导航、Chrome CDP 接入、点击和输入；运行中的 Bridge 会在 Agent 标题栏显示状态并可一键停止，网页不能自行打开未受管窗口。
 - **Computer Use（macOS P0）**：Proma / AI SDK runtime 可在用户授权后列出显示器、读取指定屏幕截图、识别前台应用/窗口，并控制鼠标、键盘和滚动；屏幕读取和每一项桌面操作均经过 Agent 权限流程。
 - **SubAgent / Tasks**：复杂任务可以通过 Agent 工具拆分为子 Agent / Task，并在消息流中展示调用过程和结果；Pi / AI SDK / Claude runtime 均已复用同一套核心工具体系。

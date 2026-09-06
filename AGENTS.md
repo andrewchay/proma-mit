@@ -525,5 +525,5 @@ React UI 更新
 
 - 完整 PR 门禁：typecheck、bun run test、lint、docs:check；真实 Provider 默认显式跳过，不能把 skip 记为通过。
 - 打包必须包含 default-tools 与工作流模板；scripts/package-smoke.ts 验证实际 Electron 的发现、执行与数据库重开。原生 helper 构建失败必须向上传播。
-- 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。配置与恶意代码测试见 apps/executor/SECURITY.md。
+- 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。CI 会在托管 runner 无法创建内层 namespace 时仅运行契约测试并明确警告，完整隔离验收必须在支持该能力的 Linux runner 执行。配置与恶意代码测试见 apps/executor/SECURITY.md。
 - 存储职责、备份与恢复见 docs/storage-contract.md。新共享 Node 工具需从 packages/shared/src/utils/node.ts 导出；通用工具仍需对应 utils/index.ts 导出。

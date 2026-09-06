@@ -32,7 +32,9 @@ describe('隔离执行器', () => {
   })
 })
 
-const linux = process.platform === 'linux' && existsSync('/usr/bin/bwrap')
+const linux = process.platform === 'linux'
+  && existsSync('/usr/bin/bwrap')
+  && process.env.GRAVITAS_EXECUTOR_SANDBOX_AVAILABLE !== '0'
 describe.skipIf(!linux)('Linux 真沙箱验收', () => {
   test('Given 当前工作区 When 执行 Then 可写入并保留结果', async () => {
     const result = await executeIsolatedCommand({ ...request, command: 'bun', args: ['-e', 'await Bun.write("result.txt","ok");console.log("done")'] }, policy)
