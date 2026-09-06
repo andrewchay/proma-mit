@@ -10,77 +10,45 @@
 
 import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
 import { getConfigDir } from '../../config-paths'
+import { openNativeSqlite, type NativeSqliteDatabase, type SqlValue } from '../../native-sqlite'
 import { join } from 'node:path'
 
-// =====================================================================
-// SQLite 运行时适配层（复用 kol-data-service.ts 模式）
-// =====================================================================
-
-let _nativeDb: { Database: new (path: string) => unknown } | null = null
-
-function loadEngine(): { Database: new (path: string) => unknown } {
-  if (typeof Bun !== 'undefined') {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require('bun:' + 'sqlite')
-      return { Database: mod.Database }
-    } catch {
-      // fall through to better-sqlite3
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return { Database: require('better-sqlite3') }
-}
-
-function getEngine(): { Database: new (path: string) => unknown } {
-  if (!_nativeDb) {
-    _nativeDb = loadEngine()
-  }
-  return _nativeDb
-}
-
-/** 统一 Database API（模拟 bun:sqlite 接口，适配 better-sqlite3 差异） */
+/** 统一 Bun / Electron 的原生 SQLite API。 */
 class Database {
-  private db: unknown
+  private db: NativeSqliteDatabase
 
   constructor(path: string) {
-    const { Database: NativeDb } = getEngine()
-    this.db = new NativeDb(path)
+    this.db = openNativeSqlite(path)
   }
 
-  run(sql: string, ...params: unknown[]): { changes: number } {
+  run(sql: string, ...params: unknown[]): { changes: number | bigint } {
     const flat = flattenParams(params)
     if (flat.length === 0) {
-      ;(this.db as { exec: (sql: string) => void }).exec(sql)
+      this.db.exec(sql)
       return { changes: 0 }
     }
-    return (this.db as { prepare: (sql: string) => { run: (...p: unknown[]) => { changes: number } } }).prepare(sql).run(...flat)
+    return this.db.prepare(sql).run(...flat)
   }
 
   query(sql: string) {
-    const stmt = (this.db as { prepare: (sql: string) => unknown }).prepare(sql)
+    const stmt = this.db.prepare(sql)
     return {
-      get: (...params: unknown[]) => {
-        const result = (stmt as { get: (...p: unknown[]) => unknown }).get(...flattenParams(params))
-        return result ?? null
-      },
-      all: (...params: unknown[]) => {
-        return (stmt as { all: (...p: unknown[]) => unknown[] }).all(...flattenParams(params))
-      },
+      get: (...params: unknown[]) => stmt.get(...flattenParams(params)) ?? null,
+      all: (...params: unknown[]) => stmt.all(...flattenParams(params)),
     }
   }
 
   close(): void {
-    ;(this.db as { close: () => void }).close()
+    this.db.close()
   }
 }
 
 /** 展开参数（兼容数组参数和展开参数） */
-function flattenParams(params: unknown[]): unknown[] {
+function flattenParams(params: unknown[]): SqlValue[] {
   if (params.length === 1 && Array.isArray(params[0])) {
-    return params[0]
+    return params[0] as SqlValue[]
   }
-  return params
+  return params as SqlValue[]
 }
 
 // =====================================================================

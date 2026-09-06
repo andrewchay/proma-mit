@@ -27,7 +27,7 @@ gravitas/
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.14)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.11.46)
+    └── electron/   # Electron 桌面应用 (v0.11.47)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.11.46)
+#### @gravitas/electron (v0.11.47)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
