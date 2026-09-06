@@ -8,7 +8,7 @@ import {
   generateStoryboard,
   type Storyboard,
   type VideoInput,
-} from '../../../marketing/video/storyboard-engine'
+} from '../../../../src/main/lib/marketing/video/storyboard-engine'
 
 export async function execute(input: unknown): Promise<string> {
   const args = (input ?? {}) as Record<string, unknown>

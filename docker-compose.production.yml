@@ -64,6 +64,13 @@ services:
       executor: { condition: service_healthy }
       minio-init: { condition: service_completed_successfully }
   executor:
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,size=64m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true", "seccomp:./apps/executor/seccomp.json"]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.0
     build: { context: ., dockerfile: apps/executor/Dockerfile }
     environment:
       PROMA_EXECUTOR_WORKSPACE_ROOT: /data/workspaces

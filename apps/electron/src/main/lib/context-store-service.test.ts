@@ -1,25 +1,46 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { ContextStoreService, _resetContextStoreService } from './context-store-service.ts'
-import { mkdirSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 
 describe('ContextStoreService', () => {
   const testSlug = '__test_ctx_service__'
-  const testPath = join(homedir(), '.proma', 'workspaces', testSlug, 'context-store.db')
-
+  const original = process.env.PROMA_TEST_CONFIG_DIR
+  let directory: string
   beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'gravitas-context-service-'))
+    process.env.PROMA_TEST_CONFIG_DIR = directory
     _resetContextStoreService()
-    // 清理测试数据
-    if (existsSync(testPath)) {
-      rmSync(testPath)
-    }
+  })
+  afterEach(() => {
+    rmSync(directory, { recursive: true, force: true })
+    if (original === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+    else process.env.PROMA_TEST_CONFIG_DIR = original
   })
 
-  afterEach(() => {
-    if (existsSync(testPath)) {
-      rmSync(testPath)
-    }
+  it('Given 并发索引 When 关闭服务并重建 Then 两条消息都保留', async () => {
+    const service = new ContextStoreService()
+    await Promise.all([
+      service.indexMessage(testSlug, 'a', 'user', 'alpha persistent', 1),
+      service.indexMessage(testSlug, 'b', 'user', 'beta persistent', 2),
+    ])
+    await service.shutdown()
+    const reopened = new ContextStoreService()
+    expect((await reopened.recall(testSlug, 'alpha')).hits).toHaveLength(1)
+    expect((await reopened.recall(testSlug, 'beta')).hits).toHaveLength(1)
+    await reopened.shutdown()
+  })
+
+  it('Given 索引正在打开数据库 When 同时关闭 Then 先完成索引且拒绝新操作', async () => {
+    const service = new ContextStoreService()
+    const pending = service.indexMessage(testSlug, 'closing', 'user', 'closing durable', 9)
+    await service.shutdown()
+    await pending
+    await expect(service.recall(testSlug, 'closing')).rejects.toThrow('已关闭')
+    const reopened = new ContextStoreService()
+    expect((await reopened.recall(testSlug, 'closing')).hits).toHaveLength(1)
+    await reopened.shutdown()
   })
 
   it('should index and recall messages', async () => {
@@ -56,7 +77,7 @@ describe('ContextStoreService', () => {
   it('should use workspace isolation', async () => {
     const service = new ContextStoreService()
     const otherSlug = '__test_other__'
-    const otherPath = join(homedir(), '.proma', 'workspaces', otherSlug, 'context-store.db')
+    const otherPath = join(directory, 'context-store', otherSlug, 'context-store.db')
 
     try {
       // 在 workspace A 索引

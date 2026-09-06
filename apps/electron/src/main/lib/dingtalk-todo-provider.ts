@@ -16,6 +16,33 @@ interface DingtalkTodoConfig {
   appSecret: string
 }
 
+interface DingtalkApiError {
+  errcode?: number
+  errmsg?: string
+  code?: string
+  message?: string
+  msg?: string
+  subMessage?: string
+}
+
+interface DingtalkTaskStatus {
+  isDone?: boolean
+  done?: boolean
+  status?: string
+}
+
+interface DingtalkTaskResponse extends DingtalkApiError, DingtalkTaskStatus {
+  taskId?: string
+  id?: string
+  result?: boolean
+  success?: boolean
+  executorStatusList?: DingtalkTaskStatus[]
+}
+
+interface DingtalkUserResponse extends DingtalkApiError {
+  result?: { unionid?: string }
+}
+
 interface TokenCache {
   token: string
   expiresAt: number
@@ -163,7 +190,7 @@ export class DingtalkTodoProvider implements TodoProvider {
   }
 
   // ===== 状态解析 =====
-  private parseTodoStatus(resp: any): string | null {
+  private parseTodoStatus(resp: DingtalkTaskResponse): string | null {
     if (resp.isDone === true || resp.done === true || resp.status === 'COMPLETED') return 'completed'
     if (resp.isDone === false || resp.done === false || resp.status === 'INIT') return 'pending'
 
@@ -202,7 +229,7 @@ export class DingtalkTodoProvider implements TodoProvider {
       body: JSON.stringify({ userid }),
     })
 
-    const data = (await resp.json()) as any
+    const data = (await resp.json()) as DingtalkUserResponse
     this.checkApiError(data, '解析钉钉 unionId')
 
     const unionid = data?.result?.unionid as string | undefined
@@ -224,7 +251,7 @@ export class DingtalkTodoProvider implements TodoProvider {
     path: string,
     token: string,
     body?: unknown
-  ): Promise<any> {
+  ): Promise<DingtalkTaskResponse> {
     const url = `${DINGTALK_API_BASE}${path}`
     const headers: Record<string, string> = {
       'x-acs-dingtalk-access-token': token,
@@ -243,7 +270,7 @@ export class DingtalkTodoProvider implements TodoProvider {
   }
 
   // ===== 错误检查 =====
-  private checkApiError(data: any, action: string): void {
+  private checkApiError(data: DingtalkApiError, action: string): void {
     if (!data || typeof data !== 'object') return
 
     const errcode = data.errcode
@@ -301,8 +328,8 @@ export class DingtalkTodoProvider implements TodoProvider {
  */
 export function createDingtalkTodoProviderFromConfig(): DingtalkTodoProvider | null {
   try {
-    const { getSettings } = require('./settings-service')
-    const settings = getSettings() as Record<string, any>
+    const { getSettings } = require('./settings-service') as typeof import('./settings-service')
+    const settings = getSettings()
 
     const dingtalkTodo = settings.dingtalkTodo as { enabled?: boolean; botId?: string; appKey?: string; appSecret?: string } | undefined
     if (!dingtalkTodo?.enabled) {
@@ -312,7 +339,7 @@ export function createDingtalkTodoProviderFromConfig(): DingtalkTodoProvider | n
 
     // 新配置统一复用 Bot Hub 的加密凭证，避免 settings.json 留存第二份 Secret。
     if (dingtalkTodo.botId) {
-      const { getDingTalkBotById, getDecryptedBotClientSecret } = require('./dingtalk-config')
+      const { getDingTalkBotById, getDecryptedBotClientSecret } = require('./dingtalk-config') as typeof import('./dingtalk-config')
       const bot = getDingTalkBotById(dingtalkTodo.botId)
       const appSecret = bot ? getDecryptedBotClientSecret(bot.id) : ''
       if (!bot?.clientId || !appSecret) {

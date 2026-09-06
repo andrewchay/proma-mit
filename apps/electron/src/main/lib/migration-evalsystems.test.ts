@@ -27,8 +27,7 @@ afterAll(() => {
 
 describe('评测/Agent 定义迁移往返（evalsystems）', () => {
   test('import 能还原 benchmarks / default-agents / allowlist（含组件在 manifest）', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const m = (await import('./migration-service')) as any
+    const m = await import('./migration-service')
 
     // 1) 构造一个含 evalsystems 的最小 zip（模拟团队/备份导出产物）
     const zipPath = join(testDir, 'share.gravi-team')
@@ -53,8 +52,8 @@ describe('评测/Agent 定义迁移往返（evalsystems）', () => {
 
     // 2) parse：确认组件在 manifest、zip 内有 evalsystems 条目
     const preview = await m.parseImportFile(zipPath)
-    expect((preview as { manifest: { components: string[] } }).manifest.components).toContain('evalsystems')
-    const tempDir = (preview as { tempDir: string }).tempDir
+    expect(preview.manifest.components).toContain('evalsystems')
+    const tempDir = preview.tempDir
     expect(existsSync(join(tempDir, 'evalsystems/benchmarks/b1/benchmark.json'))).toBe(true)
 
     // 3) 先造一个目标工作区（confirmImport 需要），再 confirmImport 还原
@@ -64,11 +63,11 @@ describe('评测/Agent 定义迁移往返（evalsystems）', () => {
 
     const confirm = await m.confirmImport({
       tempDir,
-      manifest: (preview as { manifest: unknown }).manifest,
+      manifest: preview.manifest,
       targetWorkspaceId: targetWs?.id,
       pathMappings: {},
       conflictResolution: 'overwrite',
-    } as never)
+    })
     expect(confirm.success).toBe(true)
 
     // 4) 断言磁盘还原

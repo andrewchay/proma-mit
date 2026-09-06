@@ -15,7 +15,7 @@ import { toast } from 'sonner'
 import { detectIsMac } from '@/lib/platform'
 import type { DynamicIslandSessionSnapshot, DynamicIslandState } from '@gravitas/shared'
 
-const LEVEL_LABEL: Record<string, string> = {
+const _LEVEL_LABEL: Record<string, string> = {
   info: '信息',
   success: '成功',
   warning: '警告',

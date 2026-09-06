@@ -1,7 +1,7 @@
 /** Workflow 对话式设计器：模型只提出 patch，绝不直接写入 Definition。 */
 
 import { z } from 'zod'
-import { type AgentMessage, type AgentSendInput, type WorkflowDefinition, type WorkflowPatchProposal } from '@gravitas/shared'
+import type { AgentMessage, AgentSendInput, WorkflowDefinition, WorkflowPatchProposal } from '@gravitas/shared'
 import { WorkflowPatchSchema } from '@gravitas/shared/workflow'
 import { createAgentSession } from './agent-session-manager'
 import { runAgentHeadless } from './agent-service'

@@ -18,7 +18,6 @@ import type { TodoRetryEvent } from './project-types'
 
 /** 已支持的外部平台 */
 const PLATFORMS = ['dingtalk', 'feishu'] as const
-type Platform = (typeof PLATFORMS)[number]
 
 /** 注册自动同步（返回取消函数）。应用启动时调用一次（幂等）。 */
 export function registerProjectAutoSync(): () => void {

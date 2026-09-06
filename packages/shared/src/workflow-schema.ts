@@ -4,6 +4,7 @@ import {
   WORKFLOW_NODE_KINDS,
   type WorkflowDefinition,
 } from './types/workflow'
+import { validateWorkflowDataflow } from './workflow-input-mapping'
 
 const jsonObjectSchema = z.record(z.string(), z.unknown())
 const workflowIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).max(160)
@@ -52,6 +53,7 @@ const workflowNodeSchema = z.object({
   capabilityPolicy: capabilityPolicySchema.optional(),
   retry: retryPolicySchema.optional(),
   onFailure: z.enum(['fail', 'continue', 'route_to_error']).optional(),
+  runAfter: z.array(z.enum(['completed', 'failed', 'skipped', 'cancelled', 'blocked'])).min(1).max(5).optional(),
 }).strict()
 
 const workflowEdgeSchema = z.object({
@@ -122,6 +124,19 @@ function validateNodeConfig(node: z.infer<typeof workflowNodeSchema>, addIssue: 
   }
   if (node.kind === 'condition' && (typeof config.expression !== 'string' || !config.expression.trim())) {
     addIssue('condition 节点必须提供非空 expression')
+  }
+  if (node.kind === 'subworkflow') {
+    if (typeof config.workflowId !== 'string' || !config.workflowId.trim()) addIssue('subworkflow 节点必须提供 workflowId')
+    if (typeof config.version !== 'string' || !config.version.trim()) addIssue('subworkflow 节点必须提供精确 version')
+    if (config.maxDepth !== undefined && config.maxDepth !== 1) addIssue('subworkflow 节点当前只允许一层嵌套（maxDepth=1）')
+    if (config.inputMapping !== undefined && (!config.inputMapping || typeof config.inputMapping !== 'object' || Array.isArray(config.inputMapping))) addIssue('subworkflow inputMapping 必须是对象')
+  }
+
+  if (node.kind === 'foreach') {
+    if (typeof config.items !== 'string' || !config.items.startsWith('$')) addIssue('foreach 节点必须提供以 $ 开头的 items 引用')
+    if (!config.assignments || typeof config.assignments !== 'object' || Array.isArray(config.assignments)) addIssue('foreach 节点必须提供 assignments 对象')
+    if (config.maxItems !== undefined && (typeof config.maxItems !== 'number' || !Number.isInteger(config.maxItems) || config.maxItems < 1 || config.maxItems > 100)) addIssue('foreach 节点 maxItems 必须是 1 到 100 的整数')
+    if (config.maxConcurrency !== undefined && config.maxConcurrency !== 1) addIssue('foreach 节点当前只允许顺序执行（maxConcurrency=1）')
   }
   if (node.kind === 'approval') {
     if (!['workflow_owner', 'named_users', 'role'].includes(String(config.assigneePolicy))) {
@@ -249,6 +264,11 @@ export const WorkflowDefinitionSchema = z.object({
     if (!hasErrorRoute) {
       ctx.addIssue({ code: 'custom', path: ['edges'], message: `节点 ${node.id} 使用 route_to_error 时必须有一条 label 为 error 的出边` })
     }
+  }
+
+  for (const violation of validateWorkflowDataflow(definition as WorkflowDefinition)) {
+    const nodeIndex = definition.nodes.findIndex((node) => node.id === violation.nodeId)
+    ctx.addIssue({ code: 'custom', path: ['nodes', nodeIndex, 'config', violation.path], message: violation.message })
   }
 
   const sensitivePath = findSensitiveValue(definition)

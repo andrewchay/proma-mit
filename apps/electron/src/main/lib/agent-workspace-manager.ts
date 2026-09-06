@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, realpathSync } from 'node:fs'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { safeParseJSON } from './safe-json'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:path'
 import {
   getAgentWorkspacesIndexPath,
@@ -728,6 +728,71 @@ export function deleteWorkspaceSkill(workspaceSlug: string, skillSlug: string): 
     targetId: `${workspaceSlug}/${skillSlug}`,
     targetName: skillSlug,
   })
+}
+
+/**
+ * 在指定工作区创建由用户确认的本地 Skill。
+ *
+ * 仅接受工作区 ID，不接受任意文件路径；新建操作禁止覆盖 active / inactive
+ * 中的同名 Skill，避免 Approval 执行越过既有工作区边界或意外替换内容。
+ */
+export function createApprovedWorkspaceSkill(workspaceId: string, name: string, content: string): SkillMeta {
+  const workspace = getAgentWorkspace(workspaceId)
+  if (!workspace) throw new Error('目标工作区不存在')
+  if (!name.trim()) throw new Error('Skill 名称不能为空')
+  if (!content.trim()) throw new Error('Skill 内容不能为空')
+  if (content.length > 200_000) throw new Error('Skill 内容超过 200 KB 限制')
+
+  const skillSlug = createApprovedSkillSlug(name)
+  const activeDir = getWorkspaceSkillsDir(workspace.slug)
+  const inactiveDir = getInactiveSkillsDir(workspace.slug)
+  const targetPath = join(activeDir, skillSlug)
+  if (existsSync(targetPath) || existsSync(join(inactiveDir, skillSlug))) {
+    throw new Error(`目标工作区已存在同名 Skill: ${skillSlug}`)
+  }
+
+  try { autoSnapshotBeforeUpdate(workspace.slug, `创建 Skill ${skillSlug} 前`) } catch {}
+  const stagingPath = join(activeDir, `.${skillSlug}.approval-creating`)
+  rmSync(stagingPath, { recursive: true, force: true })
+  try {
+    mkdirSync(stagingPath, { recursive: true })
+    writeFileSync(join(stagingPath, 'SKILL.md'), formatApprovedSkillContent(name, content), 'utf-8')
+    renameSync(stagingPath, targetPath)
+  } catch (error) {
+    rmSync(stagingPath, { recursive: true, force: true })
+    throw error
+  }
+
+  const meta = parseSkillFrontmatter(readFileSync(join(targetPath, 'SKILL.md'), 'utf-8'), skillSlug, true)
+  console.log(`[Agent 工作区] 已通过审批创建 Skill: ${workspace.slug}/${skillSlug}`)
+  void appendConfigAudit({
+    category: 'skill',
+    action: 'create',
+    targetId: `${workspace.slug}/${skillSlug}`,
+    targetName: skillSlug,
+    afterSnapshot: { workspaceId, generatedBy: 'proactive-approval' },
+  })
+  return meta
+}
+
+function createApprovedSkillSlug(name: string): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return slug || `proactive-skill-${createHash('sha256').update(name.trim()).digest('hex').slice(0, 12)}`
+}
+
+function formatApprovedSkillContent(name: string, content: string): string {
+  const body = content.trim().replace(/^---\s*[\r\n][\s\S]*?[\r\n]---\s*[\r\n]?/, '')
+  const safeName = name.trim().replace(/[\r\n]/g, ' ').replace(/"/g, "'")
+  return [
+    '---',
+    `name: "${safeName}"`,
+    'version: 1.0.0',
+    'generated_by: proactive-approval',
+    '---',
+    '',
+    body,
+    '',
+  ].join('\n')
 }
 
 /** 扫描指定目录下的 Skills，供 getWorkspaceSkills 和 getAllWorkspaceSkills 复用 */

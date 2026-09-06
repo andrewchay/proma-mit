@@ -28,7 +28,7 @@ import {
 } from '@gravitas/core/providers/ai-sdk-bridge'
 import type { LanguageModel, LanguageModelUsage, ModelMessage, TextStreamPart, ToolSet } from 'ai'
 import { isStepCount, jsonSchema, streamText, tool } from 'ai'
-import { isTransientNetworkError } from '../error-patterns'
+import { isContextOverflowError, isTransientNetworkError } from '../error-patterns'
 import { enrichHistoryWithDocuments, enrichMessageWithDocuments } from './attachment-enrichment'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
 import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from './tool-registry'
@@ -82,6 +82,7 @@ export interface AISDKToolExecutionState {
     apiKey: string
     baseUrl: string
     model: string
+    audit?: Omit<import('../context-compaction-audit-service').ContextCompactionAuditInput, 'packetVersion'>
   }
 }
 
@@ -253,6 +254,10 @@ export class AISDKRuntimeCore {
         if (input.signal.aborted) {
           throw error
         }
+        // 只有尚未向 UI 发出文本或工具事件时，外层才可安全压缩并重放。
+        if (isContextOverflowError(getErrorMessage(error)) && !attemptHadLiveEvents) {
+          throw error
+        }
         if (
           attemptHadLiveEvents ||
           !isTransientNetworkError(getErrorMessage(error)) ||
@@ -372,6 +377,7 @@ export class AISDKRuntimeCore {
           ...state.compaction,
           historyMessages: currentHistory,
           signal: state.signal,
+          audit: { sessionId: state.sessionId, runtime: 'ai-sdk', trigger: 'manual' },
         })
         if (result.compacted) {
           return {

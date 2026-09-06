@@ -764,7 +764,7 @@ function defaultSkillCopyFilter(src: string): boolean {
 // ===== Agent 即目录（default-agents）=====
 
 /** 内置 agent 目录不受复制污染限制的防御性基名集合。 */
-const DEFAULT_AGENT_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
+const _DEFAULT_AGENT_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
 
 /** 内置 agent id 集合（也是目录可 seed 的白名单）。 */
 export const BUILTIN_AGENT_IDS = ['code-reviewer', 'explorer', 'researcher', 'marketing-campaign'] as const
@@ -1073,7 +1073,7 @@ export function getDynamicIslandConfigPath(): string {
 // ===== 工具即目录（default-tools）=====
 
 /** 内置工具目录不受复制污染限制的防御性基名集合。 */
-const DEFAULT_TOOL_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
+const _DEFAULT_TOOL_COPY_BLOCKLIST = DEFAULT_SKILL_COPY_BLOCKLIST
 
 /** 用户可写的 default-tools 根目录。
  * @returns ~/.proma/default-tools/

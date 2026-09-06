@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { getProactiveConfigPath, getConfigDir } from './config-paths'
 import type { ProactiveExecutionTarget, ProactiveTaskRun } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
-import { extractMemoryCandidatesFromOutput } from './memory-plugin-service'
+import { extractMemoryCandidatesFromOutput, runMemoryMaintenance } from './memory-plugin-service'
 import { createMemoryApproval } from './approval-service'
 import { createSkillApproval } from './approval-service'
 
@@ -361,6 +361,7 @@ export async function runRoutineInstance(
     id: randomUUID(),
     sourceType: 'routine',
     sourceId: instance.id,
+    sourceTitle: instance.title,
     sessionId: target.sessionId,
     status: 'running',
     trigger: 'manual',
@@ -378,6 +379,17 @@ export async function runRoutineInstance(
           confidence: candidate.confidence,
           sourceSessionId: candidate.sourceSessionId,
         })
+      }
+    }
+    // Maintain：每日记忆整理成功后执行巩固（相似合并）与遗忘（低效用超期归档，可回滚）
+    if (instance.manifestId === 'proma-memory:memory-daily') {
+      try {
+        const report = runMemoryMaintenance()
+        if (report.mergedGroups > 0 || report.forgottenIds.length > 0) {
+          console.log(`[Routine] 记忆维护完成：合并 ${report.mergedGroups} 组，归档 ${report.forgottenIds.length} 条（活跃 ${report.activeBefore} → ${report.activeAfter}）`)
+        }
+      } catch (error) {
+        console.error('[Routine] 记忆维护执行失败:', error)
       }
     }
     return run

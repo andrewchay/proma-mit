@@ -25,7 +25,7 @@
     },
     "apps/electron": {
       "name": "@gravitas/electron",
-      "version": "0.11.35",
+      "version": "0.11.50",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.143",
         "@anthropic-ai/sdk": "^0.93.0",
@@ -48,6 +48,7 @@
       "devDependencies": {
         "@emoji-mart/data": "^1.2.1",
         "@emoji-mart/react": "^1.1.1",
+        "@gravitas/context-store": "workspace:*",
         "@gravitas/core": "workspace:*",
         "@gravitas/shared": "workspace:*",
         "@gravitas/ui": "workspace:*",
@@ -153,7 +154,7 @@
     },
     "apps/executor": {
       "name": "@gravitas/executor",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "devDependencies": {
         "@types/bun": "latest",
         "typescript": "^5.0.0",
@@ -161,7 +162,7 @@
     },
     "apps/server": {
       "name": "@gravitas/server",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "dependencies": {
         "@aws-sdk/client-kms": "^3.1101.0",
         "@aws-sdk/client-s3": "^3.1101.0",
@@ -196,8 +197,9 @@
     },
     "packages/context-store": {
       "name": "@gravitas/context-store",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
+        "@gravitas/shared": "workspace:*",
         "sql.js": "^1.14.1",
       },
       "devDependencies": {
@@ -228,7 +230,7 @@
     },
     "packages/shared": {
       "name": "@gravitas/shared",
-      "version": "0.1.60",
+      "version": "0.1.65",
       "devDependencies": {
         "typescript": "^5.0.0",
       },

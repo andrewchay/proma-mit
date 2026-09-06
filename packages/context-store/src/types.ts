@@ -96,6 +96,6 @@ export interface ContextRelatedNode {
 export interface ContextStoreOptions {
   /** 数据库文件路径；为空则在内存中创建（测试用） */
   path?: string
-  /** 工作区 slug；提供时自动解析为 ~/.proma/workspaces/{slug}/context-store.db */
+  /** 工作区 slug；提供时自动解析为 ~/.gravitas/context-store/{slug}/context-store.db */
   workspaceSlug?: string
 }

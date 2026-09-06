@@ -17,6 +17,7 @@ import { executeWorkflowAgentNode, stopActiveWorkflowRun } from './workflow-agen
 import { executeWorkflowDeterministicNode } from './workflow-deterministic-executor'
 import { executeWorkflowRun } from './workflow-run-executor'
 import { proposeWorkflowPatches } from './workflow-designer-service'
+import { simulateWorkflowRun } from './workflow-simulation-service'
 import { getWorkflowIdentityDirectory, saveWorkflowIdentityDirectory } from './workflow-identity-service'
 import { triggerWorkflowEvent } from './workflow-event-service'
 import { deleteWorkflowTemplate, installWorkflowTemplate, installWorkflowTemplateBatch, listWorkflowTemplates, previewWorkflowTemplateUpgrade, publishWorkflowTemplate, rollbackWorkflowTemplate, upgradeWorkflowTemplate } from './workflow-template-service'
@@ -63,7 +64,7 @@ export function registerWorkflowIpcHandlers(): void {
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.UPGRADE_TEMPLATE, (_event, workflowId: string) => upgradeWorkflowTemplate(workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.PREVIEW_TEMPLATE_UPGRADE, (_event, workflowId: string) => previewWorkflowTemplateUpgrade(workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.ROLLBACK_TEMPLATE, (_event, workflowId: string) => rollbackWorkflowTemplate(workflowId))
-  ipcMain.handle(WORKFLOW_IPC_CHANNELS.RESOLVE_SIDE_EFFECT, (_event, input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'abandon' }) => resolveWorkflowSideEffect(input.workflowId, input.runId, input.nodeId, input.action))
+  ipcMain.handle(WORKFLOW_IPC_CHANNELS.RESOLVE_SIDE_EFFECT, (_event, input: { workflowId: string; runId: string; nodeId: string; action: 'confirm' | 'retry' | 'compensate' | 'abandon' }) => resolveWorkflowSideEffect(input.workflowId, input.runId, input.nodeId, input.action))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.PUBLISH_DEFINITION, (_event, workflowId: string, input: WorkflowPublishInput): WorkflowDefinition => {
     return publishWorkflowDefinition(workflowId, input)
   })
@@ -73,6 +74,11 @@ export function registerWorkflowIpcHandlers(): void {
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.GET_RUN, (_event, workflowId: string, runId: string): WorkflowRun | null => getWorkflowRun(workflowId, runId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.LIST_RUNS, (_event, workflowId: string): WorkflowRun[] => listWorkflowRuns(workflowId))
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.LIST_RUN_EVENTS, (_event, workflowId: string, runId: string): WorkflowRunEvent[] => listWorkflowRunEvents(workflowId, runId))
+  ipcMain.handle(WORKFLOW_IPC_CHANNELS.SIMULATE_RUN, (_event, workflowId: string, runId: string) => {
+    const run = getWorkflowRun(workflowId, runId)
+    if (!run) throw new Error(`Workflow Run 不存在: ${runId}`)
+    return simulateWorkflowRun(run)
+  })
   ipcMain.handle(WORKFLOW_IPC_CHANNELS.EXECUTE_AGENT_NODE, async (_event, input: {
     workflowId: string
     runId: string

@@ -248,6 +248,7 @@ function createMonitorTaskRun(monitor: ProactiveMonitor): ProactiveTaskRun {
     id: randomUUID(),
     sourceType: 'monitor',
     sourceId: monitor.id,
+    sourceTitle: monitor.title,
     sessionId: monitor.execution.sessionId,
     status: 'running',
     trigger: 'event',
@@ -593,7 +594,7 @@ export function stopAllMonitors(): void {
   }
 
   // 清理所有防抖计时器
-  for (const [id, timer] of debounceTimers) {
+  for (const [_id, timer] of debounceTimers) {
     clearTimeout(timer)
   }
   debounceTimers.clear()

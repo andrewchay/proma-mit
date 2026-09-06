@@ -1,0 +1,31 @@
+name: Context Compaction Quality
+
+on:
+  pull_request:
+    paths:
+      - 'apps/electron/src/main/lib/agent-runtime/context-compaction*'
+      - 'apps/electron/src/main/lib/adapters/ai-sdk-agent-adapter.ts'
+      - 'apps/electron/src/main/lib/adapters/provider-agnostic-agent-adapter.ts'
+      - 'apps/electron/src/main/lib/error-patterns.ts'
+      - 'packages/shared/src/types/agent.ts'
+      - '.github/workflows/context-compaction-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  golden-quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+      - name: ContextPacket Golden 质量门
+        run: bun test apps/electron/src/main/lib/agent-runtime/context-compaction-evaluator.test.ts apps/electron/src/main/lib/agent-runtime/context-compaction.test.ts apps/electron/src/main/lib/context-overflow-recovery.test.ts
+      - name: 类型检查
+        run: bun run --filter @gravitas/shared typecheck && bun run --filter @gravitas/electron typecheck

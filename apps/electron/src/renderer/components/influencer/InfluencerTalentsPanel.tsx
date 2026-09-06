@@ -25,7 +25,7 @@ export function InfluencerTalentsPanel(): React.ReactElement {
   const [region, setRegion] = React.useState('')
   const [handle, setHandle] = React.useState('')
 
-  const load = async (): Promise<void> => {
+  const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const list = (await window.electronAPI.paa.marketing.influencer.listTalents()) as Talent[]
@@ -33,11 +33,11 @@ export function InfluencerTalentsPanel(): React.ReactElement {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   React.useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   const addTalent = async (): Promise<void> => {
     if (!name.trim()) return

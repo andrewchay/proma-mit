@@ -4,7 +4,7 @@
  * 达人内容数据追踪与效果记录。与 ma-publish-data-track skill 对应。
  * M2 为骨架：展示达人内容追踪统计（数据来源待接）。
  */
-import * as React from 'react'
+import type * as React from 'react'
 import { BarChart3, TrendingUp } from 'lucide-react'
 
 export function InfluencerTrackingPanel(): React.ReactElement {

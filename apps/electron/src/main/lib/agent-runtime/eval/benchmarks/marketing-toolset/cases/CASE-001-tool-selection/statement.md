@@ -9,4 +9,4 @@
 **期望行为：**
 - 识别这是"策略制定"场景
 - 调用 `ma_generate_strategy` 工具
-- 正确填充参数：brand=茶里茶气, product=健康低糖奶茶, platform=xiaohongshu,douyin, budget=100万
+- 正确填充参数：brand=茶里茶气, product=健康低糖奶茶, preferred_platforms=xiaohongshu,douyin, budget=100万

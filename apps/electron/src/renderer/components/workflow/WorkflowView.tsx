@@ -15,6 +15,8 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
   WorkflowNodeKind,
+  WorkflowRun,
+  WorkflowRunEvent,
 } from '@gravitas/shared'
 import { applyWorkflowPatches } from '@gravitas/shared/workflow'
 import { Button } from '@/components/ui/button'
@@ -28,6 +30,9 @@ import {
   workflowSavingAtom,
   workflowPatchProposalAtom,
   workflowLatestRunAtom,
+  workflowRunsAtom,
+  workflowRunEventsAtom,
+  selectedWorkflowRunIdAtom,
   workflowTemplatesAtom,
 } from '@/atoms/workflow-atoms'
 
@@ -38,7 +43,9 @@ const PALETTE: Array<{ kind: PaletteKind; label: string; icon: React.ReactNode }
   { kind: 'skill', label: 'Skill', icon: <Sparkles size={15} /> },
   { kind: 'tool', label: '工具', icon: <Wrench size={15} /> },
   { kind: 'condition', label: '条件', icon: <GitBranch size={15} /> },
+  { kind: 'foreach', label: '逐项处理', icon: <RefreshCcw size={15} /> },
   { kind: 'approval', label: '审批', icon: <Hand size={15} /> },
+  { kind: 'subworkflow', label: '子流程', icon: <GitBranch size={15} /> },
   { kind: 'transform', label: '映射', icon: <Send size={15} /> },
 ]
 
@@ -50,7 +57,9 @@ function defaultNode(kind: PaletteKind, position: { x: number; y: number }): Wor
     case 'skill': return { ...base, config: { skill: { slug: 'replace-with-skill' }, prompt: '按照 Skill 执行此步骤。' }, capabilityPolicy: { skills: [{ slug: 'replace-with-skill' }], permissionProfileId: 'workflow-supervised' } }
     case 'tool': return { ...base, config: { toolName: 'replace-with-tool' }, capabilityPolicy: { allowedTools: ['replace-with-tool'], permissionProfileId: 'workflow-supervised' } }
     case 'condition': return { ...base, config: { expression: '$input.approved === true' } }
+    case 'foreach': return { ...base, config: { items: '$input.items', assignments: { value: '$item', index: '$index' }, maxItems: 100, maxConcurrency: 1 } }
     case 'approval': return { ...base, config: { assigneePolicy: 'workflow_owner', onTimeout: 'fail' } }
+    case 'subworkflow': return { ...base, config: { workflowId: 'replace-with-published-workflow', version: '1.0.0', inputMapping: {} } }
     case 'transform': return { ...base, config: { assignments: {} } }
   }
 }
@@ -66,10 +75,36 @@ function replaceNode(draft: WorkflowDefinition, node: WorkflowNode): WorkflowDef
   return { ...draft, nodes: draft.nodes.map((item) => item.id === node.id ? node : item), updatedAt: Date.now() }
 }
 
+const sensitiveField = /^(api[_-]?key|token|secret|password|authorization|cookie)$/i
+
+function displayRunValue(value: unknown): string {
+  const redact = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(redact)
+    if (!item || typeof item !== 'object') return item
+    return Object.fromEntries(Object.entries(item as Record<string, unknown>).map(([key, child]) => [key, sensitiveField.test(key) ? '[已隐藏]' : redact(child)]))
+  }
+  return JSON.stringify(redact(value), null, 2)
+}
+
+function RunInspector({ run, events }: { run: WorkflowRun; events: WorkflowRunEvent[] }): React.ReactElement {
+  const nodes = run.snapshot.definition.nodes
+  return <section className="border-t border-border/60 bg-muted/20 p-3">
+    <div className="flex items-center justify-between gap-2"><div><div className="text-sm font-medium">Run Inspector</div><div className="text-[11px] text-muted-foreground">{run.id} · {run.trigger} · {run.status}</div></div><span className="text-[11px] text-muted-foreground">{new Date(run.updatedAt).toLocaleString()}</span></div>
+    <div className="mt-3 grid gap-3 xl:grid-cols-[1.1fr_1fr]">
+      <div className="space-y-2"><div className="text-xs font-medium">节点状态</div><div className="max-h-52 space-y-1 overflow-y-auto rounded-md bg-background/70 p-2">{nodes.map((node) => { const nodeRun = run.nodeRuns[node.id]; return <div key={node.id} className="rounded-md bg-muted/50 px-2 py-1.5 text-xs"><div className="flex justify-between gap-2"><span className="truncate font-medium">{node.title}</span><span>{nodeRun?.status ?? 'pending'} · #{nodeRun?.attempt ?? 0}</span></div>{nodeRun?.error && <div className="mt-1 text-destructive">{nodeRun.error.code}: {nodeRun.error.message}</div>}{nodeRun?.sideEffect?.reason && <div className="mt-1 text-amber-700 dark:text-amber-300">副作用待处置：{nodeRun.sideEffect.reason}</div>}{nodeRun?.output && <details className="mt-1"><summary className="cursor-pointer text-muted-foreground">查看输出</summary><pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-background p-1.5 text-[10px]">{displayRunValue(nodeRun.output)}</pre></details>}</div> })}</div></div>
+      <div className="space-y-2"><div className="text-xs font-medium">审计时间线</div><div className="max-h-52 space-y-1 overflow-y-auto rounded-md bg-background/70 p-2 text-[11px]">{events.length === 0 ? <span className="text-muted-foreground">暂无审计事件</span> : events.map((event) => <div key={event.id} className="rounded bg-muted/50 px-2 py-1.5"><span className="text-muted-foreground">{new Date(event.occurredAt).toLocaleTimeString()} · </span>{event.type}{event.nodeId ? ` · ${event.nodeId}` : ''}{event.payload && <details className="mt-1"><summary className="cursor-pointer text-muted-foreground">事件数据</summary><pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap rounded bg-background p-1.5 text-[10px]">{displayRunValue(event.payload)}</pre></details>}</div>)}</div></div>
+    </div>
+    <details className="mt-3"><summary className="cursor-pointer text-xs font-medium">Run 输入（敏感字段已隐藏）</summary><pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded-md bg-background/70 p-2 text-[10px]">{displayRunValue(run.input)}</pre></details>
+  </section>
+}
+
 export function WorkflowView(): React.ReactElement {
   const [draft, setDraft] = useAtom(workflowDraftAtom)
   const [proposal, setProposal] = useAtom(workflowPatchProposalAtom)
   const [latestRun, setLatestRun] = useAtom(workflowLatestRunAtom)
+  const runs = useAtomValue(workflowRunsAtom)
+  const [selectedRunId, setSelectedRunId] = useAtom(selectedWorkflowRunIdAtom)
+  const [runEvents, setRunEvents] = useAtom(workflowRunEventsAtom)
   const setDefinitions = useSetAtom(workflowDefinitionsAtom)
   const setTemplates = useSetAtom(workflowTemplatesAtom)
   const [saving, setSaving] = useAtom(workflowSavingAtom)
@@ -78,6 +113,32 @@ export function WorkflowView(): React.ReactElement {
   const [selectedNodeId, setSelectedNodeId] = React.useState<string | null>(null)
   const [intent, setIntent] = React.useState('')
   const [templateUpgradePending, setTemplateUpgradePending] = React.useState(false)
+  const inspectedRun = runs.find((run) => run.id === selectedRunId) ?? latestRun
+
+  const draftId = draft?.id
+  const latestRunId = latestRun?.id
+  const latestRunUpdatedAt = latestRun?.updatedAt
+  // biome-ignore lint/correctness/useExhaustiveDependencies: updatedAt 是审计刷新信号；只跟踪版本，避免 setLatestRun 写回新对象引发请求循环。
+  React.useEffect(() => {
+    if (!draftId || !latestRunId) return
+    let cancelled = false
+    const refreshRunInspection = async (): Promise<void> => {
+      try {
+        const [run, events] = await Promise.all([
+          window.electronAPI.getWorkflowRun(draftId, latestRunId),
+          window.electronAPI.listWorkflowRunEvents(draftId, latestRunId),
+        ])
+        if (cancelled || !run) return
+        setLatestRun(run)
+        setSelectedRunId(latestRunId)
+        setRunEvents(events)
+      } catch (error) {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : '读取 Run 审计失败')
+      }
+    }
+    void refreshRunInspection()
+    return () => { cancelled = true }
+  }, [draftId, latestRunId, latestRunUpdatedAt, setLatestRun, setRunEvents, setSelectedRunId])
 
   const addNode = React.useCallback((kind: PaletteKind, position: { x: number; y: number }) => {
     if (!draft) return
@@ -278,6 +339,7 @@ export function WorkflowView(): React.ReactElement {
               <WorkflowCanvas draft={draft} selectedNodeId={selectedNodeId} onSelect={setSelectedNodeId} onRemoveNode={removeNode} onMove={(nodeId, position) => setDraft({ ...draft, layout: { ...draft.layout, nodes: { ...draft.layout.nodes, [nodeId]: position } }, updatedAt: Date.now() })} onDropNode={addNode} />
             </div>
             <div className="border-t border-border/60 bg-background/70 p-3"><div className="flex gap-2"><Textarea value={intent} onChange={(event) => setIntent(event.target.value)} placeholder="用自然语言补充步骤，例如：添加人工审批，确认预算后再继续" className="min-h-9 h-9 resize-none py-2" onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void proposeIntent() } }} /><Button onClick={() => void proposeIntent()} title="生成受校验的 Workflow patch"><Send />建议</Button></div>{proposal ? <div className="mt-2 rounded-md bg-primary/8 p-2 text-xs"><p className="leading-5">{proposal.reply}</p><div className="mt-2 rounded border border-primary/20 bg-background/60 p-2"><div className="mb-1 font-medium">建议差异（尚未写入）</div>{proposal.patches.map((patch, index) => <div key={index} className="font-mono text-[11px] leading-5">{JSON.stringify(patch)}</div>)}</div><div className="mt-2 flex items-center gap-2"><Button size="sm" onClick={applyProposal}>确认并应用 {proposal.patches.length} 个建议</Button><Button size="sm" variant="ghost" onClick={() => setProposal(null)}>忽略</Button></div></div> : <p className="mt-1 text-[11px] text-muted-foreground">设计器只返回受限 patch；你预览并确认后才会修改 Draft，更不会直接写入文件。</p>}{latestRun?.status === 'waiting_approval' && <div className="mt-2 flex items-center justify-between rounded-md bg-amber-500/10 px-3 py-2 text-xs"><span>Run 正在等待已冻结的审批主体；当前工作台以 local-user 决策。</span><div className="flex gap-1"><Button size="sm" onClick={() => void resolveLatestApproval(true)}>通过</Button><Button size="sm" variant="outline" onClick={() => void resolveLatestApproval(false)}>拒绝</Button></div></div>}</div>
+            {inspectedRun && <RunInspector run={inspectedRun} events={inspectedRun.id === selectedRunId ? runEvents : []} />}
           </main>
           <WorkflowInspector
             node={selectedNode}
@@ -312,6 +374,13 @@ function WorkflowCanvas({ draft, selectedNodeId, onSelect, onRemoveNode, onMove,
 function WorkflowInspector({ node, nodes, edges, onChange, onRemoveNode, onAddEdge, onRemoveEdge }: { node: WorkflowNode | null; nodes: WorkflowNode[]; edges: WorkflowDefinition['edges']; onChange: (node: WorkflowNode) => void; onRemoveNode: (id: string) => void; onAddEdge: (to: string, label?: string) => void; onRemoveEdge: (edgeId: string) => void }): React.ReactElement {
   const [targetId, setTargetId] = React.useState('')
   const [edgeLabel, setEdgeLabel] = React.useState('')
+  const [inputMappingText, setInputMappingText] = React.useState('')
+  const [inputMappingError, setInputMappingError] = React.useState<string | null>(null)
+  React.useEffect(() => {
+    const mapping = node?.id ? (node.config as { inputMapping?: unknown } | undefined)?.inputMapping : undefined
+    setInputMappingText(mapping && typeof mapping === 'object' && !Array.isArray(mapping) ? JSON.stringify(mapping, null, 2) : '')
+    setInputMappingError(null)
+  }, [node?.id, node?.config])
   if (!node) return <aside className="w-72 shrink-0 border-l border-border/60 bg-background/50 p-4"><div className="text-sm font-medium">节点配置</div><p className="mt-2 text-sm text-muted-foreground">选择画布中的节点，定义它的输入、能力与审批规则。</p></aside>
   const config = node.config as Record<string, unknown> | undefined
   const updateConfig = (key: string, value: unknown) => onChange({ ...node, config: { ...config, [key]: value } } as unknown as WorkflowNode)
@@ -327,6 +396,7 @@ function WorkflowInspector({ node, nodes, edges, onChange, onRemoveNode, onAddEd
   return <aside className="w-72 shrink-0 overflow-y-auto border-l border-border/60 bg-background/50 p-4"><div className="flex items-start justify-between gap-2"><div className="text-xs text-muted-foreground">{node.kind}</div>{node.kind !== 'start' && node.kind !== 'end' && <button type="button" onClick={() => onRemoveNode(node.id)} className="-mr-1 -mt-1 p-1 text-muted-foreground/50 hover:text-destructive" title="删除节点"><X size={14} /></button>}</div><Input className="mt-1 font-medium" value={node.title} onChange={(event) => onChange({ ...node, title: event.target.value })} />
     {(node.kind === 'agent' || node.kind === 'skill') && <><label className="mt-4 block text-xs font-medium">指令</label><Textarea className="mt-1" value={prompt} onChange={(event) => updateConfig('prompt', event.target.value)} /></>}
     {node.kind === 'tool' && <><label className="mt-4 block text-xs font-medium">工具名称</label><Input className="mt-1" value={typeof config?.toolName === 'string' ? config.toolName : ''} onChange={(event) => updateConfig('toolName', event.target.value)} /></>}
+    {['agent', 'skill', 'tool'].includes(node.kind) && <div className="mt-4"><label className="block text-xs font-medium">结构化输入映射（JSON）</label><Textarea className="mt-1 min-h-24 font-mono text-xs" value={inputMappingText} placeholder={'{"projectId":"$input.projectId","risk":"$nodes.prepare.output.risk"}'} onChange={(event) => { const value = event.target.value; setInputMappingText(value); if (!value.trim()) { const { inputMapping: _ignored, ...nextConfig } = config ?? {}; onChange({ ...node, config: nextConfig } as unknown as WorkflowNode); setInputMappingError(null); return } try { const parsed: unknown = JSON.parse(value); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('输入映射必须是 JSON 对象'); updateConfig('inputMapping', parsed); setInputMappingError(null) } catch (error) { setInputMappingError(error instanceof Error ? error.message : '请输入有效 JSON') } }} />{inputMappingError ? <p className="mt-1 text-[11px] text-destructive">{inputMappingError}</p> : <p className="mt-1 text-[11px] text-muted-foreground">可引用 $input 或 $nodes.&lt;上游节点&gt;.output；发布时会校验引用关系。</p>}</div>}
     {node.kind === 'condition' && <><label className="mt-4 block text-xs font-medium">表达式</label><Input className="mt-1" value={typeof config?.expression === 'string' ? config.expression : ''} onChange={(event) => updateConfig('expression', event.target.value)} /></>}
     {node.kind === 'approval' && <p className="mt-4 rounded-md bg-amber-500/10 p-2 text-xs leading-5 text-amber-900 dark:text-amber-100">此节点将在运行时暂停，审批人会在创建 Run 时从发布者、命名用户或角色目录解析并冻结。</p>}
     {['agent', 'skill', 'tool'].includes(node.kind) && <div className="mt-5 border-t border-border/60 pt-3"><div className="text-xs font-medium">节点能力（最小权限）</div><label className="mt-2 block text-[11px] text-muted-foreground">允许工具（逗号分隔）</label><Input className="mt-1 h-8 text-xs" value={(policy.allowedTools ?? []).join(', ')} onChange={(event) => updatePolicy({ ...policy, allowedTools: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) })} placeholder="Read, mcp__server__tool" /><label className="mt-2 block text-[11px] text-muted-foreground">Skills（slug 或 slug@version）</label><Input className="mt-1 h-8 text-xs" value={(policy.skills ?? []).map((item) => `${item.slug}${item.version ? `@${item.version}` : ''}`).join(', ')} onChange={(event) => updatePolicy({ ...policy, skills: parseReferences(event.target.value) })} placeholder="project-review@1.0.0" /><label className="mt-2 block text-[11px] text-muted-foreground">MCP Servers（名称）</label><Input className="mt-1 h-8 text-xs" value={(policy.mcpServers ?? []).map((item) => item.name).join(', ')} onChange={(event) => updatePolicy({ ...policy, mcpServers: event.target.value.split(',').map((item) => item.trim()).filter(Boolean).map((name) => ({ name })) })} placeholder="nocobase" /><label className="mt-2 block text-[11px] text-muted-foreground">权限档案</label><select value={policy.permissionProfileId ?? ''} onChange={(event) => updatePolicy({ ...policy, ...(event.target.value ? { permissionProfileId: event.target.value } : {}) })} className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"><option value="">未指定</option><option value="workflow-readonly">workflow-readonly</option><option value="workflow-supervised">workflow-supervised</option></select></div>}

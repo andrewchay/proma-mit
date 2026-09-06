@@ -50,9 +50,10 @@ import { ProactiveScheduler } from './proactive-scheduler'
 import { setMonitorRunner, startAllMonitors } from './monitor-service'
 import { setApprovedChangeExecutor } from './approval-service'
 import { runRoutineInstance, setRoutineRunner } from './routine-service'
-import { createAgentSession, getAgentSessionMeta } from './agent-session-manager'
+import { createAgentSession, getAgentSessionMessages, getAgentSessionMeta } from './agent-session-manager'
 import { createCollaborationDelegations, resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
 import { executeApprovedChange } from './proactive-approved-change-executor'
+import { assertEnabledModelForChannel } from './agent-model-selection'
 import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
@@ -133,13 +134,21 @@ async function runProactiveTarget(
   let runError: string | undefined
   let outputSummary: string | undefined
   let output: string | undefined
+  let effectiveModelId = target.modelId
+  if (!effectiveModelId) {
+    const channel = await runtimeServices.credentials.resolveChannel(target.channelId)
+    if (channel?.defaultModel) effectiveModelId = channel.defaultModel
+  }
+  effectiveModelId = assertEnabledModelForChannel({ channelId: target.channelId, modelId: effectiveModelId, purpose: '主动任务' })
+  if (!effectiveModelId) throw new Error('主动任务缺少模型；请编辑任务并选择目标渠道的已启用模型')
+
   let targetSessionId = target.sessionId
   if (target.newSession) {
     const freshMeta = createAgentSession(
       `主动任务：${title.slice(0, 30)}`,
       target.channelId,
       target.workspaceId,
-      target.modelId,
+      effectiveModelId,
       target.runtime,
     )
     targetSessionId = freshMeta.id
@@ -148,11 +157,6 @@ async function runProactiveTarget(
     throw new Error('主动任务缺少目标会话（非新建会话模式且未回填 sessionId）')
   }
 
-  let effectiveModelId = target.modelId
-  if (!effectiveModelId) {
-    const channel = await runtimeServices.credentials.resolveChannel(target.channelId)
-    if (channel?.defaultModel) effectiveModelId = channel.defaultModel
-  }
   await runAgentHeadless({
     sessionId: targetSessionId,
     userMessage: target.prompt,
@@ -167,6 +171,13 @@ async function runProactiveTarget(
     onTitleUpdated: () => {},
   })
   if (runError) throw new Error(runError)
+
+  // 部分 runtime 的完成回调只携带本轮增量消息，可能漏掉已经持久化的最终 assistant 输出。
+  // Routine 需要完整输出解析 proma-memory-items 候选，因此以会话 JSONL 作为完成后的可靠兜底。
+  if (!output) {
+    output = extractProactiveOutput(getAgentSessionMessages(targetSessionId))
+    outputSummary = output?.replace(/\s+/g, ' ').trim().slice(0, 500)
+  }
   return { sessionId: targetSessionId, outputSummary, output }
 }
 

@@ -43,7 +43,7 @@ export interface TodoEventQuery {
   limit?: number
 }
 
-const MAX_TODO_EVENTS = 2000
+const _MAX_TODO_EVENTS = 2000
 
 function eventFile(): string {
   const dir = join(getConfigDir(), 'todo-events')

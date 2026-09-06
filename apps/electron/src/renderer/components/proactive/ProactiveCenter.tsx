@@ -10,7 +10,7 @@
  * - Memory: 记忆管理
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtom } from 'jotai'
 import { Zap, Calendar, Monitor, CheckCircle, History, Brain, Sparkles, Workflow, ListChecks, Wallet, KeyRound } from 'lucide-react'
 import { cn } from '@/lib/utils'

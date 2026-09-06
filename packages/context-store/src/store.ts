@@ -6,19 +6,20 @@
  * 实现基于 sql.js（与当前 apps/electron 保持一致，避免引入 better-sqlite3 native
  * 模块的打包复杂度）。生产使用时会传入磁盘文件内容，测试使用内存库。
  */
+import { writeFileAtomic } from '@gravitas/shared/utils/node'
 import initSqlJs, { type SqlJsStatic } from 'sql.js'
-import {
-  type ContextEntity,
-  type ContextEntityType,
-  type ContextEdge,
-  type ContextEdgeInput,
-  type ContextFact,
-  type ContextFactInput,
-  type ContextRelatedNode,
-  type ContextSearchHit,
-  type ContextStoreOptions,
-  type RecallOptions,
-  type RecallResult,
+import type {
+  ContextEntity,
+  ContextEntityType,
+  ContextEdge,
+  ContextEdgeInput,
+  ContextFact,
+  ContextFactInput,
+  ContextRelatedNode,
+  ContextSearchHit,
+  ContextStoreOptions,
+  RecallOptions,
+  RecallResult,
 } from './types.ts'
 import {
   type AppliedMigration,
@@ -68,7 +69,12 @@ export async function openContextStore(options: ContextStoreOptions = {}): Promi
   database.exec(`PRAGMA foreign_keys = ON`)
 
   const applied = runMigrations(database, undefined)
-  const persist = (): Uint8Array | undefined => (resolvedPath ? database.export() : undefined)
+  const persist = (): Uint8Array | undefined => {
+    if (!resolvedPath) return undefined
+    const bytes = database.export()
+    writeFileAtomic(resolvedPath, bytes)
+    return bytes
+  }
   const close = (): void => {
     persist()
     database.close()
@@ -90,7 +96,8 @@ export async function openContextStore(options: ContextStoreOptions = {}): Promi
 async function defaultWorkspacePath(slug: string): Promise<string> {
   const { join } = await import('node:path')
   const { homedir } = await import('node:os')
-  return join(homedir(), '.proma', 'workspaces', slug, 'context-store.db')
+  if (!/^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(slug) || slug === '.' || slug === '..') throw new Error('工作区 slug 不合法')
+  return join(process.env.PROMA_TEST_CONFIG_DIR || join(homedir(), '.gravitas'), 'context-store', slug, 'context-store.db')
 }
 
 async function readFileMaybe(path: string): Promise<Uint8Array | undefined> {

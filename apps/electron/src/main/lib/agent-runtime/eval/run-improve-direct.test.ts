@@ -7,7 +7,11 @@
  * 使用 mock delegate 和自定义 propose 来验证自演化流程。
  */
 
-import { test, expect } from 'bun:test'
+import { test, expect, beforeAll } from 'bun:test'
+import { cpSync } from 'node:fs'
+import { join } from 'node:path'
+import { getBenchmarksRootDir } from '../../config-paths'
+beforeAll(() => cpSync(join(import.meta.dir, 'benchmarks'), getBenchmarksRootDir(), { recursive: true }))
 import { runImprove, requireBenchmark } from './commands'
 import { buildToolsetStateGuard } from './toolset-state'
 import type { SubAgentDelegate } from './evaluator'

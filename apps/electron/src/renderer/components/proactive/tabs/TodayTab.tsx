@@ -2,7 +2,7 @@
  * Today Tab - 今日概览（接入真实数据）
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtom } from 'jotai'
 import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'

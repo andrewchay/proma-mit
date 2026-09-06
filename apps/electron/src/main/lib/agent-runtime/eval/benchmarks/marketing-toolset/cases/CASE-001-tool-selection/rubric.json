@@ -2,10 +2,13 @@
   "version": 1,
   "items": [
     { "name": "正确识别场景并选择工具", "points": 40,
-      "check": "必须调用 ma_generate_strategy 工具，而非其他工具" },
+      "check": "必须调用 ma_generate_strategy 工具，而非其他工具",
+      "toolTrace": { "name": "ma_generate_strategy" } },
     { "name": "参数填充完整准确", "points": 35,
-      "check": "brand、product、platform、budget 等关键参数必须正确填充" },
+      "check": "brand、product、budget、preferred_platforms 等关键参数必须正确填充",
+      "toolTrace": { "name": "ma_generate_strategy", "requiredArguments": ["brand", "product", "budget", "preferred_platforms"], "expectedArguments": { "brand": "茶里茶气", "product": "健康低糖奶茶", "budget": "100万" } } },
     { "name": "无多余或错误调用", "points": 25,
-      "check": "不应调用无关工具（如 ma_search_kols / ma_audit_content）" }
+      "check": "不应调用无关工具（如 ma_search_kols / ma_audit_content）",
+      "toolTrace": { "forbiddenNames": ["ma_search_kols", "ma_audit_content"] } }
   ]
 }

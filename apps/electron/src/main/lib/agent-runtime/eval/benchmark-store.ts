@@ -26,6 +26,8 @@ import { join } from 'node:path'
 import type {
   BenchmarkConfig,
   BenchmarkEvaluation,
+  EvalRuntimeRef,
+  JudgeBudget,
   Rubric,
   Scoreboard,
   ScoreboardCase,
@@ -158,6 +160,12 @@ export interface CreateBenchmarkRequest {
   provider: string
   modelId: string
   channelId?: string
+  /** 可选：独立评判运行时（LLM judge）；不配置则回退规则打分 */
+  judgeRuntime?: EvalRuntimeRef
+  /** 可选：judge 预算隔离（调用次数 / 输入规模上限） */
+  judgeBudget?: JudgeBudget
+  /** 可选：held-out Case 集（迁移测试）；与 cases 不相交，不参与 improve 优化 */
+  heldOutCases?: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
   targetScore: number
   cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
 }
@@ -167,6 +175,12 @@ export function createBenchmarkForUI(input: CreateBenchmarkRequest): BenchmarkCo
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(input.id)) {
     throw new Error(`Benchmark id 非法：仅允许字母/数字/._-，且不以数字外的符号开头（${input.id}）`)
   }
+  const trainIds = input.cases.map((c) => c.caseId)
+  const heldOutIds = (input.heldOutCases ?? []).map((c) => c.caseId)
+  const overlap = heldOutIds.filter((id) => trainIds.includes(id))
+  if (overlap.length > 0) {
+    throw new Error(`held-out Case 与训练 Case 必须不相交：${overlap.join(', ')}`)
+  }
   const now = new Date().toISOString()
   const config: BenchmarkConfig = {
     id: input.id,
@@ -174,13 +188,16 @@ export function createBenchmarkForUI(input: CreateBenchmarkRequest): BenchmarkCo
     description: input.description,
     targetAgentId: input.targetAgentId,
     runtime: { provider: input.provider, modelId: input.modelId, channelId: input.channelId },
+    ...(input.judgeRuntime ? { judgeRuntime: input.judgeRuntime } : {}),
+    ...(input.judgeBudget ? { judgeBudget: input.judgeBudget } : {}),
+    ...(heldOutIds.length > 0 ? { heldOutCases: heldOutIds } : {}),
     runsPerCase: 1,
     targetScore: input.targetScore,
-    cases: input.cases.map((c) => c.caseId),
+    cases: trainIds,
     createdAt: now,
     updatedAt: now,
   }
-  const caseDefs = input.cases.map((c) => ({
+  const caseDefs = [...input.cases, ...(input.heldOutCases ?? [])].map((c) => ({
     caseId: c.caseId,
     statement: c.statement,
     rubric: { version: 1, items: c.rubricItems },

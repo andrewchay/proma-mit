@@ -38,4 +38,23 @@ describe('Workflow Run 调度器', () => {
     expect(progressed.nodeRuns?.prepare?.output).toEqual({ project: 'p-1' })
     expect(progressed.nodeRuns?.approval?.status).toBe('waiting_approval')
   })
+
+  test('Given 发布的确定性子流程 When 父 Run 执行 Then 创建独立子 Run 并完成父节点', async () => {
+    const workspace = createAgentWorkspace('子流程工作区')
+    const child = definition(workspace.id)
+    child.id = 'child-flow'
+    child.nodes = [{ id: 'start', kind: 'start', title: '开始' }, { id: 'map', kind: 'transform', title: '映射', config: { assignments: { project: '$input.projectId' } } }, { id: 'end', kind: 'end', title: '结束' }]
+    child.edges = [{ id: 'a', from: 'start', to: 'map' }, { id: 'b', from: 'map', to: 'end' }]
+    child.layout = { nodes: { start: { x: 0, y: 0 }, map: { x: 100, y: 0 }, end: { x: 200, y: 0 } } }
+    saveWorkflowDefinition(child); publishWorkflowDefinition(child.id, { version: '1.0.0' })
+    const parent = definition(workspace.id)
+    parent.id = 'parent-flow'
+    parent.nodes = [{ id: 'start', kind: 'start', title: '开始' }, { id: 'child', kind: 'subworkflow', title: '子流程', config: { workflowId: child.id, version: '1.0.0', inputMapping: { projectId: '$input.projectId' } } }, { id: 'end', kind: 'end', title: '结束' }]
+    parent.edges = [{ id: 'a', from: 'start', to: 'child' }, { id: 'b', from: 'child', to: 'end' }]
+    parent.layout = { nodes: { start: { x: 0, y: 0 }, child: { x: 100, y: 0 }, end: { x: 200, y: 0 } } }
+    saveWorkflowDefinition(parent); publishWorkflowDefinition(parent.id, { version: '1.0.0' })
+    const result = await executeWorkflowRun(parent.id, createWorkflowRun(parent.id, { projectId: 'p-1' }).id, 'unused-channel')
+    expect(result.status).toBe('completed')
+    expect(result.nodeRuns.child?.output?.childRunId).toBeString()
+  })
 })

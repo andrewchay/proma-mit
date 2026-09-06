@@ -270,6 +270,18 @@ export function createMemoryApproval(
 }
 
 /**
+ * 创建仅用于验证审批链路的记忆候选。用户仍需显式批准，且批准前不会写入记忆。
+ */
+export function createTestMemoryApproval(): ProactiveApproval {
+  return createMemoryApproval(
+    undefined,
+    'Proactive 测试记忆候选',
+    '用于验证 Proactive 审批流程；只有在你点击“同意”后才会写入本地记忆。',
+    { kind: 'diary', tags: ['proactive', 'test'], confidence: 1 },
+  )
+}
+
+/**
  * 为 Skill 创建审批
  */
 export function createSkillApproval(runId: string | undefined, workspaceId: string, skillName: string, skillContent: string): ProactiveApproval {
@@ -317,6 +329,7 @@ export function registerApprovalIPCHandlers(): void {
   ipcMain.handle('proactive:getPendingApprovals', () => getPendingApprovals())
   ipcMain.handle('proactive:getApproval', (_event: unknown, id: string) => getApproval(id))
   ipcMain.handle('proactive:createApproval', (_event: unknown, input: CreateApprovalInput) => createApproval(input))
+  ipcMain.handle('proactive:createTestMemoryApproval', () => createTestMemoryApproval())
   ipcMain.handle('proactive:approveApproval', (_event: unknown, id: string) => approveApproval(id))
   ipcMain.handle('proactive:rejectApproval', (_event: unknown, id: string) => rejectApproval(id))
   ipcMain.handle('proactive:editApproval', (_event: unknown, id: string, editedChange: unknown) => editApproval(id, editedChange))

@@ -235,7 +235,7 @@ function checkEventConflicts(): Reminder[] {
 function checkUpcomingEvents(now: number): Reminder[] {
   const results: Reminder[] = []
   const events = listScheduleEvents()
-  const isoNow = new Date(now).toISOString()
+  const _isoNow = new Date(now).toISOString()
 
   for (const event of events) {
     const startTime = new Date(event.startTime).getTime()
@@ -282,8 +282,8 @@ function checkUpcomingEvents(now: number): Reminder[] {
 function checkTaskDeadlines(now: number): Reminder[] {
   const results: Reminder[] = []
   const tasks = listScheduleTasks()
-  const todayStr = new Date(now).toISOString().slice(0, 10)
-  const settings = getSettings()
+  const _todayStr = new Date(now).toISOString().slice(0, 10)
+  const _settings = getSettings()
 
   for (const task of tasks) {
     if (task.status === 'done') continue

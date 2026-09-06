@@ -1,7 +1,7 @@
-# Proma 代码索引与说明
+# Gravitas 代码索引与说明
 
-> 事实校准：2026-08-04
-> Electron 包版本：v0.11.1
+> 模块地图基线：2026-08-04；2026-09-05 校正包名与路径。下文静态行数和历史问题不作为当前验收结果。
+> 当前包版本与数量以 generated/repository-facts.md 为准。
 > 范围：整个 Monorepo 的源码结构、核心模块职责、数据流与已知问题。
 
 本文档是未来重构与功能扩展的基础地图。阅读前建议先看根目录 `AGENTS.md` 了解项目约定。
@@ -16,18 +16,14 @@ Proma 是一个集成通用 AI Agent 的下一代人工智能桌面应用，基�
 
 - **仓库根目录**：`/Users/chaihao/.proma/agent-workspaces/proma-mit/project`
 - **Monorepo 工具**：Bun workspace
-- **总代码规模**：
-  - `apps/electron/src/main/lib/`：约 28,410 行（主进程服务层）
-  - `apps/electron/src/renderer/`：约 48,000+ 行（渲染进程 UI / 状态）
-  - `packages/*`：约 3,000+ 行（共享类型、Provider 适配器、UI 组件）
-  - **测试文件**：68 个（含 Bun 单元/集成测试与 Playwright CDP E2E）
+- **当前代码规模**：参见 [自动生成的仓库事实](generated/repository-facts.md)，不在此重复维护易过期数字。
 
 ### 1.1 Monorepo 结构
 
 ```
 proma-mit/
 ├── apps/
-│   └── electron/              # Electron 桌面应用（@proma/electron@0.11.1）
+│   └── electron/              # Electron 桌面应用（@gravitas/electron@0.11.50）
 │       ├── src/
 │       │   ├── main/          # 主进程 + 服务层
 │       │   ├── preload/       # IPC 上下文桥接
@@ -36,9 +32,9 @@ proma-mit/
 │       ├── resources/         # 图标、音效、主题预览
 │       └── scripts/           # 构建脚本
 ├── packages/
-│   ├── shared/                # 共享类型、IPC 通道常量、工具函数（@proma/shared@0.1.43）
-│   ├── core/                  # AI Provider 适配器、代码高亮服务（@proma/core@0.2.13）
-│   └── ui/                    # 共享 UI 组件（@proma/ui@0.1.4）
+│   ├── shared/                # 共享类型、IPC 通道常量、工具函数（@gravitas/shared@0.1.65）
+│   ├── core/                  # AI Provider 适配器、代码高亮服务（@gravitas/core@0.2.14）
+│   └── ui/                    # 共享 UI 组件（@gravitas/ui@0.1.4）
 ├── docs/                      # 设计文档与代码索引
 ├── release-notes/             # 版本发布说明
 └── proma-thinking/            # 产品思考记录
@@ -48,10 +44,10 @@ proma-mit/
 
 | 包名 | 路径 | 运行时依赖 |
 |---|---|---|
-| `@proma/shared` | `packages/shared` | 无 |
-| `@proma/core` | `packages/core` | `@proma/shared`, `shiki` |
-| `@proma/ui` | `packages/ui` | `@proma/core`, `@proma/shared`, `beautiful-mermaid`, `shiki`, Radix UI |
-| `@proma/electron` | `apps/electron` | 上述 workspace + Electron + Agent SDK + 飞书 SDK 等 |
+| `@gravitas/shared` | `packages/shared` | 无 |
+| `@gravitas/core` | `packages/core` | `@gravitas/shared`, `shiki` |
+| `@gravitas/ui` | `packages/ui` | `@gravitas/core`, `@gravitas/shared`, `beautiful-mermaid`, `shiki`, Radix UI |
+| `@gravitas/electron` | `apps/electron` | 上述 workspace + Electron + Agent SDK + 飞书 SDK 等 |
 
 **包引用方式**：`workspace:*`
 
@@ -69,7 +65,7 @@ proma-mit/
 | `tray.ts` | ~120 | 系统托盘图标与菜单 |
 | `preload/index.ts` | ~150 | 通过 `contextBridge.exposeInMainWorld` 暴露类型安全的 `window.electronAPI` |
 
-**关键架构模式**：类型定义（`@proma/shared`）→ 主进程处理（`ipc.ts`）→ Preload 桥接 → 渲染进程调用。新增 IPC 必须同步修改这四个位置。
+**关键架构模式**：类型定义（`@gravitas/shared`）→ 主进程处理（`ipc.ts`）→ Preload 桥接 → 渲染进程调用。新增 IPC 必须同步修改这四个位置。
 
 ### 2.2 核心服务层（`main/lib/`）
 
@@ -151,7 +147,7 @@ proma-mit/
 | `document-parser.ts` | ~400 | PDF/Office/文本文件提取 |
 | `bridge-attachment-utils.ts` | ~200 | Bridge 附件通用工具 |
 | `workspace-watcher.ts` | 190 | 工作区文件变化监听 |
-| `config-paths.ts` | ~400 | `~/.proma/` 配置目录结构、默认 Skill 种子 |
+| `config-paths.ts` | ~400 | `~/.gravitas/` 配置目录结构、默认 Skill 种子 |
 | `safe-file.ts` | ~150 | 安全文件写入（原子写） |
 | `storage-service.ts` | ~200 | 通用存储服务 |
 | `local-file-protocol.ts` | ~120 | 本地文件协议处理 |
@@ -231,7 +227,7 @@ proma-mit/
 | `calendar-eventkit-bridge.ts` | macOS EventKit 桥接：权限请求、系统日历读取、双向同步（依赖 `resources/read-calendar.swift`） |
 | `reminder-service.ts` / `reminder-ipc-handlers.ts` | 智能提醒：日程冲突 / Deadline 分级提醒 / 去重，扫描启动/停止 IPC |
 | `project-types.ts` | 项目/任务/子任务/会议纪要/用户映射/Brief 回执类型定义 |
-| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.proma/projects/paa.db`；含 agent_employees / agent_executions 两表） |
+| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.gravitas/projects/paa.db`；含 agent_employees / agent_executions 两表） |
 | `project-service.ts` | 项目管理主服务：项目/任务/子任务 CRUD、会议纪要导入与 AI 提取、看板、进度、模板、摘要发送 |
 | `agent-employee-service.ts` | AI 员工（P0-P3）：员工 CRUD、AgentTodoProvider、headless + Workflow SOP 双执行器、60s 心跳保活/超时/stale 回退、by-task 权限（safe/bypassPermissions）、并发排队 |
 | `project-summary-service.ts` | 项目周报/摘要生成 |
@@ -504,7 +500,7 @@ proma-mit/
 
 ## 4. 共享包代码索引
 
-### 4.1 `@proma/shared`（`packages/shared/src/`）
+### 4.1 `@gravitas/shared`（`packages/shared/src/`）
 
 | 文件 | 职责 |
 |---|---|
@@ -531,7 +527,7 @@ proma-mit/
 | `utils/capabilities-diff.test.ts` | 能力差异测试 |
 | `utils/thinking-signature-error.ts` | 思考签名错误 |
 
-### 4.2 `@proma/core`（`packages/core/src/`）
+### 4.2 `@gravitas/core`（`packages/core/src/`）
 
 | 文件 | 职责 |
 |---|---|
@@ -548,7 +544,7 @@ proma-mit/
 | `types/index.ts` | Core 类型 |
 | `utils/index.ts` | Core 工具 |
 
-### 4.3 `@proma/ui`（`packages/ui/src/`）
+### 4.3 `@gravitas/ui`（`packages/ui/src/`）
 
 | 文件 | 职责 |
 |---|---|
@@ -617,10 +613,10 @@ proma-mit/
        卡片/文本回复 → feishu-bridge.ts → 飞书
 ```
 
-### 5.4 本地存储结构（`~/.proma/`）
+### 5.4 本地存储结构（`~/.gravitas/`）
 
 ```
-~/.proma/
+~/.gravitas/
 ├── channels.json              # 渠道配置（API Key 加密）
 ├── conversations.json         # 对话索引
 ├── conversations/{uuid}.jsonl # 对话消息
@@ -792,10 +788,10 @@ bun run dist:fast
 
 ## 9. 版本信息
 
-- `@proma/electron`: `0.11.6`
-- `@proma/core`: `0.2.13`
-- `@proma/shared`: `0.1.46`
-- `@proma/ui`: `0.1.4`
+- `@gravitas/electron`: `0.11.6`
+- `@gravitas/core`: `0.2.13`
+- `@gravitas/shared`: `0.1.46`
+- `@gravitas/ui`: `0.1.4`
 - Electron: `^39.8.10`
 - React: `^18.3.1`
 - Bun: `1.3.14`（当前环境）

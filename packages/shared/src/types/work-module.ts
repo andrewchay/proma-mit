@@ -327,6 +327,8 @@ export interface UserMappingInput {
   feishuUserId?: string
   dingtalkUserId?: string
   displayName: string
+  feishuUnionId?: string
+  dingTalkUnionId?: string
 }
 
 export interface KanbanBoardResult {

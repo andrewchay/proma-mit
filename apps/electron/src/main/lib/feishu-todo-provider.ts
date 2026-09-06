@@ -18,6 +18,12 @@ interface FeishuTodoConfig {
   appSecret: string
 }
 
+interface FeishuTaskResponse {
+  code?: number
+  msg?: string
+  data?: { task?: { guid?: string; completed_at?: string; status?: string } }
+}
+
 interface TokenCache {
   token: string
   expiresAt: number
@@ -68,7 +74,7 @@ export class FeishuTodoProvider implements TodoProvider {
       throw new Error(`飞书创建任务失败: ${resp.msg} (code: ${resp.code})`)
     }
 
-    const taskGuid = resp.data?.task?.guid as string
+    const taskGuid = resp.data?.task?.guid
     if (!taskGuid) {
       throw new Error('飞书创建任务返回缺少 task.guid')
     }
@@ -159,7 +165,7 @@ export class FeishuTodoProvider implements TodoProvider {
     token: string,
     body?: unknown,
     isRetry = false
-  ): Promise<any> {
+  ): Promise<FeishuTaskResponse> {
     const url = `https://open.feishu.cn${path}`
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
@@ -175,10 +181,10 @@ export class FeishuTodoProvider implements TodoProvider {
     // 飞书网关偶尔返回非 JSON（如网关文本/超限页），resp.json() 会抛
     // "Unexpected non-whitespace character after JSON"。读原文后稳控解析。
     const rawText = await resp.text()
-    let data: any
+    let data: FeishuTaskResponse
     try {
       data = JSON.parse(rawText)
-    } catch (parseError) {
+    } catch {
       throw new Error(`飞书接口返回非 JSON（HTTP ${resp.status}）：${rawText.slice(0, 120)}`)
     }
 
@@ -247,9 +253,9 @@ export function createFeishuTodoProviderFromConfig(): FeishuTodoProvider | null 
     }
 
     // 获取飞书 Bot 配置
-    const { getFeishuMultiBotConfig, getDecryptedBotAppSecret } = require('./feishu-config')
+    const { getFeishuMultiBotConfig, getDecryptedBotAppSecret } = require('./feishu-config') as typeof import('./feishu-config')
     const config = getFeishuMultiBotConfig()
-    const bot = config.bots.find((b: any) => b.id === feishuTodo.botId && b.enabled && b.appId && b.appSecret)
+    const bot = config.bots.find((b) => b.id === feishuTodo.botId && b.enabled && b.appId && b.appSecret)
     if (!bot) {
       console.log(`[FeishuTodoProvider] 未找到 Bot ${feishuTodo.botId}`)
       return null

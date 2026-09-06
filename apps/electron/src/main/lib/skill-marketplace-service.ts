@@ -1,6 +1,7 @@
 
 /** Skills 集市：汇总内置模板与其他工作区，并以原子目录替换方式安装。 */
 
+import { createHash } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
@@ -11,6 +12,10 @@ export interface MarketplaceSkillSource {
   source: "builtin" | "workspace" | "personal" | "claude"
   sourceWorkspaceSlug?: string
   sourceRelativePath?: string
+}
+
+export interface MarketplaceSkillCandidate extends SkillMarketplaceItem {
+  contentSignature?: string
 }
 
 function readSkillMeta(dir: string, slug: string, enabled: boolean): SkillMeta | null {
@@ -27,6 +32,17 @@ function readSkillMeta(dir: string, slug: string, enabled: boolean): SkillMeta |
   return { slug, name: values.name || slug, description: values.description, icon: values.icon, version: values.version, category: values.category, enabled }
 }
 
+function readSkillContentSignature(dir: string): string | undefined {
+  const path = join(dir, "SKILL.md")
+  if (!existsSync(path)) return undefined
+  const content = readFileSync(path, "utf-8")
+    .replace(/^---\s*\n[\s\S]*?\n---\s*/, "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+  return content ? createHash("sha256").update(content).digest("hex") : undefined
+}
+
 function findSkillDir(workspaceSlug: string, skillSlug: string): string | null {
   for (const dir of [getWorkspaceSkillsDir(workspaceSlug), getInactiveSkillsDir(workspaceSlug)]) {
     const candidate = join(dir, skillSlug)
@@ -35,12 +51,12 @@ function findSkillDir(workspaceSlug: string, skillSlug: string): string | null {
   return null
 }
 
-function scanDirectory(dir: string, source: MarketplaceSkillSource, sourceName?: string): SkillMarketplaceItem[] {
+function scanDirectory(dir: string, source: MarketplaceSkillSource, sourceName?: string): MarketplaceSkillCandidate[] {
   try {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
       if (!entry.isDirectory()) return []
       const meta = readSkillMeta(join(dir, entry.name), entry.name, true)
-      return meta ? [{ ...meta, id: `${source.source}:${source.sourceWorkspaceSlug ?? "default"}:${entry.name}`, source: source.source, sourceWorkspaceSlug: source.sourceWorkspaceSlug, sourceWorkspaceName: sourceName, installStatus: "available" as const }] : []
+      return meta ? [{ ...meta, id: `${source.source}:${source.sourceWorkspaceSlug ?? "default"}:${entry.name}`, source: source.source, sourceWorkspaceSlug: source.sourceWorkspaceSlug, sourceWorkspaceName: sourceName, installStatus: "available" as const, contentSignature: readSkillContentSignature(join(dir, entry.name)) }] : []
     })
   } catch {
     return []
@@ -52,8 +68,8 @@ const EXTERNAL_SKILL_SOURCES = [
   { source: "personal" as const, name: "个人 Skills", root: "/Users/chaihao/.proma/agent-workspaces/personal/skills" },
 ]
 
-function scanExternalDirectory(root: string, source: "personal" | "claude", sourceName: string): SkillMarketplaceItem[] {
-  const items: SkillMarketplaceItem[] = []
+function scanExternalDirectory(root: string, source: "personal" | "claude", sourceName: string): MarketplaceSkillCandidate[] {
+  const items: MarketplaceSkillCandidate[] = []
   const visit = (dir: string, relativeDir: string): void => {
     let entries
     try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
@@ -62,7 +78,7 @@ function scanExternalDirectory(root: string, source: "personal" | "claude", sour
       const relativePath = relativeDir ? relativeDir + "/" + entry.name : entry.name
       const path = join(dir, entry.name)
       const meta = readSkillMeta(path, relativePath.replaceAll("/", "--"), true)
-      if (meta) items.push({ ...meta, id: source + ":" + relativePath, source, sourceWorkspaceName: sourceName, sourceRelativePath: relativePath, installStatus: "available" })
+      if (meta) items.push({ ...meta, id: source + ":" + relativePath, source, sourceWorkspaceName: sourceName, sourceRelativePath: relativePath, installStatus: "available", contentSignature: readSkillContentSignature(path) })
       visit(path, relativePath)
     }
   }
@@ -78,30 +94,54 @@ function resolveExternalSkillPath(source: "personal" | "claude", relativePath?: 
 
 /**
  * 集市按能力展示，而不是按目录镜像展示。来源优先级由调用方传入顺序决定。
- * growth-copilot 只负责在 growth-scout 前澄清问题，两者同时存在时保留可直接完成分析的后者。
+ * `growth-copilot`、`guizang-ppt-skill` 与 `pdf-processor` 分别由更完整的标准入口覆盖。
  */
-const REDUNDANT_SKILL_NAMES = new Map([["growth-copilot", "growth-scout"]])
+const REDUNDANT_SKILL_NAMES = new Map([
+  ["growth-copilot", "growth-scout"],
+  ["guizang-ppt-skill", "pptx"],
+  ["pdf-processor", "pdf"],
+])
 
 function normalizeSkillName(item: SkillMeta): string {
   return item.name.normalize("NFKC").trim().replaceAll(/\s+/g, " ").toLocaleLowerCase()
 }
 
-export function deduplicateMarketplaceSkills(items: SkillMarketplaceItem[]): SkillMarketplaceItem[] {
-  const availableNames = new Set(items.map(normalizeSkillName))
+function canonicalCandidateOrder(item: MarketplaceSkillCandidate): readonly [number, number, number, string] {
+  const sourceRank = item.source === "builtin" ? 0 : item.source === "claude" ? 1 : item.source === "personal" ? 2 : 3
+  const relativePath = item.sourceRelativePath ?? item.slug
+  const mirrorRank = /^(claude-plugin-|claude-|agents-)/.test(relativePath) ? 1 : 0
+  return [sourceRank, mirrorRank, relativePath.split("/").length, relativePath]
+}
+
+function compareCanonicalCandidates(left: MarketplaceSkillCandidate, right: MarketplaceSkillCandidate): number {
+  const leftOrder = canonicalCandidateOrder(left)
+  const rightOrder = canonicalCandidateOrder(right)
+  return leftOrder[0] - rightOrder[0]
+    || leftOrder[1] - rightOrder[1]
+    || leftOrder[2] - rightOrder[2]
+    || leftOrder[3].localeCompare(rightOrder[3])
+}
+
+export function deduplicateMarketplaceSkills(items: MarketplaceSkillCandidate[]): MarketplaceSkillCandidate[] {
+  const candidates = [...items].sort(compareCanonicalCandidates)
+  const availableNames = new Set(candidates.map(normalizeSkillName))
   const seenNames = new Set<string>()
-  return items.filter((item) => {
+  const seenContentSignatures = new Set<string>()
+  return candidates.filter((item) => {
     const name = normalizeSkillName(item)
     const replacement = REDUNDANT_SKILL_NAMES.get(name)
     if (replacement && availableNames.has(replacement)) return false
     if (seenNames.has(name)) return false
+    if (item.contentSignature && seenContentSignatures.has(item.contentSignature)) return false
     seenNames.add(name)
+    if (item.contentSignature) seenContentSignatures.add(item.contentSignature)
     return true
   })
 }
 
 export function getSkillMarketplace(workspaceSlug: string): SkillMarketplaceItem[] {
   const installed = new Map(getAllWorkspaceSkills(workspaceSlug).map((skill) => [skill.slug, skill]))
-  const items = scanDirectory(getDefaultSkillsDir(), { source: "builtin" }, "内置 Skills")
+  const items: MarketplaceSkillCandidate[] = scanDirectory(getDefaultSkillsDir(), { source: "builtin" }, "内置 Skills")
   for (const external of EXTERNAL_SKILL_SOURCES) {
     for (const item of scanExternalDirectory(external.root, external.source, external.name)) {
       items.push(item)
@@ -112,10 +152,10 @@ export function getSkillMarketplace(workspaceSlug: string): SkillMarketplaceItem
     for (const skill of getAllWorkspaceSkills(workspace.slug)) {
       const dir = findSkillDir(workspace.slug, skill.slug)
       const meta = dir ? readSkillMeta(dir, skill.slug, skill.enabled) : null
-      if (meta) items.push({ ...meta, id: `workspace:${workspace.slug}:${skill.slug}`, source: "workspace", sourceWorkspaceSlug: workspace.slug, sourceWorkspaceName: workspace.name, installStatus: "available" })
+      if (meta) items.push({ ...meta, id: `workspace:${workspace.slug}:${skill.slug}`, source: "workspace", sourceWorkspaceSlug: workspace.slug, sourceWorkspaceName: workspace.name, installStatus: "available", contentSignature: dir ? readSkillContentSignature(dir) : undefined })
     }
   }
-  return deduplicateMarketplaceSkills(items).map((item) => {
+  return deduplicateMarketplaceSkills(items).map(({ contentSignature: _, ...item }) => {
     const categorized = { ...item, ...classifySkillSet(item) }
     const current = installed.get(item.slug)
     return current ? { ...categorized, installStatus: isNewer(item.version, current.version) ? "update_available" as const : "installed" as const } : categorized
@@ -152,6 +192,7 @@ export function installMarketplaceSkill(workspaceSlug: string, source: Marketpla
 }
 
 const SKILL_SET_RULES: Array<{ name: string; subset: string; terms: string[] }> = [
+  { name: "文档与媒体", subset: "内容制作", terms: ["deep-reading"] },
   { name: "开发工程", subset: "编码与架构", terms: ["code", "typescript", "javascript", "python", "api", "architecture"] },
   { name: "开发工程", subset: "测试与调试", terms: ["debug", "test", "qa", "error"] },
   { name: "开发工程", subset: "交付与安全", terms: ["git", "ci", "deploy", "performance", "security"] },

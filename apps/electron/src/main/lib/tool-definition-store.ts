@@ -15,6 +15,7 @@ import type { RuntimeToolDefinition } from './agent-runtime/types'
 import type { ToolDefinition } from '@gravitas/core'
 import { getDefaultToolsUserDir, parseToolDirVersion } from './config-paths'
 import { readJsonFileSafe } from './safe-file'
+import { getBundledMarketingExecutor } from './bundled-marketing-executors'
 
 // =====================================================================
 // 类型定义
@@ -140,7 +141,7 @@ function readToolDirState(
  * - 目录化工具优先
  * - 代码默认兜底
  */
-export type DirectoryToolsetFilter = (pluginId: string) => boolean
+export type DirectoryToolsetFilter = (pluginId: string, domain?: string) => boolean
 
 export function collectDirectoryTools(shouldInclude?: DirectoryToolsetFilter): RuntimeToolDefinition[] {
   const tools: RuntimeToolDefinition[] = []
@@ -153,7 +154,7 @@ export function collectDirectoryTools(shouldInclude?: DirectoryToolsetFilter): R
     if (!state) continue
 
     for (const toolState of state.tools) {
-    if (shouldInclude && !shouldInclude(pluginId)) continue
+    if (shouldInclude && !shouldInclude(pluginId, toolState.domain)) continue
       try {
         const tool = loadToolFromDirState(toolState)
         if (tool) tools.push(tool)
@@ -214,73 +215,19 @@ function loadToolFromDirState(state: ToolDirState): RuntimeToolDefinition | null
     }
   }
 
-  // 无 execute.ts 或加载失败：尝试从代码默认加载
-  const codeFallback = loadCodeFallbackTool(state.id)
-  if (codeFallback) return codeFallback
-
-  return null
-}
-
-/** 从代码默认加载工具（向后兼容） */
-function loadCodeFallbackTool(toolId: string): RuntimeToolDefinition | null {
-  // 营销工具的代码 fallback 映射
-  const marketingFallbacks: Record<string, () => RuntimeToolDefinition | null> = {
-    // shared
-    'ma_generate_storyboard': () => {
-      try {
-        const { marketingGenerateStoryboardTool } = require('./plugins/marketing-plugin')
-        return marketingGenerateStoryboardTool()
-      } catch { return null }
+  // 安装目录里的 TS 相对引用可能不可用；内置实现已静态纳入主进程 bundle。
+  const builtin = getBundledMarketingExecutor(state.id)
+  if (!builtin) return null
+  return {
+    name: state.id, description: state.description, parameters: state.parameters,
+    execute: async (input) => {
+      const result = await builtin.execute(input)
+      if (result && typeof result === 'object' && 'content' in result) {
+        const output = result as { toolCallId?: string; content: string; isError?: boolean }
+        return { toolCallId: output.toolCallId ?? '', content: output.content, isError: output.isError }
+      }
+      return { toolCallId: '', content: String(result ?? '') }
     },
-    // influencer
-    'ma_match_kols': () => loadToolFromModule('../marketing/ma-tools/match-ai', 'MATCH_AI_TOOL_DEFINITIONS', 'executeMatchAITool'),
-    'ma_search_kols': () => loadToolFromModule('../marketing/ma-tools/kol-search', 'KOL_SEARCH_TOOL_DEFINITIONS', 'executeKOLSearchTool'),
-    'ma_generate_creative_brief': () => loadToolFromModule('../marketing/ma-tools/creative-pilot', 'CREATIVE_PILOT_TOOL_DEFINITIONS', 'executeCreativePilotTool'),
-    'ma_audit_content': () => loadToolFromModule('../marketing/ma-tools/content-audit', 'CONTENT_AUDIT_TOOL_DEFINITIONS', 'executeContentAuditTool'),
-    'ma_generate_outreach': () => loadToolFromModule('../marketing/ma-tools/connect-bot', 'CONNECT_BOT_TOOL_DEFINITIONS', 'executeConnectBotTool'),
-    'ma_generate_script': () => loadToolFromModule('../marketing/ma-tools/script-studio', 'SCRIPT_STUDIO_TOOL_DEFINITIONS', 'executeScriptStudioTool'),
-    'ma_kol_crm': () => loadToolFromModule('../marketing/ma-tools/kol-crm', 'KOL_CRM_TOOL_DEFINITIONS', 'executeKOLCRMTool'),
-    'ma_kol_portal': () => loadToolFromModule('../marketing/ma-tools/kol-portal', 'KOL_PORTAL_TOOL_DEFINITIONS', 'executeKOLPortalTool'),
-    // paid-media
-    'ma_generate_strategy': () => loadToolFromModule('../marketing/ma-tools/strategy-iq', 'STRATEGY_IQ_TOOL_DEFINITIONS', 'executeStrategyIQTool'),
-    'ma_campaign_get': () => loadToolFromModule('../marketing/ma-tools/campaign-agent', 'CAMPAIGN_AGENT_TOOL_DEFINITIONS', 'executeCampaignAgentTool'),
-    'ma_campaign_update': () => loadToolFromModule('../marketing/ma-tools/campaign-agent', 'CAMPAIGN_AGENT_TOOL_DEFINITIONS', 'executeCampaignAgentTool'),
-    'ma_campaign_kol_add': () => loadToolFromModule('../marketing/ma-tools/campaign-agent', 'CAMPAIGN_AGENT_TOOL_DEFINITIONS', 'executeCampaignAgentTool'),
-    'ma_optimize_campaign': () => loadToolFromModule('../marketing/ma-tools/campaign-optimizer', 'CAMPAIGN_OPTIMIZER_TOOL_DEFINITIONS', 'executeCampaignOptimizerTool'),
-    'ma_design_campaign_test': () => loadToolFromModule('../marketing/ma-tools/campaign-tester', 'CAMPAIGN_TESTER_TOOL_DEFINITIONS', 'executeCampaignTesterTool'),
-    'ma_forecast_budget': () => loadToolFromModule('../marketing/ma-tools/budget-forecast', 'BUDGET_FORECAST_TOOL_DEFINITIONS', 'executeBudgetForecastTool'),
-    'ma_generate_phase_report': () => loadToolFromModule('../marketing/ma-tools/ma-phase-reviewer', 'PHASE_REVIEWER_TOOL_DEFINITIONS', 'executePhaseReviewerTool'),
-    'ma_analyze_content_performance': () => loadToolFromModule('../marketing/ma-tools/content-tracker', 'CONTENT_TRACKER_TOOL_DEFINITIONS', 'executeContentTrackerTool'),
-  }
-
-  const factory = marketingFallbacks[toolId]
-  return factory ? factory() : null
-}
-
-/** 从既有 ma-tool 模块加载工具定义 */
-function loadToolFromModule(relPath: string, defsKey: string, execKey: string): RuntimeToolDefinition | null {
-  try {
-    const mod = require(relPath) as Record<string, unknown>
-    const defs = mod[defsKey] as Array<{ name: string; description: string; parameters: unknown }> | undefined
-    const execute = mod[execKey] as (toolCall: { id: string; name: string; arguments: Record<string, unknown> }) => Promise<unknown>
-    if (!defs || !Array.isArray(defs) || defs.length === 0) return null
-    const def = defs[0]
-    if (!def || typeof execute !== 'function') return null
-    return {
-      name: def.name,
-      description: def.description,
-      parameters: def.parameters as ToolDefinition['parameters'],
-      execute: async (input) => {
-        const result = await execute({ id: '', name: def.name, arguments: (input ?? {}) as Record<string, unknown> })
-        if (result && typeof result === 'object' && 'content' in result) {
-          const r = result as { toolCallId?: string; content: string; isError?: boolean }
-          return { toolCallId: r.toolCallId ?? '', content: r.content, isError: r.isError }
-        }
-        return { toolCallId: '', content: String(result ?? '') }
-      },
-    }
-  } catch {
-    return null
   }
 }
 

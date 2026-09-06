@@ -2190,6 +2190,11 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     handleCompact,
     autoPreviewEnabled,
     setAutoPreviewEnabled,
+    piThinkingLevel,
+    currentChannel?.id,
+    currentChannel?.updatedAt,
+    currentChannel?.provider,
+    currentChannel?.baseUrl,
   ])
 
   const inputTrailingNode = streaming && !hasTextInput ? (

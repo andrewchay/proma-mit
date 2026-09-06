@@ -5,6 +5,7 @@ import { createAgentWorkspace } from './agent-workspace-manager'
 import { createWorkflowRun, publishWorkflowDefinition, saveWorkflowDefinition } from './workflow-service'
 import { executeWorkflowDeterministicNode } from './workflow-deterministic-executor'
 
+import { simulateWorkflowRun } from './workflow-simulation-service'
 const TEST_DIR = '/tmp/paa-workflow-deterministic-test'
 
 function draft(workspaceId: string, expression = '$input.amount >= 100'): WorkflowDefinition {
@@ -59,5 +60,47 @@ describe('Workflow 确定性节点执行器', () => {
     const failed = executeWorkflowDeterministicNode('deterministic-review', run.id, 'gate')
     expect(failed.nodeRuns?.gate?.status).toBe('failed')
     expect(failed.nodeRuns?.gate?.error?.code).toBe('deterministic_execution_failed')
+  })
+
+  test('Given 受控 foreach When items 在上限内 Then 顺序执行每项映射并保留逐项输出', () => {
+    const workspace = createAgentWorkspace('逐项处理工作区')
+    const definition = draft(workspace.id)
+    definition.nodes = [
+      { id: 'start', kind: 'start', title: '开始' },
+      { id: 'each', kind: 'foreach', title: '逐项处理', config: { items: '$input.items', assignments: { value: '$item', index: '$index' }, maxItems: 3, maxConcurrency: 1 } },
+      { id: 'end', kind: 'end', title: '结束' },
+    ]
+    definition.edges = [{ id: 'start-each', from: 'start', to: 'each' }, { id: 'each-end', from: 'each', to: 'end' }]
+    definition.layout = { nodes: { start: { x: 0, y: 0 }, each: { x: 120, y: 0 }, end: { x: 240, y: 0 } } }
+    saveWorkflowDefinition(definition)
+    publishWorkflowDefinition(definition.id, { version: '1.0.0' })
+    const run = createWorkflowRun(definition.id, { items: ['a', 'b'] })
+
+    const completed = executeWorkflowDeterministicNode(definition.id, run.id, 'each')
+    expect(completed.nodeRuns.each?.output).toEqual({ items: [{ value: 'a', index: 0 }, { value: 'b', index: 1 }], count: 2 })
+    expect(completed.nodeRuns.end?.status).toBe('ready')
+  })
+
+  test('Given 受控 foreach When items 超过上限 Then 失败且不执行部分项', () => {
+    const workspace = createAgentWorkspace('逐项处理上限工作区')
+    const definition = draft(workspace.id)
+    definition.nodes = [{ id: 'start', kind: 'start', title: '开始' }, { id: 'each', kind: 'foreach', title: '逐项处理', config: { items: '$input.items', assignments: { value: '$item' }, maxItems: 1, maxConcurrency: 1 } }, { id: 'end', kind: 'end', title: '结束' }]
+    definition.edges = [{ id: 'start-each', from: 'start', to: 'each' }, { id: 'each-end', from: 'each', to: 'end' }]
+    definition.layout = { nodes: { start: { x: 0, y: 0 }, each: { x: 120, y: 0 }, end: { x: 240, y: 0 } } }
+    saveWorkflowDefinition(definition); publishWorkflowDefinition(definition.id, { version: '1.0.0' })
+    const run = createWorkflowRun(definition.id, { items: ['a', 'b'] })
+    const failed = executeWorkflowDeterministicNode(definition.id, run.id, 'each')
+    expect(failed.nodeRuns.each?.status).toBe('failed')
+    expect(failed.nodeRuns.each?.error?.message).toContain('超过上限')
+  })
+
+  test('Given 冻结 Run When 模拟回放 Then 只读取确定性节点且不改变源 Run', () => {
+    const run = createRun()
+    const before = JSON.stringify(run)
+    const result = simulateWorkflowRun(run)
+    expect(result.status).toBe('simulated')
+    expect(result.simulatedNodeIds).toEqual(['start', 'prepare', 'gate', 'yes', 'no', 'end'])
+    expect(result.requiresRealExecution).toEqual([])
+    expect(JSON.stringify(run)).toBe(before)
   })
 })

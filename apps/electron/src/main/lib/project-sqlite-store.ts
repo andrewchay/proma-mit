@@ -4,17 +4,18 @@
  * 本地 SQLite 作为项目管理唯一数据源（弃用 NocoBase）。
  * 全部数据操作在此实现，project-service.ts 保持对外接口不变。
  *
- * 技术选型：better-sqlite3（同步 API，Electron 39 / ABI 140 直接可用）。
- * 存储位置：~/.paa/projects/paa.db
+ * 技术选型：sql.js 内存 SQLite，同步接口包装与原子导出持久化。
+ * 存储位置：~/.gravitas/projects/paa.db
  *
  * v1.0 — 本地 SQLite 唯一数据源
  */
 
 import { randomUUID } from 'node:crypto'
-import initSqlJs from 'sql.js'
+import initSqlJs, { type Database as SqlDatabase, type Statement, type SqlJsStatic } from 'sql.js'
+import { writeFileAtomic } from '@gravitas/shared/utils/node'
 import { getProjectsDir } from './config-paths'
 import { join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type {
   Project,
   Task,
@@ -56,9 +57,9 @@ import type {
 // sql.js 为内存库 + 手动 export 持久化，写操作后同步落盘（项目管理写频率低，可接受）。
 
 let db: SqliteCompat | null = null
-let sqlJsPromise: Promise<any> | null = null
+let sqlJsPromise: Promise<SqlJsStatic> | null = null
 
-function loadSqlJs(): Promise<any> {
+function loadSqlJs(): Promise<SqlJsStatic> {
   if (!sqlJsPromise) {
     sqlJsPromise = initSqlJs({
       // esbuild 打包后模块路径变化，显式从 node_modules 定位 wasm 文件
@@ -113,11 +114,11 @@ export function closeProjectDb(): void {
 // ===== sql.js 兼容包装 =====
 
 class SqliteCompat {
-  private database: any
+  private database: SqlDatabase
   private filePath: string
   private inTransaction = false
 
-  constructor(database: any, filePath: string) {
+  constructor(database: SqlDatabase, filePath: string) {
     this.database = database
     this.filePath = filePath
   }
@@ -125,12 +126,7 @@ class SqliteCompat {
   /** 持久化：将内存库导出写入磁盘 */
   persist(): void {
     if (this.inTransaction) return
-    try {
-      const data = this.database.export()
-      writeFileSync(this.filePath, data)
-    } catch (error) {
-      console.error('[ProjectStore] SQLite 持久化失败:', error)
-    }
+    writeFileAtomic(this.filePath, this.database.export())
   }
 
   prepare(sql: string): StmtCompat {
@@ -181,10 +177,10 @@ class SqliteCompat {
 }
 
 class StmtCompat {
-  private statement: any
+  private statement: Statement
   private owner: SqliteCompat
 
-  constructor(database: any, sql: string, owner: SqliteCompat) {
+  constructor(database: SqlDatabase, sql: string, owner: SqliteCompat) {
     this.statement = database.prepare(sql)
     this.owner = owner
   }
@@ -229,7 +225,7 @@ class StmtCompat {
  * 说明：sql.js 原生 Statement 没有 .all()，需用 step + getAsObject 手动遍历。
  * （旧实现直接 database.prepare(...).all() 会在 raw Statement 上抛错，属潜在 bug。）
  */
-function readColumnNames(database: any, table: string): string[] {
+function readColumnNames(database: SqlDatabase, table: string): string[] {
   const stmt = database.prepare(`PRAGMA table_info(${table})`)
   try {
     const names: string[] = []
@@ -243,7 +239,7 @@ function readColumnNames(database: any, table: string): string[] {
   }
 }
 
-function migrate(database: any): void {
+function migrate(database: SqlDatabase): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,

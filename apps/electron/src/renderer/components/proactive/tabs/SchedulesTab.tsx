@@ -58,6 +58,7 @@ export function SchedulesTab(): React.ReactElement {
   const [cronTimezone, setCronTimezone] = useAtom(proactiveCronTimezoneAtom)
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('proma')
+  const [selectedModelId, setSelectedModelId] = React.useState('')
   const [editingSchedule, setEditingSchedule] = React.useState<ProactiveSchedule | null>(null)
   const [configurationRecommendation, setConfigurationRecommendation] = useAtom(proactiveConfigurationRecommendationAtom)
   const [, setRecommendations] = useAtom(proactiveRecommendationsAtom)
@@ -106,14 +107,22 @@ export function SchedulesTab(): React.ReactElement {
     void refresh()
   }, [refresh, runAt, setRunAt])
 
+  const selectedSession = sessions.find((item) => item.id === sessionId)
+  const targetChannel = channels.find((item) => item.id === (newSession ? selectedChannelId : selectedSession?.channelId) && item.enabled)
+
+  React.useEffect(() => {
+    const enabledModels = targetChannel?.models.filter((model) => model.enabled) ?? []
+    setSelectedModelId((current) => enabledModels.some((model) => model.id === current) ? current : enabledModels[0]?.id ?? '')
+  }, [targetChannel])
+
   const create = async (): Promise<void> => {
     if (!prompt.trim()) {
       toast.error('请填写任务内容')
       return
     }
     const enabledChannels = channels.filter((item) => item.enabled)
-    const channel = enabledChannels.find((item) => item.id === selectedChannelId)
-    const session = sessions.find((item) => item.id === sessionId)
+    const channel = newSession ? enabledChannels.find((item) => item.id === selectedChannelId) : targetChannel
+    const session = selectedSession
     if (newSession) {
       if (!channel || !isSchedulableRuntime(selectedRuntime)) {
         toast.error('请选择已启用渠道和 Gravitas / AI SDK Runtime')
@@ -125,8 +134,7 @@ export function SchedulesTab(): React.ReactElement {
         return
       }
     }
-    const modelId = channel?.models.find((model) => model.enabled)?.id ?? channel?.models[0]?.id
-    if (!modelId) {
+    if (!selectedModelId) {
       toast.error('所选渠道没有可用模型')
       return
     }
@@ -142,7 +150,7 @@ export function SchedulesTab(): React.ReactElement {
         workspaceId: newSession ? undefined : session?.workspaceId,
         channelId: newSession ? (channel?.id ?? '') : (session?.channelId ?? ''),
         runtime: newSession ? selectedRuntime : ((session?.agentRuntime ?? 'proma') as 'proma' | 'ai-sdk'),
-        modelId,
+        modelId: selectedModelId,
         prompt: prompt.trim(),
         schedule,
         newSession,
@@ -242,6 +250,18 @@ export function SchedulesTab(): React.ReactElement {
               </Select>
             </label>
           )}
+
+          <label className="grid gap-1.5 text-sm text-muted-foreground">
+            模型
+            <Select value={selectedModelId} onValueChange={setSelectedModelId} disabled={!targetChannel}>
+              <SelectTrigger><SelectValue placeholder="选择目标渠道的模型" /></SelectTrigger>
+              <SelectContent>
+                {(targetChannel?.models.filter((model) => model.enabled) ?? []).map((model) => (
+                  <SelectItem key={model.id} value={model.id}>{model.name} · {model.id}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
 
           {kind === 'at' && (
             <label className="grid gap-1.5 text-sm text-muted-foreground">
@@ -410,6 +430,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSave
   const [newSession, setNewSession] = React.useState(schedule.newSession ?? false)
   const [sessionId, setSessionId] = React.useState(schedule.sessionId ?? schedulableSessions[0]?.id ?? '')
   const [channelId, setChannelId] = React.useState(schedule.channelId)
+  const [modelId, setModelId] = React.useState(schedule.modelId ?? '')
   const [runtime, setRuntime] = React.useState<'proma' | 'ai-sdk'>(schedule.runtime)
   const [enabled, setEnabled] = React.useState(schedule.enabled)
   const [kind, setKind] = React.useState<'at' | 'interval' | 'cron'>(schedule.schedule.type)
@@ -418,16 +439,22 @@ function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSave
   const [cronExpression, setCronExpression] = React.useState(schedule.schedule.type === 'cron' ? schedule.schedule.expression : '0 9 * * 1-5')
   const [cronTimezone, setCronTimezone] = React.useState(schedule.schedule.type === 'cron' ? schedule.schedule.timezone : 'Asia/Shanghai')
   const [saving, setSaving] = React.useState(false)
+  const selectedSession = schedulableSessions.find((item) => item.id === sessionId)
+  const targetChannelId = newSession ? channelId : selectedSession?.channelId
+  const targetChannel = channels.find((item) => item.id === targetChannelId && item.enabled)
+
+  React.useEffect(() => {
+    const enabledModels = targetChannel?.models.filter((model) => model.enabled) ?? []
+    setModelId((current) => enabledModels.some((model) => model.id === current) ? current : enabledModels[0]?.id ?? '')
+  }, [targetChannel])
 
   const save = async (): Promise<void> => {
-    const session = schedulableSessions.find((item) => item.id === sessionId)
-    const targetChannelId = newSession ? channelId : session?.channelId
-    const channel = channels.find((item) => item.id === targetChannelId && item.enabled)
+    const session = selectedSession
+    const channel = targetChannel
     if (!title.trim() || !prompt.trim() || !channel) {
       toast.error(newSession ? '请填写名称、内容并选择已启用渠道' : '请填写名称、内容并选择有效目标会话')
       return
     }
-    const modelId = schedule.modelId ?? channel.models.find((model) => model.enabled)?.id ?? channel.models[0]?.id
     if (!modelId) { toast.error('所选渠道没有可用模型'); return }
     const nextSchedule = kind === 'at'
       ? { type: 'at' as const, runAt: new Date(runAt).getTime() }
@@ -463,6 +490,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSave
           <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式<Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select></label>
         </div>
         {newSession ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">渠道<Select value={channelId} onValueChange={setChannelId}><SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger><SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm text-muted-foreground">Runtime<Select value={runtime} onValueChange={(value: 'proma' | 'ai-sdk') => setRuntime(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="proma">Gravitas</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent></Select></label></div> : <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话<Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择会话" /></SelectTrigger><SelectContent>{schedulableSessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent></Select></label>}
+        <label className="grid gap-1.5 text-sm text-muted-foreground">模型<Select value={modelId} onValueChange={setModelId} disabled={!targetChannel}><SelectTrigger><SelectValue placeholder="选择目标渠道的模型" /></SelectTrigger><SelectContent>{(targetChannel?.models.filter((model) => model.enabled) ?? []).map((model) => <SelectItem key={model.id} value={model.id}>{model.name} · {model.id}</SelectItem>)}</SelectContent></Select></label>
         {kind === 'at' && <label className="grid gap-1.5 text-sm text-muted-foreground">执行时间<Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>}
         {kind === 'interval' && <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1）<Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>}
         {kind === 'cron' && <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">Cron 表达式<Input value={cronExpression} onChange={(event) => setCronExpression(event.target.value)} /></label><label className="grid gap-1.5 text-sm text-muted-foreground">IANA 时区<Input value={cronTimezone} onChange={(event) => setCronTimezone(event.target.value)} /></label></div>}

@@ -75,7 +75,7 @@ function getSourcesPath(): string {
   return join(getCalendarDir(), 'sync', 'sources.json')
 }
 
-function getSyncLogPath(): string {
+function _getSyncLogPath(): string {
   return join(getCalendarDir(), 'sync', 'sync-log.jsonl')
 }
 

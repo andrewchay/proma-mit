@@ -44,8 +44,32 @@ const rubric: Rubric = {
   ],
 }
 
+const behaviorConfig: BenchmarkConfig = {
+  ...config,
+  id: 'eval-evaluator-tool-behavior',
+  cases: ['CASE-TOOL-001'],
+}
+
+const behaviorRubric: Rubric = {
+  version: 2,
+  items: [
+    {
+      name: '真实策略调用',
+      points: 100,
+      check: '必须真实调用 ma_generate_strategy 并传入品牌',
+      toolTrace: {
+        name: 'ma_generate_strategy',
+        requiredArguments: ['brand'],
+        expectedArguments: { brand: '茶里茶气' },
+        result: 'success',
+      },
+    },
+  ],
+}
+
 beforeAll(() => {
   createBenchmark(config, [{ caseId: 'CASE-001', statement: '# 审查 materialize.js\n评估该实现质量', rubric }])
+  createBenchmark(behaviorConfig, [{ caseId: 'CASE-TOOL-001', statement: '调用营销策略工具', rubric: behaviorRubric }])
 })
 
 async function delegateStub(input: { text?: string; workspaceDir: string }) {
@@ -97,6 +121,19 @@ describe('evaluateCaseRun', () => {
     expect(result.score).toBe(89) // clamp round(88.5)
   })
 
+  it('工具行为 rubric 只根据真实 trace 调用评分，不接受文本冒充', async () => {
+    const tracePath = join(testDir, 'tool-behavior-trace.jsonl')
+    writeFileSync(tracePath, [
+      JSON.stringify({ type: 'message', msg: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'ma_generate_strategy', input: { brand: '茶里茶气' } }] } } }),
+      JSON.stringify({ type: 'message', msg: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok', is_error: false }] } } }),
+    ].join('\n'), 'utf-8')
+    const result = await evaluateCaseRun(behaviorConfig, 'CASE-TOOL-001', 1, 1, async (input) => ({
+      text: '我调用了 ma_generate_strategy。',
+      trace: { runId: input.runId ?? 'tool-run', tracePath },
+    }))
+    expect(result.score).toBe(100)
+  })
+
   it('沙箱目录被创建且不含 rubric', async () => {
     let sawWorkspace: string | undefined
     const capture = async (input: { workspaceDir: string }) => {
@@ -122,13 +159,16 @@ describe('evaluateCaseRun', () => {
 
   it('评测运行时给 delegate 传 runId（用于 trace 落盘文件命名）', async () => {
     let seenRunId: string | undefined
+    let seenTarget: import('./types').EvalTarget | undefined
     const captureRunId: SubAgentDelegate = async (input) => {
       seenRunId = input.runId
+      seenTarget = input.target
       return { text: 'file:line' }
     }
     await evaluateCaseRun(config, 'CASE-001', 1, 1, captureRunId)
     expect(seenRunId).toBeDefined()
     expect(seenRunId!).toContain('eval-')
+    expect(seenTarget).toEqual({ type: 'agent', id: 'code-reviewer' })
   })
 
   it('不存在 case 返回 failed（invalid_request）', async () => {
@@ -140,7 +180,7 @@ describe('evaluateCaseRun', () => {
 
 // 供上述测试引用的沙箱写入（声明素材可选）
 beforeAll(() => {
-  const fs = require('node:fs') as typeof import('node:fs')
+  const _fs = require('node:fs') as typeof import('node:fs')
   const { getBenchmarkCaseStatementAssetsDir } = require('../../config-paths') as typeof import('../../config-paths')
   const assetsDir = getBenchmarkCaseStatementAssetsDir(config.id, 'CASE-001')
   writeFileSync(join(assetsDir, 'materialize.js'), '// sample source')

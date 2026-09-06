@@ -1,7 +1,7 @@
 /** Workflow Agent/Skill 节点执行适配器。 */
 
 import type { AgentExternalRunSource, AgentMessage, AgentSendInput, WorkflowCapabilityPolicy, WorkflowRun } from '@gravitas/shared'
-import { validateWorkflowOutput } from '@gravitas/shared/workflow'
+import { resolveWorkflowNodeInput, validateWorkflowInput, validateWorkflowOutput } from '@gravitas/shared/workflow'
 import {
   completeWorkflowNode,
   acquireWorkflowSideEffectLease,
@@ -83,7 +83,7 @@ const defaultSessionFactory: WorkflowAgentSessionFactory = {
   },
 }
 
-function getNodePrompt(run: WorkflowRun, nodeId: string, idempotencyKey?: string): string {
+function getNodePrompt(run: WorkflowRun, nodeId: string, nodeInput: Record<string, unknown>, idempotencyKey?: string): string {
   const node = run.snapshot.definition.nodes.find((item) => item.id === nodeId)
   if (!node || (node.kind !== 'agent' && node.kind !== 'skill' && node.kind !== 'tool')) {
     throw new Error('当前节点不是可执行的 Agent/Skill/Tool 节点')
@@ -94,16 +94,22 @@ function getNodePrompt(run: WorkflowRun, nodeId: string, idempotencyKey?: string
     : ''
   if (node.kind === 'tool') {
     if (typeof config?.toolName !== 'string' || !config.toolName.trim()) throw new Error('Workflow tool 节点缺少 toolName')
-    return `执行当前 Workflow 工具节点。只允许调用工具 ${config.toolName}，使用 workflow_input 与 inputMapping 构造参数；完成后简要说明结果。若工具支持幂等键，必须传入 workflow_idempotency_key，禁止自行生成新键。\n\n<workflow_idempotency_key>\n${idempotencyKey ?? ''}\n</workflow_idempotency_key>\n<workflow_input>\n${JSON.stringify(run.input)}\n</workflow_input>\n<workflow_input_mapping>\n${JSON.stringify(config.inputMapping ?? {})}\n</workflow_input_mapping>${outputInstruction}`
+    return `执行当前 Workflow 工具节点。只允许调用工具 ${config.toolName}，使用已解析的 workflow_node_input 构造参数；完成后简要说明结果。若工具支持幂等键，必须传入 workflow_idempotency_key，禁止自行生成新键。\n\n<workflow_idempotency_key>\n${idempotencyKey ?? ''}\n</workflow_idempotency_key>\n<workflow_node_input>\n${JSON.stringify(nodeInput)}\n</workflow_node_input>${outputInstruction}`
   }
   if (typeof config?.prompt !== 'string' || !config.prompt.trim()) {
     throw new Error('Workflow 节点缺少 prompt')
   }
-  return `${config.prompt}\n\n<workflow_input>\n${JSON.stringify(run.input)}\n</workflow_input>${outputInstruction}`
+  return `${config.prompt}\n\n<workflow_node_input>\n${JSON.stringify(nodeInput)}\n</workflow_node_input>${outputInstruction}`
 }
 
 function getNodeCapabilityPolicy(run: WorkflowRun, nodeId: string): WorkflowCapabilityPolicy {
   return run.snapshot.nodeCapabilityPolicies[nodeId] ?? {}
+}
+
+function getInputSchema(run: WorkflowRun, nodeId: string): Record<string, unknown> | undefined {
+  const node = run.snapshot.definition.nodes.find((item) => item.id === nodeId)
+  const schema = (node?.config as { inputSchema?: unknown } | undefined)?.inputSchema
+  return schema && typeof schema === 'object' && !Array.isArray(schema) ? schema as Record<string, unknown> : undefined
 }
 
 function extractResult(messages: AgentMessage[]): unknown {
@@ -137,8 +143,20 @@ export async function executeWorkflowAgentNode(
   const initial = getWorkflowRun(workflowId, runId)
   if (!initial) throw new Error(`Workflow Run 不存在: ${runId}`)
   const node = initial.snapshot.definition.nodes.find((item) => item.id === nodeId)
+  const mapping = (node?.config as { inputMapping?: unknown } | undefined)?.inputMapping
+  const nodeInput = resolveWorkflowNodeInput(
+    mapping && typeof mapping === 'object' && !Array.isArray(mapping) ? mapping as Record<string, unknown> : undefined,
+    { input: initial.input, nodes: Object.fromEntries(Object.entries(initial.nodeRuns).map(([id, nodeRun]) => [id, { output: nodeRun.output, status: nodeRun.status }])) },
+  )
+  const inputSchema = getInputSchema(initial, nodeId)
+  if (inputSchema) {
+    const validation = validateWorkflowInput(nodeInput, inputSchema)
+    if (!validation.valid) {
+      return failWorkflowNode(workflowId, runId, nodeId, { code: 'input_schema_invalid', message: validation.errors.join('; '), category: 'validation', retryable: false })
+    }
+  }
   const leased = node?.kind === 'tool' ? acquireWorkflowSideEffectLease(workflowId, runId, nodeId) : undefined
-  const prompt = getNodePrompt(initial, nodeId, leased?.nodeRuns[nodeId]?.sideEffect?.idempotencyKey)
+  const prompt = getNodePrompt(initial, nodeId, nodeInput, leased?.nodeRuns[nodeId]?.sideEffect?.idempotencyKey)
   const policy = getNodeCapabilityPolicy(initial, nodeId)
   const runner = dependencies.runner ?? defaultRunner
   const sessionFactory = dependencies.sessionFactory ?? defaultSessionFactory
@@ -170,7 +188,7 @@ export async function executeWorkflowAgentNode(
 
   if (error) {
     if (node?.kind === 'tool') return requireWorkflowSideEffectIntervention(workflowId, runId, nodeId, `工具执行返回错误，无法确认远端是否已生效：${error}`)
-    return failWorkflowNode(workflowId, runId, nodeId, { code: 'agent_execution_failed', message: error, retryable: true })
+    return failWorkflowNode(workflowId, runId, nodeId, { code: 'agent_execution_failed', message: error, category: 'transient', retryable: true })
   }
   const result = extractResult(messages)
   const outputSchema = getOutputSchema(initial, nodeId)
@@ -178,7 +196,7 @@ export async function executeWorkflowAgentNode(
     const validation = validateWorkflowOutput(result, outputSchema)
     if (!validation.valid) {
       if (node?.kind === 'tool') return requireWorkflowSideEffectIntervention(workflowId, runId, nodeId, `工具已返回但输出校验失败，远端结果需要人工确认：${validation.errors.join('; ')}`)
-      return failWorkflowNode(workflowId, runId, nodeId, { code: 'output_schema_invalid', message: validation.errors.join('; '), retryable: true })
+      return failWorkflowNode(workflowId, runId, nodeId, { code: 'output_schema_invalid', message: validation.errors.join('; '), category: 'validation', retryable: false })
     }
   }
   return completeWorkflowNode(workflowId, runId, nodeId, {

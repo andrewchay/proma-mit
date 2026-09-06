@@ -1,111 +1,35 @@
-import { describe, test, expect, mock, beforeAll, afterAll } from 'bun:test'
-import { buildElectronMock } from './testing/electron-mock'
-import type { SDKMessage, AgentStreamPayload, AgentProviderAdapter } from '@gravitas/shared'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { createAgentWorkspace, getAgentWorkspaceCwd } from './agent-workspace-manager'
+import { ElectronRuntimeWorkspaceStore } from './agent-runtime/runtime-services'
 
-// mock electron：orchestrator 顶层及相关服务依赖真实 Electron，测试环境无
-mock.module('electron', () => buildElectronMock())
-
-const { AgentOrchestrator } = await import('./agent-orchestrator')
-const { AgentEventBus } = await import('./agent-event-bus')
-import type { SessionCallbacks } from './agent-orchestrator'
-
-type Orchestrator = InstanceType<typeof AgentOrchestrator>
-
-/** 记录 query 收到的 options（捕获 cwd/agentCwd），用于断言项目目录覆盖生效。 */
-function makeCapturingAdapter(records: Array<unknown>): AgentProviderAdapter {
-  return {
-    query(options: unknown): AsyncIterable<SDKMessage> {
-      records.push(options)
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield { type: 'result', subtype: 'success' } as unknown as SDKMessage
-        },
-      }
-    },
-    abort() {},
-    dispose() {},
+describe('本地项目正式工作区合同', () => {
+  const original = process.env.PROMA_TEST_CONFIG_DIR
+  let directory: string | undefined
+  afterEach(() => {
+    if (original === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+    else process.env.PROMA_TEST_CONFIG_DIR = original
+    if (directory) rmSync(directory, { recursive: true, force: true })
+  })
+  function project() {
+    directory = mkdtempSync(join(tmpdir(), 'gravitas-project-cwd-'))
+    process.env.PROMA_TEST_CONFIG_DIR = join(directory, 'config')
+    const path = join(directory, 'project')
+    mkdirSync(path)
+    return { workspace: createAgentWorkspace('本地项目', path), path: realpathSync(path) }
   }
-}
-
-function makeFakeRuntimeServices(emit: (sid: string, p: AgentStreamPayload) => void) {
-  return {
-    credentials: { resolveChannel: async () => undefined },
-    workspaces: { resolveWorkspaceContext: () => ({ cwd: '/fake-ws-cwd' }) },
-    sessions: { getHistoryMessages: () => [], appendMessages: () => {}, truncateMessages: () => [] },
-    events: { emit },
-    mcp: {},
-  } as unknown as ConstructorParameters<typeof AgentOrchestrator>[2]
-}
-
-const EMPTY_CALLBACKS: SessionCallbacks = { onError: () => {}, onComplete: () => {}, onTitleUpdated: () => {} }
-
-const TEST_PROJECT_DIR = join(tmpdir(), 'proma-test-projdir')
-const MISSING_PROJECT_DIR = join(tmpdir(), 'definitely-not-exist-xyz-123')
-
-function ensureTestProjectDir() {
-  if (!existsSync(TEST_PROJECT_DIR)) mkdirSync(TEST_PROJECT_DIR, { recursive: true })
-}
-
-describe('Agent 编排 独立项目目录（projectDir）覆盖', () => {
-  let orchestrator: Orchestrator
-  const records: Array<unknown> = []
-  const errors: string[] = []
-
-  beforeAll(() => {
-    const eventBus = new AgentEventBus()
-    orchestrator = new AgentOrchestrator(
-      makeCapturingAdapter(records),
-      eventBus,
-      makeFakeRuntimeServices((sid, p) => eventBus.emit(sid, p)),
-    )
+  test('Given 绑定已有项目 When runtime 解析 workspaceId Then 使用实际项目根目录', () => {
+    const { workspace, path } = project()
+    expect(new ElectronRuntimeWorkspaceStore().resolveWorkspaceContext({ workspaceId: workspace.id, sessionId: 'session' }).cwd).toBe(path)
+    // Pi 与 Claude 复用同一正式工作区 cwd 函数。
+    expect(getAgentWorkspaceCwd(workspace, 'session')).toBe(path)
   })
-
-  afterAll(() => {
-    if (existsSync(TEST_PROJECT_DIR)) rmSync(TEST_PROJECT_DIR, { recursive: true, force: true })
-  })
-
-  test('provider-agnostic runtime：传 projectDir 时 query cwd 使用项目目录', async () => {
-    ensureTestProjectDir()
-    await (orchestrator as unknown as { runProviderAgnosticAgent(o: unknown): Promise<void> }).runProviderAgnosticAgent({
-      sessionId: 's-pa-cwd',
-      agentRuntime: 'proma',
-      channelId: 'c',
-      workspaceId: undefined,
-      projectDir: TEST_PROJECT_DIR,
-      userMessage: 'hello',
-      modelId: 'm',
-      provider: 'anthropic',
-      apiKey: 'k',
-      baseUrl: 'https://x',
-      callbacks: EMPTY_CALLBACKS,
-    }).catch(() => {})
-
-    const opts = records[records.length - 1] as { cwd?: string }
-    expect(opts?.cwd).toBe(TEST_PROJECT_DIR)
-  })
-
-  test('pi runtime：projectDir 指向不存在目录时在调用模型前即报错', async () => {
-    const before = records.length
-    const errsBefore = errors.length
-    await (orchestrator as unknown as { runPiAgent(o: unknown): Promise<void> }).runPiAgent({
-      sessionId: 's-pi-bad',
-      channelId: 'c',
-      workspaceId: undefined,
-      projectDir: MISSING_PROJECT_DIR,
-      userMessage: 'hello',
-      modelId: 'm',
-      provider: 'anthropic',
-      apiKey: 'k',
-      baseUrl: 'https://x',
-      callbacks: { onError: (e: string) => errors.push(e), onComplete: () => {}, onTitleUpdated: () => {} },
-    }).catch(() => {})
-
-    // 未触发模型 query，且产生项目目录报错
-    expect(records.length).toBe(before)
-    expect(errors.length).toBeGreaterThan(errsBefore)
-    expect(errors[errors.length - 1]).toContain('项目目录不可用')
+  test('Given 项目目录已移除 When runtime 解析 Then 在执行前明确拒绝', () => {
+    const { workspace, path } = project()
+    rmSync(path, { recursive: true })
+    expect(() => new ElectronRuntimeWorkspaceStore().resolveWorkspaceContext({ workspaceId: workspace.id, sessionId: 'session' })).toThrow('本地项目文件夹不可用')
+    expect(() => getAgentWorkspaceCwd(workspace, 'session')).toThrow('本地项目文件夹不可用')
   })
 })

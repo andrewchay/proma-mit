@@ -41,10 +41,10 @@ import { createCoreTools, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, A
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from '../agent-runtime/prompt-builder'
 import { maybeAutoCompact, compactSessionNow, COMPACT_CONTEXT_TOOL_NAME } from '../agent-runtime/context-compaction'
-import { getAgentSessionSDKMessages } from '../agent-session-manager'
+import { getAgentSessionMeta, getAgentSessionSDKMessages } from '../agent-session-manager'
 import { enrichMessageWithDocuments, enrichHistoryWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
 import { withRetry } from '../agent-runtime/retry'
-import { isTransientNetworkError } from '../error-patterns'
+import { isContextOverflowError, isTransientNetworkError } from '../error-patterns'
 import { isImageAttachment } from '../attachment-service'
 import type { RuntimeMessage } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
@@ -88,6 +88,7 @@ interface ToolCallExecutionCtx {
     apiKey: string
     baseUrl: string
     model: string
+    audit?: Omit<import('../context-compaction-audit-service').ContextCompactionAuditInput, 'packetVersion'>
   }
   /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
   workspaceSlug?: string
@@ -152,6 +153,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
     parameters: Record<string, unknown>
     execute(input: Record<string, unknown>): Promise<string>
   }>
+  /** 已解析运行时工具：保留正式 execute 的错误语义与 ToolContext。 */
+  runtimeTools?: RuntimeToolDefinition[]
   /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表（自研 runtime 按需提示读取） */
   skillMentions?: string[]
 }
@@ -198,6 +201,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       onAskUser,
       runSubAgent,
       extraTools,
+      runtimeTools,
       onGoalCheckpoint,
       skillMentions,
     } = input
@@ -240,6 +244,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     const tools: RuntimeToolDefinition[] = [
       ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
       ...mcpTools,
+      ...(runtimeTools ?? []),
       ...(extraTools ?? []).map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -269,7 +274,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       const proxyUrl = await getEffectiveProxyUrl()
       const fetchFn = getFetchFn(proxyUrl)
 
-      // 自动上下文压缩：历史条数超过阈值时，用 LLM 摘要早期历史并保留最近消息。
+      // 自动上下文压缩：优先按同模型的已报告 token 与已确认窗口判断；缺少观测时兼容历史条数回退。
       // 压缩后以新历史继续本轮；boundary 摘要已持久化，后续 query 自然读到。
       let effectiveHistoryMessages = input.historyMessages ?? []
       if (effectiveHistoryMessages.length > 0 && provider && apiKey && baseUrl) {
@@ -281,7 +286,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           baseUrl,
           model: model || '',
           historyMessages: effectiveHistoryMessages,
+          observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
           signal: controller.signal,
+          audit: { sessionId, runtime: 'proma', trigger: 'automatic' },
         })
         if (auto.compacted) {
           effectiveHistoryMessages = auto.history
@@ -292,6 +299,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       // 流式追加支持：外层 while 每轮处理一个用户消息（首轮为原始 prompt，追加轮为 queued 文本）。
       let currentTurnPrompt = prompt
       let currentTurnImages: FileAttachment[] = attachments?.filter((att) => isImageAttachment(att.mediaType)) ?? []
+      let contextOverflowRecovered = false
 
       while (!activeSession.cancelled) {
         // 本轮产生的 SDKMessage（assistant + tool_result），跨轮追加时纳入历史
@@ -456,6 +464,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
             apiKey,
             baseUrl,
             model: model || '',
+            audit: { sessionId, runtime: 'proma', trigger: 'manual' },
           },
           onEnterPlanMode: () => {
             planModeEntered = true
@@ -516,6 +525,27 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         ]
       }
         } catch (error) {
+          // 上下文超限发生在 streamSSE 返回前，尚未执行工具；仅允许压缩并重试一次。
+          if (!contextOverflowRecovered && isContextOverflowError(getErrorMessage(error)) && effectiveHistoryMessages.length > 0) {
+            const recovered = await compactSessionNow({
+              sessionId,
+              provider,
+              adapterProvider,
+              apiKey,
+              baseUrl,
+              model: model || "",
+              historyMessages: effectiveHistoryMessages,
+              signal: controller.signal,
+              audit: { sessionId, runtime: "proma", trigger: "overflow_recovery" },
+            })
+            if (recovered.compacted) {
+              contextOverflowRecovered = true
+              effectiveHistoryMessages = recovered.history
+              console.warn("[Agent Runtime] 上下文超限，已压缩并重试一次: sessionId=" + sessionId)
+              continue
+            }
+          }
+
           // 软中断：controller.abort() 让 streamSSE 抛错；若有追加消息则继续下一轮，否则重新抛出
           if (!activeSession.interrupted || activeSession.cancelled) throw error
           activeSession.interrupted = false

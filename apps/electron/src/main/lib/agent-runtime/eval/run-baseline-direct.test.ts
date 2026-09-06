@@ -7,7 +7,11 @@
  * 中的渠道解析逻辑，避免加载 channel-manager（它依赖 electron safeStorage）。
  */
 
-import { test, expect } from 'bun:test'
+import { test, expect, beforeAll } from 'bun:test'
+import { cpSync } from 'node:fs'
+import { join } from 'node:path'
+import { getBenchmarksRootDir } from '../../config-paths'
+beforeAll(() => cpSync(join(import.meta.dir, 'benchmarks'), getBenchmarksRootDir(), { recursive: true }))
 import { runBaseline, requireBenchmark } from './commands'
 import type { SubAgentDelegate } from './evaluator'
 

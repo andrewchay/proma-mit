@@ -1,3 +1,4 @@
+import type { UserMappingInput } from '@gravitas/shared'
 /**
  * ProjectView - 项目管理模块主视图（P1.1 版本）
  *
@@ -44,7 +45,7 @@ interface ContactPickerProps {
 function ContactPicker({ value, onChange, placeholder, includeAgents, onMemberSelect }: ContactPickerProps): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [searching, setSearching] = useState(false)
+  const [_searching, setSearching] = useState(false)
   const [members, setMembers] = useState<MemberResult[]>([])
   const [feishuUsers, setFeishuUsers] = useState<ExternalContact[]>([])
   const [dingtalkUsers, setDingtalkUsers] = useState<ExternalContact[]>([])
@@ -103,7 +104,7 @@ function ContactPicker({ value, onChange, placeholder, includeAgents, onMemberSe
     const name = c.name
     const paaUserId = `paa-${name}`
     try {
-      const existing = await callProjectAPI<any>("getUserMapping", paaUserId)
+      const existing = await callProjectAPI<Partial<UserMappingInput> | null>("getUserMapping", paaUserId)
       const base = existing && typeof existing === "object" ? existing : {}
       const mapping = {
         paaUserId,
@@ -133,7 +134,7 @@ function ContactPicker({ value, onChange, placeholder, includeAgents, onMemberSe
     }
     const paaUserId = `paa-${name}`
     try {
-      const existing = await callProjectAPI<any>("getUserMapping", paaUserId)
+      const existing = await callProjectAPI<Partial<UserMappingInput> | null>("getUserMapping", paaUserId)
       const base = existing && typeof existing === "object" ? existing : {}
       await callProjectAPI("saveUserMapping", {
         paaUserId,
@@ -403,7 +404,7 @@ export function ProjectView(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team'>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, _setIsLoading] = useState(false)
   const userProfile = useAtomValue(userProfileAtom)
 
   const loadProjects = useCallback(async () => {

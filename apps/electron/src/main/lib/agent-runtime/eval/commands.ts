@@ -7,15 +7,19 @@
  */
 
 import { appendEvaluation, readBenchmark, readScoreboard } from './benchmark-store'
-import { evaluateCaseRun, type EvalProgressCallback, type ScoreDelegate, type SubAgentDelegate } from './evaluator'
+import { evaluateCaseRun, meanStd, type EvalProgressCallback, type ScoreDelegate, type SubAgentDelegate } from './evaluator'
 import { selfEvolve, type ProposeChange, type StateGuard } from './self-evolver'
-import type { BenchmarkConfig, BenchmarkEvaluation, SelfEvolveChange } from './types'
+import type { BenchmarkConfig, BenchmarkEvaluation, HeldOutReport, JudgeIdentity, SelfEvolveChange } from './types'
 
 export interface RunBaselineOptions {
   benchmark: BenchmarkConfig
   delegate: SubAgentDelegate
   /** 可选：更准的 LLM 打分回调 */
   scoreDelegate?: ScoreDelegate
+  /** 本次评判者身份（评估器独立性审计），写入 evaluation */
+  judge?: JudgeIdentity | null
+  /** 是否评测 held-out Case 集（迁移测试；不参与任何优化，仅落盘对照） */
+  includeHeldOut?: boolean
   /** 当前被测 Agent 状态版本（快照层维护） */
   agentVersion: number
   abortSignal?: AbortSignal
@@ -27,6 +31,8 @@ export interface BaselineSummary {
   benchmarkId: string
   agentVersion: number
   score: number
+  /** held-out 迁移分（仅 includeHeldOut 时存在） */
+  heldOutScore?: number
   byCase: Array<{ caseId: string; score: number }>
   evaluationsBefore: number
 }
@@ -92,14 +98,45 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
   const total = byCase.length === 0
     ? 0
     : byCase.reduce((s, c) => s + c.score, 0) / byCase.length
+  // held-out 迁移评测（仅显式启用；不参与优化，只落盘对照）
+  let heldOut: HeldOutReport | null = null
+  if (opts.includeHeldOut && opts.benchmark.heldOutCases?.length) {
+    const heldOutByCase: typeof byCase = []
+    for (const caseId of opts.benchmark.heldOutCases) {
+      const result = await evaluateCaseAcrossRuns(
+        opts.benchmark,
+        caseId,
+        opts.agentVersion,
+        opts.delegate,
+        { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
+      )
+      heldOutByCase.push({ caseId, ...result })
+    }
+    heldOut = {
+      score: Math.round((heldOutByCase.reduce((s, c) => s + c.score, 0) / heldOutByCase.length) * 100) / 100,
+      scoreStd: meanStd(heldOutByCase.map((c) => c.score)).std,
+      cases: heldOutByCase.map((c) => ({
+        caseId: c.caseId,
+        score: c.score,
+        scoreStd: meanStd(c.runs.map((r) => r.score)).std,
+        runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath })),
+      })),
+    }
+  }
   const evaluation: BenchmarkEvaluation = {
     time: new Date().toISOString(),
     agentVersion: opts.agentVersion,
     score: Math.round(total * 100) / 100,
+    // 方差报告：跨 Case 分数的总体标准差（n<2 → null）
+    scoreStd: meanStd(byCase.map((c) => c.score)).std,
     runtime: opts.benchmark.runtime,
+    judge: opts.judge ?? null,
+    heldOut,
     cases: byCase.map((c) => ({
       caseId: c.caseId,
       score: c.score,
+      // 方差报告：多次 run 分数的总体标准差（n<2 → null）
+      scoreStd: meanStd(c.runs.map((r) => r.score)).std,
       runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath })),
     })),
   }
@@ -108,6 +145,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
     benchmarkId: opts.benchmark.id,
     agentVersion: opts.agentVersion,
     score: evaluation.score,
+    heldOutScore: heldOut?.score,
     byCase: byCase.map((c) => ({ caseId: c.caseId, score: c.score })),
     evaluationsBefore: before,
   }
@@ -117,6 +155,10 @@ export interface RunImproveOptions {
   benchmark: BenchmarkConfig
   delegate: SubAgentDelegate
   scoreDelegate?: ScoreDelegate
+  /** 本次评判者身份（评估器独立性审计），写入每条 evaluation */
+  judge?: JudgeIdentity | null
+  /** 是否在 baseline 与被接受候选上评测 held-out Case 集（迁移测试，检测过拟合） */
+  includeHeldOut?: boolean
   /** 候选生成器（默认从 scoreboard 最新成绩的失分 Case 生成，见 defaultPropose） */
   propose?: ProposeChange
   state: StateGuard
@@ -139,9 +181,10 @@ export interface ImproveSummary {
 /** 跑一次 Improve 闭环。 */
 export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummary> {
   // Baseline 由 selfEvolver 内部完成
-  const delegateForEvolve = (def: unknown, benchmark: BenchmarkConfig) =>
+  // 构造指定 Case 集的评测函数：train 集驱动优化；held-out 集仅在对照启用时评测
+  const makeEvaluator = (caseIds: string[]) => (def: unknown, benchmark: BenchmarkConfig) =>
     Promise.all(
-      benchmark.cases.map(async (caseId) => {
+      caseIds.map(async (caseId) => {
         const version = opts.state.version()
         // def 为候选（change.afterState）：若带 prompt 字段则作为系统提示覆盖
         const candidatePrompt =
@@ -165,6 +208,10 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
         }
       }),
     )
+  const delegateForEvolve = makeEvaluator(opts.benchmark.cases)
+  const evaluateHeldOut = opts.includeHeldOut && opts.benchmark.heldOutCases?.length
+    ? makeEvaluator(opts.benchmark.heldOutCases)
+    : undefined
 
   const out = await selfEvolve({
     benchmark: opts.benchmark,
@@ -172,6 +219,8 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
     propose: opts.propose ?? (async () => null),
     evaluate: delegateForEvolve,
     state: opts.state,
+    judge: opts.judge,
+    evaluateHeldOut,
   })
 
   // 把每个被接受候选的 afterState 回调出去（供“采纳写回”捕获最佳改进）

@@ -49,7 +49,7 @@ export function PaidCampaignsPanel(): React.ReactElement {
   const [goalRoi, setGoalRoi] = React.useState<number | ''>('')
   const [nameError, setNameError] = React.useState('')
 
-  const load = async (): Promise<void> => {
+  const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const list = (await window.electronAPI.paa.marketing.paidMedia.listCampaigns()) as Campaign[]
@@ -57,11 +57,11 @@ export function PaidCampaignsPanel(): React.ReactElement {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   React.useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   const addCampaign = async (): Promise<void> => {
     const check = validateName(name)

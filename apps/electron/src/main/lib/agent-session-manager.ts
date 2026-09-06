@@ -57,6 +57,7 @@ import type {
   AgentSessionReferenceSearchInput,
   AgentSessionReferenceSearchResult,
   AgentRuntime,
+  ContextPacket,
 } from '@gravitas/shared'
 import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@gravitas/shared'
 import { getConversationMessages } from './conversation-manager'
@@ -433,7 +434,7 @@ function convertLegacyMessage(legacy: AgentMessage): SDKMessage {
  */
 export function updateAgentSessionMeta(
   id: string,
-  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'modelId' | 'sourceAutomationId' | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal' | 'agentRuntime' | 'sdkSessionId' | 'workspaceId' | 'pinned' | 'archived' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'permissionMode' | 'goalId' | 'maxBudgetUsd' | 'spentBudgetUsd'>>,
+  updates: Partial<Pick<AgentSessionMeta, 'title' | 'channelId' | 'modelId' | 'sourceAutomationId' | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal' | 'agentRuntime' | 'sdkSessionId' | 'workspaceId' | 'pinned' | 'archived' | 'attachedDirectories' | 'attachedFiles' | 'forkSourceDir' | 'forkSourceSdkSessionId' | 'resumeAtMessageUuid' | 'stoppedByUser' | 'permissionMode' | 'goalId' | 'maxBudgetUsd' | 'spentBudgetUsd' | 'lastContextUsage'>>,
 ): AgentSessionMeta {
   const index = readIndex()
   const idx = index.sessions.findIndex((s) => s.id === id)
@@ -1059,7 +1060,7 @@ export function truncateSDKMessages(id: string, upToUuidInclusive: string): SDKM
  *
  * 供 Proma / AI SDK runtime 的自研压缩使用（Pi runtime 走 Pi SDK 原生 session.compact()）。
  */
-export function compactSDKMessages(id: string, summary: string, keepRecent: number): SDKMessage[] {
+export function compactSDKMessages(id: string, summary: string, keepRecent: number, contextPacket?: ContextPacket): SDKMessage[] {
   const messages = getAgentSessionSDKMessages(id)
   const keepCount = Math.max(0, Math.min(keepRecent, messages.length))
   const kept = messages.slice(messages.length - keepCount)
@@ -1068,6 +1069,7 @@ export function compactSDKMessages(id: string, summary: string, keepRecent: numb
     subtype: 'compact_boundary',
     session_id: id,
     summary,
+    contextPacket,
   } as unknown as SDKMessage
   const result = [boundary, ...kept]
 

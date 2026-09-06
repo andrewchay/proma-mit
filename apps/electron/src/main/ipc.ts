@@ -180,6 +180,7 @@ import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveF
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
+import { getContextCompactionMetrics } from './lib/context-compaction-audit-service'
 import {
   createWorkspaceSnapshot,
   listWorkspaceSnapshots,
@@ -1858,6 +1859,7 @@ export function registerIpcHandlers(): void {
     return next.computerUse ?? { enabled: true, readOnlyOnly: false }
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@gravitas/shared').AgentAuditQuery) => listAgentAuditEvents(query))
+  ipcMain.handle(AGENT_IPC_CHANNELS.GET_CONTEXT_COMPACTION_METRICS, async () => getContextCompactionMetrics())
   ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@gravitas/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
     const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()!, {
       title: '导出操作审计', defaultPath: 'proma-operation-audit.jsonl', filters: [{ name: 'JSON Lines', extensions: ['jsonl'] }],

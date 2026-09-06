@@ -35,3 +35,8 @@ export function validateWorkflowOutput(value: unknown, schema: Record<string, un
   validate(value, schema, '$', errors)
   return { valid: errors.length === 0, errors }
 }
+
+/** 输入和输出复用同一受限 JSON Schema 子集，避免执行前后契约语义漂移。 */
+export function validateWorkflowInput(value: unknown, schema: Record<string, unknown>): WorkflowOutputValidationResult {
+  return validateWorkflowOutput(value, schema)
+}

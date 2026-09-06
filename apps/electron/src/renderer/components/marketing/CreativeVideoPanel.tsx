@@ -23,24 +23,32 @@ export function CreativeVideoPanel(): React.ReactElement {
   const [category, setCategory] = React.useState('')
   const [sellingPoints, setSellingPoints] = React.useState('')
   const [platform, setPlatform] = React.useState<'xiaohongshu' | 'douyin' | 'bilibili' | 'weibo'>('douyin')
-  const [duration, setDuration] = React.useState(15)
-  const [engine, setEngine] = React.useState<'seedance' | 'minimax-h3'>('seedance')
+  const [duration, _setDuration] = React.useState(15)
+  const [engine] = React.useState<'seedance' | 'minimax-h3'>('seedance')
   const [credOk, setCredOk] = React.useState<boolean | null>(null)
   const [credMsg, setCredMsg] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [storyboard, setStoryboard] = React.useState<StoryboardShotView[] | null>(null)
   const [error, setError] = React.useState('')
 
-  const checkCredential = async (): Promise<void> => {
-    const res = (await window.electronAPI.paa.marketing.creative.checkCredential(engine)) as { ok: boolean; error?: string }
-    setCredOk(res.ok)
-    setCredMsg(res.ok ? '引擎就绪' : (res.error ?? ''))
-    setEngine(e => e) // no-op keep
-  }
-
   React.useEffect(() => {
+    let cancelled = false
+    setCredOk(null)
+    setCredMsg('')
+    const checkCredential = async (): Promise<void> => {
+      try {
+        const res = (await window.electronAPI.paa.marketing.creative.checkCredential(engine)) as { ok: boolean; error?: string }
+        if (cancelled) return
+        setCredOk(res.ok)
+        setCredMsg(res.ok ? '引擎就绪' : (res.error ?? ''))
+      } catch (error) {
+        if (cancelled) return
+        setCredOk(false)
+        setCredMsg(error instanceof Error ? error.message : '引擎凭据检查失败')
+      }
+    }
     void checkCredential()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { cancelled = true }
   }, [engine])
 
   const handleGenerate = async (): Promise<void> => {

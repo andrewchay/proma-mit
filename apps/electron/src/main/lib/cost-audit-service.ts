@@ -38,17 +38,13 @@ export interface CostAuditReport {
 }
 
 /** 懒加载数据源（token-usage-service 依赖 electron，避免单测/无 electron 环境加载崩溃） */
-function records(): (q: import('@gravitas/shared').TokenUsageQuery) => Array<{
-  sessionId: string; modelId?: string; workspaceId?: string; costTotal?: number; totalTokens?: number
-}> {
-  const { getTokenUsageRecords } = require('./token-usage-service') as { getTokenUsageRecords: (q: import('@gravitas/shared').TokenUsageQuery) => Array<any> }
+function records(): typeof import('./token-usage-service').getTokenUsageRecords {
+  const { getTokenUsageRecords } = require('./token-usage-service') as typeof import('./token-usage-service')
   return getTokenUsageRecords
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_SPIKE_RATIO = 2
-
-type UsageRow = { sessionId: string; modelId?: string; workspaceId?: string; costTotal?: number; totalTokens?: number }
 
 export function runCostAudit(input: CostAuditInput = {}): CostAuditReport {
   const now = Date.now()
@@ -58,8 +54,8 @@ export function runCostAudit(input: CostAuditInput = {}): CostAuditReport {
   const prevStart = windowStart - windowMs
 
   const get = records()
-  const current = get({ from: windowStart, to: now, limit: 5000 }) as UsageRow[]
-  const previous = get({ from: prevStart, to: windowStart, limit: 5000 }) as UsageRow[]
+  const current = get({ from: windowStart, to: now, limit: 5000 })
+  const previous = get({ from: prevStart, to: windowStart, limit: 5000 })
   console.log(`[Diag][cost-audit] 窗口 ${windowMs}ms: 当前 ${current.length} 条 / 上一 ${previous.length} 条`)
 
   const totalCost = sumCost(current)

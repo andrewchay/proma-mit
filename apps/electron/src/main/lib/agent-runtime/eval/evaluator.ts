@@ -16,7 +16,8 @@ import { join } from 'node:path'
 import { readBenchmark, readCaseRubric, readCaseStatement } from './benchmark-store'
 import { assertRubricTotals100 } from './benchmark-store'
 import { getBenchmarkCaseStatementAssetsDir, getEvalRunWorkspaceDir } from '../../config-paths'
-import type { EvalRunResult, Rubric, RubricItem, BenchmarkConfig } from './types'
+import type { EvalRunResult, Rubric, RubricItem, BenchmarkConfig, EvalTarget } from './types'
+import { matchesToolTraceAssertion } from './trace-tool-behavior'
 
 /** 评测用的可观测执行事件。 */
 export interface EvalProgressEvent {
@@ -41,6 +42,8 @@ export interface SubAgentDelegateInput {
   abortSignal?: AbortSignal
   /** 评测运行时：delegate 把本次运行 trace 信息写回（runId + trace 路径） */
   runId?: string
+  /** 本次被测能力；delegate 据此解析目录定义并注册对应工具。 */
+  target?: EvalTarget
 }
 
 /** Delegate 返回：被测文本 + 可选 trace 信息。 */
@@ -121,6 +124,7 @@ export async function evaluateCaseRun(
       task: prompt,
       workspaceDir,
       runId,
+      target: { type: benchmark.targetType ?? 'agent', id: benchmark.targetAgentId },
       maxTurns: opts.maxTurns ?? 12,
       abortSignal: opts.abortSignal,
       systemPrompt: opts.systemPrompt,
@@ -209,6 +213,10 @@ function ruleScore(rubric: Rubric, output: string, traceText?: string): number {
   const evidence = `${output}\n${traceText ?? ''}`.toLowerCase()
   let earned = 0
   for (const item of rubric.items) {
+    if (item.toolTrace) {
+      if (matchesToolTraceAssertion(traceText, item.toolTrace)) earned += item.points
+      continue
+    }
     const keywords = keywordsFor(item)
     const matched = keywords.filter((keyword) => evidence.includes(keyword.toLowerCase()))
     const ratio = keywords.length === 0 ? 1 : matched.length / keywords.length
@@ -238,4 +246,17 @@ function keywordsFor(item: RubricItem): string[] {
 function clamp(n: number): number {
   if (Number.isNaN(n)) return 0
   return Math.max(0, Math.min(100, Math.round(n)))
+}
+
+/**
+ * 均值 + 总体标准差（方差报告，纯函数）。
+ * 采用总体标准差（除以 n）：scoreboard 的 runs 是既定事实全集而非抽样。
+ * n<2 时 std 为 null（单次观测谈不上方差）。
+ */
+export function meanStd(scores: number[]): { mean: number; std: number | null } {
+  if (scores.length === 0) return { mean: 0, std: null }
+  const mean = scores.reduce((s, v) => s + v, 0) / scores.length
+  if (scores.length < 2) return { mean, std: null }
+  const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / scores.length
+  return { mean, std: Math.round(Math.sqrt(variance) * 100) / 100 }
 }

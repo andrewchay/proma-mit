@@ -29,6 +29,31 @@ export interface EvalRuntimeRef {
   channelId?: string
 }
 
+/**
+ * 评判者身份（评估器独立性审计）。
+ *
+ * 综述基准（arXiv:2607.13104 §8.1.2）：若同一评判配置既驱动更新又报告终值，
+ * 系统会过优化到评判的潜在偏差。因此每条 evaluation 记录本次评判者身份：
+ * - kind: rule=规则打分（无模型耦合，天然独立）/ llm=LLM judge / injected=外部注入回调
+ * - independent: 评判渠道是否与「被测方/Builder 渠道」不同（channelId 或 modelId 不同）
+ */
+export interface JudgeIdentity {
+  kind: 'rule' | 'llm' | 'injected'
+  provider?: string
+  modelId?: string
+  channelId?: string
+  /** true = 评判者与被测/候选生成方解耦；false = 存在自我确认风险 */
+  independent: boolean
+}
+
+/** 评判预算（judge 资源隔离，综述 §8.1.2 延伸）：超限后 judge 停用并回退规则打分。 */
+export interface JudgeBudget {
+  /** 单次评测闭环内 judge 最大调用次数（独立计费桶的最小形态） */
+  maxCalls?: number
+  /** judge 输入中被测输出的最大字符数（max tokens 的代理上限，超出截断） */
+  maxPromptChars?: number
+}
+
 /** Benchmark 配置。 */
 export interface BenchmarkConfig {
   /** 语义 id（如 "subagent-code-review"），参与路径拼接，须为 [A-Za-z0-9._-] */
@@ -41,6 +66,20 @@ export interface BenchmarkConfig {
   targetAgentId: EvalTargetAgentId
   /** 评测运行时（provider + model） */
   runtime: EvalRuntimeRef
+  /**
+   * 可选：独立评判运行时（LLM judge）。
+   * 不配置时回退规则打分；配置后 judge 用该渠道/模型评分，
+   * 与 runtime（被测方/候选生成方）不同即视为独立评判（综述 §8.1.2）。
+   */
+  judgeRuntime?: EvalRuntimeRef
+/** 可选：judge 预算隔离（调用次数 / 输入规模上限） */
+  judgeBudget?: JudgeBudget
+  /**
+   * 可选：held-out Case id 列表（迁移测试，综述 §8.1.1）。
+   * 与 cases（训练集）必须不相交；不参与 improve 优化循环，
+   * 仅在 includeHeldOut 时评测并单独落盘，用于检测对训练 benchmark 的过拟合。
+   */
+  heldOutCases?: string[]
   /** 每 Case 运行次数（默认 1） */
   runsPerCase: number
   /** 期望基准分 0..100 */
@@ -58,6 +97,25 @@ export interface RubricItem {
   points: number
   /** 判定标准（仅供评分器/人工参考，绝不被测方可见） */
   check: string
+  /**
+   * 可选的真实工具行为断言。存在时，分数只由 append-only trace 中的 tool_use /
+   * tool_result 决定，不能由模型在文本里提及工具名冒充。
+   */
+  toolTrace?: ToolTraceAssertion
+}
+
+/** 对一次或多次真实工具调用的可序列化断言。 */
+export interface ToolTraceAssertion {
+  /** 必须至少出现一次的工具名；数组表示任一即可。 */
+  name?: string | string[]
+  /** 调用参数中必须存在的字段。 */
+  requiredArguments?: string[]
+  /** 必须严格相等的关键原始参数（仅支持 JSON 原始值，保持 benchmark 可审计）。 */
+  expectedArguments?: Record<string, string | number | boolean>
+  /** 工具执行结果必须为成功或错误。 */
+  result?: 'success' | 'error'
+  /** trace 中不得出现的工具名。 */
+  forbiddenNames?: string[]
 }
 
 /** Case 私有 rubric（总分恒为 100）。 */
@@ -99,9 +157,19 @@ export interface ScoreboardCaseRun {
 export interface ScoreboardCase {
   caseId: string
   score: number
+  /** 多次 run 分数的总体标准差（n<2 时为 null）；方差报告，防单次随机性误读 */
+  scoreStd?: number | null
   costUsd?: number | null
   durationMs?: number | null
   runs: ScoreboardCaseRun[]
+}
+
+/** held-out 迁移评测结果（附在 evaluation 上，与训练分数并列）。 */
+export interface HeldOutReport {
+  score: number
+  /** 跨 Case 总体标准差（n<2 → null） */
+  scoreStd?: number | null
+  cases: ScoreboardCase[]
 }
 
 /** 一次完整的评测结果（作为 scoreboard 里一个 evaluation 条目）。 */
@@ -112,6 +180,12 @@ export interface BenchmarkEvaluation {
   costUsd?: number | null
   durationMs?: number | null
   runtime: EvalRuntimeRef
+  /** 本次评判者身份（评估器独立性审计）；null=未记录（历史数据） */
+  judge?: JudgeIdentity | null
+  /** 各 Case 分数的总体标准差（n<2 时为 null）；mean±std 方差报告 */
+  scoreStd?: number | null
+  /** held-out 迁移分数（仅 includeHeldOut 时评测）；null/缺省 = 未评测 */
+  heldOut?: HeldOutReport | null
   summary?: string
   cases: ScoreboardCase[]
 }

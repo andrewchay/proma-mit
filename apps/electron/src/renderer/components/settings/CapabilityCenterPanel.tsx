@@ -4,7 +4,7 @@
  * 列出领域能力包（业务包 + 共享能力），支持订阅 / 取消订阅。
  * 订阅后才在侧边栏显示对应导航，并支持切换视图。
  */
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtom } from 'jotai'
 import { Users, Megaphone, ImageIcon, Check } from 'lucide-react'
 import {

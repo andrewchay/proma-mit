@@ -1,0 +1,31 @@
+/** 内置营销执行器：保留惰性加载，由 esbuild 纳入安装包，避免依赖用户目录中的源码相对路径。 */
+interface DirectoryExecutor { execute(input: unknown): Promise<unknown> }
+const executors: Record<string, () => DirectoryExecutor> = {
+  "ma_generate_outreach": () => require('../../../default-tools/marketing/influencer/connect-bot/execute.ts'),
+  "ma_audit_content": () => require('../../../default-tools/marketing/influencer/content-audit/execute.ts'),
+  "ma_generate_creative_brief": () => require('../../../default-tools/marketing/influencer/creative-pilot/execute.ts'),
+  "ma_kol_crm": () => require('../../../default-tools/marketing/influencer/kol-crm/execute.ts'),
+  "ma_kol_portal": () => require('../../../default-tools/marketing/influencer/kol-portal/execute.ts'),
+  "ma_search_kols": () => require('../../../default-tools/marketing/influencer/kol-search/execute.ts'),
+  "ma_match_kols": () => require('../../../default-tools/marketing/influencer/match-ai/execute.ts'),
+  "ma_generate_script": () => require('../../../default-tools/marketing/influencer/script-studio/execute.ts'),
+  "ma_forecast_budget": () => require('../../../default-tools/marketing/paid-media/budget-forecast/execute.ts'),
+  "ma_campaign_get": () => require('../../../default-tools/marketing/paid-media/campaign-agent/execute.ts'),
+  "ma_campaign_audit": () => require('../../../default-tools/marketing/paid-media/campaign-audit/execute.ts'),
+  "ma_campaign_brief_get": () => require('../../../default-tools/marketing/paid-media/campaign-brief-get/execute.ts'),
+  "ma_campaign_brief_update": () => require('../../../default-tools/marketing/paid-media/campaign-brief-update/execute.ts'),
+  "ma_campaign_kol_add": () => require('../../../default-tools/marketing/paid-media/campaign-kol-add/execute.ts'),
+  "ma_campaign_kol_list": () => require('../../../default-tools/marketing/paid-media/campaign-kol-list/execute.ts'),
+  "ma_campaign_kol_status": () => require('../../../default-tools/marketing/paid-media/campaign-kol-status/execute.ts'),
+  "ma_optimize_campaign": () => require('../../../default-tools/marketing/paid-media/campaign-optimizer/execute.ts'),
+  "ma_design_campaign_test": () => require('../../../default-tools/marketing/paid-media/campaign-tester/execute.ts'),
+  "ma_campaign_update": () => require('../../../default-tools/marketing/paid-media/campaign-update/execute.ts'),
+  "ma_get_content_benchmarks": () => require('../../../default-tools/marketing/paid-media/content-benchmarks/execute.ts'),
+  "ma_analyze_content_performance": () => require('../../../default-tools/marketing/paid-media/content-performance/execute.ts'),
+  "ma_add_content_tracking": () => require('../../../default-tools/marketing/paid-media/content-tracking/execute.ts'),
+  "ma_generate_phase_report": () => require('../../../default-tools/marketing/paid-media/ma-phase-reviewer/execute.ts'),
+  "ma_generate_strategy": () => require('../../../default-tools/marketing/paid-media/strategy-iq/execute.ts'),
+  "ma_suggest_traffic_strategy": () => require('../../../default-tools/marketing/paid-media/traffic-strategy/execute.ts'),
+  "ma_generate_storyboard": () => require('../../../default-tools/marketing/shared/storyboard/execute.ts'),
+}
+export function getBundledMarketingExecutor(id: string): DirectoryExecutor | undefined { return executors[id]?.() }

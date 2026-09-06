@@ -367,8 +367,10 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     userProfile.userName, 
     activeToolIds, 
     setChatStreamErrors, 
-    setStreamingStates, // 取消 draft 标记，让会话出现在侧边栏
-      setDraftSessionIds
+    setStreamingStates,
+    isStreaming,
+    setQueuedChatMessages,
+    setDraftSessionIds, // 取消 draft 标记，让会话出现在侧边栏
   ])
 
   // ===== 自动发送快速任务消息 =====
@@ -390,7 +392,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
         attachments: pending.attachments,
       })
     })
-  }, [chatPendingMessage, conversationId, selectedModel, isStreaming, handleSend])
+  }, [chatPendingMessage, conversationId, selectedModel, handleSend])
 
   /** 从某条消息起截断（包含该条） */
   const truncateFromMessage = React.useCallback(async (
