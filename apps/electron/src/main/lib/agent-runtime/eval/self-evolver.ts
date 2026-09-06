@@ -11,7 +11,8 @@
  */
 
 import { appendEvaluation, readScoreboard } from './benchmark-store'
-import type { BenchmarkConfig, BenchmarkEvaluation, SelfEvolveChange, SelfEvolveRoundResult } from './types'
+import { meanStd } from './evaluator'
+import type { BenchmarkConfig, BenchmarkEvaluation, HeldOutReport, JudgeIdentity, SelfEvolveChange, SelfEvolveRoundResult } from './types'
 
 /** 评测单个 Case × run 的分数（含成本/耗时可选）。null=评测失败。 */
 export interface CaseEval {
@@ -46,6 +47,13 @@ export interface EvolveInput {
   propose: ProposeChange
   evaluate: EvaluateState
   state: StateGuard
+  /** 本次评判者身份（评估器独立性审计），写入每条 evaluation */
+  judge?: JudgeIdentity | null
+  /**
+   * 可选：held-out 迁移评测（综述 §8.1.1）。对不参与优化的 held-out Case 集评测，
+   * 在 baseline 与每个被接受候选上各跑一次并落盘——训练分涨而 held-out 不涨即为过拟合信号。
+   */
+  evaluateHeldOut?: EvaluateState
 }
 
 export interface EvolveOutput {
@@ -66,12 +74,30 @@ function averageCaseScore(cases: CaseEval[]): number | null {
   return scored.reduce((s, c) => s + (c.score as number), 0) / scored.length
 }
 
+/** 由 CaseEval 列表构造 held-out 报告。 */
+function toHeldOutReport(byCase: CaseEval[]): HeldOutReport {
+  const total = averageCaseScore(byCase) ?? 0
+  return {
+    score: Math.round(total * 100) / 100,
+    scoreStd: meanStd(byCase.filter((c) => c.score !== null).map((c) => c.score as number)).std,
+    cases: byCase.map((c) => ({
+      caseId: c.caseId,
+      score: c.score ?? 0,
+      costUsd: c.costUsd ?? null,
+      durationMs: c.durationMs ?? null,
+      runs: c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId, tracePath: c.tracePath }] : [],
+    })),
+  }
+}
+
 /** 构造一条 BenchmarkEvaluation（为 baseline 或被接受候选）。 */
 function buildEvaluation(
   benchmark: BenchmarkConfig,
   agentVersion: number,
   byCase: CaseEval[],
   time: string,
+  judge?: JudgeIdentity | null,
+  heldOutByCase?: CaseEval[] | null,
 ): BenchmarkEvaluation {
   const total = averageCaseScore(byCase) ?? 0
   return {
@@ -81,6 +107,10 @@ function buildEvaluation(
     costUsd: byCase.some((c) => c.costUsd != null) ? byCase.filter((c) => c.costUsd != null).reduce((s, c) => s + (c.costUsd as number), 0) : null,
     durationMs: byCase.some((c) => c.durationMs != null) ? byCase.filter((c) => c.durationMs != null).reduce((s, c) => s + (c.durationMs as number), 0) : null,
     runtime: benchmark.runtime,
+    judge: judge ?? null,
+    // 方差报告：跨 Case 分数的总体标准差（n<2 → null）
+    scoreStd: meanStd(byCase.filter((c) => c.score !== null).map((c) => c.score as number)).std,
+    heldOut: heldOutByCase ? toHeldOutReport(heldOutByCase) : null,
     cases: byCase.map((c) => ({
       caseId: c.caseId,
       score: c.score ?? 0,
@@ -105,7 +135,8 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   const baselineScore = averageCaseScore(baselineByCase) ?? 0
   // 记录 baseline 到 scoreboard（若无同版本记录）
   if (!sc.evaluations.some((e) => e.agentVersion === baselineVersion)) {
-    appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString()))
+    const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
+    appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline))
   }
 
   // 2) 迭代候选
@@ -139,7 +170,9 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
         rolledBack = true
       } else if (candidateTotal > currentScore) {
         accepted = true
-        appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString()))
+        // 被接受候选：同步评一次 held-out，检测"训练分涨、迁移分不涨"的过拟合
+        const heldOutCandidate = input.evaluateHeldOut ? await input.evaluateHeldOut(change.afterState, input.benchmark) : null
+        appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, heldOutCandidate))
         reason = `接受：${candidateTotal.toFixed(2)} > Reference ${currentScore.toFixed(2)}`
         currentScore = candidateTotal
         currentVersion = candidateVersion

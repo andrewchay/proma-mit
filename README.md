@@ -21,14 +21,14 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 - **Computer Use（macOS P0）**：Proma / AI SDK runtime 可在用户授权后列出显示器、读取指定屏幕截图、识别前台应用/窗口，并控制鼠标、键盘和滚动；屏幕读取和每一项桌面操作均经过 Agent 权限流程。
 - **SubAgent / Tasks**：复杂任务可以通过 Agent 工具拆分为子 Agent / Task，并在消息流中展示调用过程和结果；Pi / AI SDK / Claude runtime 均已复用同一套核心工具体系。
 - **Workflow 模式**：把反复要做的流程在画布上编排成可视化执行链（start / end、agent、tool、skill、transform、condition、approval 等节点），发布后可手动、定时或事件触发运行；支持节点能力白名单发布冻结、失败重试与错误路由、人工审批、无凭证模板的分发 / 升级 / 回滚，把可复用的工作流沉淀下来按设定的方式和时机反复执行。
-- **服务端 Web 路线（P0–P5 基础能力）**：提供独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；生产 OIDC/JWT、KMS 轮换、管理员审计、完整 Web UI 与真实 provider E2E 仍待后续阶段。
+- **服务端 Web 路线（P0–P5 基础能力）**：提供独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；OIDC/JWT、KMS 和管理员审计已有实现与离线测试；生产身份源、真实云 KMS、完整 Web 业务体验和真实 Provider 仍需按部署环境验收。
 - **Skills & MCP**：每个工作区可以独立配置 Skills、MCP Server 和工作区文件，适合沉淀可复用能力。
 - **工作模块（项目管理 / 日程管家 / 自动化）**：左侧工作模块提供企业级项目管理与任务跟踪（项目 / 任务 / 子任务 / 看板 / 会议纪要导入与 AI 提取 / 风险报告，支持飞书 / 钉钉同步，会议纪要可从钉钉 / 飞书 / Lark 云文档一键拉取并由 AI 自动提取任务草稿，并可定义 **AI 员工**——指派任务后由 Agent 无人值守执行并回写结果：默认安全模式、按任务申请 Bash/写文件/联网权限、同项目并发排队、60s 心跳保活、可绑定 Workflow SOP 作为执行器、项目摘要/风险报告/AI 团队效能看板纳入 AI 维度），与管理性子模块并行的还有日程管家（月视图日历 + 任务看板 + 自然语言创建 + 冲突检测 + 多日历源同步，含 macOS EventKit 桥接与智能提醒）与自动化（定时任务 + 运行记录 + 自动任务运行中心聚合）。工作模块与设置面板均为分组导航（模块注册表驱动），避免入口膨胀。项目管理同时支持 **项目工作区模式**（把 Agent 工作区直接绑定到本地项目目录，Agent 以该项目为根目录读写文件）与 **项目任务跟踪模式**（上面的项目 / 任务 / 看板体系），更多说明见下方「使用已有本地项目」与教程。
 - **远程机器人**：支持飞书 / Lark 机器人桥接，并已提供钉钉、微信桥接入口，用手机或群聊触发本机 Agent 工作流。
 - **记忆与工具**：Chat 和 Agent 可共享记忆能力，并支持联网搜索、内置 Chat 工具、Agent 推荐等辅助能力。
 - **目标管理（Goal，借鉴 LoopX）**：长生命周期目标跨会话追踪，支持 todos（所有权 / 声明）、用户门控（Gate）、证据沉淀与配额上限；会话可一键绑定到目标，Agent 运行中可主动读取 / 领取 / 完成 todo、追加证据，会话完成自动沉淀证据，自动化不可推进时自动阻断。后台 **目标（Goals）** 看板提供跨工作区聚合、阶段筛选、证据折叠导出与配额展示。
 - **Token 统计**：按会话 / 轮 / 工具 / Skill / MCP / 模型维度统计 token 消耗与费用，后台可查（\[设置 → Token 统计\]）。
-- **本地优先**：会话、工作区、附件、配置、Skills 等默认存储在 `~/.proma/`，使用 JSON / JSONL 文件组织，不依赖本地数据库。
+- **本地优先**：会话、工作区、附件、配置、Skills 等默认存储在 `~/.gravitas/`，核心会话和配置使用 JSON / JSONL；项目、营销和 Campaign 使用本地 SQLite，Context Store 保存可重建上下文索引。
 - **灵动岛（macOS）**：在主进程维护 Agent 会话状态机，仅在**需要用户关注**时触发灵动岛浮层——权限审批 / 计划确认 / 用户提问、任务失败、任务完成未读；任务执行中（无审批需求）不弹窗打扰，避免高频刷屏。所有会话均可点击打开导航，支持项目级静音与总开关。
 - **桌面体验**：自动更新、代理设置、文件预览、全局快捷键、快速任务窗口、语音输入、亮色 / 暗色 / 跟随系统主题。
 
@@ -36,7 +36,7 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 
 ### 下载安装
 
-从 [GitHub Releases](https://github.com/ErlichLiu/Proma/releases) 下载开源版本。当前 release notes 以 `v0.9.12` 为准，提供 macOS Apple Silicon、macOS Intel 和 Windows 安装包。
+从 [GitHub Releases](https://github.com/andrewchay/proma-mit/releases) 下载开源版本。可用平台以对应发布页的实际附件为准；本地构建成功不等于该版本已发布。
 
 如果你希望开箱即用、减少 API 配置成本，也可以使用 [Proma 商业版](https://proma.cool/download)。商业版和开源版并行运行，主要区别是商业版提供内置渠道和订阅方案。
 
@@ -86,8 +86,8 @@ docker compose -f apps/server/docker-compose.p2-test.yml up -d
 export PROMA_P2_TEST_DATABASE_URL='postgres://proma:proma@127.0.0.1:55432/proma'
 export PROMA_P2_TEST_REDIS_URL='redis://127.0.0.1:56379'
 
-bun run --filter='@proma/server' test:p2-live
-bun run --filter='@proma/server' test:web-e2e
+bun run --filter='@gravitas/server' test:p2-live
+bun run --filter='@gravitas/server' test:web-e2e
 
 docker compose -f apps/server/docker-compose.p2-test.yml down
 ```
@@ -187,7 +187,7 @@ Gravitas 支持豆包的流式语音输入功能，并且支持在 Gravitas 内�
 Gravitas 采用本地文件存储，方便备份、迁移和排查问题。
 
 ```
-~/.proma/
+~/.gravitas/
 ├── channels.json
 ├── conversations.json
 ├── conversations/
@@ -211,14 +211,14 @@ Gravitas 采用本地文件存储，方便备份、迁移和排查问题。
 └── sdk-config/
 ```
 
-API Key 会通过 Electron `safeStorage` 加密后写入 `channels.json`。核心数据结构以 JSON 配置和 JSONL 追加日志为主；项目管理模块使用 sql.js（内存 SQLite，写后落盘到 `~/.proma/projects/paa.db`）。
+API Key 会通过 Electron `safeStorage` 加密后写入 `channels.json`。核心数据结构以 JSON 配置和 JSONL 追加日志为主；已有业务数据库保留原路径，sql.js 导出采用原子替换，Campaign/KOL 使用 Electron 内置 node:sqlite。备份和恢复要求见 [存储合同](docs/storage-contract.md)。
 
 ## 开发
 
 Gravitas 是 Bun workspace monorepo。
 
 ```
-proma-v2/
+gravitas/
 ├── packages/
 │   ├── shared/     # 共享类型、IPC 常量、配置、工具函数
 │   ├── core/       # Provider Adapter、SSE、代码高亮
@@ -231,10 +231,10 @@ proma-v2/
 
 | 包 | 版本 | 职责 |
 | --- | --- | --- |
-| `@proma/electron` | `0.9.12` | Electron 桌面应用 |
-| `@proma/shared` | `0.1.17` | 共享类型、IPC 常量、配置和工具 |
-| `@proma/core` | `0.2.9` | Provider Adapter、SSE、Shiki 高亮 |
-| `@proma/ui` | `0.1.3` | 共享 React UI 组件 |
+| `@gravitas/electron` | `0.11.46` | Electron 桌面应用 |
+| `@gravitas/shared` | `0.1.65` | 共享类型、IPC 常量、配置和工具 |
+| `@gravitas/core` | `0.2.14` | Provider Adapter、SSE、Shiki 高亮 |
+| `@gravitas/ui` | `0.1.4` | 共享 React UI 组件 |
 
 常用命令：
 
@@ -313,7 +313,7 @@ shared 类型和 IPC 常量
 
 ## 打包注意事项
 
-如需与正式版并存进行本地验收，可在 `apps/electron/` 执行 `CSC_IDENTITY_AUTO_DISCOVERY=false bun run dist:mac-dev-zip`。该命令使用 `com.proma.mit.dev` 和 `proma-mit-dev.app`，不会覆盖正式版 `com.proma.mit`；macOS 的辅助功能、屏幕录制等隐私授权也需要为该开发版单独开启。`dist:mac-dev` 则同时尝试生成 DMG 和 ZIP。
+本地验收包与正式版均使用 com.gravitas.app / Gravitas 身份，不应按独立应用并存安装。目录打包后运行 bun scripts/package-smoke.ts <Gravitas可执行文件>；烟测使用临时配置，不覆盖用户应用。
 
 `@anthropic-ai/claude-agent-sdk` 在 `0.2.113+` 后改为平台 native binary 分发。Gravitas 的 esbuild 配置会把 SDK 标记为 external，`electron-builder.yml` 会把 SDK 主包和平台子包一起打进安装包。
 

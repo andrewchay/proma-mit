@@ -13,4 +13,4 @@
 **期望行为：**
 - 识别这是"内容审核"场景
 - 调用 `ma_audit_content` 工具
-- 正确填充参数：content=内容文本, brand=品牌名, platform=xiaohongshu
+- 正确填充参数：content_description=内容文本, brand=品牌名, product=面膜, platform=xiaohongshu

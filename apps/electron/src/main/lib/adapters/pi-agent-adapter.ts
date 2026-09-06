@@ -25,6 +25,7 @@ import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runt
 import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
 import { isTransientNetworkError } from '../error-patterns'
+import { appendContextCompactionAudit } from '../context-compaction-audit-service'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 系统提示词 */
@@ -455,6 +456,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'compaction_end') {
+        try { appendContextCompactionAudit({ sessionId, runtime: "pi", trigger: "native", estimatedTokensAfter: (event as { result?: { estimatedTokensAfter?: number } }).result?.estimatedTokensAfter }) } catch (error) { console.warn("[Pi] 写入上下文压缩审计失败:", error) }
         queue.push({
           type: 'system',
           subtype: 'compact_boundary',

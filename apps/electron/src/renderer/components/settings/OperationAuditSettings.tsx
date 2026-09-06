@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SettingsCard, SettingsSection } from './primitives'
+import { ContextCompactionMetrics } from './ContextCompactionMetrics'
 
 type SourceFilter = 'all' | AgentAuditEvent['source']
 
@@ -62,6 +63,7 @@ export function OperationAuditSettings(): React.ReactElement {
 
   return (
     <div className="space-y-5">
+      <ContextCompactionMetrics />
       <SettingsSection title="操作审计" description="仅显示保存在本机 JSONL 的 Web Bridge、Computer Use 与外部 IM 入口摘要；不会上传，也不含截图、页面正文、消息正文、敏感输入或原始用户标识。">
         <SettingsCard className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">

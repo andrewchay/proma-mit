@@ -51,7 +51,7 @@ function formatMonthLabel(year: number, month: number): string {
   return `${year}年${month + 1}月`
 }
 
-function isSameDay(a: string, b: string): boolean {
+function _isSameDay(a: string, b: string): boolean {
   return a.slice(0, 10) === b.slice(0, 10)
 }
 
@@ -615,6 +615,18 @@ function DateDetailPanel({ date, events, tasks }: DateDetailPanelProps): React.R
 
 // ===== 主组件 =====
 
+// 根据日历名称推断分类
+function inferCategoryFromCalendarName(calendarName: string): string {
+  const name = calendarName.toLowerCase()
+  if (name.includes('work') || name.includes('工作') || name.includes('business')) return 'work'
+  if (name.includes('family') || name.includes('家庭') || name.includes('home')) return 'family'
+  if (name.includes('health') || name.includes('健康') || name.includes('fitness')) return 'health'
+  if (name.includes('learn') || name.includes('学习') || name.includes('study')) return 'learning'
+  if (name.includes('social') || name.includes('社交') || name.includes('friend')) return 'social'
+  if (name.includes('finance') || name.includes('财务') || name.includes('money')) return 'finance'
+  return 'personal'
+}
+
 export function ScheduleView(): React.ReactElement {
   const [viewState, setViewState] = useAtom(scheduleViewStateAtom)
   const events = useAtomValue(scheduleEventsAtom)
@@ -731,7 +743,7 @@ export function ScheduleView(): React.ReactElement {
 
       // 4. 转换为 Gravitas MIT 日程格式并批量创建（去重：按标题+开始时间+结束时间）
       const existingEvents = await window.electronAPI.paa.schedule.listEvents()
-      const existingKeys = new Set(existingEvents.map((e: any) => `${e.title}|${e.startTime}|${e.endTime}`))
+      const existingKeys = new Set(existingEvents.map((e) => `${e.title}|${e.startTime}|${e.endTime}`))
       
       const newInputs = systemEvents
         .filter((e) => !existingKeys.has(`${e.title}|${e.startTime}|${e.endTime}`))
@@ -777,17 +789,7 @@ export function ScheduleView(): React.ReactElement {
     }
   }, [syncState.isSyncing, setScheduleEvents])
 
-  // 根据日历名称推断分类
-  function inferCategoryFromCalendarName(calendarName: string): string {
-    const name = calendarName.toLowerCase()
-    if (name.includes('work') || name.includes('工作') || name.includes('business')) return 'work'
-    if (name.includes('family') || name.includes('家庭') || name.includes('home')) return 'family'
-    if (name.includes('health') || name.includes('健康') || name.includes('fitness')) return 'health'
-    if (name.includes('learn') || name.includes('学习') || name.includes('study')) return 'learning'
-    if (name.includes('social') || name.includes('社交') || name.includes('friend')) return 'social'
-    if (name.includes('finance') || name.includes('财务') || name.includes('money')) return 'finance'
-    return 'personal'
-  }
+
 
   return (
     <div className="flex flex-col h-full bg-background">

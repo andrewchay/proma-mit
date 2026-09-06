@@ -31,7 +31,7 @@ export async function testDingTalkConnection(options?: {
   let appKey = ''
   let appSecret = ''
   let robotWebhook = ''
-  let robotWebhookSecret = ''
+  let _robotWebhookSecret = ''
   try {
     const { getSettings } = await import('./settings-service')
     const settings = getSettings()
@@ -55,7 +55,7 @@ export async function testDingTalkConnection(options?: {
       steps.push({ name: '凭证完整性', ok: false, detail: '未配置钉钉 Bot，请先在设置中选择已保存的 Bot' })
     }
     robotWebhook = todoConfig?.robotWebhook ?? ''
-    robotWebhookSecret = todoConfig?.robotWebhookSecret ?? ''
+    _robotWebhookSecret = todoConfig?.robotWebhookSecret ?? ''
   } catch (error) {
     steps.push({ name: '读取配置', ok: false, detail: error instanceof Error ? error.message : String(error) })
   }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { createCookieSessionAuthResolver, createCompositeAuthResolver, parseSessionCookie } from './auth-resolvers'
 import type { AuthSessionRecord } from './auth-session-store'
 
-const ADMIN_SCOPE = { tenantId: 'tenant-a', userId: 'admin-1', roles: ['admin'] as const }
+const _ADMIN_SCOPE = { tenantId: 'tenant-a', userId: 'admin-1', roles: ['admin'] as const }
 
 function makeStore() {
   const sessions = new Map<string, AuthSessionRecord>()

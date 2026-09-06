@@ -10,7 +10,7 @@
  * - "每周一早上9点健身，持续4周"
  */
 
-import type { ScheduleEventInput, RecurrenceRule } from './schedule-service'
+import type { ScheduleEventInput, RecurrenceRule, ScheduleCategory } from './schedule-service'
 
 export interface NlpParseResult {
   /** 解析是否成功 */
@@ -26,7 +26,7 @@ export interface NlpParseResult {
   /** 地点 */
   location?: string
   /** 分类 */
-  category?: string
+  category?: ScheduleCategory
   /** 标签 */
   tags?: string[]
   /** 重复规则 */
@@ -110,7 +110,7 @@ const TIME_PATTERNS = {
 
 // ===== 分类关键词 =====
 
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
+const CATEGORY_KEYWORDS = {
   work: ['工作', '会议', '客户', '项目', '汇报', '面试', '出差', '办公', '业务'],
   personal: ['个人', '自己', '私事', '独处'],
   family: ['家庭', '家人', '孩子', '父母', '亲子', '家务'],
@@ -118,7 +118,7 @@ const CATEGORY_KEYWORDS: Record<string, string[]> = {
   learning: ['学习', '课程', '培训', '读书', '考试', '复习', '进修'],
   social: ['聚会', '朋友', '聚餐', '约会', '社交', '派对', '活动'],
   finance: ['理财', '投资', '银行', '保险', '税务', '财务'],
-}
+} satisfies Partial<Record<ScheduleCategory, string[]>>
 
 // ===== 地点提取 =====
 
@@ -261,11 +261,11 @@ function parseRecurrence(text: string): { rule?: RecurrenceRule; remaining: stri
   return { rule, remaining }
 }
 
-function detectCategory(text: string): string | undefined {
+function detectCategory(text: string): ScheduleCategory | undefined {
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
     for (const keyword of keywords) {
       if (text.includes(keyword)) {
-        return category
+        return category as keyof typeof CATEGORY_KEYWORDS
       }
     }
   }
@@ -398,7 +398,7 @@ export function nlpResultToEventInput(result: NlpParseResult): ScheduleEventInpu
     endTime: result.endTime,
     allDay: result.allDay,
     location: result.location,
-    category: result.category as any,
+    category: result.category,
     recurrence: result.recurrence,
   }
 }

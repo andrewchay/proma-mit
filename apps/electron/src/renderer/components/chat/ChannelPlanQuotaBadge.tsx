@@ -52,8 +52,11 @@ function buildTitle(result: ChannelPlanQuotaResult): string {
 export function ChannelPlanQuotaBadge({ channel }: { channel: Channel }): React.ReactElement | null {
   const [quota, setQuota] = React.useState<ChannelPlanQuotaResult | null>(null)
 
+  const supportsQuota = supportsChannelPlanQuota(channel)
+
   React.useEffect(() => {
-    if (!supportsChannelPlanQuota(channel)) return
+    setQuota(null)
+    if (!supportsQuota) return
 
     let cancelled = false
     fetchChannelPlanQuota(channel.id, channel.updatedAt)
@@ -64,9 +67,9 @@ export function ChannelPlanQuotaBadge({ channel }: { channel: Channel }): React.
     return () => {
       cancelled = true
     }
-  }, [channel.id, channel.provider, channel.baseUrl])
+  }, [channel.id, channel.updatedAt, supportsQuota])
 
-  if (!supportsChannelPlanQuota(channel)) return null
+  if (!supportsQuota) return null
 
   const isUsable = quota?.supported && quota.windows.length > 0
   if (!isUsable) return null

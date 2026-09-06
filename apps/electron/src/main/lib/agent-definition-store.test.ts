@@ -77,7 +77,7 @@ describe('agent 即目录（agent-definition-store）', () => {
 
   it('foldLegacyAgentOverridesIntoDirs 把 override 折叠进目录并清理', () => {
     // 造 legacy override
-    const { saveBuiltinOverride, readBuiltinOverrides, builtinOverridesPath } = require('./agent-runtime/eval/builtin-agent-overrides') as typeof import('./agent-runtime/eval/builtin-agent-overrides')
+    const { saveBuiltinOverride, readBuiltinOverrides } = require('./agent-runtime/eval/builtin-agent-overrides') as typeof import('./agent-runtime/eval/builtin-agent-overrides')
     // 先 seed code-reviewer 为 pristine（与 bundled 相同才能折叠；这里直接造 override + 空目录场景简化验证清理）
     saveBuiltinOverride('code-reviewer', 'legacy 采纳指令')
     // 目录已由上一用例生成（code-reviewer 只有 AGENTS.md），bundled 不同 → 不覆盖，但 override 会保留

@@ -16,6 +16,7 @@ import {
   type WorkflowNodeRunStatus,
   type WorkflowPublishInput,
   type WorkflowRun,
+  type WorkflowRunCheckpoint,
   type WorkflowRunEvent,
   type WorkflowRunEventType,
   type WorkflowTriggerKind,
@@ -27,6 +28,7 @@ import {
   getWorkflowDefinitionPath,
   getWorkflowDir,
   getWorkflowRunEventsPath,
+  getWorkflowRunCheckpointsPath,
   getWorkflowRunPath,
   getWorkflowRunsDir,
   getWorkflowsDir,
@@ -91,16 +93,41 @@ function appendRunEvent(workflowId: string, event: WorkflowRunEvent): void {
   appendFileSync(getWorkflowRunEventsPath(workflowId, event.runId), `${JSON.stringify(event)}\n`, 'utf-8')
 }
 
+/** 读取 checkpoint 日志；单条损坏不会阻断本地恢复。 */
+export function listWorkflowRunCheckpoints(workflowId: string, runId: string): WorkflowRunCheckpoint[] {
+  const path = getWorkflowRunCheckpointsPath(workflowId, runId)
+  if (!existsSync(path)) return []
+  return readFileSync(path, 'utf-8').split('\n').filter((line) => line.trim()).flatMap((line) => {
+    try { return [JSON.parse(line) as WorkflowRunCheckpoint] } catch { return [] }
+  }).sort((left, right) => left.sequence - right.sequence)
+}
+
+function writeRunCheckpoint(workflowId: string, run: WorkflowRun, event: Pick<WorkflowRunEvent, 'type' | 'nodeId' | 'occurredAt'>): void {
+  const checkpoints = listWorkflowRunCheckpoints(workflowId, run.id)
+  const checkpoint: WorkflowRunCheckpoint = {
+    id: randomUUID(),
+    runId: run.id,
+    sequence: (checkpoints.at(-1)?.sequence ?? 0) + 1,
+    occurredAt: event.occurredAt,
+    eventType: event.type,
+    ...(event.nodeId ? { nodeId: event.nodeId } : {}),
+    run: deepClone(run),
+  }
+  appendFileSync(getWorkflowRunCheckpointsPath(workflowId, run.id), `${JSON.stringify(checkpoint)}\n`, 'utf-8')
+}
+
 function persistRun(workflowId: string, run: WorkflowRun, event: Omit<WorkflowRunEvent, 'id' | 'runId' | 'occurredAt'>): WorkflowRun {
   const now = Date.now()
   run.updatedAt = now
   writeJsonFileAtomic(getWorkflowRunPath(workflowId, run.id), run)
-  appendRunEvent(workflowId, {
+  const persistedEvent: WorkflowRunEvent = {
     id: randomUUID(),
     runId: run.id,
     occurredAt: now,
     ...event,
-  })
+  }
+  appendRunEvent(workflowId, persistedEvent)
+  writeRunCheckpoint(workflowId, run, persistedEvent)
   return run
 }
 
@@ -125,7 +152,9 @@ function markReadyChildren(run: WorkflowRun, completedNodeId: string): string[] 
     const child = getNodeRun(run, childId)
     if (child.status !== 'pending') continue
     const parents = incomingNodeIds(definition, childId)
-    if (parents.every((parentId) => isSuccessfulNodeStatus(getNodeRun(run, parentId).status))) {
+    const childDefinition = definition.nodes.find((node) => node.id === childId)
+    const acceptedStatuses = childDefinition?.runAfter ?? ['completed', 'skipped']
+    if (parents.every((parentId) => acceptedStatuses.includes(getNodeRun(run, parentId).status as import('@gravitas/shared').WorkflowDependencyStatus))) {
       child.status = 'ready'
       ready.push(childId)
     }
@@ -165,7 +194,15 @@ function updateRunStatusFromNodes(run: WorkflowRun): void {
     run.status = 'waiting_approval'
     return
   }
-  if (nodeRuns.some((node) => node.status === 'failed')) {
+  const hasPendingFailureHandler = Object.values(run.nodeRuns).some((nodeRun) => {
+    if (nodeRun.status !== 'failed') return false
+    return outgoingNodeIds(run.snapshot.definition, nodeRun.nodeId).some((childId) => {
+      const child = getNodeRun(run, childId)
+      const childDefinition = run.snapshot.definition.nodes.find((node) => node.id === childId)
+      return (childDefinition?.runAfter ?? ['completed', 'skipped']).includes('failed') && !isTerminalNodeStatus(child.status)
+    })
+  })
+  if (nodeRuns.some((node) => node.status === 'failed') && !hasPendingFailureHandler) {
     run.status = 'failed'
     run.finishedAt = Date.now()
     return
@@ -342,13 +379,25 @@ export function createWorkflowRun(
   for (const nodeId of readyNodes) {
     appendRunEvent(workflowId, { id: randomUUID(), runId: run.id, type: 'node_ready', occurredAt: now, nodeId })
   }
+  writeRunCheckpoint(workflowId, run, { type: 'run_created', occurredAt: now })
   return run
 }
 
 /** 读取 Run；找不到或文件损坏时返回 null。 */
 export function getWorkflowRun(workflowId: string, runId: string): WorkflowRun | null {
   const run = readJsonFileSafe<WorkflowRun>(getWorkflowRunPath(workflowId, runId))
-  if (!run) return null
+  const checkpoint = listWorkflowRunCheckpoints(workflowId, runId).at(-1)
+  if (checkpoint) {
+    const recovered = deepClone(checkpoint.run)
+    // .bak 可能是上一次原子写入的旧状态；checkpoint 是每次状态转换后的不可变记录，优先恢复它。
+    if (!run || JSON.stringify(run) !== JSON.stringify(recovered)) {
+      writeJsonFileAtomic(getWorkflowRunPath(workflowId, runId), recovered)
+    }
+    return recovered
+  }
+  if (!run) {
+    return null
+  }
   if (!run.teamId) {
     run.teamId = run.snapshot.definition.teamId ?? 'personal'
     writeJsonFileAtomic(getWorkflowRunPath(workflowId, runId), run)
@@ -421,14 +470,15 @@ export function requireWorkflowSideEffectIntervention(workflowId: string, runId:
   if (nodeRun.status !== 'running' || !nodeRun.sideEffect) throw new Error('当前节点没有待处置的副作用租约')
   nodeRun.status = 'blocked'
   nodeRun.finishedAt = Date.now()
+  nodeRun.error = { code: 'external_result_unknown', message: reason, category: 'external_unknown', retryable: false }
   nodeRun.sideEffect.status = 'requires_intervention'
   nodeRun.sideEffect.reason = reason
   run.status = 'blocked'
   return persistRun(workflowId, run, { type: 'side_effect_intervention_required', nodeId, payload: { reason, idempotencyKey: nodeRun.sideEffect.idempotencyKey } })
 }
 
-/** 人工确认远端已完成、批准以相同幂等键重试，或放弃本次副作用。 */
-export function resolveWorkflowSideEffect(workflowId: string, runId: string, nodeId: string, action: 'confirm' | 'retry' | 'abandon'): WorkflowRun {
+/** 人工确认远端已完成、批准以相同幂等键重试、确认补偿已完成，或放弃本次副作用。 */
+export function resolveWorkflowSideEffect(workflowId: string, runId: string, nodeId: string, action: 'confirm' | 'retry' | 'compensate' | 'abandon'): WorkflowRun {
   const run = getWorkflowRun(workflowId, runId)
   if (!run) throw new Error(`Workflow Run 不存在: ${runId}`)
   const nodeRun = getNodeRun(run, nodeId)
@@ -442,8 +492,12 @@ export function resolveWorkflowSideEffect(workflowId: string, runId: string, nod
     persistRun(workflowId, run, { type: 'side_effect_resolved', nodeId, payload: { action, readyNodes } })
     for (const childNodeId of readyNodes) appendRunEvent(workflowId, { id: randomUUID(), runId, type: 'node_ready', occurredAt: Date.now(), nodeId: childNodeId })
     return run
+  } else if (action === 'compensate') {
+    nodeRun.status = 'failed'; nodeRun.finishedAt = Date.now(); nodeRun.sideEffect.status = 'compensated'
+    nodeRun.error = { code: 'compensation_completed', message: '人工确认已完成外部补偿；原执行不会继续', category: 'compensation_required', retryable: false }
+    updateRunStatusFromNodes(run)
   } else {
-    nodeRun.status = 'failed'; nodeRun.finishedAt = Date.now(); nodeRun.error = { code: 'side_effect_abandoned', message: '人工放弃不确定的外部副作用', retryable: false }; updateRunStatusFromNodes(run)
+    nodeRun.status = 'failed'; nodeRun.finishedAt = Date.now(); nodeRun.error = { code: 'side_effect_abandoned', message: '人工放弃不确定的外部副作用', category: 'external_unknown', retryable: false }; updateRunStatusFromNodes(run)
   }
   return persistRun(workflowId, run, { type: 'side_effect_resolved', nodeId, payload: { action } })
 }
@@ -458,6 +512,28 @@ export function recoverWorkflowSideEffects(): WorkflowRun[] {
     }
   }
   return recovered
+
+}
+/** 恢复或继续 Run 前，以冻结 Definition 复核当前工作区能力；不读取后续草稿覆盖快照。 */
+export function revalidateWorkflowRunForResume(workflowId: string, runId: string): WorkflowRun {
+  const run = getWorkflowRun(workflowId, runId)
+  if (!run) throw new Error(`Workflow Run 不存在: ${runId}`)
+  if (run.status !== 'running') return run
+  const workspace = getAgentWorkspace(run.workspaceId)
+  const violations = !workspace
+    ? [{ nodeId: 'run', capability: 'workspace', name: run.workspaceId, reason: 'missing' }]
+    : validateWorkflowCapabilities(run.snapshot.definition, getWorkspaceCapabilities(workspace.slug), WORKFLOW_PERMISSION_PROFILES)
+  if (violations.length === 0) return run
+
+  const message = violations.map((item) => `${item.nodeId}:${item.capability}:${item.name}:${item.reason}`).join(', ')
+  const affected = Object.values(run.nodeRuns).find((node) => node.status === 'ready' || node.status === 'running')
+  if (affected) {
+    affected.status = 'blocked'
+    affected.finishedAt = Date.now()
+    affected.error = { code: 'resume_revalidation_failed', message, category: 'policy_denied', retryable: false }
+  }
+  run.status = 'blocked'
+  return persistRun(workflowId, run, { type: 'run_blocked', payload: { reason: 'resume_revalidation_failed', violations } })
 }
 
 /** 完成执行节点并推进所有已满足前置条件的后继节点。 */
@@ -503,7 +579,7 @@ export function failWorkflowNode(
   workflowId: string,
   runId: string,
   nodeId: string,
-  error: { code: string; message: string; retryable: boolean },
+  error: { code: string; message: string; category?: import('@gravitas/shared').WorkflowErrorCategory; retryable: boolean },
 ): WorkflowRun {
   const run = getWorkflowRun(workflowId, runId)
   if (!run) throw new Error(`Workflow Run 不存在: ${runId}`)
@@ -511,7 +587,7 @@ export function failWorkflowNode(
   const nodeRun = getNodeRun(run, nodeId)
   if (nodeRun.status !== 'running') throw new Error(`节点未运行，不能失败: ${nodeId}`)
 
-  nodeRun.error = deepClone(error)
+  nodeRun.error = deepClone({ ...error, category: error.category ?? (error.retryable ? 'transient' : 'permanent') })
   nodeRun.finishedAt = Date.now()
   const strategy = definitionNode?.onFailure ?? 'fail'
   if (strategy === 'continue' || strategy === 'route_to_error') {
@@ -531,8 +607,11 @@ export function failWorkflowNode(
   }
 
   nodeRun.status = 'failed'
+  const readyNodes = markReadyChildren(run, nodeId)
   updateRunStatusFromNodes(run)
-  return persistRun(workflowId, run, { type: 'node_failed', nodeId, payload: { error } })
+  persistRun(workflowId, run, { type: 'node_failed', nodeId, payload: { error, readyNodes } })
+  for (const childNodeId of readyNodes) appendRunEvent(workflowId, { id: randomUUID(), runId, type: 'node_ready', occurredAt: Date.now(), nodeId: childNodeId })
+  return run
 }
 
 /** 对可重试的失败节点创建下一次尝试。 */
@@ -606,7 +685,7 @@ export function resolveWorkflowApproval(
   nodeRun.finishedAt = now
   if (!decision.approved) {
     nodeRun.status = 'failed'
-    nodeRun.error = { code: 'approval_rejected', message: decision.comment ?? '审批被拒绝', retryable: false }
+    nodeRun.error = { code: 'approval_rejected', message: decision.comment ?? '审批被拒绝', category: 'policy_denied', retryable: false }
     updateRunStatusFromNodes(run)
     return persistRun(workflowId, run, { type: 'approval_resolved', nodeId: approval.nodeId, payload: { approvalId, approved: false } })
   }

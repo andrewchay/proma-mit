@@ -3,20 +3,21 @@
  *
  * Pi runtime 使用 Pi SDK 原生 compact；Claude 使用 SDK 原生压缩。
  * Proma / AI SDK runtime 没有 SDK 原生压缩，这里提供：
- * - 自动压缩：query 入口发现历史超过阈值时，用 LLM 摘要早期历史并保留最近消息；
+ * - 自动压缩：优先依据同模型的已报告 token 与已确认窗口；缺少观测时兼容历史条数回退，使用 LLM 摘要早期历史并保留最近消息；
  * - CompactContext 工具：手动请求压缩当前会话（立即执行，下一轮生效）。
  *
  * 压缩结果持久化为 system(compact_boundary) 摘要消息 + 最近消息，
  * 后续 query 读取历史时会自然看到摘要。
  */
 
-import type { ProviderType, SDKMessage } from '@gravitas/shared'
+import { calculateContextBudget, resolveModelContextCapability, type ContextPacket, type ProviderType, type SDKMessage } from '@gravitas/shared'
 import { getAdapter, streamSSE } from '@gravitas/core'
 import type { StreamEvent, ToolResult } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { compactSDKMessages } from '../agent-session-manager'
 import type { RuntimeToolDefinition } from './types'
+import { appendContextCompactionAudit, type ContextCompactionAuditInput } from '../context-compaction-audit-service'
 
 export const COMPACT_CONTEXT_TOOL_NAME = 'CompactContext'
 
@@ -26,14 +27,20 @@ export const DEFAULT_AUTO_COMPACT_THRESHOLD = 40
 /** 压缩时保留的最近消息条数（与 prompt-builder 的 MAX_HISTORY_MESSAGES 对齐） */
 export const DEFAULT_KEEP_RECENT_MESSAGES = 20
 
+/** 为下一轮响应预留的输出 token，避免把已报告输入压到窗口边缘。 */
+export const DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS = 32_000
+
+/** 网络协议和工具追加的不确定性缓冲。 */
+export const DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS = 8_000
+
 /** 早期历史转文本的最小字符数；太小不值得压缩 */
 const MIN_SUMMARY_SOURCE_CHARS = 2_000
 
 const SUMMARY_SYSTEM_PROMPT =
-  '你是会话上下文压缩器。把历史对话压缩成简洁的长期记忆要点，保留关键事实、决定、用户偏好、未完成任务和重要细节。使用中文，使用要点列表。'
+  '你是会话上下文压缩器。只输出一个合法 JSON 对象，不要 Markdown 或额外文本。字段必须为 version=1、summary（非空字符串）、facts、decisions、openTasks、importantFiles、toolState（均为字符串数组；无内容用 []）。保留关键事实、决定、用户偏好、未完成任务、重要文件和工具状态。使用中文。'
 
 const SUMMARY_USER_PROMPT_PREFIX =
-  '请将以下历史对话压缩为简洁的长期记忆要点（保留关键事实、决定、用户偏好、未完成任务与重要细节）：\n\n'
+  "请把以下历史对话压缩为 ContextPacket v1 JSON：\n\n"
 
 export interface ContextCompactionOptions {
   sessionId: string
@@ -45,11 +52,29 @@ export interface ContextCompactionOptions {
   model: string
   /** 完整历史消息（SDKMessage 格式） */
   historyMessages: SDKMessage[]
-  /** 自动压缩触发阈值（历史条数） */
+  /** 自动压缩触发阈值（历史条数；没有可信 token 观测时的兼容回退） */
   autoThreshold?: number
+  /** 最近一次由 Provider 或 SDK 报告的完整输入上下文用量。仅同模型且窗口已确认时参与判断。 */
+  observedUsage?: ContextUsageObservation
   /** 压缩时保留的最近消息条数 */
   keepRecent?: number
   signal?: AbortSignal
+  audit?: Omit<ContextCompactionAuditInput, "packetVersion">
+}
+
+/** 从模型输出中读取并校验 ContextPacket v1；不合法的结果不能触发破坏性压缩。 */
+export function parseContextPacket(raw: string): ContextPacket | undefined {
+  try {
+    const value: unknown = JSON.parse(raw.trim())
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+    const packet = value as Record<string, unknown>
+    const isStringArray = (items: unknown): items is string[] => Array.isArray(items) && items.every((item) => typeof item === "string" && item.trim().length > 0)
+    if (packet.version !== 1 || typeof packet.summary !== "string" || packet.summary.trim().length === 0) return undefined
+    if (!isStringArray(packet.facts) || !isStringArray(packet.decisions) || !isStringArray(packet.openTasks) || !isStringArray(packet.importantFiles) || !isStringArray(packet.toolState)) return undefined
+    return { version: 1, summary: packet.summary.trim(), facts: packet.facts, decisions: packet.decisions, openTasks: packet.openTasks, importantFiles: packet.importantFiles, toolState: packet.toolState }
+  } catch {
+    return undefined
+  }
 }
 
 export interface ContextCompactionResult {
@@ -57,8 +82,53 @@ export interface ContextCompactionResult {
   compacted: boolean
   /** 摘要文本（压缩时） */
   summary?: string
+  /** 已校验并持久化的 ContextPacket（压缩时） */
+  packet?: ContextPacket
   /** 压缩后的历史（含 boundary + 最近消息）；未压缩时返回原历史 */
   history: SDKMessage[]
+}
+
+export interface ContextUsageObservation {
+  contextTokens: number
+  modelId?: string
+  recordedAt: number
+}
+
+export interface AutoCompactionTrigger {
+  shouldCompact: boolean
+  source: 'reported_usage' | 'legacy_message_count'
+}
+
+/**
+ * 解析自动压缩触发：优先使用同模型的已报告输入 token 和已确认窗口。
+ * 没有可靠观测时，暂时保留旧的消息数量回退以兼容既有会话。
+ */
+export function resolveAutoCompactionTrigger(options: {
+  historyMessages: SDKMessage[]
+  provider: ProviderType
+  modelId: string
+  observedUsage?: ContextUsageObservation
+  autoThreshold?: number
+  keepRecent?: number
+}): AutoCompactionTrigger {
+  const { historyMessages, provider, modelId, observedUsage, autoThreshold, keepRecent } = options
+  const sameModel = observedUsage?.modelId?.toLowerCase() === modelId.toLowerCase()
+  const capability = resolveModelContextCapability({ provider, modelId })
+
+  if (sameModel && capability.source === 'catalog' && Number.isInteger(observedUsage.contextTokens) && observedUsage.contextTokens >= 0) {
+    const budget = calculateContextBudget({
+      contextWindow: capability.contextWindow,
+      inputTokens: observedUsage.contextTokens,
+      requestedOutputTokens: DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
+      safetyBufferTokens: DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS,
+    })
+    return { shouldCompact: budget.shouldCompact, source: 'reported_usage' }
+  }
+
+  return {
+    shouldCompact: shouldAutoCompact(historyMessages, autoThreshold, keepRecent),
+    source: 'legacy_message_count',
+  }
 }
 
 /** 是否值得压缩：历史条数超过阈值，且早期文本足够大 */
@@ -110,7 +180,7 @@ function extractMessageText(msg: SDKMessage): string {
  * 用当前渠道的 LLM 生成历史摘要。
  * 复用 @gravitas/core 的 ProviderAdapter + streamSSE（与 provider-agnostic adapter 同路径）。
  */
-export async function summarizeHistory(options: ContextCompactionOptions): Promise<string> {
+export async function summarizeHistory(options: ContextCompactionOptions): Promise<ContextPacket | undefined> {
   const { provider, adapterProvider, apiKey, baseUrl, model, historyMessages, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES, signal } = options
   const earlyCount = Math.max(0, historyMessages.length - keepRecent)
   const earlyMessages = historyMessages.slice(0, earlyCount)
@@ -140,7 +210,7 @@ export async function summarizeHistory(options: ContextCompactionOptions): Promi
       if (event.type === 'chunk') content += event.delta
     },
   })
-  return content.trim()
+  return parseContextPacket(content)
 }
 
 /**
@@ -148,7 +218,7 @@ export async function summarizeHistory(options: ContextCompactionOptions): Promi
  * 返回压缩结果与新的历史。
  */
 export async function compactSessionNow(options: ContextCompactionOptions): Promise<ContextCompactionResult> {
-  const { sessionId, historyMessages, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES, signal } = options
+  const { sessionId, historyMessages, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES } = options
   const earlyCount = Math.max(0, historyMessages.length - keepRecent)
   const earlyMessages = historyMessages.slice(0, earlyCount)
 
@@ -159,13 +229,18 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
     return { compacted: false, history: historyMessages }
   }
 
-  const summary = await summarizeHistory(options)
-  if (!summary) {
+  const packet = await summarizeHistory(options)
+  if (!packet) {
     return { compacted: false, history: historyMessages }
   }
 
-  const history = compactSDKMessages(sessionId, summary, keepRecent)
-  return { compacted: true, summary, history }
+  const history = compactSDKMessages(sessionId, packet.summary, keepRecent, packet)
+  try {
+    if (options.audit) appendContextCompactionAudit({ ...options.audit, packetVersion: packet.version })
+  } catch (error) {
+    console.warn("[上下文压缩] 写入审计失败:", error)
+  }
+  return { compacted: true, summary: packet.summary, packet, history }
 }
 
 /**
@@ -173,8 +248,16 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
  * 供 provider-agnostic / ai-sdk adapter 在 query 入口调用。
  */
 export async function maybeAutoCompact(options: ContextCompactionOptions): Promise<ContextCompactionResult> {
-  const { historyMessages, autoThreshold = DEFAULT_AUTO_COMPACT_THRESHOLD, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES } = options
-  if (!shouldAutoCompact(historyMessages, autoThreshold, keepRecent)) {
+  const { historyMessages, autoThreshold, keepRecent } = options
+  const trigger = resolveAutoCompactionTrigger({
+    historyMessages,
+    provider: options.provider,
+    modelId: options.model,
+    observedUsage: options.observedUsage,
+    autoThreshold,
+    keepRecent,
+  })
+  if (!trigger.shouldCompact) {
     return { compacted: false, history: historyMessages }
   }
   return compactSessionNow(options)

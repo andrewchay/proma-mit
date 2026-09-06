@@ -149,7 +149,7 @@ const ANTHROPIC_COMPATIBLE_PROVIDERS: ProviderType[] = [
 ]
 
 /** 不支持非流式直接调用的 provider（需要特殊处理） */
-const UNSUPPORTED_PROVIDERS: ProviderType[] = ['google']
+const _UNSUPPORTED_PROVIDERS: ProviderType[] = ['google']
 
 // =====================================================================
 // 核心完成函数

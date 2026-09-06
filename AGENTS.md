@@ -7,56 +7,56 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 所有的注释和日志优先采用中文，保留必要的专业术语部分。
 - 所有的依赖包的安装都要先进行搜索，综合判断依赖采用的版本，而不是默认采用某个版本。
 - 状态管理上我们全部采用 Jotai 来实现。
-- 这是个开源项目，本地存储优先，善用配置文件优于大部分默认采用 localstorage，不采用本地数据库方案。
+- 这是个开源项目，本地存储优先，善用配置文件优于大部分默认采用 localstorage，新增配置优先 JSON/JSONL；已有项目、营销与 Campaign 的 SQLite 数据继续兼容维护，Context Store 为可重建索引。不得无迁移方案替换权威数据。
 - 保证充分的组件化以及人类的可读性，每次完成改动后都要思考这一点，运行@code-simplifier 来简化优化代码，保持简单直接不过渡设计的风格。
 - 在 UI 设计上采用更现代的方案，UI 组件推荐采用 ShadcnUI，在合适的情况下，用卡片和阴影取代边框，用符合主题的饱满色彩，设置界面要设置背景，为未来做不同主题留下空间。
 - 采用 BDD 行为驱动开发的方案。
 
 ## 项目概述
 
-Proma 是一个集成通用 AI Agent 的下一代人工智能软件，采用 Electron 桌面应用架构。
+Gravitas 是基于 Proma 演进的通用 AI Agent 工作台，采用 Electron 桌面应用架构。
 
 ## Monorepo 结构
 
 Bun workspace monorepo：
 
 ```
-proma-v2/
+gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.15)
-│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.10)
-│   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.3)
+│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.65)
+│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.14)
+│   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.9.58)
+    └── electron/   # Electron 桌面应用 (v0.11.46)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
             └── renderer/   # React UI (Vite + Tailwind + Radix UI)
 ```
 
-**包命名规范**：`@proma/*` 作用域（`@proma/core`、`@proma/shared`、`@proma/ui`、`@proma/electron`）
+**包命名规范**：`@gravitas/*` 作用域（`@gravitas/core`、`@gravitas/shared`、`@gravitas/ui`、`@gravitas/electron`）
 
 **依赖管理**：package.json 中使用 `workspace:*` 引用内部包
 
 ### 包职责详解
 
-#### @proma/shared (v0.1.15)
+#### @gravitas/shared (v0.1.65)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
 - **依赖**：无运行时依赖（仅 TypeScript）
 
-#### @proma/core (v0.2.10)
+#### @gravitas/core (v0.2.14)
 - **导出模块**：`./providers`、`./highlight`、`./types`、`./utils`
 - **关键功能**：Provider 适配器注册表、代码高亮（Shiki）
-- **依赖**：`@proma/shared`、`shiki`
+- **依赖**：`@gravitas/shared`、`shiki`
 - **Peer 依赖**：`@anthropic-ai/claude-agent-sdk`、`@anthropic-ai/sdk`、`@modelcontextprotocol/sdk`
 
-#### @proma/ui (v0.1.3)
+#### @gravitas/ui (v0.1.4)
 - **关键组件**：共享 React UI 组件库
-- **依赖**：`@proma/core`、`beautiful-mermaid`、`shiki`、Radix UI
+- **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @proma/electron (v0.9.58)
+#### @gravitas/electron (v0.11.46)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -86,13 +86,13 @@ bun run typecheck
 # 单包类型检查
 cd packages/core && bun run typecheck
 
-# 测试
-bun test
+# 测试（每文件独立进程，隔离 mock/全局环境）
+bun run test
 
 # 打包分发
 cd apps/electron
 bun run dist:mac      # macOS
-bun run dist:mac-dev  # macOS 开发并存包（com.proma.mit.dev）
+bun run dist:mac-dev  # macOS 开发并存包（com.gravitas.app）
 bun run dist:mac-dev-zip # macOS 开发并存 ZIP（避免 DMG 工具链）
 bun run dist:win      # Windows
 bun run dist:linux    # Linux
@@ -124,7 +124,7 @@ bun run generate:icons    # 生成应用图标
 |------|------|------|
 | **运行时** | Bun | 1.2.5+ |
 | **语言** | TypeScript | 5.0.0+ |
-| **桌面框架** | Electron | 39.5.1 |
+| **桌面框架** | Electron | 39.8.10 |
 | **前端框架** | React | 18.3.1 |
 | **状态管理** | Jotai | 2.17.1 |
 | **UI 组件** | Radix UI | 最新 |
@@ -146,7 +146,7 @@ bun run generate:icons    # 生成应用图标
 
 类型定义 → 主进程处理 → Preload 桥接 → 渲染进程调用：
 
-1. **类型 & 常量**：`@proma/shared` 定义 IPC 通道名称常量和请求/响应类型
+1. **类型 & 常量**：`@gravitas/shared` 定义 IPC 通道名称常量和请求/响应类型
 2. **主进程处理**：`main/ipc.ts`（57KB）注册 `ipcMain.handle()` 处理器，调用 `main/lib/` 服务
 3. **Preload 桥接**：`preload/index.ts` 通过 `contextBridge.exposeInMainWorld` 暴露类型安全的 API
 4. **渲染进程**：通过 `window.electronAPI.*` 调用，Jotai atoms 中封装调用逻辑
@@ -209,7 +209,7 @@ bun run generate:icons    # 生成应用图标
 | 服务 | 职责 |
 |------|------|
 | `runtime-init.ts` | 运行时初始化：Shell 环境、Bun、Git 检测（`bun-finder.ts`、`git-detector.ts`、`shell-env.ts`） |
-| `config-paths.ts` | 配置路径管理：`~/.proma/` 目录结构 |
+| `config-paths.ts` | 配置路径管理：`~/.gravitas/` 目录结构 |
 | `user-profile-service.ts` | 用户档案持久化 |
 | `settings-service.ts` | 应用设置持久化（主题等） |
 | `updater/` | 自动更新：Electron Updater 集成 |
@@ -285,10 +285,10 @@ bun run generate:icons    # 生成应用图标
 | `AgentListenersInitializer` | 挂载 `useGlobalAgentListeners`，全局 Agent IPC 监听 |
 | `UpdaterInitializer` | 订阅主进程推送的自动更新状态变化事件 |
 
-### 本地文件存储（`~/.proma/`）
+### 本地文件存储（`~/.gravitas/`）
 
 ```
-~/.proma/
+~/.gravitas/
 ├── channels.json           # 渠道配置（API Key 经 safeStorage 加密）
 ├── conversations.json      # 对话索引（元数据，轻量）
 ├── conversations/          # 消息存储
@@ -312,9 +312,9 @@ bun run generate:icons    # 生成应用图标
 ```
 
 **关键设计**：
-- JSON 配置 + JSONL 追加日志，无本地数据库，文件可移植
+- JSON 配置 + JSONL 追加日志；业务 SQLite 与 Context Store 索引的备份边界见 docs/storage-contract.md
 - 默认 Agent 工作区按 slug 隔离，每个会话独立目录；选择已有本地项目时，`AgentWorkspace.rootPath` 保存项目根目录，Agent 的 cwd、文件浏览、`@` 文件引用和变更检测直接使用该目录
-- 本地项目工作区的会话记录、MCP、Skills 和私有运行状态仍保留在 `~/.proma/`；删除工作区索引不会删除用户项目目录
+- 本地项目工作区的会话记录、MCP、Skills 和私有运行状态仍保留在 `~/.gravitas/`；删除工作区索引不会删除用户项目目录
 - MCP 配置和 Skills 按工作区管理
 
 ## 构建工具
@@ -327,22 +327,22 @@ bun run generate:icons    # 生成应用图标
 ### 重要：打包配置注意事项
 
 **Agent SDK 打包要求（必须遵守）：**
-- `@anthropic-ai/Codex-agent-sdk` 必须使用 `--external` 参数排除在 esbuild 打包之外
-- **0.2.113+ 架构变化**：SDK 主包已不再携带 JS CLI 入口（`cli.js`）和 `vendor/ripgrep/`，改为按平台分发 native binary（`Codex` / `Codex.exe`，单文件 214-252 MB），通过 `optionalDependencies` 安装到 `@anthropic-ai/Codex-agent-sdk-{platform}-{arch}/` 子包
+- `@anthropic-ai/claude-agent-sdk` 必须使用 `--external` 参数排除在 esbuild 打包之外
+- **0.2.113+ 架构变化**：SDK 主包已不再携带 JS CLI 入口（`cli.js`）和 `vendor/ripgrep/`，改为按平台分发 native binary（`claude` / `claude.exe`，单文件 214-252 MB），通过 `optionalDependencies` 安装到 `@anthropic-ai/claude-agent-sdk-{platform}-{arch}/` 子包
 - `apps/electron/package.json` 必须显式声明当前 CI 矩阵覆盖的平台子包为 `optionalDependencies`（darwin-arm64 / darwin-x64 / win32-x64），否则 bun workspace 不会把它们链接到 `apps/electron/node_modules/`
 - `electron-builder.yml` 的 `files` 配置要同时包含主包和所有平台子包：
   ```yaml
   files:
     - dist/**/*
     - package.json
-    - node_modules/@anthropic-ai/Codex-agent-sdk/**/*
+    - node_modules/@anthropic-ai/claude-agent-sdk/**/*
     - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*
     - node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*
     - node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**/*
-    - "!node_modules/@proma/**"
+    - "!node_modules/@gravitas/**"
   ```
 - SDK 主包和同级平台子包会被复制到 `app/node_modules/@anthropic-ai/`，Node.js 的模块解析能从 `app/dist/main.cjs` 找到
-- `agent-orchestrator.ts` 中 `resolveSDKCliPath()` 解析到 SDK 主包入口后，沿 `..` 到 `@anthropic-ai/` 同级目录，再拼 `claude-agent-sdk-${platform}-${arch}/{Codex|Codex.exe}` 得到 binary 路径
+- `agent-orchestrator.ts` 中 `resolveSDKCliPath()` 解析到 SDK 主包入口后，沿 `..` 到 `@anthropic-ai/` 同级目录，再拼 `claude-agent-sdk-${platform}-${arch}/{claude|claude.exe}` 得到 binary 路径
 
 **跨平台打包限制：**
 - optionalDependencies 的平台子包由包管理器按 `os`/`cpu` 字段筛选：Apple Silicon runner 只会装 darwin-arm64，不会装 darwin-x64（cpu 不匹配）
@@ -358,14 +358,14 @@ bun run generate:icons    # 生成应用图标
 1. ✅ 确认 SDK 在 esbuild 中使用 `--external` 参数
 2. ✅ 确认 SDK 主包 + 所有目标平台子包都在 `files` 配置中
 3. ✅ 确认 `apps/electron/package.json` 的 `optionalDependencies` 列出了所有目标平台子包
-4. ✅ `bun install` 后验证 `apps/electron/node_modules/@anthropic-ai/Codex-agent-sdk-{platform}-{arch}/` symlink 存在且 binary 可执行
+4. ✅ `bun install` 后验证 `apps/electron/node_modules/@anthropic-ai/claude-agent-sdk-{platform}-{arch}/` symlink 存在且 binary 可执行
 5. ✅ 本地测试打包后的应用 Agent 功能（`CSC_IDENTITY_AUTO_DISCOVERY=false bun run dist:fast`）
 
 **其他依赖的打包策略：**
-- **原则**：只有 `electron` 和 `@anthropic-ai/Codex-agent-sdk` 需要标记为 `--external`
+- **原则**：external 列表以 apps/electron/package.json 的 build:main 为准；当前包含 Electron、Claude SDK、Pi SDK 和 playwright-core，均需对应打包资源闭包
 - `electron`：由 Electron 运行时提供，必须 external
-- `@anthropic-ai/Codex-agent-sdk`：有特殊打包要求（含 214 MB native binary），必须 external + 在 files 中包含主包和平台子包
-- **所有其他依赖**（如 `electron-updater`、`undici`、`chokidar` 等）：应该让 esbuild 打包进 `main.cjs`
+- `@anthropic-ai/claude-agent-sdk`：有特殊打包要求（含 214 MB native binary），必须 external + 在 files 中包含主包和平台子包
+- **未显式 external 的普通依赖**（如 `electron-updater`、`undici`、`chokidar` 等）：应该让 esbuild 打包进 `main.cjs`
   - ✅ 优点：避免遗漏子依赖，简化 electron-builder 配置
   - ❌ 如果标记为 external：必须在 `electron-builder.yml` 的 `files` 中手动列出所有子依赖
 - **常见错误**：将普通 npm 包标记为 external 但忘记在 `files` 中包含，导致打包后找不到模块（如 `Cannot find module 'universalify'`）
@@ -392,7 +392,7 @@ bun run generate:icons    # 生成应用图标
 
 修改任何 `default-skills/<skill>/` 内容时，**必须同步递增该 Skill `SKILL.md` frontmatter 的 `version` 字段**（patch +1）。
 
-**为什么**：`seedDefaultSkills()` 与 `upgradeDefaultSkillsInWorkspaces()` 通过 semver 比较决定是否将 bundle 中的 Skill 同步到老用户的 `~/.proma/default-skills/` 与各工作区。**version 不变 = 老用户拿不到新内容**。
+**为什么**：`seedDefaultSkills()` 与 `upgradeDefaultSkillsInWorkspaces()` 通过 semver 比较决定是否将 bundle 中的 Skill 同步到老用户的 `~/.gravitas/default-skills/` 与各工作区。**version 不变 = 老用户拿不到新内容**。
 
 **早期实现曾用"无条件 cpSync"绕开这个约束**，但每次启动同步 4MB+ 文件会阻塞主进程导致启动卡顿，已恢复为 semver 比较（见 `config-paths.ts:seedDefaultSkills`、`agent-workspace-manager.ts:upgradeDefaultSkillsInWorkspaces`）。
 
@@ -441,7 +441,7 @@ React UI 更新
 ### 关键设计
 
 - **SDK 调用**：`sdk.query({ prompt, options: { apiKey, model, permissionMode, cwd, abortController } })`
-- **事件转换**：`convertSDKMessage()`（`@proma/shared`）将 SDK 原始消息转为统一的 `AgentEvent` 类型
+- **事件转换**：`convertSDKMessage()`（`@gravitas/shared`）将 SDK 原始消息转为统一的 `AgentEvent` 类型
 - **工具匹配**：`packages/shared/src/agent/tool-matching.ts` — 无状态 `ToolIndex` + `extractToolStarts` / `extractToolResults` 解析工具调用
 - **状态管理**：`applyAgentEvent()` 纯函数更新 `AgentStreamState`，支持流式增量更新
 - **全局 IPC 监听**：`useGlobalAgentListeners`（`renderer/hooks/`）在 `main.tsx` 顶层挂载，通过 `useStore()` 直接操作 atoms，永不销毁。确保页面切换（如设置页）时流式输出、权限请求不丢失
@@ -453,7 +453,7 @@ React UI 更新
 
 ### SDK 版本升级注意事项
 
-**`@anthropic-ai/Codex-agent-sdk` 0.2.113+ `options.env` 语义为"替换"**
+**`@anthropic-ai/claude-agent-sdk` 0.2.113+ `options.env` 语义为"替换"**
 
 - SDK 将 `options.env` **替换** 传递给子进程（0.2.111/0.2.112 短暂改为叠加，0.2.113 恢复替换）
 - 如果传 `env` 时只给 `ANTHROPIC_*` 相关变量，子进程会丢失 `PATH` / `HOME` / `SHELL` 等关键变量，导致 SDK 调用 `npx` / `git` 等命令失败
@@ -469,11 +469,11 @@ React UI 更新
 - `0.2.111`: `options.env` 从"替换"变为"叠加"
 - `0.2.113`:
   - `options.env` 回退为"替换"
-  - **SDK 包结构重构**：删除 `cli.js`，改为平台 native binary（通过 `@anthropic-ai/Codex-agent-sdk-{platform}-{arch}` optionalDependency 分发），ripgrep 编译进 binary
+  - **SDK 包结构重构**：删除 `cli.js`，改为平台 native binary（通过 `@anthropic-ai/claude-agent-sdk-{platform}-{arch}` optionalDependency 分发），ripgrep 编译进 binary
   - 详见上方"打包配置注意事项"段落
 - `0.2.120`: `query()` 省略 `settingSources` 时默认加载所有来源（Proma 已显式传 `['user', 'project']`，不受影响）
 
-### 共享类型（`@proma/shared`）
+### 共享类型（`@gravitas/shared`）
 
 - `AgentEvent`：Agent 事件（text / tool_start / tool_result / done / error）
 - `AgentSessionMeta`：会话元数据（id / title / channelId / workspaceId）
@@ -488,18 +488,18 @@ React UI 更新
 
 - **会话管理**：收件箱/归档工作流
 - **权限模式**：safe / ask / allow-all
-- **Agent SDK**：@anthropic-ai/claude-agent-sdk（[v1 文档](https://platform.Codex.com/docs/en/agent-sdk/typescript)、[v2 文档](https://platform.Codex.com/docs/en/agent-sdk/typescript-v2-preview)）
+- **Agent SDK**：@anthropic-ai/claude-agent-sdk（[v1 文档](https://platform.claude.com/docs/en/agent-sdk/typescript)、[v2 文档](https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview)）
 - **MCP 集成**：Model Context Protocol 用于外部数据源
 - **凭证存储**：AES-256-GCM 加密
-- **配置位置**：`~/.proma/`（类似 `~/.craft-agent/`）
+- **配置位置**：`~/.gravitas/`（类似 `~/.craft-agent/`）
 
 ## 核心特性
 
 ### 已实现功能
 
 - ✅ **多 Provider 支持**：Anthropic、OpenAI、DeepSeek、Kimi、智谱、MiniMax、豆包、通义千问、Google、自定义端点
-- ✅ **Agent SDK 集成**：基于 Codex Agent SDK 的完整 Agent 模式
-- ✅ **服务端 Web 路线（P0–P5 基础能力）**：独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；生产 OIDC/JWT、KMS 轮换、管理员审计、完整 Web UI 与真实 provider E2E 仍待推进
+- ✅ **Agent SDK 集成**：基于 Claude Agent SDK 的完整 Agent 模式
+- ✅ **服务端 Web 路线（P0–P5 基础能力）**：独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；OIDC/JWT、KMS 和管理员审计已有实现与离线测试；生产联通、完整 Web 业务体验与真实 Provider 仍需验收
 - ✅ **Provider-Agnostic Runtime**：不依赖 Claude Agent SDK 的 Agent 运行路径，当前支持 deepseek，具备 MCP 工具（含 OAuth 2.1 授权码/客户端凭证模式、client_secret 加密存储、资源发现/读取、跨会话连接缓存）、Plan mode、AskUserQuestion、Sub Agent（内置 code-reviewer / explorer / researcher）与 fork/rewind 等能力
 - ✅ **飞书集成**：消息同步、任务通知、OAuth 认证（68KB 核心服务）
 - ✅ **工作区管理**：多工作区隔离或直接打开本地项目、MCP Server 配置、Skills 管理
@@ -519,4 +519,11 @@ React UI 更新
 - **文件监听**：工作区文件、MCP 配置、Chat 工具实时监控
 - **事件流处理**：SDK 消息流式转换与累积
 - **错误映射**：SDK 错误统一转换为应用错误
-- **Provider-Agnostic Runtime**：基于 `@proma/core` Provider 适配器的多轮工具循环；MCP 工具名按 OpenAI function name 规则清洗为 `mcp__${server}__${tool}`，避免非法字符导致请求失败；MCP client_secret 使用 safeStorage 加密单独存放，OAuth token 加密存储，连接按工作区缓存复用
+- **Provider-Agnostic Runtime**：基于 `@gravitas/core` Provider 适配器的多轮工具循环；MCP 工具名按 OpenAI function name 规则清洗为 `mcp__${server}__${tool}`，避免非法字符导致请求失败；MCP client_secret 使用 safeStorage 加密单独存放，OAuth token 加密存储，连接按工作区缓存复用
+
+## 诊断修复验收约定
+
+- 完整 PR 门禁：typecheck、bun run test、lint、docs:check；真实 Provider 默认显式跳过，不能把 skip 记为通过。
+- 打包必须包含 default-tools 与工作流模板；scripts/package-smoke.ts 验证实际 Electron 的发现、执行与数据库重开。原生 helper 构建失败必须向上传播。
+- 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。配置与恶意代码测试见 apps/executor/SECURITY.md。
+- 存储职责、备份与恢复见 docs/storage-contract.md。新共享 Node 工具需从 packages/shared/src/utils/node.ts 导出；通用工具仍需对应 utils/index.ts 导出。

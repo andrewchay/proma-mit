@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeFileSync } from 'node:fs'
 import { WORKFLOW_FORMAT, type WorkflowDefinition } from '@gravitas/shared'
 import {
   cancelWorkflowRun,
@@ -12,6 +11,7 @@ import {
   getWorkflowRun,
   listRecoverableWorkflowRuns,
   listWorkflowRunEvents,
+  listWorkflowRunCheckpoints,
   publishWorkflowDefinition,
   requestWorkflowApproval,
   resolveWorkflowApproval,
@@ -20,12 +20,13 @@ import {
   exportWorkflowDefinition,
   importWorkflowDefinition,
   startWorkflowNode,
+  revalidateWorkflowRunForResume,
   acquireWorkflowSideEffectLease,
   requireWorkflowSideEffectIntervention,
   resolveWorkflowSideEffect,
 } from './workflow-service'
-import { createAgentWorkspace, saveWorkspaceMcpConfig } from './agent-workspace-manager'
-import { getWorkspaceSkillsDir } from './config-paths'
+import { createAgentWorkspace, getAgentWorkspace, saveWorkspaceMcpConfig } from './agent-workspace-manager'
+import { getWorkflowRunPath, getWorkspaceSkillsDir } from './config-paths'
 
 const TEST_DIR = '/tmp/paa-workflow-service-test'
 
@@ -105,7 +106,7 @@ describe('Workflow Run 服务', () => {
     expect(() => importWorkflowDefinition({ file, workspaceId: target.id, workflowId: imported.id })).toThrow('Workflow 已存在')
   })
 
-  test('Given Tool 节点执行中断 When 进入人工处置 Then 只能显式确认或批准重试，且幂等键保持稳定', () => {
+  test('Given Tool 节点执行中断 When 进入人工处置 Then 只能显式确认、批准重试或人工确认补偿，且幂等键保持稳定', () => {
     const source = saveAndPublishWorkflow()
     const toolDefinition: WorkflowDefinition = {
       ...source,
@@ -119,9 +120,20 @@ describe('Workflow Run 服务', () => {
     const key = leased.nodeRuns?.collect!.sideEffect!.idempotencyKey
     const blocked = requireWorkflowSideEffectIntervention(toolDefinition.id, run.id, 'collect', '进程中断')
     expect(blocked.status).toBe('blocked')
+    expect(blocked.nodeRuns.collect?.error?.code).toBe('external_result_unknown')
+    expect(blocked.nodeRuns.collect?.error?.category).toBe('external_unknown')
     const retried = resolveWorkflowSideEffect(toolDefinition.id, run.id, 'collect', 'retry')
     expect(retried.nodeRuns?.collect!.status).toBe('ready')
     expect(retried.nodeRuns?.collect!.sideEffect!.idempotencyKey).toBe(key)
+    const compensationRun = createWorkflowRun(toolDefinition.id, {})
+    acquireWorkflowSideEffectLease(toolDefinition.id, compensationRun.id, 'collect')
+    requireWorkflowSideEffectIntervention(toolDefinition.id, compensationRun.id, 'collect', '远端扣款状态未知')
+    const compensated = resolveWorkflowSideEffect(toolDefinition.id, compensationRun.id, 'collect', 'compensate')
+    expect(compensated.status).toBe('failed')
+    expect(compensated.nodeRuns.collect?.status).toBe('failed')
+    expect(compensated.nodeRuns.collect?.sideEffect?.status).toBe('compensated')
+    expect(compensated.nodeRuns.collect?.error).toMatchObject({ code: 'compensation_completed', category: 'compensation_required', retryable: false })
+
   })
 
   test('Given 已发布 Definition When 创建 Run Then 冻结版本并让首个执行节点就绪', () => {
@@ -135,6 +147,21 @@ describe('Workflow Run 服务', () => {
     expect(run.snapshot.capabilityPolicy.allowedTools).toEqual(['Read'])
     expect(run.snapshot.nodeCapabilityPolicies.collect?.skills).toEqual([{ slug: 'project-review', version: '1.0.0' }])
     expect(listWorkflowRunEvents('project-risk-review', run.id).map((event) => event.type)).toEqual(['run_created', 'node_ready'])
+    expect(listWorkflowRunCheckpoints('project-risk-review', run.id)).toHaveLength(1)
+  })
+
+  test('Given Run 快照文件损坏 When 读取 Run Then 从最后一个 checkpoint 恢复冻结状态', () => {
+    saveAndPublishWorkflow()
+    const run = createWorkflowRun('project-risk-review', { projectId: 'p-1' })
+    startWorkflowNode('project-risk-review', run.id, 'collect')
+    const completed = completeWorkflowNode('project-risk-review', run.id, 'collect', { riskCount: 2 })
+    writeFileSync(getWorkflowRunPath('project-risk-review', run.id), '{损坏', 'utf-8')
+
+    const restored = getWorkflowRun('project-risk-review', run.id)
+    expect(restored?.nodeRuns.collect?.status).toBe('completed')
+    expect(restored?.nodeRuns.approval?.status).toBe('ready')
+    expect(restored?.snapshot.definitionVersion).toBe(completed.snapshot.definitionVersion)
+    expect(listWorkflowRunCheckpoints('project-risk-review', run.id)).toHaveLength(3)
   })
 
   test('Given 就绪节点 When 执行、审批通过并完成结束节点 Then Run 完成且保留审批证据', () => {
@@ -170,6 +197,21 @@ describe('Workflow Run 服务', () => {
     expect(retried.status).toBe('running')
     expect(retried.nodeRuns?.collect?.status).toBe('ready')
     expect(retried.nodeRuns?.collect?.attempt).toBe(1)
+  })
+
+  test('Given runAfter failed When 前置节点失败 Then 清理节点仍会执行且 Run 最终保留失败状态', () => {
+    const source = saveAndPublishWorkflow()
+    saveWorkflowDefinition({
+      ...source,
+      nodes: [...source.nodes.filter((node) => node.id !== 'approval'), { id: 'cleanup', kind: 'transform', title: '清理', config: { assignments: { notified: true } }, runAfter: ['failed'] }],
+      edges: [{ id: 'start-collect', from: 'start', to: 'collect' }, { id: 'collect-cleanup', from: 'collect', to: 'cleanup' }, { id: 'cleanup-end', from: 'cleanup', to: 'end' }],
+      layout: { nodes: { start: { x: 0, y: 0 }, collect: { x: 120, y: 0 }, cleanup: { x: 240, y: 0 }, end: { x: 360, y: 0 } } },
+    })
+    const run = createWorkflowRun(source.id, {})
+    startWorkflowNode(source.id, run.id, 'collect')
+    const afterFailure = failWorkflowNode(source.id, run.id, 'collect', { code: 'provider_down', message: '渠道不可用', retryable: true })
+    expect(afterFailure.status).toBe('running')
+    expect(afterFailure.nodeRuns.cleanup?.status).toBe('ready')
   })
 
   test('Given onFailure=continue When 节点失败 Then 保留错误并推进正常后继节点', () => {
@@ -251,5 +293,17 @@ describe('Workflow Run 服务', () => {
     expect(result.deleted).toBe(false)
     expect(result.reason).toContain('进行中')
     expect(existsSync(`${TEST_DIR}/workflows/project-risk-review`)).toBe(true)
+  })
+
+  test('Given Run 冻结能力 When 恢复前 Skill 已失效 Then 阻断而不继续执行', () => {
+    const published = saveAndPublishWorkflow()
+    const run = createWorkflowRun(published.id, {})
+    const workspace = getAgentWorkspace(published.workspaceId)
+    if (!workspace) throw new Error('测试工作区不存在')
+    rmSync(join(getWorkspaceSkillsDir(workspace.slug), 'project-review'), { recursive: true, force: true })
+    const blocked = revalidateWorkflowRunForResume(published.id, run.id)
+    expect(blocked.status).toBe('blocked')
+    expect(blocked.nodeRuns.collect?.status).toBe('blocked')
+    expect(blocked.nodeRuns.collect?.error?.code).toBe('resume_revalidation_failed')
   })
 })

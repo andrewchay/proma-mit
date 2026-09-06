@@ -15,7 +15,7 @@ export function CostAuditPanel(): React.ReactElement {
   const [running, setRunning] = React.useState(false)
   const [error, setError] = React.useState('')
 
-  const run = async (): Promise<void> => {
+  const run = React.useCallback(async (): Promise<void> => {
     setRunning(true)
     setError('')
     try {
@@ -26,9 +26,9 @@ export function CostAuditPanel(): React.ReactElement {
     } finally {
       setRunning(false)
     }
-  }
+  }, [])
 
-  React.useEffect(() => { void run() }, [])
+  React.useEffect(() => { void run() }, [run])
 
   return (
     <div className="rounded-lg border border-border/50 bg-foreground/[0.02] p-4 space-y-3">

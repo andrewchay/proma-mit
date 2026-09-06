@@ -203,7 +203,7 @@ export function CalendarSyncSettings(): React.ReactElement {
     setSyncingId(id)
     setSyncNotice(null)
     try {
-      const result = await window.electronAPI.paa.calendarSync.syncSource(id)
+      const _result = await window.electronAPI.paa.calendarSync.syncSource(id)
       const updatedSources = await window.electronAPI.paa.calendarSync.listSources()
       setSources(updatedSources as CalendarSource[])
       setSyncNotice({ status: 'success', message: '同步成功' })

@@ -106,7 +106,7 @@ function renderAskUserCard(req: AskUserRequest, requestIdAttr: string, version: 
 }
 
 function renderQuestion(q: AskUserQuestion, index: number): string {
-  const questionId = `q-${index}`
+  const _questionId = `q-${index}`
   const header = q.header ? `<span class="question-header">${escapeHtml(q.header)}</span>` : ''
 
   if (q.options && q.options.length > 0) {
@@ -138,7 +138,7 @@ function renderQuestion(q: AskUserQuestion, index: number): string {
 }
 
 function renderRadioOption(question: string, opt: AskUserQuestionOption, index: number): string {
-  const optId = `opt-${Math.random().toString(36).slice(2)}`
+  const _optId = `opt-${Math.random().toString(36).slice(2)}`
   const preview = opt.preview ? `data-preview="${escapeHtml(opt.preview)}"` : ''
   return `<label class="option-item" ${preview}>
     <input type="radio" name="${escapeHtml(question)}" value="${escapeHtml(opt.label)}" data-answer="${escapeHtml(question)}">

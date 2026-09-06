@@ -16,11 +16,11 @@ import { getChannelById, decryptApiKey } from '../../channel-manager'
 import { getSettings } from '../../settings-service'
 import { ProviderAgnosticAgentAdapter } from '../../adapters/provider-agnostic-agent-adapter'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
-import { buildBuiltinAgents } from '../../agent-prompt-builder'
 import type { ProviderType } from '@gravitas/shared'
 import type { SubAgentDelegate } from './evaluator'
 import type { BenchmarkConfig } from './types'
 import { openTrace } from './trace-writer'
+import { resolveEvalTargetCapability } from './eval-target-capability'
 
 // 内置 sub-agent 状态快照/回滚（纯逻辑）
 import { readBuiltinPrompt } from './builtin-agent-state'
@@ -55,6 +55,50 @@ export function resolveEvalChannel(benchmark: BenchmarkConfig): EvalChannelInfo 
 }
 
 /**
+ * 评判独立性判定（纯函数，可单测）。
+ *
+ * 综述基准（arXiv:2607.13104 §8.1.2）：驱动更新的 judge 与报告终值的 judge 必须独立，
+ * 否则形成自我确认循环。判据：评判渠道与被测/候选生成渠道的 channelId 或 modelId 不同。
+ */
+export function computeJudgeIndependence(
+  evalChannel: Pick<EvalChannelInfo, 'channelId' | 'modelId'>,
+  judgeChannel: Pick<EvalChannelInfo, 'channelId' | 'modelId'>,
+): boolean {
+  return evalChannel.channelId !== judgeChannel.channelId || evalChannel.modelId !== judgeChannel.modelId
+}
+
+/**
+ * 解析评判渠道（benchmark.judgeRuntime 存在时）。
+ *
+ * 未指定 channelId 时沿用 benchmark.runtime.channelId ?? 全局默认渠道；
+ * 未指定 modelId 时用该渠道第一个 enabled 模型。
+ * 返回 null 表示未配置独立评判（调用方回退规则打分或注入 delegate）。
+ */
+export function resolveJudgeChannel(
+  benchmark: BenchmarkConfig,
+  evalChannel: EvalChannelInfo,
+): { channel: EvalChannelInfo; independent: boolean } | null {
+  const judgeRef = benchmark.judgeRuntime
+  if (!judgeRef) return null
+  const channelId = judgeRef.channelId ?? benchmark.runtime.channelId ?? getSettings().agentChannelId
+  if (!channelId) {
+    throw new Error('没有可用评判渠道：请在设置中选择默认 Agent 渠道，或在 benchmark.judgeRuntime.channelId 指定')
+  }
+  const channel = getChannelById(channelId)
+  if (!channel) throw new Error(`评判渠道不存在: ${channelId}`)
+  const modelId = judgeRef.modelId || channel.models.find((m) => m.enabled)?.id
+  if (!modelId) throw new Error(`评判渠道 ${channel.name} 未配置可用模型`)
+  const judgeChannel: EvalChannelInfo = {
+    channelId,
+    provider: channel.provider,
+    apiKey: decryptApiKey(channelId),
+    baseUrl: resolveAgentRuntimeBaseUrl(channel.provider, 'proma', channel.baseUrl),
+    modelId,
+  }
+  return { channel: judgeChannel, independent: computeJudgeIndependence(evalChannel, judgeChannel) }
+}
+
+/**
  * 生成真实 SubAgentDelegate：在隔离沙箱里运行被测子代理，并把完整决策序列写入 per-run trace。
  * 系统提示 = 内置子代理 prompt + 评测任务（协议返回在 prompt 内已要求）。
  */
@@ -66,6 +110,8 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
     const ctx = { provider: channel.provider, apiKey: channel.apiKey, baseUrl: channel.baseUrl, model: channel.modelId }
     const messages: import('@gravitas/shared').SDKMessage[] = []
     const runId = input.runId ?? `eval-${Date.now()}`
+    const target = input.target ?? { type: 'agent' as const, id: input.agentName }
+    const capability = resolveEvalTargetCapability(target)
     // 打开 per-run trace（写入完整决策序列，供回放/诊断/自演化 evidence）
     const trace = openTrace({
       runId,
@@ -74,10 +120,18 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
       run: 0,
       agentVersion: 0,
       model: ctx.model,
-      systemPrompt: input.systemPrompt ?? readBuiltinPrompt(input.agentName),
+      systemPrompt: input.systemPrompt ?? capability.systemPrompt,
       createdAt: new Date().toISOString(),
     })
     try {
+      trace.appendRaw({
+        event: 'resolved_eval_target',
+        target: capability.target,
+        source: capability.source,
+        version: capability.version,
+        contentHash: capability.contentHash,
+        registeredToolNames: capability.runtimeTools.map((tool) => tool.name),
+      })
       for await (const msg of adapter.query({
         sessionId: runId,
         prompt: input.task,
@@ -86,9 +140,10 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
         apiKey: ctx.apiKey,
         baseUrl: ctx.baseUrl,
         cwd: input.workspaceDir,
-        // 系统提示 = 被测内置子代理 prompt；若非空 systemPrompt 候选则优先用候选
-        systemPrompt: input.systemPrompt ?? readBuiltinPrompt(input.agentName),
+        // 系统提示 = 被测能力目录内容；候选 systemPrompt 仅在自演化时覆盖它。
+        systemPrompt: input.systemPrompt ?? capability.systemPrompt,
         historyMessages: [],
+        runtimeTools: capability.runtimeTools,
         permissionMode: 'bypassPermissions',
         maxTurns: input.maxTurns ?? 12,
         abortSignal: input.abortSignal,

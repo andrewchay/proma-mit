@@ -11,6 +11,7 @@
  * - mock（内置样本数据，用于快速体验）
  */
 
+import { openNativeSqlite, type NativeSqliteDatabase, type SqlValue } from '../../native-sqlite'
 import { existsSync, mkdirSync, cpSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -25,47 +26,11 @@ import type { KOLExtendedData } from '@gravitas/shared'
 // =====================================================================
 
 /** 底层 SQLite 驱动实例（bun:sqlite Database 或 better-sqlite3 Database） */
-let _nativeDb: any = null
-
-/** 加载底层引擎 */
-function loadEngine(): { Database: new (path: string) => any } {
-  // Bun 运行时（开发模式）— 字符串拼接避开 esbuild 静态解析
-  if (typeof Bun !== 'undefined') {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require('bun:' + 'sqlite')
-      return { Database: mod.Database }
-    } catch {
-      // fall through to better-sqlite3
-    }
-  }
-  // Node.js / Electron 运行时（生产模式）
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return { Database: require('better-sqlite3') }
-}
-
-/** 获取底层驱动实例 */
-function getEngine(): { Database: new (path: string) => any } {
-  if (!_nativeDb) {
-    _nativeDb = loadEngine()
-  }
-  return _nativeDb
-}
-
-/**
- * 统一 Database API（模拟 bun:sqlite 接口）
- *
- * 适配 better-sqlite3 的 API 差异：
- * - DDL 用 exec()，DML 用 prepare().run()
- * - 查询用 prepare().get() / prepare().all()
- * - 空结果返回 null（兼容 bun:sqlite）
- */
 class Database {
-  private db: any
+  private db: NativeSqliteDatabase
 
   constructor(path: string) {
-    const { Database: NativeDb } = getEngine()
-    this.db = new NativeDb(path)
+    this.db = openNativeSqlite(path)
     // WAL + busy_timeout：与 campaign-manager 共用 kol-database.sqlite 双连接读写，避免 SQLITE_BUSY
     try {
       this.db.exec('PRAGMA journal_mode=WAL')
@@ -75,7 +40,7 @@ class Database {
     }
   }
 
-  run(sql: string, ...params: unknown[]): { changes: number } {
+  run(sql: string, ...params: unknown[]): { changes: number | bigint } {
     const flat = flattenParams(params)
     if (flat.length === 0) {
       this.db.exec(sql)
@@ -98,11 +63,11 @@ class Database {
 }
 
 /** 展开参数（兼容数组参数和展开参数） */
-function flattenParams(params: unknown[]): any[] {
+function flattenParams(params: unknown[]): SqlValue[] {
   if (params.length === 1 && Array.isArray(params[0])) {
-    return params[0] as any[]
+    return params[0] as SqlValue[]
   }
-  return params as any[]
+  return params as SqlValue[]
 }
 
 // =====================================================================
@@ -191,7 +156,7 @@ function getDb(): Database {
   const defaultDbPath = getDefaultKolDbPath()
 
   // 如果目标数据库不存在，且默认数据库存在，则复制
-  if (!existsSync(dbPath) && existsSync(defaultDbPath)) {
+  if (!process.env.PROMA_TEST_CONFIG_DIR && !existsSync(dbPath) && existsSync(defaultDbPath)) {
     try {
       cpSync(defaultDbPath, dbPath)
       console.log(`[KOL 数据库] 已从 ${defaultDbPath} 复制到 ${dbPath}`)

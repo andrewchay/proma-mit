@@ -127,6 +127,7 @@ import type {
   AgentSessionReferenceSearchResult,
   AgentAuditEvent,
   AgentAuditQuery,
+  ContextCompactionMetrics,
   CreateProactiveScheduleInput,
   UpdateProactiveScheduleInput,
   ProactiveSchedule,
@@ -644,6 +645,8 @@ export interface ElectronAPI {
   listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
   /** 将当前筛选结果导出为用户选择位置的 JSONL */
   exportAgentAuditEvents: (query?: AgentAuditQuery) => Promise<{ canceled: boolean; count: number }>
+  /** 查询仅含元数据的本机上下文压缩指标 */
+  getContextCompactionMetrics: () => Promise<ContextCompactionMetrics>
   /** 创建配置快照 */
   createWorkspaceSnapshot: (workspaceSlug: string, input?: import('@gravitas/shared').CreateWorkspaceSnapshotInput) => Promise<import('@gravitas/shared').WorkspaceConfigSnapshot>
   /** 列出工作区快照 */
@@ -1449,7 +1452,7 @@ export interface ElectronAPI {
   paa: {
     // --- 日程管家 ---
     schedule: {
-      listEvents: (filter?: unknown) => Promise<unknown[]>
+      listEvents: (filter?: unknown) => Promise<import('@gravitas/shared').ScheduleEventResult[]>
       getEvent: (id: string) => Promise<unknown | null>
       createEvent: (input: unknown) => Promise<unknown>
       updateEvent: (id: string, patch: unknown) => Promise<unknown | null>
@@ -1642,6 +1645,7 @@ export interface ElectronAPI {
     // Approvals
     listApprovals: () => Promise<import('@gravitas/shared').ProactiveApproval[]>
     getPendingApprovals: () => Promise<import('@gravitas/shared').ProactiveApproval[]>
+    createTestMemoryApproval: () => Promise<import('@gravitas/shared').ProactiveApproval>
     approveApproval: (id: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
     rejectApproval: (id: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
     // Routines
@@ -2137,6 +2141,7 @@ const electronAPI: ElectronAPI = {
   setComputerUseSettings: (updates: { enabled?: boolean; readOnlyOnly?: boolean }) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_COMPUTER_USE_SETTINGS, updates),
   listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
   exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
+  getContextCompactionMetrics: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_CONTEXT_COMPACTION_METRICS),
 
   // ===== 配置版本化（工作区配置快照）=====
   createWorkspaceSnapshot: (workspaceSlug: string, input: import('@gravitas/shared').CreateWorkspaceSnapshotInput = {}) => ipcRenderer.invoke(CONFIG_VERSION_IPC_CHANNELS.CREATE_SNAPSHOT, workspaceSlug, input),
@@ -3582,6 +3587,7 @@ const electronAPI: ElectronAPI = {
     // Approvals
     listApprovals: () => ipcRenderer.invoke('proactive:listApprovals'),
     getPendingApprovals: () => ipcRenderer.invoke('proactive:getPendingApprovals'),
+    createTestMemoryApproval: () => ipcRenderer.invoke('proactive:createTestMemoryApproval'),
     approveApproval: (id: string) => ipcRenderer.invoke('proactive:approveApproval', id),
     rejectApproval: (id: string) => ipcRenderer.invoke('proactive:rejectApproval', id),
     // Routines

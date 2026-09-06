@@ -35,7 +35,7 @@ describe('execution-contract-binder', () => {
   })
 
   it('完整生命周期：dispatch→start→complete 迁移到 completed 并回填 result', () => {
-    const { binder, store } = makeBinder()
+    const { binder } = makeBinder()
     binder.onDispatch(makeExecution({ id: 'exec-FULL', entityId: 't-full' }))
 
     const running = binder.onStart(makeExecution({ id: 'exec-FULL' }))

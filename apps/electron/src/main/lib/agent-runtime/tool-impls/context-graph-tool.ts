@@ -11,7 +11,7 @@ import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 
 export const EXPLORE_CONTEXT_TOOL_NAME = 'ExploreContext'
 
-const TYPE_LABEL: Record<string, string> = {
+const _TYPE_LABEL: Record<string, string> = {
   run: '运行', session: '会话', task: '待办', file_event: '文件事件', todo_event: '待办事件', calendar: '日程', member: '成员',
 }
 

@@ -32,6 +32,7 @@ describe('RecommendationService', () => {
       pendingApprovalCount: 5,
       sopCandidateCount: 3,
       recentReleaseRuns: 3,
+      scheduleCount: 1,
     }
 
     const first = runRecommendationEngine(context)
@@ -44,5 +45,25 @@ describe('RecommendationService', () => {
       'sop-review-suggestion',
     ])
     expect(repeated).toEqual([])
+  })
+
+  test('given no local proactive configuration when refreshed then it offers a safe first task', () => {
+    const recommendations = runRecommendationEngine({
+      recentRuns: [],
+      hasMemoryDailySchedule: false,
+      hasReleaseMonitor: false,
+      pendingApprovalCount: 0,
+      sopCandidateCount: 0,
+      recentReleaseRuns: 0,
+      scheduleCount: 0,
+    })
+
+    expect(recommendations).toEqual([
+      expect.objectContaining({
+        title: '创建首个安全定时任务',
+        duplicateKey: 'proactive-getting-started-suggestion',
+        safetyLevel: 'read_only',
+      }),
+    ])
   })
 })

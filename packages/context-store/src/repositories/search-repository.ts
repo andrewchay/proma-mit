@@ -1,9 +1,9 @@
 import type { SqlJsDatabase } from '../migrations.ts'
-import {
-  type ContextEntityType,
-  type ContextSearchHit,
-  type RecallOptions,
-  type RecallResult,
+import type {
+  ContextEntityType,
+  ContextSearchHit,
+  RecallOptions,
+  RecallResult,
 } from '../types.ts'
 import { safeAll } from '../migrations.ts'
 import { toQueryTokenTiers } from '../retrieval/tokenizer.ts'

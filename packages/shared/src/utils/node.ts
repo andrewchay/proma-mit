@@ -1,3 +1,4 @@
+export { writeFileAtomic } from './atomic-file'
 export {
   materializeAgentRuntimeWorkspace,
   syncAgentRuntimeWorkspaceToObjectStore,

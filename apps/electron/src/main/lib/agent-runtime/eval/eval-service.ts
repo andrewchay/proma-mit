@@ -11,7 +11,8 @@
 
 import { runBaseline, runImprove } from './commands'
 import { requireBenchmark } from './commands'
-import { buildEvalDelegate, buildBuiltinStateGuard, resolveEvalChannel, type EvalChannelInfo } from './eval-runner'
+import { buildEvalDelegate, buildBuiltinStateGuard, resolveEvalChannel, resolveJudgeChannel, type EvalChannelInfo } from './eval-runner'
+import { buildLlmJudgeScoreDelegate, withJudgeBudget } from './judge'
 import { buildEvalTargetStateGuard, isEvalTargetId } from './eval-target-state'
 import { writeToolAgentsMd } from './toolset-state'
 import { generateCandidatePrompt } from './builder'
@@ -20,7 +21,7 @@ import { clearBuiltinOverride, isBuiltinAgentId, readBuiltinOverrides } from './
 import type { BaselineSummary, ImproveSummary } from './commands'
 import type { EvalProgressCallback, ScoreDelegate } from './evaluator'
 import type { ProposeChange } from './self-evolver'
-import type { BenchmarkConfig } from './types'
+import type { BenchmarkConfig, JudgeIdentity } from './types'
 
 /** 采纳写回：把「始终允许」式的改进 prompt 持久化为内置 sub-agent 覆盖。 */
 export interface AdoptResult {
@@ -77,6 +78,8 @@ export interface EvalServiceOptions {
   maxRounds?: number
   /** 是否启用 Builder 候选生成（默认 true）；false = 只产出 baseline */
   useBuilder?: boolean
+  /** 是否评测 held-out Case 集（迁移测试，检测对训练 benchmark 的过拟合；默认 false 省成本） */
+  includeHeldOut?: boolean
   /**
    * 是否在候选被接受后自动「采纳写回」到内置 sub-agent 持久化覆盖。
    * 默认 false：只记录到 scoreboard，不自动改内置行为；true 时把最后一个被接受候选的
@@ -122,6 +125,56 @@ function buildBuilderProposer(
   }
 }
 
+/**
+ * 解析本次评判者身份与打分回调（评估器独立性，综述 arXiv:2607.13104 §8.1.2）。
+ *
+ * 优先级：
+ * 1. 外部注入 scoreDelegate → kind=injected；若同时配置了 judgeRuntime，
+ *    用其渠道信息计算独立性，否则 independent=false（无法验证，保守标记）。
+ * 2. benchmark.judgeRuntime 存在 → 内置 LLM judge（buildLlmJudgeScoreDelegate），
+ *    独立性与评测渠道比较得出；不同源时 console.warn 自我确认风险。
+ * 3. 都没有 → 规则打分（kind=rule，无模型耦合，天然独立）。
+ */
+function resolveJudge(
+  benchmark: BenchmarkConfig,
+  evalChannel: EvalChannelInfo,
+  opts: EvalServiceOptions,
+): { scoreDelegate?: ScoreDelegate; judge: JudgeIdentity } {
+  if (opts.scoreDelegate) {
+    const resolved = resolveJudgeChannel(benchmark, evalChannel)
+    return {
+      scoreDelegate: withJudgeBudget(opts.scoreDelegate, benchmark.judgeBudget),
+      judge: {
+        kind: 'injected',
+        provider: resolved?.channel.provider ?? benchmark.judgeRuntime?.provider,
+        modelId: resolved?.channel.modelId ?? benchmark.judgeRuntime?.modelId,
+        channelId: resolved?.channel.channelId ?? benchmark.judgeRuntime?.channelId,
+        independent: resolved ? resolved.independent : false,
+      },
+    }
+  }
+  const resolved = resolveJudgeChannel(benchmark, evalChannel)
+  if (resolved) {
+    if (!resolved.independent) {
+      console.warn(
+        `[Eval] 评判者与评测渠道同源（channelId=${resolved.channel.channelId}, modelId=${resolved.channel.modelId}），` +
+        '存在自我确认风险（综述 §8.1.2）：建议为 benchmark.judgeRuntime 配置不同的渠道或模型',
+      )
+    }
+    return {
+      scoreDelegate: buildLlmJudgeScoreDelegate(resolved.channel, benchmark.judgeBudget),
+      judge: {
+        kind: 'llm',
+        provider: resolved.channel.provider,
+        modelId: resolved.channel.modelId,
+        channelId: resolved.channel.channelId,
+        independent: resolved.independent,
+      },
+    }
+  }
+  return { judge: { kind: 'rule', independent: true } }
+}
+
 /** 跑一次真实 Baseline 评测。 */
 export async function runEvalBaseline(benchmarkId: string, opts: EvalServiceOptions = {}): Promise<BaselineSummary> {
   const benchmark = requireBenchmark(benchmarkId)
@@ -131,10 +184,13 @@ export async function runEvalBaseline(benchmarkId: string, opts: EvalServiceOpti
     type: benchmark.targetType ?? 'agent',
     id: benchmark.targetAgentId,
   })
+  const { scoreDelegate, judge } = resolveJudge(benchmark, channel, opts)
   return runBaseline({
     benchmark,
     delegate,
-    scoreDelegate: opts.scoreDelegate,
+    scoreDelegate,
+    judge,
+    includeHeldOut: opts.includeHeldOut,
     agentVersion: guard.version(),
     onProgress: opts.onProgress,
   })
@@ -151,11 +207,14 @@ export async function runEvalImprove(benchmarkId: string, opts: EvalServiceOptio
   })
   const maxRounds = opts.maxRounds ?? 2
   const autoAdopt = opts.autoAdopt === true
+  const { scoreDelegate, judge } = resolveJudge(benchmark, channel, opts)
   let adoptedContent: string | undefined
   return runImprove({
     benchmark,
     delegate,
-    scoreDelegate: opts.scoreDelegate,
+    scoreDelegate,
+    judge,
+    includeHeldOut: opts.includeHeldOut,
     state: guard,
     maxRounds,
     // useBuilder=false 时保守：只产出 baseline，不自动生成候选
@@ -189,6 +248,6 @@ function extractContent(afterState: unknown): string | undefined {
 }
 
 /** 兼容旧接口：从候选 afterState 提取 prompt 字符串 */
-function extractPrompt(afterState: unknown): string | undefined {
+function _extractPrompt(afterState: unknown): string | undefined {
   return extractContent(afterState)
 }

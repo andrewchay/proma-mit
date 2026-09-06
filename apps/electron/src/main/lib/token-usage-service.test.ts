@@ -12,6 +12,7 @@ import type { SDKAssistantMessage, SDKMessage, AgentStreamPayload } from '@gravi
 
 const originalHomedir = homedir()
 const tempHomeDir = mkdtempSync(join(tmpdir(), 'proma-token-usage-test-'))
+const contextUsageUpdates: Array<{ sessionId: string; updates: unknown }> = []
 
 
 mock.module('os', () => ({
@@ -31,6 +32,9 @@ mock.module('./agent-session-manager', () => ({
     agentRuntime: 'pi',
   }),
   appendSDKMessages: () => {},
+  updateAgentSessionMeta: (sessionId: string, updates: unknown) => {
+    contextUsageUpdates.push({ sessionId, updates })
+  },
 }))
 
 mock.module('./agent-workspace-manager', () => ({
@@ -81,6 +85,7 @@ describe('TokenUsageService', () => {
   beforeEach(() => {
     process.env.PROMA_TEST_CONFIG_DIR = join(tempHomeDir, `config-${Date.now()}`)
     mkdirSync(process.env.PROMA_TEST_CONFIG_DIR, { recursive: true })
+    contextUsageUpdates.length = 0
     service = createTokenUsageService()
   })
 
@@ -124,6 +129,16 @@ describe('TokenUsageService', () => {
     expect(records[0]?.totalTokens).toBe(1250)
     expect(records[0]?.costTotal).toBe(0.000315)
     expect(records[0]?.toolNames).toEqual(['Read'])
+    expect(contextUsageUpdates).toEqual([{
+      sessionId: 'session-1',
+      updates: {
+        lastContextUsage: {
+          contextTokens: 1150,
+          modelId: 'deepseek-v4-flash',
+          recordedAt: (message as unknown as { _createdAt: number })._createdAt,
+        },
+      },
+    }])
   })
 
   test('识别 Skill 工具与 MCP 服务器', () => {

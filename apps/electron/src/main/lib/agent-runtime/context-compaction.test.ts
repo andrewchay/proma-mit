@@ -22,7 +22,7 @@ mock.module('electron', () => buildElectronMock())
 const inMemorySdk = new Map<string, SDKMessage[]>()
 mock.module('../agent-session-manager', () => ({
   getAgentSessionSDKMessages: (id: string): SDKMessage[] => inMemorySdk.get(id) ?? [],
-  compactSDKMessages: (id: string, summary: string, keepRecent: number): SDKMessage[] => {
+  compactSDKMessages: (id: string, summary: string, keepRecent: number, contextPacket?: unknown): SDKMessage[] => {
     const all = inMemorySdk.get(id) ?? []
     const keepCount = Math.max(0, Math.min(keepRecent, all.length))
     const kept = all.slice(all.length - keepCount)
@@ -31,6 +31,7 @@ mock.module('../agent-session-manager', () => ({
       subtype: 'compact_boundary',
       session_id: id,
       summary,
+      contextPacket,
     } as unknown as SDKMessage
     const result = [boundary, ...kept]
     inMemorySdk.set(id, result)
@@ -52,7 +53,7 @@ mock.module('@gravitas/core', () => ({
   streamSSE: async (opts: { onEvent: (e: { type: string; delta?: string }) => void }) => {
     // 捕获摘要 prompt，模拟 LLM 返回摘要
     capturedSummaryPrompt = JSON.parse((opts as unknown as { request: { body: string } }).request.body).prompt
-    opts.onEvent({ type: 'chunk', delta: '【摘要】用户偏好 TypeScript，正在开发 proma-mit。' })
+    opts.onEvent({ type: 'chunk', delta: JSON.stringify({ version: 1, summary: '用户偏好 TypeScript，正在开发 Gravitas。', facts: ['用户偏好 TypeScript。'], decisions: ['使用 ContextPacket v1。'], openTasks: ['完成 P3。'], importantFiles: ['context-compaction.ts'], toolState: ['无外部写入。'] }) })
     opts.onEvent({ type: 'done' })
   },
 }))
@@ -61,9 +62,9 @@ const {
   shouldAutoCompact,
   sdkMessagesToCompactText,
   maybeAutoCompact,
-  DEFAULT_AUTO_COMPACT_THRESHOLD,
   DEFAULT_KEEP_RECENT_MESSAGES,
 } = await import('./context-compaction')
+const { getContextCompactionMetrics } = await import('../context-compaction-audit-service')
 
 function makeHistory(count: number): SDKMessage[] {
   const messages: SDKMessage[] = []
@@ -135,21 +136,45 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     })
 
     expect(result.compacted).toBe(true)
-    expect(result.summary).toContain('【摘要】')
+    expect(result.summary).toContain('用户偏好 TypeScript')
+    expect(result.packet?.openTasks).toEqual(['完成 P3。'])
     // 摘要 prompt 应包含早期历史
     expect(capturedSummaryPrompt).toContain('消息 0')
 
     // 持久化（内存版）：应为 boundary + 最近 20 条
     const persisted = inMemorySdk.get(sessionId) ?? []
     expect(persisted.length).toBe(DEFAULT_KEEP_RECENT_MESSAGES + 1)
-    const boundary = persisted[0] as { type?: string; subtype?: string; summary?: string }
+    const boundary = persisted[0] as { type?: string; subtype?: string; summary?: string; contextPacket?: import('@gravitas/shared').ContextPacket }
     expect(boundary?.type).toBe('system')
     expect(boundary?.subtype).toBe('compact_boundary')
-    expect(boundary?.summary).toContain('【摘要】')
+    expect(boundary?.summary).toContain('用户偏好 TypeScript')
+    expect(boundary?.contextPacket).toEqual({ version: 1, summary: '用户偏好 TypeScript，正在开发 Gravitas。', facts: ['用户偏好 TypeScript。'], decisions: ['使用 ContextPacket v1。'], openTasks: ['完成 P3。'], importantFiles: ['context-compaction.ts'], toolState: ['无外部写入。'] })
     // 最近消息仍在
     expect(JSON.stringify(persisted[persisted.length - 1])).toContain('消息 64')
     // result.history 与持久化一致
     expect(result.history.length).toBe(persisted.length)
+  })
+
+  test('自动压缩会写入不含摘要正文的本机审计指标', async () => {
+    const sessionId = 's-auto-audit'
+    const history = makeHistory(65)
+    inMemorySdk.set(sessionId, history)
+
+    await maybeAutoCompact({
+      sessionId,
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      audit: { sessionId, runtime: 'proma', trigger: 'automatic' },
+    })
+
+    expect(await getContextCompactionMetrics()).toMatchObject({
+      total: 1,
+      byRuntime: [{ key: 'proma', count: 1 }],
+      byTrigger: [{ key: 'automatic', count: 1 }],
+    })
   })
 
   test('maybeAutoCompact：早期文本过小不压缩', async () => {

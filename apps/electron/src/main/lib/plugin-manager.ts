@@ -11,6 +11,7 @@
  * - 插件状态不写入宿主 settings，由各插件自己的 config 管理（配置隔离）。
  */
 
+import { getSettings } from './settings-service'
 import { BUILTIN_PLUGINS } from '@gravitas/shared'
 import type { PluginLifecycleState, PluginManifest, PluginPermissions, PluginSurfaceType, PluginSubscription } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './agent-runtime/types'
@@ -273,7 +274,8 @@ export function collectContributingTools(): RuntimeToolDefinition[] {
 
   // ★ Phase 1: 优先收集目录化工具
   try {
-    const directoryTools = collectDirectoryTools(isDirectoryToolsetEnabled)
+    const directoryTools = collectDirectoryTools((id, domain) => isDirectoryToolsetEnabled(id)
+      && (id !== 'marketing' || domain === 'shared' || (getSettings().marketingCapabilities ?? []).includes(domain ?? '')))
     tools.push(...directoryTools)
   } catch (error) {
     console.warn('[PluginManager] 收集目录化工具失败:', error)

@@ -1,0 +1,31 @@
+name: Repository Quality
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run lint
+      - run: bun run docs:check
+  executor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建非特权执行器
+        run: docker build -f apps/executor/Dockerfile -t gravitas-executor-test .
+      - name: Linux 实际隔离与取消验收
+        run: docker run --rm --read-only --tmpfs /tmp:rw,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges --security-opt seccomp=apps/executor/seccomp.json --pids-limit 128 --memory 1g --cpus 1 gravitas-executor-test bun test src

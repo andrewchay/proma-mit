@@ -93,3 +93,12 @@ jobs:
           "$APPIMAGE" --appimage-extract
           test -x squashfs-root/AppRun
           rm -rf squashfs-root
+
+      - name: macOS 实际应用离线烟测
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find apps/electron/out -type d -name 'Gravitas.app' -print -quit)
+          test -n "$APP"
+          bun scripts/package-smoke.ts "$APP/Contents/MacOS/Gravitas"

@@ -9,14 +9,14 @@
  * 2. 在此文件追加 { id, label, icon, core, description } 与 WORK_MODULE_VIEWS 映射
  */
 
-import type { ComponentType } from 'react'
+import { lazy, type ComponentType } from 'react'
 import { CalendarDays, FolderKanban, Users, Megaphone, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
-import { CalendarModuleView } from '@/components/calendar/CalendarModuleView'
-import { ProjectView } from '@/components/projects/ProjectView'
-import { InfluencerModuleView } from '@/components/influencer/InfluencerModuleView'
-import { PaidMediaModuleView } from '@/components/paid-media/PaidMediaModuleView'
-import { CapabilitiesView } from '@/components/marketing/CapabilitiesView'
+const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
+const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
+const InfluencerModuleView = lazy(() => import('@/components/influencer/InfluencerModuleView').then((module) => ({ default: module.InfluencerModuleView })))
+const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMediaModuleView').then((module) => ({ default: module.PaidMediaModuleView })))
+const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
 
 export interface WorkModuleMeta {
   id: ActiveView

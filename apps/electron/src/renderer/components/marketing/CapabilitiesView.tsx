@@ -4,7 +4,7 @@
  * 由顶部菜单栏「应用中心 → 领域工作台」触发。
  * 展示并管理已订阅的领域能力包（达人 influencer / 广告投放 paid-media / 共享素材）。
  */
-import * as React from 'react'
+import type * as React from 'react'
 import { ArrowLeft, Layers } from 'lucide-react'
 import { activeViewAtom } from '@/atoms/active-view'
 import { useSetAtom } from 'jotai'

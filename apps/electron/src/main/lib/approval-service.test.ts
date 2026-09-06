@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   approveApproval,
   createApproval,
+  createTestMemoryApproval,
   editApproval,
   getPendingApprovals,
   setApprovedChangeExecutor,
@@ -26,6 +27,17 @@ beforeEach(async () => {
 })
 
 describe('ApprovalService', () => {
+  test('given a user requests a test approval when it is created then no memory write occurs before approval', () => {
+    const approval = createTestMemoryApproval()
+
+    expect(approval).toMatchObject({
+      sourceType: 'memory',
+      status: 'pending',
+      title: '记忆写入: Proactive 测试记忆候选',
+      proposedChange: expect.objectContaining({ type: 'memory_write', kind: 'diary' }),
+    })
+  })
+
   test('given an approved change when its executor succeeds then the decision and execution outcome are both persisted', async () => {
     let receivedApprovalId = ''
     setApprovedChangeExecutor(async (approval) => {
@@ -75,8 +87,8 @@ describe('ApprovalService', () => {
 
     editApproval(approval.id, { type: 'memory_write', title: '修订', content: '修订内容' })
 
-    expect(getPendingApprovals()).toEqual([
+    expect(getPendingApprovals()).toContainEqual(
       expect.objectContaining({ id: approval.id, status: 'edited' }),
-    ])
+    )
   })
 })

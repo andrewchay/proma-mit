@@ -11,7 +11,7 @@
  */
 
 import * as React from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
 import { Upload, Plus, X } from 'lucide-react'
 import type { WorkflowDefinition, WorkflowTemplate } from '@gravitas/shared'
@@ -55,6 +55,7 @@ function createWorkflow(workspaceId: string): WorkflowDefinition {
 }
 
 export function WorkflowSidebarList(): React.ReactElement {
+  const store = useStore()
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const setActiveView = useSetAtom(activeViewAtom)
@@ -91,26 +92,31 @@ export function WorkflowSidebarList(): React.ReactElement {
   React.useEffect(() => { void loadDefinitions() }, [loadDefinitions])
   React.useEffect(() => { void loadTemplates() }, [loadTemplates])
 
-  const loadRunHistory = React.useCallback(async (workflowId: string, focusRunId?: string) => {
-    try {
-      const list = await window.electronAPI.listWorkflowRuns(workflowId)
-      setRuns(list)
-      const targetId = focusRunId ?? selectedRunId ?? list[0]?.id
-      if (!targetId) { setRunEvents([]); return }
-      setSelectedRunId(targetId)
-      const events = await window.electronAPI.listWorkflowRunEvents(workflowId, targetId)
-      setRunEvents(events)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '读取 Run 历史失败')
-    }
-  }, [selectedRunId, setRunEvents, setRuns, setSelectedRunId])
-
+  const draftId = draft?.id
+  const latestRunId = latestRun?.id
+  const latestRunUpdatedAt = latestRun?.updatedAt
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Run ID 和版本是运行、停止及审批后的刷新信号，不依赖每次写回的新对象。
   React.useEffect(() => {
-    if (!draft) { setRuns([]); setRunEvents([]); return }
-    void loadRunHistory(draft.id)
-    // 依赖 draft?.id 与 latestRun?.id：新建/切换 Workflow 或编辑器发起 Run 动作（运行/停止/审批）后刷新列表
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.id, latestRun?.id])
+    if (!draftId) { setRuns([]); setRunEvents([]); return }
+    let cancelled = false
+    const loadRunHistory = async (): Promise<void> => {
+      try {
+        const list = await window.electronAPI.listWorkflowRuns(draftId)
+        if (cancelled) return
+        setRuns(list)
+        const selected = store.get(selectedWorkflowRunIdAtom)
+        const targetId = list.find((run) => run.id === selected)?.id ?? list[0]?.id
+        setSelectedRunId(targetId ?? null)
+        if (!targetId) { setRunEvents([]); return }
+        const events = await window.electronAPI.listWorkflowRunEvents(draftId, targetId)
+        if (!cancelled) setRunEvents(events)
+      } catch (error) {
+        if (!cancelled) toast.error(error instanceof Error ? error.message : '读取 Run 历史失败')
+      }
+    }
+    void loadRunHistory()
+    return () => { cancelled = true }
+  }, [draftId, latestRunId, latestRunUpdatedAt, store, setRuns, setRunEvents, setSelectedRunId])
 
   const selectRun = async (runId: string): Promise<void> => {
     if (!draft) return

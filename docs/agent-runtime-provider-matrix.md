@@ -2,13 +2,13 @@
 
 本文档记录 Proma 当前 Agent runtime 的 provider 支持状态、真实 API smoke 结果和后续服务端 Web 化优先级。
 
-更新时间：2026-07-28
+更新时间：2026-09-05（代码定位更新；下文历史真实 API 记录没有重新执行）
 
 ## 结论
 
-- Proma runtime 仍是当前能力最完整的 provider-agnostic Agent runtime。
-- AI SDK runtime 已具备服务端 Web 化的最佳基础，优先投入产品化；P0–P5 已完成独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、本地双实例 E2E、用量与成本账本、预算/限速、追加式审计、运行指标和僵尸任务诊断。OIDC/JWT、云 KMS 轮换、管理员审计、完整 Web UI 与真实 provider E2E 仍在后续阶段。
-- Pi runtime 已完成独立 SDK runtime 接入和多 provider 真实 smoke，但短期定位为验证/对照 runtime。
+- Pi 为当前桌面默认 runtime，Pi 与 AI SDK 复用核心工具、权限和 MCP 桥接；Proma runtime 保留兼容。
+- AI SDK runtime 已具备服务端 Web 化的最佳基础，优先投入产品化；P0–P5 已完成独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、本地双实例 E2E、用量与成本账本、预算/限速、追加式审计、运行指标和僵尸任务诊断。OIDC/JWT、云 KMS 和管理员审计已有实现与离线测试；生产联通、完整 Web 业务体验与真实 provider E2E 仍需验收。
+- Pi runtime 已完成独立 SDK runtime 接入和多 provider 真实 smoke，当前为桌面默认 runtime；历史文本 smoke 不代表全部工具链已生产验收。
 - Claude runtime 继续作为 Claude Agent SDK 原生路径，保留其 resume、权限与历史能力。
 
 ## Runtime 定位
@@ -18,7 +18,7 @@
 | `claude` | Claude Agent SDK 原生 runtime | SDK 原生会话、权限、resume/fork 语义成熟 | 绑定 Claude SDK 协议与能力模型 |
 | `proma` | Proma provider-agnostic runtime | MCP、Plan、AskUser、Sub Agent、权限、工具循环最完整 | 需要逐 provider 维护协议兼容性 |
 | `ai-sdk` | 服务端 Web 优先 runtime | Provider 包生态好，runtime core 和服务边界已初步抽离 | 细粒度 UI 流式仍需继续打磨，fork/rewind 是 history replay，不是 SDK 原生快照 |
-| `pi` | Pi SDK 验证 runtime | SDK 对照组，已可跑多 provider | 工具体系保守，MCP/AskUser/Sub Agent/权限桥接不如 Proma runtime |
+| `pi` | 桌面默认 runtime | 多 provider、核心工具、MCP 与权限桥接 | Computer Use 完整视觉/接管仍只做兼容验证；真实 Provider 工具矩阵需单独验收 |
 
 ## 真实 API Smoke
 
@@ -26,6 +26,7 @@
 
 - AI SDK：`PROMA_AI_SDK_REAL_API=1`
 - Pi：`PROMA_PI_REAL_API=1`
+- Proma：`PROMA_PROVIDER_AGNOSTIC_REAL_API=1`
 
 为避免凭证在本地或常规 CI 中泄露，仓库提供手动触发的 GitHub Actions 工作流 **Provider E2E**（`.github/workflows/provider-e2e.yml`）。它按一次一个 provider/runtime 注入对应 GitHub Secret，并运行真实 API smoke。当前工作流已落地，但本次变更没有使用生产凭证发起远程调用，因此不能把工作流本身视为新的真实 provider 通过记录。
 

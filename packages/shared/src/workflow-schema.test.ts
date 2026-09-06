@@ -63,4 +63,15 @@ describe('WorkflowDefinitionSchema', () => {
       expect(result.error.issues.map((issue) => issue.message).join('\n')).toContain('不得存储凭证')
     }
   })
+
+  test('拒绝节点引用非上游节点的输出', () => {
+    const workflow = createValidDefinition()
+    workflow.nodes[1]!.config = { prompt: '收集项目风险', inputMapping: { value: '$nodes.end.output.value' } }
+
+    const result = validateWorkflowDefinition(workflow)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.message).join('\n')).toContain('非上游节点 end')
+    }
+  })
 })

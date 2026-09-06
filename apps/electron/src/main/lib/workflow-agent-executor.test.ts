@@ -84,7 +84,7 @@ describe('Workflow Agent 节点执行器', () => {
     })
 
     expect(result.status).toBe('failed')
-    expect(result.nodeRuns?.collect?.error).toEqual({ code: 'agent_execution_failed', message: '模型不可用', retryable: true })
+    expect(result.nodeRuns?.collect?.error).toEqual({ code: 'agent_execution_failed', message: '模型不可用', category: 'transient', retryable: true })
   })
 
   test('Given 已授权 Tool 节点 When 受控 MCP 执行 Then 收到稳定幂等键且只获得声明工具', async () => {
@@ -127,6 +127,31 @@ describe('Workflow Agent 节点执行器', () => {
     expect(result.nodeRuns?.collect?.output).toEqual({ agentSessionId: 'agent-session-3', result: { count: 2 } })
   })
 
+  test('Given 上游节点输出映射 When 执行 Agent Then 仅传入已解析的结构化节点输入', async () => {
+    const published = setupWorkflow()
+    saveWorkflowDefinition({
+      ...published,
+      nodes: [
+        published.nodes[0]!,
+        { id: 'prepare', kind: 'transform', title: '整理', config: { assignments: { risk: '$input.risk' } } },
+        { ...published.nodes[1]!, config: { prompt: '收集风险', inputMapping: { projectId: '$input.projectId', risk: '$nodes.prepare.output.risk' } }, },
+        published.nodes[2]!,
+      ],
+      edges: [{ id: 'start-prepare', from: 'start', to: 'prepare' }, { id: 'prepare-collect', from: 'prepare', to: 'collect' }, { id: 'collect-end', from: 'collect', to: 'end' }],
+      layout: { nodes: { start: { x: 0, y: 0 }, prepare: { x: 80, y: 0 }, collect: { x: 160, y: 0 }, end: { x: 240, y: 0 } } },
+    })
+    const run = createWorkflowRun(published.id, { projectId: 'p-1', risk: 'budget' })
+    const { executeWorkflowDeterministicNode } = await import('./workflow-deterministic-executor')
+    executeWorkflowDeterministicNode(published.id, run.id, 'prepare')
+    let message = ''
+    await executeWorkflowAgentNode(published.id, run.id, 'collect', 'channel-1', undefined, {
+      runner: { async run(input, callbacks) { message = input.userMessage; callbacks.onComplete() } },
+      sessionFactory: { create: () => ({ id: 'agent-session-dataflow-1' }) },
+    })
+    expect(message).toContain('<workflow_node_input>\n{"projectId":"p-1","risk":"budget"}')
+    expect(message).not.toContain('"risk":"$nodes.prepare.output.risk"')
+  })
+
   test('Given outputSchema When Agent returns incompatible text Then it records retryable contract failure', async () => {
     const published = setupWorkflow()
     saveWorkflowDefinition({
@@ -141,7 +166,8 @@ describe('Workflow Agent 节点执行器', () => {
       sessionFactory: { create: () => ({ id: 'agent-session-4' }) },
     })
     expect(result.nodeRuns?.collect?.error?.code).toBe('output_schema_invalid')
-    expect(result.nodeRuns?.collect?.error?.retryable).toBe(true)
+    expect(result.nodeRuns?.collect?.error?.category).toBe('validation')
+    expect(result.nodeRuns?.collect?.error?.retryable).toBe(false)
   })
 
   test('getActiveWorkflowAgentSession 在执行 agent 节点期间可查询，结束后清理', async () => {

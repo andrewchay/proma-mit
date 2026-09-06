@@ -22,7 +22,9 @@ export const WORKFLOW_NODE_KINDS = [
   'skill',
   'transform',
   'condition',
+  'foreach',
   'approval',
+  'subworkflow',
 ] as const
 
 export type WorkflowNodeKind = typeof WORKFLOW_NODE_KINDS[number]
@@ -55,6 +57,24 @@ export type WorkflowRunStatus =
 /** 节点失败后的处理策略。 */
 export type WorkflowFailureStrategy = 'fail' | 'continue' | 'route_to_error'
 
+/** 后继节点接受的前置节点终态；未配置时仅接受 completed / skipped。 */
+export type WorkflowDependencyStatus = 'completed' | 'failed' | 'skipped' | 'cancelled' | 'blocked'
+
+/** 失败类别决定是否允许自动重试，避免将业务拒绝或外部未知误当成暂态故障。 */
+export type WorkflowErrorCategory =
+  | 'transient'
+  | 'validation'
+  | 'policy_denied'
+  | 'external_unknown'
+  | 'compensation_required'
+  | 'permanent'
+
+export interface WorkflowStructuredError {
+  code: string
+  message: string
+  category: WorkflowErrorCategory
+  retryable: boolean
+}
 /** 工作流级别触发来源。 */
 export type WorkflowTriggerKind = 'manual' | 'schedule' | 'event'
 
@@ -146,6 +166,9 @@ export interface WorkflowIdentityDirectory {
 export interface WorkflowAgentNodeConfig {
   prompt: string
   modelId?: string
+  /** 节点的结构化输入；$input 与 $nodes.<nodeId>.output 引用会在执行前解析。 */
+  inputMapping?: Record<string, unknown>
+  inputSchema?: Record<string, unknown>
   outputSchema?: Record<string, unknown>
 }
 
@@ -153,6 +176,7 @@ export interface WorkflowAgentNodeConfig {
 export interface WorkflowToolNodeConfig {
   toolName: string
   inputMapping?: Record<string, unknown>
+  inputSchema?: Record<string, unknown>
   outputSchema?: Record<string, unknown>
 }
 
@@ -160,6 +184,9 @@ export interface WorkflowToolNodeConfig {
 export interface WorkflowSkillNodeConfig {
   skill: WorkflowSkillReference
   prompt: string
+  /** 节点的结构化输入；$input 与 $nodes.<nodeId>.output 引用会在执行前解析。 */
+  inputMapping?: Record<string, unknown>
+  inputSchema?: Record<string, unknown>
   outputSchema?: Record<string, unknown>
 }
 
@@ -171,6 +198,22 @@ export interface WorkflowTransformNodeConfig {
 /** 条件分支节点配置。条件表达式的具体语言由 DSL 阶段固定。 */
 export interface WorkflowConditionNodeConfig {
   expression: string
+}
+
+/** 受控复合节点：只执行有上限、顺序的无副作用变换，不承载 Agent、Tool 或任意代码。 */
+export interface WorkflowForEachNodeConfig {
+  items: string
+  assignments: Record<string, unknown>
+  maxItems?: number
+  maxConcurrency?: 1
+}
+
+/** 受控子流程只引用精确发布版本；首版限制为同工作区的一层确定性复用。 */
+export interface WorkflowSubworkflowNodeConfig {
+  workflowId: string
+  version: string
+  inputMapping?: Record<string, unknown>
+  maxDepth?: 1
 }
 
 /** 节点定义。不同 kind 对应不同 config，运行时必须进行格式校验。 */
@@ -185,10 +228,13 @@ export interface WorkflowNode {
     | WorkflowSkillNodeConfig
     | WorkflowTransformNodeConfig
     | WorkflowConditionNodeConfig
+    | WorkflowForEachNodeConfig
     | WorkflowApprovalConfig
+    | WorkflowSubworkflowNodeConfig
   capabilityPolicy?: WorkflowCapabilityPolicy
   retry?: WorkflowRetryPolicy
   onFailure?: WorkflowFailureStrategy
+  runAfter?: WorkflowDependencyStatus[]
 }
 
 /** 节点间的语义连线。label 用于条件节点的 true/false 或业务分支名。 */
@@ -323,14 +369,14 @@ export interface WorkflowNodeRun {
   finishedAt?: number
   input?: Record<string, unknown>
   output?: Record<string, unknown>
-  error?: { code: string; message: string; retryable: boolean }
+  error?: WorkflowStructuredError
   agentSessionId?: string
   /** 仅用于可能产生外部副作用的 tool 节点；不确定结果绝不自动重试。 */
   sideEffect?: {
     idempotencyKey: string
     leaseId: string
     leaseExpiresAt: number
-    status: 'executing' | 'requires_intervention' | 'confirmed'
+    status: 'executing' | 'requires_intervention' | 'confirmed' | 'compensated'
     reason?: string
   }
 }
@@ -361,8 +407,8 @@ export interface WorkflowRun {
   nodeRuns: Record<string, WorkflowNodeRun>
   approvals: WorkflowApprovalRecord[]
   startedAt?: number
-  finishedAt?: number
   createdAt: number
+  finishedAt?: number
   updatedAt: number
 }
 
@@ -393,6 +439,18 @@ export interface WorkflowRunEvent {
   payload?: Record<string, unknown>
 }
 
+/** 不可变的 Run 状态检查点；用于故障后恢复，绝不替换历史 checkpoint。 */
+export interface WorkflowRunCheckpoint {
+  id: string
+  runId: string
+  sequence: number
+  occurredAt: number
+  eventType: WorkflowRunEventType | 'run_created'
+  nodeId?: string
+  /** 含已冻结 Definition 的完整状态，保证恢复时不读取后续版本。 */
+  run: WorkflowRun
+}
+
 /** Workflow Mode IPC 通道。 */
 export const WORKFLOW_IPC_CHANNELS = {
   LIST_DEFINITIONS: 'workflow:list-definitions',
@@ -416,6 +474,7 @@ export const WORKFLOW_IPC_CHANNELS = {
   CREATE_RUN: 'workflow:create-run',
   GET_RUN: 'workflow:get-run',
   LIST_RUNS: 'workflow:list-runs',
+  SIMULATE_RUN: 'workflow:simulate-run',
   LIST_RUN_EVENTS: 'workflow:list-run-events',
   EXECUTE_AGENT_NODE: 'workflow:execute-agent-node',
   EXECUTE_DETERMINISTIC_NODE: 'workflow:execute-deterministic-node',

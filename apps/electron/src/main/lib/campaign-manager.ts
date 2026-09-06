@@ -9,6 +9,7 @@
  * Slice 4: 添加 Brief 表 + 生成/保存功能
  */
 
+import { openNativeSqlite, type NativeSqliteDatabase, type SqlValue } from './native-sqlite'
 import { existsSync, mkdirSync, cpSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -23,35 +24,11 @@ import type { Campaign, CampaignCreativePlan, CampaignPhasePlan, CreateCampaignI
 // SQLite 运行时适配层（复用 kol-data-service 模式）
 // =====================================================================
 
-let _nativeDb: any = null
-
-function loadEngine(): { Database: new (path: string) => any } {
-  if (typeof Bun !== 'undefined') {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require('bun:' + 'sqlite')
-      return { Database: mod.Database }
-    } catch {
-      // fall through to better-sqlite3
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return { Database: require('better-sqlite3') }
-}
-
-function getEngine(): { Database: new (path: string) => any } {
-  if (!_nativeDb) {
-    _nativeDb = loadEngine()
-  }
-  return _nativeDb
-}
-
 class Database {
-  private db: any
+  private db: NativeSqliteDatabase
 
   constructor(path: string) {
-    const { Database: NativeDb } = getEngine()
-    this.db = new NativeDb(path)
+    this.db = openNativeSqlite(path)
     // WAL + busy_timeout：kol-database.sqlite 会被 campaign-manager 与 kol-data-service
     // 以两个独立连接同时读写，避免提交窗口内互踩 SQLITE_BUSY
     try {
@@ -62,7 +39,7 @@ class Database {
     }
   }
 
-  run(sql: string, ...params: unknown[]): { changes: number } {
+  run(sql: string, ...params: unknown[]): { changes: number | bigint } {
     const flat = flattenParams(params)
     if (flat.length === 0) {
       this.db.exec(sql)
@@ -84,11 +61,11 @@ class Database {
   }
 }
 
-function flattenParams(params: unknown[]): any[] {
+function flattenParams(params: unknown[]): SqlValue[] {
   if (params.length === 1 && Array.isArray(params[0])) {
-    return params[0] as any[]
+    return params[0] as SqlValue[]
   }
-  return params as any[]
+  return params as SqlValue[]
 }
 
 // =====================================================================
@@ -617,7 +594,7 @@ function getKolDb(): Database {
 }
 
 /** 填充 Mock KOL 数据到 KOL 数据库 */
-function seedMockKOLsIntoKolDb(db: Database): void {
+function _seedMockKOLsIntoKolDb(db: Database): void {
   const now = Date.now()
   const mockKOLs: Array<Omit<KOLListItem, 'createdAt' | 'updatedAt'>> = [
     ...[
@@ -1056,7 +1033,14 @@ function generateId(): string {
 }
 
 /** 行数据 → Campaign 对象 */
-function rowToCampaign(row: any): Campaign {
+interface CampaignRow {
+  id: string; name: string; brand: string; project_path?: string; platform: string
+  budget?: number; duration_months?: number; target_city?: unknown; target_audience?: string
+  current_phase?: number; phase_plans?: string; creative_plan?: string; status: string
+  created_at: number; updated_at: number
+}
+function rowToCampaign(value: unknown): Campaign {
+  const row = value as CampaignRow
   const parseTargetCity = (value: unknown): string[] => {
     if (!value) return []
     if (Array.isArray(value)) return value.map(String)
@@ -1097,7 +1081,13 @@ function rowToCampaign(row: any): Campaign {
 }
 
 /** 行数据 → CampaignKOLPoolItem */
-function rowToPoolItem(row: any): import('@gravitas/shared').CampaignKOLPoolItem {
+interface PoolRow {
+  campaign_id: string; kol_id: string; name: string; platform: string; followers?: string
+  engagement?: string; category?: string; price?: string; city?: string; status: string
+  notes?: string; added_at: number
+}
+function rowToPoolItem(value: unknown): import('@gravitas/shared').CampaignKOLPoolItem {
+  const row = value as PoolRow
   return {
     campaignId: row.campaign_id,
     kolId: row.kol_id,

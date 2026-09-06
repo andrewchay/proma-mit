@@ -148,7 +148,7 @@ export class ProactiveScheduler {
     this.activeScheduleIds.add(schedule.id)
     const startedAt = this.now()
     let run = this.store.saveRun({
-      id: randomUUID(), sourceType: trigger === 'manual' ? 'manual' : 'schedule', sourceId: schedule.id,
+      id: randomUUID(), sourceType: trigger === 'manual' ? 'manual' : 'schedule', sourceId: schedule.id, sourceTitle: schedule.title,
       sessionId: schedule.sessionId, status: 'running', trigger, startedAt,
     })
     // PH2-C：把 Proactive 运行沉淀进统一运行事实源（Run Center 可回放）

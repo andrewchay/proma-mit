@@ -1,8 +1,8 @@
 import type { SqlJsDatabase } from '../migrations.ts'
-import {
-  type ContextEdge,
-  type ContextEdgeInput,
-  type ContextRelatedNode,
+import type {
+  ContextEdge,
+  ContextEdgeInput,
+  ContextRelatedNode,
 } from '../types.ts'
 import { safeAll, safeRun } from '../migrations.ts'
 

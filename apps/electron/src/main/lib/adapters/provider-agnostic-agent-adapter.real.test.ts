@@ -14,19 +14,10 @@ import { join } from 'node:path'
 
 mock.module('electron', () => buildElectronMock())
 
-mock.module('../attachment-service', () => ({
-  isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),
-  readAttachmentAsBase64: (localPath: string) => `base64:${localPath}`,
-}))
-mock.module('../document-parser', () => ({
-  isDocumentAttachment: (mediaType: string) => mediaType === 'text/plain',
-  extractTextFromAttachment: async (localPath: string) => `文档内容：${localPath}`,
-}))
-
 const { ProviderAgnosticAgentAdapter } = await import('./provider-agnostic-agent-adapter')
 
 const apiKey = process.env.DEEPSEEK_API_KEY
-const shouldRun = Boolean(apiKey)
+const shouldRun = process.env.PROMA_PROVIDER_AGNOSTIC_REAL_API === '1' && Boolean(apiKey)
 
 ;(shouldRun ? describe : describe.skip)('Provider-Agnostic Agent 真实 API', () => {
   let tempDir: string

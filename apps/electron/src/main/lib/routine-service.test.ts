@@ -51,7 +51,7 @@ describe('RoutineService', () => {
       permissionMode: 'safe',
     })
 
-    expect(run).toMatchObject({ sourceType: 'routine', sourceId: instance!.id, status: 'success', outputSummary: '记忆候选已生成' })
+    expect(run).toMatchObject({ sourceType: 'routine', sourceId: instance!.id, sourceTitle: '每日记忆', status: 'success', outputSummary: '记忆候选已生成' })
     expect(new ProactiveSchedulerStore().listRuns()).toEqual([expect.objectContaining({ id: run.id, sourceType: 'routine' })])
     const memoryApproval = getPendingApprovals().find((approval) => approval.runId === run.id)
     expect(memoryApproval).toEqual(expect.objectContaining({

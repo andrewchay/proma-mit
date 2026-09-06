@@ -11,5 +11,7 @@ export { exportWorkflowDefinition, importWorkflowDefinition, migrateWorkflowDefi
 export { parseWorkflowDefinition, validateWorkflowDefinition } from './workflow-schema'
 export type { WorkflowExportFile, WorkflowImportOptions } from './workflow-file'
 export type { WorkflowCapabilityViolation } from './workflow-capabilities'
-export { validateWorkflowOutput } from './workflow-output-schema'
+export { validateWorkflowInput, validateWorkflowOutput } from './workflow-output-schema'
+export { resolveWorkflowNodeInput, validateWorkflowDataflow } from './workflow-input-mapping'
+export type { WorkflowDataflowContext, WorkflowDataflowViolation } from './workflow-input-mapping'
 export type { WorkflowPatchProposal } from './types/workflow'

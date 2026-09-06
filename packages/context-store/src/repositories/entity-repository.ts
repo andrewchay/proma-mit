@@ -1,7 +1,7 @@
 import type { SqlJsDatabase } from '../migrations.ts'
-import {
-  type ContextEntity,
-  type ContextEntityType,
+import type {
+  ContextEntity,
+  ContextEntityType,
 } from '../types.ts'
 import { safeAll, safeRun } from '../migrations.ts'
 

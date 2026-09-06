@@ -166,6 +166,8 @@ export interface SignalContext {
   sopCandidateCount: number
   /** 最近是否有 release/CI 相关运行 */
   recentReleaseRuns: number
+  /** 已配置的主动任务总数。 */
+  scheduleCount: number
 }
 
 /**
@@ -173,6 +175,25 @@ export interface SignalContext {
  */
 export function runRecommendationEngine(context: SignalContext): ProactiveRecommendation[] {
   const newRecommendations: ProactiveRecommendation[] = []
+
+  // 规则 0：首次使用时给出不执行、不写入的配置入口，避免 Today 空白。
+  if (context.scheduleCount === 0 && context.recentRuns.length === 0) {
+    const rec = createRecommendation({
+      kind: 'schedule',
+      title: '创建首个安全定时任务',
+      reason: '尚未配置主动任务；可以先从只生成摘要的安全定时任务开始。',
+      scope: 'getting-started',
+      confidence: 0.9,
+      safetyLevel: 'read_only',
+      duplicateKey: 'proactive-getting-started-suggestion',
+      evidence: [{ label: '当前配置', detail: '暂无定时任务和运行记录' }],
+      action: {
+        type: 'create_schedule',
+        schedule: { type: 'cron', expression: '0 9 * * 1-5', timezone: 'Asia/Shanghai' },
+      },
+    })
+    if (rec) newRecommendations.push(rec)
+  }
 
   // 规则 1：Memory candidates 存在且未开启 memory-daily
   if (!context.hasMemoryDailySchedule && context.recentRuns.length > 0) {
@@ -295,6 +316,7 @@ export function collectRecommendationSignals(): SignalContext {
     pendingApprovalCount: getPendingApprovals().length,
     sopCandidateCount: listMemoryItems('sop').length,
     recentReleaseRuns,
+    scheduleCount: schedules.length,
   }
 }
 

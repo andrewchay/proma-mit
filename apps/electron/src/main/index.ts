@@ -9,6 +9,9 @@ import {
 } from './lib/app-identity'
 
 app.setName(APP_DISPLAY_NAME)
+if (process.env.GRAVITAS_PACKAGE_SMOKE === '1' && process.env.PROMA_TEST_CONFIG_DIR) {
+  app.setPath('userData', join(process.env.PROMA_TEST_CONFIG_DIR, 'electron'))
+}
 
 // 统一使用 proma-mit 身份，不再区分 dev/prod userData
 // 注意：本机只应安装一个 proma-mit 版本，避免出现双实例
@@ -276,7 +279,7 @@ function showAndFocusMainWindow(): void {
 /**
  * Get the appropriate app icon path for the current platform
  */
-function getIconPath(): string {
+function _getIconPath(): string {
   // resources 在 build:resources 阶段被复制到 dist/ 下，与 main.cjs 同级
   const resourcesDir = join(__dirname, 'resources')
 
@@ -437,6 +440,11 @@ app.whenReady().then(bootstrap).catch(handleBootstrapFailure)
  * 单点失败不应阻止窗口和托盘的创建（用户至少要能看到界面）。
  */
 async function bootstrap(): Promise<void> {
+  if (process.env.GRAVITAS_PACKAGE_SMOKE === '1') {
+    try { await (await import('./lib/package-smoke')).runPackageSmoke(); app.exit(0) }
+    catch (error) { console.error(error); app.exit(1) }
+    return
+  }
   // 注册自定义协议 proma-file:// 用于内联预览本地文件。
   // 协议只接受主进程签发的 opaque token，不解析 renderer 提供的绝对路径。
   protocol.handle('proma-file', handlePromaFileRequest)
@@ -697,35 +705,35 @@ app.on('before-quit', () => {
   try {
     const { stopWorkflowScheduler } = require('./lib/workflow-scheduler')
     stopWorkflowScheduler()
-  } catch (e) {
+  } catch (_e) {
     // 忽略，可能在测试环境中不可用
   }
   // 停止灵动岛通知服务
   try {
     const { stopDynamicIslandService } = require('./lib/dynamic-island/dynamic-island-service')
     stopDynamicIslandService()
-  } catch (e) {
+  } catch (_e) {
     // 忽略，可能在测试环境中不可用
   }
   // 停止统一任务事件总线
   try {
     const { stopAppEventBus } = require('./lib/app-event-bus')
     stopAppEventBus()
-  } catch (e) {
+  } catch (_e) {
     // 忽略，可能在测试环境中不可用
   }
   // 停止通知协调器
   try {
     const { stopNotificationCoordinator } = require('./lib/notification-coordinator')
     stopNotificationCoordinator()
-  } catch (e) {
+  } catch (_e) {
     // 忽略，可能在测试环境中不可用
   }
   // 停止运行记录存储
   try {
     const { stopRunStore } = require('./lib/run-store')
     stopRunStore()
-  } catch (e) {
+  } catch (_e) {
     // 忽略，可能在测试环境中不可用
   }
   // 注销全局快捷键

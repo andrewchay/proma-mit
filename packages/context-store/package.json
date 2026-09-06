@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/context-store",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "BUSL-1.1",
   "description": "Local-first context graph and recall storage for Gravitas",
   "type": "module",
@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "sql.js": "^1.14.1"
+    "sql.js": "^1.14.1",
+    "@gravitas/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/sql.js": "^1.4.11",

@@ -37,7 +37,7 @@ export function PaidRulesPanel(): React.ReactElement {
   const [loading, setLoading] = React.useState(true)
   const [showAdd, setShowAdd] = React.useState(false)
 
-  const load = async (): Promise<void> => {
+  const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const list = (await window.electronAPI.paa.marketing.paidMedia.listRules()) as Rule[]
@@ -45,11 +45,11 @@ export function PaidRulesPanel(): React.ReactElement {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   React.useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   const addRule = async (tpl: Rule): Promise<void> => {
     await window.electronAPI.paa.marketing.paidMedia.createRule({

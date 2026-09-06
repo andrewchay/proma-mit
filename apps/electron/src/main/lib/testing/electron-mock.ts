@@ -75,15 +75,15 @@ class MockWebContentsView {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildElectronMock(): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const anyNativeImage = {} as any
+  const anyNativeImage = {}
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const app: any = {
+  const app = {
     isPackaged: false,
     getPath: () => '/tmp',
     getAppPath: () => '/tmp',
     whenReady: async () => undefined,
-    on: () => app,
-    once: () => app,
+    on: (): unknown => app,
+    once: (): unknown => app,
       isReady: () => false,
       quit: () => {},
       hide: () => {},

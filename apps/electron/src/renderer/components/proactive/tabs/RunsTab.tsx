@@ -2,7 +2,7 @@
  * Runs Tab - 运行历史
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtom } from 'jotai'
 import { History, RefreshCw, LoaderCircle, CheckCircle, XCircle, Pause } from 'lucide-react'
 import { Button } from '@/components/ui/button'

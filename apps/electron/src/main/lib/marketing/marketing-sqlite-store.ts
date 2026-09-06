@@ -10,9 +10,10 @@
 
 import { randomUUID } from 'node:crypto'
 import initSqlJs from 'sql.js'
+import { writeFileAtomic } from '@gravitas/shared/utils/node'
 import { getMarketingDir } from '../config-paths'
 import { join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type {
   InfluencerTalent,
   InfluencerBrief,
@@ -144,7 +145,7 @@ function wrap(raw: RawDatabase, dbPath: string): Compat {
     },
     persist() {
       const data = raw.export()
-      writeFileSync(dbPath, Buffer.from(data))
+      writeFileAtomic(dbPath, data)
     },
     close() {
       raw.export()

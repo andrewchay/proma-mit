@@ -25,7 +25,7 @@ import type {
 } from '@gravitas/shared'
 import type { AgentEventMiddleware } from './agent-event-bus'
 import { getTokenUsageIndexPath, getTokenUsageMonthPath, getDefaultSkillsDir } from './config-paths'
-import { getAgentSessionMeta } from './agent-session-manager'
+import { getAgentSessionMeta, updateAgentSessionMeta } from './agent-session-manager'
 import { getAgentWorkspace, getWorkspaceSkills } from './agent-workspace-manager'
 
 /** 单文件最大记录数软上限（用于裁剪极久远的月份，非严格限制） */
@@ -289,6 +289,21 @@ export class TokenUsageService {
     }
 
     this.appendRecord(record)
+
+    const contextTokens = record.inputTokens + record.cacheReadTokens + record.cacheCreationTokens
+    if (contextTokens > 0 && record.modelId) {
+      try {
+        updateAgentSessionMeta(sessionId, {
+          lastContextUsage: {
+            contextTokens,
+            modelId: record.modelId,
+            recordedAt: record.timestamp,
+          },
+        })
+      } catch (err) {
+        console.warn('[TokenUsage] 写入最近上下文用量失败:', err)
+      }
+    }
 
     // 配额自动闭环：若该会话绑定了 Goal，把本轮真实成本累加到 Goal 的 spentUsd。
     // 此前 spendGoalBudget 仅通过 IPC 暴露，运行流程从不调用，导致配额“只挡不扣”。

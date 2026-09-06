@@ -115,7 +115,7 @@ export async function composeVideo(
     const ffmpegCmd = buildFFmpegCommand(config, concatFile);
 
     // 5. 执行合成
-    const ffmpegResult = await execFileAsync('ffmpeg', ffmpegCmd.split(' ').filter(Boolean))
+    const _ffmpegResult = await execFileAsync('ffmpeg', ffmpegCmd.split(' ').filter(Boolean))
 
     // 6. 获取视频信息
     const videoInfo = await getVideoInfo(config.outputPath);
@@ -148,7 +148,7 @@ function buildFFmpegCommand(
   concatFile: string
 ): string {
   const format = config.outputFormat || DEFAULT_OUTPUT_FORMAT;
-  const [width, height] = format.resolution.split("x");
+  const [_width, _height] = format.resolution.split("x");
 
   let cmd = `ffmpeg -y -f concat -safe 0 -i "${concatFile}"`;
 
@@ -397,7 +397,7 @@ export async function getVideoInfo(videoPath: string): Promise<VideoInfo> {
   try {
     const result = await execFileAsync('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', videoPath])
     const info = JSON.parse(result.stdout)
-    const videoStream = info.streams.find((s: any) => s.codec_type === "video");
+    const videoStream = info.streams.find((s: { codec_type: string; width?: number; height?: number }) => s.codec_type === "video");
     const format = info.format;
 
     return {

@@ -11,10 +11,12 @@ function nodeById(run: WorkflowRun, nodeId: string) {
   return node
 }
 
-function contextOf(run: WorkflowRun): Record<string, unknown> {
+function contextOf(run: WorkflowRun, item?: unknown, index?: number): Record<string, unknown> {
   return {
     input: run.input,
     nodes: Object.fromEntries(Object.entries(run.nodeRuns).map(([id, nodeRun]) => [id, { output: nodeRun.output ?? {}, status: nodeRun.status }])),
+    ...(item !== undefined ? { item } : {}),
+    ...(index !== undefined ? { index } : {}),
   }
 }
 
@@ -66,18 +68,28 @@ function evaluateCondition(expression: string, context: Record<string, unknown>)
   }
 }
 
-/** 执行 transform 或 condition；失败会记录审计状态，不抛出未记录的异常。 */
+/** 执行 transform、condition 或受控 foreach；失败会记录审计状态，不抛出未记录的异常。 */
 export function executeWorkflowDeterministicNode(workflowId: string, runId: string, nodeId: string): WorkflowRun {
   const run = getWorkflowRun(workflowId, runId)
   if (!run) throw new Error(`Workflow Run 不存在: ${runId}`)
   const node = nodeById(run, nodeId)
-  if (node.kind !== 'transform' && node.kind !== 'condition') throw new Error('当前节点不是 transform 或 condition 节点')
+  if (node.kind !== 'transform' && node.kind !== 'condition' && node.kind !== 'foreach') throw new Error('当前节点不是确定性 Workflow 节点')
   startWorkflowNode(workflowId, runId, nodeId)
   try {
     const context = contextOf(run)
     if (node.kind === 'transform') {
       const assignments = (node.config as { assignments: Record<string, unknown> }).assignments
       return completeWorkflowNode(workflowId, runId, nodeId, resolveTemplate(assignments, context) as Record<string, unknown>)
+    }
+    if (node.kind === 'foreach') {
+      const config = node.config as { items: string; assignments: Record<string, unknown>; maxItems?: number; maxConcurrency?: number }
+      if (config.maxConcurrency !== undefined && config.maxConcurrency !== 1) throw new Error('foreach 当前只允许顺序执行')
+      const items = resolvePath(context, config.items)
+      if (!Array.isArray(items)) throw new Error('foreach items 引用必须解析为数组')
+      const maxItems = config.maxItems ?? 100
+      if (items.length > maxItems) throw new Error(`foreach 输入超过上限 ${maxItems}`)
+      const results = items.map((item, index) => resolveTemplate(config.assignments, contextOf(run, item, index)))
+      return completeWorkflowNode(workflowId, runId, nodeId, { items: results, count: results.length })
     }
     const expression = (node.config as { expression: string }).expression
     const result = evaluateCondition(expression, context)
@@ -86,6 +98,6 @@ export function executeWorkflowDeterministicNode(workflowId: string, runId: stri
     return completeWorkflowNode(workflowId, runId, nodeId, { result }, { selectedOutgoingNodeIds: selected })
   } catch (error) {
     const message = error instanceof Error ? error.message : '确定性节点执行失败'
-    return failWorkflowNode(workflowId, runId, nodeId, { code: 'deterministic_execution_failed', message, retryable: false })
+    return failWorkflowNode(workflowId, runId, nodeId, { code: 'deterministic_execution_failed', message, category: 'validation', retryable: false })
   }
 }

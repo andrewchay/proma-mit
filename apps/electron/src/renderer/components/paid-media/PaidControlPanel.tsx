@@ -42,7 +42,7 @@ export function PaidControlPanel(): React.ReactElement {
   const [loading, setLoading] = React.useState(true)
   const [showAdd, setShowAdd] = React.useState(false)
 
-  const load = async (): Promise<void> => {
+  const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const list = (await window.electronAPI.paa.marketing.paidMedia.listControlActions()) as ControlAction[]
@@ -50,11 +50,11 @@ export function PaidControlPanel(): React.ReactElement {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   React.useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   const addSuggestion = async (type: string, campaign: string): Promise<void> => {
     await window.electronAPI.paa.marketing.paidMedia.createControlAction({

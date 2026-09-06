@@ -21,8 +21,8 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
-import { WorkflowView } from '@/components/workflow/WorkflowView'
-import { ProactiveCenter } from '@/components/proactive/ProactiveCenter'
+const WorkflowView = React.lazy(() => import('@/components/workflow/WorkflowView').then((module) => ({ default: module.WorkflowView })))
+const ProactiveCenter = React.lazy(() => import('@/components/proactive/ProactiveCenter').then((module) => ({ default: module.ProactiveCenter })))
 import { WORK_MODULE_VIEWS } from '@/atoms/work-module-registry'
 
 export function MainArea(): React.ReactElement {
@@ -155,15 +155,15 @@ export function MainArea(): React.ReactElement {
     <>
       {activeView === 'workflow' ? (
         <Panel variant="grow" className={mainPanelClassName}>
-          <WorkflowView />
+          <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkflowView /></React.Suspense>
         </Panel>
       ) : activeView === 'proactive' ? (
         <Panel variant="grow" className={mainPanelClassName}>
-          <ProactiveCenter />
+          <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><ProactiveCenter /></React.Suspense>
         </Panel>
       ) : WorkModuleComponent ? (
         <Panel variant="grow" className={mainPanelClassName}>
-          <WorkModuleComponent />
+          <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkModuleComponent /></React.Suspense>
         </Panel>
       ) : (
       <Panel

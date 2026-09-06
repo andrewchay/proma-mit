@@ -11,6 +11,14 @@
  * terminal response event"），否则 Pi 断流重试耗尽后抛出的错误无法被
  * orchestrator 识别为可重试，表现为 Pi runtime 断流而 AI SDK 正常。
  */
+/** 明确的上下文窗口超限错误；用于一次性压缩恢复，不进入网络重试。 */
+export const CONTEXT_OVERFLOW_PATTERN = /context_length_exceeded|maximum context (?:length|window)|context (?:length|window).*exceed|prompt is too long|input is too long|too many tokens/i
+
+export function isContextOverflowError(message?: string, stderr?: string): boolean {
+  if (!message && !stderr) return false
+  return (!!message && CONTEXT_OVERFLOW_PATTERN.test(message)) || (!!stderr && CONTEXT_OVERFLOW_PATTERN.test(stderr))
+}
+
 export const TRANSIENT_NETWORK_PATTERN =
   /terminated|socket hang up|ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|fetch failed|network error|connection (?:closed|lost|refused|reset)|AbortError|aborted|timed out|stream (?:closed|ended|disconnected) prematurely|premature close|other side closed|ended without|stream ended before|message_stop|finish_reason|terminal response event/i
 

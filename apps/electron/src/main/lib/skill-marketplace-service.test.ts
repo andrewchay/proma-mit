@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { createAgentWorkspace, getAllWorkspaceSkills, toggleSkillSet, toggleWorkspaceSkill } from "./agent-workspace-manager"
 import { getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
 import { deduplicateMarketplaceSkills, getSkillMarketplace, installMarketplaceSkill } from "./skill-marketplace-service"
-import type { SkillMarketplaceItem } from "@gravitas/shared"
+import type { MarketplaceSkillCandidate } from "./skill-marketplace-service"
 
 const TEST_DIR = "/tmp/proma-skill-marketplace-test"
 
@@ -15,7 +15,7 @@ function writeSkill(dir: string, slug: string, version: string, category: string
   writeFileSync(join(skillDir, "SKILL.md"), "---\nname: " + slug + "\ndescription: " + slug + " 描述\nversion: " + version + "\ncategory: " + category + "\n---\n内容\n", "utf-8")
 }
 
-function marketplaceSkill(name: string, source: SkillMarketplaceItem["source"]): SkillMarketplaceItem {
+function marketplaceSkill(name: string, source: MarketplaceSkillCandidate["source"], contentSignature?: string): MarketplaceSkillCandidate {
   return {
     id: source + ":" + name,
     slug: name,
@@ -23,6 +23,7 @@ function marketplaceSkill(name: string, source: SkillMarketplaceItem["source"]):
     source,
     installStatus: "available",
     enabled: true,
+    contentSignature,
   }
 }
 
@@ -67,10 +68,22 @@ describe("Skills 集市与 Skill Set", () => {
       marketplaceSkill("pdf", "builtin"),
       marketplaceSkill("pdf", "claude"),
       marketplaceSkill("pdf", "personal"),
+      marketplaceSkill("pdf-processor", "personal"),
+      marketplaceSkill("guizang-ppt-skill", "builtin"),
+      marketplaceSkill("pptx", "builtin"),
       marketplaceSkill("growth-copilot", "personal"),
       marketplaceSkill("growth-scout", "personal"),
     ])
-    expect(items.map((item) => item.name)).toEqual(["pdf", "growth-scout"])
+    expect(items.map((item) => item.name)).toEqual(["pdf", "pptx", "growth-scout"])
     expect(items[0]?.source).toBe("builtin")
+  })
+
+  test("Given 不同名称但正文相同的来源镜像 When 构建集市 Then 只保留优先来源", () => {
+    const items = deduplicateMarketplaceSkills([
+      marketplaceSkill("adaptyv", "builtin", "same-content"),
+      marketplaceSkill("claude-plugin-adaptyv", "personal", "same-content"),
+      marketplaceSkill("adaptyv", "personal", "same-content"),
+    ])
+    expect(items.map((item) => item.name)).toEqual(["adaptyv"])
   })
 })

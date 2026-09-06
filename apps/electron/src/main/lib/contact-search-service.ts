@@ -18,6 +18,28 @@
  *   再用 topapi/v2/user/get 解析 unionid。
  */
 
+export interface FeishuContactResponse<T> {
+  code?: number
+  msg?: string
+  data?: { items?: T[]; page_token?: string; has_more?: boolean }
+}
+
+export interface FeishuDepartmentItem {
+  department?: { department_id?: string; open_department_id?: string; name?: string }
+}
+
+export interface FeishuContactUser {
+  name?: string
+  open_id?: string
+  union_id?: string
+}
+
+interface DingtalkContactResponse<T> {
+  errcode?: number
+  errmsg?: string
+  result?: T
+}
+
 // ===== 结果类型 =====
 
 export interface ContactSearchResult {
@@ -38,9 +60,9 @@ interface BotCredential {
 /** 解析 settings 中已连接的飞书 Bot 凭证（appId + 解密后的 appSecret）。 */
 export function getFeishuCredential(): BotCredential | null {
   try {
-    const { getFeishuMultiBotConfig, getDecryptedBotAppSecret } = require('./feishu-config')
-    const { getSettings } = require('./settings-service')
-    const settings = getSettings() as Record<string, any>
+    const { getFeishuMultiBotConfig, getDecryptedBotAppSecret } = require('./feishu-config') as typeof import('./feishu-config')
+    const { getSettings } = require('./settings-service') as typeof import('./settings-service')
+    const settings = getSettings()
     const feishuTodo = settings.feishuTodo as { enabled?: boolean; botId?: string } | undefined
     if (!feishuTodo?.enabled || !feishuTodo.botId) return null
 
@@ -62,9 +84,9 @@ export function getFeishuCredential(): BotCredential | null {
 /** 解析 settings 中已连接的钉钉 Bot 凭证（clientId + 解密后的 clientSecret）。 */
 export function getDingtalkCredential(): BotCredential | null {
   try {
-    const { getDingTalkBotById, getDecryptedBotClientSecret } = require('./dingtalk-config')
-    const { getSettings } = require('./settings-service')
-    const settings = getSettings() as Record<string, any>
+    const { getDingTalkBotById, getDecryptedBotClientSecret } = require('./dingtalk-config') as typeof import('./dingtalk-config')
+    const { getSettings } = require('./settings-service') as typeof import('./settings-service')
+    const settings = getSettings()
     const dingtalkTodo = settings.dingtalkTodo as { enabled?: boolean; botId?: string } | undefined
     if (!dingtalkTodo?.enabled || !dingtalkTodo.botId) return null
 
@@ -85,7 +107,7 @@ export function getDingtalkCredential(): BotCredential | null {
  * 直接 `resp.json()` 会二次抛 `SyntaxError` 掩盖真实原因；这里改为抛出包含
  * HTTP 状态码 + 原文前段的可读错误，方便一线排查。
  */
-export async function safeJson<T = any>(res: Response): Promise<T> {
+export async function safeJson<T = unknown>(res: Response): Promise<T> {
   const text = await res.text().catch(() => '')
   if (!text) {
     throw new Error(`接口返回空响应 (HTTP ${res.status})`)
@@ -93,7 +115,7 @@ export async function safeJson<T = any>(res: Response): Promise<T> {
   try {
     return JSON.parse(text) as T
   } catch {
-    throw new Error(`接口返回非 JSON (HTTP ${res.status}, ${res.url})\n原始内容: ${text.slice(0, 160)}`)
+    throw new Error(`接口返回非 JSON (HTTP ${res.status}, ${res.url.split('?')[0]})\n原始内容: ${text.slice(0, 160)}`)
   }
 }
 
@@ -194,7 +216,7 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
     })
-    const rootData = await safeJson<any>(rootResp)
+    const rootData = await safeJson<FeishuContactResponse<FeishuDepartmentItem>>(rootResp)
     deptRawSamples.push(`dept(0)响应[${JSON.stringify(rootData).slice(0, 300)}]`)
     if (rootData.code !== 0) {
       throw feishuError(rootData.code, `读取根部门失败: ${rootData.msg ?? '未知错误'}`)
@@ -220,7 +242,7 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
             method: 'GET',
             headers: { Authorization: `Bearer ${token}` },
           })
-          const childData = await safeJson<any>(childResp)
+          const childData = await safeJson<FeishuContactResponse<FeishuDepartmentItem>>(childResp)
           if (childData.code === 0) {
             const childItems = ((childData.data?.items ?? []) as Array<{ department?: { department_id?: string; name?: string } }>)
             for (const ci of childItems) {
@@ -256,7 +278,7 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
             pageToken: pageToken || undefined,
           })
           const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
-          const data = await safeJson<any>(resp)
+          const data = await safeJson<FeishuContactResponse<FeishuContactUser>>(resp)
           if (page === 0) rawProbe.push(`${dept.name}(${idKey.idType}=${idKey.value})[${JSON.stringify(data).slice(0, 220)}]`)
           if (data.code !== 0) {
             errors.push(`部门${dept.name}(${idKey.idType}=${idKey.value}) 获取用户失败: code=${data.code} ${data.msg ?? ''}`)
@@ -294,7 +316,7 @@ async function searchFeishuContacts(keyword: string): Promise<ContactSearchResul
       for (let page = 0; page < 5; page++) {
         const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
         const resp = await fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
-        const data = await safeJson<any>(resp)
+        const data = await safeJson<FeishuContactResponse<FeishuContactUser>>(resp)
         rawProbe.push(`users[${JSON.stringify(data).slice(0, 200)}]`)
         if (data.code !== 0) break
         const items = (data.data?.items as Array<{ name?: string; open_id?: string; union_id?: string }> | undefined) ?? []
@@ -353,26 +375,26 @@ export async function getDingtalkToken(appKey: string, appSecret: string): Promi
 
 /** 钉钉：取某部门下所有直属子部门 ID。 */
 export async function listDingtalkSubDeptIds(token: string, deptId: number): Promise<number[]> {
-  const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/department/listsub`, {
+  const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/department/listsub?access_token=${encodeURIComponent(token)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dept_id: deptId }),
   })
-  const data = await safeJson<any>(resp)
+  const data = await safeJson<DingtalkContactResponse<Array<{ dept_id: number }>>>(resp)
   if (data.errcode !== 0) {
     throw new Error(`钉钉获取子部门失败: ${data.errmsg} (errcode: ${data.errcode})`)
   }
-  return (data.result?.result as Array<{ dept_id: number }> | undefined)?.map((d) => d.dept_id) ?? []
+  return data.result?.map((d) => d.dept_id) ?? []
 }
 
 /** 钉钉：取某部门下所有直属成员。 */
 export async function listDingtalkDeptUsers(token: string, deptId: number): Promise<Array<{ userid: string; name: string }>> {
-  const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/user/list`, {
+  const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/user/list?access_token=${encodeURIComponent(token)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dept_id: deptId, cursor: 0, size: 100 }),
   })
-  const data = await safeJson<any>(resp)
+  const data = await safeJson<DingtalkContactResponse<{ list?: Array<{ userid?: string; name?: string }> }>>(resp)
   if (data.errcode !== 0) {
     throw new Error(`钉钉获取部门成员失败: ${data.errmsg} (errcode: ${data.errcode})`)
   }
@@ -382,12 +404,12 @@ export async function listDingtalkDeptUsers(token: string, deptId: number): Prom
 
 /** 钉钉：用 userid 解析 unionid。 */
 export async function resolveDingtalkUnionId(token: string, userid: string): Promise<string | undefined> {
-  const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/user/get`, {
+  const resp = await fetch(`${DINGTALK_OAPI_BASE}/topapi/v2/user/get?access_token=${encodeURIComponent(token)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userid }),
   })
-  const data = await safeJson<any>(resp)
+  const data = await safeJson<DingtalkContactResponse<{ unionid?: string }>>(resp)
   if (data.errcode !== 0) return undefined
   return data.result?.unionid as string | undefined
 }

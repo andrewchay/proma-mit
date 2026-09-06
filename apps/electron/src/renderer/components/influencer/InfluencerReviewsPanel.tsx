@@ -40,7 +40,7 @@ export function InfluencerReviewsPanel(): React.ReactElement {
   const [source, setSource] = React.useState('')
   const [draftType, setDraftType] = React.useState('初稿')
 
-  const load = async (): Promise<void> => {
+  const load = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
       const list = (await window.electronAPI.paa.marketing.influencer.listDrafts()) as Draft[]
@@ -48,11 +48,11 @@ export function InfluencerReviewsPanel(): React.ReactElement {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   React.useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   const addDraft = async (): Promise<void> => {
     if (!source.trim()) return

@@ -17,13 +17,15 @@ import type {
 } from '@gravitas/shared'
 import { getAgentProviderProtocol, isAgentCompatibleProvider } from '@gravitas/shared'
 import { createCoreTools, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
-import { maybeAutoCompact } from '../agent-runtime/context-compaction'
+import { compactSessionNow, maybeAutoCompact } from '../agent-runtime/context-compaction'
 import {
   AISDKRuntimeCore,
   type AISDKCanUseToolCallback,
   type AISDKRuntimeSessionState,
 } from '../agent-runtime/ai-sdk-runtime-core'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
+import { getAgentSessionMeta } from '../agent-session-manager'
+import { isContextOverflowError } from '../error-patterns'
 
 export interface AISDKAgentQueryOptions extends AgentQueryInput {
   /** 最大工具调用 step 数 */
@@ -162,7 +164,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       let currentAttachments = attachments
       let historyMessages = input.historyMessages ?? []
 
-      // 自动上下文压缩：历史条数超过阈值时，用 LLM 摘要早期历史并保留最近消息。
+      // 自动上下文压缩：优先按同模型的已报告 token 与已确认窗口判断；缺少观测时兼容历史条数回退。
       // 压缩后以新历史继续本轮；boundary 摘要已持久化，后续 query 自然读到。
       if (historyMessages.length > 0) {
         const auto = await maybeAutoCompact({
@@ -172,7 +174,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           baseUrl,
           model: model || '',
           historyMessages,
+          observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
           signal: activeSession.state.controller.signal,
+          audit: { sessionId, runtime: 'ai-sdk', trigger: 'automatic' },
         })
         if (auto.compacted) {
           historyMessages = auto.history
@@ -183,6 +187,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       // AI SDK 的一次 streamText 调用不能像 Claude SDK 那样直接向活跃 stream 注入输入。
       // 因此把运行中的追加消息排成下一轮 Agent turn，并将刚完成的一轮纳入历史，
       // 保持用户在输出期间继续追问时的上下文连续性。
+      let contextOverflowRecovered = false
       while (!activeSession.cancelled) {
         let messages: SDKMessage[]
         try {
@@ -207,6 +212,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               apiKey,
               baseUrl,
               model: model || '',
+              audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
             },
             onAgentEvent: input.onAgentEvent,
             canUseTool: input.canUseTool,
@@ -219,6 +225,25 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             workspaceSlug,
           })
         } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          if (!activeSession.interrupted && !activeSession.cancelled && !contextOverflowRecovered && isContextOverflowError(errorMessage) && historyMessages.length > 0) {
+            const recovered = await compactSessionNow({
+              sessionId,
+              provider,
+              apiKey,
+              baseUrl,
+              model: model || "",
+              historyMessages,
+              signal: activeSession.state.controller.signal,
+              audit: { sessionId, runtime: "ai-sdk", trigger: "overflow_recovery" },
+            })
+            if (recovered.compacted) {
+              contextOverflowRecovered = true
+              historyMessages = recovered.history
+              console.warn("[AI SDK Runtime] 上下文超限，已压缩并重试一次: sessionId=" + sessionId)
+              continue
+            }
+          }
           if (!activeSession.interrupted || activeSession.cancelled) throw error
 
           activeSession.interrupted = false

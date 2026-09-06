@@ -6,7 +6,9 @@ const allowedCommands = (process.env.PROMA_EXECUTOR_ALLOWED_COMMANDS ?? '').spli
 const maxTimeoutMs = parsePositiveInteger(process.env.PROMA_EXECUTOR_MAX_TIMEOUT_MS) ?? 60_000
 const maxOutputBytes = parsePositiveInteger(process.env.PROMA_EXECUTOR_MAX_OUTPUT_BYTES) ?? 256 * 1024
 
+let active = false
 const server = Bun.serve({
+  maxRequestBodySize: 256 * 1024,
   port: Number.parseInt(process.env.PROMA_EXECUTOR_PORT ?? '3010', 10),
   hostname: process.env.PROMA_EXECUTOR_HOST ?? '0.0.0.0',
   async fetch(request) {
@@ -14,6 +16,8 @@ const server = Bun.serve({
     if (request.method === 'GET' && url.pathname === '/healthz') return Response.json({ status: 'ok' })
     if (request.method !== 'POST' || url.pathname !== '/execute') return Response.json({ error: 'not found' }, { status: 404 })
     if (request.headers.get('authorization') !== `Bearer ${token}`) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    if (active) return Response.json({ error: '执行器忙，请稍后重试' }, { status: 429 })
+    active = true
     try {
       const body = await request.json()
       const result = await executeIsolatedCommand(body as import('./executor.ts').ExecutorRequest, {
@@ -21,11 +25,11 @@ const server = Bun.serve({
         allowedCommands,
         maxTimeoutMs,
         maxOutputBytes,
-      })
+      }, request.signal)
       return Response.json(result)
     } catch (error) {
       return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 })
-    }
+    } finally { active = false }
   },
 })
 

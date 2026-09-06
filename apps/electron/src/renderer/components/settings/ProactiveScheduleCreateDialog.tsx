@@ -82,7 +82,7 @@ export function ProactiveScheduleCreateDialog({
     }
     const enabledChannels = channels.filter((item) => item.enabled)
     const channel = enabledChannels.find((item) => item.id === selectedChannelId)
-    const runtime = newSession ? (selectedRuntime as 'proma' | 'ai-sdk') : undefined
+    const _runtime = newSession ? (selectedRuntime as 'proma' | 'ai-sdk') : undefined
     const session = sessions.find((item) => item.id === sessionId)
     if (newSession) {
       if (!channel || !isSchedulableRuntime(selectedRuntime)) {

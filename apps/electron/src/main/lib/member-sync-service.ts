@@ -28,6 +28,7 @@ import {
   updateMember,
   touchMemberSync,
 } from './project-sqlite-store'
+import type { FeishuContactResponse, FeishuContactUser, FeishuDepartmentItem } from './contact-search-service'
 import type { Member } from './project-types'
 
 // ===== 结果类型 =====
@@ -63,12 +64,6 @@ export function upsertMemberDraft(draft: MemberDraft): 'inserted' | 'merged' {
 }
 
 
-interface FeishuMemberRaw {
-  open_id?: string
-  union_id?: string
-  name?: string
-}
-
 /**
  * 带轻量重试的 JSON GET（供飞书/钉钉全量拉取用）。
  * - 失败（网络异常 / 非 JSON / HTTP 非 2xx）重试最多 RETRY 次（指数退避 200ms 起步）；
@@ -77,7 +72,7 @@ interface FeishuMemberRaw {
 const FEISHU_HTTP_RETRY = 2
 const RETRY_BASE_DELAY_MS = 200
 
-async function fetchJsonWithRetry(url: string, headers: Record<string, string>): Promise<any> {
+async function fetchJsonWithRetry<T>(url: string, headers: Record<string, string>): Promise<FeishuContactResponse<T>> {
   let lastErr: unknown
   for (let attempt = 0; attempt <= FEISHU_HTTP_RETRY; attempt++) {
     try {
@@ -95,7 +90,7 @@ async function fetchJsonWithRetry(url: string, headers: Record<string, string>):
 }
 
 /** 读飞书响应，返回 data；code!==0 或 data 缺失返回 null（业务层据此决定是否走兜底）。 */
-function feishuDataOrNull(data: any): any | null {
+function feishuDataOrNull<T>(data: FeishuContactResponse<T>): FeishuContactResponse<T>['data'] | null {
   if (!data || typeof data.code !== 'number' || data.code !== 0) return null
   return data.data ?? null
 }
@@ -119,7 +114,7 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
   const deptQueue: Array<{ id: string; openId?: string; name: string }> = []
   const deptIds: Array<{ id: string; openId?: string; name: string }> = []
   const authHeaders = { Authorization: `Bearer ${token}` }
-  const rootData = await fetchJsonWithRetry(
+  const rootData = await fetchJsonWithRetry<FeishuDepartmentItem>(
     `${FEISHU_BASE}/open-apis/contact/v3/departments/0/children?fetch_child=false&page_size=50`,
     authHeaders,
   )
@@ -141,7 +136,7 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
       deptIds.push(dept)
       // 子部门入队（带重试；单棵子树失败跳过，不阻断整体）
       try {
-        const childData = await fetchJsonWithRetry(
+        const childData = await fetchJsonWithRetry<FeishuDepartmentItem>(
           `${FEISHU_BASE}/open-apis/contact/v3/departments/${encodeURIComponent(dept.id)}/children?fetch_child=false&page_size=50`,
           authHeaders,
         )
@@ -174,10 +169,10 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
       // eslint-disable-next-line no-loop-func
       while (guard < 50) {
         guard++
-        let data: any
+        let data: FeishuContactResponse<FeishuContactUser>
         try {
           const url = buildFeishuFindByDepartmentUrl({ idType: idKey.idType, value: idKey.value, pageToken: pageToken || undefined })
-          data = await fetchJsonWithRetry(url, authHeaders)
+          data = await fetchJsonWithRetry<FeishuContactUser>(url, authHeaders)
         } catch (err) {
           // 单个部门分页失败：跳过该部门，避免整轮因一次性限流失败
           console.warn(`[MemberSync] 飞书拉取部门成员失败 ${idKey.value} page=${pageToken || '(首页)'}:`, err instanceof Error ? err.message : err)
@@ -185,7 +180,7 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
         }
         const body = feishuDataOrNull(data)
         if (!body) break
-        const items = ((body?.items ?? []) as FeishuMemberRaw[])
+        const items = ((body?.items ?? []) as FeishuContactUser[])
         for (const u of items) {
           if (!u.name) continue
           const externalId = u.open_id || u.union_id
@@ -211,17 +206,17 @@ async function pullFeishuMembers(): Promise<MemberDraft[]> {
     let guard = 0
     while (guard < 50) {
       guard++
-      let data: any
+      let data: FeishuContactResponse<FeishuContactUser>
       try {
         const url = `${FEISHU_BASE}/open-apis/contact/v3/users?page_size=50${pageToken ? `&page_token=${pageToken}` : ''}`
-        data = await fetchJsonWithRetry(url, authHeaders)
+        data = await fetchJsonWithRetry<FeishuContactUser>(url, authHeaders)
       } catch (err) {
         console.warn(`[MemberSync] 飞书裸 /users 拉取失败 page=${pageToken || '(首页)'}:`, err instanceof Error ? err.message : err)
         break
       }
       const body = feishuDataOrNull(data)
       if (!body) break
-      const items = ((body?.items ?? []) as FeishuMemberRaw[])
+      const items = ((body?.items ?? []) as FeishuContactUser[])
       for (const u of items) {
         if (!u.name) continue
         const externalId = u.open_id || u.union_id

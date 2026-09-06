@@ -71,6 +71,14 @@ export interface AgentAuditQuery {
   limit?: number
 }
 
+/** 上下文压缩的本机聚合指标；不包含会话正文、摘要或工具结果。 */
+export interface ContextCompactionMetrics {
+  total: number
+  byRuntime: Array<{ key: 'proma' | 'ai-sdk' | 'pi' | 'claude'; count: number }>
+  byTrigger: Array<{ key: 'automatic' | 'manual' | 'overflow_recovery' | 'native'; count: number }>
+  latestAt?: string
+}
+
 // ===== Agent 工作区 =====
 
 /** Agent 工作区 */
@@ -314,6 +322,8 @@ export interface SDKSystemMessage {
   tool_use_id?: string
   status?: string
   summary?: string
+  /** compact_boundary: 可校验的长期上下文包。 */
+  contextPacket?: ContextPacket
   output_file?: string
   last_tool_name?: string
   /** permission_denied 相关字段 */
@@ -873,6 +883,23 @@ export interface UpdateAgentGoalStatusInput {
 
 // ===== Agent 会话管理 =====
 
+/** ContextPacket v1：压缩边界中持久化、可审阅的长期上下文。 */
+export interface ContextPacket {
+  version: 1
+  summary: string
+  facts: string[]
+  decisions: string[]
+  openTasks: string[]
+  importantFiles: string[]
+  toolState: string[]
+}
+
+export interface AgentContextUsageObservation {
+  contextTokens: number
+  modelId: string
+  recordedAt: number
+}
+
 /**
  * Agent 会话轻量索引项
  *
@@ -912,6 +939,8 @@ export interface AgentSessionMeta {
   maxBudgetUsd?: number
   /** 会话已消耗预算（USD） */
   spentBudgetUsd?: number
+  /** 最近一次由 Provider 或 SDK 报告的完整输入上下文用量；仅用于下一轮压缩预判。 */
+  lastContextUsage?: AgentContextUsageObservation
   /** SDK 内部会话 ID（用于 resume 衔接上下文） */
   sdkSessionId?: string
   /** 所属工作区 ID */
@@ -1991,6 +2020,8 @@ export const AGENT_IPC_CHANNELS = {
   SET_COMPUTER_USE_SETTINGS: 'agent:set-computer-use-settings',
   /** 查询本地操作审计 */
   LIST_AUDIT_EVENTS: 'agent:list-audit-events',
+  /** 查询仅含元数据的上下文压缩聚合指标 */
+  GET_CONTEXT_COMPACTION_METRICS: 'agent:get-context-compaction-metrics',
   /** 导出筛选后的本地操作审计 */
   EXPORT_AUDIT_EVENTS: 'agent:export-audit-events',
   /** 查询本地 Proactive 定时任务 */

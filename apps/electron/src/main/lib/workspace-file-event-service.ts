@@ -31,7 +31,7 @@ export interface FileEventQuery {
   limit?: number
 }
 
-const MAX_FILE_EVENTS = 2000
+const _MAX_FILE_EVENTS = 2000
 
 function eventFile(): string {
   const dir = join(getConfigDir(), 'file-events')
