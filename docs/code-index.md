@@ -23,7 +23,7 @@ Proma 是一个集成通用 AI Agent 的下一代人工智能桌面应用，基�
 ```
 proma-mit/
 ├── apps/
-│   └── electron/              # Electron 桌面应用（@gravitas/electron@0.11.49）
+│   └── electron/              # Electron 桌面应用（@gravitas/electron@0.11.50）
 │       ├── src/
 │       │   ├── main/          # 主进程 + 服务层
 │       │   ├── preload/       # IPC 上下文桥接

@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/electron",
-  "version": "0.11.49",
+  "version": "0.11.50",
   "description": "Gravitas next gen ai software with general agents - Electron App",
   "license": "BUSL-1.1",
   "main": "dist/main.cjs",
@@ -27,7 +27,7 @@
     "build:renderer": "vite build",
     "build:computer-use-helper": "bun run scripts/build-computer-use-helper.ts",
     "build:dynamic-island": "bun run scripts/build-dynamic-island.ts",
-    "build:resources": "bun run build:computer-use-helper && bun run build:dynamic-island && cp -r resources dist/",
+    "build:resources": "bun run build:computer-use-helper && bun run build:dynamic-island && bun run scripts/copy-resources.ts",
     "build": "bun run build:main && bun run build:preload && bun run build:renderer && bun run build:resources",
     "start": "bun run build && bunx electron .",
     "typecheck": "tsc --noEmit",
