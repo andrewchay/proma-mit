@@ -3,6 +3,7 @@
 
 appId: com.gravitas.app
 productName: Gravitas
+executableName: Gravitas
 copyright: Copyright © 2026 Andrew Chai
 
 # Electron 版本（CI 环境 bun workspace 下无法自动检测，需显式指定）
