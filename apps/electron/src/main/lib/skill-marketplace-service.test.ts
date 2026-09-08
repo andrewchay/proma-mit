@@ -2,8 +2,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { createAgentWorkspace, getAllWorkspaceSkills, toggleSkillSet, toggleWorkspaceSkill } from "./agent-workspace-manager"
-import { getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
+import { createAgentWorkspace, getAllWorkspaceSkills, toggleSkillSet, toggleWorkspaceSkill, upgradeDefaultSkillsInWorkspaces } from "./agent-workspace-manager"
+import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
 import { deduplicateMarketplaceSkills, getSkillMarketplace, installMarketplaceSkill } from "./skill-marketplace-service"
 import type { MarketplaceSkillCandidate } from "./skill-marketplace-service"
 
@@ -32,16 +32,42 @@ describe("Skills 集市与 Skill Set", () => {
   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
   afterAll(() => { rmSync(TEST_DIR, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
 
-  test("Given 前缀 Skill Set When 批量停用再启用 Then 仅移动对应 Skills", () => {
+  test("Given 明确的 Skill Set 成员 When 批量停用再启用 Then 仅移动对应 Skills", () => {
     const workspace = createAgentWorkspace("批量切换")
     writeSkill(getWorkspaceSkillsDir(workspace.slug), "marketing-brand", "1.0.0", "营销")
     writeSkill(getWorkspaceSkillsDir(workspace.slug), "research-note", "1.0.0", "研究")
     writeSkill(getInactiveSkillsDir(workspace.slug), "marketing-copy", "1.0.0", "营销")
-    expect(toggleSkillSet(workspace.slug, "marketing", false)).toEqual(["marketing-brand"])
+    expect(toggleSkillSet(workspace.slug, ["marketing-brand", "marketing-copy"], false)).toEqual(["marketing-brand"])
     expect(existsSync(join(getInactiveSkillsDir(workspace.slug), "marketing-brand"))).toBe(true)
     expect(existsSync(join(getWorkspaceSkillsDir(workspace.slug), "research-note"))).toBe(true)
-    expect(toggleSkillSet(workspace.slug, "marketing", true).sort()).toEqual(["marketing-brand", "marketing-copy"])
+    expect(toggleSkillSet(workspace.slug, ["marketing-brand", "marketing-copy"], true).sort()).toEqual(["marketing-brand", "marketing-copy"])
     expect(getAllWorkspaceSkills(workspace.slug).filter((skill) => skill.slug.startsWith("marketing-")).every((skill) => skill.enabled)).toBe(true)
+  })
+
+  test("Given 新建工作区 When 初始化默认 Skills Then 只启用核心集合", () => {
+    const defaults = getDefaultSkillsDir()
+    writeSkill(defaults, "find-skills", "1.0.0", "工具")
+    writeSkill(defaults, "skill-creator", "1.0.0", "工具")
+    writeSkill(defaults, "proma-coach", "1.0.0", "工具")
+    writeSkill(defaults, "proma-memory", "1.0.0", "工具")
+    writeSkill(defaults, "pdf", "1.0.0", "文档")
+
+    const workspace = createAgentWorkspace("精简默认 Skills")
+
+    expect(getAllWorkspaceSkills(workspace.slug).map((skill) => skill.slug).sort()).toEqual([
+      "find-skills",
+      "proma-coach",
+      "skill-creator",
+    ])
+  })
+
+  test("Given 已有工作区 When 启动升级 Then 不把非核心内置 Skill 补回", () => {
+    const workspace = createAgentWorkspace("升级精简默认 Skills")
+    writeSkill(getDefaultSkillsDir(), "pdf", "1.0.0", "文档")
+
+    upgradeDefaultSkillsInWorkspaces()
+
+    expect(getAllWorkspaceSkills(workspace.slug).some((skill) => skill.slug === "pdf")).toBe(false)
   })
 
   test("Given 集市来源 When 安装和更新 Then 分类可发现且保留停用状态", () => {

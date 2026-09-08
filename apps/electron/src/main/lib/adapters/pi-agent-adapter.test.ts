@@ -92,7 +92,10 @@ mock.module('./pi-sdk-loader', () => ({
   }),
 }))
 
+const actualPiModelRegistry = await import('./pi-model-registry')
+
 mock.module('./pi-model-registry', () => ({
+  ...actualPiModelRegistry,
   registerPiModelFromChannel: async () => ({
     agentDir: '/tmp/pi-agent',
     modelRuntime: {},
@@ -318,6 +321,28 @@ describe('PiAgentAdapter', () => {
       expect.objectContaining({ type: 'assistant', message: expect.objectContaining({ content: [{ type: 'text', text: '重试成功后的总结' }] }) }),
     ]))
     expect(events.map((event) => event.type)).toEqual(['retrying', 'retry_cleared'])
+    promptEvents = []
+  })
+
+  test('given native compaction ends without a result then it does not emit a false compact boundary', async () => {
+    promptEvents = [
+      { type: 'compaction_start', reason: 'threshold' },
+      { type: 'compaction_end', reason: 'threshold', aborted: false, errorMessage: 'Auto-compaction failed' },
+    ]
+    const adapter = new PiAgentAdapter()
+    const messages = []
+
+    for await (const message of adapter.query({
+      sessionId: 's-pi-compaction-failed', prompt: '继续', agentRuntime: 'pi',
+      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+      canUseTool: async () => ({ allowed: true }),
+    })) {
+      messages.push(message)
+    }
+
+    expect(messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'system', subtype: 'compact_boundary' }),
+    ]))
     promptEvents = []
   })
 

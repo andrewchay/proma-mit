@@ -1644,11 +1644,11 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 批量切换一个 Skill Set；空前缀代表当前工作区的全部 Skills
+  // 批量切换一个 Skill Set；按明确成员列表切换 Skills
   ipcMain.handle(
     AGENT_IPC_CHANNELS.TOGGLE_SKILL_SET,
-    async (_, workspaceSlug: string, prefix: string, enabled: boolean): Promise<string[]> => {
-      return toggleSkillSet(workspaceSlug, prefix, enabled)
+    async (_, workspaceSlug: string, skillSlugs: string[], enabled: boolean): Promise<string[]> => {
+      return toggleSkillSet(workspaceSlug, skillSlugs, enabled)
     }
   )
 

@@ -26,6 +26,8 @@ import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
 import { isTransientNetworkError } from '../error-patterns'
 import { appendContextCompactionAudit } from '../context-compaction-audit-service'
+import { getAgentSessionMeta } from '../agent-session-manager'
+import { maybeAutoCompact } from '../agent-runtime/context-compaction'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 系统提示词 */
@@ -219,6 +221,24 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       modelId: model,
     })
 
+    let effectiveHistoryMessages = historyMessages ?? []
+    if (effectiveHistoryMessages.length > 0) {
+      const auto = await maybeAutoCompact({
+        sessionId,
+        provider,
+        apiKey,
+        baseUrl,
+        model,
+        historyMessages: effectiveHistoryMessages,
+        observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
+        audit: { sessionId, runtime: "pi", trigger: "automatic" },
+      })
+      if (auto.compacted) {
+        effectiveHistoryMessages = auto.history
+        console.log(`[Pi Runtime] 已在恢复会话前自动压缩上下文: sessionId=${sessionId}, 摘要 ${auto.summary?.length ?? 0} chars`)
+      }
+    }
+
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
     let mcpRelease: (() => void) | undefined
     let mcpTools: import('../agent-runtime/types').RuntimeToolDefinition[] = []
@@ -364,8 +384,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
     session.agent.toolExecution = 'sequential'
 
-    if (historyMessages && historyMessages.length > 0) {
-      session.state.messages = convertSDKMessagesToPiMessages(historyMessages)
+    if (effectiveHistoryMessages.length > 0) {
+      session.state.messages = convertSDKMessagesToPiMessages(effectiveHistoryMessages)
     }
 
     // 同一 prompt 内由 Pi 原生驱动完整工具循环；逐条投影 message_end，不能等
@@ -456,12 +476,19 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'compaction_end') {
-        try { appendContextCompactionAudit({ sessionId, runtime: "pi", trigger: "native", estimatedTokensAfter: (event as { result?: { estimatedTokensAfter?: number } }).result?.estimatedTokensAfter }) } catch (error) { console.warn("[Pi] 写入上下文压缩审计失败:", error) }
+        const result = event.result
+        if (event.aborted || event.errorMessage || !result) {
+          const reason = event.errorMessage ?? (event.aborted ? '压缩已中止' : '压缩没有生成结果')
+          console.warn(`[Pi Runtime] 上下文压缩未完成: sessionId=${sessionId}, ${reason}`)
+          logWarn(sessionId, `[Pi Runtime] 上下文压缩未完成: ${reason}`)
+          return
+        }
+        try { appendContextCompactionAudit({ sessionId, runtime: 'pi', trigger: 'native', estimatedTokensAfter: result.estimatedTokensAfter }) } catch (error) { console.warn('[Pi] 写入上下文压缩审计失败:', error) }
         queue.push({
           type: 'system',
           subtype: 'compact_boundary',
           session_id: sessionId,
-          compactionEstimatedTokensAfter: (event as { result?: { estimatedTokensAfter?: number } }).result?.estimatedTokensAfter,
+          compactionEstimatedTokensAfter: result.estimatedTokensAfter,
         } as unknown as SDKMessage)
         return
       }

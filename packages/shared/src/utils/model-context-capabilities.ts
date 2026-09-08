@@ -29,6 +29,7 @@ const KIMI_CONTEXT_WINDOWS: Readonly<Record<string, number>> = {
   'kimi-k2.5': 256_000,
   'kimi-k2.7-code': 256_000,
   'kimi-k2.7-code-highspeed': 256_000,
+  'kimi-for-coding': 256_000,
 }
 
 /**

@@ -2,8 +2,8 @@
  * Agent 工作区管理器
  *
  * 负责 Agent 工作区的 CRUD 操作。
- * - 工作区索引：~/.proma/agent-workspaces.json（轻量元数据）
- * - 工作区目录：~/.proma/agent-workspaces/{slug}/（Agent 的 cwd）
+ * - 工作区索引：~/.gravitas/agent-workspaces.json（轻量元数据）
+ * - 工作区目录：~/.gravitas/agent-workspaces/{slug}/（Agent 的 cwd）
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, realpathSync } from 'node:fs'
@@ -33,6 +33,13 @@ interface AgentWorkspacesIndex {
 }
 
 const INDEX_VERSION = 2
+
+/** 新工作区只启用运行与发现所需的核心 Skills；其余内置项留在集市按需安装。 */
+export const DEFAULT_WORKSPACE_SKILL_SLUGS = new Set([
+  'find-skills',
+  'proma-coach',
+  'skill-creator',
+])
 
 /** 读取工作区索引文件，自动执行版本迁移 */
 function readIndex(): AgentWorkspacesIndex {
@@ -154,7 +161,7 @@ export function getAgentWorkspace(id: string): AgentWorkspace | undefined {
   return index.workspaces.find((w) => w.id === id)
 }
 
-/** 将 ~/.proma/default-skills/ 的内容逐个复制到工作区 skills/ 目录 */
+/** 将 ~/.gravitas/default-skills/ 中的核心集合复制到工作区 skills/ 目录 */
 function copyDefaultSkills(workspaceSlug: string): void {
   const defaultDir = getDefaultSkillsDir()
   const targetDir = getWorkspaceSkillsDir(workspaceSlug)
@@ -168,6 +175,7 @@ function copyDefaultSkills(workspaceSlug: string): void {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
+      if (!DEFAULT_WORKSPACE_SKILL_SLUGS.has(entry.name)) continue
       const source = join(defaultDir, entry.name)
       const target = join(targetDir, entry.name)
       cpSync(source, target, { recursive: true })
@@ -373,7 +381,7 @@ export function ensureDefaultWorkspace(): AgentWorkspace {
 
 /**
  * 同步默认 Skills 到所有工作区。规则：
- * - 缺失：注入到 skills/（active），让升级后新增的内置 Skill 对老用户立即可用
+ * - 核心 Skill 缺失：注入到 skills/（active）；其他内置 Skill 留在集市按需安装
  * - 已存在（active 或 inactive）：比较 SKILL.md 的 version，bundled 更新时才覆盖
  *   （保留用户停用决定 — 在 inactive 的依然在 inactive；同时避免每次启动
  *    全量 cpSync 4MB+ 文件阻塞主进程）
@@ -445,6 +453,7 @@ export function upgradeDefaultSkillsInWorkspaces(): void {
         continue
       }
 
+      if (!DEFAULT_WORKSPACE_SKILL_SLUGS.has(slug)) continue
       try {
         if (!existsSync(activeDir)) mkdirSync(activeDir, { recursive: true })
         cpSync(info.sourcePath, activePath, { recursive: true, filter: skillCopyFilter })
@@ -844,31 +853,28 @@ export function getAllWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
 }
 
 /**
- * 切换整个 Skill Set（按前缀分组）的启用/禁用状态。
- * 将指定前缀的所有 Skill 统一移动到 active 或 inactive 目录。
+ * 切换一组明确的 Skills。
+ * UI 传入当前可见分组的 slug，避免把展示分类错误地当成文件名前缀。
  */
-export function toggleSkillSet(workspaceSlug: string, prefix: string, enabled: boolean): string[] {
-  // 自动快照：批量切换前备份
-  try { autoSnapshotBeforeUpdate(workspaceSlug, `${enabled ? '启用' : '禁用'} Skill Set ${prefix} 前`) } catch {}
+export function toggleSkillSet(workspaceSlug: string, skillSlugs: string[], enabled: boolean): string[] {
+  const requestedSlugs = new Set(skillSlugs)
+  if (requestedSlugs.size === 0) return []
+
+  try { autoSnapshotBeforeUpdate(workspaceSlug, `${enabled ? "启用" : "禁用"} Skill Set 前`) } catch {}
 
   const activeDir = getWorkspaceSkillsDir(workspaceSlug)
   const inactiveDir = getInactiveSkillsDir(workspaceSlug)
-
   const srcDir = enabled ? inactiveDir : activeDir
   const destDir = enabled ? activeDir : inactiveDir
-
   const changed: string[] = []
 
   try {
     const entries = readdirSync(srcDir, { withFileTypes: true })
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      // 匹配前缀：prefix 为空字符串时匹配所有
-      if (prefix && !entry.name.startsWith(prefix + '-')) continue
+      if (!entry.isDirectory() || !requestedSlugs.has(entry.name)) continue
 
       const srcPath = join(srcDir, entry.name)
       const destPath = join(destDir, entry.name)
-
       if (existsSync(destPath)) {
         console.warn(`[Agent 工作区] Skill Set 切换跳过: ${entry.name} 目标已存在`)
         continue
@@ -881,15 +887,13 @@ export function toggleSkillSet(workspaceSlug: string, prefix: string, enabled: b
     // 目录可能不存在，忽略
   }
 
-  console.log(`[Agent 工作区] Skill Set ${enabled ? '启用' : '禁用'}: ${workspaceSlug}/${prefix} (${changed.length} 个)`)
-
-  // 审计：批量 Skill 启用/禁用
+  console.log(`[Agent 工作区] Skill Set ${enabled ? "启用" : "禁用"}: ${workspaceSlug} (${changed.length} 个)`)
   void appendConfigAudit({
-    category: 'skill',
-    action: enabled ? 'enable_set' : 'disable_set',
-    targetId: `${workspaceSlug}/${prefix}`,
-    targetName: prefix || 'all',
-    metadata: { count: changed.length, skills: changed },
+    category: "skill",
+    action: enabled ? "enable_set" : "disable_set",
+    targetId: workspaceSlug,
+    targetName: "skill-set",
+    metadata: { count: changed.length, requestedSkills: [...requestedSlugs], skills: changed },
   })
 
   return changed

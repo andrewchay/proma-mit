@@ -23,11 +23,11 @@ Bun workspace monorepo：
 ```
 gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.65)
+│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.66)
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.14)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.11.50)
+    └── electron/   # Electron 桌面应用 (v0.11.51)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -40,7 +40,7 @@ gravitas/
 
 ### 包职责详解
 
-#### @gravitas/shared (v0.1.65)
+#### @gravitas/shared (v0.1.66)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
 - **依赖**：无运行时依赖（仅 TypeScript）
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.11.50)
+#### @gravitas/electron (v0.11.51)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -392,11 +392,15 @@ bun run generate:icons    # 生成应用图标
 
 修改任何 `default-skills/<skill>/` 内容时，**必须同步递增该 Skill `SKILL.md` frontmatter 的 `version` 字段**（patch +1）。
 
-**为什么**：`seedDefaultSkills()` 与 `upgradeDefaultSkillsInWorkspaces()` 通过 semver 比较决定是否将 bundle 中的 Skill 同步到老用户的 `~/.gravitas/default-skills/` 与各工作区。**version 不变 = 老用户拿不到新内容**。
+**为什么**：`seedDefaultSkills()` 通过 semver 比较决定是否将 bundle 中的 Skill 同步到老用户的 `~/.gravitas/default-skills/`；`upgradeDefaultSkillsInWorkspaces()` 只把核心默认集合的缺失项注入工作区，并按 semver 更新工作区里已经安装的内置 Skill。**version 不变 = 老用户拿不到新内容**。
 
 **早期实现曾用"无条件 cpSync"绕开这个约束**，但每次启动同步 4MB+ 文件会阻塞主进程导致启动卡顿，已恢复为 semver 比较（见 `config-paths.ts:seedDefaultSkills`、`agent-workspace-manager.ts:upgradeDefaultSkillsInWorkspaces`）。
 
-**新增 Skill 不需要先注入 default-skills 目录的旧版本**——`upgradeDefaultSkillsInWorkspaces` 会通过"目标缺失即注入"路径让所有老工作区自动获得。
+新工作区默认只启用 `DEFAULT_WORKSPACE_SKILL_SLUGS` 中的 `find-skills`、`proma-coach`、`skill-creator`；其他内置 Skill 只进入全局集市，不自动注入新老工作区。若新增能力确实需要默认启用，必须显式加入该集合并补充新建与升级工作区测试。
+
+Skill Set 的展示分组不是稳定的文件名前缀契约。批量开关必须从渲染进程传递该组的明确 slug 列表，经 preload、IPC 到 `toggleSkillSet(workspaceSlug, skillSlugs, enabled)`；禁止用空前缀或字符串前缀推断成员。
+
+`proma-memory` 是 `plugins/proma-memory/` 下的 Proactive Memory 能力，不是具有 `SKILL.md` 的 Agent Skill，不能计入工作区默认 Skills 集合。
 
 ## Agent SDK 集成架构
 
@@ -520,10 +524,11 @@ React UI 更新
 - **事件流处理**：SDK 消息流式转换与累积
 - **错误映射**：SDK 错误统一转换为应用错误
 - **Provider-Agnostic Runtime**：基于 `@gravitas/core` Provider 适配器的多轮工具循环；MCP 工具名按 OpenAI function name 规则清洗为 `mcp__${server}__${tool}`，避免非法字符导致请求失败；MCP client_secret 使用 safeStorage 加密单独存放，OAuth token 加密存储，连接按工作区缓存复用
+- **Pi 自动上下文压缩**：恢复历史会话前根据模型窗口与 `lastContextUsage` 判断预算；`kimi-for-coding` 明确使用 256K 窗口。压缩成功后持久化 `compact_boundary` 和最近 20 条历史，并记录 `pi/automatic` 审计；中止、报错或没有结果的 Pi 原生压缩不得伪造成功边界或审计。
 
 ## 诊断修复验收约定
 
 - 完整 PR 门禁：typecheck、bun run test、lint、docs:check；真实 Provider 默认显式跳过，不能把 skip 记为通过。
-- 打包必须包含 default-tools 与工作流模板；scripts/package-smoke.ts 验证实际 Electron 的发现、执行与数据库重开。原生 helper 构建失败必须向上传播。
+- 打包必须包含 default-tools、default-skills 与工作流模板；`scripts/package-smoke.ts` 验证实际 Electron 的发现、执行、数据库重开、新工作区核心 Skills 和分组停用。真实 Kimi 压缩烟测只能在显式设置 `GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID` 与 `GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH` 时运行，并必须验证持久化历史、`compact_boundary`、最近 20 条保留、`pi/automatic` 审计及当前回合继续完成。原生 helper 构建失败必须向上传播。
 - 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。CI 会在托管 runner 无法创建内层 namespace 时仅运行契约测试并明确警告，完整隔离验收必须在支持该能力的 Linux runner 执行。配置与恶意代码测试见 apps/executor/SECURITY.md。
 - 存储职责、备份与恢复见 docs/storage-contract.md。新共享 Node 工具需从 packages/shared/src/utils/node.ts 导出；通用工具仍需对应 utils/index.ts 导出。

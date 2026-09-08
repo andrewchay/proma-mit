@@ -38,6 +38,15 @@ describe('上下文压缩预算触发', () => {
     })).toEqual({ shouldCompact: true, source: 'reported_usage' })
   })
 
+  test('Kimi for Coding 在 256K 窗口耗用 220K 时按报告用量触发压缩', () => {
+    expect(resolveAutoCompactionTrigger({
+      historyMessages: makeHistory(30),
+      provider: 'kimi-coding',
+      modelId: 'kimi-for-coding',
+      observedUsage: { contextTokens: 220_000, modelId: 'kimi-for-coding', recordedAt: 1 },
+    })).toEqual({ shouldCompact: true, source: 'reported_usage' })
+  })
+
   test('模型切换或未知窗口时保留消息数量兼容回退', () => {
     expect(resolveAutoCompactionTrigger({
       historyMessages: makeHistory(61),

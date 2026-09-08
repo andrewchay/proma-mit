@@ -47,7 +47,7 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 2. 进入 **设置 &gt; 渠道**，添加至少一个 AI 供应商渠道，填写 Base URL、API Key 和模型列表。
 3. Chat 模式可以使用 OpenAI、Anthropic、Google 或 OpenAI 兼容协议的渠道。
 4. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）都兼容，开箱即用；AI SDK 支持 OpenAI-compatible 以及 Anthropic、Google provider package，也是后续服务端 Web 化的优先路径。Claude runtime 需要 Anthropic 或 Anthropic 兼容协议；Proma 作为较早的 provider-agnostic runtime 仍可使用但非首选。
-5. 进入 **设置 &gt; Agent**，选择默认 Agent 渠道、模型和工作区。
+5. 进入 **设置 &gt; Agent**，选择默认 Agent 渠道、模型和工作区。新工作区只默认启用 `find-skills`、`proma-coach`、`skill-creator` 三个核心 Skills，其余内置能力保留在 Skill 集市按需安装；Skills 列表的分组电源按钮可以一次启用或停用该组的明确成员。
 6. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接，在设置页对应 Tab 中继续配置。
 
 ### 使用已有本地项目
@@ -183,6 +183,8 @@ Gravitas 支持豆包的流式语音输入功能，并且支持在 Gravitas 内�
 
 **推荐使用 Pi 和 AI SDK**。Pi 是当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与部分流式输出，对多种渠道协议兼容，适合大多数个人日常任务；AI SDK 能力相近，也是后续服务端 Web 化优先路径。Claude runtime 仍保留 SDK 原生 session / snapshot 能力（fork / rewind 最接近完整时间线恢复）；Proma 作为较早的 provider-agnostic runtime 仍可用但能力相对有限，新任务建议优先 Pi 或 AI SDK。
 
+Pi Runtime 会在恢复历史会话前按模型上下文窗口和最近一次 usage 自动判断是否压缩；`kimi-for-coding` 按 256K 窗口处理。压缩成功后会持久化 `compact_boundary` 和最近历史，再继续当前回合；压缩中止或没有结果时不会写入成功审计。
+
 ## 本地数据
 
 Gravitas 采用本地文件存储，方便备份、迁移和排查问题。
@@ -232,8 +234,8 @@ gravitas/
 
 | 包 | 版本 | 职责 |
 | --- | --- | --- |
-| `@gravitas/electron` | `0.11.50` | Electron 桌面应用 |
-| `@gravitas/shared` | `0.1.65` | 共享类型、IPC 常量、配置和工具 |
+| `@gravitas/electron` | `0.11.51` | Electron 桌面应用 |
+| `@gravitas/shared` | `0.1.66` | 共享类型、IPC 常量、配置和工具 |
 | `@gravitas/core` | `0.2.14` | Provider Adapter、SSE、Shiki 高亮 |
 | `@gravitas/ui` | `0.1.4` | 共享 React UI 组件 |
 
@@ -314,7 +316,15 @@ shared 类型和 IPC 常量
 
 ## 打包注意事项
 
-本地验收包与正式版均使用 com.gravitas.app / Gravitas 身份，不应按独立应用并存安装。目录打包后运行 bun scripts/package-smoke.ts <Gravitas可执行文件>；烟测使用临时配置，不覆盖用户应用。
+本地验收包与正式版均使用 com.gravitas.app / Gravitas 身份，不应按独立应用并存安装。目录打包后运行 `bun scripts/package-smoke.ts <Gravitas可执行文件>`；烟测使用临时配置，不覆盖用户应用。默认离线烟测会验证打包资源、SQLite 重开、工作流模板、新工作区的三个默认 Skills，以及 Skill 分组批量停用落盘。
+
+如需验证真实 Kimi 自动压缩，可显式提供已有 Kimi Coding 渠道和加密渠道配置文件：
+
+```bash
+GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID=<channel-id> GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH=<channels.json> bun scripts/package-smoke.ts <Gravitas可执行文件>
+```
+
+该模式把加密渠道配置复制到临时配置目录，构造接近 256K 阈值的持久化历史，验证自动压缩审计、`compact_boundary`、最近 20 条历史保留和压缩后继续完成当前回合；结束后删除临时目录。它会产生一次真实 Provider 调用，应只在明确授权的验收环境运行。
 
 `@anthropic-ai/claude-agent-sdk` 在 `0.2.113+` 后改为平台 native binary 分发。Gravitas 的 esbuild 配置会把 SDK 标记为 external，`electron-builder.yml` 会把 SDK 主包和平台子包一起打进安装包。
 

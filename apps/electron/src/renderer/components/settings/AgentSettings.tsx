@@ -348,18 +348,21 @@ ${skillList}
     }
   }
 
-  const handleToggleAllSkills = async (enabled: boolean): Promise<void> => {
-    if (!workspaceSlug || !confirm("确定" + (enabled ? "启用" : "禁用") + "当前工作区全部 " + skills.length + " 个 Skill 吗？")) return
+  const handleToggleSkillSet = async (skillSlugs: string[], label: string, enabled: boolean): Promise<void> => {
+    if (!workspaceSlug || skillSlugs.length === 0 || !confirm(`确定${enabled ? "启用" : "禁用"}「${label}」中的 ${skillSlugs.length} 个 Skill 吗？`)) return
     try {
-      const changed = await window.electronAPI.toggleSkillSet(workspaceSlug, "", enabled)
+      const changed = await window.electronAPI.toggleSkillSet(workspaceSlug, skillSlugs, enabled)
       await loadData()
       bumpCapabilitiesVersion((version) => version + 1)
-      toast.success("已" + (enabled ? "启用" : "禁用") + " " + changed.length + " 个 Skill")
+      toast.success(`已${enabled ? "启用" : "禁用"} ${changed.length} 个 Skill`)
     } catch (error) {
       console.error("[Agent 设置] 批量切换 Skills 失败:", error)
       toast.error("批量切换失败", { description: error instanceof Error ? error.message : "未知错误" })
     }
   }
+
+  const handleToggleAllSkills = (enabled: boolean): Promise<void> =>
+    handleToggleSkillSet(skills.map((skill) => skill.slug), "当前工作区全部 Skills", enabled)
 
   const loadMarketplace = React.useCallback(async (): Promise<void> => {
     if (!workspaceSlug) return
@@ -555,6 +558,11 @@ ${skillList}
                   onSelect={setSelectedSkillSlug}
                   onDelete={handleDeleteSkill}
                   onToggle={handleToggleSkill}
+                  onToggleSet={(groupSkills, enabled) => void handleToggleSkillSet(
+                    groupSkills.map((skill) => skill.slug),
+                    groupSkills[0]?.slug.split("-")[0] ?? "当前分组",
+                    enabled,
+                  )}
                   onUpdate={handleUpdateSkill}
                   skillsDir={skillsDir}
                 />
@@ -726,11 +734,12 @@ interface SkillListPanelProps {
   onSelect: (slug: string) => void
   onDelete: (slug: string, name: string) => void
   onToggle: (slug: string, enabled: boolean) => void
+  onToggleSet: (skills: SkillMeta[], enabled: boolean) => void
   onUpdate: (slug: string) => void
   skillsDir: string
 }
 
-function SkillListPanel({ skills, selectedSlug, onSelect, onDelete, onToggle, onUpdate, skillsDir }: SkillListPanelProps): React.ReactElement {
+function SkillListPanel({ skills, selectedSlug, onSelect, onDelete, onToggle, onToggleSet, onUpdate, skillsDir }: SkillListPanelProps): React.ReactElement {
   const groups = React.useMemo(() => groupSkillsByPrefix(skills), [skills])
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() =>
     new Set(groups.filter((g) => g.prefix).map((g) => g.prefix)),
@@ -754,16 +763,25 @@ function SkillListPanel({ skills, selectedSlug, onSelect, onDelete, onToggle, on
       {groups.map((group) =>
         group.prefix ? (
           <div key={group.prefix}>
-            <button
-              onClick={() => toggleGroup(group.prefix)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
-            >
-              {expandedGroups.has(group.prefix)
-                ? <ChevronDown size={12} className="text-muted-foreground flex-shrink-0" />
-                : <ChevronRight size={12} className="text-muted-foreground flex-shrink-0" />}
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate flex-1">{group.prefix}</span>
-              <span className="text-[10px] tabular-nums text-muted-foreground flex-shrink-0">{group.skills.length}</span>
-            </button>
+            <div className="flex items-center px-3 py-1.5 hover:bg-muted/40 transition-colors">
+              <button
+                onClick={() => toggleGroup(group.prefix)}
+                className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-left"
+              >
+                {expandedGroups.has(group.prefix)
+                  ? <ChevronDown size={12} className="text-muted-foreground flex-shrink-0" />
+                  : <ChevronRight size={12} className="text-muted-foreground flex-shrink-0" />}
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate flex-1">{group.prefix}</span>
+                <span className="text-[10px] tabular-nums text-muted-foreground flex-shrink-0">{group.skills.length}</span>
+              </button>
+              <button
+                onClick={() => onToggleSet(group.skills, !group.skills.every((skill) => skill.enabled))}
+                className="ml-1 rounded-md p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                title={group.skills.every((skill) => skill.enabled) ? "禁用该组" : "启用该组"}
+              >
+                <Power size={12} />
+              </button>
+            </div>
             {expandedGroups.has(group.prefix) && (
               <div className="relative">
                 <div className="absolute left-3 top-0 bottom-0 w-px bg-border/60 pointer-events-none z-10" />

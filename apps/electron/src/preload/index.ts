@@ -777,8 +777,8 @@ export interface ElectronAPI {
   /** 切换工作区 Skill 启用/禁用 */
   toggleWorkspaceSkill: (workspaceSlug: string, skillSlug: string, enabled: boolean) => Promise<void>
 
-  /** 批量切换一个 Skill Set；空前缀代表全部 Skills */
-  toggleSkillSet: (workspaceSlug: string, prefix: string, enabled: boolean) => Promise<string[]>
+  /** 批量切换一个 Skill Set；传入当前分组的 Skill slugs */
+  toggleSkillSet: (workspaceSlug: string, skillSlugs: string[], enabled: boolean) => Promise<string[]>
 
   /** 获取 Skills 集市目录 */
   getSkillMarketplace: (workspaceSlug: string) => Promise<SkillMarketplaceItem[]>
@@ -2281,8 +2281,8 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TOGGLE_SKILL, workspaceSlug, skillSlug, enabled)
   },
 
-  toggleSkillSet: (workspaceSlug: string, prefix: string, enabled: boolean) => {
-    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TOGGLE_SKILL_SET, workspaceSlug, prefix, enabled)
+  toggleSkillSet: (workspaceSlug: string, skillSlugs: string[], enabled: boolean) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.TOGGLE_SKILL_SET, workspaceSlug, skillSlugs, enabled)
   },
 
   getSkillMarketplace: (workspaceSlug: string) => {

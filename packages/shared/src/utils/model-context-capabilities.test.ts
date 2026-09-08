@@ -15,6 +15,10 @@ describe('模型上下文能力', () => {
       contextWindow: 256_000,
       source: 'catalog',
     })
+    expect(resolveModelContextCapability({ provider: 'kimi-coding', modelId: 'kimi-for-coding' })).toMatchObject({
+      contextWindow: 256_000,
+      source: 'catalog',
+    })
   })
 
   test('Kimi 渠道返回的 K3 简写也使用 1M 窗口', () => {

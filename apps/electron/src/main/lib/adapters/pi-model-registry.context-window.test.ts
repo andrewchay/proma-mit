@@ -6,5 +6,6 @@ describe('Pi 模型窗口解析', () => {
     expect(inferPiContextWindow('kimi-k3')).toBe(1_000_000)
     expect(inferPiContextWindow('K3')).toBe(1_000_000)
     expect(inferPiContextWindow('kimi-k2.6')).toBe(256_000)
+    expect(inferPiContextWindow('kimi-for-coding')).toBe(256_000)
   })
 })
