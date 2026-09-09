@@ -95,3 +95,4 @@ export * from './execution-contract'
 
 // 配置版本化类型
 export * from './config-version'
+export * from './project-chain'

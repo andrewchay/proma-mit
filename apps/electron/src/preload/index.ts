@@ -6,6 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
@@ -1492,6 +1493,8 @@ export interface ElectronAPI {
     }
     // --- 项目管理 ---
     project: {
+      getChain: (projectId: string) => Promise<import('@gravitas/shared').ProjectChain>
+      updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
       createProject: (input: unknown) => Promise<unknown>
@@ -3438,6 +3441,8 @@ const electronAPI: ElectronAPI = {
     // --- 项目管理 ---
     project: {
       listProjects: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECTS),
+      getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
+      updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
       createProject: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_PROJECT, input),
       updateProject: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_PROJECT, id, patch),

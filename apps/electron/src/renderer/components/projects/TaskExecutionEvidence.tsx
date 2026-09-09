@@ -1,0 +1,49 @@
+import { useMemo } from 'react'
+import { atom, useAtom } from 'jotai'
+import type { AgentExecutionResult } from '@gravitas/shared'
+
+/** 通过项目任务的精确 ID 读取真实执行证据，不把运行终态解释为交付物验收。 */
+export function TaskExecutionEvidence({ taskId }: { taskId: string }): React.ReactElement {
+  const stateAtom = useMemo(
+    () => atom<{ runs?: AgentExecutionResult[]; error?: string; loading: boolean }>({ loading: false }),
+    [],
+  )
+  const [state, setState] = useAtom(stateAtom)
+  async function load(): Promise<void> {
+    setState((current) => ({ ...current, loading: true, error: undefined }))
+    try {
+      const runs = await window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', taskId)
+      setState({ runs, loading: false })
+    } catch (error) {
+      setState((current) => ({ ...current, loading: false, error: String(error) }))
+    }
+  }
+  return (
+    <div className="mt-3 text-sm">
+      <button disabled={state.loading} className="text-primary" onClick={() => void load()}>
+        {state.loading ? '加载执行记录…' : '查看任务的 Agent 执行记录'}
+      </button>
+      {state.error && (
+        <p role="alert" className="text-destructive">
+          {state.error}
+        </p>
+      )}
+      {state.runs?.length === 0 && <p className="text-muted-foreground">该任务暂无 Agent 执行记录。</p>}
+      {state.runs?.map((run) => (
+        <details key={run.id} className="mt-2 rounded-lg bg-muted/50 p-3">
+          <summary>
+            {new Date(run.startedAt).toLocaleString()} · {run.status}
+          </summary>
+          <p>Agent：{run.agentId}</p>
+          <p className="break-all">会话 / Workflow：{run.sessionId}</p>
+          <p className="whitespace-pre-wrap">{run.resultSummary ?? run.error ?? '暂无结果摘要'}</p>
+          {run.outputFiles.map((file) => (
+            <p key={file} className="break-all">
+              产物：{file}
+            </p>
+          ))}
+        </details>
+      ))}
+    </div>
+  )
+}

@@ -16,6 +16,8 @@ import { writeFileAtomic } from '@gravitas/shared/utils/node'
 import { getProjectsDir } from './config-paths'
 import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
+import { assertTaskCompletionAllowed, emptyProjectChain } from './project-chain'
+import type { ProjectChain } from '@gravitas/shared'
 import type {
   Project,
   Task,
@@ -241,6 +243,12 @@ function readColumnNames(database: SqlDatabase, table: string): string[] {
 
 function migrate(database: SqlDatabase): void {
   database.exec(`
+    CREATE TABLE IF NOT EXISTS project_chain_revisions (
+      project_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      PRIMARY KEY (project_id, revision)
+    );
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -693,6 +701,19 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
   if (!existing) return null
+  if (updates.status === 'completed') {
+    const chainRow = database.prepare(
+      'SELECT payload FROM project_chain_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1',
+    ).get(existing.project_id) as { payload: string } | undefined
+    const parsed = chainRow ? (JSON.parse(chainRow.payload) as Partial<ProjectChain>) : {}
+    assertTaskCompletionAllowed({
+      ...emptyProjectChain(),
+      ...parsed,
+      projectDefinitionOfDone: parsed.projectDefinitionOfDone ?? [],
+      taskDefinitionOfDone: parsed.taskDefinitionOfDone ?? {},
+      dependencyHandoffs: parsed.dependencyHandoffs ?? [],
+    } as ProjectChain, id)
+  }
   let completedAt = existing.completed_at
   if (updates.status === 'completed') completedAt = now()
   else if (updates.status !== undefined) completedAt = null

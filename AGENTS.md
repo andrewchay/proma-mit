@@ -528,6 +528,13 @@ React UI 更新
 
 ## 诊断修复验收约定
 
+- 项目决策与协作链路：`project-chain.ts` 管理版本化决策、通用交付物与状态转换；`project-chain-service.ts` 在项目 SQLite 的 `project_chain_revisions` 中追加快照，在同一事务内校验项目归属、任务责任和 `expectedRevision`。`ProjectCollaborationTasks` 复用权威任务、负责人、依赖及阻塞数据，不从名称推断关系。状态使用 Jotai。
+  - **责任与身份**：`ProjectDeliverable.responsibilities` 保存 `ownerId`、`reviewerId`、`recipientId`。保存时负责人必须匹配当前任务，各身份必须存在于 `workflow-identity-service.ts` 的已启用用户目录；流转时重新检查任务负责人和身份启用状态。主进程固定 actor 为 `local-user`，禁止接受客户端传入的 actor 冒充验收人或接收人。本地目录不是远端身份认证；允许一人承担多个职责，不得声称已强制职责分离。
+  - **验收与交接**：负责人提交 `draft → submitted`；验收人填写意见，通过还必须提供依据，转为 `accepted`，退回转为 `changes_requested`。负责人通过 `request_handoff` 填写交接说明后转为 `handoff_pending`；只有接收人可通过 `handoff` 确认到 `handed_off`，或通过 `reject_handoff` 填写原因退回。禁止从已验收直接跳到已接收；退回后不能原版本重提，必须修订。Agent 执行完成不等于业务验收，验收依据与成果引用不自动读取或验证真实性。
+  - **变更与历史**：决策修订必须由原决策责任人操作，决策和交付物修订均要求 `changeReason`。交付物不能换绑其他任务；新版本重置为 `draft` 并绑定当前决策版本。决策更新使直接关联交付物进入 `needs_review`；任务改派或责任人停用在后续流转时拒绝继续，须重新确认责任并保存新版本。历史事件绑定具体版本，禁止把旧验收沿用到新版本。保留 `drafts`、`draftHistory` 和 `draft` 命令键兼容首版数据；旧记录不静默补造责任，旧交接回执展示为历史本机登记，不得冒充新规则下的接收确认。
+  - **验证边界**：行为测试见 `project-chain.test.ts`、`project-chain-rules.test.ts`、`project-chain-service.test.ts`，复用身份目录的回归见 `workflow-identity-service.test.ts`。现有页面已接入规则，未扩展新的链路图；远端多人审批、交接消息发送、跨项目依赖与 Proactive 自动升级告警尚未接入。源码测试和构建通过不代表已完成打包桌面交互验收。
+  - **DACI、DoD、依赖与执行关联**：关键 `decision` 带 DACI 时先以 `candidate` 保存，`driverId` 必须是主进程 actor，`approverId` 负责 `approve_decision`；所有 DACI 身份必须在本地目录启用，必须有未来 deadline，且影响任务归属当前项目。候选决策不能驱动交付；无 DACI 的旧/低风险决策兼容为 `decided`。`projectDefinitionOfDone` 与 `taskDefinitionOfDone` 在保存交付物时冻结为 `definitionOfDone`，验收人必须用 `completedCriteria` 覆盖全部条目；`project-sqlite-store.updateTask()` 将任务置为 `completed` 前以 `assertTaskCompletionAllowed()` 再检查。`dependencyHandoffs` 只能绑定权威 `TaskDependency` 的上游/下游和负责人，经历 `planned → offered → accepted` 或 `returned`；已定义但未接收的契约阻止下游完成。交付物的 `executionId` 必须精确指向同项目、同任务、已完成的 Agent execution；Agent 负责人任务不允许省略。不要以成果引用、Agent Run 或本机记录宣称外部产物已真实验证。
+
 - 完整 PR 门禁：typecheck、bun run test、lint、docs:check；真实 Provider 默认显式跳过，不能把 skip 记为通过。
 - 打包必须包含 default-tools、default-skills 与工作流模板；`scripts/package-smoke.ts` 验证实际 Electron 的发现、执行、数据库重开、新工作区核心 Skills 和分组停用。真实 Kimi 压缩烟测只能在显式设置 `GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID` 与 `GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH` 时运行，并必须验证持久化历史、`compact_boundary`、最近 20 条保留、`pi/automatic` 审计及当前回合继续完成。原生 helper 构建失败必须向上传播。
 - 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。CI 会在托管 runner 无法创建内层 namespace 时仅运行契约测试并明确警告，完整隔离验收必须在支持该能力的 Linux runner 执行。配置与恶意代码测试见 apps/executor/SECURITY.md。

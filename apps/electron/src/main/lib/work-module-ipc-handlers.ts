@@ -6,6 +6,8 @@
  */
 
 import { ipcMain } from 'electron'
+import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
+import { getProjectChain, updateProjectChain } from './project-chain-service'
 import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
@@ -370,6 +372,8 @@ export function registerWorkModuleIpcHandlers(): void {
   // ============================================
 
   // 项目 CRUD
+  ipcMain.handle(PROJECT_CHAIN_IPC.GET, (_, projectId: string) => getProjectChain(projectId))
+  ipcMain.handle(PROJECT_CHAIN_IPC.APPLY, (_, projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => updateProjectChain(projectId, revision, command))
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PROJECTS, async () => {
     return listProjects()
   })
