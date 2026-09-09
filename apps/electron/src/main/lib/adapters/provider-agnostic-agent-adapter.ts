@@ -204,6 +204,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       runtimeTools,
       onGoalCheckpoint,
       skillMentions,
+      requestedOperation,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd) {
@@ -220,6 +221,26 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       permissionMode: input.permissionMode ?? 'auto',
     }
     this.activeSessions.set(sessionId, activeSession)
+
+    if (requestedOperation === 'compact') {
+      try {
+        await compactSessionNow({
+          sessionId,
+          provider,
+          adapterProvider,
+          apiKey,
+          baseUrl,
+          model: model || '',
+          historyMessages: input.historyMessages ?? [],
+          signal: controller.signal,
+          audit: { sessionId, runtime: 'proma', trigger: 'manual' },
+          onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
+        })
+      } finally {
+        this.activeSessions.delete(sessionId)
+      }
+      return
+    }
 
     // 加载 MCP 工具（优先使用跨会话缓存，减少重复连接）
     let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
@@ -287,12 +308,16 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           model: model || '',
           historyMessages: effectiveHistoryMessages,
           observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
+          currentPrompt: prompt,
+          systemPrompt: effectiveSystemPrompt,
+          tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
           signal: controller.signal,
+          onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
           audit: { sessionId, runtime: 'proma', trigger: 'automatic' },
         })
-        if (auto.compacted) {
+        if (auto.history !== effectiveHistoryMessages) {
           effectiveHistoryMessages = auto.history
-          console.log(`[Agent Runtime] 已自动压缩上下文: sessionId=${sessionId}, 摘要 ${auto.summary?.length ?? 0} chars`)
+          console.log(`[Agent Runtime] 已治理上下文: sessionId=${sessionId}, 策略=${auto.compacted ? 'summary' : 'tool_result_pruning'}, 摘要 ${auto.summary?.length ?? 0} chars`)
         }
       }
 
@@ -536,6 +561,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
               model: model || "",
               historyMessages: effectiveHistoryMessages,
               signal: controller.signal,
+              onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
               audit: { sessionId, runtime: "proma", trigger: "overflow_recovery" },
             })
             if (recovered.compacted) {

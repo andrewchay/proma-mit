@@ -1720,7 +1720,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       return map
     })
 
-    // 2. 初始化流式状态 + 乐观设 isCompacting=true（SDK compacting 事件之前就显示"正在压缩..."分隔符）
+    // 2. 初始化流式状态；压缩指示器只由后端 started/终止态驱动，避免发送失败后残留。
     setStreamingStates((prev) => {
       const map = new Map(prev)
       const current = prev.get(sessionId) ?? {
@@ -1730,7 +1730,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         model: agentModelId || undefined,
         startedAt: streamStartedAt,
       }
-      map.set(sessionId, { ...current, running: true, startedAt: streamStartedAt, isCompacting: true, compactInFlight: true })
+      map.set(sessionId, { ...current, running: true, startedAt: streamStartedAt })
       return map
     })
 
@@ -1745,7 +1745,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       permissionModeOverride: permissionMode,
     }).catch((error) => {
       console.error('[AgentView] /compact 发送失败:', error)
-      // 回滚：移除合成用户消息 + 清除 isCompacting flag
+      // 回滚：移除合成用户消息；若后端已发 started，也显式清除压缩状态。
       store.set(liveMessagesMapAtom, (prev) => {
         const map = new Map(prev)
         const current = (map.get(sessionId) ?? []).filter(

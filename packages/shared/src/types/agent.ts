@@ -546,6 +546,11 @@ export type AgentEvent =
   // 上下文压缩
   | { type: 'compacting' }
   | { type: 'compact_complete' }
+  | {
+      type: 'compaction_status'
+      status: 'started' | 'succeeded' | 'noop' | 'failed' | 'aborted' | 'timed_out'
+      message?: string
+    }
   // 权限请求
   | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'permission_resolved'; requestId: string; behavior: 'allow' | 'deny' }

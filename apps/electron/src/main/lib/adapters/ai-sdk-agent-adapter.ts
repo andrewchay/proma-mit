@@ -104,6 +104,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       maxTurns = 25,
       extraTools,
       skillMentions,
+      requestedOperation,
     } = input
 
     if (!provider || !apiKey || !baseUrl || !cwd || !model) {
@@ -130,6 +131,21 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
     let mcpRelease: (() => void) | undefined
     try {
+      if (requestedOperation === 'compact') {
+        await compactSessionNow({
+          sessionId,
+          provider,
+          apiKey,
+          baseUrl,
+          model,
+          historyMessages: input.historyMessages ?? [],
+          signal: activeSession.state.controller.signal,
+          audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
+          onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
+        })
+        return
+      }
+
       const tools: import('../agent-runtime/types').RuntimeToolDefinition[] = [
         ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint)),
         ...(extraTools ?? []).map((tool) => ({
@@ -175,12 +191,16 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           model: model || '',
           historyMessages,
           observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
+          currentPrompt,
+          systemPrompt: input.systemPrompt,
+          tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
           signal: activeSession.state.controller.signal,
+          onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
           audit: { sessionId, runtime: 'ai-sdk', trigger: 'automatic' },
         })
-        if (auto.compacted) {
+        if (auto.history !== historyMessages) {
           historyMessages = auto.history
-          console.log(`[AI SDK Runtime] 已自动压缩上下文: sessionId=${sessionId}, 摘要 ${auto.summary?.length ?? 0} chars`)
+          console.log(`[AI SDK Runtime] 已治理上下文: sessionId=${sessionId}, 策略=${auto.compacted ? 'summary' : 'tool_result_pruning'}, 摘要 ${auto.summary?.length ?? 0} chars`)
         }
       }
 
@@ -235,6 +255,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               model: model || "",
               historyMessages,
               signal: activeSession.state.controller.signal,
+              onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
               audit: { sessionId, runtime: "ai-sdk", trigger: "overflow_recovery" },
             })
             if (recovered.compacted) {

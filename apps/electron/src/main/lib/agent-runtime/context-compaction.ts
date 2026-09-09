@@ -1,9 +1,9 @@
 /**
  * Proma / AI SDK runtime 的上下文压缩（自研，借鉴上游 Pi session.compact() 语义）。
  *
- * Pi runtime 使用 Pi SDK 原生 compact；Claude 使用 SDK 原生压缩。
- * Proma / AI SDK runtime 没有 SDK 原生压缩，这里提供：
- * - 自动压缩：优先依据同模型的已报告 token 与已确认窗口；缺少观测时兼容历史条数回退，使用 LLM 摘要早期历史并保留最近消息；
+ * Claude 使用 SDK 原生压缩；Proma / Pi / AI SDK runtime 统一由这里管理：
+ * - 自动压缩：依据当前 outgoing payload 估算与同模型已报告 token 的较高值触发；
+ * - 分层治理：先裁剪模型视图中的旧工具结果，仍超预算时再增量更新 ContextPacket；
  * - CompactContext 工具：手动请求压缩当前会话（立即执行，下一轮生效）。
  *
  * 压缩结果持久化为 system(compact_boundary) 摘要消息 + 最近消息，
@@ -18,11 +18,9 @@ import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { compactSDKMessages } from '../agent-session-manager'
 import type { RuntimeToolDefinition } from './types'
 import { appendContextCompactionAudit, type ContextCompactionAuditInput } from '../context-compaction-audit-service'
+import { estimateTokenCount } from '../agent-tool-token-estimator'
 
 export const COMPACT_CONTEXT_TOOL_NAME = 'CompactContext'
-
-/** 自动压缩触发阈值：历史消息条数超过此值 */
-export const DEFAULT_AUTO_COMPACT_THRESHOLD = 40
 
 /** 压缩时保留的最近消息条数（与 prompt-builder 的 MAX_HISTORY_MESSAGES 对齐） */
 export const DEFAULT_KEEP_RECENT_MESSAGES = 20
@@ -33,8 +31,17 @@ export const DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS = 32_000
 /** 网络协议和工具追加的不确定性缓冲。 */
 export const DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS = 8_000
 
+/** 单次摘要压缩的默认截止时间，避免 runtime 永久停留在 compacting。 */
+export const DEFAULT_COMPACTION_TIMEOUT_MS = 120_000
+
+/** 压缩后的目标低水位，给后续多轮工具调用留出增长空间。 */
+export const COMPACTION_LOW_WATER_RATIO = 0.65
+
 /** 早期历史转文本的最小字符数；太小不值得压缩 */
 const MIN_SUMMARY_SOURCE_CHARS = 2_000
+
+/** 旧工具结果超过该规模时，优先从模型视图裁剪；原始 JSONL 不改写。 */
+export const TOOL_RESULT_PRUNE_THRESHOLD_CHARS = 2_000
 
 const SUMMARY_SYSTEM_PROMPT =
   '你是会话上下文压缩器。只输出一个合法 JSON 对象，不要 Markdown 或额外文本。字段必须为 version=1、summary（非空字符串）、facts、decisions、openTasks、importantFiles、toolState（均为字符串数组；无内容用 []）。保留关键事实、决定、用户偏好、未完成任务、重要文件和工具状态。使用中文。'
@@ -52,14 +59,33 @@ export interface ContextCompactionOptions {
   model: string
   /** 完整历史消息（SDKMessage 格式） */
   historyMessages: SDKMessage[]
-  /** 自动压缩触发阈值（历史条数；没有可信 token 观测时的兼容回退） */
-  autoThreshold?: number
   /** 最近一次由 Provider 或 SDK 报告的完整输入上下文用量。仅同模型且窗口已确认时参与判断。 */
   observedUsage?: ContextUsageObservation
+  /** 即将发送的用户输入、系统指令和工具 schema，用于估算真实 outgoing payload。 */
+  currentPrompt?: string
+  systemPrompt?: string
+  tools?: ContextBudgetTool[]
+  /** 自动治理内部使用：提交后的模型视图不得超过该 token 目标。 */
+  targetInputTokens?: number
   /** 压缩时保留的最近消息条数 */
   keepRecent?: number
   signal?: AbortSignal
+  /** 单次压缩截止时间；0 表示禁用。 */
+  timeoutMs?: number
+  onLifecycle?: (event: ContextCompactionLifecycleEvent) => void
   audit?: Omit<ContextCompactionAuditInput, "packetVersion">
+}
+
+export interface ContextCompactionLifecycleEvent {
+  status: 'started' | 'succeeded' | 'noop' | 'failed' | 'aborted' | 'timed_out'
+  message?: string
+}
+
+export class ContextCompactionTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`上下文压缩超时（${timeoutMs}ms）`)
+    this.name = 'ContextCompactionTimeoutError'
+  }
 }
 
 /** 从模型输出中读取并校验 ContextPacket v1；不合法的结果不能触发破坏性压缩。 */
@@ -86,6 +112,14 @@ export interface ContextCompactionResult {
   packet?: ContextPacket
   /** 压缩后的历史（含 boundary + 最近消息）；未压缩时返回原历史 */
   history: SDKMessage[]
+  /** 是否只对本轮模型视图执行了无损工具结果裁剪。 */
+  pruned?: boolean
+}
+
+export interface ContextBudgetTool {
+  name: string
+  description?: string
+  parameters?: unknown
 }
 
 export interface ContextUsageObservation {
@@ -96,48 +130,139 @@ export interface ContextUsageObservation {
 
 export interface AutoCompactionTrigger {
   shouldCompact: boolean
-  source: 'reported_usage' | 'legacy_message_count'
+  source: 'reported_usage' | 'estimated_payload'
+  estimatedInputTokens: number
+  inputBudgetTokens: number
 }
 
 /**
- * 解析自动压缩触发：优先使用同模型的已报告输入 token 和已确认窗口。
- * 没有可靠观测时，暂时保留旧的消息数量回退以兼容既有会话。
+ * 解析自动压缩触发：估算本轮完整 outgoing payload，并以同模型已报告输入作为下界。
  */
 export function resolveAutoCompactionTrigger(options: {
   historyMessages: SDKMessage[]
   provider: ProviderType
   modelId: string
   observedUsage?: ContextUsageObservation
-  autoThreshold?: number
   keepRecent?: number
+  currentPrompt?: string
+  systemPrompt?: string
+  tools?: ContextBudgetTool[]
 }): AutoCompactionTrigger {
-  const { historyMessages, provider, modelId, observedUsage, autoThreshold, keepRecent } = options
+  const { historyMessages, provider, modelId, observedUsage } = options
   const sameModel = observedUsage?.modelId?.toLowerCase() === modelId.toLowerCase()
   const capability = resolveModelContextCapability({ provider, modelId })
-
-  if (sameModel && capability.source === 'catalog' && Number.isInteger(observedUsage.contextTokens) && observedUsage.contextTokens >= 0) {
-    const budget = calculateContextBudget({
-      contextWindow: capability.contextWindow,
-      inputTokens: observedUsage.contextTokens,
-      requestedOutputTokens: DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
-      safetyBufferTokens: DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS,
-    })
-    return { shouldCompact: budget.shouldCompact, source: 'reported_usage' }
-  }
-
+  const estimatedInputTokens = estimateOutgoingContextTokens(options)
+  const reportedTokens = sameModel
+    && Number.isInteger(observedUsage.contextTokens)
+    && observedUsage.contextTokens >= 0
+    ? observedUsage.contextTokens
+    : undefined
+  const inputTokens = Math.max(estimatedInputTokens, reportedTokens ?? 0)
+  const budget = calculateContextBudget({
+    contextWindow: capability.contextWindow,
+    inputTokens,
+    requestedOutputTokens: DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
+    safetyBufferTokens: DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS,
+  })
   return {
-    shouldCompact: shouldAutoCompact(historyMessages, autoThreshold, keepRecent),
-    source: 'legacy_message_count',
+    shouldCompact: budget.shouldCompact,
+    source: reportedTokens !== undefined && reportedTokens >= estimatedInputTokens ? 'reported_usage' : 'estimated_payload',
+    estimatedInputTokens,
+    inputBudgetTokens: budget.inputBudgetTokens,
   }
 }
 
-/** 是否值得压缩：历史条数超过阈值，且早期文本足够大 */
-export function shouldAutoCompact(
+/**
+ * 对即将构造的 Provider 请求做保守 token 估算。
+ * Provider tokenizer 不统一，因此这里以 CJK/ASCII 启发式覆盖 history、prompt、system 和 tools，
+ * 再加入每条消息的协议 framing；已报告 usage 仅作为更高的下界，不再是唯一触发证据。
+ */
+export function estimateOutgoingContextTokens(input: {
+  historyMessages: SDKMessage[]
+  currentPrompt?: string
+  systemPrompt?: string
+  tools?: ContextBudgetTool[]
+}): number {
+  const payload = [
+    JSON.stringify(input.historyMessages),
+    input.currentPrompt ?? '',
+    input.systemPrompt ?? '',
+    input.tools ? JSON.stringify(input.tools) : '',
+  ].join('\n')
+  return estimateTokenCount(payload) + 256 + input.historyMessages.length * 12
+}
+
+/** 按低水位预算选择可保留的最近消息数量；超大单项会被纳入摘要而不是强行保留。 */
+export function resolveAdaptiveKeepRecent(input: {
+  historyMessages: SDKMessage[]
+  inputBudgetTokens: number
+  desiredKeepRecent?: number
+  currentPrompt?: string
+  systemPrompt?: string
+  tools?: ContextBudgetTool[]
+}): number {
+  const desired = Math.max(0, Math.min(input.desiredKeepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES, input.historyMessages.length))
+  const staticTokens = estimateOutgoingContextTokens({
+    historyMessages: [],
+    currentPrompt: input.currentPrompt,
+    systemPrompt: input.systemPrompt,
+    tools: input.tools,
+  })
+  const historyBudget = Math.max(0, Math.floor(input.inputBudgetTokens * COMPACTION_LOW_WATER_RATIO) - staticTokens)
+  let selected = 0
+  for (let index = input.historyMessages.length - 1; index >= 0 && selected < desired; index--) {
+    const candidate = input.historyMessages.slice(index)
+    const candidateTokens = estimateOutgoingContextTokens({ historyMessages: candidate })
+    if (candidateTokens > historyBudget) break
+    selected += 1
+  }
+  return selected
+}
+
+export interface ToolResultPruningResult {
+  history: SDKMessage[]
+  prunedResults: number
+}
+
+/**
+ * 优先裁剪最近窗口之外的大型成功 tool_result。函数只返回克隆后的模型视图，
+ * 不触碰 session JSONL；错误结果保留，以免丢失失败原因与恢复状态。
+ */
+export function pruneOldToolResults(
   historyMessages: SDKMessage[],
-  autoThreshold = DEFAULT_AUTO_COMPACT_THRESHOLD,
-  keepRecent = DEFAULT_KEEP_RECENT_MESSAGES,
-): boolean {
-  return historyMessages.length - keepRecent > autoThreshold
+  options: { keepRecentMessages?: number; thresholdChars?: number } = {},
+): ToolResultPruningResult {
+  const keepRecentMessages = options.keepRecentMessages ?? DEFAULT_KEEP_RECENT_MESSAGES
+  const thresholdChars = options.thresholdChars ?? TOOL_RESULT_PRUNE_THRESHOLD_CHARS
+  const protectedStart = Math.max(0, historyMessages.length - keepRecentMessages)
+  let prunedResults = 0
+  const history = historyMessages.map((message, messageIndex) => {
+    if (messageIndex >= protectedStart || message.type !== 'user') return message
+    const content = (message as { message?: { content?: unknown } }).message?.content
+    if (!Array.isArray(content)) return message
+    let changed = false
+    const nextContent = content.map((rawBlock) => {
+      const block = rawBlock as { type?: string; content?: unknown; is_error?: boolean; tool_use_id?: string }
+      if (block.type !== 'tool_result' || block.is_error === true) return rawBlock
+      const serialized = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')
+      if (serialized.length <= thresholdChars) return rawBlock
+      changed = true
+      prunedResults += 1
+      return {
+        ...block,
+        content: `[较早工具结果已从模型视图裁剪；原始记录保留于会话 JSONL。字符数=${serialized.length}]`,
+      }
+    })
+    if (!changed) return message
+    return {
+      ...message,
+      message: {
+        ...(message as { message?: object }).message,
+        content: nextContent,
+      },
+    } as SDKMessage
+  })
+  return { history, prunedResults }
 }
 
 /** 把早期 SDKMessage 列表转换为可读文本（用于摘要输入） */
@@ -187,13 +312,17 @@ export async function summarizeHistory(options: ContextCompactionOptions): Promi
   const sourceText = sdkMessagesToCompactText(earlyMessages)
 
   const adapter = getAdapter(adapterProvider ?? provider)
+  const previousPacket = findLatestContextPacket(earlyMessages)
+  const incrementalPrefix = previousPacket
+    ? `已有 ContextPacket v1（把它作为增量基线，结合新历史输出完整的更新包，不要遗漏仍有效的事实、决定、待办和工具状态）：\n${JSON.stringify(previousPacket)}\n\n`
+    : ''
   const request = adapter.buildStreamRequest({
     providerType: provider,
     baseUrl,
     apiKey,
     modelId: model,
     history: [],
-    userMessage: SUMMARY_USER_PROMPT_PREFIX + sourceText,
+    userMessage: SUMMARY_USER_PROMPT_PREFIX + incrementalPrefix + sourceText,
     systemMessage: SUMMARY_SYSTEM_PROMPT,
     readImageAttachments: () => [],
   })
@@ -213,54 +342,183 @@ export async function summarizeHistory(options: ContextCompactionOptions): Promi
   return parseContextPacket(content)
 }
 
+function findLatestContextPacket(messages: SDKMessage[]): ContextPacket | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.type !== 'system') continue
+    const packet = (message as { contextPacket?: ContextPacket }).contextPacket
+    if (packet?.version === 1) return packet
+  }
+  return undefined
+}
+
 /**
  * 立即压缩当前会话：摘要早期历史 + 保留最近消息 + 持久化 boundary。
  * 返回压缩结果与新的历史。
  */
 export async function compactSessionNow(options: ContextCompactionOptions): Promise<ContextCompactionResult> {
-  const { sessionId, historyMessages, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES } = options
+  const { sessionId, historyMessages } = options
+  let keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES
+  options.onLifecycle?.({ status: 'started' })
   const earlyCount = Math.max(0, historyMessages.length - keepRecent)
   const earlyMessages = historyMessages.slice(0, earlyCount)
 
   if (earlyCount <= 0) {
+    options.onLifecycle?.({ status: 'noop', message: '当前上下文较小，暂时无需压缩。' })
     return { compacted: false, history: historyMessages }
   }
   if (sdkMessagesToCompactText(earlyMessages).trim().length < MIN_SUMMARY_SOURCE_CHARS) {
+    options.onLifecycle?.({ status: 'noop', message: '可压缩的早期上下文过少，暂时无需压缩。' })
     return { compacted: false, history: historyMessages }
   }
 
-  const packet = await summarizeHistory(options)
+  let packet: ContextPacket | undefined
+  try {
+    packet = await summarizeHistoryWithDeadline(options)
+  } catch (error) {
+    const aborted = options.signal?.aborted === true || (error instanceof Error && error.name === 'AbortError')
+    const timedOut = error instanceof ContextCompactionTimeoutError
+    const message = error instanceof Error ? error.message : String(error)
+    options.onLifecycle?.({ status: timedOut ? 'timed_out' : aborted ? 'aborted' : 'failed', message })
+    throw error
+  }
   if (!packet) {
-    return { compacted: false, history: historyMessages }
+    const error = new Error('压缩摘要未通过 ContextPacket 校验。')
+    options.onLifecycle?.({ status: 'failed', message: error.message })
+    throw error
   }
 
-  const history = compactSDKMessages(sessionId, packet.summary, keepRecent, packet)
+  if (options.targetInputTokens !== undefined) {
+    while (keepRecent > 0) {
+      const projectedHistory = [{
+        type: 'system',
+        subtype: 'compact_boundary',
+        session_id: sessionId,
+        summary: packet.summary,
+        contextPacket: packet,
+      } as unknown as SDKMessage, ...historyMessages.slice(historyMessages.length - keepRecent)]
+      const projectedTokens = estimateOutgoingContextTokens({
+        historyMessages: projectedHistory,
+        currentPrompt: options.currentPrompt,
+        systemPrompt: options.systemPrompt,
+        tools: options.tools,
+      })
+      if (projectedTokens <= options.targetInputTokens) break
+      keepRecent -= 1
+    }
+    const boundaryOnlyTokens = estimateOutgoingContextTokens({
+      historyMessages: [{ type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage],
+      currentPrompt: options.currentPrompt,
+      systemPrompt: options.systemPrompt,
+      tools: options.tools,
+    })
+    if (boundaryOnlyTokens > options.targetInputTokens) {
+      const error = new Error('压缩后的 ContextPacket 仍超出目标 token 预算，已拒绝提交。')
+      options.onLifecycle?.({ status: 'failed', message: error.message })
+      throw error
+    }
+  }
+
+  let history: SDKMessage[]
+  try {
+    history = compactSDKMessages(sessionId, packet.summary, keepRecent, packet)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    options.onLifecycle?.({ status: 'failed', message })
+    throw error
+  }
   try {
     if (options.audit) appendContextCompactionAudit({ ...options.audit, packetVersion: packet.version })
   } catch (error) {
     console.warn("[上下文压缩] 写入审计失败:", error)
   }
+  options.onLifecycle?.({ status: 'succeeded' })
   return { compacted: true, summary: packet.summary, packet, history }
 }
 
+async function summarizeHistoryWithDeadline(options: ContextCompactionOptions): Promise<ContextPacket | undefined> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_COMPACTION_TIMEOUT_MS
+  if (timeoutMs <= 0) return summarizeHistory(options)
+
+  const controller = new AbortController()
+  const abortFromCaller = (): void => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) abortFromCaller()
+  else options.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
+  try {
+    try {
+      return await Promise.race([
+        summarizeHistory({ ...options, signal: controller.signal }),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            reject(new ContextCompactionTimeoutError(timeoutMs))
+            controller.abort()
+          }, timeoutMs)
+        }),
+      ])
+    } catch (error) {
+      if (timedOut && !(error instanceof ContextCompactionTimeoutError)) {
+        throw new ContextCompactionTimeoutError(timeoutMs)
+      }
+      throw error
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abortFromCaller)
+  }
+}
+
 /**
- * 自动压缩入口：历史条数超过阈值时压缩。
- * 供 provider-agnostic / ai-sdk adapter 在 query 入口调用。
+ * 自动压缩入口：当前 outgoing payload 超出输入预算时，先裁剪旧工具结果，再摘要。
+ * 供 provider-agnostic / pi / ai-sdk adapter 在 query 入口调用。
  */
 export async function maybeAutoCompact(options: ContextCompactionOptions): Promise<ContextCompactionResult> {
-  const { historyMessages, autoThreshold, keepRecent } = options
+  const { historyMessages, keepRecent } = options
   const trigger = resolveAutoCompactionTrigger({
     historyMessages,
     provider: options.provider,
     modelId: options.model,
     observedUsage: options.observedUsage,
-    autoThreshold,
     keepRecent,
+    currentPrompt: options.currentPrompt,
+    systemPrompt: options.systemPrompt,
+    tools: options.tools,
   })
   if (!trigger.shouldCompact) {
     return { compacted: false, history: historyMessages }
   }
-  return compactSessionNow(options)
+  const pruning = pruneOldToolResults(historyMessages, { keepRecentMessages: keepRecent })
+  if (pruning.prunedResults > 0) {
+    const afterPruning = resolveAutoCompactionTrigger({
+      historyMessages: pruning.history,
+      provider: options.provider,
+      modelId: options.model,
+      currentPrompt: options.currentPrompt,
+      systemPrompt: options.systemPrompt,
+      tools: options.tools,
+    })
+    if (!afterPruning.shouldCompact) {
+      options.onLifecycle?.({ status: 'started' })
+      options.onLifecycle?.({ status: 'succeeded', message: `已从模型视图裁剪 ${pruning.prunedResults} 条较早工具结果。` })
+      return { compacted: false, pruned: true, history: pruning.history }
+    }
+  }
+  const adaptiveKeepRecent = resolveAdaptiveKeepRecent({
+    historyMessages: pruning.history,
+    inputBudgetTokens: trigger.inputBudgetTokens,
+    desiredKeepRecent: keepRecent,
+    currentPrompt: options.currentPrompt,
+    systemPrompt: options.systemPrompt,
+    tools: options.tools,
+  })
+  return compactSessionNow({
+    ...options,
+    historyMessages: pruning.history,
+    keepRecent: adaptiveKeepRecent,
+    targetInputTokens: Math.floor(trigger.inputBudgetTokens * COMPACTION_LOW_WATER_RATIO),
+  })
 }
 
 /**

@@ -184,6 +184,32 @@ describe('AISDKAgentAdapter', () => {
     }).toThrow('AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd')
   })
 
+  test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {
+    const adapter = new AISDKAgentAdapter()
+    const events: AgentEvent[] = []
+
+    for await (const _message of adapter.query({
+      sessionId: 's-ai-manual-compact',
+      prompt: '/compact',
+      requestedOperation: 'compact',
+      agentRuntime: 'ai-sdk',
+      provider: 'openai',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.test',
+      model: 'gpt-test',
+      cwd: '/tmp',
+      onAgentEvent: (event) => events.push(event),
+    })) {
+      // 手动压缩不应进入普通模型流。
+    }
+
+    expect(capturedInputs).toEqual([])
+    expect(events).toEqual([
+      { type: 'compaction_status', status: 'started' },
+      { type: 'compaction_status', status: 'noop', message: '当前上下文较小，暂时无需压缩。' },
+    ])
+  })
+
   test('OpenAI-compatible provider 会通过 AI SDK 生成消息', async () => {
     const adapter = new AISDKAgentAdapter()
     const messages: SDKMessage[] = []

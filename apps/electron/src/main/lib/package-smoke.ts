@@ -1,10 +1,10 @@
 import { openNativeSqlite } from './native-sqlite'
-/** 离线安装包验收：仅在显式烟测模式和新建临时配置目录内运行。 */
+/** 安装包验收：仅在显式烟测模式和新建临时配置目录内运行。 */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { SDKMessage } from '@gravitas/shared'
+import { resolveModelContextCapability, type AgentRuntime, type SDKMessage } from '@gravitas/shared'
 import { getConfigDir, getPluginToolsDir, seedDefaultSkills, seedDefaultTools, seedBundledWorkflowTemplates } from './config-paths'
 import {
   createAgentWorkspace,
@@ -83,18 +83,24 @@ export async function runPackageSmoke(): Promise<void> {
   }))
 }
 
+interface KimiCompactionSmokeResult {
+  contextWindow: number
+  runtimes: AgentRuntime[]
+}
+
 async function runLiveKimiCompactionSmoke(
   workspace: { id: string; slug: string },
   cwd: string,
-): Promise<boolean> {
+): Promise<KimiCompactionSmokeResult | false> {
   const channelId = process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID
   if (!channelId) return false
 
-  const [channelManager, sessionManager, auditService, adapterModule] = await Promise.all([
+  const [channelManager, sessionManager, auditService, piAdapterModule, promaAdapterModule] = await Promise.all([
     import('./channel-manager'),
     import('./agent-session-manager'),
     import('./context-compaction-audit-service'),
     import('./adapters/pi-agent-adapter'),
+    import('./adapters/provider-agnostic-agent-adapter'),
   ])
   const channel = channelManager.getChannelById(channelId)
   assert(channel, '真实 Kimi 烟测渠道不存在')
@@ -103,62 +109,66 @@ async function runLiveKimiCompactionSmoke(
     ?? channel.models.find(candidate => candidate.enabled)?.id
     ?? channel.models[0]?.id
   assert(model, 'Kimi Coding 渠道没有可用模型')
+  const capability = resolveModelContextCapability({ provider: 'kimi-coding', modelId: model })
+  assert.equal(capability.contextWindow, 256_000, `P3 只验收 Kimi 256K 模型，当前 ${model}=${capability.contextWindow}`)
 
-  const session = sessionManager.createAgentSession(
-    'Package Smoke Kimi Compaction',
-    channel.id,
-    workspace.id,
-    model,
-    'pi',
-  )
-  sessionManager.updateAgentSessionMeta(session.id, {
-    lastContextUsage: {
-      contextTokens: 231_871,
-      modelId: model,
-      recordedAt: Date.now(),
-    },
-  })
-
-  const source = '这是用于验证 Kimi 自动压缩的合成历史，不包含用户数据。'.repeat(60)
-  const historyMessages: SDKMessage[] = Array.from({ length: 22 }, (_, index) => ({
-    type: index % 2 === 0 ? 'user' : 'assistant',
-    message: { content: [{ type: 'text', text: `${source} #${index}` }] },
-    parent_tool_use_id: null,
-  } as unknown as SDKMessage))
-  sessionManager.appendSDKMessages(session.id, historyMessages)
-  const adapter = new adapterModule.PiAgentAdapter()
-  const messages: SDKMessage[] = []
-  try {
-    for await (const message of adapter.query({
-      sessionId: session.id,
-      prompt: '请只回复 OK 两个字母，不要解释。',
-      agentRuntime: 'pi',
-      provider: 'kimi-coding',
-      apiKey: channelManager.decryptApiKey(channel.id),
-      baseUrl: channel.baseUrl,
+  const source = '这是用于验证 Kimi 自动压缩的合成长会话，不包含用户数据。'.repeat(60)
+  const apiKey = channelManager.decryptApiKey(channel.id)
+  const runtimes: AgentRuntime[] = ['pi', 'proma']
+  for (const runtime of runtimes) {
+    const session = sessionManager.createAgentSession(
+      `Package Smoke Kimi Compaction ${runtime}`,
+      channel.id,
+      workspace.id,
       model,
-      cwd,
-      historyMessages,
-      permissionMode: 'safe',
-    })) {
-      messages.push(message)
+      runtime,
+    )
+    sessionManager.updateAgentSessionMeta(session.id, {
+      lastContextUsage: { contextTokens: 231_871, modelId: model, recordedAt: Date.now() },
+    })
+    const historyMessages: SDKMessage[] = Array.from({ length: 22 }, (_, index) => ({
+      type: index % 2 === 0 ? 'user' : 'assistant',
+      message: { content: [{ type: 'text', text: `${source} #${index}` }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage))
+    sessionManager.appendSDKMessages(session.id, historyMessages)
+    const adapter = runtime === 'pi'
+      ? new piAdapterModule.PiAgentAdapter()
+      : new promaAdapterModule.ProviderAgnosticAgentAdapter()
+    const messages: SDKMessage[] = []
+    const lifecycle: string[] = []
+    try {
+      for await (const message of adapter.query({
+        sessionId: session.id,
+        prompt: '请只回复 OK 两个字母，不要解释。',
+        agentRuntime: runtime,
+        provider: 'kimi-coding',
+        apiKey,
+        baseUrl: channel.baseUrl,
+        model,
+        cwd,
+        historyMessages,
+        permissionMode: 'safe',
+        workspaceSlug: workspace.slug,
+        onAgentEvent: (event) => {
+          if (event.type === 'compaction_status') lifecycle.push(event.status)
+        },
+      })) {
+        messages.push(message)
+      }
+    } finally {
+      adapter.dispose()
     }
-  } finally {
-    adapter.dispose()
+    assert.deepEqual(lifecycle.slice(0, 2), ['started', 'succeeded'], `${runtime} 压缩生命周期没有闭合`)
+    const compactedHistory = sessionManager.getAgentSessionSDKMessages(session.id)
+    assert.equal(compactedHistory[0]?.type, 'system', `${runtime} 压缩历史缺少边界消息`)
+    assert.equal((compactedHistory[0] as { subtype?: string }).subtype, 'compact_boundary', `${runtime} 压缩边界类型错误`)
+    assert(messages.some(message => message.type === 'assistant'), `${runtime} 压缩后没有继续完成当前回合`)
   }
 
   const metrics = await auditService.getContextCompactionMetrics()
-  assert.equal(metrics.total, 1, '隔离烟测应只产生一条上下文压缩审计')
-  assert.deepEqual(metrics.byRuntime, [{ key: 'pi', count: 1 }], '真实 Kimi 压缩没有记录 Pi 审计')
-  assert.deepEqual(metrics.byTrigger, [{ key: 'automatic', count: 1 }], '231K Kimi 会话没有触发自动压缩')
-  const compactedHistory = sessionManager.getAgentSessionSDKMessages(session.id)
-  assert.equal(compactedHistory.length, 21, '压缩后应保留边界消息和最近 20 条历史')
-  assert.equal(compactedHistory[0]?.type, 'system', '压缩历史缺少边界消息')
-  assert.equal(
-    (compactedHistory[0] as { subtype?: string } | undefined)?.subtype,
-    'compact_boundary',
-    '压缩历史首条不是 compact_boundary',
-  )
-  assert(messages.some(message => message.type === 'assistant'), 'Kimi 压缩后没有继续完成当前回合')
-  return true
+  assert.equal(metrics.total, 2, 'Pi 与 Proma 应各产生一条上下文压缩审计')
+  assert.deepEqual(metrics.byRuntime, [{ key: 'pi', count: 1 }, { key: 'proma', count: 1 }], '双 runtime 压缩审计不完整')
+  assert.deepEqual(metrics.byTrigger, [{ key: 'automatic', count: 2 }], '双 runtime 自动触发审计不完整')
+  return { contextWindow: capability.contextWindow, runtimes }
 }

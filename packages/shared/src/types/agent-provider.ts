@@ -59,6 +59,8 @@ export interface AgentQueryInput {
   attachments?: FileAttachment[]
   /** runtime 内部增量事件回调，用于 text/tool/usage 的实时 UI 更新 */
   onAgentEvent?: (event: AgentEvent) => void
+  /** 由编排层确定性分流的运行时操作，不作为普通 prompt 发送给模型。 */
+  requestedOperation?: 'compact'
 }
 
 /**

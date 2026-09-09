@@ -72,6 +72,7 @@ import { estimateTokenCount, WRITE_CONTENT_TOKEN_THRESHOLD } from './agent-tool-
 import { createElectronRuntimeServices, type RuntimeServices } from './agent-runtime/runtime-services'
 import { tokenUsageService } from './token-usage-service'
 import { preTickTurn } from './turn-decision-service'
+import { resolveRequestedOperation } from './agent-runtime/requested-operation'
 
 // ===== 插件能力引导收集 =====
 
@@ -614,8 +615,9 @@ export class AgentOrchestrator {
     isDelegationSession?: boolean
     /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
     skillMentions?: string[]
+    requestedOperation?: 'compact'
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[${agentRuntime} runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -706,6 +708,7 @@ export class AgentOrchestrator {
         mcpServers: mcpServerConfigs,
         workspaceSlug,
         skillMentions,
+        requestedOperation,
         onMcpAuthRequired: ({ workspaceSlug: ws, serverName }: { workspaceSlug: string; serverName: string }) => {
           runtimeServices.events.emit(sessionId, {
             kind: 'proma_event',
@@ -864,8 +867,9 @@ export class AgentOrchestrator {
     isDelegationSession?: boolean
     /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
     skillMentions?: string[]
+    requestedOperation?: 'compact'
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[Pi Runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -1011,6 +1015,7 @@ export class AgentOrchestrator {
         workspaceId,
         workspaceSkillsDir: workspaceSlug ? getWorkspaceSkillsDir(workspaceSlug) : undefined,
         skillMentions,
+        requestedOperation,
         onMcpAuthRequired: ({ workspaceSlug: ws, serverName }) => {
           this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'mcp_auth_required', workspaceSlug: ws, serverName } } as AgentStreamPayload)
         },
@@ -2032,6 +2037,7 @@ export class AgentOrchestrator {
           triggeredBy,
           isDelegationSession,
           skillMentions: mentionedSkills,
+          requestedOperation: resolveRequestedOperation(userMessage),
         })
         return
       }
@@ -2057,6 +2063,7 @@ export class AgentOrchestrator {
         triggeredBy,
         isDelegationSession,
         skillMentions: mentionedSkills,
+        requestedOperation: resolveRequestedOperation(userMessage),
       })
       return
     }

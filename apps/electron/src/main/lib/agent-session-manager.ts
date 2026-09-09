@@ -486,6 +486,14 @@ export function deleteAgentSession(id: string): void {
       console.warn(`[Agent 会话] 删除消息文件失败 (${id}):`, error)
     }
   }
+  const compactionArchiveDir = join(getAgentSessionsDir(), 'compaction-archive', id)
+  if (existsSync(compactionArchiveDir)) {
+    try {
+      rmSync(compactionArchiveDir, { recursive: true, force: true })
+    } catch (error) {
+      console.warn(`[Agent 会话] 删除压缩归档失败 (${id}):`, error)
+    }
+  }
 
   // 清理 session 工作目录
   if (removed.workspaceId) {
@@ -1058,7 +1066,7 @@ export function truncateSDKMessages(id: string, upToUuidInclusive: string): SDKM
  * 上下文压缩：删除除最近 keepRecent 条外的早期消息，并在剩余历史前插入一条
  * system(compact_boundary) 摘要消息。返回新的消息列表（含 boundary）。
  *
- * 供 Proma / AI SDK runtime 的自研压缩使用（Pi runtime 走 Pi SDK 原生 session.compact()）。
+ * 供 Gravitas 管理的 Proma / Pi / AI SDK runtime 压缩使用。
  */
 export function compactSDKMessages(id: string, summary: string, keepRecent: number, contextPacket?: ContextPacket): SDKMessage[] {
   const messages = getAgentSessionSDKMessages(id)
@@ -1074,8 +1082,16 @@ export function compactSDKMessages(id: string, summary: string, keepRecent: numb
   const result = [boundary, ...kept]
 
   const filePath = getAgentSessionMessagesPath(id)
+  if (existsSync(filePath)) {
+    const archiveDir = join(getAgentSessionsDir(), 'compaction-archive', id)
+    mkdirSync(archiveDir, { recursive: true })
+    copyFileSync(filePath, join(archiveDir, `${Date.now()}-${randomUUID()}.jsonl`))
+  }
   const content = result.map((m) => JSON.stringify(m)).join('\n') + '\n'
   writeFileSync(filePath, content, 'utf-8')
+
+  // 旧 token 观测对应压缩前历史，必须失效；否则下一轮会立即重复触发压缩。
+  updateAgentSessionMeta(id, { lastContextUsage: undefined })
 
   console.log(`[Agent 会话] 上下文压缩: sessionId=${id}, 摘要 ${summary.length} chars, 保留 ${keepCount}/${messages.length} 条`)
   return result

@@ -5,7 +5,7 @@
 import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
 import { buildElectronMock } from './testing/electron-mock'
 import type { SDKMessage } from '@gravitas/shared'
-import { mkdirSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +32,7 @@ const {
   rewindProviderAgnosticSession,
   searchAgentSessionReferences,
   updateAgentSessionMeta,
+  compactSDKMessages,
 } = await import('./agent-session-manager')
 const { getConfigDir, getAgentSessionWorkspacePath, getAgentWorkspacePath } = await import('./config-paths')
 const { createAgentWorkspace, getAgentWorkspaceCwd } = await import('./agent-workspace-manager')
@@ -93,6 +94,30 @@ describe('Agent 会话管理器', () => {
 
     expect(updateAgentSessionMeta(session.id, { agentRuntime: 'proma' }).agentRuntime).toBe('proma')
     expect(updateAgentSessionMeta(session.id, { agentRuntime: 'invalid' as never }).agentRuntime).toBe('pi')
+  })
+
+  test('压缩会话历史后清除压缩前的 token 观测', () => {
+    const session = createAgentSession('compact usage reset', undefined, testWorkspaceId, undefined, 'pi')
+    updateAgentSessionMeta(session.id, {
+      lastContextUsage: { contextTokens: 200_000, modelId: 'kimi-for-coding', recordedAt: Date.now() },
+    })
+    const messagesPath = join(getConfigDir(), 'agent-sessions', `${session.id}.jsonl`)
+    mkdirSync(join(getConfigDir(), 'agent-sessions'), { recursive: true })
+    const message: SDKMessage = {
+      type: 'user',
+      uuid: 'compact-source',
+      message: { content: [{ type: 'text', text: '需要保留的最近消息' }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    writeFileSync(messagesPath, `${JSON.stringify(message)}\n`, 'utf-8')
+
+    compactSDKMessages(session.id, '已压缩摘要', 1)
+
+    expect(getAgentSessionMeta(session.id)?.lastContextUsage).toBeUndefined()
+    const archiveDir = join(getConfigDir(), 'agent-sessions', 'compaction-archive', session.id)
+    const archiveFiles = readdirSync(archiveDir)
+    expect(archiveFiles).toHaveLength(1)
+    expect(readFileSync(join(archiveDir, archiveFiles[0]!), 'utf8')).toContain('compact-source')
   })
 
   test('fork Provider-Agnostic 会话：复制工作区文件与 JSONL 历史', async () => {

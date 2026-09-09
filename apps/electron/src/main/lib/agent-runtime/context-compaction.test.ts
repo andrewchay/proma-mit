@@ -20,9 +20,11 @@ mock.module('electron', () => buildElectronMock())
 // 这里用内存 Map 实现相同语义，验证 maybeAutoCompact 的摘要/编排逻辑；
 // 真实 JSONL 读写在 agent-session-manager 自身测试已覆盖。
 const inMemorySdk = new Map<string, SDKMessage[]>()
+let compactPersistenceMode: 'success' | 'fail' = 'success'
 mock.module('../agent-session-manager', () => ({
   getAgentSessionSDKMessages: (id: string): SDKMessage[] => inMemorySdk.get(id) ?? [],
   compactSDKMessages: (id: string, summary: string, keepRecent: number, contextPacket?: unknown): SDKMessage[] => {
+    if (compactPersistenceMode === 'fail') throw new Error('模拟压缩落盘失败')
     const all = inMemorySdk.get(id) ?? []
     const keepCount = Math.max(0, Math.min(keepRecent, all.length))
     const kept = all.slice(all.length - keepCount)
@@ -40,6 +42,9 @@ mock.module('../agent-session-manager', () => ({
 }))
 
 let capturedSummaryPrompt = ''
+let summaryStreamMode: 'success' | 'hang' | 'abort-aware' | 'invalid' = 'success'
+let summaryStreamStarted: Promise<void>
+let resolveSummaryStreamStarted: () => void
 mock.module('@gravitas/core', () => ({
   getAdapter: () => ({
     providerType: 'deepseek',
@@ -50,18 +55,34 @@ mock.module('@gravitas/core', () => ({
     }),
     parseSSELine: () => [],
   }),
-  streamSSE: async (opts: { onEvent: (e: { type: string; delta?: string }) => void }) => {
+  streamSSE: async (opts: { signal?: AbortSignal; onEvent: (e: { type: string; delta?: string }) => void }) => {
+    resolveSummaryStreamStarted()
     // 捕获摘要 prompt，模拟 LLM 返回摘要
     capturedSummaryPrompt = JSON.parse((opts as unknown as { request: { body: string } }).request.body).prompt
+    if (summaryStreamMode === 'hang') await new Promise<void>(() => {})
+    if (summaryStreamMode === 'abort-aware') {
+      await new Promise<void>((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () => {
+          const error = new Error('操作已中止')
+          error.name = 'AbortError'
+          reject(error)
+        }, { once: true })
+      })
+    }
+    if (summaryStreamMode === 'invalid') {
+      opts.onEvent({ type: 'chunk', delta: '{}' })
+      return
+    }
     opts.onEvent({ type: 'chunk', delta: JSON.stringify({ version: 1, summary: '用户偏好 TypeScript，正在开发 Gravitas。', facts: ['用户偏好 TypeScript。'], decisions: ['使用 ContextPacket v1。'], openTasks: ['完成 P3。'], importantFiles: ['context-compaction.ts'], toolState: ['无外部写入。'] }) })
     opts.onEvent({ type: 'done' })
   },
 }))
 
 const {
-  shouldAutoCompact,
   sdkMessagesToCompactText,
   maybeAutoCompact,
+  compactSessionNow,
+  ContextCompactionTimeoutError,
   DEFAULT_KEEP_RECENT_MESSAGES,
 } = await import('./context-compaction')
 const { getContextCompactionMetrics } = await import('../context-compaction-audit-service')
@@ -84,6 +105,10 @@ describe('上下文压缩（Proma / AI SDK）', () => {
   const originalTestConfigDir = process.env.PROMA_TEST_CONFIG_DIR
 
   beforeEach(() => {
+    compactPersistenceMode = 'success'
+    summaryStreamMode = 'success'
+    capturedSummaryPrompt = ''
+    summaryStreamStarted = new Promise<void>((resolve) => { resolveSummaryStreamStarted = resolve })
     tempDir = mkdtempSync(join(tmpdir(), 'proma-compaction-test-'))
     process.env.PROMA_TEST_CONFIG_DIR = tempDir
   })
@@ -94,18 +119,49 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     rmSync(tempDir, { recursive: true, force: true })
   })
 
-  test('shouldAutoCompact：历史超过阈值 + keepRecent 时触发', () => {
-    expect(shouldAutoCompact(makeHistory(61), 40, 20)).toBe(true)
-    expect(shouldAutoCompact(makeHistory(60), 40, 20)).toBe(false)
-    expect(shouldAutoCompact(makeHistory(41), 40, 0)).toBe(true)
-  })
-
   test('sdkMessagesToCompactText 提取 user/assistant 文本', () => {
     const text = sdkMessagesToCompactText(makeHistory(2))
     expect(text).toContain('[用户]')
     expect(text).toContain('[助手]')
     expect(text).toContain('消息 0')
     expect(text).toContain('消息 1')
+  })
+
+  test('summarizeHistory：已有 ContextPacket 作为增量基线注入摘要请求', async () => {
+    const previousPacket = {
+      version: 1 as const,
+      summary: '此前已完成架构选择。',
+      facts: ['既有事实必须保留。'],
+      decisions: ['统一使用 ContextGovernor。'],
+      openTasks: ['继续 P2。'],
+      importantFiles: ['context-compaction.ts'],
+      toolState: ['没有待处理副作用。'],
+    }
+    const history = [
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        session_id: 's-incremental',
+        summary: previousPacket.summary,
+        contextPacket: previousPacket,
+      } as unknown as SDKMessage,
+      ...makeHistory(45),
+    ]
+    inMemorySdk.set('s-incremental', history)
+
+    await compactSessionNow({
+      sessionId: 's-incremental',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      keepRecent: 20,
+    })
+
+    expect(capturedSummaryPrompt).toContain('已有 ContextPacket v1')
+    expect(capturedSummaryPrompt).toContain('既有事实必须保留')
+    expect(capturedSummaryPrompt).toContain('统一使用 ContextGovernor')
   })
 
   test('maybeAutoCompact：历史不足时不压缩', async () => {
@@ -118,6 +174,33 @@ describe('上下文压缩（Proma / AI SDK）', () => {
       historyMessages: makeHistory(30),
     })
     expect(result.compacted).toBe(false)
+  })
+
+  test('maybeAutoCompact：旧工具结果裁剪后低于预算则不调用摘要且生命周期闭合', async () => {
+    const hugeToolResult: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'old-tool', content: 'x'.repeat(900_000) }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const history = [hugeToolResult, ...makeHistory(21)]
+    const lifecycle: string[] = []
+    inMemorySdk.set('s-prune-only', history)
+
+    const result = await maybeAutoCompact({
+      sessionId: 's-prune-only',
+      provider: 'kimi-coding',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'kimi-for-coding',
+      historyMessages: history,
+      onLifecycle: (event) => lifecycle.push(event.status),
+    })
+
+    expect(result).toMatchObject({ compacted: false, pruned: true })
+    expect(lifecycle).toEqual(['started', 'succeeded'])
+    expect(capturedSummaryPrompt).toBe('')
+    expect(JSON.stringify(result.history)).toContain('较早工具结果已从模型视图裁剪')
+    expect(JSON.stringify(inMemorySdk.get('s-prune-only'))).toContain('x'.repeat(10_000))
   })
 
   test('maybeAutoCompact：超过阈值时压缩并持久化 boundary', async () => {
@@ -133,6 +216,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
       baseUrl: 'http://mock',
       model: 'm',
       historyMessages: history,
+      observedUsage: { contextTokens: 220_000, modelId: 'm', recordedAt: Date.now() },
     })
 
     expect(result.compacted).toBe(true)
@@ -167,6 +251,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
       baseUrl: 'http://mock',
       model: 'm',
       historyMessages: history,
+      observedUsage: { contextTokens: 220_000, modelId: 'm', recordedAt: Date.now() },
       audit: { sessionId, runtime: 'proma', trigger: 'automatic' },
     })
 
@@ -190,5 +275,82 @@ describe('上下文压缩（Proma / AI SDK）', () => {
       historyMessages: tiny,
     })
     expect(result.compacted).toBe(false)
+  })
+
+  test('compactSessionNow：摘要请求超时会发出 timed_out 终止态并拒绝', async () => {
+    const history = makeHistory(65)
+    const lifecycle: string[] = []
+    summaryStreamMode = 'hang'
+
+    await expect(compactSessionNow({
+      sessionId: 's-timeout',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      timeoutMs: 5,
+      onLifecycle: (event) => lifecycle.push(event.status),
+    })).rejects.toBeInstanceOf(ContextCompactionTimeoutError)
+
+    expect(lifecycle).toEqual(['started', 'timed_out'])
+  })
+
+  test('compactSessionNow：主动中止会发出 aborted 终止态', async () => {
+    const controller = new AbortController()
+    const lifecycle: string[] = []
+    summaryStreamMode = 'abort-aware'
+    const running = compactSessionNow({
+      sessionId: 's-aborted',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: makeHistory(65),
+      signal: controller.signal,
+      onLifecycle: (event) => lifecycle.push(event.status),
+    })
+
+    await summaryStreamStarted
+    controller.abort()
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' })
+    expect(lifecycle).toEqual(['started', 'aborted'])
+  })
+
+  test('compactSessionNow：无效摘要会发出 failed 终止态且不改写历史', async () => {
+    const history = makeHistory(65)
+    const lifecycle: string[] = []
+    summaryStreamMode = 'invalid'
+
+    await expect(compactSessionNow({
+      sessionId: 's-invalid',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      onLifecycle: (event) => lifecycle.push(event.status),
+    })).rejects.toThrow('压缩摘要未通过 ContextPacket 校验。')
+
+    expect(lifecycle).toEqual(['started', 'failed'])
+    expect(inMemorySdk.get('s-invalid')).toBeUndefined()
+  })
+
+  test('compactSessionNow：压缩落盘失败会发出 failed 终止态', async () => {
+    const history = makeHistory(65)
+    const lifecycle: string[] = []
+    compactPersistenceMode = 'fail'
+
+    await expect(compactSessionNow({
+      sessionId: 's-persistence-failed',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      onLifecycle: (event) => lifecycle.push(event.status),
+    })).rejects.toThrow('模拟压缩落盘失败')
+
+    expect(lifecycle).toEqual(['started', 'failed'])
   })
 })

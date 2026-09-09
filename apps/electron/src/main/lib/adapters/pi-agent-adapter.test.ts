@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import type { Context, Model } from '@earendil-works/pi-ai'
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions'
+import type { AgentEvent } from '@gravitas/shared'
 
 
 mock.module('electron', () => buildElectronMock())
@@ -20,7 +21,7 @@ mock.module('../document-parser', () => ({
 }))
 
 let capturedSessionOptions: { noTools?: 'builtin'; customTools?: Array<{ name: string }> } | undefined
-let capturedSettings: { images?: { blockImages?: boolean } } | undefined
+let capturedSettings: { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean } } | undefined
 let capturedSystemPromptOverride: (() => string) | undefined
 let promptGate: Promise<void> | undefined
 let abortCallCount = 0
@@ -49,7 +50,7 @@ function getCapturedSessionOptions(): { noTools?: 'builtin'; customTools?: Array
   return capturedSessionOptions
 }
 
-function getCapturedSettings(): { images?: { blockImages?: boolean } } | undefined {
+function getCapturedSettings(): { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean } } | undefined {
   return capturedSettings
 }
 
@@ -67,7 +68,7 @@ mock.module('./pi-sdk-loader', () => ({
     },
     SessionManager: { inMemory: () => ({}) },
     SettingsManager: {
-      inMemory: (settings: { images?: { blockImages?: boolean } }) => {
+      inMemory: (settings: { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean } }) => {
         capturedSettings = settings
         return {}
       },
@@ -140,6 +141,34 @@ describe('PiAgentAdapter', () => {
     expect(() => adapter.dispose()).not.toThrow()
   })
 
+  test('given the user requests compact when Pi handles the turn then compaction runs directly without prompting the model', async () => {
+    capturedPrompts = []
+    const events: AgentEvent[] = []
+    const adapter = new PiAgentAdapter()
+
+    for await (const _message of adapter.query({
+      sessionId: 's-pi-manual-compact',
+      prompt: '/compact',
+      requestedOperation: 'compact',
+      agentRuntime: 'pi',
+      provider: 'deepseek',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.test',
+      model: 'test-model',
+      cwd: '/tmp',
+      canUseTool: async () => ({ allowed: true }),
+      onAgentEvent: (event) => events.push(event),
+    })) {
+      // 手动压缩不应进入普通模型 prompt。
+    }
+
+    expect(capturedPrompts).toEqual([])
+    expect(events).toEqual([
+      { type: 'compaction_status', status: 'started' },
+      { type: 'compaction_status', status: 'noop', message: '当前上下文较小，暂时无需压缩。' },
+    ])
+  })
+
   test('given Pi starts a session when P0 tools are configured then Pi built-ins are disabled and only the Proma bridge is enabled', async () => {
     capturedSessionOptions = undefined
     capturedSettings = undefined
@@ -176,6 +205,8 @@ describe('PiAgentAdapter', () => {
       'WebBridgeSnapshot', 'ComputerUseScreenshot',
     ]))
     expect(sessionOptions.customTools?.some((tool) => tool.name === 'bash')).toBe(false)
+    expect(sessionOptions.customTools?.some((tool) => tool.name === 'CompactContext')).toBe(false)
+    expect(getCapturedSettings()?.compaction?.enabled).toBe(false)
     expect(getCapturedSettings()?.images?.blockImages).toBe(false)
     expect(getCapturedSystemPrompt()).toContain('使用 WebSearch 或 WebFetch')
     expect(getCapturedSystemPrompt()).toContain('征求同意')

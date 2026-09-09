@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mergeLiveMessage } from './agent-atoms'
+import { applyAgentEvent, mergeLiveMessage, type AgentStreamState } from './agent-atoms'
 import type { SDKAssistantMessage, SDKMessage } from '@gravitas/shared'
 
 function assistantMessage(uuid: string, text: string, extra: Record<string, unknown> = {}): SDKMessage {
@@ -83,4 +83,21 @@ describe('mergeLiveMessage 流式消息合并', () => {
 
     expect(list).toHaveLength(2)
   })
+})
+
+describe('applyAgentEvent 上下文压缩生命周期', () => {
+  const initial: AgentStreamState = { running: true, content: '', toolActivities: [] }
+
+  test.each(['succeeded', 'noop', 'failed', 'aborted', 'timed_out'] as const)(
+    'given compaction started when terminal status is %s then compacting flags are cleared',
+    (status) => {
+      const started = applyAgentEvent(initial, { type: 'compaction_status', status: 'started' })
+      expect(started.isCompacting).toBe(true)
+      expect(started.compactInFlight).toBe(true)
+
+      const completed = applyAgentEvent(started, { type: 'compaction_status', status })
+      expect(completed.isCompacting).toBe(false)
+      expect(completed.compactInFlight).toBe(false)
+    },
+  )
 })

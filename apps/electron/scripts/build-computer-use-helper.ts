@@ -3,17 +3,13 @@
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { resolveNapiHeaders } from './resolve-napi-headers'
 
 const source = resolve(import.meta.dir, '../resources/computer-use/macos/computer_use_addon.mm')
 const output = resolve(import.meta.dir, '../resources/computer-use/macos/computer_use.node')
 // 模块只使用稳定 N-API ABI，不链接 Node/Electron 私有符号。CI 的 setup-node
 // 提供完整 Node 头文件；本机若已有 node-addon-api 则保留其 N-API 头文件回退。
-const bundledNapiHeaders = resolve(import.meta.dir, '../../../node_modules/node-addon-api/external-napi')
-const nodeExecutable = Bun.which('node')
-const nodeHeaders = nodeExecutable ? resolve(dirname(nodeExecutable), '../include/node') : ''
-const napiHeaders = existsSync(join(bundledNapiHeaders, 'node_api.h'))
-  ? bundledNapiHeaders
-  : nodeHeaders
+const napiHeaders = resolveNapiHeaders(import.meta.dir)
 
 if (process.platform !== 'darwin') {
   console.log('[Computer Use] 非 macOS 平台跳过原生辅助程序构建')

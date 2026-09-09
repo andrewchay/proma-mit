@@ -3,16 +3,12 @@
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { resolveNapiHeaders } from './resolve-napi-headers'
 
 const source = resolve(import.meta.dir, '../resources/dynamic-island/macos/island_addon.mm')
 const output = resolve(import.meta.dir, '../resources/dynamic-island/macos/island.node')
 // 与 computer-use 相同：只使用稳定 N-API ABI，优先使用 CI 的 Node 开发头文件。
-const bundledNapiHeaders = resolve(import.meta.dir, '../../../node_modules/node-addon-api/external-napi')
-const nodeExecutable = Bun.which('node')
-const nodeHeaders = nodeExecutable ? resolve(dirname(nodeExecutable), '../include/node') : ''
-const napiHeaders = existsSync(join(bundledNapiHeaders, 'node_api.h'))
-  ? bundledNapiHeaders
-  : nodeHeaders
+const napiHeaders = resolveNapiHeaders(import.meta.dir)
 
 if (process.platform !== 'darwin') {
   console.log('[Dynamic Island] 非 macOS 平台跳过原生模块构建')

@@ -17,7 +17,7 @@ describe('上下文压缩预算触发', () => {
       provider: 'kimi-api',
       modelId: 'kimi-k3',
       observedUsage: { contextTokens: 200_000, modelId: 'kimi-k3', recordedAt: 1 },
-    })).toEqual({ shouldCompact: false, source: 'reported_usage' })
+    })).toMatchObject({ shouldCompact: false, source: 'reported_usage' })
   })
 
   test('Gravitas runtime 将 K3 简写按 1M 预算处理', () => {
@@ -26,7 +26,7 @@ describe('上下文压缩预算触发', () => {
       provider: 'kimi-api',
       modelId: 'K3',
       observedUsage: { contextTokens: 200_000, modelId: 'K3', recordedAt: 1 },
-    })).toEqual({ shouldCompact: false, source: 'reported_usage' })
+    })).toMatchObject({ shouldCompact: false, source: 'reported_usage' })
   })
 
   test('Kimi 256K 模型接近输入预算时触发压缩', () => {
@@ -35,7 +35,7 @@ describe('上下文压缩预算触发', () => {
       provider: 'kimi-api',
       modelId: 'kimi-k2.6',
       observedUsage: { contextTokens: 220_000, modelId: 'kimi-k2.6', recordedAt: 1 },
-    })).toEqual({ shouldCompact: true, source: 'reported_usage' })
+    })).toMatchObject({ shouldCompact: true, source: 'reported_usage' })
   })
 
   test('Kimi for Coding 在 256K 窗口耗用 220K 时按报告用量触发压缩', () => {
@@ -44,15 +44,15 @@ describe('上下文压缩预算触发', () => {
       provider: 'kimi-coding',
       modelId: 'kimi-for-coding',
       observedUsage: { contextTokens: 220_000, modelId: 'kimi-for-coding', recordedAt: 1 },
-    })).toEqual({ shouldCompact: true, source: 'reported_usage' })
+    })).toMatchObject({ shouldCompact: true, source: 'reported_usage' })
   })
 
-  test('模型切换或未知窗口时保留消息数量兼容回退', () => {
+  test('模型切换时忽略陈旧 usage，并按当前 outgoing payload 估算', () => {
     expect(resolveAutoCompactionTrigger({
       historyMessages: makeHistory(61),
       provider: 'kimi-api',
       modelId: 'kimi-k3',
       observedUsage: { contextTokens: 220_000, modelId: 'kimi-k2.6', recordedAt: 1 },
-    })).toEqual({ shouldCompact: true, source: 'legacy_message_count' })
+    })).toMatchObject({ shouldCompact: false, source: 'estimated_payload' })
   })
 })

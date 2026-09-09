@@ -9,7 +9,6 @@
 import { randomUUID } from 'node:crypto'
 import { Type } from 'typebox'
 import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@gravitas/shared'
-import { calculatePiAutoCompactionReserveTokens, PI_DEFAULT_CONTEXT_WINDOW } from '@gravitas/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'
@@ -25,9 +24,8 @@ import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runt
 import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
 import { isTransientNetworkError } from '../error-patterns'
-import { appendContextCompactionAudit } from '../context-compaction-audit-service'
 import { getAgentSessionMeta } from '../agent-session-manager'
-import { maybeAutoCompact } from '../agent-runtime/context-compaction'
+import { compactSessionNow, maybeAutoCompact } from '../agent-runtime/context-compaction'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 系统提示词 */
@@ -105,44 +103,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// ===== 上下文压缩（借鉴上游 Proma #1246） =====
-
-/** 自动压缩续跑上限：压缩后自动继续原任务的最大次数 */
-const MAX_AUTOMATIC_COMPACTION_CONTINUATIONS = 20
-
-/** 压缩完成后自动继续原任务的提示词 */
-const PI_COMPACTION_CONTINUATION_PROMPT = `<proma_compaction_continuation>
-上下文已压缩。若原任务尚未完成，请基于已持久化的状态继续完成原任务；若已全部完成，简要确认即可。
-</proma_compaction_continuation>`
-
-/**
- * 当前 Agent 回合结束后执行 Pi 原生 session.compact()。
- * 若没有可压缩内容（nothing to compact / already compacted），投影一条 noop 状态消息。
- */
-async function compactCurrentSessionAfterTurn(
-  session: Pick<AgentSession, 'compact'>,
-  sessionId: string,
-  onNoop: (message: SDKMessage) => void,
-): Promise<'compacted' | 'noop'> {
-  try {
-    await session.compact()
-    return 'compacted'
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (!/nothing to compact|already compacted/i.test(message)) throw error
-    onNoop({
-      type: 'system',
-      subtype: 'status',
-      session_id: sessionId,
-      compact_result: 'noop',
-      message: /already compacted/i.test(message)
-        ? '当前上下文已经压缩过，无需重复压缩。'
-        : '当前上下文较小，暂时无需压缩。',
-    } as unknown as SDKMessage)
-    return 'noop'
-  }
-}
-
 /**
  * 把 Pi 订阅事件与异步迭代器解耦。
  *
@@ -201,17 +161,43 @@ function createAsyncQueue<T>(): AsyncQueue<T> {
 
 export class PiAgentAdapter implements AgentProviderAdapter {
   private readonly activeSessions = new Map<string, ActivePiSession>()
+  private readonly activeCompactions = new Map<string, AbortController>()
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel } = input
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal } = input
     if (!provider || !apiKey || !baseUrl || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
 
-    // 上下文压缩状态：CompactContext 工具请求压缩，当前回合结束后执行 session.compact() 并自动续跑。
-    let compactContextRequested = false
-    let automaticCompactionContinuations = 0
+    const runWithCompactionAbort = async <T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const controller = new AbortController()
+      const abortFromCaller = (): void => controller.abort(abortSignal?.reason)
+      if (abortSignal?.aborted) abortFromCaller()
+      else abortSignal?.addEventListener('abort', abortFromCaller, { once: true })
+      this.activeCompactions.set(sessionId, controller)
+      try {
+        return await operation(controller.signal)
+      } finally {
+        abortSignal?.removeEventListener('abort', abortFromCaller)
+        if (this.activeCompactions.get(sessionId) === controller) this.activeCompactions.delete(sessionId)
+      }
+    }
+
+    if (requestedOperation === 'compact') {
+      await runWithCompactionAbort((signal) => compactSessionNow({
+        sessionId,
+        provider,
+        apiKey,
+        baseUrl,
+        model,
+        historyMessages: historyMessages ?? [],
+        signal,
+        audit: { sessionId, runtime: 'pi', trigger: 'manual' },
+        onLifecycle: (event) => onAgentEvent?.({ type: 'compaction_status', ...event }),
+      }))
+      return
+    }
 
     const registration = await registerPiModelFromChannel({
       sessionId,
@@ -222,22 +208,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     })
 
     let effectiveHistoryMessages = historyMessages ?? []
-    if (effectiveHistoryMessages.length > 0) {
-      const auto = await maybeAutoCompact({
-        sessionId,
-        provider,
-        apiKey,
-        baseUrl,
-        model,
-        historyMessages: effectiveHistoryMessages,
-        observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
-        audit: { sessionId, runtime: "pi", trigger: "automatic" },
-      })
-      if (auto.compacted) {
-        effectiveHistoryMessages = auto.history
-        console.log(`[Pi Runtime] 已在恢复会话前自动压缩上下文: sessionId=${sessionId}, 摘要 ${auto.summary?.length ?? 0} chars`)
-      }
-    }
 
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
     let mcpRelease: (() => void) | undefined
@@ -310,33 +280,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       } as unknown as ToolDefinition)
     }
 
-    // 手动压缩工具：当前 Agent 回合结束后压缩上下文并自动续跑（经权限流程）
-    customTools.push({
-      name: 'CompactContext',
-      label: '压缩当前会话上下文',
-      description: 'Compact only the current Pi Agent session after this turn finishes. Before calling, persist a durable handoff or checkpoint to the session workbench or project files as appropriate. Proma will compact the current session, then automatically continue the original task from the compacted context.',
-      promptSnippet: 'CompactContext: after persisting a durable handoff/checkpoint, compact the current session context. Proma will automatically continue the original task after compaction.',
-      parameters: Type.Object({}),
-      async execute(_toolCallId: string, _params: Record<string, unknown>, signal?: AbortSignal): Promise<{ content: Array<{ type: 'text'; text: string }>; details: { toolName: string; isError: boolean } }> {
-        const permission = canUseTool
-          ? await canUseTool('CompactContext', {}, signal ?? new AbortController().signal)
-          : { allowed: false, message: '未配置权限回调' }
-        if (!permission.allowed) {
-          return {
-            content: [{ type: 'text', text: permission.message ?? '权限被拒绝' }],
-            details: { toolName: 'CompactContext', isError: true },
-          }
-        }
-        compactContextRequested = true
-        return {
-          content: [{ type: 'text', text: '将在当前 Agent 回合结束后压缩当前会话上下文，并自动从已持久化的交接状态继续原始任务。' }],
-          details: { toolName: 'CompactContext', isError: false },
-        }
-      },
-    } as unknown as ToolDefinition)
     const settingsManager = SettingsManager.inMemory({
-      // 借鉴上游 Proma：上下文达到模型窗口约 80% 时由 Pi 原生自动压缩。
-      compaction: { enabled: true, reserveTokens: calculatePiAutoCompactionReserveTokens(registration.model.contextWindow ?? PI_DEFAULT_CONTEXT_WINDOW) },
+      // 压缩由 Gravitas 在恢复会话前统一管理；关闭 Pi 原生双重压缩所有权。
+      compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 2 },
       // WebBridge / Computer Use 的截图必须进入模型上下文；blockImages=true
       // 会让 Pi 在工具已成功返回图片后静默丢弃图片本体，表现为“截图没反应”。
@@ -348,6 +294,32 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const goalGuidance = customTools.some((tool) => tool.name === 'GoalCheckpoint')
       ? '\nWhen the user message states that Goal Runtime is activated, this is an active Goal. Complete the current step and call GoalCheckpoint before ending the turn. Do not claim Goal is unsupported. Use outcome=complete only with concrete evidence; otherwise use continue, waiting, or blocked.'
       : ''
+    const effectiveSystemPrompt = `${systemPrompt ?? ''}\n${goalGuidance}\n${toolPrompt}`
+    if (effectiveHistoryMessages.length > 0) {
+      const auto = await runWithCompactionAbort((signal) => maybeAutoCompact({
+        sessionId,
+        provider,
+        apiKey,
+        baseUrl,
+        model,
+        historyMessages: effectiveHistoryMessages,
+        observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
+        currentPrompt: prompt,
+        systemPrompt: effectiveSystemPrompt,
+        tools: customTools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        })),
+        signal,
+        onLifecycle: (event) => onAgentEvent?.({ type: 'compaction_status', ...event }),
+        audit: { sessionId, runtime: 'pi', trigger: 'automatic' },
+      }))
+      if (auto.history !== effectiveHistoryMessages) {
+        effectiveHistoryMessages = auto.history
+        console.log(`[Pi Runtime] 已在恢复会话前治理上下文: sessionId=${sessionId}, 策略=${auto.compacted ? 'summary' : 'tool_result_pruning'}, 摘要 ${auto.summary?.length ?? 0} chars`)
+      }
+    }
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir: registration.agentDir,
@@ -471,27 +443,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         onAgentEvent?.({ type: 'task_progress', toolUseId: event.toolCallId })
         return
       }
-      if (event.type === 'compaction_start') {
-        queue.push({ type: 'system', subtype: 'compacting', session_id: sessionId } as unknown as SDKMessage)
-        return
-      }
-      if (event.type === 'compaction_end') {
-        const result = event.result
-        if (event.aborted || event.errorMessage || !result) {
-          const reason = event.errorMessage ?? (event.aborted ? '压缩已中止' : '压缩没有生成结果')
-          console.warn(`[Pi Runtime] 上下文压缩未完成: sessionId=${sessionId}, ${reason}`)
-          logWarn(sessionId, `[Pi Runtime] 上下文压缩未完成: ${reason}`)
-          return
-        }
-        try { appendContextCompactionAudit({ sessionId, runtime: 'pi', trigger: 'native', estimatedTokensAfter: result.estimatedTokensAfter }) } catch (error) { console.warn('[Pi] 写入上下文压缩审计失败:', error) }
-        queue.push({
-          type: 'system',
-          subtype: 'compact_boundary',
-          session_id: sessionId,
-          compactionEstimatedTokensAfter: result.estimatedTokensAfter,
-        } as unknown as SDKMessage)
-        return
-      }
     })
     this.activeSessions.set(sessionId, {
       session,
@@ -561,7 +512,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         }
       }
 
-      // Prompt 链：支持 interrupt 软中断后重发追加消息，以及 CompactContext 压缩后自动续跑。
+      // Prompt 链：支持 interrupt 软中断后重发追加消息。
       // 非 interrupt 的 steer/followUp 追加由 Pi 原生 agent loop 在 agent_end 前 drain，无需在此处理。
       let pendingInitialImages = promptImages
       const runPromptChain = async (): Promise<void> => {
@@ -582,7 +533,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             active.interrupting = false
           }
 
-          // 1. interrupt 队列：用户打断后要立即处理的新消息
+          // interrupt 队列：用户打断后要立即处理的新消息
           const active = this.activeSessions.get(sessionId)
           const pending = active?.pendingInterruptPrompts.shift()
           if (pending) {
@@ -591,15 +542,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             continue
           }
 
-          // 2. CompactContext 压缩后续跑
-          if (compactContextRequested && automaticCompactionContinuations < MAX_AUTOMATIC_COMPACTION_CONTINUATIONS) {
-            compactContextRequested = false
-            const result = await compactCurrentSessionAfterTurn(session, sessionId, (message) => queue.push(message))
-            if (result === 'compacted') {
-              automaticCompactionContinuations += 1
-              nextPrompt = PI_COMPACTION_CONTINUATION_PROMPT
-            }
-          }
         }
       }
 
@@ -651,6 +593,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   }
 
   abort(sessionId: string): void {
+    this.activeCompactions.get(sessionId)?.abort()
+    this.activeCompactions.delete(sessionId)
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     // 取消所有等待中的 interrupt 消息，避免悬挂 promise
@@ -714,6 +658,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   }
 
   dispose(): void {
+    for (const controller of this.activeCompactions.values()) controller.abort()
+    this.activeCompactions.clear()
     for (const sessionId of this.activeSessions.keys()) {
       this.releaseSession(sessionId)
     }

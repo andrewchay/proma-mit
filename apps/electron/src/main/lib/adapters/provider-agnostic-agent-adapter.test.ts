@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@gravitas/core'
-import type { SDKMessage, SDKResultMessage } from '@gravitas/shared'
+import type { AgentEvent, SDKMessage, SDKResultMessage } from '@gravitas/shared'
 
 
 // 被测模块依赖 attachment-service/document-parser，它们会加载 electron，
@@ -111,6 +111,32 @@ describe('Provider-Agnostic Agent 适配器', () => {
         return makeStreamResult('文件编辑完成，任务结束')
       },
     }))
+  })
+
+  test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const events: AgentEvent[] = []
+
+    for await (const _message of adapter.query({
+      sessionId: 's-manual-compact',
+      prompt: '/compact',
+      requestedOperation: 'compact',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      onAgentEvent: (event) => events.push(event),
+    })) {
+      // 手动压缩不应进入普通模型流。
+    }
+
+    expect(streamCallCount).toBe(0)
+    expect(capturedRequests).toEqual([])
+    expect(events).toEqual([
+      { type: 'compaction_status', status: 'started' },
+      { type: 'compaction_status', status: 'noop', message: '当前上下文较小，暂时无需压缩。' },
+    ])
   })
 
   afterEach(() => {

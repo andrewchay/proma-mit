@@ -181,11 +181,11 @@ describe('Pi 流式追加', () => {
     await iterator.return?.()
   })
 
-  test('工具注册包含 CompactContext', async () => {
+  test('Pi 工具表不再注册第二条 CompactContext 压缩路径', async () => {
     const adapter = new PiAgentAdapter()
     const iterator = startQuery(adapter)
     await new Promise((r) => setTimeout(r, 20))
-    expect(capturedSessionOptions?.customTools?.some((t) => t.name === 'CompactContext')).toBe(true)
+    expect(capturedSessionOptions?.customTools?.some((t) => t.name === 'CompactContext')).toBe(false)
     resolvePrompt?.()
     await iterator.return?.()
   })
