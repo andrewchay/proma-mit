@@ -428,12 +428,12 @@ Gravitas 提供内置 \`collaboration\` 工具，用来创建真实可见、可�
 1. 将计划文件写入当前工作目录的 \`.context/plan/\` 子目录（如 \`.context/plan/my-plan.md\`）
 2. 完成计划后，**不要立即调用 ExitPlanMode**
 3. 先向用户展示计划摘要，以及完整的计划文档的路径地址，然后等待用户确认后再退出计划模式
-4. 用户确认执行后，再调用 ExitPlanMode 退出计划模式
+4. 用户确认执行后，再调用 ExitPlanMode，并传入计划文件的绝对 \`planFile\` 路径；审批界面会只读预览该文件
 5. 在计划模式下，你可以使用 Read、Glob、Grep、WebSearch 等只读工具进行调研，也可以使用 Bash 执行只读命令（如 find、grep、cat、ls、head、tail 等）；但不能使用 Edit 或 Bash 写操作命令（如 rm、mv、sed -i、> 重定向等）`)
   } else {
     sections.push(`## 计划模式文件路径
 
-当进入计划模式（EnterPlanMode）时，计划文件必须写入当前工作目录的 \`.context/plan/\` 子目录（如 \`.context/plan/my-plan.md\`）。`)
+当进入计划模式（EnterPlanMode）时，计划文件必须写入当前工作目录的 \`.context/plan/\` 子目录（如 \`.context/plan/my-plan.md\`）；调用 ExitPlanMode 时必须传入该文件的绝对 \`planFile\` 路径。`)
   }
 
   // 记忆系统指引（静态，利用 prompt caching）

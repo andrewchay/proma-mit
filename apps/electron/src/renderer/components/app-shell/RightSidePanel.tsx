@@ -15,6 +15,8 @@ import {
   agentDiffPanelTabAtom,
 } from '@/atoms/agent-atoms'
 import { SidePanel } from '@/components/agent/SidePanel'
+import type { DiffPanelTab } from '@/components/diff/DiffPanelTabBar'
+import { previewPanelOpenMapAtom } from '@/atoms/preview-atoms'
 
 export function RightSidePanel({ width }: { width?: number }): React.ReactElement | null {
   const appMode = useAtomValue(appModeAtom)
@@ -22,8 +24,9 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
   const sessionPathMap = useAtomValue(agentSessionPathMapAtom)
   const diffPanelTabMap = useAtomValue(agentDiffPanelTabAtom)
   const setDiffPanelTabMap = useSetAtom(agentDiffPanelTabAtom)
+  const previewOpenMap = useAtomValue(previewPanelOpenMapAtom)
 
-  const setActiveTab = React.useCallback((tab: 'files' | 'changes') => {
+  const setActiveTab = React.useCallback((tab: DiffPanelTab) => {
     if (!currentSessionId) return
     setDiffPanelTabMap((prev) => {
       const map = new Map(prev)
@@ -31,6 +34,10 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
       return map
     })
   }, [currentSessionId, setDiffPanelTabMap])
+
+  React.useEffect(() => {
+    if (currentSessionId && previewOpenMap.get(currentSessionId)) setActiveTab('preview')
+  }, [currentSessionId, previewOpenMap, setActiveTab])
 
   if (appMode !== 'agent' || !currentSessionId) {
     return null

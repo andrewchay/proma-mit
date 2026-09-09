@@ -28,6 +28,9 @@ export interface PreviewFile {
 /** 每会话预览面板开关 */
 export const previewPanelOpenMapAtom = atom<Map<string, boolean>>(new Map())
 
+/** 预览已迁入统一右侧工作区；关闭旧 MainArea 分栏，避免同一文档重复渲染。 */
+export const previewUsesRightWorkspaceAtom = atom(true)
+
 /** 每会话当前预览的文件（null 时显示 DiffChangesList） */
 export const previewFileMapAtom = atom<Map<string, PreviewFile | null>>(new Map())
 

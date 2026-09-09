@@ -13,7 +13,7 @@ import { Panel } from '@/components/app-shell/Panel'
 import { cn } from '@/lib/utils'
 import { SettingsDialog } from '@/components/settings'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
-import { previewPanelOpenMapAtom, previewSplitRatioAtom } from '@/atoms/preview-atoms'
+import { previewPanelOpenMapAtom, previewSplitRatioAtom, previewUsesRightWorkspaceAtom } from '@/atoms/preview-atoms'
 import { PreviewPanel } from '@/components/diff/PreviewPanel'
 import { TabBar } from './TabBar'
 import { TabContent } from './TabContent'
@@ -52,11 +52,13 @@ export function MainArea(): React.ReactElement {
   const deferredActiveTabId = React.useDeferredValue(activeTabId)
 
   const previewOpenMap = useAtomValue(previewPanelOpenMapAtom)
+  const previewUsesRightWorkspace = useAtomValue(previewUsesRightWorkspaceAtom)
   const [splitRatio, setSplitRatio] = useAtom(previewSplitRatioAtom)
   const previewDragging = React.useRef(false)
 
-  const previewOpen =
-    activeTab?.type === 'agent' && (previewOpenMap.get(activeTab.sessionId) ?? false)
+  const previewOpen = !previewUsesRightWorkspace
+    && activeTab?.type === 'agent'
+    && (previewOpenMap.get(activeTab.sessionId) ?? false)
   const previewSessionId = activeTab?.type === 'agent' ? activeTab.sessionId : null
 
   // 关闭动画状态：当 previewOpen 从 true → false 时，播放退出动画再移除 DOM

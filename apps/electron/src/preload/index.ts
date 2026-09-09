@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
+import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
@@ -156,6 +156,12 @@ import type {
   CreateCollabDelegationsResult,
   SplitAndCreateCollabInput,
   PendingRequestsSnapshot,
+  TerminalCreateInput,
+  TerminalInput,
+  TerminalResizeInput,
+  TerminalSnapshot,
+  TerminalOutputEvent,
+  TerminalExitEvent,
 } from '@gravitas/shared'
 import type {
   UserProfile,
@@ -295,6 +301,14 @@ export interface ElectronAPI {
    * 用户安装完 Git / Node 后触发，强制刷新缓存
    */
   reinitRuntime: () => Promise<RuntimeStatus>
+
+  createTerminal: (input: TerminalCreateInput) => Promise<import('@gravitas/shared').TerminalState>
+  writeTerminal: (input: TerminalInput) => Promise<void>
+  resizeTerminal: (input: TerminalResizeInput) => Promise<void>
+  killTerminal: (terminalId: string) => Promise<void>
+  getTerminalSnapshot: (terminalId: string) => Promise<TerminalSnapshot>
+  onTerminalOutput: (callback: (event: TerminalOutputEvent) => void) => () => void
+  onTerminalExit: (callback: (event: TerminalExitEvent) => void) => () => void
 
   /**
    * 获取指定目录的 Git 仓库状态
@@ -1693,6 +1707,22 @@ const electronAPI: ElectronAPI = {
 
   reinitRuntime: () => {
     return ipcRenderer.invoke(IPC_CHANNELS.REINIT_RUNTIME)
+  },
+
+  createTerminal: (input) => ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.CREATE, input),
+  writeTerminal: (input) => ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.INPUT, input),
+  resizeTerminal: (input) => ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.RESIZE, input),
+  killTerminal: (terminalId) => ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.KILL, terminalId),
+  getTerminalSnapshot: (terminalId) => ipcRenderer.invoke(TERMINAL_IPC_CHANNELS.SNAPSHOT, terminalId),
+  onTerminalOutput: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: TerminalOutputEvent): void => callback(payload)
+    ipcRenderer.on(TERMINAL_IPC_CHANNELS.OUTPUT, listener)
+    return () => ipcRenderer.removeListener(TERMINAL_IPC_CHANNELS.OUTPUT, listener)
+  },
+  onTerminalExit: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: TerminalExitEvent): void => callback(payload)
+    ipcRenderer.on(TERMINAL_IPC_CHANNELS.EXIT, listener)
+    return () => ipcRenderer.removeListener(TERMINAL_IPC_CHANNELS.EXIT, listener)
   },
 
   getGitRepoStatus: (dirPath: string) => {

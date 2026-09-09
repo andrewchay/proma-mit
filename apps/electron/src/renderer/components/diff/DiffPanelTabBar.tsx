@@ -6,17 +6,19 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { PanelRightClose } from 'lucide-react'
+import { Columns2, Eye, PanelRightClose, SquareTerminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { agentDiffUnseenChangesAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 
-type DiffPanelTab = 'files' | 'changes'
+export type DiffPanelTab = 'files' | 'changes' | 'preview' | 'terminal'
 
 interface DiffPanelTabBarProps {
   activeTab: DiffPanelTab
   onTabChange: (tab: DiffPanelTab) => void
   onClose?: () => void
+  onToggleSplit?: () => void
+  splitActive?: boolean
 }
 
 interface PreviousTabState {
@@ -24,7 +26,7 @@ interface PreviousTabState {
   activeTab: DiffPanelTab
 }
 
-export function DiffPanelTabBar({ activeTab, onTabChange, onClose }: DiffPanelTabBarProps): React.ReactElement {
+export function DiffPanelTabBar({ activeTab, onTabChange, onClose, onToggleSplit, splitActive = false }: DiffPanelTabBarProps): React.ReactElement {
   const unseenMap = useAtomValue(agentDiffUnseenChangesAtom)
   const setUnseenMap = useSetAtom(agentDiffUnseenChangesAtom)
   const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
@@ -92,6 +94,56 @@ export function DiffPanelTabBar({ activeTab, onTabChange, onClose }: DiffPanelTa
             文件改动
           </span>
         </button>
+        <button
+          type="button"
+          onClick={() => onTabChange('preview')}
+          aria-label="预览"
+          title="预览"
+          className={cn(
+            'flex items-center justify-center w-9 h-[34px] rounded-t-lg transition-colors select-none cursor-pointer',
+            'border-t border-l border-r',
+            activeTab === 'preview'
+              ? 'bg-content-area text-foreground border-border/50'
+              : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/50',
+          )}
+        >
+          <Eye className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onTabChange('terminal')}
+          aria-label="终端"
+          title="终端"
+          className={cn(
+            'flex items-center justify-center w-9 h-[34px] rounded-t-lg transition-colors select-none cursor-pointer',
+            'border-t border-l border-r',
+            activeTab === 'terminal'
+              ? 'bg-content-area text-foreground border-border/50'
+              : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/50',
+          )}
+        >
+          <SquareTerminal className="size-3.5" />
+        </button>
+        {onToggleSplit && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onToggleSplit}
+                aria-pressed={splitActive}
+                className={cn(
+                  'flex items-center justify-center size-[28px] mb-[3px] rounded transition-colors shrink-0',
+                  splitActive
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                )}
+              >
+                <Columns2 className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{splitActive ? '关闭双窗格' : '打开双窗格'}</TooltipContent>
+          </Tooltip>
+        )}
         {/* 右侧关闭按钮（常驻，两个 tab 下都可见） */}
         {onClose && (
           <Tooltip>

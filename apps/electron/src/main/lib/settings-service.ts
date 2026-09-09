@@ -99,6 +99,7 @@ export const NESTED_MERGE_FIELDS: ReadonlySet<keyof AppSettings> = new Set<keyof
   'voiceDictation',
   'mainWindowState',
   'shortcutOverrides',
+  'fileTreeViewState',
 ])
 
 /** 纯函数：对嵌套对象字段做深合并（其余字段浅合并）。导出便于单测。 */

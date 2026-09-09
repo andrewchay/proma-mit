@@ -52,6 +52,9 @@ import {
   STICKY_ROW_BASE_CLASS,
   canBeSticky,
 } from './tree-row-layout'
+import { fileTreeStateKey } from './file-tree-state'
+import { useFileTreeExpanded } from './use-file-tree-expanded'
+import { usePersistedFileTreeState } from './use-persisted-file-tree-state'
 
 /** 计算目标路径相对 rootPath 的祖先目录集合（不含 rootPath 自身、含目标的所有上级） */
 function computeRevealAncestors(rootPath: string, targetPath: string): Set<string> {
@@ -96,13 +99,18 @@ interface FileBrowserProps {
   onFilePreview?: (filePath: string) => void
   /** 双击文件时打开独立预览窗口（多个文档可并排查看） */
   onOpenDetachedPreview?: (filePath: string) => void
+  /** 展开状态隔离键；相同会话和文件根复用状态 */
+  stateKey?: string
 }
 
-export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddToChat, onFilePreview, onOpenDetachedPreview }: FileBrowserProps): React.ReactElement {
+export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddToChat, onFilePreview, onOpenDetachedPreview, stateKey }: FileBrowserProps): React.ReactElement {
   const [entries, setEntries] = React.useState<FileEntry[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const filesVersion = useAtomValue(workspaceFilesVersionAtom)
+  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const expandedStateKey = stateKey ?? fileTreeStateKey(currentSessionId ?? undefined, 'root', rootPath)
+  usePersistedFileTreeState(expandedStateKey)
 
   // ===== Agent 写入文件时的自动定位 =====
   const autoReveal = useAtomValue(fileBrowserAutoRevealAtom)
@@ -121,7 +129,6 @@ export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddT
 
   // ===== 最近修改的文件路径（60s 内显示左侧竖条） =====
   const recentlyModifiedMap = useAtomValue(recentlyModifiedPathsAtom)
-  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const recentlyModifiedSet = React.useMemo<Set<string>>(() => {
     if (!currentSessionId) return new Set()
     const inner = recentlyModifiedMap.get(currentSessionId)
@@ -303,6 +310,7 @@ export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddT
           key={entry.path}
           entry={entry}
           depth={0}
+          expandedStateKey={expandedStateKey}
           selectedPaths={selectedPaths}
           selectedCount={selectedCount}
           renamingPath={renamingPath}
@@ -401,6 +409,7 @@ export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddT
 interface FileTreeItemProps {
   entry: FileEntry
   depth: number
+  expandedStateKey: string
   selectedPaths: Set<string>
   selectedCount: number
   renamingPath: string | null
@@ -433,6 +442,7 @@ interface FileTreeItemProps {
 function FileTreeItem({
   entry,
   depth,
+  expandedStateKey,
   selectedPaths,
   selectedCount,
   renamingPath,
@@ -455,11 +465,26 @@ function FileTreeItem({
   onFilePreview,
   onOpenDetachedPreview,
 }: FileTreeItemProps): React.ReactElement {
-  const [expanded, setExpanded] = React.useState(false)
+  const [expanded, setExpanded, relocate] = useFileTreeExpanded(expandedStateKey, entry.path)
   const [children, setChildren] = React.useState<FileEntry[]>([])
   const [childrenLoaded, setChildrenLoaded] = React.useState(false)
   const [flash, setFlash] = React.useState(false)
   const rowRef = React.useRef<HTMLDivElement>(null)
+
+  // 恢复展开状态后重新懒加载子项，避免只恢复箭头却没有目录内容。
+  React.useEffect(() => {
+    if (!expanded || childrenLoaded || !entry.isDirectory) return
+    let cancelled = false
+    window.electronAPI.listDirectory(entry.path)
+      .then((items) => {
+        if (!cancelled) {
+          setChildren(items)
+          setChildrenLoaded(true)
+        }
+      })
+      .catch((err) => console.error('[FileTreeItem] 恢复展开目录失败:', err))
+    return () => { cancelled = true }
+  }, [expanded, childrenLoaded, entry.isDirectory, entry.path])
 
   // 当 refreshVersion 变化时，已展开的文件夹自动重新加载子项
   React.useEffect(() => {
@@ -612,8 +637,16 @@ function FileTreeItem({
     const error = await onRename(entry.path, trimmed)
     if (error) {
       setRenameError(error)
+      return
     }
+    const separator = entry.path.includes('\\') ? '\\' : '/'
+    const parentEnd = Math.max(entry.path.lastIndexOf('/'), entry.path.lastIndexOf('\\'))
+    const renamedPath = parentEnd >= 0
+      ? `${entry.path.slice(0, parentEnd)}${separator}${trimmed}`
+      : trimmed
+    relocate(renamedPath)
   }
+
 
   /** 重命名键盘事件 */
   const handleRenameKeyDown = (e: React.KeyboardEvent): void => {
@@ -820,6 +853,7 @@ function FileTreeItem({
               key={child.path}
               entry={child}
               depth={depth + 1}
+              expandedStateKey={expandedStateKey}
               selectedPaths={selectedPaths}
               selectedCount={selectedCount}
               renamingPath={renamingPath}

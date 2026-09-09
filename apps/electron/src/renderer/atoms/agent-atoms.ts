@@ -10,6 +10,7 @@ import { atomFamily, atomWithStorage } from 'jotai/utils'
 import type { AgentSessionMeta, AgentEvent, AgentWorkspace, AgentPendingFile, RetryAttempt, PromaPermissionMode, PermissionRequest, AskUserRequest, ExitPlanModeRequest, ThinkingConfig, AgentEffort, SDKMessage } from '@gravitas/shared'
 import { PROMA_DEFAULT_PERMISSION_MODE } from '@gravitas/shared'
 import { calculateDockBadgeCount, countPendingRequests } from '@/lib/dock-badge-count'
+import type { RightWorkspaceSplitState } from '@/lib/right-workspace-split'
 
 /** 活动状态 */
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'error' | 'backgrounded'
@@ -338,8 +339,14 @@ export const agentSidePanelWidthAtom = atomWithStorage<number>('proma-agent-side
 /** @deprecated 保留以兼容旧代码，但实际所有 session 都读全局 atom */
 export const agentSidePanelOpenMapAtom = atom<Map<string, boolean>>(new Map())
 
-/** 侧面板当前 Tab：'files' | 'changes'（per-session Map） */
-export const agentDiffPanelTabAtom = atom<Map<string, 'files' | 'changes'>>(new Map())
+/** 侧面板当前工作区 Tab（per-session Map） */
+export const agentDiffPanelTabAtom = atom<Map<string, 'files' | 'changes' | 'preview' | 'terminal'>>(new Map())
+
+/** 右侧工作区双窗格布局（按会话持久化） */
+export const agentRightWorkspaceSplitAtom = atomWithStorage<Record<string, RightWorkspaceSplitState | null>>(
+  'proma-agent-right-workspace-split',
+  {},
+)
 
 /** Diff 视图模式：'split' | 'unified' */
 export const agentDiffViewModeAtom = atom<'split' | 'unified'>('split')

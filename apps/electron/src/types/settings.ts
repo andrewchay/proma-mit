@@ -243,6 +243,11 @@ export interface AppSettings {
   stickyUserMessageEnabled?: boolean
   /** Markdown 预览字号档位（默认 'medium'，对应 15px） */
   markdownFontSize?: MarkdownFontSize
+  /** 文件树视图状态（按会话与文件来源隔离，用于重启恢复） */
+  fileTreeViewState?: Record<string, {
+    expandedPaths: string[]
+    scrollTop: number
+  }>
   /** 上次是否在 Scratch Pad 页（用于重启恢复） */
   scratchPadActive?: boolean
   /** 应用图标变体 ID（dock + window icon），'default' 或 logo 变体 id */

@@ -1798,6 +1798,13 @@ export interface ExitPlanAllowedPrompt {
   prompt: string
 }
 
+/** 经主进程校验、可供用户在审批前只读预览的计划文档。 */
+export interface ExitPlanDocument {
+  filePath: string
+  displayName: string
+  contentHash: string
+}
+
 /** ExitPlanMode 请求（主进程 → 渲染进程） */
 export interface ExitPlanModeRequest {
   /** 请求唯一 ID */
@@ -1808,6 +1815,8 @@ export interface ExitPlanModeRequest {
   toolInput: Record<string, unknown>
   /** 解析后的 allowedPrompts 列表 */
   allowedPrompts: ExitPlanAllowedPrompt[]
+  /** 当前会话 plan 目录内、提交时已固定哈希的 Markdown 文档 */
+  planDocument?: ExitPlanDocument
 }
 
 /** ExitPlanMode 用户选择行为 */

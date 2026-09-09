@@ -736,6 +736,7 @@ export class AgentOrchestrator {
             (request: ExitPlanModeRequest) => {
               runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } } as AgentStreamPayload)
             },
+            { planDirectory: join(agentCwd, '.context', 'plan') },
           )
           if (result.behavior === 'allow' && 'targetMode' in result && result.targetMode) {
             this.sessionPermissionModes.set(sessionId, result.targetMode)
@@ -975,6 +976,7 @@ export class AgentOrchestrator {
               (request: ExitPlanModeRequest) => {
                 this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } } as AgentStreamPayload)
               },
+              { planDirectory: join(agentCwd, '.context', 'plan') },
             )
             return result as { behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }
           },
@@ -2334,6 +2336,7 @@ export class AgentOrchestrator {
           (request: ExitPlanModeRequest) => {
             this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'exit_plan_mode_request', request } })
           },
+          { planDirectory: join(agentCwd, '.context', 'plan') },
         )
       }
 

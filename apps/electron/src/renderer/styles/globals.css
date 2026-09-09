@@ -1367,3 +1367,97 @@
 .ProseMirror .markdown-code-edit-layer ::selection {
   background: hsl(var(--primary) / 0.22);
 }
+
+/* LiveMarkdown：单画布编辑，保持工作台式的克制密度与清晰焦点。 */
+.live-markdown-editor,
+.live-markdown-editor .ink-mde,
+.live-markdown-editor .ink-mde-editor,
+.live-markdown-editor .cm-editor,
+.live-markdown-editor .cm-scroller {
+  height: 100%;
+  min-height: 0;
+}
+
+.live-markdown-editor .cm-scroller {
+  overflow: auto;
+  padding: 46px clamp(20px, 5vw, 72px) 56px;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+}
+
+.live-markdown-editor .cm-content {
+  max-width: 860px;
+  margin: 0 auto;
+  font-size: var(--md-preview-font-size, 15px);
+  line-height: 1.78;
+  caret-color: hsl(var(--primary));
+}
+
+.live-markdown-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.live-markdown-editor .live-markdown-syntax-hidden,
+.live-markdown-editor .live-markdown-syntax-hidden * {
+  font-size: 0;
+}
+
+.live-markdown-editor .live-markdown-find-match {
+  background: hsl(44 96% 61% / 0.42);
+  border-radius: 3px;
+}
+
+.live-markdown-editor .live-markdown-find-match-active {
+  background: hsl(var(--primary) / 0.32);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.55);
+}
+
+.live-markdown-tool {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: hsl(var(--muted-foreground));
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.live-markdown-tool:hover,
+.live-markdown-tool.is-active {
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+}
+
+.live-markdown-editor .live-markdown-code-block,
+.live-markdown-editor .live-markdown-math-block,
+.live-markdown-table-editor-root {
+  margin: 12px 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: hsl(var(--muted) / 0.55);
+  box-shadow: 0 8px 24px hsl(var(--foreground) / 0.06);
+}
+
+.live-markdown-editor .live-markdown-math-block {
+  overflow-x: auto;
+  padding: 18px;
+  text-align: center;
+}
+
+.live-markdown-table-editor {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.live-markdown-table-editor th,
+.live-markdown-table-editor td {
+  border-bottom: 1px solid hsl(var(--border) / 0.55);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.live-markdown-table-cell-trigger {
+  width: 100%;
+  min-height: 24px;
+  text-align: inherit;
+}

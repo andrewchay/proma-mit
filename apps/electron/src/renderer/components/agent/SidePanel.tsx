@@ -19,11 +19,18 @@ import {
 import { cn } from '@/lib/utils'
 import { FileBrowser, FileDropZone, FileTypeIcon, computeTreeRowLayout, AncestorGuides, STICKY_ROW_BASE_CLASS, canBeSticky } from '@/components/file-browser'
 import { FileSearchBar } from '@/components/file-browser/FileSearchBar'
+import { PersistentFileScrollArea } from '@/components/file-browser/PersistentFileScrollArea'
+import { fileTreeStateKey } from '@/components/file-browser/file-tree-state'
 import { DiffPanelTabBar } from '@/components/diff/DiffPanelTabBar'
 import { DiffChangesList } from '@/components/diff/DiffChangesList'
+import { PreviewPanel } from '@/components/diff/PreviewPanel'
+import { TerminalTabContent } from '@/components/terminal/TerminalTabContent'
+import type { DiffPanelTab } from '@/components/diff/DiffPanelTabBar'
 import { toast } from 'sonner'
 import {
   agentSidePanelOpenAtom,
+  agentSidePanelWidthAtom,
+  agentRightWorkspaceSplitAtom,
   workspaceFilesVersionAtom,
   currentAgentWorkspaceIdAtom,
   agentWorkspacesAtom,
@@ -37,6 +44,7 @@ import {
 import { previewPanelOpenMapAtom, previewFileMapAtom } from '@/atoms/preview-atoms'
 import { detectIsWindows } from '@/lib/platform'
 import type { FileEntry, AgentPendingFile } from '@gravitas/shared'
+import { clampRightWorkspaceSplitRatio, createRightWorkspaceSplit, openRightWorkspacePreview } from '@/lib/right-workspace-split'
 
 function getPathBasename(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath
@@ -53,15 +61,32 @@ function getMediaTypeFromFilename(filename: string): string {
 interface SidePanelProps {
   sessionId: string
   sessionPath: string | null
-  activeTab: 'files' | 'changes'
-  onTabChange: (tab: 'files' | 'changes') => void
+  activeTab: DiffPanelTab
+  onTabChange: (tab: DiffPanelTab) => void
   width?: number
 }
 
 export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, width = 280 }: SidePanelProps): React.ReactElement {
   // per-session 侧面板状态（默认打开）
   const [isOpen, setIsOpen] = useAtom(agentSidePanelOpenAtom)
+  const setPanelWidth = useSetAtom(agentSidePanelWidthAtom)
+  const [splitMap, setSplitMap] = useAtom(agentRightWorkspaceSplitAtom)
+  const splitState = splitMap[sessionId] ?? null
   const isWindows = React.useMemo(() => detectIsWindows(), [])
+
+  const updateSplitState = React.useCallback((next: typeof splitState) => {
+    setSplitMap((prev) => ({ ...prev, [sessionId]: next }))
+  }, [sessionId, setSplitMap])
+
+  const handleTabChange = React.useCallback((tab: DiffPanelTab) => {
+    if (splitState) {
+      const isPrimaryTab = tab === 'files' || tab === 'changes'
+      updateSplitState(isPrimaryTab
+        ? { ...splitState, leftTab: tab, focusedPane: 'left' }
+        : { ...splitState, rightTab: tab, focusedPane: 'right' })
+    }
+    onTabChange(tab)
+  }, [onTabChange, splitState, updateSplitState])
 
   // Tab 系统
   const previewFileMap = useAtomValue(previewFileMapAtom)
@@ -74,6 +99,15 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   // 用 ref 存 basePaths 相关值，避免声明顺序问题
   const basePathsRef = React.useRef<string[]>([])
 
+  const revealPreviewWorkspace = React.useCallback(() => {
+    const primaryTab = splitState?.leftTab === 'changes' || activeTab === 'changes'
+      ? 'changes'
+      : 'files'
+    updateSplitState(openRightWorkspacePreview(splitState, primaryTab))
+    setPanelWidth((current) => Math.max(current, 720))
+    onTabChange('preview')
+  }, [activeTab, onTabChange, setPanelWidth, splitState, updateSplitState])
+
   const handleFilePreview = React.useCallback((filePath: string) => {
     const bp = basePathsRef.current
     setPreviewFileMap((prev) => {
@@ -82,7 +116,8 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       return m
     })
     setPreviewOpenMap((prev) => { const m = new Map(prev); m.set(sessionId, true); return m })
-  }, [sessionId, setPreviewFileMap, setPreviewOpenMap])
+    revealPreviewWorkspace()
+  }, [revealPreviewWorkspace, sessionId, setPreviewFileMap, setPreviewOpenMap])
 
   const handleDiffFileClick = React.useCallback((filePath: string, _isUntracked: boolean, gitRoot?: string) => {
     setPreviewFileMap((prev) => {
@@ -91,7 +126,8 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       return m
     })
     setPreviewOpenMap((prev) => { const m = new Map(prev); m.set(sessionId, true); return m })
-  }, [sessionId, sessionPath, setPreviewFileMap, setPreviewOpenMap])
+    revealPreviewWorkspace()
+  }, [revealPreviewWorkspace, sessionId, sessionPath, setPreviewFileMap, setPreviewOpenMap])
 
   /** 双击文件：在独立预览窗口打开（同一文件可同时开多个文档） */
   const handleOpenDetachedPreview = React.useCallback((filePath: string) => {
@@ -411,6 +447,53 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   basePathsRef.current = [sessionPath, workspaceFilesPath, ...fileAccessPathsMemo].filter(Boolean) as string[]
   const hasSessionAttachedItems = attachedDirs.length > 0 || attachedFiles.length > 0
   const hasWorkspaceAttachedItems = wsAttachedDirs.length > 0 || wsAttachedFiles.length > 0
+  const sessionFileStateKey = fileTreeStateKey(sessionId, 'session', sessionPath ?? '')
+  const workspaceFileStateKey = fileTreeStateKey(sessionId, 'workspace', workspaceFilesPath ?? '')
+  const terminalId = `session:${sessionId}`
+  const auxiliaryTab = splitState?.rightTab ?? activeTab
+  const primaryTab = splitState?.leftTab === 'changes' ? 'changes' : 'files'
+  const [terminalOpened, setTerminalOpened] = React.useState(auxiliaryTab === 'terminal')
+  React.useEffect(() => {
+    if (auxiliaryTab === 'terminal') setTerminalOpened(true)
+  }, [auxiliaryTab])
+
+  const handleToggleSplit = React.useCallback(() => {
+    if (splitState) {
+      updateSplitState(null)
+      return
+    }
+    const baseTab = activeTab === 'changes' ? 'changes' : 'files'
+    const nextTab = activeTab === 'preview' || activeTab === 'terminal'
+      ? activeTab
+      : selectedFilePath ? 'preview' : 'terminal'
+    updateSplitState(createRightWorkspaceSplit(baseTab, nextTab, 'right'))
+    setPanelWidth((current) => Math.max(current, 720))
+  }, [activeTab, selectedFilePath, setPanelWidth, splitState, updateSplitState])
+
+  const handleSplitMouseDown = React.useCallback((event: React.MouseEvent) => {
+    if (!splitState) return
+    event.preventDefault()
+    const container = event.currentTarget.parentElement
+    if (!container) return
+    const bounds = container.getBoundingClientRect()
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const ratio = clampRightWorkspaceSplitRatio((moveEvent.clientX - bounds.left) / bounds.width)
+      setSplitMap((prev) => {
+        const current = prev[sessionId]
+        return current ? { ...prev, [sessionId]: { ...current, ratio } } : prev
+      })
+    }
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [sessionId, setSplitMap, splitState])
 
   return (
     <div
@@ -430,9 +513,23 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
           isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none',
         )}
         >
-          <DiffPanelTabBar activeTab={activeTab} onTabChange={onTabChange} onClose={() => setIsOpen(false)} />
+          <DiffPanelTabBar
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            onClose={() => setIsOpen(false)}
+            onToggleSplit={handleToggleSplit}
+            splitActive={Boolean(splitState)}
+          />
 
-          {activeTab === 'changes' ? (
+          <div className="flex-1 min-h-0 flex overflow-hidden">
+          <div
+            className={cn(
+              'min-h-0',
+              splitState ? 'flex flex-col overflow-hidden' : auxiliaryTab === 'terminal' || auxiliaryTab === 'preview' ? 'hidden' : 'contents',
+            )}
+            style={splitState ? { width: `${splitState.ratio * 100}%` } : undefined}
+          >
+          {primaryTab === 'changes' ? (
             sessionPath ? (
             <DiffChangesList
               dirPath={sessionPath}
@@ -511,7 +608,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                         </Tooltip>
                       </div>
                       {/* 会话文件内容区（独立滚动） */}
-                      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+                      <PersistentFileScrollArea stateKey={sessionFileStateKey} className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
                         {/* 附加文件列表 */}
                         {attachedFiles.length > 0 && (
                           <AttachedFilesSection
@@ -541,7 +638,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           {hasSessionAttachedItems && (
                             <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3 pt-2">工作文件（存储于该工作区目录）</div>
                           )}
-                          <FileBrowser rootPath={sessionPath} hideToolbar embedded hideEmpty={hasSessionAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
+                          <FileBrowser rootPath={sessionPath} stateKey={sessionFileStateKey} hideToolbar embedded hideEmpty={hasSessionAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
                         </>
                         {/* 会话文件拖拽上传区域 */}
                         <FileDropZone
@@ -553,7 +650,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           onAttachFolder={handleAttachFolder}
                           onFoldersDropped={handleSessionFoldersDropped}
                         />
-                      </div>
+                      </PersistentFileScrollArea>
                       {/* ===== 分隔线 ===== */}
                       <div className="mx-3 my-3 border-t border-muted-foreground/20" />
                     </>
@@ -594,7 +691,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                       )}
                     </div>
                     {/* 工作区文件内容区（独立滚动） */}
-                    <div className="flex-1 min-h-0 overflow-y-auto pb-1 scrollbar-thin">
+                    <PersistentFileScrollArea stateKey={workspaceFileStateKey} className="flex-1 min-h-0 overflow-y-auto pb-1 scrollbar-thin">
                       {/* 工作区级附加文件 */}
                       {wsAttachedFiles.length > 0 && (
                         <AttachedFilesSection
@@ -624,7 +721,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           {hasWorkspaceAttachedItems && (
                             <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3 pt-2">工作文件（存储于该工作区目录）</div>
                           )}
-                          <FileBrowser rootPath={workspaceFilesPath} hideToolbar embedded hideEmpty={hasWorkspaceAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
+                          <FileBrowser rootPath={workspaceFilesPath} stateKey={workspaceFileStateKey} hideToolbar embedded hideEmpty={hasWorkspaceAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
                         </>
                       )}
                       {/* 工作区文件拖拽上传区域 */}
@@ -636,10 +733,31 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                         onAttachFolder={handleAttachWorkspaceFolder}
                         onFoldersDropped={handleWorkspaceFoldersDropped}
                       />
-                    </div>
+                    </PersistentFileScrollArea>
                   </div>
                 </div>
               )}
+          </div>
+          {splitState && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整双窗格宽度"
+              onMouseDown={handleSplitMouseDown}
+              className="w-1.5 -mx-0.5 z-10 flex-shrink-0 cursor-col-resize bg-border/40 hover:bg-primary/50 active:bg-primary/70 transition-colors"
+            />
+          )}
+          {auxiliaryTab === 'preview' && (
+            <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
+              <PreviewPanel sessionId={sessionId} onClose={() => { updateSplitState(null); onTabChange('files') }} />
+            </div>
+          )}
+          {terminalOpened && (
+            <div className={auxiliaryTab === 'terminal' ? 'flex-1 min-w-0 min-h-0' : 'hidden'}>
+              <TerminalTabContent terminalId={terminalId} sessionId={sessionId} visible={auxiliaryTab === 'terminal'} />
+            </div>
+          )}
+          </div>
         </div>
     </div>
   )

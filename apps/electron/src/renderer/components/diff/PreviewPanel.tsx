@@ -21,9 +21,10 @@ import { DiffTabContent } from './DiffTabContent'
 
 interface PreviewPanelProps {
   sessionId: string
+  onClose?: () => void
 }
 
-export function PreviewPanel({ sessionId }: PreviewPanelProps): React.ReactElement {
+export function PreviewPanel({ sessionId, onClose }: PreviewPanelProps): React.ReactElement {
   const fileMap = useAtomValue(previewFileMapAtom)
   const setOpenMap = useSetAtom(previewPanelOpenMapAtom)
 
@@ -34,7 +35,8 @@ export function PreviewPanel({ sessionId }: PreviewPanelProps): React.ReactEleme
 
   const handleClosePanel = React.useCallback(() => {
     setOpenMap((prev) => { const m = new Map(prev); m.set(sessionId, false); return m })
-  }, [sessionId, setOpenMap])
+    onClose?.()
+  }, [onClose, sessionId, setOpenMap])
 
   const handleOpenDetachedPreview = React.useCallback(() => {
     if (!currentFile) return

@@ -20,6 +20,7 @@ import type {
   PlanToGoalConversion,
 } from '@gravitas/shared'
 import { createGoal, bindSessionToGoal, upsertGoalTodo } from './goal-service'
+import { isPlanDocumentCurrent, resolvePlanDocument } from './agent-plan-document'
 
 /** ExitPlanMode 审批结果（扩展 SDK PermissionResult，附加 targetMode） */
 export type ExitPlanPermissionResult = {
@@ -37,6 +38,7 @@ interface PendingExitPlan {
   resolve: (result: ExitPlanPermissionResult) => void
   request: ExitPlanModeRequest
   toolInput: Record<string, unknown>
+  planDirectory?: string
 }
 
 /** ExitPlanMode 审批结果回调（通知编排层切换权限模式） */
@@ -155,21 +157,35 @@ export class AgentExitPlanService {
     input: Record<string, unknown>,
     signal: AbortSignal,
     sendToRenderer: (request: ExitPlanModeRequest) => void,
+    options?: { planDirectory?: string },
   ): Promise<ExitPlanPermissionResult> {
     console.log(`[ExitPlanService] handleExitPlanMode 开始: sessionId=${sessionId}, signal.aborted=${signal.aborted}`)
     const allowedPrompts = this.parseAllowedPrompts(input)
+    const planDocument = resolvePlanDocument(input.planFile, options?.planDirectory)
+    if (!planDocument) {
+      return Promise.resolve({
+        behavior: 'deny' as const,
+        message: '提交计划审批前必须提供当前会话 .context/plan/ 目录内、大小不超过 1 MB 的 Markdown 计划文件',
+      })
+    }
 
     const request: ExitPlanModeRequest = {
       requestId: randomUUID(),
       sessionId,
       toolInput: input,
       allowedPrompts,
+      planDocument,
     }
 
     sendToRenderer(request)
 
     return new Promise<ExitPlanPermissionResult>((resolve) => {
-      this.pendingRequests.set(request.requestId, { resolve, request, toolInput: input })
+      this.pendingRequests.set(request.requestId, {
+        resolve,
+        request,
+        toolInput: input,
+        planDirectory: options?.planDirectory,
+      })
 
       signal.addEventListener('abort', () => {
         if (this.pendingRequests.has(request.requestId)) {
@@ -192,6 +208,14 @@ export class AgentExitPlanService {
 
     const sessionId = pending.request.sessionId
     this.pendingRequests.delete(response.requestId)
+    if (
+      response.action.startsWith('approve_')
+      && pending.request.planDocument
+      && !isPlanDocumentCurrent(pending.request.planDocument, pending.planDirectory)
+    ) {
+      pending.resolve({ behavior: 'deny', message: '计划文档在审批期间已变更，请重新提交计划审批' })
+      return { sessionId, targetMode: null }
+    }
 
     switch (response.action) {
       case 'approve_auto': {

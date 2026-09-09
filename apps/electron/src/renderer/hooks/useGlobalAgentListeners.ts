@@ -62,6 +62,7 @@ import type { NotificationSoundType } from '@/types/settings'
 import { toast } from 'sonner'
 import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveModelContextCapability } from '@gravitas/shared'
 import type { AgentStreamEvent, AgentStreamCompletePayload, AgentEvent, AgentStreamPayload, SDKAssistantMessage, SDKUserMessage, SDKSystemMessage, SDKContentBlock, SDKUserContentBlock } from '@gravitas/shared'
+import { createAgentStreamEventBatcher } from '@/lib/agent-stream-event-batcher'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
@@ -483,8 +484,7 @@ export function useGlobalAgentListeners(): void {
     }).catch(console.error)
 
     // ===== 1. 流式事件 =====
-    const cleanupEvent = window.electronAPI.onAgentStreamEvent(
-      (streamEvent: AgentStreamEvent) => {
+    const handleStreamEvent = (streamEvent: AgentStreamEvent): void => {
         unstable_batchedUpdates(() => {
         const { sessionId, payload } = streamEvent
 
@@ -808,11 +808,16 @@ export function useGlobalAgentListeners(): void {
         }
         }) // unstable_batchedUpdates
       }
-    )
+    const streamEventBatcher = createAgentStreamEventBatcher({ dispatch: handleStreamEvent })
+    const cleanupEvent = window.electronAPI.onAgentStreamEvent((streamEvent) => {
+      streamEventBatcher.push(streamEvent)
+    })
 
     // ===== 2. 流式完成 =====
     const cleanupComplete = window.electronAPI.onAgentStreamComplete(
       (data: AgentStreamCompletePayload) => {
+        // 完成事件先清理等待中的 partial，防止旧快照在终态后倒灌。
+        streamEventBatcher.clear(data.sessionId)
         unstable_batchedUpdates(() => {
         // 任务完成的系统通知与提示音已由主进程 NotificationCoordinator 统一处理，
         // 这里仅保留完成态的 UI 状态更新（running: false / 工具活动收尾），避免双发。
@@ -1125,6 +1130,7 @@ export function useGlobalAgentListeners(): void {
 
     return () => {
       cleanupEvent()
+      streamEventBatcher.dispose()
       cleanupComplete()
       cleanupError()
       cleanupTitleUpdated()

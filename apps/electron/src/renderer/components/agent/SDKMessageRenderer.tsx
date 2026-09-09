@@ -222,7 +222,7 @@ function extractToolResultForTask(message: SDKUserMessage, resultBlock: SDKToolR
 
 // ===== 辅助：判断 user 消息是否为真正的人类用户输入（非工具结果/子代理提示） =====
 
-function isUserInputMessage(message: SDKUserMessage): boolean {
+export function isUserInputMessage(message: SDKUserMessage): boolean {
   if (message.parent_tool_use_id) return false
   // SDK 合成消息（如 Skill 展开 prompt）不是用户输入
   if (message.isSynthetic) return false

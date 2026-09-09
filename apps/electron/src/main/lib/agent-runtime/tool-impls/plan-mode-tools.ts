@@ -50,8 +50,12 @@ export function createExitPlanModeToolDefinition(): RuntimeToolDefinition {
           type: 'string',
           description: '建议批准的后续提示词（可选，用逗号分隔）',
         },
+        planFile: {
+          type: 'string',
+          description: '位于当前会话 .context/plan/ 目录内的 Markdown 计划文件绝对路径',
+        },
       },
-      required: ['summary'],
+      required: ['summary', 'planFile'],
     },
     execute: async (_input: unknown, _ctx: ToolContext): Promise<ToolResult> => ({
       toolCallId: '',

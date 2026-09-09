@@ -26,7 +26,7 @@ import { detectIsWindows } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
 const MIN_RIGHT_PANEL_WIDTH = 220
-const MAX_RIGHT_PANEL_WIDTH = 420
+const MAX_RIGHT_PANEL_WIDTH = 960
 
 const MIN_LEFT_SIDEBAR_WIDTH = 200
 const MAX_LEFT_SIDEBAR_WIDTH = 440

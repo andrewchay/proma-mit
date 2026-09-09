@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { allPendingExitPlanRequestsAtom, agentStreamingStatesAtom, finalizeStreamingActivities } from '@/atoms/agent-atoms'
+import { previewFileMapAtom, previewPanelOpenMapAtom } from '@/atoms/preview-atoms'
 import type { ExitPlanModeAction, ExitPlanAllowedPrompt, PlanToGoalConversion } from '@gravitas/shared'
 
 /** 选项定义 */
@@ -89,6 +90,8 @@ interface ExitPlanModeBannerProps {
 export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): React.ReactElement | null {
   const [allRequests, setAllRequests] = useAtom(allPendingExitPlanRequestsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
+  const setPreviewFileMap = useSetAtom(previewFileMapAtom)
+  const setPreviewOpenMap = useSetAtom(previewPanelOpenMapAtom)
   const requests = allRequests.get(sessionId) ?? []
   const [focusedIdx, setFocusedIdx] = React.useState(0)
   const [showFeedback, setShowFeedback] = React.useState(false)
@@ -137,6 +140,20 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
   }
 
   handleActionRef.current = handleAction
+
+  const handleOpenPlanDocument = React.useCallback((): void => {
+    if (!request?.planDocument) return
+    setPreviewFileMap((prev) => {
+      const next = new Map(prev)
+      next.set(sessionId, { filePath: request.planDocument!.filePath, previewOnly: true, readOnly: true })
+      return next
+    })
+    setPreviewOpenMap((prev) => {
+      const next = new Map(prev)
+      next.set(sessionId, true)
+      return next
+    })
+  }, [request?.planDocument, sessionId, setPreviewFileMap, setPreviewOpenMap])
 
   /** 关闭计划审批 & 终止 Agent */
   const handleDismiss = (): void => {
@@ -226,6 +243,17 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
         <div className="flex items-center gap-2 mb-1">
           <FileText className="size-4 text-primary" />
           <span className="text-sm font-medium text-foreground flex-1">Agent 计划待审批</span>
+          {request.planDocument && (
+            <button
+              type="button"
+              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              onClick={handleOpenPlanDocument}
+              title={`只读查看 ${request.planDocument.displayName}`}
+            >
+              <FileText className="size-3.5" />
+              查看计划
+            </button>
+          )}
           <button
             type="button"
             className="size-5 flex items-center justify-center rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
