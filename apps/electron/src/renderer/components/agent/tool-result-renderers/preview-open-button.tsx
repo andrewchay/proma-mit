@@ -9,7 +9,7 @@
 import type * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { previewFileMapAtom, previewPanelOpenMapAtom } from '@/atoms/preview-atoms'
-import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { currentAgentSessionIdAtom, revealRightWorkspacePreviewAtom } from '@/atoms/agent-atoms'
 import { cn } from '@/lib/utils'
 
 interface PreviewOpenButtonProps {
@@ -23,6 +23,7 @@ export function PreviewOpenButton({ filePath, expanded = false, className }: Pre
   const sessionId = useAtomValue(currentAgentSessionIdAtom)
   const setPreviewFile = useSetAtom(previewFileMapAtom)
   const setPreviewOpen = useSetAtom(previewPanelOpenMapAtom)
+  const revealRightWorkspacePreview = useSetAtom(revealRightWorkspacePreviewAtom)
 
   if (!sessionId || !filePath) return null
 
@@ -37,6 +38,7 @@ export function PreviewOpenButton({ filePath, expanded = false, className }: Pre
       next.set(sessionId, true)
       return next
     })
+    revealRightWorkspacePreview(sessionId)
   }
 
   return (

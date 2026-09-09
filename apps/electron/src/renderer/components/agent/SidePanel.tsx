@@ -31,6 +31,7 @@ import {
   agentSidePanelOpenAtom,
   agentSidePanelWidthAtom,
   agentRightWorkspaceSplitAtom,
+  revealRightWorkspacePreviewAtom,
   workspaceFilesVersionAtom,
   currentAgentWorkspaceIdAtom,
   agentWorkspacesAtom,
@@ -44,7 +45,7 @@ import {
 import { previewPanelOpenMapAtom, previewFileMapAtom } from '@/atoms/preview-atoms'
 import { detectIsWindows } from '@/lib/platform'
 import type { FileEntry, AgentPendingFile } from '@gravitas/shared'
-import { clampRightWorkspaceSplitRatio, createRightWorkspaceSplit, openRightWorkspacePreview } from '@/lib/right-workspace-split'
+import { clampRightWorkspaceSplitRatio, createRightWorkspaceSplit } from '@/lib/right-workspace-split'
 
 function getPathBasename(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath
@@ -70,6 +71,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   // per-session 侧面板状态（默认打开）
   const [isOpen, setIsOpen] = useAtom(agentSidePanelOpenAtom)
   const setPanelWidth = useSetAtom(agentSidePanelWidthAtom)
+  const revealRightWorkspacePreview = useSetAtom(revealRightWorkspacePreviewAtom)
   const [splitMap, setSplitMap] = useAtom(agentRightWorkspaceSplitAtom)
   const splitState = splitMap[sessionId] ?? null
   const isWindows = React.useMemo(() => detectIsWindows(), [])
@@ -100,13 +102,8 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const basePathsRef = React.useRef<string[]>([])
 
   const revealPreviewWorkspace = React.useCallback(() => {
-    const primaryTab = splitState?.leftTab === 'changes' || activeTab === 'changes'
-      ? 'changes'
-      : 'files'
-    updateSplitState(openRightWorkspacePreview(splitState, primaryTab))
-    setPanelWidth((current) => Math.max(current, 720))
-    onTabChange('preview')
-  }, [activeTab, onTabChange, setPanelWidth, splitState, updateSplitState])
+    revealRightWorkspacePreview(sessionId)
+  }, [revealRightWorkspacePreview, sessionId])
 
   const handleFilePreview = React.useCallback((filePath: string) => {
     const bp = basePathsRef.current

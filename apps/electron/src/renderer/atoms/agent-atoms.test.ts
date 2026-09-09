@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import { applyAgentEvent, mergeLiveMessage, type AgentStreamState } from './agent-atoms'
+import { createStore } from 'jotai'
+import {
+  agentDiffPanelTabAtom,
+  agentRightWorkspaceSplitAtom,
+  agentSidePanelOpenAtom,
+  agentSidePanelWidthAtom,
+  applyAgentEvent,
+  mergeLiveMessage,
+  revealRightWorkspacePreviewAtom,
+  type AgentStreamState,
+} from './agent-atoms'
 import type { SDKAssistantMessage, SDKMessage } from '@gravitas/shared'
 
 function assistantMessage(uuid: string, text: string, extra: Record<string, unknown> = {}): SDKMessage {
@@ -100,4 +110,24 @@ describe('applyAgentEvent 上下文压缩生命周期', () => {
       expect(completed.compactInFlight).toBe(false)
     },
   )
+})
+
+describe('聊天文件预览工作台', () => {
+  test('右侧面板折叠时打开聊天文件会展开面板并展示预览', () => {
+    const store = createStore()
+    store.set(agentSidePanelOpenAtom, false)
+    store.set(agentSidePanelWidthAtom, 280)
+    store.set(agentDiffPanelTabAtom, new Map([['session-1', 'files']]))
+
+    store.set(revealRightWorkspacePreviewAtom, 'session-1')
+
+    expect(store.get(agentSidePanelOpenAtom)).toBe(true)
+    expect(store.get(agentSidePanelWidthAtom)).toBe(720)
+    expect(store.get(agentDiffPanelTabAtom).get('session-1')).toBe('preview')
+    expect(store.get(agentRightWorkspaceSplitAtom)['session-1']).toMatchObject({
+      leftTab: 'files',
+      rightTab: 'preview',
+      focusedPane: 'right',
+    })
+  })
 })

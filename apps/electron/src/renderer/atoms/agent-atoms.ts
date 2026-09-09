@@ -10,7 +10,7 @@ import { atomFamily, atomWithStorage } from 'jotai/utils'
 import type { AgentSessionMeta, AgentEvent, AgentWorkspace, AgentPendingFile, RetryAttempt, PromaPermissionMode, PermissionRequest, AskUserRequest, ExitPlanModeRequest, ThinkingConfig, AgentEffort, SDKMessage } from '@gravitas/shared'
 import { PROMA_DEFAULT_PERMISSION_MODE } from '@gravitas/shared'
 import { calculateDockBadgeCount, countPendingRequests } from '@/lib/dock-badge-count'
-import type { RightWorkspaceSplitState } from '@/lib/right-workspace-split'
+import { openRightWorkspacePreview, type RightWorkspaceSplitState } from '@/lib/right-workspace-split'
 
 /** 活动状态 */
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'error' | 'backgrounded'
@@ -346,6 +346,36 @@ export const agentDiffPanelTabAtom = atom<Map<string, 'files' | 'changes' | 'pre
 export const agentRightWorkspaceSplitAtom = atomWithStorage<Record<string, RightWorkspaceSplitState | null>>(
   'proma-agent-right-workspace-split',
   {},
+)
+
+/**
+ * 在右侧工作台显示预览。
+ *
+ * 聊天文件路径、工具结果和文件树都可能触发预览；该动作统一负责展开折叠面板、
+ * 保留左侧目录上下文并激活右侧预览，避免入口之间出现状态不一致。
+ */
+export const revealRightWorkspacePreviewAtom = atom(
+  null,
+  (get, set, sessionId: string) => {
+    const splitMap = get(agentRightWorkspaceSplitAtom)
+    const split = splitMap[sessionId] ?? null
+    const activeTab = get(agentDiffPanelTabAtom).get(sessionId)
+    const primaryTab = split?.leftTab === 'changes' || activeTab === 'changes'
+      ? 'changes'
+      : 'files'
+
+    set(agentRightWorkspaceSplitAtom, {
+      ...splitMap,
+      [sessionId]: openRightWorkspacePreview(split, primaryTab),
+    })
+    set(agentSidePanelOpenAtom, true)
+    set(agentSidePanelWidthAtom, Math.max(get(agentSidePanelWidthAtom), 720))
+    set(agentDiffPanelTabAtom, (previous) => {
+      const next = new Map(previous)
+      next.set(sessionId, 'preview')
+      return next
+    })
+  },
 )
 
 /** Diff 视图模式：'split' | 'unified' */

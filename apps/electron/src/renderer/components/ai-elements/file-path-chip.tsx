@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { previewFileMapAtom, previewPanelOpenMapAtom } from '@/atoms/preview-atoms'
-import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { currentAgentSessionIdAtom, revealRightWorkspacePreviewAtom } from '@/atoms/agent-atoms'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -186,6 +186,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
       m.set(sessionId, true)
       return m
     })
+    store.set(revealRightWorkspacePreviewAtom, sessionId)
   }, [store, cleanPath, candidateBases])
 
   /**
