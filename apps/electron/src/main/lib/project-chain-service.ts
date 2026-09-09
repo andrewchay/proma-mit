@@ -1,4 +1,10 @@
-import type { ProjectChain, ProjectChainCommand } from '@gravitas/shared'
+import type {
+  ProjectChain,
+  ProjectChainCommand,
+  ProjectDecision,
+  ProjectDecisionSourceRef,
+  ProjectDeliverableExecution,
+} from '@gravitas/shared'
 import {
   getAgentExecution,
   getProject,
@@ -8,6 +14,35 @@ import {
 } from './project-sqlite-store'
 import { applyChainCommand, emptyProjectChain } from './project-chain'
 import { getWorkflowIdentityDirectory } from './workflow-identity-service'
+
+function normalizeSourceRefs(value: unknown): ProjectDecisionSourceRef[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (typeof item === 'string') {
+      return [{ sourceType: 'legacy' as const, sourceId: item, locator: item }]
+    }
+    if (!item || typeof item !== 'object') return []
+    const ref = item as Partial<ProjectDecisionSourceRef>
+    if (!ref.sourceType || !ref.sourceId || !ref.locator) return []
+    return [{
+      sourceType: ref.sourceType,
+      sourceId: ref.sourceId,
+      locator: ref.locator,
+      ...(ref.checksum ? { checksum: ref.checksum } : {}),
+    }]
+  })
+}
+
+function normalizeDecision(decision: ProjectDecision): ProjectDecision {
+  return {
+    ...decision,
+    status: decision.status ?? 'decided',
+    impactTaskIds: decision.impactTaskIds ?? [],
+    alternatives: decision.alternatives ?? [],
+    assumptions: decision.assumptions ?? [],
+    sourceRefs: normalizeSourceRefs(decision.sourceRefs),
+  }
+}
 
 export function getProjectChain(projectId: string): ProjectChain {
   if (typeof projectId !== 'string' || !getProject(projectId)) throw new Error('项目不存在')
@@ -23,16 +58,20 @@ export function getProjectChain(projectId: string): ProjectChain {
     ...parsed,
     projectDefinitionOfDone: parsed.projectDefinitionOfDone ?? [],
     taskDefinitionOfDone: parsed.taskDefinitionOfDone ?? {},
+    taskDodAutoAcceptance: parsed.taskDodAutoAcceptance ?? {},
     dependencyHandoffs: parsed.dependencyHandoffs ?? [],
-    decisions: (parsed.decisions ?? []).map((decision) => ({
-      ...decision,
-      status: decision.status ?? 'decided',
-      impactTaskIds: decision.impactTaskIds ?? [],
-      alternatives: decision.alternatives ?? [],
-    })),
+    serviceLevelDays: parsed.serviceLevelDays ?? 7,
+    decisions: (parsed.decisions ?? []).map(normalizeDecision),
+    decisionHistory: (parsed.decisionHistory ?? []).map(normalizeDecision),
     drafts: (parsed.drafts ?? []).map((draft) => ({
       ...draft,
       definitionOfDone: draft.definitionOfDone ?? [],
+      dodCheckResults: draft.dodCheckResults ?? [],
+    })),
+    draftHistory: (parsed.draftHistory ?? []).map((draft) => ({
+      ...draft,
+      definitionOfDone: draft.definitionOfDone ?? [],
+      dodCheckResults: draft.dodCheckResults ?? [],
     })),
   } as ProjectChain
 }
@@ -45,6 +84,7 @@ export function updateProjectChain(
 ): ProjectChain {
   let result: ProjectChain | undefined
   getProjectDb().transaction(() => {
+    let linkedExecution: ProjectDeliverableExecution | undefined
     const current = getProjectChain(projectId)
     if (!Number.isSafeInteger(expectedRevision) || current.revision !== expectedRevision)
       throw new Error('链路已更新，请刷新后重试')
@@ -82,7 +122,10 @@ export function updateProjectChain(
       if (decision.impactTaskIds.some((id) => getTask(id)?.projectId !== projectId))
         throw new Error('决策影响任务已删除或不属于当前项目')
     }
-    if (command.kind === 'set_task_dod' && getTask(command.taskId)?.projectId !== projectId)
+    if (
+      (command.kind === 'set_task_dod' || command.kind === 'set_task_dod_auto_acceptance') &&
+      getTask(command.taskId)?.projectId !== projectId
+    )
       throw new Error('DoD 任务不属于当前项目')
     if (command.kind === 'define_dependency_handoff') {
       const dependency = listTaskDependencies(projectId).find((item) => item.id === command.dependencyId)
@@ -131,6 +174,12 @@ export function updateProjectChain(
           !execution.completedAt
         )
           throw new Error('执行记录必须是该任务已完成的权威 Agent Run')
+        linkedExecution = {
+          id: execution.id,
+          agentId: execution.agentId,
+          sessionId: execution.sessionId,
+          completedAt: execution.completedAt,
+        }
       } else if (task.assignee.userId.startsWith('agent-')) {
         throw new Error('Agent 负责的任务交付必须关联一次已完成执行记录')
       }
@@ -153,6 +202,15 @@ export function updateProjectChain(
     }
     // 主进程确定操作身份，禁止客户端冒充验收人或接收人。
     result = applyChainCommand(current, command, 'local-user')
+    if (command.kind === 'draft' && linkedExecution) {
+      const draft = result.drafts.find((item) => item.executionId === linkedExecution?.id)
+      if (!draft) throw new Error('交付物未关联到已验证执行记录')
+      draft.execution = structuredClone(linkedExecution)
+      const history = result.draftHistory.find(
+        (item) => item.id === draft.id && item.version === draft.version,
+      )
+      if (history) history.execution = structuredClone(linkedExecution)
+    }
     getProjectDb()
       .prepare('INSERT INTO project_chain_revisions (project_id, revision, payload) VALUES (?, ?, ?)')
       .run(projectId, result.revision, JSON.stringify(result))

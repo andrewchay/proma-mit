@@ -712,6 +712,7 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
       projectDefinitionOfDone: parsed.projectDefinitionOfDone ?? [],
       taskDefinitionOfDone: parsed.taskDefinitionOfDone ?? {},
       dependencyHandoffs: parsed.dependencyHandoffs ?? [],
+      serviceLevelDays: parsed.serviceLevelDays ?? 7,
     } as ProjectChain, id)
   }
   let completedAt = existing.completed_at
@@ -1056,11 +1057,33 @@ export function deleteTaskDependency(id: string): boolean {
 }
 
 export function listTaskBlockers(projectId: string): TaskBlocker[] {
+  const chainRow = getProjectDb()
+    .prepare('SELECT payload FROM project_chain_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1')
+    .get(projectId) as { payload: string } | undefined
+  const handoffs = chainRow
+    ? ((JSON.parse(chainRow.payload) as Partial<ProjectChain>).dependencyHandoffs ?? [])
+    : []
   const tasks = listTasks(projectId, { includeSubTasks: true, includeDrafts: true })
   const dependencies = listTaskDependencies(projectId)
   const taskById = new Map(tasks.map((task) => [task.id, task]))
   return dependencies.flatMap((dependency) => {
     const prerequisite = taskById.get(dependency.dependsOnTaskId)
+    const handoff = handoffs.find((item) => item.dependencyId === dependency.id)
+    if (handoff?.status === 'accepted') return []
+    if (handoff) {
+      const reason = handoff.status === 'offered'
+        ? `等待下游接收「${handoff.need}」`
+        : handoff.status === 'returned'
+          ? `依赖交接被退回：「${handoff.receiptComment ?? handoff.need}」`
+          : `依赖交接尚未发起：「${handoff.need}」`
+      return [{
+        taskId: dependency.taskId,
+        dependsOnTaskId: dependency.dependsOnTaskId,
+        dependsOnTitle: prerequisite?.title ?? handoff.upstreamTaskId,
+        type: dependency.type,
+        reason,
+      }]
+    }
     if (!prerequisite || prerequisite.status === 'completed') return []
     return [{
       taskId: dependency.taskId,

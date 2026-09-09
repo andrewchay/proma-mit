@@ -1,8 +1,19 @@
 import { useEffect, useMemo } from 'react'
 import { atom, useAtom } from 'jotai'
-import type { ProjectChain, ProjectChainCommand, ProjectDeliverable } from '@gravitas/shared'
+import type {
+  ProjectChain,
+  ProjectChainCommand,
+  ProjectChainEvent,
+  ProjectDecisionSourceRef,
+  ProjectDecisionSourceType,
+  ProjectDodAutomationRule,
+  ProjectDodVerifier,
+  ProjectDeliverable,
+} from '@gravitas/shared'
 import { TaskExecutionEvidence } from './TaskExecutionEvidence'
 import { ProjectCollaborationTasks } from './ProjectCollaborationTasks'
+import { ProjectChainOverview } from './ProjectChainOverview'
+import { ProjectFlowHealth } from './ProjectFlowHealth'
 import type {
   CollaborationTask,
   CollaborationDependency,
@@ -34,17 +45,20 @@ const statusLabels: Record<ProjectDeliverable['status'], string> = {
   needs_review: '决策变更 · 待复核',
   changes_requested: '需修改',
 }
-const actionLabels: Record<ProjectChainCommand['kind'], string> = {
+const actionLabels: Record<ProjectChainEvent['action'], string> = {
   decision: '确认决策',
   approve_decision: 'DACI 拍板确认',
   set_project_dod: '更新项目 DoD',
   set_task_dod: '更新任务 DoD',
+  set_task_dod_auto_acceptance: '更新 DoD 自动验收',
+  set_flow_policy: '更新服务水平预期',
   define_dependency_handoff: '定义依赖交接',
   offer_dependency_handoff: '发起依赖交接',
   accept_dependency_handoff: '接收依赖交接',
   return_dependency_handoff: '退回依赖交接',
   draft: '保存交付物版本',
   submit: '提交验收',
+  auto_accept: '确定性自动验收',
   accept: '验收通过',
   reject: '退回修改',
   request_handoff: '发起交接',
@@ -59,6 +73,31 @@ const lines = (value: string): string[] =>
     .split('\n')
     .map((item) => item.trim())
     .filter(Boolean)
+const parseSourceRefs = (value: string): ProjectDecisionSourceRef[] =>
+  lines(value).map((item) => {
+    const [sourceType = '', sourceId = '', locator = '', checksum = ''] = item.split('|')
+    return {
+      sourceType: sourceType.trim() as ProjectDecisionSourceType,
+      sourceId: sourceId.trim(),
+      locator: locator.trim(),
+      ...(checksum.trim() ? { checksum: checksum.trim() } : {}),
+    }
+  })
+const formatSourceRef = (ref: ProjectDecisionSourceRef): string =>
+  [ref.sourceType, ref.sourceId, ref.locator, ref.checksum].filter(Boolean).join(' | ')
+const parseDodAutomationRules = (value: string): ProjectDodAutomationRule[] =>
+  lines(value).map((item) => {
+    const [criterion = '', verifier = ''] = item.split('|')
+    return {
+      criterion: criterion.trim(),
+      verifier: verifier.trim() as ProjectDodVerifier,
+    }
+  })
+const dateTimeLocal = (value?: number): string => {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(value - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
 
 export function ProjectChainPanel({
   projectId,
@@ -111,6 +150,7 @@ export function ProjectChainPanel({
           ? { draftId: undefined, draftFormVersion: (current.draftFormVersion ?? 0) + 1 }
           : {}),
       }))
+      if (command.kind.includes('dependency_handoff')) void refreshTasks()
     } catch (error) {
       setState((current) => ({ ...current, busy: false, error: String(error) }))
     }
@@ -139,6 +179,16 @@ export function ProjectChainPanel({
         <p>正在加载链路…</p>
       ) : (
         <>
+          <ProjectFlowHealth
+            tasks={tasks}
+            blockers={blockers}
+            serviceLevelDays={chain.serviceLevelDays}
+            busy={busy}
+            onServiceLevelChange={(serviceLevelDays) =>
+              void execute({ kind: 'set_flow_policy', serviceLevelDays })
+            }
+          />
+          <ProjectChainOverview chain={chain} tasks={tasks} />
           <div className="grid grid-cols-3 gap-3">
             {(['needs_review', 'submitted', 'accepted'] as const).map((status) => (
               <a key={status} href="#project-chain-drafts" className="rounded-xl bg-primary/10 p-4 shadow-sm">
@@ -207,6 +257,60 @@ export function ProjectChainPanel({
                 保存任务 DoD
               </button>
             </form>
+            <form
+              className="mt-3 grid gap-2 md:grid-cols-3"
+              onSubmit={(event) => {
+                event.preventDefault()
+                const data = new FormData(event.currentTarget)
+                void execute({
+                  kind: 'set_task_dod_auto_acceptance',
+                  taskId: text(data, 'autoTaskId'),
+                  enabled: data.get('autoEnabled') === 'on',
+                  riskLevel: 'low',
+                  rules: parseDodAutomationRules(text(data, 'autoRules')),
+                })
+              }}
+            >
+              <select aria-label="自动验收任务" name="autoTaskId" required className={fieldClass}>
+                <option value="">选择低风险任务</option>
+                {tasks.map((task) => (
+                  <option key={task.id} value={task.id}>
+                    {task.title}
+                  </option>
+                ))}
+              </select>
+              <textarea
+                aria-label="自动验收规则"
+                name="autoRules"
+                placeholder={'每行：DoD 条目 | 验证器\n验证器：artifact_reference_present 或 completed_execution'}
+                className={fieldClass}
+              />
+              <div className="space-y-2">
+                <label className="block text-sm">
+                  <input type="checkbox" name="autoEnabled" /> 仅对低风险任务启用自动验收
+                </label>
+                <button disabled={busy} className={buttonClass}>
+                  保存自动验收策略
+                </button>
+              </div>
+            </form>
+            {Object.values(chain.taskDodAutoAcceptance).some((policy) => policy.enabled) && (
+              <div className="mt-3 space-y-2 text-sm">
+                {Object.values(chain.taskDodAutoAcceptance)
+                  .filter((policy) => policy.enabled)
+                  .map((policy) => (
+                    <div key={policy.taskId} className="rounded-lg bg-muted/50 p-3">
+                      <p>
+                        低风险自动验收：
+                        {tasks.find((task) => task.id === policy.taskId)?.title ?? policy.taskId}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {policy.rules.map((rule) => `${rule.criterion} → ${rule.verifier}`).join('；')}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            )}
           </section>
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="xl:col-span-2">
@@ -222,7 +326,7 @@ export function ProjectChainPanel({
                 onSubmit={(event) => {
                   event.preventDefault()
                   const data = new FormData(event.currentTarget)
-                  const keyDecision = data.get('keyDecision') === 'on'
+                  const keyDecision = Boolean(decision?.daci) || data.get('keyDecision') === 'on'
                   const deadlineAt = new Date(text(data, 'deadlineAt')).getTime()
                   void execute({
                     kind: 'decision',
@@ -249,6 +353,8 @@ export function ProjectChainPanel({
                               tradeoffs: tradeoffs.trim(),
                             }
                           }),
+                          assumptions: lines(text(data, 'assumptions')),
+                          sourceRefs: parseSourceRefs(text(data, 'sourceRefs')),
                         }
                       : {}),
                   })
@@ -275,19 +381,19 @@ export function ProjectChainPanel({
                     <input type="checkbox" name="keyDecision" /> 关键决策：启用 DACI 拍板
                   </label>
                 )}
-                {!decision && (
+                {(!decision || decision.daci) && (
                   <div className="grid gap-2 md:grid-cols-2">
                     <input
                       aria-label="DACI 推进人"
                       name="driverId"
-                      defaultValue="local-user"
+                      defaultValue={decision?.daci?.driverId ?? 'local-user'}
                       placeholder="推进人 ID"
                       className={fieldClass}
                     />
                     <input
                       aria-label="DACI 拍板人"
                       name="approverId"
-                      defaultValue="local-user"
+                      defaultValue={decision?.daci?.approverId ?? 'local-user'}
                       placeholder="拍板人 ID"
                       className={fieldClass}
                     />
@@ -295,38 +401,64 @@ export function ProjectChainPanel({
                       aria-label="最迟决定时间"
                       type="datetime-local"
                       name="deadlineAt"
+                      defaultValue={dateTimeLocal(decision?.deadlineAt)}
                       className={fieldClass}
                     />
                     <textarea
                       aria-label="候选方案"
                       name="alternatives"
+                      defaultValue={decision?.alternatives
+                        .map((item) => `${item.title} | ${item.tradeoffs}`)
+                        .join('\n')}
                       placeholder="候选方案，每行：方案 | 取舍"
                       className={fieldClass}
                     />
                     <textarea
                       aria-label="DACI 贡献者"
                       name="contributorIds"
+                      defaultValue={decision?.daci?.contributorIds.join('\n')}
                       placeholder="贡献者 ID，每行一个"
                       className={fieldClass}
                     />
                     <textarea
                       aria-label="DACI 知会者"
                       name="informedIds"
+                      defaultValue={decision?.daci?.informedIds.join('\n')}
                       placeholder="知会者 ID，每行一个"
                       className={fieldClass}
                     />
                   </div>
                 )}
-                {!decision && (
+                {(!decision || decision.daci) && (
                   <fieldset className="text-sm">
                     <legend>影响任务</legend>
                     {tasks.map((task) => (
                       <label key={task.id} className="mr-3">
-                        <input type="checkbox" name="impactTaskIds" value={task.id} /> {task.title}
+                        <input
+                          type="checkbox"
+                          name="impactTaskIds"
+                          value={task.id}
+                          defaultChecked={decision?.impactTaskIds.includes(task.id)}
+                        />{' '}
+                        {task.title}
                       </label>
                     ))}
                   </fieldset>
                 )}
+                <textarea
+                  aria-label="关键假设"
+                  name="assumptions"
+                  defaultValue={decision?.assumptions.join('\n')}
+                  placeholder="关键假设，每行一项；只记录当时明确提出的内容"
+                  className={fieldClass}
+                />
+                <textarea
+                  aria-label="原文定位"
+                  name="sourceRefs"
+                  defaultValue={decision?.sourceRefs.map(formatSourceRef).join('\n')}
+                  placeholder="每行：meeting | meeting-2026-09-09 | paragraph:42 | 可选 checksum"
+                  className={fieldClass}
+                />
                 <textarea
                   aria-label="证据来源"
                   name="evidence"
@@ -389,6 +521,24 @@ export function ProjectChainPanel({
                         {item.alternatives
                           .map((option) => `${option.title}（${option.tradeoffs}）`)
                           .join('；')}
+                      </p>
+                    )}
+                    {item.assumptions.length > 0 && <p>关键假设：{item.assumptions.join('；')}</p>}
+                    {item.sourceRefs.length > 0 && (
+                      <div>
+                        <p>结构化原文定位：</p>
+                        <ul className="list-disc pl-5">
+                          {item.sourceRefs.map((ref) => (
+                            <li key={`${ref.sourceType}:${ref.sourceId}:${ref.locator}`}>
+                              {formatSourceRef(ref)}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {item.supersedes && (
+                      <p>
+                        替代：{item.supersedes.id} v{item.supersedes.version}
                       </p>
                     )}
                     {item.status === 'candidate' && item.daci?.approverId === 'local-user' && (
@@ -660,50 +810,78 @@ export function ProjectChainPanel({
                   </p>
                   <p>接收标准：{handoff.criteria.join('、')}</p>
                   {(handoff.status === 'planned' || handoff.status === 'returned') && (
-                    <button
-                      disabled={busy || handoff.providerId !== 'local-user'}
-                      className={`${buttonClass} mt-2`}
-                      onClick={() =>
+                    <form
+                      className="mt-2 flex gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault()
                         void execute({
                           kind: 'offer_dependency_handoff',
                           dependencyId: handoff.dependencyId,
-                          comment: '上游已交付，请下游核对',
+                          comment: text(new FormData(event.currentTarget), 'offerComment'),
                         })
-                      }
+                      }}
                     >
-                      发起交接
-                    </button>
+                      <input
+                        aria-label={`${handoff.need}的上游交付说明`}
+                        name="offerComment"
+                        required
+                        placeholder="交付内容、成果引用及待办事项"
+                        className={`${fieldClass} flex-1`}
+                      />
+                      <button disabled={busy || handoff.providerId !== 'local-user'} className={buttonClass}>
+                        发起交接
+                      </button>
+                    </form>
                   )}
                   {handoff.status === 'offered' && (
-                    <span className="inline-flex gap-2">
-                      <button
-                        disabled={busy || handoff.consumerId !== 'local-user'}
-                        className={`${buttonClass} mt-2`}
-                        onClick={() =>
+                    <form
+                      className="mt-2 space-y-2"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        const data = new FormData(event.currentTarget)
+                        const kind = (
+                          (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
+                        )?.value
+                        if (kind === 'accept_dependency_handoff' || kind === 'return_dependency_handoff')
                           void execute({
-                            kind: 'accept_dependency_handoff',
+                            kind,
                             dependencyId: handoff.dependencyId,
-                            comment: '已核对并接收',
+                            comment: text(data, 'receiptComment'),
+                            completedCriteria: data.getAll('dependencyCriteria').map(String),
                           })
-                        }
-                      >
-                        确认接收
-                      </button>
-                      <button
-                        disabled={busy || handoff.consumerId !== 'local-user'}
-                        className={`${buttonClass} mt-2`}
-                        onClick={() =>
-                          void execute({
-                            kind: 'return_dependency_handoff',
-                            dependencyId: handoff.dependencyId,
-                            comment: '退回，请补齐接收标准',
-                          })
-                        }
-                      >
-                        退回
-                      </button>
-                    </span>
+                      }}
+                    >
+                      {handoff.criteria.map((criterion) => (
+                        <label key={criterion} className="mr-3">
+                          <input type="checkbox" name="dependencyCriteria" value={criterion} /> {criterion}
+                        </label>
+                      ))}
+                      <div className="flex gap-2">
+                        <input
+                          aria-label={`${handoff.need}的下游接收意见`}
+                          name="receiptComment"
+                          required
+                          placeholder="核对结果或退回原因"
+                          className={`${fieldClass} flex-1`}
+                        />
+                        <button
+                          disabled={busy || handoff.consumerId !== 'local-user'}
+                          value="accept_dependency_handoff"
+                          className={buttonClass}
+                        >
+                          确认接收
+                        </button>
+                        <button
+                          disabled={busy || handoff.consumerId !== 'local-user'}
+                          value="return_dependency_handoff"
+                          className={buttonClass}
+                        >
+                          退回
+                        </button>
+                      </div>
+                    </form>
                   )}
+                  {handoff.acceptedCriteria && <p>已确认标准：{handoff.acceptedCriteria.join('、')}</p>}
                 </article>
               ))}
             </div>
@@ -763,6 +941,20 @@ export function ProjectChainPanel({
                     冻结 DoD：{item.definitionOfDone.join('、')}
                     {item.acceptedCriteria && ` · 已确认：${item.acceptedCriteria.join('、')}`}
                   </p>
+                )}
+                {item.dodCheckResults && item.dodCheckResults.length > 0 && (
+                  <div className="mt-2 rounded-lg bg-muted/50 p-3 text-sm">
+                    <p className="font-medium">DoD 逐项检查</p>
+                    <ul className="mt-1 list-disc pl-5">
+                      {item.dodCheckResults.map((result) => (
+                        <li key={`${result.criterion}:${result.mode}`}>
+                          {result.criterion}：{result.status === 'passed' ? '通过' : '未通过'} ·
+                          {result.mode === 'automatic' ? ` 自动（${result.verifier ?? '未配置'}）` : ' 人工'} ·
+                          {result.evidenceRef} · {result.checkedBy}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
                 <details className="mt-3 text-sm">
                   <summary>查看交付说明与版本历史</summary>

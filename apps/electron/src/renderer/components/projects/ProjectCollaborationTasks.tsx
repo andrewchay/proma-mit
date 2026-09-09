@@ -4,6 +4,9 @@ export interface CollaborationTask {
   id: string
   title: string
   status: string
+  createdAt: number
+  startDate?: number
+  completedAt?: number
   assignee?: { userId: string; displayName: string }
 }
 export interface CollaborationDependency {

@@ -2,6 +2,26 @@ import { expect, test } from 'bun:test'
 import { applyChainCommand, assertTaskCompletionAllowed, emptyProjectChain } from './project-chain'
 
 test('DACI 决策只能由指定拍板人确认，确认后才可用于交付', () => {
+  expect(() =>
+    applyChainCommand(
+      emptyProjectChain(),
+      {
+        kind: 'decision',
+        title: '缺少来源的关键决策',
+        rationale: '需要拍板',
+        evidence: '口头说明',
+        daci: {
+          driverId: 'driver',
+          approverId: 'approver',
+          contributorIds: [],
+          informedIds: [],
+        },
+        deadlineAt: Date.now() + 86_400_000,
+        sourceRefs: [],
+      },
+      'driver',
+    ),
+  ).toThrow('结构化原文定位')
   let chain = applyChainCommand(
     emptyProjectChain(),
     {
@@ -18,6 +38,15 @@ test('DACI 决策只能由指定拍板人确认，确认后才可用于交付', 
       deadlineAt: Date.now() + 86_400_000,
       impactTaskIds: ['task-1'],
       alternatives: [{ id: 'a', title: '供应商 A', tradeoffs: '成本较低' }],
+      assumptions: ['交付周期不超过 30 天'],
+      sourceRefs: [
+        {
+          sourceType: 'meeting',
+          sourceId: 'meeting-2026-09-09',
+          locator: 'paragraph:42',
+          checksum: 'sha256:abc123',
+        },
+      ],
     },
     'driver',
   )
@@ -33,6 +62,7 @@ test('DACI 决策只能由指定拍板人确认，确认后才可用于交付', 
   )
   expect(chain.decisions[0]!.status).toBe('decided')
   expect(chain.decisions[0]!.approvedBy).toBe('approver')
+  expect(chain.decisionHistory[0]!.status).toBe('decided')
   chain = applyChainCommand(
     chain,
     {
@@ -46,6 +76,17 @@ test('DACI 决策只能由指定拍板人确认，确认后才可用于交付', 
     'driver',
   )
   expect(chain.decisions[0]!.status).toBe('candidate')
+  expect(chain.decisions[0]!.supersedes).toEqual({ id: decisionId, version: 1 })
+  expect(chain.decisionHistory.find((item) => item.version === 1)?.status).toBe('superseded')
+  expect(chain.decisions[0]!.assumptions).toEqual(['交付周期不超过 30 天'])
+  expect(chain.decisions[0]!.sourceRefs).toEqual([
+    {
+      sourceType: 'meeting',
+      sourceId: 'meeting-2026-09-09',
+      locator: 'paragraph:42',
+      checksum: 'sha256:abc123',
+    },
+  ])
 })
 
 test('启用 DoD 后，任务交付必须逐项验收才能作为完成依据', () => {
@@ -103,6 +144,82 @@ test('启用 DoD 后，任务交付必须逐项验收才能作为完成依据', 
   expect(() => assertTaskCompletionAllowed(chain, 'other-task')).toThrow('DoD')
 })
 
+test('自动验收未通过确定性验证时保持待验收且不能完成任务', () => {
+  let chain = applyChainCommand(
+    emptyProjectChain(),
+    { kind: 'set_task_dod', taskId: 'task-1', criteria: ['存在成果引用'] },
+    'local-user',
+  )
+  expect(() =>
+    applyChainCommand(
+      chain,
+      {
+        kind: 'set_task_dod_auto_acceptance',
+        taskId: 'task-1',
+        enabled: true,
+        riskLevel: 'low',
+        rules: [],
+      },
+      'local-user',
+    ),
+  ).toThrow('每项 DoD')
+  chain = applyChainCommand(
+    chain,
+    {
+      kind: 'set_task_dod_auto_acceptance',
+      taskId: 'task-1',
+      enabled: true,
+      riskLevel: 'low',
+      rules: [{ criterion: '存在成果引用', verifier: 'artifact_reference_present' }],
+    },
+    'local-user',
+  )
+  chain = applyChainCommand(
+    chain,
+    { kind: 'decision', title: '范围', rationale: '范围 A', evidence: '需求单' },
+    'local-user',
+  )
+  chain = applyChainCommand(
+    chain,
+    {
+      kind: 'draft',
+      taskId: 'task-1',
+      title: '未附成果的报告',
+      content: '报告说明',
+      criteria: '按 DoD',
+      recipient: 'local-user',
+      responsibilities: { ownerId: 'local-user', reviewerId: 'local-user', recipientId: 'local-user' },
+      decisionIds: [chain.decisions[0]!.id],
+    },
+    'local-user',
+  )
+  chain = applyChainCommand(
+    chain,
+    { kind: 'submit', draftId: chain.drafts[0]!.id },
+    'local-user',
+  )
+  expect(chain.drafts[0]!.status).toBe('submitted')
+  expect(chain.drafts[0]!.dodCheckResults?.[0]).toMatchObject({
+    criterion: '存在成果引用',
+    status: 'failed',
+    mode: 'automatic',
+    verifier: 'artifact_reference_present',
+  })
+  expect(() => assertTaskCompletionAllowed(chain, 'task-1')).toThrow('DoD')
+})
+
+test('项目管理员可以配置用于流动监控的服务水平预期', () => {
+  const chain = applyChainCommand(
+    emptyProjectChain(),
+    { kind: 'set_flow_policy', serviceLevelDays: 5 },
+    'local-user',
+  )
+  expect(chain.serviceLevelDays).toBe(5)
+  expect(() =>
+    applyChainCommand(chain, { kind: 'set_flow_policy', serviceLevelDays: 0 }, 'local-user'),
+  ).toThrow('服务水平')
+})
+
 test('依赖交接契约要约和接收分别由上下游责任人确认', () => {
   let chain = applyChainCommand(
     emptyProjectChain(),
@@ -134,16 +251,24 @@ test('依赖交接契约要约和接收分别由上下游责任人确认', () =>
   expect(() =>
     applyChainCommand(
       chain,
-      { kind: 'accept_dependency_handoff', dependencyId: 'dep-1', comment: '收到' },
+      { kind: 'accept_dependency_handoff', dependencyId: 'dep-1', comment: '收到', completedCriteria: ['包含发布说明'] },
       'provider',
     ),
   ).toThrow('下游')
+  expect(() =>
+    applyChainCommand(
+      chain,
+      { kind: 'accept_dependency_handoff', dependencyId: 'dep-1', comment: '收到' },
+      'consumer',
+    ),
+  ).toThrow('接收标准')
   chain = applyChainCommand(
     chain,
-    { kind: 'accept_dependency_handoff', dependencyId: 'dep-1', comment: '校验发布说明后接收' },
+    { kind: 'accept_dependency_handoff', dependencyId: 'dep-1', comment: '校验发布说明后接收', completedCriteria: ['包含发布说明'] },
     'consumer',
   )
   expect(chain.dependencyHandoffs[0]!.status).toBe('accepted')
+  expect(chain.dependencyHandoffs[0]!.acceptedCriteria).toEqual(['包含发布说明'])
 })
 
 test('责任未明确的历史交付物不能提交验收', () => {

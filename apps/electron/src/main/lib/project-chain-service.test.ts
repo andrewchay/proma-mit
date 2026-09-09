@@ -9,11 +9,13 @@ import {
   createTask,
   createTaskDependency,
   initProjectDb,
+  listTaskBlockers,
   updateAgentExecution,
   updateTask,
 } from './project-sqlite-store'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 import { saveWorkflowIdentityDirectory } from './workflow-identity-service'
+import type { ProjectChainCommand } from '@gravitas/shared'
 
 const directory = mkdtempSync(join(tmpdir(), 'gravitas-chain-'))
 const previousDirectory = process.env.PROMA_TEST_CONFIG_DIR
@@ -205,6 +207,9 @@ test('关键决策、DoD、依赖交接和执行记录在权威项目数据上�
     deadlineAt: Date.now() + 60_000,
     impactTaskIds: [upstream.id],
     alternatives: [{ id: 'a', title: '方案 A', tradeoffs: '速度优先' }],
+    sourceRefs: [
+      { sourceType: 'meeting', sourceId: 'release-meeting', locator: 'paragraph:3' },
+    ],
   })
   const decisionId = chain.decisions[0]!.id
   const draft = {
@@ -245,6 +250,12 @@ test('关键决策、DoD、依赖交接和执行记录在权威项目数据上�
   updateAgentExecution('run-1', { status: 'completed', completedAt: Date.now(), resultSummary: '构建完成' })
   chain = updateProjectChain(project.id, chain.revision, { ...draft, executionId: 'run-1' })
   expect(chain.drafts[0]!.executionId).toBe('run-1')
+  expect(chain.drafts[0]!.execution).toEqual({
+    id: 'run-1',
+    agentId: 'agent-a',
+    sessionId: 'session-1',
+    completedAt: expect.any(Number),
+  })
   expect(() => updateTask(upstream.id, { status: 'completed' })).toThrow('DoD')
   const draftId = chain.drafts[0]!.id
   chain = updateProjectChain(project.id, chain.revision, { kind: 'submit', draftId })
@@ -267,16 +278,109 @@ test('关键决策、DoD、依赖交接和执行记录在权威项目数据上�
     dueAt: Date.now() + 60_000,
     criteria: ['包含发布说明'],
   })
+  expect(listTaskBlockers(project.id)[0]?.reason).toContain('尚未发起')
   expect(() => updateTask(downstream.id, { status: 'completed' })).toThrow('依赖交接')
   chain = updateProjectChain(project.id, chain.revision, {
     kind: 'offer_dependency_handoff',
     dependencyId: dependency.id,
     comment: 'build:42',
   })
+  expect(listTaskBlockers(project.id)[0]?.reason).toContain('等待下游接收')
   chain = updateProjectChain(project.id, chain.revision, {
     kind: 'accept_dependency_handoff',
     dependencyId: dependency.id,
     comment: '已接收',
+    completedCriteria: ['包含发布说明'],
   })
   expect(chain.dependencyHandoffs[0]!.status).toBe('accepted')
+  expect(listTaskBlockers(project.id)).toEqual([])
+})
+
+test('低风险任务按预配置确定性验证器逐项自动验收并保留检查结果', () => {
+  saveWorkflowIdentityDirectory({
+    users: [{ id: 'local-user', displayName: '本地用户', enabled: true, roleIds: [] }],
+    roles: [],
+  })
+  const project = createProject({ title: '自动验收', description: '' })
+  const task = createTask(project.id, {
+    title: '生成构建包',
+    description: '',
+    assignee: { userId: 'local-user', displayName: '本地用户' },
+  })
+  let chain = updateProjectChain(project.id, 0, {
+    kind: 'decision',
+    title: '构建范围',
+    rationale: '固定输出',
+    evidence: '需求单',
+  })
+  chain = updateProjectChain(project.id, chain.revision, {
+    kind: 'set_project_dod',
+    criteria: ['存在成果引用'],
+  })
+  chain = updateProjectChain(project.id, chain.revision, {
+    kind: 'set_task_dod',
+    taskId: task.id,
+    criteria: ['关联已完成执行'],
+  })
+  chain = updateProjectChain(project.id, chain.revision, {
+    kind: 'set_task_dod_auto_acceptance',
+    taskId: task.id,
+    enabled: true,
+    riskLevel: 'low',
+    rules: [
+      { criterion: '存在成果引用', verifier: 'artifact_reference_present' },
+      { criterion: '关联已完成执行', verifier: 'completed_execution' },
+    ],
+  } as ProjectChainCommand)
+  createAgentExecution({
+    id: 'run-auto',
+    projectId: project.id,
+    entityType: 'task',
+    entityId: task.id,
+    agentId: 'agent-a',
+    sessionId: 'session-auto',
+    prompt: '生成构建包',
+  })
+  updateAgentExecution('run-auto', {
+    status: 'completed',
+    completedAt: Date.now(),
+    resultSummary: '完成',
+  })
+  chain = updateProjectChain(project.id, chain.revision, {
+    kind: 'draft',
+    taskId: task.id,
+    title: '构建包',
+    content: '构建说明',
+    artifactRef: 'git:commit-42',
+    executionId: 'run-auto',
+    criteria: '按 DoD',
+    recipient: '本地用户',
+    responsibilities: { ownerId: 'local-user', reviewerId: 'local-user', recipientId: 'local-user' },
+    decisionIds: [chain.decisions[0]!.id],
+  })
+  const draftId = chain.drafts[0]!.id
+  chain = updateProjectChain(project.id, chain.revision, { kind: 'submit', draftId })
+  expect(chain.drafts[0]!.status).toBe('accepted')
+  expect(chain.drafts[0]!.acceptedCriteria).toEqual(['存在成果引用', '关联已完成执行'])
+  expect(chain.drafts[0]!.dodCheckResults).toEqual([
+    {
+      criterion: '存在成果引用',
+      status: 'passed',
+      mode: 'automatic',
+      verifier: 'artifact_reference_present',
+      evidenceRef: 'git:commit-42',
+      checkedBy: 'system:dod-verifier',
+      checkedAt: expect.any(Number),
+    },
+    {
+      criterion: '关联已完成执行',
+      status: 'passed',
+      mode: 'automatic',
+      verifier: 'completed_execution',
+      evidenceRef: 'run-auto',
+      checkedBy: 'system:dod-verifier',
+      checkedAt: expect.any(Number),
+    },
+  ])
+  expect(chain.events.at(-1)?.action).toBe('auto_accept')
 })
