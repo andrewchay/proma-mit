@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolvePiApi, resolvePiBaseUrl, resolvePiMaxTokens, resolvePiProviderId, shouldUsePiAuthHeader, inferPiContextWindow } from './pi-model-registry'
+import { resolvePiApi, resolvePiBaseUrl, resolvePiMaxTokens, resolvePiProviderId, shouldUsePiAuthHeader, inferPiContextWindow, resolvePiInputModalities } from './pi-model-registry'
 
 describe('pi-model-registry', () => {
   test('maps Proma providers to Pi API families', () => {
@@ -9,6 +9,12 @@ describe('pi-model-registry', () => {
     expect(resolvePiApi('google')).toBe('google-generative-ai')
     expect(resolvePiApi('anthropic')).toBe('anthropic-messages')
     expect(resolvePiApi('kimi-coding')).toBe('anthropic-messages')
+  })
+
+  test('declares Kimi K3 aliases as image-capable without widening unknown Coding models', () => {
+    expect(resolvePiInputModalities('kimi-coding', 'k3')).toEqual(['text', 'image'])
+    expect(resolvePiInputModalities('kimi-coding', 'k3-256k')).toEqual(['text', 'image'])
+    expect(resolvePiInputModalities('kimi-coding', 'kimi-for-coding')).toEqual(['text'])
   })
 
   test('normalizes OpenAI-compatible base URLs for Pi runtime', () => {

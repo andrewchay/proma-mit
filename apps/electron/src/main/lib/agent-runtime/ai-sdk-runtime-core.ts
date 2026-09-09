@@ -26,10 +26,10 @@ import {
   createAgentAISDKModel,
   type AISDKStreamStepSnapshot,
 } from '@gravitas/core/providers/ai-sdk-bridge'
-import type { LanguageModel, LanguageModelUsage, ModelMessage, TextStreamPart, ToolSet } from 'ai'
+import type { LanguageModel, LanguageModelUsage, ModelMessage, TextStreamPart, ToolSet, UserContent } from 'ai'
 import { isStepCount, jsonSchema, streamText, tool } from 'ai'
 import { isContextOverflowError, isTransientNetworkError } from '../error-patterns'
-import { enrichHistoryWithDocuments, enrichMessageWithDocuments } from './attachment-enrichment'
+import { enrichHistoryWithDocuments, enrichMessageWithDocuments, getImageAttachmentData } from './attachment-enrichment'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
 import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from './tool-registry'
 import { COMPACT_CONTEXT_TOOL_NAME, compactSessionNow } from './context-compaction'
@@ -176,7 +176,7 @@ export class AISDKRuntimeCore {
       input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : [],
     )
     const enrichedPrompt = await enrichMessageWithDocuments(input.prompt, input.attachments)
-    const messages = buildAISDKModelMessages(history, enrichedPrompt)
+    const messages = buildAISDKModelMessages(history, enrichedPrompt, getImageAttachmentData(input.attachments))
     const toolSet = this.createAISDKTools(input.runtimeTools, {
       sessionId: input.sessionId,
       cwd: input.cwd,
@@ -520,12 +520,24 @@ export class AISDKRuntimeCore {
 export function buildAISDKModelMessages(
   history: Array<{ role: string; content: string }>,
   currentPrompt: string,
+  imageData: ReturnType<typeof getImageAttachmentData> = [],
 ): ModelMessage[] {
+  const currentContent: UserContent = imageData.length > 0
+    ? [
+        { type: 'text', text: currentPrompt },
+        ...imageData.map((image) => ({
+          type: 'file' as const,
+          data: { type: 'data' as const, data: Buffer.from(image.data, 'base64') },
+          mediaType: image.mediaType,
+        })),
+      ]
+    : currentPrompt
+
   return [
     ...history
       .filter((msg): msg is { role: 'user' | 'assistant'; content: string } => msg.role === 'user' || msg.role === 'assistant')
       .map((msg): ModelMessage => ({ role: msg.role, content: msg.content })),
-    { role: 'user', content: currentPrompt },
+    { role: 'user', content: currentContent },
   ]
 }
 

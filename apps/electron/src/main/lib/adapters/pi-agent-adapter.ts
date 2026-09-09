@@ -15,7 +15,7 @@ import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-
 import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'
 import { resolveCollaborationWorkspaceId } from '../agent-collaboration-tools'
 import { logWarn } from '../file-logger'
-import { enrichMessageWithDocuments } from '../agent-runtime/attachment-enrichment'
+import { enrichMessageWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
 import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
 import { loadPiCodingAgent } from './pi-sdk-loader'
@@ -502,6 +502,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
     try {
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
+      const promptImages = getImageAttachmentData(attachments).map((image) => ({
+        type: 'image' as const,
+        data: image.data,
+        mimeType: image.mediaType,
+      }))
       // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
       const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
 
@@ -514,7 +519,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
        * 活动则 abort 底层会话并抛出可重试的瞬时错误，交由 retryablePromptChain 重试，
        * 避免会话永远卡死。
        */
-      const promptWithIdleWatchdog = async (promptText: string): Promise<void> => {
+      const promptWithIdleWatchdog = async (
+        promptText: string,
+        images: typeof promptImages,
+      ): Promise<void> => {
         // 每次 prompt 开始时重置活动时钟，避免沿用上一轮的旧时间戳导致立即误判超时。
         lastActivityAt = Date.now()
         let timer: ReturnType<typeof setInterval> | undefined
@@ -533,14 +541,18 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           }, PI_PROMPT_IDLE_POLL_MS)
         }
         try {
+          const promptOptions = {
+            expandPromptTemplates: false,
+            ...(images.length > 0 ? { images } : {}),
+          }
           if (!timer) {
-            await session.prompt(promptText, { expandPromptTemplates: false })
+            await session.prompt(promptText, promptOptions)
             return
           }
           // Promise.race 会同时为两个输入挂接 rejection 处理，因此看门狗超时 abort 后
           // 遗留 prompt 的 AbortError 不会产生 unhandled rejection，无需额外 catch。
           await Promise.race([
-            session.prompt(promptText, { expandPromptTemplates: false }),
+            session.prompt(promptText, promptOptions),
             new Promise<void>((_resolve, reject) => { rejectExec = reject }),
           ])
         } finally {
@@ -551,13 +563,18 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
       // Prompt 链：支持 interrupt 软中断后重发追加消息，以及 CompactContext 压缩后自动续跑。
       // 非 interrupt 的 steer/followUp 追加由 Pi 原生 agent loop 在 agent_end 前 drain，无需在此处理。
+      let pendingInitialImages = promptImages
       const runPromptChain = async (): Promise<void> => {
         let nextPrompt: string | undefined = promptWithSkills
+        let nextImages = pendingInitialImages
+        pendingInitialImages = []
         while (nextPrompt !== undefined) {
           const current = nextPrompt
+          const currentImages = nextImages
           nextPrompt = undefined
+          nextImages = []
           try {
-            await promptWithIdleWatchdog(current)
+            await promptWithIdleWatchdog(current, currentImages)
           } catch (error) {
             // interrupt 软中断：abort 产生的错误被吞掉，继续处理 interrupt 队列
             const active = this.activeSessions.get(sessionId)

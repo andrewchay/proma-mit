@@ -2095,6 +2095,7 @@ export class AgentOrchestrator {
       },
       parent_tool_use_id: null,
       _createdAt: Date.now(),
+      _attachments: attachments,
     } as unknown as SDKMessage
     appendSDKMessages(sessionId, [userSDKMsg])
 
@@ -2524,6 +2525,7 @@ export class AgentOrchestrator {
       const queryOptions: ClaudeAgentQueryOptions = {
         sessionId,
         prompt: finalPrompt,
+        attachments,
         model: modelId || DEFAULT_MODEL_ID,
         // 当前代码块仍是 Claude SDK 专用 queryOptions。runtime 元数据已在上方保存；
         // 后续阶段会把 proma/pi 的 options 构造拆到各自分支后再按 effectiveAgentRuntime 路由。

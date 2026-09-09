@@ -8,7 +8,7 @@ import type { McpClientManager } from '../agent-runtime/mcp-client'
 interface CapturedStreamTextInput {
   model: unknown
   system: string
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: unknown }>
   tools: Record<string, {
     execute?: (input: Record<string, unknown>, options: { toolCallId: string; messages: unknown[]; abortSignal?: AbortSignal; context: Record<string, never> }) => Promise<unknown>
   }>
@@ -43,7 +43,7 @@ mock.module('../attachment-service', () => ({
     localPath: '/tmp/mock.txt',
     createdAt: Date.now(),
   }),
-  readAttachmentAsBase64: (localPath: string) => `base64:${localPath}`,
+  readAttachmentAsBase64: () => 'AQID',
   deleteAttachment: () => {},
   deleteConversationAttachments: () => {},
 }))
@@ -204,6 +204,42 @@ describe('AISDKAgentAdapter', () => {
     expect(capturedInputs).toHaveLength(1)
     expect(capturedInputs[0]?.messages.at(-1)).toEqual({ role: 'user', content: 'hello' })
     expect(messages.map((message) => message.type)).toEqual(['assistant', 'result'])
+  })
+
+  test('given a user uploads a JPEG when AI SDK sends the turn then the model receives the real image block', async () => {
+    const adapter = new AISDKAgentAdapter()
+
+    for await (const _message of adapter.query({
+      sessionId: 's-ai-jpeg',
+      prompt: '理解这幅图',
+      agentRuntime: 'ai-sdk',
+      provider: 'custom',
+      apiKey: 'key',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash-vision-exp',
+      cwd: '/tmp',
+      attachments: [{
+        id: 'jpeg-1',
+        filename: 'photo.jpg',
+        mediaType: 'image/jpeg',
+        size: 3,
+        localPath: '/tmp/photo.jpg',
+      }],
+    })) {
+      // 消费完整迭代器，捕获最终 streamText 请求。
+    }
+
+    expect(capturedInputs[0]?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: '理解这幅图' },
+        {
+          type: 'file',
+          data: { type: 'data', data: new Uint8Array([1, 2, 3]) },
+          mediaType: 'image/jpeg',
+        },
+      ],
+    })
   })
 
   test('配置 MCP 时通过 runtime MCP service 加载工具并在结束后释放', async () => {

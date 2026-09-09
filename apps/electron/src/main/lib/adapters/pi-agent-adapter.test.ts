@@ -1,12 +1,14 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
+import type { Context, Model } from '@earendil-works/pi-ai'
+import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions'
 
 
 mock.module('electron', () => buildElectronMock())
 
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),
-  readAttachmentAsBase64: (localPath: string) => `base64:${localPath}`,
+  readAttachmentAsBase64: () => 'AQID',
   deleteAttachment: () => {},
   deleteConversationAttachments: () => {},
   saveAttachment: async () => ({ path: '/tmp/mock', fileName: 'mock.png', mimeType: 'image/png', size: 1 }),
@@ -33,6 +35,15 @@ interface MockPiEvent {
 let promptEvents: MockPiEvent[] = []
 let promptEventBatches: MockPiEvent[][] = []
 let promptCallCount = 0
+let promptErrors: Error[] = []
+interface CapturedPiPrompt {
+  text: string
+  options?: {
+    expandPromptTemplates?: boolean
+    images?: Array<{ type: 'image'; data: string; mimeType: string }>
+  }
+}
+let capturedPrompts: CapturedPiPrompt[] = []
 
 function getCapturedSessionOptions(): { noTools?: 'builtin'; customTools?: Array<{ name: string }> } | undefined {
   return capturedSessionOptions
@@ -74,7 +85,13 @@ mock.module('./pi-sdk-loader', () => ({
             listeners.push(listener)
             return () => {}
           },
-          async prompt() {
+          async prompt(text: string, options?: CapturedPiPrompt['options']) {
+            capturedPrompts.push({ text, options })
+            const promptError = promptErrors.shift()
+            if (promptError) {
+              promptCallCount += 1
+              throw promptError
+            }
             await promptGate
             promptCallCount += 1
             const events = promptEventBatches.shift() ?? promptEvents
@@ -131,6 +148,7 @@ describe('PiAgentAdapter', () => {
     promptEvents = []
     promptEventBatches = []
     promptCallCount = 0
+    capturedPrompts = []
     const adapter = new PiAgentAdapter()
 
     for await (const _message of adapter.query({
@@ -162,6 +180,79 @@ describe('PiAgentAdapter', () => {
     expect(getCapturedSystemPrompt()).toContain('使用 WebSearch 或 WebFetch')
     expect(getCapturedSystemPrompt()).toContain('征求同意')
     expect(getCapturedSystemPrompt()).toContain('绝不能先调用 WebBridgeScreenshot')
+  })
+
+  test('given a user uploads a JPEG when Pi sends the turn then the model receives the real image block', async () => {
+    capturedPrompts = []
+    const adapter = new PiAgentAdapter()
+
+    for await (const _message of adapter.query({
+      sessionId: 's-pi-jpeg',
+      prompt: '理解这幅图',
+      agentRuntime: 'pi',
+      provider: 'custom',
+      apiKey: 'test-key',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-flash-vision-exp',
+      cwd: '/tmp',
+      attachments: [{
+        id: 'jpeg-1',
+        filename: 'photo.jpg',
+        mediaType: 'image/jpeg',
+        size: 3,
+        localPath: '/tmp/photo.jpg',
+      }],
+    })) {
+      // mock session 不返回消息。
+    }
+
+    expect(capturedPrompts).toEqual([{
+      text: '理解这幅图',
+      options: {
+        expandPromptTemplates: false,
+        images: [{ type: 'image', data: 'AQID', mimeType: 'image/jpeg' }],
+      },
+    }])
+
+    const sentPrompt = capturedPrompts[0]
+    if (!sentPrompt) throw new Error('Pi 未生成 prompt')
+    let finalPayload: Record<string, unknown> | undefined
+    const model: Model<'openai-completions'> = {
+      id: 'deepseek-v4-flash-vision-exp',
+      name: 'deepseek-v4-flash-vision-exp',
+      api: 'openai-completions',
+      provider: 'custom',
+      baseUrl: 'https://api.deepseek.com/v1',
+      reasoning: true,
+      input: ['text', 'image'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_000_000,
+      maxTokens: 64_000,
+    }
+    const context: Context = {
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: sentPrompt.text },
+          ...(sentPrompt.options?.images ?? []),
+        ],
+        timestamp: 1,
+      }],
+    }
+    const serialized = streamSimple(model, context, {
+      apiKey: 'test-key',
+      onPayload: (payload) => {
+        finalPayload = payload as Record<string, unknown>
+        throw new Error('payload captured')
+      },
+    })
+    await serialized.result()
+
+    const apiMessages = finalPayload?.messages as Array<Record<string, unknown>> | undefined
+    expect(apiMessages?.at(-1)?.content).toEqual([
+      { type: 'text', text: '理解这幅图' },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AQID' } },
+    ])
   })
 
   test('given Pi emits completed messages before agent_end then messages are forwarded without waiting for final replay', async () => {
@@ -322,6 +413,41 @@ describe('PiAgentAdapter', () => {
     ]))
     expect(events.map((event) => event.type)).toEqual(['retrying', 'retry_cleared'])
     promptEvents = []
+  })
+
+  test('given Pi retries a disconnected prompt when the user uploaded a JPEG then the recovered turn does not inject the image twice', async () => {
+    capturedPrompts = []
+    promptErrors = [new Error('fetch failed: socket hang up')]
+    promptEvents = []
+    const adapter = new PiAgentAdapter()
+
+    for await (const _message of adapter.query({
+      sessionId: 's-pi-image-retry',
+      prompt: '理解这幅图',
+      agentRuntime: 'pi',
+      provider: 'deepseek',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.test',
+      model: 'deepseek-v4-flash-vision-exp',
+      cwd: '/tmp',
+      attachments: [{
+        id: 'jpeg-retry',
+        filename: 'photo.jpg',
+        mediaType: 'image/jpeg',
+        size: 3,
+        localPath: '/tmp/photo.jpg',
+      }],
+      canUseTool: async () => ({ allowed: true }),
+    })) {
+      // 首次断流后由同一 Pi session 恢复。
+    }
+
+    expect(capturedPrompts).toHaveLength(2)
+    expect(capturedPrompts[0]?.options?.images).toEqual([
+      { type: 'image', data: 'AQID', mimeType: 'image/jpeg' },
+    ])
+    expect(capturedPrompts[1]?.options?.images).toBeUndefined()
+    promptErrors = []
   })
 
   test('given native compaction ends without a result then it does not emit a false compact boundary', async () => {
