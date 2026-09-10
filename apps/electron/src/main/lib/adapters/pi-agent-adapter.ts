@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { Type } from 'typebox'
-import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@gravitas/shared'
+import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, RuntimeSpanSink, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@gravitas/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-skill-loader'
@@ -54,6 +54,8 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   isDelegationSession?: boolean
   /** 会话级思考级别（Pi runtime 支持）；缺省 off，仅 reasoning 模型生效 */
   thinkingLevel?: AgentThinkingLevel
+  /** 运行 span 采集 sink（JSONL 版）；缺省不采集。 */
+  spanSink?: RuntimeSpanSink
 }
 
 interface ActivePiSession {
@@ -356,6 +358,35 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
     session.agent.toolExecution = 'sequential'
 
+    // ===== 运行 span 采集：task 级 =====
+    // traceId 复用 sessionId（对齐 server P-I 阶段做法）；taskId = task span 自身。
+    // 插入点位于历史消息恢复之前：历史恢复耗时也计入本次 run。
+    const spanSink = input.spanSink
+    const taskSpanId = spanSink ? randomUUID() : undefined
+    let queryHadError = false
+    if (spanSink && taskSpanId) {
+      Promise.resolve(spanSink.begin({
+        tenantId: 'local',
+        userId: 'local',
+        traceId: sessionId,
+        sessionId,
+        taskId: taskSpanId,
+        spanId: taskSpanId,
+        kind: 'task',
+        name: `task:pi:${model}`,
+        startedAt: Date.now(),
+        parentSpanId: undefined,
+        meta: {
+          model,
+          provider,
+          channelId: input.channelId,
+          workspaceSlug,
+          triggeredBy: triggeredBy ?? 'user',
+          isDelegationSession: isDelegationSession ?? false,
+        },
+      })).catch(() => {})
+    }
+
     if (effectiveHistoryMessages.length > 0) {
       session.state.messages = convertSDKMessagesToPiMessages(effectiveHistoryMessages)
     }
@@ -441,6 +472,33 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       if (event.type === 'tool_execution_update') {
         touchActivity()
         onAgentEvent?.({ type: 'task_progress', toolUseId: event.toolCallId })
+        return
+      }
+      if (event.type === 'tool_execution_start') {
+        touchActivity()
+        // tool span：begin 入内存；inputKeys 只存参数键名（脱敏，不存值）。
+        Promise.resolve(spanSink?.begin({
+          tenantId: 'local',
+          userId: 'local',
+          traceId: sessionId,
+          sessionId,
+          taskId: taskSpanId ?? sessionId,
+          parentSpanId: taskSpanId,
+          spanId: event.toolCallId,
+          kind: 'tool',
+          name: `tool:${event.toolName}`,
+          startedAt: Date.now(),
+          meta: { inputKeys: Object.keys((event.args as Record<string, unknown> | undefined) ?? {}) },
+        })).catch(() => {})
+        return
+      }
+      if (event.type === 'tool_execution_end') {
+        touchActivity()
+        Promise.resolve(spanSink?.end(event.toolCallId, {
+          status: event.isError ? 'error' : 'ok',
+          ...(event.isError ? { error: `工具 ${event.toolName} 执行失败` } : {}),
+          meta: { toolName: event.toolName },
+        })).catch(() => {})
         return
       }
     })
@@ -579,7 +637,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       void retryablePromptChain()
         .then(() => queue.close())
-        .catch((error: unknown) => queue.fail(error))
+        .catch((error: unknown) => {
+          queryHadError = true
+          queue.fail(error)
+        })
       while (true) {
         const next = await queue.next()
         if (next.done) break
@@ -589,6 +650,14 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       partialAssistantCoalescer.dispose()
       this.releaseSession(sessionId)
       mcpRelease?.()
+      // task span 收尾：query 抛错时标 error；结束时刻由 sink 补全。
+      if (spanSink && taskSpanId) {
+        Promise.resolve(spanSink.end(taskSpanId, {
+          status: queryHadError ? 'error' : 'ok',
+          ...(queryHadError ? { error: 'Pi 运行提前终止' } : {}),
+          meta: { model },
+        })).catch(() => {})
+      }
     }
   }
 

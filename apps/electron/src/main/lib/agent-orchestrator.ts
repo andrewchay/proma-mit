@@ -41,6 +41,7 @@ import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
 import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
 import type { PiAgentQueryOptions } from './adapters/pi-agent-adapter'
+import { getAgentSpanSink } from './agent-span-sink'
 import { isTransientNetworkError } from './error-patterns'
 import { isClaudeFamilyModel } from './model-family'
 import type { AgentEventBus } from './agent-event-bus'
@@ -1024,6 +1025,8 @@ export class AgentOrchestrator {
         onAgentEvent: (event) => {
           this.eventBus.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
         },
+        // 运行 span 采集：复用模块级 JSONL sink 单例
+        spanSink: getAgentSpanSink(),
         triggeredBy,
         isDelegationSession,
         systemPrompt: buildSystemPrompt({
