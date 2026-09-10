@@ -150,6 +150,30 @@ function getDefaultKolDbPath(): string {
 }
 
 function getDb(): Database {
+  try {
+    return openKolDb()
+  } catch (err) {
+    // 迁移中途失败（如瞬时锁库）时丢弃半初始化实例：
+    // 建表 / 迁移语句均为幂等，下次调用可安全重试，避免缓存缺表连接后无法自愈。
+    closePartialDbInstance()
+    throw err
+  }
+}
+
+/** 丢弃可能半初始化的 KOL 数据库连接（独立函数以避开 TS 对模块级变量的类型收窄） */
+function closePartialDbInstance(): void {
+  const instance = dbInstance
+  if (instance) {
+    try {
+      instance.close()
+    } catch {
+      // 忽略关闭异常
+    }
+    dbInstance = null
+  }
+}
+
+function openKolDb(): Database {
   if (dbInstance) return dbInstance
 
   const dbPath = getDbPath()
