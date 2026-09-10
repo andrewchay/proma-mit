@@ -729,6 +729,24 @@ export function getDefaultSkillsDir(): string {
 }
 
 /**
+ * 获取营销 Skills 资源目录路径
+ *
+ * 营销 Skills 由营销 plugin（com.gravitas.marketing）按订阅状态分发到
+ * 工作区 .marketing-plugin/，不进 default-skills（避免出现在集市/默认注入）。
+ *
+ * @returns ~/.proma-mit/marketing-skills/
+ */
+export function getMarketingSkillsDir(): string {
+  const dir = join(getConfigDir(), 'marketing-skills')
+
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+
+  return dir
+}
+
+/**
  * 从 SKILL.md 的 YAML frontmatter 中解析 version 字段
  *
  * 无 version 字段时返回 '0.0.0'（确保旧 Skill 会被更新）。
@@ -760,7 +778,7 @@ export function parseSkillVersion(skillDir: string): string {
  *
  * @returns 正数表示 a > b，0 表示相等，负数表示 a < b
  */
-function compareSemver(a: string, b: string): number {
+export function compareSemver(a: string, b: string): number {
   const pa = a.split('.').map(Number)
   const pb = b.split('.').map(Number)
   for (let i = 0; i < 3; i++) {
@@ -938,6 +956,60 @@ export function seedDefaultSkills(): void {
     }
   } catch (err) {
     console.warn('[配置] 同步默认 Skills 失败:', err)
+  }
+}
+
+/**
+ * 从 app bundle 同步营销 Skills 到 ~/.proma-mit/marketing-skills/
+ *
+ * 打包模式下从 process.resourcesPath/marketing-skills 复制；
+ * 开发模式下从源码 marketing-skills/ 目录复制。
+ * 同步策略与 seedDefaultSkills 一致：缺失复制、版本比对覆盖（rm-then-cp）。
+ */
+export function seedMarketingSkills(): void {
+  const { app } = require('electron')
+  const bundledDir = app.isPackaged
+    ? join(process.resourcesPath, 'marketing-skills')
+    : join(__dirname, '../marketing-skills')
+
+  if (!existsSync(bundledDir)) {
+    console.log('[配置] 未找到内置 marketing-skills 目录，跳过')
+    return
+  }
+
+  const userDir = getMarketingSkillsDir()
+
+  try {
+    const entries = readdirSync(bundledDir, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+
+      const source = join(bundledDir, entry.name)
+      const target = join(userDir, entry.name)
+
+      try {
+        if (!existsSync(target)) {
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已同步营销 Skill: ${entry.name}`)
+          continue
+        }
+
+        const bundledVer = parseSkillVersion(source)
+        const existingVer = parseSkillVersion(target)
+
+        if (compareSemver(bundledVer, existingVer) > 0) {
+          rmSync(target, { recursive: true, force: true })
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已升级营销 Skill: ${entry.name} (${existingVer} → ${bundledVer})`)
+        }
+      } catch (err) {
+        // 单 skill 失败不影响其他 skill 同步，防止启动期 bootstrap 链路被掀翻。
+        console.warn(`[配置] 同步营销 Skill 失败 (${entry.name})，跳过:`, err)
+      }
+    }
+  } catch (err) {
+    console.warn('[配置] 同步营销 Skills 失败:', err)
   }
 }
 

@@ -475,7 +475,7 @@ export function upgradeDefaultSkillsInWorkspaces(): void {
  *
  * @returns 成功返回 true；任何步骤失败返回 false（已记录日志，不抛出）
  */
-function safeReplaceSkillDir(sourcePath: string, targetPath: string): boolean {
+export function safeReplaceSkillDir(sourcePath: string, targetPath: string): boolean {
   try {
     rmSync(targetPath, { recursive: true, force: true })
     cpSync(sourcePath, targetPath, { recursive: true, filter: skillCopyFilter })

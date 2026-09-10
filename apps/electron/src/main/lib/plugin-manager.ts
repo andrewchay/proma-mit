@@ -13,7 +13,7 @@
 
 import { getSettings } from './settings-service'
 import { BUILTIN_PLUGINS } from '@gravitas/shared'
-import type { PluginLifecycleState, PluginManifest, PluginPermissions, PluginSurfaceType, PluginSubscription } from '@gravitas/shared'
+import type { PluginLifecycleState, PluginManifest, PluginPermissions, PluginSkillContribution, PluginSurfaceType, PluginSubscription } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './agent-runtime/types'
 
 /** 插件运行状态（面向设置 UI） */
@@ -60,6 +60,12 @@ export interface BuiltinPluginRuntime {
    * 未提供则视为不贡献。
    */
   contributePrompts?: () => string[]
+  /**
+   * 声明式向 Agent 贡献 Skills（surface: 'agent-skills'）。
+   * 返回 skill 目录清单，由主进程同步代码分发到工作区（增量 + 版本比对）。
+   * 未提供则视为不贡献。
+   */
+  contributeSkills?: () => PluginSkillContribution[]
 }
 
 // ===== 内置插件注册表 =====
@@ -339,6 +345,32 @@ export function collectContributingPrompts(): string[] {
     }
   }
   return prompts
+}
+
+/**
+ * 收集所有「已启用 + 平台支持 且 贡献了 Skills」的插件 skill 清单。
+ *
+ * 与 collectContributingPrompts 对称：供工作区同步代码分发 skill 目录。
+ * 声明式安全边界：插件只声明 slug/来源路径，文件系统写入由主进程安全代码完成。
+ */
+export function collectContributingSkills(): PluginSkillContribution[] {
+  const skills: PluginSkillContribution[] = []
+
+  const factories: Array<{ id: string; factory: () => BuiltinPluginRuntime }> = []
+  for (const [id, factory] of BUILTIN_RUNTIMES) factories.push({ id, factory })
+  for (const [id, factory] of IMPORTED_RUNTIMES) factories.push({ id, factory })
+
+  for (const { id, factory } of factories) {
+    try {
+      const runtime = factory()
+      if (!runtime.isEnabled() || !runtime.isSupported()) continue
+      const contributed = runtime.contributeSkills?.()
+      if (contributed) skills.push(...contributed)
+    } catch (error) {
+      console.warn(`[Diag][plugin] 收集 ${id} 的 skills 失败：`, error)
+    }
+  }
+  return skills
 }
 
 /** 重置插件管理器内部状态（仅测试用，避免跨用例污染全局注册表）。 */

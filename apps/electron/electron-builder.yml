@@ -79,6 +79,11 @@ extraResources:
     to: default-skills
     filter:
       - "**/*"
+  # 营销 Skills 资源（营销 plugin 订阅驱动分发；不进 default-skills → 不进集市）
+  - from: marketing-skills
+    to: marketing-skills
+    filter:
+      - "**/*"
   # 默认 Agents（agent 即目录；首次启动时同步到 ~/.gravitas/default-agents/）
   - from: default-agents
     to: default-agents

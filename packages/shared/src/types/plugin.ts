@@ -34,6 +34,7 @@ export type PluginSurfaceType =
   | 'workflow-node'    // Workflow 节点
   | 'bridge-connector' // 外部平台连接
   | 'agent-tools'      // 向 Agent 注入工具（如 Computer Use 工具族）
+  | 'agent-skills'     // 向 Agent 注入 Skills（订阅驱动的领域技能包，如营销 ma-* skills）
 
 /** 插件订阅的事件类型（基于 P0-2 AppEventEnvelope 五态） */
 export type PluginSubscription =
@@ -80,6 +81,23 @@ export interface PluginPermissions {
    */
   computerUse?: ComputerUsePluginPermissions
   // 默认禁止（不可在此声明即获得，需宿主显式门控）：文件系统、Shell、任意 IPC、渠道凭据、麦克风、主进程原生模块
+}
+
+/**
+ * 插件贡献的 Skill 条目（surface: 'agent-skills'）。
+ *
+ * 插件声明 slug 与磁盘来源，由主进程同步代码负责把 skill 目录
+ * 分发到工作区（增量同步 + 版本比对），插件本身不做文件系统写入。
+ */
+export interface PluginSkillContribution {
+  /** Skill slug（目录名，全局唯一；建议带领域前缀如 ma-*） */
+  slug: string
+  /** 所属领域子域（供订阅过滤，如营销的 influencer/paid-media/shared） */
+  domain?: string
+  /** skill 目录绝对路径（bundle 同步后的用户目录） */
+  sourcePath: string
+  /** SKILL.md version（可选，供同步与诊断） */
+  version?: string
 }
 
 /** 插件 Manifest */

@@ -1081,6 +1081,16 @@ export function registerIpcHandlers(): void {
     async (event, updates: Partial<AppSettings>): Promise<AppSettings> => {
       const result = await updateSettings(updates)
 
+      // 营销订阅变化时，重新分发营销 skills 到所有工作区（下次会话生效）
+      if (updates.marketingCapabilities !== undefined) {
+        try {
+          const { syncMarketingSkillsForAllWorkspaces } = await import('./lib/marketing-skills-sync')
+          syncMarketingSkillsForAllWorkspaces()
+        } catch (err) {
+          console.warn('[IPC] 营销订阅变更后同步 skills 失败:', err)
+        }
+      }
+
       // 主题相关设置变化时，广播给所有窗口（跨窗口同步，如 Quick Task 面板）
       if (updates.themeMode !== undefined || updates.themeStyle !== undefined) {
         const payload = { themeMode: result.themeMode, themeStyle: result.themeStyle }

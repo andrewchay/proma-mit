@@ -38,6 +38,7 @@ import {
 } from '@gravitas/shared'
 import type { PermissionRequest, PromaPermissionMode, AskUserRequest, ExitPlanModeRequest } from '@gravitas/shared'
 import type { ClaudeAgentQueryOptions } from './adapters/claude-agent-adapter'
+import { getMarketingPluginDir } from './marketing-skills-sync'
 import { isPromptTooLongError, isThinkingSignatureError, friendlyErrorMessage, mapSDKErrorToTypedError, extractErrorDetails, shouldKeepChannelOpen } from './adapters/claude-agent-adapter'
 import { ProviderAgnosticAgentAdapter, type ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
 import type { PiAgentQueryOptions } from './adapters/pi-agent-adapter'
@@ -2581,7 +2582,15 @@ export class AgentOrchestrator {
         ...(() => {
           if (!workspaceSlug) return {}
           if (!workflowCapabilityPolicy) {
-            return { plugins: [{ type: 'local' as const, path: getAgentWorkspacePath(workspaceSlug) }] }
+            const basePlugins: Array<{ type: 'local'; path: string }> = [
+              { type: 'local', path: getAgentWorkspacePath(workspaceSlug) },
+            ]
+            // 合并营销 skills plugin（订阅驱动；.marketing-plugin/skills 存在才注入）
+            const marketingPluginDir = getMarketingPluginDir(workspaceSlug)
+            if (existsSync(join(marketingPluginDir, 'skills'))) {
+              basePlugins.push({ type: 'local', path: marketingPluginDir })
+            }
+            return { plugins: basePlugins }
           }
           const skillSlugs = (workflowCapabilityPolicy.skills ?? []).map((skill) => skill.slug)
           return { plugins: [{ type: 'local' as const, path: prepareWorkflowSkillPlugin(workspaceSlug, sessionId, skillSlugs) }] }
