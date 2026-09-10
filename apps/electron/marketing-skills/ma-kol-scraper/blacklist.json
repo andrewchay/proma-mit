@@ -1,0 +1,91 @@
+{
+  "updated": "2026-08-23",
+  "description": "已实锤的互暖群成员(user_id)。本文件为出厂默认基线(随版本分发, 只读)；每次检测新增的实锤号由 scripts/koc_detect.py 累积写入 ~/.mapro/koc-blacklist.json，评分时合并两者取并集命中。",
+  "users": [
+    {
+      "user_id": "57562d1c34609478a15fb8e6",
+      "hits": 6,
+      "note": ""
+    },
+    {
+      "user_id": "68df451200000000320276c5",
+      "hits": 6,
+      "note": ""
+    },
+    {
+      "user_id": "5655217c03eb840d477de9ab",
+      "hits": 4,
+      "note": ""
+    },
+    {
+      "user_id": "567ff04f50c4b434436335e3",
+      "hits": 4,
+      "note": ""
+    },
+    {
+      "user_id": "5e313e11000000000100343d",
+      "hits": 4,
+      "note": ""
+    },
+    {
+      "user_id": "65b86a82000000000903dde2",
+      "hits": 4,
+      "note": ""
+    },
+    {
+      "user_id": "66095f41000000000b00de2e",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "5b12c359e8ac2b588dd38057",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "55136ad4a46e96322566fa9a",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "5f749751000000000101cca7",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "62b20793000000001b0286ae",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "55e132c5f5a2630a7abae56f",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "5a9f4b48b1da145ef637a280",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "597f13425e87e7399f14adb2",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "5df06d2100000000010036c1",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "58ba5a375e87e778e4e47bdc",
+      "hits": 2,
+      "note": ""
+    },
+    {
+      "user_id": "592412eb50c4b45a3529385e",
+      "hits": 2,
+      "note": ""
+    }
+  ]
+}

@@ -108,7 +108,8 @@ import { createApplicationMenu } from './menu'
 import { registerIpcHandlers } from './ipc'
 import { createTray, destroyTray } from './tray'
 import { initializeRuntime } from './lib/runtime-init'
-import { seedBundledWorkflowTemplates, seedDefaultSkills, seedDefaultAgents, seedDefaultTools } from './lib/config-paths'
+import { seedBundledWorkflowTemplates, seedDefaultSkills, seedDefaultAgents, seedDefaultTools, seedMarketingSkills } from './lib/config-paths'
+import { syncMarketingSkillsForAllWorkspaces } from './lib/marketing-skills-sync'
 import { upgradeDefaultSkillsInWorkspaces } from './lib/agent-workspace-manager'
 import { stopAllAgents, killOrphanedClaudeSubprocesses } from './lib/agent-service'
 import { takePendingMcpOAuth } from './lib/agent-runtime/mcp-oauth-pending'
@@ -464,11 +465,15 @@ async function bootstrap(): Promise<void> {
   safeRun('seedDefaultSkills', seedDefaultSkills)
   safeRun('seedDefaultAgents', seedDefaultAgents)
   safeRun('seedDefaultTools', seedDefaultTools)
+  safeRun('seedMarketingSkills', seedMarketingSkills)
   safeRun('seedBundledWorkflowTemplates', seedBundledWorkflowTemplates)
   safeRun('foldLegacyAgentOverrides', () => void import('./lib/agent-definition-store').then((m) => m.foldLegacyAgentOverridesIntoDirs()))
 
   // 升级所有工作区中版本过旧的默认 Skills
   safeRun('upgradeDefaultSkillsInWorkspaces', upgradeDefaultSkillsInWorkspaces)
+
+  // 按营销订阅状态把营销 skills 分发到各工作区（未订阅时幂等清理）
+  safeRun('syncMarketingSkillsForAllWorkspaces', syncMarketingSkillsForAllWorkspaces)
 
   // Create application menu
   const menu = createApplicationMenu()

@@ -1435,7 +1435,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
             >
               <Bot size={16} className="text-foreground/40" />
-              <span className="flex-1 text-left">项目空间技能</span>
+              <span className="flex-1 text-left">工作空间配置</span>
               {capabilities && (
                 <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
                   {capabilities.skills.length}
@@ -1556,7 +1556,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
           <>
             {/* 标题 + 新建项目 */}
               <div className="px-3 pt-2 pb-1 flex items-center justify-between flex-shrink-0">
-                <span className="text-[11px] font-medium text-foreground/40 select-none">进行中的项目空间</span>
+                <span className="text-[11px] font-medium text-foreground/40 select-none">进行中的工作空间</span>
                 <div className="flex items-center gap-0.5">
                   <Tooltip>
                     <TooltipTrigger asChild>

@@ -21,6 +21,10 @@ import {
   type VideoInput,
 } from '../marketing/video/storyboard-engine'
 import { MA_TOOL_SYSTEM_PROMPTS } from '../marketing/ma-tools/ma-tool-prompts'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { getMarketingSkillsDir, parseSkillVersion } from '../config-paths'
+import type { PluginSkillContribution } from '@gravitas/shared'
 
 // =====================================================================
 // 通用适配器：ma 工具 → RuntimeToolDefinition
@@ -179,6 +183,68 @@ const MA_TOOL_GROUPS: MarketingToolGroup[] = [
   },
 ]
 
+// =====================================================================
+// Skill 贡献清单（surface: 'agent-skills'）
+// =====================================================================
+
+/**
+ * 营销 Skills 分域清单（27 个，与工具三域对齐）。
+ *
+ * skills 资源在 apps/electron/marketing-skills/（bundle 打包），
+ * 启动时 seedMarketingSkills 同步到 ~/.proma-mit/marketing-skills/，
+ * 再由 contributeSkills 按订阅过滤后分发到工作区 .marketing-plugin/。
+ * 不进 default-skills → 不出现在 skill 集市、不默认带入新建项目。
+ */
+export const MARKETING_SKILL_DOMAINS: Record<string, MarketingToolDomain> = {
+  // —— influencer 达人包（11）——
+  'ma-kol-scraper': 'influencer',
+  'ma-kol-crm': 'influencer',
+  'ma-kol-portal': 'influencer',
+  'ma-kol-history-review': 'influencer',
+  'ma-kol-pyramid': 'influencer',
+  'ma-draft-review': 'influencer',
+  'ma-image-audit': 'influencer',
+  'ma-content-audit': 'influencer',
+  'ma-publish-data-track': 'influencer',
+  'ma-pgy-invite': 'influencer',
+  'ma-script-studio': 'influencer',
+  // —— paid-media 投放包（5）——
+  'ma-paid-media': 'paid-media',
+  'ma-campaign-optimizer': 'paid-media',
+  'ma-campaign-tester': 'paid-media',
+  'ma-content-calendar': 'paid-media',
+  'ma-platform-role-mapper': 'paid-media',
+  // —— shared 策略创意基座（11，任一订阅即注入）——
+  'ma-marketing': 'shared',
+  'ma-brand-dna': 'shared',
+  'ma-brand-house': 'shared',
+  'ma-market-analysis': 'shared',
+  'ma-competitor-analyzer': 'shared',
+  'ma-consumer-insight': 'shared',
+  'ma-ta-portrait': 'shared',
+  'ma-creative-concept': 'shared',
+  'ma-creative-roi': 'shared',
+  'ma-tone-manner': 'shared',
+  'ma-ugc-campaign': 'shared',
+}
+
+/** 按订阅过滤的 Skill 贡献清单：仅返回订阅命中域的 skill（目录缺失时容错跳过） */
+export function contributeSkillsForSubscribed(subscribed: string[]): PluginSkillContribution[] {
+  const caps = subscribed.length > 0 ? subscribed : [...DEFAULT_ENABLED_CAPABILITIES]
+  // ma-* skills 是订阅内容：未订阅任何业务域时不分发（区别于 shared 基础能力 storyboard 恒在）
+  if (caps.length === 0) return []
+  const domains = subscribedDomains(caps)
+  const skillsDir = getMarketingSkillsDir()
+  const out: PluginSkillContribution[] = []
+  for (const [slug, domain] of Object.entries(MARKETING_SKILL_DOMAINS)) {
+    if (!domains.has(domain)) continue
+    const sourcePath = join(skillsDir, slug)
+    if (!existsSync(sourcePath)) continue
+    out.push({ slug, domain, sourcePath, version: parseSkillVersion(sourcePath) })
+  }
+  return out
+}
+
 /** 依据订阅集合，计算需注入的领域子域集合（shared 固定包含，随任一订阅启用） */
 function subscribedDomains(subscribed: string[]): Set<MarketingToolDomain> {
   const caps = subscribed.length > 0 ? subscribed : [...DEFAULT_ENABLED_CAPABILITIES]
@@ -243,14 +309,14 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
     manifest: {
       schemaVersion: 1,
       id: 'com.gravitas.marketing',
-      version: '0.2.0',
+      version: '0.3.0',
       name: '营销应用中心',
       description: '提供营销领域 Agent 工具（内容审核 / 视频分镜 / 策略 / 达人 / 投放），驱动应用中心的能力落地',
       publisher: 'Proma',
       platforms: ['darwin', 'win32', 'linux'],
       activationEvents: ['onAppReady'],
       subscriptions: [],
-      surfaces: ['agent-tools'],
+      surfaces: ['agent-tools', 'agent-skills'],
       permissions: {
         // 营销工具仅调用本地 LLM + 本地 SQLite，无宿主持权能力。
         // 网络/存储等高风险权限保持「默认禁止」不在此声明。
@@ -272,6 +338,8 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
     contributeTools: () => allMarketingToolDefinitions(readSubscribedCapabilities()),
     // 向 Agent 注入营销工具的系统提示引导（按订阅过滤，模型「何时用哪个工具」指令集）
     contributePrompts: () => contributePromptsForSubscribed(readSubscribedCapabilities()),
+    // 向工作区分发营销 skills（按订阅域过滤；来源为 seed 后的用户目录）
+    contributeSkills: () => contributeSkillsForSubscribed(readSubscribedCapabilities()),
   }
 }
 

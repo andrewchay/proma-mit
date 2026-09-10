@@ -5,7 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { resolveModelContextCapability, type AgentRuntime, type SDKMessage } from '@gravitas/shared'
-import { getConfigDir, getPluginToolsDir, seedDefaultSkills, seedDefaultTools, seedBundledWorkflowTemplates } from './config-paths'
+import { getConfigDir, getPluginToolsDir, seedDefaultSkills, seedDefaultTools, seedBundledWorkflowTemplates, seedMarketingSkills } from './config-paths'
 import {
   createAgentWorkspace,
   DEFAULT_WORKSPACE_SKILL_SLUGS,
@@ -16,6 +16,10 @@ import { collectDirectoryTools } from './tool-definition-store'
 import { createCampaign, listCampaigns, closeCampaignDatabase } from './campaign-manager'
 import { upsertKOL, getKOLById, closeKolDatabase } from './marketing/ma-tools/kol-data-service'
 import { listWorkflowTemplates } from './workflow-template-service'
+import { getMarketingPluginDir, syncMarketingSkillsForWorkspace } from './marketing-skills-sync'
+import { updateSettings } from './settings-service'
+import { readdirSync } from 'node:fs'
+import { getAgentWorkspacePath } from './config-paths'
 
 export async function runPackageSmoke(): Promise<void> {
   assert(app.isPackaged, '必须验证实际安装包')
@@ -29,7 +33,9 @@ export async function runPackageSmoke(): Promise<void> {
   assert(existsSync(join(root, '.package-smoke-empty')), '配置目录必须由烟测脚本创建')
   assert(existsSync(join(process.resourcesPath, 'default-tools/marketing/system_config.json')))
   assert(existsSync(join(process.resourcesPath, 'default-skills/find-skills/SKILL.md')))
+  assert(existsSync(join(process.resourcesPath, 'marketing-skills/ma-kol-scraper/SKILL.md')), 'marketing-skills 打包缺失')
   seedDefaultSkills()
+  seedMarketingSkills()
   seedDefaultTools()
   seedBundledWorkflowTemplates()
   const workspace = createAgentWorkspace('Package Smoke Skills', undefined, 'package-smoke-skills')
@@ -46,6 +52,15 @@ export async function runPackageSmoke(): Promise<void> {
   assert(disabledSkills.every(slug => inactiveSlugs.includes(slug)), 'Skill Set 停用状态未落盘')
   const kimiCompaction = await runLiveKimiCompactionSmoke(workspace, root)
   assert(listWorkflowTemplates().some(t => t.id === 'marketing-campaign'), '缺少 Campaign 模板')
+  // 营销 skills 订阅分发烟测：订阅 influencer → 工作区出现 22 个营销 skill
+  updateSettings({ marketingCapabilities: ['influencer'] })
+  syncMarketingSkillsForWorkspace(workspace.slug)
+  const mktPluginSkills = join(getAgentWorkspacePath(workspace.slug), '.marketing-plugin', 'skills')
+  assert(existsSync(mktPluginSkills), '营销 skills 未分发到工作区')
+  assert.equal(readdirSync(mktPluginSkills).length, 22, '营销 skills 分发数量不符')
+  updateSettings({ marketingCapabilities: [] })
+  syncMarketingSkillsForWorkspace(workspace.slug)
+  assert(!existsSync(getMarketingPluginDir(workspace.slug)), '清空订阅后未清理营销 skills')
   const tools = collectDirectoryTools(id => id === 'marketing')
   assert.equal(tools.length, 26, '内置工具发现不完整')
   const campaign = createCampaign({ name: 'Smoke', brand: 'Synthetic' })

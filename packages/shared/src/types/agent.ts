@@ -71,6 +71,16 @@ export interface AgentAuditQuery {
   limit?: number
 }
 
+/** 会话运行 span 查询条件；返回类型复用 RuntimeSpan（runtime-span.ts）。 */
+export interface AgentSpanQuery {
+  /** 按会话过滤（省略 = 全部会话） */
+  sessionId?: string
+  /** 只返回 startedAt >= sinceMs 的 span */
+  sinceMs?: number
+  /** 最多返回条数（默认 500，读取按时间倒序裁剪后返回升序） */
+  limit?: number
+}
+
 /** 上下文压缩的本机聚合指标；不包含会话正文、摘要或工具结果。 */
 export interface ContextCompactionMetrics {
   total: number
@@ -2038,6 +2048,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_CONTEXT_COMPACTION_METRICS: 'agent:get-context-compaction-metrics',
   /** 导出筛选后的本地操作审计 */
   EXPORT_AUDIT_EVENTS: 'agent:export-audit-events',
+  /** 查询会话的运行 span（瀑布图数据源） */
+  LIST_SESSION_SPANS: 'agent:list-session-spans',
   /** 查询本地 Proactive 定时任务 */
   LIST_PROACTIVE_SCHEDULES: 'agent:list-proactive-schedules',
   /** 创建需用户明确确认的本地 Proactive 定时任务 */

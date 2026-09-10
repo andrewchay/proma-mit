@@ -182,6 +182,7 @@ import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveF
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
+import { listAgentSpans } from './lib/agent-span-sink'
 import { getContextCompactionMetrics } from './lib/context-compaction-audit-service'
 import {
   createWorkspaceSnapshot,
@@ -1080,6 +1081,16 @@ export function registerIpcHandlers(): void {
     async (event, updates: Partial<AppSettings>): Promise<AppSettings> => {
       const result = await updateSettings(updates)
 
+      // 营销订阅变化时，重新分发营销 skills 到所有工作区（下次会话生效）
+      if (updates.marketingCapabilities !== undefined) {
+        try {
+          const { syncMarketingSkillsForAllWorkspaces } = await import('./lib/marketing-skills-sync')
+          syncMarketingSkillsForAllWorkspaces()
+        } catch (err) {
+          console.warn('[IPC] 营销订阅变更后同步 skills 失败:', err)
+        }
+      }
+
       // 主题相关设置变化时，广播给所有窗口（跨窗口同步，如 Quick Task 面板）
       if (updates.themeMode !== undefined || updates.themeStyle !== undefined) {
         const payload = { themeMode: result.themeMode, themeStyle: result.themeStyle }
@@ -1888,6 +1899,7 @@ export function registerIpcHandlers(): void {
     return next.computerUse ?? { enabled: true, readOnlyOnly: false }
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@gravitas/shared').AgentAuditQuery) => listAgentAuditEvents(query))
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_SESSION_SPANS, async (_, query: import('@gravitas/shared').AgentSpanQuery = {}) => listAgentSpans(query))
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_CONTEXT_COMPACTION_METRICS, async () => getContextCompactionMetrics())
   ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@gravitas/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {
     const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()!, {

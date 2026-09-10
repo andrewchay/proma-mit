@@ -2,7 +2,7 @@ import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
 import { cpSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { collectContributingTools, collectContributingPrompts, _resetPluginManagerForTests } from '../plugin-manager'
+import { collectContributingTools, collectContributingPrompts, collectContributingSkills, _resetPluginManagerForTests } from '../plugin-manager'
 import { marketingPluginRuntime, isMarketingEnabled, allMarketingToolDefinitions, contributePromptsForSubscribed } from './marketing-plugin'
 import { updateSettings } from '../settings-service'
 
@@ -229,5 +229,57 @@ describe('Marketing 插件', () => {
     expect(paidText).toContain('MA策略生成')
     expect(paidText).toContain('MA预算预估')
     expect(paidText).not.toContain('MAKOL搜索')
+  })
+})
+
+
+describe('Marketing 插件 Skills 贡献（surface: agent-skills）', () => {
+  const runtime = marketingPluginRuntime()
+  const bundledMarketingSkillsDir = join(import.meta.dir, '../../../../marketing-skills')
+
+  beforeAll(() => {
+    // 把源码 marketing-skills 同步到测试配置目录，模拟 seedMarketingSkills 的产物
+    cpSync(bundledMarketingSkillsDir, join(tmpConfigDir, 'marketing-skills'), { recursive: true })
+  })
+
+  test('manifest 声明 agent-skills surface', () => {
+    expect(runtime.manifest.surfaces).toContain('agent-skills')
+  })
+
+  test('未订阅时 contributeSkills 返回空（不默认带入新建项目）', () => {
+    updateSettings({ marketingCapabilities: [] })
+    expect(runtime.contributeSkills?.()).toEqual([])
+    expect(collectContributingSkills()).toEqual([])
+  })
+
+  test('订阅 influencer 后贡献达人域(11) + shared(11) = 22 个 skill', () => {
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    const skills = runtime.contributeSkills?.() ?? []
+    expect(skills.length).toBe(22)
+    const slugs = skills.map((s) => s.slug)
+    expect(slugs).toContain('ma-kol-scraper')
+    expect(slugs).toContain('ma-pgy-invite')
+    expect(slugs).toContain('ma-marketing') // shared 总纲
+    expect(slugs).not.toContain('ma-paid-media')
+    // 每个 skill 目录真实存在且带域标记
+    for (const s of skills) {
+      expect(s.domain).toBeTruthy()
+      expect(s.version).not.toBe('0.0.0')
+    }
+  })
+
+  test('订阅 paid-media 后贡献投放域(5) + shared(11) = 16 个 skill', () => {
+    updateSettings({ marketingCapabilities: ['paid-media'] })
+    const skills = runtime.contributeSkills?.() ?? []
+    expect(skills.length).toBe(16)
+    const slugs = skills.map((s) => s.slug)
+    expect(slugs).toContain('ma-campaign-optimizer')
+    expect(slugs).not.toContain('ma-draft-review')
+    expect(slugs).not.toContain('ma-kol-scraper')
+  })
+
+  test('collectContributingSkills 与 runtime 贡献一致', () => {
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    expect(collectContributingSkills().length).toBe(22)
   })
 })

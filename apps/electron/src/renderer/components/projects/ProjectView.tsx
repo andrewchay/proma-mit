@@ -716,7 +716,11 @@ function ProjectCard({
           </button>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground mb-4">{project.description}</p>
+      <p className="text-sm text-muted-foreground mb-3">{project.description}</p>
+
+      <div className="mb-4">
+        <ProjectRiskBadge projectId={project.id} />
+      </div>
 
       {progress && (
         <div className="space-y-2">
@@ -735,6 +739,61 @@ function ProjectCard({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ===== 高层项目风险徽标（项目/看板 tab 共用） =====
+
+interface ProjectAlertLite {
+  type: string
+  severity: 'warning' | 'critical'
+}
+
+/** 从告警聚合出 high-level 风险概览：等级 + 关键计数 */
+function summarizeProjectRisk(alerts: ProjectAlertLite[]): {
+  level: 'none' | 'warning' | 'critical'
+  criticalCount: number
+  warningCount: number
+  overdueCount: number
+} {
+  const criticalCount = alerts.filter((a) => a.severity === 'critical').length
+  const warningCount = alerts.filter((a) => a.severity === 'warning').length
+  const overdueCount = alerts.filter((a) => a.type === 'overdue').length
+  const level = criticalCount > 0 ? 'critical' : warningCount > 0 ? 'warning' : 'none'
+  return { level, criticalCount, warningCount, overdueCount }
+}
+
+/** 项目卡片上的单行风险徽标：无风险显示绿色「风险正常」，有风险显示红/橙计数 */
+function ProjectRiskBadge({ projectId, className = '' }: { projectId: string; className?: string }): React.ReactElement {
+  const [alerts, setAlerts] = useState<ProjectAlertLite[]>([])
+
+  useEffect(() => {
+    callProjectAPI<ProjectAlertLite[]>('listProjectAlerts', projectId)
+      .then(setAlerts)
+      .catch(() => setAlerts([]))
+  }, [projectId])
+
+  const { level, criticalCount, warningCount, overdueCount } = summarizeProjectRisk(alerts)
+
+  if (level === 'none') {
+    return (
+      <div className={`flex items-center gap-1.5 text-xs text-green-700 bg-green-50 rounded px-2 py-1 w-fit ${className}`}>
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
+        风险正常
+      </div>
+    )
+  }
+  const isCritical = level === 'critical'
+  return (
+    <div className={`flex items-center gap-3 text-xs rounded px-2 py-1 w-fit ${isCritical ? 'text-red-700 bg-red-50' : 'text-amber-700 bg-amber-50'} ${className}`}>
+      <span className="flex items-center gap-1.5 font-medium">
+        <span className={`inline-block h-1.5 w-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
+        {isCritical ? '关键风险' : '风险关注'}
+      </span>
+      {criticalCount > 0 && <span>关键告警 {criticalCount}</span>}
+      {warningCount - criticalCount > 0 && <span>警告 {warningCount - criticalCount}</span>}
+      {overdueCount > 0 && <span>逾期 {overdueCount}</span>}
     </div>
   )
 }
@@ -2878,7 +2937,10 @@ function ProjectCardOverview({ project }: { project: Project }): React.ReactElem
 
   return (
     <div className="p-4 bg-card rounded-lg border">
-      <h3 className="font-medium text-sm mb-3">{project.title}</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-medium text-sm">{project.title}</h3>
+        <ProjectRiskBadge projectId={project.id} />
+      </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="p-2 bg-gray-50 rounded">
           <div className="text-lg font-semibold">{board.pending.length}</div>
