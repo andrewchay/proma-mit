@@ -73,6 +73,8 @@ export interface SyncResult {
   taskId?: string
   status?: string
   error?: string
+  /** 负责人不在名单（无映射且成员目录反查不到）：永久性失败，重试不可能成功，调用方不应入队 outbox */
+  skipped?: boolean
 }
 
 // ===== 外部同步状态 =====
@@ -116,7 +118,9 @@ export async function syncTaskToExternal(
     }
 
     if (!platformUserId) {
-      return { success: false, error: `未找到 ${platform} 用户映射` }
+      // 负责人不在飞书/钉钉名单里：永久性失败，重试永远不可能成功。
+      // 标记 skipped 让调用方跳过入队（否则 outbox 会堆积「已尝试 N 次 · 未找到用户映射」噪音）。
+      return { success: false, skipped: true, error: `未找到 ${platform} 用户映射（负责人不在名单，已跳过同步）` }
     }
 
     // 4. 创建外部 Todo（钉钉优先使用 unionId 调用工作待办接口）

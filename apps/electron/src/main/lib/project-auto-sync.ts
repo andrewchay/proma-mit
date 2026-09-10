@@ -139,6 +139,11 @@ async function syncCreatedTask(task: Task): Promise<void> {
     try {
       const result = await syncTaskToExternal(task, platform, provider)
       if (!result.success) {
+        // 负责人不在名单：永久性失败，不入队 outbox（重试不可能成功，只会堆积噪音）
+        if (result.skipped) {
+          console.log(`[ProjectAutoSync] ${platform} 同步跳过：task=${task.id} ${result.error}`)
+          continue
+        }
         enqueueOutboxEvent({
           projectId: task.projectId,
           entityType: 'task',
