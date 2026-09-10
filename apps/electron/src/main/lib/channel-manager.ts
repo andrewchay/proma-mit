@@ -24,6 +24,11 @@ import type {
   ChannelPlanQuotaWindow,
 } from '@gravitas/shared'
 import { PROVIDER_DEFAULT_URLS, normalizeProviderType } from '@gravitas/shared'
+import {
+  isGithubCopilotCredentialExpired,
+  parseGithubCopilotCredentials,
+  serializeGithubCopilotCredentials,
+} from '@gravitas/shared'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@gravitas/core'
@@ -326,6 +331,8 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
       case 'xai':
       case 'custom':
         return await testOpenAICompatible(channel.baseUrl, apiKey, proxyUrl)
+      case 'github-copilot':
+        return testGithubCopilotCredential(apiKey)
       case 'google':
         return await testGoogle(channel.baseUrl, apiKey, proxyUrl)
       default:
@@ -494,6 +501,8 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
       case 'xai':
       case 'custom':
         return await testOpenAICompatible(input.baseUrl, input.apiKey, proxyUrl)
+      case 'github-copilot':
+        return testGithubCopilotCredential(input.apiKey)
       case 'google':
         return await testGoogle(input.baseUrl, input.apiKey, proxyUrl)
       default:
@@ -515,6 +524,24 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
  */
 // ===== 订阅制端点预设模型清单 =====
 // 这些 Coding Plan 端点没有公开 /models 列表 API，只能内置预设。
+
+/**
+ * GitHub Copilot 渠道连接测试：不向 API 发请求，仅校验凭据完整性与过期状态。
+ * 实际可用性由 Pi runtime 的 OAuth 续签保证。
+ */
+function testGithubCopilotCredential(secret: string): ChannelTestResult {
+  const credentials = parseGithubCopilotCredentials(secret)
+  if (!credentials) {
+    return { success: false, message: 'GitHub Copilot 登录凭据无效，请重新登录' }
+  }
+  if (isGithubCopilotCredentialExpired(credentials)) {
+    return { success: false, message: 'GitHub Copilot 登录已过期，将自动续签或请重新登录' }
+  }
+  return {
+    success: true,
+    message: `连接成功（${credentials.availableModelIds.length} 个可用模型）`,
+  }
+}
 
 /** 通义千问 Token Plan 预设模型 */
 const QWEN_TOKEN_PLAN_PRESET_MODELS: ChannelModel[] = [
@@ -589,6 +616,18 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
       case 'xai':
       case 'custom':
         return await fetchOpenAICompatibleModels(input.baseUrl, input.apiKey, proxyUrl)
+      case 'github-copilot': {
+        // 凭据 JSON 里的 availableModelIds 由 OAuth 登录时按订阅策略写入
+        const credentials = parseGithubCopilotCredentials(input.apiKey)
+        if (!credentials) {
+          return { success: false, message: 'GitHub Copilot 登录凭据无效，请重新登录', models: [] }
+        }
+        return {
+          success: true,
+          message: `已加载 ${credentials.availableModelIds.length} 个 GitHub Copilot 可用模型`,
+          models: credentials.availableModelIds.map((id) => ({ id, name: id, enabled: true })),
+        }
+      }
       case 'google':
         return await fetchGoogleModels(input.baseUrl, input.apiKey, proxyUrl)
       default:

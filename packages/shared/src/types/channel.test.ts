@@ -48,6 +48,7 @@ describe('Agent provider runtime capabilities', () => {
       'deepseek',
       'deepseek-openai',
       'doubao',
+      'github-copilot',
       'google',
       'kimi-api',
       'kimi-coding',

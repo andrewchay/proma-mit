@@ -44,6 +44,8 @@ const adapterRegistry = new Map<ProviderType, ProviderAdapter>([
   ['qwen-token-plan', new AnthropicAdapter('qwen-token-plan')],   // 通义千问 Token Plan 订阅制（完整 messages URL）
   ['xiaomi', new AnthropicAdapter('xiaomi')],       // 小米 MiMo API 使用 Anthropic 兼容协议
   ['xai', new OpenAIAdapter()],          // xAI (Grok) 使用 OpenAI 兼容协议
+  // github-copilot：OAuth 订阅渠道，请求由 Pi runtime 承担；适配器仅作通用回退
+  ['github-copilot', new OpenAIAdapter()],
   ['custom', new OpenAIAdapter()],        // 自定义也使用 OpenAI 兼容协议
   ['google', new GoogleAdapter()],
 ])

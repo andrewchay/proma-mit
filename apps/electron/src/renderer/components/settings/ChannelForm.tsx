@@ -70,7 +70,7 @@ interface ChannelFormProps {
 }
 
 /** 所有可选供应商 */
-const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'custom']
+const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'github-copilot', 'custom']
 
 /** 供应商选项（用于 SettingsSelect） */
 const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((p) => ({
@@ -99,6 +99,7 @@ const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
   'qwen-token-plan': '/messages',
   xiaomi: '/messages',
   xai: '/chat/completions',
+  'github-copilot': '(OAuth 订阅)',
   custom: '/chat/completions',
 }
 

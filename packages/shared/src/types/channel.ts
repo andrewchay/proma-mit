@@ -30,6 +30,7 @@ export type ProviderType =
   | 'qwen-token-plan'
   | 'xiaomi'
   | 'xai'
+  | 'github-copilot'
   | 'custom'
 
 /**
@@ -56,6 +57,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   'qwen-token-plan': 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
   xiaomi: 'https://api.xiaomimimo.com/anthropic',
   xai: 'https://api.x.ai/v1',
+  'github-copilot': '',
   custom: '',
 }
 
@@ -82,6 +84,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   'qwen-token-plan': '通义千问 Token Plan',
   xiaomi: '小米 MiMo',
   xai: 'xAI (Grok)',
+  'github-copilot': 'GitHub Copilot 订阅',
   custom: 'OpenAI 兼容格式',
 }
 
@@ -98,6 +101,65 @@ export function normalizeProviderType(provider: string | undefined | null): Prov
 
 /** Agent runtime 调用供应商时使用的协议族 */
 export type AgentProviderProtocol = 'anthropic-messages' | 'openai-chat' | 'google-generative'
+
+// ===== GitHub Copilot OAuth 凭据 =====
+
+export interface GithubCopilotOAuthCredentials {
+  /** Copilot API access token */
+  access: string
+  /** GitHub device-code OAuth token，用于续签 Copilot token */
+  refresh: string
+  /** Copilot access token 过期时间（Unix 毫秒） */
+  expires: number
+  /** GitHub Enterprise Server 域名；未填写时使用 github.com */
+  enterpriseUrl?: string
+  /** 当前订阅和组织策略实际允许使用的模型 ID */
+  availableModelIds: string[]
+}
+
+export interface GithubCopilotOAuthDeviceCode {
+  userCode: string
+  verificationUri: string
+}
+
+/** 仅持久化业务字段，隔离 Pi runtime 的临时字段（如 type） */
+export function serializeGithubCopilotCredentials(credentials: GithubCopilotOAuthCredentials): string {
+  return JSON.stringify({
+    access: credentials.access,
+    refresh: credentials.refresh,
+    expires: credentials.expires,
+    ...(credentials.enterpriseUrl ? { enterpriseUrl: credentials.enterpriseUrl } : {}),
+    availableModelIds: [...new Set(credentials.availableModelIds)],
+  })
+}
+
+export function parseGithubCopilotCredentials(secret: string): GithubCopilotOAuthCredentials | null {
+  const trimmed = secret.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<GithubCopilotOAuthCredentials>
+    if (typeof parsed.access !== 'string' || !parsed.access
+      || typeof parsed.refresh !== 'string' || !parsed.refresh
+      || typeof parsed.expires !== 'number'
+      || !Array.isArray(parsed.availableModelIds)
+      || !parsed.availableModelIds.every((id) => typeof id === 'string')) {
+      return null
+    }
+    return {
+      access: parsed.access,
+      refresh: parsed.refresh,
+      expires: parsed.expires,
+      availableModelIds: [...new Set(parsed.availableModelIds)],
+      ...(typeof parsed.enterpriseUrl === 'string' && parsed.enterpriseUrl ? { enterpriseUrl: parsed.enterpriseUrl } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+export function isGithubCopilotCredentialExpired(credentials: GithubCopilotOAuthCredentials, skewMs = 60_000): boolean {
+  return Date.now() >= credentials.expires - skewMs
+}
 
 /** 供应商在 Agent runtime 下的能力声明 */
 export interface AgentProviderRuntimeCapability {
@@ -315,6 +377,14 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: true,
+    verifiedForAgentRuntime: false,
+  },
+  'github-copilot': {
+    protocol: 'openai-chat',
+    runtimes: ['pi'],
+    supportsToolCalling: true,
+    supportsImages: true,
+    supportsStreamUsage: false,
     verifiedForAgentRuntime: false,
   },
   'openai-responses': {

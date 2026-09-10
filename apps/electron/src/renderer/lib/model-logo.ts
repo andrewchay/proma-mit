@@ -248,6 +248,7 @@ const PROVIDER_LOGO_MAP: Record<ProviderType, string> = {
   'qwen-token-plan': QwenLogo,
   xiaomi: DefaultLogo,
   xai: DefaultLogo,
+  'github-copilot': OpenAILogo,
   custom: DefaultLogo,
 }
 
