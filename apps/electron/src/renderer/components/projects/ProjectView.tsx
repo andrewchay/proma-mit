@@ -1383,17 +1383,75 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
   const rangeEnd = Math.max(...ends, rangeStart + day)
   const range = Math.max(rangeEnd - rangeStart, day)
   const blockerIds = new Set(blockers.map((blocker) => blocker.taskId))
+
+  // 按优先级排序（critical → high → medium → low），同级按截止日更紧的在前；无截止日期排最后
+  const PRIORITY_WEIGHT: Record<Task['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
+  const sortedTasks = [...datedTasks].sort((a, b) => {
+    const byPriority = PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority]
+    if (byPriority !== 0) return byPriority
+    const aDue = a.dueDate ?? Number.MAX_SAFE_INTEGER
+    const bDue = b.dueDate ?? Number.MAX_SAFE_INTEGER
+    return aDue - bDue
+  })
+  const now = Date.now()
+
+  /** 单行状态标注：超期 → 红；高风险/关键风险 → 橙/红；阻塞 → 琥珀 ● */
+  const renderStatusMarks = (task: Task): React.ReactNode => {
+    const isOverdue = task.status !== 'completed' && task.dueDate !== undefined && task.dueDate < now
+    const riskLevel = task.riskLevel
+    return (
+      <>
+        {blockerIds.has(task.id) && <span className="mr-1 text-amber-600" title="被前置任务阻塞">●</span>}
+        {isOverdue && <span className="mr-1 rounded bg-red-100 px-1 text-[10px] font-medium text-red-700" title={`已超期（截止 ${new Date(task.dueDate!).toLocaleDateString()}）`}>超期</span>}
+        {(riskLevel === 'high' || riskLevel === 'critical') && (
+          <span className={`mr-1 rounded px-1 text-[10px] font-medium ${riskLevel === 'critical' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`} title={`任务风险等级：${riskLevel === 'critical' ? '关键' : '高'}`}>风险</span>
+        )}
+      </>
+    )
+  }
+
+  /** 时间条颜色：完成 → 绿；超期 → 红；阻塞 → 琥珀；高风险/关键 → 橙/红；默认主题色 */
+  const barColor = (task: Task): string => {
+    if (task.status === 'completed') return 'bg-emerald-500'
+    if (task.dueDate !== undefined && task.dueDate < now) return 'bg-red-500'
+    if (blockerIds.has(task.id)) return 'bg-amber-500'
+    if (task.riskLevel === 'critical') return 'bg-red-400'
+    if (task.riskLevel === 'high') return 'bg-orange-400'
+    return 'bg-primary'
+  }
+
   return (
     <div className="space-y-3 overflow-x-auto">
-      <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold">Task 甘特图</h3><p className="text-xs text-muted-foreground">WBS 任务按层级显示；执行 subTask 在任务详情中展开。</p></div><span className="text-xs text-muted-foreground">{dependencies.length} 条依赖 · {blockers.length} 项阻塞</span></div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Task 甘特图</h3>
+          <p className="text-xs text-muted-foreground">按优先级排序（紧急 → 高 → 中 → 低）；标注超期与风险状态。</p>
+        </div>
+        <span className="text-xs text-muted-foreground">{dependencies.length} 条依赖 · {blockers.length} 项阻塞</span>
+      </div>
       <div className="min-w-[760px] rounded-lg border bg-card p-3">
         <div className="mb-2 ml-[220px] flex justify-between text-xs text-muted-foreground"><span>{new Date(rangeStart).toLocaleDateString()}</span><span>{new Date(rangeEnd).toLocaleDateString()}</span></div>
-        <div className="space-y-2">{tasks.map((task) => {
+        <div className="space-y-2">{sortedTasks.map((task) => {
           const start = task.startDate ?? task.createdAt
           const end = Math.max(task.dueDate ?? start + day, start + day)
           const left = Math.max(0, ((start - rangeStart) / range) * 100)
           const width = Math.max(1.5, ((end - start) / range) * 100)
-          return <div key={task.id} className="flex items-center gap-3"><div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>{blockerIds.has(task.id) && <span className="mr-1 text-amber-600">●</span>}{task.title}</div><div className="relative h-6 flex-1 rounded bg-muted/50"><div className={`absolute top-1 h-4 rounded ${task.status === 'completed' ? 'bg-emerald-500' : blockerIds.has(task.id) ? 'bg-amber-500' : 'bg-primary'}`} style={{ left: `${left}%`, width: `${width}%` }} title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}`} /></div></div>
+          return <div key={task.id} className="flex items-center gap-3">
+            <div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>
+              <span className={`mr-1 rounded px-1 text-[10px] font-medium ${task.priority === 'critical' ? 'bg-red-100 text-red-700' : task.priority === 'high' ? 'bg-orange-100 text-orange-700' : task.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                {task.priority === 'critical' ? '紧急' : task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
+              </span>
+              {renderStatusMarks(task)}
+              {task.title}
+            </div>
+            <div className="relative h-6 flex-1 rounded bg-muted/50">
+              <div
+                className={`absolute top-1 h-4 rounded ${barColor(task)}`}
+                style={{ left: `${left}%`, width: `${width}%` }}
+                title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}｜优先级 ${task.priority}${task.riskLevel ? `｜风险 ${task.riskLevel}` : ''}`}
+              />
+            </div>
+          </div>
         })}</div>
       </div>
     </div>
