@@ -513,10 +513,63 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
  * 直接使用传入的凭证（无需已保存渠道），支持创建渠道时预先拉取模型。
  * 针对不同供应商使用不同的 API 端点和响应解析。
  */
+// ===== 订阅制端点预设模型清单 =====
+// 这些 Coding Plan 端点没有公开 /models 列表 API，只能内置预设。
+
+/** 通义千问 Token Plan 预设模型 */
+const QWEN_TOKEN_PLAN_PRESET_MODELS: ChannelModel[] = [
+  { id: 'qwen3.8-max-preview', name: 'Qwen3.8 Max Preview', enabled: true },
+  { id: 'qwen3.7-max', name: 'Qwen3.7 Max', enabled: true },
+  { id: 'qwen3.7-flash', name: 'Qwen3.7 Flash', enabled: true },
+  { id: 'qwen3.6-flash', name: 'Qwen3.6 Flash', enabled: true },
+]
+
+/** 火山方舟 Agent Plan 预设模型 */
+const ARK_CODING_PLAN_PRESET_MODELS: ChannelModel[] = [
+  { id: 'doubao-seed-2.0-code', name: 'Doubao Seed 2.0 Code', enabled: true },
+  { id: 'doubao-seed-2.0-pro', name: 'Doubao Seed 2.0 Pro', enabled: true },
+  { id: 'doubao-seed-2.0-lite', name: 'Doubao Seed 2.0 Lite', enabled: true },
+  { id: 'glm-5.3', name: 'GLM-5.3', enabled: true },
+  { id: 'k3', name: 'Kimi K3', enabled: true },
+  { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', enabled: true },
+  { id: 'minimax-m3', name: 'MiniMax M3', enabled: true },
+  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', enabled: true },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', enabled: true },
+]
+
+/** 小米 MiMo 预设模型 */
+const XIAOMI_PRESET_MODELS: ChannelModel[] = [
+  { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', enabled: true },
+  { id: 'mimo-v2-pro', name: 'MiMo V2 Pro', enabled: true },
+  { id: 'mimo-v2.5', name: 'MiMo V2.5', enabled: true },
+  { id: 'mimo-v2-omni', name: 'MiMo V2 Omni', enabled: true },
+  { id: 'mimo-v2-flash', name: 'MiMo V2 Flash', enabled: true },
+]
+
+/** 生成预设模型结果 */
+function createPresetModelsResult(label: string, models: ChannelModel[]): FetchModelsResult {
+  return {
+    success: true,
+    message: `已加载 ${models.length} 个 ${label} 预设模型`,
+    models,
+  }
+}
+
 export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsResult> {
   const proxyUrl = await getEffectiveProxyUrl()
 
   try {
+    // 订阅制端点优先走预设清单（无公开 /models API）
+    if (input.provider === 'qwen-token-plan') {
+      return createPresetModelsResult('通义千问 Token Plan', QWEN_TOKEN_PLAN_PRESET_MODELS)
+    }
+    if (input.provider === 'ark-coding-plan') {
+      return createPresetModelsResult('火山方舟 Agent Plan', ARK_CODING_PLAN_PRESET_MODELS)
+    }
+    if (input.provider === 'xiaomi') {
+      return createPresetModelsResult('小米 MiMo', XIAOMI_PRESET_MODELS)
+    }
+
     switch (input.provider) {
       case 'anthropic':
       case 'deepseek':
@@ -525,10 +578,7 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
       case 'zhipu-coding':
       case 'zhipu-coding-team':
       case 'minimax':
-      case 'ark-coding-plan':
       case 'qwen-anthropic':
-      case 'qwen-token-plan':
-      case 'xiaomi':
         return await fetchAnthropicCompatibleModels(input.baseUrl, input.apiKey, proxyUrl, input.provider)
       case 'openai':
       case 'openai-responses':
