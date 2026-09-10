@@ -14,6 +14,7 @@ import { agentSessionsAtom, agentSidePanelOpenAtom, workspaceFilesVersionAtom } 
 import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import { registerShortcut } from '@/lib/shortcut-registry'
 import type { Goal } from '@gravitas/shared'
+import { SpanWaterfallPanel } from './SpanWaterfallPanel'
 
 /** AgentHeader 属性接口 */
 interface AgentHeaderProps {
@@ -167,6 +168,7 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
             </button>
           </div>
           <GoalBindingControl sessionId={sessionId} />
+          <SpanWaterfallPanel sessionId={sessionId} />
           {webBridgeStatus.active && (
             <Tooltip>
               <TooltipTrigger asChild>

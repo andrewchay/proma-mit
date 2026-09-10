@@ -26,7 +26,7 @@ describe('groupSpansByRun', () => {
     ]
     const runs = groupSpansByRun(spans)
     expect(runs.map((r) => r.taskId)).toEqual(['run-2', 'run-1'])
-    expect(runs[0].spans.map((s) => s.spanId)).toEqual(['b', 'd'])
+    expect(runs[0]!.spans.map((s) => s.spanId)).toEqual(['b', 'd'])
   })
 })
 
@@ -51,12 +51,12 @@ describe('buildSpanTimeline', () => {
   test('零时长 run 不产生 NaN（最小宽度兜底）', () => {
     const run = [makeSpan({ spanId: 'z', kind: 'task', startedAt: 50, endedAt: 50 })]
     const rows = buildSpanTimeline(run)
-    expect(Number.isFinite(rows[0].widthPct)).toBe(true)
+    expect(Number.isFinite(rows[0]!.widthPct)).toBe(true)
   })
 
   test('durationMs 正确计算', () => {
     const run = [makeSpan({ spanId: 'd', startedAt: 0, endedAt: 1500 })]
     const rows = buildSpanTimeline(run)
-    expect(rows[0].durationMs).toBe(1500)
+    expect(rows[0]!.durationMs).toBe(1500)
   })
 })
