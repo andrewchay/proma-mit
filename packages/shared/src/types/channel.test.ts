@@ -18,6 +18,7 @@ describe('Agent provider runtime capabilities', () => {
   test('Proma runtime 开放 OpenAI-compatible provider，Pi runtime 开放 SDK 可注册 provider', () => {
     expect(getAgentCompatibleProviders('proma').sort()).toEqual([
       'anthropic',
+      'ark-coding-plan',
       'custom',
       'deepseek',
       'deepseek-openai',
@@ -27,14 +28,22 @@ describe('Agent provider runtime capabilities', () => {
       'kimi-coding',
       'minimax',
       'openai',
+      'openai-responses',
       'qwen',
+      'qwen-anthropic',
+      'qwen-token-plan',
+      'xai',
+      'xiaomi',
       'zhipu',
+      'zhipu-coding',
+      'zhipu-coding-team',
     ])
     expect(isAgentCompatibleProvider('google', 'proma')).toBe(true)
     expect(isAgentCompatibleProvider('anthropic', 'proma')).toBe(true)
     expect(isAgentCompatibleProvider('minimax', 'proma')).toBe(true)
     expect(getAgentCompatibleProviders('pi').sort()).toEqual([
       'anthropic',
+      'ark-coding-plan',
       'custom',
       'deepseek',
       'deepseek-openai',
@@ -44,11 +53,19 @@ describe('Agent provider runtime capabilities', () => {
       'kimi-coding',
       'minimax',
       'openai',
+      'openai-responses',
       'qwen',
+      'qwen-anthropic',
+      'qwen-token-plan',
+      'xai',
+      'xiaomi',
       'zhipu',
+      'zhipu-coding',
+      'zhipu-coding-team',
     ])
     expect(getAgentCompatibleProviders('ai-sdk').sort()).toEqual([
       'anthropic',
+      'ark-coding-plan',
       'custom',
       'deepseek',
       'deepseek-openai',
@@ -57,8 +74,15 @@ describe('Agent provider runtime capabilities', () => {
       'kimi-api',
       'kimi-coding',
       'openai',
+      'openai-responses',
       'qwen',
+      'qwen-anthropic',
+      'qwen-token-plan',
+      'xai',
+      'xiaomi',
       'zhipu',
+      'zhipu-coding',
+      'zhipu-coding-team',
     ])
   })
 

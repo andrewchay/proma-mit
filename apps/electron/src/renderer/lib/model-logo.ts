@@ -231,15 +231,23 @@ const MODEL_LOGO_MAP: Record<string, string> = {
 const PROVIDER_LOGO_MAP: Record<ProviderType, string> = {
   anthropic: ClaudeLogo,
   openai: OpenAILogo,
+  'openai-responses': OpenAILogo,
   deepseek: DeepSeekLogo,
   'deepseek-openai': DeepSeekLogo,
   google: GeminiLogo,
   'kimi-api': KimiLogo,
   'kimi-coding': KimiLogo,
   zhipu: ZhipuLogo,
+  'zhipu-coding': ZhipuLogo,
+  'zhipu-coding-team': ZhipuLogo,
   minimax: MiniMaxLogo,
   doubao: DoubaoLogo,
+  'ark-coding-plan': DoubaoLogo,
   qwen: QwenLogo,
+  'qwen-anthropic': QwenLogo,
+  'qwen-token-plan': QwenLogo,
+  xiaomi: DefaultLogo,
+  xai: DefaultLogo,
   custom: DefaultLogo,
 }
 

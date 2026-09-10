@@ -70,7 +70,7 @@ interface ChannelFormProps {
 }
 
 /** 所有可选供应商 */
-const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'minimax', 'doubao', 'qwen', 'custom']
+const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'custom']
 
 /** 供应商选项（用于 SettingsSelect） */
 const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((p) => ({
@@ -82,15 +82,23 @@ const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((p) => ({
 const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
   anthropic: '/v1/messages',
   openai: '/chat/completions',
+  'openai-responses': '/responses',
   deepseek: '/messages',
   'deepseek-openai': '/chat/completions',
   google: '/v1beta/models/{model}:generateContent',
   'kimi-api': '/messages',
   'kimi-coding': '/messages',
   zhipu: '/chat/completions',
+  'zhipu-coding': '/messages',
+  'zhipu-coding-team': '/messages',
   minimax: '/v1/messages',
   doubao: '/chat/completions',
+  'ark-coding-plan': '/messages',
   qwen: '/chat/completions',
+  'qwen-anthropic': '/messages',
+  'qwen-token-plan': '/messages',
+  xiaomi: '/messages',
+  xai: '/chat/completions',
   custom: '/chat/completions',
 }
 

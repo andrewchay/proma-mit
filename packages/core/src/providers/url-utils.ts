@@ -82,3 +82,18 @@ export function normalizeAnthropicBaseUrlForSdk(baseUrl: string): string {
 export function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '')
 }
+
+/**
+ * 解析 OpenAI Responses 请求地址。
+ *
+ * 内置 OpenAI Responses 渠道允许填写协议根地址或完整 /responses 端点：
+ * - 已以 /responses 结尾 → 原样去尾斜杠
+ * - 否则视为协议根地址，追加 /responses
+ */
+export function resolveOpenAIResponsesUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '')
+  if (/\/responses$/.test(trimmed)) {
+    return trimmed
+  }
+  return `${trimmed}/responses`
+}

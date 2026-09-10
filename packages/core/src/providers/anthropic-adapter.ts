@@ -280,13 +280,22 @@ export class AnthropicAdapter implements ProviderAdapter {
     if (this.providerType === 'minimax') {
       return normalizeVersionedAnthropicBaseUrl(baseUrl)
     }
-    // DeepSeek / Kimi：baseUrl 本身已含非版本路径（如 /anthropic、/coding/v1），不追加 /v1
+    // DeepSeek / Kimi / 订阅制 Coding Plan：baseUrl 本身已含非版本路径（如 /anthropic、/coding/v1、/api/plan），不追加 /v1
     if (
       this.providerType === 'deepseek' ||
       this.providerType === 'kimi-api' ||
-      this.providerType === 'kimi-coding'
+      this.providerType === 'kimi-coding' ||
+      this.providerType === 'zhipu-coding' ||
+      this.providerType === 'zhipu-coding-team' ||
+      this.providerType === 'ark-coding-plan' ||
+      this.providerType === 'qwen-anthropic' ||
+      this.providerType === 'xiaomi'
     ) {
       return normalizeBaseUrl(baseUrl)
+    }
+    // 通义千问 Token Plan：baseUrl 已是完整 messages URL，原样使用
+    if (this.providerType === 'qwen-token-plan') {
+      return baseUrl.trim().replace(/\/+$/, '')
     }
     return normalizeAnthropicBaseUrl(baseUrl)
   }

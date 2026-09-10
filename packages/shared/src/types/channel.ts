@@ -13,15 +13,23 @@ import type { AgentRuntime } from './agent'
 export type ProviderType =
   | 'anthropic'
   | 'openai'
+  | 'openai-responses'
   | 'deepseek'
   | 'deepseek-openai'
   | 'google'
   | 'kimi-api'
   | 'kimi-coding'
   | 'zhipu'
+  | 'zhipu-coding'
+  | 'zhipu-coding-team'
   | 'minimax'
   | 'doubao'
+  | 'ark-coding-plan'
   | 'qwen'
+  | 'qwen-anthropic'
+  | 'qwen-token-plan'
+  | 'xiaomi'
+  | 'xai'
   | 'custom'
 
 /**
@@ -30,15 +38,24 @@ export type ProviderType =
 export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
+  'openai-responses': 'https://api.openai.com/v1',
   deepseek: 'https://api.deepseek.com/anthropic',
   'deepseek-openai': 'https://api.deepseek.com',
   google: 'https://generativelanguage.googleapis.com',
   'kimi-api': 'https://api.moonshot.cn/anthropic',
   'kimi-coding': 'https://api.kimi.com/coding/v1',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  'zhipu-coding': 'https://open.bigmodel.cn/api/anthropic',
+  'zhipu-coding-team': 'https://open.bigmodel.cn/api/anthropic',
   minimax: 'https://api.minimaxi.com/anthropic',
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
+  'ark-coding-plan': 'https://ark.cn-beijing.volces.com/api/plan',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  'qwen-anthropic': 'https://dashscope.aliyuncs.com/apps/anthropic',
+  // Token Plan Anthropic 端点已是完整 messages URL
+  'qwen-token-plan': 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
+  xiaomi: 'https://api.xiaomimimo.com/anthropic',
+  xai: 'https://api.x.ai/v1',
   custom: '',
 }
 
@@ -48,15 +65,23 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
 export const PROVIDER_LABELS: Record<ProviderType, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  'openai-responses': 'OpenAI (Responses API)',
   deepseek: 'DeepSeek',
   'deepseek-openai': 'DeepSeek (OpenAI 兼容)',
   google: 'Google',
   'kimi-api': 'Kimi API (Anthropic 协议)',
   'kimi-coding': 'Kimi Coding Plan',
   zhipu: '智谱 AI',
+  'zhipu-coding': '智谱 Coding Plan',
+  'zhipu-coding-team': '智谱 Coding Plan (团队版)',
   minimax: 'MiniMax (API&编程包)',
   doubao: '豆包',
+  'ark-coding-plan': '火山方舟 Agent Plan',
   qwen: '通义千问',
+  'qwen-anthropic': '通义千问 (Anthropic 协议)',
+  'qwen-token-plan': '通义千问 Token Plan',
+  xiaomi: '小米 MiMo',
+  xai: 'xAI (Grok)',
   custom: 'OpenAI 兼容格式',
 }
 
@@ -176,6 +201,34 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     supportsStreamUsage: false,
     verifiedForAgentRuntime: false,
   },
+  'zhipu-coding': {
+    protocol: 'anthropic-messages',
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+      pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
+    },
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: false,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: true,
+  },
+  'zhipu-coding-team': {
+    protocol: 'anthropic-messages',
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+      pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
+    },
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: false,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: true,
+  },
   minimax: {
     protocol: 'anthropic-messages',
     runtimes: ['claude', 'pi', 'proma'],
@@ -192,12 +245,84 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     supportsStreamUsage: false,
     verifiedForAgentRuntime: false,
   },
+  'ark-coding-plan': {
+    protocol: 'anthropic-messages',
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+      pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
+    },
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: false,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: true,
+  },
   qwen: {
     protocol: 'openai-chat',
     runtimes: ['proma', 'pi', 'ai-sdk'],
     supportsToolCalling: true,
     supportsImages: true,
     supportsStreamUsage: false,
+    verifiedForAgentRuntime: false,
+  },
+  'qwen-anthropic': {
+    protocol: 'anthropic-messages',
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+      pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
+    },
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: true,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: false,
+  },
+  'qwen-token-plan': {
+    protocol: 'anthropic-messages',
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+      pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
+    },
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: false,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: false,
+  },
+  xiaomi: {
+    protocol: 'anthropic-messages',
+    runtimeProtocols: {
+      claude: 'anthropic-messages',
+      proma: 'openai-chat',
+      pi: 'anthropic-messages',
+      'ai-sdk': 'openai-chat',
+    },
+    runtimes: ['claude', 'proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: false,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: false,
+  },
+  xai: {
+    protocol: 'openai-chat',
+    runtimes: ['proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: true,
+    supportsStreamUsage: true,
+    verifiedForAgentRuntime: false,
+  },
+  'openai-responses': {
+    protocol: 'openai-chat',
+    runtimes: ['proma', 'pi', 'ai-sdk'],
+    supportsToolCalling: true,
+    supportsImages: true,
+    supportsStreamUsage: true,
     verifiedForAgentRuntime: false,
   },
   custom: {

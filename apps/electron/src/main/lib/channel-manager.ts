@@ -309,13 +309,21 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
       case 'deepseek':
       case 'kimi-api':
       case 'kimi-coding':
+      case 'zhipu-coding':
+      case 'zhipu-coding-team':
       case 'minimax':
+      case 'ark-coding-plan':
+      case 'qwen-anthropic':
+      case 'qwen-token-plan':
+      case 'xiaomi':
         return await testAnthropicCompatible(channel.baseUrl, apiKey, proxyUrl, channel.provider)
       case 'openai':
+      case 'openai-responses':
       case 'deepseek-openai':
       case 'zhipu':
       case 'doubao':
       case 'qwen':
+      case 'xai':
       case 'custom':
         return await testOpenAICompatible(channel.baseUrl, apiKey, proxyUrl)
       case 'google':
@@ -469,13 +477,21 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
       case 'deepseek':
       case 'kimi-api':
       case 'kimi-coding':
+      case 'zhipu-coding':
+      case 'zhipu-coding-team':
       case 'minimax':
+      case 'ark-coding-plan':
+      case 'qwen-anthropic':
+      case 'qwen-token-plan':
+      case 'xiaomi':
         return await testAnthropicCompatible(input.baseUrl, input.apiKey, proxyUrl, input.provider)
       case 'openai':
+      case 'openai-responses':
       case 'deepseek-openai':
       case 'zhipu':
       case 'doubao':
       case 'qwen':
+      case 'xai':
       case 'custom':
         return await testOpenAICompatible(input.baseUrl, input.apiKey, proxyUrl)
       case 'google':
@@ -506,13 +522,21 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
       case 'deepseek':
       case 'kimi-api':
       case 'kimi-coding':
+      case 'zhipu-coding':
+      case 'zhipu-coding-team':
       case 'minimax':
+      case 'ark-coding-plan':
+      case 'qwen-anthropic':
+      case 'qwen-token-plan':
+      case 'xiaomi':
         return await fetchAnthropicCompatibleModels(input.baseUrl, input.apiKey, proxyUrl, input.provider)
       case 'openai':
+      case 'openai-responses':
       case 'deepseek-openai':
       case 'zhipu':
       case 'doubao':
       case 'qwen':
+      case 'xai':
       case 'custom':
         return await fetchOpenAICompatibleModels(input.baseUrl, input.apiKey, proxyUrl)
       case 'google':
