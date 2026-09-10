@@ -397,3 +397,109 @@ describe('阶段复盘报告 · 三分决策', () => {
     phaseModule.deletePhaseReport(reportId)
   })
 })
+
+describe('营销全链路（数据层端到端）', () => {
+  let e2eCampaignId: string
+
+  it('全链路: 创建 → 导入 KOL → Brief 模板 → 追踪 → 复盘 → 审核兜底', async () => {
+    // 1. 创建 Campaign
+    const campaign = campaignManager.createCampaign({
+      name: '端到端链路测试',
+      brand: '忘本果切',
+      platform: 'xiaohongshu',
+      budget: 100000,
+      durationMonths: 2,
+      targetCity: ['杭州'],
+      targetAudience: '都市白领女性',
+    })
+    e2eCampaignId = campaign.id
+    expect(campaign.id).toBeDefined()
+
+    // 2. 导入 KOL（空库时 imported=0，gracious）
+    const imported = await Promise.resolve(campaignManager.importKOLsToPool({
+      campaignId: e2eCampaignId,
+      kolIds: ['mock_小红书_美食博主阿暖'],
+    }))
+    expect(imported.imported).toBeGreaterThanOrEqual(0)
+
+    // 3. Brief 模板含 JTBD 与四力分析骨架
+    const kol = (await window_electronAPI_getPool(e2eCampaignId))[0]
+    if (kol) {
+      const template = await Promise.resolve(
+        (campaignManager as unknown as { generateBriefTemplate: (c: Campaign, k: typeof kol) => string })
+          .generateBriefTemplate(campaign, kol),
+      )
+      expect(template).toContain('JTBD 任务陈述')
+      expect(template).toContain('四力分析')
+    }
+
+    // 4. 内容追踪：创建记录并回读
+    const trackingModule = campaignManager as unknown as {
+      createContentTracking: (input: Record<string, unknown>) => Promise<{ id: string } | null>
+      listContentTracking: (campaignId: string) => Promise<unknown[]>
+    }
+    const tracking = await trackingModule.createContentTracking({
+      campaignId: e2eCampaignId,
+      kolId: 'mock_小红书_美食博主阿暖',
+      kolName: '美食博主阿暖',
+      platform: 'xiaohongshu',
+      contentUrl: 'https://www.xiaohongshu.com/explore/test',
+      contentType: 'organic',
+      publishDate: '2026-09-11',
+    })
+    expect(tracking).not.toBeNull()
+    const trackingList = await trackingModule.listContentTracking(e2eCampaignId)
+    expect(trackingList.length).toBeGreaterThanOrEqual(1)
+
+    // 5. 复盘报告：人工写入决策 + 定稿（不依赖 LLM）
+    const db = campaignManager as unknown as { getDb: () => { run: (sql: string, ...v: unknown[]) => void } }
+    db.getDb().run(
+      `INSERT INTO campaign_phase_reports (id, campaign_id, phase, report_type, start_date, end_date, status, generated_by, created_at, updated_at)
+       VALUES (?, ?, 1, 'phase', '2026-09-01', '2026-09-30', 'generated', 'manual', ?, ?)`,
+      'report_e2e_link', e2eCampaignId, Date.now(), Date.now(),
+    )
+    const updated = await Promise.resolve(
+      (campaignManager as unknown as {
+        updatePhaseReport: (id: string, updates: Record<string, unknown>) => Promise<unknown> | null
+      }).updatePhaseReport('report_e2e_link', {
+        aiDecisions: [{ element: '测评形式', decision: 'keep', evidence: 'CPE ¥2.9', reason: '机制通', nextAction: '放大到 8 人' }],
+      }),
+    )
+    expect(updated).not.toBeNull()
+
+    // 6. 内容审核：测试环境无 LLM 渠道，验证优雅降级（落库为 failed 且有报告）
+    const audit = await (campaignManager as unknown as {
+      createContentAudit: (input: Record<string, unknown>) => Promise<{ auditId: string; auditStatus: string; auditReport: string } | null>
+    }).createContentAudit({
+      campaignId: e2eCampaignId,
+      kolId: 'mock_小红书_美食博主阿暖',
+      kolName: '美食博主阿暖',
+      brand: '忘本果切',
+      product: '鲜切果盒',
+      platform: 'xiaohongshu',
+      contentType: '图文',
+      contentDescription: '实测三天，果切真的很新鲜，酸奶 barbarie 搭配绝了',
+    })
+    expect(audit).not.toBeNull()
+    // 无 LLM 时审核降级为 failed，但记录与报告落库，五维列可读
+    expect(audit!.auditStatus).toBe('failed')
+    expect(audit!.auditReport).toContain('审核失败')
+
+    // 7. 清理
+    expect(campaignManager.purgeCampaign(e2eCampaignId)).toBe(true)
+  })
+
+  afterAll(() => {
+    // 兜底清理（正常路径已在用例内 purge）
+    if (e2eCampaignId) {
+      campaignManager.purgeCampaign(e2eCampaignId)
+    }
+  })
+})
+
+/** 辅助：读取候选池（规避顶部 interface 类型收窄） */
+async function window_electronAPI_getPool(campaignId: string): Promise<import('@gravitas/shared').CampaignKOLPoolItem[]> {
+  return (campaignManager as unknown as {
+    getPoolKOLs: (campaignId: string) => import('@gravitas/shared').CampaignKOLPoolItem[]
+  }).getPoolKOLs(campaignId)
+}

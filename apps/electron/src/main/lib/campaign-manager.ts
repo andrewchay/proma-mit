@@ -18,6 +18,7 @@ import { createAgentWorkspace, listAgentWorkspaces, deleteAgentWorkspace } from 
 import { getKOLById, computeKOLScores, recalculateAllScores, type KOLRecord } from './marketing/ma-tools/kol-data-service'
 export { recalculateAllScores }
 import { runContentAudit } from './marketing/ma-tools/content-audit'
+import { evaluateWithRules, determineStatus } from './marketing/content-audit-scores'
 import type { Campaign, CampaignBuildLog, AddCampaignBuildLogInput, CampaignCreativePlan, CampaignPhasePlan, CreateCampaignInput, KOLListItem } from '@gravitas/shared'
 
 // =====================================================================
@@ -689,6 +690,35 @@ function openKolDb(): Database {
   kolDbInstance.run(`CREATE INDEX IF NOT EXISTS idx_kols_name ON kols(name)`)
   kolDbInstance.run(`CREATE INDEX IF NOT EXISTS idx_kols_source ON kols(source)`)
   kolDbInstance.run(`CREATE INDEX IF NOT EXISTS idx_kols_overall_score ON kols(overall_score DESC)`)
+
+  // content_audits 表由 kol-data-service 初始化；此处幂等兜底，
+  // 保证 campaign-manager 先于 kol-data-service 打开该库时审核链路可用。
+  kolDbInstance.run(`
+    CREATE TABLE IF NOT EXISTS content_audits (
+      audit_id TEXT PRIMARY KEY,
+      campaign_id TEXT,
+      kol_id TEXT NOT NULL,
+      content_url TEXT,
+      platform TEXT,
+      audit_status TEXT DEFAULT 'pending',
+      compliance_score REAL,
+      brand_alignment_score REAL,
+      quality_score REAL,
+      brand_image_score REAL DEFAULT 0,
+      data_verifiability_score REAL DEFAULT 0,
+      overall_score REAL DEFAULT 0,
+      audit_report TEXT,
+      auditor TEXT DEFAULT 'ai',
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+      updated_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    )
+  `)
+  const auditCols = kolDbInstance.query(`PRAGMA table_info(content_audits)`).all() as Array<{ name: string }>
+  for (const column of ['brand_image_score', 'data_verifiability_score', 'overall_score']) {
+    if (!auditCols.some((item) => item.name === column)) {
+      kolDbInstance.run(`ALTER TABLE content_audits ADD COLUMN ${column} REAL DEFAULT 0`)
+    }
+  }
 
   // 统计 KOL 数量
   const countRow = kolDbInstance.query('SELECT COUNT(*) as total FROM kols').get() as { total: number } | null
@@ -2024,7 +2054,7 @@ function generateAuditId(): string {
 
 /** 查询 Campaign 的审核记录 */
 export function listContentAudits(campaignId: string): import('@gravitas/shared').ContentAudit[] {
-  const db = getDb()
+  const db = getKolDb()
   const rows = db.query(
     `SELECT * FROM content_audits WHERE campaign_id = ? ORDER BY created_at DESC`
   ).all(campaignId) as Record<string, unknown>[]
@@ -2052,7 +2082,7 @@ export function listContentAudits(campaignId: string): import('@gravitas/shared'
 
 /** 获取单个审核记录 */
 export function getContentAudit(auditId: string): import('@gravitas/shared').ContentAudit | null {
-  const db = getDb()
+  const db = getKolDb()
   const row = db.query('SELECT * FROM content_audits WHERE audit_id = ?').get(auditId) as Record<string, unknown> | null
   if (!row) return null
 
@@ -2081,7 +2111,7 @@ export function getContentAudit(auditId: string): import('@gravitas/shared').Con
 export async function createContentAudit(
   input: import('@gravitas/shared').CreateContentAuditInput
 ): Promise<import('@gravitas/shared').ContentAudit | null> {
-  const db = getDb()
+  const db = getKolDb()
   const auditId = generateAuditId()
   const now = Date.now()
 
@@ -2122,8 +2152,20 @@ export async function createContentAudit(
     return getContentAudit(auditId)
   }
 
-  // 判定最终状态
-  const finalStatus: 'passed' | 'failed' = (auditResult.overallScore ?? 0) >= 60 ? 'passed' : 'failed'
+  // 五维合成：LLM 产出的三维分数 + 本地规则补算品牌形象/数据可验证性，
+  // 总分按奥格威权重（20/25/25/20/10）重新加权，替代三维均值。
+  const ruleScores = evaluateWithRules(input)
+  const complianceScore = auditResult.complianceScore ?? ruleScores.complianceScore
+  const brandAlignmentScore = auditResult.brandAlignmentScore ?? ruleScores.brandAlignmentScore
+  const qualityScore = auditResult.qualityScore ?? ruleScores.qualityScore
+  const overallScore = Math.round(
+    complianceScore * 0.20 +
+    brandAlignmentScore * 0.25 +
+    qualityScore * 0.25 +
+    ruleScores.brandImageScore * 0.20 +
+    ruleScores.dataVerifiabilityScore * 0.10
+  )
+  const finalStatus = determineStatus(overallScore)
 
   // 更新审核结果
   db.run(
@@ -2132,12 +2174,12 @@ export async function createContentAudit(
       brand_image_score = ?, data_verifiability_score = ?, overall_score = ?, audit_report = ?, updated_at = ?
      WHERE audit_id = ?`,
     finalStatus,
-    auditResult.complianceScore ?? 0,
-    auditResult.brandAlignmentScore ?? 0,
-    auditResult.qualityScore ?? 0,
-    auditResult.brandImageScore ?? 0,
-    auditResult.dataVerifiabilityScore ?? 0,
-    auditResult.overallScore ?? 0,
+    complianceScore,
+    brandAlignmentScore,
+    qualityScore,
+    ruleScores.brandImageScore,
+    ruleScores.dataVerifiabilityScore,
+    overallScore,
     auditResult.report ?? '',
     Date.now(),
     auditId,
@@ -2151,7 +2193,7 @@ export function updateContentAuditStatus(
   auditId: string,
   status: 'pending' | 'reviewing' | 'passed' | 'failed'
 ): boolean {
-  const db = getDb()
+  const db = getKolDb()
   const result = db.run(
     `UPDATE content_audits SET audit_status = ?, updated_at = ? WHERE audit_id = ?`,
     status,
