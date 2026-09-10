@@ -305,3 +305,95 @@ describe('Campaign 数据层集成测试', () => {
     }
   })
 })
+
+describe('阶段复盘报告 · 三分决策', () => {
+  let testCampaignId: string
+
+  beforeAll(async () => {
+    const campaign = campaignManager.createCampaign({
+      name: '复盘决策测试 Campaign',
+      brand: 'VONBON 甄果',
+      platform: 'xiaohongshu',
+      budget: 50000,
+      durationMonths: 1,
+      targetCity: ['上海'],
+      targetAudience: '测试人群',
+    })
+    testCampaignId = campaign.id
+  })
+
+  interface PhaseReportModule {
+    getPhaseReport: (id: string) => import('@gravitas/shared').CampaignPhaseReport | null
+    updatePhaseReport: (
+      id: string,
+      updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiDecisions' | 'status'>>
+    ) => import('@gravitas/shared').CampaignPhaseReport | null
+    deletePhaseReport: (id: string) => boolean
+  }
+  let phaseModule: PhaseReportModule
+  let reportId: string
+
+  const decisions: import('@gravitas/shared').PhaseDecision[] = [
+    {
+      element: '桌面对决',
+      decision: 'keep',
+      evidence: '曝光 61,739 全场最高 · CPE ¥3.47 全场最低',
+      reason: '场景代入感强，用户愿意停留和讨论',
+      nextAction: '下一批主推，人数从 6 扩到 8',
+    },
+    {
+      element: '穿搭撞色',
+      decision: 'stop',
+      evidence: '曝光 2,380 · CPE ¥3.86 偏高',
+      reason: '数据差且投入产出比不合理',
+      nextAction: '不再追加',
+    },
+    {
+      element: 'plog 拼图',
+      decision: 'start',
+      evidence: '互动率 2.74% / 收藏率 0.73% 四项最优，但样本仅 2 人',
+      reason: '样本不足不作结论，方向值得小规模再验证',
+      nextAction: '下一批分配 4 人小规模验证',
+    },
+  ]
+
+  beforeAll(async () => {
+    phaseModule = (await import('../campaign-manager')) as unknown as PhaseReportModule
+  })
+
+  it('Slice A: 人工写入的三分决策总表可落库并回读', () => {
+    // 直接经 updatePhaseReport 写入（generatePhaseReport 的 LLM 产出同列存储）
+    const db = campaignManager as unknown as { getDb: () => { run: (sql: string, ...v: unknown[]) => void } }
+    // 用 INSERT 造一条最小报告行，避免依赖 LLM
+    db.getDb().run(
+      `INSERT INTO campaign_phase_reports (id, campaign_id, phase, report_type, start_date, end_date, status, generated_by, created_at, updated_at)
+       VALUES (?, ?, 1, 'phase', '2026-07-01', '2026-07-31', 'generated', 'manual', ?, ?)`,
+      'report_test_decision', testCampaignId, Date.now(), Date.now()
+    )
+    reportId = 'report_test_decision'
+
+    const updated = phaseModule.updatePhaseReport(reportId, { aiDecisions: decisions })
+    expect(updated).not.toBeNull()
+    expect(updated!.aiDecisions).toHaveLength(3)
+  })
+
+  it('Slice B: 回读报告时三分决策结构完整', () => {
+    const report = phaseModule.getPhaseReport(reportId)
+    expect(report).not.toBeNull()
+    expect(report!.aiDecisions).toEqual(decisions)
+    expect(report!.aiDecisions[0]!.decision).toBe('keep')
+    expect(report!.aiDecisions[1]!.decision).toBe('stop')
+    expect(report!.aiDecisions[2]!.decision).toBe('start')
+    expect(report!.aiDecisions[0]!.evidence).toContain('CPE ¥3.47')
+  })
+
+  it('Slice C: 无决策的旧报告回读 aiDecisions 为空数组', () => {
+    phaseModule.updatePhaseReport(reportId, { aiDecisions: [] })
+    const report = phaseModule.getPhaseReport(reportId)
+    expect(report!.aiDecisions).toEqual([])
+  })
+
+  afterAll(() => {
+    phaseModule.deletePhaseReport(reportId)
+  })
+})

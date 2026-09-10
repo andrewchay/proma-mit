@@ -834,6 +834,20 @@ export interface CreateBenchmarkInput {
 
 // ===== 阶段复盘报告 =====
 
+/** 复盘三分决策（保持放大 / 停止 / 新开始） */
+export interface PhaseDecision {
+  /** 决策对象：内容格式 / 视觉风格 / 达人 / 关键词埋点 / 报备方式 / 出价 / 人群 / 素材等 */
+  element: string
+  /** keep = 保持放大；stop = 停止；start = 新开始 */
+  decision: 'keep' | 'stop' | 'start'
+  /** 证据数字（如"曝光 6.2 万 · CPE ¥3.47 全场最低"） */
+  evidence: string
+  /** 机制理由（一句话讲清为什么） */
+  reason: string
+  /** 下批动作（怎么放大 / 为什么停 / 新假设怎么验证） */
+  nextAction: string
+}
+
 /** 阶段复盘报告 */
 export interface CampaignPhaseReport {
   id: string
@@ -864,6 +878,8 @@ export interface CampaignPhaseReport {
   engagementTargetAchieved: boolean
   aiSummary: string
   aiFindings: string[]
+  /** 三分决策总表（保持放大 / 停止 / 新开始） */
+  aiDecisions: PhaseDecision[]
   aiRecommendations: string[]
   aiScaleAdvice: string
   status: 'draft' | 'generated' | 'finalized'

@@ -426,6 +426,7 @@ function openCampaignDb(): Database {
       ai_summary TEXT,
       ai_findings TEXT,
       ai_recommendations TEXT,
+      ai_decisions TEXT,
       ai_scale_advice TEXT,
       status TEXT DEFAULT 'draft',
       generated_by TEXT DEFAULT 'ai',
@@ -437,6 +438,19 @@ function openCampaignDb(): Database {
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_phase_reports_phase ON campaign_phase_reports(phase)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_phase_reports_type ON campaign_phase_reports(report_type)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_phase_reports_status ON campaign_phase_reports(status)`)
+
+  // 老库补列：三分决策总表（保持放大 / 停止 / 新开始）
+  const hasPhaseReportCol = (col: string): boolean => {
+    try {
+      const rows = dbInstance!.query(`PRAGMA table_info(campaign_phase_reports)`).all() as Array<{ name: string }>
+      return rows.some((r) => r.name === col)
+    } catch {
+      return false
+    }
+  }
+  if (!hasPhaseReportCol('ai_decisions')) {
+    dbInstance.run(`ALTER TABLE campaign_phase_reports ADD COLUMN ai_decisions TEXT`)
+  }
 
   // AB 测试表（新增 — Slice 3）
   dbInstance.run(`
@@ -2698,6 +2712,7 @@ function rowToPhaseReport(row: Record<string, unknown>): import('@gravitas/share
     engagementTargetAchieved: Boolean(row.engagement_target_achieved),
     aiSummary: String(row.ai_summary ?? ''),
     aiFindings: row.ai_findings ? JSON.parse(String(row.ai_findings)) : [],
+    aiDecisions: row.ai_decisions ? JSON.parse(String(row.ai_decisions)) : [],
     aiRecommendations: row.ai_recommendations ? JSON.parse(String(row.ai_recommendations)) : [],
     aiScaleAdvice: String(row.ai_scale_advice ?? ''),
     status: String(row.status ?? 'draft') as 'draft' | 'generated' | 'finalized',
@@ -2750,9 +2765,10 @@ export async function generatePhaseReport(
   const cpmTarget = input.cpmTarget ?? 0
   const engagementTarget = input.engagementTarget ?? 0
 
-  // 3. AI 分析（Slice 2）
+  // 3. AI 分析（Slice 2 · 三分决策骨架：保持放大 / 停止 / 新开始）
   let aiSummary = ''
   let aiFindings: string[] = []
+  let aiDecisions: import('@gravitas/shared').PhaseDecision[] = []
   let aiRecommendations: string[] = []
   let aiScaleAdvice = ''
 
@@ -2761,22 +2777,42 @@ export async function generatePhaseReport(
       const { completePrompt, extractJSON } = await import('./marketing/ma-tools/llm-service')
 
       const systemPrompt = `你是一位资深社交媒体投放复盘专家，曾为多个品牌管理过百万级预算的 KOL 投放项目。
+你的复盘立场：
+1. 复盘回答实验前的问题，不是罗列数据；数据只是证据。
+2. 每个结论必须落到决策——保持放大 / 停止 / 新开始，不允许"继续观察"这种模糊状态。
+3. 敢写"样本不足，不作结论"：小样本假象、大曝光稀释均值都要点破，宁可少一个结论，不要一个假结论。
+4. 风险判断优先于成本最优：数据赢但合规/限流/内容可控性不可接受的，也要判停止。
 
 请基于投放数据生成结构化复盘分析，输出严格 JSON 格式：
 {
   "summary": "整体表现总结（100字以内）",
-  "findings": ["发现1", "发现2", "发现3"],
-  "recommendations": ["建议1", "建议2", "建议3"],
+  "findings": ["共性规律1（带正反例数字，核心洞察优先从反例来）", "共性规律2", "共性规律3"],
+  "decisions": [
+    {
+      "element": "决策对象（内容格式/视觉风格/达人/关键词埋点/报备方式/出价/人群/素材等）",
+      "decision": "keep | stop | start",
+      "evidence": "证据数字（如：曝光 6.2 万 · CPE ¥3.47 全场最低）",
+      "reason": "机制理由（一句话讲清用户行为或成本逻辑）",
+      "nextAction": "下批动作（怎么放大 / 为什么停 / 新假设怎么小规模验证）"
+    }
+  ],
+  "recommendations": ["下批指示1（动作+标准，可直接执行）", "下批指示2", "下批指示3"],
   "scaleAdvice": "放量建议（200字以内，包含具体预算分配和达人组合建议）"
 }
+
+决策规则：
+- decisions 必须覆盖本阶段测试过的所有元素（内容格式、视觉风格、达人个体、关键词埋点、报备方式、投流出价/人群/素材），逐项判定
+- keep（保持放大）：数据达标 + 机制讲得通，nextAction 写清怎么放大；"保留打磨"也归 keep，但要写打磨什么
+- stop（停止）：数据差、或数据赢但风险不可接受，evidence 里要点破
+- start（新开始）：本阶段发现的新假设，nextAction 写清假设 + 验证方式 + 小规模预算；三类都必须非空
+- 每项判定必须带证据数字 + 一句机制理由，缺一不可
 
 分析维度：
 1. 数据表现与行业基准对比（CPM/CPE/互动率是否达标）
 2. 自然流 vs 投流效果对比
-3. 内容形式和内容类型的表现差异
-4. 达人层级/平台的表现差异
-5. 下阶段优化方向和具体策略
-6. 放量建议（预算分配、达人组合、内容策略）`
+3. 内容形式和内容类型的表现差异（注意样本量，单人/双人组的高互动率不作结论）
+4. 达人层级/平台的表现差异（正反例对比，找出决定性因素如"粉丝画像 × 内容方向匹配"）
+5. 下阶段优化方向和具体策略`
 
       const userPrompt = `请分析以下第 ${input.phase} 阶段投放数据：
 
@@ -2811,7 +2847,7 @@ ${rows.slice(0, 10).map((row) => {
   return `- ${name} (${platform}): 曝光 ${exp.toLocaleString()}, 点赞 ${likes.toLocaleString()}, 互动率 ${er.toFixed(2)}%, 等级 ${grade}`
 }).join('\n')}` : ''}
 
-请生成结构化复盘分析。`
+请生成结构化复盘分析（含三分决策总表）。`
 
       const llmResult = await completePrompt(userPrompt, systemPrompt, {
         jsonMode: true,
@@ -2824,6 +2860,19 @@ ${rows.slice(0, 10).map((row) => {
           const parsed = extractJSON(llmResult.text) as Record<string, unknown>
           aiSummary = String(parsed.summary ?? '')
           aiFindings = Array.isArray(parsed.findings) ? parsed.findings.map(String) : []
+          // 三分决策解析：字段缺失或结构不合法时容错为空数组，不阻塞报告落库
+          if (Array.isArray(parsed.decisions)) {
+            const validDecisions = ['keep', 'stop', 'start']
+            aiDecisions = (parsed.decisions as Record<string, unknown>[])
+              .filter((d) => d && typeof d === 'object' && validDecisions.includes(String(d.decision)))
+              .map((d) => ({
+                element: String(d.element ?? ''),
+                decision: String(d.decision) as 'keep' | 'stop' | 'start',
+                evidence: String(d.evidence ?? ''),
+                reason: String(d.reason ?? ''),
+                nextAction: String(d.nextAction ?? ''),
+              }))
+          }
           aiRecommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations.map(String) : []
           aiScaleAdvice = String(parsed.scaleAdvice ?? '')
         } catch {
@@ -2846,9 +2895,9 @@ ${rows.slice(0, 10).map((row) => {
       total_exposure, total_views, total_likes, total_saves, total_comments, total_shares,
       avg_cpm, avg_cpe, avg_ctr, avg_engagement_rate, roi_estimate,
       cpm_target, cpm_target_achieved, engagement_target, engagement_target_achieved,
-      ai_summary, ai_findings, ai_recommendations, ai_scale_advice,
+      ai_summary, ai_findings, ai_recommendations, ai_decisions, ai_scale_advice,
       status, generated_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.campaignId,
     input.phase,
@@ -2878,6 +2927,7 @@ ${rows.slice(0, 10).map((row) => {
     aiSummary,
     JSON.stringify(aiFindings),
     JSON.stringify(aiRecommendations),
+    JSON.stringify(aiDecisions),
     aiScaleAdvice,
     'generated',
     'ai',
@@ -2907,7 +2957,7 @@ export function getPhaseReport(id: string): import('@gravitas/shared').CampaignP
 /** 更新复盘报告（人工编辑） */
 export function updatePhaseReport(
   id: string,
-  updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>
+  updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiDecisions' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>
 ): import('@gravitas/shared').CampaignPhaseReport | null {
   const db = getDb()
   const report = getPhaseReport(id)
@@ -2918,6 +2968,7 @@ export function updatePhaseReport(
 
   if (updates.aiSummary !== undefined) { fields.push('ai_summary = ?'); values.push(updates.aiSummary) }
   if (updates.aiFindings !== undefined) { fields.push('ai_findings = ?'); values.push(JSON.stringify(updates.aiFindings)) }
+  if (updates.aiDecisions !== undefined) { fields.push('ai_decisions = ?'); values.push(JSON.stringify(updates.aiDecisions)) }
   if (updates.aiRecommendations !== undefined) { fields.push('ai_recommendations = ?'); values.push(JSON.stringify(updates.aiRecommendations)) }
   if (updates.aiScaleAdvice !== undefined) { fields.push('ai_scale_advice = ?'); values.push(updates.aiScaleAdvice) }
   if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
