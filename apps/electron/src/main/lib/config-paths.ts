@@ -134,6 +134,32 @@ export function getTokenUsageIndexPath(): string {
 }
 
 /**
+ * 获取 Agent 运行 span 目录路径
+ *
+ * @returns ~/.proma-mit/agent-spans/
+ */
+export function getAgentSpansDir(): string {
+  const dir = join(getConfigDir(), 'agent-spans')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建 Agent span 目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取指定时间所在月份的 Agent span 文件路径
+ *
+ * @param ts 毫秒时间戳
+ * @returns ~/.proma-mit/agent-spans/{YYYY-MM}.jsonl
+ */
+export function getAgentSpanMonthPath(ts: number): string {
+  const d = new Date(ts)
+  const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  return join(getAgentSpansDir(), `${month}.jsonl`)
+}
+
+/**
  * 获取 Goal 状态目录路径
  *
  * @returns ~/.proma-mit/goals/
