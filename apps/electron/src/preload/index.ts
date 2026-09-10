@@ -378,8 +378,17 @@ export interface ElectronAPI {
   /** 从供应商拉取可用模型列表（直接传入凭证，无需已保存渠道） */
   fetchModels: (input: FetchModelsInput) => Promise<FetchModelsResult>
 
-  /** 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口） */
+  /** 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding / GitHub Copilot 窗口） */
   getChannelPlanQuota: (channelId: string) => Promise<import('@gravitas/shared').ChannelPlanQuotaResult>
+
+  /** GitHub Copilot 设备流 OAuth 登录（返回凭据 JSON 字符串，存入 Channel.apiKey） */
+  loginGithubCopilot: (onDeviceCode?: (deviceCode: import('@gravitas/shared').GithubCopilotOAuthDeviceCode) => void) => Promise<string>
+
+  /** 取消进行中的 GitHub Copilot OAuth 登录 */
+  cancelGithubCopilotLogin: () => Promise<void>
+
+  /** 订阅 GitHub Copilot 登录设备码推送（主进程 webContents.send） */
+  onGithubCopilotDeviceCode: (listener: (deviceCode: import('@gravitas/shared').GithubCopilotOAuthDeviceCode) => void) => () => void
 
   // ===== 对话管理相关 =====
 
@@ -1824,6 +1833,24 @@ const electronAPI: ElectronAPI = {
 
   getChannelPlanQuota: (channelId: string) => {
     return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.GET_PLAN_QUOTA, channelId)
+  },
+
+  loginGithubCopilot: () => {
+    return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT)
+  },
+
+  cancelGithubCopilotLogin: () => {
+    return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.CANCEL_GITHUB_COPILOT_LOGIN)
+  },
+
+  onGithubCopilotDeviceCode: (listener: (deviceCode: import('@gravitas/shared').GithubCopilotOAuthDeviceCode) => void) => {
+    const handler = (_event: unknown, payload: { type: string; deviceCode: import('@gravitas/shared').GithubCopilotOAuthDeviceCode }) => {
+      if (payload?.type === 'device_code') listener(payload.deviceCode)
+    }
+    ipcRenderer.on(CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT, handler as never)
+    return () => {
+      ipcRenderer.removeListener(CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT, handler as never)
+    }
   },
 
   // 对话管理

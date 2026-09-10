@@ -38,6 +38,7 @@ import type {
   Channel,
   ChannelCreateInput,
   ChannelModel,
+  ChannelPlanQuotaResult,
   ChannelTestResult,
   FetchModelsResult,
   ProviderType,
@@ -399,6 +400,63 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     }
   }
 
+  // ===== GitHub Copilot 设备流 OAuth 登录闭环 =====
+  const [copilotLoggingIn, setCopilotLoggingIn] = React.useState(false)
+  const [copilotDeviceCode, setCopilotDeviceCode] = React.useState<{ userCode: string; verificationUri: string } | null>(null)
+  const [copilotQuota, setCopilotQuota] = React.useState<ChannelPlanQuotaResult | null>(null)
+
+  /** 订阅设备码推送（主进程 webContents.send，contextBridge 不允许传函数） */
+  React.useEffect(() => {
+    const unsubscribe = window.electronAPI.onGithubCopilotDeviceCode?.((deviceCode) => {
+      setCopilotDeviceCode(deviceCode)
+    })
+    return unsubscribe
+  }, [])
+
+  /** GitHub Copilot 登录：设备流 → 凭据 JSON 自动写入 apiKey → 测试 + 额度查询 */
+  const handleCopilotLogin = async (): Promise<void> => {
+    setCopilotLoggingIn(true)
+    setCopilotDeviceCode(null)
+    setTestResult(null)
+    try {
+      const secret = await window.electronAPI.loginGithubCopilot()
+      // 凭据 JSON 写入表单 apiKey（创建模式随提交保存；编辑模式 auto-save）
+      setApiKey(secret)
+      setCopilotDeviceCode(null)
+      // 自动拉取订阅允许的模型列表
+      try {
+        const fetched = await window.electronAPI.fetchModels({
+          provider: 'github-copilot',
+          baseUrl: '',
+          apiKey: secret,
+        })
+        if (fetched.success && fetched.models.length > 0) {
+          setModels(fetched.models)
+        }
+      } catch (error) {
+        console.error('[模型配置表单] Copilot 模型列表拉取失败:', error)
+      }
+      toast.success('GitHub Copilot 登录成功')
+      // 保存凭据并查询额度
+      if (isEdit && channel) {
+        try {
+          const savedChannel = await window.electronAPI.updateChannel(channel.id, {
+            name, provider, baseUrl, apiKey: secret, models, enabled,
+          })
+          setCopilotQuota(await window.electronAPI.getChannelPlanQuota(savedChannel.id))
+        } catch (error) {
+          console.error('[模型配置表单] Copilot 凭据保存/额度查询失败:', error)
+        }
+      }
+    } catch (error) {
+      console.error('[模型配置表单] GitHub Copilot 登录失败:', error)
+      const message = error instanceof Error ? error.message : String(error)
+      setTestResult({ success: false, message: `GitHub Copilot 登录失败: ${message}` })
+    } finally {
+      setCopilotLoggingIn(false)
+    }
+  }
+
   /** 执行创建渠道 */
   const doCreate = React.useCallback(async (): Promise<Channel | null> => {
     if (!name.trim() || !apiKey.trim()) return null
@@ -554,22 +612,56 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
           <div className="px-4 py-3 space-y-2">
             <div className="flex items-center justify-between">
               <div className="text-sm font-medium text-foreground">API Key</div>
-              <Button
-                variant="outline"
-                size="sm"
-                type="button"
-                onClick={handleTest}
-                disabled={testing || !apiKey.trim() || !baseUrl.trim()}
-                className="h-7 text-xs"
-              >
-                {testing ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Zap size={12} />
+              <div className="flex items-center gap-2">
+                {provider === 'github-copilot' && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    type="button"
+                    onClick={handleCopilotLogin}
+                    disabled={copilotLoggingIn}
+                    className="h-7 text-xs"
+                  >
+                    {copilotLoggingIn ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Zap size={12} />
+                    )}
+                    <span>{copilotLoggingIn ? '等待授权…' : '登录 GitHub Copilot'}</span>
+                  </Button>
                 )}
-                <span>测试连接</span>
-              </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={handleTest}
+                  disabled={testing || !apiKey.trim() || !baseUrl.trim()}
+                  className="h-7 text-xs"
+                >
+                  {testing ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Zap size={12} />
+                  )}
+                  <span>测试连接</span>
+                </Button>
+              </div>
             </div>
+            {provider === 'github-copilot' && (
+              <p className="text-xs text-muted-foreground">
+                通过 GitHub 设备流授权登录订阅；凭据自动加密保存，无需手动填写 API Key。
+              </p>
+            )}
+            {copilotDeviceCode && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="font-medium">请在浏览器中完成 GitHub 授权</p>
+                <p className="mt-1">设备码：<span className="font-mono font-semibold">{copilotDeviceCode.userCode}</span></p>
+                <p className="mt-1">
+                  授权页面：<span className="font-mono">{copilotDeviceCode.verificationUri}</span>
+                  （已自动打开）
+                </p>
+              </div>
+            )}
             <div className="relative">
               <Input
                 type={showApiKey ? 'text' : 'password'}
@@ -595,6 +687,26 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
               )}>
                 {testResult.success ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
                 <span>{testResult.message}</span>
+              </div>
+            )}
+            {copilotQuota?.supported && (
+              <div className="rounded-md border bg-muted/40 p-3 text-xs">
+                <p className="font-medium text-foreground">GitHub Copilot 订阅额度{copilotQuota.planName ? ` · ${copilotQuota.planName}` : ''}</p>
+                <div className="mt-2 space-y-2">
+                  {copilotQuota.windows.map((window) => (
+                    <div key={window.label}>
+                      <div className="flex items-center justify-between text-muted-foreground">
+                        <span>{window.label}{window.remainingLabel ? `（${window.remainingLabel}）` : ''}</span>
+                        {window.resetAt && <span>重置 {new Date(window.resetAt).toLocaleDateString()}</span>}
+                      </div>
+                      {window.showProgress !== false && (
+                        <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${window.remainingPercent}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

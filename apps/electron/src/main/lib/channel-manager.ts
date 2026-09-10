@@ -31,6 +31,7 @@ import {
 } from '@gravitas/shared'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
+import { queryGithubCopilotPlanQuota } from './github-copilot-plan-quota'
 import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@gravitas/core'
 
 import { appendConfigAudit, redactSensitive } from './config-audit-service'
@@ -1048,6 +1049,9 @@ export async function getChannelPlanQuota(channelId: string): Promise<ChannelPla
     }
     if (channel.provider === 'kimi-coding' || channel.baseUrl.includes('api.kimi.com/coding')) {
       return await queryKimiPlanQuota(apiKey, proxyUrl)
+    }
+    if (channel.provider === 'github-copilot') {
+      return await queryGithubCopilotPlanQuota(apiKey, proxyUrl)
     }
     return createUnsupportedPlanQuota(channel.provider, '当前渠道不支持订阅 Plan 额度查询')
   } catch (error) {

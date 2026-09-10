@@ -638,4 +638,8 @@ export const CHANNEL_IPC_CHANNELS = {
   TEST_DIRECT: 'channel:test-direct',
   /** 查询渠道订阅 Plan 额度 */
   GET_PLAN_QUOTA: 'channel:get-plan-quota',
+  /** GitHub Copilot 设备流 OAuth 登录（返回凭据 JSON） */
+  LOGIN_GITHUB_COPILOT: 'channel:login-github-copilot',
+  /** 取消进行中的 GitHub Copilot OAuth 登录 */
+  CANCEL_GITHUB_COPILOT_LOGIN: 'channel:cancel-github-copilot-login',
 } as const

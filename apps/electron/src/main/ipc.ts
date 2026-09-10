@@ -131,6 +131,12 @@ import {
   getChannelPlanQuota,
 } from './lib/channel-manager'
 import {
+  cancelGithubCopilotOAuthLogin,
+  loginGithubCopilotOAuth,
+} from './lib/github-copilot-oauth-service'
+import type { GithubCopilotOAuthDeviceCode } from '@gravitas/shared'
+import { serializeGithubCopilotCredentials } from '@gravitas/shared'
+import {
   listConversations,
   createConversation,
   getConversationMessages,
@@ -738,13 +744,33 @@ export function registerIpcHandlers(): void {
 
   // ===== 渠道订阅 Plan 额度 =====
 
-  // 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口）
+  // 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding / GitHub Copilot 窗口）
   ipcMain.handle(
     CHANNEL_IPC_CHANNELS.GET_PLAN_QUOTA,
     async (_, channelId: string): Promise<ChannelPlanQuotaResult> => {
       return getChannelPlanQuota(channelId)
     }
   )
+
+  // GitHub Copilot 设备流 OAuth 登录（凭据以 JSON 存入 Channel.apiKey，safeStorage 加密）
+  ipcMain.handle(
+    CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT,
+    async (event): Promise<string> => {
+      // 设备码通过 webContents 事件推送（contextBridge 不允许跨进程传函数）
+      const sender = event.sender
+      const credentials = await loginGithubCopilotOAuth({
+        onDeviceCode: (deviceCode) => {
+          sender.send(CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT, { type: 'device_code', deviceCode })
+        },
+      })
+      return serializeGithubCopilotCredentials(credentials)
+    }
+  )
+
+  // 取消进行中的 GitHub Copilot OAuth 登录
+  ipcMain.handle(CHANNEL_IPC_CHANNELS.CANCEL_GITHUB_COPILOT_LOGIN, () => {
+    cancelGithubCopilotOAuthLogin()
+  })
 
   // ===== 对话管理相关 =====
 
