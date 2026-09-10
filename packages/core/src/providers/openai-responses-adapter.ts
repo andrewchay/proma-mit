@@ -9,6 +9,11 @@
  */
 
 import type { ProviderType } from '@gravitas/shared'
+import {
+  encodeReasoningEffort,
+  normalizeReasoningCapabilityLevel,
+  resolveReasoningProfile,
+} from '@gravitas/shared'
 import type {
   ContinuationMessage,
   ImageAttachmentData,
@@ -254,6 +259,18 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
 
     if (input.tools && input.tools.length > 0) {
       bodyObj.tools = toResponsesTools(input.tools)
+    }
+
+    // 思考强度分级（推理等级矩阵）：Responses API 原生 reasoning.effort
+    if (input.thinkingLevel !== undefined) {
+      const profile = resolveReasoningProfile({ modelId: input.modelId, transport: 'openai-responses' })
+      if (profile) {
+        const level = normalizeReasoningCapabilityLevel(profile, input.thinkingLevel)
+        const effort = encodeReasoningEffort(profile, 'openai-responses', level)
+        if (effort !== null && effort !== undefined) {
+          bodyObj.reasoning = { effort }
+        }
+      }
     }
 
     return {

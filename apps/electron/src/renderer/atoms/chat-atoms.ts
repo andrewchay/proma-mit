@@ -7,7 +7,7 @@
 
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { ConversationMeta, ChatMessage, FileAttachment, ChatToolActivity, Channel } from '@gravitas/shared'
+import type { AgentThinkingLevel, ConversationMeta, ChatMessage, FileAttachment, ChatToolActivity, Channel } from '@gravitas/shared'
 
 /** 全局渠道列表缓存（启动时加载一次，设置变更时刷新） */
 export const channelsAtom = atom<Channel[]>([])
@@ -271,6 +271,9 @@ export const conversationContextLengthAtom = atom<Map<string, ContextLengthValue
 
 /** 每个对话的思考模式 */
 export const conversationThinkingEnabledAtom = atom<Map<string, boolean>>(new Map())
+
+/** 每会话思考强度分级（off/low/medium/high/xhigh）；undefined 表示未分级、沿用布尔开关 */
+export const conversationThinkingLevelAtom = atom<Map<string, AgentThinkingLevel | undefined>>(new Map())
 
 /** 每个对话的并排模式 */
 export const conversationParallelModeAtom = atom<Map<string, boolean>>(new Map())

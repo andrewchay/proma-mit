@@ -17,6 +17,7 @@ export * from './runtime-span'
 
 // 渠道（AI 供应商）相关类型
 export * from './channel'
+export * from './reasoning-profile'
 
 // 代理配置相关类型
 export * from './proxy'

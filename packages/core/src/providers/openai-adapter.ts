@@ -21,6 +21,11 @@ import type {
   ContinuationMessage,
 } from './types.ts'
 import { normalizeBaseUrl } from './url-utils.ts'
+import {
+  encodeReasoningEffort,
+  normalizeReasoningCapabilityLevel,
+  resolveReasoningProfile,
+} from '@gravitas/shared'
 
 /** 已知支持 stream_options.include_usage 的供应商 */
 const STREAM_USAGE_SUPPORTED_PROVIDERS = new Set(['openai', 'deepseek', 'deepseek-openai'])
@@ -231,6 +236,18 @@ export class OpenAIAdapter implements ProviderAdapter {
     // 仅在确认支持的供应商上请求流式 usage，避免其他 OpenAI 兼容端点报未知参数错误
     if (supportsStreamUsage(input.providerType)) {
       bodyObj.stream_options = { include_usage: true }
+    }
+
+    // 思考强度分级（推理等级矩阵）：按 reasoning profile 编码为 reasoning_effort
+    if (input.thinkingLevel !== undefined) {
+      const profile = resolveReasoningProfile({ modelId: input.modelId, transport: 'openai-completions' })
+      if (profile) {
+        const level = normalizeReasoningCapabilityLevel(profile, input.thinkingLevel)
+        const effort = encodeReasoningEffort(profile, 'openai-completions', level)
+        if (effort !== null && effort !== undefined) {
+          bodyObj.reasoning_effort = effort
+        }
+      }
     }
 
     // 工具定义

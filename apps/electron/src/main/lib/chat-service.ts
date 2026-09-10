@@ -372,6 +372,7 @@ export async function sendMessage(
         attachments,
         readImageAttachments: getImageAttachmentData,
         thinkingEnabled,
+        thinkingLevel: input.thinkingLevel,
         tools,
         continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined,
       })
@@ -461,6 +462,7 @@ export async function sendMessage(
         attachments,
         readImageAttachments: getImageAttachmentData,
         thinkingEnabled,
+        thinkingLevel: input.thinkingLevel,
         // 不传 tools，强制模型生成文本回复而非继续调用工具
         continuationMessages,
       })

@@ -35,9 +35,22 @@ import {
   currentMessagesAtom,
 } from '@/atoms/chat-atoms'
 import type { PendingAttachment, QueuedChatMessage } from '@/atoms/chat-atoms'
+import type { AgentThinkingLevel } from '@gravitas/shared'
+
+/** 思考档位显示文案（推理等级矩阵） */
+function thinkingLevelLabel(level: AgentThinkingLevel | undefined, enabled: boolean): string {
+  if (level === undefined) return enabled ? '开（默认强度）' : '关'
+  if (level === 'off') return '关'
+  if (level === 'low') return '低'
+  if (level === 'medium') return '中'
+  if (level === 'high') return '高'
+  if (level === 'xhigh') return '极高'
+  return '极高+'
+}
 import {
   useConversationModel,
   useConversationThinkingEnabled,
+  useConversationThinkingLevel,
 } from '@/hooks/useConversationSettings'
 import { FeishuNotifyToggle } from './FeishuNotifyToggle'
 import { cn } from '@/lib/utils'
@@ -92,6 +105,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
 
   const [selectedModel] = useConversationModel()
   const [thinkingEnabled, setThinkingEnabled] = useConversationThinkingEnabled()
+  const [thinkingLevel, setThinkingLevel] = useConversationThinkingLevel()
   const setPendingAttachments = onSetPendingAttachments
   const [isDragOver, setIsDragOver] = React.useState(false)
   // 优先使用上层传入的真实消息列表；currentMessagesAtom 保留作为回退来源
@@ -316,13 +330,26 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
                 'size-[36px] shrink-0 rounded-full',
                 thinkingEnabled ? 'text-green-500' : 'text-foreground/60 hover:text-foreground'
               )}
-              onClick={() => setThinkingEnabled(!thinkingEnabled)}
+              onClick={() => {
+                // 循环切档：关 → 高 → 极高 → 中 → 低 → 关（推理等级矩阵）
+                const next: AgentThinkingLevel = thinkingLevel === undefined || thinkingLevel === 'off'
+                  ? 'high'
+                  : thinkingLevel === 'high'
+                    ? 'xhigh'
+                    : thinkingLevel === 'xhigh'
+                      ? 'medium'
+                      : thinkingLevel === 'medium'
+                        ? 'low'
+                        : 'off'
+                setThinkingLevel(next)
+                setThinkingEnabled(next !== 'off')
+              }}
             >
               <Brain className="size-5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{thinkingEnabled ? '关闭思考模式' : '开启思考模式'}</p>
+            <p>思考模式：{thinkingLevelLabel(thinkingLevel, thinkingEnabled)}（点击切换档位）</p>
           </TooltipContent>
         </Tooltip>
       ),

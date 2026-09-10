@@ -15,9 +15,11 @@ import {
   conversationModelsAtom,
   conversationContextLengthAtom,
   conversationThinkingEnabledAtom,
+  conversationThinkingLevelAtom,
   conversationParallelModeAtom,
 } from '@/atoms/chat-atoms'
 import type { SelectedModel, ContextLengthValue } from '@/atoms/chat-atoms'
+import type { AgentThinkingLevel } from '@gravitas/shared'
 import {
   selectedPromptIdAtom,
   conversationPromptIdAtom,
@@ -104,6 +106,17 @@ export function useConversationThinkingEnabled(): [boolean, (v: boolean) => void
   const defaultEnabled = useAtomValue(thinkingEnabledAtom)
   const value = useMapValue(conversationThinkingEnabledAtom, conversationId, defaultEnabled)
   const setter = useMapSetter(conversationThinkingEnabledAtom, conversationId)
+  return [value, setter]
+}
+
+/**
+ * 每个对话独立的思考强度分级（推理等级矩阵）。
+ * undefined 表示未分级（沿用布尔开关语义）；主进程按 reasoning profile 编码。
+ */
+export function useConversationThinkingLevel(): [AgentThinkingLevel | undefined, (v: AgentThinkingLevel | undefined) => void] {
+  const conversationId = useConversationId()
+  const value = useMapValue(conversationThinkingLevelAtom, conversationId, undefined)
+  const setter = useMapSetter(conversationThinkingLevelAtom, conversationId)
   return [value, setter]
 }
 

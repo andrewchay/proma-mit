@@ -24,6 +24,11 @@
  */
 
 import type { ProviderType } from '@gravitas/shared'
+import {
+  encodeReasoningEffort,
+  normalizeReasoningCapabilityLevel,
+  resolveReasoningProfile,
+} from '@gravitas/shared'
 import type {
   ProviderAdapter,
   ProviderRequest,
@@ -359,7 +364,24 @@ export class AnthropicAdapter implements ProviderAdapter {
     // - manual-only：发旧版 { type: 'enabled', budget_tokens }
     // - effort-based-max（DeepSeek v4 系列）：{type: 'enabled'} + output_config.effort='max'
     //   DeepSeek v4 默认就开启思考，所以关闭时必须显式 {type: 'disabled'}
-    if (capability.mode === 'effort-based-max') {
+    //
+    // thinkingLevel（推理等级分级）优先：按 reasoning profile 的 effortMap 编码为
+    // output_config.effort（DeepSeek v4 / 订阅制端点）或 adaptive effort。
+    const reasoningProfile = input.thinkingLevel !== undefined
+      ? resolveReasoningProfile({ modelId: input.modelId, transport: 'anthropic-messages' })
+      : undefined
+    if (reasoningProfile && input.thinkingLevel !== undefined) {
+      const level = normalizeReasoningCapabilityLevel(reasoningProfile, input.thinkingLevel)
+      if (level === 'off') {
+        body.thinking = { type: 'disabled' }
+      } else {
+        const effort = encodeReasoningEffort(reasoningProfile, 'anthropic-messages', level)
+        body.thinking = { type: 'enabled' }
+        if (effort !== null && effort !== undefined) {
+          body.output_config = { effort }
+        }
+      }
+    } else if (capability.mode === 'effort-based-max') {
       if (input.thinkingEnabled) {
         body.thinking = { type: 'enabled' }
         body.output_config = { effort: 'max' }
