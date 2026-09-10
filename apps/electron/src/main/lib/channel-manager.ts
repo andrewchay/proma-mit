@@ -32,6 +32,14 @@ import {
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { queryGithubCopilotPlanQuota } from './github-copilot-plan-quota'
+import { parseCodexPlanQuotaResponse } from './codex-plan-quota'
+import { refreshCodexOAuth } from './codex-oauth-service'
+import type { CodexOAuthCredentials } from '@gravitas/shared'
+import {
+  isCodexCredentialExpired,
+  parseCodexCredentials,
+  serializeCodexCredentials,
+} from '@gravitas/shared'
 import { normalizeAnthropicBaseUrl, normalizeBaseUrl, normalizeVersionedAnthropicBaseUrl } from '@gravitas/core'
 
 import { appendConfigAudit, redactSensitive } from './config-audit-service'
@@ -334,6 +342,8 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
         return await testOpenAICompatible(channel.baseUrl, apiKey, proxyUrl)
       case 'github-copilot':
         return testGithubCopilotCredential(apiKey)
+      case 'openai-codex':
+        return testCodexCredential(apiKey)
       case 'google':
         return await testGoogle(channel.baseUrl, apiKey, proxyUrl)
       default:
@@ -504,6 +514,8 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
         return await testOpenAICompatible(input.baseUrl, input.apiKey, proxyUrl)
       case 'github-copilot':
         return testGithubCopilotCredential(input.apiKey)
+      case 'openai-codex':
+        return testCodexCredential(input.apiKey)
       case 'google':
         return await testGoogle(input.baseUrl, input.apiKey, proxyUrl)
       default:
@@ -542,6 +554,73 @@ function testGithubCopilotCredential(secret: string): ChannelTestResult {
     success: true,
     message: `连接成功（${credentials.availableModelIds.length} 个可用模型）`,
   }
+}
+
+/**
+ * ChatGPT (Codex) 渠道连接测试：仅校验凭据完整性。
+ * access token 过期由 resolveCodexOAuthCredentials 在真正调用时自动刷新。
+ */
+function testCodexCredential(secret: string): ChannelTestResult {
+  const credentials = parseCodexCredentials(secret)
+  if (!credentials) {
+    return { success: false, message: 'ChatGPT 登录凭据无效，请重新登录' }
+  }
+  return {
+    success: true,
+    message: isCodexCredentialExpired(credentials)
+      ? '连接成功（token 已临近过期，调用时将自动刷新）'
+      : '连接成功',
+  }
+}
+
+// ===== ChatGPT (Codex) OAuth 凭据解析与自动刷新 =====
+
+/** 同一 Codex 渠道的 refresh 去重（并发调用共享同一次刷新）。 */
+const inflightCodexRefresh = new Map<string, Promise<CodexOAuthCredentials>>()
+
+/**
+ * 条件回写刷新凭据：当前渠道仍是启动时的凭据才更新，
+ * 重新登录后旧会话的快照不再匹配，无法覆盖新账号。
+ */
+function persistCodexCredentials(
+  channelId: string,
+  credentials: CodexOAuthCredentials,
+  expected: CodexOAuthCredentials,
+): boolean {
+  const channel = getChannelById(channelId)
+  if (!channel || channel.provider !== 'openai-codex') return false
+  const current = parseCodexCredentials(decryptKey(channel.apiKey))
+  if (!current || serializeCodexCredentials(current) !== serializeCodexCredentials(expected)) {
+    console.info(`[Codex OAuth] 已忽略过期凭据回写: ${channelId}`)
+    return false
+  }
+  updateChannel(channelId, { apiKey: serializeCodexCredentials(credentials) })
+  return true
+}
+
+/** 解析渠道存储的 Codex 凭据，过期时自动刷新并条件回写。 */
+export async function resolveCodexOAuthCredentials(channelId: string): Promise<CodexOAuthCredentials> {
+  const channel = getChannelById(channelId)
+  if (!channel || channel.provider !== 'openai-codex') {
+    throw new Error('ChatGPT (Codex) 渠道不存在或类型不匹配')
+  }
+  const credentials = parseCodexCredentials(decryptKey(channel.apiKey))
+  if (!credentials) throw new Error('ChatGPT 登录凭据无效或缺失，请重新登录')
+  if (!isCodexCredentialExpired(credentials)) return credentials
+
+  const existing = inflightCodexRefresh.get(channelId)
+  if (existing) return existing
+  const refreshPromise = (async (): Promise<CodexOAuthCredentials> => {
+    try {
+      const refreshed = await refreshCodexOAuth(credentials.refresh)
+      persistCodexCredentials(channelId, refreshed, credentials)
+      return refreshed
+    } finally {
+      inflightCodexRefresh.delete(channelId)
+    }
+  })()
+  inflightCodexRefresh.set(channelId, refreshPromise)
+  return refreshPromise
 }
 
 /** 通义千问 Token Plan 预设模型 */
@@ -627,6 +706,25 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
           success: true,
           message: `已加载 ${credentials.availableModelIds.length} 个 GitHub Copilot 可用模型`,
           models: credentials.availableModelIds.map((id) => ({ id, name: id, enabled: true })),
+        }
+      }
+      case 'openai-codex': {
+        // ChatGPT 订阅走 Pi SDK 内置模型目录（需已登录凭据；目录由 Pi 维护）
+        const credentials = parseCodexCredentials(input.apiKey)
+        if (!credentials) {
+          return { success: false, message: 'ChatGPT 登录凭据无效，请重新登录', models: [] }
+        }
+        try {
+          const { listCodexModels } = await import('./adapters/pi-model-registry')
+          const codexModels = await listCodexModels()
+          return {
+            success: true,
+            message: `已加载 ${codexModels.length} 个 ChatGPT (Codex) 模型`,
+            models: codexModels.map((m) => ({ id: m.id, name: m.name, enabled: true })),
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          return { success: false, message: `ChatGPT 模型目录拉取失败: ${message}`, models: [] }
         }
       }
       case 'google':
@@ -1029,8 +1127,48 @@ function isDeepSeekBaseUrl(baseUrl: string): boolean {
  * 查询渠道订阅 Plan 额度（DeepSeek 余额 / Kimi For Coding 窗口）。
  * 仅支持本地已知端点；失败返回 supported:false 供 UI 隐藏。
  */
-export async function getChannelPlanQuota(channelId: string): Promise<ChannelPlanQuotaResult> {
+/** ChatGPT Codex 额度查询超时（首建连可能较慢） */
+const CODEX_PLAN_QUOTA_TIMEOUT_MS = 30_000
+
+/** 查询 ChatGPT (Codex) 订阅额度（wham/usage，需登录凭据的 access token）。 */
+async function queryCodexPlanQuota(channelId: string, proxyUrl?: string): Promise<ChannelPlanQuotaResult> {
   const channel = getChannelById(channelId)
+  if (!channel || channel.provider !== 'openai-codex') {
+    return createUnsupportedPlanQuota('openai-codex', 'ChatGPT (Codex) 渠道不存在或类型不匹配')
+  }
+  // 过期时 resolveCodexOAuthCredentials 自动刷新并条件回写渠道
+  const credentials = await resolveCodexOAuthCredentials(channelId)
+  const activeCredentials = parseCodexCredentials(decryptApiKey(channelId)) ?? credentials
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${credentials.access}`,
+    Accept: 'application/json',
+  }
+  if (activeCredentials.accountId) {
+    headers['ChatGPT-Account-Id'] = activeCredentials.accountId
+  }
+
+  try {
+    const response = await getFetchFn(proxyUrl)('https://chatgpt.com/backend-api/wham/usage', {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(CODEX_PLAN_QUOTA_TIMEOUT_MS),
+    })
+    if (!response.ok) {
+      return createUnsupportedPlanQuota('openai-codex', `ChatGPT Codex 额度查询失败: HTTP ${response.status}`)
+    }
+    return parseCodexPlanQuotaResponse(await response.json())
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return createUnsupportedPlanQuota('openai-codex', 'ChatGPT Codex 额度响应格式错误')
+    }
+    const message = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
+      ? 'ChatGPT Codex 额度查询超时，请检查网络或代理后重试'
+      : 'ChatGPT Codex 额度查询失败，请检查网络或代理后重试'
+    return createUnsupportedPlanQuota('openai-codex', message)
+  }
+}
+
+export async function getChannelPlanQuota(channelId: string): Promise<ChannelPlanQuotaResult> {  const channel = getChannelById(channelId)
   if (!channel) return createUnsupportedPlanQuota('custom', '渠道不存在')
 
   const proxyUrl = await getEffectiveProxyUrl()
@@ -1052,6 +1190,9 @@ export async function getChannelPlanQuota(channelId: string): Promise<ChannelPla
     }
     if (channel.provider === 'github-copilot') {
       return await queryGithubCopilotPlanQuota(apiKey, proxyUrl)
+    }
+    if (channel.provider === 'openai-codex') {
+      return await queryCodexPlanQuota(channel.id, proxyUrl)
     }
     return createUnsupportedPlanQuota(channel.provider, '当前渠道不支持订阅 Plan 额度查询')
   } catch (error) {

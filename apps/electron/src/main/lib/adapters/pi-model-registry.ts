@@ -211,3 +211,17 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
 
   return { modelRuntime, providerId, model, agentDir }
 }
+
+/** ChatGPT (Codex) 订阅的 Pi SDK 内置模型目录（无需登录凭据即可列出）。 */
+export async function listCodexModels(): Promise<{ id: string; name: string }[]> {
+  const { getModels } = await loadPiAiCompat()
+  return [...getModels('openai-codex')].map((m) => ({ id: m.id, name: m.name }))
+}
+
+async function loadPiAiCompat(): Promise<{ getModels: (providerId: string) => Iterable<{ id: string; name: string }> }> {
+  // pi-ai 的 models.generated 提供 per-provider 目录；经 pi-coding-agent 的 SDK 出口加载
+  const sdk = await loadPiCodingAgent()
+  const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false })
+  const models = runtime.getModels('openai-codex')
+  return { getModels: () => models }
+}

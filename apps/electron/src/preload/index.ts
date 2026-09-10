@@ -390,6 +390,15 @@ export interface ElectronAPI {
   /** 订阅 GitHub Copilot 登录设备码推送（主进程 webContents.send） */
   onGithubCopilotDeviceCode: (listener: (deviceCode: import('@gravitas/shared').GithubCopilotOAuthDeviceCode) => void) => () => void
 
+  /** ChatGPT (Codex) OAuth 登录（返回凭据 JSON 字符串，存入 Channel.apiKey） */
+  loginOpenAICodex: () => Promise<string>
+
+  /** 取消进行中的 ChatGPT (Codex) OAuth 登录 */
+  cancelOpenAICodexLogin: () => Promise<void>
+
+  /** 订阅 ChatGPT (Codex) 登录事件推送（设备码 / 授权 URL） */
+  onOpenAICodexLoginEvent: (listener: (event: { type: 'device_code'; deviceCode: import('@gravitas/shared').CodexOAuthDeviceCode } | { type: 'auth_url'; url: string }) => void) => () => void
+
   // ===== 对话管理相关 =====
 
   /** 获取对话列表 */
@@ -1850,6 +1859,28 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.on(CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT, handler as never)
     return () => {
       ipcRenderer.removeListener(CHANNEL_IPC_CHANNELS.LOGIN_GITHUB_COPILOT, handler as never)
+    }
+  },
+
+  loginOpenAICodex: () => {
+    return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.LOGIN_OPENAI_CODEX)
+  },
+
+  cancelOpenAICodexLogin: () => {
+    return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.CANCEL_OPENAI_CODEX_LOGIN)
+  },
+
+  onOpenAICodexLoginEvent: (listener: (event: { type: 'device_code'; deviceCode: import('@gravitas/shared').CodexOAuthDeviceCode } | { type: 'auth_url'; url: string }) => void) => {
+    const handler = (_event: unknown, payload: { type: string; deviceCode?: import('@gravitas/shared').CodexOAuthDeviceCode; url?: string }) => {
+      if (payload?.type === 'device_code' && payload.deviceCode) {
+        listener({ type: 'device_code', deviceCode: payload.deviceCode })
+      } else if (payload?.type === 'auth_url' && payload.url) {
+        listener({ type: 'auth_url', url: payload.url })
+      }
+    }
+    ipcRenderer.on(CHANNEL_IPC_CHANNELS.LOGIN_OPENAI_CODEX, handler as never)
+    return () => {
+      ipcRenderer.removeListener(CHANNEL_IPC_CHANNELS.LOGIN_OPENAI_CODEX, handler as never)
     }
   },
 

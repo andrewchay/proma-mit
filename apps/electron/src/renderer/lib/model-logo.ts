@@ -249,6 +249,7 @@ const PROVIDER_LOGO_MAP: Record<ProviderType, string> = {
   xiaomi: DefaultLogo,
   xai: DefaultLogo,
   'github-copilot': OpenAILogo,
+  'openai-codex': OpenAILogo,
   custom: DefaultLogo,
 }
 

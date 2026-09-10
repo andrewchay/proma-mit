@@ -54,6 +54,7 @@ describe('Agent provider runtime capabilities', () => {
       'kimi-coding',
       'minimax',
       'openai',
+      'openai-codex',
       'openai-responses',
       'qwen',
       'qwen-anthropic',

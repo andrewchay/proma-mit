@@ -31,6 +31,7 @@ export type ProviderType =
   | 'xiaomi'
   | 'xai'
   | 'github-copilot'
+  | 'openai-codex'
   | 'custom'
 
 /**
@@ -58,6 +59,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   xiaomi: 'https://api.xiaomimimo.com/anthropic',
   xai: 'https://api.x.ai/v1',
   'github-copilot': '',
+  'openai-codex': '',
   custom: '',
 }
 
@@ -85,6 +87,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   xiaomi: '小米 MiMo',
   xai: 'xAI (Grok)',
   'github-copilot': 'GitHub Copilot 订阅',
+  'openai-codex': 'ChatGPT 订阅 (Codex)',
   custom: 'OpenAI 兼容格式',
 }
 
@@ -158,6 +161,65 @@ export function parseGithubCopilotCredentials(secret: string): GithubCopilotOAut
 }
 
 export function isGithubCopilotCredentialExpired(credentials: GithubCopilotOAuthCredentials, skewMs = 60_000): boolean {
+  return Date.now() >= credentials.expires - skewMs
+}
+
+// ===== ChatGPT (Codex) OAuth 凭据 =====
+
+export interface CodexOAuthCredentials {
+  /** access token（作为 bearer token 传给 Pi SDK provider） */
+  access: string
+  /** refresh token（过期时用于换取新 token） */
+  refresh: string
+  /** access token 过期时间戳（Unix 毫秒） */
+  expires: number
+  /** 可选：从 id_token 解析出的账号标识，用于展示登录身份 */
+  accountId?: string
+}
+
+/** Pi Codex 登录方式：系统浏览器（本地 :1455 回调）或 RFC 8628 设备码 */
+export type CodexOAuthLoginMethod = 'browser' | 'device_code'
+
+/** Pi Codex device-code 登录流程的用户可见信息。 */
+export interface CodexOAuthDeviceCode {
+  userCode: string
+  verificationUri: string
+  /** 可扫码交给另一台可联网设备完成授权。 */
+  qrCodeData?: string
+}
+
+/** 将 OAuth 凭据序列化为存入 apiKey 字段的 JSON 字符串。 */
+export function serializeCodexCredentials(credentials: CodexOAuthCredentials): string {
+  return JSON.stringify(credentials)
+}
+
+/** 从 apiKey 字段解析 OAuth 凭据；非合法 JSON 或缺少必需字段时返回 null。 */
+export function parseCodexCredentials(secret: string): CodexOAuthCredentials | null {
+  const trimmed = secret.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<CodexOAuthCredentials>
+    if (typeof parsed.access === 'string' && parsed.access
+      && typeof parsed.refresh === 'string' && parsed.refresh
+      && typeof parsed.expires === 'number') {
+      return {
+        access: parsed.access,
+        refresh: parsed.refresh,
+        expires: parsed.expires,
+        ...(typeof parsed.accountId === 'string' && parsed.accountId ? { accountId: parsed.accountId } : {}),
+      }
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/**
+ * 判断 OAuth 凭据是否已过期或即将过期。
+ * 默认预留 60s 时钟偏移余量，确保 access token 在真正过期前就触发刷新。
+ */
+export function isCodexCredentialExpired(credentials: CodexOAuthCredentials, skewMs = 60_000): boolean {
   return Date.now() >= credentials.expires - skewMs
 }
 
@@ -380,6 +442,14 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     verifiedForAgentRuntime: false,
   },
   'github-copilot': {
+    protocol: 'openai-chat',
+    runtimes: ['pi'],
+    supportsToolCalling: true,
+    supportsImages: true,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: false,
+  },
+  'openai-codex': {
     protocol: 'openai-chat',
     runtimes: ['pi'],
     supportsToolCalling: true,
@@ -642,4 +712,8 @@ export const CHANNEL_IPC_CHANNELS = {
   LOGIN_GITHUB_COPILOT: 'channel:login-github-copilot',
   /** 取消进行中的 GitHub Copilot OAuth 登录 */
   CANCEL_GITHUB_COPILOT_LOGIN: 'channel:cancel-github-copilot-login',
+  /** ChatGPT (Codex) OAuth 登录（返回凭据 JSON） */
+  LOGIN_OPENAI_CODEX: 'channel:login-openai-codex',
+  /** 取消进行中的 ChatGPT (Codex) OAuth 登录 */
+  CANCEL_OPENAI_CODEX_LOGIN: 'channel:cancel-openai-codex-login',
 } as const

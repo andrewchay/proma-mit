@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 
 // channel-manager 顶层 import { safeStorage } from 'electron'，bun 环境加载失败；
-// 预设清单测试只走 fetchModels 短路分支，替身替掉 electron 原生导出。
+// codex-oauth-service 顶层 import { shell }。替身替掉 electron 原生导出。
 await mock.module('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -9,6 +9,7 @@ await mock.module('electron', () => ({
     decryptString: (v: Buffer) => v.toString(),
   },
   app: { getPath: () => '/tmp', getName: () => 'gravitas', getVersion: () => '0.0.0' },
+  shell: { openExternal: async () => undefined },
 }))
 
 const { fetchModels } = await import('./channel-manager')

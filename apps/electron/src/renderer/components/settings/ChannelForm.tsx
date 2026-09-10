@@ -71,7 +71,7 @@ interface ChannelFormProps {
 }
 
 /** 所有可选供应商 */
-const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'github-copilot', 'custom']
+const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'github-copilot', 'openai-codex', 'custom']
 
 /** 供应商选项（用于 SettingsSelect） */
 const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((p) => ({
@@ -101,6 +101,7 @@ const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
   xiaomi: '/messages',
   xai: '/chat/completions',
   'github-copilot': '(OAuth 订阅)',
+  'openai-codex': '(OAuth 订阅)',
   custom: '/chat/completions',
 }
 
@@ -405,28 +406,41 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   const [copilotDeviceCode, setCopilotDeviceCode] = React.useState<{ userCode: string; verificationUri: string } | null>(null)
   const [copilotQuota, setCopilotQuota] = React.useState<ChannelPlanQuotaResult | null>(null)
 
+  /** 是否 OAuth 订阅渠道（登录按钮 + 凭据 JSON 自动写入） */
+  const isOAuthProvider = provider === 'github-copilot' || provider === 'openai-codex'
+
   /** 订阅设备码推送（主进程 webContents.send，contextBridge 不允许传函数） */
   React.useEffect(() => {
-    const unsubscribe = window.electronAPI.onGithubCopilotDeviceCode?.((deviceCode) => {
+    const unsubscribeCopilot = window.electronAPI.onGithubCopilotDeviceCode?.((deviceCode) => {
       setCopilotDeviceCode(deviceCode)
     })
-    return unsubscribe
+    const unsubscribeCodex = window.electronAPI.onOpenAICodexLoginEvent?.((event) => {
+      if (event.type === 'device_code') {
+        setCopilotDeviceCode(event.deviceCode)
+      }
+    })
+    return () => {
+      unsubscribeCopilot?.()
+      unsubscribeCodex?.()
+    }
   }, [])
 
-  /** GitHub Copilot 登录：设备流 → 凭据 JSON 自动写入 apiKey → 测试 + 额度查询 */
+  /** OAuth 订阅登录（GitHub Copilot / ChatGPT Codex）：凭据 JSON 自动写入 apiKey → 模型列表 → 额度查询 */
   const handleCopilotLogin = async (): Promise<void> => {
     setCopilotLoggingIn(true)
     setCopilotDeviceCode(null)
     setTestResult(null)
     try {
-      const secret = await window.electronAPI.loginGithubCopilot()
+      const secret = provider === 'openai-codex'
+        ? await window.electronAPI.loginOpenAICodex()
+        : await window.electronAPI.loginGithubCopilot()
       // 凭据 JSON 写入表单 apiKey（创建模式随提交保存；编辑模式 auto-save）
       setApiKey(secret)
       setCopilotDeviceCode(null)
       // 自动拉取订阅允许的模型列表
       try {
         const fetched = await window.electronAPI.fetchModels({
-          provider: 'github-copilot',
+          provider,
           baseUrl: '',
           apiKey: secret,
         })
@@ -434,9 +448,9 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
           setModels(fetched.models)
         }
       } catch (error) {
-        console.error('[模型配置表单] Copilot 模型列表拉取失败:', error)
+        console.error('[模型配置表单] OAuth 订阅模型列表拉取失败:', error)
       }
-      toast.success('GitHub Copilot 登录成功')
+      toast.success(provider === 'openai-codex' ? 'ChatGPT 登录成功' : 'GitHub Copilot 登录成功')
       // 保存凭据并查询额度
       if (isEdit && channel) {
         try {
@@ -445,13 +459,13 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
           })
           setCopilotQuota(await window.electronAPI.getChannelPlanQuota(savedChannel.id))
         } catch (error) {
-          console.error('[模型配置表单] Copilot 凭据保存/额度查询失败:', error)
+          console.error('[模型配置表单] OAuth 凭据保存/额度查询失败:', error)
         }
       }
     } catch (error) {
-      console.error('[模型配置表单] GitHub Copilot 登录失败:', error)
+      console.error('[模型配置表单] OAuth 订阅登录失败:', error)
       const message = error instanceof Error ? error.message : String(error)
-      setTestResult({ success: false, message: `GitHub Copilot 登录失败: ${message}` })
+      setTestResult({ success: false, message: `登录失败: ${message}` })
     } finally {
       setCopilotLoggingIn(false)
     }
@@ -613,7 +627,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
             <div className="flex items-center justify-between">
               <div className="text-sm font-medium text-foreground">API Key</div>
               <div className="flex items-center gap-2">
-                {provider === 'github-copilot' && (
+                {isOAuthProvider && (
                   <Button
                     variant="default"
                     size="sm"
@@ -627,7 +641,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
                     ) : (
                       <Zap size={12} />
                     )}
-                    <span>{copilotLoggingIn ? '等待授权…' : '登录 GitHub Copilot'}</span>
+                    <span>{copilotLoggingIn ? '等待授权…' : (provider === 'openai-codex' ? '登录 ChatGPT 订阅' : '登录 GitHub Copilot')}</span>
                   </Button>
                 )}
                 <Button
@@ -647,9 +661,9 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
                 </Button>
               </div>
             </div>
-            {provider === 'github-copilot' && (
+            {isOAuthProvider && (
               <p className="text-xs text-muted-foreground">
-                通过 GitHub 设备流授权登录订阅；凭据自动加密保存，无需手动填写 API Key。
+                通过 OAuth 授权登录订阅（GitHub 设备流 / ChatGPT 浏览器回调）；凭据自动加密保存，无需手动填写 API Key。
               </p>
             )}
             {copilotDeviceCode && (
@@ -691,7 +705,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
             )}
             {copilotQuota?.supported && (
               <div className="rounded-md border bg-muted/40 p-3 text-xs">
-                <p className="font-medium text-foreground">GitHub Copilot 订阅额度{copilotQuota.planName ? ` · ${copilotQuota.planName}` : ''}</p>
+                <p className="font-medium text-foreground">订阅额度{copilotQuota.planName ? ` · ${copilotQuota.planName}` : ''}</p>
                 <div className="mt-2 space-y-2">
                   {copilotQuota.windows.map((window) => (
                     <div key={window.label}>

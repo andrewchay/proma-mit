@@ -134,8 +134,12 @@ import {
   cancelGithubCopilotOAuthLogin,
   loginGithubCopilotOAuth,
 } from './lib/github-copilot-oauth-service'
+import {
+  cancelCodexOAuthLogin,
+  loginCodexOAuth,
+} from './lib/codex-oauth-service'
 import type { GithubCopilotOAuthDeviceCode } from '@gravitas/shared'
-import { serializeGithubCopilotCredentials } from '@gravitas/shared'
+import { serializeCodexCredentials, serializeGithubCopilotCredentials } from '@gravitas/shared'
 import {
   listConversations,
   createConversation,
@@ -770,6 +774,29 @@ export function registerIpcHandlers(): void {
   // 取消进行中的 GitHub Copilot OAuth 登录
   ipcMain.handle(CHANNEL_IPC_CHANNELS.CANCEL_GITHUB_COPILOT_LOGIN, () => {
     cancelGithubCopilotOAuthLogin()
+  })
+
+  // ChatGPT (Codex) OAuth 登录（浏览器 :1455 回调或设备码；凭据 JSON 存入 Channel.apiKey）
+  ipcMain.handle(
+    CHANNEL_IPC_CHANNELS.LOGIN_OPENAI_CODEX,
+    async (event): Promise<string> => {
+      // 设备码/授权 URL 通过 webContents 事件推送（contextBridge 不允许跨进程传函数）
+      const sender = event.sender
+      const credentials = await loginCodexOAuth({
+        onDeviceCode: (deviceCode) => {
+          sender.send(CHANNEL_IPC_CHANNELS.LOGIN_OPENAI_CODEX, { type: 'device_code', deviceCode })
+        },
+        onAuthUrl: (url) => {
+          sender.send(CHANNEL_IPC_CHANNELS.LOGIN_OPENAI_CODEX, { type: 'auth_url', url })
+        },
+      })
+      return serializeCodexCredentials(credentials)
+    }
+  )
+
+  // 取消进行中的 ChatGPT (Codex) OAuth 登录
+  ipcMain.handle(CHANNEL_IPC_CHANNELS.CANCEL_OPENAI_CODEX_LOGIN, () => {
+    cancelCodexOAuthLogin()
   })
 
   // ===== 对话管理相关 =====
