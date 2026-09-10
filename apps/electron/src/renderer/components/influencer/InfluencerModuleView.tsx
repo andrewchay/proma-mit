@@ -11,7 +11,7 @@ import { ArrowLeft, Users, FileCheck2, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { activeViewAtom } from '@/atoms/active-view'
 import { CreativeVideoPanel } from '@/components/marketing/CreativeVideoPanel'
-import { InfluencerTalentsPanel } from './InfluencerTalentsPanel'
+import { KOLDataManager } from '@/components/agent/KOLDataManager'
 import { InfluencerReviewsPanel } from './InfluencerReviewsPanel'
 import { InfluencerTrackingPanel } from './InfluencerTrackingPanel'
 import { useSetAtom } from 'jotai'
@@ -63,10 +63,7 @@ export function InfluencerModuleView(): React.ReactElement {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-4 space-y-4 text-[13px] text-foreground/70">
           {subView === 'talents' && (
-            <div className="space-y-4">
-              <CreativeVideoPanel />
-              <InfluencerTalentsPanel />
-            </div>
+            <KOLDataManager />
           )}
           {subView === 'reviews' && <InfluencerReviewsPanel />}
           {subView === 'tracking' && <InfluencerTrackingPanel />}

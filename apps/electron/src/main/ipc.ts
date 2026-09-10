@@ -11,6 +11,72 @@ import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
+import { CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS } from '@gravitas/shared'
+import {
+  listCampaigns,
+  createCampaign,
+  getCampaignById,
+  updateCampaign,
+  getPoolKOLs,
+  importKOLsToPool,
+  listAvailableKOLs,
+  getBrief,
+  saveBrief,
+  generateBriefTemplate,
+  advanceCampaignPhase,
+  setCampaignArchived,
+  deleteCampaign,
+  restoreCampaign,
+  purgeCampaign,
+  listTrashedCampaigns,
+  addCampaignBuildLog,
+  listCampaignBuildLogs,
+  listAllKOLs,
+  updateKOL,
+  deleteKOL,
+  recalculateAllScores,
+  listContentAudits,
+  getContentAudit,
+  createContentAudit,
+  updateContentAuditStatus,
+  ensureCampaignWorkspace,
+  listContentTracking,
+  getContentTracking,
+  createContentTracking,
+  updateContentTrackingData,
+  updateContentTrackingAnalysis,
+  addPaidData,
+  deleteContentTracking,
+  generatePhaseReport,
+  listPhaseReports,
+  getPhaseReport,
+  updatePhaseReport,
+  finalizePhaseReport,
+  deletePhaseReport,
+  createABTest,
+  listABTests,
+  getABTest,
+  updateABTest,
+  deleteABTest,
+  getABTestResults,
+  updateABTestResult,
+  completeABTest,
+  analyzeABTest,
+} from './lib/campaign-manager'
+import { listVideoAssets, deleteVideoAsset, renameVideoAsset } from './lib/video-asset-service'
+import {
+  loadCampaignWorkflow,
+  updateWorkflowStep,
+  advanceWorkflow,
+  resetWorkflow,
+  getStepAgentPrompt,
+  getCurrentStep,
+  getCompletedSteps,
+  isWorkflowComplete,
+  getWorkflowProgress,
+} from './lib/campaign-workflow-service'
+import type { CreateCampaignInput } from '@gravitas/shared'
+
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
@@ -4431,4 +4497,411 @@ export function registerIpcHandlers(): void {
       errors: result.errors,
     }
   })
+
+  // ===== Campaign 项目管理 =====
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.LIST,
+    async (): Promise<import('@gravitas/shared').Campaign[]> => {
+      // 返回全部 Campaign（含已归档），由 UI 侧「进行中 / 已归档」切换自行过滤
+      return listCampaigns({ includeArchived: true })
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.CREATE,
+    async (_, input: CreateCampaignInput): Promise<import('@gravitas/shared').Campaign> => {
+      return createCampaign(input)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.GET,
+    async (_, id: string): Promise<import('@gravitas/shared').Campaign | null> => {
+      return getCampaignById(id)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.UPDATE,
+    async (_, id: string, input: import('@gravitas/shared').UpdateCampaignInput): Promise<import('@gravitas/shared').Campaign | null> => {
+      return updateCampaign(id, input)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.GET_POOL_KOLS,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignKOLPoolItem[]> => {
+      return getPoolKOLs(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.IMPORT_KOLS,
+    async (_, input: import('@gravitas/shared').ImportKOLsToPoolInput): Promise<{ imported: number }> => {
+      return importKOLsToPool(input)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.LIST_AVAILABLE_KOLS,
+    async (_, filters?: { platform?: string; category?: string; keywords?: string[] }): Promise<import('@gravitas/shared').KOLSearchResult> => {
+      return listAvailableKOLs(filters)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.GET_BRIEF,
+    async (_, campaignId: string, kolId: string): Promise<import('@gravitas/shared').CampaignBrief | null> => {
+      return getBrief(campaignId, kolId)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.SAVE_BRIEF,
+    async (_, input: import('@gravitas/shared').SaveCampaignBriefInput): Promise<import('@gravitas/shared').CampaignBrief> => {
+      return saveBrief(input)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.ADVANCE_PHASE,
+    async (_, id: string): Promise<import('@gravitas/shared').Campaign | null> => {
+      return advanceCampaignPhase(id)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.ARCHIVE,
+    async (_, id: string, archived: boolean): Promise<import('@gravitas/shared').Campaign | null> => {
+      return setCampaignArchived(id, archived)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.DELETE,
+    async (_, id: string): Promise<boolean> => {
+      return deleteCampaign(id)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.LIST_TRASHED,
+    async (): Promise<import('@gravitas/shared').Campaign[]> => {
+      return listTrashedCampaigns()
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.RESTORE,
+    async (_, id: string): Promise<import('@gravitas/shared').Campaign | null> => {
+      return restoreCampaign(id)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.PURGE,
+    async (_, id: string): Promise<boolean> => {
+      return purgeCampaign(id)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.ADD_BUILD_LOG,
+    async (_, input: import('@gravitas/shared').AddCampaignBuildLogInput): Promise<import('@gravitas/shared').CampaignBuildLog> => {
+      return addCampaignBuildLog(input)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.LIST_BUILD_LOGS,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignBuildLog[]> => {
+      return listCampaignBuildLogs(campaignId)
+    }
+  )
+
+  // 确保 Campaign Workspace 工具文件存在（旧 Campaign 兼容）
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.ENSURE_WORKSPACE,
+    async (_, campaign: import('@gravitas/shared').Campaign): Promise<string> => {
+      return ensureCampaignWorkspace(campaign)
+    }
+  )
+
+  // ===== Campaign 工作流 =====
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.GET_WORKFLOW,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignWorkflow> => {
+      return loadCampaignWorkflow(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.UPDATE_WORKFLOW_STEP,
+    async (_, input: import('@gravitas/shared').UpdateWorkflowStepInput): Promise<import('@gravitas/shared').CampaignWorkflow> => {
+      return updateWorkflowStep(input)
+    }
+  )
+
+  ipcMain.handle(
+    CAMPAIGN_IPC_CHANNELS.RESET_WORKFLOW,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignWorkflow> => {
+      return resetWorkflow(campaignId)
+    }
+  )
+
+  // ===== KOL 数据管理 =====
+
+  ipcMain.handle(
+    KOL_DATA_IPC_CHANNELS.LIST_ALL,
+    async (): Promise<import('@gravitas/shared').KOLListItem[]> => {
+      return listAllKOLs()
+    }
+  )
+
+  ipcMain.handle(
+    KOL_DATA_IPC_CHANNELS.UPDATE,
+    async (_, input: import('@gravitas/shared').UpdateKOLInput): Promise<boolean> => {
+      return updateKOL(input)
+    }
+  )
+
+  ipcMain.handle(
+    KOL_DATA_IPC_CHANNELS.DELETE,
+    async (_, id: string): Promise<boolean> => {
+      return deleteKOL(id)
+    }
+  )
+
+  ipcMain.handle(
+    KOL_DATA_IPC_CHANNELS.RECALCULATE_SCORES,
+    async (): Promise<{ updated: number }> => {
+      return recalculateAllScores()
+    }
+  )
+
+  // ===== 内容审核流水线 =====
+
+  ipcMain.handle(
+    CONTENT_AUDIT_IPC_CHANNELS.LIST,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').ContentAudit[]> => {
+      return listContentAudits(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_AUDIT_IPC_CHANNELS.GET,
+    async (_, auditId: string): Promise<import('@gravitas/shared').ContentAudit | null> => {
+      return getContentAudit(auditId)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_AUDIT_IPC_CHANNELS.CREATE,
+    async (_, input: import('@gravitas/shared').CreateContentAuditInput): Promise<import('@gravitas/shared').ContentAudit | null> => {
+      return createContentAudit(input)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_AUDIT_IPC_CHANNELS.UPDATE_STATUS,
+    async (_, auditId: string, status: 'pending' | 'reviewing' | 'passed' | 'failed'): Promise<boolean> => {
+      return updateContentAuditStatus(auditId, status)
+    }
+  )
+
+  // ===== 内容数据追踪 =====
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.LIST,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').KOLContentTracking[]> => {
+      return listContentTracking(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.GET,
+    async (_, id: string): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      return getContentTracking(id)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.CREATE,
+    async (_, input: import('@gravitas/shared').CreateContentTrackingInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      return createContentTracking(input)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.UPDATE_DATA,
+    async (_, input: import('@gravitas/shared').UpdateContentTrackingDataInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      return updateContentTrackingData(input)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.UPDATE_ANALYSIS,
+    async (_, input: import('@gravitas/shared').UpdateAnalysisInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      return updateContentTrackingAnalysis(input)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.ADD_PAID_DATA,
+    async (_, input: import('@gravitas/shared').AddPaidDataInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      return addPaidData(input)
+    }
+  )
+
+  ipcMain.handle(
+    CONTENT_TRACKING_IPC_CHANNELS.DELETE,
+    async (_, id: string): Promise<boolean> => {
+      return deleteContentTracking(id)
+    }
+  )
+
+  // ===== 阶段复盘报告 =====
+
+  ipcMain.handle(
+    PHASE_REPORT_IPC_CHANNELS.LIST,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignPhaseReport[]> => {
+      return listPhaseReports(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    PHASE_REPORT_IPC_CHANNELS.GET,
+    async (_, id: string): Promise<import('@gravitas/shared').CampaignPhaseReport | null> => {
+      return getPhaseReport(id)
+    }
+  )
+
+  ipcMain.handle(
+    PHASE_REPORT_IPC_CHANNELS.GENERATE,
+    async (_, input: import('@gravitas/shared').GeneratePhaseReportInput): Promise<import('@gravitas/shared').CampaignPhaseReport> => {
+      return generatePhaseReport(input)
+    }
+  )
+
+  ipcMain.handle(
+    PHASE_REPORT_IPC_CHANNELS.UPDATE,
+    async (_, id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiDecisions' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>): Promise<import('@gravitas/shared').CampaignPhaseReport | null> => {
+      return updatePhaseReport(id, updates)
+    }
+  )
+
+  ipcMain.handle(
+    PHASE_REPORT_IPC_CHANNELS.FINALIZE,
+    async (_, id: string): Promise<import('@gravitas/shared').CampaignPhaseReport | null> => {
+      return finalizePhaseReport(id)
+    }
+  )
+
+  ipcMain.handle(
+    PHASE_REPORT_IPC_CHANNELS.DELETE,
+    async (_, id: string): Promise<boolean> => {
+      return deletePhaseReport(id)
+    }
+  )
+
+  // ===== AB 测试 =====
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.LIST,
+    async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignABTest[]> => {
+      return listABTests(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.GET,
+    async (_, id: string): Promise<import('@gravitas/shared').CampaignABTest | null> => {
+      return getABTest(id)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.CREATE,
+    async (_, input: import('@gravitas/shared').CreateABTestInput): Promise<import('@gravitas/shared').CampaignABTest> => {
+      return createABTest(input)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.UPDATE,
+    async (_, id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignABTest, 'testName' | 'hypothesis' | 'variableType' | 'variableDescription' | 'controlGroupDefinition' | 'testGroupDefinition' | 'startDate' | 'endDate' | 'status' | 'winnerGroup' | 'winnerReason' | 'scaleRecommendation'>>): Promise<import('@gravitas/shared').CampaignABTest | null> => {
+      return updateABTest(id, updates)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.COMPLETE,
+    async (_, id: string, winnerGroup: string, winnerReason: string, scaleRecommendation: string): Promise<import('@gravitas/shared').CampaignABTest | null> => {
+      return completeABTest(id, winnerGroup, winnerReason, scaleRecommendation)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.DELETE,
+    async (_, id: string): Promise<boolean> => {
+      return deleteABTest(id)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.GET_RESULTS,
+    async (_, abTestId: string): Promise<import('@gravitas/shared').ABTestResult[]> => {
+      return getABTestResults(abTestId)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.UPDATE_RESULT,
+    async (_, input: import('@gravitas/shared').UpdateABTestResultInput): Promise<import('@gravitas/shared').ABTestResult> => {
+      return updateABTestResult(input)
+    }
+  )
+
+  ipcMain.handle(
+    AB_TEST_IPC_CHANNELS.ANALYZE,
+    async (_, abTestId: string): Promise<{ success: boolean; result?: import('@gravitas/shared').CampaignABTest; error?: string }> => {
+      return analyzeABTest(abTestId)
+    }
+  )
+
+
+  // ===== 视频素材 =====
+
+  ipcMain.handle(
+    VIDEO_ASSET_IPC_CHANNELS.LIST,
+    async (_, campaignId: string): Promise<import('./lib/video-asset-service').VideoAssetEntry[]> => {
+      return listVideoAssets(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    VIDEO_ASSET_IPC_CHANNELS.DELETE,
+    async (_, campaignId: string, filePath: string): Promise<boolean> => {
+      try {
+        return await deleteVideoAsset(campaignId, filePath)
+      } catch (e) {
+        console.error('[视频素材] 删除失败:', e)
+        return false
+      }
+    }
+  )
+
+  ipcMain.handle(
+    VIDEO_ASSET_IPC_CHANNELS.RENAME,
+    async (_, campaignId: string, filePath: string, newName: string): Promise<{ success: boolean; path?: string; error?: string }> => {
+      try {
+        const p = await renameVideoAsset(campaignId, filePath, newName)
+        return { success: !!p, path: p ?? undefined }
+      } catch (e) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+    }
+  )
 }

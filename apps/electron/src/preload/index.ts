@@ -7,7 +7,7 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS, CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -47,6 +47,11 @@ const WORKFLOW_IPC_CHANNELS = {
 } as const
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
+  Campaign,
+  CampaignWorkflow,
+  CreateCampaignInput,
+  UpdateCampaignInput,
+  UpdateWorkflowStepInput,
   RuntimeStatus,
   GitRepoStatus,
   Channel,
@@ -356,6 +361,141 @@ export interface ElectronAPI {
 
   /** 获取所有渠道列表（apiKey 保持加密态） */
   listChannels: () => Promise<Channel[]>
+
+  // ===== Campaign 项目管理 =====
+
+  /** 获取 Campaign 列表 */
+  listCampaigns: () => Promise<Campaign[]>
+  /** 获取单个 Campaign */
+  getCampaignById: (id: string) => Promise<Campaign | null>
+  /** 创建 Campaign */
+  createCampaign: (input: CreateCampaignInput) => Promise<Campaign>
+  /** 更新 Campaign */
+  updateCampaign: (id: string, input: UpdateCampaignInput) => Promise<Campaign | null>
+
+  // ===== KOL 候选池 =====
+
+  /** 获取 Campaign 候选池 KOL */
+  getPoolKOLs: (campaignId: string) => Promise<import('@gravitas/shared').CampaignKOLPoolItem[]>
+  /** 导入 KOL 到候选池 */
+  importKOLsToPool: (input: import('@gravitas/shared').ImportKOLsToPoolInput) => Promise<{ imported: number }>
+  /** 获取 KOL 数据库中可用 KOL（用于导入弹窗） */
+  listAvailableKOLs: (filters?: { platform?: string; category?: string; keywords?: string[]; limit?: number }) => Promise<import('@gravitas/shared').KOLSearchResult>
+
+  // ===== Brief =====
+
+  /** 获取 KOL Brief */
+  getCampaignBrief: (campaignId: string, kolId: string) => Promise<import('@gravitas/shared').CampaignBrief | null>
+  /** 保存 KOL Brief */
+  saveCampaignBrief: (input: import('@gravitas/shared').SaveCampaignBriefInput) => Promise<import('@gravitas/shared').CampaignBrief>
+  /** 推进 Campaign 到下一阶段 */
+  advanceCampaignPhase: (id: string) => Promise<import('@gravitas/shared').Campaign | null>
+  /** 归档 / 取消归档 Campaign */
+  setCampaignArchived: (id: string, archived: boolean) => Promise<import('@gravitas/shared').Campaign | null>
+  /** 删除 Campaign（移入回收站，软删除，可从回收站恢复） */
+  deleteCampaign: (id: string) => Promise<boolean>
+  /** 获取回收站中的 Campaign */
+  listTrashedCampaigns: () => Promise<import('@gravitas/shared').Campaign[]>
+  /** 从回收站恢复 Campaign */
+  restoreCampaign: (id: string) => Promise<import('@gravitas/shared').Campaign | null>
+  /** 彻底删除 Campaign（物理清除数据库记录与工作区目录，不可恢复） */
+  purgeCampaign: (id: string) => Promise<boolean>
+  /** 追加一条 Campaign 构建过程记录 */
+  addCampaignBuildLog: (input: import('@gravitas/shared').AddCampaignBuildLogInput) => Promise<import('@gravitas/shared').CampaignBuildLog>
+  /** 查询 Campaign 构建过程记录 */
+  listCampaignBuildLogs: (campaignId: string) => Promise<import('@gravitas/shared').CampaignBuildLog[]>
+  /** 确保 Campaign Workspace 工具文件存在（旧 Campaign 兼容） */
+  ensureCampaignWorkspace: (campaign: import('@gravitas/shared').Campaign) => Promise<string>
+
+  // ===== Campaign 工作流 =====
+
+  /** 获取 Campaign 工作流 */
+  getCampaignWorkflow: (campaignId: string) => Promise<CampaignWorkflow>
+  /** 更新 Campaign 工作流步骤 */
+  updateCampaignWorkflowStep: (input: UpdateWorkflowStepInput) => Promise<CampaignWorkflow>
+  /** 重置 Campaign 工作流 */
+  resetCampaignWorkflow: (campaignId: string) => Promise<CampaignWorkflow>
+
+  // ===== KOL 数据管理 =====
+
+  /** 获取所有 KOL */
+  listAllKOLs: () => Promise<import('@gravitas/shared').KOLListItem[]>
+  /** 更新 KOL */
+  updateKOL: (input: import('@gravitas/shared').UpdateKOLInput) => Promise<boolean>
+  /** 删除 KOL */
+  deleteKOL: (id: string) => Promise<boolean>
+  /** 重新计算所有 KOL 评分 */
+  recalculateKOLScores: () => Promise<{ updated: number }>
+
+  // ===== 内容审核流水线 =====
+
+  /** 获取 Campaign 的审核记录 */
+  listContentAudits: (campaignId: string) => Promise<import('@gravitas/shared').ContentAudit[]>
+  /** 获取单个审核记录 */
+  getContentAudit: (auditId: string) => Promise<import('@gravitas/shared').ContentAudit | null>
+  /** 创建并执行内容审核 */
+  createContentAudit: (input: import('@gravitas/shared').CreateContentAuditInput) => Promise<import('@gravitas/shared').ContentAudit | null>
+  /** 更新审核状态 */
+  updateContentAuditStatus: (auditId: string, status: 'pending' | 'reviewing' | 'passed' | 'failed') => Promise<boolean>
+
+  // ===== 内容数据追踪 =====
+
+  /** 获取 Campaign 的内容追踪记录 */
+  listContentTracking: (campaignId: string) => Promise<import('@gravitas/shared').KOLContentTracking[]>
+  /** 获取单条内容追踪记录 */
+  getContentTracking: (id: string) => Promise<import('@gravitas/shared').KOLContentTracking | null>
+  /** 创建内容追踪记录 */
+  addContentTracking: (input: import('@gravitas/shared').CreateContentTrackingInput) => Promise<import('@gravitas/shared').KOLContentTracking | null>
+  /** 更新内容数据 */
+  updateContentTrackingData: (input: import('@gravitas/shared').UpdateContentTrackingDataInput) => Promise<import('@gravitas/shared').KOLContentTracking | null>
+  /** 更新分析结果 */
+  updateContentTrackingAnalysis: (input: import('@gravitas/shared').UpdateAnalysisInput) => Promise<import('@gravitas/shared').KOLContentTracking | null>
+  /** 添加投流数据 */
+  addContentPaidData: (input: import('@gravitas/shared').AddPaidDataInput) => Promise<import('@gravitas/shared').KOLContentTracking | null>
+  /** 删除内容追踪记录 */
+  deleteContentTracking: (id: string) => Promise<boolean>
+
+  // ===== 阶段复盘报告 =====
+
+  /** 列出 Campaign 的复盘报告 */
+  listPhaseReports: (campaignId: string) => Promise<import('@gravitas/shared').CampaignPhaseReport[]>
+  /** 获取单份复盘报告 */
+  getPhaseReport: (id: string) => Promise<import('@gravitas/shared').CampaignPhaseReport | null>
+  /** 生成复盘报告 */
+  generatePhaseReport: (input: import('@gravitas/shared').GeneratePhaseReportInput) => Promise<import('@gravitas/shared').CampaignPhaseReport>
+  /** 更新复盘报告 */
+  updatePhaseReport: (id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiDecisions' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>) => Promise<import('@gravitas/shared').CampaignPhaseReport | null>
+  /** 定稿复盘报告 */
+  finalizePhaseReport: (id: string) => Promise<import('@gravitas/shared').CampaignPhaseReport | null>
+  /** 删除复盘报告 */
+  deletePhaseReport: (id: string) => Promise<boolean>
+
+  // ===== AB 测试 =====
+
+  /** 列出 Campaign 的 AB 测试 */
+  listABTests: (campaignId: string) => Promise<import('@gravitas/shared').CampaignABTest[]>
+  /** 获取单个 AB 测试 */
+  getABTest: (id: string) => Promise<import('@gravitas/shared').CampaignABTest | null>
+  /** 创建 AB 测试 */
+  createABTest: (input: import('@gravitas/shared').CreateABTestInput) => Promise<import('@gravitas/shared').CampaignABTest>
+  /** 更新 AB 测试 */
+  updateABTest: (id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignABTest, 'testName' | 'hypothesis' | 'variableType' | 'variableDescription' | 'controlGroupDefinition' | 'testGroupDefinition' | 'startDate' | 'endDate' | 'status' | 'winnerGroup' | 'winnerReason' | 'scaleRecommendation'>>) => Promise<import('@gravitas/shared').CampaignABTest | null>
+  /** 完成 AB 测试 */
+  completeABTest: (id: string, winnerGroup: string, winnerReason: string, scaleRecommendation: string) => Promise<import('@gravitas/shared').CampaignABTest | null>
+  /** 删除 AB 测试 */
+  deleteABTest: (id: string) => Promise<boolean>
+  /** 获取 AB 测试分组结果 */
+  getABTestResults: (abTestId: string) => Promise<import('@gravitas/shared').ABTestResult[]>
+  /** 更新 AB 测试分组结果 */
+  updateABTestResult: (input: import('@gravitas/shared').UpdateABTestResultInput) => Promise<import('@gravitas/shared').ABTestResult>
+  /** 分析 AB 测试并生成放量建议 */
+  analyzeABTest: (abTestId: string) => Promise<{ success: boolean; result?: import('@gravitas/shared').CampaignABTest; error?: string }>
+  /** 列出 Campaign 的视频产物 */
+  listVideoAssets: (campaignId: string) => Promise<import('../main/lib/video-asset-service').VideoAssetEntry[]>
+  /** 删除视频产物 */
+  deleteVideoAsset: (campaignId: string, filePath: string) => Promise<boolean>
+  /** 重命名视频产物 */
+  renameVideoAsset: (campaignId: string, filePath: string, newName: string) => Promise<{ success: boolean; path?: string; error?: string }>
 
   /** 创建渠道（apiKey 为明文，主进程加密） */
   createChannel: (input: ChannelCreateInput) => Promise<Channel>
@@ -1810,6 +1950,234 @@ const electronAPI: ElectronAPI = {
   // 渠道管理
   listChannels: () => {
     return ipcRenderer.invoke(CHANNEL_IPC_CHANNELS.LIST)
+  },
+
+  // ===== Campaign 项目管理 =====
+
+  listCampaigns: () => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.LIST)
+  },
+
+  createCampaign: (input: CreateCampaignInput) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.CREATE, input)
+  },
+
+  getCampaignById: (id: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.GET, id)
+  },
+
+  updateCampaign: (id: string, input: UpdateCampaignInput) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.UPDATE, id, input)
+  },
+
+  getPoolKOLs: (campaignId: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.GET_POOL_KOLS, campaignId)
+  },
+
+  importKOLsToPool: (input: import('@gravitas/shared').ImportKOLsToPoolInput) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.IMPORT_KOLS, input)
+  },
+
+  listAvailableKOLs: (filters?: { platform?: string; category?: string; keywords?: string[] }) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.LIST_AVAILABLE_KOLS, filters)
+  },
+
+  getCampaignBrief: (campaignId: string, kolId: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.GET_BRIEF, campaignId, kolId)
+  },
+
+  saveCampaignBrief: (input: import('@gravitas/shared').SaveCampaignBriefInput) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.SAVE_BRIEF, input)
+  },
+
+  advanceCampaignPhase: (id: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.ADVANCE_PHASE, id)
+  },
+
+  setCampaignArchived: (id: string, archived: boolean) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.ARCHIVE, id, archived)
+  },
+
+  deleteCampaign: (id: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.DELETE, id)
+  },
+
+  listTrashedCampaigns: () => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.LIST_TRASHED)
+  },
+
+  restoreCampaign: (id: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.RESTORE, id)
+  },
+
+  purgeCampaign: (id: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.PURGE, id)
+  },
+
+  addCampaignBuildLog: (input: import('@gravitas/shared').AddCampaignBuildLogInput) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.ADD_BUILD_LOG, input)
+  },
+
+  listCampaignBuildLogs: (campaignId: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.LIST_BUILD_LOGS, campaignId)
+  },
+
+  ensureCampaignWorkspace: (campaign: import('@gravitas/shared').Campaign) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.ENSURE_WORKSPACE, campaign)
+  },
+
+  // ===== Campaign 工作流 =====
+
+  getCampaignWorkflow: (campaignId: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.GET_WORKFLOW, campaignId)
+  },
+
+  updateCampaignWorkflowStep: (input: import('@gravitas/shared').UpdateWorkflowStepInput) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.UPDATE_WORKFLOW_STEP, input)
+  },
+
+  resetCampaignWorkflow: (campaignId: string) => {
+    return ipcRenderer.invoke(CAMPAIGN_IPC_CHANNELS.RESET_WORKFLOW, campaignId)
+  },
+
+  analyzeABTest: (abTestId: string) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.ANALYZE, abTestId)
+  },
+
+  // ===== KOL 数据管理 =====
+
+  listAllKOLs: () => {
+    return ipcRenderer.invoke(KOL_DATA_IPC_CHANNELS.LIST_ALL)
+  },
+
+  updateKOL: (input: import('@gravitas/shared').UpdateKOLInput) => {
+    return ipcRenderer.invoke(KOL_DATA_IPC_CHANNELS.UPDATE, input)
+  },
+
+  deleteKOL: (id: string) => {
+    return ipcRenderer.invoke(KOL_DATA_IPC_CHANNELS.DELETE, id)
+  },
+
+  recalculateKOLScores: () => {
+    return ipcRenderer.invoke(KOL_DATA_IPC_CHANNELS.RECALCULATE_SCORES)
+  },
+
+  // ===== 内容审核流水线 =====
+
+  listContentAudits: (campaignId: string) => {
+    return ipcRenderer.invoke(CONTENT_AUDIT_IPC_CHANNELS.LIST, campaignId)
+  },
+
+  getContentAudit: (auditId: string) => {
+    return ipcRenderer.invoke(CONTENT_AUDIT_IPC_CHANNELS.GET, auditId)
+  },
+
+  createContentAudit: (input: import('@gravitas/shared').CreateContentAuditInput) => {
+    return ipcRenderer.invoke(CONTENT_AUDIT_IPC_CHANNELS.CREATE, input)
+  },
+
+  updateContentAuditStatus: (auditId: string, status: 'pending' | 'reviewing' | 'passed' | 'failed') => {
+    return ipcRenderer.invoke(CONTENT_AUDIT_IPC_CHANNELS.UPDATE_STATUS, auditId, status)
+  },
+
+  // 内容数据追踪
+  listContentTracking: (campaignId: string) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.LIST, campaignId)
+  },
+
+  getContentTracking: (id: string) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.GET, id)
+  },
+
+  addContentTracking: (input: import('@gravitas/shared').CreateContentTrackingInput) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.CREATE, input)
+  },
+
+  updateContentTrackingData: (input: import('@gravitas/shared').UpdateContentTrackingDataInput) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.UPDATE_DATA, input)
+  },
+
+  updateContentTrackingAnalysis: (input: import('@gravitas/shared').UpdateAnalysisInput) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.UPDATE_ANALYSIS, input)
+  },
+
+  addContentPaidData: (input: import('@gravitas/shared').AddPaidDataInput) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.ADD_PAID_DATA, input)
+  },
+
+  deleteContentTracking: (id: string) => {
+    return ipcRenderer.invoke(CONTENT_TRACKING_IPC_CHANNELS.DELETE, id)
+  },
+
+  // 阶段复盘报告
+  listPhaseReports: (campaignId: string) => {
+    return ipcRenderer.invoke(PHASE_REPORT_IPC_CHANNELS.LIST, campaignId)
+  },
+
+  getPhaseReport: (id: string) => {
+    return ipcRenderer.invoke(PHASE_REPORT_IPC_CHANNELS.GET, id)
+  },
+
+  generatePhaseReport: (input: import('@gravitas/shared').GeneratePhaseReportInput) => {
+    return ipcRenderer.invoke(PHASE_REPORT_IPC_CHANNELS.GENERATE, input)
+  },
+
+  updatePhaseReport: (id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiDecisions' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>) => {
+    return ipcRenderer.invoke(PHASE_REPORT_IPC_CHANNELS.UPDATE, id, updates)
+  },
+
+  finalizePhaseReport: (id: string) => {
+    return ipcRenderer.invoke(PHASE_REPORT_IPC_CHANNELS.FINALIZE, id)
+  },
+
+  deletePhaseReport: (id: string) => {
+    return ipcRenderer.invoke(PHASE_REPORT_IPC_CHANNELS.DELETE, id)
+  },
+
+  // ===== AB 测试 =====
+
+  listABTests: (campaignId: string) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.LIST, campaignId)
+  },
+
+  getABTest: (id: string) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.GET, id)
+  },
+
+  createABTest: (input: import('@gravitas/shared').CreateABTestInput) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.CREATE, input)
+  },
+
+  updateABTest: (id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignABTest, 'testName' | 'hypothesis' | 'variableType' | 'variableDescription' | 'controlGroupDefinition' | 'testGroupDefinition' | 'startDate' | 'endDate' | 'status' | 'winnerGroup' | 'winnerReason' | 'scaleRecommendation'>>) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.UPDATE, id, updates)
+  },
+
+  completeABTest: (id: string, winnerGroup: string, winnerReason: string, scaleRecommendation: string) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.COMPLETE, id, winnerGroup, winnerReason, scaleRecommendation)
+  },
+
+  deleteABTest: (id: string) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.DELETE, id)
+  },
+
+  listVideoAssets: (campaignId: string) => {
+    return ipcRenderer.invoke(VIDEO_ASSET_IPC_CHANNELS.LIST, campaignId)
+  },
+
+  deleteVideoAsset: (campaignId: string, filePath: string) => {
+    return ipcRenderer.invoke(VIDEO_ASSET_IPC_CHANNELS.DELETE, campaignId, filePath)
+  },
+
+  renameVideoAsset: (campaignId: string, filePath: string, newName: string) => {
+    return ipcRenderer.invoke(VIDEO_ASSET_IPC_CHANNELS.RENAME, campaignId, filePath, newName)
+  },
+
+  getABTestResults: (abTestId: string) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.GET_RESULTS, abTestId)
+  },
+
+  updateABTestResult: (input: import('@gravitas/shared').UpdateABTestResultInput) => {
+    return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.UPDATE_RESULT, input)
   },
 
   createChannel: (input: ChannelCreateInput) => {
