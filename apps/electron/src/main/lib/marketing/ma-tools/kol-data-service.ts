@@ -286,12 +286,23 @@ function getDb(): Database {
       compliance_score REAL,
       brand_alignment_score REAL,
       quality_score REAL,
+      brand_image_score REAL DEFAULT 0,
+      data_verifiability_score REAL DEFAULT 0,
+      overall_score REAL DEFAULT 0,
       audit_report TEXT,
       auditor TEXT DEFAULT 'ai',
       created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
       updated_at INTEGER DEFAULT (strftime('%s','now') * 1000)
     )
   `)
+
+  // 存量库迁移：五维审核卡片要求所有评分字段始终可读。
+  const auditColumns = dbInstance.query(`PRAGMA table_info(content_audits)`).all() as Array<{ name: string }>
+  for (const column of ['brand_image_score', 'data_verifiability_score', 'overall_score']) {
+    if (!auditColumns.some((item) => item.name === column)) {
+      dbInstance.run(`ALTER TABLE content_audits ADD COLUMN ${column} REAL DEFAULT 0`)
+    }
+  }
 
   // 达人效果记录表
   dbInstance.run(`
