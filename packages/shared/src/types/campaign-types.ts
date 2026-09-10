@@ -78,6 +78,10 @@ export interface Campaign {
   creativePlan: CampaignCreativePlan
   /** 状态 */
   status: CampaignStatus
+  /** 是否已归档（归档项目默认不在列表中展示） */
+  archived?: boolean
+  /** 回收站时间戳；非空表示已移入回收站（软删除，可从回收站恢复） */
+  deletedAt?: number
   /** 创建时间 */
   createdAt: number
   /** 更新时间 */
@@ -289,6 +293,10 @@ export interface CampaignBrief {
   kolName: string
   /** Brief 内容（Markdown） */
   content: string
+  /** JTBD 任务规格（JSON 字符串） */
+  jobSpec?: string | null
+  /** JTBD 驱动力分析（JSON 字符串） */
+  forcesMap?: string | null
   /** 是否 AI 生成 */
   aiGenerated: boolean
   /** 状态：draft / final */
@@ -305,7 +313,72 @@ export interface SaveCampaignBriefInput {
   kolId: string
   kolName: string
   content: string
+  /** 不传时保留已有任务规格 */
+  jobSpec?: string
+  /** 不传时保留已有驱动力分析 */
+  forcesMap?: string
   aiGenerated?: boolean
+}
+
+// ===== 构建过程记录（Build Log） =====
+
+/** 构建过程记录类型 */
+export type CampaignBuildLogKind =
+  | 'campaign_created'
+  | 'campaign_updated'
+  | 'archived'
+  | 'unarchived'
+  | 'trashed'
+  | 'restored'
+  | 'purged'
+  | 'phase_changed'
+  | 'step_completed'
+  | 'step_failed'
+  | 'step_adjusted'
+  | 'user_request'
+  | 'requirement_change'
+  | 'note'
+
+/** 构建过程记录发起方 */
+export type CampaignBuildLogActor = 'user' | 'agent' | 'system'
+
+/** 构建过程记录（结构化过程史：什么步骤、何时、谁、产出了什么文件、用户诉求等） */
+export interface CampaignBuildLog {
+  /** 唯一标识 */
+  id: string
+  /** Campaign ID */
+  campaignId: string
+  /** 记录类型 */
+  kind: CampaignBuildLogKind
+  /** 发起方：user=用户诉求/操作，agent=Agent 构建动作，system=系统事件 */
+  actor: CampaignBuildLogActor
+  /** 关联的工作流步骤 ID（如 market_analysis） */
+  step?: string
+  /** 一句话标题，如「市场分析完成」 */
+  title: string
+  /** 完整内容（用户诉求原文 / 变更说明 / 摘要） */
+  content?: string
+  /** 本条目产出/关联的文件相对路径（JSON 存储） */
+  filePaths?: string[]
+  /** 关联的 Agent 会话 ID（便于回溯对话） */
+  sessionId?: string
+  /** 备用元数据（JSON 存储，如阶段/预算变更前后值） */
+  meta?: Record<string, unknown>
+  /** 创建时间 */
+  createdAt: number
+}
+
+/** 新增构建过程记录输入 */
+export interface AddCampaignBuildLogInput {
+  campaignId: string
+  kind: CampaignBuildLogKind
+  actor: CampaignBuildLogActor
+  step?: string
+  title: string
+  content?: string
+  filePaths?: string[]
+  sessionId?: string
+  meta?: Record<string, unknown>
 }
 
 // ===== IPC 通道常量 =====
@@ -334,6 +407,20 @@ export const CAMPAIGN_IPC_CHANNELS = {
   SAVE_BRIEF: 'campaign:saveBrief',
   /** 推进 Campaign 到下一阶段 */
   ADVANCE_PHASE: 'campaign:advancePhase',
+  /** 归档 / 取消归档 Campaign */
+  ARCHIVE: 'campaign:archive',
+  /** 软删除 Campaign（移入回收站） */
+  DELETE: 'campaign:delete',
+  /** 获取回收站中的 Campaign 列表 */
+  LIST_TRASHED: 'campaign:listTrashed',
+  /** 从回收站恢复 Campaign */
+  RESTORE: 'campaign:restore',
+  /** 彻底删除 Campaign（不可恢复） */
+  PURGE: 'campaign:purge',
+  /** 追加一条构建过程记录 */
+  ADD_BUILD_LOG: 'campaign:addBuildLog',
+  /** 查询 Campaign 的构建过程记录 */
+  LIST_BUILD_LOGS: 'campaign:listBuildLogs',
   /** 确保 Campaign Workspace 工具文件存在（旧 Campaign 兼容） */
   ENSURE_WORKSPACE: 'campaign:ensureWorkspace',
   /** 获取 Campaign 工作流 */
@@ -502,6 +589,10 @@ export interface ContentAudit {
   complianceScore: number
   brandAlignmentScore: number
   qualityScore: number
+  /** 品牌形象一致性（奥格威五维框架，权重 20%） */
+  brandImageScore: number
+  /** 数据可验证性（奥格威五维框架，权重 10%） */
+  dataVerifiabilityScore: number
   overallScore: number
   auditReport: string
   auditor: string
