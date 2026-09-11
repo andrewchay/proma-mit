@@ -271,6 +271,7 @@ bun run generate:icons    # 生成应用图标
 |-----------|-----------|
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态（Map 结构支持多对话并行）、模型选择、上下文设置、并排模式、思考模式、待上传附件 |
 | `agent-atoms.ts` | Agent 会话列表、当前会话、流式状态（`AgentStreamState`）、工作区选择、渠道选择、权限/AskUser 请求队列（按 sessionId Map） |
+| `project-atoms.ts` | 项目管理：任务表 / 状态定义（按 projectId 隔离 Map）、看板列派生 atom、拖拽乐观移动与回滚 |
 | 会话指示状态（`agent-atoms.ts` + `LeftSidebar`） | `SessionIndicatorStatus` = `idle/running/blocked/completed`。优先级 blocked>running>completed。侧边栏呼吸灯：running=蓝、blocked=橙、**completed=绿（会话完成且用户未查看）**。`unviewedCompletedSessionIdsAtom` 存"完成未查看"集合，点击/打开会话时由 `useOpenSession`/`useSyncActiveTabSideEffects` 清除，绿点随之消失。修改呼吸灯渲染时务必同时覆盖 completed，勿只看 running/blocked |
 | `active-view.ts` | 主面板视图切换（'conversations' / 'settings'） |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
@@ -285,6 +286,7 @@ bun run generate:icons    # 生成应用图标
 - **`chat/`**：聊天核心 — ChatView（消息加载/流式订阅）、ChatHeader（模型选择/上下文设置）、ChatInput（Tiptap 富文本编辑器）、ChatMessages（消息列表/自动滚动）、ParallelChatMessages（并排模式）
 - **`agent/`**：Agent 模式 — AgentView（纯展示 + 交互，IPC 监听已提升到全局）、AgentHeader（渠道/模型选择）、AgentMessages（消息列表 + 工具活动）、ToolActivityItem（工具调用展示）、WorkspaceSelector（工作区切换）、PermissionBanner/AskUserBanner（权限/问答请求 UI）
 - **`settings/`**：设置面板 — GeneralSettings（用户档案）、AppearanceSettings（主题）、ChannelSettings（渠道管理）、ChannelForm（Provider 配置）、AgentSettings（Agent 渠道/工作区/MCP）、McpServerForm（MCP 服务器配置）、AboutSettings（版本/更新）、FeishuSettings（飞书集成）；含 `primitives/` 可复用表单组件
+- **`projects/kanban/`**：拖拽看板 — KanbanBoard（DndContext 编排+乐观更新+失败回滚）、KanbanColumn（WIP 展示）、TaskCard、KanbanColumnSettings（状态 CRUD）
 - **`file-browser/`**：文件浏览器 — FileBrowser（工作区文件树浏览）
 - **`ai-elements/`**：AI 展示组件 — Markdown 渲染、代码块、Mermaid 图、推理折叠、上下文分割线、富文本输入
 - **`ui/`**：Radix UI 组件（现代化设计，CSS 变量主题）
@@ -564,6 +566,7 @@ React UI 更新
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
 - ✅ **Goal 状态层（借鉴 LoopX）**：长生命周期目标跨会话追踪，含 todos（所有权/声明）、用户门控（gate）、证据、配额；Goal 可绑定会话，会话完成自动沉淀证据
 - ✅ **Token 统计**：按会话/轮次/工具/Skill/MCP/模型维度统计 token 消耗（`~/.proma-mit/token-usage/`）
+- ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 task_statuses 表（预置五态沿用旧字符串 id，历史数据零迁移），跨状态逻辑只认六个语义组；@dnd-kit 拖拽一次落库改状态+顺序（中点法+重编号兜底），失败回滚提示；飞书/钉钉按语义组双向映射，回声抑制+排序不推外部
 - ✅ **Turn 决策层**：Agent 每轮前置路由判断（ready/wait/blocked/quota/goal_terminated/replan/repair），自动化不可推进时硬阻断
 - ✅ **SubAgent 交接预算**：SubAgent 交接文本限 16 行/1800 字符，超限自动压缩
 - ✅ **运行记录**：Agent/Workflow/Automation 统一运行记录（Run Center）
@@ -646,6 +649,15 @@ React UI 更新
 - `src/retrieval/tokenizer.ts`：CJK bigram 分词 + 两档词元
 - `src/retrieval/fuse.ts`：RRF 多路融合
 - `apps/electron/src/main/lib/context-store-service.ts`：Proma 运行时接入层
+
+### 项目状态分组与拖拽排序关键约定（第一批改造）
+
+- **task_statuses 表**：每项目一组状态定义（预置五态沿用旧字符串 id：draft/pending/in_progress/paused/completed，历史数据零迁移）；跨状态逻辑（完成判断/WIP/燃尽/外部同步）只认语义组，抽在 `task-status-logic.ts` 纯函数，同步层经 `task-status-store-bridge.ts` 取用。
+- **tasks.sort_order**：REAL 列，回填 -created_at（保持"最新在前"）；拖拽用 `reorderTask(taskId, { afterTaskId?, beforeTaskId?, newStatusId? })`，中点法一次只写一行，间隙耗尽整列重编号（`task-reorder-logic.ts`）。跨列移动内部走 updateTask，DoD/完成语义自动生效。
+- **sql.js 循环写入陷阱**：bun test 分支 SqlJsStmt 每次 run 后 free 语句，循环内必须逐次 prepare，否则抛 "Statement closed"（生产 better-sqlite3 无此问题）。见 skill `sqljs-statement-closed`。
+- **外部同步语义**：推方向 provider 只收 `isCompleted: boolean`（组语义二值）；`onTaskChange` 第三参携带 `{ changedFields, source }`——source=external-sync 不回推（回声抑制）、仅 sortOrder/externalSync.* 变化不推外部（拖拽降噪）；拉方向外部"未完成"仅在本地已处完成组时回退默认状态，绝不覆盖 in_progress/paused。轮询变化经 `POLL_STATUS_CHANGED` 推前端（main.tsx 全局监听写入 `pollStatusChangedAtom`，ProjectDetail 按 projectId 消费刷新）。
+- **draft 组进出规则**：updateTask 禁止普通路径进出 draft 组（草稿只能经 confirmTaskDraft/rejectTaskDraft 流转，防止绕过确认闭环）；confirmTaskDraft 内部直写 SQL 不走 updateTask 校验。拖拽邻居契约：after/before 两个邻居分别定位（任一命中即采用，全缺失回退列尾），前端按指针相对悬停卡片中线决定插前/插后。
+- **甘特图与流动指标同口径**：跨状态逻辑全部按语义组（GanttView 超期/条色经 `ganttBarColor()` 纯函数，flow-metrics WIP/完成同源）；查询索引 `idx_tasks_project_sort(project_id, sort_order)` 必须保留。
 
 ### 飞书 Task v2 同步 Todo 关键踩坑
 

@@ -4,7 +4,10 @@
  * 本地 SQLite 作为项目管理唯一数据源（弃用 NocoBase）。
  * 全部数据操作在此实现，project-service.ts 保持对外接口不变。
  *
- * 技术选型：sql.js 内存 SQLite，同步接口包装与原子导出持久化。
+ * 技术选型：Electron 主进程用 better-sqlite3（文件直写 + WAL，无全量导出）；
+ * bun test 环境用 sql.js（WASM 内存库 + 导出持久化）——better-sqlite3 的 V8 原生绑定
+ * 在 Bun 下会直接崩溃，且 Electron 主进程拿不到 node:sqlite，故测试分支保留 sql.js。
+ * 两个驱动实现同一 SqliteCompat 接口，业务 SQL 完全共享。
  * 存储位置：~/.gravitas/projects/paa.db
  *
  * v1.0 — 本地 SQLite 唯一数据源
@@ -15,9 +18,14 @@ import initSqlJs, { type Database as SqlDatabase, type Statement, type SqlJsStat
 import { writeFileAtomic } from '@gravitas/shared/utils/node'
 import { getProjectsDir } from './config-paths'
 import { join } from 'node:path'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { assertTaskCompletionAllowed, emptyProjectChain } from './project-chain'
 import type { ProjectChain } from '@gravitas/shared'
+
+// better-sqlite3 类型（仅类型引用；运行时在 loadNativeSqlite 中延迟 require，Bun 下不会加载）
+type SqliteNativeConstructor = typeof import('better-sqlite3')
+type SqliteNativeDatabase = InstanceType<SqliteNativeConstructor>
+type SqliteNativeStatement = ReturnType<SqliteNativeDatabase['prepare']>
 import type {
   Project,
   Task,
@@ -51,12 +59,39 @@ import type {
   CreateMemberInput,
   UpdateMemberInput,
   ListMembersFilter,
+  TaskStatusDef,
+  TaskStateGroup,
+  CreateTaskStatusInput,
+  UpdateTaskStatusInput,
+  ReorderTaskInput,
+  ReorderTaskResult,
 } from './project-types'
+import { builtinTaskStatusSeed, isCompletedStatus, isDraftStatusId, resolveStateGroup } from './task-status-logic'
+import { computeReorderPlan } from './task-reorder-logic'
 
 // ===== 数据库连接 =====
 
-// sql.js 兼容包装：向业务代码暴露 better-sqlite3 风格的 prepare().get/all/run + transaction。
-// sql.js 为内存库 + 手动 export 持久化，写操作后同步落盘（项目管理写频率低，可接受）。
+// 双驱动兼容层：向业务代码暴露统一的 prepare().get/all/run + transaction 接口。
+// 生产（Electron）走 better-sqlite3 直写磁盘，测试（bun）走 sql.js 导出持久化。
+
+type SqlParam = string | number | null
+
+interface StmtCompat {
+  get(...params: SqlParam[]): unknown
+  all(...params: SqlParam[]): unknown[]
+  run(...params: SqlParam[]): { changes: number }
+}
+
+interface SqliteCompat {
+  prepare(sql: string): StmtCompat
+  /** 执行多条 SQL（迁移用） */
+  exec(sql: string): void
+  /** 兼容保留：sql.js 需要显式导出落盘；better-sqlite3 写操作即时落盘，此处为空操作 */
+  persist(): void
+  /** 返回一个执行函数（支持嵌套：内层直接执行，由外层统一提交/回滚） */
+  transaction(fn: () => void): () => void
+  close(): void
+}
 
 let db: SqliteCompat | null = null
 let sqlJsPromise: Promise<SqlJsStatic> | null = null
@@ -69,6 +104,16 @@ function loadSqlJs(): Promise<SqlJsStatic> {
     })
   }
   return sqlJsPromise
+}
+
+/** 是否运行在 Bun（bun test）下：better-sqlite3 的 V8 绑定会让 Bun 直接崩溃，必须走 sql.js */
+function isBunRuntime(): boolean {
+  return typeof process !== 'undefined' && !!process.versions.bun
+}
+
+function loadNativeSqlite(): SqliteNativeConstructor {
+  // esbuild --external:better-sqlite3：原生绑定不可打包，运行时从 node_modules 解析
+  return require('better-sqlite3') as SqliteNativeConstructor
 }
 
 /** 获取（或初始化）项目管理数据库 */
@@ -86,16 +131,40 @@ export async function initProjectDb(): Promise<void> {
   if (dbReady) return
   if (dbInitPromise) return dbInitPromise
   dbInitPromise = (async () => {
-    const SQL = await loadSqlJs()
     const dir = getProjectsDir()
     const dbPath = join(dir, 'paa.db')
-    const existing = existsSync(dbPath) ? readFileSync(dbPath) : undefined
-    const database = new SQL.Database(existing as Uint8Array | undefined)
-    db = new SqliteCompat(database, dbPath)
-    migrate(database)
+    if (isBunRuntime()) {
+      // 测试分支：sql.js 内存库 + 手动导出持久化（行为与历史版本一致）
+      const SQL = await loadSqlJs()
+      const existing = existsSync(dbPath) ? readFileSync(dbPath) : undefined
+      const store = new SqlJsCompat(new SQL.Database(existing as Uint8Array | undefined), dbPath)
+      migrate(store)
+      db = store
+    } else {
+      // 生产分支：better-sqlite3 打开同一 SQLite 文件（格式与驱动无关，无数据迁移）
+      const database = new (loadNativeSqlite())(dbPath)
+      database.pragma('journal_mode = WAL')
+      database.pragma('synchronous = NORMAL')
+      backupDatabaseFile(database, dbPath)
+      const store = new NativeSqliteCompat(database)
+      migrate(store)
+      db = store
+    }
     dbReady = true
   })()
   await dbInitPromise
+}
+
+/** 驱动切换/迁移前的安全网：VACUUM INTO 生成一致性快照（含 WAL 内容），失败不阻塞启动 */
+function backupDatabaseFile(database: SqliteNativeDatabase, dbPath: string): void {
+  try {
+    const backupPath = `${dbPath}.backup`
+    if (existsSync(backupPath)) rmSync(backupPath)
+    database.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`)
+    console.log('[ProjectSqliteStore] 已生成数据库备份:', backupPath)
+  } catch (error) {
+    console.warn('[ProjectSqliteStore] 数据库备份失败（不阻塞启动）:', error instanceof Error ? error.message : error)
+  }
 }
 
 function throwIfNotReady(): void {
@@ -113,9 +182,9 @@ export function closeProjectDb(): void {
   }
 }
 
-// ===== sql.js 兼容包装 =====
+// ===== sql.js 实现（bun test 分支） =====
 
-class SqliteCompat {
+class SqlJsCompat implements SqliteCompat {
   private database: SqlDatabase
   private filePath: string
   private inTransaction = false
@@ -132,7 +201,7 @@ class SqliteCompat {
   }
 
   prepare(sql: string): StmtCompat {
-    return new StmtCompat(this.database, sql, this)
+    return new SqlJsStmt(this.database, sql, this)
   }
 
   /** 执行多条 SQL（迁移用） */
@@ -146,7 +215,7 @@ class SqliteCompat {
     return this.database.getRowsModified()
   }
 
-  /** 事务：返回一个执行函数（与 better-sqlite3 的 transaction() 行为一致，支持嵌套） */
+  /** 事务：返回一个执行函数（支持嵌套：内层直接执行，由外层统一提交/回滚） */
   transaction(fn: () => void): () => void {
     return () => {
       if (this.inTransaction) {
@@ -178,16 +247,16 @@ class SqliteCompat {
   }
 }
 
-class StmtCompat {
+class SqlJsStmt implements StmtCompat {
   private statement: Statement
-  private owner: SqliteCompat
+  private owner: SqlJsCompat
 
-  constructor(database: SqlDatabase, sql: string, owner: SqliteCompat) {
+  constructor(database: SqlDatabase, sql: string, owner: SqlJsCompat) {
     this.statement = database.prepare(sql)
     this.owner = owner
   }
 
-  get(...params: Array<string | number | null>): unknown {
+  get(...params: SqlParam[]): unknown {
     try {
       this.statement.bind(params as never[])
       const row = this.statement.step() ? this.statement.getAsObject() : undefined
@@ -197,7 +266,7 @@ class StmtCompat {
     }
   }
 
-  all(...params: Array<string | number | null>): unknown[] {
+  all(...params: SqlParam[]): unknown[] {
     try {
       this.statement.bind(params as never[])
       const rows: unknown[] = []
@@ -208,7 +277,7 @@ class StmtCompat {
     }
   }
 
-  run(...params: Array<string | number | null>): { changes: number } {
+  run(...params: SqlParam[]): { changes: number } {
     try {
       this.statement.bind(params as never[])
       this.statement.step()
@@ -220,28 +289,89 @@ class StmtCompat {
   }
 }
 
-// ===== Schema 迁移 =====
+// ===== better-sqlite3 实现（Electron 生产分支） =====
 
-/**
- * 读取某表现有列名。
- * 说明：sql.js 原生 Statement 没有 .all()，需用 step + getAsObject 手动遍历。
- * （旧实现直接 database.prepare(...).all() 会在 raw Statement 上抛错，属潜在 bug。）
- */
-function readColumnNames(database: SqlDatabase, table: string): string[] {
-  const stmt = database.prepare(`PRAGMA table_info(${table})`)
-  try {
-    const names: string[] = []
-    while (stmt.step()) {
-      const row = stmt.getAsObject() as { name?: string }
-      if (row.name) names.push(row.name)
+class NativeSqliteCompat implements SqliteCompat {
+  private database: SqliteNativeDatabase
+  private inTransaction = false
+
+  constructor(database: SqliteNativeDatabase) {
+    this.database = database
+  }
+
+  /** WAL 模式下写操作直接落盘，无需导出（兼容保留空实现） */
+  persist(): void {}
+
+  prepare(sql: string): StmtCompat {
+    return new NativeSqliteStmt(this.database, sql)
+  }
+
+  exec(sql: string): void {
+    this.database.exec(sql)
+  }
+
+  transaction(fn: () => void): () => void {
+    return () => {
+      if (this.inTransaction) {
+        fn()
+        return
+      }
+      this.database.exec('BEGIN')
+      this.inTransaction = true
+      try {
+        fn()
+        this.database.exec('COMMIT')
+      } catch (error) {
+        try {
+          this.database.exec('ROLLBACK')
+        } catch {
+          // 回滚失败不掩盖原始错误
+        }
+        throw error
+      } finally {
+        this.inTransaction = false
+      }
     }
-    return names
-  } finally {
-    stmt.free()
+  }
+
+  close(): void {
+    this.database.close()
   }
 }
 
-function migrate(database: SqlDatabase): void {
+class NativeSqliteStmt implements StmtCompat {
+  private statement: SqliteNativeStatement
+
+  constructor(database: SqliteNativeDatabase, sql: string) {
+    this.statement = database.prepare(sql)
+  }
+
+  // better-sqlite3 类型为 (named..., anonymous...) 双 rest 签名，统一断言为单 rest 便于展开
+  get(...params: SqlParam[]): unknown {
+    return (this.statement.get.bind(this.statement) as (...params: SqlParam[]) => unknown)(...params)
+  }
+
+  all(...params: SqlParam[]): unknown[] {
+    return (this.statement.all.bind(this.statement) as (...params: SqlParam[]) => unknown[])(...params)
+  }
+
+  run(...params: SqlParam[]): { changes: number } {
+    const run = this.statement.run.bind(this.statement) as (...params: SqlParam[]) => { changes: number }
+    return { changes: run(...params).changes }
+  }
+}
+
+// ===== Schema 迁移 =====
+
+/**
+ * 读取某表现有列名（走兼容层 prepare().all()，两个驱动行为一致）。
+ */
+function readColumnNames(database: SqliteCompat, table: string): string[] {
+  const rows = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>
+  return rows.map((row) => row.name).filter((name): name is string => !!name)
+}
+
+function migrate(database: SqliteCompat): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS project_chain_revisions (
       project_id TEXT NOT NULL,
@@ -490,6 +620,50 @@ function migrate(database: SqlDatabase): void {
   if (!umCols.includes('feishu_union_id')) {
     database.exec(`ALTER TABLE user_mappings ADD COLUMN feishu_union_id TEXT`)
   }
+
+  // 任务排序（Phase 2）：sort_order 为 REAL，列内升序即展示顺序；
+  // 回填 -created_at 保持历史"最新在前"的展示顺序不变
+  if (!columns.includes('sort_order')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
+    database.exec(`UPDATE tasks SET sort_order = -created_at WHERE sort_order = 0`)
+  }
+  // listTasks/reorderTask 均按 (project_id, status) 过滤 + sort_order 排序，覆盖索引
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order)`)
+
+  // State 分组状态模型（借鉴 Plane）：每项目一组可自定义状态，预置五态沿用旧字符串 id
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_statuses (
+      project_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      state_group TEXT NOT NULL CHECK (state_group IN ('backlog','unstarted','started','completed','cancelled','triage')),
+      position INTEGER NOT NULL DEFAULT 0,
+      color TEXT,
+      wip_limit INTEGER,
+      is_builtin INTEGER NOT NULL DEFAULT 0,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_statuses_project ON task_statuses(project_id);
+  `)
+  // 存量项目补种预置五态（幂等）
+  const projectRows = database.prepare('SELECT id FROM projects').all() as Array<{ id: string }>
+  for (const row of projectRows) {
+    seedTaskStatusesForProject(database, row.id)
+  }
+}
+
+/** 为项目写入预置状态种子（幂等：INSERT OR IGNORE） */
+function seedTaskStatusesForProject(database: SqliteCompat, projectId: string): void {
+  const timestamp = now()
+  // sql.js 包装层每次 run 后即 free 语句，循环内必须逐次 prepare（与全仓惯用法一致）
+  for (const item of builtinTaskStatusSeed()) {
+    database.prepare(
+      `INSERT OR IGNORE INTO task_statuses (project_id, id, name, state_group, position, is_builtin, is_default, created_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`
+    ).run(projectId, item.id, item.name, item.stateGroup, item.position, item.isDefault ? 1 : 0, timestamp)
+  }
 }
 
 // ===== 行映射工具 =====
@@ -507,6 +681,7 @@ type TaskRow = {
   start_date: number | null; due_date: number | null; completed_at: number | null;
   completion_notes: string | null; risk_level: string | null; external_sync: string | null;
   permission_requests: string | null;
+  sort_order: number;
   created_at: number; updated_at: number;
 }
 
@@ -554,6 +729,7 @@ function rowToTask(row: TaskRow): Task {
     permissionRequests: parseJsonArray(row.permission_requests),
     createdByUserId: row.created_by_user_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
+    sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -589,6 +765,7 @@ export function createProject(input: CreateProjectInput): Project {
   database.prepare(
     `INSERT INTO projects (id, title, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
   ).run(id, input.title, input.description ?? '', input.status ?? 'active', timestamp, timestamp)
+  seedTaskStatusesForProject(database, id)
   const row = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow
   return rowToProject(row)
 }
@@ -634,6 +811,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM project_activities WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM outbox_events WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM risk_assessments WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM task_statuses WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM projects WHERE id = ?`).run(id)
   })
   tx()
@@ -646,18 +824,19 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   const database = getProjectDb()
   const id = randomUUID()
   const timestamp = now()
+  const sortOrder = -timestamp
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, created_by_user_id, workspace_id, start_date, due_date, permission_requests, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, created_by_user_id, workspace_id, start_date, due_date, permission_requests, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
     input.createdByUserId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
-    JSON.stringify(input.permissionRequests ?? []), timestamp, timestamp
+    JSON.stringify(input.permissionRequests ?? []), sortOrder, timestamp, timestamp
   )
   recordProjectActivity({
     projectId,
@@ -679,12 +858,18 @@ export function listTasks(projectId: string, filter?: ListTasksFilter): Task[] {
   } else if (!filter?.includeDrafts) {
     conditions.push("status != 'draft'")
   }
-  const sql = `SELECT * FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`
+  const sql = `SELECT * FROM tasks WHERE ${conditions.join(' AND ')} ORDER BY sort_order ASC, created_at DESC`
   let rows = database.prepare(sql).all(...params) as TaskRow[]
   if (!filter?.includeSubTasks) {
     rows = rows.filter((row) => !row.parent_id)
   }
   let tasks = rows.map(rowToTask)
+  if (filter?.statusGroup) {
+    // 语义组过滤：状态定义在 task_statuses 表，无法进 SQL，取出后按组过滤
+    const statuses = listTaskStatuses(projectId)
+    const group = filter.statusGroup
+    tasks = tasks.filter((task) => resolveStateGroup(task.status, statuses) === group)
+  }
   if (filter?.assigneeUserId) {
     tasks = tasks.filter((task) => task.assignee?.userId === filter.assigneeUserId)
   }
@@ -701,7 +886,22 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
   if (!existing) return null
-  if (updates.status === 'completed') {
+  const statuses = listTaskStatuses(existing.project_id)
+  const statusChanged = updates.status !== undefined && updates.status !== existing.status
+  // draft 组进出规则：草稿是流程外待确认态，只能经 confirmTaskDraft/rejectTaskDraft 链路离开，
+  // 也禁止普通更新把已确认任务改回草稿（避免绕过确认闭环）
+  if (statusChanged && updates.status !== undefined) {
+    const fromDraft = isDraftStatusId(existing.status)
+    const toDraft = isDraftStatusId(updates.status)
+    if (fromDraft !== toDraft) {
+      throw new Error(
+        fromDraft
+          ? '草稿任务请通过「确认」或「拒绝」操作流转，不能直接改状态'
+          : '任务不能通过状态编辑改回草稿（草稿仅由文档提取/AI 生成产生）',
+      )
+    }
+  }
+  if (statusChanged && updates.status !== undefined && isCompletedStatus(updates.status, statuses)) {
     const chainRow = database.prepare(
       'SELECT payload FROM project_chain_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1',
     ).get(existing.project_id) as { payload: string } | undefined
@@ -716,8 +916,9 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     } as ProjectChain, id)
   }
   let completedAt = existing.completed_at
-  if (updates.status === 'completed') completedAt = now()
-  else if (updates.status !== undefined) completedAt = null
+  if (statusChanged && updates.status !== undefined) {
+    completedAt = isCompletedStatus(updates.status, statuses) ? now() : null
+  }
   const next: TaskRow = {
     ...existing,
     title: updates.title ?? existing.title,
@@ -780,6 +981,68 @@ export function deleteTask(id: string): boolean {
   })
   tx()
   return true
+}
+
+// ===== 任务排序（Phase 2：中点法 + 间隙不足整列重编号） =====
+
+/**
+ * 拖拽排序：一次拖拽可同时改状态（跨列）与位置（列内）。
+ *
+ * @param id 被移动任务 ID
+ * @param input 目标位置（邻居表达）与可选的新状态
+ * @returns 被移动任务；触发整列重编号时附带被一并改写的任务
+ */
+export function reorderTask(id: string, input: ReorderTaskInput): ReorderTaskResult {
+  const database = getProjectDb()
+  const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
+  if (!existing) throw new Error(`任务不存在: ${id}`)
+  const projectId = existing.project_id
+  const newStatusId = input.newStatusId ?? existing.status
+
+  // 目标列当前任务（按 sort_order 升序），排除被移动任务
+  const columnRows = database.prepare(
+    `SELECT * FROM tasks WHERE project_id = ? AND status = ? AND id != ? ORDER BY sort_order ASC, created_at DESC`,
+  ).all(projectId, newStatusId, id) as TaskRow[]
+
+  // 解析落点索引：两个邻居分别定位（after=上方邻居→其下一位；before=下方邻居→其位），
+  // 两者都命中时必须一致（同一路由产生的相邻对）；任一命中即采用，
+  // 全部未命中（跨列拖到列首时 after 天然缺失）才回退列尾。
+  let targetIndex = columnRows.length
+  const afterIndex = input.afterTaskId ? columnRows.findIndex((row) => row.id === input.afterTaskId) : -1
+  const beforeIndex = input.beforeTaskId ? columnRows.findIndex((row) => row.id === input.beforeTaskId) : -1
+  if (afterIndex >= 0) {
+    targetIndex = afterIndex + 1
+  } else if (beforeIndex >= 0) {
+    targetIndex = beforeIndex
+  }
+
+  const currentOrders = new Map(columnRows.map((row) => [row.id, row.sort_order]))
+  const plan = computeReorderPlan(
+    columnRows.map((row) => row.id),
+    id,
+    targetIndex,
+    currentOrders,
+  )
+
+  const tx = database.transaction(() => {
+    // 跨列移动需走 updateTask 的完成语义（completed_at 维护、DoD/依赖校验）
+    if (newStatusId !== existing.status) {
+      const updated = updateTask(id, { status: newStatusId })
+      if (!updated) throw new Error(`任务不存在: ${id}`)
+    }
+    database.prepare(`UPDATE tasks SET sort_order = ?, updated_at = ? WHERE id = ?`).run(plan.movedSortOrder, now(), id)
+    for (const item of plan.rewritten) {
+      database.prepare(`UPDATE tasks SET sort_order = ?, updated_at = ? WHERE id = ?`).run(item.sortOrder, now(), item.taskId)
+    }
+  })
+  tx()
+
+  const task = getTask(id)!
+  // 重编号后从库重读，保证返回的是落盘后的最新行
+  const rewrittenTasks = plan.rewritten
+    .map((item) => getTask(item.taskId))
+    .filter((item): item is Task => item !== null)
+  return { task, rewrittenTasks }
 }
 
 // ===== WBS 子任务 =====
@@ -878,16 +1141,17 @@ export function createTaskDraft(projectId: string, input: CreateTaskInput): Task
   const database = getProjectDb()
   const id = randomUUID()
   const timestamp = now()
+  const sortOrder = -timestamp
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, start_date, due_date, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, start_date, due_date, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
-    input.startDate ?? null, input.dueDate ?? null, timestamp, timestamp
+    input.startDate ?? null, input.dueDate ?? null, sortOrder, timestamp, timestamp
   )
   return getTask(id)!
 }
@@ -895,7 +1159,11 @@ export function createTaskDraft(projectId: string, input: CreateTaskInput): Task
 export function confirmTaskDraft(id: string): Task | null {
   const task = getTask(id)
   if (!task || task.status !== 'draft') return null
-  return updateTask(id, { status: 'pending' })
+  // 确认是 draft 离开的唯一合法通道（updateTask 已禁止普通路径 draft↔非draft），
+  // 这里直接落库：draft→pending 不涉及完成组语义，无需 completed_at 维护
+  const database = getProjectDb()
+  database.prepare(`UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?`).run(now(), id)
+  return getTask(id)
 }
 
 export function rejectTaskDraft(id: string): boolean {
@@ -963,22 +1231,148 @@ export function getMeetingNote(id: string): MeetingNote | null {
 // ===== 看板与进度 =====
 
 export function getKanbanBoard(projectId: string): KanbanBoard {
+  const statuses = listTaskStatuses(projectId)
   const tasks = listTasks(projectId, { includeSubTasks: false, includeDrafts: true })
+  const byStatus = new Map<string, Task[]>()
+  for (const task of tasks) {
+    const list = byStatus.get(task.status) ?? []
+    list.push(task)
+    byStatus.set(task.status, list)
+  }
   return {
-    draft: tasks.filter((t) => t.status === 'draft'),
-    pending: tasks.filter((t) => t.status === 'pending'),
-    in_progress: tasks.filter((t) => t.status === 'in_progress'),
-    completed: tasks.filter((t) => t.status === 'completed'),
+    columns: statuses.map((status) => ({ status, tasks: byStatus.get(status.id) ?? [] })),
   }
 }
 
 export function getProjectProgress(projectId: string): ProjectProgress {
+  const statuses = listTaskStatuses(projectId)
   const tasks = listTasks(projectId, { includeSubTasks: false })
-  const nonDraftTasks = tasks.filter((t) => t.status !== 'draft')
+  const nonDraftTasks = tasks.filter((t) => !isDraftStatusId(t.status))
   const total = nonDraftTasks.length
-  const completed = nonDraftTasks.filter((t) => t.status === 'completed').length
+  const completed = nonDraftTasks.filter((t) => isCompletedStatus(t.status, statuses)).length
   const percentage = total > 0 ? Math.round((completed / total) * 10000) / 100 : 0
   return { total, completed, percentage }
+}
+
+// ===== 任务状态定义（State 分组） =====
+
+type TaskStatusRow = {
+  project_id: string; id: string; name: string; state_group: string;
+  position: number; color: string | null; wip_limit: number | null;
+  is_builtin: number; is_default: number; created_at: number;
+}
+
+function rowToTaskStatus(row: TaskStatusRow): TaskStatusDef {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    stateGroup: row.state_group as TaskStateGroup,
+    position: row.position,
+    color: row.color ?? undefined,
+    wipLimit: row.wip_limit ?? undefined,
+    isBuiltin: row.is_builtin === 1,
+    isDefault: row.is_default === 1,
+    createdAt: row.created_at,
+  }
+}
+
+export function getTaskStatus(projectId: string, statusId: string): TaskStatusDef | null {
+  const row = getProjectDb().prepare(
+    `SELECT * FROM task_statuses WHERE project_id = ? AND id = ?`
+  ).get(projectId, statusId) as TaskStatusRow | undefined
+  return row ? rowToTaskStatus(row) : null
+}
+
+/** 列出项目状态定义（按 position 排序，即看板列序） */
+export function listTaskStatuses(projectId: string): TaskStatusDef[] {
+  const rows = getProjectDb().prepare(
+    `SELECT * FROM task_statuses WHERE project_id = ? ORDER BY position ASC, created_at ASC`
+  ).all(projectId) as TaskStatusRow[]
+  return rows.map(rowToTaskStatus)
+}
+
+export function createTaskStatus(projectId: string, input: CreateTaskStatusInput): TaskStatusDef {
+  const database = getProjectDb()
+  const statuses = listTaskStatuses(projectId)
+  const insertIndex = input.afterStatusId
+    ? statuses.findIndex((status) => status.id === input.afterStatusId) + 1
+    : statuses.length
+  if (input.afterStatusId && insertIndex === 0) throw new Error('参照状态不存在')
+  const id = `sts_${randomUUID()}`
+  const timestamp = now()
+  const orderedIds = [
+    ...statuses.slice(0, insertIndex).map((status) => status.id),
+    id,
+    ...statuses.slice(insertIndex).map((status) => status.id),
+  ]
+  const tx = database.transaction(() => {
+    database.prepare(
+      `INSERT INTO task_statuses (project_id, id, name, state_group, position, color, wip_limit, is_builtin, is_default, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`
+    ).run(projectId, id, input.name, input.stateGroup, insertIndex, input.color ?? null, input.wipLimit ?? null, timestamp)
+    renumberTaskStatusesByIds(database, projectId, orderedIds)
+  })
+  tx()
+  const created = getTaskStatus(projectId, id)
+  if (!created) throw new Error('状态创建失败')
+  return created
+}
+
+export function updateTaskStatus(projectId: string, statusId: string, patch: UpdateTaskStatusInput): TaskStatusDef | null {
+  const database = getProjectDb()
+  const existing = getTaskStatus(projectId, statusId)
+  if (!existing) return null
+  database.prepare(
+    `UPDATE task_statuses SET name = ?, state_group = ?, color = ?, wip_limit = ? WHERE project_id = ? AND id = ?`
+  ).run(
+    patch.name ?? existing.name,
+    patch.stateGroup ?? existing.stateGroup,
+    patch.color !== undefined ? patch.color : existing.color ?? null,
+    patch.wipLimit !== undefined ? patch.wipLimit : existing.wipLimit ?? null,
+    projectId, statusId,
+  )
+  return getTaskStatus(projectId, statusId)
+}
+
+/** 删除自定义状态；该状态下任务迁移到指定状态。预置状态不可删。 */
+export function deleteTaskStatus(projectId: string, statusId: string, migrateToStatusId: string): boolean {
+  const database = getProjectDb()
+  const existing = getTaskStatus(projectId, statusId)
+  if (!existing) return false
+  if (existing.isBuiltin) throw new Error('预置状态不可删除，可改名或调整顺序')
+  const target = getTaskStatus(projectId, migrateToStatusId)
+  if (!target) throw new Error('目标状态不存在，无法迁移任务')
+  if (target.id === statusId) throw new Error('不能迁移到被删除的状态本身')
+  const tx = database.transaction(() => {
+    database.prepare(`UPDATE tasks SET status = ?, updated_at = ? WHERE project_id = ? AND status = ?`)
+      .run(migrateToStatusId, now(), projectId, statusId)
+    database.prepare(`DELETE FROM task_statuses WHERE project_id = ? AND id = ?`).run(projectId, statusId)
+  })
+  tx()
+  return true
+}
+
+/** 按给定 id 序列重排状态（必须覆盖项目全部状态）；返回重排后的定义 */
+export function reorderTaskStatuses(projectId: string, orderedIds: string[]): TaskStatusDef[] {
+  const database = getProjectDb()
+  const statuses = listTaskStatuses(projectId)
+  const known = new Set(statuses.map((status) => status.id))
+  const provided = new Set(orderedIds)
+  const unknown = orderedIds.filter((id) => !known.has(id))
+  if (unknown.length > 0) throw new Error(`未知状态: ${unknown.join(', ')}`)
+  const missing = statuses.filter((status) => !provided.has(status.id)).map((status) => status.id)
+  const finalOrder = [...orderedIds, ...missing]
+  const tx = database.transaction(() => renumberTaskStatusesByIds(database, projectId, finalOrder))
+  tx()
+  return listTaskStatuses(projectId)
+}
+
+function renumberTaskStatusesByIds(database: SqliteCompat, projectId: string, orderedIds: string[]): void {
+  // sql.js 包装层每次 run 后即 free 语句，循环内必须逐次 prepare
+  orderedIds.forEach((statusId, index) => {
+    database.prepare(`UPDATE task_statuses SET position = ? WHERE project_id = ? AND id = ?`).run(index, projectId, statusId)
+  })
 }
 
 // ===== 任务依赖与阻塞 =====
@@ -1065,6 +1459,7 @@ export function listTaskBlockers(projectId: string): TaskBlocker[] {
     : []
   const tasks = listTasks(projectId, { includeSubTasks: true, includeDrafts: true })
   const dependencies = listTaskDependencies(projectId)
+  const statuses = listTaskStatuses(projectId)
   const taskById = new Map(tasks.map((task) => [task.id, task]))
   return dependencies.flatMap((dependency) => {
     const prerequisite = taskById.get(dependency.dependsOnTaskId)
@@ -1084,7 +1479,7 @@ export function listTaskBlockers(projectId: string): TaskBlocker[] {
         reason,
       }]
     }
-    if (!prerequisite || prerequisite.status === 'completed') return []
+    if (!prerequisite || isCompletedStatus(prerequisite.status, statuses)) return []
     return [{
       taskId: dependency.taskId,
       dependsOnTaskId: dependency.dependsOnTaskId,
@@ -1100,6 +1495,7 @@ export function listTaskBlockers(projectId: string): TaskBlocker[] {
 export function listProjectWorkItems(projectId: string): MyWorkItem[] {
   const project = getProject(projectId)
   if (!project) return []
+  const statuses = listTaskStatuses(projectId)
   const tasks = listTasks(projectId, { includeSubTasks: true, includeDrafts: true })
   const nowTimestamp = Date.now()
   const taskItems: MyWorkItem[] = tasks.map((task) => ({
@@ -1117,7 +1513,7 @@ export function listProjectWorkItems(projectId: string): MyWorkItem[] {
     externalSync: task.externalSync,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
-    isOverdue: task.status !== 'completed' && task.dueDate !== undefined && task.dueDate < nowTimestamp,
+    isOverdue: !isCompletedStatus(task.status, statuses) && task.dueDate !== undefined && task.dueDate < nowTimestamp,
   }))
   const executionItems = tasks.flatMap((task) =>
     listExecutionSubTasks(task.id).map((subTask): MyWorkItem => ({
@@ -1144,6 +1540,7 @@ export function listTasksCreatedBy(creatorUserId: string): MyWorkItem[] {
   const projects = listProjects()
   const result: MyWorkItem[] = []
   for (const project of projects) {
+    const statuses = listTaskStatuses(project.id)
     const rows = database.prepare(`SELECT * FROM tasks WHERE created_by_user_id = ? ORDER BY created_at DESC`).all(creatorUserId) as TaskRow[]
     for (const row of rows) {
       const task = rowToTask(row)
@@ -1159,7 +1556,7 @@ export function listTasksCreatedBy(creatorUserId: string): MyWorkItem[] {
         dueDate: task.dueDate,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
-        isOverdue: task.status !== 'completed' && !!task.dueDate && task.dueDate < Date.now(),
+        isOverdue: !isCompletedStatus(task.status, statuses) && !!task.dueDate && task.dueDate < Date.now(),
       })
     }
   }

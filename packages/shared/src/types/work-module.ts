@@ -234,6 +234,14 @@ export const PROJECT_IPC_CHANNELS = {
   // 看板与进度
   GET_KANBAN_BOARD: 'project:get-kanban-board',
   GET_PROJECT_PROGRESS: 'project:get-project-progress',
+  // 任务状态定义（State 分组，借鉴 Plane：跨状态逻辑只认语义组）
+  LIST_TASK_STATUSES: 'project:list-task-statuses',
+  CREATE_TASK_STATUS: 'project:create-task-status',
+  UPDATE_TASK_STATUS: 'project:update-task-status',
+  DELETE_TASK_STATUS: 'project:delete-task-status',
+  REORDER_TASK_STATUSES: 'project:reorder-task-statuses',
+  // 任务拖拽排序（中点法；一次拖拽可同时改状态与位置）
+  REORDER_TASK: 'project:reorder-task',
   // 用户映射
   SAVE_USER_MAPPING: 'project:save-user-mapping',
   GET_USER_MAPPING: 'project:get-user-mapping',
@@ -297,7 +305,8 @@ export interface TaskUpdateInput {
   description?: string
   assignee?: { userId: string; displayName: string }
   priority?: 'low' | 'medium' | 'high' | 'critical'
-  status?: 'pending' | 'in_progress' | 'completed'
+  /** 任务状态 id：预置五态（draft/pending/in_progress/paused/completed）或项目自定义状态 id */
+  status?: string
   dueDate?: number
   subTasks?: SubTaskInput[]
   /** 父任务 ID，用于建立/解除父子关联 */
@@ -313,8 +322,25 @@ export interface CreateSubTaskInput {
 }
 
 export interface ListTasksFilterInput {
-  status?: 'pending' | 'in_progress' | 'completed'
+  status?: string
+  /** 按语义组过滤（backlog/unstarted/started/completed/cancelled/triage） */
+  statusGroup?: 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
   assigneeUserId?: string
+  includeSubTasks?: boolean
+  includeDrafts?: boolean
+}
+
+/** 任务拖拽排序输入：位置由邻居表达（after=落点上方邻居/before=落点下方邻居，都不给=追加到列尾；两邻居分别定位，任一命中即采用），跨列时给 newStatusId */
+export interface ReorderTaskInput {
+  afterTaskId?: string
+  beforeTaskId?: string
+  newStatusId?: string
+}
+
+/** 排序结果：被移动任务 + 触发整列重编号时一并改写的任务（task 结构与主进程 Task 对齐，见 preload 泛型） */
+export interface ReorderTaskResult {
+  task: unknown
+  rewrittenTasks: unknown[]
 }
 
 export interface MeetingNoteInput {
@@ -331,11 +357,46 @@ export interface UserMappingInput {
   dingTalkUnionId?: string
 }
 
+/** 状态语义组（与主进程 project-types.TaskStateGroup 对齐） */
+export type ProjectTaskStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
+
+/** 项目任务状态定义（每项目独立可自定义；预置五态 id 固定为 draft/pending/in_progress/paused/completed） */
+export interface ProjectTaskStatus {
+  id: string
+  projectId: string
+  name: string
+  stateGroup: ProjectTaskStateGroup
+  position: number
+  color?: string
+  wipLimit?: number
+  isBuiltin: boolean
+  isDefault: boolean
+  createdAt: number
+}
+
+export interface ProjectTaskStatusInput {
+  name: string
+  stateGroup: ProjectTaskStateGroup
+  color?: string
+  wipLimit?: number
+  afterStatusId?: string
+}
+
+export interface ProjectTaskStatusUpdateInput {
+  name?: string
+  stateGroup?: ProjectTaskStateGroup
+  color?: string
+  wipLimit?: number
+}
+
+/** 看板列：一个状态 + 该状态下的任务 */
+export interface KanbanColumnResult {
+  status: ProjectTaskStatus
+  tasks: unknown[]
+}
+
 export interface KanbanBoardResult {
-  draft: unknown[]
-  pending: unknown[]
-  in_progress: unknown[]
-  completed: unknown[]
+  columns: KanbanColumnResult[]
 }
 
 export interface ProjectProgressResult {

@@ -7,11 +7,51 @@ import type { UserMappingInput } from '@gravitas/shared'
 
 import * as React from 'react'
 import { useState, useEffect, useCallback } from "react"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useSetAtom } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
+import { KanbanBoard } from './kanban/KanbanBoard'
+import { GANTT_GROUP_BAR_COLORS, ganttBarColor } from './project-flow-metrics'
+import {
+  setProjectTasksAtom,
+  setProjectTaskStatusesAtom,
+  pollStatusChangedAtom,
+} from '@/atoms/project-atoms'
+
+/**
+ * 看板容器：拉取看板数据写入 Jotai（任务表 + 状态定义），
+ * 供 KanbanBoard 拖拽乐观更新使用。
+ */
+function KanbanBoardContainer({ projectId, onDataChanged }: {
+  projectId: string
+  onDataChanged?: () => void
+}): React.ReactElement {
+  const setProjectTasks = useSetAtom(setProjectTasksAtom)
+  const setProjectTaskStatuses = useSetAtom(setProjectTaskStatusesAtom)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  // 拉取看板并写入 Jotai（KanbanBoard 内做乐观更新，落库走 reorderTask IPC）
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const board = await callProjectAPI<KanbanBoard>('getKanbanBoard', projectId)
+        if (cancelled) return
+        setProjectTasks({ projectId, tasks: board.columns.flatMap((col) => col.tasks) })
+        setProjectTaskStatuses({ projectId, statuses: board.columns.map((col) => col.status) })
+      } catch {
+        // 加载失败静默，保持现有列
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, refreshTick, setProjectTasks, setProjectTaskStatuses])
+
+  return <KanbanBoard projectId={projectId} onChanged={onDataChanged} />
+}
 
 /** by-task 权限申请选项（P1） */
 const PERMISSION_OPTIONS: { value: string; label: string }[] = [
@@ -290,6 +330,8 @@ interface Task {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   completionNotes?: string
   permissionRequests?: string[]
+  /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
+  sortOrder: number
   /** @deprecated 子任务已升级为独立 Task，请使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -305,11 +347,28 @@ interface MeetingNote {
   createdAt: number
 }
 
+type ProjectTaskStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
+
+interface ProjectTaskStatus {
+  id: string
+  projectId: string
+  name: string
+  stateGroup: ProjectTaskStateGroup
+  position: number
+  color?: string
+  wipLimit?: number
+  isBuiltin: boolean
+  isDefault: boolean
+  createdAt: number
+}
+
+interface KanbanColumn {
+  status: ProjectTaskStatus
+  tasks: Task[]
+}
+
 interface KanbanBoard {
-  draft: Task[]
-  pending: Task[]
-  in_progress: Task[]
-  completed: Task[]
+  columns: KanbanColumn[]
 }
 
 interface ProjectProgress {
@@ -814,6 +873,7 @@ function ProjectDetail({
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
   const [tasks, setTasks] = useState<Task[]>([])
+  const [taskStatuses, setTaskStatuses] = useState<ProjectTaskStatus[]>([])
   const [notes, setNotes] = useState<MeetingNote[]>([])
   const [board, setBoard] = useState<KanbanBoard | null>(null)
   const [pollingStatus, setPollingStatus] = useState<Record<string, boolean>>({})
@@ -840,7 +900,7 @@ function ProjectDetail({
 
   const loadData = useCallback(async () => {
     try {
-      const [taskList, noteList, boardData, retryEvents, dependencyTaskList, dependencyList, blockerList, alerts, activityItems] = await Promise.all([
+      const [taskList, noteList, boardData, retryEvents, dependencyTaskList, dependencyList, blockerList, alerts, activityItems, statusList] = await Promise.all([
         callProjectAPI<Task[]>('listTasks', project.id),
         callProjectAPI<MeetingNote[]>('listMeetingNotes', project.id),
         callProjectAPI<KanbanBoard>('getKanbanBoard', project.id),
@@ -850,10 +910,12 @@ function ProjectDetail({
         callProjectAPI<TaskBlocker[]>('listTaskBlockers', project.id),
         callProjectAPI<ProjectAlert[]>('listProjectAlerts', project.id),
         callProjectAPI<ProjectActivity[]>('listProjectActivities', project.id),
+        callProjectAPI<ProjectTaskStatus[]>('listTaskStatuses', project.id),
       ])
       setTasks(taskList)
       setNotes(noteList)
       setBoard(boardData)
+      setTaskStatuses(statusList)
       setTodoRetries(retryEvents)
       setDependencyTasks(dependencyTaskList)
       setDependencies(dependencyList)
@@ -881,6 +943,17 @@ function ProjectDetail({
       window.clearInterval(timer)
     }
   }, [loadData, project.id])
+
+  // 外部轮询状态变化 → 刷新（变化由全局 ProjectPollListenersInitializer 写入 atom，此处只消费本项目）
+  const pollChanged = useAtomValue(pollStatusChangedAtom)
+  const lastPollAtRef = React.useRef(0)
+  React.useEffect(() => {
+    if (!pollChanged || pollChanged.at === lastPollAtRef.current) return
+    lastPollAtRef.current = pollChanged.at
+    if (pollChanged.projectId === project.id) {
+      void loadData()
+    }
+  }, [pollChanged, project.id, loadData])
 
   const handleSaveProject = async () => {
     if (!editTitle.trim()) return
@@ -1269,6 +1342,7 @@ function ProjectDetail({
           <TaskList
             projectId={project.id}
             tasks={tasks}
+            statuses={taskStatuses}
             onTasksChange={setTasks}
           />
         )}
@@ -1280,11 +1354,11 @@ function ProjectDetail({
             onTasksChange={setTasks}
           />
         )}
-        {detailTab === 'board' && board && (
-          <KanbanView board={board} />
+        {detailTab === 'board' && (
+          <KanbanBoardContainer projectId={project.id} onDataChanged={loadData} />
         )}
         {detailTab === 'gantt' && (
-          <GanttView tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} />
+          <GanttView tasks={dependencyTasks} statuses={taskStatuses} dependencies={dependencies} blockers={blockers} />
         )}
         {detailTab === 'dependencies' && (
           <DependencyPanel
@@ -1371,7 +1445,7 @@ function ActivityPanel({ activities }: { activities: ProjectActivity[] }): React
   ))}</div>
 }
 
-function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependencies: TaskDependency[]; blockers: TaskBlocker[] }): React.ReactElement {
+function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[]; statuses: ProjectTaskStatus[]; dependencies: TaskDependency[]; blockers: TaskBlocker[] }): React.ReactElement {
   const datedTasks = tasks.filter((task) => task.startDate || task.dueDate)
   if (datedTasks.length === 0) {
     return <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">为 Task 设置开始日期或截止日期后，将在这里显示甘特计划。</div>
@@ -1383,6 +1457,10 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
   const rangeEnd = Math.max(...ends, rangeStart + day)
   const range = Math.max(rangeEnd - rangeStart, day)
   const blockerIds = new Set(blockers.map((blocker) => blocker.taskId))
+
+  // 语义组解析：跨状态逻辑只认组（与 task-status-logic 口径一致；渲染层就地实现避免跨层引用）
+  const groupOf = (statusId: string): ProjectTaskStateGroup =>
+    statuses.find((s) => s.id === statusId)?.stateGroup ?? (statusId === 'completed' ? 'completed' : 'unstarted')
 
   // 按优先级排序（critical → high → medium → low），同级按截止日更紧的在前；无截止日期排最后
   const PRIORITY_WEIGHT: Record<Task['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
@@ -1397,7 +1475,7 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
 
   /** 单行状态标注：超期 → 红；高风险/关键风险 → 橙/红；阻塞 → 琥珀 ● */
   const renderStatusMarks = (task: Task): React.ReactNode => {
-    const isOverdue = task.status !== 'completed' && task.dueDate !== undefined && task.dueDate < now
+    const isOverdue = groupOf(task.status) !== 'completed' && task.dueDate !== undefined && task.dueDate < now
     const riskLevel = task.riskLevel
     return (
       <>
@@ -1410,24 +1488,32 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
     )
   }
 
-  /** 时间条颜色：完成 → 绿；超期 → 红；阻塞 → 琥珀；高风险/关键 → 橙/红；默认主题色 */
-  const barColor = (task: Task): string => {
-    if (task.status === 'completed') return 'bg-emerald-500'
-    if (task.dueDate !== undefined && task.dueDate < now) return 'bg-red-500'
-    if (blockerIds.has(task.id)) return 'bg-amber-500'
-    if (task.riskLevel === 'critical') return 'bg-red-400'
-    if (task.riskLevel === 'high') return 'bg-orange-400'
-    return 'bg-primary'
-  }
 
   return (
     <div className="space-y-3 overflow-x-auto">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">Task 甘特图</h3>
-          <p className="text-xs text-muted-foreground">按优先级排序（紧急 → 高 → 中 → 低）；标注超期与风险状态。</p>
+          <p className="text-xs text-muted-foreground">按优先级排序（紧急 → 高 → 中 → 低）；时间条按状态语义组着色，超期/阻塞/高风险覆盖标注。</p>
         </div>
         <span className="text-xs text-muted-foreground">{dependencies.length} 条依赖 · {blockers.length} 项阻塞</span>
+      </div>
+      {/* 语义组图例（与看板列同口径） */}
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        {([
+          ['unstarted', '待处理'],
+          ['started', '进行中'],
+          ['completed', '已完成'],
+          ['backlog', '草稿'],
+          ['triage', '分诊'],
+          ['cancelled', '已取消'],
+        ] as Array<[ProjectTaskStateGroup, string]>).map(([group, label]) => (
+          <span key={group} className="inline-flex items-center gap-1">
+            <span className={`inline-block h-2 w-4 rounded ${GANTT_GROUP_BAR_COLORS[group]}`} />
+            {label}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-red-500" />超期</span>
       </div>
       <div className="min-w-[760px] rounded-lg border bg-card p-3">
         <div className="mb-2 ml-[220px] flex justify-between text-xs text-muted-foreground"><span>{new Date(rangeStart).toLocaleDateString()}</span><span>{new Date(rangeEnd).toLocaleDateString()}</span></div>
@@ -1446,7 +1532,7 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
             </div>
             <div className="relative h-6 flex-1 rounded bg-muted/50">
               <div
-                className={`absolute top-1 h-4 rounded ${barColor(task)}`}
+                className={`absolute top-1 h-4 rounded ${ganttBarColor(task, { blocked: blockerIds.has(task.id), now, statuses })}`}
                 style={{ left: `${left}%`, width: `${width}%` }}
                 title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}｜优先级 ${task.priority}${task.riskLevel ? `｜风险 ${task.riskLevel}` : ''}`}
               />
@@ -1553,10 +1639,12 @@ function DependencyPanel({
 function TaskList({
   projectId,
   tasks,
+  statuses,
   onTasksChange,
 }: {
   projectId: string
   tasks: Task[]
+  statuses: ProjectTaskStatus[]
   onTasksChange: (tasks: Task[]) => void
 }): React.ReactElement {
   const currentUserProfile = useAtomValue(userProfileAtom)
@@ -1828,6 +1916,7 @@ function TaskList({
             <TaskItem
               key={task.id}
               task={task}
+              statuses={statuses}
               isSyncing={syncingTaskIds.has(task.id)}
               onStatusChange={handleStatusChange}
               onDelete={handleDelete}
@@ -1843,6 +1932,7 @@ function TaskList({
 
 function TaskItem({
   task,
+  statuses,
   isSyncing,
   onStatusChange,
   onDelete,
@@ -1850,6 +1940,7 @@ function TaskItem({
   onTaskUpdate,
 }: {
   task: Task
+  statuses: ProjectTaskStatus[]
   isSyncing: boolean
   onStatusChange: (taskId: string, status: Task['status']) => void
   onDelete: (taskId: string) => void
@@ -2264,10 +2355,9 @@ function TaskItem({
             onChange={(e) => onStatusChange(task.id, e.target.value as Task['status'])}
             className="text-xs px-2 py-1 border rounded-md bg-background"
           >
-            <option value="pending">待处理</option>
-            <option value="in_progress">进行中</option>
-            <option value="paused">已暂停</option>
-            <option value="completed">已完成</option>
+            {statuses.map((status) => (
+              <option key={status.id} value={status.id}>{status.name}</option>
+            ))}
           </select>
           <button
             onClick={() => onDelete(task.id)}
@@ -2903,69 +2993,6 @@ function MeetingNotesPanel({
   )
 }
 
-// ===== 看板 =====
-
-function KanbanView({ board }: { board: KanbanBoard }): React.ReactElement {
-  const [filter, setFilter] = useState<'all' | 'human' | 'agent'>('all')
-
-  const applyFilter = (tasks: Task[]): Task[] => {
-    if (filter === 'all') return tasks
-    return tasks.filter((t) => filter === 'agent'
-      ? (t.assignee?.userId?.startsWith('agent-') ?? false)
-      : !(t.assignee?.userId?.startsWith('agent-') ?? false))
-  }
-
-  const columns = [
-    { title: '待处理', tasks: applyFilter(board.pending), color: 'bg-gray-50' },
-    { title: '进行中', tasks: applyFilter(board.in_progress), color: 'bg-blue-50' },
-    { title: '已完成', tasks: applyFilter(board.completed), color: 'bg-green-50' },
-  ]
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">任务看板</h2>
-        <div className="flex items-center gap-1 rounded-lg bg-foreground/[0.04] p-0.5">
-          {([
-            { value: 'all', label: '全部' },
-            { value: 'human', label: '真人' },
-            { value: 'agent', label: '🤖 AI 员工' },
-          ] as const).map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setFilter(opt.value)}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filter === opt.value ? 'bg-background text-foreground shadow-sm' : 'text-foreground/50 hover:text-foreground/80'}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-4">
-        {columns.map((col) => (
-          <div key={col.title} className={`${col.color} rounded-lg p-4 border`}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">{col.title}</h3>
-              <span className="text-xs text-muted-foreground">{col.tasks.length}</span>
-            </div>
-            <div className="space-y-2 min-h-[200px]">
-              {col.tasks.length === 0 ? (
-                <div className="text-sm text-muted-foreground text-center py-8">暂无任务</div>
-              ) : (
-                col.tasks.map((task) => (
-                  <div key={task.id} className="p-3 bg-white rounded-lg border shadow-sm">
-                    <p className="text-sm font-medium">{task.title}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{task.description}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 // ===== 看板总览 =====
 
@@ -2993,6 +3020,12 @@ function ProjectCardOverview({ project }: { project: Project }): React.ReactElem
 
   if (!board) return <div className="p-4 border rounded-lg animate-pulse">加载中...</div>
 
+  /** 跨项目卡片按语义组汇总（自定义状态不影响统计口径） */
+  const countByGroup = (group: ProjectTaskStateGroup): number =>
+    board.columns
+      .filter((col) => col.status.stateGroup === group)
+      .reduce((sum, col) => sum + col.tasks.length, 0)
+
   return (
     <div className="p-4 bg-card rounded-lg border">
       <div className="flex items-center justify-between mb-3">
@@ -3001,15 +3034,15 @@ function ProjectCardOverview({ project }: { project: Project }): React.ReactElem
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="p-2 bg-gray-50 rounded">
-          <div className="text-lg font-semibold">{board.pending.length}</div>
+          <div className="text-lg font-semibold">{countByGroup('unstarted')}</div>
           <div className="text-xs text-muted-foreground">待处理</div>
         </div>
         <div className="p-2 bg-blue-50 rounded">
-          <div className="text-lg font-semibold">{board.in_progress.length}</div>
+          <div className="text-lg font-semibold">{countByGroup('started')}</div>
           <div className="text-xs text-muted-foreground">进行中</div>
         </div>
         <div className="p-2 bg-green-50 rounded">
-          <div className="text-lg font-semibold">{board.completed.length}</div>
+          <div className="text-lg font-semibold">{countByGroup('completed')}</div>
           <div className="text-xs text-muted-foreground">已完成</div>
         </div>
       </div>

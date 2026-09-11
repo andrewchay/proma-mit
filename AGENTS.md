@@ -23,11 +23,11 @@ Bun workspace monorepo：
 ```
 gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.66)
-│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.14)
+│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.76)
+│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.16)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.11.51)
+    └── electron/   # Electron 桌面应用 (v0.11.69)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -40,12 +40,12 @@ gravitas/
 
 ### 包职责详解
 
-#### @gravitas/shared (v0.1.66)
+#### @gravitas/shared (v0.1.76)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
 - **依赖**：无运行时依赖（仅 TypeScript）
 
-#### @gravitas/core (v0.2.14)
+#### @gravitas/core (v0.2.16)
 - **导出模块**：`./providers`、`./highlight`、`./types`、`./utils`
 - **关键功能**：Provider 适配器注册表、代码高亮（Shiki）
 - **依赖**：`@gravitas/shared`、`shiki`
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.11.51)
+#### @gravitas/electron (v0.11.69)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -252,6 +252,7 @@ bun run generate:icons    # 生成应用图标
 |-----------|-----------|
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态（Map 结构支持多对话并行）、模型选择、上下文设置、并排模式、思考模式、待上传附件 |
 | `agent-atoms.ts` | Agent 会话列表、当前会话、流式状态（`AgentStreamState`）、工作区选择、渠道选择、权限/AskUser 请求队列（按 sessionId Map） |
+| `project-atoms.ts` | 项目管理：任务表 / 状态定义（按 projectId 隔离 Map）、看板列派生 atom、拖拽乐观移动与回滚 |
 | `active-view.ts` | 主面板视图切换（'conversations' / 'settings'） |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
 | `settings-tab.ts` | 设置面板当前标签页 |
@@ -307,6 +308,7 @@ bun run generate:icons    # 生成应用图标
 │       └── {uuid}.ext
 ├── user-profile.json       # 用户档案 { userName, avatar }
 ├── settings.json           # 应用设置 { themeMode }
+├── projects/               # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test 用 sql.js）
 └── sdk-config/             # Agent SDK 配置目录
     └── projects/           # SDK 项目配置
 ```
@@ -514,6 +516,7 @@ React UI 更新
 - ✅ **文档解析**：PDF、Office、文本文件提取
 - ✅ **多模态支持**：图片、文档附件
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
+- ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 `task_statuses` 表（预置五态沿用旧字符串 id，历史数据零迁移），跨状态逻辑只认 backlog/unstarted/started/completed/cancelled/triage 六个语义组；看板 @dnd-kit 拖拽，一次落库同时改状态与顺序（中点法 + 间隙耗尽整列重编号），乐观更新失败回滚并提示原因；飞书/钉钉同步按语义组双向映射，推方向仅推二值完成态且排序变更不打外部 API，拉方向外部"未完成"仅在本地处于完成组时回退（不覆盖 in_progress/paused），轮询变化经 `POLL_STATUS_CHANGED` 全局监听（main.tsx → pollStatusChangedAtom）推送前端刷新；draft 组只能经确认/拒绝链路进出（updateTask 拒绝普通路径）；甘特图与流动指标同按语义组着色/计算
 
 ### 架构亮点
 

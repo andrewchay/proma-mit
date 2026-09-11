@@ -15,7 +15,11 @@
  * ```
  */
 
-import { getTask, updateTask, listTasks, type Task, type TaskStatus } from './project-service'
+import { getTask, updateTask, listTasks, type Task } from './project-service'
+import { isCompletedStatusId } from './task-status-store-bridge'
+import { resolveDefaultActiveStatus } from './task-status-logic'
+import { listTaskStatuses } from './project-sqlite-store'
+import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 import { assessTaskRisk, requiresCompletionNotes } from './project-risk-service'
 import type { LLMCaller } from './project-risk-service'
 
@@ -108,17 +112,23 @@ export async function pollExternalTaskStatus(
       syncedAt: Date.now(),
     }
 
-    // 映射外部状态到本地状态
-    const localStatusMap: Record<string, TaskStatus> = {
-      pending: 'pending',
-      in_progress: 'in_progress',
-      completed: 'completed',
+    // 组语义映射（修复字面映射表把 in_progress/paused 打回 pending 的 bug）：
+    // - 外部"完成" → 仅当本地尚未处于完成组时，才推进到本地完成状态（DoD/风险门控沿用）
+    // - 外部"未完成" → 仅当本地已处于完成组（误勾恢复）时，才回退到默认未完成状态；
+    //   否则保持本地状态不动（外部平台无法表达 in_progress/paused 等中间态）
+    const externalCompleted = externalStatus === 'completed'
+    const localInCompletedGroup = isCompletedStatusId(task.status, task.projectId)
+    let newLocalStatus: string | undefined
+    if (externalCompleted && !localInCompletedGroup) {
+      newLocalStatus = 'completed'
+    } else if (!externalCompleted && localInCompletedGroup) {
+      const statuses = listTaskStatuses(task.projectId)
+      newLocalStatus = resolveDefaultActiveStatus(statuses)
     }
-    const newLocalStatus = localStatusMap[externalStatus] || task.status
 
     // 如果外部完成，且开启了自动风险评估
     let riskAssessed = false
-    if (externalStatus === 'completed' && options.autoAssessRisk && options.llmCaller) {
+    if (externalCompleted && options.autoAssessRisk && options.llmCaller) {
       try {
         const riskResult = await assessTaskRisk(task.id, options.llmCaller)
         riskAssessed = true
@@ -129,8 +139,8 @@ export async function pollExternalTaskStatus(
         await updateTask(task.id, {
           externalSync: externalSyncUpdate,
           riskLevel: riskResult.riskLevel,
-          status: shouldWaitForNotes ? task.status : newLocalStatus,
-        })
+          ...(shouldWaitForNotes ? {} : { status: newLocalStatus }),
+        }, { source: 'external-sync' })
 
         return {
           changed: true,
@@ -146,8 +156,8 @@ export async function pollExternalTaskStatus(
     // 普通状态更新（无风险评估或风险评估失败）
     await updateTask(task.id, {
       externalSync: externalSyncUpdate,
-      status: newLocalStatus,
-    })
+      ...(newLocalStatus !== undefined ? { status: newLocalStatus } : {}),
+    }, { source: 'external-sync' })
 
     return {
       changed: true,
@@ -185,9 +195,36 @@ export async function pollAllExternalTasks(
   for (const task of syncedTasks) {
     const result = await pollExternalTaskStatus(task, platform, provider, options)
     results.push(result)
+    // 检测到外部变化 → 通知前端刷新看板/任务列表（POLL_STATUS_CHANGED 原为已定义未使用的闲置通道）
+    if (result.changed) {
+      notifyRendererPollChanged(projectId, platform, task.id, result.newStatus)
+    }
   }
 
   return results
+}
+
+/** 把轮询到的外部状态变化推送给渲染进程（推失败静默，不影响轮询主流程） */
+function notifyRendererPollChanged(
+  projectId: string,
+  platform: 'feishu' | 'dingtalk',
+  taskId: string,
+  newStatus: string | null,
+): void {
+  try {
+    const { BrowserWindow } = require('electron') as typeof import('electron')
+    const win = BrowserWindow.getAllWindows().find((c) => !c.isDestroyed())
+    win?.webContents.send(PROJECT_IPC_CHANNELS.POLL_STATUS_CHANGED, {
+      projectId,
+      platform,
+      taskId,
+      newStatus,
+      changedAt: Date.now(),
+    })
+  } catch (error) {
+    // 非 Electron 环境（bun test）无 BrowserWindow，静默
+    console.debug('[ProjectPolling] 推送状态变化失败:', error instanceof Error ? error.message : error)
+  }
 }
 
 // ===== 定时轮询工具 =====

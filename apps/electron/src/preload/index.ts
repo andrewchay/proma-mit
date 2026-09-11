@@ -1559,6 +1559,7 @@ export interface ElectronAPI {
       listTasksCreatedBy: (creatorUserId: string) => Promise<unknown[]>
       /** 订阅 AI 员工执行活动变化（main→renderer，用于刷新任务/看板） */
       onProjectActivityChanged: (callback: (payload: { projectId?: string; action?: string; summary?: string }) => void) => () => void
+      onPollStatusChanged: (callback: (payload: { projectId?: string; platform?: string; taskId?: string; newStatus?: string | null }) => void) => () => void
       listProjectAlerts: (projectId: string) => Promise<unknown[]>
       listProjectActivities: (projectId: string) => Promise<unknown[]>
       generateProjectSummary: (projectId: string) => Promise<unknown>
@@ -1585,6 +1586,12 @@ export interface ElectronAPI {
       testFeishuConnection: () => Promise<unknown>
       getKanbanBoard: (projectId: string) => Promise<unknown>
       getProjectProgress: (projectId: string) => Promise<unknown>
+      listTaskStatuses: (projectId: string) => Promise<unknown[]>
+      createTaskStatus: (projectId: string, input: unknown) => Promise<unknown>
+      updateTaskStatusDef: (projectId: string, statusId: string, patch: unknown) => Promise<unknown | null>
+      deleteTaskStatus: (projectId: string, statusId: string, migrateToStatusId: string) => Promise<boolean>
+      reorderTaskStatuses: (projectId: string, orderedIds: string[]) => Promise<unknown[]>
+      reorderTask: (id: string, input: unknown) => Promise<unknown>
       saveUserMapping: (input: unknown) => Promise<unknown>
       getUserMapping: (paaUserId: string) => Promise<unknown | null>
       listUserMappings: () => Promise<unknown[]>
@@ -3564,6 +3571,11 @@ const electronAPI: ElectronAPI = {
         ipcRenderer.on(PROJECT_IPC_CHANNELS.TASK_ACTIVITY_CHANGED, listener)
         return () => ipcRenderer.removeListener(PROJECT_IPC_CHANNELS.TASK_ACTIVITY_CHANGED, listener)
       },
+      onPollStatusChanged: (callback) => {
+        const listener = (_event: unknown, payload: { projectId?: string; platform?: string; taskId?: string; newStatus?: string | null }) => callback(payload)
+        ipcRenderer.on(PROJECT_IPC_CHANNELS.POLL_STATUS_CHANGED, listener)
+        return () => ipcRenderer.removeListener(PROJECT_IPC_CHANNELS.POLL_STATUS_CHANGED, listener)
+      },
       listProjectAlerts: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ALERTS, projectId),
       listProjectActivities: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ACTIVITIES, projectId),
       generateProjectSummary: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GENERATE_PROJECT_SUMMARY, projectId),
@@ -3590,6 +3602,12 @@ const electronAPI: ElectronAPI = {
       testFeishuConnection: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.TEST_FEISHU_CONNECTION),
       getKanbanBoard: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_KANBAN_BOARD, projectId),
       getProjectProgress: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT_PROGRESS, projectId),
+      listTaskStatuses: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASK_STATUSES, projectId),
+      createTaskStatus: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK_STATUS, projectId, input),
+      updateTaskStatusDef: (projectId, statusId, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_TASK_STATUS, projectId, statusId, patch),
+      deleteTaskStatus: (projectId, statusId, migrateToStatusId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_TASK_STATUS, projectId, statusId, migrateToStatusId),
+      reorderTaskStatuses: (projectId, orderedIds) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_TASK_STATUSES, projectId, orderedIds),
+      reorderTask: (id, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_TASK, id, input),
       saveUserMapping: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_USER_MAPPING, input),
       getUserMapping: (paaUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_USER_MAPPING, paaUserId),
       listUserMappings: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_USER_MAPPINGS),

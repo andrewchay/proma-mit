@@ -15,9 +15,51 @@ export interface Project {
   updatedAt: number
 }
 
-export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
+/**
+ * 任务状态 ID：预置五态沿用旧字符串作固定 id（历史数据零迁移），
+ * 自定义状态为 task_statuses 表新建的 id。
+ */
+export type LegacyTaskStatus = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
+export type TaskStatus = LegacyTaskStatus | (string & {})
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type ExecutableWorkItemType = 'task' | 'subTask'
+
+/**
+ * 状态语义组（借鉴 Plane StateGroup）。
+ * 完成判断、WIP、燃尽等跨状态逻辑只认组，不认具体状态 id；
+ * 具体状态是每项目独立的数据行，支持自定义。
+ */
+export type TaskStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
+
+/** 项目任务状态定义（task_statuses 表行） */
+export interface TaskStatusDef {
+  id: string
+  projectId: string
+  name: string
+  stateGroup: TaskStateGroup
+  /** 展示顺序（看板列序，小者在前） */
+  position: number
+  /** 列颜色（可空，前端按语义组给默认色） */
+  color?: string
+  /** WIP 上限（可空 = 不限；当前仅做超限展示提醒） */
+  wipLimit?: number
+  /** 预置状态（不可删除，可改名/换色/调序） */
+  isBuiltin: boolean
+  /** 默认初始状态（任务确认后落入；外部"未完成"回退目标） */
+  isDefault: boolean
+  createdAt: number
+}
+
+export interface CreateTaskStatusInput {
+  name: string
+  stateGroup: TaskStateGroup
+  color?: string
+  wipLimit?: number
+  /** 插入到某状态之后；缺省追加到末尾 */
+  afterStatusId?: string
+}
+
+export type UpdateTaskStatusInput = Partial<Pick<TaskStatusDef, 'name' | 'stateGroup' | 'color' | 'wipLimit'>>
 
 export interface TaskAssignee {
   userId: string
@@ -75,6 +117,8 @@ export interface Task {
   createdByUserId?: string
   /** AI 员工执行目标工作区（PH2-③：指定执行落在哪个工作区，缺省用员工/全局） */
   workspaceId?: string
+  /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
+  sortOrder: number
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -134,6 +178,8 @@ export interface CreateExecutionSubTaskInput {
 
 export interface ListTasksFilter {
   status?: TaskStatus
+  /** 按语义组过滤（跨自定义状态筛选） */
+  statusGroup?: TaskStateGroup
   assigneeUserId?: string
   /** 是否包含子任务，默认 false */
   includeSubTasks?: boolean
@@ -141,11 +187,31 @@ export interface ListTasksFilter {
   includeDrafts?: boolean
 }
 
+/** 拖拽排序输入：目标位置由邻居表达（after=落点上方邻居、before=落点下方邻居；都不给=追加到列尾）。两个邻居分别定位，任一命中即采用；跨列时给 newStatusId */
+export interface ReorderTaskInput {
+  /** 放置到该任务之后（该任务成为上方邻居；列首拖拽时缺失） */
+  afterTaskId?: string
+  /** 放置到该任务之前（该任务成为下方邻居；列尾拖拽时缺失） */
+  beforeTaskId?: string
+  /** 同时改状态（拖入另一列）；缺省保持原状态 */
+  newStatusId?: string
+}
+
+/** 看板列：一个状态 + 该状态下按展示顺序排列的任务 */
+export interface KanbanColumn {
+  status: TaskStatusDef
+  tasks: Task[]
+}
+
 export interface KanbanBoard {
-  draft: Task[]
-  pending: Task[]
-  in_progress: Task[]
-  completed: Task[]
+  columns: KanbanColumn[]
+}
+
+/** 排序结果：被移动任务 + 触发重编号时一并改写的任务 */
+export interface ReorderTaskResult {
+  task: Task
+  /** 整列重编号时一并改写的其他任务（按新顺序） */
+  rewrittenTasks: Task[]
 }
 
 export interface ProjectProgress {

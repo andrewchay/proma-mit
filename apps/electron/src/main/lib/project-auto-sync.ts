@@ -10,10 +10,12 @@
  * 支持多平台并行：只要注册了对应 provider（飞书/钉钉）就同步。
  */
 
-import { onTaskChange, type Task } from './project-service'
+import { onTaskChange, type Task, type TaskChangedFields } from './project-service'
 import { getTodoProvider, syncTaskToExternal } from './project-sync-service'
 import { enqueueOutboxEvent } from './project-sqlite-store'
 import { recordTodoEvent } from './todo-event-service'
+import { listTaskStatuses, isCompletedStatusId } from './task-status-store-bridge'
+import { isDraftStatusId } from './task-status-logic'
 import type { TodoRetryEvent } from './project-types'
 
 /** 已支持的外部平台 */
@@ -23,14 +25,19 @@ const PLATFORMS = ['dingtalk', 'feishu'] as const
 export function registerProjectAutoSync(): () => void {
   // 幂等：重复注册先释放旧的，避免 dev 热重载/重复初始化叠加定时器与监听器
   stopProjectAutoSync()
-  const unsubscribe = onTaskChange((task, action) => {
+  const unsubscribe = onTaskChange((task, action, context) => {
     // PH2-A：Todo 事件流（团队可订阅语义流）
     recordTaskTodoEvent(task, action)
 
     if (!task) return
 
+    // 回声抑制：外部平台轮询/回写发起的更新不再推回同一平台（消除推拉回声）
+    if (context?.source === 'external-sync') return
+    // 仅排序变更（拖拽）不影响外部待办语义，不打外部 API
+    if (action === 'updated' && isReorderOnlyChange(context?.changedFields)) return
+
     // 草稿创建不推送；确认后才推送，避免半成品进入同学待办
-    if (action === 'created' && task.status === 'draft') return
+    if (action === 'created' && isDraftStatusId(task.status)) return
     if (action === 'created' || action === 'draft_confirmed') {
       syncCreatedTask(task).catch((error) => {
         console.error('[ProjectAutoSync] 创建外部待办失败:', error)
@@ -164,15 +171,27 @@ async function syncCreatedTask(task: Task): Promise<void> {
   }
 }
 
-/** 任务更新：回写已同步平台的待办状态 */
+/**
+ * 仅排序变更（拖拽调序/跨列但无内容变化）判断：外部待办只关心语义字段，
+ * sort_order 变化不触发外部推送，避免每次拖拽打外部 API。
+ */
+function isReorderOnlyChange(changedFields?: TaskChangedFields): boolean {
+  if (!changedFields) return false
+  const keys = Object.keys(changedFields)
+  if (keys.length === 0) return false
+  return keys.every((key) => key === 'sortOrder' || key.startsWith('externalSync.'))
+}
+
+/** 任务更新：回写已同步平台的待办完成态（组语义：completed 组 → true） */
 async function syncUpdatedTaskStatus(task: Task): Promise<void> {
+  const isCompleted = isCompletedStatusId(task.status, task.projectId)
   for (const platform of PLATFORMS) {
     const provider = getTodoProvider(platform)
     const external = task.externalSync?.[platform]
     if (!provider || !external?.taskId) continue
     try {
       // 直接调用 provider，让具体错误（含授权链接）能透传到 outbox 供用户查看
-      const ok = await provider.updateTodoStatus(external.taskId, task.status, {
+      const ok = await provider.updateTodoStatus(external.taskId, isCompleted, {
         unionId: (external as { unionId?: string }).unionId,
       })
       // PH2 修复：编辑任务改截止日期后，同步更新飞书 Todo 的 due（provider 支持时，保持 this 绑定）
@@ -246,11 +265,11 @@ async function maybeCreateBrief(task: Task): Promise<void> {
 function recordTaskTodoEvent(task: Task | null, action: Parameters<Parameters<typeof onTaskChange>[0]>[1]): void {
   if (!task) return
   const memberId = task.assignee?.userId
-  // 由 assignee 推断动作语义：updated 且已完成 → completed；改派 → assigned；删除 → deleted
+  // 由 assignee 推断动作语义：updated 且已进入完成组 → completed；改派 → assigned；删除 → deleted
   let action_: import('./todo-event-service').TodoEventAction
   if (action === 'created' || action === 'draft_confirmed') action_ = 'created'
   else if (action === 'deleted') action_ = 'deleted'
-  else if (task.status === 'completed') action_ = 'completed'
+  else if (isCompletedStatusId(task.status, task.projectId)) action_ = 'completed'
   else if (task.assignee?.userId) action_ = 'assigned'
   else action_ = 'updated'
 

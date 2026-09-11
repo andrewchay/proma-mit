@@ -58,8 +58,8 @@ export interface TodoProvider {
     userId: string,
     options?: { unionId?: string }
   ): Promise<{ taskId: string; status: string; unionId?: string }>
-  /** 更新 Todo 状态 */
-  updateTodoStatus(taskId: string, status: string, options?: { unionId?: string }): Promise<boolean>
+  /** 更新 Todo 完成态（本地→外部只推二值：State 组语义，外部平台无中间态） */
+  updateTodoStatus(taskId: string, isCompleted: boolean, options?: { unionId?: string }): Promise<boolean>
   /** 查询 Todo 状态 */
   queryTodoStatus(taskId: string, options?: { unionId?: string }): Promise<string | null>
   /** 将 PAA userId 转换为平台用户 ID */
@@ -153,21 +153,21 @@ export async function syncTaskToExternal(
 }
 
 /**
- * 更新外部 Todo 状态（本地状态变更时调用）
+ * 更新外部 Todo 完成态（本地状态变更时调用）
  *
  * @param taskId 外部 taskId
- * @param status 目标状态
+ * @param isCompleted 是否完成（State 组语义：completed 组 → true，其余 → false）
  * @param provider Todo Provider 实例
  * @returns 是否成功
  */
 export async function updateExternalTaskStatus(
   taskId: string,
-  status: string,
+  isCompleted: boolean,
   provider: TodoProvider,
   options?: { unionId?: string }
 ): Promise<boolean> {
   try {
-    return await provider.updateTodoStatus(taskId, status, options)
+    return await provider.updateTodoStatus(taskId, isCompleted, options)
   } catch (error) {
     console.error(`[${provider.name}] 更新外部任务状态失败:`, error)
     return false

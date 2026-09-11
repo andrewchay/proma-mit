@@ -53,6 +53,7 @@ import {
   initializeMarketingCapabilities,
 } from './atoms/marketing-atoms'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
+import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
 import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
 import type { TabItem } from './atoms/tab-atoms'
@@ -449,6 +450,32 @@ function ChatListenersInitializer(): null {
  */
 function AgentListenersInitializer(): null {
   useGlobalAgentListeners()
+  return null
+}
+
+/**
+ * 项目外部轮询状态监听初始化组件
+ *
+ * 全局挂载，永不销毁：轮询到的飞书/钉钉状态变化写入全局 atom，
+ * ProjectDetail 按 projectId 过滤消费并刷新（后台项目看板数据随之收敛）。
+ */
+function ProjectPollListenersInitializer(): null {
+  const setPollChanged = useSetAtom(pollStatusChangedAtom)
+  useEffect(() => {
+    const off = window.electronAPI?.paa?.project?.onPollStatusChanged?.((payload) => {
+      if (payload?.projectId && payload.taskId) {
+        setPollChanged({
+          projectId: payload.projectId,
+          taskId: payload.taskId,
+          newStatus: payload.newStatus ?? null,
+          at: Date.now(),
+        })
+      }
+    })
+    return () => {
+      off?.()
+    }
+  }, [setPollChanged])
   return null
 }
 
@@ -905,6 +932,7 @@ if (isQuickTaskWindow) {
       <MarketingCapabilitiesInitializer />
       <ChatListenersInitializer />
       <AgentListenersInitializer />
+      <ProjectPollListenersInitializer />
       <ChatToolInitializer />
       <UpdaterInitializer />
       <FeishuInitializer />

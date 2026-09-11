@@ -646,7 +646,7 @@ export function registerAgentEmployeeProvider(): () => void {
       const result = await dispatchTaskToAgent(task)
       return { taskId: result?.taskId ?? '', status: 'in_progress' }
     },
-    async updateTodoStatus(taskId, status) {
+    async updateTodoStatus(taskId, _isCompleted) {
       // 任务被手动改状态 → 中止对应执行。
       // 注意：getAgentExecution 按执行记录主键 id(executionId) 查询，而这里的 taskId 是任务 id；
       // execution 通过 entityId=taskId 关联。按 entityId 取最近一条非终态执行，并回退兼容 executionId。

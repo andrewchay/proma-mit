@@ -66,10 +66,10 @@ describe('FeishuTodoProvider.createTodo', () => {
 })
 
 describe('FeishuTodoProvider.updateTodoStatus', () => {
-  test('非 completed 状态：PATCH 请求体必须带 task 包裹层（防 1470400 回归）', async () => {
+  test('非完成态(isCompleted=false)：PATCH 请求体必须带 task 包裹层（防 1470400 回归）', async () => {
     calls.length = 0
     const provider = new FeishuTodoProvider({ appId: 'test-app-patch', appSecret: 'secret' })
-    await provider.updateTodoStatus('guid-123', 'pending')
+    await provider.updateTodoStatus('guid-123', false)
 
     const patchCall = calls.find((c) => c.method === 'PATCH')
     expect(patchCall).toBeDefined()
@@ -80,10 +80,10 @@ describe('FeishuTodoProvider.updateTodoStatus', () => {
     expect(patchCall!.body!.task).toEqual({})
   })
 
-  test('completed 状态：走 POST .../complete 接口', async () => {
+  test('完成态(isCompleted=true)：走 POST .../complete 接口', async () => {
     calls.length = 0
     const provider = new FeishuTodoProvider({ appId: 'test-app-complete', appSecret: 'secret' })
-    await provider.updateTodoStatus('guid-456', 'completed')
+    await provider.updateTodoStatus('guid-456', true)
 
     const completeCall = calls.find((c) => c.url.includes('/complete'))
     expect(completeCall).toBeDefined()

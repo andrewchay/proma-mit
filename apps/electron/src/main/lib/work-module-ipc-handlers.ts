@@ -103,6 +103,12 @@ import {
   getMeetingNote,
   getKanbanBoard,
   getProjectProgress,
+  listTaskStatuses,
+  createTaskStatus,
+  updateTaskStatusDef,
+  deleteTaskStatus,
+  reorderTaskStatuses,
+  reorderTask,
   saveUserMapping,
   getUserMapping,
   listUserMappings,
@@ -562,6 +568,26 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT_PROGRESS, async (_, projectId: string) => {
     return getProjectProgress(projectId)
+  })
+  // 任务状态定义（State 分组）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_STATUSES, async (_, projectId: string) => {
+    return listTaskStatuses(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.CREATE_TASK_STATUS, async (_, projectId: string, input) => {
+    return createTaskStatus(projectId, input)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.UPDATE_TASK_STATUS, async (_, projectId: string, statusId: string, patch) => {
+    return updateTaskStatusDef(projectId, statusId, patch)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.DELETE_TASK_STATUS, async (_, projectId: string, statusId: string, migrateToStatusId: string) => {
+    return deleteTaskStatus(projectId, statusId, migrateToStatusId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_TASK_STATUSES, async (_, projectId: string, orderedIds: string[]) => {
+    return reorderTaskStatuses(projectId, orderedIds)
+  })
+  // 任务拖拽排序（一次拖拽可同时改状态与位置）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_TASK, async (_, id: string, input) => {
+    return reorderTask(id, input)
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_DEPENDENCIES, async (_, projectId: string) => {
     return listTaskDependencies(projectId)

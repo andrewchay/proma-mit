@@ -31,6 +31,12 @@ import type {
   MyWorkItem,
   ProjectActivity,
   ProjectTemplate,
+  TaskStatusDef,
+  TaskStateGroup,
+  CreateTaskStatusInput,
+  UpdateTaskStatusInput,
+  ReorderTaskInput,
+  ReorderTaskResult,
 } from './project-types'
 
 export type {
@@ -60,6 +66,12 @@ export type {
   MyWorkItem,
   ProjectActivity,
   ProjectTemplate,
+  TaskStatusDef,
+  TaskStateGroup,
+  CreateTaskStatusInput,
+  UpdateTaskStatusInput,
+  ReorderTaskInput,
+  ReorderTaskResult,
 } from './project-types'
 export type { ProjectSummary } from './project-summary-service'
 
@@ -67,7 +79,11 @@ export type { ProjectSummary } from './project-summary-service'
 
 export type TaskChangeAction = 'created' | 'updated' | 'deleted' | 'draft_confirmed'
 
-type TaskChangeListener = (task: Task | null, action: TaskChangeAction) => void
+type TaskChangeListener = (
+  task: Task | null,
+  action: TaskChangeAction,
+  context?: { changedFields?: TaskChangedFields; source?: 'user' | 'external-sync' | 'system' }
+) => void
 
 const taskChangeListeners = new Set<TaskChangeListener>()
 
@@ -79,15 +95,22 @@ export function onTaskChange(listener: TaskChangeListener): () => void {
   }
 }
 
-function fireTaskChange(task: Task | null, action: TaskChangeAction): void {
+function fireTaskChange(
+  task: Task | null,
+  action: TaskChangeAction,
+  context?: { changedFields?: TaskChangedFields; source?: 'user' | 'external-sync' | 'system' },
+): void {
   for (const listener of taskChangeListeners) {
     try {
-      listener(task, action)
+      listener(task, action, context)
     } catch (error) {
       console.error('[ProjectService] 任务变更监听器执行失败:', error)
     }
   }
 }
+
+/** 本次更新实际变化的字段（供同步层判断"仅排序变更不推外部"） */
+export type TaskChangedFields = Partial<Record<string, boolean>>
 
 // ===== 项目 CRUD =====
 
@@ -127,10 +150,31 @@ export async function getTask(id: string): Promise<Task | null> {
   return store.getTask(id)
 }
 
-export async function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): Promise<Task | null> {
+export async function updateTask(
+  id: string,
+  updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>,
+  options?: { source?: 'user' | 'external-sync' | 'system' }
+): Promise<Task | null> {
   const task = store.updateTask(id, updates)
-  if (task) fireTaskChange(task, 'updated')
+  if (task) fireTaskChange(task, 'updated', { changedFields: diffTaskFields(updates), source: options?.source ?? 'user' })
   return task
+}
+
+/** 计算本次更新涉及的字段集合（含 externalSync 深层字段，供同步层降噪判断） */
+function diffTaskFields(updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): TaskChangedFields {
+  const changed: TaskChangedFields = {}
+  for (const key of Object.keys(updates)) {
+    const value = (updates as Record<string, unknown>)[key]
+    if (value !== undefined) changed[key] = true
+  }
+  // externalSync 只透传具体平台键，便于区分"状态回写"与"内容更新"
+  if (updates.externalSync) {
+    delete changed.externalSync
+    for (const platform of Object.keys(updates.externalSync)) {
+      changed[`externalSync.${platform}`] = true
+    }
+  }
+  return changed
 }
 
 export async function deleteTask(id: string): Promise<boolean> {
@@ -322,6 +366,32 @@ export async function getKanbanBoard(projectId: string): Promise<KanbanBoard> {
 
 export async function getProjectProgress(projectId: string): Promise<ProjectProgress> {
   return store.getProjectProgress(projectId)
+}
+
+// ===== 任务状态定义（State 分组） =====
+
+export async function listTaskStatuses(projectId: string): Promise<TaskStatusDef[]> {
+  return store.listTaskStatuses(projectId)
+}
+
+export async function createTaskStatus(projectId: string, input: CreateTaskStatusInput): Promise<TaskStatusDef> {
+  return store.createTaskStatus(projectId, input)
+}
+
+export async function updateTaskStatusDef(projectId: string, statusId: string, patch: UpdateTaskStatusInput): Promise<TaskStatusDef | null> {
+  return store.updateTaskStatus(projectId, statusId, patch)
+}
+
+export async function deleteTaskStatus(projectId: string, statusId: string, migrateToStatusId: string): Promise<boolean> {
+  return store.deleteTaskStatus(projectId, statusId, migrateToStatusId)
+}
+
+export async function reorderTaskStatuses(projectId: string, orderedIds: string[]): Promise<TaskStatusDef[]> {
+  return store.reorderTaskStatuses(projectId, orderedIds)
+}
+
+export async function reorderTask(id: string, input: ReorderTaskInput): Promise<ReorderTaskResult> {
+  return store.reorderTask(id, input)
 }
 
 export async function listTaskDependencies(projectId: string): Promise<TaskDependency[]> {
