@@ -589,6 +589,33 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_TASK, async (_, id: string, input) => {
     return reorderTask(id, input)
   })
+  // 任务级 token 配额：查询任务历次执行会话的累计消耗（配额刹车依据）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_TASK_TOKEN_USAGE, async (_, taskId: string) => {
+    const { listAgentExecutionsByEntity } = await import('./project-sqlite-store')
+    const { getCostMiniLedger } = await import('./token-usage-service')
+    const executions = listAgentExecutionsByEntity('task', taskId)
+    let totalTokens = 0
+    let totalCostUsd = 0
+    let activeSessionTokens = 0
+    const sessions: Array<{ sessionId: string; status: string; tokens: number; costUsd: number; startedAt: number }> = []
+    for (const execution of executions) {
+      if (!execution.sessionId || execution.sessionId.startsWith('workflow:')) continue
+      const ledger = getCostMiniLedger({ sessionId: execution.sessionId })
+      totalTokens += ledger.totalTokens
+      totalCostUsd += ledger.totalCostUsd
+      if (execution.status === 'queued' || execution.status === 'running') {
+        activeSessionTokens += ledger.totalTokens
+      }
+      sessions.push({
+        sessionId: execution.sessionId,
+        status: execution.status,
+        tokens: ledger.totalTokens,
+        costUsd: ledger.totalCostUsd,
+        startedAt: execution.startedAt,
+      })
+    }
+    return { taskId, totalTokens, totalCostUsd, activeSessionTokens, sessions }
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_DEPENDENCIES, async (_, projectId: string) => {
     return listTaskDependencies(projectId)
   })

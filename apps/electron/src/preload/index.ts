@@ -1592,6 +1592,7 @@ export interface ElectronAPI {
       deleteTaskStatus: (projectId: string, statusId: string, migrateToStatusId: string) => Promise<boolean>
       reorderTaskStatuses: (projectId: string, orderedIds: string[]) => Promise<unknown[]>
       reorderTask: (id: string, input: unknown) => Promise<unknown>
+      getTaskTokenUsage: (taskId: string) => Promise<{ taskId: string; totalTokens: number; totalCostUsd: number; activeSessionTokens: number; sessions: Array<{ sessionId: string; status: string; tokens: number; costUsd: number; startedAt: number }> }>
       saveUserMapping: (input: unknown) => Promise<unknown>
       getUserMapping: (paaUserId: string) => Promise<unknown | null>
       listUserMappings: () => Promise<unknown[]>
@@ -3608,6 +3609,7 @@ const electronAPI: ElectronAPI = {
       deleteTaskStatus: (projectId, statusId, migrateToStatusId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_TASK_STATUS, projectId, statusId, migrateToStatusId),
       reorderTaskStatuses: (projectId, orderedIds) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_TASK_STATUSES, projectId, orderedIds),
       reorderTask: (id, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_TASK, id, input),
+      getTaskTokenUsage: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_TASK_TOKEN_USAGE, taskId),
       saveUserMapping: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_USER_MAPPING, input),
       getUserMapping: (paaUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_USER_MAPPING, paaUserId),
       listUserMappings: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_USER_MAPPINGS),

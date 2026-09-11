@@ -330,6 +330,8 @@ interface Task {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   completionNotes?: string
   permissionRequests?: string[]
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退待人工处理 */
+  tokenBudget?: number
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
   sortOrder: number
   /** @deprecated 子任务已升级为独立 Task，请使用 parentId 关联 */
@@ -1658,6 +1660,7 @@ function TaskList({
   const [newDependsOnTaskIds, setNewDependsOnTaskIds] = useState<string[]>([])
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
+  const [newTokenBudget, setNewTokenBudget] = useState('')
   const [workspaces, setWorkspaces] = useState<AgentWorkspaceResult[]>([])
   const [newWorkspaceId, setNewWorkspaceId] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
@@ -1683,6 +1686,7 @@ function TaskList({
         permissionRequests?: string[]
         createdByUserId?: string
         workspaceId?: string
+        tokenBudget?: number
       } = {
         title: newTitle.trim(),
         description: newDesc.trim(),
@@ -1705,6 +1709,9 @@ function TaskList({
       if (newPermissions.length > 0) {
         input.permissionRequests = newPermissions
       }
+      if (newTokenBudget.trim()) {
+        input.tokenBudget = Number(newTokenBudget)
+      }
       const task = await callProjectAPI<Task>('createTask', projectId, input)
       // PH2-④：新建任务时选择的依赖（depends upon 已有任务）
       for (const dependsOnId of newDependsOnTaskIds) {
@@ -1720,6 +1727,7 @@ function TaskList({
       setNewDependsOnTaskIds([])
       setNewWorkspaceId('')
       setNewDueDate('')
+      setNewTokenBudget('')
       setShowCreate(false)
     } catch (err) {
       console.error('创建任务失败:', err)
@@ -1866,6 +1874,18 @@ function TaskList({
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               />
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Token 配额（AI 员工执行上限，可选）</label>
+              <input
+                type="number"
+                min={1}
+                placeholder="不限"
+                value={newTokenBudget}
+                onChange={(e) => setNewTokenBudget(e.target.value)}
+                className="w-full px-3 py-2 text-sm border rounded-md bg-background"
+                title="AI 员工执行累计消耗超过该值将自动中止，任务回退待人工处理"
+              />
+            </div>
           </div>
           <div>
             <label className="text-xs text-muted-foreground">权限申请（AI 员工执行时生效；默认只读安全模式）</label>
@@ -1984,6 +2004,7 @@ function TaskItem({
   // AI 员工任务：查询最新执行状态（P0）
   const isAgentTask = task.assignee?.userId?.startsWith('agent-') ?? false
   const [agentExecStatus, setAgentExecStatus] = useState<AgentExecutionResult['status'] | null>(null)
+  const [tokenUsage, setTokenUsage] = useState<{ totalTokens: number; activeSessionTokens: number } | null>(null)
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   useEffect(() => {
     window.electronAPI.paa.agentEmployees.list()
@@ -1996,6 +2017,12 @@ function TaskItem({
     window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', task.id)
       .then((execs) => { if (!cancelled && execs.length > 0) setAgentExecStatus(execs[0]?.status ?? null) })
       .catch(() => {})
+    // token 用量（配额可见性）：有预算或执行中才查询
+    if (task.tokenBudget || agentExecStatus === 'running') {
+      window.electronAPI.paa.project.getTaskTokenUsage(task.id)
+        .then((usage) => { if (!cancelled) setTokenUsage({ totalTokens: usage.totalTokens, activeSessionTokens: usage.activeSessionTokens }) })
+        .catch(() => {})
+    }
     return () => { cancelled = true }
   }, [isAgentTask, task.id])
 
@@ -2249,6 +2276,23 @@ function TaskItem({
             {/* AI 员工执行状态（P0） */}
             {isAgentTask && agentExecStatus && (
               <AgentExecutionBadge status={agentExecStatus} />
+            )}
+            {/* token 配额可见性：设了预算显示 已用/预算，接近或超限标色 */}
+            {isAgentTask && (task.tokenBudget || tokenUsage) && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                  task.tokenBudget && tokenUsage && tokenUsage.totalTokens > task.tokenBudget
+                    ? 'bg-red-100 text-red-700'
+                    : task.tokenBudget && tokenUsage && tokenUsage.totalTokens > task.tokenBudget * 0.8
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-gray-100 text-gray-600'
+                }`}
+                title={task.tokenBudget
+                  ? `Token 配额：已消耗 ${tokenUsage?.totalTokens ?? 0} / ${task.tokenBudget}${tokenUsage && tokenUsage.activeSessionTokens > 0 ? `（进行中会话 ${tokenUsage.activeSessionTokens}）` : ''}`
+                  : `已消耗 ${tokenUsage?.totalTokens ?? 0} tokens（未设配额）`}
+              >
+                ⚡ {tokenUsage?.totalTokens ?? 0}{task.tokenBudget ? ` / ${task.tokenBudget}` : ''}
+              </span>
             )}
             {/* 风险等级指示器 */}
             {hasRisk && (

@@ -242,6 +242,8 @@ export const PROJECT_IPC_CHANNELS = {
   REORDER_TASK_STATUSES: 'project:reorder-task-statuses',
   // 任务拖拽排序（中点法；一次拖拽可同时改状态与位置）
   REORDER_TASK: 'project:reorder-task',
+  // 任务级 token 配额：查询任务关联执行的累计消耗（配额刹车依据）
+  GET_TASK_TOKEN_USAGE: 'project:get-task-token-usage',
   // 用户映射
   SAVE_USER_MAPPING: 'project:save-user-mapping',
   GET_USER_MAPPING: 'project:get-user-mapping',
@@ -291,6 +293,8 @@ export interface TaskInput {
   dueDate?: number
   /** 父任务 ID，存在时该任务即为子任务 */
   parentId?: string
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退待处理 */
+  tokenBudget?: number
 }
 
 export interface SubTaskInput {
@@ -311,6 +315,8 @@ export interface TaskUpdateInput {
   subTasks?: SubTaskInput[]
   /** 父任务 ID，用于建立/解除父子关联 */
   parentId?: string | null
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行 */
+  tokenBudget?: number
 }
 
 export interface CreateSubTaskInput {
