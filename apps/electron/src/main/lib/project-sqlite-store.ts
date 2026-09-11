@@ -629,6 +629,10 @@ function migrate(database: SqliteCompat): void {
   }
   // listTasks/reorderTask 均按 (project_id, status) 过滤 + sort_order 排序，覆盖索引
   database.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order)`)
+  // AI 员工执行 token 配额（可选，NULL = 不限）
+  if (!columns.includes('token_budget')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN token_budget INTEGER`)
+  }
 
   // State 分组状态模型（借鉴 Plane）：每项目一组可自定义状态，预置五态沿用旧字符串 id
   database.exec(`
@@ -681,6 +685,7 @@ type TaskRow = {
   start_date: number | null; due_date: number | null; completed_at: number | null;
   completion_notes: string | null; risk_level: string | null; external_sync: string | null;
   permission_requests: string | null;
+  token_budget: number | null;
   sort_order: number;
   created_at: number; updated_at: number;
 }
@@ -729,6 +734,7 @@ function rowToTask(row: TaskRow): Task {
     permissionRequests: parseJsonArray(row.permission_requests),
     createdByUserId: row.created_by_user_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
+    tokenBudget: row.token_budget ?? undefined,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -828,15 +834,15 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, created_by_user_id, workspace_id, start_date, due_date, permission_requests, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, created_by_user_id, workspace_id, start_date, due_date, permission_requests, token_budget, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
     input.createdByUserId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
-    JSON.stringify(input.permissionRequests ?? []), sortOrder, timestamp, timestamp
+    JSON.stringify(input.permissionRequests ?? []), input.tokenBudget ?? null, sortOrder, timestamp, timestamp
   )
   recordProjectActivity({
     projectId,
@@ -935,19 +941,20 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     risk_level: updates.riskLevel !== undefined ? updates.riskLevel : existing.risk_level,
     external_sync: updates.externalSync !== undefined ? JSON.stringify(updates.externalSync) : existing.external_sync,
     permission_requests: updates.permissionRequests !== undefined ? JSON.stringify(updates.permissionRequests) : existing.permission_requests,
+    token_budget: updates.tokenBudget !== undefined ? updates.tokenBudget : existing.token_budget,
     updated_at: now(),
   }
   database.prepare(
     `UPDATE tasks SET
       title = ?, description = ?, status = ?, priority = ?,
       parent_id = ?, assignee_user_id = ?, assignee_display_name = ?,
-      start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?,
+      start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?, token_budget = ?,
       updated_at = ?
      WHERE id = ?`
   ).run(
     next.title, next.description, next.status, next.priority,
     next.parent_id, next.assignee_user_id, next.assignee_display_name,
-    next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests,
+    next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests, next.token_budget,
     next.updated_at, id
   )
   recordProjectActivity({

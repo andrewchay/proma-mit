@@ -650,6 +650,12 @@ React UI 更新
 - `src/retrieval/fuse.ts`：RRF 多路融合
 - `apps/electron/src/main/lib/context-store-service.ts`：Proma 运行时接入层
 
+### AI 员工执行护栏（Agent 闭环第二批）
+
+- **任务级 token 配额**：tasks.token_budget（可选，NULL 不限）；心跳扫描每轮对 running 执行查 token-usage（按 execution.sessionId 聚合），超限 → stopRegisteredAgent 中止 + execution failed + 任务 paused【AI 配额超限】。
+- **卡点即elicitation**：agent 摘要命中 detectAgentBlocker（无法完成/卡在/需要您确认/权限不足等）→ execution stale + 任务 paused【AI 卡点待决策】+ 活动流 agent_blocked——待人决策而非失败。
+- **乐观锁**：updateTask 支持 expectedUpdatedAt（不传则不启用，兼容既有调用方）；看板 MCP project_move_task 的 expectedUpdatedAt 参数走同语义，agent 基于旧版本操作会被拒绝并引导重看看板。
+
 ### 项目状态分组与拖拽排序关键约定（第一批改造）
 
 - **task_statuses 表**：每项目一组状态定义（预置五态沿用旧字符串 id：draft/pending/in_progress/paused/completed，历史数据零迁移）；跨状态逻辑（完成判断/WIP/燃尽/外部同步）只认语义组，抽在 `task-status-logic.ts` 纯函数，同步层经 `task-status-store-bridge.ts` 取用。

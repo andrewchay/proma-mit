@@ -153,8 +153,22 @@ export async function getTask(id: string): Promise<Task | null> {
 export async function updateTask(
   id: string,
   updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>,
-  options?: { source?: 'user' | 'external-sync' | 'system' }
+  options?: {
+    source?: 'user' | 'external-sync' | 'system'
+    /** 乐观锁：调用方读取任务时的 updatedAt。不匹配说明已被他人（人/agent）先写，抛冲突错误 */
+    expectedUpdatedAt?: number
+  }
 ): Promise<Task | null> {
+  // 乐观锁检测（人 + agent 并发写收敛点）：仅在显式传入 expectedUpdatedAt 时启用
+  if (options?.expectedUpdatedAt !== undefined) {
+    const current = await getTask(id)
+    if (!current) return null
+    if (current.updatedAt !== options.expectedUpdatedAt) {
+      throw new Error(
+        `任务已被其他操作更新（当前版本 ${current.updatedAt}，基于版本 ${options.expectedUpdatedAt}）。请刷新后重试，避免覆盖他人改动。`,
+      )
+    }
+  }
   const task = store.updateTask(id, updates)
   if (task) fireTaskChange(task, 'updated', { changedFields: diffTaskFields(updates), source: options?.source ?? 'user' })
   return task

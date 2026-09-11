@@ -117,6 +117,8 @@ export interface Task {
   createdByUserId?: string
   /** AI 员工执行目标工作区（PH2-③：指定执行落在哪个工作区，缺省用员工/全局） */
   workspaceId?: string
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退 paused 待人工处理 */
+  tokenBudget?: number
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
   sortOrder: number
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
@@ -166,6 +168,8 @@ export interface CreateTaskInput {
   createdByUserId?: string
   /** AI 员工执行目标工作区（可选；缺省用员工/全局默认） */
   workspaceId?: string
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行 */
+  tokenBudget?: number
 }
 
 /** 创建独立执行 subTask 的输入；它通过 taskId 归属 Task，不使用 WBS parentId。 */

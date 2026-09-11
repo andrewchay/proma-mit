@@ -47,7 +47,7 @@ async function boardToText(projectId: string): Promise<string> {
     lines.push(`- [${status.id}] ${status.name} [组:${status.stateGroup}]${wip}`)
     for (const task of inColumn) {
       const assignee = task.assignee?.displayName ?? '未指派'
-      lines.push(`    · ${task.id} ${task.title}（负责: ${assignee}${task.dueDate ? `，截止 ${new Date(task.dueDate).toLocaleDateString('zh-CN')}` : ''}）`)
+      lines.push(`    · ${task.id} ${task.title}（负责: ${assignee}${task.dueDate ? `，截止 ${new Date(task.dueDate).toLocaleDateString('zh-CN')}` : ''}，版本:${task.updatedAt}）`)
     }
   }
   return lines.join('\n')
@@ -85,6 +85,7 @@ export async function injectProjectBoardMcpServer(
             taskId: z.string().describe('任务 ID'),
             newStatusId: z.string().describe('目标状态 ID（见 project_board_view 输出的列 id）'),
             afterTaskId: z.string().optional().describe('放置到该任务之后（可选，用于列内排序）'),
+            expectedUpdatedAt: z.number().optional().describe('任务版本号（project_board_view 输出的"版本:"值）。传入后若任务已被他人更新将拒绝，请重新查看看板再试'),
           },
           async (args) => {
             const task = await getTask(args.taskId)
@@ -92,6 +93,15 @@ export async function injectProjectBoardMcpServer(
             const denied = projectDenied(boundProjectId, task.projectId)
             if (denied) return { content: [{ type: 'text' as const, text: denied }] }
             try {
+              // 乐观锁：agent 传入版本号时先校验（人拖卡片与 agent 并发写的收敛点）
+              if (args.expectedUpdatedAt !== undefined) {
+                const current = await getTask(args.taskId)
+                if (current && current.updatedAt !== args.expectedUpdatedAt) {
+                  return {
+                    content: [{ type: 'text' as const, text: `任务已被其他操作更新（当前版本 ${current.updatedAt}，你基于版本 ${args.expectedUpdatedAt} 操作）。请重新调用 project_board_view 查看最新看板后再操作。` }],
+                  }
+                }
+              }
               const result = await reorderTask(args.taskId, {
                 newStatusId: args.newStatusId,
                 ...(args.afterTaskId ? { afterTaskId: args.afterTaskId } : {}),

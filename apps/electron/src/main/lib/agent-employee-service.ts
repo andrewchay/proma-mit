@@ -29,6 +29,18 @@ import { executeWorkflowRun } from './workflow-run-executor'
 import type { AgentMessage } from '@gravitas/shared'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
+/** 任务级 token 配额：按执行会话聚合 token 消耗（token-usage 按会话记录，execution.sessionId 即会话 id） */
+function getTaskTokenUsage(sessionId: string): number {
+  try {
+    void import('./token-usage-service')
+    // 同步场景下用 require 保证心跳内可用；失败按 0 处理（不因统计缺失而误刹车）
+    const mod = require('./token-usage-service') as { getCostMiniLedger: (q: { sessionId: string }) => { totalTokens: number } }
+    return mod.getCostMiniLedger({ sessionId })?.totalTokens ?? 0
+  } catch {
+    return 0
+  }
+}
+
 // ============================================
 // 员工 CRUD（服务层薄封装）
 // ============================================
@@ -133,6 +145,29 @@ export function extractExecutionSummary(messages: AgentMessage[] | undefined): s
   if (!last) return '执行完成（无摘要）'
   const text = typeof last.content === 'string' ? last.content : String(last.content ?? '')
   return text.trim().slice(0, 2000) || '执行完成（无摘要）'
+}
+
+/**
+ * 识别 agent 自述卡点（elicitation 信号）：prompt 已要求"若无法完成，请明确说明卡点和原因"。
+ * 命中关键词视为 agent 主动报告无法完成 → 任务转 triage 组待人决策，而非交付/失败。
+ */
+export function detectAgentBlocker(summary: string): string | null {
+  if (!summary) return null
+  const patterns = [
+    /无法完成/,
+    /无法继续/,
+    /卡在/,
+    /卡点/,
+    /需要(?:您|你|用户).{0,12}(?:提供|确认|授权|决策|补充)/,
+    /权限不足/,
+    /无法访问.{0,16}(?:文件|目录|资源|系统)/,
+    /信息不足/,
+  ]
+  for (const pattern of patterns) {
+    const match = pattern.exec(summary)
+    if (match) return match[0]
+  }
+  return null
 }
 
 /** 执行记录 → 活动流 */
@@ -495,6 +530,27 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
 
   const summary = extractExecutionSummary(messages)
   const completedAt = Date.now()
+
+  // elicitation 挂任务：agent 自述卡点 → 任务转 triage 组待人决策（仅主任务；子任务保持原语义）
+  const blocker = execution.entityType === 'task' ? detectAgentBlocker(summary) : null
+  if (blocker) {
+    store.updateAgentExecution(executionId, {
+      status: 'stale',
+      resultSummary: summary,
+      error: `Agent 报告卡点：${blocker}`,
+      lastHeartbeatAt: completedAt,
+      completedAt,
+    })
+    try {
+      updateTask(execution.entityId, {
+        status: 'paused',
+        completionNotes: `【AI 卡点待决策】${blocker}——${summary.slice(0, 400)}`,
+      })
+    } catch { /* ignore */ }
+    recordActivity(store.getAgentExecution(executionId)!, 'agent_blocked', `AI 员工报告卡点需人工决策：${blocker}`)
+    return
+  }
+
   store.updateAgentExecution(executionId, {
     status: 'completed',
     resultSummary: summary,
@@ -603,6 +659,26 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
         recordActivity(store.getAgentExecution(execution.id)!, 'agent_timed_out', 'AI 员工 Workflow 执行超时')
       }
       continue
+    }
+
+    // 0. 任务级 token 配额：累计消耗超限即刹车（人 + agent 混跑时的成本护栏）
+    const task = store.getTask(execution.entityId)
+    if (task?.tokenBudget && task.tokenBudget > 0) {
+      const used = getTaskTokenUsage(execution.sessionId)
+      if (used > task.tokenBudget) {
+        try { stopRegisteredAgent(execution.sessionId) } catch { /* 可能已结束 */ }
+        store.updateAgentExecution(execution.id, {
+          status: 'failed',
+          error: `任务 token 配额超限（已用 ${used} > 预算 ${task.tokenBudget}）`,
+          lastHeartbeatAt: now,
+          completedAt: now,
+        })
+        try {
+          updateTask(execution.entityId, { status: 'paused', completionNotes: `【AI 配额超限】已消耗 ${used} tokens（预算 ${task.tokenBudget}），执行已中止；可调高预算后重试` })
+        } catch { /* ignore */ }
+        recordActivity(store.getAgentExecution(execution.id)!, 'agent_budget_exceeded', `AI 员工 token 配额超限中止：${task.title}`)
+        continue
+      }
     }
 
     // 1. 会话仍活跃 → 更新心跳
