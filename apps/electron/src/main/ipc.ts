@@ -4,6 +4,7 @@
  * 负责注册主进程和渲染进程之间的通信处理器
  */
 
+import { assertAnyMarketingCapability } from './lib/plugins/marketing-plugin'
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app } from 'electron'
 import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
@@ -4503,6 +4504,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.LIST,
     async (): Promise<import('@gravitas/shared').Campaign[]> => {
+      assertAnyMarketingCapability()
       // 返回全部 Campaign（含已归档），由 UI 侧「进行中 / 已归档」切换自行过滤
       return listCampaigns({ includeArchived: true })
     }
@@ -4511,6 +4513,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.CREATE,
     async (_, input: CreateCampaignInput): Promise<import('@gravitas/shared').Campaign> => {
+      assertAnyMarketingCapability()
       return createCampaign(input)
     }
   )
@@ -4518,6 +4521,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.GET,
     async (_, id: string): Promise<import('@gravitas/shared').Campaign | null> => {
+      assertAnyMarketingCapability()
       return getCampaignById(id)
     }
   )
@@ -4525,6 +4529,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.UPDATE,
     async (_, id: string, input: import('@gravitas/shared').UpdateCampaignInput): Promise<import('@gravitas/shared').Campaign | null> => {
+      assertAnyMarketingCapability()
       return updateCampaign(id, input)
     }
   )
@@ -4532,6 +4537,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.GET_POOL_KOLS,
     async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignKOLPoolItem[]> => {
+      assertAnyMarketingCapability()
       return getPoolKOLs(campaignId)
     }
   )
@@ -4539,6 +4545,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.IMPORT_KOLS,
     async (_, input: import('@gravitas/shared').ImportKOLsToPoolInput): Promise<{ imported: number }> => {
+      assertAnyMarketingCapability()
       return importKOLsToPool(input)
     }
   )
@@ -4546,6 +4553,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.LIST_AVAILABLE_KOLS,
     async (_, filters?: { platform?: string; category?: string; keywords?: string[] }): Promise<import('@gravitas/shared').KOLSearchResult> => {
+      assertAnyMarketingCapability()
       return listAvailableKOLs(filters)
     }
   )
@@ -4553,6 +4561,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.GET_BRIEF,
     async (_, campaignId: string, kolId: string): Promise<import('@gravitas/shared').CampaignBrief | null> => {
+      assertAnyMarketingCapability()
       return getBrief(campaignId, kolId)
     }
   )
@@ -4560,6 +4569,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.SAVE_BRIEF,
     async (_, input: import('@gravitas/shared').SaveCampaignBriefInput): Promise<import('@gravitas/shared').CampaignBrief> => {
+      assertAnyMarketingCapability()
       return saveBrief(input)
     }
   )
@@ -4567,6 +4577,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.ADVANCE_PHASE,
     async (_, id: string): Promise<import('@gravitas/shared').Campaign | null> => {
+      assertAnyMarketingCapability()
       return advanceCampaignPhase(id)
     }
   )
@@ -4574,6 +4585,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.ARCHIVE,
     async (_, id: string, archived: boolean): Promise<import('@gravitas/shared').Campaign | null> => {
+      assertAnyMarketingCapability()
       return setCampaignArchived(id, archived)
     }
   )
@@ -4581,6 +4593,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.DELETE,
     async (_, id: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return deleteCampaign(id)
     }
   )
@@ -4588,6 +4601,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.LIST_TRASHED,
     async (): Promise<import('@gravitas/shared').Campaign[]> => {
+      assertAnyMarketingCapability()
       return listTrashedCampaigns()
     }
   )
@@ -4595,6 +4609,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.RESTORE,
     async (_, id: string): Promise<import('@gravitas/shared').Campaign | null> => {
+      assertAnyMarketingCapability()
       return restoreCampaign(id)
     }
   )
@@ -4602,6 +4617,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.PURGE,
     async (_, id: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return purgeCampaign(id)
     }
   )
@@ -4609,6 +4625,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.ADD_BUILD_LOG,
     async (_, input: import('@gravitas/shared').AddCampaignBuildLogInput): Promise<import('@gravitas/shared').CampaignBuildLog> => {
+      assertAnyMarketingCapability()
       return addCampaignBuildLog(input)
     }
   )
@@ -4616,6 +4633,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.LIST_BUILD_LOGS,
     async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignBuildLog[]> => {
+      assertAnyMarketingCapability()
       return listCampaignBuildLogs(campaignId)
     }
   )
@@ -4624,6 +4642,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.ENSURE_WORKSPACE,
     async (_, campaign: import('@gravitas/shared').Campaign): Promise<string> => {
+      assertAnyMarketingCapability()
       return ensureCampaignWorkspace(campaign)
     }
   )
@@ -4633,6 +4652,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.GET_WORKFLOW,
     async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignWorkflow> => {
+      assertAnyMarketingCapability()
       return loadCampaignWorkflow(campaignId)
     }
   )
@@ -4640,6 +4660,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.UPDATE_WORKFLOW_STEP,
     async (_, input: import('@gravitas/shared').UpdateWorkflowStepInput): Promise<import('@gravitas/shared').CampaignWorkflow> => {
+      assertAnyMarketingCapability()
       return updateWorkflowStep(input)
     }
   )
@@ -4647,6 +4668,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CAMPAIGN_IPC_CHANNELS.RESET_WORKFLOW,
     async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignWorkflow> => {
+      assertAnyMarketingCapability()
       return resetWorkflow(campaignId)
     }
   )
@@ -4656,6 +4678,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     KOL_DATA_IPC_CHANNELS.LIST_ALL,
     async (): Promise<import('@gravitas/shared').KOLListItem[]> => {
+      assertAnyMarketingCapability()
       return listAllKOLs()
     }
   )
@@ -4663,6 +4686,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     KOL_DATA_IPC_CHANNELS.UPDATE,
     async (_, input: import('@gravitas/shared').UpdateKOLInput): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return updateKOL(input)
     }
   )
@@ -4670,6 +4694,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     KOL_DATA_IPC_CHANNELS.DELETE,
     async (_, id: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return deleteKOL(id)
     }
   )
@@ -4677,6 +4702,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     KOL_DATA_IPC_CHANNELS.RECALCULATE_SCORES,
     async (): Promise<{ updated: number }> => {
+      assertAnyMarketingCapability()
       return recalculateAllScores()
     }
   )
@@ -4686,6 +4712,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_AUDIT_IPC_CHANNELS.LIST,
     async (_, campaignId: string): Promise<import('@gravitas/shared').ContentAudit[]> => {
+      assertAnyMarketingCapability()
       return listContentAudits(campaignId)
     }
   )
@@ -4693,6 +4720,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_AUDIT_IPC_CHANNELS.GET,
     async (_, auditId: string): Promise<import('@gravitas/shared').ContentAudit | null> => {
+      assertAnyMarketingCapability()
       return getContentAudit(auditId)
     }
   )
@@ -4700,6 +4728,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_AUDIT_IPC_CHANNELS.CREATE,
     async (_, input: import('@gravitas/shared').CreateContentAuditInput): Promise<import('@gravitas/shared').ContentAudit | null> => {
+      assertAnyMarketingCapability()
       return createContentAudit(input)
     }
   )
@@ -4707,6 +4736,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_AUDIT_IPC_CHANNELS.UPDATE_STATUS,
     async (_, auditId: string, status: 'pending' | 'reviewing' | 'passed' | 'failed'): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return updateContentAuditStatus(auditId, status)
     }
   )
@@ -4716,6 +4746,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.LIST,
     async (_, campaignId: string): Promise<import('@gravitas/shared').KOLContentTracking[]> => {
+      assertAnyMarketingCapability()
       return listContentTracking(campaignId)
     }
   )
@@ -4723,6 +4754,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.GET,
     async (_, id: string): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      assertAnyMarketingCapability()
       return getContentTracking(id)
     }
   )
@@ -4730,6 +4762,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.CREATE,
     async (_, input: import('@gravitas/shared').CreateContentTrackingInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      assertAnyMarketingCapability()
       return createContentTracking(input)
     }
   )
@@ -4737,6 +4770,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.UPDATE_DATA,
     async (_, input: import('@gravitas/shared').UpdateContentTrackingDataInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      assertAnyMarketingCapability()
       return updateContentTrackingData(input)
     }
   )
@@ -4744,6 +4778,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.UPDATE_ANALYSIS,
     async (_, input: import('@gravitas/shared').UpdateAnalysisInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      assertAnyMarketingCapability()
       return updateContentTrackingAnalysis(input)
     }
   )
@@ -4751,6 +4786,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.ADD_PAID_DATA,
     async (_, input: import('@gravitas/shared').AddPaidDataInput): Promise<import('@gravitas/shared').KOLContentTracking | null> => {
+      assertAnyMarketingCapability()
       return addPaidData(input)
     }
   )
@@ -4758,6 +4794,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTENT_TRACKING_IPC_CHANNELS.DELETE,
     async (_, id: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return deleteContentTracking(id)
     }
   )
@@ -4767,6 +4804,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     PHASE_REPORT_IPC_CHANNELS.LIST,
     async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignPhaseReport[]> => {
+      assertAnyMarketingCapability()
       return listPhaseReports(campaignId)
     }
   )
@@ -4774,6 +4812,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     PHASE_REPORT_IPC_CHANNELS.GET,
     async (_, id: string): Promise<import('@gravitas/shared').CampaignPhaseReport | null> => {
+      assertAnyMarketingCapability()
       return getPhaseReport(id)
     }
   )
@@ -4781,6 +4820,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     PHASE_REPORT_IPC_CHANNELS.GENERATE,
     async (_, input: import('@gravitas/shared').GeneratePhaseReportInput): Promise<import('@gravitas/shared').CampaignPhaseReport> => {
+      assertAnyMarketingCapability()
       return generatePhaseReport(input)
     }
   )
@@ -4788,6 +4828,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     PHASE_REPORT_IPC_CHANNELS.UPDATE,
     async (_, id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiDecisions' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>): Promise<import('@gravitas/shared').CampaignPhaseReport | null> => {
+      assertAnyMarketingCapability()
       return updatePhaseReport(id, updates)
     }
   )
@@ -4795,6 +4836,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     PHASE_REPORT_IPC_CHANNELS.FINALIZE,
     async (_, id: string): Promise<import('@gravitas/shared').CampaignPhaseReport | null> => {
+      assertAnyMarketingCapability()
       return finalizePhaseReport(id)
     }
   )
@@ -4802,6 +4844,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     PHASE_REPORT_IPC_CHANNELS.DELETE,
     async (_, id: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return deletePhaseReport(id)
     }
   )
@@ -4811,6 +4854,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.LIST,
     async (_, campaignId: string): Promise<import('@gravitas/shared').CampaignABTest[]> => {
+      assertAnyMarketingCapability()
       return listABTests(campaignId)
     }
   )
@@ -4818,6 +4862,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.GET,
     async (_, id: string): Promise<import('@gravitas/shared').CampaignABTest | null> => {
+      assertAnyMarketingCapability()
       return getABTest(id)
     }
   )
@@ -4825,6 +4870,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.CREATE,
     async (_, input: import('@gravitas/shared').CreateABTestInput): Promise<import('@gravitas/shared').CampaignABTest> => {
+      assertAnyMarketingCapability()
       return createABTest(input)
     }
   )
@@ -4832,6 +4878,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.UPDATE,
     async (_, id: string, updates: Partial<Pick<import('@gravitas/shared').CampaignABTest, 'testName' | 'hypothesis' | 'variableType' | 'variableDescription' | 'controlGroupDefinition' | 'testGroupDefinition' | 'startDate' | 'endDate' | 'status' | 'winnerGroup' | 'winnerReason' | 'scaleRecommendation'>>): Promise<import('@gravitas/shared').CampaignABTest | null> => {
+      assertAnyMarketingCapability()
       return updateABTest(id, updates)
     }
   )
@@ -4839,6 +4886,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.COMPLETE,
     async (_, id: string, winnerGroup: string, winnerReason: string, scaleRecommendation: string): Promise<import('@gravitas/shared').CampaignABTest | null> => {
+      assertAnyMarketingCapability()
       return completeABTest(id, winnerGroup, winnerReason, scaleRecommendation)
     }
   )
@@ -4846,6 +4894,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.DELETE,
     async (_, id: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       return deleteABTest(id)
     }
   )
@@ -4853,6 +4902,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.GET_RESULTS,
     async (_, abTestId: string): Promise<import('@gravitas/shared').ABTestResult[]> => {
+      assertAnyMarketingCapability()
       return getABTestResults(abTestId)
     }
   )
@@ -4860,6 +4910,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.UPDATE_RESULT,
     async (_, input: import('@gravitas/shared').UpdateABTestResultInput): Promise<import('@gravitas/shared').ABTestResult> => {
+      assertAnyMarketingCapability()
       return updateABTestResult(input)
     }
   )
@@ -4867,6 +4918,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AB_TEST_IPC_CHANNELS.ANALYZE,
     async (_, abTestId: string): Promise<{ success: boolean; result?: import('@gravitas/shared').CampaignABTest; error?: string }> => {
+      assertAnyMarketingCapability()
       return analyzeABTest(abTestId)
     }
   )
@@ -4877,6 +4929,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     VIDEO_ASSET_IPC_CHANNELS.LIST,
     async (_, campaignId: string): Promise<import('./lib/video-asset-service').VideoAssetEntry[]> => {
+      assertAnyMarketingCapability()
       return listVideoAssets(campaignId)
     }
   )
@@ -4884,6 +4937,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     VIDEO_ASSET_IPC_CHANNELS.DELETE,
     async (_, campaignId: string, filePath: string): Promise<boolean> => {
+      assertAnyMarketingCapability()
       try {
         return await deleteVideoAsset(campaignId, filePath)
       } catch (e) {
@@ -4896,6 +4950,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     VIDEO_ASSET_IPC_CHANNELS.RENAME,
     async (_, campaignId: string, filePath: string, newName: string): Promise<{ success: boolean; path?: string; error?: string }> => {
+      assertAnyMarketingCapability()
       try {
         const p = await renameVideoAsset(campaignId, filePath, newName)
         return { success: !!p, path: p ?? undefined }

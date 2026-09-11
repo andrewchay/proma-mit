@@ -5,7 +5,7 @@
  * 订阅后才在侧边栏显示对应导航，并支持切换视图。
  */
 import type * as React from 'react'
-import { useAtom } from 'jotai'
+import { useAtom, useSetAtom } from 'jotai'
 import { Users, Megaphone, ImageIcon, Check } from 'lucide-react'
 import {
   CAPABILITY_MANIFEST,
@@ -16,6 +16,13 @@ import {
   type CapabilityId,
   type CapabilityKind,
 } from '@/atoms/marketing-atoms'
+import { activeViewAtom } from '@/atoms/active-view'
+
+/** 需要订阅才能停留的工作模块视图 */
+const CAPABILITY_VIEW_MAP: Partial<Record<CapabilityId, string>> = {
+  influencer: 'influencer',
+  'paid-media': 'paid-media',
+}
 
 const KIND_META: Record<CapabilityKind, { label: string; desc: string }> = {
   business: { label: '业务领域包', desc: '独立订阅，启用后在侧边栏出现' },
@@ -29,12 +36,18 @@ function CapabilityIcon({ kind }: { kind: CapabilityKind }): React.ReactNode {
 
 export function CapabilityCenterPanel(): React.ReactElement {
   const [enabled, setEnabled] = useAtom(enabledCapabilitiesAtom)
+  const [activeView, setActiveView] = useAtom(activeViewAtom)
 
   const handleToggle = (cap: (typeof CAPABILITY_MANIFEST)[number], ev: React.MouseEvent) => {
     ev.stopPropagation()
     if (cap.kind !== 'business') return
     const next = toggleCapability(enabled, cap.id as CapabilityId)
     setEnabled(next)
+    // 取消订阅后若正停留在该领域的工作模块视图，退回对话，避免停留在已失配的界面
+    const view = CAPABILITY_VIEW_MAP[cap.id as CapabilityId]
+    if (view && !next.includes(cap.id as CapabilityId) && activeView === view) {
+      setActiveView('conversations')
+    }
     // 持久化到 main settings.json，使营销工具/指令的注入随订阅联动
     void persistMarketingCapabilities(next)
   }

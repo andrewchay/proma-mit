@@ -347,6 +347,17 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
  * 读取营销订阅状态（settings.json 权威；未设置回退默认 influencer）。
  * 读取失败（非 electron 等）回退默认。被 isEnabled / contributeTools / contributePrompts 共用。
  */
+/**
+ * 断言已订阅任一营销领域包（influencer / paid-media），否则抛错拒绝服务。
+ * 供 IPC handler 门控使用：订阅语义贯穿 Agent 注入（tools/prompts/skills）、
+ * UI 导航与数据服务三层；Agent 工具经 contributeTools 域过滤已天然受限。
+ */
+export function assertAnyMarketingCapability(): void {
+  if (readSubscribedCapabilities().length === 0) {
+    throw new Error('未订阅任何营销领域能力包：请在「应用中心 → 领域工作台」订阅「达人 influencer」或「广告投放 paid-media」')
+  }
+}
+
 function readSubscribedCapabilities(): string[] {
   try {
     // 延迟 require 避免与 settings-service 形成初始化阶段循环依赖

@@ -18,7 +18,7 @@ import { ModeSwitcher } from './ModeSwitcher'
 import { SearchDialog } from './SearchDialog'
 import { UserAvatar } from '@/components/chat/UserAvatar'
 import { activeViewAtom } from '@/atoms/active-view'
-import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
+import { visibleCoreWorkModulesAtom, visibleExtendedWorkModulesAtom } from '@/atoms/work-module-registry'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
 import { CAPABILITY_MANIFEST, enabledCapabilitiesAtom, isCapabilityEnabled, type CapabilityId } from '@/atoms/marketing-atoms'
@@ -167,6 +167,8 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 
 export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom)
+  const visibleCoreModules = useAtomValue(visibleCoreWorkModulesAtom)
+  const visibleExtendedModules = useAtomValue(visibleExtendedWorkModulesAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
@@ -1400,7 +1402,25 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             工作模块
           </div>
           <div className="flex flex-col gap-0.5 mt-1">
-            {CORE_WORK_MODULES.map(({ id, label, icon: Icon }) => {
+            {visibleCoreModules.map(({ id, label, icon: Icon }) => {
+              const active = activeView === id
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveView(id)}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                    active
+                      ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                      : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+                  )}
+                >
+                  <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
+                  <span className="flex-1 text-left">{label}</span>
+                </button>
+              )
+            })}
+            {visibleExtendedModules.map(({ id, label, icon: Icon }) => {
               const active = activeView === id
               return (
                 <button

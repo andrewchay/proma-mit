@@ -10,8 +10,10 @@
  */
 
 import { lazy, type ComponentType } from 'react'
+import { atom } from 'jotai'
 import { CalendarDays, FolderKanban, Users, Megaphone, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
+import { enabledCapabilitiesAtom, isCapabilityEnabled, type CapabilityId } from '@/atoms/marketing-atoms'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
 const InfluencerModuleView = lazy(() => import('@/components/influencer/InfluencerModuleView').then((module) => ({ default: module.InfluencerModuleView })))
@@ -68,6 +70,32 @@ export const CORE_WORK_MODULES: WorkModuleMeta[] = WORK_MODULE_REGISTRY.filter((
 
 /** 扩展模块（收进「更多模块」分组） */
 export const EXTENDED_WORK_MODULES: WorkModuleMeta[] = WORK_MODULE_REGISTRY.filter((m) => !m.core)
+
+/** 各工作模块所需的订阅能力（未登记 = 无需订阅，始终可见） */
+const MODULE_REQUIRED_CAPABILITY: Partial<Record<ActiveView, CapabilityId>> = {
+  influencer: 'influencer',
+  'paid-media': 'paid-media',
+}
+
+/**
+ * 订阅门控后的可见工作模块（派生自 enabledCapabilitiesAtom）。
+ * 订阅式领域包：未订阅不出现在侧边栏导航（取消订阅即消失）。
+ */
+export const visibleCoreWorkModulesAtom = atom((get) => {
+  const caps = get(enabledCapabilitiesAtom)
+  return CORE_WORK_MODULES.filter((m) => {
+    const required = MODULE_REQUIRED_CAPABILITY[m.id]
+    return !required || isCapabilityEnabled(caps, required)
+  })
+})
+
+export const visibleExtendedWorkModulesAtom = atom((get) => {
+  const caps = get(enabledCapabilitiesAtom)
+  return EXTENDED_WORK_MODULES.filter((m) => {
+    const required = MODULE_REQUIRED_CAPABILITY[m.id]
+    return !required || isCapabilityEnabled(caps, required)
+  })
+})
 
 /** 视图映射：工作模块 id → 渲染组件 */
 export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {

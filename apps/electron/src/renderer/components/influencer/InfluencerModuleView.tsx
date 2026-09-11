@@ -1,32 +1,60 @@
 /**
  * InfluencerModuleView — 工作模块「达人 influencer」入口
  *
- * 达人营销领域包（方案 v4）：KOL/influencer 库、brief、达人稿件三态审核、
- * 内容数据追踪，并内嵌共享素材能力（图文+视频生成）。
+ * 达人营销领域包（方案 v4）：KOL/influencer 库、Campaign 管理、brief、
+ * 达人稿件三态审核、内容数据追踪，并内嵌共享素材能力（图文+视频生成）。
  *
- * M0 为骨架：顶栏返回对话 + 子视图切换，业务面板逐步填充。
+ * 订阅门控：未订阅 influencer 能力包时仅显示订阅引导（导航入口同样隐藏）。
  */
 import * as React from 'react'
-import { ArrowLeft, Users, FileCheck2, BarChart3 } from 'lucide-react'
+import { ArrowLeft, Users, FileCheck2, BarChart3, Target } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { activeViewAtom } from '@/atoms/active-view'
-import { CreativeVideoPanel } from '@/components/marketing/CreativeVideoPanel'
+import { enabledCapabilitiesAtom, isCapabilityEnabled } from '@/atoms/marketing-atoms'
+import { SubscriptionGate } from '@/components/marketing/SubscriptionGate'
 import { KOLDataManager } from '@/components/agent/KOLDataManager'
+import { CampaignList } from '@/components/agent/CampaignList'
 import { InfluencerReviewsPanel } from './InfluencerReviewsPanel'
 import { InfluencerTrackingPanel } from './InfluencerTrackingPanel'
-import { useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 
-type InfluencerSubView = 'talents' | 'reviews' | 'tracking'
+type InfluencerSubView = 'talents' | 'campaigns' | 'reviews' | 'tracking'
 
 const SUB_VIEWS: { id: InfluencerSubView; label: string; icon: React.ReactNode }[] = [
   { id: 'talents', label: '达人库', icon: <Users size={11} /> },
+  { id: 'campaigns', label: 'Campaign', icon: <Target size={11} /> },
   { id: 'reviews', label: '稿件审核', icon: <FileCheck2 size={11} /> },
   { id: 'tracking', label: '内容追踪', icon: <BarChart3 size={11} /> },
 ]
 
 export function InfluencerModuleView(): React.ReactElement {
   const setActiveView = useSetAtom(activeViewAtom)
+  const capabilities = useAtomValue(enabledCapabilitiesAtom)
   const [subView, setSubView] = React.useState<InfluencerSubView>('talents')
+
+  if (!isCapabilityEnabled(capabilities, 'influencer')) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
+          <button
+            onClick={() => setActiveView('conversations')}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors titlebar-no-drag"
+          >
+            <ArrowLeft size={15} />
+            返回对话
+          </button>
+          <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
+            <Users size={15} className="text-foreground/45" />
+            达人
+          </div>
+        </div>
+        <SubscriptionGate
+          title="尚未订阅「达人 influencer」能力包"
+          description="订阅后解锁达人库、KOL Campaign、稿件三态审核与内容数据追踪。"
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -61,13 +89,15 @@ export function InfluencerModuleView(): React.ReactElement {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="p-4 space-y-4 text-[13px] text-foreground/70">
-          {subView === 'talents' && (
-            <KOLDataManager />
-          )}
-          {subView === 'reviews' && <InfluencerReviewsPanel />}
-          {subView === 'tracking' && <InfluencerTrackingPanel />}
-        </div>
+        {subView === 'campaigns' ? (
+          <CampaignList />
+        ) : (
+          <div className="p-4 space-y-4 text-[13px] text-foreground/70">
+            {subView === 'talents' && <KOLDataManager />}
+            {subView === 'reviews' && <InfluencerReviewsPanel />}
+            {subView === 'tracking' && <InfluencerTrackingPanel />}
+          </div>
+        )}
       </div>
     </div>
   )
