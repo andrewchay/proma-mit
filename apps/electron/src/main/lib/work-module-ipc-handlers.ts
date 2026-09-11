@@ -616,6 +616,51 @@ export function registerWorkModuleIpcHandlers(): void {
     }
     return { taskId, totalTokens, totalCostUsd, activeSessionTokens, sessions }
   })
+  // 项目级 AI 成本聚合：本项目所有 agent 执行的 token/费用（按员工分组 + 超限任务清单）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT_AI_COST, async (_, projectId: string) => {
+    const { listAgentExecutionsByEntity, listTasks, getAgentEmployee } = await import('./project-sqlite-store')
+    const { getCostMiniLedger } = await import('./token-usage-service')
+    const tasks = listTasks(projectId, { includeSubTasks: true, includeDrafts: true })
+    const agentNames = new Map<string, string>()
+    const byAgent = new Map<string, { agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>()
+    let totalTokens = 0
+    let totalCostUsd = 0
+    const overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }> = []
+    for (const task of tasks) {
+      for (const execution of listAgentExecutionsByEntity('task', task.id)) {
+        if (!execution.sessionId || execution.sessionId.startsWith('workflow:')) continue
+        const ledger = getCostMiniLedger({ sessionId: execution.sessionId })
+        if (ledger.totalTokens === 0) continue
+        totalTokens += ledger.totalTokens
+        totalCostUsd += ledger.totalCostUsd
+        const name = agentNames.get(execution.agentId) ?? getAgentEmployee(execution.agentId)?.name ?? `员工-${execution.agentId.slice(0, 6)}`
+        agentNames.set(execution.agentId, name)
+        const bucket = byAgent.get(execution.agentId) ?? { agentId: execution.agentId, agentName: name, tokens: 0, costUsd: 0, taskCount: 0 }
+        bucket.tokens += ledger.totalTokens
+        bucket.costUsd += ledger.totalCostUsd
+        bucket.taskCount += 1
+        byAgent.set(execution.agentId, bucket)
+      }
+      // 配额超限清单：有预算且最近执行会话消耗超限
+      if (task.tokenBudget && task.tokenBudget > 0) {
+        const executions = listAgentExecutionsByEntity('task', task.id)
+        const latestWithSession = [...executions].reverse().find((e) => e.sessionId && !e.sessionId.startsWith('workflow:'))
+        if (latestWithSession?.sessionId) {
+          const used = getCostMiniLedger({ sessionId: latestWithSession.sessionId }).totalTokens
+          if (used > task.tokenBudget) {
+            overBudgetTasks.push({ taskId: task.id, title: task.title, budget: task.tokenBudget, used })
+          }
+        }
+      }
+    }
+    return {
+      projectId,
+      totalTokens,
+      totalCostUsd,
+      overBudgetTasks,
+      byAgent: [...byAgent.values()].sort((a, b) => b.tokens - a.tokens),
+    }
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_DEPENDENCIES, async (_, projectId: string) => {
     return listTaskDependencies(projectId)
   })

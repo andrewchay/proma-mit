@@ -244,6 +244,8 @@ export const PROJECT_IPC_CHANNELS = {
   REORDER_TASK: 'project:reorder-task',
   // 任务级 token 配额：查询任务关联执行的累计消耗（配额刹车依据）
   GET_TASK_TOKEN_USAGE: 'project:get-task-token-usage',
+  // 项目级 AI 成本聚合：本项目所有 agent 执行的 token/费用（按员工分组）
+  GET_PROJECT_AI_COST: 'project:get-project-ai-cost',
   // 用户映射
   SAVE_USER_MAPPING: 'project:save-user-mapping',
   GET_USER_MAPPING: 'project:get-user-mapping',
@@ -334,6 +336,17 @@ export interface ListTasksFilterInput {
   assigneeUserId?: string
   includeSubTasks?: boolean
   includeDrafts?: boolean
+}
+
+/** 项目级 AI 成本聚合（配额总览）：按员工分组的 token/费用消耗 */
+export interface ProjectAiCostResult {
+  projectId: string
+  totalTokens: number
+  totalCostUsd: number
+  /** 有配额且已超限的任务清单（配额刹车记录） */
+  overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }>
+  /** 按员工分组的消耗 */
+  byAgent: Array<{ agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>
 }
 
 /** 任务拖拽排序输入：位置由邻居表达（after=落点上方邻居/before=落点下方邻居，都不给=追加到列尾；两邻居分别定位，任一命中即采用），跨列时给 newStatusId */

@@ -29,6 +29,24 @@ import { executeWorkflowRun } from './workflow-run-executor'
 import type { AgentMessage } from '@gravitas/shared'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
+/**
+ * Agent 护栏外推通知（飞书/钉钉找人）：卡点待决策、配额超限等需要人介入的场景，
+ * 经钉钉群机器人推送（未配置则静默跳过——通知失败不影响护栏主流程）。
+ */
+async function notifyAgentGuardrail(projectId: string, taskId: string, title: string, detail: string): Promise<void> {
+  try {
+    const task = store.getTask(taskId)
+    if (!task) return
+    const { sendDingTalkRobotMessage } = await import('./dingtalk-todo-provider')
+    await sendDingTalkRobotMessage({
+      title: `【AI 员工】${title}`,
+      text: `**${title}**\n\n任务：${task.title}\n项目：${projectId}\n\n${detail}\n\n> 请打开 Gravitas 项目看板处理。`,
+    })
+  } catch (error) {
+    console.debug('[AgentEmployee] 护栏通知发送失败（静默）:', error instanceof Error ? error.message : error)
+  }
+}
+
 /** 任务级 token 配额：按执行会话聚合 token 消耗（token-usage 按会话记录，execution.sessionId 即会话 id） */
 function getTaskTokenUsage(sessionId: string): number {
   try {
@@ -548,6 +566,7 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
       })
     } catch { /* ignore */ }
     recordActivity(store.getAgentExecution(executionId)!, 'agent_blocked', `AI 员工报告卡点需人工决策：${blocker}`)
+    void notifyAgentGuardrail(execution.projectId, execution.entityId, 'AI 执行卡点待决策', `卡点：${blocker}。说明：${summary.slice(0, 200)}`)
     return
   }
 
@@ -677,6 +696,7 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
           updateTask(execution.entityId, { status: 'paused', completionNotes: `【AI 配额超限】已消耗 ${used} tokens（预算 ${task.tokenBudget}），执行已中止；可调高预算后重试` })
         } catch { /* ignore */ }
         recordActivity(store.getAgentExecution(execution.id)!, 'agent_budget_exceeded', `AI 员工 token 配额超限中止：${task.title}`)
+        void notifyAgentGuardrail(execution.projectId, execution.entityId, 'AI 执行 token 配额超限', `已消耗 ${used} tokens（预算 ${task.tokenBudget}），执行已中止；可调高预算后重试。`)
         continue
       }
     }

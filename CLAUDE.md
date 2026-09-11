@@ -655,6 +655,8 @@ React UI 更新
 - **任务级 token 配额**：tasks.token_budget（可选，NULL 不限）；心跳扫描每轮对 running 执行查 token-usage（按 execution.sessionId 聚合），超限 → stopRegisteredAgent 中止 + execution failed + 任务 paused【AI 配额超限】。
 - **卡点即elicitation**：agent 摘要命中 detectAgentBlocker（无法完成/卡在/需要您确认/权限不足等）→ execution stale + 任务 paused【AI 卡点待决策】+ 活动流 agent_blocked——待人决策而非失败。
 - **乐观锁**：updateTask 支持 expectedUpdatedAt（不传则不启用，兼容既有调用方）；看板 MCP project_move_task 的 expectedUpdatedAt 参数走同语义，agent 基于旧版本操作会被拒绝并引导重看看板。
+- **护栏外推通知**：卡点待决策/配额超限经 notifyAgentGuardrail 推钉钉群机器人（未配置 webhook 静默跳过，通知失败不影响护栏主流程）。
+- **AI 成本面板**：GET_PROJECT_AI_COST 按项目聚合 agent 执行的 token/费用（按员工分组 + 超限任务清单），ProjectDetail「AI 成本」tab 60s 轮询；GET_TASK_TOKEN_USAGE 按任务聚合（区分进行中会话）。
 
 ### 项目状态分组与拖拽排序关键约定（第一批改造）
 

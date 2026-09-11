@@ -870,7 +870,7 @@ function ProjectDetail({
   onBack: () => void
   onRefresh: () => void
 }): React.ReactElement {
-  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain'>('tasks')
+  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'aicost'>('tasks')
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
@@ -1276,6 +1276,7 @@ function ProjectDetail({
           { key: 'dependencies', label: `依赖${blockers.length > 0 ? ` · ${blockers.length} 阻塞` : ''}` },
           { key: 'activity', label: '活动' },
           { key: 'risk', label: '风险报告' },
+          { key: 'aicost', label: 'AI 成本' },
         ] as const).map((tab) => (
           <button
             key={tab.key}
@@ -1376,6 +1377,9 @@ function ProjectDetail({
         {detailTab === 'brief' && (
           <BriefPanel projectId={project.id} tasks={tasks} />
         )}
+        {detailTab === 'aicost' && (
+          <ProjectAiCostPanel projectId={project.id} />
+        )}
         {detailTab === 'risk' && (
           <div className="space-y-6">
             {riskReport ? (
@@ -1445,6 +1449,97 @@ function ActivityPanel({ activities }: { activities: ProjectActivity[] }): React
       <div className="min-w-0 flex-1"><p className="text-sm">{activity.summary}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(activity.createdAt).toLocaleString('zh-CN')}{activity.actor ? ` · ${activity.actor}` : ''}</p></div>
     </div>
   ))}</div>
+}
+
+/** 项目 AI 成本面板：本项目所有 AI 员工执行的 token/费用聚合（按员工分组 + 超限任务清单） */
+function ProjectAiCostPanel({ projectId }: { projectId: string }): React.ReactElement {
+  const [cost, setCost] = useState<{
+    totalTokens: number
+    totalCostUsd: number
+    overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }>
+    byAgent: Array<{ agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>
+  } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      callProjectAPI<{
+        totalTokens: number
+        totalCostUsd: number
+        overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }>
+        byAgent: Array<{ agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>
+      }>('getProjectAiCost', projectId)
+        .then((data) => { if (!cancelled) setCost(data) })
+        .catch(() => { if (!cancelled) setCost(null) })
+    }
+    load()
+    const timer = window.setInterval(load, 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [projectId])
+
+  if (!cost) {
+    return <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">加载 AI 成本数据…</div>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">AI 员工成本</h3>
+          <p className="text-xs text-muted-foreground">本项目 AI 员工执行的 token 消耗与费用聚合（每 60s 刷新）。</p>
+        </div>
+      </div>
+
+      {/* 汇总卡片 */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-lg bg-card border p-3">
+          <div className="text-[11px] text-muted-foreground">累计 Token</div>
+          <div className="text-lg font-semibold mt-0.5">{cost.totalTokens.toLocaleString()}</div>
+        </div>
+        <div className="rounded-lg bg-card border p-3">
+          <div className="text-[11px] text-muted-foreground">累计费用（USD）</div>
+          <div className="text-lg font-semibold mt-0.5">${cost.totalCostUsd.toFixed(4)}</div>
+        </div>
+      </div>
+
+      {/* 超限任务清单 */}
+      {cost.overBudgetTasks.length > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <div className="text-xs font-medium text-red-700 mb-2">⚠ 配额超限任务（{cost.overBudgetTasks.length}）</div>
+          <div className="space-y-1">
+            {cost.overBudgetTasks.map((item) => (
+              <div key={item.taskId} className="text-xs text-red-900">
+                <span className="font-medium">{item.title}</span> — 已用 {item.used.toLocaleString()} / 预算 {item.budget.toLocaleString()}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 按员工分组 */}
+      {cost.byAgent.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          本项目还没有 AI 员工执行记录
+        </div>
+      ) : (
+        <div className="rounded-lg border bg-card divide-y">
+          {cost.byAgent.map((agent) => (
+            <div key={agent.agentId} className="flex items-center justify-between px-3 py-2 text-xs">
+              <span className="font-medium">🤖 {agent.agentName}</span>
+              <span className="flex items-center gap-3 text-muted-foreground">
+                <span>{agent.taskCount} 次执行</span>
+                <span className="font-medium text-foreground">{agent.tokens.toLocaleString()} tokens</span>
+                <span>${agent.costUsd.toFixed(4)}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[]; statuses: ProjectTaskStatus[]; dependencies: TaskDependency[]; blockers: TaskBlocker[] }): React.ReactElement {
