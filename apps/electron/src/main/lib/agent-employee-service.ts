@@ -406,10 +406,11 @@ async function startAgentWorkflow(executionId: string, employee: AgentEmployee):
         completedAt,
       })
       try {
-        updateTask(execution.entityId, { status: 'completed', completionNotes: summary, completedAt })
+        // Agent 交付闸门：completed → draft 等人确认（confirmTaskDraft 后才进工作流）
+        writebackExecutionResult(store.getAgentExecution(executionId)!, 'completed', summary, completedAt)
       } catch { /* 任务可能已删除 */ }
       store.bumpAgentEmployeeStats(execution.agentId, { completed: true, durationMs: completedAt - startedAt })
-      recordActivity(store.getAgentExecution(executionId)!, 'agent_completed', `AI 员工完成任务（Workflow）：${summary.slice(0, 80)}`)
+      recordActivity(store.getAgentExecution(executionId)!, 'agent_completed', `AI 员工完成任务待确认（Workflow）：${summary.slice(0, 80)}`)
     } else if (finalRun.status === 'waiting_approval') {
       // SOP 含人工审批：任务回退 paused，等待审批后重试
       store.updateAgentExecution(executionId, {
@@ -460,6 +461,9 @@ function extractWorkflowSummary(run: { nodeRuns: Record<string, { output?: Recor
 /**
  * 按执行实体类型回写结果状态：entityType='task' → 更新 Task；'subTask' → 更新执行子任务。
  * 修复：AI 员工执行子任务完成后 subTask 卡在 running（此前无条件 updateTask）。
+ *
+ * Agent 交付闸门（draft）：AI 员工"完成"任务时不直接置 completed，而是落 draft 组
+ * 等人确认（confirmTaskDraft）——draft 规则保证 AI 无法绕过验收闭环。
  */
 function writebackExecutionResult(
   execution: import('./project-types').AgentExecution,
@@ -476,9 +480,10 @@ function writebackExecutionResult(
       console.warn(`[AgentEmployee] 回写子任务状态失败: ${execution.entityId}`)
     })
   }
+  // Agent 交付闸门：completed → draft（待人确认）；失败/等待仍落 paused
   updateTask(execution.entityId, {
-    status,
-    completionNotes: summary,
+    status: status === 'completed' ? 'draft' : status,
+    completionNotes: status === 'completed' ? `【AI 交付待确认】${summary}` : summary,
     ...(status === 'completed' ? { completedAt: ts } : {}),
   })
 }
@@ -746,10 +751,11 @@ export function reconcileWorkflowApprovalRun(workflowId: string, runId: string):
         completedAt: now,
       })
       try {
-        updateTask(execution.entityId, { status: 'completed', completionNotes: summary, completedAt: now })
+        // Agent 交付闸门：审批通过后同样落 draft 等人确认
+        writebackExecutionResult(execution, 'completed', summary, now)
       } catch { /* ignore */ }
       store.bumpAgentEmployeeStats(execution.agentId, { completed: true })
-      recordActivity(store.getAgentExecution(execution.id)!, 'agent_completed', `AI 员工任务审批完成后完成：${summary.slice(0, 80)}`)
+      recordActivity(store.getAgentExecution(execution.id)!, 'agent_completed', `AI 员工任务交付待确认（审批后）：${summary.slice(0, 80)}`)
     } else {
       const errMsg = '审批后 Workflow 执行失败'
       store.updateAgentExecution(execution.id, {

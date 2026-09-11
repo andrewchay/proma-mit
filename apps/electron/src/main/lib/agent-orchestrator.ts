@@ -2229,6 +2229,13 @@ export class AgentOrchestrator {
       await this.injectLocalContextTools(sdk, mcpServers, workspaceSlug)
       await this.injectNanoBananaTools(sdk, mcpServers, sessionId, agentCwd)
       await this.injectGoalTools(sdk, mcpServers, sessionId)
+      // 项目看板工具：会话绑定项目任务时，AI 员工可直接查看/移动/交付看板任务
+      try {
+        const { injectProjectBoardMcpServer } = await import('./chat-tools/project-board-mcp')
+        await injectProjectBoardMcpServer(sdk, mcpServers, sessionId)
+      } catch (err) {
+        console.error('[Agent 编排] 注入项目看板 MCP 失败:', err)
+      }
 
       // 注入内置协作会话工具（collaboration）：仅在绑定了项目的主会话可用
       const collaborationAvailable = !!workspaceId && !isDelegationSession

@@ -657,6 +657,8 @@ React UI 更新
 - **sql.js 循环写入陷阱**：bun test 分支 SqlJsStmt 每次 run 后 free 语句，循环内必须逐次 prepare，否则抛 "Statement closed"（生产 better-sqlite3 无此问题）。见 skill `sqljs-statement-closed`。
 - **外部同步语义**：推方向 provider 只收 `isCompleted: boolean`（组语义二值）；`onTaskChange` 第三参携带 `{ changedFields, source }`——source=external-sync 不回推（回声抑制）、仅 sortOrder/externalSync.* 变化不推外部（拖拽降噪）；拉方向外部"未完成"仅在本地已处完成组时回退默认状态，绝不覆盖 in_progress/paused。轮询变化经 `POLL_STATUS_CHANGED` 推前端（main.tsx 全局监听写入 `pollStatusChangedAtom`，ProjectDetail 按 projectId 消费刷新）。
 - **draft 组进出规则**：updateTask 禁止普通路径进出 draft 组（草稿只能经 confirmTaskDraft/rejectTaskDraft 流转，防止绕过确认闭环）；confirmTaskDraft 内部直写 SQL 不走 updateTask 校验。拖拽邻居契约：after/before 两个邻居分别定位（任一命中即采用，全缺失回退列尾），前端按指针相对悬停卡片中线决定插前/插后。
+- **AI 员工交付闸门（Agent 闭环第一批）**：Agent 完成任务一律落 draft 组待人确认（writebackExecutionResult 统一走此闸门，headless 与 Workflow 两路都覆盖），不得直接 completed；confirmTaskDraft 后才进工作流。派发闸门只收 pending/in_progress，draft 交付不会触发再派发死循环。
+- **看板 MCP 工具（proma_project_board）**：AI 员工执行会话注入 project_board_view / project_move_task / project_deliver_task 三工具；授权范围 = execution.sessionId 反查任务的 projectId（非执行会话不可用）；写入与人工走同一 updateTask/reorderTask 路径，draft 规则/DoD/活动流自动生效。TaskCard 对 agent 指派任务展示 AgentExecutionBadge（15s 心跳轮询兜底）。
 - **甘特图与流动指标同口径**：跨状态逻辑全部按语义组（GanttView 超期/条色经 `ganttBarColor()` 纯函数，flow-metrics WIP/完成同源）；查询索引 `idx_tasks_project_sort(project_id, sort_order)` 必须保留。
 
 ### 飞书 Task v2 同步 Todo 关键踩坑
