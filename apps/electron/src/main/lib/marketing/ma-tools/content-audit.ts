@@ -301,6 +301,10 @@ export interface ContentAuditResult {
   complianceScore?: number
   brandAlignmentScore?: number
   qualityScore?: number
+  /** 品牌形象一致性（奥格威五维框架）；当前三维审核路径不产生，留待五维评分服务填充 */
+  brandImageScore?: number
+  /** 数据可验证性（奥格威五维框架）；同上 */
+  dataVerifiabilityScore?: number
   overallScore?: number
   finalVerdict?: string
   report?: string

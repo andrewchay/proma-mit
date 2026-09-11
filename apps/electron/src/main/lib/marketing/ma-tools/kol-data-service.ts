@@ -150,6 +150,30 @@ function getDefaultKolDbPath(): string {
 }
 
 function getDb(): Database {
+  try {
+    return openKolDb()
+  } catch (err) {
+    // 迁移中途失败（如瞬时锁库）时丢弃半初始化实例：
+    // 建表 / 迁移语句均为幂等，下次调用可安全重试，避免缓存缺表连接后无法自愈。
+    closePartialDbInstance()
+    throw err
+  }
+}
+
+/** 丢弃可能半初始化的 KOL 数据库连接（独立函数以避开 TS 对模块级变量的类型收窄） */
+function closePartialDbInstance(): void {
+  const instance = dbInstance
+  if (instance) {
+    try {
+      instance.close()
+    } catch {
+      // 忽略关闭异常
+    }
+    dbInstance = null
+  }
+}
+
+function openKolDb(): Database {
   if (dbInstance) return dbInstance
 
   const dbPath = getDbPath()
@@ -286,12 +310,23 @@ function getDb(): Database {
       compliance_score REAL,
       brand_alignment_score REAL,
       quality_score REAL,
+      brand_image_score REAL DEFAULT 0,
+      data_verifiability_score REAL DEFAULT 0,
+      overall_score REAL DEFAULT 0,
       audit_report TEXT,
       auditor TEXT DEFAULT 'ai',
       created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
       updated_at INTEGER DEFAULT (strftime('%s','now') * 1000)
     )
   `)
+
+  // 存量库迁移：五维审核卡片要求所有评分字段始终可读。
+  const auditColumns = dbInstance.query(`PRAGMA table_info(content_audits)`).all() as Array<{ name: string }>
+  for (const column of ['brand_image_score', 'data_verifiability_score', 'overall_score']) {
+    if (!auditColumns.some((item) => item.name === column)) {
+      dbInstance.run(`ALTER TABLE content_audits ADD COLUMN ${column} REAL DEFAULT 0`)
+    }
+  }
 
   // 达人效果记录表
   dbInstance.run(`

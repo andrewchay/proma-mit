@@ -7,17 +7,21 @@
  * M0 为骨架：顶栏返回对话 + 子视图切换，业务面板逐步填充。
  */
 import * as React from 'react'
-import { ArrowLeft, Megaphone, Gauge, ClipboardCheck } from 'lucide-react'
+import { ArrowLeft, Megaphone, Gauge, ClipboardCheck, Target } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { activeViewAtom } from '@/atoms/active-view'
-import { useSetAtom } from 'jotai'
+import { enabledCapabilitiesAtom, isCapabilityEnabled } from '@/atoms/marketing-atoms'
+import { SubscriptionGate } from '@/components/marketing/SubscriptionGate'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { PaidCampaignsPanel } from './PaidCampaignsPanel'
 import { PaidControlPanel } from './PaidControlPanel'
 import { PaidRulesPanel } from './PaidRulesPanel'
+import { CampaignList } from '@/components/agent/CampaignList'
 
-type PaidSubView = 'campaigns' | 'control' | 'rules'
+type PaidSubView = 'kol-campaigns' | 'campaigns' | 'control' | 'rules'
 
 const SUB_VIEWS: { id: PaidSubView; label: string; icon: React.ReactNode }[] = [
+  { id: 'kol-campaigns', label: 'KOL Campaign', icon: <Target size={11} /> },
   { id: 'campaigns', label: '投放计划', icon: <Megaphone size={11} /> },
   { id: 'control', label: '调控审批', icon: <Gauge size={11} /> },
   { id: 'rules', label: '调控规则', icon: <ClipboardCheck size={11} /> },
@@ -25,7 +29,32 @@ const SUB_VIEWS: { id: PaidSubView; label: string; icon: React.ReactNode }[] = [
 
 export function PaidMediaModuleView(): React.ReactElement {
   const setActiveView = useSetAtom(activeViewAtom)
-  const [subView, setSubView] = React.useState<PaidSubView>('campaigns')
+  const capabilities = useAtomValue(enabledCapabilitiesAtom)
+  const [subView, setSubView] = React.useState<PaidSubView>('kol-campaigns')
+
+  if (!isCapabilityEnabled(capabilities, 'paid-media')) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
+          <button
+            onClick={() => setActiveView('conversations')}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors titlebar-no-drag"
+          >
+            <ArrowLeft size={15} />
+            返回对话
+          </button>
+          <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
+            <Megaphone size={15} className="text-foreground/45" />
+            广告投放
+          </div>
+        </div>
+        <SubscriptionGate
+          title="尚未订阅「广告投放 paid-media」能力包"
+          description="订阅后解锁 KOL Campaign 管理、投放计划、调控审批与调控规则。"
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -60,11 +89,15 @@ export function PaidMediaModuleView(): React.ReactElement {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="p-4 space-y-4 text-[13px] text-foreground/70">
-          {subView === 'campaigns' && <PaidCampaignsPanel />}
-          {subView === 'control' && <PaidControlPanel />}
-          {subView === 'rules' && <PaidRulesPanel />}
-        </div>
+        {subView === 'kol-campaigns' ? (
+          <CampaignList />
+        ) : (
+          <div className="p-4 space-y-4 text-[13px] text-foreground/70">
+            {subView === 'campaigns' && <PaidCampaignsPanel />}
+            {subView === 'control' && <PaidControlPanel />}
+            {subView === 'rules' && <PaidRulesPanel />}
+          </div>
+        )}
       </div>
     </div>
   )
