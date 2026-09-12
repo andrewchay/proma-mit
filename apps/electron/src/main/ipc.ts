@@ -4,6 +4,7 @@
  * 负责注册主进程和渲染进程之间的通信处理器
  */
 
+import { createDockIcon } from './lib/dock-icon'
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app } from 'electron'
 import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
@@ -1292,7 +1293,7 @@ export function registerIpcHandlers(): void {
 
         // macOS: 设置 Dock 图标
         if (process.platform === 'darwin' && app.dock) {
-          app.dock.setIcon(iconPath)
+          app.dock.setIcon(createDockIcon(iconPath))
         }
 
         // 持久化到设置

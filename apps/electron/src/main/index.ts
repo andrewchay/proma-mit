@@ -1,3 +1,4 @@
+import { createDockIcon } from './lib/dock-icon'
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
@@ -495,20 +496,14 @@ async function bootstrap(): Promise<void> {
     await startBriefCallbackServer(settings.briefCallback?.port ?? 8765)
   })
 
-  // Set dock icon on macOS (required for dev mode, bundled apps use Info.plist)
-  // default 变体不使用 setIcon：让 macOS 使用 Info.plist 的 icon.icns，自动应用 Big Sur
-  // 标准圆角遮罩（setIcon 的 PNG 不会被套该遮罩，易显示为直角方形）。
-  // 仅用户自定义了图标变体时才用 setIcon 覆盖。
+  // 默认款和自定义款统一添加透明留白，启动时与设置中的切换效果一致。
   if (process.platform === 'darwin' && app.dock) {
     await app.dock.show()
     const { resolveAppIconPath } = require('./ipc')
     const settings = getSettings()
-    const variantId = settings.appIconVariant
-    if (variantId && variantId !== 'default') {
-      const dockIconPath = resolveAppIconPath(variantId)
-      if (dockIconPath && existsSync(dockIconPath)) {
-        app.dock.setIcon(dockIconPath)
-      }
+    const dockIconPath = resolveAppIconPath(settings.appIconVariant ?? 'default')
+    if (dockIconPath && existsSync(dockIconPath)) {
+      app.dock.setIcon(createDockIcon(dockIconPath))
     }
   }
 
