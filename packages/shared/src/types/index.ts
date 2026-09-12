@@ -100,3 +100,6 @@ export * from './execution-contract'
 // 配置版本化类型
 export * from './config-version'
 export * from './project-chain'
+
+// 订阅与权益领域模型
+export * from './subscription'
