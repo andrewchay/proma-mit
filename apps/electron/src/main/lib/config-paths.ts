@@ -300,6 +300,37 @@ export function getUserProfilePath(): string {
 }
 
 /**
+ * 获取订阅权益缓存文件路径
+ *
+ * 只保存服务端签名的非敏感权益快照，不保存 access/refresh token。
+ *
+ * @returns ~/.proma/subscription/entitlement-cache.json
+ */
+export function getSubscriptionEntitlementCachePath(): string {
+  return join(getSubscriptionDir(), 'entitlement-cache.json')
+}
+
+/**
+ * 获取订阅服务目录路径
+ */
+export function getSubscriptionDir(): string {
+  const dir = join(getConfigDir(), 'subscription')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取订阅令牌加密存储路径
+ *
+ * 令牌由 Electron safeStorage 加密后落盘，禁止明文保存。
+ */
+export function getSubscriptionTokensPath(): string {
+  return join(getSubscriptionDir(), 'tokens.json')
+}
+
+/**
  * 获取代理配置文件路径
  *
  * @returns ~/.proma/proxy-settings.json

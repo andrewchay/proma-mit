@@ -6,3 +6,4 @@
 
 export * from './settings'
 export * from './user-profile'
+export { SUBSCRIPTION_IPC_CHANNELS } from '@gravitas/shared'

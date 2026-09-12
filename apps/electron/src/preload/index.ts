@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -243,11 +243,27 @@ export interface EvalBenchmarkDetail {
       time: string
       agentVersion: number
       score: number
+      scoreStd?: number | null
       costUsd?: number | null
       durationMs?: number | null
+      judge?: {
+        kind: "rule" | "llm" | "injected"
+        independent: boolean
+        modelId?: string
+      } | null
+      cases: Array<{
+        caseId: string
+        score: number
+        scoreStd?: number | null
+        runs: Array<{ score: number; sessionId: string; tracePath?: string }>
+      }>
     }>
   }
-  cases: Array<{ caseId: string; statement: string | null }>
+  cases: Array<{
+    caseId: string
+    statement: string | null
+    rubric: { version: number; items: Array<{ name: string; points: number; check: string }> } | null
+  }>
 }
 
 /** 创建 Benchmark 的请求（preload 本地形状）。 */
@@ -259,6 +275,7 @@ export interface EvalCreateBenchmarkRequest {
   provider: string
   modelId: string
   channelId?: string
+  judgeRuntime?: { provider: string; modelId: string; channelId?: string }
   targetScore: number
   cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
 }
@@ -990,7 +1007,7 @@ export interface ElectronAPI {
   listEvalTemplates: () => Promise<Array<{ id: string; title: string; description: string; targetAgentId: string }>>
 
   /** 从预置模板创建 Benchmark */
-  createEvalBenchmarkFromTemplate: (templateId: string) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
+  createEvalBenchmarkFromTemplate: (templateId: string, judgeRuntime?: { provider: string; modelId: string; channelId?: string }) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
 
   /** 估算 Baseline 成本 */
   estimateBaselineCost: (benchmarkId: string) => Promise<{ totalUsd: number; inputTokens: number; outputTokens: number; callCount: number; hasPricing: boolean; pricing?: { input: number; output: number }; fallbackUsd?: number } | null>
@@ -1396,6 +1413,21 @@ export interface ElectronAPI {
   cleanupTempStorage: () => Promise<unknown>
   /** 取消迁移导入（清理临时解压目录） */
   migrationCancelImport: (tempDir: string) => Promise<void>
+
+  // ===== 订阅与权益 =====
+
+  /** 获取当前订阅状态 */
+  getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  /** 登录订阅账号 */
+  loginSubscription: (input: { phone: string; displayName?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  /** 登出订阅账号 */
+  logoutSubscription: () => Promise<void>
+  /** 刷新订阅权益 */
+  refreshSubscription: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  /** 创建支付订单 */
+  createSubscriptionCheckout: (input: { planId: string; provider: string; period: string }) => Promise<import('../main/lib/subscription/subscription-api-client').SubscriptionCheckoutResponse>
+  /** 查询订单状态 */
+  getSubscriptionOrder: (orderId: string) => Promise<{ order: { id: string; status: string } }>
 
   // ===== macOS 灵动岛通知 =====
 
@@ -2034,6 +2066,31 @@ const electronAPI: ElectronAPI = {
 
   updateSettingsSync: (updates: Partial<AppSettings>) => {
     return ipcRenderer.sendSync(SETTINGS_IPC_CHANNELS.UPDATE_SYNC, updates)
+  },
+
+  // 订阅与权益
+  getSubscriptionState: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_STATE)
+  },
+
+  loginSubscription: (input: { phone: string; displayName?: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.LOGIN, input)
+  },
+
+  logoutSubscription: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.LOGOUT)
+  },
+
+  refreshSubscription: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.REFRESH)
+  },
+
+  createSubscriptionCheckout: (input: { planId: string; provider: string; period: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT, input)
+  },
+
+  getSubscriptionOrder: (orderId: string) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_ORDER, orderId)
   },
 
   getSystemTheme: () => {
@@ -2680,9 +2737,9 @@ const electronAPI: ElectronAPI = {
   },
 
   /** 从预置模板创建 Benchmark */
-  createEvalBenchmarkFromTemplate: (templateId: string) => {
+  createEvalBenchmarkFromTemplate: (templateId: string, judgeRuntime?: { provider: string; modelId: string; channelId?: string }) => {
     return ipcRenderer
-      .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE, templateId)
+      .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE, templateId, judgeRuntime)
       .then((benchmark) => ({ ok: true, benchmarkId: (benchmark as { id?: string } | null)?.id }))
       .catch((error: unknown) => ({ ok: false, error: String(error instanceof Error ? error.message : error) }))
   },

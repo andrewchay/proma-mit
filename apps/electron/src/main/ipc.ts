@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
   VoiceDictationAudioChunkInput,
@@ -439,7 +439,7 @@ function normalizeAppIconVariantId(variantId: string): string {
   return legacyVariantIds[variantId] ?? variantId
 }
 
-export function registerIpcHandlers(): void {
+export async function registerIpcHandlers(): Promise<void> {
   console.log('[IPC] 正在注册 IPC 处理器...')
 
   // ===== 嵌入式终端 =====
@@ -1170,6 +1170,86 @@ export function registerIpcHandlers(): void {
       } catch {
         event.returnValue = false
       }
+    }
+  )
+
+  // ===== 订阅与权益相关 =====
+
+  const subscriptionApiClient = {
+    login: async (input: { phone: string; displayName?: string }) => {
+      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
+      return client.login(input)
+    },
+    refresh: async (refreshToken: string) => {
+      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
+      return client.refresh(refreshToken)
+    },
+    getEntitlements: async (accessToken: string) => {
+      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
+      return client.getEntitlements(accessToken)
+    },
+    createCheckout: async (accessToken: string, input: { planId: string; provider: string; period: string }) => {
+      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
+      return client.createCheckout(accessToken, input)
+    },
+    getOrder: async (accessToken: string, orderId: string) => {
+      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
+      return client.getOrder(accessToken, orderId)
+    },
+  }
+
+  const subscriptionAuthService = {
+    load: () => undefined as import('./lib/subscription/subscription-auth-service').StoredSubscriptionTokens | undefined,
+    save: (_tokens: import('./lib/subscription/subscription-auth-service').StoredSubscriptionTokens) => {},
+    clear: () => {},
+  }
+  const entitlementCache = new (await import('./lib/subscription/entitlement-cache')).EntitlementCache()
+  const entitlementService = new (await import('./lib/subscription/entitlement-service')).EntitlementService(
+    subscriptionApiClient as unknown as import('./lib/subscription/subscription-api-client').SubscriptionApiClient,
+    subscriptionAuthService as unknown as import('./lib/subscription/subscription-auth-service').SubscriptionAuthService,
+    entitlementCache,
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.GET_STATE,
+    async () => entitlementService.getState()
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.LOGIN,
+    async (_event, input: { phone: string; displayName?: string }) => entitlementService.login(input)
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.LOGOUT,
+    async () => entitlementService.logout()
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.REFRESH,
+    async () => entitlementService.refresh()
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT,
+    async (_event, input: { planId: string; provider: string; period: string }) => {
+      const tokens = subscriptionAuthService.load()
+      if (!tokens) throw new Error('未登录')
+      return subscriptionApiClient.createCheckout(tokens.accessToken, input)
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.GET_ORDER,
+    async (_event, orderId: string) => {
+      const tokens = subscriptionAuthService.load()
+      if (!tokens) throw new Error('未登录')
+      return subscriptionApiClient.getOrder(tokens.accessToken, orderId)
     }
   )
 
@@ -2427,9 +2507,12 @@ export function registerIpcHandlers(): void {
   // 不自动写回内置 sub-agent 行为；是否采纳由 UI 的「审阅并采纳」显式触发。
   ipcMain.handle(
     AGENT_IPC_CHANNELS.EVAL_RUN_IMPROVE,
-    async (_event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').ImproveSummary> => {
+    async (event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').ImproveSummary> => {
       const { runEvalImprove } = await import('./lib/agent-runtime/eval/eval-service')
-      return runEvalImprove(benchmarkId, { autoAdopt: false })
+      return runEvalImprove(benchmarkId, {
+        autoAdopt: false,
+        onProgress: (progress) => event.sender.send(AGENT_IPC_CHANNELS.EVAL_PROGRESS, progress),
+      })
     }
   )
 
@@ -2510,9 +2593,9 @@ export function registerIpcHandlers(): void {
   // 从预置模板创建 Benchmark
   ipcMain.handle(
     AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE,
-    async (_event, templateId: string) => {
-      const { createBenchmarkFromTemplate } = await import('./lib/agent-runtime/eval/benchmark-store')
-      return createBenchmarkFromTemplate(templateId)
+    async (_event, templateId: string, judgeRuntime?: import("./lib/agent-runtime/eval/types").EvalRuntimeRef) => {
+      const { createBenchmarkFromTemplate } = await import("./lib/agent-runtime/eval/benchmark-store")
+      return createBenchmarkFromTemplate(templateId, undefined, judgeRuntime)
     }
   )
 

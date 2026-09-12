@@ -476,12 +476,20 @@ async function bootstrap(): Promise<void> {
   // 按营销订阅状态把营销 skills 分发到各工作区（未订阅时幂等清理）
   safeRun('syncMarketingSkillsForAllWorkspaces', syncMarketingSkillsForAllWorkspaces)
 
+  // 营销订阅启用时，自动安装营销 Campaign 工作流到工作区
+  safeRun('ensureMarketingWorkflowForAllWorkspaces', () => {
+    const { ensureMarketingWorkflowForAllWorkspaces } = require('./lib/marketing/marketing-workflow-installer') as {
+      ensureMarketingWorkflowForAllWorkspaces: () => void
+    }
+    ensureMarketingWorkflowForAllWorkspaces()
+  })
+
   // Create application menu
   const menu = createApplicationMenu()
   Menu.setApplicationMenu(menu)
 
   // Register IPC handlers
-  registerIpcHandlers()
+  await registerIpcHandlers()
 
   // 初始化项目管理 SQLite 数据库（本地唯一数据源）
   await safeAwait('initProjectDb', async () => {
@@ -627,7 +635,7 @@ async function safeAwait(name: string, fn: () => Promise<unknown>): Promise<void
  * 异常隔离掉了，能走到这里说明出了 bootstrap 本身控制流的意外（极端情况），
  * 此时仍尝试创建一个降级窗口，让用户至少能看到界面、复制日志、提交反馈。
  */
-function handleBootstrapFailure(err: unknown): void {
+async function handleBootstrapFailure(err: unknown): Promise<void> {
   console.error('[启动] bootstrap 致命错误，进入降级模式:', err)
 
   try {
@@ -647,7 +655,7 @@ function handleBootstrapFailure(err: unknown): void {
   }
 
   try {
-    registerIpcHandlers()
+    await registerIpcHandlers()
     createWindow()
   } catch (fallbackErr) {
     console.error('[启动] 降级窗口创建也失败:', fallbackErr)
