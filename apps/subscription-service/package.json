@@ -1,0 +1,20 @@
+{
+  "name": "@gravitas/subscription-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "BUSL-1.1",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@gravitas/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}
