@@ -6,7 +6,7 @@
  */
 import type * as React from 'react'
 import { useAtom } from 'jotai'
-import { Users, Megaphone, ImageIcon, Check } from 'lucide-react'
+import { Users, Megaphone, ImageIcon, Globe2, Check } from 'lucide-react'
 import {
   CAPABILITY_MANIFEST,
   enabledCapabilitiesAtom,
@@ -22,8 +22,9 @@ const KIND_META: Record<CapabilityKind, { label: string; desc: string }> = {
   shared: { label: '共享能力', desc: '被业务包内嵌引用，随依赖自动启用' },
 }
 
-function CapabilityIcon({ kind }: { kind: CapabilityKind }): React.ReactNode {
+function CapabilityIcon({ kind, id }: { kind: CapabilityKind; id?: string }): React.ReactNode {
   if (kind === 'shared') return <ImageIcon size={16} className="text-foreground/40" />
+  if (id === 'outbound-sourcing') return <Globe2 size={16} className="text-foreground/40" />
   return <Users size={16} className="text-foreground/40" />
 }
 

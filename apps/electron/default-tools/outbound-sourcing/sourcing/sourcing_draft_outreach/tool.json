@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_draft_outreach",
+  "name": "生成出海外联草稿",
+  "description": "根据已核验的公司、国家、联系人和业务角度生成首封外联邮件草稿；只生成内容，不发送。",
+  "parameters": {"type":"object","properties":{"company":{"type":"string"},"country":{"type":"string"},"contact_name":{"type":"string"},"product":{"type":"string"},"angle":{"type":"string"},"language":{"type":"string","enum":["en","zh","tr","ru"]}},"required":["company","product","angle"]}
+}

@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_score_lead",
+  "name": "评估出海线索优先级",
+  "description": "按国家一致性、买家类型、业务匹配、网站与邮箱证据和当前跟进状态计算 0-100 优先级；证据不足会降低分数。",
+  "parameters": {"type":"object","properties":{"company":{"type":"string"},"country":{"type":"string"},"verified_country":{"type":"string"},"customer_type":{"type":"string"},"vertical_match":{"type":"string","enum":["core","partial","none","unknown"]},"has_website":{"type":"boolean"},"has_verified_email":{"type":"boolean"},"status":{"type":"string"}},"required":["company"]}
+}

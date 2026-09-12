@@ -10,12 +10,13 @@
  */
 
 import { lazy, type ComponentType } from 'react'
-import { CalendarDays, FolderKanban, Users, Megaphone, type LucideIcon } from 'lucide-react'
+import { CalendarDays, FolderKanban, Users, Megaphone, Globe2, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
 const InfluencerModuleView = lazy(() => import('@/components/influencer/InfluencerModuleView').then((module) => ({ default: module.InfluencerModuleView })))
 const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMediaModuleView').then((module) => ({ default: module.PaidMediaModuleView })))
+const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sourcing/OutboundSourcingModuleView').then((module) => ({ default: module.OutboundSourcingModuleView })))
 const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
 
 export interface WorkModuleMeta {
@@ -61,6 +62,14 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     group: 'marketing',
     description: '投放计划 / 调控审批 / 调控规则（订阅式领域包）',
   },
+  {
+    id: 'outbound-sourcing',
+    label: '出海 sourcing',
+    icon: Globe2,
+    core: false,
+    group: 'business-domains',
+    description: '海外买家发现、线索核验与外联推进',
+  },
 ]
 
 /** 核心模块（按注册表顺序展示） */
@@ -75,5 +84,6 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   projects: ProjectView,
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
+  'outbound-sourcing': OutboundSourcingModuleView,
   capabilities: CapabilitiesView,
 }

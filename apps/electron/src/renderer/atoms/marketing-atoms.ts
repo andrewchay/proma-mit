@@ -11,7 +11,7 @@
  */
 import { atom } from 'jotai'
 
-export type CapabilityId = 'influencer' | 'paid-media'
+export type CapabilityId = 'influencer' | 'paid-media' | 'outbound-sourcing'
 export type CapabilityKind = 'business' | 'shared'
 
 export interface CapabilityMeta {
@@ -45,6 +45,12 @@ export const CAPABILITY_MANIFEST: CapabilityMeta[] = [
     dependsOn: ['creative'],
     description: '投放计划 / 调控审批 / 调控规则（首期无 API 写钱）',
   },
+  {
+    id: 'outbound-sourcing',
+    label: '出海 sourcing',
+    kind: 'business',
+    description: '海外买家发现 / 线索核验 / 优先级 / 外联与回复草稿',
+  },
 ]
 
 /** 默认订阅（默认不开启任何业务包；用户可在领域工作台手动启用）；与 main 侧 isEnabled 兜底一致 */
@@ -69,8 +75,10 @@ export async function initializeMarketingCapabilities(
 ): Promise<void> {
   try {
     const settings = await window.electronAPI.getSettings()
-    const stored = settings.marketingCapabilities as CapabilityId[] | undefined
-    setEnabled(Array.isArray(stored) && stored.length > 0 ? stored : DEFAULT_ENABLED_CAPABILITIES)
+    const marketing = Array.isArray(settings.marketingCapabilities) ? settings.marketingCapabilities : []
+    const domains = Array.isArray(settings.domainCapabilities) ? settings.domainCapabilities : []
+    const stored = [...new Set([...marketing, ...domains])] as CapabilityId[]
+    setEnabled(stored.length > 0 ? stored : DEFAULT_ENABLED_CAPABILITIES)
   } catch (error) {
     console.error('[营销订阅] 加载失败，回退默认:', error)
     setEnabled(DEFAULT_ENABLED_CAPABILITIES)
@@ -80,7 +88,10 @@ export async function initializeMarketingCapabilities(
 /** 持久化营销订阅状态到 main settings.json（与 main 侧 isEnabled 共享同一权威源） */
 export async function persistMarketingCapabilities(enabled: CapabilityId[]): Promise<void> {
   try {
-    await window.electronAPI.updateSettings({ marketingCapabilities: enabled })
+    await window.electronAPI.updateSettings({
+      marketingCapabilities: enabled.filter((id) => id === 'influencer' || id === 'paid-media'),
+      domainCapabilities: enabled.filter((id) => id === 'outbound-sourcing'),
+    })
   } catch (error) {
     console.error('[营销订阅] 持久化失败:', error)
   }

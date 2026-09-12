@@ -121,6 +121,7 @@ const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.computer-use', () => require('./plugins/computer-use-plugin').computerUsePluginRuntime()],
   // Marketing 插件：把营销领域工具以「插件贡献 agent-tools」方式提供（试点）
   ['com.gravitas.marketing', () => require('./plugins/marketing-plugin').marketingPluginRuntime()],
+  ['com.gravitas.outbound-sourcing', () => require('./plugins/outbound-sourcing-plugin').outboundSourcingPluginRuntime()],
 ])
 
 /** 安全的字符串字段取值（仅接受 mini 长度以下的用户可控字符串） */
@@ -252,6 +253,7 @@ import { collectDirectoryTools, collectDirectoryToolPrompts } from './tool-defin
 /** 目录名与内置插件 runtime ID 的稳定映射；未知目录不得绕过插件启用状态。 */
 const DIRECTORY_TOOLSET_RUNTIME_IDS: Record<string, string> = {
   marketing: 'com.gravitas.marketing',
+  'outbound-sourcing': 'com.gravitas.outbound-sourcing',
   'computer-use': 'com.gravitas.computer-use',
 }
 

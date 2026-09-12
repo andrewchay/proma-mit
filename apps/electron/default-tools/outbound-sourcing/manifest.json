@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "outbound-sourcing",
+  "name": "出海 sourcing",
+  "version": "0.1.0",
+  "description": "Redvia 方法：海外买家发现、线索核验、优先级与外联草稿",
+  "tools": ["sourcing_build_keyword_plan", "sourcing_score_lead", "sourcing_draft_outreach"]
+}
