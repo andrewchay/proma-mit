@@ -46,7 +46,7 @@ function createFakeClient(): { client: AgentRuntimePostgresClient; calls: Array<
         const existing = rows.get(key) ?? []
         const updated = existing.map((row) => ({ ...row, status: 'paid', provider_transaction_id: params[1], paid_at: params[2], updated_at: params[3] }))
         rows.set(key, updated)
-        return { rows: updated as Row[] }
+        return { rows: updated as unknown as Row[] }
       }
       return { rows: [] as Row[] }
     },
