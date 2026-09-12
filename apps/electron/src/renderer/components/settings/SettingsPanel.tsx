@@ -73,6 +73,7 @@ import { TokenUsageSettings } from './TokenUsageSettings'
 import { WorkspaceMembersSettings } from './WorkspaceMembersSettings'
 import { EnterpriseSettings } from './EnterpriseSettings'
 import { GoalsSettings } from './GoalsSettings'
+import { SubscriptionSettings } from './SubscriptionSettings'
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -155,6 +156,11 @@ const GOALS_TAB: TabItem = {
   label: '目标（Goals）',
   icon: <Target size={16} />,
 };
+const SUBSCRIPTION_TAB: TabItem = {
+  id: 'subscription',
+  label: '订阅与账户',
+  icon: <ShieldCheck size={16} />,
+};
 
 /** 企业版 Tab */
 const ENTERPRISE_TAB: TabItem = {
@@ -228,6 +234,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
       OPERATION_AUDIT_TAB,
       TOKEN_USAGE_TAB,
       GOALS_TAB,
+      SUBSCRIPTION_TAB,
       TUTORIAL_TAB,
       ENTERPRISE_TAB,
       WORKSPACE_MEMBERS_TAB,
@@ -289,6 +296,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <EnterpriseSettings />
     case 'workspace-members':
       return <WorkspaceMembersSettings />
+    case 'subscription':
+      return <SubscriptionSettings />
   }
 }
 
