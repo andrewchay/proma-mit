@@ -324,14 +324,10 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
       entrypoints: {},
     },
     isEnabled: () => isMarketingEnabled(readSubscribedCapabilities()),
-    setEnabled: async (enabled: boolean) => {
-      try {
-        const { updateSettings } = require('../settings-service') as { updateSettings: (s: { marketingCapabilities?: string[] }) => void }
-        updateSettings({ marketingCapabilities: enabled ? [...DEFAULT_ENABLED_CAPABILITIES] : [] })
-        return true
-      } catch {
-        return false
-      }
+    setEnabled: async (_enabled: boolean) => {
+      // 商业化阶段：本地开关不再直接授予能力，统一由服务端权益决定。
+      // 保留接口以兼容插件管理器，但实际订阅状态由 entitlement-service 控制。
+      return true
     },
     isSupported: () => true,
     // 向 Agent 注入营销工具（按订阅的领域子域过滤；storyboard/shared 随任一订阅启用）
