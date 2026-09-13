@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_search_buyers",
+  "name": "检索海外买家候选",
+  "description": "按产品、目标国家与买家类型调用联网搜索，返回候选公司清单与来源链接（标题/摘要/URL）。只收集线索，不做真伪判断，候选公司不等于已验证事实。",
+  "parameters": {"type":"object","properties":{"product":{"type":"string","description":"产品，如 goji puree"},"markets":{"type":"array","items":{"type":"string"},"description":"目标国家/地区"},"buyer_types":{"type":"array","items":{"type":"string"},"description":"买家类型，默认 distributor/ingredient buyer/OEM manufacturer/brand"},"max_queries":{"type":"number","description":"最多执行多少条查询，默认 6，上限 20"}},"required":["product","markets"]}
+}

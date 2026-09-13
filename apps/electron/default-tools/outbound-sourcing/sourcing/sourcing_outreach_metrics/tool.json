@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_outreach_metrics",
+  "name": "查询外联漏斗指标",
+  "description": "返回本地外联漏斗指标：已发送/待确认/失败数、触达公司数、回信公司数、回复率、平均首次回复时延，以及按公司的往来明细。只读。",
+  "parameters": {"type":"object","properties":{"top":{"type":"number","description":"按公司明细返回条数，默认 10"}},"required":[]}
+}

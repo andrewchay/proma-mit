@@ -484,6 +484,14 @@ async function bootstrap(): Promise<void> {
     ensureMarketingWorkflowForAllWorkspaces()
   })
 
+  // 领域包订阅启用时，自动安装随包 Workflow 模板（出海 sourcing 等）
+  safeRun('ensureDomainWorkflowsForAllWorkspaces', () => {
+    const { ensureDomainWorkflowsForAllWorkspaces } = require('./lib/domain-workflow-installer') as {
+      ensureDomainWorkflowsForAllWorkspaces: () => void
+    }
+    ensureDomainWorkflowsForAllWorkspaces()
+  })
+
   // Create application menu
   const menu = createApplicationMenu()
   Menu.setApplicationMenu(menu)

@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_build_persona",
+  "name": "合成决策人画像",
+  "description": "根据公司、目标品类、已知联系人与证据片段，输出决策人画像模板（角色、采购关注点、潜在痛点、切入角度、待核实项）。输出是画像草稿，不是已验证事实。",
+  "parameters": {"type":"object","properties":{"company":{"type":"string"},"contact_name":{"type":"string"},"contact_role":{"type":"string"},"product":{"type":"string"},"country":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"},"description":"已知证据片段（官网摘录、招聘信息、新闻等）"}},"required":["company","product"]}
+}

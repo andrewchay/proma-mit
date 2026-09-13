@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_list_inbox",
+  "name": "查看出海收件箱",
+  "description": "列出已同步的收件箱来信摘要（发件人/主题/分类/是否已处理）；默认不含正文，传 email_id 可读取单封完整正文。只读，不修改邮箱。",
+  "parameters": {"type":"object","properties":{"category":{"type":"string","enum":["outreach_reply","new_inbound","other"],"description":"按分类筛选"},"unhandled_only":{"type":"boolean","description":"仅未处理来信"},"limit":{"type":"number","description":"最多返回条数，默认 20"},"email_id":{"type":"string","description":"读取单封完整正文的来信 id"}},"required":[]}
+}

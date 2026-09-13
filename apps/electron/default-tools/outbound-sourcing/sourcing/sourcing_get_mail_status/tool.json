@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_get_mail_status",
+  "name": "查询邮件往来状态",
+  "description": "按公司邮箱或队列邮件 id 查询发送与回复状态（queued/approved/sent/failed 等）。只读。",
+  "parameters": {"type":"object","properties":{"company_email":{"type":"string","description":"对方公司联系人邮箱"},"thread_mail_id":{"type":"string","description":"队列邮件 id"}},"required":[]}
+}

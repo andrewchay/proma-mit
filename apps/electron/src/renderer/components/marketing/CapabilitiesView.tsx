@@ -1,8 +1,8 @@
 /**
- * CapabilitiesView — 应用中心 / 领域工作台视图
+ * CapabilitiesView — 专业订阅服务 / 领域能力包视图
  *
- * 由顶部菜单栏「应用中心 → 领域工作台」触发。
- * 展示并管理已订阅的领域能力包（达人 influencer / 广告投放 paid-media / 共享素材）。
+ * 由顶部菜单栏「专业订阅服务 → 领域能力包」触发。
+ * 展示并管理已订阅的领域能力包（达人 influencer / 广告投放 paid-media / 出海 sourcing / 共享素材）。
  */
 import type * as React from 'react'
 import { ArrowLeft, Layers } from 'lucide-react'
@@ -25,7 +25,7 @@ export function CapabilitiesView(): React.ReactElement {
         </button>
         <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
           <Layers size={15} className="text-foreground/45" />
-          应用中心
+          专业订阅服务
         </div>
         <div className="flex-1" />
       </div>

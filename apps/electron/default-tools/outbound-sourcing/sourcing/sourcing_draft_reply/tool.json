@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_draft_reply",
+  "name": "起草出海回复邮件",
+  "description": "根据收到的来信生成回复草稿简报：Jack 人设 + 品牌知识库注入、回复规则（简洁/澄清提问/纯文本）、Calendly 意向判定与线程头（Re:/In-Reply-To/References）。只产草稿，不发送邮件。",
+  "parameters": {"type":"object","properties":{"from_email":{"type":"string","description":"来信发件人地址"},"from_name":{"type":"string"},"subject":{"type":"string","description":"来信主题"},"body":{"type":"string","description":"来信正文"},"message_id":{"type":"string","description":"来信 Message-ID，用于线程头"},"references":{"type":"array","items":{"type":"string"},"description":"来信 References 链"},"language":{"type":"string","enum":["en","zh","tr","ru"]}},"required":["from_email","subject","body"]}
+}

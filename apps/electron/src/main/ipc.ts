@@ -442,6 +442,11 @@ function normalizeAppIconVariantId(variantId: string): string {
 export async function registerIpcHandlers(): Promise<void> {
   console.log('[IPC] 正在注册 IPC 处理器...')
 
+  // ===== 出海邮件（收发与同步，独立模块） =====
+  const { registerOutboundMailIpcHandlers, restoreOutboundMailSchedule } = await import('./lib/outbound-mail/outbound-mail-ipc')
+  registerOutboundMailIpcHandlers()
+  restoreOutboundMailSchedule()
+
   // ===== 嵌入式终端 =====
   const assertMainTerminalRenderer = async (senderId: number): Promise<void> => {
     const { getMainWindow } = await import('./index')
@@ -1142,6 +1147,16 @@ export async function registerIpcHandlers(): Promise<void> {
           syncMarketingSkillsForAllWorkspaces()
         } catch (err) {
           console.warn('[IPC] 营销订阅变更后同步 skills 失败:', err)
+        }
+      }
+
+      // 领域订阅变化时，重新安装已启用领域包的随包 Workflow 模板
+      if (updates.marketingCapabilities !== undefined || updates.domainCapabilities !== undefined) {
+        try {
+          const { ensureDomainWorkflowsForAllWorkspaces } = await import('./lib/domain-workflow-installer')
+          ensureDomainWorkflowsForAllWorkspaces()
+        } catch (err) {
+          console.warn('[IPC] 领域订阅变更后安装领域工作流失败:', err)
         }
       }
 

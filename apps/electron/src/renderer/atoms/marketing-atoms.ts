@@ -55,7 +55,8 @@ export const CAPABILITY_MANIFEST: CapabilityMeta[] = [
     id: 'outbound-sourcing',
     label: '出海 sourcing',
     kind: 'business',
-    description: '海外买家发现 / 线索核验 / 优先级 / 外联与回复草稿',
+    // 能力边界如实描述：与 Redvia 全流水线不同，这里只覆盖方法论三件套，检索/核验由 Agent 完成，发送需人工
+    description: '检索核验 / 画像 / 评分 / 外联与回复草稿 / 邮件同步 / 审批制发送 / 漏斗指标',
   },
 ]
 

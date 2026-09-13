@@ -103,3 +103,4 @@ export * from './project-chain'
 
 // 订阅与权益领域模型
 export * from './subscription'
+export * from './outbound-mail'

@@ -1,0 +1,121 @@
+{
+  "id": "outbound-sourcing-pipeline",
+  "teamId": "personal",
+  "name": "出海 Sourcing 流水线",
+  "description": "从关键词计划到外联准备的五阶段买家获取模板：计划 → 检索核验 → 评分 → 审批 → 外联。不自动发邮件，候选公司不作为已验证事实。",
+  "version": "1.0.0",
+  "definition": {
+    "format": "paa.workflow",
+    "formatVersion": "1.0",
+    "id": "outbound-sourcing-pipeline-template",
+    "workspaceId": "template",
+    "teamId": "personal",
+    "name": "出海 Sourcing 流水线",
+    "description": "从关键词计划到外联准备的五阶段买家获取模板。候选公司必须经网站/国家/联系人核验后才可进入外联队列；工具不发送邮件。",
+    "status": "published",
+    "version": "1.0.0",
+    "trigger": {
+      "kind": "manual"
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string"
+        },
+        "markets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "buyerTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "language": {
+          "type": "string",
+          "enum": ["en", "zh", "tr", "ru"]
+        }
+      },
+      "required": ["product", "markets"]
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "kind": "start",
+        "title": "Sourcing Brief 输入"
+      },
+      {
+        "id": "keyword-plan",
+        "kind": "agent",
+        "title": "关键词计划",
+        "description": "调用 sourcing_build_keyword_plan 为每个目标市场生成买家检索查询与核验清单；输入必须包含产品与目标国家。",
+        "config": {
+          "prompt": "使用 sourcing_build_keyword_plan 工具为当前产品与目标市场生成检索关键词计划和核验清单；输出查询列表与待核验字段。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": ["sourcing_build_keyword_plan"]
+        }
+      },
+      {
+        "id": "buyer-search",
+        "kind": "agent",
+        "title": "买家检索与证据收集",
+        "description": "用 WebSearch/WebFetch 按关键词计划检索候选公司，逐条记录官网、总部/运营国家、业务匹配和联系人来源；查不到的证据标记为待核验，不补造事实。",
+        "config": {
+          "prompt": "按关键词计划检索候选买家公司；为每家公司记录：官网、总部/运营国家、业务类型、品类匹配、联系人职位与邮箱来源。证据缺失时明确标记'待核验'，不得虚构公司信息。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised"
+        }
+      },
+      {
+        "id": "lead-scoring",
+        "kind": "agent",
+        "title": "线索核验与评分",
+        "description": "对每家候选公司调用 sourcing_score_lead，按国家一致性、业务匹配、邮箱与互动状态计算 P1/P2/P3 并保留理由；证据不足的输出待核验。",
+        "config": {
+          "prompt": "对候选公司逐条调用 sourcing_score_lead 评分，保留每条评分理由与下一步建议；国家不一致、网站缺失、邮箱未核验的线索必须降级并标记待核验。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": ["sourcing_score_lead"]
+        }
+      },
+      {
+        "id": "lead-approval",
+        "kind": "approval",
+        "title": "外联名单人工审批",
+        "description": "人工确认进入外联准备的 P1/P2 名单：核对官网、运营国家、品类匹配与联系人职位；退回不符合项。",
+        "config": {
+          "assigneePolicy": "workflow_owner",
+          "timeout": "P2D",
+          "onTimeout": "fail",
+          "allowEditOutput": true
+        }
+      },
+      {
+        "id": "outreach-draft",
+        "kind": "agent",
+        "title": "外联草稿准备",
+        "description": "对审批通过的线索调用 sourcing_draft_outreach 生成个性化首封邮件草稿；草稿不含价格承诺与未经证实的能力声明，发送前由人工核验收件人。",
+        "config": {
+          "prompt": "对审批通过的公司逐条调用 sourcing_draft_outreach 生成外联草稿（注入决策人职位与痛点）；输出草稿清单供人工核验，不发送任何邮件。"
+        },
+        "capabilityPolicy": {
+          "permissionProfileId": "workflow-supervised",
+          "allowedTools": ["sourcing_draft_outreach"]
+        }
+      },
+      {
+        "id": "end",
+        "kind": "end",
+        "title": "Sourcing 计划包完成"
+      }
+    ]
+  }
+}

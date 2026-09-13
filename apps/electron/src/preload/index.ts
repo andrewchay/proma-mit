@@ -45,7 +45,9 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS } from '../types'
+/** 保存邮箱配置的入参形态（仅用于类型推导） */
+type saveConfigInput = (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => unknown
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1319,7 +1321,7 @@ export interface ElectronAPI {
 
   /** 订阅菜单关闭标签页事件（Cmd+W 被菜单拦截后转发） */
   onMenuCloseTab: (callback: () => void) => () => void
-  /** 订阅菜单「应用中心→领域工作台」事件（打开能力中心面板） */
+  /** 订阅菜单「专业订阅服务→领域能力包」事件（打开订阅面板） */
   onMenuOpenCapabilities: (callback: () => void) => () => void
 
   // ===== 快速任务窗口 =====
@@ -1418,6 +1420,23 @@ export interface ElectronAPI {
 
   /** 获取当前订阅状态 */
   getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+
+  // ===== 出海邮件（收发与同步） =====
+  outboundMail: {
+    getConfig: () => Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>
+    saveConfig: (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => Promise<import('@gravitas/shared').OutboundMailboxConfigView>
+    testConnection: () => Promise<import('@gravitas/shared').OutboundMailTestResult>
+    listInbox: (query?: import('@gravitas/shared').OutboundInboxQuery) => Promise<import('@gravitas/shared').OutboundInboxListResult>
+    syncNow: () => Promise<import('@gravitas/shared').OutboundSyncResult>
+    listOutbox: () => Promise<import('@gravitas/shared').OutboundOutboxItem[]>
+    queueEmail: (input: { to: string; subject: string; body: string; inReplyTo?: string | null; references?: string[]; source?: 'agent' | 'manual'; replyToInboxId?: string | null }) => Promise<import('@gravitas/shared').OutboundOutboxItem>
+    approveSend: (input: { id: string; edited?: { to?: string; subject?: string; body?: string } }) => Promise<import('@gravitas/shared').OutboundOutboxItem>
+    rejectEmail: (input: { id: string; note?: string }) => Promise<import('@gravitas/shared').OutboundOutboxItem>
+    getMetrics: () => Promise<import('../main/lib/outbound-mail/outreach-metrics-service').OutreachMetrics>
+    onSynced: (callback: (payload: import('@gravitas/shared').OutboundSyncResult) => void) => () => void
+    onOutboxChanged: (callback: (payload: { id: string; status: string }) => void) => () => void
+  }
+
   /** 请求邮箱验证码 */
   requestSubscriptionEmailCode: (input: { email: string }) => Promise<{ ok: true; expiresInSeconds: number }>
   /** 校验邮箱验证码并登录 */
@@ -2083,6 +2102,30 @@ const electronAPI: ElectronAPI = {
   // 订阅与权益
   getSubscriptionState: () => {
     return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_STATE)
+  },
+
+  // ===== 出海邮件（收发与同步） =====
+  outboundMail: {
+    getConfig: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.GET_CONFIG) as Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>,
+    saveConfig: (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.SAVE_CONFIG, input) as Promise<import('@gravitas/shared').OutboundMailboxConfigView>,
+    testConnection: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.TEST_CONNECTION) as Promise<import('@gravitas/shared').OutboundMailTestResult>,
+    listInbox: (query?: import('@gravitas/shared').OutboundInboxQuery) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.LIST_INBOX, query) as Promise<import('@gravitas/shared').OutboundInboxListResult>,
+    syncNow: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.SYNC_NOW) as Promise<import('@gravitas/shared').OutboundSyncResult>,
+    listOutbox: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.LIST_OUTBOX) as Promise<import('@gravitas/shared').OutboundOutboxItem[]>,
+    queueEmail: (input: { to: string; subject: string; body: string; inReplyTo?: string | null; references?: string[]; source?: 'agent' | 'manual'; replyToInboxId?: string | null }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.QUEUE_EMAIL, input) as Promise<import('@gravitas/shared').OutboundOutboxItem>,
+    approveSend: (input: { id: string; edited?: { to?: string; subject?: string; body?: string } }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.APPROVE_SEND, input) as Promise<import('@gravitas/shared').OutboundOutboxItem>,
+    rejectEmail: (input: { id: string; note?: string }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.REJECT_EMAIL, input) as Promise<import('@gravitas/shared').OutboundOutboxItem>,
+    getMetrics: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.GET_METRICS) as Promise<import('../main/lib/outbound-mail/outreach-metrics-service').OutreachMetrics>,
+    onSynced: (callback: (payload: import('@gravitas/shared').OutboundSyncResult) => void) => {
+      const listener = (_event: unknown, payload: import('@gravitas/shared').OutboundSyncResult) => callback(payload)
+      ipcRenderer.on(OUTBOUND_MAIL_IPC_CHANNELS.ON_SYNCED, listener as never)
+      return () => { ipcRenderer.removeListener(OUTBOUND_MAIL_IPC_CHANNELS.ON_SYNCED, listener as never) }
+    },
+    onOutboxChanged: (callback: (payload: { id: string; status: string }) => void) => {
+      const listener = (_event: unknown, payload: { id: string; status: string }) => callback(payload)
+      ipcRenderer.on(OUTBOUND_MAIL_IPC_CHANNELS.ON_OUTBOX_CHANGED, listener as never)
+      return () => { ipcRenderer.removeListener(OUTBOUND_MAIL_IPC_CHANNELS.ON_OUTBOX_CHANGED, listener as never) }
+    },
   },
 
   requestSubscriptionEmailCode: (input: { email: string }) => {

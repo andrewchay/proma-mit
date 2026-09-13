@@ -2,7 +2,19 @@
   "schemaVersion": 1,
   "id": "outbound-sourcing",
   "name": "出海 sourcing",
-  "version": "0.1.0",
-  "description": "Redvia 方法：海外买家发现、线索核验、优先级与外联草稿",
-  "tools": ["sourcing_build_keyword_plan", "sourcing_score_lead", "sourcing_draft_outreach"]
+  "version": "0.4.0",
+  "description": "Redvia 方法：海外买家发现、检索核验、画像、优先级、外联/回复草稿与漏斗指标",
+  "tools": [
+    "sourcing_build_keyword_plan",
+    "sourcing_score_lead",
+    "sourcing_draft_outreach",
+    "sourcing_draft_reply",
+    "sourcing_list_inbox",
+    "sourcing_queue_email",
+    "sourcing_get_mail_status",
+    "sourcing_search_buyers",
+    "sourcing_verify_company",
+    "sourcing_build_persona",
+    "sourcing_outreach_metrics"
+  ]
 }

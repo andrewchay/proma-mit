@@ -16,6 +16,7 @@ import type { ToolDefinition } from '@gravitas/core'
 import { getDefaultToolsUserDir, parseToolDirVersion } from './config-paths'
 import { readJsonFileSafe } from './safe-file'
 import { getBundledMarketingExecutor } from './bundled-marketing-executors'
+import { getBundledOutboundExecutor } from './bundled-outbound-executors'
 
 // =====================================================================
 // 类型定义
@@ -216,7 +217,7 @@ function loadToolFromDirState(state: ToolDirState): RuntimeToolDefinition | null
   }
 
   // 安装目录里的 TS 相对引用可能不可用；内置实现已静态纳入主进程 bundle。
-  const builtin = getBundledMarketingExecutor(state.id)
+  const builtin = getBundledMarketingExecutor(state.id) ?? getBundledOutboundExecutor(state.id)
   if (!builtin) return null
   return {
     name: state.id, description: state.description, parameters: state.parameters,

@@ -1,4 +1,6 @@
 {
-  "version": 1,
-  "domains": ["sourcing"]
+  "version": 4,
+  "domains": [
+    "sourcing"
+  ]
 }
