@@ -8,6 +8,8 @@ export type SubscriptionProvider = 'wechat-pay' | 'alipay'
 export interface SubscriptionAccountRecord {
   id: string
   phoneHash?: string
+  emailHash?: string
+  emailVerifiedAt?: number
   oauthSubjectHash?: string
   displayName?: string
   disabledAt?: number
@@ -86,27 +88,44 @@ export class SubscriptionStore {
     await this.client.query(schemaSql)
   }
 
-  async createAccount(input: { phoneHash?: string; oauthSubjectHash?: string; displayName?: string }): Promise<SubscriptionAccountRecord> {
+  async createAccount(input: {
+    phoneHash?: string
+    emailHash?: string
+    emailVerifiedAt?: number
+    oauthSubjectHash?: string
+    displayName?: string
+  }): Promise<SubscriptionAccountRecord> {
     const now = Date.now()
     const record: SubscriptionAccountRecord = {
       id: randomUUID(),
       ...(input.phoneHash ? { phoneHash: input.phoneHash } : {}),
+      ...(input.emailHash ? { emailHash: input.emailHash } : {}),
+      ...(input.emailVerifiedAt ? { emailVerifiedAt: input.emailVerifiedAt } : {}),
       ...(input.oauthSubjectHash ? { oauthSubjectHash: input.oauthSubjectHash } : {}),
       ...(input.displayName ? { displayName: input.displayName } : {}),
       createdAt: now,
       updatedAt: now,
     }
     await this.client.query(
-      `INSERT INTO subscription_accounts (id, phone_hash, oauth_subject_hash, display_name, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [record.id, record.phoneHash ?? null, record.oauthSubjectHash ?? null, record.displayName ?? null, record.createdAt, record.updatedAt],
+      `INSERT INTO subscription_accounts (id, phone_hash, email_hash, email_verified_at, oauth_subject_hash, display_name, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        record.id,
+        record.phoneHash ?? null,
+        record.emailHash ?? null,
+        record.emailVerifiedAt ?? null,
+        record.oauthSubjectHash ?? null,
+        record.displayName ?? null,
+        record.createdAt,
+        record.updatedAt,
+      ],
     )
     return record
   }
 
   async findAccountById(accountId: string): Promise<SubscriptionAccountRecord | undefined> {
     const result = await this.client.query<Record<string, unknown>>(
-      `SELECT id, phone_hash, oauth_subject_hash, display_name, disabled_at, created_at, updated_at
+      `SELECT id, phone_hash, email_hash, email_verified_at, oauth_subject_hash, display_name, disabled_at, created_at, updated_at
        FROM subscription_accounts WHERE id = $1`,
       [accountId],
     )
@@ -116,12 +135,139 @@ export class SubscriptionStore {
 
   async findAccountByPhoneHash(phoneHash: string): Promise<SubscriptionAccountRecord | undefined> {
     const result = await this.client.query<Record<string, unknown>>(
-      `SELECT id, phone_hash, oauth_subject_hash, display_name, disabled_at, created_at, updated_at
+      `SELECT id, phone_hash, email_hash, email_verified_at, oauth_subject_hash, display_name, disabled_at, created_at, updated_at
        FROM subscription_accounts WHERE phone_hash = $1`,
       [phoneHash],
     )
     const row = result.rows[0]
     return row ? toAccountRecord(row) : undefined
+  }
+
+  async findAccountByEmailHash(emailHash: string): Promise<SubscriptionAccountRecord | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT id, phone_hash, email_hash, email_verified_at, oauth_subject_hash, display_name, disabled_at, created_at, updated_at
+       FROM subscription_accounts WHERE email_hash = $1`,
+      [emailHash],
+    )
+    const row = result.rows[0]
+    return row ? toAccountRecord(row) : undefined
+  }
+
+  /** 标记邮箱已验证 */
+  async markEmailVerified(accountId: string, verifiedAt: number): Promise<void> {
+    await this.client.query(
+      `UPDATE subscription_accounts SET email_verified_at = $2, updated_at = $2 WHERE id = $1`,
+      [accountId, verifiedAt],
+    )
+  }
+
+  /**
+   * 写入验证码记录。
+   * 同一邮箱的旧验证码保留，校验时按创建时间倒序取最新一条。
+   */
+  async createEmailOtp(input: {
+    emailHash: string
+    codeHash: string
+    purpose: string
+    expiresAt: number
+  }): Promise<void> {
+    await this.client.query(
+      `INSERT INTO subscription_email_otp (id, email_hash, code_hash, purpose, attempt_count, expires_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [randomUUID(), input.emailHash, input.codeHash, input.purpose, 0, input.expiresAt, Date.now()],
+    )
+  }
+
+  /** 取该邮箱最新的未消费验证码 */
+  async findLatestEmailOtp(emailHash: string, now: number): Promise<
+    | { id: string; codeHash: string; attemptCount: number; expiresAt: number }
+    | undefined
+  > {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT id, code_hash, attempt_count, expires_at
+       FROM subscription_email_otp
+       WHERE email_hash = $1 AND consumed_at IS NULL AND expires_at > $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [emailHash, now],
+    )
+    const row = result.rows[0]
+    if (!row) return undefined
+    return {
+      id: String(row.id),
+      codeHash: String(row.code_hash),
+      attemptCount: Number(row.attempt_count),
+      expiresAt: Number(row.expires_at),
+    }
+  }
+
+  /** 验证码校验失败时累加尝试次数，防止暴力破解 */
+  async incrementEmailOtpAttempt(otpId: string): Promise<void> {
+    await this.client.query(
+      `UPDATE subscription_email_otp SET attempt_count = attempt_count + 1 WHERE id = $1`,
+      [otpId],
+    )
+  }
+
+  /** 标记验证码已使用，防止重放 */
+  async consumeEmailOtp(otpId: string, consumedAt: number): Promise<void> {
+    await this.client.query(
+      `UPDATE subscription_email_otp SET consumed_at = $2 WHERE id = $1 AND consumed_at IS NULL`,
+      [otpId, consumedAt],
+    )
+  }
+
+  /** 查询该邮箱最近一次发码时间，用于发送频率限制 */
+  async findLastEmailOtpSentAt(emailHash: string): Promise<number | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT created_at FROM subscription_email_otp
+       WHERE email_hash = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [emailHash],
+    )
+    const row = result.rows[0]
+    return row ? Number(row.created_at) : undefined
+  }
+
+  /** 统计窗口内该邮箱的发码次数 */
+  async countEmailOtpInWindow(emailHash: string, since: number): Promise<number> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT COUNT(*) AS total FROM subscription_email_otp
+       WHERE email_hash = $1 AND created_at >= $2`,
+      [emailHash, since],
+    )
+    return Number(result.rows[0]?.total ?? 0)
+  }
+
+  /** 写入 OAuth state */
+  async createOAuthState(input: {
+    state: string
+    provider: string
+    redirectUri: string
+    expiresAt: number
+  }): Promise<void> {
+    await this.client.query(
+      `INSERT INTO subscription_oauth_states (state, provider, redirect_uri, expires_at, created_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [input.state, input.provider, input.redirectUri, input.expiresAt, Date.now()],
+    )
+  }
+
+  /** 消费 OAuth state，返回是否有效。已消费或过期的 state 不可重复使用。 */
+  async consumeOAuthState(
+    state: string,
+    now: number,
+  ): Promise<{ provider: string; redirectUri: string } | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `UPDATE subscription_oauth_states
+       SET consumed_at = $2
+       WHERE state = $1 AND consumed_at IS NULL AND expires_at > $2
+       RETURNING provider, redirect_uri`,
+      [state, now],
+    )
+    const row = result.rows[0]
+    if (!row) return undefined
+    return { provider: String(row.provider), redirectUri: String(row.redirect_uri) }
   }
 
   async createAuthSession(input: { accountId: string; refreshTokenHash: string; deviceId?: string; expiresAt: number }): Promise<SubscriptionAuthSessionRecord> {
@@ -385,6 +531,8 @@ function toAccountRecord(row: Record<string, unknown>): SubscriptionAccountRecor
   return {
     id: String(row.id),
     ...(row.phone_hash == null ? {} : { phoneHash: String(row.phone_hash) }),
+    ...(row.email_hash == null ? {} : { emailHash: String(row.email_hash) }),
+    ...(row.email_verified_at == null ? {} : { emailVerifiedAt: Number(row.email_verified_at) }),
     ...(row.oauth_subject_hash == null ? {} : { oauthSubjectHash: String(row.oauth_subject_hash) }),
     ...(row.display_name == null ? {} : { displayName: String(row.display_name) }),
     ...(row.disabled_at == null ? {} : { disabledAt: Number(row.disabled_at) }),

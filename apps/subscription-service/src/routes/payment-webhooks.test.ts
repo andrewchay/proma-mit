@@ -105,10 +105,15 @@ function createFakeStore(order: FakeOrder | undefined) {
 function buildConfig(): SubscriptionServiceConfig {
   return {
     port: 4310,
+    hostname: '127.0.0.1',
     databaseUrl: '',
     accessTokenSecret: '',
     accessTokenTtlMs: 0,
     refreshTokenTtlMs: 0,
+    emailPepper: 'test-pepper',
+    allowedOrigins: [],
+    trustedProxyCidrs: [],
+    maxRequestBodyBytes: 65536,
     entitlementKeyId: 'test-1',
     wechatPay: {
       appId: 'wx-app',
