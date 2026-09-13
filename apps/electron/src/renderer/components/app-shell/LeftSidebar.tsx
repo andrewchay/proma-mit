@@ -21,7 +21,7 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
-import { CAPABILITY_MANIFEST, enabledCapabilitiesAtom, isCapabilityEnabled, type CapabilityId } from '@/atoms/marketing-atoms'
+import { CAPABILITY_MANIFEST, activeCapabilitiesAtom, type CapabilityId } from '@/atoms/marketing-atoms'
 import {
   conversationsAtom,
   currentConversationIdAtom,
@@ -2493,12 +2493,14 @@ const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem(
  * 点击切换视图；末尾提供「能力中心」入口打开订阅面板。
  */
 function SubscribedCapabilities(): React.ReactElement {
-  const [enabled] = useAtom(enabledCapabilitiesAtom)
+  // 使用 activeCapabilitiesAtom：只有本地开启且订阅权益允许的包才出现在导航中，
+  // 避免用户仅改 settings.json 就能让付费包入口出现。
+  const enabled = useAtomValue(activeCapabilitiesAtom)
   const activeView = useAtomValue(activeViewAtom)
   const setActiveView = useSetAtom(activeViewAtom)
 
   const subscribedBusiness = CAPABILITY_MANIFEST.filter(
-    (c) => c.kind === 'business' && isCapabilityEnabled(enabled, c.id as CapabilityId)
+    (c) => c.kind === 'business' && enabled.includes(c.id as CapabilityId)
   )
 
   const iconFor = (id: string): React.ReactNode => {

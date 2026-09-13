@@ -5,17 +5,19 @@
  * 订阅后才在侧边栏显示对应导航，并支持切换视图。
  */
 import type * as React from 'react'
-import { useAtom } from 'jotai'
+import { useAtom, useAtomValue } from 'jotai'
 import { Users, Megaphone, ImageIcon, Globe2, Check } from 'lucide-react'
 import {
   CAPABILITY_MANIFEST,
   enabledCapabilitiesAtom,
+  activeCapabilitiesAtom,
   isCapabilityEnabled,
   toggleCapability,
   persistMarketingCapabilities,
   type CapabilityId,
   type CapabilityKind,
 } from '@/atoms/marketing-atoms'
+import { subscriptionStateAtom } from '@/atoms/subscription-atoms'
 
 const KIND_META: Record<CapabilityKind, { label: string; desc: string }> = {
   business: { label: '业务领域包', desc: '独立订阅，启用后在侧边栏出现' },
@@ -30,6 +32,11 @@ function CapabilityIcon({ kind, id }: { kind: CapabilityKind; id?: string }): Re
 
 export function CapabilityCenterPanel(): React.ReactElement {
   const [enabled, setEnabled] = useAtom(enabledCapabilitiesAtom)
+  // 实际可用能力由订阅权益决定；本地开关只是偏好
+  const active = useAtomValue(activeCapabilitiesAtom)
+  const subscriptionState = useAtomValue(subscriptionStateAtom)
+  const hasEntitlement = Boolean(subscriptionState.entitlement)
+  const isPro = subscriptionState.entitlement?.planId === 'pro'
 
   const handleToggle = (cap: (typeof CAPABILITY_MANIFEST)[number], ev: React.MouseEvent) => {
     ev.stopPropagation()
@@ -45,7 +52,8 @@ export function CapabilityCenterPanel(): React.ReactElement {
       <div>
         <h3 className="text-sm font-medium text-foreground/85 mb-3">领域能力包</h3>
         <p className="text-[12px] text-foreground/50 mb-4">
-          按需订阅加载，避免企业工作台被单一垂直域污染。订阅后才显示导航与视图。
+          按需加载领域能力包。此处开关仅控制是否显示；实际使用需订阅专业版（当前套餐：
+          {isPro ? '专业版' : '免费版'}）。
         </p>
 
         {Object.entries(KIND_META).map(([kind, meta]) => {
@@ -58,6 +66,9 @@ export function CapabilityCenterPanel(): React.ReactElement {
                 {items.map((cap) => {
                   const isBusiness = cap.kind === 'business'
                   const on = isBusiness && isCapabilityEnabled(enabled, cap.id as CapabilityId)
+                  const usable = isBusiness && active.includes(cap.id as CapabilityId)
+                  // 已开启但无权益：需要引导订阅，而不是静默不可用
+                  const lockedByEntitlement = on && !usable
                   return (
                     <div
                       key={cap.id}
@@ -79,15 +90,24 @@ export function CapabilityCenterPanel(): React.ReactElement {
                           ))}
                         </div>
                         <div className="text-[12px] text-foreground/50 truncate">{cap.description}</div>
+                        {lockedByEntitlement && (
+                          <div className="text-[11px] text-amber-600 mt-0.5">
+                            {hasEntitlement ? '当前套餐未包含此能力' : '需订阅专业版后可使用'}
+                          </div>
+                        )}
                       </div>
                       {isBusiness && (
                         <div
                           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium ${
-                            on ? 'bg-emerald-500/15 text-emerald-600' : 'bg-foreground/[0.05] text-foreground/50'
+                            usable
+                              ? 'bg-emerald-500/15 text-emerald-600'
+                              : on
+                                ? 'bg-amber-500/15 text-amber-600'
+                                : 'bg-foreground/[0.05] text-foreground/50'
                           }`}
                         >
-                          {on && <Check size={12} />}
-                          {on ? '已订阅' : '未订阅'}
+                          {usable && <Check size={12} />}
+                          {usable ? '可用' : on ? '待订阅' : '未开启'}
                         </div>
                       )}
                     </div>

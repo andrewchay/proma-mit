@@ -247,8 +247,15 @@ export function contributeSkillsForSubscribed(subscribed: string[]): PluginSkill
 
 /** 依据订阅集合，计算需注入的领域子域集合（shared 固定包含，随任一订阅启用） */
 function subscribedDomains(subscribed: string[]): Set<MarketingToolDomain> {
-  const caps = subscribed.length > 0 ? subscribed : [...DEFAULT_ENABLED_CAPABILITIES]
-  const domains = new Set<MarketingToolDomain>(['shared'])
+  // 订阅为空即无任何权限，不注入任何工具。
+  // 此前空数组会回退到 DEFAULT_ENABLED_CAPABILITIES，且 shared 域被无条件加入，
+  // 导致即使无任何权益也会注入 storyboard 工具。
+  const domains = new Set<MarketingToolDomain>()
+  if (subscribed.length === 0) return domains
+
+  const caps = subscribed
+  // shared（素材/分镜）随任一业务包启用
+  domains.add('shared')
   if (caps.includes('influencer')) domains.add('influencer')
   if (caps.includes('paid-media')) domains.add('paid-media')
   return domains
@@ -340,16 +347,78 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
 }
 
 /**
- * 读取营销订阅状态（settings.json 权威；未设置回退默认 influencer）。
- * 读取失败（非 electron 等）回退默认。被 isEnabled / contributeTools / contributePrompts 共用。
+ * 读取用户希望在本地开启的营销能力（settings.json）。
+ *
+ * 注意：这只是**用户偏好**，不是权限。能否真正使用还需订阅权益校验，
+ * 见 readEntitledCapabilities。
  */
-function readSubscribedCapabilities(): string[] {
+function readPreferredCapabilities(): string[] {
   try {
     // 延迟 require 避免与 settings-service 形成初始化阶段循环依赖
-    const { getSettings } = require('../settings-service') as { getSettings: () => { marketingCapabilities?: string[] } }
-    const caps = getSettings().marketingCapabilities
-    return caps && caps.length > 0 ? caps : [...DEFAULT_ENABLED_CAPABILITIES]
+    const { getSettings } = require('../settings-service') as { getSettings: () => { marketingCapabilities?: string[]; domainCapabilities?: string[] } }
+    const settings = getSettings()
+    const marketing = Array.isArray(settings.marketingCapabilities) ? settings.marketingCapabilities : []
+    const domains = Array.isArray(settings.domainCapabilities) ? settings.domainCapabilities : []
+    return [...new Set([...marketing, ...domains])]
   } catch {
     return [...DEFAULT_ENABLED_CAPABILITIES]
+  }
+}
+
+/**
+ * 读取当前**可用**的营销能力 = 用户偏好 且 订阅权益允许。
+ *
+ * 安全边界：这是权限判定的唯一入口。
+ * 此前仅读 settings.json，意味着任何人编辑该文件即可解锁付费工具注入。
+ * 现在权益快照必须通过签名校验，未验签或篡改的快照一律不授予能力。
+ */
+function readSubscribedCapabilities(): string[] {
+  const preferred = readPreferredCapabilities()
+  if (preferred.length === 0) return []
+
+  try {
+    const { EntitlementCache } = require('../subscription/entitlement-cache') as {
+      EntitlementCache: new () => { load: () => { snapshot: import('@gravitas/shared').EntitlementSnapshot } | undefined }
+    }
+    const { verifyEntitlementSnapshotSignature } = require('../subscription/entitlement-signature') as {
+      verifyEntitlementSnapshotSignature: (
+        snapshot: import('@gravitas/shared').EntitlementSnapshot,
+        publicKeyPem: string,
+        options?: { allowDevSignature?: boolean },
+      ) => { ok: boolean }
+    }
+    const { canUseCapability, getEntitlementStatus } = require('@gravitas/shared') as {
+      canUseCapability: (
+        snapshot: import('@gravitas/shared').EntitlementSnapshot | null,
+        capability: string,
+        now: Date,
+      ) => boolean
+      getEntitlementStatus: (
+        snapshot: import('@gravitas/shared').EntitlementSnapshot,
+        now: Date,
+      ) => string
+    }
+
+    const cached = new EntitlementCache().load()
+    if (!cached?.snapshot) return []
+
+    const publicKeyPem = process.env.GRAVITAS_SUBSCRIPTION_ENTITLEMENT_PUBLIC_KEY_PEM ?? ''
+    // 打包后必须严格验签；开发环境允许 dev 签名以便本地调试
+    const allowDevSignature = !(require('electron') as { app?: { isPackaged?: boolean } }).app?.isPackaged
+
+    const verified = verifyEntitlementSnapshotSignature(cached.snapshot, publicKeyPem, {
+      allowDevSignature,
+    })
+    if (!verified.ok) return []
+
+    const now = new Date()
+    const status = getEntitlementStatus(cached.snapshot, now)
+    if (status !== 'active' && status !== 'grace') return []
+
+    // 只保留权益确实授予的偏好项
+    return preferred.filter((capability) => canUseCapability(cached.snapshot, capability, now))
+  } catch {
+    // 任何异常都按无权益处理（fail-closed），不因为读取失败而放行
+    return []
   }
 }
