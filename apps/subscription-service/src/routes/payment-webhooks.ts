@@ -2,6 +2,21 @@ import type { SubscriptionServiceConfig } from '../config'
 import type { SubscriptionStore } from '../db/subscription-store'
 import type { EntitlementService } from '../services/entitlement-service'
 import { SUBSCRIPTION_PLANS } from '../config'
+import { parseWechatCallback, type WechatCallbackData } from '../payments/wechat-pay-signature'
+import {
+  parseAlipayNotification,
+  type AlipayNotificationData,
+  type AlipayNotificationInput,
+} from '../payments/alipay-signature'
+
+/**
+ * 支付回调处理。
+ *
+ * 安全边界：本模块绝不信任请求体中的自述字段（例如 verified / trade_status）。
+ * 微信回调必须通过平台公钥验签 + APIv3 密钥解密；
+ * 支付宝回调必须通过支付宝公钥 RSA2 验签。
+ * 只有验签通过的结果才允许进入权益发放流程。
+ */
 
 export interface PaymentWebhookDependencies {
   store: SubscriptionStore
@@ -9,109 +24,205 @@ export interface PaymentWebhookDependencies {
   config: SubscriptionServiceConfig
 }
 
-export async function handleWechatWebhook(
-  request: Request,
-  deps: PaymentWebhookDependencies,
-): Promise<Response> {
-  const body = await request.json().catch(() => undefined)
-  const orderId = typeof body?.orderId === 'string' ? body.orderId : ''
-  const transactionId = typeof body?.transactionId === 'string' ? body.transactionId : ''
-  const amountCny = typeof body?.amountCny === 'number' ? body.amountCny : 0
-  const idempotencyKey = typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : `${orderId}:${transactionId}`
-  const verified = Boolean(body?.verified)
+const DAY_MS = 24 * 60 * 60 * 1000
 
-  if (!orderId || !transactionId || !verified) {
-    return Response.json({ code: 'invalid_callback', message: '回调验签失败', retryable: false }, { status: 400 })
+/** 微信回调金额单位为分，订单金额单位为元，需换算后比对 */
+function fenToCny(fen: number): number {
+  return Math.round(fen) / 100
+}
+
+async function grantPaidOrder(
+  deps: PaymentWebhookDependencies,
+  params: {
+    provider: 'wechat-pay' | 'alipay'
+    orderId: string
+    providerTransactionId: string
+    amountCny: number
+    idempotencyKey: string
+    payloadSummary: Record<string, unknown>
+  },
+): Promise<Response> {
+  const { provider, orderId, providerTransactionId, amountCny, idempotencyKey, payloadSummary } = params
+
+  const existingEvent = await deps.store.findPaymentEventByIdempotencyKey(idempotencyKey)
+  if (existingEvent) {
+    return Response.json({ ok: true, duplicated: true })
   }
 
-  const existing = await deps.store.findPaymentEventByIdempotencyKey(idempotencyKey)
-  if (existing) return Response.json({ ok: true, duplicated: true })
-
   const order = await deps.store.findOrderById(orderId)
-  if (!order || order.provider !== 'wechat-pay') return Response.json({ code: 'order_not_found', message: '订单不存在', retryable: false }, { status: 404 })
-  if (order.amountCny !== amountCny) return Response.json({ code: 'amount_mismatch', message: '金额不匹配', retryable: false }, { status: 400 })
+  if (!order || order.provider !== provider) {
+    return Response.json(
+      { code: 'order_not_found', message: '订单不存在', retryable: false },
+      { status: 404 },
+    )
+  }
+
+  // 金额校验：必须与订单金额完全一致，防止篡改金额购买高级套餐
+  if (Math.abs(order.amountCny - amountCny) > 1e-6) {
+    return Response.json(
+      { code: 'amount_mismatch', message: '金额不匹配', retryable: false },
+      { status: 400 },
+    )
+  }
 
   await deps.store.insertPaymentEvent({
     orderId,
-    provider: 'wechat-pay',
+    provider,
     eventType: 'payment.success',
     idempotencyKey,
     verified: true,
-    payloadSummary: { orderId, transactionId, amountCny },
+    payloadSummary,
   })
 
-  const paid = await deps.store.markOrderPaid({ orderId, providerTransactionId: transactionId, paidAt: Date.now() })
-  if (!paid) return Response.json({ ok: true, duplicated: true })
+  // markOrderPaid 内部保证幂等：已支付订单返回空，避免重复发放权益
+  const paid = await deps.store.markOrderPaid({
+    orderId,
+    providerTransactionId,
+    paidAt: Date.now(),
+  })
+  if (!paid) {
+    return Response.json({ ok: true, duplicated: true })
+  }
 
-  const plan = SUBSCRIPTION_PLANS.find((item) => item.id === paid.planId)
-  const periodMs = paid.period === 'yearly' ? 365 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
+  const periodMs = paid.period === 'yearly' ? 365 * DAY_MS : 30 * DAY_MS
+  const now = Date.now()
+
   await deps.store.createSubscription({
     accountId: paid.accountId,
     planId: paid.planId,
     orderId: paid.id,
-    currentPeriodStart: Date.now(),
-    currentPeriodEnd: Date.now() + periodMs,
+    currentPeriodStart: now,
+    currentPeriodEnd: now + periodMs,
   })
   await deps.entitlementService.issueEntitlement({
     accountId: paid.accountId,
     planId: paid.planId,
     status: 'active',
-    validUntil: Date.now() + periodMs,
+    validUntil: now + periodMs,
     reason: 'order.paid',
   })
 
   return Response.json({ ok: true })
 }
 
+export async function handleWechatWebhook(
+  request: Request,
+  deps: PaymentWebhookDependencies,
+): Promise<Response> {
+  const wechatConfig = deps.config.wechatPay
+  if (!wechatConfig?.apiV3Key || !wechatConfig.platformPublicKeyPem) {
+    // 未配置凭据时不接受任何回调，避免静默降级为「不验签」
+    return Response.json(
+      { code: 'provider_not_configured', message: '微信支付未配置', retryable: false },
+      { status: 503 },
+    )
+  }
+
+  const body = await request.text()
+  const parsed = parseWechatCallback({
+    timestamp: request.headers.get('Wechatpay-Timestamp') ?? '',
+    nonce: request.headers.get('Wechatpay-Nonce') ?? '',
+    signature: request.headers.get('Wechatpay-Signature') ?? '',
+    body,
+    platformPublicKeyPem: wechatConfig.platformPublicKeyPem,
+    apiV3Key: wechatConfig.apiV3Key,
+  })
+
+  if (!parsed.ok) {
+    return Response.json(
+      { code: 'invalid_callback', message: '回调验签失败', reason: parsed.reason, retryable: false },
+      { status: 400 },
+    )
+  }
+
+  const data: WechatCallbackData = parsed.data
+
+  // 仅处理支付成功事件
+  if (data.tradeState !== 'SUCCESS') {
+    return Response.json({ ok: true, ignored: true, tradeState: data.tradeState })
+  }
+
+  return grantPaidOrder(deps, {
+    provider: 'wechat-pay',
+    orderId: data.orderId,
+    providerTransactionId: data.transactionId,
+    amountCny: fenToCny(data.amountTotalFen),
+    idempotencyKey: `wechat:${data.transactionId}`,
+    payloadSummary: {
+      orderId: data.orderId,
+      transactionId: data.transactionId,
+      amountTotalFen: data.amountTotalFen,
+      eventType: data.eventType,
+    },
+  })
+}
+
 export async function handleAlipayWebhook(
   request: Request,
   deps: PaymentWebhookDependencies,
 ): Promise<Response> {
-  const body = await request.json().catch(() => undefined)
-  const orderId = typeof body?.orderId === 'string' ? body.orderId : ''
-  const transactionId = typeof body?.transactionId === 'string' ? body.transactionId : ''
-  const amountCny = typeof body?.amountCny === 'number' ? body.amountCny : 0
-  const idempotencyKey = typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : `${orderId}:${transactionId}`
-  const verified = Boolean(body?.verified)
-
-  if (!orderId || !transactionId || !verified) {
-    return Response.json({ code: 'invalid_callback', message: '回调验签失败', retryable: false }, { status: 400 })
+  const alipayConfig = deps.config.alipay
+  if (!alipayConfig?.alipayPublicKeyPem) {
+    return Response.json(
+      { code: 'provider_not_configured', message: '支付宝未配置', retryable: false },
+      { status: 503 },
+    )
   }
 
-  const existing = await deps.store.findPaymentEventByIdempotencyKey(idempotencyKey)
-  if (existing) return Response.json({ ok: true, duplicated: true })
+  // 支付宝异步通知为 application/x-www-form-urlencoded
+  const formText = await request.text()
+  const params = new URLSearchParams(formText)
+  const asRecord: Record<string, string> = {}
+  for (const [key, value] of params.entries()) {
+    asRecord[key] = value
+  }
 
-  const order = await deps.store.findOrderById(orderId)
-  if (!order || order.provider !== 'alipay') return Response.json({ code: 'order_not_found', message: '订单不存在', retryable: false }, { status: 404 })
-  if (order.amountCny !== amountCny) return Response.json({ code: 'amount_mismatch', message: '金额不匹配', retryable: false }, { status: 400 })
+  const input: AlipayNotificationInput = {
+    params: asRecord,
+    alipayPublicKeyPem: alipayConfig.alipayPublicKeyPem,
+  }
 
-  await deps.store.insertPaymentEvent({
-    orderId,
+  const parsed = parseAlipayNotification(input)
+  if (!parsed.ok) {
+    // 支付宝要求验签失败时返回 failure 纯文本
+    return new Response('failure', { status: 400, headers: { 'Content-Type': 'text/plain' } })
+  }
+
+  const data: AlipayNotificationData = parsed.data
+
+  // 校验 app_id 归属，防止他人应用的回调被投递到本服务
+  if (alipayConfig.appId && data.appId !== alipayConfig.appId) {
+    return new Response('failure', { status: 400, headers: { 'Content-Type': 'text/plain' } })
+  }
+
+  // 验签通过但交易未完成（如 WAIT_BUYER_PAY）：返回 success 让支付宝停止重试，但不发放权益
+  if (!data.isPaid) {
+    return new Response('success', { headers: { 'Content-Type': 'text/plain' } })
+  }
+
+  const granted = await grantPaidOrder(deps, {
     provider: 'alipay',
-    eventType: 'payment.success',
-    idempotencyKey,
-    verified: true,
-    payloadSummary: { orderId, transactionId, amountCny },
+    orderId: data.outTradeNo,
+    providerTransactionId: data.tradeNo,
+    amountCny: Number(data.totalAmount),
+    idempotencyKey: `alipay:${data.tradeNo}`,
+    payloadSummary: {
+      orderId: data.outTradeNo,
+      tradeNo: data.tradeNo,
+      totalAmount: data.totalAmount,
+      tradeStatus: data.tradeStatus,
+    },
   })
 
-  const paid = await deps.store.markOrderPaid({ orderId, providerTransactionId: transactionId, paidAt: Date.now() })
-  if (!paid) return Response.json({ ok: true, duplicated: true })
+  // 成功或重复通知均需返回 success 让支付宝停止重试
+  if (granted.ok) {
+    return new Response('success', { headers: { 'Content-Type': 'text/plain' } })
+  }
+  // 业务校验失败（订单不存在/金额不符）返回 failure，保留重试以便人工排查
+  return new Response('failure', { status: 400, headers: { 'Content-Type': 'text/plain' } })
+}
 
-  const periodMs = paid.period === 'yearly' ? 365 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000
-  await deps.store.createSubscription({
-    accountId: paid.accountId,
-    planId: paid.planId,
-    orderId: paid.id,
-    currentPeriodStart: Date.now(),
-    currentPeriodEnd: Date.now() + periodMs,
-  })
-  await deps.entitlementService.issueEntitlement({
-    accountId: paid.accountId,
-    planId: paid.planId,
-    status: 'active',
-    validUntil: Date.now() + periodMs,
-    reason: 'order.paid',
-  })
-
-  return Response.json({ ok: true })
+/** 供测试与运维使用的套餐查找辅助 */
+export function findPlanOrUndefined(planId: string) {
+  return SUBSCRIPTION_PLANS.find((item) => item.id === planId)
 }

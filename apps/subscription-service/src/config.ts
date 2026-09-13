@@ -17,6 +17,8 @@ export interface SubscriptionServiceConfig {
     privateKeyPem: string
     serialNo: string
     notifyUrl: string
+    /** 微信支付平台证书公钥，用于回调验签。由商户平台下载后以环境变量注入 */
+    platformPublicKeyPem: string
   }
   alipay?: {
     appId: string
@@ -44,6 +46,7 @@ export function loadSubscriptionServiceConfig(env: NodeJS.ProcessEnv = process.e
           privateKeyPem: env.WECHAT_PAY_PRIVATE_KEY_PEM ?? '',
           serialNo: env.WECHAT_PAY_SERIAL_NO ?? '',
           notifyUrl: env.WECHAT_PAY_NOTIFY_URL ?? '',
+          platformPublicKeyPem: env.WECHAT_PAY_PLATFORM_PUBLIC_KEY_PEM ?? '',
         }
       : undefined,
     alipay: env.ALIPAY_APP_ID
