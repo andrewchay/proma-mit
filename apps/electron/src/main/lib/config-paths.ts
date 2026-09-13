@@ -331,6 +331,15 @@ export function getSubscriptionTokensPath(): string {
 }
 
 /**
+ * 获取订阅服务地址配置文件路径。
+ *
+ * 存放用户自定义的服务地址，用于分发给外部用户时用户可自行指向部署实例。
+ */
+export function getSubscriptionConfigPath(): string {
+  return join(getSubscriptionDir(), 'endpoint.json')
+}
+
+/**
  * 获取代理配置文件路径
  *
  * @returns ~/.proma/proxy-settings.json

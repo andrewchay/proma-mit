@@ -95,19 +95,63 @@ export function getBuiltinAgentDefinition(agentId: string, codeDefault: AgentDef
   return agentStateToDefinition(readAgentDirState(agentId), codeDefault)
 }
 
-/** bundled AGENTS.md 正文（开发/打包路径同一套逻辑，缺失返回空；任何失败返回空）。 */
-function bundledAgentAgentsMd(agentId: string): string {
+/** 定位随应用发布的内置 Agent 目录。 */
+function bundledAgentDir(agentId: string): string | undefined {
   try {
-    const { app } = require('electron') as { app: { isPackaged: boolean } }
-    const bundledDir = app && app.isPackaged
-      ? join(process.resourcesPath as string, 'default-agents')
-      : join(__dirname, '../default-agents') /* esbuild 打包后 __dirname=dist，../default-agents=apps/electron/default-agents */
-    const p = join(bundledDir, agentId, 'AGENTS.md')
-    if (!existsSync(p)) return ''
-    return readFileSync(p, 'utf-8').trim()
+    const { app } = require("electron") as { app: { isPackaged: boolean } }
+    const candidates = app && app.isPackaged
+      ? [join(process.resourcesPath as string, "default-agents")]
+      : [
+          join(__dirname, "../default-agents"),
+          join(__dirname, "../../../default-agents"),
+        ]
+    return candidates
+      .map((root) => join(root, agentId))
+      .find((dir) => existsSync(join(dir, "AGENTS.md")))
   } catch {
-    return ''
+    return undefined
   }
+}
+
+/** bundled AGENTS.md 正文；缺失或读取失败时返回空。 */
+function bundledAgentAgentsMd(agentId: string): string {
+  const dir = bundledAgentDir(agentId)
+  if (!dir) return ""
+  try {
+    return readFileSync(join(dir, "AGENTS.md"), "utf-8").trim()
+  } catch {
+    return ""
+  }
+}
+
+
+/** 判断用户目录里的 Agent prompt 是否偏离随应用发布的默认值。 */
+export function readAgentPromptOverride(agentId: string): string | undefined {
+  const current = readAgentDirState(agentId)?.agentsMd?.trim()
+  const bundled = bundledAgentAgentsMd(agentId)
+  if (!current || !bundled || current === bundled) return undefined
+  return current
+}
+
+/** 将 Agent prompt 与版本恢复到随应用发布的默认基线。 */
+export function restoreAgentAgentsMd(agentId: string): boolean {
+  const sourceDir = bundledAgentDir(agentId)
+  const prompt = bundledAgentAgentsMd(agentId)
+  if (!sourceDir || !prompt) return false
+
+  const targetDir = getAgentDir(agentId)
+  const targetConfigPath = join(targetDir, "system_config.json")
+  const currentConfig = readJsonFileSafe<SystemConfigFile>(targetConfigPath)
+  const fs = require("node:fs") as typeof import("node:fs")
+  fs.writeFileSync(join(targetDir, "AGENTS.md"), prompt, "utf-8")
+  writeJsonFileAtomic(targetConfigPath, {
+    ...(currentConfig ?? {}),
+    id: currentConfig?.id ?? agentId,
+    version: parseAgentDirVersion(sourceDir),
+    updatedAt: new Date().toISOString(),
+  })
+  clearBuiltinOverride(agentId)
+  return true
 }
 
 /**

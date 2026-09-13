@@ -1175,44 +1175,51 @@ export async function registerIpcHandlers(): Promise<void> {
 
   // ===== 订阅与权益相关 =====
 
-  const subscriptionApiClient = {
-    login: async (input: { phone: string; displayName?: string }) => {
-      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
-      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
-      return client.login(input)
-    },
-    refresh: async (refreshToken: string) => {
-      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
-      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
-      return client.refresh(refreshToken)
-    },
-    getEntitlements: async (accessToken: string) => {
-      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
-      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
-      return client.getEntitlements(accessToken)
-    },
-    createCheckout: async (accessToken: string, input: { planId: string; provider: string; period: string }) => {
-      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
-      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
-      return client.createCheckout(accessToken, input)
-    },
-    getOrder: async (accessToken: string, orderId: string) => {
-      const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
-      const client = new SubscriptionApiClient({ baseUrl: process.env.GRAVITAS_SUBSCRIPTION_SERVICE_URL ?? 'http://localhost:4310' })
-      return client.getOrder(accessToken, orderId)
-    },
+  // 地址在每次请求时解析，这样用户在设置中修改后无需重启应用即可生效
+  const createSubscriptionClient = async () => {
+    const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+    const { resolveSubscriptionServiceUrl } = await import('./lib/subscription/subscription-endpoint')
+    const baseUrl = resolveSubscriptionServiceUrl()
+    if (!baseUrl) {
+      throw new Error('订阅服务地址未配置，请在设置中填写服务地址')
+    }
+    return new SubscriptionApiClient({ baseUrl })
   }
 
-  const subscriptionAuthService = {
-    load: () => undefined as import('./lib/subscription/subscription-auth-service').StoredSubscriptionTokens | undefined,
-    save: (_tokens: import('./lib/subscription/subscription-auth-service').StoredSubscriptionTokens) => {},
-    clear: () => {},
-  }
-  const entitlementCache = new (await import('./lib/subscription/entitlement-cache')).EntitlementCache()
-  const entitlementService = new (await import('./lib/subscription/entitlement-service')).EntitlementService(
-    subscriptionApiClient as unknown as import('./lib/subscription/subscription-api-client').SubscriptionApiClient,
-    subscriptionAuthService as unknown as import('./lib/subscription/subscription-auth-service').SubscriptionAuthService,
+  // 使用真实实现，不再注入空壳。
+  // 此前的空壳 load() 永远返回 undefined，导致令牌不落盘、
+  // access token 无法续期、下单时必然报「未登录」。
+  const { SubscriptionAuthService } = await import('./lib/subscription/subscription-auth-service')
+  const { EntitlementCache } = await import('./lib/subscription/entitlement-cache')
+  const { EntitlementService } = await import('./lib/subscription/entitlement-service')
+
+  const subscriptionAuthService = new SubscriptionAuthService()
+  const entitlementCache = new EntitlementCache()
+
+  // 权益签名公钥：有则严格验签，无则拒绝接受任何已签名快照（开发签名除外）。
+  // 这是防「改本地 JSON 白嫖」的关键。
+  const entitlementPublicKeyPem = process.env.GRAVITAS_SUBSCRIPTION_ENTITLEMENT_PUBLIC_KEY_PEM ?? ''
+  const entitlementService = new EntitlementService(
+    // 传入轻量代理：每次调用时解析地址并构造客户端，避免地址变更后仍用旧实例
+    {
+      requestEmailOtp: async (input) => (await createSubscriptionClient()).requestEmailOtp(input),
+      verifyEmailOtp: async (input) => (await createSubscriptionClient()).verifyEmailOtp(input),
+      startOAuth: async (provider) => (await createSubscriptionClient()).startOAuth(provider),
+      completeOAuth: async (input) => (await createSubscriptionClient()).completeOAuth(input),
+      refresh: async (token) => (await createSubscriptionClient()).refresh(token),
+      logout: async (token) => (await createSubscriptionClient()).logout(token),
+      getEntitlements: async (token) => (await createSubscriptionClient()).getEntitlements(token),
+      createCheckout: async (token, input) => (await createSubscriptionClient()).createCheckout(token, input),
+      getOrder: async (token, orderId) => (await createSubscriptionClient()).getOrder(token, orderId),
+      syncOrder: async (token, orderId) => (await createSubscriptionClient()).syncOrder(token, orderId),
+    } as import('./lib/subscription/subscription-api-client').SubscriptionApiClient,
+    subscriptionAuthService,
     entitlementCache,
+    {
+      entitlementPublicKeyPem,
+      // 仅开发环境接受 dev 签名；打包后必须提供公钥
+      allowDevSignature: !app.isPackaged,
+    },
   )
 
   ipcMain.handle(
@@ -1221,8 +1228,30 @@ export async function registerIpcHandlers(): Promise<void> {
   )
 
   ipcMain.handle(
-    SUBSCRIPTION_IPC_CHANNELS.LOGIN,
-    async (_event, input: { phone: string; displayName?: string }) => entitlementService.login(input)
+    SUBSCRIPTION_IPC_CHANNELS.REQUEST_EMAIL_CODE,
+    async (_event, input: { email: string }) => entitlementService.requestEmailOtp(input)
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.VERIFY_EMAIL_CODE,
+    async (_event, input: { email: string; code: string; deviceId?: string }) =>
+      entitlementService.verifyEmailOtp(input)
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.START_OAUTH,
+    async (_event, provider: 'github' | 'google') => entitleServiceStartOAuth(provider)
+  )
+
+  async function entitleServiceStartOAuth(provider: 'github' | 'google') {
+    const client = await createSubscriptionClient()
+    return client.startOAuth(provider)
+  }
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.COMPLETE_OAUTH,
+    async (_event, input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) =>
+      entitlementService.completeOAuthLogin(input)
   )
 
   ipcMain.handle(
@@ -1236,11 +1265,31 @@ export async function registerIpcHandlers(): Promise<void> {
   )
 
   ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.GET_ENDPOINT,
+    async () => {
+      const { resolveSubscriptionServiceUrl } = await import('./lib/subscription/subscription-endpoint')
+      return { url: resolveSubscriptionServiceUrl() ?? null }
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.SET_ENDPOINT,
+    async (_event, url: string) => {
+      const { setUserSubscriptionUrl, resolveSubscriptionServiceUrl } = await import(
+        './lib/subscription/subscription-endpoint'
+      )
+      setUserSubscriptionUrl(url)
+      return { url: resolveSubscriptionServiceUrl() ?? null }
+    }
+  )
+
+  ipcMain.handle(
     SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT,
     async (_event, input: { planId: string; provider: string; period: string }) => {
       const tokens = subscriptionAuthService.load()
       if (!tokens) throw new Error('未登录')
-      return subscriptionApiClient.createCheckout(tokens.accessToken, input)
+      const client = await createSubscriptionClient()
+      return client.createCheckout(tokens.accessToken, input)
     }
   )
 
@@ -1249,7 +1298,18 @@ export async function registerIpcHandlers(): Promise<void> {
     async (_event, orderId: string) => {
       const tokens = subscriptionAuthService.load()
       if (!tokens) throw new Error('未登录')
-      return subscriptionApiClient.getOrder(tokens.accessToken, orderId)
+      const client = await createSubscriptionClient()
+      return client.getOrder(tokens.accessToken, orderId)
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.SYNC_ORDER,
+    async (_event, orderId: string) => {
+      const tokens = subscriptionAuthService.load()
+      if (!tokens) throw new Error('未登录')
+      const client = await createSubscriptionClient()
+      return client.syncOrder(tokens.accessToken, orderId)
     }
   )
 

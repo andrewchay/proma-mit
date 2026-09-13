@@ -86,9 +86,11 @@ describe('runImprove', () => {
         ? '在 file:materialize.js:42 函数上发现未初始化变量缺陷，建议初始化。格式：file:line'
         : 'file:line 修复',
     })
+    const phases: string[] = []
     const out = await runImprove({
       benchmark: config,
       delegate: delegateImproving,
+      onProgress: (progress) => phases.push(progress.phase),
       state,
       maxRounds: 2,
       propose,
@@ -99,6 +101,8 @@ describe('runImprove', () => {
     expect(out.acceptedRounds).toBeGreaterThanOrEqual(1)
     expect(out.finalVersion).toBeGreaterThanOrEqual(2)
     expect(out.finalScore).toBeGreaterThan(out.baselineScore)
+    expect(phases).toContain("case_start")
+    expect(phases).toContain("case_complete")
   })
 
   it('propose 保守策略（永不返回候选）时只产出 baseline', async () => {

@@ -1418,16 +1418,28 @@ export interface ElectronAPI {
 
   /** 获取当前订阅状态 */
   getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
-  /** 登录订阅账号 */
-  loginSubscription: (input: { phone: string; displayName?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  /** 请求邮箱验证码 */
+  requestSubscriptionEmailCode: (input: { email: string }) => Promise<{ ok: true; expiresInSeconds: number }>
+  /** 校验邮箱验证码并登录 */
+  verifySubscriptionEmailCode: (input: { email: string; code: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  /** 获取第三方登录授权地址 */
+  startSubscriptionOAuth: (provider: 'github' | 'google') => Promise<{ authorizeUrl: string; state: string }>
+  /** 用授权码完成第三方登录 */
+  completeSubscriptionOAuth: (input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
   /** 登出订阅账号 */
   logoutSubscription: () => Promise<void>
   /** 刷新订阅权益 */
   refreshSubscription: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  /** 读取当前订阅服务地址 */
+  getSubscriptionEndpoint: () => Promise<{ url: string | null }>
+  /** 设置订阅服务地址，传空字符串表示清除自定义 */
+  setSubscriptionEndpoint: (url: string) => Promise<{ url: string | null }>
   /** 创建支付订单 */
   createSubscriptionCheckout: (input: { planId: string; provider: string; period: string }) => Promise<import('../main/lib/subscription/subscription-api-client').SubscriptionCheckoutResponse>
   /** 查询订单状态 */
   getSubscriptionOrder: (orderId: string) => Promise<{ order: { id: string; status: string } }>
+  /** 主动同步订单状态（回调丢失时的兜底） */
+  syncSubscriptionOrder: (orderId: string) => Promise<import('../main/lib/subscription/subscription-api-client').SubscriptionOrderView>
 
   // ===== macOS 灵动岛通知 =====
 
@@ -2073,8 +2085,25 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_STATE)
   },
 
-  loginSubscription: (input: { phone: string; displayName?: string }) => {
-    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.LOGIN, input)
+  requestSubscriptionEmailCode: (input: { email: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.REQUEST_EMAIL_CODE, input)
+  },
+
+  verifySubscriptionEmailCode: (input: { email: string; code: string; deviceId?: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.VERIFY_EMAIL_CODE, input)
+  },
+
+  startSubscriptionOAuth: (provider: 'github' | 'google') => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.START_OAUTH, provider)
+  },
+
+  completeSubscriptionOAuth: (input: {
+    provider: 'github' | 'google'
+    code: string
+    state: string
+    deviceId?: string
+  }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.COMPLETE_OAUTH, input)
   },
 
   logoutSubscription: () => {
@@ -2085,12 +2114,24 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.REFRESH)
   },
 
+  getSubscriptionEndpoint: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_ENDPOINT)
+  },
+
+  setSubscriptionEndpoint: (url: string) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.SET_ENDPOINT, url)
+  },
+
   createSubscriptionCheckout: (input: { planId: string; provider: string; period: string }) => {
     return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT, input)
   },
 
   getSubscriptionOrder: (orderId: string) => {
     return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_ORDER, orderId)
+  },
+
+  syncSubscriptionOrder: (orderId: string) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.SYNC_ORDER, orderId)
   },
 
   getSystemTheme: () => {

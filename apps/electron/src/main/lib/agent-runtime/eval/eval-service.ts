@@ -16,8 +16,8 @@ import { buildLlmJudgeScoreDelegate, withJudgeBudget } from './judge'
 import { buildEvalTargetStateGuard, isEvalTargetId } from './eval-target-state'
 import { writeToolAgentsMd } from './toolset-state'
 import { generateCandidatePrompt } from './builder'
-import { writeAgentAgentsMd } from '../../agent-definition-store'
-import { clearBuiltinOverride, isBuiltinAgentId, readBuiltinOverrides } from './builtin-agent-overrides'
+import { readAgentPromptOverride, restoreAgentAgentsMd, writeAgentAgentsMd } from "../../agent-definition-store"
+import { BUILTIN_AGENT_IDS, clearBuiltinOverride, isBuiltinAgentId, readBuiltinOverrides } from './builtin-agent-overrides'
 import type { BaselineSummary, ImproveSummary } from './commands'
 import type { EvalProgressCallback, ScoreDelegate } from './evaluator'
 import type { ProposeChange } from './self-evolver'
@@ -56,18 +56,25 @@ export function adoptBuiltinPrompt(agentId: string, prompt: string): AdoptResult
   return adoptEvalTarget('agent', agentId, prompt)
 }
 
-/** 清除某个内置 sub-agent 的持久化覆盖（恢复代码默认；目录置回 bundled seed 在 D2 seed 同步时处理）。 */
+/** 清除某个内置 sub-agent 的持久化覆盖（恢复随应用发布的默认 prompt）。 */
 export function clearBuiltinPrompt(agentId: string): AdoptResult {
   if (!isBuiltinAgentId(agentId)) {
     return { agentId, applied: false, reason: `非内置子代理 id: ${agentId}` }
   }
-  clearBuiltinOverride(agentId)
+  if (!restoreAgentAgentsMd(agentId)) {
+    return { agentId, applied: false, reason: "未找到 " + agentId + " 的内置默认 prompt" }
+  }
   return { agentId, applied: true }
 }
 
-/** 读取内置子代理的持久化覆盖（当前生效注override）。 */
+/** 读取当前生效且偏离内置默认值的子代理 prompt。 */
 export function listBuiltinPrompts(): import('./builtin-agent-overrides').BuiltinOverridesMap {
-  return readBuiltinOverrides()
+  const result: import("./builtin-agent-overrides").BuiltinOverridesMap = { ...readBuiltinOverrides() }
+  for (const agentId of BUILTIN_AGENT_IDS) {
+    const prompt = readAgentPromptOverride(agentId)
+    if (prompt) result[agentId] = { prompt }
+  }
+  return result
 }
 
 /** 可选：注入更准的 LLM 打分（默认规则打分）。 */
@@ -215,6 +222,7 @@ export async function runEvalImprove(benchmarkId: string, opts: EvalServiceOptio
     scoreDelegate,
     judge,
     includeHeldOut: opts.includeHeldOut,
+    onProgress: opts.onProgress,
     state: guard,
     maxRounds,
     // useBuilder=false 时保守：只产出 baseline，不自动生成候选

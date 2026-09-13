@@ -26,11 +26,17 @@ function snapshot(overrides: Partial<EntitlementSnapshot> = {}): EntitlementSnap
 describe('subscription entitlement domain', () => {
   test('IPC 通道保持显式且稳定', () => {
     expect(SUBSCRIPTION_IPC_CHANNELS.GET_STATE).toBe('subscription:get-state')
-    expect(SUBSCRIPTION_IPC_CHANNELS.LOGIN).toBe('subscription:login')
+    expect(SUBSCRIPTION_IPC_CHANNELS.REQUEST_EMAIL_CODE).toBe('subscription:request-email-code')
+    expect(SUBSCRIPTION_IPC_CHANNELS.VERIFY_EMAIL_CODE).toBe('subscription:verify-email-code')
+    expect(SUBSCRIPTION_IPC_CHANNELS.START_OAUTH).toBe('subscription:start-oauth')
+    expect(SUBSCRIPTION_IPC_CHANNELS.COMPLETE_OAUTH).toBe('subscription:complete-oauth')
     expect(SUBSCRIPTION_IPC_CHANNELS.LOGOUT).toBe('subscription:logout')
     expect(SUBSCRIPTION_IPC_CHANNELS.REFRESH).toBe('subscription:refresh')
+    expect(SUBSCRIPTION_IPC_CHANNELS.GET_ENDPOINT).toBe('subscription:get-endpoint')
+    expect(SUBSCRIPTION_IPC_CHANNELS.SET_ENDPOINT).toBe('subscription:set-endpoint')
     expect(SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT).toBe('subscription:create-checkout')
     expect(SUBSCRIPTION_IPC_CHANNELS.GET_ORDER).toBe('subscription:get-order')
+    expect(SUBSCRIPTION_IPC_CHANNELS.SYNC_ORDER).toBe('subscription:sync-order')
   })
 
   test('free 快照不能使用付费能力', () => {
