@@ -203,6 +203,101 @@ export class SubscriptionStore {
     return row ? toOrderRecord(row) : undefined
   }
 
+  /**
+   * 标记订单已退款。
+   *
+   * 条件限定为 status = 'paid'：只有已支付的订单才可能被退款，
+   * 这样重复的退款通知第二次执行时不会命中任何行，天然幂等。
+   */
+  async markOrderRefunded(input: {
+    orderId: string
+    refundedAt: number
+  }): Promise<SubscriptionOrderRecord | undefined> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `UPDATE subscription_orders
+       SET status = 'refunded', updated_at = $2
+       WHERE id = $1 AND status = 'paid'
+       RETURNING id, account_id, plan_id, provider, amount_cny, currency, status, period, provider_transaction_id, expires_at, paid_at, created_at, updated_at`,
+      [input.orderId, input.refundedAt],
+    )
+    const row = result.rows[0]
+    return row ? toOrderRecord(row) : undefined
+  }
+
+  /** 撤销某账号当前所有生效中的订阅（退款或强制收回时使用） */
+  async revokeActiveSubscriptions(input: {
+    accountId: string
+    revokedAt: number
+  }): Promise<number> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `UPDATE subscription_subscriptions
+       SET status = 'revoked', updated_at = $2
+       WHERE account_id = $1 AND status = 'active'
+       RETURNING id`,
+      [input.accountId, input.revokedAt],
+    )
+    return result.rows.length
+  }
+
+  /**
+   * 找出所有已到期但仍标记为 active 的订阅，供定时任务降级。
+   *
+   * 限制返回条数避免单次扫描占用过多内存，由调用方循环处理。
+   */
+  async findExpiredActiveSubscriptions(input: {
+    now: number
+    limit: number
+  }): Promise<Array<{ id: string; accountId: string; planId: SubscriptionPlanId; currentPeriodEnd: number }>> {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT id, account_id, plan_id, current_period_end
+       FROM subscription_subscriptions
+       WHERE status = 'active' AND current_period_end <= $1
+       ORDER BY current_period_end ASC
+       LIMIT $2`,
+      [input.now, input.limit],
+    )
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      accountId: String(row.account_id),
+      planId: String(row.plan_id) as SubscriptionPlanId,
+      currentPeriodEnd: Number(row.current_period_end),
+    }))
+  }
+
+  /** 将指定订阅标记为已过期 */
+  async markSubscriptionExpired(input: { subscriptionId: string; expiredAt: number }): Promise<void> {
+    await this.client.query(
+      `UPDATE subscription_subscriptions
+       SET status = 'expired', updated_at = $2
+       WHERE id = $1 AND status = 'active'`,
+      [input.subscriptionId, input.expiredAt],
+    )
+  }
+
+  /** 查询账号当前生效的订阅完整信息，含状态，用于权益推导 */
+  async findCurrentSubscription(accountId: string): Promise<
+    | { id: string; planId: SubscriptionPlanId; status: 'active' | 'expired' | 'revoked'; currentPeriodEnd: number; orderId: string }
+    | undefined
+  > {
+    const result = await this.client.query<Record<string, unknown>>(
+      `SELECT id, plan_id, status, current_period_end, order_id
+       FROM subscription_subscriptions
+       WHERE account_id = $1
+       ORDER BY current_period_end DESC
+       LIMIT 1`,
+      [accountId],
+    )
+    const row = result.rows[0]
+    if (!row) return undefined
+    return {
+      id: String(row.id),
+      planId: String(row.plan_id) as SubscriptionPlanId,
+      status: String(row.status) as 'active' | 'expired' | 'revoked',
+      currentPeriodEnd: Number(row.current_period_end),
+      orderId: String(row.order_id),
+    }
+  }
+
   async insertPaymentEvent(input: Omit<SubscriptionPaymentEventRecord, 'id' | 'createdAt'>): Promise<SubscriptionPaymentEventRecord> {
     const record: SubscriptionPaymentEventRecord = {
       id: randomUUID(),

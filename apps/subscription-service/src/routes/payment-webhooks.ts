@@ -8,6 +8,7 @@ import {
   type AlipayNotificationData,
   type AlipayNotificationInput,
 } from '../payments/alipay-signature'
+import { SubscriptionLifecycleService } from '../services/subscription-lifecycle-service'
 
 /**
  * 支付回调处理。
@@ -136,6 +137,24 @@ export async function handleWechatWebhook(
   }
 
   const data: WechatCallbackData = parsed.data
+
+  // 退款成功事件：解密的 resource 中带有 out_trade_no 与退款状态
+  if (data.eventType === 'REFUND.SUCCESS' || data.tradeState === 'REFUND') {
+    const lifecycle = new SubscriptionLifecycleService({
+      store: deps.store,
+      entitlementService: deps.entitlementService,
+    })
+    const result = await lifecycle.handleRefund({ orderId: data.orderId })
+
+    // 订单不存在或不可退款时不阻断重试，交由运维排查
+    if (!result.ok) {
+      return Response.json(
+        { code: result.reason, message: '退款处理失败', retryable: result.reason === 'order_not_found' },
+        { status: result.reason === 'order_not_found' ? 404 : 200 },
+      )
+    }
+    return Response.json({ ok: true, refunded: true })
+  }
 
   // 仅处理支付成功事件
   if (data.tradeState !== 'SUCCESS') {
