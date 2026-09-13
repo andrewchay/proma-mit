@@ -41,12 +41,34 @@ export class EntitlementService {
     return this.toSnapshot(revision)
   }
 
+  /**
+   * 构造签名原文。
+   *
+   * 字段顺序必须与客户端 entitlement-signature.ts 的 buildEntitlementSigningPayload 完全一致，
+   * 否则两边 JSON.stringify 结果不同，验签必然失败。
+   * signature 固定为空字符串——签名不能包含自身。
+   */
+  private buildSigningPayload(snapshot: EntitlementSnapshot): string {
+    const payload = {
+      accountId: snapshot.accountId,
+      planId: snapshot.planId,
+      capabilities: [...snapshot.capabilities].sort(),
+      status: snapshot.status,
+      lastVerifiedAt: snapshot.lastVerifiedAt,
+      validUntil: snapshot.validUntil ?? null,
+      graceUntil: snapshot.graceUntil ?? null,
+      signature: '',
+      keyId: snapshot.keyId,
+    }
+    return JSON.stringify(payload)
+  }
+
   signSnapshot(snapshot: EntitlementSnapshot): string {
     if (!this.privateKeyPem) {
       // 本地开发/测试环境允许未配置私钥，但签名必须显式标记为 dev，避免生产误用。
       return `dev.${snapshot.keyId}.${Buffer.from(JSON.stringify(snapshot)).toString('base64url')}`
     }
-    const payload = Buffer.from(JSON.stringify(snapshot))
+    const payload = Buffer.from(this.buildSigningPayload(snapshot), 'utf8')
     const signer = createSign('RSA-SHA256')
     signer.update(payload)
     signer.end()
@@ -59,7 +81,7 @@ export class EntitlementService {
     }
     if (!this.publicKeyPem) return false
     const verifier = createVerify('RSA-SHA256')
-    verifier.update(Buffer.from(JSON.stringify(snapshot)))
+    verifier.update(Buffer.from(this.buildSigningPayload(snapshot), 'utf8'))
     verifier.end()
     return verifier.verify(this.publicKeyPem, signature, 'base64url')
   }

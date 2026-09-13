@@ -44,7 +44,16 @@ class BunPostgresClient {
   }
 }
 
-const postgres = new BunPostgresClient(config.databaseUrl)
+// 支持内存模式：设置 SUBSCRIPTION_USE_IN_MEMORY_DB=1 时无需 PostgreSQL，
+// 便于本地联调与演示。该模式数据不持久化，严禁用于生产。
+const postgres =
+  process.env.SUBSCRIPTION_USE_IN_MEMORY_DB === '1'
+    ? (new (await import('./dev/in-memory-postgres')).InMemoryPostgresClient() as unknown as BunPostgresClient)
+    : new BunPostgresClient(config.databaseUrl)
+
+if (process.env.SUBSCRIPTION_USE_IN_MEMORY_DB === '1') {
+  console.warn('[订阅服务] 正在使用内存数据库，数据不会持久化，仅限本地联调')
+}
 const store = new SubscriptionStore(postgres)
 const tokenService = new TokenService(
   config.accessTokenSecret,

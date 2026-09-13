@@ -4,18 +4,13 @@ import { SettingsSection } from './primitives/SettingsSection'
 import { SettingsCard } from './primitives/SettingsCard'
 import { SettingsRow } from './primitives/SettingsRow'
 import { subscriptionStateAtom } from '@/atoms/subscription-atoms'
+import { SubscriptionOnboarding } from '@/components/subscription/SubscriptionOnboarding'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-
-/** 登录流程的两个阶段 */
-type LoginStep = 'email' | 'code'
 
 export function SubscriptionSettings(): React.ReactElement {
   const [state, setState] = useAtom(subscriptionStateAtom)
 
-  const [step, setStep] = React.useState<LoginStep>('email')
-  const [email, setEmail] = React.useState('')
-  const [code, setCode] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [notice, setNotice] = React.useState<string | null>(null)
@@ -47,74 +42,11 @@ export function SubscriptionSettings(): React.ReactElement {
     })()
   }, [])
 
-  const handleRequestCode = async (): Promise<void> => {
-    const target = email.trim()
-    if (!target) {
-      setError('请输入邮箱')
-      return
-    }
-    setLoading(true)
-    setError(null)
-    setNotice(null)
-    try {
-      const result = await window.electronAPI.requestSubscriptionEmailCode({ email: target })
-      setStep('code')
-      setNotice(`验证码已发送至 ${target}，${Math.floor(result.expiresInSeconds / 60)} 分钟内有效`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '验证码发送失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleVerifyCode = async (): Promise<void> => {
-    const target = email.trim()
-    const value = code.trim()
-    if (!value) {
-      setError('请输入验证码')
-      return
-    }
-    setLoading(true)
-    setError(null)
-    try {
-      const result = await window.electronAPI.verifySubscriptionEmailCode({
-        email: target,
-        code: value,
-      })
-      setState(result)
-      setNotice(null)
-      setCode('')
-      setStep('email')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '验证码校验失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleOAuth = async (provider: 'github' | 'google'): Promise<void> => {
-    setLoading(true)
-    setError(null)
-    try {
-      const { authorizeUrl } = await window.electronAPI.startSubscriptionOAuth(provider)
-      // 在系统浏览器中打开授权页，避免在应用窗口内加载第三方页面
-      window.open(authorizeUrl, '_blank')
-      setNotice('已在浏览器中打开授权页，完成授权后返回本页点击「刷新权益」')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '第三方登录不可用')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleLogout = async (): Promise<void> => {
     setLoading(true)
     try {
       await window.electronAPI.logoutSubscription()
       setState({ entitlement: null, status: 'none', connectivity: 'unknown' })
-      setEmail('')
-      setCode('')
-      setStep('email')
       setPendingOrder(null)
       setNotice(null)
     } catch (err) {
@@ -238,87 +170,10 @@ export function SubscriptionSettings(): React.ReactElement {
               )}
             </>
           ) : (
-            <>
-              {step === 'email' ? (
-                <>
-                  <SettingsRow label="邮箱" description="用于接收登录验证码">
-                    <Input
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@example.com"
-                      className="w-56"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void handleRequestCode()
-                      }}
-                    />
-                  </SettingsRow>
-                  <div className="px-4 pb-4 flex gap-2">
-                    <Button onClick={handleRequestCode} disabled={loading}>
-                      {loading ? '发送中...' : '发送验证码'}
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <SettingsRow label="验证码" description={`已发送至 ${email}`}>
-                    <Input
-                      value={code}
-                      onChange={(e) => setCode(e.target.value)}
-                      placeholder="6 位数字"
-                      className="w-32"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void handleVerifyCode()
-                      }}
-                    />
-                  </SettingsRow>
-                  <div className="px-4 pb-4 flex gap-2">
-                    <Button onClick={handleVerifyCode} disabled={loading}>
-                      {loading ? '校验中...' : '登录'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={handleRequestCode}
-                      disabled={loading}
-                    >
-                      重新发送
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setStep('email')
-                        setCode('')
-                        setError(null)
-                        setNotice(null)
-                      }}
-                      disabled={loading}
-                    >
-                      换个邮箱
-                    </Button>
-                  </div>
-                </>
-              )}
-
-              <SettingsRow label="第三方登录" description="使用 GitHub 或 Google 账号">
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleOAuth('github')}
-                    disabled={loading}
-                  >
-                    GitHub
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleOAuth('google')}
-                    disabled={loading}
-                  >
-                    Google
-                  </Button>
-                </div>
-              </SettingsRow>
-            </>
+            <div className="px-4 pb-4 pt-2">
+              {/* 复用引导页的登录组件，避免两套实现分叉 */}
+              <SubscriptionOnboarding onLoggedIn={() => { setNotice(null); setError(null) }} compact />
+            </div>
           )}
 
           {notice && <div className="text-sm text-muted-foreground px-4 pb-2">{notice}</div>}

@@ -94,14 +94,18 @@ export function loadSubscriptionServiceConfig(env: NodeJS.ProcessEnv = process.e
     accessTokenTtlMs: Number(env.SUBSCRIPTION_ACCESS_TOKEN_TTL_MS ?? 15 * 60 * 1000),
     refreshTokenTtlMs: Number(env.SUBSCRIPTION_REFRESH_TOKEN_TTL_MS ?? 30 * 24 * 60 * 60 * 1000),
     emailPepper: env.SUBSCRIPTION_EMAIL_PEPPER ?? 'dev-only-email-pepper',
-    email: env.RESEND_API_KEY
-      ? {
-          apiKey: env.RESEND_API_KEY,
-          from: env.SUBSCRIPTION_EMAIL_FROM ?? '',
-          // 生产环境禁用控制台回退，防止验证码进入日志
-          allowConsoleFallback: !isProduction,
-        }
-      : undefined,
+    // 开发环境即使未配置 Resend 也提供 email 配置对象，
+    // 以便 EmailSender 走控制台回退，让本地能完整联调登录流程。
+    // 生产环境未配置 Key 时保持 undefined，发码直接失败而非静默降级。
+    email:
+      env.RESEND_API_KEY || !isProduction
+        ? {
+            apiKey: env.RESEND_API_KEY ?? '',
+            from: env.SUBSCRIPTION_EMAIL_FROM ?? '',
+            // 仅非生产环境允许控制台回退，避免验证码进入生产日志
+            allowConsoleFallback: !isProduction,
+          }
+        : undefined,
     allowedOrigins: parseList(env.SUBSCRIPTION_ALLOWED_ORIGINS),
     trustedProxyCidrs: parseList(env.SUBSCRIPTION_TRUSTED_PROXY_CIDRS),
     maxRequestBodyBytes: Number(env.SUBSCRIPTION_MAX_REQUEST_BODY_BYTES ?? 64 * 1024),

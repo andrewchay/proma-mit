@@ -8,7 +8,10 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "dev:memory": "SUBSCRIPTION_USE_IN_MEMORY_DB=1 NODE_ENV=development bun run src/index.ts",
+    "smoke": "bun run scripts/smoke-subscription.ts",
+    "generate-keys": "bun run scripts/generate-keys.ts"
   },
   "dependencies": {
     "@gravitas/shared": "workspace:*"
