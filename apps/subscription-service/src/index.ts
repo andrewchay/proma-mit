@@ -5,7 +5,7 @@ import { EntitlementService } from './services/entitlement-service'
 import { authenticateRequest } from './middleware/authenticate'
 import { handleLogin, handleLogout, handleMe, handleRefresh } from './routes/auth'
 import { handleGetEntitlements } from './routes/entitlements'
-import { handleCreateCheckout, handleGetOrder } from './routes/checkout'
+import { handleCreateCheckout, handleGetOrder, handleSyncOrder } from './routes/checkout'
 import { handleWechatWebhook, handleAlipayWebhook } from './routes/payment-webhooks'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -69,13 +69,19 @@ const server = Bun.serve({
 
     if (request.method === 'POST' && path === '/v1/checkout') {
       if (!auth) return Response.json({ code: 'unauthorized', message: '未认证', retryable: false }, { status: 401 })
-      return handleCreateCheckout(request, { store }, auth.accountId)
+      return handleCreateCheckout(request, { store, config }, auth.accountId)
+    }
+
+    if (request.method === 'POST' && path.endsWith('/sync') && path.startsWith('/v1/orders/')) {
+      if (!auth) return Response.json({ code: 'unauthorized', message: '未认证', retryable: false }, { status: 401 })
+      const orderId = path.slice('/v1/orders/'.length, path.length - '/sync'.length)
+      return handleSyncOrder({ store, config }, auth.accountId, orderId)
     }
 
     if (request.method === 'GET' && path.startsWith('/v1/orders/')) {
       if (!auth) return Response.json({ code: 'unauthorized', message: '未认证', retryable: false }, { status: 401 })
       const orderId = path.slice('/v1/orders/'.length)
-      return handleGetOrder({ store }, auth.accountId, orderId)
+      return handleGetOrder({ store, config }, auth.accountId, orderId)
     }
 
     if (request.method === 'POST' && path === '/webhooks/wechat') {
