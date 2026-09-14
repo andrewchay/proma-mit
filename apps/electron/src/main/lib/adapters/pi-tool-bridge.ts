@@ -182,6 +182,18 @@ function createBridgeTool<TSchemaType extends TSchema>(
         }
         if (exitResult.targetMode) options.toolContext.setPermissionMode?.(exitResult.targetMode)
       }
+
+      // 采集：只记录通过权限检查、实际被执行的工具调用。
+      // 与 AI SDK runtime 保持同一语义（仅在授权后计数），埋点旁路不抛错。
+      try {
+        const { trackToolInvoked } = require('../telemetry-tracking') as {
+          trackToolInvoked: (toolName: string) => void
+        }
+        trackToolInvoked(config.runtimeName)
+      } catch {
+        // 采集不可用时静默跳过
+      }
+
       const result = await runtimeTool.execute(input, {
         ...options.toolContext,
         abortSignal: signal ?? options.toolContext.abortSignal,

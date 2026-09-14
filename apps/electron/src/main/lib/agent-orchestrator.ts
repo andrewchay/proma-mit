@@ -55,7 +55,7 @@ import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgen
 import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
-import { trackSessionFinished, trackSessionStarted } from './telemetry-tracking'
+import { trackSessionFinished } from './telemetry-tracking'
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getRuntimeStatus } from './runtime-init'
 import { getSettings } from './settings-service'

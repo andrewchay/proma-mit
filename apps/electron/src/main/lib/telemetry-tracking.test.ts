@@ -8,7 +8,6 @@ import {
   trackNoteReferenced,
   trackNoteSaved,
   trackSessionFinished,
-  trackSessionStarted,
   trackToolInvoked,
 } from './telemetry-tracking'
 
@@ -44,7 +43,6 @@ describe('埋点不抛错', () => {
       trackNoteOpened('n1', 'v1')
       trackNoteSaved('n1')
       trackNoteReferenced(['n1', 'n2'])
-      trackSessionStarted('s1', 'pi')
       trackSessionFinished('s1', 60_000, { runtime: 'pi' })
       trackToolInvoked('Read')
       trackMeetingAttended('e1', 30, 'work')

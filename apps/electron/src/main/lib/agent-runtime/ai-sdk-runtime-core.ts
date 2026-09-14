@@ -395,6 +395,18 @@ export class AISDKRuntimeCore {
       return { content: permission.message || `权限被拒绝：${runtimeTool.name}`, isError: true }
     }
 
+    // 采集：只记录实际被授权执行的工具调用。被拒绝的调用不计入
+    // （它不代表有效工作密度），且这里已过滤掉重复的 stream 事件。
+    // 埋点旁路，绝不抛错。
+    try {
+      const { trackToolInvoked } = require('../telemetry-tracking') as {
+        trackToolInvoked: (toolName: string) => void
+      }
+      trackToolInvoked(runtimeTool.name)
+    } catch {
+      // 采集不可用时静默跳过
+    }
+
     try {
       const result = await runtimeTool.execute(args, {
         cwd: state.cwd,

@@ -71,15 +71,11 @@ export function trackNoteReferenced(noteIds: string[]): void {
 
 // ===== 工作节律 / 专注 =====
 
-/** Agent 会话开始 */
-export function trackSessionStarted(sessionId: string, runtime?: string): void {
-  emit('focus', 'session_started', {
-    meta: runtime ? { sessionId, runtime } : { sessionId },
-  })
-}
-
 /**
  * Agent 会话结束（含时长）。
+ *
+ * 不单独记录会话开始事件：聚合只依赖 session_finished 的时长，
+ * 多一个 started 事件既无消费方，又会让事件计数虚高。
  *
  * durationMs <= 0 时不记录：没有有效时长的会话对节律分析无意义，
  * 记进去只会拉低平均值。
