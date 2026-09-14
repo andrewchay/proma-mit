@@ -157,11 +157,12 @@ export interface PluginInstallInput {
   source: 'bundled' | 'marketplace' | 'local'
 }
 
-/** 第一方内置插件清单（当前含灵动岛、Computer Use） */
+/** 第一方内置插件清单（当前含灵动岛、Computer Use、学术助手） */
 export const BUILTIN_PLUGINS: Array<{ id: string; name: string; version: string }> = [
   { id: 'com.gravitas.dynamic-island', name: '灵动岛通知', version: '1.0.0' },
   { id: 'com.gravitas.computer-use', name: 'Computer Use', version: '1.0.0' },
   { id: 'com.gravitas.marketing', name: '营销应用中心', version: '0.1.0' },
+  { id: 'com.gravitas.academic', name: '学术助手', version: '0.1.0' },
 ]
 
 /** 插件管理 IPC 通道 */

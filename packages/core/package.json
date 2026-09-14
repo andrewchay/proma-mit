@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/core",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "license": "BUSL-1.1",
   "description": "proma core types,storage and core logic with agents",
   "type": "module",
@@ -14,7 +14,8 @@
     "./providers/ai-sdk-bridge": "./src/providers/ai-sdk-bridge.ts",
     "./highlight": "./src/highlight/index.ts",
     "./services/knowledge": "./src/services/knowledge/index.ts",
-    "./services/analysis": "./src/services/analysis/index.ts"
+    "./services/analysis": "./src/services/analysis/index.ts",
+    "./services/academic": "./src/services/academic/index.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.16",

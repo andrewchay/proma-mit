@@ -6,3 +6,4 @@
 
 export * as knowledge from './knowledge/index.ts'
 export * as analysis from './analysis/index.ts'
+export * as academic from './academic/index.ts'

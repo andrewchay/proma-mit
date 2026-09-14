@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS } from '../types'
 /** 保存邮箱配置的入参形态（仅用于类型推导） */
 type saveConfigInput = (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => unknown
 import type {
@@ -1467,6 +1467,25 @@ export interface ElectronAPI {
     generateWeeklyReport: (weekStart?: string) => Promise<import('@gravitas/shared').AnalysisReport>
   }
 
+  // ===== 学术助手（Pro 插件能力） =====
+  academic: {
+    // 论文项目管理
+    listPapers: () => Promise<import('@gravitas/shared').AcademicPaperSummary[]>
+    getPaper: (id: string) => Promise<import('@gravitas/shared').AcademicPaper | null>
+    createPaper: (input: { title: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => Promise<import('@gravitas/shared').AcademicPaper>
+    updatePaper: (id: string, input: { title?: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => Promise<import('@gravitas/shared').AcademicPaper>
+    deletePaper: (id: string) => Promise<boolean>
+
+    // Pipeline
+    advanceStage: (id: string) => Promise<import('@gravitas/shared').AcademicAdvanceResult>
+    rewindStage: (id: string, target: import('@gravitas/shared').AcademicStage) => Promise<import('@gravitas/shared').AcademicPaper>
+
+    // 阶段产出物
+    getIntegrityReport: (paperId: string) => Promise<import('@gravitas/shared').IntegrityReport | null>
+    getPeerReviewReport: (paperId: string) => Promise<import('@gravitas/shared').PeerReviewReport | null>
+    getRevisionTracking: (paperId: string) => Promise<import('@gravitas/shared').RevisionTracking | null>
+  }
+
   // ===== 出海邮件（收发与同步） =====
   outboundMail: {
     getConfig: () => Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>
@@ -2194,6 +2213,25 @@ const electronAPI: ElectronAPI = {
     // 快捷查询
     generateMonthlyReport: (month: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_MONTHLY_REPORT, month) as Promise<import('@gravitas/shared').AnalysisReport>,
     generateWeeklyReport: (weekStart?: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_WEEKLY_REPORT, weekStart) as Promise<import('@gravitas/shared').AnalysisReport>,
+  },
+
+  // ===== 学术助手（Pro 插件能力） =====
+  academic: {
+    // 论文项目管理
+    listPapers: () => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.LIST_PAPERS) as Promise<import('@gravitas/shared').AcademicPaperSummary[]>,
+    getPaper: (id: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PAPER, id) as Promise<import('@gravitas/shared').AcademicPaper | null>,
+    createPaper: (input: { title: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.CREATE_PAPER, input) as Promise<import('@gravitas/shared').AcademicPaper>,
+    updatePaper: (id: string, input: { title?: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.UPDATE_PAPER, id, input) as Promise<import('@gravitas/shared').AcademicPaper>,
+    deletePaper: (id: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.DELETE_PAPER, id) as Promise<boolean>,
+
+    // Pipeline
+    advanceStage: (id: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.ADVANCE_STAGE, id) as Promise<import('@gravitas/shared').AcademicAdvanceResult>,
+    rewindStage: (id: string, target: import('@gravitas/shared').AcademicStage) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.REWIND_STAGE, id, target) as Promise<import('@gravitas/shared').AcademicPaper>,
+
+    // 阶段产出物
+    getIntegrityReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, paperId) as Promise<import('@gravitas/shared').IntegrityReport | null>,
+    getPeerReviewReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, paperId) as Promise<import('@gravitas/shared').PeerReviewReport | null>,
+    getRevisionTracking: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, paperId) as Promise<import('@gravitas/shared').RevisionTracking | null>,
   },
 
   // ===== 出海邮件（收发与同步） =====

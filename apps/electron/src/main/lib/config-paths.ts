@@ -1482,3 +1482,41 @@ export function getAnalysisDir(): string {
 export function getAnalysisReportsPath(): string {
   return join(getAnalysisDir(), 'reports.json')
 }
+
+/**
+ * 获取学术助手目录
+ *
+ * 学术助手是 Pro 插件能力，数据与免费版目录分开存放。
+ *
+ * @returns ~/.proma-mit/academic/
+ */
+export function getAcademicDir(): string {
+  const dir = join(getConfigDir(), 'academic')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建学术助手目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取论文项目索引路径
+ *
+ * @returns ~/.proma-mit/academic/papers.json
+ */
+export function getAcademicPapersPath(): string {
+  return join(getAcademicDir(), 'papers.json')
+}
+
+/**
+ * 获取学术阶段产出物目录（完整性报告 / 评审报告 / 修订追踪）
+ *
+ * @returns ~/.proma-mit/academic/artifacts/
+ */
+export function getAcademicArtifactsDir(): string {
+  const dir = join(getAcademicDir(), 'artifacts')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}

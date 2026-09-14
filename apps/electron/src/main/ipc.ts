@@ -10,7 +10,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
@@ -4577,6 +4577,21 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_COMPREHENSIVE_REPORT, async (_event, range) => analysisSvc.generateComprehensiveReportService(range))
   ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_MONTHLY_REPORT, async (_event, month) => analysisSvc.generateMonthlyReport(month))
   ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_WEEKLY_REPORT, async (_event, weekStart) => analysisSvc.generateWeeklyReport(weekStart))
+
+  // ===== 学术助手（Pro 插件能力） =====
+  // 注意：处理器无条件注册，能力门禁由 academic-plugin 的权益过滤与
+  // 渲染层 selectCanUseCapability 控制，与营销插件保持一致的分层。
+  const academicSvc = require('./lib/academic-service') as typeof import('./lib/academic-service')
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.LIST_PAPERS, async () => academicSvc.listPapers())
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_PAPER, async (_event, id) => academicSvc.getPaper(id))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.CREATE_PAPER, async (_event, input) => academicSvc.createPaper(input))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.UPDATE_PAPER, async (_event, id, input) => academicSvc.updatePaper(id, input))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.DELETE_PAPER, async (_event, id) => academicSvc.deletePaper(id))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.ADVANCE_STAGE, async (_event, id) => academicSvc.advanceStage(id))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.REWIND_STAGE, async (_event, id, target) => academicSvc.rewindStage(id, target))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, async (_event, paperId) => academicSvc.getIntegrityReport(paperId))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, async (_event, paperId) => academicSvc.getPeerReviewReport(paperId))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, async (_event, paperId) => academicSvc.getRevisionTracking(paperId))
 
   // ===== 企业版连接 =====
   const { connectToServer, disconnectFromServer, getActiveConnection, migrateLocalToServer } = require('./lib/server-connection-service') as {
