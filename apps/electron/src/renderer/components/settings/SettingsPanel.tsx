@@ -26,6 +26,7 @@ import {
   HardDriveDownload,
   HardDrive,
   ShieldCheck,
+  Activity,
   MonitorCog,
   Puzzle,
   Server,
@@ -55,6 +56,7 @@ import { GeneralSettings } from "./GeneralSettings";
 import { VisionRelaySettings } from "./VisionRelaySettings";
 import { ProxySettings } from "./ProxySettings";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { TelemetrySettingsPanel } from "./TelemetrySettingsPanel";
 import { AboutSettings } from "./AboutSettings";
 import { AgentSettings } from "./AgentSettings";
 import { PromptSettings } from "./PromptSettings";
@@ -125,6 +127,11 @@ const VOICE_INPUT_TAB: TabItem = {
   id: "voice-input",
   label: "语音输入",
   icon: <Mic size={16} />,
+};
+const TELEMETRY_TAB: TabItem = {
+  id: "telemetry",
+  label: "数据采集",
+  icon: <Activity size={16} />,
 };
 const OPERATION_AUDIT_TAB: TabItem = {
   id: "operation-audit",
@@ -231,6 +238,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
     tabs: [
       TAIL_TABS[0]!, // 数据迁移
       TAIL_TABS[1]!, // 磁盘管理
+      TELEMETRY_TAB,
       OPERATION_AUDIT_TAB,
       TOKEN_USAGE_TAB,
       GOALS_TAB,
@@ -280,6 +288,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <MigrationSettings />;
     case "storage":
       return <StorageSettings />;
+    case "telemetry":
+      return <TelemetrySettingsPanel />;
     case "operation-audit":
       return <OperationAuditSettings />;
     case "automation":
