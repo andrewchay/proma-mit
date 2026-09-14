@@ -15,6 +15,11 @@ coverage
 
 # Playwright transient artifacts
 test-results
+# Playwright CLI 调试输出（console 日志与页面快照）
+.playwright-cli
+
+# 其他本地 Agent 工具的私有目录（规划草稿等，不入版本库）
+.zcode
 
 # logs
 logs
