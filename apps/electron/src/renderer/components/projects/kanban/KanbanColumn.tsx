@@ -49,7 +49,7 @@ export function KanbanColumn({ status, tasks, onTaskClick }: KanbanColumnProps):
           {tasks.length === 0 ? (
             <div className="text-sm text-muted-foreground text-center py-8">暂无任务</div>
           ) : (
-            tasks.map((task) => <TaskCard key={task.id} task={task} onClick={onTaskClick} />)
+            tasks.map((task) => <TaskCard key={task.id} task={task} columnStateGroup={status.stateGroup} onClick={onTaskClick} />)
           )}
         </div>
       </SortableContext>

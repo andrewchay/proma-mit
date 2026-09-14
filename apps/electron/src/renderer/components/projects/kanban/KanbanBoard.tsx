@@ -182,7 +182,10 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
         <DragOverlay>
           {activeTask ? (
             <div className="w-64">
-              <TaskCard task={activeTask} />
+              <TaskCard
+                task={activeTask}
+                columnStateGroup={columns.find((col) => col.status.id === activeTask.status)?.status.stateGroup ?? 'unstarted'}
+              />
             </div>
           ) : null}
         </DragOverlay>

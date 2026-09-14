@@ -7,18 +7,22 @@
 import * as React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { ProjectTaskAtom } from '@/atoms/project-atoms'
+import type { ProjectTaskAtom, ProjectTaskStatusAtom } from '@/atoms/project-atoms'
 import { AgentExecutionBadge } from '../AgentTeamPanel'
+import { DueDateBadge } from '../DueDateBadge'
 
 interface TaskCardProps {
   task: ProjectTaskAtom
+  /** 所在列的语义组（任务列即其状态，拖拽乐观更新时天然一致） */
+  columnStateGroup: ProjectTaskStatusAtom['stateGroup']
   /** 点击（未触发拖拽阈值）时打开任务详情 */
   onClick?: (task: ProjectTaskAtom) => void
 }
 
-export function TaskCard({ task, onClick }: TaskCardProps): React.ReactElement {
+export function TaskCard({ task, columnStateGroup, onClick }: TaskCardProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
   const isAgent = task.assignee?.userId?.startsWith('agent-') ?? false
+  const isDone = columnStateGroup === 'completed' || columnStateGroup === 'cancelled'
   const [execStatus, setExecStatus] = React.useState<string | null>(null)
 
   // Agent 负责人：拉取最新一条执行记录的状态（仅 running/queued/failed/stale 需要展示；完成态由任务状态表达）
@@ -66,8 +70,9 @@ export function TaskCard({ task, onClick }: TaskCardProps): React.ReactElement {
       {task.description && (
         <p className="text-xs text-muted-foreground mt-1 line-clamp-2 pointer-events-none">{task.description}</p>
       )}
-      {(task.assignee || execStatus) && (
+      {(task.assignee || execStatus || task.dueDate !== undefined) && (
         <div className="mt-2 flex items-center gap-1 flex-wrap">
+          <DueDateBadge dueDate={task.dueDate} isDone={isDone} />
           {task.assignee && (
             <span
               className={`text-xs px-1.5 py-0.5 rounded ${isAgent ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
