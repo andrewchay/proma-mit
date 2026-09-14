@@ -27,6 +27,7 @@ import {
 import type { ProjectTaskAtom } from '@/atoms/project-atoms'
 import { KanbanColumn } from './KanbanColumn'
 import { TaskCard } from './TaskCard'
+import { TaskDetailDialog } from './TaskDetailDialog'
 import { KanbanColumnSettings } from './KanbanColumnSettings'
 
 interface KanbanBoardProps {
@@ -52,8 +53,11 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
   const rollback = useSetAtom(rollbackTasksAtom)
   const applyReorderResult = useSetAtom(applyReorderResultAtom)
   const [activeTask, setActiveTask] = React.useState<ProjectTaskAtom | null>(null)
+  const [detailTask, setDetailTask] = React.useState<ProjectTaskAtom | null>(null)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [notice, setNotice] = React.useState('')
+  // 拖拽刚结束时浏览器仍会派发 click，用它抑制误触打开详情
+  const lastDragEndAtRef = React.useRef(0)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -66,11 +70,13 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
   }, [projectId, setActiveKanbanProjectId])
 
   const handleDragStart = (event: DragStartEvent): void => {
+    lastDragEndAtRef.current = Number.MAX_SAFE_INTEGER
     const taskId = String(event.active.id)
     setActiveTask(columns.flatMap((col) => col.tasks).find((task) => task.id === taskId) ?? null)
   }
 
   const handleDragEnd = (event: DragEndEvent): void => {
+    lastDragEndAtRef.current = Date.now()
     setActiveTask(null)
     const { active, over } = event
     if (!over) return
@@ -159,7 +165,15 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
       >
         <div className="flex gap-4 overflow-x-auto pb-2">
           {columns.map((col) => (
-            <KanbanColumn key={col.status.id} status={col.status} tasks={col.tasks} />
+            <KanbanColumn
+              key={col.status.id}
+              status={col.status}
+              tasks={col.tasks}
+              onTaskClick={(task) => {
+                if (Date.now() - lastDragEndAtRef.current < 200) return
+                setDetailTask(task)
+              }}
+            />
           ))}
           {columns.length === 0 && (
             <div className="text-sm text-muted-foreground py-12">暂无状态定义，请先在列设置中添加。</div>
@@ -173,6 +187,15 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
           ) : null}
         </DragOverlay>
       </DndContext>
+      {detailTask && (
+        <TaskDetailDialog
+          projectId={projectId}
+          task={detailTask}
+          statuses={columns.map((col) => col.status)}
+          onChanged={() => onChanged?.()}
+          onClose={() => setDetailTask(null)}
+        />
+      )}
       {settingsOpen && (
         <KanbanColumnSettings
           projectId={projectId}

@@ -12,9 +12,11 @@ import { AgentExecutionBadge } from '../AgentTeamPanel'
 
 interface TaskCardProps {
   task: ProjectTaskAtom
+  /** 点击（未触发拖拽阈值）时打开任务详情 */
+  onClick?: (task: ProjectTaskAtom) => void
 }
 
-export function TaskCard({ task }: TaskCardProps): React.ReactElement {
+export function TaskCard({ task, onClick }: TaskCardProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
   const isAgent = task.assignee?.userId?.startsWith('agent-') ?? false
   const [execStatus, setExecStatus] = React.useState<string | null>(null)
@@ -56,6 +58,7 @@ export function TaskCard({ task }: TaskCardProps): React.ReactElement {
       style={style}
       {...attributes}
       {...listeners}
+      onClick={onClick ? () => onClick(task) : undefined}
       className={`p-3 bg-white rounded-lg border shadow-sm cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow select-none ${execStatus === 'running' ? 'border-blue-300' : ''}`}
       data-testid={`kanban-card-${task.id}`}
     >

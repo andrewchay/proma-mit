@@ -13,6 +13,8 @@ import { TaskCard } from './TaskCard'
 interface KanbanColumnProps {
   status: ProjectTaskStatusAtom
   tasks: ProjectTaskAtom[]
+  /** 透传给 TaskCard：点击打开详情 */
+  onTaskClick?: (task: ProjectTaskAtom) => void
 }
 
 /** 语义组 → 默认列色（项目自定义状态可用 status.color 覆盖） */
@@ -25,7 +27,7 @@ const GROUP_COLORS: Record<ProjectTaskStatusAtom['stateGroup'], string> = {
   triage: 'bg-amber-50',
 }
 
-export function KanbanColumn({ status, tasks }: KanbanColumnProps): React.ReactElement {
+export function KanbanColumn({ status, tasks, onTaskClick }: KanbanColumnProps): React.ReactElement {
   const { setNodeRef, isOver } = useDroppable({ id: `column:${status.id}` })
 
   const overWip = status.wipLimit !== undefined && tasks.length > status.wipLimit
@@ -47,7 +49,7 @@ export function KanbanColumn({ status, tasks }: KanbanColumnProps): React.ReactE
           {tasks.length === 0 ? (
             <div className="text-sm text-muted-foreground text-center py-8">暂无任务</div>
           ) : (
-            tasks.map((task) => <TaskCard key={task.id} task={task} />)
+            tasks.map((task) => <TaskCard key={task.id} task={task} onClick={onTaskClick} />)
           )}
         </div>
       </SortableContext>

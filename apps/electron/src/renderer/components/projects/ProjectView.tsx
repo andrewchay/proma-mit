@@ -2856,7 +2856,7 @@ function priorityColor(p: Task['priority']): string {
   return map[p] ?? map.medium
 }
 
-function priorityLabel(p: Task['priority']): string {
+export function priorityLabel(p: Task['priority']): string {
   const map: Record<string, string> = {
     critical: '严重',
     high: '高',
