@@ -19,6 +19,7 @@ export interface ProjectTaskAtom {
   priority: 'low' | 'medium' | 'high' | 'critical'
   assignee?: { userId: string; displayName: string }
   completedAt?: number
+  dueDate?: number
   sortOrder: number
   createdAt: number
   updatedAt: number
