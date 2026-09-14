@@ -23,6 +23,7 @@ import {
 } from 'node:fs'
 import { join, extname, basename, relative, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { trackNoteReferenced } from './telemetry-tracking'
 import {
   getKnowledgeVaultsPath,
   getKnowledgeNotesPath,
@@ -441,6 +442,8 @@ export async function getKnowledgeContextForAgent(
 
   // 按相关性取前 N 条，估算 token（中文字符 ≈ 1 token，英文 ≈ 0.75）
   const chunks: string[] = []
+  // 记录实际进入上下文的笔记 id，供采集层统计「知识被使用」
+  const referencedNoteIds: string[] = []
   let estimatedTokens = 0
 
   for (const result of results.slice(0, 5)) {
@@ -453,12 +456,16 @@ export async function getKnowledgeContextForAgent(
     }
 
     chunks.push(chunk)
+    referencedNoteIds.push(note.id)
     estimatedTokens += chunkTokens
   }
 
   if (chunks.length === 0) {
     return ''
   }
+
+  // 采集：笔记被 Agent 引用（旁路观测，失败不影响上下文返回）
+  trackNoteReferenced(referencedNoteIds)
 
   return `## 知识库参考\n\n${chunks.join('\n---\n')}`
 }

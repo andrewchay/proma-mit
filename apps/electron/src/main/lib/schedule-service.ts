@@ -15,6 +15,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } fr
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { getCalendarEventsPath, getTasksPath } from './config-paths'
+import { trackMeetingAttended } from './telemetry-tracking'
 
 // ===== 类型定义 =====
 
@@ -220,6 +221,20 @@ export function createScheduleEvent(
     updatedAt: now,
   }
   appendJsonlLine(getCalendarEventsPath(), event)
+
+  // 采集：把 social / work 类的定时日程视为协作事件。
+  // 全天事件不记（无有效时长）；其他分类（family / health 等）属于私事，
+  // 不进入工作分析。埋点永不抛错。
+  if (!event.allDay) {
+    const category = event.category
+    if (category === 'social' || category === 'work') {
+      const minutes = Math.round(
+        (new Date(event.endTime).getTime() - new Date(event.startTime).getTime()) / 60000,
+      )
+      trackMeetingAttended(event.id, minutes, category)
+    }
+  }
+
   return event
 }
 

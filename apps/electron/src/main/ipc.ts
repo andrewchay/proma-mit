@@ -10,7 +10,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
@@ -279,6 +279,7 @@ import { getDingTalkConfig, saveDingTalkConfig, getDecryptedClientSecret, getDin
 import { dingtalkBridgeManager } from './lib/dingtalk-bridge-manager'
 import { getWeChatConfig } from './lib/wechat-config'
 import { wechatBridge } from './lib/wechat-bridge'
+import { trackNoteOpened } from './lib/telemetry-tracking'
 
 /** 文件浏览器中需要隐藏的系统文件 */
 const HIDDEN_FS_ENTRIES = new Set(['.DS_Store', 'Thumbs.db'])
@@ -4561,7 +4562,12 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.SEARCH_NOTES, async (_event, query, vaultId) => knowledgeSvc.searchKnowledge(query, vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.SEARCH_BY_TAG, async (_event, tag, vaultId) => knowledgeSvc.searchByTag(tag, vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_ALL_TAGS, async (_event, vaultId) => knowledgeSvc.getAllTags(vaultId))
-  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_NOTE, async (_event, id) => knowledgeSvc.getKnowledgeNote(id))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_NOTE, async (_event, id) => {
+    const note = knowledgeSvc.getKnowledgeNote(id)
+    // 采集：打开笔记（旁路观测，失败不影响返回）
+    if (note) trackNoteOpened(note.id, note.vaultId)
+    return note
+  })
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, async (_event, vaultId) => knowledgeSvc.listKnowledgeNotes(vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, async (_event, id) => knowledgeSvc.deleteKnowledgeNote(id))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
@@ -4592,6 +4598,17 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, async (_event, paperId) => academicSvc.getIntegrityReport(paperId))
   ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, async (_event, paperId) => academicSvc.getPeerReviewReport(paperId))
   ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, async (_event, paperId) => academicSvc.getRevisionTracking(paperId))
+
+  // ===== 行为采集（为非免费版分析能力提供数据基础） =====
+  const telemetrySvc = require('./lib/telemetry-service') as typeof import('./lib/telemetry-service')
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_SETTINGS, async () => telemetrySvc.getTelemetrySettings())
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.UPDATE_SETTINGS, async (_event, patch) => telemetrySvc.updateTelemetrySettings(patch))
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_STATS, async () => telemetrySvc.getTelemetryStats())
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_OVERVIEW, async () => telemetrySvc.getTelemetryOverview())
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.CLEAR_ALL, async () => { telemetrySvc.clearTelemetry(); return true })
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.CLEAR_SENSITIVE, async () => { telemetrySvc.clearSensitiveTelemetry(); return true })
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.LOG_MOOD, async (_event, input) => telemetrySvc.logMood(input))
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.LIST_MOOD, async (_event, limit) => telemetrySvc.listRecentMood(limit))
 
   // ===== 企业版连接 =====
   const { connectToServer, disconnectFromServer, getActiveConnection, migrateLocalToServer } = require('./lib/server-connection-service') as {

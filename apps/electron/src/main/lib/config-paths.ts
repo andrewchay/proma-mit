@@ -1520,3 +1520,54 @@ export function getAcademicArtifactsDir(): string {
   }
   return dir
 }
+
+/**
+ * 获取行为采集目录
+ *
+ * 存放被动采集的普通事件（知识 / 节律 / 协作）。敏感事件（情绪打卡）
+ * 单独存放在 getTelemetryMoodDir()，与普通事件物理隔离，便于单独删除
+ * 与审计。
+ *
+ * @returns ~/.gravita/telemetry/
+ */
+export function getTelemetryDir(): string {
+  const dir = join(getConfigDir(), 'telemetry')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取普通采集事件文件路径（JSONL 追加写入）
+ *
+ * @returns ~/.gravita/telemetry/events.jsonl
+ */
+export function getTelemetryEventsPath(): string {
+  return join(getTelemetryDir(), 'events.jsonl')
+}
+
+/**
+ * 获取敏感采集数据目录（情绪打卡）
+ *
+ * 与普通事件分开存放：一是让「只删敏感数据」能精确执行，二是避免
+ * 备份或导出普通数据时意外带出情绪记录。
+ *
+ * @returns ~/.gravita/telemetry-mood/
+ */
+export function getTelemetryMoodDir(): string {
+  const dir = join(getConfigDir(), 'telemetry-mood')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取情绪打卡事件文件路径
+ *
+ * @returns ~/.gravita/telemetry-mood/events.jsonl
+ */
+export function getTelemetryMoodPath(): string {
+  return join(getTelemetryMoodDir(), 'events.jsonl')
+}

@@ -55,6 +55,7 @@ import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgen
 import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
+import { trackSessionFinished, trackSessionStarted } from './telemetry-tracking'
 import { getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles } from './agent-workspace-manager'
 import { getRuntimeStatus } from './runtime-init'
 import { getSettings } from './settings-service'
@@ -808,11 +809,13 @@ export class AgentOrchestrator {
 
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logInfo(sessionId, `[${agentRuntime} runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
+      trackSessionFinished(sessionId, durationMs, { runtime: agentRuntime })
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logError(sessionId, `[${agentRuntime} runtime] 运行失败 模型=${modelId ?? '-'} 耗时=${durationMs}ms 错误=${message.slice(0, 300)}`)
+      trackSessionFinished(sessionId, durationMs, { runtime: agentRuntime, failed: true })
       console.error('[Agent Runtime] Proma runtime 运行失败:', error)
 
       // 用户主动中止时不走降级，直接向上抛出让外层处理
@@ -1092,11 +1095,13 @@ export class AgentOrchestrator {
 
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logInfo(sessionId, `[Pi Runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
+      trackSessionFinished(sessionId, durationMs, { runtime: 'pi' })
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logError(sessionId, `[Pi Runtime] 运行失败 模型=${modelId ?? '-'} 耗时=${durationMs}ms 错误=${message.slice(0, 300)}`)
+      trackSessionFinished(sessionId, durationMs, { runtime: 'pi', failed: true })
       console.error('[Pi Runtime] 运行失败:', error)
 
       if (message.includes('中止') || message.includes('aborted')) {

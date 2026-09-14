@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
 /** 保存邮箱配置的入参形态（仅用于类型推导） */
 type saveConfigInput = (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => unknown
 import type {
@@ -1486,6 +1486,21 @@ export interface ElectronAPI {
     getRevisionTracking: (paperId: string) => Promise<import('@gravitas/shared').RevisionTracking | null>
   }
 
+  // ===== 行为采集（为专业版分析能力提供数据基础） =====
+  telemetry: {
+    // 采集设置
+    getSettings: () => Promise<import('@gravitas/shared').TelemetrySettings>
+    updateSettings: (patch: Partial<import('@gravitas/shared').TelemetrySettings>) => Promise<import('@gravitas/shared').TelemetrySettings>
+    getStats: () => Promise<import('@gravitas/shared').TelemetryStats>
+    getOverview: () => Promise<import('@gravitas/shared').TelemetryOverview>
+    clearAll: () => Promise<boolean>
+    clearSensitive: () => Promise<boolean>
+
+    // 主动打卡
+    logMood: (input: import('@gravitas/shared').MoodCheckinInput) => Promise<import('@gravitas/shared').TelemetryEvent>
+    listMood: (limit?: number) => Promise<import('@gravitas/shared').TelemetryEvent[]>
+  }
+
   // ===== 出海邮件（收发与同步） =====
   outboundMail: {
     getConfig: () => Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>
@@ -2232,6 +2247,21 @@ const electronAPI: ElectronAPI = {
     getIntegrityReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, paperId) as Promise<import('@gravitas/shared').IntegrityReport | null>,
     getPeerReviewReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, paperId) as Promise<import('@gravitas/shared').PeerReviewReport | null>,
     getRevisionTracking: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, paperId) as Promise<import('@gravitas/shared').RevisionTracking | null>,
+  },
+
+  // ===== 行为采集（为专业版分析能力提供数据基础） =====
+  telemetry: {
+    // 采集设置
+    getSettings: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.GET_SETTINGS) as Promise<import('@gravitas/shared').TelemetrySettings>,
+    updateSettings: (patch: Partial<import('@gravitas/shared').TelemetrySettings>) => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.UPDATE_SETTINGS, patch) as Promise<import('@gravitas/shared').TelemetrySettings>,
+    getStats: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.GET_STATS) as Promise<import('@gravitas/shared').TelemetryStats>,
+    getOverview: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.GET_OVERVIEW) as Promise<import('@gravitas/shared').TelemetryOverview>,
+    clearAll: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.CLEAR_ALL) as Promise<boolean>,
+    clearSensitive: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.CLEAR_SENSITIVE) as Promise<boolean>,
+
+    // 主动打卡
+    logMood: (input: import('@gravitas/shared').MoodCheckinInput) => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.LOG_MOOD, input) as Promise<import('@gravitas/shared').TelemetryEvent>,
+    listMood: (limit?: number) => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.LIST_MOOD, limit) as Promise<import('@gravitas/shared').TelemetryEvent[]>,
   },
 
   // ===== 出海邮件（收发与同步） =====

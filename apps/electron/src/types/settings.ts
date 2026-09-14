@@ -4,7 +4,7 @@
  * 主题模式、IPC 通道等设置相关定义。
  */
 
-import type { AgentRuntime, EnvironmentCheckResult, ThinkingConfig, AgentEffort } from '@gravitas/shared'
+import type { AgentRuntime, EnvironmentCheckResult, ThinkingConfig, AgentEffort, TelemetrySettings } from '@gravitas/shared'
 
 /** 通知音场景类型 */
 export type NotificationSoundType = 'taskComplete' | 'permissionRequest' | 'exitPlanMode'
@@ -256,6 +256,11 @@ export interface AppSettings {
   marketingCapabilities?: string[]
   /** 已订阅的通用业务领域包 id（如 outbound-sourcing）。 */
   domainCapabilities?: string[]
+  /**
+   * 行为采集设置（为专业版分析能力提供数据基础）。
+   * 缺省时按 TELEMETRY_DEFAULT_ENABLED 处理：被动采集开启、情绪打卡关闭。
+   */
+  telemetry?: TelemetrySettings
   /** 语音输入设置（Access Token 以加密态存储，由专用服务解密后返回渲染进程） */
   voiceDictation?: VoiceDictationPersistedSettings
   /** 启动时自动清理临时文件（gravitas-preview、gravitas-installers），默认 true */
