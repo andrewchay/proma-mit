@@ -2,9 +2,9 @@
 
 > Gravitas 是开源 AI 桌面应用 **Proma**（github.com/ErlichLiu/Proma）的改造衍生版本。除特别注明外，内容表述为本项目视角。
 
-Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 Agent、工作区、Skills、MCP、远程机器人和记忆能力放在同一个开源客户端里。
+Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agent、可视化 Workflow、项目管理与 AI 员工、领域能力包、订阅商业化、企业版与私有化部署放在同一个客户端里，数据和配置尽量留在本地。
 
-它不是只面向闲聊的聊天框，而是一个可以长期沉淀个人工作流的 Agent 工作台：简单问题用 Chat，复杂任务交给 Agent，数据和配置尽量留在本地。
+它不只是聊天框，而是一个可以长期沉淀个人与团队工作流的 Agent 操作系统：简单问题用 Chat，复杂任务交给 Agent，反复执行的流程固化为 Workflow，管理性工作交给项目看板与 AI 员工，垂直领域（营销、出海 sourcing）通过领域能力包按需订阅启用。
 
 ![Gravitas 品牌海报](<./generated-images/gravitas-brand-doc-v2.png>)
 
@@ -13,73 +13,118 @@ Gravitas 是一个本地优先的 AI 桌面应用，把多模型 Chat、通用 A
 <source src="https://img.erlich.fun/personal-blog/uPic/%E7%AE%80%E5%8D%95%E4%BB%8B%E7%BB%8D%20Proma.mp4" type="video/mp4">
 </video>
 
+## 产品模块总览
+
+| 模块 | 一句话说明 |
+| --- | --- |
+| Chat / Agent / Workflow | 三种基础工作模式：回答、行动交付、流程固化复用 |
+| 项目管理与 AI 员工 | 看板 / 甘特 / 飞书钉钉同步 / 决策协作治理，AI 员工无人值守执行任务 |
+| 领域能力包 | 营销（达人营销 / Campaign / 投放）与出海 sourcing，按插件订阅分发 |
+| 订阅与权益 | 微信 / 支付宝下单、验签回调、订阅生命周期、权益门禁 |
+| 企业版与私有化部署 | 账号打通、工作区权限、审计合规、成员管理；登录 / 一键部署 / 仪表盘 |
+| 可观测与评测 | 会话 span 瀑布图、Token 统计、服务端运行档案 / Signals / 评估数据集飞轮 |
+| 桌面体验 | 灵动岛、语音输入、远程机器人、记忆、Goal、自动更新 |
+
 ## 现在能做什么
 
-- **项目决策与协作链路（本地治理闭环）**：项目详情提供由显式 ID 关系生成的决策链和协作链总览。决策链覆盖候选、证据与假设、DACI 拍板、影响任务、执行验证及替代版本；协作链覆盖项目、Task、责任人、Agent Run／Session、版本化交付物与验收交接。任务负责人来自权威任务，验收人和接收人来自本地身份目录；主进程固定当前操作身份，不能由表单冒充他人。交付须经负责人提交、验收人逐项确认 DoD、负责人发起交接及接收人确认／退回。旧记录追加保留，缺少责任时禁止继续流转。
-
-- **关键决策、DoD、依赖与流动治理**：关键决策必须填写 DACI 推进人、唯一拍板人、最迟决定时间、候选方案、关键假设、结构化原文定位和影响任务；来源引用保存来源类型、权威来源 ID、来源内定位符及可选校验值，修订会显式关联被替代版本并使相关交付物待复核。项目与任务 DoD 冻结到交付版本，任务写入 `completed` 前再次检查；管理员可为低风险任务逐项预配置“成果引用存在”或“权威执行已完成”验证器，全部通过才自动验收并留下系统检查记录。关键依赖交接契约绑定真实依赖边、上下游负责人、承诺时间和接收标准；双方填写交付／接收意见，下游逐项确认后才解除阻塞。Agent 交付冻结已完成执行的 Run、Agent、Session 和完成时间。流动健康展示在制品、等待、30 天吞吐、平均周期、最老工作项与可配置 SLE 超时。当前仍是本地单操作身份，尚未接入远端多人身份认证、外部证据自动对账、语义质量自动验收、交接消息发送、跨项目依赖与 Proactive 自动升级告警；记录的验收依据、来源校验值和成果引用不自动证明外部内容真实。
+### 基础工作模式
 
 - **Chat 模式**：多模型对话、附件解析、图片输入、Markdown / Mermaid / KaTeX / 代码高亮、并排对话、系统提示词、上下文管理。
-- **Agent 模式**：支持 Pi、AI SDK、Claude、Proma 等 runtime（默认 **Pi**，推荐 **Pi** 与 **AI SDK**），提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问。
-- **服务端 Executor**：仅在具备 Linux namespace 能力的 runner 上执行隔离工作负载；托管 CI 无法提供该能力时只验证请求边界和沙箱参数契约，并明确报告未完成实际隔离验收。
-- **Web Bridge（P0）**：Proma / AI SDK runtime 可打开独立、可见且隔离的受管浏览器，读取页面与结构化交互元素、截图、滚动、受控下载，并按逐次确认执行导航、Chrome CDP 接入、点击和输入；运行中的 Bridge 会在 Agent 标题栏显示状态并可一键停止，网页不能自行打开未受管窗口。
-- **Computer Use（macOS P0）**：Proma / AI SDK runtime 可在用户授权后列出显示器、读取指定屏幕截图、识别前台应用/窗口，并控制鼠标、键盘和滚动；屏幕读取和每一项桌面操作均经过 Agent 权限流程。
-- **SubAgent / Tasks**：复杂任务可以通过 Agent 工具拆分为子 Agent / Task，并在消息流中展示调用过程和结果；Pi / AI SDK / Claude runtime 均已复用同一套核心工具体系。
-- **Workflow 模式**：把反复要做的流程在画布上编排成可视化执行链（start / end、agent、tool、skill、transform、condition、approval 等节点），发布后可手动、定时或事件触发运行；支持节点能力白名单发布冻结、失败重试与错误路由、人工审批、无凭证模板的分发 / 升级 / 回滚，把可复用的工作流沉淀下来按设定的方式和时机反复执行。
-- **服务端 Web 路线（P0–P5 基础能力）**：提供独立 Bun server、Postgres 多租户 store、WebCrypto secret codec、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、优雅关停、本地双实例 E2E、AI SDK usage/cost ledger、预算/限速、追加式审计、运行指标和僵尸任务诊断；OIDC/JWT、KMS 和管理员审计已有实现与离线测试；生产身份源、真实云 KMS、完整 Web 业务体验和真实 Provider 仍需按部署环境验收。
-- **Skills & MCP**：每个工作区可以独立配置 Skills、MCP Server 和工作区文件，适合沉淀可复用能力。
-- **工作模块（项目管理 / 日程管家 / 自动化）**：左侧工作模块提供企业级项目管理与任务跟踪（项目 / 任务 / 子任务 / 看板 / 会议纪要导入与 AI 提取 / 风险报告，支持飞书 / 钉钉同步，会议纪要可从钉钉 / 飞书 / Lark 云文档一键拉取并由 AI 自动提取任务草稿，并可定义 **AI 员工**——指派任务后由 Agent 无人值守执行并回写结果：默认安全模式、按任务申请 Bash/写文件/联网权限、同项目并发排队、60s 心跳保活、可绑定 Workflow SOP 作为执行器、项目摘要/风险报告/AI 团队效能看板纳入 AI 维度）。看板支持 **拖拽排序与跨列改状态**（一次拖拽同时落库顺序与状态，失败自动回滚并提示原因）、**自定义状态列**（每项目独立的状态定义，按 backlog / unstarted / started / completed / cancelled / triage 六个语义组归类，可设颜色与 WIP 上限展示提醒，跨状态逻辑只认语义组）与 **列设置**（新建 / 改名 / 换色 / 删除时任务迁移）。飞书 / 钉钉同步按语义组双向映射（外部"完成 / 未完成"二值 ↔ 本地状态组），外部轮询回传不会把本地进行中 / 暂停状态打回待处理，且本地拖拽排序不触发外部 API 调用。与管理性子模块并行的还有日程管家（月视图日历 + 任务看板 + 自然语言创建 + 冲突检测 + 多日历源同步，含 macOS EventKit 桥接与智能提醒）与自动化（定时任务 + 运行记录 + 自动任务运行中心聚合）。工作模块与设置面板均为分组导航（模块注册表驱动），避免入口膨胀。项目管理同时支持 **项目工作区模式**（把 Agent 工作区直接绑定到本地项目目录，Agent 以该项目为根目录读写文件）与 **项目任务跟踪模式**（上面的项目 / 任务 / 看板体系），更多说明见下方「使用已有本地项目」与教程。
-- **远程机器人**：支持飞书 / Lark 机器人桥接，并已提供钉钉、微信桥接入口，用手机或群聊触发本机 Agent 工作流。
-- **记忆与工具**：Chat 和 Agent 可共享记忆能力，并支持联网搜索、内置 Chat 工具、Agent 推荐等辅助能力。
-- **目标管理（Goal，借鉴 LoopX）**：长生命周期目标跨会话追踪，支持 todos（所有权 / 声明）、用户门控（Gate）、证据沉淀与配额上限；会话可一键绑定到目标，Agent 运行中可主动读取 / 领取 / 完成 todo、追加证据，会话完成自动沉淀证据，自动化不可推进时自动阻断。后台 **目标（Goals）** 看板提供跨工作区聚合、阶段筛选、证据折叠导出与配额展示。
-- **Token 统计**：按会话 / 轮 / 工具 / Skill / MCP / 模型维度统计 token 消耗与费用，后台可查（\[设置 → Token 统计\]）。
-- **本地优先**：会话、工作区、附件、配置、Skills 等默认存储在 `~/.gravitas/`，核心会话和配置使用 JSON / JSONL；项目、营销和 Campaign 使用本地 SQLite，Context Store 保存可重建上下文索引。
-- **灵动岛（macOS）**：在主进程维护 Agent 会话状态机，仅在**需要用户关注**时触发灵动岛浮层——权限审批 / 计划确认 / 用户提问、任务失败、任务完成未读；任务执行中（无审批需求）不弹窗打扰，避免高频刷屏。所有会话均可点击打开导航，支持项目级静音与总开关。
-- **桌面体验**：自动更新、代理设置、文件预览、全局快捷键、快速任务窗口、语音输入、亮色 / 暗色 / 跟随系统主题。
+- **Agent 模式**：支持 Pi、AI SDK、Claude、Proma 等 runtime（默认 **Pi**，推荐 **Pi** 与 **AI SDK**），提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问；流式期间可追加输入（steer / 软中断），Pi runtime 恢复历史会话前按模型窗口与 usage 自动压缩上下文。
+- **Workflow 模式**：把反复要做的流程在画布上编排成可视化执行链（start / end、agent、tool、skill、transform、condition、approval 等节点），发布后可手动、定时或事件触发；支持节点能力白名单发布冻结、失败重试与错误路由、人工审批、无凭证模板的分发 / 升级 / 回滚。
+- **Skills & MCP**：每个工作区独立配置 Skills、MCP Server 和工作区文件；内置 Skill 集市与 Skill Set 分组开关，支持外部 Skill 导入并附带启发式安全审计。
+
+### AI 员工与项目治理
+
+- **AI 员工（Agent Employee）**：在项目管理中定义 AI 员工，指派任务后由 Agent 无人值守执行并回写结果——默认安全模式、按任务申请 Bash / 写文件 / 联网权限、同项目并发排队、60s 心跳保活、可绑定 Workflow SOP 作为执行器；支持 `@AI员工` 提及直接派发子任务。执行护栏包括**任务级 Token 配额**（UI 入口 + 消耗可见 + 用量查询）、**卡点 elicitation**（需要用户确认时外推通知）、乐观锁防并发冲突，以及**项目级 AI 成本面板**。
+- **看板与状态管理**：拖拽排序与跨列改状态一次落库、自定义状态列（按 backlog / unstarted / started / completed / cancelled / triage 六个语义组归类，可设颜色与 WIP 上限）、失败自动回滚；飞书 / 钉钉同步按语义组双向映射，外部轮询不会打回本地进行中状态，拖拽排序不触发外部 API。甘特图任务状态标注与优先级排序、项目级 high-level 风险徽标。
+- **项目决策与协作链路（本地治理闭环）**：决策链覆盖候选、证据与假设、DACI 拍板、影响任务、执行验证及替代版本（关键决策保存结构化来源定位与校验值，修订显式关联被替代版本）；协作链覆盖项目、Task、责任人、Agent Run / Session、版本化交付物与验收交接——负责人提交、验收人逐项确认 DoD、负责人发起交接、接收人确认或退回。项目与任务 DoD 冻结到交付版本，管理员可为低风险任务配置"成果引用存在 / 权威执行已完成"自动验收器；依赖交接契约绑定真实依赖边，逐项确认后才解除阻塞；流动健康展示 WIP、等待、30 天吞吐、平均周期与 SLE 超时。当前仍是本地单操作身份，远端多人身份认证与外部证据自动对账尚未接入。
+
+### 领域能力包（按订阅分发）
+
+- **营销能力包（ma-*）**：26 个达人营销 Skills（品牌 DNA、品牌屋、消费者洞察、KOL 金字塔、内容日历、脚本工坊、内容审核等）经营销 plugin 以订阅方式分发；配套**营销应用中心**（顶部菜单栏独立视图）、达人库 / 稿件审核 / 内容追踪 UI、Campaign 子系统（campaign-manager + 工具）、广告投放包（投放计划 / 调控审批 / 调控规则引擎）与共享素材层（广告视频生成的分镜 / 引擎 / 合成、视频创意管线）。
+- **出海 sourcing 能力包**：面向出海业务的检索核验、画像构建、邮件收发与漏斗指标，检索核验补齐后可完整走通 sourcing 工作流。
+
+### 订阅与权益（商业化）
+
+- **权益是付费能力的唯一权威**：本地开关不能解锁付费能力，领域包与高级能力由服务端下发的权益（entitlement）门禁。
+- **真实下单链路**：微信 Native 下单、支付宝 precreate、主动查单兜底；支付回调使用**真实验签**，堵住伪造开通的漏洞。
+- **订阅生命周期**：到期降级、退款收回、状态推导；桌面端提供订阅管理 UI、签名权益 API 验证与订阅引导页。
+- **账号登录**：邮箱验证码与 OAuth 登录（已替换早期手机号无验证登录），并补齐公网安全边界。
+
+### 企业版与私有化部署
+
+- **企业能力四阶段**：账号打通（服务端 none auth + Electron 连接 + 迁移向导）、工作区级权限落地（含开源版权限适配）、审计合规（完整性校验 + hash 链 + 法律保全）、成员管理（邀请 + 角色分配）；本地租户映射与数据迁移工具、配置版本化与审计日志。
+- **私有部署 minimal set**：local / OIDC / both 登录闭环、一键部署 + 部署烟测、健康与注册表仪表盘（成本 / 速度 / 容量 / 准确率）、子 Agent 父子树视图与会话管理。
+- **服务端 Web 路线（P0–P5 基础能力）**：独立 Bun server、Postgres 多租户 store、Redis Stream replay、S3-compatible workspace 文件、跨 worker task lease、预算 / 限速、追加式审计、运行指标与僵尸任务诊断；OIDC/JWT、KMS 和管理员审计已有实现与离线测试。生产身份源、真实云 KMS 和真实 Provider 仍需按部署环境验收。
+
+### 可观测与评测
+
+- **会话运行瀑布图**：Pi runtime 采集 tool / task span，JSONL 按月存储，会话面板可视化 span 瀑布图；任务卡点与 AI 成本进入项目级面板。
+- **Token 统计**：按会话 / 轮 / 工具 / Skill / MCP / 模型维度统计 token 消耗与费用（设置 → Token 统计）。
+- **服务端可观测闭环（P-I～P-IV）**：运行档案 trace_id 闭环 + span 每层 cost、基于 span 树的自然语言 Signals、Agent 自查运行档案、真实 input / output 采样生成评估数据集，形成"追踪 → 评估 → 再追踪"飞轮。
+- **评测与自演化**：能力 benchmark、toolset benchmark 与真实运行反馈、定时评测调度，支撑 self-evolution loop 与 agent-as-directory。
+
+### 安全与信任
+
+- **Web Bridge（P0）**：Proma / AI SDK runtime 打开独立、可见且隔离的受管浏览器（多标签 Electron CDP 引擎），按逐次确认执行导航、Chrome CDP 接入、点击和输入；上传只经系统文件选择器，最多 10 个文件 / 50MB，绝对路径不进入工具结果。
+- **Computer Use（macOS P0）**：用户授权后列出显示器、读取截图、识别前台应用 / 窗口并控制鼠标键盘滚动；敏感步骤进入专用"用户接管"状态，Agent 暂停直至用户完成。
+- **操作审计**：本机 JSONL 记录 Web Bridge 与 Computer Use 操作摘要，可按来源 / 会话 / 操作类型筛选与导出，不含页面正文、截图、敏感输入或本地绝对路径。
+- **权限体系**：safe / ask / allow-all 模式、计划确认、AskUser 追问、子 Agent 不能自动批准高风险操作。
+
+### 桌面体验与连接
+
+- **灵动岛（macOS）**：仅在需要用户关注时（权限审批 / 计划确认 / 用户提问、任务失败、完成未读）触发浮层，支持点击导航、项目级静音与总开关。
+- **远程机器人**：飞书 / Lark 桥接（消息同步、任务通知、OAuth），钉钉、微信桥接入口；外部 IM 统一 auto 权限模式并包装不可信群聊消息。
+- **记忆与工具**：Chat 和 Agent 共享跨会话记忆；联网搜索、内置 Chat 工具。
+- **目标管理（Goal，借鉴 LoopX）**：长生命周期目标跨会话追踪，todos（所有权 / 声明）、用户门控（Gate）、证据沉淀与配额上限；会话一键绑定目标，Agent 运行中主动读取 / 领取 / 完成 todo，自动化不可推进时自动阻断。
+- **其他**：文件预览工作台（文档双击独立窗口预览）、语音流式输入（应用内外 Ctrl + `）、全局快捷键、快速任务窗口、自动更新、代理设置、亮色 / 暗色主题。
+- **本地优先**：会话、工作区、附件、配置、Skills 默认存储在 `~/.gravitas/`；核心数据 JSON / JSONL，项目、营销与 Campaign 使用本地 SQLite，Context Store 为可重建索引。
 
 ## 快速开始
 
 ### 下载安装
 
-从 [GitHub Releases](https://github.com/andrewchay/proma-mit/releases) 下载开源版本。可用平台以对应发布页的实际附件为准；本地构建成功不等于该版本已发布。
-
-如果你希望开箱即用、减少 API 配置成本，也可以使用 [Proma 商业版](https://proma.cool/download)。商业版和开源版并行运行，主要区别是商业版提供内置渠道和订阅方案。
+从 [GitHub Releases](https://github.com/andrewchay/proma-mit/releases) 下载。可用平台以对应发布页的实际附件为准；本地构建成功不等于该版本已发布。
 
 ### 首次配置
 
 1. 打开 Gravitas，先完成环境检查。Agent 模式依赖本机基础环境，尤其是 Git、Node.js / Bun 以及可用的 Shell。
-2. 进入 **设置 &gt; 渠道**，添加至少一个 AI 供应商渠道，填写 Base URL、API Key 和模型列表。
-3. Chat 模式可以使用 OpenAI、Anthropic、Google 或 OpenAI 兼容协议的渠道。
-4. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）都兼容，开箱即用；AI SDK 支持 OpenAI-compatible 以及 Anthropic、Google provider package，也是后续服务端 Web 化的优先路径。Claude runtime 需要 Anthropic 或 Anthropic 兼容协议；Proma 作为较早的 provider-agnostic runtime 仍可使用但非首选。
-5. 进入 **设置 &gt; Agent**，选择默认 Agent 渠道、模型和工作区。新工作区只默认启用 `find-skills`、`proma-coach`、`skill-creator` 三个核心 Skills，其余内置能力保留在 Skill 集市按需安装；Skills 列表的分组电源按钮可以一次启用或停用该组的明确成员。
-6. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接，在设置页对应 Tab 中继续配置。
+2. 进入 **设置 > 渠道**，添加至少一个 AI 供应商渠道：填写 Base URL、API Key 和模型列表；也可使用订阅制端点（GitHub Copilot 设备流登录、ChatGPT Codex OAuth 等，登录后自动写入凭据并在模型选择处显示额度余额）。
+3. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）兼容，开箱即用；AI SDK 支持 OpenAI-compatible 与 Anthropic、Google provider，也是后续服务端 Web 化的优先路径。Claude runtime 需要 Anthropic 或兼容协议；Proma runtime 仍可用但非首选。
+4. 进入 **设置 > Agent**，选择默认 Agent 渠道、模型和工作区。新工作区只默认启用 `find-skills`、`proma-coach`、`skill-creator` 三个核心 Skills，其余内置能力保留在 Skill 集市按需安装；思考模式按模型推理等级矩阵分级。
+5. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接、订阅与领域包，在设置页对应 Tab 中继续配置。
 
 ### 使用已有本地项目
 
-在 Agent 左侧的“工作区”栏点击文件夹加号，选择已有项目目录。Gravitas 会把该目录作为 Agent 的实际工作目录（cwd）：文件浏览、`@` 文件引用和变更检测都会指向该项目，Agent 可以直接读写项目文件。
+在 Agent 左侧的"工作区"栏点击文件夹加号，选择已有项目目录。Gravitas 会把该目录作为 Agent 的实际工作目录（cwd）：文件浏览、`@` 文件引用和变更检测都会指向该项目，Agent 可以直接读写项目文件。
 
-选择本地项目不会把会话记录、MCP 配置或 Skills 写入项目根目录；这些仍保存在 Gravitas 的私有配置目录。普通“+”按钮则继续创建原有的隔离工作区。删除本地项目工作区只会移除 Gravitas 中的关联，不会删除项目文件夹。
+选择本地项目不会把会话记录、MCP 配置或 Skills 写入项目根目录；这些仍保存在 Gravitas 的私有配置目录。普通"+"按钮则继续创建原有的隔离工作区。删除本地项目工作区只会移除 Gravitas 中的关联，不会删除项目文件夹。
 
 ### 使用 Web Bridge
 
-在 Gravitas 或 AI SDK runtime 中，Agent 可通过 `WebBridgeNavigate` 打开网页，并用 `WebBridgeSnapshot`、`WebBridgeScreenshot`、`WebBridgeScroll` 查看页面。`WebBridgeNavigate`、`WebBridgeClick`、`WebBridgeType`、`WebBridgeDownload` 和 `WebBridgeUpload` 均需要逐次经过 Agent 权限流程，不能“始终允许”。上传时会额外弹出系统文件选择器：Agent 不能传入或读取本地路径，最多选择 10 个文件、总计 50MB，且绝对路径不会返回给模型。登录凭据、敏感信息、提交表单、支付、删除或授权等操作仍应由用户在最后一步确认或接管。
+在 Gravitas 或 AI SDK runtime 中，Agent 可通过 `WebBridgeNavigate` 打开网页，并用 `WebBridgeSnapshot`、`WebBridgeScreenshot`、`WebBridgeScroll` 查看页面。`WebBridgeNavigate`、`WebBridgeClick`、`WebBridgeType`、`WebBridgeDownload` 和 `WebBridgeUpload` 均需逐次经过 Agent 权限流程，不能"始终允许"。上传时会额外弹出系统文件选择器：Agent 不能传入或读取本地路径，最多选择 10 个文件、总计 50MB，且绝对路径不会返回给模型。登录凭据、敏感信息、提交表单、支付、删除或授权等操作应由用户在最后一步确认或接管。
 
-如需复用已有 Chrome 的登录态，可由用户自行以 `--remote-debugging-port=9222` 启动 Chrome，然后让 Agent 使用 `WebBridgeChromeTargets` 和 `WebBridgeConnectChrome` 连接指定页面。该 Bridge 仅连接 `127.0.0.1` 的调试端口，不会启动或关闭 Chrome；连接与所有有状态操作均走权限确认。
+如需复用已有 Chrome 的登录态，可由用户自行以 `--remote-debugging-port=9222` 启动 Chrome，然后让 Agent 使用 `WebBridgeChromeTargets` 和 `WebBridgeConnectChrome` 连接指定页面。该 Bridge 仅连接 `127.0.0.1` 的调试端口，不会启动或关闭 Chrome。
 
-在 **设置 &gt; 操作审计** 可查看本机 Web Bridge 与 Computer Use 的 JSONL 操作摘要，按来源、会话 ID、操作类型筛选，并导出当前筛选结果为 JSONL。审计不会上传，且不包含页面正文、截图、敏感输入、上传文件内容或本地绝对路径。
+在 **设置 > 操作审计** 可查看本机 Web Bridge 与 Computer Use 的 JSONL 操作摘要，按来源、会话 ID、操作类型筛选，并导出当前筛选结果为 JSONL。
 
 ### 使用 Computer Use（macOS）
 
-Computer Use 的正式支持范围为 Proma runtime 与 AI SDK runtime；Claude runtime 和 Pi runtime 仅做工具发现、权限拒绝与文本降级的兼容性验证，不承诺完整视觉输入或用户接管语义。
+Computer Use 的正式支持范围为 Proma runtime 与 AI SDK runtime；Claude runtime 和 Pi runtime 仅做工具发现、权限拒绝与文本降级的兼容性验证。
 
-Computer Use 目前仅在 macOS 提供原生系统控制，包含状态/能力查询、显示器枚举、前台应用和窗口识别、授权请求、截图、移动、点击、双击、拖拽、受限快捷键、输入与滚动。`ComputerUseScreenshot` 返回 `display_id` 和 `coordinateScale`；后续操作带回该缩放值即可自动将截图像素坐标换算为显示器逻辑坐标，适用于 Retina 和多显示器布局。敏感输入、支付、授权、发布、删除和最终提交会进入专用“用户接管”状态，Agent 暂停，用户完成后才继续。Windows/Linux 已保留相同工具接口和跨平台安装包资源，但 `ComputerUseCapabilities` 会明确报告未实现原生控制的降级状态；实际输入注入与权限流程须在对应系统真机验收。首次使用时，Agent 会通过 `ComputerUseRequestPermissions` 请求系统授权；在 macOS **系统设置 &gt; 隐私与安全性** 中为 Gravitas 打开：
+macOS 提供状态 / 能力查询、显示器枚举、前台应用和窗口识别、授权请求、截图、移动、点击、双击、拖拽、受限快捷键、输入与滚动。`ComputerUseScreenshot` 返回 `display_id` 和 `coordinateScale`，后续操作带回该缩放值即可自动换算坐标，适用于 Retina 和多显示器布局。密码、验证码、密钥、支付和最终提交等敏感步骤必须由用户接管。
 
-Windows 与 Linux 安装包会保留 Computer Use 能力查询，但当前会明确显示“控制不可用”；在对应平台完成原生输入实现和真机权限验收前，不会启用鼠标、键盘或窗口控制。
+首次使用时，Agent 会通过 `ComputerUseRequestPermissions` 请求系统授权；在 macOS **系统设置 > 隐私与安全性** 中为 Gravitas 打开：
 
 1. **辅助功能**：允许鼠标点击、键盘输入和滚动；
 2. **屏幕与系统音频录制**：允许读取屏幕画面。
 
-无需管理员密码、完全磁盘访问或输入监控权限。权限只允许 Gravitas 具备系统能力；Agent 每次读取屏幕或控制桌面仍会显示应用内确认，不能选择“本次会话总是允许”，子 Agent 也不能自动批准。密码、验证码、密钥、支付和最终提交等敏感步骤必须由用户接管。
+无需管理员密码、完全磁盘访问或输入监控权限。Windows 与 Linux 安装包保留能力查询，但在完成原生输入实现和真机权限验收前会明确显示"控制不可用"。
+
+### 订阅与领域包
+
+订阅管理与支付入口在应用内：选择订阅方案后经微信 / 支付宝完成支付，权益生效后对应领域包（营销、出海 sourcing 等）解锁；订阅到期或退款后权益自动收回。企业批量开通与私有化部署的授权发放请联系许可方。
 
 ### 服务端 Web 本地验收
 
@@ -97,17 +142,17 @@ bun run --filter='@gravitas/server' test:web-e2e
 docker compose -f apps/server/docker-compose.p2-test.yml down
 ```
 
-这套环境只用于本地验收；正式部署需提供 `PROMA_WEB_DATABASE_URL`、`PROMA_WEB_REDIS_URL`、S3-compatible storage 配置与 envelope key。`PROMA_WEB_TRUSTED_HEADER_AUTH=1` 仅限本地开发；生产环境设置 `PROMA_WEB_OIDC_ISSUER`、`PROMA_WEB_OIDC_AUDIENCE`、`PROMA_WEB_OIDC_JWKS_URL` 后，服务会校验 RS256 Bearer JWT，并从 `tenant_id` / `sub`（可由 `PROMA_WEB_OIDC_TENANT_CLAIM` / `PROMA_WEB_OIDC_USER_CLAIM` 覆盖）建立租户 scope。
+这套环境只用于本地验收；正式部署需提供 `PROMA_WEB_DATABASE_URL`、`PROMA_WEB_REDIS_URL`、S3-compatible storage 配置与 envelope key。生产环境设置 `PROMA_WEB_OIDC_ISSUER`、`PROMA_WEB_OIDC_AUDIENCE`、`PROMA_WEB_OIDC_JWKS_URL` 后，服务会校验 RS256 Bearer JWT 并建立租户 scope。
 
-如需启用当前 P3 的月度成本预检，可设置 `PROMA_WEB_MONTHLY_BUDGET_MICROUSD`（租户/用户总额）和 `PROMA_WEB_MODEL_MONTHLY_BUDGET_MICROUSD`（单模型额度，均为微美元整数）；达到预算后新任务会在调用模型前被拒绝。
+可选项：
 
-如需启用 Redis 固定窗口限速，同时设置 `PROMA_WEB_RATE_LIMIT_TASKS` 与 `PROMA_WEB_RATE_LIMIT_WINDOW_MS`；限额按 tenant/user/model 生效，并在调用模型前拒绝超额请求。
+- 月度成本预检：`PROMA_WEB_MONTHLY_BUDGET_MICROUSD`（租户/用户总额）与 `PROMA_WEB_MODEL_MONTHLY_BUDGET_MICROUSD`（单模型额度，微美元整数）。
+- Redis 固定窗口限速：`PROMA_WEB_RATE_LIMIT_TASKS` 与 `PROMA_WEB_RATE_LIMIT_WINDOW_MS`。
+- 评估数据集采样飞轮：`PROMA_WEB_SPAN_SAMPLING=1`（可选 `PROMA_WEB_SPAN_SAMPLE_RATE` 采样率，默认 0.1；默认关闭且不采集内容快照）。
 
-如需把运行时的真实输入/输出采样成评估数据集以形成「追踪→评估→再追踪」飞轮，可设置 `PROMA_WEB_SPAN_SAMPLING=1`（可选 `PROMA_WEB_SPAN_SAMPLE_RATE` 采样率 0..1 默认 0.1，`PROMA_WEB_SPAN_SAMPLE_MAX_BYTES` 单段截断上限默认 512）；默认关闭且不采集任何内容快照，`EvalSample` 仅含轻量结构化元数据与 token/成本。
+运行指标可通过 `GET /agent/metrics` 查询；Agent 运行时可观测 API（运行档案 span 树、Signals、评估数据集）及 `/agent/ui` 工作台见 [docs/server-observability-api.md](./docs/server-observability-api.md)。
 
-运行指标可通过 `GET /agent/metrics` 查询；`GET /agent/recovery/stale-tasks` 仅列出已超过 `PROMA_WEB_RECOVERY_STALE_AFTER_MS`（默认两倍任务租约）且没有有效租约的运行中任务。该诊断接口不会跨 worker 强制改写任务状态，避免误杀收尾中的任务。
-
-服务端还提供 Agent 运行时可观测 API（运行档案 span 树、Signals、评估数据集）及对应的 `/agent/ui` 工作台可视化 tab，端点与数据模型见 [docs/server-observability-api.md](./docs/server-observability-api.md)。
+私有部署（M1–M4：登录闭环、一键部署 + 烟测、健康仪表盘、子 Agent 树视图）的部署方式与验收清单见 `.context` 交接文档与 `apps/server/` 内说明。
 
 ## 模式选择
 
@@ -115,7 +160,6 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 - 日常问答、解释、翻译、润色、轻量代码讨论。
 - 读取附件内容后做总结、改写、比较。
-- 使用联网搜索或记忆工具增强一次性对话。
 - 同时对比多个模型输出，或用不同系统提示词做探索。
 
 ### Agent 适合
@@ -127,45 +171,43 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 ### Workflow 适合
 
-- 把反复要做的流程一次性编排成可视化流程（含 Agent、Skill、MCP 工具、条件分支、人工审批等节点），以后只需按设定触发。
-- 定时、事件驱动或需要人工审批流转的业务，例如订阅整理、定时出报告、多步处理后再人工确认。
-- 需要沉淀、复用到多个工作区并保证执行一致（能力收敛、无凭证模板分发）的流程。
+- 把反复要做的流程一次性编排成可视化流程，以后按设定触发。
+- 定时、事件驱动或需要人工审批流转的业务。
+- 需要沉淀、复用到多个工作区并保证执行一致的流程。
 
-简单说：**只需要回答时用 Chat，需要行动和交付结果时用 Agent，需要把流程固化下来反复执行时用 Workflow。**
+### AI 员工适合
+
+- 管理性、可拆解、可验收的重复任务：指派给 AI 员工后无人值守执行并回写到看板。
+- 需要配额护栏、卡点确认与执行留痕的团队协作场景。
+
+简单说：**只需要回答时用 Chat，需要行动和交付结果时用 Agent，需要把流程固化下来反复执行时用 Workflow，需要把任务交给"数字同事"时用 AI 员工。**
 
 ## 截图
 
 ### Chat 快速分析
 
-用 Chat 处理轻量但真实的分析任务：整理读者关注点、生成对比表，并把首屏文案快速定稿。
-
 ![Gravitas Chat 快速分析](<./docs/assets/screenshots/proma-chat-demo.png>)
 
 ### Agent 工作台
-
-Agent 在工作区里读取文件、推进任务、输出表格化结论，并把可复用文件保留在右侧工作区面板中。
 
 ![Gravitas Agent 工作台](<./docs/assets/screenshots/proma-agent-demo.png>)
 
 ### Skills
 
-每个工作区都可以沉淀专属 Skills。截图中的 `feedback-synthesis` 用于把用户反馈、访谈记录和 issue 聚合成主题、证据与优先级建议。
+每个工作区都可以沉淀专属 Skills。
 
 ![Gravitas 工作区 Skills](<./docs/assets/screenshots/proma-skills-demo.png>)
 
 ### Skills & MCP
 
-同一个工作区可以管理 stdio / HTTP MCP Server，按需启用或关闭，让 Agent 在不同项目里获得不同的外部上下文。
+同一个工作区可以管理 stdio / HTTP MCP Server，按需启用或关闭。
 
 ![Gravitas MCP 配置](<./docs/assets/screenshots/proma-mcp-demo.png>)
 
-### 流式语音输入(支持全局输入)
-
-Gravitas 支持豆包的流式语音输入功能，并且支持在 Gravitas 内使用和 Gravitas 外部使用：
+### 流式语音输入（支持全局输入）
 
 - Gravitas 内部使用：Ctrl + \` 触发识别，再次按下结束自动输入到 Gravitas 内对应的输入框
-- Gravitas 外部使用：Ctrl + \` 触发识别，再次按下结束自动输入到当前的光标所在处，如无光标则默认写入到剪贴板
-- 
+- Gravitas 外部使用：Ctrl + \` 触发识别，再次按下结束自动输入到当前光标所在处，如无光标则默认写入剪贴板
 
 ![Gravitas 语音输入](<./docs/assets/screenshots/proma-typeless-input.png>)
 
@@ -183,11 +225,13 @@ Gravitas 支持豆包的流式语音输入功能，并且支持在 Gravitas 内�
 | MiniMax | 支持 | 支持 | Anthropic 兼容协议 |
 | 豆包 | 支持 | 支持 | Anthropic 兼容协议 |
 | 通义千问 | 支持 | 支持 | Anthropic 兼容协议 |
+| GitHub Copilot | — | 支持 | 设备流 OAuth 登录，额度面板 |
+| ChatGPT (Codex) | — | 支持 | OAuth 登录 + 自动刷新，额度面板 |
 | 自定义端点 | 支持 | 支持 | OpenAI 兼容协议 / AI SDK runtime |
 
-**推荐使用 Pi 和 AI SDK**。Pi 是当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与部分流式输出，对多种渠道协议兼容，适合大多数个人日常任务；AI SDK 能力相近，也是后续服务端 Web 化优先路径。Claude runtime 仍保留 SDK 原生 session / snapshot 能力（fork / rewind 最接近完整时间线恢复）；Proma 作为较早的 provider-agnostic runtime 仍可用但能力相对有限，新任务建议优先 Pi 或 AI SDK。
+**推荐使用 Pi 和 AI SDK**。Pi 是当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与流式输出，对多种渠道协议兼容；AI SDK 能力相近，也是后续服务端 Web 化优先路径。Claude runtime 保留 SDK 原生 session / snapshot 能力（fork / rewind 最接近完整时间线恢复）；Proma 作为较早的 provider-agnostic runtime 仍可用但能力相对有限。
 
-Pi Runtime 会在恢复历史会话前按模型上下文窗口和最近一次 usage 自动判断是否压缩；`kimi-for-coding` 按 256K 窗口处理。压缩成功后会持久化 `compact_boundary` 和最近历史，再继续当前回合；压缩中止或没有结果时不会写入成功审计。
+订阅制端点（Copilot / Codex 等）通过预设清单做动态模型发现，登录后自动刷新凭据；思考模式按模型推理等级矩阵分级，而非简单布尔开关。
 
 ## 本地数据
 
@@ -310,6 +354,7 @@ shared 类型和 IPC 常量
 - `agent-orchestrator.ts`：Agent 编排、环境变量、SDK 调用、事件流、错误处理。
 - `agent-session-manager.ts`：Agent 会话索引和 JSONL 消息持久化。
 - `agent-workspace-manager.ts`：工作区、MCP、Skills 和工作区文件管理。
+- `project-chain.ts` / `project-chain-service.ts`：版本化决策与协作链、交付物验收交接状态机。
 - `chat-service.ts`：Chat 流式调用、Provider Adapter、工具活动。
 - `conversation-manager.ts`：Chat 会话索引和消息存储。
 - `channel-manager.ts`：渠道 CRUD、API Key 加密、连接测试、模型获取。

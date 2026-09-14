@@ -53,6 +53,8 @@ import themeForestMorning from '@/assets/theme-previews/theme-forest-morning.web
 import themeOceanDark from '@/assets/theme-previews/theme-ocean-dark.webp'
 import themeForestNight from '@/assets/theme-previews/theme-forest-night.webp'
 import themeMorandiNight from '@/assets/theme-previews/theme-morandi-night.webp'
+import themeEmberLight from '@/assets/theme-previews/theme-ember-light.webp'
+import themeEmberDark from '@/assets/theme-previews/theme-ember-dark.webp'
 
 /** 主题选项 */
 const THEME_OPTIONS = [
@@ -126,6 +128,18 @@ const SPECIAL_STYLES: readonly SpecialStyle[] = [
     imageScale: 1.15,
     objectPosition: '44% 58%',
   },
+  {
+    id: 'ember-light',
+    name: '余烬晨光',
+    variant: 'light',
+    image: themeEmberLight,
+  },
+  {
+    id: 'ember-dark',
+    name: '余烬暗夜',
+    variant: 'dark',
+    image: themeEmberDark,
+  },
 ]
 
 /** 各主题遮罩颜色（实心背景 + 浅色文字，与 CSS --primary 对应） */
@@ -136,6 +150,8 @@ const STYLE_MASK_COLORS: Record<SpecialStyleId, { bg: string; text: string }> = 
   'ocean-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(205, 50%, 82%)' },
   'forest-dark':  { bg: 'rgba(0,0,0,0.8)', text: 'hsl(150, 35%, 75%)' },
   'slate-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(18, 20%, 88%)' },
+  'ember-light':  { bg: 'hsl(22, 60%, 52%)',  text: 'hsl(22, 60%, 88%)' },
+  'ember-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(22, 60%, 65%)' },
 }
 
 /** 图标变体定义 */

@@ -150,7 +150,7 @@ export interface ShortcutOverrides {
 export type ThemeMode = 'light' | 'dark' | 'system' | 'special'
 
 /** 特殊风格主题 */
-export type ThemeStyle = 'default' | 'ocean-light' | 'ocean-dark' | 'forest-light' | 'forest-dark' | 'slate-light' | 'slate-dark'
+export type ThemeStyle = 'default' | 'ocean-light' | 'ocean-dark' | 'forest-light' | 'forest-dark' | 'slate-light' | 'slate-dark' | 'ember-light' | 'ember-dark'
 
 /** 默认主题模式 */
 export const DEFAULT_THEME_MODE: ThemeMode = 'dark'

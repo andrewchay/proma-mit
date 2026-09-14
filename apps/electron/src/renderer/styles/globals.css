@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    --background: 0 0% 93%;
     --foreground: 0 0% 3.9%;
     --muted: 0 0% 96.1%;
     --muted-foreground: 0 0% 45.1%;
@@ -20,13 +20,13 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
     --stop-hover-bg: hsla(0, 80%, 60%, 0.12);
-    --card: 0 0% 100%;
+    --card: 0 0% 93%;
     --card-foreground: 0 0% 3.9%;
-    --popover: 0 0% 100%;
+    --popover: 0 0% 93%;
     --popover-foreground: 0 0% 3.9%;
-    --dialog: 0 0% 100%;
+    --dialog: 0 0% 93%;
     --dialog-foreground: 0 0% 3.9%;
-    --content-area: 0 0% 100%;            /* 主内容区域背景 */
+    --content-area: 0 0% 93%;            /* 主内容区域背景 */
     /* 毛玻璃 Tooltip：深色半透明背景 + 白色文字 */
     --tooltip: 0 0% 15%;
     --tooltip-foreground: 0 0% 98%;
@@ -261,6 +261,78 @@
     --dashed-border-hover: 18 20% 50% / 0.55;
   }
 
+  /* ===== 陶土余烬色系 ===== */
+
+  /* 余烬晨光（浅色） - 陶土暖橙调，温暖活力 */
+  .theme-ember-light {
+    --background: 25 30% 93%;             /* #f5efe9 背景（侧边栏） */
+    --foreground: 20 15% 18%;             /* #332a26 前景文字 */
+    --content-area: 25 25% 96%;           /* #faf7f4 内容区域 */
+    --muted: 25 20% 88%;                  /* #e8ddd4 次要背景 */
+    --muted-foreground: 20 10% 45%;       /* #7d6e66 次要文字 */
+    --border: 25 15% 82%;                 /* #d9cfc7 边框 */
+    --primary: 22 60% 52%;                /* #d27640 陶土橙主色 */
+    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
+    --secondary: 25 18% 91%;              /* #ede4dc 二级背景 */
+    --secondary-foreground: 20 15% 22%;   /* #3d332e 二级前景 */
+    --accent: 22 30% 88%;                 /* #e8d5c8 强调背景 */
+    --accent-foreground: 22 55% 35%;      /* #8a4a24 强调文字 */
+    --ring: 22 60% 52%;                   /* #d27640 聚焦环 */
+    --card: 25 25% 96%;                   /* #faf7f4 卡片背景 */
+    --card-foreground: 20 15% 18%;        /* #332a26 卡片前景 */
+    --input: 25 18% 91%;                  /* #ede4dc 输入框背景 */
+    --popover: 25 22% 97%;                /* #fcf9f7 弹出层 */
+    --popover-foreground: 20 15% 18%;     /* #332a26 弹出前景 */
+    --dialog: 0 0% 100%;                  /* #ffffff 弹窗背景 */
+    --dialog-foreground: 20 15% 18%;      /* #332a26 弹窗前景 */
+    --destructive: 0 72% 51%;             /* #dc2828 危险色 */
+    --destructive-foreground: 0 0% 100%;  /* #ffffff 危险前景 */
+    --stop-hover-bg: hsla(0, 70%, 50%, 0.12);
+    --tooltip: 20 15% 20%;                /* #372e29 Tooltip */
+    --tooltip-foreground: 0 0% 98%;       /* #fafafa Tooltip前景 */
+    --tooltip-muted: 20 10% 60%;          /* #a89890 Tooltip弱 */
+    /* 代码块背景 - 陶土深棕 */
+    --code-bg: 20 25% 14%;                /* #2c2019 深陶土 */
+    /* 虚线边框色 */
+    --dashed-border: 22 60% 52% / 0.35;
+    --dashed-border-hover: 22 60% 52% / 0.50;
+  }
+
+  /* 余烬暗夜（深色） - 深炭灰 + 陶土橙点缀 */
+  .theme-ember-dark {
+    --background: 240 3% 17%;             /* #2c2c2e 背景（侧边栏） */
+    --foreground: 30 8% 92%;              /* #ece9e6 温暖前景文字 */
+    --content-area: 240 4% 12%;           /* #1e1e20 内容区域 */
+    --muted: 240 3% 22%;                  /* #37373a 次要背景 */
+    --muted-foreground: 30 5% 60%;        /* #9c9791 次要文字 */
+    --border: 240 3% 26%;                 /* #414144 边框 */
+    --primary: 22 60% 52%;                /* #d27640 陶土橙主色 */
+    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
+    --secondary: 240 3% 20%;              /* #333336 二级背景 */
+    --secondary-foreground: 30 8% 90%;    /* #e8e5e2 二级前景 */
+    --accent: 240 4% 24%;                 /* #3c3c3f 强调背景 */
+    --accent-foreground: 22 70% 65%;      /* #e89b6a 浅陶土橙强调文字 */
+    --ring: 22 60% 52%;                   /* #d27640 聚焦环 */
+    --card: 240 3% 18%;                   /* #2e2e30 卡片背景 */
+    --card-foreground: 30 8% 92%;         /* #ece9e6 卡片前景 */
+    --input: 240 3% 22%;                  /* #37373a 输入框背景 */
+    --popover: 240 3% 20%;                /* #333336 弹出层 */
+    --popover-foreground: 30 8% 92%;      /* #ece9e6 弹出前景 */
+    --dialog: 240 3% 22%;                 /* #37373a 弹窗背景 */
+    --dialog-foreground: 30 8% 92%;       /* #ece9e6 弹窗前景 */
+    --destructive: 0 55% 45%;             /* 中饱和度红 */
+    --destructive-foreground: 0 0% 98%;   /* #fafafa 危险前景 */
+    --stop-hover-bg: hsl(0, 35%, 18%);
+    --tooltip: 240 4% 24%;                /* #3c3c3f Tooltip */
+    --tooltip-foreground: 0 0% 98%;       /* #fafafa Tooltip前景 */
+    --tooltip-muted: 30 5% 65%;           /* #aaa5a0 Tooltip弱 */
+    /* 代码块背景 - 深炭灰 */
+    --code-bg: 240 4% 14%;                /* #232325 深炭灰 */
+    /* 虚线边框色 */
+    --dashed-border: 22 60% 52% / 0.35;
+    --dashed-border-hover: 22 60% 52% / 0.50;
+  }
+
   /* 莫兰迪夜（深色） */
   .theme-slate-dark {
     /* 基础色 - 侧边栏与内容区对调 */
@@ -397,7 +469,8 @@
 /* 深色特殊主题 dialog 光晕效果 */
 .theme-ocean-dark [data-radix-dialog-content],
 .theme-forest-dark [data-radix-dialog-content],
-.theme-slate-dark [data-radix-dialog-content] {
+.theme-slate-dark [data-radix-dialog-content],
+.theme-ember-dark [data-radix-dialog-content] {
   box-shadow:
     0 0 40px 8px rgba(255, 255, 255, 0.06),
     0 25px 50px -12px rgba(0, 0, 0, 0.5);
@@ -410,6 +483,8 @@
 .theme-forest-dark .shell-bg { background: linear-gradient(135deg, hsl(150 20% 5%) 0%, hsl(150 18% 7%) 100%); }
 .theme-slate-light .shell-bg { background: linear-gradient(135deg, hsl(40 6% 84%) 0%, hsl(40 6% 86%) 100%); }
 .theme-slate-dark .shell-bg  { background: linear-gradient(135deg, hsl(270 10% 7%) 0%, hsl(260 8% 9%) 100%); }
+.theme-ember-light .shell-bg { background: linear-gradient(135deg, hsl(25 25% 88%) 0%, hsl(25 20% 91%) 100%); }
+.theme-ember-dark .shell-bg  { background: linear-gradient(135deg, hsl(240 4% 10%) 0%, hsl(240 3% 14%) 100%); }
 
 /* ===== 特殊主题：模式切换器选中状态 ===== */
 /* 晴空碧海：蓝色背景滑块 + 白色文字 */
@@ -454,6 +529,24 @@
   box-shadow: 0 2px 4px rgba(189, 165, 155, 0.4);
 }
 .theme-slate-light .mode-btn-selected {
+  color: #ffffff !important;
+}
+
+/* 余烬晨光主题 */
+.theme-ember-light .mode-slider {
+  background: hsl(22 60% 52%) !important;   /* #d27640 陶土橙主色 */
+  box-shadow: 0 2px 4px rgba(210, 118, 64, 0.3);
+}
+.theme-ember-light .mode-btn-selected {
+  color: #ffffff !important;
+}
+
+/* 余烬暗夜主题 */
+.theme-ember-dark .mode-slider {
+  background: hsl(22 60% 52%) !important;   /* #d27640 陶土橙主色 */
+  box-shadow: 0 2px 4px rgba(210, 118, 64, 0.3);
+}
+.theme-ember-dark .mode-btn-selected {
   color: #ffffff !important;
 }
 
@@ -548,6 +641,33 @@
   color: inherit !important;
 }
 
+/* ===== 余烬主题：会话/工作区选中状态 ===== */
+/* 余烬晨光：浅陶土背景 + 深棕文字 */
+.theme-ember-light .session-item-selected,
+.theme-ember-light .workspace-item-selected,
+.theme-ember-light .tab-item-selected {
+  background: hsl(22 35% 82%) !important;   /* 浅陶土背景 */
+  color: hsl(22 55% 28%) !important;        /* 深棕文字 */
+}
+.theme-ember-light .session-item-selected *,
+.theme-ember-light .workspace-item-selected *,
+.theme-ember-light .tab-item-selected * {
+  color: inherit !important;
+}
+
+/* 余烬暗夜：深灰背景 + 陶土橙文字 */
+.theme-ember-dark .session-item-selected.session-item-selected,
+.theme-ember-dark .workspace-item-selected.workspace-item-selected,
+.theme-ember-dark .tab-item-selected.tab-item-selected {
+  background-color: hsl(240 4% 24%) !important;  /* 深灰背景 */
+  color: hsl(22 70% 65%) !important;        /* 陶土橙文字 */
+}
+.theme-ember-dark .session-item-selected *,
+.theme-ember-dark .workspace-item-selected *,
+.theme-ember-dark .tab-item-selected * {
+  color: inherit !important;
+}
+
 /* ===== 工作区 Badge 文字颜色（追踪 workspace-item-selected 的字色） ===== */
 /* 默认主题（light / dark / system）兜底色：与原先 text-foreground/40 保持一致 */
 .workspace-badge {
@@ -577,6 +697,14 @@
 .theme-slate-dark .workspace-badge {
   color: hsl(15 30% 75%);
 }
+/* 余烬晨光 */
+.theme-ember-light .workspace-badge {
+  color: hsl(22 55% 28%);
+}
+/* 余烬暗夜 */
+.theme-ember-dark .workspace-badge {
+  color: hsl(22 70% 65%);
+}
 
 /* ===== TabBar 背景 ===== */
 /* 默认背景 */
@@ -599,6 +727,11 @@
   box-shadow: inset 0 -1px 0 0 hsl(260 10% 18% / 0.6);
 }
 
+/* 余烬暗夜：底部浅色阴影勾勒轮廓 */
+.theme-ember-dark .tabbar-bg {
+  box-shadow: inset 0 -1px 0 0 hsl(240 4% 22% / 0.6);
+}
+
 /* ===== 输入框段落紧凑行距（仅作用于输入框内的 tiptap 编辑器） ===== */
 .rich-text-input .tiptap p {
   margin: 0;
@@ -616,7 +749,8 @@
 /* 深色主题：使用 muted bg + 正常前景色 */
 .dark .tiptap pre,
 .theme-ocean-dark .tiptap pre,
-.theme-slate-dark .tiptap pre {
+.theme-slate-dark .tiptap pre,
+.theme-ember-dark .tiptap pre {
   background-color: hsl(var(--muted));
   color: hsl(var(--foreground));
 }
@@ -640,6 +774,11 @@
 /* 莫兰迪夜: RGB 36 35 39 */
 .theme-slate-dark .code-block-wrapper > div:first-child {
   background: rgb(36, 35, 39) !important;
+}
+
+/* 余烬暗夜: RGB 46 46 48 */
+.theme-ember-dark .code-block-wrapper > div:first-child {
+  background: rgb(46, 46, 48) !important;
 }
 
 /* 快速任务窗口：透明背景 + 无拖拽 */
@@ -885,6 +1024,28 @@
   background-color: hsl(15 25% 68% / 0.40) !important;
 }
 
+/* 余烬晨光 ember-light */
+.theme-ember-light .scroll-progress-thumb {
+  background-color: hsl(22 60% 52% / 0.18);
+}
+.theme-ember-light .scroll-progress-thumb:hover {
+  background-color: hsl(22 60% 52% / 0.30);
+}
+.theme-ember-light .scroll-progress-thumb-active {
+  background-color: hsl(22 60% 52% / 0.40) !important;
+}
+
+/* 余烬暗夜 ember-dark */
+.theme-ember-dark .scroll-progress-thumb {
+  background-color: hsl(22 60% 52% / 0.20);
+}
+.theme-ember-dark .scroll-progress-thumb:hover {
+  background-color: hsl(22 60% 52% / 0.32);
+}
+.theme-ember-dark .scroll-progress-thumb-active {
+  background-color: hsl(22 60% 52% / 0.42) !important;
+}
+
 /* ===== 计划模式：输入框定位上下文 ===== */
 .plan-mode-border {
   position: relative;
@@ -895,6 +1056,9 @@
 }
 .theme-forest-dark .plan-mode-border .plan-mode-stroke {
   stroke: hsl(151 40% 45% / 0.7);
+}
+.theme-ember-dark .plan-mode-border .plan-mode-stroke {
+  stroke: hsl(22 60% 52% / 0.7);
 }
 
 /* ===== prose inline code：移除 Tailwind Typography 默认的前后反引号伪元素 ===== */
@@ -1193,7 +1357,8 @@
 
 .dark .ProseMirror pre.markdown-code-block,
 .theme-ocean-dark .ProseMirror pre.markdown-code-block,
-.theme-slate-dark .ProseMirror pre.markdown-code-block {
+.theme-slate-dark .ProseMirror pre.markdown-code-block,
+.theme-ember-dark .ProseMirror pre.markdown-code-block {
   background: hsl(var(--muted)) !important;
   color: hsl(var(--foreground)) !important;
 }
