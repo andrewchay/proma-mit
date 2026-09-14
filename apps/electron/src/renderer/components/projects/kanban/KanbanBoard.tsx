@@ -139,6 +139,10 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
     onChanged?.()
   }
 
+  const activeStateGroup = activeTask
+    ? columns.find((col) => col.status.id === activeTask.status)?.status.stateGroup ?? 'unstarted'
+    : 'unstarted'
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -182,10 +186,7 @@ export function KanbanBoard({ projectId, onChanged }: KanbanBoardProps): React.R
         <DragOverlay>
           {activeTask ? (
             <div className="w-64">
-              <TaskCard
-                task={activeTask}
-                columnStateGroup={columns.find((col) => col.status.id === activeTask.status)?.status.stateGroup ?? 'unstarted'}
-              />
+              <TaskCard task={activeTask} columnStateGroup={activeStateGroup} />
             </div>
           ) : null}
         </DragOverlay>

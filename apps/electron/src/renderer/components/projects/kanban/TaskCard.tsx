@@ -1,7 +1,7 @@
 /**
  * 看板任务卡片 — Task Card
  *
- * 可拖拽卡片（@dnd-kit/sortable）：显示标题/描述/负责人 + AI 员工徽标。
+ * 可拖拽卡片（@dnd-kit/sortable）：显示标题/描述/负责人/截止日期紧迫感徽标（completed/cancelled 语义组不展示）+ AI 员工徽标。
  * Agent 负责人的卡片拉取最新执行记录，live 显示 running/failed 等状态（Linear Agent Session 模式）。
  */
 import * as React from 'react'
@@ -70,7 +70,7 @@ export function TaskCard({ task, columnStateGroup, onClick }: TaskCardProps): Re
       {task.description && (
         <p className="text-xs text-muted-foreground mt-1 line-clamp-2 pointer-events-none">{task.description}</p>
       )}
-      {(task.assignee || execStatus || task.dueDate !== undefined) && (
+      {(task.assignee || execStatus || (!isDone && !!task.dueDate)) && (
         <div className="mt-2 flex items-center gap-1 flex-wrap">
           <DueDateBadge dueDate={task.dueDate} isDone={isDone} />
           {task.assignee && (
