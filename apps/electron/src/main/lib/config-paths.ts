@@ -1418,3 +1418,67 @@ export function getMarketingDir(): string {
   }
   return dir
 }
+
+/**
+ * 获取知识库索引目录
+ *
+ * @returns ~/.proma-mit/knowledge/
+ */
+export function getKnowledgeDir(): string {
+  const dir = join(getConfigDir(), 'knowledge')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建知识库目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取知识库 Vault 配置路径
+ *
+ * @returns ~/.proma-mit/knowledge/vaults.json
+ */
+export function getKnowledgeVaultsPath(): string {
+  return join(getKnowledgeDir(), 'vaults.json')
+}
+
+/**
+ * 获取知识库笔记索引路径
+ *
+ * @returns ~/.proma-mit/knowledge/notes.json
+ */
+export function getKnowledgeNotesPath(): string {
+  return join(getKnowledgeDir(), 'notes.json')
+}
+
+/**
+ * 获取知识库图谱路径
+ *
+ * @returns ~/.proma-mit/knowledge/graph.json
+ */
+export function getKnowledgeGraphPath(): string {
+  return join(getKnowledgeDir(), 'graph.json')
+}
+
+/**
+ * 获取分析引擎目录
+ *
+ * @returns ~/.proma-mit/analysis/
+ */
+export function getAnalysisDir(): string {
+  const dir = join(getConfigDir(), 'analysis')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建分析引擎目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取分析报告存储路径
+ *
+ * @returns ~/.proma-mit/analysis/reports.json
+ */
+export function getAnalysisReportsPath(): string {
+  return join(getAnalysisDir(), 'reports.json')
+}

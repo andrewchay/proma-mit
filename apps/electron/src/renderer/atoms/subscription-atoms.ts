@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import type { EntitlementSnapshot, SubscriptionCapabilityId } from '@gravitas/shared'
-import { canUseCapability, getEntitlementStatus } from '@gravitas/shared'
+import { canUseCapability, getEntitlementStatus, isFreeCapability } from '@gravitas/shared'
 
 export interface SubscriptionState {
   accountId?: string
@@ -24,6 +24,11 @@ export function selectCanUseCapability(
   state: SubscriptionState,
   capability: SubscriptionCapabilityId,
 ): boolean {
+  // 免费版能力：无需订阅即可使用
+  if (isFreeCapability(capability)) {
+    return true
+  }
+  
   if (!state.entitlement) return false
   const now = new Date()
   const status = getEntitlementStatus(state.entitlement, now)

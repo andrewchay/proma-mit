@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS } from '../types'
 /** 保存邮箱配置的入参形态（仅用于类型推导） */
 type saveConfigInput = (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => unknown
 import type {
@@ -1421,6 +1421,52 @@ export interface ElectronAPI {
   /** 获取当前订阅状态 */
   getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
 
+  // ===== 知识库（免费版基础能力） =====
+  knowledge: {
+    // Vault 管理
+    listVaults: () => Promise<import('@gravitas/shared').KnowledgeVault[]>
+    createVault: (input: Omit<import('@gravitas/shared').KnowledgeVault, 'id' | 'createdAt' | 'lastIndexedAt'>) => Promise<import('@gravitas/shared').KnowledgeVault>
+    updateVault: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeVault>) => Promise<import('@gravitas/shared').KnowledgeVault | null>
+    deleteVault: (id: string) => Promise<boolean>
+
+    // 索引
+    indexVault: (vaultId: string) => Promise<{ indexed: number; errors: string[] }>
+    indexAllVaults: () => Promise<Array<{ vaultId: string; indexed: number; errors: string[] }>>
+
+    // 搜索
+    searchNotes: (query: string, vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeSearchResult[]>
+    searchByTag: (tag: string, vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeNote[]>
+    getAllTags: (vaultId?: string) => Promise<Array<{ tag: string; count: number }>>
+
+    // 笔记
+    getNote: (id: string) => Promise<import('@gravitas/shared').KnowledgeNote | null>
+    listNotes: (vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeNote[]>
+    deleteNote: (id: string) => Promise<boolean>
+
+    // 图谱
+    getGraph: (vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeGraph>
+
+    // Agent 上下文
+    getContextForAgent: (query: string, maxTokens?: number) => Promise<string>
+  }
+
+  // ===== 分析引擎（免费版基础能力） =====
+  analysis: {
+    // 报告管理
+    listReports: (type?: string) => Promise<import('@gravitas/shared').AnalysisReport[]>
+    getReport: (id: string) => Promise<import('@gravitas/shared').AnalysisReport | null>
+    deleteReport: (id: string) => Promise<boolean>
+
+    // 报告生成
+    generateTimeReport: (range: { startDate: string; endDate: string }) => Promise<import('@gravitas/shared').AnalysisReport>
+    generateProductivityReport: (range: { startDate: string; endDate: string }) => Promise<import('@gravitas/shared').AnalysisReport>
+    generateComprehensiveReport: (range: { startDate: string; endDate: string }) => Promise<import('@gravitas/shared').AnalysisReport>
+
+    // 快捷查询
+    generateMonthlyReport: (month: string) => Promise<import('@gravitas/shared').AnalysisReport>
+    generateWeeklyReport: (weekStart?: string) => Promise<import('@gravitas/shared').AnalysisReport>
+  }
+
   // ===== 出海邮件（收发与同步） =====
   outboundMail: {
     getConfig: () => Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>
@@ -2102,6 +2148,52 @@ const electronAPI: ElectronAPI = {
   // 订阅与权益
   getSubscriptionState: () => {
     return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_STATE)
+  },
+
+  // ===== 知识库（免费版基础能力） =====
+  knowledge: {
+    // Vault 管理
+    listVaults: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.LIST_VAULTS) as Promise<import('@gravitas/shared').KnowledgeVault[]>,
+    createVault: (input: Omit<import('@gravitas/shared').KnowledgeVault, 'id' | 'createdAt' | 'lastIndexedAt'>) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_VAULT, input) as Promise<import('@gravitas/shared').KnowledgeVault>,
+    updateVault: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeVault>) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_VAULT, id, patch) as Promise<import('@gravitas/shared').KnowledgeVault | null>,
+    deleteVault: (id: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_VAULT, id) as Promise<boolean>,
+
+    // 索引
+    indexVault: (vaultId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.INDEX_VAULT, vaultId) as Promise<{ indexed: number; errors: string[] }>,
+    indexAllVaults: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.INDEX_ALL_VAULTS) as Promise<Array<{ vaultId: string; indexed: number; errors: string[] }>>,
+
+    // 搜索
+    searchNotes: (query: string, vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.SEARCH_NOTES, query, vaultId) as Promise<import('@gravitas/shared').KnowledgeSearchResult[]>,
+    searchByTag: (tag: string, vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.SEARCH_BY_TAG, tag, vaultId) as Promise<import('@gravitas/shared').KnowledgeNote[]>,
+    getAllTags: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_ALL_TAGS, vaultId) as Promise<Array<{ tag: string; count: number }>>,
+
+    // 笔记
+    getNote: (id: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_NOTE, id) as Promise<import('@gravitas/shared').KnowledgeNote | null>,
+    listNotes: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, vaultId) as Promise<import('@gravitas/shared').KnowledgeNote[]>,
+    deleteNote: (id: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, id) as Promise<boolean>,
+
+    // 图谱
+    getGraph: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, vaultId) as Promise<import('@gravitas/shared').KnowledgeGraph>,
+
+    // Agent 上下文
+    getContextForAgent: (query: string, maxTokens?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, query, maxTokens) as Promise<string>,
+  },
+
+  // ===== 分析引擎（免费版基础能力） =====
+  analysis: {
+    // 报告管理
+    listReports: (type?: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.LIST_REPORTS, type) as Promise<import('@gravitas/shared').AnalysisReport[]>,
+    getReport: (id: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GET_REPORT, id) as Promise<import('@gravitas/shared').AnalysisReport | null>,
+    deleteReport: (id: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.DELETE_REPORT, id) as Promise<boolean>,
+
+    // 报告生成
+    generateTimeReport: (range: { startDate: string; endDate: string }) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_TIME_REPORT, range) as Promise<import('@gravitas/shared').AnalysisReport>,
+    generateProductivityReport: (range: { startDate: string; endDate: string }) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_PRODUCTIVITY_REPORT, range) as Promise<import('@gravitas/shared').AnalysisReport>,
+    generateComprehensiveReport: (range: { startDate: string; endDate: string }) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_COMPREHENSIVE_REPORT, range) as Promise<import('@gravitas/shared').AnalysisReport>,
+
+    // 快捷查询
+    generateMonthlyReport: (month: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_MONTHLY_REPORT, month) as Promise<import('@gravitas/shared').AnalysisReport>,
+    generateWeeklyReport: (weekStart?: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_WEEKLY_REPORT, weekStart) as Promise<import('@gravitas/shared').AnalysisReport>,
   },
 
   // ===== 出海邮件（收发与同步） =====

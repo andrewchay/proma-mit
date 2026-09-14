@@ -12,7 +12,9 @@
     "./utils": "./src/utils/index.ts",
     "./providers": "./src/providers/index.ts",
     "./providers/ai-sdk-bridge": "./src/providers/ai-sdk-bridge.ts",
-    "./highlight": "./src/highlight/index.ts"
+    "./highlight": "./src/highlight/index.ts",
+    "./services/knowledge": "./src/services/knowledge/index.ts",
+    "./services/analysis": "./src/services/analysis/index.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.16",

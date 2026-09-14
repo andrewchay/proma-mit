@@ -31,8 +31,9 @@ describe('subscription atoms', () => {
   })
 
   test('grace 状态可以继续使用能力', () => {
+    const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     const state: SubscriptionState = {
-      entitlement: snapshot({ status: 'grace', graceUntil: '2026-09-14T00:00:00.000Z', validUntil: undefined }),
+      entitlement: snapshot({ status: 'grace', graceUntil: futureDate, validUntil: undefined }),
       status: 'grace',
     }
     expect(selectCanUseCapability(state, 'paid-media')).toBe(true)

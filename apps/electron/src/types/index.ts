@@ -6,4 +6,4 @@
 
 export * from './settings'
 export * from './user-profile'
-export { SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS } from '@gravitas/shared'
+export { SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS } from '@gravitas/shared'

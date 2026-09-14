@@ -10,7 +10,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
@@ -4549,6 +4549,34 @@ export async function registerIpcHandlers(): Promise<void> {
   registerRoutineIPCHandlers()
   const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
   registerMemoryPluginIPCHandlers()
+
+  // ===== 知识库（免费版基础能力） =====
+  const knowledgeSvc = require('./lib/knowledge-service') as typeof import('./lib/knowledge-service')
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_VAULTS, async () => knowledgeSvc.listKnowledgeVaults())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_VAULT, async (_event, input) => knowledgeSvc.createKnowledgeVault(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_VAULT, async (_event, id, patch) => knowledgeSvc.updateKnowledgeVault(id, patch))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_VAULT, async (_event, id) => knowledgeSvc.deleteKnowledgeVault(id))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.INDEX_VAULT, async (_event, vaultId) => knowledgeSvc.indexKnowledgeVault(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.INDEX_ALL_VAULTS, async () => knowledgeSvc.indexAllVaults())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.SEARCH_NOTES, async (_event, query, vaultId) => knowledgeSvc.searchKnowledge(query, vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.SEARCH_BY_TAG, async (_event, tag, vaultId) => knowledgeSvc.searchByTag(tag, vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_ALL_TAGS, async (_event, vaultId) => knowledgeSvc.getAllTags(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_NOTE, async (_event, id) => knowledgeSvc.getKnowledgeNote(id))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, async (_event, vaultId) => knowledgeSvc.listKnowledgeNotes(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, async (_event, id) => knowledgeSvc.deleteKnowledgeNote(id))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, async (_event, query, maxTokens) => knowledgeSvc.getKnowledgeContextForAgent(query, maxTokens))
+
+  // ===== 分析引擎（免费版基础能力） =====
+  const analysisSvc = require('./lib/analysis-service') as typeof import('./lib/analysis-service')
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.LIST_REPORTS, async (_event, type) => analysisSvc.listAnalysisReports(type))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GET_REPORT, async (_event, id) => analysisSvc.getAnalysisReport(id))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.DELETE_REPORT, async (_event, id) => analysisSvc.deleteAnalysisReport(id))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_TIME_REPORT, async (_event, range) => analysisSvc.generateTimeReport(range))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_PRODUCTIVITY_REPORT, async (_event, range) => analysisSvc.generateProductivityReportService(range))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_COMPREHENSIVE_REPORT, async (_event, range) => analysisSvc.generateComprehensiveReportService(range))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_MONTHLY_REPORT, async (_event, month) => analysisSvc.generateMonthlyReport(month))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_WEEKLY_REPORT, async (_event, weekStart) => analysisSvc.generateWeeklyReport(weekStart))
 
   // ===== 企业版连接 =====
   const { connectToServer, disconnectFromServer, getActiveConnection, migrateLocalToServer } = require('./lib/server-connection-service') as {

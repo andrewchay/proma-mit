@@ -12,7 +12,26 @@ export type SubscriptionPlanId = 'free' | 'pro'
 export type EntitlementStatus = 'active' | 'grace' | 'expired' | 'none'
 
 /** 当前受订阅控制的能力包 */
-export type SubscriptionCapabilityId = 'influencer' | 'paid-media' | 'outbound-sourcing'
+export type SubscriptionCapabilityId = 
+  | 'influencer' 
+  | 'paid-media' 
+  | 'outbound-sourcing'
+  | 'knowledge-basic'      // 知识库基础版（免费版可用）
+  | 'analysis-basic'       // 分析引擎基础版（免费版可用）
+  | 'academic'             // 学术助手插件（Pro 插件）
+  | 'knowledge-pro'        // 知识库专业版（Pro 插件）
+  | 'analysis-pro'         // 分析引擎专业版（Pro 插件）
+
+/** 免费版即可使用的基础能力 */
+export const FREE_CAPABILITIES: SubscriptionCapabilityId[] = [
+  'knowledge-basic',
+  'analysis-basic',
+]
+
+/** 判断是否为免费版能力 */
+export function isFreeCapability(capability: SubscriptionCapabilityId): boolean {
+  return FREE_CAPABILITIES.includes(capability)
+}
 
 /** 服务端签名的权益快照（不含 access token / refresh token / 支付密钥） */
 export interface EntitlementSnapshot {
@@ -53,6 +72,12 @@ export function canUseCapability(
   capability: SubscriptionCapabilityId,
   now: Date,
 ): boolean {
+  // 免费版能力：无需订阅即可使用
+  if (isFreeCapability(capability)) {
+    return true
+  }
+  
+  // Pro 版能力：需要有效权益
   if (!snapshot) return false
   if (getEntitlementStatus(snapshot, now) !== 'active' && getEntitlementStatus(snapshot, now) !== 'grace') {
     return false
