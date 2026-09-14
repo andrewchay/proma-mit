@@ -14,6 +14,7 @@ import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
 import { GANTT_GROUP_BAR_COLORS, ganttBarColor } from './project-flow-metrics'
+import { DueDateBadge } from './DueDateBadge'
 import {
   setProjectTasksAtom,
   setProjectTaskStatusesAtom,
@@ -2152,6 +2153,8 @@ function TaskItem({
   const hasDingtalk = task.externalSync?.dingtalk
   const hasRisk = task.riskLevel
   const needsCompletionNotes = task.riskLevel === 'high' || task.riskLevel === 'critical'
+  const assigneeStatusGroup = statuses.find((s) => s.id === task.status)?.stateGroup
+  const isTaskDone = assigneeStatusGroup === 'completed' || assigneeStatusGroup === 'cancelled'
 
   const handleAssessRisk = async () => {
     setIsAssessing(true)
@@ -2417,8 +2420,17 @@ function TaskItem({
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-1">{task.description}</p>
-          {task.assignee && (
-            <p className="text-xs text-muted-foreground">负责人: {task.assignee.displayName}</p>
+          {(task.assignee || (!isTaskDone && !!task.dueDate)) && (
+            <div className="mt-1 flex items-center gap-1 flex-wrap">
+              {task.assignee && (
+                <span
+                  className={`text-xs px-1.5 py-0.5 rounded ${isAgentTask ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  {isAgentTask ? '🤖' : '👤'} {task.assignee.displayName}
+                </span>
+              )}
+              <DueDateBadge dueDate={task.dueDate} isDone={isTaskDone} />
+            </div>
           )}
           {needsCompletionNotes && !task.completionNotes && task.status === 'completed' && (
             <p className="text-xs text-amber-600 mt-1">⚠️ 高风险任务，请填写完成纪要</p>
