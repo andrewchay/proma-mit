@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { calculateProjectFlowMetrics, ganttBarColor } from './project-flow-metrics'
+import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency } from './project-flow-metrics'
 
 test('流动指标只用权威任务时间戳计算在制品、吞吐、周期和 SLE 超时', () => {
   const day = 86_400_000
@@ -87,5 +87,53 @@ describe('甘特时间条状态组着色', () => {
     expect(ganttBarColor({ status: 'pending' }, { blocked: true, now })).toBe('bg-amber-500')
     expect(ganttBarColor({ status: 'pending', riskLevel: 'high' }, { blocked: false, now })).toBe('bg-orange-400')
     expect(ganttBarColor({ status: 'pending', riskLevel: 'critical' }, { blocked: false, now })).toBe('bg-red-400')
+  })
+})
+
+describe('截止日期紧迫感 dueDateUrgency', () => {
+  // 固定"现在"：2026-09-15 12:00 本地时间
+  const now = new Date(2026, 8, 15, 12, 0, 0).getTime()
+  const day = (offset: number, hour = 12) => new Date(2026, 8, 15 + offset, hour, 0, 0).getTime()
+
+  test('无 DDL 返回 null', () => {
+    expect(dueDateUrgency(undefined, false, now)).toBeNull()
+    expect(dueDateUrgency(NaN, false, now)).toBeNull()
+  })
+
+  test('已完成任务不展示（即使已逾期）', () => {
+    expect(dueDateUrgency(day(-3), true, now)).toBeNull()
+  })
+
+  test('逾期返回 red + 逾期文案', () => {
+    const result = dueDateUrgency(day(-2), false, now)
+    expect(result?.tone).toBe('red')
+    expect(result?.text).toContain('逾期 2 天')
+  })
+
+  test('今天截止返回 amber + 今天文案', () => {
+    const result = dueDateUrgency(day(0), false, now)
+    expect(result?.tone).toBe('amber')
+    expect(result?.text).toContain('今天')
+  })
+
+  test('3 天内返回 amber', () => {
+    const result = dueDateUrgency(day(3), false, now)
+    expect(result?.tone).toBe('amber')
+    expect(result?.text).toContain('剩 3 天')
+  })
+
+  test('宽裕返回 gray', () => {
+    const result = dueDateUrgency(day(10), false, now)
+    expect(result?.tone).toBe('gray')
+    expect(result?.text).toContain('剩 10 天')
+  })
+
+  test('半夜边界：23:59 与 00:01 同日天数差一致', () => {
+    const lateNight = new Date(2026, 8, 15, 23, 59, 0).getTime()
+    const earlyMorning = new Date(2026, 8, 15, 0, 1, 0).getTime()
+    const a = dueDateUrgency(day(5), false, lateNight)
+    const b = dueDateUrgency(day(5), false, earlyMorning)
+    expect(a?.tone).toBe(b?.tone)
+    expect(a?.text).toBe(b?.text)
   })
 })

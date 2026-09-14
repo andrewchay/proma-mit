@@ -98,3 +98,38 @@ export function ganttBarColor(
   }
   return GANTT_GROUP_BAR_COLORS[group]
 }
+
+// ===== 截止日期紧迫感（任务列表 / 看板卡片共用） =====
+
+export interface DueDateUrgency {
+  /** 展示文本，如「09-20 · 剩 5 天」 */
+  text: string
+  /** 逾期=red，今天或 3 天内=amber，其余=gray */
+  tone: 'red' | 'amber' | 'gray'
+}
+
+/** 本地当日零点（天级比较基准，避免半夜边界抖动） */
+function localMidnight(timestamp: number): number {
+  const date = new Date(timestamp)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+const DAY_MS = 86_400_000
+
+/**
+ * DDL 紧迫感：已完成/已取消返回 null（不展示）；
+ * 逾期 → red「逾期 N 天」，今天 → amber「今天截止」，3 天内 → amber「剩 N 天」，其余 → gray「剩 N 天」。
+ */
+export function dueDateUrgency(
+  dueDate: number | undefined,
+  isDone: boolean,
+  now = Date.now(),
+): DueDateUrgency | null {
+  if (isDone || dueDate === undefined || Number.isNaN(dueDate) || dueDate <= 0) return null
+  const remainingDays = Math.round((localMidnight(dueDate) - localMidnight(now)) / DAY_MS)
+  const dateText = new Date(dueDate).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+  if (remainingDays < 0) return { text: `${dateText} · 逾期 ${Math.abs(remainingDays)} 天`, tone: 'red' }
+  if (remainingDays === 0) return { text: `${dateText} · 今天截止`, tone: 'amber' }
+  return { text: `${dateText} · 剩 ${remainingDays} 天`, tone: remainingDays <= 3 ? 'amber' : 'gray' }
+}
