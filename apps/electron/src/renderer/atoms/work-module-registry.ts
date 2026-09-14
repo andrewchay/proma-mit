@@ -10,11 +10,12 @@
  */
 
 import { lazy, type ComponentType } from 'react'
-import { CalendarDays, FolderKanban, Users, Megaphone, Globe2, BookOpen, type LucideIcon } from 'lucide-react'
+import { CalendarDays, FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
 const KnowledgeModuleView = lazy(() => import('@/components/knowledge/KnowledgeModuleView').then((module) => ({ default: module.KnowledgeModuleView })))
+const AnalysisModuleView = lazy(() => import('@/components/analysis/AnalysisModuleView').then((module) => ({ default: module.AnalysisModuleView })))
 const InfluencerModuleView = lazy(() => import('@/components/influencer/InfluencerModuleView').then((module) => ({ default: module.InfluencerModuleView })))
 const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMediaModuleView').then((module) => ({ default: module.PaidMediaModuleView })))
 const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sourcing/OutboundSourcingModuleView').then((module) => ({ default: module.OutboundSourcingModuleView })))
@@ -31,7 +32,7 @@ export interface WorkModuleMeta {
   description?: string
 }
 
-/** 工作模块注册表（当前 3 个核心模块；主动协作统一收敛到 Proactive Center） */
+/** 工作模块注册表（当前 4 个核心模块；主动协作统一收敛到 Proactive Center） */
 export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
   {
     id: 'knowledge',
@@ -39,6 +40,13 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     icon: BookOpen,
     core: true,
     description: '索引本地 Markdown，支持全文检索、标签与图谱',
+  },
+  {
+    id: 'analysis',
+    label: '分析引擎',
+    icon: BarChart3,
+    core: true,
+    description: '时间使用与生产力分析报告',
   },
   {
     id: 'calendar',
@@ -89,6 +97,7 @@ export const EXTENDED_WORK_MODULES: WorkModuleMeta[] = WORK_MODULE_REGISTRY.filt
 /** 视图映射：工作模块 id → 渲染组件 */
 export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   knowledge: KnowledgeModuleView,
+  analysis: AnalysisModuleView,
   calendar: CalendarModuleView,
   projects: ProjectView,
   influencer: InfluencerModuleView,
