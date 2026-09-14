@@ -122,10 +122,21 @@ describe('截止日期紧迫感 dueDateUrgency', () => {
     expect(result?.text).toContain('剩 3 天')
   })
 
+  test('第 4 天跨出 amber 区间返回 gray', () => {
+    expect(dueDateUrgency(day(4), false, now)?.tone).toBe('gray')
+  })
+
   test('宽裕返回 gray', () => {
     const result = dueDateUrgency(day(10), false, now)
     expect(result?.tone).toBe('gray')
     expect(result?.text).toContain('剩 10 天')
+    expect(dueDateUrgency(day(5), false, now)?.text).toBe('09-20 · 剩 5 天')
+  })
+
+  test('非法时间戳返回 null', () => {
+    expect(dueDateUrgency(0, false, now)).toBeNull()
+    expect(dueDateUrgency(-1, false, now)).toBeNull()
+    expect(dueDateUrgency(Infinity, false, now)).toBeNull()
   })
 
   test('半夜边界：23:59 与 00:01 同日天数差一致', () => {

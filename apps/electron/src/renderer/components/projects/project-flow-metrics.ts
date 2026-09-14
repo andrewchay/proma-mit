@@ -115,10 +115,8 @@ function localMidnight(timestamp: number): number {
   return date.getTime()
 }
 
-const DAY_MS = 86_400_000
-
 /**
- * DDL 紧迫感：已完成/已取消返回 null（不展示）；
+ * DDL 紧迫感：`isDone` 为 true 时返回 null（调用方按 completed/cancelled 语义组判定）；
  * 逾期 → red「逾期 N 天」，今天 → amber「今天截止」，3 天内 → amber「剩 N 天」，其余 → gray「剩 N 天」。
  */
 export function dueDateUrgency(
@@ -126,9 +124,10 @@ export function dueDateUrgency(
   isDone: boolean,
   now = Date.now(),
 ): DueDateUrgency | null {
-  if (isDone || dueDate === undefined || Number.isNaN(dueDate) || dueDate <= 0) return null
-  const remainingDays = Math.round((localMidnight(dueDate) - localMidnight(now)) / DAY_MS)
-  const dateText = new Date(dueDate).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+  if (isDone || dueDate === undefined || !Number.isFinite(dueDate) || dueDate <= 0) return null
+  const remainingDays = Math.round((localMidnight(dueDate) - localMidnight(now)) / DAY)
+  const due = new Date(dueDate)
+  const dateText = `${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`
   if (remainingDays < 0) return { text: `${dateText} · 逾期 ${Math.abs(remainingDays)} 天`, tone: 'red' }
   if (remainingDays === 0) return { text: `${dateText} · 今天截止`, tone: 'amber' }
   return { text: `${dateText} · 剩 ${remainingDays} 天`, tone: remainingDays <= 3 ? 'amber' : 'gray' }
