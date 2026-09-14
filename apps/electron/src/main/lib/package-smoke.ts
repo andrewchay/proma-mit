@@ -53,6 +53,8 @@ export async function runPackageSmoke(): Promise<void> {
   const kimiCompaction = await runLiveKimiCompactionSmoke(workspace, root)
   assert(listWorkflowTemplates().some(t => t.id === 'marketing-campaign'), '缺少 Campaign 模板')
   // 营销 skills 订阅分发烟测：订阅 influencer → 工作区出现 22 个营销 skill
+  // 注意：偏好（settings）与权益（签名快照）缺一不可。签名快照由
+  // scripts/package-smoke.ts 用临时密钥签发并经环境变量传入公钥。
   updateSettings({ marketingCapabilities: ['influencer'] })
   syncMarketingSkillsForWorkspace(workspace.slug)
   const mktPluginSkills = join(getAgentWorkspacePath(workspace.slug), '.marketing-plugin', 'skills')
