@@ -634,6 +634,15 @@ function migrate(database: SqliteCompat): void {
     database.exec(`ALTER TABLE tasks ADD COLUMN token_budget INTEGER`)
   }
 
+  // 负责人身份统一（member 化）：tasks 表新增 assignee_member_id / created_by_member_id（兼容旧库）
+  if (!columns.includes('assignee_member_id')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN assignee_member_id TEXT`)
+  }
+  if (!columns.includes('created_by_member_id')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN created_by_member_id TEXT`)
+  }
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_assignee_member ON tasks(assignee_member_id)`)
+
   // State 分组状态模型（借鉴 Plane）：每项目一组可自定义状态，预置五态沿用旧字符串 id
   database.exec(`
     CREATE TABLE IF NOT EXISTS task_statuses (
@@ -656,6 +665,81 @@ function migrate(database: SqliteCompat): void {
   for (const row of projectRows) {
     seedTaskStatusesForProject(database, row.id)
   }
+
+  // 存量任务负责人身份回填（幂等）
+  backfillTaskMemberIds(database)
+}
+
+/**
+ * 存量任务负责人身份回填（幂等）：assignee_user_id / created_by_user_id 归一化后
+ * 匹配成员目录（plain_name），命中回填 member_id，未命中自动建 human 成员。
+ * 只处理 member_id 为空的行；agent- 前缀（AI 员工）不迁移；同名多成员时保持 NULL
+ * 留人工确认，不猜测合并。
+ */
+export function backfillTaskMemberIds(database: SqliteCompat): void {
+  const taskRows = database.prepare(
+    `SELECT id, assignee_user_id, assignee_display_name, created_by_user_id, assignee_member_id, created_by_member_id FROM tasks`,
+  ).all() as Array<{
+    id: string; assignee_user_id: string | null; assignee_display_name: string | null;
+    created_by_user_id: string | null; assignee_member_id: string | null; created_by_member_id: string | null;
+  }>
+  const pending = taskRows.filter(
+    (row) => (row.assignee_user_id && !row.assignee_member_id) || (row.created_by_user_id && !row.created_by_member_id),
+  )
+  if (pending.length === 0) return
+
+  const memberRows = database.prepare('SELECT member_id, display_name, plain_name FROM members').all() as Array<{
+    member_id: string; display_name: string; plain_name: string | null
+  }>
+  const byKey = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const row of memberRows) {
+    const key = normalizePersonKey(row.plain_name ?? row.display_name)
+    if (!key) continue
+    if (byKey.has(key)) ambiguous.add(key)
+    else byKey.set(key, row.member_id)
+  }
+
+  const ensureMember = (displayName: string): string | null => {
+    const key = normalizePersonKey(displayName)
+    if (!key || ambiguous.has(key)) return null
+    const existing = byKey.get(key)
+    if (existing) return existing
+    const memberId = randomUUID()
+    database.prepare(
+      `INSERT INTO members (member_id, kind, display_name, plain_name, source, active, created_at) VALUES (?, 'human', ?, ?, 'manual', 1, ?)`,
+    ).run(memberId, displayName, displayName.trim().toLowerCase(), now())
+    byKey.set(key, memberId)
+    return memberId
+  }
+
+  const update = () => database.prepare(`UPDATE tasks SET assignee_member_id = ?, created_by_member_id = ? WHERE id = ?`)
+  let assigneeFilled = 0
+  let creatorFilled = 0
+  let skipped = 0
+  for (const row of pending) {
+    // AI 员工体系（agent-<id>）独立维护，不在本次 member 化范围
+    const assigneeSource = row.assignee_user_id && !row.assignee_user_id.startsWith('agent-')
+      ? (row.assignee_display_name ?? row.assignee_user_id)
+      : null
+    const creatorSource = row.created_by_user_id && !row.created_by_user_id.startsWith('agent-')
+      ? (row.created_by_user_id.replace(/^paa-/, ''))
+      : null
+    const assigneeMemberId = assigneeSource ? ensureMember(assigneeSource) : null
+    const creatorMemberId = creatorSource ? ensureMember(creatorSource) : null
+    if (assigneeSource && !assigneeMemberId) skipped++
+    if (creatorSource && !creatorMemberId) skipped++
+    if (!assigneeMemberId && !creatorMemberId) continue
+    // 每行单独 prepare（SqlJsCompat 的语句在 run 后释放，不能跨 run 复用）
+    update().run(
+      assigneeMemberId ?? row.assignee_member_id ?? null,
+      creatorMemberId ?? row.created_by_member_id ?? null,
+      row.id,
+    )
+    if (assigneeMemberId) assigneeFilled++
+    if (creatorMemberId) creatorFilled++
+  }
+  console.log(`[项目存储] 负责人身份回填完成：assignee ${assigneeFilled} 条，creator ${creatorFilled} 条，同名消歧跳过 ${skipped} 条`)
 }
 
 /** 为项目写入预置状态种子（幂等：INSERT OR IGNORE） */
@@ -681,7 +765,9 @@ type TaskRow = {
   id: string; project_id: string; parent_id: string | null;
   title: string; description: string; status: string; priority: string;
   assignee_user_id: string | null; assignee_display_name: string | null;
-  created_by_user_id: string | null; workspace_id: string | null;
+  assignee_member_id: string | null;
+  created_by_user_id: string | null; created_by_member_id: string | null;
+  workspace_id: string | null;
   start_date: number | null; due_date: number | null; completed_at: number | null;
   completion_notes: string | null; risk_level: string | null; external_sync: string | null;
   permission_requests: string | null;
@@ -725,6 +811,7 @@ function rowToTask(row: TaskRow): Task {
     status: row.status as Task['status'],
     priority: row.priority as Task['priority'],
     assignee,
+    assigneeMemberId: row.assignee_member_id ?? undefined,
     startDate: row.start_date ?? undefined,
     dueDate: row.due_date ?? undefined,
     completedAt: row.completed_at ?? undefined,
@@ -733,6 +820,7 @@ function rowToTask(row: TaskRow): Task {
     externalSync: row.external_sync ? JSON.parse(row.external_sync) : undefined,
     permissionRequests: parseJsonArray(row.permission_requests),
     createdByUserId: row.created_by_user_id ?? undefined,
+    createdByMemberId: row.created_by_member_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
     tokenBudget: row.token_budget ?? undefined,
     sortOrder: row.sort_order,
@@ -834,13 +922,14 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, created_by_user_id, workspace_id, start_date, due_date, permission_requests, token_budget, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
-    input.createdByUserId ?? null, input.workspaceId ?? null,
+    input.assigneeMemberId ?? null,
+    input.createdByUserId ?? null, input.createdByMemberId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
     JSON.stringify(input.permissionRequests ?? []), input.tokenBudget ?? null, sortOrder, timestamp, timestamp
   )
@@ -934,6 +1023,8 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     parent_id: updates.parentId !== undefined ? updates.parentId : existing.parent_id,
     assignee_user_id: updates.assignee ? updates.assignee.userId : existing.assignee_user_id,
     assignee_display_name: updates.assignee ? updates.assignee.displayName : existing.assignee_display_name,
+    assignee_member_id: updates.assigneeMemberId !== undefined ? updates.assigneeMemberId : existing.assignee_member_id,
+    created_by_member_id: updates.createdByMemberId !== undefined ? updates.createdByMemberId : existing.created_by_member_id,
     start_date: updates.startDate !== undefined ? updates.startDate : existing.start_date,
     due_date: updates.dueDate !== undefined ? updates.dueDate : existing.due_date,
     completed_at: completedAt,
@@ -947,13 +1038,13 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
   database.prepare(
     `UPDATE tasks SET
       title = ?, description = ?, status = ?, priority = ?,
-      parent_id = ?, assignee_user_id = ?, assignee_display_name = ?,
+      parent_id = ?, assignee_user_id = ?, assignee_display_name = ?, assignee_member_id = ?, created_by_member_id = ?,
       start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?, token_budget = ?,
       updated_at = ?
      WHERE id = ?`
   ).run(
     next.title, next.description, next.status, next.priority,
-    next.parent_id, next.assignee_user_id, next.assignee_display_name,
+    next.parent_id, next.assignee_user_id, next.assignee_display_name, next.assignee_member_id, next.created_by_member_id,
     next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests, next.token_budget,
     next.updated_at, id
   )
@@ -1513,6 +1604,8 @@ export function listProjectWorkItems(projectId: string): MyWorkItem[] {
     title: task.title,
     status: task.status,
     assignee: task.assignee,
+    assigneeMemberId: task.assigneeMemberId,
+    createdByMemberId: task.createdByMemberId,
     startDate: task.startDate,
     dueDate: task.dueDate,
     completedAt: task.completedAt,
@@ -1533,23 +1626,49 @@ export function listProjectWorkItems(projectId: string): MyWorkItem[] {
   return [...taskItems, ...executionItems]
 }
 
-export function listMyWork(assigneeUserId: string): MyWorkItem[] {
+/** 负责人身份归一化：去 paa- 前缀、首尾与内部空白、大小写差异，供宽松匹配 */
+function normalizePersonKey(value: string): string {
+  return value.replace(/^paa-/, '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
+/**
+ * 我的工作：按当前用户身份过滤全部项目的任务。
+ * memberId 为统一成员目录 ID 时优先按 assignee_member_id 精确匹配；
+ * 兼容旧 paa-<名字> 入参与迁移期未回填数据，归一化名字匹配作为兑底。
+ */
+export function listMyWork(memberId: string): MyWorkItem[] {
   const projects = listProjects()
   const items = projects.flatMap((project) => listProjectWorkItems(project.id))
+  const isDirectoryId = !!memberId && !memberId.startsWith('paa-') && !memberId.startsWith('agent-')
+  const member = isDirectoryId ? getMember(memberId) : null
+  const targetKey = normalizePersonKey(member?.displayName ?? memberId)
   return items
-    .filter((item) => item.assignee?.userId === assigneeUserId)
+    .filter((item) => {
+      if (item.assigneeMemberId && item.assigneeMemberId === memberId) return true
+      const userId = item.assignee?.userId
+      if (userId && normalizePersonKey(userId) === targetKey) return true
+      const displayName = item.assignee?.displayName
+      return !!displayName && normalizePersonKey(displayName) === targetKey
+    })
     .sort((left, right) => (left.dueDate ?? Number.MAX_SAFE_INTEGER) - (right.dueDate ?? Number.MAX_SAFE_INTEGER))
 }
 
-/** PH2-⑤：“我指派的”视图——找出由该用户发起/创建的任务（含项目名）。 */
+/** PH2-⑤：“我指派的”视图——找出由该用户发起/创建的任务（含项目名）。优先按 created_by_member_id，兑底旧 userId。 */
 export function listTasksCreatedBy(creatorUserId: string): MyWorkItem[] {
   const database = getProjectDb()
   const projects = listProjects()
   const result: MyWorkItem[] = []
+  const isDirectoryId = !!creatorUserId && !creatorUserId.startsWith('paa-') && !creatorUserId.startsWith('agent-')
+  const member = isDirectoryId ? getMember(creatorUserId) : null
+  const targetKey = normalizePersonKey(member?.displayName ?? creatorUserId)
   for (const project of projects) {
     const statuses = listTaskStatuses(project.id)
-    const rows = database.prepare(`SELECT * FROM tasks WHERE created_by_user_id = ? ORDER BY created_at DESC`).all(creatorUserId) as TaskRow[]
+    const rows = database.prepare(`SELECT * FROM tasks WHERE created_by_user_id = ? OR created_by_member_id = ? ORDER BY created_at DESC`).all(creatorUserId, creatorUserId) as TaskRow[]
     for (const row of rows) {
+      // created_by_member_id 命中当前成员，或旧 created_by_user_id/展示名归一化后一致
+      const memberMatch = row.created_by_member_id === creatorUserId
+      const legacyMatch = !row.created_by_member_id && !!row.created_by_user_id && normalizePersonKey(row.created_by_user_id) === targetKey
+      if (!memberMatch && !legacyMatch) continue
       const task = rowToTask(row)
       result.push({
         entityType: 'task',
@@ -1559,6 +1678,8 @@ export function listTasksCreatedBy(creatorUserId: string): MyWorkItem[] {
         title: task.title,
         status: task.status,
         assignee: task.assignee,
+        assigneeMemberId: task.assigneeMemberId,
+        createdByMemberId: task.createdByMemberId,
         startDate: task.startDate,
         dueDate: task.dueDate,
         createdAt: task.createdAt,
@@ -1862,6 +1983,16 @@ export function findMembersByName(displayName: string): Member[] {
   const database = getProjectDb()
   const rows = database.prepare(`SELECT * FROM members WHERE plain_name = ? ORDER BY created_at ASC`).all(normalizePlainName(displayName)) as Array<Parameters<typeof mapMemberRow>[0]>
   return rows.map(mapMemberRow)
+}
+
+/** 按名字确保成员存在：归一化名字（大小写/空白不敏感）命中返回首个，否则创建 human 成员。任务指派统一入口。 */
+export function ensureMemberByName(displayName: string): Member {
+  const trimmed = displayName.trim()
+  if (!trimmed) throw new Error('成员名字不能为空')
+  const key = normalizePersonKey(trimmed)
+  const hit = listMembers({ kind: 'human' }).find((m) => normalizePersonKey(m.displayName) === key)
+  if (hit) return hit
+  return createMember({ kind: 'human', displayName: trimmed, source: 'manual' })
 }
 
 /** 更新成员（未提供的字段保留原值；如需清空请显式处理）。 */
