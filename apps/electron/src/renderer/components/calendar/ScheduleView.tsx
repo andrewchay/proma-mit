@@ -260,6 +260,7 @@ function CalendarGrid({ year, month, selectedDate, events, tasks, onSelectDate }
                 {cell.dayTasks.slice(0, 3).map((task) => (
                   <span
                     key={task.id}
+                    title={task.category?.startsWith('project:') ? `📁 ${task.category.slice('project:'.length)} · ${task.title}` : task.title}
                     className={cn(
                       'w-1.5 h-1.5 rounded-full',
                       task.status === 'done' ? 'bg-green-400' : 'bg-orange-400',
