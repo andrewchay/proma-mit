@@ -10,6 +10,7 @@
 import { getSettings, onSettingsChange } from './settings-service'
 import * as store from './project-sqlite-store'
 import { generateProjectSummary, type ProjectSummary } from './project-summary-service'
+import { resolveStateGroup } from './task-status-logic'
 import type {
   Project,
   Task,
@@ -33,6 +34,7 @@ import type {
   ProjectTemplate,
   TaskStatusDef,
   TaskStateGroup,
+  TaskPriority,
   CreateTaskStatusInput,
   UpdateTaskStatusInput,
   ReorderTaskInput,
@@ -402,6 +404,50 @@ export async function deleteTaskStatus(projectId: string, statusId: string, migr
 
 export async function reorderTaskStatuses(projectId: string, orderedIds: string[]): Promise<TaskStatusDef[]> {
   return store.reorderTaskStatuses(projectId, orderedIds)
+}
+
+/** 日程视图用：跨项目轻量任务（仅有 dueDate 且未完成、非 draft） */
+export interface ProjectTaskLite {
+  id: string
+  projectId: string
+  projectTitle: string
+  title: string
+  status: string
+  stateGroup: TaskStateGroup
+  priority: TaskPriority
+  dueDate: number
+}
+
+/**
+ * 跨项目聚合轻量任务，供日程视图按 DDL 渲染。
+ *
+ * 过滤规则：无 dueDate 剔除；completed/cancelled 语义组剔除；
+ * draft 任务由 store.listTasks 默认（includeDrafts=false）剔除。
+ */
+export async function listAllProjectTasksLite(): Promise<ProjectTaskLite[]> {
+  const projects = await listProjects()
+  const result: ProjectTaskLite[] = []
+  for (const project of projects) {
+    const statuses = await store.listTaskStatuses(project.id)
+    // includeSubTasks=false：只取核心任务，避免日程视图重复展示子任务
+    const tasks = await store.listTasks(project.id, { includeSubTasks: false })
+    for (const task of tasks) {
+      if (task.dueDate === undefined) continue
+      const group = resolveStateGroup(task.status, statuses)
+      if (group === 'completed' || group === 'cancelled') continue
+      result.push({
+        id: task.id,
+        projectId: task.projectId,
+        projectTitle: project.title,
+        title: task.title,
+        status: task.status,
+        stateGroup: group,
+        priority: task.priority,
+        dueDate: task.dueDate,
+      })
+    }
+  }
+  return result.sort((a, b) => a.dueDate - b.dueDate)
 }
 
 export async function reorderTask(id: string, input: ReorderTaskInput): Promise<ReorderTaskResult> {
