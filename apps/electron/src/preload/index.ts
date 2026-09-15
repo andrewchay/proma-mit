@@ -1707,6 +1707,8 @@ export interface ElectronAPI {
       listMyWork: (assigneeUserId: string) => Promise<unknown[]>
       /** PH2-⑤：我发起/指派的任务 */
       listTasksCreatedBy: (creatorUserId: string) => Promise<unknown[]>
+      /** 日程视图：跨项目轻量任务（有 dueDate 且未完成） */
+      listAllProjectTasksLite: () => Promise<unknown[]>
       /** 订阅 AI 员工执行活动变化（main→renderer，用于刷新任务/看板） */
       onProjectActivityChanged: (callback: (payload: { projectId?: string; action?: string; summary?: string }) => void) => () => void
       onPollStatusChanged: (callback: (payload: { projectId?: string; platform?: string; taskId?: string; newStatus?: string | null }) => void) => () => void
@@ -3887,6 +3889,7 @@ const electronAPI: ElectronAPI = {
       listProjectWorkItems: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORK_ITEMS, projectId),
       listMyWork: (assigneeUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MY_WORK, assigneeUserId),
       listTasksCreatedBy: (creatorUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASKS_CREATED_BY, creatorUserId),
+      listAllProjectTasksLite: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_ALL_PROJECT_TASKS_LITE),
       onProjectActivityChanged: (callback) => {
         const listener = (_event: unknown, payload: { projectId?: string; action?: string; summary?: string }) => callback(payload)
         ipcRenderer.on(PROJECT_IPC_CHANNELS.TASK_ACTIVITY_CHANGED, listener)

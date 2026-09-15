@@ -680,6 +680,12 @@ export function registerWorkModuleIpcHandlers(): void {
     return listMyWork(assigneeUserId)
   })
 
+  // 日程视图：跨项目轻量任务（有 dueDate 且未完成）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_ALL_PROJECT_TASKS_LITE, async () => {
+    const { listAllProjectTasksLite } = await import('./project-service')
+    return listAllProjectTasksLite()
+  })
+
   // PH2-⑤：我发起/指派的任务
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASKS_CREATED_BY, async (_, creatorUserId: string) => {
     const { listTasksCreatedBy } = await import('./project-service')

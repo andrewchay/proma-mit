@@ -203,6 +203,8 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_MY_WORK: 'project:list-my-work',
   /** PH2-⑤：我发起/指派的任务 */
   LIST_TASKS_CREATED_BY: 'project:list-tasks-created-by',
+  /** 日程视图：跨项目轻量任务（有 dueDate 且未完成） */
+  LIST_ALL_PROJECT_TASKS_LITE: 'project:list-all-project-tasks-lite',
   /** AI 员工执行回写/活动变化 → 通知前端刷新项目数据（main→renderer） */
   TASK_ACTIVITY_CHANGED: 'project:task-activity-changed',
   LIST_PROJECT_ALERTS: 'project:list-project-alerts',
