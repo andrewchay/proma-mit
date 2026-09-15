@@ -4572,6 +4572,36 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, async (_event, id) => knowledgeSvc.deleteKnowledgeNote(id))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, async (_event, vaultId, threshold, limit) => knowledgeSvc.getKnowledgeLinkSuggestions(vaultId, threshold, limit))
+
+  // --- K2-02 AOF 图谱（延迟初始化；AOF 缺失时返回 disabled 而非抛错） ---
+  type GraphBuildService = import('./lib/knowledge-graph-build-service').KnowledgeGraphBuildService
+  let graphBuildService: GraphBuildService | null = null
+  void (require('./lib/knowledge-graph-build-service') as typeof import('./lib/knowledge-graph-build-service'))
+    .createKnowledgeGraphBuildService()
+    .then((svc: GraphBuildService | null) => { graphBuildService = svc })
+    .catch(() => { /* AOF 不可用：保持 null，基础检索不受影响 */ })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH_BUILD_STATUS, async (_event, kbId: string) => {
+    if (!graphBuildService) return { available: false }
+    const record = graphBuildService.getBuild(kbId)
+    return { available: true, queryable: graphBuildService.isQueryable(kbId), record: record ?? null }
+  })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.BUILD_KNOWLEDGE_GRAPH, async (_event, kbId: string) => {
+    if (!graphBuildService) return { available: false }
+    try {
+      const record = await graphBuildService.build(kbId)
+      return { available: true, record }
+    } catch (err) {
+      return { available: true, error: err instanceof Error ? err.message : String(err), record: graphBuildService.getBuild(kbId) ?? null }
+    }
+  })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.QUERY_KNOWLEDGE_GRAPH, async (_event, kbId: string, query: string, limit?: number) => {
+    if (!graphBuildService) return { available: false }
+    try {
+      return { available: true, hits: await graphBuildService.query(kbId, query, limit) }
+    } catch (err) {
+      return { available: true, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, async (_event, query, maxTokens) => knowledgeSvc.getKnowledgeContextForAgent(query, maxTokens))
 
   // 知识库编辑（Knowledge Pro）：写盘服务内部对每个写操作做权益门禁
