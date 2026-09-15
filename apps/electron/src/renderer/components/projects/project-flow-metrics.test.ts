@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency } from './project-flow-metrics'
+import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency, sortTasksByUrgency, type SortTask } from './project-flow-metrics'
 
 test('流动指标只用权威任务时间戳计算在制品、吞吐、周期和 SLE 超时', () => {
   const day = 86_400_000
@@ -145,5 +145,90 @@ describe('截止日期紧迫感 dueDateUrgency', () => {
     const b = dueDateUrgency(day(5), false, earlyMorning)
     expect(a?.tone).toBe(b?.tone)
     expect(a?.text).toBe(b?.text)
+  })
+})
+
+describe('任务列表紧迫度排序 sortTasksByUrgency', () => {
+  // 固定"现在"：2026-09-15 12:00 本地时间
+  const now = new Date(2026, 8, 15, 12, 0, 0).getTime()
+  const at = (offsetDays: number, hour = 12) => new Date(2026, 8, 15 + offsetDays, hour, 0, 0).getTime()
+
+  /** 最小任务构造器：只填排序所需字段，其余给合法默认 */
+  const task = (overrides: Partial<SortTask> & { id: string }): SortTask => ({
+    status: 'pending',
+    priority: 'medium',
+    createdAt: at(0),
+    ...overrides,
+  })
+
+  test('逾期未完成排在最前，逾期越久越靠前', () => {
+    const tasks = [
+      task({ id: 'normal', priority: 'critical' }),
+      task({ id: 'overdue-1', dueDate: at(-1) }),
+      task({ id: 'overdue-5', dueDate: at(-5) }),
+    ]
+    const sorted = sortTasksByUrgency(tasks, [], now)
+    expect(sorted.map((t) => t.id)).toEqual(['overdue-5', 'overdue-1', 'normal'])
+  })
+
+  test('未逾期任务按优先级 critical → high → medium → low', () => {
+    const tasks = [
+      task({ id: 'low', priority: 'low' }),
+      task({ id: 'critical', priority: 'critical' }),
+      task({ id: 'medium', priority: 'medium' }),
+      task({ id: 'high', priority: 'high' }),
+    ]
+    const sorted = sortTasksByUrgency(tasks, [], now)
+    expect(sorted.map((t) => t.id)).toEqual(['critical', 'high', 'medium', 'low'])
+  })
+
+  test('今天截止与 3 天内同属琥珀档：先按优先级，同级按 DDL 升序', () => {
+    const tasks = [
+      task({ id: 'soon-high', priority: 'high', dueDate: at(3) }),
+      task({ id: 'today-medium', priority: 'medium', dueDate: at(0) }),
+    ]
+    const sorted = sortTasksByUrgency(tasks, [], now)
+    // 今天截止（amber）优先于 3 天内（amber 但更远）——同分位下 DDL 更紧的在前
+    expect(sorted.map((t) => t.id)).toEqual(['today-medium', 'soon-high'])
+  })
+
+  test('无截止日期排在同级之后（MAX_SAFE_INTEGER 兜底），同级按创建时间倒序', () => {
+    const created = (hours: number) => now - hours * 3_600_000
+    const tasks = [
+      task({ id: 'older-undated', priority: 'medium', createdAt: created(48) }),
+      task({ id: 'newer-undated', priority: 'medium', createdAt: created(1) }),
+      task({ id: 'due-medium', priority: 'medium', dueDate: at(10) }),
+    ]
+    const sorted = sortTasksByUrgency(tasks, [], now)
+    expect(sorted.map((t) => t.id)).toEqual(['due-medium', 'newer-undated', 'older-undated'])
+  })
+
+  test('已完成/已取消组沉底，按完成时间倒序', () => {
+    const tasks = [
+      task({ id: 'done-old', status: 'completed', completedAt: at(-10) }),
+      task({ id: 'cancelled', status: 'cancelled' }),
+      task({ id: 'done-recent', status: 'completed', completedAt: at(-1) }),
+      task({ id: 'active', dueDate: at(-2) }),
+    ]
+    const sorted = sortTasksByUrgency(tasks, [], now)
+    expect(sorted.map((t) => t.id)).toEqual(['active', 'done-recent', 'done-old', 'cancelled'])
+  })
+
+  test('传入状态定义时按语义组判定完成（自定义状态 id 不叫 completed）', () => {
+    const statuses = [
+      { id: 'shipped', stateGroup: 'completed' as const },
+      { id: 'wontfix', stateGroup: 'cancelled' as const },
+    ]
+    const tasks = [
+      task({ id: 'shipped-task', status: 'shipped', completedAt: at(-2) }),
+      task({ id: 'open-task', dueDate: at(-1) }),
+    ]
+    const sorted = sortTasksByUrgency(tasks, statuses, now)
+    expect(sorted.map((t) => t.id)).toEqual(['open-task', 'shipped-task'])
+  })
+
+  test('空列表与单元素列表安全', () => {
+    expect(sortTasksByUrgency([], [], now)).toEqual([])
+    expect(sortTasksByUrgency([task({ id: 'only' })], [], now).map((t) => t.id)).toEqual(['only'])
   })
 })

@@ -26,13 +26,14 @@ export interface ProjectFlowMetrics {
 const DAY = 86_400_000
 const days = (duration: number): number => Math.round((duration / DAY) * 10) / 10
 
-/** 预置五态的组归属（未传状态定义时的兜底，与主进程 task-status-logic 一致） */
+/** 预置五态的组归属（未传状态定义时的兜底，与主进程 task-status-logic 一致；cancelled 为遗留字符串状态 id） */
 const BUILTIN_GROUPS: Record<string, FlowStateGroup> = {
   draft: 'backlog',
   pending: 'unstarted',
   in_progress: 'started',
   paused: 'started',
   completed: 'completed',
+  cancelled: 'cancelled',
 }
 
 function groupOf(status: string, statuses?: FlowStatusDef[]): FlowStateGroup {
@@ -131,4 +132,62 @@ export function dueDateUrgency(
   if (remainingDays < 0) return { text: `${dateText} · 逾期 ${Math.abs(remainingDays)} 天`, tone: 'red' }
   if (remainingDays === 0) return { text: `${dateText} · 今天截止`, tone: 'amber' }
   return { text: `${dateText} · 剩 ${remainingDays} 天`, tone: remainingDays <= 3 ? 'amber' : 'gray' }
+}
+
+// ===== 任务列表紧迫度排序（展示层行为，不影响看板 sort_order 落库顺序） =====
+
+/** 排序所需的任务最小字段集（Task / ProjectTaskAtom 均满足，见同目录两个类型的公共子集） */
+export interface SortTask {
+  id: string
+  status: string
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  createdAt: number
+  dueDate?: number
+  completedAt?: number
+}
+
+/**
+ * 任务列表紧迫度排序（纯展示，不落库）：
+ * 1. 逾期未完成（DDL < 今天且非完成组）最前，逾期越久越靠前；
+ * 2. 其余按优先级 critical → low；
+ * 3. 同级按 dueDate 升序（无 DDL 兜底 MAX_SAFE_INTEGER），再按创建时间倒序；
+ * 4. completed/cancelled 语义组沉底，按完成时间倒序。
+ * 与甘特图排序（critical→优先级、DDL 升序、无 DDL 最后）同口径，逾期插队到最高档。
+ */
+export function sortTasksByUrgency<T extends SortTask>(
+  tasks: T[],
+  statuses: FlowStatusDef[],
+  now = Date.now(),
+): T[] {
+  const groupOf = (statusId: string): FlowStateGroup =>
+    statuses.find((s) => s.id === statusId)?.stateGroup ?? BUILTIN_GROUPS[statusId] ?? 'unstarted'
+  const isDone = (task: T): boolean => {
+    const group = groupOf(task.status)
+    return group === 'completed' || group === 'cancelled'
+  }
+  // 紧迫分位：0=逾期未完成（数值=逾期天数，越小越急）… 完成组固定 3
+  const urgencyBucket = (task: T): number => {
+    const group = groupOf(task.status)
+    if (group === 'completed' || group === 'cancelled') return 3
+    if (task.dueDate !== undefined && Number.isFinite(task.dueDate) && task.dueDate > 0
+      && localMidnight(task.dueDate) < localMidnight(now)) return 0
+    return 1
+  }
+  const PRIORITY_WEIGHT: Record<T['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
+  return [...tasks].sort((a, b) => {
+    const aDone = isDone(a)
+    const bDone = isDone(b)
+    if (aDone !== bDone) return aDone ? 1 : -1
+    if (aDone && bDone) return (b.completedAt ?? 0) - (a.completedAt ?? 0)
+    const bucketA = urgencyBucket(a)
+    const bucketB = urgencyBucket(b)
+    if (bucketA !== bucketB) return bucketA - bucketB
+    // 逾期档内：逾期越久（dueDate 越早）越靠前；未逾期档内：dueDate 升序
+    const dueA = a.dueDate ?? Number.MAX_SAFE_INTEGER
+    const dueB = b.dueDate ?? Number.MAX_SAFE_INTEGER
+    if (dueA !== dueB) return dueA - dueB
+    const byPriority = PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority]
+    if (byPriority !== 0) return byPriority
+    return b.createdAt - a.createdAt
+  })
 }
