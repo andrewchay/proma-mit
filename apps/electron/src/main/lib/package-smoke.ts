@@ -1,7 +1,7 @@
 import { openNativeSqlite } from './native-sqlite'
 /** 安装包验收：仅在显式烟测模式和新建临时配置目录内运行。 */
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { resolveModelContextCapability, type AgentRuntime, type SDKMessage } from '@gravitas/shared'
@@ -19,6 +19,9 @@ import { listWorkflowTemplates } from './workflow-template-service'
 import { getMarketingPluginDir, syncMarketingSkillsForWorkspace } from './marketing-skills-sync'
 import { updateSettings } from './settings-service'
 import { readdirSync } from 'node:fs'
+import { createNoteFile, updateNoteFile, renameNoteFile, deleteNoteFile, readNoteFile } from './knowledge-write-service'
+import { createKnowledgeVault, indexKnowledgeVault, listKnowledgeNotes } from './knowledge-service'
+import { hasCapability } from './entitlement-gate'
 import { getAgentWorkspacePath } from './config-paths'
 
 export async function runPackageSmoke(): Promise<void> {
@@ -89,6 +92,47 @@ export async function runPackageSmoke(): Promise<void> {
   assert.equal((JSON.parse(readFileSync(configPath, 'utf8')) as { version: number }).version, bundled.version + 1)
   closeCampaignDatabase()
   closeKolDatabase()
+
+  // ===== 知识库编辑链路（Knowledge Pro，打包环境严格验签下的端到端验证） =====
+  const smokeVaultDir = join(root, 'smoke-vault')
+  const smokeVault = createKnowledgeVault({ name: 'Smoke Vault', path: smokeVaultDir, type: 'folder', enabled: true })
+  assert(hasCapability('knowledge-pro'), '打包环境 knowledge-pro 门禁未通过（验签链路异常）')
+
+  // 新建 → 磁盘应有标准 Markdown
+  const created = createNoteFile({ vaultId: smokeVault.id, title: '烟测笔记', content: '第一段 [[关联]]', frontmatter: { tags: ['smoke'] } })
+  const createdRaw = readFileSync(created.absolutePath, 'utf-8')
+  assert(createdRaw.includes('# 烟测笔记'), '新建笔记缺少一级标题')
+  assert(createdRaw.includes('tags: [smoke]'), 'frontmatter 数组未正确序列化')
+
+  // 编辑 → 内容更新且标题保留
+  updateNoteFile({ vaultId: smokeVault.id, relativePath: created.relativePath, content: '更新后的正文' })
+  const afterEdit = readNoteFile(smokeVault.id, created.relativePath)
+  assert(afterEdit !== null && afterEdit.parsed.content.includes('更新后的正文'), '编辑后正文未更新')
+
+  // 重命名 → 旧文件消失、新文件带新标题
+  const renamed = renameNoteFile({ vaultId: smokeVault.id, relativePath: created.relativePath, newTitle: '改名笔记' })
+  assert(!existsSync(created.absolutePath), '重命名后旧文件仍存在')
+  assert(existsSync(join(smokeVaultDir, renamed.relativePath)), '重命名后新文件缺失')
+
+  // 索引两次 → 稳定 id（同一文件两次索引 id 必须一致，否则「打开→索引→保存」会失败）
+  await indexKnowledgeVault(smokeVault.id)
+  const firstIndex = listKnowledgeNotes(smokeVault.id).find(n => n.title === '改名笔记')
+  assert(firstIndex, '索引后未找到笔记')
+  await indexKnowledgeVault(smokeVault.id)
+  const secondIndex = listKnowledgeNotes(smokeVault.id).find(n => n.title === '改名笔记')
+  assert(secondIndex && secondIndex.id === firstIndex!.id, '笔记 id 在两次索引间不稳定')
+
+  // 删除 → 文件消失（放在门禁撤销前，删除本身也是写操作）
+  deleteNoteFile(smokeVault.id, renamed.relativePath)
+  assert(!existsSync(join(smokeVaultDir, renamed.relativePath)), '删除后文件仍存在')
+
+  // 门禁：撤销权益后写操作必须被拒绝，且磁盘文件不被触碰
+  rmSync(join(root, 'subscription'), { recursive: true, force: true })
+  assert(!hasCapability('knowledge-pro'), '撤销权益后门禁仍放行')
+  let gateBlocked = false
+  try { createNoteFile({ vaultId: smokeVault.id, title: '越权笔记' }) } catch { gateBlocked = true }
+  assert(gateBlocked, '无权益时新建笔记未被拒绝')
+
   console.log(JSON.stringify({
     packageSmoke: 'passed',
     version: app.getVersion(),
@@ -97,6 +141,7 @@ export async function runPackageSmoke(): Promise<void> {
     skillSetToggle: disabledSkills.length,
     kimiCompaction,
     sqlite: 'node:sqlite',
+    knowledgeEdit: 'passed',
   }))
 }
 

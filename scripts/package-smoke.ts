@@ -53,7 +53,7 @@ try {
   const snapshot = {
     accountId: 'package-smoke',
     planId: 'pro',
-    capabilities: ['influencer'],
+    capabilities: ['influencer', 'knowledge-pro'],
     status: 'active',
     lastVerifiedAt: now.toISOString(),
     validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
