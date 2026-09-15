@@ -165,7 +165,7 @@ import { extractTextFromAttachment } from './lib/document-parser'
 import { getTutorialContent, createWelcomeConversation } from './lib/tutorial-service'
 import { getUserProfile, updateUserProfile } from './lib/user-profile-service'
 import { getSettings, updateSettings } from './lib/settings-service'
-import { isModuleVisible, resolveDevEnabledModules } from './lib/feature-gate'
+import { isModuleVisible, resolveDevEnabledModules, resolveEffectiveModules } from './lib/feature-gate'
 import { setDockBadgeCount } from './lib/dock-badge-service'
 
 import { checkEnvironment } from './lib/environment-checker'
@@ -1132,7 +1132,16 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     SETTINGS_IPC_CHANNELS.GET,
     async (): Promise<AppSettings> => {
-      return getSettings()
+      const settings = getSettings()
+      // 门禁生效模块每次读取时计算，不落盘：它是派生结论，不是用户配置。
+      // 渲染层据此决定入口是否展示，避免自己再维护一份发布状态导致漂移。
+      return {
+        ...settings,
+        effectiveDevModules: resolveEffectiveModules({
+          devEnabled: settings.enabledDevModules,
+          isPackaged: app.isPackaged,
+        }),
+      }
     }
   )
 

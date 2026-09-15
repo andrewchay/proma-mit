@@ -62,32 +62,35 @@ export function resolveVisibleView(
 	return isViewVisible(view, enabledModules) ? view : 'conversations'
 }
 
+const KNOWN_MODULE_IDS: readonly DevGateModuleId[] = [
+	'knowledge',
+	'marketing',
+	'outbound-sourcing',
+	'proactive',
+]
+
 /**
- * 从主进程读取生效开关。
+ * 从主进程读取门禁计算后的生效模块清单。
  *
- * 主进程已按打包环境过滤（打包恒为空），这里不做环境判断，避免两处规则漂移；
- * 读取失败按「全部关闭」处理，不能因为一次读取异常就放开未完成功能。
+ * 直接用主进程的结论（已发布 + 本地开启，且已按打包环境过滤），渲染层不再
+ * 自己维护发布状态：两份状态一定漂移，会出现「IPC 放开了但入口还藏着」的
+ * 半开故障。读取失败按「全部不可见」处理。
  */
 export async function initializeDevModules(
 	setEnabled: (modules: DevGateModuleId[]) => void,
 ): Promise<void> {
 	try {
 		const settings = await window.electronAPI.getSettings()
-		const raw = Array.isArray(settings.enabledDevModules)
-			? settings.enabledDevModules
+		const raw = Array.isArray(settings.effectiveDevModules)
+			? settings.effectiveDevModules
 			: []
 		setEnabled(
-			raw.filter(
-				(id): id is DevGateModuleId =>
-					typeof id === 'string' &&
-					(id === 'knowledge' ||
-						id === 'marketing' ||
-						id === 'outbound-sourcing' ||
-						id === 'proactive'),
+			raw.filter((id): id is DevGateModuleId =>
+				KNOWN_MODULE_IDS.includes(id as DevGateModuleId),
 			),
 		)
 	} catch (error) {
-		console.error('[开发门禁] 读取开关失败，按全部关闭处理:', error)
+		console.error('[开发门禁] 读取生效模块失败，按全部不可见处理:', error)
 		setEnabled(FALLBACK_DEV_MODULES)
 	}
 }

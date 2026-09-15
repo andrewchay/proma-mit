@@ -43,14 +43,14 @@ export interface DevGateModuleMeta {
 /**
  * 模块发布状态登记表——单一事实源。
  *
- * 当前四个模块均未完成调试，因此全部为 hidden。项目管理与分析引擎不在管辖
- * 范围内（未登记即不受本门禁限制），保持正常展示。
+ * knowledge 已放开为 released；其余三个模块仍在调试，保持 hidden。
+ * 项目管理与分析引擎不在管辖范围内（未登记即不受本门禁限制），保持正常展示。
  */
 export const DEV_GATE_MODULES: readonly DevGateModuleMeta[] = [
 	{
 		id: 'knowledge',
-		status: 'hidden',
-		note: '知识库 K0–K2 链路未调试完（索引、图谱、AOF 评测）',
+		status: 'released',
+		note: '知识库已放开：K0–K2 链路可正常使用（索引、图谱、AOF 评测）',
 	},
 	{
 		id: 'marketing',
@@ -93,6 +93,25 @@ export function isModuleVisible(
 	// 必须同时是登记表内的模块，避免调用方传入任意 id 绕过白名单。
 	if (!findModule(moduleId)) return false
 	return (options.devEnabled ?? []).includes(moduleId)
+}
+
+/**
+ * 计算当前生效的模块清单（已发布 + 本地开启）。
+ *
+ * 这是渲染层唯一需要的输入：让渲染层拿到「哪些模块该可见」的结论，而不是
+ * 自己再维护一份发布状态——两份状态一定会漂移，出现「IPC 放开了但入口还
+ * 藏着」这类半开故障。
+ */
+export function resolveEffectiveModules(options: {
+	devEnabled?: unknown
+	isPackaged: boolean
+}): DevGateModuleId[] {
+	const devEnabled = resolveDevEnabledModules(options.devEnabled, {
+		isPackaged: options.isPackaged,
+	})
+	return DEV_GATE_MODULES.filter(
+		(module) => module.status === 'released' || devEnabled.includes(module.id),
+	).map((module) => module.id)
 }
 
 /**

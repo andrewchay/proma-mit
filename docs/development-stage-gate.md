@@ -15,14 +15,12 @@
 
 ## 当前受管模块
 
-以下四个模块处于 `hidden`（未完成，对所有用户不可见）：
-
-| 模块 id | 覆盖视图 | 说明 |
+| 模块 id | 覆盖视图 | 当前状态 |
 | --- | --- | --- |
-| `knowledge` | 知识库 | K0–K2 链路未调试完 |
-| `marketing` | 达人 / 广告投放 / 能力中心 | 营销能力中心未调试完 |
-| `outbound-sourcing` | 出海 sourcing | 买家发现与线索核验未调试完 |
-| `proactive` | Proactive Center | 定时、监听、Routine、审批未调试完 |
+| `knowledge` | 知识库 | **released**（已放开） |
+| `marketing` | 达人 / 广告投放 / 能力中心 | hidden（未调试完） |
+| `outbound-sourcing` | 出海 sourcing | hidden（未调试完） |
+| `proactive` | Proactive Center | hidden（未调试完） |
 
 项目管理（`projects`）与分析引擎（`analysis`）**不在管辖范围内**，未登记即不受限制，保持正常展示。
 
@@ -64,7 +62,15 @@
 
 ## 新增模块时
 
-在 `feature-gate.ts` 的 `DEV_GATE_MODULES` 与渲染层 `dev-gate.ts` 的 `MODULE_VIEWS` 中登记，默认即 `hidden`。未登记的模块既不受门禁管辖，也不能被本地开关打开——`isModuleVisible` 会拒绝不在登记表内的 id。
+在 `feature-gate.ts` 的 `DEV_GATE_MODULES` 中登记模块 id，再到渲染层 `dev-gate.ts` 的 `MODULE_VIEWS` 补上它对应的视图。默认即 `hidden`。未登记的模块既不受门禁管辖，也不能被本地开关打开——`isModuleVisible` 会拒绝不在登记表内的 id。
+
+## 生效清单由主进程单向下发
+
+渲染层**不维护**发布状态。主进程通过 `resolveEffectiveModules()` 计算「已发布 + 本地开启」的清单，随 `getSettings()` 以 `effectiveDevModules` 字段下发；渲染层只消费这个结论，并按 `MODULE_VIEWS` 映射到具体视图。
+
+这么做的原因是：如果渲染层自己再存一份发布状态，两份状态一定会漂移，出现「主进程 IPC 已放开、但入口还藏着」的半开故障——用户既看不到功能，也不知道哪里出了问题。
+
+`effectiveDevModules` 是派生结论，**不会写入 `settings.json`**：`updateSettings` 会剥离该字段，读取时再动态注入。
 
 ## 相关测试
 

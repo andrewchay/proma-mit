@@ -62,13 +62,17 @@ export function getSettings(): AppSettings {
  */
 export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   const current = getSettings()
-  const updated: AppSettings = mergeNestedSettings(current, updates)
+  // effectiveDevModules 是门禁计算的派生结论，只在下发时注入，绝不落盘：
+  // 否则它会变成可手改的配置，且与发布状态不一致时还会被读回。
+  const { effectiveDevModules: _ignoredDerived, ...persistable } = updates
+  const updated: AppSettings = mergeNestedSettings(current, persistable)
 
   const filePath = getSettingsPath()
 
   try {
-    writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf-8')
-    console.log('[设置] 已更新 keys:', Object.keys(updates).join(', '))
+    const { effectiveDevModules: _dropDerived, ...toWrite } = updated
+    writeFileSync(filePath, JSON.stringify(toWrite, null, 2), 'utf-8')
+    console.log('[设置] 已更新 keys:', Object.keys(persistable).join(', '))
   } catch (error) {
     console.error('[设置] 写入失败:', error)
     throw new Error('写入应用设置失败')
@@ -81,7 +85,7 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
     targetId: 'app-settings',
     beforeSnapshot: redactSensitive(current as unknown as Record<string, unknown>),
     afterSnapshot: redactSensitive(updated as unknown as Record<string, unknown>),
-    metadata: { changedKeys: Object.keys(updates) },
+    metadata: { changedKeys: Object.keys(persistable) },
   })
 
   notifySettingsChange(updated, updates)

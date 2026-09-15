@@ -238,6 +238,12 @@ export interface AppSettings {
    * 解锁未完成功能。留空即全部按门禁默认状态处理。
    */
   enabledDevModules?: string[]
+  /**
+   * 门禁计算后的生效模块清单（只读，由主进程下发，不读回 settings.json）。
+   *
+   * 渲染层据此决定入口与视图是否展示，避免自己再维护一份发布状态。
+   */
+  effectiveDevModules?: string[]
   /** 教程推荐横幅是否已关闭 */
   tutorialBannerDismissed?: boolean
   /** 自动归档天数（0 = 禁用，默认 7） */

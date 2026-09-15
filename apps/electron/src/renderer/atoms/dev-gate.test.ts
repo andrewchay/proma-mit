@@ -7,7 +7,7 @@ import {
 } from './dev-gate'
 
 describe('渲染层开发门禁', () => {
-	test('四个模块对应的视图默认全部不可见', () => {
+	test('未收到主进程生效清单时全部不可见（读取失败兜底）', () => {
 		const gated = [
 			'knowledge',
 			'influencer',
@@ -18,6 +18,11 @@ describe('渲染层开发门禁', () => {
 		]
 		for (const view of gated)
 			expect(isViewVisible(view, FALLBACK_DEV_MODULES)).toBe(false)
+	})
+
+	test('主进程下发已发布模块后该模块可见（knowledge 已 released）', () => {
+		expect(isViewVisible('knowledge', ['knowledge'])).toBe(true)
+		expect(isViewVisible('influencer', ['knowledge'])).toBe(false)
 	})
 
 	test('项目管理与分析引擎不受门禁影响', () => {
