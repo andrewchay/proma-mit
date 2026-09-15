@@ -171,3 +171,71 @@ export const ANALYSIS_IPC_CHANNELS = {
   /** 生成周报 */
   GENERATE_WEEKLY_REPORT: 'analysis:generate-weekly-report',
 } as const
+
+/**
+ * 知识目录（Source / KnowledgeBase / Project 关联）
+ *
+ * 设计边界：
+ * - Source 指向原件（Vault 目录、文件、网页快照、会话片段），不搬移原件。
+ * - KnowledgeBase 是「用途」维度的逻辑集合，可包含多个来源。
+ * - Project 关联只记录「这个项目允许使用哪些知识库」，解除关联不删库。
+ *
+ * 与旧 Vault 的关系：每个旧 Vault 迁移为一个 Source 和一个默认 KnowledgeBase，
+ * 保留原 vaultId 与 noteId，旧 JSON 文件继续存在以便回滚。
+ */
+
+/** 来源类型 */
+export type KnowledgeSourceType = 'vault' | 'file' | 'web' | 'session'
+
+/** 来源登记（指向原件，不复制内容） */
+export interface KnowledgeSource {
+  id: string
+  type: KnowledgeSourceType
+  name: string
+  /** vault：目录绝对路径；file：文件绝对路径；web：URL；session：会话 ID */
+  locator: string
+  /** 来源内限定子路径（目录来源可选），如 'projects' */
+  scopePath?: string
+  /** 排除规则（相对路径前缀或文件名） */
+  excludePatterns?: string[]
+  enabled: boolean
+  createdAt: string
+  /** 兼容字段：由旧 Vault 迁移而来时保留原 vaultId */
+  legacyVaultId?: string
+}
+
+/** 知识库（逻辑集合，面向用途） */
+export interface KnowledgeBase {
+  id: string
+  name: string
+  description?: string
+  /** 成员来源 ID */
+  sourceIds: string[]
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** Project 与知识库的关联绑定 */
+export interface ProjectKnowledgeBinding {
+  id: string
+  projectId: string
+  knowledgeBaseId: string
+  createdAt: string
+}
+
+/** 目录修订信息：用于缓存失效与乐观并发 */
+export interface KnowledgeCatalogRevision {
+  /** 每次目录变更递增；关联变更后旧缓存不得命中 */
+  revision: number
+  updatedAt: string
+}
+
+/** 目录快照（服务与 UI 的统一读取结构） */
+export interface KnowledgeCatalog {
+  schemaVersion: number
+  revision: KnowledgeCatalogRevision
+  sources: KnowledgeSource[]
+  knowledgeBases: KnowledgeBase[]
+  bindings: ProjectKnowledgeBinding[]
+}
