@@ -2,7 +2,7 @@ import * as React from 'react'
 import { useAtom } from 'jotai'
 import { FileCheck, GitBranch, Monitor, Pause, Play, Plus, Terminal, Trash2, Webhook } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AgentSessionMeta, ProactiveMonitor } from '@gravitas/shared'
+import type { AgentSessionMeta, Channel, ProactiveMonitor } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -40,6 +40,9 @@ export function MonitorsTab(): React.ReactElement {
   const [monitors, setMonitors] = useAtom(proactiveMonitorsAtom)
   const [, setLoading] = useAtom(proactiveLoadingAtom)
   const [sessions, setSessions] = React.useState<SchedulableSession[]>([])
+  const [channels, setChannels] = React.useState<Channel[]>([])
+  const [modelId, setModelId] = React.useState('')
+  const [creating, setCreating] = React.useState(false)
   const [routineInstances, setRoutineInstances] = React.useState<RoutineInstanceView[]>([])
   const [kind, setKind] = React.useState<MonitorKind>('file')
   const [title, setTitle] = React.useState('')
@@ -64,12 +67,14 @@ export function MonitorsTab(): React.ReactElement {
   const refresh = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [nextMonitors, nextSessions, nextRoutineInstances] = await Promise.all([
+      const [nextMonitors, nextSessions, nextRoutineInstances, nextChannels] = await Promise.all([
         window.electronAPI.proactive?.listMonitors?.() ?? Promise.resolve([]),
         window.electronAPI.listAgentSessions(),
         window.electronAPI.proactive?.listRoutineInstances?.() ?? Promise.resolve([]),
+        window.electronAPI.listChannels(),
       ])
       setMonitors(nextMonitors)
+      setChannels(nextChannels)
       const eligibleRoutines = nextRoutineInstances.filter(isRoutineInstance).filter((routine) => routine.enabled)
       setRoutineInstances(eligibleRoutines)
       setRoutineInstanceId((current) => current === 'manual' || eligibleRoutines.some((routine) => routine.id === current) ? current : 'manual')
@@ -86,9 +91,16 @@ export function MonitorsTab(): React.ReactElement {
 
   React.useEffect(() => { void refresh() }, [refresh])
 
+  const targetChannel = channels.find((channel) => channel.id === sessions.find((session) => session.id === sessionId)?.channelId && channel.enabled)
+  React.useEffect(() => {
+    setModelId((current) => targetChannel?.models.some((model) => model.enabled && model.id === current) ? current : targetChannel?.models.find((model) => model.enabled)?.id ?? '')
+  }, [targetChannel])
+
   const create = async (): Promise<void> => {
+    if (creating) return
     const session = sessions.find((item) => item.id === sessionId)
     const routine = routineInstances.find((item) => item.id === routineInstanceId)
+    if (!modelId || !targetChannel) { toast.error('请选择已启用渠道的模型'); return }
     if (!title.trim() || !prompt.trim() || !session) {
       toast.error('请填写名称、执行内容并选择目标会话')
       return
@@ -98,6 +110,7 @@ export function MonitorsTab(): React.ReactElement {
       toast.error('请填写当前监听类型所需的目标')
       return
     }
+    setCreating(true)
     try {
       await window.electronAPI.proactive?.createMonitor?.({
         title: title.trim(),
@@ -108,6 +121,7 @@ export function MonitorsTab(): React.ReactElement {
           sessionId: session.id,
           workspaceId: session.workspaceId,
           channelId: session.channelId,
+          modelId,
           runtime: session.agentRuntime,
           prompt: prompt.trim(),
           permissionMode: 'safe',
@@ -125,7 +139,7 @@ export function MonitorsTab(): React.ReactElement {
       await refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '创建监听任务失败')
-    }
+    } finally { setCreating(false) }
   }
 
   const toggle = async (monitor: ProactiveMonitor): Promise<void> => {
@@ -166,6 +180,7 @@ export function MonitorsTab(): React.ReactElement {
               {sessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}
             </SelectContent></Select>
           </label>
+          <label className="grid gap-1.5 text-sm text-muted-foreground">执行模型<Select value={modelId} onValueChange={setModelId} disabled={!targetChannel}><SelectTrigger><SelectValue placeholder="选择模型" /></SelectTrigger><SelectContent>{targetChannel?.models.filter((model) => model.enabled).map((model) => <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>)}</SelectContent></Select></label>
           <label className="grid gap-1.5 text-sm text-muted-foreground">触发后执行
             <Select value={routineInstanceId} onValueChange={setRoutineInstanceId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
               <SelectItem value="manual">自定义执行内容</SelectItem>
@@ -177,7 +192,7 @@ export function MonitorsTab(): React.ReactElement {
             <Input value={target} onChange={(event) => setTarget(event.target.value)} placeholder={targetPlaceholder(kind)} />
           </label>
           {(kind === 'command' || kind === 'session') && <label className="grid gap-1.5 text-sm text-muted-foreground">{kind === 'command' ? '轮询间隔（分钟）' : '空闲阈值（分钟）'}<Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>}
-          <div className="flex items-end"><Button onClick={() => void create()}><MetaIcon className="mr-2 size-4" />创建监听</Button></div>
+          <div className="flex items-end"><Button disabled={creating || !modelId} onClick={() => void create()}><MetaIcon className="mr-2 size-4" />创建监听</Button></div>
         </div>
       </section>
 

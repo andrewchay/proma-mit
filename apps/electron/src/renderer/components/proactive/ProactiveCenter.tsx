@@ -11,7 +11,7 @@
  */
 
 import type * as React from 'react'
-import { useAtom } from 'jotai'
+import { useAtom, useAtomValue } from 'jotai'
 import { Zap, Calendar, Monitor, CheckCircle, History, Brain, Sparkles, Workflow, ListChecks, Wallet, KeyRound } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { proactiveCenterTabAtom, type ProactiveTab } from '@/atoms/proactive-center'
@@ -23,10 +23,10 @@ import { ApprovalsTab } from './tabs/ApprovalsTab'
 import { RunsTab } from './tabs/RunsTab'
 import { MemoryTab } from './tabs/MemoryTab'
 import { RoutinesTab } from './tabs/RoutinesTab'
-import { AutomationRunningPanel } from '@/components/automation/AutomationRunningPanel'
+import { proactiveErrorAtom } from '@/atoms/proactive-data'
 import { CostAuditPanel } from '@/components/automation/CostAuditPanel'
 import { CredentialHealthPanel } from '@/components/automation/CredentialHealthPanel'
-import { RunCenterSettings } from '@/components/settings/RunCenterSettings'
+
 
 const TABS: Array<{ id: ProactiveTab; label: string; icon: React.ElementType }> = [
   { id: 'today', label: 'Today', icon: Sparkles },
@@ -44,6 +44,7 @@ const TABS: Array<{ id: ProactiveTab; label: string; icon: React.ElementType }> 
 export function ProactiveCenter(): React.ReactElement {
   const [activeTab, setActiveTab] = useAtom(proactiveCenterTabAtom)
   const refresh = useProactiveDataSync()
+  const error = useAtomValue(proactiveErrorAtom)
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -77,21 +78,15 @@ export function ProactiveCenter(): React.ReactElement {
         })}
       </div>
 
+      {error && <div role="alert" className="mx-4 mt-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">数据加载失败：{error}。请点击刷新重试。</div>}
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === 'today' && <TodayTab onRefresh={refresh} />}
         {activeTab === 'schedules' && <SchedulesTab />}
         {activeTab === 'monitors' && <MonitorsTab />}
         {activeTab === 'approvals' && <ApprovalsTab onRefresh={refresh} />}
-        {activeTab === 'running' && <AutomationRunningPanel />}
-        {activeTab === 'runs' && (
-          <div className="space-y-2">
-            <RunsTab onRefresh={refresh} />
-            <div className="px-4 pb-4 max-w-4xl mx-auto">
-              <RunCenterSettings />
-            </div>
-          </div>
-        )}
+        {activeTab === 'running' && <RunsTab onRefresh={refresh} runningOnly />}
+        {activeTab === 'runs' && <RunsTab onRefresh={refresh} />}
         {activeTab === 'memory' && <MemoryTab />}
         {activeTab === 'routines' && <RoutinesTab />}
         {activeTab === 'cost-audit' && <div className="p-4 max-w-4xl mx-auto"><CostAuditPanel /></div>}

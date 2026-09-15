@@ -12,12 +12,14 @@ import type {
   UpdateProactiveScheduleInput,
 } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
+import { ProactiveExecutionError } from './proactive-target-validation'
 
 const MIN_INTERVAL_MS = 60_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const MAX_CONSECUTIVE_FAILURES = 3
 
 export interface ProactiveRunResult {
+  output?: string
   outputSummary?: string
   /** 实际执行会话 ID（newSession 模式下由 runner 回填新建会话） */
   sessionId?: string
@@ -111,6 +113,11 @@ export class ProactiveScheduler {
 
   /** 应用启动后调用；错过的任务最多补跑一次，避免离线期间连发。 */
   async recover(): Promise<void> {
+    for (const run of this.store.listRuns()) {
+      if (run.status === 'running' || run.status === 'queued') {
+        this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: '应用退出导致运行中断；请检查结果后手动重试' })
+      }
+    }
     await this.runDue('recovery')
     this.arm()
   }
@@ -140,7 +147,10 @@ export class ProactiveScheduler {
   private async runDue(trigger: 'scheduled' | 'recovery'): Promise<void> {
     const now = this.now()
     const due = this.listSchedules().filter((schedule) => schedule.enabled && schedule.nextRunAt !== undefined && schedule.nextRunAt <= now)
-    for (const schedule of due) await this.execute(schedule, trigger)
+    for (const schedule of due) {
+      const current = this.store.getSchedule(schedule.id)
+      if (current?.enabled && current.nextRunAt !== undefined && current.nextRunAt <= this.now() && !this.activeScheduleIds.has(current.id)) await this.execute(current, trigger)
+    }
   }
 
   private async execute(schedule: ProactiveSchedule, trigger: ProactiveTaskRun['trigger']): Promise<ProactiveTaskRun> {
@@ -161,13 +171,14 @@ export class ProactiveScheduler {
         status: 'success',
         endedAt: this.now(),
         outputSummary: result.outputSummary,
+        output: result.output,
         sessionId: result.sessionId ?? run.sessionId,
       })
       this.emitRunEvent(schedule, run, 'completed')
       return run
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误'
-      run = this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: message })
+      run = this.store.saveRun({ ...run, sessionId: error instanceof ProactiveExecutionError ? error.sessionId : run.sessionId, status: 'failed', endedAt: this.now(), error: message })
       this.emitRunEvent(schedule, run, 'failed')
       return run
     } finally {
@@ -219,10 +230,10 @@ export class ProactiveScheduler {
 
   private arm(): void {
     if (this.timer) clearTimeout(this.timer)
-    const nextRunAt = this.listSchedules().filter((item) => item.enabled && item.nextRunAt !== undefined).map((item) => item.nextRunAt as number).sort((left, right) => left - right)[0]
+    const nextRunAt = this.listSchedules().filter((item) => item.enabled && item.nextRunAt !== undefined && !this.activeScheduleIds.has(item.id)).map((item) => item.nextRunAt as number).sort((left, right) => left - right)[0]
     if (nextRunAt === undefined) return
     this.timer = setTimeout(() => {
-      void this.runDue('scheduled').finally(() => this.arm())
+      void this.runDue('scheduled').catch((error) => console.error('[Proactive] 到期调度失败:', error)).finally(() => this.arm())
     }, Math.min(Math.max(0, nextRunAt - this.now()), MAX_TIMER_DELAY_MS))
   }
 

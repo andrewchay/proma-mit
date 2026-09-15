@@ -1,12 +1,10 @@
 /** Proactive Scheduler 设置页状态。 */
 
 import { atom } from 'jotai'
-import type { AgentSessionMeta, ProactiveSchedule, ProactiveTaskRun } from '@gravitas/shared'
+import type { AgentSessionMeta } from '@gravitas/shared'
 
-export const proactiveSchedulesAtom = atom<ProactiveSchedule[]>([])
-export const proactiveRunsAtom = atom<ProactiveTaskRun[]>([])
+export { proactiveSchedulesAtom, proactiveRunsAtom, proactiveLoadingAtom } from './proactive-data'
 export const proactiveSessionsAtom = atom<AgentSessionMeta[]>([])
-export const proactiveLoadingAtom = atom(false)
 export const proactiveSelectedSessionIdAtom = atom('')
 export const proactiveNewSessionAtom = atom(false)
 export const proactiveSelectedChannelIdAtom = atom('')

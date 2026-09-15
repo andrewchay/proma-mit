@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { getProactiveConfigPath, getConfigDir } from './config-paths'
 import type { ProactiveExecutionTarget, ProactiveTaskRun } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
+import { ProactiveExecutionError } from './proactive-target-validation'
 import { extractMemoryCandidatesFromOutput, runMemoryMaintenance } from './memory-plugin-service'
 import { createMemoryApproval } from './approval-service'
 import { createSkillApproval } from './approval-service'
@@ -370,7 +371,7 @@ export async function runRoutineInstance(
   try {
     if (!routineRunner) throw new Error('Routine 执行器未就绪')
     const result = await routineRunner(instance, { ...target, prompt }, prompt)
-    run = runStore.saveRun({ ...run, status: 'success', endedAt: Date.now(), outputSummary: result.outputSummary, sessionId: result.sessionId ?? run.sessionId })
+    run = runStore.saveRun({ ...run, status: 'success', endedAt: Date.now(), outputSummary: result.outputSummary, output: result.output, sessionId: result.sessionId ?? run.sessionId })
     if (instance.manifestId.startsWith('proma-memory:') && result.output) {
       for (const candidate of extractMemoryCandidatesFromOutput(result.output, run.id, run.sessionId)) {
         createMemoryApproval(run.id, candidate.title, candidate.content, {
@@ -395,7 +396,7 @@ export async function runRoutineInstance(
     return run
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Routine 执行失败'
-    run = runStore.saveRun({ ...run, status: 'failed', endedAt: Date.now(), error: message })
+    run = runStore.saveRun({ ...run, sessionId: error instanceof ProactiveExecutionError ? error.sessionId : run.sessionId, status: 'failed', endedAt: Date.now(), error: message })
     return run
   }
 }

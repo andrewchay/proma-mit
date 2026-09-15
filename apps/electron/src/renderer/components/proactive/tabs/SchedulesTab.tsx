@@ -6,7 +6,7 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
-import { Clock3, LoaderCircle, Pause, Pencil, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Clock3, Pause, Pencil, Play, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ProactiveSchedule } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
@@ -28,9 +28,11 @@ import {
   proactiveCronExpressionAtom,
   proactiveCronTimezoneAtom,
 } from '@/atoms/proactive-scheduler'
-import type { AgentRuntime, AgentSessionMeta, Channel } from '@gravitas/shared'
-import { proactiveConfigurationRecommendationAtom } from '@/atoms/proactive-center'
+import type { AgentWorkspace, AgentSessionMeta, Channel } from '@gravitas/shared'
+import { proactiveEditScheduleIdAtom, proactiveConfigurationRecommendationAtom } from '@/atoms/proactive-center'
 import { proactiveRecommendationsAtom } from '@/atoms/proactive-data'
+import { PROJECT_CHECK_PROMPT, assertProactiveRunSucceeded, scheduleRunState, sortProactiveRuns } from '@/lib/proactive-view'
+import { ProactiveRunCard } from '../ProactiveRunCard'
 
 type SchedulableSession = import('@gravitas/shared').AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
 
@@ -57,6 +59,12 @@ export function SchedulesTab(): React.ReactElement {
   const [cronExpression, setCronExpression] = useAtom(proactiveCronExpressionAtom)
   const [cronTimezone, setCronTimezone] = useAtom(proactiveCronTimezoneAtom)
   const [channels, setChannels] = React.useState<Channel[]>([])
+  const [workspaces, setWorkspaces] = React.useState<AgentWorkspace[]>([])
+  const [workspaceId, setWorkspaceId] = React.useState('')
+  const [creating, setCreating] = React.useState(false)
+  const [taskTitle, setTaskTitle] = React.useState('')
+  const [runningId, setRunningId] = React.useState<string | null>(null)
+  const [editScheduleId, setEditScheduleId] = useAtom(proactiveEditScheduleIdAtom)
   const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('proma')
   const [selectedModelId, setSelectedModelId] = React.useState('')
   const [editingSchedule, setEditingSchedule] = React.useState<ProactiveSchedule | null>(null)
@@ -81,17 +89,19 @@ export function SchedulesTab(): React.ReactElement {
   const refresh = React.useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [nextSchedules, nextRuns, nextSessions, nextChannels] = await Promise.all([
+      const [nextSchedules, nextRuns, nextSessions, nextChannels, nextWorkspaces] = await Promise.all([
         window.electronAPI.listProactiveSchedules(),
         window.electronAPI.listProactiveRuns(),
         window.electronAPI.listAgentSessions(),
         window.electronAPI.listChannels(),
+        window.electronAPI.listAgentWorkspaces(),
       ])
       const eligible = nextSessions.filter(eligibleRuntime)
       setSchedules(nextSchedules)
       setRuns(nextRuns)
       setSessions(eligible)
       setChannels(nextChannels)
+      setWorkspaces(nextWorkspaces)
       setSessionId((current) => eligible.some((item) => item.id === current) ? current : eligible[0]?.id ?? '')
       setSelectedChannelId((current) => nextChannels.some((item) => item.id === current && item.enabled) ? current : nextChannels.find((item) => item.enabled)?.id ?? '')
     } catch (error) {
@@ -107,6 +117,12 @@ export function SchedulesTab(): React.ReactElement {
     void refresh()
   }, [refresh, runAt, setRunAt])
 
+  React.useEffect(() => {
+    if (!editScheduleId) return
+    const schedule = schedules.find((item) => item.id === editScheduleId)
+    if (schedule) { setEditingSchedule(schedule); setEditScheduleId(null) }
+  }, [editScheduleId, schedules, setEditScheduleId])
+
   const selectedSession = sessions.find((item) => item.id === sessionId)
   const targetChannel = channels.find((item) => item.id === (newSession ? selectedChannelId : selectedSession?.channelId) && item.enabled)
 
@@ -115,7 +131,8 @@ export function SchedulesTab(): React.ReactElement {
     setSelectedModelId((current) => enabledModels.some((model) => model.id === current) ? current : enabledModels[0]?.id ?? '')
   }, [targetChannel])
 
-  const create = async (): Promise<void> => {
+  const create = async (trial = false): Promise<void> => {
+    if (creating) return
     if (!prompt.trim()) {
       toast.error('请填写任务内容')
       return
@@ -124,6 +141,7 @@ export function SchedulesTab(): React.ReactElement {
     const channel = newSession ? enabledChannels.find((item) => item.id === selectedChannelId) : targetChannel
     const session = selectedSession
     if (newSession) {
+      if (!workspaceId) { toast.error('请选择任务的目标工作区'); return }
       if (!channel || !isSchedulableRuntime(selectedRuntime)) {
         toast.error('请选择已启用渠道和 Gravitas / AI SDK Runtime')
         return
@@ -143,11 +161,12 @@ export function SchedulesTab(): React.ReactElement {
       : kind === 'interval'
         ? { type: 'interval' as const, intervalMs: Number(intervalMinutes) * 60_000 }
         : { type: 'cron' as const, expression: cronExpression.trim(), timezone: cronTimezone.trim() }
+    setCreating(true)
     try {
-      await window.electronAPI.createProactiveSchedule({
-        title: prompt.trim().slice(0, 48),
+      const created = await window.electronAPI.createProactiveSchedule({
+        title: taskTitle.trim() || prompt.trim().slice(0, 48),
         sessionId: newSession ? undefined : session?.id,
-        workspaceId: newSession ? undefined : session?.workspaceId,
+        workspaceId: newSession ? workspaceId : session?.workspaceId,
         channelId: newSession ? (channel?.id ?? '') : (session?.channelId ?? ''),
         runtime: newSession ? selectedRuntime : ((session?.agentRuntime ?? 'proma') as 'proma' | 'ai-sdk'),
         modelId: selectedModelId,
@@ -161,11 +180,24 @@ export function SchedulesTab(): React.ReactElement {
         setConfigurationRecommendation(null)
       }
       setPrompt('')
+      setTaskTitle('')
       toast.success('定时任务已创建')
       await refresh()
+      if (trial) await runSchedule(created.id)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '创建定时任务失败')
-    }
+    } finally { setCreating(false) }
+  }
+
+  const runSchedule = async (id: string): Promise<void> => {
+    if (runningId) return
+    setRunningId(id)
+    try {
+      const result = await window.electronAPI.runProactiveSchedule(id)
+      assertProactiveRunSucceeded(result)
+      toast.success('本次执行已完成，请查看下方完整结果')
+    } catch (error) { toast.error(error instanceof Error ? error.message : '执行失败，请查看运行详情') }
+    finally { setRunningId(null); await refresh() }
   }
 
   const mutate = async (action: () => Promise<unknown>, success: string): Promise<void> => {
@@ -180,6 +212,11 @@ export function SchedulesTab(): React.ReactElement {
 
   return (
     <div className="p-4 space-y-4 max-w-4xl mx-auto">
+      <div className="rounded-xl bg-primary/5 p-4 space-y-2">
+        <h2 className="text-sm font-medium">先完成一次只读项目检查</h2>
+        <p className="text-xs text-muted-foreground">选择工作区和模型，试跑后在下方查看本次结果。当前仅支持 Gravitas / AI SDK；Pi / Claude 会话暂不支持。应用关闭或设备休眠时不会常驻执行，重新打开后到期任务最多补跑一次。</p>
+        <Button size="sm" variant="outline" onClick={() => { setNewSession(true); setTaskTitle('项目未提交变更检查'); setPrompt(PROJECT_CHECK_PROMPT); setKind('cron'); setCronExpression('0 9 * * 1-5') }}>使用「项目未提交变更检查」模板</Button>
+      </div>
       {/* 创建表单 */}
       <div className="rounded-xl border border-border/50 bg-background shadow-sm">
         <div className="px-4 py-3 border-b border-border/50">
@@ -189,6 +226,7 @@ export function SchedulesTab(): React.ReactElement {
           </h3>
         </div>
         <div className="p-4 space-y-3">
+          <label className="grid gap-1.5 text-sm text-muted-foreground">任务名称<Input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="例如：项目未提交变更检查" /></label>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="grid gap-1.5 text-sm text-muted-foreground">
               执行目标
@@ -213,6 +251,9 @@ export function SchedulesTab(): React.ReactElement {
             </label>
           </div>
 
+          {newSession && <label className="grid gap-1.5 text-sm text-muted-foreground">目标工作区
+            <Select value={workspaceId} onValueChange={setWorkspaceId}><SelectTrigger><SelectValue placeholder="明确选择要检查的项目" /></SelectTrigger><SelectContent>{workspaces.map((workspace) => <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}{workspace.rootPath ? ` · ${workspace.rootPath}` : ' · 托管工作区'}</SelectItem>)}</SelectContent></Select>
+          </label>}
           {newSession ? (
             <div className="grid gap-3 md:grid-cols-2">
               <label className="grid gap-1.5 text-sm text-muted-foreground">
@@ -293,10 +334,12 @@ export function SchedulesTab(): React.ReactElement {
             <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="例如：检查当前工作区的未提交变更并总结" />
           </label>
 
-          <Button onClick={() => void create()} disabled={loading || (newSession ? channels.length === 0 : sessions.length === 0)}>
+          <Button onClick={() => void create()} disabled={creating || Boolean(runningId) || !selectedModelId || (newSession ? !workspaceId : sessions.length === 0)}>
             <Plus className="mr-2 size-4" />
-            创建安全定时任务
+            {creating ? '正在处理…' : '创建安全定时任务'}
           </Button>
+          <Button className="ml-2" variant="outline" onClick={() => void create(true)} disabled={creating || Boolean(runningId) || !selectedModelId || (newSession ? !workspaceId : sessions.length === 0)}>创建并试跑一次</Button>
+          <p className="text-xs text-muted-foreground">试跑会调用所选模型，可能产生渠道费用；不会取消后续计划，也不会提升 safe 权限。</p>
         </div>
       </div>
 
@@ -323,7 +366,9 @@ export function SchedulesTab(): React.ReactElement {
                 schedule={schedule}
                 onPause={() => mutate(() => window.electronAPI.setProactiveScheduleEnabled(schedule.id, false), '已暂停定时任务')}
                 onResume={() => mutate(() => window.electronAPI.setProactiveScheduleEnabled(schedule.id, true), '已恢复定时任务')}
-                onRun={() => mutate(() => window.electronAPI.runProactiveSchedule(schedule.id), '已完成手动运行')}
+                onRun={() => void runSchedule(schedule.id)}
+                busy={runningId === schedule.id || runs.some((run) => run.sourceId === schedule.id && run.status === 'running')}
+                stateLabel={scheduleRunState(schedule, runs)}
                 onDelete={() => mutate(() => window.electronAPI.deleteProactiveSchedule(schedule.id), '已删除定时任务')}
                 onEdit={() => setEditingSchedule(schedule)}
               />
@@ -341,17 +386,7 @@ export function SchedulesTab(): React.ReactElement {
           </h3>
         </div>
         <div className="p-4">
-          {runs.slice(0, 8).map((run) => (
-            <div key={run.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm py-1.5">
-              <span className={run.status === 'success' ? 'font-medium text-emerald-600 dark:text-emerald-400' : run.status === 'failed' ? 'font-medium text-destructive' : 'font-medium'}>
-                {run.status}
-              </span>
-              <span className="text-muted-foreground">{run.trigger} · {formatTime(run.startedAt)}</span>
-              {run.sessionId && <span className="font-mono text-xs text-muted-foreground">会话 {run.sessionId.slice(0, 8)}</span>}
-              {run.outputSummary && <span className="text-muted-foreground">{run.outputSummary}</span>}
-              {run.error && <span className="text-destructive">{run.error}</span>}
-            </div>
-          ))}
+          {sortProactiveRuns(runs).slice(0, 8).map((run) => <ProactiveRunCard key={run.id} run={run} onRefresh={refresh} />)}
           {runs.length === 0 && <p className="text-center text-sm text-muted-foreground py-6">暂无运行记录。</p>}
         </div>
       </div>
@@ -362,6 +397,7 @@ export function SchedulesTab(): React.ReactElement {
           schedule={editingSchedule}
           sessions={sessions}
           channels={channels}
+          workspaces={workspaces}
           onOpenChange={(open) => { if (!open) setEditingSchedule(null) }}
           onSaved={async () => { setEditingSchedule(null); await refresh() }}
         />
@@ -383,7 +419,9 @@ function isScheduleRecommendationAction(value: unknown): value is ScheduleRecomm
   return (schedule.type === 'cron' && typeof schedule.expression === 'string' && typeof schedule.timezone === 'string') || (schedule.type === 'interval' && typeof schedule.intervalMs === 'number')
 }
 
-function ScheduleCard({ schedule, onPause, onResume, onRun, onDelete, onEdit }: {
+function ScheduleCard({ schedule, onPause, onResume, onRun, onDelete, onEdit, busy, stateLabel }: {
+  busy: boolean
+  stateLabel: string
   schedule: ProactiveSchedule
   onPause: () => void
   onResume: () => void
@@ -396,20 +434,20 @@ function ScheduleCard({ schedule, onPause, onResume, onRun, onDelete, onEdit }: 
     <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg bg-foreground/[0.02] border border-border/40">
       <Clock3 className="size-4 text-primary flex-shrink-0" />
       <div className="min-w-48 flex-1">
-        <p className="font-medium text-sm">{schedule.title}</p>
+        <p className="font-medium text-sm">{schedule.title} · {stateLabel}</p>
         <p className="text-xs text-muted-foreground">
           {describeSchedule(schedule)} · {schedule.permissionMode} · {schedule.newSession ? '新建会话执行' : '复用会话'} · 下次 {formatScheduleTime(schedule)}{failureHint}
         </p>
       </div>
       <div className="flex items-center gap-1.5">
-        <Button variant="outline" size="sm" onClick={onEdit} aria-label={`编辑 ${schedule.title}`}><Pencil className="mr-1 size-3.5" />编辑</Button>
-        <Button variant="outline" size="sm" onClick={onRun}><Play className="mr-1 size-3.5" />运行</Button>
+        <Button variant="outline" size="sm" onClick={onEdit} disabled={busy} aria-label={`编辑 ${schedule.title}`}><Pencil className="mr-1 size-3.5" />编辑</Button>
+        <Button variant="outline" size="sm" onClick={onRun} disabled={busy}><Play className="mr-1 size-3.5" />运行</Button>
         {schedule.enabled ? (
           <Button variant="outline" size="sm" onClick={onPause}><Pause className="mr-1 size-3.5" />暂停</Button>
         ) : (
           <Button variant="outline" size="sm" onClick={onResume}><Play className="mr-1 size-3.5" />恢复</Button>
         )}
-        <Button variant="ghost" size="icon" onClick={onDelete} aria-label="删除定时任务"><Trash2 className="size-4 text-destructive" /></Button>
+        <Button variant="ghost" size="icon" onClick={onDelete} disabled={busy} aria-label="删除定时任务"><Trash2 className="size-4 text-destructive" /></Button>
       </div>
     </div>
   )
@@ -419,12 +457,14 @@ interface ScheduleEditDialogProps {
   schedule: ProactiveSchedule
   sessions: AgentSessionMeta[]
   channels: Channel[]
+  workspaces: AgentWorkspace[]
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void>
 }
 
-function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSaved }: ScheduleEditDialogProps): React.ReactElement {
+function ScheduleEditDialog({ schedule, sessions, channels, workspaces, onOpenChange, onSaved }: ScheduleEditDialogProps): React.ReactElement {
   const schedulableSessions = sessions.filter(eligibleRuntime)
+  const [workspaceId, setWorkspaceId] = React.useState(schedule.workspaceId ?? '')
   const [title, setTitle] = React.useState(schedule.title)
   const [prompt, setPrompt] = React.useState(schedule.prompt)
   const [newSession, setNewSession] = React.useState(schedule.newSession ?? false)
@@ -456,6 +496,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSave
       return
     }
     if (!modelId) { toast.error('所选渠道没有可用模型'); return }
+    if (newSession && !workspaceId) { toast.error('请选择目标工作区'); return }
     const nextSchedule = kind === 'at'
       ? { type: 'at' as const, runAt: new Date(runAt).getTime() }
       : kind === 'interval'
@@ -466,7 +507,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSave
       await window.electronAPI.updateProactiveSchedule(schedule.id, {
         title: title.trim(), prompt: prompt.trim(), schedule: nextSchedule,
         sessionId: newSession ? undefined : session?.id,
-        workspaceId: newSession ? schedule.workspaceId : session?.workspaceId,
+        workspaceId: newSession ? workspaceId : session?.workspaceId,
         channelId: channel.id, modelId, runtime: newSession ? runtime : session!.agentRuntime,
         newSession, routineInstanceId: schedule.routineInstanceId,
         permissionMode: schedule.permissionMode, enabled,
@@ -489,6 +530,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, onOpenChange, onSave
           <label className="grid gap-1.5 text-sm text-muted-foreground">执行目标<Select value={newSession ? 'new' : 'existing'} onValueChange={(value) => setNewSession(value === 'new')}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="existing">复用已有会话</SelectItem><SelectItem value="new">新建会话执行</SelectItem></SelectContent></Select></label>
           <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式<Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select></label>
         </div>
+        {newSession && <label className="grid gap-1.5 text-sm text-muted-foreground">目标工作区<Select value={workspaceId} onValueChange={setWorkspaceId}><SelectTrigger><SelectValue placeholder="选择工作区" /></SelectTrigger><SelectContent>{workspaces.map((workspace) => <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>)}</SelectContent></Select></label>}
         {newSession ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">渠道<Select value={channelId} onValueChange={setChannelId}><SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger><SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm text-muted-foreground">Runtime<Select value={runtime} onValueChange={(value: 'proma' | 'ai-sdk') => setRuntime(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="proma">Gravitas</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent></Select></label></div> : <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话<Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择会话" /></SelectTrigger><SelectContent>{schedulableSessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent></Select></label>}
         <label className="grid gap-1.5 text-sm text-muted-foreground">模型<Select value={modelId} onValueChange={setModelId} disabled={!targetChannel}><SelectTrigger><SelectValue placeholder="选择目标渠道的模型" /></SelectTrigger><SelectContent>{(targetChannel?.models.filter((model) => model.enabled) ?? []).map((model) => <SelectItem key={model.id} value={model.id}>{model.name} · {model.id}</SelectItem>)}</SelectContent></Select></label>
         {kind === 'at' && <label className="grid gap-1.5 text-sm text-muted-foreground">执行时间<Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>}
@@ -513,10 +555,6 @@ function formatScheduleTime(schedule: ProactiveSchedule): string {
   if (!schedule.nextRunAt) return '—'
   const timezone = schedule.schedule.type === 'cron' ? schedule.schedule.timezone : undefined
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short', timeZone: timezone }).format(schedule.nextRunAt)
-}
-
-function formatTime(value: number | undefined): string {
-  return value ? new Date(value).toLocaleString() : '—'
 }
 
 function toLocalDateTime(value: number): string {

@@ -85,6 +85,8 @@ export interface ProactiveTaskRun {
   startedAt?: number
   endedAt?: number
   outputSummary?: string
+  /** 本次运行的完整文本快照；旧记录可通过 sessionId 查阅。 */
+  output?: string
   error?: string
 }
 

@@ -13,6 +13,7 @@ import { watch, type FSWatcher } from 'chokidar'
 import { getProactiveConfigPath } from './config-paths'
 import type { ProactiveMonitor, MonitorTrigger, ProactiveTaskRun, ProactiveExecutionTarget } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
+import { ProactiveExecutionError } from './proactive-target-validation'
 
 const MONITORS_FILE = 'monitors.json'
 
@@ -39,6 +40,7 @@ const lastCommandOutput = new Map<string, string>()
 const runStore = new ProactiveSchedulerStore()
 
 export interface MonitorRunResult {
+  output?: string
   outputSummary?: string
   sessionId?: string
 }
@@ -232,12 +234,13 @@ async function handleMonitorEvent(monitor: ProactiveMonitor, eventData?: unknown
       status: 'success',
       endedAt: Date.now(),
       outputSummary: result.outputSummary,
+      output: result.output,
       sessionId: result.sessionId ?? run.sessionId,
     })
     emitMonitorRunEvent(monitor, run, 'completed', eventData)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Monitor 执行失败'
-    run = runStore.saveRun({ ...run, status: 'failed', endedAt: Date.now(), error: message })
+    run = runStore.saveRun({ ...run, sessionId: error instanceof ProactiveExecutionError ? error.sessionId : run.sessionId, status: 'failed', endedAt: Date.now(), error: message })
     emitMonitorRunEvent(monitor, run, 'failed', eventData)
     console.error('[MonitorService] 执行失败:', error)
   }

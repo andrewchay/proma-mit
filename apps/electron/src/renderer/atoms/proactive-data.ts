@@ -33,3 +33,6 @@ export interface MemoryPlugin {
   enabled: boolean
 }
 export const proactiveMemoryPluginsAtom = atom<MemoryPlugin[]>([])
+
+/** 加载失败不能伪装成空列表。 */
+export const proactiveErrorAtom = atom<string | null>(null)
