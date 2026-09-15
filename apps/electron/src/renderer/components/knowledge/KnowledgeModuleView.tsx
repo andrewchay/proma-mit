@@ -13,6 +13,7 @@ import {
   BookOpen,
   FileText,
   FolderPlus,
+  FilePlus,
   Hash,
   Link2,
   Loader2,
@@ -31,6 +32,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { NoteEditor, EditToggle } from './NoteEditor'
 import {
   knowledgeVaultsAtom,
   selectedVaultIdAtom,
@@ -85,6 +87,14 @@ export function KnowledgeModuleView(): React.ReactElement {
   const visibleNotes = useAtomValue(visibleNotesAtom)
 
   const [addOpen, setAddOpen] = React.useState(false)
+  /** 编辑态：非空表示正在编辑该笔记 */
+  const [editing, setEditing] = React.useState(false)
+  /** 是否具备编辑权限（knowledge-pro），由主进程判定 */
+  const [canEdit, setCanEdit] = React.useState(false)
+  const [newNoteOpen, setNewNoteOpen] = React.useState(false)
+  const [newNoteTitle, setNewNoteTitle] = React.useState('')
+  const [newNoteVault, setNewNoteVault] = React.useState('')
+  const [creatingNote, setCreatingNote] = React.useState(false)
   const [vaultName, setVaultName] = React.useState('')
   const [vaultPath, setVaultPath] = React.useState('')
   const [creating, setCreating] = React.useState(false)
@@ -122,6 +132,15 @@ export function KnowledgeModuleView(): React.ReactElement {
   React.useEffect(() => {
     void loadAll()
   }, [loadAll])
+
+  // 写权限只查一次：它由权益决定，不随导航变化
+  React.useEffect(() => {
+    if (!api?.getWritePermission) return
+    void api
+      .getWritePermission()
+      .then(setCanEdit)
+      .catch(() => setCanEdit(false))
+  }, [api])
 
   /** 切换 Vault 时刷新笔记、标签与图谱（服务端按 vaultId 过滤） */
   React.useEffect(() => {
@@ -222,6 +241,40 @@ export function KnowledgeModuleView(): React.ReactElement {
     }
   }
 
+  /** 新建笔记：创建后立即索引，以便拿到稳定的笔记 id */
+  const handleCreateNote = async (): Promise<void> => {
+    if (!api || !newNoteTitle.trim() || !newNoteVault) return
+    setCreatingNote(true)
+    setError(null)
+    try {
+      await api.createNote({
+        vaultId: newNoteVault,
+        title: newNoteTitle.trim(),
+        content: '',
+      })
+      const title = newNoteTitle.trim()
+      setNewNoteOpen(false)
+      setNewNoteTitle('')
+      setNotice(`已创建「${title}」`)
+
+      // 索引后按标题定位新笔记并打开，避免用户自己找
+      const data = await refreshKnowledge()
+      setVaults(data.vaults)
+      setNotes(data.notes)
+      setTags(data.tags)
+      const created = data.notes.find((n) => n.title === title && n.vaultId === newNoteVault)
+      if (created) {
+        setSelectedVaultId(newNoteVault)
+        setActiveNote(created)
+        setEditing(true)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCreatingNote(false)
+    }
+  }
+
   /** 删除 Vault（仅移除索引，不删除磁盘上的 Markdown 文件） */
   const removeVault = async (id: string, name: string): Promise<void> => {
     if (!api) return
@@ -257,6 +310,22 @@ export function KnowledgeModuleView(): React.ReactElement {
           知识库
         </div>
         <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setNewNoteOpen(true)}
+          disabled={!api || !canEdit || vaults.length === 0}
+          title={
+            !canEdit
+              ? '新建笔记需要订阅 Knowledge Pro'
+              : vaults.length === 0
+                ? '请先添加知识库目录'
+                : undefined
+          }
+        >
+          <FilePlus size={14} />
+          新建笔记
+        </Button>
         <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)} disabled={!api}>
           <FolderPlus size={14} />
           添加目录
@@ -424,20 +493,41 @@ export function KnowledgeModuleView(): React.ReactElement {
           </div>
         </div>
 
-        {/* 右侧：笔记详情 */}
+        {/* 右侧：笔记详情 / 编辑 */}
         <div className="flex-1 min-w-0 flex flex-col">
           {activeNote ? (
-            <NoteDetail
-              note={activeNote}
-              onOpenLinked={(title) => {
-                // wikilink 导航：按标题在已索引笔记中查找
-                const target = visibleNotes.find(
-                  (n) => n.title.toLowerCase() === title.toLowerCase(),
-                )
-                if (target) void openNote(target.id)
-              }}
-              onClose={() => setActiveNote(null)}
-            />
+            editing ? (
+              <NoteEditor
+                key={activeNote.id}
+                note={activeNote}
+                vaultId={activeNote.vaultId}
+                onCancel={() => setEditing(false)}
+                onSaved={async (newTitle) => {
+                  setEditing(false)
+                  // 标题变化会让相对路径与 id 都变，必须重新索引后再定位
+                  setNotice(`已保存「${newTitle}」`)
+                  await handleIndex()
+                  setActiveNote(null)
+                }}
+              />
+            ) : (
+              <NoteDetail
+                note={activeNote}
+                canEdit={canEdit}
+                onEdit={() => setEditing(true)}
+                onOpenLinked={(title) => {
+                  // wikilink 导航：按标题在已索引笔记中查找
+                  const target = visibleNotes.find(
+                    (n) => n.title.toLowerCase() === title.toLowerCase(),
+                  )
+                  if (target) void openNote(target.id)
+                }}
+                onClose={() => {
+                  setEditing(false)
+                  setActiveNote(null)
+                }}
+              />
+            )
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-foreground/35">
               <Network size={28} className="text-foreground/20" />
@@ -471,6 +561,58 @@ export function KnowledgeModuleView(): React.ReactElement {
           </button>
         </div>
       )}
+
+      {/* 新建笔记对话框 */}
+      <Dialog open={newNoteOpen} onOpenChange={setNewNoteOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>新建笔记</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div>
+              <label className="text-[12px] text-foreground/60">标题</label>
+              <Input
+                value={newNoteTitle}
+                onChange={(e) => setNewNoteTitle(e.target.value)}
+                placeholder="笔记标题（同时作为文件名）"
+                className="mt-1 h-8 text-[13px]"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="text-[12px] text-foreground/60">所在知识库</label>
+              <select
+                value={newNoteVault}
+                onChange={(e) => setNewNoteVault(e.target.value)}
+                className="mt-1 w-full h-8 px-2 rounded-md border border-input bg-transparent text-[13px]"
+              >
+                <option value="">请选择</option>
+                {vaults.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="text-[11px] text-foreground/45 leading-relaxed">
+              会在知识库根目录下创建同名 .md 文件。若已有同名笔记，创建会失败而不会覆盖。
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setNewNoteOpen(false)}>
+              取消
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleCreateNote}
+              disabled={creatingNote || !newNoteTitle.trim() || !newNoteVault}
+            >
+              {creatingNote ? <Loader2 size={14} className="animate-spin" /> : null}
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 添加知识库对话框 */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -569,10 +711,14 @@ function EmptyState({
 /** 笔记详情：正文阅读 + frontmatter + 标签 + 出链/反链 */
 function NoteDetail({
   note,
+  canEdit,
+  onEdit,
   onOpenLinked,
   onClose,
 }: {
   note: import('@gravitas/shared').KnowledgeNote
+  canEdit: boolean
+  onEdit: () => void
   onOpenLinked: (title: string) => void
   onClose: () => void
 }): React.ReactElement {
@@ -589,6 +735,7 @@ function NoteDetail({
             <span>更新于 {relativeTime(note.updatedAt)}</span>
           </div>
         </div>
+        <EditToggle canEdit={canEdit} editing={false} onToggle={onEdit} />
         <button
           onClick={onClose}
           className="p-1.5 rounded text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.05]"

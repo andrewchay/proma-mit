@@ -24,6 +24,7 @@ import {
 import { join, extname, basename, relative, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { trackNoteReferenced } from './telemetry-tracking'
+import { stableNoteId } from '@gravitas/core/services/knowledge'
 import {
   getKnowledgeVaultsPath,
   getKnowledgeNotesPath,
@@ -251,7 +252,9 @@ export async function indexKnowledgeVault(
       }
 
       const note: KnowledgeNote = {
-        id: randomUUID(),
+        // 稳定 id：由 vaultId + 相对路径派生。用 randomUUID 会导致每次索引后
+        // 同一笔记的 id 变化，使「打开笔记 → 后台索引 → 保存」定位失败。
+        id: stableNoteId(vaultId, relativePath),
         vaultId,
         title: parsed.title,
         filePath: relativePath,
@@ -476,12 +479,38 @@ export function getKnowledgeNote(id: string): KnowledgeNote | null {
   return ensureNotes().find((n) => n.id === id) ?? null
 }
 
+/**
+ * 从笔记 id 中反推 vaultId 与相对路径。
+ *
+ * id 形如 `sha1(vaultId + ':' + relativePath)`，不可逆，因此这里通过
+ * 在索引中查找记录来获取定位信息，而不是解密 id。
+ */
+export function resolveNoteLocation(
+  id: string,
+): { vaultId: string; relativePath: string; absolutePath: string } | null {
+  const note = getKnowledgeNote(id)
+  if (!note) return null
+  const vault = getKnowledgeVault(note.vaultId)
+  if (!vault) return null
+  return {
+    vaultId: note.vaultId,
+    relativePath: note.filePath,
+    absolutePath: join(vault.path, note.filePath),
+  }
+}
+
 export function listKnowledgeNotes(vaultId?: string): KnowledgeNote[] {
   const notes = ensureNotes()
   const filtered = vaultId ? notes.filter((n) => n.vaultId === vaultId) : notes
   return filtered.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 }
 
+/**
+ * 从索引中移除一条笔记记录（不碰磁盘文件）。
+ *
+ * 仅用于索引维护与「移除索引条目」语义。要删除磁盘上的 Markdown，
+ * 必须用 deleteNoteFile —— 两者刻意分开，避免误调后者删掉用户文件。
+ */
 export function deleteKnowledgeNote(id: string): boolean {
   const notes = ensureNotes()
   const filtered = notes.filter((n) => n.id !== id)

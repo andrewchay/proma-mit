@@ -492,3 +492,130 @@ export function suggestLinks(
 
   return unique.sort((a, b) => b.confidence - a.confidence).slice(0, limit)
 }
+
+// ===== 笔记序列化 =====
+
+/** frontmatter 值序列化：数组写成 [a, b]，其余按字符串处理 */
+function serializeFrontmatterValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => String(v)).join(', ')}]`
+  }
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+/**
+ * 需要加引号的值。
+ *
+ * 数组字面量（已序列化为 [a, b]）不能加引号，否则会变成字符串而
+ * 丢失数组语义，因此由调用方单独判断。
+ */
+function needsQuoting(raw: string): boolean {
+  if (/^\[.*\]$/.test(raw)) return false
+  // YAML 中冒号后跟空格会开启映射，必须引起来；# 开头会被当作注释
+  return /^[\s]|[\s]$|:\s|^#|[{}"]|^$/.test(raw)
+}
+
+/**
+ * 从正文中剥离与标题相同的一级标题行。
+ *
+ * parseNote 的 content 包含整个 body（含一级标题），而序列化会重新
+ * 生成标题。不剥离会使「读取 → 保存」每次都多出一行标题。
+ */
+function stripDuplicateHeading(content: string, title: string): string {
+  const trimmed = content.trimStart()
+  const match = trimmed.match(/^#\s+(.+)\r?\n?/)
+  if (match) {
+    const heading = match[1]?.trim()
+    // 仅当标题一致时剥离；不一致说明用户改过标题，应保留
+    if (heading === title.trim()) {
+      return trimmed.slice(match[0].length)
+    }
+  }
+  return content
+}
+
+/**
+ * 从结构化字段生成 Markdown 文件内容。
+ *
+ * 与 parseNote 成对：generateNoteContent 的输出必须能被 parseNote
+ * 解析回等价结构，否则每次「读取 → 保存」都会让文件漂移。
+ *
+ * 磁盘上只保留标准 Markdown 与 YAML frontmatter，不写入任何工具专用
+ * 标记，保证 Obsidian 等其他编辑器能正常读取。
+ */
+export function generateNoteContent(input: {
+  title: string
+  content: string
+  frontmatter?: Record<string, unknown>
+}): string {
+  const { frontmatter, content } = input
+
+  // title 统一进 frontmatter 会与一级标题重复；这里约定：
+  // frontmatter 只保留调用方显式给出的键，标题由正文一级标题承载。
+  const entries = Object.entries(frontmatter ?? {}).filter(([, v]) => v !== undefined && v !== null)
+
+  const parts: string[] = []
+
+  if (entries.length > 0) {
+    parts.push('---')
+    for (const [key, value] of entries) {
+      const serialized = serializeFrontmatterValue(value)
+      parts.push(
+        `${key}: ${needsQuoting(serialized) ? `"${serialized.replace(/"/g, '\\"')}"` : serialized}`,
+      )
+    }
+    parts.push('---')
+    parts.push('')
+  }
+
+  parts.push(`# ${input.title}`)
+
+  // 正文：剥离重复标题后按段拼接，避免空正文留下多余空行
+  const body = stripDuplicateHeading(content, input.title).trim()
+  if (body) {
+    parts.push('')
+    parts.push(body)
+  }
+
+  return `${parts.join('\n')}\n`
+}
+
+// ===== 稳定标识与路径规范化 =====
+
+/**
+ * 稳定笔记 id。
+ *
+ * 由 vaultId + 相对路径派生，因此同一文件在多次索引间 id 保持一致。
+ * 不用 randomUUID：那会让「打开笔记 → 后台索引 → 保存」因为 id 变化而
+ * 定位失败。
+ *
+ * 用相对路径而非标题：标题允许重复，相对路径在 Vault 内唯一。
+ *
+ * 注意：这里用同步的简单哈希而非 crypto，以便 core 保持零 Node 依赖；
+ * 该 id 只用于本地索引定位，不承载安全语义。
+ */
+export function stableNoteId(vaultId: string, relativePath: string): string {
+  const input = `${vaultId}:${normalizeRelPath(relativePath)}`
+  // FNV-1a 32 位 ×2（不同偏移）拼成 16 位十六进制，碰撞概率足以满足本地索引
+  let h1 = 0x811c9dc5
+  let h2 = 0x01000193
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i)
+    h1 ^= code
+    h1 = Math.imul(h1, 0x01000193) >>> 0
+    h2 = Math.imul(h2 ^ code, 0x85ebca6b) >>> 0
+  }
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
+}
+
+/**
+ * 统一相对路径分隔符。
+ *
+ * 同时处理两种分隔符：不能只依赖平台的 sep，因为以反斜杠输入的路径在
+ * macOS/Linux 上不会被替换，会导致跨平台 id 不一致。
+ */
+export function normalizeRelPath(relativePath: string): string {
+  return relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+}

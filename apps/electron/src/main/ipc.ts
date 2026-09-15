@@ -4573,6 +4573,17 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, async (_event, query, maxTokens) => knowledgeSvc.getKnowledgeContextForAgent(query, maxTokens))
 
+  // 知识库编辑（Knowledge Pro）：写盘服务内部对每个写操作做权益门禁
+  const knowledgeWriteSvc = require('./lib/knowledge-write-service') as typeof import('./lib/knowledge-write-service')
+  const { hasCapability } = require('./lib/entitlement-gate') as typeof import('./lib/entitlement-gate')
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_WRITE_PERMISSION, async () => hasCapability('knowledge-pro'))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_NOTE, async (_event, input) => knowledgeWriteSvc.createNoteFile(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, async (_event, input) => knowledgeWriteSvc.updateNoteFile(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, async (_event, input) => knowledgeWriteSvc.renameNoteFile(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, async (_event, vaultId, relativePath) => { knowledgeWriteSvc.deleteNoteFile(vaultId, relativePath); return true })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.readNoteFile(vaultId, relativePath))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.statNoteFile(vaultId, relativePath))
+
   // ===== 分析引擎（免费版基础能力） =====
   const analysisSvc = require('./lib/analysis-service') as typeof import('./lib/analysis-service')
   ipcMain.handle(ANALYSIS_IPC_CHANNELS.LIST_REPORTS, async (_event, type) => analysisSvc.listAnalysisReports(type))

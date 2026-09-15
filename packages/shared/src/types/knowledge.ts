@@ -98,6 +98,22 @@ export const KNOWLEDGE_IPC_CHANNELS = {
   // Agent 上下文
   /** 获取 Agent 上下文 */
   GET_CONTEXT_FOR_AGENT: 'knowledge:get-context-for-agent',
+
+  // 编辑（Knowledge Pro：写用户 Markdown 文件）
+  /** 新建笔记 */
+  CREATE_NOTE: 'knowledge:create-note',
+  /** 更新笔记内容 */
+  UPDATE_NOTE: 'knowledge:update-note',
+  /** 重命名笔记 */
+  RENAME_NOTE: 'knowledge:rename-note',
+  /** 删除笔记文件 */
+  DELETE_NOTE_FILE: 'knowledge:delete-note-file',
+  /** 读取笔记原文（绕过索引缓存，供编辑区加载） */
+  READ_NOTE_FILE: 'knowledge:read-note-file',
+  /** 查询笔记文件状态（外部变更检测） */
+  STAT_NOTE_FILE: 'knowledge:stat-note-file',
+  /** 查询当前是否具备编辑权限 */
+  GET_WRITE_PERMISSION: 'knowledge:get-write-permission',
 } as const
 
 /**
