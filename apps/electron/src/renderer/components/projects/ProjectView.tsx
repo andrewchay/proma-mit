@@ -1665,10 +1665,12 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
   const blockedEdgeKeys = new Set(blockers.map((b) => `${b.taskId}|${b.dependsOnTaskId}`))
   const links = dependencies
     .map((dep) => {
-      const fromIdx = taskIndexById.get(dep.taskId)
-      const toIdx = taskIndexById.get(dep.dependsOnTaskId)
-      const fromSpan = taskSpanById.get(dep.taskId)
-      const toSpan = taskSpanById.get(dep.dependsOnTaskId)
+      if (dep.taskId === dep.dependsOnTaskId) return null
+      // 方向：dependsOnTaskId 是前置/上游（from），taskId 是后置/下游（to）——箭头指向下游任务
+      const fromIdx = taskIndexById.get(dep.dependsOnTaskId)
+      const toIdx = taskIndexById.get(dep.taskId)
+      const fromSpan = taskSpanById.get(dep.dependsOnTaskId)
+      const toSpan = taskSpanById.get(dep.taskId)
       if (fromIdx === undefined || toIdx === undefined || !fromSpan || !toSpan) return null
       const { d } = ganttDependencyPath(
         {
@@ -1714,7 +1716,7 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
       <div className="min-w-[760px] rounded-lg border bg-card p-3">
         <div className="mb-2 ml-[220px] flex justify-between text-xs text-muted-foreground"><span>{new Date(rangeStart).toLocaleDateString()}</span><span>{new Date(rangeEnd).toLocaleDateString()}</span></div>
         <div className="relative">
-          <div className="space-y-2" style={{ minHeight: sortedTasks.length * GANTT_ROW_STEP }}>{sortedTasks.map((task) => {
+          <div className="space-y-2" style={{ minHeight: Math.max(0, sortedTasks.length * GANTT_ROW_STEP - 8) }}>{sortedTasks.map((task) => {
             const { left, width } = taskSpanById.get(task.id)!
             return <div key={task.id} className="flex items-center gap-3">
               <div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>
@@ -1736,6 +1738,7 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
           {links.length > 0 && (
             <svg
               className="pointer-events-none absolute inset-y-0 left-[217px] right-0"
+              style={{ width: 'calc(100% - 217px)' }}
               height={sortedTasks.length * GANTT_ROW_STEP}
               viewBox={`0 0 100 ${sortedTasks.length * GANTT_ROW_STEP}`}
               preserveAspectRatio="none"

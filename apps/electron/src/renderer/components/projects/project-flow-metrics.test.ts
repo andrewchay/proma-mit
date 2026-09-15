@@ -270,4 +270,14 @@ describe('甘特依赖连线 ganttDependencyPath', () => {
     expect(p.d.startsWith('M 80 44')).toBe(true)
     expect(p.d.endsWith(' 30 44')).toBe(true)
   })
+
+  test('FS 方向语义：起点取 from 条尾、终点取 to 条头（from=前置）', () => {
+    // from(startPct=80,endPct=90) 前置在右，to(startPct=10,endPct=20) 后置在左
+    const p = ganttDependencyPath(
+      { from: { index: 0, startPct: 80, endPct: 90 }, to: { index: 1, startPct: 10, endPct: 20 } },
+      'finish_to_start',
+    )
+    expect(p.d.startsWith('M 90 12')).toBe(true)
+    expect(p.d.endsWith(' 10 44')).toBe(true)
+  })
 })
