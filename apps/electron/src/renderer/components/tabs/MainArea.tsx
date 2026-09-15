@@ -24,6 +24,7 @@ import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/at
 const WorkflowView = React.lazy(() => import('@/components/workflow/WorkflowView').then((module) => ({ default: module.WorkflowView })))
 const ProactiveCenter = React.lazy(() => import('@/components/proactive/ProactiveCenter').then((module) => ({ default: module.ProactiveCenter })))
 import { WORK_MODULE_VIEWS } from '@/atoms/work-module-registry'
+import { enabledDevModulesAtom, isViewVisible, resolveVisibleView } from '@/atoms/dev-gate'
 
 export function MainArea(): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
@@ -31,6 +32,7 @@ export function MainArea(): React.ReactElement {
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const activeTab = useAtomValue(activeTabAtom)
   const activeView = useAtomValue(activeViewAtom)
+  const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
   const appMode = useAtomValue(appModeAtom)
   const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
@@ -151,15 +153,18 @@ export function MainArea(): React.ReactElement {
     : { flex: '1 1 auto' }
 
   // 工作模块视图：由模块注册表驱动（projects / calendar）
-  const WorkModuleComponent = activeView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[activeView] : null
+  // 开发阶段门禁：旧持久化状态若停在未发布模块，回落对话视图而不是渲染空白模块。
+  const effectiveView = resolveVisibleView(activeView, enabledDevModules)
+  const proactiveVisible = isViewVisible('proactive', enabledDevModules)
+  const WorkModuleComponent = effectiveView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[effectiveView] : null
 
   return (
     <>
-      {activeView === 'workflow' ? (
+      {effectiveView === 'workflow' ? (
         <Panel variant="grow" className={mainPanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkflowView /></React.Suspense>
         </Panel>
-      ) : activeView === 'proactive' ? (
+      ) : effectiveView === 'proactive' && proactiveVisible ? (
         <Panel variant="grow" className={mainPanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><ProactiveCenter /></React.Suspense>
         </Panel>

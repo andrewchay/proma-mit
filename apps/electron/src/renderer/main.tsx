@@ -34,6 +34,7 @@ import {
   unviewedCompletedSessionIdsAtom,
 } from './atoms/agent-atoms'
 import { updateStatusAtom, initializeUpdater } from './atoms/updater'
+import { enabledDevModulesAtom, initializeDevModules } from './atoms/dev-gate'
 import {
   notificationsEnabledAtom,
   notificationSoundEnabledAtom,
@@ -421,6 +422,22 @@ function MarkdownFontSizeInitializer(): null {
  *
  * 从主进程 settings.json 加载已订阅的营销领域业务包，供能力中心与侧边栏导航显隐使用。
  */
+/**
+ * 开发阶段门禁初始化
+ *
+ * 未完成模块（knowledge / marketing / outbound-sourcing / proactive）默认不可见，
+ * 开关由主进程按打包环境过滤后下发。
+ */
+function DevGateInitializer(): null {
+  const setEnabled = useSetAtom(enabledDevModulesAtom)
+
+  useEffect(() => {
+    void initializeDevModules(setEnabled)
+  }, [setEnabled])
+
+  return null
+}
+
 function MarketingCapabilitiesInitializer(): null {
   const setEnabled = useSetAtom(marketingEnabledCapabilitiesAtom)
 
@@ -924,6 +941,7 @@ if (isQuickTaskWindow) {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <ThemeInitializer />
+      <DevGateInitializer />
       <AgentSettingsInitializer />
       <NotificationsInitializer />
       <DockBadgeInitializer />

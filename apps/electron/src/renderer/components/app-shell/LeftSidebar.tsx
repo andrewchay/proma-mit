@@ -19,6 +19,7 @@ import { SearchDialog } from './SearchDialog'
 import { UserAvatar } from '@/components/chat/UserAvatar'
 import { activeViewAtom } from '@/atoms/active-view'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
+import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
 import { CAPABILITY_MANIFEST, activeCapabilitiesAtom, type CapabilityId } from '@/atoms/marketing-atoms'
@@ -167,6 +168,10 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 
 export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom)
+  // 开发阶段门禁：未完成模块的入口不渲染（proactive 与核心模块中的 knowledge 同源判定）
+  const enabledDevModules = useAtomValue(enabledDevModulesAtom)
+  const proactiveVisible = isViewVisible('proactive', enabledDevModules)
+  const visibleCoreWorkModules = CORE_WORK_MODULES.filter((module) => isViewVisible(module.id, enabledDevModules))
   const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
@@ -1219,7 +1224,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             <TooltipContent side="right">Chat 模式</TooltipContent>
           </Tooltip>
 
-          <Tooltip>
+          {proactiveVisible && <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
@@ -1239,7 +1244,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Proactive Center</TooltipContent>
-          </Tooltip>
+          </Tooltip>}
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1400,7 +1405,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             工作模块
           </div>
           <div className="flex flex-col gap-0.5 mt-1">
-            {CORE_WORK_MODULES.map(({ id, label, icon: Icon }) => {
+            {visibleCoreWorkModules.map(({ id, label, icon: Icon }) => {
               const active = activeView === id
               return (
                 <button
@@ -1418,7 +1423,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 </button>
               )
             })}
-            <button
+            {proactiveVisible && <button
               onClick={() => setActiveView('proactive')}
               className={cn(
                 'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
@@ -1429,7 +1434,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             >
               <Zap size={16} className={activeView === 'proactive' ? 'text-primary-foreground' : 'text-foreground/40'} />
               <span className="flex-1 text-left">Proactive Center</span>
-            </button>
+            </button>}
             <button
               onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
               className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"

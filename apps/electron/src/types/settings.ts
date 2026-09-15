@@ -231,6 +231,13 @@ export interface AppSettings {
   agentMaxBudgetUsd?: number
   /** Agent 最大轮次（0 或 undefined = SDK 默认） */
   agentMaxTurns?: number
+  /**
+   * 本地调试开关：显式打开尚未发布的模块（见 main/lib/feature-gate.ts）。
+   *
+   * 仅在非打包环境生效；打包产物会忽略该字段，避免改 settings.json 就能
+   * 解锁未完成功能。留空即全部按门禁默认状态处理。
+   */
+  enabledDevModules?: string[]
   /** 教程推荐横幅是否已关闭 */
   tutorialBannerDismissed?: boolean
   /** 自动归档天数（0 = 禁用，默认 7） */

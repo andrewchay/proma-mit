@@ -165,6 +165,7 @@ import { extractTextFromAttachment } from './lib/document-parser'
 import { getTutorialContent, createWelcomeConversation } from './lib/tutorial-service'
 import { getUserProfile, updateUserProfile } from './lib/user-profile-service'
 import { getSettings, updateSettings } from './lib/settings-service'
+import { isModuleVisible, resolveDevEnabledModules } from './lib/feature-gate'
 import { setDockBadgeCount } from './lib/dock-badge-service'
 
 import { checkEnvironment } from './lib/environment-checker'
@@ -4531,6 +4532,13 @@ export async function registerIpcHandlers(): Promise<void> {
     return getDynamicIslandService().setProjectMuted(workspace, muted)
   })
 
+  // 开发阶段门禁：未完成模块默认不注册任何 IPC，渲染层即使构造出请求也拿不到接口。
+  // 打包环境忽略本地调试开关，避免改 settings.json 解锁未完成功能。
+  const isDevModuleEnabled = (moduleId: string): boolean => isModuleVisible(moduleId, {
+    isPackaged: app.isPackaged,
+    devEnabled: resolveDevEnabledModules(getSettings().enabledDevModules, { isPackaged: app.isPackaged }),
+  })
+
   // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
   const { registerWorkModuleIpcHandlers } = require('./lib/work-module-ipc-handlers') as { registerWorkModuleIpcHandlers: () => void }
   registerWorkModuleIpcHandlers()
@@ -4539,19 +4547,22 @@ export async function registerIpcHandlers(): Promise<void> {
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }
   registerReminderIpcHandlers()
 
-  // ===== Proactive Center =====
-  const { registerMonitorIPCHandlers } = require('./lib/monitor-service') as { registerMonitorIPCHandlers: () => void }
-  registerMonitorIPCHandlers()
-  const { registerRecommendationIPCHandlers } = require('./lib/recommendation-service') as { registerRecommendationIPCHandlers: () => void }
-  registerRecommendationIPCHandlers()
-  const { registerApprovalIPCHandlers } = require('./lib/approval-service') as { registerApprovalIPCHandlers: () => void }
-  registerApprovalIPCHandlers()
-  const { registerRoutineIPCHandlers } = require('./lib/routine-service') as { registerRoutineIPCHandlers: () => void }
-  registerRoutineIPCHandlers()
-  const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
-  registerMemoryPluginIPCHandlers()
+  // ===== Proactive Center（受开发阶段门禁管辖：未完成时整体不注册） =====
+  if (isDevModuleEnabled('proactive')) {
+    const { registerMonitorIPCHandlers } = require('./lib/monitor-service') as { registerMonitorIPCHandlers: () => void }
+    registerMonitorIPCHandlers()
+    const { registerRecommendationIPCHandlers } = require('./lib/recommendation-service') as { registerRecommendationIPCHandlers: () => void }
+    registerRecommendationIPCHandlers()
+    const { registerApprovalIPCHandlers } = require('./lib/approval-service') as { registerApprovalIPCHandlers: () => void }
+    registerApprovalIPCHandlers()
+    const { registerRoutineIPCHandlers } = require('./lib/routine-service') as { registerRoutineIPCHandlers: () => void }
+    registerRoutineIPCHandlers()
+    const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
+    registerMemoryPluginIPCHandlers()
+  }
 
-  // ===== 知识库（免费版基础能力） =====
+  // ===== 知识库（受开发阶段门禁管辖：未完成时不注册） =====
+  if (isDevModuleEnabled('knowledge')) {
   const knowledgeSvc = require('./lib/knowledge-service') as typeof import('./lib/knowledge-service')
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_VAULTS, async () => knowledgeSvc.listKnowledgeVaults())
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_VAULT, async (_event, input) => knowledgeSvc.createKnowledgeVault(input))
@@ -4636,6 +4647,7 @@ export async function registerIpcHandlers(): Promise<void> {
     if (!meta) return { sessionId, mode: 'none', knowledgeBaseIds: [], scopeRevision: 'missing' }
     return knowledgeScopeSvc.resolveRetrievableScope({ sessionId, sessionMeta: meta })
   })
+  }
 
   // ===== 分析引擎（免费版基础能力） =====
   const analysisSvc = require('./lib/analysis-service') as typeof import('./lib/analysis-service')
