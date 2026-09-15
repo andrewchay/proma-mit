@@ -1443,6 +1443,7 @@ export interface ElectronAPI {
 
     // 图谱
     getGraph: (vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeGraph>
+    getLinkSuggestions: (vaultId?: string, threshold?: number, limit?: number) => Promise<import('@gravitas/shared').KnowledgeLinkSuggestion[]>
 
     // Agent 上下文
     getContextForAgent: (query: string, maxTokens?: number) => Promise<string>
@@ -1450,11 +1451,26 @@ export interface ElectronAPI {
     // 编辑（Knowledge Pro：写用户 Markdown 文件）
     getWritePermission: () => Promise<boolean>
     createNote: (input: { vaultId: string; title: string; directory?: string; fileName?: string; content?: string; frontmatter?: Record<string, unknown>; overwrite?: boolean }) => Promise<{ relativePath: string; absolutePath: string }>
-    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown> }) => Promise<{ absolutePath: string }>
-    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string }) => Promise<{ relativePath: string }>
+    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown>; expectedVersion?: string; force?: boolean }) => Promise<{ absolutePath: string }>
+    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string; expectedVersion?: string; force?: boolean }) => Promise<{ relativePath: string }>
     deleteNoteFile: (vaultId: string, relativePath: string) => Promise<boolean>
     readNoteFile: (vaultId: string, relativePath: string) => Promise<{ rawContent: string; parsed: { content: string; title: string } & Record<string, unknown> } | null>
     statNoteFile: (vaultId: string, relativePath: string) => Promise<{ size: number; modifiedAt: string } | null>
+    noteFileVersion: (vaultId: string, relativePath: string) => Promise<string | null>
+
+    // 知识目录（来源 / 知识库 / Project 关联）
+    readCatalog: () => Promise<import('@gravitas/shared').KnowledgeCatalog>
+    migrateLegacyVaults: () => Promise<{ migrated: number; skipped: number }>
+    createSource: (input: import('@gravitas/shared').KnowledgeSourceInput, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeSource>
+    updateSource: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeSource>, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeSource>
+    deleteSource: (id: string, options?: { expectedRevision?: number }) => Promise<boolean>
+    createKnowledgeBase: (input: { name: string; description?: string; sourceIds?: string[]; enabled?: boolean }, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeBase>
+    updateKnowledgeBase: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeBase>, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeBase>
+    deleteKnowledgeBase: (id: string, options?: { expectedRevision?: number; force?: boolean }) => Promise<boolean>
+    bindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').ProjectKnowledgeBinding>
+    unbindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => Promise<boolean>
+    listProjectKnowledgeBases: (projectId: string) => Promise<import('@gravitas/shared').KnowledgeBase[]>
+    resolveSessionScope: (sessionId: string) => Promise<{ sessionId: string; mode: 'project' | 'explicit' | 'none'; knowledgeBaseIds: string[]; scopeRevision: string; sources?: import('@gravitas/shared').KnowledgeSource[]; knowledgeBases?: import('@gravitas/shared').KnowledgeBase[] }>
   }
 
   // ===== 分析引擎（免费版基础能力） =====
@@ -2219,6 +2235,7 @@ const electronAPI: ElectronAPI = {
 
     // 图谱
     getGraph: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, vaultId) as Promise<import('@gravitas/shared').KnowledgeGraph>,
+    getLinkSuggestions: (vaultId?: string, threshold?: number, limit?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, vaultId, threshold, limit) as Promise<import('@gravitas/shared').KnowledgeLinkSuggestion[]>,
 
     // Agent 上下文
     getContextForAgent: (query: string, maxTokens?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, query, maxTokens) as Promise<string>,
@@ -2226,11 +2243,26 @@ const electronAPI: ElectronAPI = {
     // 编辑（Knowledge Pro：写用户 Markdown 文件）
     getWritePermission: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_WRITE_PERMISSION) as Promise<boolean>,
     createNote: (input: { vaultId: string; title: string; directory?: string; fileName?: string; content?: string; frontmatter?: Record<string, unknown>; overwrite?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_NOTE, input) as Promise<{ relativePath: string; absolutePath: string }>,
-    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown> }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, input) as Promise<{ absolutePath: string }>,
-    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, input) as Promise<{ relativePath: string }>,
+    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown>; expectedVersion?: string; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, input) as Promise<{ absolutePath: string }>,
+    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string; expectedVersion?: string; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, input) as Promise<{ relativePath: string }>,
     deleteNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, vaultId, relativePath) as Promise<boolean>,
     readNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, vaultId, relativePath) as Promise<{ rawContent: string; parsed: { content: string; title: string } & Record<string, unknown> } | null>,
     statNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, vaultId, relativePath) as Promise<{ size: number; modifiedAt: string } | null>,
+    noteFileVersion: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.NOTE_FILE_VERSION, vaultId, relativePath) as Promise<string | null>,
+
+    // 知识目录（来源 / 知识库 / Project 关联）
+    readCatalog: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.READ_CATALOG) as Promise<import('@gravitas/shared').KnowledgeCatalog>,
+    migrateLegacyVaults: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.MIGRATE_LEGACY_VAULTS) as Promise<{ migrated: number; skipped: number }>,
+    createSource: (input: import('@gravitas/shared').KnowledgeSourceInput, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_SOURCE, input, options) as Promise<import('@gravitas/shared').KnowledgeSource>,
+    updateSource: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeSource>, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_SOURCE, id, patch, options) as Promise<import('@gravitas/shared').KnowledgeSource>,
+    deleteSource: (id: string, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_SOURCE, id, options) as Promise<boolean>,
+    createKnowledgeBase: (input: { name: string; description?: string; sourceIds?: string[]; enabled?: boolean }, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_KNOWLEDGE_BASE, input, options) as Promise<import('@gravitas/shared').KnowledgeBase>,
+    updateKnowledgeBase: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeBase>, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_KNOWLEDGE_BASE, id, patch, options) as Promise<import('@gravitas/shared').KnowledgeBase>,
+    deleteKnowledgeBase: (id: string, options?: { expectedRevision?: number; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_KNOWLEDGE_BASE, id, options) as Promise<boolean>,
+    bindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.BIND_PROJECT, input, options) as Promise<import('@gravitas/shared').ProjectKnowledgeBinding>,
+    unbindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UNBIND_PROJECT, input, options) as Promise<boolean>,
+    listProjectKnowledgeBases: (projectId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.LIST_PROJECT_KNOWLEDGE_BASES, projectId) as Promise<import('@gravitas/shared').KnowledgeBase[]>,
+    resolveSessionScope: (sessionId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RESOLVE_SESSION_SCOPE, sessionId) as Promise<{ sessionId: string; mode: 'project' | 'explicit' | 'none'; knowledgeBaseIds: string[]; scopeRevision: string; sources?: import('@gravitas/shared').KnowledgeSource[]; knowledgeBases?: import('@gravitas/shared').KnowledgeBase[] }>,
   },
 
   // ===== 分析引擎（免费版基础能力） =====

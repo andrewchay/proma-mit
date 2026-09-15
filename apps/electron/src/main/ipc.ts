@@ -4571,6 +4571,7 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, async (_event, vaultId) => knowledgeSvc.listKnowledgeNotes(vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, async (_event, id) => knowledgeSvc.deleteKnowledgeNote(id))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, async (_event, vaultId, threshold, limit) => knowledgeSvc.getKnowledgeLinkSuggestions(vaultId, threshold, limit))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, async (_event, query, maxTokens) => knowledgeSvc.getKnowledgeContextForAgent(query, maxTokens))
 
   // 知识库编辑（Knowledge Pro）：写盘服务内部对每个写操作做权益门禁
@@ -4583,6 +4584,28 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, async (_event, vaultId, relativePath) => { knowledgeWriteSvc.deleteNoteFile(vaultId, relativePath); return true })
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.readNoteFile(vaultId, relativePath))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.statNoteFile(vaultId, relativePath))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.NOTE_FILE_VERSION, async (_event, vaultId, relativePath) => knowledgeWriteSvc.noteFileVersion(vaultId, relativePath))
+
+  // 知识目录（来源 / 知识库 / Project 关联）
+  const knowledgeCatalogSvc = require('./lib/knowledge-catalog-service') as typeof import('./lib/knowledge-catalog-service')
+  const knowledgeScopeSvc = require('./lib/knowledge-scope-service') as typeof import('./lib/knowledge-scope-service')
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.READ_CATALOG, async () => knowledgeCatalogSvc.readCatalog())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.MIGRATE_LEGACY_VAULTS, async () => knowledgeCatalogSvc.migrateLegacyVaults())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_SOURCE, async (_event, input, options) => knowledgeCatalogSvc.createSource(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_SOURCE, async (_event, id, patch, options) => knowledgeCatalogSvc.updateSource(id, patch, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_SOURCE, async (_event, id, options) => { knowledgeCatalogSvc.deleteSource(id, options); return true })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_KNOWLEDGE_BASE, async (_event, input, options) => knowledgeCatalogSvc.createKnowledgeBase(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_KNOWLEDGE_BASE, async (_event, id, patch, options) => knowledgeCatalogSvc.updateKnowledgeBase(id, patch, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_KNOWLEDGE_BASE, async (_event, id, options) => { knowledgeCatalogSvc.deleteKnowledgeBase(id, options); return true })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.BIND_PROJECT, async (_event, input, options) => knowledgeCatalogSvc.bindProject(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UNBIND_PROJECT, async (_event, input, options) => knowledgeCatalogSvc.unbindProject(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_PROJECT_KNOWLEDGE_BASES, async (_event, projectId) => knowledgeCatalogSvc.listProjectKnowledgeBases(projectId))
+  // 范围解析：只传 sessionId 与持久化元数据，不接受调用方自报的 Project 授权
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.RESOLVE_SESSION_SCOPE, async (_event, sessionId: string) => {
+    const meta = getAgentSessionMeta(sessionId)
+    if (!meta) return { sessionId, mode: 'none', knowledgeBaseIds: [], scopeRevision: 'missing' }
+    return knowledgeScopeSvc.resolveRetrievableScope({ sessionId, sessionMeta: meta })
+  })
 
   // ===== 分析引擎（免费版基础能力） =====
   const analysisSvc = require('./lib/analysis-service') as typeof import('./lib/analysis-service')

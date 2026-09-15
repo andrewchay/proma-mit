@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { KnowledgeNote, KnowledgeVault } from '@gravitas/shared'
 import { parseNote, generateNoteContent, normalizeRelPath } from '@gravitas/core/services/knowledge'
 import { assertCapability } from './entitlement-gate'
@@ -88,6 +88,57 @@ export function sanitizeFileName(title: string): string {
     throw new Error('笔记标题不合法')
   }
   return cleaned
+}
+
+/**
+ * 计算文件内容的版本标识。
+ *
+ * 用内容哈希而不是 mtime：mtime 在同秒内的两次写入可能完全相同，
+ * 也不区分内容是否真的变化。哈希只用于本地并发检测，不承载安全语义。
+ */
+export function contentVersion(rawContent: string): string {
+  return createHash('sha256').update(rawContent, 'utf-8').digest('hex')
+}
+
+/**
+ * 读取笔记当前版本；文件不存在时返回 null。
+ *
+ * 供编辑区在加载时记录基线版本，保存时回传比对。
+ */
+export function noteFileVersion(vaultId: string, relativePath: string): string | null {
+  const vault = getKnowledgeVault(vaultId)
+  if (!vault) return null
+
+  let targetPath: string
+  try {
+    targetPath = resolveSafePath(vault, relativePath)
+  } catch {
+    return null
+  }
+  if (!existsSync(targetPath)) return null
+  return contentVersion(readFileSync(targetPath, 'utf-8'))
+}
+
+/**
+ * 校验期望版本是否与磁盘一致。
+ *
+ * 这是并发编辑的唯一防线，放在主进程而不是渲染层：UI 的 mtime 提示
+ * 可以被任何其他调用方绕过。不传 expectedVersion 视为调用方自担
+ * 并发风险（保持既有调用兼容），但传入后必须匹配。
+ */
+function assertExpectedVersion(
+  targetPath: string,
+  expectedVersion: string | undefined,
+  force: boolean | undefined,
+  action: string,
+): void {
+  if (!expectedVersion || force) return
+  const actual = contentVersion(readFileSync(targetPath, 'utf-8'))
+  if (actual !== expectedVersion) {
+    throw new Error(
+      `笔记已被其他程序修改，${action}被拒绝（可能是 Obsidian 或另一个窗口）。请重新加载后再试。`,
+    )
+  }
 }
 
 /**
@@ -164,6 +215,10 @@ export interface UpdateNoteInput {
   relativePath: string
   content: string
   frontmatter?: Record<string, unknown>
+  /** 加载笔记时记录的版本（noteFileVersion）；传入后磁盘不一致则拒绝写入 */
+  expectedVersion?: string
+  /** 用户已确认覆盖外部修改时置 true；仅在 UI 显式确认后使用 */
+  force?: boolean
 }
 
 /** 更新笔记内容（保留标题作为一级标题由调用方决定是否包含在 content 内） */
@@ -176,6 +231,8 @@ export function updateNoteFile(input: UpdateNoteInput): { absolutePath: string }
   if (!existsSync(targetPath)) {
     throw new Error(`笔记不存在: ${input.relativePath}`)
   }
+
+  assertExpectedVersion(targetPath, input.expectedVersion, input.force, '保存')
 
   // 保留原文件中的标题：编辑区只承载正文，不应因为一次保存丢掉标题
   const existing = parseNote(readFileSync(targetPath, 'utf-8'), basename(targetPath, '.md'))
@@ -193,6 +250,10 @@ export interface RenameNoteInput {
   relativePath: string
   /** 新的标题（同时改文件名，保持与 Obsidian 一致的行为） */
   newTitle: string
+  /** 加载笔记时记录的版本；传入后磁盘不一致则拒绝重命名 */
+  expectedVersion?: string
+  /** 用户已确认覆盖外部修改时置 true */
+  force?: boolean
 }
 
 /**
@@ -210,6 +271,8 @@ export function renameNoteFile(input: RenameNoteInput): { relativePath: string }
   if (!existsSync(sourcePath)) {
     throw new Error(`笔记不存在: ${input.relativePath}`)
   }
+
+  assertExpectedVersion(sourcePath, input.expectedVersion, input.force, '重命名')
 
   const directory = dirname(normalizeRelPath(input.relativePath))
   const fileName = `${sanitizeFileName(input.newTitle)}.md`
