@@ -619,3 +619,11 @@ export function stableNoteId(vaultId: string, relativePath: string): string {
 export function normalizeRelPath(relativePath: string): string {
   return relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
 }
+
+// ===== 分块（K1-03）=====
+
+export {
+  chunkDocument,
+  MAX_CHUNK_CHARS,
+} from './chunking.ts'
+export type { DocumentChunk } from './chunking.ts'
