@@ -270,7 +270,7 @@ export function generateTimeAnalysisReport(
 export function generateProductivityAnalysis(
   input: ProductivityInput,
 ): ProductivityResult {
-  const { tasks, startDate, endDate } = input
+  const { tasks } = input
 
   const completed = tasks.filter((t) => t.status === 'done')
   const total = tasks.length

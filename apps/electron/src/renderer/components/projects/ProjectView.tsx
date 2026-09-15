@@ -31,7 +31,6 @@ function KanbanBoardContainer({ projectId, onDataChanged }: {
 }): React.ReactElement {
   const setProjectTasks = useSetAtom(setProjectTasksAtom)
   const setProjectTaskStatuses = useSetAtom(setProjectTaskStatusesAtom)
-  const [refreshTick, setRefreshTick] = useState(0)
 
   // 拉取看板并写入 Jotai（KanbanBoard 内做乐观更新，落库走 reorderTask IPC）
   useEffect(() => {
@@ -49,7 +48,7 @@ function KanbanBoardContainer({ projectId, onDataChanged }: {
     return () => {
       cancelled = true
     }
-  }, [projectId, refreshTick, setProjectTasks, setProjectTaskStatuses])
+  }, [projectId, setProjectTasks, setProjectTaskStatuses])
 
   return <KanbanBoard projectId={projectId} onChanged={onDataChanged} />
 }
@@ -939,7 +938,7 @@ function ProjectDetail({
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskStatuses, setTaskStatuses] = useState<ProjectTaskStatus[]>([])
   const [notes, setNotes] = useState<MeetingNote[]>([])
-  const [board, setBoard] = useState<KanbanBoard | null>(null)
+  const [, setBoard] = useState<KanbanBoard | null>(null)
   const [pollingStatus, setPollingStatus] = useState<Record<string, boolean>>({})
   const [isPollingLoading, setIsPollingLoading] = useState<Record<string, boolean>>({})
   const [riskReport, setRiskReport] = useState<{
@@ -2188,7 +2187,7 @@ function TaskItem({
         .catch(() => {})
     }
     return () => { cancelled = true }
-  }, [isAgentTask, task.id])
+  }, [isAgentTask, task.id, agentExecStatus, task.tokenBudget])
 
   // 展开时异步加载子任务
   useEffect(() => {

@@ -46,8 +46,6 @@ const WORKFLOW_IPC_CHANNELS = {
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
-/** 保存邮箱配置的入参形态（仅用于类型推导） */
-type saveConfigInput = (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => unknown
 import type {
   RuntimeStatus,
   GitRepoStatus,

@@ -4,7 +4,7 @@
  * 一列 = 一个状态定义 + 该状态下的任务（sortable 容器）。
  * 列头显示任务计数与 WIP 上限（超限标红；仅展示提醒，不强制拦截）。
  */
-import * as React from 'react'
+import type * as React from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type { ProjectTaskAtom, ProjectTaskStatusAtom } from '@/atoms/project-atoms'

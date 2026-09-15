@@ -275,14 +275,9 @@ export class LogicScanner {
       const seg = segments[i]!
       if (seg.type !== 'conclusion') continue
 
-      // 提取结论中的关键短语（前 10 个词）
-      const conclusionKeyPhrase = seg.text.slice(0, 80).toLowerCase()
-
       // 检查前面的段落是否使用了相同的短语作为前提
       for (let j = Math.max(0, i - 3); j < i; j++) {
         const prevSeg = segments[j]!
-        const prevText = prevSeg.text.toLowerCase()
-
         // 简单检查：计算结论与前提的字符重叠度
         const conclusionCore = seg.text
           .replace(/因此|所以|综上所述|由此可知|这表明|这说明|therefore|thus|hence|consequently/gi, '')
