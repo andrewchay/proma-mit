@@ -191,3 +191,57 @@ export function sortTasksByUrgency<T extends SortTask>(
     return b.createdAt - a.createdAt
   })
 }
+
+// ===== 甘特依赖连线（SVG 覆盖层坐标计算） =====
+
+export interface GanttDependencyPathResult {
+  /** SVG path d 属性（x 为百分比数值 0-100，y 为像素） */
+  d: string
+}
+
+export interface GanttLinkEndpoints {
+  from: { index: number; startPct: number; endPct: number }
+  to: { index: number; startPct: number; endPct: number }
+}
+
+export type GanttDependencyType = 'finish_to_start' | 'start_to_start' | 'finish_to_finish' | 'start_to_finish'
+
+/** 行高 24px（h-6）+ 行距 8px（space-y-2）= 32px 步进；条 h-4（16px）行内居中 → 行中心 y = index*32+16 */
+export const GANTT_ROW_STEP = 32
+
+/**
+ * 甘特依赖连线路径：百分比时间轴 × 固定行高网格 → SVG d 字符串。
+ * 端点规则：finish_to_start 条尾→条头；start_to_start 条头→条头；
+ * finish_to_finish 条尾→条尾；start_to_finish 条头→条尾。
+ * 跨行：端点水平伸出 6（百分比单位）再三次贝塞尔；同行：水平直线。
+ * y 由 SVG viewBox(0 0 100 行数*32) + preserveAspectRatio="none" 换算到实际像素。
+ */
+export function ganttDependencyPath(
+  endpoints: GanttLinkEndpoints,
+  type: GanttDependencyType,
+  rowStep = GANTT_ROW_STEP,
+): GanttDependencyPathResult {
+  const centerY = (index: number) => index * rowStep + rowStep / 2
+  const fromTail = { x: endpoints.from.endPct, y: centerY(endpoints.from.index) }
+  const fromHead = { x: endpoints.from.startPct, y: centerY(endpoints.from.index) }
+  const toHead = { x: endpoints.to.startPct, y: centerY(endpoints.to.index) }
+  const toTail = { x: endpoints.to.endPct, y: centerY(endpoints.to.index) }
+
+  let start: { x: number; y: number }
+  let end: { x: number; y: number }
+  switch (type) {
+    case 'start_to_start': start = fromHead; end = toHead; break
+    case 'finish_to_finish': start = fromTail; end = toTail; break
+    case 'start_to_finish': start = fromHead; end = toTail; break
+    case 'finish_to_start':
+    default: start = fromTail; end = toHead; break
+  }
+
+  if (start.y === end.y) {
+    return { d: `M ${start.x} ${start.y} L ${end.x} ${end.y}` }
+  }
+  const dir = end.x >= start.x ? 1 : -1
+  const c1x = start.x + 6 * dir
+  const c2x = end.x - 6 * dir
+  return { d: `M ${start.x} ${start.y} C ${c1x} ${start.y}, ${c2x} ${end.y}, ${end.x} ${end.y}` }
+}

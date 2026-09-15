@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency, sortTasksByUrgency, type SortTask } from './project-flow-metrics'
+import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency, sortTasksByUrgency, ganttDependencyPath, type SortTask } from './project-flow-metrics'
 
 test('流动指标只用权威任务时间戳计算在制品、吞吐、周期和 SLE 超时', () => {
   const day = 86_400_000
@@ -230,5 +230,44 @@ describe('任务列表紧迫度排序 sortTasksByUrgency', () => {
   test('空列表与单元素列表安全', () => {
     expect(sortTasksByUrgency([], [], now)).toEqual([])
     expect(sortTasksByUrgency([task({ id: 'only' })], [], now).map((t) => t.id)).toEqual(['only'])
+  })
+})
+
+describe('甘特依赖连线 ganttDependencyPath', () => {
+  const pts = (fromIndex: number, toIndex: number) => ({
+    from: { index: fromIndex, startPct: 10, endPct: 80 },
+    to: { index: toIndex, startPct: 30, endPct: 90 },
+  })
+
+  test('FS 跨行：from 条尾 → to 条头，含贝塞尔控制点', () => {
+    const p = ganttDependencyPath(pts(0, 2), 'finish_to_start')
+    expect(p.d).toContain('C')            // 贝塞尔
+    expect(p.d.startsWith('M 80 16')).toBe(true)   // 起点：from 条尾（index 0 中心 y=16）
+    expect(p.d.endsWith(' 30 80')).toBe(true)      // 终点：to 条头（index 2 中心 y=2*32+16=80）
+  })
+
+  test('SS：from 条头 → to 条头', () => {
+    const p = ganttDependencyPath(pts(0, 1), 'start_to_start')
+    expect(p.d.startsWith('M 10 16')).toBe(true)
+    expect(p.d.endsWith(' 30 48')).toBe(true)
+  })
+
+  test('FF：from 条尾 → to 条尾', () => {
+    const p = ganttDependencyPath(pts(0, 1), 'finish_to_finish')
+    expect(p.d.startsWith('M 80 16')).toBe(true)
+    expect(p.d.endsWith(' 90 48')).toBe(true)
+  })
+
+  test('SF：from 条头 → to 条尾', () => {
+    const p = ganttDependencyPath(pts(0, 1), 'start_to_finish')
+    expect(p.d.startsWith('M 10 16')).toBe(true)
+    expect(p.d.endsWith(' 90 48')).toBe(true)
+  })
+
+  test('同行：水平直线，无贝塞尔', () => {
+    const p = ganttDependencyPath(pts(1, 1), 'finish_to_start')
+    expect(p.d).not.toContain('C')
+    expect(p.d.startsWith('M 80 48')).toBe(true)
+    expect(p.d.endsWith(' 30 48')).toBe(true)
   })
 })
