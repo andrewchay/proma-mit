@@ -6,14 +6,14 @@ import type { UserMappingInput } from '@gravitas/shared'
  */
 
 import * as React from 'react'
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { useAtomValue, useSetAtom } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
-import { GANTT_GROUP_BAR_COLORS, ganttBarColor } from './project-flow-metrics'
+import { GANTT_GROUP_BAR_COLORS, ganttBarColor, sortTasksByUrgency } from './project-flow-metrics'
 import { DueDateBadge } from './DueDateBadge'
 import {
   setProjectTasksAtom,
@@ -1806,6 +1806,11 @@ function TaskList({
   onTasksChange: (tasks: Task[]) => void
 }): React.ReactElement {
   const currentUserProfile = useAtomValue(userProfileAtom)
+  // 展示层紧迫度排序：逾期未完成 > 优先级 > DDL 升序；完成组沉底。纯展示，不影响看板 sort_order。
+  const sortedTasks = useMemo(
+    () => sortTasksByUrgency(tasks, statuses),
+    [tasks, statuses],
+  )
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
@@ -2088,14 +2093,14 @@ function TaskList({
         </div>
       )}
 
-      {tasks.length === 0 ? (
+      {sortedTasks.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <p>暂无任务</p>
           <p className="text-sm mt-2">点击上方「新建任务」或导入会议纪要自动提取</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {tasks.map((task) => (
+          {sortedTasks.map((task) => (
             <TaskItem
               key={task.id}
               task={task}

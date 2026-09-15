@@ -173,7 +173,7 @@ export function sortTasksByUrgency<T extends SortTask>(
       && localMidnight(task.dueDate) < localMidnight(now)) return 0
     return 1
   }
-  const PRIORITY_WEIGHT: Record<T['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
+  const PRIORITY_WEIGHT: Record<SortTask['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
   return [...tasks].sort((a, b) => {
     const aDone = isDone(a)
     const bDone = isDone(b)
