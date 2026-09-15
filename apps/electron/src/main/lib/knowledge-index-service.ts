@@ -49,6 +49,11 @@ export async function openKnowledgeIndexStore(): Promise<ContextStoreHandle> {
   return opening
 }
 
+/** 获取当前已打开的索引库句柄（未打开时返回 null；供图谱构建等服务复用） */
+export function getStoreHandle(): ContextStoreHandle | null {
+  return storeHandle
+}
+
 /** 关闭并持久化索引数据库（应用退出时调用） */
 export async function closeKnowledgeIndexStore(): Promise<void> {
   if (storeHandle) {

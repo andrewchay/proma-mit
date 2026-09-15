@@ -118,6 +118,12 @@ export const KNOWLEDGE_IPC_CHANNELS = {
   GET_WRITE_PERMISSION: 'knowledge:get-write-permission',
   /** 候选关联建议（相似度启发式，仅供查看确认） */
   GET_LINK_SUGGESTIONS: 'knowledge:get-link-suggestions',
+  /** AOF 图谱构建（K2-02，本地治理链路） */
+  BUILD_KNOWLEDGE_GRAPH: 'knowledge:build-knowledge-graph',
+  /** AOF 图谱状态 */
+  GET_GRAPH_BUILD_STATUS: 'knowledge:get-graph-build-status',
+  /** AOF release-pinned 语义查询 */
+  QUERY_KNOWLEDGE_GRAPH: 'knowledge:query-knowledge-graph',
 
   // 知识目录（来源 / 知识库 / Project 关联）
   /** 读取完整目录快照 */
