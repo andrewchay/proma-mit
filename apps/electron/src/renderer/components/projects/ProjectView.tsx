@@ -15,6 +15,8 @@ import { ProjectChainPanel } from './ProjectChainPanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
 import { GANTT_GROUP_BAR_COLORS, ganttBarColor, sortTasksByUrgency } from './project-flow-metrics'
 import { DueDateBadge } from './DueDateBadge'
+import { ScheduleView } from '../calendar/ScheduleView'
+import { CalendarView } from '../calendar/CalendarSyncView'
 import {
   setProjectTasksAtom,
   setProjectTaskStatusesAtom,
@@ -480,7 +482,7 @@ async function resolveMemberId(displayName: string): Promise<string | undefined>
 // ===== UI 组件 =====
 
 export function ProjectView(): React.ReactElement {
-  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team'>('projects')
+  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team' | 'schedule' | 'sync'>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isLoading, _setIsLoading] = useState(false)
@@ -508,7 +510,7 @@ export function ProjectView(): React.ReactElement {
           onTabChange={setActiveTab}
           onRefresh={loadProjects}
         />
-        <div className="flex-1 overflow-auto p-6">
+        <div className={activeTab === 'schedule' || activeTab === 'sync' ? 'flex-1 min-h-0' : 'flex-1 overflow-auto p-6'}>
           {activeTab === 'projects' && (
             <ProjectList
               projects={projects}
@@ -520,6 +522,8 @@ export function ProjectView(): React.ReactElement {
           {activeTab === 'my-work' && <MyWorkPanel memberId={userProfile.memberId} fallbackUserId={`paa-${userProfile.userName}`} />}
           {activeTab === 'board' && <BoardOverview projects={projects} />}
           {activeTab === 'team' && <AgentTeamPanel />}
+          {activeTab === 'schedule' && <ScheduleView hideHeader />}
+          {activeTab === 'sync' && <CalendarView hideHeader />}
         </div>
       </div>
     )
@@ -543,7 +547,7 @@ function ProjectHeader({
   onRefresh,
 }: {
   activeTab: string
-  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'team') => void
+  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'team' | 'schedule' | 'sync') => void
   onRefresh: () => void
 }): React.ReactElement {
   return (
@@ -560,6 +564,8 @@ function ProjectHeader({
           { key: 'my-work', label: '我的工作' },
           { key: 'board', label: '看板' },
           { key: 'team', label: '团队' },
+          { key: 'schedule', label: '日程管家' },
+          { key: 'sync', label: '日历同步' },
         ] as const).map((tab) => (
           <button key={tab.key} onClick={() => onTabChange(tab.key)} className={`rounded px-2 py-1 text-xs titlebar-no-drag ${activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{tab.label}</button>
         ))}

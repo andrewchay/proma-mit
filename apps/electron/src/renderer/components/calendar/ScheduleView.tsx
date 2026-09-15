@@ -817,86 +817,89 @@ export function ScheduleView({ hideHeader = false }: ScheduleViewProps): React.R
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header（嵌入顶层 tab 等场景由外层已有标题栏时可用 hideHeader 隐藏） */}
-      {!hideHeader && (
-        <div className="relative z-[51] titlebar-no-drag flex items-center justify-between px-4 py-3 border-b flex-shrink-0">
+      {/* Header：嵌入顶层 tab 等场景由外层已有标题栏时，hideHeader 只隐藏标题区，
+          月份导航/今天/视图切换/新建/同步等工具区始终渲染（这些功能在收窄场景下仍需可达） */}
+      <div className="relative z-[51] titlebar-no-drag flex items-center justify-between px-4 py-3 border-b flex-shrink-0">
+        {!hideHeader ? (
           <div className="flex items-center gap-3">
             <CalendarIcon className="w-5 h-5 text-primary" />
             <h1 className="text-base font-semibold">日程管家</h1>
           </div>
+        ) : (
+          <div />
+        )}
 
-          <div className="flex items-center gap-2">
-            {/* 月份导航 */}
-            <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
-              <button
-                onClick={goToPrevMonth}
-                className="p-1.5 rounded-md hover:bg-background transition-colors"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span className="text-sm font-medium px-2 min-w-[100px] text-center">
-                {formatMonthLabel(selectedYear, selectedMonth)}
-              </span>
-              <button
-                onClick={goToNextMonth}
-                className="p-1.5 rounded-md hover:bg-background transition-colors"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-
-            <Button variant="outline" size="sm" onClick={goToToday} className="text-xs h-8">
-              今天
-            </Button>
-
-            {/* 视图切换 */}
-            <div className="flex items-center bg-muted rounded-lg p-0.5">
-              <button
-                onClick={() => setViewState((prev) => ({ ...prev, viewMode: 'week' }))}
-                className={cn(
-                  'p-1.5 rounded-md transition-colors',
-                  viewMode === 'week' ? 'bg-background shadow-sm' : 'hover:bg-background/50',
-                )}
-                title="月视图"
-              >
-                <LayoutGrid size={14} />
-              </button>
-              <button
-                onClick={() => setViewState((prev) => ({ ...prev, viewMode: 'list' }))}
-                className={cn(
-                  'p-1.5 rounded-md transition-colors',
-                  viewMode === 'list' ? 'bg-background shadow-sm' : 'hover:bg-background/50',
-                )}
-                title="列表视图"
-              >
-                <List size={14} />
-              </button>
-            </div>
-
-            <Button size="sm" className="gap-1.5 h-8" onClick={() => setShowCreatePanel(true)}>
-              <Plus className="w-3.5 h-3.5" />
-              新建
-            </Button>
-
-            {/* 同步 macOS 日历 */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 h-8"
-              onClick={handleSyncFromSystem}
-              disabled={syncState.isSyncing}
-              title="从 macOS 日历同步事件"
+        <div className="flex items-center gap-2">
+          {/* 月份导航 */}
+          <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
+            <button
+              onClick={goToPrevMonth}
+              className="p-1.5 rounded-md hover:bg-background transition-colors"
             >
-              <Monitor className="w-3.5 h-3.5" />
-              {syncState.isSyncing ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                '同步日历'
-              )}
-            </Button>
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-sm font-medium px-2 min-w-[100px] text-center">
+              {formatMonthLabel(selectedYear, selectedMonth)}
+            </span>
+            <button
+              onClick={goToNextMonth}
+              className="p-1.5 rounded-md hover:bg-background transition-colors"
+            >
+              <ChevronRight size={16} />
+            </button>
           </div>
+
+          <Button variant="outline" size="sm" onClick={goToToday} className="text-xs h-8">
+            今天
+          </Button>
+
+          {/* 视图切换 */}
+          <div className="flex items-center bg-muted rounded-lg p-0.5">
+            <button
+              onClick={() => setViewState((prev) => ({ ...prev, viewMode: 'week' }))}
+              className={cn(
+                'p-1.5 rounded-md transition-colors',
+                viewMode === 'week' ? 'bg-background shadow-sm' : 'hover:bg-background/50',
+              )}
+              title="月视图"
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              onClick={() => setViewState((prev) => ({ ...prev, viewMode: 'list' }))}
+              className={cn(
+                'p-1.5 rounded-md transition-colors',
+                viewMode === 'list' ? 'bg-background shadow-sm' : 'hover:bg-background/50',
+              )}
+              title="列表视图"
+            >
+              <List size={14} />
+            </button>
+          </div>
+
+          <Button size="sm" className="gap-1.5 h-8" onClick={() => setShowCreatePanel(true)}>
+            <Plus className="w-3.5 h-3.5" />
+            新建
+          </Button>
+
+          {/* 同步 macOS 日历 */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8"
+            onClick={handleSyncFromSystem}
+            disabled={syncState.isSyncing}
+            title="从 macOS 日历同步事件"
+          >
+            <Monitor className="w-3.5 h-3.5" />
+            {syncState.isSyncing ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              '同步日历'
+            )}
+          </Button>
         </div>
-      )}
+      </div>
 
       {/* 同步结果提示 */}
       {syncState.lastSyncResult && (

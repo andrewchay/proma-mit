@@ -10,7 +10,7 @@
  */
 
 import { lazy, type ComponentType } from 'react'
-import { CalendarDays, FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
@@ -32,7 +32,7 @@ export interface WorkModuleMeta {
   description?: string
 }
 
-/** 工作模块注册表（当前 4 个核心模块；主动协作统一收敛到 Proactive Center） */
+/** 工作模块注册表（当前 3 个核心模块；日程管家已并入项目管理子视图；主动协作统一收敛到 Proactive Center） */
 export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
   {
     id: 'knowledge',
@@ -47,13 +47,6 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     icon: BarChart3,
     core: true,
     description: '时间使用与生产力分析报告',
-  },
-  {
-    id: 'calendar',
-    label: '日程管家',
-    icon: CalendarDays,
-    core: true,
-    description: '日程安排、任务看板、多日历同步',
   },
   {
     id: 'projects',
@@ -98,6 +91,8 @@ export const EXTENDED_WORK_MODULES: WorkModuleMeta[] = WORK_MODULE_REGISTRY.filt
 export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   knowledge: KnowledgeModuleView,
   analysis: AnalysisModuleView,
+  // calendar 已从 WORK_MODULE_REGISTRY 移除（日程管家并入项目管理顶层子视图），
+  // 此处保留映射防止旧持久化 activeView='calendar' 导致白屏。
   calendar: CalendarModuleView,
   projects: ProjectView,
   influencer: InfluencerModuleView,
