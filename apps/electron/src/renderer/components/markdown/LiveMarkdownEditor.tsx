@@ -429,8 +429,9 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
     },
     getHost: () => hostRef.current,
     getView: () => viewRef.current,
-  }), [])
+  }), [applyFindMatches])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 编辑器初始化后持有自身文档状态，构建回调引用变化不应重建 CodeMirror（会丢失选区与滚动状态），外部重载走下方独立 effect
   React.useEffect(() => {
     const host = hostRef.current
     if (!host) return

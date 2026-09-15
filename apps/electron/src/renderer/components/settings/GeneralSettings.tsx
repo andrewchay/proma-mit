@@ -65,7 +65,15 @@ export function GeneralSettings(): React.ReactElement {
   const [nameInput, setNameInput] = React.useState(userProfile.userName)
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false)
   const [archiveAfterDays, setArchiveAfterDays] = React.useState<number>(7)
+  const [directoryMembers, setDirectoryMembers] = React.useState<Array<{ memberId: string; displayName: string }>>([])
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  // 加载成员目录（真人），供“我的成员身份”绑定选择
+  React.useEffect(() => {
+    window.electronAPI.paa.project.listMembers({ kind: 'human', activeOnly: true })
+      .then((members) => setDirectoryMembers(members.map((m) => ({ memberId: m.memberId, displayName: m.displayName }))))
+      .catch(() => setDirectoryMembers([]))
+  }, [])
 
   // 加载归档天数设置
   React.useEffect(() => {
@@ -227,6 +235,44 @@ export function GeneralSettings(): React.ReactElement {
               <p className="text-[12px] text-foreground/40 mt-0.5">
                 点击头像更换，点击名字编辑
               </p>
+            </div>
+          </div>
+        </SettingsCard>
+      </SettingsSection>
+
+      {/* 成员身份绑定：项目任务按统一成员目录匹配，绑定后“我的工作”等不再依赖名字字符串 */}
+      <SettingsSection
+        title="我的成员身份"
+        description="绑定后项目管理中的任务指派与“我的工作”按成员目录精确匹配"
+      >
+        <SettingsCard>
+          <div className="px-4 py-4 flex items-center gap-4">
+            <div className="flex-1 min-w-0">
+              <Select
+                value={userProfile.memberId ?? ''}
+                onValueChange={async (value) => {
+                  try {
+                    const updated = await window.electronAPI.updateUserProfile({ memberId: value || undefined })
+                    setUserProfile(updated)
+                  } catch (error) {
+                    console.error('[通用设置] 绑定成员身份失败:', error)
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full max-w-[280px]" data-testid="member-identity-select">
+                  <SelectValue placeholder="选择成员目录中的我" />
+                </SelectTrigger>
+                <SelectContent>
+                  {directoryMembers.map((m) => (
+                    <SelectItem key={m.memberId} value={m.memberId}>
+                      {m.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!userProfile.memberId && (
+                <p className="text-[12px] text-amber-600 mt-1.5">未绑定：将回退为按用户名匹配历史指派</p>
+              )}
             </div>
           </div>
         </SettingsCard>

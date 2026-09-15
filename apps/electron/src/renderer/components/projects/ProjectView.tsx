@@ -32,7 +32,6 @@ function KanbanBoardContainer({ projectId, onDataChanged }: {
 }): React.ReactElement {
   const setProjectTasks = useSetAtom(setProjectTasksAtom)
   const setProjectTaskStatuses = useSetAtom(setProjectTaskStatusesAtom)
-  const [refreshTick, setRefreshTick] = useState(0)
 
   // 拉取看板并写入 Jotai（KanbanBoard 内做乐观更新，落库走 reorderTask IPC）
   useEffect(() => {
@@ -50,7 +49,7 @@ function KanbanBoardContainer({ projectId, onDataChanged }: {
     return () => {
       cancelled = true
     }
-  }, [projectId, refreshTick, setProjectTasks, setProjectTaskStatuses])
+  }, [projectId, setProjectTasks, setProjectTaskStatuses])
 
   return <KanbanBoard projectId={projectId} onChanged={onDataChanged} />
 }
@@ -325,6 +324,10 @@ interface Task {
   status: 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
   priority: 'low' | 'medium' | 'high' | 'critical'
   assignee?: { userId: string; displayName: string }
+  /** 负责人对应的统一成员目录 ID */
+  assigneeMemberId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
   startDate?: number
   dueDate?: number
   completedAt?: number
@@ -462,6 +465,19 @@ async function callProjectAPI<T>(method: string, ...args: unknown[]): Promise<T>
   return fn(...args) as Promise<T>
 }
 
+/**
+ * 按名字确保成员目录有该成员，返回 memberId；失败返回 undefined（回退旧 paa-<名字> 路径）。
+ * 任务指派统一写 member_id 的入口，不再新增临时拼接的 paa-<名字> 身份。
+ */
+async function resolveMemberId(displayName: string): Promise<string | undefined> {
+  try {
+    const member = await callProjectAPI<{ memberId: string }>('ensureMemberByName', displayName)
+    return member.memberId
+  } catch {
+    return undefined
+  }
+}
+
 // ===== UI 组件 =====
 
 export function ProjectView(): React.ReactElement {
@@ -502,7 +518,7 @@ export function ProjectView(): React.ReactElement {
               onProjectsChange={setProjects}
             />
           )}
-          {activeTab === 'my-work' && <MyWorkPanel assigneeUserId={`paa-${userProfile.userName}`} />}
+          {activeTab === 'my-work' && <MyWorkPanel memberId={userProfile.memberId} fallbackUserId={`paa-${userProfile.userName}`} />}
           {activeTab === 'board' && <BoardOverview projects={projects} />}
           {activeTab === 'team' && <AgentTeamPanel />}
         </div>
@@ -562,7 +578,7 @@ function ProjectHeader({
   )
 }
 
-function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.ReactElement {
+function MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbackUserId: string }): React.ReactElement {
   const [items, setItems] = useState<MyWorkItem[]>([])
   const [mode, setMode] = useState<'received' | 'created'>('received')
   const [isLoading, setIsLoading] = useState(true)
@@ -571,19 +587,51 @@ function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.Reac
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      // PH2-⑤：received=分派给我的；created=我发起的（“我指派给 Andrew 的”）
+      // received=分派给我的；created=我发起的。身份优先用绑定的成员目录 ID，未绑定时回退旧 paa-<名字>
+      const identity = memberId ?? fallbackUserId
       setItems(mode === 'received'
-        ? await callProjectAPI<MyWorkItem[]>('listMyWork', assigneeUserId)
-        : await callProjectAPI<MyWorkItem[]>('listTasksCreatedBy', assigneeUserId))
+        ? await callProjectAPI<MyWorkItem[]>('listMyWork', identity)
+        : await callProjectAPI<MyWorkItem[]>('listTasksCreatedBy', identity))
     } catch (error) {
       console.error('加载我的工作失败:', error)
     } finally {
       setIsLoading(false)
     }
-  }, [assigneeUserId, mode])
+  }, [memberId, fallbackUserId, mode])
 
   useEffect(() => { void load() }, [load])
   const visible = status === 'all' ? items : items.filter((item) => item.status === status)
+
+  // 按截止日期分组：逾期 → 今天 → 明天 → 未来 7 天 → 更晚 → 无日期；已完成单独立组置底
+  const groups = React.useMemo(() => {
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+    const dayMs = 86_400_000
+    const buckets: Record<string, MyWorkItem[] | undefined> = {
+      overdue: [], today: [], tomorrow: [], week: [], later: [], none: [], done: [],
+    }
+    for (const item of visible) {
+      if (item.status === 'completed') { buckets.done!.push(item); continue }
+      if (item.dueDate === undefined) { buckets.none!.push(item); continue }
+      const days = Math.floor((item.dueDate - startOfToday.getTime()) / dayMs)
+      if (days < 0) buckets.overdue!.push(item)
+      else if (days === 0) buckets.today!.push(item)
+      else if (days === 1) buckets.tomorrow!.push(item)
+      else if (days <= 7) buckets.week!.push(item)
+      else buckets.later!.push(item)
+    }
+    const labels: Array<[string, string, string]> = [
+      ['overdue', '已逾期', 'text-red-600'],
+      ['today', '今天', 'text-blue-600'],
+      ['tomorrow', '明天', 'text-muted-foreground'],
+      ['week', '未来 7 天', 'text-muted-foreground'],
+      ['later', '更晚', 'text-muted-foreground'],
+      ['none', '无截止日期', 'text-muted-foreground'],
+      ['done', '已完成', 'text-muted-foreground'],
+    ]
+    return labels
+      .map(([key, label, colorClass]) => ({ key, label, colorClass, items: buckets[key]! }))
+      .filter((group) => group.items.length > 0)
+  }, [visible])
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -598,13 +646,25 @@ function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.Reac
           <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option>
         </select>
       </div>
+      {mode === 'received' && !memberId && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          尚未绑定成员身份，部分历史指派可能无法匹配。请在「设置 &gt; 基础设置」中选择“我的成员身份”。
+        </div>
+      )}
       {isLoading ? <p className="text-sm text-muted-foreground">加载中...</p> : visible.length === 0 ? <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{mode === 'received' ? '当前没有分配给你的工作项' : '你还没有发起/指派任何任务'}</p> : (
-        <div className="space-y-2">{visible.map((item) => (
-          <div key={`${item.entityType}-${item.id}`} className={`flex items-center gap-3 rounded-lg border p-3 ${item.isOverdue ? 'border-red-200 bg-red-50/40' : 'bg-card'}`}>
-            <span className={`rounded px-1.5 py-0.5 text-xs ${item.entityType === 'task' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.entityType === 'task' ? 'Task' : 'subTask'}</span>
-            <div className="min-w-0 flex-1"><div className={`truncate text-sm font-medium ${item.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>{item.title}</div><div className="text-xs text-muted-foreground">{item.projectTitle}{item.parentTaskTitle ? ` · ${item.parentTaskTitle}` : ''}{item.dueDate ? ` · 截止 ${new Date(item.dueDate).toLocaleDateString()}` : ''}</div></div>
-            {item.isOverdue && <span className="text-xs text-red-600">已逾期</span>}
-            <span className="text-xs text-muted-foreground">{item.status}</span>
+        <div className="space-y-4">{groups.map((group) => (
+          <div key={group.key} className="space-y-2">
+            <div className={`text-xs font-medium ${group.colorClass}`}>
+              {group.label}（{group.items.length}）
+            </div>
+            {group.items.map((item) => (
+              <div key={`${item.entityType}-${item.id}`} className={`flex items-center gap-3 rounded-lg border p-3 ${item.isOverdue ? 'border-red-200 bg-red-50/40' : 'bg-card'}`}>
+                <span className={`rounded px-1.5 py-0.5 text-xs ${item.entityType === 'task' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.entityType === 'task' ? 'Task' : 'subTask'}</span>
+                <div className="min-w-0 flex-1"><div className={`truncate text-sm font-medium ${item.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>{item.title}</div><div className="text-xs text-muted-foreground">{item.projectTitle}{item.parentTaskTitle ? ` · ${item.parentTaskTitle}` : ''}{item.dueDate ? ` · 截止 ${new Date(item.dueDate).toLocaleDateString()}` : ''}</div></div>
+                {item.isOverdue && <span className="text-xs text-red-600">已逾期</span>}
+                <span className="text-xs text-muted-foreground">{item.status}</span>
+              </div>
+            ))}
           </div>
         ))}</div>
       )}
@@ -879,7 +939,7 @@ function ProjectDetail({
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskStatuses, setTaskStatuses] = useState<ProjectTaskStatus[]>([])
   const [notes, setNotes] = useState<MeetingNote[]>([])
-  const [board, setBoard] = useState<KanbanBoard | null>(null)
+  const [, setBoard] = useState<KanbanBoard | null>(null)
   const [pollingStatus, setPollingStatus] = useState<Record<string, boolean>>({})
   const [isPollingLoading, setIsPollingLoading] = useState<Record<string, boolean>>({})
   const [riskReport, setRiskReport] = useState<{
@@ -1781,9 +1841,11 @@ function TaskList({
         description: string
         priority?: Task['priority']
         assignee?: { userId: string; displayName: string }
+        assigneeMemberId?: string
         dueDate?: number
         permissionRequests?: string[]
         createdByUserId?: string
+        createdByMemberId?: string
         workspaceId?: string
         tokenBudget?: number
       } = {
@@ -1793,6 +1855,9 @@ function TaskList({
         createdByUserId: `paa-${currentUserProfile.userName}`,
         ...(newWorkspaceId ? { workspaceId: newWorkspaceId } : {}),
       }
+      // 创建者/负责人统一确保成员目录存在并写 member_id（身份权威键）
+      const creatorMemberId = await resolveMemberId(currentUserProfile.userName)
+      if (creatorMemberId) input.createdByMemberId = creatorMemberId
       if (newAgentId) {
         const emp = agentEmployees.find((e) => e.id === newAgentId)
         input.assignee = { userId: `agent-${newAgentId}`, displayName: emp ? `🤖 ${emp.name}` : 'AI 员工' }
@@ -1801,6 +1866,8 @@ function TaskList({
           userId: `paa-${newAssigneeName.trim()}`,
           displayName: newAssigneeName.trim(),
         }
+        const assigneeMemberId = await resolveMemberId(newAssigneeName.trim())
+        if (assigneeMemberId) input.assigneeMemberId = assigneeMemberId
       }
       if (newDueDate) {
         input.dueDate = new Date(`${newDueDate}T00:00:00`).getTime()
@@ -2123,7 +2190,7 @@ function TaskItem({
         .catch(() => {})
     }
     return () => { cancelled = true }
-  }, [isAgentTask, task.id])
+  }, [isAgentTask, task.id, agentExecStatus, task.tokenBudget])
 
   // 展开时异步加载子任务
   useEffect(() => {
@@ -2212,17 +2279,20 @@ function TaskItem({
         priority: editForm.priority,
         permissionRequests: editForm.permissions,
       }
-      // assignee：AI 员工优先；否则真人（或清空）
+      // assignee：AI 员工优先；否则真人（或清空）。真人统一确保成员目录并写 member_id
       if (editForm.agentAssigneeId) {
         const emp = agentEmployees.find((e) => e.id === editForm.agentAssigneeId)
         updates.assignee = { userId: `agent-${editForm.agentAssigneeId}`, displayName: emp ? `🤖 ${emp.name}` : 'AI 员工' }
+        updates.assigneeMemberId = undefined
       } else if (editForm.assigneeName.trim()) {
         updates.assignee = {
           userId: `paa-${editForm.assigneeName.trim()}`,
           displayName: editForm.assigneeName.trim(),
         }
+        updates.assigneeMemberId = await resolveMemberId(editForm.assigneeName.trim())
       } else {
         updates.assignee = undefined
+        updates.assigneeMemberId = undefined
       }
       if (editForm.dueDate) {
         updates.dueDate = new Date(editForm.dueDate + 'T00:00:00').getTime()
@@ -2347,6 +2417,8 @@ function TaskItem({
           userId: `paa-${executionSubTaskEdit.assigneeName.trim()}`,
           displayName: executionSubTaskEdit.assigneeName.trim(),
         }
+        // 执行 subTask 同样确保成员目录存在（listMyWork 归一化兑底依赖 display 一致性）
+        await resolveMemberId(executionSubTaskEdit.assigneeName.trim())
       }
       await callProjectAPI<ExecutionSubTask>('updateExecutionSubTask', editingExecutionSubTask.id, updates)
       setEditingExecutionSubTask(null)

@@ -529,7 +529,7 @@ function FileTreeItem({
       const t = setTimeout(() => setFlash(false), 1200)
       return () => clearTimeout(t)
     }
-  }, [revealTs, revealTarget, expanded, entry.path, revealAncestors.has, entry.isDirectory, childrenLoaded]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [revealTs, revealTarget, expanded, entry.path, revealAncestors.has, entry.isDirectory, childrenLoaded, setExpanded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 重命名编辑状态
   const [editName, setEditName] = React.useState('')

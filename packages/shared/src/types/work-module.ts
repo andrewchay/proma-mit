@@ -271,6 +271,8 @@ export const PROJECT_IPC_CHANNELS = {
   SYNC_MEMBERS_DINGTALK: 'project:sync-members-dingtalk',
   LIST_MEMBERS: 'project:list-members',
   GET_MEMBER: 'project:get-member',
+  /** 按名字确保成员存在（不存在则建 human 成员），供任务指派统一写 member_id */
+  ENSURE_MEMBER_BY_NAME: 'project:ensure-member-by-name',
   // 成员目录聚合（PH1-B）
   LIST_MEMBER_DIRECTORY: 'project:list-member-directory',
   COUNT_MEMBER_DIRECTORY: 'project:count-member-directory',
@@ -291,6 +293,8 @@ export interface TaskInput {
   title: string
   description: string
   assignee?: { userId: string; displayName: string }
+  /** 负责人对应的统一成员目录 ID（优先于自由文本 assignee） */
+  assigneeMemberId?: string
   priority?: 'low' | 'medium' | 'high' | 'critical'
   dueDate?: number
   /** 父任务 ID，存在时该任务即为子任务 */

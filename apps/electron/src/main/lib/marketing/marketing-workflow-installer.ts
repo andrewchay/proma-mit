@@ -100,9 +100,6 @@ export function ensureMarketingWorkflowForWorkspace(workspaceId: string): Market
   const { importWorkflowDefinition } = require('@gravitas/shared/workflow') as {
     importWorkflowDefinition: (input: unknown, options: { workspaceId: string; workflowId: string }) => WorkflowDefinition
   }
-  const { exportWorkflowDefinition } = require('@gravitas/shared/workflow') as {
-    exportWorkflowDefinition: (input: unknown) => { definition: unknown }
-  }
 
   const exportFile = {
     format: 'paa.workflow.export' as const,

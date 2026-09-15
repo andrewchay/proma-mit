@@ -53,7 +53,7 @@ export function TaskDetailDialog({ projectId, task, statuses, onChanged, onClose
   React.useEffect(() => {
     setStatus(task.status)
     setError('')
-  }, [task.id, task.status])
+  }, [task.status])
 
   const currentStatus = statuses.find((s) => s.id === task.status)
   const dirty = status !== task.status

@@ -110,10 +110,10 @@ export function AnalysisModuleView(): React.ReactElement {
     }
   }, [api, setReports, setLoading, setError, activeReport, setActiveReport])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: load 随 activeReport 变化会导致切换报告时重复拉取，此 effect 仅挂载执行一次
   React.useEffect(() => {
     void load()
     // 仅在挂载时加载；后续刷新由生成/删除操作显式触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /** 生成报告 */

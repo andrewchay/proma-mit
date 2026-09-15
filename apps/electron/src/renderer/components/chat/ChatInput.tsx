@@ -359,7 +359,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     { key: 'tools', node: <ToolSelectorPopover /> },
     { key: 'context', node: <ContextSettingsPopover /> },
     { key: 'clear', node: <ClearContextButton onClick={onClearContext} /> },
-  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, conversationId, onClearContext])
+  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, conversationId, onClearContext, thinkingLevel, setThinkingLevel])
 
   const trailingNode = streaming ? (
     <Tooltip>

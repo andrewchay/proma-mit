@@ -98,6 +98,8 @@ export interface Task {
   title: string
   description: string
   assignee?: TaskAssignee
+  /** 负责人对应的统一成员目录 ID（身份统一后为权威匹配键） */
+  assigneeMemberId?: string
   startDate?: number
   priority: TaskPriority
   status: TaskStatus
@@ -115,6 +117,8 @@ export interface Task {
   permissionRequests?: string[]
   /** 发起/创建者（PH2-⑤） */
   createdByUserId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
   /** AI 员工执行目标工作区（PH2-③：指定执行落在哪个工作区，缺省用员工/全局） */
   workspaceId?: string
   /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退 paused 待人工处理 */
@@ -157,6 +161,8 @@ export interface CreateTaskInput {
   title: string
   description: string
   assignee?: TaskAssignee
+  /** 负责人对应的统一成员目录 ID（优先于自由文本 assignee） */
+  assigneeMemberId?: string
   priority?: TaskPriority
   startDate?: number
   dueDate?: number
@@ -166,6 +172,8 @@ export interface CreateTaskInput {
   permissionRequests?: string[]
   /** 发起/创建者（PH2-⑤：“我指派的”视图用） */
   createdByUserId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
   /** AI 员工执行目标工作区（可选；缺省用员工/全局默认） */
   workspaceId?: string
   /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行 */
@@ -276,6 +284,10 @@ export interface MyWorkItem extends ExecutableWorkItem {
   projectTitle: string
   parentTaskTitle?: string
   isOverdue: boolean
+  /** 负责人对应的统一成员目录 ID（列表按 member_id 过滤用） */
+  assigneeMemberId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
 }
 
 export type ProjectAlertType = 'overdue' | 'blocked' | 'high_risk'

@@ -93,7 +93,6 @@ describe('PeerReviewSimulator', () => {
   })
 
   it('should map scores to correct decisions', () => {
-    const simulator = new PeerReviewSimulator()
 
     // 通过配置控制严格度来测试不同决策
     const goodPaper = createPaper()
