@@ -86,13 +86,11 @@ export class CitationVerifier {
 
     // 2. 外部数据库交叉核对
     let dbRecord: DatabaseRecord | null = null
-    let matchedAdapter = ''
 
     if (citation.doi) {
       for (const adapter of this.adapters) {
         dbRecord = await adapter.lookupByDoi(citation.doi)
         if (dbRecord) {
-          matchedAdapter = adapter.name
           break
         }
       }
@@ -102,7 +100,6 @@ export class CitationVerifier {
       for (const adapter of this.adapters) {
         dbRecord = await adapter.lookupByTitle(citation.title, citation.authors)
         if (dbRecord) {
-          matchedAdapter = adapter.name
           break
         }
       }

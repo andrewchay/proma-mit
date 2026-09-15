@@ -79,7 +79,7 @@ describe('reorderTask 列内排序', () => {
     const project = createProject({ title: '列内排序项目三', description: '' })
     const a = createTask(project.id, { title: 'A', description: '' })
     createTask(project.id, { title: 'B', description: '' })
-    const result = reorderTask(a.id, {})
+    reorderTask(a.id, {})
     const tasks = listTasks(project.id)
     expect(tasks[tasks.length - 1]!.id).toBe(a.id)
   })
@@ -113,7 +113,7 @@ describe('reorderTask 邻居契约（跨列落点）', () => {
     const project = createProject({ title: '跨列列首项目', description: '' })
     const task = createTask(project.id, { title: '移动物', description: '' })
     const anchor = createTask(project.id, { title: '锚点A', description: '' })
-    const newer = createTask(project.id, { title: '锚点B-更新', description: '' })
+    createTask(project.id, { title: "锚点B-更新", description: "" })
     // 初始展示序（sort_order 升序 = 最新在前）：锚点B → 锚点A → 移动物
     expect(listTasks(project.id).map((t) => t.title)).toEqual(['锚点B-更新', '锚点A', '移动物'])
     // 跨列拖到"锚点A"之前：前端只带 beforeTaskId（上方无邻居，afterTaskId 缺失）

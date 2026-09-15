@@ -28,7 +28,7 @@ await mock.module('./agent-employee-service.ts', () => ({
   dispatchTaskToAgentIfIdle: async () => undefined,
 }))
 
-const { initProjectDb, closeProjectDb, listDingTalkTodoRetries, createProject, createTask } =
+const { initProjectDb, closeProjectDb, listDingTalkTodoRetries } =
   await import('./project-sqlite-store')
 const { saveUserMapping, getUserMapping } = await import('./project-service')
 const { upsertMemberDraft } = await import('./member-sync-service')

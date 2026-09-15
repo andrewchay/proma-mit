@@ -46,8 +46,6 @@ const WORKFLOW_IPC_CHANNELS = {
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
-/** 保存邮箱配置的入参形态（仅用于类型推导） */
-type saveConfigInput = (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => unknown
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1762,6 +1760,8 @@ export interface ElectronAPI {
       syncMembersFeishu: () => Promise<import('@gravitas/shared').MemberSyncResult>
       syncMembersDingtalk: () => Promise<import('@gravitas/shared').MemberSyncResult>
       listMembers: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
+      /** 按名字确保成员存在（不存在则建 human 成员），供任务指派统一写 member_id */
+      ensureMemberByName: (displayName: string) => Promise<import('@gravitas/shared').MemberResult>
       getMember: (memberId: string) => Promise<import('@gravitas/shared').MemberResult | null>
       listMemberDirectory: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
       countMemberDirectory: () => Promise<{ human: number; agent: number; bot: number }>
@@ -3948,6 +3948,7 @@ const electronAPI: ElectronAPI = {
       syncMembersFeishu: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_FEISHU),
       syncMembersDingtalk: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_DINGTALK),
       listMembers: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBERS, filter),
+      ensureMemberByName: (displayName) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.ENSURE_MEMBER_BY_NAME, displayName),
       getMember: (memberId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEMBER, memberId),
       listMemberDirectory: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, filter),
       countMemberDirectory: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.COUNT_MEMBER_DIRECTORY),

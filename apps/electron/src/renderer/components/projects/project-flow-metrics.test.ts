@@ -54,7 +54,6 @@ describe('甘特时间条状态组着色', () => {
   const now = 100 * 86_400_000
 
   test('Given 预置五态 When 着色 Then 跟随语义组而非字面 completed 判断', () => {
-    const day = 86_400_000
     expect(ganttBarColor({ status: 'completed' }, { blocked: false, now })).toBe('bg-emerald-500')
     expect(ganttBarColor({ status: 'in_progress' }, { blocked: false, now })).toBe('bg-blue-500')
     expect(ganttBarColor({ status: 'paused' }, { blocked: false, now })).toBe('bg-blue-500')

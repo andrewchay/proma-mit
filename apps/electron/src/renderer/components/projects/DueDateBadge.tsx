@@ -4,7 +4,7 @@
  * 展示 DDL + 紧迫感（逾期红 / 今天与 3 天内琥珀 / 其余灰）。
  * 已完成或无 DDL 不渲染；规则见 project-flow-metrics.dueDateUrgency。
  */
-import * as React from 'react'
+import type * as React from 'react'
 import { dueDateUrgency } from './project-flow-metrics'
 
 /** tone → 底色（与项目模块既有徽标色系一致） */

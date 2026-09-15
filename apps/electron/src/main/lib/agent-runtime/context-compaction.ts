@@ -148,7 +148,7 @@ export function resolveAutoCompactionTrigger(options: {
   systemPrompt?: string
   tools?: ContextBudgetTool[]
 }): AutoCompactionTrigger {
-  const { historyMessages, provider, modelId, observedUsage } = options
+  const { provider, modelId, observedUsage } = options
   const sameModel = observedUsage?.modelId?.toLowerCase() === modelId.toLowerCase()
   const capability = resolveModelContextCapability({ provider, modelId })
   const estimatedInputTokens = estimateOutgoingContextTokens(options)

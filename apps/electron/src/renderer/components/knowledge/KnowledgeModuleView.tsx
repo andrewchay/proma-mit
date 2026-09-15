@@ -75,7 +75,7 @@ export function KnowledgeModuleView(): React.ReactElement {
   const selectedVault = useAtomValue(selectedVaultAtom)
   const setNotes = useSetAtom(knowledgeNotesAtom)
   const [activeNote, setActiveNote] = useAtom(activeNoteAtom)
-  const [searchResults, setSearchResults] = useAtom(knowledgeSearchResultsAtom)
+  const [_searchResults, setSearchResults] = useAtom(knowledgeSearchResultsAtom)
   const [searchQuery, setSearchQuery] = useAtom(knowledgeSearchQueryAtom)
   const [tags, setTags] = useAtom(knowledgeTagsAtom)
   const [selectedTag, setSelectedTag] = useAtom(selectedTagAtom)

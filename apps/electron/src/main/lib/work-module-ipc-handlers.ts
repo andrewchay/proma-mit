@@ -866,6 +866,10 @@ export function registerWorkModuleIpcHandlers(): void {
     const { getMember } = require('./project-sqlite-store')
     return getMember(memberId)
   })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.ENSURE_MEMBER_BY_NAME, (_: unknown, displayName: string) => {
+    const { ensureMemberByName } = require('./project-sqlite-store')
+    return ensureMemberByName(displayName)
+  })
 
   // ===== 成员目录聚合（PH1-B） =====
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, (_: unknown, filter?: { kind?: string; q?: string; activeOnly?: boolean }) => {

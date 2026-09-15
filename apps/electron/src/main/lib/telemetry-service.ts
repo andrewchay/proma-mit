@@ -356,7 +356,6 @@ export function logMood(input: MoodCheckinInput): TelemetryEvent {
  */
 export function listRecentMood(limit = 20): TelemetryEvent[] {
   if (!getTelemetrySettings().enabled.emotion) return []
-  const today = todayKey()
   return readEventsFrom(getTelemetryMoodPath())
     .filter((e) => e.type === 'mood_logged')
     .sort((a, b) => b.at.localeCompare(a.at))
