@@ -4571,6 +4571,7 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, async (_event, vaultId) => knowledgeSvc.listKnowledgeNotes(vaultId))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, async (_event, id) => knowledgeSvc.deleteKnowledgeNote(id))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, async (_event, vaultId, threshold, limit) => knowledgeSvc.getKnowledgeLinkSuggestions(vaultId, threshold, limit))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, async (_event, query, maxTokens) => knowledgeSvc.getKnowledgeContextForAgent(query, maxTokens))
 
   // 知识库编辑（Knowledge Pro）：写盘服务内部对每个写操作做权益门禁

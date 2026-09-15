@@ -1445,6 +1445,7 @@ export interface ElectronAPI {
 
     // 图谱
     getGraph: (vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeGraph>
+    getLinkSuggestions: (vaultId?: string, threshold?: number, limit?: number) => Promise<import('@gravitas/shared').KnowledgeLinkSuggestion[]>
 
     // Agent 上下文
     getContextForAgent: (query: string, maxTokens?: number) => Promise<string>
@@ -2232,6 +2233,7 @@ const electronAPI: ElectronAPI = {
 
     // 图谱
     getGraph: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, vaultId) as Promise<import('@gravitas/shared').KnowledgeGraph>,
+    getLinkSuggestions: (vaultId?: string, threshold?: number, limit?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, vaultId, threshold, limit) as Promise<import('@gravitas/shared').KnowledgeLinkSuggestion[]>,
 
     // Agent 上下文
     getContextForAgent: (query: string, maxTokens?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, query, maxTokens) as Promise<string>,

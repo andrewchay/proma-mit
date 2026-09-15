@@ -116,6 +116,8 @@ export const KNOWLEDGE_IPC_CHANNELS = {
   NOTE_FILE_VERSION: 'knowledge:note-file-version',
   /** 查询当前是否具备编辑权限 */
   GET_WRITE_PERMISSION: 'knowledge:get-write-permission',
+  /** 候选关联建议（相似度启发式，仅供查看确认） */
+  GET_LINK_SUGGESTIONS: 'knowledge:get-link-suggestions',
 
   // 知识目录（来源 / 知识库 / Project 关联）
   /** 读取完整目录快照 */
@@ -274,4 +276,14 @@ export interface KnowledgeCatalog {
   sources: KnowledgeSource[]
   knowledgeBases: KnowledgeBase[]
   bindings: ProjectKnowledgeBinding[]
+}
+
+/** 候选关联建议（词面/标签相似度启发式，不是事实置信度） */
+export interface KnowledgeLinkSuggestion {
+  sourceId: string
+  sourceTitle: string
+  targetId: string
+  targetTitle: string
+  confidence: number
+  reason: string
 }

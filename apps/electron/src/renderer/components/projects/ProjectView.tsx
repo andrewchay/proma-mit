@@ -12,6 +12,7 @@ import { userProfileAtom } from "@/atoms/user-profile"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
+import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
 import { GANTT_GROUP_BAR_COLORS, ganttBarColor } from './project-flow-metrics'
 import { DueDateBadge } from './DueDateBadge'
@@ -871,7 +872,7 @@ function ProjectDetail({
   onBack: () => void
   onRefresh: () => void
 }): React.ReactElement {
-  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'aicost'>('tasks')
+  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'aicost'>('tasks')
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
@@ -1271,6 +1272,7 @@ function ProjectDetail({
         {([
           { key: 'tasks', label: '任务' },
           { key: 'chain', label: '决策与协作链路' },
+          { key: 'knowledge', label: '知识' },
           { key: 'notes', label: '会议纪要' },
           { key: 'board', label: '看板' },
           { key: 'gantt', label: '甘特' },
@@ -1342,6 +1344,7 @@ function ProjectDetail({
       {/* 详情内容 */}
       <div className="flex-1 overflow-auto p-6">
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
+        {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
         {detailTab === 'tasks' && (
           <TaskList
             projectId={project.id}
