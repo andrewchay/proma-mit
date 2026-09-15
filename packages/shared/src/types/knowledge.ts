@@ -116,6 +116,32 @@ export const KNOWLEDGE_IPC_CHANNELS = {
   NOTE_FILE_VERSION: 'knowledge:note-file-version',
   /** 查询当前是否具备编辑权限 */
   GET_WRITE_PERMISSION: 'knowledge:get-write-permission',
+
+  // 知识目录（来源 / 知识库 / Project 关联）
+  /** 读取完整目录快照 */
+  READ_CATALOG: 'knowledge:read-catalog',
+  /** 执行旧 Vault 幂等迁移 */
+  MIGRATE_LEGACY_VAULTS: 'knowledge:migrate-legacy-vaults',
+  /** 创建来源 */
+  CREATE_SOURCE: 'knowledge:create-source',
+  /** 更新来源 */
+  UPDATE_SOURCE: 'knowledge:update-source',
+  /** 删除来源 */
+  DELETE_SOURCE: 'knowledge:delete-source',
+  /** 创建知识库 */
+  CREATE_KNOWLEDGE_BASE: 'knowledge:create-knowledge-base',
+  /** 更新知识库 */
+  UPDATE_KNOWLEDGE_BASE: 'knowledge:update-knowledge-base',
+  /** 删除知识库 */
+  DELETE_KNOWLEDGE_BASE: 'knowledge:delete-knowledge-base',
+  /** 关联知识库到 Project */
+  BIND_PROJECT: 'knowledge:bind-project',
+  /** 解除 Project 关联 */
+  UNBIND_PROJECT: 'knowledge:unbind-project',
+  /** 查询 Project 关联的知识库 */
+  LIST_PROJECT_KNOWLEDGE_BASES: 'knowledge:list-project-knowledge-bases',
+  /** 解析会话知识范围（UI 展示当前范围用） */
+  RESOLVE_SESSION_SCOPE: 'knowledge:resolve-session-scope',
 } as const
 
 /**
@@ -186,6 +212,16 @@ export const ANALYSIS_IPC_CHANNELS = {
 
 /** 来源类型 */
 export type KnowledgeSourceType = 'vault' | 'file' | 'web' | 'session'
+
+/** 创建来源的入参（不含服务端生成字段） */
+export interface KnowledgeSourceInput {
+  type: KnowledgeSourceType
+  name: string
+  locator: string
+  scopePath?: string
+  excludePatterns?: string[]
+  enabled?: boolean
+}
 
 /** 来源登记（指向原件，不复制内容） */
 export interface KnowledgeSource {

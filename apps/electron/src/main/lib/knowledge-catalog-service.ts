@@ -23,7 +23,7 @@ import type {
   KnowledgeCatalog,
   KnowledgeBase,
   KnowledgeSource,
-  KnowledgeSourceType,
+  KnowledgeSourceInput,
   ProjectKnowledgeBinding,
 } from '@gravitas/shared'
 
@@ -136,13 +136,8 @@ function mutateCatalog<T>(
 
 // ===== 来源 =====
 
-export interface CreateSourceInput {
-  type: KnowledgeSourceType
-  name: string
-  locator: string
-  scopePath?: string
-  excludePatterns?: string[]
-  enabled?: boolean
+export type CreateSourceInput = KnowledgeSourceInput & {
+  /** 仅迁移内部使用：标记该来源由哪个旧 Vault 转换而来，保证迁移幂等 */
   legacyVaultId?: string
 }
 
@@ -434,7 +429,7 @@ export function migrateLegacyVaults(): { migrated: number; skipped: number } {
     }
 
     const source = createSource({
-      type: vault.type === 'obsidian' ? 'vault' : 'vault',
+      type: 'vault',
       name: vault.name || vault.path,
       locator: vault.path,
       enabled: vault.enabled !== false,
