@@ -31,6 +31,30 @@ export function ProjectKnowledgePanel({ projectId }: ProjectKnowledgePanelProps)
   const [busy, setBusy] = React.useState(false)
   const [message, setMessage] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [graphStatus, setGraphStatus] = React.useState<{ available: boolean; queryable?: boolean; record?: unknown } | null>(null)
+  const [graphBuilding, setGraphBuilding] = React.useState(false)
+
+  const refreshGraphStatus = React.useCallback(async () => {
+    if (!api?.getGraphBuildStatus) return
+    try {
+      setGraphStatus(await api.getGraphBuildStatus(projectId))
+    } catch { setGraphStatus({ available: false }) }
+  }, [api, projectId])
+
+  const buildGraph = async (): Promise<void> => {
+    if (!api?.buildKnowledgeGraph) return
+    setGraphBuilding(true)
+    setError(null)
+    try {
+      const res = await api.buildKnowledgeGraph(projectId)
+      if (res.error) setError(res.error)
+      await refreshGraphStatus()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGraphBuilding(false)
+    }
+  }
 
   const load = React.useCallback(async () => {
     if (!api) return
@@ -46,7 +70,7 @@ export function ProjectKnowledgePanel({ projectId }: ProjectKnowledgePanelProps)
     }
   }, [api, projectId])
 
-  React.useEffect(() => { void load() }, [load])
+  React.useEffect(() => { void load(); void refreshGraphStatus() }, [load, refreshGraphStatus])
 
   const bind = async (): Promise<void> => {
     if (!api || !selectedId) return
@@ -93,6 +117,41 @@ export function ProjectKnowledgePanel({ projectId }: ProjectKnowledgePanelProps)
 
       {error && <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">{error}</div>}
       {message && <div className="rounded border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-700">{message}</div>}
+
+      <div>
+        <div className="mb-2 text-sm font-medium">AOF 语义图谱（本地，可选）</div>
+        <div className="mb-2 rounded border bg-muted/30 p-2 text-[11px] text-muted-foreground">
+          构建在本地 AOF 治理链路中完成，角色标签为本地流程字段，非认证身份；
+          检索结果可作参考线索，不是事实保证。AOF 不可用时基础检索完全不受影响。
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void refreshGraphStatus()}
+            disabled={busy}
+            className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >刷新状态</button>
+          {graphStatus?.available === false ? (
+            <span className="text-xs text-muted-foreground">本机未检测到 AOF 环境，语义图谱不可用。</span>
+          ) : (
+            <button
+              onClick={() => void buildGraph()}
+              disabled={busy}
+              className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
+            >{graphBuilding ? '构建中…' : graphStatus?.queryable ? '重新构建' : '构建图谱'}</button>
+          )}
+        </div>
+        {graphStatus?.record != null && (() => {
+          const rec = graphStatus.record as { state?: string; releaseDigest?: string; error?: string }
+          const digestShort = typeof rec.releaseDigest === 'string' ? rec.releaseDigest.slice(7, 19) : ''
+          return (
+            <div className="mt-2 text-xs">
+              状态：<span className="font-medium">{rec.state ?? 'unknown'}</span>
+              {digestShort && <span className="ml-2 text-muted-foreground">release {digestShort}</span>}
+              {rec.error && <div className="mt-1 text-red-600">{rec.error}</div>}
+            </div>
+          )
+        })()}
+      </div>
 
       <div>
         <div className="mb-2 text-sm font-medium">已关联（{bound.length}）</div>
