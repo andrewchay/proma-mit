@@ -35,6 +35,7 @@ import {
   buildGraph,
   searchNotes,
   calculateSimilarity,
+  suggestLinks,
   type KnowledgeGraph,
   type SearchResult,
   type SearchableNote,
@@ -342,6 +343,25 @@ function rebuildGraph(): void {
     })),
   )
   saveGraph(graph)
+}
+
+/**
+ * 候选关联建议（K1-06）。
+ *
+ * 直接复用 suggestLinks 的相似度启发式，仅做展示：确认后的双链写回是
+ * 独立的可选步骤，这里绝不自动修改用户文件。
+ */
+export function getKnowledgeLinkSuggestions(
+  vaultId?: string,
+  threshold = 50,
+  limit = 20,
+): Array<{ sourceId: string; sourceTitle: string; targetId: string; targetTitle: string; confidence: number; reason: string }> {
+  const notes = listKnowledgeNotes(vaultId)
+  return suggestLinks(
+    notes.map((n) => ({ id: n.id, title: n.title, content: n.content, tags: n.tags, links: n.links })),
+    threshold,
+    limit,
+  )
 }
 
 export function getKnowledgeGraph(vaultId?: string): KnowledgeGraph {

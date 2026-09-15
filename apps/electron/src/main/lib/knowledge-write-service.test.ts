@@ -512,3 +512,167 @@ describe('保存后内容不漂移', () => {
     expect(second).toBe(first)
   })
 })
+
+/**
+ * 并发编辑冲突检测（K0-02）。
+ *
+ * 渲染层的 mtime 检查不是安全边界：它只在 UI 路径生效，且 mtime 精度
+ * 不足以区分同一秒内的两次写入。这里把冲突判定下沉到主进程，用内容
+ * 哈希作为版本依据，任何调用方都无法绕过。
+ */
+describe('编辑冲突检测', () => {
+  test('expectedVersion 与磁盘一致时保存成功', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '并发', content: '原始内容' })
+    const version = write.noteFileVersion(vaultId, '并发.md')!
+    expect(typeof version).toBe('string')
+    expect(version.length).toBeGreaterThan(0)
+
+    expect(() =>
+      write.updateNoteFile({
+        vaultId,
+        relativePath: '并发.md',
+        content: '新内容',
+        expectedVersion: version,
+      }),
+    ).not.toThrow()
+  })
+
+  test('磁盘被外部修改后，携带旧版本保存被拒绝且不覆盖', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '外部改', content: '原始内容' })
+    const staleVersion = write.noteFileVersion(vaultId, '外部改.md')!
+
+    // 模拟 Obsidian 在外部改写该文件
+    const externalContent = '# 外部改\n\n外部编辑器写入的内容\n'
+    writeFileSync(join(vaultDir, '外部改.md'), externalContent, 'utf-8')
+
+    expect(() =>
+      write.updateNoteFile({
+        vaultId,
+        relativePath: '外部改.md',
+        content: '来自 Gravitas 的覆盖',
+        expectedVersion: staleVersion,
+      }),
+    ).toThrow('已被其他程序修改')
+
+    // 关键：拒绝后磁盘必须保持外部写入的内容，不能被静默覆盖
+    expect(readFileSync(join(vaultDir, '外部改.md'), 'utf-8')).toBe(externalContent)
+  })
+
+  test('同一毫秒内的外部改写也能被内容哈希识别', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '同秒', content: 'A' })
+    const version = write.noteFileVersion(vaultId, '同秒.md')!
+
+    // 立即改写，不等待：mtime 可能相同，内容哈希必然不同
+    writeFileSync(join(vaultDir, '同秒.md'), '# 同秒\n\nB\n', 'utf-8')
+
+    expect(() =>
+      write.updateNoteFile({
+        vaultId,
+        relativePath: '同秒.md',
+        content: 'C',
+        expectedVersion: version,
+      }),
+    ).toThrow('已被其他程序修改')
+  })
+
+  test('显式 force 时才允许覆盖外部修改', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '强制', content: '原始' })
+    const version = write.noteFileVersion(vaultId, '强制.md')!
+    writeFileSync(join(vaultDir, '强制.md'), '# 强制\n\n外部\n', 'utf-8')
+
+    expect(() =>
+      write.updateNoteFile({
+        vaultId,
+        relativePath: '强制.md',
+        content: '用户确认后的覆盖',
+        expectedVersion: version,
+        force: true,
+      }),
+    ).not.toThrow()
+    expect(readFileSync(join(vaultDir, '强制.md'), 'utf-8')).toContain('用户确认后的覆盖')
+  })
+
+  test('不传 expectedVersion 时保持旧行为（编辑保存仍需经 UI 校验）', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '兼容', content: '原始' })
+    writeFileSync(join(vaultDir, '兼容.md'), '# 兼容\n\n外部\n', 'utf-8')
+
+    // 未声明版本视为调用方自担并发风险，不破坏既有调用
+    expect(() =>
+      write.updateNoteFile({ vaultId, relativePath: '兼容.md', content: '旧路径' }),
+    ).not.toThrow()
+  })
+
+  test('笔记已不存在时返回可读错误而不是崩溃', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '消失', content: 'x' })
+    expect(() => write.noteFileVersion(vaultId, '不存在.md')).not.toThrow()
+    expect(write.noteFileVersion(vaultId, '不存在.md')).toBeNull()
+  })
+
+  test('重命名同样校验版本，外部改动后拒绝改名', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '旧名', content: '正文' })
+    const version = write.noteFileVersion(vaultId, '旧名.md')!
+    writeFileSync(join(vaultDir, '旧名.md'), '# 被改过\n\n外部内容\n', 'utf-8')
+
+    expect(() =>
+      write.renameNoteFile({
+        vaultId,
+        relativePath: '旧名.md',
+        newTitle: '新名',
+        expectedVersion: version,
+      }),
+    ).toThrow('已被其他程序修改')
+    expect(existsSync(join(vaultDir, '新名.md'))).toBe(false)
+  })
+
+  test('预期版本正确时重命名成功，旧文件被清理', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '改名前', content: '正文' })
+    const version = write.noteFileVersion(vaultId, '改名前.md')!
+
+    write.renameNoteFile({
+      vaultId,
+      relativePath: '改名前.md',
+      newTitle: '改名后',
+      expectedVersion: version,
+    })
+    expect(existsSync(join(vaultDir, '改名后.md'))).toBe(true)
+    expect(existsSync(join(vaultDir, '改名前.md'))).toBe(false)
+  })
+
+  test('外部修改不影响其他笔记的保存', async () => {
+    const { vaultId } = await loadWithVault()
+    const write = await loadWriteService()
+
+    write.createNoteFile({ vaultId, title: '甲', content: 'A' })
+    write.createNoteFile({ vaultId, title: '乙', content: 'B' })
+    const versionB = write.noteFileVersion(vaultId, '乙.md')!
+    writeFileSync(join(vaultDir, '甲.md'), '# 甲\n\n外部改动\n', 'utf-8')
+
+    expect(() =>
+      write.updateNoteFile({ vaultId, relativePath: '乙.md', content: 'B2', expectedVersion: versionB }),
+    ).not.toThrow()
+  })
+})

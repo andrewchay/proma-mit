@@ -19,7 +19,7 @@ import { listWorkflowTemplates } from './workflow-template-service'
 import { getMarketingPluginDir, syncMarketingSkillsForWorkspace } from './marketing-skills-sync'
 import { updateSettings } from './settings-service'
 import { readdirSync } from 'node:fs'
-import { createNoteFile, updateNoteFile, renameNoteFile, deleteNoteFile, readNoteFile } from './knowledge-write-service'
+import { createNoteFile, updateNoteFile, renameNoteFile, deleteNoteFile, readNoteFile, noteFileVersion } from './knowledge-write-service'
 import { createKnowledgeVault, indexKnowledgeVault, listKnowledgeNotes } from './knowledge-service'
 import { hasCapability } from './entitlement-gate'
 import { getAgentWorkspacePath } from './config-paths'
@@ -108,6 +108,25 @@ export async function runPackageSmoke(): Promise<void> {
   updateNoteFile({ vaultId: smokeVault.id, relativePath: created.relativePath, content: '更新后的正文' })
   const afterEdit = readNoteFile(smokeVault.id, created.relativePath)
   assert(afterEdit !== null && afterEdit.parsed.content.includes('更新后的正文'), '编辑后正文未更新')
+
+  // 并发编辑防护 → 主进程按内容版本拒绝覆盖外部修改（Obsidian 场景）
+  const versionBefore = noteFileVersion(smokeVault.id, created.relativePath)
+  assert(versionBefore !== null, '未能读取笔记版本')
+  writeFileSync(created.absolutePath, '# 烟测笔记\n\n外部编辑器写入\n', 'utf-8')
+  let conflictBlocked = false
+  try {
+    updateNoteFile({
+      vaultId: smokeVault.id,
+      relativePath: created.relativePath,
+      content: '静默覆盖',
+      expectedVersion: versionBefore!,
+    })
+  } catch { conflictBlocked = true }
+  assert(conflictBlocked, '外部修改后仍允许保存，冲突检测未生效')
+  assert(
+    readFileSync(created.absolutePath, 'utf-8').includes('外部编辑器写入'),
+    '冲突拒绝后磁盘内容被覆盖',
+  )
 
   // 重命名 → 旧文件消失、新文件带新标题
   const renamed = renameNoteFile({ vaultId: smokeVault.id, relativePath: created.relativePath, newTitle: '改名笔记' })

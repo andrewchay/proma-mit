@@ -217,13 +217,21 @@ export function buildGraph(
     }
   }
 
-  // 链接边
-  const titleToId: Record<string, string> = {}
+  // 链接边：标题/文件名解析。重名（同名标题或同名文件名）不自动连边 ——
+  // 静默选第一个命中会把双链指到错误的笔记上，宁可少一条边也不能错连。
+  const titleCandidates = new Map<string, Set<string>>()
   for (const note of notes) {
-    titleToId[note.title] = note.id
-    const baseName = note.filePath.split('/').pop()?.replace(/\.md$/, '') || ''
-    if (!titleToId[baseName]) {
-      titleToId[baseName] = note.id
+    for (const key of [note.title, note.filePath.split('/').pop()?.replace(/\.md$/, '') || '']) {
+      if (!key) continue
+      if (!titleCandidates.has(key)) titleCandidates.set(key, new Set())
+      titleCandidates.get(key)!.add(note.id)
+    }
+  }
+  const titleToId: Record<string, string> = {}
+  for (const [key, ids] of titleCandidates) {
+    // 只有唯一命中才建立解析表；多义键保持缺失，buildGraph 的查找自然跳过
+    if (ids.size === 1) {
+      titleToId[key] = [...ids][0]!
     }
   }
 
@@ -619,3 +627,11 @@ export function stableNoteId(vaultId: string, relativePath: string): string {
 export function normalizeRelPath(relativePath: string): string {
   return relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
 }
+
+// ===== 分块（K1-03）=====
+
+export {
+  chunkDocument,
+  MAX_CHUNK_CHARS,
+} from './chunking.ts'
+export type { DocumentChunk } from './chunking.ts'

@@ -960,6 +960,21 @@ export interface AgentSessionMeta {
   sdkSessionId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /**
+   * 知识范围模式。
+   *
+   * - `project`：使用当前 Project 关联的知识库（Project 会话默认）
+   * - `explicit`：使用 explicitKnowledgeBaseIds 指定的知识库
+   * - `none`：本会话不启用知识检索（缺省，避免静默搜索全部资料）
+   *
+   * 旧会话没有此字段时按 `none` 处理：知识工具返回未配置提示，
+   * 而不是退回“搜索所有 Vault”。
+   */
+  knowledgeScopeMode?: 'project' | 'explicit' | 'none'
+  /** `explicit` 模式下选定的知识库 ID 列表 */
+  explicitKnowledgeBaseIds?: string[]
+  /** 创建会话时所属 Project ID（用于解析 `project` 模式范围） */
+  projectId?: string
   /** 是否置顶 */
   pinned?: boolean
   /** 是否已归档 */
