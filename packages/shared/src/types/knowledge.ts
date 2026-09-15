@@ -112,6 +112,8 @@ export const KNOWLEDGE_IPC_CHANNELS = {
   READ_NOTE_FILE: 'knowledge:read-note-file',
   /** 查询笔记文件状态（外部变更检测） */
   STAT_NOTE_FILE: 'knowledge:stat-note-file',
+  /** 查询笔记当前内容版本（并发编辑比对，主进程哈希） */
+  NOTE_FILE_VERSION: 'knowledge:note-file-version',
   /** 查询当前是否具备编辑权限 */
   GET_WRITE_PERMISSION: 'knowledge:get-write-permission',
 } as const

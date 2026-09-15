@@ -1452,11 +1452,12 @@ export interface ElectronAPI {
     // 编辑（Knowledge Pro：写用户 Markdown 文件）
     getWritePermission: () => Promise<boolean>
     createNote: (input: { vaultId: string; title: string; directory?: string; fileName?: string; content?: string; frontmatter?: Record<string, unknown>; overwrite?: boolean }) => Promise<{ relativePath: string; absolutePath: string }>
-    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown> }) => Promise<{ absolutePath: string }>
-    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string }) => Promise<{ relativePath: string }>
+    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown>; expectedVersion?: string; force?: boolean }) => Promise<{ absolutePath: string }>
+    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string; expectedVersion?: string; force?: boolean }) => Promise<{ relativePath: string }>
     deleteNoteFile: (vaultId: string, relativePath: string) => Promise<boolean>
     readNoteFile: (vaultId: string, relativePath: string) => Promise<{ rawContent: string; parsed: { content: string; title: string } & Record<string, unknown> } | null>
     statNoteFile: (vaultId: string, relativePath: string) => Promise<{ size: number; modifiedAt: string } | null>
+    noteFileVersion: (vaultId: string, relativePath: string) => Promise<string | null>
   }
 
   // ===== 分析引擎（免费版基础能力） =====
@@ -2224,11 +2225,12 @@ const electronAPI: ElectronAPI = {
     // 编辑（Knowledge Pro：写用户 Markdown 文件）
     getWritePermission: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_WRITE_PERMISSION) as Promise<boolean>,
     createNote: (input: { vaultId: string; title: string; directory?: string; fileName?: string; content?: string; frontmatter?: Record<string, unknown>; overwrite?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_NOTE, input) as Promise<{ relativePath: string; absolutePath: string }>,
-    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown> }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, input) as Promise<{ absolutePath: string }>,
-    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, input) as Promise<{ relativePath: string }>,
+    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown>; expectedVersion?: string; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, input) as Promise<{ absolutePath: string }>,
+    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string; expectedVersion?: string; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, input) as Promise<{ relativePath: string }>,
     deleteNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, vaultId, relativePath) as Promise<boolean>,
     readNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, vaultId, relativePath) as Promise<{ rawContent: string; parsed: { content: string; title: string } & Record<string, unknown> } | null>,
     statNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, vaultId, relativePath) as Promise<{ size: number; modifiedAt: string } | null>,
+    noteFileVersion: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.NOTE_FILE_VERSION, vaultId, relativePath) as Promise<string | null>,
   },
 
   // ===== 分析引擎（免费版基础能力） =====

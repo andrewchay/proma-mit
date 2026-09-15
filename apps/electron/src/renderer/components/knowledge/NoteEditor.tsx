@@ -80,15 +80,20 @@ export function NoteEditor({
   const [showFrontmatter, setShowFrontmatter] = React.useState(
     Object.keys(note.frontmatter ?? {}).length > 0,
   )
-  /** 加载时的文件 mtime，用于保存前检测外部修改 */
-  const [loadedMtime, setLoadedMtime] = React.useState<string | null>(null)
+  /**
+   * 加载时的内容版本（主进程哈希）。
+   *
+   * 保存时回传给主进程比对，是并发编辑的唯一防线：渲染层提示可以被
+   * 任何其他调用方绕过，且 mtime 无法区分同秒内的两次写入。
+   */
+  const [loadedVersion, setLoadedVersion] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!api || !note.vaultId) return
     void api
-      .statNoteFile(note.vaultId, note.filePath)
-      .then((stat) => setLoadedMtime(stat?.modifiedAt ?? null))
-      .catch(() => setLoadedMtime(null))
+      .noteFileVersion(note.vaultId, note.filePath)
+      .then((version) => setLoadedVersion(version))
+      .catch(() => setLoadedVersion(null))
   }, [api, note.vaultId, note.filePath])
 
   const dirty =
@@ -96,7 +101,7 @@ export function NoteEditor({
     body !== stripHeading(note.content, note.title) ||
     frontmatterText !== frontmatterToText(note.frontmatter ?? {})
 
-  /** 保存：先查外部变更，再写盘 */
+  /** 保存：主进程按内容版本判定并发冲突 */
   const handleSave = async (): Promise<void> => {
     if (!api) return
     const trimmedTitle = title.trim()
@@ -108,14 +113,15 @@ export function NoteEditor({
     setSaving(true)
     setError(null)
     try {
-      // 外部变更检测：文件被其他编辑器改过时提醒，避免静默覆盖
-      if (loadedMtime) {
-        const current = await api.statNoteFile(note.vaultId, note.filePath)
-        if (current && current.modifiedAt !== loadedMtime) {
-          const overwrite = window.confirm(
+      // 先查是否已被外部改动，让用户决定是否覆盖；主进程仍会复核一次
+      let force = false
+      if (loadedVersion) {
+        const current = await api.noteFileVersion(note.vaultId, note.filePath)
+        if (current && current !== loadedVersion) {
+          force = window.confirm(
             '这篇笔记在磁盘上已被其他程序修改（可能是 Obsidian）。\n\n继续保存会覆盖那些修改。确定继续？',
           )
-          if (!overwrite) {
+          if (!force) {
             setSaving(false)
             return
           }
@@ -128,6 +134,8 @@ export function NoteEditor({
           vaultId: note.vaultId,
           relativePath: note.filePath,
           newTitle: trimmedTitle,
+          expectedVersion: loadedVersion ?? undefined,
+          force,
         })
       }
       await api.updateNote({
@@ -135,6 +143,8 @@ export function NoteEditor({
         relativePath: note.filePath,
         content: body,
         frontmatter: textToFrontmatter(frontmatterText),
+        expectedVersion: loadedVersion ?? undefined,
+        force,
       })
       await onSaved(trimmedTitle)
     } catch (err) {

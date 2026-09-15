@@ -4583,6 +4583,7 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, async (_event, vaultId, relativePath) => { knowledgeWriteSvc.deleteNoteFile(vaultId, relativePath); return true })
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.readNoteFile(vaultId, relativePath))
   ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.statNoteFile(vaultId, relativePath))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.NOTE_FILE_VERSION, async (_event, vaultId, relativePath) => knowledgeWriteSvc.noteFileVersion(vaultId, relativePath))
 
   // ===== 分析引擎（免费版基础能力） =====
   const analysisSvc = require('./lib/analysis-service') as typeof import('./lib/analysis-service')
