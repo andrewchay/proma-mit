@@ -206,7 +206,7 @@ export interface GanttLinkEndpoints {
 
 export type GanttDependencyType = 'finish_to_start' | 'start_to_start' | 'finish_to_finish' | 'start_to_finish'
 
-/** 行高 24px（h-6）+ 行距 8px（space-y-2）= 32px 步进；条 h-4（16px）行内居中 → 行中心 y = index*32+16 */
+/** 行高 24px（h-6）+ 行距 8px（space-y-2，为下方 margin）= 32px 步进；条 top-1 h-4 → 行中心 y = index*32+12 */
 export const GANTT_ROW_STEP = 32
 
 /**
@@ -221,7 +221,8 @@ export function ganttDependencyPath(
   type: GanttDependencyType,
   rowStep = GANTT_ROW_STEP,
 ): GanttDependencyPathResult {
-  const centerY = (index: number) => index * rowStep + rowStep / 2
+  // 行 24px + 下方 8px 间距（space-y-2 margin），条 top-1 h-4 → 中心 = index*32+12
+  const centerY = (index: number) => index * rowStep + 12
   const fromTail = { x: endpoints.from.endPct, y: centerY(endpoints.from.index) }
   const fromHead = { x: endpoints.from.startPct, y: centerY(endpoints.from.index) }
   const toHead = { x: endpoints.to.startPct, y: centerY(endpoints.to.index) }

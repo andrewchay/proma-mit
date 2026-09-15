@@ -242,32 +242,32 @@ describe('甘特依赖连线 ganttDependencyPath', () => {
   test('FS 跨行：from 条尾 → to 条头，含贝塞尔控制点', () => {
     const p = ganttDependencyPath(pts(0, 2), 'finish_to_start')
     expect(p.d).toContain('C')            // 贝塞尔
-    expect(p.d.startsWith('M 80 16')).toBe(true)   // 起点：from 条尾（index 0 中心 y=16）
-    expect(p.d.endsWith(' 30 80')).toBe(true)      // 终点：to 条头（index 2 中心 y=2*32+16=80）
+    expect(p.d.startsWith('M 80 12')).toBe(true)   // 起点：from 条尾（index 0 中心 y=12）
+    expect(p.d.endsWith(' 30 76')).toBe(true)      // 终点：to 条头（index 2 中心 y=2*32+12=76）
   })
 
   test('SS：from 条头 → to 条头', () => {
     const p = ganttDependencyPath(pts(0, 1), 'start_to_start')
-    expect(p.d.startsWith('M 10 16')).toBe(true)
-    expect(p.d.endsWith(' 30 48')).toBe(true)
+    expect(p.d.startsWith('M 10 12')).toBe(true)
+    expect(p.d.endsWith(' 30 44')).toBe(true)
   })
 
   test('FF：from 条尾 → to 条尾', () => {
     const p = ganttDependencyPath(pts(0, 1), 'finish_to_finish')
-    expect(p.d.startsWith('M 80 16')).toBe(true)
-    expect(p.d.endsWith(' 90 48')).toBe(true)
+    expect(p.d.startsWith('M 80 12')).toBe(true)
+    expect(p.d.endsWith(' 90 44')).toBe(true)
   })
 
   test('SF：from 条头 → to 条尾', () => {
     const p = ganttDependencyPath(pts(0, 1), 'start_to_finish')
-    expect(p.d.startsWith('M 10 16')).toBe(true)
-    expect(p.d.endsWith(' 90 48')).toBe(true)
+    expect(p.d.startsWith('M 10 12')).toBe(true)
+    expect(p.d.endsWith(' 90 44')).toBe(true)
   })
 
   test('同行：水平直线，无贝塞尔', () => {
     const p = ganttDependencyPath(pts(1, 1), 'finish_to_start')
     expect(p.d).not.toContain('C')
-    expect(p.d.startsWith('M 80 48')).toBe(true)
-    expect(p.d.endsWith(' 30 48')).toBe(true)
+    expect(p.d.startsWith('M 80 44')).toBe(true)
+    expect(p.d.endsWith(' 30 44')).toBe(true)
   })
 })

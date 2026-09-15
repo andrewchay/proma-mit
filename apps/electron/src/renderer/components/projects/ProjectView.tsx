@@ -1661,6 +1661,8 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
     const width = Math.max(1.5, ((end - start) / range) * 100)
     return [task.id, { left, right: left + width, width }] as const
   }))
+  // 阻塞标红精确到边（同一任务可能只有部分前置依赖处于阻塞态），与 blockerIds（行标注用）分开维护
+  const blockedEdgeKeys = new Set(blockers.map((b) => `${b.taskId}|${b.dependsOnTaskId}`))
   const links = dependencies
     .map((dep) => {
       const fromIdx = taskIndexById.get(dep.taskId)
@@ -1675,7 +1677,7 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
         },
         dep.type,
       )
-      return { id: dep.id, d, blocked: blockerIds.has(dep.taskId) }
+      return { id: dep.id, d, blocked: blockedEdgeKeys.has(`${dep.taskId}|${dep.dependsOnTaskId}`) }
     })
     .filter((link): link is NonNullable<typeof link> => link !== null)
 
@@ -1733,8 +1735,7 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
           })}</div>
           {links.length > 0 && (
             <svg
-              className="pointer-events-none absolute inset-0"
-              width="100%"
+              className="pointer-events-none absolute inset-y-0 left-[217px] right-0"
               height={sortedTasks.length * GANTT_ROW_STEP}
               viewBox={`0 0 100 ${sortedTasks.length * GANTT_ROW_STEP}`}
               preserveAspectRatio="none"
@@ -1742,6 +1743,9 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
               <defs>
                 <marker id="gantt-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
                   <path d="M 0 0 L 6 3 L 0 6 z" className="fill-gray-400" />
+                </marker>
+                <marker id="gantt-arrow-red" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M 0 0 L 6 3 L 0 6 z" className="fill-red-500" />
                 </marker>
               </defs>
               {links.map((link) => (
@@ -1751,7 +1755,7 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
                   fill="none"
                   className={link.blocked ? 'stroke-red-500' : 'stroke-gray-400 opacity-60'}
                   strokeWidth={link.blocked ? 1.5 : 1}
-                  markerEnd={link.blocked ? undefined : 'url(#gantt-arrow)'}
+                  markerEnd={link.blocked ? 'url(#gantt-arrow-red)' : 'url(#gantt-arrow)'}
                   vectorEffect="non-scaling-stroke"
                 />
               ))}
