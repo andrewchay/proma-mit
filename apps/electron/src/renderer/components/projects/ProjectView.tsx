@@ -14,7 +14,7 @@ import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
-import { GANTT_GROUP_BAR_COLORS, ganttBarColor, sortTasksByUrgency } from './project-flow-metrics'
+import { GANTT_GROUP_BAR_COLORS, ganttBarColor, sortTasksByUrgency, ganttDependencyPath, GANTT_ROW_STEP } from './project-flow-metrics'
 import { DueDateBadge } from './DueDateBadge'
 import { ScheduleView } from '../calendar/ScheduleView'
 import {
@@ -1652,6 +1652,32 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
     )
   }
 
+  // 依赖连线数据：任务 id → 行号 / 时间条百分比区间（与行渲染同源，避免公式漂移）；阻塞依赖标红
+  const taskIndexById = new Map(sortedTasks.map((task, index) => [task.id, index] as const))
+  const taskSpanById = new Map(sortedTasks.map((task) => {
+    const start = task.startDate ?? task.createdAt
+    const end = Math.max(task.dueDate ?? start + day, start + day)
+    const left = Math.max(0, ((start - rangeStart) / range) * 100)
+    const width = Math.max(1.5, ((end - start) / range) * 100)
+    return [task.id, { left, right: left + width, width }] as const
+  }))
+  const links = dependencies
+    .map((dep) => {
+      const fromIdx = taskIndexById.get(dep.taskId)
+      const toIdx = taskIndexById.get(dep.dependsOnTaskId)
+      const fromSpan = taskSpanById.get(dep.taskId)
+      const toSpan = taskSpanById.get(dep.dependsOnTaskId)
+      if (fromIdx === undefined || toIdx === undefined || !fromSpan || !toSpan) return null
+      const { d } = ganttDependencyPath(
+        {
+          from: { index: fromIdx, startPct: fromSpan.left, endPct: fromSpan.right },
+          to: { index: toIdx, startPct: toSpan.left, endPct: toSpan.right },
+        },
+        dep.type,
+      )
+      return { id: dep.id, d, blocked: blockerIds.has(dep.taskId) }
+    })
+    .filter((link): link is NonNullable<typeof link> => link !== null)
 
   return (
     <div className="space-y-3 overflow-x-auto">
@@ -1660,7 +1686,11 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
           <h3 className="text-sm font-semibold">Task 甘特图</h3>
           <p className="text-xs text-muted-foreground">按优先级排序（紧急 → 高 → 中 → 低）；时间条按状态语义组着色，超期/阻塞/高风险覆盖标注。</p>
         </div>
-        <span className="text-xs text-muted-foreground">{dependencies.length} 条依赖 · {blockers.length} 项阻塞</span>
+        <span className="text-xs text-muted-foreground">
+          {dependencies.length} 条依赖 · {blockers.length} 项阻塞
+          <span className="inline-flex items-center gap-1 ml-2"><span className="inline-block w-4 border-t border-gray-400" />依赖</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-4 border-t-2 border-red-500" />阻塞生效中</span>
+        </span>
       </div>
       {/* 语义组图例（与看板列同口径） */}
       <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -1681,28 +1711,53 @@ function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[];
       </div>
       <div className="min-w-[760px] rounded-lg border bg-card p-3">
         <div className="mb-2 ml-[220px] flex justify-between text-xs text-muted-foreground"><span>{new Date(rangeStart).toLocaleDateString()}</span><span>{new Date(rangeEnd).toLocaleDateString()}</span></div>
-        <div className="space-y-2">{sortedTasks.map((task) => {
-          const start = task.startDate ?? task.createdAt
-          const end = Math.max(task.dueDate ?? start + day, start + day)
-          const left = Math.max(0, ((start - rangeStart) / range) * 100)
-          const width = Math.max(1.5, ((end - start) / range) * 100)
-          return <div key={task.id} className="flex items-center gap-3">
-            <div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>
-              <span className={`mr-1 rounded px-1 text-[10px] font-medium ${task.priority === 'critical' ? 'bg-red-100 text-red-700' : task.priority === 'high' ? 'bg-orange-100 text-orange-700' : task.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                {task.priority === 'critical' ? '紧急' : task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
-              </span>
-              {renderStatusMarks(task)}
-              {task.title}
+        <div className="relative">
+          <div className="space-y-2" style={{ minHeight: sortedTasks.length * GANTT_ROW_STEP }}>{sortedTasks.map((task) => {
+            const { left, width } = taskSpanById.get(task.id)!
+            return <div key={task.id} className="flex items-center gap-3">
+              <div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>
+                <span className={`mr-1 rounded px-1 text-[10px] font-medium ${task.priority === 'critical' ? 'bg-red-100 text-red-700' : task.priority === 'high' ? 'bg-orange-100 text-orange-700' : task.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                  {task.priority === 'critical' ? '紧急' : task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
+                </span>
+                {renderStatusMarks(task)}
+                {task.title}
+              </div>
+              <div className="relative h-6 flex-1 rounded bg-muted/50">
+                <div
+                  className={`absolute top-1 h-4 rounded ${ganttBarColor(task, { blocked: blockerIds.has(task.id), now, statuses })}`}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}｜优先级 ${task.priority}${task.riskLevel ? `｜风险 ${task.riskLevel}` : ''}`}
+                />
+              </div>
             </div>
-            <div className="relative h-6 flex-1 rounded bg-muted/50">
-              <div
-                className={`absolute top-1 h-4 rounded ${ganttBarColor(task, { blocked: blockerIds.has(task.id), now, statuses })}`}
-                style={{ left: `${left}%`, width: `${width}%` }}
-                title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}｜优先级 ${task.priority}${task.riskLevel ? `｜风险 ${task.riskLevel}` : ''}`}
-              />
-            </div>
-          </div>
-        })}</div>
+          })}</div>
+          {links.length > 0 && (
+            <svg
+              className="pointer-events-none absolute inset-0"
+              width="100%"
+              height={sortedTasks.length * GANTT_ROW_STEP}
+              viewBox={`0 0 100 ${sortedTasks.length * GANTT_ROW_STEP}`}
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <marker id="gantt-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M 0 0 L 6 3 L 0 6 z" className="fill-gray-400" />
+                </marker>
+              </defs>
+              {links.map((link) => (
+                <path
+                  key={link.id}
+                  d={link.d}
+                  fill="none"
+                  className={link.blocked ? 'stroke-red-500' : 'stroke-gray-400 opacity-60'}
+                  strokeWidth={link.blocked ? 1.5 : 1}
+                  markerEnd={link.blocked ? undefined : 'url(#gantt-arrow)'}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </svg>
+          )}
+        </div>
       </div>
     </div>
   )
