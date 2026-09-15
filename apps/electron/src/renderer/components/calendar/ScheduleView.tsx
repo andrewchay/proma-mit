@@ -358,6 +358,9 @@ function EventsListView({ events, tasks, selectedDate, onSelectDate }: EventsLis
                   {dayTasks.map((t) => (
                     <div key={t.id} className="flex items-center gap-2">
                       <span className={cn('w-2 h-2 rounded-full shrink-0', t.status === 'done' ? 'bg-green-400' : 'bg-orange-400')} />
+                      {t.category?.startsWith('project:') && (
+                        <span className="mr-1 text-[10px] px-1 rounded bg-primary/10 text-primary shrink-0">📁 {t.category.slice('project:'.length)}</span>
+                      )}
                       <span className={cn('text-sm flex-1 truncate', t.status === 'done' && 'line-through text-muted-foreground')}>{t.title}</span>
                       <span className="text-xs text-muted-foreground">{STATUS_CONFIG[t.status]?.label}</span>
                     </div>
@@ -631,13 +634,18 @@ function inferCategoryFromCalendarName(calendarName: string): string {
   return 'personal'
 }
 
-export function ScheduleView({ hideHeader = false }: { hideHeader?: boolean } = {}): React.ReactElement {
+interface ScheduleViewProps {
+  hideHeader?: boolean
+}
+
+export function ScheduleView({ hideHeader = false }: ScheduleViewProps): React.ReactElement {
   const [viewState, setViewState] = useAtom(scheduleViewStateAtom)
   const events = useAtomValue(scheduleEventsAtom)
   const setScheduleEvents = useSetAtom(scheduleEventsAtom)
   const [tasks, setTasks] = useAtom(scheduleTasksAtom)
 
-  // 项目任务 DDL 合流（跨项目，仅有 dueDate 且未完成；挂载拉一次 + expose 刷新）
+  // 项目任务 DDL 合流（跨项目，仅有 dueDate 且未完成）；挂载拉一次；
+  // 项目任务变化依赖重新挂载刷新（后续可接 onProjectActivityChanged 订阅）
   const [projectTasks, setProjectTasks] = React.useState<ScheduleTask[]>([])
   const refreshProjectTasks = React.useCallback(() => {
     void window.electronAPI.paa.project.listAllProjectTasksLite()
@@ -922,7 +930,7 @@ export function ScheduleView({ hideHeader = false }: { hideHeader?: boolean } = 
           {viewMode === 'list' ? (
             <EventsListView
               events={events}
-              tasks={tasks}
+              tasks={mergedTasks}
               selectedDate={selectedDate}
               onSelectDate={handleSelectDate}
             />

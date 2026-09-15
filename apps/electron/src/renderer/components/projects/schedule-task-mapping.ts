@@ -34,8 +34,13 @@ export function projectPriorityToSchedulePriority(priority: ProjectTaskLite['pri
   return priority === 'critical' ? 'urgent' : priority
 }
 
-/** 轻量项目任务 → ScheduleTask 形状（id 加 project- 前缀防冲突；category 带项目名供徽标展示） */
+/**
+ * 轻量项目任务 → ScheduleTask 形状（id 加 project- 前缀防冲突；category 带项目名供徽标展示）。
+ * createdAt/updatedAt 从 dueDate 派生（保持函数纯/确定性），非任务真实创建时间；
+ * 当前无消费方读取这两个字段，确定性优先于语义精确。
+ */
 export function projectTaskToScheduleTask(task: ProjectTaskLite): ScheduleTask {
+  const derivedTimestamp = new Date(task.dueDate).toISOString()
   return {
     id: `project-${task.id}`,
     title: task.title,
@@ -43,7 +48,7 @@ export function projectTaskToScheduleTask(task: ProjectTaskLite): ScheduleTask {
     priority: projectPriorityToSchedulePriority(task.priority),
     dueDate: timestampToDueDate(task.dueDate),
     category: `project:${task.projectTitle}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: derivedTimestamp,
+    updatedAt: derivedTimestamp,
   }
 }
