@@ -13,6 +13,8 @@ export const SAFE_TOOLS: readonly string[] = [
   'WebSearch',       // 网络搜索
   'WebFetch',        // 网页获取
   'RecallMemory',    // 跨会话记忆检索（只读）
+  'SearchKnowledge', // 知识库限域检索（只读，范围由会话元数据决定）
+  'ReadKnowledgeSource', // 知识库文档读取（只读，逐次经范围校验）
   'WebBridgeSnapshot', // 受管浏览器页面读取
   'WebBridgeScreenshot', // 受管浏览器截图
   'WebBridgeScroll', // 受管浏览器滚动

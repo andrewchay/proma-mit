@@ -22,15 +22,29 @@ import { readCatalog } from './knowledge-catalog-service'
 export const KNOWLEDGE_INDEX_DB_PATH = 'knowledge-index/knowledge-index.db'
 
 let storeHandle: ContextStoreHandle | null = null
+let storeHandlePath: string | null = null
 let opening: Promise<ContextStoreHandle> | null = null
 
-/** 打开（或复用）知识索引数据库 */
+/** 当前配置根下的索引库路径 */
+function knowledgeIndexDbPath(): string {
+  return join(getConfigDir(), KNOWLEDGE_INDEX_DB_PATH)
+}
+
+/** 打开（或复用）知识索引数据库；配置根变化时（测试隔离）重新打开 */
 export async function openKnowledgeIndexStore(): Promise<ContextStoreHandle> {
-  if (storeHandle) return storeHandle
-  if (!opening) {
-    const path = join(getConfigDir(), KNOWLEDGE_INDEX_DB_PATH)
+  const path = knowledgeIndexDbPath()
+  if (storeHandle && storeHandlePath === path) return storeHandle
+  // 配置根变了：旧句柄属于上一个临时目录，不能复用也不需要持久化它
+  if (storeHandle) {
+    try { storeHandle.close() } catch { /* 旧目录可能已删除 */ }
+    storeHandle = null
+  }
+  if (!opening || storeHandlePath !== path) {
     opening = openContextStore({ path })
-    opening.then((handle) => { storeHandle = handle }).catch(() => { opening = null })
+    opening.then((handle) => {
+      storeHandle = handle
+      storeHandlePath = path
+    }).catch(() => { opening = null })
   }
   return opening
 }
@@ -38,7 +52,11 @@ export async function openKnowledgeIndexStore(): Promise<ContextStoreHandle> {
 /** 关闭并持久化索引数据库（应用退出时调用） */
 export async function closeKnowledgeIndexStore(): Promise<void> {
   if (storeHandle) {
-    try { storeHandle.close() } finally { storeHandle = null }
+    try { storeHandle.close() } finally {
+      storeHandle = null
+      storeHandlePath = null
+      opening = null
+    }
   }
 }
 
