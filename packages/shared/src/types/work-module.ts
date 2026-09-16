@@ -460,6 +460,10 @@ export interface CreateAgentEmployeeInput {
   channelId: string
   modelId?: string
   workspaceId?: string
+  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
+  executionProfile?: 'general' | 'development'
+  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string
   skills?: string[]
@@ -474,6 +478,10 @@ export interface UpdateAgentEmployeeInput {
   channelId?: string
   modelId?: string | null
   workspaceId?: string | null
+  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
+  executionProfile?: 'general' | 'development'
+  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string | null
   systemPrompt?: string | null
   skills?: string[]
@@ -490,6 +498,10 @@ export interface AgentEmployeeResult {
   channelId: string
   modelId?: string
   workspaceId?: string
+  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
+  executionProfile?: 'general' | 'development'
+  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string
   skills: string[]

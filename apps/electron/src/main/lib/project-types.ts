@@ -363,6 +363,8 @@ export interface AgentEmployee {
   /** 默认工作区 ID；缺省时使用当前全局工作区 */
   workspaceId?: string
   /** 绑定的 Workflow SOP ID（P3）；绑定后任务改用 Workflow 执行（需已发布） */
+  executionProfile?: 'general' | 'development'
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string
   /** 自定义角色 system prompt */
   systemPrompt?: string
@@ -386,6 +388,8 @@ export interface CreateAgentEmployeeInput {
   channelId: string
   modelId?: string
   workspaceId?: string
+  executionProfile?: 'general' | 'development'
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string
   skills?: string[]

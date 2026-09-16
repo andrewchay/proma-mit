@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, realpathSync } from 'node:fs'
+import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { safeParseJSON } from './safe-json'
 import { createHash, randomUUID } from 'node:crypto'
@@ -241,7 +242,7 @@ export function getAgentWorkspaceCwd(workspace: AgentWorkspace, sessionId: strin
     if (!existsSync(workspace.rootPath) || !statSync(workspace.rootPath).isDirectory()) {
       throw new Error(`本地项目文件夹不可用: ${workspace.rootPath}`)
     }
-    return workspace.rootPath
+    return resolveDevelopmentWorktree(workspace.rootPath, getAgentSessionWorkspacePath(workspace.slug, sessionId)) ?? workspace.rootPath
   }
   return getAgentSessionWorkspacePath(workspace.slug, sessionId)
 }

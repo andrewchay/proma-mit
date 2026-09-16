@@ -50,7 +50,7 @@ import { ProactiveScheduler } from './proactive-scheduler'
 import { setMonitorRunner, startAllMonitors } from './monitor-service'
 import { setApprovedChangeExecutor } from './approval-service'
 import { runRoutineInstance, setRoutineRunner } from './routine-service'
-import { createAgentSession, getAgentSessionMessages, getAgentSessionMeta } from './agent-session-manager'
+import { createAgentSession, getAgentSessionMessages, getAgentSessionMeta, updateAgentSessionMeta } from './agent-session-manager'
 import { createCollaborationDelegations, resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
 import { executeApprovedChange } from './proactive-approved-change-executor'
 import { validateProactiveTarget, extractCurrentProactiveOutput, ProactiveExecutionError } from './proactive-target-validation'
@@ -494,6 +494,8 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
  * 中止指定会话的 Agent 执行
  */
 export function stopAgent(sessionId: string): void {
+  // 各 Runtime 的完成回调不一定携带停止标记，主进程先保存真实用户停止意图。
+  try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
   orchestrator.stop(sessionId)
 }
 

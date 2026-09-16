@@ -6,6 +6,9 @@
  */
 
 import * as React from 'react'
+import { useAtom } from 'jotai'
+import { agentWorkspacesAtom } from '@/atoms/agent-atoms'
+import { useOpenSession } from '@/hooks/useOpenSession'
 import { Bot, Plus, Pencil, Trash2, Play, Square, CheckCircle2, XCircle, Clock3, Loader2, Users, RefreshCw } from 'lucide-react'
 import type { AgentEmployeeResult, AgentExecutionResult, Channel, WorkflowDefinition, MemberResult, MemberSyncAllResult } from '@gravitas/shared'
 import { cn } from '@/lib/utils'
@@ -23,13 +26,16 @@ const RUNTIME_LABEL: Record<string, string> = {
 const EXEC_STATUS_META: Record<string, { label: string; className: string }> = {
   queued: { label: '排队中', className: 'bg-foreground/[0.06] text-foreground/60' },
   running: { label: '运行中', className: 'bg-blue-500/10 text-blue-500' },
-  completed: { label: '已完成', className: 'bg-green-500/10 text-green-600' },
+  completed: { label: '执行完成·待验收', className: 'bg-green-500/10 text-green-600' },
   failed: { label: '失败', className: 'bg-red-500/10 text-red-600' },
   cancelled: { label: '已取消', className: 'bg-foreground/[0.06] text-foreground/60' },
   stale: { label: '失联', className: 'bg-amber-500/10 text-amber-600' },
 }
 
 export function AgentTeamPanel(): React.ReactElement {
+  const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
+  const { openSession } = useOpenSession()
+  const [error, setError] = React.useState('')
   const [employees, setEmployees] = React.useState<AgentEmployeeResult[]>([])
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -46,6 +52,9 @@ export function AgentTeamPanel(): React.ReactElement {
     channelId: '',
     modelId: '',
     workflowId: '',
+    workspaceId: '',
+    executionProfile: 'general' as 'general' | 'development',
+    permissionMode: 'safe' as 'safe' | 'auto',
     systemPrompt: '',
   })
   const [saving, setSaving] = React.useState(false)
@@ -53,20 +62,24 @@ export function AgentTeamPanel(): React.ReactElement {
 
   const load = React.useCallback(async (): Promise<void> => {
     try {
-      const [emps, chs, wfs] = await Promise.all([
+      const [emps, chs, wfs, spaces] = await Promise.all([
         window.electronAPI.paa.agentEmployees.list(),
         window.electronAPI.listChannels(),
         window.electronAPI.listWorkflowDefinitions().catch(() => []),
+        window.electronAPI.listAgentWorkspaces(),
       ])
+      setWorkspaces(spaces)
+      setError('')
       setEmployees(emps)
       setChannels(chs.filter((c) => c.enabled))
       setWorkflows(wfs.filter((w) => w.status === 'published'))
     } catch (err) {
+      setError(err instanceof Error ? err.message : '员工加载失败')
       console.error('[AI员工] 加载失败:', err)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [setWorkspaces])
 
   const loadExecutions = React.useCallback(async (agentId: string): Promise<void> => {
     try {
@@ -83,7 +96,8 @@ export function AgentTeamPanel(): React.ReactElement {
 
   const openCreate = (): void => {
     setEditingId(null)
-    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', systemPrompt: '' })
+    setError('')
+    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceId: '', executionProfile: 'general', permissionMode: 'safe', systemPrompt: '' })
     setShowForm(true)
   }
 
@@ -97,6 +111,9 @@ export function AgentTeamPanel(): React.ReactElement {
       channelId: emp.channelId,
       modelId: emp.modelId ?? '',
       workflowId: emp.workflowId ?? '',
+      workspaceId: emp.workspaceId ?? '',
+      executionProfile: emp.executionProfile ?? 'general',
+      permissionMode: emp.permissionMode ?? 'safe',
       systemPrompt: emp.systemPrompt ?? '',
     })
     setShowForm(true)
@@ -104,6 +121,7 @@ export function AgentTeamPanel(): React.ReactElement {
 
   const handleSave = async (): Promise<void> => {
     if (!form.name.trim() || !form.channelId) return
+    if (editingId && form.executionProfile === 'general' && employees.find((employee) => employee.id === editingId)?.executionProfile === 'development' && !confirm('切回普通员工将恢复旧版全自动权限，且不再隔离 worktree。确认切换？')) return
     setSaving(true)
     try {
       const input = {
@@ -114,6 +132,9 @@ export function AgentTeamPanel(): React.ReactElement {
         channelId: form.channelId,
         modelId: form.modelId.trim() || undefined,
         workflowId: form.workflowId || undefined,
+        workspaceId: form.workspaceId || undefined,
+        executionProfile: form.executionProfile,
+        permissionMode: form.permissionMode,
         systemPrompt: form.systemPrompt.trim() || undefined,
       }
       if (editingId) {
@@ -124,6 +145,7 @@ export function AgentTeamPanel(): React.ReactElement {
       setShowForm(false)
       await load()
     } catch (err) {
+      setError(err instanceof Error ? err.message : '员工保存失败')
       console.error('[AI员工] 保存失败:', err)
     } finally {
       setSaving(false)
@@ -143,6 +165,7 @@ export function AgentTeamPanel(): React.ReactElement {
 
   return (
     <div className="space-y-4">
+      {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
       {/* 通讯录成员同步（PH1-A） */}
       <MemberSyncPanel />
 
@@ -198,6 +221,7 @@ export function AgentTeamPanel(): React.ReactElement {
                       <span className="font-medium text-sm">{emp.name}</span>
                       <span className="px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">{emp.role}</span>
                       <span className="px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">{RUNTIME_LABEL[emp.runtime] ?? emp.runtime}</span>
+                      {emp.executionProfile === 'development' && <span className="rounded-full bg-primary/10 px-2 text-[10px] text-primary">研发 · {emp.permissionMode === 'auto' ? '审批执行' : '只读诊断'}</span>}
                       {emp.workflowId && (
                         <span className="px-1.5 py-[1px] rounded-full bg-violet-500/10 text-violet-600 text-[10px]" title="绑定 Workflow SOP，任务用 Workflow 执行">SOP</span>
                       )}
@@ -221,17 +245,24 @@ export function AgentTeamPanel(): React.ReactElement {
                   </div>
                 </div>
 
+                <button onClick={() => void loadExecutions(emp.id)} className="pl-11 text-xs text-primary">刷新执行记录</button>
                 {/* 执行记录概览 */}
                 {execs.length > 0 ? (
                   <div className="pl-11 space-y-1">
                     {execs.map((exec) => {
                       const meta = EXEC_STATUS_META[exec.status] ?? { label: exec.status, className: 'bg-foreground/[0.06] text-foreground/60' }
                       return (
-                        <div key={exec.id} className="flex items-center gap-2 text-[11px] text-foreground/55">
+                        <details key={exec.id} className="rounded-md bg-muted/30 p-2 text-[11px] text-foreground/55">
+                          <summary className="flex cursor-pointer items-center gap-2">
                           <span className={cn('shrink-0 px-1.5 py-[1px] rounded-full text-[10px]', meta.className)}>{meta.label}</span>
-                          <span className="truncate flex-1">{exec.entityId === 'task' ? '任务' : '子任务'} · {exec.resultSummary?.slice(0, 60) ?? exec.error?.slice(0, 60) ?? '…'}</span>
+                          <span className="truncate flex-1">{exec.entityType === 'task' ? '任务' : '子任务'} · {exec.resultSummary?.slice(0, 60) ?? exec.error?.slice(0, 60) ?? '…'}</span>
                           <span className="shrink-0 text-foreground/30 tabular-nums">{new Date(exec.startedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
+                          </summary>
+                          <p className="mt-2 whitespace-pre-wrap break-words">{exec.error}</p>
+                          <p className="whitespace-pre-wrap break-words">{exec.resultSummary ?? '暂无交付结果'}</p>
+                          {exec.outputFiles?.map((path) => <p key={path} className="mt-1 break-all font-mono">{path}</p>)}
+                          {exec.sessionId && !exec.sessionId.startsWith('workflow:') && <button className="mt-2 text-primary" onClick={() => void openSession('agent', exec.sessionId, `${emp.name} · 任务执行`)}>打开执行会话 / 处理审批</button>}
+                        </details>
                       )
                     })}
                   </div>
@@ -251,7 +282,33 @@ export function AgentTeamPanel(): React.ReactElement {
 
       {showForm && (
         <div className="rounded-lg border bg-card p-4 space-y-3">
-          <h3 className="text-sm font-medium">{editingId ? '编辑 AI 员工' : '新建 AI 员工'}</h3>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-medium">{editingId ? '编辑 AI 员工' : '新建 AI 员工'}</h3>
+            {!editingId && <button className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => setForm((current) => ({ ...current, name: 'Gravitas 研发工程师', role: '软件开发与测试', description: '理解项目规则与现有架构，完成小范围开发、缺陷修复和回归测试，提交代码变更与验证证据供人工验收。', executionProfile: 'development', permissionMode: 'safe', workflowId: '' }))}>使用研发员工模板</button>}
+          </div>
+          <div className="rounded-lg bg-muted/40 p-3 space-y-3">
+            <label className="block text-xs text-muted-foreground">执行配置
+              <select value={form.executionProfile} onChange={(e) => setForm({ ...form, executionProfile: e.target.value as 'general' | 'development', workflowId: e.target.value === 'development' ? '' : form.workflowId })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+                <option value="general">普通员工（旧版全自动权限）</option>
+                <option value="development">研发员工（隔离 worktree + 项目上下文）</option>
+              </select>
+            </label>
+            <label className="block text-xs text-muted-foreground">默认工作区
+              <select value={form.workspaceId} onChange={(e) => setForm({ ...form, workspaceId: e.target.value })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+                <option value="">{form.executionProfile === 'development' ? '请选择代码仓库，不会回退到全局工作区' : '沿用任务 / 全局工作区'}</option>
+                {workspaces.filter((space) => form.executionProfile !== 'development' || space.rootPath).map((space) => <option key={space.id} value={space.id}>{space.name}{space.rootPath ? ` · ${space.rootPath}` : ''}</option>)}
+              </select>
+            </label>
+            {form.executionProfile === 'development' && <>
+              <label className="block text-xs text-muted-foreground">Runtime 权限
+                <select value={form.permissionMode} onChange={(e) => setForm({ ...form, permissionMode: e.target.value as 'safe' | 'auto' })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+                  <option value="safe">只读诊断（默认，不修改代码）</option>
+                  <option value="auto">审批执行（允许常规编辑，命令可能需要确认）</option>
+                </select>
+              </label>
+              <p className="text-xs leading-relaxed text-muted-foreground">从干净仓库 HEAD 建立独立分支，不自动提交、合并或发布。先读取项目规则，复用当前工作区 Skills、MCP 与项目知识范围。worktree 不是系统沙箱；审批执行不代表所有操作免审批。成果暂停待人工验收，未真实验证的 Runtime 不保证无人值守可用。</p>
+            </>}
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input
               type="text"
@@ -316,6 +373,7 @@ export function AgentTeamPanel(): React.ReactElement {
               <label className="text-xs text-muted-foreground">绑定 Workflow SOP（可选）</label>
               <select
                 value={form.workflowId}
+                disabled={form.executionProfile === 'development'}
                 onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
@@ -336,7 +394,7 @@ export function AgentTeamPanel(): React.ReactElement {
             className="w-full px-3 py-2 text-sm border rounded-md bg-background resize-none h-16"
           />
           <div className="flex gap-2">
-            <button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.channelId} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+            <button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.channelId || (form.executionProfile === 'development' && (!form.workspaceId || !form.modelId.trim()))} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
               {saving && <Loader2 size={14} className="animate-spin" />}
               {editingId ? '保存' : '创建'}
             </button>

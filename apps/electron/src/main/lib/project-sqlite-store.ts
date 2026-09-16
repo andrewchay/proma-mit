@@ -610,6 +610,9 @@ function migrate(database: SqliteCompat): void {
   if (!empColumns.includes('workflow_id')) {
     database.exec(`ALTER TABLE agent_employees ADD COLUMN workflow_id TEXT`)
   }
+  // 研发员工采用显式配置，旧档案保持普通员工语义。
+  if (!empColumns.includes('execution_profile')) database.exec("ALTER TABLE agent_employees ADD COLUMN execution_profile TEXT NOT NULL DEFAULT 'general'")
+  if (!empColumns.includes('permission_mode')) database.exec("ALTER TABLE agent_employees ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'safe'")
   // P3：agent_executions 表新增 executor 列（兼容旧库）
   const execColumns = readColumnNames(database, 'agent_executions')
   if (!execColumns.includes('executor')) {
@@ -2251,6 +2254,7 @@ function rowToBriefReceipt(row: BriefReceiptRow): BriefReceipt {
 type AgentEmployeeRow = {
   id: string; name: string; role: string; avatar: string | null; description: string;
   runtime: string; channel_id: string; model_id: string | null; workspace_id: string | null;
+  execution_profile: string; permission_mode: string;
   workflow_id: string | null; system_prompt: string | null; skills: string | null; enabled: number; total_tasks: number;
   completed_tasks: number; avg_duration_ms: number | null; failure_count: number;
   created_at: number; updated_at: number;
@@ -2275,6 +2279,8 @@ function rowToAgentEmployee(row: AgentEmployeeRow): AgentEmployee {
     channelId: row.channel_id,
     modelId: row.model_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
+    executionProfile: row.execution_profile as AgentEmployee['executionProfile'],
+    permissionMode: row.permission_mode as AgentEmployee['permissionMode'],
     workflowId: row.workflow_id ?? undefined,
     systemPrompt: row.system_prompt ?? undefined,
     skills: parseJsonArray(row.skills),
@@ -2338,8 +2344,8 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
   const now = Date.now()
   database.prepare(
     `INSERT INTO agent_employees
-     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, workflow_id, system_prompt, skills, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
+     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, workflow_id, system_prompt, skills, execution_profile, permission_mode, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
   ).run(
     id,
     input.name,
@@ -2353,6 +2359,8 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
     input.workflowId ?? null,
     input.systemPrompt ?? null,
     JSON.stringify(input.skills ?? []),
+    input.executionProfile ?? 'general',
+    input.permissionMode ?? 'safe',
     now,
     now,
   )
@@ -2367,7 +2375,7 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
   database.prepare(
     `UPDATE agent_employees SET
        name = ?, role = ?, avatar = ?, description = ?, runtime = ?, channel_id = ?, model_id = ?,
-       workspace_id = ?, workflow_id = ?, system_prompt = ?, skills = ?, enabled = ?, updated_at = ?
+       workspace_id = ?, workflow_id = ?, system_prompt = ?, skills = ?, execution_profile = ?, permission_mode = ?, enabled = ?, updated_at = ?
      WHERE id = ?`
   ).run(
     merged.name,
@@ -2381,6 +2389,8 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
     merged.workflowId ?? null,
     merged.systemPrompt ?? null,
     JSON.stringify(merged.skills ?? []),
+    merged.executionProfile ?? 'general',
+    merged.permissionMode ?? 'safe',
     merged.enabled ? 1 : 0,
     merged.updatedAt,
     id,
@@ -2456,7 +2466,7 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
   database.prepare(
     `UPDATE agent_executions SET
        session_id = ?, status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
-       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?
+       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?
      WHERE id = ?`
   ).run(
     merged.sessionId,
@@ -2468,6 +2478,7 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
     JSON.stringify(merged.requestedPermissions ?? []),
     merged.lastHeartbeatAt ?? null,
     merged.completedAt ?? null,
+    merged.prompt,
     id,
   )
   return getAgentExecution(id)
