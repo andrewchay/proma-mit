@@ -10,7 +10,7 @@
  */
 
 import { lazy, type ComponentType } from 'react'
-import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, FlaskConical, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
@@ -20,6 +20,7 @@ const InfluencerModuleView = lazy(() => import('@/components/influencer/Influenc
 const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMediaModuleView').then((module) => ({ default: module.PaidMediaModuleView })))
 const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sourcing/OutboundSourcingModuleView').then((module) => ({ default: module.OutboundSourcingModuleView })))
 const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
+const ResearchWorkspace = lazy(() => import('@/components/academic/ResearchWorkspace').then((module) => ({ default: module.ResearchWorkspace })))
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -54,6 +55,13 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     icon: FolderKanban,
     core: true,
     description: '项目 / 任务 / 看板 / 会议纪要 / 风险报告',
+  },
+  {
+    id: 'research',
+    label: '研究',
+    icon: FlaskConical,
+    core: true,
+    description: '从文献到稿件的可追溯研究工作台',
   },
   {
     id: 'influencer',
@@ -95,6 +103,7 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   // 此处保留映射防止旧持久化 activeView='calendar' 导致白屏。
   calendar: CalendarModuleView,
   projects: ProjectView,
+  research: ResearchWorkspace,
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
   'outbound-sourcing': OutboundSourcingModuleView,

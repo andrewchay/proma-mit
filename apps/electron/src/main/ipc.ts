@@ -4684,6 +4684,10 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, async (_event, paperId) => academicSvc.getPeerReviewReport(paperId))
   ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, async (_event, paperId) => academicSvc.getRevisionTracking(paperId))
 
+  // ===== 研究工作台（M1：独立于旧论文 pipeline 的新领域模型） =====
+  const { registerAcademicResearchIpcHandlers } = require('./lib/academic/academic-ipc-handlers') as typeof import('./lib/academic/academic-ipc-handlers')
+  registerAcademicResearchIpcHandlers()
+
   // ===== 行为采集（为非免费版分析能力提供数据基础） =====
   const telemetrySvc = require('./lib/telemetry-service') as typeof import('./lib/telemetry-service')
   ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_SETTINGS, async () => telemetrySvc.getTelemetrySettings())

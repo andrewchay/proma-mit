@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, ACADEMIC_RESEARCH_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1512,6 +1512,17 @@ export interface ElectronAPI {
     getRevisionTracking: (paperId: string) => Promise<import('@gravitas/shared').RevisionTracking | null>
   }
 
+  // ===== 研究工作台（M1：研究领域模型） =====
+  academicResearch: {
+    listProjects: () => Promise<import('@gravitas/shared').ResearchProject[]>
+    getProject: (id: string) => Promise<import('@gravitas/shared').ResearchProject | null>
+    createProject: (input: import('@gravitas/shared').CreateResearchProjectInput) => Promise<import('@gravitas/shared').ResearchProject>
+    updateBrief: (id: string, brief: import('@gravitas/shared').ResearchBrief, changeReason: string) => Promise<import('@gravitas/shared').ResearchProject>
+    changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
+    archiveProject: (id: string, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
+    migrationDryRun: () => Promise<import('@gravitas/shared').MigrationDryRunReport>
+  }
+
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
   telemetry: {
     // 采集设置
@@ -2306,6 +2317,17 @@ const electronAPI: ElectronAPI = {
     getIntegrityReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, paperId) as Promise<import('@gravitas/shared').IntegrityReport | null>,
     getPeerReviewReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, paperId) as Promise<import('@gravitas/shared').PeerReviewReport | null>,
     getRevisionTracking: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, paperId) as Promise<import('@gravitas/shared').RevisionTracking | null>,
+  },
+
+  // ===== 研究工作台（M1：研究领域模型） =====
+  academicResearch: {
+    listProjects: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROJECTS) as Promise<import('@gravitas/shared').ResearchProject[]>,
+    getProject: (id: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_PROJECT, id) as Promise<import('@gravitas/shared').ResearchProject | null>,
+    createProject: (input: import('@gravitas/shared').CreateResearchProjectInput) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROJECT, input) as Promise<import('@gravitas/shared').ResearchProject>,
+    updateBrief: (id: string, brief: import('@gravitas/shared').ResearchBrief, changeReason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.UPDATE_BRIEF, id, brief, changeReason) as Promise<import('@gravitas/shared').ResearchProject>,
+    changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CHANGE_STATUS, id, to, reason) as Promise<import('@gravitas/shared').ResearchProject>,
+    archiveProject: (id: string, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.ARCHIVE_PROJECT, id, reason) as Promise<import('@gravitas/shared').ResearchProject>,
+    migrationDryRun: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.MIGRATION_DRY_RUN) as Promise<import('@gravitas/shared').MigrationDryRunReport>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

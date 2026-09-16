@@ -131,6 +131,39 @@ export class ResearchError extends Error {
   }
 }
 
+// ===== 旧数据迁移 =====
+
+/** 单篇旧论文的映射评估 */
+export interface LegacyPaperMapping {
+  paperId: string
+  title: string
+  action: 'migrate' | 'needs_review' | 'unreadable'
+  target: 'ResearchProject + ManuscriptVersion'
+  missing: string[]
+  legacyArtifacts: Array<{ kind: string; exists: boolean }>
+}
+
+export interface MigrationDryRunReport {
+  papersPath: string
+  exists: boolean
+  readable: boolean
+  totalPapers: number
+  mappings: LegacyPaperMapping[]
+  warnings: string[]
+}
+
+// ===== IPC 通道 =====
+
+export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
+  LIST_PROJECTS: 'academic-research:list-projects',
+  GET_PROJECT: 'academic-research:get-project',
+  CREATE_PROJECT: 'academic-research:create-project',
+  UPDATE_BRIEF: 'academic-research:update-brief',
+  CHANGE_STATUS: 'academic-research:change-status',
+  ARCHIVE_PROJECT: 'academic-research:archive-project',
+  MIGRATION_DRY_RUN: 'academic-research:migration-dry-run',
+} as const
+
 // ===== 输入 =====
 
 export interface CreateResearchProjectInput {
