@@ -7,8 +7,12 @@ import type { UserMappingInput } from '@gravitas/shared'
 
 import * as React from 'react'
 import { useState, useEffect, useCallback, useMemo } from "react"
-import { useAtomValue, useSetAtom } from "jotai"
+import { useAtomValue, useSetAtom, useStore } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
+import { activeViewAtom } from "@/atoms/active-view"
+import { appModeAtom } from "@/atoms/app-mode"
+import { agentSessionsAtom, currentAgentSessionIdAtom } from "@/atoms/agent-atoms"
+import { activeTabIdAtom, openTab, tabsAtom } from "@/atoms/tab-atoms"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
@@ -2241,7 +2245,9 @@ function TaskItem({
   const isAgentTask = task.assignee?.userId?.startsWith('agent-') ?? false
   const [agentExecStatus, setAgentExecStatus] = useState<AgentExecutionResult['status'] | null>(null)
   const [agentExecutionId, setAgentExecutionId] = useState<string | null>(null)
+  const [agentSessionId, setAgentSessionId] = useState<string | null>(null)
   const [isStoppingAgent, setIsStoppingAgent] = useState(false)
+  const store = useStore()
   const [tokenUsage, setTokenUsage] = useState<{ totalTokens: number; activeSessionTokens: number } | null>(null)
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   useEffect(() => {
@@ -2257,6 +2263,7 @@ function TaskItem({
         if (cancelled) return
         setAgentExecStatus(execs[0]?.status ?? null)
         setAgentExecutionId(execs[0]?.id ?? null)
+        setAgentSessionId(execs[0]?.sessionId && !execs[0].sessionId.startsWith('workflow:') ? execs[0].sessionId : null)
       })
       .catch(() => {})
     // token 用量（配额可见性）：有预算或执行中才查询
@@ -2301,6 +2308,27 @@ function TaskItem({
   const needsCompletionNotes = task.riskLevel === 'high' || task.riskLevel === 'critical'
   const assigneeStatusGroup = statuses.find((s) => s.id === task.status)?.stateGroup
   const isTaskDone = assigneeStatusGroup === 'completed' || assigneeStatusGroup === 'cancelled'
+
+  const handleOpenAgentSession = async () => {
+    if (!agentSessionId) return
+    const sessions = await window.electronAPI.listAgentSessions()
+    const session = sessions.find((item) => item.id === agentSessionId)
+    if (!session) {
+      alert('该 AI 员工会话暂不可用。')
+      return
+    }
+    store.set(agentSessionsAtom, sessions)
+    const result = openTab(store.get(tabsAtom), {
+      type: 'agent',
+      sessionId: session.id,
+      title: session.title,
+    })
+    store.set(tabsAtom, result.tabs)
+    store.set(activeTabIdAtom, result.activeTabId)
+    store.set(currentAgentSessionIdAtom, session.id)
+    store.set(appModeAtom, 'agent')
+    store.set(activeViewAtom, 'conversations')
+  }
 
   const handleStopAgentExecution = async () => {
     if (!agentExecutionId) return
@@ -2604,6 +2632,15 @@ function TaskItem({
           )}
         </div>
         <div className="flex items-center gap-2 ml-2 shrink-0">
+          {isAgentTask && agentSessionId && (
+            <button
+              onClick={() => void handleOpenAgentSession()}
+              className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+              title="打开 AI 员工会话，查看实时输出、工具活动和历史记录"
+            >
+              {agentExecStatus === 'running' ? '查看实时输出' : '查看执行会话'}
+            </button>
+          )}
           {isAgentTask && (agentExecStatus === 'queued' || agentExecStatus === 'running') && (
             <button
               onClick={() => void handleStopAgentExecution()}
