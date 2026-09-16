@@ -87,6 +87,10 @@ export interface BenchmarkConfig {
    * 仅在 includeHeldOut 时评测并单独落盘，用于检测对训练 benchmark 的过拟合。
    */
   heldOutCases?: string[]
+  /** Benchmark 定义版本；case 集合、rubric 或被测目标变化时必须递增。 */
+  version?: number
+  /** 评分规则版本；rubric 条目变化时必须递增。 */
+  rubricVersion?: number
   /** 每 Case 运行次数（默认 1） */
   runsPerCase: number
   /** 期望基准分 0..100 */

@@ -167,6 +167,9 @@ import {
 } from './agent-employee-service'
 import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
 import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
+import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
+import { getGovernancePolicy, listGovernanceAudits, updateGovernancePolicy } from './employee-capability-governance-policy'
+import { getAgentEmployeeCapabilityDependencyGraph } from './project-sqlite-store'
 import { onSettingsChange } from './settings-service'
 import {
   listChannels,
@@ -919,6 +922,11 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_CANARY, (_, agentId: string) => listEmployeeCanaryConfigs().filter((config) => config.agentId === agentId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ENABLE_CAPABILITY_CANARY, (_, input: import('@gravitas/shared').AgentEmployeeCanaryConfigResult) => enableEmployeeCanary(input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DISABLE_CAPABILITY_CANARY, (_, agentId: string, scope: 'role' | 'workspace', reason: string) => reason ? pauseEmployeeCanary(agentId, scope, reason) : disableEmployeeCanary(agentId, scope))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_DEPENDENCY_GRAPH, (_, agentId: string) => getAgentEmployeeCapabilityDependencyGraph(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_CONFLICTS, (_, input: { roleContent?: string; workspaceContent?: string }) => detectCapabilityConflicts(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_GOVERNANCE_POLICY, () => getGovernancePolicy())
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_GOVERNANCE_POLICY, (_, patch: Partial<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>) => updateGovernancePolicy(patch))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_GOVERNANCE_AUDITS, () => listGovernanceAudits())
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

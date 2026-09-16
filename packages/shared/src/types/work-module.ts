@@ -475,6 +475,16 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   ENABLE_CAPABILITY_CANARY: 'agent-employee:enable-capability-canary',
   /** 关闭或暂停 Canary 分流；不自动回滚版本。 */
   DISABLE_CAPABILITY_CANARY: 'agent-employee:disable-capability-canary',
+  /** 查询能力版本依赖关系（显式 ID）。 */
+  GET_CAPABILITY_DEPENDENCY_GRAPH: 'agent-employee:get-capability-dependency-graph',
+  /** 在保存前校验一组组合能力，不写入任何数据。 */
+  PREVIEW_CAPABILITY_CONFLICTS: 'agent-employee:preview-capability-conflicts',
+  /** 读取治理策略配置。 */
+  GET_GOVERNANCE_POLICY: 'agent-employee:get-governance-policy',
+  /** 更新治理策略配置并记录变更审计。 */
+  UPDATE_GOVERNANCE_POLICY: 'agent-employee:update-governance-policy',
+  /** 读取治理策略变更审计。 */
+  LIST_GOVERNANCE_AUDITS: 'agent-employee:list-governance-audits',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -552,6 +562,39 @@ export interface AgentEmployeeCanaryConfigResult {
   pausedReason?: string
   createdAt: number
   updatedAt: number
+}
+
+export interface CapabilityConflictFindingResult {
+  severity: 'blocking' | 'advisory'
+  code: 'governance_override' | 'contradictory_constraint' | 'duplicate_rule'
+  message: string
+  evidence: string
+}
+
+export interface AgentEmployeeCapabilityDependencyGraphResult {
+  nodes: Array<{ id: string; scope: string; workspaceId?: string; versionNumber: number; status: string; parentVersionId?: string }>
+  blockedBy: Array<{ workspaceVersionId: string; roleVersionId: string }>
+}
+
+export interface EmployeeCapabilityGovernancePolicyResult {
+  minSanitizedSamples: number
+  cooldownDays: number
+  dailyRecommendationBudget: number
+  maxConcurrentEvaluations: number
+  maxCanaryPercent: number
+  defaultMaxFailureRate: number
+  defaultMaxReworkRate: number
+  sampleRetentionDays: number | null
+  auditRetentionDays: number | null
+}
+
+export interface EmployeeCapabilityGovernanceAuditResult {
+  id: string
+  field: string
+  previousValue: number | null
+  nextValue: number | null
+  actorId: string
+  createdAt: number
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

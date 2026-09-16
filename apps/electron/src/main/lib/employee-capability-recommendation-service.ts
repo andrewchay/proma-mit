@@ -90,7 +90,9 @@ export function scanEmployeeCapabilityScope(input: {
   now?: number
   policy?: Partial<EmployeeCapabilityRecommendationPolicy>
 }): EmployeeCapabilityScanOutcome {
-  const policy = { ...DEFAULT_EMPLOYEE_RECOMMENDATION_POLICY, ...input.policy }
+  // 中心治理配置是权威来源；显式传入的 policy 仅用于测试或一次性覆盖。
+  const center = input.policy ? {} : require('./employee-capability-governance-policy').getGovernancePolicy() as Partial<EmployeeCapabilityRecommendationPolicy> & { perScopeConcurrency?: number }
+  const policy = { ...DEFAULT_EMPLOYEE_RECOMMENDATION_POLICY, ...center, ...input.policy, perScopeConcurrency: input.policy?.perScopeConcurrency ?? center.perScopeConcurrency ?? DEFAULT_EMPLOYEE_RECOMMENDATION_POLICY.perScopeConcurrency }
   const now = input.now ?? Date.now()
   const key = scopeKey(input.agentId, input.scope, input.workspaceId)
   const base: EmployeeCapabilityScanOutcome = { agentId: input.agentId, scope: input.scope, workspaceId: input.workspaceId }
