@@ -65,8 +65,12 @@ export interface BenchmarkConfig {
   description: string
   /** 被测目标类型（默认 agent） */
   targetType?: EvalTargetType
-  /** 被测 Agent id（内置 sub-agent 或用例名） */
+  /** 被测 Agent id（内置 sub-agent、工具集 id 或 AI 员工 id） */
   targetAgentId: EvalTargetAgentId
+  /** employee_capability 专用：能力范围 */
+  targetScope?: 'role' | 'workspace'
+  /** employee_capability 专用：工作区级能力的目标工作区 */
+  targetWorkspaceId?: string
   /** 评测运行时（provider + model） */
   runtime: EvalRuntimeRef
   /**

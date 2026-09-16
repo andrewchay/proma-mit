@@ -102,7 +102,7 @@ export function resolveJudgeChannel(
  * 生成真实 SubAgentDelegate：在隔离沙箱里运行被测子代理，并把完整决策序列写入 per-run trace。
  * 系统提示 = 内置子代理 prompt + 评测任务（协议返回在 prompt 内已要求）。
  */
-export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
+export function buildEvalDelegate(channel: EvalChannelInfo, defaultTarget?: import('./types').EvalTarget): SubAgentDelegate {
   return async (input) => {
     // 每个 Case 都创建独立 adapter。评测会连续执行多个 Case，复用已 dispose 的 adapter
     // 会导致后续 Case 在模型请求前失败并被误记为 0 分。
@@ -110,7 +110,7 @@ export function buildEvalDelegate(channel: EvalChannelInfo): SubAgentDelegate {
     const ctx = { provider: channel.provider, apiKey: channel.apiKey, baseUrl: channel.baseUrl, model: channel.modelId }
     const messages: import('@gravitas/shared').SDKMessage[] = []
     const runId = input.runId ?? `eval-${Date.now()}`
-    const target = input.target ?? { type: 'agent' as const, id: input.agentName }
+    const target = input.target ?? defaultTarget ?? { type: 'agent' as const, id: input.agentName }
     const capability = resolveEvalTargetCapability(target)
     // 打开 per-run trace（写入完整决策序列，供回放/诊断/自演化 evidence）
     const trace = openTrace({

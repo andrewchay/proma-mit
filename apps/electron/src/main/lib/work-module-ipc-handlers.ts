@@ -164,6 +164,7 @@ import {
   rollbackAgentEmployeeCapabilityVersion,
   listAgentEmployeeCapabilityRollbackAudits,
 } from './agent-employee-service'
+import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
 import { onSettingsChange } from './settings-service'
 import {
   listChannels,
@@ -911,6 +912,7 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_OBSERVATIONS, (_, agentId: string) => getAgentEmployeeCapabilityObservations(agentId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, (_, agentId: string, versionId: string, reason: string) => rollbackAgentEmployeeCapabilityVersion(agentId, versionId, reason))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, (_, agentId: string) => listAgentEmployeeCapabilityRollbackAudits(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, (_, input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => runEmployeeCapabilityEvaluation(input))
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

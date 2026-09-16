@@ -21,6 +21,38 @@ const BUILDER_USER_TEMPLATE = `当前被测子代理的系统提示词：
 请产出一版改进后的系统提示词，针对低分区 Case 的失分点做强化。直接输出新提示词正文。`
 
 /** 采样子代理定义的 Case 表现（供 Builder 参考）。 */
+export interface EmployeeCandidateBuilderContext {
+  employeeName: string
+  scope: 'role' | 'workspace'
+  currentPrompt: string
+  caseScores: Array<{ caseId: string; score: number | null }>
+  sanitizedLearningSummary: string
+  nonEvolvableConstraints: string[]
+}
+
+/** 员工能力候选 Builder 用户消息（只包含已审核的脱敏摘要）。 */
+export function buildEmployeeCandidateUserPrompt(ctx: EmployeeCandidateBuilderContext): string {
+  const rows = ctx.caseScores.map((item) => `- ${item.caseId}: ${item.score == null ? '评测失败' : `${item.score.toFixed(1)} / 100`}`).join('\n')
+  return [
+    `你正在为 AI 员工“${ctx.employeeName}”的${ctx.scope === 'role' ? '角色级' : '工作区级'}能力撰写新的能力说明。`,
+    '直接输出能力说明正文，不要解释、不要 markdown 围栏。',
+    '',
+    '当前能力说明：',
+    '```',
+    ctx.currentPrompt || '（当前为基线，无附加能力说明）',
+    '```',
+    '',
+    '评测失分情况：',
+    rows || '（无 Case 数据）',
+    '',
+    '人工审核并脱敏后的学习摘要（不得反推或索取原始会话、路径或附件）：',
+    ctx.sanitizedLearningSummary,
+    '',
+    '不可演化约束（候选不得修改、规避或弱化）：',
+    ctx.nonEvolvableConstraints.map((item) => `- ${item}`).join('\n'),
+  ].join('\n')
+}
+
 export interface CandidateBuilderContext {
   benchmark: BenchmarkConfig
   /** 当前被测系统提示词 */

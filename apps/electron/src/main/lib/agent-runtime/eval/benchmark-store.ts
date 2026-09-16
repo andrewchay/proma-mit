@@ -169,6 +169,10 @@ export interface CreateBenchmarkRequest {
   heldOutCases?: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
   targetScore: number
   cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
+  /** 被测目标类型（缺省 agent）；employee_capability 需同时提供 scope。 */
+  targetType?: import('./types').EvalTargetType
+  targetScope?: 'role' | 'workspace'
+  targetWorkspaceId?: string
 }
 
 /** UI 用的创建入口：拼装 BenchmarkConfig + Cases 交给 createBenchmark。 */
@@ -188,6 +192,9 @@ export function createBenchmarkForUI(input: CreateBenchmarkRequest): BenchmarkCo
     title: input.title,
     description: input.description,
     targetAgentId: input.targetAgentId,
+    ...(input.targetType ? { targetType: input.targetType } : {}),
+    ...(input.targetScope ? { targetScope: input.targetScope } : {}),
+    ...(input.targetWorkspaceId ? { targetWorkspaceId: input.targetWorkspaceId } : {}),
     runtime: { provider: input.provider, modelId: input.modelId, channelId: input.channelId },
     ...(input.judgeRuntime ? { judgeRuntime: input.judgeRuntime } : {}),
     ...(input.judgeBudget ? { judgeBudget: input.judgeBudget } : {}),

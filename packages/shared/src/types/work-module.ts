@@ -465,6 +465,8 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   ROLLBACK_CAPABILITY_VERSION: 'agent-employee:rollback-capability-version',
   /** 查询能力版本回滚审计。 */
   LIST_CAPABILITY_ROLLBACK_AUDITS: 'agent-employee:list-capability-rollback-audits',
+  /** 手动运行受控评测；通过门禁后只创建待审批候选。 */
+  RUN_CAPABILITY_EVALUATION: 'agent-employee:run-capability-evaluation',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -515,6 +517,33 @@ export interface AgentEmployeeCapabilityRollbackAuditResult {
   reason: string
   actorId: string
   createdAt: number
+}
+
+export interface RunAgentEmployeeCapabilityEvaluationInput {
+  agentId: string
+  scope: 'role' | 'workspace'
+  workspaceId?: string
+  channelId: string
+  modelId: string
+  judgeChannelId?: string
+  judgeModelId?: string
+  maxRounds?: number
+}
+
+export interface AgentEmployeeCapabilityEvaluationResult {
+  benchmarkId: string
+  baselineScore: number
+  finalScore: number
+  heldOutBaselineScore: number | null
+  heldOutFinalScore: number | null
+  judgeIndependent: boolean
+  judgeKind: 'rule' | 'llm' | 'injected'
+  acceptedRounds: number
+  trainingSampleCount: number
+  heldOutSampleCount: number
+  approvalId?: string
+  status: 'candidate_created' | 'no_accepted_candidate' | 'judge_not_independent' | 'held_out_regression'
+  message: string
 }
 
 export interface CancelAgentExecutionResult {

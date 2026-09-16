@@ -1804,6 +1804,7 @@ export interface ElectronAPI {
       getCapabilityObservations: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityObservationResult[]>
       rollbackCapabilityVersion: (agentId: string, versionId: string, reason: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult>
       listCapabilityRollbackAudits: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult[]>
+      runCapabilityEvaluation: (input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityEvaluationResult>
     }
 
     // --- 营销能力包 ---
@@ -4019,6 +4020,7 @@ const electronAPI: ElectronAPI = {
       getCapabilityObservations: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_OBSERVATIONS, agentId),
       rollbackCapabilityVersion: (agentId, versionId, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, agentId, versionId, reason),
       listCapabilityRollbackAudits: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, agentId),
+      runCapabilityEvaluation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, input),
     },
     // --- 营销能力包 ---
     marketing: {
