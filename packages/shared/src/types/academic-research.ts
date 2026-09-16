@@ -91,6 +91,9 @@ export type ResearchEventType =
   | 'protocol_created'
   | 'protocol_approved'
   | 'protocol_revised'
+  | 'topic_proposed'
+  | 'topic_selected'
+  | 'topic_rejected'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -105,6 +108,9 @@ export type ResearchEventPayload =
   | { type: 'protocol_created'; protocol: ResearchProtocol }
   | { type: 'protocol_approved'; protocolId: string; version: number; approvedBy: ApprovalActor; checklist: string[]; note?: string }
   | { type: 'protocol_revised'; protocol: ResearchProtocol; supersedesVersion: number; changeReason: string }
+  | { type: 'topic_proposed'; proposal: TopicProposal }
+  | { type: 'topic_selected'; proposalId: string; selectedBy: ApprovalActor; reason?: string }
+  | { type: 'topic_rejected'; proposalId: string; reason: string }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -304,6 +310,69 @@ export interface ResearchProtocol {
   changeReason?: string
 }
 
+// ===== 选题候选（M3.2） =====
+
+/**
+ * gap 类型：候选选题声称填补的是哪种空白。
+ *
+ * 方案 §5 要求区分类型，而不是给一个笼统的「新颖性分数」。
+ */
+export type ResearchGapType =
+  | 'unstudied-population'
+  | 'unstudied-comparison'
+  | 'methodological'
+  | 'contradictory-evidence'
+  | 'context-transfer'
+  | 'conceptual'
+
+/** 查新范围：为排除伪新颖而做过的检索 */
+export interface NoveltyCheckScope {
+  /** 检索词 */
+  queries: string[]
+  /** 检索的数据库 */
+  databases: string[]
+  /** 检索时间 */
+  checkedAt: string
+  /** 命中的最接近的既有工作（来源 id） */
+  closestSourceIds: string[]
+  /** 检索局限（如未覆盖商业库/非英文文献） */
+  limitations: string[]
+}
+
+/**
+ * 选题候选。
+ *
+ * 刻意**不设总分**（方案 §5、§13.3）：可研究性由研究者判断，
+ * 系统只保证 gap 类型、证据关联与查新范围被如实记录。
+ */
+export interface TopicProposal {
+  id: string
+  projectId: string
+  title: string
+  /** 候选研究问题 */
+  question: string
+  gapType: ResearchGapType
+  /** 支持该选题存在的证据片段 id */
+  supportingEvidenceIds: string[]
+  /** 与之矛盾的证据片段 id（反证；不要求非空，但需显式记录检索过） */
+  contradictingEvidenceIds: string[]
+  /** 论证该 gap 的说明（为什么既有工作不能解决它） */
+  gapRationale: string
+  /** 反例/替代解释（研究者主动列出，避免只写有利证据） */
+  counterarguments: string[]
+  noveltyCheck: NoveltyCheckScope
+  /** 预计数据源（提示，不代表已接入） */
+  plannedDatabases: string[]
+  status: 'candidate' | 'selected' | 'rejected'
+  createdAt: string
+  /** 选定记录（仅 selected；actor 由主进程确定） */
+  selection?: {
+    selectedBy: ApprovalActor
+    selectedAt: string
+    reason?: string
+  }
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -352,6 +421,10 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   APPROVE_PROTOCOL: 'academic-research:approve-protocol',
   REVISE_PROTOCOL: 'academic-research:revise-protocol',
   GET_DOMAIN_PROFILE: 'academic-research:get-domain-profile',
+  LIST_TOPICS: 'academic-research:list-topics',
+  CREATE_TOPIC: 'academic-research:create-topic',
+  SELECT_TOPIC: 'academic-research:select-topic',
+  REJECT_TOPIC: 'academic-research:reject-topic',
 } as const
 
 // ===== 输入 =====

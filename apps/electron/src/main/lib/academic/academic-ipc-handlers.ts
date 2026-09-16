@@ -18,7 +18,7 @@ import {
   updateResearchBrief,
 } from './research-service'
 import { dryRunLegacyPapersMigration } from './migration'
-import { listDomainProfiles } from '@gravitas/core/services/academic'
+import { listDomainProfiles, topicAdvisoryNotes } from '@gravitas/core/services/academic'
 
 export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROJECTS, async () => listResearchProjects())
@@ -100,4 +100,19 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_DOMAIN_PROFILE, async () => ({
     profiles: listDomainProfiles(),
   }))
+
+  // ===== M3.2：选题候选（选定 actor 由主进程确定） =====
+  const proposalSvc = require('./proposal-service') as typeof import('./proposal-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_TOPICS, async (_e, projectId: string) =>
+    proposalSvc.listTopicProposals(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_TOPIC, async (_e, projectId: string, draft) =>
+    proposalSvc.createTopicProposal(projectId, draft),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.SELECT_TOPIC, async (_e, projectId: string, proposalId: string, input) =>
+    proposalSvc.selectTopicProposal(projectId, proposalId, input ?? {}),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.REJECT_TOPIC, async (_e, projectId: string, proposalId: string, reason: string) =>
+    proposalSvc.rejectTopicProposal(projectId, proposalId, reason),
+  )
 }

@@ -95,6 +95,8 @@ export const researchDedupCandidatesAtom = atom<
 >([])
 export const researchScreeningAtom = atom<import('@gravitas/shared').ScreeningDecision[]>([])
 export const researchEvidenceAtom = atom<import('@gravitas/shared').EvidenceExcerpt[]>([])
+/** 证据台账别名（UI 组件可读名字用） */
+export const evidenceAtom = researchEvidenceAtom
 export const sourceLibraryLoadingAtom = atom<boolean>(false)
 
 /** 选中项目后加载文献/证据数据 */
@@ -272,5 +274,39 @@ export const reviseProtocolAtom = atom(
     const revised = await window.electronAPI.academicResearch.reviseProtocol(projectId, { changeReason, methodPath, fields })
     set(protocolsAtom, (prev) => [...prev.map((p) => ({ ...p, status: 'superseded' as const })), revised])
     return revised
+  },
+)
+
+// ===== M3.2：选题候选 =====
+
+export type TopicProposalView = import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }
+
+export const topicsAtom = atom<TopicProposalView[]>([])
+
+export const loadTopicsAtom = atom(null, async (_get, set, projectId: string) => {
+  set(topicsAtom, await window.electronAPI.academicResearch.listTopics(projectId))
+})
+
+export const createTopicAtom = atom(
+  null,
+  async (_get, set, { projectId, draft }: { projectId: string; draft: import('@gravitas/core/services/academic').TopicProposalDraft }) => {
+    await window.electronAPI.academicResearch.createTopic(projectId, draft)
+    set(topicsAtom, await window.electronAPI.academicResearch.listTopics(projectId))
+  },
+)
+
+export const selectTopicAtom = atom(
+  null,
+  async (_get, set, { projectId, proposalId, force }: { projectId: string; proposalId: string; force?: boolean }) => {
+    await window.electronAPI.academicResearch.selectTopic(projectId, proposalId, { force })
+    set(topicsAtom, await window.electronAPI.academicResearch.listTopics(projectId))
+  },
+)
+
+export const rejectTopicAtom = atom(
+  null,
+  async (_get, set, { projectId, proposalId, reason }: { projectId: string; proposalId: string; reason: string }) => {
+    await window.electronAPI.academicResearch.rejectTopic(projectId, proposalId, reason)
+    set(topicsAtom, await window.electronAPI.academicResearch.listTopics(projectId))
   },
 )

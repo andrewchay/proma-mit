@@ -1542,6 +1542,11 @@ export interface ElectronAPI {
     approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => Promise<import('@gravitas/shared').ResearchProtocol>
     reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
     getDomainProfile: () => Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>
+    // M3.2：选题候选
+    listTopics: (projectId: string) => Promise<Array<import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }>>
+    createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => Promise<import('@gravitas/shared').TopicProposal>
+    selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => Promise<import('@gravitas/shared').TopicProposal>
+    rejectTopic: (projectId: string, proposalId: string, reason: string) => Promise<{ proposalId: string; status: 'rejected' }>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2374,6 +2379,12 @@ const electronAPI: ElectronAPI = {
     approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.APPROVE_PROTOCOL, projectId, version, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
     reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REVISE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
     getDomainProfile: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_DOMAIN_PROFILE) as Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>,
+
+    // M3.2：选题候选
+    listTopics: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_TOPICS, projectId) as Promise<Array<import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }>>,
+    createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_TOPIC, projectId, draft) as Promise<import('@gravitas/shared').TopicProposal>,
+    selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SELECT_TOPIC, projectId, proposalId, input) as Promise<import('@gravitas/shared').TopicProposal>,
+    rejectTopic: (projectId: string, proposalId: string, reason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REJECT_TOPIC, projectId, proposalId, reason) as Promise<{ proposalId: string; status: 'rejected' }>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
