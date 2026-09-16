@@ -141,10 +141,13 @@ function checkIntegrityTool(): RuntimeToolDefinition {
           ) => Promise<unknown>
         }
         const report = await checkPaperIntegrity({ paperId: paperId ?? 'adhoc', text })
-        // 传入 paperId 时同步落盘，便于 UI 与后续阶段读取
+        // 传入 paperId 时持久化报告，供 UI 与后续阶段读取
         if (paperId) {
           const svc = require('../academic-service') as typeof import('../academic-service')
-          void svc.getIntegrityReport(paperId)
+          await svc.recordIntegrityReport(
+            paperId,
+            report as Parameters<typeof svc.recordIntegrityReport>[1],
+          )
         }
         return report
       })

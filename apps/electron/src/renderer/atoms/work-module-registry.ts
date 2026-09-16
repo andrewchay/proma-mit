@@ -10,7 +10,7 @@
  */
 
 import { lazy, type ComponentType } from 'react'
-import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, Radio, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, Radio, FlaskConical, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
@@ -21,6 +21,7 @@ const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMedia
 const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sourcing/OutboundSourcingModuleView').then((module) => ({ default: module.OutboundSourcingModuleView })))
 const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
 const NewMediaModuleView = lazy(() => import('@/components/new-media/NewMediaModuleView').then((module) => ({ default: module.NewMediaModuleView })))
+const ResearchWorkspace = lazy(() => import('@/components/academic/ResearchWorkspace').then((module) => ({ default: module.ResearchWorkspace })))
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -64,6 +65,13 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     description: '本地草稿、排程与受控外发审批（不连接真实平台）',
   },
   {
+    id: 'research',
+    label: '研究',
+    icon: FlaskConical,
+    core: true,
+    description: '从文献到稿件的可追溯研究工作台',
+  },
+  {
     id: 'influencer',
     label: '达人',
     icon: Users,
@@ -103,6 +111,7 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   // 此处保留映射防止旧持久化 activeView='calendar' 导致白屏。
   calendar: CalendarModuleView,
   projects: ProjectView,
+  research: ResearchWorkspace,
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
   'outbound-sourcing': OutboundSourcingModuleView,

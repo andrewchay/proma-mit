@@ -65,17 +65,37 @@ interface PapersFile {
   papers: AcademicPaper[]
 }
 
-/** 读取论文索引；文件缺失或损坏时返回空列表，不抛错 */
+/** 论文索引损坏时抛出，避免把用户已有研究当成空库覆盖 */
+export class AcademicDataCorruptionError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'AcademicDataCorruptionError'
+  }
+}
+
+/** 读取论文索引；文件缺失返回空列表，损坏时保留原件并拒绝读写 */
 function readPapersFile(): PapersFile {
   const path = getAcademicPapersPath()
   if (!existsSync(path)) return { papers: [] }
+  let raw: string
   try {
-    const raw = readFileSync(path, 'utf-8')
-    const parsed = JSON.parse(raw) as PapersFile
-    return Array.isArray(parsed.papers) ? parsed : { papers: [] }
+    raw = readFileSync(path, 'utf-8')
   } catch (err) {
-    console.error('[学术助手] 论文索引解析失败，按空列表处理:', err)
-    return { papers: [] }
+    throw new AcademicDataCorruptionError(`论文索引无法读取: ${path}`, { cause: err })
+  }
+  try {
+    const parsed = JSON.parse(raw) as PapersFile
+    if (!Array.isArray(parsed.papers)) {
+      throw new Error('papers 字段不是数组')
+    }
+    return parsed
+  } catch (err) {
+    // 不覆盖原文件：损坏副本交由用户修复，读写路径全部拒绝。
+    console.error('[学术助手] 论文索引损坏，拒绝读写以保护原文件:', err)
+    throw new AcademicDataCorruptionError(
+      `论文索引损坏，已保留原文件：${path}。请修复或备份后重试。`,
+      { cause: err },
+    )
   }
 }
 
@@ -83,13 +103,35 @@ function writePapersFile(data: PapersFile): void {
   writeFileSync(getAcademicPapersPath(), JSON.stringify(data, null, 2), 'utf-8')
 }
 
-/** 产出物文件名：{paperId}-{kind}.json */
+/**
+ * 产出物文件名：{paperId}-{kind}-{reportId}.json。
+ *
+ * 旧版 {paperId}-{kind}.json 会互相覆盖，历史报告一旦丢失就无法
+ * 对比不同稿件版本的检查结论；这里改为每次检查写入新报告文件，
+ * 读取时返回最新一份，兼容旧文件。
+ */
 function artifactPath(paperId: string, kind: 'integrity' | 'peer-review' | 'revision'): string {
   return join(getAcademicArtifactsDir(), `${paperId}-${kind}.json`)
 }
 
+function artifactHistoryPath(paperId: string, kind: string, reportId: string): string {
+  return join(getAcademicArtifactsDir(), `${paperId}-${kind}-${reportId}.json`)
+}
+
 function writeArtifact(paperId: string, kind: 'integrity' | 'peer-review' | 'revision', data: unknown): void {
   writeFileSync(artifactPath(paperId, kind), JSON.stringify(data, null, 2), 'utf-8')
+
+  // 版本化副本：报告对象本身带 id（若没有则生成），供历史对比。
+  const withId = (typeof data === 'object' && data !== null ? data : {}) as { id?: string }
+  const reportId = typeof withId.id === 'string' && withId.id.trim()
+    ? withId.id
+    : `${Date.now()}-${randomUUID().slice(0, 8)}`
+  const stamped = withId.id ? data : { ...(withId as Record<string, unknown>), id: reportId }
+  writeFileSync(
+    artifactHistoryPath(paperId, kind, reportId),
+    JSON.stringify(stamped, null, 2),
+    'utf-8',
+  )
 }
 
 function readArtifact<T>(paperId: string, kind: 'integrity' | 'peer-review' | 'revision'): T | null {
@@ -214,12 +256,64 @@ export function deletePaper(id: string): boolean {
 
 // ===== Pipeline 推进 =====
 
+/**
+ * 识别 Markdown 标题对应的章节类型。
+ *
+ * Reviewer 按 method 等类型查找章节；旧版把整篇标成 body 会让
+ * 完整的论文被误判缺章。这里做保守映射：识别不了的标题回退 body。
+ */
+function sectionTypeOfHeading(heading: string): string {
+  const h = heading.toLowerCase()
+  if (/introduction|引言|绪论|背景/.test(h)) return 'introduction'
+  if (/method|methods|materials|研究方法|方法|实验设计|数据与方法/.test(h)) return 'method'
+  if (/result|findings|结果|研究发现/.test(h)) return 'results'
+  if (/discussion|讨论/.test(h)) return 'discussion'
+  if (/conclusion|结论/.test(h)) return 'conclusion'
+  if (/abstract|摘要/.test(h)) return 'abstract'
+  if (/reference|参考文献|书目/.test(h)) return 'references'
+  return 'body'
+}
+
+/**
+ * 把论文正文解析成算法层可识别的章节列表。
+ *
+ * 识别 Markdown 标题（#/##/###）为章节边界，标题前内容归入 body。
+ * 无任何标题时退回旧行为：整体作为 body。
+ */
+export function parsePaperSections(content: string): Array<{ type: string; content: string }> {
+  if (!content.trim()) return []
+
+  const lines = content.split(/\r?\n/)
+  const sections: Array<{ type: string; content: string }> = []
+  let currentType = 'body'
+  let buffer: string[] = []
+
+  const flush = () => {
+    const text = buffer.join('\n').trim()
+    if (text) sections.push({ type: currentType, content: text })
+    buffer = []
+  }
+
+  for (const line of lines) {
+    const heading = line.match(/^#{1,3}\s+(\S.*)$/)
+    if (heading) {
+      flush()
+      currentType = sectionTypeOfHeading(heading[1]!)
+    } else {
+      buffer.push(line)
+    }
+  }
+  flush()
+
+  return sections
+}
+
 /** 把论文内容适配成学术算法需要的 PaperContent 结构 */
 function toPaperContent(paper: AcademicPaper): PaperContent {
   return {
     title: paper.title,
     abstract: paper.abstract ?? '',
-    sections: [{ type: 'body', content: paper.content }],
+    sections: parsePaperSections(paper.content),
     wordCount: paper.content.length,
     field: paper.field,
   }
@@ -246,13 +340,26 @@ export async function advanceStage(id: string): Promise<AcademicAdvanceResult> {
   const paper = findPaper(data.papers, id)
   const current = paper.currentStage
   const next = nextStageOf(current)
-
-  if (!next) {
-    throw new Error(`已处于最终阶段「${STAGE_LABELS[current]}」，无法继续推进`)
-  }
-
   const now = Date.now()
   const currentRecord = paper.stages.find((s) => s.stage === current)
+
+  if (!next) {
+    // finalize 是最后一个阶段：推进表示显式完成交付，而不是抛错。
+    if (currentRecord) {
+      currentRecord.status = 'completed'
+      currentRecord.completedAt = now
+      delete currentRecord.blockedReason
+      paper.updatedAt = new Date().toISOString()
+      writePapersFile(data)
+      return {
+        paper,
+        executedStage: current,
+        summary: `发表准备阶段已完成，论文「${paper.title}」交付就绪（如需投稿请另行授权）。`,
+      }
+    }
+    throw new Error(`阶段记录异常：找不到「${STAGE_LABELS[current]}」的阶段记录`)
+  }
+
   if (currentRecord && currentRecord.status === 'pending') {
     currentRecord.status = 'in_progress'
     currentRecord.startedAt = currentRecord.startedAt ?? now
@@ -382,6 +489,30 @@ export function rewindStage(id: string, target: AcademicStage): AcademicPaper {
   paper.updatedAt = new Date().toISOString()
   writePapersFile(data)
   return paper
+}
+
+/**
+ * 保存工具生成的完整性报告。
+ *
+ * 旧版工具生成报告后只“读取”不写入，导致报告从未落盘。
+ * 现在由服务层统一写入当前文件与版本化副本，并登记到阶段引用。
+ */
+export function recordIntegrityReport(
+  paperId: string,
+  report: IntegrityReport & { id?: string },
+): IntegrityReport & { id?: string } {
+  // 先确认论文存在，防止对不存在项目写入孤立文件
+  const data = readPapersFile()
+  const paper = findPaper(data.papers, paperId)
+  writeArtifact(paperId, 'integrity', report)
+  const record = paper.stages.find((s) => s.stage === 'integrity')
+  if (record) {
+    const ref = `integrity:${report.id ?? paperId}`
+    record.artifactRefs = [...new Set([...record.artifactRefs, ref])]
+  }
+  paper.updatedAt = new Date().toISOString()
+  writePapersFile(data)
+  return report
 }
 
 // ===== 阶段产出物读取 =====

@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, ACADEMIC_RESEARCH_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -1512,6 +1512,67 @@ export interface ElectronAPI {
     getRevisionTracking: (paperId: string) => Promise<import('@gravitas/shared').RevisionTracking | null>
   }
 
+  // ===== 研究工作台（M1：研究领域模型） =====
+  academicResearch: {
+    listProjects: () => Promise<import('@gravitas/shared').ResearchProject[]>
+    getProject: (id: string) => Promise<import('@gravitas/shared').ResearchProject | null>
+    createProject: (input: import('@gravitas/shared').CreateResearchProjectInput) => Promise<import('@gravitas/shared').ResearchProject>
+    updateBrief: (id: string, brief: import('@gravitas/shared').ResearchBrief, changeReason: string) => Promise<import('@gravitas/shared').ResearchProject>
+    changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
+    archiveProject: (id: string, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
+    migrationDryRun: () => Promise<import('@gravitas/shared').MigrationDryRunReport>
+    // M2：文献与检索
+    listSources: (projectId: string) => Promise<import('@gravitas/shared').Source[]>
+    importBibliography: (projectId: string, format: 'ris' | 'bibtex', text: string) => Promise<import('@gravitas/shared').Source[]>
+    searchSources: (projectId: string, query: string, databaseIds: string[], options: { limit: number; filters?: Record<string, string> }) => Promise<import('@gravitas/shared').SearchRunRecord>
+    listSearchRuns: (projectId: string) => Promise<import('@gravitas/shared').SearchRunRecord[]>
+    dedupCandidates: (projectId: string) => Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>
+    recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => Promise<import('@gravitas/shared').ScreeningDecision>
+    listScreening: (projectId: string) => Promise<import('@gravitas/shared').ScreeningDecision[]>
+    // M2 第二批：证据
+    listEvidence: (projectId: string) => Promise<import('@gravitas/shared').EvidenceExcerpt[]>
+    extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => Promise<import('@gravitas/shared').EvidenceExcerpt>
+    // M2.6：Zotero 只读导入（apiKey 不落盘）
+    getZoteroConfig: () => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>
+    saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>
+    importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>
+    // M3：协议（批准 actor 由主进程确定，渲染层不能指定）
+    listProtocols: (projectId: string) => Promise<import('@gravitas/shared').ResearchProtocol[]>
+    createProtocol: (projectId: string, input: { methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    getDomainProfile: () => Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>
+    // M3.2：选题候选
+    listTopics: (projectId: string) => Promise<Array<import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }>>
+    createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => Promise<import('@gravitas/shared').TopicProposal>
+    selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => Promise<import('@gravitas/shared').TopicProposal>
+    rejectTopic: (projectId: string, proposalId: string, reason: string) => Promise<{ proposalId: string; status: 'rejected' }>
+    // M4：研究运行
+    listRuns: (projectId: string) => Promise<import('@gravitas/shared').ResearchRun[]>
+    createRun: (projectId: string, request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget>; protocolVersion?: number }) => Promise<import('@gravitas/shared').ResearchRun>
+    cancelRun: (projectId: string, runId: string) => Promise<import('@gravitas/shared').ResearchRun>
+    recordObservation: (projectId: string, input: { runId: string; text: string }) => Promise<import('@gravitas/shared').RunObservation>
+    listObservations: (projectId: string) => Promise<import('@gravitas/shared').RunObservation[]>
+    listArtifacts: (projectId: string) => Promise<import('@gravitas/shared').RunArtifact[]>
+    getAllowedInterpreters: () => Promise<{ interpreters: string[] }>
+    reconcileRuns: (projectId: string) => Promise<{ reconciled: string[] }>
+    readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>
+    recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
+    // M5：主张与稿件
+    listClaims: (projectId: string) => Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>
+    createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => Promise<import('@gravitas/shared').Claim>
+    linkEvidence: (projectId: string, input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; artifactId?: string; runId?: string; observationId?: string; note?: string }) => Promise<import('@gravitas/shared').EvidenceLink>
+    setClaimStatus: (projectId: string, claimId: string, status: import('@gravitas/shared').ClaimStatus, options?: { note?: string; staleReason?: string }) => Promise<import('@gravitas/shared').Claim>
+    propagateInvalidation: (projectId: string, change: { evidenceIds?: string[]; artifactIds?: string[]; runIds?: string[]; observationIds?: string[]; reason: string }) => Promise<{ affectedClaimIds: string[] }>
+    listManuscripts: (projectId: string) => Promise<import('@gravitas/shared').ManuscriptVersion[]>
+    createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => Promise<import('@gravitas/shared').ManuscriptVersion>
+    exportPreflight: (projectId: string) => Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>
+    // M6：外部工具集成（不内置上游产物，需用户自行安装）
+    probeExternalTools: () => Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>
+    listExternalTools: () => Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>
+    setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => Promise<import('@gravitas/shared').ExternalToolConfig>
+  }
+
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
   telemetry: {
     // 采集设置
@@ -2368,6 +2429,75 @@ const electronAPI: ElectronAPI = {
     getIntegrityReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, paperId) as Promise<import('@gravitas/shared').IntegrityReport | null>,
     getPeerReviewReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, paperId) as Promise<import('@gravitas/shared').PeerReviewReport | null>,
     getRevisionTracking: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, paperId) as Promise<import('@gravitas/shared').RevisionTracking | null>,
+  },
+
+  // ===== 研究工作台（M1：研究领域模型） =====
+  academicResearch: {
+    listProjects: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROJECTS) as Promise<import('@gravitas/shared').ResearchProject[]>,
+    getProject: (id: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_PROJECT, id) as Promise<import('@gravitas/shared').ResearchProject | null>,
+    createProject: (input: import('@gravitas/shared').CreateResearchProjectInput) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROJECT, input) as Promise<import('@gravitas/shared').ResearchProject>,
+    updateBrief: (id: string, brief: import('@gravitas/shared').ResearchBrief, changeReason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.UPDATE_BRIEF, id, brief, changeReason) as Promise<import('@gravitas/shared').ResearchProject>,
+    changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CHANGE_STATUS, id, to, reason) as Promise<import('@gravitas/shared').ResearchProject>,
+    archiveProject: (id: string, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.ARCHIVE_PROJECT, id, reason) as Promise<import('@gravitas/shared').ResearchProject>,
+    migrationDryRun: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.MIGRATION_DRY_RUN) as Promise<import('@gravitas/shared').MigrationDryRunReport>,
+
+    // M2：文献与检索
+    listSources: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SOURCES, projectId) as Promise<import('@gravitas/shared').Source[]>,
+    importBibliography: (projectId: string, format: 'ris' | 'bibtex', text: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_BIBLIOGRAPHY, projectId, format, text) as Promise<import('@gravitas/shared').Source[]>,
+    searchSources: (projectId: string, query: string, databaseIds: string[], options: { limit: number; filters?: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SEARCH_SOURCES, projectId, query, databaseIds, options) as Promise<import('@gravitas/shared').SearchRunRecord>,
+    listSearchRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SEARCH_RUNS, projectId) as Promise<import('@gravitas/shared').SearchRunRecord[]>,
+    dedupCandidates: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.DEDUP_CANDIDATES, projectId) as Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>,
+    recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_SCREENING, projectId, input) as Promise<import('@gravitas/shared').ScreeningDecision>,
+    listScreening: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SCREENING, projectId) as Promise<import('@gravitas/shared').ScreeningDecision[]>,
+
+    // M2 第二批：证据
+    listEvidence: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EVIDENCE, projectId) as Promise<import('@gravitas/shared').EvidenceExcerpt[]>,
+    extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXTRACT_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceExcerpt>,
+
+    // M2.6：Zotero 只读导入
+    getZoteroConfig: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ZOTERO_CONFIG) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>,
+    saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SAVE_ZOTERO_CONFIG, input) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>,
+    importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_FROM_ZOTERO, projectId, options) as Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>,
+
+    // M3：协议
+    listProtocols: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROTOCOLS, projectId) as Promise<import('@gravitas/shared').ResearchProtocol[]>,
+    createProtocol: (projectId: string, input: { methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.APPROVE_PROTOCOL, projectId, version, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REVISE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    getDomainProfile: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_DOMAIN_PROFILE) as Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>,
+
+    // M3.2：选题候选
+    listTopics: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_TOPICS, projectId) as Promise<Array<import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }>>,
+    createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_TOPIC, projectId, draft) as Promise<import('@gravitas/shared').TopicProposal>,
+    selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SELECT_TOPIC, projectId, proposalId, input) as Promise<import('@gravitas/shared').TopicProposal>,
+    rejectTopic: (projectId: string, proposalId: string, reason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REJECT_TOPIC, projectId, proposalId, reason) as Promise<{ proposalId: string; status: 'rejected' }>,
+
+    // M4：研究运行
+    listRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_RUNS, projectId) as Promise<import('@gravitas/shared').ResearchRun[]>,
+    createRun: (projectId: string, request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget>; protocolVersion?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_RUN, projectId, request) as Promise<import('@gravitas/shared').ResearchRun>,
+    cancelRun: (projectId: string, runId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CANCEL_RUN, projectId, runId) as Promise<import('@gravitas/shared').ResearchRun>,
+    recordObservation: (projectId: string, input: { runId: string; text: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_OBSERVATION, projectId, input) as Promise<import('@gravitas/shared').RunObservation>,
+    listObservations: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_OBSERVATIONS, projectId) as Promise<import('@gravitas/shared').RunObservation[]>,
+    listArtifacts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_ARTIFACTS, projectId) as Promise<import('@gravitas/shared').RunArtifact[]>,
+    getAllowedInterpreters: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ALLOWED_INTERPRETERS) as Promise<{ interpreters: string[] }>,
+    reconcileRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECONCILE_RUNS, projectId) as Promise<{ reconciled: string[] }>,
+    readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.READ_RUN_LOG, projectId, runId, options) as Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>,
+    recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
+
+    // M5：主张与稿件
+    listClaims: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, projectId) as Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>,
+    createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_CLAIM, projectId, input) as Promise<import('@gravitas/shared').Claim>,
+    linkEvidence: (projectId: string, input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; artifactId?: string; runId?: string; observationId?: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LINK_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceLink>,
+    setClaimStatus: (projectId: string, claimId: string, status: import('@gravitas/shared').ClaimStatus, options?: { note?: string; staleReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_CLAIM_STATUS, projectId, claimId, status, options) as Promise<import('@gravitas/shared').Claim>,
+    propagateInvalidation: (projectId: string, change: { evidenceIds?: string[]; artifactIds?: string[]; runIds?: string[]; observationIds?: string[]; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROPAGATE_INVALIDATION, projectId, change) as Promise<{ affectedClaimIds: string[] }>,
+    listManuscripts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_MANUSCRIPTS, projectId) as Promise<import('@gravitas/shared').ManuscriptVersion[]>,
+    createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_MANUSCRIPT_VERSION, projectId, draft) as Promise<import('@gravitas/shared').ManuscriptVersion>,
+    exportPreflight: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_PREFLIGHT, projectId) as Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>,
+
+    // M6：外部工具集成
+    probeExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROBE_EXTERNAL_TOOLS) as Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>,
+    listExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EXTERNAL_TOOLS) as Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>,
+    setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_EXTERNAL_TOOL, input) as Promise<import('@gravitas/shared').ExternalToolConfig>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
