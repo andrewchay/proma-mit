@@ -70,4 +70,14 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.EXTRACT_EVIDENCE, async (_e, projectId: string, input) =>
     evidenceSvc.extractEvidence(projectId, input),
   )
+
+  // ===== M2.6：Zotero 只读导入 =====
+  const zoteroConfig = require('./zotero-config') as typeof import('./zotero-config')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ZOTERO_CONFIG, async () => zoteroConfig.readZoteroConfig())
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.SAVE_ZOTERO_CONFIG, async (_e, input) =>
+    zoteroConfig.saveZoteroConfig(input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_FROM_ZOTERO, async (_e, projectId: string, options) =>
+    sourceSvc.importFromZotero(projectId, options ?? {}),
+  )
 }

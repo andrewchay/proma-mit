@@ -289,6 +289,9 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   LIST_SCREENING: 'academic-research:list-screening',
   LIST_EVIDENCE: 'academic-research:list-evidence',
   EXTRACT_EVIDENCE: 'academic-research:extract-evidence',
+  GET_ZOTERO_CONFIG: 'academic-research:get-zotero-config',
+  SAVE_ZOTERO_CONFIG: 'academic-research:save-zotero-config',
+  IMPORT_FROM_ZOTERO: 'academic-research:import-from-zotero',
 } as const
 
 // ===== 输入 =====

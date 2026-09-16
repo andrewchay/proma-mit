@@ -1532,6 +1532,10 @@ export interface ElectronAPI {
     // M2 第二批：证据
     listEvidence: (projectId: string) => Promise<import('@gravitas/shared').EvidenceExcerpt[]>
     extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => Promise<import('@gravitas/shared').EvidenceExcerpt>
+    // M2.6：Zotero 只读导入（apiKey 不落盘）
+    getZoteroConfig: () => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>
+    saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>
+    importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2352,6 +2356,11 @@ const electronAPI: ElectronAPI = {
     // M2 第二批：证据
     listEvidence: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EVIDENCE, projectId) as Promise<import('@gravitas/shared').EvidenceExcerpt[]>,
     extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXTRACT_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceExcerpt>,
+
+    // M2.6：Zotero 只读导入
+    getZoteroConfig: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ZOTERO_CONFIG) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>,
+    saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SAVE_ZOTERO_CONFIG, input) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>,
+    importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_FROM_ZOTERO, projectId, options) as Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

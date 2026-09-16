@@ -238,6 +238,55 @@ export async function findProjectDedupCandidates(projectId: string): Promise<Ded
   return findDedupCandidates(versions)
 }
 
+// ===== Zotero 只读导入（M2.6） =====
+
+/**
+ * 从已配置的 Zotero 库导入条目（只读）。
+ *
+ * 需要 Web API key 的库由调用方传入；key 不落盘（见 zotero-config）。
+ */
+export async function importFromZotero(
+  projectId: string,
+  options: { apiKey?: string; limit?: number; deps?: SourceServiceDeps } = {},
+): Promise<{ imported: Source[]; errors: string[]; total: number }> {
+  await requireProject(projectId)
+  const { readZoteroConfig, toFetchConfig } = await import('./zotero-config')
+  const config = readZoteroConfig()
+  if (!config) {
+    throw new ResearchError(RESEARCH_ERROR_CODES.INVALID_INPUT, '尚未配置 Zotero 库（请先在文献库设置库 ID）')
+  }
+
+  const { createZoteroAdapter } = await import('./adapters/zotero-adapter')
+  const fetchFn = options.deps?.fetchFn ?? fetch
+  const adapter = createZoteroAdapter(fetchFn, toFetchConfig(config, options.apiKey))
+
+  const result = await adapter.search('', { limit: options.limit ?? 50 })
+  const imported: Source[] = []
+  for (const version of result.sources) {
+    const source = buildSource(
+      projectId,
+      version.versionLabel === 'preprint' ? 'preprint' : 'other',
+      {
+        title: version.title,
+        authors: version.authors,
+        year: version.year,
+        venue: version.venue,
+        abstract: version.abstract,
+        externalIds: version.externalIds,
+      },
+      version.versionLabel,
+      version.retrievalStatus,
+    )
+    await appendEvent(projectId, {
+      commandId: `source-${randomUUID()}`,
+      payload: { type: 'source_imported', source, origin: 'import' },
+    })
+    imported.push(source)
+  }
+
+  return { imported, errors: result.errors, total: result.sources.length }
+}
+
 /** 记录筛选决定 */
 export async function recordScreening(
   projectId: string,

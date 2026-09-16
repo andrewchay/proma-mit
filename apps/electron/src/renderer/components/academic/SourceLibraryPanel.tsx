@@ -14,6 +14,10 @@ import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import {
   extractEvidenceAtom,
+  importFromZoteroAtom,
+  loadZoteroConfigAtom,
+  saveZoteroConfigAtom,
+  zoteroConfigAtom,
   importBibliographyAtom,
   loadSourceLibraryAtom,
   recordScreeningAtom,
@@ -47,6 +51,7 @@ export function SourceLibraryPanel({ project }: { project: ResearchProject }): R
       ) : (
         <>
           <SearchSection project={project} />
+          <ZoteroSection project={project} />
           <SourceListSection project={project} />
           <DedupSection />
           <EvidenceSection project={project} />
@@ -172,6 +177,117 @@ function ImportSection({ project, onDone }: { project: ResearchProject; onDone: 
           导入
         </Button>
       </div>
+    </div>
+  )
+}
+
+// ===== Zotero 只读导入（M2.6）=====
+
+function ZoteroSection({ project }: { project: ResearchProject }): React.ReactElement {
+  const config = useAtomValue(zoteroConfigAtom)
+  const loadConfig = useSetAtom(loadZoteroConfigAtom)
+  const saveConfig = useSetAtom(saveZoteroConfigAtom)
+  const importZotero = useSetAtom(importFromZoteroAtom)
+
+  const [open, setOpen] = React.useState(false)
+  const [libraryId, setLibraryId] = React.useState('')
+  const [libraryType, setLibraryType] = React.useState<'users' | 'groups'>('users')
+  const [collectionKey, setCollectionKey] = React.useState('')
+  const [apiKey, setApiKey] = React.useState('')
+  const [message, setMessage] = React.useState<string | null>(null)
+  const [busy, setBusy] = React.useState(false)
+
+  React.useEffect(() => {
+    void loadConfig()
+  }, [loadConfig])
+
+  React.useEffect(() => {
+    if (config) {
+      setLibraryId(config.libraryId)
+      setLibraryType(config.libraryType)
+      setCollectionKey(config.collectionKey ?? '')
+    }
+  }, [config])
+
+  return (
+    <div className="space-y-2 rounded-md border p-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">Zotero 只读导入</div>
+        <Button size="sm" variant="outline" onClick={() => setOpen((v) => !v)}>
+          {config ? '管理/导入' : '配置库'}
+        </Button>
+      </div>
+
+      {!config && !open && (
+        <div className="text-xs text-muted-foreground">
+          尚未配置。支持 Zotero 桌面本地 API（默认 localhost:23119）或 Web API；只读，不修改你的 Zotero 库。
+        </div>
+      )}
+
+      {config && !open && (
+        <div className="text-xs text-muted-foreground">
+          已配置：{config.libraryType}/{config.libraryId}
+          {config.collectionKey ? ` · collection ${config.collectionKey}` : ''} · {config.baseUrl}
+        </div>
+      )}
+
+      {open && (
+        <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+          <div className="flex gap-2 text-sm">
+            {(['users', 'groups'] as const).map((t) => (
+              <label key={t} className="flex items-center gap-1">
+                <input type="radio" checked={libraryType === t} onChange={() => setLibraryType(t)} />
+                {t === 'users' ? '个人库' : '群组库'}
+              </label>
+            ))}
+          </div>
+          <Input value={libraryId} onChange={(e) => setLibraryId(e.target.value)} placeholder="库 ID（个人库为 userID）" />
+          <Input value={collectionKey} onChange={(e) => setCollectionKey(e.target.value)} placeholder="Collection key（可选，留空取整库）" />
+          <Input
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Web API key（仅本次使用，不落盘；本地 API 可留空）"
+            type="password"
+          />
+          {message && <p className="text-xs text-muted-foreground">{message}</p>}
+          <div className="flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                setMessage(null)
+                const saved = await saveConfig({ libraryId, libraryType, collectionKey })
+                setMessage(`已保存 ${saved.baseUrl}`)
+              }}
+              disabled={!libraryId.trim()}
+            >
+              保存配置
+            </Button>
+            <Button
+              size="sm"
+              disabled={busy || !libraryId.trim()}
+              onClick={async () => {
+                setBusy(true)
+                setMessage(null)
+                try {
+                  await saveConfig({ libraryId, libraryType, collectionKey })
+                  const result = await importZotero({ projectId: project.id, apiKey: apiKey || undefined, limit: 50 })
+                  setMessage(
+                    `导入 ${result.imported.length} 条${result.errors.length > 0 ? ` · 错误: ${result.errors.join('; ')}` : ''}`,
+                  )
+                } catch (err) {
+                  setMessage(err instanceof Error ? err.message : String(err))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              保存并导入
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

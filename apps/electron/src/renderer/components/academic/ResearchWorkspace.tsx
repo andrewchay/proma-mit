@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import {
+  DOMAIN_ALLOWED_METHOD_PATHS,
   archiveResearchProjectAtom,
   changeResearchStatusAtom,
   createResearchProjectAtom,
@@ -342,7 +343,14 @@ function CreateProjectDialog({ onClose }: { onClose: () => void }): React.ReactE
             <select
               className="rounded-md border bg-background px-3 py-2 text-sm"
               value={domain}
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setDomain(e.target.value as ResearchDomain)}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                const next = e.target.value as ResearchDomain
+                setDomain(next)
+                const allowed = DOMAIN_ALLOWED_METHOD_PATHS[next] ?? []
+                if (!allowed.includes(methodPath)) {
+                  setMethodPath((allowed[0] ?? 'quantitative') as ResearchMethodPath)
+                }
+              }}
             >
               {Object.entries(DOMAIN_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -357,11 +365,13 @@ function CreateProjectDialog({ onClose }: { onClose: () => void }): React.ReactE
                 setMethodPath(e.target.value as ResearchMethodPath)
               }
             >
-              {Object.entries(METHOD_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
+              {Object.entries(METHOD_LABELS)
+                .filter(([value]) => (DOMAIN_ALLOWED_METHOD_PATHS[domain] ?? []).includes(value))
+                .map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
             </select>
           </div>
           <Input

@@ -164,3 +164,50 @@ export const extractEvidenceAtom = atom(
     return evidence
   },
 )
+
+// ===== M2.6：Zotero 配置与导入 =====
+
+export interface ZoteroConfigView {
+  baseUrl: string
+  libraryId: string
+  libraryType: 'users' | 'groups'
+  collectionKey?: string
+  local: boolean
+}
+
+export const zoteroConfigAtom = atom<ZoteroConfigView | null>(null)
+
+export const loadZoteroConfigAtom = atom(null, async (_get, set) => {
+  const config = await window.electronAPI.academicResearch.getZoteroConfig()
+  set(zoteroConfigAtom, config)
+  return config
+})
+
+export const saveZoteroConfigAtom = atom(null, async (_get, set, input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => {
+  const config = await window.electronAPI.academicResearch.saveZoteroConfig(input)
+  set(zoteroConfigAtom, config)
+  return config
+})
+
+export const importFromZoteroAtom = atom(
+  null,
+  async (_get, set, { projectId, apiKey, limit }: { projectId: string; apiKey?: string; limit?: number }) => {
+    const result = await window.electronAPI.academicResearch.importFromZotero(projectId, { apiKey, limit })
+    set(researchSourcesAtom, await window.electronAPI.academicResearch.listSources(projectId))
+    set(researchDedupCandidatesAtom, await window.electronAPI.academicResearch.dedupCandidates(projectId))
+    return result
+  },
+)
+
+// ===== G1：领域 profile（渲染层只读选项）=====
+
+/** 各领域允许的方法路径（与服务层 profile 同源语义；此处仅用于表单过滤） */
+export const DOMAIN_ALLOWED_METHOD_PATHS: Record<string, string[]> = {
+  audiology: ['quantitative', 'qualitative', 'mixed-practice'],
+  'medical-humanities': ['qualitative', 'mixed-practice', 'quantitative'],
+  statistics: ['quantitative', 'formal'],
+  ai: ['quantitative', 'formal'],
+  ontology: ['formal', 'qualitative'],
+  'enterprise-ai': ['mixed-practice', 'qualitative', 'quantitative'],
+  'data-science': ['quantitative', 'mixed-practice'],
+}

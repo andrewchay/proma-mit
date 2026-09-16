@@ -30,7 +30,7 @@
 | [x] | IPC（7 通道）+ preload 桥 + academic-atoms | `ee577086` |
 | [x] | ResearchWorkspace UI + 侧边栏核心模块入口 | `ee577086` |
 | [x] | 迁移 dry-run（只读预检，损坏转 warning） | `ee577086` |
-| [~] | research-profiles（七领域方法配置） | **缺失 → G1** |
+| [x] | research-profiles（七领域方法配置） | `M2.6`（G1 关闭） |
 | [~] | 服务层授权校验（§3.2-7） | **顺延 → G3** |
 
 ## 3. M2 文献与证据闭环（约 2–3 人周）
@@ -64,7 +64,18 @@
 | [x] | 9 个离线契约测试（含 PubMed 无结果不请求 esummary） | `M2.5` |
 | [x] | 真实端点 smoke 脚本（4 源全 PASS，含全库命中数与截断） | `scripts/academic-adapter-smoke.ts` |
 | [x] | shared 增加 `pmcid` 命名空间 | `M2.5` |
-| [x] | Zotero 接入 UI/服务（库配置 + 导入入口） | 未做 → 留 M2.6 |
+| [x] | Zotero 接入 UI/服务（库配置 + 一键导入） | `M2.6`（G2 完全关闭） |
+
+## 3.2 M2.6 批次（G1 + Zotero UI）
+
+| 状态 | 任务 | 提交/证据 |
+|---|---|---|
+| [x] | research-profiles：七领域 × 四方法路径（字段/检查项/默认路径） | `M2.6` |
+| [x] | profile 测试 10 个：完整性、路径约束、质性不强制假设、检查项过滤 | `M2.6` |
+| [x] | zotero-config：配置落盘（**不含 apiKey**）、基址校验、本地/Web 默认值 | `M2.6` |
+| [x] | Zotero 只读导入服务 + UI 配置/导入区块 | `M2.6` |
+| [x] | Zotero 测试 5 个：未配置拒绝、导入落库、403 错误可见 | `M2.6` |
+| [x] | 创建表单按领域过滤方法路径（非法组合不可选） | `M2.6` |
 
 ## 4. M3 选题、协议与领域方法（约 2 人周）— 未开始
 
@@ -114,14 +125,15 @@
 
 | ID | 描述 | 来源 | 优先级 | 计划归属 | 状态 |
 |---|---|---|---|---|---|
-| G1 | research-profiles.ts 缺失：七领域只有枚举与标签，无方法字段/检查项 | 2026-09-16 review | 高 | M3 首任务 | 开放 |
-| G2 | PubMed / EuropePMC / Zotero adapter 缺失 | 2026-09-16 review | 高 | M2.5 | **已修复**（Zotero UI 入口除外，见 M2.6） |
-| G3 | 服务层授权校验缺失（§3.2-7）：IPC 无条件注册，模型可伪造 projectId | 2026-09-16 review | 高 | M3 批准门禁一并落地 | 开放 |
+| G1 | research-profiles.ts 缺失 | 2026-09-16 review | 高 | M2.6 | **已修复** |
+| G2 | PubMed / EuropePMC / Zotero adapter 缺失 | 2026-09-16 review | 高 | M2.5 + M2.6 | **已修复**（含 Zotero UI 入口） |
+| G3 | 服务层授权校验缺失（§3.2-7）：IPC 无条件注册，模型可伪造 projectId | 2026-09-16 review | 高 | M3 批准门禁一并落地 | **开放（最高优先）** |
 | G4 | 真实 API smoke 未跑 | 2026-09-16 review | 中 | M2.5 | **已修复**：4 源全 PASS |
 | G5 | 证据矩阵视图超出 M2 数据层语义，实为 M5 主张层需求 | 2026-09-16 review | 中 | 正式移入 M5 | 已裁决 |
 
 ## 10. 评审记录
 
+- **2026-09-16 M2.6 批次**：关闭 G1（七领域方法 profile：协议字段/检查项/方法路径约束，质性领域不强制假设与种子）与 G2 余项（Zotero 配置 + 一键只读导入 UI，apiKey 不落盘）。至此 M2 广度缺口全部补齐。
 - **2026-09-16 M2.5 批次**：补齐 G2 三库 adapter（PubMed/EuropePMC/Zotero）与 G4 真实 smoke；四源实端点全部通过，返回听力学相关真实文献，获取等级与 API 能力一致（PubMed=metadata-only）。Zotero 目前为 adapter 层就绪，UI 库配置入口留待 M2.6。
 - **2026-09-16 完成度 review**：M0 100% / M1 约 90% / M2 约 65%。骨架原则（可追溯、检索日志、不静默合并、不虚报全文、agent 建议需人工确认）已落到代码与测试；广度缺口见 §9。typecheck 0 错误，学术模块 203 测试全绿，全量仅剩 main 基线失败（agent-blocker-detect，与本工作无关）。
 
