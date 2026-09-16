@@ -402,6 +402,118 @@ export async function readRunLog(
   }
 }
 
+// ===== M6.2：外部运行与 DVC 指针 =====
+
+/**
+ * 导入外部工具（OpenResearch）的运行记录。
+ *
+ * 语义边界：这些运行**不是本插件执行的**，status 由外部状态归一化。
+ * 因此记录里带 `externalRef`，UI 必须据此区分展示；不得把外部「done」
+ * 当作本插件已验证的结果。
+ */
+export async function importExternalRuns(
+  projectId: string,
+  input: {
+    tool: string
+    toolProjectId: string
+    runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }>
+  },
+): Promise<{ imported: ResearchRun[]; skipped: number }> {
+  await assertProjectAccess(projectId, loadProject)
+  if (!input.tool?.trim() || !input.toolProjectId?.trim()) {
+    throw new ResearchError(RESEARCH_ERROR_CODES.INVALID_INPUT, '导入外部运行需要 tool 与 toolProjectId')
+  }
+  if (!Array.isArray(input.runs) || input.runs.length === 0) {
+    throw new ResearchError(RESEARCH_ERROR_CODES.INVALID_INPUT, '没有可导入的外部运行')
+  }
+
+  const { normalizeOrxStatus } = await import('./adapters/openresearch-adapter')
+  const existing = await listRuns(projectId)
+  const imported: ResearchRun[] = []
+  let skipped = 0
+
+  for (const remote of input.runs) {
+    // 幂等：同一外部运行不重复导入
+    if (existing.some((r) => r.externalRef?.tool === input.tool && r.externalRef.toolRunId === remote.id)) {
+      skipped += 1
+      continue
+    }
+
+    const normalized = normalizeOrxStatus(remote.status, remote.exitCode)
+    const now = new Date().toISOString()
+    const run: ResearchRun = {
+      id: randomUUID(),
+      projectId,
+      kind: 'compute',
+      status: normalized.status,
+      title: `[外部] ${remote.command?.slice(0, 60) ?? remote.id}`,
+      // 外部运行的命令/环境不在本插件掌握范围：明确留空而不是编造
+      input: {},
+      budget: { timeoutMs: 0, maxOutputBytes: 0 },
+      exitCode: remote.exitCode,
+      statusReason: normalized.unmappedRaw
+        ? `外部状态「${normalized.unmappedRaw}」未识别，已按退出码/保守规则归一化`
+        : '外部工具运行（本插件未执行）',
+      createdAt: now,
+      finishedAt: remote.endedAt ? new Date(remote.endedAt * 1000).toISOString() : undefined,
+      externalRef: {
+        tool: input.tool,
+        toolProjectId: input.toolProjectId,
+        toolRunId: remote.id,
+        rawStatus: remote.status,
+        commitSha: remote.commitSha,
+      },
+    }
+
+    await appendEvent(projectId, {
+      commandId: `run-external-${randomUUID()}`,
+      payload: { type: 'run_recorded', run },
+    })
+    imported.push(run)
+  }
+
+  return { imported, skipped }
+}
+
+/**
+ * 登记 DVC 指针为产物引用。
+ *
+ * 只登记引用与哈希；**不声称数据实体已在本机**——
+ * 取数需用户执行 dvc pull（方案 §7）。
+ */
+export async function registerDvcPointer(
+  projectId: string,
+  input: { runId: string; pointerPath: string; pointerContent: string; note?: string },
+): Promise<RunArtifact> {
+  await assertProjectAccess(projectId, loadProject)
+  const runs = await listRuns(projectId)
+  if (!runs.some((r) => r.id === input.runId)) {
+    throw new ResearchError(RESEARCH_ERROR_CODES.NOT_FOUND, `运行记录不存在: ${input.runId}`)
+  }
+
+  const { parseDvcPointer, dvcRefOf } = await import('@gravitas/core/services/academic')
+  const pointer = parseDvcPointer(input.pointerPath, input.pointerContent)
+
+  const artifact: RunArtifact = {
+    id: randomUUID(),
+    projectId,
+    runId: input.runId,
+    ref: dvcRefOf(pointer),
+    // 数据实体不在本地：不做 sha256，保持 unverified
+    integrity: 'unverified',
+    note: [input.note?.trim(), `${pointer.fetchHint}（数据路径 ${pointer.dataPath}）`]
+      .filter(Boolean)
+      .join(' · '),
+    recordedAt: new Date().toISOString(),
+  }
+
+  await appendEvent(projectId, {
+    commandId: `artifact-dvc-${randomUUID()}`,
+    payload: { type: 'artifact_recorded', artifact },
+  })
+  return artifact
+}
+
 /** 运行日志的绝对路径（供 UI 读取） */
 export function runLogPath(projectId: string, runId: string): string {
   return join(getResearchDir(projectId), 'run-logs', `${runId}.log`)

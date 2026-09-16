@@ -150,6 +150,19 @@ export function registerAcademicResearchIpcHandlers(): void {
     runSvc.recordArtifact(projectId, input),
   )
 
+  // ===== M6.2：外部运行导入与 DVC 指针 =====
+  const orxAdapter = require('./adapters/openresearch-adapter') as typeof import('./adapters/openresearch-adapter')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_EXTERNAL_RUNS, async (_e, projectId: string, input) =>
+    runSvc.importExternalRuns(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_DVC_POINTER, async (_e, projectId: string, input) =>
+    runSvc.registerDvcPointer(projectId, input),
+  )
+  ipcMain.handle('academic-research:fetch-external-runs', async (_e, orxProjectId: string) => {
+    const adapter = orxAdapter.createOpenResearchAdapter()
+    return { runs: await adapter.listRuns(orxProjectId) }
+  })
+
   // ===== M5：主张、证据关联与稿件 =====
   const claimSvc = require('./claim-service') as typeof import('./claim-service')
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, async (_e, projectId: string) =>

@@ -451,6 +451,19 @@ export interface ResearchRun {
   /** 日志文件相对路径（run-logs/<runId>.log） */
   logRef?: string
   createdAt: string
+  /**
+   * 外部工具来源（M6）：该运行来自外部工具时填写。
+   * 存在时表示这是**外部事实的映射**，本插件未执行也没有其执行权；
+   * status 由外部状态归一化得到（未知状态不猜测 completed）。
+   */
+  externalRef?: {
+    tool: string
+    toolProjectId?: string
+    toolRunId: string
+    /** 外部原始状态（便于排查映射偏差） */
+    rawStatus?: string
+    commitSha?: string
+  }
 }
 
 /** 手工观察登记（质性/湿实验/现场研究的原始记录入口） */
@@ -704,6 +717,8 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   RECONCILE_RUNS: 'academic-research:reconcile-runs',
   READ_RUN_LOG: 'academic-research:read-run-log',
   RECORD_ARTIFACT: 'academic-research:record-artifact',
+  IMPORT_DVC_POINTER: 'academic-research:import-dvc-pointer',
+  IMPORT_EXTERNAL_RUNS: 'academic-research:import-external-runs',
   LIST_CLAIMS: 'academic-research:list-claims',
   CREATE_CLAIM: 'academic-research:create-claim',
   LINK_EVIDENCE: 'academic-research:link-evidence',

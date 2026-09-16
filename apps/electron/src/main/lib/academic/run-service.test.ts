@@ -304,3 +304,89 @@ describe('中断恢复与日志读取（M4.2）', () => {
     expect(limited.totalBytes).toBe(3004)
   })
 })
+
+describe('外部运行导入与 DVC 指针（M6.2）', () => {
+  test('导入外部运行：幂等、保留 externalRef、未知状态保守归一化', async () => {
+    const { run: svc, projectId } = await setupProject()
+
+    const first = (await svc.importExternalRuns(projectId, {
+      tool: 'openresearch',
+      toolProjectId: 'orx-p-1',
+      runs: [
+        { id: 'orx-r-1', status: 'done', exitCode: 0, commitSha: 'abc123', endedAt: 1789000000 },
+        { id: 'orx-r-2', status: 'totally-new-status' },
+      ],
+    })) as { imported: Array<{ status: string; statusReason?: string; input: { interpreter?: string }; externalRef?: { toolRunId: string; commitSha?: string } }>; skipped: number }
+
+    expect(first.imported).toHaveLength(2)
+    const done = first.imported.find((r) => r.externalRef?.toolRunId === 'orx-r-1')!
+    expect(done.status).toBe('completed')
+    expect(done.externalRef?.commitSha).toBe('abc123')
+    expect(done.statusReason).toContain('本插件未执行')
+    // 外部运行的输入清单不得编造
+    expect(done.input.interpreter).toBeUndefined()
+
+    const unknown = first.imported.find((r) => r.externalRef?.toolRunId === 'orx-r-2')!
+    expect(unknown.status).toBe('failed')
+    expect(unknown.statusReason).toContain('未识别')
+
+    // 幂等：重复导入被跳过
+    const second = (await svc.importExternalRuns(projectId, {
+      tool: 'openresearch',
+      toolProjectId: 'orx-p-1',
+      runs: [{ id: 'orx-r-1', status: 'done' }],
+    })) as { imported: unknown[]; skipped: number }
+    expect(second.imported).toHaveLength(0)
+    expect(second.skipped).toBe(1)
+  })
+
+  test('导入外部运行缺参数或空列表拒绝', async () => {
+    const { run: svc, projectId } = await setupProject()
+    await expect(
+      svc.importExternalRuns(projectId, { tool: '', toolProjectId: 'x', runs: [{ id: 'a' }] }),
+    ).rejects.toThrow('需要 tool 与 toolProjectId')
+    await expect(
+      svc.importExternalRuns(projectId, { tool: 'openresearch', toolProjectId: 'x', runs: [] }),
+    ).rejects.toThrow('没有可导入的外部运行')
+  })
+
+  test('DVC 指针登记为 unverified 引用，并从提示中说明需 pull', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const manual = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'tool-validation', title: 'DVC 登记', input: {} },
+      { resolveProjectRoot: () => workdir },
+    )
+
+    const artifact = await svc.registerDvcPointer(projectId, {
+      runId: manual.id,
+      pointerPath: 'data/results.csv.dvc',
+      pointerContent: 'outs:\n- md5: deadbeef1234\n  size: 2048\n  path: results.csv\n',
+    })
+
+    expect(artifact.ref).toBe('dvc:deadbeef1234')
+    // 关键：指针不等于数据实体，必须标 unverified
+    expect(artifact.integrity).toBe('unverified')
+    expect(artifact.digest).toBeUndefined()
+    expect(artifact.note).toContain('dvc pull')
+    expect(artifact.note).toContain('results.csv')
+  })
+
+  test('DVC 指针非法内容拒绝，且不落库', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const manual = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'tool-validation', title: 'DVC 失败', input: {} },
+      { resolveProjectRoot: () => workdir },
+    )
+    await expect(
+      svc.registerDvcPointer(projectId, {
+        runId: manual.id,
+        pointerPath: 'not-a-pointer.yaml',
+        pointerContent: 'outs: []',
+      }),
+    ).rejects.toThrow('.dvc')
+
+    expect(await svc.listArtifacts(projectId)).toHaveLength(0)
+  })
+})

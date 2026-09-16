@@ -1558,6 +1558,10 @@ export interface ElectronAPI {
     reconcileRuns: (projectId: string) => Promise<{ reconciled: string[] }>
     readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>
     recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
+    // M6.2：外部运行与 DVC 指针
+    importExternalRuns: (projectId: string, input: { tool: string; toolProjectId: string; runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }> }) => Promise<{ imported: import('@gravitas/shared').ResearchRun[]; skipped: number }>
+    registerDvcPointer: (projectId: string, input: { runId: string; pointerPath: string; pointerContent: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
+    fetchExternalRuns: (orxProjectId: string) => Promise<{ runs: Array<{ id: string; projectId?: string; status?: string; command?: string; exitCode?: number; commitSha?: string; endedAt?: number }> }>
     // M5：主张与稿件
     listClaims: (projectId: string) => Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>
     createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => Promise<import('@gravitas/shared').Claim>
@@ -2487,6 +2491,11 @@ const electronAPI: ElectronAPI = {
     reconcileRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECONCILE_RUNS, projectId) as Promise<{ reconciled: string[] }>,
     readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.READ_RUN_LOG, projectId, runId, options) as Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>,
     recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
+
+    // M6.2：外部运行与 DVC 指针
+    importExternalRuns: (projectId: string, input: { tool: string; toolProjectId: string; runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_EXTERNAL_RUNS, projectId, input) as Promise<{ imported: import('@gravitas/shared').ResearchRun[]; skipped: number }>,
+    registerDvcPointer: (projectId: string, input: { runId: string; pointerPath: string; pointerContent: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_DVC_POINTER, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
+    fetchExternalRuns: (orxProjectId: string) => ipcRenderer.invoke('academic-research:fetch-external-runs', orxProjectId) as Promise<{ runs: Array<{ id: string; projectId?: string; status?: string; command?: string; exitCode?: number; commitSha?: string; endedAt?: number }> }>,
 
     // M5：主张与稿件
     listClaims: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, projectId) as Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>,
