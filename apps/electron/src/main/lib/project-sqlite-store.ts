@@ -688,6 +688,7 @@ function migrate(database: SqliteCompat): void {
       channel_id TEXT NOT NULL,
       model_id TEXT,
       workspace_id TEXT,
+      workspace_ids TEXT NOT NULL DEFAULT '[]',
       workflow_id TEXT,
       system_prompt TEXT,
       skills TEXT NOT NULL DEFAULT '[]',
@@ -747,6 +748,11 @@ function migrate(database: SqliteCompat): void {
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('workflow_id')) {
     database.exec(`ALTER TABLE agent_employees ADD COLUMN workflow_id TEXT`)
+  }
+  // 工作区集合兼容既有单工作区配置；读取时仍返回 workspace_id 作为首选项。
+  if (!empColumns.includes('workspace_ids')) {
+    database.exec("ALTER TABLE agent_employees ADD COLUMN workspace_ids TEXT NOT NULL DEFAULT '[]'")
+    database.exec("UPDATE agent_employees SET workspace_ids = json_array(workspace_id) WHERE workspace_id IS NOT NULL AND workspace_id <> ''")
   }
   // 研发员工采用显式配置，旧档案保持普通员工语义。
   if (!empColumns.includes('execution_profile')) database.exec("ALTER TABLE agent_employees ADD COLUMN execution_profile TEXT NOT NULL DEFAULT 'general'")
@@ -927,6 +933,17 @@ type SubTaskRow = {
 
 function now(): number {
   return Date.now()
+}
+
+/** 截止日以本地日历日为准：跨过该日次日零点才算逾期。 */
+function isDueDateOverdue(dueDate: number | undefined, timestamp: number): boolean {
+  if (dueDate === undefined || !Number.isFinite(dueDate) || dueDate <= 0) return false
+  const midnight = (value: number): number => {
+    const date = new Date(value)
+    date.setHours(0, 0, 0, 0)
+    return date.getTime()
+  }
+  return midnight(dueDate) < midnight(timestamp)
 }
 
 function rowToProject(row: ProjectRow): Project {
@@ -1754,14 +1771,14 @@ export function listProjectWorkItems(projectId: string): MyWorkItem[] {
     externalSync: task.externalSync,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
-    isOverdue: !isCompletedStatus(task.status, statuses) && task.dueDate !== undefined && task.dueDate < nowTimestamp,
+    isOverdue: !isCompletedStatus(task.status, statuses) && isDueDateOverdue(task.dueDate, nowTimestamp),
   }))
   const executionItems = tasks.flatMap((task) =>
     listExecutionSubTasks(task.id).map((subTask): MyWorkItem => ({
       ...subTask,
       projectTitle: project.title,
       parentTaskTitle: task.title,
-      isOverdue: subTask.status !== 'completed' && subTask.dueDate !== undefined && subTask.dueDate < nowTimestamp,
+      isOverdue: subTask.status !== 'completed' && isDueDateOverdue(subTask.dueDate, nowTimestamp),
     }))
   )
   return [...taskItems, ...executionItems]
@@ -1825,7 +1842,7 @@ export function listTasksCreatedBy(creatorUserId: string): MyWorkItem[] {
         dueDate: task.dueDate,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,
-        isOverdue: !isCompletedStatus(task.status, statuses) && !!task.dueDate && task.dueDate < Date.now(),
+        isOverdue: !isCompletedStatus(task.status, statuses) && isDueDateOverdue(task.dueDate, Date.now()),
       })
     }
   }
@@ -2391,7 +2408,7 @@ function rowToBriefReceipt(row: BriefReceiptRow): BriefReceipt {
 
 type AgentEmployeeRow = {
   id: string; name: string; role: string; avatar: string | null; description: string;
-  runtime: string; channel_id: string; model_id: string | null; workspace_id: string | null;
+  runtime: string; channel_id: string; model_id: string | null; workspace_id: string | null; workspace_ids: string | null;
   execution_profile: string; permission_mode: string;
   workflow_id: string | null; system_prompt: string | null; skills: string | null; enabled: number; total_tasks: number;
   completed_tasks: number; avg_duration_ms: number | null; failure_count: number;
@@ -2417,6 +2434,9 @@ function rowToAgentEmployee(row: AgentEmployeeRow): AgentEmployee {
     channelId: row.channel_id,
     modelId: row.model_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
+    workspaceIds: parseJsonArray(row.workspace_ids).length > 0
+      ? parseJsonArray(row.workspace_ids)
+      : row.workspace_id ? [row.workspace_id] : [],
     executionProfile: row.execution_profile as AgentEmployee['executionProfile'],
     permissionMode: row.permission_mode as AgentEmployee['permissionMode'],
     workflowId: row.workflow_id ?? undefined,
@@ -2482,8 +2502,8 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
   const now = Date.now()
   database.prepare(
     `INSERT INTO agent_employees
-     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, workflow_id, system_prompt, skills, execution_profile, permission_mode, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
+     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, workspace_ids, workflow_id, system_prompt, skills, execution_profile, permission_mode, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
   ).run(
     id,
     input.name,
@@ -2493,7 +2513,8 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
     input.runtime ?? 'proma',
     input.channelId,
     input.modelId ?? null,
-    input.workspaceId ?? null,
+    input.workspaceIds?.[0] ?? input.workspaceId ?? null,
+    JSON.stringify(input.workspaceIds ?? (input.workspaceId ? [input.workspaceId] : [])),
     input.workflowId ?? null,
     input.systemPrompt ?? null,
     JSON.stringify(input.skills ?? []),
@@ -2513,7 +2534,7 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
   database.prepare(
     `UPDATE agent_employees SET
        name = ?, role = ?, avatar = ?, description = ?, runtime = ?, channel_id = ?, model_id = ?,
-       workspace_id = ?, workflow_id = ?, system_prompt = ?, skills = ?, execution_profile = ?, permission_mode = ?, enabled = ?, updated_at = ?
+       workspace_id = ?, workspace_ids = ?, workflow_id = ?, system_prompt = ?, skills = ?, execution_profile = ?, permission_mode = ?, enabled = ?, updated_at = ?
      WHERE id = ?`
   ).run(
     merged.name,
@@ -2523,7 +2544,8 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
     merged.runtime,
     merged.channelId,
     merged.modelId ?? null,
-    merged.workspaceId ?? null,
+    merged.workspaceIds?.[0] ?? merged.workspaceId ?? null,
+    JSON.stringify(merged.workspaceIds ?? (merged.workspaceId ? [merged.workspaceId] : [])),
     merged.workflowId ?? null,
     merged.systemPrompt ?? null,
     JSON.stringify(merged.skills ?? []),

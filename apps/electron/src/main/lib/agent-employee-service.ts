@@ -95,9 +95,17 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
 function validateEmployeeConfiguration(input: CreateAgentEmployeeInput): void {
   if (input.executionProfile && !['general', 'development'].includes(input.executionProfile)) throw new Error('未知员工执行配置')
   if (input.permissionMode && !['safe', 'auto'].includes(input.permissionMode)) throw new Error('不支持的员工权限模式')
-  if (input.executionProfile === 'development') validateDevelopmentTarget({ ...input, runtime: input.runtime ?? 'proma' }, undefined, {
-    getChannel: getChannelById, getWorkspace: getAgentWorkspace,
-  })
+  const workspaceIds = [...new Set((input.workspaceIds ?? (input.workspaceId ? [input.workspaceId] : [])).filter(Boolean))]
+  if (input.workspaceIds && workspaceIds.length !== input.workspaceIds.length) throw new Error('可用工作区不能包含重复或空值')
+  if (input.executionProfile === 'development') {
+    if (workspaceIds.length === 0) throw new Error('研发员工至少需要选择一个本地 Git 工作区')
+    for (const workspaceId of workspaceIds) {
+      if (!getAgentWorkspace(workspaceId)?.rootPath) throw new Error('研发员工只能选择绑定本地 Git 仓库的工作区')
+    }
+    validateDevelopmentTarget({ ...input, workspaceIds, workspaceId: workspaceIds.length === 1 ? workspaceIds[0] : undefined, runtime: input.runtime ?? 'proma' }, undefined, {
+      getChannel: getChannelById, getWorkspace: getAgentWorkspace,
+    })
+  }
 }
 
 export function deleteAgentEmployee(id: string): boolean {

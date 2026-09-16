@@ -461,7 +461,10 @@ export interface CreateAgentEmployeeInput {
   runtime?: 'proma' | 'ai-sdk' | 'pi' | 'claude'
   channelId: string
   modelId?: string
+  /** 兼容旧档案的单个默认工作区；新配置优先使用 workspaceIds。 */
   workspaceId?: string
+  /** AI 员工作为角色可服务的工作区集合；执行任务须从中明确选择。 */
+  workspaceIds?: string[]
   /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
   executionProfile?: 'general' | 'development'
   /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
@@ -484,7 +487,10 @@ export interface UpdateAgentEmployeeInput {
   runtime?: 'proma' | 'ai-sdk' | 'pi' | 'claude'
   channelId?: string
   modelId?: string | null
+  /** 兼容旧档案的单个默认工作区；新配置优先使用 workspaceIds。 */
   workspaceId?: string | null
+  /** AI 员工作为角色可服务的工作区集合；传入时整体替换。 */
+  workspaceIds?: string[]
   /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
   executionProfile?: 'general' | 'development'
   /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
@@ -504,7 +510,10 @@ export interface AgentEmployeeResult {
   runtime: string
   channelId: string
   modelId?: string
+  /** 兼容旧档案的首选工作区。 */
   workspaceId?: string
+  /** AI 员工作为角色可服务的工作区集合。 */
+  workspaceIds?: string[]
   /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
   executionProfile?: 'general' | 'development'
   /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */

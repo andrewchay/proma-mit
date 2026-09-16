@@ -20,8 +20,14 @@ describe('研发员工配置与项目理解', () => {
     expect(() => validateDevelopmentTarget({ ...employee, permissionMode: 'bypassPermissions' }, undefined, facts)).toThrow('权限')
     expect(() => validateDevelopmentTarget({ ...employee, workflowId: 'wf' }, undefined, facts)).toThrow('Workflow')
   })
-  test('Given 任务覆盖工作区 When 校验 Then 使用任务指定值', () => {
-    expect(validateDevelopmentTarget(employee, 'task-workspace', facts).workspaceId).toBe('task-workspace')
+  test('Given 单工作区员工与任务指定同一工作区 When 校验 Then 使用任务指定值', () => {
+    expect(validateDevelopmentTarget(employee, 'workspace', facts).workspaceId).toBe('workspace')
+  })
+  test('Given 多工作区员工未指定任务工作区 When 校验 Then 拒绝隐式选择', () => {
+    expect(() => validateDevelopmentTarget({ ...employee, workspaceId: undefined, workspaceIds: ['workspace', 'other-workspace'] }, undefined, facts)).toThrow('明确选择')
+  })
+  test('Given 任务选择角色范围外工作区 When 校验 Then 拒绝跨项目路由', () => {
+    expect(() => validateDevelopmentTarget({ ...employee, workspaceIds: ['workspace'] }, 'task-workspace', facts)).toThrow('可用工作区')
   })
   test('Given 项目与返工意见 When 生成指令 Then 包含来源学习、兼容与验证要求', () => {
     const prompt = buildDevelopmentInstructions({ title: 'Gravitas', description: '本地优先' }, '补充回归测试', ['测试通过'])

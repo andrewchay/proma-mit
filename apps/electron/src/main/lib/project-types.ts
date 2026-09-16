@@ -360,8 +360,10 @@ export interface AgentEmployee {
   runtime: AgentEmployeeRuntime
   channelId: string
   modelId?: string
-  /** 默认工作区 ID；缺省时使用当前全局工作区 */
+  /** 兼容旧档案的首选工作区 ID；缺省时使用当前全局工作区。 */
   workspaceId?: string
+  /** AI 员工作为角色可服务的工作区集合；执行任务须从中明确选择。 */
+  workspaceIds?: string[]
   /** 绑定的 Workflow SOP ID（P3）；绑定后任务改用 Workflow 执行（需已发布） */
   executionProfile?: 'general' | 'development'
   permissionMode?: 'safe' | 'auto'
@@ -388,6 +390,7 @@ export interface CreateAgentEmployeeInput {
   channelId: string
   modelId?: string
   workspaceId?: string
+  workspaceIds?: string[]
   executionProfile?: 'general' | 'development'
   permissionMode?: 'safe' | 'auto'
   workflowId?: string

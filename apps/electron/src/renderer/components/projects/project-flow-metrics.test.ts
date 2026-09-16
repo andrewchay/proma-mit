@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency, sortTasksByUrgency, ganttDependencyPath, type SortTask } from './project-flow-metrics'
+import { calculateProjectFlowMetrics, ganttBarColor, dueDateUrgency, isDueDateOverdue, sortTasksByUrgency, ganttDependencyPath, type SortTask } from './project-flow-metrics'
 
 test('流动指标只用权威任务时间戳计算在制品、吞吐、周期和 SLE 超时', () => {
   const day = 86_400_000
@@ -109,10 +109,12 @@ describe('截止日期紧迫感 dueDateUrgency', () => {
     expect(result?.text).toContain('逾期 2 天')
   })
 
-  test('今天截止返回 amber + 今天文案', () => {
+  test('今天截止返回 amber + 今天文案，直到次日才逾期', () => {
     const result = dueDateUrgency(day(0), false, now)
     expect(result?.tone).toBe('amber')
     expect(result?.text).toContain('今天')
+    expect(isDueDateOverdue(day(0), now)).toBeFalse()
+    expect(isDueDateOverdue(day(0), day(1))).toBeTrue()
   })
 
   test('3 天内返回 amber', () => {

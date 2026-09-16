@@ -92,7 +92,7 @@ export function ganttBarColor(
 ): string {
   const group = groupOf(task.status, options.statuses)
   if (group !== 'completed') {
-    if (task.dueDate !== undefined && task.dueDate < options.now) return 'bg-red-500'
+    if (isDueDateOverdue(task.dueDate, options.now)) return 'bg-red-500'
     if (options.blocked) return 'bg-amber-500'
     if (task.riskLevel === 'critical') return 'bg-red-400'
     if (task.riskLevel === 'high') return 'bg-orange-400'
@@ -110,10 +110,15 @@ export interface DueDateUrgency {
 }
 
 /** 本地当日零点（天级比较基准，避免半夜边界抖动） */
-function localMidnight(timestamp: number): number {
+export function localMidnight(timestamp: number): number {
   const date = new Date(timestamp)
   date.setHours(0, 0, 0, 0)
   return date.getTime()
+}
+
+/** 截止日以本地日历日为准：跨过该日次日零点才算逾期。 */
+export function isDueDateOverdue(dueDate: number | undefined, now = Date.now()): boolean {
+  return dueDate !== undefined && Number.isFinite(dueDate) && dueDate > 0 && localMidnight(dueDate) < localMidnight(now)
 }
 
 /**

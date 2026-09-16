@@ -1894,6 +1894,7 @@ function TaskList({
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
   const [newTokenBudget, setNewTokenBudget] = useState('')
+  const [newTokenBudgetPreset, setNewTokenBudgetPreset] = useState('')
   const [workspaces, setWorkspaces] = useState<AgentWorkspaceResult[]>([])
   const [newWorkspaceId, setNewWorkspaceId] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
@@ -1950,7 +1951,9 @@ function TaskList({
         input.permissionRequests = newPermissions
       }
       if (newTokenBudget.trim()) {
-        input.tokenBudget = Number(newTokenBudget)
+        const tokenBudget = Number(newTokenBudget)
+        if (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0) throw new Error('Token 配额必须是正整数')
+        input.tokenBudget = tokenBudget
       }
       const task = await callProjectAPI<Task>('createTask', projectId, input)
       // PH2-④：新建任务时选择的依赖（depends upon 已有任务）
@@ -1968,6 +1971,7 @@ function TaskList({
       setNewWorkspaceId('')
       setNewDueDate('')
       setNewTokenBudget('')
+      setNewTokenBudgetPreset('')
       setShowCreate(false)
     } catch (err) {
       console.error('创建任务失败:', err)
@@ -2093,17 +2097,22 @@ function TaskList({
               </div>
             )}
             <div>
-              <label className="text-xs text-muted-foreground">执行工作区（AI 员工在此工作区执行；可选，缺省用员工/全局）</label>
+              <label className="text-xs text-muted-foreground">执行工作区</label>
               <select
                 value={newWorkspaceId}
                 onChange={(e) => setNewWorkspaceId(e.target.value)}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
-                <option value="">（默认工作区）</option>
-                {workspaces.map((ws) => (
+                <option value="">{newAgentId && (agentEmployees.find((employee) => employee.id === newAgentId)?.workspaceIds?.length ?? 0) > 1 ? '请选择该 AI 员工的执行工作区' : '（默认工作区）'}</option>
+                {workspaces.filter((ws) => {
+                  const employee = agentEmployees.find((item) => item.id === newAgentId)
+                  const ids = employee?.workspaceIds?.length ? employee.workspaceIds : employee?.workspaceId ? [employee.workspaceId] : []
+                  return ids.length === 0 || ids.includes(ws.id ?? ws.slug)
+                }).map((ws) => (
                   <option key={ws.id ?? ws.slug} value={ws.id ?? ws.slug}>{ws.name}</option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] text-muted-foreground">AI 员工有多个工作区时必须明确选择，避免跨项目执行。</p>
             </div>
             <div>
               <label className="text-xs text-muted-foreground">截止日期</label>
@@ -2116,15 +2125,33 @@ function TaskList({
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Token 配额（AI 员工执行上限，可选）</label>
-              <input
-                type="number"
-                min={1}
-                placeholder="不限"
-                value={newTokenBudget}
-                onChange={(e) => setNewTokenBudget(e.target.value)}
+              <select
+                value={newTokenBudgetPreset}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setNewTokenBudgetPreset(value)
+                  setNewTokenBudget(value === 'custom' || value === '' ? '' : value)
+                }}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
                 title="AI 员工执行累计消耗超过该值将自动中止，任务回退待人工处理"
-              />
+              >
+                <option value="">不限</option>
+                <option value="500000">500K</option>
+                <option value="1000000">1M</option>
+                <option value="5000000">5M</option>
+                <option value="10000000">10M</option>
+                <option value="50000000">50M</option>
+                <option value="100000000">100M</option>
+                <option value="custom">自定义</option>
+              </select>
+              {newTokenBudgetPreset === 'custom' && <input
+                type="number"
+                min={1}
+                placeholder="输入 Token 整数"
+                value={newTokenBudget}
+                onChange={(e) => setNewTokenBudget(e.target.value)}
+                className="mt-2 w-full px-3 py-2 text-sm border rounded-md bg-background"
+              />}
             </div>
           </div>
           <div>

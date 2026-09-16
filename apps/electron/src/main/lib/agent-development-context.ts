@@ -3,6 +3,7 @@ interface DevelopmentEmployeeTarget {
   channelId: string
   modelId?: string
   workspaceId?: string
+  workspaceIds?: string[]
   workflowId?: string
   runtime: string
   permissionMode?: string
@@ -25,8 +26,11 @@ export function validateDevelopmentTarget(employee: DevelopmentEmployeeTarget, t
   if (!channel?.enabled) throw new Error('研发员工渠道不存在或已停用')
   const modelId = employee.modelId?.trim()
   if (!modelId || !channel.models.some((model) => model.id === modelId && model.enabled)) throw new Error('请显式选择已启用的模型，不使用隐式回退')
-  const workspaceId = taskWorkspaceId ?? employee.workspaceId
-  if (!workspaceId || !facts.getWorkspace(workspaceId)?.rootPath) throw new Error('研发员工必须指定绑定本地 Git 仓库的工作区')
+  const workspaceIds = [...new Set((employee.workspaceIds?.length ? employee.workspaceIds : employee.workspaceId ? [employee.workspaceId] : []).filter(Boolean))]
+  if (taskWorkspaceId && !workspaceIds.includes(taskWorkspaceId)) throw new Error('任务选择的工作区不在该研发员工的可用工作区范围内')
+  const workspaceId = taskWorkspaceId ?? (workspaceIds.length === 1 ? workspaceIds[0] : undefined)
+  if (!workspaceId) throw new Error('研发员工有多个可用工作区，请在任务中明确选择执行工作区')
+  if (!facts.getWorkspace(workspaceId)?.rootPath) throw new Error('研发员工必须指定绑定本地 Git 仓库的工作区')
   return { workspaceId, modelId, permissionMode }
 }
 

@@ -52,7 +52,7 @@ export function AgentTeamPanel(): React.ReactElement {
     channelId: '',
     modelId: '',
     workflowId: '',
-    workspaceId: '',
+    workspaceIds: [] as string[],
     executionProfile: 'general' as 'general' | 'development',
     permissionMode: 'safe' as 'safe' | 'auto',
     systemPrompt: '',
@@ -97,7 +97,7 @@ export function AgentTeamPanel(): React.ReactElement {
   const openCreate = (): void => {
     setEditingId(null)
     setError('')
-    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceId: '', executionProfile: 'general', permissionMode: 'safe', systemPrompt: '' })
+    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'general', permissionMode: 'safe', systemPrompt: '' })
     setShowForm(true)
   }
 
@@ -111,7 +111,7 @@ export function AgentTeamPanel(): React.ReactElement {
       channelId: emp.channelId,
       modelId: emp.modelId ?? '',
       workflowId: emp.workflowId ?? '',
-      workspaceId: emp.workspaceId ?? '',
+      workspaceIds: emp.workspaceIds?.length ? emp.workspaceIds : emp.workspaceId ? [emp.workspaceId] : [],
       executionProfile: emp.executionProfile ?? 'general',
       permissionMode: emp.permissionMode ?? 'safe',
       systemPrompt: emp.systemPrompt ?? '',
@@ -132,7 +132,8 @@ export function AgentTeamPanel(): React.ReactElement {
         channelId: form.channelId,
         modelId: form.modelId.trim() || undefined,
         workflowId: form.workflowId || undefined,
-        workspaceId: form.workspaceId || undefined,
+        workspaceIds: form.workspaceIds,
+        workspaceId: form.workspaceIds[0] || undefined,
         executionProfile: form.executionProfile,
         permissionMode: form.permissionMode,
         systemPrompt: form.systemPrompt.trim() || undefined,
@@ -293,12 +294,28 @@ export function AgentTeamPanel(): React.ReactElement {
                 <option value="development">研发员工（隔离 worktree + 项目上下文）</option>
               </select>
             </label>
-            <label className="block text-xs text-muted-foreground">默认工作区
-              <select value={form.workspaceId} onChange={(e) => setForm({ ...form, workspaceId: e.target.value })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
-                <option value="">{form.executionProfile === 'development' ? '请选择代码仓库，不会回退到全局工作区' : '沿用任务 / 全局工作区'}</option>
-                {workspaces.filter((space) => form.executionProfile !== 'development' || space.rootPath).map((space) => <option key={space.id} value={space.id}>{space.name}{space.rootPath ? ` · ${space.rootPath}` : ''}</option>)}
-              </select>
-            </label>
+            <fieldset className="block text-xs text-muted-foreground">
+              <legend>可用工作区（可多选）</legend>
+              <div className="mt-1 max-h-36 space-y-1 overflow-y-auto rounded-md bg-background px-3 py-2">
+                {workspaces.filter((space) => form.executionProfile !== 'development' || space.rootPath).map((space) => (
+                  <label key={space.id} className="flex cursor-pointer items-start gap-2 py-1 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={form.workspaceIds.includes(space.id)}
+                      onChange={(event) => setForm((current) => ({
+                        ...current,
+                        workspaceIds: event.target.checked
+                          ? [...current.workspaceIds, space.id]
+                          : current.workspaceIds.filter((workspaceId) => workspaceId !== space.id),
+                      }))}
+                    />
+                    <span>{space.name}{space.rootPath ? ` · ${space.rootPath}` : ''}</span>
+                  </label>
+                ))}
+                {workspaces.length === 0 && <p className="py-1 text-muted-foreground">暂无可用工作区</p>}
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed">{form.executionProfile === 'development' ? '研发员工至少选择一个本地 Git 工作区。若选择多个，指派任务时必须明确选择其中一个。' : '角色可跨所选工作区服务；未绑定时沿用任务或全局工作区。'}</p>
+            </fieldset>
             {form.executionProfile === 'development' && <>
               <label className="block text-xs text-muted-foreground">Runtime 权限
                 <select value={form.permissionMode} onChange={(e) => setForm({ ...form, permissionMode: e.target.value as 'safe' | 'auto' })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
@@ -394,7 +411,7 @@ export function AgentTeamPanel(): React.ReactElement {
             className="w-full px-3 py-2 text-sm border rounded-md bg-background resize-none h-16"
           />
           <div className="flex gap-2">
-            <button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.channelId || (form.executionProfile === 'development' && (!form.workspaceId || !form.modelId.trim()))} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+            <button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.channelId || (form.executionProfile === 'development' && (form.workspaceIds.length === 0 || !form.modelId.trim()))} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
               {saving && <Loader2 size={14} className="animate-spin" />}
               {editingId ? '保存' : '创建'}
             </button>
