@@ -111,6 +111,144 @@ function isBunRuntime(): boolean {
   return typeof process !== 'undefined' && !!process.versions.bun
 }
 
+/**
+ * 读取 SQLite 主库文件的最新完整镜像。
+ *
+ * 生产分支（better-sqlite3）以 WAL 模式写入：已提交事务可能仍停留在 `-wal` 文件里，
+ * 尚未 checkpoint 回主库。测试分支（sql.js）只能 `readFileSync` 主库文件，若不先合并
+ * WAL，就会读到旧快照——表现为「执行记录/prompt 明明已提交，用测试分支读却是旧值或 0 行」。
+ *
+ * 合并优先走纯 JS 的 WAL 帧重放（两个运行时都可用）；格式不支持或校验失败时
+ * 安全降级为直接读主库文件，不执行可能改写用户数据库的 checkpoint。
+ */
+async function readSqliteFileWithWalMerged(dbPath: string): Promise<Uint8Array | undefined> {
+  if (!existsSync(dbPath)) return undefined
+  const walPath = `${dbPath}-wal`
+  const main = readFileSync(dbPath)
+  if (!existsSync(walPath)) return main
+  try {
+    const merged = mergeWalIntoDatabaseImage(main, readFileSync(walPath))
+    if (merged) return merged
+  } catch {
+    // 帧损坏/格式异常：不阻断启动，回退到其它路径
+  }
+  // WAL 损坏或格式不支持时，不尝试 checkpoint：即使声明 readonly，checkpoint 也是写操作。
+  // 回退到主库快照，保持启动安全；下次由正常 SQLite 连接恢复/检查 WAL。
+  return main
+}
+
+// ===== 纯 JS WAL 合并（不依赖原生绑定，Bun / Electron 均可用） =====
+
+const SQLITE_PAGE_SIZE_OFFSET = 16
+const WAL_HEADER_SIZE = 32
+const WAL_FRAME_HEADER_SIZE = 24
+const WAL_MAGIC = 0x377f0682
+const WAL_MAGIC_LE = 0x377f0683
+/** 帧校验和只覆盖帧头前 8 字节（page number + dbsize），与 SQLite walDecodeFrame 一致 */
+const WAL_FRAME_CKSUM_HEADER_BYTES = 8
+
+/**
+ * 把 WAL 文件中「已提交」的页重放到主库镜像，返回合并后的完整数据库字节。
+ *
+ * 实现 SQLite WAL 恢复规则（对齐 src/wal.c 的 walIndexRecover / walDecodeFrame）：
+ * - WAL 头条的 checksum 从 {0,0} 起算，覆盖头前 24 字节（magic/version/pageSize/seq/salt）；
+ * - 帧校验承接上一帧的 checksum，先算帧头**前 8 字节**再算整页数据；
+ * - 遇到校验失败即停止（SQLite 会丢弃其后所有帧，即使未损坏）；
+ * - 只有最后一个**完整提交事务**（commit 帧）之前的帧才生效，未提交尾部必须忽略；
+ * - WAL 中的页即当前最新状态，按 page number 覆盖到主库镜像对应偏移。
+ *
+ * 字节序：WAL 头/帧头里的多字节字段（pageSize、salt、checksum）一律按大端读取；
+ * checksum 本身的字（word）读取字节序由 magic 决定——0x377f0682 用大端，0x377f0683 用小端。
+ */
+export function mergeWalIntoDatabaseImage(main: Uint8Array, wal: Uint8Array): Uint8Array | null {
+  if (main.byteLength < 100 || wal.byteLength < WAL_HEADER_SIZE) return null
+  const view = new DataView(wal.buffer, wal.byteOffset, wal.byteLength)
+  const magic = view.getUint32(0, false)
+  if (magic !== WAL_MAGIC && magic !== WAL_MAGIC_LE) return null
+  // magic 0x377f0682 → checksum 按大端读字；0x377f0683 → 小端
+  const checksumBigEndian = magic === WAL_MAGIC
+  let walPageSize = view.getUint32(8, false)
+  if (walPageSize === 1) walPageSize = 65536
+  if (walPageSize <= 0 || walPageSize % 8 !== 0) return null
+  const salt1 = view.getUint32(16, false)
+  const salt2 = view.getUint32(20, false)
+
+  // WAL 头校验和：从 {0,0} 起算，覆盖 [0, WAL_HEADER_SIZE-8) 即前 24 字节
+  const headerChecksum = walChecksum(checksumBigEndian, 0, 0, wal, 0, WAL_HEADER_SIZE - 8)
+  if (headerChecksum.s1 !== view.getUint32(24, false) || headerChecksum.s2 !== view.getUint32(28, false)) {
+    return null
+  }
+
+  const frameSize = WAL_FRAME_HEADER_SIZE + walPageSize
+  const frameCount = Math.floor((wal.byteLength - WAL_HEADER_SIZE) / frameSize)
+  if (frameCount <= 0) return null
+
+  // 单遍扫描：承接式校验，记录最后一个通过校验的 commit 帧
+  let lastCommitFrame = -1
+  let checksum = headerChecksum
+  for (let i = 0; i < frameCount; i++) {
+    const frameStart = WAL_HEADER_SIZE + i * frameSize
+    const frame = new DataView(wal.buffer, wal.byteOffset + frameStart, WAL_FRAME_HEADER_SIZE)
+    // salt 必须与 WAL 头一致，否则该帧不属于本轮 WAL
+    if (frame.getUint32(8, false) !== salt1 || frame.getUint32(12, false) !== salt2) break
+    let next = walChecksum(checksumBigEndian, checksum.s1, checksum.s2, wal, frameStart, WAL_FRAME_CKSUM_HEADER_BYTES)
+    next = walChecksum(
+      checksumBigEndian,
+      next.s1,
+      next.s2,
+      wal,
+      frameStart + WAL_FRAME_HEADER_SIZE,
+      walPageSize,
+    )
+    if (next.s1 !== frame.getUint32(16, false) || next.s2 !== frame.getUint32(20, false)) {
+      // 校验失败：WAL 尾部可能被截断，其后帧一律丢弃
+      break
+    }
+    checksum = next
+    if (frame.getUint32(4, false) !== 0) lastCommitFrame = i
+  }
+  if (lastCommitFrame < 0) return null
+
+  // 重放 [0, lastCommitFrame] 内的所有页（WAL 中的页即最新状态，直接覆盖主库）
+  const mergedPages = new Map<number, Uint8Array>()
+  for (let i = 0; i <= lastCommitFrame; i++) {
+    const frameStart = WAL_HEADER_SIZE + i * frameSize
+    const pageNumber = new DataView(wal.buffer, wal.byteOffset + frameStart, WAL_FRAME_HEADER_SIZE).getUint32(0, false)
+    if (pageNumber <= 0) continue
+    mergedPages.set(pageNumber, wal.subarray(frameStart + WAL_FRAME_HEADER_SIZE, frameStart + frameSize))
+  }
+  if (mergedPages.size === 0) return null
+
+  const pageCount = Math.max(Math.ceil(main.byteLength / walPageSize), ...mergedPages.keys())
+  const merged = new Uint8Array(pageCount * walPageSize)
+  merged.set(main, 0)
+  for (const [pageNumber, payload] of mergedPages) {
+    merged.set(payload, (pageNumber - 1) * walPageSize)
+  }
+  const mergedView = new DataView(merged.buffer, merged.byteOffset, 100)
+  // 主库头部 page_size 写 1 代表 65536，其余按实际值写回，确保 sql.js 正确解析
+  mergedView.setUint16(SQLITE_PAGE_SIZE_OFFSET, walPageSize === 65536 ? 1 : walPageSize, false)
+  mergedView.setUint32(28, pageCount, false)
+  return merged
+}
+
+/** SQLite WAL 滚动校验和：每 8 字节读成两个 u32，按 s1/s2 交叉累加 */
+function walChecksum(
+  bigEndian: boolean,
+  s1: number,
+  s2: number,
+  buffer: Uint8Array,
+  offset: number,
+  length: number,
+): { s1: number; s2: number } {
+  const view = new DataView(buffer.buffer, buffer.byteOffset + offset, length)
+  for (let i = 0; i + 8 <= length; i += 8) {
+    s1 = (s1 + view.getUint32(i, bigEndian) + s2) >>> 0
+    s2 = (s2 + view.getUint32(i + 4, bigEndian) + s1) >>> 0
+  }
+  return { s1, s2 }
+}
+
 function loadNativeSqlite(): SqliteNativeConstructor {
   // esbuild --external:better-sqlite3：原生绑定不可打包，运行时从 node_modules 解析
   return require('better-sqlite3') as SqliteNativeConstructor
@@ -136,7 +274,7 @@ export async function initProjectDb(): Promise<void> {
     if (isBunRuntime()) {
       // 测试分支：sql.js 内存库 + 手动导出持久化（行为与历史版本一致）
       const SQL = await loadSqlJs()
-      const existing = existsSync(dbPath) ? readFileSync(dbPath) : undefined
+      const existing = await readSqliteFileWithWalMerged(dbPath)
       const store = new SqlJsCompat(new SQL.Database(existing as Uint8Array | undefined), dbPath)
       migrate(store)
       db = store
