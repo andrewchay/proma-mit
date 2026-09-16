@@ -310,3 +310,77 @@ export const rejectTopicAtom = atom(
     set(topicsAtom, await window.electronAPI.academicResearch.listTopics(projectId))
   },
 )
+
+// ===== M4：研究运行 =====
+
+export const runsAtom = atom<import('@gravitas/shared').ResearchRun[]>([])
+export const runObservationsAtom = atom<import('@gravitas/shared').RunObservation[]>([])
+export const runArtifactsAtom = atom<import('@gravitas/shared').RunArtifact[]>([])
+export const allowedInterpretersAtom = atom<string[]>(['python3', 'python', 'Rscript', 'node', 'bun'])
+export const runLogAtom = atom<{ runId: string; content: string; truncated: boolean; exists: boolean } | null>(null)
+export const runsLoadingAtom = atom<boolean>(false)
+
+/** 加载运行数据；先调和中断运行，避免把重启前的 running 显示成在执行 */
+export const loadRunsAtom = atom(null, async (_get, set, projectId: string) => {
+  set(runsLoadingAtom, true)
+  try {
+    const api = window.electronAPI.academicResearch
+    await api.reconcileRuns(projectId)
+    set(runsAtom, await api.listRuns(projectId))
+    set(runObservationsAtom, await api.listObservations(projectId))
+    set(runArtifactsAtom, await api.listArtifacts(projectId))
+    set(allowedInterpretersAtom, (await api.getAllowedInterpreters()).interpreters)
+  } finally {
+    set(runsLoadingAtom, false)
+  }
+})
+
+export const createRunAtom = atom(
+  null,
+  async (
+    _get,
+    set,
+    { projectId, request }: { projectId: string; request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget> } },
+  ) => {
+    const run = await window.electronAPI.academicResearch.createRun(projectId, request)
+    set(runsAtom, (prev) => [run, ...prev.filter((r) => r.id !== run.id)])
+    if (run.kind === 'compute') {
+      const log = await window.electronAPI.academicResearch.readRunLog(projectId, run.id)
+    set(runLogAtom, { runId: run.id, content: log.content, truncated: log.truncated, exists: log.exists })
+    }
+    return run
+  },
+)
+
+export const cancelRunAtom = atom(
+  null,
+  async (_get, set, { projectId, runId }: { projectId: string; runId: string }) => {
+    const updated = await window.electronAPI.academicResearch.cancelRun(projectId, runId)
+    set(runsAtom, (prev) => prev.map((r) => (r.id === runId ? updated : r)))
+    return updated
+  },
+)
+
+export const recordObservationAtom = atom(
+  null,
+  async (_get, set, { projectId, runId, text }: { projectId: string; runId: string; text: string }) => {
+    const obs = await window.electronAPI.academicResearch.recordObservation(projectId, { runId, text })
+    set(runObservationsAtom, (prev) => [obs, ...prev])
+    return obs
+  },
+)
+
+export const recordArtifactAtom = atom(
+  null,
+  async (_get, set, { projectId, runId, ref, note }: { projectId: string; runId: string; ref: string; note?: string }) => {
+    const artifact = await window.electronAPI.academicResearch.recordArtifact(projectId, { runId, ref, note })
+    set(runArtifactsAtom, (prev) => [artifact, ...prev])
+    return artifact
+  },
+)
+
+export const readRunLogAtom = atom(null, async (_get, set, { projectId, runId }: { projectId: string; runId: string }) => {
+  const log = await window.electronAPI.academicResearch.readRunLog(projectId, runId)
+  set(runLogAtom, { runId, content: log.content, truncated: log.truncated, exists: log.exists })
+  return log
+})

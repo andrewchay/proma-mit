@@ -138,6 +138,15 @@ export function registerAcademicResearchIpcHandlers(): void {
     runSvc.listArtifacts(projectId),
   )
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ALLOWED_INTERPRETERS, async () => ({
-    interpreters: runExecutor.ALLOWED_INTERPRETER_LIST ?? ['python3', 'python', 'Rscript', 'node', 'bun'],
+    interpreters: runExecutor.ALLOWED_INTERPRETER_LIST,
   }))
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECONCILE_RUNS, async (_e, projectId: string) =>
+    runSvc.reconcileInterruptedRuns(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.READ_RUN_LOG, async (_e, projectId: string, runId: string, options) =>
+    runSvc.readRunLog(projectId, runId, options ?? {}),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, async (_e, projectId: string, input) =>
+    runSvc.recordArtifact(projectId, input),
+  )
 }

@@ -324,6 +324,84 @@ export async function recordArtifact(
   return artifact
 }
 
+/**
+ * 调和「中断」运行（重开恢复语义）。
+ *
+ * 应用重启或崩溃后，内存中的取消控制器消失，但事件流里仍可能留着
+ * `queued` / `running`。此时**不能**让它继续显示为在执行——本函数把
+ * 这类运行显式标记为 failed，并说明原因（方案 §12 M4「重开可恢复；
+ * 不假装仍在运行」）。
+ *
+ * 幂等：已经是终态的运行不会被再次改写。
+ */
+export async function reconcileInterruptedRuns(
+  projectId: string,
+): Promise<{ reconciled: string[] }> {
+  await assertProjectAccess(projectId, loadProject)
+  const runs = await listRuns(projectId)
+  const reconciled: string[] = []
+
+  for (const run of runs) {
+    if (run.status !== 'queued' && run.status !== 'running') continue
+    if (activeRuns.has(run.id)) continue // 本进程内仍活跃，不动
+
+    await appendEvent(projectId, {
+      commandId: `run-interrupt-${randomUUID()}`,
+      payload: {
+        type: 'run_status_changed',
+        runId: run.id,
+        status: 'failed',
+        statusReason: '运行中断：应用重启或进程已不存在，无法确认执行结果（请重新发起）',
+      },
+    })
+    reconciled.push(run.id)
+  }
+
+  return { reconciled }
+}
+
+/** 日志读取上限（单次返回字节） */
+export const MAX_LOG_READ_BYTES = 512 * 1024
+
+/**
+ * 读取运行日志尾部。
+ *
+ * 只读 `<researchDir>/run-logs/<runId>.log`，不接受任意路径；
+ * 超出上限只返回尾部并标记截断（避免把巨量日志灌进渲染层）。
+ */
+export async function readRunLog(
+  projectId: string,
+  runId: string,
+  options: { maxBytes?: number } = {},
+): Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }> {
+  await assertProjectAccess(projectId, loadProject)
+  const runs = await listRuns(projectId)
+  if (!runs.some((r) => r.id === runId)) {
+    throw new ResearchError(RESEARCH_ERROR_CODES.NOT_FOUND, `运行记录不存在: ${runId}`)
+  }
+
+  const cap = Math.min(options.maxBytes ?? MAX_LOG_READ_BYTES, MAX_LOG_READ_BYTES)
+  const path = runLogPath(projectId, runId)
+  if (!existsSync(path)) {
+    return { content: '', truncated: false, totalBytes: 0, exists: false }
+  }
+
+  const { statSync } = await import('node:fs')
+  const totalBytes = statSync(path).size
+  const truncated = totalBytes > cap
+  const start = truncated ? totalBytes - cap : 0
+  const { openSync, readSync, closeSync } = await import('node:fs')
+  const fd = openSync(path, 'r')
+  try {
+    const length = totalBytes - start
+    const buffer = Buffer.alloc(length)
+    readSync(fd, buffer, 0, length, start)
+    return { content: buffer.toString('utf8'), truncated, totalBytes, exists: true }
+  } finally {
+    closeSync(fd)
+  }
+}
+
 /** 运行日志的绝对路径（供 UI 读取） */
 export function runLogPath(projectId: string, runId: string): string {
   return join(getResearchDir(projectId), 'run-logs', `${runId}.log`)

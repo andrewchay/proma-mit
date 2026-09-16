@@ -1555,6 +1555,9 @@ export interface ElectronAPI {
     listObservations: (projectId: string) => Promise<import('@gravitas/shared').RunObservation[]>
     listArtifacts: (projectId: string) => Promise<import('@gravitas/shared').RunArtifact[]>
     getAllowedInterpreters: () => Promise<{ interpreters: string[] }>
+    reconcileRuns: (projectId: string) => Promise<{ reconciled: string[] }>
+    readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>
+    recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2402,6 +2405,9 @@ const electronAPI: ElectronAPI = {
     listObservations: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_OBSERVATIONS, projectId) as Promise<import('@gravitas/shared').RunObservation[]>,
     listArtifacts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_ARTIFACTS, projectId) as Promise<import('@gravitas/shared').RunArtifact[]>,
     getAllowedInterpreters: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ALLOWED_INTERPRETERS) as Promise<{ interpreters: string[] }>,
+    reconcileRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECONCILE_RUNS, projectId) as Promise<{ reconciled: string[] }>,
+    readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.READ_RUN_LOG, projectId, runId, options) as Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>,
+    recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

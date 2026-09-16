@@ -532,6 +532,9 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   LIST_OBSERVATIONS: 'academic-research:list-observations',
   LIST_ARTIFACTS: 'academic-research:list-artifacts',
   GET_ALLOWED_INTERPRETERS: 'academic-research:get-allowed-interpreters',
+  RECONCILE_RUNS: 'academic-research:reconcile-runs',
+  READ_RUN_LOG: 'academic-research:read-run-log',
+  RECORD_ARTIFACT: 'academic-research:record-artifact',
 } as const
 
 // ===== 输入 =====

@@ -229,3 +229,78 @@ describe('真实本地执行器（无 shell）', () => {
     expect(log).not.toContain('pwned\n')
   })
 })
+
+describe('中断恢复与日志读取（M4.2）', () => {
+  test('重启后残留的 queued/running 被显式标记为中断，且幂等', async () => {
+    const { run: svc, projectId } = await setupProject()
+    const { appendEvent } = await import(`./research-store?t=${Math.random()}`)
+
+    // 直接构造一条「卡在 running」的运行（模拟应用重启前的中断）
+    const staleId = 'stale-run-1'
+    await appendEvent(projectId, {
+      commandId: 'stale-1',
+      payload: {
+        type: 'run_recorded',
+        run: {
+          id: staleId, projectId, kind: 'compute', status: 'runtime-placeholder' as never,
+          title: '中断的运行', input: { interpreter: 'python3', scriptPath: 'x.py' },
+          budget: { timeoutMs: 1000, maxOutputBytes: 1024 }, createdAt: new Date().toISOString(),
+        },
+      },
+    })
+    await appendEvent(projectId, {
+      commandId: 'stale-2',
+      payload: { type: 'run_status_changed', runId: staleId, status: 'running' },
+    })
+
+    const first = await svc.reconcileInterruptedRuns(projectId)
+    expect(first.reconciled).toContain(staleId)
+
+    const runs = (await svc.listRuns(projectId)) as Array<{ id: string; status: string; statusReason?: string }>
+    const stale = runs.find((r) => r.id === staleId)!
+    expect(stale.status).toBe('failed')
+    expect(stale.statusReason).toContain('运行中断')
+
+    // 幂等：再次调和不再改写
+    const second = await svc.reconcileInterruptedRuns(projectId)
+    expect(second.reconciled).not.toContain(staleId)
+  })
+
+  test('终止态运行不被调和改写', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const fake = fakeExecutor({ status: 'completed', exitCode: 0 })
+    const done = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '完成', input: { interpreter: 'node', scriptPath: 'a.js' } },
+      { executor: fake.executor, resolveProjectRoot: () => workdir },
+    )
+    const result = await svc.reconcileInterruptedRuns(projectId)
+    expect(result.reconciled).not.toContain(done.id)
+    const allRuns = (await svc.listRuns(projectId)) as Array<{ id: string; status: string }>
+    expect(allRuns.find((r) => r.id === done.id)?.status).toBe('completed')
+  })
+
+  test('日志读取：不存在时明确返回；超上限只给尾部并标记截断', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const manual = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'tool-validation', title: 'T', input: {} },
+      { resolveProjectRoot: () => workdir },
+    )
+
+    const missing = await svc.readRunLog(projectId, manual.id)
+    expect(missing.exists).toBe(false)
+    expect(missing.content).toBe('')
+
+    // 写入超过上限的日志
+    const { writeFileSync, mkdirSync } = await import('node:fs')
+    const logDir = join(tempDir, 'academic', 'research', projectId, 'run-logs')
+    mkdirSync(logDir, { recursive: true })
+    writeFileSync(join(logDir, `${manual.id}.log`), 'x'.repeat(3000) + 'TAIL', 'utf8')
+
+    const limited = await svc.readRunLog(projectId, manual.id, { maxBytes: 10 })
+    expect(limited.truncated).toBe(true)
+    expect(limited.content.endsWith('TAIL')).toBe(true)
+    expect(limited.totalBytes).toBe(3004)
+  })
+})
