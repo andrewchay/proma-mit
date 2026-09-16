@@ -1869,6 +1869,7 @@ export interface ElectronAPI {
     listRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     getPendingRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     refreshRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
+    scanEmployeeCapabilityRecommendations: () => Promise<Array<{ agentId: string; scope: 'role' | 'workspace'; workspaceId?: string; skipped?: string; recommendationId?: string }>>
     acceptRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     dismissRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     deleteRecommendation: (id: string) => Promise<boolean>
@@ -4080,6 +4081,7 @@ const electronAPI: ElectronAPI = {
     listRecommendations: () => ipcRenderer.invoke('proactive:listRecommendations'),
     getPendingRecommendations: () => ipcRenderer.invoke('proactive:getPendingRecommendations'),
     refreshRecommendations: () => ipcRenderer.invoke('proactive:refreshRecommendations'),
+    scanEmployeeCapabilityRecommendations: () => ipcRenderer.invoke('proactive:scanEmployeeCapabilityRecommendations'),
     acceptRecommendation: (id: string) => ipcRenderer.invoke('proactive:acceptRecommendation', id),
     dismissRecommendation: (id: string) => ipcRenderer.invoke('proactive:dismissRecommendation', id),
     deleteRecommendation: (id: string) => ipcRenderer.invoke('proactive:deleteRecommendation', id),

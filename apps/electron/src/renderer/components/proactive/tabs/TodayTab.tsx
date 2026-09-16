@@ -2,13 +2,14 @@
  * Today Tab - 今日概览（接入真实数据）
  */
 
-import type * as React from 'react'
+import * as React from 'react'
 import { useAtom } from 'jotai'
 import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { summarizeProactiveRuns, sortProactiveRuns } from '@/lib/proactive-view'
 import { ProactiveRunCard } from '../ProactiveRunCard'
 import { EmployeeCapabilityApprovalDetails } from '../EmployeeCapabilityApprovalDetails'
+import { EmployeeCapabilityRecommendationCard } from '../EmployeeCapabilityRecommendationCard'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { proactiveSchedulesAtom, proactiveRunsAtom, proactiveRecommendationsAtom, proactiveApprovalsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
@@ -27,6 +28,11 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
   const activeSchedules = schedules.filter((s) => s.enabled)
   const pendingApprovals = approvals.filter((a) => a.status === 'pending' || a.status === 'edited')
   const suggestedRecommendations = recommendations.filter((r) => r.status === 'suggested')
+  const capabilityRecommendations = suggestedRecommendations.filter((item) => item.scope.startsWith('employee-capability:'))
+  const generalRecommendations = suggestedRecommendations.filter((item) => !item.scope.startsWith('employee-capability:'))
+  // 评测必须显式选择渠道/模型，不在建议卡里隐式回退到全局配置。
+  const [evaluationChannelId, setEvaluationChannelId] = React.useState('')
+  const [evaluationModelId, setEvaluationModelId] = React.useState('')
   const recentRuns = sortProactiveRuns(runs).slice(0, 5)
   const counts = summarizeProactiveRuns(runs)
   const pause = async (id: string): Promise<void> => {
@@ -106,7 +112,11 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
       {suggestedRecommendations.length > 0 && (
         <SectionCard title="推荐开启" icon={Sparkles}>
           <div className="space-y-2">
-            {suggestedRecommendations.map((rec) => (
+            {capabilityRecommendations.length > 0 && <div className="rounded-lg bg-foreground/[0.02] p-2 text-xs"><label className="mr-3">评测渠道<input className="ml-2 rounded border bg-background px-2 py-1" value={evaluationChannelId} onChange={(event) => setEvaluationChannelId(event.target.value)} placeholder="渠道 ID（必填）" /></label><label>评测模型<input className="ml-2 rounded border bg-background px-2 py-1" value={evaluationModelId} onChange={(event) => setEvaluationModelId(event.target.value)} placeholder="模型 ID（必填）" /></label><p className="mt-1 text-[11px] text-muted-foreground">必须显式填写已启用的渠道与模型；未配置时不会回退到默认渠道。</p></div>}
+            {capabilityRecommendations.map((rec) => (
+              <EmployeeCapabilityRecommendationCard key={rec.id} recommendation={rec} channelId={evaluationChannelId} modelId={evaluationModelId} judgeChannelId="" onResolved={(updated) => { if (updated) setRecommendations((current) => current.map((item) => item.id === updated.id ? updated : item)); else void onRefresh() }} />
+            ))}
+            {generalRecommendations.map((rec) => (
               <RecommendationCard key={rec.id} recommendation={rec} onAccept={handleAcceptRecommendation} onDismiss={handleDismissRecommendation} />
             ))}
           </div>
