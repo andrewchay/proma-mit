@@ -482,6 +482,19 @@ export interface AgentEmployeeCapabilityHealth {
   lastExecutedAt?: number
 }
 
+export interface AgentEmployeeCapabilityRollbackPreview {
+  versionId: string
+  scope: AgentEmployeeCapabilityScope
+  workspaceId?: string
+  targetVersionId?: string
+  targetVersionNumber?: number
+  targetIsBaseline: boolean
+  activeExecutionCount: number
+  dependentWorkspaceVersionCount: number
+  historicalExecutionsUnaffected: true
+  note: string
+}
+
 export interface AgentEmployeeCapabilityRollbackAudit {
   id: string
   agentId: string

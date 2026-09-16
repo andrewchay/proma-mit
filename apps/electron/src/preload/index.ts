@@ -1819,6 +1819,8 @@ export interface ElectronAPI {
       getEvolutionLedger: (agentIds?: string[], windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeEvolutionLedgerResult>
       exportEvolutionPackage: (agentIds?: string[]) => Promise<unknown>
       validateEvolutionPackage: (input: unknown) => Promise<import('@gravitas/shared').EvolutionPackageValidationResult>
+      previewCapabilityRollback: (agentId: string, versionId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackPreviewResult>
+      getCapabilityAlerts: (agentId: string, windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityAlertResult[]>
     }
 
     // --- 营销能力包 ---
@@ -4050,6 +4052,8 @@ const electronAPI: ElectronAPI = {
       getEvolutionLedger: (agentIds, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, agentIds, windowDays),
       exportEvolutionPackage: (agentIds) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, agentIds),
       validateEvolutionPackage: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, input),
+      previewCapabilityRollback: (agentId, versionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, agentId, versionId),
+      getCapabilityAlerts: (agentId, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, agentId, windowDays),
     },
     // --- 营销能力包 ---
     marketing: {

@@ -2874,6 +2874,39 @@ export function deleteAgentEmployeeLearningSamples(ids: string[]): number {
   return typeof result.changes === 'number' ? result.changes : 0
 }
 
+/**
+ * 回滚影响预览：只描述“会与不会”发生什么，不修改任何数据。
+ * 历史执行绑定冻结版本，永远不受回滚影响。
+ */
+export function previewAgentEmployeeCapabilityRollback(agentId: string, versionId: string): import('./project-types').AgentEmployeeCapabilityRollbackPreview {
+  const database = getProjectDb()
+  const row = database.prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ? AND agent_id = ?').get(versionId, agentId) as CapabilityVersionRow | undefined
+  if (!row) throw new Error('能力版本不存在')
+  const version = rowToCapabilityVersion(row)
+  if (version.status !== 'active') throw new Error('只能预览当前 active 能力版本的回滚影响')
+  const parent = version.parentVersionId
+    ? database.prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ? AND agent_id = ?').get(version.parentVersionId, agentId) as CapabilityVersionRow | undefined
+    : undefined
+  const activeExecutions = (database.prepare("SELECT COUNT(*) AS count FROM agent_executions WHERE agent_id = ? AND status IN ('queued','running')").get(agentId) as { count: number }).count
+  // 回滚按 scope 生效，同 scope 的工作区版本不会自动改变。
+  const dependencies = version.scope === 'role'
+    ? getAgentEmployeeCapabilityDependencyGraph(agentId).blockedBy.filter((edge) => edge.roleVersionId === version.id).length
+    : 0
+  return {
+    versionId: version.id,
+    scope: version.scope,
+    workspaceId: version.workspaceId,
+    targetVersionId: parent?.id,
+    targetVersionNumber: parent?.version_number,
+    // 无父版本时回到基线，即不再附加任何能力文本。
+    targetIsBaseline: !parent,
+    activeExecutionCount: activeExecutions,
+    dependentWorkspaceVersionCount: dependencies,
+    historicalExecutionsUnaffected: true,
+    note: '回滚只影响后续任务；进行中的执行保持已冻结版本，历史执行不会被改写。',
+  }
+}
+
 export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string): import('./project-types').AgentEmployeeCapabilityRollbackAudit {
   const trimmedReason = reason.trim()
   if (!trimmedReason || trimmedReason.length > 1000) throw new Error('回滚原因不能为空且不能超过 1000 字符')
