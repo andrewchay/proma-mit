@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { proactiveApprovalsAtom } from '@/atoms/proactive-data'
 import type { ProactiveApproval } from '@gravitas/shared'
+import { EmployeeCapabilityApprovalDetails } from '../EmployeeCapabilityApprovalDetails'
 
 export function ApprovalsTab({ onRefresh }: { onRefresh: () => Promise<void> }): React.ReactElement {
   const [approvals, setApprovals] = useAtom(proactiveApprovalsAtom)
@@ -63,7 +64,7 @@ export function ApprovalsTab({ onRefresh }: { onRefresh: () => Promise<void> }):
             const resolving = resolvingId === approval.id
             return <div key={approval.id} className="flex items-start gap-3 p-3 rounded-lg bg-foreground/[0.02] border border-border/40">
               <AlertCircle size={16} className="text-orange-500 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0"><p className="text-sm font-medium">{approval.title}</p><p className="text-xs text-muted-foreground mt-0.5">{approval.summary}</p><p className="text-[11px] text-muted-foreground mt-1">来源：{approval.sourceType}{approval.status === 'edited' ? ' · 已编辑，需再次确认' : ''}</p></div>
+              <div className="flex-1 min-w-0"><p className="text-sm font-medium">{approval.title}</p><p className="text-xs text-muted-foreground mt-0.5">{approval.summary}</p><p className="text-[11px] text-muted-foreground mt-1">来源：{approval.sourceType}{approval.status === 'edited' ? ' · 已编辑，需再次确认' : ''}</p><EmployeeCapabilityApprovalDetails approval={approval} /></div>
               <div className="flex items-center gap-1.5"><Button variant="outline" size="sm" disabled={resolving} onClick={() => void approve(approval.id)}>{resolving ? <LoaderCircle className="mr-1 size-3.5 animate-spin" /> : <CheckCircle className="mr-1 size-3.5" />}同意</Button><Button variant="ghost" size="sm" disabled={resolving} onClick={() => void reject(approval.id)}><XCircle className="mr-1 size-3.5" />拒绝</Button></div>
             </div>
           })}

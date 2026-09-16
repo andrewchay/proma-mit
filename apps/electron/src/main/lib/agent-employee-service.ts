@@ -9,7 +9,7 @@
  * - 心跳检查（60s）：isAgentSessionActive 探测会话存活 + 超时中止 + stale 回退可重试
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { getChannelById } from './channel-manager'
@@ -88,8 +88,12 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
 export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput): AgentEmployee | null {
   const current = store.getAgentEmployee(id)
   if (!current) return null
-  validateEmployeeConfiguration({ ...current, ...patch })
-  return store.updateAgentEmployee(id, patch)
+  // 兼容旧单工作区编辑语义：显式清空 workspaceId 同时清空由旧字段迁移出的集合。
+  const normalizedPatch = patch.workspaceId === undefined && Object.prototype.hasOwnProperty.call(patch, 'workspaceId') && patch.workspaceIds === undefined
+    ? { ...patch, workspaceIds: [] }
+    : patch
+  validateEmployeeConfiguration({ ...current, ...normalizedPatch })
+  return store.updateAgentEmployee(id, normalizedPatch)
 }
 
 function validateEmployeeConfiguration(input: CreateAgentEmployeeInput): void {
@@ -124,12 +128,43 @@ export function listAgentExecutionsByAgent(agentId: string, limit = 50): AgentEx
   return store.listAgentExecutionsByAgent(agentId, limit)
 }
 
+export function listAgentEmployeeCapabilityVersions(agentId: string) {
+  return store.listAgentEmployeeCapabilityVersions(agentId)
+}
+
+export function listAgentEmployeeLearningSamples(agentId: string) {
+  return store.listAgentEmployeeLearningSamples(agentId)
+}
+
+export function reviewAgentEmployeeLearningSample(id: string, evidenceSummary: string) {
+  return store.reviewAgentEmployeeLearningSample(id, evidenceSummary)
+}
+
+export function excludeAgentEmployeeLearningSample(id: string) {
+  return store.excludeAgentEmployeeLearningSample(id)
+}
+
 /**
  * 显式停止项目中的一条 AI 员工执行。
  *
  * 只处理 queued/running 记录：queued 不会启动，running 会先中止 Runtime/Workflow，随后
  * 回写 execution 与任务为可人工处理的 paused。不会删除 worktree、会话或已有证据。
  */
+function recordLearningSample(execution: AgentExecution, outcome: 'accepted' | 'changes_requested' | 'failed' | 'cancelled', evidenceSummary: string): void {
+  if (!execution.entityType || execution.entityType !== 'task') return
+  store.createAgentEmployeeLearningSample({
+    agentId: execution.agentId,
+    executionId: execution.id,
+    projectId: execution.projectId,
+    taskId: execution.entityId,
+    capabilityVersionIds: execution.capabilityVersionIds ?? [],
+    outcome,
+    evidenceSummary: evidenceSummary.slice(0, 4000),
+    privacyStatus: 'pending',
+    labeledAt: Date.now(),
+  })
+}
+
 export function cancelAgentExecution(executionId: string): { id: string; status: 'cancelled' } {
   const execution = store.getAgentExecution(executionId)
   if (!execution) throw new Error('未找到 Agent 执行记录')
@@ -160,6 +195,8 @@ export function cancelAgentExecution(executionId: string): { id: string; status:
   })
   writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
   recordActivity(store.getAgentExecution(execution.id)!, 'agent_cancelled', '用户停止执行，未交付')
+  // 取消仅保留待人工审查的样本，绝不自动进入演化输入。
+  recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
   return { id: execution.id, status: 'cancelled' }
 }
 
@@ -363,7 +400,10 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
   cancelReassignedQueue(task)
   if (store.listAgentExecutionsByEntity('task', task.id).some((run) => run.status === 'queued' || run.status === 'running')) return null
   const executionId = randomUUID()
-  const prompt = buildAgentTaskPrompt(task, employee)
+  const capabilityVersions = store.getActiveAgentEmployeeCapabilityVersions(employee.id, task.workspaceId)
+  const capabilityContent = capabilityVersions.map((version) => version.content).filter(Boolean).join('\n\n')
+  const capabilityHash = createHash('sha256').update(capabilityContent).digest('hex')
+  const prompt = `${buildAgentTaskPrompt(task, employee)}${capabilityContent ? `\n\n## 已冻结员工能力版本\n${capabilityContent}` : ''}`
   const usesWorkflow = Boolean(employee.workflowId)
 
   // 1. 记录执行（queued，等并发调度；executor 标记 headless / workflow）
@@ -378,6 +418,8 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
     prompt,
     status: 'queued',
     requestedPermissions: task.permissionRequests ?? [],
+    capabilityVersionIds: capabilityVersions.map((version) => version.id),
+    capabilityContentHash: capabilityHash,
     startedAt: Date.now(),
   })
   const execution = store.getAgentExecution(executionId)
@@ -695,6 +737,7 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
     store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: Date.now(), error: '用户已停止执行，未交付' })
     writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', Date.now())
     recordActivity(store.getAgentExecution(executionId)!, 'agent_cancelled', '用户停止执行，未交付')
+    recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
     return
   }
   if (!messages?.some((message) => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim())) {
@@ -761,6 +804,8 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
     'agent_completed',
     `AI 员工完成任务「${execution.entityId}」：${summary.slice(0, 80)}`,
   )
+  // 完成只产生待脱敏样本；业务验收仍以 project chain 的人工结果为准。
+  recordLearningSample(execution, 'accepted', summary)
 }
 
 /** 执行失败回写（幂等：终态 failed/cancelled/stale 均拒绝重入，避免 onError 与 .catch 双路径重复回写） */
@@ -790,6 +835,7 @@ function handleExecutionError(executionId: string, error: string, startedAt: num
     'agent_failed',
     `AI 员工执行任务失败：${error.slice(0, 120)}`,
   )
+  recordLearningSample(execution, 'failed', `执行失败：${error.slice(0, 500)}`)
 }
 
 // ============================================

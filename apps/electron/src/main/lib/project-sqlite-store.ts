@@ -718,11 +718,46 @@ function migrate(database: SqliteCompat): void {
       error TEXT,
       requested_permissions TEXT NOT NULL DEFAULT '[]',
       last_heartbeat_at INTEGER,
+      capability_version_ids TEXT NOT NULL DEFAULT '[]',
+      capability_content_hash TEXT,
       started_at INTEGER NOT NULL,
       completed_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_agent_exec_entity ON agent_executions(entity_type, entity_id);
     CREATE INDEX IF NOT EXISTS idx_agent_exec_status ON agent_executions(status);
+
+    CREATE TABLE IF NOT EXISTS agent_employee_capability_versions (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      parent_version_id TEXT,
+      version_number INTEGER NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      activated_at INTEGER,
+      retired_at INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_capability_version ON agent_employee_capability_versions(agent_id, version_number);
+    CREATE INDEX IF NOT EXISTS idx_agent_capability_active ON agent_employee_capability_versions(agent_id, scope, workspace_id, status);
+
+    CREATE TABLE IF NOT EXISTS agent_employee_learning_samples (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      capability_version_ids TEXT NOT NULL DEFAULT '[]',
+      outcome TEXT NOT NULL,
+      evidence_summary TEXT NOT NULL,
+      privacy_status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      labeled_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_learning_samples ON agent_employee_learning_samples(agent_id, privacy_status, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS sync_meta (
       key TEXT PRIMARY KEY,
@@ -762,6 +797,8 @@ function migrate(database: SqliteCompat): void {
   if (!execColumns.includes('executor')) {
     database.exec(`ALTER TABLE agent_executions ADD COLUMN executor TEXT NOT NULL DEFAULT 'headless'`)
   }
+  if (!execColumns.includes('capability_version_ids')) database.exec("ALTER TABLE agent_executions ADD COLUMN capability_version_ids TEXT NOT NULL DEFAULT '[]'")
+  if (!execColumns.includes('capability_content_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN capability_content_hash TEXT')
   // PH1-A：user_mappings 表新增 feishu_union_id 列（兼容旧库）
   const umCols = readColumnNames(database, 'user_mappings')
   if (!umCols.includes('feishu_union_id')) {
@@ -2420,6 +2457,7 @@ type AgentExecutionRow = {
   session_id: string; executor: string | null; status: string; prompt: string; result_summary: string | null;
   output_files: string | null; risk_level: string | null; error: string | null;
   requested_permissions: string | null; last_heartbeat_at: number | null;
+  capability_version_ids: string | null; capability_content_hash: string | null;
   started_at: number; completed_at: number | null;
 }
 
@@ -2469,6 +2507,8 @@ function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
     error: row.error ?? undefined,
     requestedPermissions: parseJsonArray(row.requested_permissions),
     lastHeartbeatAt: row.last_heartbeat_at ?? undefined,
+    capabilityVersionIds: parseJsonArray(row.capability_version_ids),
+    capabilityContentHash: row.capability_content_hash ?? undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at ?? undefined,
   }
@@ -2587,8 +2627,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   const now = input.startedAt ?? Date.now()
   database.prepare(
     `INSERT INTO agent_executions
-     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, NULL)`
+     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
@@ -2600,6 +2640,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
     input.status ?? 'queued',
     input.prompt,
     JSON.stringify(input.requestedPermissions ?? []),
+    JSON.stringify(input.capabilityVersionIds ?? []),
+    input.capabilityContentHash ?? null,
     now,
   )
   return getAgentExecution(input.id)!
@@ -2626,7 +2668,7 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
   database.prepare(
     `UPDATE agent_executions SET
        session_id = ?, status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
-       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?
+       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?, capability_version_ids = ?, capability_content_hash = ?
      WHERE id = ?`
   ).run(
     merged.sessionId,
@@ -2639,6 +2681,8 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
     merged.lastHeartbeatAt ?? null,
     merged.completedAt ?? null,
     merged.prompt,
+    JSON.stringify(merged.capabilityVersionIds ?? []),
+    merged.capabilityContentHash ?? null,
     id,
   )
   return getAgentExecution(id)
@@ -2674,6 +2718,77 @@ export function listAgentExecutionsByProject(projectId: string): AgentExecution[
     `SELECT * FROM agent_executions WHERE project_id = ? ORDER BY started_at DESC`
   ).all(projectId) as AgentExecutionRow[]
   return rows.map(rowToAgentExecution)
+}
+
+type CapabilityVersionRow = {
+  id: string; agent_id: string; parent_version_id: string | null; version_number: number; scope: string; workspace_id: string | null;
+  content: string; content_hash: string; status: string; source: string; created_at: number; activated_at: number | null; retired_at: number | null;
+}
+type LearningSampleRow = {
+  id: string; agent_id: string; execution_id: string; project_id: string; task_id: string; capability_version_ids: string;
+  outcome: string; evidence_summary: string; privacy_status: string; created_at: number; labeled_at: number | null;
+}
+
+function rowToCapabilityVersion(row: CapabilityVersionRow): import('./project-types').AgentEmployeeCapabilityVersion {
+  return { id: row.id, agentId: row.agent_id, parentVersionId: row.parent_version_id ?? undefined, versionNumber: row.version_number, scope: row.scope as import('./project-types').AgentEmployeeCapabilityScope, workspaceId: row.workspace_id ?? undefined, content: row.content, contentHash: row.content_hash, status: row.status as import('./project-types').AgentEmployeeCapabilityStatus, source: row.source as 'manual' | 'evolution', createdAt: row.created_at, activatedAt: row.activated_at ?? undefined, retiredAt: row.retired_at ?? undefined }
+}
+
+export function listAgentEmployeeCapabilityVersions(agentId: string): import('./project-types').AgentEmployeeCapabilityVersion[] {
+  return (getProjectDb().prepare('SELECT * FROM agent_employee_capability_versions WHERE agent_id = ? ORDER BY version_number DESC').all(agentId) as CapabilityVersionRow[]).map(rowToCapabilityVersion)
+}
+
+export function getActiveAgentEmployeeCapabilityVersions(agentId: string, workspaceId?: string): import('./project-types').AgentEmployeeCapabilityVersion[] {
+  const rows = getProjectDb().prepare('SELECT * FROM agent_employee_capability_versions WHERE agent_id = ? AND status = ? AND (scope = ? OR (scope = ? AND workspace_id = ?)) ORDER BY version_number ASC').all(agentId, 'active', 'role', 'workspace', workspaceId ?? null) as CapabilityVersionRow[]
+  return rows.map(rowToCapabilityVersion)
+}
+
+export function createAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt'>): import('./project-types').AgentEmployeeCapabilityVersion {
+  const database = getProjectDb()
+  const id = randomUUID()
+  const timestamp = Date.now()
+  database.prepare('INSERT INTO agent_employee_capability_versions (id, agent_id, parent_version_id, version_number, scope, workspace_id, content, content_hash, status, source, created_at, activated_at, retired_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, input.agentId, input.parentVersionId ?? null, input.versionNumber, input.scope, input.workspaceId ?? null, input.content, input.contentHash, input.status, input.source, timestamp, input.activatedAt ?? null, input.retiredAt ?? null)
+  const row = getProjectDb().prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ?').get(id) as CapabilityVersionRow
+  return rowToCapabilityVersion(row)
+}
+
+export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>): import('./project-types').AgentEmployeeCapabilityVersion {
+  const database = getProjectDb()
+  const active = getActiveAgentEmployeeCapabilityVersions(input.agentId, input.workspaceId).find((version) => version.scope === input.scope && version.workspaceId === input.workspaceId)
+  if (input.parentVersionId && active?.id !== input.parentVersionId) throw new Error('能力版本已变化，请基于当前版本重新评测后再推广')
+  const timestamp = Date.now()
+  database.prepare("UPDATE agent_employee_capability_versions SET status = 'superseded', retired_at = ? WHERE agent_id = ? AND scope = ? AND workspace_id IS ? AND status = 'active'").run(timestamp, input.agentId, input.scope, input.workspaceId ?? null)
+  return createAgentEmployeeCapabilityVersion({ ...input, status: 'active', activatedAt: timestamp })
+}
+
+export function createAgentEmployeeLearningSample(input: Omit<import('./project-types').AgentEmployeeLearningSample, 'id' | 'createdAt'>): import('./project-types').AgentEmployeeLearningSample {
+  const id = randomUUID()
+  const timestamp = Date.now()
+  getProjectDb().prepare('INSERT OR IGNORE INTO agent_employee_learning_samples (id, agent_id, execution_id, project_id, task_id, capability_version_ids, outcome, evidence_summary, privacy_status, created_at, labeled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, input.agentId, input.executionId, input.projectId, input.taskId, JSON.stringify(input.capabilityVersionIds), input.outcome, input.evidenceSummary, input.privacyStatus, timestamp, input.labeledAt ?? null)
+  const row = getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE execution_id = ?').get(input.executionId) as LearningSampleRow
+  return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }
+}
+
+export function listAgentEmployeeLearningSamples(agentId: string): import('./project-types').AgentEmployeeLearningSample[] {
+  return (getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]).map((row) => ({ id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }))
+}
+
+export function reviewAgentEmployeeLearningSample(id: string, evidenceSummary: string): import('./project-types').AgentEmployeeLearningSample | null {
+  const summary = evidenceSummary.trim()
+  if (!summary || summary.length > 4000) throw new Error('审核摘要不能为空且不能超过 4000 字符')
+  const database = getProjectDb()
+  const existing = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE id = ?').get(id) as LearningSampleRow | undefined
+  if (!existing) return null
+  if (existing.privacy_status === 'excluded') throw new Error('已排除的学习样本不能重新启用')
+  database.prepare("UPDATE agent_employee_learning_samples SET evidence_summary = ?, privacy_status = 'sanitized', labeled_at = ? WHERE id = ?").run(summary, Date.now(), id)
+  const row = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE id = ?').get(id) as LearningSampleRow
+  return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }
+}
+
+export function excludeAgentEmployeeLearningSample(id: string): import('./project-types').AgentEmployeeLearningSample | null {
+  const database = getProjectDb()
+  database.prepare("UPDATE agent_employee_learning_samples SET outcome = 'manual_excluded', privacy_status = 'excluded', labeled_at = ? WHERE id = ?").run(Date.now(), id)
+  const row = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE id = ?').get(id) as LearningSampleRow | undefined
+  return row ? { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined } : null
 }
 
 // ===== sync_meta（跨平台同步元信息，持久化到 DB 防重启丢失） =====

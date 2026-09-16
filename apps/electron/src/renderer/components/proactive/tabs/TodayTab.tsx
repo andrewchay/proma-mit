@@ -8,6 +8,7 @@ import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Paus
 import { toast } from 'sonner'
 import { summarizeProactiveRuns, sortProactiveRuns } from '@/lib/proactive-view'
 import { ProactiveRunCard } from '../ProactiveRunCard'
+import { EmployeeCapabilityApprovalDetails } from '../EmployeeCapabilityApprovalDetails'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { proactiveSchedulesAtom, proactiveRunsAtom, proactiveRecommendationsAtom, proactiveApprovalsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
@@ -213,6 +214,7 @@ function ApprovalCard({ approval, onApprove, onReject }: { approval: ProactiveAp
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium">{approval.title}</p>
         <p className="text-xs text-muted-foreground mt-0.5">{approval.summary}</p>
+        <EmployeeCapabilityApprovalDetails approval={approval} />
         <div className="flex items-center gap-2 mt-2">
           <Button size="sm" variant="default" className="h-7 text-xs" onClick={() => onApprove(approval.id)}>批准</Button>
           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onReject(approval.id)}>拒绝</Button>

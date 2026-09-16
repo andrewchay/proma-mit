@@ -156,6 +156,10 @@ import {
   listAgentExecutionsByEntity,
   listAgentExecutionsByAgent,
   cancelAgentExecution,
+  listAgentEmployeeCapabilityVersions,
+  listAgentEmployeeLearningSamples,
+  excludeAgentEmployeeLearningSample,
+  reviewAgentEmployeeLearningSample,
 } from './agent-employee-service'
 import { onSettingsChange } from './settings-service'
 import {
@@ -897,6 +901,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, (_, entityType: 'task' | 'subTask', entityId: string) => listAgentExecutionsByEntity(entityType, entityId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, (_, agentId: string, limit?: number) => listAgentExecutionsByAgent(agentId, limit ?? 50))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, (_, executionId: string) => cancelAgentExecution(executionId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, (_, agentId: string) => listAgentEmployeeCapabilityVersions(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, (_, agentId: string) => listAgentEmployeeLearningSamples(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, (_, sampleId: string) => excludeAgentEmployeeLearningSample(sampleId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, (_, sampleId: string, evidenceSummary: string) => reviewAgentEmployeeLearningSample(sampleId, evidenceSummary))
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

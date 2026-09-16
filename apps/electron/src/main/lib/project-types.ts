@@ -422,8 +422,45 @@ export interface AgentExecution {
   /** by-task 申请的权限（P1 使用，P0 预留） */
   requestedPermissions?: string[]
   lastHeartbeatAt?: number
+  /** 派发时冻结的角色/工作区能力版本，后续编辑不会改写历史执行。 */
+  capabilityVersionIds?: string[]
+  capabilityContentHash?: string
   startedAt: number
   completedAt?: number
+}
+
+export type AgentEmployeeCapabilityScope = 'role' | 'workspace'
+export type AgentEmployeeCapabilityStatus = 'active' | 'candidate' | 'superseded' | 'rolled_back'
+export type AgentEmployeeLearningOutcome = 'accepted' | 'changes_requested' | 'failed' | 'cancelled' | 'manual_excluded'
+
+export interface AgentEmployeeCapabilityVersion {
+  id: string
+  agentId: string
+  parentVersionId?: string
+  versionNumber: number
+  scope: AgentEmployeeCapabilityScope
+  workspaceId?: string
+  content: string
+  contentHash: string
+  status: AgentEmployeeCapabilityStatus
+  source: 'manual' | 'evolution'
+  createdAt: number
+  activatedAt?: number
+  retiredAt?: number
+}
+
+export interface AgentEmployeeLearningSample {
+  id: string
+  agentId: string
+  executionId: string
+  projectId: string
+  taskId: string
+  capabilityVersionIds: string[]
+  outcome: AgentEmployeeLearningOutcome
+  evidenceSummary: string
+  privacyStatus: 'pending' | 'sanitized' | 'excluded'
+  createdAt: number
+  labeledAt?: number
 }
 
 export interface CreateAgentExecutionInput {
@@ -437,6 +474,8 @@ export interface CreateAgentExecutionInput {
   prompt: string
   status?: AgentExecutionStatus
   requestedPermissions?: string[]
+  capabilityVersionIds?: string[]
+  capabilityContentHash?: string
   startedAt?: number
 }
 

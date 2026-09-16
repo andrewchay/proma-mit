@@ -42,6 +42,13 @@ export function AgentTeamPanel(): React.ReactElement {
   const [showForm, setShowForm] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [executionsByAgent, setExecutionsByAgent] = React.useState<Record<string, AgentExecutionResult[]>>({})
+  interface CapabilityPanelData {
+    versions: Array<{ id: string; versionNumber: number; scope: string; workspaceId?: string; status: string; source: string; content: string; contentHash: string; createdAt: number }>
+    samples: Array<{ id: string; executionId: string; outcome: string; privacyStatus: string; evidenceSummary: string; capabilityVersionIds: string[]; createdAt: number }>
+  }
+  const [capabilityData, setCapabilityData] = React.useState<Record<string, CapabilityPanelData>>({})
+  const [reviewingSampleId, setReviewingSampleId] = React.useState<string | null>(null)
+  const [sampleDrafts, setSampleDrafts] = React.useState<Record<string, string>>({})
 
   // 表单状态
   const [form, setForm] = React.useState({
@@ -80,6 +87,45 @@ export function AgentTeamPanel(): React.ReactElement {
       setLoading(false)
     }
   }, [setWorkspaces])
+
+  const loadCapabilities = React.useCallback(async (agentId: string): Promise<void> => {
+    try {
+      const [versions, samples] = await Promise.all([
+        window.electronAPI.paa.agentEmployees.listCapabilityVersions(agentId),
+        window.electronAPI.paa.agentEmployees.listLearningSamples(agentId),
+      ])
+      setCapabilityData((current) => ({ ...current, [agentId]: { versions: versions as never[], samples: samples as never[] } }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '能力演化数据加载失败')
+    }
+  }, [])
+
+  const reviewSample = async (agentId: string, sampleId: string): Promise<void> => {
+    const summary = sampleDrafts[sampleId]?.trim()
+    if (!summary) return
+    setReviewingSampleId(sampleId)
+    try {
+      await window.electronAPI.paa.agentEmployees.reviewLearningSample(sampleId, summary)
+      await loadCapabilities(agentId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '样本审核失败')
+    } finally {
+      setReviewingSampleId(null)
+    }
+  }
+
+  const excludeSample = async (agentId: string, sampleId: string): Promise<void> => {
+    if (!confirm('排除后该样本将不能进入能力候选输入，确认继续？')) return
+    setReviewingSampleId(sampleId)
+    try {
+      await window.electronAPI.paa.agentEmployees.excludeLearningSample(sampleId)
+      await loadCapabilities(agentId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '样本排除失败')
+    } finally {
+      setReviewingSampleId(null)
+    }
+  }
 
   const loadExecutions = React.useCallback(async (agentId: string): Promise<void> => {
     try {
@@ -246,7 +292,9 @@ export function AgentTeamPanel(): React.ReactElement {
                   </div>
                 </div>
 
-                <button onClick={() => void loadExecutions(emp.id)} className="pl-11 text-xs text-primary">刷新执行记录</button>
+                <div className="pl-11 flex gap-3"><button onClick={() => void loadExecutions(emp.id)} className="text-xs text-primary">刷新执行记录</button><button onClick={() => void loadCapabilities(emp.id)} className="text-xs text-primary">查看能力演化</button></div>
+                {capabilityData[emp.id] && (() => { const capability = capabilityData[emp.id]!; return <details className="ml-11 rounded-md bg-primary/[0.03] p-3 text-xs"><summary className="cursor-pointer font-medium">能力版本与学习样本</summary><div className="mt-3 space-y-3"><div><p className="mb-1 text-foreground/55">能力版本</p>{capability.versions.length === 0 ? <p className="text-muted-foreground">尚无已激活能力版本。</p> : capability.versions.map((version) => <details key={version.id} className="rounded bg-background/70 p-2"><summary>v{version.versionNumber} · {version.scope} · {version.status} · {version.contentHash.slice(0, 12)}</summary><pre className="mt-2 whitespace-pre-wrap break-words font-sans text-[11px]">{version.content || '（空基线）'}</pre></details>)}</div><div><p className="mb-1 text-foreground/55">学习样本</p>{capability.samples.length === 0 ? <p className="text-muted-foreground">暂无学习样本。</p> : capability.samples.map((sample) => <div key={sample.id} className="mb-2 rounded bg-background/70 p-2"><p><span className="font-medium">{sample.outcome}</span> · {sample.privacyStatus} · {new Date(sample.createdAt).toLocaleString('zh-CN')}</p><p className="mt-1 whitespace-pre-wrap break-words">{sample.evidenceSummary}</p>{sample.privacyStatus === 'pending' && <textarea className="mt-2 w-full rounded border bg-background p-2 text-[11px]" placeholder="人工审核后的脱敏摘要：删除路径、原始会话、敏感信息，只保留可评测结论" value={sampleDrafts[sample.id] ?? sample.evidenceSummary} onChange={(event) => setSampleDrafts((current) => ({ ...current, [sample.id]: event.target.value }))} />}{sample.privacyStatus === 'pending' && <button disabled={reviewingSampleId === sample.id} className="mr-2 mt-2 rounded bg-primary px-2 py-1 text-[11px] text-primary-foreground disabled:opacity-50" onClick={() => void reviewSample(emp.id, sample.id)}>标记可用于评测</button>}{sample.privacyStatus !== 'excluded' && <button disabled={reviewingSampleId === sample.id} className="mt-2 rounded px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50" onClick={() => void excludeSample(emp.id, sample.id)}>排除样本</button>}<p className="mt-1 text-[10px] text-muted-foreground">失败/取消样本不会自动被视为负向反馈，需人工判断。</p></div>)}</div></div></details> })()}
+
                 {/* 执行记录概览 */}
                 {execs.length > 0 ? (
                   <div className="pl-11 space-y-1">

@@ -54,6 +54,8 @@ export interface EvolveInput {
    * 在 baseline 与每个被接受候选上各跑一次并落盘——训练分涨而 held-out 不涨即为过拟合信号。
    */
   evaluateHeldOut?: EvaluateState
+  /** held-out 分数相较于 baseline/reference 允许的最大下降；缺省 0，即不得下降。 */
+  heldOutMaxRegression?: number
 }
 
 export interface EvolveOutput {
@@ -133,9 +135,10 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   // 1) Baseline
   const baselineByCase = await input.evaluate(undefined, input.benchmark)
   const baselineScore = averageCaseScore(baselineByCase) ?? 0
+  // held-out baseline 同时用于记录与候选门禁，避免同一轮重复消耗评测预算。
+  const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
   // 记录 baseline 到 scoreboard（若无同版本记录）
   if (!sc.evaluations.some((e) => e.agentVersion === baselineVersion)) {
-    const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
     appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline))
   }
 
@@ -143,6 +146,7 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   const rounds: SelfEvolveRoundResult[] = []
   let currentVersion = baselineVersion
   let currentScore = baselineScore
+  const baselineHeldOutScore = heldOutBaseline ? averageCaseScore(heldOutBaseline) : null
 
   for (let round = 1; round <= input.maxRounds; round++) {
     const deficit = baselineByCase.map((c) => ({ caseId: c.caseId, score: c.score }))
@@ -169,13 +173,22 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
         await input.state.restore()
         rolledBack = true
       } else if (candidateTotal > currentScore) {
-        accepted = true
-        // 被接受候选：同步评一次 held-out，检测"训练分涨、迁移分不涨"的过拟合
+        // held-out 是推广门禁而非仅报告：训练分上涨但独立案例下降则回滚。
         const heldOutCandidate = input.evaluateHeldOut ? await input.evaluateHeldOut(change.afterState, input.benchmark) : null
-        appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, heldOutCandidate))
-        reason = `接受：${candidateTotal.toFixed(2)} > Reference ${currentScore.toFixed(2)}`
-        currentScore = candidateTotal
-        currentVersion = candidateVersion
+        const heldOutScore = heldOutCandidate ? averageCaseScore(heldOutCandidate) : null
+        const heldOutThreshold = (baselineHeldOutScore ?? -Infinity) - (input.heldOutMaxRegression ?? 0)
+        if (heldOutScore !== null && heldOutScore < heldOutThreshold) {
+          accepted = false
+          reason = `拒绝：held-out ${heldOutScore.toFixed(2)} 低于门槛 ${heldOutThreshold.toFixed(2)}`
+          await input.state.restore()
+          rolledBack = true
+        } else {
+          accepted = true
+          appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, heldOutCandidate))
+          reason = `接受：${candidateTotal.toFixed(2)} > Reference ${currentScore.toFixed(2)}；held-out 门禁通过`
+          currentScore = candidateTotal
+          currentVersion = candidateVersion
+        }
       } else {
         reason = `拒绝：${candidateTotal.toFixed(2)} 未严格高于 Reference ${currentScore.toFixed(2)}`
         await input.state.restore()

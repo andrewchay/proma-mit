@@ -1797,6 +1797,10 @@ export interface ElectronAPI {
       listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       cancelExecution: (executionId: string) => Promise<import('@gravitas/shared').CancelAgentExecutionResult>
+      listCapabilityVersions: (agentId: string) => Promise<unknown[]>
+      listLearningSamples: (agentId: string) => Promise<unknown[]>
+      excludeLearningSample: (sampleId: string) => Promise<unknown | null>
+      reviewLearningSample: (sampleId: string, evidenceSummary: string) => Promise<unknown | null>
     }
 
     // --- 营销能力包 ---
@@ -4005,6 +4009,10 @@ const electronAPI: ElectronAPI = {
       listExecutionsByEntity: (entityType, entityId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, entityType, entityId),
       listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
       cancelExecution: (executionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, executionId),
+      listCapabilityVersions: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, agentId),
+      listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
+      excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),
+      reviewLearningSample: (sampleId, evidenceSummary) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, sampleId, evidenceSummary),
     },
     // --- 营销能力包 ---
     marketing: {

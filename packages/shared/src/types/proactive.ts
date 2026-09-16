@@ -165,7 +165,7 @@ export interface ProactiveRecommendation {
 // ===== Approval =====
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'edited'
-export type ApprovalSourceType = 'memory' | 'skill' | 'file' | 'command' | 'schedule' | 'monitor'
+export type ApprovalSourceType = 'memory' | 'skill' | 'file' | 'command' | 'schedule' | 'monitor' | 'employee_capability'
 export type ApprovalExecutionStatus = 'pending' | 'succeeded' | 'failed'
 
 export interface ProactiveApproval {

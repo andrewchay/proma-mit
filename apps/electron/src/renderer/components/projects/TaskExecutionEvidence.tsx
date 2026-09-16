@@ -63,6 +63,8 @@ export function TaskExecutionEvidence({ taskId }: { taskId: string }): React.Rea
           </summary>
           <p>Agent：{run.agentId}</p>
           <p className="break-all">会话 / Workflow：{run.sessionId}</p>
+          {run.capabilityVersionIds?.length ? <p className="break-all text-xs text-muted-foreground">冻结能力版本：{run.capabilityVersionIds.join(' · ')}{run.capabilityContentHash ? ` · ${run.capabilityContentHash.slice(0, 12)}` : ''}</p> : <p className="text-xs text-muted-foreground">能力快照：旧记录（未冻结能力版本）</p>}
+          <p className="text-xs text-muted-foreground">能力快照只说明该次执行采用的策略，不表示任务已通过业务验收。</p>
           {!run.sessionId.startsWith('workflow:') && (
             <button className="mt-2 text-primary" onClick={() => void openSession(run.sessionId).catch((error) => setState((current) => ({ ...current, error: String(error) })))}>
               {run.status === 'running' ? '查看实时输出' : '查看执行会话'}

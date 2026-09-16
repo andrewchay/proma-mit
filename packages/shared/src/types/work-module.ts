@@ -451,6 +451,14 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   LIST_EXECUTIONS_BY_AGENT: 'agent-employee:list-executions-by-agent',
   /** 停止仍在排队或运行中的执行；不会删除 worktree 或交付证据。 */
   CANCEL_EXECUTION: 'agent-employee:cancel-execution',
+  /** 查询员工能力版本。 */
+  LIST_CAPABILITY_VERSIONS: 'agent-employee:list-capability-versions',
+  /** 查询员工可审计学习样本。 */
+  LIST_LEARNING_SAMPLES: 'agent-employee:list-learning-samples',
+  /** 人工排除一条样本，禁止其进入演化输入。 */
+  EXCLUDE_LEARNING_SAMPLE: 'agent-employee:exclude-learning-sample',
+  /** 审核学习样本摘要并更新脱敏状态。 */
+  REVIEW_LEARNING_SAMPLE: 'agent-employee:review-learning-sample',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -547,6 +555,9 @@ export interface AgentExecutionResult {
   lastHeartbeatAt?: number
   startedAt: number
   completedAt?: number
+  /** 调度时冻结的能力版本；旧执行记录可能缺失。 */
+  capabilityVersionIds?: string[]
+  capabilityContentHash?: string
 }
 
 // ===== 成员（PH1-A） =====
