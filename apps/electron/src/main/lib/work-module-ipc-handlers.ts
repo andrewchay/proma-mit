@@ -164,8 +164,10 @@ import {
   getAgentEmployeeCapabilityObservations,
   rollbackAgentEmployeeCapabilityVersion,
   listAgentEmployeeCapabilityRollbackAudits,
+  getAgentEmployeeCapabilityHealth,
 } from './agent-employee-service'
 import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
+import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
 import { onSettingsChange } from './settings-service'
 import {
   listChannels,
@@ -914,6 +916,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, (_, agentId: string, versionId: string, reason: string) => rollbackAgentEmployeeCapabilityVersion(agentId, versionId, reason))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, (_, agentId: string) => listAgentEmployeeCapabilityRollbackAudits(agentId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, (_, input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => runEmployeeCapabilityEvaluation(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_HEALTH, (_, agentId: string, windowDays?: number) => getAgentEmployeeCapabilityHealth(agentId, windowDays))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_CANARY, (_, agentId: string) => listEmployeeCanaryConfigs().filter((config) => config.agentId === agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ENABLE_CAPABILITY_CANARY, (_, input: import('@gravitas/shared').AgentEmployeeCanaryConfigResult) => enableEmployeeCanary(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DISABLE_CAPABILITY_CANARY, (_, agentId: string, scope: 'role' | 'workspace', reason: string) => reason ? pauseEmployeeCanary(agentId, scope, reason) : disableEmployeeCanary(agentId, scope))
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

@@ -1866,6 +1866,10 @@ export interface ElectronAPI {
       rollbackCapabilityVersion: (agentId: string, versionId: string, reason: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult>
       listCapabilityRollbackAudits: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult[]>
       runCapabilityEvaluation: (input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityEvaluationResult>
+      getCapabilityHealth: (agentId: string, windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityHealthResult[]>
+      listCapabilityCanary: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult[]>
+      enableCapabilityCanary: (input: { agentId: string; scope: 'role' | 'workspace'; workspaceId?: string; candidateVersionId: string; percent: number; maxFailureRate?: number; maxReworkRate?: number }) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult>
+      disableCapabilityCanary: (agentId: string, scope: 'role' | 'workspace', reason?: string) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult | undefined>
     }
 
     // --- 新媒体运营本地工作台 ---
@@ -4205,6 +4209,10 @@ const electronAPI: ElectronAPI = {
       rollbackCapabilityVersion: (agentId, versionId, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, agentId, versionId, reason),
       listCapabilityRollbackAudits: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, agentId),
       runCapabilityEvaluation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, input),
+      getCapabilityHealth: (agentId, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_HEALTH, agentId, windowDays),
+      listCapabilityCanary: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_CANARY, agentId),
+      enableCapabilityCanary: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ENABLE_CAPABILITY_CANARY, input),
+      disableCapabilityCanary: (agentId, scope, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DISABLE_CAPABILITY_CANARY, agentId, scope, reason),
     },
     // --- 新媒体运营本地工作台 ---
     newMedia: {

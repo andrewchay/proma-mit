@@ -2800,6 +2800,39 @@ export function getAgentEmployeeCapabilityObservations(agentId: string): import(
   })
 }
 
+/**
+ * 版本健康指标：只陈述本地记录，不冒充外部质量结论。
+ * 取消不计入自动负向信号，样本量不足时明确返回 null 并要求更多观察。
+ */
+export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 30, now = Date.now()): import('./project-types').AgentEmployeeCapabilityHealth[] {
+  const since = now - windowDays * 24 * 60 * 60 * 1000
+  const executions = getProjectDb().prepare('SELECT status, capability_version_ids, started_at, completed_at FROM agent_executions WHERE agent_id = ?').all(agentId) as Array<{ status: string; capability_version_ids: string | null; started_at: number; completed_at: number | null }>
+  const samples = getProjectDb().prepare('SELECT capability_version_ids, outcome, privacy_status, created_at FROM agent_employee_learning_samples WHERE agent_id = ?').all(agentId) as Array<{ capability_version_ids: string; outcome: string; privacy_status: string; created_at: number }>
+  const observedExecutions = executions.filter((execution) => (execution.completed_at ?? execution.started_at) >= since)
+  const observedSamples = samples.filter((sample) => sample.created_at >= since)
+  return listAgentEmployeeCapabilityVersions(agentId).map((version) => {
+    const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(version.id))
+    const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(version.id))
+    const decided = matchedSamples.filter((sample) => sample.privacy_status !== 'pending' && sample.outcome !== 'cancelled')
+    const rework = decided.filter((sample) => sample.outcome === 'changes_requested').length
+    const failed = decided.filter((sample) => sample.outcome === 'failed' || sample.outcome === 'manual_excluded').length
+    const cancelled = matchedSamples.filter((sample) => sample.outcome === 'cancelled').length
+    const ratio = (value: number, total: number): number | null => total === 0 ? null : Math.round((value / total) * 1000) / 1000
+    return {
+      versionId: version.id,
+      windowDays,
+      executionCount: matchedExecutions.length,
+      reworkRate: ratio(rework, decided.length),
+      failureRate: ratio(failed, decided.length),
+      cancellationRate: ratio(cancelled, matchedSamples.length),
+      decidedSampleCount: decided.length,
+      // 少于 5 条已判定样本时不声称趋势可信。
+      sampleSufficient: decided.length >= 5,
+      lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
+    }
+  })
+}
+
 export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string): import('./project-types').AgentEmployeeCapabilityRollbackAudit {
   const trimmedReason = reason.trim()
   if (!trimmedReason || trimmedReason.length > 1000) throw new Error('回滚原因不能为空且不能超过 1000 字符')
