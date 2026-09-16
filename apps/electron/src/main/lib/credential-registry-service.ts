@@ -6,7 +6,7 @@
  * 不迁移底层存储，仅做统一可见性与体检（避免凭据散落、双轨、明文风险）。
  */
 
-export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret'
+export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret' | 'new_media_account'
 
 export interface CredentialEntry {
   kind: CredentialKind
@@ -49,7 +49,7 @@ function botEncryptedFlag(): boolean {
 }
 
 /** 枚举所有已配置凭据（统一可见性）。数据源懒加载（部分依赖 electron）。 */
-export function listCredentials(): CredentialRegistry {
+export async function listCredentials(): Promise<CredentialRegistry> {
   const entries: CredentialEntry[] = []
   const risks: string[] = []
   const botEncrypted = botEncryptedFlag()
@@ -111,7 +111,23 @@ export function listCredentials(): CredentialRegistry {
     }
   } catch { /* 忽略 */ }
 
-  // 4) 渠道
+  // 4) 新媒体账号（只读取非敏感元数据，不读取授权材料）
+  try {
+    const { listNewMediaAccounts } = await import('./new-media/new-media-account-service')
+    for (const account of await listNewMediaAccounts()) {
+      entries.push({
+        kind: 'new_media_account',
+        id: account.id,
+        label: `新媒体 · ${account.displayName}`,
+        hasSecret: Boolean(account.credentialRef),
+        encrypted: account.credentialProtection === 'encrypted',
+        source: account.platform === 'xiaohongshu' ? '小红书' : '微信公众号',
+      })
+      if (account.credentialProtection === 'degraded') risks.push(`新媒体账号「${account.displayName}」的授权材料未获得系统级加密保护`)
+    }
+  } catch { /* 忽略 */ }
+
+  // 5) 渠道
   try {
     const { getSettings } = require('./settings-service') as { getSettings: () => Record<string, unknown> }
     const settings = getSettings() as { channels?: Array<{ id?: string; name?: string; apiKey?: string }> }
@@ -140,7 +156,7 @@ export function listCredentials(): CredentialRegistry {
 export function credentialRegistryToText(registry: CredentialRegistry): string {
   const lines = [
     `凭据统一体检：共 ${registry.count} 项已登记`,
-    `  渠道 ${registry.entries.filter((e) => e.kind === 'channel').length} · 飞书 Bot ${registry.entries.filter((e) => e.kind === 'feishu_bot').length} · 钉钉 Bot ${registry.entries.filter((e) => e.kind === 'dingtalk_bot').length} · MCP secret ${registry.entries.filter((e) => e.kind === 'mcp_client_secret').length}`,
+    `  渠道 ${registry.entries.filter((e) => e.kind === 'channel').length} · 飞书 Bot ${registry.entries.filter((e) => e.kind === 'feishu_bot').length} · 钉钉 Bot ${registry.entries.filter((e) => e.kind === 'dingtalk_bot').length} · MCP secret ${registry.entries.filter((e) => e.kind === 'mcp_client_secret').length} · 新媒体账号 ${registry.entries.filter((e) => e.kind === 'new_media_account').length}`,
   ]
   if (registry.riskCount > 0) {
     lines.push(`⚠ 风险 ${registry.riskCount} 项:`)

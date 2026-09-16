@@ -2012,7 +2012,7 @@ export async function registerIpcHandlers(): Promise<void> {
   // 凭据统一治理（PH2-D）
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_CREDENTIAL_REGISTRY, async () => {
     const { listCredentials, credentialRegistryToText } = await import('./lib/credential-registry-service')
-    const registry = listCredentials()
+    const registry = await listCredentials()
     return { registry, text: credentialRegistryToText(registry) }
   })
   // Agent 互调请求（PH2-F）

@@ -1115,4 +1115,32 @@ export function registerWorkModuleIpcHandlers(): void {
     const { getControlledActionAudit } = await import('./new-media/controlled-actions')
     return getControlledActionAudit(actionId)
   })
+
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media/new-media-account-service')).listNewMediaAccounts())
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: { platform: import('@gravitas/shared').NewMediaPlatform; displayName: string }) => {
+    if (!input || !['xiaohongshu', 'wechat-official-account'].includes(input.platform) || typeof input.displayName !== 'string') throw new Error('账号参数无效')
+    return (await import('./new-media/new-media-account-service')).createNewMediaAccount(input)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.BEGIN_ACCOUNT_AUTHORIZATION, async (_: unknown, accountId: string) => {
+    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
+    return (await import('./new-media/new-media-account-service')).beginNewMediaAccountAuthorization(accountId)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.VALIDATE_ACCOUNT, async (_: unknown, accountId: string) => {
+    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
+    return (await import('./new-media/new-media-account-service')).validateNewMediaAccount(accountId)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.DISCONNECT_ACCOUNT, async (_: unknown, accountId: string) => {
+    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
+    return (await import('./new-media/new-media-account-service')).disconnectNewMediaAccount(accountId)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, async (_: unknown, accountId: string) => {
+    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
+    return (await import('./new-media/new-media-account-service')).getNewMediaAccountAudit(accountId)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, async (_: unknown, platform: import('@gravitas/shared').NewMediaPlatform) => {
+    if (!['xiaohongshu', 'wechat-official-account'].includes(platform)) throw new Error('平台无效')
+    const { adapterInfo } = await import('./new-media/platform-adapter')
+    const { getPlatformAdapterRegistry } = await import('./new-media/platform-adapter-registry')
+    return adapterInfo(getPlatformAdapterRegistry().get(platform))
+  })
 }

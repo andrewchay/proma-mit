@@ -289,7 +289,7 @@ export function newMediaPluginRuntime(): BuiltinPluginRuntime {
       platforms: ['darwin', 'win32', 'linux'],
       activationEvents: ['onAppReady'],
       subscriptions: [],
-      surfaces: ['agent-tools', 'agent-skills'],
+      surfaces: ['agent-tools', 'agent-skills', 'bridge-connector'],
       permissions: {},
       entrypoints: {},
     },
@@ -297,7 +297,7 @@ export function newMediaPluginRuntime(): BuiltinPluginRuntime {
     setEnabled: async () => true,
     isSupported: () => true,
     contributeTools: contentTools,
-    contributePrompts: () => isNewMediaEnabled() ? ['新媒体运营工具只会创建本地草稿、待审批发布排程和受控外发请求。不得声称已发布；当前版本不连接真实账号、不访问平台 API 或浏览器。任何未来外部发布或回复必须经用户明确确认并由受控执行器处理。'] : [],
+    contributePrompts: () => isNewMediaEnabled() ? ['新媒体运营工具只会创建本地草稿、账号占位、待审批发布排程和受控外发请求。当前 PlatformAdapter 不联网且不支持真实授权；不得声称账号已连接或内容已发布。任何未来外部授权、发布或回复必须经用户明确确认并由受控执行器处理。'] : [],
     contributeSkills,
   }
 }

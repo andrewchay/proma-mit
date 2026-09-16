@@ -1838,6 +1838,15 @@ export interface ElectronAPI {
         simulate: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         audit: (actionId: string) => Promise<import('@gravitas/shared').NewMediaAuditEntry[]>
       }
+      accounts: {
+        list: () => Promise<import('@gravitas/shared').NewMediaConnectedAccount[]>
+        create: (input: { platform: import('@gravitas/shared').NewMediaPlatform; displayName: string }) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        beginAuthorization: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAuthorizationStart>
+        validate: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        disconnect: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        audit: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAccountAuditEntry[]>
+        getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
+      }
     }
 
     // --- 营销能力包 ---
@@ -4085,6 +4094,15 @@ const electronAPI: ElectronAPI = {
         approve: (actionId, approver) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId, approver),
         simulate: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, actionId),
         audit: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, actionId),
+      },
+      accounts: {
+        list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS),
+        create: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, input),
+        beginAuthorization: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.BEGIN_ACCOUNT_AUTHORIZATION, accountId),
+        validate: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.VALIDATE_ACCOUNT, accountId),
+        disconnect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.DISCONNECT_ACCOUNT, accountId),
+        audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
+        getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
       },
     },
     // --- 营销能力包 ---

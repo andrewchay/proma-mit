@@ -626,9 +626,75 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   APPROVE_CONTROLLED_ACTION: 'new-media:approve-controlled-action',
   SIMULATE_CONTROLLED_ACTION: 'new-media:simulate-controlled-action',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
+  LIST_ACCOUNTS: 'new-media:list-accounts',
+  CREATE_ACCOUNT: 'new-media:create-account',
+  BEGIN_ACCOUNT_AUTHORIZATION: 'new-media:begin-account-authorization',
+  VALIDATE_ACCOUNT: 'new-media:validate-account',
+  DISCONNECT_ACCOUNT: 'new-media:disconnect-account',
+  GET_ACCOUNT_AUDIT: 'new-media:get-account-audit',
+  GET_ADAPTER_INFO: 'new-media:get-adapter-info',
 } as const
 
 export type NewMediaPlatform = 'xiaohongshu' | 'wechat-official-account'
+export type NewMediaAuthorizationMethod = 'unavailable' | 'oauth2' | 'api_key' | 'managed_browser'
+export type NewMediaAccountStatus = 'disconnected' | 'authorization_pending' | 'connected' | 'expired' | 'revoked' | 'error'
+export type NewMediaCredentialProtection = 'encrypted' | 'degraded' | 'none'
+
+export interface NewMediaPlatformCapabilities {
+  localDraft: boolean
+  remoteDraft: boolean
+  publish: boolean
+  readEngagements: boolean
+  sendReply: boolean
+  readMetrics: boolean
+}
+
+export interface NewMediaAdapterInfo {
+  platform: NewMediaPlatform
+  displayName: string
+  authorizationMethod: NewMediaAuthorizationMethod
+  authorizationAvailable: boolean
+  authorizationDescription: string
+  requestedScopes: string[]
+  capabilities: NewMediaPlatformCapabilities
+}
+
+export interface NewMediaConnectedAccount {
+  id: string
+  platform: NewMediaPlatform
+  displayName: string
+  externalAccountId?: string
+  status: NewMediaAccountStatus
+  authorizationMethod: NewMediaAuthorizationMethod
+  grantedScopes: string[]
+  capabilities: NewMediaPlatformCapabilities
+  credentialRef?: string
+  credentialProtection: NewMediaCredentialProtection
+  authorizedAt?: number
+  expiresAt?: number
+  lastValidatedAt?: number
+  errorCode?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface NewMediaAuthorizationStart {
+  accountId: string
+  status: NewMediaAccountStatus
+  method: NewMediaAuthorizationMethod
+  available: boolean
+  description: string
+}
+
+export type NewMediaAccountAuditEvent = 'account_created' | 'authorization_started' | 'connected' | 'validation_failed' | 'disconnected' | 'revoked' | 'removed'
+export interface NewMediaAccountAuditEntry {
+  id: string
+  accountId: string
+  event: NewMediaAccountAuditEvent
+  actor: string
+  detail: string
+  createdAt: number
+}
 
 export interface NewMediaContentDraft {
   id: string

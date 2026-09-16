@@ -1,14 +1,15 @@
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
-import { ArrowLeft, FileText, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3 } from 'lucide-react'
+import { ArrowLeft, FileText, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, UserRound } from 'lucide-react'
 import { activeViewAtom } from '@/atoms/active-view'
 import { cn } from '@/lib/utils'
 import type { NewMediaContentDraft, NewMediaControlledAction, NewMediaEngagementItem, NewMediaListeningQuery, NewMediaMention, NewMediaMetricSnapshot, NewMediaPlatform, NewMediaPublicationJob, NewMediaSocialReport, NewMediaTrendItem } from '@gravitas/shared'
 import { CommunityPanel } from './CommunityPanel'
 import { ListeningPanel } from './ListeningPanel'
 import { InsightsPanel } from './InsightsPanel'
+import { AccountsPanel } from './AccountsPanel'
 
-type SubView = 'content' | 'community' | 'listening' | 'insights' | 'outbound'
+type SubView = 'accounts' | 'content' | 'community' | 'listening' | 'insights' | 'outbound'
 
 const ALL_NEW_MEDIA_CAPABILITIES = ['content-operations', 'community-operations', 'social-listening', 'social-analytics', 'trend-radar', 'controlled-outbound']
 
@@ -104,7 +105,7 @@ export function NewMediaModuleView(): React.ReactElement {
       </header>
 
       <div className="flex gap-1 border-b border-border/40 px-4 py-2">
-        {([['content', '内容与排程', FileText], ['community', '互动', MessageCircle], ['listening', '聆听', Radar], ['insights', '洞察', BarChart3], ['outbound', '外发审批', ShieldCheck]] as const).map(([id, label, Icon]) => (
+        {([['accounts', '账号', UserRound], ['content', '内容与排程', FileText], ['community', '互动', MessageCircle], ['listening', '聆听', Radar], ['insights', '洞察', BarChart3], ['outbound', '外发审批', ShieldCheck]] as const).map(([id, label, Icon]) => (
           <button key={id} onClick={() => setSubView(id)} className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm', subView === id ? 'bg-primary text-primary-foreground' : 'text-foreground/60 hover:bg-muted')}>
             <Icon size={14} />{label}
           </button>
@@ -112,7 +113,7 @@ export function NewMediaModuleView(): React.ReactElement {
       </div>
 
       <main className="flex-1 overflow-y-auto p-5">
-        {subView === 'community' ? <CommunityPanel items={engagements} onRefresh={refresh} /> : subView === 'listening' ? <ListeningPanel queries={queries} mentions={mentions} onRefresh={refresh} /> : subView === 'insights' ? <InsightsPanel snapshots={snapshots} trends={trends} report={report} onRefresh={refresh} /> : subView === 'content' ? (
+        {subView === 'accounts' ? <AccountsPanel /> : subView === 'community' ? <CommunityPanel items={engagements} onRefresh={refresh} /> : subView === 'listening' ? <ListeningPanel queries={queries} mentions={mentions} onRefresh={refresh} /> : subView === 'insights' ? <InsightsPanel snapshots={snapshots} trends={trends} report={report} onRefresh={refresh} /> : subView === 'content' ? (
           <div className="mx-auto max-w-5xl space-y-5">
             <section className="rounded-2xl bg-background p-4 shadow-sm">
               <h2 className="mb-3 font-medium">创建双平台草稿</h2>
