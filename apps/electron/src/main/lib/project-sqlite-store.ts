@@ -2765,7 +2765,26 @@ export function createAgentEmployeeCapabilityVersion(input: Omit<import('./proje
   return rowToCapabilityVersion(row)
 }
 
+/**
+ * 能力依赖图：只用显式 ID 关联 role / workspace 版本，不从名称推断关系。
+ * 用于判断替换某个 role 版本时，哪些工作区版本与其父链相关。
+ */
+export function getAgentEmployeeCapabilityDependencyGraph(agentId: string): { nodes: Array<{ id: string; scope: string; workspaceId?: string; versionNumber: number; status: string; parentVersionId?: string }>; blockedBy: Array<{ workspaceVersionId: string; roleVersionId: string }> } {
+  const versions = listAgentEmployeeCapabilityVersions(agentId)
+  const nodes = versions.map((version) => ({ id: version.id, scope: version.scope, workspaceId: version.workspaceId, versionNumber: version.versionNumber, status: version.status, parentVersionId: version.parentVersionId }))
+  const roleIds = new Set(versions.filter((version) => version.scope === 'role').map((version) => version.id))
+  // 工作区版本的父链指向 role 版本时，视为显式依赖。
+  const blockedBy = versions
+    .filter((version) => version.scope === 'workspace' && version.parentVersionId && roleIds.has(version.parentVersionId))
+    .map((version) => ({ workspaceVersionId: version.id, roleVersionId: version.parentVersionId! }))
+  return { nodes, blockedBy }
+}
+
 export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>): import('./project-types').AgentEmployeeCapabilityVersion {
+  const { detectCapabilityConflicts, formatConflictMessage, hasBlockingConflict } = require('./agent-employee-capability-conflict') as typeof import('./agent-employee-capability-conflict')
+  const peer = getActiveAgentEmployeeCapabilityVersions(input.agentId, input.workspaceId).find((version) => version.scope !== input.scope && version.workspaceId === input.workspaceId)
+  const findings = detectCapabilityConflicts({ roleContent: input.scope === 'role' ? input.content : peer?.content, workspaceContent: input.scope === 'workspace' ? input.content : peer?.content })
+  if (hasBlockingConflict(findings)) throw new Error(`能力组合校验未通过：\n${formatConflictMessage(findings)}`)
   const database = getProjectDb()
   const active = getActiveAgentEmployeeCapabilityVersions(input.agentId, input.workspaceId).find((version) => version.scope === input.scope && version.workspaceId === input.workspaceId)
   if (input.parentVersionId && active?.id !== input.parentVersionId) throw new Error('能力版本已变化，请基于当前版本重新评测后再推广')
@@ -2831,6 +2850,28 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
       lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
     }
   })
+}
+
+/**
+ * 保留期预览：只计算“会被清理”的对象与数量，不删除任何数据。
+ * 保留期未配置（null）时始终返回空，确保默认不清理。
+ */
+export function previewAgentEmployeeLearningSampleRetention(agentId: string, retentionDays: number | null, now = Date.now()): { total: number; expired: number; expiredIds: string[]; cutoff?: number } {
+  const total = (getProjectDb().prepare('SELECT COUNT(*) AS count FROM agent_employee_learning_samples WHERE agent_id = ?').get(agentId) as { count: number }).count
+  if (retentionDays === null) return { total, expired: 0, expiredIds: [] }
+  if (!Number.isInteger(retentionDays) || retentionDays < 1) throw new Error('保留期必须是大于 0 的整数天')
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000
+  const rows = getProjectDb().prepare('SELECT id FROM agent_employee_learning_samples WHERE agent_id = ? AND created_at < ? ORDER BY created_at ASC').all(agentId, cutoff) as Array<{ id: string }>
+  return { total, expired: rows.length, expiredIds: rows.map((row) => row.id), cutoff }
+}
+
+/** 显式删除已过期样本；调用方必须先展示预览并取得用户确认。 */
+export function deleteAgentEmployeeLearningSamples(ids: string[]): number {
+  if (ids.length === 0) return 0
+  const database = getProjectDb()
+  const placeholders = ids.map(() => '?').join(',')
+  const result = database.prepare(`DELETE FROM agent_employee_learning_samples WHERE id IN (${placeholders})`).run(...ids)
+  return typeof result.changes === 'number' ? result.changes : 0
 }
 
 export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string): import('./project-types').AgentEmployeeCapabilityRollbackAudit {

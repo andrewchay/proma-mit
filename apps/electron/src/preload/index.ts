@@ -1874,6 +1874,16 @@ export interface ElectronAPI {
       listCapabilityCanary: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult[]>
       enableCapabilityCanary: (input: { agentId: string; scope: 'role' | 'workspace'; workspaceId?: string; candidateVersionId: string; percent: number; maxFailureRate?: number; maxReworkRate?: number }) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult>
       disableCapabilityCanary: (agentId: string, scope: 'role' | 'workspace', reason?: string) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult | undefined>
+      getCapabilityDependencyGraph: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityDependencyGraphResult>
+      previewCapabilityConflicts: (input: { roleContent?: string; workspaceContent?: string }) => Promise<import('@gravitas/shared').CapabilityConflictFindingResult[]>
+      getGovernancePolicy: () => Promise<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>
+      updateGovernancePolicy: (patch: Partial<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>) => Promise<{ policy: import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult; audits: import('@gravitas/shared').EmployeeCapabilityGovernanceAuditResult[] }>
+      listGovernanceAudits: () => Promise<import('@gravitas/shared').EmployeeCapabilityGovernanceAuditResult[]>
+      previewSampleRetention: (agentId: string, retentionDays: number | null) => Promise<import('@gravitas/shared').AgentEmployeeSampleRetentionPreviewResult>
+      deleteLearningSamples: (ids: string[]) => Promise<number>
+      getEvolutionLedger: (agentIds?: string[], windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeEvolutionLedgerResult>
+      exportEvolutionPackage: (agentIds?: string[]) => Promise<unknown>
+      validateEvolutionPackage: (input: unknown) => Promise<import('@gravitas/shared').EvolutionPackageValidationResult>
     }
 
     // --- 新媒体运营本地工作台 ---
@@ -4222,6 +4232,16 @@ const electronAPI: ElectronAPI = {
       listCapabilityCanary: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_CANARY, agentId),
       enableCapabilityCanary: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ENABLE_CAPABILITY_CANARY, input),
       disableCapabilityCanary: (agentId, scope, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DISABLE_CAPABILITY_CANARY, agentId, scope, reason),
+      getCapabilityDependencyGraph: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_DEPENDENCY_GRAPH, agentId),
+      previewCapabilityConflicts: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_CONFLICTS, input),
+      getGovernancePolicy: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_GOVERNANCE_POLICY),
+      updateGovernancePolicy: (patch) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_GOVERNANCE_POLICY, patch),
+      listGovernanceAudits: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_GOVERNANCE_AUDITS),
+      previewSampleRetention: (agentId, retentionDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_SAMPLE_RETENTION, agentId, retentionDays),
+      deleteLearningSamples: (ids) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, ids),
+      getEvolutionLedger: (agentIds, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, agentIds, windowDays),
+      exportEvolutionPackage: (agentIds) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, agentIds),
+      validateEvolutionPackage: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, input),
     },
     // --- 新媒体运营本地工作台 ---
     newMedia: {

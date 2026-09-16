@@ -475,6 +475,26 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   ENABLE_CAPABILITY_CANARY: 'agent-employee:enable-capability-canary',
   /** 关闭或暂停 Canary 分流；不自动回滚版本。 */
   DISABLE_CAPABILITY_CANARY: 'agent-employee:disable-capability-canary',
+  /** 查询能力版本依赖关系（显式 ID）。 */
+  GET_CAPABILITY_DEPENDENCY_GRAPH: 'agent-employee:get-capability-dependency-graph',
+  /** 在保存前校验一组组合能力，不写入任何数据。 */
+  PREVIEW_CAPABILITY_CONFLICTS: 'agent-employee:preview-capability-conflicts',
+  /** 读取治理策略配置。 */
+  GET_GOVERNANCE_POLICY: 'agent-employee:get-governance-policy',
+  /** 更新治理策略配置并记录变更审计。 */
+  UPDATE_GOVERNANCE_POLICY: 'agent-employee:update-governance-policy',
+  /** 读取治理策略变更审计。 */
+  LIST_GOVERNANCE_AUDITS: 'agent-employee:list-governance-audits',
+  /** 预览样本保留期影响，不删除数据。 */
+  PREVIEW_SAMPLE_RETENTION: 'agent-employee:preview-sample-retention',
+  /** 显式删除指定样本；调用方需先展示预览并确认。 */
+  DELETE_LEARNING_SAMPLES: 'agent-employee:delete-learning-samples',
+  /** 读取能力演化运营台账。 */
+  GET_EVOLUTION_LEDGER: 'agent-employee:get-evolution-ledger',
+  /** 导出脱敏演化包（不含样本摘要、路径、密钥）。 */
+  EXPORT_EVOLUTION_PACKAGE: 'agent-employee:export-evolution-package',
+  /** 校验导入包；不自动激活任何内容。 */
+  VALIDATE_EVOLUTION_PACKAGE: 'agent-employee:validate-evolution-package',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -552,6 +572,72 @@ export interface AgentEmployeeCanaryConfigResult {
   pausedReason?: string
   createdAt: number
   updatedAt: number
+}
+
+export interface CapabilityConflictFindingResult {
+  severity: 'blocking' | 'advisory'
+  code: 'governance_override' | 'contradictory_constraint' | 'duplicate_rule'
+  message: string
+  evidence: string
+}
+
+export interface AgentEmployeeCapabilityDependencyGraphResult {
+  nodes: Array<{ id: string; scope: string; workspaceId?: string; versionNumber: number; status: string; parentVersionId?: string }>
+  blockedBy: Array<{ workspaceVersionId: string; roleVersionId: string }>
+}
+
+export interface EmployeeCapabilityGovernancePolicyResult {
+  minSanitizedSamples: number
+  cooldownDays: number
+  dailyRecommendationBudget: number
+  maxConcurrentEvaluations: number
+  maxCanaryPercent: number
+  defaultMaxFailureRate: number
+  defaultMaxReworkRate: number
+  sampleRetentionDays: number | null
+  auditRetentionDays: number | null
+}
+
+export interface EmployeeCapabilityGovernanceAuditResult {
+  id: string
+  field: string
+  previousValue: number | null
+  nextValue: number | null
+  actorId: string
+  createdAt: number
+}
+
+export interface AgentEmployeeSampleRetentionPreviewResult {
+  total: number
+  expired: number
+  expiredIds: string[]
+  cutoff?: number
+}
+
+export interface AgentEmployeeEvolutionLedgerEntryResult {
+  agentId: string
+  agentName: string
+  versions: { total: number; active: number; superseded: number; rolledBack: number }
+  samples: { total: number; pending: number; sanitized: number; excluded: number; cancelled: number }
+  decisions: { approved: number; rejected: number; pending: number }
+  rollbacks: number
+  observations: { executionCount: number; reworkRate: number | null; failureRate: number | null; decidedSampleCount: number; sampleSufficient: boolean }
+  evaluationCostUsd: number
+  reviewEffortProxy: number
+}
+
+export interface AgentEmployeeEvolutionLedgerResult {
+  windowDays: number
+  generatedAt: number
+  entries: AgentEmployeeEvolutionLedgerEntryResult[]
+  totals: { approved: number; rejected: number; pending: number; rollbacks: number; sanitizedSamples: number; evaluationCostUsd: number }
+  disclaimer: string
+}
+
+export interface EvolutionPackageValidationResult {
+  ok: boolean
+  reason?: string
+  summary?: { agentCount: number; versionCount: number; candidateCount: number; sanitizedSampleCount: number; note: string }
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {
