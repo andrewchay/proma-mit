@@ -1558,6 +1558,15 @@ export interface ElectronAPI {
     reconcileRuns: (projectId: string) => Promise<{ reconciled: string[] }>
     readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>
     recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
+    // M5：主张与稿件
+    listClaims: (projectId: string) => Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>
+    createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => Promise<import('@gravitas/shared').Claim>
+    linkEvidence: (projectId: string, input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; artifactId?: string; runId?: string; observationId?: string; note?: string }) => Promise<import('@gravitas/shared').EvidenceLink>
+    setClaimStatus: (projectId: string, claimId: string, status: import('@gravitas/shared').ClaimStatus, options?: { note?: string; staleReason?: string }) => Promise<import('@gravitas/shared').Claim>
+    propagateInvalidation: (projectId: string, change: { evidenceIds?: string[]; artifactIds?: string[]; runIds?: string[]; observationIds?: string[]; reason: string }) => Promise<{ affectedClaimIds: string[] }>
+    listManuscripts: (projectId: string) => Promise<import('@gravitas/shared').ManuscriptVersion[]>
+    createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => Promise<import('@gravitas/shared').ManuscriptVersion>
+    exportPreflight: (projectId: string) => Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2408,6 +2417,16 @@ const electronAPI: ElectronAPI = {
     reconcileRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECONCILE_RUNS, projectId) as Promise<{ reconciled: string[] }>,
     readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.READ_RUN_LOG, projectId, runId, options) as Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>,
     recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
+
+    // M5：主张与稿件
+    listClaims: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, projectId) as Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>,
+    createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_CLAIM, projectId, input) as Promise<import('@gravitas/shared').Claim>,
+    linkEvidence: (projectId: string, input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; artifactId?: string; runId?: string; observationId?: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LINK_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceLink>,
+    setClaimStatus: (projectId: string, claimId: string, status: import('@gravitas/shared').ClaimStatus, options?: { note?: string; staleReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_CLAIM_STATUS, projectId, claimId, status, options) as Promise<import('@gravitas/shared').Claim>,
+    propagateInvalidation: (projectId: string, change: { evidenceIds?: string[]; artifactIds?: string[]; runIds?: string[]; observationIds?: string[]; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROPAGATE_INVALIDATION, projectId, change) as Promise<{ affectedClaimIds: string[] }>,
+    listManuscripts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_MANUSCRIPTS, projectId) as Promise<import('@gravitas/shared').ManuscriptVersion[]>,
+    createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_MANUSCRIPT_VERSION, projectId, draft) as Promise<import('@gravitas/shared').ManuscriptVersion>,
+    exportPreflight: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_PREFLIGHT, projectId) as Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

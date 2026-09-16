@@ -98,6 +98,10 @@ export type ResearchEventType =
   | 'run_status_changed'
   | 'observation_recorded'
   | 'artifact_recorded'
+  | 'claim_recorded'
+  | 'evidence_linked'
+  | 'claim_status_changed'
+  | 'manuscript_version_recorded'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -119,6 +123,10 @@ export type ResearchEventPayload =
   | { type: 'run_status_changed'; runId: string; status: ResearchRunStatus; exitCode?: number; statusReason?: string; logRef?: string }
   | { type: 'observation_recorded'; observation: RunObservation }
   | { type: 'artifact_recorded'; artifact: RunArtifact }
+  | { type: 'claim_recorded'; claim: Claim }
+  | { type: 'evidence_linked'; link: EvidenceLink }
+  | { type: 'claim_status_changed'; claimId: string; status: ClaimStatus; staleReason?: string; verifiedBy?: ApprovalActor; note?: string }
+  | { type: 'manuscript_version_recorded'; manuscript: ManuscriptVersion }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -473,6 +481,106 @@ export interface RunArtifact {
   recordedAt: string
 }
 
+// ===== 主张与稿件（M5） =====
+
+/** 主张类型：不同类型对证据的要求不同（方案 §4.1 四条方法路径） */
+export type ClaimType =
+  | 'empirical'
+  | 'methodological'
+  | 'theoretical'
+  | 'limitation'
+  | 'clinical-implication'
+
+/**
+ * 主张状态。
+ *
+ * `researcher_verified` 仅表示**某位研究者对该版本的确认**，
+ * 不代表期刊认可或客观正确（方案 §6.3）。
+ */
+export type ClaimStatus =
+  | 'draft'
+  | 'machine_checked'
+  | 'needs_review'
+  | 'researcher_verified'
+  | 'unsupported'
+  | 'contested'
+  | 'stale'
+
+/** 证据与主张的关系：支持 / 反对 / 限定适用范围 */
+export type EvidenceRelation = 'supports' | 'opposes' | 'qualifies'
+
+/**
+ * 主张—证据关联。
+ *
+ * 必须至少指向一个真实对象：证据片段、产物、或运行记录。
+ * 不允许只有自由文本的「依据」。
+ */
+export interface EvidenceLink {
+  id: string
+  claimId: string
+  relation: EvidenceRelation
+  /** 证据片段 id（来源原文片段） */
+  evidenceId?: string
+  /** 运行产物 id */
+  artifactId?: string
+  /** 运行记录 id */
+  runId?: string
+  /** 观察记录 id（质性/现场） */
+  observationId?: string
+  /** 适用范围/限定说明 */
+  note?: string
+  createdBy: ApprovalActor
+  createdAt: string
+}
+
+/** 研究主张：可被单独验证/推翻的陈述 */
+export interface Claim {
+  id: string
+  projectId: string
+  /** 主张陈述本身 */
+  text: string
+  type: ClaimType
+  status: ClaimStatus
+  /** 适用范围（人群、条件、边界） */
+  scope?: string
+  /** 主张进入稿件后的所在章节（可选） */
+  sectionRef?: string
+  createdAt: string
+  updatedAt: string
+  /** 人工确认记录（仅 researcher_verified） */
+  verification?: {
+    verifiedBy: ApprovalActor
+    verifiedAt: string
+    note?: string
+  }
+  /** 被标记为 stale 的原因（源变化/证据撤回等） */
+  staleReason?: string
+}
+
+/** 稿件章节 */
+export interface ManuscriptSection {
+  id: string
+  heading: string
+  content: string
+  /** 该章节引用的主张 id */
+  claimIds: string[]
+  /** 引用文献（来源 id 或外部标识） */
+  citationRefs: string[]
+}
+
+/** 稿件版本（每次修改产生新版本，历史保留） */
+export interface ManuscriptVersion {
+  id: string
+  projectId: string
+  version: number
+  title: string
+  sections: ManuscriptSection[]
+  /** 变更理由（version > 1 必填） */
+  changeReason?: string
+  createdBy: ApprovalActor
+  createdAt: string
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -535,6 +643,14 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   RECONCILE_RUNS: 'academic-research:reconcile-runs',
   READ_RUN_LOG: 'academic-research:read-run-log',
   RECORD_ARTIFACT: 'academic-research:record-artifact',
+  LIST_CLAIMS: 'academic-research:list-claims',
+  CREATE_CLAIM: 'academic-research:create-claim',
+  LINK_EVIDENCE: 'academic-research:link-evidence',
+  SET_CLAIM_STATUS: 'academic-research:set-claim-status',
+  PROPAGATE_INVALIDATION: 'academic-research:propagate-invalidation',
+  LIST_MANUSCRIPTS: 'academic-research:list-manuscripts',
+  CREATE_MANUSCRIPT_VERSION: 'academic-research:create-manuscript-version',
+  EXPORT_PREFLIGHT: 'academic-research:export-preflight',
 } as const
 
 // ===== 输入 =====

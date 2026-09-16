@@ -149,4 +149,31 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, async (_e, projectId: string, input) =>
     runSvc.recordArtifact(projectId, input),
   )
+
+  // ===== M5：主张、证据关联与稿件 =====
+  const claimSvc = require('./claim-service') as typeof import('./claim-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, async (_e, projectId: string) =>
+    claimSvc.listClaims(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_CLAIM, async (_e, projectId: string, input) =>
+    claimSvc.createClaim(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LINK_EVIDENCE, async (_e, projectId: string, input) =>
+    claimSvc.linkEvidence(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_CLAIM_STATUS, async (_e, projectId: string, claimId: string, status, options) =>
+    claimSvc.setClaimStatus(projectId, claimId, status, options ?? {}),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.PROPAGATE_INVALIDATION, async (_e, projectId: string, change) =>
+    claimSvc.propagateInvalidation(projectId, change),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_MANUSCRIPTS, async (_e, projectId: string) =>
+    claimSvc.listManuscripts(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_MANUSCRIPT_VERSION, async (_e, projectId: string, draft) =>
+    claimSvc.createManuscriptVersion(projectId, draft),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_PREFLIGHT, async (_e, projectId: string) =>
+    claimSvc.runExportPreflight(projectId),
+  )
 }
