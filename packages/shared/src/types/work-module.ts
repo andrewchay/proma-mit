@@ -499,6 +499,8 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   PREVIEW_CAPABILITY_ROLLBACK: 'agent-employee:preview-capability-rollback',
   /** 读取版本健康告警。 */
   GET_CAPABILITY_ALERTS: 'agent-employee:get-capability-alerts',
+  /** 扫描样本摘要中的疑似敏感内容（只提示）。 */
+  SCAN_SAMPLE_CONTENT: 'agent-employee:scan-sample-content',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -663,6 +665,12 @@ export interface AgentEmployeeCapabilityAlertResult {
   versionId: string
   message: string
   evidence: string
+}
+
+export interface SampleSensitiveFindingResult {
+  kind: 'absolute_path' | 'credential' | 'email' | 'url_with_credentials' | 'session_reference' | 'long_token'
+  message: string
+  excerpt: string
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

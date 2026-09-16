@@ -1821,6 +1821,7 @@ export interface ElectronAPI {
       validateEvolutionPackage: (input: unknown) => Promise<import('@gravitas/shared').EvolutionPackageValidationResult>
       previewCapabilityRollback: (agentId: string, versionId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackPreviewResult>
       getCapabilityAlerts: (agentId: string, windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityAlertResult[]>
+      scanSampleContent: (text: string) => Promise<import('@gravitas/shared').SampleSensitiveFindingResult[]>
     }
 
     // --- 营销能力包 ---
@@ -4054,6 +4055,7 @@ const electronAPI: ElectronAPI = {
       validateEvolutionPackage: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, input),
       previewCapabilityRollback: (agentId, versionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, agentId, versionId),
       getCapabilityAlerts: (agentId, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, agentId, windowDays),
+      scanSampleContent: (text) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.SCAN_SAMPLE_CONTENT, text),
     },
     // --- 营销能力包 ---
     marketing: {
