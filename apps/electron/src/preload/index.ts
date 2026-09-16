@@ -1547,6 +1547,14 @@ export interface ElectronAPI {
     createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => Promise<import('@gravitas/shared').TopicProposal>
     selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => Promise<import('@gravitas/shared').TopicProposal>
     rejectTopic: (projectId: string, proposalId: string, reason: string) => Promise<{ proposalId: string; status: 'rejected' }>
+    // M4：研究运行
+    listRuns: (projectId: string) => Promise<import('@gravitas/shared').ResearchRun[]>
+    createRun: (projectId: string, request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget>; protocolVersion?: number }) => Promise<import('@gravitas/shared').ResearchRun>
+    cancelRun: (projectId: string, runId: string) => Promise<import('@gravitas/shared').ResearchRun>
+    recordObservation: (projectId: string, input: { runId: string; text: string }) => Promise<import('@gravitas/shared').RunObservation>
+    listObservations: (projectId: string) => Promise<import('@gravitas/shared').RunObservation[]>
+    listArtifacts: (projectId: string) => Promise<import('@gravitas/shared').RunArtifact[]>
+    getAllowedInterpreters: () => Promise<{ interpreters: string[] }>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2385,6 +2393,15 @@ const electronAPI: ElectronAPI = {
     createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_TOPIC, projectId, draft) as Promise<import('@gravitas/shared').TopicProposal>,
     selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SELECT_TOPIC, projectId, proposalId, input) as Promise<import('@gravitas/shared').TopicProposal>,
     rejectTopic: (projectId: string, proposalId: string, reason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REJECT_TOPIC, projectId, proposalId, reason) as Promise<{ proposalId: string; status: 'rejected' }>,
+
+    // M4：研究运行
+    listRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_RUNS, projectId) as Promise<import('@gravitas/shared').ResearchRun[]>,
+    createRun: (projectId: string, request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget>; protocolVersion?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_RUN, projectId, request) as Promise<import('@gravitas/shared').ResearchRun>,
+    cancelRun: (projectId: string, runId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CANCEL_RUN, projectId, runId) as Promise<import('@gravitas/shared').ResearchRun>,
+    recordObservation: (projectId: string, input: { runId: string; text: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_OBSERVATION, projectId, input) as Promise<import('@gravitas/shared').RunObservation>,
+    listObservations: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_OBSERVATIONS, projectId) as Promise<import('@gravitas/shared').RunObservation[]>,
+    listArtifacts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_ARTIFACTS, projectId) as Promise<import('@gravitas/shared').RunArtifact[]>,
+    getAllowedInterpreters: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ALLOWED_INTERPRETERS) as Promise<{ interpreters: string[] }>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

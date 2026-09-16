@@ -1,0 +1,231 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { RunExecutionRequest, RunExecutionResult, RunExecutor } from './run-executor'
+
+/**
+ * 运行服务测试（M4）：
+ * - 输入清单冻结（digest）与状态流转
+ * - 超时/失败/取消语义；失败原因不泄露原始错误正文
+ * - 手工观察仅用于非计算运行
+ * - 产物：本地文件算 sha256=verified，外部引用=unverified，越界拒绝
+ * - 真实执行器：跑一个极小 fixture 脚本（无 shell、输出上限）
+ */
+
+let tempDir: string
+const originalEnv = { ...process.env }
+
+beforeEach(() => {
+  tempDir = mkdtempSync(join(tmpdir(), 'run-service-'))
+  process.env.PROMA_TEST_CONFIG_DIR = tempDir
+})
+
+afterEach(() => {
+  process.env = { ...originalEnv }
+  rmSync(tempDir, { recursive: true, force: true })
+})
+
+async function loadAll() {
+  return {
+    run: await import(`./run-service?t=${Math.random()}`),
+    project: await import(`./research-service?t=${Math.random()}`),
+    executor: await import(`./run-executor?t=${Math.random()}`),
+  }
+}
+
+/** 假执行器：记录收到的请求，返回预设结果 */
+function fakeExecutor(result: Partial<RunExecutionResult>): { executor: RunExecutor; calls: RunExecutionRequest[] } {
+  const calls: RunExecutionRequest[] = []
+  return {
+    calls,
+    executor: {
+      async execute(request) {
+        calls.push(request)
+        return { status: 'completed', outputTruncated: false, logBytes: 0, ...result }
+      },
+    },
+  }
+}
+
+async function setupProject() {
+  const { run, project } = await loadAll()
+  const p = await project.createResearchProject({
+    title: '运行测试项目', domain: 'statistics', methodPath: 'quantitative',
+  })
+  const workdir = join(tempDir, 'academic', 'research', p.id, 'workdir')
+  mkdirSync(workdir, { recursive: true })
+  return { run, projectId: p.id, workdir }
+}
+
+describe('运行创建与状态流转', () => {
+  test('计算运行：冻结输入摘要 + 状态完成', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const fake = fakeExecutor({ status: 'completed', exitCode: 0, logBytes: 12 })
+
+    const created = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '模拟实验', input: { interpreter: 'python3', scriptPath: 'sim.py', args: ['--n', '10'] }, budget: { timeoutMs: 1000 } },
+      { executor: fake.executor, resolveProjectRoot: () => workdir },
+    )
+
+    expect(created.status).toBe('completed')
+    expect(created.input.digest).toMatch(/^m4-/)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]!.input.scriptPath).toBe('sim.py')
+  })
+
+  test('失败运行保留归一化原因（不含原始错误正文）', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const fake = fakeExecutor({
+      status: 'failed',
+      exitCode: 2,
+      statusReason: '进程以退出码 2 结束，详见运行日志',
+    })
+    const created = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '失败实验', input: { interpreter: 'node', scriptPath: 'a.js' } },
+      { executor: fake.executor, resolveProjectRoot: () => workdir },
+    )
+    expect(created.status).toBe('failed')
+    expect(created.exitCode).toBe(2)
+    expect(created.statusReason).not.toContain('Traceback')
+  })
+
+  test('超时运行状态为 timed-out', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const fake = fakeExecutor({ status: 'timed-out', statusReason: '超过预算超时 1000 ms，进程已被终止' })
+    const created = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '超时实验', input: { interpreter: 'python3', scriptPath: 'slow.py' }, budget: { timeoutMs: 1000 } },
+      { executor: fake.executor, resolveProjectRoot: () => workdir },
+    )
+    expect(created.status).toBe('timed-out')
+    expect(created.finishedAt).toBeTruthy()
+  })
+
+  test('执行器抛错 → 运行标记 failed 而非崩溃', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const failing: RunExecutor = { async execute() { throw new Error('spawn EACCES') } }
+    const created = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '异常实验', input: { interpreter: 'bun', scriptPath: 'x.ts' } },
+      { executor: failing, resolveProjectRoot: () => workdir },
+    )
+    expect(created.status).toBe('failed')
+    expect(created.statusReason).toContain('执行器错误')
+  })
+})
+
+describe('手工观察与产物', () => {
+  test('手工观察用于非计算运行；计算运行拒绝', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+
+    const manual = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'manual-observation', title: '访谈记录', input: {} },
+      { resolveProjectRoot: () => workdir },
+    )
+    const obs = await svc.recordObservation(projectId, { runId: manual.id, text: '受访者提到设备噪声' })
+    expect(obs.recordedBy.id).toBe('local-user')
+    expect(await svc.listObservations(projectId)).toHaveLength(1)
+
+    const fake = fakeExecutor({})
+    const compute = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '计算', input: { interpreter: 'python3', scriptPath: 'a.py' } },
+      { executor: fake.executor, resolveProjectRoot: () => workdir },
+    )
+    await expect(
+      svc.recordObservation(projectId, { runId: compute.id, text: 'x' }),
+    ).rejects.toThrow('计算运行的输出在日志中')
+  })
+
+  test('本地产物算 sha256=verified；外部引用=unverified', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    writeFileSync(join(workdir, 'results.csv'), 'a,b\n1,2\n', 'utf8')
+
+    const manual = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'tool-validation', title: '本体验证', input: {} },
+      { resolveProjectRoot: () => workdir },
+    )
+
+    const local = await svc.recordArtifact(
+      projectId,
+      { runId: manual.id, ref: 'results.csv' },
+      { resolveProjectRoot: () => workdir },
+    )
+    expect(local.integrity).toBe('verified')
+    expect(local.digest).toHaveLength(64)
+
+    const external = await svc.recordArtifact(
+      projectId,
+      { runId: manual.id, ref: 'doi:10.1234/xyz' },
+      { resolveProjectRoot: () => workdir },
+    )
+    expect(external.integrity).toBe('unverified')
+    expect(external.digest).toBeUndefined()
+  })
+
+  test('产物越界或不存在时拒绝', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const manual = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'tool-validation', title: 'T', input: {} },
+      { resolveProjectRoot: () => workdir },
+    )
+
+    await expect(
+      svc.recordArtifact(projectId, { runId: manual.id, ref: '../../etc/passwd' }, { resolveProjectRoot: () => workdir }),
+    ).rejects.toThrow('超出项目目录')
+
+    await expect(
+      svc.recordArtifact(projectId, { runId: manual.id, ref: 'missing.csv' }, { resolveProjectRoot: () => workdir }),
+    ).rejects.toThrow('不存在')
+  })
+
+  test('取消已结束运行被拒绝', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const fake = fakeExecutor({ status: 'completed', exitCode: 0 })
+    const done = await svc.createAndExecuteRun(
+      projectId,
+      { kind: 'compute', title: '已完成', input: { interpreter: 'node', scriptPath: 'a.js' } },
+      { executor: fake.executor, resolveProjectRoot: () => workdir },
+    )
+    await expect(svc.cancelRun(projectId, done.id)).rejects.toThrow('无法取消')
+  })
+})
+
+describe('真实本地执行器（无 shell）', () => {
+  test('脚本运行并落日志；参数数组不经过 shell', async () => {
+    const { run: svc, projectId, workdir } = await setupProject()
+    const { LocalRunExecutor } = await loadAll().then((m) => m.executor)
+
+    writeFileSync(
+      join(workdir, 'echo.js'),
+      'console.log("ARGS:" + process.argv.slice(2).join(",")); process.exit(0)\n',
+      'utf8',
+    )
+
+    const run = await svc.createAndExecuteRun(
+      projectId,
+      {
+        kind: 'compute',
+        title: '真实执行',
+        // 含 shell 元字符的参数：不经过 shell，因此应原样传入而不是被解释
+        input: { interpreter: 'node', scriptPath: 'echo.js', args: ['; echo pwned', '&& rm -rf /'] },
+        budget: { timeoutMs: 15000 },
+      },
+      { executor: new LocalRunExecutor(), resolveProjectRoot: () => workdir },
+    )
+
+    expect(run.status).toBe('completed')
+    expect(run.exitCode).toBe(0)
+
+    const { readFileSync } = await import('node:fs')
+    const log = readFileSync(join(tempDir, 'academic', 'research', projectId, 'run-logs', `${run.id}.log`), 'utf8')
+    expect(log).toContain('ARGS:; echo pwned,&& rm -rf /')
+    expect(log).not.toContain('pwned\n')
+  })
+})

@@ -115,4 +115,29 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.REJECT_TOPIC, async (_e, projectId: string, proposalId: string, reason: string) =>
     proposalSvc.rejectTopicProposal(projectId, proposalId, reason),
   )
+
+  // ===== M4：研究运行（受限本地执行） =====
+  const runSvc = require('./run-service') as typeof import('./run-service')
+  const runExecutor = require('./run-executor') as typeof import('./run-executor')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_RUNS, async (_e, projectId: string) =>
+    runSvc.listRuns(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_RUN, async (_e, projectId: string, request) =>
+    runSvc.createAndExecuteRun(projectId, request),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.CANCEL_RUN, async (_e, projectId: string, runId: string) =>
+    runSvc.cancelRun(projectId, runId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_OBSERVATION, async (_e, projectId: string, input) =>
+    runSvc.recordObservation(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_OBSERVATIONS, async (_e, projectId: string) =>
+    runSvc.listObservations(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_ARTIFACTS, async (_e, projectId: string) =>
+    runSvc.listArtifacts(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ALLOWED_INTERPRETERS, async () => ({
+    interpreters: runExecutor.ALLOWED_INTERPRETER_LIST ?? ['python3', 'python', 'Rscript', 'node', 'bun'],
+  }))
 }

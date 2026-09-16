@@ -94,6 +94,10 @@ export type ResearchEventType =
   | 'topic_proposed'
   | 'topic_selected'
   | 'topic_rejected'
+  | 'run_recorded'
+  | 'run_status_changed'
+  | 'observation_recorded'
+  | 'artifact_recorded'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -111,6 +115,10 @@ export type ResearchEventPayload =
   | { type: 'topic_proposed'; proposal: TopicProposal }
   | { type: 'topic_selected'; proposalId: string; selectedBy: ApprovalActor; reason?: string }
   | { type: 'topic_rejected'; proposalId: string; reason: string }
+  | { type: 'run_recorded'; run: ResearchRun }
+  | { type: 'run_status_changed'; runId: string; status: ResearchRunStatus; exitCode?: number; statusReason?: string; logRef?: string }
+  | { type: 'observation_recorded'; observation: RunObservation }
+  | { type: 'artifact_recorded'; artifact: RunArtifact }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -373,6 +381,98 @@ export interface TopicProposal {
   }
 }
 
+// ===== 研究运行与分析（M4） =====
+
+/** 运行状态机（提交 → 执行 → 终态） */
+export type ResearchRunStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timed-out'
+
+/** 运行类型：计算任务 / 手工观察登记 / 领域工具验证 */
+export type ResearchRunKind = 'compute' | 'manual-observation' | 'tool-validation'
+
+/** 输入清单：运行前冻结，事后不可改（方案 §7 输入 manifest） */
+export interface RunInputManifest {
+  /** 解释器（compute 必填；须在允许清单内） */
+  interpreter?: string
+  /** 脚本相对路径（须落在项目目录内） */
+  scriptPath?: string
+  /** 参数数组（不经过 shell，不做字符串拼接） */
+  args?: string[]
+  /** 数据/依赖引用（如 DVC 指针、数据集版本），仅作记录 */
+  dataRefs?: string[]
+  /** 环境声明（依赖文件、随机种子等） */
+  environmentNotes?: string
+  /** 输入清单摘要（服务层计算，用于事后比对） */
+  digest?: string
+}
+
+/** 运行资源与费用上限 */
+export interface RunBudget {
+  /** 墙钟超时（毫秒） */
+  timeoutMs: number
+  /** 输出保留上限（字节） */
+  maxOutputBytes: number
+}
+
+/**
+ * 研究运行记录。
+ *
+ * 注意：completed 只表示进程正常结束，**不代表结论成立**（方案 §11.4）。
+ */
+export interface ResearchRun {
+  id: string
+  projectId: string
+  /** 可选：关联的协议版本（有协议时必须记录） */
+  protocolVersion?: number
+  kind: ResearchRunKind
+  status: ResearchRunStatus
+  /** 人类可读标题 */
+  title: string
+  input: RunInputManifest
+  budget: RunBudget
+  startedAt?: string
+  finishedAt?: string
+  exitCode?: number
+  /** 失败/超时原因（不保存可能含敏感内容的原始错误正文，只存归一化说明） */
+  statusReason?: string
+  /** 日志文件相对路径（run-logs/<runId>.log） */
+  logRef?: string
+  createdAt: string
+}
+
+/** 手工观察登记（质性/湿实验/现场研究的原始记录入口） */
+export interface RunObservation {
+  id: string
+  projectId: string
+  runId: string
+  /** 观察内容（访谈摘记、实验现象、现场记录） */
+  text: string
+  /** 记录人（主进程确定） */
+  recordedBy: ApprovalActor
+  recordedAt: string
+}
+
+/** 运行产物：文件或外部对象引用 */
+export interface RunArtifact {
+  id: string
+  projectId: string
+  runId: string
+  /** 相对路径或外部引用（file://… / doi:… / dvc:…） */
+  ref: string
+  /** 内容摘要（本地文件为 sha256；外部引用可为空并标 unverified） */
+  digest?: string
+  sizeBytes?: number
+  /** 校验状态：本地文件已算摘要 = verified；外部引用 = unverified */
+  integrity: 'verified' | 'unverified'
+  note?: string
+  recordedAt: string
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -425,6 +525,13 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   CREATE_TOPIC: 'academic-research:create-topic',
   SELECT_TOPIC: 'academic-research:select-topic',
   REJECT_TOPIC: 'academic-research:reject-topic',
+  LIST_RUNS: 'academic-research:list-runs',
+  CREATE_RUN: 'academic-research:create-run',
+  CANCEL_RUN: 'academic-research:cancel-run',
+  RECORD_OBSERVATION: 'academic-research:record-observation',
+  LIST_OBSERVATIONS: 'academic-research:list-observations',
+  LIST_ARTIFACTS: 'academic-research:list-artifacts',
+  GET_ALLOWED_INTERPRETERS: 'academic-research:get-allowed-interpreters',
 } as const
 
 // ===== 输入 =====
