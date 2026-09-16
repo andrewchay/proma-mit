@@ -148,6 +148,18 @@ export function excludeAgentEmployeeLearningSample(id: string) {
   return store.excludeAgentEmployeeLearningSample(id)
 }
 
+export function getAgentEmployeeCapabilityObservations(agentId: string) {
+  return store.getAgentEmployeeCapabilityObservations(agentId)
+}
+
+export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string) {
+  return store.rollbackAgentEmployeeCapabilityVersion(agentId, versionId, reason)
+}
+
+export function listAgentEmployeeCapabilityRollbackAudits(agentId: string) {
+  return store.listAgentEmployeeCapabilityRollbackAudits(agentId)
+}
+
 /**
  * 显式停止项目中的一条 AI 员工执行。
  *

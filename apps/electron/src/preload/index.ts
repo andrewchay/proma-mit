@@ -1801,6 +1801,10 @@ export interface ElectronAPI {
       listLearningSamples: (agentId: string) => Promise<unknown[]>
       excludeLearningSample: (sampleId: string) => Promise<unknown | null>
       reviewLearningSample: (sampleId: string, evidenceSummary: string) => Promise<unknown | null>
+      getCapabilityObservations: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityObservationResult[]>
+      rollbackCapabilityVersion: (agentId: string, versionId: string, reason: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult>
+      listCapabilityRollbackAudits: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult[]>
+      runCapabilityEvaluation: (input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityEvaluationResult>
     }
 
     // --- 新媒体运营本地工作台 ---
@@ -1918,6 +1922,7 @@ export interface ElectronAPI {
     listRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     getPendingRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     refreshRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
+    scanEmployeeCapabilityRecommendations: () => Promise<Array<{ agentId: string; scope: 'role' | 'workspace'; workspaceId?: string; skipped?: string; recommendationId?: string }>>
     acceptRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     dismissRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     deleteRecommendation: (id: string) => Promise<boolean>
@@ -4066,6 +4071,10 @@ const electronAPI: ElectronAPI = {
       listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
       excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),
       reviewLearningSample: (sampleId, evidenceSummary) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, sampleId, evidenceSummary),
+      getCapabilityObservations: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_OBSERVATIONS, agentId),
+      rollbackCapabilityVersion: (agentId, versionId, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, agentId, versionId, reason),
+      listCapabilityRollbackAudits: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, agentId),
+      runCapabilityEvaluation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, input),
     },
     // --- 新媒体运营本地工作台 ---
     newMedia: {
@@ -4177,6 +4186,7 @@ const electronAPI: ElectronAPI = {
     listRecommendations: () => ipcRenderer.invoke('proactive:listRecommendations'),
     getPendingRecommendations: () => ipcRenderer.invoke('proactive:getPendingRecommendations'),
     refreshRecommendations: () => ipcRenderer.invoke('proactive:refreshRecommendations'),
+    scanEmployeeCapabilityRecommendations: () => ipcRenderer.invoke('proactive:scanEmployeeCapabilityRecommendations'),
     acceptRecommendation: (id: string) => ipcRenderer.invoke('proactive:acceptRecommendation', id),
     dismissRecommendation: (id: string) => ipcRenderer.invoke('proactive:dismissRecommendation', id),
     deleteRecommendation: (id: string) => ipcRenderer.invoke('proactive:deleteRecommendation', id),

@@ -43,12 +43,18 @@ export function AgentTeamPanel(): React.ReactElement {
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [executionsByAgent, setExecutionsByAgent] = React.useState<Record<string, AgentExecutionResult[]>>({})
   interface CapabilityPanelData {
-    versions: Array<{ id: string; versionNumber: number; scope: string; workspaceId?: string; status: string; source: string; content: string; contentHash: string; createdAt: number }>
+    versions: Array<{ id: string; parentVersionId?: string; versionNumber: number; scope: string; workspaceId?: string; status: string; source: string; content: string; contentHash: string; createdAt: number; activatedAt?: number; retiredAt?: number }>
     samples: Array<{ id: string; executionId: string; outcome: string; privacyStatus: string; evidenceSummary: string; capabilityVersionIds: string[]; createdAt: number }>
+    observations: import('@gravitas/shared').AgentEmployeeCapabilityObservationResult[]
+    audits: import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult[]
   }
   const [capabilityData, setCapabilityData] = React.useState<Record<string, CapabilityPanelData>>({})
   const [reviewingSampleId, setReviewingSampleId] = React.useState<string | null>(null)
   const [sampleDrafts, setSampleDrafts] = React.useState<Record<string, string>>({})
+  const [rollingBackVersionId, setRollingBackVersionId] = React.useState<string | null>(null)
+  const [evaluatingAgentId, setEvaluatingAgentId] = React.useState<string | null>(null)
+  const [evaluationResult, setEvaluationResult] = React.useState<Record<string, import('@gravitas/shared').AgentEmployeeCapabilityEvaluationResult>>({})
+  const [evaluationForm, setEvaluationForm] = React.useState<Record<string, { scope: 'role' | 'workspace'; channelId: string; modelId: string; judgeChannelId: string; judgeModelId: string }>>({})
 
   // 表单状态
   const [form, setForm] = React.useState({
@@ -90,11 +96,13 @@ export function AgentTeamPanel(): React.ReactElement {
 
   const loadCapabilities = React.useCallback(async (agentId: string): Promise<void> => {
     try {
-      const [versions, samples] = await Promise.all([
+      const [versions, samples, observations, audits] = await Promise.all([
         window.electronAPI.paa.agentEmployees.listCapabilityVersions(agentId),
         window.electronAPI.paa.agentEmployees.listLearningSamples(agentId),
+        window.electronAPI.paa.agentEmployees.getCapabilityObservations(agentId),
+        window.electronAPI.paa.agentEmployees.listCapabilityRollbackAudits(agentId),
       ])
-      setCapabilityData((current) => ({ ...current, [agentId]: { versions: versions as never[], samples: samples as never[] } }))
+      setCapabilityData((current) => ({ ...current, [agentId]: { versions: versions as never[], samples: samples as never[], observations, audits } }))
     } catch (err) {
       setError(err instanceof Error ? err.message : '能力演化数据加载失败')
     }
@@ -124,6 +132,38 @@ export function AgentTeamPanel(): React.ReactElement {
       setError(err instanceof Error ? err.message : '样本排除失败')
     } finally {
       setReviewingSampleId(null)
+    }
+  }
+
+  const runCapabilityEvaluation = async (emp: AgentEmployeeResult): Promise<void> => {
+    const form = evaluationForm[emp.id] ?? { scope: 'role' as const, channelId: emp.channelId, modelId: emp.modelId ?? '', judgeChannelId: '', judgeModelId: '' }
+    if (!form.modelId.trim()) { setError('请显式填写用于本次评测的模型'); return }
+    if (!confirm('本次只生成待审批候选，不会激活生产版本。确认开始受控评测？')) return
+    setEvaluatingAgentId(emp.id)
+    setError('')
+    try {
+      const result = await window.electronAPI.paa.agentEmployees.runCapabilityEvaluation({ agentId: emp.id, scope: form.scope, workspaceId: form.scope === 'workspace' ? emp.workspaceIds?.[0] : undefined, channelId: form.channelId, modelId: form.modelId.trim(), judgeChannelId: form.judgeChannelId.trim() || undefined, judgeModelId: form.judgeModelId.trim() || undefined })
+      setEvaluationResult((current) => ({ ...current, [emp.id]: result }))
+      await loadCapabilities(emp.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '受控评测失败')
+    } finally {
+      setEvaluatingAgentId(null)
+    }
+  }
+
+  const rollbackCapability = async (agentId: string, versionId: string): Promise<void> => {
+    const reason = prompt('请输入回滚原因。该原因将写入不可变审计记录：')?.trim()
+    if (!reason) return
+    if (!confirm('确认回滚当前能力版本？后续新任务将使用父版本或基线，历史执行不会改变。')) return
+    setRollingBackVersionId(versionId)
+    try {
+      await window.electronAPI.paa.agentEmployees.rollbackCapabilityVersion(agentId, versionId, reason)
+      await loadCapabilities(agentId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '能力版本回滚失败')
+    } finally {
+      setRollingBackVersionId(null)
     }
   }
 
@@ -293,7 +333,13 @@ export function AgentTeamPanel(): React.ReactElement {
                 </div>
 
                 <div className="pl-11 flex gap-3"><button onClick={() => void loadExecutions(emp.id)} className="text-xs text-primary">刷新执行记录</button><button onClick={() => void loadCapabilities(emp.id)} className="text-xs text-primary">查看能力演化</button></div>
-                {capabilityData[emp.id] && (() => { const capability = capabilityData[emp.id]!; return <details className="ml-11 rounded-md bg-primary/[0.03] p-3 text-xs"><summary className="cursor-pointer font-medium">能力版本与学习样本</summary><div className="mt-3 space-y-3"><div><p className="mb-1 text-foreground/55">能力版本</p>{capability.versions.length === 0 ? <p className="text-muted-foreground">尚无已激活能力版本。</p> : capability.versions.map((version) => <details key={version.id} className="rounded bg-background/70 p-2"><summary>v{version.versionNumber} · {version.scope} · {version.status} · {version.contentHash.slice(0, 12)}</summary><pre className="mt-2 whitespace-pre-wrap break-words font-sans text-[11px]">{version.content || '（空基线）'}</pre></details>)}</div><div><p className="mb-1 text-foreground/55">学习样本</p>{capability.samples.length === 0 ? <p className="text-muted-foreground">暂无学习样本。</p> : capability.samples.map((sample) => <div key={sample.id} className="mb-2 rounded bg-background/70 p-2"><p><span className="font-medium">{sample.outcome}</span> · {sample.privacyStatus} · {new Date(sample.createdAt).toLocaleString('zh-CN')}</p><p className="mt-1 whitespace-pre-wrap break-words">{sample.evidenceSummary}</p>{sample.privacyStatus === 'pending' && <textarea className="mt-2 w-full rounded border bg-background p-2 text-[11px]" placeholder="人工审核后的脱敏摘要：删除路径、原始会话、敏感信息，只保留可评测结论" value={sampleDrafts[sample.id] ?? sample.evidenceSummary} onChange={(event) => setSampleDrafts((current) => ({ ...current, [sample.id]: event.target.value }))} />}{sample.privacyStatus === 'pending' && <button disabled={reviewingSampleId === sample.id} className="mr-2 mt-2 rounded bg-primary px-2 py-1 text-[11px] text-primary-foreground disabled:opacity-50" onClick={() => void reviewSample(emp.id, sample.id)}>标记可用于评测</button>}{sample.privacyStatus !== 'excluded' && <button disabled={reviewingSampleId === sample.id} className="mt-2 rounded px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50" onClick={() => void excludeSample(emp.id, sample.id)}>排除样本</button>}<p className="mt-1 text-[10px] text-muted-foreground">失败/取消样本不会自动被视为负向反馈，需人工判断。</p></div>)}</div></div></details> })()}
+                {capabilityData[emp.id] && (() => { const capability = capabilityData[emp.id]!; return <details className="ml-11 rounded-md bg-primary/[0.03] p-3 text-xs"><summary className="cursor-pointer font-medium">能力版本与学习样本</summary><div className="mt-3 space-y-3"><div><p className="mb-1 text-foreground/55">能力版本</p>{capability.versions.length === 0 ? <p className="text-muted-foreground">尚无已激活能力版本。</p> : capability.versions.map((version) => <details key={version.id} className="rounded bg-background/70 p-2"><summary>v{version.versionNumber} · {version.scope} · {version.status} · {version.contentHash.slice(0, 12)}</summary>{(() => { const observation = capability.observations.find((item) => item.versionId === version.id); return <div className="mt-2 space-y-1 text-[11px] text-muted-foreground"><p>父版本：{version.parentVersionId?.slice(0, 12) ?? '基线'} · 激活：{version.activatedAt ? new Date(version.activatedAt).toLocaleString('zh-CN') : '—'}</p><p>冻结执行 {observation?.executionCount ?? 0} · 完成 {observation?.completedCount ?? 0} · 失败 {observation?.failedCount ?? 0} · 取消 {observation?.cancelledCount ?? 0}</p><p>验收样本 {observation?.acceptedSamples ?? 0} · 返工 {observation?.changesRequestedSamples ?? 0} · 已脱敏 {observation?.sanitizedSamples ?? 0} · 待审核 {observation?.pendingSamples ?? 0}</p>{version.status === 'active' && <button disabled={rollingBackVersionId === version.id} className="rounded px-2 py-1 text-destructive hover:bg-destructive/10 disabled:opacity-50" onClick={() => void rollbackCapability(emp.id, version.id)}>回滚到{version.parentVersionId ? '父版本' : '基线'}</button>}</div> })()}<pre className="mt-2 whitespace-pre-wrap break-words font-sans text-[11px]">{version.content || '（空基线）'}</pre></details>)}</div><div><p className="mb-1 text-foreground/55">学习样本</p>{capability.samples.length === 0 ? <p className="text-muted-foreground">暂无学习样本。</p> : capability.samples.map((sample) => <div key={sample.id} className="mb-2 rounded bg-background/70 p-2"><p><span className="font-medium">{sample.outcome}</span> · {sample.privacyStatus} · {new Date(sample.createdAt).toLocaleString('zh-CN')}</p><p className="mt-1 whitespace-pre-wrap break-words">{sample.evidenceSummary}</p>{sample.privacyStatus === 'pending' && <textarea className="mt-2 w-full rounded border bg-background p-2 text-[11px]" placeholder="人工审核后的脱敏摘要：删除路径、原始会话、敏感信息，只保留可评测结论" value={sampleDrafts[sample.id] ?? sample.evidenceSummary} onChange={(event) => setSampleDrafts((current) => ({ ...current, [sample.id]: event.target.value }))} />}{sample.privacyStatus === 'pending' && <button disabled={reviewingSampleId === sample.id} className="mr-2 mt-2 rounded bg-primary px-2 py-1 text-[11px] text-primary-foreground disabled:opacity-50" onClick={() => void reviewSample(emp.id, sample.id)}>标记可用于评测</button>}{sample.privacyStatus !== 'excluded' && <button disabled={reviewingSampleId === sample.id} className="mt-2 rounded px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50" onClick={() => void excludeSample(emp.id, sample.id)}>排除样本</button>}<p className="mt-1 text-[10px] text-muted-foreground">失败/取消样本不会自动被视为负向反馈，需人工判断。</p></div>)}</div></div></details> })()}
+                {capabilityData[emp.id] && (() => {
+                  const form = evaluationForm[emp.id] ?? { scope: 'role' as const, channelId: emp.channelId, modelId: emp.modelId ?? '', judgeChannelId: '', judgeModelId: '' }
+                  const result = evaluationResult[emp.id]
+                  const sanitizedCount = capabilityData[emp.id]!.samples.filter((sample) => sample.privacyStatus === 'sanitized').length
+                  return <details className="ml-11 rounded-md bg-foreground/[0.02] p-3 text-xs"><summary className="cursor-pointer font-medium">受控评测并生成候选</summary><div className="mt-3 space-y-2"><p className="text-muted-foreground">已脱敏样本 {sanitizedCount} 条（至少 3 条，且需至少 1 条归入 held-out）。评测只产出待审批候选，不激活生产版本。</p><label className="block">能力范围<select className="mt-1 w-full rounded border bg-background p-2" value={form.scope} onChange={(event) => setEvaluationForm((current) => ({ ...current, [emp.id]: { ...form, scope: event.target.value as 'role' | 'workspace' } }))}><option value="role">角色级</option><option value="workspace">工作区级</option></select></label><label className="block">被测渠道<select className="mt-1 w-full rounded border bg-background p-2" value={form.channelId} onChange={(event) => setEvaluationForm((current) => ({ ...current, [emp.id]: { ...form, channelId: event.target.value, modelId: '' } }))}>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label><label className="block">被测模型（显式）<input className="mt-1 w-full rounded border bg-background p-2" value={form.modelId} onChange={(event) => setEvaluationForm((current) => ({ ...current, [emp.id]: { ...form, modelId: event.target.value } }))} placeholder="必须填写已启用的模型 id" /></label><label className="block">独立评判渠道（留空则视为不独立，仅出 baseline）<select className="mt-1 w-full rounded border bg-background p-2" value={form.judgeChannelId} onChange={(event) => setEvaluationForm((current) => ({ ...current, [emp.id]: { ...form, judgeChannelId: event.target.value, judgeModelId: '' } }))}><option value="">未配置</option>{channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label>{form.judgeChannelId && <label className="block">评判模型（显式）<input className="mt-1 w-full rounded border bg-background p-2" value={form.judgeModelId} onChange={(event) => setEvaluationForm((current) => ({ ...current, [emp.id]: { ...form, judgeModelId: event.target.value } }))} placeholder="必须填写已启用的模型 id" /></label>}<p className="text-[11px] text-amber-700 dark:text-amber-300">评判者必须与被测渠道或模型不同源；否则不能生成可批准候选。评测会真实调用模型并产生费用。</p><button disabled={evaluatingAgentId === emp.id} className="rounded bg-primary px-3 py-1.5 text-primary-foreground disabled:opacity-50" onClick={() => void runCapabilityEvaluation(emp)}>{evaluatingAgentId === emp.id ? '评测中…' : '运行受控评测'}</button>{result && <div className="space-y-1 rounded bg-background p-2"><p>状态：{result.status} · 训练 {result.baselineScore.toFixed(1)} → {result.finalScore.toFixed(1)} · held-out {result.heldOutBaselineScore ?? '—'} → {result.heldOutFinalScore ?? '—'}</p><p>Judge：{result.judgeKind} · 独立：{result.judgeIndependent ? '是' : '否'} · 样本 {result.trainingSampleCount} 训练 / {result.heldOutSampleCount} held-out</p><p className="text-muted-foreground">{result.message}</p><p className="break-all text-[11px] text-muted-foreground">benchmark：{result.benchmarkId}{result.approvalId ? ` · 待审批：${result.approvalId}` : ''}</p></div>}</div></details>
+                })()}
 
                 {/* 执行记录概览 */}
                 {execs.length > 0 ? (

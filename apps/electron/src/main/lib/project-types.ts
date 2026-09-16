@@ -449,6 +449,35 @@ export interface AgentEmployeeCapabilityVersion {
   retiredAt?: number
 }
 
+export interface AgentEmployeeCapabilityObservation {
+  versionId: string
+  executionCount: number
+  completedCount: number
+  failedCount: number
+  cancelledCount: number
+  staleCount: number
+  acceptedSamples: number
+  changesRequestedSamples: number
+  failedSamples: number
+  cancelledSamples: number
+  pendingSamples: number
+  sanitizedSamples: number
+  excludedSamples: number
+  lastExecutedAt?: number
+}
+
+export interface AgentEmployeeCapabilityRollbackAudit {
+  id: string
+  agentId: string
+  scope: AgentEmployeeCapabilityScope
+  workspaceId?: string
+  fromVersionId: string
+  toVersionId?: string
+  reason: string
+  actorId: string
+  createdAt: number
+}
+
 export interface AgentEmployeeLearningSample {
   id: string
   agentId: string

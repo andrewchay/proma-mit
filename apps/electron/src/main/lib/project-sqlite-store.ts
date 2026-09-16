@@ -759,6 +759,20 @@ function migrate(database: SqliteCompat): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_learning_samples ON agent_employee_learning_samples(agent_id, privacy_status, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS agent_employee_capability_audits (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      workspace_id TEXT,
+      from_version_id TEXT NOT NULL,
+      to_version_id TEXT,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_capability_audits ON agent_employee_capability_audits(agent_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS sync_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -2758,6 +2772,61 @@ export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./projec
   const timestamp = Date.now()
   database.prepare("UPDATE agent_employee_capability_versions SET status = 'superseded', retired_at = ? WHERE agent_id = ? AND scope = ? AND workspace_id IS ? AND status = 'active'").run(timestamp, input.agentId, input.scope, input.workspaceId ?? null)
   return createAgentEmployeeCapabilityVersion({ ...input, status: 'active', activatedAt: timestamp })
+}
+
+export function getAgentEmployeeCapabilityObservations(agentId: string): import('./project-types').AgentEmployeeCapabilityObservation[] {
+  const versionIds = listAgentEmployeeCapabilityVersions(agentId).map((version) => version.id)
+  const executions = getProjectDb().prepare('SELECT status, capability_version_ids, started_at, completed_at FROM agent_executions WHERE agent_id = ?').all(agentId) as Array<{ status: string; capability_version_ids: string | null; started_at: number; completed_at: number | null }>
+  const samples = getProjectDb().prepare('SELECT capability_version_ids, outcome, privacy_status FROM agent_employee_learning_samples WHERE agent_id = ?').all(agentId) as Array<{ capability_version_ids: string; outcome: string; privacy_status: string }>
+  return versionIds.map((versionId) => {
+    const matchedExecutions = executions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(versionId))
+    const matchedSamples = samples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(versionId))
+    return {
+      versionId,
+      executionCount: matchedExecutions.length,
+      completedCount: matchedExecutions.filter((item) => item.status === 'completed').length,
+      failedCount: matchedExecutions.filter((item) => item.status === 'failed').length,
+      cancelledCount: matchedExecutions.filter((item) => item.status === 'cancelled').length,
+      staleCount: matchedExecutions.filter((item) => item.status === 'stale').length,
+      acceptedSamples: matchedSamples.filter((item) => item.outcome === 'accepted').length,
+      changesRequestedSamples: matchedSamples.filter((item) => item.outcome === 'changes_requested').length,
+      failedSamples: matchedSamples.filter((item) => item.outcome === 'failed').length,
+      cancelledSamples: matchedSamples.filter((item) => item.outcome === 'cancelled').length,
+      pendingSamples: matchedSamples.filter((item) => item.privacy_status === 'pending').length,
+      sanitizedSamples: matchedSamples.filter((item) => item.privacy_status === 'sanitized').length,
+      excludedSamples: matchedSamples.filter((item) => item.privacy_status === 'excluded').length,
+      lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
+    }
+  })
+}
+
+export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string): import('./project-types').AgentEmployeeCapabilityRollbackAudit {
+  const trimmedReason = reason.trim()
+  if (!trimmedReason || trimmedReason.length > 1000) throw new Error('回滚原因不能为空且不能超过 1000 字符')
+  const database = getProjectDb()
+  let audit: import('./project-types').AgentEmployeeCapabilityRollbackAudit | undefined
+  database.transaction(() => {
+    const currentRow = database.prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ? AND agent_id = ?').get(versionId, agentId) as CapabilityVersionRow | undefined
+    if (!currentRow) throw new Error('能力版本不存在')
+    const current = rowToCapabilityVersion(currentRow)
+    if (current.status !== 'active') throw new Error('只能回滚当前 active 能力版本')
+    const parentRow = current.parentVersionId
+      ? database.prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ? AND agent_id = ?').get(current.parentVersionId, agentId) as CapabilityVersionRow | undefined
+      : undefined
+    if (parentRow && (parentRow.scope !== current.scope || (parentRow.workspace_id ?? undefined) !== current.workspaceId)) throw new Error('父版本范围与当前版本不一致')
+    const timestamp = Date.now()
+    database.prepare("UPDATE agent_employee_capability_versions SET status = 'rolled_back', retired_at = ? WHERE id = ?").run(timestamp, current.id)
+    if (parentRow) database.prepare("UPDATE agent_employee_capability_versions SET status = 'active', activated_at = ?, retired_at = NULL WHERE id = ?").run(timestamp, parentRow.id)
+    const id = randomUUID()
+    database.prepare("INSERT INTO agent_employee_capability_audits (id, agent_id, scope, workspace_id, from_version_id, to_version_id, action, reason, actor_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'rollback', ?, 'local-user', ?)").run(id, agentId, current.scope, current.workspaceId ?? null, current.id, parentRow?.id ?? null, trimmedReason, timestamp)
+    audit = { id, agentId, scope: current.scope, workspaceId: current.workspaceId, fromVersionId: current.id, toVersionId: parentRow?.id, reason: trimmedReason, actorId: 'local-user', createdAt: timestamp }
+  })()
+  return audit!
+}
+
+export function listAgentEmployeeCapabilityRollbackAudits(agentId: string): import('./project-types').AgentEmployeeCapabilityRollbackAudit[] {
+  const rows = getProjectDb().prepare("SELECT * FROM agent_employee_capability_audits WHERE agent_id = ? AND action = 'rollback' ORDER BY created_at DESC").all(agentId) as Array<{ id: string; agent_id: string; scope: string; workspace_id: string | null; from_version_id: string; to_version_id: string | null; reason: string; actor_id: string; created_at: number }>
+  return rows.map((row) => ({ id: row.id, agentId: row.agent_id, scope: row.scope as import('./project-types').AgentEmployeeCapabilityScope, workspaceId: row.workspace_id ?? undefined, fromVersionId: row.from_version_id, toVersionId: row.to_version_id ?? undefined, reason: row.reason, actorId: row.actor_id, createdAt: row.created_at }))
 }
 
 export function createAgentEmployeeLearningSample(input: Omit<import('./project-types').AgentEmployeeLearningSample, 'id' | 'createdAt'>): import('./project-types').AgentEmployeeLearningSample {
