@@ -581,6 +581,67 @@ export interface ManuscriptVersion {
   createdAt: string
 }
 
+// ===== 外部工具集成（M6） =====
+
+/**
+ * 外部工具在 Gravitas 中的角色。
+ *
+ * `descriptor-only`：只登记能力与前置条件，不提供执行路径——
+ * 用于尚未接入或需要用户自行安装/授权的工具。**不得**把描述符
+ * 当作已集成能力（方案 §7）。
+ */
+export type ExternalToolRole = 'cli-adapter' | 'descriptor-only'
+
+/** 探测结果 */
+export type ExternalToolStatus =
+  | 'available'
+  | 'not-installed'
+  | 'version-mismatch'
+  | 'license-not-acknowledged'
+  | 'disabled'
+  | 'probe-error'
+
+/** 工具登记描述符（不随代码内置任何上游源码或二进制） */
+export interface ExternalToolDescriptor {
+  id: string
+  name: string
+  role: ExternalToolRole
+  /** 需要探测的可执行文件名（CLI adapter 才有） */
+  binary?: string
+  /** 探测参数（如 ['--version']） */
+  versionArgs?: string[]
+  /** 期望版本前缀（可选；不匹配则报 version-mismatch） */
+  expectedVersionPrefix?: string
+  /** 许可与条款说明（必须由用户确认后才启用） */
+  licenseNote: string
+  /** 来源仓库/文档链接（供用户自行安装） */
+  homepage: string
+  /** 该工具能做什么（用于 UI 展示与用户判断） */
+  capabilities: string[]
+  /** 该工具需要用户自行准备的前置条件 */
+  prerequisites: string[]
+}
+
+/** 工具启用状态（落盘，不含凭据） */
+export interface ExternalToolConfig {
+  toolId: string
+  enabled: boolean
+  /** 用户确认许可的时间（ISO）；缺省表示未确认 */
+  licenseAcknowledgedAt?: string
+  /** 固定版本（用户填写实际安装版本，便于事后复现） */
+  pinnedVersion?: string
+}
+
+export interface ExternalToolStatusView {
+  descriptor: ExternalToolDescriptor
+  config: ExternalToolConfig
+  status: ExternalToolStatus
+  /** 探测到的版本（available 时） */
+  detectedVersion?: string
+  /** 说明（如缺失原因、需用户执行什么） */
+  detail?: string
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -651,6 +712,9 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   LIST_MANUSCRIPTS: 'academic-research:list-manuscripts',
   CREATE_MANUSCRIPT_VERSION: 'academic-research:create-manuscript-version',
   EXPORT_PREFLIGHT: 'academic-research:export-preflight',
+  LIST_EXTERNAL_TOOLS: 'academic-research:list-external-tools',
+  SET_EXTERNAL_TOOL: 'academic-research:set-external-tool',
+  PROBE_EXTERNAL_TOOLS: 'academic-research:probe-external-tools',
 } as const
 
 // ===== 输入 =====

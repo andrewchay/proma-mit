@@ -471,3 +471,33 @@ export const createManuscriptAtom = atom(
 export const refreshPreflightAtom = atom(null, async (_get, set, projectId: string) => {
   set(preflightAtom, await window.electronAPI.academicResearch.exportPreflight(projectId))
 })
+
+// ===== M6：外部工具集成 =====
+
+export interface ExternalToolView {
+  descriptor: import('@gravitas/shared').ExternalToolDescriptor
+  config: import('@gravitas/shared').ExternalToolConfig
+  status: import('@gravitas/shared').ExternalToolStatus
+  detectedVersion?: string
+  detail?: string
+}
+
+export const externalToolsAtom = atom<ExternalToolView[]>([])
+export const externalToolsLoadingAtom = atom<boolean>(false)
+
+export const probeExternalToolsAtom = atom(null, async (_get, set) => {
+  set(externalToolsLoadingAtom, true)
+  try {
+    set(externalToolsAtom, await window.electronAPI.academicResearch.probeExternalTools())
+  } finally {
+    set(externalToolsLoadingAtom, false)
+  }
+})
+
+export const setExternalToolAtom = atom(
+  null,
+  async (_get, set, input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => {
+    await window.electronAPI.academicResearch.setExternalTool(input)
+    set(externalToolsAtom, await window.electronAPI.academicResearch.probeExternalTools())
+  },
+)

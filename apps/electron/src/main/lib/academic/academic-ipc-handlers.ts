@@ -176,4 +176,34 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_PREFLIGHT, async (_e, projectId: string) =>
     claimSvc.runExportPreflight(projectId),
   )
+
+  // ===== M6：外部工具集成（描述符 + 探测；不内置上游产物） =====
+  const toolSvc = require('./external-tool-service') as typeof import('./external-tool-service')
+  const toolRules = require('@gravitas/core/services/academic') as typeof import('@gravitas/core/services/academic')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.PROBE_EXTERNAL_TOOLS, async () => toolSvc.probeAllTools())
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EXTERNAL_TOOLS, async () => ({
+    descriptors: toolSvc.listToolDescriptors(),
+    configs: toolSvc.listToolConfigs(),
+  }))
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_EXTERNAL_TOOL, async (_e, input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => {
+    const descriptor = toolSvc.getToolDescriptor(input.toolId)
+    const existing = toolSvc.getToolConfig(input.toolId)
+    const licenseAcknowledgedAt = input.licenseAcknowledged
+      ? (existing.licenseAcknowledgedAt ?? new Date().toISOString())
+      : undefined
+
+    toolRules.validateToolEnableRequest({
+      enabled: input.enabled,
+      licenseAcknowledgedAt,
+      pinnedVersion: input.pinnedVersion,
+      descriptor,
+    })
+
+    return toolSvc.saveToolConfig({
+      toolId: input.toolId,
+      enabled: input.enabled,
+      licenseAcknowledgedAt,
+      pinnedVersion: input.pinnedVersion?.trim() || existing.pinnedVersion,
+    })
+  })
 }

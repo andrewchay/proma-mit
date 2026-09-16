@@ -1567,6 +1567,10 @@ export interface ElectronAPI {
     listManuscripts: (projectId: string) => Promise<import('@gravitas/shared').ManuscriptVersion[]>
     createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => Promise<import('@gravitas/shared').ManuscriptVersion>
     exportPreflight: (projectId: string) => Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>
+    // M6：外部工具集成（不内置上游产物，需用户自行安装）
+    probeExternalTools: () => Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>
+    listExternalTools: () => Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>
+    setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => Promise<import('@gravitas/shared').ExternalToolConfig>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2427,6 +2431,11 @@ const electronAPI: ElectronAPI = {
     listManuscripts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_MANUSCRIPTS, projectId) as Promise<import('@gravitas/shared').ManuscriptVersion[]>,
     createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_MANUSCRIPT_VERSION, projectId, draft) as Promise<import('@gravitas/shared').ManuscriptVersion>,
     exportPreflight: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_PREFLIGHT, projectId) as Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>,
+
+    // M6：外部工具集成
+    probeExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROBE_EXTERNAL_TOOLS) as Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>,
+    listExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EXTERNAL_TOOLS) as Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>,
+    setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_EXTERNAL_TOOL, input) as Promise<import('@gravitas/shared').ExternalToolConfig>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
