@@ -10,12 +10,15 @@
  */
 
 /** 评测目标类型 */
-export type EvalTargetType = 'agent' | 'toolset'
+export type EvalTargetType = 'agent' | 'toolset' | 'employee_capability'
 
 /** 被测目标 */
 export interface EvalTarget {
   type: EvalTargetType
   id: string
+  /** employee_capability 使用；id 为 agentId。 */
+  scope?: 'role' | 'workspace'
+  workspaceId?: string
 }
 
 /** 被测目标：先针对内置 sub-agent（code-reviewer 等），后续可扩展到任意 Agent 状态。 */

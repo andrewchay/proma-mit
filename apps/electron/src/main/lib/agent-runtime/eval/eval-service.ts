@@ -238,7 +238,9 @@ export async function runEvalImprove(benchmarkId: string, opts: EvalServiceOptio
       : undefined,
   }).then(async (summary) => {
     if (autoAdopt && adoptedContent) {
-      adoptEvalTarget(benchmark.targetType ?? 'agent', benchmark.targetAgentId, adoptedContent)
+      const targetType = benchmark.targetType ?? 'agent'
+      if (targetType === 'employee_capability') throw new Error('员工能力候选禁止 autoAdopt，必须创建审批后由用户批准')
+      adoptEvalTarget(targetType, benchmark.targetAgentId, adoptedContent)
     }
     return summary
   })

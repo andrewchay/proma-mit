@@ -459,6 +459,12 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   EXCLUDE_LEARNING_SAMPLE: 'agent-employee:exclude-learning-sample',
   /** 审核学习样本摘要并更新脱敏状态。 */
   REVIEW_LEARNING_SAMPLE: 'agent-employee:review-learning-sample',
+  /** 查询按冻结版本归因的生产观察摘要。 */
+  GET_CAPABILITY_OBSERVATIONS: 'agent-employee:get-capability-observations',
+  /** 带原因人工回滚当前 active 版本。 */
+  ROLLBACK_CAPABILITY_VERSION: 'agent-employee:rollback-capability-version',
+  /** 查询能力版本回滚审计。 */
+  LIST_CAPABILITY_ROLLBACK_AUDITS: 'agent-employee:list-capability-rollback-audits',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -480,6 +486,35 @@ export interface CreateAgentEmployeeInput {
   workflowId?: string
   systemPrompt?: string
   skills?: string[]
+}
+
+export interface AgentEmployeeCapabilityObservationResult {
+  versionId: string
+  executionCount: number
+  completedCount: number
+  failedCount: number
+  cancelledCount: number
+  staleCount: number
+  acceptedSamples: number
+  changesRequestedSamples: number
+  failedSamples: number
+  cancelledSamples: number
+  pendingSamples: number
+  sanitizedSamples: number
+  excludedSamples: number
+  lastExecutedAt?: number
+}
+
+export interface AgentEmployeeCapabilityRollbackAuditResult {
+  id: string
+  agentId: string
+  scope: 'role' | 'workspace'
+  workspaceId?: string
+  fromVersionId: string
+  toVersionId?: string
+  reason: string
+  actorId: string
+  createdAt: number
 }
 
 export interface CancelAgentExecutionResult {

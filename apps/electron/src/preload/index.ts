@@ -1801,6 +1801,9 @@ export interface ElectronAPI {
       listLearningSamples: (agentId: string) => Promise<unknown[]>
       excludeLearningSample: (sampleId: string) => Promise<unknown | null>
       reviewLearningSample: (sampleId: string, evidenceSummary: string) => Promise<unknown | null>
+      getCapabilityObservations: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityObservationResult[]>
+      rollbackCapabilityVersion: (agentId: string, versionId: string, reason: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult>
+      listCapabilityRollbackAudits: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult[]>
     }
 
     // --- 营销能力包 ---
@@ -4013,6 +4016,9 @@ const electronAPI: ElectronAPI = {
       listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
       excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),
       reviewLearningSample: (sampleId, evidenceSummary) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, sampleId, evidenceSummary),
+      getCapabilityObservations: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_OBSERVATIONS, agentId),
+      rollbackCapabilityVersion: (agentId, versionId, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, agentId, versionId, reason),
+      listCapabilityRollbackAudits: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, agentId),
     },
     // --- 营销能力包 ---
     marketing: {

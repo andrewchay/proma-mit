@@ -27,6 +27,10 @@ export interface CandidateBuilderContext {
   currentPrompt: string
   /** 各 Case 表现：caseId + score（可 null） */
   caseScores: Array<{ caseId: string; score: number | null }>
+  /** 仅允许传入人工脱敏后的学习摘要。 */
+  sanitizedLearningSummary?: string
+  /** 由系统固定注入、候选不得修改的治理边界。 */
+  nonEvolvableConstraints?: string[]
 }
 
 /** 构造 Builder 的一次调用用户消息（纯函数，便于单测）。 */
@@ -34,9 +38,16 @@ export function buildBuilderUserPrompt(ctx: CandidateBuilderContext): string {
   const rows = ctx.caseScores
     .map((c) => `- ${c.caseId}: ${c.score == null ? '评测失败' : `${c.score.toFixed(1)} / 100`}`)
     .join('\n')
-  return BUILDER_USER_TEMPLATE
+  const base = BUILDER_USER_TEMPLATE
     .replace('{{prompt}}', ctx.currentPrompt)
     .replace('{{casesTable}}', rows || '（无 Case 数据）')
+  const learning = ctx.sanitizedLearningSummary?.trim()
+    ? `\n\n人工审核并脱敏后的学习摘要（不得反推或索取原始会话）：\n${ctx.sanitizedLearningSummary.trim()}`
+    : ''
+  const constraints = ctx.nonEvolvableConstraints?.length
+    ? `\n\n不可演化约束（候选不得修改、规避或弱化）：\n${ctx.nonEvolvableConstraints.map((item) => `- ${item}`).join('\n')}`
+    : ''
+  return `${base}${learning}${constraints}`
 }
 
 /** Builder 系统提示词（generateCandidatePrompt 使用）。 */
