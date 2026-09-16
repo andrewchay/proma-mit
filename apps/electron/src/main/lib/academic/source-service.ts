@@ -23,6 +23,8 @@ import { appendEvent, loadProjectState } from './research-store'
 import type { ScholarAdapter, ScholarSearchOptions } from './adapters/adapter-types'
 import { createOpenAlexAdapter } from './adapters/openalex-adapter'
 import { createArxivAdapter } from './adapters/arxiv-adapter'
+import { createPubmedAdapter } from './adapters/pubmed-adapter'
+import { createEuropePmcAdapter } from './adapters/europepmc-adapter'
 
 export interface SourceServiceDeps {
   adapters?: ScholarAdapter[]
@@ -30,9 +32,12 @@ export interface SourceServiceDeps {
   fetchFn?: typeof fetch
 }
 
+/** 免登录公开源；Zotero 需库配置，由调用方显式传入 adapter */
 const DEFAULT_DATABASES: Record<string, (fetchFn: typeof fetch) => ScholarAdapter> = {
   openalex: createOpenAlexAdapter,
   arxiv: createArxivAdapter,
+  pubmed: createPubmedAdapter,
+  europepmc: createEuropePmcAdapter,
 }
 
 function resolveAdapters(deps: SourceServiceDeps): ScholarAdapter[] {

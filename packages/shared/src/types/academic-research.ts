@@ -155,7 +155,7 @@ export type SourceType =
   | 'other'
 
 /** 外部标识命名空间：DOI 不是全局主键，只是别名之一 */
-export type ExternalIdNamespace = 'doi' | 'pmid' | 'arxiv' | 'isbn' | 'zotero' | 'url'
+export type ExternalIdNamespace = 'doi' | 'pmid' | 'pmcid' | 'arxiv' | 'isbn' | 'zotero' | 'url'
 
 export interface ExternalId {
   namespace: ExternalIdNamespace

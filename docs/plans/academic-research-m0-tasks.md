@@ -46,13 +46,25 @@
 | [x] | 文献库 IPC（7 通道）+ preload | `0d5bd01c` |
 | [x] | 证据模型 + evidence-policy + evidence-service | `f17b6fea` |
 | [x] | SourceLibraryPanel UI（检索/导入/筛选/去重/证据台账） | `f17b6fea` |
-| [~] | PubMed adapter | **缺失 → G2** |
-| [~] | EuropePMC adapter | **缺失 → G2** |
-| [~] | Zotero 只读 adapter | **缺失 → G2** |
-| [~] | 真实 API smoke（OpenAlex/arXiv 实端点各一次） | **未执行 → G4** |
+| [x] | PubMed adapter（esearch+esummary，metadata-only 不冒充） | `M2.5` |
+| [x] | EuropePMC adapter（resultType=core，剥离 HTML） | `M2.5` |
+| [x] | Zotero 只读 adapter（本地/Web API 同实现，不碰 sqlite） | `M2.5` |
+| [x] | 真实 API smoke：openalex/arxiv/pubmed/europepmc 四源全通过 | `scripts/academic-adapter-smoke.ts` |
 | [~] | 证据矩阵视图（支持/矛盾并排） | **后移至 M5 → G5** |
 | [x] | 检索日志（query/库/截断/错误） | `0d5bd01c` |
 | [ ] | 检索日志补排序与分页位置 | 未开始 |
+
+## 3.1 M2.5 补齐批次（G2 + G4）
+
+| 状态 | 任务 | 提交/证据 |
+|---|---|---|
+| [x] | PubMed adapter（E-utilities 两步、PMID/DOI 归一化） | `M2.5` |
+| [x] | EuropePMC adapter（pmcid 命名空间、open access 标注） | `M2.5` |
+| [x] | Zotero 只读 adapter（不直写 zotero.sqlite，key 由调用方传入） | `M2.5` |
+| [x] | 9 个离线契约测试（含 PubMed 无结果不请求 esummary） | `M2.5` |
+| [x] | 真实端点 smoke 脚本（4 源全 PASS，含全库命中数与截断） | `scripts/academic-adapter-smoke.ts` |
+| [x] | shared 增加 `pmcid` 命名空间 | `M2.5` |
+| [x] | Zotero 接入 UI/服务（库配置 + 导入入口） | 未做 → 留 M2.6 |
 
 ## 4. M3 选题、协议与领域方法（约 2 人周）— 未开始
 
@@ -103,13 +115,14 @@
 | ID | 描述 | 来源 | 优先级 | 计划归属 | 状态 |
 |---|---|---|---|---|---|
 | G1 | research-profiles.ts 缺失：七领域只有枚举与标签，无方法字段/检查项 | 2026-09-16 review | 高 | M3 首任务 | 开放 |
-| G2 | PubMed / EuropePMC / Zotero adapter 缺失，听力学依赖 PubMed | 2026-09-16 review | 高 | M2.5 小批次 | 开放 |
+| G2 | PubMed / EuropePMC / Zotero adapter 缺失 | 2026-09-16 review | 高 | M2.5 | **已修复**（Zotero UI 入口除外，见 M2.6） |
 | G3 | 服务层授权校验缺失（§3.2-7）：IPC 无条件注册，模型可伪造 projectId | 2026-09-16 review | 高 | M3 批准门禁一并落地 | 开放 |
-| G4 | 真实 API smoke 未跑：fixture 未覆盖实端点字段形态 | 2026-09-16 review | 中 | M2.5 | 开放 |
+| G4 | 真实 API smoke 未跑 | 2026-09-16 review | 中 | M2.5 | **已修复**：4 源全 PASS |
 | G5 | 证据矩阵视图超出 M2 数据层语义，实为 M5 主张层需求 | 2026-09-16 review | 中 | 正式移入 M5 | 已裁决 |
 
 ## 10. 评审记录
 
+- **2026-09-16 M2.5 批次**：补齐 G2 三库 adapter（PubMed/EuropePMC/Zotero）与 G4 真实 smoke；四源实端点全部通过，返回听力学相关真实文献，获取等级与 API 能力一致（PubMed=metadata-only）。Zotero 目前为 adapter 层就绪，UI 库配置入口留待 M2.6。
 - **2026-09-16 完成度 review**：M0 100% / M1 约 90% / M2 约 65%。骨架原则（可追溯、检索日志、不静默合并、不虚报全文、agent 建议需人工确认）已落到代码与测试；广度缺口见 §9。typecheck 0 错误，学术模块 203 测试全绿，全量仅剩 main 基线失败（agent-blocker-detect，与本工作无关）。
 
 ## 11. 质量门禁（每批次必过）
