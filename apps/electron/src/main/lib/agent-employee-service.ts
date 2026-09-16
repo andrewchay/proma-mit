@@ -106,9 +106,13 @@ function validateEmployeeConfiguration(input: CreateAgentEmployeeInput): void {
     for (const workspaceId of workspaceIds) {
       if (!getAgentWorkspace(workspaceId)?.rootPath) throw new Error('研发员工只能选择绑定本地 Git 仓库的工作区')
     }
-    validateDevelopmentTarget({ ...input, workspaceIds, workspaceId: workspaceIds.length === 1 ? workspaceIds[0] : undefined, runtime: input.runtime ?? 'proma' }, undefined, {
-      getChannel: getChannelById, getWorkspace: getAgentWorkspace,
-    })
+    // 保存配置时只验证目标集合；多工作区的唯一目标选择仅在实际派发时强制。
+    const channel = getChannelById(input.channelId)
+    if (!channel?.enabled) throw new Error('研发员工渠道不存在或已停用')
+    const modelId = input.modelId?.trim()
+    if (!modelId || !channel.models.some((model) => model.id === modelId && model.enabled)) throw new Error('请显式选择已启用的模型，不使用隐式回退')
+    if (input.workflowId) throw new Error('研发隔离执行暂不支持绑定 Workflow，请使用普通员工执行现有 SOP')
+    if (!['proma', 'ai-sdk', 'pi', 'claude'].includes(input.runtime ?? 'proma')) throw new Error('未知员工 Runtime')
   }
 }
 
