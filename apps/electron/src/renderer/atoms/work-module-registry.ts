@@ -10,7 +10,7 @@
  */
 
 import { lazy, type ComponentType } from 'react'
-import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, Radio, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
@@ -20,6 +20,7 @@ const InfluencerModuleView = lazy(() => import('@/components/influencer/Influenc
 const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMediaModuleView').then((module) => ({ default: module.PaidMediaModuleView })))
 const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sourcing/OutboundSourcingModuleView').then((module) => ({ default: module.OutboundSourcingModuleView })))
 const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
+const NewMediaModuleView = lazy(() => import('@/components/new-media/NewMediaModuleView').then((module) => ({ default: module.NewMediaModuleView })))
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -54,6 +55,13 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     icon: FolderKanban,
     core: true,
     description: '项目 / 任务 / 看板 / 会议纪要 / 风险报告',
+  },
+  {
+    id: 'new-media',
+    label: '新媒体运营',
+    icon: Radio,
+    core: true,
+    description: '本地草稿、排程与受控外发审批（不连接真实平台）',
   },
   {
     id: 'influencer',
@@ -98,5 +106,6 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
   'outbound-sourcing': OutboundSourcingModuleView,
+  'new-media': NewMediaModuleView,
   capabilities: CapabilitiesView,
 }

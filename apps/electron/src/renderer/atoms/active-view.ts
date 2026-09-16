@@ -11,7 +11,7 @@
 
 import { atom } from 'jotai'
 
-export type ActiveView = 'conversations' | 'workflow' | 'proactive' | 'knowledge' | 'analysis' | 'projects' | 'calendar' | 'influencer' | 'paid-media' | 'outbound-sourcing' | 'capabilities'
+export type ActiveView = 'conversations' | 'workflow' | 'proactive' | 'knowledge' | 'analysis' | 'projects' | 'calendar' | 'influencer' | 'paid-media' | 'outbound-sourcing' | 'new-media' | 'capabilities'
 
 /** 当前活跃视图（不持久化，每次启动默认显示对话） */
 export const activeViewAtom = atom<ActiveView>('conversations')

@@ -162,6 +162,7 @@ export const BUILTIN_PLUGINS: Array<{ id: string; name: string; version: string 
   { id: 'com.gravitas.dynamic-island', name: '灵动岛通知', version: '1.0.0' },
   { id: 'com.gravitas.computer-use', name: 'Computer Use', version: '1.0.0' },
   { id: 'com.gravitas.marketing', name: '营销应用中心', version: '0.1.0' },
+  { id: 'com.gravitas.new-media', name: '新媒体运营', version: '0.1.0' },
   { id: 'com.gravitas.academic', name: '学术助手', version: '0.1.0' },
 ]
 

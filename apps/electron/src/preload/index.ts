@@ -7,7 +7,7 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, NEW_MEDIA_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -1801,6 +1801,43 @@ export interface ElectronAPI {
       listLearningSamples: (agentId: string) => Promise<unknown[]>
       excludeLearningSample: (sampleId: string) => Promise<unknown | null>
       reviewLearningSample: (sampleId: string, evidenceSummary: string) => Promise<unknown | null>
+    }
+
+    // --- 新媒体运营本地工作台 ---
+    newMedia: {
+      content: {
+        listDrafts: () => Promise<import('@gravitas/shared').NewMediaContentDraft[]>
+        createDraft: (sourceText: string, platforms: import('@gravitas/shared').NewMediaPlatform[]) => Promise<import('@gravitas/shared').NewMediaContentDraft>
+        listPublicationJobs: () => Promise<import('@gravitas/shared').NewMediaPublicationJob[]>
+        schedulePublication: (input: { draftId: string; platform: import('@gravitas/shared').NewMediaPlatform; accountId: string; scheduledAt: number }) => Promise<import('@gravitas/shared').NewMediaPublicationJob>
+      }
+      community: {
+        listEngagements: () => Promise<import('@gravitas/shared').NewMediaEngagementItem[]>
+        ingestEngagement: (input: { platform: import('@gravitas/shared').NewMediaPlatform; channel: 'comment' | 'direct-message'; author: string; text: string }) => Promise<import('@gravitas/shared').NewMediaEngagementItem>
+        createReplyDraft: (engagementId: string) => Promise<import('@gravitas/shared').NewMediaReplyDraft>
+      }
+      listening: {
+        listQueries: () => Promise<import('@gravitas/shared').NewMediaListeningQuery[]>
+        createQuery: (keywords: string[]) => Promise<import('@gravitas/shared').NewMediaListeningQuery>
+        listMentions: (queryId?: string) => Promise<import('@gravitas/shared').NewMediaMention[]>
+        ingestMention: (input: { queryId: string; platform: import('@gravitas/shared').NewMediaPlatform; sourceUrl: string; text: string }) => Promise<import('@gravitas/shared').NewMediaMention>
+        getDigest: (queryId: string) => Promise<import('@gravitas/shared').NewMediaListeningDigest>
+      }
+      analytics: {
+        listSnapshots: () => Promise<import('@gravitas/shared').NewMediaMetricSnapshot[]>
+        ingestSnapshot: (input: Omit<import('@gravitas/shared').NewMediaMetricSnapshot, 'id'>) => Promise<import('@gravitas/shared').NewMediaMetricSnapshot>
+        getReport: (periodStart: number, periodEnd: number) => Promise<import('@gravitas/shared').NewMediaSocialReport>
+        listTrends: () => Promise<import('@gravitas/shared').NewMediaTrendItem[]>
+        ingestTrend: (input: Omit<import('@gravitas/shared').NewMediaTrendItem, 'id'>) => Promise<import('@gravitas/shared').NewMediaTrendItem>
+        getTrendOpportunities: (keywords: string[]) => Promise<import('@gravitas/shared').NewMediaTrendOpportunity[]>
+      }
+      controlledOutbound: {
+        list: () => Promise<import('@gravitas/shared').NewMediaControlledAction[]>
+        request: (input: { kind: 'publish' | 'send-reply'; platform: import('@gravitas/shared').NewMediaPlatform; targetId: string; summary: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        approve: (actionId: string, approver: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        simulate: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        audit: (actionId: string) => Promise<import('@gravitas/shared').NewMediaAuditEntry[]>
+      }
     }
 
     // --- 营销能力包 ---
@@ -4013,6 +4050,42 @@ const electronAPI: ElectronAPI = {
       listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
       excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),
       reviewLearningSample: (sampleId, evidenceSummary) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, sampleId, evidenceSummary),
+    },
+    // --- 新媒体运营本地工作台 ---
+    newMedia: {
+      content: {
+        listDrafts: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_DRAFTS),
+        createDraft: (sourceText, platforms) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, sourceText, platforms),
+        listPublicationJobs: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_PUBLICATION_JOBS),
+        schedulePublication: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SCHEDULE_PUBLICATION, input),
+      },
+      community: {
+        listEngagements: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_ENGAGEMENTS),
+        ingestEngagement: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_ENGAGEMENT, input),
+        createReplyDraft: (engagementId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_REPLY_DRAFT, engagementId),
+      },
+      listening: {
+        listQueries: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_LISTENING_QUERIES),
+        createQuery: (keywords) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_LISTENING_QUERY, keywords),
+        listMentions: (queryId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_MENTIONS, queryId),
+        ingestMention: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_MENTION, input),
+        getDigest: (queryId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_LISTENING_DIGEST, queryId),
+      },
+      analytics: {
+        listSnapshots: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_METRIC_SNAPSHOTS),
+        ingestSnapshot: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_METRIC_SNAPSHOT, input),
+        getReport: (periodStart, periodEnd) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SOCIAL_REPORT, periodStart, periodEnd),
+        listTrends: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_TRENDS),
+        ingestTrend: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_TREND, input),
+        getTrendOpportunities: (keywords) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_TREND_OPPORTUNITIES, keywords),
+      },
+      controlledOutbound: {
+        list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_ACTIONS),
+        request: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, input),
+        approve: (actionId, approver) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId, approver),
+        simulate: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, actionId),
+        audit: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, actionId),
+      },
     },
     // --- 营销能力包 ---
     marketing: {

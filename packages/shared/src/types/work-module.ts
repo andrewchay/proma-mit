@@ -599,6 +599,100 @@ export interface MemberSyncAllResult {
 
 
 // ============================================
+// 新媒体运营本地工作台
+// ============================================
+
+export const NEW_MEDIA_IPC_CHANNELS = {
+  LIST_DRAFTS: 'new-media:list-drafts',
+  CREATE_DRAFT: 'new-media:create-draft',
+  LIST_PUBLICATION_JOBS: 'new-media:list-publication-jobs',
+  SCHEDULE_PUBLICATION: 'new-media:schedule-publication',
+  LIST_ENGAGEMENTS: 'new-media:list-engagements',
+  INGEST_ENGAGEMENT: 'new-media:ingest-engagement',
+  CREATE_REPLY_DRAFT: 'new-media:create-reply-draft',
+  LIST_LISTENING_QUERIES: 'new-media:list-listening-queries',
+  CREATE_LISTENING_QUERY: 'new-media:create-listening-query',
+  LIST_MENTIONS: 'new-media:list-mentions',
+  INGEST_MENTION: 'new-media:ingest-mention',
+  GET_LISTENING_DIGEST: 'new-media:get-listening-digest',
+  LIST_METRIC_SNAPSHOTS: 'new-media:list-metric-snapshots',
+  INGEST_METRIC_SNAPSHOT: 'new-media:ingest-metric-snapshot',
+  GET_SOCIAL_REPORT: 'new-media:get-social-report',
+  LIST_TRENDS: 'new-media:list-trends',
+  INGEST_TREND: 'new-media:ingest-trend',
+  GET_TREND_OPPORTUNITIES: 'new-media:get-trend-opportunities',
+  LIST_CONTROLLED_ACTIONS: 'new-media:list-controlled-actions',
+  REQUEST_CONTROLLED_ACTION: 'new-media:request-controlled-action',
+  APPROVE_CONTROLLED_ACTION: 'new-media:approve-controlled-action',
+  SIMULATE_CONTROLLED_ACTION: 'new-media:simulate-controlled-action',
+  GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
+} as const
+
+export type NewMediaPlatform = 'xiaohongshu' | 'wechat-official-account'
+
+export interface NewMediaContentDraft {
+  id: string
+  sourceText: string
+  platformCopies: Partial<Record<NewMediaPlatform, { title: string; body: string; hashtags: string[] }>>
+  createdAt: number
+}
+
+export interface NewMediaPublicationJob {
+  id: string
+  draftId: string
+  platform: NewMediaPlatform
+  accountId: string
+  scheduledAt: number
+  status: 'draft' | 'scheduled' | 'pending_approval' | 'published' | 'failed'
+  approvalRequired: true
+  createdAt: number
+}
+
+export interface NewMediaEngagementItem {
+  id: string
+  platform: NewMediaPlatform
+  channel: 'comment' | 'direct-message'
+  author: string
+  text: string
+  intent: 'praise' | 'question' | 'complaint' | 'cooperation' | 'spam' | 'other'
+  sentiment: 'positive' | 'neutral' | 'negative'
+  priority: 'low' | 'normal' | 'high' | 'urgent'
+  requiresHumanReview: boolean
+  createdAt: number
+}
+export interface NewMediaReplyDraft { id: string; engagementId: string; text: string; status: 'draft'; createdAt: number }
+export interface NewMediaListeningQuery { id: string; keywords: string[]; createdAt: number }
+export interface NewMediaMention { id: string; queryId: string; platform: NewMediaPlatform; sourceUrl: string; text: string; sentiment: 'positive' | 'neutral' | 'negative'; risk: 'none' | 'watch' | 'high'; createdAt: number }
+export interface NewMediaListeningDigest { query: NewMediaListeningQuery; total: number; sentiment: Record<'positive' | 'neutral' | 'negative', number>; highRiskMentions: NewMediaMention[] }
+export interface NewMediaMetricSnapshot { id: string; platform: NewMediaPlatform; contentId: string; capturedAt: number; impressions: number; engagements: number; followersGained: number }
+export interface NewMediaSocialReport { periodStart: number; periodEnd: number; totalImpressions: number; totalEngagements: number; engagementRate: number; followersGained: number; byPlatform: Partial<Record<NewMediaPlatform, { impressions: number; engagements: number; followersGained: number }>> }
+export interface NewMediaTrendItem { id: string; title: string; summary: string; source: string; observedAt: number; heat: number; relatedKeywords: string[]; risk: 'low' | 'medium' | 'high' }
+export interface NewMediaTrendOpportunity { trend: NewMediaTrendItem; relevanceScore: number; recommendation: 'act' | 'monitor' | 'avoid'; rationale: string }
+
+export interface NewMediaControlledAction {
+  id: string
+  kind: 'publish' | 'send-reply'
+  platform: NewMediaPlatform
+  targetId: string
+  summary: string
+  status: 'pending_approval' | 'approved' | 'simulated' | 'rejected'
+  requestedAt: number
+  approvedAt?: number
+  approvedBy?: string
+  executedAt?: number
+  simulationReceipt?: string
+}
+
+export interface NewMediaAuditEntry {
+  id: string
+  actionId: string
+  event: 'requested' | 'approved' | 'simulated' | 'rejected'
+  actor: string
+  createdAt: number
+  detail: string
+}
+
+// ============================================
 // 营销能力 — Influencer（达人）包
 // ============================================
 

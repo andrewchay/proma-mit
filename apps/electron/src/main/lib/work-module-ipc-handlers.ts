@@ -16,6 +16,7 @@ import {
   INFLUENCER_IPC_CHANNELS,
   PAID_MEDIA_IPC_CHANNELS,
   CREATIVE_IPC_CHANNELS,
+  NEW_MEDIA_IPC_CHANNELS,
 } from '@gravitas/shared'
 
 // ===== 日程管家服务 =====
@@ -1058,5 +1059,60 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PAID_MEDIA_IPC_CHANNELS.UPDATE_RULE, async (_: unknown, id: string, patch) => {
     await ensureMarketingReady()
     return marketingService.updatePaidRule(id, patch)
+  })
+
+  // ============================================
+  // 新媒体运营本地工作台（无外部平台副作用）
+  // ============================================
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_DRAFTS, async () => {
+    const { listContentDrafts } = await import('./new-media/content-operations')
+    return listContentDrafts()
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, async (_: unknown, sourceText: string, platforms: import('@gravitas/shared').NewMediaPlatform[]) => {
+    const { createContentDraft } = await import('./new-media/content-operations')
+    return createContentDraft(sourceText, platforms)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_PUBLICATION_JOBS, async () => {
+    const { listPublicationJobs } = await import('./new-media/content-operations')
+    return listPublicationJobs()
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.SCHEDULE_PUBLICATION, async (_: unknown, input: { draftId: string; platform: import('@gravitas/shared').NewMediaPlatform; accountId: string; scheduledAt: number }) => {
+    const { schedulePublication } = await import('./new-media/content-operations')
+    return schedulePublication(input)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_ENGAGEMENTS, async () => (await import('./new-media/community-listening')).listEngagements())
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_ENGAGEMENT, async (_: unknown, input) => (await import('./new-media/community-listening')).ingestEngagement(input))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_REPLY_DRAFT, async (_: unknown, engagementId: string) => (await import('./new-media/community-listening')).createReplyDraft(engagementId))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_LISTENING_QUERIES, async () => (await import('./new-media/community-listening')).listListeningQueries())
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_LISTENING_QUERY, async (_: unknown, keywords: string[]) => (await import('./new-media/community-listening')).createListeningQuery(keywords))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_MENTIONS, async (_: unknown, queryId?: string) => (await import('./new-media/community-listening')).listMentions(queryId))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_MENTION, async (_: unknown, input) => (await import('./new-media/community-listening')).ingestMention(input))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_LISTENING_DIGEST, async (_: unknown, queryId: string) => (await import('./new-media/community-listening')).getListeningDigest(queryId))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_METRIC_SNAPSHOTS, async () => (await import('./new-media/analytics-trends')).listMetricSnapshots())
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_METRIC_SNAPSHOT, async (_: unknown, input) => (await import('./new-media/analytics-trends')).ingestMetricSnapshot(input))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_SOCIAL_REPORT, async (_: unknown, periodStart: number, periodEnd: number) => (await import('./new-media/analytics-trends')).getSocialReport(periodStart, periodEnd))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_TRENDS, async () => (await import('./new-media/analytics-trends')).listTrends())
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_TREND, async (_: unknown, input) => (await import('./new-media/analytics-trends')).ingestTrend(input))
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_TREND_OPPORTUNITIES, async (_: unknown, keywords: string[]) => (await import('./new-media/analytics-trends')).getTrendOpportunities(keywords))
+
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_ACTIONS, async () => {
+    const { listControlledActions } = await import('./new-media/controlled-actions')
+    return listControlledActions()
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, async (_: unknown, input: { kind: 'publish' | 'send-reply'; platform: import('@gravitas/shared').NewMediaPlatform; targetId: string; summary: string }) => {
+    const { requestControlledAction } = await import('./new-media/controlled-actions')
+    return requestControlledAction(input)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, async (_: unknown, actionId: string, approver: string) => {
+    const { approveControlledAction } = await import('./new-media/controlled-actions')
+    return approveControlledAction(actionId, approver)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, async (_: unknown, actionId: string) => {
+    const { simulateControlledAction } = await import('./new-media/controlled-actions')
+    return simulateControlledAction(actionId)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, async (_: unknown, actionId: string) => {
+    const { getControlledActionAudit } = await import('./new-media/controlled-actions')
+    return getControlledActionAudit(actionId)
   })
 }

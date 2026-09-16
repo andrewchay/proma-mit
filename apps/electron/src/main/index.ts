@@ -109,7 +109,7 @@ import { createApplicationMenu } from './menu'
 import { registerIpcHandlers } from './ipc'
 import { createTray, destroyTray } from './tray'
 import { initializeRuntime } from './lib/runtime-init'
-import { seedBundledWorkflowTemplates, seedDefaultSkills, seedDefaultAgents, seedDefaultTools, seedMarketingSkills } from './lib/config-paths'
+import { seedBundledWorkflowTemplates, seedDefaultSkills, seedDefaultAgents, seedDefaultTools, seedMarketingSkills, seedNewMediaSkills } from './lib/config-paths'
 import { syncMarketingSkillsForAllWorkspaces } from './lib/marketing-skills-sync'
 import { upgradeDefaultSkillsInWorkspaces } from './lib/agent-workspace-manager'
 import { stopAllAgents, killOrphanedClaudeSubprocesses } from './lib/agent-service'
@@ -467,6 +467,7 @@ async function bootstrap(): Promise<void> {
   safeRun('seedDefaultAgents', seedDefaultAgents)
   safeRun('seedDefaultTools', seedDefaultTools)
   safeRun('seedMarketingSkills', seedMarketingSkills)
+  safeRun('seedNewMediaSkills', seedNewMediaSkills)
   safeRun('seedBundledWorkflowTemplates', seedBundledWorkflowTemplates)
   safeRun('foldLegacyAgentOverrides', () => void import('./lib/agent-definition-store').then((m) => m.foldLegacyAgentOverridesIntoDirs()))
 

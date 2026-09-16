@@ -787,6 +787,22 @@ export function getMarketingSkillsDir(): string {
 }
 
 /**
+ * 获取新媒体运营 Skills 资源目录。
+ *
+ * 新媒体 Skills 由 `com.gravitas.new-media` 插件按能力订阅分发，
+ * 不进入默认 Skill 集市，也不会自动注入新建工作区。
+ */
+export function getNewMediaSkillsDir(): string {
+  const dir = join(getConfigDir(), 'new-media-skills')
+
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+
+  return dir
+}
+
+/**
  * 从 SKILL.md 的 YAML frontmatter 中解析 version 字段
  *
  * 无 version 字段时返回 '0.0.0'（确保旧 Skill 会被更新）。
@@ -1006,6 +1022,46 @@ export function seedDefaultSkills(): void {
  * 开发模式下从源码 marketing-skills/ 目录复制。
  * 同步策略与 seedDefaultSkills 一致：缺失复制、版本比对覆盖（rm-then-cp）。
  */
+export function seedNewMediaSkills(): void {
+  const { app } = require('electron')
+  const bundledDir = app.isPackaged
+    ? join(process.resourcesPath, 'new-media-skills')
+    : join(__dirname, '../new-media-skills')
+
+  if (!existsSync(bundledDir)) {
+    console.log('[配置] 未找到内置 new-media-skills 目录，跳过')
+    return
+  }
+
+  const userDir = getNewMediaSkillsDir()
+  try {
+    const entries = readdirSync(bundledDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const source = join(bundledDir, entry.name)
+      const target = join(userDir, entry.name)
+      try {
+        if (!existsSync(target)) {
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已同步新媒体 Skill: ${entry.name}`)
+          continue
+        }
+        const bundledVer = parseSkillVersion(source)
+        const existingVer = parseSkillVersion(target)
+        if (compareSemver(bundledVer, existingVer) > 0) {
+          rmSync(target, { recursive: true, force: true })
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已升级新媒体 Skill: ${entry.name} (${existingVer} → ${bundledVer})`)
+        }
+      } catch (err) {
+        console.warn(`[配置] 同步新媒体 Skill 失败 (${entry.name})，跳过:`, err)
+      }
+    }
+  } catch (err) {
+    console.warn('[配置] 同步新媒体 Skills 失败:', err)
+  }
+}
+
 export function seedMarketingSkills(): void {
   const { app } = require('electron')
   const bundledDir = app.isPackaged
@@ -1415,6 +1471,16 @@ export function getMarketingDir(): string {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
     console.log(`[配置] 已创建营销能力目录: ${dir}`)
+  }
+  return dir
+}
+
+/** 获取新媒体运营本地数据目录。 */
+export function getNewMediaDir(): string {
+  const dir = join(getConfigDir(), 'new-media')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建新媒体运营目录: ${dir}`)
   }
   return dir
 }

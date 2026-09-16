@@ -269,6 +269,8 @@ export interface AppSettings {
   marketingCapabilities?: string[]
   /** 已订阅的通用业务领域包 id（如 outbound-sourcing）。 */
   domainCapabilities?: string[]
+  /** 已启用的新媒体运营能力；仅控制本地 Skills/Tools，不连接真实平台。 */
+  newMediaCapabilities?: string[]
   /**
    * 行为采集设置（为专业版分析能力提供数据基础）。
    * 缺省时按 TELEMETRY_DEFAULT_ENABLED 处理：被动采集开启、情绪打卡关闭。

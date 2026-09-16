@@ -1152,12 +1152,12 @@ export async function registerIpcHandlers(): Promise<void> {
       const result = await updateSettings(updates)
 
       // 营销订阅变化时，重新分发营销 skills 到所有工作区（下次会话生效）
-      if (updates.marketingCapabilities !== undefined) {
+      if (updates.marketingCapabilities !== undefined || updates.newMediaCapabilities !== undefined) {
         try {
           const { syncMarketingSkillsForAllWorkspaces } = await import('./lib/marketing-skills-sync')
           syncMarketingSkillsForAllWorkspaces()
         } catch (err) {
-          console.warn('[IPC] 营销订阅变更后同步 skills 失败:', err)
+          console.warn('[IPC] 领域能力变更后同步 skills 失败:', err)
         }
       }
 

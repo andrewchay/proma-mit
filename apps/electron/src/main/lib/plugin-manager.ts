@@ -121,6 +121,7 @@ const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.computer-use', () => require('./plugins/computer-use-plugin').computerUsePluginRuntime()],
   // Marketing 插件：把营销领域工具以「插件贡献 agent-tools」方式提供（试点）
   ['com.gravitas.marketing', () => require('./plugins/marketing-plugin').marketingPluginRuntime()],
+  ['com.gravitas.new-media', () => require('./plugins/new-media-plugin').newMediaPluginRuntime()],
   ['com.gravitas.outbound-sourcing', () => require('./plugins/outbound-sourcing-plugin').outboundSourcingPluginRuntime()],
   // Academic 插件：学术助手（Pro 订阅能力，工具注入前先验签权益快照）
   ['com.gravitas.academic', () => require('./plugins/academic-plugin').academicPluginRuntime()],
