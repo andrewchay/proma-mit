@@ -13,6 +13,8 @@
 import { dirname } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs'
 import { BrowserWindow } from 'electron'
+import { getMainWindow } from '../index'
+import { resolveAgentStreamTarget } from './agent-stream-target'
 import type { WebContents } from 'electron'
 import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, normalizeAgentRuntime } from '@gravitas/shared'
 import type {
@@ -424,11 +426,10 @@ export async function runAgentHeadless(
   // 尝试注册目标窗口 webContents，让流式事件同步推送到桌面端。
   // AI 员工会把自身 sessionId 作为 originSessionId 传入，但此时该 session 尚未建立
   // webContents 映射；必须回退到当前主窗口，不能因“映射缺失”丢弃全部流式事件。
-  const fallbackWin = BrowserWindow.getAllWindows()[0] ?? null
+  // getAllWindows()[0] 可能是隐藏的快捷任务/语音窗口，它们没有 Agent 全局监听器。
+  const mainWindow = getMainWindow()
   const originWc = callbacks.originSessionId ? sessionWebContents.get(callbacks.originSessionId) : null
-  const wc = originWc && !originWc.isDestroyed()
-    ? originWc
-    : (fallbackWin?.webContents ?? null)
+  const wc = resolveAgentStreamTarget(originWc, mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null)
   if (wc && !wc.isDestroyed()) {
     registerWebContents(input.sessionId, wc)
   }
