@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -114,5 +114,87 @@ describe('research-store 事件存储', () => {
     })
     const ids = await store.listResearchProjectIds()
     expect(ids).toEqual(['p-a'])
+  })
+})
+
+describe('崩溃注入与恢复语义（M7）', () => {
+  test('半写尾行（无换行结尾）被忽略，原文件保留且已有事件可用', async () => {
+    const store = await loadStore()
+    const project = sampleProject('p-crash-tail')
+    await store.appendEvent('p-crash-tail', {
+      commandId: 'c1',
+      payload: { type: 'project_created', project: project as never },
+    })
+
+    // 模拟写入过程中断电：追加一段无换行的半截 JSON
+    const eventsPath = join(store.getResearchDir('p-crash-tail'), 'events.jsonl')
+    appendFileSync(eventsPath, '{"revision":2,"commandId":"c2","paylo', 'utf8')
+
+    const state = await store.loadProjectState('p-crash-tail')
+    // 已提交的事件仍可用，项目不会因为半写尾巴而打不开
+    expect(state.project?.id).toBe('p-crash-tail')
+    expect(state.revision).toBe(1)
+
+    const { warnings } = await store.readProjectEventsWithWarnings('p-crash-tail')
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('未完成的写入')
+
+    // 原文件未被修改（半截内容仍在，供诊断）
+    expect(readFileSync(eventsPath, 'utf8')).toContain('"paylo')
+  })
+
+  test('半写尾行之后仍可正常追加（revision 从已提交事件续接）', async () => {
+    const store = await loadStore()
+    const project = sampleProject('p-crash-continue')
+    await store.appendEvent('p-crash-continue', {
+      commandId: 'c1',
+      payload: { type: 'project_created', project: project as never },
+    })
+    const eventsPath = join(store.getResearchDir('p-crash-continue'), 'events.jsonl')
+    appendFileSync(eventsPath, '{"broken', 'utf8')
+
+    await store.appendEvent('p-crash-continue', {
+      commandId: 'c2',
+      payload: { type: 'status_changed', from: 'defining', to: 'literature' },
+    })
+
+    const state = await store.loadProjectState('p-crash-continue')
+    expect(state.project?.status).toBe('literature')
+  })
+
+  test('中间行损坏仍整体拒绝（不静默跳过历史事件）', async () => {
+    const store = await loadStore()
+    const project = sampleProject('p-mid-corrupt')
+    await store.appendEvent('p-mid-corrupt', {
+      commandId: 'c1',
+      payload: { type: 'project_created', project: project as never },
+    })
+    await store.appendEvent('p-mid-corrupt', {
+      commandId: 'c2',
+      payload: { type: 'status_changed', from: 'defining', to: 'literature' },
+    })
+
+    const eventsPath = join(store.getResearchDir('p-mid-corrupt'), 'events.jsonl')
+    const lines = readFileSync(eventsPath, 'utf8').split('\n')
+    // 破坏中间行（保留换行结尾 → 属于真实损坏而非半写）
+    lines[0] = '{corrupted-middle'
+    writeFileSync(eventsPath, lines.join('\n'), 'utf8')
+
+    await expect(store.loadProjectState('p-mid-corrupt')).rejects.toThrow('损坏')
+    expect(readFileSync(eventsPath, 'utf8')).toContain('{corrupted-middle')
+  })
+
+  test('已换行结尾的损坏尾行属于真实损坏（不当作半写）', async () => {
+    const store = await loadStore()
+    const project = sampleProject('p-tail-newline')
+    await store.appendEvent('p-tail-newline', {
+      commandId: 'c1',
+      payload: { type: 'project_created', project: project as never },
+    })
+    const eventsPath = join(store.getResearchDir('p-tail-newline'), 'events.jsonl')
+    // 有换行结尾的坏行：不是半写，按损坏处理
+    appendFileSync(eventsPath, '{bad-json}\n', 'utf8')
+
+    await expect(store.loadProjectState('p-tail-newline')).rejects.toThrow('损坏')
   })
 })
