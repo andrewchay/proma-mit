@@ -89,6 +89,24 @@ describe('研发员工既有链路兼容', () => {
     expect(store.getAgentExecution(retry.execution.id)?.status).toBe('failed')
     expect(store.getAgentEmployee(employee.id)?.completedTasks).toBe(1)
   })
+  test('Given 用户停止运行中执行 When 调用取消 Then Runtime 被停止且任务回退 paused', async () => {
+    const { task } = fixture()
+    const { execution, run } = await dispatch(task)
+    service.cancelAgentExecution(execution.id)
+    expect(store.getAgentExecution(execution.id)).toMatchObject({ status: 'cancelled', error: '用户已停止执行，未交付' })
+    expect(store.getTask(task.id)?.status).toBe('paused')
+    run.callbacks.onComplete([message('迟到结果')])
+    expect(store.getAgentExecution(execution.id)?.status).toBe('cancelled')
+  })
+
+  test('Given 已完成执行 When 调用取消 Then 拒绝改变交付状态', async () => {
+    const { task } = fixture()
+    const { execution, run } = await dispatch(task)
+    run.callbacks.onComplete([message('已完成')])
+    expect(() => service.cancelAgentExecution(execution.id)).toThrow('仅能停止')
+    expect(store.getAgentExecution(execution.id)?.status).toBe('completed')
+  })
+
   test('Given 用户停止 When 回调 Then 取消而非成功', async () => {
     const { task } = fixture()
     const { execution, run } = await dispatch(task)
@@ -115,6 +133,11 @@ describe('研发员工既有链路兼容', () => {
     expect(await service.dispatchTaskToAgent(store.getTask(task.id)!)).toBeNull()
     run.callbacks.onComplete([], { stoppedByUser: true })
   })
+  test('Given 研发提示 When 构建执行上下文 Then 明确禁止修改受保护目录', () => {
+    const { task, employee } = fixture()
+    expect(service.buildAgentTaskPrompt(task, employee)).toContain('禁止修改 `.context/**`、任何 `AGENTS.md`')
+  })
+
   test('Given 脏仓库 When 派发 Then 保留失败记录，不调用模型', async () => {
     const { task, repo } = fixture()
     writeFileSync(join(repo, 'source.ts'), 'work in progress')

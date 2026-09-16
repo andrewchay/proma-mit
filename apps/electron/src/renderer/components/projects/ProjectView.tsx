@@ -2240,6 +2240,8 @@ function TaskItem({
   // AI 员工任务：查询最新执行状态（P0）
   const isAgentTask = task.assignee?.userId?.startsWith('agent-') ?? false
   const [agentExecStatus, setAgentExecStatus] = useState<AgentExecutionResult['status'] | null>(null)
+  const [agentExecutionId, setAgentExecutionId] = useState<string | null>(null)
+  const [isStoppingAgent, setIsStoppingAgent] = useState(false)
   const [tokenUsage, setTokenUsage] = useState<{ totalTokens: number; activeSessionTokens: number } | null>(null)
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   useEffect(() => {
@@ -2251,7 +2253,11 @@ function TaskItem({
     if (!isAgentTask) return
     let cancelled = false
     window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', task.id)
-      .then((execs) => { if (!cancelled && execs.length > 0) setAgentExecStatus(execs[0]?.status ?? null) })
+      .then((execs) => {
+        if (cancelled) return
+        setAgentExecStatus(execs[0]?.status ?? null)
+        setAgentExecutionId(execs[0]?.id ?? null)
+      })
       .catch(() => {})
     // token 用量（配额可见性）：有预算或执行中才查询
     if (task.tokenBudget || agentExecStatus === 'running') {
@@ -2295,6 +2301,22 @@ function TaskItem({
   const needsCompletionNotes = task.riskLevel === 'high' || task.riskLevel === 'critical'
   const assigneeStatusGroup = statuses.find((s) => s.id === task.status)?.stateGroup
   const isTaskDone = assigneeStatusGroup === 'completed' || assigneeStatusGroup === 'cancelled'
+
+  const handleStopAgentExecution = async () => {
+    if (!agentExecutionId) return
+    setIsStoppingAgent(true)
+    try {
+      await window.electronAPI.paa.agentEmployees.cancelExecution(agentExecutionId)
+      setAgentExecStatus('cancelled')
+      setAgentExecutionId(null)
+      const updatedTask = await callProjectAPI<Task>('getTask', task.id)
+      if (updatedTask) onTaskUpdate(updatedTask)
+    } catch (error) {
+      alert(`停止执行失败: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsStoppingAgent(false)
+    }
+  }
 
   const handleAssessRisk = async () => {
     setIsAssessing(true)
@@ -2582,6 +2604,16 @@ function TaskItem({
           )}
         </div>
         <div className="flex items-center gap-2 ml-2 shrink-0">
+          {isAgentTask && (agentExecStatus === 'queued' || agentExecStatus === 'running') && (
+            <button
+              onClick={() => void handleStopAgentExecution()}
+              disabled={isStoppingAgent}
+              className="text-xs px-2 py-1 rounded bg-red-50 text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+              title="停止当前 AI 员工执行；不会删除 worktree 或已有执行证据"
+            >
+              {isStoppingAgent ? '停止中…' : '停止执行'}
+            </button>
+          )}
           {/* 编辑任务按钮 */}
           <button
             onClick={() => setShowEditModal(true)}

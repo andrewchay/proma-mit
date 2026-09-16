@@ -449,6 +449,8 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   LIST_EXECUTIONS_BY_ENTITY: 'agent-employee:list-executions-by-entity',
   /** 查询某 AI 员工的执行记录 */
   LIST_EXECUTIONS_BY_AGENT: 'agent-employee:list-executions-by-agent',
+  /** 停止仍在排队或运行中的执行；不会删除 worktree 或交付证据。 */
+  CANCEL_EXECUTION: 'agent-employee:cancel-execution',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -467,6 +469,11 @@ export interface CreateAgentEmployeeInput {
   workflowId?: string
   systemPrompt?: string
   skills?: string[]
+}
+
+export interface CancelAgentExecutionResult {
+  id: string
+  status: 'cancelled'
 }
 
 export interface UpdateAgentEmployeeInput {

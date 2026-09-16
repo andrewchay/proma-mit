@@ -155,6 +155,7 @@ import {
   deleteAgentEmployee,
   listAgentExecutionsByEntity,
   listAgentExecutionsByAgent,
+  cancelAgentExecution,
 } from './agent-employee-service'
 import { onSettingsChange } from './settings-service'
 import {
@@ -895,6 +896,7 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, (_, id: string) => deleteAgentEmployee(id))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, (_, entityType: 'task' | 'subTask', entityId: string) => listAgentExecutionsByEntity(entityType, entityId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, (_, agentId: string, limit?: number) => listAgentExecutionsByAgent(agentId, limit ?? 50))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, (_, executionId: string) => cancelAgentExecution(executionId))
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

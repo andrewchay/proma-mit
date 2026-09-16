@@ -42,6 +42,11 @@ export function getIslandForkScript(root: string): string {
   return join(root, 'island.fork.js')
 }
 
+/** 原生模块是 island.fork.js 的硬依赖；缺失时不要启动子进程并制造 crash-loop。 */
+export function getIslandNativeModule(root: string): string {
+  return join(root, 'macos', 'island.node')
+}
+
 export class DynamicIslandRendererProcess {
   private child: ChildProcess | null = null
   private starting: Promise<void> | null = null
@@ -87,6 +92,13 @@ export class DynamicIslandRendererProcess {
       // 冷启动 30s 内不再重试，避免每次 agent 事件都刷“script not found”
       this.startFailCooldownUntil = Date.now() + 30_000
       this.options.logger.error(`island: fork script not found: ${script}`)
+      return
+    }
+    const nativeModule = getIslandNativeModule(this.options.root)
+    if (!existsSync(nativeModule)) {
+      // 原生模块缺失时 island.fork.js 会同步报错退出；提前禁用，避免 crash-loop。
+      this.startFailCooldownUntil = Date.now() + 30_000
+      this.options.logger.warn(`island: native module not found; renderer disabled: ${nativeModule}`)
       return
     }
     const child = spawn(cmd, [script], {

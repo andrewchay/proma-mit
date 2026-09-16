@@ -1796,6 +1796,7 @@ export interface ElectronAPI {
       delete: (id: string) => Promise<boolean>
       listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
+      cancelExecution: (executionId: string) => Promise<import('@gravitas/shared').CancelAgentExecutionResult>
     }
 
     // --- 营销能力包 ---
@@ -4003,6 +4004,7 @@ const electronAPI: ElectronAPI = {
       delete: (id) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, id),
       listExecutionsByEntity: (entityType, entityId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, entityType, entityId),
       listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
+      cancelExecution: (executionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, executionId),
     },
     // --- 营销能力包 ---
     marketing: {

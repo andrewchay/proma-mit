@@ -116,6 +116,45 @@ export function listAgentExecutionsByAgent(agentId: string, limit = 50): AgentEx
   return store.listAgentExecutionsByAgent(agentId, limit)
 }
 
+/**
+ * 显式停止项目中的一条 AI 员工执行。
+ *
+ * 只处理 queued/running 记录：queued 不会启动，running 会先中止 Runtime/Workflow，随后
+ * 回写 execution 与任务为可人工处理的 paused。不会删除 worktree、会话或已有证据。
+ */
+export function cancelAgentExecution(executionId: string): { id: string; status: 'cancelled' } {
+  const execution = store.getAgentExecution(executionId)
+  if (!execution) throw new Error('未找到 Agent 执行记录')
+  if (execution.status !== 'queued' && execution.status !== 'running') {
+    throw new Error(`仅能停止排队或运行中的执行，当前状态：${execution.status}`)
+  }
+
+  if (execution.status === 'running' && execution.sessionId) {
+    const workflowRun = /^workflow:(.+)$/.exec(execution.sessionId)
+    if (workflowRun) {
+      const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
+      if (workflowId) cancelWorkflowRun(workflowId, workflowRun[1]!)
+    } else {
+      try {
+        stopRegisteredAgent(execution.sessionId)
+      } catch (error) {
+        console.warn(`[AgentEmployee] 停止 Runtime 失败 session=${execution.sessionId}:`, error)
+      }
+    }
+  }
+
+  const stoppedAt = Date.now()
+  store.updateAgentExecution(execution.id, {
+    status: 'cancelled',
+    error: '用户已停止执行，未交付',
+    lastHeartbeatAt: stoppedAt,
+    completedAt: stoppedAt,
+  })
+  writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
+  recordActivity(store.getAgentExecution(execution.id)!, 'agent_cancelled', '用户停止执行，未交付')
+  return { id: execution.id, status: 'cancelled' }
+}
+
 // ============================================
 // 指派判断与执行
 // ============================================

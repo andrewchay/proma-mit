@@ -18,6 +18,15 @@ export function TaskExecutionEvidence({ taskId }: { taskId: string }): React.Rea
       setState((current) => ({ ...current, loading: false, error: String(error) }))
     }
   }
+  async function stop(runId: string): Promise<void> {
+    setState((current) => ({ ...current, loading: true, error: undefined }))
+    try {
+      await window.electronAPI.paa.agentEmployees.cancelExecution(runId)
+      await load()
+    } catch (error) {
+      setState((current) => ({ ...current, loading: false, error: String(error) }))
+    }
+  }
   return (
     <div className="mt-3 text-sm">
       <button disabled={state.loading} className="text-primary" onClick={() => void load()}>
@@ -37,6 +46,15 @@ export function TaskExecutionEvidence({ taskId }: { taskId: string }): React.Rea
           <p>Agent：{run.agentId}</p>
           <p className="break-all">会话 / Workflow：{run.sessionId}</p>
           <p className="whitespace-pre-wrap">{run.resultSummary ?? run.error ?? '暂无结果摘要'}</p>
+          {(run.status === 'queued' || run.status === 'running') && (
+            <button
+              className="mt-2 rounded bg-destructive px-2 py-1 text-xs text-destructive-foreground disabled:opacity-50"
+              disabled={state.loading}
+              onClick={() => void stop(run.id)}
+            >
+              停止执行
+            </button>
+          )}
           {run.outputFiles.map((file) => (
             <p key={file} className="break-all">
               产物：{file}

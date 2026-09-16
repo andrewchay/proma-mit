@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { DynamicIslandStore } from './island-store'
 import { DynamicIslandRendererController } from './renderer-controller'
 import { parseStdout, serializeCmd } from './renderer-protocol'
+import { getIslandForkScript, getIslandNativeModule } from './renderer-process'
 import type { DynamicIslandRequest } from '@gravitas/shared'
 
 function req(partial: Partial<DynamicIslandRequest> = {}): DynamicIslandRequest {
@@ -173,6 +174,11 @@ describe('DynamicIslandRendererController 计时编排', () => {
 })
 
 describe('renderer-process 工具', () => {
+  test('原生模块路径与渲染脚本位于同一打包资源根', () => {
+    expect(getIslandForkScript('/resources/dynamic-island')).toBe('/resources/dynamic-island/island.fork.js')
+    expect(getIslandNativeModule('/resources/dynamic-island')).toBe('/resources/dynamic-island/macos/island.node')
+  })
+
   test('serializeCmd 追加换行', () => {
     expect(serializeCmd({ type: 'render' })).toBe('{"type":"render"}\n')
   })
