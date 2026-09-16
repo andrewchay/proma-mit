@@ -78,12 +78,15 @@ export interface ResearchProject {
 
 // ===== 事件 =====
 
-/** 研究事件类型（M1 只有项目生命周期；后续里程碑扩展） */
+/** 研究事件类型（M2 增加文献/检索/筛选；旧版本事件不识别即忽略） */
 export type ResearchEventType =
   | 'project_created'
   | 'brief_updated'
   | 'status_changed'
   | 'project_archived'
+  | 'source_imported'
+  | 'search_recorded'
+  | 'screening_recorded'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -91,6 +94,9 @@ export type ResearchEventPayload =
   | { type: 'brief_updated'; brief: ResearchBrief; changeReason: string }
   | { type: 'status_changed'; from: ResearchProjectStatus; to: ResearchProjectStatus; reason?: string }
   | { type: 'project_archived'; reason?: string }
+  | { type: 'source_imported'; source: Source; origin: 'import' | 'search'; searchRunId?: string }
+  | { type: 'search_recorded'; run: SearchRunRecord }
+  | { type: 'screening_recorded'; decision: ScreeningDecision }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -131,6 +137,85 @@ export class ResearchError extends Error {
   }
 }
 
+// ===== 文献来源与检索（M2） =====
+
+/** 来源类型（覆盖无 DOI 的书籍/访谈/档案） */
+export type SourceType =
+  | 'journal-article'
+  | 'preprint'
+  | 'book'
+  | 'book-chapter'
+  | 'thesis'
+  | 'webpage'
+  | 'interview'
+  | 'archive'
+  | 'dataset'
+  | 'other'
+
+/** 外部标识命名空间：DOI 不是全局主键，只是别名之一 */
+export type ExternalIdNamespace = 'doi' | 'pmid' | 'arxiv' | 'isbn' | 'zotero' | 'url'
+
+export interface ExternalId {
+  namespace: ExternalIdNamespace
+  value: string
+}
+
+/** 来源获取等级：区分「只有元数据」「有摘要」「有全文」 */
+export type RetrievalStatus = 'metadata-only' | 'abstract-only' | 'full-text'
+
+/** 来源的具体版本（预印本 v1/v2 与正式版分开，不静默合并） */
+export interface SourceVersion {
+  id: string
+  sourceId: string
+  versionLabel: string
+  externalIds: ExternalId[]
+  title: string
+  authors: string[]
+  year?: number
+  venue?: string
+  abstract?: string
+  retrievalStatus: RetrievalStatus
+  localAttachmentPath?: string
+  licenseNote?: string
+  retrievedAt: string
+}
+
+/** 来源 = 作品层；版本挂在上面 */
+export interface Source {
+  id: string
+  projectId: string
+  type: SourceType
+  versions: SourceVersion[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** 筛选决定（标题摘要轮 / 全文轮） */
+export interface ScreeningDecision {
+  id: string
+  projectId: string
+  sourceId: string
+  round: 'title-abstract' | 'full-text'
+  decision: 'include' | 'exclude' | 'maybe'
+  reason: string
+  recordedAt: string
+}
+
+/** 检索运行记录：查询/覆盖/截断入日志，不以未检出声称不存在 */
+export interface SearchRunRecord {
+  id: string
+  projectId: string
+  query: string
+  databases: string[]
+  startedAt: string
+  finishedAt: string
+  status: 'completed' | 'partial' | 'error'
+  resultCount: number
+  importedSourceIds: string[]
+  truncated: boolean
+  errors: string[]
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -162,6 +247,13 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   CHANGE_STATUS: 'academic-research:change-status',
   ARCHIVE_PROJECT: 'academic-research:archive-project',
   MIGRATION_DRY_RUN: 'academic-research:migration-dry-run',
+  LIST_SOURCES: 'academic-research:list-sources',
+  IMPORT_BIBLIOGRAPHY: 'academic-research:import-bibliography',
+  SEARCH_SOURCES: 'academic-research:search-sources',
+  LIST_SEARCH_RUNS: 'academic-research:list-search-runs',
+  DEDUP_CANDIDATES: 'academic-research:dedup-candidates',
+  RECORD_SCREENING: 'academic-research:record-screening',
+  LIST_SCREENING: 'academic-research:list-screening',
 } as const
 
 // ===== 输入 =====

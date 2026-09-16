@@ -225,3 +225,8 @@ export async function listResearchProjectIds(): Promise<string[]> {
     })
     .sort()
 }
+
+/** 读取项目的完整事件流（服务层用于按事件类型聚合视图数据） */
+export async function readProjectEvents(researchId: string): Promise<ResearchEventEnvelope[]> {
+  return readEnvelopes(researchId)
+}

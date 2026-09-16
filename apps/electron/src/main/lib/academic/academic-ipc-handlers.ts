@@ -37,4 +37,28 @@ export function registerAcademicResearchIpcHandlers(): void {
     archiveResearchProject(id, reason),
   )
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.MIGRATION_DRY_RUN, async () => dryRunLegacyPapersMigration())
+
+  // ===== M2：文献与检索 =====
+  const sourceSvc = require('./source-service') as typeof import('./source-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SOURCES, async (_e, projectId: string) =>
+    sourceSvc.listSources(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_BIBLIOGRAPHY, async (_e, projectId: string, format: 'ris' | 'bibtex', text: string) =>
+    sourceSvc.importBibliography(projectId, format, text),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.SEARCH_SOURCES, async (_e, projectId: string, query: string, databaseIds: string[], options) =>
+    sourceSvc.searchExternalSources(projectId, query, databaseIds, options),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SEARCH_RUNS, async (_e, projectId: string) =>
+    sourceSvc.listSearchRuns(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.DEDUP_CANDIDATES, async (_e, projectId: string) =>
+    sourceSvc.findProjectDedupCandidates(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_SCREENING, async (_e, projectId: string, input) =>
+    sourceSvc.recordScreening(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SCREENING, async (_e, projectId: string) =>
+    sourceSvc.listScreeningDecisions(projectId),
+  )
 }

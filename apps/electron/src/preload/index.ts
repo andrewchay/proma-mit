@@ -1521,6 +1521,14 @@ export interface ElectronAPI {
     changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
     archiveProject: (id: string, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
     migrationDryRun: () => Promise<import('@gravitas/shared').MigrationDryRunReport>
+    // M2：文献与检索
+    listSources: (projectId: string) => Promise<import('@gravitas/shared').Source[]>
+    importBibliography: (projectId: string, format: 'ris' | 'bibtex', text: string) => Promise<import('@gravitas/shared').Source[]>
+    searchSources: (projectId: string, query: string, databaseIds: string[], options: { limit: number; filters?: Record<string, string> }) => Promise<import('@gravitas/shared').SearchRunRecord>
+    listSearchRuns: (projectId: string) => Promise<import('@gravitas/shared').SearchRunRecord[]>
+    dedupCandidates: (projectId: string) => Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>
+    recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => Promise<import('@gravitas/shared').ScreeningDecision>
+    listScreening: (projectId: string) => Promise<import('@gravitas/shared').ScreeningDecision[]>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2328,6 +2336,15 @@ const electronAPI: ElectronAPI = {
     changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CHANGE_STATUS, id, to, reason) as Promise<import('@gravitas/shared').ResearchProject>,
     archiveProject: (id: string, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.ARCHIVE_PROJECT, id, reason) as Promise<import('@gravitas/shared').ResearchProject>,
     migrationDryRun: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.MIGRATION_DRY_RUN) as Promise<import('@gravitas/shared').MigrationDryRunReport>,
+
+    // M2：文献与检索
+    listSources: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SOURCES, projectId) as Promise<import('@gravitas/shared').Source[]>,
+    importBibliography: (projectId: string, format: 'ris' | 'bibtex', text: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_BIBLIOGRAPHY, projectId, format, text) as Promise<import('@gravitas/shared').Source[]>,
+    searchSources: (projectId: string, query: string, databaseIds: string[], options: { limit: number; filters?: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SEARCH_SOURCES, projectId, query, databaseIds, options) as Promise<import('@gravitas/shared').SearchRunRecord>,
+    listSearchRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SEARCH_RUNS, projectId) as Promise<import('@gravitas/shared').SearchRunRecord[]>,
+    dedupCandidates: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.DEDUP_CANDIDATES, projectId) as Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>,
+    recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_SCREENING, projectId, input) as Promise<import('@gravitas/shared').ScreeningDecision>,
+    listScreening: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SCREENING, projectId) as Promise<import('@gravitas/shared').ScreeningDecision[]>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
