@@ -1814,6 +1814,9 @@ export interface ElectronAPI {
       getGovernancePolicy: () => Promise<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>
       updateGovernancePolicy: (patch: Partial<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>) => Promise<{ policy: import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult; audits: import('@gravitas/shared').EmployeeCapabilityGovernanceAuditResult[] }>
       listGovernanceAudits: () => Promise<import('@gravitas/shared').EmployeeCapabilityGovernanceAuditResult[]>
+      previewSampleRetention: (agentId: string, retentionDays: number | null) => Promise<import('@gravitas/shared').AgentEmployeeSampleRetentionPreviewResult>
+      deleteLearningSamples: (ids: string[]) => Promise<number>
+      getEvolutionLedger: (agentIds?: string[], windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeEvolutionLedgerResult>
     }
 
     // --- 营销能力包 ---
@@ -4040,6 +4043,9 @@ const electronAPI: ElectronAPI = {
       getGovernancePolicy: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_GOVERNANCE_POLICY),
       updateGovernancePolicy: (patch) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_GOVERNANCE_POLICY, patch),
       listGovernanceAudits: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_GOVERNANCE_AUDITS),
+      previewSampleRetention: (agentId, retentionDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_SAMPLE_RETENTION, agentId, retentionDays),
+      deleteLearningSamples: (ids) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, ids),
+      getEvolutionLedger: (agentIds, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, agentIds, windowDays),
     },
     // --- 营销能力包 ---
     marketing: {

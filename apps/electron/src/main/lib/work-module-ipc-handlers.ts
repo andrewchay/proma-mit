@@ -169,7 +169,8 @@ import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-ser
 import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
 import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
 import { getGovernancePolicy, listGovernanceAudits, updateGovernancePolicy } from './employee-capability-governance-policy'
-import { getAgentEmployeeCapabilityDependencyGraph } from './project-sqlite-store'
+import { buildEmployeeCapabilityReviewReport } from './employee-capability-ledger'
+import { deleteAgentEmployeeLearningSamples, getAgentEmployeeCapabilityDependencyGraph, previewAgentEmployeeLearningSampleRetention } from './project-sqlite-store'
 import { onSettingsChange } from './settings-service'
 import {
   listChannels,
@@ -927,6 +928,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_GOVERNANCE_POLICY, () => getGovernancePolicy())
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_GOVERNANCE_POLICY, (_, patch: Partial<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>) => updateGovernancePolicy(patch))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_GOVERNANCE_AUDITS, () => listGovernanceAudits())
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_SAMPLE_RETENTION, (_, agentId: string, retentionDays: number | null) => previewAgentEmployeeLearningSampleRetention(agentId, retentionDays))
+  // 删除为不可逆操作：调用方必须先展示预览并取得用户确认。
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, (_, ids: string[]) => deleteAgentEmployeeLearningSamples(ids))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, (_, agentIds?: string[], windowDays?: number) => buildEmployeeCapabilityReviewReport({ agentIds, windowDays }))
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

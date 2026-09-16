@@ -485,6 +485,12 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   UPDATE_GOVERNANCE_POLICY: 'agent-employee:update-governance-policy',
   /** 读取治理策略变更审计。 */
   LIST_GOVERNANCE_AUDITS: 'agent-employee:list-governance-audits',
+  /** 预览样本保留期影响，不删除数据。 */
+  PREVIEW_SAMPLE_RETENTION: 'agent-employee:preview-sample-retention',
+  /** 显式删除指定样本；调用方需先展示预览并确认。 */
+  DELETE_LEARNING_SAMPLES: 'agent-employee:delete-learning-samples',
+  /** 读取能力演化运营台账。 */
+  GET_EVOLUTION_LEDGER: 'agent-employee:get-evolution-ledger',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -595,6 +601,33 @@ export interface EmployeeCapabilityGovernanceAuditResult {
   nextValue: number | null
   actorId: string
   createdAt: number
+}
+
+export interface AgentEmployeeSampleRetentionPreviewResult {
+  total: number
+  expired: number
+  expiredIds: string[]
+  cutoff?: number
+}
+
+export interface AgentEmployeeEvolutionLedgerEntryResult {
+  agentId: string
+  agentName: string
+  versions: { total: number; active: number; superseded: number; rolledBack: number }
+  samples: { total: number; pending: number; sanitized: number; excluded: number; cancelled: number }
+  decisions: { approved: number; rejected: number; pending: number }
+  rollbacks: number
+  observations: { executionCount: number; reworkRate: number | null; failureRate: number | null; decidedSampleCount: number; sampleSufficient: boolean }
+  evaluationCostUsd: number
+  reviewEffortProxy: number
+}
+
+export interface AgentEmployeeEvolutionLedgerResult {
+  windowDays: number
+  generatedAt: number
+  entries: AgentEmployeeEvolutionLedgerEntryResult[]
+  totals: { approved: number; rejected: number; pending: number; rollbacks: number; sanitizedSamples: number; evaluationCostUsd: number }
+  disclaimer: string
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

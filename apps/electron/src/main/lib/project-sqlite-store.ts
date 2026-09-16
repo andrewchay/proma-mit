@@ -2852,6 +2852,28 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
   })
 }
 
+/**
+ * 保留期预览：只计算“会被清理”的对象与数量，不删除任何数据。
+ * 保留期未配置（null）时始终返回空，确保默认不清理。
+ */
+export function previewAgentEmployeeLearningSampleRetention(agentId: string, retentionDays: number | null, now = Date.now()): { total: number; expired: number; expiredIds: string[]; cutoff?: number } {
+  const total = (getProjectDb().prepare('SELECT COUNT(*) AS count FROM agent_employee_learning_samples WHERE agent_id = ?').get(agentId) as { count: number }).count
+  if (retentionDays === null) return { total, expired: 0, expiredIds: [] }
+  if (!Number.isInteger(retentionDays) || retentionDays < 1) throw new Error('保留期必须是大于 0 的整数天')
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000
+  const rows = getProjectDb().prepare('SELECT id FROM agent_employee_learning_samples WHERE agent_id = ? AND created_at < ? ORDER BY created_at ASC').all(agentId, cutoff) as Array<{ id: string }>
+  return { total, expired: rows.length, expiredIds: rows.map((row) => row.id), cutoff }
+}
+
+/** 显式删除已过期样本；调用方必须先展示预览并取得用户确认。 */
+export function deleteAgentEmployeeLearningSamples(ids: string[]): number {
+  if (ids.length === 0) return 0
+  const database = getProjectDb()
+  const placeholders = ids.map(() => '?').join(',')
+  const result = database.prepare(`DELETE FROM agent_employee_learning_samples WHERE id IN (${placeholders})`).run(...ids)
+  return typeof result.changes === 'number' ? result.changes : 0
+}
+
 export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string): import('./project-types').AgentEmployeeCapabilityRollbackAudit {
   const trimmedReason = reason.trim()
   if (!trimmedReason || trimmedReason.length > 1000) throw new Error('回滚原因不能为空且不能超过 1000 字符')
