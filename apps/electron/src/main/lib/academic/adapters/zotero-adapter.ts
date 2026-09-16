@@ -10,7 +10,7 @@
  * 取回 collection 内的 top-level items，映射为 SourceVersion 草稿。
  */
 
-import type { SourceVersion, SourceType } from '@gravitas/shared'
+import type { SourceVersion } from '@gravitas/shared'
 import type { ScholarAdapter, ScholarSearchOptions, ScholarSearchResult } from './adapter-types'
 import { makeExternalId } from '@gravitas/core/services/academic'
 
@@ -40,31 +40,6 @@ export interface ZoteroFetchConfig {
   apiKey?: string
   /** collection key；缺省取整个库的 top-level items */
   collectionKey?: string
-}
-
-function mapZoteroItemType(itemType: string | undefined): SourceType {
-  switch (itemType) {
-    case 'journalArticle':
-      return 'journal-article'
-    case 'conferencePaper':
-      return 'journal-article'
-    case 'book':
-      return 'book'
-    case 'bookSection':
-      return 'book-chapter'
-    case 'thesis':
-      return 'thesis'
-    case 'preprint':
-      return 'preprint'
-    case 'webpage':
-      return 'webpage'
-    case 'dataset':
-      return 'dataset'
-    case 'interview':
-      return 'interview'
-    default:
-      return 'other'
-  }
 }
 
 function creatorsToAuthors(creators: ZoteroItemData['creators']): string[] {

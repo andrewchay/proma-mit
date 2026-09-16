@@ -1536,6 +1536,12 @@ export interface ElectronAPI {
     getZoteroConfig: () => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>
     saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>
     importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>
+    // M3：协议（批准 actor 由主进程确定，渲染层不能指定）
+    listProtocols: (projectId: string) => Promise<import('@gravitas/shared').ResearchProtocol[]>
+    createProtocol: (projectId: string, input: { methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    getDomainProfile: () => Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2361,6 +2367,13 @@ const electronAPI: ElectronAPI = {
     getZoteroConfig: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ZOTERO_CONFIG) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>,
     saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SAVE_ZOTERO_CONFIG, input) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>,
     importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_FROM_ZOTERO, projectId, options) as Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>,
+
+    // M3：协议
+    listProtocols: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROTOCOLS, projectId) as Promise<import('@gravitas/shared').ResearchProtocol[]>,
+    createProtocol: (projectId: string, input: { methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.APPROVE_PROTOCOL, projectId, version, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REVISE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    getDomainProfile: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_DOMAIN_PROFILE) as Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

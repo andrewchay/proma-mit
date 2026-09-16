@@ -32,6 +32,7 @@ import {
   updateResearchBriefAtom,
 } from '@/atoms/academic-atoms'
 import { SourceLibraryPanel } from '@/components/academic/SourceLibraryPanel'
+import { ProtocolPanel } from '@/components/academic/ProtocolPanel'
 import type {
   CreateResearchProjectInput,
   ResearchDomain,
@@ -156,6 +157,7 @@ export function ResearchWorkspace(): React.ReactElement {
       {current && (
         <div className="px-6 pb-6">
           <ProjectDetailPanel project={current} />
+          <ProtocolPanel project={current} />
           <SourceLibraryPanel project={current} />
         </div>
       )}

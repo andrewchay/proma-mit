@@ -77,14 +77,19 @@
 | [x] | Zotero 测试 5 个：未配置拒绝、导入落库、403 错误可见 | `M2.6` |
 | [x] | 创建表单按领域过滤方法路径（非法组合不可选） | `M2.6` |
 
-## 4. M3 选题、协议与领域方法（约 2 人周）— 未开始
+## 4. M3 选题、协议与领域方法（约 2 人周）— 进行中
 
-- [ ] protocol-service：ProtocolVersion 版本化 + 批准记录 + 变更理由
-- [ ] research-profiles 落地（依赖 G1）：七领域字段/检查项/方法路径模板
-- [ ] 选题：gap 矩阵、反例、查新范围（不设统一总分）
-- [ ] 批准门禁：伦理状态缺失不能启动人体数据采集；质性研究无假设不阻断
-- [ ] 顺带修复 G3（服务层授权校验，方案硬门禁）
-- [ ] protocol-rules.test + research-profiles.test + 七方向 fixture
+| 状态 | 任务 | 提交/证据 |
+|---|---|---|
+| [x] | protocol-rules：草稿校验、批准门禁、修订规则、版本递增 | `M3.1` |
+| [x] | 条件必填设计：`requiredForMethodPaths`（伦理依据仅对涉及人类路径必填） | `M3.1` |
+| [x] | access-guard（**G3 关闭**）：actor 由主进程确定、projectId 统一 NOT_FOUND | `M3.1` |
+| [x] | protocol-service：创建/批准/修订/列举（旧批准不沿用） | `M3.1` |
+| [x] | ProtocolPanel UI + getDomainProfile 只读暴露 | `M3.1` |
+| [x] | 协议测试 12 个 + 规则测试 12 个 + profile 测试 11 个 | `M3.1` |
+| [ ] | 选题：gap 矩阵、反例、查新范围（不设统一总分） | 未开始 |
+| [ ] | 七方向端到端 fixture（协议+检索+证据联动） | 未开始 |
+| [ ] | ProposalPanel UI（选题候选与查新） | 未开始 |
 
 ## 5. M4 原生研究执行与分析（约 2–3 人周）— 未开始
 
@@ -127,12 +132,13 @@
 |---|---|---|---|---|---|
 | G1 | research-profiles.ts 缺失 | 2026-09-16 review | 高 | M2.6 | **已修复** |
 | G2 | PubMed / EuropePMC / Zotero adapter 缺失 | 2026-09-16 review | 高 | M2.5 + M2.6 | **已修复**（含 Zotero UI 入口） |
-| G3 | 服务层授权校验缺失（§3.2-7）：IPC 无条件注册，模型可伪造 projectId | 2026-09-16 review | 高 | M3 批准门禁一并落地 | **开放（最高优先）** |
+| G3 | 服务层授权校验缺失（§3.2-7） | 2026-09-16 review | 高 | M3.1 | **已修复**（access-guard；远端多人身份仍属未实现边界） |
 | G4 | 真实 API smoke 未跑 | 2026-09-16 review | 中 | M2.5 | **已修复**：4 源全 PASS |
 | G5 | 证据矩阵视图超出 M2 数据层语义，实为 M5 主张层需求 | 2026-09-16 review | 中 | 正式移入 M5 | 已裁决 |
 
 ## 10. 评审记录
 
+- **2026-09-16 M3.1 批次**：关闭 G3（access-guard：actor 由主进程确定、渲染层无法自我批准、非法/不存在 projectId 统一 NOT_FOUND 不泄露存在性）。协议版本化与批准门禁落地：必填字段 + 全部检查项确认 + 涉及人类参与者需伦理依据；修订产生新版本且旧批准不沿用。设计改进：把「伦理依据」从协议顶层字段改为 profile 条件必填（`requiredForMethodPaths`），消除双真源。
 - **2026-09-16 M2.6 批次**：关闭 G1（七领域方法 profile：协议字段/检查项/方法路径约束，质性领域不强制假设与种子）与 G2 余项（Zotero 配置 + 一键只读导入 UI，apiKey 不落盘）。至此 M2 广度缺口全部补齐。
 - **2026-09-16 M2.5 批次**：补齐 G2 三库 adapter（PubMed/EuropePMC/Zotero）与 G4 真实 smoke；四源实端点全部通过，返回听力学相关真实文献，获取等级与 API 能力一致（PubMed=metadata-only）。Zotero 目前为 adapter 层就绪，UI 库配置入口留待 M2.6。
 - **2026-09-16 完成度 review**：M0 100% / M1 约 90% / M2 约 65%。骨架原则（可追溯、检索日志、不静默合并、不虚报全文、agent 建议需人工确认）已落到代码与测试；广度缺口见 §9。typecheck 0 错误，学术模块 203 测试全绿，全量仅剩 main 基线失败（agent-blocker-detect，与本工作无关）。

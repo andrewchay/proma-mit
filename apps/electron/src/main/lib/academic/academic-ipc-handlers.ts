@@ -18,6 +18,7 @@ import {
   updateResearchBrief,
 } from './research-service'
 import { dryRunLegacyPapersMigration } from './migration'
+import { listDomainProfiles } from '@gravitas/core/services/academic'
 
 export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROJECTS, async () => listResearchProjects())
@@ -80,4 +81,23 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_FROM_ZOTERO, async (_e, projectId: string, options) =>
     sourceSvc.importFromZotero(projectId, options ?? {}),
   )
+
+  // ===== M3：研究协议（版本化 + 批准门禁 + G3 访问守卫） =====
+  const protocolSvc = require('./protocol-service') as typeof import('./protocol-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROTOCOLS, async (_e, projectId: string) =>
+    protocolSvc.listProtocols(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROTOCOL, async (_e, projectId: string, input) =>
+    protocolSvc.createProtocol(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.APPROVE_PROTOCOL, async (_e, projectId: string, version: number, input) =>
+    protocolSvc.approveProtocol(projectId, version, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.REVISE_PROTOCOL, async (_e, projectId: string, input) =>
+    protocolSvc.reviseProtocol(projectId, input),
+  )
+  // 领域方法 profile 只读暴露：渲染层据此渲染字段，避免规则两处维护
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_DOMAIN_PROFILE, async () => ({
+    profiles: listDomainProfiles(),
+  }))
 }

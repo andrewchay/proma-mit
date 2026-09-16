@@ -211,3 +211,66 @@ export const DOMAIN_ALLOWED_METHOD_PATHS: Record<string, string[]> = {
   'enterprise-ai': ['mixed-practice', 'qualitative', 'quantitative'],
   'data-science': ['quantitative', 'mixed-practice'],
 }
+
+// ===== M3：研究协议 =====
+
+export interface ProfileFieldView {
+  key: string
+  label: string
+  type: 'text' | 'longtext' | 'number' | 'list' | 'select'
+  required: boolean
+  hint?: string
+  options?: string[]
+}
+
+export interface ProfileCheckView {
+  id: string
+  description: string
+}
+
+export const protocolsAtom = atom<import('@gravitas/shared').ResearchProtocol[]>([])
+export const protocolFieldsAtom = atom<ProfileFieldView[]>([])
+export const protocolChecksAtom = atom<ProfileCheckView[]>([])
+
+export const loadProtocolsAtom = atom(
+  null,
+  async (
+    _get,
+    set,
+    { projectId, domain }: { projectId: string; domain: string; methodPath: string },
+  ) => {
+    const api = window.electronAPI.academicResearch
+    set(protocolsAtom, await api.listProtocols(projectId))
+    const { profiles } = await api.getDomainProfile()
+    const profile = profiles.find((p) => p.domain === domain)
+    set(protocolFieldsAtom, (profile?.protocolFields ?? []) as ProfileFieldView[])
+    set(protocolChecksAtom, (profile?.checks ?? []) as ProfileCheckView[])
+  },
+)
+
+export const createProtocolAtom = atom(
+  null,
+  async (_get, set, { projectId, methodPath, fields }: { projectId: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => {
+    const protocol = await window.electronAPI.academicResearch.createProtocol(projectId, { methodPath, fields })
+    set(protocolsAtom, (prev) => [...prev, protocol])
+    return protocol
+  },
+)
+
+export const approveProtocolAtom = atom(
+  null,
+  async (_get, set, { projectId, version, input }: { projectId: string; version: number; input: { acknowledgedChecks: string[]; note?: string } }) => {
+    const approved = await window.electronAPI.academicResearch.approveProtocol(projectId, version, input)
+    set(protocolsAtom, (prev) => prev.map((p) => (p.version === version ? approved : p)))
+    return approved
+  },
+)
+
+export const reviseProtocolAtom = atom(
+  null,
+  async (_get, set, { projectId, changeReason, methodPath, fields }: { projectId: string; changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => {
+    const revised = await window.electronAPI.academicResearch.reviseProtocol(projectId, { changeReason, methodPath, fields })
+    set(protocolsAtom, (prev) => [...prev.map((p) => ({ ...p, status: 'superseded' as const })), revised])
+    return revised
+  },
+)

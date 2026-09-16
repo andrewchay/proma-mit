@@ -22,6 +22,11 @@ export interface ProfileField {
   label: string
   type: ProfileFieldType
   required: boolean
+  /**
+   * 条件必填：仅在这些方法路径下必填（与 required 取或）。
+   * 用于「涉及人类参与者时才需要伦理依据」这类学科条件。
+   */
+  requiredForMethodPaths?: ResearchMethodPath[]
   /** 缺省时的提示（不是默认值填充，避免推断补造） */
   hint?: string
   options?: string[]
@@ -108,8 +113,8 @@ export const DOMAIN_PROFILES: Record<ResearchDomain, DomainProfile> = {
     allowedMethodPaths: ['qualitative', 'mixed-practice', 'quantitative'],
     protocolFields: [
       ...QUALITATIVE_FIELDS,
-      { key: 'ethicsBasis', label: '伦理依据', type: 'longtext', required: true, hint: '批件或豁免说明；系统不裁决其法律有效性' },
-      { key: 'dataRetention', label: '材料保存与脱敏', type: 'longtext', required: true },
+      { key: 'ethicsBasis', label: '伦理依据', type: 'longtext', required: false, requiredForMethodPaths: ['qualitative', 'mixed-practice'], hint: '批件或豁免说明；系统不裁决其法律有效性' },
+      { key: 'dataRetention', label: '材料保存与脱敏', type: 'longtext', required: false, requiredForMethodPaths: ['qualitative', 'mixed-practice'] },
     ],
     checks: [
       { id: 'no-fabricated-quotes', description: '访谈引语必须来自真实材料片段，记录不得由模型生成' },
@@ -247,9 +252,20 @@ export function checksFor(
   return profile.checks.filter((c) => !c.appliesTo || c.appliesTo.includes(methodPath))
 }
 
-/** 该领域的必填协议字段 */
-export function requiredFieldsFor(domain: ResearchDomain): ProfileField[] {
-  return getDomainProfile(domain).protocolFields.filter((f) => f.required)
+/** 字段在给定方法路径下是否必填 */
+export function isFieldRequired(field: ProfileField, methodPath: ResearchMethodPath): boolean {
+  if (field.required) return true
+  return field.requiredForMethodPaths?.includes(methodPath) ?? false
+}
+
+/** 该领域在给定方法路径下的必填协议字段 */
+export function requiredFieldsFor(
+  domain: ResearchDomain,
+  methodPath?: ResearchMethodPath,
+): ProfileField[] {
+  const profile = getDomainProfile(domain)
+  if (!methodPath) return profile.protocolFields.filter((f) => f.required)
+  return profile.protocolFields.filter((f) => isFieldRequired(f, methodPath))
 }
 
 /** 全部领域 profile 列表（UI 展示顺序） */

@@ -88,6 +88,9 @@ export type ResearchEventType =
   | 'search_recorded'
   | 'screening_recorded'
   | 'evidence_extracted'
+  | 'protocol_created'
+  | 'protocol_approved'
+  | 'protocol_revised'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -99,6 +102,9 @@ export type ResearchEventPayload =
   | { type: 'search_recorded'; run: SearchRunRecord }
   | { type: 'screening_recorded'; decision: ScreeningDecision }
   | { type: 'evidence_extracted'; evidence: EvidenceExcerpt }
+  | { type: 'protocol_created'; protocol: ResearchProtocol }
+  | { type: 'protocol_approved'; protocolId: string; version: number; approvedBy: ApprovalActor; checklist: string[]; note?: string }
+  | { type: 'protocol_revised'; protocol: ResearchProtocol; supersedesVersion: number; changeReason: string }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -249,6 +255,55 @@ export interface EvidenceExcerpt {
   createdAt: string
 }
 
+// ===== 研究协议（M3） =====
+
+/**
+ * 审批 actor。
+ *
+ * 由主进程确定（当前固定本地用户），**绝不接受渲染层或模型传入**——
+ * 否则模型可以把自己批准为研究者（方案 §11.1 操作批准门禁）。
+ */
+export interface ApprovalActor {
+  /** 固定来源：local-user / system:<verifier> 等 */
+  id: string
+  /** 显示名（本地用户为「本机用户」） */
+  displayName: string
+  /** 该 actor 是否由主进程注入（渲染层传入一律视为不可信） */
+  trusted: boolean
+}
+
+/** 协议状态：草稿 → 已批准；修订产生新版本（旧批准不沿用） */
+export type ProtocolStatus = 'draft' | 'approved' | 'superseded'
+
+/** 研究协议的一个版本 */
+export interface ResearchProtocol {
+  id: string
+  projectId: string
+  /** 版本号，从 1 开始单调递增 */
+  version: number
+  status: ProtocolStatus
+  /** 方法路径（须与项目领域匹配） */
+  methodPath: ResearchMethodPath
+  /** 按领域 profile 的字段填写（键为 ProfileField.key） */
+  fields: Record<string, string>
+  /** 人工确认已阅读的检查项 id（批准时须覆盖全部启用检查项） */
+  acknowledgedChecks: string[]
+  /** 伦理/数据依据（人体数据采集必需） */
+  ethicsBasis?: string
+  createdAt: string
+  updatedAt: string
+  /** 批准记录（仅 approved 时存在） */
+  approval?: {
+    approvedBy: ApprovalActor
+    approvedAt: string
+    note?: string
+  }
+  /** 被哪个版本取代（修订后旧版本标记 superseded） */
+  supersededByVersion?: number
+  /** 修订理由（版本 > 1 时必填） */
+  changeReason?: string
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -292,6 +347,11 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   GET_ZOTERO_CONFIG: 'academic-research:get-zotero-config',
   SAVE_ZOTERO_CONFIG: 'academic-research:save-zotero-config',
   IMPORT_FROM_ZOTERO: 'academic-research:import-from-zotero',
+  LIST_PROTOCOLS: 'academic-research:list-protocols',
+  CREATE_PROTOCOL: 'academic-research:create-protocol',
+  APPROVE_PROTOCOL: 'academic-research:approve-protocol',
+  REVISE_PROTOCOL: 'academic-research:revise-protocol',
+  GET_DOMAIN_PROFILE: 'academic-research:get-domain-profile',
 } as const
 
 // ===== 输入 =====
