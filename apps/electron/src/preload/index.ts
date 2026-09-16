@@ -1529,6 +1529,9 @@ export interface ElectronAPI {
     dedupCandidates: (projectId: string) => Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>
     recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => Promise<import('@gravitas/shared').ScreeningDecision>
     listScreening: (projectId: string) => Promise<import('@gravitas/shared').ScreeningDecision[]>
+    // M2 第二批：证据
+    listEvidence: (projectId: string) => Promise<import('@gravitas/shared').EvidenceExcerpt[]>
+    extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => Promise<import('@gravitas/shared').EvidenceExcerpt>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2345,6 +2348,10 @@ const electronAPI: ElectronAPI = {
     dedupCandidates: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.DEDUP_CANDIDATES, projectId) as Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>,
     recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_SCREENING, projectId, input) as Promise<import('@gravitas/shared').ScreeningDecision>,
     listScreening: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SCREENING, projectId) as Promise<import('@gravitas/shared').ScreeningDecision[]>,
+
+    // M2 第二批：证据
+    listEvidence: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EVIDENCE, projectId) as Promise<import('@gravitas/shared').EvidenceExcerpt[]>,
+    extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXTRACT_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceExcerpt>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====

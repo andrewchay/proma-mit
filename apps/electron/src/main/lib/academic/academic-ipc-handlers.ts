@@ -61,4 +61,13 @@ export function registerAcademicResearchIpcHandlers(): void {
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SCREENING, async (_e, projectId: string) =>
     sourceSvc.listScreeningDecisions(projectId),
   )
+
+  // ===== M2 第二批：证据抽取 =====
+  const evidenceSvc = require('./evidence-service') as typeof import('./evidence-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EVIDENCE, async (_e, projectId: string) =>
+    evidenceSvc.listEvidence(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.EXTRACT_EVIDENCE, async (_e, projectId: string, input) =>
+    evidenceSvc.extractEvidence(projectId, input),
+  )
 }

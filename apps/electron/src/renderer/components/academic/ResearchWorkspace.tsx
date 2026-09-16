@@ -30,6 +30,7 @@ import {
   runMigrationDryRunAtom,
   updateResearchBriefAtom,
 } from '@/atoms/academic-atoms'
+import { SourceLibraryPanel } from '@/components/academic/SourceLibraryPanel'
 import type {
   CreateResearchProjectInput,
   ResearchDomain,
@@ -151,7 +152,12 @@ export function ResearchWorkspace(): React.ReactElement {
       </div>
 
       {createOpen && <CreateProjectDialog onClose={() => setCreateOpen(false)} />}
-      {current && <ProjectDetailPanel project={current} />}
+      {current && (
+        <div className="px-6 pb-6">
+          <ProjectDetailPanel project={current} />
+          <SourceLibraryPanel project={current} />
+        </div>
+      )}
     </div>
   )
 }

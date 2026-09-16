@@ -87,6 +87,7 @@ export type ResearchEventType =
   | 'source_imported'
   | 'search_recorded'
   | 'screening_recorded'
+  | 'evidence_extracted'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -97,6 +98,7 @@ export type ResearchEventPayload =
   | { type: 'source_imported'; source: Source; origin: 'import' | 'search'; searchRunId?: string }
   | { type: 'search_recorded'; run: SearchRunRecord }
   | { type: 'screening_recorded'; decision: ScreeningDecision }
+  | { type: 'evidence_extracted'; evidence: EvidenceExcerpt }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -216,6 +218,37 @@ export interface SearchRunRecord {
   errors: string[]
 }
 
+// ===== 证据抽取（M2 第二批） =====
+
+/** 证据定位器：能回到原文的位置；无定位器的引语不得进入台账 */
+export type EvidenceLocator =
+  | { kind: 'pdf-page'; page: number; anchor?: string }
+  | { kind: 'page'; page: number }
+  | { kind: 'section'; label: string }
+  | { kind: 'timestamp'; startSeconds: number; endSeconds?: number }
+  | { kind: 'url'; url: string; anchor?: string }
+  | { kind: 'table'; tableId: string; row?: string }
+
+/**
+ * 证据片段：从某来源版本的原文中抽取的引语/事实。
+ *
+ * 只有原文片段 + 定位器才构成证据；模型生成的摘要不是证据。
+ */
+export interface EvidenceExcerpt {
+  id: string
+  projectId: string
+  sourceId: string
+  sourceVersionId: string
+  /** 原文片段（逐字或明确标注的翻译/转写） */
+  text: string
+  locator: EvidenceLocator
+  /** 研究者备注（为什么重要） */
+  note?: string
+  /** 提取方式：manual / agent-suggested（agent 建议需人工确认） */
+  extractionMode: 'manual' | 'agent-suggested'
+  createdAt: string
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -254,6 +287,8 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   DEDUP_CANDIDATES: 'academic-research:dedup-candidates',
   RECORD_SCREENING: 'academic-research:record-screening',
   LIST_SCREENING: 'academic-research:list-screening',
+  LIST_EVIDENCE: 'academic-research:list-evidence',
+  EXTRACT_EVIDENCE: 'academic-research:extract-evidence',
 } as const
 
 // ===== 输入 =====
