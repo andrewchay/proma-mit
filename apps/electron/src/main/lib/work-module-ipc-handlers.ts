@@ -170,6 +170,7 @@ import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs,
 import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
 import { getGovernancePolicy, listGovernanceAudits, updateGovernancePolicy } from './employee-capability-governance-policy'
 import { buildEmployeeCapabilityReviewReport } from './employee-capability-ledger'
+import { exportEvolutionPackage, summarizeEvolutionPackageForReview, validateEvolutionPackage } from './employee-capability-portability'
 import { deleteAgentEmployeeLearningSamples, getAgentEmployeeCapabilityDependencyGraph, previewAgentEmployeeLearningSampleRetention } from './project-sqlite-store'
 import { onSettingsChange } from './settings-service'
 import {
@@ -932,6 +933,12 @@ export function registerWorkModuleIpcHandlers(): void {
   // 删除为不可逆操作：调用方必须先展示预览并取得用户确认。
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, (_, ids: string[]) => deleteAgentEmployeeLearningSamples(ids))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, (_, agentIds?: string[], windowDays?: number) => buildEmployeeCapabilityReviewReport({ agentIds, windowDays }))
+  // 导出默认脱敏；导入只校验并返回摘要，不激活任何内容。
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, (_, agentIds?: string[]) => exportEvolutionPackage({ agentIds }))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, (_, input: unknown) => {
+    const result = validateEvolutionPackage(input)
+    return result.ok ? { ok: true, summary: summarizeEvolutionPackageForReview(result.package) } : result
+  })
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()

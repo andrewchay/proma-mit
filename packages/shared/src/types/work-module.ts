@@ -491,6 +491,10 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   DELETE_LEARNING_SAMPLES: 'agent-employee:delete-learning-samples',
   /** 读取能力演化运营台账。 */
   GET_EVOLUTION_LEDGER: 'agent-employee:get-evolution-ledger',
+  /** 导出脱敏演化包（不含样本摘要、路径、密钥）。 */
+  EXPORT_EVOLUTION_PACKAGE: 'agent-employee:export-evolution-package',
+  /** 校验导入包；不自动激活任何内容。 */
+  VALIDATE_EVOLUTION_PACKAGE: 'agent-employee:validate-evolution-package',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -628,6 +632,12 @@ export interface AgentEmployeeEvolutionLedgerResult {
   entries: AgentEmployeeEvolutionLedgerEntryResult[]
   totals: { approved: number; rejected: number; pending: number; rollbacks: number; sanitizedSamples: number; evaluationCostUsd: number }
   disclaimer: string
+}
+
+export interface EvolutionPackageValidationResult {
+  ok: boolean
+  reason?: string
+  summary?: { agentCount: number; versionCount: number; candidateCount: number; sanitizedSampleCount: number; note: string }
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

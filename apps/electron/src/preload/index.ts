@@ -1817,6 +1817,8 @@ export interface ElectronAPI {
       previewSampleRetention: (agentId: string, retentionDays: number | null) => Promise<import('@gravitas/shared').AgentEmployeeSampleRetentionPreviewResult>
       deleteLearningSamples: (ids: string[]) => Promise<number>
       getEvolutionLedger: (agentIds?: string[], windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeEvolutionLedgerResult>
+      exportEvolutionPackage: (agentIds?: string[]) => Promise<unknown>
+      validateEvolutionPackage: (input: unknown) => Promise<import('@gravitas/shared').EvolutionPackageValidationResult>
     }
 
     // --- 营销能力包 ---
@@ -4046,6 +4048,8 @@ const electronAPI: ElectronAPI = {
       previewSampleRetention: (agentId, retentionDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_SAMPLE_RETENTION, agentId, retentionDays),
       deleteLearningSamples: (ids) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, ids),
       getEvolutionLedger: (agentIds, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, agentIds, windowDays),
+      exportEvolutionPackage: (agentIds) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, agentIds),
+      validateEvolutionPackage: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, input),
     },
     // --- 营销能力包 ---
     marketing: {
