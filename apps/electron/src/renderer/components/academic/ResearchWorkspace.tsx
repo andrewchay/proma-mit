@@ -35,6 +35,8 @@ import { SourceLibraryPanel } from '@/components/academic/SourceLibraryPanel'
 import { ProtocolPanel } from '@/components/academic/ProtocolPanel'
 import { ProposalPanel } from '@/components/academic/ProposalPanel'
 import { StudyRunsPanel } from '@/components/academic/StudyRunsPanel'
+import { ClaimPanel } from '@/components/academic/ClaimPanel'
+import { ManuscriptPanel } from '@/components/academic/ManuscriptPanel'
 import type {
   CreateResearchProjectInput,
   ResearchDomain,
@@ -163,6 +165,8 @@ export function ResearchWorkspace(): React.ReactElement {
           <ProposalPanel project={current} />
           <StudyRunsPanel project={current} />
           <SourceLibraryPanel project={current} />
+          <ClaimPanel project={current} />
+          <ManuscriptPanel project={current} />
         </div>
       )}
     </div>

@@ -384,3 +384,90 @@ export const readRunLogAtom = atom(null, async (_get, set, { projectId, runId }:
   set(runLogAtom, { runId, content: log.content, truncated: log.truncated, exists: log.exists })
   return log
 })
+
+// ===== M5：主张与稿件 =====
+
+export type ClaimSummaryView = { supports: number; opposes: number; qualifies: number; canBeVerified: boolean }
+export type ClaimView = import('@gravitas/shared').Claim & {
+  links: import('@gravitas/shared').EvidenceLink[]
+  summary: ClaimSummaryView
+}
+
+export const claimsAtom = atom<ClaimView[]>([])
+export const manuscriptsAtom = atom<import('@gravitas/shared').ManuscriptVersion[]>([])
+export const preflightAtom = atom<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> } | null>(null)
+export const claimsLoadingAtom = atom<boolean>(false)
+
+export const loadClaimsAtom = atom(null, async (_get, set, projectId: string) => {
+  set(claimsLoadingAtom, true)
+  try {
+    const api = window.electronAPI.academicResearch
+    set(claimsAtom, await api.listClaims(projectId))
+    set(manuscriptsAtom, await api.listManuscripts(projectId))
+    set(preflightAtom, await api.exportPreflight(projectId))
+    // 关联证据需要这两个清单；面板不依赖其他面板的加载顺序
+    set(evidenceAtom, await api.listEvidence(projectId))
+    set(runObservationsAtom, await api.listObservations(projectId))
+  } finally {
+    set(claimsLoadingAtom, false)
+  }
+})
+
+export const createClaimAtom = atom(
+  null,
+  async (_get, set, { projectId, input }: { projectId: string; input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string } }) => {
+    await window.electronAPI.academicResearch.createClaim(projectId, input)
+    set(claimsAtom, await window.electronAPI.academicResearch.listClaims(projectId))
+    set(preflightAtom, await window.electronAPI.academicResearch.exportPreflight(projectId))
+  },
+)
+
+export const linkEvidenceAtom = atom(
+  null,
+  async (
+    _get,
+    set,
+    { projectId, input }: { projectId: string; input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; runId?: string; observationId?: string; note?: string } },
+  ) => {
+    await window.electronAPI.academicResearch.linkEvidence(projectId, input)
+    set(claimsAtom, await window.electronAPI.academicResearch.listClaims(projectId))
+    set(preflightAtom, await window.electronAPI.academicResearch.exportPreflight(projectId))
+  },
+)
+
+export const setClaimStatusAtom = atom(
+  null,
+  async (_get, set, { projectId, claimId, status, note }: { projectId: string; claimId: string; status: import('@gravitas/shared').ClaimStatus; note?: string }) => {
+    await window.electronAPI.academicResearch.setClaimStatus(projectId, claimId, status, { note })
+    set(claimsAtom, await window.electronAPI.academicResearch.listClaims(projectId))
+    set(preflightAtom, await window.electronAPI.academicResearch.exportPreflight(projectId))
+  },
+)
+
+/** 相关性失效：给定变化的证据 id 触发传播 */
+export const propagateInvalidationAtom = atom(
+  null,
+  async (_get, set, { projectId, evidenceIds, reason }: { projectId: string; evidenceIds: string[]; reason: string }) => {
+    const result = await window.electronAPI.academicResearch.propagateInvalidation(projectId, { evidenceIds, reason })
+    set(claimsAtom, await window.electronAPI.academicResearch.listClaims(projectId))
+    set(preflightAtom, await window.electronAPI.academicResearch.exportPreflight(projectId))
+    return result
+  },
+)
+
+export const createManuscriptAtom = atom(
+  null,
+  async (
+    _get,
+    set,
+    { projectId, draft }: { projectId: string; draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[] }>; changeReason?: string } },
+  ) => {
+    const manuscript = await window.electronAPI.academicResearch.createManuscriptVersion(projectId, draft)
+    set(manuscriptsAtom, await window.electronAPI.academicResearch.listManuscripts(projectId))
+    return manuscript
+  },
+)
+
+export const refreshPreflightAtom = atom(null, async (_get, set, projectId: string) => {
+  set(preflightAtom, await window.electronAPI.academicResearch.exportPreflight(projectId))
+})
