@@ -633,6 +633,11 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   DISCONNECT_ACCOUNT: 'new-media:disconnect-account',
   GET_ACCOUNT_AUDIT: 'new-media:get-account-audit',
   GET_ADAPTER_INFO: 'new-media:get-adapter-info',
+  LIST_XHS_HANDOFFS: 'new-media:list-xhs-handoffs',
+  PREPARE_XHS_HANDOFF: 'new-media:prepare-xhs-handoff',
+  EXPORT_XHS_HANDOFF: 'new-media:export-xhs-handoff',
+  CONFIRM_XHS_PUBLISHED: 'new-media:confirm-xhs-published',
+  GET_XHS_HANDOFF_AUDIT: 'new-media:get-xhs-handoff-audit',
 } as const
 
 export type NewMediaPlatform = 'xiaohongshu' | 'wechat-official-account'
@@ -701,6 +706,37 @@ export interface NewMediaContentDraft {
   sourceText: string
   platformCopies: Partial<Record<NewMediaPlatform, { title: string; body: string; hashtags: string[] }>>
   createdAt: number
+}
+
+export type XiaohongshuHandoffStatus = 'draft_ready' | 'handed_off' | 'user_confirmed_published'
+export interface XiaohongshuHandoff {
+  id: string
+  draftId: string
+  status: XiaohongshuHandoffStatus
+  packageVersion: 1
+  packageFileName: string
+  packageSha256?: string
+  warnings: string[]
+  handedOffAt?: number
+  handedOffBy?: string
+  confirmedAt?: number
+  confirmedBy?: string
+  createdAt: number
+  updatedAt: number
+}
+export type XiaohongshuHandoffAuditEvent = 'prepared' | 'exported' | 'user_confirmed_published'
+export interface XiaohongshuHandoffAuditEntry {
+  id: string
+  handoffId: string
+  event: XiaohongshuHandoffAuditEvent
+  actor: string
+  detail: string
+  createdAt: number
+}
+export interface XiaohongshuHandoffExportResult {
+  canceled: boolean
+  fileName?: string
+  sha256?: string
 }
 
 export interface NewMediaPublicationJob {

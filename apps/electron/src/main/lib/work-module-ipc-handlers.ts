@@ -5,7 +5,7 @@
  * 子模块的处理器迁移而来，桥接渲染进程 IPC 调用到主进程服务层。
  */
 
-import { ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 import {
@@ -1142,5 +1142,35 @@ export function registerWorkModuleIpcHandlers(): void {
     const { adapterInfo } = await import('./new-media/platform-adapter')
     const { getPlatformAdapterRegistry } = await import('./new-media/platform-adapter-registry')
     return adapterInfo(getPlatformAdapterRegistry().get(platform))
+  })
+
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS, async () => (await import('./new-media/xiaohongshu-handoff')).listXiaohongshuHandoffs())
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, async (_: unknown, draftId: string) => {
+    if (typeof draftId !== 'string' || !draftId) throw new Error('草稿 ID 无效')
+    return (await import('./new-media/xiaohongshu-handoff')).prepareXiaohongshuHandoff(draftId)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, async (event, handoffId: string) => {
+    if (typeof handoffId !== 'string' || !handoffId) throw new Error('交接 ID 无效')
+    const service = await import('./new-media/xiaohongshu-handoff')
+    const handoff = (await service.listXiaohongshuHandoffs()).find((item) => item.id === handoffId)
+    if (!handoff) throw new Error('小红书发布交接不存在')
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()
+    const options = {
+      title: '导出小红书发布交付包',
+      defaultPath: handoff.packageFileName,
+      filters: [{ name: 'ZIP 交付包', extensions: ['zip'] }],
+    }
+    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { canceled: true }
+    const exported = await service.exportXiaohongshuHandoff(handoffId, result.filePath)
+    return { canceled: false, fileName: exported.packageFileName, sha256: exported.packageSha256 }
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CONFIRM_XHS_PUBLISHED, async (_: unknown, handoffId: string, actor: string) => {
+    if (typeof handoffId !== 'string' || !handoffId || typeof actor !== 'string') throw new Error('确认参数无效')
+    return (await import('./new-media/xiaohongshu-handoff')).confirmXiaohongshuPublished(handoffId, actor)
+  })
+  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_XHS_HANDOFF_AUDIT, async (_: unknown, handoffId: string) => {
+    if (typeof handoffId !== 'string' || !handoffId) throw new Error('交接 ID 无效')
+    return (await import('./new-media/xiaohongshu-handoff')).getXiaohongshuHandoffAudit(handoffId)
   })
 }

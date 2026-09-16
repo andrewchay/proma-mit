@@ -3,11 +3,12 @@ import { useSetAtom } from 'jotai'
 import { ArrowLeft, FileText, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, UserRound } from 'lucide-react'
 import { activeViewAtom } from '@/atoms/active-view'
 import { cn } from '@/lib/utils'
-import type { NewMediaContentDraft, NewMediaControlledAction, NewMediaEngagementItem, NewMediaListeningQuery, NewMediaMention, NewMediaMetricSnapshot, NewMediaPlatform, NewMediaPublicationJob, NewMediaSocialReport, NewMediaTrendItem } from '@gravitas/shared'
+import type { NewMediaContentDraft, NewMediaControlledAction, NewMediaEngagementItem, NewMediaListeningQuery, NewMediaMention, NewMediaMetricSnapshot, NewMediaPlatform, NewMediaPublicationJob, NewMediaSocialReport, NewMediaTrendItem, XiaohongshuHandoff } from '@gravitas/shared'
 import { CommunityPanel } from './CommunityPanel'
 import { ListeningPanel } from './ListeningPanel'
 import { InsightsPanel } from './InsightsPanel'
 import { AccountsPanel } from './AccountsPanel'
+import { XiaohongshuHandoffPanel } from './XiaohongshuHandoffPanel'
 
 type SubView = 'accounts' | 'content' | 'community' | 'listening' | 'insights' | 'outbound'
 
@@ -30,6 +31,7 @@ export function NewMediaModuleView(): React.ReactElement {
   const [snapshots, setSnapshots] = React.useState<NewMediaMetricSnapshot[]>([])
   const [trends, setTrends] = React.useState<NewMediaTrendItem[]>([])
   const [report, setReport] = React.useState<NewMediaSocialReport | null>(null)
+  const [handoffs, setHandoffs] = React.useState<XiaohongshuHandoff[]>([])
   const [sourceText, setSourceText] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [agentEnabled, setAgentEnabled] = React.useState(false)
@@ -38,7 +40,7 @@ export function NewMediaModuleView(): React.ReactElement {
     setLoading(true)
     try {
       const now = Date.now()
-      const [nextDrafts, nextJobs, nextActions, nextEngagements, nextQueries, nextMentions, nextSnapshots, nextTrends, nextReport] = await Promise.all([
+      const [nextDrafts, nextJobs, nextActions, nextEngagements, nextQueries, nextMentions, nextSnapshots, nextTrends, nextReport, nextHandoffs] = await Promise.all([
         window.electronAPI.paa.newMedia.content.listDrafts(),
         window.electronAPI.paa.newMedia.content.listPublicationJobs(),
         window.electronAPI.paa.newMedia.controlledOutbound.list(),
@@ -48,9 +50,10 @@ export function NewMediaModuleView(): React.ReactElement {
         window.electronAPI.paa.newMedia.analytics.listSnapshots(),
         window.electronAPI.paa.newMedia.analytics.listTrends(),
         window.electronAPI.paa.newMedia.analytics.getReport(now - 30 * 24 * 60 * 60 * 1000, now),
+        window.electronAPI.paa.newMedia.xiaohongshuHandoff.list(),
       ])
       setDrafts(nextDrafts); setJobs(nextJobs); setActions(nextActions); setEngagements(nextEngagements)
-      setQueries(nextQueries); setMentions(nextMentions); setSnapshots(nextSnapshots); setTrends(nextTrends); setReport(nextReport)
+      setQueries(nextQueries); setMentions(nextMentions); setSnapshots(nextSnapshots); setTrends(nextTrends); setReport(nextReport); setHandoffs(nextHandoffs)
     } finally {
       setLoading(false)
     }
@@ -82,6 +85,11 @@ export function NewMediaModuleView(): React.ReactElement {
       kind: 'publish', platform, targetId: draft.id, summary: `${PLATFORM_LABEL[platform]}内容草稿发布（本地模拟）`,
     })
     setSubView('outbound')
+    await refresh()
+  }
+
+  const prepareHandoff = async (draftId: string): Promise<void> => {
+    await window.electronAPI.paa.newMedia.xiaohongshuHandoff.prepare(draftId)
     await refresh()
   }
 
@@ -125,11 +133,12 @@ export function NewMediaModuleView(): React.ReactElement {
                 <div className="mb-3 text-xs text-foreground/45">{new Date(draft.createdAt).toLocaleString()}</div>
                 <p className="mb-4 line-clamp-3 text-sm">{draft.sourceText}</p>
                 <div className="space-y-2">{Object.entries(draft.platformCopies).map(([platform, copy]) => copy && <div key={platform} className="rounded-xl bg-muted/50 p-3">
-                  <div className="flex items-center justify-between gap-2"><strong className="text-sm">{PLATFORM_LABEL[platform as NewMediaPlatform]}</strong><button onClick={() => void requestPublish(draft, platform as NewMediaPlatform)} className="text-xs text-primary hover:underline">排程并创建审批</button></div>
+                  <div className="flex items-center justify-between gap-2"><strong className="text-sm">{PLATFORM_LABEL[platform as NewMediaPlatform]}</strong>{platform === 'xiaohongshu' ? <button onClick={() => void prepareHandoff(draft.id)} className="text-xs text-primary hover:underline">准备官方发布交接</button> : <button onClick={() => void requestPublish(draft, platform as NewMediaPlatform)} className="text-xs text-primary hover:underline">排程并创建审批</button>}</div>
                   <div className="mt-1 text-sm">{copy.title}</div>
                 </div>)}</div>
               </article>)}
             </section>
+            <XiaohongshuHandoffPanel drafts={drafts} handoffs={handoffs} onRefresh={refresh} />
             {jobs.length > 0 && <section className="rounded-2xl bg-background p-4 shadow-sm"><h2 className="mb-3 font-medium">发布排程</h2>{jobs.map((job) => <div key={job.id} className="flex justify-between border-t border-border/40 py-2 text-sm"><span>{PLATFORM_LABEL[job.platform]} · {new Date(job.scheduledAt).toLocaleString()}</span><span>{job.status}</span></div>)}</section>}
           </div>
         ) : (

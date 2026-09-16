@@ -1847,6 +1847,13 @@ export interface ElectronAPI {
         audit: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAccountAuditEntry[]>
         getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
       }
+      xiaohongshuHandoff: {
+        list: () => Promise<import('@gravitas/shared').XiaohongshuHandoff[]>
+        prepare: (draftId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
+        exportPackage: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffExportResult>
+        confirmPublished: (handoffId: string, actor: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
+        audit: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffAuditEntry[]>
+      }
     }
 
     // --- 营销能力包 ---
@@ -4103,6 +4110,13 @@ const electronAPI: ElectronAPI = {
         disconnect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.DISCONNECT_ACCOUNT, accountId),
         audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
         getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
+      },
+      xiaohongshuHandoff: {
+        list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS),
+        prepare: (draftId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draftId),
+        exportPackage: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, handoffId),
+        confirmPublished: (handoffId, actor) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONFIRM_XHS_PUBLISHED, handoffId, actor),
+        audit: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_XHS_HANDOFF_AUDIT, handoffId),
       },
     },
     // --- 营销能力包 ---
