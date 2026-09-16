@@ -422,10 +422,12 @@ export async function runAgentHeadless(
   },
 ): Promise<void> {
   // 尝试注册目标窗口 webContents，让流式事件同步推送到桌面端。
-  // 委派子会话优先复用父会话所在窗口；没有可用父窗口时才回退通用主窗口。
+  // AI 员工会把自身 sessionId 作为 originSessionId 传入，但此时该 session 尚未建立
+  // webContents 映射；必须回退到当前主窗口，不能因“映射缺失”丢弃全部流式事件。
   const fallbackWin = BrowserWindow.getAllWindows()[0] ?? null
-  const wc = callbacks.originSessionId
-    ? (sessionWebContents.get(callbacks.originSessionId) ?? fallbackWin?.webContents ?? null)
+  const originWc = callbacks.originSessionId ? sessionWebContents.get(callbacks.originSessionId) : null
+  const wc = originWc && !originWc.isDestroyed()
+    ? originWc
     : (fallbackWin?.webContents ?? null)
   if (wc && !wc.isDestroyed()) {
     registerWebContents(input.sessionId, wc)
