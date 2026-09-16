@@ -467,6 +467,14 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   LIST_CAPABILITY_ROLLBACK_AUDITS: 'agent-employee:list-capability-rollback-audits',
   /** 手动运行受控评测；通过门禁后只创建待审批候选。 */
   RUN_CAPABILITY_EVALUATION: 'agent-employee:run-capability-evaluation',
+  /** 查询带时间窗的版本健康指标。 */
+  GET_CAPABILITY_HEALTH: 'agent-employee:get-capability-health',
+  /** 查询 Canary 分流配置。 */
+  LIST_CAPABILITY_CANARY: 'agent-employee:list-capability-canary',
+  /** 显式启用 Canary 分流（默认关闭）。 */
+  ENABLE_CAPABILITY_CANARY: 'agent-employee:enable-capability-canary',
+  /** 关闭或暂停 Canary 分流；不自动回滚版本。 */
+  DISABLE_CAPABILITY_CANARY: 'agent-employee:disable-capability-canary',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -517,6 +525,33 @@ export interface AgentEmployeeCapabilityRollbackAuditResult {
   reason: string
   actorId: string
   createdAt: number
+}
+
+export interface AgentEmployeeCapabilityHealthResult {
+  versionId: string
+  windowDays: number
+  executionCount: number
+  reworkRate: number | null
+  failureRate: number | null
+  cancellationRate: number | null
+  decidedSampleCount: number
+  sampleSufficient: boolean
+  lastExecutedAt?: number
+}
+
+export interface AgentEmployeeCanaryConfigResult {
+  agentId: string
+  scope: 'role' | 'workspace'
+  workspaceId?: string
+  candidateVersionId: string
+  percent: number
+  enabled: boolean
+  maxFailureRate: number
+  maxReworkRate: number
+  pausedAt?: number
+  pausedReason?: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

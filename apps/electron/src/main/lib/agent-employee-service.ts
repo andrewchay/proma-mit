@@ -152,6 +152,10 @@ export function getAgentEmployeeCapabilityObservations(agentId: string) {
   return store.getAgentEmployeeCapabilityObservations(agentId)
 }
 
+export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays?: number) {
+  return store.getAgentEmployeeCapabilityHealth(agentId, windowDays)
+}
+
 export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string) {
   return store.rollbackAgentEmployeeCapabilityVersion(agentId, versionId, reason)
 }

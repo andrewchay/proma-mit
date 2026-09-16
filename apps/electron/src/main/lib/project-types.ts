@@ -466,6 +466,22 @@ export interface AgentEmployeeCapabilityObservation {
   lastExecutedAt?: number
 }
 
+export interface AgentEmployeeCapabilityHealth {
+  versionId: string
+  /** 观察时间窗（天）。 */
+  windowDays: number
+  executionCount: number
+  /** 返工或未通过的样本占已判定样本的比例；样本不足时为 null。 */
+  reworkRate: number | null
+  failureRate: number | null
+  cancellationRate: number | null
+  /** 已判定样本量（排除取消与待审核）；用于判断结论可信度。 */
+  decidedSampleCount: number
+  /** 样本量是否足以支撑趋势结论。 */
+  sampleSufficient: boolean
+  lastExecutedAt?: number
+}
+
 export interface AgentEmployeeCapabilityRollbackAudit {
   id: string
   agentId: string
