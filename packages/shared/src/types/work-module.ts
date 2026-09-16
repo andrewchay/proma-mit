@@ -495,6 +495,12 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   EXPORT_EVOLUTION_PACKAGE: 'agent-employee:export-evolution-package',
   /** 校验导入包；不自动激活任何内容。 */
   VALIDATE_EVOLUTION_PACKAGE: 'agent-employee:validate-evolution-package',
+  /** 预览回滚影响，不修改数据。 */
+  PREVIEW_CAPABILITY_ROLLBACK: 'agent-employee:preview-capability-rollback',
+  /** 读取版本健康告警。 */
+  GET_CAPABILITY_ALERTS: 'agent-employee:get-capability-alerts',
+  /** 扫描样本摘要中的疑似敏感内容（只提示）。 */
+  SCAN_SAMPLE_CONTENT: 'agent-employee:scan-sample-content',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -638,6 +644,33 @@ export interface EvolutionPackageValidationResult {
   ok: boolean
   reason?: string
   summary?: { agentCount: number; versionCount: number; candidateCount: number; sanitizedSampleCount: number; note: string }
+}
+
+export interface AgentEmployeeCapabilityRollbackPreviewResult {
+  versionId: string
+  scope: 'role' | 'workspace'
+  workspaceId?: string
+  targetVersionId?: string
+  targetVersionNumber?: number
+  targetIsBaseline: boolean
+  activeExecutionCount: number
+  dependentWorkspaceVersionCount: number
+  historicalExecutionsUnaffected: true
+  note: string
+}
+
+export interface AgentEmployeeCapabilityAlertResult {
+  code: 'consecutive_failures' | 'rework_spike' | 'stale_observation'
+  severity: 'info' | 'warning'
+  versionId: string
+  message: string
+  evidence: string
+}
+
+export interface SampleSensitiveFindingResult {
+  kind: 'absolute_path' | 'credential' | 'email' | 'url_with_credentials' | 'session_reference' | 'long_token'
+  message: string
+  excerpt: string
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

@@ -156,6 +156,15 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays?: n
   return store.getAgentEmployeeCapabilityHealth(agentId, windowDays)
 }
 
+export function previewAgentEmployeeCapabilityRollback(agentId: string, versionId: string) {
+  return store.previewAgentEmployeeCapabilityRollback(agentId, versionId)
+}
+
+export function buildAgentEmployeeCapabilityAlerts(agentId: string, windowDays?: number) {
+  const { buildCapabilityAlertsForAgent } = require('./agent-employee-capability-alerts') as typeof import('./agent-employee-capability-alerts')
+  return buildCapabilityAlertsForAgent(agentId, windowDays)
+}
+
 export function rollbackAgentEmployeeCapabilityVersion(agentId: string, versionId: string, reason: string) {
   return store.rollbackAgentEmployeeCapabilityVersion(agentId, versionId, reason)
 }

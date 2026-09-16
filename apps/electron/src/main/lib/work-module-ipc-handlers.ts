@@ -165,12 +165,15 @@ import {
   rollbackAgentEmployeeCapabilityVersion,
   listAgentEmployeeCapabilityRollbackAudits,
   getAgentEmployeeCapabilityHealth,
+  previewAgentEmployeeCapabilityRollback,
+  buildAgentEmployeeCapabilityAlerts,
 } from './agent-employee-service'
 import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
 import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
 import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
 import { getGovernancePolicy, listGovernanceAudits, updateGovernancePolicy } from './employee-capability-governance-policy'
 import { buildEmployeeCapabilityReviewReport } from './employee-capability-ledger'
+import { scanSampleForSensitiveContent } from './agent-employee-sample-scan'
 import { exportEvolutionPackage, summarizeEvolutionPackageForReview, validateEvolutionPackage } from './employee-capability-portability'
 import { deleteAgentEmployeeLearningSamples, getAgentEmployeeCapabilityDependencyGraph, previewAgentEmployeeLearningSampleRetention } from './project-sqlite-store'
 import { onSettingsChange } from './settings-service'
@@ -936,6 +939,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, (_, agentIds?: string[], windowDays?: number) => buildEmployeeCapabilityReviewReport({ agentIds, windowDays }))
   // 导出默认脱敏；导入只校验并返回摘要，不激活任何内容。
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, (_, agentIds?: string[]) => exportEvolutionPackage({ agentIds }))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, (_, agentId: string, versionId: string) => previewAgentEmployeeCapabilityRollback(agentId, versionId))
+  // 仅提示，不改写摘要，也不拒绝保存。
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.SCAN_SAMPLE_CONTENT, (_, text: string) => scanSampleForSensitiveContent(text))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, (_, agentId: string, windowDays?: number) => buildAgentEmployeeCapabilityAlerts(agentId, windowDays))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, (_, input: unknown) => {
     const result = validateEvolutionPackage(input)
     return result.ok ? { ok: true, summary: summarizeEvolutionPackageForReview(result.package) } : result
