@@ -63,7 +63,7 @@
 | P3-05 | P3 | 商家授权 | 实现 authorizer token 刷新与撤权 | 已完成 | P3-04 | 后端/安全 | 4 | 按租户隔离：跨租户 getToken/list/守卫一律拒绝；撤权事件立即禁用，任务前置守卫同步拒绝并停止；token 刷新单飞、refresh_token 轮换、失败回退旧值 | 高 |
 | P3-06 | P3 | 能力协商 | 按权限集动态生成 Adapter capability | 已完成 | P3-05 | 架构/后端 | 3 | 未授权权限不显示（enabled=false 不下发启用）、不调用（assertCapability 抛 WechatCapabilityDeniedError）；互斥权限产出 blocking 级显著提示文案；权限集 id 映射已在代码标注接入前需对照官方文档核验 | 中 |
 | P3-07 | P3 | 多租户 | 隔离账号、Token、任务、审计和回调 | 已完成 | P3-05 | 后端/安全 | 5 | 跨租户 ID（list/矩阵/getToken/守卫全拒）、Token（接口输出零明文，断言字段集精确）、回调（state 绑定租户，泄露的 state 无法换绑归属）、报表（脱敏摘要）均不可访问；修复 save() 漏传 funcScopes/tenantId/revokedAt 的真实缺陷 | 高 |
-| P3-08 | P3 | 迁移 | 支持 wechat-direct 迁移至开放平台授权 | 待开始 | P3-04,P2-10 | 后端/产品 | 3 | 历史草稿/指标保留；旧 Secret 可安全删除；不可静默换绑 | 中 |
+| P3-08 | P3 | 迁移 | 支持 wechat-direct 迁移至开放平台授权 | 已完成 | P3-04,P2-10 | 后端/产品 | 3 | 历史草稿/指标保留：迁移全程零数据移动（测试断言授权账号记录不变），绑定只是元数据；旧 Secret 可安全删除：仅 completed 且平台 token 实际可取才返回 true，撤权即失效；不可静默换绑：同一 authorizer 同时只允许一条 active 绑定，重复迁移必须 changeReason 且旧记录 superseded 保留审计 | 中 |
 | P3-09 | P3 | 可靠性 | 建立回调重放、轮询兜底与补偿队列 | 已完成 | P3-02,P3-05 | 后端/DevOps | 5 | 重复回调不重复执行：nonce 防线 + inbox 内容判重双保险，跨重启同报文重发最多消费一次；丢回调可恢复：ticket 过期告警 + api_get_authorizer_list 对账把本地 active 远端已移除的账号标记 revoked；失败可人工重放：/wechat/inbox/dead 列出、/wechat/inbox/replay 重放 | 高 |
 | P3-10 | P3 | 验收 | 完成第三方平台测试/全网发布验收矩阵 | 等待外部权限 | P3-01,P3-06,P3-09 | QA/产品 | 5 | 不同账号类型/权限集至少各一例；真实能力和 skip 项分开报告 | 高 |
 | P4-01 | P4 | 小红书商业 | 设计商业 Adapter capability gating | 已完成 | P1-10 | 架构/产品 | 3 | 无证明/未核验/过期/类型不符一律 disabled 并给出原因；商业 Adapter 构造前必须通过断言，防止先写代码后补授权 | 高：商务权限，证明登记依赖人工 |
