@@ -31,7 +31,7 @@
 | [x] | ResearchWorkspace UI + 侧边栏核心模块入口 | `ee577086` |
 | [x] | 迁移 dry-run（只读预检，损坏转 warning） | `ee577086` |
 | [x] | research-profiles（七领域方法配置） | `M2.6`（G1 关闭） |
-| [~] | 服务层授权校验（§3.2-7） | **顺延 → G3** |
+| [x] | 服务层授权校验（§3.2-7） | `M3.1`（G3 关闭：access-guard） |
 
 ## 3. M2 文献与证据闭环（约 2–3 人周）
 
@@ -50,7 +50,7 @@
 | [x] | EuropePMC adapter（resultType=core，剥离 HTML） | `M2.5` |
 | [x] | Zotero 只读 adapter（本地/Web API 同实现，不碰 sqlite） | `M2.5` |
 | [x] | 真实 API smoke：openalex/arxiv/pubmed/europepmc 四源全通过 | `scripts/academic-adapter-smoke.ts` |
-| [~] | 证据矩阵视图（支持/矛盾并排） | **后移至 M5 → G5** |
+| [x] | 证据矩阵视图（支持/矛盾并排） | `M5.2`（G5 关闭） |
 | [x] | 检索日志（query/库/截断/错误） | `0d5bd01c` |
 | [ ] | 检索日志补排序与分页位置 | 未开始 |
 
@@ -109,7 +109,7 @@
 | [x] | StudyRuns UI：发起计算运行、手工观察登记、日志查看、取消、产物登记 | `M4.2` |
 | [x] | atoms + IPC（调和/日志/产物 3 通道） | `M4.2` |
 | [ ] | 本体验证任务（RDF/OWL 工具接入，需先核许可） | 未开始 |
-| [ ] | 重开恢复与中断运行的显式标记 | 未开始 |
+| [x] | 重开恢复与中断运行的显式标记 | `M4.2`（reconcileInterruptedRuns） |
 
 ## 6. M5 主张、写作与审查闭环（约 2–3 人周）— 进行中
 
@@ -123,7 +123,7 @@
 | [x] | **证据矩阵视图**（支持/反对/限定三列并排，矛盾高亮） | `M5.2`（**G5 关闭**） |
 | [x] | ClaimPanel：创建主张、关联证据（证据片段/观察记录）、确认门禁 | `M5.2` |
 | [x] | ManuscriptPanel：章节编辑、逐节关联主张、版本化、可疑主张标出 | `M5.2` |
-| [ ] | 稿件编辑器 UI（章节/主张引用/引文） | 未开始 |
+| [x] | 稿件编辑器 UI（章节/主张引用/版本化） | `M5.2`（ManuscriptPanel） |
 | [ ] | LLM 审查与规则 lint 区分展示 | 未开始 |
 | [ ] | 修订回复 + 版本 diff | 未开始 |
 | [ ] | 导出包与 manifest（不含受限全文） | 未开始 |
