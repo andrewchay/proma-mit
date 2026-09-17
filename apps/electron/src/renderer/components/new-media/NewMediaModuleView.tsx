@@ -33,6 +33,8 @@ export function NewMediaModuleView(): React.ReactElement {
   const [trends, setTrends] = React.useState<NewMediaTrendItem[]>([])
   const [report, setReport] = React.useState<NewMediaSocialReport | null>(null)
   const [handoffs, setHandoffs] = React.useState<XiaohongshuHandoff[]>([])
+  const [outboundNotice, setOutboundNotice] = React.useState('')
+  const [executors, setExecutors] = React.useState<Array<{ kind: string; platform: string; description: string }>>([])
   const [sourceText, setSourceText] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [agentEnabled, setAgentEnabled] = React.useState(false)
@@ -53,6 +55,7 @@ export function NewMediaModuleView(): React.ReactElement {
         window.electronAPI.paa.newMedia.analytics.getReport(now - 30 * 24 * 60 * 60 * 1000, now),
         window.electronAPI.paa.newMedia.xiaohongshuHandoff.list(),
       ])
+      setExecutors(await window.electronAPI.paa.newMedia.controlledOutbound.listExecutors())
       setDrafts(nextDrafts); setJobs(nextJobs); setActions(nextActions); setEngagements(nextEngagements)
       setQueries(nextQueries); setMentions(nextMentions); setSnapshots(nextSnapshots); setTrends(nextTrends); setReport(nextReport); setHandoffs(nextHandoffs)
     } finally {
@@ -94,9 +97,42 @@ export function NewMediaModuleView(): React.ReactElement {
     await refresh()
   }
 
-  const approveAndSimulate = async (action: NewMediaControlledAction): Promise<void> => {
+  const approveAction = async (action: NewMediaControlledAction): Promise<void> => {
     await window.electronAPI.paa.newMedia.controlledOutbound.approve(action.id, 'local-user')
+    await refresh()
+  }
+
+  const simulateAction = async (action: NewMediaControlledAction): Promise<void> => {
     await window.electronAPI.paa.newMedia.controlledOutbound.simulate(action.id)
+    await refresh()
+  }
+
+  /** 真实执行：只有拿到单次执行权的那一次会真正调用平台执行器。 */
+  const executeAction = async (action: NewMediaControlledAction): Promise<void> => {
+    setOutboundNotice('')
+    try {
+      await window.electronAPI.paa.newMedia.controlledOutbound.execute(action.id)
+    } catch (error) {
+      setOutboundNotice(error instanceof Error ? error.message : '执行失败')
+    }
+    await refresh()
+  }
+
+  /** 结果未知的失败必须先对账，避免重复外发。 */
+  const reconcileAction = async (action: NewMediaControlledAction, platformAccepted: boolean): Promise<void> => {
+    const note = window.prompt(platformAccepted ? '请说明你在平台后台看到的已发布证据' : '请说明对账依据（平台后台确认未接收）')
+    if (!note?.trim()) return
+    await window.electronAPI.paa.newMedia.controlledOutbound.reconcile({ actionId: action.id, actor: 'local-user', platformAccepted, note })
+    await refresh()
+  }
+
+  const retryAction = async (action: NewMediaControlledAction): Promise<void> => {
+    setOutboundNotice('')
+    try {
+      await window.electronAPI.paa.newMedia.controlledOutbound.retry(action.id)
+    } catch (error) {
+      setOutboundNotice(error instanceof Error ? error.message : '重试失败')
+    }
     await refresh()
   }
 
@@ -143,10 +179,39 @@ export function NewMediaModuleView(): React.ReactElement {
             {jobs.length > 0 && <section className="rounded-2xl bg-background p-4 shadow-sm"><h2 className="mb-3 font-medium">发布排程</h2>{jobs.map((job) => <div key={job.id} className="flex justify-between border-t border-border/40 py-2 text-sm"><span>{PLATFORM_LABEL[job.platform]} · {new Date(job.scheduledAt).toLocaleString()}</span><span>{job.status}</span></div>)}</section>}
           </div>
         ) : (
-          <div className="mx-auto max-w-4xl space-y-3">{actions.map((action) => <article key={action.id} className="rounded-2xl bg-background p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3"><div><div className="font-medium">{action.summary}</div><div className="mt-1 text-xs text-foreground/45">{PLATFORM_LABEL[action.platform]} · {action.kind}</div></div><span className="rounded-full bg-muted px-2 py-1 text-xs">{action.status}</span></div>
-            {action.status === 'pending_approval' && <div className="mt-4 flex justify-end"><button onClick={() => void approveAndSimulate(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">批准并生成模拟回执</button></div>}
-            {action.simulationReceipt && <div className="mt-3 rounded-lg bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-300">{action.simulationReceipt}（未发生真实外部操作）</div>}
+          <div className="mx-auto max-w-4xl space-y-3">
+            <div className="rounded-2xl bg-background p-4 shadow-sm">
+              <h2 className="font-medium">执行器状态</h2>
+              <p className="mt-1 text-xs text-foreground/55">没有可用执行器时，「真实执行」不会被允许，也不会退回模拟成功。</p>
+              <div className="mt-2 space-y-1 text-xs text-foreground/60">
+                {executors.length === 0
+                  ? <div className="text-amber-700 dark:text-amber-300">当前没有注册任何真实执行器；微信发布执行器将随 freepublish 状态机一起接入。</div>
+                  : executors.map((executor) => <div key={`${executor.kind}:${executor.platform}`}>{executor.kind} · {PLATFORM_LABEL[executor.platform as NewMediaPlatform]}：{executor.description}</div>)}
+              </div>
+            </div>
+            {outboundNotice && <div className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">{outboundNotice}</div>}
+            {actions.map((action) => <article key={action.id} className="rounded-2xl bg-background p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3"><div><div className="font-medium">{action.summary}</div><div className="mt-1 text-xs text-foreground/45">{PLATFORM_LABEL[action.platform]} · {action.kind}{action.attempts > 0 ? ` · 已尝试 ${action.attempts} 次` : ''}</div></div><span className="rounded-full bg-muted px-2 py-1 text-xs">{action.status}</span></div>
+            {action.status === 'pending_approval' && <div className="mt-4 flex justify-end"><button onClick={() => void approveAction(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">批准</button></div>}
+            {action.status === 'approved' && <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button onClick={() => void simulateAction(action)} className="rounded-lg px-3 py-2 text-sm hover:bg-muted">生成模拟回执</button>
+              <button onClick={() => void executeAction(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">真实执行（单次授权）</button>
+            </div>}
+            {action.status === 'failed' && <div className="mt-4 space-y-2">
+              <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300">执行失败：{action.failureCode}（{action.failureOutcome}）{action.retryRequiresReconciliation ? ' · 结果未知，必须先对账再重试' : ''}</div>
+              <div className="flex flex-wrap justify-end gap-2">
+                {action.retryRequiresReconciliation && <>
+                  <button onClick={() => void reconcileAction(action, true)} className="rounded-lg px-3 py-2 text-xs hover:bg-muted">对账：平台已接收</button>
+                  <button onClick={() => void reconcileAction(action, false)} className="rounded-lg px-3 py-2 text-xs hover:bg-muted">对账：平台未接收</button>
+                </>}
+                {!action.retryRequiresReconciliation && <button onClick={() => void retryAction(action)} className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground">重试执行</button>}
+              </div>
+            </div>}
+            {action.status === 'executed' && action.receipt && <div className="mt-3 rounded-lg bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-300">
+              平台回执：{action.receipt.summary}{action.receipt.externalId ? ` · ${action.receipt.externalId}` : ''}{action.receipt.platformStatus ? ` · ${action.receipt.platformStatus}` : ''}
+              {action.receipt.platformStatus === 'publishing' ? '（已提交，尚未确认发布成功）' : ''}
+            </div>}
+            {action.simulationReceipt && <div className="mt-3 rounded-lg bg-muted p-2 text-xs text-foreground/60">{action.simulationReceipt}（本地模拟，未发生真实外部操作）</div>}
           </article>)}</div>
         )}
       </main>

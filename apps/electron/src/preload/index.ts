@@ -1940,6 +1940,10 @@ export interface ElectronAPI {
         approve: (actionId: string, approver: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         reject: (actionId: string, actor: string, reason: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         simulate: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        execute: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        reconcile: (input: { actionId: string; actor: string; platformAccepted: boolean; note: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        retry: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        listExecutors: () => Promise<Array<{ kind: string; platform: import('@gravitas/shared').NewMediaPlatform; description: string }>>
         audit: (actionId: string) => Promise<import('@gravitas/shared').NewMediaAuditEntry[]>
       }
       accounts: {
@@ -4332,6 +4336,10 @@ const electronAPI: ElectronAPI = {
         approve: (actionId, approver) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId, approver),
         reject: (actionId, actor, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, actionId, actor, reason),
         simulate: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, actionId),
+        execute: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXECUTE_CONTROLLED_ACTION, actionId),
+        reconcile: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RECONCILE_CONTROLLED_EXECUTION, input),
+        retry: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RETRY_CONTROLLED_EXECUTION, actionId),
+        listExecutors: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_EXECUTORS),
         audit: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, actionId),
       },
       accounts: {

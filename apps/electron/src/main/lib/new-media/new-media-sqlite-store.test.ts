@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import initSqlJs from 'sql.js'
 import {
   CURRENT_NEW_MEDIA_SCHEMA_VERSION,
+  NEW_MEDIA_KIND_REGISTRY,
   clearNewMediaRecordsForTests,
   closeNewMediaDb,
   getNewMediaRecord,
@@ -102,6 +103,21 @@ describe('新媒体数据库版本化 Schema', () => {
     closeNewMediaDb()
     await initNewMediaDb()
     expect((await listNewMediaRecordsByDomain<{ id: string }>('handoff')).map((item) => item.id)).toEqual(['h-1'])
+  })
+
+  test('新增记录类型无需迁移，注册表按代码常量派生同步', async () => {
+    await initNewMediaDb()
+    const before = await getNewMediaSchemaInfo()
+    // 注册表包含代码中声明的全部 kind，且 schema 版本不因记录类型增加而变化
+    expect(before.registeredKinds.length).toBe(NEW_MEDIA_KIND_REGISTRY.length)
+    expect(before.version).toBe(CURRENT_NEW_MEDIA_SCHEMA_VERSION)
+
+    // 写入一个已登记的 kind 后，域由注册表推导
+    await putNewMediaRecord('report-import-batch', { id: 'batch-1' })
+    const after = await getNewMediaSchemaInfo()
+    expect(after.version).toBe(CURRENT_NEW_MEDIA_SCHEMA_VERSION)
+    expect(after.unknownKinds).toEqual([])
+    expect((await listNewMediaRecordsByDomain<{ id: string }>('import')).map((item) => item.id)).toEqual(['batch-1'])
   })
 
   test('未提供回滚语句的基线版本拒绝降级到 v0', async () => {

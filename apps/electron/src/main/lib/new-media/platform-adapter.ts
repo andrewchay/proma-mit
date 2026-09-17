@@ -47,6 +47,14 @@ export type PlatformAdapterErrorCode =
   | 'adapter_not_found'
   /** 出口 IP 不在平台白名单内：需要用户去平台后台配置，而不是重试。 */
   | 'ip_not_whitelisted'
+  /** 素材类型不被平台接受（类型与模式组合错误）。 */
+  | 'invalid_media_type'
+  /** 素材格式不被平台接受。 */
+  | 'invalid_media_format'
+  /** 素材体积超出平台上限。 */
+  | 'invalid_media_size'
+  /** 平台侧 media_id 无效或已删除。 */
+  | 'invalid_media_id'
 
 export class PlatformAdapterError extends Error {
   constructor(readonly code: PlatformAdapterErrorCode, message: string) {

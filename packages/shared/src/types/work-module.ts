@@ -869,6 +869,10 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   APPROVE_CONTROLLED_ACTION: 'new-media:approve-controlled-action',
   REJECT_CONTROLLED_ACTION: 'new-media:reject-controlled-action',
   SIMULATE_CONTROLLED_ACTION: 'new-media:simulate-controlled-action',
+  EXECUTE_CONTROLLED_ACTION: 'new-media:execute-controlled-action',
+  RECONCILE_CONTROLLED_EXECUTION: 'new-media:reconcile-controlled-execution',
+  RETRY_CONTROLLED_EXECUTION: 'new-media:retry-controlled-execution',
+  LIST_CONTROLLED_EXECUTORS: 'new-media:list-controlled-executors',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
   LIST_ACCOUNTS: 'new-media:list-accounts',
   CREATE_ACCOUNT: 'new-media:create-account',
@@ -952,6 +956,84 @@ export interface WechatDirectCapabilityState {
   explanation: string
   requiredScopes: readonly string[]
   externalSideEffect: boolean
+}
+
+// ===== 微信公众号素材 =====
+
+export type WechatMediaType = 'image' | 'thumb'
+export type WechatMediaMode = 'temporary' | 'permanent' | 'inline'
+export type WechatMediaUploadStatus = 'uploaded' | 'failed'
+
+export interface WechatMediaUploadAttempt {
+  mediaId?: string
+  url?: string
+  uploadedAt: number
+  expiresAt?: number
+  status: WechatMediaUploadStatus
+  /** 失败原因码（平台 errcode 或本地预检码），不含凭据。 */
+  errorCode?: string
+}
+
+export interface WechatMediaAsset {
+  id: string
+  accountId: string
+  type: WechatMediaType
+  mode: WechatMediaMode
+  /** 内容 SHA-256：同账号同类型同模式同内容即复用。 */
+  sha256: string
+  byteLength: number
+  format: string
+  /** 仅保存文件名，不保存本地绝对路径。 */
+  sourceFileName: string
+  currentMediaId?: string
+  currentUrl?: string
+  currentExpiresAt?: number
+  /** 上传历史，最新的在前，用于追溯平台下发过的 media_id。 */
+  uploads: WechatMediaUploadAttempt[]
+  createdAt: number
+  updatedAt: number
+}
+
+// ===== 微信公众号草稿 =====
+
+export interface WechatDraftArticle {
+  title: string
+  author?: string
+  digest?: string
+  /** 正文 HTML。 */
+  content: string
+  contentSourceUrl?: string
+  /** 封面素材：优先使用已上传素材的 media_id。 */
+  thumbMediaId?: string
+  needOpenComment?: boolean
+  onlyFansCanComment?: boolean
+}
+
+export type WechatDraftSyncStatus =
+  | 'local_only'
+  | 'synced'
+  | 'update_conflict'
+  | 'delete_failed'
+  | 'deleted'
+
+export interface WechatDraftRecord {
+  id: string
+  accountId: string
+  /** 关联的新媒体本地内容草稿；可为空表示仅在微信侧维护。 */
+  localDraftId?: string
+  /** 平台返回的草稿 media_id；未同步时为空。 */
+  platformMediaId?: string
+  articles: WechatDraftArticle[]
+  /** 本地修订号，每次本地修改 +1。 */
+  localRevision: number
+  status: WechatDraftSyncStatus
+  /** 最近一次成功同步时平台返回的更新时间，用于检测他人修改。 */
+  platformSyncTime?: number
+  lastSyncedAt?: number
+  /** 最近一次失败的本地原因码，用于恢复而不是静默重试。 */
+  lastErrorCode?: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface NewMediaConnectedAccount {
@@ -1206,18 +1288,53 @@ export interface NewMediaSocialReport { periodStart: number; periodEnd: number; 
 export interface NewMediaTrendItem { id: string; title: string; summary: string; source: string; observedAt: number; heat: number; relatedKeywords: string[]; risk: 'low' | 'medium' | 'high' }
 export interface NewMediaTrendOpportunity { trend: NewMediaTrendItem; relevanceScore: number; recommendation: 'act' | 'monitor' | 'avoid'; rationale: string }
 
+export type NewMediaControlledActionStatus =
+  | 'pending_approval'
+  | 'approved'
+  | 'rejected'
+  | 'executing'
+  | 'executed'
+  | 'failed'
+  | 'simulated'
+
+/** 执行失败的结果分类：unknown 表示请求可能已被平台接受，重试前必须对账。 */
+export type NewMediaExecutionOutcome = 'not_started' | 'unknown' | 'confirmed_failure'
+
+export interface NewMediaExecutionReceipt {
+  platform: NewMediaPlatform
+  externalId?: string
+  platformStatus?: string
+  summary: string
+  receivedAt: number
+  details?: Record<string, string | number | boolean>
+}
+
 export interface NewMediaControlledAction {
   id: string
   kind: 'publish' | 'send-reply'
   platform: NewMediaPlatform
   targetId: string
   summary: string
-  status: 'pending_approval' | 'approved' | 'simulated' | 'rejected'
+  status: NewMediaControlledActionStatus
   requestedAt: number
   approvedAt?: number
   approvedBy?: string
   executedAt?: number
+  /** 仅本地模拟路径产生；与真实执行回执分开保存，避免混淆。 */
   simulationReceipt?: string
+  /** 本次执行使用的路径，缺省表示尚未执行。 */
+  executionMode?: 'simulated' | 'live'
+  /** 当前（或最近一次）执行尝试标识，用于与平台回执对账。 */
+  executionAttemptId?: string
+  executionStartedAt?: number
+  receipt?: NewMediaExecutionReceipt
+  failureCode?: string
+  failureOutcome?: NewMediaExecutionOutcome
+  /** true 表示失败结果不确定，必须人工对账后才允许重试。 */
+  retryRequiresReconciliation?: boolean
+  reconciledAt?: number
+  reconciledBy?: string
+  attempts: number
 }
 
 export interface NewMediaAuditEntry {

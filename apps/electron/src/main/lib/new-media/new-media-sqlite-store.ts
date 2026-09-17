@@ -36,6 +36,7 @@ export type NewMediaRecordDomain =
   | 'account'
   | 'handoff'
   | 'import'
+  | 'media'
   | 'audit'
   | 'unknown'
 
@@ -57,6 +58,8 @@ export const NEW_MEDIA_KIND_REGISTRY: readonly NewMediaKindDefinition[] = [
   { kind: 'new-media-audit', domain: 'audit', description: '统一审计事件' },
   { kind: 'report-import-batch', domain: 'import', description: '报表导入批次' },
   { kind: 'report-import-row', domain: 'import', description: '报表导入明细行' },
+  { kind: 'wechat-media-asset', domain: 'media', description: '微信公众号素材资产' },
+  { kind: 'wechat-draft', domain: 'content', description: '微信公众号草稿映射' },
 ]
 
 const KIND_TO_DOMAIN = new Map(NEW_MEDIA_KIND_REGISTRY.map((entry) => [entry.kind, entry.domain]))
@@ -138,7 +141,7 @@ const MIGRATIONS: readonly NewMediaMigration[] = [
   },
   {
     version: 3,
-    description: '同步 kind 注册表以纳入报表导入记录',
+    description: '同步 kind 注册表以纳入报表导入记录（后续同步改由 syncKindRegistry 派生）',
     up: [
       `DELETE FROM nm_kind_registry;`,
       KIND_REGISTRY_SEED,
@@ -225,6 +228,30 @@ function writeSchemaVersion(db: RawDatabase, version: number): void {
 function logMigration(db: RawDatabase, migration: NewMediaMigration, direction: 'up' | 'down'): void {
   const escaped = migration.description.replace(/'/g, "''")
   db.exec(`INSERT INTO nm_migration_log (version, direction, description, applied_at) VALUES (${migration.version}, '${direction}', '${escaped}', ${Date.now()});`)
+}
+
+/**
+ * 同步 kind 注册表。
+ *
+ * 注册表只描述「某个 kind 属于哪个域」，是从代码常量派生的数据，不是结构变更。
+ * 因此它在每次打开数据库时重新同步，新增记录类型不需要再发一次迁移；
+ * schema 版本只跟踪表结构、列与索引的变化。
+ */
+function syncKindRegistry(db: RawDatabase): void {
+  db.exec('BEGIN IMMEDIATE;')
+  try {
+    db.exec('DELETE FROM nm_kind_registry;')
+    db.exec(KIND_REGISTRY_SEED)
+    // 回填域：未登记的 kind 归入 unknown，便于诊断而不是静默丢弃。
+    db.exec(`UPDATE nm_record SET domain = COALESCE(
+      (SELECT domain FROM nm_kind_registry WHERE nm_kind_registry.kind = nm_record.kind),
+      'unknown'
+    );`)
+    db.exec('COMMIT;')
+  } catch (error) {
+    db.exec('ROLLBACK;')
+    throw new Error(`新媒体 kind 注册表同步失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 /**
@@ -350,6 +377,7 @@ export async function initNewMediaDb(): Promise<void> {
     database = new SQL.Database(existing ? new Uint8Array(existing) : undefined) as unknown as RawDatabase
     ensureFrameworkTables(database)
     migrateNewMediaDb()
+    syncKindRegistry(database)
     persist()
   })()
   try {

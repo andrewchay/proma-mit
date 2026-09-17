@@ -161,6 +161,30 @@ export function registerNewMediaIpcHandlers(): void {
     return (await import('./controlled-actions')).getControlledActionAudit(requireId(actionId, 'actionId'))
   })
 
+  // ===== 受控外发真实执行门控（P2-06） =====
+  // 只有 approved 状态可以进入执行；执行器缺失时保持 approved 并明确报错。
+  handle(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_EXECUTORS, async () => (await import('./new-media-controlled-executor')).listControlledActionExecutors())
+
+  handle(NEW_MEDIA_IPC_CHANNELS.EXECUTE_CONTROLLED_ACTION, async (_: unknown, actionId: unknown) => {
+    const { requireId } = await nmValidation()
+    return (await import('./controlled-actions')).executeControlledAction(requireId(actionId, 'actionId'))
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.RECONCILE_CONTROLLED_EXECUTION, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const actionId = v.requireId(payload.actionId, 'actionId')
+    const actor = v.requireString(payload.actor, 'actor', v.NEW_MEDIA_LIMITS.shortText)
+    const note = v.requireRichText(payload.note, 'note', v.NEW_MEDIA_LIMITS.summary)
+    if (typeof payload.platformAccepted !== 'boolean') throw new Error('platformAccepted 必须是布尔值')
+    return (await import('./controlled-actions')).reconcileControlledExecution(actionId, { actor, note, platformAccepted: payload.platformAccepted })
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.RETRY_CONTROLLED_EXECUTION, async (_: unknown, actionId: unknown) => {
+    const { requireId } = await nmValidation()
+    return (await import('./controlled-actions')).retryControlledExecution(requireId(actionId, 'actionId'))
+  })
+
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media-account-service')).listNewMediaAccounts())
   handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: unknown) => {
     const v = await nmValidation()
