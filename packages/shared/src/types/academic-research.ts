@@ -102,6 +102,9 @@ export type ResearchEventType =
   | 'evidence_linked'
   | 'claim_status_changed'
   | 'manuscript_version_recorded'
+  | 'review_finding_recorded'
+  | 'reviewer_comment_recorded'
+  | 'revision_response_recorded'
 
 /** 事件负载（按 type 判别） */
 export type ResearchEventPayload =
@@ -127,6 +130,9 @@ export type ResearchEventPayload =
   | { type: 'evidence_linked'; link: EvidenceLink }
   | { type: 'claim_status_changed'; claimId: string; status: ClaimStatus; staleReason?: string; verifiedBy?: ApprovalActor; note?: string }
   | { type: 'manuscript_version_recorded'; manuscript: ManuscriptVersion }
+  | { type: 'review_finding_recorded'; finding: ReviewFinding }
+  | { type: 'reviewer_comment_recorded'; comment: ExternalReviewerComment }
+  | { type: 'revision_response_recorded'; response: RevisionResponse }
 
 /** 事件信封：一条业务事务对应一个信封（方案 §10.2） */
 export interface ResearchEventEnvelope {
@@ -682,6 +688,70 @@ export interface ExternalToolStatusView {
   detail?: string
 }
 
+// ===== 审查与修订（M7.3） =====
+
+/**
+ * 审查发现来源。
+ *
+ * `rule-lint`：确定性规则检查，可复核、可标 error。
+ * `llm-suggestion`：模型建议，不可复现，最高只能标 warning，
+ * 且必须记录模型与理由。
+ */
+export type ReviewFindingKind = 'rule-lint' | 'llm-suggestion'
+
+export interface ReviewFindingBasis {
+  /** rule-lint：规则名与实测值 */
+  rule?: string
+  measured?: string
+  expected?: string
+  /** llm-suggestion：模型标识与理由 */
+  model?: string
+  rationale?: string
+  promptRef?: string
+}
+
+export interface ReviewFinding {
+  id: string
+  kind: ReviewFindingKind
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  location?: string
+  basis: ReviewFindingBasis
+  createdAt: string
+}
+
+/**
+ * 外部审稿意见（来自期刊/合作者）。
+ *
+ * 命名带 External 前缀：旧的论文 pipeline（types/academic.ts）已有
+ * 同名的 ReviewerComment（其语义是模型模拟评审的生成意见），两者
+ * 形状与含义不同，不能共用一个名字。
+ */
+export interface ExternalReviewerComment {
+  id: string
+  projectId: string
+  reviewerName: string
+  content: string
+  targetSection?: string
+  severity: 'major' | 'minor' | 'suggestion'
+  recordedAt: string
+}
+
+export type RevisionResponseStatus = 'addressed' | 'partially-addressed' | 'rejected' | 'pending'
+
+/** 作者对审稿意见的回复（状态为作者声明，不代表审稿人认可） */
+export interface RevisionResponse {
+  id: string
+  projectId: string
+  commentId: string
+  status: RevisionResponseStatus
+  response: string
+  manuscriptVersionId?: string
+  claimIds: string[]
+  respondedBy: ApprovalActor
+  respondedAt: string
+}
+
 // ===== 旧数据迁移 =====
 
 /** 单篇旧论文的映射评估 */
@@ -758,6 +828,14 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   SET_EXTERNAL_TOOL: 'academic-research:set-external-tool',
   PROBE_EXTERNAL_TOOLS: 'academic-research:probe-external-tools',
   EXPORT_RESEARCH_BUNDLE: 'academic-research:export-research-bundle',
+  RECORD_RULE_FINDING: 'academic-research:record-rule-finding',
+  RECORD_LLM_FINDING: 'academic-research:record-llm-finding',
+  LIST_REVIEW_FINDINGS: 'academic-research:list-review-findings',
+  RECORD_REVIEWER_COMMENT: 'academic-research:record-reviewer-comment',
+  RESPOND_TO_REVIEWER_COMMENT: 'academic-research:respond-to-reviewer-comment',
+  LIST_REVIEWER_COMMENTS: 'academic-research:list-reviewer-comments',
+  BUILD_RESPONSE_DRAFT: 'academic-research:build-response-draft',
+  MANUSCRIPT_DIFF: 'academic-research:manuscript-diff',
 } as const
 
 // ===== 输入 =====

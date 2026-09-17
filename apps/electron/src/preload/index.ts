@@ -1562,6 +1562,17 @@ export interface ElectronAPI {
     importExternalRuns: (projectId: string, input: { tool: string; toolProjectId: string; runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }> }) => Promise<{ imported: import('@gravitas/shared').ResearchRun[]; skipped: number }>
     registerDvcPointer: (projectId: string, input: { runId: string; pointerPath: string; pointerContent: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
     fetchExternalRuns: (orxProjectId: string) => Promise<{ runs: Array<{ id: string; projectId?: string; status?: string; command?: string; exitCode?: number; commitSha?: string; endedAt?: number }> }>
+    // M7.3：审查发现与修订回复
+    recordRuleFinding: (projectId: string, input: { message: string; rule: string; measured: string; expected?: string; severity?: 'error' | 'warning' | 'info'; location?: string }) => Promise<import('@gravitas/shared').ReviewFinding>
+    recordLlmFinding: (projectId: string, input: { message: string; model: string; rationale: string; severity?: 'error' | 'warning' | 'info'; location?: string; promptRef?: string }) => Promise<import('@gravitas/shared').ReviewFinding>
+    listReviewFindings: (projectId: string) => Promise<{ findings: import('@gravitas/shared').ReviewFinding[]; summary: { ruleLint: { error: number; warning: number; info: number }; llmSuggestions: number } }>
+    recordReviewerComment: (projectId: string, input: { reviewerName: string; content: string; severity: 'major' | 'minor' | 'suggestion'; targetSection?: string }) => Promise<import('@gravitas/shared').ExternalReviewerComment>
+    respondToReviewerComment: (projectId: string, input: { commentId: string; status: import('@gravitas/shared').RevisionResponseStatus; response: string; manuscriptVersionId?: string; claimIds?: string[] }) => Promise<import('@gravitas/shared').RevisionResponse>
+    listReviewerComments: (projectId: string) => Promise<import('@gravitas/shared').ExternalReviewerComment[]>
+    buildResponseDraft: (projectId: string) => Promise<{ items: Array<{ commentId: string; reviewerName: string; comment: string; severity: string; status: string; response?: string; manuscriptVersionId?: string }>; pendingCount: number; disclaimer: string }>
+    manuscriptDiff: (projectId: string, fromId: string, toId: string) => Promise<{ fromVersion: number; toVersion: number; sections: Array<{ heading: string; change: string; claimsAdded: string[]; claimsRemoved: string[] }>; claimsAdded: string[]; claimsRemoved: string[] }>
+
+
     // M5：主张与稿件
     listClaims: (projectId: string) => Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>
     createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => Promise<import('@gravitas/shared').Claim>
@@ -1923,6 +1934,7 @@ export interface ElectronAPI {
         list: () => Promise<import('@gravitas/shared').NewMediaControlledAction[]>
         request: (input: { kind: 'publish' | 'send-reply'; platform: import('@gravitas/shared').NewMediaPlatform; targetId: string; summary: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         approve: (actionId: string, approver: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        reject: (actionId: string, actor: string, reason: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         simulate: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         audit: (actionId: string) => Promise<import('@gravitas/shared').NewMediaAuditEntry[]>
       }
@@ -1932,8 +1944,12 @@ export interface ElectronAPI {
         beginAuthorization: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAuthorizationStart>
         validate: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
         disconnect: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        remove: (accountId: string) => Promise<void>
         audit: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAccountAuditEntry[]>
         getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
+      }
+      schema: {
+        getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
       }
       xiaohongshuHandoff: {
         list: () => Promise<import('@gravitas/shared').XiaohongshuHandoff[]>
@@ -2511,6 +2527,16 @@ const electronAPI: ElectronAPI = {
     importExternalRuns: (projectId: string, input: { tool: string; toolProjectId: string; runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_EXTERNAL_RUNS, projectId, input) as Promise<{ imported: import('@gravitas/shared').ResearchRun[]; skipped: number }>,
     registerDvcPointer: (projectId: string, input: { runId: string; pointerPath: string; pointerContent: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_DVC_POINTER, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
     fetchExternalRuns: (orxProjectId: string) => ipcRenderer.invoke('academic-research:fetch-external-runs', orxProjectId) as Promise<{ runs: Array<{ id: string; projectId?: string; status?: string; command?: string; exitCode?: number; commitSha?: string; endedAt?: number }> }>,
+
+    // M7.3：审查发现与修订回复
+    recordRuleFinding: (projectId: string, input: { message: string; rule: string; measured: string; expected?: string; severity?: 'error' | 'warning' | 'info'; location?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_RULE_FINDING, projectId, input) as Promise<import('@gravitas/shared').ReviewFinding>,
+    recordLlmFinding: (projectId: string, input: { message: string; model: string; rationale: string; severity?: 'error' | 'warning' | 'info'; location?: string; promptRef?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_LLM_FINDING, projectId, input) as Promise<import('@gravitas/shared').ReviewFinding>,
+    listReviewFindings: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_REVIEW_FINDINGS, projectId) as Promise<{ findings: import('@gravitas/shared').ReviewFinding[]; summary: { ruleLint: { error: number; warning: number; info: number }; llmSuggestions: number } }>,
+    recordReviewerComment: (projectId: string, input: { reviewerName: string; content: string; severity: 'major' | 'minor' | 'suggestion'; targetSection?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_REVIEWER_COMMENT, projectId, input) as Promise<import('@gravitas/shared').ExternalReviewerComment>,
+    respondToReviewerComment: (projectId: string, input: { commentId: string; status: import('@gravitas/shared').RevisionResponseStatus; response: string; manuscriptVersionId?: string; claimIds?: string[] }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RESPOND_TO_REVIEWER_COMMENT, projectId, input) as Promise<import('@gravitas/shared').RevisionResponse>,
+    listReviewerComments: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_REVIEWER_COMMENTS, projectId) as Promise<import('@gravitas/shared').ExternalReviewerComment[]>,
+    buildResponseDraft: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.BUILD_RESPONSE_DRAFT, projectId) as Promise<{ items: Array<{ commentId: string; reviewerName: string; comment: string; severity: string; status: string; response?: string; manuscriptVersionId?: string }>; pendingCount: number; disclaimer: string }>,
+    manuscriptDiff: (projectId: string, fromId: string, toId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.MANUSCRIPT_DIFF, projectId, fromId, toId) as Promise<{ fromVersion: number; toVersion: number; sections: Array<{ heading: string; change: string; claimsAdded: string[]; claimsRemoved: string[] }>; claimsAdded: string[]; claimsRemoved: string[] }>,
 
     // M5：主张与稿件
     listClaims: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, projectId) as Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>,
@@ -4286,6 +4312,7 @@ const electronAPI: ElectronAPI = {
         list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_ACTIONS),
         request: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, input),
         approve: (actionId, approver) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId, approver),
+        reject: (actionId, actor, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, actionId, actor, reason),
         simulate: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, actionId),
         audit: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, actionId),
       },
@@ -4295,8 +4322,12 @@ const electronAPI: ElectronAPI = {
         beginAuthorization: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.BEGIN_ACCOUNT_AUTHORIZATION, accountId),
         validate: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.VALIDATE_ACCOUNT, accountId),
         disconnect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.DISCONNECT_ACCOUNT, accountId),
+        remove: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REMOVE_ACCOUNT, accountId),
         audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
         getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
+      },
+      schema: {
+        getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),
       },
       xiaohongshuHandoff: {
         list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS),

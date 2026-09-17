@@ -163,6 +163,33 @@ export function registerAcademicResearchIpcHandlers(): void {
     return { runs: await adapter.listRuns(orxProjectId) }
   })
 
+  // ===== M7.3：审查发现与修订回复 =====
+  const reviewSvc = require('./review-service') as typeof import('./review-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_RULE_FINDING, async (_e, projectId: string, input) =>
+    reviewSvc.recordRuleFinding(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_LLM_FINDING, async (_e, projectId: string, input) =>
+    reviewSvc.recordLlmFinding(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_REVIEW_FINDINGS, async (_e, projectId: string) =>
+    reviewSvc.listReviewFindings(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_REVIEWER_COMMENT, async (_e, projectId: string, input) =>
+    reviewSvc.recordReviewerComment(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.RESPOND_TO_REVIEWER_COMMENT, async (_e, projectId: string, input) =>
+    reviewSvc.respondToReviewerComment(projectId, input),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_REVIEWER_COMMENTS, async (_e, projectId: string) =>
+    reviewSvc.listReviewerComments(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.BUILD_RESPONSE_DRAFT, async (_e, projectId: string) =>
+    reviewSvc.buildResponseToReviewersDraft(projectId),
+  )
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.MANUSCRIPT_DIFF, async (_e, projectId: string, fromId: string, toId: string) =>
+    reviewSvc.compareManuscriptVersions(projectId, fromId, toId),
+  )
+
   // ===== M5：主张、证据关联与稿件 =====
   const claimSvc = require('./claim-service') as typeof import('./claim-service')
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, async (_e, projectId: string) =>
