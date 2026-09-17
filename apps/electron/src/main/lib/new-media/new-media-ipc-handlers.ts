@@ -240,6 +240,48 @@ export function registerNewMediaIpcHandlers(): void {
     return (await import('./new-media-account-service')).connectWechatDirectAccount(requireId(accountId, 'accountId'))
   })
 
+  // ===== 微信分析数据同步（P2-07） =====
+  handle(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_USER_METRICS, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const result = await import('./adapters/wechat-direct-analytics-service')
+    const account = await (await import('./new-media-account-service')).getNewMediaAccount(v.requireId(payload.accountId, 'accountId'))
+    if (!account) throw new Error('账号不存在')
+    if (account.platform !== 'wechat-official-account') throw new Error('仅支持微信公众号账号')
+    if (!account.credentialRef) throw new Error('账号尚未配置凭据，无法同步分析数据')
+    return result.syncWechatUserMetrics(
+      { credentialRef: account.credentialRef, accountId: account.id },
+      {
+        source: v.requireEnum(payload.source, ['usersummary', 'usercumulate'] as const, 'source'),
+        beginDate: v.requireString(payload.beginDate, 'beginDate', 10),
+        endDate: v.requireString(payload.endDate, 'endDate', 10),
+      },
+    )
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_ARTICLE_METRICS, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const result = await import('./adapters/wechat-direct-analytics-service')
+    const account = await (await import('./new-media-account-service')).getNewMediaAccount(v.requireId(payload.accountId, 'accountId'))
+    if (!account) throw new Error('账号不存在')
+    if (account.platform !== 'wechat-official-account') throw new Error('仅支持微信公众号账号')
+    if (!account.credentialRef) throw new Error('账号尚未配置凭据，无法同步分析数据')
+    return result.syncWechatArticleMetrics(
+      { credentialRef: account.credentialRef, accountId: account.id },
+      {
+        source: v.requireEnum(payload.source, ['articletotal', 'articlesummary'] as const, 'source'),
+        beginDate: v.requireString(payload.beginDate, 'beginDate', 10),
+        endDate: v.requireString(payload.endDate, 'endDate', 10),
+      },
+    )
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.GET_WECHAT_ANALYTICS_OVERVIEW, async (_: unknown, accountId: unknown) => {
+    const { requireId } = await nmValidation()
+    return (await import('./adapters/wechat-direct-analytics-service')).getWechatAnalyticsOverview(requireId(accountId, 'accountId'))
+  })
+
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media-account-service')).listNewMediaAccounts())
   handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: unknown) => {
     const v = await nmValidation()

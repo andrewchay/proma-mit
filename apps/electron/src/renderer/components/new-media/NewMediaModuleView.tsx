@@ -9,6 +9,7 @@ import { ListeningPanel } from './ListeningPanel'
 import { InsightsPanel } from './InsightsPanel'
 import { PublishStatusPanel } from './PublishStatusPanel'
 import { ReportImportPanel } from './ReportImportPanel'
+import { WechatAnalyticsPanel } from './WechatAnalyticsPanel'
 import { AccountsPanel } from './AccountsPanel'
 import { XiaohongshuHandoffPanel } from './XiaohongshuHandoffPanel'
 

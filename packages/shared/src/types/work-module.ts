@@ -876,6 +876,9 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   LIST_WECHAT_PUBLISHES: 'new-media:list-wechat-publishes',
   POLL_WECHAT_PUBLISH: 'new-media:poll-wechat-publish',
   RECONCILE_WECHAT_SUBMIT: 'new-media:reconcile-wechat-submit',
+  SYNC_WECHAT_USER_METRICS: 'new-media:sync-wechat-user-metrics',
+  SYNC_WECHAT_ARTICLE_METRICS: 'new-media:sync-wechat-article-metrics',
+  GET_WECHAT_ANALYTICS_OVERVIEW: 'new-media:get-wechat-analytics-overview',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
   LIST_ACCOUNTS: 'new-media:list-accounts',
   CREATE_ACCOUNT: 'new-media:create-account',
@@ -1082,6 +1085,53 @@ export interface WechatPublishRecord {
   transitions: WechatPublishTransition[]
   createdAt: number
   updatedAt: number
+}
+
+// ===== 微信分析数据（本地快照口径） =====
+
+export type WechatAnalyticsSource = 'usersummary' | 'usercumulate' | 'articletotal' | 'articlesummary'
+
+export interface WechatUserMetricRecord {
+  id: string
+  accountId: string
+  source: 'usersummary' | 'usercumulate'
+  date: string
+  metrics: Record<string, number>
+  capturedAt: number
+  updatedAt: number
+}
+
+export interface WechatArticleMetricRecord {
+  id: string
+  accountId: string
+  source: 'articletotal' | 'articlesummary'
+  date: string
+  msgid: string
+  title: string
+  metrics: Record<string, number>
+  capturedAt: number
+  updatedAt: number
+}
+
+export interface WechatAnalyticsSyncResult {
+  source: WechatAnalyticsSource
+  requestedRange: { beginDate: string; endDate: string }
+  effectiveRange: { beginDate: string; endDate: string }
+  rows: number
+  latencyDays: number
+}
+
+export interface WechatAnalyticsOverview {
+  accountId: string
+  sources: Array<{
+    source: WechatAnalyticsSource
+    label: string
+    latestDate?: string
+    lagDays?: number
+    rowCount: number
+    definition: string
+  }>
+  limits: { verifiedAt: string; source: string }
 }
 
 export interface NewMediaConnectedAccount {
