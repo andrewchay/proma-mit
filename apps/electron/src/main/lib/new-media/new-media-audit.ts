@@ -9,7 +9,7 @@ import { getNewMediaRecord, listNewMediaRecords, putNewMediaRecords } from './ne
  * 且必须与状态迁移放在同一次 SQLite 事务里（putNewMediaRecords）。
  */
 
-export type NewMediaAuditDomain = 'account' | 'publication' | 'community' | 'governance' | 'handoff' | 'import'
+export type NewMediaAuditDomain = 'account' | 'publication' | 'community' | 'governance' | 'handoff' | 'import' | 'compliance'
 
 export interface NewMediaAuditMetadataValue {
   value: string | number | boolean
@@ -39,6 +39,7 @@ export const NEW_MEDIA_AUDIT_EVENTS = {
   governance: ['requested', 'approved', 'rejected', 'simulated', 'executing', 'executed', 'execution_failed', 'execution_reconciled', 'execution_retried', 'automation_triggered', 'automation_failed', 'automation_disabled'],
   handoff: ['prepared', 'exported', 'user_confirmed_published'],
   import: ['report_batch_imported'],
+  compliance: ['review_completed', 'escalated'],
 } as const satisfies Record<NewMediaAuditDomain, readonly string[]>
 
 export type NewMediaAuditEventName = (typeof NEW_MEDIA_AUDIT_EVENTS)[NewMediaAuditDomain][number]

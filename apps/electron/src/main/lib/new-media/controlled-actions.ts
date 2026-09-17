@@ -135,6 +135,13 @@ export async function simulateControlledAction(actionId: string): Promise<Contro
  */
 export async function executeControlledAction(actionId: string, actor = 'local-user'): Promise<ControlledActionRequest> {
   const current = await requireAction(actionId)
+  // 能力开关（P4-13）：外发能力被 kill switch 关闭时拒绝执行，动作保持原状态。
+  const { isCapabilityActive, listCapabilityFlags } = await import('./new-media-feature-flags')
+  const flags = await listCapabilityFlags()
+  if (!isCapabilityActive({ capability: 'controlled-outbound', platform: current.platform, accountId: current.accountId }, flags)) {
+    const decision = (await import('./new-media-feature-flags')).evaluateCapabilityFlag({ capability: 'controlled-outbound', platform: current.platform, accountId: current.accountId }, flags)
+    throw new Error(`外发能力当前已被关闭，无法执行：${decision.reason}`)
+  }
   if (current.status === 'executed') throw new Error('该请求已执行完成，同一审批不能重复执行')
   if (current.status === 'executing') throw new Error('该请求正在执行中，请等待结果')
   if (current.status === 'simulated') throw new Error('该请求已走本地模拟路径，不能再次真实执行')

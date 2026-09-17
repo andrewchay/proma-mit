@@ -455,6 +455,18 @@ export function registerWechatPublishExecutor(): void {
         throw new ControlledExecutionError('not_started', 'asset_provenance_blocked', error instanceof Error ? error.message : String(error))
       }
 
+      // 合规守卫（P4-08）：只提示与升级人工，不阻断；是否外发仍由审批人决定。
+      // 审查结果写入审计；若存在高风险发现，回执 details 会带上标记供 UI 展示。
+      const { reviewAndEscalateNewMediaContent } = await import('../new-media-compliance-guard')
+      const complianceReview = await reviewAndEscalateNewMediaContent({
+        platform,
+        title: draft.articles[0]?.title,
+        content: draft.articles.map((article) => article.content).join('\n'),
+        subjectId: input.actionId,
+        accountId: input.accountId,
+        actor: input.actor,
+      })
+
       try {
         const record = await submitWechatPublish(
           { credentialRef: account.credentialRef, accountId: input.accountId },
@@ -468,7 +480,12 @@ export function registerWechatPublishExecutor(): void {
           platformStatus: record.status,
           summary: `已提交发布（publish_id=${record.publishId ?? '未知'}），等待平台异步结果`,
           receivedAt: Date.now(),
-          details: { publishRecordId: record.id, attemptId: input.attemptId },
+          details: {
+            publishRecordId: record.id,
+            attemptId: input.attemptId,
+            complianceRequiresHumanReview: complianceReview.requiresHumanReview,
+            complianceFindingCount: complianceReview.findings.length,
+          },
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

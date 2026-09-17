@@ -12,13 +12,35 @@ import { approveControlledAction, getControlledActionAudit, requestControlledAct
 const NEW_MEDIA_SKILLS = ['nm-content-operator', 'nm-community-manager', 'nm-social-listening', 'nm-social-reporting', 'nm-trend-radar', 'nm-controlled-outbound'] as const
 const DEFAULT_ENABLED_CAPABILITIES: readonly string[] = []
 
+/**
+ * 运行时能力开关（P4-13）：在订阅能力之上叠加 kill switch。
+ * 被关闭的能力即使已订阅，也不注入工具与 Skill，实现按平台/账号快速回滚。
+ */
+function isCapabilityKilled(capability: string): boolean {
+  try {
+    const { isCapabilityActive, listCapabilityFlags } = require('../new-media/new-media-feature-flags') as {
+      isCapabilityActive: (scope: { capability: string }, flags: unknown[]) => boolean
+      listCapabilityFlags: () => Promise<unknown[]>
+    }
+    // 插件加载阶段拿不到异步存储，这里同步读取在初始化时缓存的开关快照。
+    const { getCachedCapabilityFlags } = require('../new-media/new-media-feature-flags') as { getCachedCapabilityFlags: () => unknown[] }
+    const flags = getCachedCapabilityFlags()
+    return !isCapabilityActive({ capability }, flags)
+  } catch {
+    // 开关系统不可用时按「未关闭」处理，不放大故障面。
+    return false
+  }
+}
+
 function readCapabilities(): string[] {
   try {
     const { getSettings } = require('../settings-service') as { getSettings: () => { newMediaCapabilities?: string[]; domainCapabilities?: string[] } }
     const settings = getSettings()
     const own = Array.isArray(settings.newMediaCapabilities) ? settings.newMediaCapabilities : []
     const domains = Array.isArray(settings.domainCapabilities) ? settings.domainCapabilities : []
-    return [...new Set([...own, ...domains])].filter((capability) => ['content-operations', 'community-operations', 'social-listening', 'social-analytics', 'trend-radar', 'controlled-outbound'].includes(capability))
+    return [...new Set([...own, ...domains])]
+    .filter((capability) => ['content-operations', 'community-operations', 'social-listening', 'social-analytics', 'trend-radar', 'controlled-outbound'].includes(capability))
+    .filter((capability) => !isCapabilityKilled(capability))
   } catch {
     return [...DEFAULT_ENABLED_CAPABILITIES]
   }

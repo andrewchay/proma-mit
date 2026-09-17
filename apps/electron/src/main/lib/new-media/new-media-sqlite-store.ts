@@ -67,6 +67,7 @@ export const NEW_MEDIA_KIND_REGISTRY: readonly NewMediaKindDefinition[] = [
   { kind: 'asset-provenance', domain: 'governance', description: '素材来源与许可记录' },
   { kind: 'automation-rule', domain: 'governance', description: '自动化排程规则' },
   { kind: 'automation-run', domain: 'governance', description: '自动化执行历史' },
+  { kind: 'capability-flag', domain: 'governance', description: '能力开关与灰度配置' },
 ]
 
 const KIND_TO_DOMAIN = new Map(NEW_MEDIA_KIND_REGISTRY.map((entry) => [entry.kind, entry.domain]))

@@ -1219,6 +1219,69 @@ export interface NewMediaAssetPublishCheck {
   explanation: string
 }
 
+// ===== 能力开关与灰度（P4-13） =====
+
+/** 灰度阶段：off 全关；allowlist 仅名单内账号；all 全量。 */
+export type NewMediaRolloutStage = 'off' | 'allowlist' | 'all'
+
+export interface NewMediaCapabilityFlag {
+  id: string
+  capability: string
+  /** 作用域：platform 全平台；accountId 限定单个账号（本地形态下即租户）。 */
+  scope: { platform?: NewMediaPlatform; accountId?: string }
+  stage: NewMediaRolloutStage
+  /** allowlist 阶段的账号名单。 */
+  allowlist: string[]
+  note?: string
+  updatedBy: string
+  updatedAt: number
+}
+
+export interface NewMediaCapabilityFlagDecision {
+  capability: string
+  platform?: NewMediaPlatform
+  accountId?: string
+  active: boolean
+  /** 命中的开关；无覆盖时为 enabled 默认。 */
+  matchedFlagId?: string
+  reason: string
+}
+
+// ===== 合规守卫（P4-08） =====
+
+export type NewMediaComplianceCategory = 'advertising-law' | 'platform-rule' | 'copyright' | 'crisis'
+export type NewMediaComplianceSeverity = 'suggest' | 'high-risk'
+
+export interface NewMediaComplianceRule {
+  id: string
+  category: NewMediaComplianceCategory
+  severity: NewMediaComplianceSeverity
+  /** 匹配方式：正则来源串（大小写不敏感）。 */
+  pattern: string
+  label: string
+  message: string
+  suggestion: string
+}
+
+export interface NewMediaComplianceFinding {
+  ruleId: string
+  category: NewMediaComplianceCategory
+  severity: NewMediaComplianceSeverity
+  label: string
+  matchedText: string
+  message: string
+  suggestion: string
+}
+
+export interface NewMediaComplianceReview {
+  platform: NewMediaPlatform
+  findings: NewMediaComplianceFinding[]
+  /** 高风险发现存在时为 true：升级人工，本地不做法律判定。 */
+  requiresHumanReview: boolean
+  reviewedAt: number
+  disclaimer: string
+}
+
 // ===== 自动化排程（P4-10） =====
 
 export type NewMediaAutomationCadence =

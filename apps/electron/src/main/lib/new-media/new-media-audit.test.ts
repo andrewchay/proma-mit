@@ -21,8 +21,8 @@ afterEach(async () => { const { clearNewMediaRecordsForTests } = await import('.
 afterAll(() => { closeNewMediaDb(); delete process.env.PROMA_TEST_CONFIG_DIR; rmSync(testDir, { recursive: true, force: true }) })
 
 describe('新媒体统一审计', () => {
-  test('事件字典覆盖六个领域，未登记事件被拒绝', () => {
-    expect(Object.keys(NEW_MEDIA_AUDIT_EVENTS).sort()).toEqual(['account', 'community', 'governance', 'handoff', 'import', 'publication'])
+  test('事件字典覆盖七个领域，未登记事件被拒绝', () => {
+    expect(Object.keys(NEW_MEDIA_AUDIT_EVENTS).sort()).toEqual(['account', 'community', 'compliance', 'governance', 'handoff', 'import', 'publication'])
     expect(isKnownAuditEvent('handoff', 'prepared')).toBe(true)
     expect(isKnownAuditEvent('handoff', '直接发布')).toBe(false)
     expect(isKnownAuditEvent('publication', 'publication_scheduled')).toBe(true)
