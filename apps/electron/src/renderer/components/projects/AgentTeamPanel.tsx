@@ -60,6 +60,16 @@ export function AgentTeamPanel(): React.ReactElement {
   const [evaluationForm, setEvaluationForm] = React.useState<Record<string, { scope: 'role' | 'workspace'; channelId: string; modelId: string; judgeChannelId: string; judgeModelId: string }>>({})
   const [sampleScans, setSampleScans] = React.useState<Record<string, import('@gravitas/shared').SampleSensitiveFindingResult[]>>({})
   const [benchmarkDrift, setBenchmarkDrift] = React.useState<Array<{ id: string; title: string; version?: number; rubricVersion?: number; latestScore: number | null }>>([])
+  const [versionHistoryByBenchmark, setVersionHistoryByBenchmark] = React.useState<Record<string, Array<{ snapshot: { version: number; rubricVersion: number }; recordedAt: number; driftReasons: string[]; latestScore?: number | null }>>>({});
+
+  const loadBenchmarkHistory = async (benchmarkId: string): Promise<void> => {
+    try {
+      const history = await window.electronAPI.paa.agentEmployees.listBenchmarkVersionHistory(benchmarkId)
+      setVersionHistoryByBenchmark((current) => ({ ...current, [benchmarkId]: history }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '版本历史加载失败')
+    }
+  }
 
   // 表单状态
   const [form, setForm] = React.useState({
@@ -320,7 +330,7 @@ export function AgentTeamPanel(): React.ReactElement {
       {/* AI 团队效能总览（P2） */}
       {!loading && employees.length > 0 && <AgentTeamOverview employees={employees} />}
 
-      {benchmarkDrift.length > 0 && <details className="rounded-lg border border-border/50 bg-foreground/[0.02] p-3"><summary className="cursor-pointer text-sm font-medium">评测定义版本</summary><div className="mt-3 space-y-1 text-xs">{benchmarkDrift.map((item) => <p key={item.id} className="text-muted-foreground">{item.title} · 定义 v{item.version} · 规则 v{item.rubricVersion} · 最近分数 {item.latestScore ?? '—'}{item.version === undefined ? '（旧定义未版本化，历史分数不可直接比较）' : ''}</p>)}<p className="text-[11px] text-muted-foreground/80">改变 case 集合、评分规则或被测目标时必须递增定义版本，历史结果保持原版本绑定、不会被重算。</p></div></details>}
+      {benchmarkDrift.length > 0 && <details className="rounded-lg border border-border/50 bg-foreground/[0.02] p-3"><summary className="cursor-pointer text-sm font-medium">评测定义版本</summary><div className="mt-3 space-y-1 text-xs">{benchmarkDrift.map((item) => <div key={item.id} className="rounded bg-background/60 p-2"><p className="text-muted-foreground">{item.title} · 定义 v{item.version} · 规则 v{item.rubricVersion} · 最近分数 {item.latestScore ?? '—'}{item.version === undefined ? '（旧定义未版本化，历史分数不可直接比较）' : ''}</p><button className="mt-1 text-primary" onClick={() => void loadBenchmarkHistory(item.id)}>查看版本历史</button>{versionHistoryByBenchmark[item.id] && <ul className="mt-1 space-y-0.5">{versionHistoryByBenchmark[item.id]!.map((entry) => <li key={entry.snapshot.version} className={entry.driftReasons.length ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}>v{entry.snapshot.version} · 规则 v{entry.snapshot.rubricVersion} · 记录于 {new Date(entry.recordedAt).toLocaleString('zh-CN')}{entry.latestScore != null ? ` · 分数 ${entry.latestScore}` : ''}{entry.driftReasons.length > 0 ? ` · 漂移：${entry.driftReasons.join('；')}` : ''}</li>)}{versionHistoryByBenchmark[item.id]!.length === 0 && <li className="text-muted-foreground">暂无版本历史记录。</li>}</ul>}</div>)}<p className="text-[11px] text-muted-foreground/80">改变 case 集合、评分规则或被测目标时必须递增定义版本，历史结果保持原版本绑定、不会被重算。</p></div></details>}
 
       {/* 能力演化治理策略（P4） */}
       <details className="rounded-lg border border-border/50 bg-foreground/[0.02] p-3">

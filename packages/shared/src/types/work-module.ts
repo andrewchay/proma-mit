@@ -501,6 +501,13 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   GET_CAPABILITY_ALERTS: 'agent-employee:get-capability-alerts',
   /** 扫描样本摘要中的疑似敏感内容（只提示）。 */
   SCAN_SAMPLE_CONTENT: 'agent-employee:scan-sample-content',
+  /** 读取评测定义版本历史。 */
+  LIST_BENCHMARK_VERSION_HISTORY: 'agent-employee:list-benchmark-version-history',
+  /** 读取或更新周期扫描调度（默认关闭）。 */
+  GET_SCAN_SCHEDULE: 'agent-employee:get-scan-schedule',
+  UPDATE_SCAN_SCHEDULE: 'agent-employee:update-scan-schedule',
+  /** 立即运行一次到点扫描（仅本地只读）。 */
+  RUN_SCAN_IF_DUE: 'agent-employee:run-scan-if-due',
 } as const
 
 export interface CreateAgentEmployeeInput {
@@ -675,6 +682,20 @@ export interface SampleSensitiveFindingResult {
   kind: 'absolute_path' | 'credential' | 'email' | 'url_with_credentials' | 'session_reference' | 'long_token'
   message: string
   excerpt: string
+}
+
+export interface BenchmarkVersionHistoryEntryResult {
+  snapshot: { version: number; rubricVersion: number; cases: string[]; heldOutCases: string[]; targetType: string; targetAgentId: string; targetScope?: string; targetWorkspaceId?: string }
+  recordedAt: number
+  driftReasons: string[]
+  latestScore?: number | null
+}
+
+export interface EmployeeCapabilityScanScheduleResult {
+  enabled: boolean
+  intervalHours: number
+  lastRunAt?: number
+  updatedAt: number
 }
 
 export interface RunAgentEmployeeCapabilityEvaluationInput {

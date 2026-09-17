@@ -104,6 +104,9 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
   })
   const stored = readBenchmark(benchmarkId)
   if (!stored) throw new Error('临时 benchmark 创建失败')
+  // 冻结本次评测定义快照；后续若有同 id 的变更将被漂移检测捕获。
+  const { recordBenchmarkVersionSnapshot } = require('./agent-runtime/eval/benchmark-versioning') as typeof import('./agent-runtime/eval/benchmark-versioning')
+  recordBenchmarkVersionSnapshot({ benchmark: stored })
 
   const channel = resolveEvalChannel(stored)
   const employeeTarget = { type: 'employee_capability' as const, id: input.agentId, scope: input.scope, workspaceId: input.workspaceId }
@@ -190,6 +193,8 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
     heldOutScore: heldOutFinalScore ?? 0,
     judgeIndependent: judge.independent,
     evidenceSampleIds: material.evidenceSampleIds,
+    judgeKind: judge.kind,
+    nonEvolvableConstraints: material.nonEvolvableConstraints,
   })
   return { ...base, approvalId, status: 'candidate_created', message: '候选已生成并进入待审批；批准前不会影响生产版本。' }
 }

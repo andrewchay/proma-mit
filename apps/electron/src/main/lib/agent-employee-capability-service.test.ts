@@ -42,6 +42,17 @@ test('能力观察按执行冻结版本归因，人工回滚保留审计', () =>
   expect(listAgentEmployeeCapabilityRollbackAudits(employee.id)).toHaveLength(1)
 })
 
+test('候选能力内容含疑似敏感信息时拒绝创建审批', () => {
+  const project = createProject({ title: '敏感', description: '' })
+  const task = createTask(project.id, { title: '任务', description: '', priority: 'medium' })
+  const employee = createAgentEmployee({ name: '敏感候选', role: '开发', description: '', channelId: 'channel' })
+  for (let i = 0; i < 3; i++) {
+    createAgentEmployeeLearningSample({ agentId: employee.id, executionId: `sensitive-${i}`, projectId: project.id, taskId: task.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: '已脱敏证据', privacyStatus: 'sanitized' })
+  }
+  const sampleIds = listAgentEmployeeLearningSamples(employee.id).map((sample) => sample.id)
+  expect(() => proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'role', content: '参考路径 /Users/chaihao/secret 并带上 apiKey=sk-abcdefghijklmnop', trainingScore: 90, heldOutScore: 90, judgeIndependent: true, evidenceSampleIds: sampleIds })).toThrow('疑似敏感信息')
+})
+
 test('已脱敏样本达到阈值才创建员工能力推广审批', () => {
   const project = createProject({ title: 'P0', description: '' })
   const task = createTask(project.id, { title: '任务', description: '', priority: 'medium' })

@@ -16,6 +16,10 @@ export function proposeEmployeeCapabilityAdoption(input: {
   heldOutScore: number
   judgeIndependent: boolean
   evidenceSampleIds: string[]
+  /** 本次判定的评判者类型，写入审批以供核对。 */
+  judgeKind?: 'rule' | 'llm' | 'injected'
+  /** 当次评测使用的固定不可演化约束，便于审批时核对候选未绕过边界。 */
+  nonEvolvableConstraints?: string[]
 }): { approvalId: string } {
   if (!Number.isFinite(input.trainingScore) || !Number.isFinite(input.heldOutScore)) throw new Error('候选评测分数无效')
   if (!input.judgeIndependent) throw new Error('评判者不独立，不能创建自动推广建议')
@@ -32,6 +36,10 @@ export function proposeEmployeeCapabilityAdoption(input: {
   const versionNumber = Math.max(0, ...store.listAgentEmployeeCapabilityVersions(input.agentId).map((version) => version.versionNumber)) + 1
   const content = input.content.trim()
   if (!content || content.length > 12_000) throw new Error('候选能力内容为空或超出长度限制')
+  // 能力内容会进入后续执行上下文，出现凭据/路径类内容时必须阻断。
+  const { scanSampleForSensitiveContent } = require('./agent-employee-sample-scan') as typeof import('./agent-employee-sample-scan')
+  const sensitive = scanSampleForSensitiveContent(content)
+  if (sensitive.length > 0) throw new Error(`候选能力内容包含疑似敏感信息，请先清理：${sensitive.map((item) => item.message).join('、')}`)
   const contentHash = createHash('sha256').update(content).digest('hex')
   const approval = createApproval({
     sourceType: 'employee_capability',
@@ -49,6 +57,10 @@ export function proposeEmployeeCapabilityAdoption(input: {
       trainingScore: input.trainingScore,
       heldOutScore: input.heldOutScore,
       evidenceSampleIds: selected.map((sample) => sample.id),
+      // 评判者身份与不可演化约束随候选一起冻结，供审批时核对。
+      judgeKind: input.judgeKind ?? 'injected',
+      judgeIndependent: input.judgeIndependent,
+      nonEvolvableConstraints: input.nonEvolvableConstraints ?? []
     },
   })
   return { approvalId: approval.id }
