@@ -377,6 +377,7 @@ describe('P3-04 授权账号存储加密', () => {
       tokenAcquiredAt: NOW,
       nickname: '测试公众号',
       accountType: '0',
+      funcScopes: [1, 7],
       status: 'active',
       authorizedAt: NOW,
       updatedAt: NOW,

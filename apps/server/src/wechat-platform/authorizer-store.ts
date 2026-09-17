@@ -22,6 +22,8 @@ export interface WechatAuthorizerAccount {
   nickname: string
   /** 账号类型：公众号(0)/小程序(1) 等，按微信返回原样保存。 */
   accountType: string
+  /** 商家授权的权限集（funcscope_category id 列表），能力矩阵据此生成。 */
+  funcScopes: number[]
   status: WechatAuthorizerStatus
   /** 撤权时刻；未撤权为 undefined。 */
   revokedAt?: number
@@ -74,6 +76,7 @@ interface AuthorizerRow extends Record<string, unknown> {
   token_acquired_at: string
   nickname: string
   account_type: string
+  func_scopes: string
   status: string
   revoked_at: string | null
   authorized_at: string
@@ -95,6 +98,7 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
       token_acquired_at BIGINT NOT NULL,
       nickname TEXT NOT NULL DEFAULT '',
       account_type TEXT NOT NULL DEFAULT '',
+      func_scopes TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL DEFAULT 'active',
       tenant_id TEXT NOT NULL DEFAULT '',
       revoked_at BIGINT,
@@ -106,11 +110,11 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
   async save(account: WechatAuthorizerAccount): Promise<void> {
     await this.client.query(
       `INSERT INTO proma_wechat_authorizer
-         (authorizer_app_id, encrypted_access_token, encrypted_refresh_token, token_expires_at, token_acquired_at, nickname, account_type, status, tenant_id, revoked_at, authorized_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $11, $12, $9, $10)
+         (authorizer_app_id, encrypted_access_token, encrypted_refresh_token, token_expires_at, token_acquired_at, nickname, account_type, func_scopes, status, tenant_id, revoked_at, authorized_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $11, $8, $12, $13, $9, $10)
        ON CONFLICT (authorizer_app_id) DO UPDATE SET
          encrypted_access_token = $2, encrypted_refresh_token = $3, token_expires_at = $4, token_acquired_at = $5,
-         nickname = $6, account_type = $7, status = $8, tenant_id = $11, revoked_at = $12, updated_at = $10`,
+         nickname = $6, account_type = $7, func_scopes = $11, status = $8, tenant_id = $12, revoked_at = $13, updated_at = $10`,
       [
         account.authorizerAppId,
         encryptWithKey(account.authorizerAccessToken, this.encryptionKey),
@@ -160,6 +164,7 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
       tokenAcquiredAt: Number(row.token_acquired_at),
       nickname: row.nickname,
       accountType: row.account_type,
+      funcScopes: JSON.parse(row.func_scopes || '[]') as number[],
       status: row.status === 'revoked' ? 'revoked' : 'active',
       revokedAt: row.revoked_at === null || row.revoked_at === undefined ? undefined : Number(row.revoked_at),
       authorizedAt: Number(row.authorized_at),

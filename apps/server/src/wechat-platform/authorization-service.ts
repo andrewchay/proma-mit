@@ -19,6 +19,7 @@ import type { WechatComponentTicketStore } from './ticket-store'
 import { ticketFingerprint } from './ticket-store'
 import type { WechatComponentTokenService } from './component-token-service.ts'
 import type { WechatAuthorizerAccount, WechatAuthorizerStore } from './authorizer-store.ts'
+import { generateCapabilityMatrix, type WechatCapabilityMatrix } from './capability.ts'
 
 const WECHAT_LOGIN_PAGE_BASE = 'https://mp.weixin.qq.com/cgi-bin/componentloginpage'
 const API_BASE = 'https://api.weixin.qq.com'
@@ -187,7 +188,7 @@ export class WechatAuthorizationService {
         authorizer_access_token?: string
         expires_in?: number
         authorizer_refresh_token?: string
-        func_info?: unknown[]
+        func_info?: Array<{ funcscope_category?: { id?: number } }>
       }
       authorizer_info?: { nick_name?: string; account_type?: string }
       errcode?: number
@@ -211,6 +212,9 @@ export class WechatAuthorizationService {
       tokenAcquiredAt: now,
       nickname: payload.authorizer_info?.nick_name ?? '',
       accountType: String(payload.authorizer_info?.account_type ?? ''),
+      funcScopes: (info.func_info ?? [])
+        .map((item) => item.funcscope_category?.id)
+        .filter((id): id is number => typeof id === 'number'),
       status: 'active',
       authorizedAt: now,
       updatedAt: now,
@@ -251,6 +255,13 @@ export class WechatAuthorizationService {
       }
       throw error
     }
+  }
+
+  /** 按账号授权权限集生成能力矩阵（跨租户访问拒绝）。 */
+  async getCapabilityMatrix(authorizerAppId: string, tenantId: string): Promise<WechatCapabilityMatrix> {
+    const account = await this.options.authorizerStore.load(authorizerAppId)
+    if (!account || account.tenantId !== tenantId) throw new WechatAuthorizerUnavailableError(`授权账号不存在或不属于当前租户：${authorizerAppId}`)
+    return generateCapabilityMatrix({ authorizerAppId, funcScopes: account.funcScopes })
   }
 
   /** 列出指定租户的授权账号（脱敏摘要，不含 token）。 */

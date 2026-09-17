@@ -236,6 +236,7 @@ describe('P3-09 轮询兜底与对账', () => {
       tokenAcquiredAt: NOW,
       nickname: 'n',
       accountType: '0',
+      funcScopes: [1, 7],
       status: 'active',
       authorizedAt: NOW,
       updatedAt: NOW,

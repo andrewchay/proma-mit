@@ -519,6 +519,19 @@ export function createPromaWebServerApplication(
             : !config.wechatPlatform?.authorizationRedirectUri
               ? Response.json({ error: '未配置微信第三方平台授权' }, { status: 404 })
               : Response.json({ accounts: await (await getWechatRuntime())!.authorizationService!.listAuthorizedAccounts(scope.tenantId) })
+      } else if (request.method === 'GET' && url.pathname.startsWith('/wechat/authorizers/') && url.pathname.endsWith('/capabilities')) {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : await (async () => {
+              const authorizerAppId = decodeURIComponent(url.pathname.slice('/wechat/authorizers/'.length, -'/capabilities'.length))
+              try {
+                return Response.json({ matrix: await (await getWechatRuntime())!.authorizationService!.getCapabilityMatrix(authorizerAppId, scope.tenantId) })
+              } catch (error) {
+                return Response.json({ error: error instanceof Error ? error.message : '获取能力矩阵失败' }, { status: 404 })
+              }
+            })()
       } else if (request.method === 'GET' && url.pathname === '/wechat/reconciliation') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
