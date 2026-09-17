@@ -21,6 +21,7 @@ import { configureWechatDirectAccount, connectWechatDirectAccount, createNewMedi
 import { saveWechatDirectCredential } from './wechat-direct-credential'
 import { clearWechatTokenCache, type WechatTokenTransport } from './wechat-direct-token-service'
 import { createWechatDraft, type WechatDraftTransport } from './wechat-direct-draft-service'
+import { provenanceForUploadedAsset, upsertAssetProvenance } from '../new-media-asset-provenance'
 import {
   listWechatPublishes,
   pollWechatPublishStatus,
@@ -80,6 +81,10 @@ async function seedConnectedAccountWithDraft(): Promise<{ accountId: string; dra
     { articles: [{ title: '端到端发布', content: '<p>正文</p>', thumbMediaId: 'MEDIA-E2E' }] },
     { draftTransport, token: { transport: tokenTransport } },
   )
+  // 封面素材必须有来源与许可记录，否则发布会被 P4-09 门控阻断。
+  await upsertAssetProvenance(provenanceForUploadedAsset({
+    assetKey: 'MEDIA-E2E', accountId: account.id, uploadedBy: 'Carol', licenseStatus: 'granted', licenseRef: '自有素材',
+  }))
   return { accountId: account.id, draftId: draft.id }
 }
 
@@ -131,6 +136,36 @@ describe('P2-05 + P2-06 组合：受控发布全链路', () => {
 
     const audit = await getControlledActionAudit(action.id)
     expect(audit.map((entry) => entry.event)).toEqual(['requested', 'approved', 'executing', 'executed'])
+  })
+
+  test('封面素材缺少许可记录时发布被阻断，且不消耗审批', async () => {
+    const { accountId, draftId } = await seedConnectedAccountWithDraft()
+    registerWechatPublishExecutor()
+    setWechatPublishExecutorDependenciesForTests({ publishTransport: async () => ({ status: 200, text: async () => JSON.stringify({ publish_id: 'SHOULD-NOT-BE-CALLED' }) }), token: { transport: tokenTransport } })
+    const { getNewMediaRecord } = await import('../new-media-sqlite-store')
+    // 移除封面的来源记录，模拟「素材来历不明」
+    const records = await import('../new-media-sqlite-store')
+    const list = await (records as unknown as { listNewMediaRecords: (kind: string) => Promise<Array<{ id: string; assetKey: string }>> }).listNewMediaRecords('asset-provenance')
+    for (const entry of list) {
+      if (entry.assetKey === 'MEDIA-E2E') await records.deleteNewMediaRecord('asset-provenance', entry.id)
+    }
+    void getNewMediaRecord
+
+    const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: draftId, accountId, summary: '素材缺许可' })
+    await approveControlledAction(action.id, 'Carol')
+    const error: Error = await executeControlledAction(action.id).then(
+      () => { throw new Error('预期发布被素材门控阻断') },
+      (caught: Error) => caught,
+    )
+    expect(error.message).toContain('未通过外发检查')
+    expect(error.message).toContain('MEDIA-E2E')
+
+    const failed = (await listControlledActions())[0]
+    expect(failed?.status).toBe('failed')
+    // 阻断发生在任何平台请求之前，属于 not_started：补齐许可后可直接重试
+    expect(failed?.failureOutcome).toBe('not_started')
+    expect(failed?.retryRequiresReconciliation).toBe(false)
+    expect((await listWechatPublishes(accountId)).length).toBe(0)
   })
 
   test('平台明确拒绝时执行失败可重试，且不会留下未知状态', async () => {

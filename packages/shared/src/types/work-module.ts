@@ -1136,6 +1136,83 @@ export interface WechatAnalyticsOverview {
   limits: { verifiedAt: string; source: string }
 }
 
+// ===== 商业能力授权证明（P4-01） =====
+
+/** 商业授权证明类型：平台 scope 书面授权 / 白名单 / 数据供应商许可。 */
+export type NewMediaCommercialProofType = 'scope_grant' | 'whitelist' | 'vendor_license'
+
+export interface NewMediaCommercialProof {
+  id: string
+  type: NewMediaCommercialProofType
+  /** 证明指向的商业能力，例如 pugongying-data、juguang-ads、licensed-listening。 */
+  capability: string
+  /** 平台或供应商出具的可核查凭据（合同号、后台截图编号、工单号等）。 */
+  reference: string
+  grantedAt: number
+  expiresAt?: number
+  /** 由谁核验：必须是显式的人或流程，不接受「默认有权限」。 */
+  verifiedBy: string
+  note?: string
+}
+
+/** 商业能力门控结果：无证明、过期或未核验都不得启用。 */
+export interface NewMediaCommercialGateState {
+  capability: string
+  enabled: boolean
+  reason: 'enabled' | 'no_proof' | 'proof_expired' | 'proof_not_verified'
+  explanation: string
+  proofId?: string
+  expiresAt?: number
+}
+
+// ===== 素材来源与 AIGC 标识链（P4-09） =====
+
+export type NewMediaAssetSourceKind = 'uploaded' | 'generated' | 'licensed' | 'unknown'
+
+export interface NewMediaAssetProvenance {
+  id: string
+  /** 素材标识：可指向微信素材、本地附件或交付包内文件。 */
+  assetKey: string
+  accountId: string
+  source: {
+    kind: NewMediaAssetSourceKind
+    /** 原始来源（URL 或文件名），不保存本地绝对路径。 */
+    origin?: string
+    uploadedBy?: string
+    /** 生成素材时记录模型与提示词引用。 */
+    generatedByModel?: string
+    promptRef?: string
+  }
+  license: {
+    status: 'granted' | 'missing' | 'unknown'
+    licenseRef?: string
+    grantedBy?: string
+    expiresAt?: number
+  }
+  /** AIGC 标识：平台要求标识时，未标识的素材不得外发。 */
+  aigc: {
+    isAigc: boolean
+    model?: string
+    labelApplied?: boolean
+  }
+  createdAt: number
+  updatedAt: number
+}
+
+export type NewMediaAssetPublishBlockReason =
+  | 'no_provenance'
+  | 'license_missing'
+  | 'license_unknown'
+  | 'license_expired'
+  | 'aigc_unlabeled'
+
+export interface NewMediaAssetPublishCheck {
+  assetKey: string
+  publishable: boolean
+  reason?: NewMediaAssetPublishBlockReason
+  explanation: string
+}
+
 // ===== 微信留言（只读） =====
 
 export interface WechatCommentRecord {

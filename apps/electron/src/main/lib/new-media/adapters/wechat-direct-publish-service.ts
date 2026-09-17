@@ -443,6 +443,18 @@ export function registerWechatPublishExecutor(): void {
       if (!draft) throw new ControlledExecutionError('not_started', 'draft_not_found', '未找到对应的微信草稿；请先在公众号草稿链路中创建')
       if (draft.accountId !== input.accountId) throw new ControlledExecutionError('not_started', 'draft_account_mismatch', '草稿不属于该账号')
 
+      // 素材来源与许可检查（P4-09）：封面等素材必须能回答来源与授权，缺许可直接阻断。
+      // 该检查发生在任何平台请求之前，因此失败属于 not_started，可补齐许可后重试。
+      const { assertAssetsPublishable } = await import('../new-media-asset-provenance')
+      const assetKeys = draft.articles
+        .map((article) => article.thumbMediaId)
+        .filter((mediaId): mediaId is string => Boolean(mediaId))
+      try {
+        await assertAssetsPublishable({ accountId: input.accountId, assetKeys, aigcLabelRequired: false })
+      } catch (error) {
+        throw new ControlledExecutionError('not_started', 'asset_provenance_blocked', error instanceof Error ? error.message : String(error))
+      }
+
       try {
         const record = await submitWechatPublish(
           { credentialRef: account.credentialRef, accountId: input.accountId },
