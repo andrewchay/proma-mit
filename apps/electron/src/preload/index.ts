@@ -1957,6 +1957,11 @@ export interface ElectronAPI {
         getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
         getCapabilities: (accountId: string) => Promise<{ capabilities: import('@gravitas/shared').WechatDirectCapabilityState[]; profile: import('@gravitas/shared').WechatDirectAccountProfile | null }>
       }
+      publish: {
+        list: (accountId?: string) => Promise<import('@gravitas/shared').WechatPublishRecord[]>
+        poll: (publishRecordId: string) => Promise<import('@gravitas/shared').WechatPublishRecord>
+        reconcileSubmit: (input: { publishRecordId: string; platformAccepted: boolean; publishId?: string; note: string }) => Promise<import('@gravitas/shared').WechatPublishRecord>
+      }
       schema: {
         getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
       }
@@ -4352,6 +4357,11 @@ const electronAPI: ElectronAPI = {
         audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
         getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
         getCapabilities: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, accountId),
+      },
+      publish: {
+        list: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_PUBLISHES, accountId),
+        poll: (publishRecordId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.POLL_WECHAT_PUBLISH, publishRecordId),
+        reconcileSubmit: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RECONCILE_WECHAT_SUBMIT, input),
       },
       schema: {
         getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),

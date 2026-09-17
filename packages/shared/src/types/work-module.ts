@@ -873,6 +873,9 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   RECONCILE_CONTROLLED_EXECUTION: 'new-media:reconcile-controlled-execution',
   RETRY_CONTROLLED_EXECUTION: 'new-media:retry-controlled-execution',
   LIST_CONTROLLED_EXECUTORS: 'new-media:list-controlled-executors',
+  LIST_WECHAT_PUBLISHES: 'new-media:list-wechat-publishes',
+  POLL_WECHAT_PUBLISH: 'new-media:poll-wechat-publish',
+  RECONCILE_WECHAT_SUBMIT: 'new-media:reconcile-wechat-submit',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
   LIST_ACCOUNTS: 'new-media:list-accounts',
   CREATE_ACCOUNT: 'new-media:create-account',
@@ -1032,6 +1035,50 @@ export interface WechatDraftRecord {
   lastSyncedAt?: number
   /** 最近一次失败的本地原因码，用于恢复而不是静默重试。 */
   lastErrorCode?: string
+  createdAt: number
+  updatedAt: number
+}
+
+// ===== 微信公众号发布（freepublish） =====
+
+export type WechatPublishStatus =
+  | 'submit_requested'
+  | 'publishing'
+  | 'published'
+  | 'rejected'
+  | 'failed'
+  | 'deleted'
+  | 'unknown'
+
+export interface WechatPublishTransition {
+  from: WechatPublishStatus | null
+  to: WechatPublishStatus
+  platformStatus?: number
+  at: number
+  note: string
+}
+
+export interface WechatPublishRecord {
+  id: string
+  accountId: string
+  /** 本地微信草稿记录 id。 */
+  draftId: string
+  platformMediaId: string
+  /** 平台返回的 publish_id；提交成功即保存，用于后续查询与对账。 */
+  publishId?: string
+  status: WechatPublishStatus
+  /** 平台原始 publish_status 数值，保留以便核对映射是否准确。 */
+  platformStatus?: number
+  articleId?: string
+  articleUrl?: string
+  failIndices?: number[]
+  submittedAt: number
+  lastPolledAt?: number
+  publishedAt?: number
+  /** 提交结果未知时禁止再次提交，必须先对账。 */
+  submitOutcomeUnknown?: boolean
+  failureCode?: string
+  transitions: WechatPublishTransition[]
   createdAt: number
   updatedAt: number
 }
@@ -1314,6 +1361,8 @@ export interface NewMediaControlledAction {
   kind: 'publish' | 'send-reply'
   platform: NewMediaPlatform
   targetId: string
+  /** 目标账号；真实执行器必须据此解析凭据，缺失时拒绝执行。 */
+  accountId?: string
   summary: string
   status: NewMediaControlledActionStatus
   requestedAt: number

@@ -59,11 +59,12 @@ async function requireAction(actionId: string): Promise<ControlledActionRequest>
   return action
 }
 
-export async function requestControlledAction(input: Pick<ControlledActionRequest, 'kind' | 'platform' | 'targetId' | 'summary'>, requester = 'local-user'): Promise<ControlledActionRequest> {
+export async function requestControlledAction(input: Pick<ControlledActionRequest, 'kind' | 'platform' | 'targetId' | 'summary'> & { accountId?: string }, requester = 'local-user'): Promise<ControlledActionRequest> {
   if (!input.targetId.trim() || !input.summary.trim()) throw new Error('操作目标和摘要不能为空')
   const action: ControlledActionRequest = {
     id: randomUUID(),
     ...input,
+    accountId: input.accountId?.trim() || undefined,
     status: 'pending_approval',
     requestedAt: Date.now(),
     attempts: 0,
@@ -138,6 +139,12 @@ export async function executeControlledAction(actionId: string, actor = 'local-u
   if (current.status === 'executing') throw new Error('该请求正在执行中，请等待结果')
   if (current.status === 'simulated') throw new Error('该请求已走本地模拟路径，不能再次真实执行')
   if (current.status === 'rejected') throw new Error('已拒绝的请求不能执行')
+  if (current.status === 'failed') {
+    // 失败后不能直接再执行：结果未知时必须先对账，否则应走重试入口。
+    throw new Error(current.retryRequiresReconciliation
+      ? '上次执行结果未知，可能已被平台接受；请先对账确认后再重试'
+      : '上次执行已失败，请使用重试入口重新执行')
+  }
   if (current.status !== 'approved') throw new Error('外发请求尚未批准，不能执行')
 
   // 同步块：判定并占用执行权，防止并发重复执行。
@@ -178,6 +185,7 @@ export async function executeControlledAction(actionId: string, actor = 'local-u
       kind: current.kind,
       platform: current.platform,
       targetId: current.targetId,
+      accountId: current.accountId,
       summary: current.summary,
       attemptId,
       actor,

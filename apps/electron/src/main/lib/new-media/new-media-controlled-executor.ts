@@ -32,6 +32,8 @@ export interface ControlledExecutionInput {
   kind: ControlledActionKind
   platform: NewMediaPlatform
   targetId: string
+  /** 目标账号；执行器据此解析本地凭据。 */
+  accountId?: string
   summary: string
   /** 本次执行尝试标识，用于在平台侧对账与幂等关联。 */
   attemptId: string

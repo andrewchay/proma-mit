@@ -12,6 +12,21 @@ import { NEW_MEDIA_IPC_CHANNELS } from '@gravitas/shared'
 import { withNewMediaIpcValidation } from './new-media-ipc-validation'
 
 export function registerNewMediaIpcHandlers(): void {
+  // 注册已知的真实执行器（幂等：重复注册会被 registry 拒绝，这里先做存在性判断）。
+  void (async () => {
+    try {
+      const { listControlledActionExecutors, getControlledActionExecutor } = await import('./new-media-controlled-executor')
+      if (!getControlledActionExecutor('publish', 'wechat-official-account')) {
+        const { registerWechatPublishExecutor } = await import('./adapters/wechat-direct-publish-service')
+        registerWechatPublishExecutor()
+      }
+      void listControlledActionExecutors
+    } catch (error) {
+      // 注册失败不能影响其它通道；执行时会因缺少执行器而明确报错。
+      console.error('[新媒体] 真实执行器注册失败', error)
+    }
+  })()
+
   // 所有入参先经 new-media-ipc-validation 校验，再进入服务层。
   const nmValidation = () => import('./new-media-ipc-validation')
   /**
@@ -183,6 +198,40 @@ export function registerNewMediaIpcHandlers(): void {
   handle(NEW_MEDIA_IPC_CHANNELS.RETRY_CONTROLLED_EXECUTION, async (_: unknown, actionId: unknown) => {
     const { requireId } = await nmValidation()
     return (await import('./controlled-actions')).retryControlledExecution(requireId(actionId, 'actionId'))
+  })
+
+  // ===== 微信发布状态（P2-05） =====
+  handle(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_PUBLISHES, async (_: unknown, accountId: unknown) => {
+    const { optionalId } = await nmValidation()
+    return (await import('./adapters/wechat-direct-publish-service')).listWechatPublishes(optionalId(accountId, 'accountId'))
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.POLL_WECHAT_PUBLISH, async (_: unknown, publishRecordId: unknown) => {
+    const { requireId } = await nmValidation()
+    const resolved = requireId(publishRecordId, 'publishRecordId')
+    const service = await import('./adapters/wechat-direct-publish-service')
+    const record = await service.getWechatPublish(resolved)
+    if (!record) throw new Error('发布记录不存在')
+    const account = await (await import('./new-media-account-service')).getNewMediaAccount(record.accountId)
+    if (!account?.credentialRef) throw new Error('账号缺少凭据，无法查询发布状态')
+    return service.pollWechatPublishStatus({ credentialRef: account.credentialRef, accountId: record.accountId }, resolved)
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.RECONCILE_WECHAT_SUBMIT, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const publishRecordId = v.requireId(payload.publishRecordId, 'publishRecordId')
+    const note = v.requireRichText(payload.note, 'note', v.NEW_MEDIA_LIMITS.summary)
+    if (typeof payload.platformAccepted !== 'boolean') throw new Error('platformAccepted 必须是布尔值')
+    const publishId = payload.publishId === undefined ? undefined : v.requireId(payload.publishId, 'publishId')
+    const service = await import('./adapters/wechat-direct-publish-service')
+    const record = await service.getWechatPublish(publishRecordId)
+    if (!record) throw new Error('发布记录不存在')
+    const account = await (await import('./new-media-account-service')).getNewMediaAccount(record.accountId)
+    if (!account?.credentialRef) throw new Error('账号缺少凭据')
+    return service.reconcileWechatSubmit({ credentialRef: account.credentialRef, accountId: record.accountId }, publishRecordId, {
+      platformAccepted: payload.platformAccepted, publishId, note,
+    })
   })
 
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media-account-service')).listNewMediaAccounts())

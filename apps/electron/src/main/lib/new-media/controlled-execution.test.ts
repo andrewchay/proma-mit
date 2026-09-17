@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -28,6 +28,8 @@ import { clearNewMediaRecordsForTests, closeNewMediaDb } from './new-media-sqlit
 
 let testDir = ''
 beforeAll(() => { testDir = mkdtempSync(join(tmpdir(), 'gravitas-nm-exec-')); process.env.PROMA_TEST_CONFIG_DIR = testDir })
+// 执行器注册表是进程级状态，其它测试文件可能已注册过真实执行器；每例先清空。
+beforeEach(() => { clearControlledActionExecutorsForTests() })
 afterEach(async () => { clearControlledActionExecutorsForTests(); await clearNewMediaRecordsForTests() })
 afterAll(() => { clearControlledActionExecutorsForTests(); closeNewMediaDb(); delete process.env.PROMA_TEST_CONFIG_DIR; rmSync(testDir, { recursive: true, force: true }) })
 
@@ -62,7 +64,8 @@ async function approvedAction(platform: NewMediaPlatform = 'wechat-official-acco
 }
 
 describe('P2-06 执行器注册表', () => {
-  test('默认没有任何执行器，真实外发无法触发', () => {
+  test('清空注册表后没有任何执行器，真实外发无法触发', () => {
+    clearControlledActionExecutorsForTests()
     expect(listControlledActionExecutors()).toEqual([])
   })
 

@@ -60,6 +60,7 @@ export const NEW_MEDIA_KIND_REGISTRY: readonly NewMediaKindDefinition[] = [
   { kind: 'report-import-row', domain: 'import', description: '报表导入明细行' },
   { kind: 'wechat-media-asset', domain: 'media', description: '微信公众号素材资产' },
   { kind: 'wechat-draft', domain: 'content', description: '微信公众号草稿映射' },
+  { kind: 'wechat-publish', domain: 'content', description: '微信公众号发布记录' },
 ]
 
 const KIND_TO_DOMAIN = new Map(NEW_MEDIA_KIND_REGISTRY.map((entry) => [entry.kind, entry.domain]))
