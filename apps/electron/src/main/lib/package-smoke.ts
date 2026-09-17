@@ -22,7 +22,23 @@ import { readdirSync } from 'node:fs'
 import { createNoteFile, updateNoteFile, renameNoteFile, deleteNoteFile, readNoteFile, noteFileVersion } from './knowledge-write-service'
 import { createKnowledgeVault, indexKnowledgeVault, listKnowledgeNotes } from './knowledge-service'
 import { hasCapability } from './entitlement-gate'
-import { getAgentWorkspacePath } from './config-paths'
+import { getAgentWorkspacePath, getNewMediaSkillsDir, seedNewMediaSkills } from './config-paths'
+import { newMediaPluginRuntime } from './plugins/new-media-plugin'
+import {
+  closeNewMediaDb,
+  getNewMediaRecord,
+  getNewMediaSchemaInfo,
+  initNewMediaDb,
+  putNewMediaRecord,
+} from './new-media/new-media-sqlite-store'
+import { createContentDraft } from './new-media/content-operations'
+import { buildXiaohongshuHandoffPackage, confirmXiaohongshuPublished, prepareXiaohongshuHandoff } from './new-media/xiaohongshu-handoff'
+import { listNewMediaAudit } from './new-media/new-media-audit'
+import {
+  loadNewMediaAccountSecret,
+  removeNewMediaAccountSecret,
+  saveNewMediaAccountSecret,
+} from './new-media/new-media-account-secret-store'
 
 export async function runPackageSmoke(): Promise<void> {
   assert(app.isPackaged, '必须验证实际安装包')
@@ -152,8 +168,11 @@ export async function runPackageSmoke(): Promise<void> {
   try { createNoteFile({ vaultId: smokeVault.id, title: '越权笔记' }) } catch { gateBlocked = true }
   assert(gateBlocked, '无权益时新建笔记未被拒绝')
 
+  const newMedia = await runNewMediaSmoke()
+
   console.log(JSON.stringify({
     packageSmoke: 'passed',
+    newMedia,
     version: app.getVersion(),
     tools: tools.length,
     defaultSkills: defaultSkillSlugs.length,
@@ -162,6 +181,63 @@ export async function runPackageSmoke(): Promise<void> {
     sqlite: 'node:sqlite',
     knowledgeEdit: 'passed',
   }))
+}
+
+/**
+ * 新媒体资源、DB 迁移、凭据隔离、审计脱敏与能力停用的打包验收。
+ * 只使用临时配置目录，不产生任何外部平台副作用。
+ */
+async function runNewMediaSmoke(): Promise<Record<string, unknown>> {
+  assert(existsSync(join(process.resourcesPath, 'new-media-skills/nm-content-operator/SKILL.md')), 'new-media-skills 打包缺失')
+  seedNewMediaSkills()
+  const skillsDir = getNewMediaSkillsDir()
+  const bundledSkills = readdirSync(join(process.resourcesPath, 'new-media-skills'))
+  assert(bundledSkills.length >= 6, '新媒体 Skill 数量不足')
+  assert(bundledSkills.every(slug => existsSync(join(skillsDir, slug, 'SKILL.md'))), '新媒体 Skill 未同步到配置目录')
+
+  await initNewMediaDb()
+  const info = await getNewMediaSchemaInfo()
+  assert.equal(info.version, info.currentVersion, '新媒体数据库未迁移到最新版本')
+  assert(info.unknownKinds.length === 0, `存在未登记的记录类型: ${info.unknownKinds.join(',')}`)
+  assert(info.appliedMigrations.length > 0, '缺少迁移记录')
+
+  const draft = await createContentDraft('烟测内容：新品体验分享', ['xiaohongshu'])
+  const handoff = await prepareXiaohongshuHandoff(draft.id)
+  assert.equal(handoff.status, 'draft_ready', '交接不应直接标记为已发布')
+  const pkg = await buildXiaohongshuHandoffPackage(handoff.id)
+  assert(pkg.length > 0, '交付包为空')
+  await confirmXiaohongshuPublished(handoff.id, 'package-smoke')
+  const audit = await listNewMediaAudit()
+  assert(audit.length > 0, '缺少统一审计记录')
+  assert(audit.every(entry => entry.domain && entry.event && entry.ordinal > 0), '审计信封字段不完整')
+
+  // 凭据只进独立 Secret Store，不得出现在业务数据库或审计里。
+  saveNewMediaAccountSecret('package-smoke-ref', { accessToken: 'smoke-secret-value', scopes: ['draft'] })
+  const loaded = loadNewMediaAccountSecret('package-smoke-ref')
+  assert.equal(loaded?.accessToken, 'smoke-secret-value', '凭据无法读回')
+  assert(!JSON.stringify(audit).includes('smoke-secret-value'), '审计出现敏感凭据')
+
+  // DB 重开：记录在进程内关闭并重新初始化后仍然存在。
+  closeNewMediaDb()
+  await initNewMediaDb()
+  assert((await getNewMediaRecord('xiaohongshu-handoff', handoff.id)) !== undefined, '新媒体数据库重开后丢失记录')
+  await putNewMediaRecord('content-draft', { id: 'package-smoke-draft', sourceText: '重开验证' })
+  removeNewMediaAccountSecret('package-smoke-ref')
+  assert(loadNewMediaAccountSecret('package-smoke-ref') === undefined, '凭据未删除')
+  closeNewMediaDb()
+
+  // 能力停用：不注入工具与 Skill。
+  const runtime = newMediaPluginRuntime()
+  updateSettings({ newMediaCapabilities: [] })
+  assert(!runtime.isEnabled(), '未订阅能力时插件仍启用')
+  updateSettings({ newMediaCapabilities: ['content-operations'] })
+  assert(runtime.isEnabled(), '订阅能力后插件未启用')
+  assert(runtime.contributeSkills?.().map(item => item.slug).join(',') === 'nm-content-operator', 'Skill 未按能力精确分发')
+  assert(runtime.contributeTools?.().every(tool => !tool.name.includes('engagement')), '未订阅的能力注入了工具')
+  updateSettings({ newMediaCapabilities: [] })
+  assert(runtime.contributeSkills?.().length === 0, '停用能力后仍分发 Skill')
+
+  return { schemaVersion: info.version, migrations: info.appliedMigrations.length, skills: bundledSkills.length, audits: audit.length }
 }
 
 interface KimiCompactionSmokeResult {

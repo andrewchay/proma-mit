@@ -14,6 +14,8 @@ import {
   removeNewMediaAccountSecret,
   saveNewMediaAccountSecret,
 } from './new-media-account-secret-store'
+import type { NewMediaAuditEntry } from './new-media-audit'
+import { appendNewMediaAudit, createNewMediaAuditEntry, listNewMediaAudit } from './new-media-audit'
 import {
   deleteNewMediaRecord,
   getNewMediaRecord,
@@ -22,10 +24,21 @@ import {
 } from './new-media-sqlite-store'
 
 const ACCOUNT_KIND = 'connected-account'
-const AUDIT_KIND = 'account-audit'
 
-function audit(accountId: string, event: NewMediaAccountAuditEntry['event'], actor: string, detail: string): NewMediaAccountAuditEntry {
-  return { id: randomUUID(), accountId, event, actor, detail, createdAt: Date.now() }
+/**
+ * 账号审计统一使用 new-media-audit 信封，
+ * 读取时映射回既有 NewMediaAccountAuditEntry 形状，保持 IPC 契约不变。
+ */
+function accountAudit(accountId: string, event: NewMediaAccountAuditEntry['event'], actor: string, detail: string, metadata?: Record<string, unknown>) {
+  return createNewMediaAuditEntry({ domain: 'account', event, actor, subjectId: accountId, detail, metadata })
+}
+
+async function auditOnly(entry: Promise<NewMediaAuditEntry>): Promise<void> {
+  await appendNewMediaAudit(await entry)
+}
+
+async function withAudit<T extends { id: string }>(record: T, entry: Promise<NewMediaAuditEntry>): Promise<void> {
+  await appendNewMediaAudit(await entry, [{ kind: ACCOUNT_KIND, value: record }])
 }
 
 function errorCode(error: unknown): string {
@@ -55,10 +68,10 @@ export async function createNewMediaAccount(input: { platform: NewMediaPlatform;
     createdAt: now,
     updatedAt: now,
   }
-  await putNewMediaRecords([
-    { kind: ACCOUNT_KIND, value: account },
-    { kind: AUDIT_KIND, value: audit(account.id, 'account_created', 'local-user', `已创建${adapter.displayName}账号占位；尚未授权。`) },
-  ])
+  await withAudit(account, accountAudit(account.id, 'account_created', 'local-user', `已创建${adapter.displayName}账号占位；尚未授权。`, {
+    platform: account.platform,
+    authorizationMethod: account.authorizationMethod,
+  }))
   return account
 }
 
@@ -74,10 +87,10 @@ export async function beginNewMediaAccountAuthorization(accountId: string): Prom
   const account = await requireAccount(accountId)
   const adapter = getPlatformAdapterRegistry().get(account.platform)
   if (!adapter.authorization.available) {
-    await putNewMediaRecords([{
-      kind: AUDIT_KIND,
-      value: audit(account.id, 'validation_failed', 'local-user', adapter.authorization.description),
-    }])
+    await auditOnly(accountAudit(account.id, 'validation_failed', 'local-user', adapter.authorization.description, {
+      platform: account.platform,
+      reason: 'authorization_unavailable',
+    }))
     return {
       accountId,
       status: account.status,
@@ -95,10 +108,10 @@ export async function beginNewMediaAccountAuthorization(accountId: string): Prom
     errorCode: undefined,
     updatedAt: Date.now(),
   }
-  await putNewMediaRecords([
-    { kind: ACCOUNT_KIND, value: pending },
-    { kind: AUDIT_KIND, value: audit(account.id, 'authorization_started', 'local-user', `已启动${adapter.displayName}授权。`) },
-  ])
+  await withAudit(pending, accountAudit(account.id, 'authorization_started', 'local-user', `已启动${adapter.displayName}授权。`, {
+    platform: account.platform,
+    authorizationMethod: pending.authorizationMethod,
+  }))
   return {
     accountId,
     status: pending.status,
@@ -121,10 +134,10 @@ export async function completeNewMediaAccountAuthorization(
     validation = await adapter.validateAuthorization(material, account)
   } catch (error) {
     const failed: NewMediaConnectedAccount = { ...account, status: 'error', errorCode: errorCode(error), updatedAt: Date.now() }
-    await putNewMediaRecords([
-      { kind: ACCOUNT_KIND, value: failed },
-      { kind: AUDIT_KIND, value: audit(account.id, 'validation_failed', actor, `授权校验失败：${failed.errorCode}`) },
-    ])
+    await withAudit(failed, accountAudit(account.id, 'validation_failed', actor, `授权校验失败：${failed.errorCode}`, {
+      platform: account.platform,
+      errorCode: failed.errorCode,
+    }))
     throw error
   }
 
@@ -147,10 +160,12 @@ export async function completeNewMediaAccountAuthorization(
     updatedAt: Date.now(),
   }
   try {
-    await putNewMediaRecords([
-      { kind: ACCOUNT_KIND, value: connected },
-      { kind: AUDIT_KIND, value: audit(account.id, 'connected', actor, `已连接${adapter.displayName}账号；授权材料未写入业务数据库。`) },
-    ])
+    await withAudit(connected, accountAudit(account.id, 'connected', actor, `已连接${adapter.displayName}账号；授权材料未写入业务数据库。`, {
+      platform: account.platform,
+      authorizationMethod: connected.authorizationMethod,
+      grantedScopeCount: connected.grantedScopes.length,
+      credentialProtection: connected.credentialProtection,
+    }))
   } catch (error) {
     removeNewMediaAccountSecret(credentialRef)
     throw error
@@ -176,14 +191,18 @@ export async function validateNewMediaAccount(accountId: string): Promise<NewMed
       errorCode: undefined,
       updatedAt: Date.now(),
     }
-    await putNewMediaRecords([{ kind: ACCOUNT_KIND, value: validated }])
+    await withAudit(validated, accountAudit(account.id, 'connected', 'local-user', '账号校验通过，能力与授权范围已刷新。', {
+      platform: account.platform,
+      status: validated.status,
+      grantedScopeCount: validated.grantedScopes.length,
+    }))
     return validated
   } catch (error) {
     const failed: NewMediaConnectedAccount = { ...account, status: 'error', errorCode: errorCode(error), lastValidatedAt: Date.now(), updatedAt: Date.now() }
-    await putNewMediaRecords([
-      { kind: ACCOUNT_KIND, value: failed },
-      { kind: AUDIT_KIND, value: audit(account.id, 'validation_failed', 'local-user', `账号校验失败：${failed.errorCode}`) },
-    ])
+    await withAudit(failed, accountAudit(account.id, 'validation_failed', 'local-user', `账号校验失败：${failed.errorCode}`, {
+      platform: account.platform,
+      errorCode: failed.errorCode,
+    }))
     throw error
   }
 }
@@ -209,20 +228,27 @@ export async function disconnectNewMediaAccount(accountId: string): Promise<NewM
     capabilities: adapter.getCapabilities(),
     updatedAt: Date.now(),
   }
-  await putNewMediaRecords([
-    { kind: ACCOUNT_KIND, value: disconnected },
-    { kind: AUDIT_KIND, value: audit(account.id, 'disconnected', 'local-user', '已断开账号并删除本地授权材料。') },
-  ])
+  await withAudit(disconnected, accountAudit(account.id, 'disconnected', 'local-user', '已断开账号并删除本地授权材料。', {
+    platform: account.platform,
+  }))
   return disconnected
 }
 
 export async function removeNewMediaAccount(accountId: string): Promise<boolean> {
   const account = await requireAccount(accountId)
   if (account.credentialRef) removeNewMediaAccountSecret(account.credentialRef)
-  await putNewMediaRecords([{ kind: AUDIT_KIND, value: audit(account.id, 'removed', 'local-user', '已删除账号元数据。') }])
+  await auditOnly(accountAudit(account.id, 'removed', 'local-user', '已删除账号元数据。', { platform: account.platform }))
   return deleteNewMediaRecord(ACCOUNT_KIND, accountId)
 }
 
 export async function getNewMediaAccountAudit(accountId: string): Promise<NewMediaAccountAuditEntry[]> {
-  return (await listNewMediaRecords<NewMediaAccountAuditEntry>(AUDIT_KIND)).filter((entry) => entry.accountId === accountId)
+  const entries = await listNewMediaAudit({ domain: 'account', subjectId: accountId })
+  return entries.map((entry) => ({
+    id: entry.id,
+    accountId: entry.subjectId,
+    event: entry.event as NewMediaAccountAuditEntry['event'],
+    actor: entry.actor,
+    detail: entry.detail,
+    createdAt: entry.createdAt,
+  }))
 }

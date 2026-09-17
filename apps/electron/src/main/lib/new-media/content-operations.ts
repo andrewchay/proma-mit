@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { appendNewMediaAudit, createNewMediaAuditEntry } from './new-media-audit'
 import { clearNewMediaRecordsForTests, getNewMediaRecord, listNewMediaRecords, putNewMediaRecord } from './new-media-sqlite-store'
 
 export type NewMediaPlatform = 'xiaohongshu' | 'wechat-official-account'
@@ -65,7 +66,19 @@ export async function schedulePublication(input: { draftId: string; platform: Ne
     id: randomUUID(), draftId: input.draftId, platform: input.platform, accountId: input.accountId.trim(),
     scheduledAt: input.scheduledAt, status: 'pending_approval', approvalRequired: true, createdAt: Date.now(),
   }
-  return putNewMediaRecord(JOB_KIND, job)
+  // 排程属于状态迁移：与任务记录在同一事务写入审计。
+  await appendNewMediaAudit(
+    await createNewMediaAuditEntry({
+      domain: 'publication',
+      event: 'publication_scheduled',
+      actor: 'local-user',
+      subjectId: job.id,
+      detail: '已创建发布排程；仍需人工审批，且当前实现不会连接真实平台。',
+      metadata: { platform: job.platform, draftId: job.draftId, accountId: job.accountId, status: job.status },
+    }),
+    [{ kind: JOB_KIND, value: job }],
+  )
+  return job
 }
 
 export async function listPublicationJobs(): Promise<PublicationJob[]> {

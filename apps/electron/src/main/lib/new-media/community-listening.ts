@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { NewMediaPlatform } from './content-operations'
+import { appendNewMediaAudit, createNewMediaAuditEntry } from './new-media-audit'
 import { clearNewMediaRecordsForTests, getNewMediaRecord, listNewMediaRecords, putNewMediaRecord } from './new-media-sqlite-store'
 
 export type EngagementChannel = 'comment' | 'direct-message'
@@ -29,7 +30,20 @@ function classify(text: string): Pick<EngagementItem, 'intent' | 'sentiment' | '
 
 export async function ingestEngagement(input: Pick<EngagementItem, 'platform' | 'channel' | 'author' | 'text'>): Promise<EngagementItem> {
   if (!input.author.trim() || !input.text.trim()) throw new Error('互动作者和内容不能为空')
-  return putNewMediaRecord(ENGAGEMENT_KIND, { id: randomUUID(), ...input, ...classify(input.text), createdAt: Date.now() })
+  const engagement: EngagementItem = { id: randomUUID(), ...input, ...classify(input.text), createdAt: Date.now() }
+  // 互动正文不进入审计，只记录分类结果与来源。
+  await appendNewMediaAudit(
+    await createNewMediaAuditEntry({
+      domain: 'community',
+      event: 'engagement_ingested',
+      actor: 'local-user',
+      subjectId: engagement.id,
+      detail: '已接收互动并完成本地分类；正文不写入审计。',
+      metadata: { platform: engagement.platform, channel: engagement.channel, intent: engagement.intent, sentiment: engagement.sentiment, priority: engagement.priority, requiresHumanReview: engagement.requiresHumanReview },
+    }),
+    [{ kind: ENGAGEMENT_KIND, value: engagement }],
+  )
+  return engagement
 }
 export async function listEngagements(priority?: EngagementPriority): Promise<EngagementItem[]> {
   const items = await listNewMediaRecords<EngagementItem>(ENGAGEMENT_KIND)
@@ -44,7 +58,19 @@ export async function createReplyDraft(engagementId: string): Promise<ReplyDraft
     question: '感谢关注。为避免给出不准确的信息，请告诉我们你想了解的具体产品或使用场景，我们会尽快核实回复。',
     spam: '此内容不适合回复，建议按平台规则处理。', other: '感谢留言。我们已收到你的反馈，会认真参考。',
   }
-  return putNewMediaRecord(REPLY_KIND, { id: randomUUID(), engagementId, text: textByIntent[item.intent as Exclude<EngagementIntent, 'complaint' | 'cooperation'>], status: 'draft', createdAt: Date.now() })
+  const reply: ReplyDraft = { id: randomUUID(), engagementId, text: textByIntent[item.intent as Exclude<EngagementIntent, 'complaint' | 'cooperation'>], status: 'draft', createdAt: Date.now() }
+  await appendNewMediaAudit(
+    await createNewMediaAuditEntry({
+      domain: 'community',
+      event: 'reply_draft_created',
+      actor: 'local-user',
+      subjectId: reply.id,
+      detail: '已生成回复草稿；需人工审核后才能进入外发审批，草稿正文不写入审计。',
+      metadata: { engagementId, intent: item.intent, platform: item.platform },
+    }),
+    [{ kind: REPLY_KIND, value: reply }],
+  )
+  return reply
 }
 export async function listReplyDrafts(): Promise<ReplyDraft[]> { return listNewMediaRecords(REPLY_KIND) }
 export async function createListeningQuery(keywords: string[]): Promise<ListeningQuery> {

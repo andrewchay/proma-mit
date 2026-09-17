@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/electron",
-  "version": "0.12.21",
+  "version": "0.12.22",
   "description": "Gravitas next gen ai software with general agents - Electron App",
   "license": "BUSL-1.1",
   "main": "dist/main.cjs",
@@ -74,6 +74,7 @@
     "nodemailer": "^10.0.9",
     "pdfjs-dist": "^4.10.38",
     "playwright-core": "1.61.0",
+    "read-excel-file": "^9.3.10",
     "sql.js": "^1.14.1",
     "typebox": "1.1.38"
   },

@@ -7,14 +7,20 @@ import type {
   XiaohongshuHandoff,
   XiaohongshuHandoffAuditEntry,
 } from '@gravitas/shared'
-import { getNewMediaRecord, listNewMediaRecords, putNewMediaRecords } from './new-media-sqlite-store'
+import type { NewMediaAuditEntry } from './new-media-audit'
+import { appendNewMediaAudit, createNewMediaAuditEntry, listNewMediaAudit } from './new-media-audit'
+import { getNewMediaRecord, listNewMediaRecords } from './new-media-sqlite-store'
 
 const DRAFT_KIND = 'content-draft'
 const HANDOFF_KIND = 'xiaohongshu-handoff'
-const AUDIT_KIND = 'xiaohongshu-handoff-audit'
 
-function audit(handoffId: string, event: XiaohongshuHandoffAuditEntry['event'], actor: string, detail: string): XiaohongshuHandoffAuditEntry {
-  return { id: randomUUID(), handoffId, event, actor, detail, createdAt: Date.now() }
+/** 发布交接审计统一写入 new-media-audit，读取时映射回既有形状。 */
+function audit(handoffId: string, event: XiaohongshuHandoffAuditEntry['event'], actor: string, detail: string, metadata?: Record<string, unknown>) {
+  return createNewMediaAuditEntry({ domain: 'handoff', event, actor, subjectId: handoffId, detail, metadata })
+}
+
+async function persistHandoff(record: XiaohongshuHandoff, entry: Promise<NewMediaAuditEntry>): Promise<void> {
+  await appendNewMediaAudit(await entry, [{ kind: HANDOFF_KIND, value: record }])
 }
 
 function safeName(title: string): string {
@@ -51,10 +57,11 @@ export async function prepareXiaohongshuHandoff(draftId: string): Promise<Xiaoho
     createdAt: now,
     updatedAt: now,
   }
-  await putNewMediaRecords([
-    { kind: HANDOFF_KIND, value: handoff },
-    { kind: AUDIT_KIND, value: audit(handoff.id, 'prepared', 'local-user', '已准备小红书发布交接；尚未对外发布。') },
-  ])
+  await persistHandoff(handoff, audit(handoff.id, 'prepared', 'local-user', '已准备小红书发布交接；尚未对外发布。', {
+    draftId: handoff.draftId,
+    packageVersion: handoff.packageVersion,
+    warningCount: handoff.warnings.length,
+  }))
   return handoff
 }
 
@@ -111,10 +118,12 @@ export async function exportXiaohongshuHandoff(handoffId: string, destinationPat
     handedOffBy: actor,
     updatedAt: Date.now(),
   }
-  await putNewMediaRecords([
-    { kind: HANDOFF_KIND, value: exported },
-    { kind: AUDIT_KIND, value: audit(handoff.id, 'exported', actor, `已导出交付包 ${exported.packageFileName}；未发生真实发布。`) },
-  ])
+  await persistHandoff(exported, audit(handoff.id, 'exported', actor, `已导出交付包 ${exported.packageFileName}；未发生真实发布。`, {
+    draftId: exported.draftId,
+    packageFileName: exported.packageFileName,
+    packageSha256: sha256,
+    destinationIsCustomPath: basename(destinationPath) !== exported.packageFileName,
+  }))
   return exported
 }
 
@@ -131,15 +140,24 @@ export async function confirmXiaohongshuPublished(handoffId: string, actor: stri
     confirmedBy,
     updatedAt: Date.now(),
   }
-  await putNewMediaRecords([
-    { kind: HANDOFF_KIND, value: confirmed },
-    { kind: AUDIT_KIND, value: audit(handoff.id, 'user_confirmed_published', confirmedBy, '由用户确认内容已在小红书发布；该状态不是平台 API 回执。') },
-  ])
+  await persistHandoff(confirmed, audit(handoff.id, 'user_confirmed_published', confirmedBy, '由用户确认内容已在小红书发布；该状态不是平台 API 回执。', {
+    draftId: handoff.draftId,
+    confirmationSource: 'user',
+  }))
   return confirmed
 }
 
 export async function getXiaohongshuHandoffAudit(handoffId: string): Promise<XiaohongshuHandoffAuditEntry[]> {
-  return (await listNewMediaRecords<XiaohongshuHandoffAuditEntry>(AUDIT_KIND))
-    .filter((entry) => entry.handoffId === handoffId)
-    .sort((left, right) => left.createdAt - right.createdAt || ['prepared', 'exported', 'user_confirmed_published'].indexOf(left.event) - ['prepared', 'exported', 'user_confirmed_published'].indexOf(right.event))
+  const order = ['prepared', 'exported', 'user_confirmed_published']
+  const entries = await listNewMediaAudit({ domain: 'handoff', subjectId: handoffId })
+  return entries
+    .map((entry) => ({
+      id: entry.id,
+      handoffId: entry.subjectId,
+      event: entry.event as XiaohongshuHandoffAuditEntry['event'],
+      actor: entry.actor,
+      detail: entry.detail,
+      createdAt: entry.createdAt,
+    }))
+    .sort((left, right) => order.indexOf(left.event) - order.indexOf(right.event))
 }

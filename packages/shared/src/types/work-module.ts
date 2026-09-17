@@ -846,6 +846,7 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   LIST_CONTROLLED_ACTIONS: 'new-media:list-controlled-actions',
   REQUEST_CONTROLLED_ACTION: 'new-media:request-controlled-action',
   APPROVE_CONTROLLED_ACTION: 'new-media:approve-controlled-action',
+  REJECT_CONTROLLED_ACTION: 'new-media:reject-controlled-action',
   SIMULATE_CONTROLLED_ACTION: 'new-media:simulate-controlled-action',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
   LIST_ACCOUNTS: 'new-media:list-accounts',
@@ -853,13 +854,22 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   BEGIN_ACCOUNT_AUTHORIZATION: 'new-media:begin-account-authorization',
   VALIDATE_ACCOUNT: 'new-media:validate-account',
   DISCONNECT_ACCOUNT: 'new-media:disconnect-account',
+  REMOVE_ACCOUNT: 'new-media:remove-account',
   GET_ACCOUNT_AUDIT: 'new-media:get-account-audit',
   GET_ADAPTER_INFO: 'new-media:get-adapter-info',
+  GET_SCHEMA_INFO: 'new-media:get-schema-info',
   LIST_XHS_HANDOFFS: 'new-media:list-xhs-handoffs',
   PREPARE_XHS_HANDOFF: 'new-media:prepare-xhs-handoff',
   EXPORT_XHS_HANDOFF: 'new-media:export-xhs-handoff',
   CONFIRM_XHS_PUBLISHED: 'new-media:confirm-xhs-published',
   GET_XHS_HANDOFF_AUDIT: 'new-media:get-xhs-handoff-audit',
+  LIST_IMPORT_CONTRACTS: 'new-media:list-import-contracts',
+  PICK_REPORT_FILE: 'new-media:pick-report-file',
+  CANCEL_IMPORT_PREVIEW: 'new-media:cancel-import-preview',
+  COMMIT_REPORT_IMPORT: 'new-media:commit-report-import',
+  LIST_IMPORT_BATCHES: 'new-media:list-import-batches',
+  LIST_IMPORTED_ROWS: 'new-media:list-imported-rows',
+  GET_INSIGHT_REPORT: 'new-media:get-insight-report',
 } as const
 
 export type NewMediaPlatform = 'xiaohongshu' | 'wechat-official-account'
@@ -959,6 +969,147 @@ export interface XiaohongshuHandoffExportResult {
   canceled: boolean
   fileName?: string
   sha256?: string
+}
+
+// ===== 小红书报表导入 =====
+
+export type NewMediaImportSourceKind =
+  | 'xiaohongshu-professional'
+  | 'xiaohongshu-pugongying'
+  | 'xiaohongshu-juguang'
+
+export type NewMediaImportMetricKind = 'date' | 'text' | 'count' | 'currency' | 'ratio'
+
+export interface NewMediaImportColumn {
+  field: string
+  label: string
+  kind: NewMediaImportMetricKind
+  definition: string
+  required: boolean
+  aliases: readonly string[]
+}
+
+export interface NewMediaImportContract {
+  sourceKind: NewMediaImportSourceKind
+  label: string
+  origin: string
+  commercial: boolean
+  requiresCommercialAuthorization: boolean
+  boundary: string
+  columns: readonly NewMediaImportColumn[]
+}
+
+export interface NewMediaImportInvalidRow {
+  rowNumber: number
+  reason: string
+}
+
+export interface NewMediaImportPreviewRow {
+  rowNumber: number
+  date: string
+  contentTitle?: string
+  metrics: Record<string, number>
+}
+
+export interface NewMediaImportPreview {
+  sourceKind: NewMediaImportSourceKind
+  fileName: string
+  fileSha256: string
+  sheetName?: string
+  headers: string[]
+  mapping: Record<string, number>
+  matchedFields: string[]
+  missingRequired: string[]
+  unmappedHeaders: string[]
+  totalRows: number
+  validRows: number
+  invalidRows: NewMediaImportInvalidRow[]
+  existingBatchId?: string
+  previewRows: NewMediaImportPreviewRow[]
+  boundary: string
+  commercial: boolean
+  /** 本次预览的短期凭据；提交时用它引用主进程已读取的文件，渲染进程无需接触文件内容。 */
+  pendingToken: string
+}
+
+export type NewMediaImportPickResult =
+  | { canceled: true }
+  | { canceled: false; preview: NewMediaImportPreview }
+
+export interface NewMediaReportImportBatch {
+  id: string
+  sourceKind: NewMediaImportSourceKind
+  platform: NewMediaPlatform
+  accountId: string
+  fileName: string
+  fileSha256: string
+  totalRows: number
+  importedRows: number
+  skippedDuplicateRows: number
+  invalidRows: NewMediaImportInvalidRow[]
+  mapping: Record<string, number>
+  commercial: boolean
+  importedAt: number
+  importedBy: string
+  duplicateOfBatchId?: string
+}
+
+export interface NewMediaImportedReportRow {
+  id: string
+  batchId: string
+  sourceKind: NewMediaImportSourceKind
+  commercial: boolean
+  platform: NewMediaPlatform
+  accountId: string
+  capturedAt: number
+  contentId?: string
+  contentTitle?: string
+  brand?: string
+  planName?: string
+  metrics: Record<string, number>
+  rowNumber: number
+  rowHash: string
+  createdAt: number
+}
+
+export interface NewMediaInsightSourceSummary {
+  sourceKind: NewMediaImportSourceKind
+  label: string
+  commercial: boolean
+  rowCount: number
+  batchCount: number
+  lastCapturedAt?: number
+  boundary: string
+}
+
+export interface NewMediaInsightSection {
+  scope: 'account' | 'commercial'
+  totals: Record<string, number>
+  measuredMetrics: string[]
+  sources: NewMediaInsightSourceSummary[]
+  coveredDays: string[]
+  missingDays: string[]
+  lastCapturedAt?: number
+  freshnessLagDays?: number
+}
+
+export interface NewMediaInsightReport {
+  periodStart: number
+  periodEnd: number
+  generatedAt: number
+  account: NewMediaInsightSection
+  commercial: NewMediaInsightSection
+  manualSnapshotCount: number
+  disclaimers: string[]
+}
+
+export interface NewMediaSchemaInfo {
+  version: number
+  currentVersion: number
+  rollbackAvailable: boolean
+  appliedMigrations: Array<{ version: number; direction: string; description: string; appliedAt: number }>
+  registeredKinds: Array<{ kind: string; domain: string; description: string }>
+  unknownKinds: string[]
 }
 
 export interface NewMediaPublicationJob {

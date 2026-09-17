@@ -16,7 +16,6 @@ import {
   INFLUENCER_IPC_CHANNELS,
   PAID_MEDIA_IPC_CHANNELS,
   CREATIVE_IPC_CHANNELS,
-  NEW_MEDIA_IPC_CHANNELS,
 } from '@gravitas/shared'
 
 // ===== 日程管家服务 =====
@@ -245,6 +244,8 @@ function initProjectTodoProviders(): void {
 }
 
 export function registerWorkModuleIpcHandlers(): void {
+  // 新媒体运营本地工作台（无外部平台副作用）由独立模块注册。
+  require('./new-media/new-media-ipc-handlers').registerNewMediaIpcHandlers()
   console.log('[IPC] 正在注册工作模块 IPC 处理器（日程管家 / 日历同步 / 项目管理）...')
 
   // ============================================
@@ -1102,116 +1103,4 @@ export function registerWorkModuleIpcHandlers(): void {
     return marketingService.updatePaidRule(id, patch)
   })
 
-  // ============================================
-  // 新媒体运营本地工作台（无外部平台副作用）
-  // ============================================
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_DRAFTS, async () => {
-    const { listContentDrafts } = await import('./new-media/content-operations')
-    return listContentDrafts()
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, async (_: unknown, sourceText: string, platforms: import('@gravitas/shared').NewMediaPlatform[]) => {
-    const { createContentDraft } = await import('./new-media/content-operations')
-    return createContentDraft(sourceText, platforms)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_PUBLICATION_JOBS, async () => {
-    const { listPublicationJobs } = await import('./new-media/content-operations')
-    return listPublicationJobs()
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.SCHEDULE_PUBLICATION, async (_: unknown, input: { draftId: string; platform: import('@gravitas/shared').NewMediaPlatform; accountId: string; scheduledAt: number }) => {
-    const { schedulePublication } = await import('./new-media/content-operations')
-    return schedulePublication(input)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_ENGAGEMENTS, async () => (await import('./new-media/community-listening')).listEngagements())
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_ENGAGEMENT, async (_: unknown, input) => (await import('./new-media/community-listening')).ingestEngagement(input))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_REPLY_DRAFT, async (_: unknown, engagementId: string) => (await import('./new-media/community-listening')).createReplyDraft(engagementId))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_LISTENING_QUERIES, async () => (await import('./new-media/community-listening')).listListeningQueries())
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_LISTENING_QUERY, async (_: unknown, keywords: string[]) => (await import('./new-media/community-listening')).createListeningQuery(keywords))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_MENTIONS, async (_: unknown, queryId?: string) => (await import('./new-media/community-listening')).listMentions(queryId))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_MENTION, async (_: unknown, input) => (await import('./new-media/community-listening')).ingestMention(input))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_LISTENING_DIGEST, async (_: unknown, queryId: string) => (await import('./new-media/community-listening')).getListeningDigest(queryId))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_METRIC_SNAPSHOTS, async () => (await import('./new-media/analytics-trends')).listMetricSnapshots())
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_METRIC_SNAPSHOT, async (_: unknown, input) => (await import('./new-media/analytics-trends')).ingestMetricSnapshot(input))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_SOCIAL_REPORT, async (_: unknown, periodStart: number, periodEnd: number) => (await import('./new-media/analytics-trends')).getSocialReport(periodStart, periodEnd))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_TRENDS, async () => (await import('./new-media/analytics-trends')).listTrends())
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.INGEST_TREND, async (_: unknown, input) => (await import('./new-media/analytics-trends')).ingestTrend(input))
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_TREND_OPPORTUNITIES, async (_: unknown, keywords: string[]) => (await import('./new-media/analytics-trends')).getTrendOpportunities(keywords))
-
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_ACTIONS, async () => {
-    const { listControlledActions } = await import('./new-media/controlled-actions')
-    return listControlledActions()
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, async (_: unknown, input: { kind: 'publish' | 'send-reply'; platform: import('@gravitas/shared').NewMediaPlatform; targetId: string; summary: string }) => {
-    const { requestControlledAction } = await import('./new-media/controlled-actions')
-    return requestControlledAction(input)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, async (_: unknown, actionId: string, approver: string) => {
-    const { approveControlledAction } = await import('./new-media/controlled-actions')
-    return approveControlledAction(actionId, approver)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, async (_: unknown, actionId: string) => {
-    const { simulateControlledAction } = await import('./new-media/controlled-actions')
-    return simulateControlledAction(actionId)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, async (_: unknown, actionId: string) => {
-    const { getControlledActionAudit } = await import('./new-media/controlled-actions')
-    return getControlledActionAudit(actionId)
-  })
-
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media/new-media-account-service')).listNewMediaAccounts())
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: { platform: import('@gravitas/shared').NewMediaPlatform; displayName: string }) => {
-    if (!input || !['xiaohongshu', 'wechat-official-account'].includes(input.platform) || typeof input.displayName !== 'string') throw new Error('账号参数无效')
-    return (await import('./new-media/new-media-account-service')).createNewMediaAccount(input)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.BEGIN_ACCOUNT_AUTHORIZATION, async (_: unknown, accountId: string) => {
-    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
-    return (await import('./new-media/new-media-account-service')).beginNewMediaAccountAuthorization(accountId)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.VALIDATE_ACCOUNT, async (_: unknown, accountId: string) => {
-    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
-    return (await import('./new-media/new-media-account-service')).validateNewMediaAccount(accountId)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.DISCONNECT_ACCOUNT, async (_: unknown, accountId: string) => {
-    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
-    return (await import('./new-media/new-media-account-service')).disconnectNewMediaAccount(accountId)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, async (_: unknown, accountId: string) => {
-    if (typeof accountId !== 'string' || !accountId) throw new Error('账号 ID 无效')
-    return (await import('./new-media/new-media-account-service')).getNewMediaAccountAudit(accountId)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, async (_: unknown, platform: import('@gravitas/shared').NewMediaPlatform) => {
-    if (!['xiaohongshu', 'wechat-official-account'].includes(platform)) throw new Error('平台无效')
-    const { adapterInfo } = await import('./new-media/platform-adapter')
-    const { getPlatformAdapterRegistry } = await import('./new-media/platform-adapter-registry')
-    return adapterInfo(getPlatformAdapterRegistry().get(platform))
-  })
-
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS, async () => (await import('./new-media/xiaohongshu-handoff')).listXiaohongshuHandoffs())
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, async (_: unknown, draftId: string) => {
-    if (typeof draftId !== 'string' || !draftId) throw new Error('草稿 ID 无效')
-    return (await import('./new-media/xiaohongshu-handoff')).prepareXiaohongshuHandoff(draftId)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, async (event, handoffId: string) => {
-    if (typeof handoffId !== 'string' || !handoffId) throw new Error('交接 ID 无效')
-    const service = await import('./new-media/xiaohongshu-handoff')
-    const handoff = (await service.listXiaohongshuHandoffs()).find((item) => item.id === handoffId)
-    if (!handoff) throw new Error('小红书发布交接不存在')
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()
-    const options = {
-      title: '导出小红书发布交付包',
-      defaultPath: handoff.packageFileName,
-      filters: [{ name: 'ZIP 交付包', extensions: ['zip'] }],
-    }
-    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return { canceled: true }
-    const exported = await service.exportXiaohongshuHandoff(handoffId, result.filePath)
-    return { canceled: false, fileName: exported.packageFileName, sha256: exported.packageSha256 }
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.CONFIRM_XHS_PUBLISHED, async (_: unknown, handoffId: string, actor: string) => {
-    if (typeof handoffId !== 'string' || !handoffId || typeof actor !== 'string') throw new Error('确认参数无效')
-    return (await import('./new-media/xiaohongshu-handoff')).confirmXiaohongshuPublished(handoffId, actor)
-  })
-  ipcMain.handle(NEW_MEDIA_IPC_CHANNELS.GET_XHS_HANDOFF_AUDIT, async (_: unknown, handoffId: string) => {
-    if (typeof handoffId !== 'string' || !handoffId) throw new Error('交接 ID 无效')
-    return (await import('./new-media/xiaohongshu-handoff')).getXiaohongshuHandoffAudit(handoffId)
-  })
 }

@@ -1951,6 +1951,15 @@ export interface ElectronAPI {
       schema: {
         getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
       }
+      reportImport: {
+        listContracts: () => Promise<readonly import('@gravitas/shared').NewMediaImportContract[]>
+        pickAndPreview: (input: { sourceKind: import('@gravitas/shared').NewMediaImportSourceKind; accountId: string }) => Promise<import('@gravitas/shared').NewMediaImportPickResult>
+        cancelPreview: (token: string) => Promise<void>
+        commit: (input: { token: string; confirmed: boolean; importedBy: string; allowDuplicateFile?: boolean }) => Promise<import('@gravitas/shared').NewMediaReportImportBatch>
+        listBatches: () => Promise<import('@gravitas/shared').NewMediaReportImportBatch[]>
+        listRows: (batchId?: string) => Promise<import('@gravitas/shared').NewMediaImportedReportRow[]>
+        getInsightReport: (periodStart: number, periodEnd: number) => Promise<import('@gravitas/shared').NewMediaInsightReport>
+      }
       xiaohongshuHandoff: {
         list: () => Promise<import('@gravitas/shared').XiaohongshuHandoff[]>
         prepare: (draftId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
@@ -4328,6 +4337,15 @@ const electronAPI: ElectronAPI = {
       },
       schema: {
         getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),
+      },
+      reportImport: {
+        listContracts: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_IMPORT_CONTRACTS),
+        pickAndPreview: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PICK_REPORT_FILE, input),
+        cancelPreview: (token) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CANCEL_IMPORT_PREVIEW, token),
+        commit: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.COMMIT_REPORT_IMPORT, input),
+        listBatches: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_IMPORT_BATCHES),
+        listRows: (batchId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_IMPORTED_ROWS, batchId),
+        getInsightReport: (periodStart, periodEnd) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_INSIGHT_REPORT, periodStart, periodEnd),
       },
       xiaohongshuHandoff: {
         list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS),
