@@ -12,6 +12,8 @@ export type WechatAuthorizerStatus = 'active' | 'revoked'
 
 export interface WechatAuthorizerAccount {
   authorizerAppId: string
+  /** 归属租户：授权时从 state 传递，所有按租户访问必须匹配。 */
+  tenantId: string
   /** 以下两个 token 在存储层始终加密；接口返回的也是加密前的明文，仅供服务内部使用。 */
   authorizerAccessToken: string
   authorizerRefreshToken: string
@@ -21,6 +23,8 @@ export interface WechatAuthorizerAccount {
   /** 账号类型：公众号(0)/小程序(1) 等，按微信返回原样保存。 */
   accountType: string
   status: WechatAuthorizerStatus
+  /** 撤权时刻；未撤权为 undefined。 */
+  revokedAt?: number
   authorizedAt: number
   updatedAt: number
 }
@@ -28,7 +32,8 @@ export interface WechatAuthorizerAccount {
 export interface WechatAuthorizerStore {
   save(account: WechatAuthorizerAccount): Promise<void>
   load(authorizerAppId: string): Promise<WechatAuthorizerAccount | undefined>
-  list(): Promise<WechatAuthorizerAccount[]>
+  /** 只返回指定租户的账号。 */
+  list(tenantId?: string): Promise<WechatAuthorizerAccount[]>
   markRevoked(authorizerAppId: string, revokedAt: number): Promise<void>
 }
 
@@ -45,13 +50,15 @@ export class InMemoryWechatAuthorizerStore implements WechatAuthorizerStore {
     return account ? { ...account } : undefined
   }
 
-  async list(): Promise<WechatAuthorizerAccount[]> {
-    return [...this.accounts.values()].map((account) => ({ ...account }))
+  async list(tenantId?: string): Promise<WechatAuthorizerAccount[]> {
+    return [...this.accounts.values()]
+      .filter((account) => tenantId === undefined || account.tenantId === tenantId)
+      .map((account) => ({ ...account }))
   }
 
   async markRevoked(authorizerAppId: string, revokedAt: number): Promise<void> {
     const account = this.accounts.get(authorizerAppId)
-    if (account) this.accounts.set(authorizerAppId, { ...account, status: 'revoked', updatedAt: revokedAt })
+    if (account) this.accounts.set(authorizerAppId, { ...account, status: 'revoked', revokedAt, updatedAt: revokedAt })
   }
 }
 
@@ -68,6 +75,7 @@ interface AuthorizerRow extends Record<string, unknown> {
   nickname: string
   account_type: string
   status: string
+  revoked_at: string | null
   authorized_at: string
   updated_at: string
 }
@@ -88,6 +96,8 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
       nickname TEXT NOT NULL DEFAULT '',
       account_type TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'active',
+      tenant_id TEXT NOT NULL DEFAULT '',
+      revoked_at BIGINT,
       authorized_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL
     )`)
@@ -96,11 +106,11 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
   async save(account: WechatAuthorizerAccount): Promise<void> {
     await this.client.query(
       `INSERT INTO proma_wechat_authorizer
-         (authorizer_app_id, encrypted_access_token, encrypted_refresh_token, token_expires_at, token_acquired_at, nickname, account_type, status, authorized_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (authorizer_app_id, encrypted_access_token, encrypted_refresh_token, token_expires_at, token_acquired_at, nickname, account_type, status, tenant_id, revoked_at, authorized_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $11, $12, $9, $10)
        ON CONFLICT (authorizer_app_id) DO UPDATE SET
          encrypted_access_token = $2, encrypted_refresh_token = $3, token_expires_at = $4, token_acquired_at = $5,
-         nickname = $6, account_type = $7, status = $8, updated_at = $10`,
+         nickname = $6, account_type = $7, status = $8, tenant_id = $11, revoked_at = $12, updated_at = $10`,
       [
         account.authorizerAppId,
         encryptWithKey(account.authorizerAccessToken, this.encryptionKey),
@@ -126,14 +136,16 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
     return this.decode(row)
   }
 
-  async list(): Promise<WechatAuthorizerAccount[]> {
-    const result = await this.client.query<AuthorizerRow>('SELECT * FROM proma_wechat_authorizer ORDER BY authorized_at DESC')
+  async list(tenantId?: string): Promise<WechatAuthorizerAccount[]> {
+    const result = tenantId === undefined
+      ? await this.client.query<AuthorizerRow>('SELECT * FROM proma_wechat_authorizer ORDER BY authorized_at DESC')
+      : await this.client.query<AuthorizerRow>('SELECT * FROM proma_wechat_authorizer WHERE tenant_id = $1 ORDER BY authorized_at DESC', [tenantId])
     return result.rows.map((row) => this.decode(row))
   }
 
   async markRevoked(authorizerAppId: string, revokedAt: number): Promise<void> {
     await this.client.query(
-      `UPDATE proma_wechat_authorizer SET status = 'revoked', updated_at = $2 WHERE authorizer_app_id = $1`,
+      `UPDATE proma_wechat_authorizer SET status = 'revoked', revoked_at = $2, updated_at = $2 WHERE authorizer_app_id = $1`,
       [authorizerAppId, revokedAt],
     )
   }
@@ -141,6 +153,7 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
   private decode(row: AuthorizerRow): WechatAuthorizerAccount {
     return {
       authorizerAppId: row.authorizer_app_id,
+      tenantId: String(row.tenant_id ?? ''),
       authorizerAccessToken: decryptWithKey(row.encrypted_access_token, this.encryptionKey),
       authorizerRefreshToken: decryptWithKey(row.encrypted_refresh_token, this.encryptionKey),
       tokenExpiresAt: Number(row.token_expires_at),
@@ -148,6 +161,7 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
       nickname: row.nickname,
       accountType: row.account_type,
       status: row.status === 'revoked' ? 'revoked' : 'active',
+      revokedAt: row.revoked_at === null || row.revoked_at === undefined ? undefined : Number(row.revoked_at),
       authorizedAt: Number(row.authorized_at),
       updatedAt: Number(row.updated_at),
     }

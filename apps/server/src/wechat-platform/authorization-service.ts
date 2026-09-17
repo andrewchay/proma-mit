@@ -24,9 +24,9 @@ const WECHAT_LOGIN_PAGE_BASE = 'https://mp.weixin.qq.com/cgi-bin/componentloginp
 const API_BASE = 'https://api.weixin.qq.com'
 
 export interface WechatAuthorizationStateStore {
-  /** 原子核销：state 存在且未过期则标记已用并返回 true，否则 false。 */
-  consume(state: string): Promise<boolean>
-  save(state: string, expiresAt: number): Promise<void>
+  /** 原子核销：state 存在且未过期则返回其 tenantId 并作废，否则返回 undefined。 */
+  consume(state: string): Promise<string | undefined>
+  save(state: string, tenantId: string, expiresAt: number): Promise<void>
 }
 
 /** 进程内实现（带过期清理）。 */
@@ -34,19 +34,23 @@ export class InMemoryWechatAuthorizationStateStore implements WechatAuthorizatio
   private states = new Map<string, number>()
   constructor(private readonly now = Date.now) {}
 
-  async save(state: string, expiresAt: number): Promise<void> {
+  private tenants = new Map<string, string>()
+
+  async save(state: string, tenantId: string, expiresAt: number): Promise<void> {
     this.states.set(state, expiresAt)
+    this.tenants.set(state, tenantId)
     if (this.states.size > 2000) this.prune()
   }
 
-  async consume(state: string): Promise<boolean> {
+  async consume(state: string): Promise<string | undefined> {
     const expiresAt = this.states.get(state)
-    if (expiresAt === undefined || expiresAt <= this.now()) {
-      this.states.delete(state)
-      return false
-    }
+    const tenantId = this.tenants.get(state)
     this.states.delete(state)
-    return true
+    this.tenants.delete(state)
+    if (expiresAt === undefined || tenantId === undefined || expiresAt <= this.now()) {
+      return undefined
+    }
+    return tenantId
   }
 
   private prune(): void {
@@ -67,23 +71,24 @@ export class PostgresWechatAuthorizationStateStore implements WechatAuthorizatio
   async initializeSchema(): Promise<void> {
     await this.client.query(`CREATE TABLE IF NOT EXISTS proma_wechat_auth_state (
       state TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT '',
       expires_at BIGINT NOT NULL
     )`)
   }
 
-  async save(state: string, expiresAt: number): Promise<void> {
+  async save(state: string, tenantId: string, expiresAt: number): Promise<void> {
     // 顺手清理过期 state，避免表无限增长。
     await this.client.query('DELETE FROM proma_wechat_auth_state WHERE expires_at < $1', [this.now()])
-    await this.client.query('INSERT INTO proma_wechat_auth_state (state, expires_at) VALUES ($1, $2)', [state, expiresAt])
+    await this.client.query('INSERT INTO proma_wechat_auth_state (state, tenant_id, expires_at) VALUES ($1, $2, $3)', [state, tenantId, expiresAt])
   }
 
-  async consume(state: string): Promise<boolean> {
-    // DELETE 返回受影响行数：原子核销，并发回调只有一个能拿到 1。
-    const result = await this.client.query<{ count: string }>(
-      'DELETE FROM proma_wechat_auth_state WHERE state = $1 AND expires_at > $2 RETURNING state',
+  async consume(state: string): Promise<string | undefined> {
+    // DELETE...RETURNING：原子核销，并发回调只有一个能拿到行；tenant_id 随核销返回以归属租户。
+    const result = await this.client.query<{ tenant_id: string }>(
+      'DELETE FROM proma_wechat_auth_state WHERE state = $1 AND expires_at > $2 RETURNING tenant_id',
       [state, this.now()],
     )
-    return result.rows.length > 0
+    return result.rows[0]?.tenant_id
   }
 }
 
@@ -121,6 +126,9 @@ export interface WechatAuthorizedAccountSummary {
   authorizedAt: number
 }
 
+/** 撤权/租户不符时抛出的统一错误类型，便于任务侧识别并立即停止。 */
+export class WechatAuthorizerUnavailableError extends Error {}
+
 export class WechatAuthorizationService {
   private readonly stateTtlMs: number
   private readonly authorizerRefreshLeadMs: number
@@ -144,9 +152,9 @@ export class WechatAuthorizationService {
 
   /**
    * 生成管理员扫码授权页 URL。
-   * 预授权码来自微信 API；state 本地生成并登记，回调时必须原样带回。
+   * 预授权码来自微信 API；state 本地生成并登记（绑定发起租户），回调时必须原样带回。
    */
-  async createAuthorizationUrl(): Promise<WechatAuthorizationUrlResult> {
+  async createAuthorizationUrl(tenantId: string): Promise<WechatAuthorizationUrlResult> {
     const componentToken = await this.options.componentTokenService.getToken()
     const payload = await this.postWechatJson<{ pre_auth_code?: string; expires_in?: number; errcode?: number; errmsg?: string }>(
       `${this.apiBaseUrl}/cgi-bin/component/api_create_preauthcode?component_access_token=${encodeURIComponent(componentToken)}`,
@@ -154,7 +162,7 @@ export class WechatAuthorizationService {
       '预授权码换取失败',
     )
     const state = randomUUID()
-    await this.options.stateStore.save(state, this.now() + this.stateTtlMs)
+    await this.options.stateStore.save(state, tenantId, this.now() + this.stateTtlMs)
     const redirectUri = encodeURIComponent(this.options.authorizationRedirectUri)
     const url = `${WECHAT_LOGIN_PAGE_BASE}?component_appid=${encodeURIComponent(this.options.componentAppId)}&pre_auth_code=${encodeURIComponent(payload.pre_auth_code ?? '')}&redirect_uri=${redirectUri}&auth_type=${this.authType}&state=${encodeURIComponent(state)}`
     this.logger.info(`[WeChat] 已生成授权页 URL（appId=${this.options.componentAppId}）`)
@@ -167,7 +175,8 @@ export class WechatAuthorizationService {
    */
   async handleAuthorizationCallback(input: { authCode: string; state: string }): Promise<WechatAuthorizedAccountSummary> {
     if (!input.authCode || !input.state) throw new Error('授权回调缺少 auth_code 或 state')
-    if (!await this.options.stateStore.consume(input.state)) {
+    const tenantId = await this.options.stateStore.consume(input.state)
+    if (tenantId === undefined) {
       this.logger.warn('[WeChat] 授权回调 state 无效、过期或已使用，拒绝处理')
       throw new Error('state 校验失败：请求可能被重放')
     }
@@ -195,6 +204,7 @@ export class WechatAuthorizationService {
     const now = this.now()
     const account: WechatAuthorizerAccount = {
       authorizerAppId: info.authorizer_appid,
+      tenantId,
       authorizerAccessToken: info.authorizer_access_token,
       authorizerRefreshToken: info.authorizer_refresh_token,
       tokenExpiresAt: now + (info.expires_in ?? 7200) * 1000 - 30_000,
@@ -217,11 +227,18 @@ export class WechatAuthorizationService {
     this.logger.info(`[WeChat] 商家已取消授权（authorizer=${authorizerAppId}）`)
   }
 
-  /** 取商家 authorizer_access_token：缓存 + 过期前刷新 + 单飞 + 失败回退旧值。 */
-  async getAuthorizerAccessToken(authorizerAppId: string): Promise<string> {
+  /** 任务执行前置守卫：账号必须存在、未撤权且属于指定租户，否则抛错让任务立即停止。 */
+  async assertAuthorizerUsable(authorizerAppId: string, tenantId: string): Promise<void> {
     const account = await this.options.authorizerStore.load(authorizerAppId)
-    if (!account) throw new Error(`未找到授权账号：${authorizerAppId}`)
-    if (account.status === 'revoked') throw new Error(`授权账号已取消授权：${authorizerAppId}`)
+    if (!account || account.tenantId !== tenantId) throw new WechatAuthorizerUnavailableError(`授权账号不存在或不属于当前租户：${authorizerAppId}`)
+    if (account.status === 'revoked') throw new WechatAuthorizerUnavailableError(`授权账号已取消授权：${authorizerAppId}`)
+  }
+
+  /** 取商家 authorizer_access_token：缓存 + 过期前刷新 + 单飞 + 失败回退旧值。必须传租户，跨租户访问被拒绝。 */
+  async getAuthorizerAccessToken(authorizerAppId: string, tenantId: string): Promise<string> {
+    const account = await this.options.authorizerStore.load(authorizerAppId)
+    if (!account || account.tenantId !== tenantId) throw new WechatAuthorizerUnavailableError(`授权账号不存在或不属于当前租户：${authorizerAppId}`)
+    if (account.status === 'revoked') throw new WechatAuthorizerUnavailableError(`授权账号已取消授权：${authorizerAppId}`)
     if (account.tokenExpiresAt - this.now() > this.authorizerRefreshLeadMs) {
       return account.authorizerAccessToken
     }
@@ -236,9 +253,9 @@ export class WechatAuthorizationService {
     }
   }
 
-  /** 列出全部授权账号（脱敏摘要，不含 token）。 */
-  async listAuthorizedAccounts(): Promise<WechatAuthorizedAccountSummary[]> {
-    const accounts = await this.options.authorizerStore.list()
+  /** 列出指定租户的授权账号（脱敏摘要，不含 token）。 */
+  async listAuthorizedAccounts(tenantId: string): Promise<WechatAuthorizedAccountSummary[]> {
+    const accounts = await this.options.authorizerStore.list(tenantId)
     return accounts.map((account) => this.summarize(account))
   }
 

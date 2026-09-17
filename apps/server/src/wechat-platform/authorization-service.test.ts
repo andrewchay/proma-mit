@@ -86,7 +86,7 @@ describe('P3-04 预授权码与授权页 URL', () => {
         [`https://api.weixin.qq.com/cgi-bin/component/api_create_preauthcode`]: () => ({ pre_auth_code: 'pac-123', expires_in: 600 }),
       }, calls),
     })
-    const result = await service.createAuthorizationUrl()
+    const result = await service.createAuthorizationUrl('tenant-1')
     expect(result.preAuthCodeExpiresIn).toBe(600)
     const parsed = new URL(result.url)
     expect(parsed.origin + parsed.pathname).toBe('https://mp.weixin.qq.com/cgi-bin/componentloginpage')
@@ -97,7 +97,7 @@ describe('P3-04 预授权码与授权页 URL', () => {
     const state = parsed.searchParams.get('state')
     expect(state).toBeTruthy()
     // state 已登记，可被回调核销
-    expect(await options.stateStore.consume(state!)).toBe(true)
+    expect(await options.stateStore.consume(state!)).toBe('tenant-1')
     // 请求体带 component_access_token 查询参数，不带 secret
     expect(calls[0]?.url).toContain('component_access_token=ct')
     expect(calls[0]?.body).toEqual({ component_appid: APP_ID })
@@ -109,7 +109,7 @@ describe('P3-04 预授权码与授权页 URL', () => {
       ...options,
       fetchFn: routerFetch({ 'https://api.weixin.qq.com/cgi-bin/component/api_create_preauthcode': () => ({ errcode: 40013, errmsg: 'invalid appid' }) }, []),
     })
-    await expect(service.createAuthorizationUrl()).rejects.toThrow(/errcode=40013/)
+    await expect(service.createAuthorizationUrl('tenant-1')).rejects.toThrow(/errcode=40013/)
   })
 })
 
@@ -130,7 +130,7 @@ describe('P3-04 授权回调处理', () => {
   test('合法回调：核销 state、换取 authorizer token、加密落库为 active', async () => {
     const calls: Array<{ url: string; body: unknown }> = []
     const service = await makeCallbackService(calls)
-    const { url } = await service.createAuthorizationUrl()
+    const { url } = await service.createAuthorizationUrl('tenant-1')
     const state = new URL(url).searchParams.get('state')!
     const summary = await service.handleAuthorizationCallback({ authCode: 'auth-code-1', state })
     expect(summary).toMatchObject({ authorizerAppId: AUTHORIZER_APP_ID, nickname: '测试公众号', status: 'active' })
@@ -143,7 +143,7 @@ describe('P3-04 授权回调处理', () => {
   test('state 一次性：同一 state 第二次使用被拒绝（防重放）', async () => {
     const calls: Array<{ url: string; body: unknown }> = []
     const service = await makeCallbackService(calls)
-    const { url } = await service.createAuthorizationUrl()
+    const { url } = await service.createAuthorizationUrl('tenant-1')
     const state = new URL(url).searchParams.get('state')!
     await service.handleAuthorizationCallback({ authCode: 'auth-code-1', state })
     await expect(service.handleAuthorizationCallback({ authCode: 'auth-code-1', state })).rejects.toThrow(/state 校验失败/)
@@ -165,7 +165,7 @@ describe('P3-04 授权回调处理', () => {
         'https://api.weixin.qq.com/cgi-bin/component/api_query_auth': () => ({ errcode: 40029, errmsg: 'invalid code' }),
       }, []),
     })
-    const { url } = await service.createAuthorizationUrl()
+    const { url } = await service.createAuthorizationUrl('tenant-1')
     const state = new URL(url).searchParams.get('state')!
     await expect(service.handleAuthorizationCallback({ authCode: 'bad-code', state })).rejects.toThrow(/errcode=40029/)
     expect(await authorizerStore.load(AUTHORIZER_APP_ID)).toBeUndefined()
@@ -174,21 +174,21 @@ describe('P3-04 授权回调处理', () => {
   test('取消授权后 getToken 拒绝；重新扫码授权恢复 active', async () => {
     const calls: Array<{ url: string; body: unknown }> = []
     const service = await makeCallbackService(calls)
-    const { url } = await service.createAuthorizationUrl()
+    const { url } = await service.createAuthorizationUrl('tenant-1')
     await service.handleAuthorizationCallback({ authCode: 'auth-code-1', state: new URL(url).searchParams.get('state')! })
-    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).toBe('at-1')
+    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).toBe('at-1')
 
     await service.handleUnauthorizedEvent(AUTHORIZER_APP_ID)
-    await expect(service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).rejects.toThrow(/已取消授权/)
-    const listed = await service.listAuthorizedAccounts()
+    await expect(service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).rejects.toThrow(/已取消授权/)
+    const listed = await service.listAuthorizedAccounts('tenant-1')
     expect(listed[0]?.status).toBe('revoked')
 
     // 重新授权：新回调恢复 active
-    const second = await service.createAuthorizationUrl()
+    const second = await service.createAuthorizationUrl('tenant-1')
     await service.handleAuthorizationCallback({ authCode: 'auth-code-2', state: new URL(second.url).searchParams.get('state')! })
-    const restored = await service.listAuthorizedAccounts()
+    const restored = await service.listAuthorizedAccounts('tenant-1')
     expect(restored[0]?.status).toBe('active')
-    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).toBe('at-1')
+    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).toBe('at-1')
   })
 })
 
@@ -209,16 +209,16 @@ describe('P3-04 authorizer token 刷新', () => {
         },
       }, []),
     })
-    const { url } = await service.createAuthorizationUrl()
+    const { url } = await service.createAuthorizationUrl('tenant-1')
     await service.handleAuthorizationCallback({ authCode: 'c1', state: new URL(url).searchParams.get('state')! })
-    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).toBe('at-1')
+    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).toBe('at-1')
     expect(refreshCount).toBe(0)
     currentNow = NOW + (7200 - 300) * 1000
-    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).toBe('at-2')
+    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).toBe('at-2')
     expect(refreshCount).toBe(1)
     // 刷新后 refresh_token 已轮换：第二次刷新应带 rt-2
     currentNow += (7200 - 300) * 1000
-    await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)
+    await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')
     expect(refreshCount).toBe(2)
   })
 
@@ -238,12 +238,12 @@ describe('P3-04 authorizer token 刷新', () => {
         },
       }, []),
     })
-    const { url } = await service.createAuthorizationUrl()
+    const { url } = await service.createAuthorizationUrl('tenant-1')
     await service.handleAuthorizationCallback({ authCode: 'c1', state: new URL(url).searchParams.get('state')! })
     currentNow = NOW + (7200 - 300) * 1000
-    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).toBe('at-1') // 回退
+    expect(await service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).toBe('at-1') // 回退
     currentNow = NOW + 7300 * 1000
-    await expect(service.getAuthorizerAccessToken(AUTHORIZER_APP_ID)).rejects.toThrow(/刷新失败/)
+    await expect(service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-1')).rejects.toThrow(/刷新失败/)
   })
 })
 
@@ -299,6 +299,64 @@ describe('P3-04 授权事件转发（callback.ts 集成）', () => {
   })
 })
 
+describe('P3-05 租户隔离与撤权守卫', () => {
+  test('state 绑定租户：A 租户发起的授权归 A，回调落库 tenantId 正确', async () => {
+    const { options } = await makeService()
+    const service = new WechatAuthorizationService({
+      ...options,
+      fetchFn: routerFetch({
+        'https://api.weixin.qq.com/cgi-bin/component/api_create_preauthcode': () => ({ pre_auth_code: 'pac', expires_in: 600 }),
+        'https://api.weixin.qq.com/cgi-bin/component/api_query_auth': () => queryAuthSuccessPayload(),
+      }, []),
+    })
+    const { url } = await service.createAuthorizationUrl('tenant-a')
+    const summary = await service.handleAuthorizationCallback({ authCode: 'c1', state: new URL(url).searchParams.get('state')! })
+    expect(summary.status).toBe('active')
+    const account = await options.authorizerStore.load(AUTHORIZER_APP_ID)
+    expect(account?.tenantId).toBe('tenant-a')
+  })
+
+  test('跨租户访问拒绝：getToken/list/守卫都按租户隔离', async () => {
+    const { options } = await makeService()
+    const service = new WechatAuthorizationService({
+      ...options,
+      fetchFn: routerFetch({
+        'https://api.weixin.qq.com/cgi-bin/component/api_create_preauthcode': () => ({ pre_auth_code: 'pac', expires_in: 600 }),
+        'https://api.weixin.qq.com/cgi-bin/component/api_query_auth': () => queryAuthSuccessPayload(),
+      }, []),
+    })
+    const { url } = await service.createAuthorizationUrl('tenant-a')
+    await service.handleAuthorizationCallback({ authCode: 'c1', state: new URL(url).searchParams.get('state')! })
+
+    await expect(service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-b')).rejects.toThrow(/不属于当前租户/)
+    await expect(service.assertAuthorizerUsable(AUTHORIZER_APP_ID, 'tenant-b')).rejects.toThrow(/不属于当前租户/)
+    expect(await service.listAuthorizedAccounts('tenant-b')).toEqual([])
+    expect(await service.listAuthorizedAccounts('tenant-a')).toHaveLength(1)
+    // 本租户正常
+    await expect(service.assertAuthorizerUsable(AUTHORIZER_APP_ID, 'tenant-a')).resolves.toBeUndefined()
+  })
+
+  test('撤权立即禁用：守卫与 getToken 同步拒绝，revokedAt 落库', async () => {
+    const { options } = await makeService()
+    const service = new WechatAuthorizationService({
+      ...options,
+      fetchFn: routerFetch({
+        'https://api.weixin.qq.com/cgi-bin/component/api_create_preauthcode': () => ({ pre_auth_code: 'pac', expires_in: 600 }),
+        'https://api.weixin.qq.com/cgi-bin/component/api_query_auth': () => queryAuthSuccessPayload(),
+      }, []),
+    })
+    const { url } = await service.createAuthorizationUrl('tenant-a')
+    await service.handleAuthorizationCallback({ authCode: 'c1', state: new URL(url).searchParams.get('state')! })
+    await service.handleUnauthorizedEvent(AUTHORIZER_APP_ID)
+    const account = await options.authorizerStore.load(AUTHORIZER_APP_ID)
+    expect(account?.status).toBe('revoked')
+    expect(account?.revokedAt).toBe(NOW)
+    // 撤权后：token 获取与任务前置守卫同步拒绝（任务执行前检查即停止）
+    await expect(service.getAuthorizerAccessToken(AUTHORIZER_APP_ID, 'tenant-a')).rejects.toThrow(/已取消授权/)
+    await expect(service.assertAuthorizerUsable(AUTHORIZER_APP_ID, 'tenant-a')).rejects.toThrow(/已取消授权/)
+  })
+})
+
 describe('P3-04 授权账号存储加密', () => {
   test('Postgres 落库 token 为密文，读回一致（fake client）', async () => {
     const statements: Array<{ statement: string; params: readonly unknown[] }> = []
@@ -312,6 +370,7 @@ describe('P3-04 授权账号存储加密', () => {
     await store.initializeSchema()
     await store.save({
       authorizerAppId: AUTHORIZER_APP_ID,
+      tenantId: 'tenant-1',
       authorizerAccessToken: 'plain-at',
       authorizerRefreshToken: 'plain-rt',
       tokenExpiresAt: NOW + 7000_000,

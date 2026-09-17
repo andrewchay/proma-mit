@@ -493,7 +493,7 @@ export function createPromaWebServerApplication(
             ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
             : !config.wechatPlatform?.authorizationRedirectUri
               ? Response.json({ error: '未配置微信第三方平台授权' }, { status: 404 })
-              : Response.json(await (await getWechatRuntime())!.authorizationService!.createAuthorizationUrl())
+              : Response.json(await (await getWechatRuntime())!.authorizationService!.createAuthorizationUrl(scope.tenantId))
       } else if (request.method === 'GET' && url.pathname === '/wechat/authorizers') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
@@ -501,7 +501,7 @@ export function createPromaWebServerApplication(
             ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
             : !config.wechatPlatform?.authorizationRedirectUri
               ? Response.json({ error: '未配置微信第三方平台授权' }, { status: 404 })
-              : Response.json({ accounts: await (await getWechatRuntime())!.authorizationService!.listAuthorizedAccounts() })
+              : Response.json({ accounts: await (await getWechatRuntime())!.authorizationService!.listAuthorizedAccounts(scope.tenantId) })
       } else if (request.method === 'GET' && url.pathname === '/callbacks/wechat/authorization') {
         // 微信授权回调跳转目标（公开：管理员扫码后浏览器落地页；安全由 state 一次性核销保证）
         const runtime = await getWechatRuntime()
