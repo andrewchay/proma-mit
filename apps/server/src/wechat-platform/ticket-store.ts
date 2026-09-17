@@ -57,18 +57,20 @@ interface PostgresLikeClient {
   query<Row extends Record<string, unknown>>(statement: string, params?: readonly unknown[]): Promise<{ rows: Row[] }>
 }
 
-function encryptTicket(ticket: string, keyBytes: Uint8Array): string {
-  if (keyBytes.byteLength !== 32) throw new Error('ticket 存储密钥必须是 32 字节')
+/** AES-256-GCM 加密任意字符串（ticket 与 component_access_token 共用）。 */
+export function encryptWithKey(plain: string, keyBytes: Uint8Array): string {
+  if (keyBytes.byteLength !== 32) throw new Error('凭据存储密钥必须是 32 字节')
   const iv = randomBytes(12)
   const cipher = createCipheriv('aes-256-gcm', keyBytes, iv)
-  const encrypted = Buffer.concat([cipher.update(ticket, 'utf-8'), cipher.final()])
+  const encrypted = Buffer.concat([cipher.update(plain, 'utf-8'), cipher.final()])
   const tag = cipher.getAuthTag()
   return `v1.${iv.toString('base64')}.${encrypted.toString('base64')}.${tag.toString('base64')}`
 }
 
-function decryptTicket(payload: string, keyBytes: Uint8Array): string {
+/** 解密 encryptWithKey 的输出。 */
+export function decryptWithKey(payload: string, keyBytes: Uint8Array): string {
   const [version, ivPart, ctPart, tagPart] = payload.split('.')
-  if (version !== 'v1' || !ivPart || !ctPart || !tagPart) throw new Error('ticket 密文格式无效')
+  if (version !== 'v1' || !ivPart || !ctPart || !tagPart) throw new Error('凭据密文格式无效')
   const decipher = createDecipheriv('aes-256-gcm', keyBytes, Buffer.from(ivPart, 'base64'))
   decipher.setAuthTag(Buffer.from(tagPart, 'base64'))
   return Buffer.concat([decipher.update(Buffer.from(ctPart, 'base64')), decipher.final()]).toString('utf-8')
@@ -100,7 +102,7 @@ export class PostgresWechatComponentTicketStore implements WechatComponentTicket
   }
 
   async save(record: WechatComponentTicketRecord): Promise<void> {
-    const encrypted = encryptTicket(record.ticket, this.encryptionKey)
+    const encrypted = encryptWithKey(record.ticket, this.encryptionKey)
     await this.client.query(
       `INSERT INTO proma_wechat_component_ticket (component_app_id, encrypted_ticket, received_at, receive_count)
        VALUES ($1, $2, $3, 1)
@@ -117,7 +119,7 @@ export class PostgresWechatComponentTicketStore implements WechatComponentTicket
     )
     const row = result.rows[0]
     if (!row) return undefined
-    return { componentAppId, ticket: decryptTicket(row.encrypted_ticket, this.encryptionKey), receivedAt: Number(row.received_at) }
+    return { componentAppId, ticket: decryptWithKey(row.encrypted_ticket, this.encryptionKey), receivedAt: Number(row.received_at) }
   }
 
   async count(componentAppId: string): Promise<number> {
