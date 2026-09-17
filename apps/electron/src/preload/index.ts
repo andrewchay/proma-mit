@@ -1968,6 +1968,10 @@ export interface ElectronAPI {
         syncArticle: (input: { accountId: string; source: 'articletotal' | 'articlesummary'; beginDate: string; endDate: string }) => Promise<import('@gravitas/shared').WechatAnalyticsSyncResult>
         overview: (accountId: string) => Promise<import('@gravitas/shared').WechatAnalyticsOverview>
       }
+      comments: {
+        sync: (input: { accountId: string; msgDataId: string; articleIndex?: number; limit?: number }) => Promise<import('@gravitas/shared').WechatCommentSyncResult>
+        list: (input: { accountId: string; msgDataId?: string }) => Promise<import('@gravitas/shared').WechatCommentRecord[]>
+      }
       schema: {
         getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
       }
@@ -4374,6 +4378,10 @@ const electronAPI: ElectronAPI = {
         syncUser: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_USER_METRICS, input),
         syncArticle: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_ARTICLE_METRICS, input),
         overview: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_WECHAT_ANALYTICS_OVERVIEW, accountId),
+      },
+      comments: {
+        sync: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_COMMENTS, input),
+        list: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_COMMENTS, input),
       },
       schema: {
         getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),

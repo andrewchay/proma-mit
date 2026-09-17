@@ -282,6 +282,33 @@ export function registerNewMediaIpcHandlers(): void {
     return (await import('./adapters/wechat-direct-analytics-service')).getWechatAnalyticsOverview(requireId(accountId, 'accountId'))
   })
 
+  // ===== 微信留言只读同步（P2-08） =====
+  handle(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_COMMENTS, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const service = await import('./adapters/wechat-direct-comment-service')
+    const accountService = await import('./new-media-account-service')
+    const account = await accountService.getNewMediaAccount(v.requireId(payload.accountId, 'accountId'))
+    if (!account) throw new Error('账号不存在')
+    if (!service.isWechatCommentSyncEnabled(account)) throw new Error('留言同步未启用：需要账号已连接且观察到留言接口权限')
+    if (!account.credentialRef) throw new Error('账号尚未配置凭据')
+    return service.syncWechatComments(
+      { credentialRef: account.credentialRef, accountId: account.id },
+      {
+        msgDataId: v.requireId(payload.msgDataId, 'msgDataId'),
+        articleIndex: typeof payload.articleIndex === 'number' && Number.isInteger(payload.articleIndex) && payload.articleIndex >= 0 ? payload.articleIndex : 0,
+        limit: typeof payload.limit === 'number' && Number.isInteger(payload.limit) && payload.limit > 0 ? payload.limit : undefined,
+      },
+    )
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_COMMENTS, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const { listWechatComments } = await import('./adapters/wechat-direct-comment-service')
+    return listWechatComments(v.requireId(payload.accountId, 'accountId'), v.optionalId(payload.msgDataId, 'msgDataId'))
+  })
+
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media-account-service')).listNewMediaAccounts())
   handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: unknown) => {
     const v = await nmValidation()

@@ -879,6 +879,8 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   SYNC_WECHAT_USER_METRICS: 'new-media:sync-wechat-user-metrics',
   SYNC_WECHAT_ARTICLE_METRICS: 'new-media:sync-wechat-article-metrics',
   GET_WECHAT_ANALYTICS_OVERVIEW: 'new-media:get-wechat-analytics-overview',
+  SYNC_WECHAT_COMMENTS: 'new-media:sync-wechat-comments',
+  LIST_WECHAT_COMMENTS: 'new-media:list-wechat-comments',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
   LIST_ACCOUNTS: 'new-media:list-accounts',
   CREATE_ACCOUNT: 'new-media:create-account',
@@ -1132,6 +1134,33 @@ export interface WechatAnalyticsOverview {
     definition: string
   }>
   limits: { verifiedAt: string; source: string }
+}
+
+// ===== 微信留言（只读） =====
+
+export interface WechatCommentRecord {
+  id: string
+  accountId: string
+  /** 群发/图文消息 id（平台要求的数据标识）。 */
+  msgDataId: string
+  /** 多图文消息中的第几篇，从 0 开始。 */
+  articleIndex: number
+  /** 平台侧留言唯一标识，来源追溯的关键字段。 */
+  userCommentId: string
+  content: string
+  createTime?: number
+  /** 平台返回的作者回复（只读展示，不在本地发起回复）。 */
+  replies: Array<{ content: string; createTime?: number }>
+  syncedAt: number
+}
+
+export interface WechatCommentSyncResult {
+  msgDataId: string
+  articleIndex: number
+  fetched: number
+  stored: number
+  total: number
+  pages: number
 }
 
 export interface NewMediaConnectedAccount {
