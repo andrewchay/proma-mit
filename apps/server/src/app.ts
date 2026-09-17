@@ -106,6 +106,17 @@ export interface PromaWebServerConfig {
   operations?: { siemWebhookUrl?: string; alertWebhookUrl?: string }
   /** P-IV：运行时输入/输出采样；不配置则不采集内容快照（local-first）。 */
   spanSampling?: { enabled: boolean; rate?: number; maxBytes?: number }
+  /** 微信第三方平台授权事件回调（P3-02）；不配置则不暴露回调路由。 */
+  wechatPlatform?: {
+    /** 公众号后台配置的消息 Token。 */
+    token: string
+    /** 43 字符 EncodingAESKey。 */
+    encodingAESKey: string
+    /** 预期的组件 AppID（receiveId 校验）。 */
+    componentAppId: string
+    /** ticket 落库加密密钥：64 位 hex（32 字节）。 */
+    ticketEncryptionKeyHex: string
+  }
 }
 
 export interface PromaWebServerDependencies {
@@ -116,6 +127,8 @@ export interface PromaWebServerDependencies {
   logger?: PromaWebLogger
   agentTurnRunner?: AgentRuntimeWebAgentTurnRunner
   operationsReporter?: OperationsReporter
+  /** 测试注入：微信 ticket 存储替换实现。 */
+  wechatTicketStore?: import('./wechat-platform/ticket-store').WechatComponentTicketStore
 }
 
 export interface PromaWebLogger {
@@ -353,6 +366,33 @@ export function createPromaWebServerApplication(
         const response = Response.json({ status: 'ok' })
         response.headers.set('x-trace-id', traceId)
         return response
+      }
+      // 微信第三方平台授权事件回调（公开端点：由微信服务端调用，凭签名与时间戳保护）
+      if (config.wechatPlatform && url.pathname === '/callbacks/wechat/platform') {
+        const { handleWechatCallback } = await import('./wechat-platform/callback.ts')
+        const { InMemoryWechatComponentTicketStore, PostgresWechatComponentTicketStore } = await import('./wechat-platform/ticket-store.ts')
+        const keyBytes = Buffer.from(config.wechatPlatform.ticketEncryptionKeyHex.replace(/[^0-9a-f]/gi, ''), 'hex')
+        if (keyBytes.byteLength !== 32) {
+          console.error('[WeChat] wechatPlatform.ticketEncryptionKeyHex 必须是 64 位 hex（32 字节）')
+          return new Response('fail', { status: 500 })
+        }
+        const ticketStore = dependencies.wechatTicketStore
+          ?? new PostgresWechatComponentTicketStore(postgres, keyBytes)
+        return await handleWechatCallback({
+          method: request.method as 'GET' | 'POST',
+          query: url.searchParams,
+          body: request.method === 'POST' ? await request.text() : undefined,
+          options: {
+            cryptoMaterial: { token: config.wechatPlatform.token, encodingAesKey: config.wechatPlatform.encodingAESKey },
+            ticketStore,
+            expectedComponentAppId: config.wechatPlatform.componentAppId,
+            // PromaWebLogger 使用事件对象：这里适配为 { event: 'wechat_callback_warn'|'wechat_callback' } 结构
+            logger: {
+              info: (message: string) => logger.info({ event: 'wechat_callback', error: message }),
+              warn: (message: string) => logger.error({ event: 'wechat_callback_warn', error: message }),
+            },
+          },
+        }) ?? new Response('fail', { status: 404 })
       }
       if (request.method === 'GET' && url.pathname === '/agent/ui') {
         return new Response(WEB_DASHBOARD_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
