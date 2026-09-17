@@ -21,6 +21,8 @@ export interface WechatCallbackHandlerOptions {
   ticketStore: WechatComponentTicketStore
   /** 预期的组件 AppID；回调 XML 中的 AppId 与之不符时拒绝。 */
   expectedComponentAppId?: string
+  /** P3-04：授权事件（authorized/updateauthorized/unauthorized）处理钩子；抛错不影响对微信返回 success。 */
+  onAuthorizationEvent?: (event: { infoType: string; componentAppId: string; authorizerAppId?: string }) => Promise<void> | void
   logger?: { info(message: string): void; warn(message: string): void }
   now?: () => number
 }
@@ -125,8 +127,19 @@ export async function handleWechatCallbackEvent(input: WechatCallbackRequest & {
 
   const ticket = extractComponentVerifyTicket(decryptedXml)
   if (!ticket) {
-    // 授权事件包含多种类型（授权/更新/取消授权），本阶段只消费 ticket，其余返回成功避免微信重推。
-    info(options, `[WeChat] 收到非 ticket 授权事件，已忽略（appId=${appId ?? '未知'}）`)
+    // P3-04：授权/更新/取消授权事件转发给授权服务；未知类型忽略。返回 success 避免微信重推堆积。
+    const infoType = extractXmlCdataField(decryptedXml, 'InfoType')
+    if (infoType && ['authorized', 'updateauthorized', 'unauthorized'].includes(infoType) && options.onAuthorizationEvent) {
+      const authorizerAppId = extractXmlCdataField(decryptedXml, 'AuthorizerAppid')
+      try {
+        await options.onAuthorizationEvent({ infoType, componentAppId: appId ?? '', authorizerAppId })
+        info(options, `[WeChat] 授权事件已处理（infoType=${infoType}，authorizer=${authorizerAppId ?? '未知'}）`)
+      } catch (error) {
+        warn(options, `[WeChat] 授权事件处理失败（infoType=${infoType}）：${error instanceof Error ? error.message : String(error)}`)
+      }
+    } else {
+      info(options, `[WeChat] 收到非 ticket 授权事件，已忽略（appId=${appId ?? '未知'}）`)
+    }
     return new Response('success', { status: 200 })
   }
 
