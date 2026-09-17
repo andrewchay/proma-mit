@@ -31,6 +31,21 @@ test('样本量不足时不声称趋势可信，且取消不计入失败率', ()
   expect(health).toEqual(expect.objectContaining({ decidedSampleCount: 1, sampleSufficient: false, reworkRate: 1, failureRate: 0 }))
 })
 
+test('同 scope 版本对比标注可比性，样本不足时不制造改善错觉', () => {
+  const employee = createAgentEmployee({ name: '对比', role: '开发', description: '', channelId: 'channel' })
+  const project = createProject({ title: '对比项目', description: '' })
+  const task = createTask(project.id, { title: '任务', description: '', priority: 'medium' })
+  const baseline = createAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '基线', contentHash: 'b', status: 'superseded', source: 'manual', activatedAt: Date.now() })
+  const candidate = createAgentEmployeeCapabilityVersion({ agentId: employee.id, parentVersionId: baseline.id, versionNumber: 2, scope: 'role', content: '候选', contentHash: 'c', status: 'active', source: 'manual', activatedAt: Date.now() })
+  // 各 1 条已判定样本：远不足以声称改善。
+  createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'cmp-1', projectId: project.id, taskId: task.id, capabilityVersionIds: [baseline.id], outcome: 'changes_requested', evidenceSummary: '返工', privacyStatus: 'sanitized' })
+  createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'cmp-2', projectId: project.id, taskId: task.id, capabilityVersionIds: [candidate.id], outcome: 'accepted', evidenceSummary: '通过', privacyStatus: 'sanitized' })
+  const health = getAgentEmployeeCapabilityHealth(employee.id, 30).find((item) => item.versionId === candidate.id)
+  expect(health?.comparisonVersionId).toBe(baseline.id)
+  expect(health?.reworkRateDelta).toBe(-1)
+  expect(health?.comparisonComparable).toBe(false)
+})
+
 test('Canary 默认关闭、显式启用后确定性分流，且只暂停不自动回滚', () => {
   const config = enableEmployeeCanary({ agentId: 'agent', scope: 'role', candidateVersionId: 'v2', percent: 30 })
   expect(shouldUseCanary(config, 'task-1')).toBe(shouldUseCanary(config, 'task-1'))

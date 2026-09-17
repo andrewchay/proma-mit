@@ -3,7 +3,7 @@ import { buildCapabilityAlerts } from './agent-employee-capability-alerts'
 import type { AgentEmployeeCapabilityHealth } from './project-types'
 
 function health(overrides: Partial<AgentEmployeeCapabilityHealth> = {}): AgentEmployeeCapabilityHealth {
-  return { versionId: 'v1', windowDays: 30, executionCount: 6, reworkRate: 0.1, failureRate: 0, cancellationRate: 0, decidedSampleCount: 6, sampleSufficient: true, lastExecutedAt: Date.now(), ...overrides }
+  return { versionId: 'v1', windowDays: 30, executionCount: 6, reworkRate: 0.1, failureRate: 0, cancellationRate: 0, decidedSampleCount: 6, sampleSufficient: true, lastExecutedAt: Date.now(), comparisonComparable: false, ...overrides }
 }
 
 test('样本不足时不产生质量告警，只提示观察不足', () => {

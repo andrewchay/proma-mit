@@ -2829,17 +2829,16 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
   const samples = getProjectDb().prepare('SELECT capability_version_ids, outcome, privacy_status, created_at FROM agent_employee_learning_samples WHERE agent_id = ?').all(agentId) as Array<{ capability_version_ids: string; outcome: string; privacy_status: string; created_at: number }>
   const observedExecutions = executions.filter((execution) => (execution.completed_at ?? execution.started_at) >= since)
   const observedSamples = samples.filter((sample) => sample.created_at >= since)
-  return listAgentEmployeeCapabilityVersions(agentId).map((version) => {
-    const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(version.id))
-    const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(version.id))
+  const versions = listAgentEmployeeCapabilityVersions(agentId)
+  const statsFor = (versionId: string) => {
+    const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(versionId))
+    const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(versionId))
     const decided = matchedSamples.filter((sample) => sample.privacy_status !== 'pending' && sample.outcome !== 'cancelled')
     const rework = decided.filter((sample) => sample.outcome === 'changes_requested').length
     const failed = decided.filter((sample) => sample.outcome === 'failed' || sample.outcome === 'manual_excluded').length
     const cancelled = matchedSamples.filter((sample) => sample.outcome === 'cancelled').length
     const ratio = (value: number, total: number): number | null => total === 0 ? null : Math.round((value / total) * 1000) / 1000
     return {
-      versionId: version.id,
-      windowDays,
       executionCount: matchedExecutions.length,
       reworkRate: ratio(rework, decided.length),
       failureRate: ratio(failed, decided.length),
@@ -2848,6 +2847,27 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
       // 少于 5 条已判定样本时不声称趋势可信。
       sampleSufficient: decided.length >= 5,
       lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
+    }
+  }
+  return versions.map((version) => {
+    const stats = statsFor(version.id)
+    // 同 scope 对比：优先父版本，否则取同 scope 下最近的另一个版本作为参照。
+    const sameScope = versions.filter((item) => item.id !== version.id && item.scope === version.scope && item.workspaceId === version.workspaceId)
+    const comparison = version.parentVersionId && versions.some((item) => item.id === version.parentVersionId)
+      ? versions.find((item) => item.id === version.parentVersionId)!
+      : sameScope.sort((left, right) => right.versionNumber - left.versionNumber)[0]
+    if (!comparison) return { versionId: version.id, windowDays, ...stats, comparisonComparable: false }
+    const comparisonStats = statsFor(comparison.id)
+    const delta = (current: number | null, base: number | null): number | null => current === null || base === null ? null : Math.round((current - base) * 1000) / 1000
+    return {
+      versionId: version.id,
+      windowDays,
+      ...stats,
+      comparisonVersionId: comparison.id,
+      reworkRateDelta: delta(stats.reworkRate, comparisonStats.reworkRate),
+      failureRateDelta: delta(stats.failureRate, comparisonStats.failureRate),
+      // 双方都样本充足才认为可比，避免用极小样本制造“改善”错觉。
+      comparisonComparable: stats.sampleSufficient && comparisonStats.sampleSufficient,
     }
   })
 }

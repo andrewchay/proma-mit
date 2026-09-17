@@ -563,6 +563,10 @@ export interface AgentEmployeeCapabilityHealthResult {
   decidedSampleCount: number
   sampleSufficient: boolean
   lastExecutedAt?: number
+  comparisonVersionId?: string
+  reworkRateDelta?: number | null
+  failureRateDelta?: number | null
+  comparisonComparable: boolean
 }
 
 export interface AgentEmployeeCanaryConfigResult {
