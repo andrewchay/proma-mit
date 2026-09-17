@@ -1951,6 +1951,7 @@ export interface ElectronAPI {
         remove: (accountId: string) => Promise<void>
         audit: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAccountAuditEntry[]>
         getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
+        getCapabilities: (accountId: string) => Promise<{ capabilities: import('@gravitas/shared').WechatDirectCapabilityState[]; profile: import('@gravitas/shared').WechatDirectAccountProfile | null }>
       }
       schema: {
         getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
@@ -4342,6 +4343,7 @@ const electronAPI: ElectronAPI = {
         remove: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REMOVE_ACCOUNT, accountId),
         audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
         getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
+        getCapabilities: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, accountId),
       },
       schema: {
         getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),

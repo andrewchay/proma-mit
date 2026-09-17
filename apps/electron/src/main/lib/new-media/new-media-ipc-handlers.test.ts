@@ -86,6 +86,14 @@ describe('新媒体 IPC 处理器', () => {
     expect(audit.map((entry) => entry.event)).toEqual(['prepared'])
   })
 
+  test('账号能力查询只读且不含凭据字段', async () => {
+    const account = await invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, { platform: 'wechat-official-account', displayName: '服务号' }) as { id: string }
+    const result = await invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, account.id) as { capabilities: unknown[]; profile: unknown }
+    expect(result.capabilities).toEqual([])
+    expect(result.profile).toBeNull()
+    await expect(invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, '')).rejects.toThrow('new_media:invalid_text:accountId')
+  })
+
   test('受控外发与账号通道保持无密钥契约', async () => {
     await expect(invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, { platform: 'xiaohongshu', displayName: '小红书主号' })).resolves.toBeDefined()
     // 渲染进程无法直接提交 token 类字段：多余字段不会进入持久化记录。

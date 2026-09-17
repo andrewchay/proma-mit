@@ -879,6 +879,7 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   GET_ACCOUNT_AUDIT: 'new-media:get-account-audit',
   GET_ADAPTER_INFO: 'new-media:get-adapter-info',
   GET_SCHEMA_INFO: 'new-media:get-schema-info',
+  GET_ACCOUNT_CAPABILITIES: 'new-media:get-account-capabilities',
   LIST_XHS_HANDOFFS: 'new-media:list-xhs-handoffs',
   PREPARE_XHS_HANDOFF: 'new-media:prepare-xhs-handoff',
   EXPORT_XHS_HANDOFF: 'new-media:export-xhs-handoff',
@@ -894,7 +895,7 @@ export const NEW_MEDIA_IPC_CHANNELS = {
 } as const
 
 export type NewMediaPlatform = 'xiaohongshu' | 'wechat-official-account'
-export type NewMediaAuthorizationMethod = 'unavailable' | 'oauth2' | 'api_key' | 'managed_browser'
+export type NewMediaAuthorizationMethod = 'unavailable' | 'oauth2' | 'api_key' | 'managed_browser' | 'wechat_direct'
 export type NewMediaAccountStatus = 'disconnected' | 'authorization_pending' | 'connected' | 'expired' | 'revoked' | 'error'
 export type NewMediaCredentialProtection = 'encrypted' | 'degraded' | 'none'
 
@@ -917,6 +918,42 @@ export interface NewMediaAdapterInfo {
   capabilities: NewMediaPlatformCapabilities
 }
 
+// ===== 微信公众号 direct 账号模型 =====
+
+export type WechatAccountType = 'subscription' | 'service' | 'test'
+export type WechatVerificationStatus = 'verified' | 'unverified'
+
+export interface WechatDirectAccountProfile {
+  appId: string
+  accountType: WechatAccountType
+  verificationStatus: WechatVerificationStatus
+  /** 平台实际返回的接口权限名；本地不推断、不补全。 */
+  grantedScopes: string[]
+  /** 用户是否已在微信后台配置当前出口 IP 白名单。 */
+  ipWhitelistConfigured: boolean
+  stableTokenExpiresAt?: number
+  lastTokenRefreshedAt?: number
+}
+
+export type WechatDirectCapabilityReason =
+  | 'enabled'
+  | 'no_credential'
+  | 'not_connected'
+  | 'account_type_not_allowed'
+  | 'verification_required'
+  | 'scope_not_granted'
+  | 'ip_whitelist_required'
+
+export interface WechatDirectCapabilityState {
+  capability: string
+  label: string
+  enabled: boolean
+  reason: WechatDirectCapabilityReason
+  explanation: string
+  requiredScopes: readonly string[]
+  externalSideEffect: boolean
+}
+
 export interface NewMediaConnectedAccount {
   id: string
   platform: NewMediaPlatform
@@ -928,6 +965,10 @@ export interface NewMediaConnectedAccount {
   capabilities: NewMediaPlatformCapabilities
   credentialRef?: string
   credentialProtection: NewMediaCredentialProtection
+  /** 微信公众号 direct 账号档案；其它平台或未配置时为空。 */
+  wechatDirect?: WechatDirectAccountProfile
+  /** 最近一次能力协商结果；UI 只能展示，不得自行推断能力。 */
+  capabilityStates?: WechatDirectCapabilityState[]
   authorizedAt?: number
   expiresAt?: number
   lastValidatedAt?: number

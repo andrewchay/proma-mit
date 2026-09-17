@@ -4,7 +4,15 @@ import type {
   NewMediaAuthorizationStart,
   NewMediaConnectedAccount,
   NewMediaPlatform,
+  WechatDirectAccountProfile,
+  WechatDirectCapabilityState,
 } from '@gravitas/shared'
+import {
+  configureWechatDirectAccount as persistWechatDirectAccount,
+  updateWechatDirectAccountProfile as persistWechatDirectProfile,
+  type WechatDirectConfigureInput,
+  type WechatDirectProfileUpdateInput,
+} from './adapters/wechat-direct-account-service'
 import type { AuthorizationMaterial } from './platform-adapter'
 import { PlatformAdapterError } from './platform-adapter'
 import { getPlatformAdapterRegistry } from './platform-adapter-registry'
@@ -221,6 +229,9 @@ export async function disconnectNewMediaAccount(accountId: string): Promise<NewM
     grantedScopes: [],
     credentialRef: undefined,
     credentialProtection: 'none',
+    // 断开后必须清空 direct 档案与能力快照，避免残留旧权限被误判为仍可用。
+    wechatDirect: undefined,
+    capabilityStates: undefined,
     authorizedAt: undefined,
     expiresAt: undefined,
     lastValidatedAt: undefined,
@@ -239,6 +250,41 @@ export async function removeNewMediaAccount(accountId: string): Promise<boolean>
   if (account.credentialRef) removeNewMediaAccountSecret(account.credentialRef)
   await auditOnly(accountAudit(account.id, 'removed', 'local-user', '已删除账号元数据。', { platform: account.platform }))
   return deleteNewMediaRecord(ACCOUNT_KIND, accountId)
+}
+
+/**
+ * 配置微信公众号 direct 凭据与账号档案。
+ *
+ * 凭据只写入加密 Secret Store；账号元数据里只保留 AppID 与非敏感描述符。
+ * 在 P2-02 提供真实 token 校验之前，账号状态不会因为配置凭据而变成 connected。
+ */
+export async function configureWechatDirectAccount(
+  accountId: string,
+  input: WechatDirectConfigureInput,
+): Promise<NewMediaConnectedAccount> {
+  const account = await requireAccount(accountId)
+  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+  return persistWechatDirectAccount(account, input)
+}
+
+export async function updateWechatDirectAccountProfile(
+  accountId: string,
+  input: WechatDirectProfileUpdateInput,
+): Promise<NewMediaConnectedAccount> {
+  const account = await requireAccount(accountId)
+  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+  return persistWechatDirectProfile(account, input)
+}
+
+/** 读取账号最近一次能力协商结果；未协商时返回空数组，不猜测能力。 */
+export async function getNewMediaAccountCapabilityStates(accountId: string): Promise<WechatDirectCapabilityState[]> {
+  const account = await requireAccount(accountId)
+  return account.capabilityStates ? [...account.capabilityStates] : []
+}
+
+export async function getNewMediaAccountProfile(accountId: string): Promise<WechatDirectAccountProfile | undefined> {
+  const account = await requireAccount(accountId)
+  return account.wechatDirect ? { ...account.wechatDirect, grantedScopes: [...account.wechatDirect.grantedScopes] } : undefined
 }
 
 export async function getNewMediaAccountAudit(accountId: string): Promise<NewMediaAccountAuditEntry[]> {

@@ -199,6 +199,18 @@ export function registerNewMediaIpcHandlers(): void {
   })
   handle(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO, async () => (await import('./new-media-sqlite-store')).getNewMediaSchemaInfo())
 
+  // 只读：返回账号最近一次能力协商结果与账号档案（均不含凭据）。
+  // AppSecret 等敏感材料不经过渲染进程，因此没有对应的写入通道。
+  handle(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, async (_: unknown, accountId: unknown) => {
+    const { requireId } = await nmValidation()
+    const resolved = requireId(accountId, 'accountId')
+    const service = await import('./new-media-account-service')
+    return {
+      capabilities: await service.getNewMediaAccountCapabilityStates(resolved),
+      profile: await service.getNewMediaAccountProfile(resolved) ?? null,
+    }
+  })
+
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS, async () => (await import('./xiaohongshu-handoff')).listXiaohongshuHandoffs())
   handle(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, async (_: unknown, draftId: unknown) => {
     return (await import('./xiaohongshu-handoff')).prepareXiaohongshuHandoff((await nmValidation()).requireId(draftId, 'draftId'))
