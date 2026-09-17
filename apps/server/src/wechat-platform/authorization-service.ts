@@ -202,6 +202,13 @@ export class WechatAuthorizationService {
     if (!info?.authorizer_appid || !info.authorizer_access_token || !info.authorizer_refresh_token) {
       throw new Error('授权信息不完整：缺少 authorizer token')
     }
+    // P3-07 租户边界：active 状态的账号绑定其他租户时禁止静默换绑；
+    // 已撤权（revoked）的账号允许新租户接管——商家是在新租户的扫码页上重新确认的。
+    const existing = await this.options.authorizerStore.load(info.authorizer_appid)
+    if (existing && existing.status !== 'revoked' && existing.tenantId !== tenantId) {
+      this.logger.warn(`[WeChat] 拒绝跨租户授权换绑（authorizer=${info.authorizer_appid}，原租户=${existing.tenantId}，新租户=${tenantId}）`)
+      throw new WechatAuthorizerUnavailableError('该公众号已绑定其他租户，不可静默换绑：请先由原租户取消授权后再重新扫码')
+    }
     const now = this.now()
     const account: WechatAuthorizerAccount = {
       authorizerAppId: info.authorizer_appid,

@@ -126,6 +126,9 @@ export class PostgresWechatAuthorizerStore implements WechatAuthorizerStore {
         account.status,
         account.authorizedAt,
         account.updatedAt,
+        JSON.stringify(account.funcScopes),
+        account.tenantId,
+        account.revokedAt ?? null,
       ],
     )
   }
