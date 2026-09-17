@@ -10,7 +10,7 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { FlaskConical, Loader2, Plus, FileSearch } from 'lucide-react'
+import { FlaskConical, Loader2, Plus, FileSearch, Package } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -19,6 +19,9 @@ import { cn } from '@/lib/utils'
 import {
   DOMAIN_ALLOWED_METHOD_PATHS,
   archiveResearchProjectAtom,
+  exportResearchBundleAtom,
+  exportResultAtom,
+  exportRunningAtom,
   changeResearchStatusAtom,
   createResearchProjectAtom,
   currentResearchProjectAtom,
@@ -95,6 +98,10 @@ export function ResearchWorkspace(): React.ReactElement {
   const loadProjects = useSetAtom(loadResearchProjectsAtom)
   const runDryRun = useSetAtom(runMigrationDryRunAtom)
   const [createOpen, setCreateOpen] = useAtom(researchCreateDialogOpenAtom)
+  const exportBundle = useSetAtom(exportResearchBundleAtom)
+  const exportResult = useAtomValue(exportResultAtom)
+  const exportRunning = useAtomValue(exportRunningAtom)
+  const [exportMessage, setExportMessage] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     void loadProjects()
@@ -113,6 +120,25 @@ export function ResearchWorkspace(): React.ReactElement {
             <FileSearch className="mr-1 h-4 w-4" />
             迁移预检
           </Button>
+          {current && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={exportRunning}
+              onClick={async () => {
+                setExportMessage(null)
+                try {
+                  const result = await exportBundle(current.id)
+                  setExportMessage(`已导出：${result.directory}（缺口 ${result.manifest.gaps.length} 项）`)
+                } catch (err) {
+                  setExportMessage(err instanceof Error ? err.message : String(err))
+                }
+              }}
+            >
+              {exportRunning ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Package className="mr-1 h-4 w-4" />}
+              导出交付包
+            </Button>
+          )}
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-1 h-4 w-4" />
             新建研究
@@ -121,6 +147,17 @@ export function ResearchWorkspace(): React.ReactElement {
       </div>
 
       <div className="flex-1 overflow-auto p-6">
+        {exportMessage && (
+          <div className="mb-4 rounded-md border bg-muted/40 px-4 py-3 text-sm">
+            {exportMessage}
+            {exportResult && exportResult.gaps > 0 && (
+              <span className="ml-2 text-amber-600">
+                存在 {exportResult.gaps} 项缺口，详见导出目录中的 report.md
+              </span>
+            )}
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}

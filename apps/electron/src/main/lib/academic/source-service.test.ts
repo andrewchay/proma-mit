@@ -193,3 +193,85 @@ describe('source-service 文献闭环', () => {
     ).rejects.toThrow('未知数据库')
   })
 })
+
+describe('检索日志每库明细（M7.2）', () => {
+  test('记录排序、分页位置、命中数与截断；单库失败也留明细', async () => {
+    const { svc, projectSvc } = await loadAll()
+    const projectId = await setupProject(projectSvc)
+
+    const ok = fakeAdapter('openalex', {
+      sources: [
+        {
+          id: 'oa:1', sourceId: '', versionLabel: 'published',
+          externalIds: [{ namespace: 'doi', value: '10.9/a' }], title: 'Hit',
+          authors: [], retrievalStatus: 'metadata-only', retrievedAt: '2026-09-17T00:00:00.000Z',
+        },
+      ],
+      totalCount: 500,
+      truncated: true,
+      errors: [],
+    })
+    const failing = fakeAdapter('pubmed', { errors: ['PubMed HTTP 429'] })
+
+    const run = await svc.searchExternalSources(
+      projectId,
+      'hearing aid',
+      ['openalex', 'pubmed'],
+      { limit: 20, sort: 'relevance', offset: 40 },
+      { adapters: [ok, failing] },
+    )
+
+    type DbResult = {
+      databaseId: string; sort: string; pageSize: number; offset: number
+      totalCount?: number; resultCount: number; truncated: boolean; errors: string[]
+    }
+    const dbResults = (run as { databaseResults: DbResult[] }).databaseResults
+    expect(dbResults).toHaveLength(2)
+
+    const oa = dbResults.find((d) => d.databaseId === 'openalex')!
+    expect(oa.sort).toBe('relevance')
+    expect(oa.pageSize).toBe(20)
+    expect(oa.offset).toBe(40)
+    expect(oa.totalCount).toBe(500)
+    expect(oa.resultCount).toBe(1)
+    expect(oa.truncated).toBe(true)
+
+    const pm = dbResults.find((d) => d.databaseId === 'pubmed')!
+    expect(pm.resultCount).toBe(0)
+    expect(pm.errors[0]).toContain('429')
+    // 失败库也记录了请求参数，便于复核"当时到底查了什么"
+    expect(pm.pageSize).toBe(20)
+  })
+
+  test('未指定排序时记录为 default（不猜测实际排序规则）', async () => {
+    const { svc, projectSvc } = await loadAll()
+    const projectId = await setupProject(projectSvc)
+
+    const run = await svc.searchExternalSources(
+      projectId,
+      'q',
+      ['openalex'],
+      { limit: 5 },
+      { adapters: [fakeAdapter('openalex', { sources: [] })] },
+    )
+    const first = (run as { databaseResults: Array<{ sort: string; offset: number }> }).databaseResults[0]!
+    expect(first.sort).toBe('default')
+    expect(first.offset).toBe(0)
+  })
+
+  test('每库明细随检索运行一起持久化（可事后审查）', async () => {
+    const { svc, projectSvc } = await loadAll()
+    const projectId = await setupProject(projectSvc)
+    await svc.searchExternalSources(
+      projectId,
+      'query',
+      ['openalex'],
+      { limit: 3, sort: 'cited_by_count' },
+      { adapters: [fakeAdapter('openalex', { sources: [] })] },
+    )
+
+    const runs = await svc.listSearchRuns(projectId)
+    const firstResult = (runs[0] as { databaseResults: Array<{ sort: string }> }).databaseResults[0]!
+    expect(firstResult.sort).toBe('cited_by_count')
+  })
+})

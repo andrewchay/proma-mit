@@ -501,3 +501,23 @@ export const setExternalToolAtom = atom(
     set(externalToolsAtom, await window.electronAPI.academicResearch.probeExternalTools())
   },
 )
+
+// ===== M7.2：导出包 =====
+
+export const exportResultAtom = atom<{ directory: string; gaps: number; counts: Record<string, number> } | null>(null)
+export const exportRunningAtom = atom<boolean>(false)
+
+export const exportResearchBundleAtom = atom(null, async (_get, set, projectId: string) => {
+  set(exportRunningAtom, true)
+  try {
+    const result = await window.electronAPI.academicResearch.exportResearchBundle(projectId)
+    set(exportResultAtom, {
+      directory: result.directory,
+      gaps: result.manifest.gaps.length,
+      counts: result.manifest.counts,
+    })
+    return result
+  } finally {
+    set(exportRunningAtom, false)
+  }
+})

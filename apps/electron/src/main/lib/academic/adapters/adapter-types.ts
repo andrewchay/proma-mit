@@ -12,6 +12,13 @@ export interface ScholarSearchOptions {
   limit: number
   /** 额外过滤器（年份、开放获取等，按 adapter 支持） */
   filters?: Record<string, string>
+  /**
+   * 排序方式（M7.2）。各库取值不同，未指定时按库默认排序并在
+   * 检索日志中记录为 'default'——不猜测实际排序规则。
+   */
+  sort?: string
+  /** 分页偏移（M7.2）；未指定为 0 */
+  offset?: number
 }
 
 export interface ScholarSearchResult {

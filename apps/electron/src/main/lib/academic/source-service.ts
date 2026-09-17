@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   ExternalId,
   ResearchProject,
+  SearchRunDatabaseResult,
   ScreeningDecision,
   SearchRunRecord,
   Source,
@@ -162,10 +163,16 @@ export async function searchExternalSources(
   const startedAt = new Date().toISOString()
   const importedSourceIds: string[] = []
   const errors: string[] = []
+  const databaseResults: SearchRunDatabaseResult[] = []
   let resultCount = 0
   let truncated = false
 
   for (const adapter of adapters) {
+    const requestMeta = {
+      sort: options.sort ?? 'default',
+      pageSize: options.limit,
+      offset: options.offset ?? 0,
+    }
     try {
       const result = await adapter.search(query, options)
       resultCount += result.sources.length
@@ -173,6 +180,15 @@ export async function searchExternalSources(
       for (const adapterError of result.errors ?? []) {
         errors.push(`${adapter.databaseId}: ${adapterError}`)
       }
+      // 每库明细入日志：排序、分页位置、命中数、截断与错误
+      databaseResults.push({
+        databaseId: adapter.databaseId,
+        ...requestMeta,
+        totalCount: result.totalCount,
+        resultCount: result.sources.length,
+        truncated: result.truncated,
+        errors: result.errors ?? [],
+      })
       for (const version of result.sources) {
         const source = buildSource(
           projectId,
@@ -195,7 +211,15 @@ export async function searchExternalSources(
         importedSourceIds.push(source.id)
       }
     } catch (err) {
-      errors.push(`${adapter.databaseId}: ${err instanceof Error ? err.message : String(err)}`)
+      const message = err instanceof Error ? err.message : String(err)
+      errors.push(`${adapter.databaseId}: ${message}`)
+      databaseResults.push({
+        databaseId: adapter.databaseId,
+        ...requestMeta,
+        resultCount: 0,
+        truncated: false,
+        errors: [message],
+      })
     }
   }
 
@@ -211,6 +235,7 @@ export async function searchExternalSources(
     importedSourceIds,
     truncated,
     errors,
+    databaseResults,
   }
   await appendEvent(projectId, {
     commandId: `search-${randomUUID()}`,

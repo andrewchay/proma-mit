@@ -231,6 +231,31 @@ export interface ScreeningDecision {
   recordedAt: string
 }
 
+/**
+ * 单库检索明细（M7.2）。
+ *
+ * 记录「这次检索在该库到底做了什么」：请求参数（排序/分页/上限）、
+ * 返回命中数与是否截断、以及该库的错误。方案 §12 M2 要求这些必须入日志，
+ * 否则「未检出声称不存在」无法被审查。
+ */
+export interface SearchRunDatabaseResult {
+  databaseId: string
+  /** 请求的排序方式（未指定则记录 'default'） */
+  sort: string
+  /** 请求的结果上限（pageSize） */
+  pageSize: number
+  /** 本次取回的偏移（分页位置） */
+  offset: number
+  /** 该库报告的命中总数（未提供则 undefined，不猜测） */
+  totalCount?: number
+  /** 实际返回条数 */
+  resultCount: number
+  /** 是否存在更多结果被截断 */
+  truncated: boolean
+  /** 该库的错误（部分失败可见） */
+  errors: string[]
+}
+
 /** 检索运行记录：查询/覆盖/截断入日志，不以未检出声称不存在 */
 export interface SearchRunRecord {
   id: string
@@ -244,6 +269,8 @@ export interface SearchRunRecord {
   importedSourceIds: string[]
   truncated: boolean
   errors: string[]
+  /** 每库明细（M7.2）：排序、分页位置、命中数、截断与错误 */
+  databaseResults?: SearchRunDatabaseResult[]
 }
 
 // ===== 证据抽取（M2 第二批） =====
@@ -730,6 +757,7 @@ export const ACADEMIC_RESEARCH_IPC_CHANNELS = {
   LIST_EXTERNAL_TOOLS: 'academic-research:list-external-tools',
   SET_EXTERNAL_TOOL: 'academic-research:set-external-tool',
   PROBE_EXTERNAL_TOOLS: 'academic-research:probe-external-tools',
+  EXPORT_RESEARCH_BUNDLE: 'academic-research:export-research-bundle',
 } as const
 
 // ===== 输入 =====

@@ -194,6 +194,15 @@ export function registerAcademicResearchIpcHandlers(): void {
   const toolSvc = require('./external-tool-service') as typeof import('./external-tool-service')
   const toolRules = require('@gravitas/core/services/academic') as typeof import('@gravitas/core/services/academic')
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.PROBE_EXTERNAL_TOOLS, async () => toolSvc.probeAllTools())
+  // M7.2：可追溯导出包
+  const exportSvc = require('./export-service') as typeof import('./export-service')
+  const researchSvcForExport = require('./research-service') as typeof import('./research-service')
+  ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_RESEARCH_BUNDLE, async (_e, projectId: string, options) =>
+    exportSvc.exportResearchBundle(projectId, {
+      loadProject: (id: string) => researchSvcForExport.getResearchProject(id),
+      outputDir: options?.outputDir,
+    }),
+  )
   ipcMain.handle(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EXTERNAL_TOOLS, async () => ({
     descriptors: toolSvc.listToolDescriptors(),
     configs: toolSvc.listToolConfigs(),

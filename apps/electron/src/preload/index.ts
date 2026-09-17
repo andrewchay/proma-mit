@@ -1575,6 +1575,8 @@ export interface ElectronAPI {
     probeExternalTools: () => Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>
     listExternalTools: () => Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>
     setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => Promise<import('@gravitas/shared').ExternalToolConfig>
+    // M7.2：可追溯导出包
+    exportResearchBundle: (projectId: string, options?: { outputDir?: string }) => Promise<{ directory: string; manifestPath: string; reportPath: string; manifest: { gaps: string[]; counts: Record<string, number>; excluded: string[] } }>
   }
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
@@ -2524,6 +2526,9 @@ const electronAPI: ElectronAPI = {
     probeExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROBE_EXTERNAL_TOOLS) as Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>,
     listExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EXTERNAL_TOOLS) as Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>,
     setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_EXTERNAL_TOOL, input) as Promise<import('@gravitas/shared').ExternalToolConfig>,
+
+    // M7.2：可追溯导出包
+    exportResearchBundle: (projectId: string, options?: { outputDir?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_RESEARCH_BUNDLE, projectId, options) as Promise<{ directory: string; manifestPath: string; reportPath: string; manifest: { gaps: string[]; counts: Record<string, number>; excluded: string[] } }>,
   },
 
   // ===== 行为采集（为专业版分析能力提供数据基础） =====
