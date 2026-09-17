@@ -887,6 +887,7 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   GET_ADAPTER_INFO: 'new-media:get-adapter-info',
   GET_SCHEMA_INFO: 'new-media:get-schema-info',
   GET_ACCOUNT_CAPABILITIES: 'new-media:get-account-capabilities',
+  CONNECT_WECHAT_DIRECT: 'new-media:connect-wechat-direct',
   LIST_XHS_HANDOFFS: 'new-media:list-xhs-handoffs',
   PREPARE_XHS_HANDOFF: 'new-media:prepare-xhs-handoff',
   EXPORT_XHS_HANDOFF: 'new-media:export-xhs-handoff',

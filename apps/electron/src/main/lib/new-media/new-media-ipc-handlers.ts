@@ -234,6 +234,12 @@ export function registerNewMediaIpcHandlers(): void {
     })
   })
 
+  // 用 stable token 校验微信凭据并连接账号（用户显式触发；会产生真实网络请求）。
+  handle(NEW_MEDIA_IPC_CHANNELS.CONNECT_WECHAT_DIRECT, async (_: unknown, accountId: unknown) => {
+    const { requireId } = await nmValidation()
+    return (await import('./new-media-account-service')).connectWechatDirectAccount(requireId(accountId, 'accountId'))
+  })
+
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media-account-service')).listNewMediaAccounts())
   handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: unknown) => {
     const v = await nmValidation()

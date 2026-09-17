@@ -1,5 +1,12 @@
 import * as React from 'react'
-import type { NewMediaAccountAuditEntry, NewMediaConnectedAccount, NewMediaPlatform } from '@gravitas/shared'
+import type {
+  NewMediaAccountAuditEntry,
+  NewMediaConnectedAccount,
+  NewMediaPlatform,
+  WechatDirectAccountProfile,
+  WechatDirectCapabilityState,
+} from '@gravitas/shared'
+import { WechatConnectionGuide } from './WechatConnectionGuide'
 
 const PLATFORM_LABEL: Record<NewMediaPlatform, string> = {
   xiaohongshu: '小红书',
@@ -21,8 +28,16 @@ export function AccountsPanel(): React.ReactElement {
   const [displayName, setDisplayName] = React.useState('')
   const [notice, setNotice] = React.useState('')
   const [audit, setAudit] = React.useState<Record<string, NewMediaAccountAuditEntry[]>>({})
+  const [wechat, setWechat] = React.useState<Record<string, { capabilities: WechatDirectCapabilityState[]; profile: WechatDirectAccountProfile | null }>>({})
 
-  const refresh = React.useCallback(async () => setAccounts(await window.electronAPI.paa.newMedia.accounts.list()), [])
+  const refresh = React.useCallback(async () => {
+    const next = await window.electronAPI.paa.newMedia.accounts.list()
+    setAccounts(next)
+    // 微信公众号账号额外读取能力协商结果与档案（只读，不含凭据）。
+    const wechatAccounts = next.filter((account) => account.platform === 'wechat-official-account')
+    const entries = await Promise.all(wechatAccounts.map(async (account) => [account.id, await window.electronAPI.paa.newMedia.accounts.getCapabilities(account.id)] as const))
+    setWechat(Object.fromEntries(entries))
+  }, [])
   React.useEffect(() => { void refresh() }, [refresh])
 
   const create = async (): Promise<void> => {
@@ -47,7 +62,7 @@ export function AccountsPanel(): React.ReactElement {
   return <div className="mx-auto max-w-5xl space-y-5">
     <section className="rounded-2xl bg-background p-4 shadow-sm">
       <h2 className="font-medium">账号连接模型</h2>
-      <p className="mt-1 text-sm text-foreground/55">当前仅建立账号和授权边界，不会打开登录页、收集 Token 或连接真实平台。</p>
+      <p className="mt-1 text-sm text-foreground/55">账号与授权边界在这里管理。微信公众号支持用 stable token 校验已录入的凭据；AppSecret 不经界面传输，需通过主进程安全通道录入（尚未实现）。</p>
       <div className="mt-4 flex flex-wrap gap-2">
         <select value={platform} onChange={(event) => setPlatform(event.target.value as NewMediaPlatform)} className="rounded-lg bg-muted px-3 py-2 text-sm">
           <option value="xiaohongshu">小红书</option><option value="wechat-official-account">微信公众号</option>
@@ -65,6 +80,14 @@ export function AccountsPanel(): React.ReactElement {
           <span>本地草稿：{account.capabilities.localDraft ? '可用' : '不可用'}</span><span>真实发布：{account.capabilities.publish ? '可用' : '未开放'}</span>
           <span>互动读取：{account.capabilities.readEngagements ? '可用' : '未开放'}</span><span>凭据保护：{account.credentialProtection === 'none' ? '无凭据' : account.credentialProtection}</span>
         </div>
+        {account.platform === 'wechat-official-account' && <WechatConnectionGuide
+          accountId={account.id}
+          profile={wechat[account.id]?.profile ?? null}
+          capabilities={wechat[account.id]?.capabilities ?? []}
+          credentialProtection={account.credentialProtection}
+          status={account.status}
+          onRefresh={refresh}
+        />}
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => void showAudit(account.id)} className="rounded-lg px-3 py-1.5 text-xs hover:bg-muted">查看审计</button>
           {account.status === 'connected' ? <button onClick={async () => { await window.electronAPI.paa.newMedia.accounts.disconnect(account.id); await refresh() }} className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">断开</button> : <button onClick={() => void beginAuthorization(account)} className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary">开始授权</button>}

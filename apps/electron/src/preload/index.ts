@@ -1956,6 +1956,7 @@ export interface ElectronAPI {
         audit: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAccountAuditEntry[]>
         getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
         getCapabilities: (accountId: string) => Promise<{ capabilities: import('@gravitas/shared').WechatDirectCapabilityState[]; profile: import('@gravitas/shared').WechatDirectAccountProfile | null }>
+        connect: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
       }
       publish: {
         list: (accountId?: string) => Promise<import('@gravitas/shared').WechatPublishRecord[]>
@@ -4357,6 +4358,7 @@ const electronAPI: ElectronAPI = {
         audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
         getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
         getCapabilities: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, accountId),
+        connect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONNECT_WECHAT_DIRECT, accountId),
       },
       publish: {
         list: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_PUBLISHES, accountId),
