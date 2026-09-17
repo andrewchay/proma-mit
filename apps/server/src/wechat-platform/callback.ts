@@ -12,6 +12,7 @@
  */
 import { extractComponentVerifyTicket, extractXmlCdataField, decryptWechatMessage, verifyWechatCallbackSignature, type WechatCallbackCryptoMaterial } from './message-crypto'
 import { ticketFingerprint, type WechatComponentTicketStore } from './ticket-store'
+import { inboxDedupeKey, type WechatEventInbox } from './event-inbox'
 
 /** 回调时间戳允许的时钟偏移：微信每 10 分钟推一次 ticket，5 分钟窗口足够。 */
 export const CALLBACK_FRESHNESS_MS = 5 * 60 * 1000
@@ -23,6 +24,8 @@ export interface WechatCallbackHandlerOptions {
   expectedComponentAppId?: string
   /** P3-04：授权事件（authorized/updateauthorized/unauthorized）处理钩子；抛错不影响对微信返回 success。 */
   onAuthorizationEvent?: (event: { infoType: string; componentAppId: string; authorizerAppId?: string }) => Promise<void> | void
+  /** P3-09：事件 inbox。提供后 ticket 走「幂等入库 → 消费 → processed/dead」路径，跨重启不重复执行。 */
+  ticketInbox?: WechatEventInbox
   logger?: { info(message: string): void; warn(message: string): void }
   now?: () => number
 }
@@ -148,6 +151,27 @@ export async function handleWechatCallbackEvent(input: WechatCallbackRequest & {
     return reject('missing app id', 400)
   }
 
+  if (options.ticketInbox) {
+    // P3-09：ticket 经 inbox 幂等消费。重复推送（含跨重启重试）只入库一次，消费一次。
+    const payload = JSON.stringify({ componentAppId: appId, ticket })
+    const dedupeKey = inboxDedupeKey('component_verify_ticket', payload)
+    const appended = await options.ticketInbox.append({ dedupeKey, eventType: 'component_verify_ticket', payload })
+    if (appended === 'duplicate') {
+      info(options, `[WeChat] ticket 事件已入库（processed 或 dead-letter），直接应答成功（appId=${appId}）`)
+      return new Response('success', { status: 200 })
+    }
+    try {
+      await options.ticketStore.save({ componentAppId: appId, ticket, receivedAt: now() })
+      await options.ticketInbox.markProcessed(dedupeKey)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await options.ticketInbox.markDead(dedupeKey, message)
+      warn(options, `[WeChat] ticket 消费失败，已入 dead-letter：${message}`)
+      return new Response('fail', { status: 500 })
+    }
+    info(options, `[WeChat] 已接收 component_verify_ticket（appId=${appId}，指纹=${ticketFingerprint(ticket)}）`)
+    return new Response('success', { status: 200 })
+  }
   try {
     await options.ticketStore.save({ componentAppId: appId, ticket, receivedAt: now() })
   } catch (error) {
