@@ -8,11 +8,14 @@ import type {
   WechatDirectCapabilityState,
 } from '@gravitas/shared'
 import {
+  connectWechatDirectAccount as connectWechatDirectAccountInternal,
   configureWechatDirectAccount as persistWechatDirectAccount,
+  recordWechatObservedScopes as recordWechatObservedScopesInternal,
   updateWechatDirectAccountProfile as persistWechatDirectProfile,
   type WechatDirectConfigureInput,
   type WechatDirectProfileUpdateInput,
 } from './adapters/wechat-direct-account-service'
+import type { WechatTokenDependencies } from './adapters/wechat-direct-token-service'
 import type { AuthorizationMaterial } from './platform-adapter'
 import { PlatformAdapterError } from './platform-adapter'
 import { getPlatformAdapterRegistry } from './platform-adapter-registry'
@@ -274,6 +277,30 @@ export async function updateWechatDirectAccountProfile(
   const account = await requireAccount(accountId)
   if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
   return persistWechatDirectProfile(account, input)
+}
+
+/**
+ * 用 stable token 校验微信公众号凭据并连接账号。仅供主进程调用，不经 IPC 暴露。
+ */
+export async function connectWechatDirectAccount(
+  accountId: string,
+  dependencies: WechatTokenDependencies = {},
+): Promise<NewMediaConnectedAccount> {
+  const account = await requireAccount(accountId)
+  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+  return connectWechatDirectAccountInternal(account, dependencies)
+}
+
+/**
+ * 记录真实接口调用观察到的微信接口权限。仅供主进程适配器在真实调用后调用。
+ */
+export async function recordWechatObservedScopes(
+  accountId: string,
+  observation: { grantedScopes?: string[]; deniedScopes?: string[] },
+): Promise<NewMediaConnectedAccount> {
+  const account = await requireAccount(accountId)
+  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+  return recordWechatObservedScopesInternal(account, observation)
 }
 
 /** 读取账号最近一次能力协商结果；未协商时返回空数组，不猜测能力。 */

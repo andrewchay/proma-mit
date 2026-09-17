@@ -45,6 +45,8 @@ export type PlatformAdapterErrorCode =
   | 'insufficient_scope'
   | 'temporarily_unavailable'
   | 'adapter_not_found'
+  /** 出口 IP 不在平台白名单内：需要用户去平台后台配置，而不是重试。 */
+  | 'ip_not_whitelisted'
 
 export class PlatformAdapterError extends Error {
   constructor(readonly code: PlatformAdapterErrorCode, message: string) {
