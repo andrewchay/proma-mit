@@ -6,6 +6,10 @@
  */
 
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { getBenchmarksRootDir } from '../../config-paths'
+import { readJsonFileSafe, writeJsonFileAtomic } from '../../safe-file'
 import type { BenchmarkConfig } from './types'
 
 /** 参与漂移判定、必须版本化的字段。 */
@@ -80,4 +84,45 @@ export function hashBenchmarkDefinition(input: { cases: string[]; rubricVersion:
 export function nextBenchmarkVersion(previous: BenchmarkVersionSnapshot | null, changed: boolean): number {
   if (!previous) return 1
   return changed ? previous.version + 1 : previous.version
+}
+
+export interface BenchmarkVersionHistoryEntry {
+  snapshot: BenchmarkVersionSnapshot
+  recordedAt: number
+  /** 记录时相对上一版的漂移发现。 */
+  driftReasons: string[]
+  latestScore?: number | null
+}
+
+interface BenchmarkVersionHistoryFile {
+  version: 1
+  entries: BenchmarkVersionHistoryEntry[]
+}
+
+function historyPath(benchmarkId: string): string {
+  return join(getBenchmarksRootDir(), benchmarkId, 'version-history.json')
+}
+
+/** 读取版本历史；不存在返回空数组。 */
+export function readBenchmarkVersionHistory(benchmarkId: string): BenchmarkVersionHistoryEntry[] {
+  const path = historyPath(benchmarkId)
+  if (!existsSync(path)) return []
+  const parsed = readJsonFileSafe<BenchmarkVersionHistoryFile>(path)
+  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.entries)) return []
+  return parsed.entries
+}
+
+/**
+ * 追加一条版本快照。同一版本号重复记录时覆盖该条，避免重复刷新产生堆叠。
+ * 只记录定义元数据，不写入 case 正文或评分规则内容。
+ */
+export function recordBenchmarkVersionSnapshot(input: { benchmark: BenchmarkConfig; latestScore?: number | null; now?: number }): BenchmarkVersionHistoryEntry {
+  const snapshot = readBenchmarkVersion(input.benchmark)
+  const history = readBenchmarkVersionHistory(input.benchmark.id)
+  const previous = history[history.length - 1]
+  const drift = previous ? detectBenchmarkDrift(previous.snapshot, snapshot) : { drifted: false, reasons: [] }
+  const entry: BenchmarkVersionHistoryEntry = { snapshot, recordedAt: input.now ?? Date.now(), driftReasons: drift.reasons, latestScore: input.latestScore ?? null }
+  const entries = [...history.filter((item) => item.snapshot.version !== snapshot.version), entry].sort((left, right) => left.snapshot.version - right.snapshot.version)
+  writeJsonFileAtomic(historyPath(input.benchmark.id), { version: 1, entries } satisfies BenchmarkVersionHistoryFile)
+  return entry
 }

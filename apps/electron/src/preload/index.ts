@@ -1900,6 +1900,10 @@ export interface ElectronAPI {
       previewCapabilityRollback: (agentId: string, versionId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackPreviewResult>
       getCapabilityAlerts: (agentId: string, windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityAlertResult[]>
       scanSampleContent: (text: string) => Promise<import('@gravitas/shared').SampleSensitiveFindingResult[]>
+      listBenchmarkVersionHistory: (benchmarkId: string) => Promise<import('@gravitas/shared').BenchmarkVersionHistoryEntryResult[]>
+      getScanSchedule: () => Promise<import('@gravitas/shared').EmployeeCapabilityScanScheduleResult>
+      updateScanSchedule: (input: { enabled: boolean; intervalHours?: number }) => Promise<import('@gravitas/shared').EmployeeCapabilityScanScheduleResult>
+      runScanIfDue: () => Promise<{ ran: boolean; created: number; skipped: number }>
     }
 
     // --- 新媒体运营本地工作台 ---
@@ -4288,6 +4292,10 @@ const electronAPI: ElectronAPI = {
       previewCapabilityRollback: (agentId, versionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, agentId, versionId),
       getCapabilityAlerts: (agentId, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, agentId, windowDays),
       scanSampleContent: (text) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.SCAN_SAMPLE_CONTENT, text),
+      listBenchmarkVersionHistory: (benchmarkId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_BENCHMARK_VERSION_HISTORY, benchmarkId),
+      getScanSchedule: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SCAN_SCHEDULE),
+      updateScanSchedule: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_SCAN_SCHEDULE, input),
+      runScanIfDue: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_SCAN_IF_DUE),
     },
     // --- 新媒体运营本地工作台 ---
     newMedia: {

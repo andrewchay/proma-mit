@@ -943,6 +943,22 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, (_, agentId: string, versionId: string) => previewAgentEmployeeCapabilityRollback(agentId, versionId))
   // 仅提示，不改写摘要，也不拒绝保存。
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.SCAN_SAMPLE_CONTENT, (_, text: string) => scanSampleForSensitiveContent(text))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_BENCHMARK_VERSION_HISTORY, (_, benchmarkId: string) => {
+    const { readBenchmarkVersionHistory } = require('./agent-runtime/eval/benchmark-versioning') as typeof import('./agent-runtime/eval/benchmark-versioning')
+    return readBenchmarkVersionHistory(benchmarkId)
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SCAN_SCHEDULE, () => {
+    const { getEmployeeCapabilityScanSchedule } = require('./employee-capability-scan-scheduler') as typeof import('./employee-capability-scan-scheduler')
+    return getEmployeeCapabilityScanSchedule()
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_SCAN_SCHEDULE, (_, input: { enabled: boolean; intervalHours?: number }) => {
+    const { updateEmployeeCapabilityScanSchedule } = require('./employee-capability-scan-scheduler') as typeof import('./employee-capability-scan-scheduler')
+    return updateEmployeeCapabilityScanSchedule(input)
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_SCAN_IF_DUE, () => {
+    const { runEmployeeCapabilityScanIfDue } = require('./employee-capability-scan-scheduler') as typeof import('./employee-capability-scan-scheduler')
+    return runEmployeeCapabilityScanIfDue()
+  })
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, (_, agentId: string, windowDays?: number) => buildAgentEmployeeCapabilityAlerts(agentId, windowDays))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, (_, input: unknown) => {
     const result = validateEvolutionPackage(input)

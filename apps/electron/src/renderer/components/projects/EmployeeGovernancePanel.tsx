@@ -34,6 +34,7 @@ export function EmployeeGovernancePanel(): React.ReactElement {
   const [drafts, setDrafts] = React.useState<Record<string, string>>({})
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState('')
+  const [scanSchedule, setScanSchedule] = React.useState<import('@gravitas/shared').EmployeeCapabilityScanScheduleResult | null>(null)
 
   const load = React.useCallback(async (): Promise<void> => {
     try {
@@ -46,6 +47,29 @@ export function EmployeeGovernancePanel(): React.ReactElement {
   }, [])
 
   React.useEffect(() => { void load() }, [load])
+
+  React.useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const schedule = await window.electronAPI.paa.agentEmployees.getScanSchedule()
+        if (!cancelled) setScanSchedule(schedule)
+      } catch {
+        // 调度不可用时不影响治理配置
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const toggleScanSchedule = async (enabled: boolean): Promise<void> => {
+    try {
+      const next = await window.electronAPI.paa.agentEmployees.updateScanSchedule({ enabled, intervalHours: scanSchedule?.intervalHours ?? 24 })
+      setScanSchedule(next)
+      toast.success(enabled ? '已启用周期扫描（仍只生成建议）' : '已关闭周期扫描')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '周期扫描设置失败')
+    }
+  }
 
   const save = async (): Promise<void> => {
     if (!policy) return
@@ -110,6 +134,14 @@ export function EmployeeGovernancePanel(): React.ReactElement {
         <button disabled={saving} className="rounded px-3 py-1.5 text-sm text-muted-foreground hover:bg-foreground/5 disabled:opacity-50" onClick={() => setDrafts({})}>放弃修改</button>
       </div>
       <p className="text-[11px] text-muted-foreground">治理配置不可被能力候选修改；修改不会自动删除任何数据。</p>
+      <div className="rounded border border-border/40 bg-background/60 p-2 text-xs">
+        <p className="font-medium">建议周期扫描</p>
+        <p className="mt-0.5 text-muted-foreground">默认关闭。启用后按间隔只运行本地只读扫描（不调用模型），仍只生成待确认建议。</p>
+        <div className="mt-1 flex items-center gap-2">
+          <button disabled={!scanSchedule} className={scanSchedule?.enabled ? 'rounded bg-foreground/10 px-2 py-1' : 'rounded bg-primary px-2 py-1 text-primary-foreground'} onClick={() => void toggleScanSchedule(!(scanSchedule?.enabled ?? false))}>{scanSchedule?.enabled ? '关闭周期扫描' : '启用周期扫描'}</button>
+          <span className="text-muted-foreground">间隔 {scanSchedule?.intervalHours ?? 24} 小时 · 上次运行 {scanSchedule?.lastRunAt ? new Date(scanSchedule.lastRunAt).toLocaleString('zh-CN') : '从未'}</span>
+        </div>
+      </div>
     </div>
   )
 }
