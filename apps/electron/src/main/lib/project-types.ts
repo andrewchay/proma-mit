@@ -480,6 +480,14 @@ export interface AgentEmployeeCapabilityHealth {
   /** 样本量是否足以支撑趋势结论。 */
   sampleSufficient: boolean
   lastExecutedAt?: number
+  /** 同 scope 内的对比对象（父版本或基线）；无则缺省。 */
+  comparisonVersionId?: string
+  /** 当前版本与对比对象的返工率差值（百分点）；样本不足时为 null。 */
+  reworkRateDelta?: number | null
+  /** 当前版本与对比对象的失败率差值（百分点）；样本不足时为 null。 */
+  failureRateDelta?: number | null
+  /** 对比是否具备可比样本量；false 时不应据此下结论。 */
+  comparisonComparable: boolean
 }
 
 export interface AgentEmployeeCapabilityRollbackPreview {
