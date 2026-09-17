@@ -309,6 +309,41 @@ export function registerNewMediaIpcHandlers(): void {
     return listWechatComments(v.requireId(payload.accountId, 'accountId'), v.optionalId(payload.msgDataId, 'msgDataId'))
   })
 
+  // ===== 自动化排程（P4-10）：只生成待审批动作 =====
+  handle(NEW_MEDIA_IPC_CHANNELS.LIST_AUTOMATION_RULES, async () => (await import('./new-media-automation-scheduler')).listAutomationRules())
+  handle(NEW_MEDIA_IPC_CHANNELS.CREATE_AUTOMATION_RULE, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const cadence = v.assertPlainObject(payload.cadence, 'cadence')
+    return (await import('./new-media-automation-scheduler')).createAutomationRule({
+      accountId: v.requireId(payload.accountId, 'accountId'),
+      platform: v.requirePlatform(payload.platform) as import('@gravitas/shared').NewMediaPlatform,
+      kind: v.requireEnum(payload.kind, ['publish', 'send-reply'] as const, 'kind'),
+      targetId: v.requireId(payload.targetId, 'targetId'),
+      summaryTemplate: v.requireString(payload.summaryTemplate, 'summaryTemplate', v.NEW_MEDIA_LIMITS.summary),
+      cadence: cadence.type === 'daily'
+        ? { type: 'daily', timeOfDay: v.requireString(cadence.timeOfDay, 'timeOfDay', 5) }
+        : { type: 'intervalHours', hours: v.requireFiniteNumber(cadence.hours, 'hours', { min: 1, max: 720 }) },
+      firstRunAt: payload.firstRunAt === undefined ? undefined : v.requireTimestamp(payload.firstRunAt, 'firstRunAt'),
+    })
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.SET_AUTOMATION_RULE_ENABLED, async (_: unknown, ruleId: unknown, enabled: unknown, reason: unknown) => {
+    const v = await nmValidation()
+    if (typeof enabled !== 'boolean') throw new Error('enabled 必须是布尔值')
+    return (await import('./new-media-automation-scheduler')).setAutomationRuleEnabled(
+      v.requireId(ruleId, 'ruleId'), enabled, reason === undefined ? undefined : v.requireString(reason, 'reason', v.NEW_MEDIA_LIMITS.summary),
+    )
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.DELETE_AUTOMATION_RULE, async (_: unknown, ruleId: unknown) => {
+    const { requireId } = await nmValidation()
+    return (await import('./new-media-automation-scheduler')).deleteAutomationRule(requireId(ruleId, 'ruleId'))
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.LIST_AUTOMATION_RUNS, async (_: unknown, ruleId: unknown) => {
+    const { optionalId } = await nmValidation()
+    return (await import('./new-media-automation-scheduler')).listAutomationRuns(optionalId(ruleId, 'ruleId'))
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.TICK_AUTOMATIONS, async () => (await import('./new-media-automation-scheduler')).tickNewMediaAutomations())
+
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS, async () => (await import('./new-media-account-service')).listNewMediaAccounts())
   handle(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, async (_: unknown, input: unknown) => {
     const v = await nmValidation()

@@ -36,7 +36,7 @@ export const NEW_MEDIA_AUDIT_EVENTS = {
   account: ['account_created', 'authorization_started', 'connected', 'validation_failed', 'disconnected', 'removed'],
   publication: ['publication_scheduled'],
   community: ['engagement_ingested', 'reply_draft_created'],
-  governance: ['requested', 'approved', 'rejected', 'simulated', 'executing', 'executed', 'execution_failed', 'execution_reconciled', 'execution_retried'],
+  governance: ['requested', 'approved', 'rejected', 'simulated', 'executing', 'executed', 'execution_failed', 'execution_reconciled', 'execution_retried', 'automation_triggered', 'automation_failed', 'automation_disabled'],
   handoff: ['prepared', 'exported', 'user_confirmed_published'],
   import: ['report_batch_imported'],
 } as const satisfies Record<NewMediaAuditDomain, readonly string[]>

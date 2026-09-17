@@ -880,6 +880,12 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   SYNC_WECHAT_ARTICLE_METRICS: 'new-media:sync-wechat-article-metrics',
   GET_WECHAT_ANALYTICS_OVERVIEW: 'new-media:get-wechat-analytics-overview',
   SYNC_WECHAT_COMMENTS: 'new-media:sync-wechat-comments',
+  LIST_AUTOMATION_RULES: 'new-media:list-automation-rules',
+  CREATE_AUTOMATION_RULE: 'new-media:create-automation-rule',
+  SET_AUTOMATION_RULE_ENABLED: 'new-media:set-automation-rule-enabled',
+  DELETE_AUTOMATION_RULE: 'new-media:delete-automation-rule',
+  LIST_AUTOMATION_RUNS: 'new-media:list-automation-runs',
+  TICK_AUTOMATIONS: 'new-media:tick-automations',
   LIST_WECHAT_COMMENTS: 'new-media:list-wechat-comments',
   GET_CONTROLLED_ACTION_AUDIT: 'new-media:get-controlled-action-audit',
   LIST_ACCOUNTS: 'new-media:list-accounts',
@@ -1213,7 +1219,45 @@ export interface NewMediaAssetPublishCheck {
   explanation: string
 }
 
-// ===== 微信留言（只读） =====
+// ===== 自动化排程（P4-10） =====
+
+export type NewMediaAutomationCadence =
+  | { type: 'daily'; timeOfDay: string }
+  | { type: 'intervalHours'; hours: number }
+
+export interface NewMediaAutomationRule {
+  id: string
+  accountId: string
+  platform: NewMediaPlatform
+  kind: 'publish' | 'send-reply'
+  /** 目标内容（如微信草稿记录 id）。 */
+  targetId: string
+  /** 摘要模板，支持 {{date}} 占位。 */
+  summaryTemplate: string
+  cadence: NewMediaAutomationCadence
+  enabled: boolean
+  nextRunAt: number
+  lastRunAt?: number
+  consecutiveFailures: number
+  autoDisabledAt?: number
+  autoDisabledReason?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type NewMediaAutomationRunOutcome = 'created' | 'skipped' | 'failed'
+
+export interface NewMediaAutomationRun {
+  id: string
+  ruleId: string
+  /** 本次触发对应的计划时间，用于幂等去重。 */
+  occurrenceAt: number
+  outcome: NewMediaAutomationRunOutcome
+  actionId?: string
+  detail: string
+  errorCode?: string
+  ranAt: number
+}
 
 export interface WechatCommentRecord {
   id: string

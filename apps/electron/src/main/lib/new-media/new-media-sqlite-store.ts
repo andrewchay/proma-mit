@@ -65,6 +65,8 @@ export const NEW_MEDIA_KIND_REGISTRY: readonly NewMediaKindDefinition[] = [
   { kind: 'wechat-article-metric', domain: 'analytics', description: '微信图文分析数据' },
   { kind: 'wechat-comment', domain: 'community', description: '微信留言（只读）' },
   { kind: 'asset-provenance', domain: 'governance', description: '素材来源与许可记录' },
+  { kind: 'automation-rule', domain: 'governance', description: '自动化排程规则' },
+  { kind: 'automation-run', domain: 'governance', description: '自动化执行历史' },
 ]
 
 const KIND_TO_DOMAIN = new Map(NEW_MEDIA_KIND_REGISTRY.map((entry) => [entry.kind, entry.domain]))

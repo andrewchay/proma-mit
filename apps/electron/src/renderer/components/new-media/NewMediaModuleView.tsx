@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
-import { ArrowLeft, FileText, FileSpreadsheet, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, Send, UserRound } from 'lucide-react'
+import { ArrowLeft, Bot, FileText, FileSpreadsheet, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, Send, UserRound } from 'lucide-react'
 import { activeViewAtom } from '@/atoms/active-view'
 import { cn } from '@/lib/utils'
 import type { NewMediaContentDraft, NewMediaControlledAction, NewMediaEngagementItem, NewMediaListeningQuery, NewMediaMention, NewMediaMetricSnapshot, NewMediaPlatform, NewMediaPublicationJob, NewMediaSocialReport, NewMediaTrendItem, XiaohongshuHandoff } from '@gravitas/shared'
@@ -8,12 +8,13 @@ import { CommunityPanel } from './CommunityPanel'
 import { ListeningPanel } from './ListeningPanel'
 import { InsightsPanel } from './InsightsPanel'
 import { PublishStatusPanel } from './PublishStatusPanel'
+import { AutomationPanel } from './AutomationPanel'
 import { ReportImportPanel } from './ReportImportPanel'
 import { WechatAnalyticsPanel } from './WechatAnalyticsPanel'
 import { AccountsPanel } from './AccountsPanel'
 import { XiaohongshuHandoffPanel } from './XiaohongshuHandoffPanel'
 
-type SubView = 'accounts' | 'content' | 'community' | 'listening' | 'import' | 'insights' | 'outbound' | 'publish'
+type SubView = 'accounts' | 'content' | 'community' | 'listening' | 'import' | 'insights' | 'outbound' | 'publish' | 'automation'
 
 const ALL_NEW_MEDIA_CAPABILITIES = ['content-operations', 'community-operations', 'social-listening', 'social-analytics', 'trend-radar', 'controlled-outbound']
 
@@ -152,7 +153,7 @@ export function NewMediaModuleView(): React.ReactElement {
       </header>
 
       <div className="flex gap-1 border-b border-border/40 px-4 py-2">
-        {([['accounts', '账号', UserRound], ['content', '内容与排程', FileText], ['community', '互动', MessageCircle], ['listening', '聆听', Radar], ['import', '报表导入', FileSpreadsheet], ['insights', '洞察', BarChart3], ['outbound', '外发审批', ShieldCheck], ['publish', '发布回执', Send]] as const).map(([id, label, Icon]) => (
+        {([['accounts', '账号', UserRound], ['content', '内容与排程', FileText], ['community', '互动', MessageCircle], ['listening', '聆听', Radar], ['import', '报表导入', FileSpreadsheet], ['insights', '洞察', BarChart3], ['outbound', '外发审批', ShieldCheck], ['publish', '发布回执', Send], ['automation', '自动化', Bot]] as const).map(([id, label, Icon]) => (
           <button key={id} onClick={() => setSubView(id)} className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm', subView === id ? 'bg-primary text-primary-foreground' : 'text-foreground/60 hover:bg-muted')}>
             <Icon size={14} />{label}
           </button>

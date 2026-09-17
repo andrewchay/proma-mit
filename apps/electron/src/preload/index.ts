@@ -1972,6 +1972,14 @@ export interface ElectronAPI {
         sync: (input: { accountId: string; msgDataId: string; articleIndex?: number; limit?: number }) => Promise<import('@gravitas/shared').WechatCommentSyncResult>
         list: (input: { accountId: string; msgDataId?: string }) => Promise<import('@gravitas/shared').WechatCommentRecord[]>
       }
+      automation: {
+        listRules: () => Promise<import('@gravitas/shared').NewMediaAutomationRule[]>
+        createRule: (input: { accountId: string; platform: import('@gravitas/shared').NewMediaPlatform; kind: 'publish' | 'send-reply'; targetId: string; summaryTemplate: string; cadence: import('@gravitas/shared').NewMediaAutomationCadence; firstRunAt?: number }) => Promise<import('@gravitas/shared').NewMediaAutomationRule>
+        setEnabled: (ruleId: string, enabled: boolean, reason?: string) => Promise<import('@gravitas/shared').NewMediaAutomationRule>
+        deleteRule: (ruleId: string) => Promise<boolean>
+        listRuns: (ruleId?: string) => Promise<import('@gravitas/shared').NewMediaAutomationRun[]>
+        tick: () => Promise<{ triggered: number; created: number; failed: number; skipped: number }>
+      }
       schema: {
         getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
       }
@@ -4382,6 +4390,14 @@ const electronAPI: ElectronAPI = {
       comments: {
         sync: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_COMMENTS, input),
         list: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_COMMENTS, input),
+      },
+      automation: {
+        listRules: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_AUTOMATION_RULES),
+        createRule: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_AUTOMATION_RULE, input),
+        setEnabled: (ruleId, enabled, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SET_AUTOMATION_RULE_ENABLED, ruleId, enabled, reason),
+        deleteRule: (ruleId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.DELETE_AUTOMATION_RULE, ruleId),
+        listRuns: (ruleId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_AUTOMATION_RUNS, ruleId),
+        tick: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.TICK_AUTOMATIONS),
       },
       schema: {
         getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),
