@@ -49,6 +49,17 @@ describe('AgentPermissionService safe 权限模式', () => {
     expect(requests).toHaveLength(0)
   })
 
+  test('given safe parent mode when a Worker requests a write tool then agentID cannot bypass denial', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool('session-safe-worker', (request) => requests.push(request), undefined, undefined, 'safe')
+
+    const result = await canUseTool('Write', { file_path: 'note.txt', content: 'hello' }, createOptions({ agentID: 'child-agent' }))
+
+    expect(result.behavior).toBe('deny')
+    expect(requests).toHaveLength(0)
+  })
+
   test('given a tool was always allowed in auto mode when switching to safe mode then whitelist does not bypass safe denial', async () => {
     const service = new AgentPermissionService()
     const requests: PermissionRequest[] = []

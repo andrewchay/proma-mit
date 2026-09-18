@@ -38,6 +38,9 @@ import { executeWorkflowRun } from './workflow-run-executor'
 import type { AgentMessage } from '@gravitas/shared'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
+/** 当前进程内 execution 对应的 Runtime generation；重启后未知时拒绝伪造已停止。 */
+const runtimeGenerationByExecution = new Map<string, number>()
+
 /**
  * Agent 护栏外推通知（飞书/钉钉找人）：卡点待决策、配额超限等需要人介入的场景，
  * 经钉钉群机器人推送（未配置则静默跳过——通知失败不影响护栏主流程）。
@@ -194,24 +197,76 @@ function recordLearningSample(execution: AgentExecution, outcome: 'accepted' | '
   })
 }
 
-export function cancelAgentExecution(executionId: string): { id: string; status: 'cancelled' } {
+interface ExecutionStopConfirmation {
+  requestAccepted: boolean
+  stopped: boolean
+  processTermination: 'VERIFIED' | 'NOT_VERIFIED'
+}
+
+function stopRunningExecution(execution: AgentExecution): ExecutionStopConfirmation {
+  const workflowRun = /^workflow:(.+)$/.exec(execution.sessionId)
+  if (workflowRun) {
+    const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
+    if (!workflowId) return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
+    try {
+      const cancelled = cancelWorkflowRun(workflowId, workflowRun[1]!)
+      const live = store.getAgentExecution(execution.id)
+      const stopped = cancelled.status === 'cancelled' && live?.status === 'running' && live.sessionId === execution.sessionId
+      return { requestAccepted: stopped, stopped, processTermination: stopped ? 'VERIFIED' : 'NOT_VERIFIED' }
+    } catch (error) {
+      console.warn(`[AgentEmployee] 停止 Workflow 失败 run=${workflowRun[1]}:`, error)
+      return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
+    }
+  }
+
+  const expectedGeneration = runtimeGenerationByExecution.get(execution.id)
+  if (expectedGeneration === undefined) return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
+  try {
+    const result = stopRegisteredAgent(execution.sessionId, expectedGeneration)
+    const live = store.getAgentExecution(execution.id)
+    if (!result.requestAccepted || live?.status !== 'running' || live.sessionId !== execution.sessionId) {
+      return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
+    }
+    if (result.stopped && result.processTermination === 'VERIFIED') runtimeGenerationByExecution.delete(execution.id)
+    return {
+      requestAccepted: true,
+      stopped: result.stopped && result.processTermination === 'VERIFIED',
+      processTermination: result.processTermination,
+    }
+  } catch (error) {
+    console.warn(`[AgentEmployee] 停止 Runtime 失败 session=${execution.sessionId}:`, error)
+    return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
+  }
+}
+
+export type CancelAgentExecutionResult =
+  | { id: string; status: 'cancelled'; stopped: true; processTermination: 'VERIFIED' }
+  | { id: string; status: 'running'; stopped: false; stopRequested: true; processTermination: 'NOT_VERIFIED' }
+
+export function cancelAgentExecution(executionId: string): CancelAgentExecutionResult {
   const execution = store.getAgentExecution(executionId)
   if (!execution) throw new Error('未找到 Agent 执行记录')
   if (execution.status !== 'queued' && execution.status !== 'running') {
     throw new Error(`仅能停止排队或运行中的执行，当前状态：${execution.status}`)
   }
+  const stopConfirmation = execution.status === 'running'
+    ? stopRunningExecution(execution)
+    : { requestAccepted: true, stopped: true, processTermination: 'VERIFIED' as const }
+  if (!stopConfirmation.requestAccepted) {
+    throw new Error('未能确认目标执行的停止请求已被接受，执行状态保持不变')
+  }
 
-  if (execution.status === 'running' && execution.sessionId) {
-    const workflowRun = /^workflow:(.+)$/.exec(execution.sessionId)
-    if (workflowRun) {
-      const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
-      if (workflowId) cancelWorkflowRun(workflowId, workflowRun[1]!)
-    } else {
-      try {
-        stopRegisteredAgent(execution.sessionId)
-      } catch (error) {
-        console.warn(`[AgentEmployee] 停止 Runtime 失败 session=${execution.sessionId}:`, error)
-      }
+  const live = store.getAgentExecution(execution.id)
+  if (!live || live.status !== execution.status || live.sessionId !== execution.sessionId) {
+    throw new Error('执行已变化，拒绝将非目标 attempt 标记为已取消')
+  }
+  if (!stopConfirmation.stopped || stopConfirmation.processTermination !== 'VERIFIED') {
+    return {
+      id: execution.id,
+      status: 'running',
+      stopped: false,
+      stopRequested: true,
+      processTermination: 'NOT_VERIFIED',
     }
   }
 
@@ -226,7 +281,7 @@ export function cancelAgentExecution(executionId: string): { id: string; status:
   recordActivity(store.getAgentExecution(execution.id)!, 'agent_cancelled', '用户停止执行，未交付')
   // 取消仅保留待人工审查的样本，绝不自动进入演化输入。
   recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
-  return { id: execution.id, status: 'cancelled' }
+  return { id: execution.id, status: 'cancelled', stopped: true, processTermination: 'VERIFIED' }
 }
 
 // ============================================
@@ -591,6 +646,10 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
 
   // 研发员工不再绕过审批；普通员工暂保留旧路径，避免无关迁移。
   const startedAt = Date.now()
+  runtimeGenerationByExecution.set(executionId, startedAt)
+  const clearRuntimeGeneration = (): void => {
+    if (runtimeGenerationByExecution.get(executionId) === startedAt) runtimeGenerationByExecution.delete(executionId)
+  }
   const previousMessageIds = new Set(normalizeExecutionMessages(getAgentSessionMessages(sessionId)).map((message) => message.id).filter(Boolean))
   runRegisteredHeadlessAgent(
     {
@@ -609,10 +668,12 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
       source: 'delegation',
       originSessionId: sessionId,
       onError: (error) => {
+        clearRuntimeGeneration()
         if (getAgentSessionMeta(sessionId)?.stoppedByUser) handleExecutionComplete(executionId, [], startedAt, true)
         else handleExecutionError(executionId, error, startedAt)
       },
       onComplete: (messages, result) => {
+        clearRuntimeGeneration()
         handleExecutionComplete(executionId, currentExecutionMessages(messages, previousMessageIds), startedAt, result?.stoppedByUser || getAgentSessionMeta(sessionId)?.stoppedByUser)
       },
       onTitleUpdated: () => {
@@ -620,6 +681,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
       },
     },
   ).catch((error: unknown) => {
+    clearRuntimeGeneration()
     handleExecutionError(executionId, error instanceof Error ? error.message : '未知错误', startedAt)
   })
 
@@ -926,7 +988,15 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
     if (task?.tokenBudget && task.tokenBudget > 0) {
       const used = getTaskTokenUsage(execution.sessionId)
       if (used > task.tokenBudget) {
-        try { stopRegisteredAgent(execution.sessionId) } catch { /* 可能已结束 */ }
+        const stopConfirmation = stopRunningExecution(execution)
+        if (!stopConfirmation.requestAccepted) {
+          console.warn(`[AgentEmployee] token 配额超限但未确认目标 Runtime 接受停止请求 execution=${execution.id}`)
+          continue
+        }
+        if (!stopConfirmation.stopped || stopConfirmation.processTermination !== 'VERIFIED') {
+          console.warn(`[AgentEmployee] token 配额超限停止请求已接受，进程终止仍为 NOT_VERIFIED execution=${execution.id}`)
+          continue
+        }
         store.updateAgentExecution(execution.id, {
           status: 'failed',
           error: `任务 token 配额超限（已用 ${used} > 预算 ${task.tokenBudget}）`,
@@ -988,31 +1058,21 @@ export function registerAgentEmployeeProvider(): () => void {
       // execution 通过 entityId=taskId 关联。按 entityId 取最近一条非终态执行，并回退兼容 executionId。
       const execution = getTaskExecutionByTaskId(taskId)
       if (execution && (execution.status === 'queued' || execution.status === 'running')) {
-        // Workflow 执行（sessionId=workflow:<runId>）：真正取消背后的 Workflow Run；
-        // stopRegisteredAgent 只能中止真实 Agent 会话，对 workflow 无效。
-        const runMatch = /^workflow:(.+)$/.exec(execution.sessionId ?? '')
-        if (runMatch) {
-          const runId = runMatch[1]!
-          const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
-          if (workflowId) {
-            try {
-              cancelWorkflowRun(workflowId, runId)
-            } catch (err) {
-              console.warn('[AgentEmployee] 取消 Workflow Run 失败:', err)
-            }
-          }
+        const stopConfirmation = execution.status === 'queued'
+          ? { requestAccepted: true, stopped: true, processTermination: 'VERIFIED' as const }
+          : stopRunningExecution(execution)
+        const live = store.getAgentExecution(execution.id)
+        if (stopConfirmation.stopped && live?.status === execution.status && live.sessionId === execution.sessionId) {
+          store.updateAgentExecution(execution.id, {
+            status: 'cancelled',
+            error: '任务已手动改状态，执行被取消',
+            completedAt: Date.now(),
+          })
+        } else if (!stopConfirmation.requestAccepted) {
+          console.warn(`[AgentEmployee] 任务状态已改变，但未确认目标执行停止 execution=${execution.id}`)
         } else {
-          try {
-            stopRegisteredAgent(execution.sessionId)
-          } catch {
-            // 会话可能已结束
-          }
+          console.warn(`[AgentEmployee] 任务状态已改变，停止请求已接受但进程终止仍为 NOT_VERIFIED execution=${execution.id}`)
         }
-        store.updateAgentExecution(execution.id, {
-          status: 'cancelled',
-          error: '任务已手动改状态，执行被取消',
-          completedAt: Date.now(),
-        })
       }
       return true
     },

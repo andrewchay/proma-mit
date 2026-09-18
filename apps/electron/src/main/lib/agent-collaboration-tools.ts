@@ -39,29 +39,18 @@ import {
   resolveDelegationPermissionMode,
 } from './agent-collaboration-utils'
 import { assertEnabledModelForChannel, listEnabledAgentModelsForChannel } from './agent-model-selection'
-import { getAgentWorkspace, listAgentWorkspaces } from './agent-workspace-manager'
-import { getSettings } from './settings-service'
+import { getAgentWorkspace } from './agent-workspace-manager'
 
 /**
  * 解析用于 collaboration 子会话的有效 workspaceId。
- * 优先使用会话绑定/传入的 workspaceId；为空或无效时依次 fallback：
- *   1. 全局默认工作区（settings.agentWorkspaceId）
- *   2. 最近使用的最新工作区
- * 这样大部分 Agent 会话默认都能注入 collaboration 子会话工具。
+ * 子调用只能继承父会话显式绑定的工作区；为空或失效时不回退全局默认/最近工作区，
+ * 避免无工作区父会话通过委派扩大文件与工具范围。
  */
-export function resolveCollaborationWorkspaceId(fallbackWorkspaceId?: string): string | undefined {
+export function resolveCollaborationWorkspaceId(parentWorkspaceId?: string): string | undefined {
   try {
-    const tryValid = (id?: string): string | undefined => (id && getAgentWorkspace(id) ? id : undefined)
-    const direct = tryValid(fallbackWorkspaceId)
-    if (direct) return direct
-    const defaultId = tryValid(getSettings()?.agentWorkspaceId as string | undefined)
-    if (defaultId) return defaultId
-    const all = listAgentWorkspaces()
-    const newest = all[0]
-    if (newest && tryValid(newest.id)) return newest.id
-    return undefined
+    return parentWorkspaceId && getAgentWorkspace(parentWorkspaceId) ? parentWorkspaceId : undefined
   } catch (err) {
-    console.warn('[Collaboration] 解析协作工作区失败，本次跳过注入:', err)
+    console.warn('[Collaboration] 解析父会话工作区失败，本次跳过注入:', err)
     return undefined
   }
 }
@@ -675,7 +664,7 @@ function getAvailableAgentModels(ctx: CollaborationToolContext): Record<string, 
   }
 }
 
-function stopDelegation(parentSessionId: string, delegationId: string): Record<string, unknown> {
+export function stopDelegation(parentSessionId: string, delegationId: string): Record<string, unknown> {
   const record = delegations.get(delegationId)
   if (!record) {
     // 不在内存：可能是应用重启后的遗留委派。回退到持久化记录（完全找不到才抛错），无法主动停止
@@ -695,11 +684,29 @@ function stopDelegation(parentSessionId: string, delegationId: string): Record<s
     }
   }
 
-  stopRegisteredAgent(record.childSessionId)
-  markDelegationFinished(record, 'cancelled')
+  const stopResult = stopRegisteredAgent(record.childSessionId, record.startedAt)
+  const liveRecord = delegations.get(delegationId)
+  if (!stopResult.requestAccepted || liveRecord !== record || record.status !== 'running') {
+    return {
+      delegation: getDelegationSummary(record),
+      stopped: false,
+      stopRequested: false,
+      stopConfirmation: stopResult,
+      note: stopResult.requestAccepted
+        ? '委派 attempt 已变化，未将当前记录标记为已取消。'
+        : '目标 Runtime 未确认接受停止请求，委派保持运行状态。',
+    }
+  }
+  const stopConfirmed = stopResult.stopped && stopResult.processTermination === 'VERIFIED'
+  if (stopConfirmed) markDelegationFinished(record, 'cancelled')
   return {
     delegation: getDelegationSummary(record),
-    stopped: true,
+    stopped: stopConfirmed,
+    stopRequested: true,
+    stopConfirmation: stopResult,
+    note: stopConfirmed
+      ? undefined
+      : 'Runtime 已接受取消请求，但进程终止尚未验证；等待完成回调后再标记 cancelled。',
   }
 }
 
@@ -796,8 +803,12 @@ function startDelegation(
       onError: (error) => {
         markDelegationFinished(record, 'failed', { error })
       },
-      onComplete: (messages) => {
+      onComplete: (messages, result) => {
         if (record.status !== 'running') return
+        if (result?.stoppedByUser || getAgentSessionMeta(child.id)?.stoppedByUser) {
+          markDelegationFinished(record, 'cancelled')
+          return
+        }
         const resultSummary = summarizeChildResult(child.id, messages)
         markDelegationFinished(record, 'completed', { resultSummary })
       },

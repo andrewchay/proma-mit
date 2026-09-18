@@ -496,10 +496,13 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
 /**
  * 中止指定会话的 Agent 执行
  */
-export function stopAgent(sessionId: string): void {
-  // 各 Runtime 的完成回调不一定携带停止标记，主进程先保存真实用户停止意图。
-  try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
-  orchestrator.stop(sessionId)
+export function stopAgent(sessionId: string, expectedGeneration?: number): import('./agent-headless-runner-registry').AgentStopResult {
+  const result = orchestrator.stop(sessionId, expectedGeneration)
+  // 只有目标 generation 的取消请求被 Runtime 接受后，才记录用户停止意图。
+  if (result.requestAccepted) {
+    try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
+  }
+  return result
 }
 
 // 注册 headless runner 与 stopper，供 collaboration 等内置工具启动/停止真实 Agent 会话

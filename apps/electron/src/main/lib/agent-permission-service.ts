@@ -228,11 +228,9 @@ export class AgentPermissionService {
       const webBridgeDownloadTrusted = toolName === WEB_BRIDGE_DOWNLOAD_TOOL_NAME && this.isWebBridgeSiteTrusted(sessionId)
       const requiresPerActionApproval = computerUse || webBridgeUploadOnly || (toolName === WEB_BRIDGE_DOWNLOAD_TOOL_NAME && !webBridgeDownloadTrusted)
 
-      // Worker（子代理）的工具调用自动批准，避免 UI 等待导致超时死锁
-      // （Computer Use 与 Web Bridge 上传仍需逐次确认；下载在站点未信任时需确认）
-      if (options.agentID && !requiresPerActionApproval) {
-        return allow()
-      }
+      // Worker（子代理）不能因为 agentID 存在就绕过父会话权限。
+      // 它与父会话共用本回调的 mode、白名单和逐次审批规则；否则 safe 父会话
+      // 可以通过创建子代理间接执行写操作。
       // 站点已信任的下载直接放行
       if (webBridgeDownloadTrusted) return allow()
 

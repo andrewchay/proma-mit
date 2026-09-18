@@ -18,12 +18,23 @@ const service = await import('./agent-employee-service')
 const { createAgentWorkspace, getAgentWorkspaceCwd } = await import('./agent-workspace-manager')
 const { getAgentSessionMeta, appendAgentMessage, appendSDKMessages, updateAgentSessionMeta } = await import('./agent-session-manager')
 const { createChannel } = await import('./channel-manager')
-const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+const { setAgentStopper, setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
 
 let lastRun: { input: AgentSendInput; callbacks: HeadlessAgentRunCallbacks } | undefined
+let acceptStopRequest = true
+let confirmProcessTerminated = true
 beforeAll(async () => {
   await store.initProjectDb()
   setHeadlessAgentRunner(async (input, callbacks) => { lastRun = { input, callbacks } })
+  setAgentStopper((sessionId, expectedGeneration) => ({
+    sessionId,
+    expectedGeneration,
+    activeGeneration: expectedGeneration,
+    requestAccepted: acceptStopRequest,
+    stopped: acceptStopRequest && confirmProcessTerminated,
+    reason: acceptStopRequest ? 'stop-request-accepted' : 'stop-failed',
+    processTermination: acceptStopRequest && confirmProcessTerminated ? 'VERIFIED' : 'NOT_VERIFIED',
+  }))
 })
 afterAll(() => {
   service.stopAgentEmployeeHeartbeat()
@@ -97,6 +108,40 @@ describe('研发员工既有链路兼容', () => {
     expect(store.getTask(task.id)?.status).toBe('paused')
     run.callbacks.onComplete([message('迟到结果')])
     expect(store.getAgentExecution(execution.id)?.status).toBe('cancelled')
+  })
+
+  test('Given Runtime 只确认接受请求 When 调用取消 Then 等待完成回调再标 cancelled', async () => {
+    const { task } = fixture()
+    const { execution, run } = await dispatch(task)
+    confirmProcessTerminated = false
+    try {
+      expect(service.cancelAgentExecution(execution.id)).toMatchObject({
+        status: 'running',
+        stopped: false,
+        stopRequested: true,
+        processTermination: 'NOT_VERIFIED',
+      })
+      expect(store.getAgentExecution(execution.id)?.status).toBe('running')
+      run.callbacks.onComplete([], { stoppedByUser: true })
+      expect(store.getAgentExecution(execution.id)?.status).toBe('cancelled')
+    } finally {
+      confirmProcessTerminated = true
+    }
+  })
+
+  test('Given Runtime 未确认停止 When 调用取消 Then 不伪造 cancelled', async () => {
+    const { task } = fixture()
+    const { execution, run } = await dispatch(task)
+    const taskStatusBeforeStop = store.getTask(task.id)?.status
+    acceptStopRequest = false
+    try {
+      expect(() => service.cancelAgentExecution(execution.id)).toThrow('未能确认目标执行')
+      expect(store.getAgentExecution(execution.id)?.status).toBe('running')
+      expect(store.getTask(task.id)?.status).toBe(taskStatusBeforeStop)
+    } finally {
+      acceptStopRequest = true
+      run.callbacks.onComplete([], { stoppedByUser: true })
+    }
   })
 
   test('Given 已完成执行 When 调用取消 Then 拒绝改变交付状态', async () => {

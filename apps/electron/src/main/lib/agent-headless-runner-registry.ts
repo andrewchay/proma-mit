@@ -25,7 +25,22 @@ export type HeadlessAgentRunner = (
   callbacks: HeadlessAgentRunCallbacks,
 ) => Promise<void>
 
-export type AgentStopper = (sessionId: string) => void
+export type AgentStopReason = 'stop-request-accepted' | 'not-active' | 'generation-mismatch' | 'stop-failed'
+
+export interface AgentStopResult {
+  sessionId: string
+  expectedGeneration?: number
+  activeGeneration?: number
+  /** Runtime 接受了针对目标 generation 的取消请求。 */
+  requestAccepted: boolean
+  /** 仅在 Runtime 同步确认执行已终止时为 true；当前内置 Runtime 均不会同步确认。 */
+  stopped: boolean
+  reason: AgentStopReason
+  processTermination: 'VERIFIED' | 'NOT_VERIFIED'
+  error?: string
+}
+
+export type AgentStopper = (sessionId: string, expectedGeneration?: number) => AgentStopResult
 
 let headlessRunner: HeadlessAgentRunner | null = null
 let agentStopper: AgentStopper | null = null
@@ -48,9 +63,9 @@ export async function runRegisteredHeadlessAgent(
   await headlessRunner(input, callbacks)
 }
 
-export function stopRegisteredAgent(sessionId: string): void {
+export function stopRegisteredAgent(sessionId: string, expectedGeneration?: number): AgentStopResult {
   if (!agentStopper) {
     throw new Error('Agent stopper 尚未初始化')
   }
-  agentStopper(sessionId)
+  return agentStopper(sessionId, expectedGeneration)
 }

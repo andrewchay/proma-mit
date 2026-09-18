@@ -46,6 +46,7 @@ import { getAgentSpanSink } from './agent-span-sink'
 import { isTransientNetworkError } from './error-patterns'
 import { isClaudeFamilyModel } from './model-family'
 import type { AgentEventBus } from './agent-event-bus'
+import type { AgentStopResult } from './agent-headless-runner-registry'
 import { decryptApiKey, getChannelById } from './channel-manager'
 import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@gravitas/core'
 import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
@@ -1186,8 +1187,9 @@ export class AgentOrchestrator {
         cwd: input.workspaceDir ?? ctx.cwd,
         systemPrompt,
         historyMessages: [],
-        // 子代理在内部全放行，避免向主会话 UI 发送未知 sessionId 的审批请求
-        permissionMode: 'bypassPermissions',
+        // 子代理不得超过父会话权限；需要审批的操作继续通过父调用上下文处理，
+        // Runtime 无法承载交互时应拒绝，而不是静默提升为 bypassPermissions。
+        permissionMode: ctx.permissionMode,
         mcpServers: ctx.mcpServers,
         maxTurns: input.maxTurns ?? 10,
         abortSignal: input.abortSignal,
@@ -1890,7 +1892,7 @@ export class AgentOrchestrator {
     // 2.1 立即抢占会话槽位（在所有同步检查通过后、第一个 await 之前）
     // 防止 buildSdkEnv 等 await 期间并发调用绕过上方的检查，导致多条重复消息写入 JSONL
     // finally 块会通过 generation 匹配来安全清理，不影响正常流程
-    const runGeneration = Date.now()
+    const runGeneration = input.startedAt ?? Date.now()
     // 优先使用渲染进程传来的 startedAt（确保 STREAM_COMPLETE 竞态保护比较的是同一个值），
     // 否则用本地 runGeneration 作为回退（headless 模式等无渲染进程场景）
     const streamStartedAt = input.startedAt ?? runGeneration
@@ -3296,10 +3298,64 @@ export class AgentOrchestrator {
   /**
    * 中止指定会话的 Agent 执行
    *
-   * 先从 activeSessions 移除（供 sendMessage catch 块检测用户中止），
-   * 再调用 adapter.abort() 中止底层 SDK 进程。
+   * 先校验目标 generation 并请求 adapter.abort()；请求被同步接受后才释放 activeSessions 所有权。
+   * adapter API 不提供进程退出回执，因此 processTermination 始终明确为 NOT_VERIFIED。
    */
-  stop(sessionId: string): void {
+  stop(sessionId: string, expectedGeneration?: number): AgentStopResult {
+    const activeGeneration = this.activeSessions.get(sessionId)
+    if (activeGeneration === undefined) {
+      // 普通 UI 停止仍允许清理纯排队消息；带 generation 的后台调用不得把未知 attempt 当作已停止。
+      if (expectedGeneration === undefined && this.sessionSendQueue.delete(sessionId)) {
+        this.broadcastQueueState(sessionId)
+      }
+      return {
+        sessionId,
+        expectedGeneration,
+        requestAccepted: false,
+        stopped: false,
+        reason: 'not-active',
+        processTermination: 'NOT_VERIFIED',
+      }
+    }
+    if (expectedGeneration !== undefined && activeGeneration !== expectedGeneration) {
+      return {
+        sessionId,
+        expectedGeneration,
+        activeGeneration,
+        requestAccepted: false,
+        stopped: false,
+        reason: 'generation-mismatch',
+        processTermination: 'NOT_VERIFIED',
+      }
+    }
+
+    try {
+      this.adapter.abort(sessionId)
+    } catch (error) {
+      return {
+        sessionId,
+        expectedGeneration,
+        activeGeneration,
+        requestAccepted: false,
+        stopped: false,
+        reason: 'stop-failed',
+        processTermination: 'NOT_VERIFIED',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    // abort 为同步请求接受语义；仅在 generation 仍匹配时释放当前运行所有权，避免旧停止请求误伤新一轮。
+    if (this.activeSessions.get(sessionId) !== activeGeneration) {
+      return {
+        sessionId,
+        expectedGeneration,
+        activeGeneration: this.activeSessions.get(sessionId),
+        requestAccepted: false,
+        stopped: false,
+        reason: 'generation-mismatch',
+        processTermination: 'NOT_VERIFIED',
+      }
+    }
     this.activeSessions.delete(sessionId)
     this.sessionPermissionModes.delete(sessionId)
     this.stoppedBySessions.add(sessionId)
@@ -3308,8 +3364,16 @@ export class AgentOrchestrator {
     if (this.sessionSendQueue.delete(sessionId)) {
       console.log(`[Agent 编排] 已清空会话 ${sessionId} 的待发送队列`)
     }
-    this.adapter.abort(sessionId)
-    console.log(`[Agent 编排] 已中止会话: ${sessionId}`)
+    console.log(`[Agent 编排] 已接受会话中止请求: ${sessionId}, generation=${activeGeneration}`)
+    return {
+      sessionId,
+      expectedGeneration,
+      activeGeneration,
+      requestAccepted: true,
+      stopped: false,
+      reason: 'stop-request-accepted',
+      processTermination: 'NOT_VERIFIED',
+    }
   }
 
   /** 检查指定会话是否正在处理中 */
