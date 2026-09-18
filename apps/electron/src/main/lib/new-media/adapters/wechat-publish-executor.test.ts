@@ -108,7 +108,7 @@ describe('P2-05 + P2-06 组合：受控发布全链路', () => {
     setWechatPublishExecutorDependenciesForTests({ publishTransport: submit.transport, token: { transport: tokenTransport } })
 
     const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: draftId, accountId, summary: '端到端发布' })
-    await approveControlledAction(action.id, 'Carol')
+    await approveControlledAction(action.id)
     const executed = await executeControlledAction(action.id)
 
     expect(executed.status).toBe('executed')
@@ -152,7 +152,7 @@ describe('P2-05 + P2-06 组合：受控发布全链路', () => {
     void getNewMediaRecord
 
     const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: draftId, accountId, summary: '素材缺许可' })
-    await approveControlledAction(action.id, 'Carol')
+    await approveControlledAction(action.id)
     const error: Error = await executeControlledAction(action.id).then(
       () => { throw new Error('预期发布被素材门控阻断') },
       (caught: Error) => caught,
@@ -175,7 +175,7 @@ describe('P2-05 + P2-06 组合：受控发布全链路', () => {
     setWechatPublishExecutorDependenciesForTests({ publishTransport: rejected.transport, token: { transport: tokenTransport } })
 
     const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: draftId, accountId, summary: '权限不足' })
-    await approveControlledAction(action.id, 'Carol')
+    await approveControlledAction(action.id)
     await expect(executeControlledAction(action.id)).rejects.toThrow('没有发布接口权限')
 
     const failed = (await listControlledActions())[0]
@@ -192,7 +192,7 @@ describe('P2-05 + P2-06 组合：受控发布全链路', () => {
     setWechatPublishExecutorDependenciesForTests({ publishTransport: failing, token: { transport: tokenTransport } })
 
     const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: draftId, accountId, summary: '网络异常' })
-    await approveControlledAction(action.id, 'Carol')
+    await approveControlledAction(action.id)
     await expect(executeControlledAction(action.id)).rejects.toThrow('socket hang up')
 
     const failed = (await listControlledActions())[0]
@@ -212,12 +212,12 @@ describe('P2-05 + P2-06 组合：受控发布全链路', () => {
     expect(getControlledActionExecutor('publish', 'wechat-official-account')).toBeDefined()
 
     const noAccount = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: 'draft-x', summary: '缺账号' })
-    await approveControlledAction(noAccount.id, 'Carol')
+    await approveControlledAction(noAccount.id)
     await expect(executeControlledAction(noAccount.id)).rejects.toThrow('未指定账号')
 
     const account = await createNewMediaAccount({ platform: 'wechat-official-account', displayName: '未连接号' })
     const notConnected = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: 'draft-x', accountId: account.id, summary: '未连接' })
-    await approveControlledAction(notConnected.id, 'Carol')
+    await approveControlledAction(notConnected.id)
     await expect(executeControlledAction(notConnected.id)).rejects.toThrow(/尚未通过微信侧校验/)
   })
 })

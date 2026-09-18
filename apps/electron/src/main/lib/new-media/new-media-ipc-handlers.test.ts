@@ -102,8 +102,8 @@ describe('新媒体 IPC 处理器', () => {
 
     const action = await invoke(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, { kind: 'publish', platform: 'xiaohongshu', targetId: 'draft-1', summary: '发布' }) as { id: string }
     await expect(invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, action.id)).rejects.toThrow('尚未批准')
-    await invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, action.id, 'Carol')
-    await invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, action.id, 'Carol', '内容表述需要复核')
+    await invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, action.id)
+    await invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, action.id, '内容表述需要复核')
     const audit = await invoke(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, action.id) as Array<{ event: string }>
     expect(audit.map((entry) => entry.event)).toEqual(['requested', 'approved', 'rejected'])
   })

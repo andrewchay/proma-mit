@@ -309,7 +309,7 @@ export function WorkflowView(): React.ReactElement {
     const approval = latestRun.approvals.find((item) => item.status === 'pending')
     if (!approval) return
     try {
-      const resolved = await window.electronAPI.resolveWorkflowApproval({ workflowId: draft.id, runId: latestRun.id, approvalId: approval.id, decision: { approved, resolvedBy: 'local-user' } })
+      const resolved = await window.electronAPI.resolveWorkflowApproval({ workflowId: draft.id, runId: latestRun.id, approvalId: approval.id, decision: { approved } })
       const progressed = approved
         ? await window.electronAPI.executeWorkflowRun({ workflowId: draft.id, runId: resolved.id, channelId: agentChannelId, ...(agentModelId ? { modelId: agentModelId } : {}) })
         : resolved

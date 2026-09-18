@@ -101,7 +101,7 @@ export function NewMediaModuleView(): React.ReactElement {
   }
 
   const approveAction = async (action: NewMediaControlledAction): Promise<void> => {
-    await window.electronAPI.paa.newMedia.controlledOutbound.approve(action.id, 'local-user')
+    await window.electronAPI.paa.newMedia.controlledOutbound.approve(action.id)
     await refresh()
   }
 
@@ -125,7 +125,7 @@ export function NewMediaModuleView(): React.ReactElement {
   const reconcileAction = async (action: NewMediaControlledAction, platformAccepted: boolean): Promise<void> => {
     const note = window.prompt(platformAccepted ? '请说明你在平台后台看到的已发布证据' : '请说明对账依据（平台后台确认未接收）')
     if (!note?.trim()) return
-    await window.electronAPI.paa.newMedia.controlledOutbound.reconcile({ actionId: action.id, actor: 'local-user', platformAccepted, note })
+    await window.electronAPI.paa.newMedia.controlledOutbound.reconcile({ actionId: action.id, platformAccepted, note })
     await refresh()
   }
 

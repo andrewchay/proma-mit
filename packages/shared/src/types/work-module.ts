@@ -1632,6 +1632,12 @@ export interface NewMediaControlledAction {
   requestedAt: number
   approvedAt?: number
   approvedBy?: string
+  /** 审批时冻结的动作载荷摘要；执行前必须重验，旧记录缺失时不得产生新副作用。 */
+  approvalPayloadHash?: string
+  /** 审批绑定的请求版本；当前新请求从 1 开始。 */
+  approvalRevision?: number
+  /** 动作请求版本。修改目标、账号或摘要时必须递增并重新审批。 */
+  revision?: number
   executedAt?: number
   /** 仅本地模拟路径产生；与真实执行回执分开保存，避免混淆。 */
   simulationReceipt?: string

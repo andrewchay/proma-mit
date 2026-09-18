@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type {
   NewMediaControlledAction,
   NewMediaExecutionOutcome,
@@ -29,6 +29,27 @@ export interface ControlledActionAuditEntry {
 }
 
 const ACTION_KIND = 'controlled-action'
+const TRUSTED_LOCAL_ACTOR = 'local-user'
+
+function computeApprovalPayloadHash(action: ControlledActionRequest): string {
+  return createHash('sha256').update(JSON.stringify({
+    kind: action.kind,
+    platform: action.platform,
+    targetId: action.targetId,
+    accountId: action.accountId ?? null,
+    summary: action.summary,
+    revision: action.revision ?? 1,
+  })).digest('hex')
+}
+
+function assertApprovalMatchesCurrentPayload(action: ControlledActionRequest): void {
+  if (!action.approvalPayloadHash || action.approvalRevision === undefined) {
+    throw new Error('该请求使用旧审批记录，缺少可信载荷绑定；请重新创建并审批')
+  }
+  if (action.approvalRevision !== (action.revision ?? 1) || action.approvalPayloadHash !== computeApprovalPayloadHash(action)) {
+    throw new Error('外发请求内容已变化，原审批失效；请重新审批')
+  }
+}
 
 /**
  * 进程内执行声明表。
@@ -67,6 +88,7 @@ export async function requestControlledAction(input: Pick<ControlledActionReques
     accountId: input.accountId?.trim() || undefined,
     status: 'pending_approval',
     requestedAt: Date.now(),
+    revision: 1,
     attempts: 0,
   }
   await persistAction(action, createAudit(action.id, 'requested', requester, '已创建待审批外发请求；未获批准前不会有任何平台调用。', {
@@ -80,27 +102,36 @@ export async function listControlledActions(): Promise<ControlledActionRequest[]
   return listNewMediaRecords(ACTION_KIND)
 }
 
-export async function approveControlledAction(actionId: string, approver: string): Promise<ControlledActionRequest> {
+/** 只允许可信主进程交互入口调用；Renderer/模型不得提供审批主体。 */
+export async function approveControlledAction(actionId: string): Promise<ControlledActionRequest> {
   const current = await requireAction(actionId)
-  if (!approver.trim()) throw new Error('审批人不能为空')
   if (current.status === 'rejected') throw new Error('已拒绝的请求不能批准')
   if (current.status === 'executed' || current.status === 'executing') throw new Error('已执行的请求不能重新批准')
   if (current.status === 'simulated' || current.status === 'approved') return current
-  const approvedBy = approver.trim()
-  const approved: ControlledActionRequest = { ...current, status: 'approved', approvedAt: Date.now(), approvedBy }
-  await persistAction(approved, createAudit(actionId, 'approved', approvedBy, '已批准；等待受控执行，一次批准只允许一次执行。', {
+  const approved: ControlledActionRequest = {
+    ...current,
+    status: 'approved',
+    approvedAt: Date.now(),
+    approvedBy: TRUSTED_LOCAL_ACTOR,
+    approvalRevision: current.revision ?? 1,
+    approvalPayloadHash: computeApprovalPayloadHash(current),
+  }
+  await persistAction(approved, createAudit(actionId, 'approved', TRUSTED_LOCAL_ACTOR, '已由可信本地主体批准；等待受控执行，一次批准只允许一次执行。', {
     platform: current.platform,
+    approvalRevision: approved.approvalRevision ?? 1,
+    approvalPayloadHash: approved.approvalPayloadHash ?? '',
   }))
   return approved
 }
 
-export async function rejectControlledAction(actionId: string, actor: string, reason: string): Promise<ControlledActionRequest> {
+/** 只允许可信主进程交互入口调用；拒绝主体固定为本地用户。 */
+export async function rejectControlledAction(actionId: string, reason: string): Promise<ControlledActionRequest> {
   const current = await requireAction(actionId)
   if (current.status === 'simulated') throw new Error('已模拟执行的请求不能拒绝')
   if (current.status === 'executed' || current.status === 'executing') throw new Error('已执行的请求不能拒绝')
-  if (!actor.trim() || !reason.trim()) throw new Error('拒绝人和原因不能为空')
+  if (!reason.trim()) throw new Error('拒绝原因不能为空')
   const rejected: ControlledActionRequest = { ...current, status: 'rejected' }
-  await persistAction(rejected, createAudit(actionId, 'rejected', actor.trim(), reason.trim(), { platform: current.platform }))
+  await persistAction(rejected, createAudit(actionId, 'rejected', TRUSTED_LOCAL_ACTOR, reason.trim(), { platform: current.platform }))
   return rejected
 }
 
@@ -109,6 +140,7 @@ export async function simulateControlledAction(actionId: string): Promise<Contro
   const current = await requireAction(actionId)
   if (current.status === 'simulated') return current
   if (current.status !== 'approved') throw new Error('外发请求尚未批准，不能执行')
+  assertApprovalMatchesCurrentPayload(current)
   const simulated: ControlledActionRequest = {
     ...current,
     status: 'simulated',
@@ -153,6 +185,7 @@ export async function executeControlledAction(actionId: string, actor = 'local-u
       : '上次执行已失败，请使用重试入口重新执行')
   }
   if (current.status !== 'approved') throw new Error('外发请求尚未批准，不能执行')
+  assertApprovalMatchesCurrentPayload(current)
 
   // 同步块：判定并占用执行权，防止并发重复执行。
   if (claimedActions.has(actionId)) throw new Error('该请求正在执行中，请等待结果')
@@ -241,17 +274,17 @@ export async function executeControlledAction(actionId: string, actor = 'local-u
  */
 export async function reconcileControlledExecution(
   actionId: string,
-  input: { actor: string; platformAccepted: boolean; note: string },
+  input: { platformAccepted: boolean; note: string },
 ): Promise<ControlledActionRequest> {
   const current = await requireAction(actionId)
   if (current.status !== 'failed') throw new Error('只有失败的请求需要对账')
-  if (!input.actor.trim() || !input.note.trim()) throw new Error('对账人和说明不能为空')
+  if (!input.note.trim()) throw new Error('对账说明不能为空')
 
   const reconciled: ControlledActionRequest = {
     ...current,
     status: input.platformAccepted ? 'executed' : 'failed',
     reconciledAt: Date.now(),
-    reconciledBy: input.actor.trim(),
+    reconciledBy: TRUSTED_LOCAL_ACTOR,
     retryRequiresReconciliation: input.platformAccepted ? undefined : false,
     receipt: input.platformAccepted
       ? current.receipt ?? {
@@ -262,7 +295,7 @@ export async function reconcileControlledExecution(
       }
       : current.receipt,
   }
-  await persistAction(reconciled, createAudit(actionId, 'execution_reconciled', input.actor.trim(), `已对账：平台${input.platformAccepted ? '已接收' : '未接收'}。${input.note.trim()}`, {
+  await persistAction(reconciled, createAudit(actionId, 'execution_reconciled', TRUSTED_LOCAL_ACTOR, `已对账：平台${input.platformAccepted ? '已接收' : '未接收'}。${input.note.trim()}`, {
     platform: current.platform,
     platformAccepted: input.platformAccepted,
   }))
@@ -274,19 +307,19 @@ export async function reconcileControlledExecution(
  *
  * 仅当上一次失败是 confirmed_failure / not_started，或结果未知但已通过对账确认平台未接收时允许。
  */
-export async function retryControlledExecution(actionId: string, actor = 'local-user'): Promise<ControlledActionRequest> {
+export async function retryControlledExecution(actionId: string): Promise<ControlledActionRequest> {
   const current = await requireAction(actionId)
   if (current.status !== 'failed') throw new Error('只有失败的请求可以重试')
   if (current.retryRequiresReconciliation) {
     throw new Error('上次执行结果未知，可能已被平台接受；请先对账确认后再重试，避免重复外发')
   }
   const retried: ControlledActionRequest = { ...current, status: 'approved', retryRequiresReconciliation: undefined }
-  await persistAction(retried, createAudit(actionId, 'execution_retried', actor, '已重置为待执行，将开始新的执行尝试。', {
+  await persistAction(retried, createAudit(actionId, 'execution_retried', TRUSTED_LOCAL_ACTOR, '已重置为待执行，将开始新的执行尝试。', {
     platform: current.platform,
     previousFailureCode: current.failureCode ?? '',
     previousOutcome: current.failureOutcome ?? '',
   }))
-  return executeControlledAction(actionId, actor)
+  return executeControlledAction(actionId, TRUSTED_LOCAL_ACTOR)
 }
 
 function normalizeReceipt(receipt: NewMediaExecutionReceipt, platform: NewMediaPlatform): NewMediaExecutionReceipt {

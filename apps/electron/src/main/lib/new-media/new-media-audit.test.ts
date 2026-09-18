@@ -58,7 +58,7 @@ describe('新媒体统一审计', () => {
     await createReplyDraft(engagement.id)
 
     const action = await requestControlledAction({ kind: 'publish', platform: 'xiaohongshu', targetId: draft.id, summary: '品牌内容发布' })
-    await approveControlledAction(action.id, 'Carol')
+    await approveControlledAction(action.id)
 
     const all = await listNewMediaAudit()
     expect(all.map((entry) => `${entry.domain}/${entry.event}`)).toEqual([

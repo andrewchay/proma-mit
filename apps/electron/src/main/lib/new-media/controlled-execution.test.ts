@@ -60,7 +60,7 @@ function fakeExecutor(platform: NewMediaPlatform = 'wechat-official-account') {
 
 async function approvedAction(platform: NewMediaPlatform = 'wechat-official-account') {
   const action = await requestControlledAction({ kind: 'publish', platform, targetId: 'draft-1', summary: '秋日新品发布' })
-  return approveControlledAction(action.id, 'Carol')
+  return approveControlledAction(action.id)
 }
 
 describe('P2-06 执行器注册表', () => {
@@ -103,7 +103,7 @@ describe('P2-06 审批门控', () => {
   test('已拒绝的请求不能执行', async () => {
     fakeExecutor()
     const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: 'draft-1', summary: '被拒绝' })
-    await rejectControlledAction(action.id, 'Carol', '文案需要复核')
+    await rejectControlledAction(action.id, '文案需要复核')
     await expect(executeControlledAction(action.id)).rejects.toThrow('已拒绝的请求不能执行')
   })
 
@@ -182,9 +182,9 @@ describe('P2-06 失败分类与重试边界', () => {
     expect(executor.calls).toHaveLength(1)
 
     // 对账确认平台未接收 → 允许重试
-    await reconcileControlledExecution(action.id, { actor: 'Carol', platformAccepted: false, note: '平台后台未找到该次发布' })
+    await reconcileControlledExecution(action.id, { platformAccepted: false, note: '平台后台未找到该次发布' })
     executor.setBehavior(async () => ({ platform: 'wechat-official-account', externalId: 'PUBLISH-2', platformStatus: 'publishing', summary: '重试已提交', receivedAt: 2_000 }))
-    const retried = await retryControlledExecution(action.id, 'Carol')
+    const retried = await retryControlledExecution(action.id)
     expect(retried.status).toBe('executed')
     expect(retried.attempts).toBe(2)
     expect(executor.calls).toHaveLength(2)
@@ -196,10 +196,10 @@ describe('P2-06 失败分类与重试边界', () => {
     executor.setBehavior(async () => { throw new ControlledExecutionError('unknown', 'network_timeout', '超时') })
     await executeControlledAction(action.id).catch(() => undefined)
 
-    const reconciled = await reconcileControlledExecution(action.id, { actor: 'Carol', platformAccepted: true, note: '平台后台已看到发布中' })
+    const reconciled = await reconcileControlledExecution(action.id, { platformAccepted: true, note: '平台后台已看到发布中' })
     expect(reconciled.status).toBe('executed')
     expect(reconciled.receipt?.platformStatus).toBe('accepted_by_platform')
-    expect(reconciled.reconciledBy).toBe('Carol')
+    expect(reconciled.reconciledBy).toBe('local-user')
 
     await expect(executeControlledAction(action.id)).rejects.toThrow('已执行完成')
     expect(executor.calls).toHaveLength(1)
@@ -238,6 +238,6 @@ describe('P2-06 失败分类与重试边界', () => {
     fakeExecutor()
     const action = await approvedAction()
     await expect(retryControlledExecution(action.id)).rejects.toThrow('只有失败的请求可以重试')
-    await expect(reconcileControlledExecution(action.id, { actor: 'Carol', platformAccepted: true, note: 'x' })).rejects.toThrow('只有失败的请求需要对账')
+    await expect(reconcileControlledExecution(action.id, { platformAccepted: true, note: 'x' })).rejects.toThrow('只有失败的请求需要对账')
   })
 })

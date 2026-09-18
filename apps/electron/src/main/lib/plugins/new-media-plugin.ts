@@ -7,7 +7,7 @@ import { getNewMediaSkillsDir, parseSkillVersion } from '../config-paths'
 import { createContentDraft, getPublicationJob, schedulePublication, type NewMediaPlatform } from '../new-media/content-operations'
 import { createListeningQuery, createReplyDraft, getListeningDigest, ingestEngagement, listEngagements } from '../new-media/community-listening'
 import { getSocialReport, getTrendOpportunities, ingestMetricSnapshot, ingestTrend } from '../new-media/analytics-trends'
-import { approveControlledAction, getControlledActionAudit, requestControlledAction, simulateControlledAction } from '../new-media/controlled-actions'
+import { getControlledActionAudit, requestControlledAction, simulateControlledAction } from '../new-media/controlled-actions'
 
 const NEW_MEDIA_SKILLS = ['nm-content-operator', 'nm-community-manager', 'nm-social-listening', 'nm-social-reporting', 'nm-trend-radar', 'nm-controlled-outbound'] as const
 const DEFAULT_ENABLED_CAPABILITIES: readonly string[] = []
@@ -18,9 +18,8 @@ const DEFAULT_ENABLED_CAPABILITIES: readonly string[] = []
  */
 function isCapabilityKilled(capability: string): boolean {
   try {
-    const { isCapabilityActive, listCapabilityFlags } = require('../new-media/new-media-feature-flags') as {
+    const { isCapabilityActive } = require('../new-media/new-media-feature-flags') as {
       isCapabilityActive: (scope: { capability: string }, flags: unknown[]) => boolean
-      listCapabilityFlags: () => Promise<unknown[]>
     }
     // 插件加载阶段拿不到异步存储，这里同步读取在初始化时缓存的开关快照。
     const { getCachedCapabilityFlags } = require('../new-media/new-media-feature-flags') as { getCachedCapabilityFlags: () => unknown[] }
@@ -267,16 +266,6 @@ function contentTools(): RuntimeToolDefinition[] {
           if (!isPlatform(args.platform) || (args.kind !== 'publish' && args.kind !== 'send-reply')) return { toolCallId: '', content: '操作类型或平台无效', isError: true }
           try { return { toolCallId: '', content: JSON.stringify(await requestControlledAction({ kind: args.kind, platform: args.platform, targetId: String(args.target_id ?? ''), summary: String(args.summary ?? '') }), null, 2) } }
           catch (error) { return { toolCallId: '', content: error instanceof Error ? error.message : '创建外发审批请求失败', isError: true } }
-        },
-      },
-      {
-        name: 'nm_approve_controlled_action',
-        description: '批准一个本地外发请求。批准不等于真实发布或发送；仍需后续受控执行。',
-        parameters: { type: 'object', properties: { action_id: { type: 'string' }, approver: { type: 'string' } }, required: ['action_id', 'approver'] },
-        execute: async (input) => {
-          const args = (input ?? {}) as Record<string, unknown>
-          try { return { toolCallId: '', content: JSON.stringify(await approveControlledAction(String(args.action_id ?? ''), String(args.approver ?? '')), null, 2) } }
-          catch (error) { return { toolCallId: '', content: error instanceof Error ? error.message : '批准外发请求失败', isError: true } }
         },
       },
       {

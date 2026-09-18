@@ -101,7 +101,7 @@ describe('P4-13 执行门控联动', () => {
       execute: async () => ({ platform: 'wechat-official-account', externalId: 'X', summary: '已提交', receivedAt: 1 }),
     })
     const action = await requestControlledAction({ kind: 'publish', platform: 'wechat-official-account', targetId: 'draft-1', accountId: 'acc-1', summary: '待发布' })
-    await approveControlledAction(action.id, 'Carol')
+    await approveControlledAction(action.id)
     await setCapabilityFlag({ capability: 'controlled-outbound', platform: 'wechat-official-account', stage: 'off', note: '平台故障回滚', updatedBy: 'Carol' })
 
     const error: Error = await executeControlledAction(action.id).then(

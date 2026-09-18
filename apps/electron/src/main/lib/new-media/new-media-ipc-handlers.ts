@@ -152,18 +152,14 @@ export function registerNewMediaIpcHandlers(): void {
       summary: v.requireString(payload.summary, 'summary', v.NEW_MEDIA_LIMITS.summary),
     })
   })
-  handle(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, async (_: unknown, actionId: unknown, approver: unknown) => {
+  handle(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, async (_: unknown, actionId: unknown) => {
     const v = await nmValidation()
-    return (await import('./controlled-actions')).approveControlledAction(
-      v.requireId(actionId, 'actionId'),
-      v.requireString(approver, 'approver', v.NEW_MEDIA_LIMITS.shortText),
-    )
+    return (await import('./controlled-actions')).approveControlledAction(v.requireId(actionId, 'actionId'))
   })
-  handle(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, async (_: unknown, actionId: unknown, actor: unknown, reason: unknown) => {
+  handle(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, async (_: unknown, actionId: unknown, reason: unknown) => {
     const v = await nmValidation()
     return (await import('./controlled-actions')).rejectControlledAction(
       v.requireId(actionId, 'actionId'),
-      v.requireString(actor, 'actor', v.NEW_MEDIA_LIMITS.shortText),
       v.requireRichText(reason, 'reason', v.NEW_MEDIA_LIMITS.summary),
     )
   })
@@ -189,10 +185,9 @@ export function registerNewMediaIpcHandlers(): void {
     const v = await nmValidation()
     const payload = v.assertPlainObject(input, 'input')
     const actionId = v.requireId(payload.actionId, 'actionId')
-    const actor = v.requireString(payload.actor, 'actor', v.NEW_MEDIA_LIMITS.shortText)
     const note = v.requireRichText(payload.note, 'note', v.NEW_MEDIA_LIMITS.summary)
     if (typeof payload.platformAccepted !== 'boolean') throw new Error('platformAccepted 必须是布尔值')
-    return (await import('./controlled-actions')).reconcileControlledExecution(actionId, { actor, note, platformAccepted: payload.platformAccepted })
+    return (await import('./controlled-actions')).reconcileControlledExecution(actionId, { note, platformAccepted: payload.platformAccepted })
   })
 
   handle(NEW_MEDIA_IPC_CHANNELS.RETRY_CONTROLLED_EXECUTION, async (_: unknown, actionId: unknown) => {

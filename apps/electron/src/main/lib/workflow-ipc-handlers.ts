@@ -92,9 +92,12 @@ export function registerWorkflowIpcHandlers(): void {
     workflowId: string
     runId: string
     approvalId: string
-    decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> }
+    decision: { approved: boolean; comment?: string; editedOutput?: Record<string, unknown> }
   }): Promise<WorkflowRun> => {
-    const run = resolveWorkflowApproval(input.workflowId, input.runId, input.approvalId, input.decision)
+    const run = resolveWorkflowApproval(input.workflowId, input.runId, input.approvalId, {
+      ...input.decision,
+      resolvedBy: 'local-user',
+    })
     // 审批推进 run 到终态后，联动回写对应 AI 员工 execution / Task（幂等）
     try {
       const { reconcileWorkflowApprovalRun } = await import('./agent-employee-service')

@@ -749,7 +749,7 @@ export interface ElectronAPI {
   executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
   executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => Promise<import('@gravitas/shared').WorkflowRun>
   executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
-  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@gravitas/shared').WorkflowRun>
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@gravitas/shared').WorkflowRun>
   cancelWorkflowRun: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRun>
   stopWorkflowRun: (workflowId: string, runId: string) => Promise<{ stopped: boolean; message?: string }>
   proposeWorkflowPatches: (input: { definition: import('@gravitas/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowPatchProposal>
@@ -1940,11 +1940,11 @@ export interface ElectronAPI {
       controlledOutbound: {
         list: () => Promise<import('@gravitas/shared').NewMediaControlledAction[]>
         request: (input: { kind: 'publish' | 'send-reply'; platform: import('@gravitas/shared').NewMediaPlatform; targetId: string; summary: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
-        approve: (actionId: string, approver: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
-        reject: (actionId: string, actor: string, reason: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        approve: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        reject: (actionId: string, reason: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         simulate: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         execute: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
-        reconcile: (input: { actionId: string; actor: string; platformAccepted: boolean; note: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        reconcile: (input: { actionId: string; platformAccepted: boolean; note: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         retry: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
         listExecutors: () => Promise<Array<{ kind: string; platform: import('@gravitas/shared').NewMediaPlatform; description: string }>>
         audit: (actionId: string) => Promise<import('@gravitas/shared').NewMediaAuditEntry[]>
@@ -2942,7 +2942,7 @@ const electronAPI: ElectronAPI = {
   executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_AGENT_NODE, input),
   executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_DETERMINISTIC_NODE, input),
   executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_RUN, input),
-  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
   cancelWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, workflowId, runId),
   stopWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.STOP_RUN, workflowId, runId),
   proposeWorkflowPatches: (input: { definition: import('@gravitas/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, input),
@@ -4363,8 +4363,8 @@ const electronAPI: ElectronAPI = {
       controlledOutbound: {
         list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_ACTIONS),
         request: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, input),
-        approve: (actionId, approver) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId, approver),
-        reject: (actionId, actor, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, actionId, actor, reason),
+        approve: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId),
+        reject: (actionId, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, actionId, reason),
         simulate: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, actionId),
         execute: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXECUTE_CONTROLLED_ACTION, actionId),
         reconcile: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RECONCILE_CONTROLLED_EXECUTION, input),
