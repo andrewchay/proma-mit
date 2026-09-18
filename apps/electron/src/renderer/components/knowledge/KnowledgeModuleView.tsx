@@ -33,6 +33,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { NoteEditor, EditToggle } from './NoteEditor'
+import { MarkdownRichEditor } from '@/components/diff/MarkdownRichEditor'
 import {
   knowledgeVaultsAtom,
   selectedVaultIdAtom,
@@ -744,9 +745,9 @@ function NoteDetail({
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+      <div className="flex-1 min-h-0 flex flex-col">
         {(frontmatterEntries.length > 0 || note.tags.length > 0) && (
-          <div className="mb-4 space-y-2">
+          <div className="flex-shrink-0 px-5 pt-4 pb-2 space-y-2">
             {frontmatterEntries.length > 0 && (
               <div className="rounded-lg bg-foreground/[0.03] px-3 py-2">
                 <div className="text-[11px] font-medium text-foreground/45 mb-1.5">Properties</div>
@@ -776,45 +777,57 @@ function NoteDetail({
           </div>
         )}
 
-        <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-foreground/85">
-          {note.content}
-        </pre>
+        {/* 正文：复用右侧预览面板的同一套 Markdown 渲染，保证两处展示一致 */}
+        <div className="flex-1 min-h-0">
+          <MarkdownRichEditor
+            value={note.content}
+            editing={false}
+            onChange={() => {}}
+            onSave={() => {}}
+            onCancel={() => {}}
+            onRequestEdit={canEdit ? onEdit : undefined}
+          />
+        </div>
 
-        {note.links.length > 0 && (
-          <div className="mt-5 pt-4 border-t border-border/50">
-            <div className="text-[11px] font-medium text-foreground/45 mb-2">
-              出链（{note.links.length}）
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {note.links.map((link) => (
-                <button
-                  key={link}
-                  onClick={() => onOpenLinked(link)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 text-primary text-[11px] hover:bg-primary/15 transition-colors"
-                >
-                  <Link2 size={10} />
-                  {link}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {(note.links.length > 0 || note.backlinks.length > 0) && (
+          <div className="flex-shrink-0 max-h-[32%] overflow-y-auto px-5 py-3 border-t border-border/50">
+            {note.links.length > 0 && (
+              <div>
+                <div className="text-[11px] font-medium text-foreground/45 mb-2">
+                  出链（{note.links.length}）
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {note.links.map((link) => (
+                    <button
+                      key={link}
+                      onClick={() => onOpenLinked(link)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 text-primary text-[11px] hover:bg-primary/15 transition-colors"
+                    >
+                      <Link2 size={10} />
+                      {link}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
-        {note.backlinks.length > 0 && (
-          <div className="mt-4">
-            <div className="text-[11px] font-medium text-foreground/45 mb-2">
-              反向链接（{note.backlinks.length}）
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {note.backlinks.map((link) => (
-                <span
-                  key={link}
-                  className="px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-foreground/60"
-                >
-                  {link}
-                </span>
-              ))}
-            </div>
+            {note.backlinks.length > 0 && (
+              <div className={note.links.length > 0 ? 'mt-4' : undefined}>
+                <div className="text-[11px] font-medium text-foreground/45 mb-2">
+                  反向链接（{note.backlinks.length}）
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {note.backlinks.map((link) => (
+                    <span
+                      key={link}
+                      className="px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-foreground/60"
+                    >
+                      {link}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
