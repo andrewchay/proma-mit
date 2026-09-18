@@ -110,8 +110,9 @@ export async function executeSearchKnowledgeTool(input: unknown, ctx: ToolContex
     : 8
 
   // 索引没有该范围的内容时如实说明，而不是暗示"不存在"
+  const sourceIds = scope.sources.map((source) => source.id)
   const store = await openKnowledgeIndexStore()
-  const indexedCount = store.knowledge.countDocuments(scope.knowledgeBaseIds)
+  const indexedCount = store.knowledge.countDocuments(scope.knowledgeBaseIds, sourceIds)
   if (indexedCount === 0) {
     return {
       toolCallId: '',
@@ -122,6 +123,7 @@ export async function executeSearchKnowledgeTool(input: unknown, ctx: ToolContex
 
   const result = store.knowledge.search(query, {
     allowedKnowledgeBaseIds: scope.knowledgeBaseIds,
+    sourceIds,
     limit,
   })
   if (result.hits.length === 0) {
@@ -161,8 +163,15 @@ export async function executeReadKnowledgeSourceTool(input: unknown, ctx: ToolCo
   if (!doc) {
     return { toolCallId: '', content: `文档不存在或已被移除: ${documentId}`, isError: true }
   }
-  // 范围校验以索引记录的知识库归属为准；不在允许范围内即拒绝
-  if (!scope.knowledgeBaseIds.includes(doc.knowledgeBaseId)) {
+
+  // documentId 可能来自更早的搜索结果。读取前重新解析一次实时范围，避免
+  // 搜索后停用来源或解除关联时继续使用旧授权；知识库与来源必须同时命中。
+  const currentScope = resolveRetrievableScope(request)
+  const allowedSourceIds = new Set(currentScope.sources.map((source) => source.id))
+  if (
+    !currentScope.knowledgeBaseIds.includes(doc.knowledgeBaseId)
+    || !allowedSourceIds.has(doc.sourceId)
+  ) {
     return { toolCallId: '', content: '该文档不在当前会话的知识范围内。', isError: true }
   }
 

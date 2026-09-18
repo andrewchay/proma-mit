@@ -58,6 +58,7 @@ export interface KnowledgeSearchHit {
 export interface KnowledgeSearchOptions {
   /** 允许检索的知识库 ID；空数组表示无范围，直接返回空结果 */
   allowedKnowledgeBaseIds: readonly string[]
+  /** 允许检索的来源 ID；显式空数组表示无来源，直接返回空结果 */
   sourceIds?: readonly string[]
   limit?: number
 }
@@ -177,22 +178,23 @@ export class KnowledgeRepository {
    */
   search(query: string, options: KnowledgeSearchOptions): { hits: KnowledgeSearchHit[]; relaxed: boolean } {
     const allowed = options.allowedKnowledgeBaseIds
-    if (allowed.length === 0) return { hits: [], relaxed: false }
+    const sourceIds = options.sourceIds
+    if (allowed.length === 0 || sourceIds?.length === 0) return { hits: [], relaxed: false }
 
     const tiers = toQueryTokenTiers(query)
     if (tiers.length === 0) return { hits: [], relaxed: false }
 
     const limit = options.limit ?? 20
     const kbPlaceholders = allowed.map(() => '?').join(', ')
-    const sourceClause = options.sourceIds?.length
-      ? ` AND d.source_id IN (${options.sourceIds.map(() => '?').join(', ')})`
+    const sourceClause = sourceIds
+      ? ` AND d.source_id IN (${sourceIds.map(() => '?').join(', ')})`
       : ''
 
     for (let tierIndex = 0; tierIndex < tiers.length; tierIndex += 1) {
       const tokens = tiers[tierIndex]!
       const clauses = tokens.map(() => `c.token_text LIKE ? ESCAPE '\\'`)
       const params: (string | number)[] = [...allowed]
-      if (options.sourceIds?.length) params.push(...options.sourceIds)
+      if (sourceIds) params.push(...sourceIds)
       for (const token of tokens) params.push(`%${token}%`)
 
       const hits = safeAll(
@@ -215,14 +217,20 @@ export class KnowledgeRepository {
     return { hits: [], relaxed: false }
   }
 
-  /** 文档总数（用于覆盖情况说明） */
-  countDocuments(allowedKnowledgeBaseIds: readonly string[]): number {
-    if (allowedKnowledgeBaseIds.length === 0) return 0
+  /** 文档总数（用于覆盖情况说明）；显式空来源集合表示无可见文档 */
+  countDocuments(
+    allowedKnowledgeBaseIds: readonly string[],
+    sourceIds?: readonly string[],
+  ): number {
+    if (allowedKnowledgeBaseIds.length === 0 || sourceIds?.length === 0) return 0
     const placeholders = allowedKnowledgeBaseIds.map(() => '?').join(', ')
+    const sourceClause = sourceIds
+      ? ` AND source_id IN (${sourceIds.map(() => '?').join(', ')})`
+      : ''
     const rows = safeAll(
       this.db,
-      `SELECT COUNT(*) AS count FROM knowledge_documents WHERE knowledge_base_id IN (${placeholders})`,
-      [...allowedKnowledgeBaseIds],
+      `SELECT COUNT(*) AS count FROM knowledge_documents WHERE knowledge_base_id IN (${placeholders})${sourceClause}`,
+      sourceIds ? [...allowedKnowledgeBaseIds, ...sourceIds] : [...allowedKnowledgeBaseIds],
     )
     return Number(rows[0]?.count ?? 0)
   }

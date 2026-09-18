@@ -111,6 +111,48 @@ describe('SearchKnowledge 范围与提示', () => {
     expect(result.content).toContain('尚未建立索引')
   })
 
+  test('来源已索引后被停用，旧索引立即不可检索', async () => {
+    const { catalog, kbId, sourceId } = await setupIndexedKnowledgeBase()
+    const sessionId = await setupSession([kbId])
+    const tools = await loadTools()
+
+    const before = await tools.executeSearchKnowledgeTool({ query: '本地优先' }, makeCtx(sessionId))
+    expect(before.content).toContain('documentId')
+
+    catalog.updateSource(sourceId, { enabled: false })
+    const after = await tools.executeSearchKnowledgeTool({ query: '本地优先' }, makeCtx(sessionId))
+    expect(after.isError).toBe(true)
+    expect(after.content).not.toContain('documentId')
+  })
+
+  test('多来源知识库撤掉一个来源后只保留仍授权来源', async () => {
+    const catalog = await loadCatalog()
+    const activeVault = join(tempDir, 'active-vault')
+    const revokedVault = join(tempDir, 'revoked-vault')
+    mkdirSync(activeVault, { recursive: true })
+    mkdirSync(revokedVault, { recursive: true })
+    writeFileSync(join(activeVault, '公开.md'), '# 公开\n\n仍可访问的晨星资料。\n', 'utf-8')
+    writeFileSync(join(revokedVault, '撤权.md'), '# 撤权\n\n已经撤权的夜莺机密。\n', 'utf-8')
+    const activeSource = catalog.createSource({ type: 'vault', name: '公开来源', locator: activeVault })
+    const revokedSource = catalog.createSource({ type: 'vault', name: '撤权来源', locator: revokedVault })
+    const kb = catalog.createKnowledgeBase({
+      name: '混合资料',
+      sourceIds: [activeSource.id, revokedSource.id],
+    })
+    const index = await loadIndex()
+    await index.indexAllEnabledSources()
+    const sessionId = await setupSession([kb.id])
+    const tools = await loadTools()
+
+    catalog.updateSource(revokedSource.id, { enabled: false })
+
+    const allowed = await tools.executeSearchKnowledgeTool({ query: '晨星资料' }, makeCtx(sessionId))
+    expect(allowed.content).toContain('公开.md')
+    const denied = await tools.executeSearchKnowledgeTool({ query: '夜莺机密' }, makeCtx(sessionId))
+    expect(denied.content).toContain('没有找到')
+    expect(denied.content).not.toContain('撤权.md')
+  })
+
   test('空查询参数被拒绝', async () => {
     const { kbId } = await setupIndexedKnowledgeBase()
     const sessionId = await setupSession([kbId])
@@ -136,6 +178,21 @@ describe('ReadKnowledgeSource 范围校验', () => {
     expect(result.content).toContain('# 产品')
     expect(result.content).toContain('本地优先的存储设计')
     expect(result.content).toContain('版本 ')
+  })
+
+  test('搜索后、读取前来源被撤权时拒绝旧 documentId', async () => {
+    const { catalog, kbId, sourceId } = await setupIndexedKnowledgeBase()
+    const sessionId = await setupSession([kbId])
+    const tools = await loadTools()
+
+    const search = await tools.executeSearchKnowledgeTool({ query: '本地优先' }, makeCtx(sessionId))
+    const documentId = /documentId: (\S+)/.exec(search.content)![1]!
+    catalog.updateSource(sourceId, { enabled: false })
+
+    const result = await tools.executeReadKnowledgeSourceTool({ documentId }, makeCtx(sessionId))
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('不在当前会话的知识范围内')
+    expect(result.content).not.toContain('本地优先的存储设计')
   })
 
   test('读取范围外文档被拒绝', async () => {

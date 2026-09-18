@@ -97,7 +97,18 @@ describe('知识索引范围过滤', () => {
     expect(result.hits[0]!.sourceId).toBe('s2')
   })
 
-  test('countDocuments 同样遵守范围', async () => {
+  test('显式空来源集合直接返回空结果，不解释为无限制', async () => {
+    const store = await makeStore()
+    insertDoc(store, { id: 'd-1', knowledgeBaseId: 'kb-a', sourceId: 's1', relativePath: 'a.md', title: '甲', chunks: [chunk(0, '共同关键词')] })
+
+    const result = store.knowledge.search('关键词', {
+      allowedKnowledgeBaseIds: ['kb-a'],
+      sourceIds: [],
+    })
+    expect(result.hits).toEqual([])
+  })
+
+  test('countDocuments 同样遵守知识库与来源范围', async () => {
     const store = await makeStore()
     insertDoc(store, { id: 'd-a', knowledgeBaseId: 'kb-a', relativePath: 'a.md', title: 'A', chunks: [chunk(0, 'x')] })
     insertDoc(store, { id: 'd-b', knowledgeBaseId: 'kb-b', relativePath: 'b.md', title: 'B', chunks: [chunk(0, 'x')] })
@@ -105,6 +116,8 @@ describe('知识索引范围过滤', () => {
     expect(store.knowledge.countDocuments(['kb-a'])).toBe(1)
     expect(store.knowledge.countDocuments([])).toBe(0)
     expect(store.knowledge.countDocuments(['kb-a', 'kb-b'])).toBe(2)
+    expect(store.knowledge.countDocuments(['kb-a', 'kb-b'], ['source-1'])).toBe(2)
+    expect(store.knowledge.countDocuments(['kb-a', 'kb-b'], [])).toBe(0)
   })
 })
 
