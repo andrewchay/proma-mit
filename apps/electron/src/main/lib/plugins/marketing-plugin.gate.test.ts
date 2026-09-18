@@ -153,4 +153,12 @@ describe('营销插件门禁', () => {
     const tools = runtime.contributeTools?.() ?? []
     expect(tools.length).toBeGreaterThan(0)
   })
+
+  test('调试放开开关生效时，无权益与本地开关也注入业务包', () => {
+    process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES = '1'
+
+    const runtime = marketingPluginRuntime()
+    expect(runtime.isEnabled()).toBe(true)
+    expect((runtime.contributeTools?.() ?? []).length).toBeGreaterThan(0)
+  })
 })

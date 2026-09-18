@@ -53,6 +53,7 @@ import {
   enabledCapabilitiesAtom as marketingEnabledCapabilitiesAtom,
   initializeMarketingCapabilities,
 } from './atoms/marketing-atoms'
+import { subscriptionStateAtom } from './atoms/subscription-atoms'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
 import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
@@ -444,6 +445,30 @@ function MarketingCapabilitiesInitializer(): null {
   useEffect(() => {
     initializeMarketingCapabilities(setEnabled)
   }, [setEnabled])
+
+  return null
+}
+
+/**
+ * 订阅权益状态初始化
+ *
+ * 侧边栏导航与能力中心都靠 subscriptionStateAtom 判定「本地开启 且 权益允许」。
+ * 此前该 atom 只在用户打开订阅设置时才被填充，导致付费能力在启动后一直不可见。
+ * 启动时先取一次主进程结论，后续由订阅相关操作自行更新。
+ * 读取失败按「无权益」处理（atom 默认值），不阻止应用启动。
+ */
+function SubscriptionStateInitializer(): null {
+  const setState = useSetAtom(subscriptionStateAtom)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setState(await window.electronAPI.getSubscriptionState())
+      } catch (error) {
+        console.error('[订阅] 初始化权益状态失败，按无权益处理:', error)
+      }
+    })()
+  }, [setState])
 
   return null
 }
@@ -948,6 +973,7 @@ if (isQuickTaskWindow) {
       <UiPreferencesInitializer />
       <MarkdownFontSizeInitializer />
       <MarketingCapabilitiesInitializer />
+      <SubscriptionStateInitializer />
       <ChatListenersInitializer />
       <AgentListenersInitializer />
       <ProjectPollListenersInitializer />

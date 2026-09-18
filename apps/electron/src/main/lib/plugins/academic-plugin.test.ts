@@ -211,3 +211,36 @@ describe('学术助手插件 manifest', () => {
     }
   })
 })
+
+/**
+ * 调试放开：这是唯一一条「不构造权益快照也能使用付费插件」的路径，
+ * 因此必须同时验证它确实生效、且只在显式开关下生效。
+ */
+describe('学术助手插件 · 调试放开', () => {
+  const originalEnv = { ...process.env }
+  let tempDir: string
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'academic-unlock-'))
+    process.env.PROMA_TEST_CONFIG_DIR = tempDir
+    delete process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES
+  })
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    rmSync(tempDir, { recursive: true, force: true })
+  })
+
+  test('未设置开关时无权益即不启用', () => {
+    expect(hasAcademicEntitlement()).toBe(false)
+  })
+
+  test('设置开关后无权益也授予 academic 并注入工具', () => {
+    process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES = '1'
+
+    expect(hasAcademicEntitlement()).toBe(true)
+    const runtime = academicPluginRuntime()
+    expect(runtime.isEnabled()).toBe(true)
+    expect((runtime.contributeTools?.() ?? []).length).toBeGreaterThan(0)
+  })
+})
