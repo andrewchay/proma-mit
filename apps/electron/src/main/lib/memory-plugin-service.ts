@@ -17,7 +17,7 @@
  * - 与 RecommendationService 集成（生成推荐）
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { getConfigDir } from './config-paths'
 import { computeRetrievalScore, planConsolidation, type ConsolidationOptions } from './memory-governance'
@@ -102,28 +102,100 @@ function ensureDataDirs(): void {
 const ITEMS_FILE = 'items.json'
 
 let itemsCache: MemoryItem[] | null = null
+let itemsStoragePath: string | null = null
+let itemsStorageError: Error | null = null
 
 function getItemsFilePath(): string {
   return join(getDataDir(), ITEMS_FILE)
 }
 
+function createItemsStorageError(path: string, cause: unknown): Error {
+  const detail = cause instanceof Error ? cause.message : String(cause)
+  return new Error(
+    `记忆条目文件无法读取，已停止写入以避免覆盖原数据：${path}（${detail}）。请先修复或显式替换该文件，再调用 resetMemoryItemsStorageState() 重试。`,
+    { cause },
+  )
+}
+
+function switchItemsStoragePath(path: string): void {
+  if (itemsStoragePath === path) return
+  itemsCache = null
+  itemsStorageError = null
+  itemsStoragePath = path
+}
+
+function parseItemsFile(path: string): MemoryItem[] {
+  const data: unknown = JSON.parse(readFileSync(path, 'utf-8'))
+  if (!Array.isArray(data)) {
+    throw new Error('顶层结构必须是数组')
+  }
+  // 旧版数组条目没有 utilityScore/useCount/archivedAt 等可选字段，保持原样即可兼容。
+  return data as MemoryItem[]
+}
+
+function failItemsStorage(path: string, cause: unknown): never {
+  const error = createItemsStorageError(path, cause)
+  itemsCache = null
+  itemsStorageError = error
+  throw error
+}
+
 function loadItems(): MemoryItem[] {
-  if (itemsCache) return itemsCache
   const path = getItemsFilePath()
-  if (!existsSync(path)) return []
-  try {
-    const data = JSON.parse(readFileSync(path, 'utf-8'))
-    itemsCache = Array.isArray(data) ? data : []
+  switchItemsStoragePath(path)
+  if (itemsStorageError) throw itemsStorageError
+  if (itemsCache) return itemsCache
+  if (!existsSync(path)) {
+    itemsCache = []
     return itemsCache
-  } catch {
-    return []
+  }
+  try {
+    itemsCache = parseItemsFile(path)
+    return itemsCache
+  } catch (error) {
+    return failItemsStorage(path, error)
+  }
+}
+
+function assertExistingItemsFileReadable(path: string): void {
+  if (!existsSync(path)) return
+  try {
+    parseItemsFile(path)
+  } catch (error) {
+    failItemsStorage(path, error)
   }
 }
 
 function saveItems(items: MemoryItem[]): void {
   ensureDataDirs()
-  writeFileSync(getItemsFilePath(), JSON.stringify(items, null, 2))
-  itemsCache = items
+  const path = getItemsFilePath()
+  switchItemsStoragePath(path)
+  if (itemsStorageError) throw itemsStorageError
+
+  // 即使缓存已加载，也要在覆盖前检查磁盘文件，避免外部损坏后被缓存内容静默覆盖。
+  assertExistingItemsFileReadable(path)
+  const tempPath = join(
+    getDataDir(),
+    `.${ITEMS_FILE}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`,
+  )
+  try {
+    writeFileSync(tempPath, JSON.stringify(items, null, 2))
+    renameSync(tempPath, path)
+    itemsCache = items
+  } finally {
+    // rename 成功后临时路径已不存在；失败时删除残留，但绝不触碰原文件。
+    rmSync(tempPath, { force: true })
+  }
+}
+
+/**
+ * 清除内存缓存与失败关闭状态，不删除或改写任何数据。
+ * 仅应在调用方已显式修复/替换 items.json 后用于重新加载，也供隔离测试重置状态。
+ */
+export function resetMemoryItemsStorageState(): void {
+  itemsCache = null
+  itemsStoragePath = null
+  itemsStorageError = null
 }
 
 // ===== CRUD =====
@@ -175,14 +247,13 @@ export function createMemoryItem(item: Omit<MemoryItem, 'id' | 'createdAt' | 'up
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
-  const items = loadItems()
-  items.push(newItem)
+  const items = [...loadItems(), newItem]
   saveItems(items)
   return newItem
 }
 
 export function updateMemoryItem(id: string, updates: Partial<Omit<MemoryItem, 'id' | 'createdAt'>>): MemoryItem | null {
-  const items = loadItems()
+  const items = [...loadItems()]
   const idx = items.findIndex((item) => item.id === id)
   if (idx === -1) return null
   const updated = { ...items[idx], ...updates, updatedAt: Date.now() }
@@ -206,7 +277,7 @@ export function deleteMemoryItem(id: string): boolean {
  * 检索侧（如 prompt 组装）命中条目后调用，使效用估计随真实使用更新。
  */
 export function recordMemoryUsage(id: string, utilityFeedback?: number): MemoryItem | null {
-  const items = loadItems()
+  const items = [...loadItems()]
   const idx = items.findIndex((item) => item.id === id)
   if (idx === -1) return null
   const item = items[idx]!
@@ -227,7 +298,7 @@ export function recordMemoryUsage(id: string, utilityFeedback?: number): MemoryI
 
 /** 恢复一条被归档的记忆（回滚 Maintain 的遗忘/合并）。 */
 export function restoreMemoryItem(id: string): MemoryItem | null {
-  const items = loadItems()
+  const items = [...loadItems()]
   const idx = items.findIndex((item) => item.id === id)
   if (idx === -1) return null
   const item = items[idx]!
@@ -258,7 +329,11 @@ export interface MemoryMaintenanceReport {
  */
 export function runMemoryMaintenance(opts: ConsolidationOptions = {}): MemoryMaintenanceReport {
   const now = Date.now()
-  const items = loadItems()
+  const items = loadItems().map((item) => ({
+    ...item,
+    tags: [...item.tags],
+    mergedFrom: item.mergedFrom ? [...item.mergedFrom] : undefined,
+  }))
   const activeBefore = items.filter((i) => !i.archivedAt).length
   const plan = planConsolidation(items, now, opts)
 
