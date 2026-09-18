@@ -442,6 +442,12 @@ app.whenReady().then(bootstrap).catch(handleBootstrapFailure)
  * 单点失败不应阻止窗口和托盘的创建（用户至少要能看到界面）。
  */
 async function bootstrap(): Promise<void> {
+  // 调试放开状态：启动时打印一次，避免“以为放开了其实没生效”的反复排查。
+  {
+    const { describeDevUnlock, DEV_UNLOCK_ENV } = await import('./lib/dev-unlock')
+    console.log(`[调试放开] ${DEV_UNLOCK_ENV}=1 状态：${describeDevUnlock()}`)
+  }
+
   if (process.env.GRAVITAS_PACKAGE_SMOKE === '1') {
     try { await (await import('./lib/package-smoke')).runPackageSmoke(); app.exit(0) }
     catch (error) { console.error(error); app.exit(1) }

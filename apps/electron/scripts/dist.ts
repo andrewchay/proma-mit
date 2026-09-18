@@ -8,6 +8,7 @@
  * - 支持详细输出模式（--verbose）查看 electron-builder 完整日志
  * - 支持跳过代码签名（--no-sign）
  * - 支持只构建 DMG 或 ZIP（--dmg / --zip）
+ * - 支持注入调试放开标记（--dev-unlock）
  *
  * 使用：
  * bun run scripts/dist.ts                          # 完整打包（双架构 + DMG + ZIP）
@@ -15,6 +16,7 @@
  * bun run scripts/dist.ts --current-arch --verbose   # 当前架构 + 详细日志
  * bun run scripts/dist.ts --current-arch --dmg       # 当前架构 + 只构建 DMG
  * bun run scripts/dist.ts --no-sign                 # 跳过代码签名
+ * bun run scripts/dist.ts --dev-unlock              # 调试包：产出的 .app 放开全部付费能力
  */
 
 import { spawnSync } from 'child_process'
@@ -51,6 +53,7 @@ interface DistOptions {
   currentArch: boolean
   verbose: boolean
   noSign: boolean
+  devUnlock: boolean
   targetFormat: 'all' | 'dmg' | 'zip' | 'dir'
   platform: 'mac' | 'win' | 'linux'
 }
@@ -154,6 +157,7 @@ function parseArgs(): DistOptions {
     currentArch: args.includes('--current-arch'),
     verbose: args.includes('--verbose'),
     noSign: args.includes('--no-sign'),
+    devUnlock: args.includes('--dev-unlock'),
     targetFormat: args.includes('--dmg')
       ? 'dmg'
       : args.includes('--zip')
@@ -169,6 +173,21 @@ function parseArgs(): DistOptions {
   }
 }
 
+/**
+ * 组装「构建主进程」步骤的参数。
+ *
+ * 导出便于单测：--dev-unlock 到放开标记 define 的映射是调试包能否生效的关键一环，
+ * 一旦这里静默失效，产物看起来正常但付费能力依旧锁着，很难定位。
+ */
+export function buildMainBuildArgs(devUnlock: boolean): string[] {
+  const args = ['run', 'build:main']
+  if (devUnlock) {
+    // 用 `--` 透传给 bun run，不在本文件重复 esbuild 参数，避免两处滞移。
+    args.push('--', '--define:__GRAVITAS_DEV_UNLOCK__=true')
+  }
+  return args
+}
+
 function main(): void {
   const opts = parseArgs()
   const arch = process.arch // arm64 或 x64
@@ -180,6 +199,11 @@ function main(): void {
   console.log(`  ${color.bold}架构${color.reset}:     ${opts.currentArch ? arch + ' (仅当前)' : 'arm64 + x64'}`)
   console.log(`  ${color.bold}格式${color.reset}:     ${opts.targetFormat}`)
   console.log(`  ${color.bold}签名${color.reset}:     ${opts.noSign ? '跳过' : '启用'}`)
+  console.log(
+    `  ${color.bold}调试放开${color.reset}: ${
+      opts.devUnlock ? `${color.yellow}开启（产物内全部付费能力已放开，勿分发）${color.reset}` : '关闭'
+    }`
+  )
   console.log(`  ${color.bold}详细日志${color.reset}: ${opts.verbose ? '开启' : '关闭'}`)
   printSeparator()
 
@@ -189,8 +213,10 @@ function main(): void {
   // ── 步骤 1: 构建主进程 ──
   step++
   printStepStart(step, totalSteps, '构建主进程 (esbuild)')
+  // --dev-unlock 时把放开标记烧进 main.cjs：esbuild 会直接把
+  // isBuildInjectedUnlock() 折叠为 return true，正式产物里则完全没有这条路径。
   results.push(
-    runStep('构建主进程', 'bun', ['run', 'build:main'], { verbose: opts.verbose })
+    runStep('构建主进程', 'bun', buildMainBuildArgs(opts.devUnlock), { verbose: opts.verbose })
   )
   printStepResult(results[results.length - 1])
   if (!results[results.length - 1].success) return printSummary(results)
@@ -295,4 +321,5 @@ function printSummary(results: StepResult[]): void {
   process.exit(allSuccess ? 0 : 1)
 }
 
-main()
+// 仅直接执行时跑主流程：被单测 import 时不应触发打包。
+if (import.meta.main) main()

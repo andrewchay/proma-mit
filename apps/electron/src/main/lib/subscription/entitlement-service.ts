@@ -9,6 +9,7 @@ import type { SubscriptionApiClient } from './subscription-api-client'
 import type { SubscriptionAuthService } from './subscription-auth-service'
 import type { EntitlementCache } from './entitlement-cache'
 import { verifyEntitlementSnapshotSignature, isDevSignature } from './entitlement-signature'
+import { buildDevUnlockedSnapshot, isDevUnlockEnabled } from '../dev-unlock'
 
 export interface SubscriptionState {
   accountId?: string
@@ -21,6 +22,22 @@ export interface SubscriptionState {
    */
   connectivity: 'online' | 'offline' | 'unknown'
   canUse: (capability: SubscriptionCapabilityId) => boolean
+}
+
+/**
+ * 可跨 IPC 传递的订阅状态。
+ *
+ * SubscriptionState 里的 canUse 是函数，结构化克隆会直接抛错（"An object could
+ * not be cloned"），导致渲染层根本收不到任何状态。渲染层的权益判定用
+ * selectCanUseCapability 自己算，不需要这个函数，因此在 IPC 边界剥掉它，
+ * 让返回类型与渲染层实际消费的字段一致。
+ */
+export type SubscriptionStateView = Omit<SubscriptionState, 'canUse'>
+
+/** 剥掉不可跨 IPC 传递的函数字段，供 ipcMain.handle 返回值使用。 */
+export function toSubscriptionStateView(state: SubscriptionState): SubscriptionStateView {
+  const { canUse: _canUse, ...view } = state
+  return view
 }
 
 export interface EntitlementServiceOptions {
@@ -66,6 +83,20 @@ export class EntitlementService {
   }
 
   getState(): SubscriptionState {
+    // 本地调试放开（仅非打包环境 + 显式环境变量）：直接返回一份全能力已授予的
+    // 内存快照，让渲染层的权益判定全部放行。不写盘、不缓存，去掉环境变量即恢复。
+    if (isDevUnlockEnabled()) {
+      const unlocked = buildDevUnlockedSnapshot()
+      return {
+        accountId: unlocked.accountId,
+        displayName: '调试放开（全部能力）',
+        entitlement: unlocked,
+        status: 'active',
+        connectivity: 'online',
+        canUse: () => true,
+      }
+    }
+
     const entitlement = this.loadVerifiedSnapshot() ?? null
     const now = new Date()
     const status = entitlement ? getEntitlementStatus(entitlement, now) : 'none'

@@ -166,6 +166,7 @@ import { getTutorialContent, createWelcomeConversation } from './lib/tutorial-se
 import { getUserProfile, updateUserProfile } from './lib/user-profile-service'
 import { getSettings, updateSettings } from './lib/settings-service'
 import { isModuleVisible, resolveDevEnabledModules, resolveEffectiveModules } from './lib/feature-gate'
+import { isDevUnlockEnabled } from './lib/dev-unlock'
 import { setDockBadgeCount } from './lib/dock-badge-service'
 
 import { checkEnvironment } from './lib/environment-checker'
@@ -1141,6 +1142,8 @@ export async function registerIpcHandlers(): Promise<void> {
           devEnabled: settings.enabledDevModules,
           isPackaged: app.isPackaged,
         }),
+        // 全能力调试放开同样是每次读取时计算的派生结论，不落盘。
+        capabilitiesUnlocked: isDevUnlockEnabled({ isPackaged: app.isPackaged }),
       }
     }
   )
@@ -1248,9 +1251,12 @@ export async function registerIpcHandlers(): Promise<void> {
     },
   )
 
+  // 返回值统一剥掉 canUse：它是函数，结构化克隆会直接报错，导致渲染层拿不到状态。
+  const { toSubscriptionStateView } = await import('./lib/subscription/entitlement-service')
+
   ipcMain.handle(
     SUBSCRIPTION_IPC_CHANNELS.GET_STATE,
-    async () => entitlementService.getState()
+    async () => toSubscriptionStateView(entitlementService.getState())
   )
 
   ipcMain.handle(
@@ -1261,7 +1267,7 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     SUBSCRIPTION_IPC_CHANNELS.VERIFY_EMAIL_CODE,
     async (_event, input: { email: string; code: string; deviceId?: string }) =>
-      entitlementService.verifyEmailOtp(input)
+      toSubscriptionStateView(await entitlementService.verifyEmailOtp(input))
   )
 
   ipcMain.handle(
@@ -1277,7 +1283,7 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     SUBSCRIPTION_IPC_CHANNELS.COMPLETE_OAUTH,
     async (_event, input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) =>
-      entitlementService.completeOAuthLogin(input)
+      toSubscriptionStateView(await entitlementService.completeOAuthLogin(input))
   )
 
   ipcMain.handle(
@@ -1287,7 +1293,7 @@ export async function registerIpcHandlers(): Promise<void> {
 
   ipcMain.handle(
     SUBSCRIPTION_IPC_CHANNELS.REFRESH,
-    async () => entitlementService.refresh()
+    async () => toSubscriptionStateView(await entitlementService.refresh())
   )
 
   ipcMain.handle(

@@ -25,6 +25,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { getMarketingSkillsDir, parseSkillVersion } from '../config-paths'
 import type { PluginSkillContribution } from '@gravitas/shared'
+import { BUSINESS_PACKAGE_CAPABILITIES } from '@gravitas/shared'
+import { isDevUnlockEnabled } from '../dev-unlock'
 
 // =====================================================================
 // 通用适配器：ma 工具 → RuntimeToolDefinition
@@ -373,6 +375,10 @@ function readPreferredCapabilities(): string[] {
  * 现在权益快照必须通过签名校验，未验签或篡改的快照一律不授予能力。
  */
 function readSubscribedCapabilities(): string[] {
+  // 本地调试放开（仅非打包环境 + 显式环境变量）：直接授予全部业务包能力，
+  // 不要求服务端签发权益快照。否则调试前还得先在 UI 逐个开启本地开关。
+  if (isDevUnlockEnabled()) return [...BUSINESS_PACKAGE_CAPABILITIES]
+
   const preferred = readPreferredCapabilities()
   if (preferred.length === 0) return []
 

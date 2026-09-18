@@ -15,6 +15,7 @@
  */
 
 import type { EntitlementSnapshot, SubscriptionCapabilityId } from '@gravitas/shared'
+import { isDevUnlockEnabled } from './dev-unlock'
 
 /**
  * 检查指定能力当前是否授予。
@@ -23,6 +24,10 @@ import type { EntitlementSnapshot, SubscriptionCapabilityId } from '@gravitas/sh
  * 的 safeStorage 路径，在模块初始化期直接 import 可能形成循环依赖。
  */
 export function hasCapability(capability: SubscriptionCapabilityId): boolean {
+  // 本地调试放开（仅非打包环境 + 显式环境变量）：直接授予全部能力。
+  // 放在验签之前是有意的——放开的目的就是不去构造服务端签名快照。
+  if (isDevUnlockEnabled()) return true
+
   try {
     const { EntitlementCache } = require('./subscription/entitlement-cache') as {
       EntitlementCache: new () => { load: () => { snapshot: EntitlementSnapshot } | undefined }
@@ -75,6 +80,7 @@ export function hasCapability(capability: SubscriptionCapabilityId): boolean {
  * 应直接用 hasCapability 返回空数组。
  *
  * 免费能力（FREE_CAPABILITIES）直接放行，不要求权益快照。
+ * 调试放开时全部能力直接放行（见 isDevUnlockEnabled）。
  */
 export function assertCapability(capability: SubscriptionCapabilityId, action: string): void {
   const { isFreeCapability } = require('@gravitas/shared') as {

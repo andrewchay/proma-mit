@@ -244,6 +244,14 @@ export interface AppSettings {
    * 渲染层据此决定入口与视图是否展示，避免自己再维护一份发布状态。
    */
   effectiveDevModules?: string[]
+  /**
+   * 全能力调试放开是否生效（只读，由主进程下发，不读回 settings.json）。
+   *
+   * 为 true 时渲染层把全部业务包视为本地已开启，无需用户在能力中心逐个打开。
+   * 仅在非打包环境且显式设置 GRAVITAS_UNLOCK_ALL_CAPABILITIES=1 时为 true，
+   * 详见 main/lib/dev-unlock.ts。
+   */
+  capabilitiesUnlocked?: boolean
   /** 教程推荐横幅是否已关闭 */
   tutorialBannerDismissed?: boolean
   /** 自动归档天数（0 = 禁用，默认 7） */

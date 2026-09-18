@@ -33,6 +33,39 @@ export function isFreeCapability(capability: SubscriptionCapabilityId): boolean 
   return FREE_CAPABILITIES.includes(capability)
 }
 
+/**
+ * 全部受订阅控制的付费能力。
+ *
+ * 用途：本地调试放开（见 main/lib/dev-unlock.ts）时一次性授予，避免逐个模拟
+ * 服务端签发。业务判定请使用 canUseCapability，不要直接拿这份清单当权限。
+ */
+export const PAID_CAPABILITIES: SubscriptionCapabilityId[] = [
+  'influencer',
+  'paid-media',
+  'outbound-sourcing',
+  'academic',
+  'knowledge-pro',
+  'analysis-pro',
+]
+
+/** 全部能力（免费 + 付费），同上，仅用于调试放开与展示。 */
+export const ALL_SUBSCRIPTION_CAPABILITIES: SubscriptionCapabilityId[] = [
+  ...FREE_CAPABILITIES,
+  ...PAID_CAPABILITIES,
+]
+
+/**
+ * 业务包能力（达人 / 投放 / 出海 sourcing）。
+ *
+ * 这三个能力同时是 settings.json 里的本地偏好开关取值
+ * （marketingCapabilities / domainCapabilities），两侧必须保持一致。
+ */
+export const BUSINESS_PACKAGE_CAPABILITIES: SubscriptionCapabilityId[] = [
+  'influencer',
+  'paid-media',
+  'outbound-sourcing',
+]
+
 /** 服务端签名的权益快照（不含 access token / refresh token / 支付密钥） */
 export interface EntitlementSnapshot {
   accountId: string

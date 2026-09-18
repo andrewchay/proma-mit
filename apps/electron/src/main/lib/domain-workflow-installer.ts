@@ -24,6 +24,7 @@ import { getWorkflowDefinition, publishWorkflowDefinition, saveWorkflowDefinitio
 import { readJsonFileSafe } from './safe-file'
 import { listAgentWorkspaces } from './agent-workspace-manager'
 import { getSettings } from './settings-service'
+import { isDevUnlockEnabled } from './dev-unlock'
 
 // =====================================================================
 // 领域包声明表
@@ -81,6 +82,10 @@ export interface DomainWorkflowInstallResult {
 }
 
 function isCapabilityEnabled(binding: DomainWorkflowBinding): boolean {
+  // 本地调试放开（仅非打包环境 + 显式环境变量）：直接视为已开启，
+  // 否则调试前还得先在 UI 把本地开关逐个打开。
+  if (isDevUnlockEnabled()) return true
+
   try {
     const settings = getSettings() as unknown as Record<string, unknown>
     const list = settings[binding.settingsKey]

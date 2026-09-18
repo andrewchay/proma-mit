@@ -15,6 +15,7 @@
  * main 侧 marketing-plugin.isEnabled 同样按「本地开关 AND 权益」判定。
  */
 import { atom } from 'jotai'
+import { BUSINESS_PACKAGE_CAPABILITIES } from '@gravitas/shared'
 import { subscriptionStateAtom, selectCanUseCapability } from './subscription-atoms'
 
 export type CapabilityId = 'influencer' | 'paid-media' | 'outbound-sourcing'
@@ -102,6 +103,13 @@ export async function initializeMarketingCapabilities(
 ): Promise<void> {
   try {
     const settings = await window.electronAPI.getSettings()
+    // 全能力调试放开（非打包环境 + 显式环境变量）：默认把全部业务包视为已开启，
+    // 否则主进程已放开但导航里仍然空着，还得先手动去能力中心逐个打开。
+    // 不写回 settings.json：放开消失后自动回到用户原本的偏好。
+    if (settings.capabilitiesUnlocked === true) {
+      setEnabled([...BUSINESS_PACKAGE_CAPABILITIES] as CapabilityId[])
+      return
+    }
     const marketing = Array.isArray(settings.marketingCapabilities) ? settings.marketingCapabilities : []
     const domains = Array.isArray(settings.domainCapabilities) ? settings.domainCapabilities : []
     const stored = [...new Set([...marketing, ...domains])] as CapabilityId[]

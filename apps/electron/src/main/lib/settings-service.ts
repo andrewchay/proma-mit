@@ -64,13 +64,13 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   const current = getSettings()
   // effectiveDevModules 是门禁计算的派生结论，只在下发时注入，绝不落盘：
   // 否则它会变成可手改的配置，且与发布状态不一致时还会被读回。
-  const { effectiveDevModules: _ignoredDerived, ...persistable } = updates
+  const { effectiveDevModules: _ignoredDerived, capabilitiesUnlocked: _ignoredUnlock, ...persistable } = updates
   const updated: AppSettings = mergeNestedSettings(current, persistable)
 
   const filePath = getSettingsPath()
 
   try {
-    const { effectiveDevModules: _dropDerived, ...toWrite } = updated
+    const { effectiveDevModules: _dropDerived, capabilitiesUnlocked: _dropUnlock, ...toWrite } = updated
     writeFileSync(filePath, JSON.stringify(toWrite, null, 2), 'utf-8')
     console.log('[设置] 已更新 keys:', Object.keys(persistable).join(', '))
   } catch (error) {

@@ -14,7 +14,14 @@
  * 默认策略：未登记或状态非 released 的模块一律不可见（fail-closed）。
  * 需要临时调试时，在非打包环境的 settings.json 写入 enabledDevModules，
  * 详见 isDevModuleAllowed()。
+ *
+ * 全局调试放开：另有一条更粗暴的路径，一次性打开全部已登记模块。
+ * - 运行时：环境变量 GRAVITAS_UNLOCK_ALL_CAPABILITIES=1，仅非打包环境有效
+ * - 构建期：调试专用打包脚本注入 __GRAVITAS_DEV_UNLOCK__，打包产物也生效
+ * 两者都见 dev-unlock.ts，且都不绕过登记表：未登记的模块 id 仍然不可见。
  */
+
+import { isDevUnlockEnabled } from './dev-unlock'
 
 /** 受开发阶段门禁管辖的模块 id。新增模块必须先在此登记，否则一律不可见。 */
 export type DevGateModuleId =
@@ -89,9 +96,14 @@ export function isModuleVisible(
 	options: { devEnabled?: readonly string[]; isPackaged: boolean },
 ): boolean {
 	if (isModuleReleased(moduleId)) return true
-	if (options.isPackaged) return false
 	// 必须同时是登记表内的模块，避免调用方传入任意 id 绕过白名单。
+	// 调试放开也不能绕开这一条：未登记的模块没有发布状态可依据，不应默认泄漏。
 	if (!findModule(moduleId)) return false
+	// 调试放开优先于打包环境检查：构建期注入的标记就是为了在打包产物里生效，
+	// 若放在 isPackaged 之后，build-mac-app.sh 产出的 .app 依旧看不到这些模块。
+	// 透传 isPackaged，避免本进程里出现两份「是否打包」的判断源。
+	if (isDevUnlockEnabled({ isPackaged: options.isPackaged })) return true
+	if (options.isPackaged) return false
 	return (options.devEnabled ?? []).includes(moduleId)
 }
 
@@ -109,8 +121,10 @@ export function resolveEffectiveModules(options: {
 	const devEnabled = resolveDevEnabledModules(options.devEnabled, {
 		isPackaged: options.isPackaged,
 	})
-	return DEV_GATE_MODULES.filter(
-		(module) => module.status === 'released' || devEnabled.includes(module.id),
+	// 复用 isModuleVisible 而不是重写一遍判定条件：两份条件一定会漂移，
+	// 出现「IPC 放开了但入口还藏着」这类半开故障。
+	return DEV_GATE_MODULES.filter((module) =>
+		isModuleVisible(module.id, { devEnabled, isPackaged: options.isPackaged }),
 	).map((module) => module.id)
 }
 

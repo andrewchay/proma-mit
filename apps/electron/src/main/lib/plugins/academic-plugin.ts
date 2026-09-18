@@ -19,6 +19,7 @@ import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import type { BuiltinPluginRuntime } from '../plugin-manager'
 import type { ToolResult } from '@gravitas/core'
 import type { SubscriptionCapabilityId } from '@gravitas/shared'
+import { isDevUnlockEnabled } from '../dev-unlock'
 
 /** 本插件依赖的订阅能力 */
 const REQUIRED_CAPABILITY: SubscriptionCapabilityId = 'academic'
@@ -41,6 +42,9 @@ const TOOL_NAMES = [
  * 未验签、签名失败、状态非 active/grace、或读取过程抛错，一律按无权益处理。
  */
 function hasAcademicEntitlement(): boolean {
+  // 本地调试放开（仅非打包环境 + 显式环境变量）：直接授予 academic 能力。
+  if (isDevUnlockEnabled()) return true
+
   try {
     const { EntitlementCache } = require('../subscription/entitlement-cache') as {
       EntitlementCache: new () => {

@@ -1,10 +1,14 @@
 /** 出海 sourcing 领域包：把 Redvia 的买家发现、线索判断和外联准备能力接入 Agent。 */
 import type { RuntimeToolDefinition } from '../agent-runtime/types'
 import type { BuiltinPluginRuntime } from '../plugin-manager'
+import { isDevUnlockEnabled } from '../dev-unlock'
 
 const TOOL_NAMES = ['sourcing_build_keyword_plan', 'sourcing_score_lead', 'sourcing_draft_outreach', 'sourcing_draft_reply', 'sourcing_list_inbox', 'sourcing_queue_email', 'sourcing_get_mail_status', 'sourcing_search_buyers', 'sourcing_verify_company', 'sourcing_build_persona', 'sourcing_outreach_metrics'] as const
 
 function readEnabled(): string[] {
+  // 本地调试放开（仅非打包环境 + 显式环境变量）：直接视为已开启出海 sourcing。
+  if (isDevUnlockEnabled()) return ['outbound-sourcing']
+
   try {
     const { getSettings } = require('../settings-service') as { getSettings: () => { domainCapabilities?: string[] } }
     const capabilities = getSettings().domainCapabilities

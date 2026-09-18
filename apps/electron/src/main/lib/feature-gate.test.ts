@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test, afterEach } from 'bun:test'
+import { __setBuildInjectedUnlockForTest } from './dev-unlock'
 import {
 	DEV_GATE_MODULES,
 	isModuleReleased,
@@ -112,5 +113,52 @@ describe('开发阶段门禁', () => {
 			'knowledge',
 			'marketing',
 		])
+	})
+})
+
+describe('开发阶段门禁 · 全局调试放开', () => {
+	const originalEnv = { ...process.env }
+
+	afterEach(() => {
+		__setBuildInjectedUnlockForTest(undefined)
+		process.env = { ...originalEnv }
+	})
+
+	test('设置放开开关后全部已登记模块生效，无需 enabledDevModules', () => {
+		process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES = '1'
+		expect(resolveEffectiveModules({ devEnabled: [], isPackaged: false })).toEqual([
+			'knowledge',
+			'marketing',
+			'outbound-sourcing',
+			'proactive',
+		])
+		expect(isModuleVisible('marketing', { isPackaged: false })).toBe(true)
+	})
+
+	test('放开不绕过登记表：未登记模块仍不可见', () => {
+		process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES = '1'
+		expect(isModuleVisible('brand-new-module', { isPackaged: false })).toBe(false)
+	})
+
+	test('打包环境忽略运行时放开开关', () => {
+		process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES = '1'
+		expect(resolveEffectiveModules({ devEnabled: [], isPackaged: true })).toEqual(['knowledge'])
+	})
+
+	test('构建期注入标记在打包环境也生效', () => {
+		// build-mac-app.sh 产出的调试包走这条路径：打包环境 + 构建期标记
+		__setBuildInjectedUnlockForTest(true)
+		expect(resolveEffectiveModules({ devEnabled: [], isPackaged: true })).toEqual([
+			'knowledge',
+			'marketing',
+			'outbound-sourcing',
+			'proactive',
+		])
+		expect(isModuleVisible('proactive', { isPackaged: true })).toBe(true)
+	})
+
+	test('构建期注入标记同样不绕过登记表', () => {
+		__setBuildInjectedUnlockForTest(true)
+		expect(isModuleVisible('brand-new-module', { isPackaged: true })).toBe(false)
 	})
 })

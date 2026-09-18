@@ -1417,7 +1417,7 @@ export interface ElectronAPI {
   // ===== 订阅与权益 =====
 
   /** 获取当前订阅状态 */
-  getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
 
   // ===== 知识库（免费版基础能力） =====
   knowledge: {
@@ -1624,15 +1624,15 @@ export interface ElectronAPI {
   /** 请求邮箱验证码 */
   requestSubscriptionEmailCode: (input: { email: string }) => Promise<{ ok: true; expiresInSeconds: number }>
   /** 校验邮箱验证码并登录 */
-  verifySubscriptionEmailCode: (input: { email: string; code: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  verifySubscriptionEmailCode: (input: { email: string; code: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
   /** 获取第三方登录授权地址 */
   startSubscriptionOAuth: (provider: 'github' | 'google') => Promise<{ authorizeUrl: string; state: string }>
   /** 用授权码完成第三方登录 */
-  completeSubscriptionOAuth: (input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  completeSubscriptionOAuth: (input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
   /** 登出订阅账号 */
   logoutSubscription: () => Promise<void>
   /** 刷新订阅权益 */
-  refreshSubscription: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionState>
+  refreshSubscription: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
   /** 读取当前订阅服务地址 */
   getSubscriptionEndpoint: () => Promise<{ url: string | null }>
   /** 设置订阅服务地址，传空字符串表示清除自定义 */
