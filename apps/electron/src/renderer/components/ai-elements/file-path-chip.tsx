@@ -8,7 +8,7 @@
 
 import * as React from 'react'
 import { useStore } from 'jotai'
-import { AppWindow, Copy, FileText, FolderSearch } from 'lucide-react'
+import { AppWindow, Compass, Copy, FileText, FolderSearch } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
@@ -263,6 +263,16 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
   const [editors, setEditors] = React.useState<import('@gravitas/shared').EditorApp[]>([])
   const [editorsLoaded, setEditorsLoaded] = React.useState(false)
 
+  // 「打开方式」按类型分组：编辑器在前，常见浏览器在后
+  const editorApps = React.useMemo(
+    () => editors.filter((app) => app.kind !== 'browser'),
+    [editors],
+  )
+  const browserApps = React.useMemo(
+    () => editors.filter((app) => app.kind === 'browser'),
+    [editors],
+  )
+
   const loadEditors = React.useCallback(async (open: boolean): Promise<void> => {
     if (!open || editorsLoaded) return
     try {
@@ -309,11 +319,22 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
             打开方式
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="min-w-[12rem]">
-            {editors.length > 0 ? editors.map((editor) => (
-              <ContextMenuItem key={editor.path} onSelect={() => { void openFile(editor.name) }}>
-                {editor.name}
-              </ContextMenuItem>
-            )) : (
+            {editors.length > 0 ? (
+              <>
+                {editorApps.map((editor) => (
+                  <ContextMenuItem key={editor.path} onSelect={() => { void openFile(editor.name) }}>
+                    {editor.name}
+                  </ContextMenuItem>
+                ))}
+                {browserApps.length > 0 && <ContextMenuSeparator />}
+                {browserApps.map((browser) => (
+                  <ContextMenuItem key={browser.path} onSelect={() => { void openFile(browser.name) }}>
+                    <Compass className="mr-2 size-4" />
+                    {browser.name}
+                  </ContextMenuItem>
+                ))}
+              </>
+            ) : (
               <ContextMenuItem disabled>{editorsLoaded ? '未找到支持的应用' : '正在读取应用…'}</ContextMenuItem>
             )}
           </ContextMenuSubContent>

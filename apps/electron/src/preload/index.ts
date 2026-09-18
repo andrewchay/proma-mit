@@ -1103,6 +1103,9 @@ export interface ElectronAPI {
   /** 仅解析文件路径（供 PDF/图片等用 file:// 加载） */
   resolveFilePath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<import('@gravitas/shared').ResolvedFileUrl | null>
 
+  /** 解析 HTML 文件的受管内联预览 URL（iframe 渲染） */
+  resolveHtmlPreviewPath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<import('@gravitas/shared').ResolvedFileUrl | null>
+
   /** 为内联 PDF 预览生成临时 HTML 文件，返回文件路径 */
   preparePdfPreview: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<{ tmpHtmlUrl: string } | null>
 
@@ -3475,6 +3478,10 @@ const electronAPI: ElectronAPI = {
 
   resolveFilePath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke('file:resolve-path', filePath, access) as Promise<import('@gravitas/shared').ResolvedFileUrl | null>
+  },
+
+  resolveHtmlPreviewPath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
+    return ipcRenderer.invoke('file:resolve-html-preview-path', filePath, access) as Promise<import('@gravitas/shared').ResolvedFileUrl | null>
   },
 
   preparePdfPreview: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {

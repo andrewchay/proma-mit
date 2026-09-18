@@ -229,6 +229,8 @@ export interface EditorApp {
   name: string
   /** .app 路径，如 "/Applications/Visual Studio Code.app" */
   path: string
+  /** 应用类型：编辑器（默认）或浏览器；旧数据缺失时按编辑器处理 */
+  kind?: 'editor' | 'browser'
 }
 
 /**

@@ -20,6 +20,7 @@ import { MarkdownRichEditor } from './MarkdownRichEditor'
 import { PIERRE_FILE_CSS } from '@/components/agent/tool-result-renderers/pierre-styles'
 
 const MD_EXTS = new Set(['.md', '.markdown'])
+const HTML_EXTS = new Set(['.html', '.htm'])
 const PDF_EXTS = new Set(['.pdf'])
 const DOCX_EXTS = new Set(['.docx'])
 const OFFICE_PREVIEW_EXTS = new Set(['.xlsx', '.pptx'])
@@ -43,6 +44,8 @@ type CacheEntry = {
   docxHtml?: string
   officeHtml?: string
   officeText?: string
+  /** HTML 文件的内联渲染预览 URL（proma-file:// 受管协议） */
+  htmlPreviewUrl?: string
 }
 const CACHE_MAX = 50
 const contentCache = new Map<string, CacheEntry>()
@@ -198,6 +201,9 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const [docxHtml, setDocxHtml] = React.useState('')
   const [officeHtml, setOfficeHtml] = React.useState('')
   const [officeText, setOfficeText] = React.useState('')
+  const [htmlPreviewUrl, setHtmlPreviewUrl] = React.useState('')
+  // HTML 的源码/渲染切换（只读，区别于 Markdown 的编辑态切换）
+  const [htmlSourceMode, setHtmlSourceMode] = React.useState(false)
   const [pdfSrc, setPdfSrc] = React.useState('')
   const [pdfZoom, setPdfZoom] = React.useState(100)
   const pdfIframeRef = React.useRef<HTMLIFrameElement>(null)
@@ -224,6 +230,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
   const isOfficePreview = previewOnly && OFFICE_PREVIEW_EXTS.has(ext)
   const isLegacyOffice = previewOnly && LEGACY_OFFICE_EXTS.has(ext)
   const isImage = previewOnly && IMAGE_EXTS.has(ext)
+  const isHtml = previewOnly && HTML_EXTS.has(ext)
 
   // ===== 选中文本引用（Quoted Selection）=====
 
@@ -428,6 +435,8 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     setDocxHtml('')
     setOfficeHtml('')
     setOfficeText('')
+    setHtmlPreviewUrl('')
+    setHtmlSourceMode(false)
     setPdfSrc('')
     setPdfZoom(100)
     setImageDataUrl('')
@@ -490,6 +499,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       setDocxHtml(cached.docxHtml ?? '')
       setOfficeHtml(cached.officeHtml ?? '')
       setOfficeText(cached.officeText ?? '')
+      setHtmlPreviewUrl(cached.htmlPreviewUrl ?? '')
       setPdfSrc(cached.pdfSrc ?? '')
       setPdfZoom(100)
       setImageDataUrl(cached.imageDataUrl ?? '')
@@ -504,6 +514,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
       setDocxHtml('')
       setOfficeHtml('')
       setOfficeText('')
+      setHtmlPreviewUrl('')
       setPdfSrc('')
       setPdfZoom(100)
       setImageDataUrl('')
@@ -561,6 +572,29 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
             if (isLegacyOffice) {
               return
             }
+            // HTML：既要源码（源码模式/复制），也要受管渲染 URL（iframe 预览）
+            if (isHtml) {
+              const [contentResult, preview] = await Promise.all([
+                window.electronAPI.resolveAndReadFile(filePath, fileAccess),
+                window.electronAPI.resolveHtmlPreviewPath(filePath, fileAccess),
+              ])
+              if (cancelled) return
+              content = contentResult?.content ?? ''
+              const previewUrl = preview?.url ?? ''
+              setHtmlPreviewUrl(previewUrl)
+              lastNewContentRef.current = content
+              lastOldContentRef.current = ''
+              setOldContent('')
+              setNewContent(content)
+              if (cacheKey) {
+                cacheSet(cacheKey, {
+                  oldContent: '',
+                  newContent: content,
+                  htmlPreviewUrl: previewUrl || undefined,
+                })
+              }
+              return
+            }
             const result = await window.electronAPI.resolveAndReadFile(filePath, fileAccess)
             if (cancelled) return
             content = result?.content ?? ''
@@ -592,7 +626,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
     load()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, dirPath, gitRoot, previewOnly, previewContentVersion, fileAccess, isPdf, isDocx, isOfficePreview, isLegacyOffice, isImage, sessionId, ext, getContentCacheKey, refreshVersion])
+  }, [filePath, dirPath, gitRoot, previewOnly, previewContentVersion, fileAccess, isPdf, isDocx, isOfficePreview, isLegacyOffice, isImage, isHtml, sessionId, ext, getContentCacheKey, refreshVersion])
 
   // refreshVersion 触发的静默刷新：仅 diff 模式、内容有变化时才更新 state
   const prevRefreshRef = React.useRef(-1)
@@ -844,8 +878,20 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
           )
         )}
 
+        {previewOnly && isHtml && (
+          <button
+            type="button"
+            onClick={() => setHtmlSourceMode((v) => !v)}
+            className="ml-auto p-1 rounded hover:bg-foreground/[0.06] text-foreground/40 hover:text-foreground/60 shrink-0"
+            title={htmlSourceMode ? '切换到渲染预览' : '切换到源码预览'}
+            aria-label={htmlSourceMode ? '切换到渲染预览' : '切换到源码预览'}
+          >
+            {htmlSourceMode ? <Eye className="size-3.5" /> : <Code2 className="size-3.5" />}
+          </button>
+        )}
+
         <button type="button" onClick={handleCopy}
-          className={cn("p-1 rounded hover:bg-foreground/[0.06] text-foreground/40 hover:text-foreground/60 shrink-0", previewOnly && !isMarkdown && "ml-auto")}
+          className={cn("p-1 rounded hover:bg-foreground/[0.06] text-foreground/40 hover:text-foreground/60 shrink-0", previewOnly && !isMarkdown && !isHtml && "ml-auto")}
           title="复制文件内容">
           {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
         </button>
@@ -959,7 +1005,21 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
                 dangerouslySetInnerHTML={{ __html: officeHtml }}
               />
             ) : null
-          ) : isLegacyOffice ? null : isMarkdown ? (
+          ) : isLegacyOffice ? null : isHtml && !htmlSourceMode ? (
+            htmlPreviewUrl ? (
+              <iframe
+                src={htmlPreviewUrl}
+                className="h-full w-full border-0 bg-white"
+                title={`${filePath.split('/').pop() || 'HTML'} 渲染预览`}
+                sandbox="allow-scripts allow-forms"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-muted-foreground">
+                无法加载 HTML 预览，请切换到源码预览或刷新后重试。
+              </div>
+            )
+          ) : isMarkdown ? (
             markdownEditing && markdownSourceMode ? (
               <textarea
                 value={markdownDraft}

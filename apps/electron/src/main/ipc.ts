@@ -118,7 +118,7 @@ import { CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
 import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents } from './lib/git-diff-service'
-import { registerPromaFilePath } from './lib/local-file-protocol'
+import { registerPromaDirectoryPath, registerPromaFilePath } from './lib/local-file-protocol'
 import { registerUpdaterIpc } from './lib/updater/updater-ipc'
 import {
   listChannels,
@@ -291,6 +291,29 @@ const KNOWN_EDITORS = [
   'Visual Studio Code', 'Cursor', 'Sublime Text', 'Windsurf',
   'Zed', 'CotEditor', 'IntelliJ IDEA', 'Xcode', 'TextEdit', 'Archive Utility',
 ]
+
+/** 常见浏览器（macOS，按 .app 名称匹配），供 HTML 等文件用浏览器打开 */
+const KNOWN_BROWSERS = [
+  'Safari', 'Google Chrome', 'Arc', 'Microsoft Edge', 'Firefox', 'Brave Browser',
+]
+
+/** 「打开方式」菜单允许的全部应用（编辑器 + 浏览器） */
+const KNOWN_OPEN_WITH_APPS = [...KNOWN_EDITORS, ...KNOWN_BROWSERS]
+
+/** 解析应用在 macOS 上的候选 .app 路径（按顺序取第一个存在的） */
+function resolveAppSearchPaths(name: string, home: string): string[] {
+  if (name === 'Archive Utility') {
+    return ['/System/Library/CoreServices/Applications/Archive Utility.app']
+  }
+  // Safari 在较新系统中位于 /Applications，旧系统中由系统目录提供
+  if (name === 'Safari') {
+    return ['/Applications/Safari.app', '/System/Applications/Safari.app']
+  }
+  if (name === 'Xcode' || name === 'TextEdit') {
+    return [`/Applications/${name}.app`]
+  }
+  return [`/Applications/${name}.app`, `${home}/Applications/${name}.app`]
+}
 
 /**
  * 检查路径是否在允许的目录范围内（解析 symlink）
@@ -651,7 +674,7 @@ export async function registerIpcHandlers(): Promise<void> {
       if (process.platform === 'darwin') {
         const { spawnSync } = await import('node:child_process')
         if (appName) {
-          if (!KNOWN_EDITORS.includes(appName)) {
+          if (!KNOWN_OPEN_WITH_APPS.includes(appName)) {
             console.warn('[IPC] shell:system-open-file 拒绝未知应用:', appName)
             return
           }
@@ -665,7 +688,7 @@ export async function registerIpcHandlers(): Promise<void> {
     }
   )
 
-  // 扫描系统中的编辑器应用（仅 macOS）
+  // 扫描系统中的编辑器与浏览器应用（仅 macOS）
   ipcMain.handle(
     IPC_CHANNELS.SCAN_EDITORS,
     async (): Promise<import('@gravitas/shared').EditorApp[]> => {
@@ -674,18 +697,18 @@ export async function registerIpcHandlers(): Promise<void> {
       const { homedir } = await import('node:os')
       const home = homedir()
 
-      const editors = KNOWN_EDITORS.map((name) => {
-        const searchPaths = name === 'Archive Utility'
-          ? ['/System/Library/CoreServices/Applications/Archive Utility.app']
-          : name === 'Xcode' || name === 'TextEdit'
-            ? [`/Applications/${name}.app`]
-            : [`/Applications/${name}.app`, `${home}/Applications/${name}.app`]
-        return { name, paths: searchPaths }
-      })
+      const candidates: Array<{ name: string; kind: 'editor' | 'browser' }> = [
+        ...KNOWN_EDITORS.map((name) => ({ name, kind: 'editor' as const })),
+        ...KNOWN_BROWSERS.map((name) => ({ name, kind: 'browser' as const })),
+      ]
 
-      return editors
-        .filter((e) => e.paths.some((p) => existsSync(p)))
-        .map((e) => ({ name: e.name, path: e.paths.find((p) => existsSync(p))! }))
+      return candidates
+        .map((candidate) => {
+          const paths = resolveAppSearchPaths(candidate.name, home)
+          return { ...candidate, path: paths.find((p) => existsSync(p)) }
+        })
+        .filter((candidate): candidate is { name: string; kind: 'editor' | 'browser'; path: string } => Boolean(candidate.path))
+        .map((candidate) => ({ name: candidate.name, path: candidate.path, kind: candidate.kind }))
     }
   )
 
@@ -3096,6 +3119,39 @@ export async function registerIpcHandlers(): Promise<void> {
         return null
       }
       return result ? { url: registerPromaFilePath(result) } : null
+    }
+  )
+
+  // 解析 HTML 文件为受管内联预览 URL（iframe 渲染用）
+  //
+  // 父目录整体授权时注册「目录」URL，让 HTML 内的相对 CSS/JS/图片也能加载；
+  // 单文件授权（如会话附件）只注册文件本身，避免因预览把权限扩张到整个父目录。
+  ipcMain.handle(
+    'file:resolve-html-preview-path',
+    async (_, filePath: string, access?: FileAccessOptions | string[]): Promise<ResolvedFileUrl | null> => {
+      const { basename } = await import('node:path')
+      const { resolveFilePath } = await import('./lib/file-preview-service')
+      const options = normalizeFileAccessOptions(access)
+      const resolved = resolveFilePath(filePath, getAllowedCandidateBasePaths(options))
+      if (!resolved || !isPathAllowed(resolved, options)) {
+        console.warn('[IPC] file:resolve-html-preview-path 拒绝越界路径:', resolved ?? filePath)
+        return null
+      }
+      const parentDir = dirname(resolved)
+      try {
+        if (isPathAllowed(parentDir, options)) {
+          const directoryUrl = registerPromaDirectoryPath(parentDir)
+          return { url: `${directoryUrl}/${encodeURIComponent(basename(resolved))}` }
+        }
+        return { url: registerPromaFilePath(resolved) }
+      } catch (err) {
+        console.warn(
+          '[IPC] file:resolve-html-preview-path 无法注册预览路径:',
+          resolved,
+          err instanceof Error ? err.message : err
+        )
+        return null
+      }
     }
   )
 
