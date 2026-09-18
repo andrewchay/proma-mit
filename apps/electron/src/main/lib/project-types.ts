@@ -521,6 +521,8 @@ export interface AgentEmployeeLearningSample {
   executionId: string
   projectId: string
   taskId: string
+  /** 样本产生时冻结的执行工作区；旧记录未知时缺省。 */
+  workspaceId?: string
   capabilityVersionIds: string[]
   outcome: AgentEmployeeLearningOutcome
   evidenceSummary: string

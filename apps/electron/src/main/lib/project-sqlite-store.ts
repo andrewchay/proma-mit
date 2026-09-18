@@ -813,6 +813,10 @@ function migrate(database: SqliteCompat): void {
   }
   if (!execColumns.includes('capability_version_ids')) database.exec("ALTER TABLE agent_executions ADD COLUMN capability_version_ids TEXT NOT NULL DEFAULT '[]'")
   if (!execColumns.includes('capability_content_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN capability_content_hash TEXT')
+  // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
+  const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
+  if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_agent_learning_scope ON agent_employee_learning_samples(agent_id, workspace_id, privacy_status)')
   // PH1-A：user_mappings 表新增 feishu_union_id 列（兼容旧库）
   const umCols = readColumnNames(database, 'user_mappings')
   if (!umCols.includes('feishu_union_id')) {
@@ -2739,7 +2743,7 @@ type CapabilityVersionRow = {
   content: string; content_hash: string; status: string; source: string; created_at: number; activated_at: number | null; retired_at: number | null;
 }
 type LearningSampleRow = {
-  id: string; agent_id: string; execution_id: string; project_id: string; task_id: string; capability_version_ids: string;
+  id: string; agent_id: string; execution_id: string; project_id: string; task_id: string; workspace_id: string | null; capability_version_ids: string;
   outcome: string; evidence_summary: string; privacy_status: string; created_at: number; labeled_at: number | null;
 }
 
@@ -2782,15 +2786,60 @@ export function getAgentEmployeeCapabilityDependencyGraph(agentId: string): { no
 
 export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>): import('./project-types').AgentEmployeeCapabilityVersion {
   const { detectCapabilityConflicts, formatConflictMessage, hasBlockingConflict } = require('./agent-employee-capability-conflict') as typeof import('./agent-employee-capability-conflict')
-  const peer = getActiveAgentEmployeeCapabilityVersions(input.agentId, input.workspaceId).find((version) => version.scope !== input.scope && version.workspaceId === input.workspaceId)
-  const findings = detectCapabilityConflicts({ roleContent: input.scope === 'role' ? input.content : peer?.content, workspaceContent: input.scope === 'workspace' ? input.content : peer?.content })
-  if (hasBlockingConflict(findings)) throw new Error(`能力组合校验未通过：\n${formatConflictMessage(findings)}`)
   const database = getProjectDb()
-  const active = getActiveAgentEmployeeCapabilityVersions(input.agentId, input.workspaceId).find((version) => version.scope === input.scope && version.workspaceId === input.workspaceId)
-  if (input.parentVersionId && active?.id !== input.parentVersionId) throw new Error('能力版本已变化，请基于当前版本重新评测后再推广')
-  const timestamp = Date.now()
-  database.prepare("UPDATE agent_employee_capability_versions SET status = 'superseded', retired_at = ? WHERE agent_id = ? AND scope = ? AND workspace_id IS ? AND status = 'active'").run(timestamp, input.agentId, input.scope, input.workspaceId ?? null)
-  return createAgentEmployeeCapabilityVersion({ ...input, status: 'active', activatedAt: timestamp })
+  let adopted: import('./project-types').AgentEmployeeCapabilityVersion | undefined
+
+  database.transaction(() => {
+    // 冲突检查必须与 CAS 和写入处于同一事务，避免检查后 peer 被并发替换。
+    const activeRows = database.prepare("SELECT * FROM agent_employee_capability_versions WHERE agent_id = ? AND status = 'active'").all(input.agentId) as CapabilityVersionRow[]
+    const activeVersions = activeRows.map(rowToCapabilityVersion)
+    const sameScope = activeVersions.find((version) => version.scope === input.scope && (version.workspaceId ?? undefined) === input.workspaceId)
+
+    // 有父版本时必须精确匹配当前 active；无父版本只允许真正的空基线。
+    if (input.parentVersionId ? sameScope?.id !== input.parentVersionId : Boolean(sameScope)) {
+      throw new Error('能力版本已变化，请基于当前版本重新评测后再推广')
+    }
+
+    const candidatePairs = input.scope === 'workspace'
+      ? [{ roleContent: activeVersions.find((version) => version.scope === 'role')?.content, workspaceContent: input.content }]
+      : [
+        { roleContent: input.content, workspaceContent: undefined },
+        ...activeVersions
+          .filter((version) => version.scope === 'workspace')
+          .map((version) => ({ roleContent: input.content, workspaceContent: version.content })),
+      ]
+    for (const pair of candidatePairs) {
+      const findings = detectCapabilityConflicts(pair)
+      if (hasBlockingConflict(findings)) throw new Error(`能力组合校验未通过：\n${formatConflictMessage(findings)}`)
+    }
+
+    const timestamp = Date.now()
+    if (sameScope) {
+      const result = database.prepare("UPDATE agent_employee_capability_versions SET status = 'superseded', retired_at = ? WHERE id = ? AND status = 'active'").run(timestamp, sameScope.id)
+      if (result.changes !== 1) throw new Error('能力版本已变化，请基于当前版本重新评测后再推广')
+    }
+
+    const id = randomUUID()
+    database.prepare('INSERT INTO agent_employee_capability_versions (id, agent_id, parent_version_id, version_number, scope, workspace_id, content, content_hash, status, source, created_at, activated_at, retired_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      id,
+      input.agentId,
+      input.parentVersionId ?? null,
+      input.versionNumber,
+      input.scope,
+      input.workspaceId ?? null,
+      input.content,
+      input.contentHash,
+      'active',
+      input.source,
+      timestamp,
+      timestamp,
+      input.retiredAt ?? null,
+    )
+    const row = database.prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ?').get(id) as CapabilityVersionRow
+    adopted = rowToCapabilityVersion(row)
+  })()
+
+  return adopted!
 }
 
 export function getAgentEmployeeCapabilityObservations(agentId: string): import('./project-types').AgentEmployeeCapabilityObservation[] {
@@ -2959,13 +3008,16 @@ export function listAgentEmployeeCapabilityRollbackAudits(agentId: string): impo
 export function createAgentEmployeeLearningSample(input: Omit<import('./project-types').AgentEmployeeLearningSample, 'id' | 'createdAt'>): import('./project-types').AgentEmployeeLearningSample {
   const id = randomUUID()
   const timestamp = Date.now()
-  getProjectDb().prepare('INSERT OR IGNORE INTO agent_employee_learning_samples (id, agent_id, execution_id, project_id, task_id, capability_version_ids, outcome, evidence_summary, privacy_status, created_at, labeled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, input.agentId, input.executionId, input.projectId, input.taskId, JSON.stringify(input.capabilityVersionIds), input.outcome, input.evidenceSummary, input.privacyStatus, timestamp, input.labeledAt ?? null)
+  // 只在样本创建时从权威任务解析一次，随后冻结；任务后续改绑不会改写历史样本。
+  const taskWorkspaceId = getTask(input.taskId)?.workspaceId
+  const workspaceId = input.workspaceId ?? taskWorkspaceId
+  getProjectDb().prepare('INSERT OR IGNORE INTO agent_employee_learning_samples (id, agent_id, execution_id, project_id, task_id, workspace_id, capability_version_ids, outcome, evidence_summary, privacy_status, created_at, labeled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, input.agentId, input.executionId, input.projectId, input.taskId, workspaceId ?? null, JSON.stringify(input.capabilityVersionIds), input.outcome, input.evidenceSummary, input.privacyStatus, timestamp, input.labeledAt ?? null)
   const row = getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE execution_id = ?').get(input.executionId) as LearningSampleRow
-  return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }
+  return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }
 }
 
 export function listAgentEmployeeLearningSamples(agentId: string): import('./project-types').AgentEmployeeLearningSample[] {
-  return (getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]).map((row) => ({ id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }))
+  return (getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]).map((row) => ({ id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }))
 }
 
 export function reviewAgentEmployeeLearningSample(id: string, evidenceSummary: string): import('./project-types').AgentEmployeeLearningSample | null {
@@ -2977,14 +3029,14 @@ export function reviewAgentEmployeeLearningSample(id: string, evidenceSummary: s
   if (existing.privacy_status === 'excluded') throw new Error('已排除的学习样本不能重新启用')
   database.prepare("UPDATE agent_employee_learning_samples SET evidence_summary = ?, privacy_status = 'sanitized', labeled_at = ? WHERE id = ?").run(summary, Date.now(), id)
   const row = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE id = ?').get(id) as LearningSampleRow
-  return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }
+  return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }
 }
 
 export function excludeAgentEmployeeLearningSample(id: string): import('./project-types').AgentEmployeeLearningSample | null {
   const database = getProjectDb()
   database.prepare("UPDATE agent_employee_learning_samples SET outcome = 'manual_excluded', privacy_status = 'excluded', labeled_at = ? WHERE id = ?").run(Date.now(), id)
   const row = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE id = ?').get(id) as LearningSampleRow | undefined
-  return row ? { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined } : null
+  return row ? { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined } : null
 }
 
 // ===== sync_meta（跨平台同步元信息，持久化到 DB 防重启丢失） =====

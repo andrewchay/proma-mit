@@ -53,6 +53,23 @@ test('候选能力内容含疑似敏感信息时拒绝创建审批', () => {
   expect(() => proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'role', content: '参考路径 /Users/chaihao/secret 并带上 apiKey=sk-abcdefghijklmnop', trainingScore: 90, heldOutScore: 90, judgeIndependent: true, evidenceSampleIds: sampleIds })).toThrow('疑似敏感信息')
 })
 
+test('工作区能力候选拒绝其他工作区和旧未知作用域样本', () => {
+  const project = createProject({ title: '作用域隔离', description: '' })
+  const taskA = createTask(project.id, { title: 'A任务', description: '', priority: 'medium', workspaceId: 'workspace-a' })
+  const taskB = createTask(project.id, { title: 'B任务', description: '', priority: 'medium', workspaceId: 'workspace-b' })
+  const employee = createAgentEmployee({ name: '作用域员工', role: '开发', description: '', channelId: 'channel', workspaceId: 'workspace-a', workspaceIds: ['workspace-a', 'workspace-b'] })
+  for (let i = 0; i < 3; i++) {
+    createAgentEmployeeLearningSample({ agentId: employee.id, executionId: `scope-a-${i}`, projectId: project.id, taskId: taskA.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: 'A证据', privacyStatus: 'sanitized' })
+  }
+  const sampleB = createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'scope-b', projectId: project.id, taskId: taskB.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: 'B证据', privacyStatus: 'sanitized' })
+  const samples = listAgentEmployeeLearningSamples(employee.id)
+  expect(samples.find((item) => item.id === sampleB.id)?.workspaceId).toBe('workspace-b')
+  const allIds = samples.map((item) => item.id)
+
+  expect(() => proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'workspace', workspaceId: 'workspace-a', content: '只用A证据。', trainingScore: 90, heldOutScore: 90, judgeIndependent: true, evidenceSampleIds: allIds })).not.toThrow()
+  expect(() => proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'workspace', workspaceId: 'workspace-b', content: '错误复用A证据。', trainingScore: 90, heldOutScore: 90, judgeIndependent: true, evidenceSampleIds: allIds })).toThrow('至少需要 3 条')
+})
+
 test('已脱敏样本达到阈值才创建员工能力推广审批', () => {
   const project = createProject({ title: 'P0', description: '' })
   const task = createTask(project.id, { title: '任务', description: '', priority: 'medium' })

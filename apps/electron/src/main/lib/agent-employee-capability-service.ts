@@ -27,7 +27,10 @@ export function proposeEmployeeCapabilityAdoption(input: {
   if (!employee?.enabled) throw new Error('目标 AI 员工不存在或已停用')
   if (input.scope === 'workspace' && !input.workspaceId) throw new Error('工作区能力候选必须指定 workspaceId')
   const samples = store.listAgentEmployeeLearningSamples(input.agentId)
-  const selected = samples.filter((sample) => input.evidenceSampleIds.includes(sample.id))
+  const selected = samples.filter((sample) => (
+    input.evidenceSampleIds.includes(sample.id)
+    && (input.scope !== 'workspace' || sample.workspaceId === input.workspaceId)
+  ))
   if (selected.length < 3 || selected.some((sample) => sample.privacyStatus !== 'sanitized')) {
     throw new Error('至少需要 3 条已脱敏学习样本才能创建能力推广建议')
   }

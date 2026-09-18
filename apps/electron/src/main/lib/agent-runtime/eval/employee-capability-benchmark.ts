@@ -16,14 +16,23 @@ export interface EmployeeCapabilityBenchmarkCase {
   rubric: Array<{ name: string; points: number; check: string }>
 }
 
+export interface EmployeeCapabilityBenchmarkSplit {
+  trainCaseIds: readonly string[]
+  heldOutCaseIds: readonly string[]
+  hash: string
+}
+
 export interface EmployeeCapabilityBenchmarkMaterial {
   agentId: string
   scope: AgentEmployeeCapabilityScope
   workspaceId?: string
   train: EmployeeCapabilityBenchmarkCase[]
   heldOut: EmployeeCapabilityBenchmarkCase[]
+  /** 仅包含 train 样本；held-out 内容不得进入 Builder 上下文。 */
   sanitizedLearningSummary: string
   evidenceSampleIds: string[]
+  /** 本次确定性划分的冻结证据，可由 case id 重新计算并核验。 */
+  split: Readonly<EmployeeCapabilityBenchmarkSplit>
   nonEvolvableConstraints: string[]
 }
 
@@ -38,6 +47,17 @@ function stableBucket(id: string): number {
   return Number.parseInt(createHash('sha256').update(id).digest('hex').slice(0, 8), 16) % 5
 }
 
+export function hashEmployeeCapabilityBenchmarkSplit(input: {
+  trainCaseIds: readonly string[]
+  heldOutCaseIds: readonly string[]
+}): string {
+  return createHash('sha256').update(JSON.stringify({
+    version: 1,
+    trainCaseIds: [...input.trainCaseIds].sort(),
+    heldOutCaseIds: [...input.heldOutCaseIds].sort(),
+  })).digest('hex')
+}
+
 export function buildEmployeeCapabilityBenchmarkMaterial(input: {
   agentId: string
   scope: AgentEmployeeCapabilityScope
@@ -45,7 +65,11 @@ export function buildEmployeeCapabilityBenchmarkMaterial(input: {
   samples: AgentEmployeeLearningSample[]
 }): EmployeeCapabilityBenchmarkMaterial {
   if (input.scope === 'workspace' && !input.workspaceId) throw new Error('工作区能力评测必须指定 workspaceId')
-  const sanitized = input.samples.filter((sample) => sample.agentId === input.agentId && sample.privacyStatus === 'sanitized')
+  const sanitized = input.samples.filter((sample) => (
+    sample.agentId === input.agentId
+    && sample.privacyStatus === 'sanitized'
+    && (input.scope !== 'workspace' || sample.workspaceId === input.workspaceId)
+  ))
   if (sanitized.length < 3) throw new Error('至少需要 3 条已脱敏学习样本才能构建员工能力评测')
   const ordered = [...sanitized].sort((left, right) => left.id.localeCompare(right.id))
   let heldOutIds = new Set(ordered.filter((sample) => stableBucket(sample.id) === 0).map((sample) => sample.id))
@@ -58,14 +82,27 @@ export function buildEmployeeCapabilityBenchmarkMaterial(input: {
     split: heldOutIds.has(sample.id) ? 'held_out' : 'train',
     rubric: RUBRIC,
   }))
+  const train = cases.filter((item) => item.split === 'train')
+  const heldOut = cases.filter((item) => item.split === 'held_out')
+  const trainCaseIds = Object.freeze(train.map((item) => item.id))
+  const heldOutCaseIds = Object.freeze(heldOut.map((item) => item.id))
+  const split = Object.freeze({
+    trainCaseIds,
+    heldOutCaseIds,
+    hash: hashEmployeeCapabilityBenchmarkSplit({ trainCaseIds, heldOutCaseIds }),
+  })
   return {
     agentId: input.agentId,
     scope: input.scope,
     workspaceId: input.workspaceId,
-    train: cases.filter((item) => item.split === 'train'),
-    heldOut: cases.filter((item) => item.split === 'held_out'),
-    sanitizedLearningSummary: ordered.map((sample) => `- ${sample.outcome} · versions=${sample.capabilityVersionIds.join(',') || 'baseline'} · ${sample.evidenceSummary.slice(0, 2000)}`).join('\n'),
+    train,
+    heldOut,
+    sanitizedLearningSummary: ordered
+      .filter((sample) => !heldOutIds.has(sample.id))
+      .map((sample) => `- ${sample.outcome} · versions=${sample.capabilityVersionIds.join(',') || 'baseline'} · ${sample.evidenceSummary.slice(0, 2000)}`)
+      .join('\n'),
     evidenceSampleIds: ordered.map((sample) => sample.id),
+    split,
     nonEvolvableConstraints: EMPLOYEE_NON_EVOLVABLE_CONSTRAINTS,
   }
 }

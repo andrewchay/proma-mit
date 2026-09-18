@@ -3,8 +3,8 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { buildBuilderUserPrompt } from './builder-prompts'
-import { buildEmployeeCapabilityBenchmarkMaterial, EMPLOYEE_NON_EVOLVABLE_CONSTRAINTS } from './employee-capability-benchmark'
+import { buildEmployeeCandidateUserPrompt } from './builder-prompts'
+import { buildEmployeeCapabilityBenchmarkMaterial, EMPLOYEE_NON_EVOLVABLE_CONSTRAINTS, hashEmployeeCapabilityBenchmarkSplit } from './employee-capability-benchmark'
 import { buildEmployeeCapabilityStateGuard } from './employee-capability-state'
 import { closeProjectDb, createAgentEmployee, createAgentEmployeeCapabilityVersion, getActiveAgentEmployeeCapabilityVersions, initProjectDb } from '../../project-sqlite-store'
 import type { AgentEmployeeLearningSample } from '../../project-types'
@@ -22,18 +22,70 @@ afterAll(() => {
   delete process.env.PROMA_TEST_CONFIG_DIR
 })
 
-function sample(id: string, privacyStatus: AgentEmployeeLearningSample['privacyStatus'], summary: string): AgentEmployeeLearningSample {
-  return { id, agentId: 'employee', executionId: `run-${id}`, projectId: 'project', taskId: 'task', capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: summary, privacyStatus, createdAt: 1 }
+function sample(id: string, privacyStatus: AgentEmployeeLearningSample['privacyStatus'], summary: string, workspaceId?: string): AgentEmployeeLearningSample {
+  return { id, agentId: 'employee', executionId: `run-${id}`, projectId: 'project', taskId: 'task', workspaceId, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: summary, privacyStatus, createdAt: 1 }
 }
 
-test('只用已脱敏样本构建互斥 train/held-out，并把治理约束传给 Builder', () => {
-  const material = buildEmployeeCapabilityBenchmarkMaterial({ agentId: 'employee', scope: 'role', samples: [sample('a', 'sanitized', '先验证'), sample('b', 'sanitized', '不臆造'), sample('c', 'sanitized', '说明未运行'), sample('secret', 'pending', '/Users/private 原始会话')] })
-  expect(material.train.length).toBeGreaterThan(0)
-  expect(material.heldOut.length).toBeGreaterThan(0)
+test('Builder 的真实用户输入只含 train marker，held-out marker 保持隔离', () => {
+  const samples = [
+    sample('a', 'sanitized', 'TRAIN_OR_HELD_MARKER_A'),
+    sample('b', 'sanitized', 'TRAIN_OR_HELD_MARKER_B'),
+    sample('c', 'sanitized', 'TRAIN_OR_HELD_MARKER_C'),
+    sample('d', 'sanitized', 'TRAIN_OR_HELD_MARKER_D'),
+    sample('secret', 'pending', '/Users/private 原始会话'),
+  ]
+  const material = buildEmployeeCapabilityBenchmarkMaterial({ agentId: 'employee', scope: 'role', samples })
+  const trainMarker = material.train[0]!.statement.match(/TRAIN_OR_HELD_MARKER_[A-D]/)?.[0]
+  const heldOutMarker = material.heldOut[0]!.statement.match(/TRAIN_OR_HELD_MARKER_[A-D]/)?.[0]
+
+  expect(trainMarker).toBeDefined()
+  expect(heldOutMarker).toBeDefined()
   expect(material.evidenceSampleIds).not.toContain('secret')
-  const prompt = buildBuilderUserPrompt({ benchmark: { id: 'employee', title: '', description: '', targetAgentId: 'employee', runtime: { provider: 'test', modelId: 'test' }, runsPerCase: 1, targetScore: 80, cases: [], createdAt: '', updatedAt: '' }, currentPrompt: '当前能力', caseScores: [], sanitizedLearningSummary: material.sanitizedLearningSummary, nonEvolvableConstraints: EMPLOYEE_NON_EVOLVABLE_CONSTRAINTS })
-  expect(prompt).not.toContain('/Users/private')
-  expect(prompt).toContain('不得修改或绕过权限模式')
+  const builderInput = buildEmployeeCandidateUserPrompt({
+    employeeName: '评测员工',
+    scope: 'role',
+    currentPrompt: '当前能力',
+    caseScores: material.train.map((item) => ({ caseId: item.id, score: 50 })),
+    sanitizedLearningSummary: material.sanitizedLearningSummary,
+    nonEvolvableConstraints: EMPLOYEE_NON_EVOLVABLE_CONSTRAINTS,
+  })
+
+  expect(builderInput).toContain(trainMarker!)
+  expect(builderInput).not.toContain(heldOutMarker!)
+  expect(builderInput).not.toContain('/Users/private')
+  expect(builderInput).toContain('不得修改或绕过权限模式')
+})
+
+test('workspace 能力评测只使用产生时冻结在目标工作区的样本', () => {
+  const material = buildEmployeeCapabilityBenchmarkMaterial({
+    agentId: 'employee',
+    scope: 'workspace',
+    workspaceId: 'workspace-a',
+    samples: [
+      sample('a1', 'sanitized', 'A1', 'workspace-a'),
+      sample('a2', 'sanitized', 'A2', 'workspace-a'),
+      sample('a3', 'sanitized', 'A3', 'workspace-a'),
+      sample('b1', 'sanitized', 'B_ONLY_MARKER', 'workspace-b'),
+      sample('legacy', 'sanitized', 'UNKNOWN_SCOPE_MARKER'),
+    ],
+  })
+
+  expect(material.evidenceSampleIds).toEqual(expect.arrayContaining(['a1', 'a2', 'a3']))
+  expect(material.evidenceSampleIds).not.toContain('b1')
+  expect(material.evidenceSampleIds).not.toContain('legacy')
+  expect(material.sanitizedLearningSummary).not.toContain('B_ONLY_MARKER')
+  expect(material.sanitizedLearningSummary).not.toContain('UNKNOWN_SCOPE_MARKER')
+})
+
+test('train/held-out 划分被冻结并可通过 hash 核验', () => {
+  const material = buildEmployeeCapabilityBenchmarkMaterial({ agentId: 'employee', scope: 'role', samples: [sample('a', 'sanitized', 'A'), sample('b', 'sanitized', 'B'), sample('c', 'sanitized', 'C')] })
+
+  expect(Object.isFrozen(material.split)).toBe(true)
+  expect(Object.isFrozen(material.split.trainCaseIds)).toBe(true)
+  expect(Object.isFrozen(material.split.heldOutCaseIds)).toBe(true)
+  expect(material.split.trainCaseIds).toEqual(material.train.map((item) => item.id))
+  expect(material.split.heldOutCaseIds).toEqual(material.heldOut.map((item) => item.id))
+  expect(material.split.hash).toBe(hashEmployeeCapabilityBenchmarkSplit(material.split))
 })
 
 test('员工能力 StateGuard 只改内存，restore 后生产 active 版本不变', async () => {

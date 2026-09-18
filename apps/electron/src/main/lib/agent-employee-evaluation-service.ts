@@ -44,6 +44,8 @@ export type EmployeeCapabilityEvaluationStatus =
 
 export interface EmployeeCapabilityEvaluationResult {
   benchmarkId: string
+  /** 可由已落盘 benchmark 的 train/held-out case id 重新计算核验。 */
+  benchmarkSplitHash: string
   baselineScore: number
   finalScore: number
   heldOutBaselineScore: number | null
@@ -86,7 +88,7 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
 
   const runtime = resolveExplicitChannel(input.channelId, input.modelId)
   const benchmarkId = `employee-capability-${input.agentId.slice(0, 8)}-${randomUUID().slice(0, 8)}`
-  const benchmark = createBenchmarkForUI({
+  createBenchmarkForUI({
     id: benchmarkId,
     title: `AI 员工能力评测 · ${employee.name}`,
     description: '由人工脱敏学习样本构建的受控评测；仅用于生成待审批候选，不直接激活生产能力。',
@@ -166,6 +168,7 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
 
   const base = {
     benchmarkId,
+    benchmarkSplitHash: material.split.hash,
     baselineScore: summary.baselineScore,
     finalScore: summary.finalScore,
     heldOutBaselineScore,
