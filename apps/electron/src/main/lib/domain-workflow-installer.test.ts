@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { exportWorkflowDefinition } from '@gravitas/shared/workflow'
 import { DOMAIN_WORKFLOW_BINDINGS } from './domain-workflow-installer'
 
 /** 领域包根目录（default-tools/<pkg>） */
@@ -14,6 +15,7 @@ describe('领域包随包工作流模板', () => {
     for (const binding of DOMAIN_WORKFLOW_BINDINGS) {
       const path = join(bundledPackageDir(binding.capabilityId), 'workflows', `${binding.templateId}.json`)
       const template = JSON.parse(readFileSync(path, 'utf-8')) as { id: string; definition: { nodes: Array<{ kind: string }> } }
+      expect(() => exportWorkflowDefinition(template.definition)).not.toThrow()
       expect(template.id).toBe(binding.templateId)
       const kinds = template.definition.nodes.map((n) => n.kind)
       expect(kinds[0]).toBe('start')

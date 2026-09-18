@@ -9,11 +9,12 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { KnowledgeAofAdapter, type AofDoc, type AofQueryHit } from './knowledge-aof-adapter'
+import { writeJsonFileAtomic } from './safe-file'
 
-export type GraphBuildState = 'idle' | 'building' | 'published' | 'stale' | 'failed'
+export type GraphBuildState = 'idle' | 'building' | 'published' | 'stale' | 'failed' | 'recovery_required'
 
 export interface GraphBuildRecord {
   knowledgeBaseId: string
@@ -55,6 +56,7 @@ export function computeSnapshotDigest(docs: KnowledgeDocSnapshot[]): string {
 
 export class KnowledgeGraphBuildService {
   private readonly file: GraphBuildsFile
+  private readonly inFlightBuilds = new Map<string, Promise<GraphBuildRecord>>()
 
   constructor(
     private readonly filePath: string,
@@ -65,6 +67,7 @@ export class KnowledgeGraphBuildService {
     private readonly loadScopeRevision: (knowledgeBaseId: string) => number,
   ) {
     this.file = this.load()
+    this.closeInterruptedBuilds()
   }
 
   private load(): GraphBuildsFile {
@@ -84,8 +87,31 @@ export class KnowledgeGraphBuildService {
   }
 
   private save(): void {
-    this.file.revision += 1
-    writeFileSync(this.filePath, JSON.stringify(this.file, null, 2))
+    const previousRevision = this.file.revision
+    this.file.revision = previousRevision + 1
+    try {
+      writeJsonFileAtomic(this.filePath, this.file)
+    } catch (err) {
+      this.file.revision = previousRevision
+      throw err
+    }
+  }
+
+  /**
+   * building 只代表上一个进程持有的本地 operation。进程重启后 owner 已丢失，
+   * 因此必须失败关闭并等待用户显式重建，绝不能根据持久化状态盲目重放 AOF。
+   */
+  private closeInterruptedBuilds(): void {
+    const interrupted = this.file.builds.filter((record) => record.state === 'building')
+    if (interrupted.length === 0) return
+
+    const failedAt = Date.now()
+    for (const record of interrupted) {
+      record.state = 'recovery_required'
+      record.failedAt = failedAt
+      record.error = '检测到应用重启前未完成的构建；已失败关闭，请显式重新构建'
+    }
+    this.save()
   }
 
   getBuild(knowledgeBaseId: string): GraphBuildRecord | undefined {
@@ -102,8 +128,25 @@ export class KnowledgeGraphBuildService {
     return true
   }
 
-  /** 触发构建（幂等：同快照 + 已发布 + scope 未变 → 跳过）。 */
-  async build(knowledgeBaseId: string): Promise<GraphBuildRecord> {
+  /**
+   * 触发构建。同一知识库同一时刻只有一个本地 owner；并发调用复用该 operation，
+   * 不会重复调用 adapter。不同知识库仍可并行构建。
+   */
+  build(knowledgeBaseId: string): Promise<GraphBuildRecord> {
+    const existingOperation = this.inFlightBuilds.get(knowledgeBaseId)
+    if (existingOperation) return existingOperation
+
+    const operation = this.performBuild(knowledgeBaseId).finally(() => {
+      if (this.inFlightBuilds.get(knowledgeBaseId) === operation) {
+        this.inFlightBuilds.delete(knowledgeBaseId)
+      }
+    })
+    this.inFlightBuilds.set(knowledgeBaseId, operation)
+    return operation
+  }
+
+  /** 幂等：同快照 + 已发布 + scope 未变 → 跳过。 */
+  private async performBuild(knowledgeBaseId: string): Promise<GraphBuildRecord> {
     const docs = this.loadDocs(knowledgeBaseId)
     if (docs.length === 0) throw new Error('知识库没有可构建的文档（请先建立索引）')
     const snapshotDigest = computeSnapshotDigest(docs)

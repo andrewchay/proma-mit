@@ -3,7 +3,7 @@
   "teamId": "personal",
   "name": "出海 Sourcing 流水线",
   "description": "从关键词计划到外联准备的五阶段买家获取模板：计划 → 检索核验 → 评分 → 审批 → 外联。不自动发邮件，候选公司不作为已验证事实。",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "definition": {
     "format": "paa.workflow",
     "formatVersion": "1.0",
@@ -13,7 +13,7 @@
     "name": "出海 Sourcing 流水线",
     "description": "从关键词计划到外联准备的五阶段买家获取模板。候选公司必须经网站/国家/联系人核验后才可进入外联队列；工具不发送邮件。",
     "status": "published",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "trigger": {
       "kind": "manual"
     },
@@ -116,6 +116,27 @@
         "kind": "end",
         "title": "Sourcing 计划包完成"
       }
-    ]
+    ],
+    "edges": [
+      { "id": "start-to-keyword-plan", "from": "start", "to": "keyword-plan" },
+      { "id": "keyword-plan-to-buyer-search", "from": "keyword-plan", "to": "buyer-search" },
+      { "id": "buyer-search-to-lead-scoring", "from": "buyer-search", "to": "lead-scoring" },
+      { "id": "lead-scoring-to-lead-approval", "from": "lead-scoring", "to": "lead-approval" },
+      { "id": "lead-approval-to-outreach-draft", "from": "lead-approval", "to": "outreach-draft" },
+      { "id": "outreach-draft-to-end", "from": "outreach-draft", "to": "end" }
+    ],
+    "layout": {
+      "nodes": {
+        "start": { "x": 0, "y": 0 },
+        "keyword-plan": { "x": 280, "y": 0 },
+        "buyer-search": { "x": 560, "y": 0 },
+        "lead-scoring": { "x": 840, "y": 0 },
+        "lead-approval": { "x": 1120, "y": 0 },
+        "outreach-draft": { "x": 1400, "y": 0 },
+        "end": { "x": 1680, "y": 0 }
+      }
+    },
+    "createdAt": 0,
+    "updatedAt": 0
   }
 }

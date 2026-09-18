@@ -32,7 +32,7 @@ import {
   putNewMediaRecord,
 } from './new-media/new-media-sqlite-store'
 import { createContentDraft } from './new-media/content-operations'
-import { buildXiaohongshuHandoffPackage, confirmXiaohongshuPublished, prepareXiaohongshuHandoff } from './new-media/xiaohongshu-handoff'
+import { buildXiaohongshuHandoffPackage, confirmXiaohongshuPublished, exportXiaohongshuHandoff, prepareXiaohongshuHandoff } from './new-media/xiaohongshu-handoff'
 import { listNewMediaAudit } from './new-media/new-media-audit'
 import {
   loadNewMediaAccountSecret,
@@ -50,6 +50,17 @@ export async function runPackageSmoke(): Promise<void> {
   } finally { database.close() }
   const root = getConfigDir()
   assert(existsSync(join(root, '.package-smoke-empty')), '配置目录必须由烟测脚本创建')
+  // 使用打包后实际 SQLite 引擎验证 WAL 落盘与关闭重开，不以 Bun 测试替代生产存储证据。
+  const walPath = join(root, 'package-smoke-wal.sqlite')
+  let walDatabase = openNativeSqlite(walPath)
+  const journalMode = walDatabase.prepare('PRAGMA journal_mode=WAL').get() as { journal_mode?: string } | undefined
+  assert.equal(journalMode?.journal_mode?.toLowerCase(), 'wal', '实际安装包未启用 SQLite WAL')
+  walDatabase.exec('CREATE TABLE smoke_wal(id INTEGER PRIMARY KEY, value TEXT NOT NULL); INSERT INTO smoke_wal(value) VALUES (\'persisted\')')
+  walDatabase.close()
+  walDatabase = openNativeSqlite(walPath)
+  const reopened = walDatabase.prepare('SELECT value FROM smoke_wal WHERE id = 1').get() as { value?: string } | undefined
+  assert.equal(reopened?.value, 'persisted', 'SQLite WAL 数据在关闭重开后丢失')
+  walDatabase.close()
   assert(existsSync(join(process.resourcesPath, 'default-tools/marketing/system_config.json')))
   assert(existsSync(join(process.resourcesPath, 'default-skills/find-skills/SKILL.md')))
   assert(existsSync(join(process.resourcesPath, 'marketing-skills/ma-kol-scraper/SKILL.md')), 'marketing-skills 打包缺失')
@@ -206,6 +217,9 @@ async function runNewMediaSmoke(): Promise<Record<string, unknown>> {
   assert.equal(handoff.status, 'draft_ready', '交接不应直接标记为已发布')
   const pkg = await buildXiaohongshuHandoffPackage(handoff.id)
   assert(pkg.length > 0, '交付包为空')
+  const handoffPath = join(getConfigDir(), handoff.packageFileName)
+  const exported = await exportXiaohongshuHandoff(handoff.id, handoffPath)
+  assert.equal(exported.status, 'handed_off', '交付包导出后状态错误')
   await confirmXiaohongshuPublished(handoff.id, 'package-smoke')
   const audit = await listNewMediaAudit()
   assert(audit.length > 0, '缺少统一审计记录')

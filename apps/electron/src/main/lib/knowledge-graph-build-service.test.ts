@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   computeSnapshotDigest,
   KnowledgeGraphBuildService,
   type GraphBuildRecord,
+  type GraphBuildsFile,
   type KnowledgeDocSnapshot,
 } from './knowledge-graph-build-service'
 import type { AofDoc, KnowledgeAofAdapter } from './knowledge-aof-adapter'
@@ -16,9 +17,11 @@ class FakeAdapter {
   queries: Array<{ query: string; opts: { limit?: number; expectedReleaseDigest?: string } }> = []
   failBuild = false
   releasedigest = 'sha256:fake-digest'
+  buildGate: Promise<void> | null = null
 
   async buildAndPublish(kbId: string, docs: AofDoc[]): Promise<{ ok: true; release_id: string; release_digest: string; ledger: Record<string, unknown> }> {
     this.calls.push({ kbId, docs })
+    if (this.buildGate) await this.buildGate
     if (this.failBuild) throw new Error('AOF 构建失败: IngestFailed 模拟')
     return { ok: true, release_id: `kb-test@1`, release_digest: this.releasedigest, ledger: {} }
   }
@@ -90,6 +93,35 @@ describe('GraphBuild 状态机', () => {
     expect(adapter.calls).toHaveLength(1)
   })
 
+  test('同一知识库并发构建复用同一 operation，只有一个 adapter owner', async () => {
+    const adapter = new FakeAdapter()
+    let releaseBuild: (() => void) | undefined
+    adapter.buildGate = new Promise<void>((resolve) => { releaseBuild = resolve })
+    const { service } = makeService(DOCS, 1, adapter)
+
+    const first = service.build('kb1')
+    const second = service.build('kb1')
+
+    expect(second).toBe(first)
+    expect(adapter.calls).toHaveLength(1)
+    releaseBuild?.()
+    const [firstRecord, secondRecord] = await Promise.all([first, second])
+    expect(firstRecord).toBe(secondRecord)
+    expect(firstRecord.state).toBe('published')
+    expect(adapter.calls).toHaveLength(1)
+  })
+
+  test('状态记录通过原子临时文件发布', async () => {
+    const adapter = new FakeAdapter()
+    const { service, file } = makeService(DOCS, 1, adapter)
+    await service.build('kb1')
+
+    expect(existsSync(`${file}.tmp`)).toBe(false)
+    const persisted = JSON.parse(readFileSync(file, 'utf8')) as { revision: number; builds: GraphBuildRecord[] }
+    expect(persisted.revision).toBeGreaterThan(1)
+    expect(persisted.builds[0]?.state).toBe('published')
+  })
+
   test('文档变化 → stale，旧图不可查询，重建后恢复', async () => {
     const adapter = new FakeAdapter()
     const { service, setDocs } = makeService(DOCS, 1, adapter)
@@ -129,7 +161,47 @@ describe('GraphBuild 状态机', () => {
   })
 })
 
-describe('损坏文件失败关闭', () => {
+describe('重启恢复与损坏文件失败关闭', () => {
+  test('遗留 building 在启动时转为 recovery_required，不盲重放', async () => {
+    const adapter = new FakeAdapter()
+    const dir = mkdtempSync(join(tmpdir(), 'kgb-test-'))
+    try {
+      const file = join(dir, 'graph-builds.json')
+      writeFileSync(file, JSON.stringify({
+        schemaVersion: 1,
+        revision: 8,
+        builds: [{
+          knowledgeBaseId: 'kb1',
+          state: 'building',
+          governanceNotice: 'local-role-labels',
+        }],
+      }))
+
+      const service = new KnowledgeGraphBuildService(
+        file,
+        adapter as unknown as KnowledgeAofAdapter,
+        () => DOCS,
+        () => 1,
+      )
+
+      const recovered = service.getBuild('kb1')
+      expect(recovered?.state).toBe('recovery_required')
+      expect(recovered?.error).toContain('显式重新构建')
+      expect(adapter.calls).toHaveLength(0)
+      expect(service.isQueryable('kb1')).toBe(false)
+
+      const persisted = JSON.parse(readFileSync(file, 'utf8')) as GraphBuildsFile
+      expect(persisted.revision).toBe(9)
+      expect(persisted.builds[0]?.state).toBe('recovery_required')
+
+      await service.build('kb1')
+      expect(adapter.calls).toHaveLength(1)
+      expect(service.getBuild('kb1')?.state).toBe('published')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test('graph-builds.json 损坏时不静默重建', () => {
     const adapter = new FakeAdapter()
     const dir = mkdtempSync(join(tmpdir(), 'kgb-test-'))

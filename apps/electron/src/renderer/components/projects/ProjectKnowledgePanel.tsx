@@ -31,22 +31,26 @@ export function ProjectKnowledgePanel({ projectId }: ProjectKnowledgePanelProps)
   const [busy, setBusy] = React.useState(false)
   const [message, setMessage] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [graphKnowledgeBaseId, setGraphKnowledgeBaseId] = React.useState('')
   const [graphStatus, setGraphStatus] = React.useState<{ available: boolean; queryable?: boolean; record?: unknown } | null>(null)
   const [graphBuilding, setGraphBuilding] = React.useState(false)
 
   const refreshGraphStatus = React.useCallback(async () => {
-    if (!api?.getGraphBuildStatus) return
+    if (!api?.getGraphBuildStatus || !graphKnowledgeBaseId) {
+      setGraphStatus(null)
+      return
+    }
     try {
-      setGraphStatus(await api.getGraphBuildStatus(projectId))
+      setGraphStatus(await api.getGraphBuildStatus(graphKnowledgeBaseId))
     } catch { setGraphStatus({ available: false }) }
-  }, [api, projectId])
+  }, [api, graphKnowledgeBaseId])
 
   const buildGraph = async (): Promise<void> => {
-    if (!api?.buildKnowledgeGraph) return
+    if (!api?.buildKnowledgeGraph || !graphKnowledgeBaseId) return
     setGraphBuilding(true)
     setError(null)
     try {
-      const res = await api.buildKnowledgeGraph(projectId)
+      const res = await api.buildKnowledgeGraph(graphKnowledgeBaseId)
       if (res.error) setError(res.error)
       await refreshGraphStatus()
     } catch (err) {
@@ -65,12 +69,16 @@ export function ProjectKnowledgePanel({ projectId }: ProjectKnowledgePanelProps)
       ])
       setBound(boundList)
       setAll(catalog.knowledgeBases)
+      setGraphKnowledgeBaseId((current) => (
+        boundList.some((kb) => kb.id === current) ? current : (boundList[0]?.id ?? '')
+      ))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
   }, [api, projectId])
 
-  React.useEffect(() => { void load(); void refreshGraphStatus() }, [load, refreshGraphStatus])
+  React.useEffect(() => { void load() }, [load])
+  React.useEffect(() => { void refreshGraphStatus() }, [refreshGraphStatus])
 
   const bind = async (): Promise<void> => {
     if (!api || !selectedId) return
@@ -124,22 +132,38 @@ export function ProjectKnowledgePanel({ projectId }: ProjectKnowledgePanelProps)
           构建在本地 AOF 治理链路中完成，角色标签为本地流程字段，非认证身份；
           检索结果可作参考线索，不是事实保证。AOF 不可用时基础检索完全不受影响。
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => void refreshGraphStatus()}
-            disabled={busy}
-            className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
-          >刷新状态</button>
-          {graphStatus?.available === false ? (
-            <span className="text-xs text-muted-foreground">本机未检测到 AOF 环境，语义图谱不可用。</span>
-          ) : (
+        {bound.length === 0 ? (
+          <div className="text-xs text-muted-foreground">请先为 Project 关联知识库，再选择知识库构建图谱。</div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <select
+              value={graphKnowledgeBaseId}
+              onChange={(event) => {
+                setGraphKnowledgeBaseId(event.target.value)
+                setGraphStatus(null)
+              }}
+              disabled={busy || graphBuilding}
+              aria-label="图谱知识库"
+              className="h-8 rounded border border-input bg-transparent px-2 text-xs"
+            >
+              {bound.map((kb) => <option key={kb.id} value={kb.id}>{kb.name}</option>)}
+            </select>
             <button
-              onClick={() => void buildGraph()}
-              disabled={busy}
-              className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
-            >{graphBuilding ? '构建中…' : graphStatus?.queryable ? '重新构建' : '构建图谱'}</button>
-          )}
-        </div>
+              onClick={() => void refreshGraphStatus()}
+              disabled={busy || graphBuilding || !graphKnowledgeBaseId}
+              className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+            >刷新状态</button>
+            {graphStatus?.available === false ? (
+              <span className="text-xs text-muted-foreground">本机未检测到 AOF 环境，语义图谱不可用。</span>
+            ) : (
+              <button
+                onClick={() => void buildGraph()}
+                disabled={busy || graphBuilding || !graphKnowledgeBaseId}
+                className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
+              >{graphBuilding ? '构建中…' : graphStatus?.queryable ? '重新构建' : '构建图谱'}</button>
+            )}
+          </div>
+        )}
         {graphStatus?.record != null && (() => {
           const rec = graphStatus.record as { state?: string; releaseDigest?: string; error?: string }
           const digestShort = typeof rec.releaseDigest === 'string' ? rec.releaseDigest.slice(7, 19) : ''
