@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { detectCapabilityConflicts, hasBlockingConflict } from './agent-employee-capability-conflict'
-import { adoptAgentEmployeeCapabilityVersion, closeProjectDb, createAgentEmployee, createAgentEmployeeCapabilityVersion, getAgentEmployeeCapabilityDependencyGraph, initProjectDb } from './project-sqlite-store'
+import { adoptAgentEmployeeCapabilityVersion, closeProjectDb, createAgentEmployee, createAgentEmployeeCapabilityVersion, getActiveAgentEmployeeCapabilityVersions, getAgentEmployeeCapabilityDependencyGraph, initProjectDb } from './project-sqlite-store'
 
 let configDir = ''
 beforeAll(async () => {
@@ -36,6 +36,16 @@ test('重复规则只提示不阻断', () => {
   const duplicated = detectCapabilityConflicts({ roleContent: '先复现问题再修复。\n先复现问题再修复。' })
   expect(hasBlockingConflict(duplicated)).toBe(false)
   expect(duplicated.some((item) => item.code === 'duplicate_rule' && item.severity === 'advisory')).toBe(true)
+})
+
+test('推广插入失败会回滚退役操作，空基线 CAS 不能覆盖现有 active', () => {
+  const employee = createAgentEmployee({ name: '事务校验', role: '开发', description: '', channelId: 'channel' })
+  const role = createAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '先验证再交付。', contentHash: 'role-hash', status: 'active', source: 'manual', activatedAt: Date.now() })
+  createAgentEmployeeCapabilityVersion({ agentId: employee.id, parentVersionId: role.id, versionNumber: 2, scope: 'role', content: '占用版本号', contentHash: 'candidate-hash', status: 'candidate', source: 'evolution' })
+
+  expect(() => adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, parentVersionId: role.id, versionNumber: 2, scope: 'role', content: '新内容', contentHash: 'new-hash', source: 'evolution' })).toThrow()
+  expect(getActiveAgentEmployeeCapabilityVersions(employee.id).map((version) => version.id)).toEqual([role.id])
+  expect(() => adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 3, scope: 'role', content: '无父版本覆盖', contentHash: 'baseline-hash', source: 'evolution' })).toThrow('能力版本已变化')
 })
 
 test('激活前阻断越权候选，依赖图只用显式 ID 关联', () => {

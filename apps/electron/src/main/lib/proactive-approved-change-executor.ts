@@ -52,9 +52,15 @@ export async function executeApprovedChange(
       if (!isString(change.agentId) || !isString(change.scope) || !isString(change.content) || !isString(change.contentHash) || !isNumber(change.versionNumber)) {
         throw new Error('员工能力推广审批缺少必要字段')
       }
-      if (!getAgentEmployee(change.agentId)) throw new Error('目标 AI 员工不存在或已删除')
+      const employee = getAgentEmployee(change.agentId)
+      if (!employee) throw new Error('目标 AI 员工不存在或已删除')
+      if (!employee.enabled) throw new Error('目标 AI 员工已停用，不能推广能力')
       if (change.scope !== 'role' && change.scope !== 'workspace') throw new Error('员工能力 scope 非法')
-      if (change.scope === 'workspace' && !isString(change.workspaceId)) throw new Error('工作区能力推广必须指定 workspaceId')
+      if (change.scope === 'workspace') {
+        if (!isString(change.workspaceId)) throw new Error('工作区能力推广必须指定 workspaceId')
+        const allowedWorkspaceIds = new Set([employee.workspaceId, ...(employee.workspaceIds ?? [])].filter((id): id is string => Boolean(id)))
+        if (!allowedWorkspaceIds.has(change.workspaceId)) throw new Error('目标工作区不在该员工获准服务的范围内')
+      }
       if (createHash('sha256').update(change.content).digest('hex') !== change.contentHash) throw new Error('能力内容 hash 校验失败')
       adoptAgentEmployeeCapabilityVersion({
         agentId: change.agentId,
