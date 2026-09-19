@@ -27,6 +27,7 @@ import type {
   StreamToolActivityEvent,
   StreamQueueStateEvent,
   GenerateTitleInput,
+  TypeSafeChatRecommendation,
 } from '@gravitas/shared'
 
 /** 待生成标题的队列（按 conversationId 跟踪） */
@@ -178,10 +179,15 @@ export function useGlobalChatListeners(): void {
               suggestedPrompt?: string
             }
             if (parsed.type === 'agent_recommendation' && parsed.reason && parsed.suggestedPrompt) {
-              store.set(pendingAgentRecommendationAtom, {
-                reason: parsed.reason,
-                suggestedPrompt: parsed.suggestedPrompt,
-                conversationId: event.conversationId,
+              store.set(pendingAgentRecommendationAtom, (prev) => {
+                const next = new Map(prev)
+                next.set(event.conversationId, {
+                  reason: parsed.reason!,
+                  suggestedPrompt: parsed.suggestedPrompt!,
+                  conversationId: event.conversationId,
+                  source: 'legacy',
+                })
+                return next
               })
             }
           } catch {
@@ -191,7 +197,24 @@ export function useGlobalChatListeners(): void {
       }
     )
 
-    // ===== 6. 会话发送队列状态 =====
+    // ===== 6. TypeSafe Agent 推荐 =====
+    const cleanupTypeSafeRecommendation = window.electronAPI.onTypeSafeAgentRecommendation(
+      (event: TypeSafeChatRecommendation) => {
+        store.set(pendingAgentRecommendationAtom, (prev) => {
+          const next = new Map(prev)
+          next.set(event.conversationId, {
+            reason: event.reason,
+            suggestedPrompt: event.suggestedPrompt,
+            conversationId: event.conversationId,
+            decisionId: event.decisionId,
+            source: 'typesafe',
+          })
+          return next
+        })
+      }
+    )
+
+    // ===== 7. 会话发送队列状态 =====
     const cleanupQueueState = window.electronAPI.onStreamQueueState(
       (event: StreamQueueStateEvent) => {
         // 后端广播排队数量，校正前端队列（撤回/立即执行后对齐）
@@ -215,6 +238,7 @@ export function useGlobalChatListeners(): void {
       cleanupComplete()
       cleanupError()
       cleanupToolActivity()
+      cleanupTypeSafeRecommendation()
       cleanupQueueState()
     }
   }, [store]) // store 引用稳定，effect 只执行一次

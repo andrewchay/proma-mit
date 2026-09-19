@@ -33,6 +33,7 @@ Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agen
 - **Agent 模式**：支持 Pi、AI SDK、Claude、Proma 等 runtime（默认 **Pi**，推荐 **Pi** 与 **AI SDK**），提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问；流式期间可追加输入（steer / 软中断），Pi runtime 恢复历史会话前按模型窗口与 usage 自动压缩上下文。
 - **Workflow 模式**：把反复要做的流程在画布上编排成可视化执行链（start / end、agent、tool、skill、transform、condition、approval 等节点），发布后可手动、定时或事件触发；支持节点能力白名单发布冻结、失败重试与错误路由、人工审批、无凭证模板的分发 / 升级 / 回滚。
 - **Skills & MCP**：每个工作区独立配置 Skills、MCP Server 和工作区文件；内置 Skill 集市与 Skill Set 分组开关，支持外部 Skill 导入并附带启发式安全审计。
+- **TypeSafe 判断服务（可选，P0）**：固定使用 `jev-1.13.0`；可对 Skill 路由做不改变实际行为的 shadow 观测，并增强 Chat → Agent 推荐。服务不可用时自动回退现有推荐工具，不参与权限放行或交付物自动验收。
 
 ### AI 员工与项目治理
 
@@ -94,6 +95,7 @@ Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agen
 3. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）兼容，开箱即用；AI SDK 支持 OpenAI-compatible 与 Anthropic、Google provider，也是后续服务端 Web 化的优先路径。Claude runtime 需要 Anthropic 或兼容协议；Proma runtime 仍可用但非首选。
 4. 进入 **设置 > Agent**，选择默认 Agent 渠道、模型和工作区。新工作区只默认启用 `find-skills`、`proma-coach`、`skill-creator` 三个核心 Skills，其余内置能力保留在 Skill 集市按需安装；思考模式按模型推理等级矩阵分级。
 5. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接、订阅与领域包，在设置页对应 Tab 中继续配置。
+6. 如需 TypeSafe 判断，在 **设置 > 工具 > TypeSafe 判断服务** 中保存 API Key 并显式开启。该功能默认关闭；请求只包含当前用户消息的截断文本、通用附件类别，以及 shadow 判断所需的已启用 Skill 名称与简介，不发送历史对话、附件内容、工具结果或本地路径。API Key 仅在主进程使用 `safeStorage` 加密保存；系统加密不可用时只在当前进程内存中保留。
 
 ### 使用已有本地项目
 
@@ -282,8 +284,8 @@ gravitas/
 
 | 包 | 版本 | 职责 |
 | --- | --- | --- |
-| `@gravitas/electron` | `0.11.69` | Electron 桌面应用 |
-| `@gravitas/shared` | `0.1.76` | 共享类型、IPC 常量、配置和工具 |
+| `@gravitas/electron` | `0.12.37` | Electron 桌面应用 |
+| `@gravitas/shared` | `0.2.6` | 共享类型、IPC 常量、配置和工具 |
 | `@gravitas/core` | `0.2.16` | Provider Adapter、SSE、Shiki 高亮 |
 | `@gravitas/ui` | `0.1.4` | 共享 React UI 组件 |
 
@@ -356,6 +358,7 @@ shared 类型和 IPC 常量
 - `agent-workspace-manager.ts`：工作区、MCP、Skills 和工作区文件管理。
 - `project-chain.ts` / `project-chain-service.ts`：版本化决策与协作链、交付物验收交接状态机。
 - `chat-service.ts`：Chat 流式调用、Provider Adapter、工具活动。
+- `typesafe-judgment-service.ts`：可选的 TypeSafe 路由判断、保守阈值、代理、超时/重试与熔断；审计不保存用户消息正文。
 - `conversation-manager.ts`：Chat 会话索引和消息存储。
 - `channel-manager.ts`：渠道 CRUD、API Key 加密、连接测试、模型获取。
 - `feishu-bridge.ts` / `dingtalk-bridge.ts` / `wechat-bridge.ts`：远程机器人桥接。

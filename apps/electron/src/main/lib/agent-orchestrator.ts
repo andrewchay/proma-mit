@@ -53,7 +53,7 @@ import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
-import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
+import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, getWorkspaceSkills, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
 import { trackSessionFinished } from './telemetry-tracking'
@@ -77,6 +77,7 @@ import { createElectronRuntimeServices, type RuntimeServices } from './agent-run
 import { tokenUsageService } from './token-usage-service'
 import { preTickTurn } from './turn-decision-service'
 import { resolveRequestedOperation } from './agent-runtime/requested-operation'
+import { isTypeSafeSkillShadowAvailable, judgeSkillRoute } from './typesafe-judgment-service'
 
 // ===== 插件能力引导收集 =====
 
@@ -1945,6 +1946,30 @@ export class AgentOrchestrator {
 
     if (initialPermissionMode === 'plan') {
       this.eventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'enter_plan_mode', sessionId } })
+    }
+
+    // TypeSafe P0：只对用户主动、未显式选择 Skill 的回合做非阻塞 shadow 判断。
+    // 结果仅写本地审计，不参与 prompt、skillMentions 或任何 runtime 的实际路由。
+    if (isUserSend && !mentionedSkills?.length && workspaceId && isTypeSafeSkillShadowAvailable()) {
+      const shadowWorkspace = getAgentWorkspace(workspaceId)
+      if (shadowWorkspace) {
+        const candidates = getWorkspaceSkills(shadowWorkspace.slug)
+          .filter((skill) => skill.enabled)
+          .map((skill) => ({
+            slug: skill.slug,
+            name: skill.name,
+            description: skill.description?.slice(0, 300),
+          }))
+        if (candidates.length >= 2) {
+          void judgeSkillRoute({
+            message: userMessage,
+            candidates,
+            contextId: sessionId,
+          }).catch((error: unknown) => {
+            console.warn('[Agent 编排] TypeSafe Skill shadow 判断失败:', error)
+          })
+        }
+      }
     }
 
     if (effectiveAgentRuntime !== 'claude') {

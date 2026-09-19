@@ -11,8 +11,16 @@ import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSyn
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
-import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
+import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
+import {
+  clearTypeSafeApiKey,
+  getTypeSafeJudgmentSettings,
+  updateTypeSafeJudgmentSettings,
+} from './lib/typesafe-judgment-config'
+import { testTypeSafeConnection } from './lib/typesafe-judgment-service'
+import { recordTypeSafeRecommendationFeedback } from './lib/typesafe-judgment-audit'
+import { validateTypeSafeFeedback, validateTypeSafeSettingsInput } from './lib/typesafe-judgment-validation'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -85,6 +93,8 @@ import type {
   ChatToolInfo,
   ChatToolState,
   ChatToolMeta,
+  TypeSafeJudgmentSettings,
+  TypeSafeConnectionTestResult,
   MoveSessionToWorkspaceInput,
   ForkSessionInput,
   RewindSessionInput,
@@ -1151,6 +1161,32 @@ export async function registerIpcHandlers(): Promise<void> {
   )
 
   // ===== 应用设置相关 =====
+
+  // TypeSafe 判断服务：密钥仅由主进程接收和解密，renderer 只能读取脱敏状态。
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.GET_SETTINGS,
+    async (): Promise<TypeSafeJudgmentSettings> => getTypeSafeJudgmentSettings(),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.UPDATE_SETTINGS,
+    async (_event, input: unknown): Promise<TypeSafeJudgmentSettings> => (
+      updateTypeSafeJudgmentSettings(validateTypeSafeSettingsInput(input))
+    ),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.CLEAR_API_KEY,
+    async (): Promise<TypeSafeJudgmentSettings> => clearTypeSafeApiKey(),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.TEST_CONNECTION,
+    async (): Promise<TypeSafeConnectionTestResult> => testTypeSafeConnection(),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.RECORD_FEEDBACK,
+    async (_event, feedback: unknown): Promise<void> => {
+      recordTypeSafeRecommendationFeedback(validateTypeSafeFeedback(feedback))
+    },
+  )
 
   // 获取应用设置
   ipcMain.handle(
