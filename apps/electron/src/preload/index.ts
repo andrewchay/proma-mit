@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
+import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS } from '@gravitas/shared'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, NEW_MEDIA_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
@@ -519,6 +519,17 @@ export interface ElectronAPI {
 
   // ===== 应用设置相关 =====
 
+  /** 获取 TypeSafe 判断服务脱敏设置 */
+  getTypeSafeJudgmentSettings: () => Promise<import('@gravitas/shared').TypeSafeJudgmentSettings>
+  /** 更新 TypeSafe 判断服务设置；API Key 仅发送给主进程 */
+  updateTypeSafeJudgmentSettings: (input: import('@gravitas/shared').UpdateTypeSafeJudgmentSettingsInput) => Promise<import('@gravitas/shared').TypeSafeJudgmentSettings>
+  /** 清除 TypeSafe API Key */
+  clearTypeSafeApiKey: () => Promise<import('@gravitas/shared').TypeSafeJudgmentSettings>
+  /** 测试 TypeSafe 连接 */
+  testTypeSafeConnection: () => Promise<import('@gravitas/shared').TypeSafeConnectionTestResult>
+  /** 记录 TypeSafe 推荐反馈（仅写本地审计） */
+  recordTypeSafeRecommendationFeedback: (feedback: import('@gravitas/shared').TypeSafeRecommendationFeedback) => Promise<void>
+
   /** 获取应用设置 */
   getSettings: () => Promise<AppSettings>
 
@@ -616,6 +627,9 @@ export interface ElectronAPI {
 
   /** 订阅会话发送队列状态（排队数量 / 是否执行中） */
   onStreamQueueState: (callback: (event: StreamQueueStateEvent) => void) => () => void
+
+  /** 订阅 TypeSafe 产生的 Agent 模式推荐 */
+  onTypeSafeAgentRecommendation: (callback: (event: import('@gravitas/shared').TypeSafeChatRecommendation) => void) => () => void
 
   // ===== Agent 会话管理相关 =====
 
@@ -2403,6 +2417,17 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(USER_PROFILE_IPC_CHANNELS.UPDATE, updates)
   },
 
+  // TypeSafe 判断服务
+  getTypeSafeJudgmentSettings: () => ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.GET_SETTINGS),
+  updateTypeSafeJudgmentSettings: (input: import('@gravitas/shared').UpdateTypeSafeJudgmentSettingsInput) => (
+    ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.UPDATE_SETTINGS, input)
+  ),
+  clearTypeSafeApiKey: () => ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.CLEAR_API_KEY),
+  testTypeSafeConnection: () => ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.TEST_CONNECTION),
+  recordTypeSafeRecommendationFeedback: (feedback: import('@gravitas/shared').TypeSafeRecommendationFeedback) => (
+    ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.RECORD_FEEDBACK, feedback)
+  ),
+
   // 应用设置
   getSettings: () => {
     return ipcRenderer.invoke(SETTINGS_IPC_CHANNELS.GET)
@@ -2808,6 +2833,12 @@ const electronAPI: ElectronAPI = {
     const listener = (_: unknown, event: StreamQueueStateEvent): void => callback(event)
     ipcRenderer.on(CHAT_IPC_CHANNELS.STREAM_QUEUE_STATE, listener)
     return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_QUEUE_STATE, listener) }
+  },
+
+  onTypeSafeAgentRecommendation: (callback: (event: import('@gravitas/shared').TypeSafeChatRecommendation) => void) => {
+    const listener = (_: unknown, event: import('@gravitas/shared').TypeSafeChatRecommendation): void => callback(event)
+    ipcRenderer.on(CHAT_IPC_CHANNELS.STREAM_AGENT_RECOMMENDATION, listener)
+    return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_AGENT_RECOMMENDATION, listener) }
   },
 
   // Agent 会话管理

@@ -119,9 +119,13 @@ export interface EnabledToolsResult {
  * 返回最终要注入到 API 请求中的工具定义和系统提示词。
  *
  * @param enabledToolIds 前端传入的启用工具 ID 列表
+ * @param excludedToolIds 当前回合由基础设施替代、无需注入的工具 ID
  * @returns 合并后的工具定义和系统提示词
  */
-export function getEnabledTools(enabledToolIds?: string[]): EnabledToolsResult {
+export function getEnabledTools(
+  enabledToolIds?: string[],
+  excludedToolIds: ReadonlySet<string> = new Set(),
+): EnabledToolsResult {
   // 未传入 enabledToolIds 时使用配置文件的开关状态
   const config = getChatToolsConfig()
 
@@ -130,6 +134,7 @@ export function getEnabledTools(enabledToolIds?: string[]): EnabledToolsResult {
 
   for (const entry of BUILTIN_TOOLS) {
     const toolId = entry.meta.id
+    if (excludedToolIds.has(toolId)) continue
     const state = config.toolStates[toolId]
 
     // 检查工具是否启用（前端开关 + 配置开关）
@@ -151,6 +156,7 @@ export function getEnabledTools(enabledToolIds?: string[]): EnabledToolsResult {
   // 自定义工具
   for (const customMeta of config.customTools) {
     const toolId = customMeta.id
+    if (excludedToolIds.has(toolId)) continue
     const isEnabledByUser = enabledToolIds
       ? enabledToolIds.includes(toolId)
       : (config.toolStates[toolId]?.enabled ?? false)

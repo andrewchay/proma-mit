@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { MemorySettings } from './MemorySettings'
 import { LocalContextStoreSettings } from './LocalContextStoreSettings'
+import { TypeSafeJudgmentSettingsCard } from './TypeSafeJudgmentSettings'
 import { SettingsSection, SettingsCard } from './primitives'
 import { chatToolsAtom } from '@/atoms/chat-tool-atoms'
 
@@ -473,6 +474,9 @@ export function ToolSettings(): React.ReactElement {
 
       {/* 本地上下文存储（与云端记忆并行，本地优先） */}
       <LocalContextStoreSettings />
+
+      {/* TypeSafe 判断服务 */}
+      <TypeSafeJudgmentSettingsCard />
 
       {/* 联网搜索工具 */}
       <WebSearchSettings />

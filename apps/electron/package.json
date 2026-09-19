@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/electron",
-  "version": "0.12.36",
+  "version": "0.12.37",
   "description": "Gravitas next gen ai software with general agents - Electron App",
   "license": "BUSL-1.1",
   "main": "dist/main.cjs",
@@ -58,6 +58,7 @@
     "@earendil-works/pi-coding-agent": "0.82.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@pierre/diffs": "^1.1.20",
+    "@typesafe-ai/sdk": "0.6.0",
     "@xmldom/xmldom": "^0.8.12",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",

@@ -32,6 +32,10 @@ import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { getEnabledTools } from './chat-tool-registry'
 import { executeToolCalls } from './chat-tool-executor'
+import {
+  isTypeSafeChatRecommendationAvailable,
+  judgeChatAgentRoute,
+} from './typesafe-judgment-service'
 
 /** 活跃的 AbortController 映射（conversationId → controller，仅当前串行执行项） */
 const activeControllers = new Map<string, AbortController>()
@@ -306,8 +310,30 @@ export async function sendMessage(
     // 7. 获取适配器
     const adapter = getAdapter(channel.provider)
 
-    // 8. 从工具注册表获取启用的工具
-    const { tools, systemPromptAppend } = getEnabledTools(enabledToolIds)
+    // 8. 从工具注册表获取启用的工具。TypeSafe 成功判断后，本回合排除 legacy 推荐工具；
+    // TypeSafe 不可用时保留原工具，确保现有行为完整回退。
+    let { tools, systemPromptAppend } = getEnabledTools(enabledToolIds)
+    const legacyAgentRecommendationEnabled = tools?.some((tool) => tool.name === 'suggest_agent_mode') ?? false
+    if (legacyAgentRecommendationEnabled && isTypeSafeChatRecommendationAvailable()) {
+      const routeResult = await judgeChatAgentRoute({
+        conversationId,
+        message: userMessage,
+        attachments,
+        signal: controller.signal,
+      })
+      if (routeResult.status === 'success') {
+        ;({ tools, systemPromptAppend } = getEnabledTools(
+          enabledToolIds,
+          new Set(['agent-mode-recommend']),
+        ))
+        if (routeResult.recommendation && !webContents.isDestroyed()) {
+          webContents.send(
+            CHAT_IPC_CHANNELS.STREAM_AGENT_RECOMMENDATION,
+            routeResult.recommendation,
+          )
+        }
+      }
+    }
 
     // 注入工具系统提示词
     const effectiveSystemMessage = systemPromptAppend && systemMessage
