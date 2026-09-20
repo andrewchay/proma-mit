@@ -2,16 +2,17 @@ import { describe, expect, test } from 'bun:test'
 import { selectCanUseCapability, type SubscriptionState } from './subscription-atoms'
 import type { EntitlementSnapshot } from '@gravitas/shared'
 
-const NOW = new Date('2026-09-13T00:00:00.000Z')
-
+// 权益判定使用真实时钟（new Date()），夹具必须用相对时间，
+// 避免写死日历日期形成“日期炸弹”（曾因 validUntil 写死当天过期导致测试失效）。
 function snapshot(overrides: Partial<EntitlementSnapshot> = {}): EntitlementSnapshot {
+  const now = new Date()
   return {
     accountId: 'acct-1',
     planId: 'pro',
     capabilities: ['influencer', 'paid-media'],
     status: 'active',
-    validUntil: '2026-09-20T00:00:00.000Z',
-    lastVerifiedAt: NOW.toISOString(),
+    validUntil: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    lastVerifiedAt: now.toISOString(),
     signature: 'sig',
     keyId: 'dev-1',
     ...overrides,
@@ -41,7 +42,7 @@ describe('subscription atoms', () => {
 
   test('expired 状态不能使用能力', () => {
     const state: SubscriptionState = {
-      entitlement: snapshot({ status: 'expired', validUntil: '2026-09-01T00:00:00.000Z' }),
+      entitlement: snapshot({ status: 'expired', validUntil: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() }),
       status: 'expired',
     }
     expect(selectCanUseCapability(state, 'influencer')).toBe(false)
