@@ -37,6 +37,18 @@ export const DEFAULT_COMPACTION_TIMEOUT_MS = 120_000
 /** 压缩后的目标低水位，给后续多轮工具调用留出增长空间。 */
 export const COMPACTION_LOW_WATER_RATIO = 0.65
 
+/** 摘要输入的最大字符数；超出时保留头尾并插入截断标记，避免摘要 prompt 无上限。 */
+export const SUMMARY_SOURCE_MAX_CHARS = 60_000
+
+/** 截断时保留头部字符占比（早期历史开头通常包含任务背景）。 */
+const SUMMARY_SOURCE_HEAD_RATIO = 0.2
+
+/** 自适应压缩超时的保守吞吐假设：摘要模型每秒处理的输入字符数。 */
+const SUMMARY_TIMEOUT_CHARS_PER_SECOND = 150
+
+/** 自适应压缩超时上限；避免超大历史把回合拖得过久。 */
+export const MAX_COMPACTION_TIMEOUT_MS = 480_000
+
 /** 早期历史转文本的最小字符数；太小不值得压缩 */
 const MIN_SUMMARY_SOURCE_CHARS = 2_000
 
@@ -114,6 +126,8 @@ export interface ContextCompactionResult {
   history: SDKMessage[]
   /** 是否只对本轮模型视图执行了无损工具结果裁剪。 */
   pruned?: boolean
+  /** 自动压缩失败后是否降级继续（历史为已裁剪工具结果的版本，未持久化 boundary）。 */
+  degraded?: boolean
 }
 
 export interface ContextBudgetTool {
@@ -133,6 +147,29 @@ export interface AutoCompactionTrigger {
   source: 'reported_usage' | 'estimated_payload'
   estimatedInputTokens: number
   inputBudgetTokens: number
+}
+
+/**
+ * 截断超长摘要输入：保留头尾并在中间插入标记。
+ * 头部保留任务背景，尾部（更接近当前对话的部分）对增量摘要最有价值；
+ * 中段丢失的事实由已有 ContextPacket 增量基线兜底。
+ */
+export function truncateSummarySource(text: string, maxChars: number = SUMMARY_SOURCE_MAX_CHARS): string {
+  if (text.length <= maxChars) return text
+  const headChars = Math.floor(maxChars * SUMMARY_SOURCE_HEAD_RATIO)
+  const tailChars = maxChars - headChars
+  const omitted = text.length - headChars - tailChars
+  return `${text.slice(0, headChars)}\n\n[……中间约 ${omitted} 字符的较早历史已截断；仍有效的事实以最近一次 ContextPacket 增量基线为准……]\n\n${text.slice(text.length - tailChars)}`
+}
+
+/**
+ * 按摘要输入规模自适应压缩截止时间：小历史保持默认 120s，
+ * 大历史按保守吞吐线性放大，封顶 MAX_COMPACTION_TIMEOUT_MS。
+ * 显式传入的 timeoutMs（含 0=禁用）优先于自适应值。
+ */
+export function resolveAdaptiveCompactionTimeout(sourceChars: number): number {
+  const adaptive = Math.ceil(sourceChars / SUMMARY_TIMEOUT_CHARS_PER_SECOND) * 1_000
+  return Math.min(Math.max(DEFAULT_COMPACTION_TIMEOUT_MS, adaptive), MAX_COMPACTION_TIMEOUT_MS)
 }
 
 /**
@@ -309,7 +346,7 @@ export async function summarizeHistory(options: ContextCompactionOptions): Promi
   const { provider, adapterProvider, apiKey, baseUrl, model, historyMessages, keepRecent = DEFAULT_KEEP_RECENT_MESSAGES, signal } = options
   const earlyCount = Math.max(0, historyMessages.length - keepRecent)
   const earlyMessages = historyMessages.slice(0, earlyCount)
-  const sourceText = sdkMessagesToCompactText(earlyMessages)
+  const sourceText = truncateSummarySource(sdkMessagesToCompactText(earlyMessages))
 
   const adapter = getAdapter(adapterProvider ?? provider)
   const previousPacket = findLatestContextPacket(earlyMessages)
@@ -436,8 +473,7 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
   return { compacted: true, summary: packet.summary, packet, history }
 }
 
-async function summarizeHistoryWithDeadline(options: ContextCompactionOptions): Promise<ContextPacket | undefined> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_COMPACTION_TIMEOUT_MS
+async function runSummarizeWithDeadline(options: ContextCompactionOptions, timeoutMs: number): Promise<ContextPacket | undefined> {
   if (timeoutMs <= 0) return summarizeHistory(options)
 
   const controller = new AbortController()
@@ -468,6 +504,33 @@ async function summarizeHistoryWithDeadline(options: ContextCompactionOptions): 
     if (timer) clearTimeout(timer)
     options.signal?.removeEventListener('abort', abortFromCaller)
   }
+}
+
+/**
+ * 带截止时间的摘要执行：
+ * - 未显式配置 timeoutMs 时按摘要输入规模自适应（慢模型/大历史不会被 120s 写死）；
+ * - 超时后重试一次（换一次网络/负载机会）；abort 立即向上传播，不重试。
+ */
+async function summarizeHistoryWithDeadline(options: ContextCompactionOptions): Promise<ContextPacket | undefined> {
+  const earlyCount = Math.max(0, options.historyMessages.length - (options.keepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES))
+  const sourceChars = sdkMessagesToCompactText(options.historyMessages.slice(0, earlyCount)).length
+  const timeoutMs = options.timeoutMs ?? resolveAdaptiveCompactionTimeout(sourceChars)
+  const maxAttempts = 2
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await runSummarizeWithDeadline(options, timeoutMs)
+    } catch (error) {
+      const aborted = options.signal?.aborted === true || (error instanceof Error && error.name === 'AbortError')
+      const timedOut = error instanceof ContextCompactionTimeoutError
+      if (timedOut && !aborted && attempt < maxAttempts) {
+        console.warn(`[上下文压缩] 摘要超时（${timeoutMs}ms），正在重试一次: sessionId=${options.sessionId}`)
+        continue
+      }
+      throw error
+    }
+  }
+  // 循环内要么 return 要么 throw，此处不可达；保留类型完整性。
+  throw new ContextCompactionTimeoutError(timeoutMs)
 }
 
 /**
@@ -513,12 +576,27 @@ export async function maybeAutoCompact(options: ContextCompactionOptions): Promi
     systemPrompt: options.systemPrompt,
     tools: options.tools,
   })
-  return compactSessionNow({
-    ...options,
-    historyMessages: pruning.history,
-    keepRecent: adaptiveKeepRecent,
-    targetInputTokens: Math.floor(trigger.inputBudgetTokens * COMPACTION_LOW_WATER_RATIO),
-  })
+  try {
+    return await compactSessionNow({
+      ...options,
+      historyMessages: pruning.history,
+      keepRecent: adaptiveKeepRecent,
+      targetInputTokens: Math.floor(trigger.inputBudgetTokens * COMPACTION_LOW_WATER_RATIO),
+    })
+  } catch (error) {
+    // 降级：自动压缩失败（超时/摘要不合法/落盘失败）不杀死用户回合。
+    // 退回已裁剪工具结果的历史继续本轮；boundary 不落盘，下一轮会重新尝试压缩。
+    // 用户主动 abort 仍向上传播，由 adapter 的中止链路处理。
+    const aborted = options.signal?.aborted === true || (error instanceof Error && error.name === 'AbortError')
+    if (aborted) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`[上下文压缩] 自动压缩失败，降级为工具结果裁剪并继续本轮: sessionId=${options.sessionId}, 原因=${message}`)
+    options.onLifecycle?.({
+      status: 'failed',
+      message: `自动压缩失败，已降级为工具结果裁剪并继续本轮对话：${message}`,
+    })
+    return { compacted: false, pruned: pruning.prunedResults > 0, history: pruning.history, degraded: true }
+  }
 }
 
 /**
