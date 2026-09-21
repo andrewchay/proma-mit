@@ -99,6 +99,7 @@ export const NESTED_MERGE_FIELDS: ReadonlySet<keyof AppSettings> = new Set<keyof
   'feishuTodo',
   'dingtalkTodo',
   'briefCallback',
+  'companionServer',
   'visionRelay',
   'voiceDictation',
   'mainWindowState',

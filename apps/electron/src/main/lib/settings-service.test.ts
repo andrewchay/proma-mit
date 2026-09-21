@@ -11,6 +11,15 @@ const baseSettings = {
 } as unknown as AppSettings
 
 describe('settings-service 嵌套合并', () => {
+  test('更新 companionServer 子字段不丢其它子字段（深合并）', () => {
+    const current = {
+      ...baseSettings,
+      companionServer: { enabled: true, port: 8790, tokenHash: 'abc' },
+    } as AppSettings
+    const merged = mergeNestedSettings(current, { companionServer: { enabled: false } })
+    expect(merged.companionServer).toEqual({ enabled: false, port: 8790, tokenHash: 'abc' })
+  })
+
   test('更新 computerUse 子字段不丢其它子字段（深合并）', () => {
     const current = {
       ...baseSettings,
