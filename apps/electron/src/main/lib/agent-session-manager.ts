@@ -1063,6 +1063,31 @@ export function truncateSDKMessages(id: string, upToUuidInclusive: string): SDKM
 }
 
 /**
+ * 把保留窗口起点回退到工具调用配对边界。
+ *
+ * 保留的历史不能以「含 tool_result 的 user 消息」开头：它的配对 assistant
+ * tool_use 若已被压缩掉，OpenAI 协议校验会直接报 400
+ * "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+ * （DeepSeek 等严格网关实测）。并行工具调用的多条 tool_result user 消息
+ * 会被一并回退到配对的 assistant 消息。
+ */
+export function alignKeepStartToToolPairs(messages: SDKMessage[], startIndex: number): number {
+  let start = Math.max(0, Math.min(startIndex, messages.length))
+  const hasToolResult = (message: SDKMessage): boolean => {
+    if (message.type !== 'user') return false
+    const content = (message as { message?: { content?: unknown } }).message?.content
+    return Array.isArray(content) && content.some((block) => (block as { type?: string })?.type === 'tool_result')
+  }
+  // start === messages.length 表示 keepRecent=0，无业务消息保留；不得访问越界元素。
+  while (start > 0 && start < messages.length) {
+    const message = messages[start]
+    if (!message || !hasToolResult(message)) break
+    start -= 1
+  }
+  return start
+}
+
+/**
  * 上下文压缩：删除除最近 keepRecent 条外的早期消息，并在剩余历史前插入一条
  * system(compact_boundary) 摘要消息。返回新的消息列表（含 boundary）。
  *
@@ -1071,7 +1096,8 @@ export function truncateSDKMessages(id: string, upToUuidInclusive: string): SDKM
 export function compactSDKMessages(id: string, summary: string, keepRecent: number, contextPacket?: ContextPacket): SDKMessage[] {
   const messages = getAgentSessionSDKMessages(id)
   const keepCount = Math.max(0, Math.min(keepRecent, messages.length))
-  const kept = messages.slice(messages.length - keepCount)
+  // 保留窗口不能从孤儿 tool_result 开始；必要时向前扩展到配对的 assistant
+  const kept = messages.slice(alignKeepStartToToolPairs(messages, messages.length - keepCount))
   const boundary: SDKMessage = {
     type: 'system',
     subtype: 'compact_boundary',

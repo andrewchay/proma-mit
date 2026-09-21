@@ -23,6 +23,9 @@ mock.module('../document-parser', () => ({
 
 let promptCalls = 0
 let promptErrors: string[] = []
+let streaming = false
+const streamingAtPromptCalls: boolean[] = []
+let abortCalls = 0
 
 mock.module('./pi-sdk-loader', () => ({
   loadPiCodingAgent: async () => ({
@@ -41,17 +44,24 @@ mock.module('./pi-sdk-loader', () => ({
         },
         async prompt() {
           promptCalls += 1
+          streamingAtPromptCalls.push(streaming)
           if (promptErrors.length > 0) {
             const err = promptErrors.shift()!
+            // 模拟看门狗场景：错误抛出时旧 prompt 仍在 streaming，稍后才真正退出
+            streaming = true
+            // 1300ms > 重试退避 1000ms：保证守卫在重试时仍看到 streaming，必须 abort + 等待
+            setTimeout(() => { streaming = false }, 1300)
             throw new Error(err)
           }
         },
         get isStreaming() {
-          return false
+          return streaming
         },
         async steer() {},
         async followUp() {},
-        async abort() {},
+        async abort() {
+          abortCalls += 1
+        },
         dispose() {},
       },
     }),
@@ -67,7 +77,7 @@ mock.module('./pi-model-registry', () => ({
   }),
 }))
 
-const { PiAgentAdapter } = await import('./pi-agent-adapter')
+const { PiAgentAdapter, waitForPiSessionIdle } = await import('./pi-agent-adapter')
 
 async function runQuery(adapter: InstanceType<typeof PiAgentAdapter>, prompt: string): Promise<string[]> {
   const stream = adapter.query({
@@ -93,6 +103,9 @@ describe('Pi 断流自动重试', () => {
   beforeEach(() => {
     promptCalls = 0
     promptErrors = []
+    streaming = false
+    streamingAtPromptCalls.length = 0
+    abortCalls = 0
   })
 
   afterEach(() => {
@@ -119,6 +132,29 @@ describe('Pi 断流自动重试', () => {
     const adapter = new PiAgentAdapter()
     await expect(runQuery(adapter, '你好')).rejects.toThrow('invalid_api_key')
     expect(promptCalls).toBe(1)
+  })
+
+  test('重试前等待旧 prompt 真正退出 streaming，不撞 already processing', async () => {
+    promptErrors = ['Stream ended without finish_reason']
+    const adapter = new PiAgentAdapter()
+    await runQuery(adapter, '你好')
+    expect(promptCalls).toBe(2)
+    // 第一次 prompt 前会话未 streaming；抛错瞬间进入 streaming，
+    // 重试守卫必须等它退出后才发起第二次 prompt。
+    expect(streamingAtPromptCalls[0]).toBe(false)
+    expect(streamingAtPromptCalls[1]).toBe(false)
+    expect(abortCalls).toBe(1)
+  }, 15000)
+
+  test('中止后到期仍 streaming 时明确失败，不继续重复发送', async () => {
+    let localAbortCalls = 0
+    const session = {
+      get isStreaming() { return true },
+      async abort() { localAbortCalls += 1 },
+    }
+
+    await expect(waitForPiSessionIdle(session, 20, 2)).rejects.toThrow('仍处于 processing')
+    expect(localAbortCalls).toBe(1)
   })
 
   test('断流重试超过上限后抛错', async () => {
