@@ -25,7 +25,7 @@ import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
 import { isTransientNetworkError } from '../error-patterns'
 import { getAgentSessionMeta } from '../agent-session-manager'
-import { compactSessionNow, maybeAutoCompact } from '../agent-runtime/context-compaction'
+import { compactSessionNow, maybeAutoCompact, estimateOutgoingContextTokens } from '../agent-runtime/context-compaction'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 系统提示词 */
@@ -92,6 +92,22 @@ const PI_PROMPT_IDLE_TIMEOUT_MS = 120_000
 
 /** 看门狗活动轮询间隔（毫秒） */
 const PI_PROMPT_IDLE_POLL_MS = 2_000
+
+/** 首 token 前的保守 prefill 吞吐假设（tokens/秒）：
+ * 慢模型对超大上下文（实测 16 万 token prefill >120s）的首响应不能被流中空闲阈值误杀。 */
+const PI_PREFILL_TOKENS_PER_SECOND = 500
+
+/** 首 token 宽限上限；与压缩摘要自适应超时上限对齐。 */
+export const PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS = 480_000
+
+/**
+ * 首 token 宽限期：按本回合上下文规模自适应，下限为流中空闲阈值（120s）。
+ * 首 token 到达后，空闲判定回到 PI_PROMPT_IDLE_TIMEOUT_MS。
+ */
+export function resolveFirstTokenTimeoutMs(estimatedContextTokens: number): number {
+  const adaptive = Math.ceil(estimatedContextTokens / PI_PREFILL_TOKENS_PER_SECOND) * 1_000
+  return Math.min(Math.max(PI_PROMPT_IDLE_TIMEOUT_MS, adaptive), PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS)
+}
 
 /** 构造中止错误（interrupt / abort 场景） */
 function createAbortError(): Error {
@@ -519,29 +535,50 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
       const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
 
+      // 首 token 宽限按本回合上下文规模自适应；此时 compaction 已完成，effectiveHistoryMessages 为最终历史。
+      const firstTokenTimeoutMs = resolveFirstTokenTimeoutMs(
+        estimateOutgoingContextTokens({
+          historyMessages: effectiveHistoryMessages,
+          currentPrompt: prompt,
+          systemPrompt: effectiveSystemPrompt,
+          tools: customTools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        }),
+      )
+
       /**
        * 带空闲看门狗的 Pi prompt 执行。
        *
        * Pi 的 session.prompt() 在「SSE 中途无数据但连接未断」时会永久挂起、既不
        * resolve 也不 reject（日志表现为『会话开始后长时间无完成』）。这里轮询
-       * lastActivityAt（由 session.subscribe 事件刷新），若 idleTimeoutMs 内无任何
-       * 活动则 abort 底层会话并抛出可重试的瞬时错误，交由 retryablePromptChain 重试，
-       * 避免会话永远卡死。
+       * lastActivityAt（由 session.subscribe 事件刷新），若空闲超过阈值则 abort 底层
+       * 会话并抛出可重试的瞬时错误，交由 retryablePromptChain 重试，避免会话永远卡死。
+       *
+       * 阈值分两阶段：首 token 前用按上下文规模自适应的宽限（慢模型对大上下文的
+       * prefill 静默期可达数分钟，不能当成死流），首 token 到达后回到 120s。
        */
       const promptWithIdleWatchdog = async (
         promptText: string,
         images: typeof promptImages,
       ): Promise<void> => {
+        // 重试保护：看门狗/软中断的 abort 是异步的，旧 prompt 可能仍在 streaming；
+        // 直接重新 prompt 会撞 Pi 的 "Agent is already processing"。等它真正退出。
+        if (session.isStreaming) {
+          await session.abort().catch(() => {})
+          for (let i = 0; i < 50 && session.isStreaming; i++) await sleep(100)
+        }
         // 每次 prompt 开始时重置活动时钟，避免沿用上一轮的旧时间戳导致立即误判超时。
-        lastActivityAt = Date.now()
+        const promptStartedAt = Date.now()
+        lastActivityAt = promptStartedAt
         let timer: ReturnType<typeof setInterval> | undefined
         let rejectExec: ((e: Error) => void) | null = null
         if (PI_PROMPT_IDLE_TIMEOUT_MS > 0) {
           timer = setInterval(() => {
+            // 首 token 前（无任何事件）用宽限阈值；有事件后回到流中空闲阈值。
+            const idleLimit = lastActivityAt > promptStartedAt ? PI_PROMPT_IDLE_TIMEOUT_MS : firstTokenTimeoutMs
             // 距离最后一次 Pi 活动超过阈值 → 判定挂起
-            if (Date.now() - lastActivityAt >= PI_PROMPT_IDLE_TIMEOUT_MS) {
+            if (Date.now() - lastActivityAt >= idleLimit) {
               const err = new Error(
-                `Pi prompt 流空闲超时 (no agent activity for ${PI_PROMPT_IDLE_TIMEOUT_MS}ms): stream ended without data`
+                `Pi prompt 流空闲超时 (no agent activity for ${Date.now() - lastActivityAt}ms, 阈值 ${idleLimit}ms): stream ended without data`
               )
               err.name = 'AbortError'
               void session.abort().catch(() => {})

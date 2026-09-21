@@ -121,7 +121,22 @@ mock.module('./pi-model-registry', () => ({
   }),
 }))
 
-const { PiAgentAdapter } = await import('./pi-agent-adapter')
+const { PiAgentAdapter, resolveFirstTokenTimeoutMs, PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS } = await import('./pi-agent-adapter')
+
+describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
+  test('小上下文用流中空闲阈值下限（120s）', () => {
+    expect(resolveFirstTokenTimeoutMs(0)).toBe(120_000)
+    expect(resolveFirstTokenTimeoutMs(50_000)).toBe(120_000)
+  })
+
+  test('按 500 tokens/s 线性放大：16 万 token → 320s', () => {
+    expect(resolveFirstTokenTimeoutMs(160_000)).toBe(320_000)
+  })
+
+  test('超大上下文封顶 480s', () => {
+    expect(resolveFirstTokenTimeoutMs(10_000_000)).toBe(PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS)
+  })
+})
 
 describe('PiAgentAdapter', () => {
   test('given required channel fields are missing then query fails with a helpful error', async () => {
