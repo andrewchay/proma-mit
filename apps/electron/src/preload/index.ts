@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS } from '@gravitas/shared'
+import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS } from '@gravitas/shared'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, NEW_MEDIA_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
@@ -532,6 +532,14 @@ export interface ElectronAPI {
 
   /** 获取应用设置 */
   getSettings: () => Promise<AppSettings>
+
+  /** Companion 远程访问（手机浏览器） */
+  companion: {
+    /** 生成一次性配对码（120 秒有效，单次使用） */
+    generatePairingCode: () => Promise<string>
+    /** 查询服务状态（是否运行、端口、局域网访问地址） */
+    getStatus: () => Promise<{ running: boolean; port: number; lanUrl?: string }>
+  }
 
   /** 更新应用设置 */
   updateSettings: (updates: Partial<AppSettings>) => Promise<AppSettings>
@@ -2427,6 +2435,18 @@ const electronAPI: ElectronAPI = {
   recordTypeSafeRecommendationFeedback: (feedback: import('@gravitas/shared').TypeSafeRecommendationFeedback) => (
     ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.RECORD_FEEDBACK, feedback)
   ),
+
+  // Companion 远程访问（手机浏览器）
+  companion: {
+    /** 生成一次性配对码（120 秒有效，单次使用） */
+    generatePairingCode: (): Promise<string> => {
+      return ipcRenderer.invoke(COMPANION_IPC_CHANNELS.GENERATE_PAIRING_CODE)
+    },
+    /** 查询服务状态（是否运行、端口、局域网访问地址） */
+    getStatus: (): Promise<{ running: boolean; port: number; lanUrl?: string }> => {
+      return ipcRenderer.invoke(COMPANION_IPC_CHANNELS.GET_STATUS)
+    },
+  },
 
   // 应用设置
   getSettings: () => {

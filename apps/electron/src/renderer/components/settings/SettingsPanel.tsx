@@ -31,6 +31,7 @@ import {
   Puzzle,
   Server,
   CalendarDays,
+  Smartphone,
   ChevronDown,
   BarChart3,
   Target,
@@ -54,6 +55,7 @@ import {
 import { ChannelSettings } from "./ChannelSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { VisionRelaySettings } from "./VisionRelaySettings";
+import { CompanionSettings } from "./CompanionSettings";
 import { ProxySettings } from "./ProxySettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { TelemetrySettingsPanel } from "./TelemetrySettingsPanel";
@@ -153,6 +155,11 @@ const CALENDAR_TAB: TabItem = {
   label: '日历同步',
   icon: <CalendarDays size={16} />,
 };
+const COMPANION_TAB: TabItem = {
+  id: 'companion',
+  label: '远程访问',
+  icon: <Smartphone size={16} />,
+};
 const TOKEN_USAGE_TAB: TabItem = {
   id: 'token-usage',
   label: 'Token 统计',
@@ -228,6 +235,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
     label: '连接与同步',
     tabs: [
       BOTS_TAB,
+      COMPANION_TAB,
       BASE_TABS[3]!, // 代理设置
       CALENDAR_TAB,
     ],
@@ -298,6 +306,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ExtensionSettings />
     case 'calendar':
       return <CalendarSyncSettings />
+    case 'companion':
+      return <CompanionSettings />
     case 'token-usage':
       return <TokenUsageSettings />
     case 'goals':

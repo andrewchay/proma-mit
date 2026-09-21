@@ -5,13 +5,15 @@
  */
 
 import { createDockIcon } from './lib/dock-icon'
+import { generatePairingCode } from './lib/companion-auth'
+import { getCompanionStatus } from './lib/companion-server'
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app } from 'electron'
 import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, networkInterfaces } from 'node:os'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
-import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS } from '@gravitas/shared'
+import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
 import {
   clearTypeSafeApiKey,
@@ -174,7 +176,7 @@ import {
 import { extractTextFromAttachment } from './lib/document-parser'
 import { getTutorialContent, createWelcomeConversation } from './lib/tutorial-service'
 import { getUserProfile, updateUserProfile } from './lib/user-profile-service'
-import { getSettings, updateSettings } from './lib/settings-service'
+import { getSettings, updateSettings, onSettingsChange } from './lib/settings-service'
 import { isModuleVisible, resolveDevEnabledModules, resolveEffectiveModules } from './lib/feature-gate'
 import { isDevUnlockEnabled } from './lib/dev-unlock'
 import { setDockBadgeCount } from './lib/dock-badge-service'
@@ -473,6 +475,16 @@ function normalizeAppIconVariantId(variantId: string): string {
     gradient: '10-gradient',
   }
   return legacyVariantIds[variantId] ?? variantId
+}
+
+/** 启动 Companion Server（忽略端口占用等错误，不阻塞主流程） */
+async function safeStartCompanionServer(): Promise<void> {
+  try {
+    const { startCompanionServer } = await import('./lib/companion-server')
+    await startCompanionServer()
+  } catch (error) {
+    console.error('[Companion] 启动失败:', error)
+  }
 }
 
 export async function registerIpcHandlers(): Promise<void> {
@@ -1187,6 +1199,50 @@ export async function registerIpcHandlers(): Promise<void> {
       recordTypeSafeRecommendationFeedback(validateTypeSafeFeedback(feedback))
     },
   )
+
+  // ===== Companion 远程访问（手机浏览器） =====
+
+  /** 本机局域网地址提示（用于设置页展示手机访问 URL） */
+  function resolveCompanionLanUrl(port: number): string | undefined {
+    try {
+      const interfaces = networkInterfaces()
+      for (const list of Object.values(interfaces)) {
+        for (const info of list ?? []) {
+          if (info.family === 'IPv4' && !info.internal && /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(info.address)) {
+            return `http://${info.address}:${port}/companion`
+          }
+        }
+      }
+    } catch {
+      /* 忽略 */
+    }
+    return undefined
+  }
+
+  ipcMain.handle(COMPANION_IPC_CHANNELS.GENERATE_PAIRING_CODE, () => {
+    if (!getSettings().companionServer?.enabled) {
+      throw new Error('Companion 远程访问未启用')
+    }
+    return generatePairingCode()
+  })
+
+  ipcMain.handle(COMPANION_IPC_CHANNELS.GET_STATUS, () => {
+    const status = getCompanionStatus()
+    return { ...status, lanUrl: status.running ? resolveCompanionLanUrl(status.port) : undefined }
+  })
+
+  // 设置变更时联动启停（开关切换无需重启应用）
+  let companionServerDesired = getSettings().companionServer?.enabled ?? false
+  onSettingsChange((settings) => {
+    const desired = settings.companionServer?.enabled ?? false
+    if (desired === companionServerDesired) return
+    companionServerDesired = desired
+    if (desired) {
+      void safeStartCompanionServer()
+    } else {
+      void import('./lib/companion-server').then(({ stopCompanionServer }) => stopCompanionServer())
+    }
+  })
 
   // 获取应用设置
   ipcMain.handle(
