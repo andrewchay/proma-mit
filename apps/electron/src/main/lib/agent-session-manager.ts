@@ -1078,7 +1078,12 @@ export function alignKeepStartToToolPairs(messages: SDKMessage[], startIndex: nu
     const content = (message as { message?: { content?: unknown } }).message?.content
     return Array.isArray(content) && content.some((block) => (block as { type?: string })?.type === 'tool_result')
   }
-  while (start > 0 && hasToolResult(messages[start])) start -= 1
+  // start === messages.length 表示 keepRecent=0，无业务消息保留；不得访问越界元素。
+  while (start > 0 && start < messages.length) {
+    const message = messages[start]
+    if (!message || !hasToolResult(message)) break
+    start -= 1
+  }
   return start
 }
 

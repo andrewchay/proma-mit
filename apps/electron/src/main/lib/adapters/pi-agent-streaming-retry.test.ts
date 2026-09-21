@@ -77,7 +77,7 @@ mock.module('./pi-model-registry', () => ({
   }),
 }))
 
-const { PiAgentAdapter } = await import('./pi-agent-adapter')
+const { PiAgentAdapter, waitForPiSessionIdle } = await import('./pi-agent-adapter')
 
 async function runQuery(adapter: InstanceType<typeof PiAgentAdapter>, prompt: string): Promise<string[]> {
   const stream = adapter.query({
@@ -145,6 +145,17 @@ describe('Pi 断流自动重试', () => {
     expect(streamingAtPromptCalls[1]).toBe(false)
     expect(abortCalls).toBe(1)
   }, 15000)
+
+  test('中止后到期仍 streaming 时明确失败，不继续重复发送', async () => {
+    let localAbortCalls = 0
+    const session = {
+      get isStreaming() { return true },
+      async abort() { localAbortCalls += 1 },
+    }
+
+    await expect(waitForPiSessionIdle(session, 20, 2)).rejects.toThrow('仍处于 processing')
+    expect(localAbortCalls).toBe(1)
+  })
 
   test('断流重试超过上限后抛错', async () => {
     promptErrors = ['Stream ended without finish_reason', 'Stream ended without finish_reason', 'Stream ended without finish_reason', 'Stream ended without finish_reason']

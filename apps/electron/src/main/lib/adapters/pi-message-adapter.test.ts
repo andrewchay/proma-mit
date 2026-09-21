@@ -79,15 +79,61 @@ describe('pi-message-adapter', () => {
 
     const sdkMessage = convertPiMessageToSDKMessage(piToolResult, 's1')
     if (!sdkMessage) throw new Error('Pi 工具结果未转换为 SDK 消息')
-    const restored = convertSDKMessagesToPiMessages([sdkMessage])
+    const toolCall: SDKMessage = {
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id: 'screenshot-1', name: 'WebBridgeScreenshot', input: {} }] },
+      parent_tool_use_id: null,
+    } as SDKMessage
+    const restored = convertSDKMessagesToPiMessages([toolCall, sdkMessage])
 
-    expect(restored).toEqual([expect.objectContaining({
+    expect(restored[1]).toEqual(expect.objectContaining({
       role: 'toolResult',
       toolCallId: 'screenshot-1',
       content: [
         { type: 'text', text: '截图已获取' },
         { type: 'image', data: 'AQID', mimeType: 'image/png' },
       ],
-    })])
+    }))
+  })
+
+  test('restores compact boundary as model-visible context packet', () => {
+    const restored = convertSDKMessagesToPiMessages([{
+      type: 'system',
+      subtype: 'compact_boundary',
+      summary: '继续完成 K02，不要重复已完成工作。',
+      contextPacket: { version: 1, summary: '继续完成 K02，不要重复已完成工作。', facts: [], decisions: [], openTasks: ['K02'], importantFiles: [], toolState: [] },
+    } as unknown as SDKMessage])
+
+    expect(restored).toHaveLength(1)
+    expect(restored[0]).toMatchObject({ role: 'user' })
+    expect(JSON.stringify(restored[0])).toContain('context_packet')
+    expect(JSON.stringify(restored[0])).toContain('K02')
+  })
+
+  test('drops orphan tool results from previously corrupted compacted history', () => {
+    const restored = convertSDKMessagesToPiMessages([{
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'missing-call', content: '孤儿结果' }] },
+      parent_tool_use_id: 'missing-call',
+    } as unknown as SDKMessage])
+
+    expect(restored).toEqual([])
+  })
+
+  test('keeps valid tool pairs and restores the real tool name', () => {
+    const restored = convertSDKMessagesToPiMessages([
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'call-1', name: 'Bash', input: { command: 'pwd' } }] },
+        parent_tool_use_id: null,
+      } as SDKMessage,
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'call-1', content: '/tmp' }] },
+        parent_tool_use_id: 'call-1',
+      } as unknown as SDKMessage,
+    ])
+
+    expect(restored[1]).toMatchObject({ role: 'toolResult', toolCallId: 'call-1', toolName: 'Bash' })
   })
 })

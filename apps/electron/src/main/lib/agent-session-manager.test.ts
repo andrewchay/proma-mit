@@ -160,6 +160,20 @@ describe('Agent 会话管理器', () => {
     ] as unknown as SDKMessage[]
     expect(alignKeepStartToToolPairs(messages, 1)).toBe(1)
     expect(alignKeepStartToToolPairs(messages, 0)).toBe(0)
+    expect(alignKeepStartToToolPairs(messages, messages.length)).toBe(messages.length)
+  })
+
+  test('compactSDKMessages：keepRecent=0 仅保留 boundary，不访问越界消息', () => {
+    const session = createAgentSession('compact zero recent', undefined, testWorkspaceId, undefined, 'pi')
+    const messagesPath = join(getConfigDir(), 'agent-sessions', `${session.id}.jsonl`)
+    mkdirSync(join(getConfigDir(), 'agent-sessions'), { recursive: true })
+    const message = { type: 'user', message: { content: [{ type: 'text', text: '旧消息' }] }, parent_tool_use_id: null } as unknown as SDKMessage
+    writeFileSync(messagesPath, `${JSON.stringify(message)}\n`, 'utf-8')
+
+    const result = compactSDKMessages(session.id, '仅摘要', 0)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ type: 'system', subtype: 'compact_boundary', summary: '仅摘要' })
   })
 
   test('fork Provider-Agnostic 会话：复制工作区文件与 JSONL 历史', async () => {

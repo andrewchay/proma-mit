@@ -193,22 +193,56 @@ export function convertPiMessagesToSDKMessages(
     .filter((message): message is SDKMessage => message !== null)
 }
 
+function compactBoundaryToPiUserMessage(message: SDKMessage): PiUserMessage | undefined {
+  if (message.type !== 'system') return undefined
+  const boundary = message as unknown as {
+    subtype?: string
+    summary?: string
+    contextPacket?: unknown
+  }
+  if (boundary.subtype !== 'compact_boundary' || !boundary.summary?.trim()) return undefined
+  const packet = boundary.contextPacket ?? { version: 1, summary: boundary.summary.trim() }
+  return {
+    role: 'user',
+    content: `以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
+    timestamp: timestamp(),
+  }
+}
+
+/**
+ * SDK 历史恢复到 Pi：
+ * - compact_boundary 转成模型可见的历史摘要，避免压缩后只剩最近消息；
+ * - 仅恢复能匹配前序 assistant tool_use 的 tool_result，自动丢弃旧坏历史中的孤儿结果；
+ * - 使用真实工具名，而不是统一伪造成 "tool"。
+ */
 export function convertSDKMessagesToPiMessages(messages: SDKMessage[]): PiAgentMessage[] {
   const piMessages: PiAgentMessage[] = []
+  const pendingToolCalls = new Map<string, string>()
   for (const message of messages) {
+    const boundary = compactBoundaryToPiUserMessage(message)
+    if (boundary) {
+      pendingToolCalls.clear()
+      piMessages.push(boundary)
+      continue
+    }
+
     if (isSDKUserMessage(message)) {
       const toolResultBlocks = message.message?.content?.filter(
         (block): block is SDKToolResultBlock => block.type === 'tool_result',
       ) ?? []
       for (const block of toolResultBlocks) {
+        const toolName = pendingToolCalls.get(block.tool_use_id)
+        // 压缩切片或旧版本持久化可能遗留孤儿 tool_result；严格 OpenAI 网关会 400，恢复时安全丢弃。
+        if (!toolName) continue
         piMessages.push({
           role: 'toolResult',
           toolCallId: block.tool_use_id,
-          toolName: 'tool',
+          toolName,
           content: sdkToolResultContentToPi(block),
           isError: block.is_error ?? false,
           timestamp: timestamp(),
         })
+        pendingToolCalls.delete(block.tool_use_id)
       }
 
       const text = sdkUserContentToText(message.message?.content)
@@ -218,8 +252,16 @@ export function convertSDKMessagesToPiMessages(messages: SDKMessage[]): PiAgentM
           content: text,
           timestamp: timestamp(),
         } satisfies PiUserMessage)
+        // 新用户文本开始后，未完成的旧工具调用不再允许与更晚结果错误配对。
+        pendingToolCalls.clear()
       }
     } else if (isSDKAssistantMessage(message)) {
+      pendingToolCalls.clear()
+      for (const block of message.message.content) {
+        if (block.type === 'tool_use' && typeof block.id === 'string') {
+          pendingToolCalls.set(block.id, typeof block.name === 'string' ? block.name : 'tool')
+        }
+      }
       piMessages.push({
         role: 'assistant',
         content: sdkAssistantContentToPi(message.message.content),

@@ -109,6 +109,11 @@ export function resolveFirstTokenTimeoutMs(estimatedContextTokens: number): numb
   return Math.min(Math.max(PI_PROMPT_IDLE_TIMEOUT_MS, adaptive), PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS)
 }
 
+/** 仅真实模型消息结束首 token 阶段；工具、重试等活动仍使用首 token 宽限。 */
+export function resolvePromptIdleTimeoutMs(hasModelActivity: boolean, firstTokenTimeoutMs: number): number {
+  return hasModelActivity ? PI_PROMPT_IDLE_TIMEOUT_MS : firstTokenTimeoutMs
+}
+
 /** 构造中止错误（interrupt / abort 场景） */
 function createAbortError(): Error {
   const error = new Error('操作已中止')
@@ -119,6 +124,40 @@ function createAbortError(): Error {
 /** 简易延迟（断流重试退避用） */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 中止后等待 Pi 会话退出 streaming 的默认截止时间。 */
+export const PI_SESSION_IDLE_WAIT_TIMEOUT_MS = 5_000
+
+interface AbortablePiSession {
+  readonly isStreaming: boolean
+  abort(): Promise<void>
+}
+
+/**
+ * 中止旧 prompt 并等待 Pi 真正退出 streaming。
+ *
+ * abort Promise 或状态切换任一迟滞都不能无限阻塞；到期仍忙时明确失败，
+ * 绝不继续调用 session.prompt 触发 "Agent is already processing"。
+ */
+export async function waitForPiSessionIdle(
+  session: AbortablePiSession,
+  timeoutMs: number = PI_SESSION_IDLE_WAIT_TIMEOUT_MS,
+  pollMs: number = 100,
+): Promise<void> {
+  if (!session.isStreaming) return
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+  // 启动 abort，但状态切换才是是否可安全重发的权威信号；abort Promise 可能过早 resolve 或永久悬挂。
+  const abortPromise = session.abort().catch(() => {})
+  const initialWait = Math.min(Math.max(1, pollMs), Math.max(1, deadline - Date.now()))
+  await Promise.race([abortPromise, sleep(initialWait)])
+  while (session.isStreaming && Date.now() < deadline) {
+    const remaining = deadline - Date.now()
+    await sleep(Math.min(Math.max(1, pollMs), Math.max(1, remaining)))
+  }
+  if (session.isStreaming) {
+    throw new Error(`Pi 会话中止后仍处于 processing（等待 ${timeoutMs}ms），已拒绝重复发送`)
+  }
 }
 
 /**
@@ -412,10 +451,15 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const queue = createAsyncQueue<SDKMessage>()
     let assistantUuid: string | undefined
     let deferredRetryError: SDKMessage | undefined
-    // 「流活动」时间戳：Pi 事件（message_update/message_end/agent_end/tool 等）到达时刷新。
-    // 供看门狗判断会话是否仍在产出；长时间无任何事件则判定静默挂起。
+    // 「流活动」时间戳：任意 Pi 生命周期事件都会刷新，避免长工具执行被误判为死流。
+    // 首模型响应单独记录；工具/重试事件不能冒充首 token、提前缩短 prefill 宽限。
     let lastActivityAt = Date.now()
+    let currentPromptHasModelActivity = false
     const touchActivity = (): void => { lastActivityAt = Date.now() }
+    const touchModelActivity = (): void => {
+      currentPromptHasModelActivity = true
+      touchActivity()
+    }
     const assistantUuidFor = (): string => {
       assistantUuid ??= randomUUID()
       return assistantUuid
@@ -432,12 +476,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       if (event.type === 'message_update' && isAssistantPiMessage(event.message)) {
         // 原生 retry 前的 error assistant 只是暂态；不能先显示再等待 agent_end.willRetry。
         if (event.message.stopReason === 'error') return
-        touchActivity()
+        touchModelActivity()
         partialAssistantCoalescer.schedule(event.message)
         return
       }
       if (event.type === 'message_end') {
-        touchActivity()
+        if (isAssistantPiMessage(event.message)) touchModelActivity()
+        else touchActivity()
         partialAssistantCoalescer.flush()
         const message = convertPiMessageToSDKMessage(event.message, sessionId, model, {
           final: true,
@@ -472,6 +517,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'auto_retry_end') {
+        touchActivity()
         if (event.success) onAgentEvent?.({ type: 'retry_cleared' })
         else onAgentEvent?.({
           type: 'retry_failed',
@@ -562,19 +608,16 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       ): Promise<void> => {
         // 重试保护：看门狗/软中断的 abort 是异步的，旧 prompt 可能仍在 streaming；
         // 直接重新 prompt 会撞 Pi 的 "Agent is already processing"。等它真正退出。
-        if (session.isStreaming) {
-          await session.abort().catch(() => {})
-          for (let i = 0; i < 50 && session.isStreaming; i++) await sleep(100)
-        }
-        // 每次 prompt 开始时重置活动时钟，避免沿用上一轮的旧时间戳导致立即误判超时。
-        const promptStartedAt = Date.now()
-        lastActivityAt = promptStartedAt
+        if (session.isStreaming) await waitForPiSessionIdle(session)
+        // 每次 prompt 开始时重置活动时钟和模型活动状态，避免沿用上一轮状态误判阶段。
+        lastActivityAt = Date.now()
+        currentPromptHasModelActivity = false
         let timer: ReturnType<typeof setInterval> | undefined
         let rejectExec: ((e: Error) => void) | null = null
         if (PI_PROMPT_IDLE_TIMEOUT_MS > 0) {
           timer = setInterval(() => {
-            // 首 token 前（无任何事件）用宽限阈值；有事件后回到流中空闲阈值。
-            const idleLimit = lastActivityAt > promptStartedAt ? PI_PROMPT_IDLE_TIMEOUT_MS : firstTokenTimeoutMs
+            // 仅模型消息结束首 token 宽限；工具/重试事件只刷新 lastActivityAt。
+            const idleLimit = resolvePromptIdleTimeoutMs(currentPromptHasModelActivity, firstTokenTimeoutMs)
             // 距离最后一次 Pi 活动超过阈值 → 判定挂起
             if (Date.now() - lastActivityAt >= idleLimit) {
               const err = new Error(
