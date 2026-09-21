@@ -10,7 +10,7 @@ import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ProviderAdapter, ProviderRequest, StreamSSEResult, ToolCall } from '@gravitas/core'
+import type { ProviderAdapter, ProviderRequest, StreamSSEOptions, StreamSSEResult, ToolCall } from '@gravitas/core'
 import type { AgentEvent, SDKMessage, SDKResultMessage } from '@gravitas/shared'
 
 
@@ -52,6 +52,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   let streamCallCount = 0
   let capturedRequests: CapturedRequest[] = []
   let requestedAdapterProviders: string[] = []
+  let firstResponseTimeouts: number[] = []
   let firstTurnToolCalls: ToolCall[] | undefined
 
   beforeEach(() => {
@@ -59,6 +60,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
     streamCallCount = 0
     capturedRequests = []
     requestedAdapterProviders = []
+    firstResponseTimeouts = []
     firstTurnToolCalls = undefined
 
     // mock @gravitas/core，用回合制逻辑替代真实 SSE 请求
@@ -93,8 +95,9 @@ describe('Provider-Agnostic Agent 适配器', () => {
           parseTitleResponse: () => null,
         }
       },
-      streamSSE: async (): Promise<StreamSSEResult> => {
+      streamSSE: async (options: StreamSSEOptions): Promise<StreamSSEResult> => {
         streamCallCount++
+        firstResponseTimeouts.push(options.firstResponseTimeoutMs ?? 0)
         if (streamCallCount === 1 && firstTurnToolCalls) {
           return makeStreamResult('提交 Goal 检查点', firstTurnToolCalls)
         }
@@ -199,6 +202,32 @@ describe('Provider-Agnostic Agent 适配器', () => {
     expect(capturedRequests[0]?.continuationCount).toBe(0)
     expect(capturedRequests[1]?.continuationCount).toBe(2) // assistant tool_use + user tool_result
     expect(capturedRequests[2]?.continuationCount).toBe(4) // 两轮 tool_use + tool_result
+  })
+
+  test('大型工具结果会提高下一轮实际请求的首响应宽限', async () => {
+    firstTurnToolCalls = [{
+      id: 'tc_large_answer',
+      name: 'AskUserQuestion',
+      arguments: { questions: [{ question: '请提供大型上下文' }] },
+    }]
+    const adapter = new ProviderAgnosticAgentAdapter()
+
+    for await (const _message of adapter.query({
+      sessionId: 's-large-tool-result',
+      prompt: '提问后继续',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      apiKey: 'mock-key',
+      baseUrl: 'http://localhost/mock',
+      cwd: tempDir,
+      permissionMode: 'bypassPermissions',
+      onAskUser: async () => ({ behavior: 'allow', answers: { context: 'x'.repeat(600_000) } }),
+    })) {
+      // 消费完整工具循环
+    }
+
+    expect(firstResponseTimeouts[0]).toBe(120_000)
+    expect(firstResponseTimeouts[1]).toBeGreaterThan(firstResponseTimeouts[0] ?? 0)
   })
 
   test('非 bypassPermissions 模式下写工具会被拒绝', async () => {

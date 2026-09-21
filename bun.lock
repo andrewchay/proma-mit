@@ -25,7 +25,7 @@
     },
     "apps/electron": {
       "name": "@gravitas/electron",
-      "version": "0.12.37",
+      "version": "0.12.43",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.143",
         "@anthropic-ai/sdk": "^0.93.0",
@@ -240,7 +240,7 @@
     },
     "packages/core": {
       "name": "@gravitas/core",
-      "version": "0.2.21",
+      "version": "0.2.22",
       "dependencies": {
         "@ai-sdk/anthropic": "4.0.16",
         "@ai-sdk/google": "4.0.18",

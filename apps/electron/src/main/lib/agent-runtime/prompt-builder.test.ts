@@ -91,6 +91,78 @@ describe('Prompt 构建器', () => {
     expect(history[0]?.content).toBe('msg 5')
     expect(history[19]?.content).toBe('msg 24')
   })
+
+  test('given compact boundary when rebuilding history then summary remains model-visible', () => {
+    const messages: SDKMessage[] = [
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        summary: '此前已经完成数据库迁移，下一步运行回归测试。',
+        contextPacket: { version: 1, summary: '此前已经完成数据库迁移，下一步运行回归测试。' },
+      } as unknown as SDKMessage,
+      ...Array.from({ length: 20 }, (_, i) => ({
+        type: i % 2 === 0 ? 'user' : 'assistant',
+        message: { content: [{ type: 'text', text: `recent ${i}` }] },
+        parent_tool_use_id: null,
+      } as SDKMessage)),
+    ]
+
+    const history = sdkMessagesToChatMessages(messages)
+
+    expect(history).toHaveLength(21)
+    expect(history[0]?.role).toBe('user')
+    expect(history[0]?.content).toContain('<context_packet>')
+    expect(history[0]?.content).toContain('数据库迁移')
+    expect(history[20]?.content).toBe('recent 19')
+  })
+
+  test('given window starts at tool result when rebuilding history then matching tool use is backtracked', () => {
+    const messages: SDKMessage[] = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        type: 'user',
+        message: { content: [{ type: 'text', text: `old ${i}` }] },
+        parent_tool_use_id: null,
+      } as SDKMessage)),
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'tc_boundary', name: 'Read', input: { file_path: 'note.txt' } }] },
+        parent_tool_use_id: null,
+      } as SDKMessage,
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tc_boundary', content: 'paired result' }] },
+        parent_tool_use_id: null,
+      } as SDKMessage,
+      ...Array.from({ length: 19 }, (_, i) => ({
+        type: i % 2 === 0 ? 'assistant' : 'user',
+        message: { content: [{ type: 'text', text: `recent ${i}` }] },
+        parent_tool_use_id: null,
+      } as SDKMessage)),
+    ]
+
+    const history = sdkMessagesToChatMessages(messages)
+
+    expect(history).toHaveLength(21)
+    expect(history[0]?.content).toContain('<tool_use id="tc_boundary"')
+    expect(history[1]?.content).toContain('<tool_result tool_use_id="tc_boundary">')
+  })
+
+  test('given orphan tool result in old history when rebuilding then it is filtered but user text remains', () => {
+    const history = sdkMessagesToChatMessages([{
+      type: 'user',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'missing', content: 'orphan' },
+          { type: 'text', text: '继续处理当前任务' },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as SDKMessage])
+
+    expect(history).toHaveLength(1)
+    expect(history[0]?.content).toBe('继续处理当前任务')
+    expect(history[0]?.content).not.toContain('orphan')
+  })
 })
 
 describe('buildAgentSystemPrompt 注入 available_skills', () => {

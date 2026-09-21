@@ -37,6 +37,12 @@ import { getAgentSessionSDKMessages } from '../agent-session-manager'
 import { getWorkspaceSkills } from '../agent-workspace-manager'
 import type { SkillMeta } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './types'
+import {
+  nextWithIdleTimeout,
+  resolveModelFirstResponseTimeoutMs,
+  resolveModelStreamIdleTimeoutMs,
+} from './stream-timeouts'
+import { estimateTokenCount } from '../agent-tool-token-estimator'
 
 export interface AISDKRuntimeSessionState {
   controller: AbortController
@@ -94,6 +100,7 @@ export interface AISDKRuntimeStreamInput {
   maxTurns: number
   maxRetries: number
   signal: AbortSignal
+  estimatedContextTokens: number
   provider?: ProviderType
   modelId?: string
   onAgentEvent?: (event: AgentEvent) => void
@@ -102,6 +109,14 @@ export interface AISDKRuntimeStreamInput {
 export interface AISDKRuntimeStreamResult {
   result: ReturnType<typeof streamText>
   streamedSteps: AISDKStreamStepSnapshot[]
+}
+
+function estimateStreamPartTokens(part: unknown): number {
+  try {
+    return estimateTokenCount(JSON.stringify(part) ?? '')
+  } catch {
+    return 0
+  }
 }
 
 export interface AISDKAgentTurnInput {
@@ -201,6 +216,11 @@ export class AISDKRuntimeCore {
       maxTurns: input.maxTurns,
       maxRetries: input.maxRetries,
       signal: input.activeSession.controller.signal,
+      estimatedContextTokens: estimateTokenCount(JSON.stringify({
+        system: effectiveSystemPrompt,
+        messages,
+        tools: input.runtimeTools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+      })) + 256,
       provider: input.provider,
       modelId: input.modelId,
       onAgentEvent: input.onAgentEvent,
@@ -225,28 +245,66 @@ export class AISDKRuntimeCore {
     let lastError: unknown
     while (attempt <= input.maxRetries) {
       let attemptHadLiveEvents = false
+      let stepHasModelActivity = false
+      let estimatedContextTokens = input.estimatedContextTokens
+      const executingToolCalls = new Set<string>()
       try {
-        const result = streamText({
-          model: input.model,
-          system: input.system,
-          messages: input.messages,
-          tools: input.tools,
-          stopWhen: isStepCount(input.maxTurns),
-          abortSignal: input.signal,
-        })
-        const accumulator = new AISDKStreamStepAccumulator()
-        const streamedSteps: AISDKStreamStepSnapshot[] = []
-        for await (const part of result.stream) {
-          streamedSteps.push(...accumulator.consume(part))
-          const events = aiSDKStreamPartToAgentEvents(part)
-          if (events.length > 0) {
-            attemptHadLiveEvents = true
+        const attemptController = new AbortController()
+        const abortAttempt = (): void => attemptController.abort(input.signal.reason)
+        if (input.signal.aborted) abortAttempt()
+        else input.signal.addEventListener('abort', abortAttempt, { once: true })
+
+        try {
+          const result = streamText({
+            model: input.model,
+            system: input.system,
+            messages: input.messages,
+            tools: input.tools,
+            stopWhen: isStepCount(input.maxTurns),
+            abortSignal: attemptController.signal,
+          })
+          const accumulator = new AISDKStreamStepAccumulator()
+          const streamedSteps: AISDKStreamStepSnapshot[] = []
+          const iterator = result.stream[Symbol.asyncIterator]()
+          while (true) {
+            // AI SDK 在同一 stream 内等待工具执行；工具自身负责超时，不能把长工具误判为模型断流。
+            const timeoutMs = executingToolCalls.size > 0
+              ? 0
+              : resolveModelStreamIdleTimeoutMs(
+                stepHasModelActivity,
+                resolveModelFirstResponseTimeoutMs(estimatedContextTokens),
+              )
+            const next = await nextWithIdleTimeout({
+              iterator,
+              timeoutMs,
+              runtime: 'AI SDK',
+              onTimeout: () => attemptController.abort(),
+            })
+            if (next.done) break
+
+            const part = next.value
+            if (part.type === 'tool-call') executingToolCalls.add(part.toolCallId)
+            if (part.type === 'tool-result' || part.type === 'tool-error') {
+              executingToolCalls.delete(part.toolCallId)
+            }
+            streamedSteps.push(...accumulator.consume(part))
+            estimatedContextTokens += estimateStreamPartTokens(part)
+            const events = aiSDKStreamPartToAgentEvents(part)
+            if (events.length > 0) {
+              attemptHadLiveEvents = true
+              stepHasModelActivity = true
+            }
+            for (const event of events) {
+              input.onAgentEvent?.(event)
+            }
+            // finish-step 后 AI SDK 可能执行工具并发起下一次模型请求；下一次读取重新使用
+            // 包含新增工具结果的自适应首响应宽限，但 attemptHadLiveEvents 保持为真以禁止整轮重试。
+            if (part.type === 'finish-step') stepHasModelActivity = false
           }
-          for (const event of events) {
-            input.onAgentEvent?.(event)
-          }
+          return { result, streamedSteps }
+        } finally {
+          input.signal.removeEventListener('abort', abortAttempt)
         }
-        return { result, streamedSteps }
       } catch (error) {
         lastError = error
         // 用户停止或追加消息触发的中断由 adapter 决定是否续跑；这里不能上报错误，

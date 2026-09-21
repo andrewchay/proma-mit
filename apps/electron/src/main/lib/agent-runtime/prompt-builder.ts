@@ -14,8 +14,10 @@
 import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@gravitas/shared'
 import type { RuntimeMessage } from './types.ts'
 
-/** 最大回填历史消息条数 */
+/** 最大回填历史消息条数（压缩摘要不计入此上限） */
 const MAX_HISTORY_MESSAGES = 20
+
+const COMPACT_CONTEXT_NOTICE = '以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。'
 
 /** 默认 Agent 系统提示词 */
 const DEFAULT_AGENT_SYSTEM_PROMPT = `你是一个高效的编程助手，擅长通过工具调用完成代码编辑、文件操作和命令执行任务。
@@ -192,21 +194,85 @@ function isToolResultBlock(block: unknown): block is ToolResultLikeBlock {
   return typeof block === 'object' && block !== null && (block as { type: string }).type === 'tool_result' && 'tool_use_id' in block
 }
 
-export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[] {
-  const recent = messages.slice(-MAX_HISTORY_MESSAGES)
-  const result: ChatMessage[] = []
+function getToolResultIds(message: SDKMessage | undefined): string[] {
+  if (message?.type !== 'user') return []
+  const content = (message as SDKUserMessage).message?.content
+  if (!Array.isArray(content)) return []
+  return content.filter(isToolResultBlock).map((block) => block.tool_use_id)
+}
 
-  for (const msg of recent) {
+function getToolUseIds(message: SDKMessage | undefined): Set<string> {
+  if (message?.type !== 'assistant') return new Set()
+  const content = (message as SDKAssistantMessage).message?.content
+  if (!Array.isArray(content)) return new Set()
+  return new Set(content.filter(isToolUseBlock).map((block) => block.id))
+}
+
+/** 最近消息窗口不能从 assistant tool_use 与紧随其后的 user tool_result 中间开始。 */
+function selectRecentHistory(messages: SDKMessage[]): SDKMessage[] {
+  let boundaryIndex = -1
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index] as SDKMessage & { subtype?: string }
+    if (message.type === 'system' && message.subtype === 'compact_boundary') {
+      boundaryIndex = index
+      break
+    }
+  }
+
+  const boundary = boundaryIndex >= 0 ? messages[boundaryIndex] : undefined
+  const tail = messages.slice(boundaryIndex + 1)
+  let start = Math.max(0, tail.length - MAX_HISTORY_MESSAGES)
+  if (start > 0) {
+    const resultIds = getToolResultIds(tail[start])
+    const useIds = getToolUseIds(tail[start - 1])
+    if (resultIds.some((id) => useIds.has(id))) start--
+  }
+
+  return boundary ? [boundary, ...tail.slice(start)] : tail.slice(start)
+}
+
+function compactBoundaryToChatMessage(message: SDKMessage): ChatMessage | undefined {
+  if (message.type !== 'system') return undefined
+  const boundary = message as SDKMessage & {
+    subtype?: string
+    summary?: string
+    contextPacket?: unknown
+    session_id?: string
+  }
+  if (boundary.subtype !== 'compact_boundary' || !boundary.summary?.trim()) return undefined
+  const packet = boundary.contextPacket ?? { version: 1, summary: boundary.summary.trim() }
+  return {
+    id: `${boundary.session_id ?? ''}-compact-boundary`,
+    role: 'user',
+    content: `${COMPACT_CONTEXT_NOTICE}\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
+    createdAt: Date.now(),
+  }
+}
+
+export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = []
+  const pendingToolCalls = new Set<string>()
+
+  for (const msg of selectRecentHistory(messages)) {
+    const boundary = compactBoundaryToChatMessage(msg)
+    if (boundary) {
+      pendingToolCalls.clear()
+      result.push(boundary)
+      continue
+    }
+
     if (msg.type === 'assistant') {
       const assistantMsg = msg as SDKAssistantMessage
       const content = assistantMsg.message?.content
       if (!Array.isArray(content)) continue
 
+      pendingToolCalls.clear()
       const parts: string[] = []
       for (const block of content) {
         if (isTextBlock(block)) {
           parts.push(block.text)
         } else if (isToolUseBlock(block)) {
+          pendingToolCalls.add(block.id)
           parts.push(`<tool_use id="${block.id}" name="${block.name}">${JSON.stringify(block.input)}</tool_use>`)
         }
       }
@@ -228,13 +294,16 @@ export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[]
       if (!Array.isArray(content)) continue
 
       const parts: string[] = []
+      let hasUserText = false
       for (const block of content) {
         if (isTextBlock(block)) {
+          hasUserText = true
           parts.push(block.text)
-        } else if (isToolResultBlock(block)) {
+        } else if (isToolResultBlock(block) && pendingToolCalls.has(block.tool_use_id)) {
           const errorPrefix = block.is_error ? '[错误] ' : ''
           const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content)
           parts.push(`<tool_result tool_use_id="${block.tool_use_id}">${errorPrefix}${text}</tool_result>`)
+          pendingToolCalls.delete(block.tool_use_id)
         }
       }
 
@@ -248,6 +317,7 @@ export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[]
           attachments,
         })
       }
+      if (hasUserText) pendingToolCalls.clear()
     }
   }
 
