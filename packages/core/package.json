@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/core",
-  "version": "0.2.21",
+  "version": "0.2.22",
   "license": "BUSL-1.1",
   "description": "proma core types,storage and core logic with agents",
   "type": "module",

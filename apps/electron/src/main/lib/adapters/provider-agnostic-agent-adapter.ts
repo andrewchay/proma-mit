@@ -50,6 +50,8 @@ import type { RuntimeMessage } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { getWorkspaceSkills } from '../agent-workspace-manager'
 import type { SkillPromptContext } from '../agent-runtime/prompt-builder'
+import { MODEL_STREAM_IDLE_TIMEOUT_MS, resolveModelFirstResponseTimeoutMs } from '../agent-runtime/stream-timeouts'
+import { estimateTokenCount } from '../agent-tool-token-estimator'
 
 /** 工具权限检查结果 */
 export interface ToolPermissionResult {
@@ -378,6 +380,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           })),
           continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined,
         })
+        // 每个工具续接轮次都按实际序列化请求重新估算，避免大型工具结果仍被固定 120 秒误杀。
+        const firstResponseTimeoutMs = resolveModelFirstResponseTimeoutMs(
+          estimateTokenCount(request.body) + 256,
+        )
 
         let currentContent = ''
         let currentReasoning = ''
@@ -404,6 +410,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
               adapter,
               signal: controller.signal,
               fetchFn,
+              firstResponseTimeoutMs,
+              idleTimeoutMs: MODEL_STREAM_IDLE_TIMEOUT_MS,
               onEvent: handleStreamEvent,
             }),
           {
