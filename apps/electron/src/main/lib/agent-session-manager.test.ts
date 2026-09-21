@@ -33,6 +33,7 @@ const {
   searchAgentSessionReferences,
   updateAgentSessionMeta,
   compactSDKMessages,
+  alignKeepStartToToolPairs,
 } = await import('./agent-session-manager')
 const { getConfigDir, getAgentSessionWorkspacePath, getAgentWorkspacePath } = await import('./config-paths')
 const { createAgentWorkspace, getAgentWorkspaceCwd } = await import('./agent-workspace-manager')
@@ -118,6 +119,47 @@ describe('Agent 会话管理器', () => {
     const archiveFiles = readdirSync(archiveDir)
     expect(archiveFiles).toHaveLength(1)
     expect(readFileSync(join(archiveDir, archiveFiles[0]!), 'utf8')).toContain('compact-source')
+  })
+
+  test('压缩保留窗口不会从孤儿 tool_result 开始，回退到配对的 assistant', () => {
+    const session = createAgentSession('compact tool pair', undefined, testWorkspaceId, undefined, 'pi')
+    const messagesPath = join(getConfigDir(), 'agent-sessions', `${session.id}.jsonl`)
+    mkdirSync(join(getConfigDir(), 'agent-sessions'), { recursive: true })
+    // 5 条早期消息 + 配对的 tool_use/tool_result 对，
+    // keepRecent=2 时切片点正好落在 tool_result user 上（孤儿）
+    const history: SDKMessage[] = [
+      { type: 'user', message: { content: [{ type: 'text', text: '早期 0' }] }, parent_tool_use_id: null },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '早期 1' }] }, parent_tool_use_id: null },
+      { type: 'user', message: { content: [{ type: 'text', text: '早期 2' }] }, parent_tool_use_id: null },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '早期 3' }] }, parent_tool_use_id: null },
+      { type: 'user', message: { content: [{ type: 'text', text: '早期 4' }] }, parent_tool_use_id: null },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'call-1', name: 'Bash', input: {} }] }, parent_tool_use_id: null },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call-1', content: '结果' }] }, parent_tool_use_id: 'call-1' },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '收尾' }] }, parent_tool_use_id: null },
+    ] as unknown as SDKMessage[]
+    writeFileSync(messagesPath, history.map((m) => JSON.stringify(m)).join('\n') + '\n', 'utf-8')
+
+    const result = compactSDKMessages(session.id, '摘要', 2)
+
+    // boundary + 回退后保留的配对段：tool_result 不能成为第一条业务消息
+    const kept = result.filter((m) => m.type !== 'system')
+    const firstUserWithToolResult = kept.findIndex(
+      (m) => m.type === 'user' && JSON.stringify((m as { message?: { content?: unknown[] } }).message?.content)?.includes('tool_result'),
+    )
+    expect(firstUserWithToolResult).toBeGreaterThan(0)
+    const previous = kept[firstUserWithToolResult - 1] as { message?: { content?: Array<{ type?: string }> } }
+    expect(previous.message?.content?.some((b) => b.type === 'tool_use')).toBe(true)
+    // 原始未受影响的消息没有丢失：tool_use 和 tool_result 都在保留段里
+    expect(JSON.stringify(result)).toContain('call-1')
+  })
+
+  test('alignKeepStartToToolPairs：非 tool_result 开头时保持原起点', () => {
+    const messages = [
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'a' }] } },
+      { type: 'user', message: { content: [{ type: 'text', text: 'b' }] } },
+    ] as unknown as SDKMessage[]
+    expect(alignKeepStartToToolPairs(messages, 1)).toBe(1)
+    expect(alignKeepStartToToolPairs(messages, 0)).toBe(0)
   })
 
   test('fork Provider-Agnostic 会话：复制工作区文件与 JSONL 历史', async () => {
