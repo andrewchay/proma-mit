@@ -537,8 +537,8 @@ export interface ElectronAPI {
   companion: {
     /** 生成一次性配对码（120 秒有效，单次使用） */
     generatePairingCode: () => Promise<string>
-    /** 查询服务状态（是否运行、端口、局域网访问地址） */
-    getStatus: () => Promise<{ running: boolean; port: number; lanUrl?: string }>
+    /** 查询服务状态（是否运行、端口、局域网访问地址、配对二维码） */
+    getStatus: () => Promise<{ running: boolean; port: number; lanUrl?: string; qrDataUrl?: string }>
   }
 
   /** 更新应用设置 */

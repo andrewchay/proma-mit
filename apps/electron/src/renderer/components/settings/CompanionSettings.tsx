@@ -16,7 +16,7 @@ import { SettingsSection, SettingsCard, SettingsRow } from './primitives'
 export function CompanionSettings(): React.ReactElement {
   const [enabled, setEnabled] = React.useState(false)
   const [port, setPort] = React.useState('8790')
-  const [status, setStatus] = React.useState<{ running: boolean; port: number; lanUrl?: string } | null>(null)
+  const [status, setStatus] = React.useState<{ running: boolean; port: number; lanUrl?: string; qrDataUrl?: string } | null>(null)
   const [pairingCode, setPairingCode] = React.useState('')
   const [countdown, setCountdown] = React.useState(0)
   const [loading, setLoading] = React.useState(true)
@@ -125,6 +125,17 @@ export function CompanionSettings(): React.ReactElement {
         {status?.lanUrl && (
           <div className="mt-2 rounded-md bg-muted px-3 py-2 font-mono text-sm break-all select-all">
             {status.lanUrl}
+          </div>
+        )}
+
+        {status?.qrDataUrl && (
+          <div className="mt-2 flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={status.qrDataUrl} alt="手机扫码打开配对页" className="size-40 rounded-lg border border-border" />
+            <div className="text-sm text-muted-foreground">
+              <p>手机扫码直达配对页</p>
+              <p className="mt-1 font-mono text-xs break-all">{status.lanUrl}</p>
+            </div>
           </div>
         )}
 

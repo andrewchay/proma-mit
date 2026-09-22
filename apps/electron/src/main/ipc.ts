@@ -1226,9 +1226,14 @@ export async function registerIpcHandlers(): Promise<void> {
     return generatePairingCode()
   })
 
-  ipcMain.handle(COMPANION_IPC_CHANNELS.GET_STATUS, () => {
+  ipcMain.handle(COMPANION_IPC_CHANNELS.GET_STATUS, async () => {
     const status = getCompanionStatus()
-    return { ...status, lanUrl: status.running ? resolveCompanionLanUrl(status.port) : undefined }
+    const lanUrl = status.running ? resolveCompanionLanUrl(status.port) : undefined
+    // 二维码在主进程生成（qrcode 为既有依赖），渲染层直接展示 dataURL
+    const qrDataUrl = lanUrl
+      ? await (await import('qrcode')).default.toDataURL(lanUrl, { width: 280, margin: 2, errorCorrectionLevel: 'M' })
+      : undefined
+    return { ...status, lanUrl, qrDataUrl }
   })
 
   // 设置变更时联动启停（开关切换无需重启应用）
