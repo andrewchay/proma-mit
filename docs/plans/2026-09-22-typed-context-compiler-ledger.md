@@ -4,7 +4,7 @@
 > 关联方案：`docs/plans/2026-09-22-typed-context-compiler.md`
 > 台账性质：实施控制面；每个工作项必须更新状态、证据和阻塞原因后才能进入下一阶段。
 > 状态枚举：`待开始` / `进行中` / `阻塞` / `已完成` / `取消`
-> 当前总状态：**M1 已完成；等待开始 M2 Subagent 定向上下文**
+> 当前总状态：**M2 已完成；M3 评测与对照实验进行中。**
 
 ## 1. 总体里程碑
 
@@ -12,8 +12,8 @@
 |---|---|---|---|---|---|
 | M0 | 契约与观测基线 | 定义类型、事件 ledger、token/cache/retry 基线，不改执行行为 | 无 | 已完成 | shared tests、ledger/metrics/flag/replay tests、`bun run test` 427 文件通过 |
 | M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
-| M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 进行中 | M2-01 子任务边界契约已完成；尚未改变 spawn 行为 |
-| M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 待开始 | 5+ cases、每 case 3+ runs、scoreboard |
+| M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 已完成 | feature-gated projection、只读隔离、typed result 与私有 artifact 回溯已完成 |
+| M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 进行中 | 已冻结 10-case/3-run 三组对照定义与 fail-closed gate；待接入真实 delegate 运行记录 |
 | M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 待开始 | schema token、权限和工具选择回归 |
 | M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 待开始 | compact boundary、重建和失败不伪造测试 |
 | M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 待开始 | 路由 reason、privacy allowlist、未知 cache 按 miss |
@@ -58,11 +58,11 @@
 
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
-| M3-01 | Benchmark 定义 | `typed-context-compiler` + 5 cases | M2 | case statement/rubric 与被测 Agent 输入隔离 | benchmark files | 待开始 |
-| M3-02 | 三组对照 harness | full context / 普通 brief / TCC projection | M3-01 | provider/model/version 固定且可记录 | evaluator run records | 待开始 |
-| M3-03 | 质量评分 | success、evidence coverage、false omission/inclusion、human correction | M3-02 | scoreboard 权威保存；不把 skip 记为 pass | scoreboard | 待开始 |
-| M3-04 | 成本与稳定性评分 | token、cache、duration、retry、failure | M0-04、M3-02 | provider cache unknown 按 miss；价格来源可追踪 | cost report | 待开始 |
-| M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | signed decision note | 待开始 |
+| M3-01 | Benchmark 定义 | `typed-context-compiler` + 10 fixed cases | M2 | case statement/rubric 与被测 Agent 输入隔离 | `fixtures/m3-typed-context-compiler-benchmark.json` | 已完成 |
+| M3-02 | 三组对照 harness | full context / 普通 brief / TCC projection | M3-01 | provider/model/version 固定且可记录 | `tcc-experiment.ts` | 进行中 |
+| M3-03 | 质量评分 | success、evidence coverage、false omission/inclusion、human correction | M3-02 | scoreboard 权威保存；不把 skip 记为 pass | `tcc-experiment.ts` | 进行中 |
+| M3-04 | 成本与稳定性评分 | token、cache、duration、retry、failure | M0-04、M3-02 | provider cache unknown 按 miss；价格来源可追踪 | `tcc-experiment.ts` | 进行中 |
+| M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | signed decision note | 阻塞（等待真实运行记录） |
 
 ### M4：两层工具能力目录
 
@@ -252,6 +252,16 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 风险变化：默认 feature flag 仍为关闭；试点策略不会覆盖调用方显式 projection 或 plain-text 要求，且对其他 Agent 没有运行时改变。
 - 回滚方式：移除 policy resolver 的调用即可让所有未显式 context 的内置 Agent 回到 baseline。
 - 下一步：M2-07 让父 Agent 仅消费 typed result 的 summary/claims/artifacts，禁止自动拼接 child transcript。
+
+### M3-01 / M3-02 / M3-03 / M3-04（2026-09-22）
+- 状态：进行中；仅完成 benchmark 定义和离线汇总/门禁 harness，尚未产生真实 provider 运行数据。
+- 实际变更：冻结 10 个覆盖探索、噪声、敏感路径、证据、预算、模型 policy、只读隔离和 typed handoff 的固定 case；每 case 必须有 full-context、brief、TCC projection 三组各至少 3 次运行。新增可审计的 scorecard 汇总，记录 provider/model/implementation version、token、cache、duration、retry、selected items 与 claim evidence；unknown cache 不扣减 input tokens。缺 run、skip、缺 runtime identity、evidence coverage 不足、false omission 超限或无成本/稳定性改善时 fail-closed。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/tcc-experiment.test.ts`；`bun run typecheck`。
+- 测试结果：目标测试 4 pass / 0 fail；全仓 typecheck、docs check 通过；全量隔离测试 `bun run test`：441 文件 / 0 失败。
+- 证据文件：`context/tcc-experiment.{ts,test.ts}`、`context/fixtures/m3-typed-context-compiler-benchmark.json`。
+- 风险变化：R-07 保持开放。当前是离线 gate/harness，不能将构造测试数据视为真实 provider benchmark 成绩；TCC 默认仍关闭。
+- 回滚方式：删除 M3 experiment 模块和 fixture，不影响 M0-M2 运行时路径。
+- 下一步：将三个 context variant 显式接入隔离 evaluator delegate，生成并持久化真实 run records；完成前 M3-05 保持阻塞。
 
 ### M2-07（2026-09-22）
 - 状态：已完成。
