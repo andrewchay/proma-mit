@@ -1,6 +1,6 @@
 import type { ContextItem, ContextProjectionRequest } from '@gravitas/shared'
-import { compileContextProjection } from './context-projector'
 import { parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './subtask-result-parser'
+import { prepareSubAgentProjectionFromItems } from './subagent-projection-adapter'
 import type { ContextCacheStatus } from './context-metrics'
 import type { TccExperimentCase, TccExperimentRun, TccExperimentScoreboard, TccExperimentVariant } from './tcc-experiment'
 
@@ -51,9 +51,9 @@ export async function runTccExperiment(options: RunTccExperimentOptions): Promis
   for (const testCase of options.fixture.cases) {
     for (const variant of ['full_context', 'brief', 'tcc_projection'] as const) {
       for (let run = 1; run <= options.runsPerCase; run++) {
-        const prepared = prepareTccExperimentPrompt(testCase, variant)
         const startedAt = now()
         try {
+          const prepared = prepareTccExperimentPrompt(testCase, variant)
           const result = await options.delegate({
             caseId: testCase.id,
             variant,
@@ -94,7 +94,7 @@ export async function runTccExperiment(options: RunTccExperimentOptions): Promis
             cacheStatus: 'unknown',
             durationMs: Math.max(0, now() - startedAt),
             retryCount: 0,
-            selectedItemIds: prepared.selectedItemIds,
+            selectedItemIds: [],
             verifiedClaims: 0,
             totalClaims: 0,
           })
@@ -116,13 +116,21 @@ export function prepareTccExperimentPrompt(testCase: TccExperimentFixtureCase, v
       selectedItemIds: testCase.items.map((item) => item.id),
     }
   }
-  const projection = compileContextProjection({
-    request: testCase.projectionRequest,
+  // 评测必须走与生产完全相同的 spawn 边界，否则测得的不是真实投影行为。
+  const preparation = prepareSubAgentProjectionFromItems({
+    parentSessionId: testCase.projectionRequest.sessionId,
+    enabled: true,
+    subAgent: {
+      agentName: testCase.projectionRequest.targetAgentId ?? 'explorer',
+      task: testCase.task,
+      context: { projection: testCase.projectionRequest, resultProtocol: 'typed-v1', readOnly: true },
+    },
     items: testCase.items,
     sourceRevision: `m3:${testCase.id}`,
   })
+  if (!preparation.projection) throw new Error(`TCC projection unavailable for ${testCase.id}`)
   return {
-    task: `${testCase.task}\n\n## TCC projection\n${projection.renderedPromptBlocks.join('\n\n')}`,
-    selectedItemIds: projection.items.map((item) => item.itemId),
+    task: `${testCase.task}${preparation.promptSuffix}`,
+    selectedItemIds: preparation.projection.items.map((item) => item.itemId),
   }
 }

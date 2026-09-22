@@ -1,7 +1,13 @@
 import { expect, test } from 'bun:test'
 import { loadTccSpawnFixture } from './tcc-spawn-fixture'
-import { evaluateTccSpawnEligibility, runTccSpawnExperiment } from './tcc-spawn-experiment'
+import { evaluateTccSpawnEligibility, checkTccEvalPreflight, runTccSpawnExperiment } from './tcc-spawn-experiment'
 const fixture = loadTccSpawnFixture(await Bun.file(new URL('./fixtures/m3-spawn-representative.json', import.meta.url)).json())
+test('passes preflight so paid evaluation is not spent on a broken protocol contract', () => {
+  const result = checkTccEvalPreflight(fixture.cases)
+  expect(result.reasons).toEqual([])
+  expect(result.ready).toBe(true)
+})
+
 test('blocks paid evaluation unless representative projections save at least 20% tokens', () => {
   const result = evaluateTccSpawnEligibility(fixture.cases)
   expect(result.eligible).toBe(true)
