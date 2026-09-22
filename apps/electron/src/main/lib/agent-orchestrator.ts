@@ -81,6 +81,7 @@ import { isTypeSafeSkillShadowAvailable, judgeSkillRoute } from './typesafe-judg
 import { createContextLedgerObserver, type ContextLedgerObserver } from './agent-runtime/context/context-observer'
 import type { ContextCompilerMetricEvent } from './agent-runtime/context/context-metrics'
 import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-feature-flag'
+import { prepareSubAgentProjection } from './agent-runtime/context/subagent-projection-adapter'
 
 // ===== 插件能力引导收集 =====
 
@@ -1210,7 +1211,26 @@ export class AgentOrchestrator {
     const filesHint = input.files?.length
       ? `\n\n重点关注以下文件：\n${input.files.map((f) => `- ${f}`).join('\n')}`
       : ''
-    const prompt = `${input.task}${filesHint}`
+    const parent = getAgentSessionMeta(parentSessionId)
+    const workspace = parent?.workspaceId ? getAgentWorkspace(parent.workspaceId) : undefined
+    const preparedProjection = prepareSubAgentProjection({
+      parentSessionId,
+      workspaceDirectory: workspace ? getAgentWorkspacePath(workspace.slug) : undefined,
+      enabled: workspace
+        ? isTypedContextCompilerEnabled({
+            workspaceEnabled: getWorkspaceTypedContextCompilerEnabled(workspace.slug),
+            sessionEnabled: parent?.typedContextCompiler,
+          })
+        : false,
+      subAgent: input,
+    })
+    if (preparedProjection.fallbackReason) {
+      logInfo(
+        '[Typed Context Compiler] 子任务 projection 已回退 baseline',
+        `parent=${parentSessionId} agent=${input.agentName} reason=${preparedProjection.fallbackReason}`,
+      )
+    }
+    const prompt = `${input.task}${filesHint}${preparedProjection.promptSuffix ? `\n\n${preparedProjection.promptSuffix}` : ''}`
     const systemPrompt = def.prompt
       ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
       : undefined
