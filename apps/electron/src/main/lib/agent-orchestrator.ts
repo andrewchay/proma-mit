@@ -53,7 +53,7 @@ import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, getAgentSessionSDKMessages, truncateSDKMessages, resolveUserUuidFromSDK, rewindFilesFromSnapshot, rewindProviderAgnosticSession, forkAgentSession as forkAgentSessionInternal } from './agent-session-manager'
-import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, getWorkspaceSkills, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
+import { getAgentWorkspace, getAgentWorkspaceCwd, getWorkspaceMcpConfig, getWorkspaceSkills, getWorkspaceTypedContextCompilerEnabled, ensurePluginManifest, prepareWorkflowSkillPlugin } from './agent-workspace-manager'
 import { getWorkspaceSkillsDir } from './config-paths'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceFilesDir, getConfigDirName } from './config-paths'
 import { trackSessionFinished } from './telemetry-tracking'
@@ -78,7 +78,9 @@ import { tokenUsageService } from './token-usage-service'
 import { preTickTurn } from './turn-decision-service'
 import { resolveRequestedOperation } from './agent-runtime/requested-operation'
 import { isTypeSafeSkillShadowAvailable, judgeSkillRoute } from './typesafe-judgment-service'
-import { createContextLedgerObserver } from './agent-runtime/context/context-observer'
+import { createContextLedgerObserver, type ContextLedgerObserver } from './agent-runtime/context/context-observer'
+import type { ContextCompilerMetricEvent } from './agent-runtime/context/context-metrics'
+import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-feature-flag'
 
 // ===== 插件能力引导收集 =====
 
@@ -123,6 +125,49 @@ interface QueuedAgentSend {
   input: AgentSendInput
   /** 执行本次发回馈的子回调 */
   callbacks: SessionCallbacks
+}
+
+interface ContextMetricBase {
+  sessionId: string
+  workspaceId?: string
+  runtime: ContextCompilerMetricEvent['runtime']
+  provider?: string
+  modelId?: string
+  inputTokenEstimate?: number
+}
+
+/** 仅在 TCC 观测启用时包装完成回调；不读取或持久化模型正文。 */
+function withContextMetricCallbacks(
+  callbacks: SessionCallbacks,
+  observer: ContextLedgerObserver,
+  metric: ContextMetricBase,
+  startedAt: number,
+): SessionCallbacks {
+  let reportedError = false
+  let finished = false
+  return {
+    ...callbacks,
+    onError(error): void {
+      reportedError = true
+      callbacks.onError(error)
+    },
+    onComplete(messages, options): void {
+      if (!finished) {
+        finished = true
+        observer.recordMetric({
+          version: 1,
+          id: randomUUID(),
+          stage: 'turn_finished',
+          at: new Date().toISOString(),
+          ...metric,
+          cacheStatus: 'unknown',
+          durationMs: Math.max(0, Date.now() - startedAt),
+          ...(reportedError ? { failureCode: 'agent_error' } : {}),
+        })
+      }
+      callbacks.onComplete(messages, options)
+    },
+  }
 }
 
 // ===== 工具函数 =====
@@ -1991,10 +2036,22 @@ export class AgentOrchestrator {
       const contextObserver = runtimeWorkspaceSlug
         ? createContextLedgerObserver({
             workspaceDirectory: getAgentWorkspacePath(runtimeWorkspaceSlug),
+            enabled: isTypedContextCompilerEnabled({
+              workspaceEnabled: getWorkspaceTypedContextCompilerEnabled(runtimeWorkspaceSlug),
+              sessionEnabled: sessionMeta?.typedContextCompiler,
+            }),
             onError: (error) => console.warn('[Agent 编排] Context ledger 写入失败，已忽略:', error),
           })
         : undefined
       if (contextObserver && userMessage) {
+        const contextMetric = {
+          sessionId,
+          workspaceId,
+          runtime: effectiveAgentRuntime,
+          provider: channel.provider,
+          modelId,
+          inputTokenEstimate: estimateTokenCount(userMessage),
+        } satisfies ContextMetricBase
         contextObserver.recordSessionMessage({
           eventId: randomUUID(),
           sessionId,
@@ -2002,6 +2059,15 @@ export class AgentOrchestrator {
           role: 'user',
           content: userMessage,
         })
+        contextObserver.recordMetric({
+          version: 1,
+          id: randomUUID(),
+          stage: 'turn_started',
+          at: new Date().toISOString(),
+          ...contextMetric,
+          cacheStatus: 'unknown',
+        })
+        callbacks = withContextMetricCallbacks(callbacks, contextObserver, contextMetric, streamStartedAt)
       }
 
       // 本地上下文召回（context-store）
@@ -2232,6 +2298,44 @@ export class AgentOrchestrator {
             console.log(`[Agent 编排] 无 sdkSessionId，将作为新会话启动（回填历史上下文）`)
           }
         }
+      }
+
+      // M0 Typed Context Compiler：Claude runtime 也只在 workspace/session 显式开启时旁路记录。
+      const contextObserver = workspaceSlug
+        ? createContextLedgerObserver({
+            workspaceDirectory: getAgentWorkspacePath(workspaceSlug),
+            enabled: isTypedContextCompilerEnabled({
+              workspaceEnabled: getWorkspaceTypedContextCompilerEnabled(workspaceSlug),
+              sessionEnabled: sessionMeta?.typedContextCompiler,
+            }),
+            onError: (error) => console.warn('[Agent 编排] Context ledger 写入失败，已忽略:', error),
+          })
+        : undefined
+      if (contextObserver && userMessage) {
+        const contextMetric = {
+          sessionId,
+          workspaceId,
+          runtime: effectiveAgentRuntime,
+          provider: channel.provider,
+          modelId,
+          inputTokenEstimate: estimateTokenCount(userMessage),
+        } satisfies ContextMetricBase
+        contextObserver.recordSessionMessage({
+          eventId: randomUUID(),
+          sessionId,
+          workspaceId,
+          role: 'user',
+          content: userMessage,
+        })
+        contextObserver.recordMetric({
+          version: 1,
+          id: randomUUID(),
+          stage: 'turn_started',
+          at: new Date().toISOString(),
+          ...contextMetric,
+          cacheStatus: 'unknown',
+        })
+        callbacks = withContextMetricCallbacks(callbacks, contextObserver, contextMetric, streamStartedAt)
       }
 
       // 9.4.1 Fork session JSONL 迁移已在 forkAgentSession 中完成，

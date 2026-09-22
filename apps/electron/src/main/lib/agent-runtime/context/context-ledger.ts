@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { ContextItem, ContextItemKind, ContextVisibility } from '@gravitas/shared'
 
@@ -134,7 +134,7 @@ export class ContextLedgerStore {
 export function recordToolObservation(store: ContextLedgerStore, input: ToolObservationInput): ContextItem {
   const timestamp = input.createdAt ?? new Date().toISOString()
   return store.append({
-    id: randomUUID(),
+    id: contextItemId('tool_observation', input.eventId),
     kind: 'tool_observation',
     version: 1,
     createdAt: timestamp,
@@ -166,7 +166,7 @@ export function recordSessionMessage(store: ContextLedgerStore, input: SessionMe
   const isUser = input.role === 'user'
   const isSystem = input.role === 'system'
   return store.append({
-    id: randomUUID(),
+    id: contextItemId('session_message', input.eventId),
     kind: isUser ? 'user_intent' : isSystem ? 'constraint' : 'task_state',
     version: 1,
     createdAt: timestamp,
@@ -277,6 +277,10 @@ function isContextItem(value: Record<string, unknown>): value is Omit<ContextIte
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function contextItemId(kind: string, sourceId: string): string {
+  return `${kind}:${sourceId}`
 }
 
 function summaryKey(itemId: string, version: number): string {

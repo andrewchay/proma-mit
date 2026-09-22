@@ -4,14 +4,14 @@
 > 关联方案：`docs/plans/2026-09-22-typed-context-compiler.md`
 > 台账性质：实施控制面；每个工作项必须更新状态、证据和阻塞原因后才能进入下一阶段。
 > 状态枚举：`待开始` / `进行中` / `阻塞` / `已完成` / `取消`
-> 当前总状态：**进行中（M0 契约与 durable ledger 基础已实现；正式隔离测试门禁已通过）**
+> 当前总状态：**M1 已完成；等待开始 M2 Subagent 定向上下文**
 
 ## 1. 总体里程碑
 
 | Milestone | 名称 | 目标 | 依赖 | 状态 | 退出证据 |
 |---|---|---|---|---|---|
-| M0 | 契约与观测基线 | 定义类型、事件 ledger、token/cache/retry 基线，不改执行行为 | 无 | 进行中 | shared tests、ledger tests、`bun run test` 427 文件通过 |
-| M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 待开始 | golden projection、预算裁剪、evidence 标记测试 |
+| M0 | 契约与观测基线 | 定义类型、事件 ledger、token/cache/retry 基线，不改执行行为 | 无 | 已完成 | shared tests、ledger/metrics/flag/replay tests、`bun run test` 427 文件通过 |
+| M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
 | M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 待开始 | 隔离、协议、失败回退和追溯测试 |
 | M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 待开始 | 5+ cases、每 case 3+ runs、scoreboard |
 | M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 待开始 | schema token、权限和工具选择回归 |
@@ -27,20 +27,20 @@
 | M0-01 | Shared Context 类型 | `packages/shared/src/context/types.ts`、projection、subtask-result、exports | 无 | 无 `any`；版本字段；JSON 可序列化；shared 不依赖 Electron | `packages/shared/src/context/*`；目标测试和 shared typecheck 通过 | 已完成 |
 | M0-02 | Context ledger 存储契约 | ledger/summaries/projections JSONL 格式和 sourceRevision | M0-01 | append-only；重复 source 去重；原文与摘要分离 | `apps/electron/src/main/lib/agent-runtime/context/context-ledger.{ts,test.ts}` | 已完成 |
 | M0-03 | Ledger recorder | 从现有 session/tool/artifact 事件生成最小 ContextItem | M0-01、M0-02 | recorder 失败不阻塞 Agent；可关闭；有错误指标 | 转换函数、observer 单测；orchestrator 在显式开关下旁路记录用户输入 | 已完成 |
-| M0-04 | 运行指标采集 | provider/model、token estimate、cache capability、duration、retry、failure code | 无 | 不改变调用行为；敏感正文不进入指标 | metrics tests、sample event | 待开始 |
-| M0-05 | Replay fixture | 小型探索、工具噪声、文件事实、subtask 事件 fixture | M0-01、M0-02 | 同一 fixture 可生成稳定 ledger/sourceRevision | fixture + replay test | 待开始 |
-| M0-06 | Feature flag 与回退 | workspace/session 级 `typedContextCompiler` 开关 | 无 | 默认关闭；projection/ledger 异常回退 baseline | flag tests | 待开始 |
+| M0-04 | 运行指标采集 | provider/model、token estimate、cache capability、duration、retry、failure code | 无 | 不改变调用行为；敏感正文不进入指标 | `context-metrics.{ts,test.ts}`；observer 在 turn start/finish 写入 | 已完成 |
+| M0-05 | Replay fixture | 小型探索、工具噪声、文件事实、subtask 事件 fixture | M0-01、M0-02 | 同一 fixture 可生成稳定 ledger/sourceRevision | `fixtures/m0-replay.json` + `context-replay.test.ts` | 已完成 |
+| M0-06 | Feature flag 与回退 | workspace/session 级 `typedContextCompiler` 开关 | 无 | 默认关闭；projection/ledger 异常回退 baseline | `context-feature-flag.{ts,test.ts}`；workspace config 和 session meta 接入 | 已完成 |
 
 ### M1：规则型 Context Projection
 
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
-| M1-01 | Projection request 类型落地 | purpose、task、target agent/model、budget、policy | M0-01 | 所有字段有明确默认值与版本 | shared tests | 待开始 |
-| M1-02 | Deterministic projector | required kind、verified evidence、task tag、recency、representation 选择 | M0-02、M1-01 | 同输入 byte-stable；规则可解释 | projector tests | 待开始 |
-| M1-03 | Projection renderer | `[FACT]`/`[INFERENCE]`/`[UNVERIFIED]`/`[SUMMARY]` 标记 | M1-02 | summary/full 不无标记重复；输出可审阅 | renderer golden tests | 待开始 |
-| M1-04 | Budget 与 omission 记录 | token estimate、required item 保留、omittedItemIds | M1-02 | 超预算不丢 required items；省略原因可查 | budget tests | 待开始 |
-| M1-05 | Policy projector | visibility、path allow/deny、tool class、model allowlist | M1-02 | policy 过滤是 fail-closed；无策略绕过 | policy tests | 待开始 |
-| M1-06 | Golden fixtures | full、普通摘要、噪声工具输出、敏感路径四类 projection | M1-03、M1-04、M1-05 | fixture 稳定；变更需显式更新 | `context/*.golden.*` | 待开始 |
+| M1-01 | Projection request 类型落地 | purpose、task、target agent/model、budget、policy | M0-01 | 所有字段有明确默认值与版本 | `context-policy.ts` + projector tests | 已完成 |
+| M1-02 | Deterministic projector | required kind、verified evidence、task tag、recency、representation 选择 | M0-02、M1-01 | 同输入 byte-stable；规则可解释 | `context-projector.{ts,test.ts}` | 已完成 |
+| M1-03 | Projection renderer | `[FACT]`/`[INFERENCE]`/`[UNVERIFIED]`/`[SUMMARY]` 标记 | M1-02 | summary/full 不无标记重复；输出可审阅 | `context-renderer.ts` + projector tests | 已完成 |
+| M1-04 | Budget 与 omission 记录 | token estimate、required item 保留、omittedItemIds | M1-02 | 超预算不丢 required items；省略原因可查 | `context-projector.test.ts` | 已完成 |
+| M1-05 | Policy projector | visibility、path allow/deny、tool class、model allowlist | M1-02 | policy 过滤是 fail-closed；无策略绕过 | `context-policy.test.ts` | 已完成 |
+| M1-06 | Golden fixtures | full、普通摘要、噪声工具输出、敏感路径四类 projection | M1-03、M1-04、M1-05 | fixture 稳定；变更需显式更新 | `fixtures/m1-projection-golden.json` + golden test | 已完成 |
 
 ### M2：Subagent 定向上下文与 typed result
 
@@ -161,9 +161,39 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 证据文件：`packages/shared/src/context/`、`apps/electron/src/main/lib/agent-runtime/context/context-{ledger,observer}.{ts,test.ts}`、`apps/electron/src/main/lib/agent-orchestrator.ts`、本台账。
 - 风险变化：R-03（ledger IO）仍开放，但 observer 默认关闭且异常隔离，当前不改变模型输入、工具调用、会话 JSONL 或执行结果。
 - 回滚方式：删除新增 context 模块与 package export；原始 session JSONL 未改。
-- 下一步：完成 M0-04 指标采集、M0-05 replay fixture 与 M0-06 workspace/session feature flag。
+- 下一步：开始 M1-01 的 deterministic projection request/defaults 与 projector 设计。
+
+### M0-04 / M0-05 / M0-06（2026-09-22）
+- 状态：已完成。
+- 实际变更：新增无正文 `metrics.jsonl` 指标契约；显式记录 cache 状态，未知时固定为 `unknown`。开启 TCC 时，Claude、Proma、AI SDK、Pi runtime 均在 turn start/finish 旁路写入 provider/model、输入 token 估算、duration 和通用失败码。新增稳定 replay fixture，sourceRevision 不再依赖随机 item ID。工作区 `config.json` 与 `AgentSessionMeta` 均支持 `typedContextCompiler`；session 显式值优先，缺省 fail-closed。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/context-{ledger,observer,metrics,feature-flag,replay}.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：目标测试 14 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：431 文件 / 0 失败。
+- 证据文件：`context-metrics.{ts,test.ts}`、`context-feature-flag.{ts,test.ts}`、`fixtures/m0-replay.json`、`agent-orchestrator.ts`、`agent-workspace-manager.ts`、`agent-session-manager.ts`。
+- 风险变化：R-03 降低。Metric 与 ledger 都是默认关闭、无正文、best-effort 旁路；失败不会阻断 baseline。retry 与 output token 在未被 runtime 提供时保持缺省，不伪造数值。
+- 回滚方式：关闭 workspace/session flag 即停止观测；删除 `context/metrics.jsonl` 不影响原始会话 JSONL。
+- 下一步：M1-01 deterministic projector。
+
+### M1-01 / M1-02 / M1-03（2026-09-22）
+- 状态：已完成。
+- 实际变更：新增 request 默认化与 fail-closed policy；deterministic projector 按 required kind、task tag、verified evidence、confidence、更新时间排序，采用 summary/full/locator 单一 representation，预算不足时保留 required item 并记录 omitted IDs。renderer 输出 `[FACT]`、`[INFERENCE]`、`[UNVERIFIED]`、`[SUMMARY]` 标记。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/context-projector.test.ts`；`bun run typecheck`。
+- 测试结果：4 pass / 0 fail；全仓 typecheck 通过。
+- 证据文件：`context-policy.ts`、`context-projector.ts`、`context-renderer.ts`、`context-projector.test.ts`。
+- 风险变化：R-01/R-02 仍开放；当前仅是纯函数编译器，尚未接入 subagent spawn 或主 Agent prompt。
+- 回滚方式：删除新增 projector/policy/renderer；M0 ledger 与现有 Agent 执行路径不受影响。
+- 下一步：M1-04 budget omission 细化、M1-05 policy 组合回归、M1-06 golden fixtures。
+
+### M1-04 / M1-05 / M1-06（2026-09-22）
+- 状态：已完成。
+- 实际变更：Projection 契约增加结构化 `omissions`；预算裁剪会保留 required kind，并给每个被省略 item 写入 token 或 policy 原因。path allow/deny 与 model allowlist fail-closed，deny 优先。新增四类 golden fixture：full、summary、tool noise、sensitive path。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/context-{projector,policy,projection-golden}.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：目标测试 10 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：434 文件 / 0 失败。
+- 证据文件：`context-policy.{ts,test.ts}`、`context-projector.{ts,test.ts}`、`fixtures/m1-projection-golden.json`、`context-projection-golden.test.ts`。
+- 风险变化：R-01/R-02 降低。省略和 policy 过滤现在均可追溯，但尚未把 projection 注入 Agent/subagent。
+- 回滚方式：纯函数模块无运行时调用点，可整体删除，不影响现有 Agent 行为。
+- 下一步：M2-01 Spawn 输入扩展。
 
 ## 8. 当前下一步
 
-1. 完成 M0-04 指标采集、M0-05 replay fixture 与 M0-06 workspace/session feature flag。
+1. 开始 M2-01：扩展 SubAgentInput 的 projection/resultProtocol/readOnly，保持旧调用兼容。
 2. 每完成一个 milestone 更新本台账，并在 M3 形成是否继续的门禁结论。

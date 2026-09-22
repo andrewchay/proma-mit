@@ -43,6 +43,11 @@ export interface ContextProjectionItem {
   score?: number
 }
 
+export interface ContextProjectionOmission {
+  itemId: string
+  reason: string
+}
+
 export interface ContextProjection {
   id: string
   request: ContextProjectionRequest
@@ -50,6 +55,7 @@ export interface ContextProjection {
   renderedPromptBlocks: string[]
   renderedToolCatalog?: string
   omittedItemIds: string[]
+  omissions: ContextProjectionOmission[]
   tokenEstimate: number
   createdAt: string
   sourceRevision: string

@@ -8,6 +8,7 @@ import {
   type SessionMessageInput,
   type ToolObservationInput,
 } from './context-ledger'
+import { ContextMetricsStore, type ContextCompilerMetricEvent } from './context-metrics'
 
 const TYPED_CONTEXT_OBSERVABILITY_ENV = 'GRAVITAS_TYPED_CONTEXT_OBSERVABILITY'
 
@@ -15,6 +16,7 @@ export interface ContextLedgerObserver {
   recordSessionMessage(input: SessionMessageInput): void
   recordToolObservation(input: ToolObservationInput): void
   recordArtifact(input: ArtifactInput): void
+  recordMetric(event: ContextCompilerMetricEvent): void
 }
 
 export interface CreateContextLedgerObserverOptions {
@@ -32,7 +34,9 @@ export function createContextLedgerObserver(
   const enabled = options.enabled ?? process.env[TYPED_CONTEXT_OBSERVABILITY_ENV] === '1'
   if (!enabled || !options.workspaceDirectory) return undefined
 
-  const store = new ContextLedgerStore(join(options.workspaceDirectory, 'context'))
+  const contextDirectory = join(options.workspaceDirectory, 'context')
+  const store = new ContextLedgerStore(contextDirectory)
+  const metrics = new ContextMetricsStore(contextDirectory)
   const recordSafely = (operation: () => void): void => {
     try {
       operation()
@@ -50,6 +54,9 @@ export function createContextLedgerObserver(
     },
     recordArtifact(input): void {
       recordSafely(() => { recordArtifact(store, input) })
+    },
+    recordMetric(event): void {
+      recordSafely(() => { metrics.append(event) })
     },
   }
 }

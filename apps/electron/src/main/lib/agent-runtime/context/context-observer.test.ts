@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ContextLedgerStore } from './context-ledger'
+import { ContextMetricsStore } from './context-metrics'
 import { createContextLedgerObserver } from './context-observer'
 
 const temporaryDirectories: string[] = []
@@ -53,9 +54,20 @@ describe('ContextLedgerObserver', () => {
       content: '结果内容',
       createdAt: '2026-09-22T08:02:00.000Z',
     })
+    observer?.recordMetric({
+      version: 1,
+      id: 'metric-1',
+      stage: 'turn_started',
+      at: '2026-09-22T08:02:00.000Z',
+      sessionId: 'session-1',
+      runtime: 'proma',
+      cacheStatus: 'unknown',
+    })
 
-    const ledger = new ContextLedgerStore(join(workspaceDirectory, 'context'))
+    const contextDirectory = join(workspaceDirectory, 'context')
+    const ledger = new ContextLedgerStore(contextDirectory)
     expect(ledger.list()).toHaveLength(3)
+    expect(new ContextMetricsStore(contextDirectory).list()).toHaveLength(1)
   })
 
   test('observer 写入失败时只报告错误，不抛出到 Agent 调用方', () => {

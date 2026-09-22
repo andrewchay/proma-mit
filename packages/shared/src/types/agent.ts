@@ -960,6 +960,8 @@ export interface AgentSessionMeta {
   sdkSessionId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /** Typed Context Compiler 会话级开关；显式值优先于工作区默认值。 */
+  typedContextCompiler?: boolean
   /**
    * 知识范围模式。
    *
