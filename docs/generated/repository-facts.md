@@ -8,6 +8,6 @@
 | @gravitas/shared | 0.2.9 |
 | @gravitas/core | 0.2.22 |
 | @gravitas/ui | 0.1.4 |
-| Bun 测试 / Playwright 测试文件 | 447 |
+| Bun 测试 / Playwright 测试文件 | 448 |
 | Electron 主进程 lib TypeScript 文件 | 787 |
 | Electron 渲染进程 TypeScript/TSX 文件 | 425 |

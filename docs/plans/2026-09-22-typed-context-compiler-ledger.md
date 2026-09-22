@@ -4,7 +4,7 @@
 > 关联方案：`docs/plans/2026-09-22-typed-context-compiler.md`
 > 台账性质：实施控制面；每个工作项必须更新状态、证据和阻塞原因后才能进入下一阶段。
 > 状态枚举：`待开始` / `进行中` / `阻塞` / `已完成` / `取消`
-> 当前总状态：**M2 已完成；M3 评测与对照实验进行中。**
+> 当前总状态：**M0–M3 已完成；TCC 运行与实验保持关闭；继续执行 M4，M5/M6 待开始。**
 
 ## 1. 总体里程碑
 
@@ -107,7 +107,7 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - M1 未完成：不得向子 Agent 动态注入 projection。
 - M2 未完成：不得启动 TCC benchmark。
 - M3 Gate 未通过：不得实现自动 relevance scorer、自动 compaction adoption 或自动 model router。
-- M4/M5 未通过：M6 只能做离线成本模型，不能改变线上模型选择。
+- M3 已通过冻结门禁，但用户决定关闭 TCC 运行与后续真实实验：M4–M6 可继续作为独立工程里程碑实施，但不得静默开启 TCC、恢复 provider 实验或改变线上默认行为。
 
 ## 4. 当前风险台账
 
@@ -256,17 +256,17 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 下一步：M2-07 让父 Agent 仅消费 typed result 的 summary/claims/artifacts，禁止自动拼接 child transcript。
 
 ### M3-01 / M3-02 / M3-03 / M3-04（2026-09-22）
-- 状态：进行中；仅完成 benchmark 定义和离线汇总/门禁 harness，尚未产生真实 provider 运行数据。
+- 状态：已完成；benchmark、真实 delegate 与两轮真实评测均已产出，最终结果见 M3-06/M3-07 与代表性评测决定文档。
 - 实际变更：冻结 10 个覆盖探索、噪声、敏感路径、证据、预算、模型 policy、只读隔离和 typed handoff 的固定 case；每 case 必须有 full-context、brief、TCC projection 三组各至少 3 次运行。新增可审计的 scorecard 汇总，记录 provider/model/implementation version、token、cache、duration、retry、selected items 与 claim evidence；unknown cache 不扣减 input tokens。缺 run、skip、缺 runtime identity、evidence coverage 不足、false omission 超限或无成本/稳定性改善时 fail-closed。
 - 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/tcc-experiment.test.ts`；`bun run typecheck`。
 - 测试结果：目标测试 4 pass / 0 fail；全仓 typecheck、docs check 通过；全量隔离测试 `bun run test`：441 文件 / 0 失败。
 - 证据文件：`context/tcc-experiment.{ts,test.ts}`、`context/fixtures/m3-typed-context-compiler-benchmark.json`。
 - 风险变化：R-07 保持开放。当前是离线 gate/harness，不能将构造测试数据视为真实 provider benchmark 成绩；TCC 默认仍关闭。
 - 回滚方式：删除 M3 experiment 模块和 fixture，不影响 M0-M2 运行时路径。
-- 下一步：将三个 context variant 显式接入隔离 evaluator delegate，生成并持久化真实 run records；完成前 M3-05 保持阻塞。
+- 下一步：M3 已收束，不再发起 TCC provider 实验；进入 M4-01。
 
 ### M3-06 真实 spawn 评测修正（2026-09-22）
-- 状态：离线与护栏已完成并验证；真实矩阵因预算与缺陷未产出有效结果。
+- 状态：已完成；真实矩阵已通过正式路径完成，后续不再发起 TCC provider 实验。
 - 实际变更：
   1. 首次真实评测走的是仓库外临时脚本，协议提示与 typed-v1 parser 不同源，导致大量返回被判为协议失败，白耗授权调用额度。现已改为仓库内正式入口 `scripts/run-tcc-spawn-eval.ts` + `tcc-spawn-eval-harness.ts`，并强制三重保护：离线 preflight（协议同源、必需项在内、私密项不泄漏、token 节省 ≥ 20%）、授权调用数不小于矩阵规模、逐次落盘可续跑。
   2. TCC 组不再直接调用 projector，而是经 `prepareSubAgentProjectionFromItems()` 走与生产完全相同的 spawn 边界。
@@ -277,17 +277,26 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 测试结果：全量隔离测试 446 文件 / 0 失败；typecheck 通过；在真实 Electron 运行时验证了 preflight 与授权护栏（未通过时在发起任何模型调用前退出）。
 - 真实调用消耗：修正前临时脚本 90 次（第一次授权，已消耗）；修正后首次尝试 19 次（因上述工具缺陷作废）；诊断探针 9 次。合计在第二次授权内已用 28/90。
 - 结论：首轮 M3 因 synthetic 短样本不推广的结论已被 M3-07 取代。代表性评测（真正走生产 spawn 边界）中冻结门禁输出 `passed: true`（无 reason），因此 TCC 获得 **opt-in 试点资格，默认仍关闭**。代价与边界：output token +109.8%、时长 ×2.7、整体协议失败率 30%（full 基线自身也有 20%）、评测因 `disableTools` 不覆盖带读工具的子 Agent 端到端行为。详见 `docs/plans/2026-09-22-typed-context-compiler-m3-representative-decision.md`。
-- 下一步：若要进一步推进，优先降低 typed-v1 协议失败率并按 input/output 真实单价重算净成本；在此之前不启动默认开启、自动路由或自动 compaction adoption。
-- 回滚方式：删除 `tcc-spawn-eval-harness.ts`、`tcc-spawn-real-delegate.ts`、`scripts/run-tcc-spawn-eval.ts` 及其测试，并移除 `disableTools` 选项，即可恢复 M3-05 状态。
-- 下一步：用修正后的路径重跑完整矩阵（需新的调用授权），再据实记录 fail-closed 结论。
+- 结论：代表性评测已由正式路径完成并记录在本 ledger 与决定文档中；M3-07 已明确 TCC 运行与实验关闭。M4–M6 仍按本 ledger 作为独立工程里程碑推进，但不得恢复 TCC provider 实验或线上默认路径。
+- 回滚方式：删除 `tcc-spawn-eval-harness.ts`、`tcc-spawn-real-delegate.ts`、`scripts/run-tcc-spawn-eval.ts` 及其测试，并移除 `disableTools` 选项，即可移除这套评测入口。
 
 ### M3-07 关闭决定（2026-09-22）
 - 状态：已完成，由用户决定。
 - 决定：**TCC 关闭，不再做实验。** 不再为 TCC 发起任何真实 provider 调用；不再新增评测样本、探针或对照运行。
 - 代码状态：默认路径已无 TCC。feature flag 默认 false（`sessionEnabled ?? workspaceEnabled ?? false`），内置 Agent 仅在 flag 开启时才获得 projection，非试点 Agent 永远保持 plain-text baseline。M2-08 验收测试已固定这些事实，防止后续改动静默打开。
 - 保留内容：M0–M2 的账本、投影、只读隔离、typed handoff 与私有产物均在位且已被集成验收覆盖，可在未来需要时重新评估；M3 的评测基础设施（fixture、harness、gate）同样保留，但不再运行。
-- 不再推进：M4 两层工具能力目录、M5 可逆 compaction、M6 成本感知路由不以 TCC 为前提继续；其原依赖 M3-05 的约束随本决定解除，但需另行决定是否开展。
+- 不再推进的范围：TCC 运行、TCC provider 实验、自动 relevance scorer 与任何默认开启路径。M4 两层工具能力目录、M5 可逆 compaction、M6 成本感知路由仍按本 ledger 继续，但必须作为独立里程碑验收，不得借此重新开启 TCC。
 - 依据：代表性评测虽通过冻结门禁，但代价为 output token +109.8%、时长 ×2.7、整体协议失败率 30%，投入产出不值得继续投入工程时间。
+
+### M4-01（2026-09-22）
+- 状态：已完成。
+- 实际变更：在 `packages/shared/src/context/capability.ts` 新增版本化 `CapabilityDescriptor` 与 `CapabilityCatalog`，覆盖 builtin/MCP/workspace source、schemaRef、access、dataClasses、confirmation、parallelSafe；catalog 按稳定 id 去重并返回防御性副本。完整 schema 不进入 descriptor，为 M4-02/03 按需加载保留边界。
+- 测试命令：`bun test packages/shared/src/context/capability.test.ts`；`bun run typecheck`。
+- 测试结果：目标测试 5 pass / 0 fail；全仓 typecheck 通过。
+- 证据文件：`packages/shared/src/context/capability.ts`、`capability.test.ts`、`context/index.ts`。
+- 风险变化：descriptor 校验对未知 source/access/data class、MCP 缺 server identity 和错误版本 fail-closed；不改变 TCC flag 或任何线上工具注册行为。
+- 回滚方式：移除 capability export、descriptor 模块与测试即可；现有工具执行和权限路径不受影响。
+- 下一步：M4-02 常驻 summary catalog；不得把 catalog 自动注入现有 Agent prompt。
 
 ### M2-07（2026-09-22）
 - 状态：已完成。
@@ -301,6 +310,6 @@ M0 → M1 → M2 → M3 ─┬→ M4
 
 ## 8. 当前下一步
 
-1. TCC 已关闭：不再运行实验，不再发起真实 provider 调用。后续改动不得静默开启 TCC（由 M2-08 验收测试守护）。
-2. M2 集成验收已完成（M2-08）：flag 优先级、投影、只读隔离、typed handoff 与私有产物回溯均由真实模块贯通。
-3. 若未来重新评估：先降低 typed-v1 协议失败率（当前 30%），并按 input/output 真实单价重算净成本。
+1. TCC 运行与真实实验保持关闭；后续改动不得静默开启 TCC（由 M2-08 验收测试守护）。
+2. 开始 M4-01：定义 Capability descriptor，使 builtin/MCP/workspace tool 能表达能力、schemaRef、访问级别、数据类别、确认要求与并行安全性。
+3. M4 通过后再进入 M5；M6 必须等待 M4/M5 的能力与成本数据。
