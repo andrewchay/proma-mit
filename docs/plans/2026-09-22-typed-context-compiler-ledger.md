@@ -15,8 +15,8 @@
 | M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 已完成 | feature-gated projection、只读隔离、typed result 与私有 artifact 回溯已完成 |
 | M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 已完成（冻结门禁通过，仅获 opt-in 试点资格） | 首轮 synthetic 短样本未通过（input −14.3%）；代表性长上下文真实 spawn 评测 90 次后 input −84.4%、success 0.80 == baseline、evidence 0.96，门禁通过；但 output +109.8%、时长 ×2.7、协议失败率 30%，默认仍关闭 |
 | M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 进行中 | M4-01–03 已完成；M4-04 离线 token 回归已完成，真实模型选择准确率回归被 provider 实验关闭决定阻塞 |
-| M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 待开始 | compact boundary、重建和失败不伪造测试 |
-| M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 待开始 | 路由 reason、privacy allowlist、未知 cache 按 miss |
+| M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 已完成（模块与测试落地；生产接入保持关闭） | metadata 持久化往返、ledger 重建 byte-stable、触发阈值、边界守卫（中止/报错/空结果不伪造成功）、回退链路测试全绿 |
+| M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 已完成（离线；线上模型选择未改变） | provider 能力登记、参数化成本模型（unknown cache 按 miss）、fail-closed policy、可解释 router、离线路由评测报告全绿 |
 
 ## 2. 详细工作项
 
@@ -79,21 +79,21 @@
 
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
-| M5-01 | Compact metadata | sourceRevision、policy、保留 item、摘要版本、token estimate | M3-05 | metadata 可持久化、可读取 | compact tests | 待开始 |
-| M5-02 | Rebuild view | 从原始 ledger 重建 projection，不删除原始事实 | M5-01 | 重建结果至少等价；可追溯 | replay tests | 待开始 |
-| M5-03 | 触发策略 | budget、轮数、retry、熵代理指标 | M5-01 | turn boundary 执行；不做每 turn 全量 scorer | trigger tests | 待开始 |
-| M5-04 | Pi 自动压缩接入 | 与现有 compact_boundary 和 `pi/automatic` 审计对齐 | M5-02、M5-03 | 中止/报错/空结果不写成功边界 | Pi regression tests | 待开始 |
-| M5-05 | 回退与迁移 | TCC view 失败继续使用旧 compact 路径 | M5-04 | feature flag off 时旧行为不变 | compatibility tests | 待开始 |
+| M5-01 | Compact metadata | sourceRevision、policy、保留 item、摘要版本、token estimate | M3-05 | metadata 可持久化、可读取 | `compaction-metadata.test.ts` | 已完成 |
+| M5-02 | Rebuild view | 从原始 ledger 重建 projection，不删除原始事实 | M5-01 | 重建结果至少等价；可追溯 | `compaction-rebuild.test.ts` | 已完成 |
+| M5-03 | 触发策略 | budget、轮数、retry、熵代理指标 | M5-01 | turn boundary 执行；不做每 turn 全量 scorer | `compaction-trigger.test.ts` | 已完成 |
+| M5-04 | Pi 自动压缩接入 | 与现有 compact_boundary 和 `pi/automatic` 审计对齐 | M5-02、M5-03 | 中止/报错/空结果不写成功边界 | `compaction-boundary-policy.test.ts`；生产 Pi 路径未改动 | 已完成（契约与测试固化） |
+| M5-05 | 回退与迁移 | TCC view 失败继续使用旧 compact 路径 | M5-04 | feature flag off 时旧行为不变 | `compaction-fallback.test.ts` | 已完成 |
 
 ### M6：可解释成本感知路由
 
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
-| M6-01 | Provider capability registry | cache read/write/retention/tool/schema 能力 | M3-05 | 未知字段不假设支持 | registry tests | 待开始 |
-| M6-02 | 成本模型 | input/output/cache/retry/latency 参数化 | M6-01 | 价格和 capability 可替换；估算注明来源 | cost model tests | 待开始 |
-| M6-03 | Privacy/model policy | 敏感路径、provider allowlist、模型限制 | M1-05、M6-01 | fail-closed；禁止越权路由 | security tests | 待开始 |
-| M6-04 | Explainable router | route reason、cache miss fallback、能力不匹配原因 | M6-02、M6-03 | 每次路由可审计；无黑箱默认选择 | router tests | 待开始 |
-| M6-05 | 路由评测 | 成本、质量、延迟、重试和隐私回归 | M6-04 | 未通过不自动启用 | routing scoreboard | 待开始 |
+| M6-01 | Provider capability registry | cache read/write/retention/tool/schema 能力 | M3-05 | 未知字段不假设支持 | `provider-cost-capability.test.ts` | 已完成 |
+| M6-02 | 成本模型 | input/output/cache/retry/latency 参数化 | M6-01 | 价格和 capability 可替换；估算注明来源 | `cost-model.test.ts` | 已完成 |
+| M6-03 | Privacy/model policy | 敏感路径、provider allowlist、模型限制 | M1-05、M6-01 | fail-closed；禁止越权路由 | `routing-policy.test.ts` | 已完成 |
+| M6-04 | Explainable router | route reason、cache miss fallback、能力不匹配原因 | M6-02、M6-03 | 每次路由可审计；无黑箱默认选择 | `explainable-router.test.ts` | 已完成 |
+| M6-05 | 路由评测 | 成本、质量、延迟、重试和隐私回归 | M6-04 | 未通过不自动启用 | `routing-benchmark.test.ts`（离线） | 已完成（离线）；真实流量质量/延迟回归需单独授权 |
 
 ## 3. 关键依赖与门禁
 
@@ -329,6 +329,37 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：删除模块、export 与测试即可。
 - 下一步：M4 收尾待用户决定是否授权准确率回归；M5 不依赖 M4-04 的准确率结论，可独立开始。
 
+### M5-01…M5-05（2026-09-22）
+- 状态：已完成（工程模块与验收测试；生产接入保持关闭）。
+- 实际变更：
+  1. M5-01：shared 新增 `CompactMetadata` 契约（version、sourceRevision、policyId、retained/omitted itemIds、summaryVersion、tokenEstimate、createdAt），序列化/解析严格校验 fail-closed；policyId 为键序无关的 sha256 指纹。
+  2. M5-02：`compaction-rebuild.ts` 从原始 ledger 经生产 projector 重建视图；只读消费不改写原始事实，同输入 byte-stable，ledger revision 变更使视图失效。
+  3. M5-03：`compaction-trigger.ts` 只做 budget/轮数/retry 廉价阈值判断，供 turn boundary 调用，无每 turn scorer。
+  4. M5-04：`compaction-boundary-policy.ts` 固化「中止/报错/空结果/缺摘要不写成功边界」契约，audit 口径对齐 `pi/automatic`；生产 Pi 路径未改动。
+  5. M5-05：`compaction-fallback.ts` 统一回退语义——flag 关闭、view 抛错或为空时走旧 compact 路径并记录原因。
+- 测试命令：`bun test packages/shared/src/context/compaction-metadata.test.ts`；`bun test apps/electron/src/main/lib/agent-runtime/context/compaction-{rebuild,trigger,boundary-policy,fallback}.test.ts`。
+- 测试结果：2+3+4+3+3 = 15 pass / 0 fail；全仓 typecheck 通过。
+- 证据文件：`packages/shared/src/context/compaction-metadata.{ts,test.ts}`、`apps/electron/.../context/compaction-{rebuild,trigger,boundary-policy,fallback}.{ts,test.ts}`。
+- 风险变化：重建与回退都是纯函数/旁路模块，无运行时调用点；原始 ledger 不可变性有测试固化。
+- 回滚方式：删除新增模块、export 与测试即可。
+- 下一步：M6-01…05。
+
+### M6-01…M6-05（2026-09-22）
+- 状态：已完成（离线；线上模型选择未改变）。
+- 实际变更：
+  1. M6-01：`provider-cost-capability.ts` 只登记已验证 provider（anthropic/openai/deepseek/zhipu，含证据说明）；未登记 provider 一律返回 unknown 保守默认。
+  2. M6-02：`cost-model.ts` 参数化计价（input/output/cache read/write/retry），价格来源必填；unknown/unsupported cache 的 cache tokens 按全价 input 计入并写入 assumptions。
+  3. M6-03：`routing-policy.ts` fail-closed——allowlist 为空全拒；敏感数据只能去能力已验证 provider。
+  4. M6-04：`explainable-router.ts` 按 policy 过滤 → 成本估算 → 最低价胜出（平局取输入顺序）；每次选择/拒绝都带 reason，unknown cache 假设进入决策理由。
+  5. M6-05：`routing-benchmark.ts` 离线对比可解释路由与朴素 baseline（首个候选），输出成本、隐私违规数、决策可解释性；`autoEnabled` 固定为 false。
+- 测试命令：`bun test packages/shared/src/context/{provider-cost-capability,cost-model,routing-policy,explainable-router,routing-benchmark}.test.ts`。
+- 测试结果：2+6+4+4+2 = 18 pass / 0 fail；全仓 typecheck 通过。
+- 证据文件：上述 `packages/shared/src/context/*.{ts,test.ts}` 与 `context/index.ts`。
+- 风险变化：全部为离线纯函数，无运行时调用点，不改变线上模型选择或 provider 行为；价格 fixture 仅用于测试，真实计费须注入带来源的价格表。
+- 阻塞与边界：真实流量下的质量/延迟回归需要 provider 调用，与「不做 provider 实验」决定冲突，需用户单独授权。
+- 回滚方式：删除新增模块、export 与测试即可。
+- 下一步：M0–M6 工程项全部收束；等待用户决定是否授权真实运行验证。
+
 ### M2-07（2026-09-22）
 - 状态：已完成。
 - 实际变更：typed-v1 spawn 将原始 child response 解析为 `SubtaskResult` 后，父 Agent 只接收格式化的状态、summary、claims（含 evidence）、artifacts、unverified 与 recommended next steps；raw child transcript 仅保留在 M2-05 的工作区私有 artifact，不再自动注入父 Agent。plain-text 调用仍返回原始文本。
@@ -342,5 +373,5 @@ M0 → M1 → M2 → M3 ─┬→ M4
 ## 8. 当前下一步
 
 1. TCC 运行与真实实验保持关闭；后续改动不得静默开启 TCC（由 M2-08 验收测试守护）。
-2. M4-01/02/03 已完成；M4-04 离线 token 回归完成，准确率回归被「不做 provider 实验」决定阻塞，需单独授权。
-3. M5 可逆 compaction 不依赖 M4-04 准确率结论，可独立开始；M6 仍需 M4/M5 的能力与成本数据。
+2. M0–M6 的工程模块与验收测试已全部落地；生产接入（TCC view、summary catalog 注入 prompt、线上路由）全部保持关闭，启用任何一项都需要单独决策与验收。
+3. 剩余阻塞项均为真实运行验证：M4-04 工具选择准确率回归、M6-05 真实流量质量/延迟回归，均需用户单独授权 provider 调用。
