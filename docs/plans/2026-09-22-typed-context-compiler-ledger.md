@@ -49,7 +49,7 @@
 | M2-01 | SubAgentInput 扩展 | projection、resultProtocol、readOnly，保持旧调用兼容 | M1 | 旧调用行为不变；新字段可选 | `subagent-context-options.{ts,test.ts}` | 已完成 |
 | M2-02 | Spawn projection adapter | 在 orchestrator/runtime spawn 边界生成 projection | M1、M2-01 | projection 失败回退 baseline；sourceRevision 关联 | `subagent-projection-adapter.test.ts` | 已完成 |
 | M2-03 | Read-only 子任务隔离 | 子任务独立 cwd，父工作区不可写 | M2-02 | 写入被拒绝或仅进入隔离目录 | `subagent-readonly-workspace.test.ts`、Runtime safe-mode tests | 已完成 |
-| M2-04 | Typed result parser | claims、artifacts、evidence、confidence、unverified | M0-01、M2-01 | 缺 evidence 的 high claim 自动降级；协议失败为 partial | parser tests | 待开始 |
+| M2-04 | Typed result parser | claims、artifacts、evidence、confidence、unverified | M0-01、M2-01 | 缺 evidence 的 high claim 自动降级；协议失败为 partial | `subtask-result-parser.test.ts` | 已完成 |
 | M2-05 | Child artifact 持久化 | typed result、原始 session、projection 元数据关联 | M0-02、M2-04 | 可从 result 追溯 child session 和 source items | persistence tests | 待开始 |
 | M2-06 | 内置 Agent 试点 | explorer → researcher → code-reviewer 分批接入 | M2-02、M2-04 | 每个 Agent 有明确 requiredKinds 与 result schema | integration tests | 待开始 |
 | M2-07 | 父 Agent 消费 typed result | 不自动拼接 child transcript；消费 summary/claims/artifacts | M2-05 | 父 Agent 可引用 evidence；失败状态不伪装完成 | integration tests | 待开始 |
@@ -223,7 +223,17 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：移除只读 cwd 选择和 safe-mode 覆写即可回到 M2-02 的 baseline 行为。
 - 下一步：M2-04 解析 typed `SubtaskResult`，在 evidence 缺失时下调高置信 claim。
 
+### M2-04（2026-09-22）
+- 状态：已完成。
+- 实际变更：新增 typed-v1 结果解析器与协议提示。解析器总是由父 taskId 覆写 child 自报 ID；合格 evidence-backed claim 原样保留；无 evidence 的 high claim 自动降级为 medium、置为未验证并写入 `unverified`；JSON 缺失、格式错误或必填协议字段无效时生成 `partial` 结果，不抛出并不采纳 claims/artifacts。成功 projection 的 typed-v1 spawn 会收到末尾 JSON 代码块协议提示。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/subtask-result-parser.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：目标测试 4 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：438 文件 / 0 失败。
+- 证据文件：`context/subtask-result-parser.{ts,test.ts}`、`agent-orchestrator.ts`。
+- 风险变化：此阶段仅准备和解析协议，尚不持久化或替换父 Agent 的文本消费；协议失败保留为显式 partial，而不是声明任务完成。
+- 回滚方式：移除 typed-v1 prompt suffix 和纯解析器即可恢复 M2-03 的原始文本返回。
+- 下一步：M2-05 持久化 child typed result、原始 child session 和 projection 元数据。
+
 ## 8. 当前下一步
 
-1. 开始 M2-04：解析 typed `SubtaskResult`，将缺 evidence 的 high-confidence claim 降级，并将协议失败标记为 partial。
+1. 开始 M2-05：持久化 child typed result、原始 child session 和 projection 元数据，保留可追溯关系。
 2. 每完成一个 milestone 更新本台账，并在 M3 形成是否继续的门禁结论。

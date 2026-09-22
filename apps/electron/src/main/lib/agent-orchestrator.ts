@@ -84,6 +84,7 @@ import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-f
 import { prepareSubAgentProjection } from './agent-runtime/context/subagent-projection-adapter'
 import { resolveSubAgentContextOptions } from './agent-runtime/context/subagent-context-options'
 import { resolveSubAgentWorkspace } from './agent-runtime/context/subagent-readonly-workspace'
+import { TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './agent-runtime/context/subtask-result-parser'
 
 // ===== 插件能力引导收集 =====
 
@@ -1245,7 +1246,10 @@ export class AgentOrchestrator {
       explicitWorkspaceDir: input.workspaceDir,
       childWorkspaceDir,
     })
-    const prompt = `${input.task}${filesHint}${preparedProjection.promptSuffix ? `\n\n${preparedProjection.promptSuffix}` : ''}`
+    const resultProtocolSuffix = preparedProjection.projection && contextOptions.resultProtocol === 'typed-v1'
+      ? `\n\n${TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT}`
+      : ''
+    const prompt = `${input.task}${filesHint}${preparedProjection.promptSuffix ? `\n\n${preparedProjection.promptSuffix}` : ''}${resultProtocolSuffix}`
     const systemPrompt = def.prompt
       ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
       : undefined
