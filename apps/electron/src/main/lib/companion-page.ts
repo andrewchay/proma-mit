@@ -10,6 +10,8 @@
  * token 存 localStorage；任何 401 都会清除 token 回到配对视图。
  */
 
+import { COMPANION_MARKDOWN_JS } from './companion-markdown-js'
+
 export function getCompanionPageHtml(): string {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -80,6 +82,16 @@ input:focus, textarea:focus { border-color:var(--accent); }
 .msg .bubble { background:var(--card); border-radius:12px; padding:10px 14px; white-space:pre-wrap; word-break:break-word; }
 .msg.user .bubble { background:var(--accent); }
 .msg.assistant .bubble { background:var(--card); }
+.msg .bubble p { margin:0 0 8px; } .msg .bubble p:last-child { margin-bottom:0; }
+.msg .bubble h1,.msg .bubble h2,.msg .bubble h3,.msg .bubble h4 { font-size:15px; margin:10px 0 6px; }
+.msg .bubble ul,.msg .bubble ol { margin:4px 0 8px; padding-left:20px; }
+.msg .bubble li { margin:2px 0; }
+.msg .bubble blockquote { border-left:3px solid var(--border); padding:2px 10px; color:var(--muted); margin:6px 0; }
+.msg .bubble code { background:var(--card2); border-radius:4px; padding:1px 5px; font-family:ui-monospace,monospace; font-size:13px; }
+.msg .bubble pre.md-code { background:#0a0e14; border:1px solid var(--border); border-radius:8px; padding:10px 12px; overflow-x:auto; margin:8px 0; }
+.msg .bubble pre.md-code code { background:none; padding:0; white-space:pre; }
+.msg .bubble a { color:var(--accent); }
+.msg .bubble hr { border:none; border-top:1px solid var(--border); margin:10px 0; }
 .msg.tool .bubble { background:var(--card2); color:var(--muted); font-size:13px; }
 .req-card { background:var(--card); border:1px solid var(--accent); border-radius:12px; padding:14px; margin-top:12px; }
 .req-card h3 { font-size:15px; margin-bottom:6px; }
@@ -136,6 +148,9 @@ input:focus, textarea:focus { border-color:var(--accent); }
   </div>
 
 </div>
+<script>
+${COMPANION_MARKDOWN_JS}
+</script>
 <script>
 (function () {
   'use strict';
@@ -206,6 +221,26 @@ input:focus, textarea:focus { border-color:var(--accent); }
     }).catch(function () { state.workspaces = []; });
   }
 
+  /** 复刻桌面侧栏排序：工作区按「组内最近会话时间」降序，无会话回退工作区自身时间（LeftSidebar 同规则） */
+  function orderGroupKeys(groups) {
+    var lastActivity = {};
+    Object.keys(groups).forEach(function (key) {
+      var latest = 0;
+      groups[key].forEach(function (s) { if ((s.updatedAt || 0) > latest) latest = s.updatedAt || 0; });
+      lastActivity[key] = latest;
+    });
+    var keys = Object.keys(groups).slice();
+    keys.sort(function (a, b) {
+      var aWs = state.workspaces.filter(function (w) { return w.id === a; })[0];
+      var bWs = state.workspaces.filter(function (w) { return w.id === b; })[0];
+      var aTime = lastActivity[a] || (aWs && aWs.updatedAt) || 0;
+      var bTime = lastActivity[b] || (bWs && bWs.updatedAt) || 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return ((bWs && bWs.updatedAt) || 0) - ((aWs && aWs.updatedAt) || 0);
+    });
+    return keys;
+  }
+
   function loadSessions() {
     show('list');
     api('GET', '/api/sessions').then(function (res) { return res.json(); }).then(function (data) {
@@ -226,10 +261,11 @@ input:focus, textarea:focus { border-color:var(--accent); }
       var key = s.workspaceId || 'none';
       (groups[key] = groups[key] || []).push(s);
     });
-    var orderedKeys = [];
-    state.workspaces.forEach(function (w) { if (groups[w.id]) orderedKeys.push(w.id); });
-    if (groups.none) orderedKeys.unshift('none');
-    Object.keys(groups).forEach(function (k) { if (orderedKeys.indexOf(k) === -1) orderedKeys.push(k); });
+    // 组顺序复刻桌面侧栏：按组内最近会话时间降序；'none' 组排最前便于看到未归组会话
+    var orderedKeys = orderGroupKeys(groups);
+    if (groups.none) {
+      orderedKeys = ['none'].concat(orderedKeys.filter(function (k) { return k !== 'none'; }));
+    }
 
     orderedKeys.forEach(function (key) {
       var ws = state.workspaces.filter(function (w) { return w.id === key; })[0];
@@ -303,6 +339,7 @@ input:focus, textarea:focus { border-color:var(--accent); }
     if (envelope.sessionId !== state.currentSession) return;
     var payload = envelope.payload;
     if (payload.kind === 'proma_event') {
+      flushStreaming();
       var type = payload.event.type;
       if (type === 'permission_request') showPermissionCard(payload.event.request);
       if (type === 'ask_user_request') showAskUserCard(payload.event.request);
@@ -314,13 +351,18 @@ input:focus, textarea:focus { border-color:var(--accent); }
     if (payload.kind === 'agent_event') {
       touchActivity();
       var e = payload.event;
-      if (e.type === 'text_delta' || e.type === 'text_complete') appendStreamingText(e.text);
-      if (e.type === 'tool_start') appendMessage('tool', '⚙ ' + (e.displayName || e.toolName));
-      if (e.type === 'tool_result' && e.isError) appendMessage('tool', '⚠ 工具出错: ' + String(e.result).slice(0, 300));
+      if (e.type === 'text_delta' || e.type === 'text_complete') {
+        appendStreamingText(e.text);
+      } else {
+        flushStreaming();
+        if (e.type === 'tool_start') appendMessage('tool', '⚙ ' + (e.displayName || e.toolName));
+        if (e.type === 'tool_result' && e.isError) appendMessage('tool', '⚠ 工具出错: ' + String(e.result).slice(0, 300));
+      }
     }
   }
 
   var streamBuffer = '';
+  var lastMdRenderAt = 0;
   function appendStreamingText(text) {
     streamBuffer += text;
     var last = $('messages').lastChild;
@@ -332,8 +374,24 @@ input:focus, textarea:focus { border-color:var(--accent); }
       $('messages').appendChild(div);
       last = div;
     }
-    last.querySelector('.bubble').textContent = streamBuffer;
-    $('messages').scrollTop = $('messages').scrollHeight;
+    // Markdown 重新渲染节流（150ms），避免长输出的 O(n²) 重复解析
+    var now = Date.now();
+    if (now - lastMdRenderAt > 150) {
+      lastMdRenderAt = now;
+      last.querySelector('.bubble').innerHTML = renderMarkdown(streamBuffer);
+      $('messages').scrollTop = $('messages').scrollHeight;
+    }
+  }
+
+  /** 流式结束/切换事件时冲刷未渲染的 Markdown 缓冲 */
+  function flushStreaming() {
+    if (!streamBuffer) return;
+    var last = $('messages').lastChild;
+    if (last && last.dataset.streaming === '1') {
+      last.querySelector('.bubble').innerHTML = renderMarkdown(streamBuffer);
+      streamBuffer = '';
+      last.dataset.streaming = '0';
+    }
   }
 
   function appendMessage(role, content) {
@@ -342,7 +400,9 @@ input:focus, textarea:focus { border-color:var(--accent); }
     var div = document.createElement('div');
     div.className = 'msg ' + role;
     div.innerHTML = '<div class="bubble"></div>';
-    div.querySelector('.bubble').textContent = content;
+    var bubble = div.querySelector('.bubble');
+    if (role === 'assistant') bubble.innerHTML = renderMarkdown(content);
+    else bubble.textContent = content;
     $('messages').appendChild(div);
     $('messages').scrollTop = $('messages').scrollHeight;
   }

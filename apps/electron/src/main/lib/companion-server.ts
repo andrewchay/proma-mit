@@ -129,7 +129,8 @@ async function buildRealDeps(): Promise<CompanionApiDeps> {
       // 附带运行状态，供手机端会话列表显示“运行中”脉动指示
       listAgentSessions().map((s) => ({ ...s, running: isAgentSessionActive(s.id) })),
     listWorkspaces: () =>
-      listAgentWorkspacesByUpdatedAt().map((w) => ({ id: w.id, name: w.name })),
+      // updatedAt 供手机端复刻桌面侧栏排序：按「组内最近会话时间」降序，无会话回退工作区时间
+      listAgentWorkspacesByUpdatedAt().map((w) => ({ id: w.id, name: w.name, updatedAt: w.updatedAt })),
     getMessages: (id) => {
       if (!listAgentSessions().some((s) => s.id === id)) return null
       // 与桌面端同源：历史渲染自 SDK 消息，手机端做轻量文本提取

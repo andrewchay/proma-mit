@@ -18,8 +18,8 @@ export interface CompanionApiDeps {
   issueToken(): Promise<{ token: string }>
   verifyToken(token: string | undefined | null): boolean
   listSessions(): AgentSessionMeta[]
-  /** 工作区列表（按更新时间新→旧，与桌面端顺序一致） */
-  listWorkspaces(): { id: string; name: string }[]
+  /** 工作区列表（含 updatedAt，供复刻桌面侧栏排序） */
+  listWorkspaces(): { id: string; name: string; updatedAt: number }[]
   /** 手机端可读的会话历史（从 SDK 消息提取）；会话不存在返回 null */
   getMessages(sessionId: string): CompanionHistoryEntry[] | null
   getPendingPermissions(): PermissionRequest[]

@@ -12,7 +12,7 @@ function makeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDeps {
     issueToken: async () => ({ token: 't'.repeat(64) }),
     verifyToken: (t: string | undefined | null) => t === 'good-token',
     listSessions: () => [{ id: 's1', title: '测试会话' } as never],
-    listWorkspaces: () => [{ id: 'w1', name: '默认工作区' }],
+    listWorkspaces: () => [{ id: 'w1', name: '默认工作区', updatedAt: Date.now() }],
     getMessages: (id: string) => (id === 's1' ? ([{ role: 'user', text: '你好' }] as never) : null),
     getPendingPermissions: () => [],
     getPendingAskUsers: () => [],
