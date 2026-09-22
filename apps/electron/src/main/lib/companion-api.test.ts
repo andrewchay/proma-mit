@@ -17,6 +17,8 @@ function makeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDeps {
     getPendingAskUsers: () => [],
     respondPermission: async () => 's1',
     respondAskUser: async () => 's1',
+    notifyPermissionResolved: () => undefined,
+    notifyAskUserResolved: () => undefined,
     isSessionActive: () => false,
     sendUserMessage: async () => undefined,
     stopSession: () => true,
@@ -116,6 +118,39 @@ describe('companion-api 操作接口', () => {
     expect(res!.status).toBe(200)
     expect(captured.behavior).toBe('allow')
     expect(captured.alwaysAllow).toBe(false)
+  })
+
+  test('权限应答成功后通知 resolved；404 时既不通知也不记审计', async () => {
+    const notifications: string[] = []
+    const audits: string[] = []
+    const api = createCompanionApi(makeDeps({
+      respondPermission: async () => null,
+      notifyPermissionResolved: (_sid, requestId) => { notifications.push(requestId) },
+      appendAudit: async (input) => { audits.push(input.action) },
+    }))
+    const missing = await api('POST', '/api/permission/p1', { behavior: 'deny' }, new URLSearchParams(), 'good-token')
+    expect(missing!.status).toBe(404)
+    expect(notifications).toEqual([])
+    expect(audits).toEqual([])
+
+    const okApi = createCompanionApi(makeDeps({
+      notifyPermissionResolved: (_sid, requestId) => { notifications.push(requestId) },
+      appendAudit: async (input) => { audits.push(input.action) },
+    }))
+    const ok = await okApi('POST', '/api/permission/p1', { behavior: 'allow' }, new URLSearchParams(), 'good-token')
+    expect(ok!.status).toBe(200)
+    expect(notifications).toEqual(['p1'])
+    expect(audits).toEqual(['permission_allow'])
+  })
+
+  test('AskUser 应答成功后通知 resolved', async () => {
+    const notifications: string[] = []
+    const api = createCompanionApi(makeDeps({
+      notifyAskUserResolved: (_sid, requestId) => { notifications.push(requestId) },
+    }))
+    const ok = await api('POST', '/api/ask-user/a1', { answers: { q1: 'A' } }, new URLSearchParams(), 'good-token')
+    expect(ok!.status).toBe(200)
+    expect(notifications).toEqual(['a1'])
   })
 
   test('权限应答非法 behavior 返回 400，未知 requestId 返回 404', async () => {

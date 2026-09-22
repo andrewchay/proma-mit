@@ -255,7 +255,13 @@ input:focus, textarea:focus { border-color:var(--accent); }
     div.innerHTML = html;
     div.querySelectorAll('button').forEach(function (btn) {
       btn.onclick = function () {
-        api('POST', '/api/permission/' + encodeURIComponent(req.requestId), { behavior: btn.dataset.act }).catch(function () {});
+        btn.disabled = true;
+        api('POST', '/api/permission/' + encodeURIComponent(req.requestId), { behavior: btn.dataset.act })
+          .then(function (res) {
+            if (!res.ok) return res.json().then(function (e) { throw new Error(e.error || '应答失败'); });
+            removeCard('perm-' + req.requestId);
+          })
+          .catch(function (e) { $('chat-err').textContent = e.message; btn.disabled = false; });
       };
     });
     $('requests').appendChild(div);
@@ -277,7 +283,13 @@ input:focus, textarea:focus { border-color:var(--accent); }
       btn.onclick = function () {
         var answers = {};
         questions.forEach(function (q) { answers[q.header || q.question || 'answer'] = btn.dataset.label; });
-        api('POST', '/api/ask-user/' + encodeURIComponent(req.requestId), { answers: answers }).catch(function () {});
+        btn.disabled = true;
+        api('POST', '/api/ask-user/' + encodeURIComponent(req.requestId), { answers: answers })
+          .then(function (res) {
+            if (!res.ok) return res.json().then(function (e) { throw new Error(e.error || '应答失败'); });
+            removeCard('ask-' + req.requestId);
+          })
+          .catch(function (e) { $('chat-err').textContent = e.message; btn.disabled = false; });
       };
     });
     $('requests').appendChild(div);

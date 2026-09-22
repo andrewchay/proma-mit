@@ -22,6 +22,9 @@ export interface CompanionApiDeps {
   getPendingAskUsers(): AskUserRequest[]
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow?: boolean): Promise<string | null>
   respondAskUser(requestId: string, answers: Record<string, string>): Promise<string | null>
+  /** 应答成功后广播「已解析」事件（桌面渲染进程与手机端都依赖它移除卡片） */
+  notifyPermissionResolved(sessionId: string, requestId: string, behavior: 'allow' | 'deny'): void
+  notifyAskUserResolved(sessionId: string, requestId: string): void
   isSessionActive(sessionId: string): boolean
   sendUserMessage(sessionId: string, text: string): Promise<void>
   stopSession(sessionId: string): boolean
@@ -111,15 +114,19 @@ export function createCompanionApi(deps: CompanionApiDeps): CompanionApiHandler 
       }
       // 安全边界：远程确认不落盘白名单，alwaysAllow 强制 false
       const sessionId = await deps.respondPermission(requestId, behavior, false)
-      await deps.appendAudit({ action: `permission_${behavior}`, sessionId: sessionId ?? undefined, detail: requestId })
-      return sessionId ? json({ ok: true }) : json({ error: '请求不存在或已处理' }, 404)
+      if (!sessionId) return json({ error: '请求不存在或已处理' }, 404)
+      deps.notifyPermissionResolved(sessionId, requestId, behavior)
+      await deps.appendAudit({ action: `permission_${behavior}`, sessionId, detail: requestId })
+      return json({ ok: true })
     }
     if (pathname.startsWith('/api/ask-user/') && method === 'POST') {
       const requestId = pathId(pathname)
       const answers = body?.answers ?? {}
       const sessionId = await deps.respondAskUser(requestId, answers)
-      await deps.appendAudit({ action: 'ask_user_respond', sessionId: sessionId ?? undefined, detail: requestId })
-      return sessionId ? json({ ok: true }) : json({ error: '请求不存在或已处理' }, 404)
+      if (!sessionId) return json({ error: '请求不存在或已处理' }, 404)
+      deps.notifyAskUserResolved(sessionId, requestId)
+      await deps.appendAudit({ action: 'ask_user_respond', sessionId, detail: requestId })
+      return json({ ok: true })
     }
 
     return null

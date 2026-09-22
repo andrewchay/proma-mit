@@ -110,7 +110,7 @@ function readJsonBody(req: IncomingMessage): Promise<CompanionApiBody | undefine
 
 /** 装配真实主进程服务（动态 import，仅在未注入 deps 时调用） */
 async function buildRealDeps(): Promise<CompanionApiDeps> {
-  const [{ runAgentHeadless, stopAgent, isAgentSessionActive }, { permissionService }, { askUserService }, { listAgentSessions, getAgentSessionMessages }, { verifyPairingCode, issueToken, verifyToken }, { appendCompanionAudit }] = await Promise.all([
+  const [{ runAgentHeadless, stopAgent, isAgentSessionActive, agentEventBus }, { permissionService }, { askUserService }, { listAgentSessions, getAgentSessionMessages }, { verifyPairingCode, issueToken, verifyToken }, { appendCompanionAudit }] = await Promise.all([
     import('./agent-service'),
     import('./agent-permission-service'),
     import('./agent-ask-user-service'),
@@ -133,6 +133,14 @@ async function buildRealDeps(): Promise<CompanionApiDeps> {
     respondPermission: (id, behavior, alwaysAllow) =>
       Promise.resolve(permissionService.respondToPermission(id, behavior, alwaysAllow ?? false)),
     respondAskUser: (id, answers) => Promise.resolve(askUserService.respondToAskUser(id, answers)),
+    // 应答成功后广播「已解析」事件：bus 中间件会转发给桌面渲染进程（移除卡片），
+    // companion SSE 客户端也会收到并移除手机端卡片 —— 与桌面端 PERMISSION_RESPOND IPC 行为对齐
+    notifyPermissionResolved: (sessionId, requestId, behavior) => {
+      agentEventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'permission_resolved', requestId, behavior } })
+    },
+    notifyAskUserResolved: (sessionId, requestId) => {
+      agentEventBus.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_resolved', requestId } })
+    },
     isSessionActive: isAgentSessionActive,
     sendUserMessage: (sessionId, text) => {
       const meta = listAgentSessions().find((s) => s.id === sessionId)
