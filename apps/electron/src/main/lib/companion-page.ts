@@ -295,10 +295,10 @@ ${COMPANION_MARKDOWN_JS}
       var key = s.workspaceId || 'none';
       (groups[key] = groups[key] || []).push(s);
     });
-    // 组顺序复刻桌面侧栏：按组内最近会话时间降序；'none' 组排最前便于看到未归组会话
+    // 组顺序复刻桌面侧栏：按组内最近会话时间降序；'none' 组固定排最后
     var orderedKeys = orderGroupKeys(groups);
     if (groups.none) {
-      orderedKeys = ['none'].concat(orderedKeys.filter(function (k) { return k !== 'none'; }));
+      orderedKeys = orderedKeys.filter(function (k) { return k !== 'none'; }).concat(['none']);
     }
 
     orderedKeys.forEach(function (key) {
