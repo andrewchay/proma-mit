@@ -52,7 +52,7 @@
 | M2-04 | Typed result parser | claims、artifacts、evidence、confidence、unverified | M0-01、M2-01 | 缺 evidence 的 high claim 自动降级；协议失败为 partial | `subtask-result-parser.test.ts` | 已完成 |
 | M2-05 | Child artifact 持久化 | typed result、原始 session、projection 元数据关联 | M0-02、M2-04 | 可从 result 追溯 child session 和 source items | `subtask-artifact-store.test.ts` | 已完成 |
 | M2-06 | 内置 Agent 试点 | explorer → researcher → code-reviewer 分批接入 | M2-02、M2-04 | 每个 Agent 有明确 requiredKinds 与 result schema | `builtin-subagent-context-policy.test.ts` | 已完成 |
-| M2-07 | 父 Agent 消费 typed result | 不自动拼接 child transcript；消费 summary/claims/artifacts | M2-05 | 父 Agent 可引用 evidence；失败状态不伪装完成 | integration tests | 待开始 |
+| M2-07 | 父 Agent 消费 typed result | 不自动拼接 child transcript；消费 summary/claims/artifacts | M2-05 | 父 Agent 可引用 evidence；失败状态不伪装完成 | `subtask-result-parser.test.ts` | 已完成 |
 
 ### M3：评测与对照实验
 
@@ -253,7 +253,17 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：移除 policy resolver 的调用即可让所有未显式 context 的内置 Agent 回到 baseline。
 - 下一步：M2-07 让父 Agent 仅消费 typed result 的 summary/claims/artifacts，禁止自动拼接 child transcript。
 
+### M2-07（2026-09-22）
+- 状态：已完成。
+- 实际变更：typed-v1 spawn 将原始 child response 解析为 `SubtaskResult` 后，父 Agent 只接收格式化的状态、summary、claims（含 evidence）、artifacts、unverified 与 recommended next steps；raw child transcript 仅保留在 M2-05 的工作区私有 artifact，不再自动注入父 Agent。plain-text 调用仍返回原始文本。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/subtask-result-parser.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：目标测试 5 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：440 文件 / 0 失败。
+- 证据文件：`context/subtask-result-parser.{ts,test.ts}`、`agent-orchestrator.ts`。
+- 风险变化：协议异常也以 partial typed handoff 返回，明确列出未验证项，避免 child 自由文本被父 Agent 当作已验证事实；非 typed 调用不受影响。
+- 回滚方式：让 spawn 直接返回 raw response 即可恢复 M2-06 的回传行为。
+- 下一步：完成 M2 集成验收，随后进入 M3 的 projection 对照评测与门禁。
+
 ## 8. 当前下一步
 
-1. 开始 M2-07：让父 Agent 仅消费 typed result 的 summary/claims/artifacts，禁止自动拼接 child transcript。
-2. 每完成一个 milestone 更新本台账，并在 M3 形成是否继续的门禁结论。
+1. 完成 M2 集成验收：验证显式 feature flag、投影、只读隔离、typed result 与 artifact 回溯链路。
+2. 进入 M3 projection 对照评测，并在结果达到门禁前保持 default-off。

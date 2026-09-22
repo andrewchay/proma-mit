@@ -40,6 +40,33 @@ export const TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT = `完成后请在回复末尾
  * 解析 typed-v1 子任务结果。协议异常不抛出，统一降级为可审计的 partial 结果，
  * 让后续持久化能保留原始摘要而不会把不可信文本伪装成已验证结论。
  */
+/** 将 typed result 转为父 Agent 可消费的紧凑交接；绝不回传 raw child transcript。 */
+export function formatSubtaskResultForParent(result: SubtaskResult): string {
+  const lines = [`子任务状态：${result.status}`, `摘要：${result.summary}`]
+  if (result.claims.length > 0) {
+    lines.push('主张：')
+    lines.push(...result.claims.map((claim) => {
+      const evidence = claim.evidence.length > 0
+        ? `；证据：${claim.evidence.map(({ kind, sourceId, locator }) => `${kind}:${sourceId}${locator ? `#${locator}` : ''}`).join(', ')}`
+        : ''
+      return `- [${claim.confidence}${claim.verified ? '，已验证' : '，未验证'}] ${claim.statement}${evidence}`
+    }))
+  }
+  if (result.artifacts.length > 0) {
+    lines.push('产物：')
+    lines.push(...result.artifacts.map((artifact) => `- [${artifact.kind}] ${artifact.title}\n${artifact.content}`))
+  }
+  if (result.unverified.length > 0) {
+    lines.push('未验证：')
+    lines.push(...result.unverified.map((item) => `- ${item}`))
+  }
+  if (result.recommendedNextSteps.length > 0) {
+    lines.push('建议后续：')
+    lines.push(...result.recommendedNextSteps.map((item) => `- ${item}`))
+  }
+  return lines.join('\n')
+}
+
 export function parseSubtaskResult(text: string, taskId: string): ParsedSubtaskResult {
   const candidate = extractJsonObject(text)
   if (!candidate) return protocolFailure(taskId, text, '未找到 typed-v1 JSON 对象')

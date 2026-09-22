@@ -1,17 +1,34 @@
 import { describe, expect, test } from 'bun:test'
-import { parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './subtask-result-parser'
+import { formatSubtaskResultForParent, parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './subtask-result-parser'
 
 const evidence = {
   kind: 'test_result',
   sourceId: 'test:context-projector',
   locator: 'context-projector.test.ts',
   verified: true,
-}
+} as const
 
 describe('parseSubtaskResult', () => {
   test('given a typed-v1 child when it receives protocol instructions then evidence is explicitly required for high confidence', () => {
     expect(TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT).toContain('高置信主张必须附带 evidence')
     expect(TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT).toContain('```json')
+  })
+
+  test('given a typed result when formatting for the parent then it exposes only structured fields and not the raw transcript', () => {
+    const handoff = formatSubtaskResultForParent({
+      protocolVersion: 1,
+      taskId: 'task-1',
+      status: 'partial',
+      summary: '发现一个问题',
+      claims: [{ statement: '入口在 adapter', confidence: 'medium', evidence: [evidence], verified: false }],
+      artifacts: [{ kind: 'review_finding', title: '风险', content: '需要验证', evidence: [evidence] }],
+      unverified: ['未运行集成测试'],
+      recommendedNextSteps: ['运行测试'],
+    })
+
+    expect(handoff).toContain('摘要：发现一个问题')
+    expect(handoff).toContain('test_result:test:context-projector#context-projector.test.ts')
+    expect(handoff).not.toContain('原始 child transcript')
   })
 
   test('given a valid typed-v1 response when parsing then it preserves evidence-backed claims and artifacts', () => {

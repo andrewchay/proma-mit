@@ -84,7 +84,7 @@ import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-f
 import { prepareSubAgentProjection } from './agent-runtime/context/subagent-projection-adapter'
 import { resolveSubAgentContextOptions } from './agent-runtime/context/subagent-context-options'
 import { resolveSubAgentWorkspace } from './agent-runtime/context/subagent-readonly-workspace'
-import { parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './agent-runtime/context/subtask-result-parser'
+import { formatSubtaskResultForParent, parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './agent-runtime/context/subtask-result-parser'
 import { SubtaskArtifactStore, toStoredSubtaskArtifact } from './agent-runtime/context/subtask-artifact-store'
 import { applyBuiltinSubAgentContextPolicy } from './agent-runtime/context/builtin-subagent-context-policy'
 
@@ -1301,19 +1301,22 @@ export class AgentOrchestrator {
     }
 
     const response = assistantTexts.join('\n\n') || '子代理已完成任务，但未返回文本结果'
-    if (preparedProjection.projection && contextOptions.resultProtocol === 'typed-v1' && workspace) {
-      // 持久化属于观测旁路：写入失败不改变子任务原有文本返回，也不影响父 Agent 执行。
+    const projection = preparedProjection.projection
+    const typedResult = projection && contextOptions.resultProtocol === 'typed-v1'
+      ? parseSubtaskResult(response, `${parentSessionId}:${childSessionId}`)
+      : undefined
+    if (typedResult && workspace && projection) {
+      // 持久化属于观测旁路：写入失败不改变子任务的结构化交接或父 Agent 执行。
       try {
         appendSDKMessages(childSessionId, messages)
-        const parsed = parseSubtaskResult(response, `${parentSessionId}:${childSessionId}`)
         const store = new SubtaskArtifactStore(join(getAgentWorkspacePath(workspace.slug), 'context', 'subtasks'))
         store.save(toStoredSubtaskArtifact({
           childSessionId,
           parentSessionId,
           task: subAgent.task,
           rawResponse: response,
-          result: parsed.result,
-          projection: preparedProjection.projection,
+          result: typedResult.result,
+          projection,
         }))
       } catch (error) {
         logInfo(
@@ -1323,7 +1326,7 @@ export class AgentOrchestrator {
       }
     }
 
-    return response
+    return typedResult ? formatSubtaskResultForParent(typedResult.result) : response
   }
 
   /**
