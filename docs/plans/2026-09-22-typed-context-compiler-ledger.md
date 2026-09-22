@@ -12,7 +12,7 @@
 |---|---|---|---|---|---|
 | M0 | 契约与观测基线 | 定义类型、事件 ledger、token/cache/retry 基线，不改执行行为 | 无 | 已完成 | shared tests、ledger/metrics/flag/replay tests、`bun run test` 427 文件通过 |
 | M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
-| M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 待开始 | 隔离、协议、失败回退和追溯测试 |
+| M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 进行中 | M2-01 子任务边界契约已完成；尚未改变 spawn 行为 |
 | M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 待开始 | 5+ cases、每 case 3+ runs、scoreboard |
 | M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 待开始 | schema token、权限和工具选择回归 |
 | M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 待开始 | compact boundary、重建和失败不伪造测试 |
@@ -46,7 +46,7 @@
 
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
-| M2-01 | SubAgentInput 扩展 | projection、resultProtocol、readOnly，保持旧调用兼容 | M1 | 旧调用行为不变；新字段可选 | shared/runtime tests | 待开始 |
+| M2-01 | SubAgentInput 扩展 | projection、resultProtocol、readOnly，保持旧调用兼容 | M1 | 旧调用行为不变；新字段可选 | `subagent-context-options.{ts,test.ts}` | 已完成 |
 | M2-02 | Spawn projection adapter | 在 orchestrator/runtime spawn 边界生成 projection | M1、M2-01 | projection 失败回退 baseline；sourceRevision 关联 | orchestrator tests | 待开始 |
 | M2-03 | Read-only 子任务隔离 | 子任务独立 cwd，父工作区不可写 | M2-02 | 写入被拒绝或仅进入隔离目录 | sandbox/workspace tests | 待开始 |
 | M2-04 | Typed result parser | claims、artifacts、evidence、confidence、unverified | M0-01、M2-01 | 缺 evidence 的 high claim 自动降级；协议失败为 partial | parser tests | 待开始 |
@@ -192,6 +192,16 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 风险变化：R-01/R-02 降低。省略和 policy 过滤现在均可追溯，但尚未把 projection 注入 Agent/subagent。
 - 回滚方式：纯函数模块无运行时调用点，可整体删除，不影响现有 Agent 行为。
 - 下一步：M2-01 Spawn 输入扩展。
+
+### M2-01（2026-09-22）
+- 状态：已完成。
+- 实际变更：扩展 `SubAgentInput.context` 为可选 `SubAgentContextOptions`，包含 `projection`、`resultProtocol` 与 `readOnly`。默认解析器维持旧调用的 plain-text/non-TCC 行为；显式 projection 则默认 typed-v1 与 readOnly。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/subagent-context-options.test.ts`；`bun run typecheck`。
+- 测试结果：3 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：435 文件 / 0 失败。
+- 证据文件：`agent-runtime/types.ts`、`context/subagent-context-options.{ts,test.ts}`。
+- 风险变化：无运行时调用点，因此不改变现有 Agent 或权限行为。
+- 回滚方式：移除可选字段和纯函数即可恢复先前契约。
+- 下一步：M2-02 在 provider-agnostic spawn 边界消费显式 projection，并保证失败回退 baseline。
 
 ## 8. 当前下一步
 
