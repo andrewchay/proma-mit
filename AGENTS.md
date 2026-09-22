@@ -23,11 +23,11 @@ Bun workspace monorepo：
 ```
 gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.76)
-│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.16)
+│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.2.7)
+│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.22)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.11.69)
+    └── electron/   # Electron 桌面应用 (v0.12.47)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -40,12 +40,12 @@ gravitas/
 
 ### 包职责详解
 
-#### @gravitas/shared (v0.1.76)
+#### @gravitas/shared (v0.2.7)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
 - **依赖**：无运行时依赖（仅 TypeScript）
 
-#### @gravitas/core (v0.2.16)
+#### @gravitas/core (v0.2.22)
 - **导出模块**：`./providers`、`./highlight`、`./types`、`./utils`
 - **关键功能**：Provider 适配器注册表、代码高亮（Shiki）
 - **依赖**：`@gravitas/shared`、`shiki`
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.11.69)
+#### @gravitas/electron (v0.12.47)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
