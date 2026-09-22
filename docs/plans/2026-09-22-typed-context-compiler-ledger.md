@@ -263,6 +263,21 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：删除 M3 experiment 模块和 fixture，不影响 M0-M2 运行时路径。
 - 下一步：将三个 context variant 显式接入隔离 evaluator delegate，生成并持久化真实 run records；完成前 M3-05 保持阻塞。
 
+### M3-06 真实 spawn 评测修正（2026-09-22）
+- 状态：离线与护栏已完成并验证；真实矩阵因预算与缺陷未产出有效结果。
+- 实际变更：
+  1. 首次真实评测走的是仓库外临时脚本，协议提示与 typed-v1 parser 不同源，导致大量返回被判为协议失败，白耗授权调用额度。现已改为仓库内正式入口 `scripts/run-tcc-spawn-eval.ts` + `tcc-spawn-eval-harness.ts`，并强制三重保护：离线 preflight（协议同源、必需项在内、私密项不泄漏、token 节省 ≥ 20%）、授权调用数不小于矩阵规模、逐次落盘可续跑。
+  2. TCC 组不再直接调用 projector，而是经 `prepareSubAgentProjectionFromItems()` 走与生产完全相同的 spawn 边界。
+  3. 发现并修复真实缺陷：`ProviderAgnosticAgentAdapter` 始终注入 `createCoreTools()`，因此 `runtimeTools: []` 并不能让评测看不到工具；模型改为发起 `tool_use`，在 `maxTurns: 1` 下一轮内拿不到结论。新增 `disableTools` 选项（默认关闭，行为不变），评测显式启用。
+  4. 修复 token 计量：只累加 `input_tokens` 会把 14k 上下文虚报为 15 token（其余走 cache_read），现按 `input_tokens + cache_read + cache_creation` 计入。
+  5. `extractJsonObject` 增加「最后一个配平顶层对象」回退，兼容模型在 JSON 前后附加解释文字；协议字段校验不放松。
+- 测试命令：`bun run typecheck`；`bun run test`；`bun run --filter '@gravitas/electron' build:tcc-eval`。
+- 测试结果：全量隔离测试 446 文件 / 0 失败；typecheck 通过；在真实 Electron 运行时验证了 preflight 与授权护栏（未通过时在发起任何模型调用前退出）。
+- 真实调用消耗：修正前临时脚本 90 次（第一次授权，已消耗）；修正后首次尝试 19 次（因上述工具缺陷作废）；诊断探针 9 次。合计在第二次授权内已用 28/90。
+- 结论：TCC 仍为 default-off。修正后的探针证明三组 variant 都能产出可解析的 typed-v1 结果（full 输入 8717 / TCC 输入 1358 tokens），但完整 10×3×3 矩阵尚未用修正后的路径跑完，因此不构成推广依据。
+- 回滚方式：删除 `tcc-spawn-eval-harness.ts`、`tcc-spawn-real-delegate.ts`、`scripts/run-tcc-spawn-eval.ts` 及其测试，并移除 `disableTools` 选项，即可恢复 M3-05 状态。
+- 下一步：用修正后的路径重跑完整矩阵（需新的调用授权），再据实记录 fail-closed 结论。
+
 ### M2-07（2026-09-22）
 - 状态：已完成。
 - 实际变更：typed-v1 spawn 将原始 child response 解析为 `SubtaskResult` 后，父 Agent 只接收格式化的状态、summary、claims（含 evidence）、artifacts、unverified 与 recommended next steps；raw child transcript 仅保留在 M2-05 的工作区私有 artifact，不再自动注入父 Agent。plain-text 调用仍返回原始文本。
@@ -275,5 +290,5 @@ M0 → M1 → M2 → M3 ─┬→ M4
 
 ## 8. 当前下一步
 
-1. 完成 M2 集成验收：验证显式 feature flag、投影、只读隔离、typed result 与 artifact 回溯链路。
-2. 进入 M3 projection 对照评测，并在结果达到门禁前保持 default-off。
+1. 用修正后的真实评测路径重跑完整 10×3×3 矩阵；在此之前 TCC 保持 default-off。
+2. 完成 M2 集成验收：验证显式 feature flag、投影、只读隔离、typed result 与 artifact 回溯链路。
