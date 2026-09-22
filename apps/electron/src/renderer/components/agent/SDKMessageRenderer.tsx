@@ -959,7 +959,7 @@ function UserInputMessage({ message }: { message: SDKUserMessage }): React.React
       <div className="flex items-start gap-2.5 mb-2.5">
         <UserAvatar avatar={userProfile.avatar} size={35} />
         <div className="flex flex-col justify-between h-[35px]">
-          <span className="text-sm font-semibold text-foreground/60 leading-none">{userProfile.userName}</span>
+          <span className="text-sm font-semibold text-foreground/85 leading-none">{userProfile.userName}</span>
           {meta.createdAt && (
             <span className="text-[10px] text-foreground/[0.38] leading-none">{formatMessageTime(meta.createdAt)}</span>
           )}

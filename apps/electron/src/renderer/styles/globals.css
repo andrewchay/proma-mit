@@ -3,30 +3,35 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Light 主题：对齐官方 Proma 的暖调设计语言。
+   * 侧边栏为暖调米灰（微棕黄相），内容区接近纯白，拉开两层背景层次；
+   * 品牌主色为暖驼色（模式切换器选中 pill、强调徽章等），替代原近黑色。
+   */
   :root {
-    --background: 0 0% 93%;
-    --foreground: 0 0% 3.9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
+    --background: 42 14% 94%;            /* 暖调米灰（侧边栏）*/
+    --foreground: 30 8% 12%;
+    --muted: 40 12% 90%;
+    --muted-foreground: 30 5% 42%;
+    --border: 38 12% 86%;
+    --input: 38 12% 87%;
+    --ring: 24 30% 46%;
+    --primary: 24 26% 55%;               /* 暖驼色品牌主色 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 12% 90%;
+    --secondary-foreground: 30 8% 14%;
+    --accent: 40 14% 88%;
+    --accent-foreground: 30 8% 14%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
     --stop-hover-bg: hsla(0, 80%, 60%, 0.12);
-    --card: 0 0% 93%;
-    --card-foreground: 0 0% 3.9%;
-    --popover: 0 0% 93%;
-    --popover-foreground: 0 0% 3.9%;
-    --dialog: 0 0% 93%;
-    --dialog-foreground: 0 0% 3.9%;
-    --content-area: 0 0% 93%;            /* 主内容区域背景 */
+    --card: 40 30% 99%;                  /* 卡片 = 接近纯白，与背景分层 */
+    --card-foreground: 30 8% 12%;
+    --popover: 40 30% 99%;
+    --popover-foreground: 30 8% 12%;
+    --dialog: 0 0% 100%;
+    --dialog-foreground: 30 8% 12%;
+    --content-area: 40 25% 98%;          /* 主内容区域：近白暖白 */
     /* 毛玻璃 Tooltip：深色半透明背景 + 白色文字 */
     --tooltip: 0 0% 15%;
     --tooltip-foreground: 0 0% 98%;
@@ -36,8 +41,8 @@
     /* 虚线边框色（新会话按钮、搜索按钮） */
     --dashed-border: 0 0% 9% / 0.35;
     --dashed-border-hover: 0 0% 9% / 0.50;
-    /* Markdown 预览正文字号（medium 档默认；initializer 加载用户偏好后会覆盖） */
-    --md-preview-font-size: 15px;
+    /* 会话选中态左侧 accent 竖条（对齐官方 Proma 的蓝色选中条） */
+    --selection-accent: 221 83% 53%;
   }
 
   .dark {
@@ -73,6 +78,14 @@
     /* 虚线边框色（新会话按钮、搜索按钮） */
     --dashed-border: 0 0% 98% / 0.25;
     --dashed-border-hover: 0 0% 98% / 0.40;
+    /* 会话选中态左侧 accent 竖条（暗色下提亮） */
+    --selection-accent: 217 91% 60%;
+  }
+
+  /* Markdown 预览正文字号（medium 档默认；initializer 加载用户偏好后会覆盖） */
+  :root,
+  .dark {
+    --md-preview-font-size: 15px;
   }
 
   /* ===== 特殊风格主题 ===== */

@@ -259,9 +259,9 @@ function PromptRow({ prompt, dimmed = false }: { prompt: string; dimmed?: boolea
 
 // ===== 工具短语 diff 着色 =====
 
-/** 将 displayLabel 中的 +N 染绿、-N 染红（仅对 Edit/Write 工具生效，避免 `head -5` 等命令参数被误染） */
+/** 将 displayLabel 中的 +N 染绿、-N 染红（仅对 Edit/Write/MultiEdit 工具生效，避免 `head -5` 等命令参数被误染） */
 function renderLabelWithDiffColors(label: string, toolName: string): React.ReactNode {
-  if (toolName !== 'Edit' && toolName !== 'Write') return label
+  if (toolName !== 'Edit' && toolName !== 'Write' && toolName !== 'MultiEdit') return label
   const parts = label.split(/((?:^|(?<=\s))[+-]\d+)/g)
   if (parts.length === 1) return label
   return parts.map((part, i) => {
@@ -497,6 +497,7 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
   }
 
   // ===== 普通工具：语义化短语 + 结构化结果 =====
+  const isRunning = !isCompleted && isStreaming
   return (
     <div
       className={cn(
@@ -509,6 +510,8 @@ function ToolUseBlock({ block, allMessages, animate = false, index = 0, dimmed =
         className={cn(
           'flex w-full max-w-full items-center gap-2 py-0.5 text-left transition-opacity group',
           'hover:opacity-70',
+          // 运行中：整行包在浅灰圆角块里（对齐官方 Proma），负 margin 抵消内边距保持文字对齐
+          isRunning && 'rounded-lg bg-muted/60 -mx-2 px-2 py-1',
         )}
         onClick={() => setExpanded(!expanded)}
       >

@@ -7,6 +7,7 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { Bot, MessageSquare, Workflow } from 'lucide-react'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { activeViewAtom } from '@/atoms/active-view'
 import { conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
@@ -17,10 +18,10 @@ import { cn } from '@/lib/utils'
 
 type SwitchMode = 'agent' | 'workflow' | 'chat'
 
-const MODES: { value: SwitchMode; label: string }[] = [
-  { value: 'agent', label: '智能体' },
-  { value: 'workflow', label: '工作流' },
-  { value: 'chat', label: '聊天' },
+const MODES: { value: SwitchMode; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: 'agent', label: '智能体', icon: Bot },
+  { value: 'workflow', label: '工作流', icon: Workflow },
+  { value: 'chat', label: '聊天', icon: MessageSquare },
 ]
 
 /** 滑动指示器位置：三等分 */
@@ -84,25 +85,26 @@ export function ModeSwitcher(): React.ReactElement {
   return (
     <div className="pt-2 titlebar-drag-region select-none">
       <div className="relative flex rounded-xl bg-muted p-1 titlebar-drag-region">
-        {/* 滑动背景指示器：三等分宽度 */}
+        {/* 滑动背景指示器：三等分宽度，选中态为品牌主色实心 pill */}
         <div
           className={cn(
-            'mode-slider pointer-events-none absolute top-1 bottom-1 w-[calc((100%-8px)/3)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
+            'mode-slider pointer-events-none absolute top-1 bottom-1 w-[calc((100%-8px)/3)] rounded-lg bg-primary shadow-sm transition-transform duration-300 ease-in-out',
             SLIDER_POSITIONS[activeMode]
           )}
         />
-        {MODES.map(({ value, label }) => (
+        {MODES.map(({ value, label, icon: Icon }) => (
           <button
             key={value}
             type="button"
             onClick={() => handleSwitch(value)}
             className={cn(
-              'mode-btn titlebar-no-drag relative z-[1] flex h-7 flex-1 items-center justify-center rounded-lg px-1 py-0 text-[12px] font-medium transition-all duration-200 select-none',
+              'mode-btn titlebar-no-drag relative z-[1] flex h-7 flex-1 items-center justify-center gap-1 rounded-lg px-1 py-0 text-[12px] font-medium transition-all duration-200 select-none',
               activeMode === value
-                ? 'mode-btn-selected text-foreground'
+                ? 'mode-btn-selected text-primary-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
+            <Icon className="h-3.5 w-3.5" />
             {label}
           </button>
         ))}

@@ -60,7 +60,11 @@ export function ChatToolBlock({
     >
       <button
         type="button"
-        className="flex items-center gap-2 py-0.5 text-left hover:opacity-70 transition-opacity group"
+        className={cn(
+          'flex items-center gap-2 py-0.5 text-left hover:opacity-70 transition-opacity group',
+          // 运行中：整行包在浅灰圆角块里，负 margin 抵消内边距保持文字对齐
+          !isCompleted && 'rounded-lg bg-muted/60 -mx-2 px-2 py-1',
+        )}
         onClick={() => setExpanded(!expanded)}
       >
         {!isCompleted ? (

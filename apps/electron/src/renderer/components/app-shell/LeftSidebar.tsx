@@ -2041,6 +2041,13 @@ const ConversationItem = React.memo(function ConversationItem({
               aria-hidden="true"
             />
           )}
+          {/* 选中态左侧 accent 竖条；有流式状态条时让位，避免同位置叠加 */}
+          {active && !streaming && (
+            <span
+              className="absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full bg-[hsl(var(--selection-accent))] pointer-events-none"
+              aria-hidden="true"
+            />
+          )}
           <div className="flex-1 min-w-0">
             {editing ? (
               <input
@@ -2258,6 +2265,13 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
                 'absolute left-1 top-1.5 bottom-1.5 w-[2px] rounded-full pointer-events-none',
                 SESSION_LEFT_ACCENT_CLASS[leftAccent]
               )}
+            />
+          )}
+          {/* 选中态左侧 accent 竖条；有后台任务状态条时让位，避免同位置叠加 */}
+          {active && !leftAccent && (
+            <span
+              className="absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full bg-[hsl(var(--selection-accent))] pointer-events-none"
+              aria-hidden="true"
             />
           )}
           <div className="flex-1 min-w-0">
