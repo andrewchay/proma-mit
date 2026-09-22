@@ -10,14 +10,18 @@
  * - 运行中会话不允许直接发消息（复用主进程并发守卫语义，返回 409）。
  */
 
-import type { AgentMessage, AgentSessionMeta, AskUserRequest, PermissionRequest } from '@gravitas/shared'
+import type { AgentSessionMeta, AskUserRequest, PermissionRequest } from '@gravitas/shared'
+import type { CompanionHistoryEntry } from './companion-history'
 
 export interface CompanionApiDeps {
   verifyPairingCode(code: string): boolean
   issueToken(): Promise<{ token: string }>
   verifyToken(token: string | undefined | null): boolean
   listSessions(): AgentSessionMeta[]
-  getMessages(sessionId: string): AgentMessage[] | null
+  /** 工作区列表（按更新时间新→旧，与桌面端顺序一致） */
+  listWorkspaces(): { id: string; name: string }[]
+  /** 手机端可读的会话历史（从 SDK 消息提取）；会话不存在返回 null */
+  getMessages(sessionId: string): CompanionHistoryEntry[] | null
   getPendingPermissions(): PermissionRequest[]
   getPendingAskUsers(): AskUserRequest[]
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow?: boolean): Promise<string | null>
@@ -78,6 +82,9 @@ export function createCompanionApi(deps: CompanionApiDeps): CompanionApiHandler 
     // ---- 只读接口 ----
     if (method === 'GET' && pathname === '/api/sessions') {
       return json({ sessions: deps.listSessions() })
+    }
+    if (method === 'GET' && pathname === '/api/workspaces') {
+      return json({ workspaces: deps.listWorkspaces() })
     }
     if (method === 'GET' && pathname === '/api/pending') {
       return json({ permissions: deps.getPendingPermissions(), askUsers: deps.getPendingAskUsers() })

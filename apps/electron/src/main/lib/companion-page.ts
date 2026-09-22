@@ -4,7 +4,9 @@
  * 单文件 HTML（内联 CSS/JS，vanilla，无构建步骤），由 companion-server 直接返回；
  * 页面本身不含任何数据，所有数据经认证 API 获取。
  *
- * 视图：配对（一次性配对码换 token）→ 会话列表（待确认徽标）→ 会话详情（SSE 实时流 + 权限/AskUser 卡片）。
+ * 视图：配对 → 会话列表（按工作区分组、按更新时间排序、运行中指示）→ 会话详情
+ * （SDK 同源历史 + SSE 实时流 + 权限/AskUser 卡片 + 活动指示）。
+ * 横屏（宽度 ≥700px）呈现左右双栏（列表 | 会话），尽量还原桌面布局。
  * token 存 localStorage；任何 401 都会清除 token 回到配对视图。
  */
 
@@ -18,12 +20,30 @@ export function getCompanionPageHtml(): string {
 <style>
 :root { --bg:#0d1117; --card:#161b22; --card2:#1c2330; --text:#e6edf3; --muted:#8b949e; --accent:#4c8dff; --green:#3fb950; --red:#f85149; --border:#2d333b; }
 * { box-sizing:border-box; margin:0; padding:0; }
-body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; background:var(--bg); color:var(--text); font-size:15px; }
-.container { max-width:640px; margin:0 auto; padding:16px; min-height:100vh; display:flex; flex-direction:column; }
-h1 { font-size:20px; margin-bottom:4px; }
+html, body { height:100%; }
+body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; background:var(--bg); color:var(--text); font-size:15px; overflow:hidden; }
+#layout { display:flex; height:100vh; max-width:1200px; margin:0 auto; }
+.pane { display:none; flex-direction:column; min-width:0; flex:1; padding:14px; overflow:hidden; }
+.pane.active { display:flex; }
+
+/* ---- 竖屏：单栏 ---- */
+@media (max-width: 699px), (orientation: portrait) {
+  #layout { display:block; }
+  .pane { height:100vh; }
+}
+
+/* ---- 横屏：双栏（还原桌面布局） ---- */
+@media (min-width: 700px) and (orientation: landscape) {
+  #layout { display:flex; }
+  #pane-list { display:flex; flex:0 0 300px; border-right:1px solid var(--border); }
+  #pane-chat { display:flex; flex:1; }
+  #pane-pair { display:none; }
+  #pane-pair.active { display:flex; position:absolute; inset:0; background:var(--bg); z-index:10; }
+  .back { display:none; }
+}
+
+h1 { font-size:18px; margin-bottom:2px; }
 .sub { color:var(--muted); font-size:13px; }
-.view { display:none; flex:1; flex-direction:column; }
-.view.active { display:flex; }
 .card { background:var(--card); border-radius:12px; padding:16px; margin-top:12px; box-shadow:0 1px 4px rgba(0,0,0,.4); }
 input, textarea { width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:16px; outline:none; }
 input:focus, textarea:focus { border-color:var(--accent); }
@@ -32,12 +52,29 @@ input:focus, textarea:focus { border-color:var(--accent); }
 .btn.deny { background:var(--red); }
 .btn.allow { background:var(--green); }
 .btn.small { width:auto; padding:6px 12px; font-size:13px; margin-top:0; }
-.session-item { background:var(--card); border-radius:12px; padding:14px 16px; margin-top:10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
-.session-item .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); margin-right:8px; flex-shrink:0; }
+.btn:disabled { opacity:.5; cursor:default; }
+
+/* 会话列表：工作区分组 */
+#session-scroll { flex:1; overflow-y:auto; min-height:0; }
+.ws-header { color:var(--muted); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; margin:16px 4px 4px; }
+.ws-header:first-child { margin-top:4px; }
+.session-item { background:var(--card); border-radius:10px; padding:12px 14px; margin-top:8px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+.session-item:hover { background:var(--card2); }
+.session-item.current { outline:1px solid var(--accent); }
+.session-item .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
 .session-item .dot.running { background:var(--green); animation:pulse 1.2s infinite; }
-@keyframes pulse { 50% { opacity:.4; } }
+@keyframes pulse { 50% { opacity:.35; } }
+.session-item .title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.session-item .time { color:var(--muted); font-size:12px; flex-shrink:0; }
 .badge { background:var(--red); color:#fff; border-radius:10px; padding:2px 8px; font-size:12px; font-weight:700; }
-#messages { flex:1; overflow-y:auto; padding:8px 0; }
+.header { display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; }
+
+/* 会话详情 */
+.topbar { display:flex; align-items:center; gap:10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.back { background:none; border:none; color:var(--accent); font-size:22px; cursor:pointer; padding:0 4px; }
+#run-indicator { color:var(--green); font-size:12px; white-space:nowrap; }
+#run-indicator .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green); animation:pulse 1s infinite; margin-right:4px; }
+#messages { flex:1; overflow-y:auto; padding:8px 0; min-height:0; }
 .msg { margin-top:10px; max-width:88%; }
 .msg.user { margin-left:auto; }
 .msg .bubble { background:var(--card); border-radius:12px; padding:10px 14px; white-space:pre-wrap; word-break:break-word; }
@@ -51,21 +88,19 @@ input:focus, textarea:focus { border-color:var(--accent); }
 .req-actions { display:flex; gap:10px; }
 .req-actions .btn { margin-top:0; }
 .opt-btn { display:block; width:100%; text-align:left; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:8px; font-size:14px; cursor:pointer; }
+.opt-btn:disabled { opacity:.5; }
 #inputbar { display:flex; gap:8px; padding-top:10px; }
 #inputbar textarea { flex:1; resize:none; height:44px; }
-.topbar { display:flex; align-items:center; gap:10px; padding-bottom:8px; }
-.back { background:none; border:none; color:var(--accent); font-size:22px; cursor:pointer; padding:0 4px; }
-.header { display:flex; justify-content:space-between; align-items:center; }
 .empty { color:var(--muted); text-align:center; margin-top:40px; }
-.err { color:var(--red); font-size:13px; margin-top:8px; }
+.err { color:var(--red); font-size:13px; margin-top:8px; min-height:16px; }
 </style>
 </head>
 <body>
-<div class="container">
+<div id="layout">
 
-  <div id="view-pair" class="view active">
+  <div id="pane-pair" class="pane active">
     <h1>Gravitas Companion</h1>
-    <p class="sub">在桌面端 设置 → 远程访问 生成配对码</p>
+    <p class="sub">在桌面端 设置 → 连接与同步 → 远程访问 生成配对码</p>
     <div class="card">
       <input id="pair-code" inputmode="numeric" maxlength="6" placeholder="6 位配对码" autocomplete="one-time-code">
       <button class="btn" id="pair-btn">配对</button>
@@ -73,16 +108,22 @@ input:focus, textarea:focus { border-color:var(--accent); }
     </div>
   </div>
 
-  <div id="view-list" class="view">
-    <div class="header"><h1>会话</h1><span id="pending-badge"></span></div>
-    <p class="sub" id="list-status">加载中…</p>
-    <div id="sessions"></div>
+  <div id="pane-list" class="pane">
+    <div class="header">
+      <div><h1>会话</h1><span class="sub" id="list-status"></span></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="pending-badge"></span>
+        <button class="btn secondary small" id="refresh-btn">刷新</button>
+      </div>
+    </div>
+    <div id="session-scroll"></div>
   </div>
 
-  <div id="view-chat" class="view">
+  <div id="pane-chat" class="pane">
     <div class="topbar">
       <button class="back" id="back-btn">‹</button>
       <div style="flex:1;min-width:0"><h1 id="chat-title" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">会话</h1></div>
+      <span id="run-indicator" style="display:none"><span class="dot"></span>运行中</span>
       <button class="btn secondary small" id="stop-btn">停止</button>
     </div>
     <div id="messages"></div>
@@ -99,12 +140,21 @@ input:focus, textarea:focus { border-color:var(--accent); }
 (function () {
   'use strict';
   var TOKEN_KEY = 'companion-token';
-  var state = { token: localStorage.getItem(TOKEN_KEY) || '', currentSession: null, es: null, pending: {}, lastEventId: '0' };
+  var state = {
+    token: localStorage.getItem(TOKEN_KEY) || '',
+    currentSession: null,
+    es: null,
+    lastEventId: '0',
+    workspaces: [],        // [{id,name}] 按更新时间排序
+    lastActivityAt: 0,     // 最近一次收到流式事件的时间（活动指示用）
+  };
 
   function $(id) { return document.getElementById(id); }
   function show(name) {
-    ['pair', 'list', 'chat'].forEach(function (v) { $('view-' + v).classList.toggle('active', v === name); });
+    ['pair', 'list', 'chat'].forEach(function (v) { $('pane-' + v).classList.toggle('active', v === name); });
   }
+  // 横屏下列表与聊天双栏并存：切换到聊天时不隐藏列表
+  function isLandscape() { return window.matchMedia('(min-width:700px) and (orientation:landscape)').matches; }
 
   function api(method, path, body) {
     return fetch(path, {
@@ -112,7 +162,7 @@ input:focus, textarea:focus { border-color:var(--accent); }
       headers: Object.assign({ 'Content-Type': 'application/json' }, state.token ? { Authorization: 'Bearer ' + state.token } : {}),
       body: body ? JSON.stringify(body) : undefined,
     }).then(function (res) {
-      if (res.status === 401 && path !== '/api/pair') { logout(); throw new Error('登录已失效'); }
+      if (res.status === 401 && path !== '/api/pair') { logout(); throw new Error('登录已失效，请重新配对'); }
       return res;
     });
   }
@@ -123,8 +173,17 @@ input:focus, textarea:focus { border-color:var(--accent); }
     closeStream();
     show('pair');
   }
-
   function closeStream() { if (state.es) { state.es.close(); state.es = null; } }
+
+  function relativeTime(ts) {
+    if (!ts) return '';
+    var diff = Date.now() - ts;
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+    if (diff < 172800000) return '昨天';
+    return Math.floor(diff / 86400000) + ' 天前';
+  }
 
   // ---- 配对 ----
   $('pair-btn').onclick = function () {
@@ -136,37 +195,68 @@ input:focus, textarea:focus { border-color:var(--accent); }
     }).then(function (data) {
       state.token = data.token;
       localStorage.setItem(TOKEN_KEY, data.token);
-      loadSessions();
+      loadWorkspaces().then(loadSessions);
     }).catch(function (e) { $('pair-err').textContent = e.message; });
   };
 
-  // ---- 会话列表 ----
+  // ---- 工作区与 会话列表（分组 + 排序） ----
+  function loadWorkspaces() {
+    return api('GET', '/api/workspaces').then(function (res) { return res.json(); }).then(function (data) {
+      state.workspaces = data.workspaces || [];
+    }).catch(function () { state.workspaces = []; });
+  }
+
   function loadSessions() {
     show('list');
     api('GET', '/api/sessions').then(function (res) { return res.json(); }).then(function (data) {
-      $('list-status').textContent = data.sessions.length ? '' : '暂无会话';
-      var box = $('sessions');
-      box.innerHTML = '';
-      data.sessions.forEach(function (s) {
-        var item = document.createElement('div');
-        item.className = 'session-item';
-        item.innerHTML = '<span style="display:flex;align-items:center;min-width:0"><span class="dot"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(s.title || s.id) + '</span></span>';
-        item.onclick = function () { openChat(s.id, s.title || s.id); };
-        box.appendChild(item);
-      });
+      var sessions = (data.sessions || []).slice().sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
+      renderSessionGroups(sessions);
       refreshPendingBadge();
     }).catch(function (e) { $('list-status').textContent = e.message; });
   }
 
-  function refreshPendingBadge() {
-    api('GET', '/api/pending').then(function (res) { return res.json(); }).then(function (data) {
-      state.pending = {};
-      data.permissions.forEach(function (p) { state.pending[p.requestId] = p; });
-      data.askUsers.forEach(function (a) { state.pending[a.requestId] = a; });
-      var n = data.permissions.length + data.askUsers.length;
-      $('pending-badge').innerHTML = n ? '<span class="badge">' + n + ' 待确认</span>' : '';
-    }).catch(function () { /* 静默 */ });
+  function renderSessionGroups(sessions) {
+    var box = $('session-scroll');
+    box.innerHTML = '';
+    $('list-status').textContent = sessions.length ? sessions.length + ' 个会话' : '暂无会话';
+
+    // 未归组会话收集到 'none'；组顺序按工作区列表（更新时间新→旧），未命名工作区排最前
+    var groups = {};
+    sessions.forEach(function (s) {
+      var key = s.workspaceId || 'none';
+      (groups[key] = groups[key] || []).push(s);
+    });
+    var orderedKeys = [];
+    state.workspaces.forEach(function (w) { if (groups[w.id]) orderedKeys.push(w.id); });
+    if (groups.none) orderedKeys.unshift('none');
+    Object.keys(groups).forEach(function (k) { if (orderedKeys.indexOf(k) === -1) orderedKeys.push(k); });
+
+    orderedKeys.forEach(function (key) {
+      var ws = state.workspaces.filter(function (w) { return w.id === key; })[0];
+      var header = document.createElement('div');
+      header.className = 'ws-header';
+      header.textContent = (key === 'none' ? '未分组' : (ws ? ws.name : '未知工作区')) + ' · ' + groups[key].length;
+      box.appendChild(header);
+
+      groups[key].forEach(function (s) {
+        var item = document.createElement('div');
+        item.className = 'session-item' + (s.id === state.currentSession ? ' current' : '');
+        var dot = document.createElement('span');
+        dot.className = 'dot' + (s.running ? ' running' : '');
+        var title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = s.title || s.id;
+        var time = document.createElement('span');
+        time.className = 'time';
+        time.textContent = relativeTime(s.updatedAt);
+        item.appendChild(dot); item.appendChild(title); item.appendChild(time);
+        item.onclick = function () { openChat(s.id, s.title || s.id); };
+        box.appendChild(item);
+      });
+    });
   }
+
+  $('refresh-btn').onclick = function () { loadSessions(); };
 
   // ---- 会话详情 ----
   function openChat(sessionId, title) {
@@ -175,12 +265,18 @@ input:focus, textarea:focus { border-color:var(--accent); }
     $('messages').innerHTML = '';
     $('requests').innerHTML = '';
     $('chat-err').textContent = '';
-    show('chat');
+    $('run-indicator').style.display = 'none';
+    if (isLandscape()) { show('chat'); $('pane-list').classList.add('active'); }
+    else { show('chat'); }
     closeStream();
     api('GET', '/api/sessions/' + encodeURIComponent(sessionId) + '/messages').then(function (res) { return res.json(); }).then(function (data) {
-      (data.messages || []).forEach(function (m) { appendMessage(m.role, m.content); });
+      (data.messages || []).forEach(function (m) {
+        if (m.role === 'tool') appendMessage('tool', '⚙ ' + m.text);
+        else appendMessage(m.role, m.text);
+      });
       $('messages').scrollTop = $('messages').scrollHeight;
       openStream(sessionId);
+      loadSessions(); // 刷新列表的高亮与运行状态（横屏下侧栏可见）
     }).catch(function (e) { $('chat-err').textContent = e.message; });
   }
 
@@ -190,8 +286,17 @@ input:focus, textarea:focus { border-color:var(--accent); }
     state.es.addEventListener('agent-stream', function (ev) {
       try { handleEnvelope(JSON.parse(ev.data)); } catch (e) { /* 忽略坏帧 */ }
     });
-    state.es.onerror = function () { /* EventSource 自动重连（带原 lastEventId），无需处理 */ };
+    state.es.onerror = function () { /* EventSource 自动重连 */ };
   }
+
+  /** 活动指示：4 秒内有事件即显示“运行中” */
+  function touchActivity() {
+    state.lastActivityAt = Date.now();
+    $('run-indicator').style.display = 'inline';
+  }
+  setInterval(function () {
+    if (Date.now() - state.lastActivityAt > 4000) $('run-indicator').style.display = 'none';
+  }, 1000);
 
   function handleEnvelope(envelope) {
     state.lastEventId = envelope.id || state.lastEventId;
@@ -202,9 +307,12 @@ input:focus, textarea:focus { border-color:var(--accent); }
       if (type === 'permission_request') showPermissionCard(payload.event.request);
       if (type === 'ask_user_request') showAskUserCard(payload.event.request);
       if (type === 'permission_resolved') removeCard('perm-' + payload.event.requestId);
+      if (type === 'ask_user_resolved') removeCard('ask-' + payload.event.requestId);
       if (type === 'goal_updated') return;
+      touchActivity();
     }
     if (payload.kind === 'agent_event') {
+      touchActivity();
       var e = payload.event;
       if (e.type === 'text_delta' || e.type === 'text_complete') appendStreamingText(e.text);
       if (e.type === 'tool_start') appendMessage('tool', '⚙ ' + (e.displayName || e.toolName));
@@ -237,6 +345,14 @@ input:focus, textarea:focus { border-color:var(--accent); }
     div.querySelector('.bubble').textContent = content;
     $('messages').appendChild(div);
     $('messages').scrollTop = $('messages').scrollHeight;
+  }
+
+  // ---- 待确认徽标 ----
+  function refreshPendingBadge() {
+    api('GET', '/api/pending').then(function (res) { return res.json(); }).then(function (data) {
+      var n = data.permissions.length + data.askUsers.length;
+      $('pending-badge').innerHTML = n ? '<span class="badge">' + n + ' 待确认</span>' : '';
+    }).catch(function () { /* 静默 */ });
   }
 
   // ---- 权限 / AskUser 卡片 ----
@@ -272,9 +388,9 @@ input:focus, textarea:focus { border-color:var(--accent); }
     var div = document.createElement('div');
     div.className = 'req-card';
     div.id = 'ask-' + req.requestId;
-    var html = '<h3>❓ ' + escapeHtml((req.toolInput && req.toolInput.questions && req.toolInput.questions[0] && req.toolInput.questions[0].question) || 'Agent 需要你的回答') + '</h3>';
     var questions = (req.toolInput && req.toolInput.questions) || [];
     var firstQ = questions[0] || {};
+    var html = '<h3>❓ ' + escapeHtml(firstQ.question || 'Agent 需要你的回答') + '</h3>';
     (firstQ.options || []).forEach(function (opt) {
       html += '<button class="opt-btn" data-label="' + escapeHtml(opt.label || '') + '">' + escapeHtml(opt.label || '') + (opt.description ? '<br><span style="color:var(--muted);font-size:12px">' + escapeHtml(opt.description) + '</span>' : '') + '</button>';
     });
@@ -301,7 +417,7 @@ input:focus, textarea:focus { border-color:var(--accent); }
     refreshPendingBadge();
   }
 
-  // ---- 发送 / 停止 ----
+  // ---- 发送 / 停止 / 返回 ----
   $('send-btn').onclick = function () {
     var text = $('chat-input').value.trim();
     if (!text || !state.currentSession) return;
@@ -316,7 +432,7 @@ input:focus, textarea:focus { border-color:var(--accent); }
     if (!state.currentSession) return;
     api('POST', '/api/sessions/' + encodeURIComponent(state.currentSession) + '/stop', {}).then(loadSessions).catch(function () {});
   };
-  $('back-btn').onclick = function () { closeStream(); loadSessions(); };
+  $('back-btn').onclick = function () { closeStream(); state.currentSession = null; loadSessions(); };
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -325,7 +441,7 @@ input:focus, textarea:focus { border-color:var(--accent); }
   }
 
   // ---- 启动 ----
-  if (state.token) { loadSessions(); } else { show('pair'); }
+  if (state.token) { loadWorkspaces().then(loadSessions); } else { show('pair'); }
   setInterval(refreshPendingBadge, 30000);
 })();
 </script>

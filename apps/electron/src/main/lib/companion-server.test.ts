@@ -37,6 +37,7 @@ function makeFakeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDe
     issueToken: async () => ({ token: 'fake'.repeat(16) }),
     verifyToken: (t: string | undefined | null) => t === 'good-token',
     listSessions: () => [],
+    listWorkspaces: () => [],
     getMessages: () => null,
     getPendingPermissions: () => [],
     getPendingAskUsers: () => [],

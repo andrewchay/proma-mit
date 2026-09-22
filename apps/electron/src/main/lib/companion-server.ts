@@ -110,23 +110,30 @@ function readJsonBody(req: IncomingMessage): Promise<CompanionApiBody | undefine
 
 /** 装配真实主进程服务（动态 import，仅在未注入 deps 时调用） */
 async function buildRealDeps(): Promise<CompanionApiDeps> {
-  const [{ runAgentHeadless, stopAgent, isAgentSessionActive, agentEventBus }, { permissionService }, { askUserService }, { listAgentSessions, getAgentSessionMessages }, { verifyPairingCode, issueToken, verifyToken }, { appendCompanionAudit }] = await Promise.all([
+  const [{ runAgentHeadless, stopAgent, isAgentSessionActive, agentEventBus }, { permissionService }, { askUserService }, { listAgentSessions, getAgentSessionSDKMessages }, { listAgentWorkspacesByUpdatedAt }, { verifyPairingCode, issueToken, verifyToken }, { appendCompanionAudit }, { extractCompanionHistory }] = await Promise.all([
     import('./agent-service'),
     import('./agent-permission-service'),
     import('./agent-ask-user-service'),
     import('./agent-session-manager'),
+    import('./agent-workspace-manager'),
     import('./companion-auth'),
     import('./companion-audit-service'),
+    import('./companion-history'),
   ])
 
   return {
     verifyPairingCode,
     issueToken,
     verifyToken,
-    listSessions: () => listAgentSessions(),
+    listSessions: () =>
+      // 附带运行状态，供手机端会话列表显示“运行中”脉动指示
+      listAgentSessions().map((s) => ({ ...s, running: isAgentSessionActive(s.id) })),
+    listWorkspaces: () =>
+      listAgentWorkspacesByUpdatedAt().map((w) => ({ id: w.id, name: w.name })),
     getMessages: (id) => {
       if (!listAgentSessions().some((s) => s.id === id)) return null
-      return getAgentSessionMessages(id)
+      // 与桌面端同源：历史渲染自 SDK 消息，手机端做轻量文本提取
+      return extractCompanionHistory(getAgentSessionSDKMessages(id))
     },
     getPendingPermissions: () => permissionService.getPendingRequests(),
     getPendingAskUsers: () => askUserService.getPendingRequests(),
