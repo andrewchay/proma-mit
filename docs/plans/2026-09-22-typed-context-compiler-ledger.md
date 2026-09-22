@@ -13,7 +13,7 @@
 | M0 | 契约与观测基线 | 定义类型、事件 ledger、token/cache/retry 基线，不改执行行为 | 无 | 已完成 | shared tests、ledger/metrics/flag/replay tests、`bun run test` 427 文件通过 |
 | M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
 | M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 已完成 | feature-gated projection、只读隔离、typed result 与私有 artifact 回溯已完成 |
-| M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 已完成（未通过推广门禁） | GLM-5.3-Flash 完成 10-case/3-run/90 次真实三组运行；TCC 未达到 20% token 或稳定性改善门槛，保持 default-off |
+| M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 已完成（冻结门禁通过，仅获 opt-in 试点资格） | 首轮 synthetic 短样本未通过（input −14.3%）；代表性长上下文真实 spawn 评测 90 次后 input −84.4%、success 0.80 == baseline、evidence 0.96，门禁通过；但 output +109.8%、时长 ×2.7、协议失败率 30%，默认仍关闭 |
 | M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 待开始 | schema token、权限和工具选择回归 |
 | M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 待开始 | compact boundary、重建和失败不伪造测试 |
 | M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 待开始 | 路由 reason、privacy allowlist、未知 cache 按 miss |
@@ -62,7 +62,7 @@
 | M3-02 | 三组对照 harness | full context / 普通 brief / TCC projection | M3-01 | provider/model/version 固定且可记录 | `tcc-experiment.ts`、`tcc-experiment-runner.ts` | 已完成 |
 | M3-03 | 质量评分 | success、evidence coverage、false omission/inclusion、human correction | M3-02 | scoreboard 权威保存；不把 skip 记为 pass | `tcc-experiment.ts`、`tcc-m3-glm-scoreboard.json`（私有） | 已完成 |
 | M3-04 | 成本与稳定性评分 | token、cache、duration、retry、failure | M0-04、M3-02 | provider cache unknown 按 miss；价格来源可追踪 | `tcc-experiment.ts`、`tcc-m3-glm-scoreboard.json`（私有） | 已完成 |
-| M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | workspace-private scoreboard | 已完成（未通过）：TCC 29/30 成功、100% evidence；但 input token 仅降 14.3%，duration 高于 baseline |
+| M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | workspace-private scoreboard | 已完成（代表性评测通过）：TCC 24/30 成功（= baseline 0.80）、evidence 96%、input −84.4%、私密项 0 泄漏；代价为 output +109.8%、时长 ×2.7 |
 
 ### M4：两层工具能力目录
 
@@ -274,7 +274,8 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 测试命令：`bun run typecheck`；`bun run test`；`bun run --filter '@gravitas/electron' build:tcc-eval`。
 - 测试结果：全量隔离测试 446 文件 / 0 失败；typecheck 通过；在真实 Electron 运行时验证了 preflight 与授权护栏（未通过时在发起任何模型调用前退出）。
 - 真实调用消耗：修正前临时脚本 90 次（第一次授权，已消耗）；修正后首次尝试 19 次（因上述工具缺陷作废）；诊断探针 9 次。合计在第二次授权内已用 28/90。
-- 结论：TCC 仍为 default-off。修正后的探针证明三组 variant 都能产出可解析的 typed-v1 结果（full 输入 8717 / TCC 输入 1358 tokens），但完整 10×3×3 矩阵尚未用修正后的路径跑完，因此不构成推广依据。
+- 结论：首轮 M3 因 synthetic 短样本不推广的结论已被 M3-07 取代。代表性评测（真正走生产 spawn 边界）中冻结门禁输出 `passed: true`（无 reason），因此 TCC 获得 **opt-in 试点资格，默认仍关闭**。代价与边界：output token +109.8%、时长 ×2.7、整体协议失败率 30%（full 基线自身也有 20%）、评测因 `disableTools` 不覆盖带读工具的子 Agent 端到端行为。详见 `docs/plans/2026-09-22-typed-context-compiler-m3-representative-decision.md`。
+- 下一步：若要进一步推进，优先降低 typed-v1 协议失败率并按 input/output 真实单价重算净成本；在此之前不启动默认开启、自动路由或自动 compaction adoption。
 - 回滚方式：删除 `tcc-spawn-eval-harness.ts`、`tcc-spawn-real-delegate.ts`、`scripts/run-tcc-spawn-eval.ts` 及其测试，并移除 `disableTools` 选项，即可恢复 M3-05 状态。
 - 下一步：用修正后的路径重跑完整矩阵（需新的调用授权），再据实记录 fail-closed 结论。
 
@@ -290,5 +291,6 @@ M0 → M1 → M2 → M3 ─┬→ M4
 
 ## 8. 当前下一步
 
-1. 用修正后的真实评测路径重跑完整 10×3×3 矩阵；在此之前 TCC 保持 default-off。
-2. 完成 M2 集成验收：验证显式 feature flag、投影、只读隔离、typed result 与 artifact 回溯链路。
+1. M3 门禁已通过（代表性评测）：TCC 仅获 opt-in 试点资格，默认仍关闭。
+2. 若继续推进：先降低 typed-v1 协议失败率（当前 30%），并按 input/output 真实单价重算净成本；不得据此直接默认开启。
+3. 完成 M2 集成验收：验证显式 feature flag、投影、只读隔离、typed result 与 artifact 回溯链路。
