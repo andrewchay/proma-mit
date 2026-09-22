@@ -38,6 +38,10 @@ export interface RunTccExperimentOptions {
   implementationVersion: string
   runsPerCase: number
   delegate: TccExperimentDelegate
+  /** 每次运行后回调，便于真实评测逐次落盘并在中断后续跑。 */
+  onRun?: (run: TccExperimentRun) => void
+  /** 已完成运行的 key（`case:variant:run`），命中则跳过，避免重复付费。 */
+  alreadyCompleted?: ReadonlySet<string>
   now?: () => number
 }
 
@@ -48,9 +52,14 @@ export interface RunTccExperimentOptions {
 export async function runTccExperiment(options: RunTccExperimentOptions): Promise<TccExperimentScoreboard> {
   const runs: TccExperimentRun[] = []
   const now = options.now ?? Date.now
+  const record = (run: TccExperimentRun): void => {
+    runs.push(run)
+    options.onRun?.(run)
+  }
   for (const testCase of options.fixture.cases) {
     for (const variant of ['full_context', 'brief', 'tcc_projection'] as const) {
       for (let run = 1; run <= options.runsPerCase; run++) {
+        if (options.alreadyCompleted?.has(`${testCase.id}:${variant}:${run}`)) continue
         const startedAt = now()
         try {
           const prepared = prepareTccExperimentPrompt(testCase, variant)
@@ -63,7 +72,7 @@ export async function runTccExperiment(options: RunTccExperimentOptions): Promis
           const parsed = parseSubtaskResult(result.text, `${testCase.id}:${variant}:${run}`)
           const claims = parsed.result.claims
           const verifiedClaims = claims.filter((claim) => claim.verified && claim.evidence.length > 0).length
-          runs.push({
+          record({
             caseId: testCase.id,
             variant,
             run,
@@ -81,7 +90,7 @@ export async function runTccExperiment(options: RunTccExperimentOptions): Promis
             totalClaims: claims.length,
           })
         } catch {
-          runs.push({
+          record({
             caseId: testCase.id,
             variant,
             run,

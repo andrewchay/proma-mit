@@ -61,33 +61,36 @@ export async function runTccSpawnEvaluation(
   const preflight = checkTccEvalPreflight(raw.cases)
   if (!preflight.ready) throw new Error(`TCC evaluation preflight failed: ${preflight.reasons.join('; ')}`)
 
+  const recorded = readScoreboard(plan.scoreboardPath)
+  const completed = new Set((recorded?.runs ?? []).map(runKey))
   const planned = fixture.cases.length * 3 * plan.runsPerCase
   if (plan.authorizedCalls < planned) {
     throw new Error(`Authorized calls (${plan.authorizedCalls}) are fewer than the planned matrix (${planned})`)
   }
-
-  const recorded = readScoreboard(plan.scoreboardPath)
-  const remaining = fixture.cases.length * 3 * plan.runsPerCase - (recorded?.runs.length ?? 0)
-  if (remaining <= 0 && recorded) {
-    return { planned, alreadyRecorded: recorded.runs.length, executed: 0, scoreboard: recorded, gate: evaluateTccExperimentGate(recorded) }
+  if (completed.size >= planned && recorded) {
+    return { planned, alreadyRecorded: completed.size, executed: 0, scoreboard: recorded, gate: evaluateTccExperimentGate(recorded) }
   }
 
   mkdirSync(plan.isolationDir, { recursive: true })
   const delegate = buildTccExperimentDelegate(channel, isolation)
+  const accumulated = [...(recorded?.runs ?? [])]
   const scoreboard = await runTccExperiment({
     fixture,
     provider: plan.provider,
     modelId: plan.modelId,
     implementationVersion: plan.implementationVersion,
     runsPerCase: plan.runsPerCase,
-    delegate: async (input) => {
-      const result = await delegate(input)
-      return result
+    alreadyCompleted: completed,
+    // 逐次落盘：90 次调用耗时较长，中断后必须能续跑而不能重烧额度。
+    onRun: (run) => {
+      accumulated.push(run)
+      writeFileSync(plan.scoreboardPath, `${JSON.stringify({ version: 1, benchmarkId: 'typed-context-compiler', cases: fixture.cases, runs: accumulated }, null, 2)}\n`)
     },
+    delegate,
   })
   const merged = mergeRuns(recorded, scoreboard)
   writeFileSync(plan.scoreboardPath, `${JSON.stringify(merged, null, 2)}\n`)
-  return { planned, alreadyRecorded: recorded?.runs.length ?? 0, executed: plan.runsPerCase * fixture.cases.length * 3, scoreboard: merged, gate: evaluateTccExperimentGate(merged) }
+  return { planned, alreadyRecorded: completed.size, executed: merged.runs.length - completed.size, scoreboard: merged, gate: evaluateTccExperimentGate(merged) }
 }
 
 function readScoreboard(path: string): TccExperimentScoreboard | undefined {

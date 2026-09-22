@@ -25,6 +25,17 @@ describe('TCC experiment runner', () => {
     expect(prepareTccExperimentPrompt(fixture.cases[0]!, 'tcc_projection').selectedItemIds).toEqual(['fact'])
   })
 
+  test('skips already completed runs so a resumed evaluation never pays twice', async () => {
+    const calls: string[] = []
+    const alreadyCompleted = new Set(['CASE-001:full_context:1', 'CASE-001:brief:1'])
+    const result = await runTccExperiment({ fixture, provider: 'zhipu', modelId: 'glm-5.3-flash', implementationVersion: 'test', runsPerCase: 1, alreadyCompleted,
+      delegate: async ({ variant }) => { calls.push(variant); return { text: valid, inputTokens: 10, outputTokens: 4 } },
+    })
+
+    expect(calls).toEqual(['tcc_projection'])
+    expect(result.runs.map((run) => `${run.caseId}:${run.variant}:${run.run}`)).toEqual(['CASE-001:tcc_projection:1'])
+  })
+
   test('records protocol failures fail-closed and preserves runtime metrics', async () => {
     let tick = 0
     const result = await runTccExperiment({ fixture, provider: 'zhipu', modelId: 'glm-5.3-flash', implementationVersion: 'test', runsPerCase: 1,
