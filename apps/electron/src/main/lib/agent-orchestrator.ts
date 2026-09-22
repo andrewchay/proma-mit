@@ -81,12 +81,10 @@ import { isTypeSafeSkillShadowAvailable, judgeSkillRoute } from './typesafe-judg
 import { createContextLedgerObserver, type ContextLedgerObserver } from './agent-runtime/context/context-observer'
 import type { ContextCompilerMetricEvent } from './agent-runtime/context/context-metrics'
 import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-feature-flag'
-import { prepareSubAgentProjection } from './agent-runtime/context/subagent-projection-adapter'
 import { resolveSubAgentContextOptions } from './agent-runtime/context/subagent-context-options'
-import { resolveSubAgentWorkspace } from './agent-runtime/context/subagent-readonly-workspace'
-import { formatSubtaskResultForParent, parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './agent-runtime/context/subtask-result-parser'
+import { formatSubtaskResultForParent, parseSubtaskResult } from './agent-runtime/context/subtask-result-parser'
 import { SubtaskArtifactStore, toStoredSubtaskArtifact } from './agent-runtime/context/subtask-artifact-store'
-import { applyBuiltinSubAgentContextPolicy } from './agent-runtime/context/builtin-subagent-context-policy'
+import { buildSubAgentSpawnPlan } from './agent-runtime/context/subagent-spawn-plan'
 
 // ===== 插件能力引导收集 =====
 
@@ -1221,39 +1219,25 @@ export class AgentOrchestrator {
           sessionEnabled: parent?.typedContextCompiler,
         })
       : false
-    const subAgent = applyBuiltinSubAgentContextPolicy({ subAgent: input, enabled: typedContextEnabled })
-    const filesHint = subAgent.files?.length
-      ? `\n\n重点关注以下文件：\n${subAgent.files.map((f) => `- ${f}`).join('\n')}`
-      : ''
-    const preparedProjection = prepareSubAgentProjection({
+    const spawnPlan = buildSubAgentSpawnPlan({
       parentSessionId,
+      parentCwd: ctx.cwd,
+      parentPermissionMode: ctx.permissionMode,
+      typedContextEnabled,
       workspaceDirectory: workspace ? getAgentWorkspacePath(workspace.slug) : undefined,
-      enabled: typedContextEnabled,
-      subAgent,
+      childWorkspaceDirectory: workspace ? getAgentSessionWorkspacePath(workspace.slug, childSessionId) : ctx.cwd,
+      subAgent: input,
     })
-    if (preparedProjection.fallbackReason) {
+    const subAgent = spawnPlan.subAgent
+    if (spawnPlan.projectionFallbackReason) {
       logInfo(
         '[Typed Context Compiler] 子任务 projection 已回退 baseline',
-        `parent=${parentSessionId} agent=${subAgent.agentName} reason=${preparedProjection.fallbackReason}`,
+        `parent=${parentSessionId} agent=${subAgent.agentName} reason=${spawnPlan.projectionFallbackReason}`,
       )
     }
+    const prompt = spawnPlan.prompt
+    const childCwd = spawnPlan.childCwd
     const contextOptions = resolveSubAgentContextOptions(subAgent.context)
-    // 只有成功投影后才切入只读边界。投影故障保持原有 cwd/权限，确保 M2-02 的 baseline
-    // fallback 不会因半完成的隔离导致子任务行为变化。
-    const readOnly = preparedProjection.projection !== undefined && contextOptions.readOnly
-    const childWorkspaceDir = workspace
-      ? getAgentSessionWorkspacePath(workspace.slug, childSessionId)
-      : ctx.cwd
-    const childCwd = resolveSubAgentWorkspace({
-      readOnly,
-      parentWorkspaceDir: ctx.cwd,
-      explicitWorkspaceDir: subAgent.workspaceDir,
-      childWorkspaceDir,
-    })
-    const resultProtocolSuffix = preparedProjection.projection && contextOptions.resultProtocol === 'typed-v1'
-      ? `\n\n${TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT}`
-      : ''
-    const prompt = `${subAgent.task}${filesHint}${preparedProjection.promptSuffix ? `\n\n${preparedProjection.promptSuffix}` : ''}${resultProtocolSuffix}`
     const systemPrompt = def.prompt
       ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
       : undefined
@@ -1281,7 +1265,7 @@ export class AgentOrchestrator {
         // Runtime 无法承载交互时应拒绝，而不是静默提升为 bypassPermissions。
         // 只读子代理强制 safe：Runtime 层会拒绝 Bash、Write、Edit、MCP 写入等副作用工具。
         // 这不能被父会话的 bypassPermissions 覆盖。
-        permissionMode: readOnly ? 'safe' : ctx.permissionMode,
+        permissionMode: spawnPlan.permissionMode,
         mcpServers: ctx.mcpServers,
         maxTurns: subAgent.maxTurns ?? 10,
         abortSignal: subAgent.abortSignal,
@@ -1301,8 +1285,8 @@ export class AgentOrchestrator {
     }
 
     const response = assistantTexts.join('\n\n') || '子代理已完成任务，但未返回文本结果'
-    const projection = preparedProjection.projection
-    const typedResult = projection && contextOptions.resultProtocol === 'typed-v1'
+    const projection = spawnPlan.projection
+    const typedResult = spawnPlan.typedResultEnabled
       ? parseSubtaskResult(response, `${parentSessionId}:${childSessionId}`)
       : undefined
     if (typedResult && workspace && projection) {

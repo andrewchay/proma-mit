@@ -53,6 +53,7 @@
 | M2-05 | Child artifact 持久化 | typed result、原始 session、projection 元数据关联 | M0-02、M2-04 | 可从 result 追溯 child session 和 source items | `subtask-artifact-store.test.ts` | 已完成 |
 | M2-06 | 内置 Agent 试点 | explorer → researcher → code-reviewer 分批接入 | M2-02、M2-04 | 每个 Agent 有明确 requiredKinds 与 result schema | `builtin-subagent-context-policy.test.ts` | 已完成 |
 | M2-07 | 父 Agent 消费 typed result | 不自动拼接 child transcript；消费 summary/claims/artifacts | M2-05 | 父 Agent 可引用 evidence；失败状态不伪装完成 | `subtask-result-parser.test.ts` | 已完成 |
+| M2-08 | spawn 决策链集成验收 | flag → 内置 policy → projection → 只读隔离 → typed handoff → 私有产物 | M2-01…M2-07 | 真实 ledger/projector/parser/artifact store 贯通；flag 默认关闭；fail-closed 回退不半隔离 | `subagent-spawn-plan.ts`、`tcc-m2-integration.test.ts` | 已完成 |
 
 ### M3：评测与对照实验
 
@@ -63,6 +64,7 @@
 | M3-03 | 质量评分 | success、evidence coverage、false omission/inclusion、human correction | M3-02 | scoreboard 权威保存；不把 skip 记为 pass | `tcc-experiment.ts`、`tcc-m3-glm-scoreboard.json`（私有） | 已完成 |
 | M3-04 | 成本与稳定性评分 | token、cache、duration、retry、failure | M0-04、M3-02 | provider cache unknown 按 miss；价格来源可追踪 | `tcc-experiment.ts`、`tcc-m3-glm-scoreboard.json`（私有） | 已完成 |
 | M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | workspace-private scoreboard | 已完成（代表性评测通过）：TCC 24/30 成功（= baseline 0.80）、evidence 96%、input −84.4%、私密项 0 泄漏；代价为 output +109.8%、时长 ×2.7 |
+| M3-06 | 实验关闭决定 | 停止继续实验，TCC 永久保持关闭 | M3-05 | 不再发起真实 provider 调用；默认路径无 TCC | 本文件「M3-07 关闭决定」 | 已完成（用户决定） |
 
 ### M4：两层工具能力目录
 
@@ -279,6 +281,14 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：删除 `tcc-spawn-eval-harness.ts`、`tcc-spawn-real-delegate.ts`、`scripts/run-tcc-spawn-eval.ts` 及其测试，并移除 `disableTools` 选项，即可恢复 M3-05 状态。
 - 下一步：用修正后的路径重跑完整矩阵（需新的调用授权），再据实记录 fail-closed 结论。
 
+### M3-07 关闭决定（2026-09-22）
+- 状态：已完成，由用户决定。
+- 决定：**TCC 关闭，不再做实验。** 不再为 TCC 发起任何真实 provider 调用；不再新增评测样本、探针或对照运行。
+- 代码状态：默认路径已无 TCC。feature flag 默认 false（`sessionEnabled ?? workspaceEnabled ?? false`），内置 Agent 仅在 flag 开启时才获得 projection，非试点 Agent 永远保持 plain-text baseline。M2-08 验收测试已固定这些事实，防止后续改动静默打开。
+- 保留内容：M0–M2 的账本、投影、只读隔离、typed handoff 与私有产物均在位且已被集成验收覆盖，可在未来需要时重新评估；M3 的评测基础设施（fixture、harness、gate）同样保留，但不再运行。
+- 不再推进：M4 两层工具能力目录、M5 可逆 compaction、M6 成本感知路由不以 TCC 为前提继续；其原依赖 M3-05 的约束随本决定解除，但需另行决定是否开展。
+- 依据：代表性评测虽通过冻结门禁，但代价为 output token +109.8%、时长 ×2.7、整体协议失败率 30%，投入产出不值得继续投入工程时间。
+
 ### M2-07（2026-09-22）
 - 状态：已完成。
 - 实际变更：typed-v1 spawn 将原始 child response 解析为 `SubtaskResult` 后，父 Agent 只接收格式化的状态、summary、claims（含 evidence）、artifacts、unverified 与 recommended next steps；raw child transcript 仅保留在 M2-05 的工作区私有 artifact，不再自动注入父 Agent。plain-text 调用仍返回原始文本。
@@ -291,6 +301,6 @@ M0 → M1 → M2 → M3 ─┬→ M4
 
 ## 8. 当前下一步
 
-1. M3 门禁已通过（代表性评测）：TCC 仅获 opt-in 试点资格，默认仍关闭。
-2. 若继续推进：先降低 typed-v1 协议失败率（当前 30%），并按 input/output 真实单价重算净成本；不得据此直接默认开启。
-3. 完成 M2 集成验收：验证显式 feature flag、投影、只读隔离、typed result 与 artifact 回溯链路。
+1. TCC 已关闭：不再运行实验，不再发起真实 provider 调用。后续改动不得静默开启 TCC（由 M2-08 验收测试守护）。
+2. M2 集成验收已完成（M2-08）：flag 优先级、投影、只读隔离、typed handoff 与私有产物回溯均由真实模块贯通。
+3. 若未来重新评估：先降低 typed-v1 协议失败率（当前 30%），并按 input/output 真实单价重算净成本。
