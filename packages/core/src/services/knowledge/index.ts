@@ -221,7 +221,7 @@ export function buildGraph(
   // 静默选第一个命中会把双链指到错误的笔记上，宁可少一条边也不能错连。
   const titleCandidates = new Map<string, Set<string>>()
   for (const note of notes) {
-    for (const key of [note.title, note.filePath.split('/').pop()?.replace(/\.md$/, '') || '']) {
+    for (const key of [note.title, note.filePath.split('/').pop()?.replace(/\.(md|html)$/i, '') || '']) {
       if (!key) continue
       if (!titleCandidates.has(key)) titleCandidates.set(key, new Set())
       titleCandidates.get(key)!.add(note.id)
@@ -635,3 +635,10 @@ export {
   MAX_CHUNK_CHARS,
 } from './chunking.ts'
 export type { DocumentChunk } from './chunking.ts'
+
+// ===== HTML 笔记（.html 文件索引与阅读）=====
+export {
+  parseHtmlNote,
+  htmlToText,
+} from './html-note.ts'
+export type { ParsedHtmlNote } from './html-note.ts'

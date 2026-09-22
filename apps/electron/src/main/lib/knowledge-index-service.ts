@@ -14,7 +14,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, relative, extname } from 'node:path'
 import { openContextStore, type ContextStoreHandle } from '@gravitas/context-store'
-import { chunkDocument } from '@gravitas/core/services/knowledge'
+import { chunkDocument, htmlToText, parseHtmlNote } from '@gravitas/core/services/knowledge'
 import { getConfigDir } from './config-paths'
 import { readCatalog } from './knowledge-catalog-service'
 
@@ -89,7 +89,7 @@ function contentHash(rawContent: string): string {
   return createHash('sha256').update(rawContent, 'utf-8').digest('hex')
 }
 
-const INDEXABLE_EXTENSIONS = new Set(['.md'])
+const INDEXABLE_EXTENSIONS = new Set(['.md', '.html'])
 const SKIPPED_DIRS = new Set(['.git', '.obsidian', 'node_modules', 'dist', '.trash', 'attachments', 'assets'])
 
 interface DiscoveredFile {
@@ -192,9 +192,14 @@ export async function indexSource(request: IndexSourceRequest): Promise<IndexRun
     }
 
     try {
-      const chunks = chunkDocument(rawContent)
-      const title = /^#\s+(.+)$/m.exec(rawContent)?.[1]?.trim()
-        ?? file.relativePath.replace(/\.md$/i, '').split('/').pop()
+      // HTML 文件先转纯文本再分块：对 Agent 注入与检索而言，标签噪音没有意义
+      const isHtml = extname(file.relativePath).toLowerCase() === '.html'
+      const indexableContent = isHtml ? htmlToText(rawContent) : rawContent
+      const chunks = chunkDocument(indexableContent)
+      const htmlTitle = isHtml ? parseHtmlNote(rawContent, '').title : undefined
+      const title = /^#\s+(.+)$/m.exec(indexableContent)?.[1]?.trim()
+        ?? (htmlTitle ? htmlTitle : undefined)
+        ?? file.relativePath.replace(/\.(md|html)$/i, '').split('/').pop()
         ?? file.relativePath
 
       // 一个文件被多个知识库共享时，为每个成员库各写一份文档记录，

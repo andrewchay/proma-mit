@@ -218,3 +218,34 @@ describe('来源撤销', () => {
     store.close()
   })
 })
+
+describe('HTML 文件索引', () => {
+  test('Given vault 含 .html 文件 When 索引 Then 按纯文本分块、标题取 <title>、可检索', async () => {
+    writeFileSync(
+      join(vaultDir, 'report.html'),
+      '<!DOCTYPE html><html><head><title>季度报告</title><style>body{color:red}</style></head>' +
+        '<body><h1>季度报告</h1><p>北极星指标环比增长。</p><script>alert(1)</script></body></html>',
+      'utf-8',
+    )
+    const { knowledgeBaseId } = await setupKnowledgeBase()
+    const index = await loadIndex()
+    const catalog = await loadCatalog()
+    const run = await index.indexSource({ sourceType: 'vault', sourceId: catalog.listSources()[0]!.id })
+
+    expect(run.ok).toBe(true)
+    if (!run.ok) return
+    expect(run.indexed).toBe(1)
+
+    const store = await index.openKnowledgeIndexStore()
+    const hits = store.knowledge.search('北极星指标', { allowedKnowledgeBaseIds: [knowledgeBaseId] })
+    expect(hits.hits.length).toBeGreaterThan(0)
+    expect(hits.hits[0]!.relativePath).toBe('report.html')
+    expect(hits.hits[0]!.title).toBe('季度报告')
+    // 分块内容应是纯文本：脚本与标签噪音不进入索引
+    const doc = store.knowledge.listDocumentsBySource(catalog.listSources()[0]!.id)
+    const chunks = store.knowledge.listChunks(doc[0]!.id)
+    expect(chunks.length).toBeGreaterThan(0)
+    expect(chunks.every((c: { content: string }) => !c.content.includes('<script') && !c.content.includes('color:red'))).toBe(true)
+    store.close()
+  })
+})

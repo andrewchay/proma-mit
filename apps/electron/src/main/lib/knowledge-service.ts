@@ -32,6 +32,7 @@ import {
 } from './config-paths'
 import {
   parseNote,
+  parseHtmlNote,
   buildGraph,
   searchNotes,
   calculateSimilarity,
@@ -180,7 +181,13 @@ export function deleteKnowledgeVault(id: string): boolean {
   return true
 }
 
-// ===== Markdown 文件扫描 =====
+// ===== 笔记文件扫描（Markdown + HTML）=====
+
+const INDEXABLE_NOTE_EXTENSIONS = new Set(['.md', '.html'])
+
+function isIndexableNoteFile(name: string): boolean {
+  return INDEXABLE_NOTE_EXTENSIONS.has(extname(name).toLowerCase())
+}
 
 function scanMarkdownFiles(dir: string): string[] {
   const files: string[] = []
@@ -200,7 +207,7 @@ function scanMarkdownFiles(dir: string): string[] {
             continue
           }
           scan(fullPath)
-        } else if (entry.isFile() && extname(entry.name).toLowerCase() === '.md') {
+        } else if (entry.isFile() && isIndexableNoteFile(entry.name)) {
           files.push(fullPath)
         }
       }
@@ -233,13 +240,28 @@ export async function indexKnowledgeVault(
   // 扫描所有 Markdown 文件
   const mdFiles = scanMarkdownFiles(vault.path)
 
-  // 解析每个文件
+  // 解析每个文件（Markdown 与 HTML 统一为 KnowledgeNote；HTML 的正文文本用于搜索，原文用于渲染）
   const newNotes: KnowledgeNote[] = []
   for (const filePath of mdFiles) {
     try {
       const rawContent = readFileSync(filePath, 'utf-8')
-      const fileName = basename(filePath, '.md')
-      const parsed = parseNote(rawContent, fileName)
+      const isHtml = extname(filePath).toLowerCase() === '.html'
+      const fileName = basename(filePath, extname(filePath))
+      const parsed = isHtml
+        ? (() => {
+            const html = parseHtmlNote(rawContent, fileName)
+            // content 承载纯文本（搜索/Agent 上下文），rawContent 保留原文（渲染层净化后展示）
+            return {
+              frontmatter: {} as Record<string, unknown>,
+              content: html.text,
+              rawContent: html.bodyHtml,
+              title: html.title,
+              tags: html.tags,
+              links: html.links,
+              wordCount: html.wordCount,
+            }
+          })()
+        : parseNote(rawContent, fileName)
 
       const relativePath = relative(vault.path, filePath)
 
@@ -274,15 +296,18 @@ export async function indexKnowledgeVault(
       newNotes.push(note)
     } catch (err) {
       errors.push(`解析失败: ${relative(vault.path, filePath)}`)
-      console.error(`[Knowledge] 解析 Markdown 失败: ${filePath}`, err)
+      console.error(`[Knowledge] 解析笔记失败: ${filePath}`, err)
     }
   }
 
-  // 计算 backlinks
+  // 计算 backlinks（文件名匹配需同时兼容 .md 与 .html 扩展名）
+  const noteBaseName = (filePath: string): string =>
+    basename(filePath).replace(/\.(md|html)$/i, '')
+
   const titleToId: Record<string, string> = {}
   for (const note of newNotes) {
     titleToId[note.title] = note.id
-    const fileName = basename(note.filePath, '.md')
+    const fileName = noteBaseName(note.filePath)
     if (!titleToId[fileName]) {
       titleToId[fileName] = note.id
     }
@@ -293,7 +318,7 @@ export async function indexKnowledgeVault(
     for (const other of newNotes) {
       if (other.id === note.id) continue
       for (const link of other.links) {
-        if (link === note.title || link === basename(note.filePath, '.md')) {
+        if (link === note.title || link === noteBaseName(note.filePath)) {
           if (!backlinks.includes(other.id)) {
             backlinks.push(other.id)
           }

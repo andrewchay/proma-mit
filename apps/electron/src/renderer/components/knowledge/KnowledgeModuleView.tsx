@@ -11,6 +11,7 @@ import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   BookOpen,
+  FileCode2,
   FileText,
   FolderPlus,
   FilePlus,
@@ -33,7 +34,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { NoteEditor, EditToggle } from './NoteEditor'
-import { MarkdownRichEditor } from '@/components/diff/MarkdownRichEditor'
+import { NoteMarkdownView } from './NoteMarkdownView'
 import {
   knowledgeVaultsAtom,
   selectedVaultIdAtom,
@@ -462,7 +463,11 @@ export function KnowledgeModuleView(): React.ReactElement {
                     }`}
                   >
                     <div className="flex items-center gap-1.5">
-                      <FileText size={12} className="text-foreground/35 flex-shrink-0" />
+                      {note.filePath.toLowerCase().endsWith('.html') ? (
+                        <FileCode2 size={12} className="text-foreground/35 flex-shrink-0" />
+                      ) : (
+                        <FileText size={12} className="text-foreground/35 flex-shrink-0" />
+                      )}
                       <span className="text-[13px] text-foreground/85 truncate">{note.title}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-[11px] text-foreground/40">
@@ -515,6 +520,7 @@ export function KnowledgeModuleView(): React.ReactElement {
               <NoteDetail
                 note={activeNote}
                 canEdit={canEdit}
+                notes={visibleNotes}
                 onEdit={() => setEditing(true)}
                 onOpenLinked={(title) => {
                   // wikilink 导航：按标题在已索引笔记中查找
@@ -646,7 +652,7 @@ export function KnowledgeModuleView(): React.ReactElement {
               </div>
             </div>
             <p className="text-[11px] text-foreground/45 leading-relaxed">
-              索引只读取该目录下的 Markdown 文件，不会修改或移动你的原始文件。
+              索引只读取该目录下的 Markdown 与 HTML 文件，不会修改或移动你的原始文件。
             </p>
           </div>
           <DialogFooter>
@@ -716,14 +722,20 @@ function NoteDetail({
   onEdit,
   onOpenLinked,
   onClose,
+  notes,
 }: {
   note: import('@gravitas/shared').KnowledgeNote
   canEdit: boolean
   onEdit: () => void
   onOpenLinked: (title: string) => void
   onClose: () => void
+  /** 当前范围内笔记（把反链 id 解析回标题与可点击跳转） */
+  notes: import('@gravitas/shared').KnowledgeNote[]
 }): React.ReactElement {
   const frontmatterEntries = Object.entries(note.frontmatter ?? {})
+  // HTML 笔记的编辑回写会把 Markdown 写进 .html 文件，编辑入口仅对 Markdown 开放
+  const isHtml = note.filePath.toLowerCase().endsWith('.html')
+  const noteById = React.useMemo(() => new Map(notes.map((n) => [n.id, n])), [notes])
 
   return (
     <div className="flex flex-col h-full">
@@ -736,7 +748,7 @@ function NoteDetail({
             <span>更新于 {relativeTime(note.updatedAt)}</span>
           </div>
         </div>
-        <EditToggle canEdit={canEdit} editing={false} onToggle={onEdit} />
+        <EditToggle canEdit={canEdit && !isHtml} editing={false} onToggle={onEdit} />
         <button
           onClick={onClose}
           className="p-1.5 rounded text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.05]"
@@ -777,16 +789,9 @@ function NoteDetail({
           </div>
         )}
 
-        {/* 正文：复用右侧预览面板的同一套 Markdown 渲染，保证两处展示一致 */}
+        {/* 正文：笔记专用的 Markdown/HTML 阅读渲染（双链可点击、HTML 净化渲染） */}
         <div className="flex-1 min-h-0">
-          <MarkdownRichEditor
-            value={note.content}
-            editing={false}
-            onChange={() => {}}
-            onSave={() => {}}
-            onCancel={() => {}}
-            onRequestEdit={canEdit ? onEdit : undefined}
-          />
+          <NoteMarkdownView note={note} onOpenLinked={onOpenLinked} />
         </div>
 
         {(note.links.length > 0 || note.backlinks.length > 0) && (
@@ -817,14 +822,31 @@ function NoteDetail({
                   反向链接（{note.backlinks.length}）
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {note.backlinks.map((link) => (
-                    <span
-                      key={link}
-                      className="px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-foreground/60"
-                    >
-                      {link}
-                    </span>
-                  ))}
+                  {note.backlinks.map((backlinkId) => {
+                    const source = noteById.get(backlinkId)
+                    if (!source) {
+                      // 范围外（如其他 Vault 过滤后不可见）的反链降级为不可点击文本
+                      return (
+                        <span
+                          key={backlinkId}
+                          className="px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-foreground/60"
+                          title="该笔记不在当前范围内"
+                        >
+                          {backlinkId}
+                        </span>
+                      )
+                    }
+                    return (
+                      <button
+                        key={backlinkId}
+                        onClick={() => onOpenLinked(source.title)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-foreground/70 hover:bg-foreground/[0.1] transition-colors"
+                      >
+                        <Link2 size={10} />
+                        {source.title}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             )}
