@@ -176,6 +176,8 @@ export const PROJECT_IPC_CHANNELS = {
   CREATE_PROJECT: 'project:create-project',
   UPDATE_PROJECT: 'project:update-project',
   DELETE_PROJECT: 'project:delete-project',
+  /** 项目列表手动拖拽排序：入参为按展示顺序排列的项目 id 数组 */
+  REORDER_PROJECTS: 'project:reorder-projects',
   // 任务 CRUD
   LIST_TASKS: 'project:list-tasks',
   GET_TASK: 'project:get-task',

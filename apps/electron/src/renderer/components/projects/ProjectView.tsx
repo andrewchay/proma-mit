@@ -7,6 +7,9 @@ import type { UserMappingInput } from '@gravitas/shared'
 
 import * as React from 'react'
 import { useState, useEffect, useCallback, useMemo } from "react"
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useAtomValue, useSetAtom, useStore } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
 import { activeViewAtom } from "@/atoms/active-view"
@@ -292,6 +295,8 @@ interface Project {
   status: 'planning' | 'active' | 'completed' | 'cancelled'
   createdAt: number
   updatedAt: number
+  /** 列表手动排序权重（主进程返回；旧客户端缺省为 -createdAt） */
+  sortOrder?: number
 }
 
 interface SubTask {
@@ -696,6 +701,30 @@ function ProjectList({
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
 
+  // 拖拽排序：5px 阈值以下仍算点击（与看板一致），避免卡片上的点击被拖拽吞掉
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  )
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = projects.findIndex((p) => p.id === active.id)
+    const newIndex = projects.findIndex((p) => p.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    const next = arrayMove(projects, oldIndex, newIndex)
+    // 乐观更新，失败回滚并提示（与看板拖拽同一交互约定）
+    onProjectsChange(next)
+    try {
+      const ok = await callProjectAPI<boolean>('reorderProjects', next.map((p) => p.id))
+      if (!ok) throw new Error('顺序与库内项目不一致')
+    } catch (err) {
+      console.error('项目排序失败:', err)
+      alert('项目排序失败: ' + (err instanceof Error ? err.message : String(err)))
+      onProjectsChange(projects)
+    }
+  }
+
   const handleCreate = async () => {
     if (!newTitle.trim()) return
     try {
@@ -779,17 +808,46 @@ function ProjectList({
           <p className="text-sm mt-2">点击上方「新建项目」开始</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              onClick={() => onSelectProject(project)}
-              onDelete={() => handleDelete(project.id)}
-            />
-          ))}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
+          <SortableContext items={projects.map((p) => p.id)} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {projects.map((project) => (
+                <SortableProjectCard
+                  key={project.id}
+                  project={project}
+                  onClick={() => onSelectProject(project)}
+                  onDelete={() => handleDelete(project.id)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
+    </div>
+  )
+}
+
+/** 可排序项目卡片：@dnd-kit 拖拽包装，拖拽中半透明，阈值内点击不受影响 */
+function SortableProjectCard({
+  project,
+  onClick,
+  onDelete,
+}: {
+  project: Project
+  onClick: () => void
+  onDelete: () => void
+}): React.ReactElement {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: project.id,
+  })
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  }
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <ProjectCard project={project} onClick={onClick} onDelete={onDelete} />
     </div>
   )
 }

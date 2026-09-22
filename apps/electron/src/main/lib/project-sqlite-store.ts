@@ -831,6 +831,14 @@ function migrate(database: SqliteCompat): void {
   }
   // listTasks/reorderTask 均按 (project_id, status) 过滤 + sort_order 排序，覆盖索引
   database.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_project_sort ON tasks(project_id, sort_order)`)
+
+  // 项目列表手动拖拽排序：sort_order 为 REAL，升序即展示顺序；
+  // 回填 -created_at 保持历史"最新在前"的默认顺序不变
+  const projectColumns = readColumnNames(database, 'projects')
+  if (!projectColumns.includes('sort_order')) {
+    database.exec(`ALTER TABLE projects ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
+    database.exec(`UPDATE projects SET sort_order = -created_at WHERE sort_order = 0`)
+  }
   // AI 员工执行 token 配额（可选，NULL = 不限）
   if (!columns.includes('token_budget')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN token_budget INTEGER`)
@@ -961,6 +969,8 @@ function seedTaskStatusesForProject(database: SqliteCompat, projectId: string): 
 type ProjectRow = {
   id: string; title: string; description: string; status: string;
   created_at: number; updated_at: number;
+  /** 项目卡片手动排序（REAL，升序即展示顺序；未排序时为 -created_at，最新在前） */
+  sort_order: number;
 }
 
 type TaskRow = {
@@ -1009,6 +1019,7 @@ function rowToProject(row: ProjectRow): Project {
     status: row.status as Project['status'],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    sortOrder: row.sort_order,
   }
 }
 
@@ -1079,7 +1090,7 @@ export function createProject(input: CreateProjectInput): Project {
 
 export function listProjects(): Project[] {
   const database = getProjectDb()
-  const rows = database.prepare(`SELECT * FROM projects ORDER BY created_at DESC`).all() as ProjectRow[]
+  const rows = database.prepare(`SELECT * FROM projects ORDER BY sort_order ASC, created_at DESC`).all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
@@ -1104,6 +1115,33 @@ export function updateProject(id: string, updates: Partial<Omit<Project, 'id' | 
     `UPDATE projects SET title = ?, description = ?, status = ?, updated_at = ? WHERE id = ?`
   ).run(next.title, next.description, next.status, next.updated_at, id)
   return rowToProject(next)
+}
+
+/**
+ * 项目列表手动排序：按调用方给出的 id 顺序整体重写 sort_order。
+ *
+ * 项目数量级远小于任务，不做中点法增量：整表事务内重写，任意两次拖拽之间
+ * 的并发更新只会丢失排序（不会损坏其他字段），可接受。
+ */
+export function reorderProjects(orderedIds: string[]): boolean {
+  const database = getProjectDb()
+  const existing = new Set(
+    (database.prepare(`SELECT id FROM projects`).all() as Array<{ id: string }>).map((r) => r.id),
+  )
+  // 入参必须与库内项目一一对应，否则视为过期顺序，整体拒绝
+  if (orderedIds.length !== existing.size || orderedIds.some((id) => !existing.has(id))) {
+    return false
+  }
+  // 排序不是内容更新，不动 updated_at（避免污染"最近更新"语义）
+  const tx = database.transaction(() => {
+    orderedIds.forEach((id, index) => {
+      // 间距留 1024，未来可做单条插入而无需重写全表；
+      // 注意：sql.js 测试驱动的 prepare 语句单次使用后自释放，每次循环重新 prepare
+      database.prepare(`UPDATE projects SET sort_order = ? WHERE id = ?`).run((index + 1) * 1024, id)
+    })
+  })
+  tx()
+  return true
 }
 
 export function deleteProject(id: string): boolean {

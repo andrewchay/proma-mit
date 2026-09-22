@@ -13,6 +13,8 @@ export interface Project {
   status: ProjectStatus
   createdAt: number
   updatedAt: number
+  /** 列表手动排序权重（REAL，升序在前；未手动排序时为 -createdAt） */
+  sortOrder: number
 }
 
 /**

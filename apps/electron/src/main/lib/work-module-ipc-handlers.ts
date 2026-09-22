@@ -70,6 +70,7 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  reorderProjects,
   listTasks,
   getTask,
   createTask,
@@ -415,6 +416,9 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.DELETE_PROJECT, async (_, id: string) => {
     return deleteProject(id)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_PROJECTS, async (_, orderedIds: string[]) => {
+    return reorderProjects(orderedIds)
   })
 
   // 任务 CRUD

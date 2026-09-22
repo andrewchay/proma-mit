@@ -1808,6 +1808,7 @@ export interface ElectronAPI {
       createProject: (input: unknown) => Promise<unknown>
       updateProject: (id: string, patch: unknown) => Promise<unknown | null>
       deleteProject: (id: string) => Promise<boolean>
+      reorderProjects: (orderedIds: string[]) => Promise<boolean>
       listTasks: (projectId: string, filter?: unknown) => Promise<unknown[]>
       getTask: (id: string) => Promise<unknown | null>
       createTask: (projectId: string, input: unknown) => Promise<unknown>
@@ -4257,6 +4258,7 @@ const electronAPI: ElectronAPI = {
       createProject: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_PROJECT, input),
       updateProject: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_PROJECT, id, patch),
       deleteProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_PROJECT, id),
+      reorderProjects: (orderedIds) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_PROJECTS, orderedIds),
       listTasks: (projectId, filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASKS, projectId, filter),
       getTask: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_TASK, id),
       createTask: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK, projectId, input),
