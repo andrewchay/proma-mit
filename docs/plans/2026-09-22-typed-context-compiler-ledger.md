@@ -14,7 +14,7 @@
 | M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
 | M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 已完成 | feature-gated projection、只读隔离、typed result 与私有 artifact 回溯已完成 |
 | M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 已完成（冻结门禁通过，仅获 opt-in 试点资格） | 首轮 synthetic 短样本未通过（input −14.3%）；代表性长上下文真实 spawn 评测 90 次后 input −84.4%、success 0.80 == baseline、evidence 0.96，门禁通过；但 output +109.8%、时长 ×2.7、协议失败率 30%，默认仍关闭 |
-| M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 待开始 | schema token、权限和工具选择回归 |
+| M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 进行中 | M4-01–03 已完成；M4-04 离线 token 回归已完成，真实模型选择准确率回归被 provider 实验关闭决定阻塞 |
 | M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 待开始 | compact boundary、重建和失败不伪造测试 |
 | M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 待开始 | 路由 reason、privacy allowlist、未知 cache 按 miss |
 
@@ -70,10 +70,10 @@
 
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
-| M4-01 | Capability descriptor | 工具能力、schemaRef、access、dataClasses、confirmation、parallelSafe | M3-05 | builtin/MCP/workspace tool 可表达 | catalog tests | 待开始 |
-| M4-02 | 常驻 summary catalog | 不注入完整 schema，只注入方向性描述 | M4-01 | 未选工具 schema 不进入 prompt | prompt snapshot | 待开始 |
-| M4-03 | 按需 schema projection | 选择工具后加载完整 schema | M4-02 | 实际调用仍经 permission service | integration/security tests | 待开始 |
-| M4-04 | 工具选择回归 | 对照现有工具选择准确率与 prompt token | M4-03 | 准确率不低于 baseline；token 有可测改善 | benchmark scoreboard | 待开始 |
+| M4-01 | Capability descriptor | 工具能力、schemaRef、access、dataClasses、confirmation、parallelSafe | M3-05 | builtin/MCP/workspace tool 可表达 | catalog tests | 已完成 |
+| M4-02 | 常驻 summary catalog | 不注入完整 schema，只注入方向性描述 | M4-01 | 未选工具 schema 不进入 prompt | `capability-summary.test.ts` golden snapshot | 已完成 |
+| M4-03 | 按需 schema projection | 选择工具后加载完整 schema | M4-02 | 实际调用仍经 permission service | `capability-schema-projection.integration.test.ts`（safe 拒写/auto 需审批） | 已完成 |
+| M4-04 | 工具选择回归 | 对照现有工具选择准确率与 prompt token | M4-03 | 准确率不低于 baseline；token 有可测改善 | `capability-token-benchmark.test.ts`（离线） | 部分完成（阻塞）：token 回归已过；准确率回归需真实模型调用，与「不做 provider 实验」冲突，需单独授权 |
 
 ### M5：可逆 Compaction
 
@@ -298,6 +298,37 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：移除 capability export、descriptor 模块与测试即可；现有工具执行和权限路径不受影响。
 - 下一步：M4-02 常驻 summary catalog；不得把 catalog 自动注入现有 Agent prompt。
 
+### M4-02（2026-09-22）
+- 状态：已完成。
+- 实际变更：新增 `capability-summary.ts`：`renderCapabilitySummary()` 从 catalog 产出确定性、按 id 排序、与注册顺序无关的方向性摘要（名称、来源、server、access、dataClasses、confirmation、parallelSafe）。不携带参数 schema，也不出现 schemaRef 正文；空 catalog 输出合法空块。
+- 测试命令：`bun test packages/shared/src/context/capability-summary.test.ts`。
+- 测试结果：3 pass / 0 fail（含 golden snapshot 与 schema 泄漏负向断言）。
+- 证据文件：`packages/shared/src/context/capability-summary.ts`、`capability-summary.test.ts`。
+- 风险变化：纯渲染函数，无运行时调用点；未接入任何 Agent prompt。
+- 回滚方式：删除模块、export 与测试即可。
+- 下一步：M4-03 按需 schema projection。
+
+### M4-03（2026-09-22）
+- 状态：已完成。
+- 实际变更：新增 `capability-schema-projection.ts`：只对选中的 capability 解析完整 schema；未知 id 与 resolver 异常 fail-closed 为可审计的 omission，不假装能力可用。集成测试（electron）验证投影产出的工具名走与 builtin 完全相同的 permission service 链路：safe 模式拒写、auto 模式写入产生 pending 审批请求且 `respondToPermission(deny)` 生效。
+- 测试命令：`bun test packages/shared/src/context/capability-schema-projection.test.ts`；`bun test apps/electron/src/main/lib/agent-runtime/context/capability-schema-projection.integration.test.ts`。
+- 测试结果：纯函数 2 pass；集成 2 pass / 0 fail。
+- 证据文件：`capability-schema-projection.{ts,test.ts}`、`apps/electron/.../capability-schema-projection.integration.test.ts`。
+- 风险变化：投影层无执行能力，权限语义未被削弱；未改变线上工具注入行为。
+- 回滚方式：删除模块、export 与测试即可。
+- 下一步：M4-04 工具选择回归（离线部分）。
+
+### M4-04（2026-09-22，部分完成）
+- 状态：离线 token 回归已完成；真实模型选择准确率回归阻塞。
+- 实际变更：新增 `capability-token-benchmark.ts`：对同一 catalog 对比「全部 schema 进 prompt」与「summary + 选中 schema」的 token 估算，产出确定性 scoreboard。测试证明：选中子集时节省约 55%（fixture 相关）、估算与 summary+选中 schema 逐字等价、全选时 summary 成为纯开销（节省率 ≤ 0，即两层目录只对子集有收益）、同输入结果稳定。
+- 测试命令：`bun test packages/shared/src/context/capability-token-benchmark.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：4 pass / 0 fail；全量隔离测试通过。
+- 证据文件：`capability-token-benchmark.{ts,test.ts}`。
+- 风险变化：纯离线估算，无 provider 调用；token 估算沿用 chars/4 口径，不代表真实计费 token。
+- 阻塞与边界：验收标准中「工具选择准确率不低于 baseline」需要真实模型对照实验，与 M3-07「不做 provider 实验」决定冲突；如需完成，须用户单独授权并另立运行协议。
+- 回滚方式：删除模块、export 与测试即可。
+- 下一步：M4 收尾待用户决定是否授权准确率回归；M5 不依赖 M4-04 的准确率结论，可独立开始。
+
 ### M2-07（2026-09-22）
 - 状态：已完成。
 - 实际变更：typed-v1 spawn 将原始 child response 解析为 `SubtaskResult` 后，父 Agent 只接收格式化的状态、summary、claims（含 evidence）、artifacts、unverified 与 recommended next steps；raw child transcript 仅保留在 M2-05 的工作区私有 artifact，不再自动注入父 Agent。plain-text 调用仍返回原始文本。
@@ -311,5 +342,5 @@ M0 → M1 → M2 → M3 ─┬→ M4
 ## 8. 当前下一步
 
 1. TCC 运行与真实实验保持关闭；后续改动不得静默开启 TCC（由 M2-08 验收测试守护）。
-2. 开始 M4-01：定义 Capability descriptor，使 builtin/MCP/workspace tool 能表达能力、schemaRef、访问级别、数据类别、确认要求与并行安全性。
-3. M4 通过后再进入 M5；M6 必须等待 M4/M5 的能力与成本数据。
+2. M4-01/02/03 已完成；M4-04 离线 token 回归完成，准确率回归被「不做 provider 实验」决定阻塞，需单独授权。
+3. M5 可逆 compaction 不依赖 M4-04 准确率结论，可独立开始；M6 仍需 M4/M5 的能力与成本数据。

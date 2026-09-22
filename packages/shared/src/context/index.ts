@@ -1,4 +1,7 @@
 export * from './capability'
+export * from './capability-summary'
+export * from './capability-schema-projection'
+export * from './capability-token-benchmark'
 export * from './projection'
 export * from './subtask-result'
 export * from './types'
