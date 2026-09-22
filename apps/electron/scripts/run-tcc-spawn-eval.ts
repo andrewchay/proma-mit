@@ -41,6 +41,8 @@ async function main(): Promise<void> {
   if (scoreboardPath.includes('/typed-context-compiler/')) {
     throw new Error('评测产物必须写入仓库之外的私有路径')
   }
+  const caseIds = process.env.GRAVITAS_TCC_EVAL_CASE_IDS?.split(',').map((id) => id.trim()).filter(Boolean)
+  const runsPerCase = Number(process.env.GRAVITAS_TCC_EVAL_RUNS_PER_CASE ?? '3')
 
   const channel = getChannelById(channelId)
   if (!channel) throw new Error(`渠道不存在: ${channelId}`)
@@ -53,7 +55,9 @@ async function main(): Promise<void> {
     scoreboardPath,
     isolationDir,
     authorizedCalls,
-    runsPerCase: 3,
+    runsPerCase,
+    caseIds,
+    capturePath: process.env.GRAVITAS_TCC_EVAL_CAPTURE_PATH,
     provider: channel.provider,
     modelId,
     implementationVersion: 'tcc-spawn-m3-v2',

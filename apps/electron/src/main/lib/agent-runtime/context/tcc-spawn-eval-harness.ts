@@ -16,6 +16,10 @@ export interface TccSpawnEvalPlan {
   /** 用户显式授权的最大调用次数；任何超出都不允许发生。 */
   authorizedCalls: number
   runsPerCase: number
+  /** 只评估指定 case（诊断探针用）；缺省评估全部。 */
+  caseIds?: string[]
+  /** 诊断用：将模型原始输出另存到仓库外私有文件。 */
+  capturePath?: string
   provider: string
   modelId: string
   implementationVersion: string
@@ -63,19 +67,23 @@ export async function runTccSpawnEvaluation(
 
   const recorded = readScoreboard(plan.scoreboardPath)
   const completed = new Set((recorded?.runs ?? []).map(runKey))
-  const planned = fixture.cases.length * 3 * plan.runsPerCase
+  const targetCases = plan.caseIds ? fixture.cases.filter((testCase) => plan.caseIds!.includes(testCase.id)) : fixture.cases
+  if (targetCases.length === 0) throw new Error('No evaluation cases selected')
+  const planned = targetCases.length * 3 * plan.runsPerCase
   if (plan.authorizedCalls < planned) {
     throw new Error(`Authorized calls (${plan.authorizedCalls}) are fewer than the planned matrix (${planned})`)
   }
-  if (completed.size >= planned && recorded) {
+  const matrixComplete = fixture.cases.every((testCase) => (['full_context', 'brief', 'tcc_projection'] as const).every((variant) =>
+    Array.from({ length: plan.runsPerCase }, (_, index) => index + 1).every((run) => completed.has(`${testCase.id}:${variant}:${run}`))))
+  if (matrixComplete && recorded) {
     return { planned, alreadyRecorded: completed.size, executed: 0, scoreboard: recorded, gate: evaluateTccExperimentGate(recorded) }
   }
 
   mkdirSync(plan.isolationDir, { recursive: true })
-  const delegate = buildTccExperimentDelegate(channel, isolation)
+  const delegate = buildTccExperimentDelegate(channel, plan.capturePath ? { ...isolation, capturePath: plan.capturePath } : isolation)
   const accumulated = [...(recorded?.runs ?? [])]
   const scoreboard = await runTccExperiment({
-    fixture,
+    fixture: { ...fixture, cases: targetCases },
     provider: plan.provider,
     modelId: plan.modelId,
     implementationVersion: plan.implementationVersion,
@@ -88,7 +96,7 @@ export async function runTccSpawnEvaluation(
     },
     delegate,
   })
-  const merged = mergeRuns(recorded, scoreboard)
+  const merged = mergeRuns(recorded, scoreboard, fixture.cases)
   writeFileSync(plan.scoreboardPath, `${JSON.stringify(merged, null, 2)}\n`)
   return { planned, alreadyRecorded: completed.size, executed: merged.runs.length - completed.size, scoreboard: merged, gate: evaluateTccExperimentGate(merged) }
 }
@@ -102,11 +110,11 @@ function readScoreboard(path: string): TccExperimentScoreboard | undefined {
   }
 }
 
-function mergeRuns(previous: TccExperimentScoreboard | undefined, next: TccExperimentScoreboard): TccExperimentScoreboard {
-  if (!previous) return next
-  const seen = new Set(previous.runs.map(runKey))
-  const runs: TccExperimentRun[] = [...previous.runs, ...next.runs.filter((run) => !seen.has(runKey(run)))]
-  return { ...next, runs }
+function mergeRuns(previous: TccExperimentScoreboard | undefined, next: TccExperimentScoreboard, cases: TccExperimentFixture['cases']): TccExperimentScoreboard {
+  const runs: TccExperimentRun[] = previous ? [...previous.runs] : []
+  const seen = new Set(runs.map(runKey))
+  runs.push(...next.runs.filter((run) => !seen.has(runKey(run))))
+  return { version: 1, benchmarkId: 'typed-context-compiler', cases, runs }
 }
 
 function runKey(run: TccExperimentRun): string {

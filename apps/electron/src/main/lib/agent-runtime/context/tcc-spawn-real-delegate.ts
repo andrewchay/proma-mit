@@ -1,5 +1,6 @@
 import type { PromaPermissionMode, ProviderType } from '@gravitas/shared'
 import { ProviderAgnosticAgentAdapter } from '../../adapters/provider-agnostic-agent-adapter'
+import { appendFileSync } from 'node:fs'
 import type { ContextCacheStatus } from './context-metrics'
 import type { TccExperimentDelegate, TccExperimentModelResult } from './tcc-experiment-runner'
 
@@ -17,6 +18,8 @@ export interface TccEvalIsolation {
   workspaceDir: string
   /** 固定为 safe：禁止 Bash / Write / Edit 等有副作用工具。 */
   permissionMode?: PromaPermissionMode
+  /** 可选诊断落盘路径（仓库外私有路径）：协议失败时回放原始输出用。 */
+  capturePath?: string
 }
 
 /**
@@ -30,6 +33,7 @@ export function buildTccExperimentDelegate(channel: TccEvalChannel, isolation: T
     const adapter = new ProviderAgnosticAgentAdapter()
     try {
       const texts: string[] = []
+      const blockKinds: string[] = []
       let inputTokens = 0
       let outputTokens = 0
       let cacheReadTokens = 0
@@ -44,29 +48,41 @@ export function buildTccExperimentDelegate(channel: TccEvalChannel, isolation: T
         cwd: isolation.workspaceDir,
         systemPrompt: input.systemPrompt,
         historyMessages: [],
+        // 真实评测必须看不到任何工具：否则模型会先发起 tool_use，一轮内拿不到结论，
+        // 且会污染 token 对比（上下文体积差异被工具往返淹没）。
+        disableTools: true,
         runtimeTools: [],
         permissionMode: isolation.permissionMode ?? 'safe',
         maxTurns: 1,
       })) {
-        const record = message as unknown as { type?: string; message?: { content?: unknown }; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number } }
+        const record = message as unknown as { type?: string; message?: { content?: unknown }; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }
         if (record.type === 'assistant') {
           const content = record.message?.content
-          if (Array.isArray(content)) {
+          if (typeof content === 'string') {
+            blockKinds.push('string')
+            texts.push(content)
+          } else if (Array.isArray(content)) {
             for (const block of content as Array<{ type?: string; text?: string }>) {
+              blockKinds.push(block?.type ?? 'unknown')
               if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text)
             }
           }
         }
         if (record.type === 'result' && record.usage) {
           sawUsage = true
-          inputTokens += record.usage.input_tokens ?? 0
+          // 按完整 prompt 计量：只算未缓存部分会把 14k 上下文的成本虚报为 15 token。
+          inputTokens += (record.usage.input_tokens ?? 0) + (record.usage.cache_read_input_tokens ?? 0) + (record.usage.cache_creation_input_tokens ?? 0)
           outputTokens += record.usage.output_tokens ?? 0
           cacheReadTokens += record.usage.cache_read_input_tokens ?? 0
         }
       }
       // provider 未返回 usage 时保持 unknown，交由门禁按全量 input token 计费，绝不假装命中缓存。
+      const text = texts.join('\n\n')
+      if (isolation.capturePath) {
+        appendFileSync(isolation.capturePath, `${JSON.stringify({ caseId: input.caseId, variant: input.variant, blockKinds, text })}\n`)
+      }
       return {
-        text: texts.join('\n\n'),
+        text,
         inputTokens,
         outputTokens,
         cacheStatus: sawUsage ? (cacheReadTokens > 0 ? 'hit' : 'miss') : 'unknown',

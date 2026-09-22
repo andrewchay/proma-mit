@@ -27,6 +27,8 @@ export interface TccExperimentRun {
   selectedItemIds: string[]
   verifiedClaims: number
   totalClaims: number
+  /** typed-v1 协议失败原因（分类信息，不含模型正文）。 */
+  protocolError?: string
 }
 
 export interface TccExperimentScoreboard {

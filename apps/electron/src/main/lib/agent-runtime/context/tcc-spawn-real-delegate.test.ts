@@ -28,6 +28,7 @@ describe('TCC real evaluation delegate', () => {
 
     const call = captured[0]!
     expect(call.runtimeTools).toEqual([])
+    expect(call.disableTools).toBe(true)
     expect(call.permissionMode).toBe('safe')
     expect(call.maxTurns).toBe(1)
     expect(call.cwd).toBe(isolation.workspaceDir)

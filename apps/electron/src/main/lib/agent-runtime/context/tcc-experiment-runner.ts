@@ -67,7 +67,7 @@ export async function runTccExperiment(options: RunTccExperimentOptions): Promis
             caseId: testCase.id,
             variant,
             task: prepared.task,
-            systemPrompt: `${TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT}\n\n你只能依据提供的上下文回答；引用 evidence 的 sourceId 必须对应上下文 item id。`,
+            systemPrompt: `${TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT}\n\n你只能依据提供的上下文回答；引用 evidence 的 sourceId 必须对应上下文 item id。只输出一个 JSON 对象，不要在 JSON 前后添加任何解释、标题或额外文本。`,
           })
           const parsed = parseSubtaskResult(result.text, `${testCase.id}:${variant}:${run}`)
           const claims = parsed.result.claims
@@ -88,6 +88,7 @@ export async function runTccExperiment(options: RunTccExperimentOptions): Promis
             selectedItemIds: prepared.selectedItemIds,
             verifiedClaims,
             totalClaims: claims.length,
+            ...(parsed.protocolError ? { protocolError: parsed.protocolError } : {}),
           })
         } catch {
           record({

@@ -168,7 +168,35 @@ function extractJsonObject(text: string): string | undefined {
     .filter((candidate) => candidate.startsWith('{') && candidate.endsWith('}'))
   if (fenced.length > 0) return fenced.at(-1)
   const trimmed = text.trim()
-  return trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed : undefined
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
+  // 真实模型常在 JSON 前后附加解释文字。只接受“最后一个能配平的顶层对象”，
+  // 仍不放松协议字段校验，避免把散文当成结构化结论。
+  return lastBalancedObject(text)
+}
+
+function lastBalancedObject(text: string): string | undefined {
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+  let candidate: string | undefined
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') { inString = true; continue }
+    if (char === '{') { if (depth === 0) start = index; depth += 1; continue }
+    if (char === '}') {
+      depth -= 1
+      if (depth === 0 && start >= 0) candidate = text.slice(start, index + 1)
+      if (depth < 0) { depth = 0; start = -1 }
+    }
+  }
+  return candidate
 }
 
 function stringArray(value: unknown): string[] {
