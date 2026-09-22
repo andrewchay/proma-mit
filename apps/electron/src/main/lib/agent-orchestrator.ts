@@ -78,6 +78,7 @@ import { tokenUsageService } from './token-usage-service'
 import { preTickTurn } from './turn-decision-service'
 import { resolveRequestedOperation } from './agent-runtime/requested-operation'
 import { isTypeSafeSkillShadowAvailable, judgeSkillRoute } from './typesafe-judgment-service'
+import { createContextLedgerObserver } from './agent-runtime/context/context-observer'
 
 // ===== 插件能力引导收集 =====
 
@@ -1983,6 +1984,24 @@ export class AgentOrchestrator {
           runtimeWorkspaceSlug = ws.slug
           runtimeWorkspace = ws
         }
+      }
+
+      // M0 Typed Context Compiler：仅在显式开关开启时旁路记录用户输入。
+      // Ledger 位于应用私有工作区，不写入用户项目；失败不能影响原有 Agent 流程。
+      const contextObserver = runtimeWorkspaceSlug
+        ? createContextLedgerObserver({
+            workspaceDirectory: getAgentWorkspacePath(runtimeWorkspaceSlug),
+            onError: (error) => console.warn('[Agent 编排] Context ledger 写入失败，已忽略:', error),
+          })
+        : undefined
+      if (contextObserver && userMessage) {
+        contextObserver.recordSessionMessage({
+          eventId: randomUUID(),
+          sessionId,
+          workspaceId,
+          role: 'user',
+          content: userMessage,
+        })
       }
 
       // 本地上下文召回（context-store）
