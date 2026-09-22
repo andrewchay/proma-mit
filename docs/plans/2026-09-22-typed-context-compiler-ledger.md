@@ -13,7 +13,7 @@
 | M0 | 契约与观测基线 | 定义类型、事件 ledger、token/cache/retry 基线，不改执行行为 | 无 | 已完成 | shared tests、ledger/metrics/flag/replay tests、`bun run test` 427 文件通过 |
 | M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
 | M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 已完成 | feature-gated projection、只读隔离、typed result 与私有 artifact 回溯已完成 |
-| M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 进行中 | 已冻结 10-case/3-run 三组对照定义与 fail-closed gate；待接入真实 delegate 运行记录 |
+| M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 已完成（未通过推广门禁） | GLM-5.3-Flash 完成 10-case/3-run/90 次真实三组运行；TCC 未达到 20% token 或稳定性改善门槛，保持 default-off |
 | M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 待开始 | schema token、权限和工具选择回归 |
 | M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 待开始 | compact boundary、重建和失败不伪造测试 |
 | M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 待开始 | 路由 reason、privacy allowlist、未知 cache 按 miss |
@@ -59,10 +59,10 @@
 | ID | 工作项 | 产出/范围 | 依赖 | 验收标准 | 证据位置 | 状态 |
 |---|---|---|---|---|---|---|
 | M3-01 | Benchmark 定义 | `typed-context-compiler` + 10 fixed cases | M2 | case statement/rubric 与被测 Agent 输入隔离 | `fixtures/m3-typed-context-compiler-benchmark.json` | 已完成 |
-| M3-02 | 三组对照 harness | full context / 普通 brief / TCC projection | M3-01 | provider/model/version 固定且可记录 | `tcc-experiment.ts` | 进行中 |
-| M3-03 | 质量评分 | success、evidence coverage、false omission/inclusion、human correction | M3-02 | scoreboard 权威保存；不把 skip 记为 pass | `tcc-experiment.ts` | 进行中 |
-| M3-04 | 成本与稳定性评分 | token、cache、duration、retry、failure | M0-04、M3-02 | provider cache unknown 按 miss；价格来源可追踪 | `tcc-experiment.ts` | 进行中 |
-| M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | signed decision note | 阻塞（等待真实运行记录） |
+| M3-02 | 三组对照 harness | full context / 普通 brief / TCC projection | M3-01 | provider/model/version 固定且可记录 | `tcc-experiment.ts`、`tcc-experiment-runner.ts` | 已完成 |
+| M3-03 | 质量评分 | success、evidence coverage、false omission/inclusion、human correction | M3-02 | scoreboard 权威保存；不把 skip 记为 pass | `tcc-experiment.ts`、`tcc-m3-glm-scoreboard.json`（私有） | 已完成 |
+| M3-04 | 成本与稳定性评分 | token、cache、duration、retry、failure | M0-04、M3-02 | provider cache unknown 按 miss；价格来源可追踪 | `tcc-experiment.ts`、`tcc-m3-glm-scoreboard.json`（私有） | 已完成 |
+| M3-05 | Gate decision | 决定是否进入 M4/M5 | M3-03、M3-04 | success ≥ baseline 95%；至少一项成本/稳定性改善；evidence ≥90%；false omission ≤5% | workspace-private scoreboard | 已完成（未通过）：TCC 29/30 成功、100% evidence；但 input token 仅降 14.3%，duration 高于 baseline |
 
 ### M4：两层工具能力目录
 
