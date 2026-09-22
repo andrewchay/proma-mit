@@ -84,7 +84,8 @@ import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-f
 import { prepareSubAgentProjection } from './agent-runtime/context/subagent-projection-adapter'
 import { resolveSubAgentContextOptions } from './agent-runtime/context/subagent-context-options'
 import { resolveSubAgentWorkspace } from './agent-runtime/context/subagent-readonly-workspace'
-import { TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './agent-runtime/context/subtask-result-parser'
+import { parseSubtaskResult, TYPED_SUBTASK_RESULT_PROTOCOL_PROMPT } from './agent-runtime/context/subtask-result-parser'
+import { SubtaskArtifactStore, toStoredSubtaskArtifact } from './agent-runtime/context/subtask-artifact-store'
 
 // ===== 插件能力引导收集 =====
 
@@ -1296,7 +1297,30 @@ export class AgentOrchestrator {
       }
     }
 
-    return assistantTexts.join('\n\n') || '子代理已完成任务，但未返回文本结果'
+    const response = assistantTexts.join('\n\n') || '子代理已完成任务，但未返回文本结果'
+    if (preparedProjection.projection && contextOptions.resultProtocol === 'typed-v1' && workspace) {
+      // 持久化属于观测旁路：写入失败不改变子任务原有文本返回，也不影响父 Agent 执行。
+      try {
+        appendSDKMessages(childSessionId, messages)
+        const parsed = parseSubtaskResult(response, `${parentSessionId}:${childSessionId}`)
+        const store = new SubtaskArtifactStore(join(getAgentWorkspacePath(workspace.slug), 'context', 'subtasks'))
+        store.save(toStoredSubtaskArtifact({
+          childSessionId,
+          parentSessionId,
+          task: input.task,
+          rawResponse: response,
+          result: parsed.result,
+          projection: preparedProjection.projection,
+        }))
+      } catch (error) {
+        logInfo(
+          '[Typed Context Compiler] 子任务产物持久化失败',
+          `parent=${parentSessionId} child=${childSessionId} reason=${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+
+    return response
   }
 
   /**

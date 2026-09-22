@@ -50,7 +50,7 @@
 | M2-02 | Spawn projection adapter | 在 orchestrator/runtime spawn 边界生成 projection | M1、M2-01 | projection 失败回退 baseline；sourceRevision 关联 | `subagent-projection-adapter.test.ts` | 已完成 |
 | M2-03 | Read-only 子任务隔离 | 子任务独立 cwd，父工作区不可写 | M2-02 | 写入被拒绝或仅进入隔离目录 | `subagent-readonly-workspace.test.ts`、Runtime safe-mode tests | 已完成 |
 | M2-04 | Typed result parser | claims、artifacts、evidence、confidence、unverified | M0-01、M2-01 | 缺 evidence 的 high claim 自动降级；协议失败为 partial | `subtask-result-parser.test.ts` | 已完成 |
-| M2-05 | Child artifact 持久化 | typed result、原始 session、projection 元数据关联 | M0-02、M2-04 | 可从 result 追溯 child session 和 source items | persistence tests | 待开始 |
+| M2-05 | Child artifact 持久化 | typed result、原始 session、projection 元数据关联 | M0-02、M2-04 | 可从 result 追溯 child session 和 source items | `subtask-artifact-store.test.ts` | 已完成 |
 | M2-06 | 内置 Agent 试点 | explorer → researcher → code-reviewer 分批接入 | M2-02、M2-04 | 每个 Agent 有明确 requiredKinds 与 result schema | integration tests | 待开始 |
 | M2-07 | 父 Agent 消费 typed result | 不自动拼接 child transcript；消费 summary/claims/artifacts | M2-05 | 父 Agent 可引用 evidence；失败状态不伪装完成 | integration tests | 待开始 |
 
@@ -233,7 +233,17 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：移除 typed-v1 prompt suffix 和纯解析器即可恢复 M2-03 的原始文本返回。
 - 下一步：M2-05 持久化 child typed result、原始 child session 和 projection 元数据。
 
+### M2-05（2026-09-22）
+- 状态：已完成。
+- 实际变更：成功 projection 的 typed-v1 子任务结束后，best-effort 追加原始 SDK messages 到 child session JSONL，并在工作区私有 `context/subtasks/` 写入 append-safe child artifact。记录保留 raw response、解析后的 `SubtaskResult`、child/parent session ID、原任务、projection ID/source revision 及 selected source item IDs。存储失败只记录日志，保持原始文本返回和 Agent 执行行为不变。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/subtask-artifact-store.test.ts apps/electron/src/main/lib/agent-runtime/context/subtask-result-parser.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：目标测试 6 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：439 文件 / 0 失败。
+- 证据文件：`context/subtask-artifact-store.{ts,test.ts}`、`context/subtask-result-parser.ts`、`agent-orchestrator.ts`。
+- 风险变化：子任务产物只在显式 projection + typed-v1 时写入工作区私有目录；原始 transcript 不自动拼接回父 Agent。持久化是旁路，失败不升级为执行失败。
+- 回滚方式：移除 spawn 完成后的 best-effort 保存块与 artifact store，即可恢复 M2-04 行为。
+- 下一步：M2-06 将 explorer、researcher、code-reviewer 分批显式接入 projection policy 与 result schema。
+
 ## 8. 当前下一步
 
-1. 开始 M2-05：持久化 child typed result、原始 child session 和 projection 元数据，保留可追溯关系。
+1. 开始 M2-06：为 explorer、researcher、code-reviewer 分批显式接入 projection policy 与 result schema。
 2. 每完成一个 milestone 更新本台账，并在 M3 形成是否继续的门禁结论。
