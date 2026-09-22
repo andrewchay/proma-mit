@@ -352,6 +352,10 @@ export interface AppSettings {
     bindAddress?: string
     /** 长期访问 token 的 SHA-256 hash（绝不存明文） */
     tokenHash?: string
+    /** Web Push VAPID 公钥（首次启用推送时自动生成） */
+    vapidPublicKey?: string
+    /** Web Push VAPID 私钥（绝不外泄，仅用于主进程签名推送） */
+    vapidPrivateKey?: string
   }
 }
 
