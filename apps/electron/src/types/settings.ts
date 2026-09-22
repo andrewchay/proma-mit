@@ -342,6 +342,17 @@ export interface AppSettings {
     /** 本地监听端口，默认 8765 */
     port?: number
   }
+  /** Companion 远程访问（手机浏览器）配置 */
+  companionServer?: {
+    /** 是否启用（启用后主进程自动启动监听） */
+    enabled?: boolean
+    /** 监听端口，默认 8790 */
+    port?: number
+    /** 监听地址，默认 0.0.0.0（局域网）；建议填 Tailscale IP 以缩小暴露面 */
+    bindAddress?: string
+    /** 长期访问 token 的 SHA-256 hash（绝不存明文） */
+    tokenHash?: string
+  }
 }
 
 /** 视觉助手（Vision Relay）配置 */

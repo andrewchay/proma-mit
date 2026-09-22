@@ -604,7 +604,7 @@ export type PromaEvent =
   | { type: 'turn_decision'; route: string; reason?: string }
 
 /** 外部入口触发 Agent 运行的来源 */
-export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow' | 'delegation'
+export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow' | 'delegation' | 'companion'
 
 /** 协作子会话角色 */
 export type AgentDelegationRole = 'explore' | 'research' | 'implement' | 'review' | 'custom'
@@ -2314,6 +2314,16 @@ export const AGENT_IPC_CHANNELS = {
   EVAL_SET_AUTO_SCHEDULE: 'agent:eval-set-auto-schedule',
   /** 列出所有自动评测配置 */
   EVAL_LIST_AUTO_SCHEDULES: 'agent:eval-list-auto-schedules',
+} as const
+
+/**
+ * Companion（手机浏览器远程访问）IPC 通道
+ */
+export const COMPANION_IPC_CHANNELS = {
+  /** 生成一次性配对码（设置页触发） */
+  GENERATE_PAIRING_CODE: 'companion:generate-pairing-code',
+  /** 查询 companion 服务状态（是否运行、端口） */
+  GET_STATUS: 'companion:get-status',
 } as const
 
 /**

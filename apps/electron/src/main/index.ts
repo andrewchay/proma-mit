@@ -519,6 +519,14 @@ async function bootstrap(): Promise<void> {
     await startBriefCallbackServer(settings.briefCallback?.port ?? 8765)
   })
 
+  // 启动 Companion 远程访问服务（手机浏览器；仅在设置开启时监听）
+  await safeAwait('startCompanionServer', async () => {
+    if (getSettings().companionServer?.enabled) {
+      const { startCompanionServer } = await import('./lib/companion-server')
+      await startCompanionServer()
+    }
+  })
+
   // 默认款和自定义款统一添加透明留白，启动时与设置中的切换效果一致。
   if (process.platform === 'darwin' && app.dock) {
     await app.dock.show()
