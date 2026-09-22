@@ -19,6 +19,9 @@ export function getCompanionPageHtml(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gravitas Companion</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#0d1117">
 <style>
 :root { --bg:#0d1117; --card:#161b22; --card2:#1c2330; --text:#e6edf3; --muted:#8b949e; --accent:#4c8dff; --green:#3fb950; --red:#f85149; --border:#2d333b; }
 * { box-sizing:border-box; margin:0; padding:0; }

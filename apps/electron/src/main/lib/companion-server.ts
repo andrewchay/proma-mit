@@ -20,6 +20,7 @@ import type { AgentStreamPayload, AgentStreamEnvelope } from '@gravitas/shared'
 import { createAgentStreamEnvelope, serializeAgentStreamEnvelopeForSSE } from '@gravitas/shared'
 import { createCompanionApi, type CompanionApiDeps, type CompanionApiBody } from './companion-api'
 import { getCompanionPageHtml } from './companion-page'
+import { renderCompanionIconPng } from './companion-png'
 
 /** SSE 环形缓冲上限（断线重连补发窗口） */
 const SSE_BUFFER_LIMIT = 500
@@ -198,6 +199,30 @@ export async function startCompanionServer(options: CompanionServerOptions = {})
         if (req.method === 'GET' && url.pathname === '/companion') {
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
           res.end(getCompanionPageHtml())
+          return
+        }
+
+        // PWA manifest 与图标
+        if (req.method === 'GET' && url.pathname === '/manifest.webmanifest') {
+          res.writeHead(200, { 'Content-Type': 'application/manifest+json; charset=utf-8' })
+          res.end(JSON.stringify({
+            name: 'Gravitas Companion',
+            short_name: 'Companion',
+            start_url: '/companion',
+            display: 'standalone',
+            background_color: '#0d1117',
+            theme_color: '#0d1117',
+            icons: [
+              { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+              { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+            ],
+          }))
+          return
+        }
+        const iconMatch = req.method === 'GET' && url.pathname.match(/^\/icon-(192|512)\.png$/)
+        if (iconMatch) {
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
+          res.end(renderCompanionIconPng(Number(iconMatch[1])))
           return
         }
 

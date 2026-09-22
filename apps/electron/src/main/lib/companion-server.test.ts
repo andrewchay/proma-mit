@@ -100,6 +100,14 @@ describe('companion-server', () => {
     expect(page.status).toBe(200)
     expect(await page.text()).toContain('Gravitas Companion')
 
+    // PWA manifest 与图标可达
+    const manifest = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`)
+    expect(manifest.status).toBe(200)
+    expect(((await manifest.json()) as { name: string }).name).toBe('Gravitas Companion')
+    const icon = await fetch(`http://127.0.0.1:${port}/icon-192.png`)
+    expect(icon.status).toBe(200)
+    expect(new Uint8Array(await icon.arrayBuffer()).subarray(0, 4).toString()).toEqual('137,80,78,71')
+
     // 未带 token 的 API → 401
     const res = await fetch(`http://127.0.0.1:${port}/api/sessions`)
     expect(res.status).toBe(401)
