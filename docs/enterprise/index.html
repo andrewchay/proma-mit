@@ -1,0 +1,1214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gravitas 企业智能体平台 · 企业端能力总览</title>
+<meta name="description" content="Gravitas 企业智能体平台：以统一底座承载企业服务、运营调度、CRM / ERP 与生产端 AI 视觉四层能力，本地优先、可私有化部署、全链路可审计。" />
+<style>
+  :root {
+    --bg: #08090F;
+    --bg-soft: #0E1020;
+    --surface: rgba(255, 255, 255, 0.038);
+    --surface-strong: rgba(255, 255, 255, 0.062);
+    --line: rgba(255, 255, 255, 0.085);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --text: #ECEDF5;
+    --text-dim: #A8ADC6;
+    --text-faint: #767C97;
+    --coral: #FF6B4A;
+    --violet: #7A5CFF;
+    --amber: #F5B44B;
+    --grad: linear-gradient(102deg, #FF6B4A 0%, #C05CFF 52%, #7A5CFF 100%);
+    --grad-soft: linear-gradient(102deg, rgba(255,107,74,.16), rgba(122,92,255,.16));
+    --radius: 18px;
+    --shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.85);
+    --maxw: 1180px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(760px 520px at 78% -6%, rgba(122, 92, 255, 0.20), transparent 62%),
+      radial-gradient(620px 460px at 6% 8%, rgba(255, 107, 74, 0.13), transparent 64%),
+      radial-gradient(900px 700px at 50% 108%, rgba(122, 92, 255, 0.10), transparent 66%);
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.32;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 76px 76px;
+    mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 76%);
+    -webkit-mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 76%);
+  }
+
+  .page { position: relative; z-index: 1; }
+  .wrap { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 28px; }
+  a { color: inherit; text-decoration: none; }
+
+  /* ---------- 导航 ---------- */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: saturate(160%) blur(18px);
+    -webkit-backdrop-filter: saturate(160%) blur(18px);
+    background: rgba(8, 9, 15, 0.72);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; gap: 22px; height: 66px; }
+  .brand { display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
+  .brand svg { width: 27px; height: 27px; display: block; }
+  .brand-name { font-size: 16.5px; font-weight: 650; letter-spacing: 0.01em; }
+  .brand-sub {
+    font-size: 12px;
+    color: var(--text-faint);
+    padding-left: 11px;
+    margin-left: 2px;
+    border-left: 1px solid var(--line-strong);
+    letter-spacing: 0.04em;
+  }
+  .nav-links { display: flex; gap: 4px; margin-left: auto; }
+  .nav-links a {
+    font-size: 13.5px;
+    color: var(--text-dim);
+    padding: 7px 12px;
+    border-radius: 999px;
+    transition: color .18s, background .18s;
+    white-space: nowrap;
+  }
+  .nav-links a:hover { color: var(--text); background: var(--surface); }
+  .nav-links a.is-active { color: var(--text); background: var(--surface-strong); }
+
+  /* ---------- 通用排版 ---------- */
+  section { padding: 104px 0; position: relative; }
+  section + section { border-top: 1px solid rgba(255, 255, 255, 0.055); }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 12.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 18px;
+    font-weight: 600;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 22px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--grad);
+  }
+
+  h1, h2, h3, h4 { margin: 0; font-weight: 650; letter-spacing: -0.015em; line-height: 1.25; }
+  h2 { font-size: clamp(1.6rem, 2.9vw, 2.35rem); margin-bottom: 16px; }
+  h3 { font-size: 15.5px; letter-spacing: 0.01em; }
+
+  .lead { color: var(--text-dim); font-size: 16.5px; max-width: 62ch; margin: 0; }
+  .grad-text {
+    display: inline-block;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sec-head { margin-bottom: 52px; max-width: 74ch; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 92px 0; }
+  .hero-grid { display: grid; grid-template-columns: 1.06fr 0.94fr; gap: 64px; align-items: center; }
+  .hero h1 {
+    font-size: clamp(1.95rem, 4.1vw, 3.15rem);
+    line-height: 1.16;
+    letter-spacing: -0.028em;
+    margin-bottom: 22px;
+  }
+  .hero p.lead { font-size: 17.5px; }
+  .hero-facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 34px; }
+  .fact {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-dim);
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .fact i { width: 6px; height: 6px; border-radius: 50%; background: var(--grad); display: block; flex-shrink: 0; }
+
+  .hero-visual { position: relative; }
+  .hero-visual img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 22px;
+    border: 1px solid var(--line);
+  }
+  .hero-visual::after {
+    content: "";
+    position: absolute;
+    inset: 12% 8% -6% 8%;
+    background: radial-gradient(closest-side, rgba(122, 92, 255, 0.42), transparent 72%);
+    filter: blur(46px);
+    z-index: -1;
+  }
+  .hero-caption { margin-top: 14px; font-size: 12.5px; color: var(--text-faint); text-align: right; letter-spacing: 0.02em; }
+
+  /* ---------- 能力全景 ---------- */
+  .stack { display: grid; gap: 14px; }
+  .stack-row {
+    display: grid;
+    grid-template-columns: 128px 1fr auto;
+    align-items: center;
+    gap: 24px;
+    padding: 22px 26px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background:
+      linear-gradient(102deg, rgba(255, 107, 74, 0.07), rgba(122, 92, 255, 0.07)),
+      var(--surface);
+    box-shadow: var(--shadow);
+    transition: transform .22s ease, border-color .22s ease;
+  }
+  .stack-row:hover { transform: translateY(-2px); border-color: var(--line-strong); }
+  .stack-no { font-size: 12px; font-weight: 700; letter-spacing: 0.16em; color: var(--text-faint); }
+  .stack-title strong { display: block; font-size: 16.5px; font-weight: 650; letter-spacing: -0.01em; }
+  .stack-title span { font-size: 13px; color: var(--text-faint); }
+  .stack-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+
+  .chip {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    white-space: nowrap;
+  }
+  .chip--dim { color: var(--text-faint); border-style: dashed; }
+
+  .stack-base {
+    margin-top: 18px;
+    padding: 30px 32px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    background:
+      linear-gradient(180deg, rgba(14, 16, 32, 0.96), rgba(14, 16, 32, 0.96)) padding-box,
+      var(--grad) border-box;
+    box-shadow: 0 30px 70px -34px rgba(122, 92, 255, 0.65);
+  }
+  .stack-base-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; margin-bottom: 20px; }
+  .stack-base-head strong { font-size: 17px; font-weight: 650; }
+  .stack-base-head span { font-size: 13px; color: var(--text-faint); }
+  .base-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .base-item {
+    padding: 15px 16px;
+    border-radius: 13px;
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .base-item strong { display: block; font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .base-item span { font-size: 12.5px; color: var(--text-faint); line-height: 1.6; }
+
+  /* ---------- 层级详情 ---------- */
+  .layer-head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 30px;
+    align-items: start;
+    padding-bottom: 34px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 38px;
+  }
+  .layer-index {
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    opacity: 0.9;
+    padding-top: 4px;
+  }
+  .layer-head h2 { font-size: clamp(1.5rem, 2.6vw, 2.05rem); }
+  .layer-head .lead { font-size: 16px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 999px;
+    white-space: nowrap;
+    border: 1px solid;
+  }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .badge--ready { color: #6FE0B4; border-color: rgba(111, 224, 180, 0.34); background: rgba(111, 224, 180, 0.09); }
+  .badge--pilot { color: var(--amber); border-color: rgba(245, 180, 75, 0.34); background: rgba(245, 180, 75, 0.09); }
+  .badge--plan { color: #A995FF; border-color: rgba(169, 149, 255, 0.32); background: rgba(169, 149, 255, 0.09); }
+
+  .layer-body { display: grid; grid-template-columns: 0.88fr 1.12fr; gap: 34px; align-items: start; }
+  .scenes { display: grid; gap: 12px; }
+  .scene { padding: 17px 19px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+  .scene strong { display: block; font-size: 14px; margin-bottom: 5px; font-weight: 620; }
+  .scene p { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.68; }
+  .col-label { margin-bottom: 4px; color: var(--text-faint); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
+
+  .panels { display: grid; gap: 16px; }
+  .panel { padding: 22px 24px; border-radius: 15px; border: 1px solid var(--line); background: var(--surface); }
+  .panel--now { background: linear-gradient(180deg, rgba(111, 224, 180, 0.045), rgba(255, 255, 255, 0.02)); }
+  .panel--plan {
+    background: linear-gradient(180deg, rgba(122, 92, 255, 0.075), rgba(255, 255, 255, 0.02));
+    border-style: dashed;
+    border-color: rgba(169, 149, 255, 0.28);
+  }
+  .panel h3 {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 14px;
+  }
+  .panel h3::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--grad); }
+  .panel ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .panel li { position: relative; padding-left: 17px; font-size: 13.8px; color: var(--text-dim); line-height: 1.7; }
+  .panel li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--violet);
+    opacity: 0.75;
+  }
+  .panel--now li::before { background: #6FE0B4; }
+  .panel li b { color: var(--text); font-weight: 620; }
+
+  .loop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 20px;
+    padding: 15px 18px;
+    border-radius: 13px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .loop-label { font-size: 12.5px; color: var(--text-faint); margin-right: 6px; }
+  .loop-step {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    padding: 5px 11px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .loop-arrow { color: var(--text-faint); font-size: 12px; }
+
+  /* ---------- 底座卡片 ---------- */
+  .grid-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card {
+    padding: 24px 24px 22px;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transition: transform .22s ease, border-color .22s ease, background .22s ease;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--line-strong); background: var(--surface-strong); }
+  .card-ico {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 15px;
+    background: var(--grad-soft);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 15px;
+  }
+  .card h3 { margin-bottom: 9px; font-size: 15px; }
+  .card p { margin: 0; font-size: 13.6px; color: var(--text-dim); line-height: 1.72; }
+
+  /* ---------- 落地路径 ---------- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .step { position: relative; padding: 28px 24px 24px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); }
+  .step-no { font-size: 12px; font-weight: 700; letter-spacing: 0.16em; color: var(--text-faint); margin-bottom: 14px; }
+  .step h3 { font-size: 16px; margin-bottom: 10px; }
+  .step p { margin: 0 0 14px; font-size: 13.6px; color: var(--text-dim); }
+  .step ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .step li { font-size: 13px; color: var(--text-faint); padding-left: 15px; position: relative; }
+  .step li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 9px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--grad);
+  }
+
+  /* ---------- 安全 ---------- */
+  .safety-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .safety-item { padding: 20px 22px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
+  .safety-item h4 { margin-bottom: 8px; font-size: 14.5px; font-weight: 650; }
+  .safety-item p { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.7; }
+
+  .notice {
+    margin-top: 22px;
+    padding: 18px 22px;
+    border-radius: 14px;
+    border: 1px solid rgba(245, 180, 75, 0.28);
+    background: rgba(245, 180, 75, 0.06);
+    font-size: 13.5px;
+    color: #E8D5AE;
+    line-height: 1.75;
+  }
+  .notice b { color: #F5D79A; }
+
+  /* ---------- 状态表 ---------- */
+  .table-wrap { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.6px; }
+  th, td { padding: 15px 20px; text-align: left; vertical-align: top; }
+  thead th {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.035);
+    border-bottom: 1px solid var(--line);
+  }
+  tbody tr + tr { border-top: 1px solid rgba(255, 255, 255, 0.055); }
+  tbody td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+  tbody td { color: var(--text-dim); }
+  td .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #6FE0B4; margin-right: 7px; vertical-align: 1px; }
+  td .dot--pilot { background: var(--amber); }
+  td .dot--plan { background: #A995FF; }
+
+  /* ---------- 页脚 ---------- */
+  footer { padding: 62px 0 76px; border-top: 1px solid var(--line); background: rgba(255, 255, 255, 0.012); }
+  .foot-inner { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; justify-content: space-between; }
+  .foot-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
+  .foot-brand svg { width: 26px; height: 26px; }
+  .foot-note { font-size: 12.8px; color: var(--text-faint); max-width: 66ch; line-height: 1.8; margin: 0; }
+  .foot-meta { font-size: 12.8px; color: var(--text-faint); text-align: right; line-height: 2; }
+  .foot-meta b { color: var(--text-dim); font-weight: 600; }
+
+  .wide-img { width: 100%; height: auto; display: block; border-radius: var(--radius); border: 1px solid var(--line); }
+
+  /* ---------- 入场动画 ---------- */
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.is-in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 1040px) {
+    .nav-inner { flex-wrap: wrap; height: auto; padding: 11px 0 9px; gap: 9px; }
+    .nav-links {
+      order: 3;
+      width: 100%;
+      margin-left: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .nav-links::-webkit-scrollbar { display: none; }
+    .nav-links a { font-size: 13px; padding: 6px 10px; }
+    .hero-grid { grid-template-columns: 1fr; gap: 42px; }
+    .hero-visual { order: -1; }
+    .base-grid { grid-template-columns: repeat(2, 1fr); }
+    .grid-cards { grid-template-columns: repeat(2, 1fr); }
+    .layer-body { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 760px) {
+    body { font-size: 15.5px; }
+    .wrap { padding: 0 18px; }
+    section { padding: 70px 0; }
+    .hero { padding: 54px 0 60px; }
+    .stack-row { grid-template-columns: 1fr; gap: 12px; }
+    .stack-chips { justify-content: flex-start; }
+    .layer-head { grid-template-columns: 1fr; gap: 16px; }
+    .layer-index { font-size: 30px; }
+    .base-grid { grid-template-columns: 1fr; }
+    .grid-cards { grid-template-columns: 1fr; }
+    .safety-grid { grid-template-columns: 1fr; }
+    .foot-meta { text-align: left; }
+    th, td { padding: 12px 14px; }
+    .table-wrap { overflow-x: auto; }
+    table { min-width: 620px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ========== 导航 ========== -->
+  <nav class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top">
+        <svg viewBox="0 0 1024 1024" aria-hidden="true">
+          <defs>
+            <linearGradient id="gm" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#FF6B4A" />
+              <stop offset="1" stop-color="#7A5CFF" />
+            </linearGradient>
+          </defs>
+          <g fill="none" stroke="url(#gm)">
+            <path d="M 682.2 729.9 A 276.5 276.5 0 1 1 682.2 294.1" stroke-width="107.5" />
+            <ellipse cx="727.7" cy="512.0" rx="139.8" ry="36.6" stroke-width="18.3" transform="rotate(16.0 727.7 512.0)" />
+          </g>
+          <rect x="498.2" y="485.1" width="92.5" height="53.8" fill="url(#gm)" />
+          <circle cx="727.7" cy="512.0" r="53.8" fill="url(#gm)" />
+        </svg>
+        <span class="brand-name">Gravitas</span>
+        <span class="brand-sub">企业智能体平台</span>
+      </a>
+      <div class="nav-links" id="navLinks">
+        <a href="#overview">能力全景</a>
+        <a href="#l1">企业服务</a>
+        <a href="#l2">运营效率</a>
+        <a href="#l3">CRM / ERP</a>
+        <a href="#l4">生产端 AI</a>
+        <a href="#platform">平台底座</a>
+        <a href="#path">落地路径</a>
+        <a href="#security">安全合规</a>
+        <a href="#status">状态说明</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ========== Hero ========== -->
+  <header class="hero" id="top">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">企业端能力总览 · Enterprise Capabilities</p>
+        <h1>从决策室到产线，<br />让 AI 智能体落在<br /><span class="grad-text">业务链路上</span></h1>
+        <p class="lead">
+          Gravitas 把 Agent 运行时、工作流引擎、数字员工与项目治理收敛到同一个平台底座，
+          向上承载专业服务、运营调度、业务系统与生产现场四层企业能力。
+          数据与配置本地优先，可按需私有化部署，关键操作全程留痕。
+        </p>
+        <div class="hero-facts">
+          <span class="fact"><i></i>四层能力，一个底座</span>
+          <span class="fact"><i></i>10+ 模型供应商，按能力与成本路由</span>
+          <span class="fact"><i></i>本地优先，支持私有化部署</span>
+          <span class="fact"><i></i>关键操作可审计可追溯</span>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <img src="assets/hero.jpg" alt="Gravitas 四层企业能力收敛到统一平台底座的抽象可视化" />
+        <p class="hero-caption">四层业务能力，收敛到一个平台底座</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========== 能力全景 ========== -->
+  <section id="overview">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">能力全景</p>
+        <h2>四层企业能力，共用一个平台底座</h2>
+        <p class="lead">
+          企业落地 AI 的难点很少是模型本身，而是模型之外的东西：谁来触发、按什么规则流转、出错怎么办、
+          谁批准、留没留痕、成本多少。Gravitas 把这些共性能力做成底座，上面四层业务能力因此可以按需启用、逐步扩展。
+        </p>
+      </div>
+
+      <div class="stack">
+        <article class="stack-row reveal">
+          <div class="stack-no">LAYER 01</div>
+          <div class="stack-title">
+            <strong>企业服务</strong>
+            <span>财税法 · 经营决策分析 · 专业职能数字岗位</span>
+          </div>
+          <div class="stack-chips">
+            <span class="chip">数字员工</span>
+            <span class="chip">领域能力包</span>
+            <span class="chip">决策链</span>
+            <span class="chip chip--dim">专业能力包规划中</span>
+          </div>
+        </article>
+
+        <article class="stack-row reveal">
+          <div class="stack-no">LAYER 02</div>
+          <div class="stack-title">
+            <strong>运营效率</strong>
+            <span>流程自动化 · 任务派发 · 智能调度</span>
+          </div>
+          <div class="stack-chips">
+            <span class="chip">Workflow 引擎</span>
+            <span class="chip">审批与重试</span>
+            <span class="chip">任务租约</span>
+            <span class="chip chip--dim">业务级排程规划中</span>
+          </div>
+        </article>
+
+        <article class="stack-row reveal">
+          <div class="stack-no">LAYER 03</div>
+          <div class="stack-title">
+            <strong>业务系统</strong>
+            <span>CRM · ERP · 流程与数据连接</span>
+          </div>
+          <div class="stack-chips">
+            <span class="chip">MCP 连接器</span>
+            <span class="chip">受管浏览器</span>
+            <span class="chip">双向同步</span>
+            <span class="chip chip--dim">CRM / ERP 应用规划中</span>
+          </div>
+        </article>
+
+        <article class="stack-row reveal">
+          <div class="stack-no">LAYER 04</div>
+          <div class="stack-title">
+            <strong>生产现场</strong>
+            <span>AI 视觉 · 质检 · 图文数字化</span>
+          </div>
+          <div class="stack-chips">
+            <span class="chip">多模态输入</span>
+            <span class="chip">批量识别</span>
+            <span class="chip">沙箱执行</span>
+            <span class="chip chip--dim">工业视觉应用规划中</span>
+          </div>
+        </article>
+      </div>
+
+      <div class="stack-base reveal">
+        <div class="stack-base-head">
+          <strong>Gravitas 平台底座</strong>
+          <span>四层能力共用的运行时、编排、治理与安全基座</span>
+        </div>
+        <div class="base-grid">
+          <div class="base-item">
+            <strong>Agent 运行时</strong>
+            <span>Provider 无关；多 runtime 可选，长任务流式执行、计划确认、执行中可干预</span>
+          </div>
+          <div class="base-item">
+            <strong>Workflow 引擎</strong>
+            <span>可视化编排、发布冻结、定时与事件触发、人工审批节点</span>
+          </div>
+          <div class="base-item">
+            <strong>数字员工与项目治理</strong>
+            <span>无人值守执行、并发排队、配额护栏、看板 / 甘特 / 依赖 / 验收</span>
+          </div>
+          <div class="base-item">
+            <strong>连接层</strong>
+            <span>MCP、受管浏览器、桌面自动化、飞书 / 钉钉 / 微信桥接</span>
+          </div>
+          <div class="base-item">
+            <strong>权限与审计</strong>
+            <span>分级权限模式、逐次确认、操作审计与完整性校验、角色权限隔离</span>
+          </div>
+          <div class="base-item">
+            <strong>成本与可观测</strong>
+            <span>Token 与费用统计、会话调用链瀑布图、运行信号、评估数据集</span>
+          </div>
+          <div class="base-item">
+            <strong>部署形态</strong>
+            <span>本地优先桌面、私有化一键部署、服务端多租户 Web</span>
+          </div>
+          <div class="base-item">
+            <strong>数据边界</strong>
+            <span>会话、工作区、附件与配置默认留在本机，可随私有化部署留在企业内网</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== L1 企业服务 ========== -->
+  <section id="l1">
+    <div class="wrap">
+      <div class="layer-head reveal">
+        <div class="layer-index">01</div>
+        <div>
+          <p class="eyebrow">企业服务层 · 专业职能</p>
+          <h2>财税、法务与经营分析，交给可配置的数字岗位</h2>
+          <p class="lead">
+            专业职能里最消耗人力的部分是重复的资料处理、规则核对与报表整理。
+            Gravitas 的做法是把这些工作定义成数字岗位：由 Agent 执行、由 Workflow 约束流程、由人负责关键判断。
+          </p>
+        </div>
+        <span class="badge badge--ready">平台机制已具备</span>
+      </div>
+
+      <div class="layer-body">
+        <div class="scenes reveal">
+          <h3 class="col-label">典型场景</h3>
+          <div class="scene">
+            <strong>票据与台账处理</strong>
+            <p>批量识别发票与单据，按规则核对归类，异常条目逐条外推确认后再进入后续流程，避免错账静默沉淀。</p>
+          </div>
+          <div class="scene">
+            <strong>税务与合规核对</strong>
+            <p>申报数据交叉比对、政策检索问答、风险点清单输出，每条结论附来源定位便于人工复核。</p>
+          </div>
+          <div class="scene">
+            <strong>经营决策分析</strong>
+            <p>从项目与业务数据生成周期报告、指标视图与偏差归因，把"数据在哪、谁负责、卡在哪一步"一次说清。</p>
+          </div>
+          <div class="scene">
+            <strong>合同与法务支持</strong>
+            <p>条款抽取、风险条款提示、标准模板比对与合同台账维护，把审阅前的准备工作自动化。</p>
+          </div>
+        </div>
+
+        <div class="panels reveal">
+          <div class="panel panel--now">
+            <h3>今天可用</h3>
+            <ul>
+              <li><b>数字岗位执行框架</b>：无人值守执行、任务级 Token 配额、需人工确认时外推到飞书 / 钉钉、执行全过程留痕。</li>
+              <li><b>领域能力包机制</b>：营销（26 个 Skills）与出海 sourcing 已按插件分发并跑通；财税、法务包可沿用同一套分发与权益门禁。</li>
+              <li><b>外部系统连接</b>：MCP 支持 OAuth 2.1 与客户端凭证、资源发现、凭据加密存储，可接入财务、ERP 与文档系统。</li>
+              <li><b>经营治理指标</b>：WIP、等待时长、30 天吞吐、平均周期、SLE 超时；项目级 AI 成本面板与 Token 统计。</li>
+              <li><b>决策链与证据</b>：DACI 拍板、结构化来源与校验值、决策版本替代关系、影响任务追踪。</li>
+            </ul>
+          </div>
+          <div class="panel panel--plan">
+            <h3>规划中</h3>
+            <ul>
+              <li><b>财税法专业能力包</b>：票据结构化、申报核对规则库、政策检索与风险提示模板。</li>
+              <li><b>经营决策分析增强</b>：跨源数据接入与指标口径治理、归因与情景模拟、决策建议生成。</li>
+              <li><b>外部证据自动对账</b>与远端多人身份认证、职责强制分离。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== L2 运营效率 ========== -->
+  <section id="l2">
+    <div class="wrap">
+      <div class="layer-head reveal">
+        <div class="layer-index">02</div>
+        <div>
+          <p class="eyebrow">运营效率层 · 智能调度</p>
+          <h2>把「等人推进」变成「系统推进」</h2>
+          <p class="lead">
+            流程卡在谁那里、任务超时没人管、口头确认没有留痕，是运营效率最常见的损耗。
+            Gravitas 用工作流引擎与执行调度护栏接管这些环节，让人只出现在需要判断的节点上。
+          </p>
+        </div>
+        <span class="badge badge--ready">流程与调度底座已具备</span>
+      </div>
+
+      <div class="layer-body">
+        <div class="scenes reveal">
+          <h3 class="col-label">典型场景</h3>
+          <div class="scene">
+            <strong>流程固化与自动流转</strong>
+            <p>把反复要做的流程编成可视化执行链，按时间、事件或人工触发运行，节点失败自动重试或走错误分支。</p>
+          </div>
+          <div class="scene">
+            <strong>任务派发与并发控制</strong>
+            <p>任务分派到人或数字员工，同一项目内自动排队，避免并发冲突；需要判断时外推通知，不阻塞其他工作。</p>
+          </div>
+          <div class="scene">
+            <strong>审批与例外升级</strong>
+            <p>关键节点插入人工审批，驳回重走；超时与失败进入告警与升级链路，不再依赖人工盯守。</p>
+          </div>
+          <div class="scene">
+            <strong>排班与产能调度（规划）</strong>
+            <p>结合产能、技能与交期约束生成排程建议，并支持在约束变化时重排。</p>
+          </div>
+        </div>
+
+        <div class="panels reveal">
+          <div class="panel panel--now">
+            <h3>今天可用</h3>
+            <ul>
+              <li><b>Workflow 引擎</b>：agent / tool / skill / transform / condition / approval 等节点可视化编排，支持手动、定时与事件触发，发布时可冻结节点能力白名单。</li>
+              <li><b>执行调度护栏</b>：同项目并发排队、心跳保活、乐观锁防冲突、僵尸任务诊断与恢复预案。</li>
+              <li><b>服务端任务租约</b>：跨 worker 租约与事件重放，实例故障不丢任务。</li>
+              <li><b>成本与限速</b>：租户 / 用户月度预算预检、单模型额度、固定窗口限速。</li>
+              <li><b>IM 联动</b>：飞书 / 钉钉任务通知与状态双向同步，外部状态变化不打回本地进行中的工作。</li>
+            </ul>
+          </div>
+          <div class="panel panel--plan">
+            <h3>规划中</h3>
+            <ul>
+              <li><b>业务级排程引擎</b>：产能、运力与技能约束下的优先级与 SLA 联合优化。</li>
+              <li><b>实时事件接入</b>（订单、MES、IoT）与在线重排、调度仿真与回放。</li>
+              <li><b>移动端调度指令</b>下发与现场确认回执。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="loop reveal">
+        <span class="loop-label">流程闭环</span>
+        <span class="loop-step">触发</span><span class="loop-arrow">→</span>
+        <span class="loop-step">规则校验</span><span class="loop-arrow">→</span>
+        <span class="loop-step">派发执行</span><span class="loop-arrow">→</span>
+        <span class="loop-step">人工审批</span><span class="loop-arrow">→</span>
+        <span class="loop-step">复核验收</span><span class="loop-arrow">→</span>
+        <span class="loop-step">归档留痕</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== L3 CRM / ERP ========== -->
+  <section id="l3">
+    <div class="wrap">
+      <div class="layer-head reveal">
+        <div class="layer-index">03</div>
+        <div>
+          <p class="eyebrow">业务系统层 · CRM 与 ERP</p>
+          <h2>不替换你现有系统，先把系统与 AI 连起来</h2>
+          <p class="lead">
+            企业很少愿意为了 AI 换掉 CRM / ERP。Gravitas 先做连接层：读授权数据、生成草稿、批量维护、
+            承接审批与验收；等场景稳定后，再把客户、订单、库存这类高频模块做成内建应用。
+          </p>
+        </div>
+        <span class="badge badge--ready">治理与连接底座已具备</span>
+      </div>
+
+      <div class="layer-body">
+        <div class="scenes reveal">
+          <h3 class="col-label">典型场景</h3>
+          <div class="scene">
+            <strong>系统内嵌智能助手</strong>
+            <p>在既有 CRM / ERP 工作流旁调用 Agent：查询授权数据、生成单据与跟进记录草稿、批量整理字段。</p>
+          </div>
+          <div class="scene">
+            <strong>客户与商机跟进（规划）</strong>
+            <p>客户 360 视图、商机漏斗、跟进 SOP 与销售助理，把散落在表格与聊天里的客户信息收拢。</p>
+          </div>
+          <div class="scene">
+            <strong>审批与验收闭环</strong>
+            <p>交付物版本化、验收标准逐项确认、交接双方确认，替代口头与聊天记录里的模糊承诺。</p>
+          </div>
+          <div class="scene">
+            <strong>无接口老系统的受控操作</strong>
+            <p>对没有开放接口的内部系统，用受管浏览器与桌面自动化执行受控操作，全程需要人工确认并留痕。</p>
+          </div>
+        </div>
+
+        <div class="panels reveal">
+          <div class="panel panel--now">
+            <h3>今天可用</h3>
+            <ul>
+              <li><b>项目治理内核</b>：任务表与自定义状态（按语义组归类、支持 WIP 上限）、看板拖拽一次落库、甘特图、依赖边与阻塞原因。</li>
+              <li><b>责任与验收</b>：负责人 / 验收人 / 接收人身份绑定，交付物版本化，验收标准冻结并逐项确认，交接需接收人确认。</li>
+              <li><b>系统连接器</b>：MCP（OAuth 2.1 与客户端凭证）、受管浏览器、桌面自动化，覆盖有接口与无接口两类系统。</li>
+              <li><b>双向同步</b>：飞书 / 钉钉字段与状态按语义组映射，外部轮询不覆盖本地进行中状态。</li>
+              <li><b>垂直样例已验证</b>：营销领域已实现达人库、分层与效果记录，同一机制可复用到客户与商机管理。</li>
+            </ul>
+          </div>
+          <div class="panel panel--plan">
+            <h3>规划中</h3>
+            <ul>
+              <li><b>通用 CRM 应用</b>：客户 360、商机漏斗、跟进 SOP、AI 销售助理。</li>
+              <li><b>ERP 模块</b>：采购、库存、订单、成本核算与财务凭证对接。</li>
+              <li><b>标准化连接器</b>：销售易、纷享销客、金蝶、用友、SAP 等主流 SaaS 的字段映射与同步配置台。</li>
+              <li><b>主数据治理</b>：字段映射配置、主数据校验与清洗。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== L4 生产端 AI ========== -->
+  <section id="l4">
+    <div class="wrap">
+      <div class="layer-head reveal">
+        <div class="layer-index">04</div>
+        <div>
+          <p class="eyebrow">生产现场层 · AI 视觉</p>
+          <h2>识别结果直接进入流程，而不是停在报表里</h2>
+          <p class="lead">
+            视觉模型的价值不在单次识别，而在识别之后：谁来处理、多长时间内处理、有没有复核、结果有没有回写。
+            Gravitas 把视觉能力接在同一个工作流上，让「发现—工单—复核—处置」形成闭环。
+          </p>
+        </div>
+        <span class="badge badge--plan">底座已具备 · 工业视觉规划中</span>
+      </div>
+
+      <div class="layer-body">
+        <div class="scenes reveal">
+          <h3 class="col-label">典型场景</h3>
+          <div class="scene">
+            <strong>质检判等（规划）</strong>
+            <p>缺陷检测、尺寸测量与外观分级，超阈值自动生成工单并通知责任人，复核结论回写。</p>
+          </div>
+          <div class="scene">
+            <strong>现场与设备巡检（规划）</strong>
+            <p>巡检验收影像结构化归档，支持按对象、时间与事件回溯，异常片段自动定位。</p>
+          </div>
+          <div class="scene">
+            <strong>图文与单据数字化</strong>
+            <p>纸质单据、图纸、报表的批量识别与结构化，直接进入台账或业务系统字段。</p>
+          </div>
+          <div class="scene">
+            <strong>内容与素材生产</strong>
+            <p>分镜、图像生成与视频合成管线已在营销场景落地，可复用到产品与培训素材生产。</p>
+          </div>
+        </div>
+
+        <div class="panels reveal">
+          <div class="panel panel--now">
+            <h3>今天可用</h3>
+            <ul>
+              <li><b>多模态与多模型路由</b>：图片理解在内置 Chat / Agent 中可用；运行时可接入任意多模态模型，按能力与成本选择。</li>
+              <li><b>批量处理能力</b>：提供批量抽取、分类、打标签、OCR 与长文档处理的调用路径，含向量化能力。</li>
+              <li><b>图像与视频创意管线</b>：分镜 / 引擎 / 合成链路已在营销场景跑通。</li>
+              <li><b>执行安全底座</b>：服务端执行器只允许沙箱隔离执行，环境不具备隔离能力时直接拒绝执行；权限逐次确认并记录操作摘要。</li>
+              <li><b>部署形态</b>：本地优先客户端；私有化一键部署，含部署烟测与健康仪表盘。</li>
+            </ul>
+          </div>
+          <div class="panel panel--plan">
+            <h3>规划中</h3>
+            <ul>
+              <li><b>工业质检视觉</b>：缺陷检测、尺寸测量、分级判等模型的接入与现场调优。</li>
+              <li><b>视觉模型服务化</b>：模型版本管理、效果对比与数据漂移监控。</li>
+              <li><b>边缘部署与推理加速</b>、产线设备（相机 / PLC）对接。</li>
+              <li><b>质检结果闭环</b>：异常 → 工单 → 复核 → 处置回写。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="loop reveal">
+        <span class="loop-label">质检闭环</span>
+        <span class="loop-step">图像采集</span><span class="loop-arrow">→</span>
+        <span class="loop-step">模型判读</span><span class="loop-arrow">→</span>
+        <span class="loop-step">超阈告警</span><span class="loop-arrow">→</span>
+        <span class="loop-step">工单派发</span><span class="loop-arrow">→</span>
+        <span class="loop-step">人工复核</span><span class="loop-arrow">→</span>
+        <span class="loop-step">处置回写</span>
+      </div>
+
+      <div class="reveal" style="margin-top:34px;">
+        <img class="wide-img" src="assets/vision.jpg" alt="产线机器视觉质检示意" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 平台底座 ========== -->
+  <section id="platform">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">平台底座</p>
+        <h2>为什么四层能力能落在同一个平台上</h2>
+        <p class="lead">
+          四层能力共享同一套运行时、编排、治理与安全机制。这意味着新增一层业务能力时，
+          不需要重新建设权限、审计、成本与运维体系。
+        </p>
+      </div>
+
+      <div class="grid-cards">
+        <article class="card reveal">
+          <div class="card-ico">◈</div>
+          <h3>Provider 无关的 Agent 运行时</h3>
+          <p>支持 10 个以上模型供应商与多种运行路径，可按模型能力、成本与合规要求路由；长任务流式输出，执行过程中可追加指令或软中断。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">⇄</div>
+          <h3>可视化 Workflow 引擎</h3>
+          <p>把反复执行的流程编排成执行链，支持条件分支、人工审批、失败重试与错误路由；发布时冻结节点能力范围，避免流程漂移。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">☰</div>
+          <h3>数字员工与项目治理</h3>
+          <p>任务可指派给数字员工无人值守执行并回写结果，配合并发排队、配额护栏与卡点确认，让执行可控、可查、可验收。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">⛓</div>
+          <h3>连接层</h3>
+          <p>MCP 连接标准系统，受管浏览器与桌面自动化覆盖无接口系统，IM 桥接把通知与确认带回团队已有的沟通渠道。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">⛨</div>
+          <h3>权限、审计与合规</h3>
+          <p>分级权限模式与逐次确认机制，高风险操作必须人工介入；操作摘要本地留痕，服务端审计支持完整性校验与角色权限隔离。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">◎</div>
+          <h3>成本与可观测</h3>
+          <p>按模型、工具、环节统计 Token 与费用，会话级调用链可视化；支持预算上限与限速，避免成本失控。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">⌂</div>
+          <h3>三种部署形态</h3>
+          <p>桌面客户端本地优先运行；私有化一键部署适合单团队内网；服务端多租户形态支持账号体系、统一身份与集中运维。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">⟐</div>
+          <h3>评测与持续改进</h3>
+          <p>内置能力评测与运行数据采样，把线上真实失败案例沉淀为评估集，支撑能力持续迭代而不是一次性交付。</p>
+        </article>
+        <article class="card reveal">
+          <div class="card-ico">⧉</div>
+          <h3>数据留在原处</h3>
+          <p>会话、工作区、附件与配置默认保存在本机；私有化部署时数据留在企业内网，不被用于训练或外发。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 落地路径 ========== -->
+  <section id="path">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">落地路径</p>
+        <h2>从一次可验证的场景开始，而不是一次性大改造</h2>
+        <p class="lead">
+          建议按三步推进：先连接、再固化、最后规模化。每一步都有可验收的产出，避免长期投入却看不到结果。
+        </p>
+      </div>
+
+      <div class="steps">
+        <article class="step reveal">
+          <div class="step-no">STEP 01</div>
+          <h3>连接</h3>
+          <p>接入你已有的系统与数据，先把只读查询和报表跑通，验证数据可达与权限边界。</p>
+          <ul>
+            <li>确认接入系统清单与账号权限</li>
+            <li>连接 MCP / IM / 无接口系统的受控操作</li>
+            <li>产出：一份用真实数据生成的报告</li>
+          </ul>
+        </article>
+        <article class="step reveal">
+          <div class="step-no">STEP 02</div>
+          <h3>固化</h3>
+          <p>挑一个高频、规则清楚的流程编成 Workflow，配上数字岗位与审批节点，稳定运行后再扩大范围。</p>
+          <ul>
+            <li>明确触发条件、审批点与失败处理</li>
+            <li>设定成本配额与验收标准</li>
+            <li>产出：可无人值守运行的流程</li>
+          </ul>
+        </article>
+        <article class="step reveal">
+          <div class="step-no">STEP 03</div>
+          <h3>规模化</h3>
+          <p>在验证有效后扩展到更多部门与业务系统，同时把权限、审计与运维对齐企业要求。</p>
+          <ul>
+            <li>私有化部署或服务端统一身份接入</li>
+            <li>按部门划分工作区与权限范围</li>
+            <li>产出：可复制到多部门的运行标准</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 安全与合规 ========== -->
+  <section id="security">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">安全与合规</p>
+        <h2>企业级使用的前提是边界清楚</h2>
+        <p class="lead">
+          AI 进入业务流程后，真正决定能否长期使用的往往是权限、审计与数据边界这些细节。
+        </p>
+      </div>
+
+      <div class="safety-grid">
+        <div class="safety-item reveal">
+          <h4>分级权限与逐次确认</h4>
+          <p>支持安全模式、询问模式与放行模式；改动文件、执行命令、联网与提交类操作按规则逐次确认，可对单个会话设置白名单，子任务不能自行批准高风险操作。</p>
+        </div>
+        <div class="safety-item reveal">
+          <h4>敏感步骤由人接管</h4>
+          <p>密码、验证码、密钥、支付与最终提交等步骤进入专用接管状态，执行暂停直至人工完成，避免自动流程触碰不可逆动作。</p>
+        </div>
+        <div class="safety-item reveal">
+          <h4>操作可审计</h4>
+          <p>关键操作记录摘要，可按来源、会话与操作类型筛选导出；服务端提供追加式审计与完整性校验，用于发现篡改。审计不记录页面正文、截图与敏感输入内容。</p>
+        </div>
+        <div class="safety-item reveal">
+          <h4>执行隔离</h4>
+          <p>服务端代码执行只允许在沙箱隔离环境中进行；运行环境不具备隔离能力时直接拒绝执行，而不是降级放行。</p>
+        </div>
+        <div class="safety-item reveal">
+          <h4>数据边界与加密</h4>
+          <p>本地优先存储，私有化部署时数据不出企业内网；密钥采用信封加密与轮换机制，渠道凭据加密保存。</p>
+        </div>
+        <div class="safety-item reveal">
+          <h4>成本护栏</h4>
+          <p>支持租户、用户与单模型三级预算上限与调用限速，超出阈值前置拦截，避免用量意外。</p>
+        </div>
+      </div>
+
+      <div class="notice reveal">
+        <b>关于专业结论与自动化边界：</b>
+        财税、法务等专业场景中，AI 输出定位为辅助建议与初步材料，最终结论需由具备相应资质的人员复核确认；
+        涉及资金、申报、合同签署等不可逆动作，均需人工确认后执行。
+        此外，当前多人协作身份体系为本地单操作身份，远端多人身份认证与外部证据自动对账仍在建设中。
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 状态说明 ========== -->
+  <section id="status">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="eyebrow">能力状态说明</p>
+        <h2>哪些现在能用，哪些还在路上</h2>
+        <p class="lead">
+          为了避免误解，这里按三个状态区分四层能力的当前进展。标注「规划中」的条目是产品方向，
+          具体上线范围与时间以双方确认的实施清单为准。
+        </p>
+      </div>
+
+      <div class="table-wrap reveal">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:15%;">能力层</th>
+              <th style="width:33%;">现在可演示</th>
+              <th style="width:22%;">试点 / 待环境验收</th>
+              <th style="width:30%;">规划中</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>企业服务</td>
+              <td><span class="dot"></span>数字员工执行框架、领域能力包分发、外部系统连接、经营治理指标、决策链与证据管理</td>
+              <td><span class="dot dot--pilot"></span>企业账号打通、工作区级权限、审计合规、成员管理（已有实现，待真实环境验收）</td>
+              <td><span class="dot dot--plan"></span>财税法专业能力包、经营决策分析增强、外部证据自动对账</td>
+            </tr>
+            <tr>
+              <td>运营效率</td>
+              <td><span class="dot"></span>Workflow 编排与触发、审批与重试、任务派发与并发排队、成本与限速、IM 双向同步</td>
+              <td><span class="dot dot--pilot"></span>服务端任务租约与事件重放、浏览器端工作台与交互页面（基础可用，完整管理界面在建设中）</td>
+              <td><span class="dot dot--plan"></span>业务级排程引擎、实时事件接入与在线重排、移动端调度指令</td>
+            </tr>
+            <tr>
+              <td>CRM / ERP</td>
+              <td><span class="dot"></span>项目治理内核、责任与验收、MCP 与受管浏览器连接、飞书 / 钉钉同步、达人 CRM 垂直样例</td>
+              <td><span class="dot dot--pilot"></span>无接口系统受控操作（依赖具体系统与权限范围，需单点验证）</td>
+              <td><span class="dot dot--plan"></span>通用 CRM、ERP 模块、主流 SaaS 标准连接器、主数据治理</td>
+            </tr>
+            <tr>
+              <td>生产现场</td>
+              <td><span class="dot"></span>多模态输入与多模型路由、批量识别与向量化、图像与视频创意管线、沙箱执行底座</td>
+              <td><span class="dot dot--pilot"></span>私有化一键部署与健康仪表盘；云密钥管理与外部告警联通待按部署环境验收</td>
+              <td><span class="dot dot--plan"></span>工业质检视觉、视觉模型服务化、边缘部署、质检结果闭环</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 页脚 ========== -->
+  <footer>
+    <div class="wrap foot-inner">
+      <div>
+        <div class="foot-brand">
+          <svg viewBox="0 0 1024 1024" aria-hidden="true">
+            <g fill="none" stroke="url(#gm)">
+              <path d="M 682.2 729.9 A 276.5 276.5 0 1 1 682.2 294.1" stroke-width="107.5" />
+              <ellipse cx="727.7" cy="512.0" rx="139.8" ry="36.6" stroke-width="18.3" transform="rotate(16.0 727.7 512.0)" />
+            </g>
+            <rect x="498.2" y="485.1" width="92.5" height="53.8" fill="url(#gm)" />
+            <circle cx="727.7" cy="512.0" r="53.8" fill="url(#gm)" />
+          </svg>
+          <span class="brand-name">Gravitas</span>
+        </div>
+        <p class="foot-note">
+          本页用于介绍 Gravitas 企业端能力方向。能力状态以本页标注为准，标注为「规划中」的内容为产品方向，
+          不构成交付承诺；实际交付范围、时间与验收标准以双方签署的实施清单为准。
+          财税、法务等专业场景的输出需由具备资质的人员复核确认。
+        </p>
+      </div>
+      <div class="foot-meta">
+        <div><b>文档版本</b> v0.1 草案</div>
+        <div><b>能力状态截至</b> 2026-09</div>
+        <div><b>适用对象</b> 企业客户 / 合作伙伴</div>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    // 滚动入场
+    var items = document.querySelectorAll('.reveal');
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            e.target.classList.add('is-in');
+            io.unobserve(e.target);
+          }
+        });
+      }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
+      items.forEach(function (el, i) {
+        el.style.transitionDelay = (i % 9) * 45 + 'ms';
+        io.observe(el);
+      });
+    } else {
+      items.forEach(function (el) { el.classList.add('is-in'); });
+    }
+
+    // 导航高亮
+    var links = Array.prototype.slice.call(document.querySelectorAll('#navLinks a'));
+    var targets = links
+      .map(function (a) { return document.querySelector(a.getAttribute('href')); })
+      .filter(Boolean);
+
+    function syncNav() {
+      var y = window.scrollY + 140;
+      var current = null;
+      targets.forEach(function (t) { if (t.offsetTop <= y) current = t.id; });
+      links.forEach(function (a) {
+        a.classList.toggle('is-active', current && a.getAttribute('href') === '#' + current);
+      });
+    }
+    window.addEventListener('scroll', syncNav, { passive: true });
+    syncNav();
+  })();
+</script>
+</body>
+</html>
