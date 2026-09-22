@@ -49,6 +49,9 @@ function makeFakeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDe
     sendUserMessage: async () => undefined,
     stopSession: () => false,
     appendAudit: async () => undefined,
+    getVapidPublicKey: () => 'test-vapid-public-key',
+    subscribePush: () => true,
+    unsubscribePush: () => true,
     ...overrides,
   }
 }
@@ -99,14 +102,6 @@ describe('companion-server', () => {
     const page = await fetch(`http://127.0.0.1:${port}/companion`)
     expect(page.status).toBe(200)
     expect(await page.text()).toContain('Gravitas Companion')
-
-    // PWA manifest 与图标可达
-    const manifest = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`)
-    expect(manifest.status).toBe(200)
-    expect(((await manifest.json()) as { name: string }).name).toBe('Gravitas Companion')
-    const icon = await fetch(`http://127.0.0.1:${port}/icon-192.png`)
-    expect(icon.status).toBe(200)
-    expect(new Uint8Array(await icon.arrayBuffer()).subarray(0, 4).toString()).toEqual('137,80,78,71')
 
     // 未带 token 的 API → 401
     const res = await fetch(`http://127.0.0.1:${port}/api/sessions`)
@@ -161,6 +156,57 @@ describe('companion-server', () => {
     } finally {
       await reader.close()
     }
+    await stopCompanionServer()
+  })
+
+  test('PWA manifest 与图标、Service Worker 可达', async () => {
+    const port = await startCompanionServer({
+      deps: makeFakeDeps(),
+      eventSource: makeFakeBus(),
+      bindAddress: '127.0.0.1',
+      port: 0,
+    })
+    const manifest = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`)
+    expect(manifest.status).toBe(200)
+    expect(((await manifest.json()) as { name: string }).name).toBe('Gravitas Companion')
+    const icon = await fetch(`http://127.0.0.1:${port}/icon-192.png`)
+    expect(icon.status).toBe(200)
+    expect(new Uint8Array(await icon.arrayBuffer()).subarray(0, 4).toString()).toEqual('137,80,78,71')
+    const sw = await fetch(`http://127.0.0.1:${port}/sw.js`)
+    expect(sw.status).toBe(200)
+    expect(await sw.text()).toContain('addEventListener(\'push\'')
+    await stopCompanionServer()
+  })
+
+  test('推送订阅接口：认证后可登记/移除', async () => {
+    const subs: unknown[] = []
+    const removed: string[] = []
+    const port = await startCompanionServer({
+      deps: makeFakeDeps({
+        subscribePush: (sub) => { subs.push(sub); return true },
+        unsubscribePush: (endpoint) => { removed.push(endpoint); return true },
+      }),
+      eventSource: makeFakeBus(),
+      bindAddress: '127.0.0.1',
+      port: 0,
+    })
+    const vapid = await fetch(`http://127.0.0.1:${port}/api/push/vapid`, { headers: { Authorization: 'Bearer good-token' } })
+    expect(((await vapid.json()) as { publicKey: string }).publicKey).toBe('test-vapid-public-key')
+
+    const sub = await fetch(`http://127.0.0.1:${port}/api/push/subscribe`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer good-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: { endpoint: 'https://p/x', keys: { p256dh: 'a', auth: 'b' } } }),
+    })
+    expect(sub.status).toBe(200)
+    expect(subs).toHaveLength(1)
+    const un = await fetch(`http://127.0.0.1:${port}/api/push/unsubscribe`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer good-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: 'https://p/x' }),
+    })
+    expect(un.status).toBe(200)
+    expect(removed).toEqual(['https://p/x'])
     await stopCompanionServer()
   })
 

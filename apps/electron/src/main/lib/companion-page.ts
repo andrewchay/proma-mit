@@ -12,6 +12,33 @@
 
 import { COMPANION_MARKDOWN_JS } from './companion-markdown-js'
 
+/** Service Worker 源码（Web Push；需 HTTPS 安全上下文） */
+export function getCompanionServiceWorkerJs(): string {
+  return `
+self.addEventListener('push', function (event) {
+  var data = {};
+  try { data = event.data.json(); } catch (e) { /* 忽略非 JSON 载荷 */ }
+  event.waitUntil(self.registration.showNotification(data.title || 'Gravitas', {
+    body: data.body || '',
+    tag: 'companion',
+    renotify: true,
+    data: { url: data.url || '/companion' },
+  }));
+});
+
+self.addEventListener('notificationclick', function (event) {
+  event.notification.close();
+  var url = (event.notification.data && event.notification.data.url) || '/companion';
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].url.indexOf('/companion') !== -1) return list[i].focus();
+    }
+    return self.clients.openWindow(url);
+  }));
+});
+`
+}
+
 export function getCompanionPageHtml(): string {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -132,6 +159,10 @@ input:focus, textarea:focus { border-color:var(--accent); }
       </div>
     </div>
     <div id="session-scroll"></div>
+    <div id="push-entry" style="display:none;align-items:center;gap:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <button class="btn secondary small" id="push-btn">启用推送通知</button>
+      <span class="sub" id="push-status"></span>
+    </div>
   </div>
 
   <div id="pane-chat" class="pane">
@@ -503,8 +534,52 @@ ${COMPANION_MARKDOWN_JS}
     });
   }
 
+  // ---- Web Push（需 HTTPS 安全上下文；HTTP 局域网下自动隐藏） ----
+  function urlBase64ToUint8Array(base64) {
+    var padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    var base64Str = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = atob(base64Str);
+    var arr = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+
+  async function enablePush() {
+    $('push-status').textContent = '正在注册…';
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      $('push-status').textContent = '此浏览器不支持推送';
+      return;
+    }
+    try {
+      var permission = await Notification.requestPermission();
+      if (permission !== 'granted') { $('push-status').textContent = '通知权限未授予'; return; }
+      var reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+      var vapidRes = await api('GET', '/api/push/vapid');
+      var vapid = (await vapidRes.json()).publicKey;
+      var sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapid) });
+      var res = await api('POST', '/api/push/subscribe', { subscription: sub.toJSON() });
+      if (!res.ok) throw new Error('订阅登记失败');
+      localStorage.setItem('companion-push', '1');
+      $('push-status').textContent = '推送已开启';
+    } catch (e) {
+      // HTTP 明文环境下 serviceWorker 不可用，属预期降级（建议 Tailscale Serve）
+      $('push-status').textContent = '推送不可用（需 HTTPS，建议 Tailscale Serve）';
+    }
+  }
+
+  async function maybeShowPushEntry() {
+    // 仅 HTTPS 安全上下文展示入口；HTTP 下推送本就不可用
+    if (!window.isSecureContext || !('serviceWorker' in navigator)) return;
+    $('push-entry').style.display = 'flex';
+    if (localStorage.getItem('companion-push') === '1' && Notification.permission === 'granted') {
+      $('push-status').textContent = '推送已开启';
+    }
+  }
+  $('push-btn').onclick = function () { void enablePush(); };
+
   // ---- 启动 ----
-  if (state.token) { loadWorkspaces().then(loadSessions); } else { show('pair'); }
+  if (state.token) { loadWorkspaces().then(loadSessions); maybeShowPushEntry(); } else { show('pair'); }
   setInterval(refreshPendingBadge, 30000);
 })();
 </script>

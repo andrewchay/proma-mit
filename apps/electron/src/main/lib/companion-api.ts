@@ -33,15 +33,23 @@ export interface CompanionApiDeps {
   sendUserMessage(sessionId: string, text: string): Promise<void>
   stopSession(sessionId: string): boolean
   appendAudit(input: { action: string; sessionId?: string; detail?: string }): Promise<void>
+  /** Web Push：VAPID 公钥（首次调用自动生成并持久化） */
+  getVapidPublicKey(): string
+  /** 登记手机端推送订阅 */
+  subscribePush(subscription: unknown): boolean
+  /** 按 endpoint 移除推送订阅 */
+  unsubscribePush(endpoint: string): boolean
 }
 
-/** 请求体（配对码 / 消息文本 / 权限行为 / AskUser 答案）；alwaysAllow 会被强制覆盖为 false，仅用于验证覆盖行为 */
+/** 请求体（配对码 / 消息文本 / 权限行为 / AskUser 答案 / 推送订阅）；alwaysAllow 会被强制覆盖为 false，仅用于验证覆盖行为 */
 export interface CompanionApiBody {
   code?: string
   text?: string
   behavior?: 'allow' | 'deny'
   alwaysAllow?: boolean
   answers?: Record<string, string>
+  subscription?: unknown
+  endpoint?: string
 }
 
 /** 未知路由返回 null，由传输层决定 404 */
@@ -136,6 +144,18 @@ export function createCompanionApi(deps: CompanionApiDeps): CompanionApiHandler 
       return json({ ok: true })
     }
 
+    if (method === 'GET' && pathname === '/api/push/vapid') {
+      return json({ publicKey: deps.getVapidPublicKey() })
+    }
+    if (method === 'POST' && pathname === '/api/push/subscribe') {
+      const ok = deps.subscribePush(body?.subscription)
+      return ok ? json({ ok: true }) : json({ error: '订阅结构无效' }, 400)
+    }
+    if (method === 'POST' && pathname === '/api/push/unsubscribe') {
+      const endpoint = typeof (body as { endpoint?: string } | undefined)?.endpoint === 'string' ? (body as { endpoint: string }).endpoint : ''
+      deps.unsubscribePush(endpoint)
+      return json({ ok: true })
+    }
     return null
   }
 }

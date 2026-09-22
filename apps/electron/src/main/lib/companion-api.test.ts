@@ -24,6 +24,9 @@ function makeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDeps {
     sendUserMessage: async () => undefined,
     stopSession: () => true,
     appendAudit: async () => undefined,
+    getVapidPublicKey: () => 'vapid-public-key',
+    subscribePush: () => true,
+    unsubscribePush: () => true,
     ...overrides,
   }
 }

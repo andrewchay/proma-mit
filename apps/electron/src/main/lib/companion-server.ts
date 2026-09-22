@@ -19,7 +19,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import type { AgentStreamPayload, AgentStreamEnvelope } from '@gravitas/shared'
 import { createAgentStreamEnvelope, serializeAgentStreamEnvelopeForSSE } from '@gravitas/shared'
 import { createCompanionApi, type CompanionApiDeps, type CompanionApiBody } from './companion-api'
-import { getCompanionPageHtml } from './companion-page'
+import { getCompanionPageHtml, getCompanionServiceWorkerJs } from './companion-page'
 import { renderCompanionIconPng } from './companion-png'
 
 /** SSE 环形缓冲上限（断线重连补发窗口） */
@@ -61,9 +61,24 @@ function shouldForward(payload: AgentStreamPayload): boolean {
   return false
 }
 
+/** 阻塞类请求的推送通知器（真实装配时由 buildRealDeps 设置；测试注入 fake 时保持 null） */
+let pushNotifier: ((title: string, body: string) => void) | null = null
+function setPushNotifier(notifier: (title: string, body: string) => void): void {
+  pushNotifier = notifier
+}
+
 /** agentEventBus 事件 → envelope 入缓冲并广播给所有 SSE 客户端 */
 function broadcastEvent(sessionId: string, payload: AgentStreamPayload): void {
   if (!shouldForward(payload)) return
+  // 阻塞类请求触发手机推送（人不在电脑前的核心场景）
+  if (pushNotifier && payload.kind === 'proma_event') {
+    const event = payload.event as { type?: string; request?: { toolName?: string; description?: string; questions?: Array<{ question?: string }> } }
+    if (event.type === 'permission_request') {
+      pushNotifier('需要权限确认', event.request?.description || event.request?.toolName || 'Agent 请求使用工具')
+    } else if (event.type === 'ask_user_request') {
+      pushNotifier('Agent 需要你的输入', event.request?.questions?.[0]?.question || 'Agent 有问题需要你回答')
+    }
+  }
   sseSeq += 1
   const envelope = createAgentStreamEnvelope(sessionId, payload, { id: String(sseSeq) })
   sseBuffer.push(envelope)
@@ -111,7 +126,7 @@ function readJsonBody(req: IncomingMessage): Promise<CompanionApiBody | undefine
 
 /** 装配真实主进程服务（动态 import，仅在未注入 deps 时调用） */
 async function buildRealDeps(): Promise<CompanionApiDeps> {
-  const [{ runAgentHeadless, stopAgent, isAgentSessionActive, agentEventBus }, { permissionService }, { askUserService }, { listAgentSessions, getAgentSessionSDKMessages }, { listAgentWorkspacesByUpdatedAt }, { verifyPairingCode, issueToken, verifyToken }, { appendCompanionAudit }, { extractCompanionHistory }] = await Promise.all([
+  const [{ runAgentHeadless, stopAgent, isAgentSessionActive, agentEventBus }, { permissionService }, { askUserService }, { listAgentSessions, getAgentSessionSDKMessages }, { listAgentWorkspacesByUpdatedAt }, { verifyPairingCode, issueToken, verifyToken }, { appendCompanionAudit }, { extractCompanionHistory }, { ensureVapidKeys, addPushSubscription, removePushSubscription, sendCompanionPush }] = await Promise.all([
     import('./agent-service'),
     import('./agent-permission-service'),
     import('./agent-ask-user-service'),
@@ -120,7 +135,15 @@ async function buildRealDeps(): Promise<CompanionApiDeps> {
     import('./companion-auth'),
     import('./companion-audit-service'),
     import('./companion-history'),
+    import('./companion-push'),
   ])
+
+  // 阻塞类请求触发推送（人不在电脑前的核心场景）；测试注入 fake 时不启用
+  setPushNotifier((title, body) => {
+    void sendCompanionPush(title, body).catch((error) => {
+      console.error('[CompanionPush] 推送失败:', error)
+    })
+  })
 
   return {
     verifyPairingCode,
@@ -176,6 +199,9 @@ async function buildRealDeps(): Promise<CompanionApiDeps> {
       return stopAgent(sessionId).requestAccepted
     },
     appendAudit: appendCompanionAudit,
+    getVapidPublicKey: () => ensureVapidKeys().publicKey,
+    subscribePush: (subscription) => addPushSubscription(subscription),
+    unsubscribePush: (endpoint) => removePushSubscription(endpoint),
   }
 }
 
@@ -223,6 +249,13 @@ export async function startCompanionServer(options: CompanionServerOptions = {})
         if (iconMatch) {
           res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
           res.end(renderCompanionIconPng(Number(iconMatch[1])))
+          return
+        }
+
+        // Service Worker（Web Push；需 HTTPS 安全上下文，无敏感内容无需认证）
+        if (req.method === 'GET' && url.pathname === '/sw.js') {
+          res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' })
+          res.end(getCompanionServiceWorkerJs())
           return
         }
 
@@ -309,6 +342,8 @@ export async function stopCompanionServer(): Promise<void> {
   sseClients.clear()
   const s = server
   server = null
+  pushNotifier = null
+  if (!s) return
   if (!s) return
   await new Promise<void>((resolve) => s.close(() => resolve()))
 }
