@@ -82,6 +82,8 @@ import { createContextLedgerObserver, type ContextLedgerObserver } from './agent
 import type { ContextCompilerMetricEvent } from './agent-runtime/context/context-metrics'
 import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-feature-flag'
 import { prepareSubAgentProjection } from './agent-runtime/context/subagent-projection-adapter'
+import { resolveSubAgentContextOptions } from './agent-runtime/context/subagent-context-options'
+import { resolveSubAgentWorkspace } from './agent-runtime/context/subagent-readonly-workspace'
 
 // ===== 插件能力引导收集 =====
 
@@ -1230,6 +1232,19 @@ export class AgentOrchestrator {
         `parent=${parentSessionId} agent=${input.agentName} reason=${preparedProjection.fallbackReason}`,
       )
     }
+    const contextOptions = resolveSubAgentContextOptions(input.context)
+    // 只有成功投影后才切入只读边界。投影故障保持原有 cwd/权限，确保 M2-02 的 baseline
+    // fallback 不会因半完成的隔离导致子任务行为变化。
+    const readOnly = preparedProjection.projection !== undefined && contextOptions.readOnly
+    const childWorkspaceDir = workspace
+      ? getAgentSessionWorkspacePath(workspace.slug, childSessionId)
+      : ctx.cwd
+    const childCwd = resolveSubAgentWorkspace({
+      readOnly,
+      parentWorkspaceDir: ctx.cwd,
+      explicitWorkspaceDir: input.workspaceDir,
+      childWorkspaceDir,
+    })
     const prompt = `${input.task}${filesHint}${preparedProjection.promptSuffix ? `\n\n${preparedProjection.promptSuffix}` : ''}`
     const systemPrompt = def.prompt
       ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
@@ -1250,13 +1265,15 @@ export class AgentOrchestrator {
         adapterProvider: ctx.adapterProvider,
         apiKey: ctx.apiKey,
         baseUrl: effectiveBaseUrl,
-        // 评测沙箱：子代理 cwd 指向隔离目录；缺省继承父 cwd（现有行为不变）
-        cwd: input.workspaceDir ?? ctx.cwd,
+        // 评测沙箱保持调用方指定 cwd；显式 TCC projection 成功时改为私有子会话 cwd。
+        cwd: childCwd,
         systemPrompt,
         historyMessages: [],
         // 子代理不得超过父会话权限；需要审批的操作继续通过父调用上下文处理，
         // Runtime 无法承载交互时应拒绝，而不是静默提升为 bypassPermissions。
-        permissionMode: ctx.permissionMode,
+        // 只读子代理强制 safe：Runtime 层会拒绝 Bash、Write、Edit、MCP 写入等副作用工具。
+        // 这不能被父会话的 bypassPermissions 覆盖。
+        permissionMode: readOnly ? 'safe' : ctx.permissionMode,
         mcpServers: ctx.mcpServers,
         maxTurns: input.maxTurns ?? 10,
         abortSignal: input.abortSignal,

@@ -48,7 +48,7 @@
 |---|---|---|---|---|---|---|
 | M2-01 | SubAgentInput 扩展 | projection、resultProtocol、readOnly，保持旧调用兼容 | M1 | 旧调用行为不变；新字段可选 | `subagent-context-options.{ts,test.ts}` | 已完成 |
 | M2-02 | Spawn projection adapter | 在 orchestrator/runtime spawn 边界生成 projection | M1、M2-01 | projection 失败回退 baseline；sourceRevision 关联 | `subagent-projection-adapter.test.ts` | 已完成 |
-| M2-03 | Read-only 子任务隔离 | 子任务独立 cwd，父工作区不可写 | M2-02 | 写入被拒绝或仅进入隔离目录 | sandbox/workspace tests | 待开始 |
+| M2-03 | Read-only 子任务隔离 | 子任务独立 cwd，父工作区不可写 | M2-02 | 写入被拒绝或仅进入隔离目录 | `subagent-readonly-workspace.test.ts`、Runtime safe-mode tests | 已完成 |
 | M2-04 | Typed result parser | claims、artifacts、evidence、confidence、unverified | M0-01、M2-01 | 缺 evidence 的 high claim 自动降级；协议失败为 partial | parser tests | 待开始 |
 | M2-05 | Child artifact 持久化 | typed result、原始 session、projection 元数据关联 | M0-02、M2-04 | 可从 result 追溯 child session 和 source items | persistence tests | 待开始 |
 | M2-06 | 内置 Agent 试点 | explorer → researcher → code-reviewer 分批接入 | M2-02、M2-04 | 每个 Agent 有明确 requiredKinds 与 result schema | integration tests | 待开始 |
@@ -213,7 +213,17 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：移除 orchestrator 的 adapter 调用；adapter 本身无写入和无持久化副作用。
 - 下一步：M2-03 read-only child cwd 与写入隔离。
 
+### M2-03（2026-09-22）
+- 状态：已完成。
+- 实际变更：仅当 TCC projection 成功且 context options 要求 read-only 时，spawn 边界为子任务创建私有 session cwd，忽略调用方提供的 cwd；同时强制子 Runtime 使用 `safe` 权限模式，因此 Runtime 会在调用前拒绝 Bash、Write、Edit 和非安全 MCP 等副作用工具。投影未启用或失败时继续使用原始 cwd 和父权限，不改变既有委派或评测沙箱行为。
+- 测试命令：`bun test apps/electron/src/main/lib/agent-runtime/context/subagent-readonly-workspace.test.ts apps/electron/src/main/lib/agent-runtime/context/subagent-projection-adapter.test.ts`；`bun run typecheck`；`bun run test`。
+- 测试结果：目标测试 6 pass / 0 fail；全仓 typecheck 通过；全量隔离测试 `bun run test`：437 文件 / 0 失败。
+- 证据文件：`context/subagent-readonly-workspace.{ts,test.ts}`、`agent-orchestrator.ts`、`agent-runtime/ai-sdk-runtime-core.test.ts`。
+- 风险变化：此隔离是 Runtime 工具边界，不声称提供内核级沙箱；safe 模式拒绝 Bash，文件工具又受 cwd path resolver 约束，避免以相对/绝对路径写回父工作区。
+- 回滚方式：移除只读 cwd 选择和 safe-mode 覆写即可回到 M2-02 的 baseline 行为。
+- 下一步：M2-04 解析 typed `SubtaskResult`，在 evidence 缺失时下调高置信 claim。
+
 ## 8. 当前下一步
 
-1. 开始 M2-01：扩展 SubAgentInput 的 projection/resultProtocol/readOnly，保持旧调用兼容。
+1. 开始 M2-04：解析 typed `SubtaskResult`，将缺 evidence 的 high-confidence claim 降级，并将协议失败标记为 partial。
 2. 每完成一个 milestone 更新本台账，并在 M3 形成是否继续的门禁结论。
