@@ -35,13 +35,14 @@
 
 - [x] 真机手动验收（2026-09-22 用户确认通过：配对、权限远程确认、双向卡片消失）
 - [x] 合并 feat/companion-server → main（59af9e17，合并后 typecheck 全绿、companion 33 用例全过）；待推送到 origin
+- [x] M3 首批落地（2026-09-22：M3-1/2/3/4/6，electron 0.12.45，companion 系 50 用例全过）；附件预览与 SSE ticket 延后
 - [ ] 打包新版本替换 /Applications/Gravitas.app（companion 随正式包可用）
-- [ ] M3-1：助手消息 Markdown/代码高亮渲染（与桌面差距最大的部分）
-- [ ] M3-2：消息与工作区按桌面版顺序排序展示（2026-09-22 新增；工作区列表已同源同序，需对齐消息序列化顺序与展示细节）
-- [ ] M3-3：Web Push 通知（权限请求/任务完成推送）
-- [ ] M3-4：PWA manifest（主屏幕安装）
+- [x] M3-1：助手消息 Markdown/代码高亮渲染（db1e244c；防 XSS 白名单子集：标题/粗斜体/行内码/围栏代码/列表/仅 http(s) 链接；代码高亮为样式化非语法着色）
+- [x] M3-2：消息与工作区按桌面版顺序排序（db1e244c；复刻 LeftSidebar 规则：工作区按组内最近会话时间降序，无会话回退工作区时间）
+- [x] M3-3：Web Push 通知（78e9e291：VAPID 自动生成入 settings、订阅存 JSON、SW 推送+点击回跳；**触发点：权限/AskUser 阻塞请求**；浏览器要求 HTTPS 安全上下文，HTTP 局域网下页面自动隐藏入口，需 Tailscale Serve 等通道）
+- [x] M3-4：PWA manifest 与图标（d4221374；图标纯像素数学生成，零依赖）
 - [ ] M3-5：附件只读预览
-- [ ] M3-6：配对二维码
+- [x] M3-6：配对二维码（6bc08804；复用既有 qrcode 依赖，主进程生成 dataURL）
 - [ ] M3-7（可选安全增强）：SSE token 走 URL 参数改为短时 ticket 换流
 - [ ] 存量 39 个全量测试隔离污染问题（另开任务排查）
 - [ ] `AGENTS.md` 版本号段落已过时（shared/electron 版本、测试基线数量），需用户授权后再更新
