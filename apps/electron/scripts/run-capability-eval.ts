@@ -55,7 +55,9 @@ async function main(): Promise<void> {
   const deepseek = resolveChannel(requireEnv('GRAVITAS_CAP_EVAL_DEEPSEEK_CHANNEL_ID'), 'deepseek-v4-flash')
   const catalog: CapabilityCatalog = buildSelectionCatalog()
 
-  const plannedSelection = TOOL_SELECTION_CASES.length * 2 * 3
+  const phase = process.env.GRAVITAS_CAP_EVAL_PHASE ?? 'all'
+  const runSelection = phase !== 'routing-only'
+  const plannedSelection = runSelection ? TOOL_SELECTION_CASES.length * 2 * 3 : 0
   const plannedRouting = TOOL_SELECTION_CASES.length * 2 * 2
   if (authorizedCalls < plannedSelection + plannedRouting) {
     throw new Error(`Authorized calls (${authorizedCalls}) are fewer than the planned matrix (${plannedSelection + plannedRouting})`)
@@ -72,15 +74,37 @@ async function main(): Promise<void> {
     writeFileSyncSafe(scoreboardPath, data)
   }
 
-  console.log(`[cap-eval] M4-04 selection matrix: ${plannedSelection} calls`)
-  const selectionRuns = await runToolSelectionExperiment({
-    cases: TOOL_SELECTION_CASES,
-    catalog,
-    runsPerCase: 3,
-    delegate: zhipuDelegate,
-    onRun: (run) => writeThrough({ selectionRuns: [run] }),
-  })
-  const selectionGate = summarizeToolSelection(selectionRuns)
+  let selectionRuns: Awaited<ReturnType<typeof runToolSelectionExperiment>> = []
+  let selectionGate = summarizeToolSelection([])
+  if (runSelection) {
+    console.log(`[cap-eval] M4-04 selection matrix: ${plannedSelection} calls`)
+    selectionRuns = await runToolSelectionExperiment({
+      cases: TOOL_SELECTION_CASES,
+      catalog,
+      runsPerCase: 3,
+      delegate: zhipuDelegate,
+      onRun: (run) => writeThrough({ selectionRuns: [run] }),
+    })
+    selectionGate = summarizeToolSelection(selectionRuns)
+  } else {
+    console.log('[cap-eval] skipping selection matrix (routing-only phase)')
+  }
+
+  // 续跑：从上一轮逐次日志恢复已完成 key（失败/换渠道的 key 不会命中，会如实重跑）
+  const resumeLog = process.env.GRAVITAS_CAP_EVAL_RESUME_LOG
+  const alreadyCompleted = new Set<string>()
+  if (resumeLog) {
+    const { readFileSync, existsSync } = require('node:fs') as typeof import('node:fs')
+    if (existsSync(resumeLog)) {
+      for (const line of readFileSync(resumeLog, 'utf8').split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const parsed = JSON.parse(line) as { routingRuns?: Array<{ caseId: string; providerId: string; run: number }> }
+          for (const run of parsed.routingRuns ?? []) alreadyCompleted.add(`${run.caseId}:${run.providerId}:${run.run}`)
+        } catch { /* 忽略坏行 */ }
+      }
+    }
+  }
 
   const routingProviders: RoutingLatencyProvider[] = [
     {
@@ -102,6 +126,7 @@ async function main(): Promise<void> {
     providers: routingProviders,
     runsPerCase: 2,
     catalog,
+    alreadyCompleted,
     delegate: async ({ providerId, caseId, task, systemPrompt }) => {
       const delegate = providerId === 'zhipu-glm' ? zhipuDelegate : deepseekDelegate
       return delegate({ caseId: `${providerId}:${caseId}`, variant: 'summary_on_demand', task, systemPrompt })
@@ -117,7 +142,8 @@ async function main(): Promise<void> {
     authorizedCalls,
     plannedCalls: plannedSelection + plannedRouting,
     executedCalls: selectionRuns.length + routingRuns.length,
-    m4_04: { gate: selectionGate, runs: selectionRuns },
+    phase,
+    m4_04: runSelection ? { gate: selectionGate, runs: selectionRuns } : { skipped: true },
     m6_05: { report: routingReport, runs: routingRuns },
   }
   writeThrough(result)

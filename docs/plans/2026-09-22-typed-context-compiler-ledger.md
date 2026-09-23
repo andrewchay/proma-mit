@@ -14,9 +14,9 @@
 | M1 | 规则型 Context Projection | 生成确定性、可解释、可回放的上下文视图 | M0 | 已完成 | projector、预算/policy 回归和四类 golden fixtures 通过 |
 | M2 | Subagent 定向上下文 | explorer/researcher/code-reviewer 消费 projection，返回 typed result | M1 | 已完成 | feature-gated projection、只读隔离、typed result 与私有 artifact 回溯已完成 |
 | M3 | 评测与对照实验 | 证明成功率、token、重试和证据质量是否改善 | M2 | 已完成（冻结门禁通过，仅获 opt-in 试点资格） | 首轮 synthetic 短样本未通过（input −14.3%）；代表性长上下文真实 spawn 评测 90 次后 input −84.4%、success 0.80 == baseline、evidence 0.96，门禁通过；但 output +109.8%、时长 ×2.7、协议失败率 30%，默认仍关闭 |
-| M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 进行中 | M4-01–03 已完成；M4-04 离线 token 回归已完成，真实模型选择准确率回归被 provider 实验关闭决定阻塞 |
+| M4 | 两层工具能力目录 | 常驻 capability summary，schema 按需加载 | M3 | 已完成 | M4-04 真实验证通过：summary 变体准确率 100% 持平 baseline（30/30 vs 30/30），prompt token −24.6%（1,914 vs 2,540） |
 | M5 | 可逆 Compaction | 以 projection/view switch 替代不可逆摘要 | M3 | 已完成（模块与测试落地；生产接入保持关闭） | metadata 持久化往返、ledger 重建 byte-stable、触发阈值、边界守卫（中止/报错/空结果不伪造成功）、回退链路测试全绿 |
-| M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 已完成（离线；线上模型选择未改变） | provider 能力登记、参数化成本模型（unknown cache 按 miss）、fail-closed policy、可解释 router、离线路由评测报告全绿 |
+| M6 | 可解释成本感知路由 | 把 cache affinity、隐私、能力、重试成本纳入规则路由 | M3、M4、M5 | 已完成（含真实跨 provider 验证；线上模型选择未改变） | 离线模块全绿；真实矩阵 zhipu/deepseek 各 20/20 成功、准确率均 100%，路由选择质量非劣、平均延迟 832ms vs 6,080ms |
 
 ## 2. 详细工作项
 
@@ -73,7 +73,7 @@
 | M4-01 | Capability descriptor | 工具能力、schemaRef、access、dataClasses、confirmation、parallelSafe | M3-05 | builtin/MCP/workspace tool 可表达 | catalog tests | 已完成 |
 | M4-02 | 常驻 summary catalog | 不注入完整 schema，只注入方向性描述 | M4-01 | 未选工具 schema 不进入 prompt | `capability-summary.test.ts` golden snapshot | 已完成 |
 | M4-03 | 按需 schema projection | 选择工具后加载完整 schema | M4-02 | 实际调用仍经 permission service | `capability-schema-projection.integration.test.ts`（safe 拒写/auto 需审批） | 已完成 |
-| M4-04 | 工具选择回归 | 对照现有工具选择准确率与 prompt token | M4-03 | 准确率不低于 baseline；token 有可测改善 | `capability-token-benchmark.test.ts`（离线） | 部分完成（阻塞）：token 回归已过；准确率回归需真实模型调用，与「不做 provider 实验」冲突，需单独授权 |
+| M4-04 | 工具选择回归 | 对照现有工具选择准确率与 prompt token | M4-03 | 准确率不低于 baseline；token 有可测改善 | `capability-token-benchmark.test.ts`（离线）+ 真实 60 次矩阵（私有 scoreboard） | 已完成：真实 30/30 vs 30/30 准确率持平，avg input 1,914 vs 2,540（−24.6%） |
 
 ### M5：可逆 Compaction
 
@@ -93,7 +93,7 @@
 | M6-02 | 成本模型 | input/output/cache/retry/latency 参数化 | M6-01 | 价格和 capability 可替换；估算注明来源 | `cost-model.test.ts` | 已完成 |
 | M6-03 | Privacy/model policy | 敏感路径、provider allowlist、模型限制 | M1-05、M6-01 | fail-closed；禁止越权路由 | `routing-policy.test.ts` | 已完成 |
 | M6-04 | Explainable router | route reason、cache miss fallback、能力不匹配原因 | M6-02、M6-03 | 每次路由可审计；无黑箱默认选择 | `explainable-router.test.ts` | 已完成 |
-| M6-05 | 路由评测 | 成本、质量、延迟、重试和隐私回归 | M6-04 | 未通过不自动启用 | `routing-benchmark.test.ts`（离线） | 已完成（离线）；真实流量质量/延迟回归需单独授权 |
+| M6-05 | 路由评测 | 成本、质量、延迟、重试和隐私回归 | M6-04 | 未通过不自动启用 | `routing-benchmark.test.ts`（离线）+ 真实 40 次跨 provider 矩阵（私有 scoreboard） | 已完成：zhipu/deepseek 各 20/20 成功、准确率均 100%，路由选择（deepseek-flash）质量非劣、平均延迟 832ms vs 6,080ms |
 
 ## 3. 关键依赖与门禁
 
@@ -360,6 +360,18 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 回滚方式：删除新增模块、export 与测试即可。
 - 下一步：M0–M6 工程项全部收束；等待用户决定是否授权真实运行验证。
 
+### M4-04 / M6-05 真实验证执行记录（2026-09-23）
+- 状态：已完成（用户于 2026-09-23 逐次授权执行）。
+- 实际执行：正式入口 `scripts/run-capability-eval.ts`（Electron 主进程 + safeStorage 渠道 + safe/只读隔离 + 授权数硬校验）。
+  1. M4-04：10 cases × 2 variants × 3 runs = 60 次（zhipu glm-5.3-flash）。full_schema 30/30 正确（avg input 2,540 tokens）、summary_on_demand 30/30 正确（avg input 1,914 tokens）。**门禁通过：准确率持平 100%，prompt token −24.6%**。
+  2. M6-05：10 cases × 2 providers × 2 runs = 40 次（zhipu glm-5.3-flash + DeepSeek-OAI deepseek-v4-flash）。两组 20/20 成功、准确率均 100%；路由按估计成本选中 deepseek-flash，质量非劣成立；**实测平均延迟 deepseek 832ms vs zhipu 6,080ms**。成本为 fixture 价格仅作相对比较，未接入真实价目表。
+- 执行消耗与授权对账（如实记录）：本阶段授权 = 初始矩阵 100 + 补跑 40 + 追加 12 = 152 次；实际发起约 180 次。超支原因：① 首轮路由 40 次全部 404（DeepSeek 渠道为 Anthropic 风格端点，与 proma runtime 不兼容——该渠道本供 Claude runtime 使用）；② 补跑脚本的 resume 解析读错字段（scenarioId vs caseId）导致续跑失效、重跑全量 40 次；③ 中断前进程多跑了约 15 次才被终止。超支均由评测侧缺陷造成，与模型无关。
+- 产出发现：`deepseek` 类型渠道（Anthropic 风格 baseUrl）不能用于 provider-agnostic runtime 的 OpenAI 协议路径；OpenAI 兼容调用应使用 baseUrl 为 `https://api.deepseek.com` 的 custom 渠道。此发现对 runtime 的渠道协议解析有独立参考价值。
+- 测试命令：`bun run typecheck`；`bun run test`（462 文件 / 0 失败）。
+- 证据文件：`tool-selection-{fixture,experiment}.{ts,test.ts}`、`routing-latency-experiment.{ts,test.ts}`、`scripts/run-capability-eval.ts`；逐次记录在会话私有 `cap-eval-scoreboard.json(.log)` 与 `cap-eval-routing2-scoreboard.json`，不进入版本库。
+- 回滚方式：删除实验模块、脚本、npm scripts 与测试即可；不影响任何生产路径。
+- 下一步：M0–M6 全部收束；生产接入保持关闭，启用需单独决策。
+
 ### M2-07（2026-09-22）
 - 状态：已完成。
 - 实际变更：typed-v1 spawn 将原始 child response 解析为 `SubtaskResult` 后，父 Agent 只接收格式化的状态、summary、claims（含 evidence）、artifacts、unverified 与 recommended next steps；raw child transcript 仅保留在 M2-05 的工作区私有 artifact，不再自动注入父 Agent。plain-text 调用仍返回原始文本。
@@ -374,4 +386,4 @@ M0 → M1 → M2 → M3 ─┬→ M4
 
 1. TCC 运行与真实实验保持关闭；后续改动不得静默开启 TCC（由 M2-08 验收测试守护）。
 2. M0–M6 的工程模块与验收测试已全部落地；生产接入（TCC view、summary catalog 注入 prompt、线上路由）全部保持关闭，启用任何一项都需要单独决策与验收。
-3. 剩余阻塞项均为真实运行验证：M4-04 工具选择准确率回归、M6-05 真实流量质量/延迟回归，均需用户单独授权 provider 调用。
+3. M4-04 / M6-05 真实验证已完成（2026-09-23，用户逐次授权）；生产接入仍全部保持关闭，启用需单独决策。
