@@ -4,7 +4,7 @@
 > 关联方案：`docs/plans/2026-09-22-typed-context-compiler.md`
 > 台账性质：实施控制面；每个工作项必须更新状态、证据和阻塞原因后才能进入下一阶段。
 > 状态枚举：`待开始` / `进行中` / `阻塞` / `已完成` / `取消`
-> 当前总状态：**M0–M3 已完成；TCC 运行与实验保持关闭；继续执行 M4，M5/M6 待开始。**
+> 当前总状态：**M0–M6 工程项全部完成并验收；TCC 运行与生产接入保持关闭；剩余阻塞项均为需单独授权的真实运行验证。**
 
 ## 1. 总体里程碑
 
@@ -127,13 +127,13 @@ M0 → M1 → M2 → M3 ─┬→ M4
 
 | Decision ID | 决策 | 理由 | 影响 | 状态 |
 |---|---|---|---|---|
-| D-01 | 产品/架构名称采用 Typed Context Compiler | 比 Meta-attention 更稳定，不绑定具体 scorer | 后续文档、代码模块和指标命名统一 | 已建议，待确认 |
-| D-02 | 原始 ledger 永不因 projection/compaction 删除 | 保证可回溯、换任务重投影和错误复盘 | 增加存储，需要 retention 策略 | 已建议，待确认 |
-| D-03 | 第一落点是 subagent spawn boundary | 任务已知、收益可测、风险小 | M2 优先于全局 compaction | 已建议，待确认 |
-| D-04 | 第一版 projector 用确定性规则 | 可解释、可回放、无需 scorer 训练数据 | 自动 relevance scorer 延后至 M3 通过后 | 已建议，待确认 |
-| D-05 | child 返回 typed result，不自动 merge transcript | 降低状态合并和幻觉风险 | 需要协议解析和 evidence 模型 | 已建议，待确认 |
-| D-06 | 默认 read-only 子任务 | 安全边界清楚，先验证只读协作价值 | 写任务另建显式 artifact/patch 流程 | 已建议，待确认 |
-| D-07 | 未知 cache affinity 按 miss 估算 | 不把 provider 行为假设当事实 | 路由可能保守但可解释 | 已建议，待确认 |
+| D-01 | 产品/架构名称采用 Typed Context Compiler | 比 Meta-attention 更稳定，不绑定具体 scorer | 后续文档、代码模块和指标命名统一 | 已生效（M0–M3 实施采用） |
+| D-02 | 原始 ledger 永不因 projection/compaction 删除 | 保证可回溯、换任务重投影和错误复盘 | 增加存储，需要 retention 策略 | 已生效（M5-02 重建测试固化不可变性） |
+| D-03 | 第一落点是 subagent spawn boundary | 任务已知、收益可测、风险小 | M2 优先于全局 compaction | 已生效（M2-02/M2-08 落地） |
+| D-04 | 第一版 projector 用确定性规则 | 可解释、可回放、无需 scorer 训练数据 | 自动 relevance scorer 延后至 M3 通过后 | 已生效（M1 落地；M3 后仍不启用自动 scorer） |
+| D-05 | child 返回 typed result，不自动 merge transcript | 降低状态合并和幻觉风险 | 需要协议解析和 evidence 模型 | 已生效（M2-04/02-07 落地） |
+| D-06 | 默认 read-only 子任务 | 安全边界清楚，先验证只读协作价值 | 写任务另建显式 artifact/patch 流程 | 已生效（M2-03/M2-08 落地） |
+| D-07 | 未知 cache affinity 按 miss 估算 | 不把 provider 行为假设当事实 | 路由可能保守但可解释 | 已生效（M6-01/02 落地） |
 | D-08 | 不修改两份 AGENTS.md | 当前未授权维护项目地图和工作区规则 | 方案只引用其约束，不自动写入 | 已生效 |
 
 ## 6. 实施记录模板

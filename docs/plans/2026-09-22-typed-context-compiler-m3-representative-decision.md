@@ -34,6 +34,8 @@
 
 **门禁通过，TCC 获得 opt-in 试点资格；默认仍为关闭。** 不启用自动 relevance scorer、自动 compaction adoption 或自动模型路由。
 
+> 后续更新（2026-09-22，M3-07）：本决定给出的 opt-in 试点资格已被用户关闭决定取代——TCC 运行与实验全部关闭，本文仅作为门禁证据存档。
+
 依据与边界：
 
 1. 首轮 M3（synthetic 短 prompt）测得 input token 仅降 14.3% 且未走真实 spawn 边界，因此被判不推广；本轮改为长噪声真实 spawn 样本、真实生产边界和真实协议解析后，input token 降幅为 84.4%，同时保持与 baseline 相同的成功率与 96% 证据覆盖。首轮结论由本轮证据取代。
