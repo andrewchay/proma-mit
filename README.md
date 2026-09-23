@@ -307,8 +307,8 @@ bun run electron:start
 # 类型检查
 bun run typecheck
 
-# 测试
-bun test
+# 测试（逐文件独立进程；全量不要用裸 bun test）
+bun run test
 ```
 
 Electron 子应用内也提供更细的脚本：
