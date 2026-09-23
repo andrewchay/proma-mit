@@ -388,29 +388,43 @@ export function runMemoryMaintenance(opts: ConsolidationOptions = {}): MemoryMai
  * 解析模型输出为尚未写入的记忆候选。
  * 主动 Routine 只能使用这个函数，必须经 ApprovalService 才能持久化。
  */
+/**
+ * 解析结构化记忆块。
+ * @returns 合法块返回条目数组（可能为空数组 = 模型明确报告无新记忆）；
+ *          未找到块或 JSON 非法返回 null（输出违反契约）。
+ */
+export function extractMemoryItemsBlock(
+  output: string,
+): Array<{ title: string; content: string; kind: MemoryItemKind; tags: string[]; confidence: number }> | null {
+  const regex = /```proma-memory-items\n([\s\S]*?)\n```/
+  const match = output.match(regex)
+  if (!match) return null
+
+  try {
+    const block: MemoryItemsBlock = JSON.parse(match[1]!)
+    if (!Array.isArray(block.items)) return null
+    return block.items.map((item) => ({
+      title: item.title,
+      content: item.content,
+      kind: normalizeKind(item.kind),
+      tags: item.tags ?? [],
+      confidence: item.confidence ?? 0.8,
+    }))
+  } catch {
+    return null
+  }
+}
+
 export function extractMemoryCandidatesFromOutput(
   output: string,
   runId?: string,
   sessionId?: string,
 ): Array<Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'>> {
-  const regex = /```proma-memory-items\n([\s\S]*?)\n```/
-  const match = output.match(regex)
-  if (!match) return []
-
-  try {
-    const block: MemoryItemsBlock = JSON.parse(match[1]!)
-    return block.items.map((item) => ({
-        title: item.title,
-        content: item.content,
-        kind: normalizeKind(item.kind),
-        tags: item.tags ?? [],
-        confidence: item.confidence ?? 0.8,
-        sourceRunId: runId ?? null,
-        sourceSessionId: sessionId ?? null,
-      }))
-  } catch {
-    return []
-  }
+  return (extractMemoryItemsBlock(output) ?? []).map((item) => ({
+    ...item,
+    sourceRunId: runId ?? null,
+    sourceSessionId: sessionId ?? null,
+  }))
 }
 
 function normalizeKind(kind: string | undefined): MemoryItemKind {

@@ -31,7 +31,7 @@ import {
 import type { AgentWorkspace, AgentSessionMeta, Channel } from '@gravitas/shared'
 import { proactiveEditScheduleIdAtom, proactiveConfigurationRecommendationAtom } from '@/atoms/proactive-center'
 import { proactiveRecommendationsAtom } from '@/atoms/proactive-data'
-import { PROJECT_CHECK_PROMPT, assertProactiveRunSucceeded, scheduleRunState, sortProactiveRuns } from '@/lib/proactive-view'
+import { PROJECT_CHECK_PROMPT, assertProactiveRunSucceeded, scheduleRunState, sortProactiveRuns, visibleProactiveRuns } from '@/lib/proactive-view'
 import { ProactiveRunCard } from '../ProactiveRunCard'
 
 type SchedulableSession = import('@gravitas/shared').AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
@@ -386,7 +386,7 @@ export function SchedulesTab(): React.ReactElement {
           </h3>
         </div>
         <div className="p-4">
-          {sortProactiveRuns(runs).slice(0, 8).map((run) => <ProactiveRunCard key={run.id} run={run} onRefresh={refresh} />)}
+          {visibleProactiveRuns(sortProactiveRuns(runs)).slice(0, 8).map((run) => <ProactiveRunCard key={run.id} run={run} onRefresh={refresh} />)}
           {runs.length === 0 && <p className="text-center text-sm text-muted-foreground py-6">暂无运行记录。</p>}
         </div>
       </div>

@@ -9,6 +9,7 @@ import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { tabsAtom, activeTabIdAtom, openTabPreview, openTabPermanent, type TabType } from '@/atoms/tab-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
+import { activeViewAtom } from '@/atoms/active-view'
 import { currentConversationIdAtom } from '@/atoms/chat-atoms'
 import {
   currentAgentSessionIdAtom,
@@ -32,6 +33,7 @@ export function useOpenSession(): OpenSessionActions {
   const [tabs, setTabs] = useAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setAppMode = useSetAtom(appModeAtom)
+  const setActiveView = useSetAtom(activeViewAtom)
   const setCurrentConversationId = useSetAtom(currentConversationIdAtom)
   const setCurrentAgentSessionId = useSetAtom(currentAgentSessionIdAtom)
   const agentSessions = useAtomValue(agentSessionsAtom)
@@ -41,6 +43,9 @@ export function useOpenSession(): OpenSessionActions {
   const activateSession = React.useCallback(
     (type: TabType, sessionId: string): void => {
       setAppMode(type)
+      // Proactive Center 是独立主视图；打开运行会话时必须切回会话主视图，
+      // 否则 activeView 仍为 proactive，MainArea 会继续遮住刚打开的 Agent Tab。
+      setActiveView('conversations')
 
       if (type === 'chat') {
         setCurrentConversationId(sessionId)
@@ -65,7 +70,7 @@ export function useOpenSession(): OpenSessionActions {
         }
       }
     },
-    [setAppMode, setCurrentConversationId, setCurrentAgentSessionId, agentSessions, setCurrentAgentWorkspaceId, setUnviewedCompleted],
+    [setAppMode, setActiveView, setCurrentConversationId, setCurrentAgentSessionId, agentSessions, setCurrentAgentWorkspaceId, setUnviewedCompleted],
   )
 
   const openSession = React.useCallback<OpenSessionFn>(

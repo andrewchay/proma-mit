@@ -728,7 +728,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
       baseUrl: 'http://localhost/mock',
       cwd: tempDir,
       permissionMode: 'bypassPermissions',
-      maxTurns: 1,
+      maxTurns: 3,
     })) {
       messages.push(msg)
     }

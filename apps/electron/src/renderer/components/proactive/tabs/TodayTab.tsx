@@ -6,7 +6,7 @@ import * as React from 'react'
 import { useAtom } from 'jotai'
 import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { summarizeProactiveRuns, sortProactiveRuns } from '@/lib/proactive-view'
+import { summarizeProactiveRuns, sortProactiveRuns, visibleProactiveRuns } from '@/lib/proactive-view'
 import { ProactiveRunCard } from '../ProactiveRunCard'
 import { EmployeeCapabilityApprovalDetails } from '../EmployeeCapabilityApprovalDetails'
 import { EmployeeCapabilityRecommendationCard } from '../EmployeeCapabilityRecommendationCard'
@@ -33,8 +33,12 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
   // 评测必须显式选择渠道/模型，不在建议卡里隐式回退到全局配置。
   const [evaluationChannelId, setEvaluationChannelId] = React.useState('')
   const [evaluationModelId, setEvaluationModelId] = React.useState('')
-  const recentRuns = sortProactiveRuns(runs).slice(0, 5)
-  const counts = summarizeProactiveRuns(runs)
+  const visibleRuns = visibleProactiveRuns(runs)
+  const recentRuns = sortProactiveRuns(visibleRuns).slice(0, 5)
+  const counts = summarizeProactiveRuns(visibleRuns)
+  // 需要处理：失败运行与因连续失败被自动熔断的停用任务，必须在 Today 顶部可见
+  const failedRuns = visibleRuns.filter((run) => run.status === 'failed').length
+  const trippedSchedules = schedules.filter((schedule) => !schedule.enabled && (schedule.consecutiveFailures ?? 0) >= 3)
   const pause = async (id: string): Promise<void> => {
     try { await window.electronAPI.setProactiveScheduleEnabled(id, false); await onRefresh() }
     catch (error) { toast.error(error instanceof Error ? error.message : '暂停失败') }
@@ -107,6 +111,24 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
         <StatCard icon={Activity} label="运行中" value={counts.running} color="text-blue-500" />
         <StatCard icon={Clock} label="今日运行" value={counts.today} color="text-emerald-500" />
       </div>
+
+      {/* 需要处理 */}
+      {(failedRuns > 0 || trippedSchedules.length > 0) && (
+        <SectionCard title="需要处理" icon={XCircle}>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {failedRuns > 0 && (
+              <span className="text-destructive">{failedRuns} 条失败运行</span>
+            )}
+            {trippedSchedules.length > 0 && (
+              <span className="text-amber-600">{trippedSchedules.length} 个任务因连续失败已自动暂停</span>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setActiveTab('runs')}>查看运行记录</Button>
+            {trippedSchedules.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setActiveTab('schedules')}>检查定时任务</Button>
+            )}
+          </div>
+        </SectionCard>
+      )}
 
       {/* Recommended */}
       {suggestedRecommendations.length > 0 && (

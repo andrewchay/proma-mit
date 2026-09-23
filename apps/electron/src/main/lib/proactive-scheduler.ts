@@ -115,7 +115,9 @@ export class ProactiveScheduler {
   async recover(): Promise<void> {
     for (const run of this.store.listRuns()) {
       if (run.status === 'running' || run.status === 'queued') {
-        this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: '应用退出导致运行中断；请检查结果后手动重试' })
+        const failed = this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: '应用退出导致运行中断；请检查结果后手动重试' })
+        // 恢复中断也必须补齐统一运行事实源的失败终态，保证各运行视图一致
+        this.emitRunEvent({ title: run.sourceTitle ?? '主动任务', workspaceId: undefined }, failed, 'failed')
       }
     }
     await this.runDue('recovery')
@@ -205,17 +207,21 @@ export class ProactiveScheduler {
   /**
    * PH2-C：把一次 Proactive 运行记为统一运行事件（Run Center 可回放）。
    * 不阻塞执行，失败静默。
+   * 事件的 started/completed/failed 使用唯一 ID（追加式事件，不复用同一 id），
+   * 并带上 sessionId/workspaceId 便于跨视图定位。
    */
-  private emitRunEvent(schedule: ProactiveSchedule, run: ProactiveTaskRun, type: 'started' | 'completed' | 'failed'): void {
+  private emitRunEvent(schedule: { title: string; workspaceId?: string }, run: ProactiveTaskRun, type: 'started' | 'completed' | 'failed'): void {
     try {
       const { getRunStore } = require('./run-store') as { getRunStore: () => { record: (e: import('@gravitas/shared').AppEventEnvelope) => void } }
-      const triggerLabel = run.trigger === 'manual' ? '手动触发' : run.trigger === 'recovery' ? '恢复触发' : '定时触发'
+      const triggerLabel = run.trigger === 'manual' ? '手动触发' : run.trigger === 'recovery' ? '恢复触发' : run.trigger === 'event' ? '事件触发' : '定时触发'
       const base: import('@gravitas/shared').AppEventEnvelope = {
-        id: `arun-${run.id}`,
+        id: `arun-${run.id}:${type}`,
         source: 'automation',
         taskId: run.id,
         title: schedule.title,
         timestamp: this.now(),
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        ...(schedule.workspaceId ? { workspaceId: schedule.workspaceId } : {}),
         ...(type === 'started'
           ? { type: 'started' as const }
           : type === 'failed'

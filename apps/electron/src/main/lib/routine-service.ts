@@ -23,9 +23,27 @@ import { getProactiveConfigPath, getConfigDir } from './config-paths'
 import type { ProactiveExecutionTarget, ProactiveTaskRun } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
 import { ProactiveExecutionError } from './proactive-target-validation'
-import { extractMemoryCandidatesFromOutput, runMemoryMaintenance } from './memory-plugin-service'
-import { createMemoryApproval } from './approval-service'
+import { extractMemoryItemsBlock, extractMemoryCandidatesFromOutput, runMemoryMaintenance } from './memory-plugin-service'
+import { buildMemoryRoutineContext } from './memory-routine-context'
+import { createMemoryApproval, getPendingApprovals } from './approval-service'
 import { createSkillApproval } from './approval-service'
+
+// ===== 记忆 Routine 输出契约 =====
+
+/**
+ * proma-memory 系列 Routine 的结构化输出契约。
+ * 解析器（memory-plugin-service.extractMemoryCandidatesFromOutput）只识别这个 fenced block；
+ * 提示词与解析器必须保持同步，否则「模型正常回答」也会产出零候选。
+ */
+const MEMORY_OUTPUT_CONTRACT = `【输出要求】将提取出的记忆条目严格输出为下面这一个代码块（JSON 必须合法，不要输出其他代码块）：
+\`\`\`proma-memory-items
+{"items":[{"title":"条目标题","content":"具体内容与依据","kind":"preference|correction|sop|diary|fact","tags":["标签"],"confidence":0.8}]}
+\`\`\`
+只输出资料中真实出现的信息；不要调用 Bash、Read、Grep 或其他工具自行扫描文件，只使用上面提供的授权资料；确实没有新记忆时输出 {"items":[]}。`
+
+function isMemoryRoutine(manifestId: string): boolean {
+  return manifestId.startsWith('proma-memory:')
+}
 
 // ===== 类型定义 =====
 
@@ -346,10 +364,15 @@ export function renderRoutinePrompt(instance: RoutineInstance): string {
 /**
  * 手动运行 Routine 实例，并将结果写入与 Scheduler/Monitor 共享的 Run store。
  * Routine 本身不持有隐式执行上下文，调用者必须显式提供受控 target。
+ *
+ * trigger / parentRunId：由 Schedule/Monitor 包装调用时传入，保证内层运行
+ * 继承真实触发来源并与外层运行关联（避免父子重复统计、假 manual 触发）。
  */
 export async function runRoutineInstance(
   instanceId: string,
   target: ProactiveExecutionTarget,
+  trigger: ProactiveTaskRun['trigger'] = 'manual',
+  parentRunId?: string,
 ): Promise<ProactiveTaskRun> {
   const instance = getRoutineInstance(instanceId)
   if (!instance) throw new Error('Routine 实例不存在')
@@ -357,7 +380,28 @@ export async function runRoutineInstance(
   if (!target.channelId.trim() || !target.prompt.trim()) throw new Error('Routine 缺少渠道或执行内容')
   if (!target.newSession && !target.sessionId?.trim()) throw new Error('复用会话的 Routine 缺少目标会话')
 
-  const prompt = `${renderRoutinePrompt(instance)}\n\n${target.prompt}`.trim()
+  const memoryRoutine = isMemoryRoutine(instance.manifestId)
+  // 记忆 Routine：装配被授权范围内的近期会话资料作为输入，并约定结构化输出契约。
+  // 装配失败降级为空输入（阶段会记录为 no_input），绝不让整理任务整体失败。
+  let contextText = ''
+  let contextItemCount = 0
+  if (memoryRoutine) {
+    try {
+      const lookbackDays = Number(instance.inputs.lookbackDays) > 0 ? Number(instance.inputs.lookbackDays) : 7
+      const context = buildMemoryRoutineContext(lookbackDays)
+      contextText = context.text
+      contextItemCount = context.itemCount
+    } catch (error) {
+      console.warn('[Routine] 记忆资料装配失败，按空输入继续:', error)
+    }
+  }
+  const prompt = [
+    renderRoutinePrompt(instance),
+    target.prompt,
+    memoryRoutine ? MEMORY_OUTPUT_CONTRACT : '',
+    contextText,
+  ].filter(Boolean).join('\n\n').trim()
+
   let run = runStore.saveRun({
     id: randomUUID(),
     sourceType: 'routine',
@@ -365,22 +409,52 @@ export async function runRoutineInstance(
     sourceTitle: instance.title,
     sessionId: target.sessionId,
     status: 'running',
-    trigger: 'manual',
+    trigger,
+    parentRunId,
     startedAt: Date.now(),
   })
   try {
     if (!routineRunner) throw new Error('Routine 执行器未就绪')
     const result = await routineRunner(instance, { ...target, prompt }, prompt)
     run = runStore.saveRun({ ...run, status: 'success', endedAt: Date.now(), outputSummary: result.outputSummary, output: result.output, sessionId: result.sessionId ?? run.sessionId })
-    if (instance.manifestId.startsWith('proma-memory:') && result.output) {
-      for (const candidate of extractMemoryCandidatesFromOutput(result.output, run.id, run.sessionId)) {
+    if (memoryRoutine) {
+      // 阶段追踪：区分「真实无新记忆」与「没有输入 / 输出不合契约」，不再把两者混为成功。
+      const blockItems = result.output ? extractMemoryItemsBlock(result.output) : null
+      const candidates = blockItems
+        ? extractMemoryCandidatesFromOutput(result.output!, run.id, run.sessionId)
+        : []
+      // 幂等：同标题的待审批记忆候选已存在时跳过，避免重试产生重复审批
+      const pendingTitles = new Set(
+        getPendingApprovals()
+          .filter((approval) => approval.sourceType === 'memory')
+          .map((approval) => approval.title),
+      )
+      let skippedDuplicates = 0
+      for (const candidate of candidates) {
+        const approvalTitle = `记忆写入: ${candidate.title}`
+        if (pendingTitles.has(approvalTitle)) { skippedDuplicates += 1; continue }
         createMemoryApproval(run.id, candidate.title, candidate.content, {
           kind: candidate.kind,
           tags: candidate.tags,
           confidence: candidate.confidence,
           sourceSessionId: candidate.sourceSessionId,
         })
+        pendingTitles.add(approvalTitle)
       }
+      if (skippedDuplicates > 0) {
+        console.log(`[Routine] ${skippedDuplicates} 条记忆候选与已有待审批重复，已跳过（幂等）`)
+      }
+      const memoryStage = !result.output
+        ? 'no_output'
+        : candidates.length > 0
+          ? 'pending_approval'
+          // 输出缺少合法契约块（无标记或 JSON 非法）：模型未按契约输出
+          : blockItems === null
+            ? 'invalid_output'
+            : contextItemCount === 0
+              ? 'no_input'
+              : 'no_new'
+      run = runStore.saveRun({ ...run, memoryStage, memoryCandidates: candidates.length })
     }
     // Maintain：每日记忆整理成功后执行巩固（相似合并）与遗忘（低效用超期归档，可回滚）
     if (instance.manifestId === 'proma-memory:memory-daily') {

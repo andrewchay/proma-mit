@@ -6,7 +6,7 @@
  */
 
 import * as React from 'react'
-import { KeyRound, RefreshCw, TriangleAlert, ShieldCheck } from 'lucide-react'
+import { KeyRound, RefreshCw, TriangleAlert, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { CredentialEntry } from '@gravitas/shared'
 
@@ -15,21 +15,33 @@ const KIND_LABEL: Record<string, string> = {
   feishu_bot: '飞书 Bot',
   dingtalk_bot: '钉钉 Bot',
   mcp_client_secret: 'MCP Secret',
+  new_media_account: '新媒体账号',
 }
 
 export function CredentialHealthPanel(): React.ReactElement {
   const [entries, setEntries] = React.useState<CredentialEntry[]>([])
   const [risks, setRisks] = React.useState<string[]>([])
+  const [sourceErrors, setSourceErrors] = React.useState<string[]>([])
+  const [checkedAt, setCheckedAt] = React.useState<number | null>(null)
+  const [loadError, setLoadError] = React.useState('')
   const [loading, setLoading] = React.useState(true)
 
   const load = React.useCallback(async (): Promise<void> => {
+    setLoadError('')
     try {
       const res = await window.electronAPI.listCredentialRegistry()
+      // 读取失败绝不能伪装成「无风险」：保留错误列表，且不下发「已通过」结论。
       setEntries(res.registry.entries)
       setRisks(res.registry.risks)
-    } catch {
+      setSourceErrors(res.registry.sourceErrors ?? [])
+      setCheckedAt(res.registry.checkedAt ?? null)
+    } catch (error) {
+      // 整体调用失败时：清空数据避免展示过期结论，并明确标记体检不可用。
       setEntries([])
       setRisks([])
+      setSourceErrors([])
+      setCheckedAt(null)
+      setLoadError(error instanceof Error ? error.message : '凭据体检调用失败')
     } finally {
       setLoading(false)
     }
@@ -45,7 +57,7 @@ export function CredentialHealthPanel(): React.ReactElement {
           <div>
             <h3 className="text-sm font-medium">凭据统一体检</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              渠道 / 飞书 / 钉钉 / MCP Secret（{entries.length} 项登记）
+              渠道 / 飞书 / 钉钉 / MCP Secret / 新媒体账号（{entries.length} 项登记{checkedAt ? ` · 检查于 ${new Date(checkedAt).toLocaleString()}` : ''}）
             </p>
           </div>
         </div>
@@ -54,15 +66,26 @@ export function CredentialHealthPanel(): React.ReactElement {
         </Button>
       </div>
 
+      {loadError && (
+        <div className="rounded-md bg-destructive/10 text-destructive px-3 py-2 text-xs flex items-center gap-1.5">
+          <ShieldAlert size={13} /> 体检不可用：{loadError}。以下为最近一次成功检查的结果（如有）。
+        </div>
+      )}
+      {sourceErrors.length > 0 && (
+        <div className="rounded-md bg-amber-500/10 text-amber-600 px-3 py-2 text-xs space-y-0.5">
+          <div className="flex items-center gap-1.5 font-medium"><TriangleAlert size={13} /> 来源检查失败 {sourceErrors.length} 项（结果不完整）</div>
+          {sourceErrors.map((message, i) => <div key={i}>· {message}</div>)}
+        </div>
+      )}
       {risks.length > 0 && (
         <div className="rounded-md bg-amber-500/10 text-amber-600 px-3 py-2 text-xs space-y-0.5">
           <div className="flex items-center gap-1.5 font-medium"><TriangleAlert size={13} /> 风险 {risks.length} 项</div>
           {risks.map((r, i) => <div key={i}>· {r}</div>)}
         </div>
       )}
-      {risks.length === 0 && !loading && (
+      {risks.length === 0 && sourceErrors.length === 0 && !loadError && !loading && (
         <div className="rounded-md bg-emerald-500/10 text-emerald-600 px-3 py-2 text-xs flex items-center gap-1.5">
-          <ShieldCheck size={13} /> 凭据均已配置，无风险
+          <ShieldCheck size={13} /> 凭据均已配置，未发现风险
         </div>
       )}
 

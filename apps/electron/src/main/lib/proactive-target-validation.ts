@@ -71,20 +71,54 @@ export function validateProactiveTarget<T extends ProactiveExecutionTarget>(
 	return { ...target, modelId, workspaceId }
 }
 
-/** JSONL 兜底只允许本轮新增消息，不能把历史回答当成本次成果。 */
+/**
+ * 消息身份键：跨消息格式统一标识一条消息。
+ * proma / ai-sdk runtime 持久化的是 SDK 格式（身份在 uuid），Claude 系为 AgentMessage（身份在 id）。
+ */
+export function getMessageIdentity(message: unknown): string {
+	if (typeof message !== 'object' || message === null) return ''
+	const record = message as Record<string, unknown>
+	if (typeof record.uuid === 'string') return record.uuid
+	if (typeof record.id === 'string') return record.id
+	return ''
+}
+
+/** 从 content blocks 或字符串中提取纯文本（SDK block 数组 / AgentMessage 字符串都支持）。 */
+function extractTextFromContent(content: unknown): string {
+	if (typeof content === 'string') return content.trim()
+	if (!Array.isArray(content)) return ''
+	return content
+		.map((block) => {
+			if (typeof block !== 'object' || block === null) return ''
+			const record = block as Record<string, unknown>
+			return record.type === 'text' && typeof record.text === 'string' ? record.text : ''
+		})
+		.filter(Boolean)
+		.join('\n')
+		.trim()
+}
+
+/**
+ * JSONL 兜底只允许本轮新增消息，不能把历史回答当成本次成果。
+ * 同时兼容两种持久化格式：
+ * - SDK 消息：{ type: 'assistant', uuid, message: { content: [blocks] } }（proma / ai-sdk runtime）
+ * - AgentMessage：{ id, role: 'assistant', content: string }
+ */
 export function extractCurrentProactiveOutput(
-	messages: Array<{ id: string; role: string; content: string }>,
+	messages: unknown[],
 	previousIds: ReadonlySet<string>,
 ): string | undefined {
-	return [...messages]
-		.reverse()
-		.find(
-			(message) =>
-				!previousIds.has(message.id) &&
-				message.role === 'assistant' &&
-				message.content.trim(),
-		)
-		?.content.trim()
+	for (const message of [...messages].reverse()) {
+		if (typeof message !== 'object' || message === null) continue
+		const record = message as Record<string, unknown>
+		const isAssistant = record.role === 'assistant' || record.type === 'assistant'
+		if (!isAssistant) continue
+		const identity = getMessageIdentity(message)
+		if (previousIds.has(identity)) continue
+		const text = extractTextFromContent(record.content ?? (record.message as Record<string, unknown> | undefined)?.content)
+		if (text) return text
+	}
+	return undefined
 }
 
 /** 失败仍保留新建会话的定位信息，便于用户修复。 */

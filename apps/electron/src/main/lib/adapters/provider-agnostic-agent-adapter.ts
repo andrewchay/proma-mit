@@ -365,6 +365,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       // 否则 Anthropic 适配器会产生“user tool_result -> assistant tool_use”的乱序/重复结构。
       let continuationMessages: ContinuationMessage[] = []
       let round = 0
+      let completedFinalResponse = false
       const maxRetries = input.maxRetries ?? 2
 
       while (round < maxTurns) {
@@ -487,6 +488,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
         // 无工具调用或停止原因不是 tool_use，结束循环
         if (!currentToolCalls.length || result.stopReason !== 'tool_use') {
+          completedFinalResponse = true
           break
         }
 
@@ -563,6 +565,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           },
           { role: 'tool', results: toolResults },
         ]
+      }
+
+      if (round >= maxTurns && !completedFinalResponse && !activeSession.cancelled) {
+        throw new Error(`Agent 工具循环达到最大轮数 ${maxTurns}，模型尚未生成最终回答；请缩小任务范围或减少工具调用后重试`)
       }
         } catch (error) {
           // 上下文超限发生在 streamSSE 返回前，尚未执行工具；仅允许压缩并重试一次。

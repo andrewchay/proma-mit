@@ -14,6 +14,14 @@ export function sortProactiveRuns(
 ): ProactiveTaskRun[] {
 	return [...runs].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
 }
+export function visibleProactiveRuns(
+	runs: ProactiveTaskRun[],
+): ProactiveTaskRun[] {
+	const runIds = new Set(runs.map((run) => run.id))
+	// Schedule/Monitor 外层运行会生成一个 Routine 子运行；默认列表展示根运行，
+	// 保留子运行数据用于审计和记忆阶段详情，避免用户看到两条一模一样的记录。
+	return runs.filter((run) => !run.parentRunId || !runIds.has(run.parentRunId))
+}
 export function summarizeProactiveRuns(
 	runs: ProactiveTaskRun[],
 	now = new Date(),

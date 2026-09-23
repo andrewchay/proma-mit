@@ -117,4 +117,34 @@ describe('本轮结果快照', () => {
 			),
 		).toBe('本次检查')
 	})
+	test('proma runtime SDK 格式消息（uuid + blocks）能提取本轮输出，历史 uuid 被跳过', () => {
+		const sdkMessages = [
+			{ type: 'user', uuid: 'u-1', message: { content: [{ type: 'text', text: '整理' }] } },
+			{
+				type: 'assistant',
+				uuid: 'a-old',
+				message: { content: [{ type: 'text', text: '历史回答' }] },
+			},
+			{
+				type: 'assistant',
+				uuid: 'a-new',
+				message: {
+					content: [
+						{ type: 'text', text: '```proma-memory-items\n{"items":[]}\n```' },
+					],
+				},
+			},
+		]
+		expect(extractCurrentProactiveOutput(sdkMessages, new Set(['a-old']))).toBe(
+			'```proma-memory-items\n{"items":[]}\n```',
+		)
+	})
+	test('SDK 格式下无 uuid 的消息不参与身份匹配，不会被误判为历史消息', () => {
+		expect(
+			extractCurrentProactiveOutput(
+				[{ type: 'assistant', message: { content: [{ type: 'text', text: '结果' }] } }],
+				new Set(['undefined']),
+			),
+		).toBe('结果')
+	})
 })

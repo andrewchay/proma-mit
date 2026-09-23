@@ -25,6 +25,17 @@ import {
 import type { ProactiveTaskRun } from '@gravitas/shared'
 
 /** 首页与运行记录共用：显示同一次运行快照，而不是最新会话回答。 */
+
+/** 记忆 Routine 成果阶段标签：区分「真实无新记忆」与「无输入/输出不合契约」。 */
+const MEMORY_STAGE_LABELS: Record<string, string> = {
+	no_input: '无输入资料',
+	invalid_output: '输出不合契约',
+	no_new: '无新记忆',
+	pending_approval: '记忆候选待审批',
+	committed: '已写入记忆',
+	no_output: '无输出',
+}
+
 export function ProactiveRunCard({
 	run,
 	onRefresh,
@@ -75,6 +86,11 @@ export function ProactiveRunCard({
 					}
 				>
 					{RUN_STATUS_LABELS[run.status]}
+					{run.memoryStage && MEMORY_STAGE_LABELS[run.memoryStage] && (
+						<span className="ml-2 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[10px] text-foreground/60">
+							{MEMORY_STAGE_LABELS[run.memoryStage]}
+						</span>
+					)}
 				</span>
 				<h3 className="flex-1 min-w-32 text-sm font-medium">
 					{run.sourceTitle ?? '主动任务'}

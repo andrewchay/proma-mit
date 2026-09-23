@@ -3,7 +3,7 @@ import { useAtomValue } from 'jotai'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { proactiveRunsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
-import { sortProactiveRuns } from '@/lib/proactive-view'
+import { sortProactiveRuns, visibleProactiveRuns } from '@/lib/proactive-view'
 import { ProactiveRunCard } from '../ProactiveRunCard'
 
 export function RunsTab({
@@ -15,7 +15,7 @@ export function RunsTab({
 }): React.ReactElement {
 	const allRuns = useAtomValue(proactiveRunsAtom)
 	const loading = useAtomValue(proactiveLoadingAtom)
-	const runs = sortProactiveRuns(allRuns).filter(
+	const runs = visibleProactiveRuns(sortProactiveRuns(allRuns)).filter(
 		(run) =>
 			!runningOnly || run.status === 'running' || run.status === 'queued',
 	)

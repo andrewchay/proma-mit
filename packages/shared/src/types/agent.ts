@@ -1391,7 +1391,7 @@ export interface ContextGraph {
 }
 
 /** 凭据统一治理（PH2-D） */
-export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret'
+export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret' | 'new_media_account'
 
 export interface CredentialEntry {
   kind: CredentialKind
@@ -1407,6 +1407,10 @@ export interface CredentialRegistry {
   count: number
   riskCount: number
   risks: string[]
+  /** 各来源读取/检查失败的可见记录；读取失败绝不能伪装成「无风险」。 */
+  sourceErrors: string[]
+  /** 本次体检完成时间戳 */
+  checkedAt: number
 }
 
 /** Skill 目录下的文件/子目录节点（递归树） */

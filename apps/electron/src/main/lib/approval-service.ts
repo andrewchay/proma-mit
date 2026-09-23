@@ -21,8 +21,8 @@ import type { ProactiveApproval, ApprovalStatus, ApprovalSourceType } from '@gra
 
 const APPROVALS_FILE = 'approvals.json'
 
-/** 内存缓存 */
-let approvalsCache: ProactiveApproval[] | null = null
+/** 内存缓存（按配置文件路径键控，避免跨配置目录/测试环境返回陈旧审批） */
+let approvalsCache: { path: string; approvals: ProactiveApproval[] } | null = null
 
 /**
  * 主进程在启动时注册实际变更执行器。ApprovalService 不自行执行文件、
@@ -47,13 +47,14 @@ function ensureDir(): void {
 }
 
 function loadApprovals(): ProactiveApproval[] {
-  if (approvalsCache) return approvalsCache
   const path = getApprovalsFilePath()
+  if (approvalsCache?.path === path) return approvalsCache.approvals
   if (!existsSync(path)) return []
   try {
     const data = JSON.parse(readFileSync(path, 'utf-8'))
-    approvalsCache = Array.isArray(data) ? data : []
-    return approvalsCache
+    const approvals = Array.isArray(data) ? data : []
+    approvalsCache = { path, approvals }
+    return approvals
   } catch {
     return []
   }
@@ -61,8 +62,9 @@ function loadApprovals(): ProactiveApproval[] {
 
 function saveApprovals(approvals: ProactiveApproval[]): void {
   ensureDir()
-  writeFileSync(getApprovalsFilePath(), JSON.stringify(approvals, null, 2))
-  approvalsCache = approvals
+  const path = getApprovalsFilePath()
+  writeFileSync(path, JSON.stringify(approvals, null, 2))
+  approvalsCache = { path, approvals }
 }
 
 // ===== CRUD =====
