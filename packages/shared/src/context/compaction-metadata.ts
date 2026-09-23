@@ -5,8 +5,6 @@
  * 因此任意视图都可以凭 metadata + 原始 ledger 重建。
  */
 
-import { createHash } from 'node:crypto'
-
 export interface CompactMetadata {
   version: 1
   /** 重建时的 ledger 版本；ledger 变更后 metadata 失效。 */
@@ -49,22 +47,6 @@ export function validateCompactMetadata(value: unknown): void {
   if (!isNonNegativeInt(value.tokenEstimate)) failures.push('tokenEstimate must be a non-negative integer')
   if (!isNonEmptyString(value.createdAt) || Number.isNaN(Date.parse(value.createdAt))) failures.push('createdAt must be an ISO timestamp')
   if (failures.length > 0) throw new Error(`invalid compact metadata: ${failures.join('; ')}`)
-}
-
-export function compactMetadataPolicyId(policy: unknown): string {
-  if (policy === undefined) return 'none'
-  // 键序无关的稳定序列化：同语义 policy 必须得到同一指纹。
-  const digest = createHash('sha256').update(stableStringify(policy)).digest('hex')
-  return `sha256:${digest.slice(0, 16)}`
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

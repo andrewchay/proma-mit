@@ -81,7 +81,6 @@ import { isTypeSafeSkillShadowAvailable, judgeSkillRoute } from './typesafe-judg
 import { createContextLedgerObserver, type ContextLedgerObserver } from './agent-runtime/context/context-observer'
 import type { ContextCompilerMetricEvent } from './agent-runtime/context/context-metrics'
 import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-feature-flag'
-import { resolveSubAgentContextOptions } from './agent-runtime/context/subagent-context-options'
 import { formatSubtaskResultForParent, parseSubtaskResult } from './agent-runtime/context/subtask-result-parser'
 import { SubtaskArtifactStore, toStoredSubtaskArtifact } from './agent-runtime/context/subtask-artifact-store'
 import { buildSubAgentSpawnPlan } from './agent-runtime/context/subagent-spawn-plan'
@@ -1237,7 +1236,6 @@ export class AgentOrchestrator {
     }
     const prompt = spawnPlan.prompt
     const childCwd = spawnPlan.childCwd
-    const contextOptions = resolveSubAgentContextOptions(subAgent.context)
     const systemPrompt = def.prompt
       ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
       : undefined

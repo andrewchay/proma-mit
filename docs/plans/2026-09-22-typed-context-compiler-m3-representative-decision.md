@@ -1,7 +1,7 @@
 # TCC M3 代表性真实评测决定
 
 **日期：** 2026-09-22
-**模型：** GLM-5.3-Flash（渠道 `642b2570-fb0c-4890-a4fe-f277718108a9`）
+**模型：** GLM-5.3-Flash（渠道 ID 见私有评测记录，不入库）
 **矩阵：** 10 个长噪声 spawn 样本 × full context / brief / TCC projection × 3 次，共 90 次真实调用
 **执行路径：** `scripts/run-tcc-spawn-eval.ts` → `tcc-spawn-eval-harness.ts` → `tcc-experiment-runner.ts` → `tcc-spawn-real-delegate.ts`；TCC 组经 `prepareSubAgentProjectionFromItems()` 走与生产相同的 spawn 边界
 **评测隔离：** `disableTools: true`（零工具）、`permissionMode: 'safe'`、cwd 为临时隔离目录

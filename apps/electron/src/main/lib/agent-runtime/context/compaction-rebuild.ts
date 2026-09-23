@@ -5,9 +5,25 @@
  * 且 metadata 记录 retained/omitted 以便追溯。
  */
 import type { CompactMetadata } from '@gravitas/shared'
-import { compactMetadataPolicyId } from '@gravitas/shared'
 import type { ContextItem, ContextProjection, ContextProjectionRequest } from '@gravitas/shared'
+import { createHash } from 'node:crypto'
 import { compileContextProjection } from './context-projector'
+
+/** 键序无关的稳定 policy 指纹；同语义 policy 必须得到同一 id（main 进程内可用 node:crypto）。 */
+export function compactMetadataPolicyId(policy: unknown): string {
+  if (policy === undefined) return 'none'
+  const digest = createHash('sha256').update(stableStringify(policy)).digest('hex')
+  return `sha256:${digest.slice(0, 16)}`
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
 
 export interface RebuiltCompactionView {
   projection: ContextProjection

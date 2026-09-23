@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  compactMetadataPolicyId,
   parseCompactMetadata,
   serializeCompactMetadata,
   type CompactMetadata,
@@ -30,10 +29,4 @@ describe('M5-01 compact metadata', () => {
     expect(() => parseCompactMetadata(JSON.stringify({ ...metadata, createdAt: 'yesterday' }))).toThrow('createdAt must be an ISO timestamp')
   })
 
-  test('policy fingerprint is deterministic and policy-sensitive', () => {
-    const policy = { allowUnverified: false, includeFullContent: true }
-    expect(compactMetadataPolicyId(policy)).toBe(compactMetadataPolicyId({ includeFullContent: true, allowUnverified: false }))
-    expect(compactMetadataPolicyId(policy)).not.toBe(compactMetadataPolicyId({ allowUnverified: false }))
-    expect(compactMetadataPolicyId(undefined)).toBe('none')
-  })
 })

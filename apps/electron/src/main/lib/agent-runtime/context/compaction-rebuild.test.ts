@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ContextItem, ContextProjectionRequest } from '@gravitas/shared'
-import { rebuildCompactionView } from './compaction-rebuild'
+import { compactMetadataPolicyId, rebuildCompactionView } from './compaction-rebuild'
 
 function item(id: string, kind: ContextItem['kind'], overrides: Partial<ContextItem> = {}): ContextItem {
   return {
@@ -47,6 +47,7 @@ describe('M5-02 rebuild compaction view from raw ledger', () => {
     expect(first.metadata.retainedItemIds).toContain('fact-1')
     expect(first.metadata.omittedItemIds).toContain('noise-1')
     expect(first.metadata.tokenEstimate).toBe(first.projection.tokenEstimate)
+    expect(first.metadata.policyId).toBe(compactMetadataPolicyId(request.policy))
   })
 
   test('never mutates the raw ledger items', () => {
