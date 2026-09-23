@@ -11,31 +11,18 @@ import { cn } from "@/lib/utils";
 import {
   Settings,
   Radio,
-  Palette,
   Info,
   Plug,
-  Globe,
-  BookOpen,
   Wrench,
   Bot,
-  GraduationCap,
   X,
   Keyboard,
-  Mic,
-  Eye,
-  HardDriveDownload,
+  Users,
   HardDrive,
   ShieldCheck,
-  Activity,
-  MonitorCog,
-  Puzzle,
-  Server,
   CalendarDays,
-  Smartphone,
+  MonitorCog,
   ChevronDown,
-  BarChart3,
-  Target,
-  Users,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from "@/atoms/settings-tab";
@@ -53,31 +40,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ChannelSettings } from "./ChannelSettings";
-import { GeneralSettings } from "./GeneralSettings";
-import { VisionRelaySettings } from "./VisionRelaySettings";
-import { CompanionSettings } from "./CompanionSettings";
-import { ProxySettings } from "./ProxySettings";
-import { AppearanceSettings } from "./AppearanceSettings";
-import { TelemetrySettingsPanel } from "./TelemetrySettingsPanel";
-import { AboutSettings } from "./AboutSettings";
 import { AgentSettings } from "./AgentSettings";
-import { PromptSettings } from "./PromptSettings";
-import { ToolSettings } from "./ToolSettings";
 import { BotHubSettings } from "./BotHubSettings";
-import { TutorialViewer } from "../tutorial/TutorialViewer";
 import { ShortcutSettings } from "./ShortcutSettings";
-import { VoiceInputSettings } from "./VoiceInputSettings";
-import { MigrationSettings } from "./MigrationSettings";
-import { StorageSettings } from "./StorageSettings";
-import { OperationAuditSettings } from "./OperationAuditSettings";
 import { AutomationSettings } from "./AutomationSettings";
-import { ExtensionSettings } from './ExtensionSettings'
-import { CalendarSyncSettings } from './CalendarSyncSettings'
-import { TokenUsageSettings } from './TokenUsageSettings'
-import { WorkspaceMembersSettings } from './WorkspaceMembersSettings'
-import { EnterpriseSettings } from './EnterpriseSettings'
-import { GoalsSettings } from './GoalsSettings'
-import { SubscriptionSettings } from './SubscriptionSettings'
+import { CalendarSyncSettings } from "./CalendarSyncSettings";
+import {
+  GeneralAndAppearanceTab,
+  AboutAndHelpTab,
+  ChannelsTab,
+  ToolsAndPromptsTab,
+  DataUsageTab,
+  PrivacyAuditTab,
+  AccountTeamTab,
+} from "./MergedSettingsTabs";
 
 /** 设置 Tab 定义 */
 interface TabItem {
@@ -86,119 +62,13 @@ interface TabItem {
   icon: React.ReactNode;
 }
 
-/** 基础 Tabs（所有模式都有） */
-const BASE_TABS: TabItem[] = [
-  { id: "general", label: "通用设置", icon: <Settings size={16} /> },
-  { id: "channels", label: "模型配置", icon: <Radio size={16} /> },
-  { id: "prompts", label: "提示词管理", icon: <BookOpen size={16} /> },
-  { id: "proxy", label: "代理设置", icon: <Globe size={16} /> },
-];
-
-/** Agent 模式专属 Tab */
-const AGENT_TAB: TabItem = {
-  id: "agent",
-  label: "Agent 配置",
-  icon: <Plug size={16} />,
-};
-const VISION_TAB: TabItem = {
-  id: "vision",
-  label: "视觉助手",
-  icon: <Eye size={16} />,
-};
-const TOOLS_TAB: TabItem = {
-  id: "tools",
-  label: "Chat 工具",
-  icon: <Wrench size={16} />,
-};
-const BOTS_TAB: TabItem = {
-  id: "bots",
-  label: "远程连接",
-  icon: <Bot size={16} />,
-};
-const TUTORIAL_TAB: TabItem = {
-  id: "tutorial",
-  label: "Gravitas 教程",
-  icon: <GraduationCap size={16} />,
-};
-const SHORTCUTS_TAB: TabItem = {
-  id: "shortcuts",
-  label: "快捷键管理",
-  icon: <Keyboard size={16} />,
-};
-const VOICE_INPUT_TAB: TabItem = {
-  id: "voice-input",
-  label: "语音输入",
-  icon: <Mic size={16} />,
-};
-const TELEMETRY_TAB: TabItem = {
-  id: "telemetry",
-  label: "数据采集",
-  icon: <Activity size={16} />,
-};
-const OPERATION_AUDIT_TAB: TabItem = {
-  id: "operation-audit",
-  label: "操作审计",
-  icon: <ShieldCheck size={16} />,
-};
-const AUTOMATION_TAB: TabItem = {
-  id: "automation",
-  label: "设备控制",
-  icon: <MonitorCog size={16} />,
-};
-const EXTENSIONS_TAB: TabItem = {
-  id: 'extensions',
-  label: '扩展',
-  icon: <Puzzle size={16} />,
-};
-const CALENDAR_TAB: TabItem = {
-  id: 'calendar',
-  label: '日历同步',
-  icon: <CalendarDays size={16} />,
-};
-const COMPANION_TAB: TabItem = {
-  id: 'companion',
-  label: '远程访问',
-  icon: <Smartphone size={16} />,
-};
-const TOKEN_USAGE_TAB: TabItem = {
-  id: 'token-usage',
-  label: 'Token 统计',
-  icon: <BarChart3 size={16} />,
-};
-const GOALS_TAB: TabItem = {
-  id: 'goals',
-  label: '目标（Goals）',
-  icon: <Target size={16} />,
-};
-const SUBSCRIPTION_TAB: TabItem = {
-  id: 'subscription',
-  label: '订阅与账户',
-  icon: <ShieldCheck size={16} />,
-};
-
-/** 企业版 Tab */
-const ENTERPRISE_TAB: TabItem = {
-  id: 'enterprise',
-  label: '企业版',
-  icon: <Server size={16} />,
-};
-
-/** 工作区成员 Tab */
-const WORKSPACE_MEMBERS_TAB: TabItem = {
-  id: 'workspace-members',
-  label: '工作区成员',
-  icon: <Users size={16} />,
-};
-
-/** 尾部 Tabs */
-const TAIL_TABS: TabItem[] = [
-  { id: "migration", label: "数据迁移", icon: <HardDriveDownload size={16} /> },
-  { id: "storage", label: "磁盘管理", icon: <HardDrive size={16} /> },
-  { id: "appearance", label: "外观设置", icon: <Palette size={16} /> },
-  { id: "about", label: "关于/更新", icon: <Info size={16} /> },
-];
-
-/** 设置分组（4.1 模块合并：21 Tab → 分组导航，低频组默认折叠） */
+// 4.2 设置整合：原 26 个 Tab 合并为 12 个。
+// - 代理/视觉中转并入「模型配置」；外观/语音输入/扩展并入「通用与外观」
+// - 提示词并入「工具与提示词」；教程并入「关于与帮助」；远程访问并入「远程连接」Hub
+// - 磁盘/迁移/Token 统计合并为「数据与用量」；数据采集/操作审计合并为「隐私与审计」
+// - 订阅/企业版/工作区成员合并为「账户与团队」
+// - 「目标（Goals）」暂时下线：组件保留于 GoalsSettings.tsx，入口移除，去留待定
+/** 设置分组 */
 interface SettingsGroup {
   id: string
   label: string
@@ -210,114 +80,70 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
     id: 'basic',
     label: '基础配置',
     tabs: [
-      BASE_TABS[0]!, // 通用设置
-      TAIL_TABS[2]!, // 外观设置
-      SHORTCUTS_TAB,
-      VOICE_INPUT_TAB,
-      TAIL_TABS[3]!, // 关于/更新
+      { id: 'general', label: '通用与外观', icon: <Settings size={16} /> },
+      { id: 'shortcuts', label: '快捷键管理', icon: <Keyboard size={16} /> },
+      { id: 'about', label: '关于与帮助', icon: <Info size={16} /> },
     ],
   },
   {
     id: 'model',
     label: '模型与智能体',
     tabs: [
-      BASE_TABS[1]!, // 模型配置
-      AGENT_TAB,
-      VISION_TAB,
-      TOOLS_TAB,
-      BASE_TABS[2]!, // 提示词管理
-      EXTENSIONS_TAB,
-      AUTOMATION_TAB, // 设备控制
+      { id: 'channels', label: '模型配置', icon: <Radio size={16} /> },
+      { id: 'agent', label: 'Agent 配置', icon: <Plug size={16} /> },
+      { id: 'tools', label: '工具与提示词', icon: <Wrench size={16} /> },
+      { id: 'automation', label: '设备控制', icon: <MonitorCog size={16} /> },
     ],
   },
   {
     id: 'connect',
     label: '连接与同步',
     tabs: [
-      BOTS_TAB,
-      COMPANION_TAB,
-      BASE_TABS[3]!, // 代理设置
-      CALENDAR_TAB,
+      { id: 'bots', label: '远程连接', icon: <Bot size={16} /> },
+      { id: 'calendar', label: '日历同步', icon: <CalendarDays size={16} /> },
     ],
   },
   {
     id: 'system',
     label: '系统与隐私',
     tabs: [
-      TAIL_TABS[0]!, // 数据迁移
-      TAIL_TABS[1]!, // 磁盘管理
-      TELEMETRY_TAB,
-      OPERATION_AUDIT_TAB,
-      TOKEN_USAGE_TAB,
-      GOALS_TAB,
-      SUBSCRIPTION_TAB,
-      TUTORIAL_TAB,
-      ENTERPRISE_TAB,
-      WORKSPACE_MEMBERS_TAB,
+      { id: 'data', label: '数据与用量', icon: <HardDrive size={16} /> },
+      { id: 'privacy', label: '隐私与审计', icon: <ShieldCheck size={16} /> },
+      { id: 'account', label: '账户与团队', icon: <Users size={16} /> },
     ],
   },
 ]
 
-/** 默认折叠低频组（系统与隐私） */
-const DEFAULT_COLLAPSED_GROUPS: Record<string, boolean> = {
-  system: true,
-}
+/** 整合后每组 Tab 数量很少，不再默认折叠 */
+const DEFAULT_COLLAPSED_GROUPS: Record<string, boolean> = {}
 
 /** 根据标签页 id 渲染对应内容 */
 function renderTabContent(tab: SettingsTab): React.ReactElement {
   switch (tab) {
-    case "general":
-      return <GeneralSettings />;
-    case "channels":
-      return <ChannelSettings />;
-    case "prompts":
-      return <PromptSettings />;
-    case "proxy":
-      return <ProxySettings />;
-    case "agent":
-      return <AgentSettings />;
-    case "vision":
-      return <VisionRelaySettings />;
-    case "tools":
-      return <ToolSettings />;
-    case "appearance":
-      return <AppearanceSettings />;
-    case "about":
-      return <AboutSettings />;
-    case "bots":
-      return <BotHubSettings />;
-    case "tutorial":
-      return <TutorialViewer />;
-    case "shortcuts":
-      return <ShortcutSettings />;
-    case "voice-input":
-      return <VoiceInputSettings />;
-    case "migration":
-      return <MigrationSettings />;
-    case "storage":
-      return <StorageSettings />;
-    case "telemetry":
-      return <TelemetrySettingsPanel />;
-    case "operation-audit":
-      return <OperationAuditSettings />;
-    case "automation":
-      return <AutomationSettings />;
-    case 'extensions':
-      return <ExtensionSettings />
+    case 'general':
+      return <GeneralAndAppearanceTab />
+    case 'shortcuts':
+      return <ShortcutSettings />
+    case 'about':
+      return <AboutAndHelpTab />
+    case 'channels':
+      return <ChannelsTab />
+    case 'agent':
+      return <AgentSettings />
+    case 'tools':
+      return <ToolsAndPromptsTab />
+    case 'automation':
+      return <AutomationSettings />
+    case 'bots':
+      return <BotHubSettings />
     case 'calendar':
       return <CalendarSyncSettings />
-    case 'companion':
-      return <CompanionSettings />
-    case 'token-usage':
-      return <TokenUsageSettings />
-    case 'goals':
-      return <GoalsSettings />
-    case 'enterprise':
-      return <EnterpriseSettings />
-    case 'workspace-members':
-      return <WorkspaceMembersSettings />
-    case 'subscription':
-      return <SubscriptionSettings />
+    case 'data':
+      return <DataUsageTab />
+    case 'privacy':
+      return <PrivacyAuditTab />
+    case 'account':
+      return <AccountTeamTab />
   }
 }
 
