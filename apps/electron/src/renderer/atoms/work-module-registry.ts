@@ -22,6 +22,7 @@ const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sour
 const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
 const NewMediaModuleView = lazy(() => import('@/components/new-media/NewMediaModuleView').then((module) => ({ default: module.NewMediaModuleView })))
 const ResearchWorkspace = lazy(() => import('@/components/academic/ResearchWorkspace').then((module) => ({ default: module.ResearchWorkspace })))
+const WorkspaceConfigView = lazy(() => import('@/components/settings/WorkspaceConfigView').then((module) => ({ default: module.WorkspaceConfigView })))
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -117,4 +118,7 @@ export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
   'outbound-sourcing': OutboundSourcingModuleView,
   'new-media': NewMediaModuleView,
   capabilities: CapabilitiesView,
+  // 工作空间配置与其它工作模块对齐：以右侧主区独立页面呈现（侧边栏入口切换视图，不再弹设置窗）。
+  // 仅登记视图映射，不进入 WORK_MODULE_REGISTRY——它由侧边栏的独立入口按钮渲染（带能力计数徽标）。
+  'workspace-config': WorkspaceConfigView,
 }

@@ -7,14 +7,13 @@
  * M0 为骨架：顶栏返回对话 + 子视图切换，业务面板逐步填充。
  */
 import * as React from 'react'
-import { ArrowLeft, Users, FileCheck2, BarChart3 } from 'lucide-react'
+import { Users, FileCheck2, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { activeViewAtom } from '@/atoms/active-view'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import { CreativeVideoPanel } from '@/components/marketing/CreativeVideoPanel'
 import { InfluencerTalentsPanel } from './InfluencerTalentsPanel'
 import { InfluencerReviewsPanel } from './InfluencerReviewsPanel'
 import { InfluencerTrackingPanel } from './InfluencerTrackingPanel'
-import { useSetAtom } from 'jotai'
 
 type InfluencerSubView = 'talents' | 'reviews' | 'tracking'
 
@@ -25,19 +24,12 @@ const SUB_VIEWS: { id: InfluencerSubView; label: string; icon: React.ReactNode }
 ]
 
 export function InfluencerModuleView(): React.ReactElement {
-  const setActiveView = useSetAtom(activeViewAtom)
   const [subView, setSubView] = React.useState<InfluencerSubView>('talents')
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
-        <button
-          onClick={() => setActiveView('conversations')}
-          className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors titlebar-no-drag"
-        >
-          <ArrowLeft size={15} />
-          返回对话
-        </button>
+        <ModuleBackButton />
         <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
           <Users size={15} className="text-foreground/45" />
           达人

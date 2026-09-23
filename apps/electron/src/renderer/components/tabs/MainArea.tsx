@@ -48,6 +48,15 @@ export function MainArea(): React.ReactElement {
     rightPanelActive ? 'rounded-r-none' : 'rounded-r-2xl'
   )
 
+  // 工作模块页与对话页的顶层差异：
+  // 对话页的 TabBar 自己声明了拖拽区（titlebar-drag-region），需要点击的 Tab 各自声明
+  // titlebar-no-drag；而 AppShell 还有一个 fixed 的全局 50px 窗口拖拽层，其 hitmask 不受
+  // z-index 约束（见 AppShell.tsx 中 WindowControls 的注释），会盖住主区顶部 50px。
+  // 工作模块页把「返回对话」「子视图切换」放在顶部这一带，若只逐个按钮补 titlebar-no-drag，
+  // 新增模块时极易再次漏写（表现为按钮只剩贴着 50px 边界的那几个像素可点）。
+  // 因此这里在模块分支整体声明 no-drag：模块页内全是交互内容，不需要从顶栏拖窗。
+  const workModulePanelClassName = cn(mainPanelClassName, 'titlebar-no-drag')
+
   // Tab 内容渲染降级为非紧急：TabBar 立即高亮新 tab，主区域昂贵渲染（含 PreviewPanel 中
   // DiffTabContent → ProseMirror editor mount + Shiki tokenize）让出主线程，避免点击 tab
   // 后必须等主区域渲染完才能看到 tab 切换效果
@@ -161,15 +170,15 @@ export function MainArea(): React.ReactElement {
   return (
     <>
       {effectiveView === 'workflow' ? (
-        <Panel variant="grow" className={mainPanelClassName}>
+        <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkflowView /></React.Suspense>
         </Panel>
       ) : effectiveView === 'proactive' && proactiveVisible ? (
-        <Panel variant="grow" className={mainPanelClassName}>
+        <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><ProactiveCenter /></React.Suspense>
         </Panel>
       ) : WorkModuleComponent ? (
-        <Panel variant="grow" className={mainPanelClassName}>
+        <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkModuleComponent /></React.Suspense>
         </Panel>
       ) : (

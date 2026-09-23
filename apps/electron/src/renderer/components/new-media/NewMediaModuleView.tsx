@@ -1,7 +1,6 @@
 import * as React from 'react'
-import { useSetAtom } from 'jotai'
-import { ArrowLeft, Bot, FileText, FileSpreadsheet, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, Send, UserRound } from 'lucide-react'
-import { activeViewAtom } from '@/atoms/active-view'
+import { Bot, FileText, FileSpreadsheet, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, Send, UserRound } from 'lucide-react'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import { cn } from '@/lib/utils'
 import type { NewMediaContentDraft, NewMediaControlledAction, NewMediaEngagementItem, NewMediaListeningQuery, NewMediaMention, NewMediaMetricSnapshot, NewMediaPlatform, NewMediaPublicationJob, NewMediaSocialReport, NewMediaTrendItem, XiaohongshuHandoff } from '@gravitas/shared'
 import { CommunityPanel } from './CommunityPanel'
@@ -24,7 +23,6 @@ const PLATFORM_LABEL: Record<NewMediaPlatform, string> = {
 }
 
 export function NewMediaModuleView(): React.ReactElement {
-  const setActiveView = useSetAtom(activeViewAtom)
   const [subView, setSubView] = React.useState<SubView>('content')
   const [drafts, setDrafts] = React.useState<NewMediaContentDraft[]>([])
   const [jobs, setJobs] = React.useState<NewMediaPublicationJob[]>([])
@@ -142,9 +140,7 @@ export function NewMediaModuleView(): React.ReactElement {
   return (
     <div className="flex h-full flex-col bg-muted/20">
       <header className="flex items-center gap-3 border-b border-border/50 bg-background/80 px-4 py-3 backdrop-blur">
-        <button onClick={() => setActiveView('conversations')} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-foreground/60 hover:bg-muted">
-          <ArrowLeft size={15} />返回对话
-        </button>
+        <ModuleBackButton />
         <div className="font-medium">新媒体运营</div>
         <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300">仅本地 · 不会真实发布</span>
         <div className="flex-1" />

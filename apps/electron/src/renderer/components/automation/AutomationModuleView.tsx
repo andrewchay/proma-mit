@@ -8,10 +8,9 @@
  */
 
 import * as React from 'react'
-import { ArrowLeft, Zap, ListChecks, Clock3, History } from 'lucide-react'
+import { Zap, ListChecks, Clock3, History } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { activeViewAtom } from '@/atoms/active-view'
-import { useSetAtom } from 'jotai'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import { AutomationRunningPanel } from './AutomationRunningPanel'
 import { ProactiveSchedulerSettings } from '@/components/settings/ProactiveSchedulerSettings'
 import { RunCenterSettings } from '@/components/settings/RunCenterSettings'
@@ -27,21 +26,14 @@ const SUB_VIEWS: { id: AutomationSubView; label: string; icon: React.ReactNode }
 ]
 
 export function AutomationModuleView(): React.ReactElement {
-  const setActiveView = useSetAtom(activeViewAtom)
   // 默认展示「定时任务」：自动任务应是自己创建的定时任务（能定时开启来跑）
   const [subView, setSubView] = React.useState<AutomationSubView>('schedules')
 
   return (
     <div className="flex flex-col h-full">
-      {/* 顶栏：返回对话 + 子视图切换（顶部在全局 50px 拖拽区内，按钮需 titlebar-no-drag） */}
+      {/* 顶栏：返回对话 + 子视图切换 */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
-        <button
-          onClick={() => setActiveView('conversations')}
-          className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors titlebar-no-drag"
-        >
-          <ArrowLeft size={15} />
-          返回对话
-        </button>
+        <ModuleBackButton />
         <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
           <Zap size={15} className="text-foreground/45" />
           自动化

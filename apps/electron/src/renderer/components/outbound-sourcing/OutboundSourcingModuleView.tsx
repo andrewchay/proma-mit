@@ -25,6 +25,7 @@ import {
 import { InboxTab } from './InboxTab'
 import { OutboxTab } from './OutboxTab'
 import { OutreachMetricsCard } from './OutreachMetricsCard'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 
 const stages = [
   { icon: Search, title: '1. 找买家', text: '输入产品、国家和买家类型，生成搜索计划；再用 Web Bridge 或外部资料补充候选公司。' },
@@ -88,95 +89,106 @@ export function OutboundSourcingModuleView(): React.ReactElement {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <div className="rounded-2xl bg-gradient-to-br from-sky-500/15 via-background to-emerald-500/10 p-6 shadow-sm">
-          <div className="flex items-start gap-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-600">
-              <Globe2 size={22} />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-foreground/90">出海 sourcing</h1>
-              <p className="mt-1 text-sm leading-6 text-foreground/60">把海外买家发现、线索核验、优先级判断、外联准备和邮件收发收敛成一条可复用的 Agent 工作链。</p>
-            </div>
-          </div>
+    <div className="flex flex-col h-full">
+      {/* 顶部：返回对话 + 模块名（与其它工作模块页保持一致） */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
+        <ModuleBackButton />
+        <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
+          <Globe2 size={15} className="text-foreground/45" />
+          出海 sourcing
         </div>
+      </div>
 
-        <Tabs defaultValue="work">
-          <TabsList>
-            <TabsTrigger value="work">开始工作</TabsTrigger>
-            <TabsTrigger value="inbox">收件箱</TabsTrigger>
-            <TabsTrigger value="outbox">待发队列</TabsTrigger>
-          </TabsList>
-          <TabsContent value="work" className="mt-4 space-y-6">
-
-        <OutreachMetricsCard />
-
-        {/* 开始工作：填写 Brief 后一键进入 Agent */}
-        <div className="rounded-xl bg-card p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground/85">
-            <Play size={16} className="text-sky-600" />
-            开始一次 sourcing
-          </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <Input
-              value={product}
-              onChange={(e) => setProduct(e.target.value)}
-              placeholder="产品，如 goji puree"
-              className="flex-1"
-            />
-            <Input
-              value={market}
-              onChange={(e) => setMarket(e.target.value)}
-              placeholder="目标市场，如 Germany"
-              className="flex-1"
-            />
-            <Button onClick={() => void handleQuickStart()} disabled={starting} className="sm:w-32">
-              {starting ? '创建中…' : '开始工作'}
-            </Button>
-          </div>
-          {error && <div className="mt-2 text-[12px] text-amber-600">{error}</div>}
-          <p className="mt-2 text-[12px] text-foreground/45">
-            将创建新的 Agent 会话并自动注入四阶段工作指令；结果沉淀在会话中，随时可以继续追问。
-          </p>
-          <div className="mt-3 flex items-center gap-2 border-t border-border/40 pt-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setActiveView('workflow')}
-              className="gap-1.5"
-            >
-              <Workflow size={14} />
-              打开 Sourcing 流水线工作流
-            </Button>
-            <span className="text-[12px] text-foreground/45">订阅后已自动安装到当前工作区，可直接创建 Run。</span>
-          </div>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          {stages.map(({ icon: Icon, title, text }) => (
-            <div key={title} className="rounded-xl bg-card p-4 shadow-sm">
-              <div className="flex items-center gap-2 text-sm font-medium text-foreground/85"><Icon size={17} className="text-sky-600" />{title}</div>
-              <p className="mt-2 text-xs leading-5 text-foreground/55">{text}</p>
+      <div className="flex-1 min-h-0 overflow-y-auto p-6">
+        <div className="mx-auto max-w-5xl space-y-6">
+          <div className="rounded-2xl bg-gradient-to-br from-sky-500/15 via-background to-emerald-500/10 p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-600">
+                <Globe2 size={22} />
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold text-foreground/90">出海 sourcing</h1>
+                <p className="mt-1 text-sm leading-6 text-foreground/60">把海外买家发现、线索核验、优先级判断、外联准备和邮件收发收敛成一条可复用的 Agent 工作链。</p>
+              </div>
             </div>
-          ))}
+          </div>
+
+          <Tabs defaultValue="work">
+            <TabsList>
+              <TabsTrigger value="work">开始工作</TabsTrigger>
+              <TabsTrigger value="inbox">收件箱</TabsTrigger>
+              <TabsTrigger value="outbox">待发队列</TabsTrigger>
+            </TabsList>
+            <TabsContent value="work" className="mt-4 space-y-6">
+
+          <OutreachMetricsCard />
+
+          {/* 开始工作：填写 Brief 后一键进入 Agent */}
+          <div className="rounded-xl bg-card p-5 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground/85">
+              <Play size={16} className="text-sky-600" />
+              开始一次 sourcing
+            </div>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={product}
+                onChange={(e) => setProduct(e.target.value)}
+                placeholder="产品，如 goji puree"
+                className="flex-1"
+              />
+              <Input
+                value={market}
+                onChange={(e) => setMarket(e.target.value)}
+                placeholder="目标市场，如 Germany"
+                className="flex-1"
+              />
+              <Button onClick={() => void handleQuickStart()} disabled={starting} className="sm:w-32">
+                {starting ? '创建中…' : '开始工作'}
+              </Button>
+            </div>
+            {error && <div className="mt-2 text-[12px] text-amber-600">{error}</div>}
+            <p className="mt-2 text-[12px] text-foreground/45">
+              将创建新的 Agent 会话并自动注入四阶段工作指令；结果沉淀在会话中，随时可以继续追问。
+            </p>
+            <div className="mt-3 flex items-center gap-2 border-t border-border/40 pt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveView('workflow')}
+                className="gap-1.5"
+              >
+                <Workflow size={14} />
+                打开 Sourcing 流水线工作流
+              </Button>
+              <span className="text-[12px] text-foreground/45">订阅后已自动安装到当前工作区，可直接创建 Run。</span>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            {stages.map(({ icon: Icon, title, text }) => (
+              <div key={title} className="rounded-xl bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground/85"><Icon size={17} className="text-sky-600" />{title}</div>
+                <p className="mt-2 text-xs leading-5 text-foreground/55">{text}</p>
+              </div>
+            ))}
+          </div>
+
+            </TabsContent>
+            <TabsContent value="inbox" className="mt-4">
+              <InboxTab />
+            </TabsContent>
+            <TabsContent value="outbox" className="mt-4">
+              <OutboxTab />
+            </TabsContent>
+          </Tabs>
+
+          <details className="rounded-xl bg-amber-500/10 p-4 text-xs leading-5 text-foreground/65">
+            <summary className="cursor-pointer select-none font-medium text-foreground/70">能力边界</summary>
+            <p className="mt-2">
+              领域包提供 <code>sourcing_build_keyword_plan</code>、<code>sourcing_search_buyers</code>（联网检索候选与来源）、<code>sourcing_verify_company</code>（官网证据核验）、<code>sourcing_score_lead</code>、<code>sourcing_build_persona</code>（画像假设）、<code>sourcing_draft_outreach</code>、<code>sourcing_draft_reply</code>、<code>sourcing_list_inbox</code>、<code>sourcing_queue_email</code> 与 <code>sourcing_outreach_metrics</code>（漏斗指标）。邮件发送为审批制：只会在"待发队列"中经你逐封确认后发出，Agent 永远不能直接发送；检索与核验只提供证据，候选公司不作为已验证事实。
+            </p>
+          </details>
         </div>
-
-          </TabsContent>
-          <TabsContent value="inbox" className="mt-4">
-            <InboxTab />
-          </TabsContent>
-          <TabsContent value="outbox" className="mt-4">
-            <OutboxTab />
-          </TabsContent>
-        </Tabs>
-
-        <details className="rounded-xl bg-amber-500/10 p-4 text-xs leading-5 text-foreground/65">
-          <summary className="cursor-pointer select-none font-medium text-foreground/70">能力边界</summary>
-          <p className="mt-2">
-            领域包提供 <code>sourcing_build_keyword_plan</code>、<code>sourcing_search_buyers</code>（联网检索候选与来源）、<code>sourcing_verify_company</code>（官网证据核验）、<code>sourcing_score_lead</code>、<code>sourcing_build_persona</code>（画像假设）、<code>sourcing_draft_outreach</code>、<code>sourcing_draft_reply</code>、<code>sourcing_list_inbox</code>、<code>sourcing_queue_email</code> 与 <code>sourcing_outreach_metrics</code>（漏斗指标）。邮件发送为审批制：只会在"待发队列"中经你逐封确认后发出，Agent 永远不能直接发送；检索与核验只提供证据，候选公司不作为已验证事实。
-          </p>
-        </details>
       </div>
     </div>
   )

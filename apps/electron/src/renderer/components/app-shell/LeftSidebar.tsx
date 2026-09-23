@@ -21,7 +21,7 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
 import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
-import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
+import { settingsOpenAtom } from '@/atoms/settings-tab'
 import { CAPABILITY_MANIFEST, activeCapabilitiesAtom, type CapabilityId } from '@/atoms/marketing-atoms'
 import {
   conversationsAtom,
@@ -172,7 +172,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const proactiveVisible = isViewVisible('proactive', enabledDevModules)
   const visibleCoreWorkModules = CORE_WORK_MODULES.filter((module) => isViewVisible(module.id, enabledDevModules))
-  const setSettingsTab = useSetAtom(settingsTabAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
   const currentConversationId = useAtomValue(currentConversationIdAtom)
@@ -1436,13 +1435,25 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               <span className="flex-1 text-left">Proactive Center</span>
             </button>}
             <button
-              onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
-              className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+              onClick={() => setActiveView('workspace-config')}
+              className={cn(
+                'group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                activeView === 'workspace-config'
+                  ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                  : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+              )}
             >
-              <Bot size={16} className="text-foreground/40" />
+              <Bot size={16} className={activeView === 'workspace-config' ? 'text-primary-foreground' : 'text-foreground/40'} />
               <span className="flex-1 text-left">工作空间配置</span>
               {capabilities && (
-                <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
+                <span
+                  className={cn(
+                    'flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full text-[10px] tabular-nums',
+                    activeView === 'workspace-config'
+                      ? 'bg-primary-foreground/20 text-primary-foreground'
+                      : 'bg-foreground/[0.08] text-foreground/55'
+                  )}
+                >
                   {capabilities.skills.length}
                 </span>
               )}

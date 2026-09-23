@@ -1147,6 +1147,9 @@ function MetadataEditRow({ label, value, onChange, multiline }: { label: string;
 function BuiltinAgentTools(): React.ReactElement {
   const tools = useAtomValue(chatToolsAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
+  // 「配置」指向设置面板的「工具与提示词」：本组件现在也会以独立页面（工作空间配置）渲染，
+  // 因此除了切 Tab，还需显式打开设置面板，否则点击无任何可见反馈。
+  const setSettingsOpen = useSetAtom(settingsOpenAtom)
 
   const memoryTool = tools.find((t) => t.meta.id === 'memory')
   const nanoBananaTool = tools.find((t) => t.meta.id === 'nano-banana')
@@ -1193,7 +1196,7 @@ function BuiltinAgentTools(): React.ReactElement {
       title="内置工具"
       description="启用后自动注入到 Agent 会话，在工具设置中配置"
       action={
-        <Button size="sm" variant="outline" onClick={() => setSettingsTab('tools')}>
+        <Button size="sm" variant="outline" onClick={() => { setSettingsTab('tools'); setSettingsOpen(true) }}>
           <Pencil size={14} />
           <span>配置</span>
         </Button>

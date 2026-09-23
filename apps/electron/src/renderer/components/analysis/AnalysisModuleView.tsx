@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AnalysisReport } from '@gravitas/shared'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import {
   analysisReportsAtom,
   activeAnalysisReportAtom,
@@ -168,8 +169,9 @@ export function AnalysisModuleView(): React.ReactElement {
 
   return (
     <div className="flex flex-col h-full">
-      {/* 顶部：标题 + 生成操作 */}
+      {/* 顶部：返回对话 + 标题 + 生成操作 */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
+        <ModuleBackButton />
         <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
           <BarChart3 size={15} className="text-foreground/45" />
           分析引擎

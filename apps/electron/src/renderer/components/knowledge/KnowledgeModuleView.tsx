@@ -24,6 +24,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -305,8 +306,9 @@ export function KnowledgeModuleView(): React.ReactElement {
 
   return (
     <div className="flex flex-col h-full">
-      {/* 顶部：Vault 选择与索引操作 */}
+      {/* 顶部：返回对话 + Vault 选择与索引操作 */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
+        <ModuleBackButton />
         <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
           <BookOpen size={15} className="text-foreground/45" />
           知识库

@@ -26,6 +26,7 @@ import { RoutinesTab } from './tabs/RoutinesTab'
 import { proactiveErrorAtom } from '@/atoms/proactive-data'
 import { CostAuditPanel } from '@/components/automation/CostAuditPanel'
 import { CredentialHealthPanel } from '@/components/automation/CredentialHealthPanel'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 
 
 const TABS: Array<{ id: ProactiveTab; label: string; icon: React.ElementType }> = [
@@ -48,8 +49,9 @@ export function ProactiveCenter(): React.ReactElement {
 
   return (
     <div className="h-full flex flex-col bg-background">
-      {/* Header */}
+      {/* Header：返回对话 + 标题 */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-border/50">
+        <ModuleBackButton />
         <Zap className="size-5 text-primary" />
         <h1 className="text-base font-semibold">Proactive Center</h1>
         <span className="text-xs text-muted-foreground ml-1">主动协作</span>

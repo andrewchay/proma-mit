@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import {
   DOMAIN_ALLOWED_METHOD_PATHS,
   archiveResearchProjectAtom,
@@ -111,6 +112,7 @@ export function ResearchWorkspace(): React.ReactElement {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between border-b px-6 py-4">
         <div className="flex items-center gap-2">
+          <ModuleBackButton />
           <FlaskConical className="h-5 w-5 text-primary" />
           <h1 className="text-lg font-semibold">研究工作台</h1>
           <span className="text-xs text-muted-foreground">从文献到稿件的可追溯研究过程</span>

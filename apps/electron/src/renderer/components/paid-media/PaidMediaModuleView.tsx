@@ -7,10 +7,9 @@
  * M0 为骨架：顶栏返回对话 + 子视图切换，业务面板逐步填充。
  */
 import * as React from 'react'
-import { ArrowLeft, Megaphone, Gauge, ClipboardCheck } from 'lucide-react'
+import { Megaphone, Gauge, ClipboardCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { activeViewAtom } from '@/atoms/active-view'
-import { useSetAtom } from 'jotai'
+import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import { PaidCampaignsPanel } from './PaidCampaignsPanel'
 import { PaidControlPanel } from './PaidControlPanel'
 import { PaidRulesPanel } from './PaidRulesPanel'
@@ -24,19 +23,12 @@ const SUB_VIEWS: { id: PaidSubView; label: string; icon: React.ReactNode }[] = [
 ]
 
 export function PaidMediaModuleView(): React.ReactElement {
-  const setActiveView = useSetAtom(activeViewAtom)
   const [subView, setSubView] = React.useState<PaidSubView>('campaigns')
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50 flex-shrink-0">
-        <button
-          onClick={() => setActiveView('conversations')}
-          className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[13px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/85 transition-colors titlebar-no-drag"
-        >
-          <ArrowLeft size={15} />
-          返回对话
-        </button>
+        <ModuleBackButton />
         <div className="flex items-center gap-2 text-[13px] font-medium text-foreground/75">
           <Megaphone size={15} className="text-foreground/45" />
           广告投放
