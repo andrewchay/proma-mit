@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/shared",
-  "version": "0.2.7",
+  "version": "0.2.10",
   "license": "BUSL-1.1",
   "description": "Shared types, configs and utilities for proma",
   "type": "module",
@@ -12,7 +12,8 @@
     "./config": "./src/config/index.ts",
     "./utils": "./src/utils/index.ts",
     "./utils/node": "./src/utils/node.ts",
-    "./workflow": "./src/workflow-runtime.ts"
+    "./workflow": "./src/workflow-runtime.ts",
+    "./context": "./src/context/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
