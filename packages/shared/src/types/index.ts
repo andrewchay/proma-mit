@@ -109,3 +109,6 @@ export * from './academic'
 export * from './academic-research'
 export * from './telemetry'
 export * from './typesafe-judgment'
+
+// Typed Context Compiler 的可持久化状态、投影与子任务结果契约
+export * from '../context/index'

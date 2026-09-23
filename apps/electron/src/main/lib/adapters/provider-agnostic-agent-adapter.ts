@@ -157,6 +157,12 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   }>
   /** 已解析运行时工具：保留正式 execute 的错误语义与 ToolContext。 */
   runtimeTools?: RuntimeToolDefinition[]
+  /**
+   * 完全不注册任何工具（核心 / MCP / extra 全部跳讨）。
+   * 用于只读且无副作用的纯文本任务（如上下文投影评测），
+   * 避免模型看见工具后发起 tool_use 而在一轮内无法产出结果。
+   */
+  disableTools?: boolean
   /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表（自研 runtime 按需提示读取） */
   skillMentions?: string[]
 }
@@ -204,6 +210,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       runSubAgent,
       extraTools,
       runtimeTools,
+      disableTools,
       onGoalCheckpoint,
       skillMentions,
       requestedOperation,
@@ -248,7 +255,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
     let mcpRelease: (() => void) | undefined
     let mcpTools: RuntimeToolDefinition[] = []
-    if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
+    if (!disableTools && mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
       try {
         const acquired = await this.mcpService.acquireClientManager({
           workspaceSlug,
@@ -264,7 +271,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
       }
     }
-    const tools: RuntimeToolDefinition[] = [
+    const tools: RuntimeToolDefinition[] = disableTools ? [] : [
       ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
       ...mcpTools,
       ...(runtimeTools ?? []),

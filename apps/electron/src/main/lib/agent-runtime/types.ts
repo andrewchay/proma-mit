@@ -6,7 +6,7 @@
  */
 
 import type { ToolDefinition, ToolCall, ToolResult } from '@gravitas/core'
-import type { AgentGoalCheckpoint, ProviderType, PromaPermissionMode } from '@gravitas/shared'
+import type { AgentGoalCheckpoint, ContextProjectionRequest, ProviderType, PromaPermissionMode } from '@gravitas/shared'
 import type { SessionCallbacks } from '../agent-orchestrator'
 
 /** Agent Runtime 输入 */
@@ -85,6 +85,16 @@ export interface ToolContext {
   workspaceSlug?: string
 }
 
+/**
+ * Typed Context Compiler 的子任务边界选项。
+ * 不传时保持旧的纯文本委派语义；传入 projection 后才由 spawn adapter 启用 TCC。
+ */
+export interface SubAgentContextOptions {
+  projection?: ContextProjectionRequest
+  resultProtocol?: 'typed-v1' | 'plain-text'
+  readOnly?: boolean
+}
+
 /** Sub Agent 运行输入 */
 export interface SubAgentInput {
   /** 子代理名称（内置如 code-reviewer / explorer / researcher） */
@@ -99,6 +109,8 @@ export interface SubAgentInput {
   maxTurns?: number
   /** 中止信号 */
   abortSignal?: AbortSignal
+  /** 可选的 TCC 子任务上下文边界；旧调用可省略。 */
+  context?: SubAgentContextOptions
   /**
    * 隔离工作区（评测沙箱）：子代理 cwd 指向独立目录，仅拷入该 Case 的公开素材。
    * 缺省 = 继承父会话 cwd（现有行为不变）。
