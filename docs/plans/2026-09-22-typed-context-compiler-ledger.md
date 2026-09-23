@@ -325,9 +325,9 @@ M0 → M1 → M2 → M3 ─┬→ M4
 - 测试结果：4 pass / 0 fail；全量隔离测试通过。
 - 证据文件：`capability-token-benchmark.{ts,test.ts}`。
 - 风险变化：纯离线估算，无 provider 调用；token 估算沿用 chars/4 口径，不代表真实计费 token。
-- 阻塞与边界：验收标准中「工具选择准确率不低于 baseline」需要真实模型对照实验，与 M3-07「不做 provider 实验」决定冲突；如需完成，须用户单独授权并另立运行协议。
+- 2026-09-23 更新：用户单独授权真实运行验证。新增 `tool-selection-{fixture,experiment}.ts` 与正式入口 `scripts/run-capability-eval.ts`（授权数硬校验、逐次落盘）。真实矩阵 10 cases × 2 variants × 3 runs = 60 次（zhipu glm-5.3-flash）全部完成：full_schema 30/30 正确（avg input 2,540 tokens）、summary_on_demand 30/30 正确（avg input 1,914 tokens）。**门禁通过：准确率持平 100% ≥ baseline，prompt token −24.6%**，逐次记录在私有 cap-eval scoreboard。
 - 回滚方式：删除模块、export 与测试即可。
-- 下一步：M4 收尾待用户决定是否授权准确率回归；M5 不依赖 M4-04 的准确率结论，可独立开始。
+- 下一步：M4-04 已收束；M5 不依赖该结论，可独立开始。
 
 ### M5-01…M5-05（2026-09-22）
 - 状态：已完成（工程模块与验收测试；生产接入保持关闭）。
