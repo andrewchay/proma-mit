@@ -10,8 +10,12 @@ for i in $(seq 1 120); do
     hard=""
     for f in $conf; do
       case "$f" in
-        *package.json)
-          python3 "$HOME/.proma/agent-workspaces/proma-mit/project/.context/tmp/ver_resolve.py" "$f" || hard="$hard $f"
+        *package.json|docs/generated/repository-facts.md)
+          if [ "$f" = "docs/generated/repository-facts.md" ]; then
+            git checkout --theirs -- "$f"
+          else
+            python3 "$HOME/.proma/agent-workspaces/proma-mit/project/.context/tmp/ver_resolve.py" "$f" || hard="$hard $f"
+          fi
           ;;
         *)
           hard="$hard $f"

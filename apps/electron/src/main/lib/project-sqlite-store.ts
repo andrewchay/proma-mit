@@ -793,6 +793,10 @@ function migrate(database: SqliteCompat): void {
   if (!columns.includes('workspace_id')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN workspace_id TEXT`)
   }
+  // 研发任务委派（M1）：tasks 表新增 development_scope 列（JSON 文本，兼容旧库）
+  if (!columns.includes('development_scope')) {
+    database.exec(`ALTER TABLE tasks ADD COLUMN development_scope TEXT`)
+  }
   // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('workflow_id')) {
@@ -992,6 +996,7 @@ type TaskRow = {
   completion_notes: string | null; risk_level: string | null; external_sync: string | null;
   permission_requests: string | null;
   token_budget: number | null;
+  development_scope: string | null;
   sort_order: number;
   created_at: number; updated_at: number;
 }
@@ -1051,6 +1056,7 @@ function rowToTask(row: TaskRow): Task {
     riskLevel: (row.risk_level as Task['riskLevel'] | undefined) ?? undefined,
     externalSync: row.external_sync ? JSON.parse(row.external_sync) : undefined,
     permissionRequests: parseJsonArray(row.permission_requests),
+    developmentScope: row.development_scope ? JSON.parse(row.development_scope) as Task['developmentScope'] : undefined,
     createdByUserId: row.created_by_user_id ?? undefined,
     createdByMemberId: row.created_by_member_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
@@ -1182,8 +1188,8 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, development_scope, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     'pending', input.priority ?? 'medium',
@@ -1191,7 +1197,9 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
     input.assigneeMemberId ?? null,
     input.createdByUserId ?? null, input.createdByMemberId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
-    JSON.stringify(input.permissionRequests ?? []), input.tokenBudget ?? null, sortOrder, timestamp, timestamp
+    JSON.stringify(input.permissionRequests ?? []), input.tokenBudget ?? null,
+    input.developmentScope ? JSON.stringify(input.developmentScope) : null,
+    sortOrder, timestamp, timestamp
   )
   recordProjectActivity({
     projectId,
@@ -1293,19 +1301,23 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     external_sync: updates.externalSync !== undefined ? JSON.stringify(updates.externalSync) : existing.external_sync,
     permission_requests: updates.permissionRequests !== undefined ? JSON.stringify(updates.permissionRequests) : existing.permission_requests,
     token_budget: updates.tokenBudget !== undefined ? updates.tokenBudget : existing.token_budget,
+    // developmentScope 支持“显式传 undefined”清空（与 workspaceId 旧字段同语义）
+    development_scope: Object.prototype.hasOwnProperty.call(updates, 'developmentScope')
+      ? (updates.developmentScope ? JSON.stringify(updates.developmentScope) : null)
+      : existing.development_scope,
     updated_at: now(),
   }
   database.prepare(
     `UPDATE tasks SET
       title = ?, description = ?, status = ?, priority = ?,
       parent_id = ?, assignee_user_id = ?, assignee_display_name = ?, assignee_member_id = ?, created_by_member_id = ?,
-      start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?, token_budget = ?,
+      start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?, token_budget = ?, development_scope = ?,
       updated_at = ?
      WHERE id = ?`
   ).run(
     next.title, next.description, next.status, next.priority,
     next.parent_id, next.assignee_user_id, next.assignee_display_name, next.assignee_member_id, next.created_by_member_id,
-    next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests, next.token_budget,
+    next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests, next.token_budget, next.development_scope,
     next.updated_at, id
   )
   recordProjectActivity({

@@ -77,10 +77,42 @@ export function getProjectChain(projectId: string): ProjectChain {
 }
 
 /** 在同一事务内校验版本、项目归属并追加快照，拒绝覆盖并发更新。 */
+/** 员工 principal 前缀（与 agent-employee-service 的 AGENT_ASSIGNEE_PREFIX 语义一致） */
+const AGENT_PRINCIPAL_PREFIX = 'agent-'
+
+function isAgentPrincipal(userId: string): boolean {
+  return userId.startsWith(AGENT_PRINCIPAL_PREFIX)
+}
+
+/**
+ * 交付责任校验：reviewer/recipient 必须是目录内已启用人类；
+ * ownerId 为员工 principal（agent-<id>）时由员工档案校验代管，不要求进目录。
+ */
+function deliveryRolesAreEnabled(
+  roles: { ownerId: string; reviewerId: string; recipientId: string },
+  enabledIds: Set<string>,
+): boolean {
+  const humanIds = [roles.reviewerId, roles.recipientId, ...isAgentPrincipal(roles.ownerId) ? [] : [roles.ownerId]]
+  return humanIds.every((id) => enabledIds.has(id))
+}
+
 export function updateProjectChain(
   projectId: string,
   expectedRevision: number,
   command: ProjectChainCommand,
+): ProjectChain {
+  return updateProjectChainAsActor(projectId, expectedRevision, command, 'local-user')
+}
+
+/**
+ * 以显式操作人应用链路命令。公共人工入口固定 local-user；
+ * 研发员工受限提交使用 agent-<id> 身份，必须先由交付服务验证员工档案（W03）。
+ */
+export function updateProjectChainAsActor(
+  projectId: string,
+  expectedRevision: number,
+  command: ProjectChainCommand,
+  actor: string,
 ): ProjectChain {
   let result: ProjectChain | undefined
   getProjectDb().transaction(() => {
@@ -95,6 +127,19 @@ export function updateProjectChain(
         .map((user) => user.id),
     )
     if (!enabledIds.has('local-user')) throw new Error('本机操作人未启用')
+    if (actor !== 'local-user') {
+      // 操作人 principal 二选一：真实、启用且研发档案的员工（受限交付），或身份目录内已启用人类（内部验收/交接服务）。
+      // 公共 IPC 入口 updateProjectChain 固定 local-user，客户端无法冒充任一身份。
+      const employeeId = actor.startsWith('agent-') ? actor.slice('agent-'.length) : ''
+      const employee = employeeId
+        ? (require('./project-sqlite-store') as typeof import('./project-sqlite-store')).getAgentEmployee(employeeId)
+        : null
+      const isEmployeePrincipal = Boolean(employee?.enabled && employee.executionProfile === 'development')
+      const isDirectoryUser = enabledIds.has(actor)
+      if (!isEmployeePrincipal && !isDirectoryUser) {
+        throw new Error('无效的员工操作身份')
+      }
+    }
     if (command.kind === 'decision' && command.daci) {
       const identities = [
         command.daci.driverId,
@@ -161,7 +206,9 @@ export function updateProjectChain(
       if (!task.assignee?.userId || command.responsibilities?.ownerId !== task.assignee.userId)
         throw new Error('责任快照必须匹配当前任务负责人')
       const roles = command.responsibilities
-      if (![roles.ownerId, roles.reviewerId, roles.recipientId].every((id) => enabledIds.has(id)))
+      // 员工 ownerId 的有效性由 updateProjectChainAsActor 的员工档案校验保证；
+      // 身份目录只覆盖人类角色（reviewer/recipient）。
+      if (!deliveryRolesAreEnabled(roles, enabledIds))
         throw new Error('责任人必须是身份目录中已启用的用户 ID')
       if (command.executionId) {
         const execution = getAgentExecution(command.executionId)
@@ -197,11 +244,11 @@ export function updateProjectChain(
       if (draft.responsibilities?.ownerId !== task.assignee?.userId || !task.assignee?.userId)
         throw new Error('任务负责人已变更或未指定，请重新确认责任并保存新版本')
       const roles = draft.responsibilities
-      if (!roles || ![roles.ownerId, roles.reviewerId, roles.recipientId].every((id) => enabledIds.has(id)))
+      if (!roles || !deliveryRolesAreEnabled(roles, enabledIds))
         throw new Error('责任信息缺失或责任人已停用，请保存新版本')
     }
     // 主进程确定操作身份，禁止客户端冒充验收人或接收人。
-    result = applyChainCommand(current, command, 'local-user')
+    result = applyChainCommand(current, command, actor, { suppressDodAutoAccept: actor !== 'local-user' })
     if (command.kind === 'draft' && linkedExecution) {
       const draft = result.drafts.find((item) => item.executionId === linkedExecution?.id)
       if (!draft) throw new Error('交付物未关联到已验证执行记录')

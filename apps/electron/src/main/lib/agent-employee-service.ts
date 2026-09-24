@@ -884,6 +884,22 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
     console.error('[AgentEmployee] 回写任务状态失败:', error)
   }
 
+  // 研发任务受限交付（W03）：权威完成回调触发；范围不完整则静默跳过，保持旧行为。
+  if (execution.entityType === 'task') {
+    try {
+      const { shouldSubmitDevelopmentDelivery, submitDevelopmentDelivery } = require('./development-delivery-service') as typeof import('./development-delivery-service')
+      const entityTask = store.getTask(execution.entityId)
+      if (shouldSubmitDevelopmentDelivery(entityTask)) {
+        const delivery = submitDevelopmentDelivery(executionId)
+        recordActivity(store.getAgentExecution(executionId)!, 'agent_completed', `研发交付已冻结待人工验收（v${delivery.version}，快照 ${delivery.snapshotId.slice(0, 16)}）`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[AgentEmployee] 研发受限交付提交失败:', message)
+      store.updateAgentExecution(executionId, { error: `研发交付提交失败：${message}` })
+    }
+  }
+
   // 更新员工统计
   store.bumpAgentEmployeeStats(execution.agentId, {
     completed: true,

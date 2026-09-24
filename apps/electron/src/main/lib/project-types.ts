@@ -4,6 +4,8 @@
  * 抽离为独立文件，避免 project-service.ts / local-project-store.ts / nocobase-project-service.ts 之间循环引用。
  */
 
+import type { DevelopmentTaskScope } from '@gravitas/shared'
+
 export type ProjectStatus = 'planning' | 'active' | 'completed' | 'cancelled'
 
 export interface Project {
@@ -125,6 +127,8 @@ export interface Task {
   workspaceId?: string
   /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退 paused 待人工处理 */
   tokenBudget?: number
+  /** 研发任务执行范围（文件委派）；仅研发链路消费，普通任务缺省为空 */
+  developmentScope?: DevelopmentTaskScope
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
   sortOrder: number
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
@@ -180,6 +184,8 @@ export interface CreateTaskInput {
   workspaceId?: string
   /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行 */
   tokenBudget?: number
+  /** 研发任务执行范围（文件委派）；仅研发链路消费，普通任务缺省为空 */
+  developmentScope?: DevelopmentTaskScope
 }
 
 /** 创建独立执行 subTask 的输入；它通过 taskId 归属 Task，不使用 WBS parentId。 */
