@@ -351,22 +351,19 @@ export const agentRightWorkspaceSplitAtom = atomWithStorage<Record<string, Right
 /**
  * 在右侧工作台显示预览。
  *
- * 聊天文件路径、工具结果和文件树都可能触发预览；该动作统一负责展开折叠面板、
- * 保留左侧目录上下文并激活右侧预览，避免入口之间出现状态不一致。
+ * 聊天文件路径、工具结果和文件树都可能触发预览；该动作统一负责展开折叠面板并激活预览，
+ * 避免入口之间出现状态不一致。未分屏时预览独占整个面板（不再强行并排目录页，避免文档
+ * 展示区过小）；已有分屏时保留左侧目录上下文，仅把右侧 Pane 切到预览。
  */
 export const revealRightWorkspacePreviewAtom = atom(
   null,
   (get, set, sessionId: string) => {
     const splitMap = get(agentRightWorkspaceSplitAtom)
     const split = splitMap[sessionId] ?? null
-    const activeTab = get(agentDiffPanelTabAtom).get(sessionId)
-    const primaryTab = split?.leftTab === 'changes' || activeTab === 'changes'
-      ? 'changes'
-      : 'files'
 
     set(agentRightWorkspaceSplitAtom, {
       ...splitMap,
-      [sessionId]: openRightWorkspacePreview(split, primaryTab),
+      [sessionId]: openRightWorkspacePreview(split),
     })
     set(agentSidePanelOpenAtom, true)
     set(agentSidePanelWidthAtom, Math.max(get(agentSidePanelWidthAtom), 720))

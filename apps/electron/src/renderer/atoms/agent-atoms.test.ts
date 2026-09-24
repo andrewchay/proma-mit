@@ -113,7 +113,7 @@ describe('applyAgentEvent 上下文压缩生命周期', () => {
 })
 
 describe('聊天文件预览工作台', () => {
-  test('右侧面板折叠时打开聊天文件会展开面板并展示预览', () => {
+  test('右侧面板折叠时打开聊天文件会展开面板并独占式展示预览', () => {
     const store = createStore()
     store.set(agentSidePanelOpenAtom, false)
     store.set(agentSidePanelWidthAtom, 280)
@@ -124,10 +124,23 @@ describe('聊天文件预览工作台', () => {
     expect(store.get(agentSidePanelOpenAtom)).toBe(true)
     expect(store.get(agentSidePanelWidthAtom)).toBe(720)
     expect(store.get(agentDiffPanelTabAtom).get('session-1')).toBe('preview')
-    expect(store.get(agentRightWorkspaceSplitAtom)['session-1']).toMatchObject({
+    // 未分屏时不再强行创建「目录 + 预览」分屏，预览独占整个面板
+    expect(store.get(agentRightWorkspaceSplitAtom)['session-1']).toBeNull()
+  })
+
+  test('已有分屏时保留左侧目录上下文，仅右侧 Pane 切到预览', () => {
+    const store = createStore()
+    store.set(agentRightWorkspaceSplitAtom, {
+      'session-1': { leftTab: 'files', rightTab: 'terminal', focusedPane: 'left', ratio: 0.5 },
+    })
+
+    store.set(revealRightWorkspacePreviewAtom, 'session-1')
+
+    expect(store.get(agentRightWorkspaceSplitAtom)['session-1']).toEqual({
       leftTab: 'files',
       rightTab: 'preview',
       focusedPane: 'right',
+      ratio: 0.5,
     })
   })
 })

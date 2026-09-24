@@ -23,16 +23,13 @@ describe('右侧工作台双 Pane', () => {
     expect(clampRightWorkspaceSplitRatio(0.1)).toBe(0.3)
   })
 
-  test('点击文件会保留目录上下文，并在右侧展开预览', () => {
-    expect(openRightWorkspacePreview(null, 'files')).toEqual({
-      leftTab: 'files',
-      rightTab: 'preview',
-      focusedPane: 'right',
-      ratio: 0.5,
-    })
+  test('点击文件预览未分屏时不创建分屏，预览独占面板', () => {
+    expect(openRightWorkspacePreview(null)).toBeNull()
+  })
 
+  test('已有分屏时保留目录上下文，仅右侧 Pane 切到预览', () => {
     const existing = createRightWorkspaceSplit('changes', 'terminal', 'right', 0.6)!
-    expect(openRightWorkspacePreview(existing, 'changes')).toEqual({
+    expect(openRightWorkspacePreview(existing)).toEqual({
       leftTab: 'changes',
       rightTab: 'preview',
       focusedPane: 'right',
