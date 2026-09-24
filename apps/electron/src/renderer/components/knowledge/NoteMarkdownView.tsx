@@ -11,7 +11,7 @@
  * 排版统一走 @tailwindcss/typography 的 prose，与聊天消息同一视觉语言。
  */
 import * as React from 'react'
-import Markdown from 'react-markdown'
+import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import DOMPurify from 'dompurify'
@@ -109,7 +109,17 @@ export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps):
   return (
     <div className="h-full min-h-0 overflow-y-auto px-6 py-5">
       <article className="prose prose-sm dark:prose-invert max-w-none prose-a:text-primary">
-        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={mdComponents}>
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw]}
+          components={mdComponents}
+          // react-markdown v10 默认 urlTransform 只允许 http/https 等协议，
+          // 会把 #wikilink/ 前缀的 href 清空导致双链点击失效；这里放行内部链接，
+          // 其余链接仍走默认白名单净化
+          urlTransform={(url) =>
+            url.startsWith(WIKILINK_PREFIX) ? url : defaultUrlTransform(url)
+          }
+        >
           {mdContent}
         </Markdown>
       </article>

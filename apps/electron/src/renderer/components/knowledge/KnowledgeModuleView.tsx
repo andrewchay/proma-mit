@@ -88,6 +88,8 @@ export function KnowledgeModuleView(): React.ReactElement {
   const [error, setError] = useAtom(knowledgeErrorAtom)
   const [notice, setNotice] = useAtom(knowledgeIndexNoticeAtom)
   const visibleNotes = useAtomValue(visibleNotesAtom)
+  // 双链跳转的解析范围：用全量已索引笔记，避免搜索过滤后目标不在 visibleNotes 里
+  const allNotes = useAtomValue(knowledgeNotesAtom)
 
   const [addOpen, setAddOpen] = React.useState(false)
   /** 编辑态：非空表示正在编辑该笔记 */
@@ -525,10 +527,15 @@ export function KnowledgeModuleView(): React.ReactElement {
                 notes={visibleNotes}
                 onEdit={() => setEditing(true)}
                 onOpenLinked={(title) => {
-                  // wikilink 导航：按标题在已索引笔记中查找
-                  const target = visibleNotes.find(
-                    (n) => n.title.toLowerCase() === title.toLowerCase(),
-                  )
+                  // wikilink 导航：先按标题精确匹配（忽略大小写），
+                  // 再按文件名兜底（目标可能带目录路径或 .md 后缀）
+                  const normalized = title.trim().toLowerCase()
+                  const target =
+                    allNotes.find((n) => n.title.toLowerCase() === normalized) ??
+                    allNotes.find((n) => {
+                      const base = n.filePath.split('/').pop()?.toLowerCase() ?? ''
+                      return base === normalized || base === `${normalized}.md` || base === `${normalized}.html`
+                    })
                   if (target) void openNote(target.id)
                 }}
                 onClose={() => {
