@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -2525,7 +2525,7 @@ const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem(
 /**
  * SubscribedCapabilities — 已订阅领域能力包导航区
  *
- * 在 core 工作模块下方展示已订阅的领域包（influencer/paid-media），
+ * 在 core 工作模块下方展示已订阅的领域包（influencer / paid-media / outbound-sourcing / new-media / research），
  * 点击切换视图；末尾提供「能力中心」入口打开订阅面板。
  */
 function SubscribedCapabilities(): React.ReactElement {
@@ -2542,6 +2542,8 @@ function SubscribedCapabilities(): React.ReactElement {
   const iconFor = (id: string): React.ReactNode => {
     if (id === 'paid-media') return <Megaphone size={16} className="text-foreground/40" />
     if (id === 'outbound-sourcing') return <Globe2 size={16} className="text-foreground/40" />
+    if (id === 'new-media') return <Radio size={16} className="text-foreground/40" />
+    if (id === 'research') return <FlaskConical size={16} className="text-foreground/40" />
     return <Users size={16} className="text-foreground/40" />
   }
 

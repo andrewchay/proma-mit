@@ -18,7 +18,7 @@ import { atom } from 'jotai'
 import { BUSINESS_PACKAGE_CAPABILITIES } from '@gravitas/shared'
 import { subscriptionStateAtom, selectCanUseCapability } from './subscription-atoms'
 
-export type CapabilityId = 'influencer' | 'paid-media' | 'outbound-sourcing'
+export type CapabilityId = 'influencer' | 'paid-media' | 'outbound-sourcing' | 'new-media' | 'research'
 export type CapabilityKind = 'business' | 'shared'
 
 export interface CapabilityMeta {
@@ -58,6 +58,18 @@ export const CAPABILITY_MANIFEST: CapabilityMeta[] = [
     kind: 'business',
     // 能力边界如实描述：与 Redvia 全流水线不同，这里只覆盖方法论三件套，检索/核验由 Agent 完成，发送需人工
     description: '检索核验 / 画像 / 评分 / 外联与回复草稿 / 邮件同步 / 审批制发送 / 漏斗指标',
+  },
+  {
+    id: 'new-media',
+    label: '新媒体运营 new-media',
+    kind: 'business',
+    description: '本地草稿、排程与受控外发审批（不连接真实平台）',
+  },
+  {
+    id: 'research',
+    label: '研究 research',
+    kind: 'business',
+    description: '从文献到稿件的可追溯研究工作台',
   },
 ]
 
@@ -125,7 +137,9 @@ export async function persistMarketingCapabilities(enabled: CapabilityId[]): Pro
   try {
     await window.electronAPI.updateSettings({
       marketingCapabilities: enabled.filter((id) => id === 'influencer' || id === 'paid-media'),
-      domainCapabilities: enabled.filter((id) => id === 'outbound-sourcing'),
+      // research / new-media 与 outbound-sourcing 一样走通用领域包字段；
+      // marketing-plugin 侧已按营销包 id 过滤，不会因此误开营销工具注入
+      domainCapabilities: enabled.filter((id) => id === 'outbound-sourcing' || id === 'research' || id === 'new-media'),
     })
   } catch (error) {
     console.error('[营销订阅] 持久化失败:', error)
