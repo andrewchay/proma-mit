@@ -280,7 +280,19 @@ export const PROJECT_IPC_CHANNELS = {
   // 成员目录聚合（PH1-B）
   LIST_MEMBER_DIRECTORY: 'project:list-member-directory',
   COUNT_MEMBER_DIRECTORY: 'project:count-member-directory',
+  // Project ↔ AgentWorkspace 多对多绑定（仅授权关系，不自动共享资料）
+  BIND_WORKSPACE: 'project:bind-workspace',
+  UNBIND_WORKSPACE: 'project:unbind-workspace',
+  LIST_PROJECT_WORKSPACES: 'project:list-project-workspaces',
+  LIST_WORKSPACE_PROJECTS: 'project:list-workspace-projects',
 } as const
+
+/** Project ↔ AgentWorkspace 绑定记录：正式绑定仅表示授权，不代表资料共享 */
+export interface ProjectWorkspaceBinding {
+  projectId: string
+  workspaceId: string
+  createdAt: number
+}
 
 export interface ProjectInput {
   title: string

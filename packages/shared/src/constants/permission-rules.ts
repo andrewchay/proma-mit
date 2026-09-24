@@ -12,7 +12,9 @@ export const SAFE_TOOLS: readonly string[] = [
   'Grep',            // 内容搜索
   'WebSearch',       // 网络搜索
   'WebFetch',        // 网页获取
-  'RecallMemory',    // 跨会话记忆检索（只读）
+  'RecallMemory',    // 跨会话云端记忆检索（只读，个人全局范围）
+  'SearchProjectMemory', // 本地长期记忆限域检索（只读，范围由会话元数据与实时绑定决定）
+  'ReadProjectMemory', // 本地长期记忆单条读取（只读，逐次经范围校验）
   'SearchKnowledge', // 知识库限域检索（只读，范围由会话元数据决定）
   'ReadKnowledgeSource', // 知识库文档读取（只读，逐次经范围校验）
   'WebBridgeSnapshot', // 受管浏览器页面读取

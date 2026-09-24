@@ -151,6 +151,7 @@ import {
 import { WEB_SEARCH_TOOL_NAME, createWebSearchToolDefinition, executeWebSearchTool } from './tool-impls/web-search-tool.ts'
 import { WEB_FETCH_TOOL_NAME, createWebFetchToolDefinition, executeWebFetchTool } from './tool-impls/web-fetch-tool.ts'
 import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME, createRecallMemoryToolDefinition, createAddMemoryToolDefinition, executeRecallMemoryTool, executeAddMemoryTool } from './tool-impls/memory-tool.ts'
+import { SEARCH_PROJECT_MEMORY_TOOL_NAME, READ_PROJECT_MEMORY_TOOL_NAME, createSearchProjectMemoryToolDefinition, createReadProjectMemoryToolDefinition, executeSearchProjectMemoryTool, executeReadProjectMemoryTool } from './tool-impls/project-memory-tool.ts'
 import { SEARCH_KNOWLEDGE_TOOL_NAME, READ_KNOWLEDGE_SOURCE_TOOL_NAME, createSearchKnowledgeToolDefinition, createReadKnowledgeSourceToolDefinition, executeSearchKnowledgeTool, executeReadKnowledgeSourceTool } from './tool-impls/knowledge-tool.ts'
 import { COMPACT_CONTEXT_TOOL_NAME, createCompactContextToolDefinition } from './context-compaction'
 import { GOAL_CHECKPOINT_TOOL_NAME, createGoalCheckpointToolDefinition } from './tool-impls/goal-checkpoint-tool.ts'
@@ -176,6 +177,9 @@ export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDe
     { ...createWebFetchToolDefinition(), execute: executeWebFetchTool },
     { ...createRecallMemoryToolDefinition(), execute: executeRecallMemoryTool },
     { ...createAddMemoryToolDefinition(), execute: executeAddMemoryTool },
+    // 本地长期记忆限域检索：项目/工作空间范围由主进程按会话实时解析
+    { ...createSearchProjectMemoryToolDefinition(), execute: executeSearchProjectMemoryTool },
+    { ...createReadProjectMemoryToolDefinition(), execute: executeReadProjectMemoryTool },
     // 知识库限域检索：范围由主进程按会话解析，工具参数不带授权字段
     { ...createSearchKnowledgeToolDefinition(), execute: executeSearchKnowledgeTool },
     { ...createReadKnowledgeSourceToolDefinition(), execute: executeReadKnowledgeSourceTool },
@@ -257,6 +261,8 @@ export const CORE_TOOL_NAMES: readonly string[] = [
   WEB_FETCH_TOOL_NAME,
   RECALL_MEMORY_TOOL_NAME,
   ADD_MEMORY_TOOL_NAME,
+  SEARCH_PROJECT_MEMORY_TOOL_NAME,
+  READ_PROJECT_MEMORY_TOOL_NAME,
   SEARCH_KNOWLEDGE_TOOL_NAME,
   READ_KNOWLEDGE_SOURCE_TOOL_NAME,
   COMPACT_CONTEXT_TOOL_NAME,

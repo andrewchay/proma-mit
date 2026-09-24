@@ -653,6 +653,9 @@ export interface ElectronAPI {
   /** 更新 Agent 会话标题 */
   updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
 
+  /** 更新 Agent 会话当前 Project（必须通过工作空间绑定授权；清空 projectId 则关闭项目范围） */
+  updateAgentSessionProject: (input: import('@gravitas/shared').UpdateAgentSessionProjectInput) => Promise<AgentSessionMeta>
+
   /** 更新 Agent 会话 Runtime */
   updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => Promise<AgentSessionMeta>
 
@@ -1891,6 +1894,13 @@ export interface ElectronAPI {
       listMemberDirectory: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
       countMemberDirectory: () => Promise<{ human: number; agent: number; bot: number }>
     }
+    /** Project ↔ AgentWorkspace 多对多绑定（仅授权，不自动共享资料） */
+    projectWorkspace: {
+      bind: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding | null>
+      unbind: (projectId: string, workspaceId: string) => Promise<boolean>
+      listByProject: (projectId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
+      listByWorkspace: (workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
+    }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
       list: () => Promise<import('@gravitas/shared').AgentEmployeeResult[]>
@@ -2877,6 +2887,10 @@ const electronAPI: ElectronAPI = {
 
   updateAgentSessionTitle: (id: string, title: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_TITLE, id, title)
+  },
+
+  updateAgentSessionProject: (input) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_SESSION_PROJECT, input)
   },
 
   updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => {
@@ -4344,6 +4358,13 @@ const electronAPI: ElectronAPI = {
       getMember: (memberId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEMBER, memberId),
       listMemberDirectory: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, filter),
       countMemberDirectory: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.COUNT_MEMBER_DIRECTORY),
+    },
+    // --- Project ↔ AgentWorkspace 绑定 ---
+    projectWorkspace: {
+      bind: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.BIND_WORKSPACE, projectId, workspaceId),
+      unbind: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UNBIND_WORKSPACE, projectId, workspaceId),
+      listByProject: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORKSPACES, projectId),
+      listByWorkspace: (workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, workspaceId),
     },
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {

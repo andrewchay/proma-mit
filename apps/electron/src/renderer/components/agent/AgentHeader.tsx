@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { agentSessionsAtom, agentSidePanelOpenAtom, workspaceFilesVersionAtom } from '@/atoms/agent-atoms'
 import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import { registerShortcut } from '@/lib/shortcut-registry'
-import type { Goal } from '@gravitas/shared'
+import type { AgentSessionMeta, Goal } from '@gravitas/shared'
 import { SpanWaterfallPanel } from './SpanWaterfallPanel'
 
 /** AgentHeader 属性接口 */
@@ -167,6 +167,7 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
               <Pencil className="size-3.5" />
             </button>
           </div>
+          <ProjectBindingControl session={session} setSessions={setAgentSessions} />
           <GoalBindingControl sessionId={sessionId} />
           <SpanWaterfallPanel sessionId={sessionId} />
           {webBridgeStatus.active && (
@@ -207,6 +208,94 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** 会话当前 Project 绑定控件：只能选择已与当前工作空间正式绑定的项目。 */
+function ProjectBindingControl({
+  session,
+  setSessions,
+}: {
+  session: AgentSessionMeta
+  setSessions: React.Dispatch<React.SetStateAction<AgentSessionMeta[]>>
+}): React.ReactElement {
+  const [projects, setProjects] = React.useState<Array<{ id: string; title: string }>>([])
+  const [bindingProjectIds, setBindingProjectIds] = React.useState<Set<string>>(new Set())
+  const [error, setError] = React.useState<string | null>(null)
+  const workspaceId = session.workspaceId
+
+  React.useEffect(() => {
+    let cancelled = false
+    const load = async (): Promise<void> => {
+      setError(null)
+      try {
+        const projectList = await window.electronAPI.paa.project.listProjects()
+        const safeProjects = Array.isArray(projectList)
+          ? projectList
+              .filter((item): item is { id: string; title: string } =>
+                typeof item === 'object' && item !== null &&
+                typeof (item as { id?: unknown }).id === 'string' &&
+                typeof (item as { title?: unknown }).title === 'string')
+          : []
+        if (cancelled) return
+        setProjects(safeProjects)
+
+        if (!workspaceId) {
+          setBindingProjectIds(new Set())
+          return
+        }
+        const bindings = await window.electronAPI.paa.projectWorkspace.listByWorkspace(workspaceId)
+        if (cancelled) return
+        setBindingProjectIds(new Set((Array.isArray(bindings) ? bindings : []).map((binding) => binding.projectId)))
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [workspaceId])
+
+  const availableProjects = React.useMemo(
+    () => projects.filter((project) => bindingProjectIds.has(project.id)),
+    [projects, bindingProjectIds],
+  )
+  const currentProjectId = session.projectId
+  const currentMissingBinding = Boolean(currentProjectId && !bindingProjectIds.has(currentProjectId))
+  const currentProject = projects.find((project) => project.id === currentProjectId)
+
+  const changeProject = async (value: string): Promise<void> => {
+    setError(null)
+    try {
+      const updated = await window.electronAPI.updateAgentSessionProject({
+        sessionId: session.id,
+        projectId: value || null,
+      })
+      setSessions((previous) => previous.map((item) => (item.id === updated.id ? updated : item)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return (
+    <div className="titlebar-no-drag flex min-w-0 items-center gap-1.5" title={error ?? '当前项目决定项目记忆与项目知识库的可读范围'}>
+      <span className="text-[11px] text-muted-foreground">项目</span>
+      <select
+        value={currentProjectId ?? ''}
+        onChange={(event) => void changeProject(event.target.value)}
+        disabled={!workspaceId}
+        className="h-7 max-w-[180px] rounded-md border border-border/60 bg-background px-1.5 text-xs text-foreground outline-none disabled:opacity-50"
+      >
+        <option value="">无项目</option>
+        {currentMissingBinding && currentProjectId && (
+          <option value={currentProjectId}>{currentProject?.title ?? '未绑定项目'}（需重新绑定）</option>
+        )}
+        {availableProjects.map((project) => (
+          <option key={project.id} value={project.id}>{project.title}</option>
+        ))}
+      </select>
+      {!workspaceId && <span className="text-[11px] text-amber-600">无工作空间</span>}
+      {error && <span className="max-w-[220px] truncate text-[11px] text-destructive">{error}</span>}
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resetProjectWorkspaceBindingResolver, setProjectWorkspaceBindingResolver } from './project-memory-scope'
 
 /**
  * 知识范围解析测试（K1-02）。
@@ -15,6 +16,7 @@ import { join } from 'node:path'
 let tempDir: string
 let vaultA: string
 let vaultB: string
+let boundPairs = new Set<string>()
 const originalEnv = { ...process.env }
 
 async function loadCatalog() {
@@ -39,9 +41,14 @@ beforeEach(() => {
   vaultB = join(tempDir, 'vault-b')
   mkdirSync(vaultA, { recursive: true })
   mkdirSync(vaultB, { recursive: true })
+  boundPairs = new Set()
+  setProjectWorkspaceBindingResolver({
+    hasBinding: (projectId, workspaceId) => boundPairs.has(`${projectId}::${workspaceId}`),
+  })
 })
 
 afterEach(() => {
+  resetProjectWorkspaceBindingResolver()
   process.env = { ...originalEnv }
   rmSync(tempDir, { recursive: true, force: true })
 })
@@ -94,11 +101,12 @@ describe('会话知识范围解析', () => {
     const kbB = await makeKnowledgeBase('库B', vaultB)
     catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kbA.id })
     catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kbB.id })
+    boundPairs.add('p1::ws-1')
 
     const scope = await loadScope()
     const resolved = scope.resolveKnowledgeScope({
       sessionId: 's1',
-      sessionMeta: { knowledgeScopeMode: 'project', projectId: 'p1' },
+      sessionMeta: { knowledgeScopeMode: 'project', projectId: 'p1', workspaceId: 'ws-1' },
     })
     expect(resolved.mode).toBe('project')
     expect(resolved.knowledgeBaseIds.sort()).toEqual([kbA.id, kbB.id].sort())
@@ -110,11 +118,12 @@ describe('会话知识范围解析', () => {
     const kbB = await makeKnowledgeBase('库B', vaultB)
     catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kbA.id })
     catalog.bindProject({ projectId: 'p2', knowledgeBaseId: kbB.id })
+    boundPairs.add('p1::ws-1')
 
     const scope = await loadScope()
     const resolved = scope.resolveKnowledgeScope({
       sessionId: 's1',
-      sessionMeta: { knowledgeScopeMode: 'project', projectId: 'p1' },
+      sessionMeta: { knowledgeScopeMode: 'project', projectId: 'p1', workspaceId: 'ws-1' },
     })
     expect(resolved.knowledgeBaseIds).toEqual([kbA.id])
     expect(resolved.knowledgeBaseIds).not.toContain(kbB.id)
@@ -126,8 +135,23 @@ describe('会话知识范围解析', () => {
 
     const resolved = scope.resolveKnowledgeScope({
       sessionId: 's1',
-      sessionMeta: { knowledgeScopeMode: 'project' },
+      sessionMeta: { knowledgeScopeMode: 'project', workspaceId: 'ws-1' },
     })
+    expect(resolved.knowledgeBaseIds).toEqual([])
+  })
+
+  test('project 模式缺少当前工作空间绑定时返回空范围', async () => {
+    const catalog = await loadCatalog()
+    const kb = await makeKnowledgeBase('库A', vaultA)
+    catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kb.id })
+    const scope = await loadScope()
+
+    const resolved = scope.resolveKnowledgeScope({
+      sessionId: 's1',
+      sessionMeta: { knowledgeScopeMode: 'project', projectId: 'p1', workspaceId: 'ws-1' },
+    })
+
+    expect(resolved.mode).toBe('none')
     expect(resolved.knowledgeBaseIds).toEqual([])
   })
 
@@ -176,15 +200,33 @@ describe('检索范围（含来源级校验）', () => {
     const catalog = await loadCatalog()
     const kb = await makeKnowledgeBase('库', vaultA)
     catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kb.id })
+    boundPairs.add('p1::ws-1')
 
     const scope = await loadScope()
     const request = {
       sessionId: 's1',
-      sessionMeta: { knowledgeScopeMode: 'project' as const, projectId: 'p1' },
+      sessionMeta: { knowledgeScopeMode: 'project' as const, projectId: 'p1', workspaceId: 'ws-1' },
     }
     expect(scope.resolveRetrievableScope(request).sources).toHaveLength(1)
 
     catalog.unbindProject({ projectId: 'p1', knowledgeBaseId: kb.id })
+    expect(scope.resolveRetrievableScope(request).sources).toHaveLength(0)
+  })
+
+  test('解除 Project 与工作空间绑定后项目知识范围立即失效', async () => {
+    const catalog = await loadCatalog()
+    const kb = await makeKnowledgeBase('库', vaultA)
+    catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kb.id })
+    boundPairs.add('p1::ws-1')
+
+    const scope = await loadScope()
+    const request = {
+      sessionId: 's1',
+      sessionMeta: { knowledgeScopeMode: 'project' as const, projectId: 'p1', workspaceId: 'ws-1' },
+    }
+    expect(scope.resolveRetrievableScope(request).sources).toHaveLength(1)
+
+    boundPairs.delete('p1::ws-1')
     expect(scope.resolveRetrievableScope(request).sources).toHaveLength(0)
   })
 })
@@ -210,11 +252,12 @@ describe('范围修订号用于缓存失效', () => {
     const catalog = await loadCatalog()
     const kb = await makeKnowledgeBase('库', vaultA)
     catalog.bindProject({ projectId: 'p1', knowledgeBaseId: kb.id })
+    boundPairs.add('p1::ws-1')
 
     const scope = await loadScope()
     const request = {
       sessionId: 's1',
-      sessionMeta: { knowledgeScopeMode: 'project' as const, projectId: 'p1' },
+      sessionMeta: { knowledgeScopeMode: 'project' as const, projectId: 'p1', workspaceId: 'ws-1' },
     }
     const before = scope.resolveKnowledgeScope(request).scopeRevision
     catalog.unbindProject({ projectId: 'p1', knowledgeBaseId: kb.id })

@@ -19,8 +19,18 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { getConfigDir } from './config-paths'
 import { computeRetrievalScore, planConsolidation, type ConsolidationOptions } from './memory-governance'
+import {
+  filterItemsForScope,
+  resolveWorkspaceProjectBinding,
+  type MemoryScope,
+  type MemoryScopeContext,
+  type MemorySource,
+} from './project-memory-scope'
+
+export type { MemoryScope, MemoryScopeKind, MemorySource } from './project-memory-scope'
 
 // ===== 类型定义 =====
 
@@ -49,6 +59,13 @@ export interface MemoryItem {
   mergedInto?: string | null
   /** 本条目合并过的来源条目 id 列表 */
   mergedFrom?: string[]
+  /**
+   * 归属范围（可选）：personal / workspace / project。
+   * 旧版无 scope 字段的 JSON 条目原样兼容，语义上视为 personal。
+   */
+  scope?: MemoryScope
+  /** 来源元数据（可选）：记录观察/写入时的工作空间、会话、run 与出处定位 */
+  source?: MemorySource
 }
 
 export interface MemoryItemsBlock {
@@ -233,6 +250,82 @@ export function searchMemoryItems(query: string, opts: { includeArchived?: boole
         item.tags.some((tag) => tag.toLowerCase().includes(lowerQuery))
     )
     .sort(byRetrievalScoreDesc(now))
+}
+
+// ===== 范围检索（项目记忆归属过滤） =====
+
+/** 动态 require 会话/绑定服务用（Bun ESM 下裸 require 不存在；cjs 打包下 __filename 可用） */
+const scopedRequire = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
+
+export interface ScopedMemorySearchInput {
+  /** 内容匹配关键词（大小写不敏感，匹配 title/content/tags） */
+  query: string
+  /** 发起检索的 Agent 会话 id（用于解析 workspaceId / projectId / 绑定） */
+  sessionId: string
+  /** 返回条数上限（默认 20） */
+  limit?: number
+}
+
+interface ScopedSessionResolution {
+  context: MemoryScopeContext
+}
+
+/**
+ * 从 Agent 会话元数据解析范围上下文。
+ * 动态 require agent-session-manager，避免模块环依赖；会话不存在时降级为纯个人上下文。
+ */
+function resolveScopedSession(sessionId: string): ScopedSessionResolution {
+  let workspaceId: string | undefined
+  let projectId: string | undefined
+  try {
+    const sessionManager = scopedRequire('./agent-session-manager') as {
+      getAgentSessionMeta?: (id: string) => { workspaceId?: string; projectId?: string } | undefined
+    }
+    const meta = sessionManager.getAgentSessionMeta?.(sessionId)
+    workspaceId = meta?.workspaceId
+    projectId = meta?.projectId
+  } catch {
+    // 会话索引不可用：按无工作空间/项目的个人上下文处理
+  }
+  const context: MemoryScopeContext = {
+    workspaceId,
+    projectId,
+    workspaceProjectBound: resolveWorkspaceProjectBinding(projectId ?? '', workspaceId ?? ''),
+  }
+  return { context }
+}
+
+/**
+ * 按会话范围过滤后再做内容匹配的范围检索。
+ * 先依据 session 的 workspaceId / projectId + 当前正式绑定过滤条目，再匹配 query 内容；
+ * 旧无 scope 记忆默认不出现在已绑定项目的检索结果中。
+ */
+export function searchScopedMemoryItems(input: ScopedMemorySearchInput): MemoryItem[] {
+  const limit = input.limit ?? 20
+  const { context } = resolveScopedSession(input.sessionId)
+  const lowerQuery = input.query.toLowerCase()
+  const now = Date.now()
+  return filterItemsForScope(loadItems(), context)
+    .filter((item) => !item.archivedAt)
+    .filter(
+      (item) =>
+        item.title.toLowerCase().includes(lowerQuery) ||
+        item.content.toLowerCase().includes(lowerQuery) ||
+        item.tags.some((tag) => tag.toLowerCase().includes(lowerQuery))
+    )
+    .sort(byRetrievalScoreDesc(now))
+    .slice(0, limit)
+}
+
+/**
+ * 按 id 读取单条记忆，并二次校验会话范围。
+ * 条目存在但不在该会话可见范围内时返回 undefined（与不存在的条目一致对待，不泄露归属信息）。
+ */
+export function getScopedMemoryItem(id: string, sessionId: string): MemoryItem | undefined {
+  const item = loadItems().find((entry) => entry.id === id)
+  if (!item) return undefined
+  const { context } = resolveScopedSession(sessionId)
+  return filterItemsForScope([item], context).length > 0 ? item : undefined
 }
 
 export function createMemoryItem(item: Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'>): MemoryItem {

@@ -22,6 +22,7 @@ import { BASH_TOOL_NAME } from '../agent-runtime/tool-impls/bash-tool'
 import { WEB_SEARCH_TOOL_NAME } from '../agent-runtime/tool-impls/web-search-tool'
 import { WEB_FETCH_TOOL_NAME } from '../agent-runtime/tool-impls/web-fetch-tool'
 import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME } from '../agent-runtime/tool-impls/memory-tool'
+import { SEARCH_PROJECT_MEMORY_TOOL_NAME, READ_PROJECT_MEMORY_TOOL_NAME } from '../agent-runtime/tool-impls/project-memory-tool'
 import { SEARCH_KNOWLEDGE_TOOL_NAME, READ_KNOWLEDGE_SOURCE_TOOL_NAME } from '../agent-runtime/tool-impls/knowledge-tool'
 import { EDIT_TOOL_NAME } from '../agent-runtime/tool-impls/edit-tool'
 import { GREP_TOOL_NAME } from '../agent-runtime/tool-impls/grep-tool'
@@ -313,6 +314,29 @@ export function createPiToolBridge(options: CreatePiToolBridgeOptions): ToolDefi
     }, getRequiredTool(coreTools, ADD_MEMORY_TOOL_NAME), options))
   }
   if (PI_RUNTIME_TOOL_CAPABILITIES.memory) {
+    const searchProjectMemory = coreTools.find((t) => t.name === SEARCH_PROJECT_MEMORY_TOOL_NAME)
+    const readProjectMemory = coreTools.find((t) => t.name === READ_PROJECT_MEMORY_TOOL_NAME)
+    if (searchProjectMemory) {
+      tools.push(createBridgeTool({
+        piName: SEARCH_PROJECT_MEMORY_TOOL_NAME,
+        runtimeName: SEARCH_PROJECT_MEMORY_TOOL_NAME,
+        parameters: Type.Object({
+          query: Type.String({ description: '记忆检索关键词，可匹配标题、内容与标签' }),
+          limit: Type.Optional(Type.Number({ description: '返回条数上限（默认 8，最大 20）' })),
+        }),
+        promptSnippet: `${SEARCH_PROJECT_MEMORY_TOOL_NAME}: 在当前会话授权范围内检索本地长期记忆，项目/工作空间范围由主进程实时解析。`,
+      }, searchProjectMemory, options))
+    }
+    if (readProjectMemory) {
+      tools.push(createBridgeTool({
+        piName: READ_PROJECT_MEMORY_TOOL_NAME,
+        runtimeName: READ_PROJECT_MEMORY_TOOL_NAME,
+        parameters: Type.Object({
+          memoryId: Type.String({ description: 'SearchProjectMemory 返回的记忆条目 id' }),
+        }),
+        promptSnippet: `${READ_PROJECT_MEMORY_TOOL_NAME}: 读取本地长期记忆完整内容，读取前再次校验当前会话范围。`,
+      }, readProjectMemory, options))
+    }
     // 知识库限域检索：与核心工具同名注册，范围由主进程按会话解析。
     // 核心工具列表未包含时（精简注册场景）跳过，不阻断其余工具。
     const searchKnowledge = coreTools.find((t) => t.name === SEARCH_KNOWLEDGE_TOOL_NAME)

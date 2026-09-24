@@ -47,6 +47,7 @@ function scopeRequest(ctx: ToolContext): KnowledgeScopeRequest | null {
       knowledgeScopeMode: meta.knowledgeScopeMode,
       explicitKnowledgeBaseIds: meta.explicitKnowledgeBaseIds,
       projectId: meta.projectId,
+      workspaceId: meta.workspaceId,
     },
   }
 }
