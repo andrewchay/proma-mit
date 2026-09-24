@@ -4,6 +4,7 @@
 
 export * from './SettingsPanel'
 export * from './SettingsDialog'
+export * from './SettingsModuleView'
 export * from './ChannelSettings'
 export * from './ChannelForm'
 export * from './GeneralSettings'

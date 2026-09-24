@@ -21,7 +21,6 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
 import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
-import { settingsOpenAtom } from '@/atoms/settings-tab'
 import { CAPABILITY_MANIFEST, activeCapabilitiesAtom, type CapabilityId } from '@/atoms/marketing-atoms'
 import {
   conversationsAtom,
@@ -172,7 +171,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const proactiveVisible = isViewVisible('proactive', enabledDevModules)
   const visibleCoreWorkModules = CORE_WORK_MODULES.filter((module) => isViewVisible(module.id, enabledDevModules))
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
   const currentConversationId = useAtomValue(currentConversationIdAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
@@ -1353,8 +1351,11 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               <button
                 type="button"
                 aria-label="打开设置"
-                onClick={() => setSettingsOpen(true)}
-                className="relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5"
+                onClick={() => setActiveView('settings')}
+                className={cn(
+                  'relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5',
+                  activeView === 'settings' && 'bg-foreground/[0.08] text-foreground'
+                )}
               >
                 <UserAvatar avatar={userProfile.avatar} size={28} />
                 {(hasUpdate || hasEnvironmentIssues) && (
@@ -1908,8 +1909,13 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       {/* 底部：用户资料 + 设置入口 */}
       <div className="px-3 pb-3">
         <button
-          onClick={() => setSettingsOpen(true)}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground"
+          onClick={() => setActiveView('settings')}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag',
+            activeView === 'settings'
+              ? 'bg-foreground/[0.07] text-foreground'
+              : 'text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground'
+          )}
         >
           <UserAvatar avatar={userProfile.avatar} size={28} />
           <span className="flex-1 text-sm truncate text-left">{userProfile.userName}</span>
