@@ -354,6 +354,10 @@ export function marketingPluginRuntime(): BuiltinPluginRuntime {
  * 注意：这只是**用户偏好**，不是权限。能否真正使用还需订阅权益校验，
  * 见 readEntitledCapabilities。
  */
+/** 营销插件认账的业务包 id：research / new-media 等其它领域包也持久化在
+ * domainCapabilities 里，但不应因此触发营销工具/指令注入 */
+const MARKETING_PACKAGE_IDS: readonly string[] = ['influencer', 'paid-media', 'outbound-sourcing']
+
 function readPreferredCapabilities(): string[] {
   try {
     // 延迟 require 避免与 settings-service 形成初始化阶段循环依赖
@@ -361,7 +365,7 @@ function readPreferredCapabilities(): string[] {
     const settings = getSettings()
     const marketing = Array.isArray(settings.marketingCapabilities) ? settings.marketingCapabilities : []
     const domains = Array.isArray(settings.domainCapabilities) ? settings.domainCapabilities : []
-    return [...new Set([...marketing, ...domains])]
+    return [...new Set([...marketing, ...domains])].filter((id) => MARKETING_PACKAGE_IDS.includes(id))
   } catch {
     return [...DEFAULT_ENABLED_CAPABILITIES]
   }

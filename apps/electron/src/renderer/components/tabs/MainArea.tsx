@@ -11,7 +11,7 @@ import { useAtomValue, useSetAtom, useAtom } from 'jotai'
 import { tabsAtom, activeTabIdAtom, activeTabAtom } from '@/atoms/tab-atoms'
 import { Panel } from '@/components/app-shell/Panel'
 import { cn } from '@/lib/utils'
-import { SettingsDialog } from '@/components/settings'
+import { SettingsDialog, SettingsModuleView } from '@/components/settings'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { previewPanelOpenMapAtom, previewSplitRatioAtom, previewUsesRightWorkspaceAtom } from '@/atoms/preview-atoms'
 import { PreviewPanel } from '@/components/diff/PreviewPanel'
@@ -169,7 +169,11 @@ export function MainArea(): React.ReactElement {
 
   return (
     <>
-      {effectiveView === 'workflow' ? (
+      {effectiveView === 'settings' ? (
+        <Panel variant="grow" className={workModulePanelClassName}>
+          <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><SettingsModuleView /></React.Suspense>
+        </Panel>
+      ) : effectiveView === 'workflow' ? (
         <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkflowView /></React.Suspense>
         </Panel>

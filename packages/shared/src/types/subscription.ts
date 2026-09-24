@@ -16,6 +16,8 @@ export type SubscriptionCapabilityId =
   | 'influencer' 
   | 'paid-media' 
   | 'outbound-sourcing'
+  | 'new-media'            // 新媒体运营（订阅式领域包）
+  | 'research'             // 研究工作台（订阅式领域包）
   | 'knowledge-basic'      // 知识库基础版（免费版可用）
   | 'analysis-basic'       // 分析引擎基础版（免费版可用）
   | 'academic'             // 学术助手插件（Pro 插件）
@@ -43,6 +45,8 @@ export const PAID_CAPABILITIES: SubscriptionCapabilityId[] = [
   'influencer',
   'paid-media',
   'outbound-sourcing',
+  'new-media',
+  'research',
   'academic',
   'knowledge-pro',
   'analysis-pro',
@@ -55,15 +59,19 @@ export const ALL_SUBSCRIPTION_CAPABILITIES: SubscriptionCapabilityId[] = [
 ]
 
 /**
- * 业务包能力（达人 / 投放 / 出海 sourcing）。
+ * 业务包能力（达人 / 投放 / 出海 sourcing / 新媒体运营 / 研究）。
  *
- * 这三个能力同时是 settings.json 里的本地偏好开关取值
+ * 这些能力同时是 settings.json 里的本地偏好开关取值
  * （marketingCapabilities / domainCapabilities），两侧必须保持一致。
+ * 注意：营销插件只认 influencer / paid-media / outbound-sourcing，
+ * research / new-media 归属各自领域插件，见 main/lib/plugins/ 下对应实现。
  */
 export const BUSINESS_PACKAGE_CAPABILITIES: SubscriptionCapabilityId[] = [
   'influencer',
   'paid-media',
   'outbound-sourcing',
+  'new-media',
+  'research',
 ]
 
 /** 服务端签名的权益快照（不含 access token / refresh token / 支付密钥） */

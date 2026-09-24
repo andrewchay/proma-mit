@@ -38,7 +38,7 @@ function getCachedThemeMode(): ThemeMode {
 function getCachedThemeStyle(): ThemeStyle {
   try {
     const cached = localStorage.getItem(THEME_STYLE_CACHE_KEY)
-    if (cached === 'default' || cached === 'ocean-light' || cached === 'ocean-dark' || cached === 'forest-light' || cached === 'forest-dark' || cached === 'slate-light' || cached === 'slate-dark' || cached === 'ember-light' || cached === 'ember-dark') {
+    if (cached === 'default' || cached === 'ocean-light' || cached === 'ocean-dark' || cached === 'forest-light' || cached === 'forest-dark' || cached === 'slate-light' || cached === 'slate-dark' || cached === 'ember-light' || cached === 'ember-dark' || cached === 'porcelain' || cached === 'landscape') {
       return cached
     }
   } catch {
@@ -86,8 +86,8 @@ export const resolvedThemeAtom = atom<'light' | 'dark'>((get) => {
   }
   if (mode === 'special') {
     const style = get(themeStyleAtom)
-    // 根据特殊风格决定是浅色还是深色基调
-    return style.endsWith('-light') ? 'light' : 'dark'
+    // 浅色基调的特殊风格清单（不以 -light 后缀命名的也在这里登记）
+    return LIGHT_THEME_STYLES.includes(style) ? 'light' : 'dark'
   }
   return mode
 })
@@ -102,7 +102,19 @@ const ALL_THEME_STYLE_CLASSES = [
   'theme-slate-dark',
   'theme-ember-light',
   'theme-ember-dark',
+  'theme-porcelain',
+  'theme-landscape',
 ] as const
+
+/** 浅色基调的特殊风格（porcelain / landscape 无 -light 后缀，单独登记） */
+const LIGHT_THEME_STYLES: ThemeStyle[] = [
+  'ocean-light',
+  'forest-light',
+  'slate-light',
+  'ember-light',
+  'porcelain',
+  'landscape',
+]
 
 /**
  * 应用主题到 DOM
@@ -122,7 +134,7 @@ export function applyThemeToDOM(themeMode: ThemeMode, themeStyle: ThemeStyle = '
 
   if (themeMode === 'special' && themeStyle !== 'default') {
     targetStyleClass = `theme-${themeStyle}`
-    targetIsDark = themeStyle.endsWith('-dark')
+    targetIsDark = !LIGHT_THEME_STYLES.includes(themeStyle)
   } else if (themeMode === 'system') {
     targetIsDark = systemIsDark
   } else {

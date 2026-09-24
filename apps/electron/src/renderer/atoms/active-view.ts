@@ -9,11 +9,12 @@
  * - projects / calendar / automation: 工作模块（由工作模块注册表驱动，见 atoms/work-module-registry.ts）
  * - workspace-config: 工作空间配置（Agent 工作区能力：Skills / MCP / 内置工具等），
  *   与其它工作模块一致以右侧主区独立页面呈现，不再走设置弹窗
+ * - settings: 应用设置（头像入口），与 workspace-config 同模式在主内容区呈现完整交互页
  */
 
 import { atom } from 'jotai'
 
-export type ActiveView = 'conversations' | 'workflow' | 'proactive' | 'knowledge' | 'analysis' | 'projects' | 'calendar' | 'influencer' | 'paid-media' | 'outbound-sourcing' | 'new-media' | 'research' | 'capabilities' | 'workspace-config'
+export type ActiveView = 'conversations' | 'settings' | 'workflow' | 'proactive' | 'knowledge' | 'analysis' | 'projects' | 'calendar' | 'influencer' | 'paid-media' | 'outbound-sourcing' | 'new-media' | 'research' | 'capabilities' | 'workspace-config'
 
 /** 当前活跃视图（不持久化，每次启动默认显示对话） */
 export const activeViewAtom = atom<ActiveView>('conversations')

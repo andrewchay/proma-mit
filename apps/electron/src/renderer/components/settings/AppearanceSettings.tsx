@@ -55,6 +55,8 @@ import themeForestNight from '@/assets/theme-previews/theme-forest-night.webp'
 import themeMorandiNight from '@/assets/theme-previews/theme-morandi-night.webp'
 import themeEmberLight from '@/assets/theme-previews/theme-ember-light.webp'
 import themeEmberDark from '@/assets/theme-previews/theme-ember-dark.webp'
+import themePorcelain from '@/assets/theme-previews/theme-porcelain.webp'
+import themeLandscape from '@/assets/theme-previews/theme-landscape.webp'
 
 /** 主题选项 */
 const THEME_OPTIONS = [
@@ -140,6 +142,18 @@ const SPECIAL_STYLES: readonly SpecialStyle[] = [
     variant: 'dark',
     image: themeEmberDark,
   },
+  {
+    id: 'porcelain',
+    name: '青花瓷',
+    variant: 'light',
+    image: themePorcelain,
+  },
+  {
+    id: 'landscape',
+    name: '青绿山水',
+    variant: 'light',
+    image: themeLandscape,
+  },
 ]
 
 /** 各主题遮罩颜色（实心背景 + 浅色文字，与 CSS --primary 对应） */
@@ -152,6 +166,8 @@ const STYLE_MASK_COLORS: Record<SpecialStyleId, { bg: string; text: string }> = 
   'slate-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(18, 20%, 88%)' },
   'ember-light':  { bg: 'hsl(22, 60%, 52%)',  text: 'hsl(22, 60%, 88%)' },
   'ember-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(22, 60%, 65%)' },
+  'porcelain':    { bg: 'hsl(222, 58%, 44%)', text: 'hsl(218, 40%, 86%)' },
+  'landscape':    { bg: 'hsl(165, 48%, 34%)', text: 'hsl(90, 18%, 82%)' },
 }
 
 /** 图标变体定义 */

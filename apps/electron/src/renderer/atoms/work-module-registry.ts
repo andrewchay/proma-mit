@@ -35,7 +35,8 @@ export interface WorkModuleMeta {
   description?: string
 }
 
-/** 工作模块注册表（当前 3 个核心模块；日程管家已并入项目管理子视图；主动协作统一收敛到 Proactive Center） */
+/** 工作模块注册表（核心模块：知识库 / 分析引擎 / 项目管理；
+ * 新媒体运营与研究已转为订阅式领域包，启用后在侧栏「领域能力包」分组出现） */
 export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
   {
     id: 'knowledge',
@@ -62,15 +63,17 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     id: 'new-media',
     label: '新媒体运营',
     icon: Radio,
-    core: true,
-    description: '本地草稿、排程与受控外发审批（不连接真实平台）',
+    core: false,
+    group: 'business-domains',
+    description: '本地草稿、排程与受控外发审批（不连接真实平台，订阅式领域包）',
   },
   {
     id: 'research',
     label: '研究',
     icon: FlaskConical,
-    core: true,
-    description: '从文献到稿件的可追溯研究工作台',
+    core: false,
+    group: 'business-domains',
+    description: '从文献到稿件的可追溯研究工作台（订阅式领域包）',
   },
   {
     id: 'influencer',

@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -21,7 +21,6 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
 import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
-import { settingsOpenAtom } from '@/atoms/settings-tab'
 import { CAPABILITY_MANIFEST, activeCapabilitiesAtom, type CapabilityId } from '@/atoms/marketing-atoms'
 import {
   conversationsAtom,
@@ -172,7 +171,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const proactiveVisible = isViewVisible('proactive', enabledDevModules)
   const visibleCoreWorkModules = CORE_WORK_MODULES.filter((module) => isViewVisible(module.id, enabledDevModules))
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [conversations, setConversations] = useAtom(conversationsAtom)
   const currentConversationId = useAtomValue(currentConversationIdAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
@@ -1353,8 +1351,11 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               <button
                 type="button"
                 aria-label="打开设置"
-                onClick={() => setSettingsOpen(true)}
-                className="relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5"
+                onClick={() => setActiveView('settings')}
+                className={cn(
+                  'relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5',
+                  activeView === 'settings' && 'bg-foreground/[0.08] text-foreground'
+                )}
               >
                 <UserAvatar avatar={userProfile.avatar} size={28} />
                 {(hasUpdate || hasEnvironmentIssues) && (
@@ -1561,7 +1562,9 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       {/* Workflow 模式：侧边栏显示工作流列表（模板 / 我的 Workflow / 运行历史），底部工作模块常驻 */}
       {activeView === 'workflow' ? (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="px-3 pt-3 pb-2 flex-1 min-h-0">
+          {/* 外层必须是 flex 容器：WorkflowSidebarList 靠 flex-1 + overflow-hidden 约束高度，
+              否则工作模块拉高后列表内容会溢出并叠加到底部工作模块上 */}
+          <div className="flex flex-col px-3 pt-3 pb-2 flex-1 min-h-0 overflow-hidden">
             <WorkflowSidebarList />
           </div>
           {renderWorkModule()}
@@ -1908,8 +1911,13 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       {/* 底部：用户资料 + 设置入口 */}
       <div className="px-3 pb-3">
         <button
-          onClick={() => setSettingsOpen(true)}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground"
+          onClick={() => setActiveView('settings')}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag',
+            activeView === 'settings'
+              ? 'bg-foreground/[0.07] text-foreground'
+              : 'text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground'
+          )}
         >
           <UserAvatar avatar={userProfile.avatar} size={28} />
           <span className="flex-1 text-sm truncate text-left">{userProfile.userName}</span>
@@ -2519,7 +2527,7 @@ const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem(
 /**
  * SubscribedCapabilities — 已订阅领域能力包导航区
  *
- * 在 core 工作模块下方展示已订阅的领域包（influencer/paid-media），
+ * 在 core 工作模块下方展示已订阅的领域包（influencer / paid-media / outbound-sourcing / new-media / research），
  * 点击切换视图；末尾提供「能力中心」入口打开订阅面板。
  */
 function SubscribedCapabilities(): React.ReactElement {
@@ -2536,6 +2544,8 @@ function SubscribedCapabilities(): React.ReactElement {
   const iconFor = (id: string): React.ReactNode => {
     if (id === 'paid-media') return <Megaphone size={16} className="text-foreground/40" />
     if (id === 'outbound-sourcing') return <Globe2 size={16} className="text-foreground/40" />
+    if (id === 'new-media') return <Radio size={16} className="text-foreground/40" />
+    if (id === 'research') return <FlaskConical size={16} className="text-foreground/40" />
     return <Users size={16} className="text-foreground/40" />
   }
 
