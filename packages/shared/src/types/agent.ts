@@ -1985,6 +1985,13 @@ export interface PermissionResponse {
 /**
  * Agent 相关 IPC 通道常量
  */
+/** 更新会话当前 Project 的输入 */
+export interface UpdateAgentSessionProjectInput {
+  sessionId: string
+  /** 目标 Project id；null/undefined 表示清除项目上下文 */
+  projectId?: string | null
+}
+
 export const AGENT_IPC_CHANNELS = {
   // 会话管理
   /** 获取会话列表 */
@@ -1995,6 +2002,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_SDK_MESSAGES: 'agent:get-sdk-messages',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
+  /** 更新会话当前 Project（同时切换项目知识范围；必须已通过工作空间绑定授权） */
+  UPDATE_SESSION_PROJECT: 'agent:update-session-project',
   /** 更新会话 Agent Runtime */
   UPDATE_SESSION_AGENT_RUNTIME: 'agent:update-session-agent-runtime',
   /** 删除会话 */

@@ -1,8 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext } from '../types.ts'
+import { buildElectronMock } from '../../testing/electron-mock'
+
+// agent-session-manager 传递依赖 agent-workspace-manager / electron；统一使用完整 mock，避免单测进程加载真实 electron。
+mock.module('electron', () => buildElectronMock())
 
 /**
  * 知识工具测试（K1-04）。

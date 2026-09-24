@@ -18,6 +18,67 @@ interface MemoryItemView {
   tags: string[]
   confidence: number
   updatedAt: number
+  /** 记忆归属范围（多对多记忆契约新增；旧条目缺省 = 未分类，不推断归属）。
+   *  契约形态为 { kind, workspaceId?, projectIds? }；对字符串形态也容错。 */
+  scope?: MemoryScopeView | string
+  /** 结构化来源元数据（新增字段；与旧 sourceSessionId/sourceRunId 并存兼容） */
+  source?: {
+    workspaceId?: string
+    sessionId?: string
+    runId?: string
+    locator?: string
+  }
+  /** 平铺来源字段（部分后端版本可能直接放在顶层；旧条目缺省） */
+  workspaceId?: string
+  projectIds?: string[]
+  sessionId?: string
+  runId?: string
+  sourceSessionId?: string | null
+  sourceRunId?: string | null
+}
+
+interface MemoryScopeView {
+  kind?: string
+  workspaceId?: string
+  projectIds?: string[]
+}
+
+/** 已知的 scope.kind 取值到中文标签映射；未知值原样展示，不做猜测 */
+const SCOPE_LABELS: Record<string, string> = {
+  personal: '个人',
+  workspace: '工作空间',
+  project: '项目',
+}
+
+/** 取 scope 对象（契约形态）；字符串形态返回 null */
+function asScopeObject(item: MemoryItemView): MemoryScopeView | null {
+  return typeof item.scope === 'object' && item.scope !== null ? item.scope : null
+}
+
+/** 旧条目无 scope 时统一显示「未分类」，且不给任何项目归属暗示 */
+function scopeBadgeLabel(item: MemoryItemView): string {
+  if (typeof item.scope === 'string' && item.scope.trim()) {
+    return SCOPE_LABELS[item.scope] ?? item.scope
+  }
+  const kind = asScopeObject(item)?.kind?.trim()
+  if (kind) return SCOPE_LABELS[kind] ?? kind
+  return '未分类'
+}
+
+/** 汇总条目来源：工作区 / 会话 / 运行 / 项目数；只展示真实存在的字段 */
+function sourceSummary(item: MemoryItemView): string {
+  const parts: string[] = []
+  const scopeObj = asScopeObject(item)
+  const workspaceId = (item.source?.workspaceId ?? item.workspaceId ?? scopeObj?.workspaceId ?? '').trim()
+  if (workspaceId) parts.push(`工作区 ${workspaceId.slice(0, 8)}…`)
+  const sessionId = (item.source?.sessionId ?? item.sessionId ?? item.sourceSessionId ?? '').trim()
+  if (sessionId) parts.push(`会话 ${sessionId.slice(0, 8)}…`)
+  const runId = (item.source?.runId ?? item.runId ?? item.sourceRunId ?? '').trim()
+  if (runId) parts.push(`运行 ${runId.slice(0, 8)}…`)
+  const projectIds = scopeObj?.projectIds ?? item.projectIds
+  const projectCount = Array.isArray(projectIds) ? projectIds.length : 0
+  if (projectCount > 0) parts.push(`项目 ${projectCount} 个`)
+  return parts.join(' · ')
 }
 
 interface MemoryStatsView {
@@ -87,7 +148,7 @@ export function MemoryTab(): React.ReactElement {
       <div className="flex gap-2"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、内容或标签" /></div><Button variant="outline" size="icon" onClick={() => void refresh()} disabled={loading} aria-label="刷新记忆"><RefreshCw className={loading ? 'size-4 animate-spin' : 'size-4'} /></Button></div>
       {loadError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">记忆数据加载失败：{loadError}。请刷新重试；失败不会被视为「暂无记忆」。</div>}
       {latestMemoryRuns.length > 0 && <section className="rounded-xl border border-border/50 bg-background shadow-sm p-4"><div className="flex items-center justify-between"><div><h3 className="text-sm font-medium">最近记忆 Routine 结论</h3><p className="text-xs text-muted-foreground mt-1">运行结论与候选审批分开保存；审批通过后才会进入下方记忆条目。</p></div><Button size="sm" variant="outline" onClick={() => setActiveTab('runs')}>查看运行记录</Button></div><div className="mt-3 space-y-2">{latestMemoryRuns.map((run) => <article key={run.id} className="rounded-lg bg-foreground/[0.03] p-3 text-xs"><div className="flex justify-between gap-2"><span className="font-medium">{run.sourceTitle ?? '记忆整理'}</span><span className="text-muted-foreground">{run.memoryStage} · 候选 {run.memoryCandidates ?? 0} 条</span></div><p className="mt-1 whitespace-pre-wrap text-muted-foreground line-clamp-4">{run.outputSummary ?? run.error ?? '无摘要'}</p></article>)}</div></section>}<section className="rounded-xl border border-border/50 bg-background shadow-sm p-4"><label className="grid gap-1.5 text-sm text-muted-foreground">SOP 生成 Skill 的目标工作区<Select value={workspaceId} onValueChange={setWorkspaceId}><SelectTrigger><SelectValue placeholder="选择工作区" /></SelectTrigger><SelectContent>{workspaces.map((workspace) => <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>)}</SelectContent></Select></label><p className="mt-2 text-xs text-muted-foreground">提交只会生成审批；通过后才会在所选工作区的 Skills 目录原子创建。</p></section>
-      <section className="rounded-xl border border-border/50 bg-background shadow-sm"><div className="px-4 py-3 border-b border-border/50 flex items-center justify-between"><h3 className="text-sm font-medium">记忆条目</h3>{stats && <span className="text-xs text-muted-foreground">{Object.entries(stats.byKind).filter(([, count]) => count > 0).map(([kind, count]) => `${kind} ${count}`).join(' · ')}</span>}</div><div className="p-4 space-y-2">{visibleItems.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">暂无匹配的记忆条目。</p> : visibleItems.map((item) => <article key={item.id} className="p-3 rounded-lg bg-foreground/[0.02] border border-border/40"><div className="flex items-center gap-2"><p className="text-sm font-medium">{item.title}</p><span className="text-[11px] text-muted-foreground">{item.kind} · {Math.round(item.confidence * 100)}%</span></div><p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{item.content}</p>{item.tags.length > 0 && <p className="text-[11px] text-primary mt-2">{item.tags.map((tag) => `#${tag}`).join(' ')}</p>}{item.kind === 'sop' && <Button className="mt-3" size="sm" variant="outline" disabled={!workspaceId} onClick={() => void submitSOP(item)}><FilePlus2 className="size-3.5 mr-1" />提交为 Skill 审批</Button>}</article>)}</div></section>
+      <section className="rounded-xl border border-border/50 bg-background shadow-sm"><div className="px-4 py-3 border-b border-border/50 flex items-center justify-between"><h3 className="text-sm font-medium">记忆条目</h3>{stats && <span className="text-xs text-muted-foreground">{Object.entries(stats.byKind).filter(([, count]) => count > 0).map(([kind, count]) => `${kind} ${count}`).join(' · ')}</span>}</div><div className="p-4 space-y-2">{visibleItems.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">暂无匹配的记忆条目。</p> : visibleItems.map((item) => <article key={item.id} className="p-3 rounded-lg bg-foreground/[0.02] border border-border/40"><div className="flex items-center gap-2 flex-wrap"><p className="text-sm font-medium">{item.title}</p><span className="text-[11px] text-muted-foreground">{item.kind} · {Math.round(item.confidence * 100)}%</span><span className={`rounded px-1.5 py-0.5 text-[10px] ${scopeBadgeLabel(item) !== '未分类' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{scopeBadgeLabel(item)}</span></div><p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{item.content}</p>{(() => { const source = sourceSummary(item); return source ? <p className="text-[11px] text-muted-foreground mt-1">来源：{source}</p> : null })()}{item.tags.length > 0 && <p className="text-[11px] text-primary mt-2">{item.tags.map((tag) => `#${tag}`).join(' ')}</p>}{item.kind === 'sop' && <Button className="mt-3" size="sm" variant="outline" disabled={!workspaceId} onClick={() => void submitSOP(item)}><FilePlus2 className="size-3.5 mr-1" />提交为 Skill 审批</Button>}</article>)}</div></section>
     </div>
   )
 }

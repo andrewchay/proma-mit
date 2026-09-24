@@ -98,6 +98,7 @@ import type {
   TypeSafeJudgmentSettings,
   TypeSafeConnectionTestResult,
   MoveSessionToWorkspaceInput,
+  UpdateAgentSessionProjectInput,
   ForkSessionInput,
   RewindSessionInput,
   RewindSessionResult,
@@ -127,6 +128,14 @@ import type {
   ResolvedFileUrl,
 } from '@gravitas/shared'
 import { CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
+import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
+import {
+  bindWorkspaceToProject,
+  listProjectWorkspaceBindings,
+  listWorkspaceProjectBindings,
+  unbindWorkspaceFromProject,
+} from './lib/project-workspace-bindings'
+import { updateAgentSessionProjectContext } from './lib/agent-session-project-service'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
 import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents } from './lib/git-diff-service'
@@ -1734,6 +1743,16 @@ export async function registerIpcHandlers(): Promise<void> {
     AGENT_IPC_CHANNELS.UPDATE_TITLE,
     async (_, id: string, title: string): Promise<AgentSessionMeta> => {
       return updateAgentSessionMeta(id, { title })
+    }
+  )
+
+  // 更新 Agent 会话当前 Project：项目记忆/知识范围必须与工作空间绑定一致，不接受越权 projectId
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.UPDATE_SESSION_PROJECT,
+    async (_, input: UpdateAgentSessionProjectInput): Promise<AgentSessionMeta> => {
+      return updateAgentSessionProjectContext(input.sessionId, input.projectId, {
+        isSessionActive: isAgentSessionActive,
+      })
     }
   )
 
@@ -4710,6 +4729,20 @@ export async function registerIpcHandlers(): Promise<void> {
   // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
   const { registerWorkModuleIpcHandlers } = require('./lib/work-module-ipc-handlers') as { registerWorkModuleIpcHandlers: () => void }
   registerWorkModuleIpcHandlers()
+
+  // ===== Project ↔ AgentWorkspace 多对多绑定（仅授权，不自动共享资料） =====
+  ipcMain.handle(PROJECT_IPC_CHANNELS.BIND_WORKSPACE, (_, projectId: string, workspaceId: string) =>
+    bindWorkspaceToProject(projectId, workspaceId),
+  )
+  ipcMain.handle(PROJECT_IPC_CHANNELS.UNBIND_WORKSPACE, (_, projectId: string, workspaceId: string) =>
+    unbindWorkspaceFromProject(projectId, workspaceId),
+  )
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORKSPACES, (_, projectId: string) =>
+    listProjectWorkspaceBindings(projectId),
+  )
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, (_, workspaceId: string) =>
+    listWorkspaceProjectBindings(workspaceId),
+  )
 
   // ===== 智能提醒系统 =====
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }

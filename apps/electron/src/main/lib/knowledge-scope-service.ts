@@ -17,6 +17,7 @@
  */
 
 import { readCatalog, listRetrievableSources, listProjectKnowledgeBases } from './knowledge-catalog-service'
+import { resolveWorkspaceProjectBinding } from './project-memory-scope'
 import type { AgentSessionMeta, KnowledgeBase, KnowledgeSource } from '@gravitas/shared'
 
 export type KnowledgeScopeMode = 'project' | 'explicit' | 'none'
@@ -27,7 +28,7 @@ export interface KnowledgeScopeRequest {
   /** 会话元数据的知识相关字段；旧会话可能只有部分字段 */
   sessionMeta: Pick<
     AgentSessionMeta,
-    'knowledgeScopeMode' | 'explicitKnowledgeBaseIds' | 'projectId'
+    'knowledgeScopeMode' | 'explicitKnowledgeBaseIds' | 'projectId' | 'workspaceId'
   >
 }
 
@@ -72,11 +73,24 @@ export function resolveKnowledgeScope(request: KnowledgeScopeRequest): ResolvedK
     }
   }
 
+  if (mode === 'project') {
+    // Project 知识范围需要正式的工作空间绑定作为授权。
+    // 旧会话没有 workspaceId 时保留既有项目知识行为；一旦有工作空间，就必须实时命中绑定。
+    const projectId = request.sessionMeta.projectId
+    const workspaceId = request.sessionMeta.workspaceId
+    if (!projectId || (workspaceId && !resolveWorkspaceProjectBinding(projectId, workspaceId))) {
+      return {
+        sessionId: request.sessionId,
+        mode: 'none',
+        knowledgeBaseIds: [],
+        scopeRevision: deriveScopeRevision(catalog.revision.revision, 'none', []),
+      }
+    }
+  }
+
   const declaredIds =
     mode === 'project'
-      ? request.sessionMeta.projectId
-        ? listProjectKnowledgeBases(request.sessionMeta.projectId).map((kb) => kb.id)
-        : []
+      ? listProjectKnowledgeBases(request.sessionMeta.projectId!).map((kb) => kb.id)
       : (request.sessionMeta.explicitKnowledgeBaseIds ?? [])
 
   // 存在的、启用的知识库才进入范围；伪造或已删除的 ID 被静默过滤

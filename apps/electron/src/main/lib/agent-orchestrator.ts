@@ -2601,6 +2601,7 @@ export class AgentOrchestrator {
       // Plan 模式下允许的只读工具（不包含 Write/Edit/Bash 等写操作）
       const PLAN_MODE_ALLOWED_TOOLS = new Set([
         'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'RecallMemory',
+        'SearchProjectMemory', 'ReadProjectMemory',
         'SearchKnowledge', 'ReadKnowledgeSource',
         'Agent', 'TodoRead', 'TodoWrite', 'TaskOutput',
         'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet',

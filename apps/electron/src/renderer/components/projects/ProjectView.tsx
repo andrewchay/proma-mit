@@ -20,6 +20,7 @@ import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@g
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
+import { ProjectWorkspacesPanel } from './ProjectWorkspacesPanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
 import { GANTT_GROUP_BAR_COLORS, ganttBarColor, sortTasksByUrgency, ganttDependencyPath, GANTT_ROW_STEP } from './project-flow-metrics'
 import { DueDateBadge } from './DueDateBadge'
@@ -997,7 +998,7 @@ function ProjectDetail({
   onBack: () => void
   onRefresh: () => void
 }): React.ReactElement {
-  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'aicost'>('tasks')
+  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('tasks')
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
@@ -1398,6 +1399,7 @@ function ProjectDetail({
           { key: 'tasks', label: '任务' },
           { key: 'chain', label: '决策与协作链路' },
           { key: 'knowledge', label: '知识' },
+          { key: 'workspaces', label: '工作空间' },
           { key: 'notes', label: '会议纪要' },
           { key: 'board', label: '看板' },
           { key: 'gantt', label: '甘特' },
@@ -1470,6 +1472,7 @@ function ProjectDetail({
       <div className="flex-1 overflow-auto p-6">
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
         {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
+        {detailTab === 'workspaces' && <ProjectWorkspacesPanel key={project.id} projectId={project.id} />}
         {detailTab === 'tasks' && (
           <TaskList
             projectId={project.id}
