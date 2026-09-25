@@ -13,7 +13,7 @@
 | 项目 | 当前状态 |
 |---|---|
 | 方案与测试设计 | 已编写，等待用户确认实施范围 |
-| 新功能实施 | 7 / 11 项完成（W00–W06），commits `1812e0c0` → `9d9efac1`；M3–M4 未开始 |
+| 新功能实施 | 9 / 11 项完成（W00–W08），commits `1812e0c0` → `42ceb95f`；M4 未开始 |
 | 既有研发链路基线 | 本轮复跑 27 PASS、0 FAIL，3 个独立测试进程，日志已保留 |
 | 新增 BDD | 新增 26 项测试全部通过（覆盖 T02 部分、T03、T04 范围层、T05 既有、T06–T09、T13、T17、T18、T19、T30 前置）；其余用例待 M2/M3 |
 | 真实用户路径 | R01–R04 均未执行 |
@@ -33,8 +33,8 @@
 | W04 | M2 | 文件菜单＋委派对话框；预填定位、选择已有任务、明确派发副作用 | W01,W03 | 实施 Agent／用户体验复核 | 已完成（待真机操作验证） | FileBrowser 菜单项＋SidePanel＋DelegateFileTaskDialog；commit 9d9efac1 |
 | W05 | M2 | 单一 Task Review，复用 DiffView，显示版本／验证／风险／逐项 DoD | W02,W03,W04 | 实施 Agent／人工 Reviewer | 已完成（待真机操作验证） | TaskReviewPanel 接入看板任务详情；验证状态列在 M3 补充 |
 | W06 | M2 | 退回原因＋一次幂等返工，原 session/worktree，新交付版本 | W03,W05 | 实施 Agent／工程 Reviewer | 已完成（待真机操作验证） | requestChanges 幂等派发＋T12 测试 PASS；服务层 7 项测试 |
-| W07 | M3 | 真实命令退出码与内容 hash 绑定；reported 不冒充 verified | W02 | 实施 Agent／工程 Reviewer | 待开始 | — |
-| W08 | M3 | 明确确认后应用、漂移拒绝、可恢复记录、完成不绕过 DoD | W05,W06,W07 | 实施 Agent／安全与数据复核 | 待开始 | — |
+| W07 | M3 | 真实命令退出码与内容 hash 绑定；reported 不冒充 verified | W02 | 实施 Agent／工程 Reviewer | 已完成（待真机操作验证） | development-validation-service＋7 项测试（白名单/passed/failed/stale/timeout/列表）；commit 42ceb95f |
+| W08 | M3 | 明确确认后应用、漂移拒绝、可恢复记录、完成不绕过 DoD | W05,W06,W07 | 实施 Agent／安全与数据复核 | 已完成（待真机操作验证） | development-apply-service＋7 项测试（字节级应用/漂移拒绝/过期确认单/幂等/恢复分类/DoD 闸门）；与方案偏差：前置 HEAD==基线＋目录干净使补丁上下文不可能漂移，采用直接字节写入替代 git apply（更少 CRLF/autocrlf 失败模式），已在代码注释说明 |
 | W09 | M4 | R01–R04 真机验收，记录每次人工介入及费用 | W08 | 用户＋实施 Agent | 待开始 | — |
 | W10 | M4 | 完整门禁、构建／打包烟测、文档和版本更新 | W09 | 实施 Agent／发布复核 | 待开始 | — |
 
@@ -103,13 +103,16 @@
 | G0 | 未通过 | W00 fixture、安全清理与配置目录前后检查 |
 | G1 | 测试通过，待代码审查 | M1 实现＋26 项测试＋全量门禁；未做 UI 与真实模型端到端 |
 | G2 | 服务层测试通过；真机操作待验证 | R01 前置：真实模型端到端未跑 |
-| G3 | 未通过 | 真实验证证据、确认应用与恢复测试 |
+| G3 | 测试通过，待真机操作验证 | 确定性闭环 30 项中 T04 文件系统层/T20–T24/T27–T30 已覆盖；真机检查待 R01–R04 |
 | G4 | 未通过 | R01–R04、完整 PR 门禁、目标平台构建／打包证据 |
 
 ## 6. 运行历史（追加式）
 
 | Run ID | 日期／时区 | 用例 | 结果 | 命令／证据 | 备注 |
 |---|---|---|---|---|---|
+| M3-20260925-01 | 2026-09-25 GMT+8 | W07 验证 | PASS（7/7） | `bun test apps/electron/src/main/lib/development-validation-service.test.ts` | 白名单/stale/timeout |
+| M3-20260925-02 | 2026-09-25 GMT+8 | W08 应用 | PASS（7/7） | `bun test apps/electron/src/main/lib/development-apply-service.test.ts` | 恢复分类/DoD 闸门 |
+| M3-20260925-03 | 2026-09-25 GMT+8 | 全量门禁 | PASS | typecheck／lint／`bun run test`（478 文件 0 失败）／docs:check | 真机操作待 M4 |
 | M2-20260925-01 | 2026-09-25 GMT+8 | W06 Review 服务 | PASS（7/7） | `bun test apps/electron/src/main/lib/development-review-service.test.ts` | 汇总/Diff 冻结/关联保 id/T12 幂等返工/代验收拒绝 |
 | M2-20260925-02 | 2026-09-25 GMT+8 | M1+M2 回归 | PASS（40 项） | 5 个 development-* 测试文件 | 全部通过 |
 | M2-20260925-03 | 2026-09-25 GMT+8 | 全量门禁 | PASS | typecheck／lint／`bun run test`（476 文件 0 失败）／docs:check | UI 真机操作未验证 |
