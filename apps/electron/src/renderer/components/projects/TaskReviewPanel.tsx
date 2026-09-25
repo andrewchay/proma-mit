@@ -109,7 +109,8 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
     }
   }
 
-  const act = async (action: () => Promise<unknown>): Promise<void> => {
+  const act = async (action: () => Promise<unknown>, confirmMessage?: string): Promise<void> => {
+    if (confirmMessage && !window.confirm(confirmMessage)) return
     setBusy(true); setError(null)
     try {
       await action()
@@ -222,12 +223,12 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
           <button
             className="rounded bg-green-600 px-3 py-1 text-xs text-white disabled:opacity-50"
             disabled={busy || !canAccept || !evidence.trim()}
-            onClick={() => void act(async () => { const api = agentApi(); await api.acceptDelivery(taskId, latestDelivery!.id, { evidence: evidence.trim() }) })}
+            onClick={() => void act(async () => { const api = agentApi(); await api.acceptDelivery(taskId, latestDelivery!.id, { evidence: evidence.trim() }) }, `确认验收通过？验收不可撤销（纠错通过新版本进行）。\n\n验收依据：${evidence.trim().slice(0, 120)}`)}
           >验收通过</button>
           <button
             className="rounded bg-destructive px-3 py-1 text-xs text-white disabled:opacity-50"
             disabled={busy || !latestDelivery || latestDelivery.status !== 'submitted' || !isLocalReviewer || !evidence.trim()}
-            onClick={() => void act(async () => { const api = agentApi(); await api.rejectDelivery(taskId, latestDelivery!.id, evidence.trim()) })}
+            onClick={() => void act(async () => { const api = agentApi(); await api.rejectDelivery(taskId, latestDelivery!.id, evidence.trim()) }, '确认退回该交付版本？历史记录保留。')}
           >退回（以验收依据为退回原因）</button>
           <button
             className="rounded border px-3 py-1 text-xs disabled:opacity-50"
