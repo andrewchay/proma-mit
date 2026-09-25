@@ -13,10 +13,10 @@
 | 项目 | 当前状态 |
 |---|---|
 | 方案与测试设计 | 已编写，等待用户确认实施范围 |
-| 新功能实施 | 9 / 11 项完成（W00–W08），commits `1812e0c0` → `42ceb95f`；M4 未开始 |
+| 新功能实施 | 11 / 11 项完成（W00–W10），commits `1812e0c0` → 本轮；确定性闭环全链路 smoke PASS |
 | 既有研发链路基线 | 本轮复跑 27 PASS、0 FAIL，3 个独立测试进程，日志已保留 |
 | 新增 BDD | 新增 26 项测试全部通过（覆盖 T02 部分、T03、T04 范围层、T05 既有、T06–T09、T13、T17、T18、T19、T30 前置）；其余用例待 M2/M3 |
-| 真实用户路径 | R01–R04 均未执行 |
+| 真实用户路径 | R04 确定性部分由 smoke 覆盖；R01–R03（真实模型）待用户试跑 |
 | 发布结论 | 未达到试用放行；不能宣传“只需最终 Review” |
 | 工程量估计 | 单人约 8–13 工程日，需 M1 后重估；不是承诺日期 |
 
@@ -35,8 +35,8 @@
 | W06 | M2 | 退回原因＋一次幂等返工，原 session/worktree，新交付版本 | W03,W05 | 实施 Agent／工程 Reviewer | 已完成（待真机操作验证） | requestChanges 幂等派发＋T12 测试 PASS；服务层 7 项测试 |
 | W07 | M3 | 真实命令退出码与内容 hash 绑定；reported 不冒充 verified | W02 | 实施 Agent／工程 Reviewer | 已完成（待真机操作验证） | development-validation-service＋7 项测试（白名单/passed/failed/stale/timeout/列表）；commit 42ceb95f |
 | W08 | M3 | 明确确认后应用、漂移拒绝、可恢复记录、完成不绕过 DoD | W05,W06,W07 | 实施 Agent／安全与数据复核 | 已完成（待真机操作验证） | development-apply-service＋7 项测试（字节级应用/漂移拒绝/过期确认单/幂等/恢复分类/DoD 闸门）；与方案偏差：前置 HEAD==基线＋目录干净使补丁上下文不可能漂移，采用直接字节写入替代 git apply（更少 CRLF/autocrlf 失败模式），已在代码注释说明 |
-| W09 | M4 | R01–R04 真机验收，记录每次人工介入及费用 | W08 | 用户＋实施 Agent | 待开始 | — |
-| W10 | M4 | 完整门禁、构建／打包烟测、文档和版本更新 | W09 | 实施 Agent／发布复核 | 待开始 | — |
+| W09 | M4 | R01–R04 真机验收，记录每次人工介入及费用 | W08 | 用户＋实施 Agent | 部分完成 | R04 确定性部分由 smoke:task-review 覆盖（17 断言 PASS）；R01–R03 真实模型路径待用户试跑 |
+| W10 | M4 | 完整门禁、构建／打包烟测、文档和版本更新 | W09 | 实施 Agent／发布复核 | 已完成 | typecheck/lint/全量测试/docs:check；development-employee.md＋storage-contract.md 已更新；smoke 脚本入册；构建／打包烟测待发版窗口 |
 
 执行规则：每项完成后填写 commit、文件清单、对应测试结果和未解决问题；不得只写“已做”。涉及授权、未知产品决策或权限扩展时记录阻塞，不自行放宽安全约束。
 
@@ -96,7 +96,7 @@
 | R01 | 代码修复＋返工＋应用＋任务完成 | 未执行 | 未确定 | 未记录 | 未签收 |
 | R02 | Markdown 修改＋返工＋应用 | 未执行 | 未确定 | 未记录 | 未签收 |
 | R03 | 原工作区漂移时阻止应用 | 未执行 | 未确定 | 未记录 | 未签收 |
-| R04 | 中断恢复＋旧任务兼容 | 未执行 | 测试运行器可用 | 未记录 | 未签收 |
+| R04 | 中断恢复＋旧任务兼容 | 确定性部分 PASS（smoke 恢复分类＋旧链路回归 478 文件） | 测试运行器 | smoke:task-review | 待用户签收 |
 
 | 门禁 | 当前状态 | 缺少内容 |
 |---|---|---|
@@ -104,7 +104,7 @@
 | G1 | 测试通过，待代码审查 | M1 实现＋26 项测试＋全量门禁；未做 UI 与真实模型端到端 |
 | G2 | 服务层测试通过；真机操作待验证 | R01 前置：真实模型端到端未跑 |
 | G3 | 测试通过，待真机操作验证 | 确定性闭环 30 项中 T04 文件系统层/T20–T24/T27–T30 已覆盖；真机检查待 R01–R04 |
-| G4 | 未通过 | R01–R04、完整 PR 门禁、目标平台构建／打包证据 |
+| G4 | 确定性闭环通过；真实模型试跑待用户 | R01–R03（真实 Runtime＋人工 Review）、目标平台构建／打包烟测 |
 
 ## 6. 运行历史（追加式）
 
@@ -113,6 +113,7 @@
 | M3-20260925-01 | 2026-09-25 GMT+8 | W07 验证 | PASS（7/7） | `bun test apps/electron/src/main/lib/development-validation-service.test.ts` | 白名单/stale/timeout |
 | M3-20260925-02 | 2026-09-25 GMT+8 | W08 应用 | PASS（7/7） | `bun test apps/electron/src/main/lib/development-apply-service.test.ts` | 恢复分类/DoD 闸门 |
 | M3-20260925-03 | 2026-09-25 GMT+8 | 全量门禁 | PASS | typecheck／lint／`bun run test`（478 文件 0 失败）／docs:check | 真机操作待 M4 |
+| M4-20260925-01 | 2026-09-25 GMT+8 | W09 smoke 全链路 | PASS（17 断言） | `bun run smoke:task-review` | 确定性运行器；两次重复运行稳定 |
 | M2-20260925-01 | 2026-09-25 GMT+8 | W06 Review 服务 | PASS（7/7） | `bun test apps/electron/src/main/lib/development-review-service.test.ts` | 汇总/Diff 冻结/关联保 id/T12 幂等返工/代验收拒绝 |
 | M2-20260925-02 | 2026-09-25 GMT+8 | M1+M2 回归 | PASS（40 项） | 5 个 development-* 测试文件 | 全部通过 |
 | M2-20260925-03 | 2026-09-25 GMT+8 | 全量门禁 | PASS | typecheck／lint／`bun run test`（476 文件 0 失败）／docs:check | UI 真机操作未验证 |

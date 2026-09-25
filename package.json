@@ -10,18 +10,19 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "bun run --filter='@gravitas/electron' dev",
-    "electron:dev": "bun run --filter='@gravitas/electron' dev",
-    "electron:build": "bun run --filter='@gravitas/electron' build",
-    "electron:start": "bun run --filter='@gravitas/electron' start",
     "build": "bun run --filter='*' build",
-    "typecheck": "bun run --filter='*' typecheck",
+    "dev": "bun run --filter='@gravitas/electron' dev",
+    "docs:check": "bun scripts/generate-doc-facts.ts --check",
+    "docs:generate": "bun scripts/generate-doc-facts.ts",
+    "electron:build": "bun run --filter='@gravitas/electron' build",
+    "electron:dev": "bun run --filter='@gravitas/electron' dev",
+    "electron:start": "bun run --filter='@gravitas/electron' start",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "smoke:task-review": "bun scripts/task-review-smoke.ts",
     "test": "bun scripts/run-tests.ts",
     "test:web-bridge-e2e": "playwright test",
-    "docs:generate": "bun scripts/generate-doc-facts.ts",
-    "docs:check": "bun scripts/generate-doc-facts.ts --check",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write ."
+    "typecheck": "bun run --filter='*' typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",

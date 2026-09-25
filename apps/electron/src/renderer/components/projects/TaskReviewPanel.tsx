@@ -7,8 +7,13 @@
  * 本机操作人为 local-user；登记的其他人类验收人需对应身份操作，面板会明确提示。
  */
 import * as React from 'react'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import type { DevelopmentApplyStatusInfo, DevelopmentValidationResult, TaskReviewSummary } from '@gravitas/shared'
 import { DiffView } from '@/components/diff/DiffView'
+import { activeViewAtom } from '@/atoms/active-view'
+import { appModeAtom } from '@/atoms/app-mode'
+import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { activeTabIdAtom, openTab, tabsAtom } from '@/atoms/tab-atoms'
 
 type AgentApi = {
   getTaskReview: (taskId: string) => Promise<TaskReviewSummary>
@@ -54,6 +59,22 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
   const [validations, setValidations] = React.useState<DevelopmentValidationResult[]>([])
   const [applyStatus, setApplyStatus] = React.useState<DevelopmentApplyStatusInfo | null>(null)
   const [applyManifest, setApplyManifest] = React.useState<{ operationId: string; files: Array<{ path: string; changeType: string }> } | null>(null)
+  const store = useStore()
+
+  /** 打开某次执行的 Agent 会话（实时输出或历史上下文/审批） */
+  const openSession = React.useCallback(async (sessionId: string): Promise<void> => {
+    if (sessionId.startsWith('workflow:')) return
+    const sessions = await window.electronAPI.listAgentSessions()
+    const session = sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('该 Agent 会话暂不可用')
+    store.set(agentSessionsAtom, sessions)
+    const result = openTab(store.get(tabsAtom), { type: 'agent', sessionId, title: session.title })
+    store.set(tabsAtom, result.tabs)
+    store.set(activeTabIdAtom, result.activeTabId)
+    store.set(currentAgentSessionIdAtom, sessionId)
+    store.set(appModeAtom, 'agent')
+    store.set(activeViewAtom, 'conversations')
+  }, [store])
 
   const load = React.useCallback(async () => {
     setLoading(true); setError(null)
@@ -299,6 +320,14 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
           {summary.executions.map((execution) => (
             <div key={execution.id} className="mt-1 border-t pt-1 first:border-t-0">
               <span>{STATUS_LABELS[execution.status] ?? execution.status}</span> · {new Date(execution.startedAt).toLocaleString()}
+              {!execution.sessionId.startsWith('workflow:') && (
+                <button
+                  className="ml-2 text-primary hover:underline"
+                  onClick={() => void openSession(execution.sessionId).catch((err) => setError(String(err)))}
+                >
+                  {execution.status === 'running' ? '查看实时输出' : '查看执行会话'}
+                </button>
+              )}
               {execution.error ? <p className="text-destructive">{execution.error}</p> : null}
             </div>
           ))}
