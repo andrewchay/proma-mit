@@ -489,6 +489,18 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   ENABLE_CAPABILITY_CANARY: 'agent-employee:enable-capability-canary',
   /** 关闭或暂停 Canary 分流；不自动回滚版本。 */
   DISABLE_CAPABILITY_CANARY: 'agent-employee:disable-capability-canary',
+  /** 研发任务 Review：读取任务评审汇总（任务/范围/执行/交付版本/可选决策）。 */
+  GET_TASK_REVIEW: 'agent-employee:get-task-review',
+  /** 研发任务 Review：读取冻结快照中某文件的新旧内容。 */
+  GET_SNAPSHOT_DIFF: 'agent-employee:get-snapshot-diff',
+  /** 文件委派：新建或关联任务并写入研发范围（不派发执行）。 */
+  PREPARE_FILE_DELEGATION: 'agent-employee:prepare-file-delegation',
+  /** 研发返工：记录人工意见并幂等派发（沿用原会话/worktree）。 */
+  REQUEST_CHANGES: 'agent-employee:request-changes',
+  /** 人工验收通过：当前操作人为 local-user，必须是交付版本登记的验收人。 */
+  ACCEPT_DELIVERY: 'agent-employee:accept-delivery',
+  /** 人工退回交付版本（不删除历史）。 */
+  REJECT_DELIVERY: 'agent-employee:reject-delivery',
   /** 查询能力版本依赖关系（显式 ID）。 */
   GET_CAPABILITY_DEPENDENCY_GRAPH: 'agent-employee:get-capability-dependency-graph',
   /** 在保存前校验一组组合能力，不写入任何数据。 */

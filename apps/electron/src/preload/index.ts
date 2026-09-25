@@ -1910,6 +1910,18 @@ export interface ElectronAPI {
       delete: (id: string) => Promise<boolean>
       listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
+      /** 研发 Review：任务评审汇总 */
+      getTaskReview: (taskId: string) => Promise<import('@gravitas/shared').TaskReviewSummary>
+      /** 研发 Review：冻结快照单文件新旧内容 */
+      getSnapshotDiff: (executionId: string, filePath: string) => Promise<import('@gravitas/shared').DevelopmentSnapshotDiff>
+      /** 文件委派：新建或关联任务（不派发执行） */
+      prepareFileDelegation: (input: import('@gravitas/shared').PrepareFileDelegationInput) => Promise<{ taskId: string; created: boolean }>
+      /** 研发返工：记录意见并幂等派发 */
+      requestChanges: (taskId: string, comment: string) => Promise<{ taskId: string } | null>
+      /** 人工验收通过（local-user 必须是登记验收人） */
+      acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => Promise<unknown>
+      /** 人工退回 */
+      rejectDelivery: (taskId: string, deliveryId: string, comment: string) => Promise<unknown>
       cancelExecution: (executionId: string) => Promise<import('@gravitas/shared').CancelAgentExecutionResult>
       listCapabilityVersions: (agentId: string) => Promise<unknown[]>
       listLearningSamples: (agentId: string) => Promise<unknown[]>
@@ -4376,6 +4388,12 @@ const electronAPI: ElectronAPI = {
       listExecutionsByEntity: (entityType, entityId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, entityType, entityId),
       listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
       cancelExecution: (executionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, executionId),
+      getTaskReview: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, taskId),
+      getSnapshotDiff: (executionId, filePath) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, executionId, filePath),
+      prepareFileDelegation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, input),
+      requestChanges: (taskId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, taskId, comment),
+      acceptDelivery: (taskId, deliveryId, input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, taskId, deliveryId, input),
+      rejectDelivery: (taskId, deliveryId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, taskId, deliveryId, comment),
       listCapabilityVersions: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, agentId),
       listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
       excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),

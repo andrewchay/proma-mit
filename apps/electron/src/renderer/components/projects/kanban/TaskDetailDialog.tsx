@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select'
 import { applyReorderResultAtom } from '@/atoms/project-atoms'
 import type { ProjectTaskAtom, ProjectTaskStatusAtom } from '@/atoms/project-atoms'
+import { TaskReviewPanel } from '../TaskReviewPanel'
 import { priorityLabel } from '../ProjectView'
 
 interface TaskDetailDialogProps {
@@ -124,6 +125,10 @@ export function TaskDetailDialog({ projectId, task, statuses, onChanged, onClose
               {error}
             </div>
           )}
+          {/* 研发任务统一 Review（M2）：无范围任务由面板自身降级提示 */}
+          <div className="border-t pt-3">
+            <TaskReviewPanel taskId={task.id} />
+          </div>
         </div>
         <DialogFooter>
           <button

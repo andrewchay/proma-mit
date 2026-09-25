@@ -22,6 +22,7 @@ import {
   FolderInput,
   Pencil,
   MessageSquarePlus,
+  BotMessageSquare,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -95,6 +96,8 @@ interface FileBrowserProps {
   hideEmpty?: boolean
   /** 点击添加到聊天（在文件操作菜单中显示） */
   onAddToChat?: (entry: FileEntry) => void
+  /** 委派给 AI 员工修改（在文件操作菜单中显示；未提供则隐藏该项） */
+  onDelegateToAgent?: (entry: FileEntry) => void
   /** 单击文件时在内联预览面板中显示（替代外部窗口预览） */
   onFilePreview?: (filePath: string) => void
   /** 双击文件时打开独立预览窗口（多个文档可并排查看） */
@@ -103,7 +106,7 @@ interface FileBrowserProps {
   stateKey?: string
 }
 
-export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddToChat, onFilePreview, onOpenDetachedPreview, stateKey }: FileBrowserProps): React.ReactElement {
+export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddToChat, onDelegateToAgent, onFilePreview, onOpenDetachedPreview, stateKey }: FileBrowserProps): React.ReactElement {
   const [entries, setEntries] = React.useState<FileEntry[]>([])
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -434,6 +437,7 @@ interface FileTreeItemProps {
   onRefresh: () => Promise<void>
   onClearSelection: () => void
   onAddToChat?: (entry: FileEntry) => void
+  onDelegateToAgent?: (entry: FileEntry) => void
   onFilePreview?: (filePath: string) => void
   /** 双击文件时打开独立预览窗口 */
   onOpenDetachedPreview?: (filePath: string) => void
@@ -462,6 +466,7 @@ function FileTreeItem({
   onRefresh,
   onClearSelection,
   onAddToChat,
+  onDelegateToAgent,
   onFilePreview,
   onOpenDetachedPreview,
 }: FileTreeItemProps): React.ReactElement {
@@ -792,6 +797,15 @@ function FileTreeItem({
                     添加到聊天
                   </DropdownMenuItem>
                 )}
+                {onDelegateToAgent && !entry.isDirectory && menuSelectedCount === 1 && (
+                  <DropdownMenuItem
+                    className="text-xs py-1 [&>svg]:size-3.5"
+                    onSelect={() => onDelegateToAgent(entry)}
+                  >
+                    <BotMessageSquare />
+                    交给 AI 员工修改…
+                  </DropdownMenuItem>
+                )}
                 {menuSelectedCount === 1 && (
                   <DropdownMenuItem
                     className="text-xs py-1 [&>svg]:size-3.5"
@@ -873,6 +887,7 @@ function FileTreeItem({
               onRefresh={handleRefreshAfterDelete}
               onClearSelection={onClearSelection}
               onAddToChat={onAddToChat}
+              onDelegateToAgent={onDelegateToAgent}
               onFilePreview={onFilePreview}
               onOpenDetachedPreview={onOpenDetachedPreview}
             />

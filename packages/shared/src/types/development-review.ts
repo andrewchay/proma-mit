@@ -49,3 +49,66 @@ export interface DevelopmentSnapshot {
   files: DevelopmentSnapshotFile[]
   createdAt: number
 }
+
+// ===== M2：Review 查询与委派入口 =====
+
+/** Review 页展示的交付版本（ProjectDeliverable 的可序列化投影）。 */
+export interface TaskReviewDelivery {
+  id: string
+  version: number
+  status: string
+  title: string
+  content: string
+  artifactRef?: string
+  executionId?: string
+  responsibilities?: { ownerId: string; reviewerId: string; recipientId: string }
+  dodCheckResults?: Array<{ criterion: string; status: string; mode?: string; checkedBy?: string }>
+  acceptedCriteria?: string[]
+  createdAt: number
+  actor?: string
+}
+
+/** 单个任务的 Review 汇总：任务状态、范围、执行记录、交付版本与可选决策。 */
+export interface TaskReviewSummary {
+  taskId: string
+  projectId: string
+  title: string
+  status: string
+  completionNotes?: string
+  scope: DevelopmentTaskScope | null
+  executions: import('./work-module').AgentExecutionResult[]
+  deliveries: TaskReviewDelivery[]
+  decidedDecisions: Array<{ id: string; title: string; version: number }>
+  /** 当前生效验收人（scope.reviewerId 或 local-user） */
+  reviewerId: string
+  /** 各已完成执行的冻结快照文件清单（无快照的执行不含在内）。 */
+  snapshots: Array<{ executionId: string; baseCommit: string; contentHash: string; files: DevelopmentSnapshotFile[] }>
+}
+
+/** 单文件冻结内容（Review 页 DiffView 输入）。 */
+export interface DevelopmentSnapshotDiff {
+  path: string
+  changeType: 'add' | 'modify' | 'delete'
+  oldContent: string | null
+  newContent: string | null
+  truncated: boolean
+}
+
+/** 文件委派准备输入：新建任务或关联已有任务（不复制任务）。 */
+export interface PrepareFileDelegationInput {
+  projectId: string
+  workspaceId: string
+  employeeId: string
+  targetPaths: string[]
+  allowedPaths: string[]
+  decisionIds: string[]
+  verificationCommands?: string[]
+  /** 默认 local-user；其他人类验收人需在身份目录启用 */
+  reviewerId?: string
+  /** 关联模式：提供则不新建任务 */
+  existingTaskId?: string
+  /** 新建模式必填 */
+  newTask?: { title: string; description?: string }
+  /** 任务已有其他负责人时必须显式确认改派 */
+  confirmHumanReassign?: boolean
+}

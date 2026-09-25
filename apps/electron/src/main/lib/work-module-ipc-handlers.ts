@@ -168,6 +168,14 @@ import {
   previewAgentEmployeeCapabilityRollback,
   buildAgentEmployeeCapabilityAlerts,
 } from './agent-employee-service'
+import {
+  getTaskReview,
+  getSnapshotDiff,
+  prepareFileDelegation,
+  requestChanges as requestDevelopmentChanges,
+  acceptDelivery as acceptDevelopmentDelivery,
+  rejectDelivery as rejectDevelopmentDelivery,
+} from './development-review-service'
 import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
 import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
 import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
@@ -920,6 +928,12 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, (_, id: string) => deleteAgentEmployee(id))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, (_, entityType: 'task' | 'subTask', entityId: string) => listAgentExecutionsByEntity(entityType, entityId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, (_, agentId: string, limit?: number) => listAgentExecutionsByAgent(agentId, limit ?? 50))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, (_, taskId: string) => getTaskReview(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, (_, executionId: string, filePath: string) => getSnapshotDiff(executionId, filePath))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, (_, input: import('@gravitas/shared').PrepareFileDelegationInput) => prepareFileDelegation(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, (_, taskId: string, comment: string) => requestDevelopmentChanges(taskId, comment))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, (_, taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => acceptDevelopmentDelivery(taskId, deliveryId, input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, (_, taskId: string, deliveryId: string, comment: string) => rejectDevelopmentDelivery(taskId, deliveryId, comment))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, (_, executionId: string) => cancelAgentExecution(executionId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, (_, agentId: string) => listAgentEmployeeCapabilityVersions(agentId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, (_, agentId: string) => listAgentEmployeeLearningSamples(agentId))

@@ -1,0 +1,17 @@
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/agent-development-context.test.ts:
+(pass) 研发员工配置与项目理解 > Given 显式有效配置 When 校验 Then 保留 Runtime 并默认只读 [0.87ms]
+(pass) 研发员工配置与项目理解 > Given 缺工作区或模型 When 校验 Then 不回退到全局或渠道默认 [0.53ms]
+(pass) 研发员工配置与项目理解 > Given 停用渠道、未知权限或 Workflow When 校验 Then 明确拒绝 [0.05ms]
+(pass) 研发员工配置与项目理解 > Given 单工作区员工与任务指定同一工作区 When 校验 Then 使用任务指定值 [0.14ms]
+(pass) 研发员工配置与项目理解 > Given 多工作区员工未指定任务工作区 When 校验 Then 拒绝隐式选择 [0.04ms]
+(pass) 研发员工配置与项目理解 > Given 任务选择角色范围外工作区 When 校验 Then 拒绝跨项目路由 [0.02ms]
+(pass) 研发员工配置与项目理解 > Given 项目与返工意见 When 生成指令 Then 包含来源学习、兼容与验证要求 [0.42ms]
+
+ 7 pass
+ 0 fail
+ 16 expect() calls
+Ran 7 tests across 1 file. [46.00ms]
+
+commandExitCode=0
