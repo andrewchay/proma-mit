@@ -81,7 +81,7 @@ export function TaskDetailDialog({ projectId, task, statuses, onChanged, onClose
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-w-md" data-testid="kanban-task-detail-dialog">
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto" data-testid="kanban-task-detail-dialog">
         <DialogHeader>
           <DialogTitle className="text-base">{task.title}</DialogTitle>
         </DialogHeader>
