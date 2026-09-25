@@ -333,6 +333,7 @@ export function FileBrowser({ rootPath, hideToolbar, embedded, hideEmpty, onAddT
           onRefresh={loadRoot}
           onClearSelection={() => setSelectedPaths(new Set())}
           onAddToChat={onAddToChat}
+          onDelegateToAgent={onDelegateToAgent}
           onFilePreview={onFilePreview}
           onOpenDetachedPreview={onOpenDetachedPreview}
         />
