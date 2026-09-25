@@ -7,7 +7,7 @@
  * 本机操作人为 local-user；登记的其他人类验收人需对应身份操作，面板会明确提示。
  */
 import * as React from 'react'
-import type { TaskReviewSummary } from '@gravitas/shared'
+import type { DevelopmentApplyStatusInfo, DevelopmentValidationResult, TaskReviewSummary } from '@gravitas/shared'
 import { DiffView } from '@/components/diff/DiffView'
 
 type AgentApi = {
@@ -16,6 +16,11 @@ type AgentApi = {
   acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => Promise<unknown>
   rejectDelivery: (taskId: string, deliveryId: string, comment: string) => Promise<unknown>
   requestChanges: (taskId: string, comment: string) => Promise<{ taskId: string } | null>
+  runValidation: (taskId: string, command: string) => Promise<DevelopmentValidationResult>
+  listValidations: (taskId: string) => Promise<DevelopmentValidationResult[]>
+  prepareApply: (taskId: string) => Promise<{ operationId: string; files: Array<{ path: string; changeType: string }>; expiresAt: number }>
+  confirmApply: (operationId: string) => Promise<{ status: string; taskCompleted: boolean; taskError?: string }>
+  getApplyStatus: (taskId: string) => Promise<DevelopmentApplyStatusInfo>
 }
 
 function agentApi(): AgentApi {
@@ -46,6 +51,9 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
   const [evidence, setEvidence] = React.useState('')
   const [comment, setComment] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [validations, setValidations] = React.useState<DevelopmentValidationResult[]>([])
+  const [applyStatus, setApplyStatus] = React.useState<DevelopmentApplyStatusInfo | null>(null)
+  const [applyManifest, setApplyManifest] = React.useState<{ operationId: string; files: Array<{ path: string; changeType: string }> } | null>(null)
 
   const load = React.useCallback(async () => {
     setLoading(true); setError(null)
@@ -53,6 +61,8 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
       const api = await agentApi()
       const result = await api.getTaskReview(taskId) as TaskReviewSummary
       setSummary(result)
+      setValidations(await api.listValidations(taskId))
+      setApplyStatus(await api.getApplyStatus(taskId))
       const latestSnapshot = result.snapshots[0]
       setSelectedExecutionId((current) => current ?? latestSnapshot?.executionId ?? null)
     } catch (err) {
@@ -216,6 +226,71 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
           执行完成 ≠ 业务验收；测试结果由员工报告，需核验。验收通过后文件仍在独立工作目录，应用回原仓库为后续阶段。
         </p>
       </div>
+
+      {/* 验证证据 */}
+      {summary.scope.verificationCommands?.length ? (
+        <div className="space-y-1 rounded-lg bg-muted/40 p-2 text-xs">
+          <div className="font-medium">验证证据（真实退出码，与模型自述无关）</div>
+          {validations.length === 0 ? <p className="text-muted-foreground">尚未运行验证。</p> : validations.slice(0, 5).map((validation) => (
+            <div key={validation.id} className="flex items-center gap-2">
+              <span className={
+                validation.status === 'passed' ? 'text-green-600'
+                : validation.status === 'stale' ? 'text-amber-600'
+                : 'text-destructive'
+              }>{validation.status === 'passed' ? '✓ passed' : validation.status === 'stale' ? '⚠ stale' : `✗ ${validation.status}`}</span>
+              <span className="font-mono">{validation.command}</span>
+              <span className="text-muted-foreground">exit={validation.exitCode ?? '—'} · {new Date(validation.finishedAt).toLocaleTimeString()}</span>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-1 pt-1">
+            {summary.scope.verificationCommands.map((command) => (
+              <button
+                key={command}
+                className="rounded bg-muted px-2 py-0.5 font-mono text-[11px] hover:bg-accent disabled:opacity-50"
+                disabled={busy}
+                onClick={() => void act(async () => { const api = await agentApi(); await api.runValidation(taskId, command) })}
+              >▶ {command}</button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* 确认应用（验收通过后可用） */}
+      {latestDelivery?.status === 'accepted' ? (
+        <div className="space-y-1 rounded-lg border p-2 text-xs">
+          <div className="font-medium">应用到原仓库</div>
+          {applyStatus?.latest?.status === 'recovery_required' ? (
+            <div className="text-destructive">
+              上次应用中断且文件状态混合，需人工恢复：
+              <ul className="mt-1 list-disc pl-4">
+                {(applyStatus.recoveryFiles ?? []).map((item) => <li key={item.path} className="font-mono">{item.path} — {item.issue}</li>)}
+              </ul>
+            </div>
+          ) : applyManifest ? (
+            <div className="space-y-1">
+              <p>将写入 {applyManifest.files.length} 个文件到原仓库（保留为未提交改动，无自动 commit）：</p>
+              <p className="font-mono text-muted-foreground">{applyManifest.files.map((f) => `${f.changeType === 'add' ? '+' : f.changeType === 'delete' ? '−' : '~'} ${f.path}`).join('；')}</p>
+              <div className="flex gap-2">
+                <button className="rounded bg-primary px-2 py-1 text-white disabled:opacity-50" disabled={busy}
+                  onClick={() => void act(async () => { const api = await agentApi(); const result = await api.confirmApply(applyManifest.operationId); setApplyManifest(null); setApplyStatus(await api.getApplyStatus(taskId)); if (!result.taskCompleted) setError('文件已应用，但任务完成被 DoD 闸门阻止：' + (result.taskError ?? '需逐项验收')) })}
+                >确认写入</button>
+                <button className="rounded border px-2 py-1" onClick={() => setApplyManifest(null)}>取消</button>
+              </div>
+            </div>
+          ) : applyStatus?.latest?.status === 'applied' ? (
+            <p className="text-green-600">已应用到原仓库（未提交改动）。任务完成状态：{applyStatus.taskCompleted ? '已完成' : '未完成（走 DoD 闸门）'}。</p>
+          ) : applyStatus?.latest?.status === 'blocked' ? (
+            <p className="text-amber-600">上次确认未通过：{applyStatus.latest.error ?? '仓库状态已变化'}。请重新预检。</p>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-muted-foreground">预检通过后需二次确认；源仓库 HEAD 必须仍在交付基线上且目录干净。</p>
+              <button className="rounded border px-2 py-1 disabled:opacity-50" disabled={busy}
+                onClick={() => void act(async () => { const api = await agentApi(); setApplyManifest(await api.prepareApply(taskId)) })}
+              >预检并准备应用</button>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {/* 执行记录 */}
       {summary.executions.length > 0 && (

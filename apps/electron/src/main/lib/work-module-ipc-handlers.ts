@@ -176,6 +176,15 @@ import {
   acceptDelivery as acceptDevelopmentDelivery,
   rejectDelivery as rejectDevelopmentDelivery,
 } from './development-review-service'
+import {
+  prepareApply as prepareDevelopmentApply,
+  confirmApply as confirmDevelopmentApply,
+  getApplyStatus as getDevelopmentApplyStatus,
+} from './development-apply-service'
+import {
+  runDevelopmentValidation,
+  listDevelopmentValidations,
+} from './development-validation-service'
 import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
 import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
 import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
@@ -934,6 +943,11 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, (_, taskId: string, comment: string) => requestDevelopmentChanges(taskId, comment))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, (_, taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => acceptDevelopmentDelivery(taskId, deliveryId, input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, (_, taskId: string, deliveryId: string, comment: string) => rejectDevelopmentDelivery(taskId, deliveryId, comment))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_VALIDATION, (_, taskId: string, command: string) => runDevelopmentValidation(taskId, command))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, (_, taskId: string) => listDevelopmentValidations(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, (_, taskId: string) => prepareDevelopmentApply(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CONFIRM_APPLY, (_, operationId: string) => confirmDevelopmentApply(operationId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_APPLY_STATUS, (_, taskId: string) => getDevelopmentApplyStatus(taskId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, (_, executionId: string) => cancelAgentExecution(executionId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, (_, agentId: string) => listAgentEmployeeCapabilityVersions(agentId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, (_, agentId: string) => listAgentEmployeeLearningSamples(agentId))

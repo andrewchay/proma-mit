@@ -501,6 +501,16 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   ACCEPT_DELIVERY: 'agent-employee:accept-delivery',
   /** 人工退回交付版本（不删除历史）。 */
   REJECT_DELIVERY: 'agent-employee:reject-delivery',
+  /** 运行一次受控验证（命令必须命中任务范围白名单）。 */
+  RUN_VALIDATION: 'agent-employee:run-validation',
+  /** 列出任务的验证记录。 */
+  LIST_VALIDATIONS: 'agent-employee:list-validations',
+  /** 预检并准备应用操作（不下发写入）。 */
+  PREPARE_APPLY: 'agent-employee:prepare-apply',
+  /** 确认应用（二次校验后写入，保留为未提交改动）。 */
+  CONFIRM_APPLY: 'agent-employee:confirm-apply',
+  /** 查询应用操作状态与恢复分类。 */
+  GET_APPLY_STATUS: 'agent-employee:get-apply-status',
   /** 查询能力版本依赖关系（显式 ID）。 */
   GET_CAPABILITY_DEPENDENCY_GRAPH: 'agent-employee:get-capability-dependency-graph',
   /** 在保存前校验一组组合能力，不写入任何数据。 */

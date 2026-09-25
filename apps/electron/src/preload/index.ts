@@ -1922,6 +1922,16 @@ export interface ElectronAPI {
       acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => Promise<unknown>
       /** 人工退回 */
       rejectDelivery: (taskId: string, deliveryId: string, comment: string) => Promise<unknown>
+      /** 研发验证：运行白名单命令并采集真实退出码 */
+      runValidation: (taskId: string, command: string) => Promise<import('@gravitas/shared').DevelopmentValidationResult>
+      /** 研发验证：列出验证记录 */
+      listValidations: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentValidationResult[]>
+      /** 确认应用：预检并下发操作清单（不写入） */
+      prepareApply: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentApplyManifest>
+      /** 确认应用：二次校验后字节级写入（保留为未提交改动） */
+      confirmApply: (operationId: string) => Promise<import('@gravitas/shared').DevelopmentApplyOperation & { taskCompleted: boolean; taskError?: string }>
+      /** 确认应用：查询操作状态与恢复分类 */
+      getApplyStatus: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentApplyStatusInfo>
       cancelExecution: (executionId: string) => Promise<import('@gravitas/shared').CancelAgentExecutionResult>
       listCapabilityVersions: (agentId: string) => Promise<unknown[]>
       listLearningSamples: (agentId: string) => Promise<unknown[]>
@@ -4394,6 +4404,11 @@ const electronAPI: ElectronAPI = {
       requestChanges: (taskId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, taskId, comment),
       acceptDelivery: (taskId, deliveryId, input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, taskId, deliveryId, input),
       rejectDelivery: (taskId, deliveryId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, taskId, deliveryId, comment),
+      runValidation: (taskId, command) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_VALIDATION, taskId, command),
+      listValidations: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, taskId),
+      prepareApply: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, taskId),
+      confirmApply: (operationId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CONFIRM_APPLY, operationId),
+      getApplyStatus: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_APPLY_STATUS, taskId),
       listCapabilityVersions: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, agentId),
       listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
       excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),

@@ -112,3 +112,76 @@ export interface PrepareFileDelegationInput {
   /** 任务已有其他负责人时必须显式确认改派 */
   confirmHumanReassign?: boolean
 }
+
+// ===== M3：验证证据与确认应用 =====
+
+/** 验证结果状态：与模型自述（reported）严格区分。 */
+export type DevelopmentValidationStatus = 'passed' | 'failed' | 'stale' | 'timeout'
+
+/** 一次受控验证运行的结果（进程未确认退出不得计成功）。 */
+export interface DevelopmentValidationResult {
+  id: string
+  taskId: string
+  executionId: string
+  command: string
+  startedAt: number
+  finishedAt: number
+  /** 真实进程退出码；timeout 时为 null */
+  exitCode: number | null
+  timedOut: boolean
+  status: DevelopmentValidationStatus
+  /** 验证时冻结的内容指纹；与快照不一致则 stale */
+  snapshotContentHash: string
+  /** 输出尾部（截断存储，不作为成功依据） */
+  outputTail: string
+  outputTruncated: boolean
+}
+
+/** 确认应用前下发的精确操作清单；过期必须重新预检。 */
+export interface DevelopmentApplyManifest {
+  operationId: string
+  taskId: string
+  deliveryId: string
+  version: number
+  snapshotId: string
+  contentHash: string
+  repoRoot: string
+  branch: string
+  baseCommit: string
+  files: DevelopmentSnapshotFile[]
+  createdAt: number
+  expiresAt: number
+}
+
+export type DevelopmentApplyStatus = 'prepared' | 'applying' | 'applied' | 'blocked' | 'recovery_required'
+
+/** 应用操作记录（持久化，崩溃后可恢复分类）。 */
+export interface DevelopmentApplyOperation {
+  id: string
+  taskId: string
+  deliveryId: string
+  version: number
+  /** 交付关联的权威执行 ID（快照与内容文件按其定位） */
+  executionId: string
+  snapshotId: string
+  contentHash: string
+  repoRoot: string
+  branch: string
+  baseCommit: string
+  files: DevelopmentSnapshotFile[]
+  status: DevelopmentApplyStatus
+  createdAt: number
+  expiresAt: number
+  appliedAt?: number
+  error?: string
+}
+
+/** 应用操作当前可执行性与恢复分类。 */
+export interface DevelopmentApplyStatusInfo {
+  latest?: DevelopmentApplyOperation
+  /** 最新操作可否直接确认应用 */
+  confirmable: boolean
+  /** 混合态需人工恢复；recoveryFiles 列出与快照不一致的文件 */
+  recoveryFiles?: Array<{ path: string; issue: string }>
+  taskCompleted: boolean
+}

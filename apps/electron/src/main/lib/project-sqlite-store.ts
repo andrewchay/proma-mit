@@ -797,6 +797,27 @@ function migrate(database: SqliteCompat): void {
   if (!columns.includes('development_scope')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN development_scope TEXT`)
   }
+  // 研发确认应用（M3）：应用操作记录（崩溃恢复与幂等依据）
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS development_apply_operations (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      delivery_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      execution_id TEXT NOT NULL,
+      snapshot_id TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      repo_root TEXT NOT NULL,
+      branch TEXT NOT NULL,
+      base_commit TEXT NOT NULL,
+      files TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      applied_at INTEGER,
+      error TEXT
+    )
+  `)
   // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('workflow_id')) {
