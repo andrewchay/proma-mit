@@ -27,7 +27,7 @@ gravitas/
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.24)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.12.79)
+    └── electron/   # Electron 桌面应用 (v0.12.88)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.12.79)
+#### @gravitas/electron (v0.12.88)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -518,7 +518,7 @@ React UI 更新
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
 - ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 `task_statuses` 表（预置五态沿用旧字符串 id，历史数据零迁移），跨状态逻辑只认 backlog/unstarted/started/completed/cancelled/triage 六个语义组；看板 @dnd-kit 拖拽，一次落库同时改状态与顺序（中点法 + 间隙耗尽整列重编号），乐观更新失败回滚并提示原因；飞书/钉钉同步按语义组双向映射，推方向仅推二值完成态且排序变更不打外部 API，拉方向外部"未完成"仅在本地处于完成组时回退（不覆盖 in_progress/paused），轮询变化经 `POLL_STATUS_CHANGED` 全局监听（main.tsx → pollStatusChangedAtom）推送前端刷新；draft 组只能经确认/拒绝链路进出（updateTask 拒绝普通路径）；甘特图与流动指标同按语义组着色/计算
 
-- ✅ **Project Pilot 受控准备切片**：项目概览读取权威任务、依赖、执行及决策/交付状态；主进程每 30 秒无页面只读对账并持久化候选，任务及协作线索可回到权威入口。项目经理可在概览配置始终 `paused` 的版本化草案，只列安全研发员工，要求不同执行/评审角色、共同 Git 工作区、同渠道/模型以及明确预算、次数、返工和有效期。活动 grant 采用“重新预检—冻结影响面—显式确认—幂等写入”，在策略文件锁内提交 SQLite；暂停也先展示影响面，确认后撤权、释放预留、取消未启动执行，运行中逐项选择。命令预算预留、原子排队和启动核验均重新校验当前策略、员工绑定及发行指纹；预留金额由账本按剩余授权费用和剩余次数派生，调用方不能低报。派生预留额已接入调用级 Runtime 预算字段，并与应用级阈值取更严格值；Runtime capability 明确声明是否支持费用超额停止阈值，不支持时在创建会话及调用 Provider 前 fail-closed。SDK 阈值只保证超额后停止，不保证最终费用绝不超过预留，超额结果仍撤权并进入对账。当前安全研发白名单内的 `proma` / `ai-sdk` 均不支持该能力，Claude 虽支持 `maxBudgetUsd` 但尚未纳入首版白名单，因此生产 Pilot 预检仍会阻塞。Runtime 调用前 command/execution 在同一 SQLite 事务认领为 running；失败回滚，不留下半启动状态。queued Pilot 取消时也在同一事务取消 execution 并释放 command 的费用和次数预留。应用重启发现遗留 running Pilot 时转为 stale，以 unknown 保留预算并暂停 grant，不自动续跑。费用结算只接受绑定 execution/session/channel/model 的结构化用量声明，同一 Provider 回执键不能跨命令重放；终结事件没有可信回执时自动写 `unknown`、暂停 grant 并保留预算。Provider 回执和价格快照尚未由受信采集器核验。控制面已有 IPC/UI，但真实受控派发、可信用量事件和停止核验仍未接通，`request_stop` 仅持久记录；技术评审返工与审批续跑未完成，不得据此宣称自主闭环或 G0–G3 通过。进度以 `docs/plans/2026-09-26-project-pilot/ledger.md` 为准。
+- ✅ **Project Pilot 受控准备切片**：项目概览读取权威任务、依赖、执行及决策/交付状态；主进程每 30 秒无页面只读对账并持久化候选，任务及协作线索可回到权威入口。项目经理可在概览配置始终 `paused` 的版本化草案，只列安全研发员工，要求不同执行/评审角色、共同 Git 工作区、同渠道/模型以及明确预算、次数、返工和有效期。活动 grant 采用“重新预检—冻结影响面—显式确认—幂等写入”，在策略文件锁内提交 SQLite；暂停也先展示影响面，确认后撤权、释放预留、取消未启动执行，运行中逐项选择。命令预算预留、原子排队和启动核验均重新校验当前策略、员工绑定及发行指纹；预留金额由账本按剩余授权费用和剩余次数派生，调用方不能低报。派生预留额已接入调用级 Runtime 预算字段，并与应用级阈值取更严格值；Runtime capability 明确声明是否支持费用超额停止阈值，不支持时在创建会话及调用 Provider 前 fail-closed。SDK 阈值只保证超额后停止，不保证最终费用绝不超过预留，超额结果仍撤权并进入对账。当前安全研发白名单内的 `proma` / `ai-sdk` 均不支持该能力，Claude 虽支持 `maxBudgetUsd` 但尚未纳入首版白名单，因此生产 Pilot 预检仍会阻塞。Runtime 调用前 command/execution 在同一 SQLite 事务认领为 running；失败回滚，不留下半启动状态。queued Pilot 取消时也在同一事务取消 execution 并释放 command 的费用和次数预留。应用重启发现遗留 running Pilot 时转为 stale，以 unknown 保留预算并暂停 grant，不自动续跑。headless 完成回调现会把 Runtime 原始终态 result 以不可覆盖记录保存，并绑定 execution/session/channel/model、Runtime、原文哈希、token 与费用；带 `total_cost_usd` 的结果按 `runtime_reported` 结算，无费用的 token 结果保持 `unknown`，不会使用本地估价冒充实际费用。该证据不宣称具有 Provider 请求 ID，Provider 直接回执与版本化价格快照仍未接入。控制面已有 IPC/UI，但真实受控派发和停止证明仍未接通，`request_stop` 仅持久记录；技术评审返工与审批续跑未完成，不得据此宣称自主闭环或 G0–G3 通过。进度以 `docs/plans/2026-09-26-project-pilot/ledger.md` 为准。
 
 ### 架构亮点
 

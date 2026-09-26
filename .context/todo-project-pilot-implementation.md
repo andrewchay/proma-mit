@@ -46,10 +46,11 @@ PM01 可信费用与角色能力证据、PM02 的目标澄清对话、PM03 无�
 - [x] 派生额度已接 Runtime 调用级费用超额停止阈值，并与应用级阈值取更严格值；当前 `proma` / `ai-sdk` 不支持该能力，预检明确阻塞，Claude 仍未纳入首版安全研发白名单。SDK 只承诺超额后停止，不能把该阈值称为绝对费用封顶。
 - [x] Runtime 调用前以单一 SQLite 事务将 Pilot command 与 execution 从 queued 认领为 running；任一更新失败全部回滚。创建会话/工作树失败时保持 queued，不伪造已启动。
 - [x] queued Pilot 因用户停止、任务改派/暂停/删除或状态变更取消时，同一事务取消 execution 并把 command 置为 released；费用和未启动次数预留归零，授权已暂停/过期也能安全取消。
-- [x] Runtime 终结事件没有可信 Provider 回执时，生产完成/失败/卡点/确认停止路径统一以 unknown 结算，暂停 grant 并保留预算待对账。
+- [x] Runtime 原始终态 result 已从 headless 完成回调接入结算：原文、哈希、execution/session/channel/model、Runtime、token 与费用写入不可更新的 SQLite 回执；带 `total_cost_usd` 时按 `runtime_reported` 结算，无费用时保留回执但仍以 unknown 暂停 grant，且不使用本地估价替代实际费用。
 - [x] 应用重启发现遗留 running Pilot 时，不自动续跑：先暂停项目活动 grant、execution 转 stale；仅在身份与来源关联完整且无旧费用痕迹时记录 unknown/needs_reconcile，破损账本保持原样待人工处理；重复恢复幂等。
-- [ ] 受信用量采集器、原始回执/价格快照核验；真实用量事件尚未接结算入口，不能作为完整生产费用闭环。
-- [ ] 内部原子排队仍未接真实受控派发；可信用量事件/通用释放、真实停止器和完整故障注入矩阵仍未完成；未调用模型。
+- [x] Runtime 转述用量采集与不可变原始回执核验已接结算入口；恢复时重新计算原文哈希、回执 ID，并核对原文字段、会话与防重放键。
+- [ ] Provider 直接回执 ID 与版本化价格快照仍未接入；Runtime 转述证据不能冒充 Provider 原始回执，尚不能作为完整生产费用闭环。
+- [ ] 内部原子排队仍未接真实受控派发；真实停止器和完整故障注入矩阵仍未完成；未调用模型。
 
 ## G1 隔离 Git 样例项目（用户已选择，2026-09-26）
 - [x] 每次测试在临时目录新建 Git 仓库和项目数据，不触碰现有业务项目；双角色、依赖、预算、幂等、暂停与重启对账、双项目隔离及排队写入中断恢复测试 3 PASS。另建可查看的本机样例仓库 `/private/tmp/project-pilot-g1-s0677_5b`，干净基线 `d802fd7`，自身测试 1 PASS。
