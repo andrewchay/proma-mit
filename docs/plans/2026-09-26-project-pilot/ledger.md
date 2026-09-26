@@ -1,13 +1,13 @@
 # Project Pilot 工作、测试与验收台账
 
-建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`35bf6da4`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
+建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`ebc73b7d`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
 关联：[目标与路线](goals-and-roadmap.md) · [G0 命令契约草案](g0-command-contract.md) · [G1 隔离 Git 夹具](g1-isolated-fixture.md) · [实现度审计](implementation-audit.md) · [历史方案](design.md)。
 
 ## 当前结论
 
 - 已完成原始需求对齐、静态实现度审计与路线修订。
-- **截至 2026-09-27：** 只读项目观察、历史候选意图、默认暂停策略、两步确认活动 grant、暂停影响面、预算/命令账本、原子排队与启动认领、调用级预算能力门禁、Runtime 终态原始回执、unknown 终结结算、queued 取消释放及重启中断恢复均已进入产品代码。headless 完成回调会把 Runtime 原始 result 与执行身份、Runtime、哈希、token、费用绑定后写入不可更新的 SQLite 记录；带 `total_cost_usd` 时按 `runtime_reported` 结算，无费用时保留原文但仍写 `unknown_recorded` 并撤权。恢复时会重算原文哈希和回执 ID，核对原文字段与防重放键。Project Pilot 聚合测试 15 个文件通过，其中预算账本 25、恢复对账 11、暂停恢复 12、活动 grant 暂停 10、Runtime 预算 3 PASS。
-- 当前仍没有可通过全部 readiness 的首版安全 Runtime、Provider 直接回执 ID/版本化价格快照、真实受控派发、真实停止证明、技术评审返工、最小收件箱和审批续跑。Runtime 转述结果不等于 Provider 原始回执。未创建真实业务 Pilot 任务，未调用付费模型或 Provider，未修改运行权限或发布。隔离 Git 夹具只有三项无模型确定性局部测试，因此 G0/G1/G2/G3 均未通过。
+- **截至 2026-09-27：** 只读项目观察、历史候选意图、默认暂停策略、两步确认活动 grant、暂停影响面、预算/命令账本、受控候选派发、原子排队与启动认领、调用级预算能力门禁、Runtime 终态原始回执、unknown 终结结算、queued 取消释放及重启中断恢复均已进入产品代码。后台仅对当前 `ready_candidate` 重读权威事实并复核活动 grant、readiness、策略指纹、角色、工作区和预算，再以确定性命令/执行 ID 原子排队；活动 Pilot 项目的普通派发和普通 queued 启动 fail-closed。headless 完成回调会把 Runtime 原始 result 与执行身份、Runtime、哈希、token、费用绑定后写入不可更新的 SQLite 记录；带 `total_cost_usd` 时按 `runtime_reported` 结算，无费用时保留原文但仍写 `unknown_recorded` 并撤权。Project Pilot 聚合测试 16 个文件通过，其中受控派发 3、预算账本 25、恢复对账 11、暂停恢复 12、活动 grant 暂停 10、Runtime 预算 3 PASS。
+- 当前仍没有可通过全部 readiness 的首版安全 Runtime、Provider 直接回执 ID/版本化价格快照、真实 Runtime/Provider 启动证据、真实停止证明、技术评审返工、最小收件箱和审批续跑。受控派发测试只注入 readiness 与启动替身；Runtime 转述结果不等于 Provider 原始回执。未创建真实业务 Pilot 任务，未调用付费模型或 Provider，未修改运行权限或发布。隔离 Git 夹具只有三项无模型确定性局部测试，因此 G0/G1/G2/G3 均未通过。
 - 第一交付从“全面 IA 重构”改为“受控主动推进纵向切片＋最小审批入口”。
 
 ## 1. 状态口径
@@ -24,9 +24,9 @@
 | PM01 | P0 | 确定首个fixture、角色、Runtime、授权、预算、返工/并发限制、暂停规则 | PM00 | 产品＋安全 | 部分：隔离 Git fixture、双角色/共同 Git 工作区/渠道/模型预检、预算/次数/返工及暂停规则已冻结；项目经理可配置 paused 草案并两步确认活动 grant，策略锁与命令入口核对发行指纹。预留额度由账本派生并接入调用级费用超额停止阈值；Runtime 无该能力时 fail-closed。SDK 阈值不保证绝对不超预留，超额仍撤权对账。当前安全研发白名单的 proma/ai-sdk 均不支持，Claude 尚未纳入白名单，故真实 Pilot 仍阻塞。Runtime 终态原文已不可变保存并接入结算，但证据仍由 Runtime 转述；尚无 Provider 直接回执 ID、版本化价格快照、角色能力证明或真实派发 | 草案 8＋预检 9＋发行 4＋控制面 3＋候选筛选 1＋预算账本 25＋Runtime 预算 3 PASS；完整门禁未执行 | 未执行 |
 | PM02 | P0 | 项目管理者入口：目标输入、必要澄清、解释/调整/暂停，命令与对话分离 | PM01 | 产品/前端/主进程 | 部分：项目概览已有策略草案表单、预检阻塞原因、授权影响面两步确认、暂停影响面和运行中逐项选择；命令与只读观察分区显示。尚无目标输入/必要澄清对话、计划解释调整或真实运行反馈 | 控制面 3＋候选筛选 1＋发行 4＋暂停 10 PASS；真机 UI 未验收 | 未执行 |
 | PM03 | P0 | 统一项目运行上下文；后台无页面运行；project/workspace/scope校验，无静默错路由 | PM01 | Runtime | 待开始；本轮只读项目范围观察不等于运行上下文 | 未执行 | 未执行 |
-| PM04 | P0 | 持久可恢复的项目对账入口；任务/交付/审批事件合并、版本与幂等、拒绝晚到旧结果 | PM03 | 编排 | 部分：只读观察＋SQLite 历史候选意图账本；主进程启动依次尝试恢复旧暂停决定、处理遗留 running Pilot、启动每 30 秒无页面对账，前一步失败不会跳过后一步。项目概览单次观察显示当前候选并可定位任务或其顶层祖先，或进入协作链路。运行中断恢复正常写入时撤权、转 stale，并按完整绑定决定是否记录 unknown；写入失败报告待人工处理，不自动重派。尚无任务/交付/审批事件驱动、有后果命令统一对账或审批续跑；历史 open 不代表实时有效，展示前须重新观察 | 观察 8＋账本 6＋后台对账 3＋恢复对账 11 PASS；完整行为未执行 | 未执行 |
+| PM04 | P0 | 持久可恢复的项目对账入口；任务/交付/审批事件合并、版本与幂等、拒绝晚到旧结果 | PM03 | 编排 | 部分：只读观察＋SQLite 历史候选意图账本；主进程启动依次尝试恢复旧暂停决定、处理遗留 running Pilot、启动每 30 秒无页面对账。活动授权和全部门禁通过时，当前执行候选进入唯一受控派发；停止信号贯穿二次对账并在预算预留前检查。运行中断恢复正常写入时撤权、转 stale，并按完整绑定决定是否记录 unknown；写入失败报告待人工处理，不自动重派。尚无任务/交付/审批事件驱动或审批续跑；历史 open 不代表实时执行许可 | 观察 8＋账本 6＋后台对账 3＋受控派发 3＋恢复对账 11 PASS；完整行为未执行 | 未执行 |
 | PM05 | P0 | 事实驱动的结构化计划和角色选择；确定性约束校验，拒绝虚构状态/越权动作 | PM02,PM03 | 编排/模型 | 待开始 | 未执行 | 未执行 |
-| PM06 | P0 | 受控命令派发、统一readiness和依赖等待/唤醒；隔离旧bypass路径 | PM01,PM04,PM05 | Runtime/安全 | 待开始 | 未执行 | 未执行 |
+| PM06 | P0 | 受控命令派发、统一readiness和依赖等待/唤醒；隔离旧bypass路径 | PM01,PM04,PM05 | Runtime/安全 | 部分：当前 `ready_candidate` 进入唯一派发入口，执行前重读权威事实并复核活动 grant、readiness、策略指纹、角色、工作区和预算，以确定性 ID 原子排队后复用启动门禁；普通员工派发和普通 queued 启动在活动 Pilot 下 fail-closed。尚无依赖事件唤醒、真实 Runtime 启动证据、评审/返工派发 | 受控派发 3＋研发执行 16 PASS；production readiness 仍阻塞 | 未执行 |
 | PM07 | P0 | 执行→技术评审→有限返工→再审；终态与人工业务验收分离 | PM06 | 编排/研发链 | 待开始 | 未执行 | 未执行 |
 | PM08 | P0 | 顶部最小收件箱：必要提问/权限/交付/决策；权威源、版本、过期、多入口幂等 | PM04 | 前端/主进程 | 待开始；本轮只有单项目决策/交付只读提示，不是收件箱 | 未执行 | 未执行 |
 | PM09 | P0 | 项目事项主动通知→用户答复→自动恢复；拒绝/失效正确停等，不另点运行 | PM06,PM08 | 通知/编排 | 待开始 | 未执行 | 未执行 |
@@ -83,7 +83,7 @@
 | K06 | 模型自述/技术评审冒充真实验收 | 绑定权威ID/revision/验证证据，人工门禁不变 |
 | K07 | 审批过期、重复与崩溃后重放 | 源服务重校验、幂等、恢复对账，不复用失效授权 |
 | K08 | 自动返工成本循环 | 预算/用量/重试次数、停止条件与通知 |
-| K11 | 授权命令账本、归属关联、原子排队/认领和 queued 取消释放已实现，但真实受控派发尚未接入；SQLite 认领提交与外部 Runtime 实际开始无法跨系统原子化 | 真实派发必须复用命令账本/readiness/预算门禁；认领后失败进入 unknown 停等，重启遗留 running 撤权转 stale；补齐启动调用证据、真实停止证明及完整故障矩阵 |
+| K11 | 受控派发已复用授权、readiness、命令账本、预算和原子排队/认领，但 SQLite 认领提交与外部 Runtime 实际开始无法跨系统原子化，当前测试也只注入 readiness/start 替身 | 认领后失败进入 unknown 停等，重启遗留 running 撤权转 stale；补齐真实 Runtime 启动调用证据、真实停止证明及完整故障矩阵 |
 | K09 | 范围过大、又先做完UI才补智能 | PM13为第一产品交付，UI全面重构不作为其前置 |
 | K10 | 历史台账与点击基线不完整 | 保留原始失败/热修历史；逐项补证据，不补造PASS |
 
@@ -122,13 +122,14 @@
 | PILOT-20260927-24 | 2026-09-27 | Pilot 启动前在单一 SQLite 事务把 command 与 execution 从 queued 认领为 running 并绑定 session；更新中断全部回滚，调用 Runtime 前再复核策略与员工绑定。用户停止、任务改派/暂停/删除及状态变更取消 queued Pilot 时，同一事务释放 command 的费用和次数预留；旧暂停恢复入口对现有账本也原子释放，缺失应有账本时拒绝取消。完成/失败/卡点/确认停止事件缺少可信 Provider 回执时，生产路径统一以 unknown 结算、暂停 grant 并保留预留待对账 | 预算账本 22 PASS，含认领/取消中断注入、旧入口额度重用和 unknown 结算；命令关联 5 PASS；既有研发执行 15 PASS；Electron typecheck、Biome PASS。没有 Provider 调用 | SQLite 认领提交与 Runtime 实际开始之间不能跨系统原子化，间隙崩溃仍需恢复对账；创建会话/工作树失败保持 queued 但会留下可回收的私有会话资产；尚无可信回执采集和真实受控派发。PM10 前移但 G0/G1 未通过 |
 | PILOT-20260927-25 | 2026-09-27 | 主进程初始化数据库后扫描遗留 running Pilot：不自动重派，先暂停同项目活动 grant 并将 execution 转 stale；仅当命令无旧费用痕迹且现有结算原语完整核验 execution/session/channel/model/link 时记录 unknown/needs_reconcile。缺命令/link、错版本或旧证据保持账本原样并报告 needs_attention；单条事务失败后仍单独撤权并继续扫描 | 恢复对账 11 PASS，覆盖真实数据库关闭/重开、破损账本、旧证据保留、事务回滚撤权及 queued/普通执行排除；全仓 typecheck、本切片 Biome PASS。没有 Runtime/Provider 调用 | `unknown_recorded` 仅表示未知费用已保守占额，不表示费用对账完成；无法证明崩溃前 Provider 是否已开始或仍在外部运行。真实 Runtime 停止证明、可信回执采集和受控派发仍未完成，G0/G1 未通过 |
 | PILOT-20260927-26 | 2026-09-27 | headless Runtime 完成回调透传原始终态 result；Pilot 将原文、Runtime、execution/session/channel/model、token、费用、原文哈希保存到禁止更新的 SQLite 回执表。带 `total_cost_usd` 的结果转换为 micros 后按 `runtime_reported` 结算；只有 token 时保留回执但仍按 unknown 撤权。结算与重启恢复均重新核对原文哈希、派生回执 ID、原文字段、会话和防重放键 | 预算账本 25 PASS，新增带费用结算、无费用停等、伪造引用、原文不可改写、会话错配、哈希损坏及重启缺记录行为；Project Pilot 15 文件、研发执行 15、全仓 typecheck 与 Biome PASS。未调用 Runtime/Provider | 该证据是 Runtime 转述，不是具有 Provider 请求 ID 的直接回执；Proma/AI SDK 当前终态没有费用，仍进入 `unknown_recorded`。Provider 直接回执、版本化价格快照、真实派发和停止证明仍未完成，G0/G1 未通过 |
+| PILOT-20260927-27 | 2026-09-27 | 当前 `ready_candidate` 接入唯一受控派发：二次权威对账后复核活动 grant、readiness、策略指纹、执行角色与工作区，生成确定性命令/执行 ID，复用预算账本原子排队及既有启动门禁。活动 Pilot 项目的普通员工派发与普通 queued 启动 fail-closed；后台停止信号贯穿二次对账并在预留前阻断 | 受控派发 3 PASS，后台对账 3 PASS，研发执行 16 PASS；Project Pilot 16 文件、全仓 typecheck、本切片 Biome、docs check 与 Electron build PASS。未调用 Runtime/Provider | 测试注入 readiness 与启动替身；production readiness 当前仍会阻塞全部首版 Runtime，因此没有真实 Runtime 开始/费用/停止证据。仅执行角色候选已接通，技术评审返工、审批续跑和依赖事件唤醒未实现；G0/G1 未通过 |
 
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
 ## 7. 下一次执行
 
 0. 接入 Provider 直接回执 ID 或版本化价格快照，并继续区分 Provider 原始证据、Runtime 转述、可追溯估算和 `unknown_recorded`。为首版安全研发路径实现可验证的调用级费用门禁，或在独立验证后明确纳入一个已支持该能力的 Runtime。
-1. 将候选意图接入唯一的真实受控派发入口，强制复用活动 grant、命令预算预留、原子排队/认领与 readiness；补齐认领到 Runtime 实际开始的可审计调用证据和故障注入，禁止从普通员工旧入口绕过。
+1. 在已接通的唯一受控派发入口上补齐认领到真实 Runtime 实际开始的可审计调用证据和故障注入；实现依赖事件唤醒，并保持普通员工旧入口不可绕过。
 2. 接入真实停止器和审批续跑；`request_stop` 未核验时保留预算并升级人工对账。完成执行→技术评审→有限返工→再审的确定性链路，终态仍不冒充人工业务验收。
 3. 实现最小项目收件箱与必要澄清/权限/交付/决策恢复，再用隔离 Git 样例逐项执行 A01–A07/A09a 的完整确定性闭环；G0/G1 均通过后，另行冻结模型、费用和调用上限并请求 G2 真实试跑授权。
 4. 每项分别记录实现、自动测试和真实验收；未知状态写 unknown，重测另记 Run，不用局部 PASS 代替门禁。
