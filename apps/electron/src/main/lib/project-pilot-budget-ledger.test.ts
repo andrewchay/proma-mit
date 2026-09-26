@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
-import { assertPilotCommandStartRecord, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
+import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getAgentExecution, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
+import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
+import { settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
+import { cancelLinkedQueuedPilotExecutions, registerPilotCommandLink } from './project-pilot-command-links'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-budget-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -149,6 +151,119 @@ test('预留、排队执行与关联同事务提交；重复命令不创建第�
     .toThrow('其他排队执行')
   expect(listAgentExecutionsByProject(project.id)).toHaveLength(1)
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+})
+
+test('启动认领在同一事务推进命令与执行，失败时不留下半启动状态', () => {
+  const { project, input } = fixture()
+  const queue = { executionId: `claim-${project.id}`, prompt: '执行任务' }
+  reserveAndQueuePilotCommand(input, queue)
+  const claimed = claimPilotCommandStart(queue.executionId, input.commandId, 1, 'session-claim')
+  expect(claimed.command.state).toBe('running')
+  expect(claimed.execution).toMatchObject({ status: 'running', sessionId: 'session-claim' })
+  expect(() => claimPilotCommandStart(queue.executionId, input.commandId, 1, 'other-session'))
+    .toThrow('排队状态无法核验')
+
+  const rollback = fixture()
+  const rollbackQueue = { executionId: `claim-rollback-${rollback.project.id}`, prompt: '执行任务' }
+  reserveAndQueuePilotCommand(rollback.input, rollbackQueue)
+  getProjectDb().exec(`CREATE TRIGGER pilot_claim_abort BEFORE UPDATE ON pilot_commands
+    WHEN NEW.id = '${rollback.input.commandId}' AND NEW.state = 'running'
+    BEGIN SELECT RAISE(ABORT, 'claim interrupted'); END`)
+  expect(() => claimPilotCommandStart(rollbackQueue.executionId, rollback.input.commandId, 1, 'session-rollback'))
+    .toThrow('claim interrupted')
+  expect(getAgentExecution(rollbackQueue.executionId)).toMatchObject({ status: 'queued', sessionId: '' })
+  expect(assertPilotCommandStartRecord(rollbackQueue.executionId, rollback.input.commandId, 1).state).toBe('queued')
+})
+
+test('取消尚未启动的 Pilot 执行会原子释放费用与次数预留，且不依赖活动授权', () => {
+  const { project, grantId, input } = fixture()
+  const executionId = `cancel-${project.id}`
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  getProjectDb().prepare("UPDATE pilot_runtime_grants SET state = 'paused', expires_at = 0 WHERE id = ?").run(grantId)
+  const cancelled = cancelQueuedPilotCommand(executionId, '任务已改派')
+  expect(cancelled.execution).toMatchObject({ status: 'cancelled', sessionId: '', error: '任务已改派' })
+  expect(cancelled.command).toMatchObject({ state: 'released', actualCostMicros: 0, executionId })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 0, committedCostMicros: 0 })
+})
+
+test('取消 Pilot 排队执行任一写入失败时回滚执行和命令状态', () => {
+  const { project, grantId, input } = fixture()
+  const executionId = `cancel-rollback-${project.id}`
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  getProjectDb().exec(`CREATE TRIGGER pilot_cancel_abort BEFORE UPDATE ON pilot_commands
+    WHEN NEW.id = '${input.commandId}' AND NEW.state = 'released'
+    BEGIN SELECT RAISE(ABORT, 'cancel interrupted'); END`)
+  expect(() => cancelQueuedPilotCommand(executionId, '任务已暂停')).toThrow('cancel interrupted')
+  expect(getAgentExecution(executionId)).toMatchObject({ status: 'queued', sessionId: '' })
+  expect(assertPilotCommandStartRecord(executionId, input.commandId, 1).state).toBe('queued')
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+})
+
+test('旧批量暂停入口遇到账本命令时也原子释放预留', () => {
+  const { project, grantId, input } = fixture()
+  const target = { executionId: `legacy-pause-${project.id}`, commandId: input.commandId }
+  reserveAndQueuePilotCommand(input, { executionId: target.executionId, prompt: '执行任务' })
+  getProjectDb().exec(`CREATE TRIGGER pilot_legacy_cancel_abort BEFORE UPDATE ON pilot_commands
+    WHEN NEW.id = '${input.commandId}' AND NEW.state = 'released'
+    BEGIN SELECT RAISE(ABORT, 'legacy cancel interrupted'); END`)
+  expect(() => cancelLinkedQueuedPilotExecutions(project.id, [target])).toThrow('legacy cancel interrupted')
+  expect(getAgentExecution(target.executionId)?.status).toBe('queued')
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+  getProjectDb().exec('DROP TRIGGER pilot_legacy_cancel_abort')
+  expect(cancelLinkedQueuedPilotExecutions(project.id, [target])).toEqual([target.executionId])
+  expect(getAgentExecution(target.executionId)?.status).toBe('cancelled')
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 0, committedCostMicros: 0 })
+  const nextTask = createTask(project.id, { title: '接续任务', description: '', workspaceId: 'workspace-a',
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  reservePilotCommandBudget({ ...input, commandId: `next-${project.id}`, idempotencyKey: 'next-task',
+    taskId: nextTask.id, sourceVersion: nextTask.updatedAt, sourceHash: hashPilotTaskSource(nextTask) })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+})
+
+test('旧批量暂停入口不能把缺失活动授权账本的排队执行当成旧数据取消', () => {
+  const { project } = fixture()
+  const target = { executionId: `missing-ledger-${project.id}`, commandId: `missing-command-${project.id}` }
+  createAgentExecution({ id: target.executionId, projectId: project.id, entityType: 'task', entityId: 'task-missing',
+    agentId: 'executor', sessionId: '', prompt: 'fixture', pilotCommandId: target.commandId })
+  registerPilotCommandLink({ ...target, projectId: project.id, policyRevision: 1 })
+  expect(() => cancelLinkedQueuedPilotExecutions(project.id, [target])).toThrow('授权账本缺少排队命令')
+  expect(getAgentExecution(target.executionId)?.status).toBe('queued')
+})
+
+test('Runtime 终结但没有可信回执时以 unknown 结算并暂停授权', () => {
+  const { project, grantId, input } = fixture()
+  const queue = { executionId: `unknown-${project.id}`, prompt: '执行任务' }
+  reserveAndQueuePilotCommand(input, queue)
+  claimPilotCommandStart(queue.executionId, input.commandId, 1, 'session-unknown')
+  updateAgentExecution(queue.executionId, { status: 'completed', completedAt: Date.now() })
+  const policyPath = join(dir, 'project-pilot-policies.json')
+  const hiddenPolicyPath = `${policyPath}.hidden`
+  renameSync(policyPath, hiddenPolicyPath)
+  try {
+    // 终结费用必须使用已冻结 grant；即使可变策略文件暂时不可读，也要撤权停等。
+    expect(settlePilotExecutionUnknownUsage(queue.executionId, 'SDK 未提供 Provider 回执')).toEqual({
+      commandId: input.commandId,
+      state: 'needs_reconcile',
+      actualCostMicros: null,
+      grantPaused: true,
+    })
+  } finally {
+    renameSync(hiddenPolicyPath, policyPath)
+  }
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(grantId))
+    .toEqual({ state: 'paused' })
+})
+
+test('终结用量因来源关联损坏无法结算时仍保守撤权', () => {
+  const { project, grantId, input } = fixture()
+  const executionId = `unknown-damaged-${project.id}`
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  claimPilotCommandStart(executionId, input.commandId, 1, 'session-damaged')
+  updateAgentExecution(executionId, { status: 'failed', completedAt: Date.now() })
+  getProjectDb().prepare('DELETE FROM pilot_command_links WHERE command_id = ?').run(input.commandId)
+  expect(() => settlePilotExecutionUnknownUsage(executionId, 'Provider 未返回回执')).toThrow('命令关联无法核验')
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(grantId))
+    .toEqual({ state: 'paused' })
 })
 
 test('排队阶段失败则回滚预留；已有预留遇授权暂停也不能排队', () => {

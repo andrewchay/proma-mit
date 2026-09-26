@@ -130,7 +130,7 @@ function sameCommand(row: CommandRow, input: PilotCommandReservationInput): bool
 }
 
 function readBudgetUsage(grantId: string): { runReservations: number; committedCostMicros: number } {
-  const row = getProjectDb().prepare(`SELECT COUNT(*) AS runs,
+  const row = getProjectDb().prepare(`SELECT COALESCE(SUM(CASE WHEN state = 'released' THEN 0 ELSE 1 END), 0) AS runs,
     COALESCE(SUM(CASE WHEN state = 'released' THEN 0 WHEN state = 'settled' AND actual_cost_micros IS NOT NULL THEN actual_cost_micros WHEN actual_cost_micros > reserved_cost_micros THEN actual_cost_micros ELSE reserved_cost_micros END), 0) AS committed
     FROM pilot_commands WHERE grant_id = ?`).get(grantId) as { runs: number; committed: number }
   if (!Number.isSafeInteger(row.runs) || !Number.isSafeInteger(row.committed) || row.committed < 0) {
@@ -257,6 +257,47 @@ export function reserveAndQueuePilotCommand(
   })
 }
 
+/** 取消尚未启动的 Pilot 执行，并在同一事务释放费用与次数预留。 */
+export function cancelQueuedPilotCommand(
+  executionId: string,
+  reason: string,
+  now = Date.now(),
+): { command: PilotCommandReservation; execution: AgentExecution } {
+  assertValidClock(now)
+  if (!executionId?.trim() || !reason?.trim()) throw new Error('Pilot 排队取消参数无效')
+  const database = getProjectDb()
+  let result: { command: PilotCommandReservation; execution: AgentExecution } | undefined
+  database.transaction(() => {
+    const execution = getAgentExecution(executionId)
+    if (!execution?.pilotCommandId || execution.status !== 'queued' || execution.sessionId !== '') {
+      throw new Error('Pilot 排队执行已变化或归属无法核验')
+    }
+    assertPilotExecutionLinked(executionId)
+    const command = database.prepare('SELECT * FROM pilot_commands WHERE id = ? AND project_id = ?')
+      .get(execution.pilotCommandId, execution.projectId) as CommandRow | undefined
+    if (!command || command.execution_id !== executionId || command.state !== 'queued'
+      || command.source_task_id !== execution.entityId || command.employee_id !== execution.agentId) {
+      throw new Error('Pilot 排队命令已变化或归属无法核验')
+    }
+    const cancelled = database.prepare(`UPDATE agent_executions
+      SET status = 'cancelled', error = ?, last_heartbeat_at = ?, completed_at = ?
+      WHERE id = ? AND project_id = ? AND pilot_command_id = ? AND status = 'queued' AND session_id = ''`)
+      .run(reason, now, now, executionId, execution.projectId, execution.pilotCommandId)
+    const released = database.prepare(`UPDATE pilot_commands
+      SET state = 'released', actual_cost_micros = 0, updated_at = ?
+      WHERE id = ? AND project_id = ? AND execution_id = ? AND state = 'queued'`)
+      .run(now, execution.pilotCommandId, execution.projectId, executionId)
+    if (cancelled.changes !== 1 || released.changes !== 1) throw new Error('Pilot 排队取消状态已变化')
+    const currentExecution = getAgentExecution(executionId)
+    const currentCommand = database.prepare('SELECT * FROM pilot_commands WHERE id = ?')
+      .get(execution.pilotCommandId) as CommandRow | undefined
+    if (!currentExecution || !currentCommand) throw new Error('Pilot 排队取消无法核验')
+    result = { execution: currentExecution, command: fromRow(currentCommand) }
+  })()
+  if (!result) throw new Error('Pilot 排队取消未完成')
+  return result
+}
+
 /** 启动前只核验已入账且绑定本次执行的命令；本函数不启动 Runtime。 */
 function assertPilotCommandStartRecordLocked(
   executionId: string,
@@ -304,6 +345,46 @@ export function assertPilotCommandStartRecord(executionId: string, commandId: st
   return withGrantPolicySnapshot(execution.projectId, command.grant_id, (policy) => (
     assertPilotCommandStartRecordLocked(executionId, commandId, expectedPolicyRevision, now, policy)
   ))
+}
+
+/** 在同一 SQLite 事务内认领命令和执行；事务提交后才允许调用 Runtime。 */
+export function claimPilotCommandStart(
+  executionId: string,
+  commandId: string,
+  expectedPolicyRevision: number,
+  sessionId: string,
+  now = Date.now(),
+): { command: PilotCommandReservation; execution: AgentExecution } {
+  assertValidClock(now)
+  if (!sessionId?.trim()) throw new Error('Pilot 启动会话无效')
+  const execution = getAgentExecution(executionId)
+  if (!execution?.pilotCommandId) throw new Error('Pilot 执行归属或排队状态无法核验')
+  const command = getProjectDb().prepare('SELECT grant_id FROM pilot_commands WHERE id = ? AND project_id = ?')
+    .get(commandId, execution.projectId) as { grant_id: string } | undefined
+  if (!command) throw new Error('Pilot 已预留命令与执行不匹配')
+  return withGrantPolicySnapshot(execution.projectId, command.grant_id, (policy) => {
+    const database = getProjectDb()
+    let result: { command: PilotCommandReservation; execution: AgentExecution } | undefined
+    database.transaction(() => {
+      assertPilotCommandStartRecordLocked(executionId, commandId, expectedPolicyRevision, now, policy)
+      const claimedExecution = database.prepare(`UPDATE agent_executions
+        SET status = 'running', session_id = ?, last_heartbeat_at = ?
+        WHERE id = ? AND pilot_command_id = ? AND status = 'queued' AND session_id = ''`)
+        .run(sessionId, now, executionId, commandId)
+      const claimedCommand = database.prepare(`UPDATE pilot_commands SET state = 'running', updated_at = ?
+        WHERE id = ? AND execution_id = ? AND state = 'queued'`)
+        .run(now, commandId, executionId)
+      if (claimedExecution.changes !== 1 || claimedCommand.changes !== 1) {
+        throw new Error('Pilot 启动认领状态已变化')
+      }
+      const currentExecution = getAgentExecution(executionId)
+      const currentCommand = database.prepare('SELECT * FROM pilot_commands WHERE id = ?').get(commandId) as CommandRow | undefined
+      if (!currentExecution || !currentCommand) throw new Error('Pilot 启动认领无法核验')
+      result = { execution: currentExecution, command: fromRow(currentCommand) }
+    })()
+    if (!result) throw new Error('Pilot 启动认领未完成')
+    return result
+  })
 }
 
 export interface PilotCommandSettlement {

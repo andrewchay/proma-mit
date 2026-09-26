@@ -18,9 +18,10 @@ import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopme
 import { getProjectChain } from './project-chain-service'
 import { getPilotPolicy } from './project-pilot-policy'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
-import { assertPilotCommandStartRecord } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart } from './project-pilot-budget-ledger'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
+import { settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
 
@@ -248,6 +249,19 @@ export type CancelAgentExecutionResult =
   | { id: string; status: 'cancelled'; stopped: true; processTermination: 'VERIFIED' }
   | { id: string; status: 'running'; stopped: false; stopRequested: true; processTermination: 'NOT_VERIFIED' }
 
+function cancelQueuedExecution(execution: AgentExecution, reason: string, cancelledAt = Date.now()): AgentExecution {
+  if (execution.status !== 'queued') throw new Error('仅能取消排队中的执行')
+  if (execution.pilotCommandId) return cancelQueuedPilotCommand(execution.id, reason, cancelledAt).execution
+  const cancelled = store.updateAgentExecution(execution.id, {
+    status: 'cancelled',
+    error: reason,
+    lastHeartbeatAt: cancelledAt,
+    completedAt: cancelledAt,
+  })
+  if (!cancelled) throw new Error('排队执行取消失败')
+  return cancelled
+}
+
 export function cancelAgentExecution(executionId: string): CancelAgentExecutionResult {
   const execution = store.getAgentExecution(executionId)
   if (!execution) throw new Error('未找到 Agent 执行记录')
@@ -276,12 +290,16 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   }
 
   const stoppedAt = Date.now()
-  store.updateAgentExecution(execution.id, {
-    status: 'cancelled',
-    error: '用户已停止执行，未交付',
-    lastHeartbeatAt: stoppedAt,
-    completedAt: stoppedAt,
-  })
+  if (execution.status === 'queued') cancelQueuedExecution(execution, '用户已停止执行，未交付', stoppedAt)
+  else {
+    store.updateAgentExecution(execution.id, {
+      status: 'cancelled',
+      error: '用户已停止执行，未交付',
+      lastHeartbeatAt: stoppedAt,
+      completedAt: stoppedAt,
+    })
+  }
+  if (execution.status === 'running') recordUnknownPilotUsage(execution.id, 'Runtime 停止后没有可核验的 Provider 用量回执', stoppedAt)
   writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
   recordActivity(store.getAgentExecution(execution.id)!, 'agent_cancelled', '用户停止执行，未交付')
   // 取消仅保留待人工审查的样本，绝不自动进入演化输入。
@@ -455,7 +473,7 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
 function cancelReassignedQueue(task: Task): void {
   for (const run of store.listAgentExecutionsByEntity('task', task.id)) {
     if (run.status === 'queued' && run.agentId !== parseAgentId(task.assignee?.userId)) {
-      store.updateAgentExecution(run.id, { status: 'cancelled', completedAt: Date.now(), error: '任务已改派，取消旧排队项' })
+      cancelQueuedExecution(run, '任务已改派，取消旧排队项')
       recordActivity(store.getAgentExecution(run.id)!, 'agent_cancelled', '任务已改派，取消旧排队项')
     }
   }
@@ -557,7 +575,12 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   if (execution.entityType === 'task') {
     const current = store.getTask(execution.entityId)
     if (!current || !isExecutableAgentTask(current) || parseAgentId(current.assignee?.userId) !== execution.agentId) {
-      store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: Date.now(), error: '任务已删除、暂停或改派，取消排队' })
+      try {
+        cancelQueuedExecution(execution, '任务已删除、暂停或改派，取消排队')
+      } catch (error) {
+        console.error(`[AgentEmployee] 执行 ${executionId} 排队取消失败，保留原状态等待恢复:`, error)
+        return false
+      }
       if (current && isExecutableAgentTask(current) && isAgentAssignee(current)) {
         await dispatchTaskToAgentIfIdle(current)
       }
@@ -618,7 +641,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       modelId = target.modelId
       permissionModeOverride = target.permissionMode
     } catch (error) {
-      handleExecutionError(executionId, error instanceof Error ? error.message : '研发配置无效', execution.startedAt)
+      const message = error instanceof Error ? error.message : '研发配置无效'
+      if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })
+      else handleExecutionError(executionId, message, execution.startedAt)
       return false
     }
   }
@@ -652,8 +677,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       stoppedByUser: false,
       ...(development ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
     })
-    // 尽早保留会话定位，创建 worktree 失败也能找到失败记录。
-    store.updateAgentExecution(executionId, { sessionId })
+    // 普通执行尽早保留会话定位；Pilot 必须等到调用 Runtime 前与命令同事务认领。
+    if (!execution.pilotCommandId) store.updateAgentExecution(executionId, { sessionId })
     if (development) {
       const workspace = getAgentWorkspace(workspaceId!)!
       const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, sessionId)
@@ -665,14 +690,36 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     }
   } catch (error) {
     console.error('[AgentEmployee] 创建会话失败:', error)
-    handleExecutionError(executionId, error instanceof Error ? error.message : '创建 Agent 会话失败', execution.startedAt)
+    const message = error instanceof Error ? error.message : '创建 Agent 会话失败'
+    if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })
+    else handleExecutionError(executionId, message, execution.startedAt)
     return false
   }
 
-  // 2. 更新执行：sessionId + running
-  store.updateAgentExecution(executionId, { sessionId, status: 'running', lastHeartbeatAt: Date.now() })
+  // 会话读取等准备工作放在认领前；认领后应立即调用 Runtime。
+  let previousMessageIds: Set<string>
+  try {
+    previousMessageIds = new Set(normalizeExecutionMessages(getAgentSessionMessages(sessionId)).map((message) => message.id).filter(Boolean))
+  } catch (error) {
+    console.warn(`[AgentEmployee] 执行 ${executionId} 读取会话消息失败:`, error)
+    return false
+  }
+
+  // 2. 更新执行：Pilot 命令与 execution 同事务认领，避免暂停或重启看到半启动状态。
+  if (execution.pilotCommandId) {
+    try {
+      const policy = getPilotPolicy(execution.projectId)
+      const readiness = inspectPilotReadiness(execution.projectId)
+      if (!policy || !readiness.bindingsValid || readiness.policyRevision !== policy.revision) return false
+      claimPilotCommandStart(executionId, execution.pilotCommandId, policy.revision, sessionId)
+    } catch (error) {
+      console.warn(`[AgentEmployee] Pilot 执行 ${executionId} 启动认领失败:`, error)
+      return false
+    }
+  } else {
+    store.updateAgentExecution(executionId, { sessionId, status: 'running', lastHeartbeatAt: Date.now() })
+  }
   const updated = store.getAgentExecution(executionId)!
-  recordActivity(updated, 'agent_started', `AI 员工 ${employee.name} 开始执行任务`)
 
   // 研发员工不再绕过审批；普通员工暂保留旧路径，避免无关迁移。
   const startedAt = Date.now()
@@ -680,7 +727,6 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   const clearRuntimeGeneration = (): void => {
     if (runtimeGenerationByExecution.get(executionId) === startedAt) runtimeGenerationByExecution.delete(executionId)
   }
-  const previousMessageIds = new Set(normalizeExecutionMessages(getAgentSessionMessages(sessionId)).map((message) => message.id).filter(Boolean))
   runRegisteredHeadlessAgent(
     {
       sessionId,
@@ -715,6 +761,12 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     clearRuntimeGeneration()
     handleExecutionError(executionId, error instanceof Error ? error.message : '未知错误', startedAt)
   })
+
+  try {
+    recordActivity(updated, 'agent_started', `AI 员工 ${employee.name} 开始执行任务`)
+  } catch (error) {
+    console.warn(`[AgentEmployee] 执行 ${executionId} 启动活动记录失败:`, error)
+  }
 
   return true
 }
@@ -851,13 +903,23 @@ function writebackExecutionResult(
   })
 }
 
+function recordUnknownPilotUsage(executionId: string, reason: string, capturedAt: number): void {
+  try {
+    settlePilotExecutionUnknownUsage(executionId, reason, capturedAt)
+  } catch (error) {
+    console.error(`[AgentEmployee] Pilot 执行 ${executionId} 未知用量结算失败，保留待恢复对账:`, error)
+  }
+}
+
 /** 执行完成回写 */
 function handleExecutionComplete(executionId: string, messages: AgentMessage[] | undefined, startedAt: number, stoppedByUser = false): void {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'running') return
   if (stoppedByUser) {
-    store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: Date.now(), error: '用户已停止执行，未交付' })
-    writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', Date.now())
+    const stoppedAt = Date.now()
+    store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: '用户已停止执行，未交付' })
+    recordUnknownPilotUsage(executionId, 'Runtime 停止完成事件没有可核验的 Provider 用量回执', stoppedAt)
+    writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
     recordActivity(store.getAgentExecution(executionId)!, 'agent_cancelled', '用户停止执行，未交付')
     recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
     return
@@ -880,6 +942,7 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
       lastHeartbeatAt: completedAt,
       completedAt,
     })
+    recordUnknownPilotUsage(executionId, 'Runtime 卡点终结事件没有可核验的 Provider 用量回执', completedAt)
     writebackExecutionResult(execution, 'paused', `【AI 卡点待决策】${blocker}——${summary.slice(0, 400)}`, completedAt)
     recordActivity(store.getAgentExecution(executionId)!, 'agent_blocked', `AI 员工报告卡点需人工决策：${blocker}`)
     void notifyAgentGuardrail(execution.projectId, execution.entityId, 'AI 执行卡点待决策', `卡点：${blocker}。说明：${summary.slice(0, 200)}`)
@@ -907,6 +970,7 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
     lastHeartbeatAt: completedAt,
     completedAt,
   })
+  recordUnknownPilotUsage(executionId, 'Runtime 完成事件没有可核验的 Provider 用量回执', completedAt)
 
   // 回写任务/子任务（按 entityType 区分，否则 subTask 会卡在 running）
   try {
@@ -958,6 +1022,7 @@ function handleExecutionError(executionId: string, error: string, startedAt: num
     lastHeartbeatAt: failedAt,
     completedAt: failedAt,
   })
+  recordUnknownPilotUsage(executionId, 'Runtime 失败事件没有可核验的 Provider 用量回执', failedAt)
 
   // 任务/子任务回退 paused，保留上下文可重试
   try {
@@ -1024,6 +1089,7 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
           lastHeartbeatAt: now,
           completedAt: now,
         })
+        recordUnknownPilotUsage(execution.id, 'Workflow 超时后没有可核验的 Provider 用量回执', now)
         writebackExecutionResult(execution, 'paused', '【AI 执行超时】Workflow 超时，请检查对应运行', now)
         recordActivity(store.getAgentExecution(execution.id)!, 'agent_timed_out', 'AI 员工 Workflow 执行超时')
       }
@@ -1050,6 +1116,7 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
           lastHeartbeatAt: now,
           completedAt: now,
         })
+        recordUnknownPilotUsage(execution.id, 'Runtime 因 token 配额超限停止后没有可核验的 Provider 用量回执', now)
         writebackExecutionResult(execution, 'paused', `【AI 配额超限】已消耗 ${used} tokens（预算 ${task.tokenBudget}），执行已中止；可调高预算后重试`, now)
         recordActivity(store.getAgentExecution(execution.id)!, 'agent_budget_exceeded', `AI 员工 token 配额超限中止：${task.title}`)
         void notifyAgentGuardrail(execution.projectId, execution.entityId, 'AI 执行 token 配额超限', `已消耗 ${used} tokens（预算 ${task.tokenBudget}），执行已中止；可调高预算后重试。`)
@@ -1077,6 +1144,7 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
       lastHeartbeatAt: now,
       completedAt: now,
     })
+    recordUnknownPilotUsage(execution.id, 'Runtime 超时或失联后没有可核验的 Provider 用量回执', now)
     writebackExecutionResult(execution, 'paused', `【AI 执行${timedOut ? '超时' : '失联'}】请重试或人工介入`, now)
     recordActivity(
       store.getAgentExecution(execution.id)!,
@@ -1110,11 +1178,19 @@ export function registerAgentEmployeeProvider(): () => void {
           : stopRunningExecution(execution)
         const live = store.getAgentExecution(execution.id)
         if (stopConfirmation.stopped && live?.status === execution.status && live.sessionId === execution.sessionId) {
-          store.updateAgentExecution(execution.id, {
-            status: 'cancelled',
-            error: '任务已手动改状态，执行被取消',
-            completedAt: Date.now(),
-          })
+          const cancelledAt = Date.now()
+          if (execution.status === 'queued') {
+            cancelQueuedExecution(execution, '任务已手动改状态，执行被取消', cancelledAt)
+          } else {
+            store.updateAgentExecution(execution.id, {
+              status: 'cancelled',
+              error: '任务已手动改状态，执行被取消',
+              completedAt: cancelledAt,
+            })
+          }
+          if (execution.status === 'running') {
+            recordUnknownPilotUsage(execution.id, '任务状态变更停止 Runtime 后没有可核验的 Provider 用量回执', cancelledAt)
+          }
         } else if (!stopConfirmation.requestAccepted) {
           console.warn(`[AgentEmployee] 任务状态已改变，但未确认目标执行停止 execution=${execution.id}`)
         } else {

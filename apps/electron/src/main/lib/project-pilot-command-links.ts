@@ -70,21 +70,32 @@ export function registerPilotCommandLink(input: Omit<PilotCommandLink, 'createdA
   return result!
 }
 
-/** 已确认暂停后的底层原子操作；调用方须先校验影响面与策略版本。任何一项已启动则整批不取消。 */
+/** 已确认暂停后的底层原子操作；兼容旧的无账本关联，现有账本预留随执行一起释放。 */
 export function cancelLinkedQueuedPilotExecutions(projectId: string, targets: Array<{ executionId: string; commandId: string }>): string[] {
   if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('缺少项目 ID')
   if (new Set(targets.map((item) => item.executionId)).size !== targets.length) throw new Error('Pilot 排队执行重复')
   const database = getProjectDb()
   const cancelled: string[] = []
+  const commandsWithLedger = new Set<string>()
   database.transaction(() => {
     for (const target of targets) {
-      const link = database.prepare('SELECT command_id FROM pilot_command_links WHERE command_id = ? AND project_id = ? AND execution_id = ?')
-        .get(target.commandId, projectId, target.executionId) as { command_id: string } | undefined
+      const link = database.prepare('SELECT command_id, policy_revision FROM pilot_command_links WHERE command_id = ? AND project_id = ? AND execution_id = ?')
+        .get(target.commandId, projectId, target.executionId) as { command_id: string; policy_revision: number } | undefined
       const execution = getAgentExecution(target.executionId)
       if (!link || !execution || execution.projectId !== projectId || execution.pilotCommandId !== target.commandId
         || execution.status !== 'queued' || execution.sessionId !== '') {
         throw new Error('Pilot 排队执行已变化或命令归属无法核验，请重新预览')
       }
+      const command = database.prepare('SELECT state, execution_id FROM pilot_commands WHERE id = ? AND project_id = ?')
+        .get(target.commandId, projectId) as { state: string; execution_id: string | null } | undefined
+      if (!command && database.prepare('SELECT 1 FROM pilot_runtime_grants WHERE project_id = ? AND policy_revision = ? LIMIT 1')
+        .get(projectId, link.policy_revision)) {
+        throw new Error('Pilot 授权账本缺少排队命令，请重新预览')
+      }
+      if (command && (command.state !== 'queued' || command.execution_id !== target.executionId)) {
+        throw new Error('Pilot 排队命令已变化，请重新预览')
+      }
+      if (command) commandsWithLedger.add(target.commandId)
     }
     for (const target of targets) {
       const now = Date.now()
@@ -92,6 +103,13 @@ export function cancelLinkedQueuedPilotExecutions(projectId: string, targets: Ar
         WHERE id = ? AND project_id = ? AND pilot_command_id = ? AND status = 'queued' AND session_id = ''`)
         .run('用户确认暂停 Pilot，取消尚未启动的排队执行', now, target.executionId, projectId, target.commandId)
       if (updated.changes !== 1) throw new Error('Pilot 排队执行已变化，请重新预览')
+      if (commandsWithLedger.has(target.commandId)) {
+        const released = database.prepare(`UPDATE pilot_commands
+          SET state = 'released', actual_cost_micros = 0, updated_at = ?
+          WHERE id = ? AND project_id = ? AND execution_id = ? AND state = 'queued'`)
+          .run(now, target.commandId, projectId, target.executionId)
+        if (released.changes !== 1) throw new Error('Pilot 排队命令已变化，请重新预览')
+      }
       database.prepare(`INSERT INTO project_activities
         (id, project_id, entity_type, entity_id, action, summary, payload, actor, created_at)
         VALUES (?, ?, 'task', ?, 'pilot_queued_cancelled', ?, ?, 'local-user', ?)`)
