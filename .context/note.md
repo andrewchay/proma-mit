@@ -1,5 +1,33 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-09-26 Pilot PM04 历史候选意图账本
+- 新 `project-pilot-intent-store.ts` 从权威只读观察生成 task/decision/delivery 候选，SQLite 在项目迁移时建 `pilot_intents`，删除项目同事务清理。相同候选幂等、失效设 stale；重启后历史可追溯，展示前必须 `getCurrentPilotIntents` 重读事实。
+- 此账本没有 runnable command、执行器或通知；同项目 Promise 队列仅串行本模块对账，**不提供跨其他事实写者的严格快照一致性**。旧 open 只是上次对账结果，绝不能用于授权/自动派发。
+- 新账本 5 PASS，连同现有 Pilot/chain/service 五文件定向 24 PASS；typecheck/lint/diff-check PASS。无后台事件接线、真实自治或 UI 真机。PM04 仍部分完成。
+
+## 2026-09-26 Pilot PM11 任务列表审阅入口
+- 任务列表标题打开现有 `TaskReviewPanel`（Radix Dialog），而不是新建审批服务；操作成功后刷新项目权威任务列表。面板已有真实验证、冻结差异、验收/返工/应用；范围变更后重新冻结仍待实施。
+- 代码审查修正手写 modal 键盘问题及 Review 后列表不刷新的问题；typecheck/lint PASS，未进行 UI 真机。
+
+## 2026-09-26 Pilot 策略草案首片（不可激活）
+- 新增 `project-pilot-policy.ts`：每项目 JSON 草案，始终 paused；无 IPC 与执行器消费。写入限制预算、员工、模型、过期时间、revision；项目存在校验，缺实际绑定校验与预算扣减。
+- 为未来跨进程安全边界，采用独占目录锁覆盖读-改-写、随机独占临时文件、fsync 文件及目录；配置损坏和符号链接失败关闭。遗留锁需人工核查后恢复。
+- 7 个安全测试 PASS。**这不是实际授权，也没有付费模型动作；磁盘伪造 active 会被拒绝。** 下一步只能在真实绑定、预算预留、持久命令幂等和激活来源完成后开放。
+
+## 2026-09-26 Pilot 只读观察首片（未完成自治）
+- `project-pilot-reconcile.ts` 从权威 SQLite 任务/阻塞/执行与版本化 chain 只读投影项目状态和待当前 local-user 的候选决策、交付审阅；批量读取执行，指纹只用于展示，不是写命令锁。
+- `PROJECT_IPC_CHANNELS.OBSERVE_PILOT` → main handler → preload → ProjectView「概览」，前台刷新；不启用后台监控/模型/派发/审批。
+- 新测试 7 PASS，project-chain 4、project-service 1 回归 PASS；typecheck、lint 通过。无 UI 真机、真实模型、全量测试。
+- 下一步先持久项目授权/预算/受控命令/恢复，再接事件和依赖唤醒，最后做 Reviewer/收件箱续跑；当前不宣称 G0/G1/P0 通过。
+
+## 2026-09-26 项目智能管理目标校准
+- 用户原始诉求是项目管理者持续组织不同角色 Agent、无需进入工作区/会话推动步骤、必要时主动请求审批。UI/收件箱和配置简化是配套，不得替代主动管理主线。
+- 静态审计基线 HEAD 017f9088：headless/自动派发/Proactive/人工 Review 已有；项目级规划、依赖解除唤醒、自动技术审阅返工及统一审批续跑尚未接成闭环。未运行本轮新测试或真实模型。
+- 当前有效目标：`docs/plans/2026-09-26-project-pilot/goals-and-roadmap.md`；台账：同目录 `ledger.md`；完整实现证据：`implementation-audit.md`。历史 design.md 已显著标记被取代。
+- 第一交付改为受控主动推进纵向切片＋最小审批入口；基础权限/预算/幂等/暂停/隔离/最小崩溃安全同步交付，真实试跑前确认具体授权。
+- 已校正旧 Task Review ledger 的 11/11、R02/R03/G4 和零审批误推；保留 R01 PASS 及历史日志，未知仍 unknown，不等于自治通过。
+- 本轮仅文档变更；没有修改产品代码、CLAUDE/README、运行权限或创建业务任务。
+
 ## 2026-08-13 元素定位收敛 + 站点信任权限 ✅
 - **纯 AX ref**：BrowserEngineBackend.click/type 只认 Observe 的 AX ref（`r{g}-{i}`），不再做 element_id/selector DOM 定位回退（用户决策）；upload 仍用 CSS selector（合法例外）。Click/Type 工具描述已改。
 - **站点信任权限**：agent-permission-service 新增 `noteWebBridgeHost/trustWebBridgeHost/trustCurrentWebBridgeHost/isWebBridgeSiteTrusted`；`WebBridgeDownload` 在当前站点被信任时自动放行，`WebBridgeUpload` 永远逐次确认，导航/点击/输入保持工具白名单；web-bridge-service 在 rememberSnapshot 时 note 当前 host。

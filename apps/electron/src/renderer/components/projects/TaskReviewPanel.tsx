@@ -45,7 +45,7 @@ const DELIVERY_STATUS_LABELS: Record<string, { label: string; className: string 
   needs_review: { label: '需复核', className: 'bg-amber-500/10 text-amber-600' },
 }
 
-export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElement {
+export function TaskReviewPanel({ taskId, onChanged }: { taskId: string; onChanged?: () => void }): React.ReactElement {
   const [summary, setSummary] = React.useState<TaskReviewSummary | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
@@ -116,6 +116,7 @@ export function TaskReviewPanel({ taskId }: { taskId: string }): React.ReactElem
       await action()
       setEvidence(''); setComment('')
       await load()
+      onChanged?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

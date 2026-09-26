@@ -631,6 +631,18 @@ function migrate(database: SqliteCompat): void {
     );
     CREATE INDEX IF NOT EXISTS idx_deps_task ON task_dependencies(task_id);
 
+    CREATE TABLE IF NOT EXISTS pilot_intents (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_version TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('open', 'stale')),
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_intents_project ON pilot_intents(project_id, status);
+
     CREATE TABLE IF NOT EXISTS project_activities (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -1189,6 +1201,7 @@ export function deleteProject(id: string): boolean {
     for (const task of tasks) deleteTask(task.id)
     database.prepare(`DELETE FROM meeting_notes WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM project_activities WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_intents WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM outbox_events WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM risk_assessments WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM task_statuses WHERE project_id = ?`).run(id)

@@ -1808,6 +1808,7 @@ export interface ElectronAPI {
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
+      observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
       createProject: (input: unknown) => Promise<unknown>
       updateProject: (id: string, patch: unknown) => Promise<unknown | null>
       deleteProject: (id: string) => Promise<boolean>
@@ -4291,6 +4292,7 @@ const electronAPI: ElectronAPI = {
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),
       createProject: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_PROJECT, input),
       updateProject: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_PROJECT, id, patch),
       deleteProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_PROJECT, id),

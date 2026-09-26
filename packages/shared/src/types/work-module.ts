@@ -201,6 +201,8 @@ export const PROJECT_IPC_CHANNELS = {
   CREATE_TASK_DEPENDENCY: 'project:create-task-dependency',
   DELETE_TASK_DEPENDENCY: 'project:delete-task-dependency',
   LIST_TASK_BLOCKERS: 'project:list-task-blockers',
+  /** Project Pilot 只读对账；不能据此派发员工或启动模型。 */
+  OBSERVE_PILOT: 'project:observe-pilot',
   LIST_PROJECT_WORK_ITEMS: 'project:list-project-work-items',
   LIST_MY_WORK: 'project:list-my-work',
   /** PH2-⑤：我发起/指派的任务 */

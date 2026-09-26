@@ -19,6 +19,9 @@ import { activeTabIdAtom, openTab, tabsAtom } from "@/atoms/tab-atoms"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
+import { ProjectPilotOverview } from './ProjectPilotOverview'
+import { TaskReviewPanel } from './TaskReviewPanel'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
 import { ProjectWorkspacesPanel } from './ProjectWorkspacesPanel'
 import { KanbanBoard } from './kanban/KanbanBoard'
@@ -998,7 +1001,7 @@ function ProjectDetail({
   onBack: () => void
   onRefresh: () => void
 }): React.ReactElement {
-  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('tasks')
+  const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
@@ -1396,6 +1399,7 @@ function ProjectDetail({
       {/* 详情标签 */}
       <div className="flex gap-1 px-6 pt-3 border-b">
         {([
+          { key: 'pilot', label: '概览' },
           { key: 'tasks', label: '任务' },
           { key: 'chain', label: '决策与协作链路' },
           { key: 'knowledge', label: '知识' },
@@ -1470,6 +1474,7 @@ function ProjectDetail({
 
       {/* 详情内容 */}
       <div className="flex-1 overflow-auto p-6">
+        {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} />}
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
         {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
         {detailTab === 'workspaces' && <ProjectWorkspacesPanel key={project.id} projectId={project.id} />}
@@ -1479,6 +1484,7 @@ function ProjectDetail({
             tasks={tasks}
             statuses={taskStatuses}
             onTasksChange={setTasks}
+            onReviewChanged={loadData}
           />
         )}
         {detailTab === 'notes' && (
@@ -1932,11 +1938,13 @@ function TaskList({
   tasks,
   statuses,
   onTasksChange,
+  onReviewChanged,
 }: {
   projectId: string
   tasks: Task[]
   statuses: ProjectTaskStatus[]
   onTasksChange: (tasks: Task[]) => void
+  onReviewChanged: () => void
 }): React.ReactElement {
   const currentUserProfile = useAtomValue(userProfileAtom)
   // 展示层紧迫度排序：逾期未完成 > 优先级 > DDL 升序；完成组沉底。纯展示，不影响看板 sort_order。
@@ -1959,6 +1967,7 @@ function TaskList({
   const [workspaces, setWorkspaces] = useState<AgentWorkspaceResult[]>([])
   const [newWorkspaceId, setNewWorkspaceId] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
+  const [reviewTaskId, setReviewTaskId] = useState<string | null>(null)
 
   React.useEffect(() => {
     window.electronAPI.paa.agentEmployees.list()
@@ -2270,10 +2279,17 @@ function TaskList({
               onDelete={handleDelete}
               onSync={handleSync}
               onTaskUpdate={(updatedTask) => onTasksChange(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)))}
+              onOpenReview={() => setReviewTaskId(task.id)}
             />
           ))}
         </div>
       )}
+      <Dialog open={reviewTaskId !== null} onOpenChange={(open) => { if (!open) setReviewTaskId(null) }}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader><DialogTitle>任务交付审阅</DialogTitle></DialogHeader>
+          {reviewTaskId && <TaskReviewPanel taskId={reviewTaskId} onChanged={onReviewChanged} />}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -2286,6 +2302,7 @@ function TaskItem({
   onDelete,
   onSync,
   onTaskUpdate,
+  onOpenReview,
 }: {
   task: Task
   statuses: ProjectTaskStatus[]
@@ -2294,6 +2311,7 @@ function TaskItem({
   onDelete: (taskId: string) => void
   onSync: (taskId: string, platform: 'feishu' | 'dingtalk') => void
   onTaskUpdate: (task: Task) => void
+  onOpenReview: () => void
 }): React.ReactElement {
   const [showRiskModal, setShowRiskModal] = useState(false)
   const [showCompletionModal, setShowCompletionModal] = useState(false)
@@ -2651,9 +2669,10 @@ function TaskItem({
             <span className={`text-xs px-2 py-0.5 rounded-full ${priorityColor(task.priority)}`}>
               {priorityLabel(task.priority)}
             </span>
-            <span className={`font-medium text-sm truncate ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>
+            {/* 任务行直达权威 Review，不必先切换看板。 */}
+            <button type="button" onClick={onOpenReview} className={`font-medium text-sm truncate text-left hover:text-primary hover:underline ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`} title="查看任务交付与验证">
               {task.title}
-            </span>
+            </button>
             {/* AI 员工执行状态（P0） */}
             {isAgentTask && agentExecStatus && (
               <AgentExecutionBadge status={agentExecStatus} />

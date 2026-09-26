@@ -8,6 +8,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
+import { observeProjectPilot } from './project-pilot-reconcile'
 import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
@@ -424,6 +425,9 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT, async (_, id: string) => {
     return getProject(id)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, async (_, projectId: string) => {
+    return observeProjectPilot(projectId)
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.CREATE_PROJECT, async (_, input) => {
     return createProject(input)
