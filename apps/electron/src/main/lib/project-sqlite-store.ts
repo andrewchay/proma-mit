@@ -919,6 +919,11 @@ function migrate(database: SqliteCompat): void {
   if (!execColumns.includes('capability_version_ids')) database.exec("ALTER TABLE agent_executions ADD COLUMN capability_version_ids TEXT NOT NULL DEFAULT '[]'")
   if (!execColumns.includes('capability_content_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN capability_content_hash TEXT')
   if (!execColumns.includes('pilot_command_id')) database.exec('ALTER TABLE agent_executions ADD COLUMN pilot_command_id TEXT')
+  // 活动 Pilot grant 必须保存用户确认的冻结指纹；旧测试/历史行保持 NULL，不能用于新受控命令。
+  const pilotGrantColumns = readColumnNames(database, 'pilot_runtime_grants')
+  if (!pilotGrantColumns.includes('approval_fingerprint')) {
+    database.exec('ALTER TABLE pilot_runtime_grants ADD COLUMN approval_fingerprint TEXT')
+  }
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')

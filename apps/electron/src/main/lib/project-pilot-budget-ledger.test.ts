@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
 import { assertPilotCommandStartRecord, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandCost, type PilotCommandReservationInput } from './project-pilot-budget-ledger'
+import { insertPilotGrantFixture } from './project-pilot-test-helpers'
+import { getPilotPolicy, savePilotPolicyDraft } from './project-pilot-policy'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-budget-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -21,11 +23,9 @@ function fixture(state: 'paused' | 'active' = 'active', maxCostMicros = 1_000, m
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
   const grantId = `grant-${project.id}`
   const now = Date.now()
-  getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
-    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
-     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
-    VALUES (?, ?, 1, ?, 'workspace-a', 'channel-a', 'model-a', 'executor', 'reviewer', ?, ?, 1, ?, ?)`)
-    .run(grantId, project.id, state, maxCostMicros, maxRuns, now + 100_000, now)
+  insertPilotGrantFixture({ grantId, projectId: project.id, state, workspaceId: 'workspace-a',
+    channelId: 'channel-a', modelId: 'model-a', maxCostMicros, maxRuns, maxRework: 1,
+    expiresAt: now + 100_000, createdAt: now })
   const input: PilotCommandReservationInput = {
     commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'task-first-execution',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
@@ -73,6 +73,19 @@ test('跨项目、错角色、旧来源和未解除依赖在事务内拒绝，�
   expect(() => reservePilotCommandBudget({ ...input, sourceVersion: currentTask.updatedAt,
     sourceHash: hashPilotTaskSource(currentTask) })).toThrow('依赖尚未解除')
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 0, committedCostMicros: 0 })
+})
+
+test('grant 发行后策略范围变化时，即使活动行仍存在也拒绝新命令', () => {
+  const { project, input } = fixture()
+  const policy = getPilotPolicy(project.id)!
+  savePilotPolicyDraft(project.id, {
+    workspaceId: policy.workspaceId, employeeIds: policy.employeeIds,
+    executorEmployeeId: policy.executorEmployeeId!, reviewerEmployeeId: policy.reviewerEmployeeId!,
+    channelId: policy.channelId, modelId: policy.modelId, maxCostMicros: policy.maxCostMicros,
+    maxRuns: policy.maxRuns + 1, maxRework: policy.maxRework, expiresAt: policy.expiresAt,
+  }, policy.revision)
+  expect(() => reservePilotCommandBudget(input)).toThrow('授权版本已变化')
+  expect(listAgentExecutionsByProject(project.id)).toEqual([])
 })
 
 test('同库预留跨重启保留；同项目第二任务受预算约束，删除项目清理账本', async () => {

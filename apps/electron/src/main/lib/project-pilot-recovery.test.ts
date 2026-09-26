@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
 import { inspectPilotGrantRecovery } from './project-pilot-recovery'
+import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createAgentExecution, createProject, createTask, getProjectDb, initProjectDb, updateAgentExecution } from './project-sqlite-store'
 
 const root = mkdtempSync(join(tmpdir(), 'project-pilot-recovery-'))
@@ -22,11 +23,9 @@ function fixture() {
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
   const grantId = `grant-${project.id}`
   const now = Date.now()
-  getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
-    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
-     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
-    VALUES (?, ?, 1, 'active', 'pilot-workspace', 'channel', 'model', 'executor', 'reviewer', 1000, 1, 0, ?, ?)`)
-    .run(grantId, project.id, now + 100_000, now)
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId: 'pilot-workspace',
+    channelId: 'channel', modelId: 'model', maxCostMicros: 1_000, maxRuns: 1,
+    maxRework: 0, expiresAt: now + 100_000, createdAt: now })
   const input = { commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'first',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
     employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }

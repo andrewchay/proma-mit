@@ -128,6 +128,20 @@ export function getPilotPolicy(projectId: string): PilotPolicy | null {
   return readIndex().policies.find((p) => p.projectId === projectId) ?? null
 }
 
+/** 在跨进程策略锁内读取指定版本，供 SQLite grant 发行形成一致快照。 */
+export function withPilotPolicySnapshot<T>(
+  projectId: string,
+  expectedRevision: number,
+  operation: (policy: PilotPolicy) => T,
+): T {
+  if (!nonEmpty(projectId) || !positiveInt(expectedRevision)) throw new Error('Pilot 授权版本无效')
+  return withPolicyLock(() => {
+    const policy = readIndex().policies.find((item) => item.projectId === projectId)
+    if (!policy || policy.revision !== expectedRevision) throw new Error('Pilot 授权版本已变化')
+    return operation(policy)
+  })
+}
+
 /** 内部草案持久化入口：尚未公开为 IPC；写入始终暂停，不触发模型、任务或通知。 */
 export function savePilotPolicyDraft(projectId: string, input: PilotDraftInput, expectedRevision: number | null): PilotPolicy {
   if (!nonEmpty(projectId) || !getProject(projectId)) throw new Error('项目不存在')

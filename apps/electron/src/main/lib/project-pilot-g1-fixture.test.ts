@@ -6,6 +6,7 @@ import { getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotComm
 import { confirmPilotGrantPause, inspectPilotGrantPauseRecovery, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import { evaluatePilotPolicyBindings } from './project-pilot-readiness'
+import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, getAgentExecution,
   getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateTask } from './project-sqlite-store'
 import type { AgentEmployee } from './project-types'
@@ -52,13 +53,10 @@ test('隔离 Git 项目完成无模型的双角色命令、预算和暂停纵向
   expect(preflight.bindingsValid).toBe(true)
   expect(policy.state).toBe('paused')
 
-  // 活动 grant 仅由临时 SQLite fixture 构造；产品仍没有授权发行入口。
+  // 测试 grant 与已保存策略快照一致；本测试仍不调用模型或 Runtime。
   const grantId = `g1-grant-${project.id}`
-  getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
-    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
-     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
-    VALUES (?, ?, ?, 'active', ?, ?, ?, 'executor', 'reviewer', 1200, 2, 1, ?, ?)`)
-    .run(grantId, project.id, policy.revision, workspaceId, channelId, modelId, policy.expiresAt, now)
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    maxCostMicros: 1_200, maxRuns: 2, maxRework: 1, expiresAt: policy.expiresAt, createdAt: now })
   const upstream = createTask(project.id, { title: '依赖任务', description: '' })
   const executionTask = createTask(project.id, { title: '实现样例变更', description: '', workspaceId,
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
@@ -117,11 +115,10 @@ test('两个隔离 Git 项目不能混用 grant、任务或工作区；暂停一
   const grantA = `grant-${a.id}`
   const grantB = `grant-${b.id}`
   const workspaceB = 'g1-isolated-git-b'
-  const insertGrant = (grantId: string, projectId: string, workspace: string) => getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
-    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
-     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
-    VALUES (?, ?, 1, 'active', ?, ?, ?, 'executor', 'reviewer', 600, 1, 0, ?, ?)`)
-    .run(grantId, projectId, workspace, channelId, modelId, now + 3_600_000, now)
+  const insertGrant = (grantId: string, projectId: string, workspace: string) => insertPilotGrantFixture({
+    grantId, projectId, workspaceId: workspace, channelId, modelId, maxCostMicros: 600,
+    maxRuns: 1, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now,
+  })
   insertGrant(grantA, a.id, workspaceId)
   insertGrant(grantB, b.id, workspaceB)
   const taskA = createTask(a.id, { title: '相近任务', description: '', workspaceId,
@@ -160,11 +157,8 @@ test('排队事务中断后重启无半成品，重试只生成一个命令与�
   const grantId = `grant-${project.id}`
   const task = createTask(project.id, { title: '可重试任务', description: '', workspaceId,
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
-  getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
-    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
-     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
-    VALUES (?, ?, 1, 'active', ?, ?, ?, 'executor', 'reviewer', 600, 1, 0, ?, ?)`)
-    .run(grantId, project.id, workspaceId, channelId, modelId, now + 3_600_000, now)
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    maxCostMicros: 600, maxRuns: 1, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
   const input = { commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'first',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
     employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }

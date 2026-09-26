@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
 import { confirmPilotGrantPause, confirmPilotGrantPauseAndRequestStops, inspectPilotGrantPauseRecovery, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
+import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createAgentExecution, createProject, createTask, getAgentExecution, getProjectDb,
   initProjectDb, updateAgentExecution } from './project-sqlite-store'
 
@@ -21,11 +22,9 @@ function fixture() {
   const project = createProject({ title: '受控暂停', description: '' })
   const grantId = `grant-${project.id}`
   const now = Date.now()
-  getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
-    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
-     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
-    VALUES (?, ?, 1, 'active', 'workspace-a', 'channel-a', 'model-a', 'executor', 'reviewer', 10000, 4, 1, ?, ?)`)
-    .run(grantId, project.id, now + 100_000, now)
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId: 'workspace-a',
+    channelId: 'channel-a', modelId: 'model-a', maxCostMicros: 10_000, maxRuns: 4,
+    maxRework: 1, expiresAt: now + 100_000, createdAt: now })
   const queue = (ordinal: number) => {
     const task = createTask(project.id, { title: `任务 ${ordinal}`, description: '', workspaceId: 'workspace-a',
       assignee: { userId: 'agent-executor', displayName: '执行员工' } })

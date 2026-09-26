@@ -3,8 +3,11 @@ import { createAgentExecution, getAgentExecution, getProjectDb, getTask, listTas
 import { assertPilotExecutionLinked, registerPilotCommandLink } from './project-pilot-command-links'
 import { resolveStateGroup } from './task-status-logic'
 import type { AgentExecution, Task } from './project-types'
+import type { PilotPolicy } from './project-pilot-policy'
+import { withPilotPolicySnapshot } from './project-pilot-policy'
+import { hashPilotGrantApproval } from './project-pilot-grant-issue'
 
-/** 仅供受控派发层使用的账本原语；当前没有活动 grant 的发行或执行派发入口。 */
+/** 仅供受控派发层使用的账本原语；活动 grant 尚未接入执行派发入口。 */
 export interface PilotCommandReservationInput {
   commandId: string
   projectId: string
@@ -41,6 +44,26 @@ interface GrantRow {
   max_runs: number
   max_rework: number
   expires_at: number
+  approval_fingerprint: string | null
+}
+
+function assertGrantMatchesPolicy(grant: GrantRow, policy: PilotPolicy): void {
+  if (policy.revision !== grant.policy_revision
+    || grant.approval_fingerprint !== hashPilotGrantApproval(policy)
+    || policy.workspaceId !== grant.workspace_id || policy.channelId !== grant.channel_id
+    || policy.modelId !== grant.model_id || policy.executorEmployeeId !== grant.executor_employee_id
+    || policy.reviewerEmployeeId !== grant.reviewer_employee_id
+    || policy.maxCostMicros !== grant.max_cost_micros || policy.maxRuns !== grant.max_runs
+    || policy.maxRework !== grant.max_rework || policy.expiresAt !== grant.expires_at) {
+    throw new Error('Pilot 活动授权与当前策略不一致')
+  }
+}
+
+function withGrantPolicySnapshot<T>(projectId: string, grantId: string, operation: (policy: PilotPolicy) => T): T {
+  const grant = getProjectDb().prepare('SELECT policy_revision FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
+    .get(grantId, projectId) as { policy_revision: number } | undefined
+  if (!grant) throw new Error('Pilot 活动授权不存在或已失效')
+  return withPilotPolicySnapshot(projectId, grant.policy_revision, operation)
 }
 
 interface CommandRow {
@@ -115,51 +138,51 @@ function readBudgetUsage(grantId: string): { runReservations: number; committedC
   return { runReservations: row.runs, committedCostMicros: row.committed }
 }
 
-/** 只预留费用和次数，不创建 Agent execution，也不调用模型。正向路径须由未来的授权发行层接入。 */
-export function reservePilotCommandBudget(input: PilotCommandReservationInput, now = Date.now()): PilotCommandReservation {
-  validateInput(input)
-  assertValidClock(now)
+/** 在已锁定的策略快照内预留费用和次数；不创建 Agent execution，也不调用模型。 */
+function reservePilotCommandBudgetLocked(
+  input: PilotCommandReservationInput,
+  now: number,
+  policy: PilotPolicy,
+): PilotCommandReservation {
   const database = getProjectDb()
-  let result: PilotCommandReservation | undefined
-  database.transaction(() => {
-    const previous = database.prepare('SELECT * FROM pilot_commands WHERE grant_id = ? AND idempotency_key = ?')
-      .get(input.grantId, input.idempotencyKey) as CommandRow | undefined
-    if (previous) {
-      if (!sameCommand(previous, input)) throw new Error('Pilot 命令幂等键已对应其他内容')
-      result = fromRow(previous)
-      return
-    }
-    const grant = database.prepare('SELECT * FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
-      .get(input.grantId, input.projectId) as GrantRow | undefined
-    if (!grant || grant.state !== 'active' || grant.expires_at <= now) throw new Error('Pilot 活动授权不存在或已失效')
-    if (input.reworkOrdinal > grant.max_rework) throw new Error('Pilot 返工次数超出授权')
-    const expectedEmployee = input.role === 'executor' ? grant.executor_employee_id : grant.reviewer_employee_id
-    if (input.employeeId !== expectedEmployee) throw new Error('Pilot 命令员工不在授权角色内')
+  const previous = database.prepare('SELECT * FROM pilot_commands WHERE grant_id = ? AND idempotency_key = ?')
+    .get(input.grantId, input.idempotencyKey) as CommandRow | undefined
+  if (previous) {
+    if (!sameCommand(previous, input)) throw new Error('Pilot 命令幂等键已对应其他内容')
+    return fromRow(previous)
+  }
+  const grant = database.prepare('SELECT * FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
+    .get(input.grantId, input.projectId) as GrantRow | undefined
+  if (!grant || grant.state !== 'active' || grant.expires_at <= now) throw new Error('Pilot 活动授权不存在或已失效')
+  assertGrantMatchesPolicy(grant, policy)
+  if (input.reworkOrdinal > grant.max_rework) throw new Error('Pilot 返工次数超出授权')
+  const expectedEmployee = input.role === 'executor' ? grant.executor_employee_id : grant.reviewer_employee_id
+  if (input.employeeId !== expectedEmployee) throw new Error('Pilot 命令员工不在授权角色内')
 
-    const task = getTask(input.taskId)
-    if (!task || task.projectId !== input.projectId || task.workspaceId !== grant.workspace_id
-      || task.assignee?.userId !== `agent-${input.employeeId}`) throw new Error('Pilot 任务、项目、工作区或负责人不匹配')
-    const group = resolveStateGroup(task.status, listTaskStatuses(input.projectId))
-    if (task.status === 'draft' || task.status === 'paused' || (group !== 'unstarted' && group !== 'started')) {
-      throw new Error('Pilot 任务状态不可派发')
-    }
-    if (task.updatedAt !== input.sourceVersion || hashPilotTaskSource(task) !== input.sourceHash) {
-      throw new Error('Pilot 命令来源版本已变化')
-    }
-    if (listTaskBlockers(input.projectId).some((blocker) => blocker.taskId === task.id)) {
-      throw new Error('Pilot 任务依赖尚未解除')
-    }
-    const activeTaskCommand = database.prepare(`SELECT id FROM pilot_commands
-      WHERE project_id = ? AND source_task_id = ? AND role = ? AND state IN ('reserved', 'queued', 'running', 'needs_reconcile') LIMIT 1`)
-      .get(input.projectId, input.taskId, input.role) as { id: string } | undefined
-    if (activeTaskCommand) throw new Error('Pilot 任务已有未结命令')
+  const task = getTask(input.taskId)
+  if (!task || task.projectId !== input.projectId || task.workspaceId !== grant.workspace_id
+    || task.assignee?.userId !== `agent-${input.employeeId}`) throw new Error('Pilot 任务、项目、工作区或负责人不匹配')
+  const group = resolveStateGroup(task.status, listTaskStatuses(input.projectId))
+  if (task.status === 'draft' || task.status === 'paused' || (group !== 'unstarted' && group !== 'started')) {
+    throw new Error('Pilot 任务状态不可派发')
+  }
+  if (task.updatedAt !== input.sourceVersion || hashPilotTaskSource(task) !== input.sourceHash) {
+    throw new Error('Pilot 命令来源版本已变化')
+  }
+  if (listTaskBlockers(input.projectId).some((blocker) => blocker.taskId === task.id)) {
+    throw new Error('Pilot 任务依赖尚未解除')
+  }
+  const activeTaskCommand = database.prepare(`SELECT id FROM pilot_commands
+    WHERE project_id = ? AND source_task_id = ? AND role = ? AND state IN ('reserved', 'queued', 'running', 'needs_reconcile') LIMIT 1`)
+    .get(input.projectId, input.taskId, input.role) as { id: string } | undefined
+  if (activeTaskCommand) throw new Error('Pilot 任务已有未结命令')
 
-    const usage = readBudgetUsage(input.grantId)
-    if (usage.runReservations >= grant.max_runs) throw new Error('Pilot 执行次数额度已耗尽')
-    if (!Number.isSafeInteger(grant.max_cost_micros) || grant.max_cost_micros <= 0
-      || input.reservedCostMicros > grant.max_cost_micros - usage.committedCostMicros) throw new Error('Pilot 费用额度不足或无法核验')
+  const usage = readBudgetUsage(input.grantId)
+  if (usage.runReservations >= grant.max_runs) throw new Error('Pilot 执行次数额度已耗尽')
+  if (!Number.isSafeInteger(grant.max_cost_micros) || grant.max_cost_micros <= 0
+    || input.reservedCostMicros > grant.max_cost_micros - usage.committedCostMicros) throw new Error('Pilot 费用额度不足或无法核验')
 
-    database.prepare(`INSERT INTO pilot_commands
+  database.prepare(`INSERT INTO pilot_commands
       (id, project_id, grant_id, idempotency_key, source_task_id, source_version, source_hash,
        employee_id, role, rework_ordinal, reserved_cost_micros, actual_cost_micros, state, execution_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'reserved', NULL, ?, ?)`).run(
@@ -167,10 +190,18 @@ export function reservePilotCommandBudget(input: PilotCommandReservationInput, n
       input.sourceVersion, input.sourceHash, input.employeeId, input.role, input.reworkOrdinal,
       input.reservedCostMicros, now, now,
     )
-    result = { ...input, state: 'reserved', actualCostMicros: null, executionId: null, createdAt: now, updatedAt: now }
-  })()
-  if (!result) throw new Error('Pilot 命令预留未完成')
-  return result
+  return { ...input, state: 'reserved', actualCostMicros: null, executionId: null, createdAt: now, updatedAt: now }
+}
+
+export function reservePilotCommandBudget(input: PilotCommandReservationInput, now = Date.now()): PilotCommandReservation {
+  validateInput(input)
+  assertValidClock(now)
+  return withGrantPolicySnapshot(input.projectId, input.grantId, (policy) => {
+    let result: PilotCommandReservation | undefined
+    getProjectDb().transaction(() => { result = reservePilotCommandBudgetLocked(input, now, policy) })()
+    if (!result) throw new Error('Pilot 命令预留未完成')
+    return result
+  })
 }
 
 /** 仅内部持久化切片：预留、排队执行和来源关联同事务提交；不会启动 Runtime。 */
@@ -182,43 +213,51 @@ export function reserveAndQueuePilotCommand(
   validateInput(input)
   assertValidClock(now)
   if (!queue.executionId?.trim() || !queue.prompt?.trim()) throw new Error('Pilot 排队执行参数无效')
-  const database = getProjectDb()
-  let result: { command: PilotCommandReservation; execution: AgentExecution } | undefined
-  database.transaction(() => {
-    const reservation = reservePilotCommandBudget(input, now)
-    const grant = database.prepare('SELECT * FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
-      .get(input.grantId, input.projectId) as GrantRow | undefined
-    if (!grant || grant.state !== 'active' || grant.expires_at <= now) throw new Error('Pilot 活动授权不存在或已失效')
-    if (reservation.state === 'queued') {
-      const existing = getAgentExecution(queue.executionId)
-      if (reservation.executionId !== queue.executionId || !existing || existing.prompt !== queue.prompt) {
-        throw new Error('Pilot 命令幂等键已对应其他排队执行')
+  return withGrantPolicySnapshot(input.projectId, input.grantId, (policy) => {
+    const database = getProjectDb()
+    let result: { command: PilotCommandReservation; execution: AgentExecution } | undefined
+    database.transaction(() => {
+      const reservation = reservePilotCommandBudgetLocked(input, now, policy)
+      const grant = database.prepare('SELECT * FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
+        .get(input.grantId, input.projectId) as GrantRow | undefined
+      if (!grant || grant.state !== 'active' || grant.expires_at <= now) throw new Error('Pilot 活动授权不存在或已失效')
+      assertGrantMatchesPolicy(grant, policy)
+      if (reservation.state === 'queued') {
+        const existing = getAgentExecution(queue.executionId)
+        if (reservation.executionId !== queue.executionId || !existing || existing.prompt !== queue.prompt) {
+          throw new Error('Pilot 命令幂等键已对应其他排队执行')
+        }
+        assertPilotCommandStartRecordLocked(queue.executionId, input.commandId, grant.policy_revision, now, policy)
+        assertPilotExecutionLinked(queue.executionId, grant.policy_revision)
+        result = { command: reservation, execution: existing }
+        return
       }
-      assertPilotCommandStartRecord(queue.executionId, input.commandId, grant.policy_revision, now)
-      assertPilotExecutionLinked(queue.executionId, grant.policy_revision)
-      result = { command: reservation, execution: existing }
-      return
-    }
-    if (reservation.state !== 'reserved' || reservation.executionId) throw new Error('Pilot 命令状态不可排队')
-    const execution = createAgentExecution({ id: queue.executionId, projectId: input.projectId,
-      entityType: 'task', entityId: input.taskId, agentId: input.employeeId, sessionId: '',
-      pilotCommandId: input.commandId, prompt: queue.prompt, startedAt: now })
-    const updated = database.prepare(`UPDATE pilot_commands SET state = 'queued', execution_id = ?, updated_at = ?
-      WHERE id = ? AND grant_id = ? AND state = 'reserved' AND execution_id IS NULL`)
-      .run(queue.executionId, now, input.commandId, input.grantId)
-    if (updated.changes !== 1) throw new Error('Pilot 命令排队状态已变化')
-    registerPilotCommandLink({ commandId: input.commandId, projectId: input.projectId,
-      executionId: queue.executionId, policyRevision: grant.policy_revision })
-    const command = assertPilotCommandStartRecord(queue.executionId, input.commandId, grant.policy_revision, now)
-    result = { command, execution }
-  })()
-  if (!result) throw new Error('Pilot 命令排队未完成')
-  return result
+      if (reservation.state !== 'reserved' || reservation.executionId) throw new Error('Pilot 命令状态不可排队')
+      const execution = createAgentExecution({ id: queue.executionId, projectId: input.projectId,
+        entityType: 'task', entityId: input.taskId, agentId: input.employeeId, sessionId: '',
+        pilotCommandId: input.commandId, prompt: queue.prompt, startedAt: now })
+      const updated = database.prepare(`UPDATE pilot_commands SET state = 'queued', execution_id = ?, updated_at = ?
+        WHERE id = ? AND grant_id = ? AND state = 'reserved' AND execution_id IS NULL`)
+        .run(queue.executionId, now, input.commandId, input.grantId)
+      if (updated.changes !== 1) throw new Error('Pilot 命令排队状态已变化')
+      registerPilotCommandLink({ commandId: input.commandId, projectId: input.projectId,
+        executionId: queue.executionId, policyRevision: grant.policy_revision })
+      const command = assertPilotCommandStartRecordLocked(queue.executionId, input.commandId, grant.policy_revision, now, policy)
+      result = { command, execution }
+    })()
+    if (!result) throw new Error('Pilot 命令排队未完成')
+    return result
+  })
 }
 
 /** 启动前只核验已入账且绑定本次执行的命令；本函数不启动 Runtime。 */
-export function assertPilotCommandStartRecord(executionId: string, commandId: string, expectedPolicyRevision: number, now = Date.now()): PilotCommandReservation {
-  assertValidClock(now)
+function assertPilotCommandStartRecordLocked(
+  executionId: string,
+  commandId: string,
+  expectedPolicyRevision: number,
+  now: number,
+  policy: PilotPolicy,
+): PilotCommandReservation {
   const execution = getAgentExecution(executionId)
   if (!execution || execution.pilotCommandId !== commandId || execution.status !== 'queued' || execution.sessionId !== '') {
     throw new Error('Pilot 执行归属或排队状态无法核验')
@@ -235,6 +274,7 @@ export function assertPilotCommandStartRecord(executionId: string, commandId: st
     || row.employee_id !== (row.role === 'executor' ? grant.executor_employee_id : grant.reviewer_employee_id)) {
     throw new Error('Pilot 命令活动授权已失效')
   }
+  assertGrantMatchesPolicy(grant, policy)
   const task = getTask(row.source_task_id)
   if (!task || task.projectId !== execution.projectId || task.workspaceId !== grant.workspace_id
     || task.assignee?.userId !== `agent-${row.employee_id}`
@@ -245,6 +285,18 @@ export function assertPilotCommandStartRecord(executionId: string, commandId: st
     throw new Error('Pilot 任务依赖尚未解除')
   }
   return fromRow(row)
+}
+
+export function assertPilotCommandStartRecord(executionId: string, commandId: string, expectedPolicyRevision: number, now = Date.now()): PilotCommandReservation {
+  assertValidClock(now)
+  const execution = getAgentExecution(executionId)
+  if (!execution?.pilotCommandId) throw new Error('Pilot 执行归属或排队状态无法核验')
+  const command = getProjectDb().prepare('SELECT grant_id FROM pilot_commands WHERE id = ? AND project_id = ?')
+    .get(commandId, execution.projectId) as { grant_id: string } | undefined
+  if (!command) throw new Error('Pilot 已预留命令与执行不匹配')
+  return withGrantPolicySnapshot(execution.projectId, command.grant_id, (policy) => (
+    assertPilotCommandStartRecordLocked(executionId, commandId, expectedPolicyRevision, now, policy)
+  ))
 }
 
 export interface PilotCommandSettlement {
