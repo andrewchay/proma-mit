@@ -10,8 +10,12 @@ export interface PilotPolicy {
   projectId: string
   revision: number
   state: 'paused'
+  pauseDecisionFingerprint?: string
   workspaceId: string
   employeeIds: string[]
+  /** 旧版草案可能缺少职责绑定；缺失时预检必须阻塞。 */
+  executorEmployeeId?: string
+  reviewerEmployeeId?: string
   modelId: string
   channelId: string
   maxCostMicros: number
@@ -24,6 +28,8 @@ export interface PilotPolicy {
 export interface PilotDraftInput {
   workspaceId: string
   employeeIds: string[]
+  executorEmployeeId: string
+  reviewerEmployeeId: string
   modelId: string
   channelId: string
   maxCostMicros: number
@@ -57,9 +63,15 @@ function validPolicy(value: unknown): value is PilotPolicy {
   if (!value || typeof value !== 'object') return false
   const p = value as Record<string, unknown>
   return p.version === 1 && nonEmpty(p.projectId) && positiveInt(p.revision)
-    && p.state === 'paused' && nonEmpty(p.workspaceId)
+    && p.state === 'paused' && (p.pauseDecisionFingerprint === undefined
+      || (typeof p.pauseDecisionFingerprint === 'string' && /^[a-f0-9]{64}$/.test(p.pauseDecisionFingerprint)))
+    && nonEmpty(p.workspaceId)
     && Array.isArray(p.employeeIds) && p.employeeIds.length > 0
     && p.employeeIds.every(nonEmpty) && new Set(p.employeeIds).size === p.employeeIds.length
+    && ((p.executorEmployeeId === undefined && p.reviewerEmployeeId === undefined)
+      || (nonEmpty(p.executorEmployeeId) && nonEmpty(p.reviewerEmployeeId)
+        && p.executorEmployeeId !== p.reviewerEmployeeId
+        && p.employeeIds.includes(p.executorEmployeeId) && p.employeeIds.includes(p.reviewerEmployeeId)))
     && nonEmpty(p.modelId) && nonEmpty(p.channelId) && positiveInt(p.maxCostMicros)
     && positiveInt(p.maxRuns) && nonNegativeInt(p.maxRework)
     && positiveInt(p.expiresAt) && nonNegativeInt(p.updatedAt)
@@ -122,6 +134,9 @@ export function savePilotPolicyDraft(projectId: string, input: PilotDraftInput, 
   if (!nonEmpty(input?.workspaceId) || !nonEmpty(input.modelId) || !nonEmpty(input.channelId)
     || !Array.isArray(input.employeeIds) || !input.employeeIds.length
     || !input.employeeIds.every(nonEmpty) || new Set(input.employeeIds).size !== input.employeeIds.length
+    || !nonEmpty(input.executorEmployeeId) || !nonEmpty(input.reviewerEmployeeId)
+    || input.executorEmployeeId === input.reviewerEmployeeId
+    || !input.employeeIds.includes(input.executorEmployeeId) || !input.employeeIds.includes(input.reviewerEmployeeId)
     || !positiveInt(input.maxCostMicros) || !positiveInt(input.maxRuns)
     || !nonNegativeInt(input.maxRework) || !positiveInt(input.expiresAt) || input.expiresAt <= Date.now()) {
     throw new Error('Pilot 策略草案必须限定工作区、员工、模型、预算、次数和有效期')
@@ -133,6 +148,7 @@ export function savePilotPolicyDraft(projectId: string, input: PilotDraftInput, 
     const policy: PilotPolicy = { version: 1, projectId, revision: (previous?.revision ?? 0) + 1,
       // 契约仅落为草案；待预算扣减、命令幂等和人工授权入口接通后另设激活事务。
       state: 'paused', workspaceId: input.workspaceId, employeeIds: [...input.employeeIds],
+      executorEmployeeId: input.executorEmployeeId, reviewerEmployeeId: input.reviewerEmployeeId,
       modelId: input.modelId, channelId: input.channelId, maxCostMicros: input.maxCostMicros,
       maxRuns: input.maxRuns, maxRework: input.maxRework, expiresAt: input.expiresAt, updatedAt: Date.now() }
     writeIndex({ version: 1, policies: [...index.policies.filter((p) => p.projectId !== projectId), policy] })
@@ -140,14 +156,16 @@ export function savePilotPolicyDraft(projectId: string, input: PilotDraftInput, 
   })
 }
 
-/** 仅停止未来动作；在途执行的取消与费用回收须由将来的执行器完成。 */
-export function pausePilotPolicy(projectId: string, expectedRevision: number): PilotPolicy {
-  if (!nonEmpty(projectId) || !positiveInt(expectedRevision)) throw new Error('Pilot 授权版本无效')
+/** 当前仅更新始终 paused 的内部草案；主动暂停须经 project-pilot-pause-impact 的影响面确认入口；本函数自身只更新草案。 */
+export function pausePilotPolicy(projectId: string, expectedRevision: number, decisionFingerprint?: string): PilotPolicy {
+  if (!nonEmpty(projectId) || !positiveInt(expectedRevision)
+    || (decisionFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(decisionFingerprint))) throw new Error('Pilot 授权版本无效')
   return withPolicyLock(() => {
     const index = readIndex()
     const previous = index.policies.find((p) => p.projectId === projectId)
     if (!previous || previous.revision !== expectedRevision) throw new Error('Pilot 授权版本已变化')
-    const policy: PilotPolicy = { ...previous, state: 'paused', revision: previous.revision + 1, updatedAt: Date.now() }
+    const policy: PilotPolicy = { ...previous, state: 'paused', pauseDecisionFingerprint: decisionFingerprint,
+      revision: previous.revision + 1, updatedAt: Date.now() }
     writeIndex({ version: 1, policies: [...index.policies.filter((p) => p.projectId !== projectId), policy] })
     return policy
   })

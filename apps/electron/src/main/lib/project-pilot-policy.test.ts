@@ -14,7 +14,7 @@ afterAll(() => {
   else process.env.PROMA_TEST_CONFIG_DIR = previous
   rmSync(dir, { recursive: true, force: true })
 })
-const grant = () => ({ workspaceId: 'fixture-workspace', employeeIds: ['executor', 'reviewer'], modelId: 'fixture-model',
+const grant = () => ({ workspaceId: 'fixture-workspace', employeeIds: ['executor', 'reviewer'], executorEmployeeId: 'executor', reviewerEmployeeId: 'reviewer', modelId: 'fixture-model',
   channelId: 'fixture-channel', maxCostMicros: 1_000_000, maxRuns: 3, maxRework: 1, expiresAt: Date.now() + 100_000 })
 
 test('未授权项目默认拒绝，单项目草案持久化但仍不可激活', () => {
@@ -26,6 +26,7 @@ test('未授权项目默认拒绝，单项目草案持久化但仍不可激活',
   expect(policy.revision).toBe(1)
   expect(policy.state).toBe('paused')
   expect(getPilotPolicy(first.id)?.employeeIds).toEqual(['executor', 'reviewer'])
+  expect(getPilotPolicy(first.id)?.reviewerEmployeeId).toBe('reviewer')
   expect(() => assertPilotPolicyActive(first.id)).toThrow('未获有效托管授权')
   expect(() => assertPilotPolicyActive(other.id)).toThrow('未获有效托管授权')
   expect(() => assertPilotPolicyActive(first.id, policy.expiresAt)).toThrow('未获有效托管授权')
@@ -47,6 +48,8 @@ test('拒绝虚构项目、缺预算、无效员工与重复员工', () => {
   expect(() => savePilotPolicyDraft('missing', grant(), null)).toThrow('项目不存在')
   expect(() => savePilotPolicyDraft(project.id, { ...grant(), maxCostMicros: 0 }, null)).toThrow('必须限定')
   expect(() => savePilotPolicyDraft(project.id, { ...grant(), employeeIds: ['executor', 'executor'] }, null)).toThrow('必须限定')
+  expect(() => savePilotPolicyDraft(project.id, { ...grant(), reviewerEmployeeId: 'executor' }, null)).toThrow('必须限定')
+  expect(() => savePilotPolicyDraft(project.id, { ...grant(), reviewerEmployeeId: 'other' }, null)).toThrow('必须限定')
   expect(() => savePilotPolicyDraft(project.id, { ...grant(), expiresAt: Date.now() - 1 }, null)).toThrow('必须限定')
 })
 
@@ -96,5 +99,24 @@ test('配置损坏拒绝授权读写，不以空索引覆盖', () => {
     expect(() => getPilotPolicy(project.id)).toThrow('无法读取')
     expect(() => savePilotPolicyDraft(project.id, grant(), null)).toThrow('无法读取')
     expect(readFileSync(file, 'utf8')).toBe('{bad')
+  } finally { writeFileSync(file, original) }
+})
+
+test('旧版暂停草案缺职责绑定仍可读取，但再次保存必须补齐明确执行与评审员工', () => {
+  const project = createProject({ title: '旧草案', description: '' })
+  const saved = savePilotPolicyDraft(project.id, grant(), null)
+  const file = join(dir, 'project-pilot-policies.json')
+  const original = readFileSync(file, 'utf8')
+  try {
+    const index = JSON.parse(original) as { version: number; policies: Array<Record<string, unknown>> }
+    const old = index.policies.find((item) => item.projectId === project.id)!
+    delete old.executorEmployeeId
+    delete old.reviewerEmployeeId
+    writeFileSync(file, JSON.stringify(index))
+    expect(getPilotPolicy(project.id)?.revision).toBe(saved.revision)
+    expect(getPilotPolicy(project.id)?.executorEmployeeId).toBeUndefined()
+    const updated = savePilotPolicyDraft(project.id, grant(), saved.revision)
+    expect(updated.executorEmployeeId).toBe('executor')
+    expect(updated.reviewerEmployeeId).toBe('reviewer')
   } finally { writeFileSync(file, original) }
 })

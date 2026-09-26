@@ -16,6 +16,9 @@ import { getChannelById } from './channel-manager'
 import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent-development-context'
 import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
 import { getProjectChain } from './project-chain-service'
+import { assertPilotPolicyActive, getPilotPolicy } from './project-pilot-policy'
+import { assertPilotExecutionLinked } from './project-pilot-command-links'
+import { assertPilotCommandStartRecord } from './project-pilot-budget-ledger'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
 
@@ -536,6 +539,17 @@ export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: s
 export async function tryStartExecution(executionId: string): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
+  // Pilot 执行每次启动前重新读取授权；未知、暂停或失效时保持 queued，等待对账。
+  if (execution.pilotCommandId) {
+    try {
+      const policy = getPilotPolicy(execution.projectId)
+      if (!policy) return false
+      const link = assertPilotExecutionLinked(execution.id, policy.revision)
+      assertPilotCommandStartRecord(execution.id, link.commandId, policy.revision)
+      assertPilotPolicyActive(execution.projectId)
+    }
+    catch { return false }
+  }
   if (execution.entityType === 'task') {
     const current = store.getTask(execution.entityId)
     if (!current || !isExecutableAgentTask(current) || parseAgentId(current.assignee?.userId) !== execution.agentId) {

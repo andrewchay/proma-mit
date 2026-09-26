@@ -643,6 +643,73 @@ function migrate(database: SqliteCompat): void {
     );
     CREATE INDEX IF NOT EXISTS idx_pilot_intents_project ON pilot_intents(project_id, status);
 
+    CREATE TABLE IF NOT EXISTS pilot_command_links (
+      command_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      policy_revision INTEGER NOT NULL,
+      execution_id TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_command_links_project ON pilot_command_links(project_id);
+
+    CREATE TABLE IF NOT EXISTS pilot_runtime_grants (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      policy_revision INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('paused', 'active')),
+      workspace_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      executor_employee_id TEXT NOT NULL,
+      reviewer_employee_id TEXT NOT NULL,
+      max_cost_micros INTEGER NOT NULL CHECK (max_cost_micros > 0),
+      max_runs INTEGER NOT NULL CHECK (max_runs > 0),
+      max_rework INTEGER NOT NULL CHECK (max_rework >= 0),
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE (project_id, policy_revision)
+    );
+    CREATE TABLE IF NOT EXISTS pilot_commands (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      grant_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      source_task_id TEXT NOT NULL,
+      source_version INTEGER NOT NULL,
+      source_hash TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('executor', 'reviewer')),
+      rework_ordinal INTEGER NOT NULL CHECK (rework_ordinal >= 0),
+      reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+      actual_cost_micros INTEGER CHECK (actual_cost_micros >= 0),
+      state TEXT NOT NULL CHECK (state IN ('reserved', 'queued', 'running', 'settled', 'released', 'needs_reconcile')),
+      execution_id TEXT UNIQUE,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (grant_id, idempotency_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_commands_project ON pilot_commands(project_id, grant_id);
+
+    CREATE TABLE IF NOT EXISTS pilot_grant_pause_decisions (
+      grant_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      policy_revision INTEGER NOT NULL,
+      fingerprint TEXT NOT NULL,
+      queued_targets TEXT NOT NULL,
+      running_choices TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pilot_pause_decisions (
+      project_id TEXT NOT NULL,
+      policy_revision INTEGER NOT NULL,
+      fingerprint TEXT NOT NULL,
+      queued_targets TEXT NOT NULL,
+      running_choices TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, policy_revision)
+    );
+
     CREATE TABLE IF NOT EXISTS project_activities (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -722,6 +789,7 @@ function migrate(database: SqliteCompat): void {
       agent_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
       executor TEXT NOT NULL DEFAULT 'headless',
+      pilot_command_id TEXT,
       status TEXT NOT NULL DEFAULT 'queued',
       prompt TEXT NOT NULL DEFAULT '',
       result_summary TEXT,
@@ -850,6 +918,7 @@ function migrate(database: SqliteCompat): void {
   }
   if (!execColumns.includes('capability_version_ids')) database.exec("ALTER TABLE agent_executions ADD COLUMN capability_version_ids TEXT NOT NULL DEFAULT '[]'")
   if (!execColumns.includes('capability_content_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN capability_content_hash TEXT')
+  if (!execColumns.includes('pilot_command_id')) database.exec('ALTER TABLE agent_executions ADD COLUMN pilot_command_id TEXT')
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
@@ -1202,6 +1271,11 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM meeting_notes WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM project_activities WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_intents WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_command_links WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_commands WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_grant_pause_decisions WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_runtime_grants WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_pause_decisions WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM outbox_events WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM risk_assessments WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM task_statuses WHERE project_id = ?`).run(id)
@@ -2565,7 +2639,7 @@ type AgentEmployeeRow = {
 
 type AgentExecutionRow = {
   id: string; project_id: string; entity_type: string; entity_id: string; agent_id: string;
-  session_id: string; executor: string | null; status: string; prompt: string; result_summary: string | null;
+  session_id: string; executor: string | null; pilot_command_id: string | null; status: string; prompt: string; result_summary: string | null;
   output_files: string | null; risk_level: string | null; error: string | null;
   requested_permissions: string | null; last_heartbeat_at: number | null;
   capability_version_ids: string | null; capability_content_hash: string | null;
@@ -2610,6 +2684,7 @@ function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
     agentId: row.agent_id,
     sessionId: row.session_id,
     executor: (row.executor as AgentExecution['executor']) ?? 'headless',
+    pilotCommandId: row.pilot_command_id ?? undefined,
     status: row.status as AgentExecution['status'],
     prompt: row.prompt,
     resultSummary: row.result_summary ?? undefined,
@@ -2738,8 +2813,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   const now = input.startedAt ?? Date.now()
   database.prepare(
     `INSERT INTO agent_executions
-     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
+     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
@@ -2748,6 +2823,7 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
     input.agentId,
     input.sessionId,
     input.executor ?? 'headless',
+    input.pilotCommandId ?? null,
     input.status ?? 'queued',
     input.prompt,
     JSON.stringify(input.requestedPermissions ?? []),
@@ -2771,7 +2847,7 @@ export function getAgentExecutionBySessionId(sessionId: string): AgentExecution 
   return row ? rowToAgentExecution(row) : null
 }
 
-export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecution, 'id' | 'projectId' | 'entityType' | 'entityId' | 'agentId' | 'startedAt'>>): AgentExecution | null {
+export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecution, 'id' | 'projectId' | 'entityType' | 'entityId' | 'agentId' | 'pilotCommandId' | 'startedAt'>>): AgentExecution | null {
   const database = getProjectDb()
   const existing = getAgentExecution(id)
   if (!existing) return null

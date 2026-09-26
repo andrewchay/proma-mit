@@ -510,6 +510,12 @@ async function bootstrap(): Promise<void> {
   await safeAwait('initProjectDb', async () => {
     const { initProjectDb } = await import('./lib/project-sqlite-store')
     await initProjectDb()
+    const { recoverAllPilotPauseQueues } = await import('./lib/project-pilot-pause-decision')
+    for (const recovery of recoverAllPilotPauseQueues()) {
+      if (recovery.result.state === 'needs_attention') {
+        console.warn(`[Pilot] 暂停恢复需人工对账 project=${recovery.projectId} revision=${recovery.policyRevision}: ${recovery.result.reason}`)
+      }
+    }
   })
 
   // 启动 Brief 回执服务（H5 表单 + 回调，供核心任务回执使用）

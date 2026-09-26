@@ -421,6 +421,8 @@ export interface AgentExecution {
   sessionId: string
   /** 执行器类型：headless（默认）/ workflow（绑定 SOP，sessionId 存 workflow:<runId>） */
   executor?: 'headless' | 'workflow'
+  /** 仅未来 Pilot 受控命令创建的执行填写；旧执行保持无归属。 */
+  pilotCommandId?: string
   status: AgentExecutionStatus
   prompt: string
   resultSummary?: string
@@ -547,6 +549,7 @@ export interface CreateAgentExecutionInput {
   agentId: string
   sessionId: string
   executor?: 'headless' | 'workflow'
+  pilotCommandId?: string
   prompt: string
   status?: AgentExecutionStatus
   requestedPermissions?: string[]
