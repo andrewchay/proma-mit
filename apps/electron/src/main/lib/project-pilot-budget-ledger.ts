@@ -19,10 +19,10 @@ export interface PilotCommandReservationInput {
   employeeId: string
   role: 'executor' | 'reviewer'
   reworkOrdinal: number
-  reservedCostMicros: number
 }
 
 export interface PilotCommandReservation extends PilotCommandReservationInput {
+  reservedCostMicros: number
   state: 'reserved' | 'queued' | 'running' | 'settled' | 'released' | 'needs_reconcile'
   actualCostMicros: number | null
   executionId: string | null
@@ -80,6 +80,7 @@ interface CommandRow {
   reserved_cost_micros: number
   actual_cost_micros: number | null
   usage_evidence: string | null
+  usage_record_key: string | null
   state: PilotCommandReservation['state']
   execution_id: string | null
   created_at: number
@@ -111,9 +112,8 @@ function validateInput(input: PilotCommandReservationInput): void {
     || !Number.isSafeInteger(input.sourceVersion) || input.sourceVersion < 0
     || !/^[a-f0-9]{64}$/.test(input.sourceHash)
     || (input.role !== 'executor' && input.role !== 'reviewer')
-    || !Number.isSafeInteger(input.reworkOrdinal) || input.reworkOrdinal < 0
-    || !Number.isSafeInteger(input.reservedCostMicros) || input.reservedCostMicros <= 0) {
-    throw new Error('Pilot 预算预留参数无效或费用未知')
+    || !Number.isSafeInteger(input.reworkOrdinal) || input.reworkOrdinal < 0) {
+    throw new Error('Pilot 预算预留参数无效')
   }
 }
 
@@ -126,7 +126,7 @@ function sameCommand(row: CommandRow, input: PilotCommandReservationInput): bool
     && row.idempotency_key === input.idempotencyKey && row.source_task_id === input.taskId
     && row.source_version === input.sourceVersion && row.source_hash === input.sourceHash
     && row.employee_id === input.employeeId && row.role === input.role
-    && row.rework_ordinal === input.reworkOrdinal && row.reserved_cost_micros === input.reservedCostMicros
+    && row.rework_ordinal === input.reworkOrdinal
 }
 
 function readBudgetUsage(grantId: string): { runReservations: number; committedCostMicros: number } {
@@ -180,8 +180,14 @@ function reservePilotCommandBudgetLocked(
 
   const usage = readBudgetUsage(input.grantId)
   if (usage.runReservations >= grant.max_runs) throw new Error('Pilot 执行次数额度已耗尽')
+  const remainingCostMicros = grant.max_cost_micros - usage.committedCostMicros
+  const remainingRuns = grant.max_runs - usage.runReservations
+  const reservedCostMicros = Math.ceil(remainingCostMicros / remainingRuns)
   if (!Number.isSafeInteger(grant.max_cost_micros) || grant.max_cost_micros <= 0
-    || input.reservedCostMicros > grant.max_cost_micros - usage.committedCostMicros) throw new Error('Pilot 费用额度不足或无法核验')
+    || !Number.isSafeInteger(remainingCostMicros) || remainingCostMicros <= 0
+    || !Number.isSafeInteger(reservedCostMicros) || reservedCostMicros <= 0) {
+    throw new Error('Pilot 费用额度不足或无法核验')
+  }
 
   database.prepare(`INSERT INTO pilot_commands
       (id, project_id, grant_id, idempotency_key, source_task_id, source_version, source_hash,
@@ -189,9 +195,9 @@ function reservePilotCommandBudgetLocked(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'reserved', NULL, ?, ?)`).run(
       input.commandId, input.projectId, input.grantId, input.idempotencyKey, input.taskId,
       input.sourceVersion, input.sourceHash, input.employeeId, input.role, input.reworkOrdinal,
-      input.reservedCostMicros, now, now,
+      reservedCostMicros, now, now,
     )
-  return { ...input, state: 'reserved', actualCostMicros: null, executionId: null, createdAt: now, updatedAt: now }
+  return { ...input, reservedCostMicros, state: 'reserved', actualCostMicros: null, executionId: null, createdAt: now, updatedAt: now }
 }
 
 export function reservePilotCommandBudget(input: PilotCommandReservationInput, now = Date.now()): PilotCommandReservation {
@@ -343,6 +349,36 @@ export function validatePilotUsageEvidence(evidence: PilotUsageEvidence): void {
   }
 }
 
+export function hashPilotProviderUsageRecord(channelId: string, providerRecordId: string): string {
+  return createHash('sha256').update(JSON.stringify({
+    source: 'provider_reported',
+    channelId,
+    providerRecordId,
+  })).digest('hex')
+}
+
+function usageRecordKey(evidence: PilotUsageEvidence): string | null {
+  if (evidence.source !== 'provider_reported') return null
+  return hashPilotProviderUsageRecord(evidence.channelId, evidence.providerRecordId)
+}
+
+function hasLegacyUsageReplay(recordKey: string, commandId: string): boolean {
+  const rows = getProjectDb().prepare(`SELECT id, usage_evidence FROM pilot_commands
+    WHERE usage_record_key IS NULL AND usage_evidence IS NOT NULL AND id <> ?`).all(commandId) as Array<{
+      id: string
+      usage_evidence: string
+    }>
+  return rows.some((row) => {
+    try {
+      const legacy = JSON.parse(row.usage_evidence) as PilotUsageEvidence
+      return legacy.source === 'provider_reported'
+        && hashPilotProviderUsageRecord(legacy.channelId, legacy.providerRecordId) === recordKey
+    } catch {
+      return false
+    }
+  })
+}
+
 /** 只接受与执行归属完全绑定的 Provider 回执、可追溯估算或显式未知证据。 */
 export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageEvidence, now = Date.now()): PilotCommandSettlement {
   if (typeof commandId !== 'string' || !commandId.trim()) throw new Error('Pilot 结算命令无效')
@@ -351,6 +387,7 @@ export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageE
   if (evidence.capturedAt > now) throw new Error('Pilot 用量证据时间无效')
   const actualCostMicros = evidence.source === 'unknown' ? null : evidence.costMicros
   const serializedEvidence = JSON.stringify(evidence)
+  const recordKey = usageRecordKey(evidence)
   const database = getProjectDb()
   let result: PilotCommandSettlement | undefined
   database.transaction(() => {
@@ -371,15 +408,24 @@ export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageE
       throw new Error('Pilot 用量证据与执行、会话、渠道或模型不匹配')
     }
     if ((command.state === 'settled' || command.state === 'needs_reconcile')
-      && command.actual_cost_micros === actualCostMicros && command.usage_evidence === serializedEvidence) {
+      && command.actual_cost_micros === actualCostMicros && command.usage_evidence === serializedEvidence
+      && command.usage_record_key === recordKey) {
       result = { commandId, state: command.state, actualCostMicros, grantPaused: grant.state === 'paused' }
       return
     }
     if (command.state !== 'running') throw new Error('Pilot 命令状态不可结算')
+    if (recordKey) {
+      const replay = database.prepare('SELECT id FROM pilot_commands WHERE usage_record_key = ? AND id <> ?')
+        .get(recordKey, commandId) as { id: string } | undefined
+      if (replay || hasLegacyUsageReplay(recordKey, commandId)) {
+        throw new Error('Pilot Provider 用量回执已被其他命令使用')
+      }
+    }
     const exceeded = actualCostMicros === null || actualCostMicros > command.reserved_cost_micros
     const state = exceeded ? 'needs_reconcile' : 'settled'
-    const updated = database.prepare(`UPDATE pilot_commands SET state = ?, actual_cost_micros = ?, usage_evidence = ?, updated_at = ?
-      WHERE id = ? AND state = 'running'`).run(state, actualCostMicros, serializedEvidence, now, commandId)
+    const updated = database.prepare(`UPDATE pilot_commands
+      SET state = ?, actual_cost_micros = ?, usage_evidence = ?, usage_record_key = ?, updated_at = ?
+      WHERE id = ? AND state = 'running'`).run(state, actualCostMicros, serializedEvidence, recordKey, now, commandId)
     if (updated.changes !== 1) throw new Error('Pilot 结算状态已变化')
     if (exceeded) {
       database.prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE id = ? AND state = 'active'")

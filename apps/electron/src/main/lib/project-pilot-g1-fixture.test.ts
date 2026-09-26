@@ -65,8 +65,7 @@ test('隔离 Git 项目完成无模型的双角色命令、预算和暂停纵向
     const task = getTask(taskId)!
     return { commandId: `g1-command-${project.id}-${ordinal}`, projectId: project.id, grantId,
       idempotencyKey: `g1-${role}-${ordinal}`, taskId, sourceVersion: task.updatedAt,
-      sourceHash: hashPilotTaskSource(task), employeeId: role, role, reworkOrdinal: 0,
-      reservedCostMicros: 600 }
+      sourceHash: hashPilotTaskSource(task), employeeId: role, role, reworkOrdinal: 0 }
   }
   expect(() => reserveAndQueuePilotCommand(command(executionTask.id, 'executor', 1),
     { executionId: `g1-execution-${project.id}`, prompt: '实现样例变更' })).toThrow('依赖尚未解除')
@@ -129,7 +128,7 @@ test('两个隔离 Git 项目不能混用 grant、任务或工作区；暂停一
     const task = getTask(taskId)!
     return { commandId: `command-${projectId}`, projectId, grantId, idempotencyKey: 'first',
       taskId, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-      employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }
+      employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
   }
   expect(Bun.file(join(repo, '.git', 'HEAD')).size).toBeGreaterThan(0)
   expect(Bun.file(join(secondRepo, '.git', 'HEAD')).size).toBeGreaterThan(0)
@@ -161,7 +160,7 @@ test('排队事务中断后重启无半成品，重试只生成一个命令与�
     maxCostMicros: 600, maxRuns: 1, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
   const input = { commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'first',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }
+    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
   const queue = { executionId: `execution-${project.id}`, prompt: '可重试任务' }
   getProjectDb().exec(`CREATE TRIGGER pilot_g1_abort BEFORE INSERT ON pilot_command_links
     WHEN NEW.command_id = '${input.commandId}' BEGIN SELECT RAISE(ABORT, 'fixture interrupted'); END`)

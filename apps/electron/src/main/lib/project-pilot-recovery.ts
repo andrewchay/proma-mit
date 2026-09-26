@@ -1,4 +1,4 @@
-import { assertPilotCommandStartRecord, validatePilotUsageEvidence, type PilotUsageEvidence } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, hashPilotProviderUsageRecord, validatePilotUsageEvidence, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 
@@ -22,6 +22,7 @@ interface CommandRow {
   execution_id: string | null
   actual_cost_micros: number | null
   usage_evidence: string | null
+  usage_record_key: string | null
 }
 
 export interface PilotRecoveryIssue {
@@ -88,6 +89,11 @@ export function inspectPilotGrantRecovery(grantId: string, now = Date.now()): Pi
         }
         if (usageEvidence.source === 'unknown' || usageEvidence.costMicros !== command.actual_cost_micros) {
           snapshot.needsAttention.push({ commandId: command.id, reason: '结算用量证据与账本金额不一致' })
+          continue
+        }
+        if (usageEvidence.source === 'provider_reported'
+          && command.usage_record_key !== hashPilotProviderUsageRecord(usageEvidence.channelId, usageEvidence.providerRecordId)) {
+          snapshot.needsAttention.push({ commandId: command.id, reason: 'Provider 用量回执缺少防重放键' })
           continue
         }
       }

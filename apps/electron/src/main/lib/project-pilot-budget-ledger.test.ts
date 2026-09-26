@@ -28,12 +28,12 @@ function fixture(state: 'paused' | 'active' = 'active', maxCostMicros = 1_000, m
   const input: PilotCommandReservationInput = {
     commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'task-first-execution',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-    employeeId: 'executor', role: 'executor', reworkOrdinal: 0, reservedCostMicros: 600,
+    employeeId: 'executor', role: 'executor', reworkOrdinal: 0,
   }
   return { project, task, grantId, input }
 }
 
-const usageEvidence = (executionId: string, costMicros: number): PilotUsageEvidence => ({
+const usageEvidence = (executionId: string, costMicros: number): Extract<PilotUsageEvidence, { source: 'provider_reported' }> => ({
   source: 'provider_reported', executionId, sessionId: 'session-1', channelId: 'channel-a', modelId: 'model-a',
   providerRecordId: `provider-${executionId}`, inputTokens: 100, outputTokens: 20, costMicros, capturedAt: Date.now(),
 })
@@ -46,7 +46,6 @@ const unknownUsage = (executionId: string): PilotUsageEvidence => ({
 test('暂停授权、未知费用与无授权都不能预留或创建执行', () => {
   const { project, grantId, input } = fixture('paused')
   expect(() => reservePilotCommandBudget(input)).toThrow('活动授权不存在或已失效')
-  expect(() => reservePilotCommandBudget({ ...input, reservedCostMicros: 0 })).toThrow('费用未知')
   expect(() => reservePilotCommandBudget({ ...input, grantId: 'missing' })).toThrow('活动授权不存在或已失效')
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 0, committedCostMicros: 0 })
   expect(listAgentExecutionsByProject(project.id)).toEqual([])
@@ -60,12 +59,13 @@ test('同一命令幂等预留一次；不同键不能绕过未结命令保护',
   const { project, grantId, input } = fixture('active', 1_000, 2)
   const first = reservePilotCommandBudget(input)
   expect(reservePilotCommandBudget(input)).toEqual(first)
-  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 600 })
-  expect(() => reservePilotCommandBudget({ ...input, commandId: 'changed', reservedCostMicros: 500 })).toThrow('幂等键已对应其他内容')
-  expect(() => reservePilotCommandBudget({ ...input, commandId: 'second', idempotencyKey: 'other', reservedCostMicros: 500 }))
+  expect(first.reservedCostMicros).toBe(500)
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+  expect(() => reservePilotCommandBudget({ ...input, commandId: 'changed' })).toThrow('幂等键已对应其他内容')
+  expect(() => reservePilotCommandBudget({ ...input, commandId: 'second', idempotencyKey: 'other' }))
     .toThrow('任务已有未结命令')
   getProjectDb().prepare("UPDATE pilot_commands SET state = 'needs_reconcile' WHERE id = ?").run(input.commandId)
-  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 600 })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
   expect(listAgentExecutionsByProject(project.id)).toEqual([])
 })
 
@@ -96,18 +96,17 @@ test('同库预留跨重启保留；同项目第二任务受预算约束，删�
   reservePilotCommandBudget(input)
   closeProjectDb()
   await initProjectDb()
-  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 600 })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 400 })
   const another = createTask(project.id, { title: '第二个任务', description: '', workspaceId: 'workspace-a',
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
   const next = { ...input, commandId: `second-${project.id}`, idempotencyKey: 'task-second-execution',
     taskId: another.id, sourceVersion: another.updatedAt, sourceHash: hashPilotTaskSource(another) }
-  expect(() => reservePilotCommandBudget({ ...next, reservedCostMicros: 201 })).toThrow('费用额度不足')
-  expect(reservePilotCommandBudget({ ...next, reservedCostMicros: 200 }).state).toBe('reserved')
+  expect(reservePilotCommandBudget(next)).toMatchObject({ state: 'reserved', reservedCostMicros: 400 })
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 2, committedCostMicros: 800 })
   const third = createTask(project.id, { title: '第三个任务', description: '', workspaceId: 'workspace-a',
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
   expect(() => reservePilotCommandBudget({ ...next, commandId: `third-${project.id}`, idempotencyKey: 'task-third-execution',
-    taskId: third.id, sourceVersion: third.updatedAt, sourceHash: hashPilotTaskSource(third), reservedCostMicros: 1 }))
+    taskId: third.id, sourceVersion: third.updatedAt, sourceHash: hashPilotTaskSource(third) }))
     .toThrow('执行次数额度已耗尽')
   expect(deleteProject(project.id)).toBe(true)
   expect(() => getPilotGrantBudgetUsage(grantId)).toThrow('授权不存在')
@@ -149,7 +148,7 @@ test('预留、排队执行与关联同事务提交；重复命令不创建第�
   expect(() => reserveAndQueuePilotCommand(input, { ...queue, executionId: 'other' }))
     .toThrow('其他排队执行')
   expect(listAgentExecutionsByProject(project.id)).toHaveLength(1)
-  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 600 })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
 })
 
 test('排队阶段失败则回滚预留；已有预留遇授权暂停也不能排队', () => {
@@ -217,7 +216,7 @@ test('未知或超预留费用保留预算占额并暂停后续派发', () => {
       commandId: input.commandId, state: 'needs_reconcile', actualCostMicros, grantPaused: true,
     })
     expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1,
-      committedCostMicros: actualCostMicros ?? 600 })
+      committedCostMicros: actualCostMicros ?? 500 })
     const grant = getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?')
       .get(grantId) as { state: string }
     expect(grant.state).toBe('paused')
@@ -258,6 +257,26 @@ test('用量证据必须绑定执行、会话、渠道和模型，可追溯估�
   expect(JSON.parse(row.usage_evidence)).toEqual(estimate)
 })
 
+test('同一 Provider 用量回执不能跨命令重复结算', () => {
+  const first = fixture()
+  const second = fixture()
+  const firstExecutionId = `execution-${first.project.id}`
+  const secondExecutionId = `execution-${second.project.id}`
+  reserveAndQueuePilotCommand(first.input, { executionId: firstExecutionId, prompt: '执行任务' })
+  reserveAndQueuePilotCommand(second.input, { executionId: secondExecutionId, prompt: '执行任务' })
+  updateAgentExecution(firstExecutionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  updateAgentExecution(secondExecutionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id IN (?, ?)")
+    .run(first.input.commandId, second.input.commandId)
+  const providerRecordId = 'provider-shared-receipt'
+  settlePilotCommandUsage(first.input.commandId, { ...usageEvidence(firstExecutionId, 300), providerRecordId })
+  // 模拟从仅有 usage_evidence、尚无唯一键的上一版本数据库升级。
+  getProjectDb().prepare('UPDATE pilot_commands SET usage_record_key = NULL WHERE id = ?').run(first.input.commandId)
+  expect(() => settlePilotCommandUsage(second.input.commandId,
+    { ...usageEvidence(secondExecutionId, 300), providerRecordId }))
+    .toThrow('Provider 用量回执已被其他命令使用')
+})
+
 test('执行未终结、费用无效或已释放的排队命令不能结算', () => {
   const { project, grantId, input } = fixture()
   const executionId = `execution-${project.id}`
@@ -267,5 +286,5 @@ test('执行未终结、费用无效或已释放的排队命令不能结算', ()
   expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, -1))).toThrow('用量或计价证据无效')
   updateAgentExecution(executionId, { status: 'cancelled', sessionId: 'session-1', completedAt: Date.now() })
   expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 0))).toThrow('状态不可结算')
-  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 600 })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
 })

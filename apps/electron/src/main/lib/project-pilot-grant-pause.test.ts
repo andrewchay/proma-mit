@@ -32,7 +32,7 @@ function fixture() {
     const executionId = `execution-${project.id}-${ordinal}`
     const input = { commandId, projectId: project.id, grantId, idempotencyKey: `dispatch-${ordinal}`,
       taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-      employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }
+      employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
     reserveAndQueuePilotCommand(input, { executionId, prompt: `执行任务 ${ordinal}` })
     return { input, executionId }
   }
@@ -124,7 +124,7 @@ test('暂停影响面列出未排队预留，确认后同事务释放费用', ()
     assignee: { userId: 'agent-executor', displayName: '执行员工' } })
   const input = { commandId: `reserved-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'reserved',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }
+    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
   reservePilotCommandBudget(input)
   const impact = previewPilotGrantPauseImpact(grantId)
   expect(impact.reservedCommandIds).toEqual([input.commandId])
@@ -165,7 +165,7 @@ test('reserved 命令已有执行标记时拒绝释放预算', () => {
   const commandId = `reserved-${project.id}`
   reservePilotCommandBudget({ commandId, projectId: project.id, grantId, idempotencyKey: 'reserved',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-    employeeId: 'executor', role: 'executor', reworkOrdinal: 0, reservedCostMicros: 600 })
+    employeeId: 'executor', role: 'executor', reworkOrdinal: 0 })
   createAgentExecution({ id: `orphan-${project.id}`, projectId: project.id, entityType: 'task',
     entityId: task.id, agentId: 'executor', sessionId: '', prompt: '异常执行', pilotCommandId: commandId })
   expect(() => previewPilotGrantPauseImpact(grantId)).toThrow('已有执行或来源关联')

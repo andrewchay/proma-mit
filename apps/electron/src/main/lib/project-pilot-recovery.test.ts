@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
+import { hashPilotProviderUsageRecord, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
 import { inspectPilotGrantRecovery } from './project-pilot-recovery'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createAgentExecution, createProject, createTask, getProjectDb, initProjectDb, updateAgentExecution } from './project-sqlite-store'
@@ -28,7 +28,7 @@ function fixture() {
     maxRework: 0, expiresAt: now + 100_000, createdAt: now })
   const input = { commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'first',
     taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
-    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0, reservedCostMicros: 600 }
+    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
   return { project, grantId, input, executionId: `execution-${project.id}`, now }
 }
 
@@ -179,8 +179,9 @@ test('费用与命令状态矛盾时必须停等，不能按零费用或完整�
     channelId: 'channel', modelId: 'model', providerRecordId: `provider-${changedOwner.executionId}`,
     inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now(),
   })
-  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = ? WHERE id = ?")
-    .run(ownerEvidence, changedOwner.input.commandId)
+  getProjectDb().prepare(`UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20,
+    usage_evidence = ?, usage_record_key = ? WHERE id = ?`)
+    .run(ownerEvidence, hashPilotProviderUsageRecord('channel', `provider-${changedOwner.executionId}`), changedOwner.input.commandId)
   getProjectDb().prepare('UPDATE agent_executions SET agent_id = ? WHERE id = ?').run('other-agent', changedOwner.executionId)
   expect(inspectPilotGrantRecovery(changedOwner.grantId).needsAttention)
     .toEqual([{ commandId: changedOwner.input.commandId, reason: '终结命令与执行状态不一致' }])

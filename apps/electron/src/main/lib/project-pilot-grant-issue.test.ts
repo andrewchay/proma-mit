@@ -86,4 +86,5 @@ test('Given 旧数据库 When 初始化 Then grant 确认指纹列已迁移', ()
   expect(columns.map((item) => item.name)).toContain('approval_fingerprint')
   const commandColumns = getProjectDb().prepare('PRAGMA table_info(pilot_commands)').all() as Array<{ name: string }>
   expect(commandColumns.map((item) => item.name)).toContain('usage_evidence')
+  expect(commandColumns.map((item) => item.name)).toContain('usage_record_key')
 })

@@ -683,6 +683,7 @@ function migrate(database: SqliteCompat): void {
       reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
       actual_cost_micros INTEGER CHECK (actual_cost_micros >= 0),
       usage_evidence TEXT,
+      usage_record_key TEXT,
       state TEXT NOT NULL CHECK (state IN ('reserved', 'queued', 'running', 'settled', 'released', 'needs_reconcile')),
       execution_id TEXT UNIQUE,
       created_at INTEGER NOT NULL,
@@ -930,6 +931,11 @@ function migrate(database: SqliteCompat): void {
   if (!pilotCommandColumns.includes('usage_evidence')) {
     database.exec('ALTER TABLE pilot_commands ADD COLUMN usage_evidence TEXT')
   }
+  if (!pilotCommandColumns.includes('usage_record_key')) {
+    database.exec('ALTER TABLE pilot_commands ADD COLUMN usage_record_key TEXT')
+  }
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_commands_usage_record
+    ON pilot_commands(usage_record_key) WHERE usage_record_key IS NOT NULL`)
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
