@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createProject, createTask, createTaskDependency, deleteProject, getProjectDb, initProjectDb, listAgentExecutionsByProject, updateTask } from './project-sqlite-store'
-import { getCurrentPilotIntents, listPilotIntentHistory, reconcilePilotIntents } from './project-pilot-intent-store'
+import { getCurrentPilotIntents, listPilotIntentHistory, reconcilePilotIntents, reconcilePilotOverview } from './project-pilot-intent-store'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-intent-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -79,4 +79,13 @@ test('Given 旧 open 与进程重启 When 事实已变 Then 首次展示强制�
 test('Given 已初始化数据库 Then 意图表由迁移创建，而非首次查询才建表', () => {
   const rows = getProjectDb().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pilot_intents'").all()
   expect(rows).toHaveLength(1)
+})
+
+test('Given 概览读取 When 候选与观察一并返回 Then 候选来源与状态对应同次事实', async () => {
+  const project = createProject({ title: '概览一致性', description: '' })
+  const task = createTask(project.id, { title: '待安排', description: '', assignee })
+  const snapshot = await reconcilePilotOverview(project.id)
+  expect(snapshot.observation.tasks.find((item) => item.taskId === task.id)?.state).toBe('ready')
+  expect(snapshot.intents.find((item) => item.sourceId === task.id)?.kind).toBe('ready_candidate')
+  expect(snapshot.intents.every((item) => item.projectId === snapshot.observation.projectId)).toBe(true)
 })

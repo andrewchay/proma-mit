@@ -516,6 +516,8 @@ async function bootstrap(): Promise<void> {
         console.warn(`[Pilot] 暂停恢复需人工对账 project=${recovery.projectId} revision=${recovery.policyRevision}: ${recovery.result.reason}`)
       }
     }
+    const { startPilotBackgroundReconcile } = await import('./lib/project-pilot-background-reconcile')
+    stopPilotBackgroundReconcile = startPilotBackgroundReconcile()
   })
 
   // 启动 Brief 回执服务（H5 表单 + 回调，供核心任务回执使用）
@@ -699,9 +701,12 @@ app.on('window-all-closed', () => {
   }
 })
 
+let stopPilotBackgroundReconcile: (() => void) | null = null
+
 app.on('before-quit', () => {
   // 标记正在退出，让 close 事件不再阻止关闭
   setQuitting()
+  stopPilotBackgroundReconcile?.()
 
   // 中止所有活跃的 Agent 和 Chat 子进程
   stopAllAgents()

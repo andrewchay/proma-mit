@@ -1,34 +1,49 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { PilotObservation } from '@gravitas/shared'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { PilotIntent, PilotObservation } from '@gravitas/shared'
 
 const LABELS: Record<PilotObservation['tasks'][number]['state'], string> = {
   waiting_dependency: '等待依赖', awaiting_review: '待人工审阅',
   needs_attention: '需要关注', ready: '可安排', running: '进行中', done: '已完成', inactive: '不参与推进',
 }
+const INTENT_LABELS: Record<PilotIntent['kind'], string> = {
+  dependency_wait: '等待依赖解除', ready_candidate: '待核实可安排',
+  review_candidate: '待人工审阅', attention_candidate: '待人工关注',
+}
 
-export function ProjectPilotOverview({ projectId, refreshKey }: { projectId: string; refreshKey?: unknown }): React.ReactElement {
+export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
+  projectId: string
+  refreshKey?: unknown
+  onOpenSource: (intent: PilotIntent, task?: PilotObservation['tasks'][number]) => void
+}): React.ReactElement {
   const [observation, setObservation] = useState<PilotObservation | null>(null)
+  const [intents, setIntents] = useState<PilotIntent[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const refreshVersion = useRef(0)
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current
     setLoading(true)
     try {
-      const result = await window.electronAPI.paa.project.observePilot(projectId)
-      setObservation(result)
+      const snapshot = await window.electronAPI.paa.project.getPilotOverview(projectId)
+      if (version !== refreshVersion.current) return
+      setObservation(snapshot.observation)
+      setIntents(snapshot.intents)
       setError('')
     } catch (cause) {
+      if (version !== refreshVersion.current) return
       setError(cause instanceof Error ? cause.message : '加载项目状态失败')
     } finally {
-      setLoading(false)
+      if (version === refreshVersion.current) setLoading(false)
     }
   }, [projectId])
   useEffect(() => {
     setObservation(null)
+    setIntents([])
     void refresh()
     const off = window.electronAPI.paa.project.onProjectActivityChanged((payload) => {
       if (!payload.projectId || payload.projectId === projectId) void refresh()
     })
-    return () => off()
+    return () => { refreshVersion.current++; off() }
   }, [projectId, refresh])
   useEffect(() => {
     if (refreshKey !== undefined && refreshKey !== null) void refresh()
@@ -62,6 +77,22 @@ export function ProjectPilotOverview({ projectId, refreshKey }: { projectId: str
         </div>}
         <div className="flex flex-wrap gap-2 text-sm" aria-label="项目状态汇总">
           {(Object.keys(LABELS) as Array<keyof typeof LABELS>).map((state) => <span key={state} className="rounded-md bg-muted px-3 py-2">{LABELS[state]} {counts[state] ?? 0}</span>)}
+        </div>
+        <div className="rounded-xl bg-card p-4 shadow-sm" aria-label="当前候选意图">
+          <h3 className="font-semibold">当前待处理线索 · {intents.length}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">后台保存候选记录；展示时重新核对项目事实。线索不会自动派发任务或批准交付。</p>
+          {intents.length > 0 && <ul className="mt-3 space-y-2 text-sm">
+            {intents.map((intent) => {
+              const task = intent.sourceType === 'task' ? observation.tasks.find((item) => item.taskId === intent.sourceId) : undefined
+              const attention = observation.attention.find((item) => item.sourceType === intent.sourceType && item.sourceId === intent.sourceId)
+              return <li key={intent.id}>
+                <button type="button" onClick={() => onOpenSource(intent, task)} className="w-full rounded-lg bg-muted px-3 py-2 text-left hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+                  <strong>{task?.title ?? attention?.reason ?? intent.sourceId}</strong> · {INTENT_LABELS[intent.kind]}
+                  <span className="ml-2 text-muted-foreground">{intent.sourceType !== 'task' ? '前往决策与协作链路' : task?.parentTaskId ? '定位上级任务' : '定位原任务'}</span>
+                </button>
+              </li>
+            })}
+          </ul>}
         </div>
         <div className="space-y-2">
           {observation.tasks.length === 0 && <p className="text-sm text-muted-foreground">暂无任务。先在任务页创建任务。</p>}

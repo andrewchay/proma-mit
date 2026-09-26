@@ -31,6 +31,14 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
     }
   }
   const observations = tasks.map((task): PilotTaskObservation => {
+    let rootTaskId = task.id
+    let parentId = task.parentId
+    const visited = new Set([task.id])
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId)
+      rootTaskId = parentId
+      parentId = taskById.get(parentId)?.parentId
+    }
     const blocked = blockerByTask.get(task.id) ?? []
     const latest = latestExecutionByTask.get(task.id)
     const group = resolveStateGroup(task.status, statuses)
@@ -63,7 +71,8 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
       reason = '尚未指定负责人'
     }
     return {
-      taskId: task.id, title: task.title, status: task.status, updatedAt: task.updatedAt,
+      taskId: task.id, parentTaskId: task.parentId, rootTaskId,
+      title: task.title, status: task.status, updatedAt: task.updatedAt,
       state, reason, executionId: latest?.id,
       blockerTaskIds: [...new Set(blocked.map((item) => item.dependsOnTaskId))].sort(),
     }

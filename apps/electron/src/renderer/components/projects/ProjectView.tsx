@@ -1002,6 +1002,8 @@ function ProjectDetail({
   onRefresh: () => void
 }): React.ReactElement {
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
+  const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
+  useEffect(() => { if (detailTab !== 'tasks') setPilotTaskFocus(null) }, [detailTab])
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
@@ -1474,7 +1476,17 @@ function ProjectDetail({
 
       {/* 详情内容 */}
       <div className="flex-1 overflow-auto p-6">
-        {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} />}
+        {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} onOpenSource={(intent, task) => {
+          if (intent.sourceType === 'task') {
+            setPilotTaskFocus({
+              taskId: task?.rootTaskId ?? intent.sourceId,
+              subTaskId: task?.parentTaskId === task?.rootTaskId ? intent.sourceId : undefined,
+            })
+            setDetailTab('tasks')
+          } else {
+            setDetailTab('chain')
+          }
+        }} />}
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
         {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
         {detailTab === 'workspaces' && <ProjectWorkspacesPanel key={project.id} projectId={project.id} />}
@@ -1485,6 +1497,8 @@ function ProjectDetail({
             statuses={taskStatuses}
             onTasksChange={setTasks}
             onReviewChanged={loadData}
+            focusTaskId={pilotTaskFocus?.taskId}
+            focusSubTaskId={pilotTaskFocus?.subTaskId}
           />
         )}
         {detailTab === 'notes' && (
@@ -1939,12 +1953,16 @@ function TaskList({
   statuses,
   onTasksChange,
   onReviewChanged,
+  focusTaskId,
+  focusSubTaskId,
 }: {
   projectId: string
   tasks: Task[]
   statuses: ProjectTaskStatus[]
   onTasksChange: (tasks: Task[]) => void
   onReviewChanged: () => void
+  focusTaskId?: string | null
+  focusSubTaskId?: string
 }): React.ReactElement {
   const currentUserProfile = useAtomValue(userProfileAtom)
   // 展示层紧迫度排序：逾期未完成 > 优先级 > DDL 升序；完成组沉底。纯展示，不影响看板 sort_order。
@@ -1968,6 +1986,10 @@ function TaskList({
   const [newWorkspaceId, setNewWorkspaceId] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
   const [reviewTaskId, setReviewTaskId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!focusTaskId || !sortedTasks.some((task) => task.id === focusTaskId)) return
+    document.getElementById(`project-task-${focusTaskId}`)?.scrollIntoView({ block: 'center' })
+  }, [focusTaskId, sortedTasks])
 
   React.useEffect(() => {
     window.electronAPI.paa.agentEmployees.list()
@@ -2270,17 +2292,19 @@ function TaskList({
       ) : (
         <div className="space-y-2">
           {sortedTasks.map((task) => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              statuses={statuses}
-              isSyncing={syncingTaskIds.has(task.id)}
-              onStatusChange={handleStatusChange}
-              onDelete={handleDelete}
-              onSync={handleSync}
-              onTaskUpdate={(updatedTask) => onTasksChange(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)))}
-              onOpenReview={() => setReviewTaskId(task.id)}
-            />
+            <div key={task.id} id={`project-task-${task.id}`} className={focusTaskId === task.id ? 'rounded-lg ring-2 ring-primary ring-offset-2' : undefined}>
+              <TaskItem
+                task={task}
+                statuses={statuses}
+                isSyncing={syncingTaskIds.has(task.id)}
+                onStatusChange={handleStatusChange}
+                onDelete={handleDelete}
+                onSync={handleSync}
+                onTaskUpdate={(updatedTask) => onTasksChange(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)))}
+                onOpenReview={() => setReviewTaskId(task.id)}
+                focusSubTaskId={focusTaskId === task.id ? focusSubTaskId : undefined}
+              />
+            </div>
           ))}
         </div>
       )}
@@ -2303,6 +2327,7 @@ function TaskItem({
   onSync,
   onTaskUpdate,
   onOpenReview,
+  focusSubTaskId,
 }: {
   task: Task
   statuses: ProjectTaskStatus[]
@@ -2312,6 +2337,7 @@ function TaskItem({
   onSync: (taskId: string, platform: 'feishu' | 'dingtalk') => void
   onTaskUpdate: (task: Task) => void
   onOpenReview: () => void
+  focusSubTaskId?: string
 }): React.ReactElement {
   const [showRiskModal, setShowRiskModal] = useState(false)
   const [showCompletionModal, setShowCompletionModal] = useState(false)
@@ -2335,7 +2361,7 @@ function TaskItem({
     startDate: task.startDate ? new Date(task.startDate).toISOString().split('T')[0] : '',
     dueDate: task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '',
   })
-  const [subTasksExpanded, setSubTasksExpanded] = useState(false)
+  const [subTasksExpanded, setSubTasksExpanded] = useState(Boolean(focusSubTaskId))
   const [subTasks, setSubTasks] = useState<Task[]>([])
   const [subTasksLoading, setSubTasksLoading] = useState(false)
   const [newSubTaskTitle, setNewSubTaskTitle] = useState('')
@@ -2394,6 +2420,10 @@ function TaskItem({
       .finally(() => setSubTasksLoading(false))
     return () => { cancelled = true }
   }, [subTasksExpanded, task.id])
+  useEffect(() => {
+    if (!focusSubTaskId || !subTasks.some((item) => item.id === focusSubTaskId)) return
+    document.getElementById(`project-subtask-${focusSubTaskId}`)?.scrollIntoView({ block: 'center' })
+  }, [focusSubTaskId, subTasks])
 
   useEffect(() => {
     if (!executionSubTasksExpanded) return
@@ -2891,7 +2921,7 @@ function TaskItem({
               <div className="text-xs text-muted-foreground">加载中...</div>
             )}
             {!subTasksLoading && subTasks.map((sub) => (
-              <div key={sub.id} className="flex items-center gap-2 group">
+              <div key={sub.id} id={`project-subtask-${sub.id}`} className={`flex items-center gap-2 group ${focusSubTaskId === sub.id ? 'rounded-md bg-accent ring-2 ring-primary' : ''}`}>
                 <input
                   type="checkbox"
                   checked={sub.status === 'completed'}

@@ -203,6 +203,8 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_TASK_BLOCKERS: 'project:list-task-blockers',
   /** Project Pilot 只读对账；不能据此派发员工或启动模型。 */
   OBSERVE_PILOT: 'project:observe-pilot',
+  /** 同一次权威观察中的项目状态和当前候选。 */
+  GET_PILOT_OVERVIEW: 'project:get-pilot-overview',
   LIST_PROJECT_WORK_ITEMS: 'project:list-project-work-items',
   LIST_MY_WORK: 'project:list-my-work',
   /** PH2-⑤：我发起/指派的任务 */

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   closeProjectDb, createAgentExecution, createProject, createTask,
-  createTaskDependency, initProjectDb, updateAgentExecution, updateTask,
+  createSubTask, createTaskDependency, initProjectDb, updateAgentExecution, updateTask,
 } from './project-sqlite-store'
 import { observeProjectPilot } from './project-pilot-reconcile'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
@@ -37,6 +37,16 @@ test('项目只读对账：依赖解除后 waiting 转 ready，重复读取不�
   expect(second.fingerprint).not.toBe(first.fingerprint)
   expect((await observeProjectPilot(project.id)).fingerprint).toBe(second.fingerprint)
   expect(second.tasks.every((task) => task.executionId === undefined)).toBe(true)
+})
+
+test('子任务候选保留父任务与顶层任务定位，不会误当作任务列表的顶层行', async () => {
+  const project = createProject({ title: '子任务定位', description: '' })
+  const parent = createTask(project.id, { title: '父任务', description: '' })
+  const child = createSubTask(parent.id, { title: '子任务', description: '', assignee: { userId: 'local-user', displayName: '本地用户' } })
+  expect(child).not.toBeNull()
+  const observation = await observeProjectPilot(project.id)
+  expect(observation.tasks.find((item) => item.taskId === child?.id)?.parentTaskId).toBe(parent.id)
+  expect(observation.tasks.find((item) => item.taskId === child?.id)?.rootTaskId).toBe(parent.id)
 })
 
 test('执行完成不等于交付提交，不能误报待审阅；跨项目任务不进入快照', async () => {
