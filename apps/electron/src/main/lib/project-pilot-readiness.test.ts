@@ -22,10 +22,25 @@ const facts = () => ({
   employees: [employee('executor', '执行'), employee('reviewer', '技术评审')],
 })
 
-test('给定两名安全研发角色和一致的绑定，预检可通过但策略仍保持暂停', () => {
+test('给定两名安全研发角色和一致的绑定，但 Runtime 没有费用停止阈值，预检保持阻塞', () => {
   const result = evaluatePilotPolicyBindings(policy.projectId, policy, facts(), now)
-  expect(result).toEqual({ projectId: policy.projectId, policyRevision: 2, bindingsValid: true, blockers: [] })
+  expect(result.bindingsValid).toBe(false)
+  expect(result.blockers).toEqual([
+    '员工 executor 的 Runtime 不支持 Pilot 单次费用超额停止阈值',
+    '员工 reviewer 的 Runtime 不支持 Pilot 单次费用超额停止阈值',
+  ])
   expect(policy.state).toBe('paused')
+})
+
+test('给定支持费用停止阈值但未纳入首版安全路径的 Runtime，预检仍不扩大授权面', () => {
+  const input = facts()
+  input.employees = input.employees.map((item) => item ? { ...item, runtime: 'claude' } : item)
+  const result = evaluatePilotPolicyBindings(policy.projectId, policy, input, now)
+  expect(result.bindingsValid).toBe(false)
+  expect(result.blockers).toEqual([
+    '员工 executor 不适用于首版安全研发运行路径',
+    '员工 reviewer 不适用于首版安全研发运行路径',
+  ])
 })
 
 test('给定缺失草案或项目，预检明确阻塞', () => {

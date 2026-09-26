@@ -711,6 +711,8 @@ export interface AgentRuntimeCapabilities {
   supportsFileSnapshotRewind: boolean
   /** 是否支持模型输出的 partial streaming */
   supportsPartialStreaming: boolean
+  /** 是否支持调用级预算停止阈值；超额后停止，实际费用仍可能超过阈值。 */
+  supportsBudgetStopThreshold: boolean
 }
 
 export type AgentRuntimeForkMode = 'sdk_snapshot' | 'jsonl_history_copy'
@@ -743,6 +745,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: true,
     supportsFileSnapshotRewind: true,
     supportsPartialStreaming: true,
+    supportsBudgetStopThreshold: true,
   },
   proma: {
     supportsTools: true,
@@ -753,6 +756,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: false,
+    supportsBudgetStopThreshold: false,
   },
   pi: {
     supportsTools: true,
@@ -763,6 +767,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
+    supportsBudgetStopThreshold: false,
   },
   'ai-sdk': {
     supportsTools: true,
@@ -773,6 +778,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
+    supportsBudgetStopThreshold: false,
   },
 }
 
@@ -1467,6 +1473,8 @@ export interface AgentSendInput {
   modelId?: string
   /** 本次发送使用的 Agent runtime，未传时继承会话或默认 Claude */
   agentRuntime?: AgentRuntime
+  /** 本次 Runtime 调用的预算停止阈值（USD）；不支持该门禁的 Runtime 必须拒绝执行。 */
+  runtimeBudgetLimitUsd?: number
   /** 工作区 ID（用于确定 cwd） */
   workspaceId?: string
   /** 附加的外部目录（绝对路径，传递给 SDK additionalDirectories） */

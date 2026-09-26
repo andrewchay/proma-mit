@@ -16,9 +16,11 @@ import { getChannelById } from './channel-manager'
 import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent-development-context'
 import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
 import { getProjectChain } from './project-chain-service'
-import { assertPilotPolicyActive, getPilotPolicy } from './project-pilot-policy'
+import { getPilotPolicy } from './project-pilot-policy'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord } from './project-pilot-budget-ledger'
+import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
+import { inspectPilotReadiness } from './project-pilot-readiness'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
 
@@ -539,14 +541,16 @@ export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: s
 export async function tryStartExecution(executionId: string): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
+  let pilotReservedCostMicros: number | undefined
   // Pilot 执行每次启动前重新读取授权；未知、暂停或失效时保持 queued，等待对账。
   if (execution.pilotCommandId) {
     try {
       const policy = getPilotPolicy(execution.projectId)
       if (!policy) return false
+      const readiness = inspectPilotReadiness(execution.projectId)
+      if (!readiness.bindingsValid || readiness.policyRevision !== policy.revision) return false
       const link = assertPilotExecutionLinked(execution.id, policy.revision)
-      assertPilotCommandStartRecord(execution.id, link.commandId, policy.revision)
-      assertPilotPolicyActive(execution.projectId)
+      pilotReservedCostMicros = assertPilotCommandStartRecord(execution.id, link.commandId, policy.revision).reservedCostMicros
     }
     catch { return false }
   }
@@ -562,6 +566,15 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   }
   const employee = store.getAgentEmployee(execution.agentId)
   if (!employee || !employee.enabled) return false
+  let runtimeBudgetLimitUsd: number | undefined
+  if (pilotReservedCostMicros !== undefined) {
+    try {
+      runtimeBudgetLimitUsd = resolvePilotRuntimeBudgetLimitUsd(employee.runtime, pilotReservedCostMicros)
+    } catch (error) {
+      console.warn(`[AgentEmployee] Pilot 执行 ${executionId} 启动被阻塞:`, error)
+      return false
+    }
+  }
 
   // 并发控制：同项目运行中数量上限（仅统计真正 running，排队中的不占用额度，避免同项目多个排队互相死锁）
   const runningCount = store.listRunningAgentExecutions().filter((e) => e.projectId === execution.projectId && e.status === 'running').length
@@ -578,12 +591,15 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
 
   // P3：员工绑定 Workflow SOP → 走 Workflow 执行；否则 headless
   if (employee.workflowId) {
+    // Workflow 路径尚不能接收本次费用停止阈值，Pilot 必须在启动前停等。
+    if (runtimeBudgetLimitUsd !== undefined) return false
     return startAgentWorkflow(executionId, employee)
-  }  return startAgentHeadless(executionId, employee)
+  }
+  return startAgentHeadless(executionId, employee, runtimeBudgetLimitUsd)
 }
 
 /** 真正启动 headless Agent 执行（创建会话 + 启动） */
-async function startAgentHeadless(executionId: string, employee: AgentEmployee): Promise<boolean> {
+async function startAgentHeadless(executionId: string, employee: AgentEmployee, runtimeBudgetLimitUsd?: number): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
 
@@ -673,6 +689,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee):
       modelId,
       mentionedSkills: employee.skills,
       agentRuntime: employee.runtime,
+      runtimeBudgetLimitUsd,
       workspaceId,
       permissionModeOverride,
       triggeredBy: 'automation',

@@ -84,6 +84,7 @@ import { isTypedContextCompilerEnabled } from './agent-runtime/context/context-f
 import { formatSubtaskResultForParent, parseSubtaskResult } from './agent-runtime/context/subtask-result-parser'
 import { SubtaskArtifactStore, toStoredSubtaskArtifact } from './agent-runtime/context/subtask-artifact-store'
 import { buildSubAgentSpawnPlan } from './agent-runtime/context/subagent-spawn-plan'
+import { resolveRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 
 // ===== 插件能力引导收集 =====
 
@@ -1830,7 +1831,7 @@ export class AgentOrchestrator {
    * 自动取出下一条执行。pumpNext 驱动时需传 opts.skipQueueCheck=true 跳过入队判断。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks, opts?: { skipQueueCheck?: boolean }): Promise<void> {
-    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, mentionedAgentEmployees, attachments, workflowCapabilityPolicy, triggeredBy } = input
+    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, runtimeBudgetLimitUsd, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, mentionedAgentEmployees, attachments, workflowCapabilityPolicy, triggeredBy } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护 + 会话级发送排队
@@ -2017,6 +2018,11 @@ export class AgentOrchestrator {
 
     const appSettings = getSettings()
     const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+    const effectiveRuntimeBudgetLimitUsd = resolveRuntimeBudgetLimitUsd(
+      effectiveAgentRuntime,
+      runtimeBudgetLimitUsd,
+      appSettings.agentMaxBudgetUsd,
+    )
     if (!sessionMeta?.agentRuntime || sessionMeta.agentRuntime !== effectiveAgentRuntime) {
       try {
         updateAgentSessionMeta(sessionId, {
@@ -2826,8 +2832,8 @@ export class AgentOrchestrator {
         // SDK 0.2.52+ 新增选项（从 settings 读取）
         ...(appSettings.agentThinking && { thinking: appSettings.agentThinking }),
         effort: appSettings.agentEffort ?? 'high',
-        ...(appSettings.agentMaxBudgetUsd != null && appSettings.agentMaxBudgetUsd > 0 && {
-          maxBudgetUsd: appSettings.agentMaxBudgetUsd,
+        ...(effectiveRuntimeBudgetLimitUsd !== undefined && {
+          maxBudgetUsd: effectiveRuntimeBudgetLimitUsd,
         }),
         // 1M context window: 支持的模型自动启用 beta（Claude: Sonnet 4+ / Opus 4.6+、DeepSeek V4 系列）
         // 未启用时 SDK 默认 200K 并在约 150K 触发压缩；启用后上限提升至 1M

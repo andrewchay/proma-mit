@@ -50,7 +50,11 @@ test('隔离 Git 项目完成无模型的双角色命令、预算和暂停纵向
     workspace: { rootPath: repo }, gitMarkerExists: Bun.file(join(repo, '.git', 'HEAD')).size > 0,
     channel: { enabled: true, models: [{ id: modelId, enabled: true }] },
     employees: [employee('executor'), employee('reviewer')] }, now)
-  expect(preflight.bindingsValid).toBe(true)
+  expect(preflight.bindingsValid).toBe(false)
+  expect(preflight.blockers).toEqual([
+    '员工 executor 的 Runtime 不支持 Pilot 单次费用超额停止阈值',
+    '员工 reviewer 的 Runtime 不支持 Pilot 单次费用超额停止阈值',
+  ])
   expect(policy.state).toBe('paused')
 
   // 测试 grant 与已保存策略快照一致；本测试仍不调用模型或 Runtime。

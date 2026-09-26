@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { AGENT_RUNTIME_CAPABILITIES } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getChannelById } from './channel-manager'
 import { getAgentEmployee, getProject } from './project-sqlite-store'
@@ -68,6 +69,9 @@ function checkPolicyBindings(policy: PilotPolicy, facts: PilotBindingFacts, now:
     if (employee.executionProfile !== 'development' || employee.workflowId || !['proma', 'ai-sdk'].includes(employee.runtime)
       || (employee.permissionMode ?? 'safe') !== 'safe') {
       blockers.push(`员工 ${employeeId} 不适用于首版安全研发运行路径`)
+    }
+    if (!AGENT_RUNTIME_CAPABILITIES[employee.runtime].supportsBudgetStopThreshold) {
+      blockers.push(`员工 ${employeeId} 的 Runtime 不支持 Pilot 单次费用超额停止阈值`)
     }
     const allowedWorkspaces = employee.workspaceIds?.length ? employee.workspaceIds : employee.workspaceId ? [employee.workspaceId] : []
     if (!allowedWorkspaces.includes(policy.workspaceId)) blockers.push(`员工 ${employeeId} 未绑定执行工作区`)
