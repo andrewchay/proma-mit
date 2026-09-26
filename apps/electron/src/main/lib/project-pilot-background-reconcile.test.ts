@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { reconcileAllPilotProjects, startPilotBackgroundReconcile } from './project-pilot-background-reconcile'
 import { listPilotIntentHistory, reconcilePilotIntents } from './project-pilot-intent-store'
 import { closeProjectDb, createProject, createTask, createTaskDependency, initProjectDb, listAgentExecutionsByProject, updateTask } from './project-sqlite-store'
+import { updateTask as updateTaskWithEvents } from './project-service'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-background-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -62,4 +63,44 @@ test('Given 后台服务已停止 When 对账请求排队 Then 不再写入候�
   controller.abort()
   await expect(reconcilePilotIntents(project.id, controller.signal)).rejects.toThrow('Pilot 对账已停止')
   expect(listPilotIntentHistory(project.id)).toEqual([])
+})
+
+test('Given 依赖任务通过项目服务完成 When 页面未打开 Then 任务事件立即唤醒后台对账', async () => {
+  const project = createProject({ title: '事件唤醒', description: '' })
+  const upstream = createTask(project.id, { title: '事件上游', description: '' })
+  const downstream = createTask(project.id, { title: '事件下游', description: '', assignee: { userId: 'local-user', displayName: '本地用户' } })
+  createTaskDependency(downstream.id, upstream.id)
+  await reconcileAllPilotProjects()
+  const waiting = listPilotIntentHistory(project.id).find((item) => item.sourceId === downstream.id && item.status === 'open')
+  expect(waiting?.kind).toBe('dependency_wait')
+
+  const stop = startPilotBackgroundReconcile()
+  try {
+    await updateTaskWithEvents(upstream.id, { status: 'completed' }, { source: 'system' })
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const ready = listPilotIntentHistory(project.id).some((item) => item.sourceId === downstream.id
+        && item.status === 'open' && item.kind === 'ready_candidate')
+      if (ready) break
+      await Bun.sleep(10)
+    }
+    expect(listPilotIntentHistory(project.id).find((item) => item.id === waiting?.id)?.status).toBe('stale')
+    expect(listPilotIntentHistory(project.id).find((item) => item.sourceId === downstream.id && item.status === 'open')?.kind).toBe('ready_candidate')
+    expect(listAgentExecutionsByProject(project.id)).toEqual([])
+  } finally {
+    stop()
+  }
+})
+
+test('Given 后台服务已停止 When 任务事件到达 Then 不再唤醒或改写候选', async () => {
+  const project = createProject({ title: '事件取消订阅', description: '' })
+  const upstream = createTask(project.id, { title: '上游', description: '' })
+  const downstream = createTask(project.id, { title: '下游', description: '', assignee: { userId: 'local-user', displayName: '本地用户' } })
+  createTaskDependency(downstream.id, upstream.id)
+  await reconcileAllPilotProjects()
+  const before = listPilotIntentHistory(project.id)
+  const stop = startPilotBackgroundReconcile()
+  stop()
+  await updateTaskWithEvents(upstream.id, { status: 'completed' }, { source: 'system' })
+  await Bun.sleep(20)
+  expect(listPilotIntentHistory(project.id)).toEqual(before)
 })
