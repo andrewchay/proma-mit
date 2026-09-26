@@ -6,6 +6,7 @@ import { reconcileAllPilotProjects, startPilotBackgroundReconcile } from './proj
 import { listPilotIntentHistory, reconcilePilotIntents } from './project-pilot-intent-store'
 import { closeProjectDb, createProject, createTask, createTaskDependency, initProjectDb, listAgentExecutionsByProject, updateTask } from './project-sqlite-store'
 import { updateTask as updateTaskWithEvents } from './project-service'
+import { getProjectChain, updateProjectChain } from './project-chain-service'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-background-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -101,6 +102,47 @@ test('Given 后台服务已停止 When 任务事件到达 Then 不再唤醒或�
   const stop = startPilotBackgroundReconcile()
   stop()
   await updateTaskWithEvents(upstream.id, { status: 'completed' }, { source: 'system' })
+  await Bun.sleep(20)
+  expect(listPilotIntentHistory(project.id)).toEqual(before)
+})
+
+test('Given 决策或交付链修订 When 页面未打开 Then 项目链事件立即唤醒后台对账', async () => {
+  const project = createProject({ title: '项目链唤醒', description: '' })
+  await reconcileAllPilotProjects()
+  const stop = startPilotBackgroundReconcile()
+  try {
+    updateProjectChain(project.id, getProjectChain(project.id).revision, {
+      kind: 'decision', title: '待确认方向', rationale: '需要项目经理拍板', evidence: 'fixture',
+      deadlineAt: Date.now() + 60_000,
+      sourceRefs: [{ sourceType: 'task', sourceId: project.id, locator: 'fixture:decision' }],
+      daci: { driverId: 'local-user', approverId: 'local-user', contributorIds: [], informedIds: [] },
+    })
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (listPilotIntentHistory(project.id).some((item) => item.sourceType === 'decision'
+        && item.status === 'open' && item.kind === 'attention_candidate')) break
+      await Bun.sleep(10)
+    }
+    expect(listPilotIntentHistory(project.id)).toContainEqual(expect.objectContaining({
+      projectId: project.id, sourceType: 'decision', status: 'open', kind: 'attention_candidate',
+    }))
+    expect(listAgentExecutionsByProject(project.id)).toEqual([])
+  } finally {
+    stop()
+  }
+})
+
+test('Given 后台服务已停止 When 项目链修订提交 Then 不再唤醒或改写候选', async () => {
+  const project = createProject({ title: '项目链取消订阅', description: '' })
+  await reconcileAllPilotProjects()
+  const before = listPilotIntentHistory(project.id)
+  const stop = startPilotBackgroundReconcile()
+  stop()
+  updateProjectChain(project.id, 0, {
+    kind: 'decision', title: '待确认方向', rationale: '需要拍板', evidence: 'fixture',
+    deadlineAt: Date.now() + 60_000,
+    sourceRefs: [{ sourceType: 'task', sourceId: project.id, locator: 'fixture:decision' }],
+    daci: { driverId: 'local-user', approverId: 'local-user', contributorIds: [], informedIds: [] },
+  })
   await Bun.sleep(20)
   expect(listPilotIntentHistory(project.id)).toEqual(before)
 })

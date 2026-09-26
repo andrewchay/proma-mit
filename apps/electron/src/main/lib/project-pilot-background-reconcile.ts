@@ -3,6 +3,7 @@ import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { dispatchReadyPilotIntents } from './project-pilot-dispatch'
 import { getPilotControlSnapshot } from './project-pilot-control'
 import { onTaskChange } from './project-service'
+import { onProjectChainChange } from './project-chain-service'
 
 const RECONCILE_INTERVAL_MS = 30_000
 
@@ -58,11 +59,17 @@ export function startPilotBackgroundReconcile(): () => void {
       if (!controller.signal.aborted) console.warn(`[Pilot] 任务事件对账或受控派发失败 project=${task.projectId}`, error)
     })
   })
+  const unsubscribeChain = onProjectChainChange((projectId) => {
+    if (stopped) return
+    void reconcile().catch((error) => {
+      if (!controller.signal.aborted) console.warn(`[Pilot] 项目链事件对账或受控派发失败 project=${projectId}`, error)
+    })
+  })
   // 启动时补偿上次关闭后的变更，后续周期性重读权威数据。
   void reconcile().catch((error) => console.warn('[Pilot] 启动对账或受控派发失败', error))
   const timer = setInterval(() => {
     void reconcile().catch((error) => console.warn('[Pilot] 定期对账或受控派发失败', error))
   }, RECONCILE_INTERVAL_MS)
   timer.unref()
-  return () => { stopped = true; controller.abort(); clearInterval(timer); unsubscribe() }
+  return () => { stopped = true; controller.abort(); clearInterval(timer); unsubscribe(); unsubscribeChain() }
 }

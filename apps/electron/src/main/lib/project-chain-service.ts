@@ -15,6 +15,23 @@ import {
 import { applyChainCommand, emptyProjectChain } from './project-chain'
 import { getWorkflowIdentityDirectory } from './workflow-identity-service'
 
+type ProjectChainChangeListener = (projectId: string) => void
+
+const projectChainChangeListeners = new Set<ProjectChainChangeListener>()
+
+/** 订阅已提交的项目链修订；监听器只收到项目身份，必须自行重读权威链路。 */
+export function onProjectChainChange(listener: ProjectChainChangeListener): () => void {
+  projectChainChangeListeners.add(listener)
+  return () => { projectChainChangeListeners.delete(listener) }
+}
+
+function fireProjectChainChange(projectId: string): void {
+  for (const listener of projectChainChangeListeners) {
+    try { listener(projectId) }
+    catch (error) { console.error('[ProjectChain] 修订监听器执行失败:', error) }
+  }
+}
+
 function normalizeSourceRefs(value: unknown): ProjectDecisionSourceRef[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
@@ -115,6 +132,7 @@ export function updateProjectChainAsActor(
   actor: string,
 ): ProjectChain {
   let result: ProjectChain | undefined
+  let savedPayload: string | undefined
   getProjectDb().transaction(() => {
     let linkedExecution: ProjectDeliverableExecution | undefined
     const current = getProjectChain(projectId)
@@ -258,10 +276,25 @@ export function updateProjectChainAsActor(
       )
       if (history) history.execution = structuredClone(linkedExecution)
     }
+    savedPayload = JSON.stringify(result)
     getProjectDb()
       .prepare('INSERT INTO project_chain_revisions (project_id, revision, payload) VALUES (?, ?, ?)')
-      .run(projectId, result.revision, JSON.stringify(result))
+      .run(projectId, result.revision, savedPayload)
   })()
-  if (!result) throw new Error('链路保存失败')
+  if (!result || !savedPayload) throw new Error('链路保存失败')
+  const revision = result.revision
+  const payload = savedPayload
+  // 嵌套事务由外层提交或回滚；在同一轮同步调用结束后核验权威行，再通知订阅者。
+  queueMicrotask(() => {
+    if (projectChainChangeListeners.size === 0) return
+    try {
+      const row = getProjectDb()
+        .prepare('SELECT payload FROM project_chain_revisions WHERE project_id = ? AND revision = ?')
+        .get(projectId, revision) as { payload: string } | undefined
+      if (row?.payload === payload) fireProjectChainChange(projectId)
+    } catch (error) {
+      console.error('[ProjectChain] 修订事件核验失败:', error)
+    }
+  })
   return result
 }
