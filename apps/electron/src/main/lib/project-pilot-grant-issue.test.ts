@@ -84,4 +84,6 @@ test('Given 草案已修改或项目已有其他活动授权 When 确认 Then �
 test('Given 旧数据库 When 初始化 Then grant 确认指纹列已迁移', () => {
   const columns = getProjectDb().prepare('PRAGMA table_info(pilot_runtime_grants)').all() as Array<{ name: string }>
   expect(columns.map((item) => item.name)).toContain('approval_fingerprint')
+  const commandColumns = getProjectDb().prepare('PRAGMA table_info(pilot_commands)').all() as Array<{ name: string }>
+  expect(commandColumns.map((item) => item.name)).toContain('usage_evidence')
 })

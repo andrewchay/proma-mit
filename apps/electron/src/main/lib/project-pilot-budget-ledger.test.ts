@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
-import { assertPilotCommandStartRecord, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandCost, type PilotCommandReservationInput } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-budget-'))
@@ -32,6 +32,16 @@ function fixture(state: 'paused' | 'active' = 'active', maxCostMicros = 1_000, m
   }
   return { project, task, grantId, input }
 }
+
+const usageEvidence = (executionId: string, costMicros: number): PilotUsageEvidence => ({
+  source: 'provider_reported', executionId, sessionId: 'session-1', channelId: 'channel-a', modelId: 'model-a',
+  providerRecordId: `provider-${executionId}`, inputTokens: 100, outputTokens: 20, costMicros, capturedAt: Date.now(),
+})
+
+const unknownUsage = (executionId: string): PilotUsageEvidence => ({
+  source: 'unknown', executionId, sessionId: 'session-1', channelId: 'channel-a', modelId: 'model-a',
+  reason: 'Provider 未返回可核验用量', capturedAt: Date.now(),
+})
 
 test('暂停授权、未知费用与无授权都不能预留或创建执行', () => {
   const { project, grantId, input } = fixture('paused')
@@ -187,11 +197,12 @@ test('终结执行的已知费用结算并释放未用预留，重复结算幂�
   reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
   updateAgentExecution(executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
   getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
-  const settled = settlePilotCommandCost(input.commandId, 450)
+  const evidence = usageEvidence(executionId, 450)
+  const settled = settlePilotCommandUsage(input.commandId, evidence)
   expect(settled).toEqual({ commandId: input.commandId, state: 'settled', actualCostMicros: 450, grantPaused: false })
-  expect(settlePilotCommandCost(input.commandId, 450)).toEqual(settled)
+  expect(settlePilotCommandUsage(input.commandId, evidence)).toEqual(settled)
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 450 })
-  expect(() => settlePilotCommandCost(input.commandId, 451)).toThrow('状态不可结算')
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 451))).toThrow('状态不可结算')
 })
 
 test('未知或超预留费用保留预算占额并暂停后续派发', () => {
@@ -201,7 +212,8 @@ test('未知或超预留费用保留预算占额并暂停后续派发', () => {
     reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
     updateAgentExecution(executionId, { status: 'failed', sessionId: 'session-1', completedAt: Date.now() })
     getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
-    expect(settlePilotCommandCost(input.commandId, actualCostMicros)).toEqual({
+    const evidence = actualCostMicros === null ? unknownUsage(executionId) : usageEvidence(executionId, actualCostMicros)
+    expect(settlePilotCommandUsage(input.commandId, evidence)).toEqual({
       commandId: input.commandId, state: 'needs_reconcile', actualCostMicros, grantPaused: true,
     })
     expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1,
@@ -212,14 +224,48 @@ test('未知或超预留费用保留预算占额并暂停后续派发', () => {
   }
 })
 
+test('用量证据必须绑定执行、会话、渠道和模型，可追溯估算必须携带价格来源', () => {
+  const { project, input } = fixture()
+  const executionId = `execution-${project.id}`
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  updateAgentExecution(executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
+  const invalidSource = { ...usageEvidence(executionId, 300), source: 'bogus' } as unknown as PilotUsageEvidence
+  expect(() => settlePilotCommandUsage(input.commandId, invalidSource)).toThrow('用量证据来源无效')
+  expect(() => settlePilotCommandUsage(input.commandId, { ...usageEvidence(executionId, 300), capturedAt: Date.now() + 10_000 }))
+    .toThrow('用量证据时间无效')
+  expect(() => settlePilotCommandUsage(input.commandId, { ...usageEvidence(executionId, 300), channelId: 'other' }))
+    .toThrow('用量证据与执行、会话、渠道或模型不匹配')
+  getProjectDb().prepare('UPDATE agent_executions SET agent_id = ? WHERE id = ?').run('other-agent', executionId)
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 300)))
+    .toThrow('执行未终结或账本归属无法核验')
+  getProjectDb().prepare('UPDATE agent_executions SET agent_id = ? WHERE id = ?').run('executor', executionId)
+  getProjectDb().prepare('DELETE FROM pilot_command_links WHERE command_id = ?').run(input.commandId)
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 300)))
+    .toThrow('命令关联无法核验')
+  getProjectDb().prepare(`INSERT INTO pilot_command_links
+    (command_id, project_id, policy_revision, execution_id, created_at) VALUES (?, ?, 1, ?, ?)`)
+    .run(input.commandId, project.id, executionId, Date.now())
+  const estimate: PilotUsageEvidence = {
+    source: 'traceable_estimate', executionId, sessionId: 'session-1', channelId: 'channel-a', modelId: 'model-a',
+    priceSource: 'vendor-price-snapshot-2026-09-26', inputTokens: 100, outputTokens: 20,
+    costMicros: 300, capturedAt: Date.now(),
+  }
+  expect(() => settlePilotCommandUsage(input.commandId, { ...estimate, priceSource: '' })).toThrow('用量或计价证据无效')
+  expect(settlePilotCommandUsage(input.commandId, estimate).state).toBe('settled')
+  const row = getProjectDb().prepare('SELECT usage_evidence FROM pilot_commands WHERE id = ?')
+    .get(input.commandId) as { usage_evidence: string }
+  expect(JSON.parse(row.usage_evidence)).toEqual(estimate)
+})
+
 test('执行未终结、费用无效或已释放的排队命令不能结算', () => {
   const { project, grantId, input } = fixture()
   const executionId = `execution-${project.id}`
   reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
-  expect(() => settlePilotCommandCost(input.commandId, 100)).toThrow('执行未终结')
-  expect(() => settlePilotCommandCost(input.commandId, Number.NaN)).toThrow('结算费用无效')
-  expect(() => settlePilotCommandCost(input.commandId, -1)).toThrow('结算费用无效')
-  updateAgentExecution(executionId, { status: 'cancelled', completedAt: Date.now() })
-  expect(() => settlePilotCommandCost(input.commandId, 0)).toThrow('状态不可结算')
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 100))).toThrow('执行未终结')
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, Number.NaN))).toThrow('用量或计价证据无效')
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, -1))).toThrow('用量或计价证据无效')
+  updateAgentExecution(executionId, { status: 'cancelled', sessionId: 'session-1', completedAt: Date.now() })
+  expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 0))).toThrow('状态不可结算')
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 600 })
 })

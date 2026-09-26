@@ -1,4 +1,4 @@
-import { assertPilotCommandStartRecord } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, validatePilotUsageEvidence, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 
@@ -7,6 +7,8 @@ interface GrantRow {
   project_id: string
   policy_revision: number
   state: 'active' | 'paused'
+  channel_id: string
+  model_id: string
   expires_at: number
 }
 
@@ -14,9 +16,12 @@ interface CommandRow {
   id: string
   project_id: string
   grant_id: string
+  source_task_id: string
+  employee_id: string
   state: 'reserved' | 'queued' | 'running' | 'settled' | 'released' | 'needs_reconcile'
   execution_id: string | null
   actual_cost_micros: number | null
+  usage_evidence: string | null
 }
 
 export interface PilotRecoveryIssue {
@@ -59,6 +64,7 @@ export function inspectPilotGrantRecovery(grantId: string, now = Date.now()): Pi
     const commands = database.prepare('SELECT * FROM pilot_commands WHERE grant_id = ? ORDER BY id')
       .all(grantId) as CommandRow[]
     for (const command of commands) {
+      let usageEvidence: PilotUsageEvidence | undefined
       if (command.project_id !== grant.project_id) {
         snapshot.needsAttention.push({ commandId: command.id, reason: '命令项目与授权不一致' })
         continue
@@ -69,6 +75,21 @@ export function inspectPilotGrantRecovery(grantId: string, now = Date.now()): Pi
           || command.actual_cost_micros === null || command.actual_cost_micros < 0))) {
         snapshot.needsAttention.push({ commandId: command.id, reason: '命令费用与状态不一致' })
         continue
+      }
+      if (command.state === 'settled') {
+        try {
+          if (!command.usage_evidence) throw new Error('missing')
+          usageEvidence = JSON.parse(command.usage_evidence) as PilotUsageEvidence
+          validatePilotUsageEvidence(usageEvidence)
+          if (usageEvidence.capturedAt > now) throw new Error('future')
+        } catch {
+          snapshot.needsAttention.push({ commandId: command.id, reason: '结算用量证据缺失或无效' })
+          continue
+        }
+        if (usageEvidence.source === 'unknown' || usageEvidence.costMicros !== command.actual_cost_micros) {
+          snapshot.needsAttention.push({ commandId: command.id, reason: '结算用量证据与账本金额不一致' })
+          continue
+        }
       }
       if (command.state === 'reserved') {
         if (hasUnexpectedReservationArtifacts(command)) {
@@ -101,9 +122,15 @@ export function inspectPilotGrantRecovery(grantId: string, now = Date.now()): Pi
       if (command.execution_id) {
         const execution = getAgentExecution(command.execution_id)
         if (!execution || execution.pilotCommandId !== command.id || execution.projectId !== grant.project_id
+          || execution.entityType !== 'task' || execution.entityId !== command.source_task_id
+          || execution.agentId !== command.employee_id
           || execution.status === 'queued' || execution.status === 'running'
           || (command.state === 'released' && (execution.status !== 'cancelled' || execution.sessionId !== ''))) {
           snapshot.needsAttention.push({ commandId: command.id, reason: '终结命令与执行状态不一致' })
+        } else if (usageEvidence && (usageEvidence.executionId !== execution.id
+          || usageEvidence.sessionId !== execution.sessionId || usageEvidence.channelId !== grant.channel_id
+          || usageEvidence.modelId !== grant.model_id)) {
+          snapshot.needsAttention.push({ commandId: command.id, reason: '结算用量证据与执行或授权不一致' })
         } else {
           try {
             assertPilotExecutionLinked(execution.id, grant.policy_revision)

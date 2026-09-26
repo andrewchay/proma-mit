@@ -682,6 +682,7 @@ function migrate(database: SqliteCompat): void {
       rework_ordinal INTEGER NOT NULL CHECK (rework_ordinal >= 0),
       reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
       actual_cost_micros INTEGER CHECK (actual_cost_micros >= 0),
+      usage_evidence TEXT,
       state TEXT NOT NULL CHECK (state IN ('reserved', 'queued', 'running', 'settled', 'released', 'needs_reconcile')),
       execution_id TEXT UNIQUE,
       created_at INTEGER NOT NULL,
@@ -923,6 +924,11 @@ function migrate(database: SqliteCompat): void {
   const pilotGrantColumns = readColumnNames(database, 'pilot_runtime_grants')
   if (!pilotGrantColumns.includes('approval_fingerprint')) {
     database.exec('ALTER TABLE pilot_runtime_grants ADD COLUMN approval_fingerprint TEXT')
+  }
+  // Pilot 费用结算必须保存与执行/session/渠道/模型绑定的用量证据；旧结算行保持 NULL，恢复时进入人工对账。
+  const pilotCommandColumns = readColumnNames(database, 'pilot_commands')
+  if (!pilotCommandColumns.includes('usage_evidence')) {
+    database.exec('ALTER TABLE pilot_commands ADD COLUMN usage_evidence TEXT')
   }
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')

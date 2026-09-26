@@ -79,6 +79,7 @@ interface CommandRow {
   rework_ordinal: number
   reserved_cost_micros: number
   actual_cost_micros: number | null
+  usage_evidence: string | null
   state: PilotCommandReservation['state']
   execution_id: string | null
   created_at: number
@@ -306,13 +307,50 @@ export interface PilotCommandSettlement {
   grantPaused: boolean
 }
 
-/** 仅内部记账原语：调用方费用尚未绑定可信 usage 证据，禁止作为生产结算入口；未知或超预留时保留占额并撤权。 */
-export function settlePilotCommandCost(commandId: string, actualCostMicros: number | null, now = Date.now()): PilotCommandSettlement {
-  if (typeof commandId !== 'string' || !commandId.trim()
-    || (actualCostMicros !== null && (!Number.isSafeInteger(actualCostMicros) || actualCostMicros < 0))) {
-    throw new Error('Pilot 结算费用无效')
+interface PilotUsageEvidenceBase {
+  executionId: string
+  sessionId: string
+  channelId: string
+  modelId: string
+  capturedAt: number
+}
+
+export type PilotUsageEvidence = PilotUsageEvidenceBase & (
+  | { source: 'provider_reported'; providerRecordId: string; inputTokens: number; outputTokens: number; costMicros: number }
+  | { source: 'traceable_estimate'; priceSource: string; inputTokens: number; outputTokens: number; costMicros: number }
+  | { source: 'unknown'; reason: string }
+)
+
+export function validatePilotUsageEvidence(evidence: PilotUsageEvidence): void {
+  const ids = [evidence?.executionId, evidence?.sessionId, evidence?.channelId, evidence?.modelId]
+  if (ids.some((value) => typeof value !== 'string' || !value.trim())
+    || !Number.isSafeInteger(evidence?.capturedAt) || evidence.capturedAt < 0) {
+    throw new Error('Pilot 用量证据身份无效')
   }
+  if (!['provider_reported', 'traceable_estimate', 'unknown'].includes(evidence.source)) {
+    throw new Error('Pilot 用量证据来源无效')
+  }
+  if (evidence.source === 'unknown') {
+    if (!evidence.reason?.trim()) throw new Error('Pilot 未知用量必须说明原因')
+    return
+  }
+  if (!Number.isSafeInteger(evidence.inputTokens) || evidence.inputTokens < 0
+    || !Number.isSafeInteger(evidence.outputTokens) || evidence.outputTokens < 0
+    || !Number.isSafeInteger(evidence.costMicros) || evidence.costMicros < 0
+    || (evidence.source === 'provider_reported' && !evidence.providerRecordId?.trim())
+    || (evidence.source === 'traceable_estimate' && !evidence.priceSource?.trim())) {
+    throw new Error('Pilot 用量或计价证据无效')
+  }
+}
+
+/** 只接受与执行归属完全绑定的 Provider 回执、可追溯估算或显式未知证据。 */
+export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageEvidence, now = Date.now()): PilotCommandSettlement {
+  if (typeof commandId !== 'string' || !commandId.trim()) throw new Error('Pilot 结算命令无效')
+  validatePilotUsageEvidence(evidence)
   assertValidClock(now)
+  if (evidence.capturedAt > now) throw new Error('Pilot 用量证据时间无效')
+  const actualCostMicros = evidence.source === 'unknown' ? null : evidence.costMicros
+  const serializedEvidence = JSON.stringify(evidence)
   const database = getProjectDb()
   let result: PilotCommandSettlement | undefined
   database.transaction(() => {
@@ -323,18 +361,25 @@ export function settlePilotCommandCost(commandId: string, actualCostMicros: numb
     const execution = getAgentExecution(command.execution_id)
     if (!grant || !execution || execution.projectId !== command.project_id
       || execution.pilotCommandId !== command.id || execution.entityId !== command.source_task_id
+      || execution.entityType !== 'task' || execution.agentId !== command.employee_id
       || !['completed', 'failed', 'cancelled', 'stale'].includes(execution.status)) {
       throw new Error('Pilot 执行未终结或账本归属无法核验')
     }
-    if (command.state === 'settled' && command.actual_cost_micros === actualCostMicros) {
-      result = { commandId, state: 'settled', actualCostMicros, grantPaused: grant.state === 'paused' }
+    assertPilotExecutionLinked(execution.id, grant.policy_revision)
+    if (execution.id !== evidence.executionId || execution.sessionId !== evidence.sessionId
+      || grant.channel_id !== evidence.channelId || grant.model_id !== evidence.modelId) {
+      throw new Error('Pilot 用量证据与执行、会话、渠道或模型不匹配')
+    }
+    if ((command.state === 'settled' || command.state === 'needs_reconcile')
+      && command.actual_cost_micros === actualCostMicros && command.usage_evidence === serializedEvidence) {
+      result = { commandId, state: command.state, actualCostMicros, grantPaused: grant.state === 'paused' }
       return
     }
     if (command.state !== 'running') throw new Error('Pilot 命令状态不可结算')
     const exceeded = actualCostMicros === null || actualCostMicros > command.reserved_cost_micros
     const state = exceeded ? 'needs_reconcile' : 'settled'
-    const updated = database.prepare(`UPDATE pilot_commands SET state = ?, actual_cost_micros = ?, updated_at = ?
-      WHERE id = ? AND state = 'running'`).run(state, actualCostMicros, now, commandId)
+    const updated = database.prepare(`UPDATE pilot_commands SET state = ?, actual_cost_micros = ?, usage_evidence = ?, updated_at = ?
+      WHERE id = ? AND state = 'running'`).run(state, actualCostMicros, serializedEvidence, now, commandId)
     if (updated.changes !== 1) throw new Error('Pilot 结算状态已变化')
     if (exceeded) {
       database.prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE id = ? AND state = 'active'")

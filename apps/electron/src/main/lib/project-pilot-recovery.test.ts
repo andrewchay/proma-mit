@@ -124,6 +124,66 @@ test('费用与命令状态矛盾时必须停等，不能按零费用或完整�
     .run(settled.input.commandId)
   expect(inspectPilotGrantRecovery(settled.grantId).needsAttention)
     .toEqual([{ commandId: settled.input.commandId, reason: '命令费用与状态不一致' }])
+
+  const legacySettled = fixture()
+  reserveAndQueuePilotCommand(legacySettled.input, { executionId: legacySettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(legacySettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = NULL WHERE id = ?")
+    .run(legacySettled.input.commandId)
+  expect(inspectPilotGrantRecovery(legacySettled.grantId).needsAttention)
+    .toEqual([{ commandId: legacySettled.input.commandId, reason: '结算用量证据缺失或无效' }])
+
+  const tamperedSettled = fixture()
+  reserveAndQueuePilotCommand(tamperedSettled.input, { executionId: tamperedSettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(tamperedSettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const evidence = JSON.stringify({
+    source: 'provider_reported', executionId: tamperedSettled.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', providerRecordId: `provider-${tamperedSettled.executionId}`,
+    inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now(),
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 21, usage_evidence = ? WHERE id = ?")
+    .run(evidence, tamperedSettled.input.commandId)
+  expect(inspectPilotGrantRecovery(tamperedSettled.grantId).needsAttention)
+    .toEqual([{ commandId: tamperedSettled.input.commandId, reason: '结算用量证据与账本金额不一致' }])
+
+  const unknownSettled = fixture()
+  reserveAndQueuePilotCommand(unknownSettled.input, { executionId: unknownSettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(unknownSettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const unknownEvidence = JSON.stringify({
+    source: 'unknown', executionId: unknownSettled.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', reason: 'Provider 未返回用量', capturedAt: Date.now(),
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = ? WHERE id = ?")
+    .run(unknownEvidence, unknownSettled.input.commandId)
+  expect(inspectPilotGrantRecovery(unknownSettled.grantId).needsAttention)
+    .toEqual([{ commandId: unknownSettled.input.commandId, reason: '结算用量证据与账本金额不一致' }])
+
+  const futureSettled = fixture()
+  reserveAndQueuePilotCommand(futureSettled.input, { executionId: futureSettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(futureSettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const futureEvidence = JSON.stringify({
+    source: 'provider_reported', executionId: futureSettled.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', providerRecordId: `provider-${futureSettled.executionId}`,
+    inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now() + 10_000,
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = ? WHERE id = ?")
+    .run(futureEvidence, futureSettled.input.commandId)
+  expect(inspectPilotGrantRecovery(futureSettled.grantId).needsAttention)
+    .toEqual([{ commandId: futureSettled.input.commandId, reason: '结算用量证据缺失或无效' }])
+
+  const changedOwner = fixture()
+  reserveAndQueuePilotCommand(changedOwner.input, { executionId: changedOwner.executionId, prompt: '研发任务' })
+  updateAgentExecution(changedOwner.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const ownerEvidence = JSON.stringify({
+    source: 'provider_reported', executionId: changedOwner.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', providerRecordId: `provider-${changedOwner.executionId}`,
+    inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now(),
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = ? WHERE id = ?")
+    .run(ownerEvidence, changedOwner.input.commandId)
+  getProjectDb().prepare('UPDATE agent_executions SET agent_id = ? WHERE id = ?').run('other-agent', changedOwner.executionId)
+  expect(inspectPilotGrantRecovery(changedOwner.grantId).needsAttention)
+    .toEqual([{ commandId: changedOwner.input.commandId, reason: '终结命令与执行状态不一致' }])
 })
 
 test('命令行丢失时仍扫描同项目 Pilot 执行与关联，不能返回空安全快照', () => {
