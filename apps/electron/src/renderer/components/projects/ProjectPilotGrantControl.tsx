@@ -64,7 +64,7 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
     try {
       await window.electronAPI.paa.project.confirmPilotGrant(issuePreview, issuePreview.approvalFingerprint)
       setIssuePreview(null)
-      setNotice('活动授权已发行；当前仍不会自动派发或启动模型。')
+      setNotice('活动授权已发行；符合条件的候选会在后台重新核验全部门禁后进入受控派发。')
       setError('')
       await load()
     } catch (cause) {
@@ -149,7 +149,7 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
           <p className="font-semibold">确认发行版本 {issuePreview.policyRevision} 的活动授权</p>
           <p className="mt-1">工作区 {issuePreview.workspaceId}；执行 {issuePreview.executorEmployeeId}；评审 {issuePreview.reviewerEmployeeId}。</p>
           <p className="mt-1">模型 {issuePreview.channelId} / {issuePreview.modelId}；{formatCost(issuePreview.maxCostMicros)}；最多 {issuePreview.maxRuns} 次，返工 {issuePreview.maxRework} 次；有效期至 {new Date(issuePreview.expiresAt).toLocaleString()}。</p>
-          <p className="mt-1">确认只写入授权记录，不创建命令、不派发员工、不调用模型。</p>
+          <p className="mt-1">本次确认只写入授权记录；随后后台可能对符合条件的候选重新核验并受控派发。</p>
           <div className="mt-3 flex gap-2">
             <button type="button" className="rounded-md bg-primary px-3 py-2 text-primary-foreground" onClick={() => void confirmIssue()} disabled={busy}>确认发行活动授权</button>
             <button type="button" className="rounded-md bg-white px-3 py-2" onClick={() => setIssuePreview(null)} disabled={busy}>取消</button>

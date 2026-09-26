@@ -7,7 +7,7 @@ import type { PilotPolicy } from './project-pilot-policy'
 import { withPilotPolicySnapshot } from './project-pilot-policy'
 import { hashPilotGrantApproval } from './project-pilot-grant-issue'
 
-/** 仅供受控派发层使用的账本原语；活动 grant 尚未接入执行派发入口。 */
+/** 仅供受控派发层使用的账本原语；调用方仍须先重验候选、readiness 与活动 grant。 */
 export interface PilotCommandReservationInput {
   commandId: string
   projectId: string

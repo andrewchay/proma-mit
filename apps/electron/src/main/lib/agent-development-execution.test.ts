@@ -19,6 +19,7 @@ const { createAgentWorkspace, getAgentWorkspaceCwd } = await import('./agent-wor
 const { getAgentSessionMeta, appendAgentMessage, appendSDKMessages, updateAgentSessionMeta } = await import('./agent-session-manager')
 const { createChannel } = await import('./channel-manager')
 const { setAgentStopper, setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+const { insertPilotGrantFixture } = await import('./project-pilot-test-helpers')
 
 let lastRun: { input: AgentSendInput; callbacks: HeadlessAgentRunCallbacks } | undefined
 let acceptStopRequest = true
@@ -67,6 +68,28 @@ async function dispatch(task: ReturnType<typeof store.createTask>) {
 }
 
 describe('研发员工既有链路兼容', () => {
+  test('Given 项目已有活动 Pilot 授权 When 普通入口派发或启动旧队列 Then fail closed', async () => {
+    const { task, workspace, employee } = fixture()
+    store.updateTask(task.id, { workspaceId: workspace.id })
+    const current = store.getTask(task.id)!
+    const now = Date.now()
+    insertPilotGrantFixture({
+      grantId: `grant-${task.projectId}`, projectId: task.projectId, workspaceId: workspace.id,
+      channelId: employee.channelId, modelId: employee.modelId!, executorEmployeeId: employee.id,
+      reviewerEmployeeId: `reviewer-${employee.id}`, maxCostMicros: 1_000, maxRuns: 1,
+      maxRework: 0, expiresAt: now + 100_000, createdAt: now,
+    })
+    expect(await service.dispatchTaskToAgent(current)).toBeNull()
+    expect(store.listAgentExecutionsByProject(task.projectId)).toEqual([])
+    const ordinary = store.createAgentExecution({
+      id: randomUUID(), projectId: task.projectId, entityType: 'task', entityId: task.id,
+      agentId: employee.id, sessionId: '', prompt: '旧普通队列', status: 'queued',
+    })
+    expect(await service.tryStartExecution(ordinary.id)).toBe(false)
+    expect(store.getAgentExecution(ordinary.id)?.status).toBe('queued')
+    expect(lastRun).toBeUndefined()
+  })
+
   test('Given 研发配置 When 派发与返工 Then 继承范围权限且保留原代码和会话', async () => {
     const { task, workspace, repo, employee } = fixture()
     const { execution, run } = await dispatch(task)

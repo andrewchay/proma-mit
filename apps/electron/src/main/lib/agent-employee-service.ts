@@ -17,6 +17,7 @@ import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent
 import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
 import { getProjectChain } from './project-chain-service'
 import { getPilotPolicy } from './project-pilot-policy'
+import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart } from './project-pilot-budget-ledger'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
@@ -494,6 +495,12 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
     return null
   }
 
+  // 活动 Pilot 项目只能从受控候选入口生成账本命令，普通员工旧入口不得绕过授权与预算。
+  if (getActivePilotGrant(task.projectId)) {
+    console.warn(`[AgentEmployee] 项目 ${task.projectId} 存在活动 Pilot 授权，拒绝普通派发入口`)
+    return null
+  }
+
   const employee = store.getAgentEmployee(agentId)
   if (!employee) {
     console.error(`[AgentEmployee] 员工不存在: ${agentId}`)
@@ -560,6 +567,10 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
   let pilotReservedCostMicros: number | undefined
+  if (!execution.pilotCommandId && getActivePilotGrant(execution.projectId)) {
+    console.warn(`[AgentEmployee] 项目 ${execution.projectId} 存在活动 Pilot 授权，普通排队执行不得启动`)
+    return false
+  }
   // Pilot 执行每次启动前重新读取授权；未知、暂停或失效时保持 queued，等待对账。
   if (execution.pilotCommandId) {
     try {

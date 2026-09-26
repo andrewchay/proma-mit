@@ -63,7 +63,7 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
       <div className="flex items-start justify-between gap-4 rounded-xl bg-card p-5 shadow-sm">
         <div>
           <h2 className="text-lg font-semibold">项目驾驶 · 状态观察</h2>
-          <p className="text-sm text-muted-foreground">当前仅根据项目事实展示下一步线索，不调用模型或自动派发。需要人工处理的事项请到原任务/协作入口审阅。</p>
+          <p className="text-sm text-muted-foreground">这里根据项目事实展示下一步线索；只有活动授权和全部门禁通过的执行候选才会进入受控派发。人工事项请到原任务/协作入口审阅。</p>
         </div>
         <button className="rounded-md bg-muted px-3 py-1.5 text-sm" type="button" onClick={() => void refresh()} disabled={loading}>刷新状态</button>
       </div>
@@ -82,7 +82,7 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
         </div>
         <div className="rounded-xl bg-card p-4 shadow-sm" aria-label="当前候选意图">
           <h3 className="font-semibold">当前待处理线索 · {intents.length}</h3>
-          <p className="mt-1 text-sm text-muted-foreground">后台保存候选记录；展示时重新核对项目事实。线索不会自动派发任务或批准交付。</p>
+          <p className="mt-1 text-sm text-muted-foreground">后台保存候选记录并重新核对项目事实；执行候选仍须通过活动授权、预算和 Runtime 门禁，交付不会自动批准。</p>
           {intents.length > 0 && <ul className="mt-3 space-y-2 text-sm">
             {intents.map((intent) => {
               const task = intent.sourceType === 'task' ? observation.tasks.find((item) => item.taskId === intent.sourceId) : undefined
