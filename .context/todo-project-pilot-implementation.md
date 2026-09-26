@@ -47,6 +47,7 @@ PM01 可信费用与角色能力证据、PM02 的目标澄清对话、PM03 无�
 - [x] Runtime 调用前以单一 SQLite 事务将 Pilot command 与 execution 从 queued 认领为 running；任一更新失败全部回滚。创建会话/工作树失败时保持 queued，不伪造已启动。
 - [x] queued Pilot 因用户停止、任务改派/暂停/删除或状态变更取消时，同一事务取消 execution 并把 command 置为 released；费用和未启动次数预留归零，授权已暂停/过期也能安全取消。
 - [x] Runtime 终结事件没有可信 Provider 回执时，生产完成/失败/卡点/确认停止路径统一以 unknown 结算，暂停 grant 并保留预算待对账。
+- [x] 应用重启发现遗留 running Pilot 时，不自动续跑：先暂停项目活动 grant、execution 转 stale；仅在身份与来源关联完整且无旧费用痕迹时记录 unknown/needs_reconcile，破损账本保持原样待人工处理；重复恢复幂等。
 - [ ] 受信用量采集器、原始回执/价格快照核验；真实用量事件尚未接结算入口，不能作为完整生产费用闭环。
 - [ ] 内部原子排队仍未接真实受控派发；可信用量事件/通用释放、真实停止器和完整故障注入矩阵仍未完成；未调用模型。
 

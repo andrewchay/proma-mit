@@ -510,12 +510,23 @@ async function bootstrap(): Promise<void> {
   await safeAwait('initProjectDb', async () => {
     const { initProjectDb } = await import('./lib/project-sqlite-store')
     await initProjectDb()
+  })
+  await safeAwait('recoverAllPilotPauseQueues', async () => {
     const { recoverAllPilotPauseQueues } = await import('./lib/project-pilot-pause-decision')
     for (const recovery of recoverAllPilotPauseQueues()) {
       if (recovery.result.state === 'needs_attention') {
         console.warn(`[Pilot] 暂停恢复需人工对账 project=${recovery.projectId} revision=${recovery.policyRevision}: ${recovery.result.reason}`)
       }
     }
+  })
+  await safeAwait('recoverInterruptedPilotRuntimeExecutions', async () => {
+    const { recoverInterruptedPilotRuntimeExecutions } = await import('./lib/project-pilot-runtime-recovery')
+    for (const recovery of recoverInterruptedPilotRuntimeExecutions()) {
+      const log = recovery.state === 'needs_attention' ? console.warn : console.info
+      log(`[Pilot] 重启恢复 execution=${recovery.executionId} command=${recovery.commandId}: ${recovery.reason}`)
+    }
+  })
+  await safeAwait('startPilotBackgroundReconcile', async () => {
     const { startPilotBackgroundReconcile } = await import('./lib/project-pilot-background-reconcile')
     stopPilotBackgroundReconcile = startPilotBackgroundReconcile()
   })
