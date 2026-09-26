@@ -205,6 +205,18 @@ export const PROJECT_IPC_CHANNELS = {
   OBSERVE_PILOT: 'project:observe-pilot',
   /** 同一次权威观察中的项目状态和当前候选。 */
   GET_PILOT_OVERVIEW: 'project:get-pilot-overview',
+  /** 读取 Pilot 策略、预检和活动授权；只读。 */
+  GET_PILOT_CONTROL: 'project:get-pilot-control',
+  /** 保存始终 paused 的 Pilot 策略草案；不会发行授权。 */
+  SAVE_PILOT_POLICY_DRAFT: 'project:save-pilot-policy-draft',
+  /** 冻结待确认的活动授权影响面；只读。 */
+  PREVIEW_PILOT_GRANT: 'project:preview-pilot-grant',
+  /** 按已冻结指纹发行活动授权；不派发或调用模型。 */
+  CONFIRM_PILOT_GRANT: 'project:confirm-pilot-grant',
+  /** 冻结暂停活动授权会取消或影响的命令。 */
+  PREVIEW_PILOT_GRANT_PAUSE: 'project:preview-pilot-grant-pause',
+  /** 用户逐项确认后撤权并取消未启动命令。 */
+  CONFIRM_PILOT_GRANT_PAUSE: 'project:confirm-pilot-grant-pause',
   LIST_PROJECT_WORK_ITEMS: 'project:list-project-work-items',
   LIST_MY_WORK: 'project:list-my-work',
   /** PH2-⑤：我发起/指派的任务 */

@@ -1,8 +1,9 @@
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import type { PilotPolicyDraftInput } from '@gravitas/shared'
 import { getConfigDir } from './config-paths'
-import { getProject } from './project-sqlite-store'
+import { getProject, getProjectDb } from './project-sqlite-store'
 
 /** 首版托管契约的持久边界。目前没有执行器消费该配置，也没有激活 IPC。 */
 export interface PilotPolicy {
@@ -23,19 +24,6 @@ export interface PilotPolicy {
   maxRework: number
   expiresAt: number
   updatedAt: number
-}
-
-export interface PilotDraftInput {
-  workspaceId: string
-  employeeIds: string[]
-  executorEmployeeId: string
-  reviewerEmployeeId: string
-  modelId: string
-  channelId: string
-  maxCostMicros: number
-  maxRuns: number
-  maxRework: number
-  expiresAt: number
 }
 
 const PATH = 'project-pilot-policies.json'
@@ -142,8 +130,8 @@ export function withPilotPolicySnapshot<T>(
   })
 }
 
-/** 内部草案持久化入口：尚未公开为 IPC；写入始终暂停，不触发模型、任务或通知。 */
-export function savePilotPolicyDraft(projectId: string, input: PilotDraftInput, expectedRevision: number | null): PilotPolicy {
+/** 草案持久化入口：已供项目经理 IPC 使用；写入始终暂停，不触发模型、任务或通知。 */
+export function savePilotPolicyDraft(projectId: string, input: PilotPolicyDraftInput, expectedRevision: number | null): PilotPolicy {
   if (!nonEmpty(projectId) || !getProject(projectId)) throw new Error('项目不存在')
   if (!nonEmpty(input?.workspaceId) || !nonEmpty(input.modelId) || !nonEmpty(input.channelId)
     || !Array.isArray(input.employeeIds) || !input.employeeIds.length
@@ -156,6 +144,9 @@ export function savePilotPolicyDraft(projectId: string, input: PilotDraftInput, 
     throw new Error('Pilot 策略草案必须限定工作区、员工、模型、预算、次数和有效期')
   }
   return withPolicyLock(() => {
+    const activeGrant = getProjectDb().prepare("SELECT id FROM pilot_runtime_grants WHERE project_id = ? AND state = 'active' LIMIT 1")
+      .get(projectId) as { id: string } | undefined
+    if (activeGrant) throw new Error('项目存在活动 Pilot 授权，请先预览影响面并暂停')
     const index = readIndex()
     const previous = index.policies.find((p) => p.projectId === projectId)
     if ((previous?.revision ?? null) !== expectedRevision) throw new Error('Pilot 授权版本已变化')

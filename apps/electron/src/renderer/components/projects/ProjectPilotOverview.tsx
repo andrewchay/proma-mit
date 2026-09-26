@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PilotIntent, PilotObservation } from '@gravitas/shared'
+import { ProjectPilotGrantControl } from './ProjectPilotGrantControl'
 
 const LABELS: Record<PilotObservation['tasks'][number]['state'], string> = {
   waiting_dependency: '等待依赖', awaiting_review: '待人工审阅',
@@ -66,6 +67,7 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
         </div>
         <button className="rounded-md bg-muted px-3 py-1.5 text-sm" type="button" onClick={() => void refresh()} disabled={loading}>刷新状态</button>
       </div>
+      <ProjectPilotGrantControl projectId={projectId} refreshKey={refreshKey} />
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {observation && <>
         {observation.attention.length > 0 && <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-950">

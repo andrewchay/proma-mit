@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
 import { assertPilotCommandStartRecord, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandCost, type PilotCommandReservationInput } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
-import { getPilotPolicy, savePilotPolicyDraft } from './project-pilot-policy'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-budget-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -75,16 +74,10 @@ test('跨项目、错角色、旧来源和未解除依赖在事务内拒绝，�
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 0, committedCostMicros: 0 })
 })
 
-test('grant 发行后策略范围变化时，即使活动行仍存在也拒绝新命令', () => {
-  const { project, input } = fixture()
-  const policy = getPilotPolicy(project.id)!
-  savePilotPolicyDraft(project.id, {
-    workspaceId: policy.workspaceId, employeeIds: policy.employeeIds,
-    executorEmployeeId: policy.executorEmployeeId!, reviewerEmployeeId: policy.reviewerEmployeeId!,
-    channelId: policy.channelId, modelId: policy.modelId, maxCostMicros: policy.maxCostMicros,
-    maxRuns: policy.maxRuns + 1, maxRework: policy.maxRework, expiresAt: policy.expiresAt,
-  }, policy.revision)
-  expect(() => reservePilotCommandBudget(input)).toThrow('授权版本已变化')
+test('grant 发行后活动行边界损坏时拒绝新命令', () => {
+  const { project, grantId, input } = fixture()
+  getProjectDb().prepare('UPDATE pilot_runtime_grants SET max_runs = max_runs + 1 WHERE id = ?').run(grantId)
+  expect(() => reservePilotCommandBudget(input)).toThrow('活动授权与当前策略不一致')
   expect(listAgentExecutionsByProject(project.id)).toEqual([])
 })
 

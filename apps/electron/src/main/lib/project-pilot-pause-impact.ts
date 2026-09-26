@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
+import type { PilotRunningChoice, PilotRunningDisposition } from '@gravitas/shared'
+export type { PilotRunningChoice, PilotRunningDisposition } from '@gravitas/shared'
 import type { AgentExecution } from './project-types'
 import { listAgentExecutionsByProject } from './project-sqlite-store'
 import { getPilotPolicy, pausePilotPolicy, type PilotPolicy } from './project-pilot-policy'
 import { cancelLinkedQueuedPilotExecutions, listPilotCommandLinks, type PilotCommandLink } from './project-pilot-command-links'
 import { cancelAgentExecution } from './agent-employee-service'
 import { recordPilotPauseDecision } from './project-pilot-pause-decision'
-
-export type PilotRunningDisposition = 'finish_current' | 'request_stop'
 
 export interface PilotPauseExecution {
   executionId: string
@@ -23,11 +23,6 @@ export interface PilotPauseImpact {
   queued: PilotPauseExecution[]
   running: PilotPauseExecution[]
   mode: 'preview'
-}
-
-export interface PilotRunningChoice {
-  executionId: string
-  disposition: PilotRunningDisposition
 }
 
 /** 只读展示候选影响面。真正取消前仍须核验命令归属并做 queued 状态条件更新。 */

@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type {
+  PilotGrantPauseImpact,
+  PilotGrantPauseResult,
+  PilotGrantPauseTarget,
+  PilotRunningChoice,
+} from '@gravitas/shared'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
-import type { PilotRunningChoice } from './project-pilot-pause-impact'
 
 interface GrantRow {
   id: string
@@ -24,24 +29,6 @@ interface LinkRow {
   project_id: string
   policy_revision: number
   execution_id: string
-}
-
-export interface PilotGrantPauseTarget {
-  commandId: string
-  executionId: string
-  taskId: string
-  agentId: string
-  sessionId: string
-}
-
-export interface PilotGrantPauseImpact {
-  grantId: string
-  projectId: string
-  policyRevision: number
-  fingerprint: string
-  reservedCommandIds: string[]
-  queued: PilotGrantPauseTarget[]
-  running: PilotGrantPauseTarget[]
 }
 
 function readImpact(grantId: string): PilotGrantPauseImpact {
@@ -106,14 +93,6 @@ export function previewPilotGrantPauseImpact(grantId: string): PilotGrantPauseIm
   getProjectDb().transaction(() => { result = readImpact(grantId) })()
   if (!result) throw new Error('Pilot 暂停影响面无法核验')
   return result
-}
-
-export interface PilotGrantPauseResult {
-  grantId: string
-  cancelledExecutionIds: string[]
-  releasedReservationCommandIds: string[]
-  runningChoices: PilotRunningChoice[]
-  pendingStopExecutionIds: string[]
 }
 
 /** 内部存储原语：用户逐项确认后同事务撤权、释放未启动预留、取消排队；停止请求仍待编排层执行。 */
@@ -194,7 +173,7 @@ export interface PilotGrantPauseWithStopsResult extends PilotGrantPauseResult {
   stopOutcomes: PilotGrantStopOutcome[]
 }
 
-/** 供未来确认入口注入真实停止器；暂停事务先提交，再逐条请求停止并如实报告未知结果。 */
+/** 供后续真实停止器接线；暂停事务先提交，再逐条请求停止并如实报告未知结果。 */
 export function confirmPilotGrantPauseAndRequestStops(
   preview: PilotGrantPauseImpact,
   choices: PilotRunningChoice[],

@@ -47,3 +47,100 @@ export interface PilotOverviewSnapshot {
   observation: PilotObservation
   intents: PilotIntent[]
 }
+
+/** 项目经理确认前可见的活动授权影响面。 */
+export interface PilotGrantIssuePreview {
+  projectId: string
+  policyRevision: number
+  workspaceId: string
+  channelId: string
+  modelId: string
+  executorEmployeeId: string
+  reviewerEmployeeId: string
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+  approvalFingerprint: string
+}
+
+export interface PilotRuntimeGrant extends Omit<PilotGrantIssuePreview, 'approvalFingerprint'> {
+  grantId: string
+  state: 'active' | 'paused'
+  /** 旧库活动记录可能缺少确认指纹；只能进入保守暂停/人工对账。 */
+  approvalFingerprint: string | null
+  createdAt: number
+}
+
+export interface PilotPolicySummary {
+  revision: number
+  state: 'paused'
+  workspaceId: string
+  employeeIds: string[]
+  executorEmployeeId?: string
+  reviewerEmployeeId?: string
+  channelId: string
+  modelId: string
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+}
+
+export interface PilotPolicyDraftInput {
+  workspaceId: string
+  employeeIds: string[]
+  executorEmployeeId: string
+  reviewerEmployeeId: string
+  modelId: string
+  channelId: string
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+}
+
+export interface PilotControlSnapshot {
+  projectId: string
+  policy: PilotPolicySummary | null
+  readiness: {
+    policyRevision: number | null
+    bindingsValid: boolean
+    blockers: string[]
+  }
+  activeGrant: PilotRuntimeGrant | null
+  grantStatus: 'none' | 'active' | 'expired' | 'needs_reconcile'
+}
+
+export type PilotRunningDisposition = 'finish_current' | 'request_stop'
+
+export interface PilotRunningChoice {
+  executionId: string
+  disposition: PilotRunningDisposition
+}
+
+export interface PilotGrantPauseTarget {
+  commandId: string
+  executionId: string
+  taskId: string
+  agentId: string
+  sessionId: string
+}
+
+export interface PilotGrantPauseImpact {
+  grantId: string
+  projectId: string
+  policyRevision: number
+  fingerprint: string
+  reservedCommandIds: string[]
+  queued: PilotGrantPauseTarget[]
+  running: PilotGrantPauseTarget[]
+}
+
+export interface PilotGrantPauseResult {
+  grantId: string
+  cancelledExecutionIds: string[]
+  releasedReservationCommandIds: string[]
+  runningChoices: PilotRunningChoice[]
+  pendingStopExecutionIds: string[]
+}

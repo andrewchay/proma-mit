@@ -1,29 +1,9 @@
 import { createHash } from 'node:crypto'
+import type { PilotGrantIssuePreview, PilotRuntimeGrant } from '@gravitas/shared'
 import type { PilotPolicy } from './project-pilot-policy'
 import { getPilotPolicy, withPilotPolicySnapshot } from './project-pilot-policy'
 import { inspectPilotReadiness, type PilotReadiness } from './project-pilot-readiness'
 import { getProjectDb } from './project-sqlite-store'
-
-export interface PilotGrantIssuePreview {
-  projectId: string
-  policyRevision: number
-  workspaceId: string
-  channelId: string
-  modelId: string
-  executorEmployeeId: string
-  reviewerEmployeeId: string
-  maxCostMicros: number
-  maxRuns: number
-  maxRework: number
-  expiresAt: number
-  approvalFingerprint: string
-}
-
-export interface PilotRuntimeGrant extends PilotGrantIssuePreview {
-  grantId: string
-  state: 'active' | 'paused'
-  createdAt: number
-}
 
 type ReadinessInspector = (projectId: string, now: number) => PilotReadiness
 
@@ -85,7 +65,7 @@ function rowToGrant(row: {
   id: string; project_id: string; policy_revision: number; state: 'active' | 'paused'; workspace_id: string;
   channel_id: string; model_id: string; executor_employee_id: string; reviewer_employee_id: string;
   max_cost_micros: number; max_runs: number; max_rework: number; expires_at: number;
-  approval_fingerprint: string; created_at: number;
+  approval_fingerprint: string | null; created_at: number;
 }): PilotRuntimeGrant {
   return {
     grantId: row.id, projectId: row.project_id, policyRevision: row.policy_revision, state: row.state,
@@ -96,6 +76,14 @@ function rowToGrant(row: {
   }
 }
 
+/** 只读返回项目当前活动授权；损坏记录会在后续预览/确认中拒绝。 */
+export function getActivePilotGrant(projectId: string): PilotRuntimeGrant | null {
+  if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('缺少项目 ID')
+  const row = getProjectDb().prepare("SELECT * FROM pilot_runtime_grants WHERE project_id = ? AND state = 'active'")
+    .get(projectId) as Parameters<typeof rowToGrant>[0] | undefined
+  return row ? rowToGrant(row) : null
+}
+
 function grantMatchesPreview(grant: PilotRuntimeGrant, preview: PilotGrantIssuePreview): boolean {
   return grant.projectId === preview.projectId && grant.policyRevision === preview.policyRevision
     && grant.workspaceId === preview.workspaceId && grant.channelId === preview.channelId
@@ -104,6 +92,24 @@ function grantMatchesPreview(grant: PilotRuntimeGrant, preview: PilotGrantIssueP
     && grant.maxCostMicros === preview.maxCostMicros && grant.maxRuns === preview.maxRuns
     && grant.maxRework === preview.maxRework && grant.expiresAt === preview.expiresAt
     && grant.approvalFingerprint === preview.approvalFingerprint
+}
+
+export function pilotGrantMatchesPolicy(grant: PilotRuntimeGrant, policy: PilotPolicy): boolean {
+  if (!policy.executorEmployeeId || !policy.reviewerEmployeeId) return false
+  return grantMatchesPreview(grant, {
+    projectId: policy.projectId,
+    policyRevision: policy.revision,
+    workspaceId: policy.workspaceId,
+    channelId: policy.channelId,
+    modelId: policy.modelId,
+    executorEmployeeId: policy.executorEmployeeId,
+    reviewerEmployeeId: policy.reviewerEmployeeId,
+    maxCostMicros: policy.maxCostMicros,
+    maxRuns: policy.maxRuns,
+    maxRework: policy.maxRework,
+    expiresAt: policy.expiresAt,
+    approvalFingerprint: hashPilotGrantApproval(policy),
+  })
 }
 
 /** 确认后仅发行活动授权记录；不会创建命令、执行或调用模型。 */

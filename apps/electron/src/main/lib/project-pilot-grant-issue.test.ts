@@ -35,6 +35,8 @@ test('Given 已复核暂停草案 When 用户按冻结指纹确认 Then 幂等�
   expect(first.state).toBe('active')
   expect(first.policyRevision).toBe(policy.revision)
   expect(confirmPilotGrantIssue(preview, preview.approvalFingerprint, now, ready)).toEqual(first)
+  expect(() => savePilotPolicyDraft(project.id, { ...draft(), maxRuns: 3 }, policy.revision))
+    .toThrow('请先预览影响面并暂停')
   getProjectDb().prepare('UPDATE pilot_runtime_grants SET max_runs = 99 WHERE id = ?').run(first.grantId)
   expect(() => confirmPilotGrantIssue(preview, preview.approvalFingerprint, now, ready))
     .toThrow('授权与确认内容不一致')

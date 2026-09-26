@@ -10,6 +10,10 @@ import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 import { observeProjectPilot } from './project-pilot-reconcile'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
+import { getPilotControlSnapshot } from './project-pilot-control'
+import { confirmPilotGrantIssue, previewPilotGrantIssue } from './project-pilot-grant-issue'
+import { confirmPilotGrantPause, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
+import { savePilotPolicyDraft } from './project-pilot-policy'
 import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
@@ -432,6 +436,25 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PILOT_OVERVIEW, async (_, projectId: string) => {
     return reconcilePilotOverview(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PILOT_CONTROL, async (_, projectId: string) => {
+    return getPilotControlSnapshot(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SAVE_PILOT_POLICY_DRAFT, async (_, projectId: string, input: import('@gravitas/shared').PilotPolicyDraftInput, expectedRevision: number | null) => {
+    savePilotPolicyDraft(projectId, input, expectedRevision)
+    return getPilotControlSnapshot(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT, async (_, projectId: string, policyRevision: number) => {
+    return previewPilotGrantIssue(projectId, policyRevision)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT, async (_, preview: import('@gravitas/shared').PilotGrantIssuePreview, confirmedFingerprint: string) => {
+    return confirmPilotGrantIssue(preview, confirmedFingerprint)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT_PAUSE, async (_, grantId: string) => {
+    return previewPilotGrantPauseImpact(grantId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT_PAUSE, async (_, preview: import('@gravitas/shared').PilotGrantPauseImpact, choices: import('@gravitas/shared').PilotRunningChoice[]) => {
+    return confirmPilotGrantPause(preview, choices)
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.CREATE_PROJECT, async (_, input) => {
     return createProject(input)
