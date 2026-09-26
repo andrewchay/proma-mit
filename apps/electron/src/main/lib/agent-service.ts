@@ -417,7 +417,7 @@ export async function runAgentHeadless(
   input: AgentSendInput,
   callbacks: {
     onError: (error: string) => void
-    onComplete: (messages?: AgentMessage[], result?: { stoppedByUser?: boolean }) => void
+    onComplete: (messages?: AgentMessage[], result?: import('./agent-headless-runner-registry').HeadlessAgentRunResult) => void
     onTitleUpdated: (title: string) => void
     source?: import('@gravitas/shared').AgentExternalRunSource
     /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */
@@ -448,7 +448,10 @@ export async function runAgentHeadless(
         }
       },
       onComplete: (messages, opts) => {
-        callbacks.onComplete(messages, { stoppedByUser: opts?.stoppedByUser })
+        callbacks.onComplete(messages, {
+          stoppedByUser: opts?.stoppedByUser,
+          runtimeResult: opts?.runtimeResult,
+        })
         // 同步到渲染进程
         if (wc && !wc.isDestroyed()) {
           wc.send(AGENT_IPC_CHANNELS.STREAM_COMPLETE, {

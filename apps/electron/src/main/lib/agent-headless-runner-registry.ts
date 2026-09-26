@@ -9,11 +9,18 @@ import type {
   AgentExternalRunSource,
   AgentMessage,
   AgentSendInput,
+  SDKResultMessage,
 } from '@gravitas/shared'
+
+export interface HeadlessAgentRunResult {
+  stoppedByUser?: boolean
+  /** Runtime 原样返回的终态 result；仅供受控审计与费用结算，不能直接视为 Provider 回执。 */
+  runtimeResult?: SDKResultMessage
+}
 
 export interface HeadlessAgentRunCallbacks {
   onError: (error: string) => void
-  onComplete: (messages?: AgentMessage[], result?: { stoppedByUser?: boolean }) => void
+  onComplete: (messages?: AgentMessage[], result?: HeadlessAgentRunResult) => void
   onTitleUpdated: (title: string) => void
   source?: AgentExternalRunSource
   /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */

@@ -21,7 +21,7 @@ import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart } from './project-pilot-budget-ledger'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
-import { settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
+import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
 
@@ -41,7 +41,7 @@ import { updateTask, getTask, updateExecutionSubTask } from './project-service'
 import { getSettings } from './settings-service'
 import { createWorkflowRun, getWorkflowRun, cancelWorkflowRun } from './workflow-service'
 import { executeWorkflowRun } from './workflow-run-executor'
-import type { AgentMessage } from '@gravitas/shared'
+import type { AgentMessage, SDKResultMessage } from '@gravitas/shared'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
 /** 当前进程内 execution 对应的 Runtime generation；重启后未知时拒绝伪造已停止。 */
@@ -751,7 +751,14 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       },
       onComplete: (messages, result) => {
         clearRuntimeGeneration()
-        handleExecutionComplete(executionId, currentExecutionMessages(messages, previousMessageIds), startedAt, result?.stoppedByUser || getAgentSessionMeta(sessionId)?.stoppedByUser)
+        handleExecutionComplete(
+          executionId,
+          currentExecutionMessages(messages, previousMessageIds),
+          startedAt,
+          result?.stoppedByUser || getAgentSessionMeta(sessionId)?.stoppedByUser,
+          employee.runtime,
+          result?.runtimeResult,
+        )
       },
       onTitleUpdated: () => {
         // 标题已在创建会话时设定，无需额外处理
@@ -911,21 +918,44 @@ function recordUnknownPilotUsage(executionId: string, reason: string, capturedAt
   }
 }
 
+function recordPilotTerminalUsage(
+  executionId: string,
+  runtimeSource: string,
+  runtimeResult: SDKResultMessage | undefined,
+  unknownReason: string,
+  capturedAt: number,
+): void {
+  if (!runtimeResult) return recordUnknownPilotUsage(executionId, unknownReason, capturedAt)
+  try {
+    settlePilotExecutionRuntimeUsage(executionId, runtimeSource, runtimeResult, capturedAt)
+  } catch (error) {
+    console.error(`[AgentEmployee] Pilot 执行 ${executionId} Runtime 用量回执结算失败，保留待恢复对账:`, error)
+  }
+}
+
 /** 执行完成回写 */
-function handleExecutionComplete(executionId: string, messages: AgentMessage[] | undefined, startedAt: number, stoppedByUser = false): void {
+function handleExecutionComplete(
+  executionId: string,
+  messages: AgentMessage[] | undefined,
+  startedAt: number,
+  stoppedByUser = false,
+  runtimeSource = 'unknown',
+  runtimeResult?: SDKResultMessage,
+): void {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'running') return
   if (stoppedByUser) {
     const stoppedAt = Date.now()
     store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: '用户已停止执行，未交付' })
-    recordUnknownPilotUsage(executionId, 'Runtime 停止完成事件没有可核验的 Provider 用量回执', stoppedAt)
+    recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
+      'Runtime 停止完成事件没有可核验的用量回执', stoppedAt)
     writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
     recordActivity(store.getAgentExecution(executionId)!, 'agent_cancelled', '用户停止执行，未交付')
     recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
     return
   }
   if (!messages?.some((message) => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim())) {
-    handleExecutionError(executionId, '执行没有返回有效结果，不能标记为完成', startedAt)
+    handleExecutionError(executionId, '执行没有返回有效结果，不能标记为完成', startedAt, runtimeSource, runtimeResult)
     return
   }
 
@@ -942,7 +972,8 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
       lastHeartbeatAt: completedAt,
       completedAt,
     })
-    recordUnknownPilotUsage(executionId, 'Runtime 卡点终结事件没有可核验的 Provider 用量回执', completedAt)
+    recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
+      'Runtime 卡点终结事件没有可核验的用量回执', completedAt)
     writebackExecutionResult(execution, 'paused', `【AI 卡点待决策】${blocker}——${summary.slice(0, 400)}`, completedAt)
     recordActivity(store.getAgentExecution(executionId)!, 'agent_blocked', `AI 员工报告卡点需人工决策：${blocker}`)
     void notifyAgentGuardrail(execution.projectId, execution.entityId, 'AI 执行卡点待决策', `卡点：${blocker}。说明：${summary.slice(0, 200)}`)
@@ -970,7 +1001,8 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
     lastHeartbeatAt: completedAt,
     completedAt,
   })
-  recordUnknownPilotUsage(executionId, 'Runtime 完成事件没有可核验的 Provider 用量回执', completedAt)
+  recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
+    'Runtime 完成事件没有可核验的用量回执', completedAt)
 
   // 回写任务/子任务（按 entityType 区分，否则 subTask 会卡在 running）
   try {
@@ -1011,7 +1043,13 @@ function handleExecutionComplete(executionId: string, messages: AgentMessage[] |
 }
 
 /** 执行失败回写（幂等：终态 failed/cancelled/stale 均拒绝重入，避免 onError 与 .catch 双路径重复回写） */
-function handleExecutionError(executionId: string, error: string, startedAt: number): void {
+function handleExecutionError(
+  executionId: string,
+  error: string,
+  startedAt: number,
+  runtimeSource = 'unknown',
+  runtimeResult?: SDKResultMessage,
+): void {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return
 
@@ -1022,7 +1060,8 @@ function handleExecutionError(executionId: string, error: string, startedAt: num
     lastHeartbeatAt: failedAt,
     completedAt: failedAt,
   })
-  recordUnknownPilotUsage(executionId, 'Runtime 失败事件没有可核验的 Provider 用量回执', failedAt)
+  recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
+    'Runtime 失败事件没有可核验的用量回执', failedAt)
 
   // 任务/子任务回退 paused，保留上下文可重试
   try {

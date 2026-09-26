@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
+import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, SDKResultMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -116,7 +116,7 @@ export interface SessionCallbacks {
   /** 发送流式错误 */
   onError: (error: string) => void
   /** 发送流式完成（携带已持久化的消息列表） */
-  onComplete: (messages?: AgentMessage[], opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string }) => void
+  onComplete: (messages?: AgentMessage[], opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; runtimeResult?: SDKResultMessage }) => void
   /** 发送标题更新 */
   onTitleUpdated: (title: string) => void
 }
@@ -862,7 +862,10 @@ export class AgentOrchestrator {
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logInfo(sessionId, `[${agentRuntime} runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
       trackSessionFinished(sessionId, durationMs, { runtime: agentRuntime })
-      callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
+      callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], {
+        startedAt,
+        runtimeResult: [...accumulatedMessages].reverse().find((message): message is SDKResultMessage => message.type === 'result'),
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const durationMs = startedAt ? Date.now() - startedAt : 0
@@ -1148,7 +1151,10 @@ export class AgentOrchestrator {
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logInfo(sessionId, `[Pi Runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
       trackSessionFinished(sessionId, durationMs, { runtime: 'pi' })
-      callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], { startedAt })
+      callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], {
+        startedAt,
+        runtimeResult: [...accumulatedMessages].reverse().find((message): message is SDKResultMessage => message.type === 'result'),
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const durationMs = startedAt ? Date.now() - startedAt : 0
@@ -2957,6 +2963,7 @@ export class AgentOrchestrator {
           let pendingNext: Promise<IteratorResult<SDKMessage>> | null = null
           // 捕获 result.subtype 以传递给前端（用于区分 success/error_max_turns/error_max_budget_usd）
           let capturedResultSubtype: string | undefined
+          let capturedRuntimeResult: SDKResultMessage | undefined
           // result 收到后的安全超时：adapter 层 channel.close() 应让 iterator 自然关闭，
           // 此 timeout 仅作安全网，防止极端情况下 iterator 仍未关闭
           let drainTimeoutPromise: Promise<'drain_timeout'> | null = null
@@ -3122,6 +3129,7 @@ export class AgentOrchestrator {
 
             // Turn 结束时：持久化累积消息
             if (msg.type === 'result') {
+              capturedRuntimeResult = msg as SDKResultMessage
               capturedResultSubtype = (msg as { subtype?: string }).subtype
               this.persistSDKMessages(sessionId, accumulatedMessages, Date.now() - queryStartedAt)
               accumulatedMessages.length = 0
@@ -3192,7 +3200,11 @@ export class AgentOrchestrator {
           }
 
           // 发送完成信号
-          callbacks.onComplete(getAgentSessionMessages(sessionId), { startedAt: streamStartedAt, resultSubtype: capturedResultSubtype })
+          callbacks.onComplete(getAgentSessionMessages(sessionId), {
+            startedAt: streamStartedAt,
+            resultSubtype: capturedResultSubtype,
+            runtimeResult: capturedRuntimeResult,
+          })
 
           break  // 成功完成，退出重试循环
 

@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getAgentExecution, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
-import { settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
+import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
+import type { SDKResultMessage } from '@gravitas/shared'
 import { cancelLinkedQueuedPilotExecutions, registerPilotCommandLink } from './project-pilot-command-links'
+import { inspectPilotGrantRecovery } from './project-pilot-recovery'
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-budget-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -317,6 +319,110 @@ test('终结执行的已知费用结算并释放未用预留，重复结算幂�
   expect(settlePilotCommandUsage(input.commandId, evidence)).toEqual(settled)
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 450 })
   expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 451))).toThrow('状态不可结算')
+})
+
+test('Runtime 原始终态带费用时保存不可变回执并按 runtime_reported 结算', () => {
+  const { project, grantId, input } = fixture()
+  const executionId = `runtime-${project.id}`
+  const capturedAt = Date.now()
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  updateAgentExecution(executionId, { status: 'completed', sessionId: 'session-1', completedAt: capturedAt })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
+  const runtimeResult: SDKResultMessage = {
+    type: 'result', subtype: 'success', session_id: 'session-1',
+    usage: { input_tokens: 100, output_tokens: 20 }, total_cost_usd: 0.00045,
+  }
+  const settled = settlePilotExecutionRuntimeUsage(executionId, 'claude', runtimeResult, capturedAt)
+  expect(settled).toEqual({ commandId: input.commandId, state: 'settled', actualCostMicros: 450, grantPaused: false })
+  expect(settlePilotExecutionRuntimeUsage(executionId, 'claude', runtimeResult, capturedAt)).toEqual(settled)
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 450 })
+  const receipt = getProjectDb().prepare(`SELECT id, raw_payload, payload_hash, cost_micros
+    FROM pilot_runtime_usage_receipts WHERE execution_id = ?`).get(executionId) as {
+      id: string; raw_payload: string; payload_hash: string; cost_micros: number
+    }
+  expect(receipt.id).toHaveLength(64)
+  expect(receipt.payload_hash).toHaveLength(64)
+  expect(JSON.parse(receipt.raw_payload)).toEqual(runtimeResult)
+  expect(receipt.cost_micros).toBe(450)
+  expect(() => getProjectDb().prepare('UPDATE pilot_runtime_usage_receipts SET cost_micros = 1 WHERE id = ?')
+    .run(receipt.id)).toThrow('immutable')
+  const evidence = getProjectDb().prepare('SELECT usage_evidence FROM pilot_commands WHERE id = ?')
+    .get(input.commandId) as { usage_evidence: string }
+  expect(JSON.parse(evidence.usage_evidence)).toMatchObject({
+    source: 'runtime_reported', runtimeReceiptId: receipt.id, payloadHash: receipt.payload_hash,
+    inputTokens: 100, outputTokens: 20, costMicros: 450,
+  })
+  expect(inspectPilotGrantRecovery(grantId).needsAttention).toEqual([])
+  getProjectDb().exec('DROP TRIGGER pilot_runtime_usage_receipts_immutable')
+  try {
+    getProjectDb().prepare('UPDATE pilot_runtime_usage_receipts SET raw_payload = ? WHERE id = ?')
+      .run('{}', receipt.id)
+    expect(inspectPilotGrantRecovery(grantId).needsAttention).toEqual([{
+      commandId: input.commandId, reason: 'Runtime 用量回执原始记录缺失或不一致',
+    }])
+    getProjectDb().prepare('UPDATE pilot_runtime_usage_receipts SET raw_payload = ? WHERE id = ?')
+      .run(receipt.raw_payload, receipt.id)
+  } finally {
+    getProjectDb().exec(`CREATE TRIGGER pilot_runtime_usage_receipts_immutable
+      BEFORE UPDATE ON pilot_runtime_usage_receipts
+      BEGIN SELECT RAISE(ABORT, 'Pilot Runtime usage receipt is immutable'); END`)
+  }
+  expect(inspectPilotGrantRecovery(grantId).needsAttention).toEqual([])
+  getProjectDb().prepare('DELETE FROM pilot_runtime_usage_receipts WHERE id = ?').run(receipt.id)
+  expect(inspectPilotGrantRecovery(grantId).needsAttention).toEqual([{
+    commandId: input.commandId, reason: 'Runtime 用量回执原始记录缺失或不一致',
+  }])
+})
+
+test('Runtime 只有 token 时保留原始回执但按未知费用撤权待对账', () => {
+  const { project, grantId, input } = fixture()
+  const executionId = `runtime-unknown-${project.id}`
+  const capturedAt = Date.now()
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  updateAgentExecution(executionId, { status: 'completed', sessionId: 'session-1', completedAt: capturedAt })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
+  const runtimeResult: SDKResultMessage = {
+    type: 'result', subtype: 'success', session_id: 'session-1',
+    usage: { input_tokens: 100, output_tokens: 20 },
+  }
+  expect(settlePilotExecutionRuntimeUsage(executionId, 'proma', runtimeResult, capturedAt)).toEqual({
+    commandId: input.commandId, state: 'needs_reconcile', actualCostMicros: null, grantPaused: true,
+  })
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+  const command = getProjectDb().prepare('SELECT usage_evidence FROM pilot_commands WHERE id = ?')
+    .get(input.commandId) as { usage_evidence: string }
+  expect(JSON.parse(command.usage_evidence)).toMatchObject({
+    source: 'unknown', reason: 'Runtime 终态回执未提供费用，不能用本地估价替代实际结算',
+    runtimeReceiptId: expect.any(String), payloadHash: expect.any(String),
+  })
+  expect(getProjectDb().prepare('SELECT cost_micros FROM pilot_runtime_usage_receipts WHERE execution_id = ?')
+    .get(executionId)).toEqual({ cost_micros: null })
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(grantId))
+    .toEqual({ state: 'paused' })
+})
+
+test('Runtime 回执引用不能伪造，且同一执行不能改写原始终态', () => {
+  const { project, input } = fixture()
+  const executionId = `runtime-forged-${project.id}`
+  const capturedAt = Date.now()
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  updateAgentExecution(executionId, { status: 'completed', sessionId: 'session-1', completedAt: capturedAt })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
+  expect(() => settlePilotCommandUsage(input.commandId, {
+    source: 'runtime_reported', executionId, sessionId: 'session-1', channelId: 'channel-a', modelId: 'model-a',
+    runtimeReceiptId: 'missing', payloadHash: 'a'.repeat(64), inputTokens: 1, outputTokens: 1,
+    costMicros: 1, capturedAt,
+  })).toThrow('Runtime 用量回执与原始记录不匹配')
+  const original: SDKResultMessage = {
+    type: 'result', subtype: 'success', usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.0001,
+  }
+  expect(() => settlePilotExecutionRuntimeUsage(executionId, 'claude', {
+    ...original, session_id: 'other-session',
+  }, capturedAt)).toThrow('Runtime 回执会话与执行会话不匹配')
+  settlePilotExecutionRuntimeUsage(executionId, 'claude', original, capturedAt)
+  expect(() => settlePilotExecutionRuntimeUsage(executionId, 'claude', {
+    ...original, total_cost_usd: 0.0002,
+  }, capturedAt)).toThrow('已有不同的 Runtime 用量回执')
 })
 
 test('未知或超预留费用保留预算占额并暂停后续派发', () => {

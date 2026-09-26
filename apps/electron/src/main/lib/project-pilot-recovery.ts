@@ -1,4 +1,11 @@
-import { assertPilotCommandStartRecord, hashPilotProviderUsageRecord, validatePilotUsageEvidence, type PilotUsageEvidence } from './project-pilot-budget-ledger'
+import {
+  assertPilotCommandStartRecord,
+  assertPilotRuntimeUsageReceipt,
+  hashPilotProviderUsageRecord,
+  hashPilotRuntimeUsageRecord,
+  validatePilotUsageEvidence,
+  type PilotUsageEvidence,
+} from './project-pilot-budget-ledger'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 
@@ -95,6 +102,18 @@ export function inspectPilotGrantRecovery(grantId: string, now = Date.now()): Pi
           && command.usage_record_key !== hashPilotProviderUsageRecord(usageEvidence.channelId, usageEvidence.providerRecordId)) {
           snapshot.needsAttention.push({ commandId: command.id, reason: 'Provider 用量回执缺少防重放键' })
           continue
+        }
+        if (usageEvidence.source === 'runtime_reported') {
+          try {
+            assertPilotRuntimeUsageReceipt(usageEvidence, command.project_id)
+          } catch {
+            snapshot.needsAttention.push({ commandId: command.id, reason: 'Runtime 用量回执原始记录缺失或不一致' })
+            continue
+          }
+          if (command.usage_record_key !== hashPilotRuntimeUsageRecord(usageEvidence.runtimeReceiptId)) {
+            snapshot.needsAttention.push({ commandId: command.id, reason: 'Runtime 用量回执缺少防重放键' })
+            continue
+          }
         }
       }
       if (command.state === 'reserved') {

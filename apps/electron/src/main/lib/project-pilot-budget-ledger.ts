@@ -404,8 +404,9 @@ interface PilotUsageEvidenceBase {
 
 export type PilotUsageEvidence = PilotUsageEvidenceBase & (
   | { source: 'provider_reported'; providerRecordId: string; inputTokens: number; outputTokens: number; costMicros: number }
+  | { source: 'runtime_reported'; runtimeReceiptId: string; payloadHash: string; inputTokens: number; outputTokens: number; costMicros: number }
   | { source: 'traceable_estimate'; priceSource: string; inputTokens: number; outputTokens: number; costMicros: number }
-  | { source: 'unknown'; reason: string }
+  | { source: 'unknown'; reason: string; runtimeReceiptId?: string; payloadHash?: string }
 )
 
 export function validatePilotUsageEvidence(evidence: PilotUsageEvidence): void {
@@ -414,17 +415,24 @@ export function validatePilotUsageEvidence(evidence: PilotUsageEvidence): void {
     || !Number.isSafeInteger(evidence?.capturedAt) || evidence.capturedAt < 0) {
     throw new Error('Pilot 用量证据身份无效')
   }
-  if (!['provider_reported', 'traceable_estimate', 'unknown'].includes(evidence.source)) {
+  if (!['provider_reported', 'runtime_reported', 'traceable_estimate', 'unknown'].includes(evidence.source)) {
     throw new Error('Pilot 用量证据来源无效')
   }
   if (evidence.source === 'unknown') {
-    if (!evidence.reason?.trim()) throw new Error('Pilot 未知用量必须说明原因')
+    if (!evidence.reason?.trim()
+      || Boolean(evidence.runtimeReceiptId) !== Boolean(evidence.payloadHash)
+      || (evidence.runtimeReceiptId !== undefined && !evidence.runtimeReceiptId.trim())
+      || (evidence.payloadHash !== undefined && !/^[a-f0-9]{64}$/.test(evidence.payloadHash))) {
+      throw new Error('Pilot 未知用量必须说明原因并携带完整回执引用')
+    }
     return
   }
   if (!Number.isSafeInteger(evidence.inputTokens) || evidence.inputTokens < 0
     || !Number.isSafeInteger(evidence.outputTokens) || evidence.outputTokens < 0
     || !Number.isSafeInteger(evidence.costMicros) || evidence.costMicros < 0
     || (evidence.source === 'provider_reported' && !evidence.providerRecordId?.trim())
+    || (evidence.source === 'runtime_reported'
+      && (!evidence.runtimeReceiptId?.trim() || !/^[a-f0-9]{64}$/.test(evidence.payloadHash)))
     || (evidence.source === 'traceable_estimate' && !evidence.priceSource?.trim())) {
     throw new Error('Pilot 用量或计价证据无效')
   }
@@ -438,9 +446,99 @@ export function hashPilotProviderUsageRecord(channelId: string, providerRecordId
   })).digest('hex')
 }
 
+export function hashPilotRuntimeUsageRecord(runtimeReceiptId: string): string {
+  return createHash('sha256').update(JSON.stringify({
+    source: 'runtime_reported',
+    runtimeReceiptId,
+  })).digest('hex')
+}
+
 function usageRecordKey(evidence: PilotUsageEvidence): string | null {
-  if (evidence.source !== 'provider_reported') return null
-  return hashPilotProviderUsageRecord(evidence.channelId, evidence.providerRecordId)
+  if (evidence.source === 'provider_reported') {
+    return hashPilotProviderUsageRecord(evidence.channelId, evidence.providerRecordId)
+  }
+  if (evidence.source === 'runtime_reported') return hashPilotRuntimeUsageRecord(evidence.runtimeReceiptId)
+  if (evidence.source === 'unknown' && evidence.runtimeReceiptId) {
+    return hashPilotRuntimeUsageRecord(evidence.runtimeReceiptId)
+  }
+  return null
+}
+
+interface RuntimeUsageReceiptRow {
+  id: string
+  execution_id: string
+  project_id: string
+  session_id: string
+  channel_id: string
+  model_id: string
+  runtime_source: string
+  raw_payload: string
+  payload_hash: string
+  input_tokens: number
+  output_tokens: number
+  cost_micros: number | null
+}
+
+function validateRuntimeReceiptPayload(receipt: RuntimeUsageReceiptRow): void {
+  if (!receipt.runtime_source.trim()
+    || !Number.isSafeInteger(receipt.input_tokens) || receipt.input_tokens < 0
+    || !Number.isSafeInteger(receipt.output_tokens) || receipt.output_tokens < 0
+    || (receipt.cost_micros !== null
+      && (!Number.isSafeInteger(receipt.cost_micros) || receipt.cost_micros < 0))
+    || createHash('sha256').update(receipt.raw_payload).digest('hex') !== receipt.payload_hash) {
+    throw new Error('Pilot Runtime 用量回执原文哈希无效')
+  }
+  const expectedId = createHash('sha256').update(JSON.stringify({
+    executionId: receipt.execution_id,
+    sessionId: receipt.session_id,
+    channelId: receipt.channel_id,
+    modelId: receipt.model_id,
+    runtimeSource: receipt.runtime_source,
+    payloadHash: receipt.payload_hash,
+  })).digest('hex')
+  if (receipt.id !== expectedId) throw new Error('Pilot Runtime 用量回执标识无效')
+  let payload: {
+    type?: string
+    session_id?: string
+    usage?: { input_tokens?: number; output_tokens?: number }
+    total_cost_usd?: number
+  }
+  try {
+    payload = JSON.parse(receipt.raw_payload) as typeof payload
+  } catch {
+    throw new Error('Pilot Runtime 用量回执原文不是有效 JSON')
+  }
+  const costMicros = payload.total_cost_usd === undefined
+    ? null
+    : Math.round(payload.total_cost_usd * 1_000_000)
+  if (payload.type !== 'result' || (payload.session_id && payload.session_id !== receipt.session_id)
+    || payload.usage?.input_tokens !== receipt.input_tokens
+    || payload.usage?.output_tokens !== receipt.output_tokens
+    || (costMicros !== null && !Number.isSafeInteger(costMicros))
+    || costMicros !== receipt.cost_micros) {
+    throw new Error('Pilot Runtime 用量回执原文与索引字段不一致')
+  }
+}
+
+export function assertPilotRuntimeUsageReceipt(
+  evidence: Extract<PilotUsageEvidence, { source: 'runtime_reported' | 'unknown' }>,
+  projectId: string,
+): void {
+  if (!evidence.runtimeReceiptId) return
+  const receipt = getProjectDb().prepare('SELECT * FROM pilot_runtime_usage_receipts WHERE id = ?')
+    .get(evidence.runtimeReceiptId) as RuntimeUsageReceiptRow | undefined
+  if (!receipt) throw new Error('Pilot Runtime 用量回执与原始记录不匹配')
+  validateRuntimeReceiptPayload(receipt)
+  if (receipt.execution_id !== evidence.executionId || receipt.project_id !== projectId
+    || receipt.session_id !== evidence.sessionId || receipt.channel_id !== evidence.channelId
+    || receipt.model_id !== evidence.modelId || receipt.payload_hash !== evidence.payloadHash) {
+    throw new Error('Pilot Runtime 用量回执与原始记录不匹配')
+  }
+  if (evidence.source === 'runtime_reported'
+    && (receipt.input_tokens !== evidence.inputTokens || receipt.output_tokens !== evidence.outputTokens
+      || receipt.cost_micros !== evidence.costMicros)) {
+    throw new Error('Pilot Runtime 用量回执金额或 token 与原始记录不匹配')
+  }
 }
 
 function hasLegacyUsageReplay(recordKey: string, commandId: string): boolean {
@@ -487,6 +585,9 @@ export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageE
     if (execution.id !== evidence.executionId || execution.sessionId !== evidence.sessionId
       || grant.channel_id !== evidence.channelId || grant.model_id !== evidence.modelId) {
       throw new Error('Pilot 用量证据与执行、会话、渠道或模型不匹配')
+    }
+    if (evidence.source === 'runtime_reported' || evidence.source === 'unknown') {
+      assertPilotRuntimeUsageReceipt(evidence, command.project_id)
     }
     if ((command.state === 'settled' || command.state === 'needs_reconcile')
       && command.actual_cost_micros === actualCostMicros && command.usage_evidence === serializedEvidence

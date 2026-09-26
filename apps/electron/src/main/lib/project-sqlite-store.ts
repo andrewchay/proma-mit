@@ -692,6 +692,27 @@ function migrate(database: SqliteCompat): void {
     );
     CREATE INDEX IF NOT EXISTS idx_pilot_commands_project ON pilot_commands(project_id, grant_id);
 
+    CREATE TABLE IF NOT EXISTS pilot_runtime_usage_receipts (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      runtime_source TEXT NOT NULL,
+      raw_payload TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+      output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+      cost_micros INTEGER CHECK (cost_micros >= 0),
+      captured_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_runtime_usage_payload
+      ON pilot_runtime_usage_receipts(payload_hash, execution_id);
+    CREATE TRIGGER IF NOT EXISTS pilot_runtime_usage_receipts_immutable
+      BEFORE UPDATE ON pilot_runtime_usage_receipts
+      BEGIN SELECT RAISE(ABORT, 'Pilot Runtime usage receipt is immutable'); END;
+
     CREATE TABLE IF NOT EXISTS pilot_grant_pause_decisions (
       grant_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -936,6 +957,27 @@ function migrate(database: SqliteCompat): void {
   }
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_commands_usage_record
     ON pilot_commands(usage_record_key) WHERE usage_record_key IS NOT NULL`)
+  // Runtime 终态原文单独追加保存；旧库补表后仍不能据历史 token 统计反推费用。
+  database.exec(`CREATE TABLE IF NOT EXISTS pilot_runtime_usage_receipts (
+    id TEXT PRIMARY KEY,
+    execution_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    runtime_source TEXT NOT NULL,
+    raw_payload TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+    cost_micros INTEGER CHECK (cost_micros >= 0),
+    captured_at INTEGER NOT NULL
+  )`)
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_runtime_usage_payload
+    ON pilot_runtime_usage_receipts(payload_hash, execution_id)`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS pilot_runtime_usage_receipts_immutable
+    BEFORE UPDATE ON pilot_runtime_usage_receipts
+    BEGIN SELECT RAISE(ABORT, 'Pilot Runtime usage receipt is immutable'); END`)
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
@@ -1289,6 +1331,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM project_activities WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_intents WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_command_links WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_runtime_usage_receipts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_commands WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_grant_pause_decisions WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_grants WHERE project_id = ?`).run(id)
