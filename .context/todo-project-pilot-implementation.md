@@ -1,5 +1,13 @@
 # Project Pilot 实施进度（2026-09-26）
 
+## 切片 `-30`–`-34` 提交与上游对账（2026-09-27 22:38）
+- [x] 五个切片（交接审计/重启边界/readiness 回归/工作区持久化/Pi 预算 PoC）以 10 个提交全部入库；台账基线 `a44c3868` 核对一致。
+- [x] 发现本地 main 与 origin/main 分叉：远端 9 提交（PR #12/#13 记忆范围、主题、订阅）与本地底部 6 个提交同内容不同 SHA；`git cherry` 判定 2 个 patch 等价、4 个远端修订版。
+- [x] 备份 `backup/main-pre-rebase-20260927` 后 `rebase --onto origin/main c3e3854f`：45 个独有提交重放，package.json 版本号策略性取本地方，生成事实文件事后重生成；rebase 后最终树与原本地树逐字节一致（无内容漂移）。
+- [x] 门禁：docs:generate 重生成事实（远端新文件计入计数）、全仓 typecheck 5 包 PASS、`bun run test` 498 文件 0 失败、Biome 1819 文件无问题。
+- [x] 已推送 `origin/main` 至 `0c0e2d35`（45 重放 + 事实重生成 + scratch 清理 + gitignore `.context/tmp/`）；scratch 脚本曾误入 `e6f5c043`，按不重写已推历史原则后续提交清除。
+- [ ] Pi 0.87.1 bump 前置条件已解除，可开新切片；备份分支保留至下一切片收敛后删除。
+
 ## 已完成首片
 - [x] 只读项目事实观察、详情概览、依赖/交接/决策投影；7 个观察测试。
 - [x] 始终 paused 的策略草案与安全写入；7 个策略测试；不公开激活。
