@@ -1,10 +1,35 @@
 import { settlePilotCommandUsage } from './project-pilot-budget-ledger'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 
+export type PilotStartBoundary = 'claim_only' | 'handoff_intent' | 'missing_attempt' | 'invalid_attempt'
+
+interface StartAttemptRow {
+  command_id: string
+  project_id: string
+  session_id: string
+  claimed_at: number
+  handoff_intent_at: number | null
+}
+
+/** 该证据仅反映本地交接意图；不能反推 Runtime/Provider 是否执行。 */
+function readPilotStartBoundary(execution: NonNullable<ReturnType<typeof getAgentExecution>>, now: number): PilotStartBoundary {
+  const attempt = getProjectDb().prepare('SELECT * FROM pilot_runtime_start_attempts WHERE execution_id = ?')
+    .get(execution.id) as StartAttemptRow | undefined
+  if (!attempt) return 'missing_attempt'
+  if (attempt.command_id !== execution.pilotCommandId || attempt.project_id !== execution.projectId
+    || attempt.session_id !== execution.sessionId || !Number.isSafeInteger(attempt.claimed_at)
+    || attempt.claimed_at < 0 || attempt.claimed_at > now
+    || (attempt.handoff_intent_at !== null && (!Number.isSafeInteger(attempt.handoff_intent_at)
+      || attempt.handoff_intent_at < attempt.claimed_at || attempt.handoff_intent_at > now))) return 'invalid_attempt'
+  return attempt.handoff_intent_at === null ? 'claim_only' : 'handoff_intent'
+}
+
 export interface InterruptedPilotRuntimeRecovery {
   executionId: string
   commandId: string
   state: 'unknown_recorded' | 'needs_attention'
+  /** 仅描述本地持久证据；missing_attempt 可来自旧库或记录损坏，不代表未启动。 */
+  startBoundary: PilotStartBoundary
   reason: string
 }
 
@@ -18,10 +43,12 @@ export function recoverInterruptedPilotRuntimeExecutions(now = Date.now()): Inte
   const results: InterruptedPilotRuntimeRecovery[] = []
   for (const candidate of candidates) {
     let result: InterruptedPilotRuntimeRecovery | undefined
+    let startBoundary: PilotStartBoundary = 'invalid_attempt'
     try {
       database.transaction(() => {
         const execution = getAgentExecution(candidate.id)
         if (!execution || execution.status !== 'running' || execution.pilotCommandId !== candidate.pilot_command_id) return
+        startBoundary = readPilotStartBoundary(execution, now)
         // 命令或授权损坏时也先撤权，避免继续派发；结算失败只留待人工对账。
         database.prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE project_id = ? AND state = 'active'")
           .run(execution.projectId)
@@ -52,10 +79,10 @@ export function recoverInterruptedPilotRuntimeExecutions(now = Date.now()): Inte
             reason: '应用重启中断 Runtime，无法核验 Provider 用量',
           }, now)
           result = { executionId: execution.id, commandId: candidate.pilot_command_id,
-            state: 'unknown_recorded', reason: '中断 Runtime 已按未知用量撤权停等' }
+            state: 'unknown_recorded', startBoundary, reason: '中断 Runtime 已按未知用量撤权停等' }
         } catch {
           result = { executionId: execution.id, commandId: candidate.pilot_command_id,
-            state: 'needs_attention', reason: '中断执行用量或账本无法核验，授权已暂停' }
+            state: 'needs_attention', startBoundary, reason: '中断执行用量或账本无法核验，授权已暂停' }
         }
       })()
     } catch {
@@ -67,7 +94,7 @@ export function recoverInterruptedPilotRuntimeExecutions(now = Date.now()): Inte
         paused = true
       } catch { /* 数据库不可写时只能在结果中如实报告 */ }
       result = { executionId: candidate.id, commandId: candidate.pilot_command_id,
-        state: 'needs_attention', reason: paused ? '中断执行恢复失败，授权已暂停' : '中断执行恢复失败，授权暂停未能核验' }
+        state: 'needs_attention', startBoundary, reason: paused ? '中断执行恢复失败，授权已暂停' : '中断执行恢复失败，授权暂停未能核验' }
     }
     if (result) results.push(result)
   }

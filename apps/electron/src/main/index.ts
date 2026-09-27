@@ -523,7 +523,7 @@ async function bootstrap(): Promise<void> {
     const { recoverInterruptedPilotRuntimeExecutions } = await import('./lib/project-pilot-runtime-recovery')
     for (const recovery of recoverInterruptedPilotRuntimeExecutions()) {
       const log = recovery.state === 'needs_attention' ? console.warn : console.info
-      log(`[Pilot] 重启恢复 execution=${recovery.executionId} command=${recovery.commandId}: ${recovery.reason}`)
+      log(`[Pilot] 重启恢复 execution=${recovery.executionId} command=${recovery.commandId} startBoundary=${recovery.startBoundary}: ${recovery.reason}`)
     }
   })
   await safeAwait('startPilotBackgroundReconcile', async () => {

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claimPilotCommandStart, getPilotGrantBudgetUsage, hashPilotProviderUsageRecord, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
+import { claimPilotCommandStart, recordPilotRunnerHandoffIntent, getPilotGrantBudgetUsage, hashPilotProviderUsageRecord, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
 import { inspectPilotGrantRecovery } from './project-pilot-recovery'
 import { recoverInterruptedPilotRuntimeExecutions } from './project-pilot-runtime-recovery'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
@@ -82,12 +82,12 @@ test('运行结果未知与终结状态矛盾都不能被归入可重检队列',
 test('重启后遗留 running Pilot 自动转为 stale、未知费用并暂停授权，且恢复幂等', async () => {
   const data = fixture()
   reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
-  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-interrupted')
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-interrupted', data.now)
   closeProjectDb()
   await initProjectDb()
   expect(recoverInterruptedPilotRuntimeExecutions(data.now + 1)).toContainEqual({
     executionId: data.executionId, commandId: data.input.commandId,
-    state: 'unknown_recorded', reason: '中断 Runtime 已按未知用量撤权停等',
+    state: 'unknown_recorded', startBoundary: 'claim_only', reason: '中断 Runtime 已按未知用量撤权停等',
   })
   expect(getAgentExecution(data.executionId)).toMatchObject({ status: 'stale', sessionId: 'session-interrupted' })
   const command = getProjectDb().prepare('SELECT state, actual_cost_micros, usage_evidence FROM pilot_commands WHERE id = ?')
@@ -102,6 +102,66 @@ test('重启后遗留 running Pilot 自动转为 stale、未知费用并暂停�
   expect(recoverInterruptedPilotRuntimeExecutions(data.now + 2)).toEqual([])
 })
 
+test('重启时区分交接意图与缺失记录，但均按未知用量撤权', async () => {
+  const handed = fixture()
+  reserveAndQueuePilotCommand(handed.input, { executionId: handed.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(handed.executionId, handed.input.commandId, 1, 'session-handoff')
+  recordPilotRunnerHandoffIntent(handed.executionId, handed.input.commandId, 'session-handoff')
+  const legacy = fixture()
+  reserveAndQueuePilotCommand(legacy.input, { executionId: legacy.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(legacy.executionId, legacy.input.commandId, 1, 'session-legacy')
+  getProjectDb().prepare('DELETE FROM pilot_runtime_start_attempts WHERE execution_id = ?').run(legacy.executionId)
+  closeProjectDb()
+  await initProjectDb()
+  const results = recoverInterruptedPilotRuntimeExecutions()
+  expect(results).toContainEqual({ executionId: handed.executionId, commandId: handed.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'handoff_intent', reason: '中断 Runtime 已按未知用量撤权停等' })
+  expect(results).toContainEqual({ executionId: legacy.executionId, commandId: legacy.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'missing_attempt', reason: '中断 Runtime 已按未知用量撤权停等' })
+  for (const item of [handed, legacy]) {
+    expect(getAgentExecution(item.executionId)?.status).toBe('stale')
+    expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(item.grantId)).toEqual({ state: 'paused' })
+    expect(getPilotGrantBudgetUsage(item.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+  }
+  expect(recoverInterruptedPilotRuntimeExecutions()).toEqual([])
+})
+
+test('损坏的启动尝试不冒充 Runtime 交接，仍保守撤权占额', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-damaged-attempt')
+  // 旧库或人工损坏的行不应被当作有效交接；测试故意绕过不可变约束。
+  getProjectDb().exec('DROP TRIGGER pilot_runtime_start_attempts_guard')
+  try {
+    getProjectDb().prepare('UPDATE pilot_runtime_start_attempts SET session_id = ?, handoff_intent_at = ? WHERE execution_id = ?')
+      .run('foreign-session', data.now - 1, data.executionId)
+    const results = recoverInterruptedPilotRuntimeExecutions()
+    expect(results).toContainEqual({ executionId: data.executionId, commandId: data.input.commandId,
+      state: 'unknown_recorded', startBoundary: 'invalid_attempt', reason: '中断 Runtime 已按未知用量撤权停等' })
+    expect(getPilotGrantBudgetUsage(data.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+    expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(data.grantId)).toEqual({ state: 'paused' })
+  } finally {
+    getProjectDb().exec(`CREATE TRIGGER pilot_runtime_start_attempts_guard
+    BEFORE UPDATE ON pilot_runtime_start_attempts
+    WHEN OLD.execution_id != NEW.execution_id OR OLD.command_id != NEW.command_id
+      OR OLD.project_id != NEW.project_id OR OLD.session_id != NEW.session_id
+      OR OLD.claimed_at != NEW.claimed_at OR OLD.handoff_intent_at IS NOT NULL
+      OR NEW.handoff_intent_at IS NULL OR NEW.handoff_intent_at < OLD.claimed_at
+    BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start attempt is immutable'); END`)
+  }
+})
+
+test('启动尝试的时间晚于恢复时钟时不认作交接，仍撤权保留预算', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-future', data.now + 5)
+  expect(recoverInterruptedPilotRuntimeExecutions(data.now + 1)).toContainEqual({
+    executionId: data.executionId, commandId: data.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'invalid_attempt', reason: '中断 Runtime 已按未知用量撤权停等',
+  })
+  expect(getPilotGrantBudgetUsage(data.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+})
+
 test('中断 Pilot 的命令或来源关联破损时撤权但不伪造完整用量结算', () => {
   const missing = fixture()
   reserveAndQueuePilotCommand(missing.input, { executionId: missing.executionId, prompt: '研发任务' })
@@ -114,7 +174,7 @@ test('中断 Pilot 的命令或来源关联破损时撤权但不伪造完整用�
   const results = recoverInterruptedPilotRuntimeExecutions()
   for (const item of [missing, damaged]) {
     expect(results).toContainEqual({ executionId: item.executionId, commandId: item.input.commandId,
-      state: 'needs_attention', reason: '中断执行用量或账本无法核验，授权已暂停' })
+      state: 'needs_attention', startBoundary: 'claim_only', reason: '中断执行用量或账本无法核验，授权已暂停' })
     expect(getAgentExecution(item.executionId)?.status).toBe('stale')
     expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(item.grantId))
       .toEqual({ state: 'paused' })
@@ -131,7 +191,7 @@ test('中断命令已有费用证据时保留原证据并暂停授权', () => {
   getProjectDb().prepare('UPDATE pilot_commands SET usage_evidence = ? WHERE id = ?')
     .run(prior, data.input.commandId)
   expect(recoverInterruptedPilotRuntimeExecutions()).toContainEqual({ executionId: data.executionId,
-    commandId: data.input.commandId, state: 'needs_attention', reason: '中断执行用量或账本无法核验，授权已暂停' })
+    commandId: data.input.commandId, state: 'needs_attention', startBoundary: 'claim_only', reason: '中断执行用量或账本无法核验，授权已暂停' })
   expect(getAgentExecution(data.executionId)?.status).toBe('stale')
   expect(getProjectDb().prepare('SELECT state, usage_evidence FROM pilot_commands WHERE id = ?')
     .get(data.input.commandId)).toEqual({ state: 'running', usage_evidence: prior })
@@ -153,7 +213,7 @@ test('恢复写入失败时独立撤权，且不处理 queued Pilot 或普通 ru
     WHEN NEW.id = '${interrupted.executionId}' AND NEW.status = 'stale'
     BEGIN SELECT RAISE(ABORT, 'recovery interrupted'); END`)
   expect(recoverInterruptedPilotRuntimeExecutions()).toContainEqual({ executionId: interrupted.executionId,
-    commandId: interrupted.input.commandId, state: 'needs_attention', reason: '中断执行恢复失败，授权已暂停' })
+    commandId: interrupted.input.commandId, state: 'needs_attention', startBoundary: 'claim_only', reason: '中断执行恢复失败，授权已暂停' })
   expect(getAgentExecution(interrupted.executionId)?.status).toBe('running')
   expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(interrupted.grantId))
     .toEqual({ state: 'paused' })
