@@ -76,18 +76,26 @@ const MARKDOWN_FONT_SIZE_OPTIONS = [
 /** 特殊风格 ID（排除 default） */
 type SpecialStyleId = Exclude<ThemeStyle, 'default'>
 
-/** 特殊风格定义 */
-interface SpecialStyle {
+/** 特殊风格定义：图片与实际界面预览二选一。 */
+interface SpecialStyleBase {
   id: SpecialStyleId
   name: string
   variant: 'light' | 'dark'
-  /** 主题预览图 */
+}
+
+interface ImageStyle extends SpecialStyleBase {
   image: string
-  /** 图片裁剪位置（默认居中） */
+  preview?: never
   objectPosition?: string
-  /** 图片缩放比例（默认 1） */
   imageScale?: number
 }
+
+interface PaletteStyle extends SpecialStyleBase {
+  preview: { background: string; panel: string; accent: string; text: string }
+  image?: never
+}
+
+type SpecialStyle = ImageStyle | PaletteStyle
 
 const SPECIAL_STYLES: readonly SpecialStyle[] = [
   {
@@ -154,9 +162,19 @@ const SPECIAL_STYLES: readonly SpecialStyle[] = [
     variant: 'light',
     image: themeLandscape,
   },
+  { id: 'landscape-night', name: '千里江山·夜', variant: 'dark',
+    preview: { background: '#0D131A', panel: '#162A2B', accent: '#66DCC5', text: '#E5E9F0' } },
+  { id: 'vermeer-night', name: '维米尔·夜', variant: 'dark',
+    preview: { background: '#121214', panel: '#1E293B', accent: '#E5C86B', text: '#F8F9FA' } },
+  { id: 'caravaggio-night', name: '卡拉瓦乔', variant: 'dark',
+    preview: { background: '#100F11', panel: '#241C1A', accent: '#D9A45B', text: '#ECE4D7' } },
+  { id: 'vangogh-night', name: '梵高·星夜', variant: 'dark',
+    preview: { background: '#10162B', panel: '#1E2D4D', accent: '#E7C456', text: '#E8ECF7' } },
+  { id: 'synthwave-night', name: '霓虹合成波', variant: 'dark',
+    preview: { background: '#0A0714', panel: '#1F1435', accent: '#F27BC5', text: '#E9E5F6' } },
 ]
 
-/** 各主题遮罩颜色（实心背景 + 浅色文字，与 CSS --primary 对应） */
+/** 图片主题的名称遮罩；调色板主题的名称直接使用预览色。 */
 const STYLE_MASK_COLORS: Record<SpecialStyleId, { bg: string; text: string }> = {
   'slate-light':  { bg: 'hsl(18, 20%, 67%)',  text: 'hsl(18, 20%, 88%)' },
   'ocean-light':  { bg: 'hsl(205, 50%, 50%)', text: 'hsl(205, 50%, 82%)' },
@@ -168,6 +186,13 @@ const STYLE_MASK_COLORS: Record<SpecialStyleId, { bg: string; text: string }> = 
   'ember-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(22, 60%, 65%)' },
   'porcelain':    { bg: 'hsl(222, 58%, 44%)', text: 'hsl(218, 40%, 86%)' },
   'landscape':    { bg: 'hsl(165, 48%, 34%)', text: 'hsl(90, 18%, 82%)' },
+  'landscape-night': { bg: '#111820', text: '#E5E9F0' },
+  'vermeer-night': { bg: '#111820', text: '#E5E9F0' },
+  'caravaggio-night': { bg: '#111820', text: '#E5E9F0' },
+  'vangogh-night': { bg: '#111820', text: '#E5E9F0' },
+  'synthwave-night': { bg: '#111820', text: '#E5E9F0' },
+
+
 }
 
 /** 图标变体定义 */
@@ -269,19 +294,30 @@ export function AppearanceSettings(): React.ReactElement {
             options={THEME_OPTIONS}
           />
 
-          {/* 特殊风格 - 标签在上，卡片在下 */}
-          <div className="px-4 py-3 space-y-2">
-            <div className="text-sm font-medium text-foreground">特殊风格</div>
-            <div className="grid grid-cols-6 gap-3">
-              {SPECIAL_STYLES.map((style) => (
-                <StyleCard
-                  key={style.id}
-                  style={style}
-                  isSelected={themeMode === 'special' && themeStyle === style.id}
-                  onSelect={() => handleStyleSelect(style.id)}
-                />
-              ))}
-            </div>
+          {/* 按明暗分组，方便选择适合长时间工作的主题。 */}
+          <div className="px-4 py-3 space-y-4">
+            {(['light', 'dark'] as const).map((variant) => (
+              <div key={variant} className="space-y-2">
+                <div className="text-sm font-medium text-foreground">
+                  {variant === 'light' ? '日间配色' : '夜间与艺术主题'}
+                </div>
+                {variant === 'dark' && (
+                  <p className="text-xs text-muted-foreground">
+                    从《千里江山图》《戴珍珠耳环的少女》、卡拉瓦乔的明暗法与《星月夜》提取光色。
+                  </p>
+                )}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(99px,1fr))] gap-3">
+                  {SPECIAL_STYLES.filter((style) => style.variant === variant).map((style) => (
+                    <StyleCard
+                      key={style.id}
+                      style={style}
+                      isSelected={themeMode === 'special' && themeStyle === style.id}
+                      onSelect={() => handleStyleSelect(style.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           <SettingsRow
@@ -440,36 +476,46 @@ function StyleCard({
     <button
       type="button"
       onClick={onSelect}
+      aria-label={`选择${style.name}主题`}
+      aria-pressed={isSelected}
       className={cn(
         'relative rounded-lg overflow-hidden',
-        'w-[99px] h-[183px]',
+        'w-full h-[183px]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1',
         isSelected
           ? 'ring-2 ring-primary shadow-lg shadow-primary/20'
           : 'ring-1 ring-border/50 hover:ring-border'
       )}
     >
-      <div
-        className="w-full h-full"
-        style={style.imageScale ? { transform: `scale(${style.imageScale})` } : undefined}
-      >
-        <img
-          src={style.image}
-          alt={style.name}
-          loading="lazy"
-          decoding="async"
-          className="w-full h-full object-cover"
-          style={style.objectPosition ? { objectPosition: style.objectPosition } : undefined}
-          draggable={false}
-        />
-      </div>
+      {style.preview ? (
+        <div className="absolute inset-0 p-2 text-left" style={{ background: style.preview.background }} aria-hidden="true">
+          <div className="flex h-full gap-1 rounded-md p-1.5 shadow-lg" style={{ background: style.preview.panel }}>
+            <div className="w-3 shrink-0 rounded-sm opacity-65" style={{ background: style.preview.background }} />
+            <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+              <div className="h-1.5 w-3/4 rounded-full opacity-80" style={{ background: style.preview.text }} />
+              <div className="h-1 w-full rounded-full opacity-45" style={{ background: style.preview.text }} />
+              <div className="h-1 w-4/5 rounded-full opacity-45" style={{ background: style.preview.text }} />
+              <div className="mt-2 h-12 rounded-md p-1.5" style={{ background: style.preview.background }}>
+                <div className="h-1 w-3/4 rounded-full" style={{ background: style.preview.accent }} />
+                <div className="mt-1 h-1 w-1/2 rounded-full opacity-60" style={{ background: style.preview.text }} />
+              </div>
+              <div className="mt-auto mb-6 h-4 w-full rounded-md border" style={{ borderColor: style.preview.accent }} />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="w-full h-full" style={style.imageScale ? { transform: `scale(${style.imageScale})` } : undefined}>
+          <img src={style.image} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover"
+            style={style.objectPosition ? { objectPosition: style.objectPosition } : undefined} draggable={false} />
+        </div>
+      )}
       <div
         className="absolute bottom-0 left-0 right-0 h-5 flex items-end justify-center pb-0.5"
-        style={{ background: STYLE_MASK_COLORS[style.id].bg }}
+        style={{ background: style.preview?.panel ?? STYLE_MASK_COLORS[style.id].bg }}
       >
         <span
           className="text-xs font-medium"
-          style={{ color: STYLE_MASK_COLORS[style.id].text }}
+          style={{ color: style.preview?.text ?? STYLE_MASK_COLORS[style.id].text }}
         >
           {style.name}
         </span>

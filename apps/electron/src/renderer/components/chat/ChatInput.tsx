@@ -434,7 +434,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
         <div
           className={cn(
             'rounded-[10px] border border-solid border-border/80 bg-muted/30 backdrop-blur-sm transition-all duration-200',
-            'focus-within:border-foreground/30 focus-within:bg-muted/50',
+            'focus-within:border-ring focus-within:bg-muted/50',
             isDragOver && 'border-[2px] border-dashed border-[#2ecc71] bg-[#2ecc71]/[0.03]'
           )}
           onDragOver={handleDragOver}

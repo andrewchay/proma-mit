@@ -98,7 +98,7 @@
     --muted: 205 35% 88%;                 /* #d7e4ef 次要背景 */
     --muted-foreground: 210 15% 40%;      /* #576675 次要文字 */
     --border: 205 30% 82%;                /* #c3d5e5 边框 */
-    --primary: 205 50% 50%;               /* #408abf 主色 */
+    --primary: 205 55% 40%;               /* #2e6f9e 主色 */
     --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
     /* 会话选中态左侧 accent 竖条：跟随主题主色 */
     --selection-accent: 205 55% 48%;
@@ -106,7 +106,7 @@
     --secondary-foreground: 210 30% 20%;  /* #243342 二级前景 */
     --accent: 205 35% 82%;                /* #c1d6e7 强调背景 */
     --accent-foreground: 205 50% 30%;     /* #265373 强调文字 */
-    --ring: 205 50% 50%;                  /* #408abf 聚焦环 */
+    --ring: 205 55% 40%;                  /* #2e6f9e 聚焦环 */
     --card: 205 30% 97%;                  /* #f4f7fa 卡片背景 */
     --card-foreground: 210 30% 15%;       /* #1b2632 卡片前景 */
     --input: 205 35% 91%;                 /* #e2ebf3 输入框背景 */
@@ -143,7 +143,7 @@
     --secondary-foreground: 210 20% 90%;  /* #e0e6eb 二级前景 */
     --accent: 210 40% 22%;                /* #22384f 强调背景 */
     --accent-foreground: 205 60% 70%;     /* #85bae0 强调文字 */
-    --ring: 205 87% 24%;                  /* #084672 聚焦环（与主色一致） */
+    --ring: 205 85% 62%;                  /* #4cacf0 聚焦环 */
     --card: 210 35% 11%;                  /* #121c26 卡片背景 */
     --card-foreground: 210 20% 92%;       /* #e7ebef 卡片前景 */
     --input: 210 30% 14%;                 /* #19242e 输入框背景 */
@@ -172,7 +172,7 @@
     --foreground: 150 25% 15%;            /* #1d3026 前景文字 */
     --content-area: 140 20% 97%;          /* #f6f9f7 内容区域 */
     --muted: 140 15% 90%;                 /* #e2e9e4 次要背景 */
-    --muted-foreground: 145 10% 45%;      /* #677e71 次要文字 */
+    --muted-foreground: 145 10% 40%;      /* #5c7064 次要文字 */
     --border: 140 15% 82%;                /* #cad8cf 边框 */
     --primary: 150 35% 38%;               /* #3f8361 主色 */
     --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
@@ -250,18 +250,18 @@
     --content-area: 40 8% 94%;            /* #f0efec 内容区域（RGB 240,239,236 主题色） */
     /* 次要色 */
     --muted: 40 6% 85%;                   /* #dbd8d2 次要背景 */
-    --muted-foreground: 40 5% 45%;        /* #787568 次要文字 */
+    --muted-foreground: 40 5% 36%;        /* #605d57 次要文字 */
     --border: 40 6% 80%;                  /* #d0cdc6 边框 */
     /* 交互色 */
     --primary: 18 20% 67%;                /* #bda59b 主色（RGB 189,165,155） */
-    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景（白色文字） */
+    --primary-foreground: 40 8% 18%;      /* #322f2a 深色主按钮文字 */
     /* 会话选中态左侧 accent 竖条：跟随主题主色（提高饱和度保证选中可见） */
     --selection-accent: 18 35% 55%;
     --secondary: 40 6% 90%;               /* #e8e6e2 二级背景 */
     --secondary-foreground: 40 8% 22%;    /* #3c3933 二级前景 */
     --accent: 40 6% 86%;                  /* #dddad4 强调背景 */
     --accent-foreground: 40 10% 30%;      /* #554f44 强调文字 */
-    --ring: 18 20% 67%;                   /* #bda59b 聚焦环 */
+    --ring: 18 35% 45%;                   /* #9b634b 聚焦环 */
     /* 组件色 */
     --card: 40 8% 96%;                    /* #f6f5f2 卡片背景 */
     --card-foreground: 40 8% 18%;         /* #312f2a 卡片前景 */
@@ -292,9 +292,9 @@
     --foreground: 20 15% 18%;             /* #332a26 前景文字 */
     --content-area: 25 25% 96%;           /* #faf7f4 内容区域 */
     --muted: 25 20% 88%;                  /* #e8ddd4 次要背景 */
-    --muted-foreground: 20 10% 45%;       /* #7d6e66 次要文字 */
+    --muted-foreground: 20 10% 38%;       /* #6b5e57 次要文字 */
     --border: 25 15% 82%;                 /* #d9cfc7 边框 */
-    --primary: 22 60% 52%;                /* #d27640 陶土橙主色 */
+    --primary: 22 60% 43%;                /* #af5c2c 陶土橙主色 */
     --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
     /* 会话选中态左侧 accent 竖条：跟随主题主色 */
     --selection-accent: 22 65% 50%;
@@ -302,7 +302,7 @@
     --secondary-foreground: 20 15% 22%;   /* #3d332e 二级前景 */
     --accent: 22 30% 88%;                 /* #e8d5c8 强调背景 */
     --accent-foreground: 22 55% 35%;      /* #8a4a24 强调文字 */
-    --ring: 22 60% 52%;                   /* #d27640 聚焦环 */
+    --ring: 22 60% 43%;                   /* #af5c2c 聚焦环 */
     --card: 25 25% 96%;                   /* #faf7f4 卡片背景 */
     --card-foreground: 20 15% 18%;        /* #332a26 卡片前景 */
     --input: 25 18% 91%;                  /* #ede4dc 输入框背景 */
@@ -332,7 +332,7 @@
     --muted-foreground: 30 5% 60%;        /* #9c9791 次要文字 */
     --border: 240 3% 26%;                 /* #414144 边框 */
     --primary: 22 60% 52%;                /* #d27640 陶土橙主色 */
-    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
+    --primary-foreground: 240 4% 10%;      /* #18181b 深色主按钮文字 */
     /* 会话选中态左侧 accent 竖条：跟随主题主色 */
     --selection-accent: 22 70% 58%;
     --secondary: 240 3% 20%;              /* #333336 二级背景 */
@@ -454,7 +454,7 @@
     --content-area: 42 30% 94%;           /* #f5f0e4 内容区域（宣纸色） */
     /* 次要色 - 淡赭石 */
     --muted: 40 22% 84%;                  /* #ddd2ba 次要背景 */
-    --muted-foreground: 80 8% 38%;        /* #63665a 次要文字 */
+    --muted-foreground: 80 8% 37%;        /* #616657 次要文字 */
     --border: 40 16% 76%;                 /* #cfc4ac 边框 */
     /* 交互色 - 石绿（孔雀石） */
     --primary: 165 48% 34%;               /* #2e7d64 石绿主色 */
@@ -487,6 +487,87 @@
     --dashed-border: 165 48% 34% / 0.35;
     --dashed-border-hover: 165 48% 34% / 0.50;
   }
+
+  /* 名画与夜间创作：色彩用于交互，长篇文字保持低饱和、高对比。 */
+  .theme-landscape-night {
+    --art-background: 212 33% 8%;       /* #0D131A 暮天 */
+    --art-panel: 183 32% 13%;           /* #162A2B 石绿 */
+    --art-foreground: 218 27% 92%;      /* #E5E9F0 */
+    --art-muted-foreground: 211 20% 72%;
+    --art-signal: 168 63% 63%;          /* #66DCC5 石青 */
+    --art-code: 210 35% 7%;
+  }
+
+  .theme-vermeer-night {
+    --art-background: 240 5% 7%;        /* #121214 暗室 */
+    --art-panel: 217 33% 17%;           /* #1E293B 群青 */
+    --art-foreground: 210 17% 98%;      /* #F8F9FA */
+    --art-muted-foreground: 218 17% 73%;
+    --art-signal: 46 70% 66%;           /* #E5C86B 柔和珍珠黄 */
+    --art-code: 218 30% 9%;
+  }
+
+  .theme-caravaggio-night {
+    --art-background: 270 6% 6%;        /* #100F11 明暗对照 */
+    --art-panel: 12 16% 12%;            /* #241C1A 暖暗部 */
+    --art-foreground: 37 36% 88%;       /* #ECE4D7 */
+    --art-muted-foreground: 33 12% 69%;
+    --art-signal: 35 62% 60%;           /* #D9A45B 琥珀光 */
+    --art-code: 15 12% 8%;
+  }
+
+  .theme-vangogh-night {
+    --art-background: 227 46% 12%;      /* #10162B 星夜蓝 */
+    --art-panel: 221 44% 21%;           /* #1E2D4D 深群青 */
+    --art-foreground: 224 48% 94%;      /* #E8ECF7 */
+    --art-muted-foreground: 218 31% 74%;
+    --art-signal: 46 75% 62%;           /* #E7C456 星光黄 */
+    --art-code: 226 45% 9%;
+  }
+
+  .theme-synthwave-night {
+    --art-background: 254 48% 5%;       /* #0A0714 深空 */
+    --art-panel: 260 45% 14%;           /* #1F1435 午夜紫 */
+    --art-foreground: 254 49% 93%;      /* #E9E5F6 */
+    --art-muted-foreground: 259 19% 70%;
+    --art-signal: 323 82% 72%;          /* #F27BC5 受控霓虹粉 */
+    --art-code: 256 42% 8%;
+  }
+
+  :is(.theme-landscape-night, .theme-vermeer-night, .theme-caravaggio-night,
+      .theme-vangogh-night, .theme-synthwave-night) {
+    --background: var(--art-background);
+    --foreground: var(--art-foreground);
+    --content-area: var(--art-background);
+    --muted: var(--art-panel);
+    --muted-foreground: var(--art-muted-foreground);
+    --border: var(--art-panel);
+    --input: var(--art-panel);
+    --ring: var(--art-signal);
+    --primary: var(--art-signal);
+    --primary-foreground: var(--art-background);
+    --selection-accent: var(--art-signal);
+    --secondary: var(--art-panel);
+    --secondary-foreground: var(--art-foreground);
+    --accent: var(--art-panel);
+    --accent-foreground: var(--art-signal);
+    --card: var(--art-panel);
+    --card-foreground: var(--art-foreground);
+    --popover: var(--art-panel);
+    --popover-foreground: var(--art-foreground);
+    --dialog: var(--art-panel);
+    --dialog-foreground: var(--art-foreground);
+    --destructive: 0 68% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --stop-hover-bg: hsl(0 55% 20%);
+    --tooltip: var(--art-panel);
+    --tooltip-foreground: var(--art-foreground);
+    --tooltip-muted: var(--art-muted-foreground);
+    --code-bg: var(--art-code);
+    --dashed-border: var(--art-signal) / 0.38;
+    --dashed-border-hover: var(--art-signal) / 0.65;
+  }
+
 }
 
 @layer base {
@@ -603,10 +684,28 @@
 .theme-porcelain .shell-bg { background: linear-gradient(135deg, hsl(215 30% 91%) 0%, hsl(215 25% 94%) 100%); }
 .theme-landscape .shell-bg { background: linear-gradient(135deg, hsl(40 24% 83%) 0%, hsl(42 28% 89%) 100%); }
 
+/* 名画夜间主题的工作区层次与 AI 运行信号。 */
+:is(.theme-landscape-night, .theme-vermeer-night, .theme-caravaggio-night,
+    .theme-vangogh-night, .theme-synthwave-night) .shell-bg {
+  background: hsl(var(--art-background));
+}
+:is(.theme-landscape-night, .theme-vermeer-night, .theme-caravaggio-night,
+    .theme-vangogh-night, .theme-synthwave-night) .sidebar-breathe-running {
+  --breathe-color: var(--art-signal);
+  color: hsl(var(--art-signal));
+}
+:is(.theme-landscape-night, .theme-vermeer-night, .theme-caravaggio-night,
+    .theme-vangogh-night, .theme-synthwave-night) .code-block-wrapper > div:first-child {
+  background: hsl(var(--art-panel)) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-breathe-dot { animation: none; }
+}
+
 /* ===== 特殊主题：模式切换器选中状态 ===== */
 /* 晴空碧海：蓝色背景滑块 + 白色文字 */
 .theme-ocean-light .mode-slider {
-  background: hsl(205 50% 50%) !important;  /* #408abf 主色 */
+  background: hsl(205 55% 40%) !important;  /* 更深的蓝色，白字可读 */
   box-shadow: 0 2px 4px rgba(64, 138, 191, 0.3);
 }
 .theme-ocean-light .mode-btn-selected {
@@ -646,12 +745,12 @@
   box-shadow: 0 2px 4px rgba(189, 165, 155, 0.4);
 }
 .theme-slate-light .mode-btn-selected {
-  color: #ffffff !important;
+  color: hsl(40 8% 18%) !important;
 }
 
 /* 余烬晨光主题 */
 .theme-ember-light .mode-slider {
-  background: hsl(22 60% 52%) !important;   /* #d27640 陶土橙主色 */
+  background: hsl(22 60% 43%) !important;   /* 加深陶土橙以保留白字对比 */
   box-shadow: 0 2px 4px rgba(210, 118, 64, 0.3);
 }
 .theme-ember-light .mode-btn-selected {
@@ -664,7 +763,7 @@
   box-shadow: 0 2px 4px rgba(210, 118, 64, 0.3);
 }
 .theme-ember-dark .mode-btn-selected {
-  color: #ffffff !important;
+  color: hsl(240 4% 10%) !important;
 }
 
 /* 青花瓷主题 */

@@ -38,7 +38,7 @@ function getCachedThemeMode(): ThemeMode {
 function getCachedThemeStyle(): ThemeStyle {
   try {
     const cached = localStorage.getItem(THEME_STYLE_CACHE_KEY)
-    if (cached === 'default' || cached === 'ocean-light' || cached === 'ocean-dark' || cached === 'forest-light' || cached === 'forest-dark' || cached === 'slate-light' || cached === 'slate-dark' || cached === 'ember-light' || cached === 'ember-dark' || cached === 'porcelain' || cached === 'landscape') {
+    if (cached === 'default' || cached === 'ocean-light' || cached === 'ocean-dark' || cached === 'forest-light' || cached === 'forest-dark' || cached === 'slate-light' || cached === 'slate-dark' || cached === 'ember-light' || cached === 'ember-dark' || cached === 'porcelain' || cached === 'landscape' || cached === 'landscape-night' || cached === 'vermeer-night' || cached === 'caravaggio-night' || cached === 'vangogh-night' || cached === 'synthwave-night') {
       return cached
     }
   } catch {
@@ -104,6 +104,11 @@ const ALL_THEME_STYLE_CLASSES = [
   'theme-ember-dark',
   'theme-porcelain',
   'theme-landscape',
+  'theme-landscape-night',
+  'theme-vermeer-night',
+  'theme-caravaggio-night',
+  'theme-vangogh-night',
+  'theme-synthwave-night',
 ] as const
 
 /** 浅色基调的特殊风格（porcelain / landscape 无 -light 后缀，单独登记） */

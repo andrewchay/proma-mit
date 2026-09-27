@@ -27,7 +27,7 @@ gravitas/
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.24)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.12.91)
+    └── electron/   # Electron 桌面应用 (v0.12.93)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.12.91)
+#### @gravitas/electron (v0.12.93)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -256,16 +256,18 @@ bun run generate:icons    # 生成应用图标
 | `active-view.ts` | 主面板视图切换（'conversations' / 'settings'） |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
 | `settings-tab.ts` | 设置面板当前标签页 |
-| `theme.ts` | 主题模式（light / dark / system） |
+| `theme.ts` | 主题模式（light / dark / system / special）、特殊风格缓存与 DOM 类名切换 |
 | `user-profile.ts` | 用户档案（姓名 + 头像） |
 | `updater.ts` | 自动更新状态（检查/下载/安装），优雅降级（updater 不可用时保持 idle） |
+
+新增特殊风格时，同步 `types/settings.ts` 的 `ThemeStyle`、`atoms/theme.ts` 的缓存与类名清单、`renderer/index.html` 的首屏明暗类名、`AppearanceSettings.tsx` 的选项和 `styles/globals.css` 的色值；用 `theme-contrast.test.ts` 检查主题文字、按钮与聚焦色的基础对比度。
 
 ### 渲染进程组件架构（`renderer/components/`）
 
 - **`app-shell/`**：三面板布局（LeftSidebar | NavigatorPanel | MainContentPanel），侧边栏含模式切换、置顶对话、日期分组列表、流式指示器
 - **`chat/`**：聊天核心 — ChatView（消息加载/流式订阅）、ChatHeader（模型选择/上下文设置）、ChatInput（Tiptap 富文本编辑器）、ChatMessages（消息列表/自动滚动）、ParallelChatMessages（并排模式）
 - **`agent/`**：Agent 模式 — AgentView（纯展示 + 交互，IPC 监听已提升到全局）、AgentHeader（渠道/模型选择）、AgentMessages（消息列表 + 工具活动）、ToolActivityItem（工具调用展示）、WorkspaceSelector（工作区切换）、PermissionBanner/AskUserBanner（权限/问答请求 UI）
-- **`settings/`**：设置面板 — GeneralSettings（用户档案）、AppearanceSettings（主题）、ChannelSettings（渠道管理）、ChannelForm（Provider 配置）、AgentSettings（Agent 渠道/工作区/MCP）、McpServerForm（MCP 服务器配置）、AboutSettings（版本/更新）、FeishuSettings（飞书集成）；含 `primitives/` 可复用表单组件
+- **`settings/`**：设置面板 — GeneralSettings（用户档案）、AppearanceSettings（主题模式、日间与夜间艺术风格）、ChannelSettings（渠道管理）、ChannelForm（Provider 配置）、AgentSettings（Agent 渠道/工作区/MCP）、McpServerForm（MCP 服务器配置）、AboutSettings（版本/更新）、FeishuSettings（飞书集成）；含 `primitives/` 可复用表单组件
 - **`file-browser/`**：文件浏览器 — FileBrowser（工作区文件树浏览）
 - **`ai-elements/`**：AI 展示组件 — Markdown 渲染、代码块、Mermaid 图、推理折叠、上下文分割线、富文本输入
 - **`ui/`**：Radix UI 组件（现代化设计，CSS 变量主题）
@@ -307,7 +309,7 @@ bun run generate:icons    # 生成应用图标
 │   └── {conversationId}/
 │       └── {uuid}.ext
 ├── user-profile.json       # 用户档案 { userName, avatar }
-├── settings.json           # 应用设置 { themeMode }
+├── settings.json           # 应用设置 { themeMode, themeStyle }
 ├── projects/               # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test 用 sql.js）
 └── sdk-config/             # Agent SDK 配置目录
     └── projects/           # SDK 项目配置

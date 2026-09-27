@@ -15,7 +15,7 @@
         if (mode === 'special' && style && style !== 'default') {
           // 特殊风格模式：添加主题类名 + 根据后缀决定 dark 类
           html.classList.add('theme-' + style)
-          if (style.endsWith('-dark')) {
+          if (style.endsWith('-dark') || style.endsWith('-night')) {
             html.classList.add('dark')
           }
         } else if (mode === 'dark') {
