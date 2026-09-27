@@ -138,6 +138,8 @@
 
 | PILOT-20260927-35 | 2026-09-27 | 实际 bump `@earendil-works/pi-agent-core`、`pi-ai`、`pi-coding-agent` 0.82.1→0.87.1（lockfile 同步）。迁移历史恢复断点：0.87 起 SessionManager 为会话唯一事实源，事后赋值 `session.state.messages` 不再进入模型上下文；改为创建 AgentSession 前用 `buildPiHistorySessionEntries` 把恢复历史组装成 parentId 单链 entries，经 `SessionManager.inMemory(cwd, undefined, entries)` 注入。`DefaultResourceLoader.systemPromptOverride`、`session.agent.toolExecution`、消息转换类型在 0.87.1 均保持兼容；adapter 测试的 `streamSimple` 改经 `normalizeContext`（Context→TranscriptContext 品牌类型） | 新增 3 个 0.87 回归测试（条目链结构、真实 SessionManager `buildSessionContext` 回读、预种子 manager 创建 AgentSession 后 `session.messages` 可见历史）PASS；pi-message-adapter 9 PASS；全仓 `bun run test` 498 文件 0 失败、全仓 typecheck、Biome PASS。未调用 Provider | 基线 HEAD `0c0e2d35`（已推送）；真实 Provider 冒烟（PROMA_PI_REAL_API）未开，Pi 扩展逃逸/原始回执/硬费用上限未验证；Pi 仍不在首版白名单、能力位仍 false，G0/G1 不变 |
 
+| PILOT-20260927-36 | 2026-09-27 | 实际开始回执：新增不可变表 `pilot_runtime_start_receipts` 与 `project-pilot-start-receipt` 模块。runner 经 orchestrator 首条 runtime 消息确认真正开始后（新增可选回调 `onRuntimeSessionEstablished`，主路径与重试路径均触发、跨重试只报一次），由员工服务写回执（runner 身份＋进程号＋started_at），校验执行归属、交接链完整与时钟单调，重复幂等拒绝。重启恢复边界新增 `started_proven`：有有效回执＝启动事实已证但终态与费用仍 unknown；无回执保持 handoff_intent 保守结论。普通员工执行与非 Pilot 归属拒绝回执 | 新增 `project-pilot-start-receipt.test.ts` 7 PASS（含故障注入：claim/handoff/receipt 各断裂组合、错配会话、早于交接、时钟倒置、重复回执、表不可变、非 Pilot 拒绝）；Project Pilot 19 文件、全仓 `bun run test` 500 文件 0 失败、全仓 typecheck、Biome PASS。未调用 Provider | 基线 HEAD `3b7f22b7`（含外观主题提交）；回执只证明"Runtime 已活动"，不证明 Provider 实际计费或终态；进程存活探针与真实停止器仍未接通，G0/G1 不变 |
+
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
 ## 7. 下一次执行

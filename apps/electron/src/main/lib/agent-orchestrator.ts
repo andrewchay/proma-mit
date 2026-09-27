@@ -119,6 +119,11 @@ export interface SessionCallbacks {
   onComplete: (messages?: AgentMessage[], opts?: { stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; runtimeResult?: SDKResultMessage }) => void
   /** 发送标题更新 */
   onTitleUpdated: (title: string) => void
+  /**
+   * Runtime 会话已建立并产出首条消息（adapter 首个事件到达）。
+   * 只表示 Runtime 真正开始活动，不证明终态与费用；Pilot 用它写开始回执。
+   */
+  onRuntimeSessionEstablished?: () => void
 }
 
 /** 会话级待发送队列条目（对应 AgentSendInput 的一次排队发送） */
@@ -840,8 +845,13 @@ export class AgentOrchestrator {
 
       const iterable = this.adapter.query(queryOptions)
       const accumulatedMessages: SDKMessage[] = []
+      let runtimeEstablished = false
 
       for await (const msg of iterable) {
+        if (!runtimeEstablished) {
+          runtimeEstablished = true
+          callbacks.onRuntimeSessionEstablished?.()
+        }
         accumulatedMessages.push(msg)
         runtimeServices.events.emit(sessionId, { kind: 'sdk_message', message: msg } as AgentStreamPayload)
 
@@ -2953,6 +2963,8 @@ export class AgentOrchestrator {
         }
 
         let shouldRetryFromError = false
+        // 跨重试尝试只报一次：首条消息到达即证明 Runtime 已活动。
+        let runtimeEstablished = false
 
         try {
           // 获取异步迭代器（手动 .next() 以支持 Promise.race 中断）
@@ -2997,6 +3009,10 @@ export class AgentOrchestrator {
 
             pendingNext = null
             const msg = iterResult.value
+            if (!runtimeEstablished) {
+              runtimeEstablished = true
+              callbacks.onRuntimeSessionEstablished?.()
+            }
 
             // 检测 assistant 消息中的 SDK 错误
             if (msg.type === 'assistant') {

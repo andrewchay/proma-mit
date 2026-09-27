@@ -736,6 +736,20 @@ function migrate(database: SqliteCompat): void {
         OR NEW.handoff_intent_at IS NULL OR NEW.handoff_intent_at < OLD.claimed_at
       BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start attempt is immutable'); END;
 
+    CREATE TABLE IF NOT EXISTS pilot_runtime_start_receipts (
+      execution_id TEXT PRIMARY KEY,
+      command_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      runner_name TEXT NOT NULL,
+      process_id INTEGER,
+      started_at INTEGER NOT NULL CHECK (started_at >= 0),
+      received_at INTEGER NOT NULL CHECK (received_at >= started_at)
+    );
+    CREATE TRIGGER IF NOT EXISTS pilot_runtime_start_receipts_immutable
+      BEFORE UPDATE ON pilot_runtime_start_receipts
+      BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start receipt is immutable'); END;
+
     CREATE TABLE IF NOT EXISTS pilot_grant_pause_decisions (
       grant_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -1017,6 +1031,20 @@ function migrate(database: SqliteCompat): void {
       OR OLD.claimed_at != NEW.claimed_at OR OLD.handoff_intent_at IS NOT NULL
       OR NEW.handoff_intent_at IS NULL OR NEW.handoff_intent_at < OLD.claimed_at
     BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start attempt is immutable'); END`)
+  // 实际开始回执：runner 确认 Runtime 已产出首个活动后写入；旧库不回填，启动事实仍按未知处理。
+  database.exec(`CREATE TABLE IF NOT EXISTS pilot_runtime_start_receipts (
+    execution_id TEXT PRIMARY KEY,
+    command_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    runner_name TEXT NOT NULL,
+    process_id INTEGER,
+    started_at INTEGER NOT NULL CHECK (started_at >= 0),
+    received_at INTEGER NOT NULL CHECK (received_at >= started_at)
+  )`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS pilot_runtime_start_receipts_immutable
+    BEFORE UPDATE ON pilot_runtime_start_receipts
+    BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start receipt is immutable'); END`)
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
@@ -1372,6 +1400,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM pilot_command_links WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_usage_receipts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_start_attempts WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_runtime_start_receipts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_commands WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_grant_pause_decisions WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_grants WHERE project_id = ?`).run(id)

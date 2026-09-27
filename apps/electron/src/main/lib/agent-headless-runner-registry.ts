@@ -27,6 +27,11 @@ export interface HeadlessAgentRunCallbacks {
   originSessionId?: string
   /** runner 入口前同步写交接意图；崩溃窗口内是否实际执行未知，失败则不调用 runner。 */
   onRunnerInvoke?: () => void
+  /**
+   * Runtime 已产出首条消息（真正开始活动）后由 runner 调用；Pilot 用它写不可变
+   * 开始回执。只证明启动，不证明终态与费用。
+   */
+  onRuntimeStarted?: () => void
 }
 
 export type HeadlessAgentRunner = (

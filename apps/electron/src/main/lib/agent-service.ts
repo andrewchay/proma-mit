@@ -422,6 +422,8 @@ export async function runAgentHeadless(
     source?: import('@gravitas/shared').AgentExternalRunSource
     /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */
     originSessionId?: string
+    /** Runtime 首条消息到达：真正开始活动，转发给 Pilot 开始回执。 */
+    onRuntimeStarted?: () => void
   },
 ): Promise<void> {
   // 尝试注册目标窗口 webContents，让流式事件同步推送到桌面端。
@@ -447,6 +449,7 @@ export async function runAgentHeadless(
           })
         }
       },
+      onRuntimeSessionEstablished: callbacks.onRuntimeStarted,
       onComplete: (messages, opts) => {
         callbacks.onComplete(messages, {
           stoppedByUser: opts?.stoppedByUser,

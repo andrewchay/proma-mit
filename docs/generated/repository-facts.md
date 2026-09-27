@@ -4,10 +4,10 @@
 
 | 项目 | 当前值 |
 |---|---:|
-| @gravitas/electron | 0.12.92 |
+| @gravitas/electron | 0.12.93 |
 | @gravitas/shared | 0.2.22 |
 | @gravitas/core | 0.2.24 |
 | @gravitas/ui | 0.1.4 |
-| Bun 测试 / Playwright 测试文件 | 498 |
-| Electron 主进程 lib TypeScript 文件 | 863 |
-| Electron 渲染进程 TypeScript/TSX 文件 | 437 |
+| Bun 测试 / Playwright 测试文件 | 500 |
+| Electron 主进程 lib TypeScript 文件 | 865 |
+| Electron 渲染进程 TypeScript/TSX 文件 | 438 |

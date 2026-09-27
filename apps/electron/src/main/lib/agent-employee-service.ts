@@ -20,6 +20,7 @@ import { getPilotPolicy } from './project-pilot-policy'
 import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent } from './project-pilot-budget-ledger'
+import { recordPilotRuntimeStarted } from './project-pilot-start-receipt'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
@@ -771,6 +772,18 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
           throw new Error('Pilot 启动交接绑定或启动参数已变化')
         }
         recordPilotRunnerHandoffIntent(executionId, execution.pilotCommandId!, sessionId)
+      } } : {}),
+      // Runtime 首条消息到达 = 启动事实成立；写不可变开始回执供重启恢复区分
+      // "启动已证"与"启动未知"。回执失败只记录日志：不中断运行，终态结算仍按原路径。
+      ...(execution.pilotCommandId ? { onRuntimeStarted: () => {
+        try {
+          recordPilotRuntimeStarted(executionId, execution.pilotCommandId!, sessionId, {
+            runnerName: 'headless-runner',
+            processId: process.pid,
+          })
+        } catch (error) {
+          console.warn(`[AgentEmployee] Pilot 执行 ${executionId} 开始回执写入失败:`, error)
+        }
       } } : {}),
       onError: (error) => {
         clearRuntimeGeneration()

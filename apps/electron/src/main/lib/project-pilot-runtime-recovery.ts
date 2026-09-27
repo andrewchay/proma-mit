@@ -1,7 +1,8 @@
 import { settlePilotCommandUsage } from './project-pilot-budget-ledger'
+import { isPilotStartProven } from './project-pilot-start-receipt'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 
-export type PilotStartBoundary = 'claim_only' | 'handoff_intent' | 'missing_attempt' | 'invalid_attempt'
+export type PilotStartBoundary = 'claim_only' | 'handoff_intent' | 'started_proven' | 'missing_attempt' | 'invalid_attempt'
 
 interface StartAttemptRow {
   command_id: string
@@ -11,7 +12,7 @@ interface StartAttemptRow {
   handoff_intent_at: number | null
 }
 
-/** 该证据仅反映本地交接意图；不能反推 Runtime/Provider 是否执行。 */
+/** 该证据仅反映本地持久证据；claim_only/handoff_intent 不能反推 Runtime/Provider 是否执行。 */
 function readPilotStartBoundary(execution: NonNullable<ReturnType<typeof getAgentExecution>>, now: number): PilotStartBoundary {
   const attempt = getProjectDb().prepare('SELECT * FROM pilot_runtime_start_attempts WHERE execution_id = ?')
     .get(execution.id) as StartAttemptRow | undefined
@@ -21,7 +22,15 @@ function readPilotStartBoundary(execution: NonNullable<ReturnType<typeof getAgen
     || attempt.claimed_at < 0 || attempt.claimed_at > now
     || (attempt.handoff_intent_at !== null && (!Number.isSafeInteger(attempt.handoff_intent_at)
       || attempt.handoff_intent_at < attempt.claimed_at || attempt.handoff_intent_at > now))) return 'invalid_attempt'
-  return attempt.handoff_intent_at === null ? 'claim_only' : 'handoff_intent'
+  if (attempt.handoff_intent_at === null) return 'claim_only'
+  // 有不可变开始回执且交接链完整时，启动事实已证；终态与费用仍按 unknown 处理。
+  if (isPilotStartProven({
+    id: execution.id,
+    projectId: execution.projectId,
+    sessionId: execution.sessionId,
+    pilotCommandId: execution.pilotCommandId,
+  }, now)) return 'started_proven'
+  return 'handoff_intent'
 }
 
 export interface InterruptedPilotRuntimeRecovery {
@@ -79,7 +88,10 @@ export function recoverInterruptedPilotRuntimeExecutions(now = Date.now()): Inte
             reason: '应用重启中断 Runtime，无法核验 Provider 用量',
           }, now)
           result = { executionId: execution.id, commandId: candidate.pilot_command_id,
-            state: 'unknown_recorded', startBoundary, reason: '中断 Runtime 已按未知用量撤权停等' }
+            state: 'unknown_recorded', startBoundary,
+            reason: startBoundary === 'started_proven'
+              ? '启动已证实但终态与用量未知，已按未知用量撤权停等'
+              : '中断 Runtime 已按未知用量撤权停等' }
         } catch {
           result = { executionId: execution.id, commandId: candidate.pilot_command_id,
             state: 'needs_attention', startBoundary, reason: '中断执行用量或账本无法核验，授权已暂停' }
