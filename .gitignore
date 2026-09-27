@@ -61,3 +61,6 @@ vendor
 
 # Dynamic Island macOS native module is built from tracked ObjC source.
 apps/electron/resources/dynamic-island/macos/island.node
+
+# rebase/session scratch tooling
+.context/tmp/
