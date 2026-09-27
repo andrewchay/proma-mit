@@ -13,11 +13,14 @@
 import * as React from 'react'
 import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import rehypeRaw from 'rehype-raw'
+import rehypeKatex from 'rehype-katex'
 import DOMPurify from 'dompurify'
 import { Link2 } from 'lucide-react'
 import { CodeBlock } from '@gravitas/ui'
 import type { KnowledgeNote } from '@gravitas/shared'
+import type { NoteLinkKind } from './note-navigation'
 
 /** wikilink 前缀：避开真实 URL 空间，a 组件据此路由到笔记导航 */
 const WIKILINK_PREFIX = '#wikilink/'
@@ -34,14 +37,68 @@ function wikilinkToMd(content: string): string {
   })
 }
 
+/** 在代码围栏和行内代码以外转换 Obsidian 双链及常见 LaTeX 定界符。 */
+export function prepareNoteMarkdown(content: string): string {
+  const transformPlain = (text: string): string => wikilinkToMd(
+    text
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math: string) => `\n$$\n${math.trim()}\n$$\n`)
+      .replace(/\\\(([^\n]*?)\\\)/g, (_match, math: string) => `$${math}$`),
+  )
+
+  const transformOutsideInlineCode = (text: string): string => {
+    const codeSpan = /(`+)([\s\S]*?)\1/g
+    let result = ''
+    let lastIndex = 0
+    for (const match of text.matchAll(codeSpan)) {
+      result += transformPlain(text.slice(lastIndex, match.index)) + match[0]
+      lastIndex = match.index + match[0].length
+    }
+    return result + transformPlain(text.slice(lastIndex))
+  }
+
+  let result = ''
+  let plain = ''
+  let fence: { marker: string; length: number } | null = null
+  for (const line of content.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (!fence && marker) {
+      result += transformOutsideInlineCode(plain) + line
+      plain = ''
+      fence = { marker: marker[1]![0]!, length: marker[1]!.length }
+    } else if (fence) {
+      result += line
+      if (marker && marker[1]![0] === fence.marker && marker[1]!.length >= fence.length) {
+        fence = null
+      }
+    } else {
+      plain += line
+    }
+  }
+  return result + transformOutsideInlineCode(plain)
+}
+
 interface NoteMarkdownViewProps {
   note: KnowledgeNote
   /** 点击正文双链时跳转（由父组件按标题解析目标笔记） */
-  onOpenLinked: (title: string) => void
+  onOpenLinked: (target: string, kind: NoteLinkKind) => void
+  fragmentTarget?: { noteId: string; fragment: string } | null
 }
 
-export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps): React.ReactElement {
+export function NoteMarkdownView({ note, onOpenLinked, fragmentTarget }: NoteMarkdownViewProps): React.ReactElement {
   const isHtml = note.filePath.toLowerCase().endsWith('.html')
+  const contentRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    if (!fragmentTarget || fragmentTarget.noteId !== note.id) return
+    const slug = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, '-')
+    const fragment = fragmentTarget.fragment.trim().toLowerCase()
+    const target = Array.from(
+      contentRef.current?.querySelectorAll<HTMLElement>('[id], h1, h2, h3, h4, h5, h6') ?? [],
+    ).find((element) =>
+      element.id.toLowerCase() === fragment || slug(element.textContent ?? '') === slug(fragment),
+    )
+    target?.scrollIntoView({ block: 'start' })
+  }, [fragmentTarget, note.id])
 
   // HTML 笔记：索引层已剔除 script/style/head，这里经 DOMPurify 二次净化后渲染
   const sanitizedHtml = React.useMemo(
@@ -51,9 +108,17 @@ export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps):
 
   // Markdown 笔记：双链转为内部链接协议，由自定义 a 组件渲染成 chip
   const mdContent = React.useMemo(
-    () => (isHtml ? '' : wikilinkToMd(note.content)),
+    () => (isHtml ? '' : prepareNoteMarkdown(note.content)),
     [isHtml, note.content],
   )
+
+  const openHref = React.useCallback((href: string, kind: NoteLinkKind): void => {
+    if (/^https?:\/\//i.test(href)) {
+      void window.electronAPI.openExternal(href)
+    } else if (!/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith('//')) {
+      onOpenLinked(href, kind)
+    }
+  }, [onOpenLinked])
 
   const mdComponents = React.useMemo(
     () => ({
@@ -63,7 +128,7 @@ export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps):
           return (
             <button
               type="button"
-              onClick={() => onOpenLinked(target)}
+              onClick={() => onOpenLinked(target, 'wiki')}
               className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-primary/10 text-primary text-[0.85em] align-baseline hover:bg-primary/20 transition-colors"
               title={`打开笔记「${target}」`}
             >
@@ -77,9 +142,7 @@ export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps):
             href={href}
             onClick={(e) => {
               e.preventDefault()
-              if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-                void window.electronAPI.openExternal(href)
-              }
+              if (href) openHref(href, 'markdown')
             }}
             title={href}
           >
@@ -91,14 +154,21 @@ export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps):
         <CodeBlock>{children}</CodeBlock>
       ),
     }),
-    [onOpenLinked],
+    [onOpenLinked, openHref],
   )
 
   if (isHtml) {
     return (
-      <div className="h-full min-h-0 overflow-y-auto px-6 py-5">
+      <div ref={contentRef} className="h-full min-h-0 overflow-y-auto px-6 py-5">
         <article
           className="prose prose-sm dark:prose-invert max-w-none prose-a:text-primary"
+          onClick={(event) => {
+            const anchor = (event.target as HTMLElement).closest('a')
+            const href = anchor?.getAttribute('href')
+            if (!href) return
+            event.preventDefault()
+            openHref(href, 'markdown')
+          }}
           // 内容已经过索引层剔除 + DOMPurify 净化，不含 script/事件属性
           dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
         />
@@ -107,11 +177,11 @@ export function NoteMarkdownView({ note, onOpenLinked }: NoteMarkdownViewProps):
   }
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto px-6 py-5">
+    <div ref={contentRef} className="h-full min-h-0 overflow-y-auto px-6 py-5">
       <article className="prose prose-sm dark:prose-invert max-w-none prose-a:text-primary">
         <Markdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]}
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeRaw, rehypeKatex]}
           components={mdComponents}
           // react-markdown v10 默认 urlTransform 只允许 http/https 等协议，
           // 会把 #wikilink/ 前缀的 href 清空导致双链点击失效；这里放行内部链接，

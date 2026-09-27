@@ -252,6 +252,7 @@ bun run generate:icons    # 生成应用图标
 |-----------|-----------|
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态（Map 结构支持多对话并行）、模型选择、上下文设置、并排模式、思考模式、待上传附件 |
 | `agent-atoms.ts` | Agent 会话列表、当前会话、流式状态（`AgentStreamState`）、工作区选择、渠道选择、权限/AskUser 请求队列（按 sessionId Map） |
+| `knowledge-atoms.ts` | 知识库列表与笔记、阅读历史、标题锚点及搜索/索引状态 |
 | `project-atoms.ts` | 项目管理：任务表 / 状态定义（按 projectId 隔离 Map）、看板列派生 atom、拖拽乐观移动与回滚 |
 | `active-view.ts` | 主面板视图切换（'conversations' / 'settings'） |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
@@ -270,6 +271,7 @@ bun run generate:icons    # 生成应用图标
 - **`settings/`**：设置面板 — GeneralSettings（用户档案）、AppearanceSettings（主题模式、日间与夜间艺术风格）、ChannelSettings（渠道管理）、ChannelForm（Provider 配置）、AgentSettings（Agent 渠道/工作区/MCP）、McpServerForm（MCP 服务器配置）、AboutSettings（版本/更新）、FeishuSettings（飞书集成）；含 `primitives/` 可复用表单组件
 - **`file-browser/`**：文件浏览器 — FileBrowser（工作区文件树浏览）
 - **`ai-elements/`**：AI 展示组件 — Markdown 渲染、代码块、Mermaid 图、推理折叠、上下文分割线、富文本输入
+- **`knowledge/`**：本地 Markdown / HTML 笔记阅读；同库双链、相对 Markdown 链接、标题锚点及返回上一笔记。Markdown 正文支持 `$…$`、`$$…$$`、`\(...\)`、`\[...\]`，经 KaTeX 渲染
 - **`ui/`**：Radix UI 组件（现代化设计，CSS 变量主题）
 
 ### 全局 Hooks（`renderer/hooks/`）

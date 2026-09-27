@@ -30,6 +30,7 @@ Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agen
 ### 基础工作模式
 
 - **Chat 模式**：多模型对话、附件解析、图片输入、Markdown / Mermaid / KaTeX / 代码高亮、并排对话、系统提示词、上下文管理。
+- **知识库阅读**：索引本地 Markdown / HTML 笔记；支持同一知识库内的双链、相对 Markdown 链接、标题锚点及返回上一笔记。Markdown 正文中的 `$…$`、`$$…$$`、`\(...\)`、`\[...\]` 公式由 KaTeX 渲染。
 - **Agent 模式**：支持 Pi、AI SDK、Claude、Proma 等 runtime（默认 **Pi**，推荐 **Pi** 与 **AI SDK**），提供隔离工作区或直接打开本地项目、权限模式、文件操作、长任务流式输出、计划确认和用户追问；流式期间可追加输入（steer / 软中断），Pi runtime 恢复历史会话前按模型窗口与 usage 自动压缩上下文。
 - **Workflow 模式**：把反复要做的流程在画布上编排成可视化执行链（start / end、agent、tool、skill、transform、condition、approval 等节点），发布后可手动、定时或事件触发；支持节点能力白名单发布冻结、失败重试与错误路由、人工审批、无凭证模板的分发 / 升级 / 回滚。
 - **Skills & MCP**：每个工作区独立配置 Skills、MCP Server 和工作区文件；内置 Skill 集市与 Skill Set 分组开关，支持外部 Skill 导入并附带启发式安全审计。

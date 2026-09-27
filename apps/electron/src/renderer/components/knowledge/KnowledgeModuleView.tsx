@@ -10,6 +10,7 @@
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
+  ArrowLeft,
   BookOpen,
   FileCode2,
   FileText,
@@ -36,12 +37,15 @@ import {
 } from '@/components/ui/dialog'
 import { NoteEditor, EditToggle } from './NoteEditor'
 import { NoteMarkdownView } from './NoteMarkdownView'
+import { resolveNoteLink, type NoteLinkKind } from './note-navigation'
 import {
   knowledgeVaultsAtom,
   selectedVaultIdAtom,
   selectedVaultAtom,
   knowledgeNotesAtom,
   activeNoteAtom,
+  knowledgeNoteHistoryAtom,
+  knowledgeFragmentTargetAtom,
   knowledgeSearchResultsAtom,
   knowledgeSearchQueryAtom,
   knowledgeTagsAtom,
@@ -78,6 +82,8 @@ export function KnowledgeModuleView(): React.ReactElement {
   const selectedVault = useAtomValue(selectedVaultAtom)
   const setNotes = useSetAtom(knowledgeNotesAtom)
   const [activeNote, setActiveNote] = useAtom(activeNoteAtom)
+  const [noteHistory, setNoteHistory] = useAtom(knowledgeNoteHistoryAtom)
+  const [fragmentTarget, setFragmentTarget] = useAtom(knowledgeFragmentTargetAtom)
   const [_searchResults, setSearchResults] = useAtom(knowledgeSearchResultsAtom)
   const [searchQuery, setSearchQuery] = useAtom(knowledgeSearchQueryAtom)
   const [tags, setTags] = useAtom(knowledgeTagsAtom)
@@ -165,6 +171,8 @@ export function KnowledgeModuleView(): React.ReactElement {
       setSearchResults([])
       setSelectedTag(null)
       setActiveNote(null)
+      setNoteHistory([])
+      setFragmentTarget(null)
     })
   }, [selectedVaultId, api, run, setNotes, setTags, setGraph, setSearchQuery, setSearchResults, setSelectedTag, setActiveNote])
 
@@ -298,11 +306,30 @@ export function KnowledgeModuleView(): React.ReactElement {
   }
 
   /** 打开笔记详情 */
-  const openNote = async (noteId: string): Promise<void> => {
+  const openNote = async (noteId: string, fragment: string | null = null): Promise<void> => {
     if (!api) return
+    if (activeNote?.id === noteId) {
+      setFragmentTarget(fragment ? { noteId, fragment } : null)
+      return
+    }
     await run(async () => {
       const note = await api.getNote(noteId)
+      if (!note) throw new Error('目标笔记已不在索引中，请重新索引知识库')
+      if (activeNote) setNoteHistory((history) => [...history, activeNote.id])
       setActiveNote(note)
+      setFragmentTarget(fragment ? { noteId, fragment } : null)
+    })
+  }
+
+  const goBack = async (): Promise<void> => {
+    const previousId = noteHistory.at(-1)
+    if (!api || !previousId) return
+    await run(async () => {
+      const note = await api.getNote(previousId)
+      if (!note) throw new Error('上一笔记已不在索引中，请重新索引知识库')
+      setNoteHistory((history) => history.slice(0, -1))
+      setActiveNote(note)
+      setFragmentTarget(null)
     })
   }
 
@@ -518,29 +545,31 @@ export function KnowledgeModuleView(): React.ReactElement {
                   setNotice(`已保存「${newTitle}」`)
                   await handleIndex()
                   setActiveNote(null)
+                  setNoteHistory([])
                 }}
               />
             ) : (
               <NoteDetail
                 note={activeNote}
                 canEdit={canEdit}
-                notes={visibleNotes}
+                notes={allNotes}
+                canGoBack={noteHistory.length > 0}
+                onBack={() => void goBack()}
+                fragmentTarget={fragmentTarget}
                 onEdit={() => setEditing(true)}
-                onOpenLinked={(title) => {
-                  // wikilink 导航：先按标题精确匹配（忽略大小写），
-                  // 再按文件名兜底（目标可能带目录路径或 .md 后缀）
-                  const normalized = title.trim().toLowerCase()
-                  const target =
-                    allNotes.find((n) => n.title.toLowerCase() === normalized) ??
-                    allNotes.find((n) => {
-                      const base = n.filePath.split('/').pop()?.toLowerCase() ?? ''
-                      return base === normalized || base === `${normalized}.md` || base === `${normalized}.html`
-                    })
-                  if (target) void openNote(target.id)
+                onOpenLinked={(target, kind) => {
+                  const resolved = resolveNoteLink(allNotes, activeNote, target, kind)
+                  if (resolved) {
+                    void openNote(resolved.note.id, resolved.fragment)
+                  } else {
+                    setNotice(`未找到链接目标「${target}」`)
+                  }
                 }}
                 onClose={() => {
                   setEditing(false)
                   setActiveNote(null)
+                  setNoteHistory([])
+                  setFragmentTarget(null)
                 }}
               />
             )
@@ -729,6 +758,9 @@ function NoteDetail({
   note,
   canEdit,
   onEdit,
+  canGoBack,
+  onBack,
+  fragmentTarget,
   onOpenLinked,
   onClose,
   notes,
@@ -736,7 +768,10 @@ function NoteDetail({
   note: import('@gravitas/shared').KnowledgeNote
   canEdit: boolean
   onEdit: () => void
-  onOpenLinked: (title: string) => void
+  canGoBack: boolean
+  onBack: () => void
+  fragmentTarget: { noteId: string; fragment: string } | null
+  onOpenLinked: (target: string, kind: NoteLinkKind) => void
   onClose: () => void
   /** 当前范围内笔记（把反链 id 解析回标题与可点击跳转） */
   notes: import('@gravitas/shared').KnowledgeNote[]
@@ -749,6 +784,16 @@ function NoteDetail({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-start gap-3 px-5 py-3 border-b border-border/50 flex-shrink-0">
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={!canGoBack}
+          title="返回上一笔记"
+          aria-label="返回上一笔记"
+          className="p-1.5 rounded text-foreground/55 hover:text-foreground hover:bg-foreground/[0.05] disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ArrowLeft size={15} />
+        </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-[15px] font-medium text-foreground/90 truncate">{note.title}</h2>
           <div className="mt-1 flex items-center gap-3 text-[11px] text-foreground/45">
@@ -800,7 +845,7 @@ function NoteDetail({
 
         {/* 正文：笔记专用的 Markdown/HTML 阅读渲染（双链可点击、HTML 净化渲染） */}
         <div className="flex-1 min-h-0">
-          <NoteMarkdownView note={note} onOpenLinked={onOpenLinked} />
+          <NoteMarkdownView key={note.id} note={note} onOpenLinked={onOpenLinked} fragmentTarget={fragmentTarget} />
         </div>
 
         {(note.links.length > 0 || note.backlinks.length > 0) && (
@@ -814,7 +859,7 @@ function NoteDetail({
                   {note.links.map((link) => (
                     <button
                       key={link}
-                      onClick={() => onOpenLinked(link)}
+                      onClick={() => onOpenLinked(link, 'wiki')}
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 text-primary text-[11px] hover:bg-primary/15 transition-colors"
                     >
                       <Link2 size={10} />
@@ -848,7 +893,7 @@ function NoteDetail({
                     return (
                       <button
                         key={backlinkId}
-                        onClick={() => onOpenLinked(source.title)}
+                        onClick={() => onOpenLinked(source.filePath, 'wiki')}
                         className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-foreground/[0.05] text-[11px] text-foreground/70 hover:bg-foreground/[0.1] transition-colors"
                       >
                         <Link2 size={10} />
