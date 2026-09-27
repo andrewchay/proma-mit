@@ -92,6 +92,10 @@ export function recoverInterruptedPilotRuntimeExecutions(now = Date.now()): Inte
             reason: startBoundary === 'started_proven'
               ? '启动已证实但终态与用量未知，已按未知用量撤权停等'
               : '中断 Runtime 已按未知用量撤权停等' }
+          // 停止升级保持 open 供人工对账，恢复路径不自动消解。
+          const escalation = database.prepare(`SELECT reason FROM pilot_stop_escalations
+            WHERE execution_id = ? AND resolved_at IS NULL`).get(execution.id) as { reason: string } | undefined
+          if (escalation) result = { ...result, reason: `${result.reason}；停止升级待人工对账：${escalation.reason}` }
         } catch {
           result = { executionId: execution.id, commandId: candidate.pilot_command_id,
             state: 'needs_attention', startBoundary, reason: '中断执行用量或账本无法核验，授权已暂停' }

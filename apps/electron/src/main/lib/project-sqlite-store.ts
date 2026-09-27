@@ -750,6 +750,21 @@ function migrate(database: SqliteCompat): void {
       BEFORE UPDATE ON pilot_runtime_start_receipts
       BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start receipt is immutable'); END;
 
+    CREATE TABLE IF NOT EXISTS pilot_stop_escalations (
+      escalation_id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE,
+      command_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      expected_generation INTEGER,
+      requested_at INTEGER NOT NULL CHECK (requested_at >= 0),
+      reason TEXT NOT NULL,
+      resolved_at INTEGER,
+      resolution TEXT,
+      resolution_evidence TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_stop_escalations_project ON pilot_stop_escalations(project_id);
+
     CREATE TABLE IF NOT EXISTS pilot_grant_pause_decisions (
       grant_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -1045,6 +1060,21 @@ function migrate(database: SqliteCompat): void {
   database.exec(`CREATE TRIGGER IF NOT EXISTS pilot_runtime_start_receipts_immutable
     BEFORE UPDATE ON pilot_runtime_start_receipts
     BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start receipt is immutable'); END`)
+  // 停止请求未核验升级：保留预算并记录待人工对账；终态到达后消解。
+  database.exec(`CREATE TABLE IF NOT EXISTS pilot_stop_escalations (
+    escalation_id TEXT PRIMARY KEY,
+    execution_id TEXT NOT NULL UNIQUE,
+    command_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    expected_generation INTEGER,
+    requested_at INTEGER NOT NULL CHECK (requested_at >= 0),
+    reason TEXT NOT NULL,
+    resolved_at INTEGER,
+    resolution TEXT,
+    resolution_evidence TEXT
+  )`)
+  database.exec(`CREATE INDEX IF NOT EXISTS idx_pilot_stop_escalations_project ON pilot_stop_escalations(project_id)`)
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
@@ -1401,6 +1431,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM pilot_runtime_usage_receipts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_start_attempts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_start_receipts WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_stop_escalations WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_commands WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_grant_pause_decisions WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_grants WHERE project_id = ?`).run(id)

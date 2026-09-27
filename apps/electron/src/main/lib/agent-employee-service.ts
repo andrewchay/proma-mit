@@ -21,6 +21,7 @@ import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent } from './project-pilot-budget-ledger'
 import { recordPilotRuntimeStarted } from './project-pilot-start-receipt'
+import { recordPilotStopEscalation, resolvePilotStopEscalation } from './project-pilot-stop-escalation'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
@@ -282,6 +283,16 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
     throw new Error('执行已变化，拒绝将非目标 attempt 标记为已取消')
   }
   if (!stopConfirmation.stopped || stopConfirmation.processTermination !== 'VERIFIED') {
+    // 停止请求已接受但进程终止未核验：Pilot 执行保留预算（暂停授权）并升级人工对账。
+    if (execution.pilotCommandId) {
+      try {
+        recordPilotStopEscalation(execution.id,
+          '停止请求已被 Runtime 接受，但进程终止未核验；预算保留，待人工对账',
+          Date.now(), runtimeGenerationByExecution.get(execution.id))
+      } catch (error) {
+        console.warn(`[AgentEmployee] Pilot 执行 ${execution.id} 停止升级记录失败:`, error)
+      }
+    }
     return {
       id: execution.id,
       status: 'running',
@@ -302,6 +313,7 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
     })
   }
   if (execution.status === 'running') recordUnknownPilotUsage(execution.id, 'Runtime 停止后没有可核验的 Provider 用量回执', stoppedAt)
+  resolveStopEscalationBestEffort(execution, '停止已核验', `processTermination=VERIFIED，stoppedAt=${stoppedAt}`)
   writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
   recordActivity(store.getAgentExecution(execution.id)!, 'agent_cancelled', '用户停止执行，未交付')
   // 取消仅保留待人工审查的样本，绝不自动进入演化输入。
@@ -959,6 +971,17 @@ function recordUnknownPilotUsage(executionId: string, reason: string, capturedAt
   }
 }
 
+/** 终态到达时消解停止升级（若有）；失败只记日志，不阻断终态回写。 */
+function resolveStopEscalationBestEffort(execution: AgentExecution, resolution: string, evidence: string): void {
+  if (!execution.pilotCommandId) return
+  try {
+    resolvePilotStopEscalation(execution.id, resolution, evidence)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes('不存在')) console.warn(`[AgentEmployee] Pilot 执行 ${execution.id} 停止升级消解失败:`, error)
+  }
+}
+
 function recordPilotTerminalUsage(
   executionId: string,
   runtimeSource: string,
@@ -990,6 +1013,8 @@ function handleExecutionComplete(
     store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: '用户已停止执行，未交付' })
     recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
       'Runtime 停止完成事件没有可核验的用量回执', stoppedAt)
+    resolveStopEscalationBestEffort(execution, 'Runtime 停止完成',
+      `stoppedByUser=true，runtimeSource=${runtimeSource}，stoppedAt=${stoppedAt}`)
     writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
     recordActivity(store.getAgentExecution(executionId)!, 'agent_cancelled', '用户停止执行，未交付')
     recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
