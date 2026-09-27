@@ -1,5 +1,20 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-09-27 Project Pilot 使用 Pi Runtime 的可行性评估
+- 决策建议：Pi 可作为受控研发执行内核的候选，先做无模型/无费用的能力验证；不可直接加入 Pilot 白名单或把 `supportsBudgetStopThreshold` 改为 true。当前仓库 Pi 依赖固定 `0.82.1`；所查官方能力以 `earendil-works/pi` v0.87.1 为参考，不能当作已安装版本保证。
+- 已接的 Pi adapter 禁内置工具（`noTools: 'builtin'`）、禁隐式 extensions/context，使用 Proma Bridge 的 customTools、权限回调及 abort；这些是工具控制地基，不是费用门禁。首版 readiness 只允许 proma/ai-sdk，并要求调用级费用超额停止能力；Pi capability 明确 false。
+- **版本校正**：已安装 0.82.1 并无 agent-core 公开 `finishTurn` / 请求前 `prepareRequest`；`prepareRequest` 在 coding-agent ModelRuntime 内部。0.82.1 有 `shouldStopAfterTurn`（低层循环）、`prepareNextTurnWithContext`（Agent）和可注入 `streamFn`，已用假流验证消息终态观察、工具前拒绝、请求间软预算。v0.87.1 API 不得直接作为当前仓库实现依据。单次请求仍不能按 USD 精准截费或绝对封顶。Pi usage/cost 属本地或 Runtime 转述，Provider 原始请求 ID、可信回执、价格快照需按具体 Provider 独立核验；模型用量/异常/重试/缓存与并发都须计入。
+- 已完成第一段无 Provider PoC：Pi agent-core 0.82.1 假 stream＋预算实验 6 PASS；首轮准入、逐轮累计/拒绝下一请求、单次超额/缺费用时禁工具和续轮、失败携带费用保留、手工 abort 接线验证无继续工具调用。合并 22 文件 154 PASS、全仓 typecheck、Biome/diff-check PASS。它**不是产品接线**，没有对真实 adapter/Bridge 的扩展绕过、终态原文身份绑定、请求重试去重或真实 Provider 限额进行证明；这些留待下一切片。G0/G1 不因此通过。
+- **0.82.1→0.87.1 升级兼容评估（2026-09-27，隔离 /tmp/pi-087-probe）**：npm 三个包 latest 均 0.87.1，可安装；官方 Agent 冒烟（initialState/streamFn/beforeToolCall/finishTurn/subscribe/prompt）通过。破坏面核对：`shouldStopAfterTurn` 已删（我们没用）；`ToolDefinition`/`ResourceLoader`/`AgentSession` 仍导出；`pi-ai` 的 `./api/*` 子路径保留。**唯一行为断点：`pi-agent-adapter.ts:446` 直接赋值 `session.state.messages`，0.87.0 起 SessionManager 为唯一事实源，赋值不再生效**——须改为 SessionManager.inMemory 或 sessionManager+refreshContext。类型涟漪：0.86.0 `ToolResultMessage` 变条件类型、details 限 JSON、provider stream 入参 Context→TranscriptContext（影响 message-adapter 与 adapter 测试）。无 ExtensionRunner/turn_end emit 用法，边界变更不影响。升级后 `prepareRequest`（每次请求前，含首次）正好对应 Pilot 预算准入闸门，比 PoC 的 subscribe 门控更干净。建议：等当前未提交切片收敛提交后，单独切片做 bump+修 adapter+全量回归；bump 前不改 lockfile。
+- 参考：`apps/electron/src/main/lib/adapters/pi-agent-adapter.ts`、`packages/shared/src/types/agent.ts`、`apps/electron/src/main/lib/project-pilot-readiness.ts`、`apps/electron/package.json`；官方源码 https://github.com/earendil-works/pi/blob/v0.87.1/packages/agent/src/types.ts 与 https://github.com/earendil-works/pi/blob/v0.87.1/packages/coding-agent/docs/extensions.md 。
+
+## 2026-09-27 会话健康自测（用户问：运行记录/监听能否发现"卡住"）
+- 本轮可观测信号（模型侧标记为证）：工具结果被裁剪多处、子代理交接被 budget 压缩多次、一次子代理"操作已中止"；行为面：用户 3 次发"继续"并追问"为什么总是卡住"，每轮重复恢复性读取（CLAUDE.md/台账/todo/git status）。
+- 实测结论：标记注明"原始记录保留于会话 JSONL"，但 4 次不同路径探查（~/.proma/sdk-config/projects 各种 glob）均未定位到当前会话文件——**记录存在、不可寻址**。无监听层聚合信号，检测完全依赖用户察觉；这就是"总是卡住"未被系统发现的原因。
+- 设计映射（与 Pilot 同构）：把"事实账本＋对账＋边界分类"用于会话自身——①稳定可寻址的会话记录接口（路径约定或查询 API）；②watcher 按 JSONL 计算每轮健康度：交付物数/轮、用户修复事件、裁剪/压缩/子代理失败计数、重复读取比、轮次时长；③stall 边界分类（context_overflow / handoff_loss / loop_without_progress / gate_blocked）写入健康账本；④对账触发行为自适应并**主动上报**，而非等用户问。
+- 盲区：模型只见裁剪标记、不见被裁内容，长会话早期轮次滑出视野，自我计数不可靠——外部 watcher 是必要组件，标记自报仅作辅助。
+- 本轮即时改进：小步直读、最小输出、停用大型探索委派（用户明确不需要 skill 形式）。
+
 ## 2026-09-26 Pilot PM04 历史候选意图账本
 - 新 `project-pilot-intent-store.ts` 从权威只读观察生成 task/decision/delivery 候选，SQLite 在项目迁移时建 `pilot_intents`，删除项目同事务清理。相同候选幂等、失效设 stale；重启后历史可追溯，展示前必须 `getCurrentPilotIntents` 重读事实。
 - 此账本没有 runnable command、执行器或通知；同项目 Promise 队列仅串行本模块对账，**不提供跨其他事实写者的严格快照一致性**。旧 open 只是上次对账结果，绝不能用于授权/自动派发。

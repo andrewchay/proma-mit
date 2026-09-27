@@ -1,6 +1,6 @@
 # Project Pilot 工作、测试与验收台账
 
-建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`a8fbdeab`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
+建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`7109ccd1`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
 关联：[目标与路线](goals-and-roadmap.md) · [G0 命令契约草案](g0-command-contract.md) · [G1 隔离 Git 夹具](g1-isolated-fixture.md) · [实现度审计](implementation-audit.md) · [历史方案](design.md)。
 
 ## 当前结论
@@ -134,12 +134,14 @@
 
 | PILOT-20260927-33 | 2026-09-27 | 修复 `updateTask` 接受 `workspaceId` 但未持久化的断口；显式清空会写 NULL，省略不改变绑定，草稿创建与确认保留工作区；统一项目服务的工作区清空事件标记 `changedFields.workspaceId`。这是任务事实/隔离修复，不等于 PM03 全部统一 | 工作区定向 1、草稿规则 4 PASS；连同 Pilot、研发执行、项目服务共 21 文件 148 PASS；全仓 typecheck、本切片 Biome、diff-check PASS，含重开数据库与服务层事件检查；未在 Electron native SQLite 真机验收 | 基线 `a44c3868`，继续叠加未提交切片；无真实 Runtime/Provider，G0/G1 未通过 |
 
+| PILOT-20260927-34 | 2026-09-27 | 用户批准评估 Pi：核对仓库已装 `@earendil-works/pi-agent-core` 0.82.1，该版无公开 `finishTurn`/请求前 `prepareRequest`；新增仅测试引用的假 stream 逐轮预算实验，不调用 Provider。验证首轮准入、下一请求拒绝、工具前阻断、缺费/超预算保守停止、失败回执费用保留和手动 abort 接线 | Pi 假流 6 PASS；与 Pilot、研发执行及任务规则合计 22 文件 154 PASS；全仓 typecheck、Biome、diff-check PASS | 基线 HEAD `a44c3868`，未提交工作区变更；实验模块未接生产 adapter，未证明真实 Pi 扩展/工具逃逸阻断、Provider 原始请求/费用回执、单次请求硬费用上限及真实停止。Pi 仍不在首版白名单、能力位仍 false，G0/G1 不变 |
+
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
 ## 7. 下一次执行
 
 0. 接入 Provider 直接回执 ID 或版本化价格快照，并继续区分 Provider 原始证据、Runtime 转述、可追溯估算和 `unknown_recorded`。为首版安全研发路径实现可验证的调用级费用门禁，或在独立验证后明确纳入一个已支持该能力的 Runtime。
-1. 在已接通的唯一受控派发入口上补齐认领到真实 Runtime 实际开始的可审计调用证据和故障注入；把审批答复接到可核验的自动续跑，并保持普通员工旧入口不可绕过。
+1. 本地认领与调用前交接意图已有记录，但实际 Runtime/Provider 开始仍不可证明；补独立的实际开始回执与进程故障注入，并把审批答复接到可核验的自动续跑，保持普通员工旧入口不可绕过。
 2. 接入真实停止器和审批续跑；`request_stop` 未核验时保留预算并升级人工对账。完成执行→技术评审→有限返工→再审的确定性链路，终态仍不冒充人工业务验收。
 3. 实现最小项目收件箱与必要澄清/权限/交付/决策恢复，再用隔离 Git 样例逐项执行 A01–A07/A09a 的完整确定性闭环；G0/G1 均通过后，另行冻结模型、费用和调用上限并请求 G2 真实试跑授权。
 4. 每项分别记录实现、自动测试和真实验收；未知状态写 unknown，重测另记 Run，不用局部 PASS 代替门禁。
