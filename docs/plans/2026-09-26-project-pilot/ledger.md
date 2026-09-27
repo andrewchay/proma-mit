@@ -1,6 +1,6 @@
 # Project Pilot 工作、测试与验收台账
 
-建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`911a1c24`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
+建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`a8fbdeab`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
 关联：[目标与路线](goals-and-roadmap.md) · [G0 命令契约草案](g0-command-contract.md) · [G1 隔离 Git 夹具](g1-isolated-fixture.md) · [实现度审计](implementation-audit.md) · [历史方案](design.md)。
 
 ## 当前结论
@@ -131,6 +131,8 @@
 | PILOT-20260927-31 | 2026-09-27 | 重启时读取本地启动尝试并核对 command/project/session 与时间，按 `claim_only`、`handoff_intent`、`missing_attempt`、`invalid_attempt` 分类；输出写入启动日志。所有分类均保守撤权、running 转 stale、未知费用占额并停等；缺记录不推断为旧库或从未调用，交接意图不证明 Runtime 真正开始 | 恢复对账 14 PASS，Project Pilot 与研发执行合计 18 文件 141 PASS；全仓 typecheck、本切片 Biome、diff-check PASS。覆盖数据库重开、缺记录、会话损坏、未来时钟与重复恢复；不含真实 Runtime/Provider | 在未提交的 `-30` 工作区变更上继续；基线 HEAD `a44c3868`。只是诊断分层，既未实证外部启动或停止，也不解除 G0/G1 门禁 |
 
 | PILOT-20260927-32 | 2026-09-27 | 隔离 Git＋双安全研发员工＋活动 grant＋原子 queued 命令走真实 `tryStartExecution` 服务入口；生产 readiness 精确报告两员工 `proma` Runtime 均缺单次费用停止阈值，因此在预检处保持 queued、无启动尝试或 runner 调用，预留仍占额。不替换 readiness，不扩大白名单 | 研发执行 17 PASS；Project Pilot 与研发执行合计 18 文件 142 PASS、全仓 typecheck、本切片 Biome、diff-check PASS；无模型/Provider 调用 | 基线 HEAD `a44c3868`，在未提交 `-30/-31` 工作区变更上继续。测试仅证明生产预检 fail-closed，不覆盖预检通过后的费用换算、真实 Runtime 启动或 G0/G1 门禁 |
+
+| PILOT-20260927-33 | 2026-09-27 | 修复 `updateTask` 接受 `workspaceId` 但未持久化的断口；显式清空会写 NULL，省略不改变绑定，草稿创建与确认保留工作区；统一项目服务的工作区清空事件标记 `changedFields.workspaceId`。这是任务事实/隔离修复，不等于 PM03 全部统一 | 工作区定向 1、草稿规则 4 PASS；连同 Pilot、研发执行、项目服务共 21 文件 148 PASS；全仓 typecheck、本切片 Biome、diff-check PASS，含重开数据库与服务层事件检查；未在 Electron native SQLite 真机验收 | 基线 `a44c3868`，继续叠加未提交切片；无真实 Runtime/Provider，G0/G1 未通过 |
 
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
