@@ -144,6 +144,8 @@
 
 | PILOT-20260927-38 | 2026-09-27 | 修补停止未核验的 fail-closed 边界：升级与同项目所有活动授权暂停同一事务，校验本命令授权为 paused；失败向调用者抛错，不伪称成功。open 升级在授权发行、命令预留和有限费用结算时阻断；普通终态/`stoppedByUser`/cancelled 无持久化终止回执，不再自动消解，升级保持 open 待人工对账。删去可凭任意停止确认对象消解的公开原语；修复 SQLite transaction 返回 void 导致写入成功但返回 undefined 的问题 | 新增授权发行/预留/有限费用与事务失败回归；全仓 typecheck、501 测试文件 0 失败、Biome、docs:check PASS；未调用 Provider | 基线 HEAD `933743e6`；停止请求与终态回调抢先交错的持久意图及真实 session/generation 终止凭据仍待设计；不能宣称进程实际停止或 G0/G1 通过 |
 
+| PILOT-20260928-39 | 2026-09-28 | Pilot 运行中停止改为先记录绑定 execution/command/session/generation 的持久停止意图，并同事务暂停同项目活动授权，再调用现有 stopper。同步终态抢先、abort 未接受或异常时意图仍 open；落盘失败不发停止请求。同步回调不再使已接受的请求因执行非 running 被误判；不覆盖终态。重复请求拒绝，缺内存代际拒发无目标停止。 | 定向停止升级与研发员工 32 PASS；全仓 typecheck、503 测试文件零失败、Biome（0 error、并行知识笔记改动 2 warnings）、docs:check PASS；其中新增的知识笔记测试不属于本切片；未调用 Provider | 基线 HEAD `600d6474`。现有 stopper 的 abort 只证明请求接受，仍无绑定代际的真实终止回执；grant-pause IPC 的逐条 request_stop 接线、停止结果/失败事实持久化与可信人工消解仍待后续切片。open 升级保留占额，G0/G1 不变。 |
+
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
 ## 7. 下一次执行

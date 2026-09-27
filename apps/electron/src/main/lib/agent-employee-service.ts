@@ -21,7 +21,7 @@ import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent } from './project-pilot-budget-ledger'
 import { recordPilotRuntimeStarted } from './project-pilot-start-receipt'
-import { recordPilotStopEscalation } from './project-pilot-stop-escalation'
+import { requestPilotStopWithIntent } from './project-pilot-stop-escalation'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
@@ -212,7 +212,7 @@ interface ExecutionStopConfirmation {
   processTermination: 'VERIFIED' | 'NOT_VERIFIED'
 }
 
-function stopRunningExecution(execution: AgentExecution): ExecutionStopConfirmation {
+function stopRunningExecution(execution: AgentExecution, stopGeneration?: number): ExecutionStopConfirmation {
   const workflowRun = /^workflow:(.+)$/.exec(execution.sessionId)
   if (workflowRun) {
     const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
@@ -228,14 +228,18 @@ function stopRunningExecution(execution: AgentExecution): ExecutionStopConfirmat
     }
   }
 
-  const expectedGeneration = runtimeGenerationByExecution.get(execution.id)
+  const expectedGeneration = stopGeneration ?? runtimeGenerationByExecution.get(execution.id)
   if (expectedGeneration === undefined) return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
   try {
     const result = stopRegisteredAgent(execution.sessionId, expectedGeneration)
     const live = store.getAgentExecution(execution.id)
-    if (!result.requestAccepted || live?.status !== 'running' || live.sessionId !== execution.sessionId) {
+    if (!result.requestAccepted || result.activeGeneration !== expectedGeneration
+      || live?.sessionId !== execution.sessionId || live.pilotCommandId !== execution.pilotCommandId
+      || (stopGeneration === undefined && live.status !== 'running')) {
       return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
     }
+    // 同步 stopper 可在返回前触发终态回调；只以目标代际核对请求归属，
+    // 不以仍为 running 推断请求是否接受。后续复查会拒绝重复改写终态。
     if (result.stopped && result.processTermination === 'VERIFIED') runtimeGenerationByExecution.delete(execution.id)
     return {
       requestAccepted: true,
@@ -250,7 +254,7 @@ function stopRunningExecution(execution: AgentExecution): ExecutionStopConfirmat
 
 export type CancelAgentExecutionResult =
   | { id: string; status: 'cancelled'; stopped: true; processTermination: 'VERIFIED' }
-  | { id: string; status: 'running'; stopped: false; stopRequested: true; processTermination: 'NOT_VERIFIED' }
+  | { id: string; status: AgentExecution['status']; stopped: false; stopRequested: true; processTermination: 'NOT_VERIFIED' }
 
 function cancelQueuedExecution(execution: AgentExecution, reason: string, cancelledAt = Date.now()): AgentExecution {
   if (execution.status !== 'queued') throw new Error('仅能取消排队中的执行')
@@ -271,29 +275,41 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   if (execution.status !== 'queued' && execution.status !== 'running') {
     throw new Error(`仅能停止排队或运行中的执行，当前状态：${execution.status}`)
   }
-  const stopConfirmation = execution.status === 'running'
-    ? stopRunningExecution(execution)
-    : { requestAccepted: true, stopped: true, processTermination: 'VERIFIED' as const }
+  // Pilot 的停止意图必须先于外部 abort 落盘：同步 stopper 也可能触发终态回调，
+  // 不能先发停止请求再要求执行仍为 running 才记录待对账事实。
+  let stopConfirmation: ExecutionStopConfirmation
+  if (execution.status === 'running' && execution.pilotCommandId) {
+    const generation = runtimeGenerationByExecution.get(execution.id)
+    if (generation === undefined) throw new Error('Pilot 运行代际未知，拒绝发送无目标的停止请求')
+    stopConfirmation = requestPilotStopWithIntent(execution.id, generation, () => stopRunningExecution(execution, generation))
+  } else {
+    stopConfirmation = execution.status === 'running'
+      ? stopRunningExecution(execution)
+      : { requestAccepted: true, stopped: true, processTermination: 'VERIFIED' }
+  }
   if (!stopConfirmation.requestAccepted) {
-    throw new Error('未能确认目标执行的停止请求已被接受，执行状态保持不变')
+    throw new Error(execution.pilotCommandId
+      ? '未能确认目标执行的停止请求已被接受；Pilot 停止意图保持 open 待对账'
+      : '未能确认目标执行的停止请求已被接受，执行状态保持不变')
   }
 
   const live = store.getAgentExecution(execution.id)
-  if (!live || live.status !== execution.status || live.sessionId !== execution.sessionId) {
+  if (!live || live.sessionId !== execution.sessionId || live.pilotCommandId !== execution.pilotCommandId) {
+    throw new Error('执行归属已变化，Pilot 停止意图如已记录则保持 open 待对账')
+  }
+  if (live.status !== execution.status) {
+    // stop() 同步触发的终态回调可能先于此处运行。只陈述停止请求已接受；
+    // 不重写终态、不宣称进程退出已核验，仍保留持久 open 意图与预算占额。
+    if (execution.pilotCommandId && execution.status === 'running'
+      && stopConfirmation.processTermination === 'NOT_VERIFIED'
+      && live.status !== 'queued') {
+      return { id: execution.id, status: live.status, stopped: false,
+        stopRequested: true, processTermination: 'NOT_VERIFIED' }
+    }
     throw new Error('执行已变化，拒绝将非目标 attempt 标记为已取消')
   }
   if (!stopConfirmation.stopped || stopConfirmation.processTermination !== 'VERIFIED') {
-    // 停止请求已接受但进程终止未核验：Pilot 执行保留预算（暂停授权）并升级人工对账。
-    if (execution.pilotCommandId) {
-      try {
-        recordPilotStopEscalation(execution.id,
-          '停止请求已被 Runtime 接受，但进程终止未核验；预算保留，待人工对账',
-          Date.now(), runtimeGenerationByExecution.get(execution.id))
-      } catch (error) {
-        // 停止已请求但升级/暂停无法落盘：不得返回已安全升级的假象。
-        throw new Error(`Pilot 停止已请求但升级对账落盘失败: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
+    // Pilot 已在发出请求前持久停等；普通执行沿用现有等待回调路径。
     return {
       id: execution.id,
       status: 'running',

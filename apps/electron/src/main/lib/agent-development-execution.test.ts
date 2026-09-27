@@ -22,6 +22,7 @@ const { setAgentStopper, setHeadlessAgentRunner } = await import('./agent-headle
 const { insertPilotGrantFixture } = await import('./project-pilot-test-helpers')
 const { reserveAndQueuePilotCommand, hashPilotTaskSource, getPilotGrantBudgetUsage } = await import('./project-pilot-budget-ledger')
 const { inspectPilotReadiness } = await import('./project-pilot-readiness')
+const { getPilotStopEscalation } = await import('./project-pilot-stop-escalation')
 
 let lastRun: { input: AgentSendInput; callbacks: HeadlessAgentRunCallbacks } | undefined
 let acceptStopRequest = true
@@ -103,6 +104,27 @@ describe('研发员工既有链路兼容', () => {
     expect(store.getProjectDb().prepare('SELECT execution_id FROM pilot_runtime_start_attempts WHERE execution_id = ?').get(executionId)).toBeUndefined()
     expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
     expect(lastRun).toBeUndefined()
+  })
+
+  test('Given Pilot 运行中执行缺失内存代际 When 请求停止 Then 不调用无目标 stopper', () => {
+    const { project, task, workspace, employee } = fixture(true)
+    const now = Date.now()
+    const grantId = `grant-${project.id}`
+    insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId: workspace.id,
+      channelId: employee.channelId, modelId: employee.modelId!, executorEmployeeId: employee.id, maxCostMicros: 1_000,
+      maxRuns: 1, maxRework: 0, expiresAt: now + 100_000, createdAt: now })
+    const current = store.getTask(task.id)!
+    const executionId = `execution-${project.id}`
+    const commandId = `command-${project.id}`
+    reserveAndQueuePilotCommand({ commandId, projectId: project.id, grantId, idempotencyKey: 'stop-race',
+      taskId: task.id, sourceVersion: current.updatedAt, sourceHash: hashPilotTaskSource(current),
+      employeeId: employee.id, role: 'executor', reworkOrdinal: 0 }, { executionId, prompt: '停止交错测试' })
+    store.getProjectDb().prepare("UPDATE agent_executions SET status = 'running', session_id = ? WHERE id = ?")
+      .run('stop-race-session', executionId)
+    // 运行代际通常由真实 runner 启动设置；此测试直接构造运行中执行，无法读私有 Map。
+    // 先验证缺失代际时必须在 stopper 之前拒绝，不能伪造对账记录。
+    expect(() => service.cancelAgentExecution(executionId)).toThrow('Pilot 运行代际未知')
+    expect(getPilotStopEscalation(executionId)).toBeUndefined()
   })
 
   test('Given 项目已有活动 Pilot 授权 When 普通入口派发或启动旧队列 Then fail closed', async () => {

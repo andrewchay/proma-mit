@@ -1,11 +1,11 @@
 /**
  * Project Pilot 停止请求未核验升级对账
  *
- * Pilot 执行的停止请求被 Runtime 接受但进程终止未核验时（stopRequested=true,
- * processTermination=NOT_VERIFIED），执行仍在运行、费用仍在累积风险中。本模块：
- * 1. 记录升级（每执行唯一）：暂停授权保留预算，留下待人工对账记录；
+ * 在向 Runtime 发送停止请求前先记录持久意图：请求可能失败、回调可能抢先到达，
+ * 终止与费用均不能仅凭 abort 或普通终态推断。本模块：
+ * 1. 意图（每执行唯一）与同项目授权暂停同事务落盘，保留预算待人工对账；
  * 2. 未核验停止后的普通终态并不等于已核验终止，升级保持 open；
- * 3. 仅已核验停止且执行转 cancelled 后允许显式消解；重启恢复不自动消解。
+ * 3. 没有可信终止回执前不自动消解；重启恢复亦保持 open。
  */
 
 import { randomUUID } from 'node:crypto'
@@ -60,8 +60,8 @@ function fromRow(row: EscalationRow): PilotStopEscalation {
 }
 
 /**
- * 停止请求未核验时调用：校验执行仍为运行中的 Pilot 执行后，暂停授权保留预算并
- * 写入升级记录。同一执行重复升级幂等拒绝（升级保持 open 直到消解）。
+ * 发送停止请求前调用：校验执行仍为运行中的 Pilot 执行后，暂停授权保留预算并
+ * 写入意图。同一执行重复意图拒绝，已有 open 记录始终待人工对账。
  */
 export function recordPilotStopEscalation(
   executionId: string,
@@ -111,6 +111,14 @@ export function recordPilotStopEscalation(
   })()
   if (!result) throw new Error('Pilot 停止升级未完成')
   return result
+}
+
+/** 只负责「先持久停等、再请求停止」的顺序；停止器结果不得当作退出回执。 */
+export function requestPilotStopWithIntent<T>(executionId: string, generation: number, requestStop: () => T): T {
+  if (!Number.isSafeInteger(generation) || generation < 0) throw new Error('Pilot 运行代际无效')
+  recordPilotStopEscalation(executionId,
+    '停止意图已持久化；Runtime 是否接受停止请求及终止状态待人工对账', Date.now(), generation)
+  return requestStop()
 }
 
 // 自动消解暂不开放：停止确认对象不含可持久核验的 session/generation 凭据。

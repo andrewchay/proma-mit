@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { claimPilotCommandStart, hashPilotTaskSource, recordPilotRunnerHandoffIntent, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
 import { recoverInterruptedPilotRuntimeExecutions } from './project-pilot-runtime-recovery'
 import {
-  getPilotStopEscalation, listOpenPilotStopEscalations, recordPilotStopEscalation,
+  getPilotStopEscalation, listOpenPilotStopEscalations, recordPilotStopEscalation, requestPilotStopWithIntent,
 } from './project-pilot-stop-escalation'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { reservePilotCommandBudget } from './project-pilot-budget-ledger'
@@ -40,6 +40,88 @@ function fixture() {
   recordPilotRunnerHandoffIntent(executionId, input.commandId, 'session-1', now + 1)
   return { project, grantId, input, executionId, now: now + 1 }
 }
+
+test('无效 generation 或非运行中执行均不得发出停止请求', () => {
+  const data = fixture()
+  let called = false
+  expect(() => requestPilotStopWithIntent(data.executionId, Number.NaN, () => { called = true }))
+    .toThrow('Pilot 运行代际无效')
+  expect(called).toBe(false)
+  getProjectDb().prepare("UPDATE agent_executions SET status = 'completed' WHERE id = ?").run(data.executionId)
+  expect(() => requestPilotStopWithIntent(data.executionId, 42, () => { called = true }))
+    .toThrow('Pilot 停止升级仅适用于运行中的执行')
+  expect(called).toBe(false)
+  expect(getPilotStopEscalation(data.executionId)).toBeUndefined()
+})
+
+test('停止意图先落盘再调用停止器：同步终态抢先仍保留 open 与占额', () => {
+  const data = fixture()
+  const result = requestPilotStopWithIntent(data.executionId, 42, () => {
+    expect(getPilotStopEscalation(data.executionId)).toMatchObject({
+      sessionId: 'session-1', commandId: data.input.commandId, expectedGeneration: 42, resolvedAt: null,
+    })
+    const grant = getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?')
+      .get(data.grantId) as { state: string }
+    expect(grant.state).toBe('paused')
+    getProjectDb().prepare("UPDATE agent_executions SET status = 'cancelled' WHERE id = ?").run(data.executionId)
+    return 'accepted'
+  })
+  expect(result).toBe('accepted')
+  expect(getPilotStopEscalation(data.executionId)?.resolvedAt).toBeNull()
+  expect(getPilotGrantBudgetUsage(data.grantId).committedCostMicros).toBe(1_000)
+})
+
+test('同步终态回调先于停止返回：open 仍阻断有限费用结算', () => {
+  const data = fixture()
+  requestPilotStopWithIntent(data.executionId, 45, () => {
+    getProjectDb().prepare("UPDATE agent_executions SET status = 'completed' WHERE id = ?").run(data.executionId)
+    expect(() => settlePilotCommandUsage(data.input.commandId, {
+      source: 'provider_reported', executionId: data.executionId, sessionId: 'session-1',
+      channelId: 'channel', modelId: 'model', providerRecordId: `race-${data.project.id}`,
+      inputTokens: 1, outputTokens: 1, costMicros: 1, capturedAt: data.now + 3,
+    }, data.now + 3)).toThrow('Pilot 停止升级未消解')
+  })
+  expect(getPilotGrantBudgetUsage(data.grantId).committedCostMicros).toBe(1_000)
+  expect(getPilotStopEscalation(data.executionId)?.resolvedAt).toBeNull()
+})
+
+test('停止请求失败仍保留持久意图；落盘失败则不得调用停止器', () => {
+  const failedStop = fixture()
+  expect(() => requestPilotStopWithIntent(failedStop.executionId, 43, () => {
+    throw new Error('Runtime abort failed')
+  })).toThrow('Runtime abort failed')
+  expect(getPilotStopEscalation(failedStop.executionId)?.resolvedAt).toBeNull()
+  const missingGrant = fixture()
+  getProjectDb().prepare('DELETE FROM pilot_runtime_grants WHERE id = ?').run(missingGrant.grantId)
+  let called = false
+  expect(() => requestPilotStopWithIntent(missingGrant.executionId, 44, () => {
+    called = true
+  })).toThrow('授权暂停无法核验')
+  expect(called).toBe(false)
+  expect(getPilotStopEscalation(missingGrant.executionId)).toBeUndefined()
+})
+
+test('重复停止意图不得发出第二次停止请求或覆盖原代际', () => {
+  const data = fixture()
+  requestPilotStopWithIntent(data.executionId, 42, () => undefined)
+  let called = false
+  expect(() => requestPilotStopWithIntent(data.executionId, 43, () => { called = true }))
+    .toThrow('Pilot 停止升级已存在')
+  expect(called).toBe(false)
+  expect(getPilotStopEscalation(data.executionId)?.expectedGeneration).toBe(42)
+})
+
+test('停止意图在重启后仍保持 open 且项目暂停', async () => {
+  const data = fixture()
+  requestPilotStopWithIntent(data.executionId, 42, () => undefined)
+  closeProjectDb()
+  await initProjectDb()
+  expect(getPilotStopEscalation(data.executionId)).toMatchObject({
+    sessionId: 'session-1', expectedGeneration: 42, resolvedAt: null,
+  })
+  expect((getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?')
+    .get(data.grantId) as { state: string }).state).toBe('paused')
+})
 
 test('停止未核验升级：记录升级、暂停授权保留预算、执行保持运行', () => {
   const data = fixture()
