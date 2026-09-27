@@ -46,6 +46,20 @@ test('Given 已复核暂停草案 When 用户按冻结指纹确认 Then 幂等�
     .get(project.id)).toEqual({ count: 0 })
 })
 
+test('Given 项目有未消解停止升级 When 确认发行 Then 旧确认仍不得启用授权', () => {
+  const project = createProject({ title: '待停止对账', description: '' })
+  const policy = savePilotPolicyDraft(project.id, draft(), null)
+  const preview = previewPilotGrantIssue(project.id, policy.revision, now, ready)
+  getProjectDb().prepare(`INSERT INTO pilot_stop_escalations
+    (escalation_id, execution_id, command_id, project_id, session_id, requested_at, reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(`escalation-${project.id}`, `execution-${project.id}`,
+    `command-${project.id}`, project.id, 'session-1', now, '停止未核验')
+  expect(() => confirmPilotGrantIssue(preview, preview.approvalFingerprint, now, ready))
+    .toThrow('Pilot 停止升级待人工对账')
+  expect(getProjectDb().prepare('SELECT COUNT(*) AS count FROM pilot_runtime_grants WHERE project_id = ?')
+    .get(project.id)).toEqual({ count: 0 })
+})
+
 test('Given 旧确认或绑定失败 When 发行 Then 不产生部分活动授权', () => {
   const project = createProject({ title: '拒绝旧确认', description: '' })
   const policy = savePilotPolicyDraft(project.id, draft(), null)

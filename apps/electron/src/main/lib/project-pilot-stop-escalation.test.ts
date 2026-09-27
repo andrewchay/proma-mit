@@ -5,11 +5,12 @@ import { join } from 'node:path'
 import { claimPilotCommandStart, hashPilotTaskSource, recordPilotRunnerHandoffIntent, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
 import { recoverInterruptedPilotRuntimeExecutions } from './project-pilot-runtime-recovery'
 import {
-  getPilotStopEscalation, listOpenPilotStopEscalations,
-  recordPilotStopEscalation, resolvePilotStopEscalation,
+  getPilotStopEscalation, listOpenPilotStopEscalations, recordPilotStopEscalation,
 } from './project-pilot-stop-escalation'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
+import { reservePilotCommandBudget } from './project-pilot-budget-ledger'
 import { closeProjectDb, createAgentExecution, createProject, createTask, getProjectDb, initProjectDb } from './project-sqlite-store'
+import { settlePilotCommandUsage, getPilotGrantBudgetUsage } from './project-pilot-budget-ledger'
 
 const root = mkdtempSync(join(tmpdir(), 'project-pilot-stop-escalation-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -57,28 +58,52 @@ test('停止未核验升级：记录升级、暂停授权保留预算、执行�
   expect(listOpenPilotStopEscalations(data.project.id)).toHaveLength(1)
 })
 
-test('同一执行重复升级被拒绝；消解后也不能再次升级', () => {
+test('重复升级拒绝；普通终态不能消解 open 升级', () => {
   const data = fixture()
   recordPilotStopEscalation(data.executionId, '第一次停止未核验', data.now + 1)
   expect(() => recordPilotStopEscalation(data.executionId, '第二次停止未核验', data.now + 2))
     .toThrow('Pilot 停止升级已存在')
-
-  resolvePilotStopEscalation(data.executionId, 'Runtime 停止完成', 'stoppedByUser=true', data.now + 3)
-  expect(() => recordPilotStopEscalation(data.executionId, '停止未核验', data.now + 4))
-    .toThrow('Pilot 停止升级已消解，不能重复升级')
+  for (const status of ['completed', 'failed', 'stale', 'cancelled']) {
+    getProjectDb().prepare('UPDATE agent_executions SET status = ? WHERE id = ?').run(status, data.executionId)
+    expect(getPilotStopEscalation(data.executionId)?.resolvedAt).toBeNull()
+  }
+  expect(listOpenPilotStopEscalations(data.project.id).map((row) => row.executionId)).toContain(data.executionId)
 })
 
-test('消解要求结论与证据；重复消解被拒绝', () => {
+test('open 升级阻断同项目新命令预留，即使另一授权被标记 active', () => {
   const data = fixture()
   recordPilotStopEscalation(data.executionId, '停止未核验', data.now + 1)
-  expect(() => resolvePilotStopEscalation(data.executionId, '', 'evidence', data.now + 2)).toThrow('Pilot 停止升级消解结论无效')
-  expect(() => resolvePilotStopEscalation(data.executionId, 'ok', '', data.now + 2)).toThrow('Pilot 停止升级消解证据无效')
-
-  const resolved = resolvePilotStopEscalation(data.executionId, '停止已核验', 'processTermination=VERIFIED', data.now + 2)
-  expect(resolved.resolvedAt).toBe(data.now + 2)
-  expect(resolved.resolution).toBe('停止已核验')
-  expect(() => resolvePilotStopEscalation(data.executionId, '再次消解', 'x', data.now + 3)).toThrow('Pilot 停止升级已消解')
+  getProjectDb().prepare("UPDATE pilot_runtime_grants SET state = 'active' WHERE id = ?").run(data.grantId)
+  expect(() => reservePilotCommandBudget({ ...data.input, commandId: `next-${data.project.id}`,
+    idempotencyKey: 'next' }, data.now + 2)).toThrow('Pilot 停止升级待人工对账')
 })
+
+test('open 停止升级禁止按有限费用结算释放预留；终态未知仍保留额度', () => {
+  const data = fixture()
+  recordPilotStopEscalation(data.executionId, '停止未核验', data.now + 1)
+  getProjectDb().prepare("UPDATE agent_executions SET status = 'completed' WHERE id = ?").run(data.executionId)
+  const known = { source: 'provider_reported' as const, executionId: data.executionId,
+    sessionId: 'session-1', channelId: 'channel', modelId: 'model',
+    providerRecordId: `receipt-${data.project.id}`, inputTokens: 1, outputTokens: 1,
+    costMicros: 1, capturedAt: data.now + 2 }
+  expect(() => settlePilotCommandUsage(data.input.commandId, known, data.now + 2))
+    .toThrow('Pilot 停止升级未消解，费用须保留')
+  expect(getPilotGrantBudgetUsage(data.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+  expect(getPilotStopEscalation(data.executionId)?.resolvedAt).toBeNull()
+})
+
+test('授权已暂停仍可记录升级；授权缺失时事务回滚、不冒充安全停等', () => {
+  const alreadyPaused = fixture()
+  getProjectDb().prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE id = ?").run(alreadyPaused.grantId)
+  expect(recordPilotStopEscalation(alreadyPaused.executionId, '停止未核验', alreadyPaused.now + 2).resolvedAt).toBeNull()
+
+  const missing = fixture()
+  getProjectDb().prepare('DELETE FROM pilot_runtime_grants WHERE id = ?').run(missing.grantId)
+  expect(() => recordPilotStopEscalation(missing.executionId, '停止未核验', missing.now + 2))
+    .toThrow('Pilot 停止升级授权暂停无法核验')
+  expect(getPilotStopEscalation(missing.executionId)).toBeUndefined()
+})
+
 
 test('非 Pilot 执行与已终结执行拒绝升级', () => {
   const project = createProject({ title: '普通项目', description: '' })

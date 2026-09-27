@@ -4,8 +4,8 @@
  * Pilot 执行的停止请求被 Runtime 接受但进程终止未核验时（stopRequested=true,
  * processTermination=NOT_VERIFIED），执行仍在运行、费用仍在累积风险中。本模块：
  * 1. 记录升级（每执行唯一）：暂停授权保留预算，留下待人工对账记录；
- * 2. 终态到达（已核验停止/完成/卡点/恢复 stale）时消解，附终态证据；
- * 3. 恢复路径不自动消解——stale 执行的升级保持 open，等待人工对账。
+ * 2. 未核验停止后的普通终态并不等于已核验终止，升级保持 open；
+ * 3. 仅已核验停止且执行转 cancelled 后允许显式消解；重启恢复不自动消解。
  */
 
 import { randomUUID } from 'node:crypto'
@@ -76,49 +76,45 @@ export function recordPilotStopEscalation(
   const execution = getAgentExecution(executionId)
   if (!execution || !execution.pilotCommandId) throw new Error('Pilot 停止升级执行归属无法核验')
   if (execution.status !== 'running') throw new Error('Pilot 停止升级仅适用于运行中的执行')
-  const existing = database.prepare('SELECT * FROM pilot_stop_escalations WHERE execution_id = ?')
-    .get(executionId) as EscalationRow | undefined
-  if (existing && existing.resolved_at === null) throw new Error('Pilot 停止升级已存在')
-  if (existing) throw new Error('Pilot 停止升级已消解，不能重复升级')
-  // 保留预算：停止未核验期间不允许同一项目继续消耗授权。
-  database.prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE project_id = ? AND state = 'active'")
-    .run(execution.projectId)
   const escalationId = randomUUID()
-  database.prepare(`INSERT INTO pilot_stop_escalations
-    (escalation_id, execution_id, command_id, project_id, session_id, expected_generation, requested_at, reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(escalationId, executionId, execution.pilotCommandId, execution.projectId,
-      execution.sessionId, expectedGeneration ?? null, now, reason.trim())
-  const row = database.prepare('SELECT * FROM pilot_stop_escalations WHERE execution_id = ?')
-    .get(executionId) as EscalationRow | undefined
-  if (!row) throw new Error('Pilot 停止升级写入无法核验')
-  return fromRow(row)
+  let result: PilotStopEscalation | undefined
+  database.transaction(() => {
+    const current = getAgentExecution(executionId)
+    if (!current || current.status !== 'running' || current.pilotCommandId !== execution.pilotCommandId
+      || current.sessionId !== execution.sessionId) throw new Error('Pilot 停止升级执行已变化')
+    const existing = database.prepare('SELECT * FROM pilot_stop_escalations WHERE execution_id = ?')
+      .get(executionId) as EscalationRow | undefined
+    if (existing && existing.resolved_at === null) throw new Error('Pilot 停止升级已存在')
+    if (existing) throw new Error('Pilot 停止升级已消解，不能重复升级')
+    const commandId = current.pilotCommandId
+    if (!commandId) throw new Error('Pilot 停止升级执行归属无法核验')
+    const command = database.prepare('SELECT grant_id, project_id, execution_id FROM pilot_commands WHERE id = ?')
+      .get(commandId) as { grant_id: string; project_id: string; execution_id: string } | undefined
+    if (!command || command.project_id !== current.projectId || command.execution_id !== executionId) {
+      throw new Error('Pilot 停止升级命令归属无法核验')
+    }
+    // 暂停同项目所有活动授权，并验证本命令授权也已停等；两者与升级记录同事务。
+    database.prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE project_id = ? AND state = 'active'")
+      .run(current.projectId)
+    const grant = database.prepare('SELECT state FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
+      .get(command.grant_id, current.projectId) as { state: string } | undefined
+    if (grant?.state !== 'paused') throw new Error('Pilot 停止升级授权暂停无法核验')
+    database.prepare(`INSERT INTO pilot_stop_escalations
+      (escalation_id, execution_id, command_id, project_id, session_id, expected_generation, requested_at, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(escalationId, executionId, commandId, current.projectId,
+        current.sessionId, expectedGeneration ?? null, now, reason.trim())
+    const row = database.prepare('SELECT * FROM pilot_stop_escalations WHERE execution_id = ?')
+      .get(executionId) as EscalationRow | undefined
+    if (!row) throw new Error('Pilot 停止升级写入无法核验')
+    result = fromRow(row)
+  })()
+  if (!result) throw new Error('Pilot 停止升级未完成')
+  return result
 }
 
-/** 终态到达时消解升级，附终态证据（停止核验结果/终态结果回执摘要）。 */
-export function resolvePilotStopEscalation(
-  executionId: string,
-  resolution: string,
-  resolutionEvidence: string,
-  now = Date.now(),
-): PilotStopEscalation {
-  assertValidClock(now)
-  if (!resolution?.trim()) throw new Error('Pilot 停止升级消解结论无效')
-  if (!resolutionEvidence?.trim()) throw new Error('Pilot 停止升级消解证据无效')
-  const database = getProjectDb()
-  const row = database.prepare('SELECT * FROM pilot_stop_escalations WHERE execution_id = ?')
-    .get(executionId) as EscalationRow | undefined
-  if (!row) throw new Error('Pilot 停止升级不存在')
-  if (row.resolved_at !== null) throw new Error('Pilot 停止升级已消解')
-  if (now < row.requested_at) throw new Error('Pilot 停止升级消解时钟无效')
-  database.prepare(`UPDATE pilot_stop_escalations
-    SET resolved_at = ?, resolution = ?, resolution_evidence = ? WHERE execution_id = ? AND resolved_at IS NULL`)
-    .run(now, resolution.trim(), resolutionEvidence.slice(0, 4000), executionId)
-  const updated = database.prepare('SELECT * FROM pilot_stop_escalations WHERE execution_id = ?')
-    .get(executionId) as EscalationRow | undefined
-  if (!updated || updated.resolved_at === null) throw new Error('Pilot 停止升级消解无法核验')
-  return fromRow(updated)
-}
+// 自动消解暂不开放：停止确认对象不含可持久核验的 session/generation 凭据。
+// 任何普通终态或 cancelled 状态都不能自行清理 open 升级。
 
 /** 读取执行的开升级记录；无则 undefined。 */
 export function getPilotStopEscalation(executionId: string): PilotStopEscalation | undefined {

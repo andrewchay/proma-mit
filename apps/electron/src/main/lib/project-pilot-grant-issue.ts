@@ -129,6 +129,9 @@ export function confirmPilotGrantIssue(
     const database = getProjectDb()
     let result: PilotRuntimeGrant | undefined
     database.transaction(() => {
+      const unresolvedStop = database.prepare(`SELECT 1 FROM pilot_stop_escalations
+        WHERE project_id = ? AND resolved_at IS NULL LIMIT 1`).get(preview.projectId)
+      if (unresolvedStop) throw new Error('Pilot 停止升级待人工对账，拒绝发行新授权')
       const active = database.prepare("SELECT * FROM pilot_runtime_grants WHERE project_id = ? AND state = 'active'")
         .get(preview.projectId) as Parameters<typeof rowToGrant>[0] | undefined
       if (active) {

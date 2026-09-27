@@ -146,6 +146,9 @@ function reservePilotCommandBudgetLocked(
   policy: PilotPolicy,
 ): PilotCommandReservation {
   const database = getProjectDb()
+  const unresolvedStop = database.prepare(`SELECT 1 FROM pilot_stop_escalations
+    WHERE project_id = ? AND resolved_at IS NULL LIMIT 1`).get(input.projectId)
+  if (unresolvedStop) throw new Error('Pilot 停止升级待人工对账，拒绝预留新命令')
   const previous = database.prepare('SELECT * FROM pilot_commands WHERE grant_id = ? AND idempotency_key = ?')
     .get(input.grantId, input.idempotencyKey) as CommandRow | undefined
   if (previous) {
@@ -628,6 +631,12 @@ export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageE
       return
     }
     if (command.state !== 'running') throw new Error('Pilot 命令状态不可结算')
+    const unresolvedStop = database.prepare(`SELECT 1 FROM pilot_stop_escalations
+      WHERE execution_id = ? AND command_id = ? AND resolved_at IS NULL LIMIT 1`)
+      .get(execution.id, commandId)
+    // 终态回调可能先于停止核验返回；保留费用额度并保持人工对账，不能将
+    // Runtime 转述的有限费用当作可释放的最终账。
+    if (unresolvedStop && evidence.source !== 'unknown') throw new Error('Pilot 停止升级未消解，费用须保留待人工对账')
     if (recordKey) {
       const replay = database.prepare('SELECT id FROM pilot_commands WHERE usage_record_key = ? AND id <> ?')
         .get(recordKey, commandId) as { id: string } | undefined
