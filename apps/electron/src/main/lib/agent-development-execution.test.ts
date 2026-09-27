@@ -20,6 +20,8 @@ const { getAgentSessionMeta, appendAgentMessage, appendSDKMessages, updateAgentS
 const { createChannel } = await import('./channel-manager')
 const { setAgentStopper, setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
 const { insertPilotGrantFixture } = await import('./project-pilot-test-helpers')
+const { reserveAndQueuePilotCommand, hashPilotTaskSource, getPilotGrantBudgetUsage } = await import('./project-pilot-budget-ledger')
+const { inspectPilotReadiness } = await import('./project-pilot-readiness')
 
 let lastRun: { input: AgentSendInput; callbacks: HeadlessAgentRunCallbacks } | undefined
 let acceptStopRequest = true
@@ -47,7 +49,7 @@ afterAll(() => {
 function message(content: string): AgentMessage {
   return { id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }
 }
-function fixture() {
+function fixture(withTaskWorkspace = false) {
   const repo = join(directory, randomUUID()); mkdirSync(repo)
   const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' })
   git('init'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid')
@@ -56,7 +58,9 @@ function fixture() {
   const channel = createChannel({ name: '隔离测试渠道', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'not-a-real-key', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
   const employee = service.createAgentEmployee({ name: '研发', role: '工程师', description: '', executionProfile: 'development', permissionMode: 'auto', workspaceId: workspace.id, channelId: channel.id, modelId: 'model', runtime: 'pi', skills: ['find-skills'] })
   const project = store.createProject({ title: 'Gravitas', description: '保留兼容' })
-  const task = store.createTask(project.id, { title: '修复小问题', description: '补充测试', assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+  const task = store.createTask(project.id, { title: '修复小问题', description: '补充测试',
+    ...(withTaskWorkspace ? { workspaceId: workspace.id } : {}),
+    assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
   return { repo, workspace, employee, project, task }
 }
 async function dispatch(task: ReturnType<typeof store.createTask>) {
@@ -68,6 +72,39 @@ async function dispatch(task: ReturnType<typeof store.createTask>) {
 }
 
 describe('研发员工既有链路兼容', () => {
+  test('Given 已排队 Pilot 命令但 Runtime 无单次费用停止能力 When 真实服务入口尝试启动 Then 保留队列且不触发 runner', async () => {
+    const { project, task, workspace, employee: initialEmployee } = fixture(true)
+    const employee = service.updateAgentEmployee(initialEmployee.id, { runtime: 'proma', permissionMode: 'safe' })!
+    const reviewer = service.createAgentEmployee({ name: '技术评审', role: '评审', description: '',
+      executionProfile: 'development', permissionMode: 'safe', workspaceId: workspace.id,
+      channelId: employee.channelId, modelId: 'model', runtime: 'proma' })
+    const currentTask = store.getTask(task.id)!
+    const now = Date.now()
+    const grantId = `grant-${project.id}`
+    insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId: workspace.id,
+      channelId: employee.channelId, modelId: employee.modelId!, executorEmployeeId: employee.id,
+      reviewerEmployeeId: reviewer.id, maxCostMicros: 1_000, maxRuns: 1, maxRework: 0,
+      expiresAt: now + 100_000, createdAt: now })
+    const commandId = `command-${project.id}`
+    const executionId = `execution-${project.id}`
+    reserveAndQueuePilotCommand({ commandId, projectId: project.id, grantId, idempotencyKey: 'once',
+      taskId: currentTask.id, sourceVersion: currentTask.updatedAt, sourceHash: hashPilotTaskSource(currentTask),
+      employeeId: employee.id, role: 'executor', reworkOrdinal: 0 }, { executionId, prompt: '仅测试启动门禁' })
+    lastRun = undefined
+    const readiness = inspectPilotReadiness(project.id)
+    expect(readiness.bindingsValid).toBe(false)
+    expect(readiness.blockers).toEqual([
+      `员工 ${employee.id} 的 Runtime 不支持 Pilot 单次费用超额停止阈值`,
+      `员工 ${reviewer.id} 的 Runtime 不支持 Pilot 单次费用超额停止阈值`,
+    ])
+    expect(await service.tryStartExecution(executionId)).toBe(false)
+    expect(store.getAgentExecution(executionId)).toMatchObject({ status: 'queued', sessionId: '', pilotCommandId: commandId })
+    expect(store.getProjectDb().prepare('SELECT state FROM pilot_commands WHERE id = ?').get(commandId)).toEqual({ state: 'queued' })
+    expect(store.getProjectDb().prepare('SELECT execution_id FROM pilot_runtime_start_attempts WHERE execution_id = ?').get(executionId)).toBeUndefined()
+    expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+    expect(lastRun).toBeUndefined()
+  })
+
   test('Given 项目已有活动 Pilot 授权 When 普通入口派发或启动旧队列 Then fail closed', async () => {
     const { task, workspace, employee } = fixture()
     store.updateTask(task.id, { workspaceId: workspace.id })
