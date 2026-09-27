@@ -25,6 +25,8 @@ export interface HeadlessAgentRunCallbacks {
   source?: AgentExternalRunSource
   /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */
   originSessionId?: string
+  /** runner 入口前同步写交接意图；崩溃窗口内是否实际执行未知，失败则不调用 runner。 */
+  onRunnerInvoke?: () => void
 }
 
 export type HeadlessAgentRunner = (
@@ -67,6 +69,7 @@ export async function runRegisteredHeadlessAgent(
   if (!headlessRunner) {
     throw new Error('Agent headless runner 尚未初始化')
   }
+  callbacks.onRunnerInvoke?.()
   await headlessRunner(input, callbacks)
 }
 

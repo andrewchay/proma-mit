@@ -305,14 +305,17 @@ function assertPilotCommandStartRecordLocked(
   expectedPolicyRevision: number,
   now: number,
   policy: PilotPolicy,
+  runningSessionId?: string,
 ): PilotCommandReservation {
   const execution = getAgentExecution(executionId)
-  if (!execution || execution.pilotCommandId !== commandId || execution.status !== 'queued' || execution.sessionId !== '') {
+  if (!execution || execution.pilotCommandId !== commandId
+    || execution.status !== (runningSessionId ? 'running' : 'queued')
+    || execution.sessionId !== (runningSessionId ?? '')) {
     throw new Error('Pilot 执行归属或排队状态无法核验')
   }
   const row = getProjectDb().prepare('SELECT * FROM pilot_commands WHERE id = ? AND project_id = ?')
     .get(commandId, execution.projectId) as CommandRow | undefined
-  if (!row || row.state !== 'queued' || row.execution_id !== executionId || row.employee_id !== execution.agentId
+  if (!row || row.state !== (runningSessionId ? 'running' : 'queued') || row.execution_id !== executionId || row.employee_id !== execution.agentId
     || row.source_task_id !== execution.entityId || row.reserved_cost_micros <= 0) {
     throw new Error('Pilot 已预留命令与执行不匹配')
   }
@@ -357,6 +360,7 @@ export function claimPilotCommandStart(
 ): { command: PilotCommandReservation; execution: AgentExecution } {
   assertValidClock(now)
   if (!sessionId?.trim()) throw new Error('Pilot 启动会话无效')
+  if (getProjectDb().isTransactionActive()) throw new Error('Pilot 启动认领不得嵌套未提交事务')
   const execution = getAgentExecution(executionId)
   if (!execution?.pilotCommandId) throw new Error('Pilot 执行归属或排队状态无法核验')
   const command = getProjectDb().prepare('SELECT grant_id FROM pilot_commands WHERE id = ? AND project_id = ?')
@@ -377,6 +381,9 @@ export function claimPilotCommandStart(
       if (claimedExecution.changes !== 1 || claimedCommand.changes !== 1) {
         throw new Error('Pilot 启动认领状态已变化')
       }
+      database.prepare(`INSERT INTO pilot_runtime_start_attempts
+        (execution_id, command_id, project_id, session_id, claimed_at)
+        VALUES (?, ?, ?, ?, ?)`).run(executionId, commandId, execution.projectId, sessionId, now)
       const currentExecution = getAgentExecution(executionId)
       const currentCommand = database.prepare('SELECT * FROM pilot_commands WHERE id = ?').get(commandId) as CommandRow | undefined
       if (!currentExecution || !currentCommand) throw new Error('Pilot 启动认领无法核验')
@@ -384,6 +391,31 @@ export function claimPilotCommandStart(
     })()
     if (!result) throw new Error('Pilot 启动认领未完成')
     return result
+  })
+}
+
+/** runner 调用前持久化交接意图；崩溃时是否实际调用仍未知，不能当成 Runtime/Provider 启动证据。 */
+export function recordPilotRunnerHandoffIntent(executionId: string, commandId: string, sessionId: string, now = Date.now()): void {
+  assertValidClock(now)
+  if (getProjectDb().isTransactionActive()) throw new Error('Pilot 启动交接不得嵌套未提交事务')
+  const execution = getAgentExecution(executionId)
+  if (!execution || execution.pilotCommandId !== commandId) throw new Error('Pilot 交接执行归属无法核验')
+  const command = getProjectDb().prepare('SELECT grant_id FROM pilot_commands WHERE id = ? AND project_id = ?')
+    .get(commandId, execution.projectId) as { grant_id: string } | undefined
+  if (!command) throw new Error('Pilot 交接命令无法核验')
+  withGrantPolicySnapshot(execution.projectId, command.grant_id, (policy) => {
+    const database = getProjectDb()
+    database.transaction(() => {
+      const grant = database.prepare('SELECT policy_revision FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
+        .get(command.grant_id, execution.projectId) as { policy_revision: number } | undefined
+      if (!grant) throw new Error('Pilot 交接授权无法核验')
+      assertPilotCommandStartRecordLocked(executionId, commandId, grant.policy_revision, now, policy, sessionId)
+      const changed = database.prepare(`UPDATE pilot_runtime_start_attempts SET handoff_intent_at = ?
+        WHERE execution_id = ? AND command_id = ? AND project_id = ? AND session_id = ?
+          AND handoff_intent_at IS NULL AND claimed_at <= ?`)
+        .run(now, executionId, commandId, execution.projectId, sessionId, now)
+      if (changed.changes !== 1) throw new Error('Pilot Runtime 启动交接状态无法核验或已记录')
+    })()
   })
 }
 

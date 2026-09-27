@@ -3,7 +3,7 @@ import { mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getAgentExecution, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
-import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
 import type { SDKResultMessage } from '@gravitas/shared'
@@ -162,12 +162,45 @@ test('启动认领在同一事务推进命令与执行，失败时不留下半�
   const claimed = claimPilotCommandStart(queue.executionId, input.commandId, 1, 'session-claim')
   expect(claimed.command.state).toBe('running')
   expect(claimed.execution).toMatchObject({ status: 'running', sessionId: 'session-claim' })
+  const attempt = () => getProjectDb().prepare('SELECT session_id, claimed_at, handoff_intent_at FROM pilot_runtime_start_attempts WHERE execution_id = ?')
+    .get(queue.executionId) as { session_id: string; claimed_at: number; handoff_intent_at: number | null }
+  expect(attempt()).toMatchObject({ session_id: 'session-claim', handoff_intent_at: null })
+  expect(() => getProjectDb().transaction(() => recordPilotRunnerHandoffIntent(queue.executionId, input.commandId, 'session-claim'))())
+    .toThrow('不得嵌套')
+  expect(attempt().handoff_intent_at).toBeNull()
+  expect(() => recordPilotRunnerHandoffIntent(queue.executionId, input.commandId, 'wrong-session')).toThrow('无法核验')
+  recordPilotRunnerHandoffIntent(queue.executionId, input.commandId, 'session-claim')
+  expect(attempt().handoff_intent_at).toBeGreaterThanOrEqual(attempt().claimed_at)
+  expect(() => recordPilotRunnerHandoffIntent(queue.executionId, input.commandId, 'session-claim')).toThrow('已记录')
+  expect(() => getProjectDb().prepare('UPDATE pilot_runtime_start_attempts SET claimed_at = 0 WHERE execution_id = ?').run(queue.executionId)).toThrow('immutable')
+  expect(() => getProjectDb().prepare('UPDATE pilot_runtime_start_attempts SET handoff_intent_at = NULL WHERE execution_id = ?').run(queue.executionId)).toThrow('immutable')
   expect(() => claimPilotCommandStart(queue.executionId, input.commandId, 1, 'other-session'))
     .toThrow('排队状态无法核验')
+
+  const revoked = fixture()
+  const revokedQueue = { executionId: `revoked-${revoked.project.id}`, prompt: '执行任务' }
+  reserveAndQueuePilotCommand(revoked.input, revokedQueue)
+  claimPilotCommandStart(revokedQueue.executionId, revoked.input.commandId, 1, 'session-revoked')
+  getProjectDb().prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE id = ?").run(revoked.grantId)
+  expect(() => recordPilotRunnerHandoffIntent(revokedQueue.executionId, revoked.input.commandId, 'session-revoked')).toThrow('授权已失效')
+  expect(getProjectDb().prepare('SELECT handoff_intent_at FROM pilot_runtime_start_attempts WHERE execution_id = ?')
+    .get(revokedQueue.executionId)).toEqual({ handoff_intent_at: null })
+
+  const changedTask = fixture()
+  const changedQueue = { executionId: `changed-${changedTask.project.id}`, prompt: '执行任务' }
+  reserveAndQueuePilotCommand(changedTask.input, changedQueue)
+  claimPilotCommandStart(changedQueue.executionId, changedTask.input.commandId, 1, 'session-changed')
+  updateTask(changedTask.task.id, { title: '认领后的新任务' })
+  expect(() => recordPilotRunnerHandoffIntent(changedQueue.executionId, changedTask.input.commandId, 'session-changed')).toThrow('来源已变化')
+  expect(getProjectDb().prepare('SELECT handoff_intent_at FROM pilot_runtime_start_attempts WHERE execution_id = ?')
+    .get(changedQueue.executionId)).toEqual({ handoff_intent_at: null })
 
   const rollback = fixture()
   const rollbackQueue = { executionId: `claim-rollback-${rollback.project.id}`, prompt: '执行任务' }
   reserveAndQueuePilotCommand(rollback.input, rollbackQueue)
+  expect(() => getProjectDb().transaction(() => claimPilotCommandStart(rollbackQueue.executionId, rollback.input.commandId, 1, 'session-rollback'))())
+    .toThrow('不得嵌套')
+  expect(getAgentExecution(rollbackQueue.executionId)).toMatchObject({ status: 'queued', sessionId: '' })
   getProjectDb().exec(`CREATE TRIGGER pilot_claim_abort BEFORE UPDATE ON pilot_commands
     WHEN NEW.id = '${rollback.input.commandId}' AND NEW.state = 'running'
     BEGIN SELECT RAISE(ABORT, 'claim interrupted'); END`)
@@ -175,6 +208,18 @@ test('启动认领在同一事务推进命令与执行，失败时不留下半�
     .toThrow('claim interrupted')
   expect(getAgentExecution(rollbackQueue.executionId)).toMatchObject({ status: 'queued', sessionId: '' })
   expect(assertPilotCommandStartRecord(rollbackQueue.executionId, rollback.input.commandId, 1).state).toBe('queued')
+  expect(getProjectDb().prepare('SELECT execution_id FROM pilot_runtime_start_attempts WHERE execution_id = ?').get(rollbackQueue.executionId)).toBeUndefined()
+
+  const auditRollback = fixture()
+  const auditQueue = { executionId: `audit-rollback-${auditRollback.project.id}`, prompt: '执行任务' }
+  reserveAndQueuePilotCommand(auditRollback.input, auditQueue)
+  getProjectDb().exec(`CREATE TRIGGER pilot_start_audit_abort BEFORE INSERT ON pilot_runtime_start_attempts
+    WHEN NEW.execution_id = '${auditQueue.executionId}'
+    BEGIN SELECT RAISE(ABORT, 'audit interrupted'); END`)
+  expect(() => claimPilotCommandStart(auditQueue.executionId, auditRollback.input.commandId, 1, 'session-audit'))
+    .toThrow('audit interrupted')
+  expect(getAgentExecution(auditQueue.executionId)).toMatchObject({ status: 'queued', sessionId: '' })
+  expect(assertPilotCommandStartRecord(auditQueue.executionId, auditRollback.input.commandId, 1).state).toBe('queued')
 })
 
 test('取消尚未启动的 Pilot 执行会原子释放费用与次数预留，且不依赖活动授权', () => {

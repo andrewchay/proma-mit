@@ -90,6 +90,8 @@ interface SqliteCompat {
   persist(): void
   /** 返回一个执行函数（支持嵌套：内层直接执行，由外层统一提交/回滚） */
   transaction(fn: () => void): () => void
+  /** 外层事务未提交时禁止跨进程 Pilot 启动交接。 */
+  isTransactionActive(): boolean
   close(): void
 }
 
@@ -353,6 +355,8 @@ class SqlJsCompat implements SqliteCompat {
     return this.database.getRowsModified()
   }
 
+  isTransactionActive(): boolean { return this.inTransaction }
+
   /** 事务：返回一个执行函数（支持嵌套：内层直接执行，由外层统一提交/回滚） */
   transaction(fn: () => void): () => void {
     return () => {
@@ -439,6 +443,8 @@ class NativeSqliteCompat implements SqliteCompat {
 
   /** WAL 模式下写操作直接落盘，无需导出（兼容保留空实现） */
   persist(): void {}
+
+  isTransactionActive(): boolean { return this.inTransaction }
 
   prepare(sql: string): StmtCompat {
     return new NativeSqliteStmt(this.database, sql)
@@ -709,9 +715,26 @@ function migrate(database: SqliteCompat): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_runtime_usage_payload
       ON pilot_runtime_usage_receipts(payload_hash, execution_id);
+
+    CREATE TABLE IF NOT EXISTS pilot_runtime_start_attempts (
+      execution_id TEXT PRIMARY KEY,
+      command_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      claimed_at INTEGER NOT NULL,
+      handoff_intent_at INTEGER
+    );
     CREATE TRIGGER IF NOT EXISTS pilot_runtime_usage_receipts_immutable
       BEFORE UPDATE ON pilot_runtime_usage_receipts
       BEGIN SELECT RAISE(ABORT, 'Pilot Runtime usage receipt is immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS pilot_runtime_start_attempts_guard
+      BEFORE UPDATE ON pilot_runtime_start_attempts
+      WHEN OLD.execution_id != NEW.execution_id OR OLD.command_id != NEW.command_id
+        OR OLD.project_id != NEW.project_id OR OLD.session_id != NEW.session_id
+        OR OLD.claimed_at != NEW.claimed_at OR OLD.handoff_intent_at IS NOT NULL
+        OR NEW.handoff_intent_at IS NULL OR NEW.handoff_intent_at < OLD.claimed_at
+      BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start attempt is immutable'); END;
 
     CREATE TABLE IF NOT EXISTS pilot_grant_pause_decisions (
       grant_id TEXT PRIMARY KEY,
@@ -978,6 +1001,22 @@ function migrate(database: SqliteCompat): void {
   database.exec(`CREATE TRIGGER IF NOT EXISTS pilot_runtime_usage_receipts_immutable
     BEFORE UPDATE ON pilot_runtime_usage_receipts
     BEGIN SELECT RAISE(ABORT, 'Pilot Runtime usage receipt is immutable'); END`)
+  // 旧库补启动交接记录表；不回填历史 running，未知边界仍按未知处理。
+  database.exec(`CREATE TABLE IF NOT EXISTS pilot_runtime_start_attempts (
+    execution_id TEXT PRIMARY KEY,
+    command_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    claimed_at INTEGER NOT NULL,
+    handoff_intent_at INTEGER
+  )`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS pilot_runtime_start_attempts_guard
+    BEFORE UPDATE ON pilot_runtime_start_attempts
+    WHEN OLD.execution_id != NEW.execution_id OR OLD.command_id != NEW.command_id
+      OR OLD.project_id != NEW.project_id OR OLD.session_id != NEW.session_id
+      OR OLD.claimed_at != NEW.claimed_at OR OLD.handoff_intent_at IS NOT NULL
+      OR NEW.handoff_intent_at IS NULL OR NEW.handoff_intent_at < OLD.claimed_at
+    BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start attempt is immutable'); END`)
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
@@ -1332,6 +1371,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM pilot_intents WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_command_links WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_usage_receipts WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_runtime_start_attempts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_commands WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_grant_pause_decisions WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_grants WHERE project_id = ?`).run(id)

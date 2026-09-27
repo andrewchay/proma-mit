@@ -19,7 +19,7 @@ import { getProjectChain } from './project-chain-service'
 import { getPilotPolicy } from './project-pilot-policy'
 import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
-import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent } from './project-pilot-budget-ledger'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
@@ -755,6 +755,23 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     {
       source: 'delegation',
       originSessionId: sessionId,
+      ...(execution.pilotCommandId ? { onRunnerInvoke: () => {
+        const readiness = inspectPilotReadiness(execution.projectId)
+        const policy = getPilotPolicy(execution.projectId)
+        const currentEmployee = store.getAgentEmployee(employee.id)
+        if (!policy || !readiness.bindingsValid || readiness.policyRevision !== policy.revision
+          || !currentEmployee || currentEmployee.runtime !== employee.runtime
+          || currentEmployee.channelId !== employee.channelId || currentEmployee.modelId !== modelId
+          || currentEmployee.executionProfile !== employee.executionProfile
+          || currentEmployee.permissionMode !== employee.permissionMode
+          || currentEmployee.workflowId !== employee.workflowId
+          || JSON.stringify(currentEmployee.skills) !== JSON.stringify(employee.skills)
+          || workspaceId !== policy.workspaceId || employee.channelId !== policy.channelId
+          || modelId !== policy.modelId || permissionModeOverride !== 'safe') {
+          throw new Error('Pilot 启动交接绑定或启动参数已变化')
+        }
+        recordPilotRunnerHandoffIntent(executionId, execution.pilotCommandId!, sessionId)
+      } } : {}),
       onError: (error) => {
         clearRuntimeGeneration()
         if (getAgentSessionMeta(sessionId)?.stoppedByUser) handleExecutionComplete(executionId, [], startedAt, true)
