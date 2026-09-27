@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import type { Context, Model } from '@earendil-works/pi-ai'
+import { normalizeContext } from '@earendil-works/pi-ai'
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions'
 import type { AgentEvent } from '@gravitas/shared'
 
@@ -290,7 +291,7 @@ describe('PiAgentAdapter', () => {
         timestamp: 1,
       }],
     }
-    const serialized = streamSimple(model, context, {
+    const serialized = streamSimple(model, normalizeContext(context), {
       apiKey: 'test-key',
       onPayload: (payload) => {
         finalPayload = payload as Record<string, unknown>

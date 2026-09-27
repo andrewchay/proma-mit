@@ -15,6 +15,8 @@ import type {
   UserMessage as PiUserMessage,
 } from '@earendil-works/pi-ai'
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core'
+import type { FileEntry as PiFileEntry } from '@earendil-works/pi-coding-agent'
+import { randomUUID } from 'node:crypto'
 
 function timestamp(): number {
   return Date.now()
@@ -207,6 +209,31 @@ function compactBoundaryToPiUserMessage(message: SDKMessage): PiUserMessage | un
     content: `以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
     timestamp: timestamp(),
   }
+}
+
+/**
+ * 把恢复用的 Pi 历史消息组装成 SessionManager 可加载的 append-only 条目链。
+ *
+ * Pi 0.87 起 SessionManager 是会话唯一事实源，直接赋值 session.state.messages 不再
+ * 进入模型上下文；必须在创建 AgentSession 之前把历史作为初始 entries 传入
+ * SessionManager.inMemory(cwd, undefined, entries)。条目按 parentId 串成单链，
+ * leaf 落在最后一条历史上，后续 prompt 自然延续。
+ */
+export function buildPiHistorySessionEntries(messages: PiAgentMessage[]): PiFileEntry[] {
+  const entries: PiFileEntry[] = []
+  let parentId: string | null = null
+  for (const message of messages) {
+    const id = randomUUID()
+    entries.push({
+      type: 'message',
+      id,
+      parentId,
+      timestamp: new Date(message.timestamp ?? Date.now()).toISOString(),
+      message,
+    })
+    parentId = id
+  }
+  return entries
 }
 
 /**

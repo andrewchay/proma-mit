@@ -136,6 +136,8 @@
 
 | PILOT-20260927-34 | 2026-09-27 | 用户批准评估 Pi：核对仓库已装 `@earendil-works/pi-agent-core` 0.82.1，该版无公开 `finishTurn`/请求前 `prepareRequest`；新增仅测试引用的假 stream 逐轮预算实验，不调用 Provider。验证首轮准入、下一请求拒绝、工具前阻断、缺费/超预算保守停止、失败回执费用保留和手动 abort 接线 | Pi 假流 6 PASS；与 Pilot、研发执行及任务规则合计 22 文件 154 PASS；全仓 typecheck、Biome、diff-check PASS | 基线 HEAD `a44c3868`，未提交工作区变更；实验模块未接生产 adapter，未证明真实 Pi 扩展/工具逃逸阻断、Provider 原始请求/费用回执、单次请求硬费用上限及真实停止。Pi 仍不在首版白名单、能力位仍 false，G0/G1 不变 |
 
+| PILOT-20260927-35 | 2026-09-27 | 实际 bump `@earendil-works/pi-agent-core`、`pi-ai`、`pi-coding-agent` 0.82.1→0.87.1（lockfile 同步）。迁移历史恢复断点：0.87 起 SessionManager 为会话唯一事实源，事后赋值 `session.state.messages` 不再进入模型上下文；改为创建 AgentSession 前用 `buildPiHistorySessionEntries` 把恢复历史组装成 parentId 单链 entries，经 `SessionManager.inMemory(cwd, undefined, entries)` 注入。`DefaultResourceLoader.systemPromptOverride`、`session.agent.toolExecution`、消息转换类型在 0.87.1 均保持兼容；adapter 测试的 `streamSimple` 改经 `normalizeContext`（Context→TranscriptContext 品牌类型） | 新增 3 个 0.87 回归测试（条目链结构、真实 SessionManager `buildSessionContext` 回读、预种子 manager 创建 AgentSession 后 `session.messages` 可见历史）PASS；pi-message-adapter 9 PASS；全仓 `bun run test` 498 文件 0 失败、全仓 typecheck、Biome PASS。未调用 Provider | 基线 HEAD `0c0e2d35`（已推送）；真实 Provider 冒烟（PROMA_PI_REAL_API）未开，Pi 扩展逃逸/原始回执/硬费用上限未验证；Pi 仍不在首版白名单、能力位仍 false，G0/G1 不变 |
+
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
 ## 7. 下一次执行

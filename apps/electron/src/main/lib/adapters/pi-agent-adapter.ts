@@ -15,7 +15,7 @@ import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-sk
 import { resolveCollaborationWorkspaceId } from '../agent-collaboration-tools'
 import { logWarn } from '../file-logger'
 import { enrichMessageWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
-import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
+import { buildPiHistorySessionEntries, convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
 import { loadPiCodingAgent } from './pi-sdk-loader'
 import { createPiToolBridge, type PiCanUseToolCallback } from './pi-tool-bridge'
@@ -396,6 +396,16 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     })
     await resourceLoader.reload()
 
+    // Pi 0.87 起 SessionManager 是会话唯一事实源：历史必须在创建 AgentSession 前
+    // 作为初始 entries 注入 inMemory manager；事后赋值 session.state.messages 不会
+    // 进入模型上下文（0.82 的行为断点）。
+    const piHistoryMessages = effectiveHistoryMessages.length > 0
+      ? convertSDKMessagesToPiMessages(effectiveHistoryMessages)
+      : []
+    const sessionManager = piHistoryMessages.length > 0
+      ? SessionManager.inMemory(cwd, undefined, buildPiHistorySessionEntries(piHistoryMessages))
+      : SessionManager.inMemory(cwd)
+
     const { session } = await createAgentSession({
       cwd,
       agentDir: registration.agentDir,
@@ -407,7 +417,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       noTools: 'builtin',
       customTools,
       resourceLoader,
-      sessionManager: SessionManager.inMemory(cwd),
+      sessionManager,
       settingsManager,
     })
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
@@ -442,9 +452,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       })).catch(() => {})
     }
 
-    if (effectiveHistoryMessages.length > 0) {
-      session.state.messages = convertSDKMessagesToPiMessages(effectiveHistoryMessages)
-    }
+    // 历史已在上面的 sessionManager 注入；此处不再赋值 state.messages（0.87 无效）。
 
     // 同一 prompt 内由 Pi 原生驱动完整工具循环；逐条投影 message_end，不能等
     // agent_end 后再从 state 回放，否则工具结果和最终总结会在 UI 中表现为断流。

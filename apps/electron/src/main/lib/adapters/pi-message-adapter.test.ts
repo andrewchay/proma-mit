@@ -137,3 +137,85 @@ describe('pi-message-adapter', () => {
     expect(restored[1]).toMatchObject({ role: 'toolResult', toolCallId: 'call-1', toolName: 'Bash' })
   })
 })
+
+describe('pi-history-session-entries（Pi 0.87 SessionManager 种子）', () => {
+  test('buildPiHistorySessionEntries 生成 parentId 单链与 ISO 时间戳', async () => {
+    const { buildPiHistorySessionEntries } = await import('./pi-message-adapter')
+    const restored = convertSDKMessagesToPiMessages([
+      { type: 'user', message: { content: [{ type: 'text', text: '第一条' }] } } as unknown as SDKMessage,
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: '回复' }],
+          model: 'm1',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      } as SDKMessage,
+    ])
+
+    const entries = buildPiHistorySessionEntries(restored)
+
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({ type: 'message', parentId: null })
+    expect(entries[1]).toMatchObject({ type: 'message', parentId: (entries[0] as { id: string }).id })
+    for (const entry of entries) {
+      expect(Number.isNaN(Date.parse((entry as { timestamp: string }).timestamp))).toBe(false)
+    }
+  })
+
+  test('种子 entries 经真实 SessionManager 加载后进入模型上下文', async () => {
+    const { buildPiHistorySessionEntries } = await import('./pi-message-adapter')
+    const pi = await import('@earendil-works/pi-coding-agent')
+    const restored = convertSDKMessagesToPiMessages([
+      { type: 'user', message: { content: [{ type: 'text', text: '历史问题' }] } } as unknown as SDKMessage,
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: '历史回答' }],
+          model: 'm1',
+          usage: { input_tokens: 2, output_tokens: 3 },
+        },
+      } as SDKMessage,
+    ])
+
+    const sessionManager = pi.SessionManager.inMemory('/tmp', undefined, buildPiHistorySessionEntries(restored) as never)
+    const context = sessionManager.buildSessionContext()
+
+    expect(context.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    expect(JSON.stringify(context.messages[0])).toContain('历史问题')
+    // leaf 落在最后一条历史，后续 prompt 才能延续对话而不是覆盖历史。
+    expect(sessionManager.getLeafId()).toBe(sessionManager.getEntries().at(-1)?.id ?? null)
+  })
+
+  test('预种子 SessionManager 创建的 AgentSession 直接可见历史消息（0.87 回归）', async () => {
+    const { buildPiHistorySessionEntries } = await import('./pi-message-adapter')
+    const pi = await import('@earendil-works/pi-coding-agent')
+    const restored = convertSDKMessagesToPiMessages([
+      { type: 'user', message: { content: [{ type: 'text', text: '早前的问题' }] } } as unknown as SDKMessage,
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: '早前的回答' }],
+          model: 'm1',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      } as SDKMessage,
+    ])
+
+    const sessionManager = pi.SessionManager.inMemory('/tmp', undefined, buildPiHistorySessionEntries(restored) as never)
+    const modelRuntime = await pi.ModelRuntime.create({ allowModelNetwork: false })
+    const { session } = await pi.createAgentSession({
+      cwd: '/tmp',
+      modelRuntime,
+      noTools: 'builtin',
+      sessionManager,
+    })
+
+    try {
+      expect(session.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+      expect(JSON.stringify(session.messages)).toContain('早前的问题')
+    } finally {
+      session.dispose()
+    }
+  }, 30000)
+})
