@@ -186,7 +186,7 @@ function diffTaskFields(updates: Partial<Omit<Task, 'id' | 'projectId' | 'create
   const changed: TaskChangedFields = {}
   for (const key of Object.keys(updates)) {
     const value = (updates as Record<string, unknown>)[key]
-    if (value !== undefined) changed[key] = true
+    if (value !== undefined || key === 'workspaceId') changed[key] = true
   }
   // externalSync 只透传具体平台键，便于区分"状态回写"与"内容更新"
   if (updates.externalSync) {

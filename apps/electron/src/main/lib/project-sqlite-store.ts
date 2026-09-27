@@ -1509,6 +1509,8 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     external_sync: updates.externalSync !== undefined ? JSON.stringify(updates.externalSync) : existing.external_sync,
     permission_requests: updates.permissionRequests !== undefined ? JSON.stringify(updates.permissionRequests) : existing.permission_requests,
     token_budget: updates.tokenBudget !== undefined ? updates.tokenBudget : existing.token_budget,
+    workspace_id: Object.prototype.hasOwnProperty.call(updates, 'workspaceId')
+      ? (updates.workspaceId ?? null) : existing.workspace_id,
     // developmentScope 支持“显式传 undefined”清空（与 workspaceId 旧字段同语义）
     development_scope: Object.prototype.hasOwnProperty.call(updates, 'developmentScope')
       ? (updates.developmentScope ? JSON.stringify(updates.developmentScope) : null)
@@ -1518,13 +1520,13 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
   database.prepare(
     `UPDATE tasks SET
       title = ?, description = ?, status = ?, priority = ?,
-      parent_id = ?, assignee_user_id = ?, assignee_display_name = ?, assignee_member_id = ?, created_by_member_id = ?,
+      parent_id = ?, assignee_user_id = ?, assignee_display_name = ?, assignee_member_id = ?, created_by_member_id = ?, workspace_id = ?,
       start_date = ?, due_date = ?, completed_at = ?, completion_notes = ?, risk_level = ?, external_sync = ?, permission_requests = ?, token_budget = ?, development_scope = ?,
       updated_at = ?
      WHERE id = ?`
   ).run(
     next.title, next.description, next.status, next.priority,
-    next.parent_id, next.assignee_user_id, next.assignee_display_name, next.assignee_member_id, next.created_by_member_id,
+    next.parent_id, next.assignee_user_id, next.assignee_display_name, next.assignee_member_id, next.created_by_member_id, next.workspace_id,
     next.start_date, next.due_date, next.completed_at, next.completion_notes, next.risk_level, next.external_sync, next.permission_requests, next.token_budget, next.development_scope,
     next.updated_at, id
   )
@@ -1723,12 +1725,12 @@ export function createTaskDraft(projectId: string, input: CreateTaskInput): Task
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, start_date, due_date, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, workspace_id, start_date, due_date, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
     input.priority ?? 'medium',
-    input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
+    input.assignee?.userId ?? null, input.assignee?.displayName ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null, sortOrder, timestamp, timestamp
   )
   return getTask(id)!
