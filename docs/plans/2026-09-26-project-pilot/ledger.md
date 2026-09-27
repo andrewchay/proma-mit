@@ -1,6 +1,6 @@
 # Project Pilot 工作、测试与验收台账
 
-建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`fdd13b30`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
+建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`4a4c42e2`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
 关联：[目标与路线](goals-and-roadmap.md) · [G0 命令契约草案](g0-command-contract.md) · [G1 隔离 Git 夹具](g1-isolated-fixture.md) · [实现度审计](implementation-audit.md) · [历史方案](design.md)。
 
 ## 当前结论
@@ -127,6 +127,8 @@
 | PILOT-20260927-29 | 2026-09-27 | project-chain 的决策、交付和审批修订提交后触发 Pilot 对账；通知延迟到 microtask，并按 project/revision/payload 回读权威行，外层事务回滚不发假事件，监听器异常逐个隔离。后台停止后取消链路订阅 | 项目链 5 PASS、后台对账 7 PASS；Project Pilot 16 文件、全仓 typecheck 与本切片 Biome PASS。未调用 Runtime/Provider | 事件只触发权威重算，不会自动批准交付或恢复审批后的 Runtime；数据库在 microtask 核验前关闭时跳过通知，启动/周期对账补偿。真实 Runtime、技术评审返工和审批续跑仍未接通，G0/G1 未通过 |
 
 | PILOT-20260927-30 | 2026-09-27 | 启动认领同事务写入 Pilot 本地启动尝试；runner 入口前同步保存一次性交接意图，交接时复核活动授权、策略、任务来源、依赖和执行会话，并重跑渠道/模型/员工 readiness、核对交给 runner 的启动参数；认领或交接遇外层未提交事务直接拒绝。旧库只补表不回填历史。交接失败不调用 runner；崩溃窗口内即使已有交接意图，实际 Runtime/Provider 是否启动仍为 unknown | Project Pilot 定向 17 文件 122 PASS，连同研发执行共 18 文件 138 PASS；全仓 typecheck、本切片 Biome、diff-check PASS；认领/审计写入回滚、嵌套事务拒绝、认领后撤权或任务变化及重复交接有夹具测试。未运行真实 Runtime/Provider | 基线 `a44c3868`，未提交工作区改动；仅本地交接意图，不是 Runtime 实际开始证明或外部启动回执。readiness 与交接持久事务非跨配置存储原子快照，故不能据此开放生产派发；G0/G1 仍未通过 |
+
+| PILOT-20260927-31 | 2026-09-27 | 重启时读取本地启动尝试并核对 command/project/session 与时间，按 `claim_only`、`handoff_intent`、`missing_attempt`、`invalid_attempt` 分类；输出写入启动日志。所有分类均保守撤权、running 转 stale、未知费用占额并停等；缺记录不推断为旧库或从未调用，交接意图不证明 Runtime 真正开始 | 恢复对账 14 PASS，Project Pilot 与研发执行合计 18 文件 141 PASS；全仓 typecheck、本切片 Biome、diff-check PASS。覆盖数据库重开、缺记录、会话损坏、未来时钟与重复恢复；不含真实 Runtime/Provider | 在未提交的 `-30` 工作区变更上继续；基线 HEAD `a44c3868`。只是诊断分层，既未实证外部启动或停止，也不解除 G0/G1 门禁 |
 
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
