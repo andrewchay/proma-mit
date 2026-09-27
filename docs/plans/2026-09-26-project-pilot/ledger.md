@@ -1,6 +1,6 @@
 # Project Pilot 工作、测试与验收台账
 
-建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`575817be`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
+建立：2026-09-26 GMT+8。最后更新：2026-09-27 GMT+8，核对 HEAD：`fdd13b30`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
 关联：[目标与路线](goals-and-roadmap.md) · [G0 命令契约草案](g0-command-contract.md) · [G1 隔离 Git 夹具](g1-isolated-fixture.md) · [实现度审计](implementation-audit.md) · [历史方案](design.md)。
 
 ## 当前结论
@@ -125,6 +125,8 @@
 | PILOT-20260927-27 | 2026-09-27 | 当前 `ready_candidate` 接入唯一受控派发：二次权威对账后复核活动 grant、readiness、策略指纹、执行角色与工作区，生成确定性命令/执行 ID，复用预算账本原子排队及既有启动门禁。活动 Pilot 项目的普通员工派发与普通 queued 启动 fail-closed；后台停止信号贯穿二次对账并在预留前阻断 | 受控派发 3 PASS，后台对账 3 PASS，研发执行 16 PASS；Project Pilot 16 文件、全仓 typecheck、本切片 Biome、docs check 与 Electron build PASS。未调用 Runtime/Provider | 测试注入 readiness 与启动替身；production readiness 当前仍会阻塞全部首版 Runtime，因此没有真实 Runtime 开始/费用/停止证据。仅执行角色候选已接通，技术评审返工、审批续跑和依赖事件唤醒未实现；G0/G1 未通过 |
 | PILOT-20260927-28 | 2026-09-27 | 后台订阅统一项目服务的携身份任务事件并立即唤醒权威对账；扫描中多个事件合并为一次补跑，扫描失败期间的新事件仍兑现补跑。停止时 abort、清定时器并取消订阅；删除等无任务身份事件继续由 30 秒扫描补偿 | 后台对账 5 PASS；Project Pilot 16 文件、全仓 typecheck、本切片 Biome PASS。未调用 Runtime/Provider | 只覆盖通过 project-service 发出的携任务事件；直接 store 写入和删除事件不会即时唤醒，周期扫描是真实兜底。交付/审批事件与真实 Runtime 仍未接通，G0/G1 未通过 |
 | PILOT-20260927-29 | 2026-09-27 | project-chain 的决策、交付和审批修订提交后触发 Pilot 对账；通知延迟到 microtask，并按 project/revision/payload 回读权威行，外层事务回滚不发假事件，监听器异常逐个隔离。后台停止后取消链路订阅 | 项目链 5 PASS、后台对账 7 PASS；Project Pilot 16 文件、全仓 typecheck 与本切片 Biome PASS。未调用 Runtime/Provider | 事件只触发权威重算，不会自动批准交付或恢复审批后的 Runtime；数据库在 microtask 核验前关闭时跳过通知，启动/周期对账补偿。真实 Runtime、技术评审返工和审批续跑仍未接通，G0/G1 未通过 |
+
+| PILOT-20260927-30 | 2026-09-27 | 启动认领同事务写入 Pilot 本地启动尝试；runner 入口前同步保存一次性交接意图，交接时复核活动授权、策略、任务来源、依赖和执行会话，并重跑渠道/模型/员工 readiness、核对交给 runner 的启动参数；认领或交接遇外层未提交事务直接拒绝。旧库只补表不回填历史。交接失败不调用 runner；崩溃窗口内即使已有交接意图，实际 Runtime/Provider 是否启动仍为 unknown | Project Pilot 定向 17 文件 122 PASS，连同研发执行共 18 文件 138 PASS；全仓 typecheck、本切片 Biome、diff-check PASS；认领/审计写入回滚、嵌套事务拒绝、认领后撤权或任务变化及重复交接有夹具测试。未运行真实 Runtime/Provider | 基线 `a44c3868`，未提交工作区改动；仅本地交接意图，不是 Runtime 实际开始证明或外部启动回执。readiness 与交接持久事务非跨配置存储原子快照，故不能据此开放生产派发；G0/G1 仍未通过 |
 
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
