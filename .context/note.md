@@ -1,5 +1,12 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-09-28 Project Pilot Goal：放开 ai-sdk Pilot readiness（-56）
+- 发起链路核查发现最后一个代码闸：启动预检要求 `supportsBudgetStopThreshold=true`，而 `ai-sdk` 为 false——直接发起会被 readiness 拦在 queued、零请求。用户批准放开（PILOT-20260928-56）。
+- 依据：ai-sdk 单次费用上界已由受控出口在**发送前**强制（证据派生→预留→body 核验，否则 HTTP 零发送），强度高于事后阈值；注册表唯一证据 glm-5.3-flash，其他模型 fail-closed；非 Pilot 零行为变化。
+- 改动：shared 能力位翻转 + 注释；agent.test.ts 两处断言、runtime-budget.test.ts（ai-sdk 现按预留精确换算 0.5 USD，proma/pi 保持 throw）。readiness/G1/研发执行夹具仍用 proma 验证阻断不变。
+- 门禁：定向 43 PASS；全仓 511 文件零失败、typecheck 三包 0、Biome 0 error（3 warnings 既有）、docs:check、diff-check 过。未调用 Provider。
+- 提交 0d143d8c（-54/-55）之后本条为 -56。G2 现在真正只等用户应用内发起。
+
 ## 2026-09-28 Project Pilot Goal：逐请求结算/释放 + G2 参数确认（-55）
 - 用户确认 G2 参数：预算 **$1.00**（1,000,000 micro-USD）、**2 命令 × 6 轮**、总请求硬上限 20、24h 有效；渠道为 bigmodel 国内 OpenAI 兼容端点（端点/Key 用户已配置）。已核实 bigmodel 模型 ID 为小写 `glm-5.3-flash`（渠道必须精确一致，否则 derive 拒发）、其兼容接口支持 `stream_options.include_usage`。
 - 实现 `project-pilot-request-settlement.ts`：`settlePilotRequestUsage` 按证据价同一套 BigInt ceil 结算实际用量——实际 ≤ 预留 → `settled` 释放差额（可用额度 SUM 改为 settled 行按实际计、其余按预留计）；实际 > 预留或证据不可用 → `needs_reconcile` 保持全额占额；幂等不改判。`markPilotRequestNeedsReconcile` 只作用于 reserved 行。

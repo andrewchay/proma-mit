@@ -778,7 +778,9 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
-    supportsBudgetStopThreshold: false,
+    // Pilot 单次费用停止由受控请求出口在发送前强制（证据派生 → 预算内预留 → body 核验，否则 HTTP 零发送），
+    // 强度高于事后阈值；用户已于 G2 前批准放开（PILOT-20260928-56）。
+    supportsBudgetStopThreshold: true,
   },
 }
 

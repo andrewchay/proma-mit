@@ -10,8 +10,12 @@ describe('Pilot Runtime 单次费用超额停止阈值', () => {
 
   test('Given Runtime 无停止阈值能力 When Pilot 准备调用 Then fail-closed', () => {
     expect(() => resolvePilotRuntimeBudgetLimitUsd('proma', 500_000)).toThrow('不支持单次费用超额停止阈值')
-    expect(() => resolvePilotRuntimeBudgetLimitUsd('ai-sdk', 500_000)).toThrow('不支持单次费用超额停止阈值')
     expect(() => resolveRuntimeBudgetLimitUsd('pi', 0.5, undefined)).toThrow('不支持调用级费用超额停止阈值')
+  })
+
+  test('Given ai-sdk 受控出口事前强制费用 When Pilot 准备调用 Then 按预留精确换算阈值', () => {
+    expect(resolvePilotRuntimeBudgetLimitUsd('ai-sdk', 500_000)).toBe(0.5)
+    expect(resolveRuntimeBudgetLimitUsd('ai-sdk', 0.5, 0.3)).toBe(0.3)
   })
 
   test('Given 无效或缺失预留 When 构造上限 Then 拒绝调用 Runtime', () => {
