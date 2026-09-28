@@ -670,6 +670,8 @@ export class AgentOrchestrator {
     callbacks: SessionCallbacks
     startedAt?: number
     permissionMode?: PromaPermissionMode
+    /** 安全研发隔离写入边界：仅由无监督研发 runner 置位，safe 模式下放行 worktree 内 Write/Edit */
+    worktreeScopedWrite?: boolean
     attachments?: FileAttachment[]
     triggeredBy?: 'user' | 'automation' | 'delegation'
     isDelegationSession?: boolean
@@ -677,7 +679,7 @@ export class AgentOrchestrator {
     skillMentions?: string[]
     requestedOperation?: 'compact'
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, worktreeScopedWrite, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[${agentRuntime} runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -765,6 +767,7 @@ export class AgentOrchestrator {
         historyMessages,
         attachments,
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+        worktreeScopedWrite: worktreeScopedWrite === true,
         mcpServers: mcpServerConfigs,
         workspaceSlug,
         skillMentions,
@@ -1849,7 +1852,7 @@ export class AgentOrchestrator {
    * 自动取出下一条执行。pumpNext 驱动时需传 opts.skipQueueCheck=true 跳过入队判断。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks, opts?: { skipQueueCheck?: boolean }): Promise<void> {
-    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, runtimeBudgetLimitUsd, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, mentionedSkills, mentionedMcpServers, mentionedSessionIds, mentionedAgentEmployees, attachments, workflowCapabilityPolicy, triggeredBy } = input
+    const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, runtimeBudgetLimitUsd, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, worktreeScopedWrite, mentionedSkills, mentionedMcpServers, mentionedSessionIds, mentionedAgentEmployees, attachments, workflowCapabilityPolicy, triggeredBy } = input
     const stderrChunks: string[] = []
 
     // 0. 并发保护 + 会话级发送排队
@@ -2260,6 +2263,7 @@ export class AgentOrchestrator {
         callbacks,
         startedAt: input.startedAt,
         permissionMode: initialPermissionMode,
+        worktreeScopedWrite: worktreeScopedWrite === true,
         attachments,
         triggeredBy,
         isDelegationSession,

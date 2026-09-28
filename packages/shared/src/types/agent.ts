@@ -1485,6 +1485,12 @@ export interface AgentSendInput {
   customMcpServers?: Record<string, Record<string, unknown>>
   /** 强制覆盖权限模式（飞书等无 UI 交互场景下强制 'bypassPermissions'） */
   permissionModeOverride?: PromaPermissionMode
+  /**
+   * 安全研发会话的隔离写入边界：置位后 safe 模式允许 Write/Edit 仅写入会话 cwd
+   * （隔离 Git worktree）内的路径；Bash 仍只读、外部资源仍禁。只由无监督研发
+   * runner 设置，交互会话不得置位。
+   */
+  worktreeScopedWrite?: boolean
   /** 用户通过 /skill:xxx 引用的 Skill slug 列表 */
   mentionedSkills?: string[]
   /** 用户通过 #mcp:xxx 引用的 MCP 服务器名称列表 */

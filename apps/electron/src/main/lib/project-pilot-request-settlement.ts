@@ -16,6 +16,27 @@ export type PilotRequestSettlement =
   | { outcome: 'settled'; settledCostMicros: number }
   | { outcome: 'needs_reconcile'; reason: string }
 
+export interface PilotCommandRequestSettlementSummary {
+  requestIds: string[]
+  settledCount: number
+  pendingCount: number
+  totalSettledCostMicros: number
+}
+
+/** 汇总命令的逐请求结算状态；供终态门禁与 request_settled 终态证据构建使用。 */
+export function summarizePilotCommandRequestSettlements(commandId: string): PilotCommandRequestSettlementSummary {
+  if (typeof commandId !== 'string' || !commandId.trim()) throw new Error('Pilot 命令无效')
+  const rows = getProjectDb().prepare('SELECT request_id, state, settled_cost_micros FROM pilot_request_reservations WHERE command_id = ?')
+    .all(commandId) as Array<{ request_id: string; state: string; settled_cost_micros: number | null }>
+  const settled = rows.filter((row) => row.state === 'settled')
+  return {
+    requestIds: rows.map((row) => row.request_id),
+    settledCount: settled.length,
+    pendingCount: rows.length - settled.length,
+    totalSettledCostMicros: settled.reduce((sum, row) => sum + (row.settled_cost_micros ?? 0), 0),
+  }
+}
+
 const MILLION = 1_000_000n
 
 /** 结算单次请求。幂等：已 settled 返回原值；已 needs_reconcile 不自动改判。 */

@@ -2,12 +2,13 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeProjectDb, createProject, createTask, getProjectDb, initProjectDb } from './project-sqlite-store'
-import { claimPilotCommandStart, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
+import { closeProjectDb, createProject, createTask, getProjectDb, initProjectDb, updateAgentExecution } from './project-sqlite-store'
+import { claimPilotCommandStart, hashPilotTaskSource, reserveAndQueuePilotCommand, settlePilotCommandUsage } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { registerPilotPriceEvidenceForTests } from './project-pilot-request-evidence'
 import { reservePilotRequest } from './project-pilot-request-reservation'
-import { markPilotRequestNeedsReconcile, settlePilotRequestUsage } from './project-pilot-request-settlement'
+import { markPilotRequestNeedsReconcile, settlePilotRequestUsage, summarizePilotCommandRequestSettlements } from './project-pilot-request-settlement'
+import { settlePilotExecutionRuntimeUsage } from './project-pilot-runtime-usage'
 import type { PilotRequestEnvelope } from './project-pilot-request-envelope'
 
 const FINGERPRINT_A = 'a'.repeat(64)
@@ -138,4 +139,88 @@ test('Given 旧库表缺 settled 列 When 重新初始化 Then 重建迁移保�
   // 唯一索引在重建后仍然存在。
   expect(getProjectDb().prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_pilot_request_reservations_body'")
     .get()).toBeTruthy()
+})
+
+test('Given 命令全部请求已逐笔结算 When 以 request_settled 证据终态结算 Then 按总额落账', () => {
+  const { commandId, executionId } = fixture()
+  const base = { commandId, executionId, sessionId: 'session-a', envelope }
+  expect(reservePilotRequest({ ...base, requestId: 'terminal-1' })).toBe(200)
+  expect(reservePilotRequest({ ...base, requestId: 'terminal-2', envelope: { ...envelope, requestEvidenceId: FINGERPRINT_B } })).toBe(200)
+  expect(settlePilotRequestUsage('terminal-1', { promptTokens: 10, completionTokens: 10 })).toEqual({ outcome: 'settled', settledCostMicros: 20 })
+  expect(settlePilotRequestUsage('terminal-2', { promptTokens: 30, completionTokens: 30 })).toEqual({ outcome: 'settled', settledCostMicros: 60 })
+
+  const summary = summarizePilotCommandRequestSettlements(commandId)
+  expect(summary).toEqual({ requestIds: ['terminal-1', 'terminal-2'], settledCount: 2, pendingCount: 0, totalSettledCostMicros: 80 })
+
+  updateAgentExecution(executionId, { status: 'failed' })
+  const settlement = settlePilotCommandUsage(commandId, {
+    executionId, sessionId: 'session-a', channelId: 'channel-a', modelId: 'glm-5.3-flash', capturedAt: Date.now(),
+    source: 'request_settled', requestSettlementIds: summary.requestIds, costMicros: 80,
+  })
+  expect(settlement).toEqual({ commandId, state: 'settled', actualCostMicros: 80, grantPaused: false })
+})
+
+test('Given request_settled 证据与账本不符 When 终态结算 Then 拒绝且不改判', () => {
+  const { commandId, executionId } = fixture()
+  const base = { commandId, executionId, sessionId: 'session-a', envelope }
+  expect(reservePilotRequest({ ...base, requestId: 'tamper-1' })).toBe(200)
+  expect(reservePilotRequest({ ...base, requestId: 'tamper-2', envelope: { ...envelope, requestEvidenceId: FINGERPRINT_B } })).toBe(200)
+  expect(settlePilotRequestUsage('tamper-1', { promptTokens: 10, completionTokens: 10 })).toEqual({ outcome: 'settled', settledCostMicros: 20 })
+  expect(settlePilotRequestUsage('tamper-2', { promptTokens: 40, completionTokens: 40 })).toEqual({ outcome: 'settled', settledCostMicros: 80 })
+  updateAgentExecution(executionId, { status: 'failed' })
+  const evidence = {
+    executionId, sessionId: 'session-a', channelId: 'channel-a', modelId: 'glm-5.3-flash', capturedAt: Date.now(),
+    source: 'request_settled' as const,
+  }
+  // 总额不符
+  expect(() => settlePilotCommandUsage(commandId, { ...evidence, requestSettlementIds: ['tamper-1', 'tamper-2'], costMicros: 999 }))
+    .toThrow('总额不一致')
+  // 清单不符（缺第二笔）
+  expect(() => settlePilotCommandUsage(commandId, { ...evidence, requestSettlementIds: ['tamper-1'], costMicros: 20 }))
+    .toThrow('清单与命令预留不一致')
+  // 全部拒绝后命令保持原状，可重新正确结算
+  expect(settlePilotCommandUsage(commandId, { ...evidence, requestSettlementIds: ['tamper-1', 'tamper-2'], costMicros: 100 }))
+    .toEqual({ commandId, state: 'settled', actualCostMicros: 100, grantPaused: false })
+})
+
+test('Given 仍有请求未结算 When request_settled 终态结算 Then 拒绝（未结算的请求预留）', () => {
+  const { commandId, executionId } = fixture()
+  const base = { commandId, executionId, sessionId: 'session-a', envelope }
+  expect(reservePilotRequest({ ...base, requestId: 'half-1' })).toBe(200)
+  expect(reservePilotRequest({ ...base, requestId: 'half-2', envelope: { ...envelope, requestEvidenceId: FINGERPRINT_B } })).toBe(200)
+  expect(settlePilotRequestUsage('half-1', { promptTokens: 10, completionTokens: 10 })).toEqual({ outcome: 'settled', settledCostMicros: 20 })
+  updateAgentExecution(executionId, { status: 'failed' })
+  expect(() => settlePilotCommandUsage(commandId, {
+    executionId, sessionId: 'session-a', channelId: 'channel-a', modelId: 'glm-5.3-flash', capturedAt: Date.now(),
+    source: 'request_settled', requestSettlementIds: ['half-1', 'half-2'], costMicros: 220,
+  })).toThrow('未结算的请求预留')
+})
+
+test('Given ai-sdk 终态只有 token 无费用 When 逐请求全部结算 Then Runtime 回执走 request_settled 落账', () => {
+  const { commandId, executionId } = fixture()
+  const base = { commandId, executionId, sessionId: 'session-a', envelope }
+  expect(reservePilotRequest({ ...base, requestId: 'runtime-1' })).toBe(200)
+  expect(settlePilotRequestUsage('runtime-1', { promptTokens: 60, completionTokens: 20 })).toEqual({ outcome: 'settled', settledCostMicros: 80 })
+  updateAgentExecution(executionId, { status: 'failed' })
+
+  const settlement = settlePilotExecutionRuntimeUsage(executionId, 'ai-sdk',
+    { type: 'result', session_id: 'session-a', usage: { input_tokens: 60, output_tokens: 20 } } as never, Date.now())
+  expect(settlement).toEqual({ commandId, state: 'settled', actualCostMicros: 80, grantPaused: false })
+  // 回执表保存了原样终态（cost 为空），命令按逐请求总额 settled。
+  const receipt = getProjectDb().prepare('SELECT cost_micros, input_tokens, output_tokens FROM pilot_runtime_usage_receipts WHERE execution_id = ?')
+    .get(executionId) as { cost_micros: number | null; input_tokens: number; output_tokens: number }
+  expect(receipt).toEqual({ cost_micros: null, input_tokens: 60, output_tokens: 20 })
+})
+
+test('Given ai-sdk 终态无费用且仍有请求未结算 When Runtime 回执落账 Then 保守转 unknown 并暂停授权', () => {
+  const { commandId, executionId } = fixture()
+  const base = { commandId, executionId, sessionId: 'session-a', envelope }
+  expect(reservePilotRequest({ ...base, requestId: 'pending-1' })).toBe(200)
+  expect(reservePilotRequest({ ...base, requestId: 'pending-2', envelope: { ...envelope, requestEvidenceId: FINGERPRINT_B } })).toBe(200)
+  expect(settlePilotRequestUsage('pending-1', { promptTokens: 10, completionTokens: 10 })).toEqual({ outcome: 'settled', settledCostMicros: 20 })
+  updateAgentExecution(executionId, { status: 'failed' })
+
+  const settlement = settlePilotExecutionRuntimeUsage(executionId, 'ai-sdk',
+    { type: 'result', session_id: 'session-a', usage: { input_tokens: 30, output_tokens: 10 } } as never, Date.now())
+  expect(settlement).toEqual({ commandId, state: 'needs_reconcile', actualCostMicros: null, grantPaused: true })
 })

@@ -120,6 +120,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   systemPrompt?: string
   /** 权限模式 */
   permissionMode?: import('@gravitas/shared').PromaPermissionMode
+  /** 安全研发隔离写入边界：置位后 safe 模式允许 Write/Edit 仅写会话 cwd 内路径 */
+  worktreeScopedWrite?: boolean
   /** 自定义权限检查回调；未提供时按 permissionMode 做本地兜底判断 */
   canUseTool?: CanUseToolCallback
   /** 历史 SDKMessage（阶段 2：多轮会话上下文） */

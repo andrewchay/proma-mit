@@ -26,6 +26,7 @@ import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budge
 import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
 import { getPilotCompletionBlocker, getPilotSettlementBlocker } from './project-pilot-terminal-gate'
+import { summarizePilotCommandRequestSettlements } from './project-pilot-request-settlement'
 import type { PilotCommandSettlement } from './project-pilot-budget-ledger'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
@@ -782,6 +783,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       runtimeBudgetLimitUsd,
       workspaceId,
       permissionModeOverride,
+      // 安全研发无监督会话：隔离 worktree 内放行 Write/Edit（safe 模式专属豁免）
+      worktreeScopedWrite: development && permissionModeOverride === 'safe',
       triggeredBy: 'automation',
       startedAt,
     },
@@ -1032,8 +1035,11 @@ function handleExecutionComplete(
     recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
     return
   }
+  const requestSettlementSummary = execution.pilotCommandId
+    ? summarizePilotCommandRequestSettlements(execution.pilotCommandId)
+    : undefined
   const pilotBlocker = getPilotCompletionBlocker(execution.pilotCommandId,
-    store.getAgentEmployee(execution.agentId)?.runtime, runtimeSource, runtimeResult)
+    store.getAgentEmployee(execution.agentId)?.runtime, runtimeSource, runtimeResult, requestSettlementSummary)
   if (pilotBlocker) {
     // 禁止来源不明、Pi 或缺费用的 Pilot 回调把执行、任务与交付误标为成功；
     // 失败仍走 unknown 结算、撤权及待人工对账，不用本地估价填补回执。

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { SDKResultMessage } from '@gravitas/shared'
 import { settlePilotCommandUsage, type PilotCommandSettlement } from './project-pilot-budget-ledger'
+import { summarizePilotCommandRequestSettlements } from './project-pilot-request-settlement'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 
 interface PilotRuntimeBinding {
@@ -134,6 +135,21 @@ export function settlePilotExecutionRuntimeUsage(
       runtimeReceiptId: receiptId, payloadHash,
     }
     if (costMicros === null) {
+      // ai-sdk 终态只有 token 没有费用字段；若本命令全部请求已按真实 usage 逐笔
+      // settled，则费用证据已闭合，按逐请求结算总额落账（清单与总额在账本内核验）。
+      const summary = summarizePilotCommandRequestSettlements(execution.pilotCommandId)
+      if (summary.settledCount >= 1 && summary.pendingCount === 0) {
+        return settlePilotCommandUsage(execution.pilotCommandId, {
+          executionId: execution.id,
+          sessionId: execution.sessionId,
+          channelId: binding.channelId,
+          modelId: binding.modelId,
+          capturedAt,
+          source: 'request_settled',
+          requestSettlementIds: summary.requestIds,
+          costMicros: summary.totalSettledCostMicros,
+        }, capturedAt)
+      }
       return settlePilotCommandUsage(execution.pilotCommandId, {
         ...evidenceBase, source: 'unknown',
         reason: 'Runtime 终态回执未提供费用，不能用本地估价替代实际结算',

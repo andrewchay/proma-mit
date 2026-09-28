@@ -35,6 +35,8 @@ export interface AISDKAgentQueryOptions extends AgentQueryInput {
   systemPrompt?: string
   /** 权限模式 */
   permissionMode?: PromaPermissionMode
+  /** 安全研发隔离写入边界：置位后 safe 模式允许 Write/Edit 仅写会话 cwd 内路径 */
+  worktreeScopedWrite?: boolean
   /** 自定义权限检查回调 */
   canUseTool?: AISDKCanUseToolCallback
   /** 历史 SDKMessage */
@@ -127,6 +129,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         controller: createAbortController(abortSignal),
         permissionMode: input.permissionMode ?? 'auto',
         planModeEntered: input.permissionMode === 'plan',
+        worktreeScopedWrite: input.worktreeScopedWrite === true,
       },
       queuedMessages: [],
       interrupted: false,

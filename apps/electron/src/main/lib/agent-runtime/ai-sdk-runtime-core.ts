@@ -21,6 +21,7 @@ import type {
 } from '@gravitas/shared'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
+import { resolve, sep } from 'node:path'
 import {
   AISDKStreamStepAccumulator,
   createAgentAISDKModel,
@@ -49,6 +50,11 @@ export interface AISDKRuntimeSessionState {
   controller: AbortController
   permissionMode: PromaPermissionMode
   planModeEntered: boolean
+  /**
+   * 安全研发隔离写入边界（由无监督研发 runner 置位）：safe 模式下允许 Write/Edit
+   * 仅写入会话 cwd（隔离 Git worktree）内路径；Bash 仍只读、外部工具仍禁。
+   */
+  worktreeScopedWrite?: boolean
 }
 
 export interface AISDKToolPermissionResult {
@@ -542,6 +548,18 @@ export class AISDKRuntimeCore {
       if (toolName === 'Bash') {
         const command = typeof input.command === 'string' ? input.command : ''
         if (isBashCommandReadOnly(command)) return { allowed: true }
+      }
+      // 安全研发隔离写入：无监督研发 runner 置位后，允许 Write/Edit 仅写入会话
+      // cwd（隔离 Git worktree）内的路径；解析后越界一律拒绝，Bash 仍只读。
+      if (state.activeSession.worktreeScopedWrite
+        && (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit')) {
+        const filePath = typeof input.file_path === 'string' ? input.file_path.trim() : ''
+        if (filePath) {
+          const root = resolve(state.cwd)
+          const target = resolve(root, filePath)
+          if (target === root || target.startsWith(root + sep)) return { allowed: true }
+          return { allowed: false, message: `安全研发会话仅允许写入工作树内文件（${root}），目标路径越界` }
+        }
       }
       return { allowed: false, message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
     }

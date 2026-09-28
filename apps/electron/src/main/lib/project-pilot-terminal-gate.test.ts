@@ -35,3 +35,18 @@ test('Given 普通员工或既有 Pilot Runtime 有费用结果 When 回调完�
   expect(getPilotCompletionBlocker('pilot-command', 'proma', 'proma', receipt)).toBeUndefined()
   expect(getPilotCompletionBlocker('pilot-command', 'ai-sdk', 'ai-sdk', receipt)).toBeUndefined()
 })
+
+test('Given ai-sdk 终态无费用但命令全部请求已逐笔结算 When 回调完成 Then 视为费用证据闭合', () => {
+  const noCost = { usage: { input_tokens: 49278, output_tokens: 1840 } } as SDKResultMessage
+  expect(getPilotCompletionBlocker('pilot-command', 'ai-sdk', 'ai-sdk', noCost,
+    { settledCount: 4, pendingCount: 0 })).toBeUndefined()
+  // 任一请求未结算（reserved / needs_reconcile）或没有任何请求记录，仍然拒绝。
+  expect(getPilotCompletionBlocker('pilot-command', 'ai-sdk', 'ai-sdk', noCost,
+    { settledCount: 3, pendingCount: 1 })).toContain('费用结果')
+  expect(getPilotCompletionBlocker('pilot-command', 'ai-sdk', 'ai-sdk', noCost,
+    { settledCount: 0, pendingCount: 0 })).toContain('费用结果')
+  expect(getPilotCompletionBlocker('pilot-command', 'ai-sdk', 'ai-sdk', noCost)).toContain('费用结果')
+  // 该豁免仅限 ai-sdk：proma 缺终态费用仍拒绝。
+  expect(getPilotCompletionBlocker('pilot-command', 'proma', 'proma', noCost,
+    { settledCount: 4, pendingCount: 0 })).toContain('费用结果')
+})

@@ -441,6 +441,7 @@ export type PilotUsageEvidence = PilotUsageEvidenceBase & (
   | { source: 'provider_reported'; providerRecordId: string; inputTokens: number; outputTokens: number; costMicros: number }
   | { source: 'runtime_reported'; runtimeReceiptId: string; payloadHash: string; inputTokens: number; outputTokens: number; costMicros: number }
   | { source: 'traceable_estimate'; priceSource: string; inputTokens: number; outputTokens: number; costMicros: number }
+  | { source: 'request_settled'; requestSettlementIds: string[]; costMicros: number }
   | { source: 'unknown'; reason: string; runtimeReceiptId?: string; payloadHash?: string }
 )
 
@@ -450,7 +451,7 @@ export function validatePilotUsageEvidence(evidence: PilotUsageEvidence): void {
     || !Number.isSafeInteger(evidence?.capturedAt) || evidence.capturedAt < 0) {
     throw new Error('Pilot 用量证据身份无效')
   }
-  if (!['provider_reported', 'runtime_reported', 'traceable_estimate', 'unknown'].includes(evidence.source)) {
+  if (!['provider_reported', 'runtime_reported', 'traceable_estimate', 'request_settled', 'unknown'].includes(evidence.source)) {
     throw new Error('Pilot 用量证据来源无效')
   }
   if (evidence.source === 'unknown') {
@@ -459,6 +460,15 @@ export function validatePilotUsageEvidence(evidence: PilotUsageEvidence): void {
       || (evidence.runtimeReceiptId !== undefined && !evidence.runtimeReceiptId.trim())
       || (evidence.payloadHash !== undefined && !/^[a-f0-9]{64}$/.test(evidence.payloadHash))) {
       throw new Error('Pilot 未知用量必须说明原因并携带完整回执引用')
+    }
+    return
+  }
+  if (evidence.source === 'request_settled') {
+    const ids = evidence.requestSettlementIds
+    if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => typeof id !== 'string' || !id.trim())
+      || new Set(ids).size !== ids.length
+      || !Number.isSafeInteger(evidence.costMicros) || evidence.costMicros < 0) {
+      throw new Error('Pilot 逐请求结算证据无效')
     }
     return
   }
@@ -488,11 +498,19 @@ export function hashPilotRuntimeUsageRecord(runtimeReceiptId: string): string {
   })).digest('hex')
 }
 
+export function hashPilotRequestSettlementRecord(requestSettlementIds: string[]): string {
+  return createHash('sha256').update(JSON.stringify({
+    source: 'request_settled',
+    requestSettlementIds: [...requestSettlementIds].sort(),
+  })).digest('hex')
+}
+
 function usageRecordKey(evidence: PilotUsageEvidence): string | null {
   if (evidence.source === 'provider_reported') {
     return hashPilotProviderUsageRecord(evidence.channelId, evidence.providerRecordId)
   }
   if (evidence.source === 'runtime_reported') return hashPilotRuntimeUsageRecord(evidence.runtimeReceiptId)
+  if (evidence.source === 'request_settled') return hashPilotRequestSettlementRecord(evidence.requestSettlementIds)
   if (evidence.source === 'unknown' && evidence.runtimeReceiptId) {
     return hashPilotRuntimeUsageRecord(evidence.runtimeReceiptId)
   }
@@ -623,6 +641,20 @@ export function settlePilotCommandUsage(commandId: string, evidence: PilotUsageE
     }
     if (evidence.source === 'runtime_reported' || evidence.source === 'unknown') {
       assertPilotRuntimeUsageReceipt(evidence, command.project_id)
+    }
+    if (evidence.source === 'request_settled') {
+      // 终态命令结算不信任调用方数字：逐请求预留必须全部 settled，且清单与总额逐项一致。
+      const rows = database.prepare('SELECT request_id, state, settled_cost_micros FROM pilot_request_reservations WHERE command_id = ?')
+        .all(commandId) as Array<{ request_id: string; state: string; settled_cost_micros: number | null }>
+      if (rows.length < 1) throw new Error('Pilot 命令没有逐请求结算记录')
+      const dbIds = rows.map((row) => row.request_id).sort()
+      const evidenceIds = [...evidence.requestSettlementIds].sort()
+      if (dbIds.length !== evidenceIds.length || dbIds.some((id, index) => id !== evidenceIds[index])) {
+        throw new Error('Pilot 逐请求结算清单与命令预留不一致')
+      }
+      if (rows.some((row) => row.state !== 'settled')) throw new Error('Pilot 命令仍有未结算的请求预留')
+      const total = rows.reduce((sum, row) => sum + (row.settled_cost_micros ?? 0), 0)
+      if (total !== evidence.costMicros) throw new Error('Pilot 逐请求结算总额不一致')
     }
     if ((command.state === 'settled' || command.state === 'needs_reconcile')
       && command.actual_cost_micros === actualCostMicros && command.usage_evidence === serializedEvidence
