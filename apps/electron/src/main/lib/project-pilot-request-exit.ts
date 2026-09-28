@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { derivePilotRequestEnvelope, getPilotReviewedPriceEvidence } from './project-pilot-request-evidence'
 import { getAgentExecutionBySessionId } from './project-sqlite-store'
 import { reservePilotRequest, verifyPilotRequestBody } from './project-pilot-request-reservation'
+import { markPilotRequestNeedsReconcile, settlePilotRequestUsage } from './project-pilot-request-settlement'
 
 /**
  * Pilot 受控请求出口：每次模型 HTTP 请求必须依次通过
@@ -41,8 +42,10 @@ export function createPilotRequestFetch(input: PilotRequestFetchInput): typeof g
     if (typeof body !== 'string' || body.length === 0) {
       throw new Error('Pilot 受控出口无法核验请求体，拒绝发送')
     }
+    // 流式请求注入 include_usage：结束前返回 usage 块，供逐请求结算；指纹与核验均针对注入后的最终 body。
+    const finalBody = injectStreamUsage(body)
     const envelope = derivePilotRequestEnvelope({
-      body,
+      body: finalBody,
       priceEvidenceId: input.priceEvidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID,
     })
     // requestId 只需全局唯一即可；崩溃后是否重复发送由请求体指纹唯一约束兜底。
@@ -54,10 +57,103 @@ export function createPilotRequestFetch(input: PilotRequestFetchInput): typeof g
       sessionId: input.sessionId,
       envelope,
     })
-    verifyPilotRequestBody(requestId, body)
-    return input.baseFetch(rawInput, { ...init, body })
+    verifyPilotRequestBody(requestId, finalBody)
+    const response = await input.baseFetch(rawInput, { ...init, body: finalBody })
+    return settleAfterResponse(requestId, response)
   }
   return Object.assign(pilotFetch, { preconnect: () => {} })
+}
+
+/** 流式请求注入 stream_options.include_usage（已配置则尊重原值）；其余 body 原样返回。 */
+function injectStreamUsage(body: string): string {
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(body) as Record<string, unknown>
+  } catch {
+    return body
+  }
+  if (parsed.stream !== true || parsed.stream_options !== undefined) return body
+  parsed.stream_options = { include_usage: true }
+  return JSON.stringify(parsed)
+}
+
+/** 响应返回后 tee 一份副本异步解析用量并结算；主分支原样交给 Runtime 消费。 */
+function settleAfterResponse(requestId: string, response: Response): Response {
+  if (!response.body) {
+    markPilotRequestNeedsReconcile(requestId)
+    return response
+  }
+  try {
+    const [main, probe] = response.body.tee()
+    void consumeUsageAndSettle(requestId, probe, response.headers.get('content-type') ?? '', response.status)
+    return new Response(main, { status: response.status, statusText: response.statusText, headers: response.headers })
+  } catch {
+    // tee 失败时费用无法核验：保持占额转待对账，响应原样返回。
+    markPilotRequestNeedsReconcile(requestId)
+    return response
+  }
+}
+
+async function consumeUsageAndSettle(requestId: string, stream: ReadableStream<Uint8Array>,
+  contentType: string, status: number): Promise<void> {
+  try {
+    if (status < 200 || status >= 300) {
+      // 非成功响应的费用无法证明未计费：保持占额转待对账。
+      markPilotRequestNeedsReconcile(requestId)
+      return
+    }
+    const text = await new Response(stream).text()
+    const usage = contentType.includes('text/event-stream')
+      ? extractSseUsage(text)
+      : extractJsonUsage(text)
+    if (!usage) {
+      markPilotRequestNeedsReconcile(requestId)
+      return
+    }
+    const settlement = settlePilotRequestUsage(requestId, usage)
+    if (settlement.outcome === 'needs_reconcile') {
+      console.warn(`[Pilot 受控出口] 请求 ${requestId} 转入待对账：${settlement.reason}`)
+    }
+  } catch (error) {
+    markPilotRequestNeedsReconcile(requestId)
+    console.warn(`[Pilot 受控出口] 请求 ${requestId} 用量解析失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function extractJsonUsage(text: string): { promptTokens: number; completionTokens: number } | undefined {
+  try {
+    const parsed = JSON.parse(text) as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }
+    const prompt = parsed.usage?.prompt_tokens
+    const completion = parsed.usage?.completion_tokens
+    if (typeof prompt === 'number' && typeof completion === 'number') {
+      return { promptTokens: prompt, completionTokens: completion }
+    }
+  } catch {
+    // 非 JSON 响应按无用量处理。
+  }
+  return undefined
+}
+
+/** 取最后一个带数值 usage 的 data 块（include_usage 约定：[DONE] 前返回 usage 块且 choices 为空）。 */
+function extractSseUsage(text: string): { promptTokens: number; completionTokens: number } | undefined {
+  const lines = text.split('\n')
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]?.trim() ?? ''
+    if (!line.startsWith('data:')) continue
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      const parsed = JSON.parse(payload) as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }
+      const prompt = parsed.usage?.prompt_tokens
+      const completion = parsed.usage?.completion_tokens
+      if (typeof prompt === 'number' && typeof completion === 'number') {
+        return { promptTokens: prompt, completionTokens: completion }
+      }
+    } catch {
+      continue
+    }
+  }
+  return undefined
 }
 
 /** 一次 turn 的完整受控运行时：同一闭包覆盖主 turn、压缩等全部请求，保证 requestId 序列共享。 */

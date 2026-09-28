@@ -705,7 +705,9 @@ function migrate(database: SqliteCompat): void {
       request_evidence_id TEXT NOT NULL,
       price_evidence_id TEXT NOT NULL,
       reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
-      state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile')),
+      settled_cost_micros INTEGER CHECK (settled_cost_micros IS NULL OR settled_cost_micros >= 0),
+      state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile', 'settled')
+        AND (state != 'settled' OR settled_cost_micros IS NOT NULL)),
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_pilot_request_reservations_command ON pilot_request_reservations(command_id);
@@ -1032,12 +1034,41 @@ function migrate(database: SqliteCompat): void {
     request_evidence_id TEXT NOT NULL,
     price_evidence_id TEXT NOT NULL,
     reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
-    state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile')),
+    settled_cost_micros INTEGER CHECK (settled_cost_micros IS NULL OR settled_cost_micros >= 0),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile', 'settled')
+      AND (state != 'settled' OR settled_cost_micros IS NOT NULL)),
     created_at INTEGER NOT NULL
   )`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_pilot_request_reservations_command ON pilot_request_reservations(command_id)')
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_request_reservations_body
     ON pilot_request_reservations(execution_id, request_evidence_id)`)
+  // 旧库表无 settled 列且 CHECK 不含 settled 状态：重建迁移，逐行保留原 reserved/needs_reconcile 占额。
+  const requestReservationColumns = readColumnNames(database, 'pilot_request_reservations')
+  if (requestReservationColumns.length > 0 && !requestReservationColumns.includes('settled_cost_micros')) {
+    database.exec(`CREATE TABLE pilot_request_reservations_rebuild (
+      request_id TEXT PRIMARY KEY,
+      command_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      request_evidence_id TEXT NOT NULL,
+      price_evidence_id TEXT NOT NULL,
+      reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+      settled_cost_micros INTEGER CHECK (settled_cost_micros IS NULL OR settled_cost_micros >= 0),
+      state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile', 'settled')
+        AND (state != 'settled' OR settled_cost_micros IS NOT NULL)),
+      created_at INTEGER NOT NULL
+    );
+    INSERT INTO pilot_request_reservations_rebuild
+      (request_id, command_id, execution_id, session_id, request_evidence_id, price_evidence_id,
+       reserved_cost_micros, settled_cost_micros, state, created_at)
+      SELECT request_id, command_id, execution_id, session_id, request_evidence_id, price_evidence_id,
+       reserved_cost_micros, NULL, state, created_at FROM pilot_request_reservations;
+    DROP TABLE pilot_request_reservations;
+    ALTER TABLE pilot_request_reservations_rebuild RENAME TO pilot_request_reservations;`)
+    database.exec('CREATE INDEX IF NOT EXISTS idx_pilot_request_reservations_command ON pilot_request_reservations(command_id)')
+    database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_request_reservations_body
+      ON pilot_request_reservations(execution_id, request_evidence_id)`)
+  }
   // Runtime 终态原文单独追加保存；旧库补表后仍不能据历史 token 统计反推费用。
   database.exec(`CREATE TABLE IF NOT EXISTS pilot_runtime_usage_receipts (
     id TEXT PRIMARY KEY,

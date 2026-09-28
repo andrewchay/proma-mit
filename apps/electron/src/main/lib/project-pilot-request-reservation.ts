@@ -57,7 +57,9 @@ export function reservePilotRequest(input: PilotRequestReservationInput, now = D
       .get(input.executionId, input.envelope.requestEvidenceId)) {
       throw new Error('Pilot 请求体指纹已预留，不得重复发送')
     }
-    const usage = db.prepare(`SELECT COALESCE(SUM(reserved_cost_micros), 0) AS total
+    // 可用额度 = 命令预留 − 未结算占额 − 已结算行的实际成本；settled 释放预留与实际的差额。
+    const usage = db.prepare(`SELECT COALESCE(SUM(CASE WHEN state = 'settled' THEN settled_cost_micros
+      ELSE reserved_cost_micros END), 0) AS total
       FROM pilot_request_reservations WHERE command_id = ?`).get(input.commandId) as { total: number }
     if (!Number.isSafeInteger(usage.total) || !Number.isSafeInteger(command.reserved_cost_micros)) {
       throw new Error('Pilot 请求累计费用无法核验')

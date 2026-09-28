@@ -8,7 +8,8 @@
 - [x] 证据绑定与请求体指纹：价格证据必须注册于版本库审核表；包络费率/上界不得偏离证据且上界为正整数；requestEvidenceId 强制为最终 HTTP 请求体 SHA-256，同执行指纹唯一（崩溃换 requestId 也拒绝重发同一请求体）；derive 从真实 body 提取输出上限并夹紧模型上界，模型标识强制绑定（google 经出口核验的 verifiedModel 传入）；发送前 verifyPilotRequestBody 核对指纹。审查员复核三项问题闭合。定向 14 PASS、全仓 509 文件零失败。
 - [x] 登记首条真实价格证据：用户指定 glm-5.3-flash；Z.ai 官方牌价输入 $0.15/M、输出 $0.50/M（上下文 1M、最大输出 128K）入库为 zai-glm-5.3-flash-2026-09-28；derive 拒绝多模态消息块（messages/contents 双协议受检）与非 function 内置工具。复核通过。定向 17 PASS、全仓 509 文件零失败。国内牌价覆盖依赖 USDCNY≥5.6；max_tokens 对推理 token 的服务端强制语义待接线实测。
 - [x] ai-sdk 生产出口接线（-54）：project-pilot-request-exit.ts 受控 fetch——最终 body 依次 derive→reserve→verify 后才发送，预算不足/证据不符/多模态/缺 max_tokens 一律 HTTP 零发送；按 sessionId 反查 Pilot 受控执行（库不可用 fail-closed），仅 Pilot 会话注入；streamText 强制 maxOutputTokens=131072；手动/自动/工具内/溢出恢复四条压缩路径同出口；Pilot 模式禁用子代理委派（绕过路径 fail-closed）。复核通过：无绕过、非 Pilot 零行为变化。定向 36 PASS、全仓 510 文件零失败。
-- [ ] 逐请求结算/释放：响应回执对账（Provider 用量 vs 预留）、断流/失败占额回收或转 needs_reconcile、跨执行恢复策略；与命令级 settlePilotCommandUsage 对齐。
+- [x] 逐请求结算/释放（-55）：settlement 模块按证据价同一 ceil 算术结算实际用量，settled 释放差额、超预留/用量不可信转 needs_reconcile 保持占额；出口流式注入 include_usage 并 tee 解析 usage（非 2xx/无 usage/解析失败转待对账，崩溃残留保持 reserved）；可用额度 SUM 按状态计费；旧库表重建迁移。复核通过：无超释组合、全路径落三类状态之一。定向 44 PASS、全仓 511 文件零失败。
+- [ ] G2 受控真实试跑（参数已确认：$1.00 / 2 命令 × 6 轮 / 总请求 ≤20 / 24h 有效；渠道 bigmodel 国内 OpenAI 兼容端点 + Key 已配置，模型 ID 须精确 glm-5.3-flash）。**实际计费为 CNY，总花费硬上限 ¥10，超出须单独向用户申请**（$1.00 USD 为客户端预算上界）。验收：回执与 usage 落库；usage.completion_tokens ≤ max_tokens（thinking 计入输出实测）；预留→实际结算余额正确；断流占额转 needs_reconcile 不复用；全程无未过出口的请求；结束后与 bigmodel 账单核对。
 - [ ] Pi Runtime 生产出口接线（独立验收；重试、压缩、工具新增请求纳入或禁用）。max_tokens 对推理 token 的服务端强制语义在首次真实试跑前实测。
 - [ ] 保留各 Runtime 独立放行条件：同一受控出口、能力位、readiness 与费用结算纵向测试必须单独验收，禁止因其中一条通过而全局放开。
 

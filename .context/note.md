@@ -1,5 +1,14 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-09-28 Project Pilot Goal：逐请求结算/释放 + G2 参数确认（-55）
+- 用户确认 G2 参数：预算 **$1.00**（1,000,000 micro-USD）、**2 命令 × 6 轮**、总请求硬上限 20、24h 有效；渠道为 bigmodel 国内 OpenAI 兼容端点（端点/Key 用户已配置）。已核实 bigmodel 模型 ID 为小写 `glm-5.3-flash`（渠道必须精确一致，否则 derive 拒发）、其兼容接口支持 `stream_options.include_usage`。
+- 实现 `project-pilot-request-settlement.ts`：`settlePilotRequestUsage` 按证据价同一套 BigInt ceil 结算实际用量——实际 ≤ 预留 → `settled` 释放差额（可用额度 SUM 改为 settled 行按实际计、其余按预留计）；实际 > 预留或证据不可用 → `needs_reconcile` 保持全额占额；幂等不改判。`markPilotRequestNeedsReconcile` 只作用于 reserved 行。
+- 出口增强：流式请求注入 `stream_options.include_usage`（注入后才算指纹/核验/发送，三者一致）；`settleAfterResponse` tee 响应副本异步解析 usage（SSE 取最后一个带数值 usage 的 data 块 / JSON 取 `usage` 字段）→ 结算；非 2xx、无 usage、解析异常、tee 异常全部转待对账；进程崩溃残留保持 reserved。理论占额状态只有 reserved/needs_reconcile/settled 三类，无静默蒸发路径。
+- schema：`pilot_request_reservations` 增加 `settled_cost_micros` 列与 `settled` 状态（CHECK 联动）；旧库（de82e991 版表结构）走重建迁移，逐行保留占额并重建双索引——迁移测试模拟降级→重开验证。
+- 复核（glm-5.3-flashx 子会话）结论「通过」：算术与预留一致且单调性保证不超；无超释状态组合；tee 全路径落三类状态之一；迁移不丢数据不丢索引。
+- 验证：定向 44 PASS；全仓 511 文件零失败、typecheck、lint 0 error（3 warnings 既有）、docs:check、git diff --check 全过。
+- **边界**：结算信任 Provider 诚实回执；`max_tokens` 对 thinking 的服务端强制语义在 G2 首呼实测；国内 CNY 牌价由 USD 证据覆盖依赖 USDCNY≥5.6。G2 现在只等用户在应用内发起（readiness 位仍未全局放开，走既有 Pilot 门禁发起）。
+
 ## 2026-09-28 Project Pilot Goal：ai-sdk 生产受控出口接线（-54）
 - 新增 `project-pilot-request-exit.ts`：`createPilotRequestFetch` 把最终 HTTP body 依次送入 derive→reserve→verify 后才调真实 fetch；非字符串 body、预算不足、证据不符、多模态、缺 max_tokens 一律 throw（HTTP 零发送）。`resolvePilotBudgetForSession` 用 `getAgentExecutionBySessionId` 反查 Pilot 受控执行（库不可用直接抛错=fail-closed，宁可拒发不可漏发），仅 Pilot 会话注入出口，普通会话零行为变化。
 - 接线点：adapter 构建 `pilotRuntime`（单闭包覆盖整 turn）→ `createAgentAISDKModel` 注入 fetch + streamText 强制 `maxOutputTokens=131072`（来自 GLM 证据）；手动/自动/工具内/溢出恢复四条压缩路径经 `fetchFn` 走同一出口；requestId 用 randomUUID 全局唯一，崩溃重复发送由请求体指纹唯一约束兜底。
