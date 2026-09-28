@@ -139,6 +139,16 @@ function readBudgetUsage(grantId: string): { runReservations: number; committedC
   return { runReservations: row.runs, committedCostMicros: row.committed }
 }
 
+/** 是否存在已结算的执行命令：评审命令只允许在执行链闭环后派发，先评审后执行视为编排异常。 */
+export function hasSettledPilotExecutorRun(projectId: string, grantId: string): boolean {
+  if (typeof projectId !== 'string' || !projectId.trim() || typeof grantId !== 'string' || !grantId.trim()) {
+    throw new Error('Pilot 结算查询参数无效')
+  }
+  const row = getProjectDb().prepare(`SELECT 1 FROM pilot_commands
+    WHERE project_id = ? AND grant_id = ? AND role = 'executor' AND state = 'settled' LIMIT 1`).get(projectId, grantId)
+  return row !== undefined
+}
+
 /** 在已锁定的策略快照内预留费用和次数；不创建 Agent execution，也不调用模型。 */
 function reservePilotCommandBudgetLocked(
   input: PilotCommandReservationInput,

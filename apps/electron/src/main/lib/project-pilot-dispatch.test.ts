@@ -51,7 +51,7 @@ function fixture() {
     executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
     maxCostMicros: 1_000, maxRuns: 2, maxRework: 1, expiresAt: now + 100_000, createdAt: now,
   })
-  return { project, task, executor, grantId, now }
+  return { project, task, executor, reviewer, grantId, now }
 }
 
 const ready = (projectId: string) => ({
@@ -121,4 +121,66 @@ test('Given 后台停止信号 When 候选准备派发 Then 不预留命令或�
     inspectReadiness: ready, startExecution: async () => false,
   }, Date.now(), controller.signal)).rejects.toThrow('对账已停止')
   expect(listAgentExecutionsByProject(project.id)).toEqual([])
+})
+
+/** 评审派发夹具：同一授权下执行任务与评审任务都处于 ready。 */
+function reviewerFixture() {
+  const base = fixture()
+  const reviewerTask = createTask(base.project.id, {
+    title: '评审执行交付', description: '在执行命令结算后进入评审 run', workspaceId: 'workspace-a',
+    assignee: { userId: `agent-${base.reviewer.id}`, displayName: base.reviewer.name },
+  })
+  return { ...base, reviewerTask }
+}
+
+test('Given 执行命令尚未结算 When 派发评审候选 Then 拒绝且不预留命令', async () => {
+  const { project, reviewerTask, now } = reviewerFixture()
+  const intent = (await getCurrentPilotIntents(project.id)).find((item) => item.sourceId === reviewerTask.id)!
+  await expect(projectPilotDispatchTesting.dispatch(project.id, intent.id, {
+    inspectReadiness: ready, startExecution: async () => false,
+  }, now)).rejects.toThrow('评审命令须在执行命令结算后派发')
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE project_id = ?').get(project.id))
+    .toEqual({ n: 0 })
+})
+
+test('Given 执行命令已结算 When 派发评审候选与第三个候选 Then 评审占用第 2 次 run 且超额拒绝', async () => {
+  const fx = reviewerFixture()
+  const intents = await getCurrentPilotIntents(fx.project.id)
+  const executorIntent = intents.find((item) => item.sourceId === fx.task.id)!
+  await projectPilotDispatchTesting.dispatch(fx.project.id, executorIntent.id, {
+    inspectReadiness: ready, startExecution: async () => false,
+  }, fx.now)
+  getProjectDb().prepare(`UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 100
+    WHERE project_id = ? AND role = 'executor'`).run(fx.project.id)
+  const reviewerIntent = (await getCurrentPilotIntents(fx.project.id)).find((item) => item.sourceId === fx.reviewerTask.id)!
+  const result = await projectPilotDispatchTesting.dispatch(fx.project.id, reviewerIntent.id, {
+    inspectReadiness: ready, startExecution: async () => false,
+  }, fx.now)
+  expect(result.commandId).toStartWith('pilot-command-')
+  expect(getProjectDb().prepare('SELECT role, employee_id, state, rework_ordinal FROM pilot_commands WHERE id = ?')
+    .get(result.commandId)).toEqual({ role: 'reviewer', employee_id: fx.reviewer.id, state: 'queued', rework_ordinal: 0 })
+  expect(getAgentExecution(result.executionId)).toMatchObject({ agentId: fx.reviewer.id, status: 'queued' })
+  expect(getProjectDb().prepare(`SELECT count(*) AS n FROM pilot_commands WHERE grant_id = ? AND state != 'released'`)
+    .get(fx.grantId)).toEqual({ n: 2 })
+
+  const extraTask = createTask(fx.project.id, {
+    title: '超出授权的追加任务', description: '授权仅 2 次 run', workspaceId: 'workspace-a',
+    assignee: { userId: `agent-${fx.executor.id}`, displayName: fx.executor.name },
+  })
+  const extraIntent = (await getCurrentPilotIntents(fx.project.id)).find((item) => item.sourceId === extraTask.id)!
+  await expect(projectPilotDispatchTesting.dispatch(fx.project.id, extraIntent.id, {
+    inspectReadiness: ready, startExecution: async () => false,
+  }, fx.now)).rejects.toThrow('Pilot 执行次数额度已耗尽')
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE project_id = ?').get(fx.project.id))
+    .toEqual({ n: 2 })
+})
+
+test('Given 候选负责人既非执行也非评审员工 When 派发 Then 拒绝且不创建命令', async () => {
+  const drifted = reviewerFixture()
+  const intent = (await getCurrentPilotIntents(drifted.project.id)).find((item) => item.sourceId === drifted.reviewerTask.id)!
+  getProjectDb().prepare('UPDATE tasks SET assignee_user_id = ? WHERE id = ?').run('agent-stranger', drifted.reviewerTask.id)
+  await expect(projectPilotDispatchTesting.dispatch(drifted.project.id, intent.id, {
+    inspectReadiness: ready, startExecution: async () => false,
+  }, drifted.now)).rejects.toThrow('执行角色或工作区不匹配')
+  expect(listAgentExecutionsByProject(drifted.project.id)).toEqual([])
 })

@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
+import { hasSettledPilotExecutorRun, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
+import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
 import { getPilotPolicy } from './project-pilot-policy'
 import { inspectPilotReadiness, type PilotReadiness } from './project-pilot-readiness'
-import { hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
 import { getAgentEmployee, getTask } from './project-sqlite-store'
 
 export interface PilotDispatchResult {
@@ -26,8 +26,8 @@ const productionDependencies: PilotDispatchDependencies = {
   },
 }
 
-function commandIdentity(grantId: string, intentId: string): string {
-  return createHash('sha256').update(JSON.stringify({ grantId, intentId, role: 'executor', reworkOrdinal: 0 }))
+function commandIdentity(grantId: string, intentId: string, role: 'executor' | 'reviewer', reworkOrdinal: number): string {
+  return createHash('sha256').update(JSON.stringify({ grantId, intentId, role, reworkOrdinal }))
     .digest('hex')
 }
 
@@ -59,21 +59,29 @@ async function dispatchPilotIntentWithDependencies(
     || !pilotGrantMatchesPolicy(grant, policy)) {
     throw new Error('Pilot 活动授权或当前绑定未通过派发核验')
   }
+  // 角色由任务负责人决定：执行员工派执行命令，评审员工派评审命令；其余一律拒绝。
+  // 工作区漂移与未知负责人共用同一拒绝语，避免向客户端泄露授权内部角色绑定。
   const task = getTask(intent.sourceId)
-  if (!task || task.projectId !== projectId || task.assignee?.userId !== `agent-${grant.executorEmployeeId}`
-    || task.workspaceId !== grant.workspaceId) {
+  const assigneeId = task?.assignee?.userId
+  const role: 'executor' | 'reviewer' | null = !task || task.projectId !== projectId || task.workspaceId !== grant.workspaceId ? null
+    : assigneeId === `agent-${grant.executorEmployeeId}` ? 'executor'
+    : assigneeId === `agent-${grant.reviewerEmployeeId}` ? 'reviewer' : null
+  if (!task || !role) {
     throw new Error('Pilot 候选任务与授权执行角色或工作区不匹配')
   }
-  const employee = getAgentEmployee(grant.executorEmployeeId)
-  if (!employee || !employee.enabled || employee.executionProfile !== 'development') {
-    throw new Error('Pilot 执行员工不可用或不属于安全研发角色')
+  if (role === 'reviewer' && !hasSettledPilotExecutorRun(projectId, grant.grantId)) {
+    throw new Error('Pilot 评审命令须在执行命令结算后派发')
   }
-  const identity = commandIdentity(grant.grantId, intent.id)
+  const employee = getAgentEmployee(role === 'executor' ? grant.executorEmployeeId : grant.reviewerEmployeeId)
+  if (!employee || !employee.enabled || employee.executionProfile !== 'development') {
+    throw new Error('Pilot 授权员工不可用或不属于安全研发角色')
+  }
+  const identity = commandIdentity(grant.grantId, intent.id, role, 0)
   const commandId = `pilot-command-${identity}`
   const executionId = `pilot-execution-${identity}`
   const sourceHash = hashPilotTaskSource(task)
   const prompt = [
-    '按 Project Pilot 已确认授权执行当前研发任务。',
+    role === 'executor' ? '按 Project Pilot 已确认授权执行当前研发任务。' : '按 Project Pilot 已确认授权评审当前交付任务。',
     `任务：${task.title}`,
     `描述：${task.description || '（无）'}`,
     `候选：${intent.id}`,
@@ -83,12 +91,12 @@ async function dispatchPilotIntentWithDependencies(
     commandId,
     projectId,
     grantId: grant.grantId,
-    idempotencyKey: `intent:${intent.id}:executor:0`,
+    idempotencyKey: `intent:${intent.id}:${role}:0`,
     taskId: task.id,
     sourceVersion: task.updatedAt,
     sourceHash,
-    employeeId: grant.executorEmployeeId,
-    role: 'executor',
+    employeeId: employee.id,
+    role,
     reworkOrdinal: 0,
   }, { executionId, prompt }, now)
   const started = await dependencies.startExecution(queued.execution.id)
@@ -109,7 +117,7 @@ export const projectPilotDispatchTesting = {
   dispatch: dispatchPilotIntentWithDependencies,
 }
 
-/** 当前活动授权通过全部门禁时，按候选稳定顺序尝试派发；单项失败不扩散到其他项目。 */
+/** 当前活动授权通过全部门禁时，按候选稳定顺序尝试派发；单项失败只跳过该项，不阻塞同项目其他候选（如评审候选）。 */
 export async function dispatchReadyPilotIntents(projectId: string, intentIds: string[], signal?: AbortSignal): Promise<PilotDispatchResult[]> {
   const results: PilotDispatchResult[] = []
   for (const intentId of intentIds) {
@@ -119,7 +127,7 @@ export async function dispatchReadyPilotIntents(projectId: string, intentIds: st
     } catch (error) {
       if (signal?.aborted) break
       console.warn(`[Pilot] 候选派发跳过 project=${projectId} intent=${intentId}`, error)
-      break
+      continue
     }
   }
   return results
