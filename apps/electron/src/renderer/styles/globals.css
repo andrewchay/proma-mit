@@ -1803,6 +1803,15 @@
 }
 
 /* LiveMarkdown：单画布编辑，保持工作台式的克制密度与清晰焦点。 */
+.live-markdown-editor {
+  --ink-color: hsl(var(--foreground));
+  --ink-block-background-color: hsl(var(--muted));
+  --ink-syntax-strong-color: hsl(var(--foreground));
+  --ink-syntax-emphasis-color: hsl(var(--foreground));
+  color: hsl(var(--foreground));
+  background: hsl(var(--content-area));
+}
+
 .live-markdown-editor,
 .live-markdown-editor .ink-mde,
 .live-markdown-editor .ink-mde-editor,
