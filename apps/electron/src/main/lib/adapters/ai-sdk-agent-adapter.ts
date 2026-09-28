@@ -25,6 +25,7 @@ import {
 } from '../agent-runtime/ai-sdk-runtime-core'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { getAgentSessionMeta } from '../agent-session-manager'
+import { buildPilotRequestRuntime, resolvePilotBudgetForSession } from '../project-pilot-request-exit'
 import { isContextOverflowError } from '../error-patterns'
 
 export interface AISDKAgentQueryOptions extends AgentQueryInput {
@@ -117,6 +118,10 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
     const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
 
+    // Pilot 受控执行：按会话反查命令归属；同一受控出口覆盖模型请求与压缩请求。
+    const pilotBudget = resolvePilotBudgetForSession(sessionId)
+    const pilotRuntime = pilotBudget ? buildPilotRequestRuntime(pilotBudget, globalThis.fetch) : undefined
+
     const activeSession: ActiveAISDKSession = {
       state: {
         controller: createAbortController(abortSignal),
@@ -140,6 +145,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           model,
           historyMessages: input.historyMessages ?? [],
           signal: activeSession.state.controller.signal,
+          ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
           audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
         })
@@ -195,6 +201,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           systemPrompt: input.systemPrompt,
           tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
           signal: activeSession.state.controller.signal,
+          ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
           audit: { sessionId, runtime: 'ai-sdk', trigger: 'automatic' },
         })
@@ -224,6 +231,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             activeSession: activeSession.state,
             maxTurns,
             maxRetries: input.maxRetries ?? 2,
+            ...(pilotRuntime ? { pilotBudget } : {}),
             historyMessages,
             attachments: currentAttachments,
             systemPrompt: input.systemPrompt,
@@ -232,6 +240,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               apiKey,
               baseUrl,
               model: model || '',
+              ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
               audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
             },
             onAgentEvent: input.onAgentEvent,
@@ -239,7 +248,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             onEnterPlanMode: input.onEnterPlanMode,
             onExitPlanMode: input.onExitPlanMode,
             onAskUser: input.onAskUser,
-            runSubAgent: input.runSubAgent,
+            // Pilot 受控执行禁用子代理委派：子代理新 sessionId 解析不到预算上下文，
+            // 会绕过受控出口；未配置 runSubAgent 时 Agent 工具直接报错，零花费。
+            runSubAgent: pilotRuntime ? undefined : input.runSubAgent,
             onGoalCheckpoint: input.onGoalCheckpoint,
             mcpManager,
             workspaceSlug,
@@ -255,6 +266,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               model: model || "",
               historyMessages,
               signal: activeSession.state.controller.signal,
+              ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
               onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
               audit: { sessionId, runtime: "ai-sdk", trigger: "overflow_recovery" },
             })

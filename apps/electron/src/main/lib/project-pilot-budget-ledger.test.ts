@@ -299,6 +299,14 @@ test('Runtime 终结但没有可信回执时以 unknown 结算并暂停授权', 
   }
   expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(grantId))
     .toEqual({ state: 'paused' })
+  // Pi 当前不产生可核验的终态 result：即使执行已标 completed，未知费用
+  // 仍保留原预留，不得因 Runtime 成功回调而释放额度或继续创建命令。
+  expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+  const nextTask = createTask(project.id, { title: '未知费用后续任务', description: '', workspaceId: 'workspace-a',
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  expect(() => reservePilotCommandBudget({ ...input, commandId: `after-unknown-${project.id}`,
+    idempotencyKey: 'after-unknown', taskId: nextTask.id, sourceVersion: nextTask.updatedAt,
+    sourceHash: hashPilotTaskSource(nextTask) })).toThrow('活动授权不存在或已失效')
 })
 
 test('终结用量因来源关联损坏无法结算时仍保守撤权', () => {
@@ -364,6 +372,28 @@ test('终结执行的已知费用结算并释放未用预留，重复结算幂�
   expect(settlePilotCommandUsage(input.commandId, evidence)).toEqual(settled)
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 450 })
   expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 451))).toThrow('状态不可结算')
+})
+
+test('Pilot 完成回调先保守持久化失败态，再按同一执行结算；未结算时不留假成功', () => {
+  const { project, input } = fixture()
+  const executionId = `pending-settlement-${project.id}`
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '执行任务' })
+  const now = Date.now()
+  updateAgentExecution(executionId, {
+    status: 'failed', sessionId: 'session-1', completedAt: now, error: 'Pilot 终态费用待结算，未交付',
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(input.commandId)
+  expect(getAgentExecution(executionId)).toMatchObject({ status: 'failed', error: 'Pilot 终态费用待结算，未交付' })
+  const result: SDKResultMessage = {
+    type: 'result', subtype: 'success', session_id: 'session-1',
+    usage: { input_tokens: 100, output_tokens: 20 }, total_cost_usd: 0.00045,
+  }
+  expect(settlePilotExecutionRuntimeUsage(executionId, 'claude', result, now)).toEqual({
+    commandId: input.commandId, state: 'settled', actualCostMicros: 450, grantPaused: false,
+  })
+  expect(getAgentExecution(executionId)?.status).toBe('failed')
+  updateAgentExecution(executionId, { status: 'completed', error: '' })
+  expect(getAgentExecution(executionId)?.status).toBe('completed')
 })
 
 test('Runtime 原始终态带费用时保存不可变回执并按 runtime_reported 结算', () => {

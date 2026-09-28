@@ -25,6 +25,8 @@ import { requestPilotStopWithIntent } from './project-pilot-stop-escalation'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
+import { getPilotCompletionBlocker, getPilotSettlementBlocker } from './project-pilot-terminal-gate'
+import type { PilotCommandSettlement } from './project-pilot-budget-ledger'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
 
@@ -995,12 +997,16 @@ function recordPilotTerminalUsage(
   runtimeResult: SDKResultMessage | undefined,
   unknownReason: string,
   capturedAt: number,
-): void {
-  if (!runtimeResult) return recordUnknownPilotUsage(executionId, unknownReason, capturedAt)
+): PilotCommandSettlement | null {
+  if (!runtimeResult) {
+    recordUnknownPilotUsage(executionId, unknownReason, capturedAt)
+    return null
+  }
   try {
-    settlePilotExecutionRuntimeUsage(executionId, runtimeSource, runtimeResult, capturedAt)
+    return settlePilotExecutionRuntimeUsage(executionId, runtimeSource, runtimeResult, capturedAt)
   } catch (error) {
     console.error(`[AgentEmployee] Pilot 执行 ${executionId} Runtime 用量回执结算失败，保留待恢复对账:`, error)
+    return null
   }
 }
 
@@ -1024,6 +1030,14 @@ function handleExecutionComplete(
     writebackExecutionResult(execution, 'paused', '【AI 执行已停止】用户停止，未交付', stoppedAt)
     recordActivity(store.getAgentExecution(executionId)!, 'agent_cancelled', '用户停止执行，未交付')
     recordLearningSample(execution, 'cancelled', '用户已停止执行；该样本默认待审查，不自动作为负向训练反馈。')
+    return
+  }
+  const pilotBlocker = getPilotCompletionBlocker(execution.pilotCommandId,
+    store.getAgentEmployee(execution.agentId)?.runtime, runtimeSource, runtimeResult)
+  if (pilotBlocker) {
+    // 禁止来源不明、Pi 或缺费用的 Pilot 回调把执行、任务与交付误标为成功；
+    // 失败仍走 unknown 结算、撤权及待人工对账，不用本地估价填补回执。
+    handleExecutionError(executionId, pilotBlocker, startedAt, runtimeSource)
     return
   }
   if (!messages?.some((message) => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim())) {
@@ -1067,14 +1081,32 @@ function handleExecutionComplete(
     }
   }
 
+  // 账本只接受已终结执行。Pilot 先持久化为保守失败态，账本结算成功后
+  // 才改为 completed；即使进程在两次写入之间崩溃，也不会留下假成功。
   store.updateAgentExecution(executionId, {
-    status: 'completed',
+    status: execution.pilotCommandId ? 'failed' : 'completed',
     resultSummary: summary,
+    ...(execution.pilotCommandId ? { error: 'Pilot 终态费用待结算，未交付' } : {}),
     lastHeartbeatAt: completedAt,
     completedAt,
   })
-  recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
+  const settlement = recordPilotTerminalUsage(executionId, runtimeSource, runtimeResult,
     'Runtime 完成事件没有可核验的用量回执', completedAt)
+  const settlementBlocker = getPilotSettlementBlocker(execution.pilotCommandId, settlement)
+  if (settlementBlocker) {
+    // 结算抛错、归属破损或 needs_reconcile 均不能触发交付/成功统计。
+    store.updateAgentExecution(executionId, { error: settlementBlocker, completedAt })
+    try {
+      writebackExecutionResult(execution, 'paused', `【AI 执行失败】${settlementBlocker}`, completedAt)
+    } catch (error) {
+      console.error('[AgentEmployee] Pilot 结算失败后任务回写失败:', error)
+    }
+    store.bumpAgentEmployeeStats(execution.agentId, { failed: true, durationMs: completedAt - startedAt })
+    recordActivity(store.getAgentExecution(executionId)!, 'agent_failed', settlementBlocker)
+    recordLearningSample(execution, 'failed', settlementBlocker)
+    return
+  }
+  if (execution.pilotCommandId) store.updateAgentExecution(executionId, { status: 'completed', error: '' })
 
   // 回写任务/子任务（按 entityType 区分，否则 subTask 会卡在 running）
   try {

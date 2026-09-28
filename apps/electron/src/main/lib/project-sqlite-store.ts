@@ -697,6 +697,20 @@ function migrate(database: SqliteCompat): void {
       UNIQUE (grant_id, idempotency_key)
     );
     CREATE INDEX IF NOT EXISTS idx_pilot_commands_project ON pilot_commands(project_id, grant_id);
+    CREATE TABLE IF NOT EXISTS pilot_request_reservations (
+      request_id TEXT PRIMARY KEY,
+      command_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      request_evidence_id TEXT NOT NULL,
+      price_evidence_id TEXT NOT NULL,
+      reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+      state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile')),
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_request_reservations_command ON pilot_request_reservations(command_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_request_reservations_body
+      ON pilot_request_reservations(execution_id, request_evidence_id);
 
     CREATE TABLE IF NOT EXISTS pilot_runtime_usage_receipts (
       id TEXT PRIMARY KEY,
@@ -1009,6 +1023,21 @@ function migrate(database: SqliteCompat): void {
   }
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_commands_usage_record
     ON pilot_commands(usage_record_key) WHERE usage_record_key IS NOT NULL`)
+  // 请求子预留属于命令预留内部，不重复计入 grant；旧库只补表，不回填历史未知请求。
+  database.exec(`CREATE TABLE IF NOT EXISTS pilot_request_reservations (
+    request_id TEXT PRIMARY KEY,
+    command_id TEXT NOT NULL,
+    execution_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    request_evidence_id TEXT NOT NULL,
+    price_evidence_id TEXT NOT NULL,
+    reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile')),
+    created_at INTEGER NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_pilot_request_reservations_command ON pilot_request_reservations(command_id)')
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_request_reservations_body
+    ON pilot_request_reservations(execution_id, request_evidence_id)`)
   // Runtime 终态原文单独追加保存；旧库补表后仍不能据历史 token 统计反推费用。
   database.exec(`CREATE TABLE IF NOT EXISTS pilot_runtime_usage_receipts (
     id TEXT PRIMARY KEY,

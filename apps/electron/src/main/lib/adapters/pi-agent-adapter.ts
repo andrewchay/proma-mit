@@ -19,6 +19,7 @@ import { buildPiHistorySessionEntries, convertPiMessageToSDKMessage, convertSDKM
 import { registerPiModelFromChannel } from './pi-model-registry'
 import { loadPiCodingAgent } from './pi-sdk-loader'
 import { createPiToolBridge, type PiCanUseToolCallback } from './pi-tool-bridge'
+import { createPiRequestBudgetGate } from './pi-request-budget-gate'
 import type { ToolContext } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { createPartialMessageCoalescer } from './pi-streaming-control'
@@ -28,6 +29,8 @@ import { getAgentSessionMeta } from '../agent-session-manager'
 import { compactSessionNow, maybeAutoCompact, estimateOutgoingContextTokens } from '../agent-runtime/context-compaction'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
+  /** 仅用于保守的请求间/工具前软门禁；不是单次请求美元硬上限。 */
+  runtimeBudgetLimitUsd?: number
   /** 系统提示词 */
   systemPrompt?: string
   /** 历史 SDKMessage，用于恢复 Pi in-memory session 上下文 */
@@ -222,7 +225,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal } = input
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
+    if (runtimeBudgetLimitUsd !== undefined && (!Number.isFinite(runtimeBudgetLimitUsd) || runtimeBudgetLimitUsd <= 0)) {
+      throw new Error('Pi 调用级费用阈值无效')
+    }
     if (!provider || !apiKey || !baseUrl || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
@@ -242,6 +248,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
 
     if (requestedOperation === 'compact') {
+      if (runtimeBudgetLimitUsd !== undefined) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
       await runWithCompactionAbort((signal) => compactSessionNow({
         sessionId,
         provider,
@@ -340,7 +347,18 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const settingsManager = SettingsManager.inMemory({
       // 压缩由 Gravitas 在恢复会话前统一管理；关闭 Pi 原生双重压缩所有权。
       compaction: { enabled: false },
-      retry: { enabled: true, maxRetries: 2 },
+      // 有调用级预算时失败回执/断流可能已产生费用；即使请求前钩子可拒绝
+      // 下一请求，也不让 Pi 自己的重试队列保留不确定的待发副作用。
+      retry: {
+        enabled: runtimeBudgetLimitUsd === undefined,
+        maxRetries: 2,
+        // agent loop 重试和 pi-ai Provider HTTP 重试是两层；一次准入后
+        // HTTP 重试可能再发一笔费用，有限费用模式必须显式禁用。
+        ...(runtimeBudgetLimitUsd !== undefined ? { provider: { maxRetries: 0 } } : {}),
+      },
+      // Pi 0.87 默认 streaming cache warming 会绕过 prepareRequest，独立重发
+      // Provider 请求；有限费用模式禁止这条未归属的计费路径。
+      cacheWarming: runtimeBudgetLimitUsd === undefined ? 'streaming' : 'off',
       // WebBridge / Computer Use 的截图必须进入模型上下文；blockImages=true
       // 会让 Pi 在工具已成功返回图片后静默丢弃图片本体，表现为“截图没反应”。
       images: { blockImages: false },
@@ -352,7 +370,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       ? '\nWhen the user message states that Goal Runtime is activated, this is an active Goal. Complete the current step and call GoalCheckpoint before ending the turn. Do not claim Goal is unsupported. Use outcome=complete only with concrete evidence; otherwise use continue, waiting, or blocked.'
       : ''
     const effectiveSystemPrompt = `${systemPrompt ?? ''}\n${goalGuidance}\n${toolPrompt}`
-    if (effectiveHistoryMessages.length > 0) {
+    if (effectiveHistoryMessages.length > 0 && runtimeBudgetLimitUsd === undefined) {
+      // 统一压缩走独立 Provider 请求路径，暂未接此门禁；有限费用模式直接
+      // 保留原始历史，由模型上下文检查自然失败，不可静默触发额外计费。
       const auto = await runWithCompactionAbort((signal) => maybeAutoCompact({
         sessionId,
         provider,
@@ -422,6 +442,45 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     })
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
     session.agent.toolExecution = 'sequential'
+    const budgetGate = runtimeBudgetLimitUsd === undefined ? undefined : createPiRequestBudgetGate(runtimeBudgetLimitUsd)
+    if (budgetGate) {
+      const loadedExtensions = resourceLoader.getExtensions()
+      if (loadedExtensions.extensions.length > 0 || loadedExtensions.errors.length > 0
+        || session.getActiveToolNames().some((name) => !customTools.some((tool) => tool.name === name))) {
+        throw new Error('Pi 有限费用模式禁止未核验的扩展或内置工具路径')
+      }
+    }
+    if (budgetGate) {
+      // coding-agent 在 createAgentSession 时安装 canonical context 和扩展工具钩子；
+      // 必须链式保留，否则可能绕过 Pi 原有的会话投影/工具治理。
+      const previousPrepare = session.agent.prepareRequest
+      const previousToolHook = session.agent.beforeToolCall
+      session.agent.prepareRequest = async (request, signal) => {
+        if (budgetGate.blocked || budgetGate.inFlight) budgetGate.beforeRequest()
+        const prepared = await previousPrepare?.(request, signal)
+        budgetGate.beforeRequest()
+        // coding-agent 的 streamFn 之外可能还有其它请求路径；有限阈值模式只
+        // 允许一个受控请求待回执。后续任何未归属回执都进入停等。
+        return prepared ?? undefined
+      }
+      const previousPayload = session.agent.onPayload
+      session.agent.onPayload = async (payload, requestModel) => {
+        // Provider 构造请求体后、发送前再次核验已有准入，阻断遗漏 prepareRequest
+        // 的旁路。此处没有可信价格或输入 token 上界，不能称为费用硬封顶。
+        budgetGate.beforePayload()
+        return previousPayload?.(payload, requestModel)
+      }
+      session.agent.beforeToolCall = async (context, signal) => {
+        if (budgetGate.blocked || budgetGate.inFlight) {
+          return { block: true, reason: budgetGate.blocked ?? '模型请求尚无费用回执', terminate: true }
+        }
+        const previous = await previousToolHook?.(context, signal)
+        if (budgetGate.blocked || budgetGate.inFlight) {
+          return { block: true, reason: budgetGate.blocked ?? '模型请求尚无费用回执', terminate: true }
+        }
+        return previous
+      }
+    }
 
     // ===== 运行 span 采集：task 级 =====
     // traceId 复用 sessionId（对齐 server P-I 阶段做法）；taskId = task span 自身。
@@ -489,8 +548,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'message_end') {
-        if (isAssistantPiMessage(event.message)) touchModelActivity()
-        else touchActivity()
+        if (isAssistantPiMessage(event.message)) {
+          touchModelActivity()
+          budgetGate?.afterResponse(event.message)
+        } else touchActivity()
         partialAssistantCoalescer.flush()
         const message = convertPiMessageToSDKMessage(event.message, sessionId, model, {
           final: true,
@@ -706,7 +767,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             const message = error instanceof Error ? error.message : String(error)
             const active = this.activeSessions.get(sessionId)
             // active 不存在说明会话已被 abort/release；interrupting 时由 interrupt 路径处理
-            if (!active || active.interrupting) throw error
+            if (!active || active.interrupting || budgetGate?.blocked) throw error
+            // 未收到可归属的费用回执时一次网络重试也可能重复计费；有限阈值
+            // 模式必须先停等，不能借现有 prompt 断流重试绕开未知费用门禁。
+            if (budgetGate) throw error
             if (!isTransientNetworkError(message) || attempts >= MAX_PROMPT_RETRIES) throw error
             attempts += 1
             const delayMs = 1000 * attempts
@@ -724,7 +788,12 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         }
       }
       void retryablePromptChain()
-        .then(() => queue.close())
+        .then(() => {
+          // Pi 的工具 terminate / prepareRequest 拒绝可能被 SDK 收敛为正常 resolve；
+          // 有限费用模式必须按回执状态判断终态，不允许外层误报成功。
+          budgetGate?.assertComplete()
+          queue.close()
+        })
         .catch((error: unknown) => {
           queryHadError = true
           queue.fail(error)
@@ -735,6 +804,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         yield next.value
       }
     } finally {
+      budgetGate?.stop()
       partialAssistantCoalescer.dispose()
       this.releaseSession(sessionId)
       mcpRelease?.()

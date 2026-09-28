@@ -1,5 +1,67 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-09-28 Project Pilot Goal：ai-sdk 生产受控出口接线（-54）
+- 新增 `project-pilot-request-exit.ts`：`createPilotRequestFetch` 把最终 HTTP body 依次送入 derive→reserve→verify 后才调真实 fetch；非字符串 body、预算不足、证据不符、多模态、缺 max_tokens 一律 throw（HTTP 零发送）。`resolvePilotBudgetForSession` 用 `getAgentExecutionBySessionId` 反查 Pilot 受控执行（库不可用直接抛错=fail-closed，宁可拒发不可漏发），仅 Pilot 会话注入出口，普通会话零行为变化。
+- 接线点：adapter 构建 `pilotRuntime`（单闭包覆盖整 turn）→ `createAgentAISDKModel` 注入 fetch + streamText 强制 `maxOutputTokens=131072`（来自 GLM 证据）；手动/自动/工具内/溢出恢复四条压缩路径经 `fetchFn` 走同一出口；requestId 用 randomUUID 全局唯一，崩溃重复发送由请求体指纹唯一约束兜底。
+- 审查发现的绕过路径已堵：Pilot 会话可派生 Agent 子代理，子代理新 sessionId 解析不到预算上下文——Pilot 模式直接禁用 runSubAgent（工具报错零花费），未做预算化透传。
+- 验证：定向 36 PASS（exit 5 + adapter 14 + evidence 8 + envelope 3 + reservation 6）；全仓 510 文件零失败、typecheck、lint 0 error（3 warnings 既有）、docs:check、git diff --check 全过。协作子会话复核结论「通过」：无绕过路径、非 Pilot 零行为变化、重试/多 step/溢出恢复全覆盖。
+- **边界**：逐请求结算/释放未做（预留持续占额，响应后对账是下一片）；Pi 出口未接（独立验收）；`max_tokens` 对推理 token 的服务端强制语义未实测（首次真实试跑前必须验证）；真实调用仍需渠道/次数/预算授权（G2）；渠道模型 ID 必须精确为 `glm-5.3-flash`。
+
+## 2026-09-28 Project Pilot Goal：登记 GLM glm-5.3-flash 首条真实价格证据
+- 用户指定 glm-5.3-flash 为首个目标模型。核对 Z.ai 官方文档（docs.z.ai 定价页与 GLM-5.3-Flash 模型页）：输入 $0.15/M、输出 $0.50/M、缓存输入 $0.03/M（更低不抬高上界）；上下文 1M、最大输出 128K；OpenAI 兼容 Chat Completion；思考不可关闭（计入输出）。注册表登记首条真实证据 `zai-glm-5.3-flash-2026-09-28`（micro-USD/M：150,000 / 500,000，上限 1M / 131,072）。
+- derive 新增 fail-closed 闸：① 拒绝多模态消息块——GLM-5.3-flash 原生多模态，image_url 引用图片的 token 数不受 body 字节数约束，会击穿「token ≤ 字节」上界（messages[].content 与 google contents[].parts 均受检）；② 拒绝非 function 内置工具（如按次计费 web_search）；③ body 为 JSON null 等非对象形态干净拒绝。纯文本 function 工具放行。协作子会话（glm-5.3-flashx）复核牌价换算与拒绝逻辑，结论通过、无必改项。
+- 定向 17 PASS；全仓 509 文件零失败、typecheck、lint 0 error（3 warnings 既有）、docs:check、git diff --check 全过。
+- **边界与风险**：国内平台同名模型牌价 ¥0.80/¥2.80，USDCNY≥5.6 时被此 USD 上界覆盖，汇率/牌价变动须另增证据条目；`max_tokens` 对推理 token 的服务端强制语义未实测，接线时必须验证（这是「可执行上限合同」的核心）；生产 fetch 出口仍未接 derive→reserve→verify；真实调用仍需渠道/次数/预算授权。渠道配置必须用精确小写模型 ID `glm-5.3-flash`。
+
+## 2026-09-28 Project Pilot Goal：价格证据入库与请求体指纹（审查阻断修复）
+- 针对上轮 code-reviewer 的两个阻断落地：① 新增 `project-pilot-request-evidence.ts`——价格证据必须是版本库内审核注册表的条目（生产默认为空，未注册即 fail-closed 拒绝）；`derivePilotRequestEnvelope` 从**最终 HTTP 请求体**逐字节生成 SHA-256 指纹作为 requestEvidenceId，按 provider 协议（openai/anthropic `max_tokens`/`max_completion_tokens` 取小、google `generationConfig.maxOutputTokens`）提取输出上限并与模型审核上界夹紧；输入上界用「token ≤ UTF-8 字节数」夹紧模型上限。② `reservePilotRequest` 现在校验包络费率/上界与证据一致、requestEvidenceId 必须是 64 位十六进制指纹，并新增同执行内指纹唯一约束（DB 唯一索引 + 事务内检查）——崩溃后换 requestId 重发同一请求体被拒绝；新增 `verifyPilotRequestBody` 供发送前核验请求体未被篡改。
+- 验证：定向 14 PASS（evidence 5 + envelope 3 + reservation 6，含索引存在断言）；全仓 509 测试文件零失败、typecheck、Biome 0 error（3 warnings 既有）、docs:check、git diff --check 全过。审查员复核三项问题后确认闭合：模型标识强制绑定（google 需出口核验 URL 后经 verifiedModel 传入，缺失即拒）、上界 safe 正整数防 NaN 绕过、唯一索引兜底跨连接并发。
+- **边界**：生产 fetch 出口尚未调用 derive/verify（接线是下一步）；价格注册表还没有任何真实模型条目，出现真实价格前任何预留都会被拒；仍无逐请求结算/释放与跨执行恢复策略；「token ≤ 字节数」是保守真上界但比实际粗（对 CJK 约 3 倍高估预留）。
+
+## 2026-09-28 Project Pilot Goal：请求级原子子预留离线原语
+- 增加 `project-pilot-request-envelope.ts` BigInt 向上取整算术及 `project-pilot-request-reservation.ts` SQLite 命令内请求子预留；子预留不会重复计入 grant，总占额限制在命令预留内。核验 running execution/session/command、活动 grant 与时效；requestId 只可用一次，崩溃重开仍占额，缺证据、无预算、写入回滚则拒绝。离线定向 7 PASS，全仓 508 文件零失败。
+- **严格边界**：priceEvidenceId/requestEvidenceId 现在只是调用方提供的字符串，并不验证价格文件或最终 HTTP body，不能接生产真实 Provider；已预留后还没有可核验的每请求响应结算/失败回收机制，继续保守占额。SQLite 事务只序列化单个项目数据库句柄内写入；跨进程并发需要额外锁或架构单写者证明。此切片是内部原语，不代表任一 Runtime 费用能力验收或放行。
+
+## 2026-09-28 Project Pilot Goal：AI SDK 受控 HTTP 出口首段离线验证
+- `packages/core/src/providers/ai-sdk-bridge.ts` 的 OpenAI/Anthropic/Google 模型工厂增加可选自定义 `fetch` 注入，默认不变。OpenAI-compatible AI SDK 模型通过本机 loopback 夹具调用 `generateText(maxRetries:0)`；注入出口捕捉最终 body 后抛错，断言 HTTP 零发送，6 PASS、typecheck PASS。没有接生产预算，也不意味着任意 Protocol 已通过费用验收。
+- 下一步共享预算包络应有逐请求数据库原子子预留、可审核固定价格/输入上界/输出强制参数，并在 AI SDK 生产 `streamText` 的所有内部 step 及 Pi 每请求接入；重试、压缩与工具新增请求均须纳入或禁用。
+
+## 2026-09-28 Project Pilot Goal：双 Runtime 客户端预算包络决策
+- 用户确认长期保留 Pi 与 Vercel AI SDK（仓库 `ai-sdk`），两者均可作受控 Pilot 候选，不必 Pi 优先；同意先做客户端受控请求出口的离线方案，未授权真实付费请求。
+- 当前 `ai-sdk-runtime-core.ts` 每次 turn 使用 Vercel `streamText`，工具循环内可发多次模型请求，且外层有整轮重试/独立压缩；`packages/core/src/providers/ai-sdk-bridge.ts` 的 OpenAI/Anthropic/Google 工厂当前未注入自定义 fetch。Pi 主流走 prepareRequest/onPayload，但已有 soft gate 不是硬美元上限。共享账本应承接命令预留下的每请求子预留，两个 Runtime 分别注入受控出口。Provider/model 价格和 token 上界若无法验证，必须在发送前拒绝；这仍不等同 Provider 实际账单的绝对硬限。
+- `project-pilot-readiness.ts` 首版仅允许 `proma`/`ai-sdk`，`pi` 仍排除；共享能力位里两者 `supportsBudgetStopThreshold=false`。后续每 Runtime 独立验收、独立启用，不把“支持自控费用包络”等同现有 `supportsBudgetStopThreshold`（后者语义偏运行中停止）；正式 G2 仍需授权。
+
+## 2026-09-28 Project Pilot Goal：结算失败不准成功回写
+- 发现 `recordPilotTerminalUsage` 曾吞掉结算异常，员工服务随后继续任务交付。现在返回账本 settlement，Pilot 完成必须同一 command `settled` 且 grant 未暂停；null/needs_reconcile/归属错则保持失败、任务暂停、不做成功统计或交付。由于账本目前只接受终态执行，先持久化为失败「费用待结算」，结算成功后才提升 completed；崩溃窗口也不留假成功。纯门禁＋员工＋账本定向测试与全仓门禁另见台账。此项没有提供 Provider 原始费用可信性。
+- 重要后续：完成分支前的卡点、研发证据采集失败、停止、超时也各自有 unknown 结算/停等路径；正式 Pilot Pi 启动仍禁用，不能以单元测试声称纵向链完成。
+
+## 2026-09-28 Project Pilot Goal：Pilot 终态成功回写保守门禁
+- 审计 `handleExecutionComplete`：原先 `recordPilotTerminalUsage` 虽能把缺回执记为 unknown 并撤权，但发生在 execution completed 后，仍继续任务回写与交付；不能把费用失败与执行成功混同。现在成功回写前检查 Pilot 执行：员工配置为 Pi 一律不能报告成功（尚无可核验终态 result）；来源与员工配置不一致、缺 Runtime 费用或 token 字段亦拒绝，转 `handleExecutionError` 并以 unknown 停等。普通非 Pilot 语义不变。
+- 纯门禁与普通员工测试定向 23 PASS，typecheck PASS；正式 Pilot Pi 启动仍被 readiness/capability 关闭，未验证其真实回调纵向路径。其他 Runtime 本地 `total_cost_usd` 是 Runtime 转述，字段有效并不意味着 Provider 原始账单可信；这里只保留已有 Runtime 结算语义，不宣称 Provider 可信或费用上界完成。
+
+## 2026-09-28 Project Pilot Goal：员工终态回调离线边界
+- 复用 `agent-development-execution.test.ts` 的隔离 Git worktree 与假 headless runner：普通 Pi 研发员工（无 pilotCommandId）成功回调无 SDK result 时 execution=completed、任务仍 paused 待人工验收；失败回调后迟到成功保持 failed，不交付。定向 20 PASS。这只覆盖员工服务普通 Pi 入口，**不是 Pilot Pi 的 unknown 结算纵向验收**。
+- Pilot Pi 正式 `tryStartExecution` 在 readiness/capability 阻断，现有测试已证 queued 不触发 runner；为了测试回调若强行跳过此门禁，会误示 Pilot 已放行。账本原语 unknown 结算与普通 Pi 回调分别有证据，但两者的正式纵向路径尚未打通；需要在保持生产门禁的前提下设计可注入/回放的受控回调测试，不应直接改 capability。
+
+## 2026-09-28 Project Pilot Goal：DeepSeek Flash 候选契约与终态停等复核
+- 候选限定官方 `deepseek-flash`／OpenAI-format `https://api.deepseek.com` 的 Chat Completions；这是审计对象，不是已选试跑模型。官方 [模型与价格](https://api-docs.deepseek.com/quick_start/pricing) 当前称版本 DeepSeek-V4.1-Flash，1M context、384K 最大输出、峰时 cache miss $0.30/1M input、output $1.20/1M；但明确保留调价权，旧模型别名可重映射。官方 [Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion) 称 `max_tokens` 为 1～393216，默认 thinking enabled；官方 [token usage](https://api-docs.deepseek.com/quick_start/token_usage) 明确字符换算只是近似，以响应 usage 为准。不能把这些动态网页值直接冻结为硬保证，也不能把 Pi `contextWindow` 推断或注册 `cost=0` 当计费上界。
+- 保守静态算例（仅用于排查量级，**不是验收上界**）：即便假设 input≤1M、output≤384K，按当前峰时非缓存价也可达约 $0.7608（不考虑输入输出共享 context 的进一步收紧）；与 Pilot 某笔预留 500 micros（$0.0005）的数量级不符。关键不是计算公式，而是尚未在发送前获得可依赖的输入 token 计数/线上最终参数及价格锁定或服务端硬额度；即使发出后返回 usage，也不能追回单请求超额。
+- 终态离线回归加强：现有 `settlePilotExecutionUnknownUsage` 对已完成执行写 needs_reconcile、暂停 grant；本轮在 `project-pilot-budget-ledger.test.ts` 增断言未知费用保持 500 micros 原预留且后续预留拒绝，定向 25 PASS。此为**账本原语**证据，非 Pi 真实回调纵向测试；Pi adapter 没有 SDK result，不能伪造成本以求结算。下一步应验证员工服务真实 Pi 回调路径与故障交错，同时继续寻求可信价格/上限协议，不能凭离线夹具打开 readiness。
+
+## 2026-09-28 Project Pilot Goal：Pi 请求体第二道屏障
+- 0.87.1 `agent-loop.js` 的 `prepareRequest` 在 streamFunction 前；`sdk.js` 将 `onPayload` 接到 Pi Provider；`openai-completions.js` 在 SDK `create(params)` 之前调用该钩子。本机 loopback fixture 验证准入→payload 审核→拒绝 HTTP 零发送，未触发真实 Provider。
+- 有限模式增加预算门禁 `beforePayload()`，未准入/已阻断不能进入既有 onPayload；有效准入链保留既有钩子。定向三文件 36 PASS。此门禁只核验一条请求的归属，未限定价格、输入 token 或输出上限；不能叫美元硬封顶。Pi 终态仍无可核验 SDK result，现有员工服务没有 result 时走 unknown 用量结算，不应伪造 result。
+
+## 2026-09-28 Project Pilot Goal：Provider 请求层与官方契约核查
+- Pi coding-agent `sdk.js` 的 `buildRequestOptions` 从 `SettingsManager.getProviderRetrySettings()` 取得 `maxRetries`，传至 `modelRuntime.streamSimple`；pi-ai `openai-completions.js` 通过 `retryProviderRequest` 包装 OpenAI SDK（SDK 自身 maxRetries=0）。先前仅设置 `retry.enabled=false` 只关闭 agent loop，不必然禁 Provider HTTP 重试。现有限模式已设置 `retry.provider.maxRetries=0`；mock＋真实 SDK SettingsManager 共 30 PASS、typecheck PASS。普通模式不改变。
+- `pi-model-registry.ts` 动态注册模型 `cost` 全为 0、maxTokens 按 provider 给 16K/32K/64K，contextWindow 部分启发式推断；这些均非 Provider 价格或输入计费上限。DeepSeek 官方 [Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion) 规定 `max_tokens` 1～393216、输入＋输出受模型 context length 限制；[Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing) 当前列 1M context、peak/off-peak 输入缓存价与输出价，并声明价格可变、保留调整权。Pi openai-completions compat 对 deepseek.com baseUrl 推断 max_tokens；最终 payload 仍可经 onPayload 改写。不能把请求前本地估算当固定 USD 硬上限。
+- 安全结论：第 1 包尚未通过；在选定有可审计价格变更控制和实际请求/响应约束的 Provider/模型之前，不放开 Pi Pilot。无 Provider 调用。
+
+## 2026-09-28 Project Pilot Goal：单请求费用边界核查
+- Pi 0.87.1 `SettingsManager.getCacheWarmingMode()` 未配置时默认 `streaming`；`sdk.js` 创建 CacheWarmer，刷新通过独立 `modelRuntime.streamSimple` 发送，绕过当前 agent `prepareRequest` 门禁。有限费用模式显式设 `cacheWarming: off`；普通模式保留 streaming。adapter mock 相关 29 PASS、typecheck PASS，未调用 Provider。
+- `pi-ai` 可设 `StreamOptions.maxTokens`，但无统一输入 token Provider 硬限，也不能凭 Pi 模型元数据证明 Provider 实际接收的输出限制；不同渠道可能改写 token 下限/推理计费，缓存与价格 tier 亦须审计。第 1 工作包仍未达成，不得把软门禁或本地价格估计当硬 USD 封顶；readiness/capability 保持关闭。
+- 下一步优先确定支持可审计输入/输出与价格合同的 Provider/模型组合，验证最终请求参数和计费规则；无法证明则维持 fail-closed，不以冒烟代替证明。
+
 ## 2026-09-27 Project Pilot 使用 Pi Runtime 的可行性评估
 - 决策建议：Pi 可作为受控研发执行内核的候选，先做无模型/无费用的能力验证；不可直接加入 Pilot 白名单或把 `supportsBudgetStopThreshold` 改为 true。当前仓库 Pi 依赖固定 `0.82.1`；所查官方能力以 `earendil-works/pi` v0.87.1 为参考，不能当作已安装版本保证。
 - 已接的 Pi adapter 禁内置工具（`noTools: 'builtin'`）、禁隐式 extensions/context，使用 Proma Bridge 的 customTools、权限回调及 abort；这些是工具控制地基，不是费用门禁。首版 readiness 只允许 proma/ai-sdk，并要求调用级费用超额停止能力；Pi capability 明确 false。

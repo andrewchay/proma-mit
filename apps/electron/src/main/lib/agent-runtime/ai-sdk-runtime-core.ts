@@ -43,6 +43,7 @@ import {
   resolveModelStreamIdleTimeoutMs,
 } from './stream-timeouts'
 import { estimateTokenCount } from '../agent-tool-token-estimator'
+import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 
 export interface AISDKRuntimeSessionState {
   controller: AbortController
@@ -88,6 +89,8 @@ export interface AISDKToolExecutionState {
     apiKey: string
     baseUrl: string
     model: string
+    /** Pilot 受控出口：存在时压缩请求经 derive→reserve→verify 后才发送。 */
+    fetchFn?: typeof globalThis.fetch
     audit?: Omit<import('../context-compaction-audit-service').ContextCompactionAuditInput, 'packetVersion'>
   }
 }
@@ -104,6 +107,8 @@ export interface AISDKRuntimeStreamInput {
   provider?: ProviderType
   modelId?: string
   onAgentEvent?: (event: AgentEvent) => void
+  /** Pilot 受控执行强制输出上限；来自价格证据的模型输出硬上界。 */
+  maxOutputTokens?: number
 }
 
 export interface AISDKRuntimeStreamResult {
@@ -132,6 +137,8 @@ export interface AISDKAgentTurnInput {
   activeSession: AISDKRuntimeSessionState
   maxTurns: number
   maxRetries: number
+  /** Pilot 受控预算上下文；存在时模型请求经受控出口并强制输出上限。 */
+  pilotBudget?: PilotBudgetContext
   historyMessages?: SDKMessage[]
   attachments?: FileAttachment[]
   systemPrompt?: string
@@ -176,6 +183,10 @@ type RuntimeToolJsonSchema = RuntimeToolDefinition['parameters']
 
 export class AISDKRuntimeCore {
   async runAgentTurn(input: AISDKAgentTurnInput): Promise<SDKMessage[]> {
+    // Pilot 受控执行：同一闭包覆盖本 turn 全部请求（模型、压缩），derive→reserve→verify 后才发送。
+    const pilotRuntime = input.pilotBudget
+      ? buildPilotRequestRuntime(input.pilotBudget, globalThis.fetch)
+      : undefined
     const modelInstance = createAgentAISDKModel({
       provider: input.provider,
       protocol: input.protocol,
@@ -183,6 +194,7 @@ export class AISDKRuntimeCore {
       apiKey: input.apiKey,
       baseUrl: resolveAgentRuntimeBaseUrl(input.provider, 'ai-sdk', input.baseUrl),
       modelId: input.modelId,
+      ...(pilotRuntime ? { fetch: pilotRuntime.fetch } : {}),
     })
     const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
@@ -224,6 +236,7 @@ export class AISDKRuntimeCore {
       provider: input.provider,
       modelId: input.modelId,
       onAgentEvent: input.onAgentEvent,
+      ...(pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens } : {}),
     })
 
     const steps = streamRun.streamedSteps.length > 0
@@ -262,6 +275,7 @@ export class AISDKRuntimeCore {
             tools: input.tools,
             stopWhen: isStepCount(input.maxTurns),
             abortSignal: attemptController.signal,
+            ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
           })
           const accumulator = new AISDKStreamStepAccumulator()
           const streamedSteps: AISDKStreamStepSnapshot[] = []

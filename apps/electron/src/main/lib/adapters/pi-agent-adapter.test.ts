@@ -22,7 +22,18 @@ mock.module('../document-parser', () => ({
 }))
 
 let capturedSessionOptions: { noTools?: 'builtin'; customTools?: Array<{ name: string }> } | undefined
-let capturedSettings: { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean } } | undefined
+let capturedAgent: {
+  toolExecution: string
+  prepareRequest?: (request: { context: { messages: unknown[] } }, signal?: AbortSignal) => Promise<unknown>
+  onPayload?: (payload: unknown, model: unknown) => Promise<unknown>
+  beforeToolCall?: (context: { toolCall: { name: string } }, signal?: AbortSignal) => Promise<{ block?: boolean; terminate?: boolean } | undefined>
+} | undefined
+let previousPrepareCalls = 0
+let previousPayloadCalls = 0
+let previousToolCalls = 0
+let mockBeforePrompt: (() => Promise<void>) | undefined
+let mockAfterPrompt: (() => Promise<void>) | undefined
+let capturedSettings: { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean }; retry?: { enabled?: boolean; provider?: { maxRetries?: number } }; cacheWarming?: 'streaming' | 'off' } | undefined
 let capturedSystemPromptOverride: (() => string) | undefined
 let promptGate: Promise<void> | undefined
 let abortCallCount = 0
@@ -51,7 +62,7 @@ function getCapturedSessionOptions(): { noTools?: 'builtin'; customTools?: Array
   return capturedSessionOptions
 }
 
-function getCapturedSettings(): { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean } } | undefined {
+function getCapturedSettings(): typeof capturedSettings {
   return capturedSettings
 }
 
@@ -66,10 +77,11 @@ mock.module('./pi-sdk-loader', () => ({
         capturedSystemPromptOverride = options.systemPromptOverride
       }
       async reload(): Promise<void> {}
+      getExtensions() { return { extensions: [], errors: [] } }
     },
     SessionManager: { inMemory: () => ({}) },
     SettingsManager: {
-      inMemory: (settings: { images?: { blockImages?: boolean }; compaction?: { enabled?: boolean } }) => {
+      inMemory: (settings: NonNullable<typeof capturedSettings>) => {
         capturedSettings = settings
         return {}
       },
@@ -79,15 +91,24 @@ mock.module('./pi-sdk-loader', () => ({
       sessionActivated = true
       const listeners: Array<(event: MockPiEvent) => void> = []
       const state: { messages: unknown[] } = { messages: [] }
+      const agent = {
+        toolExecution: 'parallel',
+        prepareRequest: async () => { previousPrepareCalls++; return undefined },
+        onPayload: async (payload: unknown) => { previousPayloadCalls++; return payload },
+        beforeToolCall: async () => { previousToolCalls++; return undefined },
+      }
+      capturedAgent = agent
       return {
         session: {
           state,
-          agent: { toolExecution: 'parallel' },
+          agent,
+          getActiveToolNames: () => options.customTools?.map((tool) => tool.name) ?? [],
           subscribe(listener: (event: MockPiEvent) => void) {
             listeners.push(listener)
             return () => {}
           },
           async prompt(text: string, options?: CapturedPiPrompt['options']) {
+            if (mockBeforePrompt) await mockBeforePrompt()
             capturedPrompts.push({ text, options })
             const promptError = promptErrors.shift()
             if (promptError) {
@@ -102,6 +123,7 @@ mock.module('./pi-sdk-loader', () => ({
               for (const listener of listeners) listener(event)
             }
             for (const listener of listeners) listener({ type: 'agent_end', messages: [] })
+            if (mockAfterPrompt) await mockAfterPrompt()
           },
           async abort() { abortCallCount += 1 },
           dispose() { disposeCallCount += 1 },
@@ -190,6 +212,19 @@ describe('PiAgentAdapter', () => {
     ])
   })
 
+  test('Pi 有限费用模式下手动 compact 在 Provider/会话初始化前被拒绝', async () => {
+    capturedPrompts = []
+    const adapter = new PiAgentAdapter()
+    await expect(async () => {
+      for await (const _message of adapter.query({
+        sessionId: 's-pi-compact-budget', prompt: '/compact', requestedOperation: 'compact', agentRuntime: 'pi',
+        provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+        model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+      })) { /* 费用模式不得进入模型 */ }
+    }).toThrow('禁止未纳入请求门禁的压缩调用')
+    expect(capturedPrompts).toEqual([])
+  })
+
   test('given Pi starts a session when P0 tools are configured then Pi built-ins are disabled and only the Proma bridge is enabled', async () => {
     capturedSessionOptions = undefined
     capturedSettings = undefined
@@ -228,10 +263,137 @@ describe('PiAgentAdapter', () => {
     expect(sessionOptions.customTools?.some((tool) => tool.name === 'bash')).toBe(false)
     expect(sessionOptions.customTools?.some((tool) => tool.name === 'CompactContext')).toBe(false)
     expect(getCapturedSettings()?.compaction?.enabled).toBe(false)
+    expect(getCapturedSettings()?.retry?.enabled).toBe(true)
+    expect(getCapturedSettings()?.retry?.provider?.maxRetries).toBeUndefined()
+    expect(getCapturedSettings()?.cacheWarming).toBe('streaming')
     expect(getCapturedSettings()?.images?.blockImages).toBe(false)
     expect(getCapturedSystemPrompt()).toContain('使用 WebSearch 或 WebFetch')
     expect(getCapturedSystemPrompt()).toContain('征求同意')
     expect(getCapturedSystemPrompt()).toContain('绝不能先调用 WebBridgeScreenshot')
+  })
+
+  test('有调用级预算时安装 Pi 请求/工具钩子并保留 coding-agent 原钩子；缺费阻断下一请求及工具', async () => {
+    promptEvents = [{ type: 'message_end', message: {
+      role: 'assistant', usage: { cost: { total: Number.NaN } }, stopReason: 'stop', content: [],
+    } }]
+    previousPrepareCalls = 0
+    previousToolCalls = 0
+    const adapter = new PiAgentAdapter()
+    await expect(async () => {
+      for await (const _message of adapter.query({
+        sessionId: 's-pi-budget-hooks', prompt: '离线预算', agentRuntime: 'pi',
+        provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+        model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+      })) { /* mock 不触发真实 Provider */ }
+    }).toThrow('Pi 有限费用执行待对账')
+    expect(capturedAgent?.prepareRequest).toBeDefined()
+    expect(getCapturedSettings()?.retry?.enabled).toBe(false)
+    expect(getCapturedSettings()?.retry?.provider?.maxRetries).toBe(0)
+    expect(getCapturedSettings()?.cacheWarming).toBe('off')
+    const request = { context: { messages: [] } }
+    // query 已结束；从订阅事件观察到费用未知，预算快照必须拒绝后续请求。
+    await expect(capturedAgent?.prepareRequest?.(request)).rejects.toThrow('费用门禁阻断')
+    expect(previousPrepareCalls).toBe(0) // 已有阻断时不得先跑旧 hook
+    expect(await capturedAgent?.beforeToolCall?.({ toolCall: { name: 'Write' } })).toMatchObject({ block: true, terminate: true })
+    expect(previousToolCalls).toBe(0)
+    promptEvents = []
+  })
+
+  test('有限费用请求体必须已有请求准入；无准入不能调用既有 payload 钩子', async () => {
+    promptEvents = []
+    previousPayloadCalls = 0
+    mockBeforePrompt = async () => {
+      await expect(capturedAgent?.onPayload?.({ model: 'test-model' }, {})).rejects.toThrow('Provider 请求体门禁阻断')
+      expect(previousPayloadCalls).toBe(0)
+    }
+    try {
+      const adapter = new PiAgentAdapter()
+      await expect(async () => {
+        for await (const _message of adapter.query({
+          sessionId: 's-pi-payload-gate', prompt: '离线请求体', agentRuntime: 'pi',
+          provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+          model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+        })) { /* 离线 mock */ }
+      }).toThrow('Provider 请求体没有有效的模型请求准入')
+    } finally { mockBeforePrompt = undefined }
+  })
+
+  test('Pi 预算钩子拒绝没有请求准入的回执；不得把费用看似有效当作工具放行', async () => {
+    promptEvents = [{ type: 'message_end', message: {
+      role: 'assistant', usage: { cost: { total: 0.1 } }, stopReason: 'stop', content: [],
+    } }]
+    previousToolCalls = 0
+    const adapter = new PiAgentAdapter()
+    await expect(async () => {
+      for await (const _message of adapter.query({
+        sessionId: 's-pi-budget-allowed', prompt: '离线预算', agentRuntime: 'pi',
+        provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+        model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+      })) { /* mock 不触发真实 Provider */ }
+    }).toThrow('Pi 有限费用执行待对账')
+    // mock 不执行 SDK 的 prepareRequest；无准入的费用回执必须 fail-closed。
+    expect(await capturedAgent?.beforeToolCall?.({ toolCall: { name: 'Read' } })).toMatchObject({ block: true })
+    expect(previousToolCalls).toBe(0)
+    promptEvents = []
+  })
+
+  test('Pi adapter 已准入请求但没有费用回执时，正常 resolve 仍不得报告完成', async () => {
+    promptEvents = []
+    mockBeforePrompt = async () => { await capturedAgent?.prepareRequest?.({ context: { messages: [] } }) }
+    try {
+      const adapter = new PiAgentAdapter()
+      await expect(async () => {
+        for await (const _message of adapter.query({
+          sessionId: 's-pi-budget-no-receipt', prompt: '离线预算', agentRuntime: 'pi',
+          provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+          model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+        })) { /* mock 不触发真实 Provider */ }
+      }).toThrow('模型请求没有 Runtime 费用回执')
+    } finally { mockBeforePrompt = undefined }
+  })
+
+  test('Pi adapter 费用达到阈值后 prompt 虽正常 resolve，也不得向外报告完成', async () => {
+    promptEvents = [{ type: 'message_end', message: {
+      role: 'assistant', usage: { cost: { total: 0.5 } }, stopReason: 'stop', content: [],
+    } }]
+    mockBeforePrompt = async () => { await capturedAgent?.prepareRequest?.({ context: { messages: [] } }) }
+    try {
+      const adapter = new PiAgentAdapter()
+      await expect(async () => {
+        for await (const _message of adapter.query({
+          sessionId: 's-pi-budget-at-limit', prompt: '离线预算', agentRuntime: 'pi',
+          provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+          model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+        })) { /* mock 不触发真实 Provider */ }
+      }).toThrow('Pi 有限费用执行待对账')
+    } finally { mockBeforePrompt = undefined; promptEvents = [] }
+  })
+
+  test('Pi adapter 按请求前准入计费且保留 coding-agent 原工具钩子', async () => {
+    promptEvents = [{ type: 'message_end', message: {
+      role: 'assistant', usage: { cost: { total: 0.1 } }, stopReason: 'stop', content: [],
+    } }]
+    previousPrepareCalls = 0
+    previousPayloadCalls = 0
+    previousToolCalls = 0
+    mockBeforePrompt = async () => {
+      await capturedAgent?.prepareRequest?.({ context: { messages: [] } })
+      expect(await capturedAgent?.onPayload?.({ model: 'test-model' }, {})).toEqual({ model: 'test-model' })
+    }
+    mockAfterPrompt = async () => {
+      expect(await capturedAgent?.beforeToolCall?.({ toolCall: { name: 'Read' } })).toBeUndefined()
+    }
+    try {
+      const adapter = new PiAgentAdapter()
+      for await (const _message of adapter.query({
+        sessionId: 's-pi-budget-admitted', prompt: '离线预算', agentRuntime: 'pi',
+        provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+        model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+      })) { /* mock 不触发真实 Provider */ }
+      expect(previousPrepareCalls).toBe(1)
+      expect(previousPayloadCalls).toBe(1)
+      expect(previousToolCalls).toBe(1)
+    } finally { mockBeforePrompt = undefined; mockAfterPrompt = undefined; promptEvents = [] }
   })
 
   test('given a user uploads a JPEG when Pi sends the turn then the model receives the real image block', async () => {
@@ -500,6 +662,23 @@ describe('PiAgentAdapter', () => {
     ])
     expect(capturedPrompts[1]?.options?.images).toBeUndefined()
     promptErrors = []
+  })
+
+  test('有限费用模式下 prompt 断流不得由 adapter 再次调用 Pi；费用未知需人工对账', async () => {
+    capturedPrompts = []
+    promptErrors = [new Error('fetch failed: socket hang up')]
+    promptEvents = []
+    const adapter = new PiAgentAdapter()
+    try {
+      await expect(async () => {
+        for await (const _message of adapter.query({
+          sessionId: 's-pi-budget-retry', prompt: '离线断流', agentRuntime: 'pi',
+          provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test',
+          model: 'test-model', cwd: '/tmp', runtimeBudgetLimitUsd: 0.5,
+        })) { /* mock 不触发真实 Provider */ }
+      }).toThrow('fetch failed')
+      expect(capturedPrompts).toHaveLength(1)
+    } finally { promptErrors = []; promptEvents = [] }
   })
 
   test('given native compaction ends without a result then it does not emit a false compact boundary', async () => {

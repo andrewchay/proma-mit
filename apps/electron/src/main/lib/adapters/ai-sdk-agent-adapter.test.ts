@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildElectronMock } from '../testing/electron-mock'
+import { closeProjectDb, createAgentExecution, createProject, createTask, initProjectDb } from '../project-sqlite-store'
 import type { LanguageModelUsage } from 'ai'
 import type { AgentEvent, SDKMessage } from '@gravitas/shared'
 import type { RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
@@ -167,7 +171,21 @@ mock.module('ai', () => ({
 
 const { AISDKAgentAdapter } = await import('./ai-sdk-agent-adapter')
 
+// 会话反查 Pilot 归属需读项目库；库不可用按 fail-closed 处理，测试环境补临时库。
+const projectDbDir = mkdtempSync(join(tmpdir(), 'ai-sdk-adapter-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+
 describe('AISDKAgentAdapter', () => {
+  beforeAll(async () => {
+    process.env.PROMA_TEST_CONFIG_DIR = projectDbDir
+    await initProjectDb()
+  })
+  afterAll(() => {
+    closeProjectDb()
+    if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+    else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+    rmSync(projectDbDir, { recursive: true, force: true })
+  })
   beforeEach(() => {
     capturedInputs = []
     streamTextMode = 'text'
@@ -232,8 +250,52 @@ describe('AISDKAgentAdapter', () => {
     expect(messages.map((message) => message.type)).toEqual(['assistant', 'result'])
   })
 
-  test('given a user uploads a JPEG when AI SDK sends the turn then the model receives the real image block', async () => {
+  test('Given Pilot 受控执行 When 发起 turn Then 模型注入受控 fetch 与输出上限；普通会话不注入', async () => {
+    const project = createProject({ title: 'Pilot 接线', description: '' })
+    const task = createTask(project.id, { title: '任务', description: '', workspaceId: 'workspace-a',
+      assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+    const pilotSessionId = `pilot-session-${project.id}`
+    createAgentExecution({ id: `pilot-exec-${project.id}`, projectId: project.id, entityType: 'task',
+      entityId: task.id, agentId: 'executor', sessionId: pilotSessionId, prompt: '执行',
+      status: 'running', pilotCommandId: `cmd-${project.id}` })
+
     const adapter = new AISDKAgentAdapter()
+    for await (const _message of adapter.query({
+      sessionId: pilotSessionId,
+      prompt: 'hello',
+      agentRuntime: 'ai-sdk',
+      provider: 'openai',
+      apiKey: 'key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'glm-5.3-flash',
+      cwd: '/tmp',
+    })) {
+      // 消费迭代器即可。
+    }
+    const pilotModelInput = (capturedInputs[0]?.model as { input?: { fetch?: unknown; modelId?: string } } | undefined)?.input
+    expect(typeof pilotModelInput?.fetch).toBe('function')
+    expect(pilotModelInput?.modelId).toBe('glm-5.3-flash')
+    expect((capturedInputs[0] as unknown as { maxOutputTokens?: number }).maxOutputTokens).toBe(131_072)
+
+    const plainSessionId = `plain-session-${project.id}`
+    for await (const _message of adapter.query({
+      sessionId: plainSessionId,
+      prompt: 'hello',
+      agentRuntime: 'ai-sdk',
+      provider: 'openai',
+      apiKey: 'key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+      cwd: '/tmp',
+    })) {
+      // 消费迭代器即可。
+    }
+    const plainModelInput = (capturedInputs[1]?.model as { input?: { fetch?: unknown } } | undefined)?.input
+    expect(plainModelInput?.fetch).toBeUndefined()
+    expect((capturedInputs[1] as unknown as { maxOutputTokens?: number }).maxOutputTokens).toBeUndefined()
+  })
+
+  test('given a user uploads a JPEG when AI SDK sends the turn then the model receives the real image block', async () => {    const adapter = new AISDKAgentAdapter()
 
     for await (const _message of adapter.query({
       sessionId: 's-ai-jpeg',

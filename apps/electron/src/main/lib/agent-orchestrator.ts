@@ -939,8 +939,9 @@ export class AgentOrchestrator {
     /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
     skillMentions?: string[]
     requestedOperation?: 'compact'
+    runtimeBudgetLimitUsd?: number
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, runtimeBudgetLimitUsd } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[Pi Runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -1015,6 +1016,7 @@ export class AgentOrchestrator {
       const queryOptions: PiAgentQueryOptions = {
         sessionId,
         agentRuntime: 'pi',
+        runtimeBudgetLimitUsd,
         prompt,
         model: resolvedModelId,
         provider,
@@ -2236,6 +2238,7 @@ export class AgentOrchestrator {
           isDelegationSession,
           skillMentions: mentionedSkills,
           requestedOperation: resolveRequestedOperation(userMessage),
+          runtimeBudgetLimitUsd: effectiveRuntimeBudgetLimitUsd,
         })
         return
       }

@@ -84,6 +84,8 @@ export interface ContextCompactionOptions {
   signal?: AbortSignal
   /** 单次压缩截止时间；0 表示禁用。 */
   timeoutMs?: number
+  /** Pilot 受控出口：传入后压缩请求同样经过 derive→reserve→verify，缺省走代理感知 fetch。 */
+  fetchFn?: typeof globalThis.fetch
   onLifecycle?: (event: ContextCompactionLifecycleEvent) => void
   audit?: Omit<ContextCompactionAuditInput, "packetVersion">
 }
@@ -365,7 +367,8 @@ export async function summarizeHistory(options: ContextCompactionOptions): Promi
   })
 
   const proxyUrl = await getEffectiveProxyUrl()
-  const fetchFn = getFetchFn(proxyUrl)
+  // Pilot 受控执行传入 fetchFn 时压缩请求与主模型请求走同一受控出口；否则保持代理感知默认。
+  const fetchFn = options.fetchFn ?? getFetchFn(proxyUrl)
   let content = ''
   await streamSSE({
     request,

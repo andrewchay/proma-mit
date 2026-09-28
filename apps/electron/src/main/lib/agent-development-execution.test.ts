@@ -182,6 +182,31 @@ describe('研发员工既有链路兼容', () => {
     expect(store.getAgentExecution(retry.execution.id)?.status).toBe('failed')
     expect(store.getAgentEmployee(employee.id)?.completedTasks).toBe(1)
   })
+  test('Given 普通 Pi 回调成功但没有 SDK result When 员工处理终态 Then 仅普通任务待验收', async () => {
+    const { task } = fixture()
+    const { execution, run } = await dispatch(task)
+    expect(run.input.agentRuntime).toBe('pi')
+    run.callbacks.onComplete([message('本轮已完成，等待验收')], { runtimeResult: undefined })
+    expect(store.getAgentExecution(execution.id)?.status).toBe('completed')
+    expect(store.getTask(task.id)?.status).toBe('paused')
+    expect(store.getTask(task.id)?.completedAt).toBeUndefined()
+    expect(store.getAgentExecution(execution.id)?.pilotCommandId).toBeUndefined()
+  })
+
+  test('Given Pi 回调先失败后迟到成功 When 员工处理终态 Then 只保留失败且不交付', async () => {
+    const { task } = fixture()
+    const { execution, run } = await dispatch(task)
+    expect(run.input.agentRuntime).toBe('pi')
+    run.callbacks.onError('Pi 请求费用未获可核验回执')
+    expect(store.getAgentExecution(execution.id)).toMatchObject({
+      status: 'failed', error: 'Pi 请求费用未获可核验回执',
+    })
+    expect(store.getTask(task.id)?.status).toBe('paused')
+    run.callbacks.onComplete([message('迟到的成功回答')])
+    expect(store.getAgentExecution(execution.id)?.status).toBe('failed')
+    expect(store.getTask(task.id)?.completionNotes).not.toContain('迟到的成功回答')
+  })
+
   test('Given 用户停止运行中执行 When 调用取消 Then Runtime 被停止且任务回退 paused', async () => {
     const { task } = fixture()
     const { execution, run } = await dispatch(task)

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { LanguageModelUsage, TextStreamPart, ToolSet } from 'ai'
+import { generateText, type LanguageModelUsage, type TextStreamPart, type ToolSet } from 'ai'
 import { AISDKStreamPartConverter, AISDKStreamStepAccumulator, consumeAISDKStream, createAgentAISDKModel } from './ai-sdk-bridge.ts'
 import type { StreamEvent } from './types.ts'
 
@@ -33,6 +33,28 @@ async function* parts(items: TextStreamPart<ToolSet>[]): AsyncIterable<TextStrea
 }
 
 describe('AI SDK bridge', () => {
+  test('Given OpenAI-compatible 模型使用受控 fetch When 出口拒绝 Then Provider HTTP 零发送', async () => {
+    let sent = 0
+    let intercepted = 0
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => { sent++; return new Response('unexpected') } })
+    try {
+      const model = createAgentAISDKModel({ provider: 'openai', protocol: 'openai-chat', modelId: 'offline',
+        baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: 'offline-only',
+        fetch: Object.assign(async (_request: RequestInfo | URL, init?: RequestInit) => {
+          intercepted++
+          const body = init?.body
+          expect(typeof body).toBe('string')
+          expect(JSON.parse(body as string)).toMatchObject({ model: 'offline' })
+          throw new Error('本地预算出口拒绝')
+        }, { preconnect: globalThis.fetch.preconnect }),
+      })
+      await expect(generateText({ model, prompt: '不应发送', maxOutputTokens: 3, maxRetries: 0 }))
+        .rejects.toThrow('本地预算出口拒绝')
+      expect(intercepted).toBe(1)
+      expect(sent).toBe(0)
+    } finally { server.stop(true) }
+  })
+
   test('given supported Agent protocols then provider-specific AI SDK models are created', () => {
     const anthropic = createAgentAISDKModel({
       provider: 'anthropic',
