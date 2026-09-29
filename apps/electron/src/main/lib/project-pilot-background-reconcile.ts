@@ -13,11 +13,12 @@ export async function reconcileAllPilotProjects(signal?: AbortSignal): Promise<v
     try {
       const snapshot = await reconcilePilotOverview(project.id, signal)
       if (signal?.aborted) break
-      const readyIntentIds = snapshot.intents
-        .filter((intent) => intent.kind === 'ready_candidate')
+      // ready_candidate：待派发的执行/手工评审候选；review_candidate：交付提交后的自动评审/返工环路（A03）。
+      const dispatchableIntentIds = snapshot.intents
+        .filter((intent) => intent.kind === 'ready_candidate' || intent.kind === 'review_candidate')
         .map((intent) => intent.id)
-      if (readyIntentIds.length > 0 && getPilotControlSnapshot(project.id).grantStatus === 'active') {
-        await dispatchReadyPilotIntents(project.id, readyIntentIds, signal)
+      if (dispatchableIntentIds.length > 0 && getPilotControlSnapshot(project.id).grantStatus === 'active') {
+        await dispatchReadyPilotIntents(project.id, dispatchableIntentIds, signal)
       }
     } catch (error) {
       if (signal?.aborted) break

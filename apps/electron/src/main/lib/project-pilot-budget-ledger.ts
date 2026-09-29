@@ -150,6 +150,20 @@ export function hasSettledPilotExecutorRun(projectId: string, grantId: string): 
   return row !== undefined
 }
 
+/** 最近一条已结算的同授权同任务同角色命令；返工轮次与再审触发以此为权威。 */
+export function getLatestSettledPilotCommand(grantId: string, taskId: string,
+  role: 'executor' | 'reviewer'): { commandId: string; reworkOrdinal: number } | null {
+  if (typeof grantId !== 'string' || !grantId.trim() || typeof taskId !== 'string' || !taskId.trim()) {
+    throw new Error('Pilot 结算查询参数无效')
+  }
+  if (role !== 'executor' && role !== 'reviewer') throw new Error('Pilot 结算查询参数无效')
+  const row = getProjectDb().prepare(`SELECT id, rework_ordinal FROM pilot_commands
+    WHERE grant_id = ? AND source_task_id = ? AND role = ? AND state = 'settled'
+    ORDER BY rework_ordinal DESC, created_at DESC, id DESC LIMIT 1`).get(grantId, taskId, role) as
+    { id: string; rework_ordinal: number } | undefined
+  return row ? { commandId: row.id, reworkOrdinal: row.rework_ordinal } : null
+}
+
 /** 在已锁定的策略快照内预留费用和次数；不创建 Agent execution，也不调用模型。 */
 function reservePilotCommandBudgetLocked(
   input: PilotCommandReservationInput,
@@ -175,10 +189,19 @@ function reservePilotCommandBudgetLocked(
   if (input.employeeId !== expectedEmployee) throw new Error('Pilot 命令员工不在授权角色内')
 
   const task = getTask(input.taskId)
-  if (!task || task.projectId !== input.projectId || task.workspaceId !== grant.workspace_id
-    || task.assignee?.userId !== `agent-${input.employeeId}`) throw new Error('Pilot 任务、项目、工作区或负责人不匹配')
+  // 同任务评审/返工环路（A03）：评审命令可作用于执行员工负责的任务；负责人校验相应放宽。
+  const assigneeOk = task?.assignee?.userId === `agent-${input.employeeId}`
+    || (input.role === 'reviewer' && task?.assignee?.userId === `agent-${grant.executor_employee_id}`)
+  if (!task || task.projectId !== input.projectId || task.workspaceId !== grant.workspace_id || !assigneeOk) {
+    throw new Error('Pilot 任务、项目、工作区或负责人不匹配')
+  }
   const group = resolveStateGroup(task.status, listTaskStatuses(input.projectId))
-  if (task.status === 'draft' || task.status === 'paused' || (group !== 'unstarted' && group !== 'started')) {
+  // paused（待人工验收）任务仅允许环路命令（评审/返工）作用；执行命令首轮仍禁止，防止人工验收中的任务被自动重跑。
+  const reviewLoopCommand = input.role === 'reviewer' || input.reworkOrdinal > 0
+  if (task.status === 'draft' || (task.status === 'paused' && !reviewLoopCommand)) {
+    throw new Error('Pilot 任务状态不可派发')
+  }
+  if (task.status !== 'paused' && group !== 'unstarted' && group !== 'started') {
     throw new Error('Pilot 任务状态不可派发')
   }
   if (task.updatedAt !== input.sourceVersion || hashPilotTaskSource(task) !== input.sourceHash) {
@@ -341,8 +364,11 @@ function assertPilotCommandStartRecordLocked(
   }
   assertGrantMatchesPolicy(grant, policy)
   const task = getTask(row.source_task_id)
+  // 同任务评审环路：reviewer 命令允许作用于执行员工负责的任务（A03），其余角色仍要求负责人一致。
+  const startAssigneeOk = !!task && (task.assignee?.userId === `agent-${row.employee_id}`
+    || (row.role === 'reviewer' && task.assignee?.userId === `agent-${grant.executor_employee_id}`))
   if (!task || task.projectId !== execution.projectId || task.workspaceId !== grant.workspace_id
-    || task.assignee?.userId !== `agent-${row.employee_id}`
+    || !startAssigneeOk
     || task.updatedAt !== row.source_version || hashPilotTaskSource(task) !== row.source_hash) {
     throw new Error('Pilot 命令来源已变化')
   }

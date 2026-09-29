@@ -976,7 +976,17 @@ function writebackExecutionResult(
     })
   }
   const current = store.getTask(execution.entityId)
-  if (!current || parseAgentId(current.assignee?.userId) !== execution.agentId || !isExecutableAgentTask(current)) return
+  if (!current || !isExecutableAgentTask(current)) return
+  // 技术评审等非负责人 Pilot 执行：只把评审摘要落到 completionNotes，不改变任务状态（C5 人工验收闸门不动）。
+  if (parseAgentId(current.assignee?.userId) !== execution.agentId) {
+    if (!execution.pilotCommandId) return
+    void updateTask(execution.entityId, {
+      completionNotes: `【技术评审】${summary}`,
+    }, { source: 'system' }).catch((error: unknown) => {
+      console.warn(`[AgentEmployee] Pilot 评审意见回写失败: ${execution.entityId}`, error)
+    })
+    return
+  }
   // 任务 draft 是需求确认态，不是交付物草稿；暂停待验收，沿用现有完成/DoD 闸门。
   void updateTask(execution.entityId, {
     status: 'paused',

@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
-import { hasSettledPilotExecutorRun, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
+import {
+  getLatestSettledPilotCommand, getPilotGrantBudgetUsage, hasSettledPilotExecutorRun, hashPilotTaskSource,
+  reserveAndQueuePilotCommand,
+} from './project-pilot-budget-ledger'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
 import { getPilotPolicy } from './project-pilot-policy'
@@ -11,6 +14,18 @@ export interface PilotDispatchResult {
   commandId: string
   executionId: string
   started: boolean
+}
+
+/** 评审结论标记：技术评审执行的交付摘要必须以机器可读行给出结论；缺标记一律保守不动作。 */
+const REVIEW_VERDICT_PASS = '【评审结论：通过】'
+const REVIEW_VERDICT_REWORK = '【评审结论：返工'
+
+/** 解析评审结论；返工优先于通过（结论行可能同时引用子项通过）。 */
+export function parsePilotReviewVerdict(notes: string | null | undefined): 'pass' | 'rework' | null {
+  if (!notes) return null
+  if (notes.includes(REVIEW_VERDICT_REWORK)) return 'rework'
+  if (notes.includes(REVIEW_VERDICT_PASS)) return 'pass'
+  return null
 }
 
 interface PilotDispatchDependencies {
@@ -31,9 +46,81 @@ function commandIdentity(grantId: string, intentId: string, role: 'executor' | '
     .digest('hex')
 }
 
+interface PilotDispatchPlan {
+  role: 'executor' | 'reviewer'
+  reworkOrdinal: number
+  employeeId: string
+  prompt: string
+  /** 评估为「无需派发」（如评审通过待人工、返工额度尽）时为 false，调用方静默跳过而非报错。 */
+  actionable: true
+}
+
+/** ready_candidate：按任务负责人分角色（执行员工→执行、评审员工→评审），返工序号恒 0。 */
+function planReadyDispatch(projectId: string, grant: { grantId: string; executorEmployeeId: string; reviewerEmployeeId: string; workspaceId: string },
+  task: NonNullable<ReturnType<typeof getTask>>, intentId: string): PilotDispatchPlan | null {
+  const assigneeId = task.assignee?.userId
+  const role = task.workspaceId !== grant.workspaceId ? null
+    : assigneeId === `agent-${grant.executorEmployeeId}` ? 'executor'
+    : assigneeId === `agent-${grant.reviewerEmployeeId}` ? 'reviewer' : null
+  if (!role) return null
+  if (role === 'reviewer' && !hasSettledPilotExecutorRun(projectId, grant.grantId)) {
+    throw new Error('Pilot 评审命令须在执行命令结算后派发')
+  }
+  const employeeId = role === 'executor' ? grant.executorEmployeeId : grant.reviewerEmployeeId
+  const prompt = [
+    role === 'executor' ? '按 Project Pilot 已确认授权执行当前研发任务。' : '按 Project Pilot 已确认授权评审当前交付任务。',
+    `任务：${task.title}`,
+    `描述：${task.description || '（无）'}`,
+    `候选：${intentId}`,
+    `来源哈希：${hashPilotTaskSource(task)}`,
+  ].join('\n')
+  return { role, reworkOrdinal: 0, employeeId, prompt, actionable: true }
+}
+
+/**
+ * review_candidate：同任务自动化评审/返工环路（A03）。
+ * - 交付已提交且尚无对应轮次评审 → 派发评审命令（reworkOrdinal = 最新已结算执行轮次）；
+ * - 本轮评审已结算且结论为返工 → 返工序号 +1 ≤ maxRework 时派发执行返工命令；
+ * - 结论通过 / 无标记 / 返工额度尽 / run 额度尽 → 静默不派发（等人工或等额度）。
+ */
+function planReviewDispatch(grant: { grantId: string; executorEmployeeId: string; reviewerEmployeeId: string; workspaceId: string; maxRework: number; maxRuns: number },
+  task: NonNullable<ReturnType<typeof getTask>>, intentId: string): PilotDispatchPlan | null {
+  if (task.workspaceId !== grant.workspaceId || task.assignee?.userId !== `agent-${grant.executorEmployeeId}`) return null
+  const latestExecutor = getLatestSettledPilotCommand(grant.grantId, task.id, 'executor')
+  if (!latestExecutor) return null
+  const latestReviewer = getLatestSettledPilotCommand(grant.grantId, task.id, 'reviewer')
+  if (!latestReviewer || latestReviewer.reworkOrdinal < latestExecutor.reworkOrdinal) {
+    const usage = getPilotGrantBudgetUsage(grant.grantId)
+    if (usage.runReservations >= grant.maxRuns) return null
+    const prompt = [
+      '按 Project Pilot 已确认授权执行当前技术评审；这是 Pilot 闭环内的技术评审，不等于业务验收。',
+      `任务：${task.title}`,
+      `描述：${task.description || '（无）'}`,
+      `候选：${intentId}`,
+      `来源哈希：${hashPilotTaskSource(task)}`,
+      '评审要求：核对交付与任务描述及验收口径的一致性；结束时必须输出且仅输出一行结论标记：【评审结论：通过】 或 【评审结论：返工：<原因>】。',
+    ].join('\n')
+    return { role: 'reviewer', reworkOrdinal: latestExecutor.reworkOrdinal, employeeId: grant.reviewerEmployeeId, prompt, actionable: true }
+  }
+  if (parsePilotReviewVerdict(task.completionNotes) !== 'rework') return null
+  const nextOrdinal = latestExecutor.reworkOrdinal + 1
+  if (nextOrdinal > grant.maxRework) return null
+  const usage = getPilotGrantBudgetUsage(grant.grantId)
+  if (usage.runReservations >= grant.maxRuns) return null
+  const prompt = [
+    `按 Project Pilot 已确认授权执行当前研发任务（第 ${nextOrdinal} 轮返工）；请针对技术评审指出的缺陷修复并重新交付。`,
+    `任务：${task.title}`,
+    `描述：${task.description || '（无）'}`,
+    `候选：${intentId}`,
+    `来源哈希：${hashPilotTaskSource(task)}`,
+  ].join('\n')
+  return { role: 'executor', reworkOrdinal: nextOrdinal, employeeId: grant.executorEmployeeId, prompt, actionable: true }
+}
+
 /**
  * 唯一的 Pilot 候选派发入口。
  * 候选 ID 只用于定位；执行前必须重读权威事实，调用方不能提供员工、模型、预算或 prompt。
+ * 评估为「无需派发」时返回 null（不视为错误）。
  */
 async function dispatchPilotIntentWithDependencies(
   projectId: string,
@@ -41,14 +128,15 @@ async function dispatchPilotIntentWithDependencies(
   dependencies: PilotDispatchDependencies,
   now = Date.now(),
   signal?: AbortSignal,
-): Promise<PilotDispatchResult> {
+): Promise<PilotDispatchResult | null> {
   if (!projectId?.trim() || !intentId?.trim() || !Number.isSafeInteger(now) || now < 0) {
     throw new Error('Pilot 派发参数无效')
   }
   const snapshot = await reconcilePilotOverview(projectId, signal)
   if (signal?.aborted) throw new Error('Pilot 派发已停止')
   const intent = snapshot.intents.find((item) => item.id === intentId)
-  if (!intent || intent.projectId !== projectId || intent.sourceType !== 'task' || intent.kind !== 'ready_candidate') {
+  if (!intent || intent.projectId !== projectId || intent.sourceType !== 'task'
+    || (intent.kind !== 'ready_candidate' && intent.kind !== 'review_candidate')) {
     throw new Error('Pilot 候选已失效或不可派发')
   }
   const policy = getPilotPolicy(projectId)
@@ -59,46 +147,38 @@ async function dispatchPilotIntentWithDependencies(
     || !pilotGrantMatchesPolicy(grant, policy)) {
     throw new Error('Pilot 活动授权或当前绑定未通过派发核验')
   }
-  // 角色由任务负责人决定：执行员工派执行命令，评审员工派评审命令；其余一律拒绝。
-  // 工作区漂移与未知负责人共用同一拒绝语，避免向客户端泄露授权内部角色绑定。
   const task = getTask(intent.sourceId)
-  const assigneeId = task?.assignee?.userId
-  const role: 'executor' | 'reviewer' | null = !task || task.projectId !== projectId || task.workspaceId !== grant.workspaceId ? null
-    : assigneeId === `agent-${grant.executorEmployeeId}` ? 'executor'
-    : assigneeId === `agent-${grant.reviewerEmployeeId}` ? 'reviewer' : null
-  if (!task || !role) {
+  if (!task || task.projectId !== projectId) {
     throw new Error('Pilot 候选任务与授权执行角色或工作区不匹配')
   }
-  if (role === 'reviewer' && !hasSettledPilotExecutorRun(projectId, grant.grantId)) {
-    throw new Error('Pilot 评审命令须在执行命令结算后派发')
+  // 工作区漂移与未知负责人共用同一拒绝语，避免向客户端泄露授权内部角色绑定（ready 路径）。
+  const plan = intent.kind === 'ready_candidate'
+    ? planReadyDispatch(projectId, grant, task, intent.id)
+    : planReviewDispatch(grant, task, intent.id)
+  if (!plan) {
+    if (intent.kind === 'ready_candidate') throw new Error('Pilot 候选任务与授权执行角色或工作区不匹配')
+    return null
   }
-  const employee = getAgentEmployee(role === 'executor' ? grant.executorEmployeeId : grant.reviewerEmployeeId)
+  const employee = getAgentEmployee(plan.employeeId)
   if (!employee || !employee.enabled || employee.executionProfile !== 'development') {
     throw new Error('Pilot 授权员工不可用或不属于安全研发角色')
   }
-  const identity = commandIdentity(grant.grantId, intent.id, role, 0)
+  const identity = commandIdentity(grant.grantId, intent.id, plan.role, plan.reworkOrdinal)
   const commandId = `pilot-command-${identity}`
   const executionId = `pilot-execution-${identity}`
   const sourceHash = hashPilotTaskSource(task)
-  const prompt = [
-    role === 'executor' ? '按 Project Pilot 已确认授权执行当前研发任务。' : '按 Project Pilot 已确认授权评审当前交付任务。',
-    `任务：${task.title}`,
-    `描述：${task.description || '（无）'}`,
-    `候选：${intent.id}`,
-    `来源哈希：${sourceHash}`,
-  ].join('\n')
   const queued = reserveAndQueuePilotCommand({
     commandId,
     projectId,
     grantId: grant.grantId,
-    idempotencyKey: `intent:${intent.id}:${role}:0`,
+    idempotencyKey: `intent:${intent.id}:${plan.role}:${plan.reworkOrdinal}`,
     taskId: task.id,
     sourceVersion: task.updatedAt,
     sourceHash,
     employeeId: employee.id,
-    role,
-    reworkOrdinal: 0,
-  }, { executionId, prompt }, now)
+    role: plan.role,
+    reworkOrdinal: plan.reworkOrdinal,
+  }, { executionId, prompt: plan.prompt }, now)
   const started = await dependencies.startExecution(queued.execution.id)
   return { intentId: intent.id, commandId: queued.command.commandId, executionId: queued.execution.id, started }
 }
@@ -108,7 +188,7 @@ export function dispatchPilotIntent(
   intentId: string,
   now = Date.now(),
   signal?: AbortSignal,
-): Promise<PilotDispatchResult> {
+): Promise<PilotDispatchResult | null> {
   return dispatchPilotIntentWithDependencies(projectId, intentId, productionDependencies, now, signal)
 }
 
@@ -123,7 +203,8 @@ export async function dispatchReadyPilotIntents(projectId: string, intentIds: st
   for (const intentId of intentIds) {
     if (signal?.aborted) break
     try {
-      results.push(await dispatchPilotIntent(projectId, intentId, Date.now(), signal))
+      const result = await dispatchPilotIntent(projectId, intentId, Date.now(), signal)
+      if (result) results.push(result)
     } catch (error) {
       if (signal?.aborted) break
       console.warn(`[Pilot] 候选派发跳过 project=${projectId} intent=${intentId}`, error)
