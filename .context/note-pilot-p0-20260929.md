@@ -18,6 +18,9 @@ G0 已审定；先前特批 G2 的 ai-sdk/bigmodel 两次受控 run 已结算，
 ## 2026-09-29 原生 WAL 局部强杀证据
 新增独立 Node 子进程夹具（非 Bun）运行 `initProjectDb` 的 NativeSqliteCompat / better-sqlite3 WAL 分支，临时 `PROMA_TEST_CONFIG_DIR`；在 `confirmPilotGrantPause` 外层事务 callback 完成但提交前、函数提交后各发 READY 并由父进程 SIGKILL，新进程重开验证：提交前 grant active / 无 decision / execution running / 无 request；提交后 grant paused / decision 恰一条 / execution running / request pending。子进程断言 NativeSqliteCompat，重开断言 `journal_mode=wal`。该证据只覆盖暂停事务的进程强杀，不包含停止请求送达窗口、Electron ABI 固定构建、断电持久性（生产 `synchronous=NORMAL`）、派发/审批/WAL 矩阵和 Runtime 外部副作用。`stopAgent→orchestrator.stop` 的实现始终回报 `processTermination: NOT_VERIFIED`，adapter abort 只说明目标代际请求被同步接受，不能提供退出凭据。G1 未通过。
 
+## 2026-09-29 Electron 固定二进制 WAL 复验
+探测确认仓库自带 Electron 39.8.10 二进制在 `ELECTRON_RUN_AS_NODE=1` 下（ABI 140 / Node 22.22.1）可加载并写入生产 better-sqlite3（同包在 Node 24 ABI 137 亦可用，双 ABI 均可）。强杀矩阵参数化 Electron 运行器复跑：提交前回滚、提交后 pending 持久，与 Node 结论一致；inspect 扩展 commandState 与未消解升级计数。首跑 `database is locked` 的教训：跨用例共享数据根会让被杀子进程的残留锁/存活树污染下一用例，修复为每用例独立数据根 + 进程组 SIGKILL（detached + kill(-pid)）。边界：run-as-node 无 app 生命周期/窗口，不等于打包固定构建；派发/审批窗口、停止送达后崩溃、断电、外部副作用仍未验收。G1 未通过。
+
 ## 管理者入口缺口
 项目创建仅保存 title/description；Pilot 控制面展示已有任务与授权；现有 `planReadyDispatch` 是从结构化任务出发的候选派发，不是自然语言目标→澄清→任务/依赖/DoD/角色的计划生成。下一切片建议“只生成草案—澄清—用户批准结构化计划—事务性建任务—复核授权后派发”，避免模型输出直接触发创建/付费。主动通知与固定构建 UI 仍未验收。
 

@@ -58,8 +58,17 @@ if (mode === 'setup') {
     const decision = database.prepare('SELECT count(*) AS n FROM pilot_grant_pause_decisions WHERE grant_id = ?')
       .get(grantId) as { n: number }
     const execution = getAgentExecution(executionId)
+    // 重开对账扩展：同时核验 Pilot 命令状态与未消解停止升级，不只看授权与执行。
+    const command = execution?.pilotCommandId
+      ? database.prepare('SELECT state FROM pilot_commands WHERE id = ?')
+        .get(execution.pilotCommandId) as { state: string } | undefined
+      : undefined
+    const openEscalations = (database.prepare(
+      'SELECT count(*) AS n FROM pilot_stop_escalations WHERE execution_id = ? AND resolved_at IS NULL')
+      .get(executionId) as { n: number }).n
     process.stdout.write(`DATA ${JSON.stringify({ driver, journalMode: database.prepare('PRAGMA journal_mode').get(),
       grantState: grant?.state, decisions: decision.n, executionStatus: execution?.status,
+      commandState: command?.state ?? null, openEscalations,
       requests: listPilotGrantStopRequests(projectId).map((row) => ({ executionId: row.execution_id, state: row.state })) })}\n`)
     closeProjectDb()
   }
