@@ -1,5 +1,7 @@
 # Project Pilot G0 命令与预算契约（待审查草案）
 
+> **[2026-09-29] 本草案已完成审定，由 [g0-contract-ratified.md](g0-contract-ratified.md) 取代**；四项开放决策（单请求费用边界语义、needs_reconcile 释放、停止证据标准、G1 范围）已由用户裁定。本文保留用于追溯，其中与审定版冲突的表述（如「派生预留尚未作为 Runtime 单次硬上限」）以审定版为准。
+
 日期：2026-09-26。本文把首版真实派发前必须满足的权威边界写成可实现、可测试的契约；它不是运行授权。当前 `project-pilot-policy.ts` 只保存 `paused` 草案，`assertPilotPolicyActive()` 始终拒绝，本文不改变这一事实。
 
 ## 为什么要先定这个契约

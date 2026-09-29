@@ -29,7 +29,7 @@
   - [ ] Pilot Pi 员工端纵向结算尚不能走正式入口：readiness 与费用 capability 关闭；不得在测试中绕过门禁假称已验证。Provider 回执/可核价证据仍缺。
 - [ ] 3. 停止/恢复的持久结果、代际终止证明及人工对账。
 - [ ] 4. 技术评审返工、审批续跑和最小收件箱的 P0 纵向闭环。
-- [ ] 5. G0 契约评审，G1 隔离 fixture A01–A07/A09a 故障矩阵。
+- [ ] 5. ~~G0 契约评审~~（已完成：g0-contract-ratified.md，-61）→ G1 隔离 fixture A01–A07/A09a 全量 must-pass；前置缺口 B1 返工派发 / B2 审批续跑+收件箱 / B3 后台非 mount 推进 / B4 并行依赖计划派发。
 - [ ] 前述通过后另行申请 G2 受控真实试跑授权；未经授权不调用付费 Provider。
 
 约束：CLAUDE.md/README.md 修改先请求用户许可；Pi Pilot readiness 与费用能力位暂不开放。未提交的 -40～-42 修改保留，提交前复核整个 diff。
