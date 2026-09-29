@@ -176,6 +176,54 @@ test('Given 执行完成且主动询问 When 页面未挂载时人工批准 Then
   }
 })
 
+test('Given 审批已提交但即时事件丢失 When 重开数据库且后台启动扫描 Then 仅派一条续跑命令', async () => {
+  const base = e2eFixture('审批事件丢失后重启')
+  const task = createTask(base.project.id, {
+    title: '等待答复后续跑', description: '', workspaceId: 'workspace-e2e',
+    assignee: { userId: `agent-${base.executor.id}`, displayName: base.executor.name },
+  })
+  const readyIntent = (await getCurrentPilotIntents(base.project.id)).find((item) => item.sourceId === task.id)!
+  const first = await projectPilotDispatchTesting.dispatch(base.project.id, readyIntent.id, {
+    inspectReadiness: backgroundDependencies.inspectReadiness,
+    startExecution: async () => false,
+  }, base.now)
+  getProjectDb().prepare(`UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 40 WHERE id = ?`).run(first!.commandId)
+  const summary = '【需要人工：决策】确认执行范围'
+  updateAgentExecution(first!.executionId, { status: 'completed', completedAt: base.now + 1, resultSummary: summary })
+  updateTask(task.id, { status: 'paused', completionNotes: summary })
+  const version = getTask(task.id)!.updatedAt
+  // 未启动后台订阅：审批提交后的即时事件没有消费者；活动记录后置链不作为续跑事实。
+  await resolvePilotApproval(base.project.id, task.id, 'approved', { sourceVersion: version, note: '范围已确认' })
+  expect((getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+    .get(task.id) as { n: number }).n).toBe(1)
+  closeProjectDb()
+  await initProjectDb()
+  let starts = 0
+  const stop = startPilotBackgroundReconcile({ ...backgroundDependencies,
+    startExecution: async () => { starts++; return false },
+  })
+  try {
+    const resumed = await waitFor(() => (getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+      .get(task.id) as { n: number }).n === 2)
+    expect(resumed).toBe(true)
+    const commands = getProjectDb().prepare('SELECT state, execution_id FROM pilot_commands WHERE source_task_id = ?')
+      .all(task.id) as Array<{ state: string; execution_id: string }>
+    expect(commands.map((item) => item.state).sort()).toEqual(['queued', 'settled'])
+    const continuation = commands.find((item) => item.state === 'queued')
+    expect(continuation?.execution_id).not.toBe(first!.executionId)
+    expect(getAgentExecution(continuation!.execution_id)).toMatchObject({
+      projectId: base.project.id, entityId: task.id, agentId: base.executor.id, status: 'queued',
+    })
+    expect(starts).toBe(1)
+    // 周期/重复对账不得再次占额或创建第三条命令。
+    await getCurrentPilotIntents(base.project.id)
+    expect((getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+      .get(task.id) as { n: number }).n).toBe(2)
+  } finally {
+    stop()
+  }
+})
+
 test('Given 交付提交 When 页面未挂载 Then 后台自动派发同任务评审命令（A03 环路事件入口）', async () => {
   const base = e2eFixture('交付评审端到端')
   const task = createTask(base.project.id, {
