@@ -65,6 +65,10 @@ interface Identity {
   employeeId: string
   summary?: string
   version?: number
+  workspaceId?: string
+  channelId?: string
+  executorEmployeeId?: string
+  repoPath?: string
 }
 
 interface Snapshot {
@@ -210,6 +214,41 @@ test('审批已提交但事件及活动记录未执行时强杀：重开只认�
     expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
       taskStatus: 'pending', resolutionCount: 1, approvalActivityCount: 0 })
     expect(run('reconcile-approved', identity, runner)).toMatchObject({ ready: 1, commandCount: 1 })
+  }
+}, 120_000)
+
+test('同一原生 WAL 强杀库：正式绑定预检后重启受控续派一次（Node/Electron）', async () => {
+  for (const runner of matrixRunners()) {
+    useFreshDataRoot()
+    const identity = run('setup-approval-bound', undefined, runner) as Identity
+    await killAt('approval-after-commit-before-event', identity, runner)
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      taskStatus: 'pending', resolutionCount: 1, approvalActivityCount: 0,
+      commandState: 'settled', commandCount: 1, executionCount: 1 })
+    const resumed = run('resume-approved-bound', identity, runner) as unknown as {
+      readiness: boolean; grantStatus: string; boundWorkspace: boolean; commandCount: number; queuedCount: number;
+      starts: number; queuedExecutionId: string; queuedExecution: Record<string, unknown>;
+      approvalActivityCount: number
+    }
+    expect(resumed).toMatchObject({ readiness: true, grantStatus: 'active', boundWorkspace: true, commandCount: 2,
+      queuedCount: 1, starts: 1, approvalActivityCount: 0 })
+    expect(resumed.queuedExecutionId).not.toBe(identity.executionId)
+    expect(resumed.queuedExecution).toMatchObject({ projectId: identity.projectId, entityId: identity.taskId,
+      agentId: identity.executorEmployeeId, status: 'queued' })
+    // 另一份同样强杀后的独立库：验证真正的后台启动入口而非仅手动调用扫描函数。
+    useFreshDataRoot()
+    const background = run('setup-approval-bound', undefined, runner) as Identity
+    await killAt('approval-after-commit-before-event', background, runner)
+    expect(run('start-approved-bound-background', background, runner))
+      .toMatchObject({ queuedCount: 1, starts: 1, commandCount: 2 })
+    useFreshDataRoot()
+    const blocked = run('setup-approval-bound', undefined, runner) as Identity
+    await killAt('approval-after-commit-before-event', blocked, runner)
+    expect(run('invalidate-bound-channel', blocked, runner)).toMatchObject({ disabled: true })
+    // 生产预检拒绝停用渠道；resume 进程以非零退出，账本不产生第二条命令。
+    expect(() => run('resume-approved-bound', blocked, runner)).toThrow('重启绑定或授权未就绪')
+    expect(run('inspect', blocked, runner) as Snapshot).toMatchObject({ commandCount: 1,
+      taskStatus: 'pending', resolutionCount: 1 })
   }
 }, 120_000)
 

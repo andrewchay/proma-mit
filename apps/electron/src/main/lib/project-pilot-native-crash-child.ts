@@ -1,15 +1,26 @@
 import { getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { getConfigDir, getChannelsPath } from './config-paths'
+import { getChannelById } from './channel-manager'
 import { resolvePilotApproval } from './project-pilot-approval'
+import { createAgentWorkspace, getAgentWorkspace } from './agent-workspace-manager'
+import { bindWorkspaceToProject, listProjectWorkspaceBindings } from './project-workspace-bindings'
+import { inspectPilotReadiness } from './project-pilot-readiness'
+import { getPilotControlSnapshot } from './project-pilot-control'
+import { reconcileAllPilotProjects, startPilotBackgroundReconcile } from './project-pilot-background-reconcile'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { confirmPilotGrantPause, listPilotGrantStopRequests, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
-import { closeProjectDb, createProject, createTask, getAgentExecution, getProjectDb, getTask,
+import { closeProjectDb, createAgentEmployee, createProject, createTask, getAgentEmployee, getAgentExecution, getProjectDb, getTask,
   initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
 
 // 仅由 G1 原生强杀测试子进程执行；必须运行生产 NativeSqliteCompat/better-sqlite3 WAL 分支。不连接 Provider。
 const MODES = ['setup', 'setup-dispatch', 'setup-approval', 'before', 'after', 'dispatch-before', 'dispatch-after',
   'dispatch-retry', 'approval-before', 'approval-after', 'approval-after-commit-before-event',
-  'approval-retry', 'approval-dup', 'reconcile-approved', 'inspect'] as const
+  'approval-retry', 'approval-dup', 'reconcile-approved', 'setup-approval-bound', 'resume-approved-bound',
+  'invalidate-bound-channel', 'start-approved-bound-background', 'inspect'] as const
 const mode = process.argv[2]
 if (!mode || !(MODES as readonly string[]).includes(mode)) throw new Error('无效崩溃窗口')
 
@@ -26,6 +37,10 @@ interface Identity {
   employeeId: string
   summary?: string
   version?: number
+  workspaceId?: string
+  channelId?: string
+  executorEmployeeId?: string
+  repoPath?: string
 }
 
 function readIdentity(): Identity {
@@ -119,6 +134,56 @@ async function main(): Promise<void> {
       executionId: `native-execution-${project.id}`, taskId: task.id,
       sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
       idempotencyKey: 'native-dispatch', prompt: '派发窗口任务', employeeId: 'executor' })
+    closeProjectDb()
+    return
+  }
+  if (mode === 'setup-approval-bound') {
+    const repoPath = mkdtempSync(join(getConfigDir(), 'pilot-bound-repo-'))
+    execFileSync('git', ['init', '--quiet', repoPath])
+    const workspace = createAgentWorkspace('Pilot WAL 绑定工作区', repoPath)
+    const channelId = 'native-channel-bound'
+    // Electron run-as-node 没有 safeStorage；测试文件只做权威 channels.json 夹具，
+    // 随后和重启后必须由生产 getChannelById / inspectPilotReadiness 重新读取，绝不请求 .invalid 端点。
+    writeFileSync(getChannelsPath(), JSON.stringify({ version: 1, channels: [{
+      id: channelId, name: 'Pilot WAL 无网络渠道', provider: 'custom',
+      baseUrl: 'https://pilot.invalid/v1', apiKey: 'fixture-not-a-real-key',
+      models: [{ id: 'glm-5.3-flash', name: 'G1 无请求模型', enabled: true }],
+      enabled: true, createdAt: now, updatedAt: now,
+    }] }))
+    const channel = getChannelById(channelId)
+    if (!channel?.enabled) throw new Error('持久渠道夹具未被生产读取')
+    const executor = createAgentEmployee({ name: 'Pilot WAL 执行', role: '工程师', description: '',
+      channelId: channel.id, modelId: 'glm-5.3-flash', workspaceId: workspace.id,
+      workspaceIds: [workspace.id], runtime: 'ai-sdk', executionProfile: 'development' })
+    const reviewer = createAgentEmployee({ name: 'Pilot WAL 评审', role: '技术评审', description: '',
+      channelId: channel.id, modelId: 'glm-5.3-flash', workspaceId: workspace.id,
+      workspaceIds: [workspace.id], runtime: 'ai-sdk', executionProfile: 'development' })
+    const project = createProject({ title: '原生 WAL 审批同库续派', description: '' })
+    if (!bindWorkspaceToProject(project.id, workspace.id)) throw new Error('项目与隔离工作区正式绑定失败')
+    const grantId = `native-grant-${project.id}`
+    insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId: workspace.id,
+      channelId: channel.id, modelId: 'glm-5.3-flash', executorEmployeeId: executor.id,
+      reviewerEmployeeId: reviewer.id, maxCostMicros: 10_000, maxRuns: 2, maxRework: 0,
+      expiresAt: now + 120_000, createdAt: now })
+    const task = createTask(project.id, { title: '原生 WAL 同库审批', description: '',
+      workspaceId: workspace.id, assignee: { userId: `agent-${executor.id}`, displayName: executor.name } })
+    const commandId = `native-command-${project.id}`
+    const executionId = `native-execution-${project.id}`
+    reserveAndQueuePilotCommand({ commandId, projectId: project.id, grantId, idempotencyKey: 'native-approval-bound',
+      taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
+      employeeId: executor.id, role: 'executor', reworkOrdinal: 0 },
+    { executionId, prompt: '合成询问，不调用模型' })
+    const summary = '【需要人工：决策】是否继续？'
+    database.prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 30 WHERE id = ?").run(commandId)
+    updateAgentExecution(executionId, { status: 'completed', completedAt: Date.now(), resultSummary: summary })
+    updateTask(task.id, { status: 'paused', completionNotes: summary })
+    const readiness = inspectPilotReadiness(project.id)
+    if (!readiness.bindingsValid) throw new Error(`正式绑定预检未通过：${readiness.blockers.join('; ')}`)
+    emit({ projectId: project.id, grantId, executionId, commandId, taskId: task.id,
+      sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task), idempotencyKey: 'native-approval-bound',
+      prompt: '合成询问，不调用模型', employeeId: executor.id, executorEmployeeId: executor.id,
+      workspaceId: workspace.id, channelId: channel.id, repoPath,
+      summary, version: getTask(task.id)!.updatedAt })
     closeProjectDb()
     return
   }
@@ -227,6 +292,81 @@ async function main(): Promise<void> {
       } catch (cause) {
         emit({ ok: false, message: messageOf(cause) })
       }
+      closeProjectDb()
+      return
+    }
+    case 'invalidate-bound-channel': {
+      // 仅操纵隔离权威 channels.json 夹具；生产 getChannelById / inspectPilotReadiness 必须即时阻断。
+      const path = getChannelsPath()
+      const config = JSON.parse(readFileSync(path, 'utf8')) as { version: number; channels: Array<{ id: string; enabled: boolean }> }
+      const channel = config.channels.find((item) => item.id === identity.channelId)
+      if (!channel) throw new Error('渠道夹具不存在')
+      channel.enabled = false
+      writeFileSync(path, JSON.stringify(config))
+      emit({ disabled: !getChannelById(identity.channelId!)?.enabled })
+      closeProjectDb()
+      return
+    }
+    case 'start-approved-bound-background': {
+      const readiness = inspectPilotReadiness(identity.projectId)
+      if (!readiness.bindingsValid || getPilotControlSnapshot(identity.projectId).grantStatus !== 'active') {
+        throw new Error(`后台启动前生产预检未通过：${readiness.blockers.join('; ')}`)
+      }
+      let starts = 0
+      const stop = startPilotBackgroundReconcile({ inspectReadiness: inspectPilotReadiness,
+        startExecution: async () => { starts++; return false },
+      })
+      try {
+        let queuedCount = 0
+        for (let i = 0; i < 100; i++) {
+          queuedCount = (database.prepare(`SELECT count(*) AS n FROM pilot_commands
+            WHERE source_task_id = ? AND state = 'queued'`).get(identity.taskId) as { n: number }).n
+          if (queuedCount === 1) break
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        emit({ queuedCount, starts, commandCount: (database.prepare(`SELECT count(*) AS n FROM pilot_commands
+          WHERE source_task_id = ?`).get(identity.taskId) as { n: number }).n })
+      } finally {
+        stop()
+      }
+      closeProjectDb()
+      return
+    }
+    case 'resume-approved-bound': {
+      // 同一被 SIGKILL 的 WAL 数据库重开后仅替换 Runtime 启动，不覆盖生产 readiness/grant 状态。
+      const readiness = inspectPilotReadiness(identity.projectId)
+      const control = getPilotControlSnapshot(identity.projectId)
+      const channel = identity.channelId ? getChannelById(identity.channelId) : undefined
+      const workspace = identity.workspaceId ? getAgentWorkspace(identity.workspaceId) : undefined
+      const executor = identity.executorEmployeeId ? getAgentEmployee(identity.executorEmployeeId) : null
+      if (!channel || channel.baseUrl !== 'https://pilot.invalid/v1'
+        || !workspace?.rootPath || !identity.repoPath
+        || realpathSync(workspace.rootPath) !== realpathSync(identity.repoPath)
+        || executor?.runtime !== 'ai-sdk'
+        || !executor.workspaceIds?.includes(identity.workspaceId ?? '')) {
+        throw new Error('重启后渠道、Git 工作区或 ai-sdk 员工绑定漂移')
+      }
+      const boundWorkspace = listProjectWorkspaceBindings(identity.projectId)
+        .some((binding) => binding.workspaceId === identity.workspaceId)
+      if (!boundWorkspace) throw new Error('重启后项目工作区正式绑定缺失')
+      if (!readiness.bindingsValid || control.grantStatus !== 'active') {
+        throw new Error(`重启绑定或授权未就绪：${readiness.blockers.join('; ')} / ${control.grantStatus}`)
+      }
+      let starts = 0
+      const dependencies = { inspectReadiness: inspectPilotReadiness,
+        startExecution: async () => { starts++; return false } }
+      await reconcileAllPilotProjects(undefined, dependencies)
+      await reconcileAllPilotProjects(undefined, dependencies)
+      const rows = database.prepare('SELECT id, state, execution_id FROM pilot_commands WHERE source_task_id = ?')
+        .all(identity.taskId) as Array<{ id: string; state: string; execution_id: string }>
+      const queued = rows.filter((row) => row.state === 'queued')
+      emit({ readiness: readiness.bindingsValid, grantStatus: control.grantStatus,
+        boundWorkspace, commandCount: rows.length, queuedCount: queued.length, starts,
+        queuedExecutionId: queued[0]?.execution_id ?? null,
+        queuedExecution: queued[0] ? getAgentExecution(queued[0].execution_id) : null,
+        approvalActivityCount: (database.prepare(`SELECT count(*) AS n FROM project_activities
+          WHERE project_id = ? AND entity_id = ? AND action = 'pilot_approval_approved'`)
+          .get(identity.projectId, identity.taskId) as { n: number }).n })
       closeProjectDb()
       return
     }
