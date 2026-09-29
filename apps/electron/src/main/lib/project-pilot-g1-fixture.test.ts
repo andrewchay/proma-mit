@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
@@ -11,6 +11,12 @@ import { confirmPilotGrantPause, inspectPilotGrantPauseRecovery, previewPilotGra
 import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { updateProjectChain, updateProjectChainAsActor } from './project-chain-service'
 import { getWorkflowIdentityDirectory, saveWorkflowIdentityDirectory } from './workflow-identity-service'
+import { createAgentWorkspace, getAgentWorkspaceCwd } from './agent-workspace-manager'
+import { getAgentSessionWorkspacePath } from './config-paths'
+import { createDevelopmentWorktree, resolveDevelopmentWorktree } from './agent-development-worktree'
+import { bindWorkspaceToProject, unbindWorkspaceFromProject } from './project-workspace-bindings'
+import { createSource, createKnowledgeBase, bindProject as bindProjectKnowledge } from './knowledge-catalog-service'
+import { resolveRetrievableScope } from './knowledge-scope-service'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import { evaluatePilotPolicyBindings } from './project-pilot-readiness'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
@@ -33,6 +39,11 @@ beforeAll(async () => {
   const initialized = Bun.spawnSync(['git', 'init', '--quiet', repo])
   if (initialized.exitCode !== 0) throw new Error(`G1 Git 样例项目创建失败: ${initialized.stderr.toString()}`)
   writeFileSync(join(repo, 'README.md'), '# Project Pilot G1 isolated fixture\n')
+  for (const args of [['config', 'user.name', 'G1 Fixture'], ['config', 'user.email', 'g1@example.invalid'],
+    ['add', 'README.md'], ['commit', '--quiet', '-m', 'G1 baseline']]) {
+    const result = Bun.spawnSync(['git', '-C', repo, ...args])
+    if (result.exitCode !== 0) throw new Error(`G1 Git 基线失败: ${result.stderr.toString()}`)
+  }
   await initProjectDb()
   const directory = getWorkflowIdentityDirectory()
   if (!directory.users.some((user) => user.id === 'reviewer-1')) {
@@ -67,6 +78,45 @@ function employee(id: 'executor' | 'reviewer'): AgentEmployee {
     permissionMode: 'safe', enabled: true, totalTasks: 0, completedTasks: 0, failureCount: 0,
     createdAt: now, updatedAt: now }
 }
+
+test('A07：真实隔离 Git worktree cwd 与项目知识授权实时边界（无 Runtime/Provider）', () => {
+  const baseline = Bun.spawnSync(['git', '-C', repo, 'rev-parse', 'HEAD'])
+  expect(baseline.exitCode).toBe(0)
+  // 不对工作区根目录直接写；研发执行绑定后的 cwd 必须指向会话 worktree。
+  const workspace = createAgentWorkspace('G1 A07 项目工作区', repo)
+  const projectA = createProject({ title: 'G1 A07 项目 A', description: '' })
+  const projectB = createProject({ title: 'G1 A07 项目 B', description: '' })
+  const sessionId = `g1-a07-${projectA.id}`
+  const sessionDir = getAgentSessionWorkspacePath(workspace.slug, sessionId)
+  const worktree = createDevelopmentWorktree(repo, sessionDir, `g1-a07-${projectA.id}`)
+  const cwd = getAgentWorkspaceCwd(workspace, sessionId)
+  expect(cwd).toBe(realpathSync(worktree.path))
+  expect(cwd).not.toBe(realpathSync(repo))
+  writeFileSync(join(cwd, 'only-in-session.txt'), 'isolated')
+  expect(readFileSync(join(cwd, 'only-in-session.txt'), 'utf8')).toBe('isolated')
+  expect(Bun.spawnSync(['git', '-C', repo, 'status', '--porcelain']).stdout.toString()).toBe('')
+  const other = join(root, 'g1-a07-other-repo')
+  mkdirSync(other)
+  expect(Bun.spawnSync(['git', 'init', '--quiet', other]).exitCode).toBe(0)
+  expect(() => resolveDevelopmentWorktree(other, sessionDir)).toThrow('绑定的仓库已变化')
+  // Project 授权来自正式工作区绑定与项目知识关联；伪造其他项目 ID 不可继承 A 的知识。
+  expect(bindWorkspaceToProject(projectA.id, workspace.id)).not.toBeNull()
+  const source = createSource({ type: 'vault', name: 'G1 A07 文档', locator: join(root, 'a07-vault') })
+  const kb = createKnowledgeBase({ name: 'G1 A07 私有知识库', sourceIds: [source.id] })
+  bindProjectKnowledge({ projectId: projectA.id, knowledgeBaseId: kb.id })
+  expect(bindWorkspaceToProject(projectB.id, workspace.id)).not.toBeNull()
+  const otherSource = createSource({ type: 'vault', name: 'G1 A07 B 文档', locator: join(root, 'a07-vault-b') })
+  const otherKb = createKnowledgeBase({ name: 'G1 A07 B 私有知识库', sourceIds: [otherSource.id] })
+  bindProjectKnowledge({ projectId: projectB.id, knowledgeBaseId: otherKb.id })
+  const scope = (projectId: string) => resolveRetrievableScope({ sessionId,
+    sessionMeta: { knowledgeScopeMode: 'project', projectId, workspaceId: workspace.id } })
+  expect(scope(projectA.id).knowledgeBaseIds).toEqual([kb.id])
+  expect(scope(projectB.id).knowledgeBaseIds).toEqual([otherKb.id])
+  expect(scope(projectA.id).knowledgeBaseIds).not.toContain(otherKb.id)
+  expect(unbindWorkspaceFromProject(projectA.id, workspace.id)).toBe(true)
+  expect(scope(projectA.id).knowledgeBaseIds).toEqual([])
+  expect(scope(projectB.id).knowledgeBaseIds).toEqual([otherKb.id])
+})
 
 test('隔离 Git 项目完成无模型的双角色命令、预算和暂停纵向切片', async () => {
   const project = createProject({ title: 'Project Pilot G1 隔离样例', description: '仅确定性验收，不调用模型' })
