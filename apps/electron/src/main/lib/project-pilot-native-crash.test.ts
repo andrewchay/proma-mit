@@ -11,13 +11,16 @@ const childFile = join(stageRoot, 'native-crash-child.cjs')
 const dataRoots: string[] = []
 // 每个用例独立数据根：SIGKILL 残留锁/存活树不得跨用例互相污染。
 let env: Record<string, string | undefined>
-function useFreshDataRoot(): void {
+function useFreshDataRoot(): string {
   const dataRoot = mkdtempSync(join(tmpdir(), 'pilot-native-wal-data-'))
   dataRoots.push(dataRoot)
   env = { ...process.env, PROMA_TEST_CONFIG_DIR: dataRoot,
     NODE_PATH: join(import.meta.dir, '../../../../../node_modules') }
+  return dataRoot
 }
 useFreshDataRoot()
+afterAll(() => { for (const dir of [stageRoot, ...dataRoots]) rmSync(dir, { recursive: true, force: true }) })
+
 const timeoutMs = 20_000
 const nodeBinary = process.env.PROMA_NATIVE_NODE_BINARY ?? (process.platform === 'win32'
   ? 'node' : execFileSync('/usr/bin/which', ['node'], { encoding: 'utf8' }).trim())
@@ -41,26 +44,52 @@ const nodeRunner: Runner = { bin: nodeBinary, env: {} }
 const electronRunner: Runner | null = electronUsable
   ? { bin: electronBinary, env: { ELECTRON_RUN_AS_NODE: '1' } }
   : null
+const matrixRunners = (): Runner[] => (electronRunner ? [nodeRunner, electronRunner] : [nodeRunner])
+
 const source = join(import.meta.dir, 'project-pilot-native-crash-child.ts')
 buildSync({ entryPoints: [source], outfile: childFile, bundle: true, platform: 'node', format: 'cjs',
-  target: 'node24', external: ['better-sqlite3', 'electron'], absWorkingDir: process.cwd() })
-afterAll(() => { for (const dir of dataRoots) rmSync(dir, { recursive: true, force: true }) })
+  target: 'node24', absWorkingDir: process.cwd(),
+  // 生产依赖在运行时由 NODE_PATH 解析；playwright/fsevents 等重依赖不参与打包。
+  external: ['better-sqlite3', 'electron', 'playwright-core', 'playwright', 'fsevents', 'chromium-bidi'] })
 
-interface Identity { projectId: string; grantId: string; executionId: string }
+interface Identity {
+  projectId: string
+  grantId: string
+  executionId: string
+  commandId: string
+  taskId: string
+  sourceVersion: number
+  sourceHash: string
+  idempotencyKey: string
+  prompt: string
+  employeeId: string
+  summary?: string
+  version?: number
+}
+
 interface Snapshot {
   driver: string
   journalMode: { journal_mode: string }
-  grantState: string
+  grantState: string | null
   decisions: number
-  executionStatus: string
+  executionStatus: string | null
   commandState: string | null
   openEscalations: number
+  taskStatus: string | null
+  taskVersion: number | null
+  resolutionCount: number
+  commandCount: number
+  executionCount: number
+  runReservations: number
   requests: Array<{ executionId: string; state: string }>
 }
 
-function run(mode: 'setup' | 'inspect', identity?: Identity, runner: Runner = nodeRunner): Identity | Snapshot {
+interface RetryResult { ok: boolean; message?: string; commandState?: string; executionStatus?: string }
+
+function run(mode: string, identity?: Identity, runner: Runner = nodeRunner):
+  Identity | Snapshot | RetryResult {
   const result = spawnSync(runner.bin, [childFile, mode, ...(identity
-    ? [identity.projectId, identity.grantId, identity.executionId] : [])],
+    ? [JSON.stringify(identity)] : [])],
     { env: { ...env, ...runner.env }, encoding: 'utf8', timeout: timeoutMs })
   if (result.status !== 0) throw new Error(`原生夹具退出 ${result.status}: ${result.stdout}\n${result.stderr}`)
   const match = result.stdout.match(/^DATA (.+)$/m)
@@ -68,15 +97,14 @@ function run(mode: 'setup' | 'inspect', identity?: Identity, runner: Runner = no
   return JSON.parse(match[1]!)
 }
 
-async function killAt(mode: 'before' | 'after', identity: Identity, runner: Runner = nodeRunner): Promise<void> {
-  const child = spawn(runner.bin, [childFile, mode,
-    identity.projectId, identity.grantId, identity.executionId],
+async function killAt(mode: string, identity: Identity, runner: Runner = nodeRunner): Promise<void> {
+  const child = spawn(runner.bin, [childFile, mode, JSON.stringify(identity)],
     { env: { ...env, ...runner.env }, stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32' })
   let stdout = ''
   let stderr = ''
   child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-  const expected = mode === 'before' ? 'READY_BEFORE_COMMIT' : 'READY_AFTER_COMMIT'
+  const expected = mode.endsWith('before') ? 'READY_BEFORE_COMMIT' : 'READY_AFTER_COMMIT'
   const finished = new Promise<{ signal: NodeJS.Signals | null; code: number | null }>((resolve) => {
     child.once('exit', (code, signal) => resolve({ code, signal }))
   })
@@ -100,19 +128,21 @@ async function killAt(mode: 'before' | 'after', identity: Identity, runner: Runn
 }
 
 test.skipIf(process.platform === 'win32')('原生 SQLite WAL：撤权事务提交前后强杀，重开验证回滚与待对账记录', async () => {
+  useFreshDataRoot()
   const before = run('setup') as Identity
   await killAt('before', before)
   const beforeView = run('inspect', before) as Snapshot
   expect(beforeView).toMatchObject({ driver: 'NativeSqliteCompat', journalMode: { journal_mode: 'wal' },
     grantState: 'active', decisions: 0, executionStatus: 'running', commandState: 'running',
-    openEscalations: 0, requests: [] })
+    commandCount: 1, executionCount: 1, runReservations: 1, openEscalations: 0, requests: [] })
 
   const after = run('setup') as Identity
   await killAt('after', after)
   const afterView = run('inspect', after) as Snapshot
   expect(afterView).toMatchObject({ driver: 'NativeSqliteCompat', journalMode: { journal_mode: 'wal' },
     grantState: 'paused', decisions: 1, executionStatus: 'running', commandState: 'running',
-    openEscalations: 0, requests: [{ executionId: after.executionId, state: 'pending' }] })
+    commandCount: 1, executionCount: 1, runReservations: 1, openEscalations: 0,
+    requests: [{ executionId: after.executionId, state: 'pending' }] })
 }, 30_000)
 
 test.skipIf(!electronUsable)('Electron 固定二进制（run-as-node）WAL：撤权事务提交前后强杀复验', async () => {
@@ -123,12 +153,66 @@ test.skipIf(!electronUsable)('Electron 固定二进制（run-as-node）WAL：撤
   const beforeView = run('inspect', before, runner) as Snapshot
   expect(beforeView).toMatchObject({ driver: 'NativeSqliteCompat', journalMode: { journal_mode: 'wal' },
     grantState: 'active', decisions: 0, executionStatus: 'running', commandState: 'running',
-    openEscalations: 0, requests: [] })
+    commandCount: 1, executionCount: 1, runReservations: 1, openEscalations: 0, requests: [] })
 
   const after = run('setup', undefined, runner) as Identity
   await killAt('after', after, runner)
   const afterView = run('inspect', after, runner) as Snapshot
   expect(afterView).toMatchObject({ driver: 'NativeSqliteCompat', journalMode: { journal_mode: 'wal' },
     grantState: 'paused', decisions: 1, executionStatus: 'running', commandState: 'running',
-    openEscalations: 0, requests: [{ executionId: after.executionId, state: 'pending' }] })
+    commandCount: 1, executionCount: 1, runReservations: 1, openEscalations: 0,
+    requests: [{ executionId: after.executionId, state: 'pending' }] })
 }, 45_000)
+
+test('派发事务提交前后强杀：无半成品、遗留锁 fail-closed、核查后重试幂等（Node/Electron 运行器）', async () => {
+  for (const runner of matrixRunners()) {
+    const dataRoot = useFreshDataRoot()
+    const identity = run('setup-dispatch', undefined, runner) as Identity
+    await killAt('dispatch-before', identity, runner)
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      grantState: 'active', commandCount: 0, executionCount: 0, runReservations: 0 })
+    // 生产 fail-closed：强杀中断派发会在配置目录遗留策略锁，写入被拒绝直到人工核查。
+    const lockedRetry = run('dispatch-retry', identity, runner) as RetryResult
+    expect(lockedRetry.ok).toBe(false)
+    expect(lockedRetry.message).toContain('遗留锁未核查')
+    // 模拟人工核查后移除遗留锁目录，重试必须幂等成功且只生成一个命令与执行。
+    rmSync(join(dataRoot, 'project-pilot-policies.json.lock'), { recursive: true, force: true })
+    expect(run('dispatch-retry', identity, runner)).toMatchObject({ ok: true, commandState: 'queued' })
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      grantState: 'active', commandCount: 1, executionCount: 1, runReservations: 1, commandState: 'queued' })
+
+    const after = run('setup-dispatch', undefined, runner) as Identity
+    await killAt('dispatch-after', after, runner)
+    expect(run('inspect', after, runner) as Snapshot).toMatchObject({
+      grantState: 'active', commandCount: 1, executionCount: 1, runReservations: 1,
+      commandState: 'queued', executionStatus: 'queued' })
+    // 幂等重派：同 idempotencyKey 不产生第二个命令或执行，预算预留不变。
+    expect(run('dispatch-retry', after, runner)).toMatchObject({ ok: true, commandState: 'queued' })
+    expect(run('inspect', after, runner) as Snapshot).toMatchObject({
+      commandCount: 1, executionCount: 1, runReservations: 1 })
+  }
+}, 120_000)
+
+test('审批事务提交前后强杀：无假批准、凭据恰一、旧版本重复批准拒绝（Node/Electron 运行器）', async () => {
+  for (const runner of matrixRunners()) {
+    useFreshDataRoot()
+    const identity = run('setup-approval', undefined, runner) as Identity
+    await killAt('approval-before', identity, runner)
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      taskStatus: 'paused', taskVersion: identity.version, resolutionCount: 0, commandState: 'settled' })
+    expect(run('approval-retry', identity, runner)).toMatchObject({ ok: true })
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      taskStatus: 'pending', resolutionCount: 1 })
+
+    const after = run('setup-approval', undefined, runner) as Identity
+    await killAt('approval-after', after, runner)
+    expect(run('inspect', after, runner) as Snapshot).toMatchObject({
+      taskStatus: 'pending', resolutionCount: 1, commandState: 'settled' })
+    // 旧版本重复批准必须拒绝，且不产生第二条凭据。
+    const dup = run('approval-dup', after, runner) as RetryResult
+    expect(dup.ok).toBe(false)
+    expect(dup.message).toContain('没有待答复')
+    expect(run('inspect', after, runner) as Snapshot).toMatchObject({
+      taskStatus: 'pending', resolutionCount: 1 })
+  }
+}, 120_000)
