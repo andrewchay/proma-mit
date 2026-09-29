@@ -17,6 +17,7 @@ import { createDevelopmentWorktree, resolveDevelopmentWorktree } from './agent-d
 import { bindWorkspaceToProject, unbindWorkspaceFromProject } from './project-workspace-bindings'
 import { createSource, createKnowledgeBase, bindProject as bindProjectKnowledge } from './knowledge-catalog-service'
 import { resolveRetrievableScope } from './knowledge-scope-service'
+import { ElectronRuntimeWorkspaceStore } from './agent-runtime/runtime-services'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import { evaluatePilotPolicyBindings } from './project-pilot-readiness'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
@@ -92,6 +93,8 @@ test('A07：真实隔离 Git worktree cwd 与项目知识授权实时边界（�
   const cwd = getAgentWorkspaceCwd(workspace, sessionId)
   expect(cwd).toBe(realpathSync(worktree.path))
   expect(cwd).not.toBe(realpathSync(repo))
+  expect(new ElectronRuntimeWorkspaceStore().resolveWorkspaceContext({ workspaceId: workspace.id, sessionId }).cwd)
+    .toBe(cwd)
   writeFileSync(join(cwd, 'only-in-session.txt'), 'isolated')
   expect(readFileSync(join(cwd, 'only-in-session.txt'), 'utf8')).toBe('isolated')
   expect(Bun.spawnSync(['git', '-C', repo, 'status', '--porcelain']).stdout.toString()).toBe('')
