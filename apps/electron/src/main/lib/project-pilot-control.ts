@@ -1,4 +1,5 @@
 import type { PilotControlSnapshot } from '@gravitas/shared'
+import { getPilotGrantBudgetUsageView } from './project-pilot-budget-ledger'
 import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
 import { getPilotPolicy } from './project-pilot-policy'
 import { inspectPilotReadiness } from './project-pilot-readiness'
@@ -12,6 +13,8 @@ export function getPilotControlSnapshot(projectId: string, now = Date.now()): Pi
     : activeGrant.expiresAt <= now ? 'expired'
       : !policy || !readiness.bindingsValid || !pilotGrantMatchesPolicy(activeGrant, policy) ? 'needs_reconcile'
         : 'active'
+  // 消耗合计与活动授权绑定；无授权时为 null，口径与账本预算核验一致。
+  const budgetUsage = activeGrant ? getPilotGrantBudgetUsageView(projectId, activeGrant.grantId) : null
   return {
     projectId,
     policy: policy ? {
@@ -35,5 +38,6 @@ export function getPilotControlSnapshot(projectId: string, now = Date.now()): Pi
     },
     activeGrant,
     grantStatus,
+    budgetUsage,
   }
 }

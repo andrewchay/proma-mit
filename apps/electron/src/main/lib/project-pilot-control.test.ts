@@ -26,6 +26,7 @@ test('Given 项目经理打开概览 When 尚无策略 Then 控制面明确阻�
   expect(snapshot.readiness.blockers).toContain('尚未保存 Pilot 策略草案')
   expect(snapshot.activeGrant).toBeNull()
   expect(snapshot.grantStatus).toBe('none')
+  expect(snapshot.budgetUsage).toBeNull()
 })
 
 test('Given 已确认活动授权 When 项目经理刷新控制面 Then 展示冻结边界但不伪报绑定就绪', () => {
@@ -47,6 +48,12 @@ test('Given 已确认活动授权 When 项目经理刷新控制面 Then 展示�
   expect(snapshot.readiness.blockers).toContain('执行工作区不存在')
   expect(snapshot.grantStatus).toBe('needs_reconcile')
   expect(getPilotControlSnapshot(project.id, policy.expiresAt).grantStatus).toBe('expired')
+  // 消耗合计与活动授权绑定：刚发行时零占用、全部额度剩余、无命令明细。
+  expect(snapshot.budgetUsage).toMatchObject({
+    grantId: grant.grantId, state: 'active', maxCostMicros: 2_000_000, maxRuns: 2,
+    usedRuns: 0, committedCostMicros: 0, remainingCostMicros: 2_000_000, remainingRuns: 2,
+  })
+  expect(snapshot.budgetUsage?.commands).toEqual([])
 })
 
 test('Given 旧库活动授权缺少确认指纹 When 打开控制面 Then 标记需对账且仍可预览保守暂停', () => {

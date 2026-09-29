@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { PilotGrantBudgetUsage } from '@gravitas/shared'
 import { createAgentExecution, getAgentExecution, getProjectDb, getTask, listTaskBlockers, listTaskStatuses } from './project-sqlite-store'
 import { assertPilotExecutionLinked, registerPilotCommandLink } from './project-pilot-command-links'
 import { resolveStateGroup } from './task-status-logic'
@@ -707,4 +708,56 @@ export function getPilotGrantBudgetUsage(grantId: string): { runReservations: nu
   const grant = getProjectDb().prepare('SELECT id FROM pilot_runtime_grants WHERE id = ?').get(grantId) as { id: string } | undefined
   if (!grant) throw new Error('Pilot 授权不存在，预算余额无法核验')
   return readBudgetUsage(grantId)
+}
+
+/** 控制面只读用量视图：与预算核验同口径（settled 按实结计、其余命令按预留占额），附逐命令与逐请求汇总；授权不存在返回 null。 */
+export function getPilotGrantBudgetUsageView(projectId: string, grantId: string): PilotGrantBudgetUsage | null {
+  if (typeof projectId !== 'string' || !projectId.trim() || typeof grantId !== 'string' || !grantId.trim()) {
+    throw new Error('Pilot 用量视图参数无效')
+  }
+  const grant = getProjectDb().prepare('SELECT id, state, max_cost_micros, max_runs FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
+    .get(grantId, projectId) as { id: string; state: 'active' | 'paused'; max_cost_micros: number; max_runs: number } | undefined
+  if (!grant) return null
+  const usage = readBudgetUsage(grantId)
+  const commandRows = getProjectDb().prepare(`SELECT id, role, rework_ordinal, state, reserved_cost_micros, actual_cost_micros, created_at
+    FROM pilot_commands WHERE grant_id = ? ORDER BY created_at ASC, id ASC`).all(grantId) as Array<{
+    id: string; role: 'executor' | 'reviewer'; rework_ordinal: number
+    state: 'reserved' | 'queued' | 'running' | 'settled' | 'released' | 'needs_reconcile'
+    reserved_cost_micros: number; actual_cost_micros: number | null; created_at: number
+  }>
+  const requestRows = getProjectDb().prepare(`SELECT r.command_id AS commandId, COUNT(*) AS total,
+      COALESCE(SUM(CASE WHEN r.state = 'settled' THEN 1 ELSE 0 END), 0) AS settled,
+      COALESCE(SUM(CASE WHEN r.state = 'needs_reconcile' THEN 1 ELSE 0 END), 0) AS needsReconcile,
+      COALESCE(SUM(r.settled_cost_micros), 0) AS settledCost
+    FROM pilot_request_reservations r JOIN pilot_commands c ON c.id = r.command_id
+    WHERE c.grant_id = ? GROUP BY r.command_id`).all(grantId) as Array<{
+    commandId: string; total: number; settled: number; needsReconcile: number; settledCost: number
+  }>
+  const byCommand = new Map(requestRows.map((row) => [row.commandId, row]))
+  return {
+    grantId,
+    state: grant.state,
+    maxCostMicros: grant.max_cost_micros,
+    maxRuns: grant.max_runs,
+    usedRuns: usage.runReservations,
+    committedCostMicros: usage.committedCostMicros,
+    remainingCostMicros: Math.max(0, grant.max_cost_micros - usage.committedCostMicros),
+    remainingRuns: Math.max(0, grant.max_runs - usage.runReservations),
+    commands: commandRows.map((row) => {
+      const aggregate = byCommand.get(row.id)
+      return {
+        commandId: row.id,
+        role: row.role,
+        reworkOrdinal: row.rework_ordinal,
+        state: row.state,
+        reservedCostMicros: row.reserved_cost_micros,
+        actualCostMicros: row.actual_cost_micros,
+        requestsTotal: aggregate?.total ?? 0,
+        requestsSettled: aggregate?.settled ?? 0,
+        requestsNeedsReconcile: aggregate?.needsReconcile ?? 0,
+        settledCostMicros: aggregate?.settledCost ?? 0,
+        createdAt: row.created_at,
+      }
+    }),
+  }
 }

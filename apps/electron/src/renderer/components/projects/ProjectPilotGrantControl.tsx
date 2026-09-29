@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
+  PilotCommandUsageLine,
   PilotControlSnapshot,
   PilotGrantIssuePreview,
   PilotGrantPauseImpact,
@@ -9,6 +10,10 @@ import type {
 import { ProjectPilotPolicyEditor } from './ProjectPilotPolicyEditor'
 
 const formatCost = (micros: number): string => `${(micros / 1_000_000).toFixed(2)} USD 上限`
+const formatSpent = (micros: number): string => `${(micros / 1_000_000).toFixed(4)}`
+const commandStateLabel: Record<PilotCommandUsageLine['state'], string> = {
+  reserved: '预留中', queued: '已排队', running: '执行中', settled: '已结算', released: '已释放', needs_reconcile: '待对账',
+}
 
 export function ProjectPilotGrantControl({ projectId, refreshKey }: {
   projectId: string
@@ -158,6 +163,31 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
         {control.activeGrant && !pausePreview && <div className={`flex items-center justify-between gap-3 rounded-lg p-3 text-sm ${control.grantStatus === 'active' ? 'bg-emerald-50 text-emerald-950' : 'bg-amber-50 text-amber-950'}`}>
           <span>{control.grantStatus === 'active' ? '活动授权' : control.grantStatus === 'expired' ? '授权已过期，不可派发' : '授权与策略不一致，需对账'} {control.activeGrant.grantId}</span>
           <button type="button" className="rounded-md bg-red-600 px-3 py-2 text-white" onClick={() => void previewPause()} disabled={busy}>预览暂停影响面</button>
+        </div>}
+        {control.budgetUsage && <div className="rounded-lg bg-muted p-3 text-sm" aria-label="Pilot 消耗合计">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-background px-3 py-2 font-medium">已占用 {formatSpent(control.budgetUsage.committedCostMicros)} / {formatSpent(control.budgetUsage.maxCostMicros)}</span>
+            <span className="rounded-md bg-background px-3 py-2">剩余 {formatSpent(control.budgetUsage.remainingCostMicros)}</span>
+            <span className="rounded-md bg-background px-3 py-2">run {control.budgetUsage.usedRuns}/{control.budgetUsage.maxRuns}</span>
+            <span className="rounded-md bg-background px-3 py-2">授权状态 {control.budgetUsage.state === 'active' ? 'active' : 'paused'}</span>
+          </div>
+          {control.budgetUsage.commands.length > 0 && <table className="mt-2 w-full text-left text-xs" aria-label="Pilot 命令消耗明细">
+            <thead><tr className="text-muted-foreground">
+              <th className="py-1 font-medium">命令</th><th className="font-medium">角色</th><th className="font-medium">状态</th>
+              <th className="font-medium">预留</th><th className="font-medium">实结</th><th className="font-medium">请求（已结/总）</th>
+            </tr></thead>
+            <tbody>
+              {control.budgetUsage.commands.map((line) => <tr key={line.commandId} className="border-t border-border/40">
+                <td className="py-1 font-mono">{line.commandId.slice(0, 18)}…</td>
+                <td>{line.role === 'executor' ? '执行' : '评审'}</td>
+                <td>{commandStateLabel[line.state]}</td>
+                <td>{formatSpent(line.reservedCostMicros)}</td>
+                <td>{line.actualCostMicros === null ? '—' : formatSpent(line.actualCostMicros)}</td>
+                <td>{line.requestsSettled}/{line.requestsTotal}{line.requestsNeedsReconcile > 0 ? `（待对账 ${line.requestsNeedsReconcile}）` : ''}</td>
+              </tr>)}
+            </tbody>
+          </table>}
+          <p className="mt-2 text-muted-foreground">口径与预算核验一致：已结算按实结计，未结命令按预留占额；待对账占额不自动释放。</p>
         </div>}
         {pausePreview && <div className="rounded-lg bg-red-50 p-4 text-sm text-red-950" aria-label="暂停授权确认">
           <p className="font-semibold">暂停后立即阻止新派发</p>

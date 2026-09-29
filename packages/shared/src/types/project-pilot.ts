@@ -100,6 +100,34 @@ export interface PilotPolicyDraftInput {
   expiresAt: number
 }
 
+/** 控制面逐命令用量行：权威账本投影，只读。 */
+export interface PilotCommandUsageLine {
+  commandId: string
+  role: 'executor' | 'reviewer'
+  reworkOrdinal: number
+  state: 'reserved' | 'queued' | 'running' | 'settled' | 'released' | 'needs_reconcile'
+  reservedCostMicros: number
+  actualCostMicros: number | null
+  requestsTotal: number
+  requestsSettled: number
+  requestsNeedsReconcile: number
+  settledCostMicros: number
+  createdAt: number
+}
+
+/** 授权级消耗合计：与预算核验同口径（settled 按实结计、其余命令按预留占额）。 */
+export interface PilotGrantBudgetUsage {
+  grantId: string
+  state: 'active' | 'paused'
+  maxCostMicros: number
+  maxRuns: number
+  usedRuns: number
+  committedCostMicros: number
+  remainingCostMicros: number
+  remainingRuns: number
+  commands: PilotCommandUsageLine[]
+}
+
 export interface PilotControlSnapshot {
   projectId: string
   policy: PilotPolicySummary | null
@@ -110,6 +138,7 @@ export interface PilotControlSnapshot {
   }
   activeGrant: PilotRuntimeGrant | null
   grantStatus: 'none' | 'active' | 'expired' | 'needs_reconcile'
+  budgetUsage: PilotGrantBudgetUsage | null
 }
 
 export type PilotRunningDisposition = 'finish_current' | 'request_stop'

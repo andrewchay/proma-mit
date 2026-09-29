@@ -3,7 +3,7 @@ import { mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, deleteProject, getAgentExecution, getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateAgentExecution, updateTask } from './project-sqlite-store'
-import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent, getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
+import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent, getPilotGrantBudgetUsage, getPilotGrantBudgetUsageView, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget, settlePilotCommandUsage, type PilotCommandReservationInput, type PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
 import type { SDKResultMessage } from '@gravitas/shared'
@@ -583,4 +583,50 @@ test('执行未终结、费用无效或已释放的排队命令不能结算', ()
   updateAgentExecution(executionId, { status: 'cancelled', sessionId: 'session-1', completedAt: Date.now() })
   expect(() => settlePilotCommandUsage(input.commandId, usageEvidence(executionId, 0))).toThrow('状态不可结算')
   expect(getPilotGrantBudgetUsage(grantId)).toEqual({ runReservations: 1, committedCostMicros: 500 })
+})
+
+test('控制面用量视图：与预算核验同口径聚合并附逐命令/逐请求汇总', () => {
+  const { project, grantId, input } = fixture('active', 1_000, 2)
+  expect(getPilotGrantBudgetUsageView(project.id, 'grant-missing')).toBeNull()
+  expect(getPilotGrantBudgetUsageView(project.id, grantId)).toMatchObject({
+    grantId, state: 'active', usedRuns: 0, committedCostMicros: 0, remainingRuns: 2, commands: [],
+  })
+
+  const insertRequestRow = (requestId: string, commandId: string, executionId: string, evidenceId: string,
+    reserved: number, settled: number | null, state: 'settled' | 'needs_reconcile') => {
+    getProjectDb().prepare(`INSERT INTO pilot_request_reservations
+      (request_id, command_id, execution_id, session_id, request_evidence_id, price_evidence_id, reserved_cost_micros, settled_cost_micros, state, created_at)
+      VALUES (?, ?, ?, 'session-view', ?, 'price-view', ?, ?, ?, ?)`)
+      .run(requestId, commandId, executionId, evidenceId, reserved, settled, state, Date.now())
+  }
+
+  const first = reserveAndQueuePilotCommand(input, { executionId: `exec-view-1-${project.id}`, prompt: '执行' })
+  insertRequestRow('req-view-1', first.command.commandId, `exec-view-1-${project.id}`, 'evidence-view-1', 300, 200, 'settled')
+  insertRequestRow('req-view-2', first.command.commandId, `exec-view-1-${project.id}`, 'evidence-view-2', 150, null, 'needs_reconcile')
+
+  const view = getPilotGrantBudgetUsageView(project.id, grantId)!
+  expect(view).toMatchObject({ usedRuns: 1, committedCostMicros: 500, remainingCostMicros: 500, remainingRuns: 1 })
+  expect(view.commands).toHaveLength(1)
+  expect(view.commands[0]).toMatchObject({
+    commandId: first.command.commandId, role: 'executor', state: 'queued',
+    reservedCostMicros: 500, actualCostMicros: null,
+    requestsTotal: 2, requestsSettled: 1, requestsNeedsReconcile: 1, settledCostMicros: 200,
+  })
+
+  const another = createTask(project.id, { title: '视图第二任务', description: '', workspaceId: 'workspace-a',
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  const second = reserveAndQueuePilotCommand({ ...input, commandId: `command-view-2-${project.id}`, idempotencyKey: 'task-view-second',
+    taskId: another.id, sourceVersion: another.updatedAt, sourceHash: hashPilotTaskSource(another) },
+    { executionId: `exec-view-2-${project.id}`, prompt: '评审' })
+  insertRequestRow('req-view-3', second.command.commandId, `exec-view-2-${project.id}`, 'evidence-view-3', 500, 500, 'settled')
+  updateAgentExecution(`exec-view-2-${project.id}`, { status: 'failed', sessionId: 'session-1', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(second.command.commandId)
+  expect(settlePilotCommandUsage(second.command.commandId, usageEvidence(`exec-view-2-${project.id}`, 100)).state).toBe('settled')
+
+  const finalView = getPilotGrantBudgetUsageView(project.id, grantId)!
+  expect(finalView).toMatchObject({ usedRuns: 2, committedCostMicros: 600, remainingCostMicros: 400, remainingRuns: 0 })
+  expect(finalView.commands[1]).toMatchObject({
+    commandId: second.command.commandId, state: 'settled', reservedCostMicros: 500,
+    actualCostMicros: 100, requestsTotal: 1, requestsSettled: 1, requestsNeedsReconcile: 0, settledCostMicros: 500,
+  })
 })

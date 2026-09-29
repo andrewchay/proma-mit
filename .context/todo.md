@@ -1,9 +1,8 @@
-# G2 -58：评审命令（reviewer run）自动派发
+# G2 -60：Pilot 控制面消耗合计
 
-- [x] 读透 intent-store / budget-ledger（runs 上限）/ dispatch 测试夹具
-- [x] dispatch：commandIdentity 参数化 role；按 assignee 区分 executor/reviewer 路径
-- [x] reviewer 守卫：须存在已结算的 executor 命令；max_runs 由账本强制
-- [x] reviewer 提示词与幂等键 intent:{id}:reviewer:0
-- [x] 测试：reviewer 派发 / 早于执行拒绝 / executor 身份哈希不变 / 超次数拒绝
-- [x] 门禁：定向测试 + 全仓 electron + typecheck + biome
-- [x] 台账 -58 + 提交（7802afd8 已推送）
+- [x] 读 control snapshot 类型/IPC 接线/GrantControl 渲染模式
+- [x] 账本导出授权级用量视图（同 readBudgetUsage 口径 + 逐命令明细 + 请求结算计数）
+- [x] control snapshot 扩展字段 + IPC 透传
+- [x] GrantControl 渲染合计条 + 命令明细表
+- [x] 测试：账本视图 + 控制面快照
+- [x] 门禁：定向 + typecheck + biome；台账 -60；提交
