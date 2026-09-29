@@ -3,12 +3,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
+import { startPilotBackgroundReconcile } from './project-pilot-background-reconcile'
+import { getCurrentPilotIntents } from './project-pilot-intent-store'
+import { resolvePilotApproval, listPilotInbox } from './project-pilot-approval'
+import { updateTask as updateTaskWithEvents } from './project-service'
 import { confirmPilotGrantPause, inspectPilotGrantPauseRecovery, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
+import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import { evaluatePilotPolicyBindings } from './project-pilot-readiness'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createAgentExecution, createProject, createTask, createTaskDependency, getAgentExecution,
-  getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, updateTask } from './project-sqlite-store'
+  getProjectDb, getTask, initProjectDb, listAgentExecutionsByProject, createAgentEmployee,
+  updateAgentExecution, updateTask } from './project-sqlite-store'
 import type { AgentEmployee } from './project-types'
 
 const root = mkdtempSync(join(tmpdir(), 'project-pilot-g1-git-'))
@@ -33,6 +39,20 @@ afterAll(() => {
   else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
   rmSync(root, { recursive: true, force: true })
 })
+
+async function waitForPilot(predicate: () => boolean, attempts = 100): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if (predicate()) return
+    await Bun.sleep(20)
+  }
+  expect(predicate()).toBe(true)
+}
+
+const backgroundFixture = {
+  inspectReadiness: (projectId: string) => ({ projectId, policyRevision: 1, bindingsValid: true, blockers: [] }),
+  startExecution: async () => false,
+  inspectGrantStatus: (projectId: string) => getActivePilotGrant(projectId) ? 'active' : 'paused',
+}
 
 function employee(id: 'executor' | 'reviewer'): AgentEmployee {
   return { id, name: id, role: id === 'executor' ? '执行' : '技术评审', description: '',
@@ -108,6 +128,85 @@ test('隔离 Git 项目完成无模型的双角色命令、预算和暂停纵向
     { executionId: `late-${project.id}`, prompt: '不应继续派发' })).toThrow('活动授权不存在或已失效')
 })
 
+test('A01/A02：固定隔离 Git 仓库无页面双并行派发，依赖事件后自动续派', async () => {
+  expect(Bun.file(join(repo, '.git', 'HEAD')).size).toBeGreaterThan(0)
+  const executor = createAgentEmployee({ name: 'G1 后台执行', role: '工程师', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const reviewer = createAgentEmployee({ name: 'G1 后台评审', role: '技术评审', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const project = createProject({ title: 'G1 无页面并行依赖', description: '同一隔离 Git 仓库的确定性事件链' })
+  const grantId = `g1-grant-${project.id}`
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
+    maxCostMicros: 1_800, maxRuns: 3, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const makeTask = (title: string) => createTask(project.id, { title, description: '仅入账，不触达模型', workspaceId,
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name } })
+  const upstream = makeTask('并行上游')
+  const parallel = makeTask('独立并行')
+  const downstream = makeTask('依赖上游')
+  createTaskDependency(downstream.id, upstream.id)
+  const pending = await getCurrentPilotIntents(project.id)
+  expect(pending.find((item) => item.sourceId === downstream.id)?.kind).toBe('dependency_wait')
+  const stop = startPilotBackgroundReconcile(backgroundFixture)
+  try {
+    await waitForPilot(() => (getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE project_id = ?')
+      .get(project.id) as { n: number }).n === 2)
+    const first = getProjectDb().prepare('SELECT source_task_id FROM pilot_commands WHERE project_id = ?')
+      .all(project.id) as Array<{ source_task_id: string }>
+    expect(new Set(first.map((item) => item.source_task_id))).toEqual(new Set([upstream.id, parallel.id]))
+    expect(getPilotGrantBudgetUsage(grantId).runReservations).toBe(2)
+    await updateTaskWithEvents(upstream.id, { status: 'completed' }, { source: 'system' })
+    await waitForPilot(() => (getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+      .get(downstream.id) as { n: number }).n === 1)
+    expect(getPilotGrantBudgetUsage(grantId).runReservations).toBe(3)
+    expect(listAgentExecutionsByProject(project.id)).toHaveLength(3)
+  } finally {
+    stop()
+  }
+})
+
+test('A04/A05：固定隔离 Git 仓库询问后旧版拒绝、批准自动续跑且重复答复不重放', async () => {
+  const executor = createAgentEmployee({ name: 'G1 审批执行', role: '工程师', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const reviewer = createAgentEmployee({ name: 'G1 审批评审', role: '技术评审', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const project = createProject({ title: 'G1 审批续跑', description: '无 Provider 测试' })
+  const grantId = `g1-grant-${project.id}`
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
+    maxCostMicros: 1_200, maxRuns: 2, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const task = createTask(project.id, { title: '需要人工答复', description: '仅模拟执行结果', workspaceId,
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name } })
+  const stop = startPilotBackgroundReconcile(backgroundFixture)
+  try {
+    await waitForPilot(() => (getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+      .get(task.id) as { n: number }).n === 1)
+    const command = getProjectDb().prepare('SELECT id, execution_id FROM pilot_commands WHERE source_task_id = ?')
+      .get(task.id) as { id: string; execution_id: string }
+    const summary = '【需要人工：提问】目标分支名称？'
+    getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 30 WHERE id = ?").run(command.id)
+    updateAgentExecution(command.execution_id, { status: 'completed', completedAt: Date.now(), resultSummary: summary })
+    await updateTaskWithEvents(task.id, { status: 'paused', completionNotes: summary }, { source: 'system' })
+    const stale = (await listPilotInbox(project.id)).find((item) => item.sourceType === 'approval')!
+    expect(stale).toMatchObject({ taskId: task.id, sourceVersion: getTask(task.id)!.updatedAt })
+    await updateTaskWithEvents(task.id, { description: '目标仍需确认' }, { source: 'system' })
+    await expect(resolvePilotApproval(project.id, task.id, 'approved',
+      { sourceVersion: stale.sourceVersion, note: 'main' })).rejects.toThrow('版本已失效')
+    expect((getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+      .get(task.id) as { n: number }).n).toBe(1)
+    const current = (await listPilotInbox(project.id)).find((item) => item.sourceType === 'approval')!
+    await resolvePilotApproval(project.id, task.id, 'approved', { sourceVersion: current.sourceVersion, note: 'main' })
+    await waitForPilot(() => (getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+      .get(task.id) as { n: number }).n === 2)
+    await expect(resolvePilotApproval(project.id, task.id, 'approved',
+      { sourceVersion: current.sourceVersion, note: '重复批准' })).rejects.toThrow('没有待答复')
+    expect(getPilotGrantBudgetUsage(grantId).runReservations).toBe(2)
+    expect((await getCurrentPilotIntents(project.id)).some((item) => item.kind === 'approval_request')).toBe(false)
+  } finally {
+    stop()
+  }
+})
+
 test('两个隔离 Git 项目不能混用 grant、任务或工作区；暂停一方不撤销另一方', () => {
   const secondRepo = join(root, 'other-sample-repo')
   mkdirSync(secondRepo)
@@ -154,6 +253,44 @@ test('两个隔离 Git 项目不能混用 grant、任务或工作区；暂停一
   expect(getAgentExecution(runB.execution.id)?.status).toBe('queued')
 })
 
+
+test('A09a 局部：审批凭据写入失败并重开，任务未假批准且可安全重试', async () => {
+  const executor = createAgentEmployee({ name: 'G1 崩溃审批执行', role: '工程师', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const reviewer = createAgentEmployee({ name: 'G1 崩溃审批评审', role: '技术评审', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const project = createProject({ title: 'G1 审批事务回滚', description: '' })
+  const grantId = `grant-${project.id}`
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
+    maxCostMicros: 1_200, maxRuns: 2, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const task = createTask(project.id, { title: '审批事务', description: '', workspaceId,
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name } })
+  const source = getTask(task.id)!
+  const first = reserveAndQueuePilotCommand({ commandId: `command-${project.id}`, projectId: project.id, grantId,
+    idempotencyKey: 'initial', taskId: task.id, sourceVersion: source.updatedAt, sourceHash: hashPilotTaskSource(source),
+    employeeId: executor.id, role: 'executor', reworkOrdinal: 0 },
+  { executionId: `execution-${project.id}`, prompt: '模拟完成请求' })
+  const summary = '【需要人工：决策】是否继续？'
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 30 WHERE id = ?").run(first.command.commandId)
+  updateAgentExecution(first.execution.id, { status: 'completed', completedAt: Date.now(), resultSummary: summary })
+  updateTask(task.id, { status: 'paused', completionNotes: summary })
+  const version = getTask(task.id)!.updatedAt
+  getProjectDb().exec(`CREATE TRIGGER pilot_g1_approval_abort BEFORE INSERT ON pilot_approval_resolutions
+    WHEN NEW.task_id = '${task.id}' BEGIN SELECT RAISE(ABORT, 'approval fixture interrupted'); END`)
+  await expect(resolvePilotApproval(project.id, task.id, 'approved', { sourceVersion: version, note: '继续' }))
+    .rejects.toThrow('approval fixture interrupted')
+  closeProjectDb()
+  await initProjectDb()
+  expect(getTask(task.id)).toMatchObject({ status: 'paused', updatedAt: version, completionNotes: summary })
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_approval_resolutions WHERE task_id = ?').get(task.id))
+    .toEqual({ n: 0 })
+  getProjectDb().exec('DROP TRIGGER pilot_g1_approval_abort')
+  await resolvePilotApproval(project.id, task.id, 'approved', { sourceVersion: version, note: '继续' })
+  expect(getTask(task.id)?.status).toBe('pending')
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_approval_resolutions WHERE task_id = ?').get(task.id))
+    .toEqual({ n: 1 })
+})
 
 test('排队事务中断后重启无半成品，重试只生成一个命令与执行', async () => {
   const project = createProject({ title: 'G1 崩溃窗口样例', description: '' })
