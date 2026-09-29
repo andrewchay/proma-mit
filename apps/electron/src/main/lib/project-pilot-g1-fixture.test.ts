@@ -429,6 +429,77 @@ test('A09a 局部：审批凭据写入失败并重开，任务未假批准且可
     .toEqual({ n: 1 })
 })
 
+test('A09a 子进程强制终止：审批提交前不假批准，提交后不重放', async () => {
+  const executor = createAgentEmployee({ name: 'G1 子进程执行', role: '工程师', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const reviewer = createAgentEmployee({ name: 'G1 子进程评审', role: '技术评审', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const project = createProject({ title: 'G1 子进程中断审批', description: '' })
+  const grantId = `grant-${project.id}`
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, maxCostMicros: 1_200,
+    maxRuns: 2, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const task = createTask(project.id, { title: '崩溃窗口询问', description: '', workspaceId,
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name } })
+  const input = { commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'initial',
+    taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
+    employeeId: executor.id, role: 'executor' as const, reworkOrdinal: 0 }
+  const first = reserveAndQueuePilotCommand(input, { executionId: `execution-${project.id}`, prompt: '合成询问' })
+  const summary = '【需要人工：提问】是否继续？'
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 30 WHERE id = ?").run(first.command.commandId)
+  updateAgentExecution(first.execution.id, { status: 'completed', completedAt: Date.now(), resultSummary: summary })
+  updateTask(task.id, { status: 'paused', completionNotes: summary })
+  const version = getTask(task.id)!.updatedAt
+  const killAt = async (mode: 'before' | 'after') => {
+    // 测试驱动是 sql.js 内存镜像；关闭父句柄后才启动子进程，防止父镜像覆盖子进程已提交的磁盘快照。
+    closeProjectDb()
+    let child: ReturnType<typeof Bun.spawn> | undefined
+    let signalCode: string | null = null
+    try {
+      child = Bun.spawn(['bun', '--preload', join(import.meta.dir, '../../../../../tests/electron-mock.preload.ts'),
+        join(import.meta.dir, 'project-pilot-crash-child.ts'), mode, project.id, task.id, String(version)], {
+        cwd: import.meta.dir, env: { ...process.env, PROMA_TEST_CONFIG_DIR: root }, stdout: 'pipe', stderr: 'pipe',
+      })
+      const marker = mode === 'before' ? 'READY_BEFORE' : 'READY_AFTER'
+      const outputStream = child.stdout
+      if (!outputStream || typeof outputStream === 'number') throw new Error('G1 子进程标准输出不可读')
+      const reader = outputStream.getReader()
+      const output = await Promise.race([
+        (async () => {
+          let text = ''
+          while (!text.includes(marker)) {
+            const chunk = await reader.read()
+            if (chunk.done) throw new Error(`G1 子进程提前退出：${text}`)
+            text += new TextDecoder().decode(chunk.value)
+          }
+          return text
+        })(),
+        Bun.sleep(5000).then(() => { throw new Error('G1 子进程未发出就绪回执') }),
+      ])
+      expect(output).toContain(marker)
+    } finally {
+      try {
+        if (child) {
+          child.kill('SIGKILL')
+          await child.exited
+          signalCode = child.signalCode
+        }
+      } finally {
+        await initProjectDb()
+      }
+    }
+    expect(signalCode).toBe('SIGKILL')
+  }
+  await killAt('before')
+  expect(getTask(task.id)).toMatchObject({ status: 'paused', completionNotes: summary, updatedAt: version })
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_approval_resolutions WHERE task_id = ?').get(task.id)).toEqual({ n: 0 })
+  await killAt('after')
+  expect(getTask(task.id)).toMatchObject({ status: 'pending', completionNotes: `${summary}\n【人工批准】已确认继续` })
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_approval_resolutions WHERE task_id = ?').get(task.id)).toEqual({ n: 1 })
+  await expect(resolvePilotApproval(project.id, task.id, 'approved', { sourceVersion: version, note: '重复' }))
+    .rejects.toThrow('没有待答复')
+})
+
 test('排队事务中断后重启无半成品，重试只生成一个命令与执行', async () => {
   const project = createProject({ title: 'G1 崩溃窗口样例', description: '' })
   const grantId = `grant-${project.id}`
