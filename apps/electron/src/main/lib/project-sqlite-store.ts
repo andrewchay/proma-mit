@@ -791,6 +791,19 @@ function migrate(database: SqliteCompat): void {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS pilot_grant_stop_requests (
+      grant_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      command_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'accepted_unverified', 'unverified', 'stopper_reported')),
+      requested_at INTEGER NOT NULL CHECK (requested_at >= 0),
+      result_at INTEGER,
+      PRIMARY KEY (grant_id, execution_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pilot_grant_stop_requests_project ON pilot_grant_stop_requests(project_id);
+
     CREATE TABLE IF NOT EXISTS pilot_pause_decisions (
       project_id TEXT NOT NULL,
       policy_revision INTEGER NOT NULL,
@@ -1146,6 +1159,19 @@ function migrate(database: SqliteCompat): void {
     resolution_evidence TEXT
   )`)
   database.exec(`CREATE INDEX IF NOT EXISTS idx_pilot_stop_escalations_project ON pilot_stop_escalations(project_id)`)
+  // 旧库补建授权暂停时逐项待停止记录；历史决策不回填请求状态，仍由原决策只读对账。
+  database.exec(`CREATE TABLE IF NOT EXISTS pilot_grant_stop_requests (
+    grant_id TEXT NOT NULL,
+    execution_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    command_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'accepted_unverified', 'unverified', 'stopper_reported')),
+    requested_at INTEGER NOT NULL CHECK (requested_at >= 0),
+    result_at INTEGER,
+    PRIMARY KEY (grant_id, execution_id)
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_pilot_grant_stop_requests_project ON pilot_grant_stop_requests(project_id)')
   // 学习样本冻结产生时的执行工作区；旧数据保持 NULL，不能按员工当前默认工作区补造。
   const learningSampleColumns = readColumnNames(database, 'agent_employee_learning_samples')
   if (!learningSampleColumns.includes('workspace_id')) database.exec('ALTER TABLE agent_employee_learning_samples ADD COLUMN workspace_id TEXT')
@@ -1503,6 +1529,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM pilot_runtime_start_attempts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_start_receipts WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_stop_escalations WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM pilot_grant_stop_requests WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_commands WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_grant_pause_decisions WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM pilot_runtime_grants WHERE project_id = ?`).run(id)

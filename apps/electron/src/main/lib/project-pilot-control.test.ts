@@ -27,6 +27,7 @@ test('Given 项目经理打开概览 When 尚无策略 Then 控制面明确阻�
   expect(snapshot.activeGrant).toBeNull()
   expect(snapshot.grantStatus).toBe('none')
   expect(snapshot.budgetUsage).toBeNull()
+  expect(snapshot.stopReconciliation).toEqual([])
 })
 
 test('Given 已确认活动授权 When 项目经理刷新控制面 Then 展示冻结边界但不伪报绑定就绪', () => {
@@ -55,6 +56,31 @@ test('Given 已确认活动授权 When 项目经理刷新控制面 Then 展示�
   })
   expect(snapshot.budgetUsage?.commands).toEqual([])
 })
+
+test('Given 已暂停的停止决策 When 重启刷新控制面 Then 无活动授权仍展示人工对账', async () => {
+  const now = Date.now()
+  const project = createProject({ title: '停止对账项目', description: '' })
+  getProjectDb().prepare(`INSERT INTO pilot_runtime_grants
+    (id, project_id, policy_revision, state, workspace_id, channel_id, model_id,
+     executor_employee_id, reviewer_employee_id, max_cost_micros, max_runs, max_rework, expires_at, created_at)
+    VALUES (?, ?, 1, 'active', 'workspace-a', 'channel-a', 'model-a',
+      'executor', 'reviewer', 10000, 1, 0, ?, ?)`).run(`grant-${project.id}`, project.id, now + 100000, now)
+  const grantId = `grant-${project.id}`
+  getProjectDb().prepare(`INSERT INTO pilot_grant_pause_decisions
+    (grant_id, project_id, policy_revision, fingerprint, queued_targets, running_choices, created_at)
+    VALUES (?, ?, 1, 'fixture', '{"reservedCommandIds":[],"queued":[]}', ?, ?)`).run(
+    grantId, project.id, JSON.stringify([{ executionId: 'run-a', disposition: 'request_stop' }]), now)
+  expect(getPilotControlSnapshot(project.id).stopReconciliation).toMatchObject([
+    { grantId, executionId: 'run-a', state: 'legacy_unknown' },
+  ])
+  getProjectDb().exec('DROP TABLE pilot_grant_stop_requests')
+  closeProjectDb()
+  await initProjectDb()
+  expect(getPilotControlSnapshot(project.id).stopReconciliation).toMatchObject([
+    { grantId, executionId: 'run-a', state: 'legacy_unknown' },
+  ])
+})
+
 
 test('Given 旧库活动授权缺少确认指纹 When 打开控制面 Then 标记需对账且仍可预览保守暂停', () => {
   const now = Date.now()

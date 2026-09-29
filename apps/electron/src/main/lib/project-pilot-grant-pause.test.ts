@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
-import { confirmPilotGrantPause, confirmPilotGrantPauseAndRequestStops, inspectPilotGrantPauseRecovery, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
+import { confirmPilotGrantPause, confirmPilotGrantPauseAndRequestStops, inspectPilotGrantPauseRecovery, listPilotGrantStopRequests, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createAgentExecution, createProject, createTask, getAgentExecution, getProjectDb,
   initProjectDb, updateAgentExecution } from './project-sqlite-store'
@@ -72,6 +72,9 @@ test('用户确认后同事务暂停 grant、取消未启动执行并保留运�
   const decision = getProjectDb().prepare('SELECT running_choices FROM pilot_grant_pause_decisions WHERE grant_id = ?')
     .get(grantId) as { running_choices: string }
   expect(JSON.parse(decision.running_choices)).toEqual(choice)
+  expect(listPilotGrantStopRequests(project.id)).toMatchObject([{ grant_id: grantId,
+    execution_id: running.executionId, command_id: running.input.commandId,
+    session_id: 'session-running', state: 'pending' }])
   expect(inspectPilotGrantPauseRecovery(grantId)).toEqual({ state: 'needs_attention',
     pendingStopExecutionIds: [running.executionId], reason: '运行中停止请求缺少进程终止证据' })
 })
@@ -136,6 +139,38 @@ test('暂停影响面列出未排队预留，确认后同事务释放费用', ()
 })
 
 
+test('旧版暂停决定没有新表记录时仍列出送达状态未知的人工对账项', () => {
+  const { project, grantId, queue } = fixture()
+  const running = queue(1)
+  updateAgentExecution(running.executionId, { status: 'running', sessionId: 'session-running' })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(running.input.commandId)
+  confirmPilotGrantPause(previewPilotGrantPauseImpact(grantId),
+    [{ executionId: running.executionId, disposition: 'request_stop' }])
+  getProjectDb().prepare('DELETE FROM pilot_grant_stop_requests WHERE grant_id = ?').run(grantId)
+  expect(listPilotGrantStopRequests(project.id)).toMatchObject([{ grant_id: grantId,
+    execution_id: running.executionId, state: 'legacy_unknown' }])
+})
+
+
+test('逐项待停止写入失败时授权撤权与排队取消一并回滚', () => {
+  const { grantId, queue } = fixture()
+  const queued = queue(1)
+  const running = queue(2)
+  updateAgentExecution(running.executionId, { status: 'running', sessionId: 'session-running' })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(running.input.commandId)
+  const preview = previewPilotGrantPauseImpact(grantId)
+  getProjectDb().exec(`CREATE TRIGGER reject_pending_stop BEFORE INSERT ON pilot_grant_stop_requests
+    BEGIN SELECT RAISE(ABORT, 'pending unavailable'); END`)
+  expect(() => confirmPilotGrantPause(preview,
+    [{ executionId: running.executionId, disposition: 'request_stop' }])).toThrow('pending unavailable')
+  getProjectDb().exec('DROP TRIGGER reject_pending_stop')
+  expect((getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?')
+    .get(grantId) as { state: string }).state).toBe('active')
+  expect(getAgentExecution(queued.executionId)?.status).toBe('queued')
+  expect(listPilotGrantStopRequests(preview.projectId)).toEqual([])
+})
+
+
 test('停止请求只在撤权提交后逐项发送，失败如实报告未验证', () => {
   const { grantId, queue } = fixture()
   const running = queue(1)
@@ -155,6 +190,65 @@ test('停止请求只在撤权提交后逐项发送，失败如实报告未验�
   expect(result.stopOutcomes).toEqual([{ executionId: running.executionId,
     requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }])
   expect(getAgentExecution(running.executionId)?.status).toBe('running')
+})
+
+
+test('暂停后逐条请求停止：一条已接受、一条抛错，均不冒充终止且重启待对账', async () => {
+  const { grantId, queue } = fixture()
+  const first = queue(1)
+  const second = queue(2)
+  for (const item of [first, second]) {
+    updateAgentExecution(item.executionId, { status: 'running', sessionId: `session-${item.executionId}` })
+    getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(item.input.commandId)
+  }
+  const calls: string[] = []
+  const preview = previewPilotGrantPauseImpact(grantId)
+  const result = confirmPilotGrantPauseAndRequestStops(preview, [
+    { executionId: first.executionId, disposition: 'request_stop' },
+    { executionId: second.executionId, disposition: 'request_stop' },
+  ], (executionId) => {
+    calls.push(executionId)
+    expect((getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?')
+      .get(grantId) as { state: string }).state).toBe('paused')
+    if (executionId === first.executionId) return { executionId, requestAccepted: true,
+      stopped: false, processTermination: 'NOT_VERIFIED' }
+    throw new Error('目标代际不可用')
+  })
+  expect(calls).toEqual([first.executionId, second.executionId])
+  expect(result.stopOutcomes).toEqual([
+    { executionId: first.executionId, requestAccepted: true, stopped: false, processTermination: 'NOT_VERIFIED' },
+    { executionId: second.executionId, requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' },
+  ])
+  expect(listPilotGrantStopRequests(preview.projectId).map((row) => row.state))
+    .toEqual(['accepted_unverified', 'unverified'])
+  closeProjectDb()
+  await initProjectDb()
+  expect(listPilotGrantStopRequests(preview.projectId).map((row) => row.state))
+    .toEqual(['accepted_unverified', 'unverified'])
+  expect(inspectPilotGrantPauseRecovery(grantId).state).toBe('needs_attention')
+  const activities = getProjectDb().prepare("SELECT payload FROM project_activities WHERE action = 'pilot_stop_request_result' AND project_id = ?")
+    .all(preview.projectId) as Array<{ payload: string }>
+  expect(activities.map((item) => JSON.parse(item.payload).executionId).sort()).toEqual(
+    [first.executionId, second.executionId].sort())
+})
+
+
+test('停止请求已送达但结果审计失败时不伪装成未送达，保留人工对账', () => {
+  const { grantId, queue } = fixture()
+  const running = queue(1)
+  updateAgentExecution(running.executionId, { status: 'running', sessionId: 'session-running' })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(running.input.commandId)
+  getProjectDb().exec(`CREATE TRIGGER reject_stop_result BEFORE INSERT ON project_activities
+    WHEN NEW.action = 'pilot_stop_request_result' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`)
+  const result = confirmPilotGrantPauseAndRequestStops(previewPilotGrantPauseImpact(grantId),
+    [{ executionId: running.executionId, disposition: 'request_stop' }], (executionId) => ({
+      executionId, requestAccepted: true, stopped: false, processTermination: 'NOT_VERIFIED',
+    }))
+  expect(result.stopOutcomes).toEqual([{ executionId: running.executionId, requestAccepted: true,
+    stopped: false, processTermination: 'NOT_VERIFIED', auditRecorded: false }])
+  expect(listPilotGrantStopRequests(getAgentExecution(running.executionId)!.projectId)[0]?.state).toBe('pending')
+  expect(inspectPilotGrantPauseRecovery(grantId).state).toBe('needs_attention')
+  getProjectDb().exec('DROP TRIGGER reject_stop_result')
 })
 
 

@@ -2,6 +2,7 @@ import type { PilotControlSnapshot } from '@gravitas/shared'
 import { getPilotGrantBudgetUsageView } from './project-pilot-budget-ledger'
 import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
 import { getPilotPolicy } from './project-pilot-policy'
+import { listPilotGrantStopRequests } from './project-pilot-grant-pause'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 
 /** 项目经理控制面只读快照；不发行授权、不修改策略，也不触发模型。 */
@@ -39,5 +40,8 @@ export function getPilotControlSnapshot(projectId: string, now = Date.now()): Pi
     activeGrant,
     grantStatus,
     budgetUsage,
+    stopReconciliation: listPilotGrantStopRequests(projectId).map((row) => ({
+      grantId: row.grant_id, executionId: row.execution_id, state: row.state,
+    })),
   }
 }

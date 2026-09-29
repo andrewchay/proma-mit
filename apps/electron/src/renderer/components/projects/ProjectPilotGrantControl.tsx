@@ -108,7 +108,10 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
       const result = await window.electronAPI.paa.project.confirmPilotGrantPause(pausePreview, choices)
       setPausePreview(null)
       setRunningChoices({})
-      setNotice(`授权已暂停；释放 ${result.releasedReservationCommandIds.length} 条预留，取消 ${result.cancelledExecutionIds.length} 条未启动执行。${result.pendingStopExecutionIds.length ? ` ${result.pendingStopExecutionIds.length} 条运行中停止请求尚待真实停止器核验。` : ''}`)
+      const accepted = result.stopOutcomes.filter((outcome) => outcome.requestAccepted).length
+      const unverified = result.stopOutcomes.filter((outcome) => outcome.processTermination !== 'VERIFIED').length
+      const auditFailed = result.stopOutcomes.filter((outcome) => outcome.auditRecorded === false).length
+      setNotice(`授权已暂停；释放 ${result.releasedReservationCommandIds.length} 条预留，取消 ${result.cancelledExecutionIds.length} 条未启动执行。${result.stopOutcomes.length ? ` 已逐条尝试停止：接受 ${accepted} 条、失败或无法确认 ${result.stopOutcomes.length - accepted} 条；${unverified} 条终止未核验${auditFailed ? `，${auditFailed} 条结果审计未落盘` : ''}。停止意图与费用仍须人工对账。` : ''}`)
       setError('')
       await load()
     } catch (cause) {
@@ -129,6 +132,12 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
       {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
       {notice && <p role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-950">{notice}</p>}
       {!control && !error && <p className="mt-3 text-sm text-muted-foreground">正在读取授权状态…</p>}
+      {control && control.stopReconciliation.length > 0 && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" aria-label="停止请求人工对账">
+        <p className="font-medium">停止请求需人工对账（{control.stopReconciliation.length} 条）</p>
+        <p className="mt-1">pending 或旧记录不证明请求未发送；停止器报告也不是可持久核验的目标代际退出证明。不会自动重发或释放未知费用。</p>
+        <ul className="mt-2 list-inside list-disc">{control.stopReconciliation.map((item) =>
+          <li key={`${item.grantId}:${item.executionId}`}>执行 {item.executionId} · {item.state}</li>)}</ul>
+      </div>}
       {control && !control.policy && <div className="mt-3 rounded-lg bg-muted p-3 text-sm">
         <p className="font-medium">尚未保存 Pilot 策略草案</p>
         <p className="mt-1 text-muted-foreground">需先配置隔离 Git 工作区、两名不同员工、渠道/模型、预算、次数和有效期。</p>

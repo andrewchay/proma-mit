@@ -1,13 +1,13 @@
 # Project Pilot 工作、测试与验收台账
 
-建立：2026-09-26 GMT+8。最后更新：2026-09-28 GMT+8，本轮核对基线 HEAD：`2bdd2ecc`。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。后续提交状态以 Git 历史为准。
+建立：2026-09-26 GMT+8。最后核对：2026-09-29 15:28 GMT+8；当前 HEAD `7d4bd836`，与 `origin/main` 同步。本轮 -70～-72 为**未提交工作树切片**，且同树另有 Codex/Pi/Runtime retirement 等并行改动；后续提交状态以 Git 历史为准。建账时基线 HEAD：`017f9088`；观察与意图首片提交：`da1a3c64`。
 关联：[目标与路线](goals-and-roadmap.md) · [G0 命令契约草案](g0-command-contract.md) · [G1 隔离 Git 夹具](g1-isolated-fixture.md) · [实现度审计](implementation-audit.md) · [历史方案](design.md)。
 
 ## 当前结论
 
 - 已完成原始需求对齐、静态实现度审计与路线修订。
 - **截至 2026-09-27：** 只读项目观察、历史候选意图、默认暂停策略、两步确认活动 grant、暂停影响面、预算/命令账本、任务/项目链事件唤醒、受控候选派发、原子排队与启动认领、调用级预算能力门禁、Runtime 终态原始回执、unknown 终结结算、queued 取消释放及重启中断恢复均已进入产品代码。携带任务身份的统一项目服务事件和已提交的项目链修订会立即唤醒权威对账，扫描期间的多次事件合并为一次补跑；项目链事件回读精确 revision/payload 后才通知，外层事务回滚不产生假唤醒。30 秒周期继续补偿删除等缺项目身份的事件。后台仅对当前 `ready_candidate` 复核活动 grant、readiness、策略指纹、角色、工作区和预算，再以确定性命令/执行 ID 原子排队；活动 Pilot 项目的普通派发和普通 queued 启动 fail-closed。headless 完成回调会把 Runtime 原始 result 与执行身份、Runtime、哈希、token、费用绑定后写入不可更新的 SQLite 记录；带 `total_cost_usd` 时按 `runtime_reported` 结算，无费用时保留原文但仍写 `unknown_recorded` 并撤权。Project Pilot 聚合测试 16 个文件通过，其中后台对账 7、受控派发 3、预算账本 25、恢复对账 11、暂停恢复 12、活动 grant 暂停 10、Runtime 预算 3 PASS。
-- 后续 `-30`～`-39` 已补本地认领/交接链、Runtime 首活动开始回执、Pi 0.87.1 升级，以及未核验停止时的持久意图与同项目撤权停等；`-40`/`-41` 在不调用 Provider 的条件下验证 Pi 0.87.1 假流并接入生产 adapter 的可选请求间软门禁（当前 Pilot readiness 仍阻断 Pi）；逐轮证据见第 6 节。这些改进尚不等于 Provider 真正开始/费用或进程终止证明。当前仍没有可通过全部 readiness 的首版安全 Runtime、Provider 直接回执 ID/版本化价格快照、可信终止回执、技术评审返工、最小收件箱和审批续跑。受控派发测试只注入 readiness 与启动替身；Runtime 转述结果不等于 Provider 原始回执。未创建真实业务 Pilot 任务，未调用付费模型或 Provider，未修改运行权限或发布。隔离 Git 夹具只有三项无模型确定性局部测试，因此 G0/G1/G2/G3 均未通过。
+- **2026-09-29 现状（取代本段旧进度口径）：** G0 契约已审定通过；ai-sdk/bigmodel `glm-5.3-flash` 已在此前单独授权下完成两次真实受控 G2 run 和账单核对，不能说 G2 未执行，也不因此追认 G1。Pi Pilot readiness 仍关闭。B1 有限返工、B2 人工答复/最小收件箱、B3 无页面唤醒、B4 已结构化任务的依赖派发均有实现和确定性证据，但自然语言目标→澄清→结构化计划/角色选择、主动通知和 UI 真机闭环未完成。固定隔离 Git 夹具为局部证据，G1 仍未通过。本轮 -70～-72 补授权暂停后逐项停止 IPC、事务性待办/保守人工对账、Node 原生 SQLite/WAL 暂停事务强杀；未调用 Provider，非 Electron 固定构建/真实 Runtime 终止证据。上方截至 2026-09-27 的叙述及第 2～5、7 节部分历史状态已过时，追溯时以本条和第 6 节最新记录为准。
 - 第一交付从“全面 IA 重构”改为“受控主动推进纵向切片＋最小审批入口”。
 
 ## 1. 状态口径
@@ -91,6 +91,9 @@
 
 | Run/记录ID | 日期 | 内容 | 结果 | 证据边界 |
 |---|---|---|---|---|
+| PILOT-20260929-72 | 2026-09-29 | **暂停事务原生 WAL 局部强杀**：新建隔离 Node 子进程夹具，使用生产 `initProjectDb` 的 `NativeSqliteCompat`/better-sqlite3 分支及 WAL；事务 callback 完成而 COMMIT 前、函数提交后分别发 READY，父进程 SIGKILL，新进程重开。前者 grant active/无 decision/执行 running/无 stop request；后者 grant paused/decision 恰一条/执行仍 running/stop request pending。子进程核对原生驱动，重开核对 `journal_mode=wal`。`stopAgent→orchestrator.stop` 源码核对：adapter.abort 只确认请求接受，始终返回 `processTermination: NOT_VERIFIED`。 | 本轮复跑 native-crash、grant-pause、control、stop-escalation 四文件 **33 PASS/0 fail**；此前 native-crash + grant-pause + control 定向、九包 typecheck、Biome、diff-check 通过；未调用 Provider。`project-pilot-native-crash-child.ts`、`.test.ts` 未提交；HEAD `7d4bd836`。 | 只证明 **Node 原生分支暂停事务**的进程强杀回滚/持久化；未运行 Electron ABI 固定构建，未覆盖断电（WAL `synchronous=NORMAL`）、派发/审批 WAL 矩阵、停止请求送达后崩溃或 Runtime 外部副作用；未证明“不重放”或目标代际退出。G1 未通过。 |
+| PILOT-20260929-71 | 2026-09-29 | **撤权与逐项停止待办同事务**：`confirmPilotGrantPause` 在撤权、释放预留、取消 queued、保存选择的同一 SQLite 事务内写 `pilot_grant_stop_requests`（grant/execution/project/command/session、pending）；结果与活动审计同事务更新 accepted_unverified/unverified/stopper_reported。审计失败时调用方标记 `auditRecorded:false`，库里仍 pending；旧库空表补建但不伪造历史状态，旧决策作为 `legacy_unknown` 进只读对账清单；控制面即使无活动授权也展示，禁止盲目重发或释放未知费用。 | grant-pause/control 单测覆盖待办写入失败整笔回滚、关闭重开、结果审计失败、旧决策迁移展示；本轮上述四文件 33 PASS/0 fail；九包 typecheck、Biome/diff-check 通过；未提交、无 Provider。 | pending 可指未发送或已发送未落结果；stopper_reported 只是停止器说法，不是绑定 session/generation 的退出凭据。`inspectPilotGrantPauseRecovery` 仍保守 needs_attention，人工核验/附证据消解入口未建；G1 未通过。 |
+| PILOT-20260929-70 | 2026-09-29 | **授权暂停后的逐项停止生产接线**：暂停确认 IPC 改调用 `confirmPilotGrantPauseAndRequestStops`，在撤权提交后逐项委托 `cancelAgentExecution`；Pilot 路径先持久停止意图再发目标代际 abort。结果写活动记录，UI 区分请求接受/失败/终止未核验与审计失败。 | 暂停/停止升级/G1 定向曾 37 PASS；本轮 pause/control/stop/native 33 PASS；typecheck/Biome/diff-check 通过。另研发执行套件曾 43 PASS/1 FAIL，当时由同树并行 Runtime retirement 变更令旧 proma 测试被拒；不宣称全量绿。未提交、无 Provider。 | 撤权事务与逐项外部停止之间仍有崩溃空窗；-71 使目标待办持久可见但不允许未知状态自动重发。真实 IPC/UI、真实 Runtime 终止、费用人工对账未验收；G1 未通过。 |
 | AUDIT-20260926-01 | 2026-09-26 | 三路源码/界面/历史台账只读审计 | 完成 | implementation-audit.md；未执行测试 |
 | ALIGN-20260926-01 | 2026-09-26 | 主目标恢复为主动管理，重排阶段并建台账 | 完成 | goals-and-roadmap.md；不是产品实现 |
 | PILOT-20260926-01 | 2026-09-26 | 只读观察首片：IPC/preload/概览、权威依赖/执行/链路投影 | 部分实现；7/7 新单测 PASS，project-chain 4/4 与 project-service 1/1 回归 PASS；typecheck/lint PASS；真机未执行 | 临时 SQLite fixture；`bun test apps/electron/src/main/lib/project-pilot-reconcile.test.ts`，无真实 Provider；不覆盖 A01–A07/A09a |
@@ -180,10 +183,12 @@
 
 后续每个测试Run需记录：固定HEAD及脏文件、应用形态、Runtime/model、project/task/execution/delivery IDs、状态revision、授权/预算、预期自主步骤、实际动作、人工必要决定/催办/技术支持、费用/用量、日志、结果、签收。未知填unknown，重测新增Run并引用retestOf。
 
-## 7. 下一次执行
+## 7. 下一次执行（2026-09-29 更新，按优先级）
 
-0. 接入 Provider 直接回执 ID 或版本化价格快照，并继续区分 Provider 原始证据、Runtime 转述、可追溯估算和 `unknown_recorded`。为首版安全研发路径实现可验证的调用级费用门禁，或在独立验证后明确纳入一个已支持该能力的 Runtime。
-1. 本地认领与调用前交接意图、首条 Runtime 活动回执均已有记录；仍不能据此证明 Provider 实际开始或计费。补 Provider 身份/费用链和进程故障注入，并把审批答复接到可核验的自动续跑，保持普通员工旧入口不可绕过。
-2. 将已落盘的停止意图接入 grant-pause 的逐条 `request_stop`，持久记录结果；获取与 session/generation 绑定的可信终止回执或人工对账消解，不能把现有 abort 接受当成退出证明。完成执行→技术评审→有限返工→再审的确定性链路，终态仍不冒充人工业务验收。
-3. 实现最小项目收件箱与必要澄清/权限/交付/决策恢复，再用隔离 Git 样例逐项执行 A01–A07/A09a 的完整确定性闭环；G0/G1 均通过后，另行冻结模型、费用和调用上限并请求 G2 真实试跑授权。
-4. 每项分别记录实现、自动测试和真实验收；未知状态写 unknown，重测另记 Run，不用局部 PASS 代替门禁。
+0. **先收束未提交切片。** 逐文件核对 -70～-72 的 Pilot diff，与同树 Codex/Pi/Runtime retirement 改动拆开；清理本轮临时构建产物 `.context/pilot-native-crash-child.cjs`，复跑定向、typecheck/静态检查后再决定独立提交。台账本次更新本身不表示代码已合入。
+1. **G1 A06/A09a 生产故障矩阵。** 用固定构建 Electron/better-sqlite3 WAL（不是 Node ABI 代替）覆盖派发与审批提交前/后、停止待办提交→请求送达→结果审计各窗口；重启对账同时核验命令、执行、授权、费用预留及外部副作用。对 pending/legacy_unknown 不自动重放；设计附证据的人工对账/消解路径，或取得绑定 session/generation 的可信退出回执。当前 abort 仅请求接受。
+2. **G1 P0 管理者工作流。** 做目标输入与必要澄清→结构化计划草案（任务、依赖、DoD、角色、工作区）→用户审定后事务性建任务；模型文本不得直接创建/派发。补主动通知、回复后自动续跑及固定构建 UI 验收；现有 B4 仅派发已结构化任务。
+3. **G1 全场景复验。** 在固定隔离 Git 样例按 A01–A07/A09a 全量验收，特别是真 Pilot 命令启动 Runtime、A03 真模型缺陷识别与评审标记服从、A07 实际会话 cwd/知识工具限域及文件越界、停止与崩溃对账。确定性注入只算局部证据；记录构建、HEAD、预期/实际、费用与失败。G0 已通过，G1 仍未通过。
+4. **Runtime 分线与后续费用授权。** ai-sdk 既有特批 G2 两次受控 run 已完成，不能复用为新付费授权；Pi 请求出口及费用证据须独立验收，readiness 保持关闭。新项目/模型的 G2 真实试跑须在完整 G1 后另行冻结角色、模型、次数、预算并请求用户授权。旧 needs_reconcile 占额不自动释放。
+
+每项分别记录实现、自动测试和真实验收；未知状态写 unknown，不用局部 PASS 代替门禁。

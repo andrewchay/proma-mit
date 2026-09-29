@@ -13,7 +13,7 @@ import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { listPilotInbox, resolvePilotApproval } from './project-pilot-approval'
 import { getPilotControlSnapshot } from './project-pilot-control'
 import { confirmPilotGrantIssue, previewPilotGrantIssue } from './project-pilot-grant-issue'
-import { confirmPilotGrantPause, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
+import { confirmPilotGrantPauseAndRequestStops, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import {
   SCHEDULE_IPC_CHANNELS,
@@ -459,7 +459,11 @@ export function registerWorkModuleIpcHandlers(): void {
     return previewPilotGrantPauseImpact(grantId)
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT_PAUSE, async (_, preview: import('@gravitas/shared').PilotGrantPauseImpact, choices: import('@gravitas/shared').PilotRunningChoice[]) => {
-    return confirmPilotGrantPause(preview, choices)
+    return confirmPilotGrantPauseAndRequestStops(preview, choices, (executionId) => {
+      const result = cancelAgentExecution(executionId)
+      return { executionId, requestAccepted: result.stopped || result.stopRequested,
+        stopped: result.stopped, processTermination: result.processTermination }
+    })
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.CREATE_PROJECT, async (_, input) => {
     return createProject(input)

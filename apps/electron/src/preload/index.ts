@@ -1817,7 +1817,7 @@ export interface ElectronAPI {
       previewPilotGrant: (projectId: string, policyRevision: number) => Promise<import('@gravitas/shared').PilotGrantIssuePreview>
       confirmPilotGrant: (preview: import('@gravitas/shared').PilotGrantIssuePreview, confirmedFingerprint: string) => Promise<import('@gravitas/shared').PilotRuntimeGrant>
       previewPilotGrantPause: (grantId: string) => Promise<import('@gravitas/shared').PilotGrantPauseImpact>
-      confirmPilotGrantPause: (preview: import('@gravitas/shared').PilotGrantPauseImpact, choices: import('@gravitas/shared').PilotRunningChoice[]) => Promise<import('@gravitas/shared').PilotGrantPauseResult>
+      confirmPilotGrantPause: (preview: import('@gravitas/shared').PilotGrantPauseImpact, choices: import('@gravitas/shared').PilotRunningChoice[]) => Promise<import('@gravitas/shared').PilotGrantPauseWithStopsResult>
       createProject: (input: unknown) => Promise<unknown>
       updateProject: (id: string, patch: unknown) => Promise<unknown | null>
       deleteProject: (id: string) => Promise<boolean>

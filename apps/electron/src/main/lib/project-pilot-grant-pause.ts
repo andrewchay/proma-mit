@@ -154,6 +154,15 @@ export function confirmPilotGrantPause(
       (grant_id, project_id, policy_revision, fingerprint, queued_targets, running_choices, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`).run(current.grantId, current.projectId, current.policyRevision,
       current.fingerprint, JSON.stringify({ reservedCommandIds: current.reservedCommandIds, queued: current.queued }), JSON.stringify(choices), now)
+    for (const choice of choices) {
+      if (choice.disposition !== 'request_stop') continue
+      const target = current.running.find((item) => item.executionId === choice.executionId)
+      if (!target || !target.sessionId) throw new Error('Pilot 运行中停止目标无法核验')
+      database.prepare(`INSERT INTO pilot_grant_stop_requests
+        (grant_id, execution_id, project_id, command_id, session_id, state, requested_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)`).run(current.grantId, target.executionId,
+        current.projectId, target.commandId, target.sessionId, now)
+    }
     result = { grantId: current.grantId, cancelledExecutionIds, releasedReservationCommandIds,
       runningChoices: choices, pendingStopExecutionIds: choices.filter((choice) => choice.disposition === 'request_stop')
         .map((choice) => choice.executionId) }
@@ -167,6 +176,7 @@ export interface PilotGrantStopOutcome {
   requestAccepted: boolean
   stopped: boolean
   processTermination: 'VERIFIED' | 'NOT_VERIFIED'
+  auditRecorded?: false
 }
 
 export interface PilotGrantPauseWithStopsResult extends PilotGrantPauseResult {
@@ -181,19 +191,75 @@ export function confirmPilotGrantPauseAndRequestStops(
 ): PilotGrantPauseWithStopsResult {
   const paused = confirmPilotGrantPause(preview, choices)
   const stopOutcomes = paused.pendingStopExecutionIds.map((executionId): PilotGrantStopOutcome => {
+    let outcome: PilotGrantStopOutcome
     try {
-      const outcome = stopRunning(executionId)
+      outcome = stopRunning(executionId)
       if (!outcome || outcome.executionId !== executionId
         || outcome.stopped !== (outcome.processTermination === 'VERIFIED')
         || (outcome.stopped && !outcome.requestAccepted)) {
         throw new Error('Pilot 停止结果无法核验')
       }
-      return outcome
     } catch {
-      return { executionId, requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
+      outcome = { executionId, requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
     }
+    try {
+      getProjectDb().transaction(() => {
+        const state = outcome.processTermination === 'VERIFIED' ? 'stopper_reported'
+          : outcome.requestAccepted ? 'accepted_unverified' : 'unverified'
+        const changed = getProjectDb().prepare(`UPDATE pilot_grant_stop_requests SET state = ?, result_at = ?
+          WHERE grant_id = ? AND execution_id = ? AND project_id = ? AND state = 'pending'`)
+          .run(state, Date.now(), paused.grantId, executionId, preview.projectId)
+        if (changed.changes !== 1) throw new Error('Pilot 停止请求待办已变化')
+        getProjectDb().prepare(`INSERT INTO project_activities
+          (id, project_id, entity_type, entity_id, action, summary, payload, actor, created_at)
+          VALUES (?, ?, 'task', ?, 'pilot_stop_request_result', ?, ?, 'local-user', ?)`).run(
+          randomUUID(), preview.projectId, executionId, 'Pilot 暂停后逐项停止请求结果（不代表费用对账完成）',
+          JSON.stringify({ grantId: paused.grantId, ...outcome }), Date.now())
+      })()
+    } catch {
+      // 保留实际请求结果；审计失败独立标记，不能把已送达伪装为未送达。
+      return { ...outcome, auditRecorded: false }
+    }
+    return outcome
   })
   return { ...paused, stopOutcomes }
+}
+
+export interface GrantStopRequestRow {
+  grant_id: string
+  execution_id: string
+  project_id: string
+  command_id: string
+  session_id: string
+  state: 'pending' | 'accepted_unverified' | 'unverified' | 'stopper_reported' | 'legacy_unknown'
+  requested_at: number
+  result_at: number | null
+}
+
+/** 只读人工对账清单；pending/legacy_unknown 都可能已经发出，绝不自动重放。 */
+export function listPilotGrantStopRequests(projectId: string): GrantStopRequestRow[] {
+  if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('缺少 Pilot 项目 ID')
+  const database = getProjectDb()
+  const rows = database.prepare(`SELECT * FROM pilot_grant_stop_requests
+    WHERE project_id = ? ORDER BY requested_at, execution_id`).all(projectId) as GrantStopRequestRow[]
+  const legacy = database.prepare(`SELECT grant_id, running_choices, created_at FROM pilot_grant_pause_decisions
+    WHERE project_id = ? ORDER BY created_at, grant_id`).all(projectId) as Array<{
+      grant_id: string; running_choices: string; created_at: number
+    }>
+  for (const decision of legacy) {
+    let choices: PilotRunningChoice[]
+    try { choices = JSON.parse(decision.running_choices) as PilotRunningChoice[] } catch { continue }
+    if (!Array.isArray(choices)) continue
+    for (const choice of choices) {
+      if (!choice || choice.disposition !== 'request_stop' || typeof choice.executionId !== 'string') continue
+      if (rows.some((row) => row.grant_id === decision.grant_id && row.execution_id === choice.executionId)) continue
+      const execution = getAgentExecution(choice.executionId)
+      rows.push({ grant_id: decision.grant_id, execution_id: choice.executionId, project_id: projectId,
+        command_id: execution?.pilotCommandId ?? '', session_id: execution?.sessionId ?? '',
+        state: 'legacy_unknown', requested_at: decision.created_at, result_at: null })
+    }
+  }
+  return rows.sort((a, b) => a.requested_at - b.requested_at || a.execution_id.localeCompare(b.execution_id))
 }
 
 interface GrantPauseDecisionRow {

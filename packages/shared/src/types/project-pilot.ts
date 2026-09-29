@@ -148,6 +148,11 @@ export interface PilotControlSnapshot {
   activeGrant: PilotRuntimeGrant | null
   grantStatus: 'none' | 'active' | 'expired' | 'needs_reconcile'
   budgetUsage: PilotGrantBudgetUsage | null
+  stopReconciliation: Array<{
+    grantId: string
+    executionId: string
+    state: 'pending' | 'accepted_unverified' | 'unverified' | 'stopper_reported' | 'legacy_unknown'
+  }>
 }
 
 export type PilotRunningDisposition = 'finish_current' | 'request_stop'
@@ -181,4 +186,14 @@ export interface PilotGrantPauseResult {
   releasedReservationCommandIds: string[]
   runningChoices: PilotRunningChoice[]
   pendingStopExecutionIds: string[]
+}
+
+export interface PilotGrantPauseWithStopsResult extends PilotGrantPauseResult {
+  stopOutcomes: Array<{
+    executionId: string
+    requestAccepted: boolean
+    stopped: boolean
+    processTermination: 'VERIFIED' | 'NOT_VERIFIED'
+    auditRecorded?: false
+  }>
 }
