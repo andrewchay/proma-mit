@@ -8,6 +8,6 @@
 - [x] Node 原生 NativeSqliteCompat/better-sqlite3 WAL 子进程 SIGKILL：撤权提交前回滚、提交后持久 pending，重开核验（非 Electron 固定构建）
 - [x] 收束切片提交 `b540c759`：14 文件；sqlite-store 拆分暂存剔除并行默认 Runtime 改动；定向 44 PASS、typecheck/Biome/diff-check 过；临时 .cjs 已清理
 - [x] Electron 固定二进制（run-as-node ABI 140）复验同矩阵：45 PASS；对账扩展命令状态与未消解升级；独立数据根+进程组强杀修 locked；提交 `607a923e`
-- [x] 派发与审批事务原生 WAL 强杀矩阵（Node+Electron 双运行器）：无半成品/幂等重试/凭据恰一/旧版拒绝；新发现策略锁残留 fail-closed 恢复链路
+- [x] 派发与审批事务原生 WAL 强杀矩阵（Node+Electron 双运行器）：无半成品/幂等重试/凭据恰一/旧版拒绝；新发现策略锁残留 fail-closed 恢复链路；提交 `818809b8`
 - [ ] 锁残留人工恢复的 UI/文档指引核实；事件唤醒与 recordProjectActivity 后置窗口；打包构建、断电、真 Runtime 终止凭据、外部副作用矩阵
 - [ ] 计划草案/澄清/人审建任务及主动通知；固定构建 G1 完整场景验收
