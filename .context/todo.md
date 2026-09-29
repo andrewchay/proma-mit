@@ -1,8 +1,10 @@
-# G2 -60：Pilot 控制面消耗合计
+# B2/B3/B4 推进（G1 前置缺口收尾）
 
-- [x] 读 control snapshot 类型/IPC 接线/GrantControl 渲染模式
-- [x] 账本导出授权级用量视图（同 readBudgetUsage 口径 + 逐命令明细 + 请求结算计数）
-- [x] control snapshot 扩展字段 + IPC 透传
-- [x] GrantControl 渲染合计条 + 命令明细表
-- [x] 测试：账本视图 + 控制面快照
-- [x] 门禁：定向 + typecheck + biome；台账 -60；提交
+- [x] B2 审批续跑 + 最小收件箱（A04）：shared 类型扩展 approval/approval_request 与版本
+- [x] B2：审批凭据绑定任务/执行/授权/版本、原子答复、IPC/preload/UI 收件箱
+- [x] B2：观察层待人工答复分支 + 完成回调【需要人工】截断交付
+- [x] B2：测试（询问产生→批准续跑→拒绝不执行→旧版本/伪造标记拒绝→依赖阻塞）
+- [x] B3 后台非 mount 推进（A01）：活动授权 fixture 自动派发 + 交付评审事件入口
+- [x] B4 并行+依赖计划派发（A02）：双任务同批 + 依赖链事件自动续派测试
+- [x] 门禁：全量回归（45 既有失败持平）+ typecheck + Biome；台账 -63
+- [ ] 提交推送；G1 固定隔离夹具/真机构建验收仍另行进行

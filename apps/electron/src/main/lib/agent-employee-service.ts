@@ -27,6 +27,7 @@ import { inspectPilotReadiness } from './project-pilot-readiness'
 import { settlePilotExecutionRuntimeUsage, settlePilotExecutionUnknownUsage } from './project-pilot-runtime-usage'
 import { getPilotCompletionBlocker, getPilotSettlementBlocker } from './project-pilot-terminal-gate'
 import { summarizePilotCommandRequestSettlements } from './project-pilot-request-settlement'
+import { parsePilotHumanRequest } from './project-pilot-approval'
 import type { PilotCommandSettlement } from './project-pilot-budget-ledger'
 import { normalizeExecutionMessages, currentExecutionMessages } from './agent-execution-messages'
 import { resolveStateGroup } from './task-status-logic'
@@ -1125,10 +1126,32 @@ function handleExecutionComplete(
   if (execution.pilotCommandId) store.updateAgentExecution(executionId, { status: 'completed', error: '' })
 
   // 回写任务/子任务（按 entityType 区分，否则 subTask 会卡在 running）
+  // A04 主动询问：Pilot 负责人执行说明带【需要人工：…】→ 结算照常闭合，任务转待人工答复，
+  // 不提交交付、不进评审环路；答复经 resolvePilotApproval 批准后由后台对账自动续跑。
+  const pilotHumanRequest = execution.pilotCommandId && execution.entityType === 'task'
+    ? (() => {
+      const entityTask = store.getTask(execution.entityId)
+      if (!entityTask || parseAgentId(entityTask.assignee?.userId) !== execution.agentId) return null
+      return parsePilotHumanRequest(summary)
+    })()
+    : null
   try {
-    writebackExecutionResult(execution as import('./project-types').AgentExecution, 'completed', summary, completedAt)
+    if (pilotHumanRequest) {
+      writebackExecutionResult(execution as import('./project-types').AgentExecution, 'paused', summary, completedAt)
+    } else {
+      writebackExecutionResult(execution as import('./project-types').AgentExecution, 'completed', summary, completedAt)
+    }
   } catch (error) {
     console.error('[AgentEmployee] 回写任务状态失败:', error)
+  }
+
+  if (pilotHumanRequest) {
+    recordActivity(store.getAgentExecution(executionId)!, 'agent_blocked',
+      `Pilot 执行请求人工协助（${pilotHumanRequest.category}）：${pilotHumanRequest.detail}`)
+    void notifyAgentGuardrail(execution.projectId, execution.entityId, 'Pilot 执行待人工答复',
+      `类别：${pilotHumanRequest.category}。说明：${pilotHumanRequest.detail}`)
+    recordLearningSample(execution, 'accepted', summary)
+    return
   }
 
   // 研发任务受限交付（W03）：权威完成回调触发；范围不完整则静默跳过，保持旧行为。

@@ -801,6 +801,17 @@ function migrate(database: SqliteCompat): void {
       PRIMARY KEY (project_id, policy_revision)
     );
 
+    CREATE TABLE IF NOT EXISTS pilot_approval_resolutions (
+      task_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      grant_id TEXT NOT NULL,
+      source_version INTEGER NOT NULL,
+      resolved_version INTEGER NOT NULL,
+      resolved_notes TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+      PRIMARY KEY (task_id, execution_id)
+    );
+
     CREATE TABLE IF NOT EXISTS project_activities (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -1635,7 +1646,7 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
     development_scope: Object.prototype.hasOwnProperty.call(updates, 'developmentScope')
       ? (updates.developmentScope ? JSON.stringify(updates.developmentScope) : null)
       : existing.development_scope,
-    updated_at: now(),
+    updated_at: Math.max(now(), existing.updated_at + 1),
   }
   database.prepare(
     `UPDATE tasks SET

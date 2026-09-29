@@ -13,7 +13,7 @@ export interface PilotTaskObservation {
 }
 
 export interface PilotAttention {
-  sourceType: 'decision' | 'delivery'
+  sourceType: 'decision' | 'delivery' | 'approval'
   sourceId: string
   taskId?: string
   sourceVersion: number
@@ -35,10 +35,10 @@ export interface PilotObservation {
 export interface PilotIntent {
   id: string
   projectId: string
-  sourceType: 'task' | 'decision' | 'delivery'
+  sourceType: 'task' | 'decision' | 'delivery' | 'approval'
   sourceId: string
   sourceVersion: string
-  kind: 'dependency_wait' | 'ready_candidate' | 'review_candidate' | 'attention_candidate'
+  kind: 'dependency_wait' | 'ready_candidate' | 'review_candidate' | 'attention_candidate' | 'approval_request'
   status: 'open' | 'stale'
   createdAt: number
 }
@@ -46,6 +46,15 @@ export interface PilotIntent {
 export interface PilotOverviewSnapshot {
   observation: PilotObservation
   intents: PilotIntent[]
+}
+
+/** 收件箱条目（最小数据层）：open 意图对应的人工待办事实，展示层以 sourceType+sourceId 定位。 */
+export interface PilotInboxEntry {
+  sourceType: 'decision' | 'delivery' | 'approval'
+  sourceId: string
+  taskId?: string
+  sourceVersion: number
+  reason: string
 }
 
 /** 项目经理确认前可见的活动授权影响面。 */

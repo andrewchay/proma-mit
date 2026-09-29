@@ -10,6 +10,7 @@ import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 import { observeProjectPilot } from './project-pilot-reconcile'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
+import { listPilotInbox, resolvePilotApproval } from './project-pilot-approval'
 import { getPilotControlSnapshot } from './project-pilot-control'
 import { confirmPilotGrantIssue, previewPilotGrantIssue } from './project-pilot-grant-issue'
 import { confirmPilotGrantPause, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
@@ -437,6 +438,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PILOT_OVERVIEW, async (_, projectId: string) => {
     return reconcilePilotOverview(projectId)
   })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PILOT_INBOX, async (_, projectId: string) => listPilotInbox(projectId))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.RESOLVE_PILOT_APPROVAL, async (_, projectId: string, taskId: string,
+    decision: 'approved' | 'rejected', sourceVersion: number, note: string) =>
+    resolvePilotApproval(projectId, taskId, decision, { sourceVersion, note }))
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PILOT_CONTROL, async (_, projectId: string) => {
     return getPilotControlSnapshot(projectId)
   })

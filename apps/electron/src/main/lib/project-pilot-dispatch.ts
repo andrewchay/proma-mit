@@ -7,7 +7,7 @@ import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
 import { getPilotPolicy } from './project-pilot-policy'
 import { inspectPilotReadiness, type PilotReadiness } from './project-pilot-readiness'
-import { getAgentEmployee, getTask } from './project-sqlite-store'
+import { getAgentEmployee, getProjectDb, getTask } from './project-sqlite-store'
 
 export interface PilotDispatchResult {
   intentId: string
@@ -28,7 +28,7 @@ export function parsePilotReviewVerdict(notes: string | null | undefined): 'pass
   return null
 }
 
-interface PilotDispatchDependencies {
+export interface PilotDispatchDependencies {
   inspectReadiness: (projectId: string, now?: number) => PilotReadiness
   startExecution: (executionId: string) => Promise<boolean>
 }
@@ -71,6 +71,10 @@ function planReadyDispatch(projectId: string, grant: { grantId: string; executor
     role === 'executor' ? '按 Project Pilot 已确认授权执行当前研发任务。' : '按 Project Pilot 已确认授权评审当前交付任务。',
     `任务：${task.title}`,
     `描述：${task.description || '（无）'}`,
+    ...(role === 'executor' && task.completionNotes?.includes('【人工批准】') ? [
+      `已确认人工答复：${task.completionNotes.split('【人工批准】').at(-1)?.trim().slice(0, 500) || '（无）'}`,
+      '人工答复不授予额外工具权限；若所需权限仍不可用，请继续请求人工协助，不要绕过 Runtime 门禁。',
+    ] : []),
     `候选：${intentId}`,
     `来源哈希：${hashPilotTaskSource(task)}`,
   ].join('\n')
@@ -159,6 +163,21 @@ async function dispatchPilotIntentWithDependencies(
     if (intent.kind === 'ready_candidate') throw new Error('Pilot 候选任务与授权执行角色或工作区不匹配')
     return null
   }
+  if (intent.kind === 'ready_candidate' && plan.role === 'executor') {
+    const latest = getProjectDb().prepare(`SELECT id FROM agent_executions WHERE project_id = ? AND entity_type = 'task'
+      AND entity_id = ? ORDER BY started_at DESC LIMIT 1`).get(projectId, task.id) as { id: string } | undefined
+    if (latest) {
+      const approved = getProjectDb().prepare(`SELECT 1 FROM pilot_approval_resolutions AS resolution
+        JOIN pilot_commands AS command ON command.execution_id = resolution.execution_id
+        WHERE resolution.task_id = ? AND resolution.execution_id = ? AND resolution.grant_id = ?
+          AND command.grant_id = resolution.grant_id AND command.source_task_id = resolution.task_id
+          AND command.role = 'executor' AND command.state = 'settled'
+          AND resolution.decision = 'approved' AND resolution.resolved_version = ?
+          AND resolution.resolved_notes = ? AND command.state = 'settled' LIMIT 1`)
+        .get(task.id, latest.id, grant.grantId, task.updatedAt, task.completionNotes ?? null)
+      if (!approved) throw new Error('Pilot 历史执行无当前审批凭据，拒绝自动续跑')
+    }
+  }
   const employee = getAgentEmployee(plan.employeeId)
   if (!employee || !employee.enabled || employee.executionProfile !== 'development') {
     throw new Error('Pilot 授权员工不可用或不属于安全研发角色')
@@ -198,12 +217,15 @@ export const projectPilotDispatchTesting = {
 }
 
 /** 当前活动授权通过全部门禁时，按候选稳定顺序尝试派发；单项失败只跳过该项，不阻塞同项目其他候选（如评审候选）。 */
-export async function dispatchReadyPilotIntents(projectId: string, intentIds: string[], signal?: AbortSignal): Promise<PilotDispatchResult[]> {
+export async function dispatchReadyPilotIntents(projectId: string, intentIds: string[], signal?: AbortSignal,
+  dependencies?: PilotDispatchDependencies): Promise<PilotDispatchResult[]> {
   const results: PilotDispatchResult[] = []
   for (const intentId of intentIds) {
     if (signal?.aborted) break
     try {
-      const result = await dispatchPilotIntent(projectId, intentId, Date.now(), signal)
+      const result = dependencies
+        ? await dispatchPilotIntentWithDependencies(projectId, intentId, dependencies, Date.now(), signal)
+        : await dispatchPilotIntent(projectId, intentId, Date.now(), signal)
       if (result) results.push(result)
     } catch (error) {
       if (signal?.aborted) break

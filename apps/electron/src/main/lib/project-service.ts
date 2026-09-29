@@ -181,6 +181,26 @@ export async function updateTask(
   return task
 }
 
+/** 在同一个 SQLite 事务中核对版本并写入；事件只在提交后发出，供 Pilot 审批防重放。 */
+export function updateTaskIfVersion(
+  id: string,
+  expectedUpdatedAt: number,
+  updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>,
+  beforeCommit?: (previous: Task, updated: Task) => void,
+): Task {
+  let task: Task | null = null
+  store.getProjectDb().transaction(() => {
+    const current = store.getTask(id)
+    if (!current || current.updatedAt !== expectedUpdatedAt) throw new Error('任务版本已变化，请刷新后重试')
+    task = store.updateTask(id, updates)
+    if (!task) throw new Error('任务已不存在')
+    beforeCommit?.(current, task)
+  })()
+  if (!task) throw new Error('任务已不存在')
+  fireTaskChange(task, 'updated', { changedFields: diffTaskFields(updates), source: 'user' })
+  return task
+}
+
 /** 计算本次更新涉及的字段集合（含 externalSync 深层字段，供同步层降噪判断） */
 function diffTaskFields(updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): TaskChangedFields {
   const changed: TaskChangedFields = {}

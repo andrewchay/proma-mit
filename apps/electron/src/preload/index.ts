@@ -1810,6 +1810,8 @@ export interface ElectronAPI {
       getProject: (id: string) => Promise<unknown | null>
       observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
       getPilotOverview: (projectId: string) => Promise<import('@gravitas/shared').PilotOverviewSnapshot>
+      listPilotInbox: (projectId: string) => Promise<import('@gravitas/shared').PilotInboxEntry[]>
+      resolvePilotApproval: (projectId: string, taskId: string, decision: 'approved' | 'rejected', sourceVersion: number, note: string) => Promise<void>
       getPilotControl: (projectId: string) => Promise<import('@gravitas/shared').PilotControlSnapshot>
       savePilotPolicyDraft: (projectId: string, input: import('@gravitas/shared').PilotPolicyDraftInput, expectedRevision: number | null) => Promise<import('@gravitas/shared').PilotControlSnapshot>
       previewPilotGrant: (projectId: string, policyRevision: number) => Promise<import('@gravitas/shared').PilotGrantIssuePreview>
@@ -4301,6 +4303,9 @@ const electronAPI: ElectronAPI = {
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
       observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),
       getPilotOverview: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PILOT_OVERVIEW, projectId),
+      listPilotInbox: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PILOT_INBOX, projectId),
+      resolvePilotApproval: (projectId, taskId, decision, sourceVersion, note) =>
+        ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RESOLVE_PILOT_APPROVAL, projectId, taskId, decision, sourceVersion, note),
       getPilotControl: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PILOT_CONTROL, projectId),
       savePilotPolicyDraft: (projectId, input, expectedRevision) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_PILOT_POLICY_DRAFT, projectId, input, expectedRevision),
       previewPilotGrant: (projectId, policyRevision) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT, projectId, policyRevision),

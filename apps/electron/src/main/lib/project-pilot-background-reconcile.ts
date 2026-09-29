@@ -2,12 +2,28 @@ import { listProjects } from './project-sqlite-store'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { dispatchReadyPilotIntents } from './project-pilot-dispatch'
 import { getPilotControlSnapshot } from './project-pilot-control'
+import type { PilotDispatchDependencies } from './project-pilot-dispatch'
 import { onTaskChange } from './project-service'
 import { onProjectChainChange } from './project-chain-service'
 
 const RECONCILE_INTERVAL_MS = 30_000
 
-export async function reconcileAllPilotProjects(signal?: AbortSignal): Promise<void> {
+/** 后台对账的可注入面：生产默认走受控出口与控制面快照；测试注入以避免 mock.module 的进程级泄漏。 */
+export interface PilotBackgroundDependencies {
+  inspectReadiness?: PilotDispatchDependencies['inspectReadiness']
+  startExecution?: PilotDispatchDependencies['startExecution']
+  inspectGrantStatus?: (projectId: string) => string
+}
+
+export async function reconcileAllPilotProjects(signal?: AbortSignal, dependencies?: PilotBackgroundDependencies): Promise<void> {
+  const inspectGrantStatus = dependencies?.inspectGrantStatus
+    ?? ((projectId: string) => getPilotControlSnapshot(projectId).grantStatus)
+  const dispatchDependencies = dependencies
+    ? {
+        inspectReadiness: dependencies.inspectReadiness!,
+        startExecution: dependencies.startExecution!,
+      }
+    : undefined
   for (const project of listProjects()) {
     if (signal?.aborted) break
     try {
@@ -17,8 +33,8 @@ export async function reconcileAllPilotProjects(signal?: AbortSignal): Promise<v
       const dispatchableIntentIds = snapshot.intents
         .filter((intent) => intent.kind === 'ready_candidate' || intent.kind === 'review_candidate')
         .map((intent) => intent.id)
-      if (dispatchableIntentIds.length > 0 && getPilotControlSnapshot(project.id).grantStatus === 'active') {
-        await dispatchReadyPilotIntents(project.id, dispatchableIntentIds, signal)
+      if (dispatchableIntentIds.length > 0 && inspectGrantStatus(project.id) === 'active') {
+        await dispatchReadyPilotIntents(project.id, dispatchableIntentIds, signal, dispatchDependencies)
       }
     } catch (error) {
       if (signal?.aborted) break
@@ -28,7 +44,7 @@ export async function reconcileAllPilotProjects(signal?: AbortSignal): Promise<v
 }
 
 /** 应用存活期间定期对账；仅在活动授权和全部硬门禁通过后进入唯一受控派发入口。 */
-export function startPilotBackgroundReconcile(): () => void {
+export function startPilotBackgroundReconcile(dependencies?: PilotBackgroundDependencies): () => void {
   let stopped = false
   const controller = new AbortController()
   let running: Promise<void> | null = null
@@ -43,7 +59,7 @@ export function startPilotBackgroundReconcile(): () => void {
       do {
         rerunRequested = false
         try {
-          await reconcileAllPilotProjects(controller.signal)
+          await reconcileAllPilotProjects(controller.signal, dependencies)
         } catch (error) {
           // 扫描失败时仍兑现运行期间收到的任务事件；没有补跑请求则交给调用方记录错误。
           if (!rerunRequested || stopped) throw error

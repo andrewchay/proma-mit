@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import type { PilotAttention, PilotObservation, PilotTaskObservation } from '@gravitas/shared'
 import { getProject, listTasks, listTaskBlockers } from './project-service'
 import { getProjectChain } from './project-chain-service'
-import { listAgentExecutionsByProject } from './project-sqlite-store'
+import { getProjectDb, listAgentExecutionsByProject } from './project-sqlite-store'
 import { listTaskStatuses } from './task-status-store-bridge'
 import { resolveStateGroup } from './task-status-logic'
+import { parsePilotHumanRequest } from './project-pilot-approval'
 
 /** Pilot 的只读事实投影。没有授权/预算/命令契约前，不从此服务派发或调用模型。 */
 
@@ -42,6 +43,10 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
     const blocked = blockerByTask.get(task.id) ?? []
     const latest = latestExecutionByTask.get(task.id)
     const group = resolveStateGroup(task.status, statuses)
+    // A04 主动询问：负责人 Pilot 执行已完成、说明带【需要人工】且未答复 → 待人工答复事实（不进评审环路）。
+    const humanRequest = task.status === 'paused' && latest?.status === 'completed'
+      && latest.pilotCommandId && latest.resultSummary === task.completionNotes
+      ? parsePilotHumanRequest(task.completionNotes) : null
     let state: PilotTaskObservation['state'] = 'needs_attention'
     let reason = '需要确认下一步'
     if (group === 'completed') { state = 'done'; reason = '任务已完成' }
@@ -50,6 +55,8 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
       reason = group === 'cancelled' ? '任务已取消' : task.status === 'draft' ? '草稿等待确认' : '尚未进入执行流程'
     } else if (submittedTaskIds.has(task.id)) {
       state = 'awaiting_review'; reason = '交付已提交，等待人工审阅'
+    } else if (humanRequest) {
+      state = 'needs_attention'; reason = `待人工答复（${humanRequest.category}）：${humanRequest.detail}`
     } else if (task.status === 'paused' && latest?.status === 'completed') {
       reason = '执行已完成，待核对交付版本'
     } else if (task.status === 'paused') {
@@ -59,8 +66,19 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
     } else if (latest?.status === 'queued' || latest?.status === 'running') {
       state = 'running'; reason = latest.status === 'queued' ? '执行排队中' : '员工执行中'
     } else if (latest?.status === 'completed') {
-      // 旧执行不能证明当前任务已经交付；本投影不触发任何派发。
-      reason = '存在历史执行，需核实当前交付'
+      // 批准仅适用于同一轮已结算的 Pilot 执行；依赖、状态、负责人仍须重新满足。
+      const approval = getProjectDb().prepare(`SELECT 1 FROM pilot_approval_resolutions AS resolution
+        JOIN pilot_commands AS command ON command.execution_id = resolution.execution_id
+        WHERE resolution.task_id = ? AND resolution.execution_id = ? AND resolution.decision = 'approved'
+          AND command.source_task_id = resolution.task_id AND command.role = 'executor'
+          AND resolution.grant_id = command.grant_id AND command.state = 'settled'
+          AND resolution.resolved_version = ? AND resolution.resolved_notes = ? LIMIT 1`)
+        .get(task.id, latest.id, task.updatedAt, task.completionNotes ?? null)
+      if (group === 'unstarted' && blocked.length === 0 && task.assignee && approval) {
+        state = 'ready'; reason = '人工批准续跑；已指定负责人，待核实执行前置条件'
+      } else {
+        reason = '存在历史执行，需核实当前交付'
+      }
     } else if (latest?.status === 'failed') {
       reason = '执行失败，等待人工处理'
     } else if (group === 'started') {
@@ -86,6 +104,18 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
       sourceType: 'delivery' as const, sourceId: delivery.id, sourceVersion: delivery.version,
       taskId: delivery.taskId, reason: `待审阅交付：${delivery.title}`,
     })),
+    // A04：待人工答复的 Pilot 询问；sourceVersion 用任务 updatedAt，答复后事实变化即失效。
+    ...tasks.flatMap((task) => {
+      const latest = latestExecutionByTask.get(task.id)
+      const request = task.status === 'paused' && latest?.status === 'completed'
+        && latest.pilotCommandId && latest.resultSummary === task.completionNotes
+        ? parsePilotHumanRequest(task.completionNotes) : null
+      if (!request) return []
+      return [{
+        sourceType: 'approval' as const, sourceId: task.id, taskId: task.id, sourceVersion: task.updatedAt,
+        reason: `待人工答复（${request.category}）：${request.detail}`,
+      }]
+    }),
   ]
   // 指纹仅标识本次事实投影，不作为 SQLite 快照/命令乐观锁；写命令须重新读取权威事实。
   const fingerprint = createHash('sha256').update(JSON.stringify({

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { projectPilotDispatchTesting } from './project-pilot-dispatch'
+import { dispatchReadyPilotIntents, projectPilotDispatchTesting } from './project-pilot-dispatch'
 import { getWorkflowIdentityDirectory, saveWorkflowIdentityDirectory } from './workflow-identity-service'
 import { getCurrentPilotIntents } from './project-pilot-intent-store'
 import { updateProjectChain, updateProjectChainAsActor } from './project-chain-service'
@@ -12,6 +12,7 @@ import {
   createAgentEmployee,
   createProject,
   createTask,
+  createTaskDependency,
   getAgentExecution,
   getProjectDb,
   initProjectDb,
@@ -303,4 +304,75 @@ test('Given 结论缺失或无标记 When 派发评审候选 Then 保守不动�
   updateTask(task.id, { completionNotes: '评审意见没有结论标记' })
   const nextIntent = (await getCurrentPilotIntents(project.id)).find((item) => item.sourceId === task.id && item.kind === 'review_candidate')!
   await expect(projectPilotDispatchTesting.dispatch(project.id, nextIntent.id, dispatchOptions, now)).resolves.toBeNull()
+})
+
+
+test('Given 并行多任务候选 When 批次计划派发 Then 按角色各自成命令且单项失败不阻塞他项（A02/B4）', async () => {
+  const { project, task, executor, reviewer, grantId } = reviewerFixture()
+  // 第二个并行执行任务：同授权执行员工负责、同工作区
+  const parallel = createTask(project.id, {
+    title: '并行执行任务', description: '与主任务同批就绪', workspaceId: 'workspace-a',
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name },
+  })
+  // 第三项：工作区漂移（模拟超授权范围），批次中应被跳过
+  const drifted = createTask(project.id, {
+    title: '漂移任务', description: '', workspaceId: 'workspace-elsewhere',
+    assignee: { userId: `agent-${reviewer.id}`, displayName: reviewer.name },
+  })
+  const intents = await getCurrentPilotIntents(project.id)
+  const readyIds = intents.filter((item) => item.kind === 'ready_candidate'
+    && [task.id, parallel.id, drifted.id].includes(item.sourceId)).map((item) => item.id)
+  expect(readyIds).toHaveLength(3)
+  const results = await dispatchReadyPilotIntents(project.id, readyIds, undefined, {
+    inspectReadiness: ready, startExecution: async () => false,
+  })
+  // 漂移项被跳过，其余两项各自派发执行/评审角色命令
+  expect(results).toHaveLength(2)
+  const commands = getProjectDb().prepare(`SELECT id, source_task_id, role, employee_id, state FROM pilot_commands
+    WHERE project_id = ? ORDER BY created_at ASC, id ASC`).all(project.id) as Array<{
+    id: string, source_task_id: string, role: string, employee_id: string, state: string
+  }>
+  expect(commands).toHaveLength(2)
+  expect(commands.find((row) => row.source_task_id === task.id)).toMatchObject({ role: 'executor', employee_id: executor.id, state: 'queued' })
+  expect(commands.find((row) => row.source_task_id === parallel.id)).toMatchObject({ role: 'executor', employee_id: executor.id, state: 'queued' })
+  expect(commands.find((row) => row.source_task_id === drifted.id)).toBeUndefined()
+  // 批次内 run 与预算各自入账：两项执行命令占 2 次 run
+  const { getPilotGrantBudgetUsage } = await import('./project-pilot-budget-ledger')
+  const usage = getPilotGrantBudgetUsage(grantId)
+  expect(usage.runReservations).toBe(2)
+  expect(listAgentExecutionsByProject(project.id)).toHaveLength(2)
+})
+
+test('Given 依赖未解除 When 批次计划派发 Then 仅派发无阻塞任务；解除后下一拍派发下游（A02/B4）', async () => {
+  const { project, task, executor, now } = fixture()
+  const downstream = createTask(project.id, {
+    title: '下游任务', description: '依赖主任务完成', workspaceId: 'workspace-a',
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name },
+  })
+  createTaskDependency(downstream.id, task.id)
+  const intents = await getCurrentPilotIntents(project.id)
+  const batchIds = intents.filter((item) => [task.id, downstream.id].includes(item.sourceId)).map((item) => item.id)
+  // waiting_dependency 不进入派发：批次里只有主任务的 ready_candidate 会成命令
+  expect(batchIds).toHaveLength(2)
+  const results = await dispatchReadyPilotIntents(project.id, batchIds, undefined, {
+    inspectReadiness: ready, startExecution: async () => false,
+  })
+  expect(results).toHaveLength(1)
+  expect(results[0]!.intentId).toBe(intents.find((item) => item.sourceId === task.id)!.id)
+  expect(getProjectDb().prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?').get(downstream.id))
+    .toEqual({ n: 0 })
+
+  // 主任务结算并完成 → 下游解除依赖 → 下一拍后台事实投影给出 ready_candidate（计划性续派由后台对账驱动）
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 50 WHERE id = ?").run(results[0]!.commandId)
+  updateAgentExecution(results[0]!.executionId, { status: 'completed', completedAt: Date.now() })
+  updateTask(task.id, { status: 'completed' })
+  const { getCurrentPilotIntents: reread } = await import('./project-pilot-intent-store')
+  const next = await reread(project.id)
+  const downstreamIntent = next.find((item) => item.sourceId === downstream.id)
+  expect(downstreamIntent?.kind).toBe('ready_candidate')
+  const downstreamResult = await projectPilotDispatchTesting.dispatch(project.id, downstreamIntent!.id, {
+    inspectReadiness: ready, startExecution: async () => false,
+  }, now + 1)
+  expect(downstreamResult).toMatchObject({ intentId: downstreamIntent!.id })
+  expect(getAgentExecution(downstreamResult!.executionId)).toMatchObject({ agentId: executor.id, status: 'queued' })
 })

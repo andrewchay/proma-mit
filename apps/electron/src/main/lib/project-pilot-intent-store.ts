@@ -24,7 +24,8 @@ function candidates(observation: PilotObservation): IntentKey[] {
   }
   for (const attention of observation.attention) {
     result.push({ projectId, sourceType: attention.sourceType, sourceId: attention.sourceId,
-      sourceVersion: String(attention.sourceVersion), kind: attention.sourceType === 'delivery' ? 'review_candidate' : 'attention_candidate' })
+      sourceVersion: String(attention.sourceVersion), kind: attention.sourceType === 'delivery' ? 'review_candidate'
+        : attention.sourceType === 'approval' ? 'approval_request' : 'attention_candidate' })
   }
   return result
 }

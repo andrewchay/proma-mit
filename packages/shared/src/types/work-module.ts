@@ -205,6 +205,8 @@ export const PROJECT_IPC_CHANNELS = {
   OBSERVE_PILOT: 'project:observe-pilot',
   /** 同一次权威观察中的项目状态和当前候选。 */
   GET_PILOT_OVERVIEW: 'project:get-pilot-overview',
+  LIST_PILOT_INBOX: 'project:list-pilot-inbox',
+  RESOLVE_PILOT_APPROVAL: 'project:resolve-pilot-approval',
   /** 读取 Pilot 策略、预检和活动授权；只读。 */
   GET_PILOT_CONTROL: 'project:get-pilot-control',
   /** 保存始终 paused 的 Pilot 策略草案；不会发行授权。 */

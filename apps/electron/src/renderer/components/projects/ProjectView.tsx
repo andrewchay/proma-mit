@@ -1477,6 +1477,7 @@ function ProjectDetail({
       {/* 详情内容 */}
       <div className="flex-1 overflow-auto p-6">
         {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} onOpenSource={(intent, task) => {
+          if (intent.sourceType === 'approval') return
           if (intent.sourceType === 'task') {
             setPilotTaskFocus({
               taskId: task?.rootTaskId ?? intent.sourceId,
