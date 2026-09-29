@@ -9,6 +9,8 @@ import { resolvePilotApproval, listPilotInbox } from './project-pilot-approval'
 import { updateTask as updateTaskWithEvents } from './project-service'
 import { confirmPilotGrantPause, inspectPilotGrantPauseRecovery, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { getActivePilotGrant } from './project-pilot-grant-issue'
+import { updateProjectChain, updateProjectChainAsActor } from './project-chain-service'
+import { getWorkflowIdentityDirectory, saveWorkflowIdentityDirectory } from './workflow-identity-service'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import { evaluatePilotPolicyBindings } from './project-pilot-readiness'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
@@ -32,6 +34,11 @@ beforeAll(async () => {
   if (initialized.exitCode !== 0) throw new Error(`G1 Git 样例项目创建失败: ${initialized.stderr.toString()}`)
   writeFileSync(join(repo, 'README.md'), '# Project Pilot G1 isolated fixture\n')
   await initProjectDb()
+  const directory = getWorkflowIdentityDirectory()
+  if (!directory.users.some((user) => user.id === 'reviewer-1')) {
+    saveWorkflowIdentityDirectory({ ...directory, users: [...directory.users,
+      { id: 'reviewer-1', displayName: 'G1 人工验收', roleIds: [], enabled: true }] })
+  }
 })
 afterAll(() => {
   closeProjectDb()
@@ -165,6 +172,73 @@ test('A01/A02：固定隔离 Git 仓库无页面双并行派发，依赖事件�
   }
 })
 
+test('A03：固定 Git 夹具后台评审→限额返工→再审通过，业务验收保持人工', async () => {
+  const executor = createAgentEmployee({ name: 'G1 缺陷执行', role: '工程师', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const reviewer = createAgentEmployee({ name: 'G1 缺陷评审', role: '技术评审', description: '',
+    channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
+  const project = createProject({ title: 'G1 有限返工', description: '确定性模拟缺陷，不调用模型' })
+  const grantId = `g1-grant-${project.id}`
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
+    maxCostMicros: 2_400, maxRuns: 4, maxRework: 1, expiresAt: now + 3_600_000, createdAt: now })
+  const task = createTask(project.id, { title: '修复预设边界缺陷', description: 'sum(-1, 1) 应为 0', workspaceId,
+    assignee: { userId: `agent-${executor.id}`, displayName: executor.name } })
+  const owner = `agent-${executor.id}`
+  const commandRows = () => getProjectDb().prepare(`SELECT id, execution_id, role, rework_ordinal
+    FROM pilot_commands WHERE project_id = ? ORDER BY created_at, id`).all(project.id) as Array<{
+      id: string; execution_id: string; role: string; rework_ordinal: number
+    }>
+  const settle = (row: ReturnType<typeof commandRows>[number], summary: string) => {
+    getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 40 WHERE id = ?").run(row.id)
+    updateAgentExecution(row.execution_id, { status: 'completed', completedAt: Date.now(), resultSummary: summary })
+  }
+  const stop = startPilotBackgroundReconcile(backgroundFixture)
+  try {
+    await waitForPilot(() => commandRows().length === 1)
+    const first = commandRows()[0]!
+    expect([first.role, first.rework_ordinal]).toEqual(['executor', 0])
+    settle(first, '【AI 交付待确认】初版遗漏负数边界')
+    await updateTaskWithEvents(task.id, { status: 'paused', completionNotes: '【AI 交付待确认】初版遗漏负数边界' }, { source: 'system' })
+    const decision = updateProjectChain(project.id, 0, { kind: 'decision', title: '修复方向', rationale: '补边界测试', evidence: 'fixture' })
+    const draft = updateProjectChainAsActor(project.id, decision.revision, {
+      kind: 'draft', taskId: task.id, title: '初版交付', content: '故意遗漏负数边界', criteria: '边界测试通过',
+      recipient: 'reviewer-1', decisionIds: [decision.decisions[0]!.id], executionId: first.execution_id,
+      responsibilities: { ownerId: owner, reviewerId: 'reviewer-1', recipientId: 'reviewer-1' },
+    }, owner)
+    updateProjectChainAsActor(project.id, draft.revision, { kind: 'submit', draftId: draft.drafts[0]!.id }, owner)
+    await waitForPilot(() => commandRows().length === 2)
+    const review = commandRows().find((row) => row.role === 'reviewer' && row.rework_ordinal === 0)!
+    expect(review).toBeDefined()
+    settle(review, '【评审结论：返工：负数边界未覆盖】')
+    await updateTaskWithEvents(task.id, { completionNotes: '【评审结论：返工：负数边界未覆盖】' }, { source: 'system' })
+    await waitForPilot(() => commandRows().length === 3)
+    const rework = commandRows().find((row) => row.role === 'executor' && row.rework_ordinal === 1)!
+    expect(rework).toBeDefined()
+    settle(rework, '【AI 交付待确认】补全负数边界')
+    await updateTaskWithEvents(task.id, { completionNotes: '【AI 交付待确认】补全负数边界' }, { source: 'system' })
+    const updated = updateProjectChainAsActor(project.id, draft.revision + 1, {
+      kind: 'draft', taskId: task.id, title: '返工交付 v2', content: '补全负数边界测试', criteria: '边界测试通过',
+      recipient: 'reviewer-1', decisionIds: [decision.decisions[0]!.id], executionId: rework.execution_id,
+      responsibilities: { ownerId: owner, reviewerId: 'reviewer-1', recipientId: 'reviewer-1' },
+    }, owner)
+    updateProjectChainAsActor(project.id, updated.revision, { kind: 'submit', draftId: updated.drafts.find((item) => item.executionId === rework.execution_id)!.id }, owner)
+    await waitForPilot(() => commandRows().length === 4)
+    const rereview = commandRows().find((row) => row.role === 'reviewer' && row.rework_ordinal === 1)!
+    expect(rereview).toBeDefined()
+    settle(rereview, '【评审结论：通过】')
+    await updateTaskWithEvents(task.id, { completionNotes: '【评审结论：通过】' }, { source: 'system' })
+    await Bun.sleep(60)
+    expect(commandRows().map((row) => [row.role, row.rework_ordinal])).toEqual([
+      ['executor', 0], ['reviewer', 0], ['executor', 1], ['reviewer', 1],
+    ])
+    expect(getPilotGrantBudgetUsage(grantId).runReservations).toBe(4)
+    expect(getTask(task.id)?.status).toBe('paused')
+  } finally {
+    stop()
+  }
+})
+
 test('A04/A05：固定隔离 Git 仓库询问后旧版拒绝、批准自动续跑且重复答复不重放', async () => {
   const executor = createAgentEmployee({ name: 'G1 审批执行', role: '工程师', description: '',
     channelId, modelId, workspaceId, workspaceIds: [workspaceId], runtime: 'proma', executionProfile: 'development' })
@@ -253,6 +327,69 @@ test('两个隔离 Git 项目不能混用 grant、任务或工作区；暂停一
   expect(getAgentExecution(runB.execution.id)?.status).toBe('queued')
 })
 
+
+test('A06：固定 Git 夹具预览变更拒绝、逐项暂停与预算/过期阻断', () => {
+  const project = createProject({ title: 'G1 暂停预算过期', description: '' })
+  const grantId = `grant-${project.id}`
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId, channelId, modelId,
+    maxCostMicros: 1_800, maxRuns: 3, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const queue = (ordinal: number) => {
+    const task = createTask(project.id, { title: `暂停任务 ${ordinal}`, description: '', workspaceId,
+      assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+    const input = { commandId: `g1-a06-${project.id}-${ordinal}`, projectId: project.id, grantId,
+      idempotencyKey: `a06-${ordinal}`, taskId: task.id, sourceVersion: task.updatedAt,
+      sourceHash: hashPilotTaskSource(task), employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
+    const queued = reserveAndQueuePilotCommand(input, { executionId: `g1-a06-execution-${project.id}-${ordinal}`, prompt: '不发 Provider' })
+    return { input, queued }
+  }
+  const first = queue(1)
+  const stale = previewPilotGrantPauseImpact(grantId)
+  const running = queue(2)
+  expect(() => confirmPilotGrantPause(stale, [])).toThrow('影响面已变化')
+  updateAgentExecution(running.queued.execution.id, { status: 'running', sessionId: 'g1-running-session' })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(running.input.commandId)
+  const impact = previewPilotGrantPauseImpact(grantId)
+  expect(impact.queued.map((item) => item.executionId)).toEqual([first.queued.execution.id])
+  expect(impact.running.map((item) => item.executionId)).toEqual([running.queued.execution.id])
+  expect(() => confirmPilotGrantPause(impact, [])).toThrow('逐项选择')
+  const result = confirmPilotGrantPause(impact, [{ executionId: running.queued.execution.id, disposition: 'request_stop' }])
+  expect(result.cancelledExecutionIds).toEqual([first.queued.execution.id])
+  expect(result.pendingStopExecutionIds).toEqual([running.queued.execution.id])
+  expect(getAgentExecution(first.queued.execution.id)?.status).toBe('cancelled')
+  expect(getAgentExecution(running.queued.execution.id)?.status).toBe('running')
+  expect(inspectPilotGrantPauseRecovery(grantId).state).toBe('needs_attention')
+  const third = createTask(project.id, { title: '撤权后不得启动', description: '', workspaceId,
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  const input = { ...first.input, commandId: `g1-a06-late-${project.id}`, idempotencyKey: 'late',
+    taskId: third.id, sourceVersion: third.updatedAt, sourceHash: hashPilotTaskSource(third) }
+  expect(() => reserveAndQueuePilotCommand(input, { executionId: `g1-a06-late-execution-${project.id}`, prompt: '拒绝' }))
+    .toThrow('活动授权不存在或已失效')
+  // 独立授权用尽次数与过期时均不产生新命令；未决 running 保持占额，不自动释放。
+  const capped = createProject({ title: 'G1 预算耗尽', description: '' })
+  const capGrantId = `grant-${capped.id}`
+  insertPilotGrantFixture({ grantId: capGrantId, projectId: capped.id, workspaceId, channelId, modelId,
+    maxCostMicros: 600, maxRuns: 1, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const capTask = createTask(capped.id, { title: '一次额度', description: '', workspaceId,
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  const capInput = { ...input, commandId: `g1-cap-${capped.id}-1`, projectId: capped.id, grantId: capGrantId,
+    taskId: capTask.id, sourceVersion: capTask.updatedAt, sourceHash: hashPilotTaskSource(capTask) }
+  reserveAndQueuePilotCommand(capInput, { executionId: `g1-cap-run-${capped.id}`, prompt: '占用一次' })
+  const capNext = createTask(capped.id, { title: '第二次应拒绝', description: '', workspaceId,
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  expect(() => reserveAndQueuePilotCommand({ ...capInput, commandId: `g1-cap-${capped.id}-2`, idempotencyKey: 'cap-next',
+    taskId: capNext.id, sourceVersion: capNext.updatedAt, sourceHash: hashPilotTaskSource(capNext) },
+  { executionId: `g1-cap-denied-${capped.id}`, prompt: '拒绝' })).toThrow('执行次数额度已耗尽')
+  const expired = createProject({ title: 'G1 授权已过期', description: '' })
+  const expiredGrant = `grant-${expired.id}`
+  insertPilotGrantFixture({ grantId: expiredGrant, projectId: expired.id, workspaceId, channelId, modelId,
+    maxCostMicros: 600, maxRuns: 1, maxRework: 0, expiresAt: now + 3_600_000, createdAt: now })
+  const expiredTask = createTask(expired.id, { title: '过期拒绝', description: '', workspaceId,
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  expect(() => reserveAndQueuePilotCommand({ ...capInput, commandId: `g1-expired-${expired.id}`, projectId: expired.id,
+    grantId: expiredGrant, idempotencyKey: 'expired', taskId: expiredTask.id,
+    sourceVersion: expiredTask.updatedAt, sourceHash: hashPilotTaskSource(expiredTask) },
+  { executionId: `g1-expired-execution-${expired.id}`, prompt: '拒绝' }, now + 3_600_001)).toThrow('活动授权不存在或已失效')
+})
 
 test('A09a 局部：审批凭据写入失败并重开，任务未假批准且可安全重试', async () => {
   const executor = createAgentEmployee({ name: 'G1 崩溃审批执行', role: '工程师', description: '',
