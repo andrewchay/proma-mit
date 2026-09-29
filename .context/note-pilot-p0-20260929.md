@@ -1,5 +1,8 @@
 # 2026-09-29 Pilot P0 收束诊断
 
+## 收束记录
+切片已独立提交 `b540c759`（14 文件，444+/16-）：Pilot 代码、测试、台账 -70～-72、本目录 todo/note。`project-sqlite-store.ts` 用过滤补丁拆分暂存，剔除同文件并行的员工默认 Runtime `proma`→`ai-sdk` hunk（仍留在工作树，归 Runtime retirement 线）。临时构建产物 `.context/pilot-native-crash-child.cjs` 已删除。提交前定向 44 PASS（native-crash/grant-pause/control/stop-escalation/g1-fixture）、九包 typecheck、Biome 11 文件、暂存+工作树 diff-check 通过。同树其余 Codex/Pi/渠道/监控/proactive 等并行改动未触碰。
+
 ## 状态与范围
 G0 已审定；先前特批 G2 的 ai-sdk/bigmodel 两次受控 run 已结算，不代表 G1 通过。Pi Pilot readiness 保持关闭。本轮不调用 Provider，不更改 CLAUDE.md/README.md，不触碰 Codex/Pi/渠道并行修改。
 

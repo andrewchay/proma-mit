@@ -6,5 +6,6 @@
 - [x] 梳理目标澄清→结构化计划的最小安全实施方案及 G1 余项，不调用 Provider
 - [x] 同事务记录逐项待停止目标/结果；重启控制面列出 pending 与旧版 unknown，禁止盲目重放
 - [x] Node 原生 NativeSqliteCompat/better-sqlite3 WAL 子进程 SIGKILL：撤权提交前回滚、提交后持久 pending，重开核验（非 Electron 固定构建）
+- [x] 收束切片提交 `b540c759`：14 文件；sqlite-store 拆分暂存剔除并行默认 Runtime 改动；定向 44 PASS、typecheck/Biome/diff-check 过；临时 .cjs 已清理
 - [ ] 真 Runtime 停止与终止凭据、Electron 固定构建/WAL 派发及外部副作用矩阵；送达状态未知及费用人工对账仍未闭合
 - [ ] 计划草案/澄清/人审建任务及主动通知；固定构建 G1 完整场景验收
