@@ -16,6 +16,9 @@ import { getAgentSessionWorkspacePath } from './config-paths'
 import { createDevelopmentWorktree, resolveDevelopmentWorktree } from './agent-development-worktree'
 import { bindWorkspaceToProject, unbindWorkspaceFromProject } from './project-workspace-bindings'
 import { createSource, createKnowledgeBase, bindProject as bindProjectKnowledge } from './knowledge-catalog-service'
+import { closeKnowledgeIndexStore, indexAllEnabledSources, openKnowledgeIndexStore } from './knowledge-index-service'
+import { createAgentSession, updateAgentSessionMeta } from './agent-session-manager'
+import { executeSearchKnowledgeTool, executeReadKnowledgeSourceTool } from './agent-runtime/tool-impls/knowledge-tool'
 import { resolveRetrievableScope } from './knowledge-scope-service'
 import { ElectronRuntimeWorkspaceStore } from './agent-runtime/runtime-services'
 import { savePilotPolicyDraft } from './project-pilot-policy'
@@ -52,7 +55,8 @@ beforeAll(async () => {
       { id: 'reviewer-1', displayName: 'G1 人工验收', roleIds: [], enabled: true }] })
   }
 })
-afterAll(() => {
+afterAll(async () => {
+  await closeKnowledgeIndexStore()
   closeProjectDb()
   if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
@@ -119,6 +123,44 @@ test('A07：真实隔离 Git worktree cwd 与项目知识授权实时边界（�
   expect(unbindWorkspaceFromProject(projectA.id, workspace.id)).toBe(true)
   expect(scope(projectA.id).knowledgeBaseIds).toEqual([])
   expect(scope(projectB.id).knowledgeBaseIds).toEqual([otherKb.id])
+})
+
+test('A07：知识工具使用持久会话权限，跨项目文档与撤权后的旧 documentId 均拒绝', async () => {
+  const workspace = createAgentWorkspace('G1 A07 知识工具工作区')
+  const projectA = createProject({ title: 'G1 知识项目 A', description: '' })
+  const projectB = createProject({ title: 'G1 知识项目 B', description: '' })
+  expect(bindWorkspaceToProject(projectA.id, workspace.id)).not.toBeNull()
+  expect(bindWorkspaceToProject(projectB.id, workspace.id)).not.toBeNull()
+  const vaultA = join(root, 'g1-a07-tools-a')
+  const vaultB = join(root, 'g1-a07-tools-b')
+  mkdirSync(vaultA); mkdirSync(vaultB)
+  writeFileSync(join(vaultA, 'a.md'), '# A 项目\n\n唯一令牌 AlphaCanaryOnly。\n')
+  writeFileSync(join(vaultB, 'b.md'), '# B 项目\n\n唯一令牌 BetaCanaryOnly。\n')
+  const sourceA = createSource({ type: 'vault', name: 'G1 工具 A 来源', locator: vaultA })
+  const sourceB = createSource({ type: 'vault', name: 'G1 工具 B 来源', locator: vaultB })
+  const kbA = createKnowledgeBase({ name: 'G1 工具 A 库', sourceIds: [sourceA.id] })
+  const kbB = createKnowledgeBase({ name: 'G1 工具 B 库', sourceIds: [sourceB.id] })
+  bindProjectKnowledge({ projectId: projectA.id, knowledgeBaseId: kbA.id })
+  bindProjectKnowledge({ projectId: projectB.id, knowledgeBaseId: kbB.id })
+  const indexed = await indexAllEnabledSources()
+  expect(indexed.failed).toBe(0)
+  const session = createAgentSession('G1 限域会话', undefined, workspace.id)
+  updateAgentSessionMeta(session.id, { projectId: projectA.id, knowledgeScopeMode: 'project' })
+  const ctx = { sessionId: session.id, cwd: getAgentSessionWorkspacePath(workspace.slug, session.id) }
+  const allowed = await executeSearchKnowledgeTool({ query: 'AlphaCanaryOnly' }, ctx)
+  expect(allowed.isError ?? false).toBe(false)
+  const documentId = /documentId: (\S+)/.exec(allowed.content)?.[1]
+  expect(documentId).toBeTruthy()
+  const forbidden = (await openKnowledgeIndexStore()).knowledge.listDocuments([kbB.id])[0]!
+  const outside = await executeReadKnowledgeSourceTool({ documentId: forbidden.id }, ctx)
+  expect(outside.isError).toBe(true)
+  expect(outside.content).not.toContain('BetaCanaryOnly')
+  expect(unbindWorkspaceFromProject(projectA.id, workspace.id)).toBe(true)
+  const revoked = await executeReadKnowledgeSourceTool({ documentId }, ctx)
+  expect(revoked.isError).toBe(true)
+  expect(revoked.content).not.toContain('AlphaCanaryOnly')
+  const searchAfterRevocation = await executeSearchKnowledgeTool({ query: 'AlphaCanaryOnly' }, ctx)
+  expect(searchAfterRevocation.isError).toBe(true)
 })
 
 test('隔离 Git 项目完成无模型的双角色命令、预算和暂停纵向切片', async () => {
