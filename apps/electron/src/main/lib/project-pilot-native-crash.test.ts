@@ -78,6 +78,7 @@ interface Snapshot {
   taskStatus: string | null
   taskVersion: number | null
   resolutionCount: number
+  approvalActivityCount: number
   commandCount: number
   executionCount: number
   runReservations: number
@@ -104,7 +105,8 @@ async function killAt(mode: string, identity: Identity, runner: Runner = nodeRun
   let stdout = ''
   let stderr = ''
   child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-  const expected = mode.endsWith('before') ? 'READY_BEFORE_COMMIT' : 'READY_AFTER_COMMIT'
+  const expected = mode === 'approval-after-commit-before-event' ? 'READY_AFTER_COMMIT_BEFORE_EVENT'
+    : mode.endsWith('before') ? 'READY_BEFORE_COMMIT' : 'READY_AFTER_COMMIT'
   const finished = new Promise<{ signal: NodeJS.Signals | null; code: number | null }>((resolve) => {
     child.once('exit', (code, signal) => resolve({ code, signal }))
   })
@@ -190,6 +192,24 @@ test('派发事务提交前后强杀：无半成品、遗留锁 fail-closed、�
     expect(run('dispatch-retry', after, runner)).toMatchObject({ ok: true, commandState: 'queued' })
     expect(run('inspect', after, runner) as Snapshot).toMatchObject({
       commandCount: 1, executionCount: 1, runReservations: 1 })
+  }
+}, 120_000)
+
+test('审批已提交但事件及活动记录未执行时强杀：重开只认持久凭据，不重放旧版（Node/Electron）', async () => {
+  for (const runner of matrixRunners()) {
+    useFreshDataRoot()
+    const identity = run('setup-approval', undefined, runner) as Identity
+    await killAt('approval-after-commit-before-event', identity, runner)
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      driver: 'NativeSqliteCompat', journalMode: { journal_mode: 'wal' },
+      taskStatus: 'pending', resolutionCount: 1, approvalActivityCount: 0,
+      commandState: 'settled', runReservations: 1 })
+    const dup = run('approval-dup', identity, runner) as RetryResult
+    expect(dup.ok).toBe(false)
+    expect(dup.message).toContain('没有待答复')
+    expect(run('inspect', identity, runner) as Snapshot).toMatchObject({
+      taskStatus: 'pending', resolutionCount: 1, approvalActivityCount: 0 })
+    expect(run('reconcile-approved', identity, runner)).toMatchObject({ ready: 1, commandCount: 1 })
   }
 }, 120_000)
 

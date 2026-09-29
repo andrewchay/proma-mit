@@ -1,5 +1,6 @@
 import { getPilotGrantBudgetUsage, hashPilotTaskSource, reserveAndQueuePilotCommand } from './project-pilot-budget-ledger'
 import { resolvePilotApproval } from './project-pilot-approval'
+import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { confirmPilotGrantPause, listPilotGrantStopRequests, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { insertPilotGrantFixture } from './project-pilot-test-helpers'
 import { closeProjectDb, createProject, createTask, getAgentExecution, getProjectDb, getTask,
@@ -7,7 +8,8 @@ import { closeProjectDb, createProject, createTask, getAgentExecution, getProjec
 
 // 仅由 G1 原生强杀测试子进程执行；必须运行生产 NativeSqliteCompat/better-sqlite3 WAL 分支。不连接 Provider。
 const MODES = ['setup', 'setup-dispatch', 'setup-approval', 'before', 'after', 'dispatch-before', 'dispatch-after',
-  'dispatch-retry', 'approval-before', 'approval-after', 'approval-retry', 'approval-dup', 'inspect'] as const
+  'dispatch-retry', 'approval-before', 'approval-after', 'approval-after-commit-before-event',
+  'approval-retry', 'approval-dup', 'reconcile-approved', 'inspect'] as const
 const mode = process.argv[2]
 if (!mode || !(MODES as readonly string[]).includes(mode)) throw new Error('无效崩溃窗口')
 
@@ -36,7 +38,7 @@ function emit(payload: unknown): void {
   process.stdout.write(`DATA ${JSON.stringify(payload)}\n`)
 }
 
-function holdUntilKilled(marker: 'READY_BEFORE_COMMIT' | 'READY_AFTER_COMMIT'): void {
+function holdUntilKilled(marker: 'READY_BEFORE_COMMIT' | 'READY_AFTER_COMMIT' | 'READY_AFTER_COMMIT_BEFORE_EVENT'): void {
   process.stdout.write(`${marker}\n`)
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000)
 }
@@ -180,6 +182,22 @@ async function main(): Promise<void> {
       closeProjectDb()
       return
     }
+    case 'approval-after-commit-before-event': {
+      // 只在审批事务执行函数返回（COMMIT 已完成）后阻断，事件与活动记录尚未执行。
+      const original = database.transaction.bind(database)
+      database.transaction = ((callback: () => void) => {
+        const execute = original(callback)
+        return () => {
+          execute()
+          if (approvalResolutionExists(database, identity.taskId)) {
+            holdUntilKilled('READY_AFTER_COMMIT_BEFORE_EVENT')
+          }
+        }
+      }) as typeof database.transaction
+      await resolvePilotApproval(identity.projectId, identity.taskId, 'approved',
+        { sourceVersion: identity.version!, note: '已确认继续' })
+      return
+    }
     case 'approval-before':
       holdBeforeCommit(database, () => approvalResolutionExists(database, identity.taskId))
       await resolvePilotApproval(identity.projectId, identity.taskId, 'approved',
@@ -212,6 +230,16 @@ async function main(): Promise<void> {
       closeProjectDb()
       return
     }
+    case 'reconcile-approved': {
+      // 重开后主动重读权威事实；不注入 readiness，也不启动派发或 Provider。
+      const snapshot = await reconcilePilotOverview(identity.projectId)
+      emit({ ready: snapshot.intents.filter((item) => item.status === 'open'
+        && item.kind === 'ready_candidate' && item.sourceId === identity.taskId).length,
+      commandCount: (database.prepare('SELECT count(*) AS n FROM pilot_commands WHERE source_task_id = ?')
+        .get(identity.taskId) as { n: number }).n })
+      closeProjectDb()
+      return
+    }
     case 'inspect': {
       const grant = database.prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?')
         .get(identity.grantId) as { state: string } | undefined
@@ -229,11 +257,14 @@ async function main(): Promise<void> {
       const resolutionCount = (database.prepare(
         'SELECT count(*) AS n FROM pilot_approval_resolutions WHERE task_id = ?')
         .get(identity.taskId) as { n: number }).n
+      const approvalActivityCount = (database.prepare(`SELECT count(*) AS n FROM project_activities
+        WHERE project_id = ? AND entity_id = ? AND action = 'pilot_approval_approved'`)
+        .get(identity.projectId, identity.taskId) as { n: number }).n
       const budget = getPilotGrantBudgetUsage(identity.grantId)
       emit({ driver: database.constructor.name, journalMode: database.prepare('PRAGMA journal_mode').get(),
         grantState: grant?.state ?? null, decisions, executionStatus: execution?.status ?? null,
         commandState: command?.state ?? null, openEscalations, taskStatus: task?.status ?? null,
-        taskVersion: task?.updatedAt ?? null, resolutionCount, commandCount,
+        taskVersion: task?.updatedAt ?? null, resolutionCount, approvalActivityCount, commandCount,
         executionCount: listAgentExecutionsByProject(identity.projectId).length,
         runReservations: budget.runReservations,
         requests: listPilotGrantStopRequests(identity.projectId)
