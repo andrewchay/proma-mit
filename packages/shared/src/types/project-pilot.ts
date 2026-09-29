@@ -153,6 +153,8 @@ export interface PilotControlSnapshot {
     executionId: string
     state: 'pending' | 'accepted_unverified' | 'unverified' | 'stopper_reported' | 'legacy_unknown'
   }>
+  /** 配置目录存在疑似遗留策略锁时的只读人工核查提示；null 表示无锁。 */
+  policyLockHint: string | null
 }
 
 export type PilotRunningDisposition = 'finish_current' | 'request_stop'

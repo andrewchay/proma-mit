@@ -1,7 +1,7 @@
 import type { PilotControlSnapshot } from '@gravitas/shared'
 import { getPilotGrantBudgetUsageView } from './project-pilot-budget-ledger'
 import { getActivePilotGrant, pilotGrantMatchesPolicy } from './project-pilot-grant-issue'
-import { getPilotPolicy } from './project-pilot-policy'
+import { getPilotPolicy, getPilotPolicyLockHint } from './project-pilot-policy'
 import { listPilotGrantStopRequests } from './project-pilot-grant-pause'
 import { inspectPilotReadiness } from './project-pilot-readiness'
 
@@ -43,5 +43,6 @@ export function getPilotControlSnapshot(projectId: string, now = Date.now()): Pi
     stopReconciliation: listPilotGrantStopRequests(projectId).map((row) => ({
       grantId: row.grant_id, executionId: row.execution_id, state: row.state,
     })),
+    policyLockHint: getPilotPolicyLockHint(),
   }
 }

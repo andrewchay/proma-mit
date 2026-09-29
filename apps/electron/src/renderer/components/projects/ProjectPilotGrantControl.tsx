@@ -132,6 +132,11 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
       {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
       {notice && <p role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-950">{notice}</p>}
       {!control && !error && <p className="mt-3 text-sm text-muted-foreground">正在读取授权状态…</p>}
+      {control && control.policyLockHint && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" aria-label="策略锁疑似遗留">
+        <p className="font-medium">Pilot 策略锁疑似遗留，写入已被拒绝</p>
+        <p className="mt-1">锁目录：<code className="break-all">{control.policyLockHint}</code></p>
+        <p className="mt-1">锁存在也可能表示确有进行中的 Pilot 操作。确认没有后，人工核查并移除该锁目录即可恢复写入；本应用不会自动移除。</p>
+      </div>}
       {control && control.stopReconciliation.length > 0 && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" aria-label="停止请求人工对账">
         <p className="font-medium">停止请求需人工对账（{control.stopReconciliation.length} 条）</p>
         <p className="mt-1">pending 或旧记录不证明请求未发送；停止器报告也不是可持久核验的目标代际退出证明。不会自动重发或释放未知费用。</p>

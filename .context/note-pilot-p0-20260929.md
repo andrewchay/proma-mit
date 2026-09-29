@@ -18,6 +18,9 @@ G0 已审定；先前特批 G2 的 ai-sdk/bigmodel 两次受控 run 已结算，
 ## 2026-09-29 原生 WAL 局部强杀证据
 新增独立 Node 子进程夹具（非 Bun）运行 `initProjectDb` 的 NativeSqliteCompat / better-sqlite3 WAL 分支，临时 `PROMA_TEST_CONFIG_DIR`；在 `confirmPilotGrantPause` 外层事务 callback 完成但提交前、函数提交后各发 READY 并由父进程 SIGKILL，新进程重开验证：提交前 grant active / 无 decision / execution running / 无 request；提交后 grant paused / decision 恰一条 / execution running / request pending。子进程断言 NativeSqliteCompat，重开断言 `journal_mode=wal`。该证据只覆盖暂停事务的进程强杀，不包含停止请求送达窗口、Electron ABI 固定构建、断电持久性（生产 `synchronous=NORMAL`）、派发/审批/WAL 矩阵和 Runtime 外部副作用。`stopAgent→orchestrator.stop` 的实现始终回报 `processTermination: NOT_VERIFIED`，adapter abort 只说明目标代际请求被同步接受，不能提供退出凭据。G1 未通过。
 
+## 2026-09-29 遗留策略锁人工对账路径补齐
+核实确认：崩溃后遗留的 `project-pilot-policies.json.lock` 此前在生产中零指引（无 UI、无文档、错误信息不带路径）。本轮补齐：错误信息带锁路径+恢复办法（不自动移除，措辞区分进行中操作与遗留）；`getPilotPolicyLockHint()` 只读提示进控制面 `policyLockHint`，管理面常驻警示。不进 readiness 门禁、不改 fail-closed 语义。遗留：README/用户文档需用户允许后更新；事件唤醒与 recordProjectActivity 后置窗口、打包构建、断电、真 Runtime 终止凭据、外部副作用仍未验收。G1 未通过。
+
 ## 2026-09-29 派发与审批事务强杀矩阵
 原生夹具扩为 5 类窗口（暂停/派发/审批 × 提交前后 + 审批重复拒绝），Node 与 Electron run-as-node 双运行器全过。**新发现的生产语义**：派发事务内被 SIGKILL 后，`withPolicyLock` 的 mkdir 文件锁残留（finally 不执行），所有 Pilot 写入被"遗留锁未核查"fail-closed 拒绝，需人工移除 `project-pilot-policies.json.lock` 后才能幂等重试——测试已显式建模该恢复路径；这解释了为何暂停矩阵此前未暴露（只读对账不触发锁检查）。审批链路：提交前杀→无假批准可安全重试；提交后杀→凭据恰一、旧版本拒绝。拦截钩子需"事务深度+内容标记"双条件（withPilotPolicySnapshot 前置快照与嵌套事务都会干扰单条件判断）。遗留问题：锁残留的人工恢复是否有 UI/文档指引未验证；recordProjectActivity/事件唤醒的后置窗口未强杀；打包构建、断电、真 Runtime 终止凭据、外部副作用仍未验收。G1 未通过。
 

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getPilotControlSnapshot } from './project-pilot-control'
@@ -79,6 +79,18 @@ test('Given 已暂停的停止决策 When 重启刷新控制面 Then 无活动�
   expect(getPilotControlSnapshot(project.id).stopReconciliation).toMatchObject([
     { grantId, executionId: 'run-a', state: 'legacy_unknown' },
   ])
+})
+
+test('Given 配置目录存在疑似遗留策略锁 When 打开控制面 Then 展示人工核查提示且移除后消失', () => {
+  const project = createProject({ title: '策略锁提示项目', description: '' })
+  const lock = join(directory, 'project-pilot-policies.json.lock')
+  mkdirSync(lock, { mode: 0o700 })
+  try {
+    expect(getPilotControlSnapshot(project.id).policyLockHint).toBe(lock)
+  } finally {
+    rmSync(lock, { recursive: true, force: true })
+  }
+  expect(getPilotControlSnapshot(project.id).policyLockHint).toBeNull()
 })
 
 

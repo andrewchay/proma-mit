@@ -37,9 +37,18 @@ const path = (): string => join(getConfigDir(), PATH)
 function withPolicyLock<T>(operation: () => T): T {
   const lock = `${path()}.lock`
   try { mkdirSync(lock, { mode: 0o700 }) }
-  catch { throw new Error('Pilot 授权配置正在修改或遗留锁未核查；已停止写入') }
+  catch {
+    throw new Error(`Pilot 授权配置正在修改或遗留锁未核查（${lock}）；已停止写入。`
+      + '确认没有进行中的 Pilot 操作后，人工核查并移除该锁目录即可恢复。')
+  }
   try { return operation() }
   finally { rmdirSync(lock) }
+}
+
+/** 遗留策略锁的只读人工核查提示；不自动移除——锁存在即表示可能有并发修改。 */
+export function getPilotPolicyLockHint(): string | null {
+  const lock = `${path()}.lock`
+  return fileExists(lock) ? lock : null
 }
 
 const fileExists = (file: string): boolean => {
