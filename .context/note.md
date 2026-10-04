@@ -1,5 +1,13 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-05 Pi 1.0.2 试用分支（feat/pi-runtime-1.0.2-trial，未合入）
+- Pi 三包（pi-agent-core / pi-ai / pi-coding-agent）0.87.1→1.0.2 精确锁定；electron 版本 0.12.99→0.12.100。全仓 typecheck 九包零断点；Pi 定向测试 88 项全过（adapter 85 + 能力探针 3），覆盖预算门禁钩子链（prepareRequest/onPayload/beforeToolCall）、SessionManager.inMemory 历史种子（真实 SDK）、Codex 原生传输离线 mock（endpoint/鉴权/SSE）、渠道凭据存储。
+- **Codex 遗留路线完整存活**：openai-codex 下 9 个模型全部走 `openai-codex-responses`；但**模型目录换代**（现为 gpt-5.3-codex-spark / gpt-5.5 / gpt-5.6-luna|sol|terra / gpt-6-astra|luna|sol / gpt-6.1-sol）——渠道若存旧模型 ID，需在应用内刷新模型列表，否则 `registerPiModelFromChannel` 抛"不支持模型"。
+- **1.0 新能力 SDK 面可用**：`generateImages`（59 个图片模型目录）、`classify`（23 个分类器，含 typesafe/jev 族）、`getModelsOfType`/`getAllModels`/`getAvailableOfType`。**虚拟模型 `pi.registerVirtualModel` 是 extension host API**，裸 SDK 不可用；Gravitas 以 `noExtensions: true` 运行，若采用需走 SDK inline extension（builtin: true）路径，另行评估。
+- 探针固化：`apps/electron/src/main/lib/adapters/pi-102-capability-probe.test.ts`。build:main 正常（3 个 warning 为既有 import.meta/CJS 提示，与升级无关）。
+- **真机待验**：① 应用内 ChatGPT 登录 + 流式对话；② 实渠道（智谱/豆包等 openai-completions）一轮 Agent 回归；③ 图片生成/分类器真实调用；④ `dist:fast` 打包冒烟——1.0.2 新增传递依赖 `quickjs-wasi`（顶层包，不在 `node_modules/@earendil-works/**` glob 内）与 pi-mcp/pi-codemode 的 ASAR 打包解析未验证。
+- 边界：Pilot readiness/capability 未动；Pi 原生 MCP/Codemode/extensions 保持关闭；未改 README/CLAUDE.md。
+
 ## 2026-10-05 分支清理与 backup 内容核实
 - main 与 origin/main 同步（0ccc2b3e）；删除 21 个已完全合入的分支（本地 12 + 远程 9，含 5 个干净 worktree），`git branch -d` 全部通过。
 - backup/main-pre-rebase-20260927 已删除（tip 94bcd94f，2026-10-05 删除；内容经逐项核实全部被 main 覆盖，如需找回走 reflog）。
