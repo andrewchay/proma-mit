@@ -12,7 +12,7 @@ import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir, networkInterfaces } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isRetiredAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS } from '@gravitas/shared'
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
 import {
@@ -1724,9 +1724,15 @@ export async function registerIpcHandlers(): Promise<void> {
       if (agentRuntime !== undefined && !isAgentRuntime(agentRuntime)) {
         throw new Error(`非法的 Agent runtime: ${String(agentRuntime)}`)
       }
+      if (agentRuntime && isRetiredAgentRuntime(agentRuntime)) {
+        throw new Error('Claude / Gravitas Runtime 已停止新建会话；已有会话仍可继续运行，请选择 Pi 或 AI SDK')
+      }
+      // 老设置保留原值供存量使用，但新会话不继承已下线的默认值。
+      const configuredRuntime = getSettings().agentRuntime ?? 'pi'
+      const selectedRuntime = agentRuntime ?? (isRetiredAgentRuntime(configuredRuntime) ? 'pi' : configuredRuntime)
       // modelId 缺省时兜底到全局默认模型，确保会话元数据始终带模型（子会话继承了会话模型）
       const fallbackModelId = getSettings().agentModelId || undefined
-      return createAgentSession(title, channelId, workspaceId, fallbackModelId, agentRuntime ?? getSettings().agentRuntime)
+      return createAgentSession(title, channelId, workspaceId, fallbackModelId, selectedRuntime)
     }
   )
 
@@ -1769,6 +1775,9 @@ export async function registerIpcHandlers(): Promise<void> {
       }
       if (isAgentSessionActive(sessionId)) {
         throw new Error('Agent 正在运行，完成后再切换 Runtime')
+      }
+      if (isRetiredAgentRuntime(runtime) && current.agentRuntime !== runtime) {
+        throw new Error('Claude / Gravitas Runtime 已停止切入；已有会话仍可继续运行')
       }
 
       const updates: Partial<Pick<AgentSessionMeta, 'agentRuntime' | 'sdkSessionId'>> = {
@@ -1898,6 +1907,10 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.FORK_SESSION,
     async (_, input: ForkSessionInput): Promise<AgentSessionMeta> => {
+      const source = getAgentSessionMeta(input.sessionId)
+      if (source?.agentRuntime && isRetiredAgentRuntime(source.agentRuntime)) {
+        throw new Error('Claude / Gravitas Runtime 已停止新建分叉会话；原会话仍可继续运行')
+      }
       return forkAgentSession(input)
     }
   )
@@ -2236,6 +2249,11 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.SEND_MESSAGE,
     async (event, input: AgentSendInput): Promise<void> => {
+      const current = getAgentSessionMeta(input.sessionId)
+      if (input.agentRuntime && isRetiredAgentRuntime(input.agentRuntime)
+        && current?.agentRuntime !== input.agentRuntime) {
+        throw new Error('Claude / Gravitas Runtime 已停止切入；只能继续运行原有会话')
+      }
       await runAgent(input, event.sender)
     }
   )
@@ -2304,7 +2322,7 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES, async () => listProactiveSchedules())
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS, async () => listProactiveTaskRuns())
   ipcMain.handle(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, async (_, input: import('@gravitas/shared').CreateProactiveScheduleInput) => {
-    if (!input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务仅支持 Proma 或 AI SDK Runtime')
+    if (!input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务仅支持 Gravitas 或 AI SDK Runtime')
     return createProactiveSchedule(input)
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.UPDATE_PROACTIVE_SCHEDULE, async (_, scheduleId: string, input: import('@gravitas/shared').UpdateProactiveScheduleInput) => {

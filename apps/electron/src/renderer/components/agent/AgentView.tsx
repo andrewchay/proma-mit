@@ -278,8 +278,8 @@ function AgentThinkingPopover({ agentThinking, onToggle, piThinkingLevel, onPiTh
 }
 
 const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; description: string; disabled?: boolean }> = [
-  { value: 'claude', label: 'Claude', description: '使用 Claude Agent SDK' },
-  { value: 'proma', label: 'Gravitas', description: '使用 Provider-Agnostic Runtime' },
+  { value: 'claude', label: 'Claude（已停止新选用）', description: '存量会话仍可继续运行', disabled: true },
+  { value: 'proma', label: 'Gravitas（已停止新选用）', description: '存量会话仍可继续运行', disabled: true },
   { value: 'pi', label: 'Pi', description: '使用 Pi Agent SDK（v1 只读工具）' },
   { value: 'ai-sdk', label: 'AI SDK', description: '使用 Vercel AI SDK Runtime' },
 ]
@@ -1815,6 +1815,10 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   /** 在新对话继续：创建新会话 + 切换 tab + 使用 &session 引用旧会话 */
   const handleRetryInNewSession = React.useCallback(async (): Promise<void> => {
     if (!agentChannelId) return
+    if (sessionAgentRuntime === 'claude' || sessionAgentRuntime === 'proma') {
+      toast.info('旧 Runtime 已停止新建会话。请先选择兼容 Pi 或 AI SDK 的渠道与模型，再新建会话引用历史。')
+      return
+    }
 
     try {
       const meta = await window.electronAPI.createAgentSession(

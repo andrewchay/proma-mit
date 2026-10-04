@@ -33,7 +33,7 @@ const TYPE_META: Record<ProactiveMonitor['trigger']['type'], { label: string; ic
 const SELECTABLE_MONITOR_KINDS: MonitorKind[] = ['file', 'session', 'github', 'command']
 
 function isSchedulableSession(session: AgentSessionMeta): session is SchedulableSession {
-  return Boolean(session.channelId) && (session.agentRuntime === 'proma' || session.agentRuntime === 'ai-sdk')
+  return Boolean(session.channelId) && session.agentRuntime === 'ai-sdk'
 }
 
 export function MonitorsTab(): React.ReactElement {

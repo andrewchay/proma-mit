@@ -11,7 +11,7 @@ import { execSync } from 'node:child_process'
 import { join } from 'node:path'
 import { watch, type FSWatcher } from 'chokidar'
 import { getProactiveConfigPath } from './config-paths'
-import type { ProactiveMonitor, MonitorTrigger, ProactiveTaskRun, ProactiveExecutionTarget } from '@gravitas/shared'
+import { isRetiredAgentRuntime, type ProactiveMonitor, type MonitorTrigger, type ProactiveTaskRun, type ProactiveExecutionTarget } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
 import { ProactiveExecutionError } from './proactive-target-validation'
 
@@ -108,6 +108,9 @@ export interface CreateMonitorInput {
 }
 
 export function createMonitor(input: CreateMonitorInput): ProactiveMonitor {
+  if (isRetiredAgentRuntime(input.execution.runtime)) {
+    throw new Error('Gravitas Runtime 已停止新建 Monitor；已有 Monitor 仍可继续运行')
+  }
   validateExecutionTarget(input.execution)
   const monitor: ProactiveMonitor = {
     id: randomUUID(),
@@ -135,6 +138,14 @@ export function updateMonitor(id: string, updates: Partial<Omit<ProactiveMonitor
   const monitors = loadMonitors()
   const idx = monitors.findIndex((m) => m.id === id)
   if (idx === -1) return null
+  if (updates.execution && isRetiredAgentRuntime(updates.execution.runtime)) {
+    if (updates.execution.runtime !== monitors[idx]!.execution.runtime) {
+      throw new Error('Gravitas Runtime 已停止切入；已有 Monitor 仍可编辑和运行')
+    }
+    if (updates.execution.newSession && !monitors[idx]!.execution.newSession) {
+      throw new Error('存量 Gravitas Monitor 不能改为自动新建会话')
+    }
+  }
   const updated = { ...monitors[idx], ...updates, updatedAt: Date.now() }
   monitors[idx] = updated as ProactiveMonitor
   saveMonitors(monitors)

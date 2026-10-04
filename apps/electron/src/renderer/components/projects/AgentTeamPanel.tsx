@@ -76,7 +76,7 @@ export function AgentTeamPanel(): React.ReactElement {
     name: '',
     role: '',
     description: '',
-    runtime: 'proma' as string,
+    runtime: 'ai-sdk' as string,
     channelId: '',
     modelId: '',
     workflowId: '',
@@ -230,7 +230,7 @@ export function AgentTeamPanel(): React.ReactElement {
   const openCreate = (): void => {
     setEditingId(null)
     setError('')
-    setForm({ name: '', role: '', description: '', runtime: 'proma', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'general', permissionMode: 'safe', systemPrompt: '' })
+    setForm({ name: '', role: '', description: '', runtime: 'ai-sdk', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'general', permissionMode: 'safe', systemPrompt: '' })
     setShowForm(true)
   }
 
@@ -505,7 +505,7 @@ export function AgentTeamPanel(): React.ReactElement {
                 onChange={(e) => setForm({ ...form, runtime: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
-                {Object.entries(RUNTIME_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                {Object.entries(RUNTIME_LABEL).map(([value, label]) => <option key={value} value={value} disabled={(value === 'claude' || value === 'proma') && form.runtime !== value}>{label}{value === 'claude' || value === 'proma' ? '（已停止新选用）' : ''}</option>)}
               </select>
             </div>
             <div>

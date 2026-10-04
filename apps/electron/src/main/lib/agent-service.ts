@@ -16,7 +16,7 @@ import { BrowserWindow } from 'electron'
 import { getMainWindow } from '../index'
 import { resolveAgentStreamTarget } from './agent-stream-target'
 import type { WebContents } from 'electron'
-import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, normalizeAgentRuntime } from '@gravitas/shared'
+import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, isRetiredAgentRuntime, normalizeAgentRuntime } from '@gravitas/shared'
 import type {
   AgentSendInput,
   AgentMessage,
@@ -207,10 +207,20 @@ export { eventBus as agentEventBus }
 export { goalCoordinator }
 
 export function createProactiveSchedule(input: CreateProactiveScheduleInput): ProactiveSchedule {
+  if (isRetiredAgentRuntime(input.runtime)) {
+    throw new Error('Gravitas Runtime 已停止新建定时任务；已有任务仍可继续运行')
+  }
   return proactiveScheduler.create(checkProactiveTarget(input))
 }
 
 export function updateProactiveSchedule(scheduleId: string, input: UpdateProactiveScheduleInput): ProactiveSchedule {
+  const current = proactiveScheduler.listSchedules().find((schedule) => schedule.id === scheduleId)
+  if (isRetiredAgentRuntime(input.runtime) && current?.runtime !== input.runtime) {
+    throw new Error('Gravitas Runtime 已停止切入；已有定时任务仍可编辑和运行')
+  }
+  if (current?.runtime === 'proma' && input.runtime === 'proma' && input.newSession && !current.newSession) {
+    throw new Error('存量 Gravitas 定时任务不能改为自动新建会话')
+  }
   return proactiveScheduler.update(scheduleId, checkProactiveTarget(input))
 }
 

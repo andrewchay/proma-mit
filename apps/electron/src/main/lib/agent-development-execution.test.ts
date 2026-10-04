@@ -75,8 +75,9 @@ async function dispatch(task: ReturnType<typeof store.createTask>) {
 describe('研发员工既有链路兼容', () => {
   test('Given 已排队 Pilot 命令但 Runtime 无单次费用停止能力 When 真实服务入口尝试启动 Then 保留队列且不触发 runner', async () => {
     const { project, task, workspace, employee: initialEmployee } = fixture(true)
-    const employee = service.updateAgentEmployee(initialEmployee.id, { runtime: 'proma', permissionMode: 'safe' })!
-    const reviewer = service.createAgentEmployee({ name: '技术评审', role: '评审', description: '',
+    // 模拟软下线前已经存在的员工；服务层不再允许新建或切入旧 Runtime。
+    const employee = store.updateAgentEmployee(initialEmployee.id, { runtime: 'proma', permissionMode: 'safe' })!
+    const reviewer = store.createAgentEmployee({ name: '技术评审', role: '评审', description: '',
       executionProfile: 'development', permissionMode: 'safe', workspaceId: workspace.id,
       channelId: employee.channelId, modelId: 'model', runtime: 'proma' })
     const currentTask = store.getTask(task.id)!

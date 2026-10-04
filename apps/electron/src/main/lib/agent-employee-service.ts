@@ -10,6 +10,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
+import { isRetiredAgentRuntime } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { getChannelById } from './channel-manager'
@@ -97,8 +98,12 @@ export function getAgentEmployee(id: string): AgentEmployee | null {
 }
 
 export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmployee {
-  validateEmployeeConfiguration(input)
-  return store.createAgentEmployee(input)
+  const runtime = input.runtime ?? 'ai-sdk'
+  if (isRetiredAgentRuntime(runtime)) {
+    throw new Error('Claude / Gravitas Runtime 已停止新建员工；请选择 Pi 或 AI SDK')
+  }
+  validateEmployeeConfiguration({ ...input, runtime })
+  return store.createAgentEmployee({ ...input, runtime })
 }
 
 export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput): AgentEmployee | null {
@@ -108,6 +113,9 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
   const normalizedPatch = patch.workspaceId === undefined && Object.prototype.hasOwnProperty.call(patch, 'workspaceId') && patch.workspaceIds === undefined
     ? { ...patch, workspaceIds: [] }
     : patch
+  if (normalizedPatch.runtime && isRetiredAgentRuntime(normalizedPatch.runtime) && normalizedPatch.runtime !== current.runtime) {
+    throw new Error('Claude / Gravitas Runtime 已停止切入；已有员工仍可运行和编辑')
+  }
   validateEmployeeConfiguration({ ...current, ...normalizedPatch })
   return store.updateAgentEmployee(id, normalizedPatch)
 }

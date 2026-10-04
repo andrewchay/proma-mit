@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { getSettingsPath } from './config-paths'
 import { DEFAULT_THEME_MODE } from '../../types'
-import { DEFAULT_AGENT_RUNTIME, normalizeAgentRuntime } from '@gravitas/shared'
+import { DEFAULT_AGENT_RUNTIME, isRetiredAgentRuntime, normalizeAgentRuntime } from '@gravitas/shared'
 import type { AppSettings } from '../../types'
 
 import { appendConfigAudit, redactSensitive } from './config-audit-service'
@@ -65,6 +65,10 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   // effectiveDevModules 是门禁计算的派生结论，只在下发时注入，绝不落盘：
   // 否则它会变成可手改的配置，且与发布状态不一致时还会被读回。
   const { effectiveDevModules: _ignoredDerived, capabilitiesUnlocked: _ignoredUnlock, ...persistable } = updates
+  if (persistable.agentRuntime !== undefined && isRetiredAgentRuntime(persistable.agentRuntime)
+    && persistable.agentRuntime !== current.agentRuntime) {
+    throw new Error('Claude / Gravitas Runtime 已停止设为默认值；请选择 Pi 或 AI SDK')
+  }
   const updated: AppSettings = mergeNestedSettings(current, persistable)
 
   const filePath = getSettingsPath()

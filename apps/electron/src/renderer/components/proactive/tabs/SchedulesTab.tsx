@@ -37,11 +37,7 @@ import { ProactiveRunCard } from '../ProactiveRunCard'
 type SchedulableSession = import('@gravitas/shared').AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
 
 function eligibleRuntime(session: import('@gravitas/shared').AgentSessionMeta): session is SchedulableSession {
-  return Boolean(session.channelId) && (session.agentRuntime === 'proma' || session.agentRuntime === 'ai-sdk')
-}
-
-function isSchedulableRuntime(runtime: string): runtime is 'proma' | 'ai-sdk' {
-  return runtime === 'proma' || runtime === 'ai-sdk'
+  return Boolean(session.channelId) && session.agentRuntime === 'ai-sdk'
 }
 
 export function SchedulesTab(): React.ReactElement {
@@ -65,7 +61,7 @@ export function SchedulesTab(): React.ReactElement {
   const [taskTitle, setTaskTitle] = React.useState('')
   const [runningId, setRunningId] = React.useState<string | null>(null)
   const [editScheduleId, setEditScheduleId] = useAtom(proactiveEditScheduleIdAtom)
-  const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('proma')
+  const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('ai-sdk')
   const [selectedModelId, setSelectedModelId] = React.useState('')
   const [editingSchedule, setEditingSchedule] = React.useState<ProactiveSchedule | null>(null)
   const [configurationRecommendation, setConfigurationRecommendation] = useAtom(proactiveConfigurationRecommendationAtom)
@@ -142,8 +138,8 @@ export function SchedulesTab(): React.ReactElement {
     const session = selectedSession
     if (newSession) {
       if (!workspaceId) { toast.error('请选择任务的目标工作区'); return }
-      if (!channel || !isSchedulableRuntime(selectedRuntime)) {
-        toast.error('请选择已启用渠道和 Gravitas / AI SDK Runtime')
+      if (!channel || selectedRuntime !== 'ai-sdk') {
+        toast.error('请选择已启用渠道和 AI SDK Runtime')
         return
       }
     } else {
@@ -272,7 +268,6 @@ export function SchedulesTab(): React.ReactElement {
                 <Select value={selectedRuntime} onValueChange={(value: 'proma' | 'ai-sdk') => setSelectedRuntime(value)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="proma">Gravitas</SelectItem>
                     <SelectItem value="ai-sdk">AI SDK</SelectItem>
                   </SelectContent>
                 </Select>
@@ -463,7 +458,8 @@ interface ScheduleEditDialogProps {
 }
 
 function ScheduleEditDialog({ schedule, sessions, channels, workspaces, onOpenChange, onSaved }: ScheduleEditDialogProps): React.ReactElement {
-  const schedulableSessions = sessions.filter(eligibleRuntime)
+  const schedulableSessions = sessions.filter((session) => eligibleRuntime(session)
+    || (session.id === schedule.sessionId && session.agentRuntime === 'proma' && Boolean(session.channelId))) as SchedulableSession[]
   const [workspaceId, setWorkspaceId] = React.useState(schedule.workspaceId ?? '')
   const [title, setTitle] = React.useState(schedule.title)
   const [prompt, setPrompt] = React.useState(schedule.prompt)
@@ -497,6 +493,10 @@ function ScheduleEditDialog({ schedule, sessions, channels, workspaces, onOpenCh
     }
     if (!modelId) { toast.error('所选渠道没有可用模型'); return }
     if (newSession && !workspaceId) { toast.error('请选择目标工作区'); return }
+    if (newSession && runtime === 'proma' && !(schedule.runtime === 'proma' && schedule.newSession)) {
+      toast.error('Gravitas Runtime 已停止新选用')
+      return
+    }
     const nextSchedule = kind === 'at'
       ? { type: 'at' as const, runAt: new Date(runAt).getTime() }
       : kind === 'interval'
@@ -531,7 +531,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, workspaces, onOpenCh
           <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式<Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select></label>
         </div>
         {newSession && <label className="grid gap-1.5 text-sm text-muted-foreground">目标工作区<Select value={workspaceId} onValueChange={setWorkspaceId}><SelectTrigger><SelectValue placeholder="选择工作区" /></SelectTrigger><SelectContent>{workspaces.map((workspace) => <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>)}</SelectContent></Select></label>}
-        {newSession ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">渠道<Select value={channelId} onValueChange={setChannelId}><SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger><SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm text-muted-foreground">Runtime<Select value={runtime} onValueChange={(value: 'proma' | 'ai-sdk') => setRuntime(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="proma">Gravitas</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent></Select></label></div> : <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话<Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择会话" /></SelectTrigger><SelectContent>{schedulableSessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent></Select></label>}
+        {newSession ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">渠道<Select value={channelId} onValueChange={setChannelId}><SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger><SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm text-muted-foreground">Runtime<Select value={runtime} onValueChange={(value: 'proma' | 'ai-sdk') => setRuntime(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{schedule.runtime === 'proma' && schedule.newSession && <SelectItem value="proma">Gravitas（存量任务）</SelectItem>}<SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent></Select></label></div> : <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话<Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择会话" /></SelectTrigger><SelectContent>{schedulableSessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent></Select></label>}
         <label className="grid gap-1.5 text-sm text-muted-foreground">模型<Select value={modelId} onValueChange={setModelId} disabled={!targetChannel}><SelectTrigger><SelectValue placeholder="选择目标渠道的模型" /></SelectTrigger><SelectContent>{(targetChannel?.models.filter((model) => model.enabled) ?? []).map((model) => <SelectItem key={model.id} value={model.id}>{model.name} · {model.id}</SelectItem>)}</SelectContent></Select></label>
         {kind === 'at' && <label className="grid gap-1.5 text-sm text-muted-foreground">执行时间<Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>}
         {kind === 'interval' && <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1）<Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>}

@@ -681,6 +681,10 @@ export type AgentRuntime = 'claude' | 'proma' | 'pi' | 'ai-sdk'
 /** 默认 Agent 运行时。旧会话/旧设置无显式 runtime 时，新会话默认 Pi Runtime（支持像
  * deepseek-v4-flash 这类 pi 模型），而非 Claude SDK——否则会报“selected model 不存在”。 */
 export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'pi'
+/** 软下线：历史配置仍可读取和执行，但不允许用户新建或切换至旧 runtime。 */
+export function isRetiredAgentRuntime(runtime: AgentRuntime): boolean {
+  return runtime === 'claude' || runtime === 'proma'
+}
 /** Agent runtime 展示名称，避免 UI / 编排层硬编码分支文案 */
 export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
   claude: 'Claude',

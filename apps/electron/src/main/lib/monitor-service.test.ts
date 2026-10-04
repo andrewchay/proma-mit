@@ -43,7 +43,7 @@ describe('MonitorService', () => {
       execution: {
         sessionId: 'session-1',
         channelId: 'channel-1',
-        runtime: 'proma',
+        runtime: 'ai-sdk',
         prompt: '检查配置变更',
       },
       trigger: { type: 'file', path: '/tmp/monitor-test', events: ['modify'] },
@@ -71,11 +71,19 @@ describe('MonitorService', () => {
     ])
   })
 
+  test('given a retired runtime when creating a monitor then it is rejected without blocking existing monitors', () => {
+    expect(() => createMonitor({
+      title: '旧 Runtime 新监听', routineId: 'test:routine',
+      execution: { sessionId: 'session-1', channelId: 'channel-1', runtime: 'proma', prompt: '检查状态' },
+      trigger: { type: 'file', path: '/tmp/retired-monitor', events: ['modify'] },
+    })).toThrow('已停止新建 Monitor')
+  })
+
   test('given a reused-session monitor without a target session when created then it is rejected', () => {
     expect(() => createMonitor({
       title: '无效监听',
       routineId: 'test:routine',
-      execution: { channelId: 'channel-1', runtime: 'proma', prompt: '检查状态' },
+      execution: { channelId: 'channel-1', runtime: 'ai-sdk', prompt: '检查状态' },
       trigger: { type: 'command', command: 'true', intervalMs: 60_000 },
     })).toThrow('复用会话的 Monitor 缺少目标会话')
   })
@@ -83,7 +91,7 @@ describe('MonitorService', () => {
   test('given a Routine instance binding when a monitor is created then it is persisted with the controlled execution target', () => {
     const monitor = createMonitor({
       title: 'Routine 监听', routineId: 'memory-daily', routineInstanceId: 'routine-instance-1',
-      execution: { sessionId: 'session-1', channelId: 'channel-1', runtime: 'proma', prompt: '整理变化' },
+      execution: { sessionId: 'session-1', channelId: 'channel-1', runtime: 'ai-sdk', prompt: '整理变化' },
       trigger: { type: 'file', path: '/tmp/routine-monitor', events: ['modify'] },
     })
 
@@ -93,7 +101,7 @@ describe('MonitorService', () => {
   test('given a signed webhook event when received then it enters the monitored execution pipeline', async () => {
     const monitor = createMonitor({
       title: '部署完成', routineId: 'test:webhook',
-      execution: { sessionId: 'session-1', channelId: 'channel-1', runtime: 'proma', prompt: '检查部署结果' },
+      execution: { sessionId: 'session-1', channelId: 'channel-1', runtime: 'ai-sdk', prompt: '检查部署结果' },
       trigger: { type: 'webhook', endpoint: 'deploy', secret: 'test-secret' }, debounceMs: 0,
     })
     setMonitorRunner(async () => ({ outputSummary: '部署已检查' }))
