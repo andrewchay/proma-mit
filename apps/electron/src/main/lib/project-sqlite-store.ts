@@ -2996,7 +2996,7 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
     input.role ?? '通用',
     input.avatar ?? null,
     input.description ?? '',
-    input.runtime ?? 'proma',
+    input.runtime ?? 'ai-sdk',
     input.channelId,
     input.modelId ?? null,
     input.workspaceIds?.[0] ?? input.workspaceId ?? null,
