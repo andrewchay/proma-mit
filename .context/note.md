@@ -1,5 +1,11 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-05 分支清理与 backup 内容核实
+- main 与 origin/main 同步（0ccc2b3e）；删除 21 个已完全合入的分支（本地 12 + 远程 9，含 5 个干净 worktree），`git branch -d` 全部通过。
+- backup/main-pre-rebase-20260927 已删除（tip 94bcd94f，2026-10-05 删除；内容经逐项核实全部被 main 覆盖，如需找回走 reflog）。
+- `backup/main-pre-rebase-20260927` 形式领先 51，patch-id 级仅 6 个差异；逐项核实均已被 main 覆盖：研发委派 M1（main 有 development-review.ts + 冻结快照）、双链跳转（NoteMarkdownView wikilink 放行）、记忆范围多对多（经 feat/project-memory-scope PR #12 合入 3603a42e）、青花瓷主题（theme.ts/AppearanceSettings）、new-media/research 领域包（subscription.ts 逐行一致）、头像设置页（SettingsModuleView）。backup 无独有内容，可删。
+- 真正未合入：`feat/marketing-campaign-full-chain` 7 个提交（09-11，营销 Campaign 全链路，落后 358）+ stash@{0} wip-before-marketing，均搁置待定。
+
 ## 2026-09-29 智谱额度查询调研（用户暂缓，未实现）
 - Coding Plan 额度可查：`GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`，Authorization 头直接放 API Key（无 Bearer 前缀为准，带 Bearer 亦有实现兼容）；响应 `data.level + data.limits[]`，unit 3=5 小时窗口、6=周窗口，可仿 Kimi 双窗口展示。
 - 团队版（zhipu-coding-team）：同端点加 `?type=2`，且必须带 `bigmodel-organization`（org-xxx）+ `bigmodel-project`（proj-xxx）头；ID 在团队后台用量页 URL 获取；401/403 视为凭据失效。接入需渠道表单新增两个可选字段。参考：cc-switch `query_zhipu_team_at`、token-monitor `zaiTeamLimits.js`、sub2api issue #6266。
