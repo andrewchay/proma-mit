@@ -1,5 +1,12 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-05 Pi Durable 评估（结论：暂缓，不纳入 1.0.2 试用）
+- `@earendil-works/pi-durable@1.0.2` 独立 npm 包（"Durable conversation, task, and document runtime"），README 明确标注 **Experimental（API 随时变）**；与 `pi-coding-agent` 无依赖关系（本地 dist 无引用、不在其 dependencies），本次升级不包含它。
+- 定位：独立 durable harness（`Harness.open`/`root.submit`），对话/模型轮次/工具调用/自定义状态先提交存储再展示，进程崩溃可从中断点恢复；基于 pi-ai + chord。
+- **与 Gravitas 重叠**：会话持久化（Gravitas JSONL + SessionManager.inMemory 重播种）、任务图（Goal todos/SubAgent/collaboration）、文档状态（context-store）、压缩（maybeAutoCompact）。**真实缺口仅一个：mid-turn 崩溃恢复**（当前进程死在轮次中，该轮丢失需用户重发；Durable 可续跑）。
+- **采纳成本**：等于重写 Pi adapter 核心（事件循环/历史播种/权限），且预算门禁（prepareRequest/onPayload/beforeToolCall）在 Durable 钩子面的等价能力未验证；引入第二持久化事实源（与 Pilot 账本"单写者"原则冲突）。
+- 决策：暂缓。若未来要做 mid-turn 恢复，作为独立切片评估 Durable 或自研；届时先验证其 Hooks 是否支持请求前拦截。
+
 ## 2026-10-05 Pi 1.0.2 打包冒烟与 ASAR 校验（feat/pi-runtime-1.0.2-trial）
 - `dist:fast` 打包成功（`apps/electron/out/Gravitas-0.12.100-arm64.dmg` + `out/mac-arm64/Gravitas.app`，1m4s）；"missing optional dependencies" 为预期跨平台提示。
 - **ASAR 内容校验通过**：`quickjs-wasi`（含 quickjs.wasm）、`pi-mcp`、`pi-codemode`、`pi-ai`、`pi-agent-core`、`pi-coding-agent`、`claude-agent-sdk-darwin-arm64` 全部在包内——electron-builder 的 bun traversal 收集器自动包含传递依赖，此前担心的顶层 glob 缺口不存在。
