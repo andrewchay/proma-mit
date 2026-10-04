@@ -1,5 +1,14 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-05 Pi Durable mid-turn 恢复实现调研（源码级，npm 包 1.0.2 实测）
+- 包：`@earendil-works/pi-durable@1.0.2`（独立包，基于 pi-ai + chord；规范文档在 github `packages/durable/docs/spec.md`）。
+- **核心机制 = 单线原子提交**：所有变更（transcript 条目、文档、任务状态）走 `conversation.commit(tx)`，要么全存要么不存；"展示前必先提交"。条目不可变（`pi.user`/`pi.assistant`/`pi.tool-result`/`pi.system`/`pi.compaction`/`pi.reset` + 自定义 kind）。
+- **文档（与条目同事务提交的 typed JSON 状态）**：`pi.agent`（每会话 agent 配置，存扩展名不存实现）、`pi.provider`（UUIDv7 provider 会话身份，给 pi-ai 当 sessionId 做 prompt-cache/亲和；跨 reopen/reset/压缩/换模型存活，fork/子会话换新）、`pi.live`（在跑的 generation 部分输出 + 工具 + 压缩）、`pi.inbox`（排队提交）、`pi.usage`（花费）。
+- **任务 = 带 checkpoint 的持久状态机**：`pi.generation` 调模型、拥有 `pi.tool` 子任务、等待其完成后把 run 交给下一代。调度器状态 pending/running/waiting/completing；**只有调度器能写 faulted/orphaned**。
+- **mid-turn 恢复流程（关键）**：① 流式期间 assistant 部分输出以 ≤100ms 节流提交进 `pi.live.generation.message`（一个在途提交，finally 里 await 保证 outcome 后不落脏部分）；② 进程死后重开：调度器把存活的 `running` 任务重置为 `pending`，`resume()` 重新派发；③ generation 任务在 request 相位先 `convertPartial`——把已提交的部分输出**作为 stopReason="aborted" 的 assistant 条目追加进 transcript**（输出不丢、断裂可见），然后**重新发起一次全新模型请求**（旧 HTTP 连接已随进程死亡）；attempt 计数防无限重试；④ 工具任务：意图（名字+参数）在 execute 前提交；恢复时**仅当存储意图与当前工具都声明 `replay:"safe"` 才重跑**（重跑清掉已发布输出），否则模型收到 `interrupted` 错误结果 + 保留部分输出；⑤ 提交幂等：同 requestId 重提交返回原 submission；⑥ 无定义可接的任务结算为 `orphaned`。
+- **存储**：SQLite（WAL + synchronous=NORMAL——进程崩溃可存活，断电/宿主故障可能丢最新提交）或 JSONL（批量写 + `{"type":"commit"}` 标记，可选每标记 fsync；无标记的撕裂尾部开卷时丢弃——与 pi-agent-core JsonlSessionRepo 同构）。**单进程独占存储，无跨进程锁**（与 Gravitas 单写者原则兼容）。
+- **对 Gravitas 的费用/门禁含义**：① mid-turn 恢复 = **重新计一次模型请求**（输入 token 重新计费，`pi.provider` sessionId 靠 provider 端 prompt cache 缓解）；② 钩子面：Generation 有 `beforeRequest`（可替换 messages，**无文档化的 block 语义**——阻断只能靠抛错）、`afterResponse`/`onYield`/`afterTools`；Tool 有 `beforeTool`（**有 block 语义**，可阻断或改写参数）/`afterTool`；**没有 onPayload 等价物**——请求体指纹核验弱于 Gravitas 现有 prepareRequest+onPayload 双层设计；③ 结论不变：采纳 = harness 替换 + 门禁重建，暂缓；若未来自研 mid-turn 恢复，可借鉴其"部分输出节流提交 + aborted 条目 + 意图先行 + replay 安全分级"四件套。
+
 ## 2026-10-05 Pi Durable 评估（结论：暂缓，不纳入 1.0.2 试用）
 - `@earendil-works/pi-durable@1.0.2` 独立 npm 包（"Durable conversation, task, and document runtime"），README 明确标注 **Experimental（API 随时变）**；与 `pi-coding-agent` 无依赖关系（本地 dist 无引用、不在其 dependencies），本次升级不包含它。
 - 定位：独立 durable harness（`Harness.open`/`root.submit`），对话/模型轮次/工具调用/自定义状态先提交存储再展示，进程崩溃可从中断点恢复；基于 pi-ai + chord。
