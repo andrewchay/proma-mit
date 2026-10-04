@@ -1,5 +1,16 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-09-29 智谱额度查询调研（用户暂缓，未实现）
+- Coding Plan 额度可查：`GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`，Authorization 头直接放 API Key（无 Bearer 前缀为准，带 Bearer 亦有实现兼容）；响应 `data.level + data.limits[]`，unit 3=5 小时窗口、6=周窗口，可仿 Kimi 双窗口展示。
+- 团队版（zhipu-coding-team）：同端点加 `?type=2`，且必须带 `bigmodel-organization`（org-xxx）+ `bigmodel-project`（proj-xxx）头；ID 在团队后台用量页 URL 获取；401/403 视为凭据失效。接入需渠道表单新增两个可选字段。参考：cc-switch `query_zhipu_team_at`、token-monitor `zaiTeamLimits.js`、sub2api issue #6266。
+- 按量付费（zhipu）现金余额/资源包：无公开 API，第三方均只查套餐额度，无法像 DeepSeek `/user/balance` 那样展示。
+- 未来接入点：`channel-manager.ts` getChannelPlanQuota 增加智谱分支（仿 Kimi/DeepSeek 模式）+ `renderer/lib/channel-plan-quota.ts` supportsChannelPlanQuota 加 `zhipu-coding`/`zhipu-coding-team`；团队版另需 org/project ID 配置与请求头注入。
+
+## 2026-09-29 ChatGPT Codex 订阅可用性修复（未真机验收）
+- 原链路只接 OAuth/模型目录/额度：普通 Chat `getAdapter(openai-codex)` 缺注册；Pi Agent 空 Base URL 被拦，按自定义临时 provider 注册会把 OAuth JSON 当 API Key 及 Anthropic 协议发送。不能靠普通 OpenAI adapter 兼容 Codex。
+- 采用 Pi 0.87.1 内置 `openai-codex` 模型和 `openai-codex-responses` transport，应用渠道的加密凭据通过 `CredentialStore` 读取/串行刷新回写（不读写 Pi 全局 auth.json）。Chat 用原生 Pi SSE + 原 Chat UI 事件/工具循环；Pi Agent 直接注册内置模型，独立压缩仍未接入，避免错误协议；Chat/Agent 标题也走内置协议。
+- 离线 mock 原生 SDK 确认发往 `https://chatgpt.com/backend-api/codex/responses` 且 Bearer 为 access token，事件包含 text_delta/done；未使用用户真实凭据发起外网调用。Chat 现限 SSE 保持应用内代理适配；真实订阅成功率和登录状态仍需应用内验收。
+
 ## 2026-09-28 Project Pilot Goal：放开 ai-sdk Pilot readiness（-56）
 - 发起链路核查发现最后一个代码闸：启动预检要求 `supportsBudgetStopThreshold=true`，而 `ai-sdk` 为 false——直接发起会被 readiness 拦在 queued、零请求。用户批准放开（PILOT-20260928-56）。
 - 依据：ai-sdk 单次费用上界已由受控出口在**发送前**强制（证据派生→预留→body 核验，否则 HTTP 零发送），强度高于事后阈值；注册表唯一证据 glm-5.3-flash，其他模型 fail-closed；非 Pilot 零行为变化。

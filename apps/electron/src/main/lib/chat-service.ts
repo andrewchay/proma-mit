@@ -32,6 +32,8 @@ import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { getEnabledTools } from './chat-tool-registry'
 import { executeToolCalls } from './chat-tool-executor'
+import { streamCodexChat, codexToolResults } from './adapters/codex-chat'
+import type { Message as PiMessage } from '@earendil-works/pi-ai'
 import {
   isTypeSafeChatRecommendationAvailable,
   judgeChatAgentRoute,
@@ -308,7 +310,7 @@ export async function sendMessage(
 
   try {
     // 7. 获取适配器
-    const adapter = getAdapter(channel.provider)
+    const adapter = channel.provider === 'openai-codex' ? null : getAdapter(channel.provider)
 
     // 8. 从工具注册表获取启用的工具。TypeSafe 成功判断后，本回合排除 legacy 推荐工具；
     // TypeSafe 不可用时保留原工具，确保现有行为完整回退。
@@ -347,6 +349,7 @@ export async function sendMessage(
 
     // 9. 工具续接循环
     let continuationMessages: ContinuationMessage[] = []
+    const codexContinuation: PiMessage[] = []
     let round = 0
     /** 标记最近一轮是否执行了工具（用于判断是否需要最终响应轮） */
     let pendingToolResults = false
@@ -387,6 +390,37 @@ export async function sendMessage(
       round++
       pendingToolResults = false
 
+      if (channel.provider === 'openai-codex') {
+        const reply = await streamCodexChat({
+          channelId, modelId, history: enrichedHistory, userMessage: enrichedUserMessage,
+          attachments, systemPrompt: effectiveSystemMessage, tools,
+          thinkingLevel: input.thinkingLevel ?? (thinkingEnabled ? 'medium' : 'off'),
+          continuation: codexContinuation, signal: controller.signal,
+          onDelta: (type, delta) => handleStreamEvent({ type, delta }),
+        })
+        if (reply.toolCalls.length === 0) break
+        if (reply.stopReason !== 'toolUse') throw new Error(`ChatGPT 工具调用未正常完成: ${reply.stopReason}`)
+        const lastUserMsg = fullHistory.filter((m) => m.role === 'user').at(-1)
+        const lastAssistantMsg = fullHistory.filter((m) => m.role === 'assistant').at(-1)
+        const results = await executeToolCalls(reply.toolCalls, {
+          webContents, conversationId, currentAttachments: attachments,
+          previousUserAttachments: lastUserMsg?.attachments,
+          previousAssistantAttachments: lastAssistantMsg?.attachments,
+        })
+        codexContinuation.push(reply.message, ...codexToolResults(results.map((result) => ({
+          ...result, toolName: reply.toolCalls.find((call) => call.id === result.toolCallId)?.name ?? '',
+        }))))
+        for (const call of reply.toolCalls) {
+          const result = results.find((item) => item.toolCallId === call.id)
+          if (result) {
+            accumulatedToolActivities.push({ toolCallId: call.id, toolName: call.name, type: 'result', result: result.content, isError: result.isError, input: call.arguments })
+            if (result.generatedAttachments) accumulatedGeneratedAttachments.push(...result.generatedAttachments)
+          }
+        }
+        pendingToolResults = true
+        continue
+      }
+      if (!adapter) throw new Error('聊天适配器未初始化')
       const request = adapter.buildStreamRequest({
         providerType: channel.provider as ProviderType,
         baseUrl: channel.baseUrl,
@@ -474,7 +508,14 @@ export async function sendMessage(
 
     // 10. 最终响应轮：如果因达到 MAX_TOOL_ROUNDS 退出但仍有待处理的工具结果，
     // 再发起一次 API 调用（不传 tools）让模型基于工具结果生成最终文本回复
-    if (pendingToolResults && continuationMessages.length > 0) {
+    if (pendingToolResults && channel.provider === 'openai-codex') {
+      await streamCodexChat({
+        channelId, modelId, history: enrichedHistory, userMessage: enrichedUserMessage,
+        attachments, systemPrompt: effectiveSystemMessage, tools, continuation: codexContinuation, removeTools: true,
+        signal: controller.signal, onDelta: (type, delta) => handleStreamEvent({ type, delta }),
+      })
+    }
+    if (pendingToolResults && continuationMessages.length > 0 && adapter) {
       console.log(`[聊天服务] 工具轮次已达上限 (${MAX_TOOL_ROUNDS})，发起最终响应轮`)
 
       const finalRequest = adapter.buildStreamRequest({
@@ -768,6 +809,13 @@ export async function generateTitle(input: GenerateTitleInput): Promise<string |
   }
 
   try {
+    if (channel.provider === 'openai-codex') {
+      const { content } = await streamCodexChat({
+        channelId, modelId, history: [], userMessage: TITLE_PROMPT + userMessage,
+        signal: new AbortController().signal, onDelta: () => {},
+      })
+      return content.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim().slice(0, MAX_TITLE_LENGTH) || null
+    }
     const adapter = getAdapter(channel.provider)
     const request = adapter.buildTitleRequest({
       baseUrl: channel.baseUrl,

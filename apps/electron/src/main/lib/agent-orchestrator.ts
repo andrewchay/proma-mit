@@ -1687,6 +1687,14 @@ export class AgentOrchestrator {
         return null
       }
 
+      if (channel.provider === 'openai-codex') {
+        const { streamCodexChat } = await import('./adapters/codex-chat')
+        const { content } = await streamCodexChat({
+          channelId, modelId, history: [], userMessage: TITLE_PROMPT + userMessage,
+          signal: new AbortController().signal, onDelta: () => {},
+        })
+        return content.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim().slice(0, MAX_TITLE_LENGTH) || null
+      }
       const providerAdapter = getAdapter(channel.provider)
       const request = providerAdapter.buildTitleRequest({
         baseUrl: channel.baseUrl,

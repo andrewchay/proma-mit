@@ -10,6 +10,8 @@ const PLAN_QUOTA_PROVIDERS = new Set<ProviderType>([
   'deepseek',
   'deepseek-openai',
   'kimi-coding',
+  'github-copilot',
+  'openai-codex',
 ])
 
 /** 判断 Base URL 是否指向 DeepSeek 官方域名 */

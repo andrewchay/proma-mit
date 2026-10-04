@@ -229,7 +229,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     if (runtimeBudgetLimitUsd !== undefined && (!Number.isFinite(runtimeBudgetLimitUsd) || runtimeBudgetLimitUsd <= 0)) {
       throw new Error('Pi 调用级费用阈值无效')
     }
-    if (!provider || !apiKey || !baseUrl || !model || !cwd) {
+    if (!provider || !apiKey || (!baseUrl && provider !== 'openai-codex') || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
 
@@ -248,12 +248,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
 
     if (requestedOperation === 'compact') {
+      if (provider === 'openai-codex') throw new Error('ChatGPT 订阅暂不支持独立压缩，请缩短对话后重试')
       if (runtimeBudgetLimitUsd !== undefined) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
       await runWithCompactionAbort((signal) => compactSessionNow({
         sessionId,
         provider,
         apiKey,
-        baseUrl,
+        baseUrl: baseUrl ?? '',
         model,
         historyMessages: historyMessages ?? [],
         signal,
@@ -267,8 +268,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       sessionId,
       provider,
       apiKey,
-      baseUrl,
+      baseUrl: baseUrl ?? '',
       modelId: model,
+      channelId: input.channelId,
     })
 
     let effectiveHistoryMessages = historyMessages ?? []
@@ -370,14 +372,14 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       ? '\nWhen the user message states that Goal Runtime is activated, this is an active Goal. Complete the current step and call GoalCheckpoint before ending the turn. Do not claim Goal is unsupported. Use outcome=complete only with concrete evidence; otherwise use continue, waiting, or blocked.'
       : ''
     const effectiveSystemPrompt = `${systemPrompt ?? ''}\n${goalGuidance}\n${toolPrompt}`
-    if (effectiveHistoryMessages.length > 0 && runtimeBudgetLimitUsd === undefined) {
+    if (effectiveHistoryMessages.length > 0 && runtimeBudgetLimitUsd === undefined && provider !== 'openai-codex') {
       // 统一压缩走独立 Provider 请求路径，暂未接此门禁；有限费用模式直接
       // 保留原始历史，由模型上下文检查自然失败，不可静默触发额外计费。
       const auto = await runWithCompactionAbort((signal) => maybeAutoCompact({
         sessionId,
         provider,
         apiKey,
-        baseUrl,
+        baseUrl: baseUrl ?? '',
         model,
         historyMessages: effectiveHistoryMessages,
         observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,

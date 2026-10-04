@@ -6,6 +6,7 @@ import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveAgentRuntimeBaseUrl, resolveMode
 import { getConfigDir } from '../config-paths'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { loadPiCodingAgent } from './pi-sdk-loader'
+import { createCodexRuntime } from './codex-runtime'
 
 export interface PiModelRegistrationInput {
   sessionId: string
@@ -13,6 +14,7 @@ export interface PiModelRegistrationInput {
   apiKey: string
   baseUrl: string
   modelId: string
+  channelId?: string
 }
 
 export interface PiModelRegistration {
@@ -174,6 +176,13 @@ export function resolvePiProviderId(provider: ProviderType, sessionId: string): 
 
 export async function registerPiModelFromChannel(input: PiModelRegistrationInput): Promise<PiModelRegistration> {
   const agentDir = join(getConfigDir(), 'pi-runtime')
+  if (input.provider === 'openai-codex') {
+    if (!input.channelId) throw new Error('ChatGPT 订阅需要渠道 ID')
+    const modelRuntime = await createCodexRuntime(input.channelId)
+    const model = modelRuntime.getModel('openai-codex', input.modelId)
+    if (!model) throw new Error(`ChatGPT 订阅不支持模型 ${input.modelId}，请刷新模型列表`)
+    return { modelRuntime, providerId: 'openai-codex', model, agentDir }
+  }
   const providerId = resolvePiProviderId(input.provider, input.sessionId)
   const api = resolvePiApi(input.provider)
   const baseUrl = resolvePiBaseUrl(input.provider, input.baseUrl)
