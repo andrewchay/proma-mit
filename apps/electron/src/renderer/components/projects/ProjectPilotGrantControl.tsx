@@ -11,6 +11,12 @@ import { ProjectPilotPolicyEditor } from './ProjectPilotPolicyEditor'
 
 const formatCost = (micros: number): string => `${(micros / 1_000_000).toFixed(2)} USD 上限`
 const formatSpent = (micros: number): string => `${(micros / 1_000_000).toFixed(4)}`
+/** 把员工/工作区 ID 解析成「名称 (8 位短 ID)」便于人工核对授权对象；查不到名称时回退短 ID。 */
+const resolveDisplayName = (names: Record<string, string>, id: string | undefined | null): string => {
+  if (!id) return '未绑定'
+  const name = names[id]
+  return name ? `${name} (${id.slice(0, 8)})` : id.slice(0, 8)
+}
 const commandStateLabel: Record<PilotCommandUsageLine['state'], string> = {
   reserved: '预留中', queued: '已排队', running: '执行中', settled: '已结算', released: '已释放', needs_reconcile: '待对账',
 }
@@ -26,6 +32,19 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({})
+  const [workspaceNames, setWorkspaceNames] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    // 名称映射仅用于展示；加载失败时回退显示短 ID，不阻塞授权状态展示。
+    void Promise.all([
+      window.electronAPI.paa.agentEmployees.list().catch(() => []),
+      window.electronAPI.listAgentWorkspaces().catch(() => []),
+    ]).then(([employees, workspaces]) => {
+      setEmployeeNames(Object.fromEntries(employees.map((item) => [item.id, item.name])))
+      setWorkspaceNames(Object.fromEntries(workspaces.map((item) => [item.id, item.name])))
+    })
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -152,8 +171,8 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
       {control?.policy && <div className="mt-3 space-y-3">
         <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
           <span className="rounded-md bg-muted px-3 py-2">策略版本 {control.policy.revision}</span>
-          <span className="rounded-md bg-muted px-3 py-2">执行者 {control.policy.executorEmployeeId ?? '未绑定'}</span>
-          <span className="rounded-md bg-muted px-3 py-2">评审者 {control.policy.reviewerEmployeeId ?? '未绑定'}</span>
+          <span className="rounded-md bg-muted px-3 py-2">执行者 {resolveDisplayName(employeeNames, control.policy.executorEmployeeId)}</span>
+          <span className="rounded-md bg-muted px-3 py-2">评审者 {resolveDisplayName(employeeNames, control.policy.reviewerEmployeeId)}</span>
           <span className="rounded-md bg-muted px-3 py-2">模型 {control.policy.channelId} / {control.policy.modelId}</span>
           <span className="rounded-md bg-muted px-3 py-2">{formatCost(control.policy.maxCostMicros)} · {control.policy.maxRuns} 次</span>
           <span className="rounded-md bg-muted px-3 py-2">有效期至 {new Date(control.policy.expiresAt).toLocaleString()}</span>
@@ -166,7 +185,7 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
           onClick={() => void previewIssue()} disabled={busy || !control.readiness.bindingsValid}>预览活动授权影响面</button>}
         {issuePreview && <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-950" aria-label="授权发行确认">
           <p className="font-semibold">确认发行版本 {issuePreview.policyRevision} 的活动授权</p>
-          <p className="mt-1">工作区 {issuePreview.workspaceId}；执行 {issuePreview.executorEmployeeId}；评审 {issuePreview.reviewerEmployeeId}。</p>
+          <p className="mt-1">工作区 {resolveDisplayName(workspaceNames, issuePreview.workspaceId)}；执行 {resolveDisplayName(employeeNames, issuePreview.executorEmployeeId)}；评审 {resolveDisplayName(employeeNames, issuePreview.reviewerEmployeeId)}。</p>
           <p className="mt-1">模型 {issuePreview.channelId} / {issuePreview.modelId}；{formatCost(issuePreview.maxCostMicros)}；最多 {issuePreview.maxRuns} 次，返工 {issuePreview.maxRework} 次；有效期至 {new Date(issuePreview.expiresAt).toLocaleString()}。</p>
           <p className="mt-1">本次确认只写入授权记录；随后后台可能对符合条件的候选重新核验并受控派发。</p>
           <div className="mt-3 flex gap-2">
