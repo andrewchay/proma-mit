@@ -6,7 +6,7 @@ import type { Channel } from '@gravitas/shared'
  *
  * 覆盖「渠道（模型配置页）优先 → 环境变量兜底」的凭据解析逻辑：
  *  - seedance    → doubao 渠道，baseUrl 归一化 /api/v3，模型选择
- *  - minimax-h3  → minimax 渠道，Anthropic baseUrl 推导 /v1
+ *  - minimax-video → minimax-video 渠道，baseUrl 归一化 /v2（H3 V2 协议）
  *  - 禁用 / 无 Key / 解密失败渠道均跳过
  *  - 显式 channelId 精确命中
  *  - 无可用渠道回退 process.env
@@ -199,7 +199,7 @@ describe('resolveMiniMaxConfig', () => {
     const cfg = resolveMiniMaxConfig()
     expect(cfg.source).toBe('env')
     expect(cfg.apiKey).toBe('')
-    expect(cfg.baseUrl).toBe('https://api.minimaxi.com/v1')
+    expect(cfg.baseUrl).toBe('https://api.minimax.cn/v2')
   })
 
   test('有可用 minimax 渠道 → channel 优先', () => {
@@ -211,16 +211,16 @@ describe('resolveMiniMaxConfig', () => {
     expect(cfg.channelName).toBe('MiniMax 渠道')
   })
 
-  test('渠道 baseUrl 以 /anthropic 结尾 → 推导为 /v1', () => {
+  test('渠道 baseUrl 以 /anthropic 结尾 → 推导为 /v2（H3 V2 协议）', () => {
     mockChannels = [makeMiniMaxChannel({ baseUrl: 'https://api.minimaxi.com/anthropic' })]
     const cfg = resolveMiniMaxConfig()
-    expect(cfg.baseUrl).toBe('https://api.minimaxi.com/v1')
+    expect(cfg.baseUrl).toBe('https://api.minimaxi.com/v2')
   })
 
-  test('渠道 baseUrl 为裸域名 → 追加 /v1', () => {
-    mockChannels = [makeMiniMaxChannel({ baseUrl: 'https://api.minimaxi.com' })]
+  test('渠道 baseUrl 为裸域名 → 追加 /v2', () => {
+    mockChannels = [makeMiniMaxChannel({ baseUrl: 'https://api.minimax.cn' })]
     const cfg = resolveMiniMaxConfig()
-    expect(cfg.baseUrl).toBe('https://api.minimaxi.com/v1')
+    expect(cfg.baseUrl).toBe('https://api.minimax.cn/v2')
   })
 
   test('minimax 渠道 disabled → 回退 env', () => {
@@ -254,11 +254,12 @@ describe('resolveVideoEngineConfig', () => {
     expect(cfg.model).toBe('doubao-seedance-2-5-260628')
   })
 
-  test('minimax-h3 → minimax 渠道解析', () => {
-    mockChannels = [makeMiniMaxChannel()]
+  test('minimax-h3 → minimax-video 渠道解析（V2 根）', () => {
+    mockChannels = [makeMiniMaxChannel({ provider: 'minimax-video', baseUrl: 'https://api.minimax.cn' })]
     const cfg = resolveVideoEngineConfig('minimax-h3')
     expect(cfg.source).toBe('channel')
-    expect(cfg.baseUrl).toBe('https://api.minimaxi.com/v1')
+    expect(cfg.baseUrl).toBe('https://api.minimax.cn/v2')
+    expect(cfg.model).toBe('MiniMax-H3')
   })
 
   test('引擎名不匹配 → 默认按 seedance 处理', () => {

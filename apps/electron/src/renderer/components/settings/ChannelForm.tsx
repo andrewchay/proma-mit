@@ -72,7 +72,7 @@ interface ChannelFormProps {
 }
 
 /** 所有可选供应商 */
-const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'github-copilot', 'openai-codex', 'custom']
+const PROVIDER_OPTIONS: ProviderType[] = ['anthropic', 'openai', 'openai-responses', 'deepseek', 'deepseek-openai', 'google', 'kimi-api', 'kimi-coding', 'zhipu', 'zhipu-coding', 'zhipu-coding-team', 'minimax', 'minimax-video', 'doubao', 'ark-coding-plan', 'qwen', 'qwen-anthropic', 'qwen-token-plan', 'xiaomi', 'xai', 'github-copilot', 'openai-codex', 'custom']
 
 /** 供应商选项（用于 SettingsSelect） */
 const PROVIDER_SELECT_OPTIONS = PROVIDER_OPTIONS.map((p) => ({
@@ -94,6 +94,7 @@ const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
   'zhipu-coding': '/messages',
   'zhipu-coding-team': '/messages',
   minimax: '/v1/messages',
+  'minimax-video': '/v2/video_generation',
   doubao: '/chat/completions',
   'ark-coding-plan': '/messages',
   qwen: '/chat/completions',
@@ -114,6 +115,11 @@ const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
 function buildPreviewUrl(baseUrl: string, provider: ProviderType): string {
   let trimmed = baseUrl.trim().replace(/\/+$/, '')
 
+    // MiniMax 视频 V2：baseUrl 填裸域（api.minimax.cn），API 位于 /v2/video_generation
+    if (provider === 'minimax-video') {
+      const bare = trimmed.replace(/\/(v\d+|anthropic)$/, '')
+      return `${bare}/v2/video_generation`
+    }
   if (provider === 'anthropic' || provider === 'deepseek' || provider === 'kimi-api' || provider === 'kimi-coding' || provider === 'minimax') {
     // 去除用户误填的 /messages 后缀，与 normalizeAnthropicBaseUrl 保持一致
     trimmed = trimmed.replace(/\/messages$/, '')
@@ -299,6 +305,11 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       } else if (p === 'minimax') {
         setModels([
           { id: 'MiniMax-M2.7', name: 'MiniMax-M2.7', enabled: true },
+        ])
+      } else if (p === 'minimax-video') {
+        setModels([
+          { id: 'MiniMax-H3', name: 'MiniMax H3', enabled: true },
+          { id: 'MiniMax-H3-Max', name: 'MiniMax H3 Max (极速)', enabled: false },
         ])
       }
     }

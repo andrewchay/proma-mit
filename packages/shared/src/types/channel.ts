@@ -23,6 +23,7 @@ export type ProviderType =
   | 'zhipu-coding'
   | 'zhipu-coding-team'
   | 'minimax'
+  | 'minimax-video'
   | 'doubao'
   | 'ark-coding-plan'
   | 'qwen'
@@ -49,6 +50,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
   'zhipu-coding': 'https://open.bigmodel.cn/api/anthropic',
   'zhipu-coding-team': 'https://open.bigmodel.cn/api/anthropic',
+  'minimax-video': 'https://api.minimax.cn',
   minimax: 'https://api.minimaxi.com/anthropic',
   doubao: 'https://ark.cn-beijing.volces.com/api/v3',
   'ark-coding-plan': 'https://ark.cn-beijing.volces.com/api/plan',
@@ -79,6 +81,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   'zhipu-coding': '智谱 Coding Plan',
   'zhipu-coding-team': '智谱 Coding Plan (团队版)',
   minimax: 'MiniMax (API&编程包)',
+  'minimax-video': 'MiniMax 视频 (H3 按量)',
   doubao: '豆包',
   'ark-coding-plan': '火山方舟 Agent Plan',
   qwen: '通义千问',
@@ -360,6 +363,14 @@ export const AGENT_PROVIDER_RUNTIME_CAPABILITIES: Record<ProviderType, AgentProv
     supportsImages: true,
     supportsStreamUsage: false,
     verifiedForAgentRuntime: true,
+  },
+  'minimax-video': {
+    protocol: 'openai-chat',
+    runtimes: [],
+    supportsToolCalling: false,
+    supportsImages: false,
+    supportsStreamUsage: false,
+    verifiedForAgentRuntime: false,
   },
   doubao: {
     protocol: 'openai-chat',
