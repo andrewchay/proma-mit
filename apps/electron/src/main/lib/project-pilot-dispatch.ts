@@ -164,9 +164,11 @@ async function dispatchPilotIntentWithDependencies(
     return null
   }
   if (intent.kind === 'ready_candidate' && plan.role === 'executor') {
-    const latest = getProjectDb().prepare(`SELECT id FROM agent_executions WHERE project_id = ? AND entity_type = 'task'
-      AND entity_id = ? ORDER BY started_at DESC LIMIT 1`).get(projectId, task.id) as { id: string } | undefined
-    if (latest) {
+    // 仅对已完成的历史执行要求人工续跑审批凭据（与 reconcile 投影口径一致）；
+    // cancelled/failed 视为未运行完成，不拦截自动派发。
+    const latest = getProjectDb().prepare(`SELECT id, status FROM agent_executions WHERE project_id = ? AND entity_type = 'task'
+      AND entity_id = ? ORDER BY started_at DESC LIMIT 1`).get(projectId, task.id) as { id: string; status: string } | undefined
+    if (latest?.status === 'completed') {
       const approved = getProjectDb().prepare(`SELECT 1 FROM pilot_approval_resolutions AS resolution
         JOIN pilot_commands AS command ON command.execution_id = resolution.execution_id
         WHERE resolution.task_id = ? AND resolution.execution_id = ? AND resolution.grant_id = ?
