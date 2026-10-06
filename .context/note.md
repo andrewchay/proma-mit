@@ -1,5 +1,12 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-06 主题预览视觉统一（艺术系定稿方向）
+- 用户反馈：界面背景纹样"太丑"→ 已移除 ThemeTextureLayer 及 theme-texture-layer.tsx，运行界面恢复纯净；预览卡图案保留。
+- 用户反馈：简笔 SVG 预览"太简陋"，与青花瓷/青绿山水不一致 → 用户选定**艺术系**：全部主题卡改画作预览，卡片只留图与名称。
+- 实现：Pillow 程序化绘制 10 幅同系列插画（纸纹颗粒 + 柔边笔触 + 有限配色），脚本 `scripts/generate-theme-preview-art.py` 可复现；AppearanceSettings 简化为统一 `image` 结构，删除 theme-preview-decor.tsx 与调色板分支；被替换的 ember 旧截图预览已删（新图 `theme-ember-*-art.webp`）。
+- 注意：程序插画非真实画作，质感与真迹有差距；若需更高保真需引入真实图像素材（如公版名画）或外部生成能力。
+- 验证：typecheck / theme-contrast.test（3 pass）/ build:renderer 全过；版本 0.12.103。
+
 ## 2026-10-05 分支清理与 backup 内容核实
 - main 与 origin/main 同步（0ccc2b3e）；删除 21 个已完全合入的分支（本地 12 + 远程 9，含 5 个干净 worktree），`git branch -d` 全部通过。
 - backup/main-pre-rebase-20260927 已删除（tip 94bcd94f，2026-10-05 删除；内容经逐项核实全部被 main 覆盖，如需找回走 reflog）。
