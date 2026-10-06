@@ -10,7 +10,7 @@
  * - 普通 浅色/深色/跟随系统 模式不渲染，保持纯净
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { themeModeAtom, themeStyleAtom } from '@/atoms/theme'
 import type { ThemeStyle } from '../../../types'
