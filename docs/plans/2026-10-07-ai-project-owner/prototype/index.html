@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gravitas · AI Owner 目标驱动原型</title>
+<style>
+:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#23302b;background:#f5f6f5;font-size:14px;--accent:#216b54;--muted:#65746d;--line:#e7ece8}
+*{box-sizing:border-box}
+body{margin:0}
+button,input,textarea,select{font:inherit}
+button{cursor:pointer;border:0;border-radius:9px;background:#edf1ee;color:#314b3d;padding:10px 15px;font-weight:600}
+button:hover{filter:brightness(.96)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #5ca18c;outline-offset:3px}
+button.primary{background:var(--accent);color:#fff}
+button:disabled{opacity:.5;cursor:not-allowed}
+.app{display:grid;grid-template-columns:185px 1fr;min-height:100vh}
+nav{background:#eef1ee;padding:28px 18px;display:flex;flex-direction:column;gap:24px}
+.brand{font-size:19px;font-weight:700;letter-spacing:-.6px}
+.nav-label{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:1px;margin-bottom:8px}
+.nav-item{padding:10px;border-radius:9px;margin-top:3px;color:var(--muted)}
+.nav-item.selected{background:white;color:var(--accent);font-weight:650;box-shadow:0 2px 9px #223b2610}
+nav small{margin-top:auto;color:var(--muted);line-height:1.7}
+.workspace{min-width:0}
+header{padding:20px 30px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line)}
+.crumb{font-size:12px;color:var(--muted);margin-bottom:6px}
+h1{font-size:23px;letter-spacing:-.6px;margin:0}
+h2{font-size:23px;line-height:1.45;margin:8px 0 12px}
+h3{font-size:15px;margin:0 0 12px}
+p{line-height:1.75;margin:8px 0;color:var(--muted)}
+.tag{font-size:11px;padding:5px 9px;border-radius:6px;background:#eef5f1;color:var(--accent);display:inline-block}
+.demo-tag{background:#fff4de;color:#77521d;white-space:nowrap}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:15px 30px;background:#fafbfa;font-size:12px}
+.toolbar label{color:var(--muted)}
+select{padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:white;color:#23302b}
+.tabs{display:flex;gap:24px;padding:0 30px;color:var(--muted);border-bottom:1px solid var(--line)}
+.tabs span{padding:15px 0}
+.tabs .active{color:var(--accent);border-bottom:2px solid var(--accent);font-weight:600}
+main{padding:25px 30px;display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:22px;max-width:1400px;margin:auto}
+.card{background:#fff;border-radius:15px;padding:24px;box-shadow:0 3px 16px #183e2910;margin-bottom:18px}
+.owner-line{display:flex;gap:11px;align-items:center;margin-bottom:16px}
+.avatar{background:#e4f2eb;color:var(--accent);width:35px;height:35px;border-radius:11px;display:grid;place-items:center;font-weight:750}
+.owner-name{font-weight:650;font-size:13px}
+.owner-note{font-size:11px;color:var(--muted);margin-top:3px}
+.eyebrow{font-size:11px;letter-spacing:1px;color:var(--accent);font-weight:650}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:20px}
+label.field{display:block;font-weight:600;font-size:12px;margin:16px 0 7px}
+textarea,input{width:100%;border:1px solid #dce5df;border-radius:10px;padding:12px;color:#23302b;background:#fbfcfb}
+textarea{resize:vertical;min-height:100px;line-height:1.7}
+.hint{font-size:12px;line-height:1.75;color:var(--muted)}
+.quiet{background:#f4f8f5;padding:13px 15px;border-radius:10px;font-size:12px;line-height:1.8;color:#516459;margin:14px 0}
+.step{display:grid;grid-template-columns:29px 1fr auto;gap:12px;align-items:start;padding:17px 0;border-bottom:1px solid var(--line)}
+.step:last-child{border:0}
+.step-index{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#f0f3f1;color:var(--muted);font-size:12px}
+.step.done .step-index{background:#dceddf;color:var(--accent)}
+.step-title{font-weight:650;margin-bottom:5px}
+.step .hint{font-size:12px}
+.step-state{color:var(--muted);font-size:11px;padding-top:5px}
+.status-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.metric{padding:12px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted)}
+.metric strong{color:#23302b;text-align:right;font-weight:600}
+.metric:last-child{border:0}
+aside .card{padding:20px}
+details{margin-top:14px}
+summary{cursor:pointer;font-size:12px;color:var(--muted);padding:5px 0}
+.timeline{padding-left:16px;margin:0;color:var(--muted);font-size:12px;line-height:1.8}
+.timeline li{margin-bottom:12px}
+.timeline b{font-weight:550;color:#364b40}
+.alert{padding:14px;border-radius:10px;background:#fff4df;color:#755120;font-size:13px;line-height:1.8;margin:16px 0}
+.criteria{padding-left:19px;line-height:1.9;font-size:13px}
+.result{background:#f5f8f5;padding:20px;border-radius:12px;margin-top:17px}
+.result h3{margin-bottom:10px}
+code{background:#e9efea;border-radius:4px;padding:2px 5px}
+.caption{font-size:11px;color:var(--muted);line-height:1.7}
+.empty{color:var(--muted);padding:12px 0;font-size:12px}
+.divider{border-top:1px solid var(--line);margin-top:18px;padding-top:14px}
+.footer{font-size:11px;color:var(--muted);padding:0 30px 22px}
+.error{color:#a23838;font-size:12px}
+ @media(max-width:1040px){main{grid-template-columns:1fr}
+aside{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+header{padding:20px}
+.toolbar,.tabs{padding-left:20px}
+main{padding:20px}
+}
+@media(max-width:700px){.app{grid-template-columns:1fr}
+nav{display:none}
+aside{grid-template-columns:1fr}
+h1{font-size:19px}
+.card{padding:18px}
+header{align-items:start}
+.tabs{gap:16px}
+.toolbar{gap:7px}
+}
+
+</style></head>
+<body><div class="app"><nav aria-label="项目导航"><div class="brand">Gravitas</div><div><div class="nav-label">工作台</div><div class="nav-item">会话</div><div class="nav-item selected">项目</div><div class="nav-item">知识</div></div><div><div class="nav-label">当前项目 · 示例</div><div class="nav-item selected">产品定位探索</div></div><small>目标由你定义。<br>计划与推进由 Owner 组织。<br><br>导航为布局参考，不接产品。</small></nav><div class="workspace"><header><div><div class="crumb">项目 / Owner 工作台</div><h1 id="project-title">产品定位探索</h1></div><span class="tag demo-tag">离线原型 · 所有数据均为模拟</span></header><div class="toolbar"><label for="example">目标类型</label><select id="example"><option value="project">非代码项目</option><option value="task">代码单任务</option></select><label for="scenario">演示分支</label><select id="scenario"><option value="normal">正常推进</option><option value="clarify">需要澄清</option><option value="rework">技术评审返工</option><option value="scope">超出授权范围</option><option value="failure">异常与未知费用</option></select><button id="reset">重置演示</button></div><div class="tabs" aria-label="布局参考"><span class="active">概览 · AI Owner</span><span>任务</span><span>成果</span><span>治理详情</span></div><main><section id="content" aria-live="polite"></section><aside id="sidebar"></aside></main><div class="footer">仅验证交互。固定示例不会理解任意目标；预算、角色、证据、推进行为均为模拟，无网络请求、模型调用、项目写入或真实授权。</div></div></div>
+<script>
+'use strict'
+const fixtures = {
+  project: {
+    title: '产品定位探索',
+    objective: '梳理这款产品的定位，形成一份可评审的方案，并解释推荐方向。',
+    context: '示例资料：产品介绍与三份访谈摘要。未连接真实知识库。',
+    steps: [
+      ['梳理资料与人群', '研究角色', '资料摘要', '明确来源与待验证假设', '无前置依赖'],
+      ['提出定位与备选', '策略角色', '定位方案', '给出推荐、备选和取舍依据', '依赖资料摘要'],
+      ['核对标准并汇总', '评审角色', '可审阅方案', '区分事实、假设与剩余风险', '依赖定位方案'],
+    ],
+  },
+  task: {
+    title: '修复负数量报价',
+    objective: '报价不能接受负数量，修复后保持正常报价行为，并提供验证依据。',
+    context: '示例工作区：已绑定的代码仓库。未读取真实文件。',
+    steps: [
+      ['定位边界与拟定范围', '开发角色', '修改与验证方案', '说明负数量和正常行为标准', '无前置依赖'],
+      ['实施修复与测试', '开发角色', '代码变更与验证记录', '负数量被拒绝，正常行为保持', '依赖范围确认'],
+      ['技术评审与交付', '评审角色', '冻结交付快照', '核对变更、测试和原仓库差异', '依赖修复结果'],
+    ],
+  },
+}
+let state, timer
+const $ = (s) => document.querySelector(s)
+const esc = (s) =>
+  String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  )
+function stop() {
+  clearTimeout(timer)
+  timer = undefined
+}
+function log(text) {
+  state.events.push(text)
+}
+function reset() {
+  stop()
+  const kind = $('#example').value
+  state = {
+    kind,
+    scenario: $('#scenario').value,
+    phase: 'goal',
+    objective: fixtures[kind].objective,
+    constraints: '仅使用已授权资料；不对外发布。',
+    planVersion: 1,
+    deliveryVersion: 1,
+    grantVersion: null,
+    progress: 0,
+    reworked: false,
+    scopeAnswered: false,
+    expanded: false,
+    events: [],
+    feedback: '',
+    answer: '',
+    closed: false,
+  }
+  render()
+}
+function owner() {
+  return '<div class="owner-line"><div class="avatar">O</div><div><div class="owner-name">AI Project Owner</div><div class="owner-note">管理角色 · 主动规划与跟进 · 模拟</div></div></div>'
+}
+function button(id, text, primary = false) {
+  return `<button id="${id}" class="${primary ? 'primary' : ''}">${text}</button>`
+}
+function steps() {
+  return fixtures[state.kind].steps
+    .map(
+      (s, i) =>
+        `<div class="step ${i < state.progress ? 'done' : ''}"><div class="step-index">${i < state.progress ? '✓' : i + 1}</div><div><div class="step-title">${esc(s[0])}</div><div class="hint">${esc(s[1])}建议 · 成果：${esc(s[2])}<br>标准：${esc(s[3])}<br>${esc(s[4])}</div></div><div class="step-state">${i < state.progress ? '模拟完成' : state.phase === 'running' && i === state.progress ? '推进中' : '计划步骤'}</div></div>`,
+    )
+    .join('')
+}
+function render() {
+  const f = fixtures[state.kind]
+  $('#project-title').textContent = f.title
+  let html = owner()
+  if (state.phase === 'goal') {
+    html +=
+      '<div class="eyebrow">从目标开始</div><h2>你想完成什么？</h2><p>我会提出计划、安排合适的角色，并跟进成果。你不需要先拆好所有任务。</p><label class="field" for="objective">目标</label><textarea id="objective">' +
+      esc(state.objective) +
+      '</textarea><label class="field" for="constraints">必要约束（可选）</label><input id="constraints" value="' +
+      esc(state.constraints) +
+      '"><div class="quiet">' +
+      esc(f.context) +
+      '<br>员工和资料范围由系统继承或建议；有冲突时才询问。</div><div id="error" class="error" role="alert"></div><div class="actions">' +
+      button('propose', '让 Owner 提出计划（模拟）', true) +
+      '</div><p class="caption">真实产品中规划调用也需费用授权；本原型使用固定计划，不产生费用。</p>'
+  }
+  if (state.phase === 'clarify') {
+    html +=
+      '<div class="eyebrow">一个必要的澄清</div><h2>先确认成果面向谁</h2><p>受众会改变资料重点和评审标准。示例建议：先用于团队内部评审，不作为对外承诺。</p><label class="field" for="answer">你的判断</label><input id="answer" value="团队内部评审，不对外发布"><div id="error" class="error" role="alert"></div><div class="actions">' +
+      button('answer', '确认判断并生成计划（模拟）', true) +
+      '</div>'
+  }
+  if (state.phase === 'plan') {
+    html +=
+      '<div class="eyebrow">计划建议 · v' +
+      state.planVersion +
+      '</div><h2>我建议这样达到你的目标</h2><p>' +
+      esc(state.objective) +
+      '</p>' +
+      steps() +
+      '<div class="quiet">' +
+      esc(state.constraints || '尚未提供额外约束；执行前仍需明确资料/修改范围。') +
+      '<br>风险：' +
+      (state.kind === 'project'
+        ? '访谈不足以证明完整市场结论，结论会标注假设。'
+        : '边界修复可能影响正常行为，需要单独回归。') +
+      '</div>' +
+      (state.feedback
+        ? '<p class="hint">已记录计划调整：' +
+          esc(state.feedback) +
+          '。本次只演示新版本与标准补充，不代表模型已理解或完成修改。</p>'
+        : '') +
+      '<details><summary>调整计划，不需要重新手工拆任务</summary><label class="field" for="plan-feedback">你希望怎么调整？</label><input id="plan-feedback" placeholder="例如：增加一项备选方案的比较标准"><div class="actions">' +
+      button('revise', '记录调整并生成新版本（模拟）') +
+      '</div><div id="error" class="error" role="alert"></div></details><div class="actions">' +
+      button('confirm-plan', '确认计划，查看执行边界', true) +
+      '</div><p class="caption">确认计划不等于授予执行权限；尚未创建任何真实任务。</p>'
+  }
+  if (state.phase === 'authorize') {
+    html +=
+      '<div class="eyebrow">单独确认执行授权 · 计划 v' +
+      state.planVersion +
+      '</div><h2>这些边界内，我可以主动推进</h2><p>正常执行、依赖推进、技术评审和最多一轮返工，不必你逐条催办。范围或预算变化会再次询问。</p><ul class="criteria"><li>范围：' +
+      (state.kind === 'project'
+        ? '仅示例产品资料的分析与方案草稿'
+        : '仅示例仓库的报价边界与相关测试；不应用到原仓库') +
+      (state.expanded
+        ? '；拟新增：' +
+          (state.kind === 'project' ? '外部访谈资料访问（仅模拟，不实际联系）' : '相邻结算模块的模拟修改')
+        : '') +
+      '</li><li>资料/工具：仅当前示例上下文；不外发、不购买</li><li>额度：$0.50 · 最多 4 次运行 · 最多 1 轮返工（全部模拟）</li><li>有效期：本次演示；预算/工具/员工可展开核对</li><li>最终业务验收由你完成；写回/发布另行确认</li></ul><div class="alert">真实执行适配器和费用停止能力尚未在本原型接通。这不是实际运行授权。</div><div class="actions">' +
+      button('authorize', '确认模拟边界，演示自动推进', true) +
+      button('back-plan', '返回计划') +
+      '</div>'
+  }
+  if (state.phase === 'running' || state.phase === 'paused') {
+    html +=
+      '<div class="eyebrow">' +
+      (state.phase === 'paused' ? '已暂停模拟' : '授权内主动推进 · 模拟') +
+      '</div><h2>' +
+      (state.phase === 'paused' ? '等待你的恢复决定' : '我正在组织执行与评审') +
+      '</h2><p>依赖满足后自动进入下一项；技术评审和授权内返工不需要逐任务点开始。</p>' +
+      steps() +
+      '<div class="actions">' +
+      (state.phase === 'running' ? button('pause', '暂停模拟') : button('resume', '恢复模拟推进', true)) +
+      '</div>'
+  }
+  if (state.phase === 'scope') {
+    html +=
+      '<div class="eyebrow">Owner 提出的必要决定</div><h2>有一项建议超出了原授权</h2><p>' +
+      (state.kind === 'project'
+        ? '外部访谈能补足定位证据，但不在当前资料授权内。我建议先交付现有资料方案，并标记这项风险。'
+        : '还发现了相邻结算模块问题，但不在当前修改范围。我建议先交付报价边界修复，另立后续目标。') +
+      '</p><div class="alert">已经停止模拟推进，旧授权不能覆盖扩展范围。扩大范围会形成新计划，并重新确认边界。</div><div class="actions">' +
+      button('keep-scope', '按原范围继续（建议）', true) +
+      button('expand-scope', '提出范围扩展，重新确认') +
+      button('deny-scope', '拒绝继续，保留当前证据') +
+      '</div>'
+  }
+  if (state.phase === 'failure' || state.phase === 'closed') {
+    html +=
+      '<div class="eyebrow">异常收口 · 模拟</div><h2>' +
+      (state.phase === 'closed' ? '管理事项已关闭，未知证据仍保留' : '执行结果与费用尚不能确认') +
+      '</h2><p>示例故障：运行返回中断，没有可靠终态回执。Owner 不会自动重试，也不会把未知费用记为零。</p><div class="alert">运行状态：停止待核验 · 费用：unknown（模拟）<br>原预算预留与已有证据保留；关闭管理事项不代表进程已停止或费用已释放。</div>' +
+      (state.phase === 'failure'
+        ? '<div class="actions">' + button('close-failure', '仅关闭管理事项，保留未知证据') + '</div>'
+        : '')
+  }
+  if (state.phase === 'review' || state.phase === 'accepted' || state.phase === 'applied') {
+    const accepted = state.phase !== 'review'
+    html +=
+      '<div class="eyebrow">' +
+      (accepted ? '业务验收已确认 · 模拟' : '成果待你审阅') +
+      ' · 成果 v' +
+      state.deliveryVersion +
+      '</div><h2>' +
+      (accepted ? '这项成果已被你验收' : '成果已经准备好，请直接审阅') +
+      '</h2><p>执行完成与技术评审通过都是模拟结果，不代表已做真实验证。业务验收由你决定。</p><div class="result"><h3>' +
+      (state.kind === 'project' ? '产品定位建议（固定示例）' : '报价边界修复（固定示例）') +
+      '</h3>' +
+      (state.kind === 'project'
+        ? '<p>推荐优先服务需要减少重复协调的产品团队，以目标驱动的项目管理为核心利益；备选方向是资料整合与成果审阅。推荐依据仅来自示例资料，市场适用性仍需真实研究。</p>'
+        : '<p>建议在报价入口拒绝负数量，并保持正常数量的价格计算。示例 Diff 与测试仅作审阅结构示范，不代表已定位或修改实际仓库。</p><pre><code>- 接受任意数量\n+ 拒绝负数量，保留正常路径</code></pre>') +
+      '<ul class="criteria"><li>目标与标准：' +
+      (state.kind === 'project' ? '推荐/备选/取舍已展示' : '负数量/正常路径的检查点已展示') +
+      '（模拟）</li><li>技术评审：通过（模拟），不等于内容已真实验证</li><li>证据：示例资料摘要 / 示例验证记录，非真实来源</li><li>剩余风险：' +
+      (state.kind === 'project' ? '缺真实市场验证' : '缺真实仓库回归与固定构建验收') +
+      '</li></ul>' +
+      (state.feedback
+        ? '<p class="hint">已记录反馈：' + esc(state.feedback) + '（仅模拟版本修订）</p>'
+        : '') +
+      '</div>' +
+      (accepted
+        ? state.kind === 'task'
+          ? '<p class="hint">' +
+            (state.phase === 'applied'
+              ? '已确认模拟应用；原仓库没有任何写入。'
+              : '原仓库尚未应用。验收不会自动写回、commit 或 push。') +
+            '</p><div class="actions">' +
+            (state.phase === 'accepted' ? button('apply', '查看原仓库应用确认', true) : '') +
+            '</div>'
+          : '<p class="quiet">方案仅为示例草稿，没有对外发布或发送。</p>'
+        : '<label class="field" for="review-feedback">修改意见（可选）</label><input id="review-feedback" placeholder="例如：补充备选方向的取舍依据"><div id="error" class="error" role="alert"></div><div class="actions">' +
+          button('accept', '确认成果验收（模拟）', true) +
+          button('request-rework', '请 Owner 按意见修改（模拟）') +
+          '</div>')
+  }
+  if (state.phase === 'apply') {
+    html +=
+      '<div class="eyebrow">独立副作用确认 · 模拟</div><h2>验收通过不等于应用到原仓库</h2><p>真实产品应重新核对源版本、冻结快照、冲突和可应用范围。本原型不会访问仓库。</p><div class="alert">本次确认仅将演示标记为“模拟应用”。不会写文件、提交或推送。</div><div class="actions">' +
+      button('confirm-apply', '确认模拟应用', true) +
+      button('cancel-apply', '取消，保留验收结果') +
+      '</div>'
+  }
+  $('#content').innerHTML = '<div class="card">' + html + '</div>'
+  const statuses = {
+    goal: '目标待整理',
+    clarify: '等待一个判断',
+    plan: '计划待确认',
+    authorize: '尚未授权',
+    running: '模拟推进中',
+    paused: '模拟已暂停',
+    scope: '等待范围决定',
+    failure: '结果待核验',
+    closed: '管理事项已关闭',
+    review: '成果待验收',
+    accepted: '业务已验收',
+    apply: '应用待确认',
+    applied: '模拟应用已确认',
+  }
+  $('#sidebar').innerHTML =
+    '<div class="card"><div class="status-heading"><h3>项目状态</h3><span class="tag">' +
+    esc(statuses[state.phase]) +
+    '</span></div><div class="metric"><span>计划</span><strong>v' +
+    state.planVersion +
+    '</strong></div><div class="metric"><span>执行授权</span><strong>' +
+    (state.grantVersion ? 'v' + state.grantVersion + ' · 仅模拟' : '未授权') +
+    '</strong></div><div class="metric"><span>完成步骤</span><strong>' +
+    state.progress +
+    ' / 3 · 模拟</strong></div><div class="metric"><span>真实费用</span><strong>未发生调用</strong></div><details><summary>授权与费用详情</summary><p class="caption">演示预留上限 $0.50；角色与范围均为示例。' +
+    (state.phase === 'failure' || state.phase === 'closed'
+      ? '模拟结算未知，预留不释放。'
+      : '模拟数字不是实际账单。') +
+    '<br>规划授权与执行授权应分别核验。仅计划版本号不能保护目标/授权一致性，真实服务仍需权威版本与幂等校验。</p></details></div><div class="card"><h3>Owner 动态</h3>' +
+    (state.events.length
+      ? '<ol class="timeline">' + state.events.map((e) => '<li><b>' + esc(e) + '</b></li>').join('') + '</ol>'
+      : '<div class="empty">目标提交后，Owner 会主动提出下一步。所有动态为演示记录。</div>') +
+    '</div>'
+  bind()
+}
+function on(id, fn) {
+  const el = $('#' + id)
+  if (el) el.addEventListener('click', fn)
+}
+function error(msg) {
+  $('#error').textContent = msg
+}
+function run() {
+  state.phase = 'running'
+  render()
+  stop()
+  timer = setTimeout(tick, 650)
+}
+function tick() {
+  if (state.phase !== 'running') return
+  if (state.progress === 1 && !state.scopeAnswered && state.scenario === 'scope') {
+    state.phase = 'scope'
+    log('发现超范围建议，暂停并提出推荐方案')
+    render()
+    return
+  }
+  if (state.progress === 1 && state.scenario === 'failure') {
+    state.phase = 'failure'
+    log('终态/费用未知，停止模拟派发，保留预留')
+    render()
+    return
+  }
+  if (state.progress === 2 && state.scenario === 'rework' && !state.reworked) {
+    state.reworked = true
+    state.deliveryVersion++
+    log('技术评审发现缺项，授权内自动返工并重新评审')
+    render()
+    timer = setTimeout(tick, 900)
+    return
+  }
+  state.progress++
+  log(fixtures[state.kind].steps[state.progress - 1][0] + ' · 模拟完成')
+  if (state.progress === 3) {
+    state.phase = 'review'
+    log('已汇总成果，等待人类业务验收')
+    render()
+    return
+  }
+  render()
+  timer = setTimeout(tick, 650)
+}
+function bind() {
+  on('propose', () => {
+    state.objective = $('#objective').value.trim()
+    state.constraints = $('#constraints').value.trim()
+    if (!state.objective) return error('请先说明希望得到的结果。')
+    state.phase = state.scenario === 'clarify' ? 'clarify' : 'plan'
+    log(state.phase === 'clarify' ? '发现受众缺口，集中提出一个问题' : '已整理目标并提出三步计划（固定示例）')
+    render()
+  })
+  on('answer', () => {
+    const answer = $('#answer').value.trim()
+    if (!answer) return error('请填写这个会改变方案的判断。')
+    state.answer = answer
+    state.constraints += (state.constraints ? '；' : '') + answer
+    state.phase = 'plan'
+    log('收到判断，已加入约束并继续提出计划')
+    render()
+  })
+  on('revise', () => {
+    const feedback = $('#plan-feedback').value.trim()
+    if (!feedback) return error('请说明你希望调整什么。')
+    state.feedback = feedback
+    state.planVersion++
+    state.grantVersion = null
+    log('记录调整，计划更新为 v' + state.planVersion + '；旧授权失效')
+    render()
+  })
+  on('confirm-plan', () => {
+    state.phase = 'authorize'
+    log('计划已确认；执行授权尚未确认')
+    render()
+  })
+  on('back-plan', () => {
+    state.phase = 'plan'
+    render()
+  })
+  on('authorize', () => {
+    state.grantVersion = state.planVersion
+    state.reworked = false
+    log('模拟授权绑定计划 v' + state.planVersion + '，自动推进')
+    run()
+  })
+  on('pause', () => {
+    stop()
+    state.phase = 'paused'
+    log('人类暂停，模拟计时器已停止')
+    render()
+  })
+  on('resume', () => {
+    log('人类恢复当前模拟范围')
+    run()
+  })
+  on('keep-scope', () => {
+    state.scopeAnswered = true
+    log('按原范围继续，超范围建议留作后续目标')
+    run()
+  })
+  on('expand-scope', () => {
+    state.scopeAnswered = true
+    state.expanded = true
+    state.planVersion++
+    state.grantVersion = null
+    state.phase = 'plan'
+    state.progress = 0
+    state.feedback = '申请扩大范围；需要独立核对资料/工具/费用后重新确认'
+    log('扩展提案成为计划 v' + state.planVersion + '，原授权失效，尚未续跑')
+    render()
+  })
+  on('deny-scope', () => {
+    stop()
+    state.phase = 'paused'
+    log('人类拒绝当前建议，模拟推进已暂停，证据保留')
+    render()
+  })
+  on('close-failure', () => {
+    state.phase = 'closed'
+    state.closed = true
+    log('仅关闭管理事项，未知运行/费用与预留保留')
+    render()
+  })
+  on('accept', () => {
+    state.phase = 'accepted'
+    log('人类确认成果业务验收，不自动写回或发布')
+    render()
+  })
+  on('request-rework', () => {
+    const feedback = $('#review-feedback').value.trim()
+    if (!feedback) return error('请填写修改意见，Owner 将据此组织新成果版本。')
+    if (state.reworked) {
+      state.scopeAnswered = true
+      state.feedback = feedback
+      state.planVersion++
+      state.grantVersion = null
+      state.progress = 0
+      state.phase = 'plan'
+      log('返工额度已用尽，转新计划与授权确认，不自动继续')
+      render()
+      return
+    }
+    state.feedback = feedback
+    state.reworked = true
+    state.deliveryVersion++
+    state.progress = 1
+    log('记录修改意见，使用剩余模拟返工额度，形成新成果版本')
+    run()
+  })
+  on('apply', () => {
+    state.phase = 'apply'
+    render()
+  })
+  on('confirm-apply', () => {
+    state.phase = 'applied'
+    log('人类确认模拟应用，无实际仓库写入')
+    render()
+  })
+  on('cancel-apply', () => {
+    state.phase = 'accepted'
+    log('取消模拟应用，验收结果保留')
+    render()
+  })
+}
+$('#example').addEventListener('change', reset)
+$('#scenario').addEventListener('change', reset)
+$('#reset').addEventListener('click', reset)
+reset()
+</script></body></html>
