@@ -4,7 +4,7 @@
  * 主题模式、IPC 通道等设置相关定义。
  */
 
-import type { AgentRuntime, EnvironmentCheckResult, ThinkingConfig, AgentEffort } from '@gravitas/shared'
+import type { AgentRuntime, EnvironmentCheckResult, ThinkingConfig, AgentEffort, TelemetrySettings } from '@gravitas/shared'
 
 /** 通知音场景类型 */
 export type NotificationSoundType = 'taskComplete' | 'permissionRequest' | 'exitPlanMode'
@@ -150,7 +150,7 @@ export interface ShortcutOverrides {
 export type ThemeMode = 'light' | 'dark' | 'system' | 'special'
 
 /** 特殊风格主题 */
-export type ThemeStyle = 'default' | 'ocean-light' | 'ocean-dark' | 'forest-light' | 'forest-dark' | 'slate-light' | 'slate-dark'
+export type ThemeStyle = 'default' | 'ocean-light' | 'ocean-dark' | 'forest-light' | 'forest-dark' | 'slate-light' | 'slate-dark' | 'ember-light' | 'ember-dark' | 'porcelain' | 'landscape' | 'sage' | 'peach' | 'lavender' | 'landscape-night' | 'vermeer-night' | 'caravaggio-night' | 'vangogh-night' | 'synthwave-night'
 
 /** 默认主题模式 */
 export const DEFAULT_THEME_MODE: ThemeMode = 'dark'
@@ -231,6 +231,27 @@ export interface AppSettings {
   agentMaxBudgetUsd?: number
   /** Agent 最大轮次（0 或 undefined = SDK 默认） */
   agentMaxTurns?: number
+  /**
+   * 本地调试开关：显式打开尚未发布的模块（见 main/lib/feature-gate.ts）。
+   *
+   * 仅在非打包环境生效；打包产物会忽略该字段，避免改 settings.json 就能
+   * 解锁未完成功能。留空即全部按门禁默认状态处理。
+   */
+  enabledDevModules?: string[]
+  /**
+   * 门禁计算后的生效模块清单（只读，由主进程下发，不读回 settings.json）。
+   *
+   * 渲染层据此决定入口与视图是否展示，避免自己再维护一份发布状态。
+   */
+  effectiveDevModules?: string[]
+  /**
+   * 全能力调试放开是否生效（只读，由主进程下发，不读回 settings.json）。
+   *
+   * 为 true 时渲染层把全部业务包视为本地已开启，无需用户在能力中心逐个打开。
+   * 仅在非打包环境且显式设置 GRAVITAS_UNLOCK_ALL_CAPABILITIES=1 时为 true，
+   * 详见 main/lib/dev-unlock.ts。
+   */
+  capabilitiesUnlocked?: boolean
   /** 教程推荐横幅是否已关闭 */
   tutorialBannerDismissed?: boolean
   /** 自动归档天数（0 = 禁用，默认 7） */
@@ -254,6 +275,15 @@ export interface AppSettings {
   appIconVariant?: string
   /** 已订阅的营销领域业务包 id（如 influencer / paid-media）。空数组 = 未启用营销，此时营销工具与指令不注入 Agent */
   marketingCapabilities?: string[]
+  /** 已订阅的通用业务领域包 id（如 outbound-sourcing）。 */
+  domainCapabilities?: string[]
+  /** 已启用的新媒体运营能力；仅控制本地 Skills/Tools，不连接真实平台。 */
+  newMediaCapabilities?: string[]
+  /**
+   * 行为采集设置（为专业版分析能力提供数据基础）。
+   * 缺省时按 TELEMETRY_DEFAULT_ENABLED 处理：被动采集开启、情绪打卡关闭。
+   */
+  telemetry?: TelemetrySettings
   /** 语音输入设置（Access Token 以加密态存储，由专用服务解密后返回渲染进程） */
   voiceDictation?: VoiceDictationPersistedSettings
   /** 启动时自动清理临时文件（gravitas-preview、gravitas-installers），默认 true */
@@ -311,6 +341,21 @@ export interface AppSettings {
     tunnelUrl?: string
     /** 本地监听端口，默认 8765 */
     port?: number
+  }
+  /** Companion 远程访问（手机浏览器）配置 */
+  companionServer?: {
+    /** 是否启用（启用后主进程自动启动监听） */
+    enabled?: boolean
+    /** 监听端口，默认 8790 */
+    port?: number
+    /** 监听地址，默认 0.0.0.0（局域网）；建议填 Tailscale IP 以缩小暴露面 */
+    bindAddress?: string
+    /** 长期访问 token 的 SHA-256 hash（绝不存明文） */
+    tokenHash?: string
+    /** Web Push VAPID 公钥（首次启用推送时自动生成） */
+    vapidPublicKey?: string
+    /** Web Push VAPID 私钥（绝不外泄，仅用于主进程签名推送） */
+    vapidPrivateKey?: string
   }
 }
 

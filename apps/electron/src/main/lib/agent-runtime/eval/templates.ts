@@ -81,8 +81,8 @@ export const codeReviewerTemplate: CreateBenchmarkRequest = {
   title: '代码审查能力评测',
   description: '评测 code-reviewer sub-agent 的代码质量审查能力，包括问题发现、建议质量和输出格式。',
   targetAgentId: 'code-reviewer',
-  provider: 'anthropic',
-  modelId: 'claude-sonnet-4-20250514',
+  provider: "",
+  modelId: "",
   targetScore: 75,
   cases: [
     {
@@ -100,9 +100,9 @@ export const codeReviewerTemplate: CreateBenchmarkRequest = {
       caseId: 'performance-issue',
       statement: performanceCaseStatement(),
       rubricItems: [
-        { name: '发现重复计算问题', points: 30, check: '指出 filter 和 sort 在每次渲染时重复执行，建议使用 useMemo' },
-        { name: '发现缺少防抖', points: 20, check: '指出输入过滤缺少防抖/节流，频繁渲染问题' },
-        { name: '发现 key 使用不当', points: 20, check: '检查是否提到 key={user.id} 在列表重排时的性能影响' },
+        { name: '发现重复计算问题', points: 30, check: '指出 filter 和 sort 在每次渲染时重复执行，在列表较大或渲染频繁时建议使用 useMemo，并说明收益条件' },
+        { name: '避免无依据的防抖建议', points: 20, check: '说明本地过滤不必默认防抖，仅在数据量大或计算昂贵时提出并说明条件' },
+        { name: '正确判断列表 key', points: 20, check: '确认 key={user.id} 是稳定且合适的 key，不把它误报为缺陷' },
         { name: '给出优化方案', points: 20, check: '提供具体的性能优化代码示例' },
         { name: '输出格式规范', points: 10, check: '按严重程度分类，结构清晰' },
       ],
@@ -122,26 +122,23 @@ export const codeReviewerTemplate: CreateBenchmarkRequest = {
 }
 
 const explorerAuthCaseStatement = () =>
-  '在一个典型的 Express + TypeScript 项目中，用户认证流程涉及哪些文件和函数？\n\n' +
-  '请搜索并返回：\n' +
-  '1. 认证相关的路由定义文件\n' +
-  '2. 中间件函数名称和位置\n' +
-  '3. 用户模型/类型定义位置\n' +
-  '4. JWT 或 session 处理逻辑位置\n\n' +
-  '以结构化格式返回结果。'
+  "请根据下面的项目文件清单还原用户认证流程：\n\n" +
+  "- src/routes/auth.routes.ts：注册 POST /login，调用 AuthController.login\n" +
+  "- src/controllers/auth.controller.ts：校验输入并调用 AuthService.authenticate\n" +
+  "- src/services/auth.service.ts：查询 User，并调用 signAccessToken\n" +
+  "- src/middleware/auth.middleware.ts：导出 verifyToken，从 Authorization 读取 JWT\n" +
+  "- src/models/user.ts：定义 User 与 UserRole\n" +
+  "- src/security/jwt.ts：导出 signAccessToken 与 verifyAccessToken\n\n" +
+  "请给出从登录到受保护请求的调用顺序，标明文件和函数，并指出还需要读取哪些实现细节才能确认安全性。"
 
 const explorerDependencyCaseStatement = () =>
-  '分析一个 React 项目的依赖关系：\n\n' +
-  '项目使用 Vite + React + TypeScript，包含以下目录结构：\n' +
-  '- src/components/\n' +
-  '- src/hooks/\n' +
-  '- src/utils/\n' +
-  '- src/types/\n\n' +
-  '请找出：\n' +
-  '1. 哪些组件使用了自定义 hooks\n' +
-  '2. 哪些文件被最多其他文件导入\n' +
-  '3. 是否存在循环依赖风险\n\n' +
-  '以结构化格式返回分析结果。'
+  "请根据下面的 import 清单分析依赖关系：\n\n" +
+  "- src/components/UserList.tsx -> src/hooks/useUsers.ts, src/types/user.ts\n" +
+  "- src/components/UserCard.tsx -> src/types/user.ts, src/utils/avatar.ts\n" +
+  "- src/hooks/useUsers.ts -> src/api/users.ts, src/types/user.ts\n" +
+  "- src/api/users.ts -> src/utils/http.ts, src/types/user.ts\n" +
+  "- src/utils/http.ts -> src/api/users.ts\n\n" +
+  "请列出组件与 hook 的对应关系、被引用最多的文件，并明确给出循环依赖链。"
 
 /** explorer 评测模板：测试代码库探索能力 */
 export const explorerTemplate: CreateBenchmarkRequest = {
@@ -149,8 +146,8 @@ export const explorerTemplate: CreateBenchmarkRequest = {
   title: '代码库探索能力评测',
   description: '评测 explorer sub-agent 的代码库搜索、信息收集和结构化输出能力。',
   targetAgentId: 'explorer',
-  provider: 'anthropic',
-  modelId: 'claude-sonnet-4-20250514',
+  provider: "",
+  modelId: "",
   targetScore: 70,
   cases: [
     {
@@ -170,7 +167,7 @@ export const explorerTemplate: CreateBenchmarkRequest = {
       rubricItems: [
         { name: '识别 hooks 使用', points: 30, check: '正确列出组件与 hooks 的对应关系' },
         { name: '分析导入频次', points: 30, check: '正确识别高频被导入的文件（如 types、utils）' },
-        { name: '发现循环依赖', points: 25, check: '识别潜在的循环依赖模式（如 A→B→C→A）' },
+        { name: '发现循环依赖', points: 25, check: '明确识别 src/api/users.ts 与 src/utils/http.ts 的双向循环依赖' },
         { name: '输出结构化', points: 15, check: '使用表格或列表清晰展示依赖关系' },
       ],
     },
@@ -210,8 +207,8 @@ export const researcherTemplate: CreateBenchmarkRequest = {
   title: '技术调研能力评测',
   description: '评测 researcher sub-agent 的技术方案对比、分析和推荐能力。',
   targetAgentId: 'researcher',
-  provider: 'anthropic',
-  modelId: 'claude-sonnet-4-20250514',
+  provider: "",
+  modelId: "",
   targetScore: 70,
   cases: [
     {

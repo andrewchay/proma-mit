@@ -115,7 +115,30 @@ describe('Agent 编排 会话级发送队列', () => {
       { queueId: 'x', input: EMPTY_INPUT, callbacks: EMPTY_CALLBACKS },
     ])
     expect(orchestrator.getQueuedMessageCount('s-stop')).toBe(1)
-    orchestrator.stop('s-stop')
+    const result = orchestrator.stop('s-stop')
+    expect(result).toMatchObject({ requestAccepted: false, stopped: false, reason: 'not-active', processTermination: 'NOT_VERIFIED' })
     expect(orchestrator.getQueuedMessageCount('s-stop')).toBe(0)
+  })
+
+  test('stop 仅接受匹配 generation 的目标 attempt', () => {
+    const activeSessions = (orchestrator as unknown as { activeSessions: Map<string, number> }).activeSessions
+    activeSessions.set('s-generation', 101)
+
+    expect(orchestrator.stop('s-generation', 100)).toMatchObject({
+      requestAccepted: false,
+      stopped: false,
+      reason: 'generation-mismatch',
+      activeGeneration: 101,
+    })
+    expect(activeSessions.get('s-generation')).toBe(101)
+
+    expect(orchestrator.stop('s-generation', 101)).toMatchObject({
+      requestAccepted: true,
+      stopped: false,
+      reason: 'stop-request-accepted',
+      activeGeneration: 101,
+      processTermination: 'NOT_VERIFIED',
+    })
+    expect(activeSessions.has('s-generation')).toBe(false)
   })
 })

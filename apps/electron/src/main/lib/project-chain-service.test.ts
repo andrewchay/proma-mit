@@ -8,12 +8,13 @@ import {
   createProject,
   createTask,
   createTaskDependency,
+  getProjectDb,
   initProjectDb,
   listTaskBlockers,
   updateAgentExecution,
   updateTask,
 } from './project-sqlite-store'
-import { getProjectChain, updateProjectChain } from './project-chain-service'
+import { getProjectChain, onProjectChainChange, updateProjectChain } from './project-chain-service'
 import { saveWorkflowIdentityDirectory } from './workflow-identity-service'
 import type { ProjectChainCommand } from '@gravitas/shared'
 
@@ -28,6 +29,41 @@ afterAll(() => {
   if (previousDirectory === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = previousDirectory
   rmSync(directory, { recursive: true, force: true })
+})
+
+test('Given 外层事务回滚 When 项目链保存 Then 不发出已提交事件；提交后异常监听器不阻断其他监听器', async () => {
+  const project = createProject({ title: '修订通知事务', description: '' })
+  const events: string[] = []
+  const unsubscribeFailing = onProjectChainChange(() => { throw new Error('模拟监听器异常') })
+  const unsubscribeRecording = onProjectChainChange((projectId) => events.push(projectId))
+  const decision = {
+    kind: 'decision' as const,
+    title: '待确认方向', rationale: '需要拍板', evidence: 'fixture',
+    deadlineAt: Date.now() + 60_000,
+    sourceRefs: [{ sourceType: 'task' as const, sourceId: project.id, locator: 'fixture:decision' }],
+    daci: { driverId: 'local-user', approverId: 'local-user', contributorIds: [], informedIds: [] },
+  }
+  try {
+    expect(() => getProjectDb().transaction(() => {
+      updateProjectChain(project.id, 0, decision)
+      expect(events).toEqual([])
+      throw new Error('模拟外层回滚')
+    })()).toThrow('模拟外层回滚')
+    await Promise.resolve()
+    expect(getProjectChain(project.id).revision).toBe(0)
+    expect(events).toEqual([])
+
+    getProjectDb().transaction(() => {
+      updateProjectChain(project.id, 0, decision)
+      expect(events).toEqual([])
+    })()
+    await Promise.resolve()
+    expect(getProjectChain(project.id).revision).toBe(1)
+    expect(events).toEqual([project.id])
+  } finally {
+    unsubscribeFailing()
+    unsubscribeRecording()
+  }
 })
 
 test('项目决策、协作、验收与交接在数据库重开后保留，并拒绝过期写入与跨项目引用', async () => {

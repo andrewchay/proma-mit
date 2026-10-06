@@ -226,9 +226,12 @@ proma-mit/
 | `calendar-sync-service.ts` | 多日历源（Google/Apple/Outlook/本地）同步配置、冲突策略、增量同步 |
 | `calendar-eventkit-bridge.ts` | macOS EventKit 桥接：权限请求、系统日历读取、双向同步（依赖 `resources/read-calendar.swift`） |
 | `reminder-service.ts` / `reminder-ipc-handlers.ts` | 智能提醒：日程冲突 / Deadline 分级提醒 / 去重，扫描启动/停止 IPC |
-| `project-types.ts` | 项目/任务/子任务/会议纪要/用户映射/Brief 回执类型定义 |
-| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（sql.js，`~/.gravitas/projects/paa.db`；含 agent_employees / agent_executions 两表） |
-| `project-service.ts` | 项目管理主服务：项目/任务/子任务 CRUD、会议纪要导入与 AI 提取、看板、进度、模板、摘要发送 |
+| `project-types.ts` | 项目/任务/子任务/会议纪要/用户映射/Brief 回执类型定义（含 TaskStatusDef 状态分组、ReorderTaskInput 拖拽排序） |
+| `task-status-logic.ts` / `task-reorder-logic.ts` | 状态语义组纯函数（组解析/完成判断/预置种子）与拖拽排序纯函数（中点法 + 间隙耗尽重编号） |
+| `task-status-store-bridge.ts` | 同步层按项目取状态定义与组判断的桥接入口（避免循环引用） |
+| `project-sqlite-store.ts` | 项目管理 SQLite 数据层（双驱动：生产 better-sqlite3 直写 WAL，bun test sql.js 导出持久化；`~/.gravitas/projects/paa.db`；含 task_statuses 状态表、tasks.sort_order 排序列、agent_employees / agent_executions 等） |
+| `project-service.ts` | 项目管理主服务：项目/任务/子任务 CRUD、会议纪要导入与 AI 提取、看板、进度、模板、摘要发送；任务变更回调携带 changedFields/source（回声抑制与排序降噪用） |
+| `project-auto-sync.ts` / `project-polling-service.ts` | 外部同步：推方向组语义二值完成态 + 回声抑制 + 仅排序变更不推送；拉方向组映射（外部"未完成"仅在本地完成组时回退）+ POLL_STATUS_CHANGED 前端推送 |
 | `agent-employee-service.ts` | AI 员工（P0-P3）：员工 CRUD、AgentTodoProvider、headless + Workflow SOP 双执行器、60s 心跳保活/超时/stale 回退、by-task 权限（safe/bypassPermissions）、并发排队 |
 | `project-summary-service.ts` | 项目周报/摘要生成 |
 | `project-alert-service.ts` | 项目告警（高风险任务等） |
@@ -466,7 +469,8 @@ proma-mit/
 |---|---|
 | `components/ui/` | shadcn/ui + Radix UI 原始组件（~30 个） |
 | `components/welcome/` | 欢迎页 |
-| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/看板/会议纪要/风险报告）、`AgentTeamPanel.tsx`（AI 员工团队管理 + 效能总览） |
+| `components/projects/` | 工作模块-项目管理：`ProjectView.tsx`（项目/任务/会议纪要/风险报告）、`kanban/`（拖拽看板：KanbanBoard 编排 + 乐观更新回滚、KanbanColumn、TaskCard、KanbanColumnSettings）、`AgentTeamPanel.tsx`（AI 员工团队管理 + 效能总览） |
+| `atoms/project-atoms.ts` | 项目管理 Jotai 状态层：任务表/状态定义（按 projectId 隔离）、看板列派生、拖拽乐观移动与回滚 |
 | `components/calendar/` | 工作模块-日程管家：`CalendarModuleView.tsx`（子视图切换）、`ScheduleView.tsx`、`EventCreatePanel.tsx`、`CalendarSyncView.tsx` |
 | `components/automation/` | 工作模块-自动化：`AutomationModuleView.tsx`（子视图：运行中/定时任务/运行记录）、`AutomationRunningPanel.tsx` |
 | `components/onboarding/` | 新手引导 |
@@ -630,7 +634,7 @@ proma-mit/
 ├── user-profile.json          # 用户档案
 ├── settings.json              # 应用设置
 ├── calendar/                  # 日程管家：events.jsonl / tasks.jsonl
-├── projects/                  # 项目管理：paa.db（sql.js SQLite，写后落盘）
+├── projects/                  # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test sql.js 导出）
 └── default-skills/            # 默认 Skills 缓存
 ```
 

@@ -17,10 +17,20 @@
  * - 与 RecommendationService 集成（生成推荐）
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { getConfigDir } from './config-paths'
 import { computeRetrievalScore, planConsolidation, type ConsolidationOptions } from './memory-governance'
+import {
+  filterItemsForScope,
+  resolveWorkspaceProjectBinding,
+  type MemoryScope,
+  type MemoryScopeContext,
+  type MemorySource,
+} from './project-memory-scope'
+
+export type { MemoryScope, MemoryScopeKind, MemorySource } from './project-memory-scope'
 
 // ===== 类型定义 =====
 
@@ -49,6 +59,13 @@ export interface MemoryItem {
   mergedInto?: string | null
   /** 本条目合并过的来源条目 id 列表 */
   mergedFrom?: string[]
+  /**
+   * 归属范围（可选）：personal / workspace / project。
+   * 旧版无 scope 字段的 JSON 条目原样兼容，语义上视为 personal。
+   */
+  scope?: MemoryScope
+  /** 来源元数据（可选）：记录观察/写入时的工作空间、会话、run 与出处定位 */
+  source?: MemorySource
 }
 
 export interface MemoryItemsBlock {
@@ -102,28 +119,100 @@ function ensureDataDirs(): void {
 const ITEMS_FILE = 'items.json'
 
 let itemsCache: MemoryItem[] | null = null
+let itemsStoragePath: string | null = null
+let itemsStorageError: Error | null = null
 
 function getItemsFilePath(): string {
   return join(getDataDir(), ITEMS_FILE)
 }
 
+function createItemsStorageError(path: string, cause: unknown): Error {
+  const detail = cause instanceof Error ? cause.message : String(cause)
+  return new Error(
+    `记忆条目文件无法读取，已停止写入以避免覆盖原数据：${path}（${detail}）。请先修复或显式替换该文件，再调用 resetMemoryItemsStorageState() 重试。`,
+    { cause },
+  )
+}
+
+function switchItemsStoragePath(path: string): void {
+  if (itemsStoragePath === path) return
+  itemsCache = null
+  itemsStorageError = null
+  itemsStoragePath = path
+}
+
+function parseItemsFile(path: string): MemoryItem[] {
+  const data: unknown = JSON.parse(readFileSync(path, 'utf-8'))
+  if (!Array.isArray(data)) {
+    throw new Error('顶层结构必须是数组')
+  }
+  // 旧版数组条目没有 utilityScore/useCount/archivedAt 等可选字段，保持原样即可兼容。
+  return data as MemoryItem[]
+}
+
+function failItemsStorage(path: string, cause: unknown): never {
+  const error = createItemsStorageError(path, cause)
+  itemsCache = null
+  itemsStorageError = error
+  throw error
+}
+
 function loadItems(): MemoryItem[] {
-  if (itemsCache) return itemsCache
   const path = getItemsFilePath()
-  if (!existsSync(path)) return []
-  try {
-    const data = JSON.parse(readFileSync(path, 'utf-8'))
-    itemsCache = Array.isArray(data) ? data : []
+  switchItemsStoragePath(path)
+  if (itemsStorageError) throw itemsStorageError
+  if (itemsCache) return itemsCache
+  if (!existsSync(path)) {
+    itemsCache = []
     return itemsCache
-  } catch {
-    return []
+  }
+  try {
+    itemsCache = parseItemsFile(path)
+    return itemsCache
+  } catch (error) {
+    return failItemsStorage(path, error)
+  }
+}
+
+function assertExistingItemsFileReadable(path: string): void {
+  if (!existsSync(path)) return
+  try {
+    parseItemsFile(path)
+  } catch (error) {
+    failItemsStorage(path, error)
   }
 }
 
 function saveItems(items: MemoryItem[]): void {
   ensureDataDirs()
-  writeFileSync(getItemsFilePath(), JSON.stringify(items, null, 2))
-  itemsCache = items
+  const path = getItemsFilePath()
+  switchItemsStoragePath(path)
+  if (itemsStorageError) throw itemsStorageError
+
+  // 即使缓存已加载，也要在覆盖前检查磁盘文件，避免外部损坏后被缓存内容静默覆盖。
+  assertExistingItemsFileReadable(path)
+  const tempPath = join(
+    getDataDir(),
+    `.${ITEMS_FILE}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`,
+  )
+  try {
+    writeFileSync(tempPath, JSON.stringify(items, null, 2))
+    renameSync(tempPath, path)
+    itemsCache = items
+  } finally {
+    // rename 成功后临时路径已不存在；失败时删除残留，但绝不触碰原文件。
+    rmSync(tempPath, { force: true })
+  }
+}
+
+/**
+ * 清除内存缓存与失败关闭状态，不删除或改写任何数据。
+ * 仅应在调用方已显式修复/替换 items.json 后用于重新加载，也供隔离测试重置状态。
+ */
+export function resetMemoryItemsStorageState(): void {
+  itemsCache = null
+  itemsStoragePath = null
+  itemsStorageError = null
 }
 
 // ===== CRUD =====
@@ -163,6 +252,82 @@ export function searchMemoryItems(query: string, opts: { includeArchived?: boole
     .sort(byRetrievalScoreDesc(now))
 }
 
+// ===== 范围检索（项目记忆归属过滤） =====
+
+/** 动态 require 会话/绑定服务用（Bun ESM 下裸 require 不存在；cjs 打包下 __filename 可用） */
+const scopedRequire = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
+
+export interface ScopedMemorySearchInput {
+  /** 内容匹配关键词（大小写不敏感，匹配 title/content/tags） */
+  query: string
+  /** 发起检索的 Agent 会话 id（用于解析 workspaceId / projectId / 绑定） */
+  sessionId: string
+  /** 返回条数上限（默认 20） */
+  limit?: number
+}
+
+interface ScopedSessionResolution {
+  context: MemoryScopeContext
+}
+
+/**
+ * 从 Agent 会话元数据解析范围上下文。
+ * 动态 require agent-session-manager，避免模块环依赖；会话不存在时降级为纯个人上下文。
+ */
+function resolveScopedSession(sessionId: string): ScopedSessionResolution {
+  let workspaceId: string | undefined
+  let projectId: string | undefined
+  try {
+    const sessionManager = scopedRequire('./agent-session-manager') as {
+      getAgentSessionMeta?: (id: string) => { workspaceId?: string; projectId?: string } | undefined
+    }
+    const meta = sessionManager.getAgentSessionMeta?.(sessionId)
+    workspaceId = meta?.workspaceId
+    projectId = meta?.projectId
+  } catch {
+    // 会话索引不可用：按无工作空间/项目的个人上下文处理
+  }
+  const context: MemoryScopeContext = {
+    workspaceId,
+    projectId,
+    workspaceProjectBound: resolveWorkspaceProjectBinding(projectId ?? '', workspaceId ?? ''),
+  }
+  return { context }
+}
+
+/**
+ * 按会话范围过滤后再做内容匹配的范围检索。
+ * 先依据 session 的 workspaceId / projectId + 当前正式绑定过滤条目，再匹配 query 内容；
+ * 旧无 scope 记忆默认不出现在已绑定项目的检索结果中。
+ */
+export function searchScopedMemoryItems(input: ScopedMemorySearchInput): MemoryItem[] {
+  const limit = input.limit ?? 20
+  const { context } = resolveScopedSession(input.sessionId)
+  const lowerQuery = input.query.toLowerCase()
+  const now = Date.now()
+  return filterItemsForScope(loadItems(), context)
+    .filter((item) => !item.archivedAt)
+    .filter(
+      (item) =>
+        item.title.toLowerCase().includes(lowerQuery) ||
+        item.content.toLowerCase().includes(lowerQuery) ||
+        item.tags.some((tag) => tag.toLowerCase().includes(lowerQuery))
+    )
+    .sort(byRetrievalScoreDesc(now))
+    .slice(0, limit)
+}
+
+/**
+ * 按 id 读取单条记忆，并二次校验会话范围。
+ * 条目存在但不在该会话可见范围内时返回 undefined（与不存在的条目一致对待，不泄露归属信息）。
+ */
+export function getScopedMemoryItem(id: string, sessionId: string): MemoryItem | undefined {
+  const item = loadItems().find((entry) => entry.id === id)
+  if (!item) return undefined
+  const { context } = resolveScopedSession(sessionId)
+  return filterItemsForScope([item], context).length > 0 ? item : undefined
+}
+
 export function createMemoryItem(item: Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'>): MemoryItem {
   const newItem: MemoryItem = {
     ...item,
@@ -175,14 +340,13 @@ export function createMemoryItem(item: Omit<MemoryItem, 'id' | 'createdAt' | 'up
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
-  const items = loadItems()
-  items.push(newItem)
+  const items = [...loadItems(), newItem]
   saveItems(items)
   return newItem
 }
 
 export function updateMemoryItem(id: string, updates: Partial<Omit<MemoryItem, 'id' | 'createdAt'>>): MemoryItem | null {
-  const items = loadItems()
+  const items = [...loadItems()]
   const idx = items.findIndex((item) => item.id === id)
   if (idx === -1) return null
   const updated = { ...items[idx], ...updates, updatedAt: Date.now() }
@@ -206,7 +370,7 @@ export function deleteMemoryItem(id: string): boolean {
  * 检索侧（如 prompt 组装）命中条目后调用，使效用估计随真实使用更新。
  */
 export function recordMemoryUsage(id: string, utilityFeedback?: number): MemoryItem | null {
-  const items = loadItems()
+  const items = [...loadItems()]
   const idx = items.findIndex((item) => item.id === id)
   if (idx === -1) return null
   const item = items[idx]!
@@ -227,7 +391,7 @@ export function recordMemoryUsage(id: string, utilityFeedback?: number): MemoryI
 
 /** 恢复一条被归档的记忆（回滚 Maintain 的遗忘/合并）。 */
 export function restoreMemoryItem(id: string): MemoryItem | null {
-  const items = loadItems()
+  const items = [...loadItems()]
   const idx = items.findIndex((item) => item.id === id)
   if (idx === -1) return null
   const item = items[idx]!
@@ -258,7 +422,11 @@ export interface MemoryMaintenanceReport {
  */
 export function runMemoryMaintenance(opts: ConsolidationOptions = {}): MemoryMaintenanceReport {
   const now = Date.now()
-  const items = loadItems()
+  const items = loadItems().map((item) => ({
+    ...item,
+    tags: [...item.tags],
+    mergedFrom: item.mergedFrom ? [...item.mergedFrom] : undefined,
+  }))
   const activeBefore = items.filter((i) => !i.archivedAt).length
   const plan = planConsolidation(items, now, opts)
 
@@ -313,29 +481,43 @@ export function runMemoryMaintenance(opts: ConsolidationOptions = {}): MemoryMai
  * 解析模型输出为尚未写入的记忆候选。
  * 主动 Routine 只能使用这个函数，必须经 ApprovalService 才能持久化。
  */
+/**
+ * 解析结构化记忆块。
+ * @returns 合法块返回条目数组（可能为空数组 = 模型明确报告无新记忆）；
+ *          未找到块或 JSON 非法返回 null（输出违反契约）。
+ */
+export function extractMemoryItemsBlock(
+  output: string,
+): Array<{ title: string; content: string; kind: MemoryItemKind; tags: string[]; confidence: number }> | null {
+  const regex = /```proma-memory-items\n([\s\S]*?)\n```/
+  const match = output.match(regex)
+  if (!match) return null
+
+  try {
+    const block: MemoryItemsBlock = JSON.parse(match[1]!)
+    if (!Array.isArray(block.items)) return null
+    return block.items.map((item) => ({
+      title: item.title,
+      content: item.content,
+      kind: normalizeKind(item.kind),
+      tags: item.tags ?? [],
+      confidence: item.confidence ?? 0.8,
+    }))
+  } catch {
+    return null
+  }
+}
+
 export function extractMemoryCandidatesFromOutput(
   output: string,
   runId?: string,
   sessionId?: string,
 ): Array<Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'>> {
-  const regex = /```proma-memory-items\n([\s\S]*?)\n```/
-  const match = output.match(regex)
-  if (!match) return []
-
-  try {
-    const block: MemoryItemsBlock = JSON.parse(match[1]!)
-    return block.items.map((item) => ({
-        title: item.title,
-        content: item.content,
-        kind: normalizeKind(item.kind),
-        tags: item.tags ?? [],
-        confidence: item.confidence ?? 0.8,
-        sourceRunId: runId ?? null,
-        sourceSessionId: sessionId ?? null,
-      }))
-  } catch {
-    return []
-  }
+  return (extractMemoryItemsBlock(output) ?? []).map((item) => ({
+    ...item,
+    sourceRunId: runId ?? null,
+    sourceSessionId: sessionId ?? null,
+  }))
 }
 
 function normalizeKind(kind: string | undefined): MemoryItemKind {

@@ -1,0 +1,31 @@
+[
+  {
+    "kind": "session_message",
+    "eventId": "fixture-message-1",
+    "sessionId": "fixture-session",
+    "workspaceId": "fixture-workspace",
+    "role": "user",
+    "content": "检查 src/main/lib 的上下文压缩实现。",
+    "createdAt": "2026-09-22T08:00:00.000Z"
+  },
+  {
+    "kind": "tool_observation",
+    "eventId": "fixture-tool-1",
+    "sessionId": "fixture-session",
+    "workspaceId": "fixture-workspace",
+    "toolName": "Read",
+    "result": "export const COMPACTION_THRESHOLD = 0.8",
+    "summary": "读取了压缩阈值常量。",
+    "createdAt": "2026-09-22T08:01:00.000Z"
+  },
+  {
+    "kind": "artifact",
+    "artifactId": "fixture-artifact-1",
+    "sourceEventId": "fixture-message-1",
+    "sessionId": "fixture-session",
+    "workspaceId": "fixture-workspace",
+    "title": "压缩检查结果",
+    "content": "阈值为上下文窗口的 80%。",
+    "createdAt": "2026-09-22T08:02:00.000Z"
+  }
+]

@@ -604,7 +604,7 @@ export type PromaEvent =
   | { type: 'turn_decision'; route: string; reason?: string }
 
 /** 外部入口触发 Agent 运行的来源 */
-export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow' | 'delegation'
+export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'workflow' | 'delegation' | 'companion'
 
 /** 协作子会话角色 */
 export type AgentDelegationRole = 'explore' | 'research' | 'implement' | 'review' | 'custom'
@@ -681,6 +681,10 @@ export type AgentRuntime = 'claude' | 'proma' | 'pi' | 'ai-sdk'
 /** 默认 Agent 运行时。旧会话/旧设置无显式 runtime 时，新会话默认 Pi Runtime（支持像
  * deepseek-v4-flash 这类 pi 模型），而非 Claude SDK——否则会报“selected model 不存在”。 */
 export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'pi'
+/** 软下线：历史配置仍可读取和执行，但不允许用户新建或切换至旧 runtime。 */
+export function isRetiredAgentRuntime(runtime: AgentRuntime): boolean {
+  return runtime === 'claude' || runtime === 'proma'
+}
 /** Agent runtime 展示名称，避免 UI / 编排层硬编码分支文案 */
 export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
   claude: 'Claude',
@@ -711,6 +715,8 @@ export interface AgentRuntimeCapabilities {
   supportsFileSnapshotRewind: boolean
   /** 是否支持模型输出的 partial streaming */
   supportsPartialStreaming: boolean
+  /** 是否支持调用级预算停止阈值；超额后停止，实际费用仍可能超过阈值。 */
+  supportsBudgetStopThreshold: boolean
 }
 
 export type AgentRuntimeForkMode = 'sdk_snapshot' | 'jsonl_history_copy'
@@ -743,6 +749,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: true,
     supportsFileSnapshotRewind: true,
     supportsPartialStreaming: true,
+    supportsBudgetStopThreshold: true,
   },
   proma: {
     supportsTools: true,
@@ -753,6 +760,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: false,
+    supportsBudgetStopThreshold: false,
   },
   pi: {
     supportsTools: true,
@@ -763,6 +771,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
+    supportsBudgetStopThreshold: false,
   },
   'ai-sdk': {
     supportsTools: true,
@@ -773,6 +782,9 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsNativeResume: false,
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
+    // Pilot 单次费用停止由受控请求出口在发送前强制（证据派生 → 预算内预留 → body 核验，否则 HTTP 零发送），
+    // 强度高于事后阈值；用户已于 G2 前批准放开（PILOT-20260928-56）。
+    supportsBudgetStopThreshold: true,
   },
 }
 
@@ -960,6 +972,23 @@ export interface AgentSessionMeta {
   sdkSessionId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /** Typed Context Compiler 会话级开关；显式值优先于工作区默认值。 */
+  typedContextCompiler?: boolean
+  /**
+   * 知识范围模式。
+   *
+   * - `project`：使用当前 Project 关联的知识库（Project 会话默认）
+   * - `explicit`：使用 explicitKnowledgeBaseIds 指定的知识库
+   * - `none`：本会话不启用知识检索（缺省，避免静默搜索全部资料）
+   *
+   * 旧会话没有此字段时按 `none` 处理：知识工具返回未配置提示，
+   * 而不是退回“搜索所有 Vault”。
+   */
+  knowledgeScopeMode?: 'project' | 'explicit' | 'none'
+  /** `explicit` 模式下选定的知识库 ID 列表 */
+  explicitKnowledgeBaseIds?: string[]
+  /** 创建会话时所属 Project ID（用于解析 `project` 模式范围） */
+  projectId?: string
   /** 是否置顶 */
   pinned?: boolean
   /** 是否已归档 */
@@ -1374,7 +1403,7 @@ export interface ContextGraph {
 }
 
 /** 凭据统一治理（PH2-D） */
-export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret'
+export type CredentialKind = 'channel' | 'feishu_bot' | 'dingtalk_bot' | 'mcp_client_secret' | 'new_media_account'
 
 export interface CredentialEntry {
   kind: CredentialKind
@@ -1390,6 +1419,10 @@ export interface CredentialRegistry {
   count: number
   riskCount: number
   risks: string[]
+  /** 各来源读取/检查失败的可见记录；读取失败绝不能伪装成「无风险」。 */
+  sourceErrors: string[]
+  /** 本次体检完成时间戳 */
+  checkedAt: number
 }
 
 /** Skill 目录下的文件/子目录节点（递归树） */
@@ -1446,6 +1479,8 @@ export interface AgentSendInput {
   modelId?: string
   /** 本次发送使用的 Agent runtime，未传时继承会话或默认 Claude */
   agentRuntime?: AgentRuntime
+  /** 本次 Runtime 调用的预算停止阈值（USD）；不支持该门禁的 Runtime 必须拒绝执行。 */
+  runtimeBudgetLimitUsd?: number
   /** 工作区 ID（用于确定 cwd） */
   workspaceId?: string
   /** 附加的外部目录（绝对路径，传递给 SDK additionalDirectories） */
@@ -1454,6 +1489,12 @@ export interface AgentSendInput {
   customMcpServers?: Record<string, Record<string, unknown>>
   /** 强制覆盖权限模式（飞书等无 UI 交互场景下强制 'bypassPermissions'） */
   permissionModeOverride?: PromaPermissionMode
+  /**
+   * 安全研发会话的隔离写入边界：置位后 safe 模式允许 Write/Edit 仅写入会话 cwd
+   * （隔离 Git worktree）内的路径；Bash 仍只读、外部资源仍禁。只由无监督研发
+   * runner 设置，交互会话不得置位。
+   */
+  worktreeScopedWrite?: boolean
   /** 用户通过 /skill:xxx 引用的 Skill slug 列表 */
   mentionedSkills?: string[]
   /** 用户通过 #mcp:xxx 引用的 MCP 服务器名称列表 */
@@ -1964,6 +2005,13 @@ export interface PermissionResponse {
 /**
  * Agent 相关 IPC 通道常量
  */
+/** 更新会话当前 Project 的输入 */
+export interface UpdateAgentSessionProjectInput {
+  sessionId: string
+  /** 目标 Project id；null/undefined 表示清除项目上下文 */
+  projectId?: string | null
+}
+
 export const AGENT_IPC_CHANNELS = {
   // 会话管理
   /** 获取会话列表 */
@@ -1974,6 +2022,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_SDK_MESSAGES: 'agent:get-sdk-messages',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
+  /** 更新会话当前 Project（同时切换项目知识范围；必须已通过工作空间绑定授权） */
+  UPDATE_SESSION_PROJECT: 'agent:update-session-project',
   /** 更新会话 Agent Runtime */
   UPDATE_SESSION_AGENT_RUNTIME: 'agent:update-session-agent-runtime',
   /** 删除会话 */
@@ -2299,6 +2349,16 @@ export const AGENT_IPC_CHANNELS = {
   EVAL_SET_AUTO_SCHEDULE: 'agent:eval-set-auto-schedule',
   /** 列出所有自动评测配置 */
   EVAL_LIST_AUTO_SCHEDULES: 'agent:eval-list-auto-schedules',
+} as const
+
+/**
+ * Companion（手机浏览器远程访问）IPC 通道
+ */
+export const COMPANION_IPC_CHANNELS = {
+  /** 生成一次性配对码（设置页触发） */
+  GENERATE_PAIRING_CODE: 'companion:generate-pairing-code',
+  /** 查询 companion 服务状态（是否运行、端口） */
+  GET_STATUS: 'companion:get-status',
 } as const
 
 /**

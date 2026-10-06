@@ -164,6 +164,8 @@ export interface RunImproveOptions {
   state: StateGuard
   maxRounds: number
   abortSignal?: AbortSignal
+  /** 每轮逐 Case 运行进度，供界面解释当前状态。 */
+  onProgress?: EvalProgressCallback
   /** 每接受一个候选时回调其 afterState（供调用方捕获最佳改进，用于“采纳写回”） */
   onAcceptedCandidate?: (candidate: SelfEvolveChange) => void
 }
@@ -182,15 +184,21 @@ export interface ImproveSummary {
 export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummary> {
   // Baseline 由 selfEvolver 内部完成
   // 构造指定 Case 集的评测函数：train 集驱动优化；held-out 集仅在对照启用时评测
-  const makeEvaluator = (caseIds: string[]) => (def: unknown, benchmark: BenchmarkConfig) =>
-    Promise.all(
+  const makeEvaluator = (caseIds: string[]) => async (def: unknown, benchmark: BenchmarkConfig) => {
+    let completedCases = 0
+    return Promise.all(
       caseIds.map(async (caseId) => {
+        opts.onProgress?.({
+          benchmarkId: benchmark.id,
+          caseId,
+          phase: "case_start",
+          completedCases,
+          totalCases: caseIds.length,
+        })
         const version = opts.state.version()
-        // def 为候选（change.afterState）：若带 prompt 字段则作为系统提示覆盖
-        const candidatePrompt =
-          def && typeof def === 'object'
-            ? (def as Record<string, unknown>).prompt as string | undefined
-            : undefined
+        const candidatePrompt = def && typeof def === "object"
+          ? (def as Record<string, unknown>).prompt as string | undefined
+          : undefined
         const { score, runs } = await evaluateCaseAcrossRuns(
           benchmark,
           caseId,
@@ -198,6 +206,15 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           opts.delegate,
           { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal, systemPrompt: candidatePrompt },
         )
+        completedCases += 1
+        opts.onProgress?.({
+          benchmarkId: benchmark.id,
+          caseId,
+          phase: "case_complete",
+          completedCases,
+          totalCases: caseIds.length,
+          score,
+        })
         return {
           caseId,
           score: score >= 0 ? score : null,
@@ -208,6 +225,7 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
         }
       }),
     )
+  }
   const delegateForEvolve = makeEvaluator(opts.benchmark.cases)
   const evaluateHeldOut = opts.includeHeldOut && opts.benchmark.heldOutCases?.length
     ? makeEvaluator(opts.benchmark.heldOutCases)

@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Zap } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -19,9 +19,10 @@ import { SearchDialog } from './SearchDialog'
 import { UserAvatar } from '@/components/chat/UserAvatar'
 import { activeViewAtom } from '@/atoms/active-view'
 import { visibleCoreWorkModulesAtom, visibleExtendedWorkModulesAtom } from '@/atoms/work-module-registry'
+import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
+import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
-import { settingsTabAtom, settingsOpenAtom } from '@/atoms/settings-tab'
-import { CAPABILITY_MANIFEST, enabledCapabilitiesAtom, isCapabilityEnabled, type CapabilityId } from '@/atoms/marketing-atoms'
+import { CAPABILITY_MANIFEST, activeCapabilitiesAtom, type CapabilityId } from '@/atoms/marketing-atoms'
 import {
   conversationsAtom,
   currentConversationIdAtom,
@@ -167,10 +168,15 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 
 export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom)
-  const visibleCoreModules = useAtomValue(visibleCoreWorkModulesAtom)
-  const visibleExtendedModules = useAtomValue(visibleExtendedWorkModulesAtom)
-  const setSettingsTab = useSetAtom(settingsTabAtom)
-  const setSettingsOpen = useSetAtom(settingsOpenAtom)
+  // 订阅门控（领域包）与开发门禁（dev-gate）叠加：两者都放行才显示。
+  const enabledDevModules = useAtomValue(enabledDevModulesAtom)
+  const proactiveVisible = isViewVisible('proactive', enabledDevModules)
+  const visibleCoreModules = useAtomValue(visibleCoreWorkModulesAtom).filter(
+    (module) => isViewVisible(module.id, enabledDevModules),
+  )
+  const visibleExtendedModules = useAtomValue(visibleExtendedWorkModulesAtom).filter(
+    (module) => isViewVisible(module.id, enabledDevModules),
+  )
   const [conversations, setConversations] = useAtom(conversationsAtom)
   const currentConversationId = useAtomValue(currentConversationIdAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
@@ -1221,7 +1227,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             <TooltipContent side="right">Chat 模式</TooltipContent>
           </Tooltip>
 
-          <Tooltip>
+          {proactiveVisible && <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
@@ -1241,7 +1247,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Proactive Center</TooltipContent>
-          </Tooltip>
+          </Tooltip>}
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1351,8 +1357,11 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               <button
                 type="button"
                 aria-label="打开设置"
-                onClick={() => setSettingsOpen(true)}
-                className="relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5"
+                onClick={() => setActiveView('settings')}
+                className={cn(
+                  'relative size-10 flex items-center justify-center rounded-[12px] transition-colors titlebar-no-drag hover:bg-foreground/5',
+                  activeView === 'settings' && 'bg-foreground/[0.08] text-foreground'
+                )}
               >
                 <UserAvatar avatar={userProfile.avatar} size={28} />
                 {(hasUpdate || hasEnvironmentIssues) && (
@@ -1438,7 +1447,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 </button>
               )
             })}
-            <button
+            {proactiveVisible && <button
               onClick={() => setActiveView('proactive')}
               className={cn(
                 'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
@@ -1449,15 +1458,27 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             >
               <Zap size={16} className={activeView === 'proactive' ? 'text-primary-foreground' : 'text-foreground/40'} />
               <span className="flex-1 text-left">Proactive Center</span>
-            </button>
+            </button>}
             <button
-              onClick={() => { setSettingsTab('agent'); setSettingsOpen(true) }}
-              className="group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80 transition-colors titlebar-no-drag"
+              onClick={() => setActiveView('workspace-config')}
+              className={cn(
+                'group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
+                activeView === 'workspace-config'
+                  ? 'bg-primary text-primary-foreground shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
+                  : 'text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground/80'
+              )}
             >
-              <Bot size={16} className="text-foreground/40" />
+              <Bot size={16} className={activeView === 'workspace-config' ? 'text-primary-foreground' : 'text-foreground/40'} />
               <span className="flex-1 text-left">工作空间配置</span>
               {capabilities && (
-                <span className="flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-foreground/[0.08] text-[10px] text-foreground/55 tabular-nums">
+                <span
+                  className={cn(
+                    'flex-shrink-0 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full text-[10px] tabular-nums',
+                    activeView === 'workspace-config'
+                      ? 'bg-primary-foreground/20 text-primary-foreground'
+                      : 'bg-foreground/[0.08] text-foreground/55'
+                  )}
+                >
                   {capabilities.skills.length}
                 </span>
               )}
@@ -1565,7 +1586,9 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       {/* Workflow 模式：侧边栏显示工作流列表（模板 / 我的 Workflow / 运行历史），底部工作模块常驻 */}
       {activeView === 'workflow' ? (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="px-3 pt-3 pb-2 flex-1 min-h-0">
+          {/* 外层必须是 flex 容器：WorkflowSidebarList 靠 flex-1 + overflow-hidden 约束高度，
+              否则工作模块拉高后列表内容会溢出并叠加到底部工作模块上 */}
+          <div className="flex flex-col px-3 pt-3 pb-2 flex-1 min-h-0 overflow-hidden">
             <WorkflowSidebarList />
           </div>
           {renderWorkModule()}
@@ -1912,8 +1935,13 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       {/* 底部：用户资料 + 设置入口 */}
       <div className="px-3 pb-3">
         <button
-          onClick={() => setSettingsOpen(true)}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground"
+          onClick={() => setActiveView('settings')}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag',
+            activeView === 'settings'
+              ? 'bg-foreground/[0.07] text-foreground'
+              : 'text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground'
+          )}
         >
           <UserAvatar avatar={userProfile.avatar} size={28} />
           <span className="flex-1 text-sm truncate text-left">{userProfile.userName}</span>
@@ -2053,6 +2081,13 @@ const ConversationItem = React.memo(function ConversationItem({
           {streaming && (
             <span
               className="absolute left-1 top-1.5 bottom-1.5 w-[2px] rounded-full bg-emerald-500 animate-pulse pointer-events-none"
+              aria-hidden="true"
+            />
+          )}
+          {/* 选中态左侧 accent 竖条；有流式状态条时让位，避免同位置叠加 */}
+          {active && !streaming && (
+            <span
+              className="absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full bg-[hsl(var(--selection-accent))] pointer-events-none"
               aria-hidden="true"
             />
           )}
@@ -2273,6 +2308,13 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
                 'absolute left-1 top-1.5 bottom-1.5 w-[2px] rounded-full pointer-events-none',
                 SESSION_LEFT_ACCENT_CLASS[leftAccent]
               )}
+            />
+          )}
+          {/* 选中态左侧 accent 竖条；有后台任务状态条时让位，避免同位置叠加 */}
+          {active && !leftAccent && (
+            <span
+              className="absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full bg-[hsl(var(--selection-accent))] pointer-events-none"
+              aria-hidden="true"
             />
           )}
           <div className="flex-1 min-w-0">
@@ -2509,20 +2551,25 @@ const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem(
 /**
  * SubscribedCapabilities — 已订阅领域能力包导航区
  *
- * 在 core 工作模块下方展示已订阅的领域包（influencer/paid-media），
+ * 在 core 工作模块下方展示已订阅的领域包（influencer / paid-media / outbound-sourcing / new-media / research），
  * 点击切换视图；末尾提供「能力中心」入口打开订阅面板。
  */
 function SubscribedCapabilities(): React.ReactElement {
-  const [enabled] = useAtom(enabledCapabilitiesAtom)
+  // 使用 activeCapabilitiesAtom：只有本地开启且订阅权益允许的包才出现在导航中，
+  // 避免用户仅改 settings.json 就能让付费包入口出现。
+  const enabled = useAtomValue(activeCapabilitiesAtom)
   const activeView = useAtomValue(activeViewAtom)
   const setActiveView = useSetAtom(activeViewAtom)
 
   const subscribedBusiness = CAPABILITY_MANIFEST.filter(
-    (c) => c.kind === 'business' && isCapabilityEnabled(enabled, c.id as CapabilityId)
+    (c) => c.kind === 'business' && enabled.includes(c.id as CapabilityId)
   )
 
   const iconFor = (id: string): React.ReactNode => {
     if (id === 'paid-media') return <Megaphone size={16} className="text-foreground/40" />
+    if (id === 'outbound-sourcing') return <Globe2 size={16} className="text-foreground/40" />
+    if (id === 'new-media') return <Radio size={16} className="text-foreground/40" />
+    if (id === 'research') return <FlaskConical size={16} className="text-foreground/40" />
     return <Users size={16} className="text-foreground/40" />
   }
 

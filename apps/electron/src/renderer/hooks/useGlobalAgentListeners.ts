@@ -760,6 +760,26 @@ export function useGlobalAgentListeners(): void {
               event.request.questions[0]?.question ?? 'Agent 有问题需要你回答',
               'permissionRequest'
             )
+          } else if (event.type === 'permission_resolved') {
+            // 权限请求已被任一入口（桌面 / 手机 companion）应答，从队列移除，避免僵尸横幅
+            store.set(allPendingPermissionRequestsAtom, (prev) => {
+              const map = new Map(prev)
+              const current = map.get(sessionId) ?? []
+              const next = current.filter((r) => r.requestId !== event.requestId)
+              if (next.length === 0) map.delete(sessionId)
+              else map.set(sessionId, next)
+              return map
+            })
+          } else if (event.type === 'ask_user_resolved') {
+            // AskUser 已被应答，同上从队列移除
+            store.set(allPendingAskUserRequestsAtom, (prev) => {
+              const map = new Map(prev)
+              const current = map.get(sessionId) ?? []
+              const next = current.filter((r) => r.requestId !== event.requestId)
+              if (next.length === 0) map.delete(sessionId)
+              else map.set(sessionId, next)
+              return map
+            })
           } else if (event.type === 'exit_plan_mode_request') {
             // ExitPlanMode 请求入队
             store.set(allPendingExitPlanRequestsAtom, (prev) => {

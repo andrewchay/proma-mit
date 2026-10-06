@@ -115,6 +115,25 @@ describe('selfEvolve', () => {
     expect(out.finalScore).toBe(88)
   })
 
+  it('训练集提升但 held-out 下降时回滚', async () => {
+    const state = mkState(() => 1)
+    const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'overfit', target: 'x', afterState: 2 })
+    const out = await selfEvolve({
+      benchmark: config,
+      maxRounds: 1,
+      propose,
+      evaluate: evaluateScored(70, 90),
+      evaluateHeldOut: (() => {
+        let calls = 0
+        return async () => [{ caseId: 'HELD-001', score: ++calls === 1 ? 80 : 60, sessionId: 'held-s' }]
+      })(),
+      state,
+    })
+    expect(out.rounds[0]!.accepted).toBe(false)
+    expect(out.rounds[0]!.rolledBack).toBe(true)
+    expect(out.rounds[0]!.reason).toContain('held-out')
+  })
+
   it('候选评测异常时回滚并在 round 中记录失败', async () => {
     const state = mkState(() => 1)
     const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'boom', target: 'x', afterState: 2 })

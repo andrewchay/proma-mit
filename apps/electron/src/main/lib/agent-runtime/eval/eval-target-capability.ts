@@ -11,6 +11,7 @@ import { readAgentDirState } from '../../agent-definition-store'
 import { collectDirectoryToolsForPlugin, readPluginToolsDirState } from '../../tool-definition-store'
 import type { RuntimeToolDefinition } from '../../agent-runtime/types'
 import type { EvalTarget } from './types'
+import { getActiveAgentEmployeeCapabilityVersions, getAgentEmployee } from '../../project-sqlite-store'
 
 export interface ResolvedEvalTargetCapability {
   target: EvalTarget
@@ -25,6 +26,7 @@ export interface ResolvedEvalTargetCapability {
 export function resolveEvalTargetCapability(target: EvalTarget): ResolvedEvalTargetCapability {
   if (target.type === 'agent') return resolveAgentCapability(target)
   if (target.type === 'toolset') return resolveToolsetCapability(target)
+  if (target.type === 'employee_capability') return resolveEmployeeCapability(target)
   throw new Error(`未知评测目标类型: ${(target as { type: string }).type}`)
 }
 
@@ -71,6 +73,30 @@ function resolveToolsetCapability(target: EvalTarget): ResolvedEvalTargetCapabil
     }),
     systemPrompt,
     runtimeTools,
+  }
+}
+
+function resolveEmployeeCapability(target: EvalTarget): ResolvedEvalTargetCapability {
+  if (!target.scope) throw new Error('员工能力评测目标缺少 scope')
+  if (target.scope === 'workspace' && !target.workspaceId) throw new Error('工作区能力评测目标缺少 workspaceId')
+  const employee = getAgentEmployee(target.id)
+  if (!employee?.enabled) throw new Error(`目标 AI 员工不存在或已停用: ${target.id}`)
+  const active = getActiveAgentEmployeeCapabilityVersions(target.id, target.workspaceId)
+    .find((version) => version.scope === target.scope && version.workspaceId === target.workspaceId)
+  const capabilityContent = active?.content ?? ''
+  const systemPrompt = [
+    `你正在评测 AI 员工“${employee.name}”的${target.scope === 'role' ? '角色级' : '工作区级'}能力。`,
+    employee.systemPrompt ?? employee.description,
+    '## 已冻结员工能力版本',
+    capabilityContent || '当前为基线版本，没有附加能力文本。',
+  ].filter(Boolean).join('\n\n')
+  return {
+    target,
+    source: 'directory',
+    version: active?.versionNumber ?? 0,
+    contentHash: active?.contentHash ?? hashCapability({ target, capabilityContent }),
+    systemPrompt,
+    runtimeTools: [],
   }
 }
 

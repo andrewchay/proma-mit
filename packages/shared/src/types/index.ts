@@ -100,3 +100,19 @@ export * from './execution-contract'
 // 配置版本化类型
 export * from './config-version'
 export * from './project-chain'
+export * from './project-pilot'
+
+// 研发任务委派与人工 Review（冻结快照 / 受限交付）
+export * from './development-review'
+
+// 订阅与权益领域模型
+export * from './subscription'
+export * from './outbound-mail'
+export * from './knowledge'
+export * from './academic'
+export * from './academic-research'
+export * from './telemetry'
+export * from './typesafe-judgment'
+
+// Typed Context Compiler 的可持久化状态、投影与子任务结果契约
+export * from '../context/index'

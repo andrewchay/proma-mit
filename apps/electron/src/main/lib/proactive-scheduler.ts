@@ -12,12 +12,14 @@ import type {
   UpdateProactiveScheduleInput,
 } from '@gravitas/shared'
 import { ProactiveSchedulerStore } from './proactive-scheduler-store'
+import { ProactiveExecutionError } from './proactive-target-validation'
 
 const MIN_INTERVAL_MS = 60_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const MAX_CONSECUTIVE_FAILURES = 3
 
 export interface ProactiveRunResult {
+  output?: string
   outputSummary?: string
   /** 实际执行会话 ID（newSession 模式下由 runner 回填新建会话） */
   sessionId?: string
@@ -111,6 +113,13 @@ export class ProactiveScheduler {
 
   /** 应用启动后调用；错过的任务最多补跑一次，避免离线期间连发。 */
   async recover(): Promise<void> {
+    for (const run of this.store.listRuns()) {
+      if (run.status === 'running' || run.status === 'queued') {
+        const failed = this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: '应用退出导致运行中断；请检查结果后手动重试' })
+        // 恢复中断也必须补齐统一运行事实源的失败终态，保证各运行视图一致
+        this.emitRunEvent({ title: run.sourceTitle ?? '主动任务', workspaceId: undefined }, failed, 'failed')
+      }
+    }
     await this.runDue('recovery')
     this.arm()
   }
@@ -140,7 +149,10 @@ export class ProactiveScheduler {
   private async runDue(trigger: 'scheduled' | 'recovery'): Promise<void> {
     const now = this.now()
     const due = this.listSchedules().filter((schedule) => schedule.enabled && schedule.nextRunAt !== undefined && schedule.nextRunAt <= now)
-    for (const schedule of due) await this.execute(schedule, trigger)
+    for (const schedule of due) {
+      const current = this.store.getSchedule(schedule.id)
+      if (current?.enabled && current.nextRunAt !== undefined && current.nextRunAt <= this.now() && !this.activeScheduleIds.has(current.id)) await this.execute(current, trigger)
+    }
   }
 
   private async execute(schedule: ProactiveSchedule, trigger: ProactiveTaskRun['trigger']): Promise<ProactiveTaskRun> {
@@ -161,13 +173,14 @@ export class ProactiveScheduler {
         status: 'success',
         endedAt: this.now(),
         outputSummary: result.outputSummary,
+        output: result.output,
         sessionId: result.sessionId ?? run.sessionId,
       })
       this.emitRunEvent(schedule, run, 'completed')
       return run
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误'
-      run = this.store.saveRun({ ...run, status: 'failed', endedAt: this.now(), error: message })
+      run = this.store.saveRun({ ...run, sessionId: error instanceof ProactiveExecutionError ? error.sessionId : run.sessionId, status: 'failed', endedAt: this.now(), error: message })
       this.emitRunEvent(schedule, run, 'failed')
       return run
     } finally {
@@ -194,17 +207,21 @@ export class ProactiveScheduler {
   /**
    * PH2-C：把一次 Proactive 运行记为统一运行事件（Run Center 可回放）。
    * 不阻塞执行，失败静默。
+   * 事件的 started/completed/failed 使用唯一 ID（追加式事件，不复用同一 id），
+   * 并带上 sessionId/workspaceId 便于跨视图定位。
    */
-  private emitRunEvent(schedule: ProactiveSchedule, run: ProactiveTaskRun, type: 'started' | 'completed' | 'failed'): void {
+  private emitRunEvent(schedule: { title: string; workspaceId?: string }, run: ProactiveTaskRun, type: 'started' | 'completed' | 'failed'): void {
     try {
       const { getRunStore } = require('./run-store') as { getRunStore: () => { record: (e: import('@gravitas/shared').AppEventEnvelope) => void } }
-      const triggerLabel = run.trigger === 'manual' ? '手动触发' : run.trigger === 'recovery' ? '恢复触发' : '定时触发'
+      const triggerLabel = run.trigger === 'manual' ? '手动触发' : run.trigger === 'recovery' ? '恢复触发' : run.trigger === 'event' ? '事件触发' : '定时触发'
       const base: import('@gravitas/shared').AppEventEnvelope = {
-        id: `arun-${run.id}`,
+        id: `arun-${run.id}:${type}`,
         source: 'automation',
         taskId: run.id,
         title: schedule.title,
         timestamp: this.now(),
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        ...(schedule.workspaceId ? { workspaceId: schedule.workspaceId } : {}),
         ...(type === 'started'
           ? { type: 'started' as const }
           : type === 'failed'
@@ -219,10 +236,10 @@ export class ProactiveScheduler {
 
   private arm(): void {
     if (this.timer) clearTimeout(this.timer)
-    const nextRunAt = this.listSchedules().filter((item) => item.enabled && item.nextRunAt !== undefined).map((item) => item.nextRunAt as number).sort((left, right) => left - right)[0]
+    const nextRunAt = this.listSchedules().filter((item) => item.enabled && item.nextRunAt !== undefined && !this.activeScheduleIds.has(item.id)).map((item) => item.nextRunAt as number).sort((left, right) => left - right)[0]
     if (nextRunAt === undefined) return
     this.timer = setTimeout(() => {
-      void this.runDue('scheduled').finally(() => this.arm())
+      void this.runDue('scheduled').catch((error) => console.error('[Proactive] 到期调度失败:', error)).finally(() => this.arm())
     }, Math.min(Math.max(0, nextRunAt - this.now()), MAX_TIMER_DELAY_MS))
   }
 

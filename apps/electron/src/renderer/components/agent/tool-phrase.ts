@@ -62,6 +62,20 @@ export function getToolPhrase(toolName: string, input: Record<string, unknown>):
       return phrase(`编辑 ${name}`)
     }
 
+    case 'MultiEdit': {
+      const fp = input.file_path ?? input.filePath
+      const name = typeof fp === 'string' ? filename(fp) : '文件'
+      const editCount = Array.isArray(input.edits) ? input.edits.length : 0
+      const diff = computeDiffStats('MultiEdit', input)
+      const parts: string[] = [name]
+      if (editCount > 0) parts.push(`${editCount} 处`)
+      if (diff) {
+        if (diff.additions > 0) parts.push(`+${diff.additions}`)
+        if (diff.deletions > 0) parts.push(`-${diff.deletions}`)
+      }
+      return phrase(`编辑 ${parts.join(' ')}`)
+    }
+
     case 'Write': {
       const fp = input.file_path ?? input.filePath
       const name = typeof fp === 'string' ? filename(fp) : '文件'

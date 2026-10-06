@@ -3,6 +3,16 @@
 import { listProjectWorkItems, listTaskBlockers, listTasks } from './project-service.ts'
 import type { ProjectAlert } from './project-types.ts'
 
+function isDueDateOverdue(dueDate: number | undefined, now: number): boolean {
+  if (dueDate === undefined || !Number.isFinite(dueDate) || dueDate <= 0) return false
+  const midnight = (timestamp: number): number => {
+    const date = new Date(timestamp)
+    date.setHours(0, 0, 0, 0)
+    return date.getTime()
+  }
+  return midnight(dueDate) < midnight(now)
+}
+
 export async function listProjectAlerts(projectId: string, now = Date.now()): Promise<ProjectAlert[]> {
   const [workItems, blockers, tasks] = await Promise.all([
     listProjectWorkItems(projectId),
@@ -12,7 +22,7 @@ export async function listProjectAlerts(projectId: string, now = Date.now()): Pr
   const taskById = new Map(tasks.map((task) => [task.id, task]))
   const alerts: ProjectAlert[] = []
   for (const item of workItems) {
-    if (item.status !== 'completed' && item.dueDate !== undefined && item.dueDate < now) {
+    if (item.status !== 'completed' && isDueDateOverdue(item.dueDate, now)) {
       alerts.push({
         id: `overdue:${item.entityType}:${item.id}`,
         projectId,
@@ -21,7 +31,7 @@ export async function listProjectAlerts(projectId: string, now = Date.now()): Pr
         entityType: item.entityType,
         entityId: item.id,
         title: `已逾期：${item.title}`,
-        description: `截止于 ${new Date(item.dueDate).toLocaleDateString('zh-CN')}，请${item.assignee ? `提醒负责人 ${item.assignee.displayName}` : '尽快指派负责人'}。`,
+        description: `截止于 ${new Date(item.dueDate!).toLocaleDateString('zh-CN')}，请${item.assignee ? `提醒负责人 ${item.assignee.displayName}` : '尽快指派负责人'}。`,
         assignee: item.assignee,
         createdAt: now,
       })

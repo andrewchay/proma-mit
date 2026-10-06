@@ -25,6 +25,8 @@ export interface AISDKOpenAICompatibleModelInput {
   providerName?: string
   /** 额外请求头 */
   headers?: Record<string, string>
+  /** 受控 HTTP 出口；Pilot 须在此核验最终请求体并完成逐请求预留。 */
+  fetch?: typeof globalThis.fetch
 }
 
 export interface AISDKProviderModelInput extends AISDKOpenAICompatibleModelInput {
@@ -106,6 +108,7 @@ export function createOpenAICompatibleAISDKModel(input: AISDKOpenAICompatibleMod
     baseURL: normalizeBaseUrl(input.baseUrl),
     name: input.providerName ?? 'proma-openai-compatible',
     headers: input.headers,
+    fetch: input.fetch,
   })
 
   return provider.chat(input.modelId)
@@ -118,6 +121,7 @@ export function createAnthropicAISDKModel(input: AISDKOpenAICompatibleModelInput
     baseURL: normalizeBaseUrl(input.baseUrl),
     name: input.providerName ?? 'proma-anthropic',
     headers: input.headers,
+    fetch: input.fetch,
   })
 
   return provider.messages(input.modelId)
@@ -130,6 +134,7 @@ export function createGoogleAISDKModel(input: AISDKOpenAICompatibleModelInput): 
     baseURL: normalizeGoogleBaseUrl(input.baseUrl),
     name: input.providerName ?? 'proma-google',
     headers: input.headers,
+    fetch: input.fetch,
   })
 
   return provider.chat(input.modelId)

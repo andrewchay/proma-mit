@@ -1,17 +1,24 @@
 /**
- * 营销领域包订阅状态（M0：能力中心 / 订阅开关）
+ * 营销领域包与订阅权益（M0：能力中心 / 订阅开关）
  *
  * 方案 v4：两个订阅式业务包（influencer 达人 / paid-media 广告投放）
  * + 共享素材能力层（两端内嵌引用）。
  * 「按需加载」= 运行时惰性初始化，非物理移除；订阅后才显示导航与可切换视图。
  *
- * 订阅状态持久化到 main 的 settings.json（marketingCapabilities），由 `marketingCapabilitiesAtom`
- * 提供内存态，经 `initializeMarketingCapabilities` 从主进程加载、`persistMarketingCapabilities` 写回。
- * main 侧 marketing-plugin.isEnabled 据此决定是否注入营销工具与指令（对齐「领域 vs 插件」边界）。
+ * 商业化后的权限模型（重要）：
+ * - `enabledCapabilitiesAtom` 现在只是**用户偏好**（是否希望显示某个包），
+ *   持久化在 settings.json，用户可自由开关。
+ * - 实际能否使用由 `activeCapabilitiesAtom` 决定：本地开关 AND 订阅权益。
+ * - 因此单独修改 settings.json 中的 marketingCapabilities 不再能解锁付费能力，
+ *   必须持有服务端签发且验签通过的权益快照。
+ *
+ * main 侧 marketing-plugin.isEnabled 同样按「本地开关 AND 权益」判定。
  */
 import { atom } from 'jotai'
+import { BUSINESS_PACKAGE_CAPABILITIES } from '@gravitas/shared'
+import { subscriptionStateAtom, selectCanUseCapability } from './subscription-atoms'
 
-export type CapabilityId = 'influencer' | 'paid-media'
+export type CapabilityId = 'influencer' | 'paid-media' | 'outbound-sourcing' | 'new-media' | 'research'
 export type CapabilityKind = 'business' | 'shared'
 
 export interface CapabilityMeta {
@@ -45,6 +52,25 @@ export const CAPABILITY_MANIFEST: CapabilityMeta[] = [
     dependsOn: ['creative'],
     description: '投放计划 / 调控审批 / 调控规则（首期无 API 写钱）',
   },
+  {
+    id: 'outbound-sourcing',
+    label: '出海 sourcing',
+    kind: 'business',
+    // 能力边界如实描述：与 Redvia 全流水线不同，这里只覆盖方法论三件套，检索/核验由 Agent 完成，发送需人工
+    description: '检索核验 / 画像 / 评分 / 外联与回复草稿 / 邮件同步 / 审批制发送 / 漏斗指标',
+  },
+  {
+    id: 'new-media',
+    label: '新媒体运营 new-media',
+    kind: 'business',
+    description: '本地草稿、排程与受控外发审批（不连接真实平台）',
+  },
+  {
+    id: 'research',
+    label: '研究 research',
+    kind: 'business',
+    description: '从文献到稿件的可追溯研究工作台',
+  },
 ]
 
 /** 默认订阅（默认不开启任何业务包；用户可在领域工作台手动启用）；与 main 侧 isEnabled 兜底一致 */
@@ -52,6 +78,26 @@ export const DEFAULT_ENABLED_CAPABILITIES: CapabilityId[] = []
 
 /** 已订阅的业务能力包 id（内存态；初始化自 main settings，toggle 后写回） */
 export const enabledCapabilitiesAtom = atom<CapabilityId[]>(DEFAULT_ENABLED_CAPABILITIES)
+
+/**
+ * 实际可用的能力包 = 用户本地开启 且 订阅权益允许。
+ *
+ * 这是权限判定的唯一权威来源，所有展示与功能门禁都应基于此 atom，
+ * 而不是直接读 enabledCapabilitiesAtom。
+ */
+export const activeCapabilitiesAtom = atom<CapabilityId[]>((get) => {
+  const preferred = get(enabledCapabilitiesAtom)
+  const subscriptionState = get(subscriptionStateAtom)
+  return preferred.filter((id) => selectCanUseCapability(subscriptionState, id))
+})
+
+/** 判断某能力当前是否真的可用（需同时满足本地开启与权益） */
+export function isCapabilityActive(
+  active: CapabilityId[],
+  id: CapabilityId,
+): boolean {
+  return active.includes(id)
+}
 
 /** 判断某业务包是否已订阅 */
 export function isCapabilityEnabled(enabled: CapabilityId[], id: CapabilityId): boolean {
@@ -69,8 +115,17 @@ export async function initializeMarketingCapabilities(
 ): Promise<void> {
   try {
     const settings = await window.electronAPI.getSettings()
-    const stored = settings.marketingCapabilities as CapabilityId[] | undefined
-    setEnabled(Array.isArray(stored) && stored.length > 0 ? stored : DEFAULT_ENABLED_CAPABILITIES)
+    // 全能力调试放开（非打包环境 + 显式环境变量）：默认把全部业务包视为已开启，
+    // 否则主进程已放开但导航里仍然空着，还得先手动去能力中心逐个打开。
+    // 不写回 settings.json：放开消失后自动回到用户原本的偏好。
+    if (settings.capabilitiesUnlocked === true) {
+      setEnabled([...BUSINESS_PACKAGE_CAPABILITIES] as CapabilityId[])
+      return
+    }
+    const marketing = Array.isArray(settings.marketingCapabilities) ? settings.marketingCapabilities : []
+    const domains = Array.isArray(settings.domainCapabilities) ? settings.domainCapabilities : []
+    const stored = [...new Set([...marketing, ...domains])] as CapabilityId[]
+    setEnabled(stored.length > 0 ? stored : DEFAULT_ENABLED_CAPABILITIES)
   } catch (error) {
     console.error('[营销订阅] 加载失败，回退默认:', error)
     setEnabled(DEFAULT_ENABLED_CAPABILITIES)
@@ -80,7 +135,12 @@ export async function initializeMarketingCapabilities(
 /** 持久化营销订阅状态到 main settings.json（与 main 侧 isEnabled 共享同一权威源） */
 export async function persistMarketingCapabilities(enabled: CapabilityId[]): Promise<void> {
   try {
-    await window.electronAPI.updateSettings({ marketingCapabilities: enabled })
+    await window.electronAPI.updateSettings({
+      marketingCapabilities: enabled.filter((id) => id === 'influencer' || id === 'paid-media'),
+      // research / new-media 与 outbound-sourcing 一样走通用领域包字段；
+      // marketing-plugin 侧已按营销包 id 过滤，不会因此误开营销工具注入
+      domainCapabilities: enabled.filter((id) => id === 'outbound-sourcing' || id === 'research' || id === 'new-media'),
+    })
   } catch (error) {
     console.error('[营销订阅] 持久化失败:', error)
   }

@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { sendAgentInvoke, listIncomingInvokes, respondToInvoke, invokeToText } from './agent-invoke-service'
 
 /**
@@ -14,8 +14,13 @@ import { sendAgentInvoke, listIncomingInvokes, respondToInvoke, invokeToText } f
 
 const testDir = join(tmpdir(), `gravitas-agentinvoke-test-${Date.now()}`)
 
-beforeAll(async () => {
+beforeAll(() => {
   process.env.PROMA_TEST_CONFIG_DIR = testDir
+})
+
+beforeEach(() => {
+  rmSync(testDir, { recursive: true, force: true })
+  mkdirSync(testDir, { recursive: true })
 })
 
 afterAll(() => {
@@ -52,5 +57,64 @@ describe('Agent 互调协议（PH2-F）', () => {
     const req = sendAgentInvoke('agent-a', 'agent-b', '简单确认')
     expect(invokeToText(req)).toContain('Agent 互调请求')
     expect(invokeToText(req)).toContain('简单确认')
+  })
+
+  test('相同幂等键的重试只产生一条收件箱请求', () => {
+    const first = sendAgentInvoke('agent-a', 'agent-b', '只创建一次', 'retry-key-1')
+    const retried = sendAgentInvoke('agent-a', 'agent-b', '只创建一次', 'retry-key-1')
+
+    expect(retried.id).toBe(first.id)
+    expect(retried.idempotencyKey).toBe('retry-key-1')
+    expect(listIncomingInvokes('agent-b')).toHaveLength(1)
+    expect(() => sendAgentInvoke('agent-a', 'agent-b', '不同任务', 'retry-key-1')).toThrow('幂等键')
+  })
+
+  test('不提供幂等键时仍保留每次发送一条请求的既有语义', () => {
+    sendAgentInvoke('agent-a', 'agent-b', '允许重复')
+    sendAgentInvoke('agent-a', 'agent-b', '允许重复')
+
+    expect(listIncomingInvokes('agent-b')).toHaveLength(2)
+  })
+
+  test('以临时文件原子替换并保持 JSONL 格式', () => {
+    const req = sendAgentInvoke('agent-a', 'agent-b', '原子写入')
+    respondToInvoke(req.id, 'done', '完成')
+
+    const dir = join(testDir, 'agent-invokes')
+    const content = readFileSync(join(dir, 'invokes.jsonl'), 'utf-8')
+    expect(content.endsWith('\n')).toBe(true)
+    expect(content.trim().split('\n').map((line) => JSON.parse(line))).toHaveLength(1)
+    expect(readdirSync(dir).filter((name) => name.includes('.tmp-'))).toEqual([])
+  })
+
+  test('损坏的 JSONL 会失败关闭且不会被新请求覆盖', () => {
+    const dir = join(testDir, 'agent-invokes')
+    const path = join(dir, 'invokes.jsonl')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path, '{"id":"truncated"\n', 'utf-8')
+    const before = readFileSync(path, 'utf-8')
+
+    expect(() => sendAgentInvoke('agent-a', 'agent-b', '不得覆盖损坏数据')).toThrow('损坏')
+    expect(readFileSync(path, 'utf-8')).toBe(before)
+  })
+
+  test('持久化失败会向上传播且原文件保持不变', () => {
+    const req = sendAgentInvoke('agent-a', 'agent-b', '等待回复')
+    const dir = join(testDir, 'agent-invokes')
+    const path = join(dir, 'invokes.jsonl')
+    const before = readFileSync(path, 'utf-8')
+
+    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined)
+    chmodSync(dir, 0o500)
+    try {
+      expect(() => respondToInvoke(req.id, 'done', '不能落盘')).toThrow()
+      expect(logSpy.mock.calls.some(([message]) => String(message).includes(`[Diag][agent-invoke] respond ${req.id}`))).toBe(false)
+    } finally {
+      chmodSync(dir, 0o700)
+      logSpy.mockRestore()
+    }
+
+    expect(readFileSync(path, 'utf-8')).toBe(before)
+    expect(listIncomingInvokes('agent-b', 'open')).toHaveLength(1)
   })
 })

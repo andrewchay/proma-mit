@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { rmSync } from 'node:fs'
-import { createBenchmarkForUI, getBenchmarkDetail, listBenchmarks } from './benchmark-store'
+import { createBenchmarkForUI, createBenchmarkFromTemplate, getBenchmarkDetail, listBenchmarks } from './benchmark-store'
 import type { CreateBenchmarkRequest } from './benchmark-store'
 
 const testDir = join(tmpdir(), `gravitas-eval-ui-test-${Date.now()}`)
@@ -58,7 +58,16 @@ describe('benchmark-store UI 入口', () => {
     expect(detail).not.toBeNull()
     expect(detail?.config.cases).toHaveLength(1)
     expect(detail?.cases[0]?.statement).toContain('审查')
+    expect(detail?.cases[0]?.rubric?.items[0]?.check).toBe("x")
     expect(detail?.scoreboard.evaluations).toHaveLength(0)
+  })
+
+  it("模板仅在显式选择后保存 LLM 评判配置", () => {
+    const created = createBenchmarkFromTemplate("builtin-code-reviewer", "judge-opt-in", {
+      provider: "",
+      modelId: "",
+    })
+    expect(created.judgeRuntime).toEqual({ provider: "", modelId: "" })
   })
 
   it('非法 id 抛错', () => {

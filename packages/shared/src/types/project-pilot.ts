@@ -1,0 +1,201 @@
+/** 只读项目驾驶观察契约。不是派发命令或自动执行授权。 */
+export interface PilotTaskObservation {
+  taskId: string
+  parentTaskId?: string
+  rootTaskId: string
+  title: string
+  status: string
+  updatedAt: number
+  state: 'waiting_dependency' | 'awaiting_review' | 'needs_attention' | 'ready' | 'running' | 'done' | 'inactive'
+  reason: string
+  executionId?: string
+  blockerTaskIds: string[]
+}
+
+export interface PilotAttention {
+  sourceType: 'decision' | 'delivery' | 'approval'
+  sourceId: string
+  taskId?: string
+  sourceVersion: number
+  reason: string
+}
+
+export interface PilotObservation {
+  projectId: string
+  projectTitle: string
+  chainRevision: number
+  fingerprint: string
+  observedAt: number
+  tasks: PilotTaskObservation[]
+  attention: PilotAttention[]
+  mode: 'read_only'
+}
+
+/** 当前候选只供展示与诊断，不构成执行授权。 */
+export interface PilotIntent {
+  id: string
+  projectId: string
+  sourceType: 'task' | 'decision' | 'delivery' | 'approval'
+  sourceId: string
+  sourceVersion: string
+  kind: 'dependency_wait' | 'ready_candidate' | 'review_candidate' | 'attention_candidate' | 'approval_request'
+  status: 'open' | 'stale'
+  createdAt: number
+}
+
+export interface PilotOverviewSnapshot {
+  observation: PilotObservation
+  intents: PilotIntent[]
+}
+
+/** 收件箱条目（最小数据层）：open 意图对应的人工待办事实，展示层以 sourceType+sourceId 定位。 */
+export interface PilotInboxEntry {
+  sourceType: 'decision' | 'delivery' | 'approval'
+  sourceId: string
+  taskId?: string
+  sourceVersion: number
+  reason: string
+}
+
+/** 项目经理确认前可见的活动授权影响面。 */
+export interface PilotGrantIssuePreview {
+  projectId: string
+  policyRevision: number
+  workspaceId: string
+  channelId: string
+  modelId: string
+  executorEmployeeId: string
+  reviewerEmployeeId: string
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+  approvalFingerprint: string
+}
+
+export interface PilotRuntimeGrant extends Omit<PilotGrantIssuePreview, 'approvalFingerprint'> {
+  grantId: string
+  state: 'active' | 'paused'
+  /** 旧库活动记录可能缺少确认指纹；只能进入保守暂停/人工对账。 */
+  approvalFingerprint: string | null
+  createdAt: number
+}
+
+export interface PilotPolicySummary {
+  revision: number
+  state: 'paused'
+  workspaceId: string
+  employeeIds: string[]
+  executorEmployeeId?: string
+  reviewerEmployeeId?: string
+  channelId: string
+  modelId: string
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+}
+
+export interface PilotPolicyDraftInput {
+  workspaceId: string
+  employeeIds: string[]
+  executorEmployeeId: string
+  reviewerEmployeeId: string
+  modelId: string
+  channelId: string
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+}
+
+/** 控制面逐命令用量行：权威账本投影，只读。 */
+export interface PilotCommandUsageLine {
+  commandId: string
+  role: 'executor' | 'reviewer'
+  reworkOrdinal: number
+  state: 'reserved' | 'queued' | 'running' | 'settled' | 'released' | 'needs_reconcile'
+  reservedCostMicros: number
+  actualCostMicros: number | null
+  requestsTotal: number
+  requestsSettled: number
+  requestsNeedsReconcile: number
+  settledCostMicros: number
+  createdAt: number
+}
+
+/** 授权级消耗合计：与预算核验同口径（settled 按实结计、其余命令按预留占额）。 */
+export interface PilotGrantBudgetUsage {
+  grantId: string
+  state: 'active' | 'paused'
+  maxCostMicros: number
+  maxRuns: number
+  usedRuns: number
+  committedCostMicros: number
+  remainingCostMicros: number
+  remainingRuns: number
+  commands: PilotCommandUsageLine[]
+}
+
+export interface PilotControlSnapshot {
+  projectId: string
+  policy: PilotPolicySummary | null
+  readiness: {
+    policyRevision: number | null
+    bindingsValid: boolean
+    blockers: string[]
+  }
+  activeGrant: PilotRuntimeGrant | null
+  grantStatus: 'none' | 'active' | 'expired' | 'needs_reconcile'
+  budgetUsage: PilotGrantBudgetUsage | null
+  stopReconciliation: Array<{
+    grantId: string
+    executionId: string
+    state: 'pending' | 'accepted_unverified' | 'unverified' | 'stopper_reported' | 'legacy_unknown'
+  }>
+  /** 配置目录存在疑似遗留策略锁时的只读人工核查提示；null 表示无锁。 */
+  policyLockHint: string | null
+}
+
+export type PilotRunningDisposition = 'finish_current' | 'request_stop'
+
+export interface PilotRunningChoice {
+  executionId: string
+  disposition: PilotRunningDisposition
+}
+
+export interface PilotGrantPauseTarget {
+  commandId: string
+  executionId: string
+  taskId: string
+  agentId: string
+  sessionId: string
+}
+
+export interface PilotGrantPauseImpact {
+  grantId: string
+  projectId: string
+  policyRevision: number
+  fingerprint: string
+  reservedCommandIds: string[]
+  queued: PilotGrantPauseTarget[]
+  running: PilotGrantPauseTarget[]
+}
+
+export interface PilotGrantPauseResult {
+  grantId: string
+  cancelledExecutionIds: string[]
+  releasedReservationCommandIds: string[]
+  runningChoices: PilotRunningChoice[]
+  pendingStopExecutionIds: string[]
+}
+
+export interface PilotGrantPauseWithStopsResult extends PilotGrantPauseResult {
+  stopOutcomes: Array<{
+    executionId: string
+    requestAccepted: boolean
+    stopped: boolean
+    processTermination: 'VERIFIED' | 'NOT_VERIFIED'
+    auditRecorded?: false
+  }>
+}

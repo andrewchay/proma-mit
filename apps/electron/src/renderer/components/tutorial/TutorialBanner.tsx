@@ -41,7 +41,7 @@ export function TutorialBanner(): React.ReactElement | null {
 
   // 立即学习：跳转到设置教程页并关闭横幅
   const handleLearnNow = async () => {
-    setSettingsTab('tutorial')
+    setSettingsTab('about')
     setSettingsOpen(true)
     await handleDismiss()
   }

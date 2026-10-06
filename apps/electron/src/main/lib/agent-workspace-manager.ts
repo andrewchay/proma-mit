@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync, statSync, renameSync, openSync, readSync, closeSync, realpathSync } from 'node:fs'
+import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { safeParseJSON } from './safe-json'
 import { createHash, randomUUID } from 'node:crypto'
@@ -241,7 +242,7 @@ export function getAgentWorkspaceCwd(workspace: AgentWorkspace, sessionId: strin
     if (!existsSync(workspace.rootPath) || !statSync(workspace.rootPath).isDirectory()) {
       throw new Error(`本地项目文件夹不可用: ${workspace.rootPath}`)
     }
-    return workspace.rootPath
+    return resolveDevelopmentWorktree(workspace.rootPath, getAgentSessionWorkspacePath(workspace.slug, sessionId)) ?? workspace.rootPath
   }
   return getAgentSessionWorkspacePath(workspace.slug, sessionId)
 }
@@ -1362,6 +1363,8 @@ function isNewerVersion(a: string, b: string): boolean {
 interface WorkspaceConfig {
   attachedDirectories?: string[]
   attachedFiles?: string[]
+  /** Typed Context Compiler 的工作区默认开关；缺省保持关闭。 */
+  typedContextCompiler?: boolean
 }
 
 function getWorkspaceConfigPath(workspaceSlug: string): string {
@@ -1384,6 +1387,9 @@ function readWorkspaceConfig(workspaceSlug: string): WorkspaceConfig {
     attachedFiles: Array.isArray(data.attachedFiles)
       ? data.attachedFiles.filter((file): file is string => typeof file === 'string')
       : undefined,
+    typedContextCompiler: typeof data.typedContextCompiler === 'boolean'
+      ? data.typedContextCompiler
+      : undefined,
   }
 }
 
@@ -1393,6 +1399,17 @@ function writeWorkspaceConfig(workspaceSlug: string, config: WorkspaceConfig): v
 
   const configPath = getWorkspaceConfigPath(workspaceSlug)
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+}
+
+/** 获取 Typed Context Compiler 的工作区默认开关；缺省表示 fail-closed。 */
+export function getWorkspaceTypedContextCompilerEnabled(workspaceSlug: string): boolean | undefined {
+  return readWorkspaceConfig(workspaceSlug).typedContextCompiler
+}
+
+/** 设置 Typed Context Compiler 工作区默认开关；会话可通过自身元数据显式覆盖。 */
+export function setWorkspaceTypedContextCompilerEnabled(workspaceSlug: string, enabled: boolean): void {
+  const config = readWorkspaceConfig(workspaceSlug)
+  writeWorkspaceConfig(workspaceSlug, { ...config, typedContextCompiler: enabled })
 }
 
 // ===== 工作区级附加目录管理 =====

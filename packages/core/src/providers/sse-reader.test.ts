@@ -147,6 +147,62 @@ describe('streamSSE 空闲看门狗', () => {
     ).rejects.toThrow(/空闲超时|ended without data/i)
   })
 
+  test('首模型响应使用独立宽限，收到模型事件后恢复流中阈值', async () => {
+    const fetchFn = (async () => {
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 80))
+          controller.enqueue(new TextEncoder().encode('data: {"text":"慢首字节"}\n\n'))
+          controller.close()
+        },
+      })
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await streamSSE({
+      request: { url: 'http://x', headers: {}, body: '' },
+      adapter: googleAdapter,
+      fetchFn,
+      onEvent: () => {},
+      firstResponseTimeoutMs: 200,
+      idleTimeoutMs: 30,
+    })
+
+    expect(result.content).toBe('慢首字节')
+  })
+
+  test('SSE 心跳不会被误判为首个模型响应', async () => {
+    const fetchFn = (async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(': heartbeat\n\n'))
+        },
+      })
+      return new Response(body, { status: 200 })
+    }) as unknown as typeof globalThis.fetch
+
+    await expect(streamSSE({
+      request: { url: 'http://x', headers: {}, body: '' },
+      adapter: googleAdapter,
+      fetchFn,
+      onEvent: () => {},
+      firstResponseTimeoutMs: 50,
+      idleTimeoutMs: 500,
+    })).rejects.toThrow(/首响应空闲超时|ended without data/i)
+  })
+
+  test('首响应宽限覆盖等待响应头的阶段', async () => {
+    const fetchFn = (() => new Promise<Response>(() => {})) as unknown as typeof globalThis.fetch
+    await expect(streamSSE({
+      request: { url: 'http://x', headers: {}, body: '' },
+      adapter: googleAdapter,
+      fetchFn,
+      onEvent: () => {},
+      firstResponseTimeoutMs: 50,
+      idleTimeoutMs: 500,
+    })).rejects.toThrow(/首响应空闲超时|ended without data/i)
+  })
+
   test('常规数据流在 idleTimeoutMs 内完成时不触发看门狗', async () => {
     const fetchFn = makeFetch([
       new TextEncoder().encode('data: {"text":"快速"}\n\n'),

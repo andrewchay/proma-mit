@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_queue_email",
+  "name": "入队出海邮件",
+  "description": "把一封邮件（冷外联或回复）加入待发队列；发送必须经用户在待发队列中逐封确认后才经 SMTP 发出。本工具不发送邮件。",
+  "parameters": {"type":"object","properties":{"to":{"type":"string","description":"收件人邮箱"},"subject":{"type":"string"},"body":{"type":"string","description":"纯文本正文（与回复规则一致，不使用 HTML）"},"in_reply_to":{"type":"string","description":"回复时的 Message-ID"},"references":{"type":"array","items":{"type":"string"},"description":"回复时的 References 链"},"reply_to_inbox_id":{"type":"string","description":"关联的来信 id（回复场景）"}},"required":["to","subject","body"]}
+}

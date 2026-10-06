@@ -173,7 +173,7 @@ export function AutomationSettings(): React.ReactElement {
         </div>
         <div className="flex flex-wrap gap-3">
           <Button variant="outline" onClick={() => setActiveTab('channels')}>前往模型配置测试</Button>
-          <Button variant="outline" onClick={() => setActiveTab('operation-audit')}>查看本地操作审计</Button>
+          <Button variant="outline" onClick={() => setActiveTab('privacy')}>查看本地操作审计</Button>
         </div>
       </SettingsCard>
     </SettingsSection>

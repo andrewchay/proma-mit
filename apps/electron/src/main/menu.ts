@@ -88,12 +88,12 @@ export function createApplicationMenu(): Menu {
       ],
     },
 
-    // 应用中心菜单（领域能力包 / 工作台入口）
+    // 专业订阅服务菜单（领域能力包 / 工作台入口）
     {
-      label: '应用中心',
+      label: '专业订阅服务',
       submenu: [
         {
-          label: '领域工作台',
+          label: '领域能力包',
           accelerator: 'CmdOrCtrl+Shift+D',
           click: () => {
             const win = BrowserWindow.getFocusedWindow()

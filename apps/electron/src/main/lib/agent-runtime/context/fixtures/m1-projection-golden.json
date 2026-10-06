@@ -1,0 +1,33 @@
+[
+  {
+    "name": "full-content",
+    "request": { "task": "检查 threshold", "maxInputTokens": 100 },
+    "items": [{ "id": "full", "tags": ["threshold"], "content": "threshold = 0.8" }],
+    "expectedBlocks": ["[FACT] id=full kind=file_fact\nthreshold = 0.8"],
+    "expectedOmissions": []
+  },
+  {
+    "name": "summary-preferred",
+    "request": { "task": "检查 threshold", "maxInputTokens": 100 },
+    "items": [{ "id": "summary", "tags": ["threshold"], "content": "threshold = 0.8", "summary": "阈值为 80%。" }],
+    "expectedBlocks": ["[SUMMARY][FACT] id=summary kind=file_fact\n阈值为 80%。"],
+    "expectedOmissions": []
+  },
+  {
+    "name": "tool-noise-budget",
+    "request": { "task": "检查 threshold", "maxInputTokens": 15 },
+    "items": [
+      { "id": "relevant", "tags": ["threshold"], "content": "threshold = 0.8" },
+      { "id": "noise", "kind": "tool_observation", "content": "无关工具日志。无关工具日志。无关工具日志。无关工具日志。" }
+    ],
+    "expectedBlocks": ["[FACT] id=relevant kind=file_fact\nthreshold = 0.8"],
+    "expectedOmissions": ["noise"]
+  },
+  {
+    "name": "sensitive-path-policy",
+    "request": { "task": "检查 key", "maxInputTokens": 100, "policy": { "deniedPaths": ["src/private/"] } },
+    "items": [{ "id": "sensitive", "content": "secret", "locator": "src/private/key.ts:1" }],
+    "expectedBlocks": [],
+    "expectedOmissions": ["sensitive"]
+  }
+]

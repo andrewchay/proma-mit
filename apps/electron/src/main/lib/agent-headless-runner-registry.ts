@@ -9,15 +9,29 @@ import type {
   AgentExternalRunSource,
   AgentMessage,
   AgentSendInput,
+  SDKResultMessage,
 } from '@gravitas/shared'
+
+export interface HeadlessAgentRunResult {
+  stoppedByUser?: boolean
+  /** Runtime 原样返回的终态 result；仅供受控审计与费用结算，不能直接视为 Provider 回执。 */
+  runtimeResult?: SDKResultMessage
+}
 
 export interface HeadlessAgentRunCallbacks {
   onError: (error: string) => void
-  onComplete: (messages?: AgentMessage[]) => void
+  onComplete: (messages?: AgentMessage[], result?: HeadlessAgentRunResult) => void
   onTitleUpdated: (title: string) => void
   source?: AgentExternalRunSource
   /** 发起此次 headless 运行的可见会话，用于将事件路由回其 renderer。 */
   originSessionId?: string
+  /** runner 入口前同步写交接意图；崩溃窗口内是否实际执行未知，失败则不调用 runner。 */
+  onRunnerInvoke?: () => void
+  /**
+   * Runtime 已产出首条消息（真正开始活动）后由 runner 调用；Pilot 用它写不可变
+   * 开始回执。只证明启动，不证明终态与费用。
+   */
+  onRuntimeStarted?: () => void
 }
 
 export type HeadlessAgentRunner = (
@@ -25,7 +39,22 @@ export type HeadlessAgentRunner = (
   callbacks: HeadlessAgentRunCallbacks,
 ) => Promise<void>
 
-export type AgentStopper = (sessionId: string) => void
+export type AgentStopReason = 'stop-request-accepted' | 'not-active' | 'generation-mismatch' | 'stop-failed'
+
+export interface AgentStopResult {
+  sessionId: string
+  expectedGeneration?: number
+  activeGeneration?: number
+  /** Runtime 接受了针对目标 generation 的取消请求。 */
+  requestAccepted: boolean
+  /** 仅在 Runtime 同步确认执行已终止时为 true；当前内置 Runtime 均不会同步确认。 */
+  stopped: boolean
+  reason: AgentStopReason
+  processTermination: 'VERIFIED' | 'NOT_VERIFIED'
+  error?: string
+}
+
+export type AgentStopper = (sessionId: string, expectedGeneration?: number) => AgentStopResult
 
 let headlessRunner: HeadlessAgentRunner | null = null
 let agentStopper: AgentStopper | null = null
@@ -45,12 +74,13 @@ export async function runRegisteredHeadlessAgent(
   if (!headlessRunner) {
     throw new Error('Agent headless runner 尚未初始化')
   }
+  callbacks.onRunnerInvoke?.()
   await headlessRunner(input, callbacks)
 }
 
-export function stopRegisteredAgent(sessionId: string): void {
+export function stopRegisteredAgent(sessionId: string, expectedGeneration?: number): AgentStopResult {
   if (!agentStopper) {
     throw new Error('Agent stopper 尚未初始化')
   }
-  agentStopper(sessionId)
+  return agentStopper(sessionId, expectedGeneration)
 }

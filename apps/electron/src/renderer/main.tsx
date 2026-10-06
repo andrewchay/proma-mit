@@ -34,6 +34,7 @@ import {
   unviewedCompletedSessionIdsAtom,
 } from './atoms/agent-atoms'
 import { updateStatusAtom, initializeUpdater } from './atoms/updater'
+import { enabledDevModulesAtom, initializeDevModules } from './atoms/dev-gate'
 import {
   notificationsEnabledAtom,
   notificationSoundEnabledAtom,
@@ -52,7 +53,9 @@ import {
   enabledCapabilitiesAtom as marketingEnabledCapabilitiesAtom,
   initializeMarketingCapabilities,
 } from './atoms/marketing-atoms'
+import { subscriptionStateAtom } from './atoms/subscription-atoms'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
+import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
 import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
 import type { TabItem } from './atoms/tab-atoms'
@@ -420,12 +423,52 @@ function MarkdownFontSizeInitializer(): null {
  *
  * 从主进程 settings.json 加载已订阅的营销领域业务包，供能力中心与侧边栏导航显隐使用。
  */
+/**
+ * 开发阶段门禁初始化
+ *
+ * 未完成模块（knowledge / marketing / outbound-sourcing / proactive）默认不可见，
+ * 开关由主进程按打包环境过滤后下发。
+ */
+function DevGateInitializer(): null {
+  const setEnabled = useSetAtom(enabledDevModulesAtom)
+
+  useEffect(() => {
+    void initializeDevModules(setEnabled)
+  }, [setEnabled])
+
+  return null
+}
+
 function MarketingCapabilitiesInitializer(): null {
   const setEnabled = useSetAtom(marketingEnabledCapabilitiesAtom)
 
   useEffect(() => {
     initializeMarketingCapabilities(setEnabled)
   }, [setEnabled])
+
+  return null
+}
+
+/**
+ * 订阅权益状态初始化
+ *
+ * 侧边栏导航与能力中心都靠 subscriptionStateAtom 判定「本地开启 且 权益允许」。
+ * 此前该 atom 只在用户打开订阅设置时才被填充，导致付费能力在启动后一直不可见。
+ * 启动时先取一次主进程结论，后续由订阅相关操作自行更新。
+ * 读取失败按「无权益」处理（atom 默认值），不阻止应用启动。
+ */
+function SubscriptionStateInitializer(): null {
+  const setState = useSetAtom(subscriptionStateAtom)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setState(await window.electronAPI.getSubscriptionState())
+      } catch (error) {
+        console.error('[订阅] 初始化权益状态失败，按无权益处理:', error)
+      }
+    })()
+  }, [setState])
 
   return null
 }
@@ -449,6 +492,32 @@ function ChatListenersInitializer(): null {
  */
 function AgentListenersInitializer(): null {
   useGlobalAgentListeners()
+  return null
+}
+
+/**
+ * 项目外部轮询状态监听初始化组件
+ *
+ * 全局挂载，永不销毁：轮询到的飞书/钉钉状态变化写入全局 atom，
+ * ProjectDetail 按 projectId 过滤消费并刷新（后台项目看板数据随之收敛）。
+ */
+function ProjectPollListenersInitializer(): null {
+  const setPollChanged = useSetAtom(pollStatusChangedAtom)
+  useEffect(() => {
+    const off = window.electronAPI?.paa?.project?.onPollStatusChanged?.((payload) => {
+      if (payload?.projectId && payload.taskId) {
+        setPollChanged({
+          projectId: payload.projectId,
+          taskId: payload.taskId,
+          newStatus: payload.newStatus ?? null,
+          at: Date.now(),
+        })
+      }
+    })
+    return () => {
+      off?.()
+    }
+  }, [setPollChanged])
   return null
 }
 
@@ -897,14 +966,17 @@ if (isQuickTaskWindow) {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <ThemeInitializer />
+      <DevGateInitializer />
       <AgentSettingsInitializer />
       <NotificationsInitializer />
       <DockBadgeInitializer />
       <UiPreferencesInitializer />
       <MarkdownFontSizeInitializer />
       <MarketingCapabilitiesInitializer />
+      <SubscriptionStateInitializer />
       <ChatListenersInitializer />
       <AgentListenersInitializer />
+      <ProjectPollListenersInitializer />
       <ChatToolInitializer />
       <UpdaterInitializer />
       <FeishuInitializer />

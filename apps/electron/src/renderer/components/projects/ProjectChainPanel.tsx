@@ -14,6 +14,13 @@ import { TaskExecutionEvidence } from './TaskExecutionEvidence'
 import { ProjectCollaborationTasks } from './ProjectCollaborationTasks'
 import { ProjectChainOverview } from './ProjectChainOverview'
 import { ProjectFlowHealth } from './ProjectFlowHealth'
+import {
+  emptySourceRef,
+  formatSourceRef,
+  SOURCE_REF_TYPE_OPTIONS,
+  validateSourceRef,
+  validateSourceRefs,
+} from './project-source-refs'
 import type {
   CollaborationTask,
   CollaborationDependency,
@@ -28,6 +35,12 @@ interface ChainPanelState {
   draftId?: string
   decisionFormVersion?: number
   draftFormVersion?: number
+  /** 关键决策来源行草稿（R-P0-01）：由行编辑器维护，提交时整体校验 */
+  sourceRefsDraft?: ProjectDecisionSourceRef[]
+  /** 是否已尝试提交；用于展示行级字段错误 */
+  sourceRefsAttempted?: boolean
+  /** 内联拍板确认草稿（R-P0-02）：要求必填确认意见 */
+  approveDraft?: { decisionId: string; comment: string }
 }
 interface Props {
   projectId: string
@@ -73,18 +86,6 @@ const lines = (value: string): string[] =>
     .split('\n')
     .map((item) => item.trim())
     .filter(Boolean)
-const parseSourceRefs = (value: string): ProjectDecisionSourceRef[] =>
-  lines(value).map((item) => {
-    const [sourceType = '', sourceId = '', locator = '', checksum = ''] = item.split('|')
-    return {
-      sourceType: sourceType.trim() as ProjectDecisionSourceType,
-      sourceId: sourceId.trim(),
-      locator: locator.trim(),
-      ...(checksum.trim() ? { checksum: checksum.trim() } : {}),
-    }
-  })
-const formatSourceRef = (ref: ProjectDecisionSourceRef): string =>
-  [ref.sourceType, ref.sourceId, ref.locator, ref.checksum].filter(Boolean).join(' | ')
 const parseDodAutomationRules = (value: string): ProjectDodAutomationRule[] =>
   lines(value).map((item) => {
     const [criterion = '', verifier = ''] = item.split('|')
@@ -97,6 +98,108 @@ const dateTimeLocal = (value?: number): string => {
   if (!value) return ''
   const date = new Date(value)
   return new Date(value - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+/** 决策「结构化原文定位」行编辑器（R-P0-01）：类型下拉 + 来源 ID + 定位 + 可选校验值，逐字段提示 */
+function DecisionSourceRefsEditor({ rows, attempted, onChange }: {
+  rows: ProjectDecisionSourceRef[]
+  attempted: boolean
+  onChange: (rows: ProjectDecisionSourceRef[]) => void
+}): React.ReactElement {
+  const rowErrors = attempted ? rows.map((row) => validateSourceRef(row)) : null
+  const update = (index: number, patch: Partial<ProjectDecisionSourceRef>): void =>
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  return (
+    <fieldset className="rounded-md border p-3 text-sm">
+      <legend className="px-1 font-medium">原文定位（关键决策必填）</legend>
+      <p className="text-xs text-muted-foreground">
+        每条说明依据来自哪里：来源类型、来源 ID、原文内定位；校验值可选。例如：task ｜ TASK-1234 ｜ section:1。
+      </p>
+      {rows.length === 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">还没有来源，请至少添加一条；来源 ID 和原文定位必填。</p>
+      )}
+      {rows.map((row, index) => {
+        const errors = rowErrors?.[index] ?? {}
+        const isLegacy = row.sourceType === 'legacy'
+        return (
+          <div key={index} className="mt-2 rounded-md bg-muted/40 p-2">
+            <div className="grid gap-2 md:grid-cols-4">
+              <label className="block text-xs text-muted-foreground">来源类型
+                <select
+                  aria-label={`来源类型 ${index + 1}`}
+                  disabled={isLegacy}
+                  value={row.sourceType}
+                  onChange={(event) => update(index, { sourceType: event.target.value as ProjectDecisionSourceRef['sourceType'] })}
+                  className={`${fieldClass} mt-1`}
+                >
+                  {SOURCE_REF_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value} disabled={!option.creatable}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs text-muted-foreground">来源 ID（必填）
+                <input
+                  aria-label={`来源 ID ${index + 1}`}
+                  disabled={isLegacy}
+                  value={row.sourceId}
+                  placeholder="如 TASK-1234、meeting-2026-09-09"
+                  onChange={(event) => update(index, { sourceId: event.target.value })}
+                  className={`${fieldClass} mt-1`}
+                />
+              </label>
+              <label className="block text-xs text-muted-foreground">原文定位（必填）
+                <input
+                  aria-label={`原文定位 ${index + 1}`}
+                  disabled={isLegacy}
+                  value={row.locator}
+                  placeholder="如 section:1、paragraph:42"
+                  onChange={(event) => update(index, { locator: event.target.value })}
+                  className={`${fieldClass} mt-1`}
+                />
+              </label>
+              <label className="block text-xs text-muted-foreground">校验值（可选）
+                <input
+                  aria-label={`校验值 ${index + 1}`}
+                  disabled={isLegacy}
+                  value={row.checksum ?? ''}
+                  placeholder="可选 checksum"
+                  onChange={(event) => update(index, { checksum: event.target.value.trim() || undefined })}
+                  className={`${fieldClass} mt-1`}
+                />
+              </label>
+            </div>
+            {(errors.sourceType || errors.sourceId || errors.locator) && (
+              <div role="alert" className="mt-1 space-y-0.5 text-xs text-destructive">
+                {errors.sourceType && <p>{errors.sourceType}</p>}
+                {errors.sourceId && <p>{errors.sourceId}</p>}
+                {errors.locator && <p>{errors.locator}</p>}
+              </div>
+            )}
+            {isLegacy ? (
+              <p className="mt-1 text-xs text-muted-foreground">旧格式依据原样保留：{row.sourceId}</p>
+            ) : (
+              <button
+                type="button"
+                className="mt-1 text-xs text-muted-foreground hover:text-destructive"
+                onClick={() => onChange(rows.filter((_, i) => i !== index))}
+              >
+                删除此条
+              </button>
+            )}
+          </div>
+        )
+      })}
+      <button
+        type="button"
+        className="mt-2 text-primary"
+        onClick={() => onChange([...rows, emptySourceRef()])}
+      >
+        + 添加来源
+      </button>
+    </fieldset>
+  )
 }
 
 export function ProjectChainPanel({
@@ -144,8 +247,9 @@ export function ProjectChainPanel({
         busy: false,
         error: '',
         ...(command.kind === 'decision'
-          ? { decisionId: undefined, decisionFormVersion: (current.decisionFormVersion ?? 0) + 1 }
+          ? { decisionId: undefined, decisionFormVersion: (current.decisionFormVersion ?? 0) + 1, sourceRefsDraft: [], sourceRefsAttempted: false }
           : {}),
+        ...(command.kind === 'approve_decision' ? { approveDraft: undefined } : {}),
         ...(command.kind === 'draft'
           ? { draftId: undefined, draftFormVersion: (current.draftFormVersion ?? 0) + 1 }
           : {}),
@@ -161,9 +265,9 @@ export function ProjectChainPanel({
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">决策与协作链路</h2>
+          <h2 className="text-lg font-semibold">治理与交付详情</h2>
           <p className="text-sm text-muted-foreground">
-            决策依据 → 任务与责任 → 执行与交付 → 验收 → 协作交接
+            高级视图：决策依据 → 任务与责任 → 执行与交付 → 验收 → 协作交接；日常推进请使用「概览」和「新建任务」。
           </p>
         </div>
         <button className={buttonClass} disabled={busy} onClick={() => void refresh()}>
@@ -327,6 +431,13 @@ export function ProjectChainPanel({
                   event.preventDefault()
                   const data = new FormData(event.currentTarget)
                   const keyDecision = Boolean(decision?.daci) || data.get('keyDecision') === 'on'
+                  // 关键决策必须提供结构化原文定位：先整体校验行草稿，不合法则阻断提交并展示行内错误
+                  const draftRefs = state.sourceRefsDraft ?? []
+                  const rowErrors = keyDecision ? validateSourceRefs(draftRefs) : null
+                  if (rowErrors) {
+                    setState((current) => ({ ...current, sourceRefsAttempted: true, error: '关键决策的「原文定位」还有未填字段：请按行内提示补充来源 ID 和原文定位后重试。' }))
+                    return
+                  }
                   const deadlineAt = new Date(text(data, 'deadlineAt')).getTime()
                   void execute({
                     kind: 'decision',
@@ -354,7 +465,7 @@ export function ProjectChainPanel({
                             }
                           }),
                           assumptions: lines(text(data, 'assumptions')),
-                          sourceRefs: parseSourceRefs(text(data, 'sourceRefs')),
+                          sourceRefs: draftRefs,
                         }
                       : {}),
                   })
@@ -452,12 +563,10 @@ export function ProjectChainPanel({
                   placeholder="关键假设，每行一项；只记录当时明确提出的内容"
                   className={fieldClass}
                 />
-                <textarea
-                  aria-label="原文定位"
-                  name="sourceRefs"
-                  defaultValue={decision?.sourceRefs.map(formatSourceRef).join('\n')}
-                  placeholder="每行：meeting | meeting-2026-09-09 | paragraph:42 | 可选 checksum"
-                  className={fieldClass}
+                <DecisionSourceRefsEditor
+                  rows={state.sourceRefsDraft ?? []}
+                  attempted={state.sourceRefsAttempted ?? false}
+                  onChange={(rows) => setState((current) => ({ ...current, sourceRefsDraft: rows }))}
                 />
                 <textarea
                   aria-label="证据来源"
@@ -483,7 +592,7 @@ export function ProjectChainPanel({
                   <button
                     type="button"
                     className="ml-2 text-sm"
-                    onClick={() => setState((current) => ({ ...current, decisionId: undefined }))}
+                    onClick={() => setState((current) => ({ ...current, decisionId: undefined, sourceRefsDraft: [], sourceRefsAttempted: false }))}
                   >
                     取消编辑
                   </button>
@@ -497,14 +606,30 @@ export function ProjectChainPanel({
                     </summary>
                     <p className="mt-2 whitespace-pre-wrap">{item.rationale}</p>
                     <p className="mt-2 whitespace-pre-wrap text-muted-foreground">依据：{item.evidence}</p>
-                    <p className="mt-2">
-                      状态：
-                      {item.status === 'candidate'
-                        ? '待 DACI 拍板'
-                        : item.status === 'decided'
-                          ? '已决定'
-                          : '已替代'}
-                      {item.daci && ` · 推进 ${item.daci.driverId} · 拍板 ${item.daci.approverId}`}
+                    <p className="mt-2 flex flex-wrap items-center gap-2">
+                      <span
+                        className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${
+                          item.status === 'candidate'
+                            ? 'bg-amber-100 text-amber-800'
+                            : item.status === 'decided'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {item.status === 'candidate'
+                          ? '待拍板（草稿，任务还不能关联）'
+                          : item.status === 'decided'
+                            ? '已拍板'
+                            : '已替代'}
+                      </span>
+                      {item.status === 'candidate' && item.daci && (
+                        <span className="text-xs text-muted-foreground">
+                          需由拍板人 {item.daci.approverId} 确认后，任务才能关联此决策
+                        </span>
+                      )}
+                      {item.daci && (
+                        <span className="text-xs text-muted-foreground">推进 {item.daci.driverId}</span>
+                      )}
                     </p>
                     {item.deadlineAt && <p>最迟决定：{new Date(item.deadlineAt).toLocaleString()}</p>}
                     {item.impactTaskIds.length > 0 && (
@@ -542,19 +667,56 @@ export function ProjectChainPanel({
                       </p>
                     )}
                     {item.status === 'candidate' && item.daci?.approverId === 'local-user' && (
-                      <button
-                        disabled={busy}
-                        className={`${buttonClass} mt-2`}
-                        onClick={() =>
-                          void execute({
-                            kind: 'approve_decision',
-                            decisionId: item.id,
-                            comment: '已审阅并确认',
-                          })
-                        }
-                      >
-                        DACI 拍板确认
-                      </button>
+                      state.approveDraft?.decisionId === item.id ? (
+                        <div className="mt-2 space-y-2 rounded-md border p-2">
+                          <textarea
+                            aria-label="拍板确认意见"
+                            value={state.approveDraft.comment}
+                            placeholder="确认意见（必填），例如：已审阅，采用方案 A"
+                            onChange={(event) => setState((current) => ({
+                              ...current,
+                              approveDraft: { decisionId: item.id, comment: event.target.value },
+                            }))}
+                            className={fieldClass}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              disabled={busy || !state.approveDraft.comment.trim()}
+                              className={buttonClass}
+                              onClick={() =>
+                                void execute({
+                                  kind: 'approve_decision',
+                                  decisionId: item.id,
+                                  comment: state.approveDraft!.comment.trim(),
+                                })
+                              }
+                            >
+                              确认拍板（变为已拍板）
+                            </button>
+                            <button
+                              type="button"
+                              className="text-sm"
+                              onClick={() => setState((current) => ({ ...current, approveDraft: undefined }))}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className={`${buttonClass} mt-2`}
+                          onClick={() =>
+                            setState((current) => ({
+                              ...current,
+                              approveDraft: { decisionId: item.id, comment: '' },
+                            }))
+                          }
+                        >
+                          拍板确认（任务需关联已拍板决策）
+                        </button>
+                      )
                     )}
                     <details className="mt-2">
                       <summary>决策版本历史</summary>
@@ -575,7 +737,7 @@ export function ProjectChainPanel({
                     <button
                       disabled={busy}
                       className="mt-2 text-primary"
-                      onClick={() => setState((current) => ({ ...current, decisionId: item.id }))}
+                      onClick={() => setState((current) => ({ ...current, decisionId: item.id, sourceRefsDraft: item.sourceRefs, sourceRefsAttempted: false }))}
                     >
                       更新决策
                     </button>

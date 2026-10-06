@@ -15,19 +15,22 @@ import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-sk
 import { resolveCollaborationWorkspaceId } from '../agent-collaboration-tools'
 import { logWarn } from '../file-logger'
 import { enrichMessageWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
-import { convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
+import { buildPiHistorySessionEntries, convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
 import { loadPiCodingAgent } from './pi-sdk-loader'
 import { createPiToolBridge, type PiCanUseToolCallback } from './pi-tool-bridge'
+import { createPiRequestBudgetGate } from './pi-request-budget-gate'
 import type { ToolContext } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
 import { isTransientNetworkError } from '../error-patterns'
 import { getAgentSessionMeta } from '../agent-session-manager'
-import { compactSessionNow, maybeAutoCompact } from '../agent-runtime/context-compaction'
+import { compactSessionNow, maybeAutoCompact, estimateOutgoingContextTokens } from '../agent-runtime/context-compaction'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
+  /** 仅用于保守的请求间/工具前软门禁；不是单次请求美元硬上限。 */
+  runtimeBudgetLimitUsd?: number
   /** 系统提示词 */
   systemPrompt?: string
   /** 历史 SDKMessage，用于恢复 Pi in-memory session 上下文 */
@@ -93,6 +96,27 @@ const PI_PROMPT_IDLE_TIMEOUT_MS = 120_000
 /** 看门狗活动轮询间隔（毫秒） */
 const PI_PROMPT_IDLE_POLL_MS = 2_000
 
+/** 首 token 前的保守 prefill 吞吐假设（tokens/秒）：
+ * 慢模型对超大上下文（实测 16 万 token prefill >120s）的首响应不能被流中空闲阈值误杀。 */
+const PI_PREFILL_TOKENS_PER_SECOND = 500
+
+/** 首 token 宽限上限；与压缩摘要自适应超时上限对齐。 */
+export const PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS = 480_000
+
+/**
+ * 首 token 宽限期：按本回合上下文规模自适应，下限为流中空闲阈值（120s）。
+ * 首 token 到达后，空闲判定回到 PI_PROMPT_IDLE_TIMEOUT_MS。
+ */
+export function resolveFirstTokenTimeoutMs(estimatedContextTokens: number): number {
+  const adaptive = Math.ceil(estimatedContextTokens / PI_PREFILL_TOKENS_PER_SECOND) * 1_000
+  return Math.min(Math.max(PI_PROMPT_IDLE_TIMEOUT_MS, adaptive), PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS)
+}
+
+/** 仅真实模型消息结束首 token 阶段；工具、重试等活动仍使用首 token 宽限。 */
+export function resolvePromptIdleTimeoutMs(hasModelActivity: boolean, firstTokenTimeoutMs: number): number {
+  return hasModelActivity ? PI_PROMPT_IDLE_TIMEOUT_MS : firstTokenTimeoutMs
+}
+
 /** 构造中止错误（interrupt / abort 场景） */
 function createAbortError(): Error {
   const error = new Error('操作已中止')
@@ -103,6 +127,40 @@ function createAbortError(): Error {
 /** 简易延迟（断流重试退避用） */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 中止后等待 Pi 会话退出 streaming 的默认截止时间。 */
+export const PI_SESSION_IDLE_WAIT_TIMEOUT_MS = 5_000
+
+interface AbortablePiSession {
+  readonly isStreaming: boolean
+  abort(): Promise<void>
+}
+
+/**
+ * 中止旧 prompt 并等待 Pi 真正退出 streaming。
+ *
+ * abort Promise 或状态切换任一迟滞都不能无限阻塞；到期仍忙时明确失败，
+ * 绝不继续调用 session.prompt 触发 "Agent is already processing"。
+ */
+export async function waitForPiSessionIdle(
+  session: AbortablePiSession,
+  timeoutMs: number = PI_SESSION_IDLE_WAIT_TIMEOUT_MS,
+  pollMs: number = 100,
+): Promise<void> {
+  if (!session.isStreaming) return
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+  // 启动 abort，但状态切换才是是否可安全重发的权威信号；abort Promise 可能过早 resolve 或永久悬挂。
+  const abortPromise = session.abort().catch(() => {})
+  const initialWait = Math.min(Math.max(1, pollMs), Math.max(1, deadline - Date.now()))
+  await Promise.race([abortPromise, sleep(initialWait)])
+  while (session.isStreaming && Date.now() < deadline) {
+    const remaining = deadline - Date.now()
+    await sleep(Math.min(Math.max(1, pollMs), Math.max(1, remaining)))
+  }
+  if (session.isStreaming) {
+    throw new Error(`Pi 会话中止后仍处于 processing（等待 ${timeoutMs}ms），已拒绝重复发送`)
+  }
 }
 
 /**
@@ -167,8 +225,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal } = input
-    if (!provider || !apiKey || !baseUrl || !model || !cwd) {
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
+    if (runtimeBudgetLimitUsd !== undefined && (!Number.isFinite(runtimeBudgetLimitUsd) || runtimeBudgetLimitUsd <= 0)) {
+      throw new Error('Pi 调用级费用阈值无效')
+    }
+    if (!provider || !apiKey || (!baseUrl && provider !== 'openai-codex') || !model || !cwd) {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
 
@@ -187,11 +248,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
 
     if (requestedOperation === 'compact') {
+      if (provider === 'openai-codex') throw new Error('ChatGPT 订阅暂不支持独立压缩，请缩短对话后重试')
+      if (runtimeBudgetLimitUsd !== undefined) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
       await runWithCompactionAbort((signal) => compactSessionNow({
         sessionId,
         provider,
         apiKey,
-        baseUrl,
+        baseUrl: baseUrl ?? '',
         model,
         historyMessages: historyMessages ?? [],
         signal,
@@ -205,8 +268,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       sessionId,
       provider,
       apiKey,
-      baseUrl,
+      baseUrl: baseUrl ?? '',
       modelId: model,
+      channelId: input.channelId,
     })
 
     let effectiveHistoryMessages = historyMessages ?? []
@@ -285,7 +349,18 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const settingsManager = SettingsManager.inMemory({
       // 压缩由 Gravitas 在恢复会话前统一管理；关闭 Pi 原生双重压缩所有权。
       compaction: { enabled: false },
-      retry: { enabled: true, maxRetries: 2 },
+      // 有调用级预算时失败回执/断流可能已产生费用；即使请求前钩子可拒绝
+      // 下一请求，也不让 Pi 自己的重试队列保留不确定的待发副作用。
+      retry: {
+        enabled: runtimeBudgetLimitUsd === undefined,
+        maxRetries: 2,
+        // agent loop 重试和 pi-ai Provider HTTP 重试是两层；一次准入后
+        // HTTP 重试可能再发一笔费用，有限费用模式必须显式禁用。
+        ...(runtimeBudgetLimitUsd !== undefined ? { provider: { maxRetries: 0 } } : {}),
+      },
+      // Pi 0.87 默认 streaming cache warming 会绕过 prepareRequest，独立重发
+      // Provider 请求；有限费用模式禁止这条未归属的计费路径。
+      cacheWarming: runtimeBudgetLimitUsd === undefined ? 'streaming' : 'off',
       // WebBridge / Computer Use 的截图必须进入模型上下文；blockImages=true
       // 会让 Pi 在工具已成功返回图片后静默丢弃图片本体，表现为“截图没反应”。
       images: { blockImages: false },
@@ -297,12 +372,14 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       ? '\nWhen the user message states that Goal Runtime is activated, this is an active Goal. Complete the current step and call GoalCheckpoint before ending the turn. Do not claim Goal is unsupported. Use outcome=complete only with concrete evidence; otherwise use continue, waiting, or blocked.'
       : ''
     const effectiveSystemPrompt = `${systemPrompt ?? ''}\n${goalGuidance}\n${toolPrompt}`
-    if (effectiveHistoryMessages.length > 0) {
+    if (effectiveHistoryMessages.length > 0 && runtimeBudgetLimitUsd === undefined && provider !== 'openai-codex') {
+      // 统一压缩走独立 Provider 请求路径，暂未接此门禁；有限费用模式直接
+      // 保留原始历史，由模型上下文检查自然失败，不可静默触发额外计费。
       const auto = await runWithCompactionAbort((signal) => maybeAutoCompact({
         sessionId,
         provider,
         apiKey,
-        baseUrl,
+        baseUrl: baseUrl ?? '',
         model,
         historyMessages: effectiveHistoryMessages,
         observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
@@ -337,9 +414,19 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       noContextFiles: true,
       // 以 override 固定 Proma 的系统提示词边界，避免 Pi 资源加载过程中隐式追加或
       // 覆盖工具约束；所有模型可见工具均来自 Proma Bridge。
-      systemPromptOverride: () => `${systemPrompt ?? ''}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得声称工具缺失，也不得调用小写 Pi 内置工具。\n\n绝大多数网页信息需求（天气、新闻、资料、价格等）使用 WebSearch 或 WebFetch，不要为此开启 Web Bridge。只有当用户明确需要爬取特定网站、或代为操作浏览器（点击、填表、下单、登录等有状态操作）时，才使用 Web Bridge；识别到这类意图后，先向用户说明将开启受管浏览器代为操作并征求同意，再调用 WebBridgeNavigate，导航、点击、输入会触发权限确认，等待用户批准后再继续。\n\n若已使用 Web Bridge，请遵守强制顺序：WebBridgeNavigate({ url }) 成功后，才能调用 WebBridgeSnapshot、WebBridgeScreenshot、WebBridgeClick、WebBridgeType 或 WebBridgeScroll。尤其是“打开网页并截图/理解内容”任务，绝不能先调用 WebBridgeScreenshot；若尚未导航，立即调用 WebBridgeNavigate，而不是结束回答。快照返回后，点击或输入必须使用其中的 element_id。除非实际工具结果报错，否则不得声称工具缺失。\n\n记忆能力：你拥有跨会话记忆，用 RecallMemory 回忆（用户提到“之前”“上次”等回溯表述或任务可能与过去相关时），用 AddMemory 记住（出现值得记住的工作方式、偏好、重要决定时）。自然运用，不提及“记忆系统”内部概念。${goalGuidance}\n${toolPrompt}\n</pi_proma_tools>`,
+      systemPromptOverride: () => `${systemPrompt ?? ''}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得声称工具缺失，也不得调用小写 Pi 内置工具。\n\n绝大多数网页信息需求（天气、新闻、资料、价格等）使用 WebSearch 或 WebFetch，不要为此开启 Web Bridge。只有当用户明确需要爬取特定网站、或代为操作浏览器（点击、填表、下单、登录等有状态操作）时，才使用 Web Bridge；识别到这类意图后，先向用户说明将开启受管浏览器代为操作并征求同意，再调用 WebBridgeNavigate，导航、点击、输入会触发权限确认，等待用户批准后再继续。\n\n若已使用 Web Bridge，请遵守强制顺序：WebBridgeNavigate({ url }) 成功后，才能调用 WebBridgeSnapshot、WebBridgeScreenshot、WebBridgeClick、WebBridgeType 或 WebBridgeScroll。尤其是“打开网页并截图/理解内容”任务，绝不能先调用 WebBridgeScreenshot；若尚未导航，立即调用 WebBridgeNavigate，而不是结束回答。快照返回后，点击或输入必须使用其中的 element_id。除非实际工具结果报错，否则不得声称工具缺失。\n\n记忆能力：RecallMemory / AddMemory 是个人跨会话云端记忆；SearchProjectMemory / ReadProjectMemory 是当前会话授权范围内的本地长期记忆。需要回溯时优先按任务相关性选择合适工具，自然运用，不提及“记忆系统”内部概念。${goalGuidance}\n${toolPrompt}\n</pi_proma_tools>`,
     })
     await resourceLoader.reload()
+
+    // Pi 0.87 起 SessionManager 是会话唯一事实源：历史必须在创建 AgentSession 前
+    // 作为初始 entries 注入 inMemory manager；事后赋值 session.state.messages 不会
+    // 进入模型上下文（0.82 的行为断点）。
+    const piHistoryMessages = effectiveHistoryMessages.length > 0
+      ? convertSDKMessagesToPiMessages(effectiveHistoryMessages)
+      : []
+    const sessionManager = piHistoryMessages.length > 0
+      ? SessionManager.inMemory(cwd, undefined, buildPiHistorySessionEntries(piHistoryMessages))
+      : SessionManager.inMemory(cwd)
 
     const { session } = await createAgentSession({
       cwd,
@@ -352,11 +439,50 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       noTools: 'builtin',
       customTools,
       resourceLoader,
-      sessionManager: SessionManager.inMemory(cwd),
+      sessionManager,
       settingsManager,
     })
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
     session.agent.toolExecution = 'sequential'
+    const budgetGate = runtimeBudgetLimitUsd === undefined ? undefined : createPiRequestBudgetGate(runtimeBudgetLimitUsd)
+    if (budgetGate) {
+      const loadedExtensions = resourceLoader.getExtensions()
+      if (loadedExtensions.extensions.length > 0 || loadedExtensions.errors.length > 0
+        || session.getActiveToolNames().some((name) => !customTools.some((tool) => tool.name === name))) {
+        throw new Error('Pi 有限费用模式禁止未核验的扩展或内置工具路径')
+      }
+    }
+    if (budgetGate) {
+      // coding-agent 在 createAgentSession 时安装 canonical context 和扩展工具钩子；
+      // 必须链式保留，否则可能绕过 Pi 原有的会话投影/工具治理。
+      const previousPrepare = session.agent.prepareRequest
+      const previousToolHook = session.agent.beforeToolCall
+      session.agent.prepareRequest = async (request, signal) => {
+        if (budgetGate.blocked || budgetGate.inFlight) budgetGate.beforeRequest()
+        const prepared = await previousPrepare?.(request, signal)
+        budgetGate.beforeRequest()
+        // coding-agent 的 streamFn 之外可能还有其它请求路径；有限阈值模式只
+        // 允许一个受控请求待回执。后续任何未归属回执都进入停等。
+        return prepared ?? undefined
+      }
+      const previousPayload = session.agent.onPayload
+      session.agent.onPayload = async (payload, requestModel) => {
+        // Provider 构造请求体后、发送前再次核验已有准入，阻断遗漏 prepareRequest
+        // 的旁路。此处没有可信价格或输入 token 上界，不能称为费用硬封顶。
+        budgetGate.beforePayload()
+        return previousPayload?.(payload, requestModel)
+      }
+      session.agent.beforeToolCall = async (context, signal) => {
+        if (budgetGate.blocked || budgetGate.inFlight) {
+          return { block: true, reason: budgetGate.blocked ?? '模型请求尚无费用回执', terminate: true }
+        }
+        const previous = await previousToolHook?.(context, signal)
+        if (budgetGate.blocked || budgetGate.inFlight) {
+          return { block: true, reason: budgetGate.blocked ?? '模型请求尚无费用回执', terminate: true }
+        }
+        return previous
+      }
+    }
 
     // ===== 运行 span 采集：task 级 =====
     // traceId 复用 sessionId（对齐 server P-I 阶段做法）；taskId = task span 自身。
@@ -387,19 +513,22 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       })).catch(() => {})
     }
 
-    if (effectiveHistoryMessages.length > 0) {
-      session.state.messages = convertSDKMessagesToPiMessages(effectiveHistoryMessages)
-    }
+    // 历史已在上面的 sessionManager 注入；此处不再赋值 state.messages（0.87 无效）。
 
     // 同一 prompt 内由 Pi 原生驱动完整工具循环；逐条投影 message_end，不能等
     // agent_end 后再从 state 回放，否则工具结果和最终总结会在 UI 中表现为断流。
     const queue = createAsyncQueue<SDKMessage>()
     let assistantUuid: string | undefined
     let deferredRetryError: SDKMessage | undefined
-    // 「流活动」时间戳：Pi 事件（message_update/message_end/agent_end/tool 等）到达时刷新。
-    // 供看门狗判断会话是否仍在产出；长时间无任何事件则判定静默挂起。
+    // 「流活动」时间戳：任意 Pi 生命周期事件都会刷新，避免长工具执行被误判为死流。
+    // 首模型响应单独记录；工具/重试事件不能冒充首 token、提前缩短 prefill 宽限。
     let lastActivityAt = Date.now()
+    let currentPromptHasModelActivity = false
     const touchActivity = (): void => { lastActivityAt = Date.now() }
+    const touchModelActivity = (): void => {
+      currentPromptHasModelActivity = true
+      touchActivity()
+    }
     const assistantUuidFor = (): string => {
       assistantUuid ??= randomUUID()
       return assistantUuid
@@ -416,12 +545,15 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       if (event.type === 'message_update' && isAssistantPiMessage(event.message)) {
         // 原生 retry 前的 error assistant 只是暂态；不能先显示再等待 agent_end.willRetry。
         if (event.message.stopReason === 'error') return
-        touchActivity()
+        touchModelActivity()
         partialAssistantCoalescer.schedule(event.message)
         return
       }
       if (event.type === 'message_end') {
-        touchActivity()
+        if (isAssistantPiMessage(event.message)) {
+          touchModelActivity()
+          budgetGate?.afterResponse(event.message)
+        } else touchActivity()
         partialAssistantCoalescer.flush()
         const message = convertPiMessageToSDKMessage(event.message, sessionId, model, {
           final: true,
@@ -456,6 +588,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
       if (event.type === 'auto_retry_end') {
+        touchActivity()
         if (event.success) onAgentEvent?.({ type: 'retry_cleared' })
         else onAgentEvent?.({
           type: 'retry_failed',
@@ -519,29 +652,47 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
       const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
 
+      // 首 token 宽限按本回合上下文规模自适应；此时 compaction 已完成，effectiveHistoryMessages 为最终历史。
+      const firstTokenTimeoutMs = resolveFirstTokenTimeoutMs(
+        estimateOutgoingContextTokens({
+          historyMessages: effectiveHistoryMessages,
+          currentPrompt: prompt,
+          systemPrompt: effectiveSystemPrompt,
+          tools: customTools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+        }),
+      )
+
       /**
        * 带空闲看门狗的 Pi prompt 执行。
        *
        * Pi 的 session.prompt() 在「SSE 中途无数据但连接未断」时会永久挂起、既不
        * resolve 也不 reject（日志表现为『会话开始后长时间无完成』）。这里轮询
-       * lastActivityAt（由 session.subscribe 事件刷新），若 idleTimeoutMs 内无任何
-       * 活动则 abort 底层会话并抛出可重试的瞬时错误，交由 retryablePromptChain 重试，
-       * 避免会话永远卡死。
+       * lastActivityAt（由 session.subscribe 事件刷新），若空闲超过阈值则 abort 底层
+       * 会话并抛出可重试的瞬时错误，交由 retryablePromptChain 重试，避免会话永远卡死。
+       *
+       * 阈值分两阶段：首 token 前用按上下文规模自适应的宽限（慢模型对大上下文的
+       * prefill 静默期可达数分钟，不能当成死流），首 token 到达后回到 120s。
        */
       const promptWithIdleWatchdog = async (
         promptText: string,
         images: typeof promptImages,
       ): Promise<void> => {
-        // 每次 prompt 开始时重置活动时钟，避免沿用上一轮的旧时间戳导致立即误判超时。
+        // 重试保护：看门狗/软中断的 abort 是异步的，旧 prompt 可能仍在 streaming；
+        // 直接重新 prompt 会撞 Pi 的 "Agent is already processing"。等它真正退出。
+        if (session.isStreaming) await waitForPiSessionIdle(session)
+        // 每次 prompt 开始时重置活动时钟和模型活动状态，避免沿用上一轮状态误判阶段。
         lastActivityAt = Date.now()
+        currentPromptHasModelActivity = false
         let timer: ReturnType<typeof setInterval> | undefined
         let rejectExec: ((e: Error) => void) | null = null
         if (PI_PROMPT_IDLE_TIMEOUT_MS > 0) {
           timer = setInterval(() => {
+            // 仅模型消息结束首 token 宽限；工具/重试事件只刷新 lastActivityAt。
+            const idleLimit = resolvePromptIdleTimeoutMs(currentPromptHasModelActivity, firstTokenTimeoutMs)
             // 距离最后一次 Pi 活动超过阈值 → 判定挂起
-            if (Date.now() - lastActivityAt >= PI_PROMPT_IDLE_TIMEOUT_MS) {
+            if (Date.now() - lastActivityAt >= idleLimit) {
               const err = new Error(
-                `Pi prompt 流空闲超时 (no agent activity for ${PI_PROMPT_IDLE_TIMEOUT_MS}ms): stream ended without data`
+                `Pi prompt 流空闲超时 (no agent activity for ${Date.now() - lastActivityAt}ms, 阈值 ${idleLimit}ms): stream ended without data`
               )
               err.name = 'AbortError'
               void session.abort().catch(() => {})
@@ -618,7 +769,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             const message = error instanceof Error ? error.message : String(error)
             const active = this.activeSessions.get(sessionId)
             // active 不存在说明会话已被 abort/release；interrupting 时由 interrupt 路径处理
-            if (!active || active.interrupting) throw error
+            if (!active || active.interrupting || budgetGate?.blocked) throw error
+            // 未收到可归属的费用回执时一次网络重试也可能重复计费；有限阈值
+            // 模式必须先停等，不能借现有 prompt 断流重试绕开未知费用门禁。
+            if (budgetGate) throw error
             if (!isTransientNetworkError(message) || attempts >= MAX_PROMPT_RETRIES) throw error
             attempts += 1
             const delayMs = 1000 * attempts
@@ -636,7 +790,12 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         }
       }
       void retryablePromptChain()
-        .then(() => queue.close())
+        .then(() => {
+          // Pi 的工具 terminate / prepareRequest 拒绝可能被 SDK 收敛为正常 resolve；
+          // 有限费用模式必须按回执状态判断终态，不允许外层误报成功。
+          budgetGate?.assertComplete()
+          queue.close()
+        })
         .catch((error: unknown) => {
           queryHadError = true
           queue.fail(error)
@@ -647,6 +806,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         yield next.value
       }
     } finally {
+      budgetGate?.stop()
       partialAssistantCoalescer.dispose()
       this.releaseSession(sessionId)
       mcpRelease?.()

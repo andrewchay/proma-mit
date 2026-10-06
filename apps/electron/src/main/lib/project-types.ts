@@ -4,6 +4,8 @@
  * 抽离为独立文件，避免 project-service.ts / local-project-store.ts / nocobase-project-service.ts 之间循环引用。
  */
 
+import type { DevelopmentTaskScope } from '@gravitas/shared'
+
 export type ProjectStatus = 'planning' | 'active' | 'completed' | 'cancelled'
 
 export interface Project {
@@ -13,11 +15,55 @@ export interface Project {
   status: ProjectStatus
   createdAt: number
   updatedAt: number
+  /** 列表手动排序权重（REAL，升序在前；未手动排序时为 -createdAt） */
+  sortOrder: number
 }
 
-export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
+/**
+ * 任务状态 ID：预置五态沿用旧字符串作固定 id（历史数据零迁移），
+ * 自定义状态为 task_statuses 表新建的 id。
+ */
+export type LegacyTaskStatus = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
+export type TaskStatus = LegacyTaskStatus | (string & {})
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type ExecutableWorkItemType = 'task' | 'subTask'
+
+/**
+ * 状态语义组（借鉴 Plane StateGroup）。
+ * 完成判断、WIP、燃尽等跨状态逻辑只认组，不认具体状态 id；
+ * 具体状态是每项目独立的数据行，支持自定义。
+ */
+export type TaskStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
+
+/** 项目任务状态定义（task_statuses 表行） */
+export interface TaskStatusDef {
+  id: string
+  projectId: string
+  name: string
+  stateGroup: TaskStateGroup
+  /** 展示顺序（看板列序，小者在前） */
+  position: number
+  /** 列颜色（可空，前端按语义组给默认色） */
+  color?: string
+  /** WIP 上限（可空 = 不限；当前仅做超限展示提醒） */
+  wipLimit?: number
+  /** 预置状态（不可删除，可改名/换色/调序） */
+  isBuiltin: boolean
+  /** 默认初始状态（任务确认后落入；外部"未完成"回退目标） */
+  isDefault: boolean
+  createdAt: number
+}
+
+export interface CreateTaskStatusInput {
+  name: string
+  stateGroup: TaskStateGroup
+  color?: string
+  wipLimit?: number
+  /** 插入到某状态之后；缺省追加到末尾 */
+  afterStatusId?: string
+}
+
+export type UpdateTaskStatusInput = Partial<Pick<TaskStatusDef, 'name' | 'stateGroup' | 'color' | 'wipLimit'>>
 
 export interface TaskAssignee {
   userId: string
@@ -56,6 +102,8 @@ export interface Task {
   title: string
   description: string
   assignee?: TaskAssignee
+  /** 负责人对应的统一成员目录 ID（身份统一后为权威匹配键） */
+  assigneeMemberId?: string
   startDate?: number
   priority: TaskPriority
   status: TaskStatus
@@ -73,8 +121,16 @@ export interface Task {
   permissionRequests?: string[]
   /** 发起/创建者（PH2-⑤） */
   createdByUserId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
   /** AI 员工执行目标工作区（PH2-③：指定执行落在哪个工作区，缺省用员工/全局） */
   workspaceId?: string
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退 paused 待人工处理 */
+  tokenBudget?: number
+  /** 研发任务执行范围（文件委派）；仅研发链路消费，普通任务缺省为空 */
+  developmentScope?: DevelopmentTaskScope
+  /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
+  sortOrder: number
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -111,6 +167,8 @@ export interface CreateTaskInput {
   title: string
   description: string
   assignee?: TaskAssignee
+  /** 负责人对应的统一成员目录 ID（优先于自由文本 assignee） */
+  assigneeMemberId?: string
   priority?: TaskPriority
   startDate?: number
   dueDate?: number
@@ -120,8 +178,14 @@ export interface CreateTaskInput {
   permissionRequests?: string[]
   /** 发起/创建者（PH2-⑤：“我指派的”视图用） */
   createdByUserId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
   /** AI 员工执行目标工作区（可选；缺省用员工/全局默认） */
   workspaceId?: string
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行 */
+  tokenBudget?: number
+  /** 研发任务执行范围（文件委派）；仅研发链路消费，普通任务缺省为空 */
+  developmentScope?: DevelopmentTaskScope
 }
 
 /** 创建独立执行 subTask 的输入；它通过 taskId 归属 Task，不使用 WBS parentId。 */
@@ -134,6 +198,8 @@ export interface CreateExecutionSubTaskInput {
 
 export interface ListTasksFilter {
   status?: TaskStatus
+  /** 按语义组过滤（跨自定义状态筛选） */
+  statusGroup?: TaskStateGroup
   assigneeUserId?: string
   /** 是否包含子任务，默认 false */
   includeSubTasks?: boolean
@@ -141,11 +207,31 @@ export interface ListTasksFilter {
   includeDrafts?: boolean
 }
 
+/** 拖拽排序输入：目标位置由邻居表达（after=落点上方邻居、before=落点下方邻居；都不给=追加到列尾）。两个邻居分别定位，任一命中即采用；跨列时给 newStatusId */
+export interface ReorderTaskInput {
+  /** 放置到该任务之后（该任务成为上方邻居；列首拖拽时缺失） */
+  afterTaskId?: string
+  /** 放置到该任务之前（该任务成为下方邻居；列尾拖拽时缺失） */
+  beforeTaskId?: string
+  /** 同时改状态（拖入另一列）；缺省保持原状态 */
+  newStatusId?: string
+}
+
+/** 看板列：一个状态 + 该状态下按展示顺序排列的任务 */
+export interface KanbanColumn {
+  status: TaskStatusDef
+  tasks: Task[]
+}
+
 export interface KanbanBoard {
-  draft: Task[]
-  pending: Task[]
-  in_progress: Task[]
-  completed: Task[]
+  columns: KanbanColumn[]
+}
+
+/** 排序结果：被移动任务 + 触发重编号时一并改写的任务 */
+export interface ReorderTaskResult {
+  task: Task
+  /** 整列重编号时一并改写的其他任务（按新顺序） */
+  rewrittenTasks: Task[]
 }
 
 export interface ProjectProgress {
@@ -206,6 +292,10 @@ export interface MyWorkItem extends ExecutableWorkItem {
   projectTitle: string
   parentTaskTitle?: string
   isOverdue: boolean
+  /** 负责人对应的统一成员目录 ID（列表按 member_id 过滤用） */
+  assigneeMemberId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
 }
 
 export type ProjectAlertType = 'overdue' | 'blocked' | 'high_risk'
@@ -278,9 +368,13 @@ export interface AgentEmployee {
   runtime: AgentEmployeeRuntime
   channelId: string
   modelId?: string
-  /** 默认工作区 ID；缺省时使用当前全局工作区 */
+  /** 兼容旧档案的首选工作区 ID；缺省时使用当前全局工作区。 */
   workspaceId?: string
+  /** AI 员工作为角色可服务的工作区集合；执行任务须从中明确选择。 */
+  workspaceIds?: string[]
   /** 绑定的 Workflow SOP ID（P3）；绑定后任务改用 Workflow 执行（需已发布） */
+  executionProfile?: 'general' | 'development'
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string
   /** 自定义角色 system prompt */
   systemPrompt?: string
@@ -304,6 +398,9 @@ export interface CreateAgentEmployeeInput {
   channelId: string
   modelId?: string
   workspaceId?: string
+  workspaceIds?: string[]
+  executionProfile?: 'general' | 'development'
+  permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string
   skills?: string[]
@@ -324,6 +421,8 @@ export interface AgentExecution {
   sessionId: string
   /** 执行器类型：headless（默认）/ workflow（绑定 SOP，sessionId 存 workflow:<runId>） */
   executor?: 'headless' | 'workflow'
+  /** 仅未来 Pilot 受控命令创建的执行填写；旧执行保持无归属。 */
+  pilotCommandId?: string
   status: AgentExecutionStatus
   prompt: string
   resultSummary?: string
@@ -333,8 +432,113 @@ export interface AgentExecution {
   /** by-task 申请的权限（P1 使用，P0 预留） */
   requestedPermissions?: string[]
   lastHeartbeatAt?: number
+  /** 派发时冻结的角色/工作区能力版本，后续编辑不会改写历史执行。 */
+  capabilityVersionIds?: string[]
+  capabilityContentHash?: string
   startedAt: number
   completedAt?: number
+}
+
+export type AgentEmployeeCapabilityScope = 'role' | 'workspace'
+export type AgentEmployeeCapabilityStatus = 'active' | 'candidate' | 'superseded' | 'rolled_back'
+export type AgentEmployeeLearningOutcome = 'accepted' | 'changes_requested' | 'failed' | 'cancelled' | 'manual_excluded'
+
+export interface AgentEmployeeCapabilityVersion {
+  id: string
+  agentId: string
+  parentVersionId?: string
+  versionNumber: number
+  scope: AgentEmployeeCapabilityScope
+  workspaceId?: string
+  content: string
+  contentHash: string
+  status: AgentEmployeeCapabilityStatus
+  source: 'manual' | 'evolution'
+  createdAt: number
+  activatedAt?: number
+  retiredAt?: number
+}
+
+export interface AgentEmployeeCapabilityObservation {
+  versionId: string
+  executionCount: number
+  completedCount: number
+  failedCount: number
+  cancelledCount: number
+  staleCount: number
+  acceptedSamples: number
+  changesRequestedSamples: number
+  failedSamples: number
+  cancelledSamples: number
+  pendingSamples: number
+  sanitizedSamples: number
+  excludedSamples: number
+  lastExecutedAt?: number
+}
+
+export interface AgentEmployeeCapabilityHealth {
+  versionId: string
+  /** 观察时间窗（天）。 */
+  windowDays: number
+  executionCount: number
+  /** 返工或未通过的样本占已判定样本的比例；样本不足时为 null。 */
+  reworkRate: number | null
+  failureRate: number | null
+  cancellationRate: number | null
+  /** 已判定样本量（排除取消与待审核）；用于判断结论可信度。 */
+  decidedSampleCount: number
+  /** 样本量是否足以支撑趋势结论。 */
+  sampleSufficient: boolean
+  lastExecutedAt?: number
+  /** 同 scope 内的对比对象（父版本或基线）；无则缺省。 */
+  comparisonVersionId?: string
+  /** 当前版本与对比对象的返工率差值（百分点）；样本不足时为 null。 */
+  reworkRateDelta?: number | null
+  /** 当前版本与对比对象的失败率差值（百分点）；样本不足时为 null。 */
+  failureRateDelta?: number | null
+  /** 对比是否具备可比样本量；false 时不应据此下结论。 */
+  comparisonComparable: boolean
+}
+
+export interface AgentEmployeeCapabilityRollbackPreview {
+  versionId: string
+  scope: AgentEmployeeCapabilityScope
+  workspaceId?: string
+  targetVersionId?: string
+  targetVersionNumber?: number
+  targetIsBaseline: boolean
+  activeExecutionCount: number
+  dependentWorkspaceVersionCount: number
+  historicalExecutionsUnaffected: true
+  note: string
+}
+
+export interface AgentEmployeeCapabilityRollbackAudit {
+  id: string
+  agentId: string
+  scope: AgentEmployeeCapabilityScope
+  workspaceId?: string
+  fromVersionId: string
+  toVersionId?: string
+  reason: string
+  actorId: string
+  createdAt: number
+}
+
+export interface AgentEmployeeLearningSample {
+  id: string
+  agentId: string
+  executionId: string
+  projectId: string
+  taskId: string
+  /** 样本产生时冻结的执行工作区；旧记录未知时缺省。 */
+  workspaceId?: string
+  capabilityVersionIds: string[]
+  outcome: AgentEmployeeLearningOutcome
+  evidenceSummary: string
+  privacyStatus: 'pending' | 'sanitized' | 'excluded'
+  createdAt: number
+  labeledAt?: number
 }
 
 export interface CreateAgentExecutionInput {
@@ -345,9 +549,12 @@ export interface CreateAgentExecutionInput {
   agentId: string
   sessionId: string
   executor?: 'headless' | 'workflow'
+  pilotCommandId?: string
   prompt: string
   status?: AgentExecutionStatus
   requestedPermissions?: string[]
+  capabilityVersionIds?: string[]
+  capabilityContentHash?: string
   startedAt?: number
 }
 

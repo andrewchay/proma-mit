@@ -82,11 +82,11 @@ export class FeishuTodoProvider implements TodoProvider {
     return { taskId: taskGuid, status: 'pending' }
   }
 
-  // ===== 更新 Todo 状态 =====
-  async updateTodoStatus(taskId: string, status: string): Promise<boolean> {
+  // ===== 更新 Todo 完成态（组语义：外部平台只有完成/未完成二值） =====
+  async updateTodoStatus(taskId: string, isCompleted: boolean): Promise<boolean> {
     const token = await this.getTenantAccessToken()
 
-    if (status === 'completed') {
+    if (isCompleted) {
       // 标记完成
       const resp = await this.feishuApi(
         'POST',

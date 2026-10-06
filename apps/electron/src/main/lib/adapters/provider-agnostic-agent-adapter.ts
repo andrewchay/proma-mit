@@ -50,6 +50,8 @@ import type { RuntimeMessage } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { getWorkspaceSkills } from '../agent-workspace-manager'
 import type { SkillPromptContext } from '../agent-runtime/prompt-builder'
+import { MODEL_STREAM_IDLE_TIMEOUT_MS, resolveModelFirstResponseTimeoutMs } from '../agent-runtime/stream-timeouts'
+import { estimateTokenCount } from '../agent-tool-token-estimator'
 
 /** 工具权限检查结果 */
 export interface ToolPermissionResult {
@@ -118,6 +120,8 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   systemPrompt?: string
   /** 权限模式 */
   permissionMode?: import('@gravitas/shared').PromaPermissionMode
+  /** 安全研发隔离写入边界：置位后 safe 模式允许 Write/Edit 仅写会话 cwd 内路径 */
+  worktreeScopedWrite?: boolean
   /** 自定义权限检查回调；未提供时按 permissionMode 做本地兜底判断 */
   canUseTool?: CanUseToolCallback
   /** 历史 SDKMessage（阶段 2：多轮会话上下文） */
@@ -155,6 +159,12 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
   }>
   /** 已解析运行时工具：保留正式 execute 的错误语义与 ToolContext。 */
   runtimeTools?: RuntimeToolDefinition[]
+  /**
+   * 完全不注册任何工具（核心 / MCP / extra 全部跳讨）。
+   * 用于只读且无副作用的纯文本任务（如上下文投影评测），
+   * 避免模型看见工具后发起 tool_use 而在一轮内无法产出结果。
+   */
+  disableTools?: boolean
   /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表（自研 runtime 按需提示读取） */
   skillMentions?: string[]
 }
@@ -202,6 +212,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       runSubAgent,
       extraTools,
       runtimeTools,
+      disableTools,
       onGoalCheckpoint,
       skillMentions,
       requestedOperation,
@@ -246,7 +257,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
     let mcpRelease: (() => void) | undefined
     let mcpTools: RuntimeToolDefinition[] = []
-    if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
+    if (!disableTools && mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
       try {
         const acquired = await this.mcpService.acquireClientManager({
           workspaceSlug,
@@ -262,7 +273,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
       }
     }
-    const tools: RuntimeToolDefinition[] = [
+    const tools: RuntimeToolDefinition[] = disableTools ? [] : [
       ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
       ...mcpTools,
       ...(runtimeTools ?? []),
@@ -356,6 +367,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       // 否则 Anthropic 适配器会产生“user tool_result -> assistant tool_use”的乱序/重复结构。
       let continuationMessages: ContinuationMessage[] = []
       let round = 0
+      let completedFinalResponse = false
       const maxRetries = input.maxRetries ?? 2
 
       while (round < maxTurns) {
@@ -378,6 +390,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           })),
           continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined,
         })
+        // 每个工具续接轮次都按实际序列化请求重新估算，避免大型工具结果仍被固定 120 秒误杀。
+        const firstResponseTimeoutMs = resolveModelFirstResponseTimeoutMs(
+          estimateTokenCount(request.body) + 256,
+        )
 
         let currentContent = ''
         let currentReasoning = ''
@@ -404,6 +420,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
               adapter,
               signal: controller.signal,
               fetchFn,
+              firstResponseTimeoutMs,
+              idleTimeoutMs: MODEL_STREAM_IDLE_TIMEOUT_MS,
               onEvent: handleStreamEvent,
             }),
           {
@@ -472,6 +490,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
         // 无工具调用或停止原因不是 tool_use，结束循环
         if (!currentToolCalls.length || result.stopReason !== 'tool_use') {
+          completedFinalResponse = true
           break
         }
 
@@ -548,6 +567,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           },
           { role: 'tool', results: toolResults },
         ]
+      }
+
+      if (round >= maxTurns && !completedFinalResponse && !activeSession.cancelled) {
+        throw new Error(`Agent 工具循环达到最大轮数 ${maxTurns}，模型尚未生成最终回答；请缩小任务范围或减少工具调用后重试`)
       }
         } catch (error) {
           // 上下文超限发生在 streamSSE 返回前，尚未执行工具；仅允许压缩并重试一次。
@@ -704,6 +727,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         'WebSearch',
         'WebFetch',
         'RecallMemory',
+        'SearchProjectMemory',
+        'ReadProjectMemory',
         'WebBridgeSnapshot',
         'WebBridgeScreenshot',
         'WebBridgeScroll',
@@ -744,6 +769,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         'WebSearch',
         'WebFetch',
         'RecallMemory',
+        'SearchProjectMemory',
+        'ReadProjectMemory',
         'WebBridgeSnapshot',
         'WebBridgeScreenshot',
         'WebBridgeScroll',

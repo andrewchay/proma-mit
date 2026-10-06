@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { createToolCallIdempotencyCache } from './agent-collaboration-utils'
+import { createToolCallIdempotencyCache, resolveDelegationPermissionMode } from './agent-collaboration-utils'
+
+describe('协作委派权限上限', () => {
+  test('Pi 与其他 Runtime 都不能请求高于父会话的权限', () => {
+    expect(resolveDelegationPermissionMode('safe', 'bypassPermissions', 'pi')).toBe('safe')
+    expect(resolveDelegationPermissionMode('auto', 'bypassPermissions', 'claude')).toBe('auto')
+    expect(resolveDelegationPermissionMode('bypassPermissions', 'safe', 'proma')).toBe('safe')
+  })
+
+  test('缺少父权限时使用默认上限而不是 bypass', () => {
+    expect(resolveDelegationPermissionMode(undefined, 'bypassPermissions', 'pi')).not.toBe('bypassPermissions')
+  })
+})
 
 describe('协作委派重放保护', () => {
   test('相同父会话和 toolCallId 只执行一次副作用', () => {

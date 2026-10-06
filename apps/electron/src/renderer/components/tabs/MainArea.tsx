@@ -11,7 +11,7 @@ import { useAtomValue, useSetAtom, useAtom } from 'jotai'
 import { tabsAtom, activeTabIdAtom, activeTabAtom } from '@/atoms/tab-atoms'
 import { Panel } from '@/components/app-shell/Panel'
 import { cn } from '@/lib/utils'
-import { SettingsDialog } from '@/components/settings'
+import { SettingsDialog, SettingsModuleView } from '@/components/settings'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { previewPanelOpenMapAtom, previewSplitRatioAtom, previewUsesRightWorkspaceAtom } from '@/atoms/preview-atoms'
 import { PreviewPanel } from '@/components/diff/PreviewPanel'
@@ -24,6 +24,7 @@ import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/at
 const WorkflowView = React.lazy(() => import('@/components/workflow/WorkflowView').then((module) => ({ default: module.WorkflowView })))
 const ProactiveCenter = React.lazy(() => import('@/components/proactive/ProactiveCenter').then((module) => ({ default: module.ProactiveCenter })))
 import { WORK_MODULE_VIEWS } from '@/atoms/work-module-registry'
+import { enabledDevModulesAtom, isViewVisible, resolveVisibleView } from '@/atoms/dev-gate'
 
 export function MainArea(): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
@@ -31,6 +32,7 @@ export function MainArea(): React.ReactElement {
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const activeTab = useAtomValue(activeTabAtom)
   const activeView = useAtomValue(activeViewAtom)
+  const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
   const appMode = useAtomValue(appModeAtom)
   const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
@@ -45,6 +47,15 @@ export function MainArea(): React.ReactElement {
     sidebarCollapsed ? 'rounded-l-2xl' : 'rounded-l-none',
     rightPanelActive ? 'rounded-r-none' : 'rounded-r-2xl'
   )
+
+  // 工作模块页与对话页的顶层差异：
+  // 对话页的 TabBar 自己声明了拖拽区（titlebar-drag-region），需要点击的 Tab 各自声明
+  // titlebar-no-drag；而 AppShell 还有一个 fixed 的全局 50px 窗口拖拽层，其 hitmask 不受
+  // z-index 约束（见 AppShell.tsx 中 WindowControls 的注释），会盖住主区顶部 50px。
+  // 工作模块页把「返回对话」「子视图切换」放在顶部这一带，若只逐个按钮补 titlebar-no-drag，
+  // 新增模块时极易再次漏写（表现为按钮只剩贴着 50px 边界的那几个像素可点）。
+  // 因此这里在模块分支整体声明 no-drag：模块页内全是交互内容，不需要从顶栏拖窗。
+  const workModulePanelClassName = cn(mainPanelClassName, 'titlebar-no-drag')
 
   // Tab 内容渲染降级为非紧急：TabBar 立即高亮新 tab，主区域昂贵渲染（含 PreviewPanel 中
   // DiffTabContent → ProseMirror editor mount + Shiki tokenize）让出主线程，避免点击 tab
@@ -151,20 +162,27 @@ export function MainArea(): React.ReactElement {
     : { flex: '1 1 auto' }
 
   // 工作模块视图：由模块注册表驱动（projects / calendar）
-  const WorkModuleComponent = activeView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[activeView] : null
+  // 开发阶段门禁：旧持久化状态若停在未发布模块，回落对话视图而不是渲染空白模块。
+  const effectiveView = resolveVisibleView(activeView, enabledDevModules)
+  const proactiveVisible = isViewVisible('proactive', enabledDevModules)
+  const WorkModuleComponent = effectiveView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[effectiveView] : null
 
   return (
     <>
-      {activeView === 'workflow' ? (
-        <Panel variant="grow" className={mainPanelClassName}>
+      {effectiveView === 'settings' ? (
+        <Panel variant="grow" className={workModulePanelClassName}>
+          <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><SettingsModuleView /></React.Suspense>
+        </Panel>
+      ) : effectiveView === 'workflow' ? (
+        <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkflowView /></React.Suspense>
         </Panel>
-      ) : activeView === 'proactive' ? (
-        <Panel variant="grow" className={mainPanelClassName}>
+      ) : effectiveView === 'proactive' && proactiveVisible ? (
+        <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><ProactiveCenter /></React.Suspense>
         </Panel>
       ) : WorkModuleComponent ? (
-        <Panel variant="grow" className={mainPanelClassName}>
+        <Panel variant="grow" className={workModulePanelClassName}>
           <React.Suspense fallback={<div role="status" className="p-6 text-muted-foreground">加载中…</div>}><WorkModuleComponent /></React.Suspense>
         </Panel>
       ) : (

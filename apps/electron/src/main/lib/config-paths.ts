@@ -300,6 +300,46 @@ export function getUserProfilePath(): string {
 }
 
 /**
+ * 获取订阅权益缓存文件路径
+ *
+ * 只保存服务端签名的非敏感权益快照，不保存 access/refresh token。
+ *
+ * @returns ~/.proma/subscription/entitlement-cache.json
+ */
+export function getSubscriptionEntitlementCachePath(): string {
+  return join(getSubscriptionDir(), 'entitlement-cache.json')
+}
+
+/**
+ * 获取订阅服务目录路径
+ */
+export function getSubscriptionDir(): string {
+  const dir = join(getConfigDir(), 'subscription')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取订阅令牌加密存储路径
+ *
+ * 令牌由 Electron safeStorage 加密后落盘，禁止明文保存。
+ */
+export function getSubscriptionTokensPath(): string {
+  return join(getSubscriptionDir(), 'tokens.json')
+}
+
+/**
+ * 获取订阅服务地址配置文件路径。
+ *
+ * 存放用户自定义的服务地址，用于分发给外部用户时用户可自行指向部署实例。
+ */
+export function getSubscriptionConfigPath(): string {
+  return join(getSubscriptionDir(), 'endpoint.json')
+}
+
+/**
  * 获取代理配置文件路径
  *
  * @returns ~/.proma/proxy-settings.json
@@ -747,6 +787,22 @@ export function getMarketingSkillsDir(): string {
 }
 
 /**
+ * 获取新媒体运营 Skills 资源目录。
+ *
+ * 新媒体 Skills 由 `com.gravitas.new-media` 插件按能力订阅分发，
+ * 不进入默认 Skill 集市，也不会自动注入新建工作区。
+ */
+export function getNewMediaSkillsDir(): string {
+  const dir = join(getConfigDir(), 'new-media-skills')
+
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+
+  return dir
+}
+
+/**
  * 从 SKILL.md 的 YAML frontmatter 中解析 version 字段
  *
  * 无 version 字段时返回 '0.0.0'（确保旧 Skill 会被更新）。
@@ -966,6 +1022,46 @@ export function seedDefaultSkills(): void {
  * 开发模式下从源码 marketing-skills/ 目录复制。
  * 同步策略与 seedDefaultSkills 一致：缺失复制、版本比对覆盖（rm-then-cp）。
  */
+export function seedNewMediaSkills(): void {
+  const { app } = require('electron')
+  const bundledDir = app.isPackaged
+    ? join(process.resourcesPath, 'new-media-skills')
+    : join(__dirname, '../new-media-skills')
+
+  if (!existsSync(bundledDir)) {
+    console.log('[配置] 未找到内置 new-media-skills 目录，跳过')
+    return
+  }
+
+  const userDir = getNewMediaSkillsDir()
+  try {
+    const entries = readdirSync(bundledDir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const source = join(bundledDir, entry.name)
+      const target = join(userDir, entry.name)
+      try {
+        if (!existsSync(target)) {
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已同步新媒体 Skill: ${entry.name}`)
+          continue
+        }
+        const bundledVer = parseSkillVersion(source)
+        const existingVer = parseSkillVersion(target)
+        if (compareSemver(bundledVer, existingVer) > 0) {
+          rmSync(target, { recursive: true, force: true })
+          cpSync(source, target, { recursive: true, filter: defaultSkillCopyFilter })
+          console.log(`[配置] 已升级新媒体 Skill: ${entry.name} (${existingVer} → ${bundledVer})`)
+        }
+      } catch (err) {
+        console.warn(`[配置] 同步新媒体 Skill 失败 (${entry.name})，跳过:`, err)
+      }
+    }
+  } catch (err) {
+    console.warn('[配置] 同步新媒体 Skills 失败:', err)
+  }
+}
+
 export function seedMarketingSkills(): void {
   const { app } = require('electron')
   const bundledDir = app.isPackaged
@@ -1377,4 +1473,167 @@ export function getMarketingDir(): string {
     console.log(`[配置] 已创建营销能力目录: ${dir}`)
   }
   return dir
+}
+
+/** 获取新媒体运营本地数据目录。 */
+export function getNewMediaDir(): string {
+  const dir = join(getConfigDir(), 'new-media')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建新媒体运营目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取知识库索引目录
+ *
+ * @returns ~/.proma-mit/knowledge/
+ */
+export function getKnowledgeDir(): string {
+  const dir = join(getConfigDir(), 'knowledge')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建知识库目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取知识库 Vault 配置路径
+ *
+ * @returns ~/.proma-mit/knowledge/vaults.json
+ */
+export function getKnowledgeVaultsPath(): string {
+  return join(getKnowledgeDir(), 'vaults.json')
+}
+
+/**
+ * 获取知识库笔记索引路径
+ *
+ * @returns ~/.proma-mit/knowledge/notes.json
+ */
+export function getKnowledgeNotesPath(): string {
+  return join(getKnowledgeDir(), 'notes.json')
+}
+
+/**
+ * 获取知识库图谱路径
+ *
+ * @returns ~/.proma-mit/knowledge/graph.json
+ */
+export function getKnowledgeGraphPath(): string {
+  return join(getKnowledgeDir(), 'graph.json')
+}
+
+/**
+ * 获取分析引擎目录
+ *
+ * @returns ~/.proma-mit/analysis/
+ */
+export function getAnalysisDir(): string {
+  const dir = join(getConfigDir(), 'analysis')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建分析引擎目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取分析报告存储路径
+ *
+ * @returns ~/.proma-mit/analysis/reports.json
+ */
+export function getAnalysisReportsPath(): string {
+  return join(getAnalysisDir(), 'reports.json')
+}
+
+/**
+ * 获取学术助手目录
+ *
+ * 学术助手是 Pro 插件能力，数据与免费版目录分开存放。
+ *
+ * @returns ~/.proma-mit/academic/
+ */
+export function getAcademicDir(): string {
+  const dir = join(getConfigDir(), 'academic')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    console.log(`[配置] 已创建学术助手目录: ${dir}`)
+  }
+  return dir
+}
+
+/**
+ * 获取论文项目索引路径
+ *
+ * @returns ~/.proma-mit/academic/papers.json
+ */
+export function getAcademicPapersPath(): string {
+  return join(getAcademicDir(), 'papers.json')
+}
+
+/**
+ * 获取学术阶段产出物目录（完整性报告 / 评审报告 / 修订追踪）
+ *
+ * @returns ~/.proma-mit/academic/artifacts/
+ */
+export function getAcademicArtifactsDir(): string {
+  const dir = join(getAcademicDir(), 'artifacts')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取行为采集目录
+ *
+ * 存放被动采集的普通事件（知识 / 节律 / 协作）。敏感事件（情绪打卡）
+ * 单独存放在 getTelemetryMoodDir()，与普通事件物理隔离，便于单独删除
+ * 与审计。
+ *
+ * @returns ~/.gravita/telemetry/
+ */
+export function getTelemetryDir(): string {
+  const dir = join(getConfigDir(), 'telemetry')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取普通采集事件文件路径（JSONL 追加写入）
+ *
+ * @returns ~/.gravita/telemetry/events.jsonl
+ */
+export function getTelemetryEventsPath(): string {
+  return join(getTelemetryDir(), 'events.jsonl')
+}
+
+/**
+ * 获取敏感采集数据目录（情绪打卡）
+ *
+ * 与普通事件分开存放：一是让「只删敏感数据」能精确执行，二是避免
+ * 备份或导出普通数据时意外带出情绪记录。
+ *
+ * @returns ~/.gravita/telemetry-mood/
+ */
+export function getTelemetryMoodDir(): string {
+  const dir = join(getConfigDir(), 'telemetry-mood')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
+/**
+ * 获取情绪打卡事件文件路径
+ *
+ * @returns ~/.gravita/telemetry-mood/events.jsonl
+ */
+export function getTelemetryMoodPath(): string {
+  return join(getTelemetryMoodDir(), 'events.jsonl')
 }

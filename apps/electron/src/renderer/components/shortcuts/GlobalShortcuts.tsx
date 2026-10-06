@@ -120,7 +120,7 @@ export function GlobalShortcuts(): null {
     return cleanup
   }, [handleCloseTab])
 
-  // 监听「应用中心 → 领域工作台」菜单事件，切到应用中心视图
+  // 监听「专业订阅服务 → 领域能力包」菜单事件，切到订阅服务视图
   useEffect(() => {
     const cleanup = window.electronAPI.onMenuOpenCapabilities(() => {
       setActiveView('capabilities')

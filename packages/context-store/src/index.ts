@@ -46,3 +46,13 @@ export {
   recall,
   deleteEntity,
 } from './store.ts'
+
+// 知识索引（K1-03）
+export { KnowledgeRepository } from './repositories/knowledge-repository.ts'
+export type {
+  KnowledgeChunkInput,
+  KnowledgeChunkRow,
+  KnowledgeDocumentRow,
+  KnowledgeSearchHit,
+  KnowledgeSearchOptions,
+} from './repositories/knowledge-repository.ts'

@@ -8,6 +8,7 @@
  */
 
 import * as React from 'react'
+import type { Channel } from "@gravitas/shared"
 import {
   Play,
   TrendingUp,
@@ -42,12 +43,38 @@ interface EvalBench {
   cases: string[]
 }
 
+interface EvalCaseResult {
+  caseId: string
+  score: number
+  scoreStd?: number | null
+  runs: Array<{ score: number; sessionId: string; tracePath?: string }>
+}
+
 interface EvalDetail {
-  config: { id: string; title: string; targetAgentId: string; targetScore: number; cases: string[] }
-  scoreboard: {
-    evaluations: Array<{ time: string; agentVersion: number; score: number; costUsd?: number | null; durationMs?: number | null }>
+  config: {
+    id: string
+    title: string
+    targetAgentId: string
+    targetScore: number
+    cases: string[]
   }
-  cases: Array<{ caseId: string; statement: string | null }>
+  scoreboard: {
+    evaluations: Array<{
+      time: string
+      agentVersion: number
+      score: number
+      scoreStd?: number | null
+      costUsd?: number | null
+      durationMs?: number | null
+      judge?: { kind: "rule" | "llm" | "injected"; independent: boolean; modelId?: string } | null
+      cases: EvalCaseResult[]
+    }>
+  }
+  cases: Array<{
+    caseId: string
+    statement: string | null
+    rubric: { version: number; items: Array<{ name: string; points: number; check: string }> } | null
+  }>
 }
 
 interface BenchmarkTemplate {
@@ -231,8 +258,10 @@ export function EvalPanel(): React.ReactElement {
   const clearAdopt = async (agentId: string): Promise<void> => {
     setBusy(`clear-${agentId}`)
     try {
-      await window.electronAPI.clearEvalPrompt(agentId)
-      setNotice(`已清除 ${agentId} 的覆盖，恢复代码默认`)
+      const result = await window.electronAPI.clearEvalPrompt(agentId)
+      setNotice(result.applied
+        ? `已恢复 ${agentId} 的内置默认 prompt`
+        : `恢复失败：${result.reason ?? "未知原因"}`)
       await refresh()
     } catch (error) {
       setNotice(`清除失败: ${String(error)}`)
@@ -254,11 +283,12 @@ export function EvalPanel(): React.ReactElement {
     }
   }
 
-  const createFromTemplate = async (templateId: string): Promise<void> => {
+  const createFromTemplate = async (templateId: string, useLlmJudge: boolean): Promise<void> => {
     setBusy(`template-${templateId}`)
     setNotice(null)
     try {
-      const res = await window.electronAPI.createEvalBenchmarkFromTemplate(templateId)
+      const judgeRuntime = useLlmJudge ? { provider: "", modelId: "" } : undefined
+      const res = await window.electronAPI.createEvalBenchmarkFromTemplate(templateId, judgeRuntime)
       if (!res.ok || !res.benchmarkId) {
         setNotice(`从模板创建失败: ${res.error ?? '未知错误'}`)
         return
@@ -277,7 +307,7 @@ export function EvalPanel(): React.ReactElement {
   return (
     <div className="space-y-4">
       {/* 采纳写回状态 */}
-      <SettingsSection title="始终允许 / 已采纳的 sub-agent 覆盖" description="被采纳、持久化的内置 sub-agent prompt（会影响真实 sub-agent 运行）。">
+      <SettingsSection title="内置 sub-agent 提示词" description="查看评测改进后已写入并正在生效的提示词；可随时恢复内置默认。">
         <SettingsCard divided={false}>
           <div className="space-y-2 p-3">
             {BUILTIN_TARGETS.map((agentId) => {
@@ -286,7 +316,7 @@ export function EvalPanel(): React.ReactElement {
                 <SettingsRow
                   key={agentId}
                   label={`${TARGET_LABELS[agentId] ?? agentId}`}
-                  description={overridden ? '已采纳自定义 prompt（覆盖代码默认）' : '使用代码默认 prompt'}
+                  description={overridden ? '自定义 prompt 正在生效' : '使用代码默认 prompt'}
                 >
                   <Button variant="outline" size="sm" disabled={!overridden || busy !== null} onClick={() => void clearAdopt(agentId)}>
                     <RotateCcw className="size-3 mr-1" />恢复默认
@@ -373,10 +403,10 @@ export function EvalPanel(): React.ReactElement {
                   {selectedBench && (
                     <div className="mt-2 flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); void runBaseline(b.id) }}>
-                        <Play className="size-3 mr-1" />Baseline
+                        <Play className="size-3 mr-1" />测试当前版本
                       </Button>
                       <Button size="sm" variant="outline" disabled={busy !== null} onClick={(e) => { e.stopPropagation(); void runImprove(b.id) }}>
-                        <TrendingUp className="size-3 mr-1" />Improve
+                        <TrendingUp className="size-3 mr-1" />生成改进方案
                       </Button>
                     </div>
                   )}
@@ -423,7 +453,7 @@ export function EvalPanel(): React.ReactElement {
           </div>
           {runningEval.totalCases > 0 && (
             <div className="mt-1 text-muted-foreground">
-              Case {runningEval.completedCases + (runningEval.caseId ? 1 : 0)}/{runningEval.totalCases}: {runningEval.caseId}
+              已完成 {runningEval.completedCases}/{runningEval.totalCases}{runningEval.caseId ? `，当前或最近 Case：${runningEval.caseId}` : ""}
               {runningEval.lastScore != null ? `，刚完成得分 ${runningEval.lastScore}` : ''}
             </div>
           )}
@@ -494,7 +524,7 @@ export function EvalPanel(): React.ReactElement {
         </SettingsCard>
       )}
 
-      {showTemplates && <TemplateSelector templates={templates} onSelect={(id) => void createFromTemplate(id)} onCancel={() => setShowTemplates(false)} busy={busy !== null} />}
+      {showTemplates && <TemplateSelector templates={templates} onSelect={(id, useLlmJudge) => void createFromTemplate(id, useLlmJudge)} onCancel={() => setShowTemplates(false)} busy={busy !== null} />}
       {showCreate && <CreateBenchmarkForm onCancelled={() => setShowCreate(false)} onCreated={(id) => { setShowCreate(false); void loadDetail(id); void refresh() }} />}
     </div>
   )
@@ -504,20 +534,55 @@ export function EvalPanel(): React.ReactElement {
 function ScoreTrend({ detail }: { detail: EvalDetail }): React.ReactElement {
   const evals = detail.scoreboard.evaluations
   if (evals.length === 0) {
-    return <div className="text-xs text-muted-foreground/60">暂无评测记录</div>
+    return <div className="text-xs text-muted-foreground/60">暂无评测记录。先运行“测试当前版本”。</div>
   }
-  const max = Math.max(...evals.map((e) => e.score), 1)
+  const latest = evals[evals.length - 1]
+  const judgeLabel = latest?.judge?.kind === "llm"
+    ? `LLM 评判 · ${latest.judge.modelId ?? "未记录模型"}${latest.judge.independent ? " · 独立" : " · 同源"}`
+    : latest?.judge?.kind === "injected"
+      ? "外部评判器"
+      : "规则关键词评分"
   return (
-    <div className="space-y-1">
-      {evals.slice(-8).map((e) => (
-        <div key={e.time + e.agentVersion} className="flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground/60 w-10 shrink-0 text-right">v{e.agentVersion}</span>
-          <div className="flex-1 h-2 rounded bg-muted/50 overflow-hidden">
-            <div className="h-full bg-primary/70" style={{ width: `${(e.score / max) * 100}%` }} />
-          </div>
-          <span className="w-10 shrink-0 text-foreground/80">{e.score.toFixed(1)}</span>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-medium text-foreground">最近一次结果</span>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">{judgeLabel}</span>
+      </div>
+      <div className="space-y-1.5">
+        {latest?.cases.map((item) => {
+          const definition = detail.cases.find((candidate) => candidate.caseId === item.caseId)
+          return (
+            <details key={item.caseId} className="rounded-md bg-muted/30 px-2 py-1.5">
+              <summary className="cursor-pointer text-xs">
+                <span className="ml-1 text-muted-foreground">{item.caseId}</span>
+                <span className={`float-right ${item.score >= detail.config.targetScore ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                  {item.score.toFixed(1)}
+                </span>
+              </summary>
+              <div className="mt-2 space-y-1 border-t border-border/40 pt-2">
+                {definition?.rubric?.items.map((rubricItem) => (
+                  <div key={rubricItem.name} className="grid grid-cols-[1fr_auto] gap-x-3 text-[11px]">
+                    <span className="text-foreground/80">{rubricItem.name}</span>
+                    <span className="text-muted-foreground">{rubricItem.points} 分</span>
+                    <span className="col-span-2 text-muted-foreground">{rubricItem.check}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )
+        })}
+      </div>
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer">查看历史趋势</summary>
+        <div className="mt-2 space-y-1">
+          {evals.slice(-8).map((item) => (
+            <div key={item.time + item.agentVersion} className="flex justify-between gap-3">
+              <span>{new Date(item.time).toLocaleString()} · v{item.agentVersion}</span>
+              <span>{item.score.toFixed(1)}{item.scoreStd != null ? ` ± ${item.scoreStd.toFixed(1)}` : ""}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </details>
     </div>
   )
 }
@@ -530,10 +595,11 @@ function TemplateSelector({
   busy,
 }: {
   templates: BenchmarkTemplate[]
-  onSelect: (templateId: string) => void
+  onSelect: (templateId: string, useLlmJudge: boolean) => void
   onCancel: () => void
   busy: boolean
 }): React.ReactElement {
+  const [useLlmJudge, setUseLlmJudge] = React.useState(false)
   return (
     <SettingsSection title="从预置模板创建" description="选择内置 sub-agent 的评测模板，一键创建 Benchmark。">
       <SettingsCard divided={false}>
@@ -546,7 +612,7 @@ function TemplateSelector({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => onSelect(t.id)}
+                  onClick={() => onSelect(t.id, useLlmJudge)}
                   disabled={busy}
                   className="w-full text-left p-3 rounded-lg border border-border/50 hover:bg-muted/40 transition-colors disabled:opacity-50"
                 >
@@ -564,6 +630,16 @@ function TemplateSelector({
               ))}
             </div>
           )}
+          <label className="flex items-start gap-2 rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={useLlmJudge}
+              onChange={(event) => setUseLlmJudge(event.target.checked)}
+              disabled={busy}
+              className="mt-0.5 rounded border-border"
+            />
+            <span>使用 LLM 语义评分：会将测试题、Agent 输出和私有评分标准发送到默认 Agent 渠道并产生模型费用。未勾选时使用本地规则关键词评分。</span>
+          </label>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>取消</Button>
           </div>
@@ -579,8 +655,10 @@ function CreateBenchmarkForm({ onCancelled, onCreated }: { onCancelled: () => vo
   const [title, setTitle] = React.useState('')
   const [description, setDescription] = React.useState('')
   const [targetAgentId, setTargetAgentId] = React.useState<string>('code-reviewer')
-  const [provider, setProvider] = React.useState('deepseek')
-  const [modelId, setModelId] = React.useState('')
+  const [channels, setChannels] = React.useState<Channel[]>([])
+  const [channelId, setChannelId] = React.useState("")
+  const [modelId, setModelId] = React.useState("")
+  const [useLlmJudge, setUseLlmJudge] = React.useState(false)
   const [targetScore, setTargetScore] = React.useState('80')
   const [caseId, setCaseId] = React.useState('CASE-001')
   const [statement, setStatement] = React.useState('')
@@ -588,12 +666,34 @@ function CreateBenchmarkForm({ onCancelled, onCreated }: { onCancelled: () => vo
   const [error, setError] = React.useState<string | null>(null)
   const [creating, setCreating] = React.useState(false)
 
+  React.useEffect(() => {
+    void window.electronAPI.listChannels().then((items) => {
+      const enabled = items.filter((item) => item.enabled)
+      setChannels(enabled)
+      const first = enabled[0]
+      if (first) {
+        setChannelId(first.id)
+        setModelId(first.models.find((model) => model.enabled)?.id ?? "")
+      }
+    }).catch((cause: unknown) => setError(`载入渠道失败：${String(cause)}`))
+  }, [])
+
+  const selectedChannel = channels.find((channel) => channel.id === channelId)
+
   const submit = async (): Promise<void> => {
     if (!title.trim() || !statement.trim()) {
-      setError('标题 与 Case 内容必填')
+      setError("标题、Case 内容必填")
+      return
+    }
+    if (!selectedChannel || !modelId) {
+      setError("请先选择可用的 Agent 渠道和模型")
       return
     }
     const total = rubricItems.reduce((s, i) => s + (Number(i.points) || 0), 0)
+    if (rubricItems.some((item) => !item.name.trim() || !item.check.trim())) {
+      setError("每个评分项都要填写名称和明确的得分条件")
+      return
+    }
     if (total !== 100) {
       setError(`Rubric 总分应为 100，当前 ${total}`)
       return
@@ -606,8 +706,16 @@ function CreateBenchmarkForm({ onCancelled, onCreated }: { onCancelled: () => vo
         title: title.trim(),
         description: description.trim(),
         targetAgentId,
-        provider,
-        modelId: modelId.trim(),
+        provider: selectedChannel.provider,
+        channelId: selectedChannel.id,
+        modelId,
+        ...(useLlmJudge ? {
+          judgeRuntime: {
+            provider: selectedChannel.provider,
+            channelId: selectedChannel.id,
+            modelId,
+          },
+        } : {}),
         targetScore: Number(targetScore) || 80,
         cases: [{
           caseId: caseId.trim(),
@@ -648,11 +756,37 @@ function CreateBenchmarkForm({ onCancelled, onCreated }: { onCancelled: () => vo
             </select>
           </SettingsRow>
 
-          <div className="grid grid-cols-3 gap-2">
-            <SettingsInput label="Provider" value={provider} onChange={setProvider} disabled={creating} />
-            <SettingsInput label="Model" value={modelId} onChange={setModelId} disabled={creating} placeholder="deepseek-v4-flash" />
-            <SettingsInput label="目标分" value={targetScore} onChange={setTargetScore} disabled={creating} />
+          <div className="grid gap-3 md:grid-cols-2">
+            <SettingsRow label="运行渠道" description="使用该渠道实际执行被测 Agent">
+              <select
+                value={channelId}
+                onChange={(event) => {
+                  const nextId = event.target.value
+                  const nextChannel = channels.find((channel) => channel.id === nextId)
+                  setChannelId(nextId)
+                  setModelId(nextChannel?.models.find((model) => model.enabled)?.id ?? "")
+                }}
+                className="h-8 max-w-52 rounded-md border border-border bg-background px-2 text-sm"
+                disabled={creating}
+              >
+                {channels.length === 0 && <option value="">暂无可用渠道</option>}
+                {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+              </select>
+            </SettingsRow>
+            <SettingsRow label="运行模型" description="只显示所选渠道中已启用的模型">
+              <select
+                value={modelId}
+                onChange={(event) => setModelId(event.target.value)}
+                className="h-8 max-w-52 rounded-md border border-border bg-background px-2 text-sm"
+                disabled={creating || !selectedChannel}
+              >
+                {(selectedChannel?.models.filter((model) => model.enabled) ?? []).map((model) => (
+                  <option key={model.id} value={model.id}>{model.name || model.id}</option>
+                ))}
+              </select>
+            </SettingsRow>
           </div>
+          <SettingsInput label="目标分" value={targetScore} onChange={setTargetScore} disabled={creating} />
 
           <div className="border-t border-border/40 pt-3">
             <div className="text-xs font-medium text-foreground mb-2">Case</div>
@@ -667,18 +801,37 @@ function CreateBenchmarkForm({ onCancelled, onCreated }: { onCancelled: () => vo
               disabled={creating}
             />
             <div className="text-xs font-medium text-foreground mt-3 mb-1">Rubric（私有评分项，总和须为 100）</div>
+            <label className="mb-2 flex items-start gap-2 rounded-md bg-muted/30 p-2 text-[11px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={useLlmJudge}
+                onChange={(event) => setUseLlmJudge(event.target.checked)}
+                disabled={creating}
+                className="mt-0.5 rounded border-border"
+              />
+              <span>使用 LLM 按完整语义评判（推荐）。当前使用同一渠道和模型，适合调试；结果会标记“同源”。关闭后改用成本更低的规则关键词评分。</span>
+            </label>
             {rubricItems.map((item, idx) => (
-              <div key={idx} className="flex items-center gap-2 mb-2">
-                <input className="flex-1 h-8 rounded-md border border-border bg-background text-sm px-2" value={item.name}
-                  onChange={(e) => setRubricItems((prev) => prev.map((v, i) => (i === idx ? { ...v, name: e.target.value } : v)))}
-                  placeholder="评分项名" disabled={creating} />
-                <input className="w-16 h-8 rounded-md border border-border bg-background text-sm px-2" value={item.points}
-                  onChange={(e) => setRubricItems((prev) => prev.map((v, i) => (i === idx ? { ...v, points: Number(e.target.value) || 0 } : v)))}
-                  placeholder="分" disabled={creating} />
-                <Button variant="ghost" size="sm" disabled={creating || rubricItems.length <= 1}
-                  onClick={() => setRubricItems((prev) => prev.filter((_, i) => i !== idx))}>
-                  <Trash2 className="size-3.5" />
-                </Button>
+              <div key={idx} className="mb-2 rounded-lg bg-muted/30 p-2">
+                <div className="flex items-center gap-2">
+                  <input className="flex-1 h-8 rounded-md border border-border bg-background text-sm px-2" value={item.name}
+                    onChange={(event) => setRubricItems((prev) => prev.map((value, index) => index === idx ? { ...value, name: event.target.value } : value))}
+                    placeholder="评分项名称" disabled={creating} />
+                  <input className="w-16 h-8 rounded-md border border-border bg-background text-sm px-2" type="number" min={0} max={100} value={item.points}
+                    onChange={(event) => setRubricItems((prev) => prev.map((value, index) => index === idx ? { ...value, points: Number(event.target.value) || 0 } : value))}
+                    placeholder="分值" disabled={creating} />
+                  <Button variant="ghost" size="sm" disabled={creating || rubricItems.length <= 1}
+                    onClick={() => setRubricItems((prev) => prev.filter((_, index) => index !== idx))}>
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+                <textarea
+                  className="mt-2 h-16 w-full rounded-md border border-border bg-background p-2 text-sm"
+                  value={item.check}
+                  onChange={(event) => setRubricItems((prev) => prev.map((value, index) => index === idx ? { ...value, check: event.target.value } : value))}
+                  placeholder="明确写出得分条件，例如：指出缺少 JWT 签名验证，并说明伪造风险"
+                  disabled={creating}
+                />
               </div>
             ))}
             <Button variant="outline" size="sm" disabled={creating}

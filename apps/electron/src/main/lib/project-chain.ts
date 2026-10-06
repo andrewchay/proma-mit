@@ -72,11 +72,17 @@ function required(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || !value.trim() || value.length > 200_000)
     throw new Error(`${label}不能为空或过长`)
 }
+export interface ApplyChainCommandOptions {
+  /** 禁用提交时的低风险 DoD 自动验收（研发员工受限路径专用） */
+  suppressDodAutoAccept?: boolean
+}
+
 /** 纯状态转换：失败时不修改原状态，验收绑定交付物版本。 */
 export function applyChainCommand(
   source: ProjectChain,
   command: ProjectChainCommand,
   actor: string,
+  options?: ApplyChainCommandOptions,
 ): ProjectChain {
   required(actor, '操作人')
   if (!command || typeof command !== 'object') throw new Error('无效的链路操作')
@@ -375,7 +381,10 @@ export function applyChainCommand(
         if (draft.status !== 'draft') throw new Error('当前交付物不能提交')
         draft.status = 'submitted'
         {
-          const policy = chain.taskDodAutoAcceptance[draft.taskId]
+          // 研发员工受限提交路径强制停在 submitted，即使配置了低风险自动验收（T19）。
+          const policy = options?.suppressDodAutoAccept
+            ? undefined
+            : chain.taskDodAutoAcceptance[draft.taskId]
           if (policy?.enabled && policy.riskLevel === 'low') {
             const ruleByCriterion = new Map(policy.rules.map((rule) => [rule.criterion, rule]))
             const results: ProjectDodCheckResult[] = draft.definitionOfDone.map((criterion) => {

@@ -2,6 +2,10 @@
 #
 # 构建 macOS 版 Gravitas 应用（当前架构 DMG）
 #
+# 注意：本脚本产出的 .app 是**调试包**，全部付费能力已放开（构建期注入）。
+# 原因：macOS 上双击启动的 .app 由 launchd 拉起，不继承终端环境变量，
+# 所以只能把放开标记在构建时就烧进产物。正式发布不要用这个脚本。
+#
 # 用法：
 #   ./scripts/build-mac-app.sh           # 从 scripts/ 子目录运行
 #   ./build-mac-app.sh                   # 从项目根目录运行
@@ -36,16 +40,22 @@ echo "🧹 清理打包残留（避免 electron-builder ENOTEMPTY）..."
 find out -name ".DS_Store" -delete 2>/dev/null || true
 rm -rf out/mac-arm64 out/mac-arm64.tmp out/mac-arm64-unpacked
 
+# 所有分支统一走 scripts/dist.ts，并带 --dev-unlock。
+# --dev-unlock 让 esbuild 用 --define 把放开标记烧进 main.cjs（参考 main/lib/dev-unlock.ts），
+# 产出的 .app 打开即为全部付费能力放开。
+# 不用 dist:fast / dist:mac 的原因：它们不注入放开标记，只能用于正式构建。
 if [[ "$1" == "--signed" ]]; then
   echo "🔏 启用代码签名（自动发现证书）"
-  bun run dist:fast
+  bun run rebuild:natives && bun run scripts/dist.ts --current-arch --dmg --dev-unlock
 elif [[ "$1" == "--mac" ]]; then
   echo "📦 完整 multi-arch 构建（arm64 + x64）"
-  bun run dist:mac
+  bun run rebuild:natives && bun run scripts/dist.ts --dev-unlock
 else
   echo "🔓 跳过代码签名（本地测试用）"
-  CSC_IDENTITY_AUTO_DISCOVERY=false bun run dist:fast
+  bun run rebuild:natives && bun run scripts/dist.ts --current-arch --dmg --no-sign --dev-unlock
 fi
+
+echo "⚠️  本次产出为调试包：全部付费能力已放开，请勿分发"
 
 echo "✅ 构建完成，输出目录："
 echo "   apps/electron/out/"

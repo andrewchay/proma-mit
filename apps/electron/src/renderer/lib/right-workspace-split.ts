@@ -28,18 +28,18 @@ export function createRightWorkspaceSplit(
 }
 
 /**
- * 将文件预览固定展示在右侧 Pane。
+ * 激活文件预览时更新右侧工作台布局。
  *
- * 文件树中的点击不应只是切换 Tab，否则用户会失去原来的目录上下文。
- * 未分屏时以当前主视图创建「主视图 + 预览」；已有分屏时保留左侧内容。
+ * 用户反馈：未分屏时强行创建「目录 + 预览」分屏会让文档展示区过小，
+ * 每次预览都要手动关掉目录页。因此新策略是：
+ * - 未分屏：不创建分屏，预览独占整个右侧面板；
+ * - 已分屏：保留用户已有的左侧目录上下文，仅把右侧 Pane 切到预览。
+ * 需要目录 + 预览同框时，可通过面板 Tab 栏的手动分屏按钮开启。
  */
 export function openRightWorkspacePreview(
   split: RightWorkspaceSplitState | null,
-  primaryTab: Extract<RightWorkspaceTab, 'files' | 'changes'>,
-): RightWorkspaceSplitState {
-  if (!split) {
-    return createRightWorkspaceSplit(primaryTab, 'preview', 'right')!
-  }
+): RightWorkspaceSplitState | null {
+  if (!split) return null
 
   return {
     ...split,

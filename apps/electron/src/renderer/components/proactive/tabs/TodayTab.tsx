@@ -2,14 +2,19 @@
  * Today Tab - 今日概览（接入真实数据）
  */
 
-import type * as React from 'react'
+import * as React from 'react'
 import { useAtom } from 'jotai'
 import { Sparkles, AlertCircle, Activity, Clock, Zap, CheckCircle, XCircle, Pause, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
+import { summarizeProactiveRuns, sortProactiveRuns, visibleProactiveRuns } from '@/lib/proactive-view'
+import { ProactiveRunCard } from '../ProactiveRunCard'
+import { EmployeeCapabilityApprovalDetails } from '../EmployeeCapabilityApprovalDetails'
+import { EmployeeCapabilityRecommendationCard } from '../EmployeeCapabilityRecommendationCard'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { proactiveSchedulesAtom, proactiveRunsAtom, proactiveRecommendationsAtom, proactiveApprovalsAtom, proactiveLoadingAtom } from '@/atoms/proactive-data'
 import { proactiveCenterTabAtom, proactiveConfigurationRecommendationAtom } from '@/atoms/proactive-center'
-import type { ProactiveSchedule, ProactiveTaskRun, ProactiveRecommendation, ProactiveApproval } from '@gravitas/shared'
+import type { ProactiveSchedule, ProactiveRecommendation, ProactiveApproval } from '@gravitas/shared'
 
 export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): React.ReactElement {
   const [schedules] = useAtom(proactiveSchedulesAtom)
@@ -23,7 +28,21 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
   const activeSchedules = schedules.filter((s) => s.enabled)
   const pendingApprovals = approvals.filter((a) => a.status === 'pending' || a.status === 'edited')
   const suggestedRecommendations = recommendations.filter((r) => r.status === 'suggested')
-  const recentRuns = runs.slice(0, 5)
+  const capabilityRecommendations = suggestedRecommendations.filter((item) => item.scope.startsWith('employee-capability:'))
+  const generalRecommendations = suggestedRecommendations.filter((item) => !item.scope.startsWith('employee-capability:'))
+  // 评测必须显式选择渠道/模型，不在建议卡里隐式回退到全局配置。
+  const [evaluationChannelId, setEvaluationChannelId] = React.useState('')
+  const [evaluationModelId, setEvaluationModelId] = React.useState('')
+  const visibleRuns = visibleProactiveRuns(runs)
+  const recentRuns = sortProactiveRuns(visibleRuns).slice(0, 5)
+  const counts = summarizeProactiveRuns(visibleRuns)
+  // 需要处理：失败运行与因连续失败被自动熔断的停用任务，必须在 Today 顶部可见
+  const failedRuns = visibleRuns.filter((run) => run.status === 'failed').length
+  const trippedSchedules = schedules.filter((schedule) => !schedule.enabled && (schedule.consecutiveFailures ?? 0) >= 3)
+  const pause = async (id: string): Promise<void> => {
+    try { await window.electronAPI.setProactiveScheduleEnabled(id, false); await onRefresh() }
+    catch (error) { toast.error(error instanceof Error ? error.message : '暂停失败') }
+  }
 
   const handleAcceptRecommendation = async (id: string): Promise<void> => {
     try {
@@ -53,7 +72,9 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
 
   const handleApprove = async (id: string): Promise<void> => {
     try {
-      await window.electronAPI.proactive?.approveApproval?.(id)
+      const result = await window.electronAPI.proactive?.approveApproval?.(id)
+      if (result?.executionStatus === 'failed') toast.error(result.executionError ?? '批准后执行失败')
+      await onRefresh()
     } catch (error) {
       console.error('批准失败:', error)
     }
@@ -62,6 +83,7 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
   const handleReject = async (id: string): Promise<void> => {
     try {
       await window.electronAPI.proactive?.rejectApproval?.(id)
+      await onRefresh()
     } catch (error) {
       console.error('拒绝失败:', error)
     }
@@ -86,15 +108,37 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
       <div className="grid grid-cols-4 gap-3">
         <StatCard icon={Sparkles} label="推荐" value={suggestedRecommendations.length} color="text-amber-500" />
         <StatCard icon={AlertCircle} label="待审批" value={pendingApprovals.length} color="text-orange-500" />
-        <StatCard icon={Activity} label="运行中" value={activeSchedules.length} color="text-blue-500" />
-        <StatCard icon={Clock} label="今日运行" value={recentRuns.filter((r) => r.startedAt && isToday(r.startedAt)).length} color="text-emerald-500" />
+        <StatCard icon={Activity} label="运行中" value={counts.running} color="text-blue-500" />
+        <StatCard icon={Clock} label="今日运行" value={counts.today} color="text-emerald-500" />
       </div>
+
+      {/* 需要处理 */}
+      {(failedRuns > 0 || trippedSchedules.length > 0) && (
+        <SectionCard title="需要处理" icon={XCircle}>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {failedRuns > 0 && (
+              <span className="text-destructive">{failedRuns} 条失败运行</span>
+            )}
+            {trippedSchedules.length > 0 && (
+              <span className="text-amber-600">{trippedSchedules.length} 个任务因连续失败已自动暂停</span>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setActiveTab('runs')}>查看运行记录</Button>
+            {trippedSchedules.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setActiveTab('schedules')}>检查定时任务</Button>
+            )}
+          </div>
+        </SectionCard>
+      )}
 
       {/* Recommended */}
       {suggestedRecommendations.length > 0 && (
         <SectionCard title="推荐开启" icon={Sparkles}>
           <div className="space-y-2">
-            {suggestedRecommendations.map((rec) => (
+            {capabilityRecommendations.length > 0 && <div className="rounded-lg bg-foreground/[0.02] p-2 text-xs"><label className="mr-3">评测渠道<input className="ml-2 rounded border bg-background px-2 py-1" value={evaluationChannelId} onChange={(event) => setEvaluationChannelId(event.target.value)} placeholder="渠道 ID（必填）" /></label><label>评测模型<input className="ml-2 rounded border bg-background px-2 py-1" value={evaluationModelId} onChange={(event) => setEvaluationModelId(event.target.value)} placeholder="模型 ID（必填）" /></label><p className="mt-1 text-[11px] text-muted-foreground">必须显式填写已启用的渠道与模型；未配置时不会回退到默认渠道。</p></div>}
+            {capabilityRecommendations.map((rec) => (
+              <EmployeeCapabilityRecommendationCard key={rec.id} recommendation={rec} channelId={evaluationChannelId} modelId={evaluationModelId} judgeChannelId="" onResolved={(updated) => { if (updated) setRecommendations((current) => current.map((item) => item.id === updated.id ? updated : item)); else void onRefresh() }} />
+            ))}
+            {generalRecommendations.map((rec) => (
               <RecommendationCard key={rec.id} recommendation={rec} onAccept={handleAcceptRecommendation} onDismiss={handleDismissRecommendation} />
             ))}
           </div>
@@ -114,10 +158,10 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
 
       {/* Active */}
       {activeSchedules.length > 0 && (
-        <SectionCard title="正在运行" icon={Activity}>
+        <SectionCard title="已启用，等待触发" icon={Activity}>
           <div className="space-y-2">
             {activeSchedules.map((schedule) => (
-              <ActiveScheduleCard key={schedule.id} schedule={schedule} />
+              <ActiveScheduleCard key={schedule.id} schedule={schedule} onPause={() => void pause(schedule.id)} />
             ))}
           </div>
         </SectionCard>
@@ -128,7 +172,7 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
         <SectionCard title="最近运行" icon={Clock}>
           <div className="space-y-1.5">
             {recentRuns.map((run) => (
-              <RunRow key={run.id} run={run} />
+              <ProactiveRunCard key={run.id} run={run} onRefresh={onRefresh} />
             ))}
           </div>
         </SectionCard>
@@ -139,7 +183,8 @@ export function TodayTab({ onRefresh }: { onRefresh: () => Promise<void> }): Rea
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
           <Zap className="size-12 mb-4 opacity-30" />
           <p className="text-sm">暂无主动任务</p>
-          <p className="text-xs mt-1 opacity-60">Proma 会根据你的使用习惯推荐主动功能</p>
+          <p className="text-xs mt-1 opacity-60">先创建一个只读任务，试跑后在这里查看结果</p>
+          <Button className="mt-3" size="sm" onClick={() => setActiveTab('schedules')}>创建并试跑首个任务</Button>
         </div>
       )}
     </div>
@@ -201,6 +246,7 @@ function ApprovalCard({ approval, onApprove, onReject }: { approval: ProactiveAp
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium">{approval.title}</p>
         <p className="text-xs text-muted-foreground mt-0.5">{approval.summary}</p>
+        <EmployeeCapabilityApprovalDetails approval={approval} />
         <div className="flex items-center gap-2 mt-2">
           <Button size="sm" variant="default" className="h-7 text-xs" onClick={() => onApprove(approval.id)}>批准</Button>
           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onReject(approval.id)}>拒绝</Button>
@@ -210,7 +256,7 @@ function ApprovalCard({ approval, onApprove, onReject }: { approval: ProactiveAp
   )
 }
 
-function ActiveScheduleCard({ schedule }: { schedule: ProactiveSchedule }): React.ReactElement {
+function ActiveScheduleCard({ schedule, onPause }: { schedule: ProactiveSchedule; onPause: () => void }): React.ReactElement {
   return (
     <div className="flex items-center gap-3 p-2.5 rounded-lg bg-blue-50/30 dark:bg-blue-950/10 border border-blue-200/30 dark:border-blue-800/20">
       <Activity className="size-4 text-blue-500 flex-shrink-0" />
@@ -220,31 +266,7 @@ function ActiveScheduleCard({ schedule }: { schedule: ProactiveSchedule }): Reac
           下次运行: {schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleString() : '—'}
         </p>
       </div>
-      <Pause className="size-4 text-muted-foreground cursor-pointer hover:text-foreground" />
+      <Button size="sm" variant="ghost" onClick={onPause} aria-label={`暂停 ${schedule.title}`}><Pause className="size-4 mr-1" />暂停</Button>
     </div>
   )
-}
-
-function RunRow({ run }: { run: ProactiveTaskRun }): React.ReactElement {
-  const statusIcon = run.status === 'success' ? <CheckCircle className="size-3.5 text-emerald-500" />
-    : run.status === 'failed' ? <XCircle className="size-3.5 text-destructive" />
-    : <Activity className="size-3.5 text-blue-500" />
-
-  return (
-    <div className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-foreground/[0.02]">
-      {statusIcon}
-      <span className="text-xs truncate max-w-40">{run.sourceTitle ?? (run.sourceType === 'schedule' ? '定时任务' : run.sourceType === 'monitor' ? '监听任务' : run.sourceType === 'routine' ? 'Routine' : '手动运行')}</span>
-      <span className="text-xs capitalize">{run.status}</span>
-      <span className="text-xs text-muted-foreground">{run.trigger}</span>
-      <span className="text-xs text-muted-foreground ml-auto">
-        {run.startedAt ? new Date(run.startedAt).toLocaleString() : '—'}
-      </span>
-    </div>
-  )
-}
-
-function isToday(timestamp: number): boolean {
-  const date = new Date(timestamp)
-  const now = new Date()
-  return date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()
 }

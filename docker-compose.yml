@@ -1,0 +1,29 @@
+# 订阅服务本地联调环境
+#
+# 启动：docker compose up -d
+# 停止：docker compose down
+# 清空数据：docker compose down -v
+#
+# 仅用于本地开发与联调。生产部署请使用托管 PostgreSQL 与独立密钥管理。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gravitas-subscription-db
+    environment:
+      POSTGRES_USER: gravitas
+      POSTGRES_PASSWORD: gravitas_dev_only
+      POSTGRES_DB: gravitas_subscription
+    ports:
+      - '5432:5432'
+    volumes:
+      - subscription-db-data:/var/lib/postgresql/data
+      - ./apps/subscription-service/src/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U gravitas -d gravitas_subscription']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  subscription-db-data:

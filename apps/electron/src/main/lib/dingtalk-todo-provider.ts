@@ -93,10 +93,10 @@ export class DingtalkTodoProvider implements TodoProvider {
     return this.createPersonalTodo(task)
   }
 
-  // ===== 更新 Todo 状态 =====
+  // ===== 更新 Todo 完成态（组语义：外部平台只有完成/未完成二值） =====
   async updateTodoStatus(
     taskId: string,
-    status: string,
+    isCompleted: boolean,
     options?: { unionId?: string }
   ): Promise<boolean> {
     const token = await this.getAccessToken()
@@ -104,13 +104,13 @@ export class DingtalkTodoProvider implements TodoProvider {
 
     if (unionId) {
       const path = `/todo/users/${encodeURIComponent(unionId)}/tasks/${encodeURIComponent(taskId)}/status`
-      const resp = await this.dingtalkApi('PUT', path, token, { isDone: status === 'completed' })
+      const resp = await this.dingtalkApi('PUT', path, token, { isDone: isCompleted })
       return resp.result === true || resp.success === true
     }
 
     // 无 unionId 时回退到个人待办
     const path = `/todo/users/me/tasks/${encodeURIComponent(taskId)}`
-    const resp = await this.dingtalkApi('PUT', path, token, { isDone: status === 'completed' })
+    const resp = await this.dingtalkApi('PUT', path, token, { isDone: isCompleted })
     return resp.result === true || resp.success === true
   }
 

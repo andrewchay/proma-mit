@@ -10,12 +10,15 @@
  */
 
 /** 评测目标类型 */
-export type EvalTargetType = 'agent' | 'toolset'
+export type EvalTargetType = 'agent' | 'toolset' | 'employee_capability'
 
 /** 被测目标 */
 export interface EvalTarget {
   type: EvalTargetType
   id: string
+  /** employee_capability 使用；id 为 agentId。 */
+  scope?: 'role' | 'workspace'
+  workspaceId?: string
 }
 
 /** 被测目标：先针对内置 sub-agent（code-reviewer 等），后续可扩展到任意 Agent 状态。 */
@@ -62,8 +65,12 @@ export interface BenchmarkConfig {
   description: string
   /** 被测目标类型（默认 agent） */
   targetType?: EvalTargetType
-  /** 被测 Agent id（内置 sub-agent 或用例名） */
+  /** 被测 Agent id（内置 sub-agent、工具集 id 或 AI 员工 id） */
   targetAgentId: EvalTargetAgentId
+  /** employee_capability 专用：能力范围 */
+  targetScope?: 'role' | 'workspace'
+  /** employee_capability 专用：工作区级能力的目标工作区 */
+  targetWorkspaceId?: string
   /** 评测运行时（provider + model） */
   runtime: EvalRuntimeRef
   /**
@@ -80,6 +87,10 @@ export interface BenchmarkConfig {
    * 仅在 includeHeldOut 时评测并单独落盘，用于检测对训练 benchmark 的过拟合。
    */
   heldOutCases?: string[]
+  /** Benchmark 定义版本；case 集合、rubric 或被测目标变化时必须递增。 */
+  version?: number
+  /** 评分规则版本；rubric 条目变化时必须递增。 */
+  rubricVersion?: number
   /** 每 Case 运行次数（默认 1） */
   runsPerCase: number
   /** 期望基准分 0..100 */

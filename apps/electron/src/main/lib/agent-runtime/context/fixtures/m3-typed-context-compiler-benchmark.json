@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "benchmarkId": "typed-context-compiler",
+  "minimumCases": 10,
+  "runsPerCase": 3,
+  "variants": ["full_context", "brief", "tcc_projection"],
+  "cases": [
+    { "id": "CASE-001-repo-exploration", "focus": "repo exploration", "targetAgentId": "explorer" },
+    { "id": "CASE-002-tool-output-noise", "focus": "tool output noise", "targetAgentId": "explorer" },
+    { "id": "CASE-003-sensitive-file-policy", "focus": "sensitive path exclusion", "targetAgentId": "code-reviewer" },
+    { "id": "CASE-004-subtask-evidence", "focus": "evidence-backed claim", "targetAgentId": "researcher" },
+    { "id": "CASE-005-context-recovery", "focus": "required fact recovery", "targetAgentId": "explorer" },
+    { "id": "CASE-006-summary-conflict", "focus": "summary versus source fact", "targetAgentId": "researcher" },
+    { "id": "CASE-007-budget-pressure", "focus": "required-kind retention under budget", "targetAgentId": "code-reviewer" },
+    { "id": "CASE-008-model-policy", "focus": "model allowlist fail-closed", "targetAgentId": "researcher" },
+    { "id": "CASE-009-child-readonly", "focus": "read-only spawn isolation", "targetAgentId": "explorer" },
+    { "id": "CASE-010-typed-handoff", "focus": "typed result transcript isolation", "targetAgentId": "code-reviewer" }
+  ]
+}

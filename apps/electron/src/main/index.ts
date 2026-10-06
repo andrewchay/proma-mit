@@ -1,3 +1,4 @@
+import { createDockIcon } from './lib/dock-icon'
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
@@ -108,7 +109,7 @@ import { createApplicationMenu } from './menu'
 import { registerIpcHandlers } from './ipc'
 import { createTray, destroyTray } from './tray'
 import { initializeRuntime } from './lib/runtime-init'
-import { seedBundledWorkflowTemplates, seedDefaultSkills, seedDefaultAgents, seedDefaultTools, seedMarketingSkills } from './lib/config-paths'
+import { seedBundledWorkflowTemplates, seedDefaultSkills, seedDefaultAgents, seedDefaultTools, seedMarketingSkills, seedNewMediaSkills } from './lib/config-paths'
 import { syncMarketingSkillsForAllWorkspaces } from './lib/marketing-skills-sync'
 import { upgradeDefaultSkillsInWorkspaces } from './lib/agent-workspace-manager'
 import { stopAllAgents, killOrphanedClaudeSubprocesses } from './lib/agent-service'
@@ -441,6 +442,12 @@ app.whenReady().then(bootstrap).catch(handleBootstrapFailure)
  * 单点失败不应阻止窗口和托盘的创建（用户至少要能看到界面）。
  */
 async function bootstrap(): Promise<void> {
+  // 调试放开状态：启动时打印一次，避免“以为放开了其实没生效”的反复排查。
+  {
+    const { describeDevUnlock, DEV_UNLOCK_ENV } = await import('./lib/dev-unlock')
+    console.log(`[调试放开] ${DEV_UNLOCK_ENV}=1 状态：${describeDevUnlock()}`)
+  }
+
   if (process.env.GRAVITAS_PACKAGE_SMOKE === '1') {
     try { await (await import('./lib/package-smoke')).runPackageSmoke(); app.exit(0) }
     catch (error) { console.error(error); app.exit(1) }
@@ -466,6 +473,7 @@ async function bootstrap(): Promise<void> {
   safeRun('seedDefaultAgents', seedDefaultAgents)
   safeRun('seedDefaultTools', seedDefaultTools)
   safeRun('seedMarketingSkills', seedMarketingSkills)
+  safeRun('seedNewMediaSkills', seedNewMediaSkills)
   safeRun('seedBundledWorkflowTemplates', seedBundledWorkflowTemplates)
   safeRun('foldLegacyAgentOverrides', () => void import('./lib/agent-definition-store').then((m) => m.foldLegacyAgentOverridesIntoDirs()))
 
@@ -475,17 +483,52 @@ async function bootstrap(): Promise<void> {
   // 按营销订阅状态把营销 skills 分发到各工作区（未订阅时幂等清理）
   safeRun('syncMarketingSkillsForAllWorkspaces', syncMarketingSkillsForAllWorkspaces)
 
+  // 营销订阅启用时，自动安装营销 Campaign 工作流到工作区
+  safeRun('ensureMarketingWorkflowForAllWorkspaces', () => {
+    const { ensureMarketingWorkflowForAllWorkspaces } = require('./lib/marketing/marketing-workflow-installer') as {
+      ensureMarketingWorkflowForAllWorkspaces: () => void
+    }
+    ensureMarketingWorkflowForAllWorkspaces()
+  })
+
+  // 领域包订阅启用时，自动安装随包 Workflow 模板（出海 sourcing 等）
+  safeRun('ensureDomainWorkflowsForAllWorkspaces', () => {
+    const { ensureDomainWorkflowsForAllWorkspaces } = require('./lib/domain-workflow-installer') as {
+      ensureDomainWorkflowsForAllWorkspaces: () => void
+    }
+    ensureDomainWorkflowsForAllWorkspaces()
+  })
+
   // Create application menu
   const menu = createApplicationMenu()
   Menu.setApplicationMenu(menu)
 
   // Register IPC handlers
-  registerIpcHandlers()
+  await registerIpcHandlers()
 
   // 初始化项目管理 SQLite 数据库（本地唯一数据源）
   await safeAwait('initProjectDb', async () => {
     const { initProjectDb } = await import('./lib/project-sqlite-store')
     await initProjectDb()
+  })
+  await safeAwait('recoverAllPilotPauseQueues', async () => {
+    const { recoverAllPilotPauseQueues } = await import('./lib/project-pilot-pause-decision')
+    for (const recovery of recoverAllPilotPauseQueues()) {
+      if (recovery.result.state === 'needs_attention') {
+        console.warn(`[Pilot] 暂停恢复需人工对账 project=${recovery.projectId} revision=${recovery.policyRevision}: ${recovery.result.reason}`)
+      }
+    }
+  })
+  await safeAwait('recoverInterruptedPilotRuntimeExecutions', async () => {
+    const { recoverInterruptedPilotRuntimeExecutions } = await import('./lib/project-pilot-runtime-recovery')
+    for (const recovery of recoverInterruptedPilotRuntimeExecutions()) {
+      const log = recovery.state === 'needs_attention' ? console.warn : console.info
+      log(`[Pilot] 重启恢复 execution=${recovery.executionId} command=${recovery.commandId} startBoundary=${recovery.startBoundary}: ${recovery.reason}`)
+    }
+  })
+  await safeAwait('startPilotBackgroundReconcile', async () => {
+    const { startPilotBackgroundReconcile } = await import('./lib/project-pilot-background-reconcile')
+    stopPilotBackgroundReconcile = startPilotBackgroundReconcile()
   })
 
   // 启动 Brief 回执服务（H5 表单 + 回调，供核心任务回执使用）
@@ -495,20 +538,22 @@ async function bootstrap(): Promise<void> {
     await startBriefCallbackServer(settings.briefCallback?.port ?? 8765)
   })
 
-  // Set dock icon on macOS (required for dev mode, bundled apps use Info.plist)
-  // default 变体不使用 setIcon：让 macOS 使用 Info.plist 的 icon.icns，自动应用 Big Sur
-  // 标准圆角遮罩（setIcon 的 PNG 不会被套该遮罩，易显示为直角方形）。
-  // 仅用户自定义了图标变体时才用 setIcon 覆盖。
+  // 启动 Companion 远程访问服务（手机浏览器；仅在设置开启时监听）
+  await safeAwait('startCompanionServer', async () => {
+    if (getSettings().companionServer?.enabled) {
+      const { startCompanionServer } = await import('./lib/companion-server')
+      await startCompanionServer()
+    }
+  })
+
+  // 默认款和自定义款统一添加透明留白，启动时与设置中的切换效果一致。
   if (process.platform === 'darwin' && app.dock) {
     await app.dock.show()
     const { resolveAppIconPath } = require('./ipc')
     const settings = getSettings()
-    const variantId = settings.appIconVariant
-    if (variantId && variantId !== 'default') {
-      const dockIconPath = resolveAppIconPath(variantId)
-      if (dockIconPath && existsSync(dockIconPath)) {
-        app.dock.setIcon(dockIconPath)
-      }
+    const dockIconPath = resolveAppIconPath(settings.appIconVariant ?? 'default')
+    if (dockIconPath && existsSync(dockIconPath)) {
+      app.dock.setIcon(createDockIcon(dockIconPath))
     }
   }
 
@@ -632,7 +677,7 @@ async function safeAwait(name: string, fn: () => Promise<unknown>): Promise<void
  * 异常隔离掉了，能走到这里说明出了 bootstrap 本身控制流的意外（极端情况），
  * 此时仍尝试创建一个降级窗口，让用户至少能看到界面、复制日志、提交反馈。
  */
-function handleBootstrapFailure(err: unknown): void {
+async function handleBootstrapFailure(err: unknown): Promise<void> {
   console.error('[启动] bootstrap 致命错误，进入降级模式:', err)
 
   try {
@@ -652,7 +697,7 @@ function handleBootstrapFailure(err: unknown): void {
   }
 
   try {
-    registerIpcHandlers()
+    await registerIpcHandlers()
     createWindow()
   } catch (fallbackErr) {
     console.error('[启动] 降级窗口创建也失败:', fallbackErr)
@@ -667,9 +712,12 @@ app.on('window-all-closed', () => {
   }
 })
 
+let stopPilotBackgroundReconcile: (() => void) | null = null
+
 app.on('before-quit', () => {
   // 标记正在退出，让 close 事件不再阻止关闭
   setQuitting()
+  stopPilotBackgroundReconcile?.()
 
   // 中止所有活跃的 Agent 和 Chat 子进程
   stopAllAgents()

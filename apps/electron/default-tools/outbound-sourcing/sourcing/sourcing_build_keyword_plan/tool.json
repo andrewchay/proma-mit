@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_build_keyword_plan",
+  "name": "生成出海买家关键词计划",
+  "description": "根据产品、目标国家和买家类型生成可执行的海外买家搜索计划；不执行搜索，不声称已经找到买家。",
+  "parameters": {"type":"object","properties":{"product":{"type":"string","description":"产品或原料"},"markets":{"type":"array","items":{"type":"string"},"description":"目标国家或地区"},"buyer_types":{"type":"array","items":{"type":"string"},"description":"买家类型，如 distributor、brand、OEM"},"applications":{"type":"array","items":{"type":"string"},"description":"应用场景"},"language":{"type":"string","description":"优先搜索语言，默认 en"}},"required":["product","markets"]}
+}

@@ -336,5 +336,12 @@ export function registerRecommendationIPCHandlers(): void {
   ipcMain.handle('proactive:dismissRecommendation', (_event: unknown, id: string) => dismissRecommendation(id))
   ipcMain.handle('proactive:deleteRecommendation', (_event: unknown, id: string) => deleteRecommendation(id))
   ipcMain.handle('proactive:runRecommendationEngine', (_event: unknown, context: SignalContext) => runRecommendationEngine(context))
+  ipcMain.handle('proactive:listEmployeeCapabilityRecommendations', () =>
+    loadRecommendations().filter((item) => item.scope.startsWith('employee-capability:')),
+  )
   ipcMain.handle('proactive:refreshRecommendations', () => refreshRecommendations())
+  ipcMain.handle('proactive:scanEmployeeCapabilityRecommendations', () => {
+    const { scanAllEmployeeCapabilityScopes } = require('./employee-capability-recommendation-service')
+    return scanAllEmployeeCapabilityScopes()
+  })
 }

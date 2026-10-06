@@ -84,6 +84,11 @@ const {
   compactSessionNow,
   ContextCompactionTimeoutError,
   DEFAULT_KEEP_RECENT_MESSAGES,
+  DEFAULT_COMPACTION_TIMEOUT_MS,
+  MAX_COMPACTION_TIMEOUT_MS,
+  SUMMARY_SOURCE_MAX_CHARS,
+  truncateSummarySource,
+  resolveAdaptiveCompactionTimeout,
 } = await import('./context-compaction')
 const { getContextCompactionMetrics } = await import('../context-compaction-audit-service')
 
@@ -352,5 +357,116 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     })).rejects.toThrow('模拟压缩落盘失败')
 
     expect(lifecycle).toEqual(['started', 'failed'])
+  })
+
+  test('truncateSummarySource：超长输入保留头尾并插入截断标记', () => {
+    const text = '头'.repeat(1_000) + '[MIDDLE_MARKER]' + '中'.repeat(SUMMARY_SOURCE_MAX_CHARS) + '尾'.repeat(1_000)
+    const truncated = truncateSummarySource(text, 4_000)
+    expect(truncated.length).toBeLessThan(text.length)
+    expect(truncated).toContain('头'.repeat(100))
+    expect(truncated).toContain('尾'.repeat(100))
+    expect(truncated).toContain('已截断')
+    // 中段内容被丢弃
+    expect(truncated).not.toContain('[MIDDLE_MARKER]')
+  })
+
+  test('truncateSummarySource：未超长时原样返回', () => {
+    const text = '短文本'
+    expect(truncateSummarySource(text)).toBe(text)
+  })
+
+  test('resolveAdaptiveCompactionTimeout：小历史用默认值，大历史线性放大且封顶', () => {
+    expect(resolveAdaptiveCompactionTimeout(1_000)).toBe(DEFAULT_COMPACTION_TIMEOUT_MS)
+    // 150 chars/s：90_000 字符 → 600s，被 480s 封顶
+    expect(resolveAdaptiveCompactionTimeout(90_000)).toBe(MAX_COMPACTION_TIMEOUT_MS)
+    // 45_000 字符 → 300s
+    expect(resolveAdaptiveCompactionTimeout(45_000)).toBe(300_000)
+  })
+
+  test('summarizeHistory：超长早期历史会被截断后再进入摘要 prompt', async () => {
+    const bigText = 'A'.repeat(70_000)
+    const history: SDKMessage[] = [
+      { type: 'user', message: { content: [{ type: 'text', text: bigText }] }, parent_tool_use_id: null } as unknown as SDKMessage,
+      ...makeHistory(44),
+    ]
+    inMemorySdk.set('s-truncated', history)
+
+    await compactSessionNow({
+      sessionId: 's-truncated',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      keepRecent: 20,
+    })
+
+    expect(capturedSummaryPrompt).toContain('已截断')
+    // 尾部（早期历史里最接近当前对话的部分）仍在：早期历史为 big + 消息 0..23
+    expect(capturedSummaryPrompt).toContain('消息 23')
+  })
+
+  test('maybeAutoCompact：压缩超时降级为裁剪历史并继续回合', async () => {
+    // 除超大旧工具结果外，普通消息也放大到足够规模，
+    // 保证裁剪后估算仍超预算、真正进入摘要压缩路径（而非仅 prune 就结束）。
+    const hugeToolResult: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'old-tool', content: 'y'.repeat(900_000) }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const bigTextMessages = makeHistory(30).map((m) => ({
+      ...m,
+      message: { content: [{ type: 'text', text: 'Z'.repeat(40_000) }] },
+    }))
+    const history = [hugeToolResult, ...bigTextMessages]
+    const lifecycle: Array<{ status: string; message?: string }> = []
+    inMemorySdk.set('s-degraded', history)
+    summaryStreamMode = 'hang'
+
+    const result = await maybeAutoCompact({
+      sessionId: 's-degraded',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      observedUsage: { contextTokens: 220_000, modelId: 'm', recordedAt: Date.now() },
+      timeoutMs: 5,
+      onLifecycle: (event) => lifecycle.push({ status: event.status, message: event.message }),
+    })
+
+    expect(result.compacted).toBe(false)
+    expect(result.degraded).toBe(true)
+    expect(result.history).not.toBe(history)
+    expect(JSON.stringify(result.history)).toContain('较早工具结果已从模型视图裁剪')
+    // 原始 JSONL 未改写
+    expect(JSON.stringify(inMemorySdk.get('s-degraded'))).toContain('y'.repeat(10_000))
+    const last = lifecycle.at(-1)
+    expect(last?.status).toBe('failed')
+    expect(last?.message).toContain('降级')
+    // boundary 未落盘
+    expect(inMemorySdk.get('s-degraded')?.[0]).toMatchObject({ type: 'user' })
+  })
+
+  test('maybeAutoCompact：用户主动中止时不降级，向上传播 AbortError', async () => {
+    const controller = new AbortController()
+    summaryStreamMode = 'abort-aware'
+    const history = makeHistory(65)
+    inMemorySdk.set('s-abort-degrade', history)
+
+    const running = maybeAutoCompact({
+      sessionId: 's-abort-degrade',
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      observedUsage: { contextTokens: 220_000, modelId: 'm', recordedAt: Date.now() },
+      signal: controller.signal,
+    })
+
+    await summaryStreamStarted
+    controller.abort()
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' })
   })
 })

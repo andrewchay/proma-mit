@@ -34,11 +34,7 @@ import type { AgentSessionMeta } from '@gravitas/shared'
 type SchedulableSession = AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
 
 function eligibleRuntime(session: AgentSessionMeta): session is SchedulableSession {
-  return Boolean(session.channelId) && (session.agentRuntime === 'proma' || session.agentRuntime === 'ai-sdk')
-}
-
-function isSchedulableRuntime(runtime: string): runtime is 'proma' | 'ai-sdk' {
-  return runtime === 'proma' || runtime === 'ai-sdk'
+  return Boolean(session.channelId) && session.agentRuntime === 'ai-sdk'
 }
 
 interface ProactiveScheduleCreateDialogProps {
@@ -68,7 +64,7 @@ export function ProactiveScheduleCreateDialog({
   const [sessionId, setSessionId] = useAtom(proactiveSelectedSessionIdAtom)
   const [newSession, setNewSession] = useAtom(proactiveNewSessionAtom)
   const [selectedChannelId, setSelectedChannelId] = useAtom(proactiveSelectedChannelIdAtom)
-  const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('proma')
+  const [selectedRuntime, setSelectedRuntime] = React.useState<'proma' | 'ai-sdk'>('ai-sdk')
 
   // 打开时确保「执行时间」默认有一分钟后的默认值
   React.useEffect(() => {
@@ -85,8 +81,8 @@ export function ProactiveScheduleCreateDialog({
     const _runtime = newSession ? (selectedRuntime as 'proma' | 'ai-sdk') : undefined
     const session = sessions.find((item) => item.id === sessionId)
     if (newSession) {
-      if (!channel || !isSchedulableRuntime(selectedRuntime)) {
-        toast.error('请选择已启用渠道和 Gravitas / AI SDK Runtime')
+      if (!channel || selectedRuntime !== 'ai-sdk') {
+        toast.error('请选择已启用渠道和 AI SDK Runtime')
         return
       }
     } else {
@@ -163,7 +159,7 @@ export function ProactiveScheduleCreateDialog({
               <label className="grid gap-1.5 text-sm text-muted-foreground">Runtime
                 <Select value={selectedRuntime} onValueChange={(value: 'proma' | 'ai-sdk') => setSelectedRuntime(value)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="proma">Gravitas</SelectItem><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent>
                 </Select>
               </label>
             </div>

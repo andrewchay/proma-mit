@@ -85,7 +85,15 @@ export interface ProactiveTaskRun {
   startedAt?: number
   endedAt?: number
   outputSummary?: string
+  /** 本次运行的完整文本快照；旧记录可通过 sessionId 查阅。 */
+  output?: string
   error?: string
+  /** 外层 Schedule/Monitor 包装的根运行 ID，用于父子运行关联与去重统计。 */
+  parentRunId?: string
+  /** 记忆 Routine 成果阶段：no_input / invalid_output / no_new / pending_approval / committed */
+  memoryStage?: string
+  /** 本次提取的记忆候选数量 */
+  memoryCandidates?: number
 }
 
 // ===== Monitor =====
@@ -163,7 +171,7 @@ export interface ProactiveRecommendation {
 // ===== Approval =====
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'edited'
-export type ApprovalSourceType = 'memory' | 'skill' | 'file' | 'command' | 'schedule' | 'monitor'
+export type ApprovalSourceType = 'memory' | 'skill' | 'file' | 'command' | 'schedule' | 'monitor' | 'employee_capability'
 export type ApprovalExecutionStatus = 'pending' | 'succeeded' | 'failed'
 
 export interface ProactiveApproval {

@@ -5,13 +5,16 @@
  */
 
 import { assertAnyMarketingCapability } from './lib/plugins/marketing-plugin'
+import { createDockIcon } from './lib/dock-icon'
+import { generatePairingCode } from './lib/companion-auth'
+import { getCompanionStatus } from './lib/companion-server'
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app } from 'electron'
 import { join, resolve, sep, dirname } from 'node:path'
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
-import { TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
+import { tmpdir, networkInterfaces } from 'node:os'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isRetiredAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
+import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS } from '@gravitas/shared'
 import { CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS } from '@gravitas/shared'
 import {
   listCampaigns,
@@ -79,7 +82,15 @@ import {
 import type { CreateCampaignInput } from '@gravitas/shared'
 
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import {
+  clearTypeSafeApiKey,
+  getTypeSafeJudgmentSettings,
+  updateTypeSafeJudgmentSettings,
+} from './lib/typesafe-judgment-config'
+import { testTypeSafeConnection } from './lib/typesafe-judgment-service'
+import { recordTypeSafeRecommendationFeedback } from './lib/typesafe-judgment-audit'
+import { validateTypeSafeFeedback, validateTypeSafeSettingsInput } from './lib/typesafe-judgment-validation'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
   VoiceDictationAudioChunkInput,
@@ -151,7 +162,10 @@ import type {
   ChatToolInfo,
   ChatToolState,
   ChatToolMeta,
+  TypeSafeJudgmentSettings,
+  TypeSafeConnectionTestResult,
   MoveSessionToWorkspaceInput,
+  UpdateAgentSessionProjectInput,
   ForkSessionInput,
   RewindSessionInput,
   RewindSessionResult,
@@ -181,10 +195,18 @@ import type {
   ResolvedFileUrl,
 } from '@gravitas/shared'
 import { CONFIG_VERSION_IPC_CHANNELS } from '@gravitas/shared'
+import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
+import {
+  bindWorkspaceToProject,
+  listProjectWorkspaceBindings,
+  listWorkspaceProjectBindings,
+  unbindWorkspaceFromProject,
+} from './lib/project-workspace-bindings'
+import { updateAgentSessionProjectContext } from './lib/agent-session-project-service'
 import type { UserProfile, AppSettings } from '../types'
 import { getRuntimeStatus, getGitRepoStatus, reinitializeRuntime } from './lib/runtime-init'
 import { getUnstagedChanges, getFileDiff, getUntrackedContent, revertFile, getDiffContents } from './lib/git-diff-service'
-import { registerPromaFilePath } from './lib/local-file-protocol'
+import { registerPromaDirectoryPath, registerPromaFilePath } from './lib/local-file-protocol'
 import { registerUpdaterIpc } from './lib/updater/updater-ipc'
 import {
   listChannels,
@@ -230,7 +252,9 @@ import {
 import { extractTextFromAttachment } from './lib/document-parser'
 import { getTutorialContent, createWelcomeConversation } from './lib/tutorial-service'
 import { getUserProfile, updateUserProfile } from './lib/user-profile-service'
-import { getSettings, updateSettings } from './lib/settings-service'
+import { getSettings, updateSettings, onSettingsChange } from './lib/settings-service'
+import { isModuleVisible, resolveDevEnabledModules, resolveEffectiveModules } from './lib/feature-gate'
+import { isDevUnlockEnabled } from './lib/dev-unlock'
 import { setDockBadgeCount } from './lib/dock-badge-service'
 
 import { checkEnvironment } from './lib/environment-checker'
@@ -345,6 +369,7 @@ import { getDingTalkConfig, saveDingTalkConfig, getDecryptedClientSecret, getDin
 import { dingtalkBridgeManager } from './lib/dingtalk-bridge-manager'
 import { getWeChatConfig } from './lib/wechat-config'
 import { wechatBridge } from './lib/wechat-bridge'
+import { trackNoteOpened } from './lib/telemetry-tracking'
 
 /** 文件浏览器中需要隐藏的系统文件 */
 const HIDDEN_FS_ENTRIES = new Set(['.DS_Store', 'Thumbs.db'])
@@ -354,6 +379,29 @@ const KNOWN_EDITORS = [
   'Visual Studio Code', 'Cursor', 'Sublime Text', 'Windsurf',
   'Zed', 'CotEditor', 'IntelliJ IDEA', 'Xcode', 'TextEdit', 'Archive Utility',
 ]
+
+/** 常见浏览器（macOS，按 .app 名称匹配），供 HTML 等文件用浏览器打开 */
+const KNOWN_BROWSERS = [
+  'Safari', 'Google Chrome', 'Arc', 'Microsoft Edge', 'Firefox', 'Brave Browser',
+]
+
+/** 「打开方式」菜单允许的全部应用（编辑器 + 浏览器） */
+const KNOWN_OPEN_WITH_APPS = [...KNOWN_EDITORS, ...KNOWN_BROWSERS]
+
+/** 解析应用在 macOS 上的候选 .app 路径（按顺序取第一个存在的） */
+function resolveAppSearchPaths(name: string, home: string): string[] {
+  if (name === 'Archive Utility') {
+    return ['/System/Library/CoreServices/Applications/Archive Utility.app']
+  }
+  // Safari 在较新系统中位于 /Applications，旧系统中由系统目录提供
+  if (name === 'Safari') {
+    return ['/Applications/Safari.app', '/System/Applications/Safari.app']
+  }
+  if (name === 'Xcode' || name === 'TextEdit') {
+    return [`/Applications/${name}.app`]
+  }
+  return [`/Applications/${name}.app`, `${home}/Applications/${name}.app`]
+}
 
 /**
  * 检查路径是否在允许的目录范围内（解析 symlink）
@@ -505,8 +553,23 @@ function normalizeAppIconVariantId(variantId: string): string {
   return legacyVariantIds[variantId] ?? variantId
 }
 
-export function registerIpcHandlers(): void {
+/** 启动 Companion Server（忽略端口占用等错误，不阻塞主流程） */
+async function safeStartCompanionServer(): Promise<void> {
+  try {
+    const { startCompanionServer } = await import('./lib/companion-server')
+    await startCompanionServer()
+  } catch (error) {
+    console.error('[Companion] 启动失败:', error)
+  }
+}
+
+export async function registerIpcHandlers(): Promise<void> {
   console.log('[IPC] 正在注册 IPC 处理器...')
+
+  // ===== 出海邮件（收发与同步，独立模块） =====
+  const { registerOutboundMailIpcHandlers, restoreOutboundMailSchedule } = await import('./lib/outbound-mail/outbound-mail-ipc')
+  registerOutboundMailIpcHandlers()
+  restoreOutboundMailSchedule()
 
   // ===== 嵌入式终端 =====
   const assertMainTerminalRenderer = async (senderId: number): Promise<void> => {
@@ -709,7 +772,7 @@ export function registerIpcHandlers(): void {
       if (process.platform === 'darwin') {
         const { spawnSync } = await import('node:child_process')
         if (appName) {
-          if (!KNOWN_EDITORS.includes(appName)) {
+          if (!KNOWN_OPEN_WITH_APPS.includes(appName)) {
             console.warn('[IPC] shell:system-open-file 拒绝未知应用:', appName)
             return
           }
@@ -723,7 +786,7 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  // 扫描系统中的编辑器应用（仅 macOS）
+  // 扫描系统中的编辑器与浏览器应用（仅 macOS）
   ipcMain.handle(
     IPC_CHANNELS.SCAN_EDITORS,
     async (): Promise<import('@gravitas/shared').EditorApp[]> => {
@@ -732,18 +795,18 @@ export function registerIpcHandlers(): void {
       const { homedir } = await import('node:os')
       const home = homedir()
 
-      const editors = KNOWN_EDITORS.map((name) => {
-        const searchPaths = name === 'Archive Utility'
-          ? ['/System/Library/CoreServices/Applications/Archive Utility.app']
-          : name === 'Xcode' || name === 'TextEdit'
-            ? [`/Applications/${name}.app`]
-            : [`/Applications/${name}.app`, `${home}/Applications/${name}.app`]
-        return { name, paths: searchPaths }
-      })
+      const candidates: Array<{ name: string; kind: 'editor' | 'browser' }> = [
+        ...KNOWN_EDITORS.map((name) => ({ name, kind: 'editor' as const })),
+        ...KNOWN_BROWSERS.map((name) => ({ name, kind: 'browser' as const })),
+      ]
 
-      return editors
-        .filter((e) => e.paths.some((p) => existsSync(p)))
-        .map((e) => ({ name: e.name, path: e.paths.find((p) => existsSync(p))! }))
+      return candidates
+        .map((candidate) => {
+          const paths = resolveAppSearchPaths(candidate.name, home)
+          return { ...candidate, path: paths.find((p) => existsSync(p)) }
+        })
+        .filter((candidate): candidate is { name: string; kind: 'editor' | 'browser'; path: string } => Boolean(candidate.path))
+        .map((candidate) => ({ name: candidate.name, path: candidate.path, kind: candidate.kind }))
     }
   )
 
@@ -1187,11 +1250,97 @@ export function registerIpcHandlers(): void {
 
   // ===== 应用设置相关 =====
 
+  // TypeSafe 判断服务：密钥仅由主进程接收和解密，renderer 只能读取脱敏状态。
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.GET_SETTINGS,
+    async (): Promise<TypeSafeJudgmentSettings> => getTypeSafeJudgmentSettings(),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.UPDATE_SETTINGS,
+    async (_event, input: unknown): Promise<TypeSafeJudgmentSettings> => (
+      updateTypeSafeJudgmentSettings(validateTypeSafeSettingsInput(input))
+    ),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.CLEAR_API_KEY,
+    async (): Promise<TypeSafeJudgmentSettings> => clearTypeSafeApiKey(),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.TEST_CONNECTION,
+    async (): Promise<TypeSafeConnectionTestResult> => testTypeSafeConnection(),
+  )
+  ipcMain.handle(
+    TYPESAFE_JUDGMENT_IPC_CHANNELS.RECORD_FEEDBACK,
+    async (_event, feedback: unknown): Promise<void> => {
+      recordTypeSafeRecommendationFeedback(validateTypeSafeFeedback(feedback))
+    },
+  )
+
+  // ===== Companion 远程访问（手机浏览器） =====
+
+  /** 本机局域网地址提示（用于设置页展示手机访问 URL） */
+  function resolveCompanionLanUrl(port: number): string | undefined {
+    try {
+      const interfaces = networkInterfaces()
+      for (const list of Object.values(interfaces)) {
+        for (const info of list ?? []) {
+          if (info.family === 'IPv4' && !info.internal && /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(info.address)) {
+            return `http://${info.address}:${port}/companion`
+          }
+        }
+      }
+    } catch {
+      /* 忽略 */
+    }
+    return undefined
+  }
+
+  ipcMain.handle(COMPANION_IPC_CHANNELS.GENERATE_PAIRING_CODE, () => {
+    if (!getSettings().companionServer?.enabled) {
+      throw new Error('Companion 远程访问未启用')
+    }
+    return generatePairingCode()
+  })
+
+  ipcMain.handle(COMPANION_IPC_CHANNELS.GET_STATUS, async () => {
+    const status = getCompanionStatus()
+    const lanUrl = status.running ? resolveCompanionLanUrl(status.port) : undefined
+    // 二维码在主进程生成（qrcode 为既有依赖），渲染层直接展示 dataURL
+    const qrDataUrl = lanUrl
+      ? await (await import('qrcode')).default.toDataURL(lanUrl, { width: 280, margin: 2, errorCorrectionLevel: 'M' })
+      : undefined
+    return { ...status, lanUrl, qrDataUrl }
+  })
+
+  // 设置变更时联动启停（开关切换无需重启应用）
+  let companionServerDesired = getSettings().companionServer?.enabled ?? false
+  onSettingsChange((settings) => {
+    const desired = settings.companionServer?.enabled ?? false
+    if (desired === companionServerDesired) return
+    companionServerDesired = desired
+    if (desired) {
+      void safeStartCompanionServer()
+    } else {
+      void import('./lib/companion-server').then(({ stopCompanionServer }) => stopCompanionServer())
+    }
+  })
+
   // 获取应用设置
   ipcMain.handle(
     SETTINGS_IPC_CHANNELS.GET,
     async (): Promise<AppSettings> => {
-      return getSettings()
+      const settings = getSettings()
+      // 门禁生效模块每次读取时计算，不落盘：它是派生结论，不是用户配置。
+      // 渲染层据此决定入口是否展示，避免自己再维护一份发布状态导致漂移。
+      return {
+        ...settings,
+        effectiveDevModules: resolveEffectiveModules({
+          devEnabled: settings.enabledDevModules,
+          isPackaged: app.isPackaged,
+        }),
+        // 全能力调试放开同样是每次读取时计算的派生结论，不落盘。
+        capabilitiesUnlocked: isDevUnlockEnabled({ isPackaged: app.isPackaged }),
+      }
     }
   )
 
@@ -1202,12 +1351,22 @@ export function registerIpcHandlers(): void {
       const result = await updateSettings(updates)
 
       // 营销订阅变化时，重新分发营销 skills 到所有工作区（下次会话生效）
-      if (updates.marketingCapabilities !== undefined) {
+      if (updates.marketingCapabilities !== undefined || updates.newMediaCapabilities !== undefined) {
         try {
           const { syncMarketingSkillsForAllWorkspaces } = await import('./lib/marketing-skills-sync')
           syncMarketingSkillsForAllWorkspaces()
         } catch (err) {
-          console.warn('[IPC] 营销订阅变更后同步 skills 失败:', err)
+          console.warn('[IPC] 领域能力变更后同步 skills 失败:', err)
+        }
+      }
+
+      // 领域订阅变化时，重新安装已启用领域包的随包 Workflow 模板
+      if (updates.marketingCapabilities !== undefined || updates.domainCapabilities !== undefined) {
+        try {
+          const { ensureDomainWorkflowsForAllWorkspaces } = await import('./lib/domain-workflow-installer')
+          ensureDomainWorkflowsForAllWorkspaces()
+        } catch (err) {
+          console.warn('[IPC] 领域订阅变更后安装领域工作流失败:', err)
         }
       }
 
@@ -1236,6 +1395,149 @@ export function registerIpcHandlers(): void {
       } catch {
         event.returnValue = false
       }
+    }
+  )
+
+  // ===== 订阅与权益相关 =====
+
+  // 地址在每次请求时解析，这样用户在设置中修改后无需重启应用即可生效
+  const createSubscriptionClient = async () => {
+    const { SubscriptionApiClient } = await import('./lib/subscription/subscription-api-client')
+    const { resolveSubscriptionServiceUrl } = await import('./lib/subscription/subscription-endpoint')
+    const baseUrl = resolveSubscriptionServiceUrl()
+    if (!baseUrl) {
+      throw new Error('订阅服务地址未配置，请在设置中填写服务地址')
+    }
+    return new SubscriptionApiClient({ baseUrl })
+  }
+
+  // 使用真实实现，不再注入空壳。
+  // 此前的空壳 load() 永远返回 undefined，导致令牌不落盘、
+  // access token 无法续期、下单时必然报「未登录」。
+  const { SubscriptionAuthService } = await import('./lib/subscription/subscription-auth-service')
+  const { EntitlementCache } = await import('./lib/subscription/entitlement-cache')
+  const { EntitlementService } = await import('./lib/subscription/entitlement-service')
+
+  const subscriptionAuthService = new SubscriptionAuthService()
+  const entitlementCache = new EntitlementCache()
+
+  // 权益签名公钥：有则严格验签，无则拒绝接受任何已签名快照（开发签名除外）。
+  // 这是防「改本地 JSON 白嫖」的关键。
+  const entitlementPublicKeyPem = process.env.GRAVITAS_SUBSCRIPTION_ENTITLEMENT_PUBLIC_KEY_PEM ?? ''
+  const entitlementService = new EntitlementService(
+    // 传入轻量代理：每次调用时解析地址并构造客户端，避免地址变更后仍用旧实例
+    {
+      requestEmailOtp: async (input) => (await createSubscriptionClient()).requestEmailOtp(input),
+      verifyEmailOtp: async (input) => (await createSubscriptionClient()).verifyEmailOtp(input),
+      startOAuth: async (provider) => (await createSubscriptionClient()).startOAuth(provider),
+      completeOAuth: async (input) => (await createSubscriptionClient()).completeOAuth(input),
+      refresh: async (token) => (await createSubscriptionClient()).refresh(token),
+      logout: async (token) => (await createSubscriptionClient()).logout(token),
+      getEntitlements: async (token) => (await createSubscriptionClient()).getEntitlements(token),
+      createCheckout: async (token, input) => (await createSubscriptionClient()).createCheckout(token, input),
+      getOrder: async (token, orderId) => (await createSubscriptionClient()).getOrder(token, orderId),
+      syncOrder: async (token, orderId) => (await createSubscriptionClient()).syncOrder(token, orderId),
+    } as import('./lib/subscription/subscription-api-client').SubscriptionApiClient,
+    subscriptionAuthService,
+    entitlementCache,
+    {
+      entitlementPublicKeyPem,
+      // 仅开发环境接受 dev 签名；打包后必须提供公钥
+      allowDevSignature: !app.isPackaged,
+    },
+  )
+
+  // 返回值统一剥掉 canUse：它是函数，结构化克隆会直接报错，导致渲染层拿不到状态。
+  const { toSubscriptionStateView } = await import('./lib/subscription/entitlement-service')
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.GET_STATE,
+    async () => toSubscriptionStateView(entitlementService.getState())
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.REQUEST_EMAIL_CODE,
+    async (_event, input: { email: string }) => entitlementService.requestEmailOtp(input)
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.VERIFY_EMAIL_CODE,
+    async (_event, input: { email: string; code: string; deviceId?: string }) =>
+      toSubscriptionStateView(await entitlementService.verifyEmailOtp(input))
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.START_OAUTH,
+    async (_event, provider: 'github' | 'google') => entitleServiceStartOAuth(provider)
+  )
+
+  async function entitleServiceStartOAuth(provider: 'github' | 'google') {
+    const client = await createSubscriptionClient()
+    return client.startOAuth(provider)
+  }
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.COMPLETE_OAUTH,
+    async (_event, input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) =>
+      toSubscriptionStateView(await entitlementService.completeOAuthLogin(input))
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.LOGOUT,
+    async () => entitlementService.logout()
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.REFRESH,
+    async () => toSubscriptionStateView(await entitlementService.refresh())
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.GET_ENDPOINT,
+    async () => {
+      const { resolveSubscriptionServiceUrl } = await import('./lib/subscription/subscription-endpoint')
+      return { url: resolveSubscriptionServiceUrl() ?? null }
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.SET_ENDPOINT,
+    async (_event, url: string) => {
+      const { setUserSubscriptionUrl, resolveSubscriptionServiceUrl } = await import(
+        './lib/subscription/subscription-endpoint'
+      )
+      setUserSubscriptionUrl(url)
+      return { url: resolveSubscriptionServiceUrl() ?? null }
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT,
+    async (_event, input: { planId: string; provider: string; period: string }) => {
+      const tokens = subscriptionAuthService.load()
+      if (!tokens) throw new Error('未登录')
+      const client = await createSubscriptionClient()
+      return client.createCheckout(tokens.accessToken, input)
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.GET_ORDER,
+    async (_event, orderId: string) => {
+      const tokens = subscriptionAuthService.load()
+      if (!tokens) throw new Error('未登录')
+      const client = await createSubscriptionClient()
+      return client.getOrder(tokens.accessToken, orderId)
+    }
+  )
+
+  ipcMain.handle(
+    SUBSCRIPTION_IPC_CHANNELS.SYNC_ORDER,
+    async (_event, orderId: string) => {
+      const tokens = subscriptionAuthService.load()
+      if (!tokens) throw new Error('未登录')
+      const client = await createSubscriptionClient()
+      return client.syncOrder(tokens.accessToken, orderId)
     }
   )
 
@@ -1359,7 +1661,7 @@ export function registerIpcHandlers(): void {
 
         // macOS: 设置 Dock 图标
         if (process.platform === 'darwin' && app.dock) {
-          app.dock.setIcon(iconPath)
+          app.dock.setIcon(createDockIcon(iconPath))
         }
 
         // 持久化到设置
@@ -1489,9 +1791,15 @@ export function registerIpcHandlers(): void {
       if (agentRuntime !== undefined && !isAgentRuntime(agentRuntime)) {
         throw new Error(`非法的 Agent runtime: ${String(agentRuntime)}`)
       }
+      if (agentRuntime && isRetiredAgentRuntime(agentRuntime)) {
+        throw new Error('Claude / Gravitas Runtime 已停止新建会话；已有会话仍可继续运行，请选择 Pi 或 AI SDK')
+      }
+      // 老设置保留原值供存量使用，但新会话不继承已下线的默认值。
+      const configuredRuntime = getSettings().agentRuntime ?? 'pi'
+      const selectedRuntime = agentRuntime ?? (isRetiredAgentRuntime(configuredRuntime) ? 'pi' : configuredRuntime)
       // modelId 缺省时兜底到全局默认模型，确保会话元数据始终带模型（子会话继承了会话模型）
       const fallbackModelId = getSettings().agentModelId || undefined
-      return createAgentSession(title, channelId, workspaceId, fallbackModelId, agentRuntime ?? getSettings().agentRuntime)
+      return createAgentSession(title, channelId, workspaceId, fallbackModelId, selectedRuntime)
     }
   )
 
@@ -1511,6 +1819,16 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // 更新 Agent 会话当前 Project：项目记忆/知识范围必须与工作空间绑定一致，不接受越权 projectId
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.UPDATE_SESSION_PROJECT,
+    async (_, input: UpdateAgentSessionProjectInput): Promise<AgentSessionMeta> => {
+      return updateAgentSessionProjectContext(input.sessionId, input.projectId, {
+        isSessionActive: isAgentSessionActive,
+      })
+    }
+  )
+
   // 更新 Agent 会话 Runtime
   ipcMain.handle(
     AGENT_IPC_CHANNELS.UPDATE_SESSION_AGENT_RUNTIME,
@@ -1524,6 +1842,9 @@ export function registerIpcHandlers(): void {
       }
       if (isAgentSessionActive(sessionId)) {
         throw new Error('Agent 正在运行，完成后再切换 Runtime')
+      }
+      if (isRetiredAgentRuntime(runtime) && current.agentRuntime !== runtime) {
+        throw new Error('Claude / Gravitas Runtime 已停止切入；已有会话仍可继续运行')
       }
 
       const updates: Partial<Pick<AgentSessionMeta, 'agentRuntime' | 'sdkSessionId'>> = {
@@ -1653,6 +1974,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.FORK_SESSION,
     async (_, input: ForkSessionInput): Promise<AgentSessionMeta> => {
+      const source = getAgentSessionMeta(input.sessionId)
+      if (source?.agentRuntime && isRetiredAgentRuntime(source.agentRuntime)) {
+        throw new Error('Claude / Gravitas Runtime 已停止新建分叉会话；原会话仍可继续运行')
+      }
       return forkAgentSession(input)
     }
   )
@@ -1912,7 +2237,7 @@ export function registerIpcHandlers(): void {
   // 凭据统一治理（PH2-D）
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_CREDENTIAL_REGISTRY, async () => {
     const { listCredentials, credentialRegistryToText } = await import('./lib/credential-registry-service')
-    const registry = listCredentials()
+    const registry = await listCredentials()
     return { registry, text: credentialRegistryToText(registry) }
   })
   // Agent 互调请求（PH2-F）
@@ -1991,6 +2316,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.SEND_MESSAGE,
     async (event, input: AgentSendInput): Promise<void> => {
+      const current = getAgentSessionMeta(input.sessionId)
+      if (input.agentRuntime && isRetiredAgentRuntime(input.agentRuntime)
+        && current?.agentRuntime !== input.agentRuntime) {
+        throw new Error('Claude / Gravitas Runtime 已停止切入；只能继续运行原有会话')
+      }
       await runAgent(input, event.sender)
     }
   )
@@ -2059,7 +2389,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_SCHEDULES, async () => listProactiveSchedules())
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PROACTIVE_RUNS, async () => listProactiveTaskRuns())
   ipcMain.handle(AGENT_IPC_CHANNELS.CREATE_PROACTIVE_SCHEDULE, async (_, input: import('@gravitas/shared').CreateProactiveScheduleInput) => {
-    if (!input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务仅支持 Proma 或 AI SDK Runtime')
+    if (!input || (input.runtime !== 'proma' && input.runtime !== 'ai-sdk')) throw new Error('定时任务仅支持 Gravitas 或 AI SDK Runtime')
     return createProactiveSchedule(input)
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.UPDATE_PROACTIVE_SCHEDULE, async (_, scheduleId: string, input: import('@gravitas/shared').UpdateProactiveScheduleInput) => {
@@ -2493,9 +2823,12 @@ export function registerIpcHandlers(): void {
   // 不自动写回内置 sub-agent 行为；是否采纳由 UI 的「审阅并采纳」显式触发。
   ipcMain.handle(
     AGENT_IPC_CHANNELS.EVAL_RUN_IMPROVE,
-    async (_event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').ImproveSummary> => {
+    async (event, benchmarkId: string): Promise<import('./lib/agent-runtime/eval/commands').ImproveSummary> => {
       const { runEvalImprove } = await import('./lib/agent-runtime/eval/eval-service')
-      return runEvalImprove(benchmarkId, { autoAdopt: false })
+      return runEvalImprove(benchmarkId, {
+        autoAdopt: false,
+        onProgress: (progress) => event.sender.send(AGENT_IPC_CHANNELS.EVAL_PROGRESS, progress),
+      })
     }
   )
 
@@ -2576,9 +2909,9 @@ export function registerIpcHandlers(): void {
   // 从预置模板创建 Benchmark
   ipcMain.handle(
     AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE,
-    async (_event, templateId: string) => {
-      const { createBenchmarkFromTemplate } = await import('./lib/agent-runtime/eval/benchmark-store')
-      return createBenchmarkFromTemplate(templateId)
+    async (_event, templateId: string, judgeRuntime?: import("./lib/agent-runtime/eval/types").EvalRuntimeRef) => {
+      const { createBenchmarkFromTemplate } = await import("./lib/agent-runtime/eval/benchmark-store")
+      return createBenchmarkFromTemplate(templateId, undefined, judgeRuntime)
     }
   )
 
@@ -2987,6 +3320,39 @@ export function registerIpcHandlers(): void {
         return null
       }
       return result ? { url: registerPromaFilePath(result) } : null
+    }
+  )
+
+  // 解析 HTML 文件为受管内联预览 URL（iframe 渲染用）
+  //
+  // 父目录整体授权时注册「目录」URL，让 HTML 内的相对 CSS/JS/图片也能加载；
+  // 单文件授权（如会话附件）只注册文件本身，避免因预览把权限扩张到整个父目录。
+  ipcMain.handle(
+    'file:resolve-html-preview-path',
+    async (_, filePath: string, access?: FileAccessOptions | string[]): Promise<ResolvedFileUrl | null> => {
+      const { basename } = await import('node:path')
+      const { resolveFilePath } = await import('./lib/file-preview-service')
+      const options = normalizeFileAccessOptions(access)
+      const resolved = resolveFilePath(filePath, getAllowedCandidateBasePaths(options))
+      if (!resolved || !isPathAllowed(resolved, options)) {
+        console.warn('[IPC] file:resolve-html-preview-path 拒绝越界路径:', resolved ?? filePath)
+        return null
+      }
+      const parentDir = dirname(resolved)
+      try {
+        if (isPathAllowed(parentDir, options)) {
+          const directoryUrl = registerPromaDirectoryPath(parentDir)
+          return { url: `${directoryUrl}/${encodeURIComponent(basename(resolved))}` }
+        }
+        return { url: registerPromaFilePath(resolved) }
+      } catch (err) {
+        console.warn(
+          '[IPC] file:resolve-html-preview-path 无法注册预览路径:',
+          resolved,
+          err instanceof Error ? err.message : err
+        )
+        return null
+      }
     }
   )
 
@@ -4438,25 +4804,177 @@ export function registerIpcHandlers(): void {
     return getDynamicIslandService().setProjectMuted(workspace, muted)
   })
 
+  // 开发阶段门禁：未完成模块默认不注册任何 IPC，渲染层即使构造出请求也拿不到接口。
+  // 打包环境忽略本地调试开关，避免改 settings.json 解锁未完成功能。
+  const isDevModuleEnabled = (moduleId: string): boolean => isModuleVisible(moduleId, {
+    isPackaged: app.isPackaged,
+    devEnabled: resolveDevEnabledModules(getSettings().enabledDevModules, { isPackaged: app.isPackaged }),
+  })
+
   // ===== 工作模块（项目管理 / 日程管家 / 日历同步） =====
   const { registerWorkModuleIpcHandlers } = require('./lib/work-module-ipc-handlers') as { registerWorkModuleIpcHandlers: () => void }
   registerWorkModuleIpcHandlers()
+
+  // ===== Project ↔ AgentWorkspace 多对多绑定（仅授权，不自动共享资料） =====
+  ipcMain.handle(PROJECT_IPC_CHANNELS.BIND_WORKSPACE, (_, projectId: string, workspaceId: string) =>
+    bindWorkspaceToProject(projectId, workspaceId),
+  )
+  ipcMain.handle(PROJECT_IPC_CHANNELS.UNBIND_WORKSPACE, (_, projectId: string, workspaceId: string) =>
+    unbindWorkspaceFromProject(projectId, workspaceId),
+  )
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORKSPACES, (_, projectId: string) =>
+    listProjectWorkspaceBindings(projectId),
+  )
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, (_, workspaceId: string) =>
+    listWorkspaceProjectBindings(workspaceId),
+  )
 
   // ===== 智能提醒系统 =====
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }
   registerReminderIpcHandlers()
 
-  // ===== Proactive Center =====
-  const { registerMonitorIPCHandlers } = require('./lib/monitor-service') as { registerMonitorIPCHandlers: () => void }
-  registerMonitorIPCHandlers()
-  const { registerRecommendationIPCHandlers } = require('./lib/recommendation-service') as { registerRecommendationIPCHandlers: () => void }
-  registerRecommendationIPCHandlers()
-  const { registerApprovalIPCHandlers } = require('./lib/approval-service') as { registerApprovalIPCHandlers: () => void }
-  registerApprovalIPCHandlers()
-  const { registerRoutineIPCHandlers } = require('./lib/routine-service') as { registerRoutineIPCHandlers: () => void }
-  registerRoutineIPCHandlers()
-  const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
-  registerMemoryPluginIPCHandlers()
+  // ===== Proactive Center（受开发阶段门禁管辖：未完成时整体不注册） =====
+  if (isDevModuleEnabled('proactive')) {
+    const { registerMonitorIPCHandlers } = require('./lib/monitor-service') as { registerMonitorIPCHandlers: () => void }
+    registerMonitorIPCHandlers()
+    const { registerRecommendationIPCHandlers } = require('./lib/recommendation-service') as { registerRecommendationIPCHandlers: () => void }
+    registerRecommendationIPCHandlers()
+    const { registerApprovalIPCHandlers } = require('./lib/approval-service') as { registerApprovalIPCHandlers: () => void }
+    registerApprovalIPCHandlers()
+    const { registerRoutineIPCHandlers } = require('./lib/routine-service') as { registerRoutineIPCHandlers: () => void }
+    registerRoutineIPCHandlers()
+    const { registerMemoryPluginIPCHandlers } = require('./lib/memory-plugin-service') as { registerMemoryPluginIPCHandlers: () => void }
+    registerMemoryPluginIPCHandlers()
+  }
+
+  // ===== 知识库（受开发阶段门禁管辖：未完成时不注册） =====
+  if (isDevModuleEnabled('knowledge')) {
+  const knowledgeSvc = require('./lib/knowledge-service') as typeof import('./lib/knowledge-service')
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_VAULTS, async () => knowledgeSvc.listKnowledgeVaults())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_VAULT, async (_event, input) => knowledgeSvc.createKnowledgeVault(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_VAULT, async (_event, id, patch) => knowledgeSvc.updateKnowledgeVault(id, patch))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_VAULT, async (_event, id) => knowledgeSvc.deleteKnowledgeVault(id))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.INDEX_VAULT, async (_event, vaultId) => knowledgeSvc.indexKnowledgeVault(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.INDEX_ALL_VAULTS, async () => knowledgeSvc.indexAllVaults())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.SEARCH_NOTES, async (_event, query, vaultId) => knowledgeSvc.searchKnowledge(query, vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.SEARCH_BY_TAG, async (_event, tag, vaultId) => knowledgeSvc.searchByTag(tag, vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_ALL_TAGS, async (_event, vaultId) => knowledgeSvc.getAllTags(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_NOTE, async (_event, id) => {
+    const note = knowledgeSvc.getKnowledgeNote(id)
+    // 采集：打开笔记（旁路观测，失败不影响返回）
+    if (note) trackNoteOpened(note.id, note.vaultId)
+    return note
+  })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, async (_event, vaultId) => knowledgeSvc.listKnowledgeNotes(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, async (_event, id) => knowledgeSvc.deleteKnowledgeNote(id))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, async (_event, vaultId) => knowledgeSvc.getKnowledgeGraph(vaultId))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, async (_event, vaultId, threshold, limit) => knowledgeSvc.getKnowledgeLinkSuggestions(vaultId, threshold, limit))
+
+  // --- K2-02 AOF 图谱（延迟初始化；AOF 缺失时返回 disabled 而非抛错） ---
+  type GraphBuildService = import('./lib/knowledge-graph-build-service').KnowledgeGraphBuildService
+  let graphBuildService: GraphBuildService | null = null
+  void (require('./lib/knowledge-graph-build-service') as typeof import('./lib/knowledge-graph-build-service'))
+    .createKnowledgeGraphBuildService()
+    .then((svc: GraphBuildService | null) => { graphBuildService = svc })
+    .catch(() => { /* AOF 不可用：保持 null，基础检索不受影响 */ })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH_BUILD_STATUS, async (_event, kbId: string) => {
+    if (!graphBuildService) return { available: false }
+    const record = graphBuildService.getBuild(kbId)
+    return { available: true, queryable: graphBuildService.isQueryable(kbId), record: record ?? null }
+  })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.BUILD_KNOWLEDGE_GRAPH, async (_event, kbId: string) => {
+    if (!graphBuildService) return { available: false }
+    try {
+      const record = await graphBuildService.build(kbId)
+      return { available: true, record }
+    } catch (err) {
+      return { available: true, error: err instanceof Error ? err.message : String(err), record: graphBuildService.getBuild(kbId) ?? null }
+    }
+  })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.QUERY_KNOWLEDGE_GRAPH, async (_event, kbId: string, query: string, limit?: number) => {
+    if (!graphBuildService) return { available: false }
+    try {
+      return { available: true, hits: await graphBuildService.query(kbId, query, limit) }
+    } catch (err) {
+      return { available: true, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, async (_event, query, maxTokens) => knowledgeSvc.getKnowledgeContextForAgent(query, maxTokens))
+
+  // 知识库编辑（Knowledge Pro）：写盘服务内部对每个写操作做权益门禁
+  const knowledgeWriteSvc = require('./lib/knowledge-write-service') as typeof import('./lib/knowledge-write-service')
+  const { hasCapability } = require('./lib/entitlement-gate') as typeof import('./lib/entitlement-gate')
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.GET_WRITE_PERMISSION, async () => hasCapability('knowledge-pro'))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_NOTE, async (_event, input) => knowledgeWriteSvc.createNoteFile(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, async (_event, input) => knowledgeWriteSvc.updateNoteFile(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, async (_event, input) => knowledgeWriteSvc.renameNoteFile(input))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, async (_event, vaultId, relativePath) => { knowledgeWriteSvc.deleteNoteFile(vaultId, relativePath); return true })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.readNoteFile(vaultId, relativePath))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, async (_event, vaultId, relativePath) => knowledgeWriteSvc.statNoteFile(vaultId, relativePath))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.NOTE_FILE_VERSION, async (_event, vaultId, relativePath) => knowledgeWriteSvc.noteFileVersion(vaultId, relativePath))
+
+  // 知识目录（来源 / 知识库 / Project 关联）
+  const knowledgeCatalogSvc = require('./lib/knowledge-catalog-service') as typeof import('./lib/knowledge-catalog-service')
+  const knowledgeScopeSvc = require('./lib/knowledge-scope-service') as typeof import('./lib/knowledge-scope-service')
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.READ_CATALOG, async () => knowledgeCatalogSvc.readCatalog())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.MIGRATE_LEGACY_VAULTS, async () => knowledgeCatalogSvc.migrateLegacyVaults())
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_SOURCE, async (_event, input, options) => knowledgeCatalogSvc.createSource(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_SOURCE, async (_event, id, patch, options) => knowledgeCatalogSvc.updateSource(id, patch, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_SOURCE, async (_event, id, options) => { knowledgeCatalogSvc.deleteSource(id, options); return true })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.CREATE_KNOWLEDGE_BASE, async (_event, input, options) => knowledgeCatalogSvc.createKnowledgeBase(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UPDATE_KNOWLEDGE_BASE, async (_event, id, patch, options) => knowledgeCatalogSvc.updateKnowledgeBase(id, patch, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.DELETE_KNOWLEDGE_BASE, async (_event, id, options) => { knowledgeCatalogSvc.deleteKnowledgeBase(id, options); return true })
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.BIND_PROJECT, async (_event, input, options) => knowledgeCatalogSvc.bindProject(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.UNBIND_PROJECT, async (_event, input, options) => knowledgeCatalogSvc.unbindProject(input, options))
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.LIST_PROJECT_KNOWLEDGE_BASES, async (_event, projectId) => knowledgeCatalogSvc.listProjectKnowledgeBases(projectId))
+  // 范围解析：只传 sessionId 与持久化元数据，不接受调用方自报的 Project 授权
+  ipcMain.handle(KNOWLEDGE_IPC_CHANNELS.RESOLVE_SESSION_SCOPE, async (_event, sessionId: string) => {
+    const meta = getAgentSessionMeta(sessionId)
+    if (!meta) return { sessionId, mode: 'none', knowledgeBaseIds: [], scopeRevision: 'missing' }
+    return knowledgeScopeSvc.resolveRetrievableScope({ sessionId, sessionMeta: meta })
+  })
+  }
+
+  // ===== 分析引擎（免费版基础能力） =====
+  const analysisSvc = require('./lib/analysis-service') as typeof import('./lib/analysis-service')
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.LIST_REPORTS, async (_event, type) => analysisSvc.listAnalysisReports(type))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GET_REPORT, async (_event, id) => analysisSvc.getAnalysisReport(id))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.DELETE_REPORT, async (_event, id) => analysisSvc.deleteAnalysisReport(id))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_TIME_REPORT, async (_event, range) => analysisSvc.generateTimeReport(range))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_PRODUCTIVITY_REPORT, async (_event, range) => analysisSvc.generateProductivityReportService(range))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_COMPREHENSIVE_REPORT, async (_event, range) => analysisSvc.generateComprehensiveReportService(range))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_MONTHLY_REPORT, async (_event, month) => analysisSvc.generateMonthlyReport(month))
+  ipcMain.handle(ANALYSIS_IPC_CHANNELS.GENERATE_WEEKLY_REPORT, async (_event, weekStart) => analysisSvc.generateWeeklyReport(weekStart))
+
+  // ===== 学术助手（Pro 插件能力） =====
+  // 注意：处理器无条件注册，能力门禁由 academic-plugin 的权益过滤与
+  // 渲染层 selectCanUseCapability 控制，与营销插件保持一致的分层。
+  const academicSvc = require('./lib/academic-service') as typeof import('./lib/academic-service')
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.LIST_PAPERS, async () => academicSvc.listPapers())
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_PAPER, async (_event, id) => academicSvc.getPaper(id))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.CREATE_PAPER, async (_event, input) => academicSvc.createPaper(input))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.UPDATE_PAPER, async (_event, id, input) => academicSvc.updatePaper(id, input))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.DELETE_PAPER, async (_event, id) => academicSvc.deletePaper(id))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.ADVANCE_STAGE, async (_event, id) => academicSvc.advanceStage(id))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.REWIND_STAGE, async (_event, id, target) => academicSvc.rewindStage(id, target))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, async (_event, paperId) => academicSvc.getIntegrityReport(paperId))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, async (_event, paperId) => academicSvc.getPeerReviewReport(paperId))
+  ipcMain.handle(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, async (_event, paperId) => academicSvc.getRevisionTracking(paperId))
+
+  // ===== 研究工作台（M1：独立于旧论文 pipeline 的新领域模型） =====
+  const { registerAcademicResearchIpcHandlers } = require('./lib/academic/academic-ipc-handlers') as typeof import('./lib/academic/academic-ipc-handlers')
+  registerAcademicResearchIpcHandlers()
+
+  // ===== 行为采集（为非免费版分析能力提供数据基础） =====
+  const telemetrySvc = require('./lib/telemetry-service') as typeof import('./lib/telemetry-service')
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_SETTINGS, async () => telemetrySvc.getTelemetrySettings())
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.UPDATE_SETTINGS, async (_event, patch) => telemetrySvc.updateTelemetrySettings(patch))
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_STATS, async () => telemetrySvc.getTelemetryStats())
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.GET_OVERVIEW, async () => telemetrySvc.getTelemetryOverview())
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.CLEAR_ALL, async () => { telemetrySvc.clearTelemetry(); return true })
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.CLEAR_SENSITIVE, async () => { telemetrySvc.clearSensitiveTelemetry(); return true })
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.LOG_MOOD, async (_event, input) => telemetrySvc.logMood(input))
+  ipcMain.handle(TELEMETRY_IPC_CHANNELS.LIST_MOOD, async (_event, limit) => telemetrySvc.listRecentMood(limit))
 
   // ===== 企业版连接 =====
   const { connectToServer, disconnectFromServer, getActiveConnection, migrateLocalToServer } = require('./lib/server-connection-service') as {

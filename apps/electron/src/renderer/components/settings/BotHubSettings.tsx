@@ -2,7 +2,7 @@
  * BotHubSettings - 多平台机器人连接设置 Hub
  *
  * 左侧平台选择栏 + 右侧配置面板。
- * 支持飞书、钉钉、微信（WeClaw）三个平台。
+ * 支持飞书、钉钉、微信（WeClaw）、手机远程（Companion）四个平台。
  */
 
 import * as React from 'react'
@@ -15,6 +15,7 @@ import { wechatBridgeStateAtom } from '@/atoms/wechat-atoms'
 import { FeishuSettings } from './FeishuSettings'
 import { DingTalkSettings } from './DingTalkSettings'
 import { WeChatSettings } from './WeChatSettings'
+import { CompanionSettings } from './CompanionSettings'
 import { BotDefaultSettings } from './BotDefaultSettings'
 import { PromaLogoSettings } from './PromaLogoSettings'
 import feishuLogo from '@/assets/bots/feishu.png'
@@ -24,7 +25,7 @@ import gravitasLogo from '@/assets/bots/gravitas-logos/gravitas-10-gradient.png'
 
 // ===== 类型 =====
 
-type BotPlatformId = 'feishu' | 'dingtalk' | 'wechat' | 'defaults' | 'logos'
+type BotPlatformId = 'feishu' | 'dingtalk' | 'wechat' | 'companion' | 'defaults' | 'logos'
 
 interface BotPlatformDef {
   id: BotPlatformId
@@ -59,6 +60,12 @@ const PLATFORMS: readonly BotPlatformDef[] = [
     iconBgClass: 'bg-orange-500/15',
   },
   {
+    id: 'companion',
+    name: '手机远程',
+    iconChar: '📱',
+    iconBgClass: 'bg-emerald-500/15',
+  },
+  {
     id: 'defaults',
     name: '用法',
     iconChar: '⚙',
@@ -89,7 +96,7 @@ function PlatformStatusDot({ platformId }: { platformId: BotPlatformId }): React
   const dingtalkBotStates = useAtomValue(dingtalkBotStatesAtom)
   const wechatState = useAtomValue(wechatBridgeStateAtom)
 
-  if (platformId === 'defaults' || platformId === 'logos') return null
+  if (platformId === 'companion' || platformId === 'defaults' || platformId === 'logos') return null
 
   const statusMap: Record<string, string> = {
     feishu: getPlatformStatus(feishuBotStates),
@@ -168,6 +175,8 @@ function renderPlatformPanel(id: BotPlatformId): React.ReactElement {
       return <DingTalkSettings />
     case 'wechat':
       return <WeChatSettings />
+    case 'companion':
+      return <CompanionSettings />
     case 'defaults':
       return <BotDefaultSettings />
     case 'logos':

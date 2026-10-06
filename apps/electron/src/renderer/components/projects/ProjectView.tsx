@@ -6,12 +6,66 @@ import type { UserMappingInput } from '@gravitas/shared'
  */
 
 import * as React from 'react'
-import { useState, useEffect, useCallback } from "react"
-import { useAtomValue } from "jotai"
+import { useState, useEffect, useCallback, useMemo } from "react"
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { useAtomValue, useSetAtom, useStore } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
+import { activeViewAtom } from "@/atoms/active-view"
+import { appModeAtom } from "@/atoms/app-mode"
+import { agentSessionsAtom, currentAgentSessionIdAtom } from "@/atoms/agent-atoms"
+import { activeTabIdAtom, openTab, tabsAtom } from "@/atoms/tab-atoms"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
+import { ProjectPilotOverview } from './ProjectPilotOverview'
+import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
+import { TaskReviewPanel } from './TaskReviewPanel'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
+import { ProjectWorkspacesPanel } from './ProjectWorkspacesPanel'
+import { KanbanBoard } from './kanban/KanbanBoard'
+import { GANTT_GROUP_BAR_COLORS, ganttBarColor, sortTasksByUrgency, ganttDependencyPath, GANTT_ROW_STEP } from './project-flow-metrics'
+import { DueDateBadge } from './DueDateBadge'
+import { ScheduleView } from '../calendar/ScheduleView'
+import {
+  setProjectTasksAtom,
+  setProjectTaskStatusesAtom,
+  pollStatusChangedAtom,
+} from '@/atoms/project-atoms'
+
+/**
+ * 看板容器：拉取看板数据写入 Jotai（任务表 + 状态定义），
+ * 供 KanbanBoard 拖拽乐观更新使用。
+ */
+function KanbanBoardContainer({ projectId, onDataChanged }: {
+  projectId: string
+  onDataChanged?: () => void
+}): React.ReactElement {
+  const setProjectTasks = useSetAtom(setProjectTasksAtom)
+  const setProjectTaskStatuses = useSetAtom(setProjectTaskStatusesAtom)
+
+  // 拉取看板并写入 Jotai（KanbanBoard 内做乐观更新，落库走 reorderTask IPC）
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const board = await callProjectAPI<KanbanBoard>('getKanbanBoard', projectId)
+        if (cancelled) return
+        setProjectTasks({ projectId, tasks: board.columns.flatMap((col) => col.tasks) })
+        setProjectTaskStatuses({ projectId, statuses: board.columns.map((col) => col.status) })
+      } catch {
+        // 加载失败静默，保持现有列
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, setProjectTasks, setProjectTaskStatuses])
+
+  return <KanbanBoard projectId={projectId} onChanged={onDataChanged} />
+}
 
 /** by-task 权限申请选项（P1） */
 const PERMISSION_OPTIONS: { value: string; label: string }[] = [
@@ -246,6 +300,8 @@ interface Project {
   status: 'planning' | 'active' | 'completed' | 'cancelled'
   createdAt: number
   updatedAt: number
+  /** 列表手动排序权重（主进程返回；旧客户端缺省为 -createdAt） */
+  sortOrder?: number
 }
 
 interface SubTask {
@@ -283,6 +339,10 @@ interface Task {
   status: 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
   priority: 'low' | 'medium' | 'high' | 'critical'
   assignee?: { userId: string; displayName: string }
+  /** 负责人对应的统一成员目录 ID */
+  assigneeMemberId?: string
+  /** 发起/创建者对应的统一成员目录 ID */
+  createdByMemberId?: string
   startDate?: number
   dueDate?: number
   completedAt?: number
@@ -290,6 +350,10 @@ interface Task {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   completionNotes?: string
   permissionRequests?: string[]
+  /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退待人工处理 */
+  tokenBudget?: number
+  /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
+  sortOrder: number
   /** @deprecated 子任务已升级为独立 Task，请使用 parentId 关联 */
   subTasks?: SubTask[]
   createdAt: number
@@ -305,11 +369,28 @@ interface MeetingNote {
   createdAt: number
 }
 
+type ProjectTaskStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
+
+interface ProjectTaskStatus {
+  id: string
+  projectId: string
+  name: string
+  stateGroup: ProjectTaskStateGroup
+  position: number
+  color?: string
+  wipLimit?: number
+  isBuiltin: boolean
+  isDefault: boolean
+  createdAt: number
+}
+
+interface KanbanColumn {
+  status: ProjectTaskStatus
+  tasks: Task[]
+}
+
 interface KanbanBoard {
-  draft: Task[]
-  pending: Task[]
-  in_progress: Task[]
-  completed: Task[]
+  columns: KanbanColumn[]
 }
 
 interface ProjectProgress {
@@ -399,10 +480,23 @@ async function callProjectAPI<T>(method: string, ...args: unknown[]): Promise<T>
   return fn(...args) as Promise<T>
 }
 
+/**
+ * 按名字确保成员目录有该成员，返回 memberId；失败返回 undefined（回退旧 paa-<名字> 路径）。
+ * 任务指派统一写 member_id 的入口，不再新增临时拼接的 paa-<名字> 身份。
+ */
+async function resolveMemberId(displayName: string): Promise<string | undefined> {
+  try {
+    const member = await callProjectAPI<{ memberId: string }>('ensureMemberByName', displayName)
+    return member.memberId
+  } catch {
+    return undefined
+  }
+}
+
 // ===== UI 组件 =====
 
 export function ProjectView(): React.ReactElement {
-  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team'>('projects')
+  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team' | 'schedule'>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isLoading, _setIsLoading] = useState(false)
@@ -430,7 +524,7 @@ export function ProjectView(): React.ReactElement {
           onTabChange={setActiveTab}
           onRefresh={loadProjects}
         />
-        <div className="flex-1 overflow-auto p-6">
+        <div className={activeTab === 'schedule' ? 'flex-1 min-h-0' : 'flex-1 overflow-auto p-6'}>
           {activeTab === 'projects' && (
             <ProjectList
               projects={projects}
@@ -439,9 +533,10 @@ export function ProjectView(): React.ReactElement {
               onProjectsChange={setProjects}
             />
           )}
-          {activeTab === 'my-work' && <MyWorkPanel assigneeUserId={`paa-${userProfile.userName}`} />}
+          {activeTab === 'my-work' && <MyWorkPanel memberId={userProfile.memberId} fallbackUserId={`paa-${userProfile.userName}`} />}
           {activeTab === 'board' && <BoardOverview projects={projects} />}
           {activeTab === 'team' && <AgentTeamPanel />}
+          {activeTab === 'schedule' && <ScheduleView hideHeader />}
         </div>
       </div>
     )
@@ -465,7 +560,7 @@ function ProjectHeader({
   onRefresh,
 }: {
   activeTab: string
-  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'team') => void
+  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'team' | 'schedule') => void
   onRefresh: () => void
 }): React.ReactElement {
   return (
@@ -482,6 +577,7 @@ function ProjectHeader({
           { key: 'my-work', label: '我的工作' },
           { key: 'board', label: '看板' },
           { key: 'team', label: '团队' },
+          { key: 'schedule', label: '日程管家' },
         ] as const).map((tab) => (
           <button key={tab.key} onClick={() => onTabChange(tab.key)} className={`rounded px-2 py-1 text-xs titlebar-no-drag ${activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{tab.label}</button>
         ))}
@@ -499,7 +595,7 @@ function ProjectHeader({
   )
 }
 
-function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.ReactElement {
+function MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbackUserId: string }): React.ReactElement {
   const [items, setItems] = useState<MyWorkItem[]>([])
   const [mode, setMode] = useState<'received' | 'created'>('received')
   const [isLoading, setIsLoading] = useState(true)
@@ -508,19 +604,51 @@ function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.Reac
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      // PH2-⑤：received=分派给我的；created=我发起的（“我指派给 Andrew 的”）
+      // received=分派给我的；created=我发起的。身份优先用绑定的成员目录 ID，未绑定时回退旧 paa-<名字>
+      const identity = memberId ?? fallbackUserId
       setItems(mode === 'received'
-        ? await callProjectAPI<MyWorkItem[]>('listMyWork', assigneeUserId)
-        : await callProjectAPI<MyWorkItem[]>('listTasksCreatedBy', assigneeUserId))
+        ? await callProjectAPI<MyWorkItem[]>('listMyWork', identity)
+        : await callProjectAPI<MyWorkItem[]>('listTasksCreatedBy', identity))
     } catch (error) {
       console.error('加载我的工作失败:', error)
     } finally {
       setIsLoading(false)
     }
-  }, [assigneeUserId, mode])
+  }, [memberId, fallbackUserId, mode])
 
   useEffect(() => { void load() }, [load])
   const visible = status === 'all' ? items : items.filter((item) => item.status === status)
+
+  // 按截止日期分组：逾期 → 今天 → 明天 → 未来 7 天 → 更晚 → 无日期；已完成单独立组置底
+  const groups = React.useMemo(() => {
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+    const dayMs = 86_400_000
+    const buckets: Record<string, MyWorkItem[] | undefined> = {
+      overdue: [], today: [], tomorrow: [], week: [], later: [], none: [], done: [],
+    }
+    for (const item of visible) {
+      if (item.status === 'completed') { buckets.done!.push(item); continue }
+      if (item.dueDate === undefined) { buckets.none!.push(item); continue }
+      const days = Math.floor((item.dueDate - startOfToday.getTime()) / dayMs)
+      if (days < 0) buckets.overdue!.push(item)
+      else if (days === 0) buckets.today!.push(item)
+      else if (days === 1) buckets.tomorrow!.push(item)
+      else if (days <= 7) buckets.week!.push(item)
+      else buckets.later!.push(item)
+    }
+    const labels: Array<[string, string, string]> = [
+      ['overdue', '已逾期', 'text-red-600'],
+      ['today', '今天', 'text-blue-600'],
+      ['tomorrow', '明天', 'text-muted-foreground'],
+      ['week', '未来 7 天', 'text-muted-foreground'],
+      ['later', '更晚', 'text-muted-foreground'],
+      ['none', '无截止日期', 'text-muted-foreground'],
+      ['done', '已完成', 'text-muted-foreground'],
+    ]
+    return labels
+      .map(([key, label, colorClass]) => ({ key, label, colorClass, items: buckets[key]! }))
+      .filter((group) => group.items.length > 0)
+  }, [visible])
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -535,13 +663,25 @@ function MyWorkPanel({ assigneeUserId }: { assigneeUserId: string }): React.Reac
           <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option>
         </select>
       </div>
+      {mode === 'received' && !memberId && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          尚未绑定成员身份，部分历史指派可能无法匹配。请在「设置 &gt; 基础设置」中选择“我的成员身份”。
+        </div>
+      )}
       {isLoading ? <p className="text-sm text-muted-foreground">加载中...</p> : visible.length === 0 ? <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{mode === 'received' ? '当前没有分配给你的工作项' : '你还没有发起/指派任何任务'}</p> : (
-        <div className="space-y-2">{visible.map((item) => (
-          <div key={`${item.entityType}-${item.id}`} className={`flex items-center gap-3 rounded-lg border p-3 ${item.isOverdue ? 'border-red-200 bg-red-50/40' : 'bg-card'}`}>
-            <span className={`rounded px-1.5 py-0.5 text-xs ${item.entityType === 'task' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.entityType === 'task' ? 'Task' : 'subTask'}</span>
-            <div className="min-w-0 flex-1"><div className={`truncate text-sm font-medium ${item.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>{item.title}</div><div className="text-xs text-muted-foreground">{item.projectTitle}{item.parentTaskTitle ? ` · ${item.parentTaskTitle}` : ''}{item.dueDate ? ` · 截止 ${new Date(item.dueDate).toLocaleDateString()}` : ''}</div></div>
-            {item.isOverdue && <span className="text-xs text-red-600">已逾期</span>}
-            <span className="text-xs text-muted-foreground">{item.status}</span>
+        <div className="space-y-4">{groups.map((group) => (
+          <div key={group.key} className="space-y-2">
+            <div className={`text-xs font-medium ${group.colorClass}`}>
+              {group.label}（{group.items.length}）
+            </div>
+            {group.items.map((item) => (
+              <div key={`${item.entityType}-${item.id}`} className={`flex items-center gap-3 rounded-lg border p-3 ${item.isOverdue ? 'border-red-200 bg-red-50/40' : 'bg-card'}`}>
+                <span className={`rounded px-1.5 py-0.5 text-xs ${item.entityType === 'task' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.entityType === 'task' ? 'Task' : 'subTask'}</span>
+                <div className="min-w-0 flex-1"><div className={`truncate text-sm font-medium ${item.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>{item.title}</div><div className="text-xs text-muted-foreground">{item.projectTitle}{item.parentTaskTitle ? ` · ${item.parentTaskTitle}` : ''}{item.dueDate ? ` · 截止 ${new Date(item.dueDate).toLocaleDateString()}` : ''}</div></div>
+                {item.isOverdue && <span className="text-xs text-red-600">已逾期</span>}
+                <span className="text-xs text-muted-foreground">{item.status}</span>
+              </div>
+            ))}
           </div>
         ))}</div>
       )}
@@ -565,6 +705,30 @@ function ProjectList({
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
+
+  // 拖拽排序：5px 阈值以下仍算点击（与看板一致），避免卡片上的点击被拖拽吞掉
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  )
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = projects.findIndex((p) => p.id === active.id)
+    const newIndex = projects.findIndex((p) => p.id === over.id)
+    if (oldIndex < 0 || newIndex < 0) return
+    const next = arrayMove(projects, oldIndex, newIndex)
+    // 乐观更新，失败回滚并提示（与看板拖拽同一交互约定）
+    onProjectsChange(next)
+    try {
+      const ok = await callProjectAPI<boolean>('reorderProjects', next.map((p) => p.id))
+      if (!ok) throw new Error('顺序与库内项目不一致')
+    } catch (err) {
+      console.error('项目排序失败:', err)
+      alert('项目排序失败: ' + (err instanceof Error ? err.message : String(err)))
+      onProjectsChange(projects)
+    }
+  }
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return
@@ -649,17 +813,46 @@ function ProjectList({
           <p className="text-sm mt-2">点击上方「新建项目」开始</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              onClick={() => onSelectProject(project)}
-              onDelete={() => handleDelete(project.id)}
-            />
-          ))}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
+          <SortableContext items={projects.map((p) => p.id)} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {projects.map((project) => (
+                <SortableProjectCard
+                  key={project.id}
+                  project={project}
+                  onClick={() => onSelectProject(project)}
+                  onDelete={() => handleDelete(project.id)}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
+    </div>
+  )
+}
+
+/** 可排序项目卡片：@dnd-kit 拖拽包装，拖拽中半透明，阈值内点击不受影响 */
+function SortableProjectCard({
+  project,
+  onClick,
+  onDelete,
+}: {
+  project: Project
+  onClick: () => void
+  onDelete: () => void
+}): React.ReactElement {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: project.id,
+  })
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  }
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <ProjectCard project={project} onClick={onClick} onDelete={onDelete} />
     </div>
   )
 }
@@ -809,13 +1002,18 @@ function ProjectDetail({
   onBack: () => void
   onRefresh: () => void
 }): React.ReactElement {
-  const [detailTab, setDetailTab] = useState<'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain'>('tasks')
+  const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
+  const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
+  // R-P1-01：项目概览无任务/顶部 CTA 打开统一创建入口
+  const [showOverviewCreate, setShowOverviewCreate] = useState(false)
+  useEffect(() => { if (detailTab !== 'tasks') setPilotTaskFocus(null) }, [detailTab])
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
   const [editDesc, setEditDesc] = useState(project.description)
   const [tasks, setTasks] = useState<Task[]>([])
+  const [taskStatuses, setTaskStatuses] = useState<ProjectTaskStatus[]>([])
   const [notes, setNotes] = useState<MeetingNote[]>([])
-  const [board, setBoard] = useState<KanbanBoard | null>(null)
+  const [, setBoard] = useState<KanbanBoard | null>(null)
   const [pollingStatus, setPollingStatus] = useState<Record<string, boolean>>({})
   const [isPollingLoading, setIsPollingLoading] = useState<Record<string, boolean>>({})
   const [riskReport, setRiskReport] = useState<{
@@ -840,7 +1038,7 @@ function ProjectDetail({
 
   const loadData = useCallback(async () => {
     try {
-      const [taskList, noteList, boardData, retryEvents, dependencyTaskList, dependencyList, blockerList, alerts, activityItems] = await Promise.all([
+      const [taskList, noteList, boardData, retryEvents, dependencyTaskList, dependencyList, blockerList, alerts, activityItems, statusList] = await Promise.all([
         callProjectAPI<Task[]>('listTasks', project.id),
         callProjectAPI<MeetingNote[]>('listMeetingNotes', project.id),
         callProjectAPI<KanbanBoard>('getKanbanBoard', project.id),
@@ -850,10 +1048,12 @@ function ProjectDetail({
         callProjectAPI<TaskBlocker[]>('listTaskBlockers', project.id),
         callProjectAPI<ProjectAlert[]>('listProjectAlerts', project.id),
         callProjectAPI<ProjectActivity[]>('listProjectActivities', project.id),
+        callProjectAPI<ProjectTaskStatus[]>('listTaskStatuses', project.id),
       ])
       setTasks(taskList)
       setNotes(noteList)
       setBoard(boardData)
+      setTaskStatuses(statusList)
       setTodoRetries(retryEvents)
       setDependencyTasks(dependencyTaskList)
       setDependencies(dependencyList)
@@ -881,6 +1081,17 @@ function ProjectDetail({
       window.clearInterval(timer)
     }
   }, [loadData, project.id])
+
+  // 外部轮询状态变化 → 刷新（变化由全局 ProjectPollListenersInitializer 写入 atom，此处只消费本项目）
+  const pollChanged = useAtomValue(pollStatusChangedAtom)
+  const lastPollAtRef = React.useRef(0)
+  React.useEffect(() => {
+    if (!pollChanged || pollChanged.at === lastPollAtRef.current) return
+    lastPollAtRef.current = pollChanged.at
+    if (pollChanged.projectId === project.id) {
+      void loadData()
+    }
+  }, [pollChanged, project.id, loadData])
 
   const handleSaveProject = async () => {
     if (!editTitle.trim()) return
@@ -1193,14 +1404,18 @@ function ProjectDetail({
       {/* 详情标签 */}
       <div className="flex gap-1 px-6 pt-3 border-b">
         {([
+          { key: 'pilot', label: '概览' },
           { key: 'tasks', label: '任务' },
-          { key: 'chain', label: '决策与协作链路' },
+          { key: 'chain', label: '治理与交付详情' },
+          { key: 'knowledge', label: '知识' },
+          { key: 'workspaces', label: '工作空间' },
           { key: 'notes', label: '会议纪要' },
           { key: 'board', label: '看板' },
           { key: 'gantt', label: '甘特' },
           { key: 'dependencies', label: `依赖${blockers.length > 0 ? ` · ${blockers.length} 阻塞` : ''}` },
           { key: 'activity', label: '活动' },
           { key: 'risk', label: '风险报告' },
+          { key: 'aicost', label: 'AI 成本' },
         ] as const).map((tab) => (
           <button
             key={tab.key}
@@ -1264,12 +1479,36 @@ function ProjectDetail({
 
       {/* 详情内容 */}
       <div className="flex-1 overflow-auto p-6">
+        {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} onCreateTask={() => setShowOverviewCreate(true)} onOpenSource={(intent, task) => {
+          if (intent.sourceType === 'approval') return
+          if (intent.sourceType === 'task') {
+            setPilotTaskFocus({
+              taskId: task?.rootTaskId ?? intent.sourceId,
+              subTaskId: task?.parentTaskId === task?.rootTaskId ? intent.sourceId : undefined,
+            })
+            setDetailTab('tasks')
+          } else {
+            setDetailTab('chain')
+          }
+        }} />}
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
+        <CreateProjectTaskDialog
+          open={showOverviewCreate}
+          onClose={() => setShowOverviewCreate(false)}
+          projectId={project.id}
+          onCreated={() => { setShowOverviewCreate(false); void loadData() }}
+        />
+        {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
+        {detailTab === 'workspaces' && <ProjectWorkspacesPanel key={project.id} projectId={project.id} />}
         {detailTab === 'tasks' && (
           <TaskList
             projectId={project.id}
             tasks={tasks}
+            statuses={taskStatuses}
             onTasksChange={setTasks}
+            onReviewChanged={loadData}
+            focusTaskId={pilotTaskFocus?.taskId}
+            focusSubTaskId={pilotTaskFocus?.subTaskId}
           />
         )}
         {detailTab === 'notes' && (
@@ -1280,11 +1519,11 @@ function ProjectDetail({
             onTasksChange={setTasks}
           />
         )}
-        {detailTab === 'board' && board && (
-          <KanbanView board={board} />
+        {detailTab === 'board' && (
+          <KanbanBoardContainer projectId={project.id} onDataChanged={loadData} />
         )}
         {detailTab === 'gantt' && (
-          <GanttView tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} />
+          <GanttView tasks={dependencyTasks} statuses={taskStatuses} dependencies={dependencies} blockers={blockers} />
         )}
         {detailTab === 'dependencies' && (
           <DependencyPanel
@@ -1299,6 +1538,9 @@ function ProjectDetail({
         )}
         {detailTab === 'brief' && (
           <BriefPanel projectId={project.id} tasks={tasks} />
+        )}
+        {detailTab === 'aicost' && (
+          <ProjectAiCostPanel projectId={project.id} />
         )}
         {detailTab === 'risk' && (
           <div className="space-y-6">
@@ -1371,7 +1613,98 @@ function ActivityPanel({ activities }: { activities: ProjectActivity[] }): React
   ))}</div>
 }
 
-function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependencies: TaskDependency[]; blockers: TaskBlocker[] }): React.ReactElement {
+/** 项目 AI 成本面板：本项目所有 AI 员工执行的 token/费用聚合（按员工分组 + 超限任务清单） */
+function ProjectAiCostPanel({ projectId }: { projectId: string }): React.ReactElement {
+  const [cost, setCost] = useState<{
+    totalTokens: number
+    totalCostUsd: number
+    overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }>
+    byAgent: Array<{ agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>
+  } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      callProjectAPI<{
+        totalTokens: number
+        totalCostUsd: number
+        overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }>
+        byAgent: Array<{ agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>
+      }>('getProjectAiCost', projectId)
+        .then((data) => { if (!cancelled) setCost(data) })
+        .catch(() => { if (!cancelled) setCost(null) })
+    }
+    load()
+    const timer = window.setInterval(load, 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [projectId])
+
+  if (!cost) {
+    return <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">加载 AI 成本数据…</div>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">AI 员工成本</h3>
+          <p className="text-xs text-muted-foreground">本项目 AI 员工执行的 token 消耗与费用聚合（每 60s 刷新）。</p>
+        </div>
+      </div>
+
+      {/* 汇总卡片 */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-lg bg-card border p-3">
+          <div className="text-[11px] text-muted-foreground">累计 Token</div>
+          <div className="text-lg font-semibold mt-0.5">{cost.totalTokens.toLocaleString()}</div>
+        </div>
+        <div className="rounded-lg bg-card border p-3">
+          <div className="text-[11px] text-muted-foreground">累计费用（USD）</div>
+          <div className="text-lg font-semibold mt-0.5">${cost.totalCostUsd.toFixed(4)}</div>
+        </div>
+      </div>
+
+      {/* 超限任务清单 */}
+      {cost.overBudgetTasks.length > 0 && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <div className="text-xs font-medium text-red-700 mb-2">⚠ 配额超限任务（{cost.overBudgetTasks.length}）</div>
+          <div className="space-y-1">
+            {cost.overBudgetTasks.map((item) => (
+              <div key={item.taskId} className="text-xs text-red-900">
+                <span className="font-medium">{item.title}</span> — 已用 {item.used.toLocaleString()} / 预算 {item.budget.toLocaleString()}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 按员工分组 */}
+      {cost.byAgent.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          本项目还没有 AI 员工执行记录
+        </div>
+      ) : (
+        <div className="rounded-lg border bg-card divide-y">
+          {cost.byAgent.map((agent) => (
+            <div key={agent.agentId} className="flex items-center justify-between px-3 py-2 text-xs">
+              <span className="font-medium">🤖 {agent.agentName}</span>
+              <span className="flex items-center gap-3 text-muted-foreground">
+                <span>{agent.taskCount} 次执行</span>
+                <span className="font-medium text-foreground">{agent.tokens.toLocaleString()} tokens</span>
+                <span>${agent.costUsd.toFixed(4)}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GanttView({ tasks, statuses, dependencies, blockers }: { tasks: Task[]; statuses: ProjectTaskStatus[]; dependencies: TaskDependency[]; blockers: TaskBlocker[] }): React.ReactElement {
   const datedTasks = tasks.filter((task) => task.startDate || task.dueDate)
   if (datedTasks.length === 0) {
     return <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">为 Task 设置开始日期或截止日期后，将在这里显示甘特计划。</div>
@@ -1383,6 +1716,10 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
   const rangeEnd = Math.max(...ends, rangeStart + day)
   const range = Math.max(rangeEnd - rangeStart, day)
   const blockerIds = new Set(blockers.map((blocker) => blocker.taskId))
+
+  // 语义组解析：跨状态逻辑只认组（与 task-status-logic 口径一致；渲染层就地实现避免跨层引用）
+  const groupOf = (statusId: string): ProjectTaskStateGroup =>
+    statuses.find((s) => s.id === statusId)?.stateGroup ?? (statusId === 'completed' ? 'completed' : 'unstarted')
 
   // 按优先级排序（critical → high → medium → low），同级按截止日更紧的在前；无截止日期排最后
   const PRIORITY_WEIGHT: Record<Task['priority'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
@@ -1397,7 +1734,7 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
 
   /** 单行状态标注：超期 → 红；高风险/关键风险 → 橙/红；阻塞 → 琥珀 ● */
   const renderStatusMarks = (task: Task): React.ReactNode => {
-    const isOverdue = task.status !== 'completed' && task.dueDate !== undefined && task.dueDate < now
+    const isOverdue = groupOf(task.status) !== 'completed' && task.dueDate !== undefined && task.dueDate < now
     const riskLevel = task.riskLevel
     return (
       <>
@@ -1410,49 +1747,119 @@ function GanttView({ tasks, dependencies, blockers }: { tasks: Task[]; dependenc
     )
   }
 
-  /** 时间条颜色：完成 → 绿；超期 → 红；阻塞 → 琥珀；高风险/关键 → 橙/红；默认主题色 */
-  const barColor = (task: Task): string => {
-    if (task.status === 'completed') return 'bg-emerald-500'
-    if (task.dueDate !== undefined && task.dueDate < now) return 'bg-red-500'
-    if (blockerIds.has(task.id)) return 'bg-amber-500'
-    if (task.riskLevel === 'critical') return 'bg-red-400'
-    if (task.riskLevel === 'high') return 'bg-orange-400'
-    return 'bg-primary'
-  }
+  // 依赖连线数据：任务 id → 行号 / 时间条百分比区间（与行渲染同源，避免公式漂移）；阻塞依赖标红
+  const taskIndexById = new Map(sortedTasks.map((task, index) => [task.id, index] as const))
+  const taskSpanById = new Map(sortedTasks.map((task) => {
+    const start = task.startDate ?? task.createdAt
+    const end = Math.max(task.dueDate ?? start + day, start + day)
+    const left = Math.max(0, ((start - rangeStart) / range) * 100)
+    const width = Math.max(1.5, ((end - start) / range) * 100)
+    return [task.id, { left, right: left + width, width }] as const
+  }))
+  // 阻塞标红精确到边（同一任务可能只有部分前置依赖处于阻塞态），与 blockerIds（行标注用）分开维护
+  const blockedEdgeKeys = new Set(blockers.map((b) => `${b.taskId}|${b.dependsOnTaskId}`))
+  const links = dependencies
+    .map((dep) => {
+      if (dep.taskId === dep.dependsOnTaskId) return null
+      // 方向：dependsOnTaskId 是前置/上游（from），taskId 是后置/下游（to）——箭头指向下游任务
+      const fromIdx = taskIndexById.get(dep.dependsOnTaskId)
+      const toIdx = taskIndexById.get(dep.taskId)
+      const fromSpan = taskSpanById.get(dep.dependsOnTaskId)
+      const toSpan = taskSpanById.get(dep.taskId)
+      if (fromIdx === undefined || toIdx === undefined || !fromSpan || !toSpan) return null
+      const { d } = ganttDependencyPath(
+        {
+          from: { index: fromIdx, startPct: fromSpan.left, endPct: fromSpan.right },
+          to: { index: toIdx, startPct: toSpan.left, endPct: toSpan.right },
+        },
+        dep.type,
+      )
+      return { id: dep.id, d, blocked: blockedEdgeKeys.has(`${dep.taskId}|${dep.dependsOnTaskId}`) }
+    })
+    .filter((link): link is NonNullable<typeof link> => link !== null)
 
   return (
     <div className="space-y-3 overflow-x-auto">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold">Task 甘特图</h3>
-          <p className="text-xs text-muted-foreground">按优先级排序（紧急 → 高 → 中 → 低）；标注超期与风险状态。</p>
+          <p className="text-xs text-muted-foreground">按优先级排序（紧急 → 高 → 中 → 低）；时间条按状态语义组着色，超期/阻塞/高风险覆盖标注。</p>
         </div>
-        <span className="text-xs text-muted-foreground">{dependencies.length} 条依赖 · {blockers.length} 项阻塞</span>
+        <span className="text-xs text-muted-foreground">
+          {dependencies.length} 条依赖 · {blockers.length} 项阻塞
+          <span className="inline-flex items-center gap-1 ml-2"><span className="inline-block w-4 border-t border-gray-400" />依赖</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block w-4 border-t-2 border-red-500" />阻塞生效中</span>
+        </span>
+      </div>
+      {/* 语义组图例（与看板列同口径） */}
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        {([
+          ['unstarted', '待处理'],
+          ['started', '进行中'],
+          ['completed', '已完成'],
+          ['backlog', '草稿'],
+          ['triage', '分诊'],
+          ['cancelled', '已取消'],
+        ] as Array<[ProjectTaskStateGroup, string]>).map(([group, label]) => (
+          <span key={group} className="inline-flex items-center gap-1">
+            <span className={`inline-block h-2 w-4 rounded ${GANTT_GROUP_BAR_COLORS[group]}`} />
+            {label}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-red-500" />超期</span>
       </div>
       <div className="min-w-[760px] rounded-lg border bg-card p-3">
         <div className="mb-2 ml-[220px] flex justify-between text-xs text-muted-foreground"><span>{new Date(rangeStart).toLocaleDateString()}</span><span>{new Date(rangeEnd).toLocaleDateString()}</span></div>
-        <div className="space-y-2">{sortedTasks.map((task) => {
-          const start = task.startDate ?? task.createdAt
-          const end = Math.max(task.dueDate ?? start + day, start + day)
-          const left = Math.max(0, ((start - rangeStart) / range) * 100)
-          const width = Math.max(1.5, ((end - start) / range) * 100)
-          return <div key={task.id} className="flex items-center gap-3">
-            <div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>
-              <span className={`mr-1 rounded px-1 text-[10px] font-medium ${task.priority === 'critical' ? 'bg-red-100 text-red-700' : task.priority === 'high' ? 'bg-orange-100 text-orange-700' : task.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                {task.priority === 'critical' ? '紧急' : task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
-              </span>
-              {renderStatusMarks(task)}
-              {task.title}
+        <div className="relative">
+          <div className="space-y-2" style={{ minHeight: Math.max(0, sortedTasks.length * GANTT_ROW_STEP - 8) }}>{sortedTasks.map((task) => {
+            const { left, width } = taskSpanById.get(task.id)!
+            return <div key={task.id} className="flex items-center gap-3">
+              <div className={`w-[205px] truncate text-xs ${task.parentId ? 'pl-4' : ''}`} title={task.title}>
+                <span className={`mr-1 rounded px-1 text-[10px] font-medium ${task.priority === 'critical' ? 'bg-red-100 text-red-700' : task.priority === 'high' ? 'bg-orange-100 text-orange-700' : task.priority === 'medium' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                  {task.priority === 'critical' ? '紧急' : task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
+                </span>
+                {renderStatusMarks(task)}
+                {task.title}
+              </div>
+              <div className="relative h-6 flex-1 rounded bg-muted/50">
+                <div
+                  className={`absolute top-1 h-4 rounded ${ganttBarColor(task, { blocked: blockerIds.has(task.id), now, statuses })}`}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}｜优先级 ${task.priority}${task.riskLevel ? `｜风险 ${task.riskLevel}` : ''}`}
+                />
+              </div>
             </div>
-            <div className="relative h-6 flex-1 rounded bg-muted/50">
-              <div
-                className={`absolute top-1 h-4 rounded ${barColor(task)}`}
-                style={{ left: `${left}%`, width: `${width}%` }}
-                title={`${task.startDate ? new Date(task.startDate).toLocaleDateString() : '创建日'} → ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '未设截止日期'}｜优先级 ${task.priority}${task.riskLevel ? `｜风险 ${task.riskLevel}` : ''}`}
-              />
-            </div>
-          </div>
-        })}</div>
+          })}</div>
+          {links.length > 0 && (
+            <svg
+              className="pointer-events-none absolute inset-y-0 left-[217px] right-0"
+              style={{ width: 'calc(100% - 217px)' }}
+              height={sortedTasks.length * GANTT_ROW_STEP}
+              viewBox={`0 0 100 ${sortedTasks.length * GANTT_ROW_STEP}`}
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <marker id="gantt-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M 0 0 L 6 3 L 0 6 z" className="fill-gray-400" />
+                </marker>
+                <marker id="gantt-arrow-red" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M 0 0 L 6 3 L 0 6 z" className="fill-red-500" />
+                </marker>
+              </defs>
+              {links.map((link) => (
+                <path
+                  key={link.id}
+                  d={link.d}
+                  fill="none"
+                  className={link.blocked ? 'stroke-red-500' : 'stroke-gray-400 opacity-60'}
+                  strokeWidth={link.blocked ? 1.5 : 1}
+                  markerEnd={link.blocked ? 'url(#gantt-arrow-red)' : 'url(#gantt-arrow)'}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </svg>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1553,14 +1960,29 @@ function DependencyPanel({
 function TaskList({
   projectId,
   tasks,
+  statuses,
   onTasksChange,
+  onReviewChanged,
+  focusTaskId,
+  focusSubTaskId,
 }: {
   projectId: string
   tasks: Task[]
+  statuses: ProjectTaskStatus[]
   onTasksChange: (tasks: Task[]) => void
+  onReviewChanged: () => void
+  focusTaskId?: string | null
+  focusSubTaskId?: string
 }): React.ReactElement {
   const currentUserProfile = useAtomValue(userProfileAtom)
+  // 展示层紧迫度排序：逾期未完成 > 优先级 > DDL 升序；完成组沉底。纯展示，不影响看板 sort_order。
+  const sortedTasks = useMemo(
+    () => sortTasksByUrgency(tasks, statuses),
+    [tasks, statuses],
+  )
   const [showCreate, setShowCreate] = useState(false)
+  const [showGuidedCreate, setShowGuidedCreate] = useState(false)
+  const [createError, setCreateError] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [newPriority, setNewPriority] = useState<Task['priority']>('medium')
@@ -1570,9 +1992,16 @@ function TaskList({
   const [newDependsOnTaskIds, setNewDependsOnTaskIds] = useState<string[]>([])
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   const [newDueDate, setNewDueDate] = useState('')
+  const [newTokenBudget, setNewTokenBudget] = useState('')
+  const [newTokenBudgetPreset, setNewTokenBudgetPreset] = useState('')
   const [workspaces, setWorkspaces] = useState<AgentWorkspaceResult[]>([])
   const [newWorkspaceId, setNewWorkspaceId] = useState('')
   const [syncingTaskIds, setSyncingTaskIds] = useState<Set<string>>(new Set())
+  const [reviewTaskId, setReviewTaskId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!focusTaskId || !sortedTasks.some((task) => task.id === focusTaskId)) return
+    document.getElementById(`project-task-${focusTaskId}`)?.scrollIntoView({ block: 'center' })
+  }, [focusTaskId, sortedTasks])
 
   React.useEffect(() => {
     window.electronAPI.paa.agentEmployees.list()
@@ -1585,16 +2014,25 @@ function TaskList({
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return
+    // R-P0-04：高级表单无法配置研发范围，指派 AI 员工时必须走引导流程，避免创建无 developmentScope 的半有效任务
+    if (newAgentId) {
+      setCreateError('已选择 AI 员工：普通表单无法配置执行范围。请关闭后使用「+ 新建任务」→「交给 AI 完成」，任务才能进入交付链。')
+      return
+    }
+    setCreateError('')
     try {
       const input: {
         title: string
         description: string
         priority?: Task['priority']
         assignee?: { userId: string; displayName: string }
+        assigneeMemberId?: string
         dueDate?: number
         permissionRequests?: string[]
         createdByUserId?: string
+        createdByMemberId?: string
         workspaceId?: string
+        tokenBudget?: number
       } = {
         title: newTitle.trim(),
         description: newDesc.trim(),
@@ -1602,6 +2040,9 @@ function TaskList({
         createdByUserId: `paa-${currentUserProfile.userName}`,
         ...(newWorkspaceId ? { workspaceId: newWorkspaceId } : {}),
       }
+      // 创建者/负责人统一确保成员目录存在并写 member_id（身份权威键）
+      const creatorMemberId = await resolveMemberId(currentUserProfile.userName)
+      if (creatorMemberId) input.createdByMemberId = creatorMemberId
       if (newAgentId) {
         const emp = agentEmployees.find((e) => e.id === newAgentId)
         input.assignee = { userId: `agent-${newAgentId}`, displayName: emp ? `🤖 ${emp.name}` : 'AI 员工' }
@@ -1610,12 +2051,19 @@ function TaskList({
           userId: `paa-${newAssigneeName.trim()}`,
           displayName: newAssigneeName.trim(),
         }
+        const assigneeMemberId = await resolveMemberId(newAssigneeName.trim())
+        if (assigneeMemberId) input.assigneeMemberId = assigneeMemberId
       }
       if (newDueDate) {
         input.dueDate = new Date(`${newDueDate}T00:00:00`).getTime()
       }
       if (newPermissions.length > 0) {
         input.permissionRequests = newPermissions
+      }
+      if (newTokenBudget.trim()) {
+        const tokenBudget = Number(newTokenBudget)
+        if (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0) throw new Error('Token 配额必须是正整数')
+        input.tokenBudget = tokenBudget
       }
       const task = await callProjectAPI<Task>('createTask', projectId, input)
       // PH2-④：新建任务时选择的依赖（depends upon 已有任务）
@@ -1632,6 +2080,8 @@ function TaskList({
       setNewDependsOnTaskIds([])
       setNewWorkspaceId('')
       setNewDueDate('')
+      setNewTokenBudget('')
+      setNewTokenBudgetPreset('')
       setShowCreate(false)
     } catch (err) {
       console.error('创建任务失败:', err)
@@ -1687,17 +2137,27 @@ function TaskList({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium">任务列表 ({tasks.length})</h2>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-        >
-          + 新建任务
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowGuidedCreate(true)}
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+          >
+            + 新建任务
+          </button>
+          <button
+            onClick={() => setShowCreate((prev) => !prev)}
+            className="px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+            title="权限申请、依赖、Token 配额等高级字段"
+          >
+            高级选项
+          </button>
+        </div>
       </div>
 
       {showCreate && (
         <div className="p-4 bg-card rounded-lg border space-y-3">
-          <h3 className="text-sm font-medium">新建任务</h3>
+          <h3 className="text-sm font-medium">高级新建（指派 AI 员工请用「+ 新建任务」引导流程）</h3>
+          {createError && <p role="alert" className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{createError}</p>}
           <input
             type="text"
             placeholder="任务标题"
@@ -1757,17 +2217,22 @@ function TaskList({
               </div>
             )}
             <div>
-              <label className="text-xs text-muted-foreground">执行工作区（AI 员工在此工作区执行；可选，缺省用员工/全局）</label>
+              <label className="text-xs text-muted-foreground">执行工作区</label>
               <select
                 value={newWorkspaceId}
                 onChange={(e) => setNewWorkspaceId(e.target.value)}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
-                <option value="">（默认工作区）</option>
-                {workspaces.map((ws) => (
+                <option value="">{newAgentId && (agentEmployees.find((employee) => employee.id === newAgentId)?.workspaceIds?.length ?? 0) > 1 ? '请选择该 AI 员工的执行工作区' : '（默认工作区）'}</option>
+                {workspaces.filter((ws) => {
+                  const employee = agentEmployees.find((item) => item.id === newAgentId)
+                  const ids = employee?.workspaceIds?.length ? employee.workspaceIds : employee?.workspaceId ? [employee.workspaceId] : []
+                  return ids.length === 0 || ids.includes(ws.id ?? ws.slug)
+                }).map((ws) => (
                   <option key={ws.id ?? ws.slug} value={ws.id ?? ws.slug}>{ws.name}</option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] text-muted-foreground">AI 员工有多个工作区时必须明确选择，避免跨项目执行。</p>
             </div>
             <div>
               <label className="text-xs text-muted-foreground">截止日期</label>
@@ -1777,6 +2242,36 @@ function TaskList({
                 onChange={(e) => setNewDueDate(e.target.value)}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Token 配额（AI 员工执行上限，可选）</label>
+              <select
+                value={newTokenBudgetPreset}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setNewTokenBudgetPreset(value)
+                  setNewTokenBudget(value === 'custom' || value === '' ? '' : value)
+                }}
+                className="w-full px-3 py-2 text-sm border rounded-md bg-background"
+                title="AI 员工执行累计消耗超过该值将自动中止，任务回退待人工处理"
+              >
+                <option value="">不限</option>
+                <option value="500000">500K</option>
+                <option value="1000000">1M</option>
+                <option value="5000000">5M</option>
+                <option value="10000000">10M</option>
+                <option value="50000000">50M</option>
+                <option value="100000000">100M</option>
+                <option value="custom">自定义</option>
+              </select>
+              {newTokenBudgetPreset === 'custom' && <input
+                type="number"
+                min={1}
+                placeholder="输入 Token 整数"
+                value={newTokenBudget}
+                onChange={(e) => setNewTokenBudget(e.target.value)}
+                className="mt-2 w-full px-3 py-2 text-sm border rounded-md bg-background"
+              />}
             </div>
           </div>
           <div>
@@ -1817,44 +2312,70 @@ function TaskList({
         </div>
       )}
 
-      {tasks.length === 0 ? (
+      {sortedTasks.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <p>暂无任务</p>
           <p className="text-sm mt-2">点击上方「新建任务」或导入会议纪要自动提取</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {tasks.map((task) => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              isSyncing={syncingTaskIds.has(task.id)}
-              onStatusChange={handleStatusChange}
-              onDelete={handleDelete}
-              onSync={handleSync}
-              onTaskUpdate={(updatedTask) => onTasksChange(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)))}
-            />
+          {sortedTasks.map((task) => (
+            <div key={task.id} id={`project-task-${task.id}`} className={focusTaskId === task.id ? 'rounded-lg ring-2 ring-primary ring-offset-2' : undefined}>
+              <TaskItem
+                task={task}
+                statuses={statuses}
+                isSyncing={syncingTaskIds.has(task.id)}
+                onStatusChange={handleStatusChange}
+                onDelete={handleDelete}
+                onSync={handleSync}
+                onTaskUpdate={(updatedTask) => onTasksChange(tasks.map((t) => (t.id === updatedTask.id ? updatedTask : t)))}
+                onOpenReview={() => setReviewTaskId(task.id)}
+                focusSubTaskId={focusTaskId === task.id ? focusSubTaskId : undefined}
+              />
+            </div>
           ))}
         </div>
       )}
+      <Dialog open={reviewTaskId !== null} onOpenChange={(open) => { if (!open) setReviewTaskId(null) }}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader><DialogTitle>任务交付审阅</DialogTitle></DialogHeader>
+          {reviewTaskId && <TaskReviewPanel taskId={reviewTaskId} onChanged={onReviewChanged} />}
+        </DialogContent>
+      </Dialog>
+      <CreateProjectTaskDialog
+        open={showGuidedCreate}
+        onClose={() => setShowGuidedCreate(false)}
+        projectId={projectId}
+        onCreated={() => {
+          void callProjectAPI<Task[]>('listTasks', projectId)
+            .then((items) => { if (Array.isArray(items)) onTasksChange(items) })
+            .catch((err) => console.error('刷新任务列表失败:', err))
+        }}
+      />
     </div>
   )
 }
 
 function TaskItem({
   task,
+  statuses,
   isSyncing,
   onStatusChange,
   onDelete,
   onSync,
   onTaskUpdate,
+  onOpenReview,
+  focusSubTaskId,
 }: {
   task: Task
+  statuses: ProjectTaskStatus[]
   isSyncing: boolean
   onStatusChange: (taskId: string, status: Task['status']) => void
   onDelete: (taskId: string) => void
   onSync: (taskId: string, platform: 'feishu' | 'dingtalk') => void
   onTaskUpdate: (task: Task) => void
+  onOpenReview: () => void
+  focusSubTaskId?: string
 }): React.ReactElement {
   const [showRiskModal, setShowRiskModal] = useState(false)
   const [showCompletionModal, setShowCompletionModal] = useState(false)
@@ -1878,7 +2399,7 @@ function TaskItem({
     startDate: task.startDate ? new Date(task.startDate).toISOString().split('T')[0] : '',
     dueDate: task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '',
   })
-  const [subTasksExpanded, setSubTasksExpanded] = useState(false)
+  const [subTasksExpanded, setSubTasksExpanded] = useState(Boolean(focusSubTaskId))
   const [subTasks, setSubTasks] = useState<Task[]>([])
   const [subTasksLoading, setSubTasksLoading] = useState(false)
   const [newSubTaskTitle, setNewSubTaskTitle] = useState('')
@@ -1893,6 +2414,11 @@ function TaskItem({
   // AI 员工任务：查询最新执行状态（P0）
   const isAgentTask = task.assignee?.userId?.startsWith('agent-') ?? false
   const [agentExecStatus, setAgentExecStatus] = useState<AgentExecutionResult['status'] | null>(null)
+  const [agentExecutionId, setAgentExecutionId] = useState<string | null>(null)
+  const [agentSessionId, setAgentSessionId] = useState<string | null>(null)
+  const [isStoppingAgent, setIsStoppingAgent] = useState(false)
+  const store = useStore()
+  const [tokenUsage, setTokenUsage] = useState<{ totalTokens: number; activeSessionTokens: number } | null>(null)
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
   useEffect(() => {
     window.electronAPI.paa.agentEmployees.list()
@@ -1903,10 +2429,21 @@ function TaskItem({
     if (!isAgentTask) return
     let cancelled = false
     window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', task.id)
-      .then((execs) => { if (!cancelled && execs.length > 0) setAgentExecStatus(execs[0]?.status ?? null) })
+      .then((execs) => {
+        if (cancelled) return
+        setAgentExecStatus(execs[0]?.status ?? null)
+        setAgentExecutionId(execs[0]?.id ?? null)
+        setAgentSessionId(execs[0]?.sessionId && !execs[0].sessionId.startsWith('workflow:') ? execs[0].sessionId : null)
+      })
       .catch(() => {})
+    // token 用量（配额可见性）：有预算或执行中才查询
+    if (task.tokenBudget || agentExecStatus === 'running') {
+      window.electronAPI.paa.project.getTaskTokenUsage(task.id)
+        .then((usage) => { if (!cancelled) setTokenUsage({ totalTokens: usage.totalTokens, activeSessionTokens: usage.activeSessionTokens }) })
+        .catch(() => {})
+    }
     return () => { cancelled = true }
-  }, [isAgentTask, task.id])
+  }, [isAgentTask, task.id, agentExecStatus, task.tokenBudget])
 
   // 展开时异步加载子任务
   useEffect(() => {
@@ -1921,6 +2458,10 @@ function TaskItem({
       .finally(() => setSubTasksLoading(false))
     return () => { cancelled = true }
   }, [subTasksExpanded, task.id])
+  useEffect(() => {
+    if (!focusSubTaskId || !subTasks.some((item) => item.id === focusSubTaskId)) return
+    document.getElementById(`project-subtask-${focusSubTaskId}`)?.scrollIntoView({ block: 'center' })
+  }, [focusSubTaskId, subTasks])
 
   useEffect(() => {
     if (!executionSubTasksExpanded) return
@@ -1939,6 +2480,45 @@ function TaskItem({
   const hasDingtalk = task.externalSync?.dingtalk
   const hasRisk = task.riskLevel
   const needsCompletionNotes = task.riskLevel === 'high' || task.riskLevel === 'critical'
+  const assigneeStatusGroup = statuses.find((s) => s.id === task.status)?.stateGroup
+  const isTaskDone = assigneeStatusGroup === 'completed' || assigneeStatusGroup === 'cancelled'
+
+  const handleOpenAgentSession = async () => {
+    if (!agentSessionId) return
+    const sessions = await window.electronAPI.listAgentSessions()
+    const session = sessions.find((item) => item.id === agentSessionId)
+    if (!session) {
+      alert('该 AI 员工会话暂不可用。')
+      return
+    }
+    store.set(agentSessionsAtom, sessions)
+    const result = openTab(store.get(tabsAtom), {
+      type: 'agent',
+      sessionId: session.id,
+      title: session.title,
+    })
+    store.set(tabsAtom, result.tabs)
+    store.set(activeTabIdAtom, result.activeTabId)
+    store.set(currentAgentSessionIdAtom, session.id)
+    store.set(appModeAtom, 'agent')
+    store.set(activeViewAtom, 'conversations')
+  }
+
+  const handleStopAgentExecution = async () => {
+    if (!agentExecutionId) return
+    setIsStoppingAgent(true)
+    try {
+      await window.electronAPI.paa.agentEmployees.cancelExecution(agentExecutionId)
+      setAgentExecStatus('cancelled')
+      setAgentExecutionId(null)
+      const updatedTask = await callProjectAPI<Task>('getTask', task.id)
+      if (updatedTask) onTaskUpdate(updatedTask)
+    } catch (error) {
+      alert(`停止执行失败: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setIsStoppingAgent(false)
+    }
+  }
 
   const handleAssessRisk = async () => {
     setIsAssessing(true)
@@ -1993,17 +2573,20 @@ function TaskItem({
         priority: editForm.priority,
         permissionRequests: editForm.permissions,
       }
-      // assignee：AI 员工优先；否则真人（或清空）
+      // assignee：AI 员工优先；否则真人（或清空）。真人统一确保成员目录并写 member_id
       if (editForm.agentAssigneeId) {
         const emp = agentEmployees.find((e) => e.id === editForm.agentAssigneeId)
         updates.assignee = { userId: `agent-${editForm.agentAssigneeId}`, displayName: emp ? `🤖 ${emp.name}` : 'AI 员工' }
+        updates.assigneeMemberId = undefined
       } else if (editForm.assigneeName.trim()) {
         updates.assignee = {
           userId: `paa-${editForm.assigneeName.trim()}`,
           displayName: editForm.assigneeName.trim(),
         }
+        updates.assigneeMemberId = await resolveMemberId(editForm.assigneeName.trim())
       } else {
         updates.assignee = undefined
+        updates.assigneeMemberId = undefined
       }
       if (editForm.dueDate) {
         updates.dueDate = new Date(editForm.dueDate + 'T00:00:00').getTime()
@@ -2128,6 +2711,8 @@ function TaskItem({
           userId: `paa-${executionSubTaskEdit.assigneeName.trim()}`,
           displayName: executionSubTaskEdit.assigneeName.trim(),
         }
+        // 执行 subTask 同样确保成员目录存在（listMyWork 归一化兑底依赖 display 一致性）
+        await resolveMemberId(executionSubTaskEdit.assigneeName.trim())
       }
       await callProjectAPI<ExecutionSubTask>('updateExecutionSubTask', editingExecutionSubTask.id, updates)
       setEditingExecutionSubTask(null)
@@ -2152,12 +2737,30 @@ function TaskItem({
             <span className={`text-xs px-2 py-0.5 rounded-full ${priorityColor(task.priority)}`}>
               {priorityLabel(task.priority)}
             </span>
-            <span className={`font-medium text-sm truncate ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`}>
+            {/* 任务行直达权威 Review，不必先切换看板。 */}
+            <button type="button" onClick={onOpenReview} className={`font-medium text-sm truncate text-left hover:text-primary hover:underline ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`} title="查看任务交付与验证">
               {task.title}
-            </span>
+            </button>
             {/* AI 员工执行状态（P0） */}
             {isAgentTask && agentExecStatus && (
               <AgentExecutionBadge status={agentExecStatus} />
+            )}
+            {/* token 配额可见性：设了预算显示 已用/预算，接近或超限标色 */}
+            {isAgentTask && (task.tokenBudget || tokenUsage) && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                  task.tokenBudget && tokenUsage && tokenUsage.totalTokens > task.tokenBudget
+                    ? 'bg-red-100 text-red-700'
+                    : task.tokenBudget && tokenUsage && tokenUsage.totalTokens > task.tokenBudget * 0.8
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-gray-100 text-gray-600'
+                }`}
+                title={task.tokenBudget
+                  ? `Token 配额：已消耗 ${tokenUsage?.totalTokens ?? 0} / ${task.tokenBudget}${tokenUsage && tokenUsage.activeSessionTokens > 0 ? `（进行中会话 ${tokenUsage.activeSessionTokens}）` : ''}`
+                  : `已消耗 ${tokenUsage?.totalTokens ?? 0} tokens（未设配额）`}
+              >
+                ⚡ {tokenUsage?.totalTokens ?? 0}{task.tokenBudget ? ` / ${task.tokenBudget}` : ''}
+              </span>
             )}
             {/* 风险等级指示器 */}
             {hasRisk && (
@@ -2187,14 +2790,42 @@ function TaskItem({
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-1">{task.description}</p>
-          {task.assignee && (
-            <p className="text-xs text-muted-foreground">负责人: {task.assignee.displayName}</p>
+          {(task.assignee || (!isTaskDone && !!task.dueDate)) && (
+            <div className="mt-1 flex items-center gap-1 flex-wrap">
+              {task.assignee && (
+                <span
+                  className={`text-xs px-1.5 py-0.5 rounded ${isAgentTask ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
+                >
+                  {isAgentTask ? '🤖' : '👤'} {task.assignee.displayName}
+                </span>
+              )}
+              <DueDateBadge dueDate={task.dueDate} isDone={isTaskDone} />
+            </div>
           )}
           {needsCompletionNotes && !task.completionNotes && task.status === 'completed' && (
             <p className="text-xs text-amber-600 mt-1">⚠️ 高风险任务，请填写完成纪要</p>
           )}
         </div>
         <div className="flex items-center gap-2 ml-2 shrink-0">
+          {isAgentTask && agentSessionId && (
+            <button
+              onClick={() => void handleOpenAgentSession()}
+              className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+              title="打开 AI 员工会话，查看实时输出、工具活动和历史记录"
+            >
+              {agentExecStatus === 'running' ? '查看实时输出' : '查看执行会话'}
+            </button>
+          )}
+          {isAgentTask && (agentExecStatus === 'queued' || agentExecStatus === 'running') && (
+            <button
+              onClick={() => void handleStopAgentExecution()}
+              disabled={isStoppingAgent}
+              className="text-xs px-2 py-1 rounded bg-red-50 text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+              title="停止当前 AI 员工执行；不会删除 worktree 或已有执行证据"
+            >
+              {isStoppingAgent ? '停止中…' : '停止执行'}
+            </button>
+          )}
           {/* 编辑任务按钮 */}
           <button
             onClick={() => setShowEditModal(true)}
@@ -2264,10 +2895,9 @@ function TaskItem({
             onChange={(e) => onStatusChange(task.id, e.target.value as Task['status'])}
             className="text-xs px-2 py-1 border rounded-md bg-background"
           >
-            <option value="pending">待处理</option>
-            <option value="in_progress">进行中</option>
-            <option value="paused">已暂停</option>
-            <option value="completed">已完成</option>
+            {statuses.map((status) => (
+              <option key={status.id} value={status.id}>{status.name}</option>
+            ))}
           </select>
           <button
             onClick={() => onDelete(task.id)}
@@ -2329,7 +2959,7 @@ function TaskItem({
               <div className="text-xs text-muted-foreground">加载中...</div>
             )}
             {!subTasksLoading && subTasks.map((sub) => (
-              <div key={sub.id} className="flex items-center gap-2 group">
+              <div key={sub.id} id={`project-subtask-${sub.id}`} className={`flex items-center gap-2 group ${focusSubTaskId === sub.id ? 'rounded-md bg-accent ring-2 ring-primary' : ''}`}>
                 <input
                   type="checkbox"
                   checked={sub.status === 'completed'}
@@ -2627,7 +3257,7 @@ function priorityColor(p: Task['priority']): string {
   return map[p] ?? map.medium
 }
 
-function priorityLabel(p: Task['priority']): string {
+export function priorityLabel(p: Task['priority']): string {
   const map: Record<string, string> = {
     critical: '严重',
     high: '高',
@@ -2903,69 +3533,6 @@ function MeetingNotesPanel({
   )
 }
 
-// ===== 看板 =====
-
-function KanbanView({ board }: { board: KanbanBoard }): React.ReactElement {
-  const [filter, setFilter] = useState<'all' | 'human' | 'agent'>('all')
-
-  const applyFilter = (tasks: Task[]): Task[] => {
-    if (filter === 'all') return tasks
-    return tasks.filter((t) => filter === 'agent'
-      ? (t.assignee?.userId?.startsWith('agent-') ?? false)
-      : !(t.assignee?.userId?.startsWith('agent-') ?? false))
-  }
-
-  const columns = [
-    { title: '待处理', tasks: applyFilter(board.pending), color: 'bg-gray-50' },
-    { title: '进行中', tasks: applyFilter(board.in_progress), color: 'bg-blue-50' },
-    { title: '已完成', tasks: applyFilter(board.completed), color: 'bg-green-50' },
-  ]
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">任务看板</h2>
-        <div className="flex items-center gap-1 rounded-lg bg-foreground/[0.04] p-0.5">
-          {([
-            { value: 'all', label: '全部' },
-            { value: 'human', label: '真人' },
-            { value: 'agent', label: '🤖 AI 员工' },
-          ] as const).map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setFilter(opt.value)}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filter === opt.value ? 'bg-background text-foreground shadow-sm' : 'text-foreground/50 hover:text-foreground/80'}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="grid grid-cols-3 gap-4">
-        {columns.map((col) => (
-          <div key={col.title} className={`${col.color} rounded-lg p-4 border`}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">{col.title}</h3>
-              <span className="text-xs text-muted-foreground">{col.tasks.length}</span>
-            </div>
-            <div className="space-y-2 min-h-[200px]">
-              {col.tasks.length === 0 ? (
-                <div className="text-sm text-muted-foreground text-center py-8">暂无任务</div>
-              ) : (
-                col.tasks.map((task) => (
-                  <div key={task.id} className="p-3 bg-white rounded-lg border shadow-sm">
-                    <p className="text-sm font-medium">{task.title}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{task.description}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 // ===== 看板总览 =====
 
@@ -2993,6 +3560,12 @@ function ProjectCardOverview({ project }: { project: Project }): React.ReactElem
 
   if (!board) return <div className="p-4 border rounded-lg animate-pulse">加载中...</div>
 
+  /** 跨项目卡片按语义组汇总（自定义状态不影响统计口径） */
+  const countByGroup = (group: ProjectTaskStateGroup): number =>
+    board.columns
+      .filter((col) => col.status.stateGroup === group)
+      .reduce((sum, col) => sum + col.tasks.length, 0)
+
   return (
     <div className="p-4 bg-card rounded-lg border">
       <div className="flex items-center justify-between mb-3">
@@ -3001,15 +3574,15 @@ function ProjectCardOverview({ project }: { project: Project }): React.ReactElem
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="p-2 bg-gray-50 rounded">
-          <div className="text-lg font-semibold">{board.pending.length}</div>
+          <div className="text-lg font-semibold">{countByGroup('unstarted')}</div>
           <div className="text-xs text-muted-foreground">待处理</div>
         </div>
         <div className="p-2 bg-blue-50 rounded">
-          <div className="text-lg font-semibold">{board.in_progress.length}</div>
+          <div className="text-lg font-semibold">{countByGroup('started')}</div>
           <div className="text-xs text-muted-foreground">进行中</div>
         </div>
         <div className="p-2 bg-green-50 rounded">
-          <div className="text-lg font-semibold">{board.completed.length}</div>
+          <div className="text-lg font-semibold">{countByGroup('completed')}</div>
           <div className="text-xs text-muted-foreground">已完成</div>
         </div>
       </div>

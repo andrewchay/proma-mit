@@ -44,6 +44,7 @@ export function MarkdownRichEditor({
     if (!readOnly) editorRef.current?.focus()
   }, [readOnly])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: value 变化时需重算当前文档的匹配计数（输入即刷新）
   React.useEffect(() => {
     const handle = editorRef.current
     if (!handle) return

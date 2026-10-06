@@ -1,0 +1,15 @@
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/agent-development-worktree.test.ts:
+(pass) 研发任务 Git 隔离 > Given 干净仓库 When 创建任务目录 Then 改动不污染原目录且绑定可恢复 [271.43ms]
+(pass) 研发任务 Git 隔离 > Given 未提交改动 When 创建 Then 拒绝而非忽略当前迭代 [238.39ms]
+(pass) 研发任务 Git 隔离 > Given 已绑定但目录消失 When 恢复 Then 不静默回退主仓库 [247.77ms]
+(pass) 研发任务 Git 隔离 > Given 普通会话 When 解析 Then 不改变既有 cwd [105.83ms]
+(pass) 研发任务 Git 隔离 > Given 工作区被换绑 When 恢复 Then 拒绝旧绑定 [185.89ms]
+
+ 5 pass
+ 0 fail
+ 7 expect() calls
+Ran 5 tests across 1 file. [1081.00ms]
+
+commandExitCode=0

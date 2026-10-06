@@ -29,6 +29,7 @@ describe('Agent runtime 类型', () => {
       supportsPartialStreaming: true,
       supportsNativeResume: false,
       supportsFileSnapshotRewind: false,
+      supportsBudgetStopThreshold: true,
     })
   })
 
@@ -42,7 +43,16 @@ describe('Agent runtime 类型', () => {
       supportsPartialStreaming: true,
       supportsNativeResume: false,
       supportsFileSnapshotRewind: false,
+      supportsBudgetStopThreshold: false,
     })
+  })
+
+  test('只有已接入调用级费用超额停止阈值的 Runtime 才声明支持', () => {
+    expect(AGENT_RUNTIME_CAPABILITIES.claude.supportsBudgetStopThreshold).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.proma.supportsBudgetStopThreshold).toBe(false)
+    expect(AGENT_RUNTIME_CAPABILITIES.pi.supportsBudgetStopThreshold).toBe(false)
+    // ai-sdk 由受控请求出口在发送前强制单次费用上界（证据 → 预留 → 核验），强度高于事后阈值。
+    expect(AGENT_RUNTIME_CAPABILITIES['ai-sdk'].supportsBudgetStopThreshold).toBe(true)
   })
 
   test('自动化设置所需的 IPC 通道保持显式且稳定', () => {

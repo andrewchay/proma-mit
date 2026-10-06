@@ -27,6 +27,7 @@ import { toast } from 'sonner'
 import { useSetAtom } from 'jotai'
 import { channelFormDirtyAtom } from '@/atoms/settings-tab'
 import { cn } from '@/lib/utils'
+import { suggestChannelName } from './channel-name'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -154,7 +155,8 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   const isEdit = channel !== null
 
   // 表单状态
-  const [name, setName] = React.useState(channel?.name ?? '')
+  const [name, setName] = React.useState(channel?.name ?? suggestChannelName('anthropic', PROVIDER_DEFAULT_URLS.anthropic))
+  const nameManuallyEditedRef = React.useRef(false)
   const [provider, setProvider] = React.useState<ProviderType>(channel?.provider ?? 'anthropic')
   const [baseUrl, setBaseUrl] = React.useState(channel?.baseUrl ?? PROVIDER_DEFAULT_URLS.anthropic)
   const [apiKey, setApiKey] = React.useState('')
@@ -267,6 +269,11 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     scheduleAutoSave(models, name, provider, baseUrl, apiKey, enabled)
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
   }, [models, name, provider, baseUrl, apiKey, enabled, scheduleAutoSave])
+
+  // 创建时按供应商 / 端点建议配置名称；用户手动编辑后不再覆盖。
+  React.useEffect(() => {
+    if (!isEdit && !nameManuallyEditedRef.current) setName(suggestChannelName(provider, baseUrl))
+  }, [isEdit, provider, baseUrl])
 
   // 切换供应商时自动更新 Base URL，Anthropic 兼容渠道自动添加预设模型
   const handleProviderChange = (newProvider: string): void => {
@@ -438,6 +445,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       setApiKey(secret)
       setCopilotDeviceCode(null)
       // 自动拉取订阅允许的模型列表
+      let loggedInModels = models
       try {
         const fetched = await window.electronAPI.fetchModels({
           provider,
@@ -445,7 +453,12 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
           apiKey: secret,
         })
         if (fetched.success && fetched.models.length > 0) {
-          setModels(fetched.models)
+          const enabledById = new Map(models.map((model) => [model.id, model.enabled]))
+          loggedInModels = fetched.models.map((model) => ({
+            ...model,
+            enabled: enabledById.get(model.id) ?? model.enabled,
+          }))
+          setModels(loggedInModels)
         }
       } catch (error) {
         console.error('[模型配置表单] OAuth 订阅模型列表拉取失败:', error)
@@ -455,7 +468,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       if (isEdit && channel) {
         try {
           const savedChannel = await window.electronAPI.updateChannel(channel.id, {
-            name, provider, baseUrl, apiKey: secret, models, enabled,
+            name, provider, baseUrl, apiKey: secret, models: loggedInModels, enabled,
           })
           setCopilotQuota(await window.electronAPI.getChannelPlanQuota(savedChannel.id))
         } catch (error) {
@@ -511,7 +524,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   }
 
   /** 检测表单是否有未保存内容 */
-  const isDirty = !isEdit && (name.trim() !== '' || apiKey.trim() !== '' || models.length > 0)
+  const isDirty = !isEdit && (nameManuallyEditedRef.current || apiKey.trim() !== '' || models.length > 0 || provider !== 'anthropic' || baseUrl !== PROVIDER_DEFAULT_URLS.anthropic)
   const hasNoModels = !isEdit && models.length === 0
 
   /** 返回按钮：创建模式下有未保存内容时拦截 */
@@ -604,8 +617,11 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
           <SettingsInput
             label="配置名称"
             value={name}
-            onChange={setName}
-            placeholder="例如: My Anthropic"
+            onChange={(value) => {
+              nameManuallyEditedRef.current = true
+              setName(value)
+            }}
+            placeholder="根据供应商自动命名，也可自定义"
             required
           />
           <SettingsSelect

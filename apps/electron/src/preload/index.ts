@@ -6,8 +6,8 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS } from '@gravitas/shared'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS, CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS } from '@gravitas/shared'
+import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, NEW_MEDIA_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS, CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -45,7 +45,7 @@ const WORKFLOW_IPC_CHANNELS = {
   SAVE_IDENTITY_DIRECTORY: 'workflow:save-identity-directory',
   TRIGGER_EVENT: 'workflow:trigger-event',
 } as const
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, SUBSCRIPTION_IPC_CHANNELS, OUTBOUND_MAIL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, ACADEMIC_RESEARCH_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS } from '../types'
 import type {
   Campaign,
   CampaignWorkflow,
@@ -248,11 +248,27 @@ export interface EvalBenchmarkDetail {
       time: string
       agentVersion: number
       score: number
+      scoreStd?: number | null
       costUsd?: number | null
       durationMs?: number | null
+      judge?: {
+        kind: "rule" | "llm" | "injected"
+        independent: boolean
+        modelId?: string
+      } | null
+      cases: Array<{
+        caseId: string
+        score: number
+        scoreStd?: number | null
+        runs: Array<{ score: number; sessionId: string; tracePath?: string }>
+      }>
     }>
   }
-  cases: Array<{ caseId: string; statement: string | null }>
+  cases: Array<{
+    caseId: string
+    statement: string | null
+    rubric: { version: number; items: Array<{ name: string; points: number; check: string }> } | null
+  }>
 }
 
 /** 创建 Benchmark 的请求（preload 本地形状）。 */
@@ -264,6 +280,7 @@ export interface EvalCreateBenchmarkRequest {
   provider: string
   modelId: string
   channelId?: string
+  judgeRuntime?: { provider: string; modelId: string; channelId?: string }
   targetScore: number
   cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
 }
@@ -642,8 +659,27 @@ export interface ElectronAPI {
 
   // ===== 应用设置相关 =====
 
+  /** 获取 TypeSafe 判断服务脱敏设置 */
+  getTypeSafeJudgmentSettings: () => Promise<import('@gravitas/shared').TypeSafeJudgmentSettings>
+  /** 更新 TypeSafe 判断服务设置；API Key 仅发送给主进程 */
+  updateTypeSafeJudgmentSettings: (input: import('@gravitas/shared').UpdateTypeSafeJudgmentSettingsInput) => Promise<import('@gravitas/shared').TypeSafeJudgmentSettings>
+  /** 清除 TypeSafe API Key */
+  clearTypeSafeApiKey: () => Promise<import('@gravitas/shared').TypeSafeJudgmentSettings>
+  /** 测试 TypeSafe 连接 */
+  testTypeSafeConnection: () => Promise<import('@gravitas/shared').TypeSafeConnectionTestResult>
+  /** 记录 TypeSafe 推荐反馈（仅写本地审计） */
+  recordTypeSafeRecommendationFeedback: (feedback: import('@gravitas/shared').TypeSafeRecommendationFeedback) => Promise<void>
+
   /** 获取应用设置 */
   getSettings: () => Promise<AppSettings>
+
+  /** Companion 远程访问（手机浏览器） */
+  companion: {
+    /** 生成一次性配对码（120 秒有效，单次使用） */
+    generatePairingCode: () => Promise<string>
+    /** 查询服务状态（是否运行、端口、局域网访问地址、配对二维码） */
+    getStatus: () => Promise<{ running: boolean; port: number; lanUrl?: string; qrDataUrl?: string }>
+  }
 
   /** 更新应用设置 */
   updateSettings: (updates: Partial<AppSettings>) => Promise<AppSettings>
@@ -740,6 +776,9 @@ export interface ElectronAPI {
   /** 订阅会话发送队列状态（排队数量 / 是否执行中） */
   onStreamQueueState: (callback: (event: StreamQueueStateEvent) => void) => () => void
 
+  /** 订阅 TypeSafe 产生的 Agent 模式推荐 */
+  onTypeSafeAgentRecommendation: (callback: (event: import('@gravitas/shared').TypeSafeChatRecommendation) => void) => () => void
+
   // ===== Agent 会话管理相关 =====
 
   /** 获取 Agent 会话列表 */
@@ -753,6 +792,9 @@ export interface ElectronAPI {
 
   /** 更新 Agent 会话标题 */
   updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
+
+  /** 更新 Agent 会话当前 Project（必须通过工作空间绑定授权；清空 projectId 则关闭项目范围） */
+  updateAgentSessionProject: (input: import('@gravitas/shared').UpdateAgentSessionProjectInput) => Promise<AgentSessionMeta>
 
   /** 更新 Agent 会话 Runtime */
   updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => Promise<AgentSessionMeta>
@@ -872,7 +914,7 @@ export interface ElectronAPI {
   executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
   executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => Promise<import('@gravitas/shared').WorkflowRun>
   executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowRun>
-  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@gravitas/shared').WorkflowRun>
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; comment?: string; editedOutput?: Record<string, unknown> } }) => Promise<import('@gravitas/shared').WorkflowRun>
   cancelWorkflowRun: (workflowId: string, runId: string) => Promise<import('@gravitas/shared').WorkflowRun>
   stopWorkflowRun: (workflowId: string, runId: string) => Promise<{ stopped: boolean; message?: string }>
   proposeWorkflowPatches: (input: { definition: import('@gravitas/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => Promise<import('@gravitas/shared').WorkflowPatchProposal>
@@ -1130,7 +1172,7 @@ export interface ElectronAPI {
   listEvalTemplates: () => Promise<Array<{ id: string; title: string; description: string; targetAgentId: string }>>
 
   /** 从预置模板创建 Benchmark */
-  createEvalBenchmarkFromTemplate: (templateId: string) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
+  createEvalBenchmarkFromTemplate: (templateId: string, judgeRuntime?: { provider: string; modelId: string; channelId?: string }) => Promise<{ ok: boolean; error?: string; benchmarkId?: string }>
 
   /** 估算 Baseline 成本 */
   estimateBaselineCost: (benchmarkId: string) => Promise<{ totalUsd: number; inputTokens: number; outputTokens: number; callCount: number; hasPricing: boolean; pricing?: { input: number; output: number }; fallbackUsd?: number } | null>
@@ -1225,6 +1267,9 @@ export interface ElectronAPI {
 
   /** 仅解析文件路径（供 PDF/图片等用 file:// 加载） */
   resolveFilePath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<import('@gravitas/shared').ResolvedFileUrl | null>
+
+  /** 解析 HTML 文件的受管内联预览 URL（iframe 渲染） */
+  resolveHtmlPreviewPath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<import('@gravitas/shared').ResolvedFileUrl | null>
 
   /** 为内联 PDF 预览生成临时 HTML 文件，返回文件路径 */
   preparePdfPreview: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => Promise<{ tmpHtmlUrl: string } | null>
@@ -1442,7 +1487,7 @@ export interface ElectronAPI {
 
   /** 订阅菜单关闭标签页事件（Cmd+W 被菜单拦截后转发） */
   onMenuCloseTab: (callback: () => void) => () => void
-  /** 订阅菜单「应用中心→领域工作台」事件（打开能力中心面板） */
+  /** 订阅菜单「专业订阅服务→领域能力包」事件（打开订阅面板） */
   onMenuOpenCapabilities: (callback: () => void) => () => void
 
   // ===== 快速任务窗口 =====
@@ -1536,6 +1581,236 @@ export interface ElectronAPI {
   cleanupTempStorage: () => Promise<unknown>
   /** 取消迁移导入（清理临时解压目录） */
   migrationCancelImport: (tempDir: string) => Promise<void>
+
+  // ===== 订阅与权益 =====
+
+  /** 获取当前订阅状态 */
+  getSubscriptionState: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
+
+  // ===== 知识库（免费版基础能力） =====
+  knowledge: {
+    // Vault 管理
+    listVaults: () => Promise<import('@gravitas/shared').KnowledgeVault[]>
+    createVault: (input: Omit<import('@gravitas/shared').KnowledgeVault, 'id' | 'createdAt' | 'lastIndexedAt'>) => Promise<import('@gravitas/shared').KnowledgeVault>
+    updateVault: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeVault>) => Promise<import('@gravitas/shared').KnowledgeVault | null>
+    deleteVault: (id: string) => Promise<boolean>
+
+    // 索引
+    indexVault: (vaultId: string) => Promise<{ indexed: number; errors: string[] }>
+    indexAllVaults: () => Promise<Array<{ vaultId: string; indexed: number; errors: string[] }>>
+
+    // 搜索
+    searchNotes: (query: string, vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeSearchResult[]>
+    searchByTag: (tag: string, vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeNote[]>
+    getAllTags: (vaultId?: string) => Promise<Array<{ tag: string; count: number }>>
+
+    // 笔记
+    getNote: (id: string) => Promise<import('@gravitas/shared').KnowledgeNote | null>
+    listNotes: (vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeNote[]>
+    deleteNote: (id: string) => Promise<boolean>
+
+    // 图谱
+    getGraph: (vaultId?: string) => Promise<import('@gravitas/shared').KnowledgeGraph>
+    getLinkSuggestions: (vaultId?: string, threshold?: number, limit?: number) => Promise<import('@gravitas/shared').KnowledgeLinkSuggestion[]>
+    buildKnowledgeGraph: (kbId: string) => Promise<{ available: boolean; record?: unknown; error?: string }>
+    getGraphBuildStatus: (kbId: string) => Promise<{ available: boolean; queryable?: boolean; record?: unknown }>
+    queryKnowledgeGraph: (kbId: string, query: string, limit?: number) => Promise<{ available: boolean; hits?: Array<{ resource_id: string; name: string; kind: string }>; error?: string }>
+
+    // Agent 上下文
+    getContextForAgent: (query: string, maxTokens?: number) => Promise<string>
+
+    // 编辑（Knowledge Pro：写用户 Markdown 文件）
+    getWritePermission: () => Promise<boolean>
+    createNote: (input: { vaultId: string; title: string; directory?: string; fileName?: string; content?: string; frontmatter?: Record<string, unknown>; overwrite?: boolean }) => Promise<{ relativePath: string; absolutePath: string }>
+    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown>; expectedVersion?: string; force?: boolean }) => Promise<{ absolutePath: string }>
+    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string; expectedVersion?: string; force?: boolean }) => Promise<{ relativePath: string }>
+    deleteNoteFile: (vaultId: string, relativePath: string) => Promise<boolean>
+    readNoteFile: (vaultId: string, relativePath: string) => Promise<{ rawContent: string; parsed: { content: string; title: string } & Record<string, unknown> } | null>
+    statNoteFile: (vaultId: string, relativePath: string) => Promise<{ size: number; modifiedAt: string } | null>
+    noteFileVersion: (vaultId: string, relativePath: string) => Promise<string | null>
+
+    // 知识目录（来源 / 知识库 / Project 关联）
+    readCatalog: () => Promise<import('@gravitas/shared').KnowledgeCatalog>
+    migrateLegacyVaults: () => Promise<{ migrated: number; skipped: number }>
+    createSource: (input: import('@gravitas/shared').KnowledgeSourceInput, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeSource>
+    updateSource: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeSource>, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeSource>
+    deleteSource: (id: string, options?: { expectedRevision?: number }) => Promise<boolean>
+    createKnowledgeBase: (input: { name: string; description?: string; sourceIds?: string[]; enabled?: boolean }, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeBase>
+    updateKnowledgeBase: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeBase>, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').KnowledgeBase>
+    deleteKnowledgeBase: (id: string, options?: { expectedRevision?: number; force?: boolean }) => Promise<boolean>
+    bindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => Promise<import('@gravitas/shared').ProjectKnowledgeBinding>
+    unbindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => Promise<boolean>
+    listProjectKnowledgeBases: (projectId: string) => Promise<import('@gravitas/shared').KnowledgeBase[]>
+    resolveSessionScope: (sessionId: string) => Promise<{ sessionId: string; mode: 'project' | 'explicit' | 'none'; knowledgeBaseIds: string[]; scopeRevision: string; sources?: import('@gravitas/shared').KnowledgeSource[]; knowledgeBases?: import('@gravitas/shared').KnowledgeBase[] }>
+  }
+
+  // ===== 分析引擎（免费版基础能力） =====
+  analysis: {
+    // 报告管理
+    listReports: (type?: string) => Promise<import('@gravitas/shared').AnalysisReport[]>
+    getReport: (id: string) => Promise<import('@gravitas/shared').AnalysisReport | null>
+    deleteReport: (id: string) => Promise<boolean>
+
+    // 报告生成
+    generateTimeReport: (range: { startDate: string; endDate: string }) => Promise<import('@gravitas/shared').AnalysisReport>
+    generateProductivityReport: (range: { startDate: string; endDate: string }) => Promise<import('@gravitas/shared').AnalysisReport>
+    generateComprehensiveReport: (range: { startDate: string; endDate: string }) => Promise<import('@gravitas/shared').AnalysisReport>
+
+    // 快捷查询
+    generateMonthlyReport: (month: string) => Promise<import('@gravitas/shared').AnalysisReport>
+    generateWeeklyReport: (weekStart?: string) => Promise<import('@gravitas/shared').AnalysisReport>
+  }
+
+  // ===== 学术助手（Pro 插件能力） =====
+  academic: {
+    // 论文项目管理
+    listPapers: () => Promise<import('@gravitas/shared').AcademicPaperSummary[]>
+    getPaper: (id: string) => Promise<import('@gravitas/shared').AcademicPaper | null>
+    createPaper: (input: { title: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => Promise<import('@gravitas/shared').AcademicPaper>
+    updatePaper: (id: string, input: { title?: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => Promise<import('@gravitas/shared').AcademicPaper>
+    deletePaper: (id: string) => Promise<boolean>
+
+    // Pipeline
+    advanceStage: (id: string) => Promise<import('@gravitas/shared').AcademicAdvanceResult>
+    rewindStage: (id: string, target: import('@gravitas/shared').AcademicStage) => Promise<import('@gravitas/shared').AcademicPaper>
+
+    // 阶段产出物
+    getIntegrityReport: (paperId: string) => Promise<import('@gravitas/shared').IntegrityReport | null>
+    getPeerReviewReport: (paperId: string) => Promise<import('@gravitas/shared').PeerReviewReport | null>
+    getRevisionTracking: (paperId: string) => Promise<import('@gravitas/shared').RevisionTracking | null>
+  }
+
+  // ===== 研究工作台（M1：研究领域模型） =====
+  academicResearch: {
+    listProjects: () => Promise<import('@gravitas/shared').ResearchProject[]>
+    getProject: (id: string) => Promise<import('@gravitas/shared').ResearchProject | null>
+    createProject: (input: import('@gravitas/shared').CreateResearchProjectInput) => Promise<import('@gravitas/shared').ResearchProject>
+    updateBrief: (id: string, brief: import('@gravitas/shared').ResearchBrief, changeReason: string) => Promise<import('@gravitas/shared').ResearchProject>
+    changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
+    archiveProject: (id: string, reason?: string) => Promise<import('@gravitas/shared').ResearchProject>
+    migrationDryRun: () => Promise<import('@gravitas/shared').MigrationDryRunReport>
+    // M2：文献与检索
+    listSources: (projectId: string) => Promise<import('@gravitas/shared').Source[]>
+    importBibliography: (projectId: string, format: 'ris' | 'bibtex', text: string) => Promise<import('@gravitas/shared').Source[]>
+    searchSources: (projectId: string, query: string, databaseIds: string[], options: { limit: number; filters?: Record<string, string> }) => Promise<import('@gravitas/shared').SearchRunRecord>
+    listSearchRuns: (projectId: string) => Promise<import('@gravitas/shared').SearchRunRecord[]>
+    dedupCandidates: (projectId: string) => Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>
+    recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => Promise<import('@gravitas/shared').ScreeningDecision>
+    listScreening: (projectId: string) => Promise<import('@gravitas/shared').ScreeningDecision[]>
+    // M2 第二批：证据
+    listEvidence: (projectId: string) => Promise<import('@gravitas/shared').EvidenceExcerpt[]>
+    extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => Promise<import('@gravitas/shared').EvidenceExcerpt>
+    // M2.6：Zotero 只读导入（apiKey 不落盘）
+    getZoteroConfig: () => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>
+    saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>
+    importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>
+    // M3：协议（批准 actor 由主进程确定，渲染层不能指定）
+    listProtocols: (projectId: string) => Promise<import('@gravitas/shared').ResearchProtocol[]>
+    createProtocol: (projectId: string, input: { methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => Promise<import('@gravitas/shared').ResearchProtocol>
+    getDomainProfile: () => Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>
+    // M3.2：选题候选
+    listTopics: (projectId: string) => Promise<Array<import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }>>
+    createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => Promise<import('@gravitas/shared').TopicProposal>
+    selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => Promise<import('@gravitas/shared').TopicProposal>
+    rejectTopic: (projectId: string, proposalId: string, reason: string) => Promise<{ proposalId: string; status: 'rejected' }>
+    // M4：研究运行
+    listRuns: (projectId: string) => Promise<import('@gravitas/shared').ResearchRun[]>
+    createRun: (projectId: string, request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget>; protocolVersion?: number }) => Promise<import('@gravitas/shared').ResearchRun>
+    cancelRun: (projectId: string, runId: string) => Promise<import('@gravitas/shared').ResearchRun>
+    recordObservation: (projectId: string, input: { runId: string; text: string }) => Promise<import('@gravitas/shared').RunObservation>
+    listObservations: (projectId: string) => Promise<import('@gravitas/shared').RunObservation[]>
+    listArtifacts: (projectId: string) => Promise<import('@gravitas/shared').RunArtifact[]>
+    getAllowedInterpreters: () => Promise<{ interpreters: string[] }>
+    reconcileRuns: (projectId: string) => Promise<{ reconciled: string[] }>
+    readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>
+    recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
+    // M6.2：外部运行与 DVC 指针
+    importExternalRuns: (projectId: string, input: { tool: string; toolProjectId: string; runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }> }) => Promise<{ imported: import('@gravitas/shared').ResearchRun[]; skipped: number }>
+    registerDvcPointer: (projectId: string, input: { runId: string; pointerPath: string; pointerContent: string; note?: string }) => Promise<import('@gravitas/shared').RunArtifact>
+    fetchExternalRuns: (orxProjectId: string) => Promise<{ runs: Array<{ id: string; projectId?: string; status?: string; command?: string; exitCode?: number; commitSha?: string; endedAt?: number }> }>
+    // M7.3：审查发现与修订回复
+    recordRuleFinding: (projectId: string, input: { message: string; rule: string; measured: string; expected?: string; severity?: 'error' | 'warning' | 'info'; location?: string }) => Promise<import('@gravitas/shared').ReviewFinding>
+    recordLlmFinding: (projectId: string, input: { message: string; model: string; rationale: string; severity?: 'error' | 'warning' | 'info'; location?: string; promptRef?: string }) => Promise<import('@gravitas/shared').ReviewFinding>
+    listReviewFindings: (projectId: string) => Promise<{ findings: import('@gravitas/shared').ReviewFinding[]; summary: { ruleLint: { error: number; warning: number; info: number }; llmSuggestions: number } }>
+    recordReviewerComment: (projectId: string, input: { reviewerName: string; content: string; severity: 'major' | 'minor' | 'suggestion'; targetSection?: string }) => Promise<import('@gravitas/shared').ExternalReviewerComment>
+    respondToReviewerComment: (projectId: string, input: { commentId: string; status: import('@gravitas/shared').RevisionResponseStatus; response: string; manuscriptVersionId?: string; claimIds?: string[] }) => Promise<import('@gravitas/shared').RevisionResponse>
+    listReviewerComments: (projectId: string) => Promise<import('@gravitas/shared').ExternalReviewerComment[]>
+    buildResponseDraft: (projectId: string) => Promise<{ items: Array<{ commentId: string; reviewerName: string; comment: string; severity: string; status: string; response?: string; manuscriptVersionId?: string }>; pendingCount: number; disclaimer: string }>
+    manuscriptDiff: (projectId: string, fromId: string, toId: string) => Promise<{ fromVersion: number; toVersion: number; sections: Array<{ heading: string; change: string; claimsAdded: string[]; claimsRemoved: string[] }>; claimsAdded: string[]; claimsRemoved: string[] }>
+
+
+    // M5：主张与稿件
+    listClaims: (projectId: string) => Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>
+    createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => Promise<import('@gravitas/shared').Claim>
+    linkEvidence: (projectId: string, input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; artifactId?: string; runId?: string; observationId?: string; note?: string }) => Promise<import('@gravitas/shared').EvidenceLink>
+    setClaimStatus: (projectId: string, claimId: string, status: import('@gravitas/shared').ClaimStatus, options?: { note?: string; staleReason?: string }) => Promise<import('@gravitas/shared').Claim>
+    propagateInvalidation: (projectId: string, change: { evidenceIds?: string[]; artifactIds?: string[]; runIds?: string[]; observationIds?: string[]; reason: string }) => Promise<{ affectedClaimIds: string[] }>
+    listManuscripts: (projectId: string) => Promise<import('@gravitas/shared').ManuscriptVersion[]>
+    createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => Promise<import('@gravitas/shared').ManuscriptVersion>
+    exportPreflight: (projectId: string) => Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>
+    // M6：外部工具集成（不内置上游产物，需用户自行安装）
+    probeExternalTools: () => Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>
+    listExternalTools: () => Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>
+    setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => Promise<import('@gravitas/shared').ExternalToolConfig>
+    // M7.2：可追溯导出包
+    exportResearchBundle: (projectId: string, options?: { outputDir?: string }) => Promise<{ directory: string; manifestPath: string; reportPath: string; manifest: { gaps: string[]; counts: Record<string, number>; excluded: string[] } }>
+  }
+
+  // ===== 行为采集（为专业版分析能力提供数据基础） =====
+  telemetry: {
+    // 采集设置
+    getSettings: () => Promise<import('@gravitas/shared').TelemetrySettings>
+    updateSettings: (patch: Partial<import('@gravitas/shared').TelemetrySettings>) => Promise<import('@gravitas/shared').TelemetrySettings>
+    getStats: () => Promise<import('@gravitas/shared').TelemetryStats>
+    getOverview: () => Promise<import('@gravitas/shared').TelemetryOverview>
+    clearAll: () => Promise<boolean>
+    clearSensitive: () => Promise<boolean>
+
+    // 主动打卡
+    logMood: (input: import('@gravitas/shared').MoodCheckinInput) => Promise<import('@gravitas/shared').TelemetryEvent>
+    listMood: (limit?: number) => Promise<import('@gravitas/shared').TelemetryEvent[]>
+  }
+
+  // ===== 出海邮件（收发与同步） =====
+  outboundMail: {
+    getConfig: () => Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>
+    saveConfig: (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => Promise<import('@gravitas/shared').OutboundMailboxConfigView>
+    testConnection: () => Promise<import('@gravitas/shared').OutboundMailTestResult>
+    listInbox: (query?: import('@gravitas/shared').OutboundInboxQuery) => Promise<import('@gravitas/shared').OutboundInboxListResult>
+    syncNow: () => Promise<import('@gravitas/shared').OutboundSyncResult>
+    listOutbox: () => Promise<import('@gravitas/shared').OutboundOutboxItem[]>
+    queueEmail: (input: { to: string; subject: string; body: string; inReplyTo?: string | null; references?: string[]; source?: 'agent' | 'manual'; replyToInboxId?: string | null }) => Promise<import('@gravitas/shared').OutboundOutboxItem>
+    approveSend: (input: { id: string; edited?: { to?: string; subject?: string; body?: string } }) => Promise<import('@gravitas/shared').OutboundOutboxItem>
+    rejectEmail: (input: { id: string; note?: string }) => Promise<import('@gravitas/shared').OutboundOutboxItem>
+    getMetrics: () => Promise<import('../main/lib/outbound-mail/outreach-metrics-service').OutreachMetrics>
+    onSynced: (callback: (payload: import('@gravitas/shared').OutboundSyncResult) => void) => () => void
+    onOutboxChanged: (callback: (payload: { id: string; status: string }) => void) => () => void
+  }
+
+  /** 请求邮箱验证码 */
+  requestSubscriptionEmailCode: (input: { email: string }) => Promise<{ ok: true; expiresInSeconds: number }>
+  /** 校验邮箱验证码并登录 */
+  verifySubscriptionEmailCode: (input: { email: string; code: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
+  /** 获取第三方登录授权地址 */
+  startSubscriptionOAuth: (provider: 'github' | 'google') => Promise<{ authorizeUrl: string; state: string }>
+  /** 用授权码完成第三方登录 */
+  completeSubscriptionOAuth: (input: { provider: 'github' | 'google'; code: string; state: string; deviceId?: string }) => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
+  /** 登出订阅账号 */
+  logoutSubscription: () => Promise<void>
+  /** 刷新订阅权益 */
+  refreshSubscription: () => Promise<import('../main/lib/subscription/entitlement-service').SubscriptionStateView>
+  /** 读取当前订阅服务地址 */
+  getSubscriptionEndpoint: () => Promise<{ url: string | null }>
+  /** 设置订阅服务地址，传空字符串表示清除自定义 */
+  setSubscriptionEndpoint: (url: string) => Promise<{ url: string | null }>
+  /** 创建支付订单 */
+  createSubscriptionCheckout: (input: { planId: string; provider: string; period: string }) => Promise<import('../main/lib/subscription/subscription-api-client').SubscriptionCheckoutResponse>
+  /** 查询订单状态 */
+  getSubscriptionOrder: (orderId: string) => Promise<{ order: { id: string; status: string } }>
+  /** 主动同步订单状态（回调丢失时的兜底） */
+  syncSubscriptionOrder: (orderId: string) => Promise<import('../main/lib/subscription/subscription-api-client').SubscriptionOrderView>
 
   // ===== macOS 灵动岛通知 =====
 
@@ -1673,9 +1948,20 @@ export interface ElectronAPI {
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
+      observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
+      getPilotOverview: (projectId: string) => Promise<import('@gravitas/shared').PilotOverviewSnapshot>
+      listPilotInbox: (projectId: string) => Promise<import('@gravitas/shared').PilotInboxEntry[]>
+      resolvePilotApproval: (projectId: string, taskId: string, decision: 'approved' | 'rejected', sourceVersion: number, note: string) => Promise<void>
+      getPilotControl: (projectId: string) => Promise<import('@gravitas/shared').PilotControlSnapshot>
+      savePilotPolicyDraft: (projectId: string, input: import('@gravitas/shared').PilotPolicyDraftInput, expectedRevision: number | null) => Promise<import('@gravitas/shared').PilotControlSnapshot>
+      previewPilotGrant: (projectId: string, policyRevision: number) => Promise<import('@gravitas/shared').PilotGrantIssuePreview>
+      confirmPilotGrant: (preview: import('@gravitas/shared').PilotGrantIssuePreview, confirmedFingerprint: string) => Promise<import('@gravitas/shared').PilotRuntimeGrant>
+      previewPilotGrantPause: (grantId: string) => Promise<import('@gravitas/shared').PilotGrantPauseImpact>
+      confirmPilotGrantPause: (preview: import('@gravitas/shared').PilotGrantPauseImpact, choices: import('@gravitas/shared').PilotRunningChoice[]) => Promise<import('@gravitas/shared').PilotGrantPauseWithStopsResult>
       createProject: (input: unknown) => Promise<unknown>
       updateProject: (id: string, patch: unknown) => Promise<unknown | null>
       deleteProject: (id: string) => Promise<boolean>
+      reorderProjects: (orderedIds: string[]) => Promise<boolean>
       listTasks: (projectId: string, filter?: unknown) => Promise<unknown[]>
       getTask: (id: string) => Promise<unknown | null>
       createTask: (projectId: string, input: unknown) => Promise<unknown>
@@ -1697,8 +1983,11 @@ export interface ElectronAPI {
       listMyWork: (assigneeUserId: string) => Promise<unknown[]>
       /** PH2-⑤：我发起/指派的任务 */
       listTasksCreatedBy: (creatorUserId: string) => Promise<unknown[]>
+      /** 日程视图：跨项目轻量任务（有 dueDate 且未完成） */
+      listAllProjectTasksLite: () => Promise<unknown[]>
       /** 订阅 AI 员工执行活动变化（main→renderer，用于刷新任务/看板） */
       onProjectActivityChanged: (callback: (payload: { projectId?: string; action?: string; summary?: string }) => void) => () => void
+      onPollStatusChanged: (callback: (payload: { projectId?: string; platform?: string; taskId?: string; newStatus?: string | null }) => void) => () => void
       listProjectAlerts: (projectId: string) => Promise<unknown[]>
       listProjectActivities: (projectId: string) => Promise<unknown[]>
       generateProjectSummary: (projectId: string) => Promise<unknown>
@@ -1725,6 +2014,14 @@ export interface ElectronAPI {
       testFeishuConnection: () => Promise<unknown>
       getKanbanBoard: (projectId: string) => Promise<unknown>
       getProjectProgress: (projectId: string) => Promise<unknown>
+      listTaskStatuses: (projectId: string) => Promise<unknown[]>
+      createTaskStatus: (projectId: string, input: unknown) => Promise<unknown>
+      updateTaskStatusDef: (projectId: string, statusId: string, patch: unknown) => Promise<unknown | null>
+      deleteTaskStatus: (projectId: string, statusId: string, migrateToStatusId: string) => Promise<boolean>
+      reorderTaskStatuses: (projectId: string, orderedIds: string[]) => Promise<unknown[]>
+      reorderTask: (id: string, input: unknown) => Promise<unknown>
+      getTaskTokenUsage: (taskId: string) => Promise<{ taskId: string; totalTokens: number; totalCostUsd: number; activeSessionTokens: number; sessions: Array<{ sessionId: string; status: string; tokens: number; costUsd: number; startedAt: number }> }>
+      getProjectAiCost: (projectId: string) => Promise<unknown>
       saveUserMapping: (input: unknown) => Promise<unknown>
       getUserMapping: (paaUserId: string) => Promise<unknown | null>
       listUserMappings: () => Promise<unknown[]>
@@ -1741,9 +2038,18 @@ export interface ElectronAPI {
       syncMembersFeishu: () => Promise<import('@gravitas/shared').MemberSyncResult>
       syncMembersDingtalk: () => Promise<import('@gravitas/shared').MemberSyncResult>
       listMembers: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
+      /** 按名字确保成员存在（不存在则建 human 成员），供任务指派统一写 member_id */
+      ensureMemberByName: (displayName: string) => Promise<import('@gravitas/shared').MemberResult>
       getMember: (memberId: string) => Promise<import('@gravitas/shared').MemberResult | null>
       listMemberDirectory: (filter?: { kind?: string; q?: string; activeOnly?: boolean }) => Promise<import('@gravitas/shared').MemberResult[]>
       countMemberDirectory: () => Promise<{ human: number; agent: number; bot: number }>
+    }
+    /** Project ↔ AgentWorkspace 多对多绑定（仅授权，不自动共享资料） */
+    projectWorkspace: {
+      bind: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding | null>
+      unbind: (projectId: string, workspaceId: string) => Promise<boolean>
+      listByProject: (projectId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
+      listByWorkspace: (workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
@@ -1754,6 +2060,155 @@ export interface ElectronAPI {
       delete: (id: string) => Promise<boolean>
       listExecutionsByEntity: (entityType: 'task' | 'subTask', entityId: string) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
+      /** 研发 Review：任务评审汇总 */
+      getTaskReview: (taskId: string) => Promise<import('@gravitas/shared').TaskReviewSummary>
+      /** AI 任务前置检查：只读返回用户可读阻塞列表与阶段（R-P0-08） */
+      getTaskReadiness: (taskId: string) => Promise<import('@gravitas/shared').ProjectTaskReadiness>
+      /** 研发 Review：冻结快照单文件新旧内容 */
+      getSnapshotDiff: (executionId: string, filePath: string) => Promise<import('@gravitas/shared').DevelopmentSnapshotDiff>
+      /** 文件委派：新建或关联任务（不派发执行） */
+      prepareFileDelegation: (input: import('@gravitas/shared').PrepareFileDelegationInput) => Promise<{ taskId: string; created: boolean }>
+      /** 研发返工：记录意见并幂等派发 */
+      requestChanges: (taskId: string, comment: string) => Promise<{ taskId: string } | null>
+      /** 人工验收通过（local-user 必须是登记验收人） */
+      acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => Promise<unknown>
+      /** 人工退回 */
+      rejectDelivery: (taskId: string, deliveryId: string, comment: string) => Promise<unknown>
+      /** 研发验证：运行白名单命令并采集真实退出码 */
+      runValidation: (taskId: string, command: string) => Promise<import('@gravitas/shared').DevelopmentValidationResult>
+      /** 研发验证：列出验证记录 */
+      listValidations: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentValidationResult[]>
+      /** 确认应用：预检并下发操作清单（不写入） */
+      prepareApply: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentApplyManifest>
+      /** 确认应用：二次校验后字节级写入（保留为未提交改动） */
+      confirmApply: (operationId: string) => Promise<import('@gravitas/shared').DevelopmentApplyOperation & { taskCompleted: boolean; taskError?: string }>
+      /** 确认应用：查询操作状态与恢复分类 */
+      getApplyStatus: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentApplyStatusInfo>
+      cancelExecution: (executionId: string) => Promise<import('@gravitas/shared').CancelAgentExecutionResult>
+      listCapabilityVersions: (agentId: string) => Promise<unknown[]>
+      listLearningSamples: (agentId: string) => Promise<unknown[]>
+      excludeLearningSample: (sampleId: string) => Promise<unknown | null>
+      reviewLearningSample: (sampleId: string, evidenceSummary: string) => Promise<unknown | null>
+      getCapabilityObservations: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityObservationResult[]>
+      rollbackCapabilityVersion: (agentId: string, versionId: string, reason: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult>
+      listCapabilityRollbackAudits: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackAuditResult[]>
+      runCapabilityEvaluation: (input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityEvaluationResult>
+      getCapabilityHealth: (agentId: string, windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityHealthResult[]>
+      listCapabilityCanary: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult[]>
+      enableCapabilityCanary: (input: { agentId: string; scope: 'role' | 'workspace'; workspaceId?: string; candidateVersionId: string; percent: number; maxFailureRate?: number; maxReworkRate?: number }) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult>
+      disableCapabilityCanary: (agentId: string, scope: 'role' | 'workspace', reason?: string) => Promise<import('@gravitas/shared').AgentEmployeeCanaryConfigResult | undefined>
+      getCapabilityDependencyGraph: (agentId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityDependencyGraphResult>
+      previewCapabilityConflicts: (input: { roleContent?: string; workspaceContent?: string }) => Promise<import('@gravitas/shared').CapabilityConflictFindingResult[]>
+      getGovernancePolicy: () => Promise<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>
+      updateGovernancePolicy: (patch: Partial<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>) => Promise<{ policy: import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult; audits: import('@gravitas/shared').EmployeeCapabilityGovernanceAuditResult[] }>
+      listGovernanceAudits: () => Promise<import('@gravitas/shared').EmployeeCapabilityGovernanceAuditResult[]>
+      previewSampleRetention: (agentId: string, retentionDays: number | null) => Promise<import('@gravitas/shared').AgentEmployeeSampleRetentionPreviewResult>
+      deleteLearningSamples: (ids: string[]) => Promise<number>
+      getEvolutionLedger: (agentIds?: string[], windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeEvolutionLedgerResult>
+      exportEvolutionPackage: (agentIds?: string[]) => Promise<unknown>
+      validateEvolutionPackage: (input: unknown) => Promise<import('@gravitas/shared').EvolutionPackageValidationResult>
+      previewCapabilityRollback: (agentId: string, versionId: string) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityRollbackPreviewResult>
+      getCapabilityAlerts: (agentId: string, windowDays?: number) => Promise<import('@gravitas/shared').AgentEmployeeCapabilityAlertResult[]>
+      scanSampleContent: (text: string) => Promise<import('@gravitas/shared').SampleSensitiveFindingResult[]>
+      listBenchmarkVersionHistory: (benchmarkId: string) => Promise<import('@gravitas/shared').BenchmarkVersionHistoryEntryResult[]>
+      getScanSchedule: () => Promise<import('@gravitas/shared').EmployeeCapabilityScanScheduleResult>
+      updateScanSchedule: (input: { enabled: boolean; intervalHours?: number }) => Promise<import('@gravitas/shared').EmployeeCapabilityScanScheduleResult>
+      runScanIfDue: () => Promise<{ ran: boolean; created: number; skipped: number }>
+    }
+
+    // --- 新媒体运营本地工作台 ---
+    newMedia: {
+      content: {
+        listDrafts: () => Promise<import('@gravitas/shared').NewMediaContentDraft[]>
+        createDraft: (sourceText: string, platforms: import('@gravitas/shared').NewMediaPlatform[]) => Promise<import('@gravitas/shared').NewMediaContentDraft>
+        listPublicationJobs: () => Promise<import('@gravitas/shared').NewMediaPublicationJob[]>
+        schedulePublication: (input: { draftId: string; platform: import('@gravitas/shared').NewMediaPlatform; accountId: string; scheduledAt: number }) => Promise<import('@gravitas/shared').NewMediaPublicationJob>
+      }
+      community: {
+        listEngagements: () => Promise<import('@gravitas/shared').NewMediaEngagementItem[]>
+        ingestEngagement: (input: { platform: import('@gravitas/shared').NewMediaPlatform; channel: 'comment' | 'direct-message'; author: string; text: string }) => Promise<import('@gravitas/shared').NewMediaEngagementItem>
+        createReplyDraft: (engagementId: string) => Promise<import('@gravitas/shared').NewMediaReplyDraft>
+      }
+      listening: {
+        listQueries: () => Promise<import('@gravitas/shared').NewMediaListeningQuery[]>
+        createQuery: (keywords: string[]) => Promise<import('@gravitas/shared').NewMediaListeningQuery>
+        listMentions: (queryId?: string) => Promise<import('@gravitas/shared').NewMediaMention[]>
+        ingestMention: (input: { queryId: string; platform: import('@gravitas/shared').NewMediaPlatform; sourceUrl: string; text: string }) => Promise<import('@gravitas/shared').NewMediaMention>
+        getDigest: (queryId: string) => Promise<import('@gravitas/shared').NewMediaListeningDigest>
+      }
+      analytics: {
+        listSnapshots: () => Promise<import('@gravitas/shared').NewMediaMetricSnapshot[]>
+        ingestSnapshot: (input: Omit<import('@gravitas/shared').NewMediaMetricSnapshot, 'id'>) => Promise<import('@gravitas/shared').NewMediaMetricSnapshot>
+        getReport: (periodStart: number, periodEnd: number) => Promise<import('@gravitas/shared').NewMediaSocialReport>
+        listTrends: () => Promise<import('@gravitas/shared').NewMediaTrendItem[]>
+        ingestTrend: (input: Omit<import('@gravitas/shared').NewMediaTrendItem, 'id'>) => Promise<import('@gravitas/shared').NewMediaTrendItem>
+        getTrendOpportunities: (keywords: string[]) => Promise<import('@gravitas/shared').NewMediaTrendOpportunity[]>
+      }
+      controlledOutbound: {
+        list: () => Promise<import('@gravitas/shared').NewMediaControlledAction[]>
+        request: (input: { kind: 'publish' | 'send-reply'; platform: import('@gravitas/shared').NewMediaPlatform; targetId: string; summary: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        approve: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        reject: (actionId: string, reason: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        simulate: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        execute: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        reconcile: (input: { actionId: string; platformAccepted: boolean; note: string }) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        retry: (actionId: string) => Promise<import('@gravitas/shared').NewMediaControlledAction>
+        listExecutors: () => Promise<Array<{ kind: string; platform: import('@gravitas/shared').NewMediaPlatform; description: string }>>
+        audit: (actionId: string) => Promise<import('@gravitas/shared').NewMediaAuditEntry[]>
+      }
+      accounts: {
+        list: () => Promise<import('@gravitas/shared').NewMediaConnectedAccount[]>
+        create: (input: { platform: import('@gravitas/shared').NewMediaPlatform; displayName: string }) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        beginAuthorization: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAuthorizationStart>
+        validate: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        disconnect: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        remove: (accountId: string) => Promise<void>
+        audit: (accountId: string) => Promise<import('@gravitas/shared').NewMediaAccountAuditEntry[]>
+        getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
+        getCapabilities: (accountId: string) => Promise<{ capabilities: import('@gravitas/shared').WechatDirectCapabilityState[]; profile: import('@gravitas/shared').WechatDirectAccountProfile | null }>
+        connect: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+      }
+      publish: {
+        list: (accountId?: string) => Promise<import('@gravitas/shared').WechatPublishRecord[]>
+        poll: (publishRecordId: string) => Promise<import('@gravitas/shared').WechatPublishRecord>
+        reconcileSubmit: (input: { publishRecordId: string; platformAccepted: boolean; publishId?: string; note: string }) => Promise<import('@gravitas/shared').WechatPublishRecord>
+      }
+      wechatAnalytics: {
+        syncUser: (input: { accountId: string; source: 'usersummary' | 'usercumulate'; beginDate: string; endDate: string }) => Promise<import('@gravitas/shared').WechatAnalyticsSyncResult>
+        syncArticle: (input: { accountId: string; source: 'articletotal' | 'articlesummary'; beginDate: string; endDate: string }) => Promise<import('@gravitas/shared').WechatAnalyticsSyncResult>
+        overview: (accountId: string) => Promise<import('@gravitas/shared').WechatAnalyticsOverview>
+      }
+      comments: {
+        sync: (input: { accountId: string; msgDataId: string; articleIndex?: number; limit?: number }) => Promise<import('@gravitas/shared').WechatCommentSyncResult>
+        list: (input: { accountId: string; msgDataId?: string }) => Promise<import('@gravitas/shared').WechatCommentRecord[]>
+      }
+      automation: {
+        listRules: () => Promise<import('@gravitas/shared').NewMediaAutomationRule[]>
+        createRule: (input: { accountId: string; platform: import('@gravitas/shared').NewMediaPlatform; kind: 'publish' | 'send-reply'; targetId: string; summaryTemplate: string; cadence: import('@gravitas/shared').NewMediaAutomationCadence; firstRunAt?: number }) => Promise<import('@gravitas/shared').NewMediaAutomationRule>
+        setEnabled: (ruleId: string, enabled: boolean, reason?: string) => Promise<import('@gravitas/shared').NewMediaAutomationRule>
+        deleteRule: (ruleId: string) => Promise<boolean>
+        listRuns: (ruleId?: string) => Promise<import('@gravitas/shared').NewMediaAutomationRun[]>
+        tick: () => Promise<{ triggered: number; created: number; failed: number; skipped: number }>
+      }
+      schema: {
+        getInfo: () => Promise<import('@gravitas/shared').NewMediaSchemaInfo>
+      }
+      reportImport: {
+        listContracts: () => Promise<readonly import('@gravitas/shared').NewMediaImportContract[]>
+        pickAndPreview: (input: { sourceKind: import('@gravitas/shared').NewMediaImportSourceKind; accountId: string }) => Promise<import('@gravitas/shared').NewMediaImportPickResult>
+        cancelPreview: (token: string) => Promise<void>
+        commit: (input: { token: string; confirmed: boolean; importedBy: string; allowDuplicateFile?: boolean }) => Promise<import('@gravitas/shared').NewMediaReportImportBatch>
+        listBatches: () => Promise<import('@gravitas/shared').NewMediaReportImportBatch[]>
+        listRows: (batchId?: string) => Promise<import('@gravitas/shared').NewMediaImportedReportRow[]>
+        getInsightReport: (periodStart: number, periodEnd: number) => Promise<import('@gravitas/shared').NewMediaInsightReport>
+      }
+      xiaohongshuHandoff: {
+        list: () => Promise<import('@gravitas/shared').XiaohongshuHandoff[]>
+        prepare: (draftId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
+        exportPackage: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffExportResult>
+        confirmPublished: (handoffId: string, actor: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
+        audit: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffAuditEntry[]>
+      }
     }
 
     // --- 营销能力包 ---
@@ -1818,6 +2273,7 @@ export interface ElectronAPI {
     listRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     getPendingRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
     refreshRecommendations: () => Promise<import('@gravitas/shared').ProactiveRecommendation[]>
+    scanEmployeeCapabilityRecommendations: () => Promise<Array<{ agentId: string; scope: 'role' | 'workspace'; workspaceId?: string; skipped?: string; recommendationId?: string }>>
     acceptRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     dismissRecommendation: (id: string) => Promise<import('@gravitas/shared').ProactiveRecommendation | null>
     deleteRecommendation: (id: string) => Promise<boolean>
@@ -2382,6 +2838,29 @@ const electronAPI: ElectronAPI = {
     return ipcRenderer.invoke(USER_PROFILE_IPC_CHANNELS.UPDATE, updates)
   },
 
+  // TypeSafe 判断服务
+  getTypeSafeJudgmentSettings: () => ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.GET_SETTINGS),
+  updateTypeSafeJudgmentSettings: (input: import('@gravitas/shared').UpdateTypeSafeJudgmentSettingsInput) => (
+    ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.UPDATE_SETTINGS, input)
+  ),
+  clearTypeSafeApiKey: () => ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.CLEAR_API_KEY),
+  testTypeSafeConnection: () => ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.TEST_CONNECTION),
+  recordTypeSafeRecommendationFeedback: (feedback: import('@gravitas/shared').TypeSafeRecommendationFeedback) => (
+    ipcRenderer.invoke(TYPESAFE_JUDGMENT_IPC_CHANNELS.RECORD_FEEDBACK, feedback)
+  ),
+
+  // Companion 远程访问（手机浏览器）
+  companion: {
+    /** 生成一次性配对码（120 秒有效，单次使用） */
+    generatePairingCode: (): Promise<string> => {
+      return ipcRenderer.invoke(COMPANION_IPC_CHANNELS.GENERATE_PAIRING_CODE)
+    },
+    /** 查询服务状态（是否运行、端口、局域网访问地址） */
+    getStatus: (): Promise<{ running: boolean; port: number; lanUrl?: string }> => {
+      return ipcRenderer.invoke(COMPANION_IPC_CHANNELS.GET_STATUS)
+    },
+  },
+
   // 应用设置
   getSettings: () => {
     return ipcRenderer.invoke(SETTINGS_IPC_CHANNELS.GET)
@@ -2393,6 +2872,279 @@ const electronAPI: ElectronAPI = {
 
   updateSettingsSync: (updates: Partial<AppSettings>) => {
     return ipcRenderer.sendSync(SETTINGS_IPC_CHANNELS.UPDATE_SYNC, updates)
+  },
+
+  // 订阅与权益
+  getSubscriptionState: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_STATE)
+  },
+
+  // ===== 知识库（免费版基础能力） =====
+  knowledge: {
+    // Vault 管理
+    listVaults: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.LIST_VAULTS) as Promise<import('@gravitas/shared').KnowledgeVault[]>,
+    createVault: (input: Omit<import('@gravitas/shared').KnowledgeVault, 'id' | 'createdAt' | 'lastIndexedAt'>) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_VAULT, input) as Promise<import('@gravitas/shared').KnowledgeVault>,
+    updateVault: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeVault>) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_VAULT, id, patch) as Promise<import('@gravitas/shared').KnowledgeVault | null>,
+    deleteVault: (id: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_VAULT, id) as Promise<boolean>,
+
+    // 索引
+    indexVault: (vaultId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.INDEX_VAULT, vaultId) as Promise<{ indexed: number; errors: string[] }>,
+    indexAllVaults: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.INDEX_ALL_VAULTS) as Promise<Array<{ vaultId: string; indexed: number; errors: string[] }>>,
+
+    // 搜索
+    searchNotes: (query: string, vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.SEARCH_NOTES, query, vaultId) as Promise<import('@gravitas/shared').KnowledgeSearchResult[]>,
+    searchByTag: (tag: string, vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.SEARCH_BY_TAG, tag, vaultId) as Promise<import('@gravitas/shared').KnowledgeNote[]>,
+    getAllTags: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_ALL_TAGS, vaultId) as Promise<Array<{ tag: string; count: number }>>,
+
+    // 笔记
+    getNote: (id: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_NOTE, id) as Promise<import('@gravitas/shared').KnowledgeNote | null>,
+    listNotes: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.LIST_NOTES, vaultId) as Promise<import('@gravitas/shared').KnowledgeNote[]>,
+    deleteNote: (id: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE, id) as Promise<boolean>,
+
+    // 图谱
+    getGraph: (vaultId?: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH, vaultId) as Promise<import('@gravitas/shared').KnowledgeGraph>,
+    getLinkSuggestions: (vaultId?: string, threshold?: number, limit?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_LINK_SUGGESTIONS, vaultId, threshold, limit) as Promise<import('@gravitas/shared').KnowledgeLinkSuggestion[]>,
+    buildKnowledgeGraph: (kbId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.BUILD_KNOWLEDGE_GRAPH, kbId) as Promise<{ available: boolean; record?: unknown; error?: string }>,
+    getGraphBuildStatus: (kbId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_GRAPH_BUILD_STATUS, kbId) as Promise<{ available: boolean; queryable?: boolean; record?: unknown }>,
+    queryKnowledgeGraph: (kbId: string, query: string, limit?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.QUERY_KNOWLEDGE_GRAPH, kbId, query, limit) as Promise<{ available: boolean; hits?: Array<{ resource_id: string; name: string; kind: string }>; error?: string }>,
+
+    // Agent 上下文
+    getContextForAgent: (query: string, maxTokens?: number) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_CONTEXT_FOR_AGENT, query, maxTokens) as Promise<string>,
+
+    // 编辑（Knowledge Pro：写用户 Markdown 文件）
+    getWritePermission: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.GET_WRITE_PERMISSION) as Promise<boolean>,
+    createNote: (input: { vaultId: string; title: string; directory?: string; fileName?: string; content?: string; frontmatter?: Record<string, unknown>; overwrite?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_NOTE, input) as Promise<{ relativePath: string; absolutePath: string }>,
+    updateNote: (input: { vaultId: string; relativePath: string; content: string; frontmatter?: Record<string, unknown>; expectedVersion?: string; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_NOTE, input) as Promise<{ absolutePath: string }>,
+    renameNote: (input: { vaultId: string; relativePath: string; newTitle: string; expectedVersion?: string; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RENAME_NOTE, input) as Promise<{ relativePath: string }>,
+    deleteNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_NOTE_FILE, vaultId, relativePath) as Promise<boolean>,
+    readNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.READ_NOTE_FILE, vaultId, relativePath) as Promise<{ rawContent: string; parsed: { content: string; title: string } & Record<string, unknown> } | null>,
+    statNoteFile: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.STAT_NOTE_FILE, vaultId, relativePath) as Promise<{ size: number; modifiedAt: string } | null>,
+    noteFileVersion: (vaultId: string, relativePath: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.NOTE_FILE_VERSION, vaultId, relativePath) as Promise<string | null>,
+
+    // 知识目录（来源 / 知识库 / Project 关联）
+    readCatalog: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.READ_CATALOG) as Promise<import('@gravitas/shared').KnowledgeCatalog>,
+    migrateLegacyVaults: () => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.MIGRATE_LEGACY_VAULTS) as Promise<{ migrated: number; skipped: number }>,
+    createSource: (input: import('@gravitas/shared').KnowledgeSourceInput, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_SOURCE, input, options) as Promise<import('@gravitas/shared').KnowledgeSource>,
+    updateSource: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeSource>, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_SOURCE, id, patch, options) as Promise<import('@gravitas/shared').KnowledgeSource>,
+    deleteSource: (id: string, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_SOURCE, id, options) as Promise<boolean>,
+    createKnowledgeBase: (input: { name: string; description?: string; sourceIds?: string[]; enabled?: boolean }, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.CREATE_KNOWLEDGE_BASE, input, options) as Promise<import('@gravitas/shared').KnowledgeBase>,
+    updateKnowledgeBase: (id: string, patch: Partial<import('@gravitas/shared').KnowledgeBase>, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UPDATE_KNOWLEDGE_BASE, id, patch, options) as Promise<import('@gravitas/shared').KnowledgeBase>,
+    deleteKnowledgeBase: (id: string, options?: { expectedRevision?: number; force?: boolean }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.DELETE_KNOWLEDGE_BASE, id, options) as Promise<boolean>,
+    bindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.BIND_PROJECT, input, options) as Promise<import('@gravitas/shared').ProjectKnowledgeBinding>,
+    unbindProject: (input: { projectId: string; knowledgeBaseId: string }, options?: { expectedRevision?: number }) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.UNBIND_PROJECT, input, options) as Promise<boolean>,
+    listProjectKnowledgeBases: (projectId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.LIST_PROJECT_KNOWLEDGE_BASES, projectId) as Promise<import('@gravitas/shared').KnowledgeBase[]>,
+    resolveSessionScope: (sessionId: string) => ipcRenderer.invoke(KNOWLEDGE_IPC_CHANNELS.RESOLVE_SESSION_SCOPE, sessionId) as Promise<{ sessionId: string; mode: 'project' | 'explicit' | 'none'; knowledgeBaseIds: string[]; scopeRevision: string; sources?: import('@gravitas/shared').KnowledgeSource[]; knowledgeBases?: import('@gravitas/shared').KnowledgeBase[] }>,
+  },
+
+  // ===== 分析引擎（免费版基础能力） =====
+  analysis: {
+    // 报告管理
+    listReports: (type?: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.LIST_REPORTS, type) as Promise<import('@gravitas/shared').AnalysisReport[]>,
+    getReport: (id: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GET_REPORT, id) as Promise<import('@gravitas/shared').AnalysisReport | null>,
+    deleteReport: (id: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.DELETE_REPORT, id) as Promise<boolean>,
+
+    // 报告生成
+    generateTimeReport: (range: { startDate: string; endDate: string }) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_TIME_REPORT, range) as Promise<import('@gravitas/shared').AnalysisReport>,
+    generateProductivityReport: (range: { startDate: string; endDate: string }) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_PRODUCTIVITY_REPORT, range) as Promise<import('@gravitas/shared').AnalysisReport>,
+    generateComprehensiveReport: (range: { startDate: string; endDate: string }) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_COMPREHENSIVE_REPORT, range) as Promise<import('@gravitas/shared').AnalysisReport>,
+
+    // 快捷查询
+    generateMonthlyReport: (month: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_MONTHLY_REPORT, month) as Promise<import('@gravitas/shared').AnalysisReport>,
+    generateWeeklyReport: (weekStart?: string) => ipcRenderer.invoke(ANALYSIS_IPC_CHANNELS.GENERATE_WEEKLY_REPORT, weekStart) as Promise<import('@gravitas/shared').AnalysisReport>,
+  },
+
+  // ===== 学术助手（Pro 插件能力） =====
+  academic: {
+    // 论文项目管理
+    listPapers: () => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.LIST_PAPERS) as Promise<import('@gravitas/shared').AcademicPaperSummary[]>,
+    getPaper: (id: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PAPER, id) as Promise<import('@gravitas/shared').AcademicPaper | null>,
+    createPaper: (input: { title: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.CREATE_PAPER, input) as Promise<import('@gravitas/shared').AcademicPaper>,
+    updatePaper: (id: string, input: { title?: string; abstract?: string; field?: string; content?: string; keywords?: string[]; targetJournal?: string }) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.UPDATE_PAPER, id, input) as Promise<import('@gravitas/shared').AcademicPaper>,
+    deletePaper: (id: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.DELETE_PAPER, id) as Promise<boolean>,
+
+    // Pipeline
+    advanceStage: (id: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.ADVANCE_STAGE, id) as Promise<import('@gravitas/shared').AcademicAdvanceResult>,
+    rewindStage: (id: string, target: import('@gravitas/shared').AcademicStage) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.REWIND_STAGE, id, target) as Promise<import('@gravitas/shared').AcademicPaper>,
+
+    // 阶段产出物
+    getIntegrityReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_INTEGRITY_REPORT, paperId) as Promise<import('@gravitas/shared').IntegrityReport | null>,
+    getPeerReviewReport: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_PEER_REVIEW_REPORT, paperId) as Promise<import('@gravitas/shared').PeerReviewReport | null>,
+    getRevisionTracking: (paperId: string) => ipcRenderer.invoke(ACADEMIC_IPC_CHANNELS.GET_REVISION_TRACKING, paperId) as Promise<import('@gravitas/shared').RevisionTracking | null>,
+  },
+
+  // ===== 研究工作台（M1：研究领域模型） =====
+  academicResearch: {
+    listProjects: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROJECTS) as Promise<import('@gravitas/shared').ResearchProject[]>,
+    getProject: (id: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_PROJECT, id) as Promise<import('@gravitas/shared').ResearchProject | null>,
+    createProject: (input: import('@gravitas/shared').CreateResearchProjectInput) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROJECT, input) as Promise<import('@gravitas/shared').ResearchProject>,
+    updateBrief: (id: string, brief: import('@gravitas/shared').ResearchBrief, changeReason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.UPDATE_BRIEF, id, brief, changeReason) as Promise<import('@gravitas/shared').ResearchProject>,
+    changeStatus: (id: string, to: import('@gravitas/shared').ResearchProjectStatus, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CHANGE_STATUS, id, to, reason) as Promise<import('@gravitas/shared').ResearchProject>,
+    archiveProject: (id: string, reason?: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.ARCHIVE_PROJECT, id, reason) as Promise<import('@gravitas/shared').ResearchProject>,
+    migrationDryRun: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.MIGRATION_DRY_RUN) as Promise<import('@gravitas/shared').MigrationDryRunReport>,
+
+    // M2：文献与检索
+    listSources: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SOURCES, projectId) as Promise<import('@gravitas/shared').Source[]>,
+    importBibliography: (projectId: string, format: 'ris' | 'bibtex', text: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_BIBLIOGRAPHY, projectId, format, text) as Promise<import('@gravitas/shared').Source[]>,
+    searchSources: (projectId: string, query: string, databaseIds: string[], options: { limit: number; filters?: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SEARCH_SOURCES, projectId, query, databaseIds, options) as Promise<import('@gravitas/shared').SearchRunRecord>,
+    listSearchRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SEARCH_RUNS, projectId) as Promise<import('@gravitas/shared').SearchRunRecord[]>,
+    dedupCandidates: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.DEDUP_CANDIDATES, projectId) as Promise<{ kind: string; versionIds: string[]; sourceIds: string[]; detail: string }[]>,
+    recordScreening: (projectId: string, input: { sourceId: string; round: 'title-abstract' | 'full-text'; decision: 'include' | 'exclude' | 'maybe'; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_SCREENING, projectId, input) as Promise<import('@gravitas/shared').ScreeningDecision>,
+    listScreening: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_SCREENING, projectId) as Promise<import('@gravitas/shared').ScreeningDecision[]>,
+
+    // M2 第二批：证据
+    listEvidence: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EVIDENCE, projectId) as Promise<import('@gravitas/shared').EvidenceExcerpt[]>,
+    extractEvidence: (projectId: string, input: { sourceId: string; sourceVersionId: string; text: string; locator: import('@gravitas/shared').EvidenceLocator; note?: string; extractionMode?: 'manual' | 'agent-suggested' }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXTRACT_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceExcerpt>,
+
+    // M2.6：Zotero 只读导入
+    getZoteroConfig: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ZOTERO_CONFIG) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean } | null>,
+    saveZoteroConfig: (input: { baseUrl?: string; libraryId: string; libraryType?: 'users' | 'groups'; collectionKey?: string; local?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SAVE_ZOTERO_CONFIG, input) as Promise<{ baseUrl: string; libraryId: string; libraryType: 'users' | 'groups'; collectionKey?: string; local: boolean }>,
+    importFromZotero: (projectId: string, options?: { apiKey?: string; limit?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_FROM_ZOTERO, projectId, options) as Promise<{ imported: import('@gravitas/shared').Source[]; errors: string[]; total: number }>,
+
+    // M3：协议
+    listProtocols: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_PROTOCOLS, projectId) as Promise<import('@gravitas/shared').ResearchProtocol[]>,
+    createProtocol: (projectId: string, input: { methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    approveProtocol: (projectId: string, version: number, input: { acknowledgedChecks: string[]; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.APPROVE_PROTOCOL, projectId, version, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    reviseProtocol: (projectId: string, input: { changeReason: string; methodPath: import('@gravitas/shared').ResearchMethodPath; fields: Record<string, string> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REVISE_PROTOCOL, projectId, input) as Promise<import('@gravitas/shared').ResearchProtocol>,
+    getDomainProfile: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_DOMAIN_PROFILE) as Promise<{ profiles: Array<{ domain: string; label: string; protocolFields: Array<{ key: string; label: string; type: string; required: boolean; hint?: string; options?: string[] }>; checks: Array<{ id: string; description: string }>; allowedMethodPaths: string[]; defaultMethodPath: string }> }>,
+
+    // M3.2：选题候选
+    listTopics: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_TOPICS, projectId) as Promise<Array<import('@gravitas/shared').TopicProposal & { recordednessGaps: string[] }>>,
+    createTopic: (projectId: string, draft: import('@gravitas/core/services/academic').TopicProposalDraft) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_TOPIC, projectId, draft) as Promise<import('@gravitas/shared').TopicProposal>,
+    selectTopic: (projectId: string, proposalId: string, input?: { reason?: string; force?: boolean }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SELECT_TOPIC, projectId, proposalId, input) as Promise<import('@gravitas/shared').TopicProposal>,
+    rejectTopic: (projectId: string, proposalId: string, reason: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.REJECT_TOPIC, projectId, proposalId, reason) as Promise<{ proposalId: string; status: 'rejected' }>,
+
+    // M4：研究运行
+    listRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_RUNS, projectId) as Promise<import('@gravitas/shared').ResearchRun[]>,
+    createRun: (projectId: string, request: { kind: import('@gravitas/shared').ResearchRunKind; title: string; input: import('@gravitas/shared').RunInputManifest; budget?: Partial<import('@gravitas/shared').RunBudget>; protocolVersion?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_RUN, projectId, request) as Promise<import('@gravitas/shared').ResearchRun>,
+    cancelRun: (projectId: string, runId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CANCEL_RUN, projectId, runId) as Promise<import('@gravitas/shared').ResearchRun>,
+    recordObservation: (projectId: string, input: { runId: string; text: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_OBSERVATION, projectId, input) as Promise<import('@gravitas/shared').RunObservation>,
+    listObservations: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_OBSERVATIONS, projectId) as Promise<import('@gravitas/shared').RunObservation[]>,
+    listArtifacts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_ARTIFACTS, projectId) as Promise<import('@gravitas/shared').RunArtifact[]>,
+    getAllowedInterpreters: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.GET_ALLOWED_INTERPRETERS) as Promise<{ interpreters: string[] }>,
+    reconcileRuns: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECONCILE_RUNS, projectId) as Promise<{ reconciled: string[] }>,
+    readRunLog: (projectId: string, runId: string, options?: { maxBytes?: number }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.READ_RUN_LOG, projectId, runId, options) as Promise<{ content: string; truncated: boolean; totalBytes: number; exists: boolean }>,
+    recordArtifact: (projectId: string, input: { runId: string; ref: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_ARTIFACT, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
+
+    // M6.2：外部运行与 DVC 指针
+    importExternalRuns: (projectId: string, input: { tool: string; toolProjectId: string; runs: Array<{ id: string; status?: string; exitCode?: number; command?: string; commitSha?: string; endedAt?: number }> }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_EXTERNAL_RUNS, projectId, input) as Promise<{ imported: import('@gravitas/shared').ResearchRun[]; skipped: number }>,
+    registerDvcPointer: (projectId: string, input: { runId: string; pointerPath: string; pointerContent: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.IMPORT_DVC_POINTER, projectId, input) as Promise<import('@gravitas/shared').RunArtifact>,
+    fetchExternalRuns: (orxProjectId: string) => ipcRenderer.invoke('academic-research:fetch-external-runs', orxProjectId) as Promise<{ runs: Array<{ id: string; projectId?: string; status?: string; command?: string; exitCode?: number; commitSha?: string; endedAt?: number }> }>,
+
+    // M7.3：审查发现与修订回复
+    recordRuleFinding: (projectId: string, input: { message: string; rule: string; measured: string; expected?: string; severity?: 'error' | 'warning' | 'info'; location?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_RULE_FINDING, projectId, input) as Promise<import('@gravitas/shared').ReviewFinding>,
+    recordLlmFinding: (projectId: string, input: { message: string; model: string; rationale: string; severity?: 'error' | 'warning' | 'info'; location?: string; promptRef?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_LLM_FINDING, projectId, input) as Promise<import('@gravitas/shared').ReviewFinding>,
+    listReviewFindings: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_REVIEW_FINDINGS, projectId) as Promise<{ findings: import('@gravitas/shared').ReviewFinding[]; summary: { ruleLint: { error: number; warning: number; info: number }; llmSuggestions: number } }>,
+    recordReviewerComment: (projectId: string, input: { reviewerName: string; content: string; severity: 'major' | 'minor' | 'suggestion'; targetSection?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RECORD_REVIEWER_COMMENT, projectId, input) as Promise<import('@gravitas/shared').ExternalReviewerComment>,
+    respondToReviewerComment: (projectId: string, input: { commentId: string; status: import('@gravitas/shared').RevisionResponseStatus; response: string; manuscriptVersionId?: string; claimIds?: string[] }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.RESPOND_TO_REVIEWER_COMMENT, projectId, input) as Promise<import('@gravitas/shared').RevisionResponse>,
+    listReviewerComments: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_REVIEWER_COMMENTS, projectId) as Promise<import('@gravitas/shared').ExternalReviewerComment[]>,
+    buildResponseDraft: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.BUILD_RESPONSE_DRAFT, projectId) as Promise<{ items: Array<{ commentId: string; reviewerName: string; comment: string; severity: string; status: string; response?: string; manuscriptVersionId?: string }>; pendingCount: number; disclaimer: string }>,
+    manuscriptDiff: (projectId: string, fromId: string, toId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.MANUSCRIPT_DIFF, projectId, fromId, toId) as Promise<{ fromVersion: number; toVersion: number; sections: Array<{ heading: string; change: string; claimsAdded: string[]; claimsRemoved: string[] }>; claimsAdded: string[]; claimsRemoved: string[] }>,
+
+    // M5：主张与稿件
+    listClaims: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_CLAIMS, projectId) as Promise<Array<import('@gravitas/shared').Claim & { links: import('@gravitas/shared').EvidenceLink[]; summary: { supports: number; opposes: number; qualifies: number; canBeVerified: boolean } }>>,
+    createClaim: (projectId: string, input: { text: string; type: import('@gravitas/shared').ClaimType; scope?: string; sectionRef?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_CLAIM, projectId, input) as Promise<import('@gravitas/shared').Claim>,
+    linkEvidence: (projectId: string, input: { claimId: string; relation: import('@gravitas/shared').EvidenceRelation; evidenceId?: string; artifactId?: string; runId?: string; observationId?: string; note?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LINK_EVIDENCE, projectId, input) as Promise<import('@gravitas/shared').EvidenceLink>,
+    setClaimStatus: (projectId: string, claimId: string, status: import('@gravitas/shared').ClaimStatus, options?: { note?: string; staleReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_CLAIM_STATUS, projectId, claimId, status, options) as Promise<import('@gravitas/shared').Claim>,
+    propagateInvalidation: (projectId: string, change: { evidenceIds?: string[]; artifactIds?: string[]; runIds?: string[]; observationIds?: string[]; reason: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROPAGATE_INVALIDATION, projectId, change) as Promise<{ affectedClaimIds: string[] }>,
+    listManuscripts: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_MANUSCRIPTS, projectId) as Promise<import('@gravitas/shared').ManuscriptVersion[]>,
+    createManuscriptVersion: (projectId: string, draft: { title: string; sections: Array<{ heading: string; content: string; claimIds?: string[]; citationRefs?: string[] }>; changeReason?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.CREATE_MANUSCRIPT_VERSION, projectId, draft) as Promise<import('@gravitas/shared').ManuscriptVersion>,
+    exportPreflight: (projectId: string) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_PREFLIGHT, projectId) as Promise<{ ok: boolean; items: Array<{ claimId: string; text: string; status: string; issue: string }> }>,
+
+    // M6：外部工具集成
+    probeExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.PROBE_EXTERNAL_TOOLS) as Promise<Array<{ descriptor: import('@gravitas/shared').ExternalToolDescriptor; config: import('@gravitas/shared').ExternalToolConfig; status: import('@gravitas/shared').ExternalToolStatus; detectedVersion?: string; detail?: string }>>,
+    listExternalTools: () => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.LIST_EXTERNAL_TOOLS) as Promise<{ descriptors: import('@gravitas/shared').ExternalToolDescriptor[]; configs: import('@gravitas/shared').ExternalToolConfig[] }>,
+    setExternalTool: (input: { toolId: string; enabled: boolean; licenseAcknowledged?: boolean; pinnedVersion?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.SET_EXTERNAL_TOOL, input) as Promise<import('@gravitas/shared').ExternalToolConfig>,
+
+    // M7.2：可追溯导出包
+    exportResearchBundle: (projectId: string, options?: { outputDir?: string }) => ipcRenderer.invoke(ACADEMIC_RESEARCH_IPC_CHANNELS.EXPORT_RESEARCH_BUNDLE, projectId, options) as Promise<{ directory: string; manifestPath: string; reportPath: string; manifest: { gaps: string[]; counts: Record<string, number>; excluded: string[] } }>,
+  },
+
+  // ===== 行为采集（为专业版分析能力提供数据基础） =====
+  telemetry: {
+    // 采集设置
+    getSettings: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.GET_SETTINGS) as Promise<import('@gravitas/shared').TelemetrySettings>,
+    updateSettings: (patch: Partial<import('@gravitas/shared').TelemetrySettings>) => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.UPDATE_SETTINGS, patch) as Promise<import('@gravitas/shared').TelemetrySettings>,
+    getStats: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.GET_STATS) as Promise<import('@gravitas/shared').TelemetryStats>,
+    getOverview: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.GET_OVERVIEW) as Promise<import('@gravitas/shared').TelemetryOverview>,
+    clearAll: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.CLEAR_ALL) as Promise<boolean>,
+    clearSensitive: () => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.CLEAR_SENSITIVE) as Promise<boolean>,
+
+    // 主动打卡
+    logMood: (input: import('@gravitas/shared').MoodCheckinInput) => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.LOG_MOOD, input) as Promise<import('@gravitas/shared').TelemetryEvent>,
+    listMood: (limit?: number) => ipcRenderer.invoke(TELEMETRY_IPC_CHANNELS.LIST_MOOD, limit) as Promise<import('@gravitas/shared').TelemetryEvent[]>,
+  },
+
+  // ===== 出海邮件（收发与同步） =====
+  outboundMail: {
+    getConfig: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.GET_CONFIG) as Promise<import('@gravitas/shared').OutboundMailboxConfigView | null>,
+    saveConfig: (input: { label?: string; email: string; imapHost?: string; imapPort?: number; imapTls?: boolean; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; fromName?: string; password?: string; syncIntervalMinutes?: number }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.SAVE_CONFIG, input) as Promise<import('@gravitas/shared').OutboundMailboxConfigView>,
+    testConnection: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.TEST_CONNECTION) as Promise<import('@gravitas/shared').OutboundMailTestResult>,
+    listInbox: (query?: import('@gravitas/shared').OutboundInboxQuery) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.LIST_INBOX, query) as Promise<import('@gravitas/shared').OutboundInboxListResult>,
+    syncNow: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.SYNC_NOW) as Promise<import('@gravitas/shared').OutboundSyncResult>,
+    listOutbox: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.LIST_OUTBOX) as Promise<import('@gravitas/shared').OutboundOutboxItem[]>,
+    queueEmail: (input: { to: string; subject: string; body: string; inReplyTo?: string | null; references?: string[]; source?: 'agent' | 'manual'; replyToInboxId?: string | null }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.QUEUE_EMAIL, input) as Promise<import('@gravitas/shared').OutboundOutboxItem>,
+    approveSend: (input: { id: string; edited?: { to?: string; subject?: string; body?: string } }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.APPROVE_SEND, input) as Promise<import('@gravitas/shared').OutboundOutboxItem>,
+    rejectEmail: (input: { id: string; note?: string }) => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.REJECT_EMAIL, input) as Promise<import('@gravitas/shared').OutboundOutboxItem>,
+    getMetrics: () => ipcRenderer.invoke(OUTBOUND_MAIL_IPC_CHANNELS.GET_METRICS) as Promise<import('../main/lib/outbound-mail/outreach-metrics-service').OutreachMetrics>,
+    onSynced: (callback: (payload: import('@gravitas/shared').OutboundSyncResult) => void) => {
+      const listener = (_event: unknown, payload: import('@gravitas/shared').OutboundSyncResult) => callback(payload)
+      ipcRenderer.on(OUTBOUND_MAIL_IPC_CHANNELS.ON_SYNCED, listener as never)
+      return () => { ipcRenderer.removeListener(OUTBOUND_MAIL_IPC_CHANNELS.ON_SYNCED, listener as never) }
+    },
+    onOutboxChanged: (callback: (payload: { id: string; status: string }) => void) => {
+      const listener = (_event: unknown, payload: { id: string; status: string }) => callback(payload)
+      ipcRenderer.on(OUTBOUND_MAIL_IPC_CHANNELS.ON_OUTBOX_CHANGED, listener as never)
+      return () => { ipcRenderer.removeListener(OUTBOUND_MAIL_IPC_CHANNELS.ON_OUTBOX_CHANGED, listener as never) }
+    },
+  },
+
+  requestSubscriptionEmailCode: (input: { email: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.REQUEST_EMAIL_CODE, input)
+  },
+
+  verifySubscriptionEmailCode: (input: { email: string; code: string; deviceId?: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.VERIFY_EMAIL_CODE, input)
+  },
+
+  startSubscriptionOAuth: (provider: 'github' | 'google') => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.START_OAUTH, provider)
+  },
+
+  completeSubscriptionOAuth: (input: {
+    provider: 'github' | 'google'
+    code: string
+    state: string
+    deviceId?: string
+  }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.COMPLETE_OAUTH, input)
+  },
+
+  logoutSubscription: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.LOGOUT)
+  },
+
+  refreshSubscription: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.REFRESH)
+  },
+
+  getSubscriptionEndpoint: () => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_ENDPOINT)
+  },
+
+  setSubscriptionEndpoint: (url: string) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.SET_ENDPOINT, url)
+  },
+
+  createSubscriptionCheckout: (input: { planId: string; provider: string; period: string }) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.CREATE_CHECKOUT, input)
+  },
+
+  getSubscriptionOrder: (orderId: string) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.GET_ORDER, orderId)
+  },
+
+  syncSubscriptionOrder: (orderId: string) => {
+    return ipcRenderer.invoke(SUBSCRIPTION_IPC_CHANNELS.SYNC_ORDER, orderId)
   },
 
   getSystemTheme: () => {
@@ -2516,6 +3268,12 @@ const electronAPI: ElectronAPI = {
     return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_QUEUE_STATE, listener) }
   },
 
+  onTypeSafeAgentRecommendation: (callback: (event: import('@gravitas/shared').TypeSafeChatRecommendation) => void) => {
+    const listener = (_: unknown, event: import('@gravitas/shared').TypeSafeChatRecommendation): void => callback(event)
+    ipcRenderer.on(CHAT_IPC_CHANNELS.STREAM_AGENT_RECOMMENDATION, listener)
+    return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_AGENT_RECOMMENDATION, listener) }
+  },
+
   // Agent 会话管理
   listAgentSessions: () => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_SESSIONS)
@@ -2531,6 +3289,10 @@ const electronAPI: ElectronAPI = {
 
   updateAgentSessionTitle: (id: string, title: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_TITLE, id, title)
+  },
+
+  updateAgentSessionProject: (input) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_SESSION_PROJECT, input)
   },
 
   updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => {
@@ -2648,7 +3410,7 @@ const electronAPI: ElectronAPI = {
   executeWorkflowAgentNode: (input: { workflowId: string; runId: string; nodeId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_AGENT_NODE, input),
   executeWorkflowDeterministicNode: (input: { workflowId: string; runId: string; nodeId: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_DETERMINISTIC_NODE, input),
   executeWorkflowRun: (input: { workflowId: string; runId: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.EXECUTE_RUN, input),
-  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; resolvedBy?: string; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
+  resolveWorkflowApproval: (input: { workflowId: string; runId: string; approvalId: string; decision: { approved: boolean; comment?: string; editedOutput?: Record<string, unknown> } }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.RESOLVE_APPROVAL, input),
   cancelWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.CANCEL_RUN, workflowId, runId),
   stopWorkflowRun: (workflowId: string, runId: string) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.STOP_RUN, workflowId, runId),
   proposeWorkflowPatches: (input: { definition: import('@gravitas/shared').WorkflowDefinition; instruction: string; channelId: string; modelId?: string }) => ipcRenderer.invoke(WORKFLOW_IPC_CHANNELS.PROPOSE_PATCHES, input),
@@ -3039,9 +3801,9 @@ const electronAPI: ElectronAPI = {
   },
 
   /** 从预置模板创建 Benchmark */
-  createEvalBenchmarkFromTemplate: (templateId: string) => {
+  createEvalBenchmarkFromTemplate: (templateId: string, judgeRuntime?: { provider: string; modelId: string; channelId?: string }) => {
     return ipcRenderer
-      .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE, templateId)
+      .invoke(AGENT_IPC_CHANNELS.EVAL_CREATE_FROM_TEMPLATE, templateId, judgeRuntime)
       .then((benchmark) => ({ ok: true, benchmarkId: (benchmark as { id?: string } | null)?.id }))
       .catch((error: unknown) => ({ ok: false, error: String(error instanceof Error ? error.message : error) }))
   },
@@ -3184,6 +3946,10 @@ const electronAPI: ElectronAPI = {
 
   resolveFilePath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
     return ipcRenderer.invoke('file:resolve-path', filePath, access) as Promise<import('@gravitas/shared').ResolvedFileUrl | null>
+  },
+
+  resolveHtmlPreviewPath: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
+    return ipcRenderer.invoke('file:resolve-html-preview-path', filePath, access) as Promise<import('@gravitas/shared').ResolvedFileUrl | null>
   },
 
   preparePdfPreview: (filePath: string, access?: import('@gravitas/shared').FileAccessOptions) => {
@@ -3905,9 +4671,21 @@ const electronAPI: ElectronAPI = {
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),
+      getPilotOverview: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PILOT_OVERVIEW, projectId),
+      listPilotInbox: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PILOT_INBOX, projectId),
+      resolvePilotApproval: (projectId, taskId, decision, sourceVersion, note) =>
+        ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RESOLVE_PILOT_APPROVAL, projectId, taskId, decision, sourceVersion, note),
+      getPilotControl: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PILOT_CONTROL, projectId),
+      savePilotPolicyDraft: (projectId, input, expectedRevision) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_PILOT_POLICY_DRAFT, projectId, input, expectedRevision),
+      previewPilotGrant: (projectId, policyRevision) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT, projectId, policyRevision),
+      confirmPilotGrant: (preview, confirmedFingerprint) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT, preview, confirmedFingerprint),
+      previewPilotGrantPause: (grantId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT_PAUSE, grantId),
+      confirmPilotGrantPause: (preview, choices) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT_PAUSE, preview, choices),
       createProject: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_PROJECT, input),
       updateProject: (id, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_PROJECT, id, patch),
       deleteProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_PROJECT, id),
+      reorderProjects: (orderedIds) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_PROJECTS, orderedIds),
       listTasks: (projectId, filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASKS, projectId, filter),
       getTask: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_TASK, id),
       createTask: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK, projectId, input),
@@ -3927,10 +4705,16 @@ const electronAPI: ElectronAPI = {
       listProjectWorkItems: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORK_ITEMS, projectId),
       listMyWork: (assigneeUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MY_WORK, assigneeUserId),
       listTasksCreatedBy: (creatorUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASKS_CREATED_BY, creatorUserId),
+      listAllProjectTasksLite: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_ALL_PROJECT_TASKS_LITE),
       onProjectActivityChanged: (callback) => {
         const listener = (_event: unknown, payload: { projectId?: string; action?: string; summary?: string }) => callback(payload)
         ipcRenderer.on(PROJECT_IPC_CHANNELS.TASK_ACTIVITY_CHANGED, listener)
         return () => ipcRenderer.removeListener(PROJECT_IPC_CHANNELS.TASK_ACTIVITY_CHANGED, listener)
+      },
+      onPollStatusChanged: (callback) => {
+        const listener = (_event: unknown, payload: { projectId?: string; platform?: string; taskId?: string; newStatus?: string | null }) => callback(payload)
+        ipcRenderer.on(PROJECT_IPC_CHANNELS.POLL_STATUS_CHANGED, listener)
+        return () => ipcRenderer.removeListener(PROJECT_IPC_CHANNELS.POLL_STATUS_CHANGED, listener)
       },
       listProjectAlerts: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ALERTS, projectId),
       listProjectActivities: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_ACTIVITIES, projectId),
@@ -3958,6 +4742,14 @@ const electronAPI: ElectronAPI = {
       testFeishuConnection: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.TEST_FEISHU_CONNECTION),
       getKanbanBoard: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_KANBAN_BOARD, projectId),
       getProjectProgress: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT_PROGRESS, projectId),
+      listTaskStatuses: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_TASK_STATUSES, projectId),
+      createTaskStatus: (projectId, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_TASK_STATUS, projectId, input),
+      updateTaskStatusDef: (projectId, statusId, patch) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UPDATE_TASK_STATUS, projectId, statusId, patch),
+      deleteTaskStatus: (projectId, statusId, migrateToStatusId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_TASK_STATUS, projectId, statusId, migrateToStatusId),
+      reorderTaskStatuses: (projectId, orderedIds) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_TASK_STATUSES, projectId, orderedIds),
+      reorderTask: (id, input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REORDER_TASK, id, input),
+      getTaskTokenUsage: (taskId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_TASK_TOKEN_USAGE, taskId),
+      getProjectAiCost: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT_AI_COST, projectId),
       saveUserMapping: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_USER_MAPPING, input),
       getUserMapping: (paaUserId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_USER_MAPPING, paaUserId),
       listUserMappings: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_USER_MAPPINGS),
@@ -3975,9 +4767,17 @@ const electronAPI: ElectronAPI = {
       syncMembersFeishu: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_FEISHU),
       syncMembersDingtalk: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SYNC_MEMBERS_DINGTALK),
       listMembers: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBERS, filter),
+      ensureMemberByName: (displayName) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.ENSURE_MEMBER_BY_NAME, displayName),
       getMember: (memberId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_MEMBER, memberId),
       listMemberDirectory: (filter) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, filter),
       countMemberDirectory: () => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.COUNT_MEMBER_DIRECTORY),
+    },
+    // --- Project ↔ AgentWorkspace 绑定 ---
+    projectWorkspace: {
+      bind: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.BIND_WORKSPACE, projectId, workspaceId),
+      unbind: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.UNBIND_WORKSPACE, projectId, workspaceId),
+      listByProject: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORKSPACES, projectId),
+      listByWorkspace: (workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, workspaceId),
     },
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
@@ -3988,6 +4788,142 @@ const electronAPI: ElectronAPI = {
       delete: (id) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, id),
       listExecutionsByEntity: (entityType, entityId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, entityType, entityId),
       listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
+      cancelExecution: (executionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, executionId),
+      getTaskReview: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, taskId),
+      getTaskReadiness: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_READINESS, taskId),
+      getSnapshotDiff: (executionId, filePath) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, executionId, filePath),
+      prepareFileDelegation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, input),
+      requestChanges: (taskId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, taskId, comment),
+      acceptDelivery: (taskId, deliveryId, input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, taskId, deliveryId, input),
+      rejectDelivery: (taskId, deliveryId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, taskId, deliveryId, comment),
+      runValidation: (taskId, command) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_VALIDATION, taskId, command),
+      listValidations: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, taskId),
+      prepareApply: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, taskId),
+      confirmApply: (operationId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CONFIRM_APPLY, operationId),
+      getApplyStatus: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_APPLY_STATUS, taskId),
+      listCapabilityVersions: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, agentId),
+      listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),
+      excludeLearningSample: (sampleId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, sampleId),
+      reviewLearningSample: (sampleId, evidenceSummary) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, sampleId, evidenceSummary),
+      getCapabilityObservations: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_OBSERVATIONS, agentId),
+      rollbackCapabilityVersion: (agentId, versionId, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, agentId, versionId, reason),
+      listCapabilityRollbackAudits: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, agentId),
+      runCapabilityEvaluation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, input),
+      getCapabilityHealth: (agentId, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_HEALTH, agentId, windowDays),
+      listCapabilityCanary: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_CANARY, agentId),
+      enableCapabilityCanary: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ENABLE_CAPABILITY_CANARY, input),
+      disableCapabilityCanary: (agentId, scope, reason) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DISABLE_CAPABILITY_CANARY, agentId, scope, reason),
+      getCapabilityDependencyGraph: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_DEPENDENCY_GRAPH, agentId),
+      previewCapabilityConflicts: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_CONFLICTS, input),
+      getGovernancePolicy: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_GOVERNANCE_POLICY),
+      updateGovernancePolicy: (patch) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_GOVERNANCE_POLICY, patch),
+      listGovernanceAudits: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_GOVERNANCE_AUDITS),
+      previewSampleRetention: (agentId, retentionDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_SAMPLE_RETENTION, agentId, retentionDays),
+      deleteLearningSamples: (ids) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, ids),
+      getEvolutionLedger: (agentIds, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, agentIds, windowDays),
+      exportEvolutionPackage: (agentIds) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, agentIds),
+      validateEvolutionPackage: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, input),
+      previewCapabilityRollback: (agentId, versionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, agentId, versionId),
+      getCapabilityAlerts: (agentId, windowDays) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, agentId, windowDays),
+      scanSampleContent: (text) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.SCAN_SAMPLE_CONTENT, text),
+      listBenchmarkVersionHistory: (benchmarkId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_BENCHMARK_VERSION_HISTORY, benchmarkId),
+      getScanSchedule: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SCAN_SCHEDULE),
+      updateScanSchedule: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_SCAN_SCHEDULE, input),
+      runScanIfDue: () => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_SCAN_IF_DUE),
+    },
+    // --- 新媒体运营本地工作台 ---
+    newMedia: {
+      content: {
+        listDrafts: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_DRAFTS),
+        createDraft: (sourceText, platforms) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, sourceText, platforms),
+        listPublicationJobs: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_PUBLICATION_JOBS),
+        schedulePublication: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SCHEDULE_PUBLICATION, input),
+      },
+      community: {
+        listEngagements: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_ENGAGEMENTS),
+        ingestEngagement: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_ENGAGEMENT, input),
+        createReplyDraft: (engagementId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_REPLY_DRAFT, engagementId),
+      },
+      listening: {
+        listQueries: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_LISTENING_QUERIES),
+        createQuery: (keywords) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_LISTENING_QUERY, keywords),
+        listMentions: (queryId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_MENTIONS, queryId),
+        ingestMention: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_MENTION, input),
+        getDigest: (queryId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_LISTENING_DIGEST, queryId),
+      },
+      analytics: {
+        listSnapshots: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_METRIC_SNAPSHOTS),
+        ingestSnapshot: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_METRIC_SNAPSHOT, input),
+        getReport: (periodStart, periodEnd) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SOCIAL_REPORT, periodStart, periodEnd),
+        listTrends: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_TRENDS),
+        ingestTrend: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.INGEST_TREND, input),
+        getTrendOpportunities: (keywords) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_TREND_OPPORTUNITIES, keywords),
+      },
+      controlledOutbound: {
+        list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_ACTIONS),
+        request: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REQUEST_CONTROLLED_ACTION, input),
+        approve: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.APPROVE_CONTROLLED_ACTION, actionId),
+        reject: (actionId, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REJECT_CONTROLLED_ACTION, actionId, reason),
+        simulate: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SIMULATE_CONTROLLED_ACTION, actionId),
+        execute: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXECUTE_CONTROLLED_ACTION, actionId),
+        reconcile: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RECONCILE_CONTROLLED_EXECUTION, input),
+        retry: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RETRY_CONTROLLED_EXECUTION, actionId),
+        listExecutors: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_CONTROLLED_EXECUTORS),
+        audit: (actionId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_CONTROLLED_ACTION_AUDIT, actionId),
+      },
+      accounts: {
+        list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_ACCOUNTS),
+        create: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, input),
+        beginAuthorization: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.BEGIN_ACCOUNT_AUTHORIZATION, accountId),
+        validate: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.VALIDATE_ACCOUNT, accountId),
+        disconnect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.DISCONNECT_ACCOUNT, accountId),
+        remove: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.REMOVE_ACCOUNT, accountId),
+        audit: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_AUDIT, accountId),
+        getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
+        getCapabilities: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, accountId),
+        connect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONNECT_WECHAT_DIRECT, accountId),
+      },
+      publish: {
+        list: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_PUBLISHES, accountId),
+        poll: (publishRecordId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.POLL_WECHAT_PUBLISH, publishRecordId),
+        reconcileSubmit: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.RECONCILE_WECHAT_SUBMIT, input),
+      },
+      wechatAnalytics: {
+        syncUser: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_USER_METRICS, input),
+        syncArticle: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_ARTICLE_METRICS, input),
+        overview: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_WECHAT_ANALYTICS_OVERVIEW, accountId),
+      },
+      comments: {
+        sync: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_WECHAT_COMMENTS, input),
+        list: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_COMMENTS, input),
+      },
+      automation: {
+        listRules: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_AUTOMATION_RULES),
+        createRule: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_AUTOMATION_RULE, input),
+        setEnabled: (ruleId, enabled, reason) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SET_AUTOMATION_RULE_ENABLED, ruleId, enabled, reason),
+        deleteRule: (ruleId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.DELETE_AUTOMATION_RULE, ruleId),
+        listRuns: (ruleId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_AUTOMATION_RUNS, ruleId),
+        tick: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.TICK_AUTOMATIONS),
+      },
+      schema: {
+        getInfo: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO),
+      },
+      reportImport: {
+        listContracts: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_IMPORT_CONTRACTS),
+        pickAndPreview: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PICK_REPORT_FILE, input),
+        cancelPreview: (token) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CANCEL_IMPORT_PREVIEW, token),
+        commit: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.COMMIT_REPORT_IMPORT, input),
+        listBatches: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_IMPORT_BATCHES),
+        listRows: (batchId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_IMPORTED_ROWS, batchId),
+        getInsightReport: (periodStart, periodEnd) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_INSIGHT_REPORT, periodStart, periodEnd),
+      },
+      xiaohongshuHandoff: {
+        list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS),
+        prepare: (draftId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draftId),
+        exportPackage: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, handoffId),
+        confirmPublished: (handoffId, actor) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONFIRM_XHS_PUBLISHED, handoffId, actor),
+        audit: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_XHS_HANDOFF_AUDIT, handoffId),
+      },
     },
     // --- 营销能力包 ---
     marketing: {
@@ -4047,6 +4983,7 @@ const electronAPI: ElectronAPI = {
     listRecommendations: () => ipcRenderer.invoke('proactive:listRecommendations'),
     getPendingRecommendations: () => ipcRenderer.invoke('proactive:getPendingRecommendations'),
     refreshRecommendations: () => ipcRenderer.invoke('proactive:refreshRecommendations'),
+    scanEmployeeCapabilityRecommendations: () => ipcRenderer.invoke('proactive:scanEmployeeCapabilityRecommendations'),
     acceptRecommendation: (id: string) => ipcRenderer.invoke('proactive:acceptRecommendation', id),
     dismissRecommendation: (id: string) => ipcRenderer.invoke('proactive:dismissRecommendation', id),
     deleteRecommendation: (id: string) => ipcRenderer.invoke('proactive:deleteRecommendation', id),

@@ -1,8 +1,10 @@
 import * as React from 'react'
+import { useAtomValue } from 'jotai'
 import { syntaxTree } from '@codemirror/language'
 import { Prec, RangeSetBuilder, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, keymap, type DecorationSet } from '@codemirror/view'
 import ink, { type Instance } from 'ink-mde'
+import { resolvedThemeAtom } from '@/atoms/theme'
 import { cn } from '@/lib/utils'
 import {
   createLiveMarkdownBlockPreview,
@@ -326,9 +328,12 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   extensions = [],
   className,
 }, ref): React.ReactElement {
+  const appearance = useAtomValue(resolvedThemeAtom)
   const hostRef = React.useRef<HTMLDivElement>(null)
   const viewRef = React.useRef<EditorView | null>(null)
   const instanceRef = React.useRef<Instance | null>(null)
+  const appearanceRef = React.useRef(appearance)
+  const syncingAppearanceRef = React.useRef<Instance | null>(null)
   const valueRef = React.useRef(value)
   const findControllerRef = React.useRef(createLiveMarkdownFindController())
   const findQueryRef = React.useRef<{ query: string; options: LiveMarkdownFindOptions; activeIndex: number } | null>(null)
@@ -340,12 +345,32 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   const onTextSelectionChangeRef = React.useRef(onTextSelectionChange)
   const onChangePropertiesRef = React.useRef(onChangeProperties)
   valueRef.current = value
+  appearanceRef.current = appearance
   onChangeRef.current = onChange
   onSaveRef.current = onSave
   onCancelRef.current = onCancel
   onReadyRef.current = onReady
   onTextSelectionChangeRef.current = onTextSelectionChange
   onChangePropertiesRef.current = onChangeProperties
+
+  // ink-mde 0.33.0 的 reconfigure 实际异步排队；完成后再核对最新主题。
+  const syncAppearance = React.useCallback((instance: Instance): void => {
+    if (syncingAppearanceRef.current === instance) return
+    syncingAppearanceRef.current = instance
+    void (async () => {
+      try {
+        while (instanceRef.current === instance) {
+          const currentAppearance = appearanceRef.current
+          if (instance.options().interface.appearance === currentAppearance) break
+          await Promise.resolve(instance.reconfigure({ interface: { appearance: currentAppearance } }))
+        }
+      } catch (error) {
+        console.error('同步 Markdown 编辑器主题失败：', error)
+      } finally {
+        if (syncingAppearanceRef.current === instance) syncingAppearanceRef.current = null
+      }
+    })()
+  }, [])
 
   const onChangePropertiesProxy = React.useCallback((entries: LiveMarkdownPropertyEntry[], documentValue?: string): void => {
     // The extension is retained for the editor lifetime. Forward its live
@@ -429,8 +454,9 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
     },
     getHost: () => hostRef.current,
     getView: () => viewRef.current,
-  }), [])
+  }), [applyFindMatches])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 编辑器初始化后持有自身文档状态，构建回调引用变化不应重建 CodeMirror（会丢失选区与滚动状态），外部重载走下方独立 effect
   React.useEffect(() => {
     const host = hostRef.current
     if (!host) return
@@ -447,7 +473,7 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
       files: { clipboard: false, dragAndDrop: false, injectMarkup: true },
       hooks: { afterUpdate: (nextValue) => { if (ready) onChangeRef.current(nextValue) } },
       interface: {
-        appearance: 'auto', attribution: false, autocomplete: false, images: false,
+        appearance, attribution: false, autocomplete: false, images: false,
         lists: true, readonly: readOnly, spellcheck: false, toolbar: false,
       },
       plugins: [
@@ -540,6 +566,7 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
         return
       }
       instanceRef.current = instance
+      syncAppearance(instance)
       if (instance.getDoc() !== valueRef.current) instance.update(valueRef.current)
       ready = true
       onReadyRef.current?.()
@@ -570,6 +597,11 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   // 不要因 render callback 引用变化而意外销毁 CodeMirror，避免丢失选区与滚动状态。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly])
+
+  React.useEffect(() => {
+    const instance = instanceRef.current
+    if (instance) syncAppearance(instance)
+  }, [appearance, syncAppearance])
 
   React.useEffect(() => {
     const instance = instanceRef.current

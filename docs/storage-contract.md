@@ -8,6 +8,7 @@
 | 项目、营销 | 已有 sql.js 业务数据库是权威记录 | export 后临时文件写入、文件 fsync、原子 rename、非 Windows 父目录 fsync；失败向调用者抛出，不能仅记录日志并返回成功 |
 | Campaign、KOL | 既有 SQLite 业务数据，Electron 使用 node:sqlite；Bun 测试使用 bun:sqlite | WAL 与主文件须一致。先关闭应用再备份整个根目录，不应在运行中仅拷贝单个 sqlite 文件 |
 | Context Store | 可重建检索索引，不替代会话 JSONL 或审批后的 Memory | context-store/<workspace-slug>/context-store.db；独立全局索引 __global__；重开回归保证已索引内容可读 |
+| 研发快照／验证／应用记录 | 项目 SQLite（development_apply_operations）记录应用操作状态；快照内容与验证日志保存在会话私有目录（agent-workspaces/<slug>/<sessionId>/development-*） | 备份须同时覆盖项目数据库与被引用的会话目录；操作记录指向的快照缺失时应用/Review 会明确阻塞，不伪造成功 |
 
 新配置优先采用文件；已存在的 SQLite 是兼容性约束，不代表授权另建一套权威数据。业务数据库不能当成可随意删除的缓存。Context Store 当前没有用户可操作的一键全量重建流程；发生损坏时保留原件，从权威会话记录重建，不能声称清缓存即恢复所有数据。
 

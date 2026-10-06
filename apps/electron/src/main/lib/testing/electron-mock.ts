@@ -146,7 +146,14 @@ export function buildElectronMock(): Record<string, unknown> {
     nativeTheme: { on: () => {}, off: () => {}, shouldUseDarkColors: false, themeSource: 'system' },
     net: { request: () => ({ on: () => {}, pipe: () => {}, abort: () => {} }) },
     powerMonitor: { on: () => {}, off: () => {}, getSystemIdleState: () => 'unknown' },
-    protocol: { registerFileProtocol: () => {}, interceptRequest: () => {}, handle: () => {} },
+    protocol: {
+      registerFileProtocol: () => {},
+      interceptRequest: () => {},
+      handle: () => {},
+      // 主进程启动时会注册特权协议方案（必须在 app ready 之前），
+      // mock 缺少该方法会让间接 import main/index.ts 的测试直接崩在模块加载期。
+      registerSchemesAsPrivileged: () => {},
+    },
     safeStorage: {
       isEncryptionAvailable: () => false,
       encryptString: (s: string) => Buffer.from(s, 'utf-8'),

@@ -14,8 +14,10 @@
 import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@gravitas/shared'
 import type { RuntimeMessage } from './types.ts'
 
-/** 最大回填历史消息条数 */
+/** 最大回填历史消息条数（压缩摘要不计入此上限） */
 const MAX_HISTORY_MESSAGES = 20
+
+const COMPACT_CONTEXT_NOTICE = '以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。'
 
 /** 默认 Agent 系统提示词 */
 const DEFAULT_AGENT_SYSTEM_PROMPT = `你是一个高效的编程助手，擅长通过工具调用完成代码编辑、文件操作和命令执行任务。
@@ -41,10 +43,17 @@ const WEB_AND_MEMORY_GUIDE = `## Web Bridge 与记忆
 
 ## 记忆
 
-- 你拥有跨会话记忆能力：RecallMemory 回忆，AddMemory 记住。
-- 当用户提到“之前”“上次”等回溯表述，或当前任务可能和过去做过的事情有关时，先调用 RecallMemory 回忆。
-- 当对话中出现值得记住的信息（用户的工作方式、偏好、重要决定、一起解决过的问题）时，调用 AddMemory 存储。
-- 自然运用记忆，不要提及“记忆系统”等内部概念；记忆未配置时工具会返回配置提示，向用户说明即可。`
+- RecallMemory / AddMemory 是个人跨会话云端记忆；不要把它当成当前项目的权威事实库。
+- SearchProjectMemory / ReadProjectMemory 检索本地长期记忆，范围由当前会话的工作空间、项目及实时绑定决定，工具参数不能扩大范围。
+- 当用户提到“之前”“上次”等回溯表述，或当前任务可能和过去做过的事情有关时，先检索相关记忆再回答。
+- 项目任务优先使用 SearchProjectMemory 与 SearchKnowledge；项目记忆必须结合返回的范围、来源和时间判断，旧内容可能已过期。
+- 当对话中出现值得记住的信息（用户的工作方式、偏好、重要决定、一起解决过的问题）时，使用适用的记忆工具存储；自然运用，不要提及“记忆系统”等内部概念。
+
+## 知识库
+
+- 你拥有限域知识检索能力：SearchKnowledge 搜索，ReadKnowledgeSource 读取全文。只能检索当前会话已配置的知识范围，工具参数不能扩大范围。
+- 回答中的事实性内容若来自知识库，必须以实际检索结果为依据并标注来源路径；不能只凭文档标题或记忆断言内容，检索不到就如实说明。
+- 当用户的问题可能和已整理的资料、文档、笔记相关时，先检索再回答；范围未配置时提示用户去 Project 知识页或会话设置中配置。`
 
 /** Computer Use 固定操作规则（仅当 Computer Use 工具实际可用时才注入）。 */
 const COMPUTER_USE_GUIDE = `## Computer Use
@@ -186,21 +195,85 @@ function isToolResultBlock(block: unknown): block is ToolResultLikeBlock {
   return typeof block === 'object' && block !== null && (block as { type: string }).type === 'tool_result' && 'tool_use_id' in block
 }
 
-export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[] {
-  const recent = messages.slice(-MAX_HISTORY_MESSAGES)
-  const result: ChatMessage[] = []
+function getToolResultIds(message: SDKMessage | undefined): string[] {
+  if (message?.type !== 'user') return []
+  const content = (message as SDKUserMessage).message?.content
+  if (!Array.isArray(content)) return []
+  return content.filter(isToolResultBlock).map((block) => block.tool_use_id)
+}
 
-  for (const msg of recent) {
+function getToolUseIds(message: SDKMessage | undefined): Set<string> {
+  if (message?.type !== 'assistant') return new Set()
+  const content = (message as SDKAssistantMessage).message?.content
+  if (!Array.isArray(content)) return new Set()
+  return new Set(content.filter(isToolUseBlock).map((block) => block.id))
+}
+
+/** 最近消息窗口不能从 assistant tool_use 与紧随其后的 user tool_result 中间开始。 */
+function selectRecentHistory(messages: SDKMessage[]): SDKMessage[] {
+  let boundaryIndex = -1
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index] as SDKMessage & { subtype?: string }
+    if (message.type === 'system' && message.subtype === 'compact_boundary') {
+      boundaryIndex = index
+      break
+    }
+  }
+
+  const boundary = boundaryIndex >= 0 ? messages[boundaryIndex] : undefined
+  const tail = messages.slice(boundaryIndex + 1)
+  let start = Math.max(0, tail.length - MAX_HISTORY_MESSAGES)
+  if (start > 0) {
+    const resultIds = getToolResultIds(tail[start])
+    const useIds = getToolUseIds(tail[start - 1])
+    if (resultIds.some((id) => useIds.has(id))) start--
+  }
+
+  return boundary ? [boundary, ...tail.slice(start)] : tail.slice(start)
+}
+
+function compactBoundaryToChatMessage(message: SDKMessage): ChatMessage | undefined {
+  if (message.type !== 'system') return undefined
+  const boundary = message as SDKMessage & {
+    subtype?: string
+    summary?: string
+    contextPacket?: unknown
+    session_id?: string
+  }
+  if (boundary.subtype !== 'compact_boundary' || !boundary.summary?.trim()) return undefined
+  const packet = boundary.contextPacket ?? { version: 1, summary: boundary.summary.trim() }
+  return {
+    id: `${boundary.session_id ?? ''}-compact-boundary`,
+    role: 'user',
+    content: `${COMPACT_CONTEXT_NOTICE}\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
+    createdAt: Date.now(),
+  }
+}
+
+export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = []
+  const pendingToolCalls = new Set<string>()
+
+  for (const msg of selectRecentHistory(messages)) {
+    const boundary = compactBoundaryToChatMessage(msg)
+    if (boundary) {
+      pendingToolCalls.clear()
+      result.push(boundary)
+      continue
+    }
+
     if (msg.type === 'assistant') {
       const assistantMsg = msg as SDKAssistantMessage
       const content = assistantMsg.message?.content
       if (!Array.isArray(content)) continue
 
+      pendingToolCalls.clear()
       const parts: string[] = []
       for (const block of content) {
         if (isTextBlock(block)) {
           parts.push(block.text)
         } else if (isToolUseBlock(block)) {
+          pendingToolCalls.add(block.id)
           parts.push(`<tool_use id="${block.id}" name="${block.name}">${JSON.stringify(block.input)}</tool_use>`)
         }
       }
@@ -222,13 +295,16 @@ export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[]
       if (!Array.isArray(content)) continue
 
       const parts: string[] = []
+      let hasUserText = false
       for (const block of content) {
         if (isTextBlock(block)) {
+          hasUserText = true
           parts.push(block.text)
-        } else if (isToolResultBlock(block)) {
+        } else if (isToolResultBlock(block) && pendingToolCalls.has(block.tool_use_id)) {
           const errorPrefix = block.is_error ? '[错误] ' : ''
           const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content)
           parts.push(`<tool_result tool_use_id="${block.tool_use_id}">${errorPrefix}${text}</tool_result>`)
+          pendingToolCalls.delete(block.tool_use_id)
         }
       }
 
@@ -242,6 +318,7 @@ export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[]
           attachments,
         })
       }
+      if (hasUserText) pendingToolCalls.clear()
     }
   }
 

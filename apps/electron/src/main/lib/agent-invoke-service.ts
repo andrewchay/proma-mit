@@ -8,7 +8,8 @@
  * 通过 Team Mailbox（PH2-C）暴露给目标成员/其 Agent。
  */
 
-import { mkdirSync, readFileSync, existsSync, appendFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { getConfigDir } from './config-paths'
 
@@ -23,6 +24,8 @@ export interface AgentInvokeRequest {
   status: InvokeRequestStatus
   /** 接受/完成的回复 */
   result?: string
+  /** 调用方提供的幂等键；相同键的同一请求重试不会重复进入收件箱。 */
+  idempotencyKey?: string
   createdAt: number
   updatedAt: number
 }
@@ -31,6 +34,8 @@ const MAX_INVOKES = 2000
 /** 单条请求 task / result 文本长度上限（防超长文本使 JSONL 膨胀 / 刷屏 Mailbox）。 */
 const TASK_CHAR_LIMIT = 10_000
 const RESULT_CHAR_LIMIT = 10_000
+const IDEMPOTENCY_KEY_CHAR_LIMIT = 256
+const INVOKE_STATUSES = new Set<InvokeRequestStatus>(['open', 'accepted', 'done', 'declined'])
 
 function file(): string {
   const dir = join(getConfigDir(), 'agent-invokes')
@@ -38,47 +43,106 @@ function file(): string {
   return join(dir, 'invokes.jsonl')
 }
 
+function isAgentInvokeRequest(value: unknown): value is AgentInvokeRequest {
+  if (!value || typeof value !== 'object') return false
+  const request = value as Partial<AgentInvokeRequest>
+  return typeof request.id === 'string'
+    && typeof request.fromMemberId === 'string'
+    && typeof request.toMemberId === 'string'
+    && typeof request.task === 'string'
+    && typeof request.status === 'string'
+    && INVOKE_STATUSES.has(request.status as InvokeRequestStatus)
+    && (request.result === undefined || typeof request.result === 'string')
+    && (request.idempotencyKey === undefined || typeof request.idempotencyKey === 'string')
+    && typeof request.createdAt === 'number'
+    && Number.isFinite(request.createdAt)
+    && typeof request.updatedAt === 'number'
+    && Number.isFinite(request.updatedAt)
+}
+
 function readAll(): AgentInvokeRequest[] {
-  try {
-    const p = file()
-    if (!existsSync(p)) return []
-    return readFileSync(p, 'utf-8').split('\n').flatMap((line): AgentInvokeRequest[] => {
-      if (!line.trim()) return []
-      try {
-        return [JSON.parse(line) as AgentInvokeRequest]
-      } catch {
-        return []
+  const p = file()
+  if (!existsSync(p)) return []
+
+  return readFileSync(p, 'utf-8').split('\n').flatMap((line, index): AgentInvokeRequest[] => {
+    if (!line.trim()) return []
+    try {
+      const parsed: unknown = JSON.parse(line)
+      if (!isAgentInvokeRequest(parsed)) {
+        throw new Error('记录字段不完整')
       }
-    })
-  } catch {
-    return []
-  }
+      return [parsed]
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new Error(`Agent 互调存储损坏（第 ${index + 1} 行）：${reason}`, { cause: error })
+    }
+  })
 }
 
 function writeAll(requests: AgentInvokeRequest[]): void {
+  const p = file()
+  const tempPath = `${p}.tmp-${process.pid}-${randomUUID()}`
+  const content = requests.map((request) => JSON.stringify(request)).join('\n') + (requests.length ? '\n' : '')
+
   try {
-    const p = file()
-    const dir = join(getConfigDir(), 'agent-invokes')
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    // 用追加式：清空后重写全部（小规模可接受）
-    require('node:fs').writeFileSync(p, requests.map((r) => JSON.stringify(r)).join('\n') + (requests.length ? '\n' : ''), 'utf-8')
-  } catch {
-    // 忽略
+    writeFileSync(tempPath, content, { encoding: 'utf-8', flag: 'wx' })
+    renameSync(tempPath, p)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      // 临时文件可能尚未创建，或已被 rename 移走。
+    }
+    throw error
   }
 }
 
+function normalizeIdempotencyKey(idempotencyKey: string | undefined): string | undefined {
+  if (idempotencyKey === undefined) return undefined
+  const normalized = idempotencyKey.trim()
+  if (!normalized) throw new Error('Agent 互调幂等键不能为空')
+  if (normalized.length > IDEMPOTENCY_KEY_CHAR_LIMIT) {
+    throw new Error(`Agent 互调幂等键不能超过 ${IDEMPOTENCY_KEY_CHAR_LIMIT} 个字符`)
+  }
+  return normalized
+}
+
 /** 发送一个互调请求给某成员（真人 / AI 员工）。 */
-export function sendAgentInvoke(fromMemberId: string, toMemberId: string, task: string): AgentInvokeRequest {
+export function sendAgentInvoke(
+  fromMemberId: string,
+  toMemberId: string,
+  task: string,
+  idempotencyKey?: string,
+): AgentInvokeRequest {
+  const normalizedTask = task.slice(0, TASK_CHAR_LIMIT)
+  const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey)
+  const all = readAll()
+
+  if (normalizedIdempotencyKey) {
+    const existing = all.find((request) => request.idempotencyKey === normalizedIdempotencyKey)
+    if (existing) {
+      if (
+        existing.fromMemberId !== fromMemberId
+        || existing.toMemberId !== toMemberId
+        || existing.task !== normalizedTask
+      ) {
+        throw new Error(`Agent 互调幂等键已用于不同请求：${normalizedIdempotencyKey}`)
+      }
+      return existing
+    }
+  }
+
+  const now = Date.now()
   const req: AgentInvokeRequest = {
-    id: `invoke-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `invoke-${now}-${Math.random().toString(36).slice(2, 6)}`,
     fromMemberId,
     toMemberId,
-    task: task.slice(0, TASK_CHAR_LIMIT),
+    task: normalizedTask,
     status: 'open',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    ...(normalizedIdempotencyKey ? { idempotencyKey: normalizedIdempotencyKey } : {}),
+    createdAt: now,
+    updatedAt: now,
   }
-  const all = readAll()
   all.unshift(req)
   writeAll(all.slice(0, MAX_INVOKES))
   console.log(`[Diag][agent-invoke] send ${req.fromMemberId} → ${req.toMemberId}: ${req.task.slice(0, 40)}`)
@@ -88,22 +152,22 @@ export function sendAgentInvoke(fromMemberId: string, toMemberId: string, task: 
 /** 列出某成员收到的互调请求（按时间倒序）。 */
 export function listIncomingInvokes(toMemberId: string, status?: InvokeRequestStatus): AgentInvokeRequest[] {
   return readAll()
-    .filter((r) => r.toMemberId === toMemberId && (!status || r.status === status))
+    .filter((request) => request.toMemberId === toMemberId && (!status || request.status === status))
     .sort((a, b) => b.createdAt - a.createdAt)
 }
 
 /** 更新互调请求状态（接受/完成/拒绝）并附结果。 */
 export function respondToInvoke(id: string, status: InvokeRequestStatus, result?: string): AgentInvokeRequest | null {
   const all = readAll()
-  const idx = all.findIndex((r) => r.id === id)
-  if (idx === -1) return null
+  const index = all.findIndex((request) => request.id === id)
+  if (index === -1) return null
   const updated: AgentInvokeRequest = {
-    ...all[idx]!,
+    ...all[index]!,
     status,
     ...(result ? { result: result.slice(0, RESULT_CHAR_LIMIT) } : {}),
     updatedAt: Date.now(),
   }
-  all[idx] = updated
+  all[index] = updated
   writeAll(all)
   console.log(`[Diag][agent-invoke] respond ${id} → ${status}`)
   return updated

@@ -406,6 +406,23 @@ export function computeDiffStats(
   toolName: string,
   input: Record<string, unknown>
 ): { additions: number; deletions: number } | null {
+  // MultiEdit：edits 数组内多次 old_string/new_string 替换，逐条累加行数
+  if (toolName === 'MultiEdit') {
+    const edits = input.edits
+    if (!Array.isArray(edits)) return null
+    let additions = 0
+    let deletions = 0
+    for (const edit of edits) {
+      if (!edit || typeof edit !== 'object') continue
+      const record = edit as Record<string, unknown>
+      const oldString = typeof record.old_string === 'string' ? record.old_string : ''
+      const newString = typeof record.new_string === 'string' ? record.new_string : ''
+      deletions += oldString ? oldString.split('\n').length : 0
+      additions += newString ? newString.split('\n').length : 0
+    }
+    return additions > 0 || deletions > 0 ? { additions, deletions } : null
+  }
+
   if (toolName !== 'Edit') {
     return null
   }

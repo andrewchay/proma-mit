@@ -249,16 +249,19 @@ export const chatMessageRefreshAtom = atom<Map<string, number>>(new Map())
 
 /** Agent 模式推荐数据（由 suggest_agent_mode 工具结果写入） */
 export interface AgentRecommendation {
-  /** 推荐理由（AI 生成，描述 Agent 如何帮助用户） */
+  /** 推荐理由 */
   reason: string
   /** 建议的 Agent 初始提示词 */
   suggestedPrompt: string
   /** 来源对话 ID（用于对话切换时清除） */
   conversationId: string
+  /** TypeSafe 推荐用于本地反馈关联；legacy 工具推荐无此字段。 */
+  decisionId?: string
+  source?: 'typesafe' | 'legacy'
 }
 
-/** 待处理的 Agent 模式推荐（工具结果写入，用户操作/关闭/切换对话时清除） */
-export const pendingAgentRecommendationAtom = atom<AgentRecommendation | null>(null)
+/** 按对话隔离的待处理 Agent 模式推荐，避免后台会话覆盖当前会话横幅。 */
+export const pendingAgentRecommendationAtom = atom<Map<string, AgentRecommendation>>(new Map())
 
 // ===== Per-conversation 设置 Map =====
 // 分屏时每个 ChatView 实例独立控制，缺省时使用全局默认值

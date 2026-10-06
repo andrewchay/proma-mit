@@ -153,4 +153,50 @@ describe('AI SDK runtime core', () => {
     expect(result).toEqual({ content: 'Goal 检查点已持久化。' })
     expect(checkpointSummary).toBe('等待用户授权')
   })
+
+  test('given safe dev session with worktreeScopedWrite when Write targets inside cwd then allowed; outside cwd or without flag then denied', async () => {
+    const core = new AISDKRuntimeCore()
+    const writes: string[] = []
+    const writeTool = createRuntimeTool('Write', async (input) => {
+      writes.push(String((input as Record<string, unknown>).file_path))
+      return { toolCallId: 'unexpected', content: '不应执行占位实现' }
+    })
+    const toolSet = core.createAISDKTools([writeTool], {
+      sessionId: 'session-safe-dev',
+      cwd: '/tmp/worktree/source',
+      signal: new AbortController().signal,
+      activeSession: {
+        controller: new AbortController(), permissionMode: 'safe', planModeEntered: false,
+        worktreeScopedWrite: true,
+      },
+    })
+    const write = toolSet.Write as unknown as ExecutableAITool
+
+    // 相对路径落在 cwd 内 → 放行
+    const inside = await write.execute({ file_path: 'hello.txt', content: 'x' },
+      { toolCallId: 'w1', messages: [], abortSignal: new AbortController().signal, context: {} })
+    expect(inside.isError).toBeFalsy()
+
+    // 越界（相对路径回溯 / 绝对路径在外）→ 拒绝且不执行
+    for (const file_path of ['../escape.txt', '/etc/passwd', 'a/../../b.txt']) {
+      const denied = await write.execute({ file_path, content: 'x' },
+        { toolCallId: 'w2', messages: [], abortSignal: new AbortController().signal, context: {} })
+      expect(denied.isError).toBe(true)
+      expect(String(denied.content)).toContain('工作树内')
+    }
+    expect(writes).toEqual(['hello.txt'])
+
+    // 未置位豁免的普通 safe 会话：Write 仍被拒
+    const plainToolSet = core.createAISDKTools([writeTool], {
+      sessionId: 'session-safe-plain',
+      cwd: '/tmp/worktree/source',
+      signal: new AbortController().signal,
+      activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false },
+    })
+    const plainWrite = plainToolSet.Write as unknown as ExecutableAITool
+    const denied = await plainWrite.execute({ file_path: 'hello.txt', content: 'x' },
+      { toolCallId: 'w3', messages: [], abortSignal: new AbortController().signal, context: {} })
+    expect(denied.isError).toBe(true)
+    expect(String(denied.content)).toContain('安全模式下不允许执行写操作')
+  })
 })

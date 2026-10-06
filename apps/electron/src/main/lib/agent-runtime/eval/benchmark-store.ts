@@ -139,14 +139,15 @@ export function listBenchmarks(): Array<BenchmarkConfig & { latestScore: number 
 
 /** 读取某个 Benchmark 的配置 + scoreboard（供面板展示）。不存在返回 null。 */
 export function getBenchmarkDetail(benchmarkId: string):
-  | { config: BenchmarkConfig; scoreboard: Scoreboard; cases: Array<{ caseId: string; statement: string | null }> }
+  | { config: BenchmarkConfig; scoreboard: Scoreboard; cases: Array<{ caseId: string; statement: string | null; rubric: Rubric | null }> }
   | null {
   const config = readBenchmark(benchmarkId)
   if (!config) return null
   const scoreboard = readScoreboard(benchmarkId)
-  const cases: Array<{ caseId: string; statement: string | null }> = config.cases.map((caseId) => ({
+  const cases = config.cases.map((caseId) => ({
     caseId,
     statement: readCaseStatement(benchmarkId, caseId),
+    rubric: readCaseRubric(benchmarkId, caseId),
   }))
   return { config, scoreboard, cases }
 }
@@ -168,6 +169,10 @@ export interface CreateBenchmarkRequest {
   heldOutCases?: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
   targetScore: number
   cases: Array<{ caseId: string; statement: string; rubricItems: Array<{ name: string; points: number; check: string }> }>
+  /** 被测目标类型（缺省 agent）；employee_capability 需同时提供 scope。 */
+  targetType?: import('./types').EvalTargetType
+  targetScope?: 'role' | 'workspace'
+  targetWorkspaceId?: string
 }
 
 /** UI 用的创建入口：拼装 BenchmarkConfig + Cases 交给 createBenchmark。 */
@@ -187,6 +192,9 @@ export function createBenchmarkForUI(input: CreateBenchmarkRequest): BenchmarkCo
     title: input.title,
     description: input.description,
     targetAgentId: input.targetAgentId,
+    ...(input.targetType ? { targetType: input.targetType } : {}),
+    ...(input.targetScope ? { targetScope: input.targetScope } : {}),
+    ...(input.targetWorkspaceId ? { targetWorkspaceId: input.targetWorkspaceId } : {}),
     runtime: { provider: input.provider, modelId: input.modelId, channelId: input.channelId },
     ...(input.judgeRuntime ? { judgeRuntime: input.judgeRuntime } : {}),
     ...(input.judgeBudget ? { judgeBudget: input.judgeBudget } : {}),
@@ -210,7 +218,11 @@ export function createBenchmarkForUI(input: CreateBenchmarkRequest): BenchmarkCo
 export { listBenchmarkTemplates, getBenchmarkTemplate }
 
 /** 从预置模板创建 Benchmark（自动添加后缀避免冲突） */
-export function createBenchmarkFromTemplate(templateId: string, suffix?: string): BenchmarkConfig {
+export function createBenchmarkFromTemplate(
+  templateId: string,
+  suffix?: string,
+  judgeRuntime?: EvalRuntimeRef,
+): BenchmarkConfig {
   const template = getBenchmarkTemplate(templateId)
   if (!template) {
     throw new Error(`预置模板不存在: ${templateId}`)
@@ -220,6 +232,7 @@ export function createBenchmarkFromTemplate(templateId: string, suffix?: string)
   const input: CreateBenchmarkRequest = {
     ...template,
     id: instanceId,
+    ...(judgeRuntime ? { judgeRuntime } : {}),
   }
   return createBenchmarkForUI(input)
 }

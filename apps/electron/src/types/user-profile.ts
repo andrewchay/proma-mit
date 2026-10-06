@@ -16,6 +16,8 @@ export interface UserProfile {
   userName: string
   /** 头像（emoji 字符串 或 data:image/* base64 URL） */
   avatar: string
+  /** 当前用户绑定的统一成员目录 ID（项目任务身份匹配用；未绑定时回退 paa-<userName>） */
+  memberId?: string
 }
 
 /** 用户档案 IPC 通道 */

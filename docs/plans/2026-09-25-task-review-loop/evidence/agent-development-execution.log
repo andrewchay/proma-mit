@@ -1,0 +1,193 @@
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/agent-development-execution.test.ts:
+[配置] 已创建 SDK 配置目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/sdk-config
+[配置] 已创建项目管理目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/projects
+[配置] 已创建 Agent 工作区目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/aef5beb5-482b-41c9-9ef8-2d99f4df287b
+[Agent 工作区] 已创建 plugin manifest: aef5beb5-482b-41c9-9ef8-2d99f4df287b
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: aef5beb5-482b-41c9-9ef8-2d99f4df287b
+[Agent 工作区] 已创建工作区: 研发测试-aef5beb5-482b-41c9-9ef8-2d99f4df287b (slug: aef5beb5-482b-41c9-9ef8-2d99f4df287b)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (ba2eac29-7d23-484a-9755-6a5357032314)
+[Diag][agent-employee] 执行 ad6db15d-da40-48ea-afb5-5cb48834be0c task=9a909ff5-6c1b-445f-a525-5750aaa7f07d 工作区=员工:06adb42c-009a-421e-8584-f80b9d6c7797 最终=06adb42c-009a-421e-8584-f80b9d6c7797
+[配置] 已创建 Agent 会话目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-sessions
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/aef5beb5-482b-41c9-9ef8-2d99f4df287b/c2477249-ffbb-4394-acd4-cac833441d4a
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (c2477249-ffbb-4394-acd4-cac833441d4a)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (c2477249-ffbb-4394-acd4-cac833441d4a)
+[Diag][agent-employee] 执行 b4e1949c-be92-4fbc-b025-71bcd3376f89 task=9a909ff5-6c1b-445f-a525-5750aaa7f07d 工作区=员工:06adb42c-009a-421e-8584-f80b9d6c7797 最终=06adb42c-009a-421e-8584-f80b9d6c7797
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (c2477249-ffbb-4394-acd4-cac833441d4a)
+(pass) 研发员工既有链路兼容 > Given 研发配置 When 派发与返工 Then 继承范围权限且保留原代码和会话 [608.38ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/7a561702-4711-4039-be7d-78e0d4f235eb
+[Agent 工作区] 已创建 plugin manifest: 7a561702-4711-4039-be7d-78e0d4f235eb
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 7a561702-4711-4039-be7d-78e0d4f235eb
+[Agent 工作区] 已创建工作区: 研发测试-7a561702-4711-4039-be7d-78e0d4f235eb (slug: 7a561702-4711-4039-be7d-78e0d4f235eb)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (ee8d8a91-3383-426f-bb22-bf8abe8d6f2e)
+[Diag][agent-employee] 执行 f32d5174-1db1-42ed-ba77-08ab88dd38e3 task=d29c7c7c-5b02-4210-9544-e733d09efeb7 工作区=员工:2e5a3722-3612-43d4-8542-0f8efaa1fd43 最终=2e5a3722-3612-43d4-8542-0f8efaa1fd43
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/7a561702-4711-4039-be7d-78e0d4f235eb/1a40336d-f3da-4e95-b194-e3f0864dfb05
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (1a40336d-f3da-4e95-b194-e3f0864dfb05)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (1a40336d-f3da-4e95-b194-e3f0864dfb05)
+(pass) 研发员工既有链路兼容 > Given 用户停止运行中执行 When 调用取消 Then Runtime 被停止且任务回退 paused [197.72ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/19443930-3dc0-4658-a095-067faf49108c
+[Agent 工作区] 已创建 plugin manifest: 19443930-3dc0-4658-a095-067faf49108c
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 19443930-3dc0-4658-a095-067faf49108c
+[Agent 工作区] 已创建工作区: 研发测试-19443930-3dc0-4658-a095-067faf49108c (slug: 19443930-3dc0-4658-a095-067faf49108c)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (aa6b1328-f32f-4dd0-94d6-733ad00cde52)
+[Diag][agent-employee] 执行 e2082837-dc5e-4b36-9747-282d22564ad3 task=270ea06d-40f6-41b0-b01f-8f25b98223fd 工作区=员工:fcba8bd6-1178-426c-8afe-45cab584960f 最终=fcba8bd6-1178-426c-8afe-45cab584960f
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/19443930-3dc0-4658-a095-067faf49108c/cd72f667-2368-4a82-b118-239f18915b5a
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (cd72f667-2368-4a82-b118-239f18915b5a)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (cd72f667-2368-4a82-b118-239f18915b5a)
+(pass) 研发员工既有链路兼容 > Given Runtime 只确认接受请求 When 调用取消 Then 等待完成回调再标 cancelled [198.45ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/506dcc33-0b14-484b-af69-c3e8d9b55e96
+[Agent 工作区] 已创建 plugin manifest: 506dcc33-0b14-484b-af69-c3e8d9b55e96
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 506dcc33-0b14-484b-af69-c3e8d9b55e96
+[Agent 工作区] 已创建工作区: 研发测试-506dcc33-0b14-484b-af69-c3e8d9b55e96 (slug: 506dcc33-0b14-484b-af69-c3e8d9b55e96)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (49fbf847-b673-4cd5-a97f-a16ee234f805)
+[Diag][agent-employee] 执行 1da2dff1-7709-41f9-bd4c-e6077c6d7dfe task=e645685b-4952-4c2f-a95b-0a8ca579b9db 工作区=员工:4a610d97-9764-42ca-b0d6-75bbfdda2982 最终=4a610d97-9764-42ca-b0d6-75bbfdda2982
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/506dcc33-0b14-484b-af69-c3e8d9b55e96/065e0c7b-67c7-4504-8f59-39153d253cfd
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (065e0c7b-67c7-4504-8f59-39153d253cfd)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (065e0c7b-67c7-4504-8f59-39153d253cfd)
+(pass) 研发员工既有链路兼容 > Given Runtime 未确认停止 When 调用取消 Then 不伪造 cancelled [200.32ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/2e4d89f9-fdaf-462d-b787-badbbd862933
+[Agent 工作区] 已创建 plugin manifest: 2e4d89f9-fdaf-462d-b787-badbbd862933
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 2e4d89f9-fdaf-462d-b787-badbbd862933
+[Agent 工作区] 已创建工作区: 研发测试-2e4d89f9-fdaf-462d-b787-badbbd862933 (slug: 2e4d89f9-fdaf-462d-b787-badbbd862933)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (9114cb49-78a4-4a06-a861-1195a440faaa)
+[Diag][agent-employee] 执行 e9c73e53-389f-43f8-ab41-4bfd70ade4ec task=6613c81b-56df-4be5-b6fd-a9a5e5d5af55 工作区=员工:e8d99b10-00c7-40ff-94a0-95a59e9ef7f7 最终=e8d99b10-00c7-40ff-94a0-95a59e9ef7f7
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/2e4d89f9-fdaf-462d-b787-badbbd862933/23563364-c13c-48f1-8d0d-bec713ce46c5
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (23563364-c13c-48f1-8d0d-bec713ce46c5)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (23563364-c13c-48f1-8d0d-bec713ce46c5)
+(pass) 研发员工既有链路兼容 > Given 已完成执行 When 调用取消 Then 拒绝改变交付状态 [455.37ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/2b96ed02-c4f6-4d26-8896-312f57345675
+[Agent 工作区] 已创建 plugin manifest: 2b96ed02-c4f6-4d26-8896-312f57345675
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 2b96ed02-c4f6-4d26-8896-312f57345675
+[Agent 工作区] 已创建工作区: 研发测试-2b96ed02-c4f6-4d26-8896-312f57345675 (slug: 2b96ed02-c4f6-4d26-8896-312f57345675)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (98fbd6b5-1ad5-4cbe-8163-91a4cd011dba)
+[Diag][agent-employee] 执行 6fa4660a-9c75-4074-a46c-883f4f46c94b task=4f6327d1-8ace-4368-a961-b1dd0dbbc39a 工作区=员工:f1d05649-7789-4b99-aaf6-438c12948526 最终=f1d05649-7789-4b99-aaf6-438c12948526
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/2b96ed02-c4f6-4d26-8896-312f57345675/8b4531bd-7bce-4442-8e04-df64164fa2f9
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (8b4531bd-7bce-4442-8e04-df64164fa2f9)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (8b4531bd-7bce-4442-8e04-df64164fa2f9)
+(pass) 研发员工既有链路兼容 > Given 用户停止 When 回调 Then 取消而非成功 [229.07ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/f1d07906-c25d-4c93-bdc5-83e36e87fab5
+[Agent 工作区] 已创建 plugin manifest: f1d07906-c25d-4c93-bdc5-83e36e87fab5
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: f1d07906-c25d-4c93-bdc5-83e36e87fab5
+[Agent 工作区] 已创建工作区: 研发测试-f1d07906-c25d-4c93-bdc5-83e36e87fab5 (slug: f1d07906-c25d-4c93-bdc5-83e36e87fab5)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (2dc575f4-5297-4c7c-a7ac-ea4c222069da)
+[Diag][agent-employee] 执行 2d76f6ee-17ec-45f7-bc9d-a57dd99a01cd task=9b16cbef-4474-4e07-9e43-6b44ae765852 工作区=员工:625df909-2861-41b6-b912-619895e4f7f8 最终=625df909-2861-41b6-b912-619895e4f7f8
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/f1d07906-c25d-4c93-bdc5-83e36e87fab5/bc3c5613-7a56-4617-afa0-099f28777d73
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (bc3c5613-7a56-4617-afa0-099f28777d73)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (bc3c5613-7a56-4617-afa0-099f28777d73)
+(pass) 研发员工既有链路兼容 > Given 运行中改派 When 旧运行交付 Then 不覆盖新负责人和状态 [341.41ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/e65c6dc3-2bbf-44ce-a7d4-dbaf5bbe9eb4
+[Agent 工作区] 已创建 plugin manifest: e65c6dc3-2bbf-44ce-a7d4-dbaf5bbe9eb4
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: e65c6dc3-2bbf-44ce-a7d4-dbaf5bbe9eb4
+[Agent 工作区] 已创建工作区: 研发测试-e65c6dc3-2bbf-44ce-a7d4-dbaf5bbe9eb4 (slug: e65c6dc3-2bbf-44ce-a7d4-dbaf5bbe9eb4)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (8d466953-2b51-41c9-9359-2cb2d037ad54)
+[Diag][agent-employee] 执行 77f04564-1817-49c5-88cd-95b370533868 task=d186d9ad-0e8d-416d-88be-a095f266b916 工作区=员工:d19b4060-18b7-4c33-b957-16e4200fbed4 最终=d19b4060-18b7-4c33-b957-16e4200fbed4
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/e65c6dc3-2bbf-44ce-a7d4-dbaf5bbe9eb4/7fab32ab-2e02-4a8c-8469-9c7042d87c32
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (7fab32ab-2e02-4a8c-8469-9c7042d87c32)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (7fab32ab-2e02-4a8c-8469-9c7042d87c32)
+(pass) 研发员工既有链路兼容 > Given 自定义可执行状态 When 指派 Then 按语义组派发且不重复执行 [218.27ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/0e59b4e1-aee0-4c41-a91b-928ed1c00301
+[Agent 工作区] 已创建 plugin manifest: 0e59b4e1-aee0-4c41-a91b-928ed1c00301
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 0e59b4e1-aee0-4c41-a91b-928ed1c00301
+[Agent 工作区] 已创建工作区: 研发测试-0e59b4e1-aee0-4c41-a91b-928ed1c00301 (slug: 0e59b4e1-aee0-4c41-a91b-928ed1c00301)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (74bdd5fe-51e8-4c2a-b238-f5ae23387c69)
+(pass) 研发员工既有链路兼容 > Given 研发提示 When 构建执行上下文 Then 明确禁止修改受保护目录 [105.04ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/4d0857f7-83a4-4cdd-aeea-a119b9d5f9c5
+[Agent 工作区] 已创建 plugin manifest: 4d0857f7-83a4-4cdd-aeea-a119b9d5f9c5
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 4d0857f7-83a4-4cdd-aeea-a119b9d5f9c5
+[Agent 工作区] 已创建工作区: 研发测试-4d0857f7-83a4-4cdd-aeea-a119b9d5f9c5 (slug: 4d0857f7-83a4-4cdd-aeea-a119b9d5f9c5)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (53e895e3-73d5-4e41-861e-69ad40bee95c)
+[Diag][agent-employee] 执行 0ae64d38-b384-4b35-ae55-b92cca4088ed task=4a87c451-d63a-43d4-bc3c-b0ffb094e184 工作区=员工:45f33ce6-6d9d-4b6d-bed0-c08d6e7d3c5a 最终=45f33ce6-6d9d-4b6d-bed0-c08d6e7d3c5a
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/4d0857f7-83a4-4cdd-aeea-a119b9d5f9c5/17fabcac-50c6-4d61-82c2-daa995698a0a
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (17fabcac-50c6-4d61-82c2-daa995698a0a)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (17fabcac-50c6-4d61-82c2-daa995698a0a)
+[AgentEmployee] 创建会话失败: 24 | 
+25 | export function createDevelopmentWorktree(repository: string, sessionDirectory: string, executionId: string): DevelopmentWorktree {
+26 |   if (!/^[a-zA-Z0-9-]+$/.test(executionId)) throw new Error('无效的研发执行 ID')
+27 |   const root = realpathSync(repository)
+28 |   if (realpathSync(git(root, 'rev-parse', '--show-toplevel')) !== root) throw new Error('工作区必须指向 Git 仓库根目录')
+29 |   if (git(root, 'status', '--porcelain', '--untracked-files=all')) throw new Error('仓库存在未提交改动，请先保存当前迭代，再派发研发任务；不会自动提交或丢弃变更')
+                                                                                  ^
+error: 仓库存在未提交改动，请先保存当前迭代，再派发研发任务；不会自动提交或丢弃变更
+      at createDevelopmentWorktree (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-development-worktree.ts:29:78)
+      at startAgentHeadless (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-employee-service.ts:632:104)
+      at dispatchTaskToAgentLocked (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-employee-service.ts:513:8)
+      at dispatchTaskToAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-employee-service.ts:443:18)
+      at dispatch (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-development-execution.test.ts:63:32)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-development-execution.test.ts:189:38)
+
+(pass) 研发员工既有链路兼容 > Given 脏仓库 When 派发 Then 保留失败记录，不调用模型 [150.72ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/0016b666-35a9-4162-b460-470dad8bc2c7
+[Agent 工作区] 已创建 plugin manifest: 0016b666-35a9-4162-b460-470dad8bc2c7
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 0016b666-35a9-4162-b460-470dad8bc2c7
+[Agent 工作区] 已创建工作区: 研发测试-0016b666-35a9-4162-b460-470dad8bc2c7 (slug: 0016b666-35a9-4162-b460-470dad8bc2c7)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (b02e0f2d-170a-49fa-a727-468cdb965dbe)
+[Diag][agent-employee] 执行 5b5e03bb-34f9-4ba6-b8ee-64502f6ddf3f task=aa2a9662-5579-4f9e-9c95-8a0d2e6ee112 工作区=员工:e6e0bebd-edff-4a59-86a8-85a0a79b3c32 最终=e6e0bebd-edff-4a59-86a8-85a0a79b3c32
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/0016b666-35a9-4162-b460-470dad8bc2c7/f21224a8-0d88-40ca-9647-c2d88e672967
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (f21224a8-0d88-40ca-9647-c2d88e672967)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (f21224a8-0d88-40ca-9647-c2d88e672967)
+[Diag][agent-employee] 执行 8705c4b5-1940-482c-907c-ac0dfdf306d1 task=aa2a9662-5579-4f9e-9c95-8a0d2e6ee112 工作区=员工:e6e0bebd-edff-4a59-86a8-85a0a79b3c32 最终=e6e0bebd-edff-4a59-86a8-85a0a79b3c32
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (f21224a8-0d88-40ca-9647-c2d88e672967)
+(pass) 研发员工既有链路兼容 > Given 真实 SDK 消息 When 首次交付与返工 Then 按 uuid 提取本轮结果 [481.70ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/2cac3b34-2b41-447a-88b3-9d5f0ef9d338
+[Agent 工作区] 已创建 plugin manifest: 2cac3b34-2b41-447a-88b3-9d5f0ef9d338
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 2cac3b34-2b41-447a-88b3-9d5f0ef9d338
+[Agent 工作区] 已创建工作区: 研发测试-2cac3b34-2b41-447a-88b3-9d5f0ef9d338 (slug: 2cac3b34-2b41-447a-88b3-9d5f0ef9d338)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (0b89e834-16cc-40fd-b11f-315afb57b448)
+[Diag][agent-employee] 执行 556122b8-e719-435e-9745-f1151e995ace task=59d392c2-9815-4a8b-837f-fea2391c2134 工作区=员工:a60a88e6-9fd9-4b2e-80a5-e9b01317e5f8 最终=a60a88e6-9fd9-4b2e-80a5-e9b01317e5f8
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/2cac3b34-2b41-447a-88b3-9d5f0ef9d338/16dedc29-0dc5-4625-b240-ab080ca1a0eb
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (16dedc29-0dc5-4625-b240-ab080ca1a0eb)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (16dedc29-0dc5-4625-b240-ab080ca1a0eb)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (16dedc29-0dc5-4625-b240-ab080ca1a0eb)
+(pass) 研发员工既有链路兼容 > Given Runtime 未返回停止字段 When 存在真实停止标记 Then 不交付 [230.19ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/7dd082c3-5ca3-4eea-bd4c-be4a981db86a
+[Agent 工作区] 已创建 plugin manifest: 7dd082c3-5ca3-4eea-bd4c-be4a981db86a
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: 7dd082c3-5ca3-4eea-bd4c-be4a981db86a
+[Agent 工作区] 已创建工作区: 研发测试-7dd082c3-5ca3-4eea-bd4c-be4a981db86a (slug: 7dd082c3-5ca3-4eea-bd4c-be4a981db86a)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (9e4987ab-46f2-4d25-a75f-7783de980cd4)
+[Diag][agent-employee] 执行 e0eb8b13-9097-4e3c-abcf-b885480cb3c3 task=cc673411-c99d-46db-a2b0-e36ede45b68a 工作区=员工:12b9d246-736c-4d58-951d-3b3469e14efb 最终=12b9d246-736c-4d58-951d-3b3469e14efb
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/7dd082c3-5ca3-4eea-bd4c-be4a981db86a/1d212789-73e0-4e1f-b41f-aa6c2c6b3d5f
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (1d212789-73e0-4e1f-b41f-aa6c2c6b3d5f)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (1d212789-73e0-4e1f-b41f-aa6c2c6b3d5f)
+(pass) 研发员工既有链路兼容 > Given 已改派 When 旧员工报告卡点 Then 不覆盖新任务 [195.52ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/d4c0cd2b-3a7e-4b6d-97c5-3707c45fcd4f
+[Agent 工作区] 已创建 plugin manifest: d4c0cd2b-3a7e-4b6d-97c5-3707c45fcd4f
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: d4c0cd2b-3a7e-4b6d-97c5-3707c45fcd4f
+[Agent 工作区] 已创建工作区: 研发测试-d4c0cd2b-3a7e-4b6d-97c5-3707c45fcd4f (slug: d4c0cd2b-3a7e-4b6d-97c5-3707c45fcd4f)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (c01cabdc-0527-46f7-9809-abd57a4bf803)
+[Diag][agent-employee] 执行 921eb8f8-72f9-4c5f-a8c5-aae2846e729b task=01505850-a302-461c-9a32-5e1577e1a0cb 工作区=员工:b76f8641-ac0e-4494-be36-ef7639d8c37c 最终=b76f8641-ac0e-4494-be36-ef7639d8c37c
+[配置] 已创建 Agent 会话工作目录: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/d4c0cd2b-3a7e-4b6d-97c5-3707c45fcd4f/e03ca433-bba9-4ac4-a6ff-044b22be33f2
+[Agent 会话] 已创建会话: [AI员工] 研发 · 修复小问题 (e03ca433-bba9-4ac4-a6ff-044b22be33f2)
+[Agent 会话] 已更新会话: [AI员工] 研发 · 修复小问题 (e03ca433-bba9-4ac4-a6ff-044b22be33f2)
+(pass) 研发员工既有链路兼容 > Given 旧员工排队期间改派 When 新负责人派发 Then 取消旧队列且启动新员工 [192.98ms]
+[配置] 已创建 Agent 工作区: /var/folders/59/q3vzby0n52n0fpkjsts6xr080000gq/T/gravitas-rd-execution-lb48K8/config/agent-workspaces/bfaab7b4-03af-4574-a779-260631875a1a
+[Agent 工作区] 已创建 plugin manifest: bfaab7b4-03af-4574-a779-260631875a1a
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: bfaab7b4-03af-4574-a779-260631875a1a
+[Agent 工作区] 已创建工作区: 研发测试-bfaab7b4-03af-4574-a779-260631875a1a (slug: bfaab7b4-03af-4574-a779-260631875a1a)
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 隔离测试渠道 (7aa42e15-19a1-40ca-84c5-276a02a96234)
+[项目存储] 负责人身份回填完成：assignee 2 条，creator 0 条，同名消歧跳过 0 条
+(pass) 研发员工既有链路兼容 > Given 普通员工 When 重开数据库 Then 缺省兼容，研发配置保持 [352.71ms]
+[配置] 配置目录: ~/.gravitas/
+
+ 15 pass
+ 0 fail
+ 66 expect() calls
+Ran 15 tests across 1 file. [4.50s]
+
+commandExitCode=0

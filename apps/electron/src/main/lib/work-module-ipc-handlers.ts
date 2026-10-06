@@ -5,9 +5,16 @@
  * 子模块的处理器迁移而来，桥接渲染进程 IPC 调用到主进程服务层。
  */
 
-import { ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
+import { observeProjectPilot } from './project-pilot-reconcile'
+import { reconcilePilotOverview } from './project-pilot-intent-store'
+import { listPilotInbox, resolvePilotApproval } from './project-pilot-approval'
+import { getPilotControlSnapshot } from './project-pilot-control'
+import { confirmPilotGrantIssue, previewPilotGrantIssue } from './project-pilot-grant-issue'
+import { confirmPilotGrantPauseAndRequestStops, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
+import { savePilotPolicyDraft } from './project-pilot-policy'
 import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
@@ -70,6 +77,7 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  reorderProjects,
   listTasks,
   getTask,
   createTask,
@@ -103,6 +111,12 @@ import {
   getMeetingNote,
   getKanbanBoard,
   getProjectProgress,
+  listTaskStatuses,
+  createTaskStatus,
+  updateTaskStatusDef,
+  deleteTaskStatus,
+  reorderTaskStatuses,
+  reorderTask,
   saveUserMapping,
   getUserMapping,
   listUserMappings,
@@ -149,7 +163,43 @@ import {
   deleteAgentEmployee,
   listAgentExecutionsByEntity,
   listAgentExecutionsByAgent,
+  cancelAgentExecution,
+  listAgentEmployeeCapabilityVersions,
+  listAgentEmployeeLearningSamples,
+  excludeAgentEmployeeLearningSample,
+  reviewAgentEmployeeLearningSample,
+  getAgentEmployeeCapabilityObservations,
+  rollbackAgentEmployeeCapabilityVersion,
+  listAgentEmployeeCapabilityRollbackAudits,
+  getAgentEmployeeCapabilityHealth,
+  previewAgentEmployeeCapabilityRollback,
+  buildAgentEmployeeCapabilityAlerts,
 } from './agent-employee-service'
+import {
+  getTaskReview,
+  getSnapshotDiff,
+  prepareFileDelegation,
+  requestChanges as requestDevelopmentChanges,
+  acceptDelivery as acceptDevelopmentDelivery,
+  rejectDelivery as rejectDevelopmentDelivery,
+} from './development-review-service'
+import {
+  prepareApply as prepareDevelopmentApply,
+  confirmApply as confirmDevelopmentApply,
+  getApplyStatus as getDevelopmentApplyStatus,
+} from './development-apply-service'
+import {
+  runDevelopmentValidation,
+  listDevelopmentValidations,
+} from './development-validation-service'
+import { runEmployeeCapabilityEvaluation } from './agent-employee-evaluation-service'
+import { disableEmployeeCanary, enableEmployeeCanary, listEmployeeCanaryConfigs, pauseEmployeeCanary } from './agent-employee-canary'
+import { detectCapabilityConflicts } from './agent-employee-capability-conflict'
+import { getGovernancePolicy, listGovernanceAudits, updateGovernancePolicy } from './employee-capability-governance-policy'
+import { buildEmployeeCapabilityReviewReport } from './employee-capability-ledger'
+import { scanSampleForSensitiveContent } from './agent-employee-sample-scan'
+import { exportEvolutionPackage, summarizeEvolutionPackageForReview, validateEvolutionPackage } from './employee-capability-portability'
+import { deleteAgentEmployeeLearningSamples, getAgentEmployeeCapabilityDependencyGraph, previewAgentEmployeeLearningSampleRetention } from './project-sqlite-store'
 import { onSettingsChange } from './settings-service'
 import {
   listChannels,
@@ -219,6 +269,8 @@ function initProjectTodoProviders(): void {
 }
 
 export function registerWorkModuleIpcHandlers(): void {
+  // 新媒体运营本地工作台（无外部平台副作用）由独立模块注册。
+  require('./new-media/new-media-ipc-handlers').registerNewMediaIpcHandlers()
   console.log('[IPC] 正在注册工作模块 IPC 处理器（日程管家 / 日历同步 / 项目管理）...')
 
   // ============================================
@@ -380,6 +432,39 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT, async (_, id: string) => {
     return getProject(id)
   })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, async (_, projectId: string) => {
+    return observeProjectPilot(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PILOT_OVERVIEW, async (_, projectId: string) => {
+    return reconcilePilotOverview(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PILOT_INBOX, async (_, projectId: string) => listPilotInbox(projectId))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.RESOLVE_PILOT_APPROVAL, async (_, projectId: string, taskId: string,
+    decision: 'approved' | 'rejected', sourceVersion: number, note: string) =>
+    resolvePilotApproval(projectId, taskId, decision, { sourceVersion, note }))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PILOT_CONTROL, async (_, projectId: string) => {
+    return getPilotControlSnapshot(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SAVE_PILOT_POLICY_DRAFT, async (_, projectId: string, input: import('@gravitas/shared').PilotPolicyDraftInput, expectedRevision: number | null) => {
+    savePilotPolicyDraft(projectId, input, expectedRevision)
+    return getPilotControlSnapshot(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT, async (_, projectId: string, policyRevision: number) => {
+    return previewPilotGrantIssue(projectId, policyRevision)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT, async (_, preview: import('@gravitas/shared').PilotGrantIssuePreview, confirmedFingerprint: string) => {
+    return confirmPilotGrantIssue(preview, confirmedFingerprint)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.PREVIEW_PILOT_GRANT_PAUSE, async (_, grantId: string) => {
+    return previewPilotGrantPauseImpact(grantId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.CONFIRM_PILOT_GRANT_PAUSE, async (_, preview: import('@gravitas/shared').PilotGrantPauseImpact, choices: import('@gravitas/shared').PilotRunningChoice[]) => {
+    return confirmPilotGrantPauseAndRequestStops(preview, choices, (executionId) => {
+      const result = cancelAgentExecution(executionId)
+      return { executionId, requestAccepted: result.stopped || result.stopRequested,
+        stopped: result.stopped, processTermination: result.processTermination }
+    })
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.CREATE_PROJECT, async (_, input) => {
     return createProject(input)
   })
@@ -388,6 +473,9 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.DELETE_PROJECT, async (_, id: string) => {
     return deleteProject(id)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_PROJECTS, async (_, orderedIds: string[]) => {
+    return reorderProjects(orderedIds)
   })
 
   // 任务 CRUD
@@ -563,6 +651,98 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT_PROGRESS, async (_, projectId: string) => {
     return getProjectProgress(projectId)
   })
+  // 任务状态定义（State 分组）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_STATUSES, async (_, projectId: string) => {
+    return listTaskStatuses(projectId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.CREATE_TASK_STATUS, async (_, projectId: string, input) => {
+    return createTaskStatus(projectId, input)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.UPDATE_TASK_STATUS, async (_, projectId: string, statusId: string, patch) => {
+    return updateTaskStatusDef(projectId, statusId, patch)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.DELETE_TASK_STATUS, async (_, projectId: string, statusId: string, migrateToStatusId: string) => {
+    return deleteTaskStatus(projectId, statusId, migrateToStatusId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_TASK_STATUSES, async (_, projectId: string, orderedIds: string[]) => {
+    return reorderTaskStatuses(projectId, orderedIds)
+  })
+  // 任务拖拽排序（一次拖拽可同时改状态与位置）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.REORDER_TASK, async (_, id: string, input) => {
+    return reorderTask(id, input)
+  })
+  // 任务级 token 配额：查询任务历次执行会话的累计消耗（配额刹车依据）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_TASK_TOKEN_USAGE, async (_, taskId: string) => {
+    const { listAgentExecutionsByEntity } = await import('./project-sqlite-store')
+    const { getCostMiniLedger } = await import('./token-usage-service')
+    const executions = listAgentExecutionsByEntity('task', taskId)
+    let totalTokens = 0
+    let totalCostUsd = 0
+    let activeSessionTokens = 0
+    const sessions: Array<{ sessionId: string; status: string; tokens: number; costUsd: number; startedAt: number }> = []
+    for (const execution of executions) {
+      if (!execution.sessionId || execution.sessionId.startsWith('workflow:')) continue
+      const ledger = getCostMiniLedger({ sessionId: execution.sessionId })
+      totalTokens += ledger.totalTokens
+      totalCostUsd += ledger.totalCostUsd
+      if (execution.status === 'queued' || execution.status === 'running') {
+        activeSessionTokens += ledger.totalTokens
+      }
+      sessions.push({
+        sessionId: execution.sessionId,
+        status: execution.status,
+        tokens: ledger.totalTokens,
+        costUsd: ledger.totalCostUsd,
+        startedAt: execution.startedAt,
+      })
+    }
+    return { taskId, totalTokens, totalCostUsd, activeSessionTokens, sessions }
+  })
+  // 项目级 AI 成本聚合：本项目所有 agent 执行的 token/费用（按员工分组 + 超限任务清单）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT_AI_COST, async (_, projectId: string) => {
+    const { listAgentExecutionsByEntity, listTasks, getAgentEmployee } = await import('./project-sqlite-store')
+    const { getCostMiniLedger } = await import('./token-usage-service')
+    const tasks = listTasks(projectId, { includeSubTasks: true, includeDrafts: true })
+    const agentNames = new Map<string, string>()
+    const byAgent = new Map<string, { agentId: string; agentName: string; tokens: number; costUsd: number; taskCount: number }>()
+    let totalTokens = 0
+    let totalCostUsd = 0
+    const overBudgetTasks: Array<{ taskId: string; title: string; budget: number; used: number }> = []
+    for (const task of tasks) {
+      for (const execution of listAgentExecutionsByEntity('task', task.id)) {
+        if (!execution.sessionId || execution.sessionId.startsWith('workflow:')) continue
+        const ledger = getCostMiniLedger({ sessionId: execution.sessionId })
+        if (ledger.totalTokens === 0) continue
+        totalTokens += ledger.totalTokens
+        totalCostUsd += ledger.totalCostUsd
+        const name = agentNames.get(execution.agentId) ?? getAgentEmployee(execution.agentId)?.name ?? `员工-${execution.agentId.slice(0, 6)}`
+        agentNames.set(execution.agentId, name)
+        const bucket = byAgent.get(execution.agentId) ?? { agentId: execution.agentId, agentName: name, tokens: 0, costUsd: 0, taskCount: 0 }
+        bucket.tokens += ledger.totalTokens
+        bucket.costUsd += ledger.totalCostUsd
+        bucket.taskCount += 1
+        byAgent.set(execution.agentId, bucket)
+      }
+      // 配额超限清单：有预算且最近执行会话消耗超限
+      if (task.tokenBudget && task.tokenBudget > 0) {
+        const executions = listAgentExecutionsByEntity('task', task.id)
+        const latestWithSession = [...executions].reverse().find((e) => e.sessionId && !e.sessionId.startsWith('workflow:'))
+        if (latestWithSession?.sessionId) {
+          const used = getCostMiniLedger({ sessionId: latestWithSession.sessionId }).totalTokens
+          if (used > task.tokenBudget) {
+            overBudgetTasks.push({ taskId: task.id, title: task.title, budget: task.tokenBudget, used })
+          }
+        }
+      }
+    }
+    return {
+      projectId,
+      totalTokens,
+      totalCostUsd,
+      overBudgetTasks,
+      byAgent: [...byAgent.values()].sort((a, b) => b.tokens - a.tokens),
+    }
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_DEPENDENCIES, async (_, projectId: string) => {
     return listTaskDependencies(projectId)
   })
@@ -580,6 +760,12 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_MY_WORK, async (_, assigneeUserId: string) => {
     return listMyWork(assigneeUserId)
+  })
+
+  // 日程视图：跨项目轻量任务（有 dueDate 且未完成）
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_ALL_PROJECT_TASKS_LITE, async () => {
+    const { listAllProjectTasksLite } = await import('./project-service')
+    return listAllProjectTasksLite()
   })
 
   // PH2-⑤：我发起/指派的任务
@@ -768,6 +954,10 @@ export function registerWorkModuleIpcHandlers(): void {
     const { getMember } = require('./project-sqlite-store')
     return getMember(memberId)
   })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.ENSURE_MEMBER_BY_NAME, (_: unknown, displayName: string) => {
+    const { ensureMemberByName } = require('./project-sqlite-store')
+    return ensureMemberByName(displayName)
+  })
 
   // ===== 成员目录聚合（PH1-B） =====
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_MEMBER_DIRECTORY, (_: unknown, filter?: { kind?: string; q?: string; activeOnly?: boolean }) => {
@@ -787,6 +977,79 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_EMPLOYEE, (_, id: string) => deleteAgentEmployee(id))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, (_, entityType: 'task' | 'subTask', entityId: string) => listAgentExecutionsByEntity(entityType, entityId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, (_, agentId: string, limit?: number) => listAgentExecutionsByAgent(agentId, limit ?? 50))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, (_, taskId: string) => getTaskReview(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_READINESS, async (_, taskId: string) => {
+    // 只读前置检查：不授权、不派发；各门禁在真实派发路径仍独立校验（R-P0-08）
+    const { getTask, listAgentExecutionsByEntity } = await import('./project-sqlite-store')
+    const { getAgentWorkspace } = await import('./agent-workspace-manager')
+    const { inspectTaskReadiness } = await import('./project-task-readiness')
+    const task = getTask(taskId)
+    if (!task) throw new Error('任务不存在')
+    return inspectTaskReadiness(task, {
+      getWorkspace: (id) => getAgentWorkspace(id),
+      getChain: (projectId) => getProjectChain(projectId),
+      listExecutions: (id) => listAgentExecutionsByEntity('task', id),
+      isEmployeeEnabled: (employeeId) => Boolean(getAgentEmployee(employeeId)?.enabled),
+    })
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, (_, executionId: string, filePath: string) => getSnapshotDiff(executionId, filePath))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, (_, input: import('@gravitas/shared').PrepareFileDelegationInput) => prepareFileDelegation(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, (_, taskId: string, comment: string) => requestDevelopmentChanges(taskId, comment))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, (_, taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => acceptDevelopmentDelivery(taskId, deliveryId, input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, (_, taskId: string, deliveryId: string, comment: string) => rejectDevelopmentDelivery(taskId, deliveryId, comment))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_VALIDATION, (_, taskId: string, command: string) => runDevelopmentValidation(taskId, command))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, (_, taskId: string) => listDevelopmentValidations(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, (_, taskId: string) => prepareDevelopmentApply(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CONFIRM_APPLY, (_, operationId: string) => confirmDevelopmentApply(operationId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_APPLY_STATUS, (_, taskId: string) => getDevelopmentApplyStatus(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, (_, executionId: string) => cancelAgentExecution(executionId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, (_, agentId: string) => listAgentEmployeeCapabilityVersions(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, (_, agentId: string) => listAgentEmployeeLearningSamples(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.EXCLUDE_LEARNING_SAMPLE, (_, sampleId: string) => excludeAgentEmployeeLearningSample(sampleId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REVIEW_LEARNING_SAMPLE, (_, sampleId: string, evidenceSummary: string) => reviewAgentEmployeeLearningSample(sampleId, evidenceSummary))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_OBSERVATIONS, (_, agentId: string) => getAgentEmployeeCapabilityObservations(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ROLLBACK_CAPABILITY_VERSION, (_, agentId: string, versionId: string, reason: string) => rollbackAgentEmployeeCapabilityVersion(agentId, versionId, reason))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_ROLLBACK_AUDITS, (_, agentId: string) => listAgentEmployeeCapabilityRollbackAudits(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_CAPABILITY_EVALUATION, (_, input: import('@gravitas/shared').RunAgentEmployeeCapabilityEvaluationInput) => runEmployeeCapabilityEvaluation(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_HEALTH, (_, agentId: string, windowDays?: number) => getAgentEmployeeCapabilityHealth(agentId, windowDays))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_CANARY, (_, agentId: string) => listEmployeeCanaryConfigs().filter((config) => config.agentId === agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ENABLE_CAPABILITY_CANARY, (_, input: import('@gravitas/shared').AgentEmployeeCanaryConfigResult) => enableEmployeeCanary(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DISABLE_CAPABILITY_CANARY, (_, agentId: string, scope: 'role' | 'workspace', reason: string) => reason ? pauseEmployeeCanary(agentId, scope, reason) : disableEmployeeCanary(agentId, scope))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_DEPENDENCY_GRAPH, (_, agentId: string) => getAgentEmployeeCapabilityDependencyGraph(agentId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_CONFLICTS, (_, input: { roleContent?: string; workspaceContent?: string }) => detectCapabilityConflicts(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_GOVERNANCE_POLICY, () => getGovernancePolicy())
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_GOVERNANCE_POLICY, (_, patch: Partial<import('@gravitas/shared').EmployeeCapabilityGovernancePolicyResult>) => updateGovernancePolicy(patch))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_GOVERNANCE_AUDITS, () => listGovernanceAudits())
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_SAMPLE_RETENTION, (_, agentId: string, retentionDays: number | null) => previewAgentEmployeeLearningSampleRetention(agentId, retentionDays))
+  // 删除为不可逆操作：调用方必须先展示预览并取得用户确认。
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.DELETE_LEARNING_SAMPLES, (_, ids: string[]) => deleteAgentEmployeeLearningSamples(ids))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_EVOLUTION_LEDGER, (_, agentIds?: string[], windowDays?: number) => buildEmployeeCapabilityReviewReport({ agentIds, windowDays }))
+  // 导出默认脱敏；导入只校验并返回摘要，不激活任何内容。
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.EXPORT_EVOLUTION_PACKAGE, (_, agentIds?: string[]) => exportEvolutionPackage({ agentIds }))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CAPABILITY_ROLLBACK, (_, agentId: string, versionId: string) => previewAgentEmployeeCapabilityRollback(agentId, versionId))
+  // 仅提示，不改写摘要，也不拒绝保存。
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.SCAN_SAMPLE_CONTENT, (_, text: string) => scanSampleForSensitiveContent(text))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_BENCHMARK_VERSION_HISTORY, (_, benchmarkId: string) => {
+    const { readBenchmarkVersionHistory } = require('./agent-runtime/eval/benchmark-versioning') as typeof import('./agent-runtime/eval/benchmark-versioning')
+    return readBenchmarkVersionHistory(benchmarkId)
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SCAN_SCHEDULE, () => {
+    const { getEmployeeCapabilityScanSchedule } = require('./employee-capability-scan-scheduler') as typeof import('./employee-capability-scan-scheduler')
+    return getEmployeeCapabilityScanSchedule()
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.UPDATE_SCAN_SCHEDULE, (_, input: { enabled: boolean; intervalHours?: number }) => {
+    const { updateEmployeeCapabilityScanSchedule } = require('./employee-capability-scan-scheduler') as typeof import('./employee-capability-scan-scheduler')
+    return updateEmployeeCapabilityScanSchedule(input)
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_SCAN_IF_DUE, () => {
+    const { runEmployeeCapabilityScanIfDue } = require('./employee-capability-scan-scheduler') as typeof import('./employee-capability-scan-scheduler')
+    return runEmployeeCapabilityScanIfDue()
+  })
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_CAPABILITY_ALERTS, (_, agentId: string, windowDays?: number) => buildAgentEmployeeCapabilityAlerts(agentId, windowDays))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.VALIDATE_EVOLUTION_PACKAGE, (_, input: unknown) => {
+    const result = validateEvolutionPackage(input)
+    return result.ok ? { ok: true, summary: summarizeEvolutionPackageForReview(result.package) } : result
+  })
 
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()
@@ -941,4 +1204,5 @@ export function registerWorkModuleIpcHandlers(): void {
     await ensureMarketingReady()
     return marketingService.updatePaidRule(id, patch)
   })
+
 }

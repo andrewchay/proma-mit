@@ -1,0 +1,23 @@
+{
+  "name": "@gravitas/subscription-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "BUSL-1.1",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "dev:memory": "SUBSCRIPTION_USE_IN_MEMORY_DB=1 NODE_ENV=development bun run src/index.ts",
+    "smoke": "bun run scripts/smoke-subscription.ts",
+    "generate-keys": "bun run scripts/generate-keys.ts"
+  },
+  "dependencies": {
+    "@gravitas/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

@@ -27,7 +27,6 @@ import {
   streamingStatesAtom,
   chatStreamErrorsAtom,
   chatMessageRefreshAtom,
-  pendingAgentRecommendationAtom,
   conversationModelsAtom,
   chatPendingMessageAtom,
   queuedChatMessagesAtom,
@@ -97,7 +96,6 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const promptSidebarOpen = useAtomValue(promptSidebarOpenAtom)
   const activeToolIds = useAtomValue(activeToolIdsAtom)
-  const setPendingRecommendation = useSetAtom(pendingAgentRecommendationAtom)
   const [chatPendingMessage, setChatPendingMessage] = React.useState<ChatPendingMessage | null>(null)
 
   // 从全局 atom 读取快速任务待发送消息
@@ -129,8 +127,8 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
 
   // ===== 对话切换时重置状态 =====
   React.useEffect(() => {
+    if (!conversationId) return
     setInlineEditingMessageId(null)
-    setPendingRecommendation(null)
 
     // 清空附件列表和缓存
     setPendingAttachments((prev) => {
@@ -147,7 +145,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
     if (window.__pendingAttachmentData) {
       window.__pendingAttachmentData.clear()
     }
-  }, [setPendingRecommendation])
+  }, [conversationId])
 
   // ===== 加载消息 + 上下文分隔线 =====
   React.useEffect(() => {
@@ -660,7 +658,7 @@ function ChatViewInner({ conversationId }: ChatViewProps): React.ReactElement {
           )}
 
           {/* Agent 模式推荐横幅 */}
-          <AgentRecommendBanner />
+          <AgentRecommendBanner conversationId={conversationId} />
 
           {/* 底部：输入框 */}
           <ChatInput

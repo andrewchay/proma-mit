@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { X, FolderOpen, ExternalLink, RefreshCw, ChevronRight, MoreHorizontal, FolderSearch, Pencil, FolderInput, Info, FolderHeart, MessageSquarePlus } from 'lucide-react'
+import { X, FolderOpen, ExternalLink, RefreshCw, ChevronRight, MoreHorizontal, FolderSearch, Pencil, FolderInput, Info, FolderHeart, MessageSquarePlus, FolderGit2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { FileBrowser, FileDropZone, FileTypeIcon, computeTreeRowLayout, AncestorGuides, STICKY_ROW_BASE_CLASS, canBeSticky } from '@/components/file-browser'
+import { DelegateFileTaskDialog, resolveDelegationTarget } from '@/components/projects/DelegateFileTaskDialog'
 import { FileSearchBar } from '@/components/file-browser/FileSearchBar'
 import { PersistentFileScrollArea } from '@/components/file-browser/PersistentFileScrollArea'
 import { fileTreeStateKey } from '@/components/file-browser/file-tree-state'
@@ -163,6 +164,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const workspaceSlug = workspaces.find((w) => w.id === currentWorkspaceId)?.slug ?? null
+  const repoRoot = workspaces.find((w) => w.id === currentWorkspaceId)?.rootPath ?? null
 
   // 附加目录列表（会话级）
   const attachedDirsMap = useAtomValue(agentAttachedDirectoriesMapAtom)
@@ -373,6 +375,19 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const handleRefresh = React.useCallback(() => {
     setFilesVersion((prev) => prev + 1)
   }, [setFilesVersion])
+
+  // 文件委派给 AI 员工（M2）：仅在文件位于仓库内时预填相对路径
+  const [delegation, setDelegation] = React.useState<{ open: boolean; workspaceId?: string; targetPath?: string }>({ open: false })
+  const handleDelegateToAgent = React.useCallback((entry: FileEntry) => {
+    const workspace = workspaces.find((w) => w.id === currentWorkspaceId)
+    const target = resolveDelegationTarget(entry.path, workspace)
+    if (target) {
+      setDelegation({ open: true, workspaceId: target.workspaceId, targetPath: target.relativePath })
+    } else {
+      // 会话目录/工作区文件目录内的文件无法推导仓库相对路径：仅打开对话框让用户填写
+      setDelegation({ open: true, workspaceId: currentWorkspaceId ?? undefined })
+    }
+  }, [workspaces, currentWorkspaceId])
 
   // 添加文件到聊天
   const pendingFiles = useAtomValue(agentPendingFilesAtomFamily(sessionId))
@@ -635,7 +650,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           {hasSessionAttachedItems && (
                             <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3 pt-2">工作文件（存储于该工作区目录）</div>
                           )}
-                          <FileBrowser rootPath={sessionPath} stateKey={sessionFileStateKey} hideToolbar embedded hideEmpty={hasSessionAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
+                          <FileBrowser rootPath={sessionPath} stateKey={sessionFileStateKey} hideToolbar embedded hideEmpty={hasSessionAttachedItems} onAddToChat={handleAddToChat} onDelegateToAgent={handleDelegateToAgent} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
                         </>
                         {/* 会话文件拖拽上传区域 */}
                         <FileDropZone
@@ -653,6 +668,27 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                     </>
                   )}
 
+
+                  {/* ===== 仓库文件区（绑定了本地 Git 仓库的工作区；文件委派入口） ===== */}
+                  {repoRoot && (
+                    <div className="flex-1 min-h-0 flex flex-col mx-2 mb-2">
+                      <div className="flex items-center gap-1 px-2 h-[32px] flex-shrink-0">
+                        <FolderGit2 className="size-3 text-muted-foreground" />
+                        <span className="text-[11px] font-medium text-muted-foreground">仓库文件（{repoRoot.split('/').pop()}）</span>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="size-3 text-muted-foreground/50 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-[220px]">
+                            <p>绑定仓库的源码树；悬浮文件行用 ⋯ 菜单可「交给 AI 员工修改」，研发执行在独立 worktree 进行</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <PersistentFileScrollArea stateKey={`repo-${currentWorkspaceId ?? 'none'}`} className="flex-1 min-h-0 overflow-y-auto pb-1 scrollbar-thin">
+                        <FileBrowser rootPath={repoRoot} stateKey={`repo-${currentWorkspaceId ?? 'none'}`} hideToolbar embedded onAddToChat={handleAddToChat} onDelegateToAgent={handleDelegateToAgent} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
+                      </PersistentFileScrollArea>
+                    </div>
+                  )}
 
                   {/* ===== 工作区文件区 ===== */}
                   <div className="flex-1 min-h-0 flex flex-col mx-2 mb-2">
@@ -718,7 +754,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
                           {hasWorkspaceAttachedItems && (
                             <div className="text-[11px] font-medium text-muted-foreground mb-1 px-3 pt-2">工作文件（存储于该工作区目录）</div>
                           )}
-                          <FileBrowser rootPath={workspaceFilesPath} stateKey={workspaceFileStateKey} hideToolbar embedded hideEmpty={hasWorkspaceAttachedItems} onAddToChat={handleAddToChat} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
+                          <FileBrowser rootPath={workspaceFilesPath} stateKey={workspaceFileStateKey} hideToolbar embedded hideEmpty={hasWorkspaceAttachedItems} onAddToChat={handleAddToChat} onDelegateToAgent={handleDelegateToAgent} onFilePreview={handleFilePreview} onOpenDetachedPreview={handleOpenDetachedPreview} />
                         </>
                       )}
                       {/* 工作区文件拖拽上传区域 */}
@@ -756,6 +792,12 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
           )}
           </div>
         </div>
+      <DelegateFileTaskDialog
+        open={delegation.open}
+        onClose={() => setDelegation({ open: false })}
+        workspaceId={delegation.workspaceId}
+        initialTargetPath={delegation.targetPath}
+      />
     </div>
   )
 }

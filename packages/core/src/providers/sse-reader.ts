@@ -27,16 +27,17 @@ export interface StreamSSEOptions {
   /** 自定义 fetch 函数（代理等场景下由调用方注入） */
   fetchFn?: typeof globalThis.fetch
   /**
-   * 流式读取的空闲看门狗超时（毫秒）。
+   * 流中相邻数据块的空闲看门狗超时（毫秒）。
    *
-   * 解决「SSE 中途无任何数据、连接也不报错 → 静默挂起」问题：
-   * 若在 idleTimeoutMs 内 `reader.read()` 从未返回任何数据，判定为挂起/断流，
-   * 自动 abort 底层 fetch 并抛出一个可重试的瞬时网络错误，让上层 withRetry /
-   * Pi 断流重试接管，避免会话永远卡死。任何实际数据到达都会重置计时。
-   *
-   * 默认 120_000（120s）。传入 0 或负数可禁用看门狗（保持旧行为）。
+   * 解决「SSE 中途无任何数据、连接也不报错 → 静默挂起」问题。默认 120 秒；
+   * 传入 0 或负数可禁用。任何实际数据到达都会重置计时。
    */
   idleTimeoutMs?: number
+  /**
+   * 首模型响应宽限（毫秒）。设置后从发起 fetch 起计时，直到解析出首个文本、推理或工具事件；
+   * 心跳和无业务数据块不会结束宽限，模型开始响应后恢复使用 idleTimeoutMs。
+   */
+  firstResponseTimeoutMs?: number
 }
 
 /** streamSSE 的返回结果 */
@@ -75,26 +76,58 @@ export interface StreamSSEResult {
 export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSEResult> {
   const { request, adapter, onEvent, signal, fetchFn = fetch } = options
 
-  // 空闲看门狗：在「流无任何数据到达」时判定挂起并中断，避免静默卡死。
+  // 两阶段看门狗：大上下文首字节可使用更长宽限，收到首字节后恢复常规流中阈值。
   const idleTimeoutMs = options.idleTimeoutMs ?? 120_000
   const idleEnabled = idleTimeoutMs > 0
-  const idleEnabledRef = { enabled: idleEnabled, ms: idleTimeoutMs }
+  const firstResponseTimeoutMs = options.firstResponseTimeoutMs ?? 0
+  const firstResponseEnabled = firstResponseTimeoutMs > 0
+  const watchdogEnabled = idleEnabled || firstResponseEnabled
+  const firstResponseDeadline = firstResponseEnabled ? Date.now() + firstResponseTimeoutMs : undefined
 
   // 内部 controller：既响应外部 abort，也负责超时自中断（fetch 只能绑定一个 signal）。
   const idleController = new AbortController()
-  if (idleEnabled && signal) {
-    if (signal.aborted) idleController.abort()
-    else signal.addEventListener('abort', () => idleController.abort(), { once: true })
-  }
-  const effectiveSignal = idleEnabled ? idleController.signal : signal
+  const effectiveSignal = watchdogEnabled
+    ? signal
+      ? AbortSignal.any([signal, idleController.signal])
+      : idleController.signal
+    : signal
 
-  // 1. 发起请求（支持通过 fetchFn 注入代理）
-  const response = await fetchFn(request.url, {
+  const createIdleTimeoutError = (timeoutMs: number, phase: '首响应' | '流中'): Error => {
+    const error = new Error(
+      `${adapter.providerType} SSE ${phase}空闲超时 (no data for ${timeoutMs}ms): stream ended without data`,
+    )
+    error.name = 'AbortError'
+    return error
+  }
+
+  const raceWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, phase: '首响应' | '流中'): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const error = createIdleTimeoutError(timeoutMs, phase)
+            idleController.abort()
+            reject(error)
+          }, timeoutMs)
+        }),
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  // 1. 发起请求（支持通过 fetchFn 注入代理）。首字节宽限从 fetch 开始，覆盖等待响应头的阶段。
+  const fetchPromise = fetchFn(request.url, {
     method: 'POST',
     headers: request.headers,
     body: request.body,
     signal: effectiveSignal,
   })
+  const response = firstResponseEnabled
+    ? await raceWithTimeout(fetchPromise, firstResponseTimeoutMs, '首响应')
+    : await fetchPromise
 
   // 2. 错误检查
   if (!response.ok) {
@@ -138,39 +171,19 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
     // 没有任何数据返回（读挂起），判定为静默挂起：取消底层 fetch 并抛可重试的
     // 瞬时网络错误，让上层 withRetry / Pi 断流重试接管，避免会话永远卡死。
     type ReadResult = Awaited<ReturnType<typeof reader.read>>
+    let receivedModelActivity = false
     const readWithIdleGuard = async (): Promise<ReadResult> => {
-      if (!idleEnabledRef.enabled) return reader.read()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      let rejectRead: ((e: Error) => void) | null = null
-      // 标记本次 read 是否因看门狗空闲超时而被中断（区别于用户/外部 abort）。
-      let idleTimedOut = false
-      const readPromise = reader.read().catch((e: unknown) => {
-        const err = e instanceof Error ? e : new Error(String(e))
-        // 仅当本次中断确由看门狗超时触发时才吞掉 AbortError（交由下方竞态中的拒绝分支
-        // 抛出统一的空闲超时错误）；外部 abort（用户中断）应原样抛出，交给上层 abort 处理。
-        if (err.name === 'AbortError' && idleTimedOut) return { done: true, value: undefined } as unknown as ReadResult
-        throw err
-      })
-      timer = setTimeout(() => {
-        idleTimedOut = true
-        const err = new Error(
-          `${adapter.providerType} SSE 流空闲超时 (no data for ${idleEnabledRef.ms}ms): stream ended without data`
-        )
-        err.name = 'AbortError'
+      const waitingForFirstResponse = !receivedModelActivity && firstResponseDeadline !== undefined
+      const firstResponseRemaining = waitingForFirstResponse ? firstResponseDeadline - Date.now() : undefined
+      const timeoutMs = firstResponseRemaining !== undefined ? firstResponseRemaining : idleTimeoutMs
+      const phase = waitingForFirstResponse ? '首响应' : '流中'
+      const enabled = waitingForFirstResponse ? firstResponseEnabled : idleEnabled
+      if (!enabled) return reader.read()
+      if (timeoutMs <= 0) {
         idleController.abort()
-        rejectRead?.(err)
-      }, idleEnabledRef.ms)
-      try {
-        return await Promise.race<ReadResult>([
-          readPromise,
-          new Promise<ReadResult>((_resolve, reject) => {
-            rejectRead = reject
-          }),
-        ])
-      } finally {
-        if (timer) clearTimeout(timer)
-        rejectRead = null
+        throw createIdleTimeoutError(firstResponseTimeoutMs, '首响应')
       }
+      return raceWithTimeout(reader.read(), timeoutMs, phase)
     }
 
     while (true) {
@@ -202,6 +215,7 @@ export async function streamSSE(options: StreamSSEOptions): Promise<StreamSSERes
         const events = adapter.parseSSELine(data)
 
         for (const event of events) {
+          if (event.type !== 'usage' && event.type !== 'done') receivedModelActivity = true
           if (event.type === 'chunk') {
             content += event.delta
           } else if (event.type === 'reasoning') {

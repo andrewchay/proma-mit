@@ -6,6 +6,8 @@ import {
   readAgentDirState,
   getBuiltinAgentDefinition,
   writeAgentAgentsMd,
+  readAgentPromptOverride,
+  restoreAgentAgentsMd,
   foldLegacyAgentOverridesIntoDirs,
 } from './agent-definition-store'
 import { getAgentDir, getDefaultAgentsUserDir } from './config-paths'
@@ -73,6 +75,16 @@ describe('agent 即目录（agent-definition-store）', () => {
     // buildBuiltinAgents 反映目录（真实链路）
     const agents = buildBuiltinAgents(true)
     expect(agents['researcher']?.prompt).toContain('采纳后的新指令')
+  })
+
+  it("识别目录 prompt 覆盖并恢复随应用发布的默认值", () => {
+    seedAgent("code-reviewer", "自定义评测改进指令", 5)
+    expect(readAgentPromptOverride("code-reviewer")).toBe("自定义评测改进指令")
+
+    expect(restoreAgentAgentsMd("code-reviewer")).toBe(true)
+    expect(readAgentPromptOverride("code-reviewer")).toBeUndefined()
+    expect(readAgentDirState("code-reviewer")?.version).toBe(1)
+    expect(readFileSync(join(getAgentDir("code-reviewer"), "AGENTS.md"), "utf-8")).toContain("代码质量")
   })
 
   it('foldLegacyAgentOverridesIntoDirs 把 override 折叠进目录并清理', () => {

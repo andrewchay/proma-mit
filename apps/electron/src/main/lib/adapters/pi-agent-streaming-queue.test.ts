@@ -46,7 +46,12 @@ mock.module('./pi-sdk-loader', () => ({
           agent: { toolExecution: 'parallel' },
           subscribe: () => () => {},
           async prompt() {
-            await promptGate
+            streaming = true
+            try {
+              await promptGate
+            } finally {
+              streaming = false
+            }
           },
           get isStreaming() {
             return streaming
@@ -59,6 +64,7 @@ mock.module('./pi-sdk-loader', () => ({
           },
           async abort() {
             abortCalls += 1
+            streaming = false
           },
           dispose() {},
         },
@@ -114,7 +120,6 @@ describe('Pi 流式追加', () => {
   })
 
   test('priority=now 时走 session.steer', async () => {
-    streaming = true
     const adapter = new PiAgentAdapter()
     const iterator = startQuery(adapter)
     await new Promise((r) => setTimeout(r, 20))
@@ -135,7 +140,6 @@ describe('Pi 流式追加', () => {
   })
 
   test('普通追加走 session.followUp', async () => {
-    streaming = true
     const adapter = new PiAgentAdapter()
     const iterator = startQuery(adapter)
     await new Promise((r) => setTimeout(r, 20))
@@ -155,7 +159,6 @@ describe('Pi 流式追加', () => {
   })
 
   test('interrupt 时调用 session.abort 并等待 prompt 链重发', async () => {
-    streaming = true
     const adapter = new PiAgentAdapter()
     const iterator = startQuery(adapter)
     await new Promise((r) => setTimeout(r, 20))

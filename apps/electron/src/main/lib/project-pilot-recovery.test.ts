@@ -1,0 +1,345 @@
+import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { claimPilotCommandStart, recordPilotRunnerHandoffIntent, getPilotGrantBudgetUsage, hashPilotProviderUsageRecord, hashPilotTaskSource, reserveAndQueuePilotCommand, reservePilotCommandBudget } from './project-pilot-budget-ledger'
+import { inspectPilotGrantRecovery } from './project-pilot-recovery'
+import { recoverInterruptedPilotRuntimeExecutions } from './project-pilot-runtime-recovery'
+import { insertPilotGrantFixture } from './project-pilot-test-helpers'
+import { closeProjectDb, createAgentExecution, createProject, createTask, getAgentExecution, getProjectDb, initProjectDb, updateAgentExecution } from './project-sqlite-store'
+
+const root = mkdtempSync(join(tmpdir(), 'project-pilot-recovery-'))
+const previous = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => { process.env.PROMA_TEST_CONFIG_DIR = root; await initProjectDb() })
+afterAll(() => {
+  closeProjectDb()
+  if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previous
+  rmSync(root, { recursive: true, force: true })
+})
+
+function fixture() {
+  const project = createProject({ title: '恢复对账项目', description: '' })
+  const task = createTask(project.id, { title: '研发任务', description: '', workspaceId: 'pilot-workspace',
+    assignee: { userId: 'agent-executor', displayName: '执行员工' } })
+  const grantId = `grant-${project.id}`
+  const now = Date.now()
+  insertPilotGrantFixture({ grantId, projectId: project.id, workspaceId: 'pilot-workspace',
+    channelId: 'channel', modelId: 'model', maxCostMicros: 1_000, maxRuns: 1,
+    maxRework: 0, expiresAt: now + 100_000, createdAt: now })
+  const input = { commandId: `command-${project.id}`, projectId: project.id, grantId, idempotencyKey: 'first',
+    taskId: task.id, sourceVersion: task.updatedAt, sourceHash: hashPilotTaskSource(task),
+    employeeId: 'executor', role: 'executor' as const, reworkOrdinal: 0 }
+  return { project, grantId, input, executionId: `execution-${project.id}`, now }
+}
+
+test('重启后只把完整预留和排队项列为需重检，不自动认领或重派', async () => {
+  const { grantId, input, executionId, now } = fixture()
+  reservePilotCommandBudget(input)
+  expect(inspectPilotGrantRecovery(grantId, now)).toEqual({
+    grantId, projectId: input.projectId, grantState: 'active',
+    reservedRecheckCommandIds: [input.commandId], queuedRecheckExecutionIds: [], needsAttention: [],
+  })
+  closeProjectDb()
+  await initProjectDb()
+  reserveAndQueuePilotCommand(input, { executionId, prompt: '研发任务' })
+  closeProjectDb()
+  await initProjectDb()
+  expect(inspectPilotGrantRecovery(grantId, now).queuedRecheckExecutionIds).toEqual([executionId])
+  const row = getProjectDb().prepare('SELECT state FROM pilot_commands WHERE id = ?')
+    .get(input.commandId) as { state: string }
+  expect(row.state).toBe('queued')
+})
+
+test('授权过期或暂停、来源关联破损均需人工对账', () => {
+  const expired = fixture()
+  reservePilotCommandBudget(expired.input)
+  expect(inspectPilotGrantRecovery(expired.grantId, expired.now + 200_000).needsAttention)
+    .toEqual([{ commandId: expired.input.commandId, reason: '预留命令的授权已暂停或过期' }])
+  const queued = fixture()
+  reserveAndQueuePilotCommand(queued.input, { executionId: queued.executionId, prompt: '研发任务' })
+  getProjectDb().prepare('DELETE FROM pilot_command_links WHERE command_id = ?').run(queued.input.commandId)
+  expect(inspectPilotGrantRecovery(queued.grantId).needsAttention)
+    .toEqual([{ commandId: queued.input.commandId, reason: '排队命令的授权、来源或执行关联无法核验' }])
+  getProjectDb().prepare("UPDATE pilot_runtime_grants SET state = 'paused' WHERE id = ?").run(queued.grantId)
+  expect(inspectPilotGrantRecovery(queued.grantId).queuedRecheckExecutionIds).toEqual([])
+})
+
+test('运行结果未知与终结状态矛盾都不能被归入可重检队列', () => {
+  const running = fixture()
+  reserveAndQueuePilotCommand(running.input, { executionId: running.executionId, prompt: '研发任务' })
+  updateAgentExecution(running.executionId, { status: 'running', sessionId: 'session-1' })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'running' WHERE id = ?").run(running.input.commandId)
+  expect(inspectPilotGrantRecovery(running.grantId).needsAttention)
+    .toEqual([{ commandId: running.input.commandId, reason: '运行结果或费用未知，需人工对账' }])
+  const inconsistent = fixture()
+  reserveAndQueuePilotCommand(inconsistent.input, { executionId: inconsistent.executionId, prompt: '研发任务' })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'released', actual_cost_micros = 0 WHERE id = ?").run(inconsistent.input.commandId)
+  expect(inspectPilotGrantRecovery(inconsistent.grantId).needsAttention)
+    .toEqual([{ commandId: inconsistent.input.commandId, reason: '终结命令与执行状态不一致' }])
+})
+
+test('重启后遗留 running Pilot 自动转为 stale、未知费用并暂停授权，且恢复幂等', async () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-interrupted', data.now)
+  closeProjectDb()
+  await initProjectDb()
+  expect(recoverInterruptedPilotRuntimeExecutions(data.now + 1)).toContainEqual({
+    executionId: data.executionId, commandId: data.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'claim_only', reason: '中断 Runtime 已按未知用量撤权停等',
+  })
+  expect(getAgentExecution(data.executionId)).toMatchObject({ status: 'stale', sessionId: 'session-interrupted' })
+  const command = getProjectDb().prepare('SELECT state, actual_cost_micros, usage_evidence FROM pilot_commands WHERE id = ?')
+    .get(data.input.commandId) as { state: string; actual_cost_micros: number | null; usage_evidence: string }
+  expect(command.state).toBe('needs_reconcile')
+  expect(command.actual_cost_micros).toBeNull()
+  expect(JSON.parse(command.usage_evidence)).toMatchObject({ source: 'unknown', executionId: data.executionId,
+    sessionId: 'session-interrupted', reason: '应用重启中断 Runtime，无法核验 Provider 用量' })
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(data.grantId))
+    .toEqual({ state: 'paused' })
+  expect(getPilotGrantBudgetUsage(data.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+  expect(recoverInterruptedPilotRuntimeExecutions(data.now + 2)).toEqual([])
+})
+
+test('重启时区分交接意图与缺失记录，但均按未知用量撤权', async () => {
+  const handed = fixture()
+  reserveAndQueuePilotCommand(handed.input, { executionId: handed.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(handed.executionId, handed.input.commandId, 1, 'session-handoff')
+  recordPilotRunnerHandoffIntent(handed.executionId, handed.input.commandId, 'session-handoff')
+  const legacy = fixture()
+  reserveAndQueuePilotCommand(legacy.input, { executionId: legacy.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(legacy.executionId, legacy.input.commandId, 1, 'session-legacy')
+  getProjectDb().prepare('DELETE FROM pilot_runtime_start_attempts WHERE execution_id = ?').run(legacy.executionId)
+  closeProjectDb()
+  await initProjectDb()
+  const results = recoverInterruptedPilotRuntimeExecutions()
+  expect(results).toContainEqual({ executionId: handed.executionId, commandId: handed.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'handoff_intent', reason: '中断 Runtime 已按未知用量撤权停等' })
+  expect(results).toContainEqual({ executionId: legacy.executionId, commandId: legacy.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'missing_attempt', reason: '中断 Runtime 已按未知用量撤权停等' })
+  for (const item of [handed, legacy]) {
+    expect(getAgentExecution(item.executionId)?.status).toBe('stale')
+    expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(item.grantId)).toEqual({ state: 'paused' })
+    expect(getPilotGrantBudgetUsage(item.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+  }
+  expect(recoverInterruptedPilotRuntimeExecutions()).toEqual([])
+})
+
+test('损坏的启动尝试不冒充 Runtime 交接，仍保守撤权占额', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-damaged-attempt')
+  // 旧库或人工损坏的行不应被当作有效交接；测试故意绕过不可变约束。
+  getProjectDb().exec('DROP TRIGGER pilot_runtime_start_attempts_guard')
+  try {
+    getProjectDb().prepare('UPDATE pilot_runtime_start_attempts SET session_id = ?, handoff_intent_at = ? WHERE execution_id = ?')
+      .run('foreign-session', data.now - 1, data.executionId)
+    const results = recoverInterruptedPilotRuntimeExecutions()
+    expect(results).toContainEqual({ executionId: data.executionId, commandId: data.input.commandId,
+      state: 'unknown_recorded', startBoundary: 'invalid_attempt', reason: '中断 Runtime 已按未知用量撤权停等' })
+    expect(getPilotGrantBudgetUsage(data.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+    expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(data.grantId)).toEqual({ state: 'paused' })
+  } finally {
+    getProjectDb().exec(`CREATE TRIGGER pilot_runtime_start_attempts_guard
+    BEFORE UPDATE ON pilot_runtime_start_attempts
+    WHEN OLD.execution_id != NEW.execution_id OR OLD.command_id != NEW.command_id
+      OR OLD.project_id != NEW.project_id OR OLD.session_id != NEW.session_id
+      OR OLD.claimed_at != NEW.claimed_at OR OLD.handoff_intent_at IS NOT NULL
+      OR NEW.handoff_intent_at IS NULL OR NEW.handoff_intent_at < OLD.claimed_at
+    BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start attempt is immutable'); END`)
+  }
+})
+
+test('启动尝试的时间晚于恢复时钟时不认作交接，仍撤权保留预算', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-future', data.now + 5)
+  expect(recoverInterruptedPilotRuntimeExecutions(data.now + 1)).toContainEqual({
+    executionId: data.executionId, commandId: data.input.commandId,
+    state: 'unknown_recorded', startBoundary: 'invalid_attempt', reason: '中断 Runtime 已按未知用量撤权停等',
+  })
+  expect(getPilotGrantBudgetUsage(data.grantId)).toEqual({ runReservations: 1, committedCostMicros: 1_000 })
+})
+
+test('中断 Pilot 的命令或来源关联破损时撤权但不伪造完整用量结算', () => {
+  const missing = fixture()
+  reserveAndQueuePilotCommand(missing.input, { executionId: missing.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(missing.executionId, missing.input.commandId, 1, 'session-missing')
+  getProjectDb().prepare('DELETE FROM pilot_commands WHERE id = ?').run(missing.input.commandId)
+  const damaged = fixture()
+  reserveAndQueuePilotCommand(damaged.input, { executionId: damaged.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(damaged.executionId, damaged.input.commandId, 1, 'session-damaged')
+  getProjectDb().prepare('DELETE FROM pilot_command_links WHERE command_id = ?').run(damaged.input.commandId)
+  const results = recoverInterruptedPilotRuntimeExecutions()
+  for (const item of [missing, damaged]) {
+    expect(results).toContainEqual({ executionId: item.executionId, commandId: item.input.commandId,
+      state: 'needs_attention', startBoundary: 'claim_only', reason: '中断执行用量或账本无法核验，授权已暂停' })
+    expect(getAgentExecution(item.executionId)?.status).toBe('stale')
+    expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(item.grantId))
+      .toEqual({ state: 'paused' })
+  }
+  expect(getProjectDb().prepare('SELECT state, usage_evidence FROM pilot_commands WHERE id = ?')
+    .get(damaged.input.commandId)).toEqual({ state: 'running', usage_evidence: null })
+})
+
+test('中断命令已有费用证据时保留原证据并暂停授权', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(data.executionId, data.input.commandId, 1, 'session-evidence')
+  const prior = '{"source":"provider_reported","providerRecordId":"unverified"}'
+  getProjectDb().prepare('UPDATE pilot_commands SET usage_evidence = ? WHERE id = ?')
+    .run(prior, data.input.commandId)
+  expect(recoverInterruptedPilotRuntimeExecutions()).toContainEqual({ executionId: data.executionId,
+    commandId: data.input.commandId, state: 'needs_attention', startBoundary: 'claim_only', reason: '中断执行用量或账本无法核验，授权已暂停' })
+  expect(getAgentExecution(data.executionId)?.status).toBe('stale')
+  expect(getProjectDb().prepare('SELECT state, usage_evidence FROM pilot_commands WHERE id = ?')
+    .get(data.input.commandId)).toEqual({ state: 'running', usage_evidence: prior })
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(data.grantId))
+    .toEqual({ state: 'paused' })
+})
+
+test('恢复写入失败时独立撤权，且不处理 queued Pilot 或普通 running 执行', () => {
+  const interrupted = fixture()
+  reserveAndQueuePilotCommand(interrupted.input, { executionId: interrupted.executionId, prompt: '研发任务' })
+  claimPilotCommandStart(interrupted.executionId, interrupted.input.commandId, 1, 'session-interrupted')
+  const queued = fixture()
+  reserveAndQueuePilotCommand(queued.input, { executionId: queued.executionId, prompt: '研发任务' })
+  const ordinary = fixture()
+  createAgentExecution({ id: ordinary.executionId, projectId: ordinary.project.id, entityType: 'task',
+    entityId: ordinary.input.taskId, agentId: 'executor', sessionId: 'ordinary-session', prompt: 'fixture' })
+  updateAgentExecution(ordinary.executionId, { status: 'running' })
+  getProjectDb().exec(`CREATE TRIGGER pilot_runtime_recovery_abort BEFORE UPDATE ON agent_executions
+    WHEN NEW.id = '${interrupted.executionId}' AND NEW.status = 'stale'
+    BEGIN SELECT RAISE(ABORT, 'recovery interrupted'); END`)
+  expect(recoverInterruptedPilotRuntimeExecutions()).toContainEqual({ executionId: interrupted.executionId,
+    commandId: interrupted.input.commandId, state: 'needs_attention', startBoundary: 'claim_only', reason: '中断执行恢复失败，授权已暂停' })
+  expect(getAgentExecution(interrupted.executionId)?.status).toBe('running')
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(interrupted.grantId))
+    .toEqual({ state: 'paused' })
+  expect(getAgentExecution(queued.executionId)?.status).toBe('queued')
+  expect(getAgentExecution(ordinary.executionId)?.status).toBe('running')
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(queued.grantId))
+    .toEqual({ state: 'active' })
+  expect(getProjectDb().prepare('SELECT state FROM pilot_runtime_grants WHERE id = ?').get(ordinary.grantId))
+    .toEqual({ state: 'active' })
+})
+
+test('已释放命令若仍有孤儿执行归属，恢复时不能误判为干净', () => {
+  const fixtureData = fixture()
+  reservePilotCommandBudget(fixtureData.input)
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'released', actual_cost_micros = 0 WHERE id = ?").run(fixtureData.input.commandId)
+  createAgentExecution({ id: fixtureData.executionId, projectId: fixtureData.project.id,
+    entityType: 'task', entityId: fixtureData.input.taskId, agentId: 'executor', sessionId: '',
+    prompt: '异常孤儿执行', pilotCommandId: fixtureData.input.commandId })
+  expect(inspectPilotGrantRecovery(fixtureData.grantId).needsAttention)
+    .toEqual([{ commandId: fixtureData.input.commandId, reason: '终结命令的执行归属无法核验' }])
+})
+
+test('仅取消且未记录 session 的关联执行可作为已释放命令状态对账', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  updateAgentExecution(data.executionId, { status: 'cancelled', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'released', actual_cost_micros = 0 WHERE id = ?").run(data.input.commandId)
+  expect(inspectPilotGrantRecovery(data.grantId).needsAttention).toEqual([])
+  getProjectDb().prepare('DELETE FROM pilot_command_links WHERE command_id = ?').run(data.input.commandId)
+  expect(inspectPilotGrantRecovery(data.grantId).needsAttention)
+    .toEqual([{ commandId: data.input.commandId, reason: '终结命令的来源关联无法核验' }])
+  updateAgentExecution(data.executionId, { status: 'completed', sessionId: 'session-1' })
+  expect(inspectPilotGrantRecovery(data.grantId).needsAttention)
+    .toEqual([{ commandId: data.input.commandId, reason: '终结命令与执行状态不一致' }])
+})
+
+test('费用与命令状态矛盾时必须停等，不能按零费用或完整预留继续', () => {
+  const reserved = fixture()
+  reservePilotCommandBudget(reserved.input)
+  getProjectDb().prepare('UPDATE pilot_commands SET actual_cost_micros = 20 WHERE id = ?').run(reserved.input.commandId)
+  expect(inspectPilotGrantRecovery(reserved.grantId).needsAttention)
+    .toEqual([{ commandId: reserved.input.commandId, reason: '命令费用与状态不一致' }])
+
+  const released = fixture()
+  reservePilotCommandBudget(released.input)
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'released', actual_cost_micros = 20 WHERE id = ?")
+    .run(released.input.commandId)
+  expect(inspectPilotGrantRecovery(released.grantId).needsAttention)
+    .toEqual([{ commandId: released.input.commandId, reason: '命令费用与状态不一致' }])
+
+  const settled = fixture()
+  reserveAndQueuePilotCommand(settled.input, { executionId: settled.executionId, prompt: '研发任务' })
+  updateAgentExecution(settled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = NULL WHERE id = ?")
+    .run(settled.input.commandId)
+  expect(inspectPilotGrantRecovery(settled.grantId).needsAttention)
+    .toEqual([{ commandId: settled.input.commandId, reason: '命令费用与状态不一致' }])
+
+  const legacySettled = fixture()
+  reserveAndQueuePilotCommand(legacySettled.input, { executionId: legacySettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(legacySettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = NULL WHERE id = ?")
+    .run(legacySettled.input.commandId)
+  expect(inspectPilotGrantRecovery(legacySettled.grantId).needsAttention)
+    .toEqual([{ commandId: legacySettled.input.commandId, reason: '结算用量证据缺失或无效' }])
+
+  const tamperedSettled = fixture()
+  reserveAndQueuePilotCommand(tamperedSettled.input, { executionId: tamperedSettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(tamperedSettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const evidence = JSON.stringify({
+    source: 'provider_reported', executionId: tamperedSettled.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', providerRecordId: `provider-${tamperedSettled.executionId}`,
+    inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now(),
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 21, usage_evidence = ? WHERE id = ?")
+    .run(evidence, tamperedSettled.input.commandId)
+  expect(inspectPilotGrantRecovery(tamperedSettled.grantId).needsAttention)
+    .toEqual([{ commandId: tamperedSettled.input.commandId, reason: '结算用量证据与账本金额不一致' }])
+
+  const unknownSettled = fixture()
+  reserveAndQueuePilotCommand(unknownSettled.input, { executionId: unknownSettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(unknownSettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const unknownEvidence = JSON.stringify({
+    source: 'unknown', executionId: unknownSettled.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', reason: 'Provider 未返回用量', capturedAt: Date.now(),
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = ? WHERE id = ?")
+    .run(unknownEvidence, unknownSettled.input.commandId)
+  expect(inspectPilotGrantRecovery(unknownSettled.grantId).needsAttention)
+    .toEqual([{ commandId: unknownSettled.input.commandId, reason: '结算用量证据与账本金额不一致' }])
+
+  const futureSettled = fixture()
+  reserveAndQueuePilotCommand(futureSettled.input, { executionId: futureSettled.executionId, prompt: '研发任务' })
+  updateAgentExecution(futureSettled.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const futureEvidence = JSON.stringify({
+    source: 'provider_reported', executionId: futureSettled.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', providerRecordId: `provider-${futureSettled.executionId}`,
+    inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now() + 10_000,
+  })
+  getProjectDb().prepare("UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20, usage_evidence = ? WHERE id = ?")
+    .run(futureEvidence, futureSettled.input.commandId)
+  expect(inspectPilotGrantRecovery(futureSettled.grantId).needsAttention)
+    .toEqual([{ commandId: futureSettled.input.commandId, reason: '结算用量证据缺失或无效' }])
+
+  const changedOwner = fixture()
+  reserveAndQueuePilotCommand(changedOwner.input, { executionId: changedOwner.executionId, prompt: '研发任务' })
+  updateAgentExecution(changedOwner.executionId, { status: 'completed', sessionId: 'session-1', completedAt: Date.now() })
+  const ownerEvidence = JSON.stringify({
+    source: 'provider_reported', executionId: changedOwner.executionId, sessionId: 'session-1',
+    channelId: 'channel', modelId: 'model', providerRecordId: `provider-${changedOwner.executionId}`,
+    inputTokens: 10, outputTokens: 2, costMicros: 20, capturedAt: Date.now(),
+  })
+  getProjectDb().prepare(`UPDATE pilot_commands SET state = 'settled', actual_cost_micros = 20,
+    usage_evidence = ?, usage_record_key = ? WHERE id = ?`)
+    .run(ownerEvidence, hashPilotProviderUsageRecord('channel', `provider-${changedOwner.executionId}`), changedOwner.input.commandId)
+  getProjectDb().prepare('UPDATE agent_executions SET agent_id = ? WHERE id = ?').run('other-agent', changedOwner.executionId)
+  expect(inspectPilotGrantRecovery(changedOwner.grantId).needsAttention)
+    .toEqual([{ commandId: changedOwner.input.commandId, reason: '终结命令与执行状态不一致' }])
+})
+
+test('命令行丢失时仍扫描同项目 Pilot 执行与关联，不能返回空安全快照', () => {
+  const data = fixture()
+  reserveAndQueuePilotCommand(data.input, { executionId: data.executionId, prompt: '研发任务' })
+  getProjectDb().prepare('DELETE FROM pilot_commands WHERE id = ?').run(data.input.commandId)
+  const snapshot = inspectPilotGrantRecovery(data.grantId)
+  expect(snapshot.queuedRecheckExecutionIds).toEqual([])
+  expect(snapshot.needsAttention)
+    .toEqual([{ commandId: data.input.commandId, reason: '项目存在无账本命令的 Pilot 执行或来源关联' }])
+})

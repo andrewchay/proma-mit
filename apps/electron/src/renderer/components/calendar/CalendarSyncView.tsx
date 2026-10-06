@@ -484,7 +484,12 @@ function LogsPanel({
 
 // ===== 主组件 =====
 
-export function CalendarView(): React.ReactElement {
+interface CalendarViewProps {
+  /** 嵌入项目管理顶层 tab 等场景由外层已有标题栏时，隐藏本组件的头部标题行（同步按钮迁移到标签页导航行） */
+  hideHeader?: boolean
+}
+
+export function CalendarView({ hideHeader = false }: CalendarViewProps): React.ReactElement {
   const [viewState, setViewState] = useAtom(calendarViewStateAtom)
   const [sources, setSources] = useAtom(calendarSourcesAtom)
   const [events, setEvents] = useAtom(calendarSyncEventsAtom)
@@ -639,95 +644,102 @@ export function CalendarView(): React.ReactElement {
   const enabledCount = sources.filter((s) => s.enabled).length
   const viewMode = viewState.viewMode || 'sources'
 
+  // 「全部同步」「添加源」动作按钮：hideHeader=false 时留在头部；hideHeader=true 时迁移到标签页导航行
+  const headerActions = (
+    <div className="flex items-center gap-2">
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs gap-1"
+        onClick={handleSyncAll}
+        disabled={viewState.syncStatus === 'syncing'}
+      >
+        <RefreshCw className={`w-3.5 h-3.5 ${viewState.syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+        全部同步
+      </Button>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogTrigger asChild>
+          <Button size="sm" className="h-7 text-xs">
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            添加源
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>添加日历源</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <div>
+              <label className="text-xs font-medium mb-1 block">名称</label>
+              <Input
+                value={newSource.name}
+                onChange={(e) => setNewSource((s) => ({ ...s, name: e.target.value }))}
+                placeholder="例如：Google 工作日历"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block">提供商</label>
+              <Select
+                value={newSource.provider}
+                onValueChange={(v) => setNewSource((s) => ({ ...s, provider: v as CalendarSource['provider'] }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(PROVIDER_CONFIG).map(([key, config]) => (
+                    <SelectItem key={key} value={key}>
+                      {config.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block">同步方向</label>
+              <Select
+                value={newSource.syncDirection}
+                onValueChange={(v) => setNewSource((s) => ({ ...s, syncDirection: v as CalendarSource['syncDirection'] }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(DIRECTION_LABELS).map(([key, label]) => (
+                    <SelectItem key={key} value={key}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={handleCreate} className="w-full" disabled={!newSource.name.trim()}>
+              确认添加
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* 头部 */}
-      <div className="relative z-[51] titlebar-no-drag flex items-center justify-between px-6 py-3 border-b shrink-0">
-        <div className="flex items-center gap-3">
-          <CalendarDays className="w-5 h-5 text-primary" />
-          <h1 className="text-lg font-semibold">日历同步</h1>
-          <Badge variant="secondary" className="text-[10px] h-4">
-            {enabledCount}/{sources.length} 启用
-          </Badge>
+      {/* 头部：hideHeader=true（嵌入项目管理顶层 tab）时整体不渲染，动作按钮迁移到标签页导航行 */}
+      {!hideHeader && (
+        <div className="relative z-[51] titlebar-no-drag flex items-center justify-between px-6 py-3 border-b shrink-0">
+          <div className="flex items-center gap-3">
+            <CalendarDays className="w-5 h-5 text-primary" />
+            <h1 className="text-lg font-semibold">日历同步</h1>
+            <Badge variant="secondary" className="text-[10px] h-4">
+              {enabledCount}/{sources.length} 启用
+            </Badge>
+          </div>
+          {headerActions}
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs gap-1"
-            onClick={handleSyncAll}
-            disabled={viewState.syncStatus === 'syncing'}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${viewState.syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-            全部同步
-          </Button>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="h-7 text-xs">
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                添加源
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>添加日历源</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 pt-2">
-                <div>
-                  <label className="text-xs font-medium mb-1 block">名称</label>
-                  <Input
-                    value={newSource.name}
-                    onChange={(e) => setNewSource((s) => ({ ...s, name: e.target.value }))}
-                    placeholder="例如：Google 工作日历"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium mb-1 block">提供商</label>
-                  <Select
-                    value={newSource.provider}
-                    onValueChange={(v) => setNewSource((s) => ({ ...s, provider: v as CalendarSource['provider'] }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(PROVIDER_CONFIG).map(([key, config]) => (
-                        <SelectItem key={key} value={key}>
-                          {config.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium mb-1 block">同步方向</label>
-                  <Select
-                    value={newSource.syncDirection}
-                    onValueChange={(v) => setNewSource((s) => ({ ...s, syncDirection: v as CalendarSource['syncDirection'] }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(DIRECTION_LABELS).map(([key, label]) => (
-                        <SelectItem key={key} value={key}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button onClick={handleCreate} className="w-full" disabled={!newSource.name.trim()}>
-                  确认添加
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
+      )}
 
       {/* 标签页导航 */}
-      <div className="px-6 py-2 border-b shrink-0">
+      <div className={`px-6 py-2 border-b shrink-0 ${hideHeader ? 'flex items-center justify-between' : ''}`}>
         <Tabs
           value={viewMode}
           onValueChange={(v) => setViewState((s) => ({ ...s, viewMode: v as CalendarViewState['viewMode'] }))}
@@ -756,6 +768,7 @@ export function CalendarView(): React.ReactElement {
             </TabsTrigger>
           </TabsList>
         </Tabs>
+        {hideHeader && headerActions}
       </div>
 
       {syncNotice && (

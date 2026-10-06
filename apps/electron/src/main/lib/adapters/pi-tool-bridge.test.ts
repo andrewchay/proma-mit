@@ -1,5 +1,19 @@
-import { describe, expect, test } from 'bun:test'
-import {
+import { describe, expect, mock, test, afterAll } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { buildElectronMock } from '../testing/electron-mock'
+import type { RuntimeToolDefinition } from '../agent-runtime/types'
+
+// tool-registry 传递依赖 config-paths / electron；统一使用完整 mock，避免单测进程加载真实 electron。
+mock.module('electron', () => buildElectronMock())
+
+// createCoreTools 可能触发插件目录初始化；在 bootstrap 临时配置目录中执行，避免触碰真实 ~/.gravitas。
+const originalEnv = { ...process.env }
+const bootstrapDir = mkdtempSync(join(tmpdir(), `gravitas-pi-bridge-bootstrap-${process.pid}-`))
+process.env.PROMA_TEST_CONFIG_DIR = bootstrapDir
+
+const {
   createPiToolBridge,
   PI_PROMA_BASH_TOOL_NAME,
   PI_PROMA_AGENT_TOOL_NAME,
@@ -12,8 +26,12 @@ import {
   PI_PROMA_READ_TOOL_NAME,
   PI_PROMA_WRITE_TOOL_NAME,
   PI_RUNTIME_TOOL_CAPABILITIES,
-} from './pi-tool-bridge'
-import type { RuntimeToolDefinition } from '../agent-runtime/types'
+} = await import('./pi-tool-bridge')
+
+afterAll(() => {
+  process.env = { ...originalEnv }
+  rmSync(bootstrapDir, { recursive: true, force: true })
+})
 
 function createReadTool(execute: RuntimeToolDefinition['execute']): RuntimeToolDefinition {
   return {
@@ -37,6 +55,8 @@ function createCoreTools(readExecute: RuntimeToolDefinition['execute']): Runtime
     { name: 'WebFetch', description: '抓取网页', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
     { name: 'RecallMemory', description: '回忆记忆', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
     { name: 'AddMemory', description: '存储记忆', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
+    { name: 'SearchProjectMemory', description: '检索本地记忆', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
+    { name: 'ReadProjectMemory', description: '读取本地记忆', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
     { name: 'Bash', description: '执行命令', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
     { name: 'EnterPlanMode', description: '进入计划模式', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
     { name: 'ExitPlanMode', description: '退出计划模式', parameters: { type: 'object', properties: {}, required: [] }, execute: placeholder },
@@ -66,6 +86,8 @@ describe('Pi Tool Bridge', () => {
       'WebFetch',
       'RecallMemory',
       'AddMemory',
+      'SearchProjectMemory',
+      'ReadProjectMemory',
       PI_PROMA_ENTER_PLAN_MODE_TOOL_NAME,
       PI_PROMA_EXIT_PLAN_MODE_TOOL_NAME,
       PI_PROMA_ASK_USER_TOOL_NAME,

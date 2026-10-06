@@ -31,6 +31,7 @@ import {
   EdgeRepository,
   FactRepository,
   SearchRepository,
+  KnowledgeRepository,
 } from './repositories/index.ts'
 
 export interface ContextStoreHandle {
@@ -46,6 +47,8 @@ export interface ContextStoreHandle {
   edges: EdgeRepository
   facts: FactRepository
   search: SearchRepository
+  /** 知识文档与分块（K1-03）：与 context_entities 分表，范围过滤在 SQL 层完成 */
+  knowledge: KnowledgeRepository
 }
 
 let sqlJsPromise: Promise<SqlJsStatic> | null = null
@@ -90,6 +93,7 @@ export async function openContextStore(options: ContextStoreOptions = {}): Promi
     edges: new EdgeRepository(database),
     facts: new FactRepository(database),
     search: new SearchRepository(database),
+    knowledge: new KnowledgeRepository(database),
   }
 }
 

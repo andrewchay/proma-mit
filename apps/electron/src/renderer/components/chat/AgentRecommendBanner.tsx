@@ -31,15 +31,34 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
 import { tabsAtom, activeTabIdAtom, openTab } from '@/atoms/tab-atoms'
 
-export function AgentRecommendBanner(): React.ReactElement | null {
-  const [recommendation, setRecommendation] = useAtom(pendingAgentRecommendationAtom)
+interface AgentRecommendBannerProps {
+  conversationId: string
+}
+
+export function AgentRecommendBanner({ conversationId }: AgentRecommendBannerProps): React.ReactElement | null {
+  const [recommendations, setRecommendations] = useAtom(pendingAgentRecommendationAtom)
   const store = useStore()
   const [migrating, setMigrating] = React.useState(false)
+  const recommendation = recommendations.get(conversationId)
 
   if (!recommendation) return null
 
+  const clearRecommendation = (): void => {
+    setRecommendations((prev) => {
+      const next = new Map(prev)
+      next.delete(conversationId)
+      return next
+    })
+  }
+
   const handleDismiss = (): void => {
-    setRecommendation(null)
+    if (recommendation.decisionId) {
+      void window.electronAPI.recordTypeSafeRecommendationFeedback({
+        decisionId: recommendation.decisionId,
+        action: 'dismissed',
+      }).catch(console.error)
+    }
+    clearRecommendation()
   }
 
   const handleMigrate = async (): Promise<void> => {
@@ -51,9 +70,9 @@ export function AgentRecommendBanner(): React.ReactElement | null {
       return
     }
 
-    // 保存推荐数据后立即清除，避免模式切换时 ChatView 副作用
-    const { conversationId, suggestedPrompt } = recommendation
-    setRecommendation(null)
+    // 保存推荐数据后立即清除，避免模式切换时重复操作。
+    const { suggestedPrompt, decisionId } = recommendation
+    clearRecommendation()
 
     setMigrating(true)
     try {
@@ -109,6 +128,12 @@ export function AgentRecommendBanner(): React.ReactElement | null {
       toast.success('已切换到 Agent 模式', {
         description: '对话历史已迁移到新的 Agent 会话',
       })
+      if (decisionId) {
+        void window.electronAPI.recordTypeSafeRecommendationFeedback({
+          decisionId,
+          action: 'accepted',
+        }).catch(console.error)
+      }
     } catch (error) {
       console.error('[AgentRecommendBanner] 迁移失败:', error)
       toast.error('切换到 Agent 模式失败')

@@ -438,4 +438,6 @@ export const CHAT_IPC_CHANNELS = {
   STREAM_TOOL_ACTIVITY: 'chat:stream:tool-activity',
   /** 队列状态（主进程 → 渲染进程：排队数量/是否执行中） */
   STREAM_QUEUE_STATE: 'chat:stream:queue-state',
+  /** TypeSafe 判断产生的 Agent 模式推荐 */
+  STREAM_AGENT_RECOMMENDATION: 'chat:stream:agent-recommendation',
 } as const

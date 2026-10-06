@@ -1,0 +1,6 @@
+{
+  "id": "sourcing_verify_company",
+  "name": "核验候选公司官网",
+  "description": "抓取候选公司官网正文并抽取结构化证据（是否提及进口/分销/采购、是否提及目标品类、联系线索、运营国家提示、页面标题）。只给证据与命中情况，不做真伪判定。",
+  "parameters": {"type":"object","properties":{"company":{"type":"string","description":"公司名"},"website":{"type":"string","description":"官网 URL（http/https）"},"product_keywords":{"type":"array","items":{"type":"string"},"description":"目标品类关键词，如 goji / wolfberry"},"target_country":{"type":"string","description":"目标运营国家"}},"required":["company","website"]}
+}

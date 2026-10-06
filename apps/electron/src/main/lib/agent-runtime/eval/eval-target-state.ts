@@ -8,6 +8,7 @@ import type { EvalTarget, EvalTargetType } from './types'
 import type { StateGuard } from './self-evolver'
 import { buildBuiltinStateGuard } from './builtin-agent-state'
 import { buildToolsetStateGuard } from './toolset-state'
+import { buildEmployeeCapabilityStateGuard } from './employee-capability-state'
 
 /** 统一 StateGuard + 内容读取接口 */
 export interface UnifiedStateGuard extends StateGuard {
@@ -38,6 +39,8 @@ export function buildEvalTargetStateGuard(target: EvalTarget): UnifiedStateGuard
     }
   }
 
+  if (target.type === 'employee_capability') return buildEmployeeCapabilityStateGuard(target)
+
   throw new Error(`未知评测目标类型: ${(target as { type: string }).type}`)
 }
 
@@ -55,6 +58,10 @@ export function isEvalTargetId(type: EvalTargetType, id: string): boolean {
     // 检查是否存在对应的工具集目录
     const { readPluginToolsDirState } = require('../../tool-definition-store')
     return readPluginToolsDirState(id) !== null
+  }
+  if (type === 'employee_capability') {
+    const { getAgentEmployee } = require('../../project-sqlite-store')
+    return Boolean(getAgentEmployee(id)?.enabled)
   }
   return false
 }

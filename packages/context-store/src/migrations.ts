@@ -86,8 +86,50 @@ CREATE TABLE IF NOT EXISTS context_facts (
 CREATE INDEX IF NOT EXISTS idx_facts_entity ON context_facts(entity_id, fact_type);
 `
 
+/**
+ * 知识索引（K1-03）。
+ *
+ * 与 context_entities 分表而不复用：会话消息与知识文档的字段、生命周期、
+ * 范围校验方式都不同。混在一起会让"只在当前知识范围内检索"变成对
+ * 全量消息表的过滤，容易漏掉范围条件。
+ *
+ * knowledge_chunks 是派生数据，可重建：原件与目录才是权威来源。
+ */
+const V2_KNOWLEDGE = `
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+  id                TEXT PRIMARY KEY,
+  knowledge_base_id TEXT NOT NULL,
+  source_id         TEXT NOT NULL,
+  relative_path     TEXT NOT NULL,
+  title             TEXT NOT NULL DEFAULT '',
+  content_hash      TEXT NOT NULL,
+  byte_size         INTEGER NOT NULL DEFAULT 0,
+  modified_at       INTEGER NOT NULL,
+  indexed_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_kdocs_kb ON knowledge_documents(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS idx_kdocs_source ON knowledge_documents(source_id, relative_path);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  id           TEXT PRIMARY KEY,
+  document_id  TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+  chunk_index  INTEGER NOT NULL,
+  heading      TEXT,
+  content      TEXT NOT NULL,
+  char_start   INTEGER NOT NULL DEFAULT 0,
+  char_end     INTEGER NOT NULL DEFAULT 0,
+  token_text   TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_kchunks_doc ON knowledge_chunks(document_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_kchunks_tokens ON knowledge_chunks(token_text);
+`
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'init', sql: V1_INIT },
+  { version: 2, name: 'knowledge_index', sql: V2_KNOWLEDGE },
 ]
 
 /**

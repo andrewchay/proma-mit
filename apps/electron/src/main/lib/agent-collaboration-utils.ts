@@ -71,12 +71,11 @@ export interface RecoveredDelegationState {
 export function resolveDelegationPermissionMode(
   parentMode: PromaPermissionMode | undefined,
   requestedMode: PromaPermissionMode | undefined,
-  agentRuntime?: AgentRuntime,
+  _agentRuntime?: AgentRuntime,
 ): PromaPermissionMode {
-  // Pi 子会话目前不支持 Plan 模式下的完整工具集，固定直接执行。
-  if (agentRuntime === 'pi') return 'bypassPermissions'
-
-  const parent = parentMode ?? PROMA_DEFAULT_PERMISSION_MODE
+  // 所有 Runtime 都必须继承父权限上限；Runtime 能力不足时应明确拒绝，
+  // 不能以 bypassPermissions 补齐功能。
+  const parent = parentMode ?? 'safe'
   const requested = requestedMode ?? parent
   return PERMISSION_RANK[requested] <= PERMISSION_RANK[parent] ? requested : parent
 }

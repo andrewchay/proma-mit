@@ -12,3 +12,6 @@ export const proactiveCenterTabAtom = atom<ProactiveTab>('today')
 
 /** 等待用户补齐执行目标的推荐；创建成功后才将 Recommendation 标记为 accepted。 */
 export const proactiveConfigurationRecommendationAtom = atom<ProactiveRecommendation | null>(null)
+
+/** 从失败运行直接定位其可编辑定义。 */
+export const proactiveEditScheduleIdAtom = atom<string | null>(null)

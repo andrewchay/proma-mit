@@ -11,14 +11,20 @@
 
 import { lazy, type ComponentType } from 'react'
 import { atom } from 'jotai'
-import { CalendarDays, FolderKanban, Users, Megaphone, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Users, Megaphone, Globe2, BookOpen, BarChart3, Radio, FlaskConical, type LucideIcon } from 'lucide-react'
 import type { ActiveView } from '@/atoms/active-view'
 import { enabledCapabilitiesAtom, isCapabilityEnabled, type CapabilityId } from '@/atoms/marketing-atoms'
 const CalendarModuleView = lazy(() => import('@/components/calendar/CalendarModuleView').then((module) => ({ default: module.CalendarModuleView })))
 const ProjectView = lazy(() => import('@/components/projects/ProjectView').then((module) => ({ default: module.ProjectView })))
+const KnowledgeModuleView = lazy(() => import('@/components/knowledge/KnowledgeModuleView').then((module) => ({ default: module.KnowledgeModuleView })))
+const AnalysisModuleView = lazy(() => import('@/components/analysis/AnalysisModuleView').then((module) => ({ default: module.AnalysisModuleView })))
 const InfluencerModuleView = lazy(() => import('@/components/influencer/InfluencerModuleView').then((module) => ({ default: module.InfluencerModuleView })))
 const PaidMediaModuleView = lazy(() => import('@/components/paid-media/PaidMediaModuleView').then((module) => ({ default: module.PaidMediaModuleView })))
+const OutboundSourcingModuleView = lazy(() => import('@/components/outbound-sourcing/OutboundSourcingModuleView').then((module) => ({ default: module.OutboundSourcingModuleView })))
 const CapabilitiesView = lazy(() => import('@/components/marketing/CapabilitiesView').then((module) => ({ default: module.CapabilitiesView })))
+const NewMediaModuleView = lazy(() => import('@/components/new-media/NewMediaModuleView').then((module) => ({ default: module.NewMediaModuleView })))
+const ResearchWorkspace = lazy(() => import('@/components/academic/ResearchWorkspace').then((module) => ({ default: module.ResearchWorkspace })))
+const WorkspaceConfigView = lazy(() => import('@/components/settings/WorkspaceConfigView').then((module) => ({ default: module.WorkspaceConfigView })))
 
 export interface WorkModuleMeta {
   id: ActiveView
@@ -31,14 +37,22 @@ export interface WorkModuleMeta {
   description?: string
 }
 
-/** 工作模块注册表（当前 2 个核心模块；主动协作统一收敛到 Proactive Center） */
+/** 工作模块注册表（核心模块：知识库 / 分析引擎 / 项目管理；
+ * 新媒体运营与研究已转为订阅式领域包，启用后在侧栏「领域能力包」分组出现） */
 export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
   {
-    id: 'calendar',
-    label: '日程管家',
-    icon: CalendarDays,
+    id: 'knowledge',
+    label: '知识库',
+    icon: BookOpen,
     core: true,
-    description: '日程安排、任务看板、多日历同步',
+    description: '索引本地 Markdown，支持全文检索、标签与图谱',
+  },
+  {
+    id: 'analysis',
+    label: '分析引擎',
+    icon: BarChart3,
+    core: true,
+    description: '时间使用与生产力分析报告',
   },
   {
     id: 'projects',
@@ -46,6 +60,22 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     icon: FolderKanban,
     core: true,
     description: '项目 / 任务 / 看板 / 会议纪要 / 风险报告',
+  },
+  {
+    id: 'new-media',
+    label: '新媒体运营',
+    icon: Radio,
+    core: false,
+    group: 'business-domains',
+    description: '本地草稿、排程与受控外发审批（不连接真实平台，订阅式领域包）',
+  },
+  {
+    id: 'research',
+    label: '研究',
+    icon: FlaskConical,
+    core: false,
+    group: 'business-domains',
+    description: '从文献到稿件的可追溯研究工作台（订阅式领域包）',
   },
   {
     id: 'influencer',
@@ -62,6 +92,14 @@ export const WORK_MODULE_REGISTRY: WorkModuleMeta[] = [
     core: false,
     group: 'marketing',
     description: '投放计划 / 调控审批 / 调控规则（订阅式领域包）',
+  },
+  {
+    id: 'outbound-sourcing',
+    label: '出海 sourcing',
+    icon: Globe2,
+    core: false,
+    group: 'business-domains',
+    description: '海外买家发现、线索核验与外联推进',
   },
 ]
 
@@ -99,9 +137,19 @@ export const visibleExtendedWorkModulesAtom = atom((get) => {
 
 /** 视图映射：工作模块 id → 渲染组件 */
 export const WORK_MODULE_VIEWS: Record<string, ComponentType> = {
+  knowledge: KnowledgeModuleView,
+  analysis: AnalysisModuleView,
+  // calendar 已从 WORK_MODULE_REGISTRY 移除（日程管家并入项目管理顶层子视图），
+  // 此处保留映射防止旧持久化 activeView='calendar' 导致白屏。
   calendar: CalendarModuleView,
   projects: ProjectView,
+  research: ResearchWorkspace,
   influencer: InfluencerModuleView,
   'paid-media': PaidMediaModuleView,
+  'outbound-sourcing': OutboundSourcingModuleView,
+  'new-media': NewMediaModuleView,
   capabilities: CapabilitiesView,
+  // 工作空间配置与其它工作模块对齐：以右侧主区独立页面呈现（侧边栏入口切换视图，不再弹设置窗）。
+  // 仅登记视图映射，不进入 WORK_MODULE_REGISTRY——它由侧边栏的独立入口按钮渲染（带能力计数徽标）。
+  'workspace-config': WorkspaceConfigView,
 }

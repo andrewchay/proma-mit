@@ -6,6 +6,7 @@
  * 流程：
  *  Step 1：欢迎 + 教程入口
  *  Step 2：Windows 环境检测（仅 Windows，其他平台自动跳过）
+ *  Step 3：订阅引导（可跳过）
  */
 
 import { useMemo, useState } from 'react'
@@ -21,6 +22,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { TutorialViewer } from '@/components/tutorial/TutorialViewer'
 import { EnvironmentCheckPanel } from '@/components/environment/EnvironmentCheckPanel'
+import { SubscriptionOnboarding } from '@/components/subscription/SubscriptionOnboarding'
 import { isShellEnvironmentOkAtom } from '@/atoms/environment'
 import { detectIsWindows } from '@/lib/platform'
 import { migrationImportDialogOpenAtom } from '@/atoms/migration-atoms'
@@ -32,7 +34,7 @@ interface OnboardingViewProps {
 
 export function OnboardingView({ onComplete }: OnboardingViewProps) {
   const [showTutorial, setShowTutorial] = useState(false)
-  const [step, setStep] = useState<'welcome' | 'environment'>('welcome')
+  const [step, setStep] = useState<'welcome' | 'environment' | 'subscription'>('welcome')
   const isWindows = useMemo(() => detectIsWindows(), [])
   const shellOk = useAtomValue(isShellEnvironmentOkAtom)
   const setMigrationImportDialogOpen = useSetAtom(migrationImportDialogOpenAtom)
@@ -48,7 +50,7 @@ export function OnboardingView({ onComplete }: OnboardingViewProps) {
     if (isWindows) {
       setStep('environment')
     } else {
-      handleFinish()
+      setStep('subscription')
     }
   }
 
@@ -170,14 +172,35 @@ export function OnboardingView({ onComplete }: OnboardingViewProps) {
             </Button>
             <div className="flex gap-3">
               <Button
-                onClick={handleFinish}
+                onClick={() => setStep('subscription')}
                 variant={shellOk ? 'default' : 'outline'}
               >
-                {shellOk ? '开始使用' : '稍后处理（进入主界面）'}
+                {shellOk ? '下一步' : '稍后处理（继续）'}
               </Button>
             </div>
           </div>
         </div>
+      )}
+
+      {step === 'subscription' && (
+        <>
+          <SubscriptionOnboarding onLoggedIn={handleFinish} />
+          <div className="w-full max-w-2xl mt-6 flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setStep(isWindows ? 'environment' : 'welcome')}
+              className="text-muted-foreground"
+            >
+              <ChevronLeft className="mr-1 h-4 w-4" />
+              上一步
+            </Button>
+            <Button variant="outline" onClick={handleFinish}>
+              稍后设置
+              <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
+        </>
       )}
 
       <Sheet open={showTutorial} onOpenChange={setShowTutorial}>

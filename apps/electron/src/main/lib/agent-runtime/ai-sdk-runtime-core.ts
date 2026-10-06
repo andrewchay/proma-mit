@@ -21,6 +21,7 @@ import type {
 } from '@gravitas/shared'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
+import { resolve, sep } from 'node:path'
 import {
   AISDKStreamStepAccumulator,
   createAgentAISDKModel,
@@ -37,11 +38,23 @@ import { getAgentSessionSDKMessages } from '../agent-session-manager'
 import { getWorkspaceSkills } from '../agent-workspace-manager'
 import type { SkillMeta } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './types'
+import {
+  nextWithIdleTimeout,
+  resolveModelFirstResponseTimeoutMs,
+  resolveModelStreamIdleTimeoutMs,
+} from './stream-timeouts'
+import { estimateTokenCount } from '../agent-tool-token-estimator'
+import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 
 export interface AISDKRuntimeSessionState {
   controller: AbortController
   permissionMode: PromaPermissionMode
   planModeEntered: boolean
+  /**
+   * 安全研发隔离写入边界（由无监督研发 runner 置位）：safe 模式下允许 Write/Edit
+   * 仅写入会话 cwd（隔离 Git worktree）内路径；Bash 仍只读、外部工具仍禁。
+   */
+  worktreeScopedWrite?: boolean
 }
 
 export interface AISDKToolPermissionResult {
@@ -82,6 +95,8 @@ export interface AISDKToolExecutionState {
     apiKey: string
     baseUrl: string
     model: string
+    /** Pilot 受控出口：存在时压缩请求经 derive→reserve→verify 后才发送。 */
+    fetchFn?: typeof globalThis.fetch
     audit?: Omit<import('../context-compaction-audit-service').ContextCompactionAuditInput, 'packetVersion'>
   }
 }
@@ -94,14 +109,25 @@ export interface AISDKRuntimeStreamInput {
   maxTurns: number
   maxRetries: number
   signal: AbortSignal
+  estimatedContextTokens: number
   provider?: ProviderType
   modelId?: string
   onAgentEvent?: (event: AgentEvent) => void
+  /** Pilot 受控执行强制输出上限；来自价格证据的模型输出硬上界。 */
+  maxOutputTokens?: number
 }
 
 export interface AISDKRuntimeStreamResult {
   result: ReturnType<typeof streamText>
   streamedSteps: AISDKStreamStepSnapshot[]
+}
+
+function estimateStreamPartTokens(part: unknown): number {
+  try {
+    return estimateTokenCount(JSON.stringify(part) ?? '')
+  } catch {
+    return 0
+  }
 }
 
 export interface AISDKAgentTurnInput {
@@ -117,6 +143,8 @@ export interface AISDKAgentTurnInput {
   activeSession: AISDKRuntimeSessionState
   maxTurns: number
   maxRetries: number
+  /** Pilot 受控预算上下文；存在时模型请求经受控出口并强制输出上限。 */
+  pilotBudget?: PilotBudgetContext
   historyMessages?: SDKMessage[]
   attachments?: FileAttachment[]
   systemPrompt?: string
@@ -161,6 +189,10 @@ type RuntimeToolJsonSchema = RuntimeToolDefinition['parameters']
 
 export class AISDKRuntimeCore {
   async runAgentTurn(input: AISDKAgentTurnInput): Promise<SDKMessage[]> {
+    // Pilot 受控执行：同一闭包覆盖本 turn 全部请求（模型、压缩），derive→reserve→verify 后才发送。
+    const pilotRuntime = input.pilotBudget
+      ? buildPilotRequestRuntime(input.pilotBudget, globalThis.fetch)
+      : undefined
     const modelInstance = createAgentAISDKModel({
       provider: input.provider,
       protocol: input.protocol,
@@ -168,6 +200,7 @@ export class AISDKRuntimeCore {
       apiKey: input.apiKey,
       baseUrl: resolveAgentRuntimeBaseUrl(input.provider, 'ai-sdk', input.baseUrl),
       modelId: input.modelId,
+      ...(pilotRuntime ? { fetch: pilotRuntime.fetch } : {}),
     })
     const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
@@ -201,9 +234,15 @@ export class AISDKRuntimeCore {
       maxTurns: input.maxTurns,
       maxRetries: input.maxRetries,
       signal: input.activeSession.controller.signal,
+      estimatedContextTokens: estimateTokenCount(JSON.stringify({
+        system: effectiveSystemPrompt,
+        messages,
+        tools: input.runtimeTools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+      })) + 256,
       provider: input.provider,
       modelId: input.modelId,
       onAgentEvent: input.onAgentEvent,
+      ...(pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens } : {}),
     })
 
     const steps = streamRun.streamedSteps.length > 0
@@ -225,28 +264,67 @@ export class AISDKRuntimeCore {
     let lastError: unknown
     while (attempt <= input.maxRetries) {
       let attemptHadLiveEvents = false
+      let stepHasModelActivity = false
+      let estimatedContextTokens = input.estimatedContextTokens
+      const executingToolCalls = new Set<string>()
       try {
-        const result = streamText({
-          model: input.model,
-          system: input.system,
-          messages: input.messages,
-          tools: input.tools,
-          stopWhen: isStepCount(input.maxTurns),
-          abortSignal: input.signal,
-        })
-        const accumulator = new AISDKStreamStepAccumulator()
-        const streamedSteps: AISDKStreamStepSnapshot[] = []
-        for await (const part of result.stream) {
-          streamedSteps.push(...accumulator.consume(part))
-          const events = aiSDKStreamPartToAgentEvents(part)
-          if (events.length > 0) {
-            attemptHadLiveEvents = true
+        const attemptController = new AbortController()
+        const abortAttempt = (): void => attemptController.abort(input.signal.reason)
+        if (input.signal.aborted) abortAttempt()
+        else input.signal.addEventListener('abort', abortAttempt, { once: true })
+
+        try {
+          const result = streamText({
+            model: input.model,
+            system: input.system,
+            messages: input.messages,
+            tools: input.tools,
+            stopWhen: isStepCount(input.maxTurns),
+            abortSignal: attemptController.signal,
+            ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
+          })
+          const accumulator = new AISDKStreamStepAccumulator()
+          const streamedSteps: AISDKStreamStepSnapshot[] = []
+          const iterator = result.stream[Symbol.asyncIterator]()
+          while (true) {
+            // AI SDK 在同一 stream 内等待工具执行；工具自身负责超时，不能把长工具误判为模型断流。
+            const timeoutMs = executingToolCalls.size > 0
+              ? 0
+              : resolveModelStreamIdleTimeoutMs(
+                stepHasModelActivity,
+                resolveModelFirstResponseTimeoutMs(estimatedContextTokens),
+              )
+            const next = await nextWithIdleTimeout({
+              iterator,
+              timeoutMs,
+              runtime: 'AI SDK',
+              onTimeout: () => attemptController.abort(),
+            })
+            if (next.done) break
+
+            const part = next.value
+            if (part.type === 'tool-call') executingToolCalls.add(part.toolCallId)
+            if (part.type === 'tool-result' || part.type === 'tool-error') {
+              executingToolCalls.delete(part.toolCallId)
+            }
+            streamedSteps.push(...accumulator.consume(part))
+            estimatedContextTokens += estimateStreamPartTokens(part)
+            const events = aiSDKStreamPartToAgentEvents(part)
+            if (events.length > 0) {
+              attemptHadLiveEvents = true
+              stepHasModelActivity = true
+            }
+            for (const event of events) {
+              input.onAgentEvent?.(event)
+            }
+            // finish-step 后 AI SDK 可能执行工具并发起下一次模型请求；下一次读取重新使用
+            // 包含新增工具结果的自适应首响应宽限，但 attemptHadLiveEvents 保持为真以禁止整轮重试。
+            if (part.type === 'finish-step') stepHasModelActivity = false
           }
-          for (const event of events) {
-            input.onAgentEvent?.(event)
-          }
+          return { result, streamedSteps }
+        } finally {
+          input.signal.removeEventListener('abort', abortAttempt)
         }
-        return { result, streamedSteps }
       } catch (error) {
         lastError = error
         // 用户停止或追加消息触发的中断由 adapter 决定是否续跑；这里不能上报错误，
@@ -395,6 +473,18 @@ export class AISDKRuntimeCore {
       return { content: permission.message || `权限被拒绝：${runtimeTool.name}`, isError: true }
     }
 
+    // 采集：只记录实际被授权执行的工具调用。被拒绝的调用不计入
+    // （它不代表有效工作密度），且这里已过滤掉重复的 stream 事件。
+    // 埋点旁路，绝不抛错。
+    try {
+      const { trackToolInvoked } = require('../telemetry-tracking') as {
+        trackToolInvoked: (toolName: string) => void
+      }
+      trackToolInvoked(runtimeTool.name)
+    } catch {
+      // 采集不可用时静默跳过
+    }
+
     try {
       const result = await runtimeTool.execute(args, {
         cwd: state.cwd,
@@ -435,6 +525,8 @@ export class AISDKRuntimeCore {
         'WebSearch',
         'WebFetch',
         'RecallMemory',
+        'SearchProjectMemory',
+        'ReadProjectMemory',
         'WebBridgeSnapshot',
         'WebBridgeScreenshot',
         'WebBridgeScroll',
@@ -457,6 +549,18 @@ export class AISDKRuntimeCore {
         const command = typeof input.command === 'string' ? input.command : ''
         if (isBashCommandReadOnly(command)) return { allowed: true }
       }
+      // 安全研发隔离写入：无监督研发 runner 置位后，允许 Write/Edit 仅写入会话
+      // cwd（隔离 Git worktree）内的路径；解析后越界一律拒绝，Bash 仍只读。
+      if (state.activeSession.worktreeScopedWrite
+        && (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit')) {
+        const filePath = typeof input.file_path === 'string' ? input.file_path.trim() : ''
+        if (filePath) {
+          const root = resolve(state.cwd)
+          const target = resolve(root, filePath)
+          if (target === root || target.startsWith(root + sep)) return { allowed: true }
+          return { allowed: false, message: `安全研发会话仅允许写入工作树内文件（${root}），目标路径越界` }
+        }
+      }
       return { allowed: false, message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
     }
 
@@ -468,6 +572,8 @@ export class AISDKRuntimeCore {
         'WebSearch',
         'WebFetch',
         'RecallMemory',
+        'SearchProjectMemory',
+        'ReadProjectMemory',
         'WebBridgeSnapshot',
         'WebBridgeScreenshot',
         'WebBridgeScroll',

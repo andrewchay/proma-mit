@@ -23,11 +23,11 @@ Bun workspace monorepo：
 ```
 gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.66)
-│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.14)
+│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.2.19)
+│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.24)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.11.51)
+    └── electron/   # Electron 桌面应用 (v0.12.93)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -40,12 +40,12 @@ gravitas/
 
 ### 包职责详解
 
-#### @gravitas/shared (v0.1.66)
+#### @gravitas/shared (v0.2.19)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
 - **依赖**：无运行时依赖（仅 TypeScript）
 
-#### @gravitas/core (v0.2.14)
+#### @gravitas/core (v0.2.24)
 - **导出模块**：`./providers`、`./highlight`、`./types`、`./utils`
 - **关键功能**：Provider 适配器注册表、代码高亮（Shiki）
 - **依赖**：`@gravitas/shared`、`shiki`
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.11.51)
+#### @gravitas/electron (v0.12.93)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -114,7 +114,7 @@ bun run generate:icons    # 生成应用图标
 使用 Bun 代替 Node.js/npm/pnpm：
 
 - `bun install` 安装依赖，`bun run <script>` 运行脚本
-- `bun test` 运行测试（内置测试运行器，`import { test, expect } from "bun:test"`）
+- `bun test` 是 Bun 内置测试运行器，本仓库只用于跑**单个测试文件**；全量必须用 `bun run test`（逐文件独立进程），裸跑全量会因跨文件 mock 污染出现 `Export named 'xxx' not found` 之类假失败
 - Bun 自动加载 .env 文件（无需 dotenv）
 - 优先使用 Bun 原生 API：`Bun.file` > `node:fs`，`Bun.$\`command\`` > `execa`
 
@@ -252,21 +252,26 @@ bun run generate:icons    # 生成应用图标
 |-----------|-----------|
 | `chat-atoms.ts` | 对话列表、当前消息、流式状态（Map 结构支持多对话并行）、模型选择、上下文设置、并排模式、思考模式、待上传附件 |
 | `agent-atoms.ts` | Agent 会话列表、当前会话、流式状态（`AgentStreamState`）、工作区选择、渠道选择、权限/AskUser 请求队列（按 sessionId Map） |
+| `knowledge-atoms.ts` | 知识库列表与笔记、阅读历史、标题锚点及搜索/索引状态 |
+| `project-atoms.ts` | 项目管理：任务表 / 状态定义（按 projectId 隔离 Map）、看板列派生 atom、拖拽乐观移动与回滚 |
 | `active-view.ts` | 主面板视图切换（'conversations' / 'settings'） |
 | `app-mode.ts` | 应用模式（Chat / Agent） |
 | `settings-tab.ts` | 设置面板当前标签页 |
-| `theme.ts` | 主题模式（light / dark / system） |
+| `theme.ts` | 主题模式（light / dark / system / special）、特殊风格缓存与 DOM 类名切换 |
 | `user-profile.ts` | 用户档案（姓名 + 头像） |
 | `updater.ts` | 自动更新状态（检查/下载/安装），优雅降级（updater 不可用时保持 idle） |
+
+新增特殊风格时，同步 `types/settings.ts` 的 `ThemeStyle`、`atoms/theme.ts` 的缓存与类名清单、`renderer/index.html` 的首屏明暗类名、`AppearanceSettings.tsx` 的选项和 `styles/globals.css` 的色值；用 `theme-contrast.test.ts` 检查主题文字、按钮与聚焦色的基础对比度。
 
 ### 渲染进程组件架构（`renderer/components/`）
 
 - **`app-shell/`**：三面板布局（LeftSidebar | NavigatorPanel | MainContentPanel），侧边栏含模式切换、置顶对话、日期分组列表、流式指示器
 - **`chat/`**：聊天核心 — ChatView（消息加载/流式订阅）、ChatHeader（模型选择/上下文设置）、ChatInput（Tiptap 富文本编辑器）、ChatMessages（消息列表/自动滚动）、ParallelChatMessages（并排模式）
 - **`agent/`**：Agent 模式 — AgentView（纯展示 + 交互，IPC 监听已提升到全局）、AgentHeader（渠道/模型选择）、AgentMessages（消息列表 + 工具活动）、ToolActivityItem（工具调用展示）、WorkspaceSelector（工作区切换）、PermissionBanner/AskUserBanner（权限/问答请求 UI）
-- **`settings/`**：设置面板 — GeneralSettings（用户档案）、AppearanceSettings（主题）、ChannelSettings（渠道管理）、ChannelForm（Provider 配置）、AgentSettings（Agent 渠道/工作区/MCP）、McpServerForm（MCP 服务器配置）、AboutSettings（版本/更新）、FeishuSettings（飞书集成）；含 `primitives/` 可复用表单组件
+- **`settings/`**：设置面板 — GeneralSettings（用户档案）、AppearanceSettings（主题模式、日间与夜间艺术风格）、ChannelSettings（渠道管理）、ChannelForm（Provider 配置）、AgentSettings（Agent 渠道/工作区/MCP）、McpServerForm（MCP 服务器配置）、AboutSettings（版本/更新）、FeishuSettings（飞书集成）；含 `primitives/` 可复用表单组件
 - **`file-browser/`**：文件浏览器 — FileBrowser（工作区文件树浏览）
 - **`ai-elements/`**：AI 展示组件 — Markdown 渲染、代码块、Mermaid 图、推理折叠、上下文分割线、富文本输入
+- **`knowledge/`**：本地 Markdown / HTML 笔记阅读；同库双链、相对 Markdown 链接、标题锚点及返回上一笔记。Markdown 正文支持 `$…$`、`$$…$$`、`\(...\)`、`\[...\]`，经 KaTeX 渲染
 - **`ui/`**：Radix UI 组件（现代化设计，CSS 变量主题）
 
 ### 全局 Hooks（`renderer/hooks/`）
@@ -306,7 +311,8 @@ bun run generate:icons    # 生成应用图标
 │   └── {conversationId}/
 │       └── {uuid}.ext
 ├── user-profile.json       # 用户档案 { userName, avatar }
-├── settings.json           # 应用设置 { themeMode }
+├── settings.json           # 应用设置 { themeMode, themeStyle }
+├── projects/               # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test 用 sql.js）
 └── sdk-config/             # Agent SDK 配置目录
     └── projects/           # SDK 项目配置
 ```
@@ -514,6 +520,9 @@ React UI 更新
 - ✅ **文档解析**：PDF、Office、文本文件提取
 - ✅ **多模态支持**：图片、文档附件
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
+- ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 `task_statuses` 表（预置五态沿用旧字符串 id，历史数据零迁移），跨状态逻辑只认 backlog/unstarted/started/completed/cancelled/triage 六个语义组；看板 @dnd-kit 拖拽，一次落库同时改状态与顺序（中点法 + 间隙耗尽整列重编号），乐观更新失败回滚并提示原因；飞书/钉钉同步按语义组双向映射，推方向仅推二值完成态且排序变更不打外部 API，拉方向外部"未完成"仅在本地处于完成组时回退（不覆盖 in_progress/paused），轮询变化经 `POLL_STATUS_CHANGED` 全局监听（main.tsx → pollStatusChangedAtom）推送前端刷新；draft 组只能经确认/拒绝链路进出（updateTask 拒绝普通路径）；甘特图与流动指标同按语义组着色/计算
+
+- ✅ **Project Pilot 受控准备切片**：项目概览读取权威任务、依赖、执行及决策/交付状态；携带任务身份的项目服务事件和已提交的项目链修订会立即唤醒后台权威对账，主进程每 30 秒扫描继续补偿删除等缺身份事件，任务及协作线索可回到权威入口。项目链通知在 microtask 中按 revision/payload 回读确认已提交，外层事务回滚不触发。项目经理可在概览配置始终 `paused` 的版本化草案，只列安全研发员工，要求不同执行/评审角色、共同 Git 工作区、同渠道/模型以及明确预算、次数、返工和有效期。活动 grant 采用“重新预检—冻结影响面—显式确认—幂等写入”，在策略文件锁内提交 SQLite；后台仅对当前 `ready_candidate` 重读权威任务并复核授权、readiness、策略指纹、角色、工作区和预算，再以确定性命令/执行 ID 原子排队并复用既有启动门禁。活动 Pilot 项目的普通员工派发和普通排队启动 fail-closed，不能绕过命令账本。暂停先展示影响面，确认后撤权、释放预留、取消未启动执行，运行中逐项选择。命令预算预留、原子排队和启动核验均重新校验当前策略、员工绑定及发行指纹；预留金额由账本按剩余授权费用和剩余次数派生，调用方不能低报。派生预留额已接入调用级 Runtime 预算字段，并与应用级阈值取更严格值；Runtime capability 明确声明是否支持费用超额停止阈值，不支持时在创建会话及调用 Provider 前 fail-closed。SDK 阈值只保证超额后停止，不保证最终费用绝不超过预留，超额结果仍撤权并进入对账。当前安全研发白名单内的 `proma` / `ai-sdk` 均不支持该能力，Claude 虽支持 `maxBudgetUsd` 但尚未纳入首版白名单，因此生产 Pilot 仍会在受控派发前被 readiness 阻塞。Runtime 调用前 command/execution 在同一 SQLite 事务认领为 running；失败回滚，不留下半启动状态。queued Pilot 取消时也在同一事务取消 execution 并释放 command 的费用和次数预留。应用重启发现遗留 running Pilot 时转为 stale，以 unknown 保留预算并暂停 grant，不自动续跑。headless 完成回调现会把 Runtime 原始终态 result 以不可覆盖记录保存，并绑定 execution/session/channel/model、Runtime、原文哈希、token 与费用；带 `total_cost_usd` 的结果按 `runtime_reported` 结算，无费用的 token 结果保持 `unknown`，不会使用本地估价冒充实际费用。该证据不宣称具有 Provider 请求 ID，Provider 直接回执与版本化价格快照仍未接入。确定性测试已覆盖受控派发和旧入口阻断，但还没有通过 readiness 的真实 Runtime、Provider 启动证据或真实停止证明；`request_stop` 仅持久记录，技术评审返工与审批续跑未完成，不得据此宣称自主闭环或 G0–G3 通过。进度以 `docs/plans/2026-09-26-project-pilot/ledger.md` 为准。
 
 ### 架构亮点
 

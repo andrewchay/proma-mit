@@ -36,6 +36,7 @@ import {
   type ScheduleTask,
 } from '@/atoms/paa-atoms'
 import { EventCreatePanel } from './EventCreatePanel'
+import { projectTaskToScheduleTask, type ProjectTaskLite } from '../projects/schedule-task-mapping'
 
 // ===== 工具函数 =====
 
@@ -259,6 +260,7 @@ function CalendarGrid({ year, month, selectedDate, events, tasks, onSelectDate }
                 {cell.dayTasks.slice(0, 3).map((task) => (
                   <span
                     key={task.id}
+                    title={task.category?.startsWith('project:') ? `📁 ${task.category.slice('project:'.length)} · ${task.title}` : task.title}
                     className={cn(
                       'w-1.5 h-1.5 rounded-full',
                       task.status === 'done' ? 'bg-green-400' : 'bg-orange-400',
@@ -357,6 +359,9 @@ function EventsListView({ events, tasks, selectedDate, onSelectDate }: EventsLis
                   {dayTasks.map((t) => (
                     <div key={t.id} className="flex items-center gap-2">
                       <span className={cn('w-2 h-2 rounded-full shrink-0', t.status === 'done' ? 'bg-green-400' : 'bg-orange-400')} />
+                      {t.category?.startsWith('project:') && (
+                        <span className="mr-1 text-[10px] px-1 rounded bg-primary/10 text-primary shrink-0">📁 {t.category.slice('project:'.length)}</span>
+                      )}
                       <span className={cn('text-sm flex-1 truncate', t.status === 'done' && 'line-through text-muted-foreground')}>{t.title}</span>
                       <span className="text-xs text-muted-foreground">{STATUS_CONFIG[t.status]?.label}</span>
                     </div>
@@ -586,7 +591,10 @@ function DateDetailPanel({ date, events, tasks }: DateDetailPanelProps): React.R
                 <span className={cn('flex-shrink-0', STATUS_CONFIG[task.status]?.color)}>
                   {STATUS_CONFIG[task.status]?.icon}
                 </span>
-                <span className={cn('text-xs', task.status === 'done' && 'line-through text-muted-foreground')}>
+                {task.category?.startsWith('project:') && (
+                  <span className="mr-1 text-[10px] px-1 rounded bg-primary/10 text-primary shrink-0">📁 {task.category.slice('project:'.length)}</span>
+                )}
+                <span className={cn('text-xs truncate min-w-0 flex-1', task.status === 'done' && 'line-through text-muted-foreground')}>
                   {task.title}
                 </span>
                 <span className={cn(
@@ -627,11 +635,28 @@ function inferCategoryFromCalendarName(calendarName: string): string {
   return 'personal'
 }
 
-export function ScheduleView(): React.ReactElement {
+interface ScheduleViewProps {
+  hideHeader?: boolean
+}
+
+export function ScheduleView({ hideHeader = false }: ScheduleViewProps): React.ReactElement {
   const [viewState, setViewState] = useAtom(scheduleViewStateAtom)
   const events = useAtomValue(scheduleEventsAtom)
   const setScheduleEvents = useSetAtom(scheduleEventsAtom)
   const [tasks, setTasks] = useAtom(scheduleTasksAtom)
+
+  // 项目任务 DDL 合流（跨项目，仅有 dueDate 且未完成）；挂载拉一次；
+  // 项目任务变化依赖重新挂载刷新（后续可接 onProjectActivityChanged 订阅）
+  const [projectTasks, setProjectTasks] = React.useState<ScheduleTask[]>([])
+  const refreshProjectTasks = React.useCallback(() => {
+    void window.electronAPI.paa.project.listAllProjectTasksLite()
+      .then((lite) => setProjectTasks((lite as ProjectTaskLite[]).map(projectTaskToScheduleTask)))
+      .catch((err) => console.error('加载项目任务失败:', err))
+  }, [])
+  React.useEffect(() => { refreshProjectTasks() }, [refreshProjectTasks])
+
+  // 项目任务合流：仅月历/日详情；TaskBoard 保持只用日程任务
+  const mergedTasks = React.useMemo(() => [...tasks, ...projectTasks], [tasks, projectTasks])
 
   const { selectedDate, viewMode } = viewState
   const selectedYear = parseInt(selectedDate.slice(0, 4))
@@ -793,12 +818,17 @@ export function ScheduleView(): React.ReactElement {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Header */}
+      {/* Header：嵌入顶层 tab 等场景由外层已有标题栏时，hideHeader 只隐藏标题区，
+          月份导航/今天/视图切换/新建/同步等工具区始终渲染（这些功能在收窄场景下仍需可达） */}
       <div className="relative z-[51] titlebar-no-drag flex items-center justify-between px-4 py-3 border-b flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <CalendarIcon className="w-5 h-5 text-primary" />
-          <h1 className="text-base font-semibold">日程管家</h1>
-        </div>
+        {!hideHeader ? (
+          <div className="flex items-center gap-3">
+            <CalendarIcon className="w-5 h-5 text-primary" />
+            <h1 className="text-base font-semibold">日程管家</h1>
+          </div>
+        ) : (
+          <div />
+        )}
 
         <div className="flex items-center gap-2">
           {/* 月份导航 */}
@@ -904,7 +934,7 @@ export function ScheduleView(): React.ReactElement {
           {viewMode === 'list' ? (
             <EventsListView
               events={events}
-              tasks={tasks}
+              tasks={mergedTasks}
               selectedDate={selectedDate}
               onSelectDate={handleSelectDate}
             />
@@ -914,7 +944,7 @@ export function ScheduleView(): React.ReactElement {
               month={selectedMonth}
               selectedDate={selectedDate}
               events={events}
-              tasks={tasks}
+              tasks={mergedTasks}
               onSelectDate={handleSelectDate}
             />
           )}
@@ -927,7 +957,7 @@ export function ScheduleView(): React.ReactElement {
             <DateDetailPanel
               date={selectedDate}
               events={events}
-              tasks={tasks}
+              tasks={mergedTasks}
             />
           </div>
 

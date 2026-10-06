@@ -106,6 +106,20 @@ export interface PromaWebServerConfig {
   operations?: { siemWebhookUrl?: string; alertWebhookUrl?: string }
   /** P-IV：运行时输入/输出采样；不配置则不采集内容快照（local-first）。 */
   spanSampling?: { enabled: boolean; rate?: number; maxBytes?: number }
+  /** 微信第三方平台授权事件回调（P3-02）；不配置则不暴露回调路由。 */
+  wechatPlatform?: {
+    /** 公众号后台配置的消息 Token。 */
+    token: string
+    /** 43 字符 EncodingAESKey。 */
+    encodingAESKey: string
+    /** 预期的组件 AppID（receiveId 校验）。 */
+    componentAppId: string
+    /** ticket 与 authorizer token 落库加密密钥：64 位 hex（32 字节）。 */
+    ticketEncryptionKeyHex: string
+    /** 商家授权回调 redirect_uri（必须与微信开放平台后台登记一致）。 */
+    authorizationRedirectUri?: string
+    componentAppSecret: string
+  }
 }
 
 export interface PromaWebServerDependencies {
@@ -116,6 +130,8 @@ export interface PromaWebServerDependencies {
   logger?: PromaWebLogger
   agentTurnRunner?: AgentRuntimeWebAgentTurnRunner
   operationsReporter?: OperationsReporter
+  /** 测试注入：微信 ticket 存储替换实现。 */
+  wechatTicketStore?: import('./wechat-platform/ticket-store').WechatComponentTicketStore
 }
 
 export interface PromaWebLogger {
@@ -343,6 +359,75 @@ export function createPromaWebServerApplication(
     }
   }
 
+  // 微信第三方平台运行时（P3-02/P3-03/P3-04）：配置齐全时构建一次，含内存 token 快路径。
+  let wechatRuntimePromise: Promise<{
+    ticketStore: import('./wechat-platform/ticket-store').WechatComponentTicketStore
+    componentTokenService: import('./wechat-platform/component-token-service').WechatComponentTokenService
+    authorizationService?: import('./wechat-platform/authorization-service').WechatAuthorizationService
+    ticketInbox: import('./wechat-platform/event-inbox').WechatEventInbox
+    reconciliationService: import('./wechat-platform/reconciliation').WechatReconciliationService
+  }> | undefined
+  const getWechatRuntime = () => {
+    if (!config.wechatPlatform) return undefined
+    wechatRuntimePromise ??= (async () => {
+      const { PostgresWechatComponentTicketStore } = await import('./wechat-platform/ticket-store.ts')
+      const { WechatComponentTokenService } = await import('./wechat-platform/component-token-service.ts')
+      const keyBytes = Buffer.from(config.wechatPlatform!.ticketEncryptionKeyHex.replace(/[^0-9a-f]/gi, ''), 'hex')
+      const ticketStore = dependencies.wechatTicketStore ?? new PostgresWechatComponentTicketStore(postgres, keyBytes)
+      const componentTokenService = new WechatComponentTokenService({
+        componentAppId: config.wechatPlatform!.componentAppId,
+        componentAppSecret: config.wechatPlatform!.componentAppSecret,
+        ticketStore,
+        tokenCacheStore: new (await import('./wechat-platform/component-token-service.ts')).PostgresWechatComponentTokenCacheStore(postgres, keyBytes),
+        logger: {
+          info: (message: string) => logger.info({ event: 'wechat_component_token', error: message }),
+          warn: (message: string) => logger.error({ event: 'wechat_component_token_warn', error: message }),
+        },
+      })
+      if (!(ticketStore instanceof PostgresWechatComponentTicketStore)) {
+        await new PostgresWechatComponentTicketStore(postgres, keyBytes).initializeSchema().catch(() => undefined)
+      }
+      await new (await import('./wechat-platform/component-token-service.ts')).PostgresWechatComponentTokenCacheStore(postgres, keyBytes).initializeSchema().catch(() => undefined)
+      const { PostgresWechatEventInbox } = await import('./wechat-platform/event-inbox.ts')
+      const ticketInbox = new PostgresWechatEventInbox(postgres, keyBytes)
+      await ticketInbox.initializeSchema().catch(() => undefined)
+      const { WechatReconciliationService } = await import('./wechat-platform/reconciliation.ts')
+      const reconciliationService = new WechatReconciliationService({
+        componentAppId: config.wechatPlatform!.componentAppId,
+        ticketStore,
+        componentTokenService,
+        authorizerStore: new (await import('./wechat-platform/authorizer-store.ts')).PostgresWechatAuthorizerStore(postgres, keyBytes),
+        logger: {
+          info: (message: string) => logger.info({ event: 'wechat_reconciliation', error: message }),
+          warn: (message: string) => logger.error({ event: 'wechat_reconciliation_warn', error: message }),
+        },
+      })
+      let authorizationService: import('./wechat-platform/authorization-service').WechatAuthorizationService | undefined
+      if (config.wechatPlatform!.authorizationRedirectUri) {
+        const { WechatAuthorizationService, PostgresWechatAuthorizationStateStore } = await import('./wechat-platform/authorization-service.ts')
+        const { PostgresWechatAuthorizerStore } = await import('./wechat-platform/authorizer-store.ts')
+        const stateStore = new PostgresWechatAuthorizationStateStore(postgres)
+        const authorizerStore = new PostgresWechatAuthorizerStore(postgres, keyBytes)
+        await stateStore.initializeSchema().catch(() => undefined)
+        await authorizerStore.initializeSchema().catch(() => undefined)
+        authorizationService = new WechatAuthorizationService({
+          componentAppId: config.wechatPlatform!.componentAppId,
+          authorizationRedirectUri: config.wechatPlatform!.authorizationRedirectUri!,
+          ticketStore,
+          componentTokenService,
+          authorizerStore,
+          stateStore,
+          logger: {
+            info: (message: string) => logger.info({ event: 'wechat_authorization', error: message }),
+            warn: (message: string) => logger.error({ event: 'wechat_authorization_warn', error: message }),
+          },
+        })
+      }
+      return { ticketStore, componentTokenService, authorizationService, ticketInbox, reconciliationService }
+    })()
+    return wechatRuntimePromise
+  }
+
   return {
     async fetch(request) {
       const url = new URL(request.url)
@@ -353,6 +438,37 @@ export function createPromaWebServerApplication(
         const response = Response.json({ status: 'ok' })
         response.headers.set('x-trace-id', traceId)
         return response
+      }
+      // 微信第三方平台授权事件回调（公开端点：由微信服务端调用，凭签名与时间戳保护）
+      if (config.wechatPlatform && url.pathname === '/callbacks/wechat/platform') {
+        const { handleWechatCallback } = await import('./wechat-platform/callback.ts')
+        const runtime = await getWechatRuntime()
+        if (!runtime) return new Response('fail', { status: 500 })
+        return await handleWechatCallback({
+          method: request.method as 'GET' | 'POST',
+          query: url.searchParams,
+          body: request.method === 'POST' ? await request.text() : undefined,
+          options: {
+            cryptoMaterial: { token: config.wechatPlatform.token, encodingAesKey: config.wechatPlatform.encodingAESKey },
+            ticketStore: runtime.ticketStore,
+            ticketInbox: runtime.ticketInbox,
+            expectedComponentAppId: config.wechatPlatform.componentAppId,
+            onAuthorizationEvent: runtime.authorizationService
+              ? async (event) => {
+                  if (event.infoType === 'unauthorized' && event.authorizerAppId) {
+                    await runtime.authorizationService!.handleUnauthorizedEvent(event.authorizerAppId)
+                  }
+                  // authorized/updateauthorized：等商家侧下次 token 使用时自然恢复；这里记录审计。
+                  logger.info({ event: 'wechat_authorizer_event', error: `infoType=${event.infoType} authorizer=${event.authorizerAppId ?? ''}` })
+                }
+              : undefined,
+            // PromaWebLogger 使用事件对象：这里适配为 { event: 'wechat_callback_warn'|'wechat_callback' } 结构
+            logger: {
+              info: (message: string) => logger.info({ event: 'wechat_callback', error: message }),
+              warn: (message: string) => logger.error({ event: 'wechat_callback_warn', error: message }),
+            },
+          },
+        }) ?? new Response('fail', { status: 404 })
       }
       if (request.method === 'GET' && url.pathname === '/agent/ui') {
         return new Response(WEB_DASHBOARD_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
@@ -386,6 +502,78 @@ export function createPromaWebServerApplication(
       let response: Response
       if (actionAuthorizationError) {
         response = actionAuthorizationError
+      // P3-04：微信第三方平台商家授权（operator/admin）
+      } else if (request.method === 'GET' && url.pathname === '/wechat/authorization-url') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : !config.wechatPlatform?.authorizationRedirectUri
+              ? Response.json({ error: '未配置微信第三方平台授权' }, { status: 404 })
+              : Response.json(await (await getWechatRuntime())!.authorizationService!.createAuthorizationUrl(scope.tenantId))
+      } else if (request.method === 'GET' && url.pathname === '/wechat/authorizers') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : !config.wechatPlatform?.authorizationRedirectUri
+              ? Response.json({ error: '未配置微信第三方平台授权' }, { status: 404 })
+              : Response.json({ accounts: await (await getWechatRuntime())!.authorizationService!.listAuthorizedAccounts(scope.tenantId) })
+      } else if (request.method === 'GET' && url.pathname.startsWith('/wechat/authorizers/') && url.pathname.endsWith('/capabilities')) {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : await (async () => {
+              const authorizerAppId = decodeURIComponent(url.pathname.slice('/wechat/authorizers/'.length, -'/capabilities'.length))
+              try {
+                return Response.json({ matrix: await (await getWechatRuntime())!.authorizationService!.getCapabilityMatrix(authorizerAppId, scope.tenantId) })
+              } catch (error) {
+                return Response.json({ error: error instanceof Error ? error.message : '获取能力矩阵失败' }, { status: 404 })
+              }
+            })()
+      } else if (request.method === 'GET' && url.pathname === '/wechat/reconciliation') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : Response.json({ report: await (await getWechatRuntime())!.reconciliationService.reconcile() })
+      } else if (request.method === 'GET' && url.pathname === '/wechat/inbox/dead') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : Response.json({ dead: await (await getWechatRuntime())!.ticketInbox.listDead() })
+      } else if (request.method === 'POST' && url.pathname === '/wechat/inbox/replay') {
+        response = !scope
+          ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+          : !hasAnyRole(scope, ['operator', 'admin'])
+            ? Response.json({ error: '需要 operator 或 admin 角色' }, { status: 403 })
+            : await (async () => {
+              const body = await request.json().catch(() => ({})) as { dedupeKey?: string }
+              if (!body.dedupeKey) return Response.json({ error: '缺少 dedupeKey' }, { status: 400 })
+              try {
+                const result = await (await import('./wechat-platform/event-inbox.ts')).replayTicketDeadLetter((await getWechatRuntime())!.ticketInbox, (await getWechatRuntime())!.ticketStore, body.dedupeKey)
+                return Response.json({ result })
+              } catch (error) {
+                return Response.json({ error: error instanceof Error ? error.message : '重放失败' }, { status: 500 })
+              }
+            })()
+      } else if (request.method === 'GET' && url.pathname === '/callbacks/wechat/authorization') {
+        // 微信授权回调跳转目标（公开：管理员扫码后浏览器落地页；安全由 state 一次性核销保证）
+        const runtime = await getWechatRuntime()
+        const authCode = url.searchParams.get('auth_code') ?? ''
+        const state = url.searchParams.get('state') ?? ''
+        if (!runtime?.authorizationService || !authCode || !state) {
+          response = new Response('<html><body><h3>授权失败</h3><p>缺少参数或服务未配置。</p></body></html>', { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
+        } else {
+          try {
+            const account = await runtime.authorizationService.handleAuthorizationCallback({ authCode, state })
+            response = new Response(`<html><body><h3>授权成功</h3><p>公众号：${account.nickname}（${account.authorizerAppId}）</p><p>可关闭本页返回应用。</p></body></html>`, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+          } catch (error) {
+            response = new Response(`<html><body><h3>授权未完成</h3><p>${error instanceof Error ? error.message : '未知错误'}</p></body></html>`, { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
+          }
+        }
       } else if (request.method === 'GET' && url.pathname === '/agent/billing') {
         response = !scope
           ? Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })

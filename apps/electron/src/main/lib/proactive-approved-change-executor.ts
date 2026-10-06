@@ -4,6 +4,8 @@ import { createMemoryItem } from './memory-plugin-service'
 import { createApprovedWorkspaceSkill } from './agent-workspace-manager'
 import type { CreateMonitorInput } from './monitor-service'
 import type { MemoryItemKind } from './memory-plugin-service'
+import { adoptAgentEmployeeCapabilityVersion, getAgentEmployee } from './project-sqlite-store'
+import { createHash } from 'node:crypto'
 
 export interface ApprovedChangeExecutorDependencies {
   createSchedule: (input: CreateProactiveScheduleInput) => void
@@ -46,6 +48,33 @@ export async function executeApprovedChange(
       createMonitor(change.input as unknown as CreateMonitorInput)
       return
     }
+    case 'employee_capability_adopt': {
+      if (!isString(change.agentId) || !isString(change.scope) || !isString(change.content) || !isString(change.contentHash) || !isNumber(change.versionNumber)) {
+        throw new Error('员工能力推广审批缺少必要字段')
+      }
+      const employee = getAgentEmployee(change.agentId)
+      if (!employee) throw new Error('目标 AI 员工不存在或已删除')
+      if (!employee.enabled) throw new Error('目标 AI 员工已停用，不能推广能力')
+      if (change.scope !== 'role' && change.scope !== 'workspace') throw new Error('员工能力 scope 非法')
+      if (change.scope === 'workspace') {
+        if (!isString(change.workspaceId)) throw new Error('工作区能力推广必须指定 workspaceId')
+        const allowedWorkspaceIds = new Set([employee.workspaceId, ...(employee.workspaceIds ?? [])].filter((id): id is string => Boolean(id)))
+        if (!allowedWorkspaceIds.has(change.workspaceId)) throw new Error('目标工作区不在该员工获准服务的范围内')
+      }
+      if (createHash('sha256').update(change.content).digest('hex') !== change.contentHash) throw new Error('能力内容 hash 校验失败')
+      adoptAgentEmployeeCapabilityVersion({
+        agentId: change.agentId,
+        parentVersionId: typeof change.parentVersionId === 'string' ? change.parentVersionId : undefined,
+        versionNumber: change.versionNumber,
+        scope: change.scope,
+        workspaceId: typeof change.workspaceId === 'string' ? change.workspaceId : undefined,
+        content: change.content,
+        contentHash: change.contentHash,
+        source: 'evolution',
+        retiredAt: undefined,
+      })
+      return
+    }
     case 'skill_create': {
       if (!isString(change.workspaceId) || !isString(change.name) || !isString(change.content)) {
         throw new Error('Skill 审批缺少目标工作区、名称或内容')
@@ -64,6 +93,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 function isNullableString(value: unknown): value is string | null {

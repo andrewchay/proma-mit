@@ -10,6 +10,7 @@
 import { getSettings, onSettingsChange } from './settings-service'
 import * as store from './project-sqlite-store'
 import { generateProjectSummary, type ProjectSummary } from './project-summary-service'
+import { resolveStateGroup } from './task-status-logic'
 import type {
   Project,
   Task,
@@ -31,6 +32,13 @@ import type {
   MyWorkItem,
   ProjectActivity,
   ProjectTemplate,
+  TaskStatusDef,
+  TaskStateGroup,
+  TaskPriority,
+  CreateTaskStatusInput,
+  UpdateTaskStatusInput,
+  ReorderTaskInput,
+  ReorderTaskResult,
 } from './project-types'
 
 export type {
@@ -60,6 +68,12 @@ export type {
   MyWorkItem,
   ProjectActivity,
   ProjectTemplate,
+  TaskStatusDef,
+  TaskStateGroup,
+  CreateTaskStatusInput,
+  UpdateTaskStatusInput,
+  ReorderTaskInput,
+  ReorderTaskResult,
 } from './project-types'
 export type { ProjectSummary } from './project-summary-service'
 
@@ -67,7 +81,11 @@ export type { ProjectSummary } from './project-summary-service'
 
 export type TaskChangeAction = 'created' | 'updated' | 'deleted' | 'draft_confirmed'
 
-type TaskChangeListener = (task: Task | null, action: TaskChangeAction) => void
+type TaskChangeListener = (
+  task: Task | null,
+  action: TaskChangeAction,
+  context?: { changedFields?: TaskChangedFields; source?: 'user' | 'external-sync' | 'system' }
+) => void
 
 const taskChangeListeners = new Set<TaskChangeListener>()
 
@@ -79,15 +97,22 @@ export function onTaskChange(listener: TaskChangeListener): () => void {
   }
 }
 
-function fireTaskChange(task: Task | null, action: TaskChangeAction): void {
+function fireTaskChange(
+  task: Task | null,
+  action: TaskChangeAction,
+  context?: { changedFields?: TaskChangedFields; source?: 'user' | 'external-sync' | 'system' },
+): void {
   for (const listener of taskChangeListeners) {
     try {
-      listener(task, action)
+      listener(task, action, context)
     } catch (error) {
       console.error('[ProjectService] 任务变更监听器执行失败:', error)
     }
   }
 }
+
+/** 本次更新实际变化的字段（供同步层判断"仅排序变更不推外部"） */
+export type TaskChangedFields = Partial<Record<string, boolean>>
 
 // ===== 项目 CRUD =====
 
@@ -111,6 +136,11 @@ export async function deleteProject(id: string): Promise<boolean> {
   return store.deleteProject(id)
 }
 
+/** 项目列表手动排序：整表按 id 顺序重写 sort_order */
+export async function reorderProjects(orderedIds: string[]): Promise<boolean> {
+  return store.reorderProjects(orderedIds)
+}
+
 // ===== 任务 CRUD =====
 
 export async function createTask(projectId: string, input: CreateTaskInput): Promise<Task> {
@@ -127,10 +157,65 @@ export async function getTask(id: string): Promise<Task | null> {
   return store.getTask(id)
 }
 
-export async function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): Promise<Task | null> {
+export async function updateTask(
+  id: string,
+  updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>,
+  options?: {
+    source?: 'user' | 'external-sync' | 'system'
+    /** 乐观锁：调用方读取任务时的 updatedAt。不匹配说明已被他人（人/agent）先写，抛冲突错误 */
+    expectedUpdatedAt?: number
+  }
+): Promise<Task | null> {
+  // 乐观锁检测（人 + agent 并发写收敛点）：仅在显式传入 expectedUpdatedAt 时启用
+  if (options?.expectedUpdatedAt !== undefined) {
+    const current = await getTask(id)
+    if (!current) return null
+    if (current.updatedAt !== options.expectedUpdatedAt) {
+      throw new Error(
+        `任务已被其他操作更新（当前版本 ${current.updatedAt}，基于版本 ${options.expectedUpdatedAt}）。请刷新后重试，避免覆盖他人改动。`,
+      )
+    }
+  }
   const task = store.updateTask(id, updates)
-  if (task) fireTaskChange(task, 'updated')
+  if (task) fireTaskChange(task, 'updated', { changedFields: diffTaskFields(updates), source: options?.source ?? 'user' })
   return task
+}
+
+/** 在同一个 SQLite 事务中核对版本并写入；事件只在提交后发出，供 Pilot 审批防重放。 */
+export function updateTaskIfVersion(
+  id: string,
+  expectedUpdatedAt: number,
+  updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>,
+  beforeCommit?: (previous: Task, updated: Task) => void,
+): Task {
+  let task: Task | null = null
+  store.getProjectDb().transaction(() => {
+    const current = store.getTask(id)
+    if (!current || current.updatedAt !== expectedUpdatedAt) throw new Error('任务版本已变化，请刷新后重试')
+    task = store.updateTask(id, updates)
+    if (!task) throw new Error('任务已不存在')
+    beforeCommit?.(current, task)
+  })()
+  if (!task) throw new Error('任务已不存在')
+  fireTaskChange(task, 'updated', { changedFields: diffTaskFields(updates), source: 'user' })
+  return task
+}
+
+/** 计算本次更新涉及的字段集合（含 externalSync 深层字段，供同步层降噪判断） */
+function diffTaskFields(updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): TaskChangedFields {
+  const changed: TaskChangedFields = {}
+  for (const key of Object.keys(updates)) {
+    const value = (updates as Record<string, unknown>)[key]
+    if (value !== undefined || key === 'workspaceId') changed[key] = true
+  }
+  // externalSync 只透传具体平台键，便于区分"状态回写"与"内容更新"
+  if (updates.externalSync) {
+    delete changed.externalSync
+    for (const platform of Object.keys(updates.externalSync)) {
+      changed[`externalSync.${platform}`] = true
+    }
+  }
+  return changed
 }
 
 export async function deleteTask(id: string): Promise<boolean> {
@@ -322,6 +407,76 @@ export async function getKanbanBoard(projectId: string): Promise<KanbanBoard> {
 
 export async function getProjectProgress(projectId: string): Promise<ProjectProgress> {
   return store.getProjectProgress(projectId)
+}
+
+// ===== 任务状态定义（State 分组） =====
+
+export async function listTaskStatuses(projectId: string): Promise<TaskStatusDef[]> {
+  return store.listTaskStatuses(projectId)
+}
+
+export async function createTaskStatus(projectId: string, input: CreateTaskStatusInput): Promise<TaskStatusDef> {
+  return store.createTaskStatus(projectId, input)
+}
+
+export async function updateTaskStatusDef(projectId: string, statusId: string, patch: UpdateTaskStatusInput): Promise<TaskStatusDef | null> {
+  return store.updateTaskStatus(projectId, statusId, patch)
+}
+
+export async function deleteTaskStatus(projectId: string, statusId: string, migrateToStatusId: string): Promise<boolean> {
+  return store.deleteTaskStatus(projectId, statusId, migrateToStatusId)
+}
+
+export async function reorderTaskStatuses(projectId: string, orderedIds: string[]): Promise<TaskStatusDef[]> {
+  return store.reorderTaskStatuses(projectId, orderedIds)
+}
+
+/** 日程视图用：跨项目轻量任务（仅有 dueDate 且未完成、非 draft） */
+export interface ProjectTaskLite {
+  id: string
+  projectId: string
+  projectTitle: string
+  title: string
+  status: string
+  stateGroup: TaskStateGroup
+  priority: TaskPriority
+  dueDate: number
+}
+
+/**
+ * 跨项目聚合轻量任务，供日程视图按 DDL 渲染。
+ *
+ * 过滤规则：无 dueDate 剔除；completed/cancelled 语义组剔除；
+ * draft 任务由 store.listTasks 默认（includeDrafts=false）剔除。
+ */
+export async function listAllProjectTasksLite(): Promise<ProjectTaskLite[]> {
+  const projects = await listProjects()
+  const result: ProjectTaskLite[] = []
+  for (const project of projects) {
+    const statuses = await store.listTaskStatuses(project.id)
+    // includeSubTasks=false：只取核心任务，避免日程视图重复展示子任务
+    const tasks = await store.listTasks(project.id, { includeSubTasks: false })
+    for (const task of tasks) {
+      if (task.dueDate === undefined) continue
+      const group = resolveStateGroup(task.status, statuses)
+      if (group === 'completed' || group === 'cancelled') continue
+      result.push({
+        id: task.id,
+        projectId: task.projectId,
+        projectTitle: project.title,
+        title: task.title,
+        status: task.status,
+        stateGroup: group,
+        priority: task.priority,
+        dueDate: task.dueDate,
+      })
+    }
+  }
+  return result.sort((a, b) => a.dueDate - b.dueDate)
+}
+
+export async function reorderTask(id: string, input: ReorderTaskInput): Promise<ReorderTaskResult> {
+  return store.reorderTask(id, input)
 }
 
 export async function listTaskDependencies(projectId: string): Promise<TaskDependency[]> {
