@@ -523,6 +523,13 @@ function migrate(database: SqliteCompat): void {
       payload TEXT NOT NULL,
       PRIMARY KEY (project_id, revision)
     );
+    CREATE TABLE IF NOT EXISTS project_owner_revisions (
+      project_id TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      payload TEXT NOT NULL,
+      PRIMARY KEY (project_id, subject_key, revision)
+    );
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
