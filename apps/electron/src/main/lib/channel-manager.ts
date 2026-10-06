@@ -325,6 +325,8 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
       case 'kimi-coding':
       case 'zhipu-coding':
       case 'zhipu-coding-team':
+      case 'minimax-video':
+        return await testMiniMaxVideoCredential(channel.baseUrl, apiKey, proxyUrl)
       case 'minimax':
       case 'ark-coding-plan':
       case 'qwen-anthropic':
@@ -352,6 +354,38 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误'
     return { success: false, message: `连接测试失败: ${message}` }
+  }
+}
+
+/**
+ * 测试 MiniMax 视频（V2 按量）渠道连通性。
+ *
+ * 视频 API 为异步任务式接口，无轻量"列出模型"端点可探测，因此用伪造 task_id 查询：
+ *   401            → key 无效/未开通视频权限（失败）
+ *   400/404/422 等 → 鉴权已通过，仅探测 ID 不存在（成功）
+ */
+async function testMiniMaxVideoCredential(
+  baseUrl: string,
+  apiKey: string,
+  proxyUrl?: string,
+): Promise<ChannelTestResult> {
+  const bare = baseUrl.trim().replace(/\/+$/, '').replace(/\/(v\d+|anthropic)$/, '')
+  const url = `${bare}/v2/query/video_generation/__credential_probe__`
+  const fetchFn = getFetchFn(proxyUrl)
+  try {
+    const response = await fetchFn(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    if (response.status === 401 || response.status === 403) {
+      const detail = await response.text().catch(() => '')
+      return { success: false, message: `MiniMax 视频 API 鉴权失败（${response.status}）：请确认 key 为开放平台按量 key 且已按量购买 H3${detail ? ` — ${detail.slice(0, 120)}` : ''}` }
+    }
+    if (response.status >= 500) {
+      return { success: false, message: `MiniMax 视频 API 服务异常（${response.status}），稍后重试` }
+    }
+    return { success: true, message: 'MiniMax 视频 API 鉴权通过（V2）' }
+  } catch (error) {
+    return { success: false, message: `连接失败: ${error instanceof Error ? error.message : String(error)}` }
   }
 }
 

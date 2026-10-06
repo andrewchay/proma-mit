@@ -20,7 +20,6 @@ import type { VideoEngineConfig } from './video-generation-service'
 const ARK_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 
 /** MiniMax 视频 API 默认 Base URL */
-const MINIMAX_VIDEO_DEFAULT_BASE_URL = 'https://api.minimaxi.com/v1'
 
 /** Seedance 默认模型（doubao 渠道未显式配置 seedance 模型时使用） */
 export const SEEDANCE_DEFAULT_MODEL = 'doubao-seedance-2-5-260628'
@@ -57,22 +56,6 @@ function normalizeArkBaseUrl(baseUrl: string): string {
   return `${trimmed}/api/v3`
 }
 
-/** 由 MiniMax 渠道 Base URL（Anthropic 协议）推导视频 API Base URL */
-function deriveMiniMaxVideoBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, '')
-  // https://api.minimaxi.com/anthropic → https://api.minimaxi.com/v1
-  if (/\/anthropic$/.test(trimmed)) {
-    return trimmed.replace(/\/anthropic$/, '/v1')
-  }
-  // https://api.minimaxi.com → https://api.minimaxi.com/v1
-  try {
-    const pathname = new URL(trimmed).pathname
-    if (pathname === '/' || pathname === '') return `${trimmed}/v1`
-  } catch {
-    // 忽略
-  }
-  return trimmed
-}
 
 /** 安全解密渠道 key（解密失败按无凭据处理） */
 function safeDecryptApiKey(channelId: string): string {
@@ -140,23 +123,50 @@ export function resolveSeedanceConfig(channelId?: string): ResolvedVideoEngineCo
   }
 }
 
-/** 解析 MiniMax H3 引擎配置：minimax 渠道优先，环境变量兜底 */
+/** MiniMax 视频 V2 默认根（国内站） */
+const MINIMAX_VIDEO_V2_DEFAULT = 'https://api.minimax.cn/v2'
+
+/** 从渠道 baseUrl 归一化出 V2 根（兼容误填 /anthropic、/v1、/v2 结尾） */
+function deriveMiniMaxVideoV2BaseUrl(baseUrl: string): string {
+  const bare = baseUrl.trim().replace(/\/+$/, '').replace(/\/(v\d+|anthropic)$/, '')
+  return `${bare}/v2`
+}
+
+/** 从渠道模型中挑选 H3 系模型（缺省用官方 MiniMax-H3） */
+function pickMiniMaxVideoModel(models: Channel['models']): string | undefined {
+  return models.find((m) => /H3/i.test(m.id))?.id
+}
+
+/** 解析 MiniMax H3 引擎配置：minimax-video 渠道优先 → minimax 渠道 → 环境变量兜底 */
 export function resolveMiniMaxConfig(channelId?: string): ResolvedVideoEngineConfig {
+  const videoCh = findUsableChannel('minimax-video', pickMiniMaxVideoModel, channelId)
+  if (videoCh) {
+    return {
+      apiKey: videoCh.apiKey,
+      baseUrl: deriveMiniMaxVideoV2BaseUrl(videoCh.baseUrl),
+      source: 'channel',
+      channelId: videoCh.id,
+      channelName: videoCh.name,
+      model: videoCh.model ?? 'MiniMax-H3',
+    }
+  }
   const ch = findUsableChannel('minimax', undefined, channelId)
   if (ch) {
     return {
       apiKey: ch.apiKey,
-      baseUrl: deriveMiniMaxVideoBaseUrl(ch.baseUrl),
+      baseUrl: deriveMiniMaxVideoV2BaseUrl(ch.baseUrl),
       source: 'channel',
       channelId: ch.id,
       channelName: ch.name,
+      model: 'MiniMax-H3',
     }
   }
 
   return {
     apiKey: process.env.MINIMAX_API_KEY ?? '',
-    baseUrl: MINIMAX_VIDEO_DEFAULT_BASE_URL,
+    baseUrl: MINIMAX_VIDEO_V2_DEFAULT,
     source: 'env',
+    model: 'MiniMax-H3',
   }
 }
 

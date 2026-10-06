@@ -295,57 +295,104 @@ function extractSeedanceVideoUrl(data: VideoTaskJson): string | undefined {
 
 const MINIMAX_DEFAULT_CONFIG: VideoEngineConfig = {
   apiKey: process.env.MINIMAX_API_KEY || "",
-  baseUrl: "https://api.minimaxi.com/v1",
+  baseUrl: "https://api.minimax.cn/v2",
   timeout: 120000,
 };
 
 /**
- * 使用 MiniMax H3 生成视频
+ * 使用 MiniMax H3（V2 协议）生成视频
+ *
+ * V2 契约（2026-10 官方文档核对）：
+ *   创建  POST {base}/video_generation                 body: { model, content[], resolution, duration, ratio }
+ *   查询  GET  {base}/query/video_generation/{task_id}  状态: queued|running|succeeded|failed|cancelled
+ *   成片  task.content.url（查询响应直接给出，无需 files/retrieve）
+ * baseUrl 必须为含 /v2 的根（resolver 已归一化；env 默认 https://api.minimax.cn/v2）
  */
 export async function generateVideoWithMiniMax(
   request: VideoGenerationRequest,
   config: VideoEngineConfig = MINIMAX_DEFAULT_CONFIG
 ): Promise<VideoGenerationResult> {
   const startTime = Date.now();
-
   try {
-    // 1. 创建视频生成任务
+    // 1. 创建任务：content 数组（text 必填）；首帧图 → image_url + role=first_frame
+    const content: Array<Record<string, unknown>> = [{ type: "text", text: request.prompt }];
+    if (request.firstFrameImage) {
+      content.push({ type: "image_url", image_url: { url: request.firstFrameImage }, role: "first_frame" });
+    }
+    const body: Record<string, unknown> = {
+      model: request.model ?? "MiniMax-H3",
+      content,
+      resolution: "768P",
+      duration: request.duration,
+    };
+    // 文生视频 ratio 必填且不可 adaptive；图生视频由首帧图决定比例（不传，接口强制 adaptive）
+    if (!request.firstFrameImage) body.ratio = request.aspectRatio;
+
     const createResponse = await fetch(`${config.baseUrl}/video_generation`, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: request.model ?? "minimax-h3",
-        prompt: request.prompt,
-        duration: request.duration,
-        aspect_ratio: request.aspectRatio,
-        ...(request.firstFrameImage && {
-          first_frame_image: request.firstFrameImage,
-        }),
-      }),
+      body: JSON.stringify(body),
     });
-
     if (!createResponse.ok) {
       const errorText = await createResponse.text();
-      throw new Error(`MiniMax API error: ${createResponse.status} - ${errorText}`);
+      throw new Error(`MiniMax V2 API error: ${createResponse.status} - ${errorText.slice(0, 300)}`);
     }
+    const created = (await createResponse.json()) as { task_id?: string };
+    const taskId = created.task_id;
+    if (!taskId) throw new Error("MiniMax V2 API returned no task_id");
 
-    const createData = await createResponse.json() as VideoTaskJson;
-    const taskId = createData.task_id || createData.id;
-
-    if (!taskId) {
-      throw new Error("MiniMax API returned no task_id");
+    // 2. 轮询：10s 间隔，最长 12 分钟（生成通常 2–6 分钟）
+    const pollInterval = 10000;
+    const maxAttempts = 72;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      let task: { status?: string; content?: { url?: string }; error?: { message?: string } } | undefined;
+      try {
+        const res = await fetch(`${config.baseUrl}/query/video_generation/${taskId}`, {
+          headers: { Authorization: `Bearer ${config.apiKey}` },
+        });
+        if (res.status === 401 || res.status === 403) {
+          return {
+            status: "failed",
+            taskId,
+            error: `鉴权失败（${res.status}）：key 无视频权限或已过期`,
+            engine: "minimax-h3",
+            createdAt: startTime,
+          };
+        }
+        if (!res.ok) continue;
+        task = (await res.json() as { task?: typeof task }).task;
+      } catch (error) {
+        console.warn(`[MiniMax V2] 轮询第 ${attempt} 次失败:`, error);
+        continue;
+      }
+      if (task?.status === "succeeded") {
+        const videoUrl = task.content?.url;
+        if (!videoUrl) {
+          return { status: "failed", taskId, error: "任务成功但响应缺少 content.url", engine: "minimax-h3", createdAt: startTime };
+        }
+        return { status: "success", taskId, videoUrl, engine: "minimax-h3", createdAt: startTime, completedAt: Date.now() };
+      }
+      if (task?.status === "failed" || task?.status === "cancelled") {
+        return {
+          status: "failed",
+          taskId,
+          error: task.error?.message ?? (task.status === "cancelled" ? "任务已取消" : "任务失败"),
+          engine: "minimax-h3",
+          createdAt: startTime,
+        };
+      }
+      // queued / running → 继续等待
     }
-
-    // 2. 轮询任务状态
-    const result = await pollVideoTask(taskId, "minimax-h3", config);
-
     return {
-      ...result,
+      status: "failed",
+      taskId,
+      error: `轮询超时（${maxAttempts * (pollInterval / 1000)} 秒）`,
+      engine: "minimax-h3",
       createdAt: startTime,
-      completedAt: Date.now(),
     };
   } catch (error) {
     return {
@@ -357,8 +404,6 @@ export async function generateVideoWithMiniMax(
     };
   }
 }
-
-// ============================================================
 // 通用轮询逻辑（MiniMax 等非 Seedance 引擎）
 // ============================================================
 
