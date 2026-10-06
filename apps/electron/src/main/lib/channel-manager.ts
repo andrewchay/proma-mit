@@ -319,14 +319,14 @@ export async function testChannel(channelId: string): Promise<ChannelTestResult>
 
   try {
     switch (channel.provider) {
+      case 'minimax-video':
+        return await testMiniMaxVideoCredential(channel.baseUrl, apiKey, proxyUrl)
       case 'anthropic':
       case 'deepseek':
       case 'kimi-api':
       case 'kimi-coding':
       case 'zhipu-coding':
       case 'zhipu-coding-team':
-      case 'minimax-video':
-        return await testMiniMaxVideoCredential(channel.baseUrl, apiKey, proxyUrl)
       case 'minimax':
       case 'ark-coding-plan':
       case 'qwen-anthropic':
@@ -765,6 +765,16 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
       }
       case 'google':
         return await fetchGoogleModels(input.baseUrl, input.apiKey, proxyUrl)
+      case 'minimax-video':
+        // 视频 V2 接口无「列出模型」端点，返回官方固定模型目录
+        return {
+          success: true,
+          message: '已加载 MiniMax 视频模型目录（H3 系列）',
+          models: [
+            { id: 'MiniMax-H3', name: 'MiniMax H3', enabled: true },
+            { id: 'MiniMax-H3-Max', name: 'MiniMax H3 Max（极速）', enabled: true },
+          ],
+        }
       default:
         return { success: false, message: `不支持的供应商: ${input.provider}`, models: [] }
     }
