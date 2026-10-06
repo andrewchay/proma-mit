@@ -488,6 +488,132 @@
     --dashed-border-hover: 165 48% 34% / 0.50;
   }
 
+  /* 鼠尾草（浅色） - 灰绿 #89A8A0 + 米白 #F1EFE7 + 沙棕 #D7C5A1，自然植物系 */
+  .theme-sage {
+    /* 基础色 */
+    --background: 48 26% 93%;             /* #F1EFE7 背景（侧边栏，米白） */
+    --foreground: 165 15% 18%;            /* 深灰绿前景文字 */
+    --content-area: 48 30% 96%;           /* 内容区域（更亮米白） */
+    /* 次要色 */
+    --muted: 45 22% 88%;                  /* 次要背景 */
+    --muted-foreground: 165 8% 32%;       /* 次要文字 */
+    --border: 45 18% 80%;                 /* 边框 */
+    /* 交互色 - 鼠尾草灰绿（#89A8A0 深化，保证白字可读） */
+    --primary: 164 15% 38%;               /* #89A8A0 深化主色 */
+    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
+    /* 会话选中态左侧 accent 竖条：跟随主题主色 */
+    --selection-accent: 164 25% 40%;
+    --secondary: 45 24% 90%;              /* 二级背景 */
+    --secondary-foreground: 165 18% 22%;  /* 二级前景 */
+    --accent: 40 40% 82%;                 /* #D7C5A1 沙棕强调背景 */
+    --accent-foreground: 40 35% 28%;      /* 深沙棕强调文字 */
+    --ring: 164 15% 38%;                  /* 聚焦环 */
+    /* 组件色 */
+    --card: 48 30% 96%;                   /* 卡片背景 */
+    --card-foreground: 165 15% 18%;       /* 卡片前景 */
+    --input: 45 22% 90%;                  /* 输入框背景 */
+    --popover: 48 35% 97%;                /* 弹出层 */
+    --popover-foreground: 165 15% 18%;    /* 弹出前景 */
+    --dialog: 48 35% 97%;                 /* 弹窗背景 */
+    --dialog-foreground: 165 15% 18%;     /* 弹窗前景 */
+    /* 功能色 */
+    --destructive: 0 72% 51%;             /* #dc2828 危险色 */
+    --destructive-foreground: 0 0% 100%;  /* #ffffff 危险前景 */
+    --stop-hover-bg: hsla(0, 70%, 50%, 0.12);
+    --tooltip: 165 15% 20%;               /* 深灰绿 Tooltip */
+    --tooltip-foreground: 0 0% 98%;       /* #fafafa Tooltip前景 */
+    --tooltip-muted: 45 15% 65%;          /* Tooltip弱 */
+    /* 代码块背景 - 深灰绿 */
+    --code-bg: 165 20% 12%;               /* 深鼠尾草绿 */
+    /* 虚线边框色 */
+    --dashed-border: 164 15% 38% / 0.35;
+    --dashed-border-hover: 164 15% 38% / 0.50;
+  }
+
+  /* 蜜桃奶油（浅色） - 蜜桃 #F0C4A8 + 浅驼 #EAD8C4 + 粉白 #F6E2DB，柔和暖调 */
+  .theme-peach {
+    /* 基础色 */
+    --background: 15 60% 91%;             /* #F6E2DB 背景（侧边栏，粉白） */
+    --foreground: 15 30% 18%;             /* 深暖棕前景文字 */
+    --content-area: 20 50% 95%;           /* 内容区域（近白蜜桃调） */
+    /* 次要色 */
+    --muted: 25 45% 88%;                  /* 次要背景 */
+    --muted-foreground: 15 12% 36%;       /* 次要文字 */
+    --border: 25 35% 82%;                 /* 边框 */
+    /* 交互色 - 蜜桃（#F0C4A8 深化，保证白字可读） */
+    --primary: 16 50% 43%;                /* #F0C4A8 深化主色 */
+    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
+    /* 会话选中态左侧 accent 竖条：跟随主题主色 */
+    --selection-accent: 16 55% 48%;
+    --secondary: 31 45% 89%;              /* #EAD8C4 浅驼二级背景 */
+    --secondary-foreground: 20 30% 24%;   /* 二级前景 */
+    --accent: 23 65% 84%;                 /* #F0C4A8 蜜桃强调背景 */
+    --accent-foreground: 16 45% 30%;      /* 深蜜桃棕强调文字 */
+    --ring: 16 50% 43%;                   /* 聚焦环 */
+    /* 组件色 */
+    --card: 20 50% 95%;                   /* 卡片背景 */
+    --card-foreground: 15 30% 18%;        /* 卡片前景 */
+    --input: 25 40% 90%;                  /* 输入框背景 */
+    --popover: 20 55% 96%;                /* 弹出层 */
+    --popover-foreground: 15 30% 18%;     /* 弹出前景 */
+    --dialog: 20 55% 96%;                 /* 弹窗背景 */
+    --dialog-foreground: 15 30% 18%;      /* 弹窗前景 */
+    /* 功能色 */
+    --destructive: 0 72% 51%;             /* #dc2828 危险色 */
+    --destructive-foreground: 0 0% 100%;  /* #ffffff 危险前景 */
+    --stop-hover-bg: hsla(0, 70%, 50%, 0.12);
+    --tooltip: 15 25% 20%;                /* 深暖棕 Tooltip */
+    --tooltip-foreground: 0 0% 98%;       /* #fafafa Tooltip前景 */
+    --tooltip-muted: 20 15% 65%;          /* Tooltip弱 */
+    /* 代码块背景 - 深暖棕 */
+    --code-bg: 16 25% 14%;                /* 深蜜桃棕 */
+    /* 虚线边框色 */
+    --dashed-border: 16 50% 43% / 0.35;
+    --dashed-border-hover: 16 50% 43% / 0.50;
+  }
+
+  /* 薰衣草（浅色） - 薰衣草紫 #B9AFD8 + 浅灰紫 #D7D1DC + 暖白 #F2EEEA，柔和雾紫调 */
+  .theme-lavender {
+    /* 基础色 */
+    --background: 29 24% 93%;             /* #F2EEEA 背景（侧边栏，暖白） */
+    --foreground: 255 14% 20%;            /* 深紫灰前景文字 */
+    --content-area: 30 20% 96%;           /* 内容区域（更亮暖白） */
+    /* 次要色 */
+    --muted: 273 12% 88%;                 /* #D7D1DC 系次要背景 */
+    --muted-foreground: 255 8% 34%;       /* 次要文字 */
+    --border: 273 10% 80%;                /* 边框 */
+    /* 交互色 - 薰衣草紫（#B9AFD8 深化，保证白字可读） */
+    --primary: 255 24% 45%;               /* #B9AFD8 深化主色 */
+    --primary-foreground: 0 0% 100%;      /* #ffffff 主色前景 */
+    /* 会话选中态左侧 accent 竖条：跟随主题主色 */
+    --selection-accent: 255 28% 50%;
+    --secondary: 273 14% 89%;             /* #D7D1DC 浅灰紫二级背景 */
+    --secondary-foreground: 255 18% 24%;  /* 二级前景 */
+    --accent: 273 14% 84%;                /* #D7D1DC 强调背景 */
+    --accent-foreground: 255 22% 30%;     /* 深紫强调文字 */
+    --ring: 255 24% 45%;                  /* 聚焦环 */
+    /* 组件色 */
+    --card: 30 20% 96%;                   /* 卡片背景 */
+    --card-foreground: 255 14% 20%;       /* 卡片前景 */
+    --input: 273 12% 89%;                 /* 输入框背景 */
+    --popover: 30 25% 97%;                /* 弹出层 */
+    --popover-foreground: 255 14% 20%;    /* 弹出前景 */
+    --dialog: 30 25% 97%;                 /* 弹窗背景 */
+    --dialog-foreground: 255 14% 20%;     /* 弹窗前景 */
+    /* 功能色 */
+    --destructive: 0 72% 51%;             /* #dc2828 危险色 */
+    --destructive-foreground: 0 0% 100%;  /* #ffffff 危险前景 */
+    --stop-hover-bg: hsla(0, 70%, 50%, 0.12);
+    --tooltip: 255 14% 22%;               /* 深紫 Tooltip */
+    --tooltip-foreground: 0 0% 98%;       /* #fafafa Tooltip前景 */
+    --tooltip-muted: 273 10% 65%;         /* Tooltip弱 */
+    /* 代码块背景 - 深紫 */
+    --code-bg: 255 18% 14%;               /* 深雾紫 */
+    /* 虚线边框色 */
+    --dashed-border: 255 24% 45% / 0.35;
+    --dashed-border-hover: 255 24% 45% / 0.50;
+  }
+
   /* 名画与夜间创作：色彩用于交互，长篇文字保持低饱和、高对比。 */
   .theme-landscape-night {
     --art-background: 212 33% 8%;       /* #0D131A 暮天 */
@@ -683,6 +809,9 @@
 .theme-ember-dark .shell-bg  { background: linear-gradient(135deg, hsl(240 4% 10%) 0%, hsl(240 3% 14%) 100%); }
 .theme-porcelain .shell-bg { background: linear-gradient(135deg, hsl(215 30% 91%) 0%, hsl(215 25% 94%) 100%); }
 .theme-landscape .shell-bg { background: linear-gradient(135deg, hsl(40 24% 83%) 0%, hsl(42 28% 89%) 100%); }
+.theme-sage .shell-bg { background: linear-gradient(135deg, hsl(48 24% 88%) 0%, hsl(48 26% 91%) 100%); }
+.theme-peach .shell-bg { background: linear-gradient(135deg, hsl(15 50% 87%) 0%, hsl(18 55% 89%) 100%); }
+.theme-lavender .shell-bg { background: linear-gradient(135deg, hsl(273 12% 87%) 0%, hsl(30 16% 90%) 100%); }
 
 /* 名画夜间主题的工作区层次与 AI 运行信号。 */
 :is(.theme-landscape-night, .theme-vermeer-night, .theme-caravaggio-night,
@@ -781,6 +910,33 @@
   box-shadow: 0 2px 4px rgba(46, 125, 100, 0.3);
 }
 .theme-landscape .mode-btn-selected {
+  color: #ffffff !important;
+}
+
+/* 鼠尾草主题 */
+.theme-sage .mode-slider {
+  background: hsl(164 15% 38%) !important;  /* #89A8A0 深化主色 */
+  box-shadow: 0 2px 4px rgba(137, 168, 160, 0.4);
+}
+.theme-sage .mode-btn-selected {
+  color: #ffffff !important;
+}
+
+/* 蜜桃奶油主题 */
+.theme-peach .mode-slider {
+  background: hsl(16 50% 43%) !important;   /* #F0C4A8 深化主色 */
+  box-shadow: 0 2px 4px rgba(240, 196, 168, 0.4);
+}
+.theme-peach .mode-btn-selected {
+  color: #ffffff !important;
+}
+
+/* 薰衣草主题 */
+.theme-lavender .mode-slider {
+  background: hsl(255 24% 45%) !important;  /* #B9AFD8 深化主色 */
+  box-shadow: 0 2px 4px rgba(185, 175, 216, 0.4);
+}
+.theme-lavender .mode-btn-selected {
   color: #ffffff !important;
 }
 
