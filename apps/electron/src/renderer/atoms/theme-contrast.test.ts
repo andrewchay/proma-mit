@@ -12,6 +12,7 @@ const styles = [
 const existingStyles = [
   'ocean-light', 'ocean-dark', 'forest-light', 'forest-dark', 'slate-light',
   'slate-dark', 'ember-light', 'ember-dark', 'porcelain', 'landscape',
+  'sage', 'peach', 'lavender',
 ] as const
 
 interface Rgb {

@@ -57,6 +57,7 @@ import themeEmberLight from '@/assets/theme-previews/theme-ember-light.webp'
 import themeEmberDark from '@/assets/theme-previews/theme-ember-dark.webp'
 import themePorcelain from '@/assets/theme-previews/theme-porcelain.webp'
 import themeLandscape from '@/assets/theme-previews/theme-landscape.webp'
+import { THEME_PREVIEW_DECORS } from './theme-preview-decor'
 
 /** 主题选项 */
 const THEME_OPTIONS = [
@@ -92,6 +93,8 @@ interface ImageStyle extends SpecialStyleBase {
 
 interface PaletteStyle extends SpecialStyleBase {
   preview: { background: string; panel: string; accent: string; text: string }
+  /** 定制意象插画（有则铺满卡片替代纯色块模拟缩略图） */
+  decor?: React.ReactNode
   image?: never
 }
 
@@ -162,16 +165,42 @@ const SPECIAL_STYLES: readonly SpecialStyle[] = [
     variant: 'light',
     image: themeLandscape,
   },
+  {
+    id: 'sage',
+    name: '鼠尾草',
+    variant: 'light',
+    preview: { background: '#F1EFE7', panel: '#D7C5A1', accent: '#89A8A0', text: '#3A4A45' },
+    decor: THEME_PREVIEW_DECORS.sage,
+  },
+  {
+    id: 'peach',
+    name: '蜜桃奶油',
+    variant: 'light',
+    preview: { background: '#F6E2DB', panel: '#EAD8C4', accent: '#F0C4A8', text: '#4A332C' },
+    decor: THEME_PREVIEW_DECORS.peach,
+  },
+  {
+    id: 'lavender',
+    name: '薰衣草',
+    variant: 'light',
+    preview: { background: '#F2EEEA', panel: '#D7D1DC', accent: '#B9AFD8', text: '#3A3345' },
+    decor: THEME_PREVIEW_DECORS.lavender,
+  },
   { id: 'landscape-night', name: '千里江山·夜', variant: 'dark',
-    preview: { background: '#0D131A', panel: '#162A2B', accent: '#66DCC5', text: '#E5E9F0' } },
+    preview: { background: '#0D131A', panel: '#162A2B', accent: '#66DCC5', text: '#E5E9F0' },
+    decor: THEME_PREVIEW_DECORS['landscape-night'] },
   { id: 'vermeer-night', name: '维米尔·夜', variant: 'dark',
-    preview: { background: '#121214', panel: '#1E293B', accent: '#E5C86B', text: '#F8F9FA' } },
+    preview: { background: '#121214', panel: '#1E293B', accent: '#E5C86B', text: '#F8F9FA' },
+    decor: THEME_PREVIEW_DECORS['vermeer-night'] },
   { id: 'caravaggio-night', name: '卡拉瓦乔', variant: 'dark',
-    preview: { background: '#100F11', panel: '#241C1A', accent: '#D9A45B', text: '#ECE4D7' } },
+    preview: { background: '#100F11', panel: '#241C1A', accent: '#D9A45B', text: '#ECE4D7' },
+    decor: THEME_PREVIEW_DECORS['caravaggio-night'] },
   { id: 'vangogh-night', name: '梵高·星夜', variant: 'dark',
-    preview: { background: '#10162B', panel: '#1E2D4D', accent: '#E7C456', text: '#E8ECF7' } },
+    preview: { background: '#10162B', panel: '#1E2D4D', accent: '#E7C456', text: '#E8ECF7' },
+    decor: THEME_PREVIEW_DECORS['vangogh-night'] },
   { id: 'synthwave-night', name: '霓虹合成波', variant: 'dark',
-    preview: { background: '#0A0714', panel: '#1F1435', accent: '#F27BC5', text: '#E9E5F6' } },
+    preview: { background: '#0A0714', panel: '#1F1435', accent: '#F27BC5', text: '#E9E5F6' },
+    decor: THEME_PREVIEW_DECORS['synthwave-night'] },
 ]
 
 /** 图片主题的名称遮罩；调色板主题的名称直接使用预览色。 */
@@ -186,6 +215,9 @@ const STYLE_MASK_COLORS: Record<SpecialStyleId, { bg: string; text: string }> = 
   'ember-dark':   { bg: 'rgba(0,0,0,0.8)', text: 'hsl(22, 60%, 65%)' },
   'porcelain':    { bg: 'hsl(222, 58%, 44%)', text: 'hsl(218, 40%, 86%)' },
   'landscape':    { bg: 'hsl(165, 48%, 34%)', text: 'hsl(90, 18%, 82%)' },
+  'sage':         { bg: 'hsl(164, 15%, 38%)', text: 'hsl(48, 30%, 90%)' },
+  'peach':        { bg: 'hsl(16, 50%, 43%)',  text: 'hsl(23, 60%, 88%)' },
+  'lavender':     { bg: 'hsl(255, 24%, 45%)', text: 'hsl(273, 25%, 90%)' },
   'landscape-night': { bg: '#111820', text: '#E5E9F0' },
   'vermeer-night': { bg: '#111820', text: '#E5E9F0' },
   'caravaggio-night': { bg: '#111820', text: '#E5E9F0' },
@@ -488,20 +520,24 @@ function StyleCard({
       )}
     >
       {style.preview ? (
-        <div className="absolute inset-0 p-2 text-left" style={{ background: style.preview.background }} aria-hidden="true">
-          <div className="flex h-full gap-1 rounded-md p-1.5 shadow-lg" style={{ background: style.preview.panel }}>
-            <div className="w-3 shrink-0 rounded-sm opacity-65" style={{ background: style.preview.background }} />
-            <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
-              <div className="h-1.5 w-3/4 rounded-full opacity-80" style={{ background: style.preview.text }} />
-              <div className="h-1 w-full rounded-full opacity-45" style={{ background: style.preview.text }} />
-              <div className="h-1 w-4/5 rounded-full opacity-45" style={{ background: style.preview.text }} />
-              <div className="mt-2 h-12 rounded-md p-1.5" style={{ background: style.preview.background }}>
-                <div className="h-1 w-3/4 rounded-full" style={{ background: style.preview.accent }} />
-                <div className="mt-1 h-1 w-1/2 rounded-full opacity-60" style={{ background: style.preview.text }} />
+        <div className="absolute inset-0 overflow-hidden" style={{ background: style.preview.background }} aria-hidden="true">
+          {style.decor ?? (
+            <div className="absolute inset-0 p-2 text-left">
+              <div className="flex h-full gap-1 rounded-md p-1.5 shadow-lg" style={{ background: style.preview.panel }}>
+                <div className="w-3 shrink-0 rounded-sm opacity-65" style={{ background: style.preview.background }} />
+                <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
+                  <div className="h-1.5 w-3/4 rounded-full opacity-80" style={{ background: style.preview.text }} />
+                  <div className="h-1 w-full rounded-full opacity-45" style={{ background: style.preview.text }} />
+                  <div className="h-1 w-4/5 rounded-full opacity-45" style={{ background: style.preview.text }} />
+                  <div className="mt-2 h-12 rounded-md p-1.5" style={{ background: style.preview.background }}>
+                    <div className="h-1 w-3/4 rounded-full" style={{ background: style.preview.accent }} />
+                    <div className="mt-1 h-1 w-1/2 rounded-full opacity-60" style={{ background: style.preview.text }} />
+                  </div>
+                  <div className="mt-auto mb-6 h-4 w-full rounded-md border" style={{ borderColor: style.preview.accent }} />
+                </div>
               </div>
-              <div className="mt-auto mb-6 h-4 w-full rounded-md border" style={{ borderColor: style.preview.accent }} />
             </div>
-          </div>
+          )}
         </div>
       ) : (
         <div className="w-full h-full" style={style.imageScale ? { transform: `scale(${style.imageScale})` } : undefined}>
