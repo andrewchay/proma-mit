@@ -525,6 +525,8 @@ export async function testChannelDirect(input: FetchModelsInput): Promise<Channe
 
   try {
     switch (input.provider) {
+      case 'minimax-video':
+        return await testMiniMaxVideoCredential(input.baseUrl, input.apiKey, proxyUrl)
       case 'anthropic':
       case 'deepseek':
       case 'kimi-api':
