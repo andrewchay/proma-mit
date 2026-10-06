@@ -161,3 +161,7 @@ export type {
   ContextBudget,
   ContextBudgetInput,
 } from './context-budget'
+export {
+  buildArtifactPersistenceDirective,
+  splitOutputByFiles,
+} from './campaign-prompt'

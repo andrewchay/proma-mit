@@ -10,15 +10,16 @@
  */
 
 import { openNativeSqlite, type NativeSqliteDatabase, type SqlValue } from './native-sqlite'
-import { existsSync, mkdirSync, cpSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, cpSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { getConfigDir, getAgentWorkspacePath } from './config-paths'
-import { createAgentWorkspace } from './agent-workspace-manager'
+import { createAgentWorkspace, listAgentWorkspaces, deleteAgentWorkspace } from './agent-workspace-manager'
 import { getKOLById, computeKOLScores, recalculateAllScores, type KOLRecord } from './marketing/ma-tools/kol-data-service'
 export { recalculateAllScores }
 import { runContentAudit } from './marketing/ma-tools/content-audit'
-import type { Campaign, CampaignCreativePlan, CampaignPhasePlan, CreateCampaignInput, KOLListItem } from '@gravitas/shared'
+import { evaluateWithRules, determineStatus } from './marketing/content-audit-scores'
+import type { Campaign, CampaignBuildLog, AddCampaignBuildLogInput, CampaignCreativePlan, CampaignPhasePlan, CreateCampaignInput, KOLListItem } from '@gravitas/shared'
 
 // =====================================================================
 // SQLite 运行时适配层（复用 kol-data-service 模式）
@@ -174,6 +175,31 @@ function getDbPath(): string {
 }
 
 export function getDb(): Database {
+  try {
+    return openCampaignDb()
+  } catch (err) {
+    // 迁移中途失败（如瞬时锁库）时丢弃半初始化实例：
+    // 迁移语句均为幂等（IF NOT EXISTS / guarded ALTER），下次调用可安全重试。
+    // 否则会缓存缺表的连接，后续写入报 "no such table" 且进程内无法自愈。
+    closePartialDbInstance()
+    throw err
+  }
+}
+
+/** 丢弃可能半初始化的 Campaign 数据库连接（独立函数以避开 TS 对模块级变量的类型收窄） */
+function closePartialDbInstance(): void {
+  const instance = dbInstance
+  if (instance) {
+    try {
+      instance.close()
+    } catch {
+      // 忽略关闭异常
+    }
+    dbInstance = null
+  }
+}
+
+function openCampaignDb(): Database {
   if (dbInstance) return dbInstance
 
   const dbPath = getDbPath()
@@ -200,6 +226,8 @@ export function getDb(): Database {
       phase_plans TEXT,
       creative_plan TEXT,
       status TEXT DEFAULT 'draft',
+      archived INTEGER DEFAULT 0,
+      deleted_at INTEGER,
       created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
       updated_at INTEGER DEFAULT (strftime('%s','now') * 1000)
     )
@@ -208,6 +236,8 @@ export function getDb(): Database {
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_campaigns_brand ON campaigns(brand)`)
 
+  // 列迁移必须先于新列索引创建：旧库可能缺少 archived / deleted_at 等列，
+  // 若先建索引会因 "no such column" 中断整个迁移序列。
   const campaignColumns = dbInstance.query(`PRAGMA table_info(campaigns)`).all() as Array<{ name: string }>
   if (!campaignColumns.some((col) => col.name === 'phase_plans')) {
     dbInstance.run(`ALTER TABLE campaigns ADD COLUMN phase_plans TEXT`)
@@ -218,6 +248,32 @@ export function getDb(): Database {
   if (!campaignColumns.some((col) => col.name === 'project_path')) {
     dbInstance.run(`ALTER TABLE campaigns ADD COLUMN project_path TEXT`)
   }
+  if (!campaignColumns.some((col) => col.name === 'archived')) {
+    dbInstance.run(`ALTER TABLE campaigns ADD COLUMN archived INTEGER DEFAULT 0`)
+  }
+  if (!campaignColumns.some((col) => col.name === 'deleted_at')) {
+    dbInstance.run(`ALTER TABLE campaigns ADD COLUMN deleted_at INTEGER`)
+  }
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_campaigns_archived ON campaigns(archived)`)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_campaigns_deleted_at ON campaigns(deleted_at)`)
+
+  // 构建过程记录表（结构化过程史：步骤完成、用户诉求、需求变更等）
+  dbInstance.run(`
+    CREATE TABLE IF NOT EXISTS campaign_build_log (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      step TEXT,
+      title TEXT NOT NULL,
+      content TEXT,
+      file_paths TEXT,
+      session_id TEXT,
+      meta TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_build_log_campaign ON campaign_build_log(campaign_id, created_at)`)
 
   // Campaign KOL 候选池表（Slice 3）
   dbInstance.run(`
@@ -251,6 +307,8 @@ export function getDb(): Database {
       kol_id TEXT NOT NULL,
       kol_name TEXT NOT NULL,
       content TEXT NOT NULL,
+      job_spec TEXT,
+      forces_map TEXT,
       ai_generated INTEGER DEFAULT 0,
       status TEXT DEFAULT 'draft',
       created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
@@ -258,6 +316,15 @@ export function getDb(): Database {
       UNIQUE(campaign_id, kol_id)
     )
   `)
+
+  // 存量库迁移：JTBD Brief 的结构化字段
+  const briefColumns = dbInstance.query(`PRAGMA table_info(campaign_briefs)`).all() as Array<{ name: string }>
+  if (!briefColumns.some((col) => col.name === 'job_spec')) {
+    dbInstance.run(`ALTER TABLE campaign_briefs ADD COLUMN job_spec TEXT`)
+  }
+  if (!briefColumns.some((col) => col.name === 'forces_map')) {
+    dbInstance.run(`ALTER TABLE campaign_briefs ADD COLUMN forces_map TEXT`)
+  }
 
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_briefs_campaign ON campaign_briefs(campaign_id)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_briefs_kol ON campaign_briefs(kol_id)`)
@@ -360,6 +427,7 @@ export function getDb(): Database {
       ai_summary TEXT,
       ai_findings TEXT,
       ai_recommendations TEXT,
+      ai_decisions TEXT,
       ai_scale_advice TEXT,
       status TEXT DEFAULT 'draft',
       generated_by TEXT DEFAULT 'ai',
@@ -371,6 +439,19 @@ export function getDb(): Database {
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_phase_reports_phase ON campaign_phase_reports(phase)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_phase_reports_type ON campaign_phase_reports(report_type)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_phase_reports_status ON campaign_phase_reports(status)`)
+
+  // 老库补列：三分决策总表（保持放大 / 停止 / 新开始）
+  const hasPhaseReportCol = (col: string): boolean => {
+    try {
+      const rows = dbInstance!.query(`PRAGMA table_info(campaign_phase_reports)`).all() as Array<{ name: string }>
+      return rows.some((r) => r.name === col)
+    } catch {
+      return false
+    }
+  }
+  if (!hasPhaseReportCol('ai_decisions')) {
+    dbInstance.run(`ALTER TABLE campaign_phase_reports ADD COLUMN ai_decisions TEXT`)
+  }
 
   // AB 测试表（新增 — Slice 3）
   dbInstance.run(`
@@ -480,6 +561,29 @@ function getKolDbPath(): string {
 }
 
 function getKolDb(): Database {
+  try {
+    return openKolDb()
+  } catch (err) {
+    // 同 getDb：迁移中途失败时丢弃半初始化连接，避免缓存缺表连接后无法自愈
+    closePartialKolDbInstance()
+    throw err
+  }
+}
+
+/** 丢弃可能半初始化的 KOL 数据库连接（独立函数以避开 TS 对模块级变量的类型收窄） */
+function closePartialKolDbInstance(): void {
+  const instance = kolDbInstance
+  if (instance) {
+    try {
+      instance.close()
+    } catch {
+      // 忽略关闭异常
+    }
+    kolDbInstance = null
+  }
+}
+
+function openKolDb(): Database {
   if (kolDbInstance) return kolDbInstance
 
   const dbPath = getKolDbPath()
@@ -586,6 +690,35 @@ function getKolDb(): Database {
   kolDbInstance.run(`CREATE INDEX IF NOT EXISTS idx_kols_name ON kols(name)`)
   kolDbInstance.run(`CREATE INDEX IF NOT EXISTS idx_kols_source ON kols(source)`)
   kolDbInstance.run(`CREATE INDEX IF NOT EXISTS idx_kols_overall_score ON kols(overall_score DESC)`)
+
+  // content_audits 表由 kol-data-service 初始化；此处幂等兜底，
+  // 保证 campaign-manager 先于 kol-data-service 打开该库时审核链路可用。
+  kolDbInstance.run(`
+    CREATE TABLE IF NOT EXISTS content_audits (
+      audit_id TEXT PRIMARY KEY,
+      campaign_id TEXT,
+      kol_id TEXT NOT NULL,
+      content_url TEXT,
+      platform TEXT,
+      audit_status TEXT DEFAULT 'pending',
+      compliance_score REAL,
+      brand_alignment_score REAL,
+      quality_score REAL,
+      brand_image_score REAL DEFAULT 0,
+      data_verifiability_score REAL DEFAULT 0,
+      overall_score REAL DEFAULT 0,
+      audit_report TEXT,
+      auditor TEXT DEFAULT 'ai',
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+      updated_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    )
+  `)
+  const auditCols = kolDbInstance.query(`PRAGMA table_info(content_audits)`).all() as Array<{ name: string }>
+  for (const column of ['brand_image_score', 'data_verifiability_score', 'overall_score']) {
+    if (!auditCols.some((item) => item.name === column)) {
+      kolDbInstance.run(`ALTER TABLE content_audits ADD COLUMN ${column} REAL DEFAULT 0`)
+    }
+  }
 
   // 统计 KOL 数量
   const countRow = kolDbInstance.query('SELECT COUNT(*) as total FROM kols').get() as { total: number } | null
@@ -1037,6 +1170,7 @@ interface CampaignRow {
   id: string; name: string; brand: string; project_path?: string; platform: string
   budget?: number; duration_months?: number; target_city?: unknown; target_audience?: string
   current_phase?: number; phase_plans?: string; creative_plan?: string; status: string
+  archived?: number; deleted_at?: number | null
   created_at: number; updated_at: number
 }
 function rowToCampaign(value: unknown): Campaign {
@@ -1075,6 +1209,8 @@ function rowToCampaign(value: unknown): Campaign {
     phasePlans: normalizePhasePlans(row.phase_plans, budget, durationMonths),
     creativePlan: normalizeCreativePlan(row.creative_plan, { brand, targetAudience }),
     status: row.status as Campaign['status'],
+    archived: Boolean(row.archived),
+    deletedAt: row.deleted_at ? Number(row.deleted_at) : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -1104,11 +1240,23 @@ function rowToPoolItem(value: unknown): import('@gravitas/shared').CampaignKOLPo
   }
 }
 
-/** 获取 Campaign 列表（按创建时间倒序） */
-export function listCampaigns(): Campaign[] {
+/** 获取 Campaign 列表（按创建时间倒序；默认排除已归档；始终排除回收站中的记录） */
+export function listCampaigns(options?: { includeArchived?: boolean }): Campaign[] {
+  const db = getDb()
+  const where = options?.includeArchived
+    ? `WHERE deleted_at IS NULL`
+    : `WHERE archived = 0 AND deleted_at IS NULL`
+  const rows = db.query(
+    `SELECT * FROM campaigns ${where} ORDER BY created_at DESC`
+  ).all()
+  return rows.map(rowToCampaign)
+}
+
+/** 获取回收站中的 Campaign（软删除记录，按删除时间倒序） */
+export function listTrashedCampaigns(): Campaign[] {
   const db = getDb()
   const rows = db.query(
-    `SELECT * FROM campaigns ORDER BY created_at DESC`
+    `SELECT * FROM campaigns WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC`
   ).all()
   return rows.map(rowToCampaign)
 }
@@ -1164,6 +1312,7 @@ export function createCampaign(input: CreateCampaignInput): Campaign {
     phasePlans,
     creativePlan,
     status: 'draft',
+    archived: false,
     createdAt: now,
     updatedAt: now,
   }
@@ -1221,6 +1370,29 @@ export function createCampaign(input: CreateCampaignInput): Campaign {
       throw err instanceof Error ? err : new Error(String(err))
     }
   }
+
+  // 记录创建事件到构建过程史
+  addCampaignBuildLog({
+    campaignId: campaign.id,
+    kind: 'campaign_created',
+    actor: 'user',
+    title: `创建 Campaign「${campaign.name}」`,
+    content: [
+      `品牌：${campaign.brand}`,
+      `平台：${campaign.platform}`,
+      `预算：${campaign.budget}`,
+      `周期：${campaign.durationMonths} 个月`,
+      campaign.targetAudience ? `目标人群：${campaign.targetAudience}` : '',
+    ].filter(Boolean).join('\n'),
+    filePaths: campaign.projectPath ? [campaign.projectPath] : undefined,
+    meta: {
+      name: campaign.name,
+      brand: campaign.brand,
+      platform: campaign.platform,
+      budget: campaign.budget,
+      durationMonths: campaign.durationMonths,
+    },
+  })
 
   return campaign
 }
@@ -1416,6 +1588,8 @@ export function getBrief(campaignId: string, kolId: string): import('@gravitas/s
     kolId: String(row.kol_id),
     kolName: String(row.kol_name),
     content: String(row.content),
+    jobSpec: row.job_spec != null ? String(row.job_spec) : null,
+    forcesMap: row.forces_map != null ? String(row.forces_map) : null,
     aiGenerated: Boolean(row.ai_generated),
     status: row.status as 'draft' | 'final',
     createdAt: Number(row.created_at),
@@ -1435,58 +1609,44 @@ export function saveBrief(input: import('@gravitas/shared').SaveCampaignBriefInp
   ).get(input.campaignId, input.kolId) as { id: string } | null
 
   if (existing) {
-    // 更新
+    // 更新（jobSpec/forcesMap 不传时保留原值）
     db.run(
       `UPDATE campaign_briefs
-       SET content = ?, kol_name = ?, ai_generated = ?, status = ?, updated_at = ?
+       SET content = ?, kol_name = ?, ai_generated = ?, status = ?,
+           job_spec = COALESCE(?, job_spec), forces_map = COALESCE(?, forces_map),
+           updated_at = ?
        WHERE id = ?`,
       input.content,
       input.kolName,
       input.aiGenerated ? 1 : 0,
       'draft',
+      input.jobSpec ?? null,
+      input.forcesMap ?? null,
       now,
       existing.id,
     )
 
-    return {
-      id: existing.id,
-      campaignId: input.campaignId,
-      kolId: input.kolId,
-      kolName: input.kolName,
-      content: input.content,
-      aiGenerated: input.aiGenerated ?? false,
-      status: 'draft',
-      createdAt: now,
-      updatedAt: now,
-    }
+    return getBrief(input.campaignId, input.kolId)!
   }
 
   // 新建
   db.run(
-    `INSERT INTO campaign_briefs (id, campaign_id, kol_id, kol_name, content, ai_generated, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO campaign_briefs (id, campaign_id, kol_id, kol_name, content, job_spec, forces_map, ai_generated, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.campaignId,
     input.kolId,
     input.kolName,
     input.content,
+    input.jobSpec ?? null,
+    input.forcesMap ?? null,
     input.aiGenerated ? 1 : 0,
     'draft',
     now,
     now,
   )
 
-  return {
-    id,
-    campaignId: input.campaignId,
-    kolId: input.kolId,
-    kolName: input.kolName,
-    content: input.content,
-    aiGenerated: input.aiGenerated ?? false,
-    status: 'draft',
-    createdAt: now,
-    updatedAt: now,
-  }
+  return getBrief(input.campaignId, input.kolId)!
 }
 
 // =====================================================================
@@ -1529,6 +1689,21 @@ ${campaign.phasePlans.map((phase) => `### 第 ${phase.phase} 阶段：${phase.na
 - 结合 ${campaign.brand} 品牌调性创作内容
 - 围绕 ${campaign.creativePlan.contentPillars.join('、') || '产品卖点'} 展开
 - 适配 ${kol.platform} 平台内容形态与受众习惯`).join('\n\n')}
+
+## JTBD 任务陈述（待策略细化）
+- **任务陈述**：当【情境】时，目标用户想要【动机】，以便【功能/情感/社会收益】
+- **功能维度**：____
+- **情感维度**：____
+- **社会维度**：____
+- **跨品类竞争集**：用户不选我们时会"雇用"什么替代方案：____
+- **障碍与焦虑**：____
+- **关键取舍**：____
+
+## 四力分析（待策略细化）
+- **推力**（现有方案的不满 → 内容放大的痛点场景）：____
+- **拉力**（新方案的吸引 → 内容突出的收益憧憬）：____
+- **惯性**（旧习惯 → 内容要降低的改变成本）：____
+- **焦虑**（担忧 → 内容要提供的保证/证据）：____
 
 ## 内容要求
 - [ ] 必须露出品牌名「${campaign.brand}」
@@ -1695,6 +1870,179 @@ export function advanceCampaignPhase(id: string): Campaign | null {
   return getCampaignById(id)
 }
 
+/** 归档 / 取消归档 Campaign（归档项目默认不在列表中展示，数据保留） */
+export function setCampaignArchived(id: string, archived: boolean): Campaign | null {
+  const db = getDb()
+  const campaign = getCampaignById(id)
+  if (!campaign) return null
+
+  db.run(
+    `UPDATE campaigns SET archived = ?, updated_at = ? WHERE id = ?`,
+    archived ? 1 : 0,
+    Date.now(),
+    id,
+  )
+
+  return getCampaignById(id)
+}
+
+/**
+ * 软删除 Campaign：移入回收站（设置 deleted_at），数据与工作区目录保留，可从回收站恢复。
+ */
+export function deleteCampaign(id: string): boolean {
+  const db = getDb()
+  const campaign = getCampaignById(id)
+  if (!campaign) return false
+
+  const result = db.run(
+    `UPDATE campaigns SET deleted_at = ?, archived = 0, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+    Date.now(),
+    Date.now(),
+    id,
+  )
+  if (result.changes === 0) return false
+
+  console.log(`[Campaign] 已移入回收站: ${campaign.name} (${id})`)
+  return true
+}
+
+/** 从回收站恢复 Campaign */
+export function restoreCampaign(id: string): Campaign | null {
+  const db = getDb()
+  const campaign = getCampaignById(id)
+  if (!campaign) return null
+
+  db.run(
+    `UPDATE campaigns SET deleted_at = NULL, updated_at = ? WHERE id = ?`,
+    Date.now(),
+    id,
+  )
+  return getCampaignById(id)
+}
+
+/**
+ * 彻底删除 Campaign：物理清除数据库关联数据 + 专属 Agent 工作区目录，不可恢复。
+ * 注意：用户绑定到工作区的本地项目文件夹（rootPath）不会被删除，仅删除 ~/.proma-mit 下的 campaign-{id} 工作区目录。
+ */
+export function purgeCampaign(id: string): boolean {
+  const db = getDb()
+  const campaign = getCampaignById(id)
+  if (!campaign) return false
+
+  // 1. 清理构建过程记录
+  db.run(`DELETE FROM campaign_build_log WHERE campaign_id = ?`, id)
+
+  // 2. 清理关联数据（子表无外键级联，逐个显式删除）
+  const abTestIds = db.query(
+    `SELECT id FROM campaign_ab_tests WHERE campaign_id = ?`
+  ).all(id) as Array<{ id: string }>
+  for (const ab of abTestIds) {
+    db.run(`DELETE FROM ab_test_results WHERE ab_test_id = ?`, ab.id)
+  }
+  db.run(`DELETE FROM campaign_ab_tests WHERE campaign_id = ?`, id)
+  db.run(`DELETE FROM campaign_phase_reports WHERE campaign_id = ?`, id)
+  db.run(`DELETE FROM kol_content_tracking WHERE campaign_id = ?`, id)
+  db.run(`DELETE FROM campaign_briefs WHERE campaign_id = ?`, id)
+  db.run(`DELETE FROM campaign_kol_pool WHERE campaign_id = ?`, id)
+
+  // content_audits 表实际位于 KOL 数据库（kol-database.sqlite），单独清理，失败不影响主删除
+  try {
+    const kolDb = getKolDb()
+    kolDb.run(`DELETE FROM content_audits WHERE campaign_id = ?`, id)
+  } catch (err) {
+    console.warn(`[Campaign] 清理 content_audits 失败（忽略）:`, err)
+  }
+
+  // 3. 删除 Campaign 主记录
+  const result = db.run(`DELETE FROM campaigns WHERE id = ?`, id)
+  if (result.changes === 0) return false
+
+  // 4. 删除专属 Agent 工作区目录（保留索引条目清理 + 目录物理删除）
+  try {
+    const workspace = listAgentWorkspaces().find((w) => w.slug === `campaign-${id}`)
+    if (workspace) {
+      deleteAgentWorkspace(workspace.id)
+    }
+    const workspacePath = getAgentWorkspacePath(`campaign-${id}`)
+    if (existsSync(workspacePath)) {
+      rmSync(workspacePath, { recursive: true, force: true })
+    }
+  } catch (err) {
+    // 目录删除失败不阻断数据库删除，仅记录
+    console.error(`[Campaign] 删除工作区目录失败 (${id}):`, err)
+  }
+
+  console.log(`[Campaign] 已彻底删除 Campaign: ${campaign.name} (${id})`)
+  return true
+}
+
+// =====================================================================
+// 构建过程记录（Build Log）
+// =====================================================================
+
+/** 追加一条构建过程记录 */
+export function addCampaignBuildLog(input: AddCampaignBuildLogInput): CampaignBuildLog {
+  const db = getDb()
+  const now = Date.now()
+  const entry: CampaignBuildLog = {
+    id: `buildlog_${now}_${Math.random().toString(36).slice(2, 9)}`,
+    campaignId: input.campaignId,
+    kind: input.kind,
+    actor: input.actor,
+    step: input.step,
+    title: input.title,
+    content: input.content,
+    filePaths: input.filePaths,
+    sessionId: input.sessionId,
+    meta: input.meta,
+    createdAt: now,
+  }
+
+  db.run(
+    `INSERT INTO campaign_build_log (id, campaign_id, kind, actor, step, title, content, file_paths, session_id, meta, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    entry.id,
+    entry.campaignId,
+    entry.kind,
+    entry.actor,
+    entry.step ?? null,
+    entry.title,
+    entry.content ?? null,
+    entry.filePaths ? JSON.stringify(entry.filePaths) : null,
+    entry.sessionId ?? null,
+    entry.meta ? JSON.stringify(entry.meta) : null,
+    entry.createdAt,
+  )
+
+  return entry
+}
+
+/** 查询 Campaign 的构建过程记录（按时间正序，便于阅读构建史） */
+export function listCampaignBuildLogs(campaignId: string): CampaignBuildLog[] {
+  const db = getDb()
+  const rows = db.query(
+    `SELECT * FROM campaign_build_log WHERE campaign_id = ? ORDER BY created_at ASC`
+  ).all(campaignId) as Record<string, unknown>[]
+
+  return rows.map((row) => {
+    const filePaths = row.file_paths ? JSON.parse(String(row.file_paths)) : undefined
+    const meta = row.meta ? JSON.parse(String(row.meta)) : undefined
+    return {
+      id: String(row.id),
+      campaignId: String(row.campaign_id),
+      kind: String(row.kind) as CampaignBuildLog['kind'],
+      actor: String(row.actor) as CampaignBuildLog['actor'],
+      step: row.step ? String(row.step) : undefined,
+      title: String(row.title),
+      content: row.content ? String(row.content) : undefined,
+      filePaths,
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      meta,
+      createdAt: Number(row.created_at),
+    }
+  })
+}
+
 // =====================================================================
 // 内容审核流水线（内容审核流水线）
 // =====================================================================
@@ -1706,7 +2054,7 @@ function generateAuditId(): string {
 
 /** 查询 Campaign 的审核记录 */
 export function listContentAudits(campaignId: string): import('@gravitas/shared').ContentAudit[] {
-  const db = getDb()
+  const db = getKolDb()
   const rows = db.query(
     `SELECT * FROM content_audits WHERE campaign_id = ? ORDER BY created_at DESC`
   ).all(campaignId) as Record<string, unknown>[]
@@ -1722,6 +2070,8 @@ export function listContentAudits(campaignId: string): import('@gravitas/shared'
     complianceScore: Number(row.compliance_score ?? 0),
     brandAlignmentScore: Number(row.brand_alignment_score ?? 0),
     qualityScore: Number(row.quality_score ?? 0),
+    brandImageScore: Number(row.brand_image_score ?? 0),
+    dataVerifiabilityScore: Number(row.data_verifiability_score ?? 0),
     overallScore: Number(row.overall_score ?? 0),
     auditReport: String(row.audit_report ?? ''),
     auditor: String(row.auditor ?? 'ai'),
@@ -1732,7 +2082,7 @@ export function listContentAudits(campaignId: string): import('@gravitas/shared'
 
 /** 获取单个审核记录 */
 export function getContentAudit(auditId: string): import('@gravitas/shared').ContentAudit | null {
-  const db = getDb()
+  const db = getKolDb()
   const row = db.query('SELECT * FROM content_audits WHERE audit_id = ?').get(auditId) as Record<string, unknown> | null
   if (!row) return null
 
@@ -1747,6 +2097,8 @@ export function getContentAudit(auditId: string): import('@gravitas/shared').Con
     complianceScore: Number(row.compliance_score ?? 0),
     brandAlignmentScore: Number(row.brand_alignment_score ?? 0),
     qualityScore: Number(row.quality_score ?? 0),
+    brandImageScore: Number(row.brand_image_score ?? 0),
+    dataVerifiabilityScore: Number(row.data_verifiability_score ?? 0),
     overallScore: Number(row.overall_score ?? 0),
     auditReport: String(row.audit_report ?? ''),
     auditor: String(row.auditor ?? 'ai'),
@@ -1759,7 +2111,7 @@ export function getContentAudit(auditId: string): import('@gravitas/shared').Con
 export async function createContentAudit(
   input: import('@gravitas/shared').CreateContentAuditInput
 ): Promise<import('@gravitas/shared').ContentAudit | null> {
-  const db = getDb()
+  const db = getKolDb()
   const auditId = generateAuditId()
   const now = Date.now()
 
@@ -1800,19 +2152,34 @@ export async function createContentAudit(
     return getContentAudit(auditId)
   }
 
-  // 判定最终状态
-  const finalStatus: 'passed' | 'failed' = (auditResult.overallScore ?? 0) >= 60 ? 'passed' : 'failed'
+  // 五维合成：LLM 产出的三维分数 + 本地规则补算品牌形象/数据可验证性，
+  // 总分按奥格威权重（20/25/25/20/10）重新加权，替代三维均值。
+  const ruleScores = evaluateWithRules(input)
+  const complianceScore = auditResult.complianceScore ?? ruleScores.complianceScore
+  const brandAlignmentScore = auditResult.brandAlignmentScore ?? ruleScores.brandAlignmentScore
+  const qualityScore = auditResult.qualityScore ?? ruleScores.qualityScore
+  const overallScore = Math.round(
+    complianceScore * 0.20 +
+    brandAlignmentScore * 0.25 +
+    qualityScore * 0.25 +
+    ruleScores.brandImageScore * 0.20 +
+    ruleScores.dataVerifiabilityScore * 0.10
+  )
+  const finalStatus = determineStatus(overallScore)
 
   // 更新审核结果
   db.run(
     `UPDATE content_audits SET
-      audit_status = ?, compliance_score = ?, brand_alignment_score = ?, quality_score = ?, overall_score = ?, audit_report = ?, updated_at = ?
+      audit_status = ?, compliance_score = ?, brand_alignment_score = ?, quality_score = ?,
+      brand_image_score = ?, data_verifiability_score = ?, overall_score = ?, audit_report = ?, updated_at = ?
      WHERE audit_id = ?`,
     finalStatus,
-    auditResult.complianceScore ?? 0,
-    auditResult.brandAlignmentScore ?? 0,
-    auditResult.qualityScore ?? 0,
-    auditResult.overallScore ?? 0,
+    complianceScore,
+    brandAlignmentScore,
+    qualityScore,
+    ruleScores.brandImageScore,
+    ruleScores.dataVerifiabilityScore,
+    overallScore,
     auditResult.report ?? '',
     Date.now(),
     auditId,
@@ -1826,7 +2193,7 @@ export function updateContentAuditStatus(
   auditId: string,
   status: 'pending' | 'reviewing' | 'passed' | 'failed'
 ): boolean {
-  const db = getDb()
+  const db = getKolDb()
   const result = db.run(
     `UPDATE content_audits SET audit_status = ?, updated_at = ? WHERE audit_id = ?`,
     status,
@@ -2387,6 +2754,7 @@ function rowToPhaseReport(row: Record<string, unknown>): import('@gravitas/share
     engagementTargetAchieved: Boolean(row.engagement_target_achieved),
     aiSummary: String(row.ai_summary ?? ''),
     aiFindings: row.ai_findings ? JSON.parse(String(row.ai_findings)) : [],
+    aiDecisions: row.ai_decisions ? JSON.parse(String(row.ai_decisions)) : [],
     aiRecommendations: row.ai_recommendations ? JSON.parse(String(row.ai_recommendations)) : [],
     aiScaleAdvice: String(row.ai_scale_advice ?? ''),
     status: String(row.status ?? 'draft') as 'draft' | 'generated' | 'finalized',
@@ -2439,9 +2807,10 @@ export async function generatePhaseReport(
   const cpmTarget = input.cpmTarget ?? 0
   const engagementTarget = input.engagementTarget ?? 0
 
-  // 3. AI 分析（Slice 2）
+  // 3. AI 分析（Slice 2 · 三分决策骨架：保持放大 / 停止 / 新开始）
   let aiSummary = ''
   let aiFindings: string[] = []
+  let aiDecisions: import('@gravitas/shared').PhaseDecision[] = []
   let aiRecommendations: string[] = []
   let aiScaleAdvice = ''
 
@@ -2450,22 +2819,42 @@ export async function generatePhaseReport(
       const { completePrompt, extractJSON } = await import('./marketing/ma-tools/llm-service')
 
       const systemPrompt = `你是一位资深社交媒体投放复盘专家，曾为多个品牌管理过百万级预算的 KOL 投放项目。
+你的复盘立场：
+1. 复盘回答实验前的问题，不是罗列数据；数据只是证据。
+2. 每个结论必须落到决策——保持放大 / 停止 / 新开始，不允许"继续观察"这种模糊状态。
+3. 敢写"样本不足，不作结论"：小样本假象、大曝光稀释均值都要点破，宁可少一个结论，不要一个假结论。
+4. 风险判断优先于成本最优：数据赢但合规/限流/内容可控性不可接受的，也要判停止。
 
 请基于投放数据生成结构化复盘分析，输出严格 JSON 格式：
 {
   "summary": "整体表现总结（100字以内）",
-  "findings": ["发现1", "发现2", "发现3"],
-  "recommendations": ["建议1", "建议2", "建议3"],
+  "findings": ["共性规律1（带正反例数字，核心洞察优先从反例来）", "共性规律2", "共性规律3"],
+  "decisions": [
+    {
+      "element": "决策对象（内容格式/视觉风格/达人/关键词埋点/报备方式/出价/人群/素材等）",
+      "decision": "keep | stop | start",
+      "evidence": "证据数字（如：曝光 6.2 万 · CPE ¥3.47 全场最低）",
+      "reason": "机制理由（一句话讲清用户行为或成本逻辑）",
+      "nextAction": "下批动作（怎么放大 / 为什么停 / 新假设怎么小规模验证）"
+    }
+  ],
+  "recommendations": ["下批指示1（动作+标准，可直接执行）", "下批指示2", "下批指示3"],
   "scaleAdvice": "放量建议（200字以内，包含具体预算分配和达人组合建议）"
 }
+
+决策规则：
+- decisions 必须覆盖本阶段测试过的所有元素（内容格式、视觉风格、达人个体、关键词埋点、报备方式、投流出价/人群/素材），逐项判定
+- keep（保持放大）：数据达标 + 机制讲得通，nextAction 写清怎么放大；"保留打磨"也归 keep，但要写打磨什么
+- stop（停止）：数据差、或数据赢但风险不可接受，evidence 里要点破
+- start（新开始）：本阶段发现的新假设，nextAction 写清假设 + 验证方式 + 小规模预算；三类都必须非空
+- 每项判定必须带证据数字 + 一句机制理由，缺一不可
 
 分析维度：
 1. 数据表现与行业基准对比（CPM/CPE/互动率是否达标）
 2. 自然流 vs 投流效果对比
-3. 内容形式和内容类型的表现差异
-4. 达人层级/平台的表现差异
-5. 下阶段优化方向和具体策略
-6. 放量建议（预算分配、达人组合、内容策略）`
+3. 内容形式和内容类型的表现差异（注意样本量，单人/双人组的高互动率不作结论）
+4. 达人层级/平台的表现差异（正反例对比，找出决定性因素如"粉丝画像 × 内容方向匹配"）
+5. 下阶段优化方向和具体策略`
 
       const userPrompt = `请分析以下第 ${input.phase} 阶段投放数据：
 
@@ -2500,7 +2889,7 @@ ${rows.slice(0, 10).map((row) => {
   return `- ${name} (${platform}): 曝光 ${exp.toLocaleString()}, 点赞 ${likes.toLocaleString()}, 互动率 ${er.toFixed(2)}%, 等级 ${grade}`
 }).join('\n')}` : ''}
 
-请生成结构化复盘分析。`
+请生成结构化复盘分析（含三分决策总表）。`
 
       const llmResult = await completePrompt(userPrompt, systemPrompt, {
         jsonMode: true,
@@ -2513,6 +2902,19 @@ ${rows.slice(0, 10).map((row) => {
           const parsed = extractJSON(llmResult.text) as Record<string, unknown>
           aiSummary = String(parsed.summary ?? '')
           aiFindings = Array.isArray(parsed.findings) ? parsed.findings.map(String) : []
+          // 三分决策解析：字段缺失或结构不合法时容错为空数组，不阻塞报告落库
+          if (Array.isArray(parsed.decisions)) {
+            const validDecisions = ['keep', 'stop', 'start']
+            aiDecisions = (parsed.decisions as Record<string, unknown>[])
+              .filter((d) => d && typeof d === 'object' && validDecisions.includes(String(d.decision)))
+              .map((d) => ({
+                element: String(d.element ?? ''),
+                decision: String(d.decision) as 'keep' | 'stop' | 'start',
+                evidence: String(d.evidence ?? ''),
+                reason: String(d.reason ?? ''),
+                nextAction: String(d.nextAction ?? ''),
+              }))
+          }
           aiRecommendations = Array.isArray(parsed.recommendations) ? parsed.recommendations.map(String) : []
           aiScaleAdvice = String(parsed.scaleAdvice ?? '')
         } catch {
@@ -2535,9 +2937,9 @@ ${rows.slice(0, 10).map((row) => {
       total_exposure, total_views, total_likes, total_saves, total_comments, total_shares,
       avg_cpm, avg_cpe, avg_ctr, avg_engagement_rate, roi_estimate,
       cpm_target, cpm_target_achieved, engagement_target, engagement_target_achieved,
-      ai_summary, ai_findings, ai_recommendations, ai_scale_advice,
+      ai_summary, ai_findings, ai_recommendations, ai_decisions, ai_scale_advice,
       status, generated_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.campaignId,
     input.phase,
@@ -2567,6 +2969,7 @@ ${rows.slice(0, 10).map((row) => {
     aiSummary,
     JSON.stringify(aiFindings),
     JSON.stringify(aiRecommendations),
+    JSON.stringify(aiDecisions),
     aiScaleAdvice,
     'generated',
     'ai',
@@ -2596,7 +2999,7 @@ export function getPhaseReport(id: string): import('@gravitas/shared').CampaignP
 /** 更新复盘报告（人工编辑） */
 export function updatePhaseReport(
   id: string,
-  updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>
+  updates: Partial<Pick<import('@gravitas/shared').CampaignPhaseReport, 'aiSummary' | 'aiFindings' | 'aiDecisions' | 'aiRecommendations' | 'aiScaleAdvice' | 'status'>>
 ): import('@gravitas/shared').CampaignPhaseReport | null {
   const db = getDb()
   const report = getPhaseReport(id)
@@ -2607,6 +3010,7 @@ export function updatePhaseReport(
 
   if (updates.aiSummary !== undefined) { fields.push('ai_summary = ?'); values.push(updates.aiSummary) }
   if (updates.aiFindings !== undefined) { fields.push('ai_findings = ?'); values.push(JSON.stringify(updates.aiFindings)) }
+  if (updates.aiDecisions !== undefined) { fields.push('ai_decisions = ?'); values.push(JSON.stringify(updates.aiDecisions)) }
   if (updates.aiRecommendations !== undefined) { fields.push('ai_recommendations = ?'); values.push(JSON.stringify(updates.aiRecommendations)) }
   if (updates.aiScaleAdvice !== undefined) { fields.push('ai_scale_advice = ?'); values.push(updates.aiScaleAdvice) }
   if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }

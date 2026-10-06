@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateKeyPairSync, createSign } from 'node:crypto'
 import { collectContributingTools, collectContributingPrompts, collectContributingSkills, _resetPluginManagerForTests } from '../plugin-manager'
-import { marketingPluginRuntime, isMarketingEnabled, allMarketingToolDefinitions, contributePromptsForSubscribed } from './marketing-plugin'
+import { marketingPluginRuntime, isMarketingEnabled, allMarketingToolDefinitions, contributePromptsForSubscribed, assertAnyMarketingCapability } from './marketing-plugin'
 import { updateSettings } from '../settings-service'
 import { buildEntitlementSigningPayload } from '../subscription/entitlement-signature'
 import type { EntitlementSnapshot } from '@gravitas/shared'
@@ -355,5 +355,28 @@ describe('Marketing 插件 Skills 贡献（surface: agent-skills）', () => {
     updateSettings({ marketingCapabilities: ['influencer'] })
     grantEntitlement(['influencer'])
     expect(collectContributingSkills().length).toBe(22)
+  })
+})
+
+describe('营销 IPC 服务门控（assertAnyMarketingCapability）', () => {
+  afterAll(() => {
+    // 还原为订阅态，避免影响同文件其他用例的假设（每文件独立进程，防御性复位）
+    updateSettings({ marketingCapabilities: ['influencer'] })
+  })
+
+  test('未订阅任何领域包时抛错拒绝服务', () => {
+    updateSettings({ marketingCapabilities: [] })
+    expect(() => assertAnyMarketingCapability()).toThrow(/未订阅/)
+  })
+
+  test('订阅 influencer 或 paid-media 任一即放行', () => {
+    // 合并注：readSubscribedCapabilities 现在要求签名权益快照（安全边界演进），
+    // 偏好 + 快照任一包同时具备才放行。
+    updateSettings({ marketingCapabilities: ['influencer'] })
+    grantEntitlement(['influencer'])
+    expect(() => assertAnyMarketingCapability()).not.toThrow()
+    updateSettings({ marketingCapabilities: ['paid-media'] })
+    grantEntitlement(['paid-media'])
+    expect(() => assertAnyMarketingCapability()).not.toThrow()
   })
 })

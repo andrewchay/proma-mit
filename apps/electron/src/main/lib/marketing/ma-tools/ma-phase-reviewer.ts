@@ -15,7 +15,7 @@ import type { ToolCall, ToolResult, ToolDefinition } from '@gravitas/core'
 export const PHASE_REVIEWER_TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'ma_generate_phase_report',
-    description: 'Generate a phase review report based on campaign phase data. Summarizes KOL content performance, calculates metrics (CPM, CPE, CTR, engagement rate), and provides AI analysis with optimization suggestions and scaling recommendations. Use when the user needs to review campaign phase performance, analyze influencer content data, or get recommendations for the next phase.',
+    description: 'Generate a phase review report based on campaign phase data. Summarizes KOL content performance, calculates metrics (CPM, CPE, CTR, engagement rate), and provides AI analysis with a keep/stop/start decision table (which elements to keep & scale, stop, or start new), next-batch instructions and scaling recommendations. Use when the user needs to review campaign phase performance, analyze influencer content data, or get recommendations for the next phase.',
     parameters: {
       type: 'object',
       properties: {
@@ -96,6 +96,16 @@ export async function executePhaseReviewerTool(toolCall: ToolCall): Promise<Tool
       parts.push('### 🔍 核心发现')
       for (const finding of report.aiFindings) {
         parts.push(`- ${finding}`)
+      }
+      parts.push('')
+    }
+
+    // 三分决策总表（保持放大 / 停止 / 新开始）
+    if (report.aiDecisions.length > 0) {
+      parts.push('### 🎯 决策总表：保持 / 停止 / 新开始')
+      const DECISION_LABEL = { keep: '✅ 保持放大', stop: '⛔ 停止', start: '🆕 新开始' } as const
+      for (const d of report.aiDecisions) {
+        parts.push(`- **${DECISION_LABEL[d.decision] ?? d.decision} · ${d.element}**：${d.evidence}。${d.reason} → ${d.nextAction}`)
       }
       parts.push('')
     }

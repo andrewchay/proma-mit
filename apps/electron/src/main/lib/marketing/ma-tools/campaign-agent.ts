@@ -137,11 +137,17 @@ export const CAMPAIGN_AGENT_TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ]
 
+/** Campaign Agent 工具名清单（用于运行时判断是否本模块处理） */
+const CAMPAIGN_AGENT_TOOL_NAMES = CAMPAIGN_AGENT_TOOL_DEFINITIONS.map((tool) => tool.name)
+
+/** 判断工具名是否属于 Campaign Agent 工具 */
+export function isCampaignAgentToolCall(toolName: string): boolean {
+  return CAMPAIGN_AGENT_TOOL_NAMES.includes(toolName)
+}
+
 // =====================================================================
 // 工具执行
 // =====================================================================
-
-
 
 export async function executeCampaignAgentTool(tc: ToolCall): Promise<ToolResult> {
   try {
