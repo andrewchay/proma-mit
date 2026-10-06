@@ -75,6 +75,7 @@ export function DelegateFileTaskDialog({ open, onClose, workspaceId, initialTarg
   const [taskDescription, setTaskDescription] = React.useState('')
   const [existingTaskId, setExistingTaskId] = React.useState('')
   const [existingTasks, setExistingTasks] = React.useState<Array<{ id: string; title: string; status: string }>>([])
+  const [linkReadiness, setLinkReadiness] = React.useState<import('@gravitas/shared').ProjectTaskReadiness | null>(null)
   const [decisions, setDecisions] = React.useState<Array<{ id: string; title: string }>>([])
 
   React.useEffect(() => {
@@ -114,9 +115,9 @@ export function DelegateFileTaskDialog({ open, onClose, workspaceId, initialTarg
     if (targetPath && !allowedPaths.trim()) setAllowedPaths(dir === '.' ? '.' : dir)
   }, [targetPath, allowedPaths])
 
-  // 项目变化时拉取已拍板决策与可关联任务
+  // 项目变化或打开表单时拉取已拍板决策与可关联任务；R-P0-05：依赖 open，拍板后重开即可见，不再用陈旧快照
   React.useEffect(() => {
-    if (!projectId) { setDecisions([]); setExistingTasks([]); return }
+    if (!projectId || !open) { setDecisions([]); setExistingTasks([]); return }
     void (async () => {
       try {
         const chain = await projectApi<{ decisions: Array<{ id: string; title: string; status: string }> }>('getChain', projectId)
@@ -127,7 +128,21 @@ export function DelegateFileTaskDialog({ open, onClose, workspaceId, initialTarg
         setError(err instanceof Error ? err.message : String(err))
       }
     })()
-  }, [projectId])
+  }, [projectId, open])
+
+  // R-P0-08：关联已有任务时预读 readiness，提前告知该任务为何可能无法派发/进入交付
+  React.useEffect(() => {
+    setLinkReadiness(null)
+    if (!open || mode !== 'link' || !existingTaskId) return
+    void (async () => {
+      try {
+        const readiness = await window.electronAPI.paa.agentEmployees.getTaskReadiness(existingTaskId)
+        setLinkReadiness(readiness)
+      } catch {
+        // readiness 只是解释层；失败时静默，不阻断委派流程
+      }
+    })()
+  }, [open, mode, existingTaskId])
 
   const submit = async (): Promise<void> => {
     setBusy(true); setError(null)
@@ -228,6 +243,14 @@ export function DelegateFileTaskDialog({ open, onClose, workspaceId, initialTarg
                   {existingTasks.map((task) => <option key={task.id} value={task.id}>{task.title}（{task.status}）</option>)}
                 </select>
               </label>
+            )}
+            {mode === 'link' && linkReadiness && linkReadiness.blockers.length > 0 && (
+              <div role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">
+                <p className="font-medium">该任务当前无法正常派发/交付，共 {linkReadiness.blockers.length} 项阻塞：</p>
+                <ul className="mt-1 list-inside list-disc">
+                  {linkReadiness.blockers.map((b) => <li key={b.code}>{b.message}</li>)}
+                </ul>
+              </div>
             )}
             {error && <p role="alert" className="text-destructive text-xs">{error}</p>}
             <div className="flex justify-end gap-2">

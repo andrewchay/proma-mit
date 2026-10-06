@@ -509,6 +509,8 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   DISABLE_CAPABILITY_CANARY: 'agent-employee:disable-capability-canary',
   /** 研发任务 Review：读取任务评审汇总（任务/范围/执行/交付版本/可选决策）。 */
   GET_TASK_REVIEW: 'agent-employee:get-task-review',
+  /** AI 任务前置检查：只读返回用户可读阻塞列表与阶段（R-P0-08）。 */
+  GET_TASK_READINESS: 'agent-employee:get-task-readiness',
   /** 研发任务 Review：读取冻结快照中某文件的新旧内容。 */
   GET_SNAPSHOT_DIFF: 'agent-employee:get-snapshot-diff',
   /** 文件委派：新建或关联任务并写入研发范围（不派发执行）。 */
@@ -1886,4 +1888,29 @@ export interface CreativeAsset {
   resolution?: string
   status: 'ready' | 'processing' | 'failed'
   createdAt: string
+}
+
+/** AI 任务推进阶段（只读投影，不构成派发授权；R-P0-08） */
+export type ProjectTaskReadinessPhase =
+  | 'closed'
+  | 'blocked'
+  | 'ready'
+  | 'running'
+  | 'awaiting_review'
+  | 'completed'
+
+export interface ProjectTaskReadinessBlocker {
+  /** 稳定诊断码 */
+  code: string
+  /** 用户可读原因与下一步 */
+  message: string
+}
+
+/** 统一前置检查结果：renderer 只做解释；主进程各门禁仍是最终权威 */
+export interface ProjectTaskReadiness {
+  taskId: string
+  phase: ProjectTaskReadinessPhase
+  blockers: ProjectTaskReadinessBlocker[]
+  /** 面向高级详情的内部事实说明 */
+  diagnostics: string[]
 }

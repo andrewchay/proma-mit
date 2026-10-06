@@ -1922,6 +1922,8 @@ export interface ElectronAPI {
       listExecutionsByAgent: (agentId: string, limit?: number) => Promise<import('@gravitas/shared').AgentExecutionResult[]>
       /** 研发 Review：任务评审汇总 */
       getTaskReview: (taskId: string) => Promise<import('@gravitas/shared').TaskReviewSummary>
+      /** AI 任务前置检查：只读返回用户可读阻塞列表与阶段（R-P0-08） */
+      getTaskReadiness: (taskId: string) => Promise<import('@gravitas/shared').ProjectTaskReadiness>
       /** 研发 Review：冻结快照单文件新旧内容 */
       getSnapshotDiff: (executionId: string, filePath: string) => Promise<import('@gravitas/shared').DevelopmentSnapshotDiff>
       /** 文件委派：新建或关联任务（不派发执行） */
@@ -4420,6 +4422,7 @@ const electronAPI: ElectronAPI = {
       listExecutionsByAgent: (agentId, limit) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, agentId, limit),
       cancelExecution: (executionId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, executionId),
       getTaskReview: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, taskId),
+      getTaskReadiness: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_READINESS, taskId),
       getSnapshotDiff: (executionId, filePath) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, executionId, filePath),
       prepareFileDelegation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, input),
       requestChanges: (taskId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, taskId, comment),
