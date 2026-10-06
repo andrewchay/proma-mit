@@ -53,11 +53,18 @@ import themeForestMorning from '@/assets/theme-previews/theme-forest-morning.web
 import themeOceanDark from '@/assets/theme-previews/theme-ocean-dark.webp'
 import themeForestNight from '@/assets/theme-previews/theme-forest-night.webp'
 import themeMorandiNight from '@/assets/theme-previews/theme-morandi-night.webp'
-import themeEmberLight from '@/assets/theme-previews/theme-ember-light.webp'
-import themeEmberDark from '@/assets/theme-previews/theme-ember-dark.webp'
+import themeEmberLight from '@/assets/theme-previews/theme-ember-light-art.webp'
+import themeEmberDark from '@/assets/theme-previews/theme-ember-dark-art.webp'
 import themePorcelain from '@/assets/theme-previews/theme-porcelain.webp'
 import themeLandscape from '@/assets/theme-previews/theme-landscape.webp'
-import { THEME_PREVIEW_DECORS } from './theme-preview-decor'
+import themeSage from '@/assets/theme-previews/theme-sage.webp'
+import themePeach from '@/assets/theme-previews/theme-peach.webp'
+import themeLavender from '@/assets/theme-previews/theme-lavender.webp'
+import themeLandscapeNight from '@/assets/theme-previews/theme-landscape-night.webp'
+import themeVermeerNight from '@/assets/theme-previews/theme-vermeer-night.webp'
+import themeCaravaggioNight from '@/assets/theme-previews/theme-caravaggio-night.webp'
+import themeVangoghNight from '@/assets/theme-previews/theme-vangogh-night.webp'
+import themeSynthwaveNight from '@/assets/theme-previews/theme-synthwave-night.webp'
 
 /** 主题选项 */
 const THEME_OPTIONS = [
@@ -77,28 +84,15 @@ const MARKDOWN_FONT_SIZE_OPTIONS = [
 /** 特殊风格 ID（排除 default） */
 type SpecialStyleId = Exclude<ThemeStyle, 'default'>
 
-/** 特殊风格定义：图片与实际界面预览二选一。 */
-interface SpecialStyleBase {
+/** 所有主题卡片共用画作预览。 */
+interface SpecialStyle {
   id: SpecialStyleId
   name: string
   variant: 'light' | 'dark'
-}
-
-interface ImageStyle extends SpecialStyleBase {
   image: string
-  preview?: never
   objectPosition?: string
   imageScale?: number
 }
-
-interface PaletteStyle extends SpecialStyleBase {
-  preview: { background: string; panel: string; accent: string; text: string }
-  /** 定制意象插画（有则铺满卡片替代纯色块模拟缩略图） */
-  decor?: React.ReactNode
-  image?: never
-}
-
-type SpecialStyle = ImageStyle | PaletteStyle
 
 const SPECIAL_STYLES: readonly SpecialStyle[] = [
   {
@@ -165,45 +159,17 @@ const SPECIAL_STYLES: readonly SpecialStyle[] = [
     variant: 'light',
     image: themeLandscape,
   },
-  {
-    id: 'sage',
-    name: '鼠尾草',
-    variant: 'light',
-    preview: { background: '#F1EFE7', panel: '#D7C5A1', accent: '#89A8A0', text: '#3A4A45' },
-    decor: THEME_PREVIEW_DECORS.sage,
-  },
-  {
-    id: 'peach',
-    name: '蜜桃奶油',
-    variant: 'light',
-    preview: { background: '#F6E2DB', panel: '#EAD8C4', accent: '#F0C4A8', text: '#4A332C' },
-    decor: THEME_PREVIEW_DECORS.peach,
-  },
-  {
-    id: 'lavender',
-    name: '薰衣草',
-    variant: 'light',
-    preview: { background: '#F2EEEA', panel: '#D7D1DC', accent: '#B9AFD8', text: '#3A3345' },
-    decor: THEME_PREVIEW_DECORS.lavender,
-  },
-  { id: 'landscape-night', name: '千里江山·夜', variant: 'dark',
-    preview: { background: '#0D131A', panel: '#162A2B', accent: '#66DCC5', text: '#E5E9F0' },
-    decor: THEME_PREVIEW_DECORS['landscape-night'] },
-  { id: 'vermeer-night', name: '维米尔·夜', variant: 'dark',
-    preview: { background: '#121214', panel: '#1E293B', accent: '#E5C86B', text: '#F8F9FA' },
-    decor: THEME_PREVIEW_DECORS['vermeer-night'] },
-  { id: 'caravaggio-night', name: '卡拉瓦乔', variant: 'dark',
-    preview: { background: '#100F11', panel: '#241C1A', accent: '#D9A45B', text: '#ECE4D7' },
-    decor: THEME_PREVIEW_DECORS['caravaggio-night'] },
-  { id: 'vangogh-night', name: '梵高·星夜', variant: 'dark',
-    preview: { background: '#10162B', panel: '#1E2D4D', accent: '#E7C456', text: '#E8ECF7' },
-    decor: THEME_PREVIEW_DECORS['vangogh-night'] },
-  { id: 'synthwave-night', name: '霓虹合成波', variant: 'dark',
-    preview: { background: '#0A0714', panel: '#1F1435', accent: '#F27BC5', text: '#E9E5F6' },
-    decor: THEME_PREVIEW_DECORS['synthwave-night'] },
+  { id: 'sage', name: '鼠尾草', variant: 'light', image: themeSage },
+  { id: 'peach', name: '蜜桃奶油', variant: 'light', image: themePeach },
+  { id: 'lavender', name: '薰衣草', variant: 'light', image: themeLavender },
+  { id: 'landscape-night', name: '千里江山·夜', variant: 'dark', image: themeLandscapeNight },
+  { id: 'vermeer-night', name: '维米尔·夜', variant: 'dark', image: themeVermeerNight },
+  { id: 'caravaggio-night', name: '卡拉瓦乔', variant: 'dark', image: themeCaravaggioNight },
+  { id: 'vangogh-night', name: '梵高·星夜', variant: 'dark', image: themeVangoghNight },
+  { id: 'synthwave-night', name: '霓虹合成波', variant: 'dark', image: themeSynthwaveNight },
 ]
 
-/** 图片主题的名称遮罩；调色板主题的名称直接使用预览色。 */
+/** 主题卡片底部名称遮罩配色。 */
 const STYLE_MASK_COLORS: Record<SpecialStyleId, { bg: string; text: string }> = {
   'slate-light':  { bg: 'hsl(18, 20%, 67%)',  text: 'hsl(18, 20%, 88%)' },
   'ocean-light':  { bg: 'hsl(205, 50%, 50%)', text: 'hsl(205, 50%, 82%)' },
@@ -519,39 +485,17 @@ function StyleCard({
           : 'ring-1 ring-border/50 hover:ring-border'
       )}
     >
-      {style.preview ? (
-        <div className="absolute inset-0 overflow-hidden" style={{ background: style.preview.background }} aria-hidden="true">
-          {style.decor ?? (
-            <div className="absolute inset-0 p-2 text-left">
-              <div className="flex h-full gap-1 rounded-md p-1.5 shadow-lg" style={{ background: style.preview.panel }}>
-                <div className="w-3 shrink-0 rounded-sm opacity-65" style={{ background: style.preview.background }} />
-                <div className="flex min-w-0 flex-1 flex-col gap-2 pt-1">
-                  <div className="h-1.5 w-3/4 rounded-full opacity-80" style={{ background: style.preview.text }} />
-                  <div className="h-1 w-full rounded-full opacity-45" style={{ background: style.preview.text }} />
-                  <div className="h-1 w-4/5 rounded-full opacity-45" style={{ background: style.preview.text }} />
-                  <div className="mt-2 h-12 rounded-md p-1.5" style={{ background: style.preview.background }}>
-                    <div className="h-1 w-3/4 rounded-full" style={{ background: style.preview.accent }} />
-                    <div className="mt-1 h-1 w-1/2 rounded-full opacity-60" style={{ background: style.preview.text }} />
-                  </div>
-                  <div className="mt-auto mb-6 h-4 w-full rounded-md border" style={{ borderColor: style.preview.accent }} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="w-full h-full" style={style.imageScale ? { transform: `scale(${style.imageScale})` } : undefined}>
-          <img src={style.image} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover"
-            style={style.objectPosition ? { objectPosition: style.objectPosition } : undefined} draggable={false} />
-        </div>
-      )}
+      <div className="w-full h-full" style={style.imageScale ? { transform: `scale(${style.imageScale})` } : undefined}>
+        <img src={style.image} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover"
+          style={style.objectPosition ? { objectPosition: style.objectPosition } : undefined} draggable={false} />
+      </div>
       <div
         className="absolute bottom-0 left-0 right-0 h-5 flex items-end justify-center pb-0.5"
-        style={{ background: style.preview?.panel ?? STYLE_MASK_COLORS[style.id].bg }}
+        style={{ background: STYLE_MASK_COLORS[style.id].bg }}
       >
         <span
           className="text-xs font-medium"
-          style={{ color: style.preview?.text ?? STYLE_MASK_COLORS[style.id].text }}
+          style={{ color: STYLE_MASK_COLORS[style.id].text }}
         >
           {style.name}
         </span>

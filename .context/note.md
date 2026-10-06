@@ -1,5 +1,12 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-06 主题预览视觉统一（艺术系定稿方向）
+- 用户反馈：界面背景纹样"太丑"→ 已移除 ThemeTextureLayer 及 theme-texture-layer.tsx，运行界面恢复纯净；预览卡图案保留。
+- 用户反馈：简笔 SVG 预览"太简陋"，与青花瓷/青绿山水不一致 → 用户选定**艺术系**：全部主题卡改画作预览，卡片只留图与名称。
+- 实现：Pillow 程序化绘制 10 幅同系列插画（纸纹颗粒 + 柔边笔触 + 有限配色），脚本 `scripts/generate-theme-preview-art.py` 可复现；AppearanceSettings 简化为统一 `image` 结构，删除 theme-preview-decor.tsx 与调色板分支；被替换的 ember 旧截图预览已删（新图 `theme-ember-*-art.webp`）。
+- 注意：程序插画非真实画作，质感与真迹有差距；若需更高保真需引入真实图像素材（如公版名画）或外部生成能力。
+- 验证：typecheck / theme-contrast.test（3 pass）/ build:renderer 全过；版本 0.12.103。
+
 ## 2026-10-05 Pi Durable mid-turn 恢复实现调研（源码级，npm 包 1.0.2 实测）
 - 包：`@earendil-works/pi-durable@1.0.2`（独立包，基于 pi-ai + chord；规范文档在 github `packages/durable/docs/spec.md`）。
 - **核心机制 = 单线原子提交**：所有变更（transcript 条目、文档、任务状态）走 `conversation.commit(tx)`，要么全存要么不存；"展示前必先提交"。条目不可变（`pi.user`/`pi.assistant`/`pi.tool-result`/`pi.system`/`pi.compaction`/`pi.reset` + 自定义 kind）。
