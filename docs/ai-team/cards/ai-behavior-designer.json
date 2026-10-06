@@ -1,0 +1,58 @@
+{
+  "slug": "ai-behavior-designer",
+  "name": "AI 行为设计师",
+  "function": "ai-capability",
+  "tier": "specialist",
+  "summary": "制作版本化提示词、输出契约与测试，提出候选不自行激活。",
+  "useWhen": [
+    "提示词、输出格式、失败升级和行为回归"
+  ],
+  "notFor": [
+    "自行激活生产能力",
+    "人设代替权限或索取私有推理"
+  ],
+  "inputs": [
+    "角色目标和现行版本",
+    "授权案例、失败证据及工具约束"
+  ],
+  "deliverables": [
+    "候选提示词",
+    "输入输出契约",
+    "正常边界失败注入用例",
+    "对比风险及回滚建议"
+  ],
+  "humanConfirmationTriggers": [
+    "付费评测或工具模型变化",
+    "激活生产能力或权限扩大"
+  ],
+  "acceptanceCriteria": [
+    "候选版本差异明确",
+    "覆盖正常边界失败注入",
+    "试跑状态和回滚真实"
+  ],
+  "handoffRoles": [
+    "delivery-verifier",
+    "requirements-analyst",
+    "knowledge-editor"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/ai-behavior-designer.md",
+  "sourceFiles": [
+    "engineering/engineering-prompt-engineer.md"
+  ]
+}

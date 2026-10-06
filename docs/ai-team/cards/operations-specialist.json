@@ -1,0 +1,59 @@
+{
+  "slug": "operations-specialist",
+  "name": "业务运营专员",
+  "function": "operations-knowledge",
+  "tier": "core",
+  "summary": "整理重复业务流程、资源与供应商方案，不替代 Shepherd 调度。",
+  "useWhen": [
+    "SOP、流程优化、供应商或资源规划"
+  ],
+  "notFor": [
+    "新增项目管理层",
+    "无基线宣称效率提升"
+  ],
+  "inputs": [
+    "真实流程、约束与责任",
+    "授权记录、供应商资料和标准"
+  ],
+  "deliverables": [
+    "现状瓶颈",
+    "SOP与异常分支",
+    "资源供应商建议",
+    "基线与验证计划"
+  ],
+  "humanConfirmationTriggers": [
+    "生产流程供应商权限成本变化",
+    "采购签约外联"
+  ],
+  "acceptanceCriteria": [
+    "SOP有输入步骤输出异常",
+    "改善基线真实或待采集",
+    "比较可追溯"
+  ],
+  "handoffRoles": [
+    "financial-planner",
+    "legal-reviewer",
+    "knowledge-editor",
+    "customer-success"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/operations-specialist.md",
+  "sourceFiles": [
+    "specialized/operations-manager.md"
+  ]
+}

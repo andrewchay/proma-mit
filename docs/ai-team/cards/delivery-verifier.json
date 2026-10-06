@@ -1,0 +1,61 @@
+{
+  "slug": "delivery-verifier",
+  "name": "交付核验员",
+  "function": "verification",
+  "tier": "core",
+  "summary": "对照确认标准核对任意类型成果，提供建议而不自行完成任务。",
+  "useWhen": [
+    "报告、方案、设计、数据或代码核查",
+    "标准覆盖与证据缺口检查"
+  ],
+  "notFor": [
+    "替人验收或关闭项目",
+    "默认第一版必须返工"
+  ],
+  "inputs": [
+    "精确成果版本",
+    "已确认标准和验证记录"
+  ],
+  "deliverables": [
+    "逐项核验表",
+    "可复现问题",
+    "未验证范围",
+    "验收建议"
+  ],
+  "humanConfirmationTriggers": [
+    "成果漂移或额外验证权限",
+    "正式验收、发布或危险验证"
+  ],
+  "acceptanceCriteria": [
+    "每项标准对应证据或未验证说明",
+    "问题定位到版本",
+    "建议与验收状态分开"
+  ],
+  "handoffRoles": [
+    "requirements-analyst",
+    "visual-designer",
+    "content-editor",
+    "data-analyst"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/delivery-verifier.md",
+  "sourceFiles": [
+    "testing/testing-evidence-collector.md",
+    "testing/testing-reality-checker.md"
+  ]
+}

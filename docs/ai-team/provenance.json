@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "referenceRepository": "https://github.com/msitarzewski/agency-agents",
+  "referenceHead": "58a6884db74e003e823d6aa0bbc7eda0466297f3",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025 AgentLand Contributors",
+  "derivation": "方法参考，Gravitas 原创岗位映射及本地化重写，未复制整份人格模板。",
+  "sources": {
+    "product/product-manager.md": {
+      "sha256": "4a3fe4661e72e5173877bcba7c362392181774b20efc27ac1789171e98676c9d",
+      "worktreeModified": false
+    },
+    "research/research-synthesist.md": {
+      "sha256": "3618b4a2a73523147731ae38ac4096cea0e83a7de930f55ea9ea6c69e3c77f30",
+      "worktreeModified": false
+    },
+    "testing/testing-evidence-collector.md": {
+      "sha256": "ff1868ae89f3be62f6f0da1fc8693582f18578c77751b8a65a53169ef15ececd",
+      "worktreeModified": false
+    },
+    "testing/testing-reality-checker.md": {
+      "sha256": "6d32fcdb114233e13902ec6372d50293b120e85d490b5e81d372c29808f988a1",
+      "worktreeModified": false
+    },
+    "design/design-brand-guardian.md": {
+      "sha256": "d1d5c78af85d4d35be94b93d5c011d17e3cf5dcb69b2037a3ebf3059803b893e",
+      "worktreeModified": false
+    },
+    "design/design-visual-storyteller.md": {
+      "sha256": "f4950c9d65b5d105ec48ebce4b7621154e3bf89871dbbf07af245476930eb4dd",
+      "worktreeModified": false
+    },
+    "marketing/marketing-social-media-strategist.md": {
+      "sha256": "7c698a9280872666b2726b7ca305c6d4890fcb95a098c7c316beb9bf5fdb4274",
+      "worktreeModified": false
+    },
+    "marketing/marketing-content-creator.md": {
+      "sha256": "26ddce44f057068a3935c13d53becd3c57385fb47fcdcfdd891b80269070b3d5",
+      "worktreeModified": false
+    },
+    "sales/sales-proposal-strategist.md": {
+      "sha256": "84c42e0ae7e11e6b239b7f921bdb0c33398102f94998c2eaa41114a3a46dc4c9",
+      "worktreeModified": false
+    },
+    "finance/finance-fpa-analyst.md": {
+      "sha256": "5fa9137c80e0b91fbe62815e7981d7b6a2ca5bafe43013c56d1b847a3c963141",
+      "worktreeModified": false
+    },
+    "finance/finance-bookkeeper-controller.md": {
+      "sha256": "5510a24274d8f7897ca3f4df2c3318262138a2c82827b37dd2489dcfca8de75a",
+      "worktreeModified": false
+    },
+    "specialized/legal-document-review.md": {
+      "sha256": "02bf51dbc9d8ffc93a8b053a09ec61ee2a3a9905e395fbd24389a532d20d1dba",
+      "worktreeModified": false
+    },
+    "support/support-legal-compliance-checker.md": {
+      "sha256": "0544f2219d52742f9ba436c193b34eb48c47cee8fcba38aef2b478dcb5e19284",
+      "worktreeModified": false
+    },
+    "specialized/operations-manager.md": {
+      "sha256": "3c133a31ae1542922444d77d7c8f9964127704ba94638dde12e37a9ad0fd35bd",
+      "worktreeModified": false
+    },
+    "specialized/customer-success-manager.md": {
+      "sha256": "2fc5ebc10734a621d65d1bfe0a253158f0a7418ee39b7c93a18efe6b26661cfe",
+      "worktreeModified": false
+    },
+    "specialized/business-strategist.md": {
+      "sha256": "9314906805d8dee81c3e2d10cb93513a391731d9fceb2e4c936257005a144b92",
+      "worktreeModified": false
+    },
+    "design/design-ux-researcher.md": {
+      "sha256": "25f59c4333df2d0f1170ff7a1b11ea8415fd3d0ef80c3e0985209aeb4018680f",
+      "worktreeModified": false
+    },
+    "design/design-ui-designer.md": {
+      "sha256": "3130768958d3b3d38178aaec91cf789e01ecca4984c8674d4aaea446b6cba240",
+      "worktreeModified": false
+    },
+    "design/design-persona-walkthrough.md": {
+      "sha256": "8def8c73df7f79a61704e7353b85b915afa31c4a9fa1100fbb9220c50d6a1c55",
+      "worktreeModified": false
+    },
+    "product/product-feedback-synthesizer.md": {
+      "sha256": "9f7bc1474bf8bf95c0573c20df5e3d8ae70c3b9659ec5ea7958cc4692b958270",
+      "worktreeModified": false
+    },
+    "engineering/engineering-prompt-engineer.md": {
+      "sha256": "e94ccdc64a6a4fe064550dee7242778632696813d98dc1d6053f64d3794794d3",
+      "worktreeModified": false
+    },
+    "engineering/engineering-technical-writer.md": {
+      "sha256": "bf5c809977e10904b988ab8b218853ce8dfa38b2cbd89a7d2cfadba44ac25761",
+      "worktreeModified": false
+    },
+    "support/support-analytics-reporter.md": {
+      "sha256": "ee0c4e6f02667be08898fea0ddbbfdab8cfd4eb52328cbf9af209a17a7dc204f",
+      "worktreeModified": false
+    },
+    "specialized/recruitment-specialist.md": {
+      "sha256": "dfd01aa152324f2120b7c7b8d3c76e991065c0a38f03c0fb43d3d1db0f7bd529",
+      "worktreeModified": false
+    }
+  }
+}

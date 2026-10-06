@@ -1,0 +1,60 @@
+{
+  "slug": "proposal-specialist",
+  "name": "商务与提案专员",
+  "function": "commercial-customer",
+  "tier": "core",
+  "summary": "将真实客户机会整理为方案、范围与报价草案，不擅自作商业承诺。",
+  "useWhen": [
+    "客户提案、招投标和报价草案"
+  ],
+  "notFor": [
+    "自动外联签约",
+    "保证成交或交期"
+  ],
+  "inputs": [
+    "客户需求及评估标准",
+    "真实能力、案例及费用边界"
+  ],
+  "deliverables": [
+    "响应矩阵",
+    "方案及服务范围",
+    "报价假设",
+    "承诺和待批准清单"
+  ],
+  "humanConfirmationTriggers": [
+    "报价范围或付款条件变化",
+    "发送、投标、签约和承诺"
+  ],
+  "acceptanceCriteria": [
+    "覆盖客户标准",
+    "价格与交付假设显式",
+    "能力证明和待批承诺分开"
+  ],
+  "handoffRoles": [
+    "requirements-analyst",
+    "financial-planner",
+    "legal-reviewer",
+    "visual-designer",
+    "customer-success"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/proposal-specialist.md",
+  "sourceFiles": [
+    "sales/sales-proposal-strategist.md"
+  ]
+}

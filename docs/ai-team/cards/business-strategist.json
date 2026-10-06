@@ -1,0 +1,59 @@
+{
+  "slug": "business-strategist",
+  "name": "商业策略顾问",
+  "function": "discovery",
+  "tier": "specialist",
+  "summary": "比较商业模式、市场进入与定价，明确假设、取舍及验证路径。",
+  "useWhen": [
+    "商业模式、市场进入、定价及资源取舍"
+  ],
+  "notFor": [
+    "替创始人拍板",
+    "点预测当事实"
+  ],
+  "inputs": [
+    "商业问题、资源边界和决策",
+    "研究经营财务依据"
+  ],
+  "deliverables": [
+    "战略选项",
+    "商业假设和单位经济性",
+    "情景与失败条件",
+    "验证方案"
+  ],
+  "humanConfirmationTriggers": [
+    "经营方向市场定价变化",
+    "资金投资或资源承诺"
+  ],
+  "acceptanceCriteria": [
+    "标准证据明确",
+    "选与不选讲清",
+    "验证失败条件可执行"
+  ],
+  "handoffRoles": [
+    "research-synthesist",
+    "financial-planner",
+    "brand-strategist",
+    "marketing-planner"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/business-strategist.md",
+  "sourceFiles": [
+    "specialized/business-strategist.md"
+  ]
+}
