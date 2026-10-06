@@ -6,7 +6,7 @@
  * 画布按竖长卡片构图（viewBox 0 0 100 190，slice 铺满裁切）。
  */
 
-import * as React from 'react'
+import type * as React from 'react'
 
 /** 鼠尾草：米白底 + 灰绿穗状花序 + 沙棕丘影 */
 export function SageDecor(): React.ReactElement {
