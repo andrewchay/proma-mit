@@ -22,6 +22,7 @@ import { agentSidePanelWidthAtom, currentAgentSessionIdAtom, currentSessionSideP
 import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { sidebarWidthAtom } from '@/atoms/sidebar-atoms'
 import { WindowControls } from '@/components/WindowControls'
+import { ThemeTextureLayer } from './theme-texture-layer'
 import { detectIsWindows } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 
@@ -158,6 +159,8 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
       <WindowControls />
 
       <div className="shell-bg relative h-screen w-screen flex overflow-hidden bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-950 dark:to-zinc-900">
+        {/* 主题意象纹样层：特殊风格主题下叠加极淡纹样，普通模式不渲染 */}
+        <ThemeTextureLayer />
         {/* 左侧边栏：可折叠、可拖宽。仅保留窗口边缘 padding（p-2 左右），右侧与主区无间隔 */}
         <div className="p-2 pr-0 relative z-[60]">
           <LeftSidebar width={clampedSidebarWidth} resizing={sidebarResizing} />
