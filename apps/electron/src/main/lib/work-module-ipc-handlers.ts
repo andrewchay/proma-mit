@@ -978,6 +978,20 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_ENTITY, (_, entityType: 'task' | 'subTask', entityId: string) => listAgentExecutionsByEntity(entityType, entityId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_EXECUTIONS_BY_AGENT, (_, agentId: string, limit?: number) => listAgentExecutionsByAgent(agentId, limit ?? 50))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, (_, taskId: string) => getTaskReview(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_READINESS, async (_, taskId: string) => {
+    // 只读前置检查：不授权、不派发；各门禁在真实派发路径仍独立校验（R-P0-08）
+    const { getTask, listAgentExecutionsByEntity } = await import('./project-sqlite-store')
+    const { getAgentWorkspace } = await import('./agent-workspace-manager')
+    const { inspectTaskReadiness } = await import('./project-task-readiness')
+    const task = getTask(taskId)
+    if (!task) throw new Error('任务不存在')
+    return inspectTaskReadiness(task, {
+      getWorkspace: (id) => getAgentWorkspace(id),
+      getChain: (projectId) => getProjectChain(projectId),
+      listExecutions: (id) => listAgentExecutionsByEntity('task', id),
+      isEmployeeEnabled: (employeeId) => Boolean(getAgentEmployee(employeeId)?.enabled),
+    })
+  })
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, (_, executionId: string, filePath: string) => getSnapshotDiff(executionId, filePath))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, (_, input: import('@gravitas/shared').PrepareFileDelegationInput) => prepareFileDelegation(input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, (_, taskId: string, comment: string) => requestDevelopmentChanges(taskId, comment))

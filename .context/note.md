@@ -7,6 +7,37 @@
 - 注意：程序插画非真实画作，质感与真迹有差距；若需更高保真需引入真实图像素材（如公版名画）或外部生成能力。
 - 验证：typecheck / theme-contrast.test（3 pass）/ build:renderer 全过；版本 0.12.103。
 
+## 2026-10-05 Pi Durable mid-turn 恢复实现调研（源码级，npm 包 1.0.2 实测）
+- 包：`@earendil-works/pi-durable@1.0.2`（独立包，基于 pi-ai + chord；规范文档在 github `packages/durable/docs/spec.md`）。
+- **核心机制 = 单线原子提交**：所有变更（transcript 条目、文档、任务状态）走 `conversation.commit(tx)`，要么全存要么不存；"展示前必先提交"。条目不可变（`pi.user`/`pi.assistant`/`pi.tool-result`/`pi.system`/`pi.compaction`/`pi.reset` + 自定义 kind）。
+- **文档（与条目同事务提交的 typed JSON 状态）**：`pi.agent`（每会话 agent 配置，存扩展名不存实现）、`pi.provider`（UUIDv7 provider 会话身份，给 pi-ai 当 sessionId 做 prompt-cache/亲和；跨 reopen/reset/压缩/换模型存活，fork/子会话换新）、`pi.live`（在跑的 generation 部分输出 + 工具 + 压缩）、`pi.inbox`（排队提交）、`pi.usage`（花费）。
+- **任务 = 带 checkpoint 的持久状态机**：`pi.generation` 调模型、拥有 `pi.tool` 子任务、等待其完成后把 run 交给下一代。调度器状态 pending/running/waiting/completing；**只有调度器能写 faulted/orphaned**。
+- **mid-turn 恢复流程（关键）**：① 流式期间 assistant 部分输出以 ≤100ms 节流提交进 `pi.live.generation.message`（一个在途提交，finally 里 await 保证 outcome 后不落脏部分）；② 进程死后重开：调度器把存活的 `running` 任务重置为 `pending`，`resume()` 重新派发；③ generation 任务在 request 相位先 `convertPartial`——把已提交的部分输出**作为 stopReason="aborted" 的 assistant 条目追加进 transcript**（输出不丢、断裂可见），然后**重新发起一次全新模型请求**（旧 HTTP 连接已随进程死亡）；attempt 计数防无限重试；④ 工具任务：意图（名字+参数）在 execute 前提交；恢复时**仅当存储意图与当前工具都声明 `replay:"safe"` 才重跑**（重跑清掉已发布输出），否则模型收到 `interrupted` 错误结果 + 保留部分输出；⑤ 提交幂等：同 requestId 重提交返回原 submission；⑥ 无定义可接的任务结算为 `orphaned`。
+- **存储**：SQLite（WAL + synchronous=NORMAL——进程崩溃可存活，断电/宿主故障可能丢最新提交）或 JSONL（批量写 + `{"type":"commit"}` 标记，可选每标记 fsync；无标记的撕裂尾部开卷时丢弃——与 pi-agent-core JsonlSessionRepo 同构）。**单进程独占存储，无跨进程锁**（与 Gravitas 单写者原则兼容）。
+- **对 Gravitas 的费用/门禁含义**：① mid-turn 恢复 = **重新计一次模型请求**（输入 token 重新计费，`pi.provider` sessionId 靠 provider 端 prompt cache 缓解）；② 钩子面：Generation 有 `beforeRequest`（可替换 messages，**无文档化的 block 语义**——阻断只能靠抛错）、`afterResponse`/`onYield`/`afterTools`；Tool 有 `beforeTool`（**有 block 语义**，可阻断或改写参数）/`afterTool`；**没有 onPayload 等价物**——请求体指纹核验弱于 Gravitas 现有 prepareRequest+onPayload 双层设计；③ 结论不变：采纳 = harness 替换 + 门禁重建，暂缓；若未来自研 mid-turn 恢复，可借鉴其"部分输出节流提交 + aborted 条目 + 意图先行 + replay 安全分级"四件套。
+
+## 2026-10-05 Pi Durable 评估（结论：暂缓，不纳入 1.0.2 试用）
+- `@earendil-works/pi-durable@1.0.2` 独立 npm 包（"Durable conversation, task, and document runtime"），README 明确标注 **Experimental（API 随时变）**；与 `pi-coding-agent` 无依赖关系（本地 dist 无引用、不在其 dependencies），本次升级不包含它。
+- 定位：独立 durable harness（`Harness.open`/`root.submit`），对话/模型轮次/工具调用/自定义状态先提交存储再展示，进程崩溃可从中断点恢复；基于 pi-ai + chord。
+- **与 Gravitas 重叠**：会话持久化（Gravitas JSONL + SessionManager.inMemory 重播种）、任务图（Goal todos/SubAgent/collaboration）、文档状态（context-store）、压缩（maybeAutoCompact）。**真实缺口仅一个：mid-turn 崩溃恢复**（当前进程死在轮次中，该轮丢失需用户重发；Durable 可续跑）。
+- **采纳成本**：等于重写 Pi adapter 核心（事件循环/历史播种/权限），且预算门禁（prepareRequest/onPayload/beforeToolCall）在 Durable 钩子面的等价能力未验证；引入第二持久化事实源（与 Pilot 账本"单写者"原则冲突）。
+- 决策：暂缓。若未来要做 mid-turn 恢复，作为独立切片评估 Durable 或自研；届时先验证其 Hooks 是否支持请求前拦截。
+
+## 2026-10-05 Pi 1.0.2 打包冒烟与 ASAR 校验（feat/pi-runtime-1.0.2-trial）
+- `dist:fast` 打包成功（`apps/electron/out/Gravitas-0.12.100-arm64.dmg` + `out/mac-arm64/Gravitas.app`，1m4s）；"missing optional dependencies" 为预期跨平台提示。
+- **ASAR 内容校验通过**：`quickjs-wasi`（含 quickjs.wasm）、`pi-mcp`、`pi-codemode`、`pi-ai`、`pi-agent-core`、`pi-coding-agent`、`claude-agent-sdk-darwin-arm64` 全部在包内——electron-builder 的 bun traversal 收集器自动包含传递依赖，此前担心的顶层 glob 缺口不存在。
+- **静态依赖分析**：`pi-coding-agent` dist 不静态引用 codemode/mcp/quickjs-wasi（懒加载）；Gravitas `noExtensions: true` 下这些包仅随包不解载，零运行时风险。
+- **隔离 HOME 启动冒烟**：主进程在 ASAR 环境完整引导（配置目录/Token 统计/MonitorService/协作监听全初始化），日志无任何模块错误；随后因**单实例锁被生产版持有**按设计自退出。锁不随 HOME 环境变量隔离，为应用全局约束。
+- **完整窗口 + Pi 会话验证需先退出生产版 Gravitas**（注意：生产版是当前会话宿主，退出即中断会话；会话持久化可恢复）。退出后：`open apps/electron/out/mac-arm64/Gravitas.app` → 渠道内做 ChatGPT 登录/模型列表刷新/实渠道对话三项验收。
+
+## 2026-10-05 Pi 1.0.2 试用分支（feat/pi-runtime-1.0.2-trial，未合入）
+- Pi 三包（pi-agent-core / pi-ai / pi-coding-agent）0.87.1→1.0.2 精确锁定；electron 版本 0.12.99→0.12.100。全仓 typecheck 九包零断点；Pi 定向测试 88 项全过（adapter 85 + 能力探针 3），覆盖预算门禁钩子链（prepareRequest/onPayload/beforeToolCall）、SessionManager.inMemory 历史种子（真实 SDK）、Codex 原生传输离线 mock（endpoint/鉴权/SSE）、渠道凭据存储。
+- **Codex 遗留路线完整存活**：openai-codex 下 9 个模型全部走 `openai-codex-responses`；但**模型目录换代**（现为 gpt-5.3-codex-spark / gpt-5.5 / gpt-5.6-luna|sol|terra / gpt-6-astra|luna|sol / gpt-6.1-sol）——渠道若存旧模型 ID，需在应用内刷新模型列表，否则 `registerPiModelFromChannel` 抛"不支持模型"。
+- **1.0 新能力 SDK 面可用**：`generateImages`（59 个图片模型目录）、`classify`（23 个分类器，含 typesafe/jev 族）、`getModelsOfType`/`getAllModels`/`getAvailableOfType`。**虚拟模型 `pi.registerVirtualModel` 是 extension host API**，裸 SDK 不可用；Gravitas 以 `noExtensions: true` 运行，若采用需走 SDK inline extension（builtin: true）路径，另行评估。
+- 探针固化：`apps/electron/src/main/lib/adapters/pi-102-capability-probe.test.ts`。build:main 正常（3 个 warning 为既有 import.meta/CJS 提示，与升级无关）。
+- **真机待验**：① 应用内 ChatGPT 登录 + 流式对话；② 实渠道（智谱/豆包等 openai-completions）一轮 Agent 回归；③ 图片生成/分类器真实调用；④ `dist:fast` 打包冒烟——1.0.2 新增传递依赖 `quickjs-wasi`（顶层包，不在 `node_modules/@earendil-works/**` glob 内）与 pi-mcp/pi-codemode 的 ASAR 打包解析未验证。
+- 边界：Pilot readiness/capability 未动；Pi 原生 MCP/Codemode/extensions 保持关闭；未改 README/CLAUDE.md。
+
 ## 2026-10-05 分支清理与 backup 内容核实
 - main 与 origin/main 同步（0ccc2b3e）；删除 21 个已完全合入的分支（本地 12 + 远程 9，含 5 个干净 worktree），`git branch -d` 全部通过。
 - backup/main-pre-rebase-20260927 已删除（tip 94bcd94f，2026-10-05 删除；内容经逐项核实全部被 main 覆盖，如需找回走 reflog）。

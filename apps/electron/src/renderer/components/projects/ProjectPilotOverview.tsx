@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PilotInboxEntry, PilotIntent, PilotObservation } from '@gravitas/shared'
 import { ProjectPilotGrantControl } from './ProjectPilotGrantControl'
+import { buildNextStepItems, describeIntentKind, describeTaskState } from './project-user-language'
 
-const LABELS: Record<PilotObservation['tasks'][number]['state'], string> = {
-  waiting_dependency: '等待依赖', awaiting_review: '待人工审阅',
-  needs_attention: '需要关注', ready: '可安排', running: '进行中', done: '已完成', inactive: '不参与推进',
-}
-const INTENT_LABELS: Record<PilotIntent['kind'], string> = {
-  dependency_wait: '等待依赖解除', ready_candidate: '待核实可安排',
-  review_candidate: '待人工审阅', attention_candidate: '待人工关注',
-  approval_request: '待人工答复',
-}
-
-export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
+export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCreateTask }: {
   projectId: string
   refreshKey?: unknown
   onOpenSource: (intent: PilotIntent, task?: PilotObservation['tasks'][number]) => void
+  /** 无任务时提供「新建任务/交给 AI 完成」入口（R-P1-01） */
+  onCreateTask?: () => void
 }): React.ReactElement {
   const [observation, setObservation] = useState<PilotObservation | null>(null)
   const [intents, setIntents] = useState<PilotIntent[]>([])
@@ -81,16 +74,28 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
     result[task.state] = (result[task.state] ?? 0) + 1
     return result
   }, {}) ?? {}
+  // R-P1-01：下一步行动（≤5 条，优先级在 project-user-language 内聚合）
+  const nextSteps = observation ? buildNextStepItems(observation, intents) : []
   return (
-    <section className="space-y-4" aria-label="项目驾驶观察" data-project-id={projectId}>
+    <section className="space-y-4" aria-label="项目进展" data-project-id={projectId}>
       <div className="flex items-start justify-between gap-4 rounded-xl bg-card p-5 shadow-sm">
         <div>
-          <h2 className="text-lg font-semibold">项目驾驶 · 状态观察</h2>
-          <p className="text-sm text-muted-foreground">这里根据项目事实展示下一步线索；只有活动授权和全部门禁通过的执行候选才会进入受控派发。人工事项请到原任务/协作入口审阅。</p>
+          <h2 className="text-lg font-semibold">项目进展</h2>
+          <p className="text-sm text-muted-foreground">当前进展与下一步都在这里；执行授权与预算仍在后台严格把关，成果不会自动视为验收通过。</p>
         </div>
-        <button className="rounded-md bg-muted px-3 py-1.5 text-sm" type="button" onClick={() => void refresh()} disabled={loading}>刷新状态</button>
+        <div className="flex items-center gap-2">
+          {onCreateTask && (
+            <button className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground" type="button" onClick={onCreateTask}>
+              + 新建任务 / 交给 AI
+            </button>
+          )}
+          <button className="rounded-md bg-muted px-3 py-1.5 text-sm" type="button" onClick={() => void refresh()} disabled={loading}>刷新</button>
+        </div>
       </div>
-      <ProjectPilotGrantControl projectId={projectId} refreshKey={refreshKey} />
+      <details className="rounded-xl bg-card p-4 shadow-sm">
+        <summary className="cursor-pointer text-sm font-medium text-muted-foreground">执行授权与预算（高级）</summary>
+        <div className="mt-3"><ProjectPilotGrantControl projectId={projectId} refreshKey={refreshKey} /></div>
+      </details>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {observation && <>
         {inbox.length > 0 && <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-950" aria-label="项目待办收件箱">
@@ -116,35 +121,50 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource }: {
           <ul className="mt-2 list-inside list-disc space-y-1">
             {observation.attention.map((item) => <li key={`${item.sourceType}:${item.sourceId}`}>{item.reason}（版本 {item.sourceVersion}）</li>)}
           </ul>
-          <p className="mt-2">人工询问可在上方收件箱答复；交付与决策请到「决策与协作链路」核验后处理。</p>
+          <p className="mt-2">人工询问可在上方收件箱答复；交付与决策请到「治理与交付详情」核验后处理。</p>
         </div>}
         <div className="flex flex-wrap gap-2 text-sm" aria-label="项目状态汇总">
-          {(Object.keys(LABELS) as Array<keyof typeof LABELS>).map((state) => <span key={state} className="rounded-md bg-muted px-3 py-2">{LABELS[state]} {counts[state] ?? 0}</span>)}
-        </div>
-        <div className="rounded-xl bg-card p-4 shadow-sm" aria-label="当前候选意图">
-          <h3 className="font-semibold">当前待处理线索 · {intents.length}</h3>
-          <p className="mt-1 text-sm text-muted-foreground">后台保存候选记录并重新核对项目事实；执行候选仍须通过活动授权、预算和 Runtime 门禁，交付不会自动批准。</p>
-          {intents.length > 0 && <ul className="mt-3 space-y-2 text-sm">
-            {intents.map((intent) => {
-              const task = intent.sourceType === 'task' ? observation.tasks.find((item) => item.taskId === intent.sourceId) : undefined
-              const attention = observation.attention.find((item) => item.sourceType === intent.sourceType && item.sourceId === intent.sourceId)
-              return <li key={intent.id}>
-                <button type="button" onClick={() => onOpenSource(intent, task)} className="w-full rounded-lg bg-muted px-3 py-2 text-left hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-                  <strong>{task?.title ?? attention?.reason ?? intent.sourceId}</strong> · {INTENT_LABELS[intent.kind]}
-                  <span className="ml-2 text-muted-foreground">{intent.sourceType === 'approval' ? '在上方收件箱答复' : intent.sourceType !== 'task' ? '前往决策与协作链路' : task?.parentTaskId ? '定位上级任务' : '定位原任务'}</span>
-                </button>
-              </li>
+          {(observation.tasks.map((task) => task.state))
+            .filter((state, index, all) => all.indexOf(state) === index)
+            .map((state) => {
+              const language = describeTaskState(state)
+              return <span key={state} className="rounded-md bg-muted px-3 py-2">{language.label} {counts[state] ?? 0}</span>
             })}
-          </ul>}
+        </div>
+        <div className="rounded-xl bg-card p-4 shadow-sm" aria-label="下一步行动">
+          <h3 className="font-semibold">下一步 · {nextSteps.length}</h3>
+          {nextSteps.length === 0
+            ? <p className="mt-1 text-sm text-muted-foreground">暂无待处理事项。</p>
+            : <ul className="mt-3 space-y-2 text-sm">
+              {nextSteps.map((step) => {
+                const language = describeIntentKind(step.intent.kind)
+                const isApproval = step.actionKind === 'open_inbox'
+                return <li key={step.id}>
+                  {isApproval ? <div className="rounded-lg bg-muted px-3 py-2">
+                    <strong>{step.title}</strong> · {language.label}
+                    <span className="ml-2 text-muted-foreground">{language.nextAction}</span>
+                  </div> : <button type="button" onClick={() => onOpenSource(step.intent, step.task)} className="w-full rounded-lg bg-muted px-3 py-2 text-left hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+                    <strong>{step.title}</strong> · {language.label}
+                    <span className="ml-2 text-muted-foreground">{step.reason}</span>
+                  </button>}
+                </li>
+              })}
+            </ul>}
         </div>
         <div className="space-y-2">
-          {observation.tasks.length === 0 && <p className="text-sm text-muted-foreground">暂无任务。先在任务页创建任务。</p>}
-          {observation.tasks.map((task) => (
-            <div key={task.taskId} className="rounded-xl bg-card p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-2"><strong>{task.title}</strong><span className="text-xs text-muted-foreground">{LABELS[task.state]}</span></div>
-              <p className="mt-1 text-sm text-muted-foreground">{task.reason}</p>
+          {observation.tasks.length === 0 && (
+            <div className="rounded-xl bg-card p-4 shadow-sm text-sm">
+              <p className="text-muted-foreground">这个项目还没有任务。</p>
+              {onCreateTask && <button type="button" onClick={onCreateTask} className="mt-2 rounded-md bg-primary px-3 py-1.5 text-primary-foreground">+ 新建任务 / 交给 AI 完成</button>}
             </div>
-          ))}
+          )}
+          {observation.tasks.map((task) => {
+            const language = describeTaskState(task.state)
+            return <div key={task.taskId} className="rounded-xl bg-card p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-2"><strong>{task.title}</strong><span className="text-xs text-muted-foreground">{language.label}</span></div>
+              <p className="mt-1 text-sm text-muted-foreground">{language.nextAction}</p>
+            </div>
+          })}
         </div>
       </>}
     </section>

@@ -20,6 +20,7 @@ import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@g
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
+import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { TaskReviewPanel } from './TaskReviewPanel'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
@@ -1003,6 +1004,8 @@ function ProjectDetail({
 }): React.ReactElement {
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
   const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
+  // R-P1-01：项目概览无任务/顶部 CTA 打开统一创建入口
+  const [showOverviewCreate, setShowOverviewCreate] = useState(false)
   useEffect(() => { if (detailTab !== 'tasks') setPilotTaskFocus(null) }, [detailTab])
   const [isEditingProject, setIsEditingProject] = useState(false)
   const [editTitle, setEditTitle] = useState(project.title)
@@ -1403,7 +1406,7 @@ function ProjectDetail({
         {([
           { key: 'pilot', label: '概览' },
           { key: 'tasks', label: '任务' },
-          { key: 'chain', label: '决策与协作链路' },
+          { key: 'chain', label: '治理与交付详情' },
           { key: 'knowledge', label: '知识' },
           { key: 'workspaces', label: '工作空间' },
           { key: 'notes', label: '会议纪要' },
@@ -1476,7 +1479,7 @@ function ProjectDetail({
 
       {/* 详情内容 */}
       <div className="flex-1 overflow-auto p-6">
-        {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} onOpenSource={(intent, task) => {
+        {detailTab === 'pilot' && <ProjectPilotOverview projectId={project.id} refreshKey={pollChanged} onCreateTask={() => setShowOverviewCreate(true)} onOpenSource={(intent, task) => {
           if (intent.sourceType === 'approval') return
           if (intent.sourceType === 'task') {
             setPilotTaskFocus({
@@ -1489,6 +1492,12 @@ function ProjectDetail({
           }
         }} />}
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
+        <CreateProjectTaskDialog
+          open={showOverviewCreate}
+          onClose={() => setShowOverviewCreate(false)}
+          projectId={project.id}
+          onCreated={() => { setShowOverviewCreate(false); void loadData() }}
+        />
         {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
         {detailTab === 'workspaces' && <ProjectWorkspacesPanel key={project.id} projectId={project.id} />}
         {detailTab === 'tasks' && (
@@ -1972,6 +1981,8 @@ function TaskList({
     [tasks, statuses],
   )
   const [showCreate, setShowCreate] = useState(false)
+  const [showGuidedCreate, setShowGuidedCreate] = useState(false)
+  const [createError, setCreateError] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [newPriority, setNewPriority] = useState<Task['priority']>('medium')
@@ -2003,6 +2014,12 @@ function TaskList({
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return
+    // R-P0-04：高级表单无法配置研发范围，指派 AI 员工时必须走引导流程，避免创建无 developmentScope 的半有效任务
+    if (newAgentId) {
+      setCreateError('已选择 AI 员工：普通表单无法配置执行范围。请关闭后使用「+ 新建任务」→「交给 AI 完成」，任务才能进入交付链。')
+      return
+    }
+    setCreateError('')
     try {
       const input: {
         title: string
@@ -2120,17 +2137,27 @@ function TaskList({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-medium">任务列表 ({tasks.length})</h2>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-        >
-          + 新建任务
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowGuidedCreate(true)}
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+          >
+            + 新建任务
+          </button>
+          <button
+            onClick={() => setShowCreate((prev) => !prev)}
+            className="px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+            title="权限申请、依赖、Token 配额等高级字段"
+          >
+            高级选项
+          </button>
+        </div>
       </div>
 
       {showCreate && (
         <div className="p-4 bg-card rounded-lg border space-y-3">
-          <h3 className="text-sm font-medium">新建任务</h3>
+          <h3 className="text-sm font-medium">高级新建（指派 AI 员工请用「+ 新建任务」引导流程）</h3>
+          {createError && <p role="alert" className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">{createError}</p>}
           <input
             type="text"
             placeholder="任务标题"
@@ -2315,6 +2342,16 @@ function TaskList({
           {reviewTaskId && <TaskReviewPanel taskId={reviewTaskId} onChanged={onReviewChanged} />}
         </DialogContent>
       </Dialog>
+      <CreateProjectTaskDialog
+        open={showGuidedCreate}
+        onClose={() => setShowGuidedCreate(false)}
+        projectId={projectId}
+        onCreated={() => {
+          void callProjectAPI<Task[]>('listTasks', projectId)
+            .then((items) => { if (Array.isArray(items)) onTasksChange(items) })
+            .catch((err) => console.error('刷新任务列表失败:', err))
+        }}
+      />
     </div>
   )
 }

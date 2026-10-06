@@ -199,15 +199,15 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
         </div>}
         {control.budgetUsage && <div className="rounded-lg bg-muted p-3 text-sm" aria-label="Pilot 消耗合计">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md bg-background px-3 py-2 font-medium">已占用 {formatSpent(control.budgetUsage.committedCostMicros)} / {formatSpent(control.budgetUsage.maxCostMicros)}</span>
-            <span className="rounded-md bg-background px-3 py-2">剩余 {formatSpent(control.budgetUsage.remainingCostMicros)}</span>
-            <span className="rounded-md bg-background px-3 py-2">run {control.budgetUsage.usedRuns}/{control.budgetUsage.maxRuns}</span>
+            <span className="rounded-md bg-background px-3 py-2 font-medium">已占用（含预留）{formatSpent(control.budgetUsage.committedCostMicros)} / {formatSpent(control.budgetUsage.maxCostMicros)} USD</span>
+            <span className="rounded-md bg-background px-3 py-2">剩余可用 {formatSpent(control.budgetUsage.remainingCostMicros)} USD</span>
+            <span className="rounded-md bg-background px-3 py-2">执行次数 {control.budgetUsage.usedRuns}/{control.budgetUsage.maxRuns}</span>
             <span className="rounded-md bg-background px-3 py-2">授权状态 {control.budgetUsage.state === 'active' ? 'active' : 'paused'}</span>
           </div>
           {control.budgetUsage.commands.length > 0 && <table className="mt-2 w-full text-left text-xs" aria-label="Pilot 命令消耗明细">
             <thead><tr className="text-muted-foreground">
               <th className="py-1 font-medium">命令</th><th className="font-medium">角色</th><th className="font-medium">状态</th>
-              <th className="font-medium">预留</th><th className="font-medium">实结</th><th className="font-medium">请求（已结/总）</th>
+              <th className="font-medium">预留</th><th className="font-medium">实结</th><th className="font-medium">请求数（技术指标，已结/总）</th>
             </tr></thead>
             <tbody>
               {control.budgetUsage.commands.map((line) => <tr key={line.commandId} className="border-t border-border/40">
@@ -220,7 +220,7 @@ export function ProjectPilotGrantControl({ projectId, refreshKey }: {
               </tr>)}
             </tbody>
           </table>}
-          <p className="mt-2 text-muted-foreground">口径与预算核验一致：已结算按实结计，未结命令按预留占额；待对账占额不自动释放。</p>
+          <p className="mt-2 text-muted-foreground">口径与预算核验一致：已结算按实结计，未结命令按预留占额；待对账占额不自动释放。费用是预估容量的唯一口径；请求数只是技术指标（单次执行可能消耗 12–20 请求），不代表可运行次数。实结与预留分别列出，未知费用以「待对账」占额展示，不会计为 0。</p>
         </div>}
         {pausePreview && <div className="rounded-lg bg-red-50 p-4 text-sm text-red-950" aria-label="暂停授权确认">
           <p className="font-semibold">暂停后立即阻止新派发</p>
