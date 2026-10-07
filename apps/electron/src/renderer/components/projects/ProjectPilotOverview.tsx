@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PilotInboxEntry, PilotIntent, PilotObservation } from '@gravitas/shared'
 import { ProjectPilotGrantControl } from './ProjectPilotGrantControl'
+import { ProjectOwnerGoalPanel } from './ProjectOwnerGoalPanel'
 import { buildNextStepItems, describeIntentKind, describeTaskState } from './project-user-language'
 
 export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCreateTask }: {
@@ -78,6 +79,7 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCr
   const nextSteps = observation ? buildNextStepItems(observation, intents) : []
   return (
     <section className="space-y-4" aria-label="项目进展" data-project-id={projectId}>
+      <ProjectOwnerGoalPanel projectId={projectId} />
       <div className="flex items-start justify-between gap-4 rounded-xl bg-card p-5 shadow-sm">
         <div>
           <h2 className="text-lg font-semibold">项目进展</h2>

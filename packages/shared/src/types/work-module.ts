@@ -173,6 +173,9 @@ export const PROJECT_IPC_CHANNELS = {
   // 项目 CRUD
   LIST_PROJECTS: 'project:list-projects',
   GET_PROJECT: 'project:get-project',
+  /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
+  GET_OWNER_GOAL_DRAFT: 'project:get-owner-goal-draft',
+  SAVE_OWNER_GOAL_DRAFT: 'project:save-owner-goal-draft',
   CREATE_PROJECT: 'project:create-project',
   UPDATE_PROJECT: 'project:update-project',
   DELETE_PROJECT: 'project:delete-project',

@@ -59,6 +59,17 @@ AO-01 已产出 [离线原型 v1](prototype/index.html)，15/15 模拟状态分�
 
 删除项目/任务不顺带删除Owner规划历史；服务重新检查主体，失效历史不作为可操作入口。没有修改既有删除行为或迁移两套Goal。完整计划保存、费用授权、身份/来源映射与IPC/UI仍待接，因此AO-03仅存储子片完成。
 
+## 2026-10-07 第四批：目标草案产品入口
+
+- 共享契约统一到 `packages/shared/src/types/project-owner.ts`；主进程服务和规划简报复用，不再维护跨进程类型副本。
+- `project-owner-goal-ipc.ts` 的严格请求白名单和结构化冲突响应已注册工作模块；preload暴露 get/save，不暴露运行授权或派发工具。
+- 新Jotai编辑状态按项目/任务隔离，服务器快照与本地输入分开。加载/保存晚到不会覆盖新输入；冲突必须加载最新、比较确认再保存，没有自动重试。
+- 新 `ProjectOwnerGoalPanel` 位于项目概览首卡，只有目标必填；没有配置也可保存，组件明确标注未启动、不收费、模型拆解待接。单任务契约/状态已支持，任务可见入口后续再接。
+- 验证共60项：IPC5（包括Jotai→处理器→真实sql.js服务的进程内保存/冲突恢复）、状态9、组件SSR3、原服务/规划/链/后台43；typecheck、定向Biome和main/preload/renderer构建通过。无全量PR门禁或真实运行授权。
+- 在独立受管浏览器新标签，用真实源码组件＋生成主题CSS、内存模拟API走查填写/保存并截图。用户原型标签未导航/关闭。此烟测不验证真实Electron传输或DB；真实IPC/固定构建/重开验收仍待补。
+- worktree依赖已按原bun.lock冻结安装、ignore-scripts，无新增依赖，确保引用本worktree的shared而非原项目目录旧类型。
+- docs:check首次因原repository-facts摘要过期失败；运行既有生成脚本只更新 `docs/generated/repository-facts.md` 后复验通过。未修改README/AGENTS，未运行全量test/lint或打包启动。
+
 ## 5. 下一批建议
 
 1. AO-01：目标驱动原型中展示 Owner 提出的计划、必要澄清和成果标准，验证非代码项目＋代码单任务。

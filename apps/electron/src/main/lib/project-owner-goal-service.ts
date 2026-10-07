@@ -1,14 +1,14 @@
 /** 项目内 Owner 目标草案。只追加规划记录，不触发模型/任务/项目链/授权事件。 */
-import { prepareProjectOwnerGoalBrief, type ProjectOwnerGoalBrief } from './project-owner-planning'
+import type { ProjectOwnerGoalBrief, ProjectOwnerGoalDraft } from '@gravitas/shared'
+import { prepareProjectOwnerGoalBrief } from './project-owner-planning'
 import { getProject, getProjectDb, getTask } from './project-sqlite-store'
 
-export interface ProjectOwnerGoalDraft {
-  schemaVersion: 1
-  revision: number
-  state: 'draft'
-  actor: 'local-user'
-  savedAt: number
-  goal: ProjectOwnerGoalBrief
+/** IPC 通过结构化响应保留冲突类别，不能将过期写入自动重试。 */
+export class ProjectOwnerGoalConflictError extends Error {
+  constructor() {
+    super('目标草案已更新，请刷新后重试')
+    this.name = 'ProjectOwnerGoalConflictError'
+  }
 }
 
 interface GoalSubject {
@@ -108,7 +108,7 @@ export function saveProjectOwnerGoalDraft(
   getProjectDb().transaction(() => {
     const subject = assertSubject(projectId, taskId)
     const current = readCurrent(subject)
-    if ((current?.revision ?? 0) !== expectedRevision) throw new Error('目标草案已更新，请刷新后重试')
+    if ((current?.revision ?? 0) !== expectedRevision) throw new ProjectOwnerGoalConflictError()
     const goalVersion = (current?.goal.goalVersion ?? 0) + 1
     if (!Number.isSafeInteger(goalVersion) || !Number.isSafeInteger(expectedRevision + 1)) throw new Error('草案版本超出安全整数范围')
     const goal = parseGoalInput(input, subject, goalVersion)

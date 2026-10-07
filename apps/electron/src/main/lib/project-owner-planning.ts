@@ -2,15 +2,8 @@
  * AI Owner 规划输入边界：只产生简报/计划建议，不创建权威任务或执行授权。
  * 本模块无持久化与 Runtime 依赖；角色可用性须由调用方从权威目录提供。
  */
-export interface ProjectOwnerGoalBrief {
-  projectId: string
-  /** 存在时表示单任务目标；缺省为项目目标，不自动创建任务。 */
-  taskId?: string
-  goalVersion: number
-  objective: string
-  constraints: string[]
-  acceptanceCriteria: string[]
-}
+import type { ProjectOwnerGoalBrief } from '@gravitas/shared'
+export type { ProjectOwnerGoalBrief } from '@gravitas/shared'
 
 export interface ProjectOwnerPlanStep {
   /** 仅在本计划内标识依赖，不是权威任务 ID。 */
