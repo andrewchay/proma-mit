@@ -581,9 +581,9 @@ export interface CreateAgentEmployeeInput {
   workspaceId?: string
   /** AI 员工作为角色可服务的工作区集合；执行任务须从中明确选择。 */
   workspaceIds?: string[]
-  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
-  executionProfile?: 'general' | 'development'
-  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  /** development 使用 Git worktree；controlled 为非代码受控配置；缺省兼容旧普通员工。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
+  /** 研发/受控配置的 Runtime 权限；safe 沿用限制（研发有 worktree 写入豁免），auto 仍可能等待审批。 */
   permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string
@@ -801,9 +801,9 @@ export interface UpdateAgentEmployeeInput {
   workspaceId?: string | null
   /** AI 员工作为角色可服务的工作区集合；传入时整体替换。 */
   workspaceIds?: string[]
-  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
-  executionProfile?: 'general' | 'development'
-  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  /** development 使用 Git worktree；controlled 为非代码受控配置；缺省兼容旧普通员工。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
+  /** 研发/受控配置的 Runtime 权限；safe 沿用限制（研发有 worktree 写入豁免），auto 仍可能等待审批。 */
   permissionMode?: 'safe' | 'auto'
   workflowId?: string | null
   systemPrompt?: string | null
@@ -824,9 +824,9 @@ export interface AgentEmployeeResult {
   workspaceId?: string
   /** AI 员工作为角色可服务的工作区集合。 */
   workspaceIds?: string[]
-  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
-  executionProfile?: 'general' | 'development'
-  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  /** development 使用 Git worktree；controlled 为非代码受控配置；缺省兼容旧普通员工。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
+  /** 研发/受控配置的 Runtime 权限；safe 沿用限制（研发有 worktree 写入豁免），auto 仍可能等待审批。 */
   permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string

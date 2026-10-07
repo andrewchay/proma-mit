@@ -70,6 +70,12 @@ AO-01 已产出 [离线原型 v1](prototype/index.html)，15/15 模拟状态分�
 - worktree依赖已按原bun.lock冻结安装、ignore-scripts，无新增依赖，确保引用本worktree的shared而非原项目目录旧类型。
 - docs:check首次因原repository-facts摘要过期失败；运行既有生成脚本只更新 `docs/generated/repository-facts.md` 后复验通过。未修改README/AGENTS，未运行全量test/lint或打包启动。
 
+## 2026-10-07 第五批：员工创建阻塞修复
+
+[员工创建修复](employee-creation-repair.md)新增controlled非代码配置（真实托管/本地绑定、Pi/AI SDK、safe/auto、启动重验与无全局回退），20份岗位模板接新建表单只做预填。研发限制/Pilot准入/旧general默认存储保持，已有员工不自动迁移。工作区不再静默过滤，保存缺项和失败靠近表单显示。
+
+100项定向测试、类型检查、定向Biome、三层构建、模板资料完整性与生成一致性验证通过。React StrictMode真实源码表单＋模拟API验证创建、托管勾选、失败输入保留及手动重试，非真实ElectronIPC。动态角色匹配、Owner授权派发、受控Workflow/子任务仍未实现；不能据此标记AO-06完成或解除原费用门禁。用户旧0.12.104尚未更新，不允许新controlled档案交旧二进制执行。
+
 ## 5. 下一批建议
 
 1. AO-01：目标驱动原型中展示 Owner 提出的计划、必要澄清和成果标准，验证非代码项目＋代码单任务。

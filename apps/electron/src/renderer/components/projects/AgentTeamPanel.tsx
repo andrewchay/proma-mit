@@ -16,6 +16,8 @@ import { FileEventPanel } from './FileEventPanel'
 import { TodoEventPanel } from './TodoEventPanel'
 import { MailboxPanel } from './MailboxPanel'
 import { EmployeeGovernancePanel } from './EmployeeGovernancePanel'
+import roleTemplates from '../../../../resources/employee-role-templates.json'
+import { employeeTemplateChanges, getEmployeeSaveIssues, isEmployeeWorkspaceEligible } from './agent-employee-form'
 
 const RUNTIME_LABEL: Record<string, string> = {
   proma: 'Gravitas',
@@ -81,11 +83,12 @@ export function AgentTeamPanel(): React.ReactElement {
     modelId: '',
     workflowId: '',
     workspaceIds: [] as string[],
-    executionProfile: 'general' as 'general' | 'development',
+    executionProfile: 'controlled' as NonNullable<AgentEmployeeResult['executionProfile']>,
     permissionMode: 'safe' as 'safe' | 'auto',
     systemPrompt: '',
   })
   const [saving, setSaving] = React.useState(false)
+  const [templateId, setTemplateId] = React.useState('')
   const [workflows, setWorkflows] = React.useState<WorkflowDefinition[]>([])
 
   const load = React.useCallback(async (): Promise<void> => {
@@ -229,13 +232,15 @@ export function AgentTeamPanel(): React.ReactElement {
 
   const openCreate = (): void => {
     setEditingId(null)
+    setTemplateId('')
     setError('')
-    setForm({ name: '', role: '', description: '', runtime: 'ai-sdk', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'general', permissionMode: 'safe', systemPrompt: '' })
+    setForm({ name: '', role: '', description: '', runtime: 'ai-sdk', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'controlled', permissionMode: 'safe', systemPrompt: '' })
     setShowForm(true)
   }
 
   const openEdit = (emp: AgentEmployeeResult): void => {
     setEditingId(emp.id)
+    setError('')
     setForm({
       name: emp.name,
       role: emp.role,
@@ -252,9 +257,11 @@ export function AgentTeamPanel(): React.ReactElement {
     setShowForm(true)
   }
 
+  const saveIssues = getEmployeeSaveIssues(form, channels, workspaces)
   const handleSave = async (): Promise<void> => {
-    if (!form.name.trim() || !form.channelId) return
-    if (editingId && form.executionProfile === 'general' && employees.find((employee) => employee.id === editingId)?.executionProfile === 'development' && !confirm('切回普通员工将恢复旧版全自动权限，且不再隔离 worktree。确认切换？')) return
+    if (saveIssues.length) { setError(saveIssues.join('\n')); return }
+    if (editingId && form.executionProfile === 'general' && !confirm('保存旧版普通员工将沿用全自动权限，不受下面的受控模式约束。确认保留旧配置？')) return
+    setError('')
     setSaving(true)
     try {
       const input = {
@@ -363,7 +370,8 @@ export function AgentTeamPanel(): React.ReactElement {
                       <span className="font-medium text-sm">{emp.name}</span>
                       <span className="px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">{emp.role}</span>
                       <span className="px-1.5 py-[1px] rounded-full bg-foreground/[0.06] text-[10px] text-foreground/50">{RUNTIME_LABEL[emp.runtime] ?? emp.runtime}</span>
-                      {emp.executionProfile === 'development' && <span className="rounded-full bg-primary/10 px-2 text-[10px] text-primary">研发 · {emp.permissionMode === 'auto' ? '审批执行' : '只读诊断'}</span>}
+                      {emp.executionProfile === 'controlled' && <span className="rounded-full bg-primary/10 px-2 text-[10px] text-primary">非代码受控 · {emp.permissionMode === 'auto' ? '审批执行' : '只读'}</span>}
+                      {emp.executionProfile === 'development' && <span className="rounded-full bg-primary/10 px-2 text-[10px] text-primary">研发 · {emp.permissionMode === 'auto' ? '审批执行' : '受限研发'}</span>}
                       {emp.workflowId && (
                         <span className="px-1.5 py-[1px] rounded-full bg-violet-500/10 text-violet-600 text-[10px]" title="绑定 Workflow SOP，任务用 Workflow 执行">SOP</span>
                       )}
@@ -434,46 +442,62 @@ export function AgentTeamPanel(): React.ReactElement {
         <div className="rounded-lg border bg-card p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium">{editingId ? '编辑 AI 员工' : '新建 AI 员工'}</h3>
-            {!editingId && <button className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => setForm((current) => ({ ...current, name: 'Gravitas 研发工程师', role: '软件开发与测试', description: '理解项目规则与现有架构，完成小范围开发、缺陷修复和回归测试，提交代码变更与验证证据供人工验收。', executionProfile: 'development', permissionMode: 'safe', workflowId: '' }))}>使用研发员工模板</button>}
+            {!editingId && <button className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => { setTemplateId(''); setForm((current) => ({ ...current, name: 'Gravitas 研发工程师', role: '软件开发与测试', description: '理解项目规则与现有架构，完成小范围开发、缺陷修复和回归测试，提交代码变更与验证证据供人工验收。', executionProfile: 'development', permissionMode: 'safe', workflowId: '' })) }}>使用研发员工模板</button>}
           </div>
+          {!editingId && <label className="block text-xs text-muted-foreground">使用岗位模板（只预填，不创建或授权）
+            <select aria-label="岗位模板" value={templateId} onChange={(event) => {
+              const template = roleTemplates.find((item) => item.id === event.target.value)
+              if (template) { setTemplateId(template.id); setForm((current) => ({ ...current, ...employeeTemplateChanges(template) })); setError('') }
+            }} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+              <option value="">选择岗位模板（{roleTemplates.length} 个）…</option>
+              {roleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · v{template.version}</option>)}
+            </select>
+            <p className="mt-1">完整岗位规则会填入下方指令；保留你选择的渠道、模型和工作区，默认恢复 safe。保存员工不等于执行或付费授权。</p>
+          </label>}
           <div className="rounded-lg bg-muted/40 p-3 space-y-3">
             <label className="block text-xs text-muted-foreground">执行配置
-              <select value={form.executionProfile} onChange={(e) => setForm({ ...form, executionProfile: e.target.value as 'general' | 'development', workflowId: e.target.value === 'development' ? '' : form.workflowId })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
-                <option value="general">普通员工（旧版全自动权限）</option>
+              <select aria-label="执行配置" value={form.executionProfile} onChange={(e) => setForm({ ...form, executionProfile: e.target.value as NonNullable<AgentEmployeeResult['executionProfile']>, workflowId: e.target.value === 'general' ? form.workflowId : '' })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+                <option value="controlled">非代码受控员工（托管/本地工作区＋Runtime 审批）</option>
+                {editingId && (employees.find((item) => item.id === editingId)?.executionProfile ?? 'general') === 'general' && <option value="general">普通员工（保留旧版全自动权限，不建议新用）</option>}
                 <option value="development">研发员工（隔离 worktree + 项目上下文）</option>
               </select>
             </label>
             <fieldset className="block text-xs text-muted-foreground">
               <legend>可用工作区（可多选）</legend>
               <div className="mt-1 max-h-36 space-y-1 overflow-y-auto rounded-md bg-background px-3 py-2">
-                {workspaces.filter((space) => form.executionProfile !== 'development' || space.rootPath).map((space) => (
+                {workspaces.map((space) => (
                   <label key={space.id} className="flex cursor-pointer items-start gap-2 py-1 text-sm text-foreground">
                     <input
                       type="checkbox"
                       checked={form.workspaceIds.includes(space.id)}
-                      onChange={(event) => setForm((current) => ({
-                        ...current,
-                        workspaceIds: event.target.checked
-                          ? [...current.workspaceIds, space.id]
-                          : current.workspaceIds.filter((workspaceId) => workspaceId !== space.id),
-                      }))}
+                      disabled={!isEmployeeWorkspaceEligible(form.executionProfile, space) && !form.workspaceIds.includes(space.id)}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked
+                        setForm((current) => ({ ...current, workspaceIds: checked
+                          ? [...new Set([...current.workspaceIds, space.id])]
+                          : current.workspaceIds.filter((workspaceId) => workspaceId !== space.id) }))
+                      }}
                     />
-                    <span>{space.name}{space.rootPath ? ` · ${space.rootPath}` : ''}</span>
+                    <span className="min-w-0 break-words">{space.name}{space.rootPath ? ` · ${space.rootPath}` : ' · 托管工作区'}
+                      {!isEmployeeWorkspaceEligible(form.executionProfile, space) && <span className="block text-xs text-muted-foreground">研发员工不可选：未绑定本地目录。非代码岗位请改选「非代码受控员工」。</span>}
+                    </span>
                   </label>
                 ))}
                 {workspaces.length === 0 && <p className="py-1 text-muted-foreground">暂无可用工作区</p>}
               </div>
-              <p className="mt-1 text-[11px] leading-relaxed">{form.executionProfile === 'development' ? '研发员工至少选择一个本地 Git 工作区。若选择多个，指派任务时必须明确选择其中一个。' : '角色可跨所选工作区服务；未绑定时沿用任务或全局工作区。'}</p>
+              <p className="mt-1 text-[11px] leading-relaxed">{form.executionProfile === 'development' ? '研发员工至少选择一个绑定本地目录的工作区，启动前还会验证 Git；不会放宽到托管工作区。' : form.executionProfile === 'controlled' ? '非代码岗位可选托管或本地工作区，不要求 Git。至少绑定一个；多个工作区时，任务必须明确目标，不隐式回退。' : '旧版员工沿用原工作区回退和全自动权限。'}</p>
             </fieldset>
-            {form.executionProfile === 'development' && <>
+            {form.executionProfile !== 'general' && <>
               <label className="block text-xs text-muted-foreground">Runtime 权限
-                <select value={form.permissionMode} onChange={(e) => setForm({ ...form, permissionMode: e.target.value as 'safe' | 'auto' })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
-                  <option value="safe">只读诊断（默认，不修改代码）</option>
+                <select aria-label="Runtime 权限" value={form.permissionMode} onChange={(e) => setForm({ ...form, permissionMode: e.target.value as 'safe' | 'auto' })} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+                  <option value="safe">{form.executionProfile === 'development' ? '受限研发（worktree 内写入豁免）' : '只读（默认，不豁免写入）'}</option>
                   <option value="auto">审批执行（允许常规编辑，命令可能需要确认）</option>
                 </select>
               </label>
-              <p className="text-xs leading-relaxed text-muted-foreground">从干净仓库 HEAD 建立独立分支，不自动提交、合并或发布。先读取项目规则，复用当前工作区 Skills、MCP 与项目知识范围。worktree 不是系统沙箱；审批执行不代表所有操作免审批。成果暂停待人工验收，未真实验证的 Runtime 不保证无人值守可用。</p>
+              {form.executionProfile === 'controlled' && <p className="text-xs leading-relaxed text-muted-foreground">非代码配置不创建 worktree，不是系统沙箱。safe 沿用 Runtime 只读限制，不豁免写入；auto 沿用现有审批，可能等待你确认。外发、发布、付款等仍需对应授权。员工档案保存不会调用模型。</p>}
+              {form.executionProfile === 'development' && <p className="text-xs leading-relaxed text-muted-foreground">从干净仓库 HEAD 建立独立分支，不自动提交、合并或发布。先读取项目规则，复用当前工作区 Skills、MCP 与项目知识范围。worktree 不是系统沙箱；审批执行不代表所有操作免审批。成果暂停待人工验收，未真实验证的 Runtime 不保证无人值守可用。</p>}
             </>}
+            {form.executionProfile === 'general' && <p className="text-xs text-amber-700 dark:text-amber-300">当前是旧版全自动权限。建议显式改用非代码受控配置；不会自动迁移已有员工。</p>}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input
@@ -501,6 +525,7 @@ export function AgentTeamPanel(): React.ReactElement {
             <div>
               <label className="text-xs text-muted-foreground">Runtime</label>
               <select
+                aria-label="Runtime"
                 value={form.runtime}
                 onChange={(e) => setForm({ ...form, runtime: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
@@ -511,6 +536,7 @@ export function AgentTeamPanel(): React.ReactElement {
             <div>
               <label className="text-xs text-muted-foreground">渠道</label>
               <select
+                aria-label="渠道"
                 value={form.channelId}
                 onChange={(e) => { setForm({ ...form, channelId: e.target.value, modelId: '' }) }}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
@@ -522,9 +548,10 @@ export function AgentTeamPanel(): React.ReactElement {
             <div>
               <label className="text-xs text-muted-foreground">模型</label>
               <input
+                aria-label="模型"
                 list="agent-employee-models"
                 type="text"
-                placeholder="从渠道拉取或手动输入"
+                placeholder="选择渠道中已启用的模型 ID"
                 value={form.modelId}
                 onChange={(e) => setForm({ ...form, modelId: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
@@ -532,14 +559,14 @@ export function AgentTeamPanel(): React.ReactElement {
               <datalist id="agent-employee-models">
                 {channels
                   .find((c) => c.id === form.channelId)
-                  ?.models?.map((m) => <option key={m.id} value={m.id} />)}
+                  ?.models?.filter((model) => model.enabled).map((m) => <option key={m.id} value={m.id} />)}
               </datalist>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">绑定 Workflow SOP（可选）</label>
+              <label className="text-xs text-muted-foreground">Workflow SOP（仅旧版普通员工可选）</label>
               <select
                 value={form.workflowId}
-                disabled={form.executionProfile === 'development'}
+                disabled={form.executionProfile !== 'general'}
                 onChange={(e) => setForm({ ...form, workflowId: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
@@ -548,7 +575,7 @@ export function AgentTeamPanel(): React.ReactElement {
                   <option key={w.id} value={w.id}>{w.name} · v{w.publication?.version ?? '?'}</option>
                 ))}
               </select>
-              {workflows.length === 0 && (
+              {form.executionProfile === 'general' && workflows.length === 0 && (
                 <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">暂无已发布的 Workflow，请在「工作流」工作台先发布一个 SOP。</p>
               )}
             </div>
@@ -559,8 +586,10 @@ export function AgentTeamPanel(): React.ReactElement {
             onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
             className="w-full px-3 py-2 text-sm border rounded-md bg-background resize-none h-16"
           />
+          {saveIssues.length > 0 && <div aria-live="polite" className="rounded-lg bg-muted/50 p-3 text-xs"><p className="font-medium">暂不能保存，仍需：</p><ul className="mt-1 list-disc space-y-1 pl-4">{saveIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
+          {error && <p role="alert" className="whitespace-pre-wrap rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
           <div className="flex gap-2">
-            <button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.channelId || (form.executionProfile === 'development' && (form.workspaceIds.length === 0 || !form.modelId.trim()))} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+            <button onClick={() => void handleSave()} disabled={saving || saveIssues.length > 0} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
               {saving && <Loader2 size={14} className="animate-spin" />}
               {editingId ? '保存' : '创建'}
             </button>

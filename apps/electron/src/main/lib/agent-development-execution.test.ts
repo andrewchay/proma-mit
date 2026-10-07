@@ -72,6 +72,57 @@ async function dispatch(task: ReturnType<typeof store.createTask>) {
   return { execution, run: lastRun! }
 }
 
+describe('非代码受控员工', () => {
+  test('托管工作区保存/重读/启动沿用auto审批，不建worktree、不豁免写权限，完成待验收', async () => {
+    const workspace = createAgentWorkspace(`非代码-${randomUUID()}`)
+    const channel = createChannel({ name: '非代码测试', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
+    const employee = service.createAgentEmployee({ name: '需求分析师', role: '需求', description: '', runtime: 'pi', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id], executionProfile: 'controlled', permissionMode: 'auto' })
+    expect(store.getAgentEmployee(employee.id)?.executionProfile).toBe('controlled')
+    const project = store.createProject({ title: '非代码项目', description: '' })
+    const task = store.createTask(project.id, { title: '整理需求', description: '', assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+    const { execution, run } = await dispatch(task)
+    expect(run.input).toMatchObject({ workspaceId: workspace.id, permissionModeOverride: 'auto', worktreeScopedWrite: false, modelId: 'model' })
+    expect(getAgentSessionMeta(run.input.sessionId)).toMatchObject({ permissionMode: 'auto', projectId: project.id, knowledgeScopeMode: 'project' })
+    expect(execution.outputFiles?.length ?? 0).toBe(0)
+    run.callbacks.onComplete?.([message('已整理需求，待人工核验。')])
+    expect(store.getTask(task.id)?.status).toBe('paused')
+    expect(store.getAgentExecution(execution.id)?.status).toBe('completed')
+    // 编辑回safe不能遗留auto或旧版全自动权限。
+    service.updateAgentEmployee(employee.id, { permissionMode: 'safe' })
+    store.closeProjectDb()
+    await store.initProjectDb()
+    expect(store.getAgentEmployee(employee.id)).toMatchObject({ executionProfile: 'controlled', permissionMode: 'safe', workspaceIds: [workspace.id] })
+    const second = store.createTask(project.id, { title: '只读检查', description: '', assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+    expect((await dispatch(second)).run.input).toMatchObject({ permissionModeOverride: 'safe', worktreeScopedWrite: false })
+  })
+  test('无法凭保存好的档案绕过多工作区显式选择或绑定范围', async () => {
+    const first = createAgentWorkspace(`第一-${randomUUID()}`)
+    const second = createAgentWorkspace(`第二-${randomUUID()}`)
+    const channel = createChannel({ name: '绑定测试', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
+    const employee = service.createAgentEmployee({ name: '研究员', role: '研究', description: '', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [first.id, second.id], executionProfile: 'controlled' })
+    const project = store.createProject({ title: '多区项目', description: '' })
+    for (const workspaceId of [undefined, 'outside-binding']) {
+      const task = store.createTask(project.id, { title: '无有效目标', description: '', workspaceId, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+      const { execution, run } = await dispatch(task)
+      expect(run).toBeUndefined()
+      expect(store.getAgentExecution(execution.id)?.status).toBe('failed')
+    }
+    const task = store.createTask(project.id, { title: '明确目标', description: '', workspaceId: second.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+    expect((await dispatch(task)).run.input.workspaceId).toBe(second.id)
+    expect(() => service.updateAgentEmployee(employee.id, { workflowId: 'sop' })).toThrow('Workflow')
+    expect(store.getAgentEmployee(employee.id)?.workflowId).toBeUndefined()
+    // 用存储层模拟历史/损坏配置：启动必须再次拒绝，不能直入Workflow。
+    store.updateAgentEmployee(employee.id, { workflowId: 'sop' })
+    const stale = store.createTask(project.id, { title: '过期配置', description: '', workspaceId: first.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+    expect((await dispatch(stale)).run).toBeUndefined()
+    store.getProjectDb().prepare('UPDATE agent_employees SET execution_profile = ? WHERE id = ?').run('future-profile', employee.id)
+    const unknown = store.createTask(project.id, { title: '未知配置', description: '', workspaceId: first.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+    const refused = await dispatch(unknown)
+    expect(refused.run).toBeUndefined()
+    expect(store.getAgentExecution(refused.execution.id)?.error).toContain('禁止回退')
+  })
+})
+
 describe('研发员工既有链路兼容', () => {
   test('Given 已排队 Pilot 命令但 Runtime 无单次费用停止能力 When 真实服务入口尝试启动 Then 保留队列且不触发 runner', async () => {
     const { project, task, workspace, employee: initialEmployee } = fixture(true)

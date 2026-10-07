@@ -55,6 +55,12 @@
 
 safe 是未来实例的建议默认，不是本轮运行配置。版本哈希只证明完整性，不证明模型质量和外部真实性。
 
+## 2026-10-07 产品创建入口补充
+
+17:41 GMT+8用户要求修复创建阻塞后，20份模板已接入Electron0.12.108源码的新建员工表单。选择模板只预填名称、描述和完整规则，应用默认采用新增`controlled`非代码受控配置（safe）；实际渠道、显式启用模型和工作区仍须用户配置后由服务核验。原能力卡中的未绑定状态/字段保留作为资料来源，不直接用于Runtime权限。
+
+本批没有创建真实员工、调用真实模型或开放Shepherd动态选人/派工。源码及模拟UI验证不等于用户当前0.12.104已更新。详见[创建修复与验证边界](../plans/2026-10-07-ai-project-owner/employee-creation-repair.md)。生成器为`bun scripts/generate-employee-role-templates.ts --check`；完整上游MIT许可随生成的Electron资源保留。
+
 ## 来源与验证
 
 - [provenance.json](provenance.json)：参考 HEAD、实际文件哈希及工作树变更标记。
