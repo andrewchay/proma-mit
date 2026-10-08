@@ -21,3 +21,7 @@ Memory 保持 candidate → Approval → 用户批准 → Memory，索引写入�
 ### 非代码任务准备与启动确认（2026-10-08）
 
 项目SQLite新增`controlled_task_preparations`：请求幂等、任务对应、确认/范围指纹、有效期、唯一execution关联和本地请求准入时间；任务新增不可普通编辑的`controlled_preparation_id`。与现有任务/执行一起一致备份，不单独恢复该辅助表。缺标记或回执不补造授权；运行中崩溃不自动重放。新controlled数据不能无一致恢复方案交旧0.12.104执行。细节与边界见[非代码项目入口](plans/2026-10-07-ai-project-owner/noncode-project-entry.md)。
+
+### Owner规划载体绑定与暂停来源关联（2026-10-08）
+
+`project_owner_runtime_revisions`保存项目Owner职责与现有受控载体绑定的连续版本；`project_owner_planning_links`保存Goal/Plan/context/绑定版本与权威paused承载任务的来源关联，属于同`paa.db`附属权威数据，不是Context Store索引或新grant。`controlled_task_preparations.owner_planning_link_id`提供第二份目的定位证据，两者需与任务/配置/Goal/Plan一起一致备份恢复。任一证据存在不得降级为普通Agent，损坏/来源变化fail-closed，不自动重建或重发。只有配置指纹，不持久化渠道凭据或发送文件正文；JSON来源/版本记录不代表签名、费用授权或业务完成。当前A阶段拒绝规划任务启动，实际Runtime与未知费用恢复待B/C实现和D验收。

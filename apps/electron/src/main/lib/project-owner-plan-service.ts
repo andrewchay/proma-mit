@@ -161,7 +161,7 @@ export function listProjectOwnerPlanHistory(projectId: string, taskId?: string):
 }
 
 /** 缺目录沿现有本机默认身份；存在但损坏/重复/停用不得回退成启用。 */
-function assertLocalActorEnabled(): void {
+export function assertLocalActorEnabled(): void {
   let input: unknown
   try { input = JSON.parse(readFileSync(getWorkflowIdentityDirectoryPath(), 'utf8')) }
   catch (cause) {

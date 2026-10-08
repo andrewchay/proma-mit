@@ -530,6 +530,15 @@ function migrate(database: SqliteCompat): void {
       payload TEXT NOT NULL,
       PRIMARY KEY (project_id, subject_key, revision)
     );
+    CREATE TABLE IF NOT EXISTS project_owner_runtime_revisions (
+      project_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0), payload TEXT NOT NULL,
+      PRIMARY KEY (project_id, revision)
+    );
+    CREATE TABLE IF NOT EXISTS project_owner_planning_links (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, request_id TEXT NOT NULL,
+      planning_task_id TEXT NOT NULL UNIQUE, input_hash TEXT NOT NULL, payload TEXT NOT NULL,
+      UNIQUE(project_id, request_id)
+    );
     CREATE TABLE IF NOT EXISTS project_owner_plan_revisions (
       project_id TEXT NOT NULL,
       subject_key TEXT NOT NULL,
@@ -997,6 +1006,9 @@ function migrate(database: SqliteCompat): void {
     authorized_scope_hash TEXT, authorized_until INTEGER, execution_id TEXT, provider_admitted_at INTEGER,
     UNIQUE(project_id, request_id)
   )`)
+  if (!readColumnNames(database, 'controlled_task_preparations').includes('owner_planning_link_id')) {
+    database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN owner_planning_link_id TEXT')
+  }
   if (!readColumnNames(database, 'controlled_task_preparations').includes('provider_admitted_at')) {
     database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN provider_admitted_at INTEGER')
   }

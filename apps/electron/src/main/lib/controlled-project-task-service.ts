@@ -134,6 +134,11 @@ function row(taskId: string): PreparationRow {
 	return record
 }
 function context(taskId: string) {
+  // A阶段只允许暂停准备。目的双证据防止关联丢失后降级普通Agent；B阶段将替换为受限出口校验。
+  if (store.getProjectDb().prepare('SELECT id FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId)
+    || store.getProjectDb().prepare('SELECT owner_planning_link_id FROM controlled_task_preparations WHERE task_id = ? AND owner_planning_link_id IS NOT NULL').get(taskId))
+    throw new Error('Owner规划出口尚未开放，不能按普通Agent启动')
+
 	const task = store.getTask(taskId)
 	if (
 		!task ||

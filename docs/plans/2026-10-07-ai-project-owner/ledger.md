@@ -149,3 +149,7 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 [规划协议与审阅](planning-protocol-review.md)接严格needs_clarification/plan_proposal协议与项目/单任务计划UI，Jotai保护晚到输入与版本冲突、未保存目标禁写、旧确认不沿用，依赖选择不要求手填内部key。origin仍manual，未接Owner模型调用或生成回执。548独立文件失败0，完整typecheck/lint1981/docs/build通过；固定Electron39.8.10及实际产品preload/原生SQLite的47次IPC包含真实计划UI修订→新版本→内容确认/历史，非完整生产导航或安装包验收。Electron0.12.115/shared0.2.30，本地开发，无push/merge/安装/真实Provider。
 
 独立源码审查推荐复用controlled权威Task/execution与启动/费用确认，通过owner_planning目的/source-link收紧为单请求零工具/历史/MCP/Skills。Owner/carrier身份、资料/费用范围、可信回执及重启unknown属新增契约，需要明确人审；go on不代表真实收费授权。当前ai-sdk capability支持预算停止，但实际费用出口为Pilot专属，不能伪造grant或误称普通Owner有硬预算。主动规划实现方案已形成，待审批，不按旧台账继续默认手工拆任务。
+
+### 2026-10-08 受控Owner主动规划方案获实现审批：A基础
+
+[Owner绑定/暂停关联](owner-runtime-binding.md)追加版本化职责→真实carrier绑定及同库source-link，严格目标/计划/context/config CAS、资料/协议指纹、目标业务任务与承载任务分离；复用controlled准备，paused零执行。关联或preparation目的证据任一存在即拒绝普通Agent启动，B出口未完成不会偷开放。13项/46断言、controlled23项/97、全仓549文件0失败、typecheck/lint1983/docs/build通过。Electron0.12.116/shared0.2.30；没有新增配置/启动UI、没有本片Native验收或实际模型，不能把本片记AO-02/03/04整体完成。继续B单请求零工具出口，费用仍另逐次确认。
