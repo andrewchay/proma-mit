@@ -129,3 +129,7 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 ### 2026-10-08 PR #19 仓库lint清理
 
 用户明确要求修正CI阻断。清理无调用的视频旧轮询、无展示的营销审核缓存/旧Chat状态/评分组件，测试采用真实ToolCall/ToolResult并恢复隔离环境；移除未用catch绑定，修正Hook依赖但保留主题变化同步及数据弹窗打开时重置。未调整lint规则、Owner/员工权限或Provider授权。Electron版本0.12.111。全仓lint零错误/警告、完整typecheck、538隔离测试文件失败0、docs:check/diff及完整构建通过。此前18错误的历史结果不变，本次本地门禁已通过；远端CI需以新提交实际结果为准。不安装、不发布、不合并；既有0.12.110 ZIP不冒充0.12.111产物。
+
+### 2026-10-08 PR19授权旁路修复
+
+合并前复查发现普通任务指派controlled员工仍复用早期自动派发测试，绕过准备/范围/费用确认。普通派发、queued启动与Provider/权限识别已按受控员工身份收束，缺回执fail-closed，历史任务无静默授权迁移。新回归先RED（旧路径产生execution）再修复；合法auto/safe测试改为显式prepare/preview/confirm。保留general/development及已准备任务任一证据保护。具体门禁结果以本轮交付及CI为准，不据此宣称真实Provider、Owner自主闭环或新版本已安装。

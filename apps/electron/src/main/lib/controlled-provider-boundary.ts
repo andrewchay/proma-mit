@@ -22,9 +22,11 @@ export interface ControlledProviderContext {
 }
 export function isControlledProviderSession(sessionId: string): boolean {
 	const execution = store.getAgentExecutionBySessionId(sessionId)
-	return Boolean(
-		execution?.entityType === 'task' &&
-			requiresControlledStart(execution.entityId),
+	if (!execution) return false
+	// 旧队列或普通改派也不能凭缺少准备记录绕过最终发送与权限门禁。
+	return (
+		store.getAgentEmployee(execution.agentId)?.executionProfile === 'controlled' ||
+		(execution.entityType === 'task' && requiresControlledStart(execution.entityId))
 	)
 }
 /** 每次最终payload/HTTP发送前重读；异步初始化与既有payload钩子不能沿用旧确认。 */
