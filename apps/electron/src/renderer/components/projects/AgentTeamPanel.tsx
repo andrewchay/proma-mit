@@ -1,3 +1,4 @@
+import { AgentExecutionStopButton } from './AgentExecutionStopButton'
 /**
  * AgentTeamPanel — 项目管理「团队」Tab
  *
@@ -383,7 +384,7 @@ export function AgentTeamPanel(): React.ReactElement {
                     <p className="text-[11px] text-foreground/35 mt-1">{stats}</p>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => void handleToggle(emp)} className="p-1.5 rounded hover:bg-foreground/[0.06] text-foreground/40 hover:text-foreground/70" title={emp.enabled ? '停用' : '启用'}>
+                    <button onClick={() => void handleToggle(emp)} className="p-1.5 rounded hover:bg-foreground/[0.06] text-foreground/40 hover:text-foreground/70" title={emp.enabled ? '停用员工（不代替停止运行中的执行；请使用执行记录中的停止按钮）' : '启用'}>
                       {emp.enabled ? <Square size={13} /> : <Play size={13} />}
                     </button>
                     <button onClick={() => openEdit(emp)} className="p-1.5 rounded hover:bg-foreground/[0.06] text-foreground/40 hover:text-foreground/70" title="编辑">
@@ -418,6 +419,7 @@ export function AgentTeamPanel(): React.ReactElement {
                           </summary>
                           <p className="mt-2 whitespace-pre-wrap break-words">{exec.error}</p>
                           <p className="whitespace-pre-wrap break-words">{exec.resultSummary ?? '暂无交付结果'}</p>
+                          <AgentExecutionStopButton execution={exec} onChanged={() => loadExecutions(emp.id)} />
                           {exec.outputFiles?.map((path) => <p key={path} className="mt-1 break-all font-mono">{path}</p>)}
                           {exec.sessionId && !exec.sessionId.startsWith('workflow:') && <button className="mt-2 text-primary" onClick={() => void openSession('agent', exec.sessionId, `${emp.name} · 任务执行`)}>打开执行会话 / 处理审批</button>}
                         </details>

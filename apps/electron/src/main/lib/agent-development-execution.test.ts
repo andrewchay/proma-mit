@@ -27,10 +27,13 @@ const { getPilotStopEscalation } = await import('./project-pilot-stop-escalation
 let lastRun: { input: AgentSendInput; callbacks: HeadlessAgentRunCallbacks } | undefined
 let acceptStopRequest = true
 let confirmProcessTerminated = true
+let completeSynchronouslyOnStop = false
 beforeAll(async () => {
   await store.initProjectDb()
   setHeadlessAgentRunner(async (input, callbacks) => { lastRun = { input, callbacks } })
-  setAgentStopper((sessionId, expectedGeneration) => ({
+  setAgentStopper((sessionId, expectedGeneration) => {
+    if (completeSynchronouslyOnStop) lastRun?.callbacks.onComplete([], { stoppedByUser: true })
+    return ({
     sessionId,
     expectedGeneration,
     activeGeneration: expectedGeneration,
@@ -38,7 +41,7 @@ beforeAll(async () => {
     stopped: acceptStopRequest && confirmProcessTerminated,
     reason: acceptStopRequest ? 'stop-request-accepted' : 'stop-failed',
     processTermination: acceptStopRequest && confirmProcessTerminated ? 'VERIFIED' : 'NOT_VERIFIED',
-  }))
+  }) })
 })
 afterAll(() => {
   service.stopAgentEmployeeHeartbeat()
@@ -286,6 +289,20 @@ describe('研发员工既有链路兼容', () => {
     } finally {
       confirmProcessTerminated = true
     }
+  })
+
+  test('Given 同一代际停止同步触发取消回调 When 服务回读终态 Then 不误报失败且不伪造进程核验', async () => {
+    const { task } = fixture()
+    const { execution } = await dispatch(task)
+    confirmProcessTerminated = false
+    completeSynchronouslyOnStop = true
+    try {
+      expect(service.cancelAgentExecution(execution.id)).toMatchObject({
+        status: 'cancelled', stopped: false, stopRequested: true, processTermination: 'NOT_VERIFIED',
+      })
+      expect(store.getAgentExecution(execution.id)?.status).toBe('cancelled')
+      expect(store.getTask(task.id)?.status).toBe('paused')
+    } finally { confirmProcessTerminated = true; completeSynchronouslyOnStop = false }
   })
 
   test('Given Runtime 未确认停止 When 调用取消 Then 不伪造 cancelled', async () => {

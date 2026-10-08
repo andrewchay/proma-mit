@@ -122,17 +122,18 @@ export function ControlledTaskStartButton({
 					}
 				}}
 			>
-				<DialogContent className="max-h-[85vh] overflow-y-auto">
-					<DialogHeader>
+				<DialogContent className="flex max-h-[calc(100dvh-4rem)] w-[calc(100vw-2rem)] max-w-lg min-w-0 flex-col overflow-hidden [overflow-wrap:anywhere]">
+					<DialogHeader className="shrink-0 pr-8">
 						<DialogTitle>确认开始非代码任务</DialogTitle>
 					</DialogHeader>
 					{preview && (
-						<div className="space-y-3 text-sm">
+						<>
+						<div className="min-h-0 min-w-0 space-y-3 overflow-y-auto text-sm" data-testid="controlled-task-preview-body">
 							<p className="font-medium">{preview.title}</p>
-							<p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
+							<p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-muted-foreground">
 								{preview.description || '未另填说明，请确认目标已足够明确。'}
 							</p>
-							<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+							<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
 								<dt>员工</dt>
 								<dd>{preview.employeeName}</dd>
 								<dt>工作区</dt>
@@ -156,7 +157,9 @@ export function ControlledTaskStartButton({
 							<p className="rounded bg-amber-500/10 p-3 text-xs">
 								开始后会调用真实模型，可能产生费用，沿用应用预算控制但不承诺绝对费用上限。只确认此次任务的模型执行，不授予外发、发布、付款等额外权限；工具操作仍受Runtime审批，完成后待人工验收。
 							</p>
-							<label className="flex items-start gap-2">
+						</div>
+						<div className="shrink-0 space-y-3" data-testid="controlled-task-preview-actions">
+							<label className="flex items-start gap-2 text-sm">
 								<input
 									aria-label="确认本次模型执行及费用"
 									type="checkbox"
@@ -170,7 +173,7 @@ export function ControlledTaskStartButton({
 									{error}
 								</p>
 							)}
-							<div className="flex justify-end gap-2">
+							<div className="flex flex-wrap justify-end gap-2 bg-background">
 								<button
 									type="button"
 									disabled={busy}
@@ -189,7 +192,8 @@ export function ControlledTaskStartButton({
 								</button>
 							</div>
 						</div>
-					)}
+					</>
+					) }
 				</DialogContent>
 			</Dialog>
 		</div>

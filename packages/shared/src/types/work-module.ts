@@ -823,7 +823,11 @@ export interface AgentEmployeeCapabilityEvaluationResult {
 
 export interface CancelAgentExecutionResult {
   id: string
-  status: 'cancelled'
+  status: AgentExecutionResult['status']
+  /** 仅明确取消排队或核验终止时为true；请求已接受不能冒充停止。 */
+  stopped: boolean
+  stopRequested?: boolean
+  processTermination: 'VERIFIED' | 'NOT_VERIFIED'
 }
 
 export interface UpdateAgentEmployeeInput {

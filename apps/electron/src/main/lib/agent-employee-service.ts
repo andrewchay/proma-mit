@@ -250,7 +250,7 @@ function stopRunningExecution(execution: AgentExecution, stopGeneration?: number
     const live = store.getAgentExecution(execution.id)
     if (!result.requestAccepted || result.activeGeneration !== expectedGeneration
       || live?.sessionId !== execution.sessionId || live.pilotCommandId !== execution.pilotCommandId
-      || (stopGeneration === undefined && live.status !== 'running')) {
+      || (stopGeneration === undefined && live.status !== 'running' && live.status !== 'cancelled')) {
       return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
     }
     // 同步 stopper 可在返回前触发终态回调；只以目标代际核对请求归属，
@@ -315,9 +315,9 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   if (live.status !== execution.status) {
     // stop() 同步触发的终态回调可能先于此处运行。只陈述停止请求已接受；
     // 不重写终态、不宣称进程退出已核验，仍保留持久 open 意图与预算占额。
-    if (execution.pilotCommandId && execution.status === 'running'
-      && stopConfirmation.processTermination === 'NOT_VERIFIED'
-      && live.status !== 'queued') {
+    if (execution.status === 'running'
+      && (live.status === 'cancelled' || (execution.pilotCommandId
+        && stopConfirmation.processTermination === 'NOT_VERIFIED' && live.status !== 'queued'))) {
       return { id: execution.id, status: live.status, stopped: false,
         stopRequested: true, processTermination: 'NOT_VERIFIED' }
     }
