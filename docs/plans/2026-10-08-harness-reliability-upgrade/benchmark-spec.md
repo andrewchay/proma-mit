@@ -60,4 +60,8 @@
 - green：首轮25 tests / 66 assertions通过；简化/边界审查新增原型伪JSON测试后先红（25 pass/1 fail），修复普通对象检查后最终26 tests / 69 assertions通过，0 fail。
 - 首次shared typecheck发现fixture字面量类型被拓宽；添加明确类型返回后通过。此为实现过程修复，不隐去失败。
 - 最终全仓`bun run test`：541文件，3572 pass / 0 fail / 27 skip；skip不作为真实Provider通过。九包typecheck、全仓lint、docs:check、diff检查通过。私有日志引用见ledger。
-- 这些结果不证明产物新鲜度、完成门禁、sandbox、真实Provider或业务签收；旧服务回归也不能替代新V02/V03端到端验收。
+- 这些首批结果不证明产物新鲜度、完成门禁、sandbox、真实Provider或业务签收；旧服务回归也不能替代新V02/V03端到端验收。
+
+## 6. V02第二批子集进展（2026-10-08 22:37 GMT+8）
+
+HR02的Git内容变化集、HR03的记录身份与结构拒绝、HR04的非0伪passed拒绝已新增本地服务/fixture覆盖，详情见v02-evidence.md。当前新验证结果仍只证明命令退出，未采集可信测试数；HR01完整Goal来源/逐条件门禁未落地。5个定向文件53 pass；全仓542文件3595 pass/0 fail/27 skip。不得把子集通过写成全部14-case或G1通过。

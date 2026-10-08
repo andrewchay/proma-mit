@@ -4,28 +4,27 @@
  * 职责：对已冻结交付运行真实验证命令，采集进程退出码与内容 hash 绑定。
  * 边界：
  * - 命令必须精确命中任务范围 verificationCommands 白名单（用户在派发时确认）；
- * - 模型自述的"测试通过"只算 reported，本服务只产出 verified 证据；
+ * - 模型自述的"测试通过"只算 reported，本服务产出命令退出证据，不证明测试收集或业务质量；
  * - 运行前后校验工作目录与快照一致，不一致结果作废为 stale；
  * - 进程未确认退出（timeout）不算成功；输出只存尾部，不作为成功依据。
  */
 
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { DevelopmentSnapshot, DevelopmentValidationResult } from '@gravitas/shared'
+import type { DevelopmentSnapshot, DevelopmentTaskScope, DevelopmentValidationBinding, DevelopmentValidationEvidence, DevelopmentValidationResult } from '@gravitas/shared'
 import { writeJsonFileAtomic } from './safe-file'
 import { getAgentExecution, getTask } from './project-sqlite-store'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
-import { loadDevelopmentSnapshot } from './development-snapshot-service'
+import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot } from './development-snapshot-service'
+import { normalizeRepoRelativePath } from './development-task-service'
+import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS, parseDevelopmentValidationRecord } from './development-validation-record'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
-const OUTPUT_TAIL_CHARS = 8000
-/** 单文件验证读取上限与快照一致（1MiB） */
-const MAX_FILE_BYTES = 1024 * 1024
 
 export class DevelopmentValidationError extends Error {
   constructor(message: string) {
@@ -40,45 +39,44 @@ interface ValidationWorld {
   worktreePath: string
   sessionDirectory: string
   snapshot: DevelopmentSnapshot
-}
-
-function sha256(content: Buffer): string {
-  return createHash('sha256').update(content).digest('hex')
+  scope: DevelopmentTaskScope
+  binding: DevelopmentValidationBinding
 }
 
 /** 解析执行上下文：任务范围 + 最近完成执行 + worktree + 快照 */
-function resolveValidationWorld(taskId: string): ValidationWorld {
+function resolveValidationWorld(taskId: string, executionId?: string): ValidationWorld {
   const task = getTask(taskId)
   if (!task?.developmentScope) throw new DevelopmentValidationError('任务缺少研发执行范围')
-  const execution = listTaskExecutions(taskId).find((item) => item.status === 'completed' && !item.sessionId.startsWith('workflow:'))
-  if (!execution) throw new DevelopmentValidationError('没有已完成的研发执行，无法验证')
+  const execution = executionId ? getAgentExecution(executionId) : listTaskExecutions(taskId).find((item) => item.status === 'completed' && !item.sessionId.startsWith('workflow:'))
+  if (!execution || execution.status !== 'completed' || execution.sessionId.startsWith('workflow:')) throw new DevelopmentValidationError('没有已完成的研发执行，无法验证')
+  if (execution.projectId !== task.projectId || execution.entityType !== 'task' || execution.entityId !== taskId) throw new DevelopmentValidationError('验证执行不属于当前任务')
 
   const meta = execution.sessionId ? getAgentSessionMeta(execution.sessionId) : undefined
   const workspace = meta?.workspaceId ? getAgentWorkspace(meta.workspaceId) : undefined
-  if (!workspace?.rootPath) throw new DevelopmentValidationError('研发工作区已失效')
+  if (!workspace?.rootPath || workspace.id !== task.developmentScope.workspaceId) throw new DevelopmentValidationError('研发工作区已失效或不匹配任务范围')
   const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
   const worktreePath = resolveDevelopmentWorktree(workspace.rootPath, sessionDirectory)
   if (!worktreePath) throw new DevelopmentValidationError('研发 worktree 绑定缺失')
   const snapshot = loadDevelopmentSnapshot(sessionDirectory, execution.id)
-  return { taskId, executionId: execution.id, worktreePath, sessionDirectory, snapshot }
+  if (snapshot.executionId !== execution.id || snapshot.workspaceId !== workspace.id) throw new DevelopmentValidationError('研发快照身份不匹配')
+  if (!Number.isSafeInteger(snapshot.createdAt) || snapshot.createdAt < 0 || snapshot.createdAt > Date.now()) throw new DevelopmentValidationError('研发快照时间无效')
+  const scope = task.developmentScope
+  const normalized = (paths: string[]): string[] => [...new Set(paths.map(normalizeRepoRelativePath))].sort()
+  const scopeHash = hashJson({ workspaceId: scope.workspaceId, targetPaths: normalized(scope.targetPaths), allowedPaths: normalized(scope.allowedPaths) })
+  const binding: DevelopmentValidationBinding = {
+    version: 1, projectId: task.projectId, workspaceId: workspace.id, sessionId: execution.sessionId,
+    snapshotId: snapshot.id, baseCommit: snapshot.baseCommit, scopeHash,
+    verificationConfigHash: hashJson({
+      scopeHash, commands: [...new Set(scope.verificationCommands ?? [])].sort(),
+      reviewerId: scope.reviewerId ?? null, decisionIds: [...new Set(scope.decisionIds ?? [])].sort(),
+    }),
+  }
+  return { taskId, executionId: execution.id, worktreePath, sessionDirectory, snapshot, scope, binding }
 }
 
 function listTaskExecutions(taskId: string) {
   const { listAgentExecutionsByEntity } = require('./project-sqlite-store') as typeof import('./project-sqlite-store')
   return listAgentExecutionsByEntity('task', taskId)
-}
-
-/** 工作目录与快照一致性：逐文件核对新内容 hash；文件缺失/被改即返回 false */
-function worktreeMatchesSnapshot(worktreePath: string, snapshot: DevelopmentSnapshot): boolean {
-  for (const file of snapshot.files) {
-    if (file.changeType === 'delete') continue
-    const absolute = join(worktreePath, ...file.path.split('/'))
-    if (!existsSync(absolute)) return false
-    const stat = require('node:fs').statSync(absolute) as { size: number }
-    if (stat.size > MAX_FILE_BYTES) return false
-    if (sha256(readFileSync(absolute)) !== file.newSha256) return false
-  }
-  return true
 }
 
 /**
@@ -96,7 +94,8 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
   }
 
   const world = resolveValidationWorld(taskId)
-  if (!worktreeMatchesSnapshot(world.worktreePath, world.snapshot)) {
+  if (!world.scope.verificationCommands?.includes(trimmed)) throw new DevelopmentValidationError('验证命令授权已变化')
+  if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.scope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
 
@@ -104,7 +103,7 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
   const { exitCode, timedOut, output } = await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   const finishedAt = Date.now()
 
-  const staleAfter = !worktreeMatchesSnapshot(world.worktreePath, world.snapshot)
+  const staleAfter = !validationWorldStillMatches(world)
   const status: DevelopmentValidationResult['status'] = timedOut ? 'timeout' : staleAfter ? 'stale' : exitCode === 0 ? 'passed' : 'failed'
 
   const result: DevelopmentValidationResult = {
@@ -118,8 +117,9 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
     timedOut,
     status,
     snapshotContentHash: world.snapshot.contentHash,
-    outputTail: output.slice(-OUTPUT_TAIL_CHARS),
-    outputTruncated: output.length > OUTPUT_TAIL_CHARS,
+    outputTail: output.slice(-DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS),
+    outputTruncated: output.length > DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS,
+    binding: world.binding,
   }
   writeJsonFileAtomic(join(world.sessionDirectory, `development-validation-${result.id}.json`), result)
   return result
@@ -135,18 +135,62 @@ export function listDevelopmentValidations(taskId: string): DevelopmentValidatio
     if (!workspace) continue
     const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
     if (!existsSync(sessionDirectory)) continue
-    const { readdirSync } = require('node:fs') as typeof import('node:fs')
     for (const name of readdirSync(sessionDirectory)) {
       if (!name.startsWith('development-validation-') || !name.endsWith('.json')) continue
       try {
-        const record = JSON.parse(readFileSync(join(sessionDirectory, name), 'utf8')) as DevelopmentValidationResult
-        if (record.taskId === taskId) results.push(record)
+        const id = name.slice('development-validation-'.length, -'.json'.length)
+        const record = readValidationRecord(sessionDirectory, id, taskId, execution.id)
+        results.push(record)
       } catch {
         // 单条记录损坏不阻塞列表
       }
     }
   }
   return results.sort((a, b) => b.finishedAt - a.finishedAt)
+}
+
+/**
+ * 从主进程按权威任务/执行派生的私有路径回读，拒绝接收模型DTO或任意文件路径。
+ * fresh只是绑定/当前Git变化集一致，不能冒充测试收集、Goal调用身份或业务验收。
+ */
+export function readDevelopmentValidationEvidence(taskId: string, executionId: string, validationId: string): DevelopmentValidationEvidence {
+  const world = resolveValidationWorld(taskId, executionId)
+  const result = readValidationRecord(world.sessionDirectory, validationId, taskId, executionId)
+  if (!result.binding) return { result, freshness: 'legacy', reason: '旧记录没有配置绑定，不补造可信新鲜度' }
+  if (hashJson(result.binding) !== hashJson(world.binding) || result.snapshotContentHash !== world.snapshot.contentHash
+    || !world.scope.verificationCommands?.includes(result.command) || result.startedAt < world.snapshot.createdAt) {
+    return { result, freshness: 'stale', reason: '身份、快照或验证配置已变化' }
+  }
+  if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.scope)) {
+    return { result, freshness: 'stale', reason: '当前工作目录的完整Git变化集与快照不一致' }
+  }
+  return { result, freshness: 'fresh' }
+}
+
+function readValidationRecord(sessionDirectory: string, id: string, taskId: string, executionId: string): DevelopmentValidationResult {
+  if (!/^val-[a-f0-9-]+$/.test(id)) throw new DevelopmentValidationError('验证记录ID无效')
+  const path = join(sessionDirectory, `development-validation-${id}.json`)
+  const stat = lstatSync(path)
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) throw new DevelopmentValidationError('验证记录不是合法的私有文件')
+  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+  const record = parseDevelopmentValidationRecord(raw, { id, taskId, executionId }, Date.now())
+  if (!record) throw new DevelopmentValidationError('验证记录结构或身份不合法')
+  return record
+}
+
+function validationWorldStillMatches(original: ValidationWorld): boolean {
+  try {
+    const current = resolveValidationWorld(original.taskId, original.executionId)
+    return hashJson(current.binding) === hashJson(original.binding)
+      && current.snapshot.contentHash === original.snapshot.contentHash
+      && developmentWorktreeMatchesSnapshot(current.worktreePath, current.snapshot, current.scope)
+  } catch {
+    return false
+  }
+}
+
+function hashJson(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
 /** 受控运行：无 shell，参数按空格切分（首版不支持引号）；输出全量采集后截尾。 */

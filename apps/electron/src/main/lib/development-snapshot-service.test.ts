@@ -15,7 +15,7 @@ process.env.PROMA_TEST_CONFIG_DIR = join(directory, 'config')
 mock.module('electron', () => buildElectronMock())
 
 const { createDevelopmentWorktree } = await import('./agent-development-worktree')
-const { createDevelopmentSnapshot, loadDevelopmentSnapshot, SNAPSHOT_LIMITS } = await import('./development-snapshot-service')
+const { createDevelopmentSnapshot, loadDevelopmentSnapshot, developmentWorktreeMatchesSnapshot, SNAPSHOT_LIMITS } = await import('./development-snapshot-service')
 
 beforeAll(async () => { /* 快照服务不依赖项目数据库 */ })
 afterAll(() => {
@@ -84,6 +84,42 @@ describe('快照冻结（T06/T08）', () => {
   test('Given worktree 无变更 When 冻结 Then 明确拒绝', () => {
     const f = fixture('clean')
     expect(() => createDevelopmentSnapshot({ worktreePath: f.worktreePath, sessionDirectory: f.session, executionId: f.executionId, workspaceId: 'ws', scope: f.scope })).toThrow('没有变更')
+  })
+})
+
+describe('完整变化集只读比对', () => {
+  test('Given 已冻结变更 When 只读重采 Then 保持快照清单/index/内容不变', () => {
+    const f = fixture('readonly-match')
+    writeFileSync(join(f.worktreePath, 'src', 'a.ts'), 'fixed\n')
+    const snapshot = createDevelopmentSnapshot({ worktreePath: f.worktreePath, sessionDirectory: f.session, executionId: f.executionId, workspaceId: 'ws', scope: f.scope })
+    const manifestPath = join(f.session, `development-snapshot-${f.executionId}.json`)
+    const before = readFileSync(manifestPath, 'utf8')
+    const status = git(f.worktreePath, 'status', '--porcelain')
+    expect(developmentWorktreeMatchesSnapshot(f.worktreePath, snapshot, f.scope)).toBe(true)
+    expect(readFileSync(manifestPath, 'utf8')).toBe(before)
+    expect(git(f.worktreePath, 'status', '--porcelain')).toBe(status)
+    expect(developmentWorktreeMatchesSnapshot(f.worktreePath, snapshot, { ...f.scope, workspaceId: 'other' })).toBe(false)
+  })
+
+  test('Given 未修改过的基线文件在冻结后变化 When 比对 Then 拒绝额外变化', () => {
+    const f = fixture('baseline-drift')
+    writeFileSync(join(f.worktreePath, 'src', 'a.ts'), 'fixed\n')
+    const snapshot = createDevelopmentSnapshot({ worktreePath: f.worktreePath, sessionDirectory: f.session, executionId: f.executionId, workspaceId: 'ws', scope: f.scope })
+    writeFileSync(join(f.worktreePath, 'src', 'b.ts'), 'later\n')
+    expect(developmentWorktreeMatchesSnapshot(f.worktreePath, snapshot, f.scope)).toBe(false)
+  })
+
+  test('Given 父目录或dangling符号链接 When 冻结/比对 Then 不跟随链接', () => {
+    const f = fixture('ancestor-link')
+    const external = join(directory, 'ancestor-external')
+    mkdirSync(external)
+    writeFileSync(join(external, 'a.ts'), 'fixed\n')
+    rmSync(join(f.worktreePath, 'src'), { recursive: true })
+    symlinkSync(external, join(f.worktreePath, 'src'))
+    expect(() => createDevelopmentSnapshot({ worktreePath: f.worktreePath, sessionDirectory: f.session, executionId: f.executionId, workspaceId: 'ws', scope: f.scope })).toThrow('符号链接')
+    const dangling = fixture('dangling-link')
+    symlinkSync(join(directory, 'does-not-exist'), join(dangling.worktreePath, 'src', 'link.ts'))
+    expect(() => createDevelopmentSnapshot({ worktreePath: dangling.worktreePath, sessionDirectory: dangling.session, executionId: dangling.executionId, workspaceId: 'ws', scope: dangling.scope })).toThrow('符号链接')
   })
 })
 
