@@ -9,8 +9,8 @@ function render(patch: Partial<OwnerPlanEditor> = {}) {
   store.set(ownerPlanEditorsAtom, new Map([['["a",null]', { ...getOwnerPlanEditor(new Map(), { projectId: 'a' }), loaded: true, ...patch }]]))
   return renderToStaticMarkup(createElement(Provider, { store }, createElement(ProjectOwnerPlanPanel, { projectId: 'a' })))
 }
-test('Given 无计划 When SSR Then 不读window，主动规划未接入且没有手工创建/生成入口', () => {
-  const html = render(); expect(html).toContain('Owner主动规划尚未接入'); expect(html).not.toContain('保存计划新版本'); expect(html).not.toContain('生成计划'); expect(html).toContain('不会调用模型')
+test('Given 无计划 When SSR Then 不读window，空态引导受控准备而没有本面板手工创建/生成入口', () => {
+  const html = render(); expect(html).toContain('尚无可审阅计划'); expect(html).not.toContain('保存计划新版本'); expect(html).not.toContain('生成计划'); expect(html).toContain('不会调用模型')
 })
 test('Given 计划API失败 When 展示 Then 局部提示，不影响目标保存', () => {
   const html = render({ loaded: false, error: '计划接口不可用' }); expect(html).toContain('计划接口不可用'); expect(html).toContain('role="alert"'); expect(html).toContain('重新加载计划')

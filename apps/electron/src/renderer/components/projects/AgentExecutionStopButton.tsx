@@ -5,7 +5,7 @@ import { executionStopMessage } from './project-task-execution-state'
 
 /** 只取消这一条权威执行；员工停用开关不等于停止正在运行的任务。 */
 export function AgentExecutionStopButton({ execution, onChanged }: {
-  execution: AgentExecutionResult
+  execution: Pick<AgentExecutionResult, 'id' | 'status' | 'entityType' | 'entityId'>
   onChanged: () => void | Promise<void>
 }): React.ReactElement | null {
   // biome-ignore lint/correctness/useExhaustiveDependencies: 执行身份切换必须重置局部停止反馈，不能沿用另一执行的状态。

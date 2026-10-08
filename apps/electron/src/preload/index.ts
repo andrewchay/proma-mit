@@ -1948,6 +1948,10 @@ export interface ElectronAPI {
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
+      getOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['getOwnerRuntimeBinding']
+      saveOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['saveOwnerRuntimeBinding']
+      prepareOwnerPlanning: import('@gravitas/shared').ProjectOwnerRuntimeApi['prepareOwnerPlanning']
+      listOwnerPlanningRuns: import('@gravitas/shared').ProjectOwnerRuntimeApi['listOwnerPlanningRuns']
       getOwnerPlanningContext: import('@gravitas/shared').ProjectOwnerPlanApi['getOwnerPlanningContext']
       getOwnerPlanDraft: import('@gravitas/shared').ProjectOwnerPlanApi['getOwnerPlanDraft']
       listOwnerPlanHistory: import('@gravitas/shared').ProjectOwnerPlanApi['listOwnerPlanHistory']
@@ -4681,6 +4685,10 @@ const electronAPI: ElectronAPI = {
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      getOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, request),
+      saveOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_RUNTIME_BINDING, request),
+      prepareOwnerPlanning: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, request),
+      listOwnerPlanningRuns: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, request),
       getOwnerPlanningContext: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_PLANNING_CONTEXT, subject),
       getOwnerPlanDraft: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_PLAN_DRAFT, subject),
       listOwnerPlanHistory: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLAN_HISTORY, subject),

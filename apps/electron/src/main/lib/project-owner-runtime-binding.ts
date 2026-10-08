@@ -8,42 +8,8 @@ import { assertLocalActorEnabled, getProjectOwnerPlanDraft, getProjectOwnerPlann
 import { buildProjectOwnerPlanningRequest } from './project-owner-planning-protocol'
 import { prepareControlledTask } from './controlled-project-task-service'
 import * as store from './project-sqlite-store'
-export interface OwnerRuntimeBinding {
-  schemaVersion: 1
-  projectId: string
-  revision: number
-  ownerRole: 'project_owner'
-  ownerName: string
-  carrierId: string
-  workspaceId: string
-  channelId: string
-  modelId: string
-  runtime: 'ai-sdk'
-  carrierFingerprint: string
-  actor: 'local-user'
-  savedAt: number
-  changeReason: string
-}
-export interface OwnerPlanningLink {
-  schemaVersion: 1
-  id: string
-  projectId: string
-  requestId: string
-  planningTaskId: string
-  targetTaskId?: string
-  bindingRevision: number
-  goalRevision: number
-  goalVersion: number
-  planRevision: number
-  contextFingerprint: string
-  carrierFingerprint: string
-  protocolVersion: '1'
-  promptHash: string
-  purpose: 'owner_planning'
-  maxRequests: 1
-  maxOutputTokens: 4096
-  createdAt: number
-}
+import type { OwnerPlanningLink, OwnerRuntimeBinding } from '@gravitas/shared'
+export type { OwnerPlanningLink, OwnerRuntimeBinding } from '@gravitas/shared'
 interface BindingRow { revision: number; payload: string }
 interface LinkRow { id: string; project_id: string; request_id: string; planning_task_id: string; input_hash: string; payload: string; source_snapshot: string | null }
 const hash = (input: unknown): string => createHash('sha256').update(JSON.stringify(input)).digest('hex')
@@ -86,12 +52,12 @@ function parseBinding(payload: string, projectId: string, expectedRevision: numb
     return { schemaVersion: 1, projectId, revision: revision(value.revision, 1), ownerRole: 'project_owner', ownerName: text(value.ownerName, '职责名称'), carrierId: text(value.carrierId, '载体ID', 128), workspaceId: text(value.workspaceId, '工作区ID', 128), channelId: text(value.channelId, '渠道ID', 128), modelId: text(value.modelId, '模型ID'), runtime: 'ai-sdk', carrierFingerprint: digest(value.carrierFingerprint), actor: 'local-user', savedAt: revision(value.savedAt, 1), changeReason: text(value.changeReason, '变更原因', 2000) }
   } catch { throw new Error('Owner配置记录无效，请保留数据库核查') }
 }
-export function getOwnerRuntimeBinding(projectId: string): OwnerRuntimeBinding | null {
+export function getOwnerRuntimeBinding(projectId: string, atRevision?: number): OwnerRuntimeBinding | null {
   project(projectId)
   const rows = store.getProjectDb().prepare('SELECT revision, payload FROM project_owner_runtime_revisions WHERE project_id = ? ORDER BY revision').all(projectId) as BindingRow[]
   const versions = rows.map((row, index) => parseBinding(row.payload, projectId, index + 1))
   if (rows.some((row, index) => row.revision !== index + 1)) throw new Error('Owner配置记录历史不连续')
-  return versions.at(-1) ?? null
+  return (atRevision === undefined ? versions.at(-1) : versions.find(version => version.revision === revision(atRevision, 1))) ?? null
 }
 export function saveOwnerRuntimeBinding(projectId: string, expectedRevision: number, raw: unknown): OwnerRuntimeBinding {
   const input = object(raw, ['ownerName', 'carrierId', 'workspaceId', 'changeReason'])

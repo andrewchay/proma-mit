@@ -132,3 +132,7 @@ test('Given 内容超出服务上限 When 点击保存 Then UI拦截而不是发
   }
   expect(f.writes()).toBe(0)
 })
+test('Given 已保存目标但尚无Plan When 加载 Then 仍取得规划资料供首次Owner准备，不能人工伪造空计划', async () => {
+  const f = setup({ getOwnerPlanDraft: async () => ({ ok: true, value: null }) }); await f.store.set(loadOwnerPlanAtom, subject)
+  expect(f.read().context?.goal.revision).toBe(1); expect(f.read().snapshot).toBeNull(); expect(f.writes()).toBe(0)
+})

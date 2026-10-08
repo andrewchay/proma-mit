@@ -174,6 +174,10 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_PROJECTS: 'project:list-projects',
   GET_PROJECT: 'project:get-project',
   /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
+  GET_OWNER_RUNTIME_BINDING: 'project:get-owner-runtime-binding',
+  SAVE_OWNER_RUNTIME_BINDING: 'project:save-owner-runtime-binding',
+  PREPARE_OWNER_PLANNING: 'project:prepare-owner-planning',
+  LIST_OWNER_PLANNING_RUNS: 'project:list-owner-planning-runs',
   GET_OWNER_PLANNING_CONTEXT: 'project:get-owner-planning-context',
   GET_OWNER_PLAN_DRAFT: 'project:get-owner-plan-draft',
   LIST_OWNER_PLAN_HISTORY: 'project:list-owner-plan-history',
@@ -485,6 +489,8 @@ export interface PrepareControlledTaskInput {
   priority?: 'low' | 'medium' | 'high' | 'critical'
 }
 export interface ControlledTaskStartPreview {
+  /** 仅Owner已冻结的JSON资料；无岗位全文/文件/历史/凭据。费用确认不保证金额硬上限。 */
+  ownerPlanning?: { purpose: 'owner_planning'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: '1'; maxRequests: 1; maxOutputTokens: 4096; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; costs: 'unknown_no_hard_cap' }
   taskId: string
   previewHash: string
   expiresAt: number

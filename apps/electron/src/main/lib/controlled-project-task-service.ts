@@ -1,3 +1,4 @@
+import { resolveOwnerPlanningTask } from './project-owner-planning-source'
 /** 非代码项目任务：准备不执行；本机显式启动确认不是Pilot grant或硬费用保证。 */
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -133,10 +134,10 @@ function row(taskId: string): PreparationRow {
 		throw new Error('非代码任务准备回执缺失或损坏，请保留数据核查')
 	return record
 }
-function context(taskId: string) {
+function context(taskId: string, allowOwnerPreview = false) {
   // A阶段只允许暂停准备。目的双证据防止关联丢失后降级普通Agent；B阶段将替换为受限出口校验。
-  if (store.getProjectDb().prepare('SELECT id FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId)
-    || store.getProjectDb().prepare('SELECT owner_planning_link_id FROM controlled_task_preparations WHERE task_id = ? AND owner_planning_link_id IS NOT NULL').get(taskId))
+  const ownerPlanning = resolveOwnerPlanningTask(taskId)
+  if (ownerPlanning && !allowOwnerPreview)
     throw new Error('Owner规划出口尚未开放，不能按普通Agent启动')
 
 	const task = store.getTask(taskId)
@@ -169,6 +170,7 @@ function context(taskId: string) {
 		task.workspaceId,
 	)
 	const scopeHash = digest({
+    ...(ownerPlanning ? { ownerPlanning: { link: ownerPlanning.link, binding: ownerPlanning.binding, source: ownerPlanning.context, request: ownerPlanning.request } } : {}),
 		task: {
 			id: task.id,
 			projectId: task.projectId,
@@ -219,7 +221,7 @@ function context(taskId: string) {
 			hash: version.contentHash,
 		})),
 	})
-	return { task, ...facts, scopeHash }
+	return { task, ...facts, scopeHash, ownerPlanning }
 }
 
 /** 同事务首次INSERT就是paused，创建回执不通知自动派发。 */
@@ -283,7 +285,7 @@ export function getControlledTaskStartPreview(
 ): ControlledTaskStartPreview {
 	text(taskId, 128, '任务ID')
 	row(taskId)
-	const facts = context(taskId)
+	const facts = context(taskId, true)
 	if (!['paused', 'pending', 'in_progress'].includes(facts.task.status))
 		throw new Error('当前任务状态不能开始')
 	const executions = store.listAgentExecutionsByEntity('task', taskId)
@@ -294,6 +296,7 @@ export function getControlledTaskStartPreview(
 		)
 	)
 		throw new Error('任务已有排队或运行的执行，请查看现有执行')
+  if (facts.ownerPlanning && (executions.length > 0 || store.getProjectDb().prepare('SELECT link_id FROM project_owner_planning_admissions WHERE link_id = ?').get(facts.ownerPlanning.link.id))) throw new Error('这份Owner准备已有Run或发送占位，不会补发；新调用需要新准备和费用确认')
 	const expiresAt = (Math.floor(Date.now() / ttl) + 1) * ttl
 	return {
 		taskId,
@@ -312,6 +315,7 @@ export function getControlledTaskStartPreview(
 		runtime: facts.employee.runtime,
 		workspaceName: facts.workspace.name,
 		permissionMode: facts.result.permissionMode,
+    ...(facts.ownerPlanning ? { ownerPlanning: { purpose: 'owner_planning' as const, linkId: facts.ownerPlanning.link.id, ownerName: facts.ownerPlanning.binding.ownerName, bindingRevision: facts.ownerPlanning.link.bindingRevision, goalRevision: facts.ownerPlanning.link.goalRevision, planRevision: facts.ownerPlanning.link.planRevision, contextFingerprint: facts.ownerPlanning.context.fingerprint, promptHash: facts.ownerPlanning.link.promptHash, protocolVersion: '1' as const, maxRequests: 1 as const, maxOutputTokens: 4096 as const, systemPrompt: facts.ownerPlanning.request.systemPrompt, userPrompt: facts.ownerPlanning.request.userPrompt, context: facts.ownerPlanning.context, costs: 'unknown_no_hard_cap' as const } } : {}),
 	}
 }
 

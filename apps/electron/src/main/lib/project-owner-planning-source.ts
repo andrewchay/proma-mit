@@ -33,7 +33,10 @@ function digest(value: unknown): string { if (typeof value !== 'string' || !/^[a
 export function readOwnerPlanningSnapshot(taskId: string): { link: OwnerPlanningLink; context: ProjectOwnerPlanningContext; request: ProjectOwnerPlanningRequest } | null {
   const row = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId) as LinkRow | undefined
   const purpose = store.getProjectDb().prepare('SELECT id, owner_planning_link_id, execution_id FROM controlled_task_preparations WHERE task_id = ?').get(taskId) as PurposeRow | undefined
-  if (!row && !purpose?.owner_planning_link_id) return null
+  if (!row && !purpose?.owner_planning_link_id) {
+    if (store.hasOwnerPlanningTaskEvidence(taskId)) throw new Error('Owner规划关联或目的证据缺失，不允许降级普通Agent')
+    return null
+  }
   if (!row || !purpose || purpose.owner_planning_link_id !== row.id) throw new Error('Owner规划关联或目的证据缺失，不允许降级普通Agent')
   try {
     const value = JSON.parse(row.payload) as Record<string, unknown>

@@ -104,7 +104,8 @@ export const loadOwnerPlanAtom = atom(null, async (get, set, subject: ProjectOwn
     const api = get(ownerPlanApiAtom); const response = await api.getOwnerPlanDraft(subject)
     if (!response.ok) throw new Error(response.error.message)
     if (response.value) { assertSubject(response.value, subject); assertSubject(response.value.proposal, subject) }
-    const contextResponse = response.value ? await api.getOwnerPlanningContext(subject) : null
+    const savedGoal = getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject)
+    const contextResponse = response.value || (savedGoal.loaded && savedGoal.snapshot) ? await api.getOwnerPlanningContext(subject) : null
     if (contextResponse && !contextResponse.ok) throw new Error(contextResponse.error.message)
     const context = contextResponse?.ok ? contextResponse.value : null
     if (context) assertSubject(context.goal.goal, subject)

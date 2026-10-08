@@ -112,9 +112,10 @@ export interface ProjectOwnerPlanDraft extends ProjectOwnerGoalSubject {
   goalVersion: number
   /** stale由最新目标/来源派生，旧历史本身不被覆盖。 */
   state: 'proposed' | 'confirmed' | 'stale'
-  actor: 'local-user'
-  /** 当前接口仅允许本机人工记录；尚未实现模型规划调用。 */
-  origin: 'manual'
+  actor: 'local-user' | 'system:owner-planner'
+  /** generated必须有主进程可信Run回执，不接受客户端自报。 */
+  origin: 'manual' | 'generated'
+  sourceRun?: { receiptId: string; executionId: string; responseHash: string }
   savedAt: number
   changeReason: string
   contextFingerprint: string
@@ -140,4 +141,55 @@ export interface ProjectOwnerPlanApi {
   listOwnerPlanHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<ProjectOwnerPlanDraft[]>>
   saveOwnerPlanDraft: (request: SaveProjectOwnerPlanRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerPlanDraft>>
   confirmOwnerPlanDraft: (request: ProjectOwnerPlanVersionRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerPlanDraft>>
+}
+
+export interface OwnerRuntimeBinding {
+  schemaVersion: 1
+  projectId: string
+  revision: number
+  ownerRole: 'project_owner'
+  ownerName: string
+  carrierId: string
+  workspaceId: string
+  channelId: string
+  modelId: string
+  runtime: 'ai-sdk'
+  carrierFingerprint: string
+  actor: 'local-user'
+  savedAt: number
+  changeReason: string
+}
+export interface OwnerPlanningLink {
+  schemaVersion: 1
+  id: string
+  projectId: string
+  requestId: string
+  planningTaskId: string
+  targetTaskId?: string
+  bindingRevision: number
+  goalRevision: number
+  goalVersion: number
+  planRevision: number
+  contextFingerprint: string
+  carrierFingerprint: string
+  protocolVersion: '1'
+  promptHash: string
+  purpose: 'owner_planning'
+  maxRequests: 1
+  maxOutputTokens: 4096
+  createdAt: number
+}
+
+export interface ProjectOwnerRunView {
+  link: OwnerPlanningLink
+  executions: { id: string; sessionId: string; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'; summary: string | null }[]
+  receipts: { id: string; executionId: string; capturedAt: number; responseText: string; responseHash: string; validTerminal: boolean; stopped: boolean; error: string | null; usage: { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWriteTokens: number | null } | null; cost: { source: 'runtime_reported' | 'unknown'; usd: number | null } }[]
+  outcomes: { executionId: string; receiptId: string; state: 'proposed' | 'needs_clarification' | 'stale' | 'failed' | 'unknown' | 'stopped'; detail: string; planRevision?: number; clarification?: { reason: string; questions: { key: string; question: string; why: string; options: string[] }[] } }[]
+}
+/** 配置/准备/读取无费用；真正start仍走既有显式费用IPC，不新增自由Caller。 */
+export interface ProjectOwnerRuntimeApi {
+  getOwnerRuntimeBinding: (subject: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding | null>>
+  saveOwnerRuntimeBinding: (request: { projectId: string; expectedRevision: number; input: { ownerName: string; carrierId: string; workspaceId: string; changeReason: string } }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding>>
+  prepareOwnerPlanning: (request: { projectId: string; input: { requestId: string; taskId?: string; expectedBindingRevision: number; expectedGoalRevision: number; expectedPlanRevision: number; expectedContextFingerprint: string } }) => Promise<ProjectOwnerGoalResult<OwnerPlanningLink>>
+  listOwnerPlanningRuns: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<ProjectOwnerRunView[]>>
 }

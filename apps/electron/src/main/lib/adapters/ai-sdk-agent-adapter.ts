@@ -1,3 +1,4 @@
+import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
 /**
  * Vercel AI SDK Agent Runtime 适配器。
  *
@@ -168,6 +169,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       const requestFetch = controlledFetch ?? pilotRuntime?.fetch
       if (owner && !controlledFetch) throw new Error('Owner规划缺少受控模型出口')
       if (owner) {
+        try {
         const messages = await this.runtimeCore.runAgentTurn({
           sessionId, prompt: owner.request.userPrompt, modelId: model, provider, protocol, apiKey, baseUrl, cwd,
           runtimeTools: [], activeSession: activeSession.state, maxTurns: 1, maxRetries: 0,
@@ -175,6 +177,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           fetchFn: controlledFetch, onAgentEvent: input.onAgentEvent,
         })
         for (const message of messages) yield message
+        } catch (cause) { if (!(cause instanceof OwnerPlanningRuntimeError)) throw cause; yield cause.runtimeResult as unknown as SDKMessage }
         return
       }
       if (requestedOperation === 'compact') {

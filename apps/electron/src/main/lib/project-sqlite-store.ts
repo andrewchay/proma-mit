@@ -1013,6 +1013,20 @@ function migrate(database: SqliteCompat): void {
     link_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL, source_snapshot TEXT NOT NULL, admitted_at INTEGER NOT NULL CHECK (admitted_at > 0)
   )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_callback_evidence (
+    id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, payload TEXT NOT NULL
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_run_receipts (
+    id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, capture_hash TEXT NOT NULL, payload TEXT NOT NULL,
+    UNIQUE(execution_id, capture_hash)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_stop_requests (
+    execution_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, requested_at INTEGER NOT NULL,
+    CHECK (requested_at > 0)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_run_outcomes (
+    execution_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL, payload TEXT NOT NULL
+  )`)
   if (!readColumnNames(database, 'controlled_task_preparations').includes('owner_planning_link_id')) {
     database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN owner_planning_link_id TEXT')
   }
@@ -1562,8 +1576,19 @@ export function reorderProjects(orderedIds: string[]): boolean {
   return true
 }
 
+/** 负向用途限制：任何Run/stop/callback证据保留时不可降级普通任务；不是发送许可。 */
+export function hasOwnerPlanningExecutionEvidence(executionId: string): boolean {
+  return ['project_owner_planning_admissions', 'project_owner_planning_stop_requests', 'project_owner_planning_callback_evidence', 'project_owner_planning_run_receipts', 'project_owner_planning_run_outcomes'].some(table => Boolean(getProjectDb().prepare(`SELECT execution_id FROM ${table} WHERE execution_id = ? LIMIT 1`).get(executionId)))
+}
+export function hasOwnerPlanningTaskEvidence(taskId: string): boolean {
+  const database = getProjectDb()
+  if (database.prepare('SELECT id FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId) || database.prepare('SELECT id FROM controlled_task_preparations WHERE task_id = ? AND owner_planning_link_id IS NOT NULL').get(taskId)) return true
+  const executions = database.prepare("SELECT id FROM agent_executions WHERE entity_type = 'task' AND entity_id = ?").all(taskId) as { id: string }[]
+  return executions.some(item => hasOwnerPlanningExecutionEvidence(item.id))
+}
 export function deleteProject(id: string): boolean {
   const database = getProjectDb()
+  if (database.prepare('SELECT id FROM project_owner_planning_links WHERE project_id = ? LIMIT 1').get(id) || database.prepare('SELECT id FROM controlled_task_preparations WHERE project_id = ? AND owner_planning_link_id IS NOT NULL LIMIT 1').get(id) || (database.prepare('SELECT id FROM agent_executions WHERE project_id = ?').all(id) as { id: string }[]).some(item => hasOwnerPlanningExecutionEvidence(item.id))) throw new Error('项目关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined
   if (!existing) return false
   const tx = database.transaction(() => {
@@ -1749,6 +1774,7 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
 
 export function deleteTask(id: string): boolean {
   const database = getProjectDb()
+  if (hasOwnerPlanningTaskEvidence(id) || database.prepare("SELECT id FROM project_owner_planning_links WHERE json_extract(payload, '$.targetTaskId') = ? LIMIT 1").get(id)) throw new Error('任务关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
   if (!existing) return false
   const tx = database.transaction(() => {

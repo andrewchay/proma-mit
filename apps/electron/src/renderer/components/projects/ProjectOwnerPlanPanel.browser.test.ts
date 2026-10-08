@@ -50,7 +50,7 @@ createRoot(document.getElementById('root')).render(<App/>);
   try {
     browser = await chromium.launch({ headless: true }); const page = await browser.newPage({ viewport: { width: 360, height: 480 } }); const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
     await page.goto(`http://127.0.0.1:${server.port}`)
-    await page.getByText('Owner主动规划尚未接入。', { exact: false }).waitFor()
+    await page.getByText('尚无可审阅计划。', { exact: false }).waitFor()
     expect(await page.getByRole('button', { name: '保存计划新版本', exact: true }).count()).toBe(0)
     const counts = () => page.evaluate(() => { const f = (window as unknown as { fixture: { writes: unknown[]; confirms: unknown[] } }).fixture; return { writes: f.writes.length, confirms: f.confirms.length } })
     expect(await counts()).toEqual({ writes: 0, confirms: 0 })

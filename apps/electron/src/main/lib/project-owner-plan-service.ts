@@ -9,6 +9,9 @@ import { getWorkflowIdentityDirectoryPath } from './config-paths'
 import { getProjectOwnerGoalDraft, listProjectOwnerGoalHistory } from './project-owner-goal-service'
 import { parseProjectOwnerPlanProposal } from './project-owner-planning'
 import { getProjectOwnerRoleAdviceCatalog } from './project-owner-role-catalog'
+import { getOwnerPlanningRunReceipt, verifyGeneratedOwnerPlan } from './project-owner-planning-run-service'
+import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
+import { parseProjectOwnerPlanningResponse } from './project-owner-planning-protocol'
 import { getProject, getProjectDb, getTask } from './project-sqlite-store'
 
 export class ProjectOwnerPlanConflictError extends Error {
@@ -89,10 +92,10 @@ function parseSources(input: unknown, projectId: string, taskId?: string): Proje
 /** 历史按冻结的合法目标/岗位来源解析，角色升级只使当前计划失效，不重写历史。 */
 function parseRow(row: PlanRow, projectId: string, taskId: string | undefined, goals: ProjectOwnerGoalDraft[]): ProjectOwnerPlanDraft {
   try {
-    const value = record(JSON.parse(row.payload), ['schemaVersion', 'projectId', 'taskId', 'revision', 'planVersion', 'goalRevision', 'goalVersion', 'state', 'actor', 'origin', 'savedAt', 'changeReason', 'contextFingerprint', 'planFingerprint', 'sources', 'proposal'])
+    const value = record(JSON.parse(row.payload), ['schemaVersion', 'projectId', 'taskId', 'revision', 'planVersion', 'goalRevision', 'goalVersion', 'state', 'actor', 'origin', 'savedAt', 'changeReason', 'contextFingerprint', 'planFingerprint', 'sources', 'proposal', 'sourceRun'])
     if (value.schemaVersion !== 1 || value.projectId !== projectId || value.taskId !== taskId
       || value.revision !== row.revision || (value.state !== 'proposed' && value.state !== 'confirmed')
-      || value.actor !== 'local-user' || value.origin !== 'manual') throw new Error('计划元信息无效')
+      || !((value.origin === 'manual' && value.actor === 'local-user' && value.sourceRun === undefined) || (value.origin === 'generated' && value.actor === (value.state === 'confirmed' ? 'local-user' : 'system:owner-planner') && value.sourceRun !== undefined))) throw new Error('计划元信息无效')
     const revision = positive(row.revision)
     const planVersion = positive(value.planVersion)
     if (planVersion > revision) throw new Error('计划版本超过修订')
@@ -109,8 +112,10 @@ function parseRow(row: PlanRow, projectId: string, taskId: string | undefined, g
     const proposal = parseProjectOwnerPlanProposal(proposalInput, goal.goal, sources.roles.map((role) => role.key))
     const contentFingerprint = digest(value.planFingerprint)
     if (contentFingerprint !== planFingerprint({ planVersion, goalRevision, contextFingerprint, proposal })) throw new Error('计划内容指纹不匹配')
+    let sourceRun: ProjectOwnerPlanDraft['sourceRun']
+    if (value.origin === 'generated') { const proof = record(value.sourceRun, ['receiptId', 'executionId', 'responseHash']); sourceRun = { receiptId: digest(proof.receiptId), executionId: text(proof.executionId, 'Run身份', 128), responseHash: digest(proof.responseHash) }; verifyGeneratedOwnerPlan(sourceRun, proposal, goalRevision, contextFingerprint) }
     return { schemaVersion: 1, projectId, ...(taskId === undefined ? {} : { taskId }), revision, planVersion,
-      goalRevision, goalVersion, state: value.state, actor: 'local-user', origin: 'manual', savedAt: positive(value.savedAt),
+      goalRevision, goalVersion, state: value.state, actor: value.actor as ProjectOwnerPlanDraft['actor'], origin: value.origin as ProjectOwnerPlanDraft['origin'], ...(sourceRun ? { sourceRun } : {}), savedAt: positive(value.savedAt),
       changeReason: text(value.changeReason, '变更原因'), contextFingerprint, planFingerprint: contentFingerprint, sources, proposal }
   } catch { throw new Error('Owner 计划记录格式无效，请保留数据库并核查') }
 }
@@ -129,14 +134,14 @@ function readStoredHistory(projectId: string, taskId?: string): ProjectOwnerPlan
     if (!previous) valid &&= plan.planVersion === 1 && plan.state === 'proposed'
     else if (plan.planVersion === previous.planVersion) {
       const content = (item: ProjectOwnerPlanDraft) => {
-        const { revision: _revision, state: _state, savedAt: _time, ...snapshot } = item
+        const { revision: _revision, state: _state, savedAt: _time, actor: _actor, ...snapshot } = item
         return JSON.stringify(snapshot)
       }
       valid &&= previous.state === 'proposed' && plan.state === 'confirmed' && content(plan) === content(previous)
     } else {
       valid &&= plan.planVersion === previous.planVersion + 1 && plan.state === 'proposed'
         && plan.goalRevision >= previous.goalRevision
-        && (plan.contextFingerprint !== previous.contextFingerprint || JSON.stringify(plan.proposal) !== JSON.stringify(previous.proposal))
+        && (plan.contextFingerprint !== previous.contextFingerprint || JSON.stringify(plan.proposal) !== JSON.stringify(previous.proposal) || plan.sourceRun?.receiptId !== previous.sourceRun?.receiptId)
     }
     if (!valid) throw new Error('Owner 计划历史转换无效，请保留数据库并核查')
   }
@@ -228,8 +233,34 @@ export function confirmProjectOwnerPlanDraft(projectId: string, expectedGoalRevi
     if (!current) throw new Error('请先保存 Owner 计划提案')
     if (current.state === 'stale') throw new ProjectOwnerPlanConflictError()
     if (current.state === 'confirmed') return current
-    const confirmed: ProjectOwnerPlanDraft = { ...current, revision: current.revision + 1, state: 'confirmed', savedAt: Date.now() }
+    const confirmed: ProjectOwnerPlanDraft = { ...current, revision: current.revision + 1, state: 'confirmed', actor: 'local-user', savedAt: Date.now() }
     append(confirmed)
     return confirmed
+  })
+}
+
+/** 内部可信Run入口，不注册IPC；原文解析+历史反查+双CAS，不接受客户端proposal/actor/origin。 */
+export function appendGeneratedOwnerPlan(receiptId: string): ProjectOwnerPlanDraft {
+  return planTransaction(() => {
+    const receipt = getOwnerPlanningRunReceipt(receiptId)
+    if (!receipt?.validTerminal || receipt.stopped || receipt.error) throw new Error('Owner没有可生成提案的可信终态')
+    const execution = getProjectDb().prepare('SELECT status FROM agent_executions WHERE id = ?').get(receipt.executionId) as { status: string } | undefined
+    if (execution?.status !== 'running') throw new Error('Owner生成提案仅允许当前运行中的可信Run')
+    if (getProjectDb().prepare('SELECT execution_id FROM project_owner_planning_stop_requests WHERE execution_id = ?').get(receipt.executionId)) throw new Error('Owner已经请求停止，不允许从旧回执生成提案')
+    const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
+    if (!frozen) throw new Error('Owner规划来源缺失')
+    const currentSource = resolveOwnerPlanningTask(receipt.planningTaskId)
+    if (!currentSource || receipt.linkId !== frozen.link.id || receipt.executionId !== (getProjectDb().prepare('SELECT execution_id FROM controlled_task_preparations WHERE task_id = ?').get(receipt.planningTaskId) as { execution_id: string | null } | undefined)?.execution_id) throw new Error('Owner Run身份已变化')
+    const context = getProjectOwnerPlanningContext(receipt.projectId, frozen.link.targetTaskId)
+    const current = readCurrent(context)
+    checkVersions(context, current, frozen.link.goalRevision, frozen.link.planRevision)
+    assertLocalActorEnabled()
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
+    if (response.kind !== 'plan_proposal') throw new Error('Owner澄清不是计划提案')
+    const planVersion = (current?.planVersion ?? 0) + 1
+    const plan: ProjectOwnerPlanDraft = { schemaVersion: 1, projectId: receipt.projectId, ...(frozen.link.targetTaskId === undefined ? {} : { taskId: frozen.link.targetTaskId }), revision: frozen.link.planRevision + 1, planVersion, goalRevision: frozen.link.goalRevision, goalVersion: frozen.link.goalVersion, state: 'proposed', actor: 'system:owner-planner', origin: 'generated', sourceRun: { receiptId, executionId: receipt.executionId, responseHash: receipt.responseHash }, savedAt: Date.now(), changeReason: '可信规划Run生成新提案；待人工内容确认', contextFingerprint: context.fingerprint, planFingerprint: planFingerprint({ planVersion, goalRevision: frozen.link.goalRevision, contextFingerprint: context.fingerprint, proposal: response.proposal }), sources: context.sources, proposal: response.proposal }
+    verifyGeneratedOwnerPlan(plan.sourceRun!, plan.proposal, plan.goalRevision, plan.contextFingerprint)
+    append(plan)
+    return plan
   })
 }

@@ -157,3 +157,11 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 ### 2026-10-09 Owner主动规划B：受限Runtime与单请求边界
 
 [受限出口](owner-runtime-isolation.md)：同库冻结资料、权威Owner解析、Worker/Orchestrator/AI SDK早分流，零工具/MCP/Skills/history/role/dynamic/title/steering/压缩，SDK内外retry0、输出4096；真实三协议body/解密凭据校验＋同事务唯一admission，未知发送不补跑。独立只读审查指出自动redirect P1，已强制error并用本地307/308验证目标0访问；未报告用量另保存Owner null证据，不拿兼容0当费用。两子会话均wait收敛。555隔离文件失败0、全typecheck/lint1991/docs/diff/fullbuild含两nativehelpers通过，真实Provider/外部skip不算PASS。Electron0.12.117/shared0.2.31；A禁启动仍保留，C回执/提案/费用UI未完成，不记AO-03/04整体完成，不宣称Owner自治或实际收费许可/硬金额上限。本片尚无Native schema验收，不安装/push/merge。
+
+### 2026-10-09 Owner规划C：Run证据、待审提案与准备界面
+
+[Run与受控准备](owner-planning-runs.md)接Owner职责/真实载体绑定与暂停准备UI、typed IPC/Jotai、完整资料/费用预检、不可覆盖回执、generated待审提案或必要澄清、双CAS、Owner专用完成/停止/心跳隔离。未知token/费用不拿兼容0估算，生成不完成业务任务或写员工学习；停止意图在abort前持久化，坏来源回调先隔离保全后stale，晚到不续跑。审查删除证据P1与吞来源错误P2已修复，关联Owner准备/Run的项目/承载/目标任务拒绝物理删除。A启动禁令继续保留，不把readonly预检或fake占位当生产费用许可。
+
+本轮原生runId `6422d725-0233-4401-ba3d-13a654da35bd`验证Electron39.8.10/ABI140、真实better-sqlite3/SQLite3.53.4/WAL、实际产品preload及源UI的30次Owner IPC；覆盖旧A加列迁移、首次无Plan准备、费用UI+A拒绝启动0HTTP、显式fake callback生成/人工确认/澄清、receipt先提交+生成事务ABORT、重开与小窗无横向溢出。harness host/Runtime明确替身，不证明D真实start→Worker→SDK链、生产导航、打包/真实收费或进程终止。Electron0.12.118/shared0.2.32；最终工程门禁/独立复审仍待本片收束，无push/merge/安装。AO-02/03/04不记整体完成，AO-G0～G3未通过。
+
+C收束：最新静态树559个逐文件测试失败0，全包typecheck、lint2000、docs:check、diff及完整build（renderer/preload/resources/两原生helper）通过。独立复审已wait收敛：原P1/P2关闭；新增“只剩stop/callback/receipt/outcome证据可能降级”P2随后真RED→GREEN，权威store/来源/Worker/删除均识别全部残余execution证据，只用于负向限制，不授权发送。Worker6项/62断言、Run18项/69断言，并在内部生成入口独立拒绝stop意图复用旧回执。复审原报告保留，整改不改写旧结论；D完整实际费用确认→Worker→SDK离线闭环尚未验收，仍不开启动出口。

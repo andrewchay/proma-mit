@@ -32,7 +32,8 @@ function PlanSourceFacts({ sources }: { sources: ProjectOwnerPlanSources }): Rea
 /** 完整只读事实用于冲突比较和历史；不允许把历史版本恢复成当前确认。 */
 function PlanFacts({ plan }: { plan: ProjectOwnerPlanDraft }): React.ReactElement {
   return <div className="space-y-2 whitespace-pre-wrap text-sm">
-    <p>计划 v{plan.planVersion} · {stateLabel(plan.state)} · 目标 v{plan.goalVersion} · 人工记录</p>
+    <p>计划 v{plan.planVersion} · {stateLabel(plan.state)} · 目标 v{plan.goalVersion} · {plan.origin === 'generated' ? 'AI生成（可信Run）' : '人工记录'}</p>
+    {plan.sourceRun && <p className="text-xs text-muted-foreground break-all">来源Run：{plan.sourceRun.executionId}；回执 {plan.sourceRun.receiptId}；原文摘要 {plan.sourceRun.responseHash}</p>}
     <p>{plan.proposal.summary}</p>
     <p>假设：{plan.proposal.assumptions.join('；') || '无'}</p><p>风险：{plan.proposal.risks.join('；') || '无'}</p>
     <ol className="space-y-2">{plan.proposal.steps.map(step => <li key={step.key} className="rounded-md bg-background/60 p-2">
@@ -59,10 +60,10 @@ export function ProjectOwnerPlanPanel({ projectId, taskId }: { projectId: string
   const editStep = (index: number, patch: Partial<(typeof editor.steps)[number]>) => edit({ subject, patch: { steps: editor.steps.map((step, i) => i === index ? { ...step, ...patch } : step) } })
   return <section className="mt-4 min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label={taskId ? '任务计划审阅' : '项目计划审阅'}>
     <div className="flex flex-wrap items-start justify-between gap-3"><h2 className="text-lg font-semibold">Owner 计划审阅</h2>
-      <span className="rounded-md bg-muted px-2 py-1 text-xs" role="status">{editor.loading ? '正在加载计划' : snapshot ? `计划 v${snapshot.planVersion} · ${stateLabel(snapshot.state)} · 人工记录` : '尚无计划'}</span></div>
+      <span className="rounded-md bg-muted px-2 py-1 text-xs" role="status">{editor.loading ? '正在加载计划' : snapshot ? `计划 v${snapshot.planVersion} · ${stateLabel(snapshot.state)} · ${snapshot.origin === 'generated' ? 'AI生成（可信Run）' : '人工记录'}` : '尚无计划'}</span></div>
     <p className="mt-2 text-xs leading-relaxed text-muted-foreground">这里只审阅和确认内容，不会调用模型，不会收费或派工。岗位建议不是员工实例，步骤不是已创建任务；旧版本确认不沿用到新版本。</p>
     {editor.error && <p className="mt-3 text-sm text-destructive" role="alert">计划接口：{editor.error}。本地输入仍保留，目标保存不受影响。</p>}
-    {!snapshot && <p className="mt-4 text-sm text-muted-foreground">{editor.loaded ? 'Owner主动规划尚未接入。尚无可审阅计划，不需要手工拆任务。' : '计划尚未加载完成；不会创建或生成计划。'}</p>}
+    {!snapshot && <p className="mt-4 text-sm text-muted-foreground">{editor.loaded ? '尚无可审阅计划。可在上方绑定既有载体并准备目标规划，不需要默认手工拆任务。' : '计划尚未加载完成；不会创建或生成计划。'}</p>}
     {snapshot && <>
       {!goalReady && <p className="mt-3 text-sm text-muted-foreground">请先保存目标并解决目标冲突，再加载最新计划来源。未保存的目标不视为已保存，计划写入与确认已禁用。</p>}
       {snapshot.state === 'stale' && <p className="mt-3 text-sm text-muted-foreground">目标或规划来源已变化，不能确认这个旧版本。请比较最新来源，填写修订原因后重新保存为待审阅新版本。</p>}

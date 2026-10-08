@@ -1,3 +1,4 @@
+import { recordOwnerPlanningRun, requestOwnerPlanningStop, ownerPlanningPurposeExists } from './project-owner-planning-run-service'
 import { resolveOwnerPlanningTask, type OwnerPlanningTaskSource } from './project-owner-planning-source'
 /**
  * AI 员工（Agent Employee）服务
@@ -291,6 +292,7 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   if (execution.status !== 'queued' && execution.status !== 'running') {
     throw new Error(`仅能停止排队或运行中的执行，当前状态：${execution.status}`)
   }
+  const ownerStop = requestOwnerPlanningStop(executionId)
   // Pilot 的停止意图必须先于外部 abort 落盘：同步 stopper 也可能触发终态回调，
   // 不能先发停止请求再要求执行仍为 running 才记录待对账事实。
   let stopConfirmation: ExecutionStopConfirmation
@@ -336,6 +338,13 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   }
 
   const stoppedAt = Date.now()
+  if (ownerStop) {
+    try { recordOwnerPlanningRun(executionId, 'unknown', undefined, true) } catch {
+      // Runtime终止已由原stopper核验，但费用/来源仍待对账；callback原文已先隔离保存。
+      store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: 'Owner停止已请求；来源证据损坏，费用仍未知，请保留数据核查' })
+    }
+    return { id: execution.id, status: 'cancelled', stopped: true, processTermination: 'VERIFIED' }
+  }
   if (execution.status === 'queued') cancelQueuedExecution(execution, '用户已停止执行，未交付', stoppedAt)
   else {
     store.updateAgentExecution(execution.id, {
@@ -1103,6 +1112,16 @@ function recordPilotTerminalUsage(
   }
 }
 
+/** Owner坏来源不走普通回写；已有回调原文先保全，当前attempt保守stale且不自动补发。 */
+function handleOwnerRunCallback(execution: AgentExecution, runtimeSource: string, runtimeResult?: SDKResultMessage, stopped = false, error?: string): boolean {
+  try { return Boolean(recordOwnerPlanningRun(execution.id, runtimeSource, runtimeResult, stopped, error)) }
+  catch (cause) {
+    if (execution.entityType !== 'task' || !ownerPlanningPurposeExists(execution.entityId, execution.id)) throw cause
+    if (execution.status === 'running' || execution.status === 'queued') store.updateAgentExecution(execution.id, { status: 'stale', completedAt: Date.now(), error: 'Owner回调证据已隔离保留，来源或回执损坏；费用仍待核查，不自动补发' })
+    console.warn(`[AgentEmployee] Owner回调保守隔离 execution=${execution.id}:`, cause instanceof Error ? cause.message : '来源核查失败')
+    return true
+  }
+}
 /** 执行完成回写 */
 function handleExecutionComplete(
   executionId: string,
@@ -1113,7 +1132,9 @@ function handleExecutionComplete(
   runtimeResult?: SDKResultMessage,
 ): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status !== 'running') return
+  if (!execution) return
+  if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, stoppedByUser)) return
+  if (execution.status !== 'running') return
   if (stoppedByUser) {
     const stoppedAt = Date.now()
     store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: '用户已停止执行，未交付' })
@@ -1273,7 +1294,9 @@ function handleExecutionError(
   runtimeResult?: SDKResultMessage,
 ): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return
+  if (!execution) return
+  if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, false, error)) return
+  if (execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return
 
   const failedAt = Date.now()
   store.updateAgentExecution(executionId, {
@@ -1340,6 +1363,17 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
 
   // 2. 探测 running 执行
   for (const execution of running.filter((e) => e.status === 'running')) {
+    if (execution.entityType === 'task' && ownerPlanningPurposeExists(execution.entityId, execution.id)) {
+      let active = false
+      try { active = isAgentSessionActive(execution.sessionId) } catch { /* 探测失败保持unknown，不补发 */ }
+      if (active) store.updateAgentExecution(execution.id, { lastHeartbeatAt: now })
+      else {
+        try { recordOwnerPlanningRun(execution.id, 'unknown') } catch {
+          store.updateAgentExecution(execution.id, { status: 'stale', completedAt: now, error: 'Owner失联且来源证据损坏，回调已隔离保全；费用未知，不自动补发' })
+        }
+      }
+      continue // 不沿用普通重试/学习/DoD或外部通知路径。
+    }
     // Workflow 执行（sessionId=workflow:runId）不是 Agent 会话：不做 isActive 探测，仅超时检查
     if (execution.executor === 'workflow') {
       const duration = now - execution.startedAt

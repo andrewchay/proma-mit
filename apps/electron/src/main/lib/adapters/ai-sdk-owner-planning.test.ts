@@ -49,7 +49,7 @@ describe('Owner authority-only AI SDK turn', () => {
   })
   test('given overflow then no compaction or hidden retry occurs', async () => {
     captured = []; fail = true
-    try { await expect(collect(adapter())).rejects.toThrow('context length exceeded'); expect(captured).toHaveLength(1); expect(compact).toBe(0) } finally { fail = false }
+    try { const messages = await collect(adapter()); expect(messages.at(-1)).toMatchObject({ type: 'result', subtype: 'error_during_execution', finish_reason: 'error' }); expect(JSON.stringify(messages.at(-1))).toContain('context length exceeded'); expect(captured).toHaveLength(1); expect(compact).toBe(0) } finally { fail = false }
   })
   test('given manual compaction or binding mismatch then no model call occurs', async () => {
     captured = []; await expect(collect(adapter(), { ...input(), requestedOperation: 'compact' })).rejects.toThrow('Owner')

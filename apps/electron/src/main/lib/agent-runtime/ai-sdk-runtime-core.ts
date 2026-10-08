@@ -1,3 +1,4 @@
+import { OwnerPlanningRuntimeError } from './owner-planning-runtime-error'
 /**
  * AI SDK Agent runtime core。
  *
@@ -212,6 +213,8 @@ export class AISDKRuntimeCore {
       modelId: input.modelId,
       ...((input.fetchFn ?? pilotRuntime?.fetch) ? { fetch: input.fetchFn ?? pilotRuntime?.fetch } : {}),
     })
+    let partialText = ''
+    try {
     const effectiveSystemPrompt = owner ? owner.systemPrompt : buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
       : undefined)
@@ -255,7 +258,7 @@ export class AISDKRuntimeCore {
       })) + 256,
       provider: input.provider,
       modelId: input.modelId,
-      onAgentEvent: input.onAgentEvent,
+      onAgentEvent: owner ? (event) => { if (event.type === 'text_delta') partialText += event.text; input.onAgentEvent?.(event) } : input.onAgentEvent,
       ...(owner ? { maxOutputTokens: 4096 } : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens } : {}),
     })
 
@@ -278,6 +281,10 @@ export class AISDKRuntimeCore {
       } } : {}),
     }
     return [...sdkMessages, resultMessage as unknown as SDKMessage]
+    } catch (cause) {
+      if (!owner) throw cause
+      throw new OwnerPlanningRuntimeError({ type: 'result', subtype: 'error_during_execution', session_id: input.sessionId, result: partialText, finish_reason: input.activeSession.controller.signal.aborted ? 'abort' : 'error', errors: [cause instanceof Error ? cause.message : 'Owner规划Runtime异常'], usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null } }, cause)
+    }
   }
 
   async runStreamTextWithRetry(input: AISDKRuntimeStreamInput): Promise<AISDKRuntimeStreamResult> {

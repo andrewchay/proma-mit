@@ -100,3 +100,13 @@ test('given Provider未报告usage then Owner专用证据保留unknown而非兼�
     const messages = await new AISDKRuntimeCore().runAgentTurn(input(transport)); expect(messages.at(-1)).toMatchObject({ result: 'partial-answer', subtype: reason === 'stop' ? 'success' : 'error_during_execution', owner_planning_usage: { inputTokens: null, outputTokens: null } })
   }
 })
+test('given 文本已流出后运输断流 then 一请求抛失败证据，保留partial原文/unknown token，不成功不重发', async () => {
+  let requests = 0
+  const transport: typeof fetch = Object.assign(async () => {
+    requests++; let part = 0
+    return new Response(new ReadableStream<Uint8Array>({ async pull(controller) { if (!part++) controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({ id: 'fake', object: 'chat.completion.chunk', created: 1, model: 'offline-model', choices: [{ index: 0, delta: { content: 'partial-before-drop' }, finish_reason: null }] })+'\n\n')); else { await new Promise(resolve => setTimeout(resolve, 10)); controller.error(new Error('fake stream dropped')) } } }), { headers: { 'content-type': 'text/event-stream' } })
+  }, { preconnect: () => {} })
+  const { OwnerPlanningRuntimeError } = await import('./owner-planning-runtime-error')
+  try { await new AISDKRuntimeCore().runAgentTurn(input(transport)); throw new Error('应失败') } catch (cause) { expect(cause).toBeInstanceOf(OwnerPlanningRuntimeError); expect((cause as InstanceType<typeof OwnerPlanningRuntimeError>).runtimeResult).toMatchObject({ result: 'partial-before-drop', finish_reason: 'error', subtype: 'error_during_execution', owner_planning_usage: { inputTokens: null, outputTokens: null } }) }
+  expect(requests).toBe(1)
+})
