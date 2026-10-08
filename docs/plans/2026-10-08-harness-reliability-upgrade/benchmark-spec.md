@@ -65,3 +65,7 @@
 ## 6. V02第二批子集进展（2026-10-08 22:37 GMT+8）
 
 HR02的Git内容变化集、HR03的记录身份与结构拒绝、HR04的非0伪passed拒绝已新增本地服务/fixture覆盖，详情见v02-evidence.md。当前新验证结果仍只证明命令退出，未采集可信测试数；HR01完整Goal来源/逐条件门禁未落地。5个定向文件53 pass；全仓542文件3595 pass/0 fail/27 skip。不得把子集通过写成全部14-case或G1通过。
+
+## 7. V02第三批子集进展（2026-10-08 23:25 GMT+8）
+
+HR01的Goal/session/run关联子集已接真实Orchestrator，覆盖旧run不能更新新Goal、停止/重复/排队/相同startedAt所有权，见goal-run-evidence.md。尚不覆盖完整InvocationContext、逐criteria来源或真实test收集，不能升级HR01整体通过。最终5定向文件76 pass；全仓543文件3612 pass/0 fail/27 skip。既有runner没有受保护收集协议，V03保持阻塞；仍不是全部14-case、真实Provider或G1验收通过。

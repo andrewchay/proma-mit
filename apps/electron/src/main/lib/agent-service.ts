@@ -79,8 +79,7 @@ const orchestrator = new AgentOrchestrator(
   adapter,
   eventBus,
   runtimeServices,
-  (sessionId, checkpoint) => goalCoordinator.submitCheckpoint(sessionId, checkpoint).then(() => undefined),
-  (sessionId) => Boolean(goalCoordinator.getActiveBySession(sessionId)),
+  (sessionId) => goalCoordinator.captureRun(sessionId),
 )
 
 goalCoordinator.setContinuationRunner(async ({ goal, prompt }) => {
@@ -361,7 +360,6 @@ export async function runAgent(
         }
       },
     })
-    await goalCoordinator.onTurnFinished(effectiveInput.sessionId)
   } catch (err) {
     console.error('[Agent 服务] runAgent 未处理异常:', err)
     const errorMessage = err instanceof Error ? err.message : '未知错误'

@@ -886,6 +886,8 @@ export interface AgentGoal {
   status: AgentGoalStatus
   checkpoint?: AgentGoalCheckpoint
   activeRunId?: string
+  /** 主进程已接收检查点的调用身份；不代表证据验证通过。 */
+  checkpointRunId?: string
   createdAt: number
   updatedAt: number
   version: number

@@ -11,6 +11,14 @@ import { ElectronGoalStore } from './goal-store'
 
 const MAX_IMMEDIATE_CONTINUATIONS = 3
 
+/** 仅由主进程签发，模型只能提交checkpoint内容，不能指定身份。 */
+export interface AgentGoalRunCallbacks {
+  readonly goalId: string
+  readonly runId: string
+  onCheckpoint(checkpoint: AgentGoalCheckpoint): Promise<void>
+  onFinished(canContinue: boolean): Promise<void>
+}
+
 export interface GoalContinuationRequest {
   goal: AgentGoal
   prompt: string
@@ -82,7 +90,8 @@ export class GoalCoordinator {
       checkpoint: resumedCheckpoint,
       // 停止或暂停后，该 run 已不再属于可恢复的 Goal。清空它可避免 UI
       // 和恢复逻辑把旧 run 误判成仍在占用当前会话。
-      activeRunId: status === 'active' ? goal.activeRunId : undefined,
+      activeRunId: undefined,
+      checkpointRunId: undefined,
       updatedAt: Date.now(),
     })
     if (status !== 'active') this.immediateCounts.delete(goalId)
@@ -97,30 +106,65 @@ export class GoalCoordinator {
     this.save({
       ...goal,
       status: 'waiting',
+      activeRunId: undefined,
+      checkpointRunId: undefined,
       checkpoint: { ...goal.checkpoint, outcome: 'waiting', wakeTrigger: { type: 'user_input' } },
       updatedAt: Date.now(),
     })
   }
 
-  async submitCheckpoint(sessionId: string, checkpoint: AgentGoalCheckpoint): Promise<AgentGoal | undefined> {
+  /** 真正抢占运行槽位后签发；排队、压缩和槽位抢占前预检不创建Goal run。 */
+  captureRun(sessionId: string): AgentGoalRunCallbacks | undefined {
     const goal = this.getActiveBySession(sessionId)
-    if (!goal) throw new Error('当前会话没有激活的 Goal')
-    validateCheckpoint(checkpoint, goal)
-    const next = this.save({
-      ...goal,
-      status: statusFromCheckpoint(checkpoint),
-      checkpoint: cloneCheckpoint(checkpoint),
-      activeRunId: undefined,
-      updatedAt: Date.now(),
+    if (!goal) return undefined
+    const runId = randomUUID()
+    this.save({
+      ...goal, status: 'active', activeRunId: runId,
+      checkpoint: undefined, checkpointRunId: undefined, updatedAt: Date.now(),
     })
-    return next
+    let finished = false
+    return Object.freeze({
+      goalId: goal.id,
+      runId,
+      onCheckpoint: async (checkpoint: AgentGoalCheckpoint): Promise<void> => {
+        const current = this.get(goal.id)
+        if (finished || !current || current.sessionId !== sessionId || current.status !== 'active' || current.activeRunId !== runId) {
+          throw new Error('Goal检查点调用身份已失效，请基于当前运行重新提交')
+        }
+        validateCheckpoint(checkpoint, current)
+        this.save({
+          ...current, status: statusFromCheckpoint(checkpoint), checkpoint: cloneCheckpoint(checkpoint),
+          checkpointRunId: runId, activeRunId: undefined, updatedAt: Date.now(),
+        })
+      },
+      onFinished: async (canContinue: boolean): Promise<void> => {
+        if (finished) return
+        finished = true
+        const current = this.get(goal.id)
+        if (!current || current.sessionId !== sessionId) return
+        // 没有本轮检查点时等待用户，不能复用上一轮continue；旧finally不改写新run。
+        if (current.activeRunId === runId) {
+          this.waitForUser(current, '本轮未提交有效Goal检查点，等待用户确认继续。')
+          return
+        }
+        if (current.activeRunId || current.checkpointRunId !== runId || current.status !== 'active') return
+        if (!canContinue) {
+          this.waitForUser(current, '本轮已停止或有用户输入待处理，不自动续跑。')
+          return
+        }
+        if (current.checkpoint?.wakeTrigger?.type === 'immediate') await this.schedule(current)
+      },
+    })
   }
 
-  /** 当前 Agent turn 已完全退出后再调度续跑，避免与会话并发守卫竞争。 */
-  async onTurnFinished(sessionId: string): Promise<void> {
-    const goal = this.getActiveBySession(sessionId)
-    if (!goal || goal.status !== 'active' || goal.checkpoint?.wakeTrigger?.type !== 'immediate') return
-    await this.schedule(goal)
+  private waitForUser(goal: AgentGoal, blocker: string): void {
+    this.save({
+      ...goal, status: 'waiting', activeRunId: undefined, updatedAt: Date.now(),
+      checkpoint: {
+        ...(goal.checkpoint ?? { summary: blocker, completed: [], evidence: [] }),
+        outcome: 'waiting', wakeTrigger: { type: 'user_input' }, blocker,
+      },
+    })
   }
 
   /** 在应用重启后恢复可自动执行的 Goal；没有窗口时保留并延迟重试。 */
@@ -161,27 +205,26 @@ export class GoalCoordinator {
   private async startContinuation(goalId: string): Promise<void> {
     if (this.startingGoalIds.has(goalId)) return
     const goal = this.store.get(goalId)
-    if (!goal || goal.status !== 'active' || !this.continuationRunner) return
+    if (!goal || goal.status !== 'active' || goal.activeRunId || !this.continuationRunner) return
     this.startingGoalIds.add(goalId)
     try {
-      const active = this.save({ ...goal, status: 'active', activeRunId: randomUUID(), updatedAt: Date.now() })
+      // runId只在Orchestrator实际准入时签发，不为尚未启动的续跑预造身份。
       const started = await this.continuationRunner({
-        goal: active,
-        prompt: buildContinuationPrompt(active),
+        goal,
+        prompt: buildContinuationPrompt(goal),
       })
       if (!started) {
-        this.save({ ...active, activeRunId: undefined, updatedAt: Date.now() })
-        setTimeout(() => { void this.startContinuation(goalId) }, 2_000)
+        const current = this.get(goalId)
+        if (current?.version === goal.version && current.status === 'active') {
+          setTimeout(() => { void this.startContinuation(goalId) }, 2_000)
+        }
       }
     } catch (error) {
       console.error(`[Goal] 自动续跑失败: ${goalId}`, error)
-      this.save({
-        ...goal,
-        status: 'waiting',
-        activeRunId: undefined,
-        checkpoint: { ...goal.checkpoint!, outcome: 'waiting', wakeTrigger: { type: 'user_input' }, blocker: '自动续跑失败，等待用户恢复。' },
-        updatedAt: Date.now(),
-      })
+      const current = this.get(goalId)
+      if (current?.version === goal.version && current.status === 'active') {
+        this.waitForUser(current, '自动续跑失败，等待用户恢复。')
+      }
     } finally {
       this.startingGoalIds.delete(goalId)
     }
