@@ -2,9 +2,23 @@
  * Agent Runtime Prompt 构建器单元测试
  */
 
-import { describe, test, expect } from 'bun:test'
-import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
+import { afterAll, describe, test, expect } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { isolateSteWritingHostDependencies } from '../testing/ste-writing-test-isolation'
 import type { SDKMessage } from '@gravitas/shared'
+
+isolateSteWritingHostDependencies()
+const tempDir = mkdtempSync(join(tmpdir(), 'runtime-prompt-'))
+const originalConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = tempDir
+const { buildAgentSystemPrompt, sdkMessagesToChatMessages } = await import('./prompt-builder')
+afterAll(() => {
+  rmSync(tempDir, { recursive: true, force: true })
+  if (originalConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = originalConfigDir
+})
 
 describe('Prompt 构建器', () => {
   test('given 默认提示词 when 构建 runtime prompt then 包含 cwd 与自动化工具规则', () => {

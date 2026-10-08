@@ -1,52 +1,73 @@
-import { describe, expect, mock, test } from 'bun:test'
-import { buildElectronMock } from '../testing/electron-mock'
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, mkdirSync, symlinkSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { isolateSteWritingHostDependencies } from '../testing/ste-writing-test-isolation'
 
-// 与 computer-use-plugin.test.ts 相同的原因：collectContributingPrompts 会遍历
-// 全部内置插件 runtime（含 computer-use 的导入链），在纯 bun 环境下需要先把
-// electron mock 成最小可用实现，并使用「顶层动态 import」保证 mock 先注册。
-mock.module('electron', () => buildElectronMock())
+isolateSteWritingHostDependencies()
+const tempDir = mkdtempSync(join(tmpdir(), 'ste-plugin-'))
+const originalConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = tempDir
+const { steWritingPluginRuntime, steWritingPromptSections, STE_WRITING_PROMPT_SECTION } = await import('./ste-writing-plugin')
+const { collectContributingPrompts, setPluginEnabled } = await import('../plugin-manager')
+const { getSettingsPath } = await import('../config-paths')
+const settingsPath = getSettingsPath()
+afterAll(() => {
+  rmSync(tempDir, { recursive: true, force: true })
+  if (originalConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = originalConfigDir
+})
+beforeEach(() => rmSync(settingsPath, { recursive: true, force: true }))
 
-const { steWritingPluginRuntime, steWritingPromptSections, STE_WRITING_PROMPT_SECTION } = await import(
-  './ste-writing-plugin'
-)
-const { collectContributingPrompts } = await import('../plugin-manager')
+function stePrompts(): string[] {
+  return collectContributingPrompts().filter((prompt) => prompt.includes('STE 简化写作规范'))
+}
 
 describe('STE 简化写作插件', () => {
-  const runtime = steWritingPluginRuntime()
-
-  test('manifest 声明：稳定 id、settings surface、全平台支持', () => {
+  test('缺省启用并贡献自然语言指导；manifest 保持稳定', () => {
+    const runtime = steWritingPluginRuntime()
     expect(runtime.manifest.id).toBe('com.gravitas.ste-writing')
     expect(runtime.manifest.surfaces).toContain('settings')
-    expect(runtime.manifest.platforms).toContain('darwin')
-    expect(runtime.manifest.platforms).toContain('win32')
-    expect(runtime.manifest.platforms).toContain('linux')
-  })
-
-  test('默认启用：settings 无 steWriting 配置时 isEnabled 为 true', () => {
+    expect(runtime.manifest.platforms).toEqual(['darwin', 'win32', 'linux'])
     expect(runtime.isEnabled()).toBe(true)
-  })
-
-  test('平台支持：全平台返回 true（提示注入不依赖桌面能力）', () => {
     expect(runtime.isSupported()).toBe(true)
-  })
-
-  test('启用时 contributePrompts 返回包含底线规则的段落', () => {
-    const prompts = runtime.contributePrompts?.() ?? []
-    expect(prompts.length).toBe(1)
-    expect(prompts[0]).toContain('STE 简化写作规范')
-    expect(prompts[0]).toContain('一句一个意思')
-    expect(prompts[0]).toContain('答案先行')
-    expect(prompts[0]).toContain('ste-writing')
-  })
-
-  test('纯函数 steWritingPromptSections：启用返回段落，停用返回空数组（信息零残留）', () => {
-    expect(steWritingPromptSections(true)).toEqual([STE_WRITING_PROMPT_SECTION])
+    expect(stePrompts()).toEqual([STE_WRITING_PROMPT_SECTION])
     expect(steWritingPromptSections(false)).toEqual([])
   })
 
-  test('collectContributingPrompts 会收编本插件的片段（默认启用态）', () => {
-    const prompts = collectContributingPrompts()
-    const stePrompts = prompts.filter((p) => p.includes('STE 简化写作规范'))
-    expect(stePrompts.length).toBe(1)
+  test('真实 manager 停用、重复停用、重启、重复启用均成功，并落盘影响 collector', async () => {
+    for (const enabled of [false, false, true, true]) {
+      const state = await setPluginEnabled('com.gravitas.ste-writing', enabled)
+      expect(state?.enabled).toBe(enabled)
+      expect(JSON.parse(readFileSync(settingsPath, 'utf8')).steWriting.enabled).toBe(enabled)
+      expect(stePrompts()).toEqual(steWritingPromptSections(enabled))
+    }
+  })
+
+  test('配置损坏时停止注入、启停明确失败且不覆盖损坏内容', async () => {
+    writeFileSync(settingsPath, '{broken')
+    expect(steWritingPluginRuntime().isEnabled()).toBe(false)
+    expect(stePrompts()).toEqual([])
+    expect(await setPluginEnabled('com.gravitas.ste-writing', false)).toBeNull()
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{broken')
+  })
+
+  test('写入失败时不能返回成功或改变 collector', async () => {
+    // 悬空链接：读取按缺省处理，但落盘因父目录不存在明确失败；全程只操作临时目录。
+    symlinkSync(join(tempDir, 'missing-parent', 'settings.json'), settingsPath)
+    expect(await setPluginEnabled('com.gravitas.ste-writing', false)).toBeNull()
+    expect(stePrompts()).toEqual([STE_WRITING_PROMPT_SECTION])
+  })
+
+  test('设置文件是目录时读取失败，不能被默认值冒充成功', async () => {
+    mkdirSync(settingsPath)
+    expect(await setPluginEnabled('com.gravitas.ste-writing', true)).toBeNull()
+    expect(stePrompts()).toEqual([])
+  })
+
+  test('保留事实、风险、安全和结构化输出优先级，不宣称硬强制', () => {
+    for (const phrase of ['schema、JSON、XML', '数字必须有证据', '不编造', '风险、限制和不确定性', '不是机制硬强制', '不改变任何工具权限']) {
+      expect(STE_WRITING_PROMPT_SECTION).toContain(phrase)
+    }
   })
 })
