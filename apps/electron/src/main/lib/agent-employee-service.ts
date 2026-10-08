@@ -559,6 +559,9 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
     return null
   }
 
+  // controlled 档案不是执行授权；普通创建或改派必须先走准备与确认。
+  if (employee.executionProfile === 'controlled') return null
+
   cancelReassignedQueue(task)
   if (store.listAgentExecutionsByEntity('task', task.id).some((run) => run.status === 'queued' || run.status === 'running')) return null
   const executionId = enqueueAgentTask(task, employee)
@@ -682,7 +685,7 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
     }
   }
 
-  if (execution.entityType === 'task' && requiresControlledStart(execution.entityId)) {
+  if (employee.executionProfile === 'controlled' || (execution.entityType === 'task' && requiresControlledStart(execution.entityId))) {
     try { assertControlledPreparedExecution(executionId) }
     catch (error) { handleExecutionError(executionId, error instanceof Error ? error.message : '启动确认无效', execution.startedAt); return false }
   }

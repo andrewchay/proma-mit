@@ -71,3 +71,9 @@ Electron39.8.10、产品preload/work模块handlers、原生better-sqlite3与真�
 验证：538个独立测试文件失败0，含停止同步回调BDD、新执行选择/反馈用例；完整typecheck、定向Biome通过。Electron39.8.10独立宿主加载真实TaskItem/确认组件、产品preload/work IPC与原生数据库，测试长路径、1180/760/480宽窗口（最小480×420）、确认区可见/无横向溢出、费用默认未勾选、启动后停止入口出现、请求已接受仍running、终态回调cancelled/paused，以及员工记录中排队执行取消。Runtime为隔离注册runner/stopper，不发送Provider请求；不能据此声称真实模型停止、底层工具退出或费用已对账。证据为会话`modal-stop-validation/`。
 
 修复包0.12.110另行构建，安装需要本次独立确认，未自动退出或替换用户正在使用的应用。原有完整lint与真实Provider验收边界仍未改变。
+
+### 2026-10-08 合并复查：普通入口授权收束
+
+复查发现此前阶段的兼容测试允许普通任务直接派发给controlled员工；这条路径没有准备回执，不经过新范围与费用确认。现在普通创建或改派不会为controlled员工生成执行；历史queued记录缺确认时失败并暂停任务，不能重开后自动启动。最终模型与权限门禁按当前权威controlled员工身份或任务准备证据识别，缺准备拒绝，不依赖客户端标志。旧general/development兼容不变，受控任务切成general也不能移除准备证据保护。合法执行测试已改为真实prepare→preview→confirm，未授权历史任务不能通过保存档案或编辑状态补造授权；应先由用户准备并确认新执行，不自动迁移授权。
+
+新增离线回归覆盖普通创建、改派、遗留queue重开和running模型/权限/子Agent门禁；fake runner及HTTP不作为真实Provider执行、费用或进程终止证据。

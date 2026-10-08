@@ -655,3 +655,56 @@ test('Given AI SDK真实活跃adapter在模型等待中 When 外部选择bypass 
 		spy.mockRestore()
 	}
 })
+
+test('Given 普通任务未准备 When 指派受控员工并经普通派发 Then 无执行且不调用runner', async () => {
+  const { project, employee, workspace } = fixture()
+  const task = store.createTask(project.id, { title: '普通创建不可授权', description: '', workspaceId: workspace.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+  const before = calls
+  try {
+    expect(await employees.dispatchTaskToAgent(task)).toBeNull()
+    expect(store.listAgentExecutionsByEntity('task', task.id)).toHaveLength(0)
+    expect(calls).toBe(before)
+  } finally {
+    for (const run of store.listAgentExecutionsByEntity('task', task.id)) callbacks.get(run.sessionId)?.onComplete([], { stoppedByUser: true })
+  }
+})
+
+test('Given 旧普通任务 When 改派到受控员工 Then 不能通过编辑获得执行授权', async () => {
+  const { project, employee, workspace } = fixture()
+  const task = store.createTask(project.id, { title: '人工任务', description: '', workspaceId: workspace.id })
+  const updated = store.updateTask(task.id, { assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })!
+  const before = calls
+  expect(await employees.dispatchTaskToAgent(updated)).toBeNull()
+  expect(store.listAgentExecutionsByEntity('task', task.id)).toHaveLength(0)
+  expect(calls).toBe(before)
+})
+
+test('Given 无确认的历史受控queue When 重开并启动 Then 失败暂停且零runner', async () => {
+  const { project, employee, workspace } = fixture()
+  const task = store.createTask(project.id, { title: '历史排队', description: '', workspaceId: workspace.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+  const execution = store.createAgentExecution({ id: randomUUID(), projectId: project.id, entityType: 'task', entityId: task.id, agentId: employee.id, sessionId: '', prompt: '未授权的旧排队', status: 'queued' })
+  const before = calls
+  store.closeProjectDb()
+  await store.initProjectDb()
+  expect(await employees.tryStartExecution(execution.id)).toBe(false)
+  expect(store.getAgentExecution(execution.id)?.status).toBe('failed')
+  expect(store.getTask(task.id)?.status).toBe('paused')
+  expect(store.getAgentExecution(execution.id)?.sessionId).toBe('')
+  expect(calls).toBe(before)
+})
+
+test('Given 无确认的历史running When 请求模型或升级权限 Then 按员工身份识别并拒绝', () => {
+  const { project, employee, workspace } = fixture()
+  const task = store.createTask(project.id, { title: '历史运行', description: '', workspaceId: workspace.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+  const sessionId = randomUUID()
+  const execution = store.createAgentExecution({ id: randomUUID(), projectId: project.id, entityType: 'task', entityId: task.id, agentId: employee.id, sessionId, prompt: '旧记录', status: 'running' })
+  try {
+    expect(boundary.isControlledProviderSession(sessionId)).toBe(true)
+    expect(() => boundary.assertControlledProviderBoundary(sessionId, { runtime: 'pi', cwd: directory, modelId: 'model', permissionMode: 'safe' })).toThrow()
+    expect(() => boundary.assertControlledPermissionChange(sessionId, 'bypassPermissions')).toThrow()
+    const context = boundary.guardControlledPiToolContext(sessionId, { cwd: directory, sessionId, permissionMode: 'safe', runSubAgent: async () => '不应执行' })
+    expect(context.runSubAgent).toBeUndefined()
+  } finally {
+    store.updateAgentExecution(execution.id, { status: 'failed' })
+  }
+})
