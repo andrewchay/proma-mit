@@ -1,3 +1,4 @@
+import { assertControlledPermissionChange, isControlledProviderSession } from './controlled-provider-boundary'
 /**
  * AgentOrchestrator — Agent 编排层
  *
@@ -956,6 +957,7 @@ export class AgentOrchestrator {
       let mcpServers: Record<string, import('@gravitas/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
+        if (!ws) throw new Error('明确工作区不存在，禁止回退到主目录')
         if (ws) {
           workspaceName = ws.name
           workspaceSlug = ws.slug
@@ -1019,6 +1021,7 @@ export class AgentOrchestrator {
       const queryOptions: PiAgentQueryOptions = {
         sessionId,
         agentRuntime: 'pi',
+        getPermissionMode: () => currentPiPermissionMode,
         runtimeBudgetLimitUsd,
         prompt,
         model: resolvedModelId,
@@ -1056,6 +1059,7 @@ export class AgentOrchestrator {
             return result as { behavior: 'allow'; targetMode?: PromaPermissionMode } | { behavior: 'deny'; message: string }
           },
           setPermissionMode: (mode) => {
+            assertControlledPermissionChange(sessionId, mode)
             currentPiPermissionMode = mode
             this.sessionPermissionModes.set(sessionId, mode)
           },
@@ -1224,6 +1228,7 @@ export class AgentOrchestrator {
     },
     input: SubAgentInput,
   ): Promise<string> {
+    if (isControlledProviderSession(parentSessionId)) throw new Error('非代码受控任务禁止未经本次确认的子代理委派')
     const agents = buildBuiltinAgents(false)
     const def = agents[input.agentName]
     if (!def) {
@@ -3640,6 +3645,7 @@ export class AgentOrchestrator {
    */
   async updateSessionPermissionMode(sessionId: string, mode: PromaPermissionMode): Promise<void> {
     if (!this.activeSessions.has(sessionId)) return
+    assertControlledPermissionChange(sessionId, mode)
     this.sessionPermissionModes.set(sessionId, mode)
     // 同步通知 SDK 侧
     if (this.adapter.setPermissionMode) {

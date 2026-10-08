@@ -7,6 +7,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { assertControlledPermissionChange, createControlledProviderFetch, guardControlledPiToolContext, guardControlledPiModelRuntime, isControlledProviderSession } from '../controlled-provider-boundary'
+import { getEffectiveProxyUrl } from '../proxy-settings-service'
+import { getFetchFn } from '../proxy-fetch'
 import { Type } from 'typebox'
 import type { AgentEvent, AgentProviderAdapter, AgentQueryInput, AgentThinkingLevel, McpServerEntry, PromaPermissionMode, RuntimeSpanSink, SDKMessage, SDKUserMessageInput, SendQueuedMessageOptions } from '@gravitas/shared'
 import type { AssistantMessage as PiAssistantMessage } from '@earendil-works/pi-ai'
@@ -37,6 +40,8 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   historyMessages?: SDKMessage[]
   /** 当前会话权限模式 */
   permissionMode?: PromaPermissionMode
+  /** 编排层实际工具权限；不能沿用初始化前快照。 */
+  getPermissionMode?: () => PromaPermissionMode
   /** Proma 统一权限检查回调 */
   canUseTool?: PiCanUseToolCallback
   /** Pi 通过 Proma Bridge 触发的交互能力。 */
@@ -247,6 +252,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
     }
 
+    const controlled = isControlledProviderSession(sessionId)
+    const actualProvider = () => ({ runtime: 'pi' as const, cwd, modelId: model, permissionMode: input.getPermissionMode?.() ?? permissionMode ?? 'safe' })
+    const controlledFetch = controlled ? createControlledProviderFetch(sessionId, actualProvider, getFetchFn(await getEffectiveProxyUrl())) : undefined
+
     if (requestedOperation === 'compact') {
       if (provider === 'openai-codex') throw new Error('ChatGPT 订阅暂不支持独立压缩，请缩短对话后重试')
       if (runtimeBudgetLimitUsd !== undefined) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
@@ -258,6 +267,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         model,
         historyMessages: historyMessages ?? [],
         signal,
+        ...(controlledFetch ? { fetchFn: controlledFetch } : {}),
         audit: { sessionId, runtime: 'pi', trigger: 'manual' },
         onLifecycle: (event) => onAgentEvent?.({ type: 'compaction_status', ...event }),
       }))
@@ -273,6 +283,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       channelId: input.channelId,
     })
 
+    guardControlledPiModelRuntime(sessionId, registration.modelRuntime, actualProvider, controlledFetch)
     let effectiveHistoryMessages = historyMessages ?? []
 
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
@@ -284,18 +295,21 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       mcpTools = await acquired.manager.listAllTools()
     }
     const customTools = createPiToolBridge({
-      toolContext: {
-        cwd,
-        sessionId,
-        permissionMode,
-        ...toolContextOverrides,
-      },
-      canUseTool,
+      toolContext: guardControlledPiToolContext(sessionId, {
+        cwd, sessionId, permissionMode, ...toolContextOverrides,
+      }),
+      allowSubAgent: !controlled,
+      canUseTool: controlled ? async (name, args, signal) => {
+        assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
+        const result = await canUseTool?.(name, args, signal)
+        assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
+        return result ?? { allowed: false, message: '未配置权限回调' }
+      } : canUseTool,
       mcpTools,
     })
     // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
     const collaborationWorkspaceId = resolveCollaborationWorkspaceId(workspaceId)
-    const collaborationAvailable = !!collaborationWorkspaceId && !!input.channelId && !isDelegationSession
+    const collaborationAvailable = !controlled && !!collaborationWorkspaceId && !!input.channelId && !isDelegationSession
     console.log('[Pi Runtime] collaboration 注入判定:', {
       sessionId, workspaceId, collabWs: collaborationWorkspaceId, channelId: input.channelId, isDelegationSession, collaborationAvailable,
     })
@@ -392,6 +406,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         })),
         signal,
         onLifecycle: (event) => onAgentEvent?.({ type: 'compaction_status', ...event }),
+        ...(controlledFetch ? { fetchFn: controlledFetch } : {}),
         audit: { sessionId, runtime: 'pi', trigger: 'automatic' },
       }))
       if (auto.history !== effectiveHistoryMessages) {

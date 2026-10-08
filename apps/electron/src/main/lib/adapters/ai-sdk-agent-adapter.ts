@@ -27,6 +27,9 @@ import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runt
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { buildPilotRequestRuntime, resolvePilotBudgetForSession } from '../project-pilot-request-exit'
 import { isContextOverflowError } from '../error-patterns'
+import { assertControlledPermissionChange, createControlledProviderFetch, isControlledProviderSession } from '../controlled-provider-boundary'
+import { getEffectiveProxyUrl } from '../proxy-settings-service'
+import { getFetchFn } from '../proxy-fetch'
 
 export interface AISDKAgentQueryOptions extends AgentQueryInput {
   /** 最大工具调用 step 数 */
@@ -136,6 +139,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       cancelled: false,
     }
     this.activeSessions.set(sessionId, activeSession)
+    const controlled = isControlledProviderSession(sessionId)
+    const controlledFetch = controlled ? createControlledProviderFetch(sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: model, permissionMode: activeSession.state.permissionMode }), pilotRuntime?.fetch ?? getFetchFn(await getEffectiveProxyUrl())) : undefined
+    const requestFetch = controlledFetch ?? pilotRuntime?.fetch
 
     let mcpRelease: (() => void) | undefined
     try {
@@ -148,7 +154,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           model,
           historyMessages: input.historyMessages ?? [],
           signal: activeSession.state.controller.signal,
-          ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
+          ...(requestFetch ? { fetchFn: requestFetch } : {}),
           audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
         })
@@ -204,7 +210,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           systemPrompt: input.systemPrompt,
           tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
           signal: activeSession.state.controller.signal,
-          ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
+          ...(requestFetch ? { fetchFn: requestFetch } : {}),
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
           audit: { sessionId, runtime: 'ai-sdk', trigger: 'automatic' },
         })
@@ -235,6 +241,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             maxTurns,
             maxRetries: input.maxRetries ?? 2,
             ...(pilotRuntime ? { pilotBudget } : {}),
+            ...(controlledFetch ? { fetchFn: controlledFetch } : {}),
             historyMessages,
             attachments: currentAttachments,
             systemPrompt: input.systemPrompt,
@@ -243,17 +250,18 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               apiKey,
               baseUrl,
               model: model || '',
-              ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
+              ...(requestFetch ? { fetchFn: requestFetch } : {}),
               audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
             },
             onAgentEvent: input.onAgentEvent,
             canUseTool: input.canUseTool,
+            onPermissionModeChange: controlled ? (mode) => assertControlledPermissionChange(sessionId, mode) : undefined,
             onEnterPlanMode: input.onEnterPlanMode,
             onExitPlanMode: input.onExitPlanMode,
             onAskUser: input.onAskUser,
             // Pilot 受控执行禁用子代理委派：子代理新 sessionId 解析不到预算上下文，
             // 会绕过受控出口；未配置 runSubAgent 时 Agent 工具直接报错，零花费。
-            runSubAgent: pilotRuntime ? undefined : input.runSubAgent,
+            runSubAgent: pilotRuntime || controlled ? undefined : input.runSubAgent,
             onGoalCheckpoint: input.onGoalCheckpoint,
             mcpManager,
             workspaceSlug,
@@ -269,7 +277,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               model: model || "",
               historyMessages,
               signal: activeSession.state.controller.signal,
-              ...(pilotRuntime ? { fetchFn: pilotRuntime.fetch } : {}),
+              ...(requestFetch ? { fetchFn: requestFetch } : {}),
               onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
               audit: { sessionId, runtime: "ai-sdk", trigger: "overflow_recovery" },
             })
@@ -338,6 +346,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     if (mode === 'safe' || mode === 'auto' || mode === 'plan' || mode === 'bypassPermissions') {
+      assertControlledPermissionChange(sessionId, mode)
       active.state.permissionMode = mode
       active.state.planModeEntered = mode === 'plan'
     }

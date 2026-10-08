@@ -16,3 +16,7 @@
 原子 rename 防止读到半写文件；替换后的目录 fsync 如果失败也会抛错，但此时目标已替换，不能宣称旧版本仍在；Windows 未做目录 fsync。同步不等于跨平台断电恢复保证。Windows、文件系统异常和断电恢复仍需要专门故障注入验收。不得把本轮临时目录写失败测试描述为已通过真实断电试验。
 
 Memory 保持 candidate → Approval → 用户批准 → Memory，索引写入不会绕过审批。配置审计采用同步追加：低频写入完成后才返回，IO 错误向上传播，避免 fire-and-forget 在退出或测试清理后继续写入。
+
+### 非代码任务准备与启动确认（2026-10-08）
+
+项目SQLite新增`controlled_task_preparations`：请求幂等、任务对应、确认/范围指纹、有效期、唯一execution关联和本地请求准入时间；任务新增不可普通编辑的`controlled_preparation_id`。与现有任务/执行一起一致备份，不单独恢复该辅助表。缺标记或回执不补造授权；运行中崩溃不自动重放。新controlled数据不能无一致恢复方案交旧0.12.104执行。细节与边界见[非代码项目入口](plans/2026-10-07-ai-project-owner/noncode-project-entry.md)。

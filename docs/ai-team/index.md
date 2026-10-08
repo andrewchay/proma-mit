@@ -70,3 +70,7 @@ safe 是未来实例的建议默认，不是本轮运行配置。版本哈希只
 - [创建与验证记录](verification.md)：实际创建、静态检查、全仓门禁失败及未接通范围。
 - 可重复检查：`python3 docs/ai-team/checks/validate.py docs/ai-team`。
 - 未修改 Owner 台账状态，不宣称 AO-04／06 已接通。
+
+## 非代码项目入口（2026-10-08）
+
+20模板已接实际员工表单；0.12.109本地验收包新增项目非代码任务准备、明确启动与费用确认。模板不是员工或授权。详见[入口与验证边界](../plans/2026-10-07-ai-project-owner/noncode-project-entry.md)。尚未替换用户0.12.104应用，不宣称Owner自动派工或真实Provider已验收。

@@ -184,6 +184,7 @@ import {
   acceptDelivery as acceptDevelopmentDelivery,
   rejectDelivery as rejectDevelopmentDelivery,
 } from './development-review-service'
+import { prepareControlledTask, getControlledTaskStartPreview, startControlledTask } from './controlled-project-task-service'
 import {
   prepareApply as prepareDevelopmentApply,
   confirmApply as confirmDevelopmentApply,
@@ -996,6 +997,9 @@ export function registerWorkModuleIpcHandlers(): void {
     })
   })
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, (_, executionId: string, filePath: string) => getSnapshotDiff(executionId, filePath))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_CONTROLLED_TASK, (_, input: unknown) => prepareControlledTask(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CONTROLLED_TASK_START, (_, taskId: string) => getControlledTaskStartPreview(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.START_CONTROLLED_TASK, (_, input: unknown) => startControlledTask(input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, (_, input: import('@gravitas/shared').PrepareFileDelegationInput) => prepareFileDelegation(input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, (_, taskId: string, comment: string) => requestDevelopmentChanges(taskId, comment))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, (_, taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => acceptDevelopmentDelivery(taskId, deliveryId, input))

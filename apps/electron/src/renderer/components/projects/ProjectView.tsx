@@ -21,6 +21,7 @@ import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
+import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { TaskReviewPanel } from './TaskReviewPanel'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
@@ -350,6 +351,7 @@ interface Task {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   completionNotes?: string
   permissionRequests?: string[]
+  controlledPreparationId?: string
   /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退待人工处理 */
   tokenBudget?: number
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
@@ -2825,6 +2827,12 @@ function TaskItem({
             >
               {isStoppingAgent ? '停止中…' : '停止执行'}
             </button>
+          )}
+          {task.controlledPreparationId && task.status !== 'completed' && agentExecStatus !== 'running' && agentExecStatus !== 'queued' && (
+            <ControlledTaskStartButton taskId={task.id} revision={task.updatedAt} onChanged={async () => {
+              const latest = await callProjectAPI<Task | null>('getTask', task.id)
+              if (latest) onTaskUpdate(latest)
+            }} />
           )}
           {/* 编辑任务按钮 */}
           <button

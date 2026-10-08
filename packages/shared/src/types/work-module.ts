@@ -469,7 +469,44 @@ export interface ProjectProgressResult {
 // 4. AI 员工（Agent Employee）— P0
 // ============================================
 
+/** 非代码任务准备不是执行授权，requestId供持久化幂等。 */
+export interface PrepareControlledTaskInput {
+  requestId: string
+  projectId: string
+  employeeId: string
+  workspaceId: string
+  title: string
+  description: string
+  priority?: 'low' | 'medium' | 'high' | 'critical'
+}
+export interface ControlledTaskStartPreview {
+  taskId: string
+  previewHash: string
+  expiresAt: number
+  title: string
+  description: string
+  requestedPermissions: string[]
+  employeeName: string
+  channelName: string
+  modelId: string
+  runtime: string
+  workspaceName: string
+  permissionMode: 'safe' | 'auto'
+}
+export interface StartControlledTaskInput {
+  taskId: string
+  previewHash: string
+  acknowledgeModelCosts: boolean
+}
+export interface ControlledTaskStartResult {
+  taskId: string
+  executionId: string
+  status: string
+}
 export const AGENT_EMPLOYEE_IPC_CHANNELS = {
+  PREPARE_CONTROLLED_TASK: 'agent-employee:prepare-controlled-task',
+  PREVIEW_CONTROLLED_TASK_START: 'agent-employee:preview-controlled-task-start',
+  START_CONTROLLED_TASK: 'agent-employee:start-controlled-task',
   /** AI 员工列表 */
   LIST_EMPLOYEES: 'agent-employee:list',
   /** 获取单个 AI 员工 */

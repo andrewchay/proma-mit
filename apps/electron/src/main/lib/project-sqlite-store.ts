@@ -982,8 +982,22 @@ function migrate(database: SqliteCompat): void {
     );
   `)
 
+  // 非代码任务准备只保存幂等回执和一次启动确认，任务/执行仍使用权威表。
+  database.exec(`CREATE TABLE IF NOT EXISTS controlled_task_preparations (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, request_id TEXT NOT NULL,
+    task_id TEXT NOT NULL UNIQUE, input_hash TEXT NOT NULL, actor TEXT NOT NULL,
+    created_at INTEGER NOT NULL, confirmed_preview_hash TEXT,
+    authorized_scope_hash TEXT, authorized_until INTEGER, execution_id TEXT, provider_admitted_at INTEGER,
+    UNIQUE(project_id, request_id)
+  )`)
+  if (!readColumnNames(database, 'controlled_task_preparations').includes('provider_admitted_at')) {
+    database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN provider_admitted_at INTEGER')
+  }
   // P1：tasks 表新增 permission_requests 列（兼容旧库）
   const columns = readColumnNames(database, 'tasks')
+  if (!columns.includes('controlled_preparation_id')) {
+    database.exec('ALTER TABLE tasks ADD COLUMN controlled_preparation_id TEXT')
+  }
   if (!columns.includes('permission_requests')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN permission_requests TEXT NOT NULL DEFAULT '[]'`)
   }
@@ -1359,6 +1373,7 @@ type TaskRow = {
   permission_requests: string | null;
   token_budget: number | null;
   development_scope: string | null;
+  controlled_preparation_id: string | null;
   sort_order: number;
   created_at: number; updated_at: number;
 }
@@ -1419,6 +1434,7 @@ function rowToTask(row: TaskRow): Task {
     externalSync: row.external_sync ? JSON.parse(row.external_sync) : undefined,
     permissionRequests: parseJsonArray(row.permission_requests),
     developmentScope: row.development_scope ? JSON.parse(row.development_scope) as Task['developmentScope'] : undefined,
+    controlledPreparationId: row.controlled_preparation_id ?? undefined,
     createdByUserId: row.created_by_user_id ?? undefined,
     createdByMemberId: row.created_by_member_id ?? undefined,
     workspaceId: row.workspace_id ?? undefined,
@@ -1553,7 +1569,7 @@ export function deleteProject(id: string): boolean {
 
 // ===== 任务 CRUD =====
 
-export function createTask(projectId: string, input: CreateTaskInput): Task {
+export function createTask(projectId: string, input: CreateTaskInput, preparation?: { id: string }): Task {
   const database = getProjectDb()
   const id = randomUUID()
   const timestamp = now()
@@ -1561,18 +1577,18 @@ export function createTask(projectId: string, input: CreateTaskInput): Task {
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, development_scope, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, development_scope, controlled_preparation_id, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
-    'pending', input.priority ?? 'medium',
+    preparation ? 'paused' : 'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
     input.assigneeMemberId ?? null,
     input.createdByUserId ?? null, input.createdByMemberId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
     JSON.stringify(input.permissionRequests ?? []), input.tokenBudget ?? null,
     input.developmentScope ? JSON.stringify(input.developmentScope) : null,
-    sortOrder, timestamp, timestamp
+    preparation?.id ?? null, sortOrder, timestamp, timestamp
   )
   recordProjectActivity({
     projectId,

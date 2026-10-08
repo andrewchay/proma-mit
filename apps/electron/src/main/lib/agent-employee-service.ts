@@ -16,6 +16,7 @@ import { getAgentSessionWorkspacePath } from './config-paths'
 import { getChannelById } from './channel-manager'
 import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent-development-context'
 import { validateControlledConfiguration, validateControlledTarget } from './agent-controlled-context'
+import { assertControlledPreparedExecution, claimControlledPreparedExecution, requiresControlledStart } from './controlled-project-task-service'
 import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
 import { getProjectChain } from './project-chain-service'
 import { getPilotPolicy } from './project-pilot-policy'
@@ -532,6 +533,8 @@ function isExecutableAgentTask(task: Task): boolean {
 }
 
 async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{ taskId: string } | null> {
+  // 准备任务只由显式确认入口入队；不能信任调用方传来的陈旧task标记。
+  if (requiresControlledStart(task.id)) return null
   // PH2-③ 统一只派发可执行态（pending / in_progress），completed/draft/paused 一律不派发：
   //   - completed/draft：防“完成任务→回写→onTaskChange→再派发”死循环（每轮写一个新工作日志/100字文件）
   //   - paused：任务处于人工暂停/失败回退态，不应自动重跑（否则失败回写置 paused 后又会被重派，形成类死循环变体）
@@ -558,6 +561,17 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
 
   cancelReassignedQueue(task)
   if (store.listAgentExecutionsByEntity('task', task.id).some((run) => run.status === 'queued' || run.status === 'running')) return null
+  const executionId = enqueueAgentTask(task, employee)
+
+  // 2. 尝试启动（并发有额度才真正建会话执行）
+  void tryStartExecution(executionId).catch((error: unknown) => handleExecutionError(executionId, error instanceof Error ? error.message : '启动失败', Date.now()))
+
+  return { taskId: executionId }
+}
+
+/** 复用权威execution和冻结提示词，只入队，不创建会话或调用Runtime。 */
+function enqueueAgentTask(task: Task, employee: AgentEmployee): string {
+  const agentId = employee.id
   const executionId = randomUUID()
   const capabilityVersions = store.getActiveAgentEmployeeCapabilityVersions(employee.id, task.workspaceId)
   const capabilityContent = capabilityVersions.map((version) => version.content).filter(Boolean).join('\n\n')
@@ -584,10 +598,17 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
   const execution = store.getAgentExecution(executionId)
   if (execution) recordActivity(execution, 'agent_queued', `AI 员工 ${employee.name} 已接收任务「${task.title}」，等待调度`)
 
-  // 2. 尝试启动（并发有额度才真正建会话执行）
-  void tryStartExecution(executionId).catch((error: unknown) => handleExecutionError(executionId, error instanceof Error ? error.message : '启动失败', Date.now()))
+  return executionId
+}
 
-  return { taskId: executionId }
+/** 仅供非代码显式确认事务使用，不暴露为独立IPC入口。 */
+export function enqueueControlledPreparedTask(taskId: string): string {
+  const task = store.getTask(taskId)
+  if (!task?.controlledPreparationId || getActivePilotGrant(task.projectId)) throw new Error('非代码任务准备身份或项目授权无效')
+  const employee = store.getAgentEmployee(parseAgentId(task.assignee?.userId) ?? '')
+  if (!employee?.enabled || employee.executionProfile !== 'controlled') throw new Error('非代码员工已变化')
+  if (store.listAgentExecutionsByEntity('task', taskId).some((run) => run.status === 'queued' || run.status === 'running')) throw new Error('已有执行，不重复入队')
+  return enqueueAgentTask(task, employee)
 }
 
 /**
@@ -661,6 +682,11 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
     }
   }
 
+  if (execution.entityType === 'task' && requiresControlledStart(execution.entityId)) {
+    try { assertControlledPreparedExecution(executionId) }
+    catch (error) { handleExecutionError(executionId, error instanceof Error ? error.message : '启动确认无效', execution.startedAt); return false }
+  }
+
   // 并发控制：同项目运行中数量上限（仅统计真正 running，排队中的不占用额度，避免同项目多个排队互相死锁）
   const runningCount = store.listRunningAgentExecutions().filter((e) => e.projectId === execution.projectId && e.status === 'running').length
   if (runningCount >= PROJECT_CONCURRENCY_LIMIT) {
@@ -731,6 +757,12 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     task?.workspaceId ? `任务指定:${task.workspaceId}` : (employee.workspaceId ? `员工:${employee.workspaceId}` : `全局:${workspaceId}`)
   } 最终=${workspaceId}`)
 
+  // 单次认领先于会话创建；崩溃后的running不能作为新的排队授权重放。
+  if (task && requiresControlledStart(task.id)) {
+    try { claimControlledPreparedExecution(executionId) }
+    catch (error) { console.warn('[AgentEmployee] 非代码启动认领被拒绝:', error); return false }
+  }
+
   // 1. 创建独立 Agent 会话
   let sessionId: string
   try {
@@ -782,6 +814,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     previousMessageIds = new Set(normalizeExecutionMessages(getAgentSessionMessages(sessionId)).map((message) => message.id).filter(Boolean))
   } catch (error) {
     console.warn(`[AgentEmployee] 执行 ${executionId} 读取会话消息失败:`, error)
+    if (task && requiresControlledStart(task.id)) handleExecutionError(executionId, '会话准备失败，需重新预检启动', execution.startedAt)
     return false
   }
 
