@@ -13,6 +13,7 @@
 
 import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@gravitas/shared'
 import type { RuntimeMessage } from './types.ts'
+import { collectContributingPrompts } from '../plugin-manager'
 
 /** 最大回填历史消息条数（压缩摘要不计入此上限） */
 const MAX_HISTORY_MESSAGES = 20
@@ -105,8 +106,11 @@ export function buildAgentSystemPrompt(
   const base = baseSystemPrompt?.trim() || DEFAULT_AGENT_SYSTEM_PROMPT
   const skillsBlock = formatAvailableSkills(skillContext)
   const skillsSection = skillsBlock ? `\n\n${skillsBlock}` : ''
+  // 在最终装配阶段收集，保留默认/角色提示与原有工具规则；普通 SubAgent 同样经过此处。
+  const pluginPrompts = collectContributingPrompts()
+  const pluginSection = pluginPrompts.length ? `\n\n${pluginPrompts.join('\n\n')}` : ''
   const computerUseSection = computerUseToolsAvailable() ? `\n\n${COMPUTER_USE_GUIDE}` : ''
-  return `${base}\n\n${WEB_AND_MEMORY_GUIDE}${computerUseSection}${skillsSection}\n\n当前工作目录：${cwd}\n你可以使用工具来完成任务。需要调用工具时，请使用函数调用格式。`
+  return `${base}\n\n${WEB_AND_MEMORY_GUIDE}${computerUseSection}${skillsSection}${pluginSection}\n\n当前工作目录：${cwd}\n你可以使用工具来完成任务。需要调用工具时，请使用函数调用格式。`
 }
 
 /**

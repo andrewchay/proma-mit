@@ -231,6 +231,8 @@ export interface AppSettings {
   agentMaxBudgetUsd?: number
   /** Agent 最大轮次（0 或 undefined = SDK 默认） */
   agentMaxTurns?: number
+  /** STE 简化写作插件配置（com.gravitas.ste-writing）；缺省 enabled=true（每会话注入输出风格底线规则） */
+  steWriting?: { enabled?: boolean }
   /**
    * 本地调试开关：显式打开尚未发布的模块（见 main/lib/feature-gate.ts）。
    *
