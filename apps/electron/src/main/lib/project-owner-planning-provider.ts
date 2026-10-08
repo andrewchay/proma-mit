@@ -5,6 +5,16 @@ import { getChannelById, decryptApiKey } from './channel-manager'
 import { resolveOwnerPlanningSession, type OwnerPlanningSessionSource } from './project-owner-planning-source'
 import * as store from './project-sqlite-store'
 import { assertControlledPreparedExecution } from './controlled-project-task-service'
+/** 本地完整性检查不是签名，不认证有任意SQL写权限的攻击者。旧占位不补造证明。 */
+export interface OwnerPlanningAdmission {
+  link_id: string; execution_id: string; session_id: string; request_hash: string; source_snapshot: string; admitted_at: number; integrity_hash?: string | null
+}
+export function ownerPlanningAdmissionHash(record: OwnerPlanningAdmission): string {
+  return createHash('sha256').update(JSON.stringify({ link_id: record.link_id, execution_id: record.execution_id, session_id: record.session_id, request_hash: record.request_hash, source_snapshot: record.source_snapshot, admitted_at: record.admitted_at })).digest('hex')
+}
+export function assertOwnerPlanningAdmission(record: OwnerPlanningAdmission): void {
+  if (![record.link_id, record.execution_id, record.session_id].every(value => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 128) || !/^[a-f0-9]{64}$/.test(record.request_hash) || typeof record.source_snapshot !== 'string' || record.source_snapshot.length > 300000 || !Number.isSafeInteger(record.admitted_at) || record.admitted_at <= 0 || record.integrity_hash !== ownerPlanningAdmissionHash(record)) throw new Error('Owner发送占位证据无效，保留原文核查，不生成或补发')
+}
 function object(value: unknown, keys: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) throw new Error('Owner规划模型请求包含未知或非文本字段')
   return value as Record<string, unknown>
@@ -76,6 +86,7 @@ export function claimOwnerPlanningProviderRequest(sessionId: string, body: strin
   assertOwnerPlanningPayload(source, payload, getAgentProviderProtocol(channel.provider, 'ai-sdk'), url)
   const existing = store.getProjectDb().prepare('SELECT link_id FROM project_owner_planning_admissions WHERE link_id = ? OR execution_id = ? OR session_id = ?').get(source.link.id, source.executionId, source.sessionId)
   if (existing) throw new Error('Owner规划请求已占位或可能发送，不自动重试；请核查原Run')
-  store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at) VALUES (?, ?, ?, ?, ?, ?)').run(source.link.id, source.executionId, source.sessionId, createHash('sha256').update(body).digest('hex'), JSON.stringify(source.context), Date.now())
+  const record: OwnerPlanningAdmission = { link_id: source.link.id, execution_id: source.executionId, session_id: source.sessionId, request_hash: createHash('sha256').update(body).digest('hex'), source_snapshot: JSON.stringify(source.context), admitted_at: Date.now() }
+  store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at, integrity_hash) VALUES (?, ?, ?, ?, ?, ?, ?)').run(record.link_id, record.execution_id, record.session_id, record.request_hash, record.source_snapshot, record.admitted_at, ownerPlanningAdmissionHash(record))
   })()
 }

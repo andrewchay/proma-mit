@@ -165,3 +165,15 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 本轮原生runId `6422d725-0233-4401-ba3d-13a654da35bd`验证Electron39.8.10/ABI140、真实better-sqlite3/SQLite3.53.4/WAL、实际产品preload及源UI的30次Owner IPC；覆盖旧A加列迁移、首次无Plan准备、费用UI+A拒绝启动0HTTP、显式fake callback生成/人工确认/澄清、receipt先提交+生成事务ABORT、重开与小窗无横向溢出。harness host/Runtime明确替身，不证明D真实start→Worker→SDK链、生产导航、打包/真实收费或进程终止。Electron0.12.118/shared0.2.32；最终工程门禁/独立复审仍待本片收束，无push/merge/安装。AO-02/03/04不记整体完成，AO-G0～G3未通过。
 
 C收束：最新静态树559个逐文件测试失败0，全包typecheck、lint2000、docs:check、diff及完整build（renderer/preload/resources/两原生helper）通过。独立复审已wait收敛：原P1/P2关闭；新增“只剩stop/callback/receipt/outcome证据可能降级”P2随后真RED→GREEN，权威store/来源/Worker/删除均识别全部残余execution证据，只用于负向限制，不授权发送。Worker6项/62断言、Run18项/69断言，并在内部生成入口独立拒绝stop意图复用旧回执。复审原报告保留，整改不改写旧结论；D完整实际费用确认→Worker→SDK离线闭环尚未验收，仍不开启动出口。
+
+### D：受控启动全链收束（2026-10-09 GMT+8）
+
+C之后将A常量启动禁令替换为严格当前Owner来源校验；明确费用ack/preview/scope/TTL、既有排队原子claim与最终body/凭据/单请求占位仍不可跳过。规划只追加待审提案或必要澄清，不派工、不满足业务DoD。停止意图必须在新会话/发送前独立拒绝；完整链RED复现并GREEN修复，已发送的费用/远端停止仍未知。
+
+独立D审查与Native两个子会话均已`wait_for_delegations(mode=all)`收敛，续轮再wait all。审查P2“真实准入后空request_hash仍生成”已修复：占位增加全部列本地integrity SHA，坏摘要/时间/legacy NULL先隔离callback，不生成或补发；旧schema additive ALTER，旧行NULL不补造发送证明。本地SHA不是签名。复审42项260断言及独立3项17断言通过，原P2关闭、无确认剩余实质P0/P1/P2；旧报告不覆写。
+
+真实产品fee assert/claim→Worker→Orchestrator→AISDKAdapter/真实SDK→内存transport→Run/Plan BDD **12项112断言**（Bun sql.js）通过，包含必要澄清、未知usage、并发双击、TTL/scope损坏0请求、网络/断流/length/302不重发、停止generation、失联late、重开，以及五类准入损坏。全量逐文件 **560文件失败0**，全包typecheck、lint2001、docs:check、diff与完整build（含renderer/preload/resources/原生helpers）通过。
+
+最新Native D runId **642c8bd7-1eaa-4784-b08a-14b8022f23da**，Electron39.8.10/ABI140、better-sqlite3/SQLite3.53.4 WAL、真实产品UI/生产preload/Owner IPC、实际费用确认/原子claim/Worker/Orchestrator/Adapter/SDK，未SQL伪造授权/admission。proposal与clarification各1请求；五类真实准入后故障各1请求并stale，raw callback重开持久、0完整receipt/outcome/新Plan；7条真实准入行旧schema迁移后其余列不变、integrity NULL；共7个内存HTTP，4096/no-tools、重复preview不补发、外部联网0、cleanup成功、360px无横溢出。Source hash父核验无差异。证据在会话`owner-planning-full-native-validation/runs/<runId>/`，保留每轮原文、15项哈希、SDK版本、截图及复跑脚本。仅host桥接与最终transport替身，不宣称完整生产导航、安装包、真实Provider费用/Provider请求ID、金额硬封顶、远端停止、断电/多进程或自主业务闭环。
+
+本批准方案A/B/C/D本地研发与离线验收完成；真实Provider另须逐次费用授权，自动组织员工/后台自主推进/业务自动验收不在此批准切片内。Electron0.12.119/shared0.2.32。没有push/merge/安装，生产员工/配置及installed0.12.109/main0.12.113未改变。详细契约见`owner-planning-controlled-start.md`。

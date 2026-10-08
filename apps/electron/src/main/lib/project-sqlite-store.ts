@@ -1011,8 +1011,9 @@ function migrate(database: SqliteCompat): void {
   }
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_admissions (
     link_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL UNIQUE,
-    request_hash TEXT NOT NULL, source_snapshot TEXT NOT NULL, admitted_at INTEGER NOT NULL CHECK (admitted_at > 0)
+    request_hash TEXT NOT NULL, source_snapshot TEXT NOT NULL, admitted_at INTEGER NOT NULL CHECK (admitted_at > 0), integrity_hash TEXT
   )`)
+  if (!readColumnNames(database, 'project_owner_planning_admissions').includes('integrity_hash')) database.exec('ALTER TABLE project_owner_planning_admissions ADD COLUMN integrity_hash TEXT')
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_callback_evidence (
     id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, payload TEXT NOT NULL
   )`)

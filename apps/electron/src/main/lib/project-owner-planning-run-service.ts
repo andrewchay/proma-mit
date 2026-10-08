@@ -1,5 +1,6 @@
 /** 仅可信Runtime回调调用。Run证据不可覆盖；晚到证据不覆盖已有处理结论。无Caller/派工/费用许可。 */
 import { createHash } from 'node:crypto'
+import { assertOwnerPlanningAdmission, type OwnerPlanningAdmission } from './project-owner-planning-provider'
 import type { SDKResultMessage, ProjectOwnerPlanProposal } from '@gravitas/shared'
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
@@ -7,7 +8,7 @@ import { parseProjectOwnerPlanningResponse } from './project-owner-planning-prot
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
 import * as store from './project-sqlite-store'
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-interface Admission { link_id: string; execution_id: string; session_id: string; request_hash: string; source_snapshot: string; admitted_at: number }
+
 export interface OwnerPlanningRunReceipt {
   schemaVersion: 1
   id: string
@@ -54,7 +55,7 @@ function storedReceipt(row: ReceiptRow): OwnerPlanningRunReceipt {
   try {
     const receipt = JSON.parse(row.payload) as OwnerPlanningRunReceipt
     const { id, ...body } = receipt
-    if (receipt.schemaVersion !== 1 || id !== row.id || receipt.executionId !== row.execution_id || receipt.captureHash !== row.capture_hash || hash(body) !== id || hash(receipt.responseText) !== receipt.responseHash) throw new Error('证据摘要不一致')
+    if (receipt.schemaVersion !== 1 || id !== row.id || receipt.executionId !== row.execution_id || receipt.captureHash !== row.capture_hash || hash(body) !== id || hash(receipt.responseText) !== receipt.responseHash || receipt.validTerminal && (typeof receipt.requestHash !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.requestHash))) throw new Error('证据摘要不一致')
     return receipt
   } catch { throw new Error('Owner Run回执无效，请保留数据核查') }
 }
@@ -125,7 +126,8 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
   const binding = getOwnerRuntimeBinding(link.projectId, link.bindingRevision)
   const preparation = store.getProjectDb().prepare('SELECT execution_id FROM controlled_task_preparations WHERE task_id = ?').get(execution.entityId) as { execution_id: string | null } | undefined
   if (!binding || binding.carrierFingerprint !== link.carrierFingerprint || execution.projectId !== link.projectId || execution.agentId !== binding.carrierId || preparation?.execution_id !== execution.id || execution.pilotCommandId) throw new Error('Owner回执与冻结执行身份不匹配')
-  const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id = ?').get(executionId) as Admission | undefined
+  const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id = ?').get(executionId) as OwnerPlanningAdmission | undefined
+  if (admission) assertOwnerPlanningAdmission(admission)
   if ((!execution.sessionId && (admission || runtimeResult)) || (admission && (admission.link_id !== link.id || admission.session_id !== execution.sessionId || admission.source_snapshot !== JSON.stringify(frozen.context)))) throw new Error('Owner回执与实际请求占位不匹配')
   const trustedRuntime = runtimeSource === 'ai-sdk' && runtimeResult?.type === 'result' && runtimeResult.session_id === execution.sessionId
   const validTerminal = !!(trustedRuntime && admission && runtimeResult.subtype === 'success' && runtimeResult.finish_reason === 'stop' && typeof runtimeResult.result === 'string')

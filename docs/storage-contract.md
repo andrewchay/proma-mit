@@ -31,3 +31,5 @@ Owner规划B（2026-10-09）追加`project_owner_planning_links.source_snapshot`
 ### Owner规划Run与停止/隔离证据（2026-10-09）
 
 C阶段在同paa.db新增`project_owner_planning_run_receipts`、`project_owner_planning_run_outcomes`、`project_owner_planning_stop_requests`和`project_owner_planning_callback_evidence`。原文/nullable用量/Runtime报告费用或unknown先保全，再事务处理生成；回执不可覆盖，停止意图持久化，坏来源server callback隔离记录不作为生成或结清证明。generated计划指向原始Run回执，不能单独恢复或删除这些表、Goal/Plan/配置/link/preparation/admission/任务/execution任一子集。关联Owner准备或Run的项目、承载任务和目标业务任务暂不支持物理删除，应暂停并保留证据；没有隐式清缓存或归档入口。未知发送与费用不因停止、回滚、重开而变零或释放占位。原生迁移/重开/receipt先提交及生成事务ABORT验收见[Owner规划C](plans/2026-10-07-ai-project-owner/owner-planning-runs.md)；不是断电或多进程验收。生产模型启动禁令仍保留，完整受控调用恢复待D验证。
+
+Owner D为`project_owner_planning_admissions`追加nullable `integrity_hash`，新发送占位对link/execution/session/request hash/冻结source JSON/时间全部列保存本地SHA，Run接收先验证格式与该摘要。旧表仅ALTER新增列，旧行保持NULL，禁止迁移补造发送证明；没有该证据的回调仍先隔离保留原文，但不升级完整Run/费用、不生成或补发。此SHA是本地损坏检测，不是签名，也不认证拥有任意数据库写权限的攻击者。历史不可覆盖receipt仍保全当时已捕获证据，不因后续占位丢失推断新的发送许可。

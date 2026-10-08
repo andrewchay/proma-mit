@@ -134,11 +134,10 @@ function row(taskId: string): PreparationRow {
 		throw new Error('非代码任务准备回执缺失或损坏，请保留数据核查')
 	return record
 }
-function context(taskId: string, allowOwnerPreview = false) {
-  // A阶段只允许暂停准备。目的双证据防止关联丢失后降级普通Agent；B阶段将替换为受限出口校验。
+function context(taskId: string) {
+  // Owner仅允许当前权威冻结来源；残余或损坏用途证据拒绝降级。
+  // 此校验不是发送许可：仍须费用确认、范围复核、原子认领与最终单请求准入。
   const ownerPlanning = resolveOwnerPlanningTask(taskId)
-  if (ownerPlanning && !allowOwnerPreview)
-    throw new Error('Owner规划出口尚未开放，不能按普通Agent启动')
 
 	const task = store.getTask(taskId)
 	if (
@@ -285,7 +284,7 @@ export function getControlledTaskStartPreview(
 ): ControlledTaskStartPreview {
 	text(taskId, 128, '任务ID')
 	row(taskId)
-	const facts = context(taskId, true)
+	const facts = context(taskId)
 	if (!['paused', 'pending', 'in_progress'].includes(facts.task.status))
 		throw new Error('当前任务状态不能开始')
 	const executions = store.listAgentExecutionsByEntity('task', taskId)

@@ -55,9 +55,9 @@ test('Given 旧A无资料快照 When 明确重复准备且来源仍当前 Then �
   const f = prepared(); store.getProjectDb().prepare('UPDATE project_owner_planning_links SET source_snapshot = NULL WHERE id = ?').run(f.link.id)
   expect(() => source.resolveOwnerPlanningTask(f.link.planningTaskId)).toThrow('记录'); expect(service.prepareOwnerPlanning(f.project.id, { ...request(f.project.id), requestId: f.link.requestId }).id).toBe(f.link.id); expect(source.resolveOwnerPlanningTask(f.link.planningTaskId)).not.toBeNull()
 })
-test('Given 伪造running却无本次费用确认 When 最终占位 Then A仍拒绝且无准入', () => {
+test('Given 伪造running却无本次费用确认 When 最终占位 Then 本次费用确认门禁拒绝且无准入', () => {
   const f = prepared(); const run = running(f); const scope = source.resolveOwnerPlanningSession(run.sessionId)!
   const body = JSON.stringify({ model: f.employee.modelId, max_tokens: 4096, stream: true, messages: [{ role: 'system', content: scope.request.systemPrompt }, { role: 'user', content: scope.request.userPrompt }] })
-  expect(() => claimOwnerPlanningProviderRequest(run.sessionId, body, new URL('https://example.invalid/v1/chat/completions'))).toThrow('规划出口')
+  expect(() => claimOwnerPlanningProviderRequest(run.sessionId, body, new URL('https://example.invalid/v1/chat/completions'))).toThrow('启动确认缺失')
   expect((store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM project_owner_planning_admissions').get() as { c: number }).c).toBe(0)
 })

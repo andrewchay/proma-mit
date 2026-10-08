@@ -11,6 +11,7 @@ let encrypted = false
 const electron = { ...buildElectronMock(), safeStorage: { isEncryptionAvailable: () => encrypted, encryptString: (value: string) => Buffer.from(value, 'utf8'), decryptString: (value: Buffer) => value.toString('utf8') } }
 mock.module('electron', () => electron)
 mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
+const { ownerPlanningAdmissionHash } = await import('./project-owner-planning-provider')
 const store = await import('./project-sqlite-store')
 const employees = await import('./agent-employee-service')
 const { createAgentWorkspace } = await import('./agent-workspace-manager')
@@ -52,6 +53,8 @@ async function launch() {
   expect(await employees.tryStartExecution(executionId)).toBe(true)
   const execution = store.getAgentExecution(executionId)!, frozen = source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
   store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at) VALUES (?, ?, ?, ?, ?, ?)').run(f.link.id, executionId, execution.sessionId, 'a'.repeat(64), JSON.stringify(frozen.context), Date.now())
+  const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id=?').get(executionId) as import('./project-owner-planning-provider').OwnerPlanningAdmission
+  store.getProjectDb().prepare('UPDATE project_owner_planning_admissions SET integrity_hash=? WHERE execution_id=?').run(ownerPlanningAdmissionHash(admission), admission.execution_id)
   const result = { type: 'result' as const, subtype: 'success' as const, session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: 1, contextFingerprint: f.link.contextFingerprint, proposal: { summary: '规划成果', assumptions: [], risks: [], steps: [{ key: 'brief', title: '研究定位', outcome: '定位简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: frozen.context.sources.roles[0]!.key }] } }), usage: { input_tokens: 0, output_tokens: 0 } }
   return { ...f, executionId, callbacks, result }
 }

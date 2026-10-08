@@ -73,6 +73,8 @@ export function resolveOwnerPlanningSession(sessionId: string): OwnerPlanningSes
   if (!execution || execution.entityType !== 'task') return null
   const source = resolveOwnerPlanningTask(execution.entityId)
   if (!source) return null
+  // 持久停止意图先于abort；即使Runtime未确认取消，也不能再获得新发送许可。
+  if (store.getProjectDb().prepare('SELECT execution_id FROM project_owner_planning_stop_requests WHERE execution_id = ?').get(execution.id)) throw new Error('Owner已请求停止，不能启动或继续发送')
   const preparation = store.getProjectDb().prepare('SELECT execution_id FROM controlled_task_preparations WHERE task_id = ?').get(source.link.planningTaskId) as { execution_id: string | null }
   if (execution.status !== 'running' || execution.sessionId !== sessionId || execution.agentId !== source.binding.carrierId || execution.projectId !== source.link.projectId || preparation.execution_id !== execution.id || execution.pilotCommandId) throw new Error('Owner规划会话没有当前同来源受控执行，不能伪造Pilot授权')
   return { ...source, executionId: execution.id, sessionId }

@@ -11,6 +11,7 @@ let encrypted = false
 const electron = { ...buildElectronMock(), safeStorage: { isEncryptionAvailable: () => encrypted, encryptString: (value: string) => Buffer.from(value, 'utf8'), decryptString: (value: Buffer) => value.toString('utf8') } }
 mock.module('electron', () => electron)
 mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
+const { ownerPlanningAdmissionHash } = await import('./project-owner-planning-provider')
 const store = await import('./project-sqlite-store')
 const employees = await import('./agent-employee-service')
 const { createAgentWorkspace } = await import('./agent-workspace-manager')
@@ -47,6 +48,8 @@ function accepted(f: ReturnType<typeof prepared>) {
   const run = running(f); const snapshot = source.readOwnerPlanningSnapshot(f.link.planningTaskId)!;
   // 只测试可信callback/生成链：显式假占位，不冒充真实费用授权或HTTP。
   store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at) VALUES (?, ?, ?, ?, ?, ?)').run(f.link.id, run.executionId, run.sessionId, 'a'.repeat(64), JSON.stringify(snapshot.context), Date.now())
+  const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id=?').get(run.executionId) as import('./project-owner-planning-provider').OwnerPlanningAdmission
+  store.getProjectDb().prepare('UPDATE project_owner_planning_admissions SET integrity_hash=? WHERE execution_id=?').run(ownerPlanningAdmissionHash(admission), admission.execution_id)
   const response = { schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, proposal: { summary: '生成定位简报', assumptions: [], risks: [], steps: [{ key: 'brief', title: '定位研究', outcome: '定位简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: snapshot.context.sources.roles[0]!.key }] } }
   const result = { type: 'result' as const, subtype: 'success' as const, session_id: run.sessionId, result: JSON.stringify(response), finish_reason: 'stop', usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }
   return { ...f, ...run, response, result }
@@ -112,10 +115,10 @@ test('Given 已排队但session建立前失败 When 可信启动错误回调 The
   const f = prepared(); const executionId = randomUUID(); store.createAgentExecution({ id: executionId, projectId: f.project.id, entityType: 'task', entityId: f.link.planningTaskId, agentId: f.employee.id, sessionId: '', status: 'queued', prompt: '' }); store.getProjectDb().prepare('UPDATE controlled_task_preparations SET execution_id = ? WHERE task_id = ?').run(executionId, f.link.planningTaskId)
   expect(runService.recordOwnerPlanningRun(executionId, 'unknown', undefined, false, 'session创建失败')?.state).toBe('failed'); expect(store.getAgentExecution(executionId)?.status).toBe('failed')
 })
-test('Given paused Owner准备 When 只读预检 Then 显示实际用途/全JSON资料/单请求未知成本，不解锁真实启动', async () => {
+test('Given paused Owner准备 When 只读预检 Then 显示实际用途/全JSON资料/单请求未知成本，预检本身不授权启动', async () => {
   const f = prepared(); const { getControlledTaskStartPreview, startControlledTask } = await import('./controlled-project-task-service'); const preview = getControlledTaskStartPreview(f.link.planningTaskId)
   expect(preview.ownerPlanning).toMatchObject({ purpose: 'owner_planning', ownerName: f.binding.ownerName, bindingRevision: 1, goalRevision: 1, planRevision: 0, maxRequests: 1, maxOutputTokens: 4096, costs: 'unknown_no_hard_cap', context: { fingerprint: f.link.contextFingerprint } }); expect(preview.modelId).toBe(f.employee.modelId!)
-  expect(() => startControlledTask({ taskId: f.link.planningTaskId, previewHash: preview.previewHash, acknowledgeModelCosts: true })).toThrow('Owner规划出口尚未开放'); expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(0)
+  await expect(startControlledTask({ taskId: f.link.planningTaskId, previewHash: preview.previewHash, acknowledgeModelCosts: false })).rejects.toThrow('费用'); expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(0)
 })
 test('Given 已持久停止意图但SDK晚到stop When 完成 Then 留原文USD但不能生成，不把abort接受当远端证明', () => {
   const f = accepted(prepared()); expect(runService.requestOwnerPlanningStop(f.executionId)).toBe(true)
