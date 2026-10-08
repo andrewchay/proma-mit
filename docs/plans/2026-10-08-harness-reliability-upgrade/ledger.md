@@ -1,0 +1,418 @@
+# Gravitas Harness Reliability Upgrade 实施台账
+
+> 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
+> 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
+> 文档性质：实施控制面与验收账本，不是已实现能力声明。
+> 当前总状态（截至2026-10-08 22:10 GMT+8首批实施）：**已开始；H00/H01源码审计与V01共享DTO/解析器已落地。M0整体及V02/V03生产完成门禁未完成，所有发布门禁未通过。**
+> 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
+> 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
+
+**Goal：** 在保留多 Runtime、本地权威存储和既有业务验收规则的前提下，提高完成验证、工具上下文效率、执行安全与策略一致性。
+
+**Architecture：** 复用既有 Goal、CapabilityDescriptor、ContextPacket、审批、研发快照和评测设施。在工具执行和 turn 结束边界增加薄层、版本化契约与主进程权威证据；不重写所有 Runtime，不复活已关闭的 TCC。
+
+**Tech Stack：** Bun、TypeScript、Electron、React、Jotai、现有 JSON/JSONL 与业务 SQLite、既有 Claude/Pi/AI SDK 适配层。无新增依赖决定。
+
+---
+
+## 1. 目标、范围与产品原则
+
+### 1.1 六条升级主线
+
+1. **验证完成**：区分模型退出、机械检查通过、业务验收通过；验证必须对应最新产物。
+2. **工具按需加载**：复用既有两层能力目录，评估独立生产接线，减少无关 schema。
+3. **工具 effects 与调度**：按真实资源冲突串行，独立只读任务并行；截断调用不产生副作用。
+4. **跨 Runtime 策略契约**：明确支持范围、执行边界和失败原因；不能兑现的受控保证 fail-closed。
+5. **上下文与学习治理**：压缩保留关键约束和证据定位；记忆/Skill 候选经过原有审批。
+6. **ACP 可选接入**：由明确的编辑器或宿主需求决定，非首轮发布前置。
+
+### 1.2 不在本轮范围
+
+- 新 Agent 框架、向量代码 RAG、Agent swarm、A2A 内部通信和重写所有循环。
+- 自动改写项目或工作区 AGENTS.md；未经单独授权修改 README.md。
+- 默认打开 TCC、重新运行 TCC Provider 实验、自动 relevance scorer。
+- 将每次压缩变为新业务会话；新增第二套 Goal、审批、Memory 或权威数据库。
+- 用 LLM 自述、日志中的“PASS”字符串或全局测试通过替代产物验证与业务签收。
+- 因本台账存在就创建定时任务、真实员工派发、模型调用或 ACP 外部监听端口。
+
+### 1.3 明确边界
+
+- 论文是固定版本源码比较，不是统一基准或因果实验；其采用比例、性能百分比不是本项目验收值。
+- 研究对象主要是 coding harness；文档、营销、研究任务需要独立验证器，不能强套代码测试。
+- “同一份策略”不等于“所有 Runtime 实现同样的保证”；以能力矩阵和验证证据为准。
+- 权限不是 sandbox；预算估算不是实际账单；abort 接受不是进程/Provider 已停止。
+- 发现工具、加载 schema、选择模型均不产生执行授权。
+
+## 2. 基线核验与上一轮建议修正
+
+规划基线形成于2026-10-08早轮，只做源码/台账读取。21:44 GMT+8之后的首批实施另有源码审计和离线测试；当前明细见第13节及`contracts.md`。历史私有scoreboard未重新核验。
+
+| 领域 | 已有入口（源码或台账） | 当前判断 | 本升级采取的动作 |
+|---|---|---|---|
+| AgentGoal | `apps/electron/src/main/lib/goal-runtime/goal-coordinator.ts`；`packages/shared/src/types/agent.ts` | complete 对有验收条件的 Goal 仅要求 evidence 非空；尚非新鲜证据的逐条件核验 | 扩展现有完成门禁，不新建 Goal 系统 |
+| 另一类 Goal | `packages/shared/src/types/goal.ts`；`apps/electron/src/main/lib/goal-service.ts` | 长生命周期 Goal 与 AgentGoal 是不同现有对象 | M0 明确关联身份，不从标题匹配或合并存储 |
+| 工具目录 | `packages/shared/src/context/capability.ts`、`capability-summary.ts`、`capability-schema-projection.ts` | 已有 access、confirmation、parallelSafe 和按需 schema 模块 | 修正“需要从零开发”的建议；重点为独立生产接线和验收 |
+| 工具执行类型 | `apps/electron/src/main/lib/agent-runtime/types.ts` | RuntimeToolDefinition 未表达完整资源 effects | 与已有 descriptor 同源扩展，而非复制目录 |
+| TCC 历史决定 | `docs/plans/2026-09-22-typed-context-compiler-ledger.md` M3-07 | 用户决定关闭 TCC、不再实验；M4–M6 作为独立工程里程碑保留 | 禁止借本升级重新开启；独立能力也需新验收，不继承历史 PASS |
+| 压缩 | `apps/electron/src/main/lib/agent-runtime/context-compaction.ts`、`agent-session-manager.ts` | 已有结构化 packet、预算缓冲、旧工具裁剪及 compaction archive | 补 fidelity/provenance 测试，不用 lineage 旋转替换业务 session |
+| 研发证据 | `apps/electron/src/main/lib/development-snapshot-service.ts`、`development-apply-service.ts`；`docs/storage-contract.md` | 已有快照、验证/应用记录及会话私有产物 | M0 先审计可复用证据结构，避免第二套验证来源 |
+| Runtime 能力 | `packages/shared/src/types/agent.ts` 的 AGENT_RUNTIME_CAPABILITIES | 当前 ai-sdk 与 claude 的预算停止能力位为 true，pi/proma 为 false；强度和适用路径不同 | 修正旧上下文可能过时的判断；不能把位值当真实全链验收 |
+| Memory/Skill | `memory-plugin-service.ts`、`memory-governance.ts`；`agent-runtime/skill-porting/*` | 已有候选/审批、来源元数据、scanner/auditor；scanner 名称不代表安全扫描 | 先审计既有门控覆盖，再补缺口，不另造自动学习系统 |
+| 评测 | `apps/electron/src/main/lib/agent-runtime/eval/self-evolver.ts`、`eval-runner.ts` | 已有 baseline、候选、回滚和 held-out 设施 | 为本升级新增独立 benchmark；不运行关闭的 TCC benchmark |
+| ACP | 本轮查阅官方介绍；相关范围源码搜索未发现明确接线 | 不足以证明全仓完全没有 ACP | 可选阶段先做全仓核验和需求确认，不把缺失当已证明事实 |
+
+**工作树保护：** 开始时 `.context/note.md` 已有用户/其他工作改动；本任务不触碰它。后续实施先检查工作树并使用独立 linked worktree、立即 SelectWorktree 绑定，再编辑代码。
+
+## 3. 状态、证据与完成规则
+
+### 3.1 状态枚举
+
+`待开始` / `进行中` / `阻塞` / `部分完成` / `已完成` / `取消`。
+
+- 已有模块记为“复用基线”，不把新增工作项标成已完成。
+- 测试 pass、fail、skip、未执行分别记录；skip 永远不是 pass。
+- 完成必须具备代码/文档位置、固定版本、测试命令与结果、限制、回滚方式。
+- 取消保留记录和理由，不删除历史。
+- 阻塞必须记录解除条件，不以“以后再做”替代。
+
+### 3.2 每次执行必须追加的证据字段
+
+`recordId`、时间/时区、workItemIds、commit/build 标识、工作树差异、Runtime/SDK/Provider/model、平台、配置作用域、fixture/真实运行、命令、pass/fail/skip、artifactRef、费用来源、限制、下一步。
+
+- 本 ledger 只放证据摘要及定位，不写密钥、聊天正文、私人路径明细或完整工具敏感参数。
+- 敏感原始证据放会话私有目录；公开 fixture 必须脱敏。
+- 新运行记录采用 `HARNESS-YYYYMMDD-NNN`；新设计决定采用 `DECISION-HARNESS-NNN`。
+
+## 4. 里程碑与依赖
+
+| ID | 里程碑 | 退出条件 | 依赖 | 当前状态 |
+|---|---|---|---|---|
+| M0 | 范围、契约与基线 | 现有证据/目录/Runtime 接线审计，方案和门禁冻结 | 本 ledger | 部分完成：H00/H01及V01子契约；H02完整决策/H03仍待补 |
+| M1 | 产物绑定的完成验证 | coding AgentGoal 仅凭权威、新鲜证据完成；人工验收不变 | M0 | 部分完成：V01；无生产门禁接线 |
+| M2 | 独立按需工具接线 | 复用目录，权限不降级，关闭 TCC，工具选择与成本通过门禁 | M0；上线需 M3 截断保护 | 待开始 |
+| M3 | Effects、安全调度与截断保护 | 冲突序列化、未知保守、取消清锁、不执行截断调用 | M0 | 待开始 |
+| M4 | 跨 Runtime 策略一致性 | 能力矩阵、版本化策略、契约测试和不支持清单 | M1/M2/M3 的契约 | 待开始 |
+| M5 | 压缩与学习治理补强 | 多轮 fidelity、原文定位、候选审批/撤销覆盖 | M0；M4 | 待开始 |
+| M6 | 集成、性能与发布 | 完整回归、隔离打包、真实 opt-in 验收、恢复/回滚 | M1–M5 | 待开始 |
+| M7 | ACP 可选探索 | 有明确宿主与授权，固定协议版本，离线契约通过 | M4；M6 稳定路径 | 阻塞：尚无接入需求和实施授权 |
+
+推荐交付顺序：M0 → M1 → M3 安全地基 → M2 独立接线 → M4 → M5 → M6；M7 单独决策。M2 设计可与 M1 并行，但不能让工具加载绕过尚未建立的安全执行边界。
+
+## 5. 共享契约与存储设计要求
+
+### 5.1 验证与完成
+
+拟议契约最终在 M0 冻结，以下不是现有 API 声明。
+
+- **ArtifactRevision**：稳定 artifactId、所属 workspace/session/execution/task、内容 hash、scope hash、捕获时间、来源快照引用。不能只有全局 Git HEAD，必须覆盖 dirty/untracked 文件；symlink、删除、生成文件和范围变更有明确定义。
+- **VerificationReceipt**：version、receiptId、criteriaId、verifierId/version、artifactRevision、runId/toolCallId、开始/结束、exitCode、result（passed/failed/unknown/skipped）、evidenceRef、主进程来源。模型不能自己构造 passed 回执。
+- **VerificationDecision**：required criteria 的逐项结果、freshness、overallStatus、阻塞原因、引用。任一缺失、失败、过期或 unknown 不通过。
+- **Lifecycle**：保留现有 execution 状态；另加验证投影，不把所有历史 completed 重置或伪造已验证。历史记录没有回执显示 legacy/unverified。
+- 首片只覆盖显式配置验证要求的 coding AgentGoal。业务任务完成、交付物验收和交接继续由既有 project-chain 权威服务决定。
+- 验证器来自用户/项目认可的固定配置，Agent 不得用空测试命令替换验收标准。退出码 0 不足以证明收集到了测试；记录测试计数和命令适用性，零测试按预定规则拒绝或 unknown。
+- 测试运行期间和结束后再检查产物修订；外部编辑、验证器执行造成产物变化或退出前再次修改会使证据失效。
+
+### 5.2 工具身份、目录与 effects
+
+- 复用 CapabilityDescriptor 的稳定 id/schemaRef/source/confirmation；建立与 RuntimeToolDefinition 的单一映射。
+- 目录修订绑定 builtin 版本、MCP server/tool 身份和 schema hash；禁用/断连/更新使旧选择失效。缓存不是授权来源。
+- 常驻工具集合按任务与 Runtime 契约冻结，不以论文“15个”作硬阈值；schema token 预算包括 discovery 元数据。
+- unknown tool/schema load failed：明确返回不可用原因；不能执行未注册工具。正常发现失败可回退获授权的 baseline catalog，受控运行不能借回退绕过 scope/privacy policy。
+- effects：read/write/delete、local/external、资源键、scope、unknown。路径键做 realpath/根边界校验，目录冲突覆盖子路径，大小写/符号链接/不存在目标按平台契约处理。
+- 任意 Bash、MCP side-effect metadata 或模型声明均不能自动成为“并行安全”；默认 unknown，除非有可信工具实现/配置约束。
+
+### 5.3 策略与运行保证
+
+- JSON 版本化策略，主进程校验；workspace/session 可收紧，不能放宽应用硬底线或现有审批。
+- 归一化 deny/ask/allow、路径/数据/模型 scope、回合/时间/费用限制、验证要求、可支持的恢复与取消。
+- 能力位同时声明强度和边界：预算预请求准入、超额后停止、进程终止核验、OS sandbox 不混用。
+- policy revision/fingerprint 绑定运行和证据；撤权后尚未开始的操作拒绝。执行中取消/外部效果未知需要保留 unknown 与待对账。
+- 所有新 UI 状态采用 Jotai；新增 IPC 遵循 shared → main → preload → renderer 四层同步。
+
+### 5.4 权威记录与兼容性
+
+- 优先复用研发验证、业务账本和 session JSONL；M0 先决定适合的权威落点，禁止“为了方便”建立重复真相。
+- 若需要新的技术回执日志，优先在会话私有目录追加 JSONL，并通过已存在的业务身份引用；若原子业务迁移需要 SQLite 表，单独说明理由及迁移/恢复方案。
+- hash 只能证明绑定内容/一致性，不证明成果质量或防篡改真实性；审批/Provider/外部证据仍需来源核验。
+- 旧数据读取兼容、不伪造历史回执；未知 schema version fail-closed 且保留原件。
+- 禁止在文档规划阶段迁移、清理或修复用户真实配置。
+
+## 6. 可执行工作项
+
+以下路径中“新增”均为拟议位置，尚不存在；实施前若已有等效模块应复用并在账本记录调整。
+
+### M0：冻结基线
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| H00 | 审计既有验证/Goal：goal-coordinator.ts、development-snapshot-service.ts、development-apply-service.ts、project-chain-service.ts | 映射 AgentGoal/Goal/Task/Execution/Deliverable 身份和证据；Given 同名不同任务，Then 不互认回执 | 无 | 已完成：contracts.md身份映射/缺口审计；V01只覆盖结构不串项 |
+| H01 | 审计工具目录与 Runtime：capability*.ts、tool-registry.ts、pi-tool-bridge.ts、各 adapter | 输出 schema 进入模型和执行路径图；分别标注已生产、实验、关闭、未知；不调用 Provider | H00 | 已完成：contracts.md接线表；SDK先验截断阻断仍未知 |
+| H02 | 冻结契约/benchmark；新增本目录 `contracts.md`、`benchmark-spec.md` | 记录验证配置、存储、非劣门槛、固定样本和错误语义；Given 旧 completed，Then 不补造 verified | H00/H01 | 部分完成：V01子契约和14-case规格；完整权威落点/flags/策略仍未冻结 |
+| H03 | 无副作用基线与 feature flag 设计；复用 eval/trace-writer.ts、context-metrics.ts | 同版本 baseline 可复现；flag off 无新行为、无 TCC，日志无敏感正文 | H02 | 待开始 |
+
+### M1：完成验证
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
+| V02 | 复用快照与运行证据；拟新增 `apps/electron/src/main/lib/verification/verification-service.ts` 及测试 | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 待开始 |
+| V03 | 接线 goal-runtime/goal-coordinator.ts 和测试；拟新增 verification/completion-guard.ts | Given 显式 required criteria，When complete，Then 逐项核验；缺/错/旧/skip/零收集拒绝，不跳业务验收 | V02 | 待开始 |
+| V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
+| V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
+
+**首片限制：** 开始仅支持固定、本地、已授权的确定性验证命令。研究真实性、文案语义质量、外部投放成功都不能因通用 guard 而宣称已验证。
+
+### M2：复用目录并独立接线
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| D01 | 扩展已有 capability.ts、capability-summary.ts、capability-schema-projection.ts 及测试 | 保持版本兼容和稳定id；失效目录/未知 schema 明确 omitted；不重复实现 catalog | H01/H02 | 待开始 |
+| D02 | 拟新增 `agent-runtime/tool-discovery.ts` 及测试；接线 tool-registry.ts | 词法/规则发现，按 token 预算选择；目录修订生效；CJK/同名工具/大型MCP目录；required工具不静默丢失 | D01 | 待开始 |
+| D03 | 先选一个合适生产 Runtime 的独立 opt-in 路径；ai-sdk-runtime-core.ts 或 pi-tool-bridge.ts 的选择由H01冻结 | 没选中的schema不进入模型；加载不提权；拒绝未加载/旧schema调用；每Runtime明确支持/不支持 | D02；E03/P01 | 待开始 |
+| D04 | 接入新独立 benchmark，复用 eval-runner.ts；新增本目录结果引用 | 多步工具选择与恢复非劣，统计schema token、总token/cache、时延、失败；不能拿历史M4单轮结果作新PASS | D03 | 待开始 |
+
+**TCC 保护：** 独立 discovery flag 默认 false，不修改 typedContextCompiler 默认、不调用 TCC spawn 实验。需要额外上下文治理时必须另行说明，不能以工具目录作为复活 TCC 的依赖。
+
+### M3：安全执行地基
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| E01 | 从 capability.ts 映射 effects；拟新增 `packages/shared/src/context/tool-effects.ts` 及测试；扩展 RuntimeToolDefinition | descriptor与执行同源；unknown保守；Bash/MCP不因自述而安全；旧工具缺字段不自动并行 | H02 | 待开始 |
+| E02 | 拟新增 `agent-runtime/tool-scheduler.ts` 及测试 | 资源冲突读写/写写串行；独立可信读取并行；目录/realpath别名冲突；限制并发；锁按确定顺序避免死锁 | E01 | 待开始 |
+| E03 | 拟新增 `agent-runtime/tool-call-integrity.ts` 及测试；接线 ai-sdk-runtime-core.ts、pi-tool-bridge.ts | response length/不完整批次不执行任何待执行mutation；已执行的流式调用单独记录，不能谎称撤销；SDK无法先验检查则不声明支持 | E01 | 待开始 |
+| E04 | 取消/错误/重启矩阵；tool-scheduler.ts 与 adapter 测试 | queued取消不开始；错误释放锁；幂等read可按策略重试，unknown写/外部调用不自动重放；禁用后仍保留硬底线 | E02/E03 | 待开始 |
+| E05 | 小范围Runtime生产接线与调度指标 | 给出同资源跨session/父子Agent的锁域；不支持跨进程共享锁时禁止宣称全局安全；同一browser/terminal始终序列化 | E04 | 待开始 |
+
+### M4：策略一致性
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| P01 | 拟新增 `packages/shared/src/types/harness-policy.ts` 及测试；扩展现有 AgentRuntimeCapabilities | 版本化配置与保证强度；不支持required保证在Provider前拒绝；策略只能收紧、不放宽硬底线 | H02 | 待开始 |
+| P02 | 复用 agent-permission-service.ts、permission-rules.ts、project-pilot-runtime-budget.ts 和已有 controlled出口 | Plan只允许既有plan写范围；高风险/外发审批不旁路；allow-all不吞硬deny；保留真实费用unknown | P01 | 待开始 |
+| P03 | 拟新增 `adapters/harness-policy-conformance.test.ts`，参数化真实adapter边界 | claude/pi/ai-sdk/proma分别填写 support/unsupported/retired；不为了测试恢复retired runtime；撤权/预算/取消一致 | P02；V03/D03/E05 | 待开始 |
+| P04 | UI能力说明、审计原因与schema迁移 | 展示作用域、策略revision、拒绝原因、sandbox与approval区别；未知字段/损坏配置保留原件并拒绝受控运行 | P03 | 待开始 |
+
+### M5：上下文与学习
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| C01 | 扩展 context-compaction-goldens.ts、context-compaction.test.ts、context-compaction-budget.test.ts | 连续3次以上压缩保留原目标、禁止项、关键决策和未解决阻塞；recent tail保留完整tool-call/result组 | H02 | 待开始 |
+| C02 | 扩展 context-compaction.ts、agent-session-manager.ts 与审计测试 | 摘要有原文/修订定位；archive缺失显示unrecoverable；中止/空结果/错误不写成功；overflow恢复不重放mutation | C01；P03 | 待开始 |
+| C03 | 审计并补 memory-plugin-service.ts、memory-governance.ts、skill-porting/auditor/installer 入口 | session lesson → candidate → existing Approval → approved写入；跨项目/敏感/矛盾事实不自动推广；安全scanner不作无恶意证明 | H00；P03 | 待开始 |
+| C04 | 候选patch的版本、来源和恢复测试 | stale patch拒绝；重复批准幂等；更新失败旧版本可恢复；缺授权不写AGENTS/README；Skill变更遵守version契约 | C03 | 待开始 |
+
+### M6：验收与发布
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| R01 | 新独立 held-out benchmark 与离线矩阵；复用 eval/self-evolver.ts、trace-writer.ts | 多任务/多Runtime基线和失败样本；安全断言零容忍；未知费用不作0；不跑TCC实验 | M1–M5 | 待开始 |
+| R02 | 完整PR门禁与隔离打包；现有根scripts、scripts/package-smoke.ts | typecheck/test/lint/docs、完整build、隔离包启动/数据库重开；原生helper失败上抛 | R01 | 待开始 |
+| R03 | 单独授权的真实Provider opt-in试点 | 固定Runtime/model/build/budget/cases；逐调用留证；验证真实工具/权限/最新产物；skip不记通过 | R02；用户另行授权 | 阻塞：未获真实调用授权 |
+| R04 | 回滚演练与分阶段启用 | 关闭新flags恢复baseline，硬安全底线不降低；旧数据可读、日志不删；扩容需正式门禁决策 | R03 | 待开始 |
+
+### M7：ACP 可选分支
+
+| ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
+|---|---|---|---|---|
+| A01 | 新增本目录 `acp-decision.md`：需求/全仓能力/协议版本/依赖调研 | 决定client或server及一个真实宿主；没有需求则取消实现，仅保留研究结论 | 用户需求；M4 | 阻塞：待用户决定用途 |
+| A02 | 只实现一个方向的离线adapter；候选目录 `main/lib/acp/` | 初始化、能力协商、session、prompt、updates、cancel、permission映射；未知方法版本明确拒绝 | A01 | 待开始 |
+| A03 | MCP/ACP权限分离与宿主测试 | client提供filesystem/terminal能力不能越scope；Agent拒绝也不能由宿主“已批准”覆盖；连接断开不静默自动批准 | A02 | 待开始 |
+| A04 | 一个固定宿主的实际互通 | 协议版本/宿主版本/本地stdio链路可复现；resume等仅对声明支持测试；远程不作为首片 | A03；单独授权 | 阻塞：待宿主与试跑授权 |
+
+## 7. 必须通过的横向行为场景
+
+| Case | Given / When / Then | 对应项 |
+|---|---|---|
+| B01 | 最后一次修改后无新验证，完成请求被拒绝；通过验证后再修改仍被拒绝 | V02/V03 |
+| B02 | 回执对应别的任务、session、artifact、criteria或revision，不互认 | V01/V02 |
+| B03 | 工具stdout含PASS但exit非0、测试数为0、验证器不匹配，不能判已验证 | V02/V03 |
+| B04 | 验证时外部修改、权限撤销、用户暂停或输入，不能在旧结果上继续完成/续跑 | V03/V04 |
+| B05 | 数据库重开/进程重启，修复计数、证据版本和unknown保留；非幂等副作用不重放 | V04/E04/R04 |
+| B06 | discovery选中敏感工具，仍需原审批；未授权schema不因fallback曝光或执行 | D02/D03/P02 |
+| B07 | MCP断连/禁用/同名跨server/目录更新，旧schema引用失效；明确错误而非幻觉执行 | D01/D03 |
+| B08 | 相同文件的realpath别名、父子路径、跨session写入冲突，实际锁域内安全串行 | E02/E05 |
+| B09 | 任意Bash、未知MCP effects、external操作，默认保守；模型声明不提权 | E01/P02 |
+| B10 | 模型输出截断、参数不完整或batch损坏，尚未开始的mutation零执行；已执行效果明确unknown/事实 | E03 |
+| B11 | queued取消、running错误/超时，锁正确释放；并发上限生效，无deadlock或工具结果错配 | E04 |
+| B12 | Runtime缺必要能力，首次Provider请求前拒绝；unsupported/skip与passed区分 | P01/P03 |
+| B13 | 连续压缩不丢原目标/禁令/未完任务；归档丢失不假装可恢复，不伪造成功boundary | C01/C02 |
+| B14 | 记忆/Skill候选未批准、旧patch、重复审批、安装中断，不覆盖权威内容或扩大scope | C03/C04 |
+| B15 | flags off：行为兼容；TCC始终关闭；retired Runtime不恢复；现有Pilot/Task Review门禁不降低 | H03/P03/R04 |
+| B16 | 同一coding请求run finished ≠ verified ≠ accepted，UI不会一律显示业务完成 | V05/P04 |
+| B17 | ACP宿主请求越权filesystem/terminal、断连后代批准、未知版本，不绕原策略 | A02/A03 |
+
+## 8. 评测与发布门禁
+
+### 8.1 新benchmark设计（拟议，M0冻结）
+
+- 固定至少12个代表性case：完成/陈旧证据/验证失败、简单/复杂工具选择、CJK/MCP目录、资源冲突、截断、取消恢复、压缩fidelity、Memory审批。
+- 安全与状态机case走确定性fixture；模型选择case采用相同版本、模型、任务的paired baseline/upgrade，并覆盖多轮工具交互。
+- fixture矩阵至少覆盖当前正式受支持的主要Runtime；无法接线的Runtime为unsupported，不填PASS。
+- 真实Provider试点初拟每个模型工具选择至少30对样本，样本数和费用在单独授权前冻结；这是筛查，不冒充统计充分或生产普适性证明。
+- 记录全体样本，包括失败、超时、重试、schema发现失败和人为中止；不得只统计成功样本。
+- 质量：task success、required-tool recall、验证漏拒/误拒、evidence freshness、敏感泄漏、人工纠正。
+- 效率：schema tokens、总input/output、cache read/write、wall time p50/p95、discovery往返、重试、真实/估算费用来源。
+
+### 8.2 初拟阈值（不是已测结果）
+
+- B01–B17适用项100%通过；任何越权、伪造完成、截断mutation执行或敏感泄漏均阻断发布。
+- 固定确定性case中的陈旧/缺失/错身份证据拒绝率100%；合法新鲜证据误拒绝为0。
+- paired试点 task success 不低于baseline，required-tool recall不低于baseline；小样本不能据此宣称普适非劣。
+- 大工具目录case的schema token平均减少至少20%；总token/费用和p95时延必须同时报告，不以schema节省掩盖净退化。
+- 总token或p95时延恶化超过10%时阻断默认启用，除非用户依据质量收益明确接受；不改变安全硬门槛。
+- compaction固定关键约束/未完任务保留率100%，recent tool协议完整率100%。
+- 默认推广需要更多代表性试用证据和用户决定；一轮小样本通过只赋予限定组合opt-in资格。
+
+| Gate | 要求 | 当前状态 | 可宣称能力 |
+|---|---|---|---|
+| G0 | H00–H03、contracts/benchmark/存储和支持矩阵冻结；实施获授权 | 未通过 | 仅规划已写入 |
+| G1 | 离线BDD、隔离故障矩阵、相关Runtime接线与硬安全断言 | 未执行 | 仅有逐项真实证据后可称确定性机制通过 |
+| G2 | PR门禁、完整构建、隔离包启动、最新数据兼容和回滚 | 未执行 | 仅固定构建工程验收 |
+| G3 | 单独授权真实Provider、工具/验证链和新benchmark opt-in验收 | 阻塞：未授权 | 仅已测平台/Runtime/model组合 |
+| G4 | 代表性使用观察、失败对账、默认推广授权和支持清单 | 未执行 | 才能在明确范围宣称默认可靠升级 |
+| GA | ACP官方版本核验、离线契约与固定宿主互通 | 阻塞：未定义宿主 | 与G0–G4独立，不阻塞核心升级 |
+
+## 9. 验证命令与测试隔离
+
+下面是未来执行命令，不是本轮执行记录。新增测试文件须先存在；全量不要裸跑 `bun test`。
+
+```bash
+# 既有相关测试逐文件运行
+bun test apps/electron/src/main/lib/goal-runtime/goal-coordinator.test.ts
+bun test packages/shared/src/context/capability.test.ts
+bun test packages/shared/src/context/capability-schema-projection.test.ts
+bun test apps/electron/src/main/lib/agent-runtime/context/capability-schema-projection.integration.test.ts
+bun test apps/electron/src/main/lib/agent-runtime/context-compaction.test.ts
+bun test apps/electron/src/main/lib/agent-permission-service.test.ts
+bun test apps/electron/src/main/lib/adapters/pi-tool-bridge.test.ts
+bun test apps/electron/src/main/lib/memory-plugin-service.test.ts
+
+# 新增机制的定向测试（实施后）
+bun test apps/electron/src/main/lib/verification/verification-service.test.ts
+bun test apps/electron/src/main/lib/agent-runtime/tool-discovery.test.ts
+bun test apps/electron/src/main/lib/agent-runtime/tool-scheduler.test.ts
+bun test apps/electron/src/main/lib/agent-runtime/tool-call-integrity.test.ts
+bun test apps/electron/src/main/lib/adapters/harness-policy-conformance.test.ts
+
+# 完整PR门禁
+bun run typecheck
+bun run test
+bun run lint
+bun run docs:check
+git diff --check
+
+# 打包前必须完整构建；实际打包方式按目标平台与现有脚本选择
+bun run build
+# 对隔离构建的实际可执行文件运行；没有显式Kimi配置不得连接Provider
+bun scripts/package-smoke.ts /absolute/path/to/isolated/Gravitas.app/Contents/MacOS/Gravitas
+```
+
+- 创建workspace/session/config的测试必须在导入相关模块前隔离 `PROMA_TEST_CONFIG_DIR`，或以现有测试约定mock homedir；finally清理临时目录并删除环境变量。
+- 原生运行需要HOME/配置隔离；真实配置只核验workspace目录数量/名称变化，不扫描或导出内容。测试不应在 `~/.gravitas/agent-workspaces/` 产生新目录。
+- 禁止测试创建可用真实凭据或访问真实外部资源；fixture端点使用不可达占位地址。
+- 定向测试期待“全部适用case通过”；精确数量按实际记录，不预填PASS。
+- 不安装新依赖直到完成官方文档/版本/许可证/打包闭包调研；有依赖才另行记录决定。
+- 每个代码切片进行简化审查：同源契约、组件化、无重复状态、无any；有可用code-simplifier时使用，否则明确记录人工同等审查，不虚构执行。
+- 提交受影响包时patch递增；default-skills内容变更同步SKILL.md version；只写此文档不递增软件版本。
+
+## 10. 发布、回滚与恢复
+
+### 10.1 分阶段启用
+
+1. 契约和离线测试，默认行为不变。
+2. 显式opt-in的一个Runtime、一个workspace；不打开TCC。
+3. 离线故障矩阵和隔离打包通过。
+4. 单独授权的小规模真实验证；限定费用、次数、数据范围和停止条件。
+5. 对失败/unknown人工对账并形成门禁决策，之后才考虑扩大范围或默认启用。
+
+### 10.2 回滚原则
+
+- discovery/performance flag关闭可回baseline完整目录，但不能恢复已拒绝的权限或泄漏不允许的schema。
+- effects调度功能关闭时回保守串行，不回未知并行；完整调用校验属于硬底线，不作为性能回滚牺牲项。
+- verification关闭不得把未验证任务变已验证；受控任务要求的验证不能因flag被静默取消。
+- 证据日志、失败记录、业务回执保留；禁止删除unknown或用迁移伪造成功。
+- 新字段保持可选读取并注明legacy；老版本是否可读取/执行新记录必须实际测，不假设可以直接降级运行。
+- 安装/写入中断先核验实际磁盘状态；rename成功后fsync失败不宣称旧版本仍在。
+- 崩溃后不得自动重放mutation、付款/发布或未知外部请求；停止接受与真实终止分开记录。
+- 退出应用后的本地功能不能宣称仍持续执行；远程执行属于独立部署/验收范围。
+
+## 11. 风险与待决事项
+
+| ID | 风险/问题 | 处置或解除条件 | 状态 |
+|---|---|---|---|
+| K01 | 两种Goal和业务身份混用，证据串项 | H00精确ID映射；回执校验task/session/artifact | 开放 |
+| K02 | 测试0收集、Agent替换验收器、生成日志伪PASS | 固定验证配置、主进程来源、收集/退出/修订一致核验 | 开放 |
+| K03 | 外部编辑或验证器自己修改文件造成TOCTOU | 捕获前/后revision，最终完成边界再检查 | 开放 |
+| K04 | directory已存在却另建目录、重复状态或误启TCC | 复用M4模块，独立flag，B15固定回归 | 开放 |
+| K05 | discovery往返/输出增大抵消token收益 | 同时报总token/cache/费用/时延，超过门槛不推广 | 开放 |
+| K06 | MCP/Bash effects不可知、path alias/跨session冲突 | unknown串行，realpath范围与锁域声明，跨进程限制 | 开放 |
+| K07 | SDK流式执行早于完整输出判定 | H01/E03核验先验阻断能力；不支持时明确受控拒绝 | 开放 |
+| K08 | Runtime能力位过时、retired路径被恢复 | 当前源码+真实支持矩阵，未知拒绝，不继承旧AGENTS结论 | 开放 |
+| K09 | 续跑次数只在内存、重启绕过限额 | V04持久计数/幂等，复用现有业务预算门禁 | 开放 |
+| K10 | 记忆/Skill审批或安装路径不一致 | C03覆盖全部入口，来源/patch/安装失败保护 | 开放 |
+| K11 | 验证日志成为敏感信息扩散路径 | ledger只写摘要；原件私有、最少必要、来源权限 | 开放 |
+| K12 | sandbox/费用封顶/真实停止被文案夸大 | 能力强度与验证证据分离，明确unsupported/unknown | 开放 |
+| K13 | ACP远程协议/版本演进或宿主提升权限 | 首片stdio、固定版本、permission映射，单独远程安全评审 | 开放 |
+
+待决定：首个生产Runtime、验证配置所有者/审批入口、回执权威落点、跨session锁域、策略硬底线清单、验证误拒的人工处理路径、真实矩阵预算、ACP用途及宿主。这些问题在对应工作项开工前解决，不预设用户已认可。
+
+## 12. ACP 说明与选择标准
+
+### 12.1 ACP 是什么
+
+这里的 ACP 是 **Agent Client Protocol**，不是其他同缩写的协议。它标准化代码编辑器/IDE等客户端与coding agent的通信。官方介绍类比LSP：客户端不必为每个Agent重新实现一套专有接口，Agent也不必为每个编辑器单独集成。
+
+官方资料截至本轮读取：本地Agent通常由客户端作为子进程启动，使用 **JSON-RPC over stdio**。官方同时描述远程HTTP/WebSocket场景，但明确完整远程支持仍在推进，不能假设本地/远程能力已完全一致。
+
+典型交互包含初始化和能力协商、创建或支持条件下加载session、发送prompt、接收文本/计划/工具状态更新、取消、权限请求；具体方法/字段/支持范围必须在A01依据固定协议版本核验。
+
+### 12.2 与 MCP、A2A 的区别
+
+| 协议 | 主要边界 | Gravitas例子 |
+|---|---|---|
+| ACP | Client/editor ↔ Agent | 编辑器驱动Gravitas，或Gravitas宿主驱动外部coding harness |
+| MCP | Agent/application ↔ tools/resources | Agent调用数据库、搜索、文件或SaaS集成 |
+| A2A | 独立Agent服务 ↔ Agent服务 | 跨组织/远端Agent任务协作；非本项目内部子Agent前置 |
+
+ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代。ACP自身不保证sandbox、正确性、隐私、费用上限或业务验收。
+
+### 12.3 Gravitas 两种角色
+
+- **ACP client/host**：Gravitas提供交互/权限界面，连接外部ACP Agent。价值是引入更多harness；风险是重复宿主和权限映射。
+- **ACP agent/server**：Gravitas提供Agent协议边界，由兼容编辑器或其他宿主驱动。价值是外部可消费；不等于必须新开公网HTTP服务。
+
+先实现一个方向与一个真实消费者。没有明确消费者则保持deferred；不为内部子Agent引入ACP，不为“平台化”口号扩大暴露面。
+
+## 13. 决策与执行记录
+
+### 13.1 决策
+
+| ID | 时间 | 决定/依据 | 授权边界 |
+|---|---|---|---|
+| DECISION-HARNESS-001 | 2026-10-08 18:48 GMT+8 用户请求起 | 用户要求为前轮六条建议写完整ledger，并询问ACP | 仅文档，不授权代码或实验 |
+| DECISION-HARNESS-002 | 2026-10-08 本轮核验 | 已有CapabilityDescriptor/summary/schema projection，升级复用；先前“缺发现层”只适用于尚未核验的生产接线，不能称模块缺失 | 技术规划修正，不擅自开启功能 |
+| DECISION-HARNESS-003 | 2026-10-08 本轮核验 | 保留2026-09-22 TCC关闭决定；M2是独立目录接线，禁止复活TCC | 旧用户决定不因本ledger失效 |
+| DECISION-HARNESS-004 | 2026-10-08 本轮核验 | 当前ai-sdk预算停止能力位为true；所有强保证按路径和证据评估，不照抄旧状态 | 不等于真实全链G3通过 |
+| DECISION-HARNESS-005 | 2026-10-08 21:44 GMT+8 | 用户要求切分支开始实施；首批为H00/H01审计、H02子契约和V01，不将解析DTO当可信来源 | 实施/离线测试获授权；默认启用、付费、ACP/TCC不属于本批 |
+
+### 13.2 实施记录
+
+| Record | 时间 | 工作项 | 结果 | 证据与边界 |
+|---|---|---|---|---|
+| HARNESS-20261008-001 | 2026-10-08 本轮 | 文档准备 | 读取论文相关节、现有ledger、相关源码和ACP官方介绍；建立本ledger | HEAD 6c71b384；仅文档交付；无代码、无行为测试、无付费或外部副作用 |
+| HARNESS-20261008-002 | 2026-10-08 本轮 | 文档校验 | 34个唯一工作项；引用的明确既有路径存在；新增路径已标为拟议；`git diff --check`、`bun run docs:check` 通过 | 仅文档格式/路径/事实摘要检查，不证明任何升级机制或G0–G4通过；未改已有 `.context/note.md` |
+| HARNESS-20261008-003 | 2026-10-08 21:44–22:10 GMT+8 | H00/H01、H02部分、V01 | 独立worktree/分支；新增contracts、benchmark-spec、VerificationSubject/ArtifactRevision/Receipt及纯解析器，types/utils导出；shared 0.2.29→0.2.30，事实摘要同步 | 基线6c71b384；无生产调用方/新配置/持久化/flags；H02完整决策与H03未完成，M0/G0不通过。审计发现旧验证遗漏delete复现/新增变化集，留给V02 |
+| HARNESS-20261008-004 | 2026-10-08 22:10 GMT+8 | V01 red/green与工程回归 | 初始模块缺失red；fixture类型问题修复；原型对象测试red后修复；最终26测试/69断言。全仓541文件：3572 pass/0 fail/27 skip；九包typecheck、全仓lint（1968文件）、docs:check、diff检查通过 | 私有工作台日志`harness-full-tests-final.log`、`harness-typecheck.log`、`harness-lint.log`。测试runner每文件临时配置隔离；未运行真实Provider/打包。新模块无I/O；没有测试前真实目录清单快照，不额外宣称真实配置目录前后比对已验收。skip不计真实通过 |
+
+以上工程回归不替代G1新完成门禁/调度闭环；解析器只验证结构与调用方提供身份一致性，不证明真实性、新鲜度或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
+
+## 14. 参考资料与执行交接
+
+- 论文：https://arxiv.org/html/2609.00006v1 。架构模式依据，不作为本项目性能验收。
+- ACP官方介绍：https://agentclientprotocol.com/get-started/introduction 。本轮已读取；协议细节在A01固定版本后核验。
+- ACP官方代码：https://github.com/agentclientprotocol/agent-client-protocol 。本轮未审计源码。
+- 既有目录/关闭决定：`docs/plans/2026-09-22-typed-context-compiler-ledger.md`。
+- Pilot：`docs/plans/2026-09-26-project-pilot/ledger.md`。本ledger不改写其门禁或继承其PASS。
+- 存储：`docs/storage-contract.md`。新权威数据落点和备份必须遵循该合同。
+
+执行下一步：实施授权已取得，继续补齐H02/H03及V02服务设计，优先修复完整变化集/来源回读边界，再接V03完成门禁；不得直接跳到真实Provider、开启功能或ACP接入。每项采用“失败行为测试 → 最小实现 → 定向回归 → 简化审查 → 记录证据 → 单独可审阅提交”，受影响包patch同步。README/AGENTS变更只提出最小候选并另行请求授权。

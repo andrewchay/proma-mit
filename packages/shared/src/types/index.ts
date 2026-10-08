@@ -28,6 +28,9 @@ export * from './chat'
 // Agent 相关类型
 export * from './agent'
 
+// 技术验证回执：只描述结构，不授予信任或业务验收。
+export * from './verification'
+
 // 统一任务事件契约（消费端统一消费）
 export * from './app-event'
 
