@@ -82,3 +82,12 @@ AO-01 已产出 [离线原型 v1](prototype/index.html)，15/15 模拟状态分�
 2. AO-02：明确 Project 与两套 Goal 的权威关系、版本化计划存储及角色/默认配置继承。优先建立显式关联，不复用宽松续跑作为授权。
 3. 再接目标草案保存、受控规划费用授权、IPC/preload/UI 与模型提案输出；状态始终区分 draft/proposed、确认和执行授权。
 4. 完整契约审定前不开放“确认即派发”；保持原 Pilot 门禁和独立副作用确认。
+
+
+## 2026-10-08 继续开发：计划版本及调用来源断口
+
+分支已快进合并main6c71b384，PR19普通controlled指派/queue/最终Provider保护及PR20实际提示装配/停用修复沿用，旧lint阻断已解决。本片[计划版本服务](plan-version-service.md)保存同库附属计划历史，不改旧schema1 Goal表payload；来源只有真实目标修订、项目/任务元信息和20模板能力建议摘要，角色规则版本/完整规则hash可核对，未知角色拒绝。Owner真实身份、employee/代码角色映射及配置继承仍未完成，不能把模板当实例。
+
+`project-agent-service.ts:createLlmCaller`目前直接buildTitleRequest/fetch，仅改max_tokens，不能直接当受控Owner调用：尚未接规划费用/资料确认、最终发送前目标/来源/配置核验、明确用量/unknown费用回执与代理路由证据。Goal quota、内容confirmed、普通LLMCaller均不是授权。下一片须复用既有调用控制面并补审规划专用版本/恢复契约，不独立另造grant或绕过Pilot停止预算门禁。
+
+单任务目标入口已接真实TaskItem，UI组件替身交互和计划服务/IPC确定性回归均通过；原生Electron/产品preload/真实数据库的证据独立记录，不把SSR或内存API当持久化验收。计划编辑UI、主动模型提案和AO-06自动组织仍未接；AO-02保持进行中。

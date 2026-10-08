@@ -27,9 +27,9 @@ export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string
     { key: 'criteriaText' as const, label: '完成标准', placeholder: '可以先留空，之后由 Owner 提出建议。每行一条。' },
   ]
   return (
-    <section className="rounded-xl bg-card p-5 shadow-sm" aria-label={taskId ? '任务目标草案' : '项目目标草案'} data-project-id={projectId}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <section className="min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label={taskId ? '任务目标草案' : '项目目标草案'} data-project-id={projectId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-48">
           <h2 className="text-lg font-semibold">{taskId ? '这项任务希望得到什么结果？' : '这个项目希望达到什么目标？'}</h2>
           <p className="mt-1 text-sm text-muted-foreground">先保存目标与必要约束，不需要先拆任务、选择员工或填写文件路径。</p>
         </div>

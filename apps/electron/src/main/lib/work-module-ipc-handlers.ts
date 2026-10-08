@@ -9,6 +9,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 import { registerProjectOwnerGoalIpcHandlers } from './project-owner-goal-ipc'
+import { registerProjectOwnerPlanIpcHandlers } from './project-owner-plan-ipc'
 import { observeProjectPilot } from './project-pilot-reconcile'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { listPilotInbox, resolvePilotApproval } from './project-pilot-approval'
@@ -427,6 +428,7 @@ export function registerWorkModuleIpcHandlers(): void {
 
   // 草案服务独立于任务/项目链事件，不唤醒派发。
   registerProjectOwnerGoalIpcHandlers(ipcMain)
+  registerProjectOwnerPlanIpcHandlers(ipcMain)
   // 项目 CRUD
   ipcMain.handle(PROJECT_CHAIN_IPC.GET, (_, projectId: string) => getProjectChain(projectId))
   ipcMain.handle(PROJECT_CHAIN_IPC.APPLY, (_, projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => updateProjectChain(projectId, revision, command))

@@ -24,6 +24,7 @@ import { ProjectPilotOverview } from './ProjectPilotOverview'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { TaskReviewPanel } from './TaskReviewPanel'
+import { TaskOwnerGoalEntry } from './TaskOwnerGoalEntry'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
 import { ProjectWorkspacesPanel } from './ProjectWorkspacesPanel'
@@ -2766,6 +2767,7 @@ function TaskItem({
             <button type="button" onClick={onOpenReview} className={`font-medium text-sm truncate text-left hover:text-primary hover:underline ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`} title="查看任务交付与验证">
               {task.title}
             </button>
+            <TaskOwnerGoalEntry projectId={task.projectId} taskId={task.id} taskTitle={task.title} />
             {/* AI 员工执行状态（P0） */}
             {isAgentTask && agentExecStatus && (
               <AgentExecutionBadge status={agentExecStatus} />

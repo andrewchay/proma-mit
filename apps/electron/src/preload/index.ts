@@ -1948,6 +1948,11 @@ export interface ElectronAPI {
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
+      getOwnerPlanningContext: import('@gravitas/shared').ProjectOwnerPlanApi['getOwnerPlanningContext']
+      getOwnerPlanDraft: import('@gravitas/shared').ProjectOwnerPlanApi['getOwnerPlanDraft']
+      listOwnerPlanHistory: import('@gravitas/shared').ProjectOwnerPlanApi['listOwnerPlanHistory']
+      saveOwnerPlanDraft: import('@gravitas/shared').ProjectOwnerPlanApi['saveOwnerPlanDraft']
+      confirmOwnerPlanDraft: import('@gravitas/shared').ProjectOwnerPlanApi['confirmOwnerPlanDraft']
       getOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['getOwnerGoalDraft']
       saveOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['saveOwnerGoalDraft']
       observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
@@ -4676,6 +4681,11 @@ const electronAPI: ElectronAPI = {
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      getOwnerPlanningContext: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_PLANNING_CONTEXT, subject),
+      getOwnerPlanDraft: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_PLAN_DRAFT, subject),
+      listOwnerPlanHistory: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLAN_HISTORY, subject),
+      saveOwnerPlanDraft: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_PLAN_DRAFT, request),
+      confirmOwnerPlanDraft: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_PLAN_DRAFT, request),
       getOwnerGoalDraft: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_GOAL_DRAFT, subject),
       saveOwnerGoalDraft: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_GOAL_DRAFT, request),
       observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),
