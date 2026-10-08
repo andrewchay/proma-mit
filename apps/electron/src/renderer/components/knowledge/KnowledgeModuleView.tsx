@@ -174,7 +174,7 @@ export function KnowledgeModuleView(): React.ReactElement {
       setNoteHistory([])
       setFragmentTarget(null)
     })
-  }, [selectedVaultId, api, run, setNotes, setTags, setGraph, setSearchQuery, setSearchResults, setSelectedTag, setActiveNote])
+  }, [selectedVaultId, api, run, setNotes, setTags, setGraph, setSearchQuery, setSearchResults, setSelectedTag, setActiveNote, setNoteHistory, setFragmentTarget])
 
   /** 全文搜索（输入变化时防抖触发） */
   React.useEffect(() => {

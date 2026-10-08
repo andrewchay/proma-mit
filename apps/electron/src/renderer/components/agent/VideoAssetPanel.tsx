@@ -124,7 +124,7 @@ export function VideoAssetPanel({ campaignId, onSendToAssistant }: VideoAssetPan
       } else {
         toast.error(res.error ?? '重命名失败')
       }
-    } catch (e) {
+    } catch {
       toast.error('重命名失败')
     } finally {
       setEditingName(null)

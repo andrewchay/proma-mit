@@ -91,9 +91,6 @@ export function CampaignDetail({ campaign: initialCampaign, onBack, onNavigateTo
   // 内容审核状态
   const [auditDialogOpen, setAuditDialogOpen] = React.useState(false)
   const [selectedAuditKOL, setSelectedAuditKOL] = React.useState<CampaignKOLPoolItem | null>(null)
-  const [auditHistoryOpen, setAuditHistoryOpen] = React.useState(false)
-  const [auditHistory, setAuditHistory] = React.useState<import('@gravitas/shared').ContentAudit[]>([])
-  const [loadingAudits, setLoadingAudits] = React.useState(false)
 
   // 文件预览状态
   const [previewFilePath, setPreviewFilePath] = React.useState<string | null>(null)
@@ -126,16 +123,6 @@ export function CampaignDetail({ campaign: initialCampaign, onBack, onNavigateTo
       .catch(console.error)
       .finally(() => setLoadingPool(false))
   }, [campaign.id])
-
-  React.useEffect(() => {
-    if (!auditHistoryOpen) return
-    setLoadingAudits(true)
-    window.electronAPI
-      .listContentAudits(campaign.id)
-      .then((list) => setAuditHistory(list))
-      .catch(console.error)
-      .finally(() => setLoadingAudits(false))
-  }, [auditHistoryOpen, campaign.id])
 
   const handleImported = () => {
     window.electronAPI
@@ -596,9 +583,7 @@ export function CampaignDetail({ campaign: initialCampaign, onBack, onNavigateTo
             if (!open) setSelectedAuditKOL(null)
           }}
           onAudited={() => {
-            window.electronAPI.listContentAudits(campaign.id)
-              .then((list) => setAuditHistory(list))
-              .catch(console.error)
+            // 审核结果由弹窗展示，不维护页面未呈现的历史缓存。
           }}
         />
       )}

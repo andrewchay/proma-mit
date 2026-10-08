@@ -600,7 +600,7 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
 
   React.useEffect(() => {
     const instance = instanceRef.current
-    if (instance) syncAppearance(instance)
+    if (instance && instance.options().interface.appearance !== appearance) syncAppearance(instance)
   }, [appearance, syncAppearance])
 
   React.useEffect(() => {

@@ -8,32 +8,25 @@
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Bot, Target } from 'lucide-react'
-import { campaignsAtom, campaignConversationMapAtom, currentCampaignIdAtom } from '@/atoms/campaign-atoms'
+import { campaignsAtom, currentCampaignIdAtom } from '@/atoms/campaign-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
-import { conversationsAtom, chatPendingMessageAtom } from '@/atoms/chat-atoms'
 import { agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
 import { CampaignDetail } from './CampaignDetail'
 import { AgentView } from './AgentView'
 import { cn } from '@/lib/utils'
-import type { AgentSessionMeta, AgentWorkspace, Campaign, Channel, ConversationMeta } from '@gravitas/shared'
-
-type CampaignAssistantMode = 'agent' | 'chat'
+import type { AgentSessionMeta, AgentWorkspace, Campaign, Channel } from '@gravitas/shared'
 
 export function CampaignList(): React.ReactElement {
   const [campaigns, setCampaigns] = useAtom(campaignsAtom)
-  const [conversations, setConversations] = useAtom(conversationsAtom)
-  const [campaignConversationMap, setCampaignConversationMap] = useAtom(campaignConversationMapAtom)
   const [, setAgentWorkspaces] = useAtom(agentWorkspacesAtom)
   const currentCampaignId = useAtomValue(currentCampaignIdAtom)
   const setCurrentCampaignId = useSetAtom(currentCampaignIdAtom)
   const setActiveView = useSetAtom(activeViewAtom)
-  const setChatPendingMessage = useSetAtom(chatPendingMessageAtom)
   const setCurrentAgentSessionId = useSetAtom(currentAgentSessionIdAtom)
   const setCurrentAgentWorkspaceId = useSetAtom(currentAgentWorkspaceIdAtom)
   const [loading, setLoading] = React.useState(true)
   const [selectedCampaign, setSelectedCampaign] = React.useState<Campaign | null>(null)
   const [agentSession, setAgentSession] = React.useState<AgentSessionMeta | null>(null)
-  const [agentWorkspace, setAgentWorkspace] = React.useState<AgentWorkspace | null>(null)
   const [defaultChannel, setDefaultChannel] = React.useState<Channel | null>(null)
   const [assistantLoading, setAssistantLoading] = React.useState(false)
 
@@ -110,7 +103,6 @@ export function CampaignList(): React.ReactElement {
     }
 
     setAgentSession(session)
-    setAgentWorkspace(workspace)
     setCurrentAgentSessionId(session.id)
     setCurrentAgentWorkspaceId(workspace.id)
     window.electronAPI.updateSettings({ agentWorkspaceId: workspace.id }).catch(console.error)
@@ -120,7 +112,6 @@ export function CampaignList(): React.ReactElement {
   React.useEffect(() => {
     if (!selectedCampaign) {
       setAgentSession(null)
-      setAgentWorkspace(null)
       return
     }
 
