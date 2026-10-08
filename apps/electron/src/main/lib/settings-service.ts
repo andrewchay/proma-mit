@@ -13,12 +13,17 @@ import type { AppSettings } from '../../types'
 
 import { appendConfigAudit, redactSensitive } from './config-audit-service'
 
+interface SettingsReadOptions {
+  /** 配置无法读取时抛错，避免把默认值当作可安全覆盖的现有配置。 */
+  strictRead?: boolean
+}
+
 /**
  * 获取应用设置
  *
  * 如果文件不存在，返回默认设置。
  */
-export function getSettings(): AppSettings {
+export function getSettings(options: SettingsReadOptions = {}): AppSettings {
   const filePath = getSettingsPath()
 
   if (!existsSync(filePath)) {
@@ -44,6 +49,7 @@ export function getSettings(): AppSettings {
     }
   } catch (error) {
     console.error('[设置] 读取失败:', error)
+    if (options.strictRead) throw new Error('读取应用设置失败', { cause: error })
     return {
       themeMode: DEFAULT_THEME_MODE,
       agentRuntime: DEFAULT_AGENT_RUNTIME,
@@ -60,8 +66,8 @@ export function getSettings(): AppSettings {
  * 浅合并顶层字段；对嵌套对象（如 computerUse）做深度合并，避免更新子字段时
  * 意外丢掉其余子字段。
  */
-export function updateSettings(updates: Partial<AppSettings>): AppSettings {
-  const current = getSettings()
+export function updateSettings(updates: Partial<AppSettings>, options: SettingsReadOptions = {}): AppSettings {
+  const current = getSettings(options)
   // effectiveDevModules 是门禁计算的派生结论，只在下发时注入，绝不落盘：
   // 否则它会变成可手改的配置，且与发布状态不一致时还会被读回。
   const { effectiveDevModules: _ignoredDerived, capabilitiesUnlocked: _ignoredUnlock, ...persistable } = updates
@@ -99,6 +105,7 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
 /** 需要深度合并的嵌套对象字段（更新子字段时保留其余子字段，避免整块替换丢失）。 */
 export const NESTED_MERGE_FIELDS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>([
   'computerUse',
+  'steWriting',
   'agentAllowlist',
   'feishuTodo',
   'dingtalkTodo',

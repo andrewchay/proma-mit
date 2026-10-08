@@ -164,6 +164,7 @@ export const BUILTIN_PLUGINS: Array<{ id: string; name: string; version: string 
   { id: 'com.gravitas.marketing', name: '营销应用中心', version: '0.1.0' },
   { id: 'com.gravitas.new-media', name: '新媒体运营', version: '0.1.0' },
   { id: 'com.gravitas.academic', name: '学术助手', version: '0.1.0' },
+  { id: 'com.gravitas.ste-writing', name: 'STE 简化写作', version: '1.0.0' },
 ]
 
 /** 插件管理 IPC 通道 */

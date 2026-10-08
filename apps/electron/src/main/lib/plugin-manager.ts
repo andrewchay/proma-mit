@@ -125,6 +125,8 @@ const BUILTIN_RUNTIMES = new Map<string, () => BuiltinPluginRuntime>([
   ['com.gravitas.outbound-sourcing', () => require('./plugins/outbound-sourcing-plugin').outboundSourcingPluginRuntime()],
   // Academic 插件：学术助手（Pro 订阅能力，工具注入前先验签权益快照）
   ['com.gravitas.academic', () => require('./plugins/academic-plugin').academicPluginRuntime()],
+  // STE 简化写作插件：向每个 Agent 会话注入输出风格底线规则（contribute-prompts）
+  ['com.gravitas.ste-writing', () => require('./plugins/ste-writing-plugin').steWritingPluginRuntime()],
 ])
 
 /** 安全的字符串字段取值（仅接受 mini 长度以下的用户可控字符串） */
