@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { ProjectOwnerPlanPanel } from './ProjectOwnerPlanPanel'
 import {
   acknowledgeOwnerGoalComparisonAtom, canSaveOwnerGoal, editOwnerGoalAtom, getOwnerGoalEditor,
   loadOwnerGoalAtom, ownerGoalEditorsAtom, saveOwnerGoalAtom,
@@ -27,6 +28,7 @@ export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string
     { key: 'criteriaText' as const, label: '完成标准', placeholder: '可以先留空，之后由 Owner 提出建议。每行一条。' },
   ]
   return (
+    <>
     <section className="min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label={taskId ? '任务目标草案' : '项目目标草案'} data-project-id={projectId}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 basis-48">
@@ -73,5 +75,7 @@ export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string
         <p className="text-xs text-muted-foreground">未保存输入暂存在当前窗口；退出或重载窗口前请保存。标准与约束各最多 32 条，每条不超过 2000 字。</p>
       </form>
     </section>
+    <ProjectOwnerPlanPanel projectId={projectId} taskId={taskId} />
+    </>
   )
 }

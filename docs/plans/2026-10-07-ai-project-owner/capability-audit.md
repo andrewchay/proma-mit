@@ -91,3 +91,10 @@ AO-01 已产出 [离线原型 v1](prototype/index.html)，15/15 模拟状态分�
 `project-agent-service.ts:createLlmCaller`目前直接buildTitleRequest/fetch，仅改max_tokens，不能直接当受控Owner调用：尚未接规划费用/资料确认、最终发送前目标/来源/配置核验、明确用量/unknown费用回执与代理路由证据。Goal quota、内容confirmed、普通LLMCaller均不是授权。下一片须复用既有调用控制面并补审规划专用版本/恢复契约，不独立另造grant或绕过Pilot停止预算门禁。
 
 单任务目标入口已接真实TaskItem，UI组件替身交互和计划服务/IPC确定性回归均通过；原生Electron/产品preload/真实数据库的证据独立记录，不把SSR或内存API当持久化验收。计划编辑UI、主动模型提案和AO-06自动组织仍未接；AO-02保持进行中。
+
+
+## 2026-10-08 22:11后：协议/审阅与真实调用核验
+
+新增[规划协议与审阅](planning-protocol-review.md)的无I/O请求/响应边界与已有计划编辑UI。生成/澄清、可信Run回执仍待接。已核验现成控制面没有项目级无工具Owner execution捷径；推荐controlled目的特化、明确Owner/carrier、同库source-link、最终单请求/无工具/无隐藏上下文约束，不使用bare LLMCaller，不新造grant。
+
+补正早期预算能力判断：当前shared/types/agent.ts的ai-sdk supportsBudgetStopThreshold=true，Pi=false，实际费用出口却仅在真实Pilot command归属下工作。普通Owner/controlled的费用确认并非金额硬上限。文档旧结论保留历史，新判断按本次源码证据；未擅改AGENTS/README。
