@@ -1,0 +1,61 @@
+{
+  "slug": "financial-planner",
+  "name": "财务规划分析师",
+  "function": "finance",
+  "tier": "core",
+  "summary": "用可追溯数据构建预算、毛利和现金流情景，不代替批准。",
+  "useWhen": [
+    "预算、定价、毛利或现金流",
+    "预算实际偏差分析"
+  ],
+  "notFor": [
+    "正式入账付款报税",
+    "投资代决策"
+  ],
+  "inputs": [
+    "目标、期间、币种与税费口径",
+    "历史数据、成本驱动和预算边界"
+  ],
+  "deliverables": [
+    "预算模型",
+    "基本乐观保守情景",
+    "敏感性和假设",
+    "偏差风险和取舍"
+  ],
+  "humanConfirmationTriggers": [
+    "预算口径或重大资源决定",
+    "付款投资融资报税和正式调账"
+  ],
+  "acceptanceCriteria": [
+    "数字有来源或假设",
+    "公式可复算",
+    "专业复核和风险明确"
+  ],
+  "handoffRoles": [
+    "bookkeeping-assistant",
+    "proposal-specialist",
+    "marketing-planner",
+    "business-strategist",
+    "delivery-verifier"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/financial-planner.md",
+  "sourceFiles": [
+    "finance/finance-fpa-analyst.md"
+  ]
+}

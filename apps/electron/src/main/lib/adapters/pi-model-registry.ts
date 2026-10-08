@@ -1,8 +1,10 @@
+import { resolvePiBaseUrl } from './pi-runtime-base-url'
+export { resolvePiBaseUrl } from './pi-runtime-base-url'
 import { join } from 'node:path'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ProviderType } from '@gravitas/shared'
-import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveAgentRuntimeBaseUrl, resolveModelContextCapability } from '@gravitas/shared'
+import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveModelContextCapability } from '@gravitas/shared'
 import { getConfigDir } from '../config-paths'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { loadPiCodingAgent } from './pi-sdk-loader'
@@ -61,29 +63,6 @@ export function resolvePiApi(provider: ProviderType): Api {
     return 'openai-completions'
   }
   return 'anthropic-messages'
-}
-
-export function resolvePiBaseUrl(provider: ProviderType, baseUrl: string): string {
-  const normalized = baseUrl.trim().replace(/\/+$/, '')
-  if (provider === 'google') {
-    return /\/v\d+(beta)?$/.test(normalized) ? normalized : `${normalized}/v1beta`
-  }
-  if (provider === 'kimi-coding') {
-    return normalized
-      .replace(/\/v\d+\/messages$/, '')
-      .replace(/\/v\d+$/, '')
-  }
-  if (
-    provider === 'openai' ||
-    provider === 'deepseek-openai' ||
-    provider === 'zhipu' ||
-    provider === 'doubao' ||
-    provider === 'qwen' ||
-    provider === 'custom'
-  ) {
-    return resolveAgentRuntimeBaseUrl(provider, 'proma', baseUrl)
-  }
-  return normalized
 }
 
 export function shouldUsePiAuthHeader(provider: ProviderType): boolean {

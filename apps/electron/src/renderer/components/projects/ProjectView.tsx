@@ -1,3 +1,4 @@
+import { selectTaskExecution, executionStopMessage } from './project-task-execution-state'
 import type { UserMappingInput } from '@gravitas/shared'
 /**
  * ProjectView - 项目管理模块主视图（P1.1 版本）
@@ -10,7 +11,7 @@ import { useState, useEffect, useCallback, useMemo } from "react"
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useAtomValue, useSetAtom, useStore } from "jotai"
+import { atom, useAtom, useAtomValue, useSetAtom, useStore } from "jotai"
 import { userProfileAtom } from "@/atoms/user-profile"
 import { activeViewAtom } from "@/atoms/active-view"
 import { appModeAtom } from "@/atoms/app-mode"
@@ -21,6 +22,7 @@ import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
+import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { TaskReviewPanel } from './TaskReviewPanel'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
@@ -350,6 +352,7 @@ interface Task {
   riskLevel?: 'low' | 'medium' | 'high' | 'critical'
   completionNotes?: string
   permissionRequests?: string[]
+  controlledPreparationId?: string
   /** AI 员工执行 token 配额（可选）：累计消耗超限即中止执行，任务回退待人工处理 */
   tokenBudget?: number
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
@@ -2417,6 +2420,12 @@ function TaskItem({
   const [agentExecutionId, setAgentExecutionId] = useState<string | null>(null)
   const [agentSessionId, setAgentSessionId] = useState<string | null>(null)
   const [isStoppingAgent, setIsStoppingAgent] = useState(false)
+  const agentStopFeedbackAtom = useMemo(() => atom<string | null>(null), [])
+  const executionRefreshEpochAtom = useMemo(() => atom(0), [])
+  const [agentStopFeedback, setAgentStopFeedback] = useAtom(agentStopFeedbackAtom)
+  const [executionRefreshEpoch, setExecutionRefreshEpoch] = useAtom(executionRefreshEpochAtom)
+  const onExecutionTaskUpdate = React.useRef(onTaskUpdate)
+  onExecutionTaskUpdate.current = onTaskUpdate
   const store = useStore()
   const [tokenUsage, setTokenUsage] = useState<{ totalTokens: number; activeSessionTokens: number } | null>(null)
   const [agentEmployees, setAgentEmployees] = useState<AgentEmployeeResult[]>([])
@@ -2425,25 +2434,40 @@ function TaskItem({
       .then((emps) => setAgentEmployees(emps.filter((e) => e.enabled)))
       .catch(() => setAgentEmployees([]))
   }, [])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 权威任务版本与显式启动/停止刷新必须触发回读，不能仅依赖尚未更新的本地执行状态。
   useEffect(() => {
     if (!isAgentTask) return
     let cancelled = false
-    window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', task.id)
-      .then((execs) => {
+    let loading = false
+    const refresh = async (): Promise<void> => {
+      if (loading || cancelled) return
+      loading = true
+      try {
+        const executions = await window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', task.id)
         if (cancelled) return
-        setAgentExecStatus(execs[0]?.status ?? null)
-        setAgentExecutionId(execs[0]?.id ?? null)
-        setAgentSessionId(execs[0]?.sessionId && !execs[0].sessionId.startsWith('workflow:') ? execs[0].sessionId : null)
-      })
-      .catch(() => {})
-    // token 用量（配额可见性）：有预算或执行中才查询
-    if (task.tokenBudget || agentExecStatus === 'running') {
-      window.electronAPI.paa.project.getTaskTokenUsage(task.id)
-        .then((usage) => { if (!cancelled) setTokenUsage({ totalTokens: usage.totalTokens, activeSessionTokens: usage.activeSessionTokens }) })
-        .catch(() => {})
+        const current = selectTaskExecution(executions)
+        const terminalTransition = current && current.status !== 'running' && current.status !== 'queued'
+          && (agentExecStatus === 'running' || agentExecStatus === 'queued')
+        const latestTask = terminalTransition ? await callProjectAPI<Task | null>('getTask', task.id) : null
+        if (cancelled) return
+        if (latestTask) onExecutionTaskUpdate.current(latestTask)
+        setAgentExecStatus(current?.status ?? null)
+        if (current && current.status !== 'running' && current.status !== 'queued') {
+          setAgentStopFeedback((previous) => previous?.startsWith('已发送停止请求') ? `执行记录已更新为${current.status}；底层操作与实际费用以执行证据为准。` : previous)
+        }
+        setAgentExecutionId(current?.id ?? null)
+        setAgentSessionId(current?.sessionId && !current.sessionId.startsWith('workflow:') ? current.sessionId : null)
+        if (task.tokenBudget || current?.status === 'running') {
+          const usage = await window.electronAPI.paa.project.getTaskTokenUsage(task.id)
+          if (!cancelled) setTokenUsage({ totalTokens: usage.totalTokens, activeSessionTokens: usage.activeSessionTokens })
+        }
+      } catch (error) { if (!cancelled) console.error('刷新员工执行状态失败:', error) }
+      finally { loading = false }
     }
-    return () => { cancelled = true }
-  }, [isAgentTask, task.id, agentExecStatus, task.tokenBudget])
+    void refresh()
+    const timer = agentExecStatus === 'running' || agentExecStatus === 'queued' ? window.setInterval(() => void refresh(), 2000) : undefined
+    return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
+  }, [isAgentTask, task.id, task.updatedAt, agentExecStatus, task.tokenBudget, executionRefreshEpoch])
 
   // 展开时异步加载子任务
   useEffect(() => {
@@ -2508,13 +2532,14 @@ function TaskItem({
     if (!agentExecutionId) return
     setIsStoppingAgent(true)
     try {
-      await window.electronAPI.paa.agentEmployees.cancelExecution(agentExecutionId)
-      setAgentExecStatus('cancelled')
-      setAgentExecutionId(null)
+      const result = await window.electronAPI.paa.agentEmployees.cancelExecution(agentExecutionId)
+      setAgentStopFeedback(executionStopMessage(result))
+      setAgentExecStatus(result.status)
+      setExecutionRefreshEpoch((value) => value + 1)
       const updatedTask = await callProjectAPI<Task>('getTask', task.id)
       if (updatedTask) onTaskUpdate(updatedTask)
     } catch (error) {
-      alert(`停止执行失败: ${error instanceof Error ? error.message : String(error)}`)
+      setAgentStopFeedback(`停止请求失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setIsStoppingAgent(false)
     }
@@ -2789,7 +2814,8 @@ function TaskItem({
               </span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-1">{task.description}</p>
+          <p className="text-xs text-muted-foreground mt-1 break-words [overflow-wrap:anywhere]">{task.description}</p>
+          {agentStopFeedback && <p role="status" className="mt-1 text-xs text-muted-foreground">{agentStopFeedback}</p>}
           {(task.assignee || (!isTaskDone && !!task.dueDate)) && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               {task.assignee && (
@@ -2825,6 +2851,13 @@ function TaskItem({
             >
               {isStoppingAgent ? '停止中…' : '停止执行'}
             </button>
+          )}
+          {task.controlledPreparationId && task.status !== 'completed' && agentExecStatus !== 'running' && agentExecStatus !== 'queued' && (
+            <ControlledTaskStartButton taskId={task.id} revision={task.updatedAt} onChanged={async () => {
+              setExecutionRefreshEpoch((value) => value + 1)
+              const latest = await callProjectAPI<Task | null>('getTask', task.id)
+              if (latest) onTaskUpdate(latest)
+            }} />
           )}
           {/* 编辑任务按钮 */}
           <button

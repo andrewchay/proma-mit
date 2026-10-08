@@ -8,6 +8,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
+import { registerProjectOwnerGoalIpcHandlers } from './project-owner-goal-ipc'
 import { observeProjectPilot } from './project-pilot-reconcile'
 import { reconcilePilotOverview } from './project-pilot-intent-store'
 import { listPilotInbox, resolvePilotApproval } from './project-pilot-approval'
@@ -183,6 +184,7 @@ import {
   acceptDelivery as acceptDevelopmentDelivery,
   rejectDelivery as rejectDevelopmentDelivery,
 } from './development-review-service'
+import { prepareControlledTask, getControlledTaskStartPreview, startControlledTask } from './controlled-project-task-service'
 import {
   prepareApply as prepareDevelopmentApply,
   confirmApply as confirmDevelopmentApply,
@@ -423,6 +425,8 @@ export function registerWorkModuleIpcHandlers(): void {
   // 3. 项目管理
   // ============================================
 
+  // 草案服务独立于任务/项目链事件，不唤醒派发。
+  registerProjectOwnerGoalIpcHandlers(ipcMain)
   // 项目 CRUD
   ipcMain.handle(PROJECT_CHAIN_IPC.GET, (_, projectId: string) => getProjectChain(projectId))
   ipcMain.handle(PROJECT_CHAIN_IPC.APPLY, (_, projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => updateProjectChain(projectId, revision, command))
@@ -993,6 +997,9 @@ export function registerWorkModuleIpcHandlers(): void {
     })
   })
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, (_, executionId: string, filePath: string) => getSnapshotDiff(executionId, filePath))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_CONTROLLED_TASK, (_, input: unknown) => prepareControlledTask(input))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CONTROLLED_TASK_START, (_, taskId: string) => getControlledTaskStartPreview(taskId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.START_CONTROLLED_TASK, (_, input: unknown) => startControlledTask(input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, (_, input: import('@gravitas/shared').PrepareFileDelegationInput) => prepareFileDelegation(input))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, (_, taskId: string, comment: string) => requestDevelopmentChanges(taskId, comment))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, (_, taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => acceptDevelopmentDelivery(taskId, deliveryId, input))

@@ -14,6 +14,7 @@ test('Given 策略草案员工选择器 When 筛选候选 Then 只展示安全�
   expect(isPilotEmployeeCandidate(employee())).toBe(true)
   expect(isPilotEmployeeCandidate(employee({ enabled: false }))).toBe(false)
   expect(isPilotEmployeeCandidate(employee({ executionProfile: 'general' }))).toBe(false)
+  expect(isPilotEmployeeCandidate(employee({ executionProfile: 'controlled' }))).toBe(false)
   expect(isPilotEmployeeCandidate(employee({ permissionMode: 'auto' }))).toBe(false)
   expect(isPilotEmployeeCandidate(employee({ runtime: 'claude-sdk' }))).toBe(false)
   expect(isPilotEmployeeCandidate(employee({ workflowId: 'workflow-a' }))).toBe(false)

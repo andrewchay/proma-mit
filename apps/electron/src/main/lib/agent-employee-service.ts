@@ -15,6 +15,8 @@ import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { getChannelById } from './channel-manager'
 import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent-development-context'
+import { validateControlledConfiguration, validateControlledTarget } from './agent-controlled-context'
+import { assertControlledPreparedExecution, claimControlledPreparedExecution, requiresControlledStart } from './controlled-project-task-service'
 import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
 import { getProjectChain } from './project-chain-service'
 import { getPilotPolicy } from './project-pilot-policy'
@@ -121,10 +123,11 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
 }
 
 function validateEmployeeConfiguration(input: CreateAgentEmployeeInput): void {
-  if (input.executionProfile && !['general', 'development'].includes(input.executionProfile)) throw new Error('未知员工执行配置')
+  if (input.executionProfile && !['general', 'development', 'controlled'].includes(input.executionProfile)) throw new Error('未知员工执行配置')
   if (input.permissionMode && !['safe', 'auto'].includes(input.permissionMode)) throw new Error('不支持的员工权限模式')
   const workspaceIds = [...new Set((input.workspaceIds ?? (input.workspaceId ? [input.workspaceId] : [])).filter(Boolean))]
   if (input.workspaceIds && workspaceIds.length !== input.workspaceIds.length) throw new Error('可用工作区不能包含重复或空值')
+  if (input.executionProfile === 'controlled') validateControlledConfiguration(input, { getChannel: getChannelById, getWorkspace: getAgentWorkspace })
   if (input.executionProfile === 'development') {
     if (workspaceIds.length === 0) throw new Error('研发员工至少需要选择一个本地 Git 工作区')
     for (const workspaceId of workspaceIds) {
@@ -247,7 +250,7 @@ function stopRunningExecution(execution: AgentExecution, stopGeneration?: number
     const live = store.getAgentExecution(execution.id)
     if (!result.requestAccepted || result.activeGeneration !== expectedGeneration
       || live?.sessionId !== execution.sessionId || live.pilotCommandId !== execution.pilotCommandId
-      || (stopGeneration === undefined && live.status !== 'running')) {
+      || (stopGeneration === undefined && live.status !== 'running' && live.status !== 'cancelled')) {
       return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
     }
     // 同步 stopper 可在返回前触发终态回调；只以目标代际核对请求归属，
@@ -312,9 +315,9 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   if (live.status !== execution.status) {
     // stop() 同步触发的终态回调可能先于此处运行。只陈述停止请求已接受；
     // 不重写终态、不宣称进程退出已核验，仍保留持久 open 意图与预算占额。
-    if (execution.pilotCommandId && execution.status === 'running'
-      && stopConfirmation.processTermination === 'NOT_VERIFIED'
-      && live.status !== 'queued') {
+    if (execution.status === 'running'
+      && (live.status === 'cancelled' || (execution.pilotCommandId
+        && stopConfirmation.processTermination === 'NOT_VERIFIED' && live.status !== 'queued'))) {
       return { id: execution.id, status: live.status, stopped: false,
         stopRequested: true, processTermination: 'NOT_VERIFIED' }
     }
@@ -379,7 +382,7 @@ export function buildAgentTaskPrompt(task: Task, employee: AgentEmployee): strin
   // by-task 权限声明（P1）
   const development = employee.executionProfile === 'development'
   const perms = task.permissionRequests ?? []
-  const permLines = development
+  const permLines = development || employee.executionProfile === 'controlled'
     ? ['', '## 本次任务权限', `Runtime 权限：${employee.permissionMode ?? 'safe'}。safe 只读；auto 复用现有审批，可能等待用户处理。`, '权限申请不是批准：', ...perms.map((p) => `- ${p}`)]
     : perms.length > 0
     ? [
@@ -530,6 +533,8 @@ function isExecutableAgentTask(task: Task): boolean {
 }
 
 async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{ taskId: string } | null> {
+  // 准备任务只由显式确认入口入队；不能信任调用方传来的陈旧task标记。
+  if (requiresControlledStart(task.id)) return null
   // PH2-③ 统一只派发可执行态（pending / in_progress），completed/draft/paused 一律不派发：
   //   - completed/draft：防“完成任务→回写→onTaskChange→再派发”死循环（每轮写一个新工作日志/100字文件）
   //   - paused：任务处于人工暂停/失败回退态，不应自动重跑（否则失败回写置 paused 后又会被重派，形成类死循环变体）
@@ -556,6 +561,17 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
 
   cancelReassignedQueue(task)
   if (store.listAgentExecutionsByEntity('task', task.id).some((run) => run.status === 'queued' || run.status === 'running')) return null
+  const executionId = enqueueAgentTask(task, employee)
+
+  // 2. 尝试启动（并发有额度才真正建会话执行）
+  void tryStartExecution(executionId).catch((error: unknown) => handleExecutionError(executionId, error instanceof Error ? error.message : '启动失败', Date.now()))
+
+  return { taskId: executionId }
+}
+
+/** 复用权威execution和冻结提示词，只入队，不创建会话或调用Runtime。 */
+function enqueueAgentTask(task: Task, employee: AgentEmployee): string {
+  const agentId = employee.id
   const executionId = randomUUID()
   const capabilityVersions = store.getActiveAgentEmployeeCapabilityVersions(employee.id, task.workspaceId)
   const capabilityContent = capabilityVersions.map((version) => version.content).filter(Boolean).join('\n\n')
@@ -582,10 +598,17 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
   const execution = store.getAgentExecution(executionId)
   if (execution) recordActivity(execution, 'agent_queued', `AI 员工 ${employee.name} 已接收任务「${task.title}」，等待调度`)
 
-  // 2. 尝试启动（并发有额度才真正建会话执行）
-  void tryStartExecution(executionId).catch((error: unknown) => handleExecutionError(executionId, error instanceof Error ? error.message : '启动失败', Date.now()))
+  return executionId
+}
 
-  return { taskId: executionId }
+/** 仅供非代码显式确认事务使用，不暴露为独立IPC入口。 */
+export function enqueueControlledPreparedTask(taskId: string): string {
+  const task = store.getTask(taskId)
+  if (!task?.controlledPreparationId || getActivePilotGrant(task.projectId)) throw new Error('非代码任务准备身份或项目授权无效')
+  const employee = store.getAgentEmployee(parseAgentId(task.assignee?.userId) ?? '')
+  if (!employee?.enabled || employee.executionProfile !== 'controlled') throw new Error('非代码员工已变化')
+  if (store.listAgentExecutionsByEntity('task', taskId).some((run) => run.status === 'queued' || run.status === 'running')) throw new Error('已有执行，不重复入队')
+  return enqueueAgentTask(task, employee)
 }
 
 /**
@@ -643,6 +666,12 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
   }
   const employee = store.getAgentEmployee(execution.agentId)
   if (!employee || !employee.enabled) return false
+  if (!['general', 'development', 'controlled'].includes(employee.executionProfile ?? 'general')) {
+    const error = '未知员工执行配置，禁止回退为旧版全自动权限'
+    if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error })
+    else handleExecutionError(executionId, error, execution.startedAt)
+    return false
+  }
   let runtimeBudgetLimitUsd: number | undefined
   if (pilotReservedCostMicros !== undefined) {
     try {
@@ -651,6 +680,11 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
       console.warn(`[AgentEmployee] Pilot 执行 ${executionId} 启动被阻塞:`, error)
       return false
     }
+  }
+
+  if (execution.entityType === 'task' && requiresControlledStart(execution.entityId)) {
+    try { assertControlledPreparedExecution(executionId) }
+    catch (error) { handleExecutionError(executionId, error instanceof Error ? error.message : '启动确认无效', execution.startedAt); return false }
   }
 
   // 并发控制：同项目运行中数量上限（仅统计真正 running，排队中的不占用额度，避免同项目多个排队互相死锁）
@@ -668,6 +702,10 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
 
   // P3：员工绑定 Workflow SOP → 走 Workflow 执行；否则 headless
   if (employee.workflowId) {
+    if (employee.executionProfile === 'controlled') {
+      handleExecutionError(executionId, '受控员工不允许通过 Workflow 绕过任务权限', execution.startedAt)
+      return false
+    }
     // Workflow 路径尚不能接收本次费用停止阈值，Pilot 必须在启动前停等。
     if (runtimeBudgetLimitUsd !== undefined) return false
     return startAgentWorkflow(executionId, employee)
@@ -683,6 +721,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   // PH2-③：执行工作区优先级 = 任务指定的 workspaceId → 员工档案 → 全局默认
   const task = execution.entityType === 'task' ? store.getTask(execution.entityId) : null
   const development = employee.executionProfile === 'development'
+  const controlled = employee.executionProfile === 'controlled'
   let workspaceId = task?.workspaceId ?? employee.workspaceId ?? getSettings().agentWorkspaceId
   let modelId = employee.modelId
   let permissionModeOverride: 'safe' | 'auto' | 'bypassPermissions' = 'bypassPermissions'
@@ -701,9 +740,28 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       return false
     }
   }
+  if (controlled) {
+    try {
+      if (!task || !isExecutableAgentTask(task) || parseAgentId(task.assignee?.userId) !== employee.id) throw new Error('受控员工仅支持当前有效且明确指派的主任务')
+      if (store.listTaskBlockers(task.projectId).some((blocker) => blocker.taskId === task.id)) throw new Error('任务依赖尚未解除，不能开始受控执行')
+      const target = validateControlledTarget(employee, task.workspaceId, { getChannel: getChannelById, getWorkspace: getAgentWorkspace })
+      workspaceId = target.workspaceId
+      modelId = target.modelId
+      permissionModeOverride = target.permissionMode
+    } catch (error) {
+      handleExecutionError(executionId, error instanceof Error ? error.message : '受控配置无效', execution.startedAt)
+      return false
+    }
+  }
   console.log(`[Diag][agent-employee] 执行 ${execution.id} task=${execution.entityId} 工作区=${
     task?.workspaceId ? `任务指定:${task.workspaceId}` : (employee.workspaceId ? `员工:${employee.workspaceId}` : `全局:${workspaceId}`)
   } 最终=${workspaceId}`)
+
+  // 单次认领先于会话创建；崩溃后的running不能作为新的排队授权重放。
+  if (task && requiresControlledStart(task.id)) {
+    try { claimControlledPreparedExecution(executionId) }
+    catch (error) { console.warn('[AgentEmployee] 非代码启动认领被拒绝:', error); return false }
+  }
 
   // 1. 创建独立 Agent 会话
   let sessionId: string
@@ -729,7 +787,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     updateAgentSessionMeta(sessionId, {
       delegationDepth: 1,
       stoppedByUser: false,
-      ...(development ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
+      ...(development || controlled ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
     })
     // 普通执行尽早保留会话定位；Pilot 必须等到调用 Runtime 前与命令同事务认领。
     if (!execution.pilotCommandId) store.updateAgentExecution(executionId, { sessionId })
@@ -756,6 +814,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     previousMessageIds = new Set(normalizeExecutionMessages(getAgentSessionMessages(sessionId)).map((message) => message.id).filter(Boolean))
   } catch (error) {
     console.warn(`[AgentEmployee] 执行 ${executionId} 读取会话消息失败:`, error)
+    if (task && requiresControlledStart(task.id)) handleExecutionError(executionId, '会话准备失败，需重新预检启动', execution.startedAt)
     return false
   }
 
@@ -775,7 +834,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   }
   const updated = store.getAgentExecution(executionId)!
 
-  // 研发员工不再绕过审批；普通员工暂保留旧路径，避免无关迁移。
+  // 研发与受控员工不绕过审批；旧版普通员工保留原路径，不自动迁移。
   const startedAt = Date.now()
   runtimeGenerationByExecution.set(executionId, startedAt)
   const clearRuntimeGeneration = (): void => {

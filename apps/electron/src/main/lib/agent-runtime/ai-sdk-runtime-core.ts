@@ -74,6 +74,7 @@ export interface AISDKToolExecutionState {
   signal: AbortSignal
   activeSession: AISDKRuntimeSessionState
   canUseTool?: AISDKCanUseToolCallback
+  onPermissionModeChange?: (mode: PromaPermissionMode) => void
   onEnterPlanMode?: () => void
   onExitPlanMode?: (
     input: Record<string, unknown>,
@@ -145,11 +146,14 @@ export interface AISDKAgentTurnInput {
   maxRetries: number
   /** Pilot 受控预算上下文；存在时模型请求经受控出口并强制输出上限。 */
   pilotBudget?: PilotBudgetContext
+  /** 由主进程注入的模型出口；客户端不能传入。 */
+  fetchFn?: typeof globalThis.fetch
   historyMessages?: SDKMessage[]
   attachments?: FileAttachment[]
   systemPrompt?: string
   onAgentEvent?: (event: AgentEvent) => void
   canUseTool?: AISDKCanUseToolCallback
+  onPermissionModeChange?: (mode: PromaPermissionMode) => void
   onEnterPlanMode?: () => void
   onExitPlanMode?: AISDKToolExecutionState['onExitPlanMode']
   onAskUser?: AISDKToolExecutionState['onAskUser']
@@ -200,7 +204,7 @@ export class AISDKRuntimeCore {
       apiKey: input.apiKey,
       baseUrl: resolveAgentRuntimeBaseUrl(input.provider, 'ai-sdk', input.baseUrl),
       modelId: input.modelId,
-      ...(pilotRuntime ? { fetch: pilotRuntime.fetch } : {}),
+      ...((input.fetchFn ?? pilotRuntime?.fetch) ? { fetch: input.fetchFn ?? pilotRuntime?.fetch } : {}),
     })
     const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
@@ -217,6 +221,7 @@ export class AISDKRuntimeCore {
       activeSession: input.activeSession,
       canUseTool: input.canUseTool,
       compaction: input.compaction,
+      onPermissionModeChange: input.onPermissionModeChange,
       onEnterPlanMode: input.onEnterPlanMode,
       onExitPlanMode: input.onExitPlanMode,
       onAskUser: input.onAskUser,
@@ -412,6 +417,7 @@ export class AISDKRuntimeCore {
         return { content: result.message || '用户拒绝了计划', isError: true }
       }
       if (result.targetMode) {
+        state.onPermissionModeChange?.(result.targetMode)
         state.activeSession.permissionMode = result.targetMode
       }
       state.activeSession.planModeEntered = false
@@ -495,6 +501,7 @@ export class AISDKRuntimeCore {
         onEnterPlanMode: state.onEnterPlanMode,
         onExitPlanMode: state.onExitPlanMode,
         setPermissionMode: (mode) => {
+          state.onPermissionModeChange?.(mode)
           state.activeSession.permissionMode = mode
           state.activeSession.planModeEntered = false
         },

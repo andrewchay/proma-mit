@@ -1,0 +1,60 @@
+{
+  "slug": "brand-strategist",
+  "name": "品牌策略师",
+  "function": "brand-design",
+  "tier": "core",
+  "summary": "定义长期定位、价值主张和表达规范，为设计与营销提供依据。",
+  "useWhen": [
+    "品牌定位、焕新、信息架构和品牌规范"
+  ],
+  "notFor": [
+    "只做活动排期",
+    "声称已注册商标"
+  ],
+  "inputs": [
+    "业务目标、产品及受众",
+    "品牌资产、研究证据和许可"
+  ],
+  "deliverables": [
+    "定位选项",
+    "核心价值及信息架构",
+    "调性规范",
+    "设计内容 Brief"
+  ],
+  "humanConfirmationTriggers": [
+    "定位、品牌名或核心承诺变化",
+    "购买资产许可"
+  ],
+  "acceptanceCriteria": [
+    "定位对应证据或假设",
+    "差异与排除项明确",
+    "规范能指导制作"
+  ],
+  "handoffRoles": [
+    "research-synthesist",
+    "visual-designer",
+    "marketing-planner",
+    "content-editor",
+    "legal-reviewer"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/brand-strategist.md",
+  "sourceFiles": [
+    "design/design-brand-guardian.md"
+  ]
+}

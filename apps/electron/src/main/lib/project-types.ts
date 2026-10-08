@@ -129,6 +129,8 @@ export interface Task {
   tokenBudget?: number
   /** 研发任务执行范围（文件委派）；仅研发链路消费，普通任务缺省为空 */
   developmentScope?: DevelopmentTaskScope
+  /** 主进程发出的非代码准备回执，普通编辑不能清除或伪造。 */
+  readonly controlledPreparationId?: string
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
   sortOrder: number
   /** 子任务（任务拆解）。@deprecated 子任务已升级为独立 Task，请优先使用 parentId 关联 */
@@ -372,8 +374,8 @@ export interface AgentEmployee {
   workspaceId?: string
   /** AI 员工作为角色可服务的工作区集合；执行任务须从中明确选择。 */
   workspaceIds?: string[]
-  /** 绑定的 Workflow SOP ID（P3）；绑定后任务改用 Workflow 执行（需已发布） */
-  executionProfile?: 'general' | 'development'
+  /** 执行配置：旧 general、隔离研发 development、非代码 controlled。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
   permissionMode?: 'safe' | 'auto'
   workflowId?: string
   /** 自定义角色 system prompt */
@@ -399,7 +401,7 @@ export interface CreateAgentEmployeeInput {
   modelId?: string
   workspaceId?: string
   workspaceIds?: string[]
-  executionProfile?: 'general' | 'development'
+  executionProfile?: 'general' | 'development' | 'controlled'
   permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string

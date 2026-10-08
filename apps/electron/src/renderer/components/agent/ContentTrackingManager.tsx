@@ -394,6 +394,7 @@ function DataFormDialog({ open, onOpenChange, editingItem, campaignId, onSaved }
   const [submitting, setSubmitting] = React.useState(false)
 
   React.useEffect(() => {
+    if (!open) return
     if (editingItem) {
       setForm({
         campaignId: editingItem.campaignId,

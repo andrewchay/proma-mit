@@ -560,7 +560,7 @@ export function KOLDataManager(): React.ReactElement {
     if (extendedDataJson.trim()) {
       try {
         parsedExtendedData = JSON.parse(extendedDataJson) as KOLExtendedData
-      } catch (e) {
+      } catch {
         toast.error('扩展数据 JSON 格式错误，请检查语法')
         return
       }

@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "status": "draft-unbound",
+  "roleCount": 20,
+  "coreRoleCount": 13,
+  "specialistRoleCount": 7,
+  "files": [
+    {
+      "roleSlug": "requirements-analyst",
+      "cardPath": "cards/requirements-analyst.json",
+      "contractPath": "roles/requirements-analyst.md",
+      "casesPath": "cases/requirements-analyst.json",
+      "contractSha256": "2afb4ecef2a974c5dfbb299ecd5302d53212c75e70c06188c9da74bf01f5c22e",
+      "cardSha256": "92701f5aa2667323ad707b152db7245d285788a83f1bd936da1ceb901f9aaee3",
+      "casesSha256": "142954a9669460af61ec8dff7a1468c0b697cc819658d09ae95e09db50d05d51"
+    },
+    {
+      "roleSlug": "research-synthesist",
+      "cardPath": "cards/research-synthesist.json",
+      "contractPath": "roles/research-synthesist.md",
+      "casesPath": "cases/research-synthesist.json",
+      "contractSha256": "22383dcc9e0798612edace2c5516c4e24f2cf7c1c975d4035881689b9aaf555b",
+      "cardSha256": "32e41ef402dbfbe009f4de5d62ec9df7de73f652617c6b4fb7d9aabce0ccb9cc",
+      "casesSha256": "e8c554a5548955d3a25e24c460bd1744407d40d30277fb4905a575312f1b7d04"
+    },
+    {
+      "roleSlug": "delivery-verifier",
+      "cardPath": "cards/delivery-verifier.json",
+      "contractPath": "roles/delivery-verifier.md",
+      "casesPath": "cases/delivery-verifier.json",
+      "contractSha256": "4d35c22c54b16d7b92a99e4512b869ca3b966f1d595be31d9d176dfe754afd19",
+      "cardSha256": "aa6a4a9f9c344589a8e4c8eed4fb16d302ac8c841933ac49e4e4728f1f909ec4",
+      "casesSha256": "486028b9c2884d2785f5ab04bc5294ba69f027a7d03226dec2e5bb9b03c71ac5"
+    },
+    {
+      "roleSlug": "brand-strategist",
+      "cardPath": "cards/brand-strategist.json",
+      "contractPath": "roles/brand-strategist.md",
+      "casesPath": "cases/brand-strategist.json",
+      "contractSha256": "6e97bd194b7d3557e4a4293adcf711e12fab5735bdb3e2f6ec2ca42b2bb3d31d",
+      "cardSha256": "12d917dc03d67fe00b091f23d6fd9cfacbc9cfa010dc8eebe72fcaa80a222e92",
+      "casesSha256": "2004d3160991a87e87291778cd639d3c581460759468bb3ffc2205d8db370a31"
+    },
+    {
+      "roleSlug": "visual-designer",
+      "cardPath": "cards/visual-designer.json",
+      "contractPath": "roles/visual-designer.md",
+      "casesPath": "cases/visual-designer.json",
+      "contractSha256": "cb7325c761da338850d0a1f7055ef55a66398d27f16d7353a08bc8159de6a2a3",
+      "cardSha256": "d7e8493385579af4eff74d9afaba67bd1fdfdc08cf1f5e9c70c830afed3854c6",
+      "casesSha256": "3e7b36af1e6b7e008c6b9db60e3ba45258f1cc183d01237b6a97f237586f948e"
+    },
+    {
+      "roleSlug": "marketing-planner",
+      "cardPath": "cards/marketing-planner.json",
+      "contractPath": "roles/marketing-planner.md",
+      "casesPath": "cases/marketing-planner.json",
+      "contractSha256": "3197360dd2254377844531fc4dae0981c3c7805aeb30abf5b2df4fc9beacb061",
+      "cardSha256": "68af846339c8f2914b16b4690b5cdecda4ea8c64a2ca187599332b16fd598281",
+      "casesSha256": "12275fb2e7b50e4fb11874e23347b37a70c7886ef41a28bce702d10e1a85b1cc"
+    },
+    {
+      "roleSlug": "content-editor",
+      "cardPath": "cards/content-editor.json",
+      "contractPath": "roles/content-editor.md",
+      "casesPath": "cases/content-editor.json",
+      "contractSha256": "826fc96c7e2262b7b9edaaab37a64f2af16ea3706c1e91b445e7553954f26f42",
+      "cardSha256": "1c385a9e8696d8384c9cee12c8854a131d631914f4ed43814a28503e958da739",
+      "casesSha256": "e5ebe519a46148b76d2318cfff7d7698fa9cfaca810738ca2589e55d2d02aed4"
+    },
+    {
+      "roleSlug": "proposal-specialist",
+      "cardPath": "cards/proposal-specialist.json",
+      "contractPath": "roles/proposal-specialist.md",
+      "casesPath": "cases/proposal-specialist.json",
+      "contractSha256": "13f7d55d77963099f74ff973e6339d3cb0f3454137381c3724dd9fee51c39d77",
+      "cardSha256": "7d5b4f27e6c56e7373e8bfb03c1d157db8617e56372d04d59d2bc7f213ce6215",
+      "casesSha256": "c43ea58ab0b300775a5ef60ef6b4bf07651ee38d1e5b3865632f2da3601a4ec5"
+    },
+    {
+      "roleSlug": "financial-planner",
+      "cardPath": "cards/financial-planner.json",
+      "contractPath": "roles/financial-planner.md",
+      "casesPath": "cases/financial-planner.json",
+      "contractSha256": "40266acf68fe09beb6da0d0588d5f9641e2cbf4f5465cc1e67c9194cb0cfd2ec",
+      "cardSha256": "c1e1686ef7470bb77f7fb926bdccaf3e846bea2f29a4bf0ea64c63da5dea0243",
+      "casesSha256": "5b988f57ddf8753d2b5745bfbcfa36f0af0c4929dfabd60c280f3f09a4fba6af"
+    },
+    {
+      "roleSlug": "bookkeeping-assistant",
+      "cardPath": "cards/bookkeeping-assistant.json",
+      "contractPath": "roles/bookkeeping-assistant.md",
+      "casesPath": "cases/bookkeeping-assistant.json",
+      "contractSha256": "1757a91c6bd399c5d211362918d9e1b897a839d69eb8a0d83671d97045385fd2",
+      "cardSha256": "0bcb27e0aba2d36fc8d47846a44973bdf7ef75571455d1701500bbbd426c4bc5",
+      "casesSha256": "641878c1bd687ee4c41f6b179c777a9d98fa695a540c9ec1e1e9cfd61405febb"
+    },
+    {
+      "roleSlug": "legal-reviewer",
+      "cardPath": "cards/legal-reviewer.json",
+      "contractPath": "roles/legal-reviewer.md",
+      "casesPath": "cases/legal-reviewer.json",
+      "contractSha256": "d83a4d0e705e6ec95856f9133aa37bff12bb9247c2db7bec698e8ecd172b5eb4",
+      "cardSha256": "cf2047f5ebc0b290d3b22707e1c13a4f3a15115e210ccf2658329e65f044843c",
+      "casesSha256": "af23d9084a1afcb7a47e41901869b7d38d37b2614b99d943e5d5fa213d592c74"
+    },
+    {
+      "roleSlug": "operations-specialist",
+      "cardPath": "cards/operations-specialist.json",
+      "contractPath": "roles/operations-specialist.md",
+      "casesPath": "cases/operations-specialist.json",
+      "contractSha256": "7760062e94271f9b1ce62fa2b1768b1c2e7640915383c89e3dcd365c8f89dea0",
+      "cardSha256": "84676a4b9dc67d39d71c06541ec41bc515c944d3c2ad6d8149d585925ec968b0",
+      "casesSha256": "7e1adfb1e7c7add8229f46135480677f47dc636d84bd3d3a8d27d1c53b49c377"
+    },
+    {
+      "roleSlug": "customer-success",
+      "cardPath": "cards/customer-success.json",
+      "contractPath": "roles/customer-success.md",
+      "casesPath": "cases/customer-success.json",
+      "contractSha256": "3e43712ab01a14300a1259a758be4ad600ee63978de4588a80a09e24a3e82091",
+      "cardSha256": "a5af4aef20159988fdcf182d122a22bfbd39b807951fd5d485e120da6c8470a4",
+      "casesSha256": "b607e35e63f1ff2653ffcd7548c23ea114039b8987a3ae7f131bc677a594d318"
+    },
+    {
+      "roleSlug": "business-strategist",
+      "cardPath": "cards/business-strategist.json",
+      "contractPath": "roles/business-strategist.md",
+      "casesPath": "cases/business-strategist.json",
+      "contractSha256": "d4a68de405eb1ee384d822b3761341c8d13a420641bb0e56a5880a3caf86c22e",
+      "cardSha256": "77be4f4cef2c74b04145c6bf959ec07163d05ec6b96cada040865fed52b984d7",
+      "casesSha256": "a618185bfd87f3f81052fd2eebb6a3dfebf0b10ed8a18806df187dadb5a33e0d"
+    },
+    {
+      "roleSlug": "experience-designer",
+      "cardPath": "cards/experience-designer.json",
+      "contractPath": "roles/experience-designer.md",
+      "casesPath": "cases/experience-designer.json",
+      "contractSha256": "a3ff5d4c6667cc72f92afeb3f16f3a8e93c294e53aec6850b0a8401ac6e37682",
+      "cardSha256": "7529255fdcc81706f0abf5ca8e19bf28070c1385f2829d2d859a2866b4551192",
+      "casesSha256": "881225d53742cfc5c6cf8bff875de383c8c07d713fbf428c3b7baf5173fd84ca"
+    },
+    {
+      "roleSlug": "feedback-analyst",
+      "cardPath": "cards/feedback-analyst.json",
+      "contractPath": "roles/feedback-analyst.md",
+      "casesPath": "cases/feedback-analyst.json",
+      "contractSha256": "090954af33e9a61a08abb0e4f0828b5bfae9fbf0fc7d9003b4db39d699d05bf2",
+      "cardSha256": "5335a885acc12c3384de700d2f35af24ecba1f2d697e27273c299bae1cef2617",
+      "casesSha256": "d3bdb3cbf09d72d12c2ab7245322f77646c3ef1ecff92680709cebd3b37cf3c8"
+    },
+    {
+      "roleSlug": "ai-behavior-designer",
+      "cardPath": "cards/ai-behavior-designer.json",
+      "contractPath": "roles/ai-behavior-designer.md",
+      "casesPath": "cases/ai-behavior-designer.json",
+      "contractSha256": "3de1d4a97f917b652f1f698167c556934653e1d46ac25009af647a6de5ac30c3",
+      "cardSha256": "4938f4a6d90dd4a48c709ec5ae1e694813b50c890ebff19164f22fce2e79df0b",
+      "casesSha256": "860e3216908cd36ccdfab4755e7c8bca99a87d31b6f73692b569b46aaf429043"
+    },
+    {
+      "roleSlug": "knowledge-editor",
+      "cardPath": "cards/knowledge-editor.json",
+      "contractPath": "roles/knowledge-editor.md",
+      "casesPath": "cases/knowledge-editor.json",
+      "contractSha256": "bd89b67c6c52d38776eec3ca10fca62a6672ea4f8ef830163e4c988ef2b352c6",
+      "cardSha256": "78d253dbc1c38493e87a9431389ea9c939b2b9785f14394d1643ac8f858d5372",
+      "casesSha256": "dbc7a06f5322f1d6aaa254fbee25d3876360f49879eb0d05b882d039dec0ce38"
+    },
+    {
+      "roleSlug": "data-analyst",
+      "cardPath": "cards/data-analyst.json",
+      "contractPath": "roles/data-analyst.md",
+      "casesPath": "cases/data-analyst.json",
+      "contractSha256": "d385b0efdc281bb1f6c1c99930591397937729c24503a068a5c567a0ac2f09b2",
+      "cardSha256": "4d7ef30da37904480f875946cc0c0f2fa6e0cb948e9d1df9e783ccc1e8709f1c",
+      "casesSha256": "547f35e6edf435f1ee5b7eab80838aa13483ab966388d2810f9962e04c5f8fc7"
+    },
+    {
+      "roleSlug": "recruitment-assistant",
+      "cardPath": "cards/recruitment-assistant.json",
+      "contractPath": "roles/recruitment-assistant.md",
+      "casesPath": "cases/recruitment-assistant.json",
+      "contractSha256": "492e97d226041acb7a9bfbdfe3e56b2fcb65b184c70233935490fa54cf214b5c",
+      "cardSha256": "c239b54827fb9cbde307509f40d54c94ba182f053ba84e0810bb12930d7dfe21",
+      "casesSha256": "1a46309b4d9111a040645834c0d5e3982c9eb14bb92bc1f92df887a96d08b204"
+    }
+  ]
+}

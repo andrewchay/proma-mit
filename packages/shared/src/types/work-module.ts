@@ -173,6 +173,9 @@ export const PROJECT_IPC_CHANNELS = {
   // 项目 CRUD
   LIST_PROJECTS: 'project:list-projects',
   GET_PROJECT: 'project:get-project',
+  /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
+  GET_OWNER_GOAL_DRAFT: 'project:get-owner-goal-draft',
+  SAVE_OWNER_GOAL_DRAFT: 'project:save-owner-goal-draft',
   CREATE_PROJECT: 'project:create-project',
   UPDATE_PROJECT: 'project:update-project',
   DELETE_PROJECT: 'project:delete-project',
@@ -466,7 +469,44 @@ export interface ProjectProgressResult {
 // 4. AI 员工（Agent Employee）— P0
 // ============================================
 
+/** 非代码任务准备不是执行授权，requestId供持久化幂等。 */
+export interface PrepareControlledTaskInput {
+  requestId: string
+  projectId: string
+  employeeId: string
+  workspaceId: string
+  title: string
+  description: string
+  priority?: 'low' | 'medium' | 'high' | 'critical'
+}
+export interface ControlledTaskStartPreview {
+  taskId: string
+  previewHash: string
+  expiresAt: number
+  title: string
+  description: string
+  requestedPermissions: string[]
+  employeeName: string
+  channelName: string
+  modelId: string
+  runtime: string
+  workspaceName: string
+  permissionMode: 'safe' | 'auto'
+}
+export interface StartControlledTaskInput {
+  taskId: string
+  previewHash: string
+  acknowledgeModelCosts: boolean
+}
+export interface ControlledTaskStartResult {
+  taskId: string
+  executionId: string
+  status: string
+}
 export const AGENT_EMPLOYEE_IPC_CHANNELS = {
+  PREPARE_CONTROLLED_TASK: 'agent-employee:prepare-controlled-task',
+  PREVIEW_CONTROLLED_TASK_START: 'agent-employee:preview-controlled-task-start',
+  START_CONTROLLED_TASK: 'agent-employee:start-controlled-task',
   /** AI 员工列表 */
   LIST_EMPLOYEES: 'agent-employee:list',
   /** 获取单个 AI 员工 */
@@ -578,9 +618,9 @@ export interface CreateAgentEmployeeInput {
   workspaceId?: string
   /** AI 员工作为角色可服务的工作区集合；执行任务须从中明确选择。 */
   workspaceIds?: string[]
-  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
-  executionProfile?: 'general' | 'development'
-  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  /** development 使用 Git worktree；controlled 为非代码受控配置；缺省兼容旧普通员工。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
+  /** 研发/受控配置的 Runtime 权限；safe 沿用限制（研发有 worktree 写入豁免），auto 仍可能等待审批。 */
   permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string
@@ -783,7 +823,11 @@ export interface AgentEmployeeCapabilityEvaluationResult {
 
 export interface CancelAgentExecutionResult {
   id: string
-  status: 'cancelled'
+  status: AgentExecutionResult['status']
+  /** 仅明确取消排队或核验终止时为true；请求已接受不能冒充停止。 */
+  stopped: boolean
+  stopRequested?: boolean
+  processTermination: 'VERIFIED' | 'NOT_VERIFIED'
 }
 
 export interface UpdateAgentEmployeeInput {
@@ -798,9 +842,9 @@ export interface UpdateAgentEmployeeInput {
   workspaceId?: string | null
   /** AI 员工作为角色可服务的工作区集合；传入时整体替换。 */
   workspaceIds?: string[]
-  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
-  executionProfile?: 'general' | 'development'
-  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  /** development 使用 Git worktree；controlled 为非代码受控配置；缺省兼容旧普通员工。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
+  /** 研发/受控配置的 Runtime 权限；safe 沿用限制（研发有 worktree 写入豁免），auto 仍可能等待审批。 */
   permissionMode?: 'safe' | 'auto'
   workflowId?: string | null
   systemPrompt?: string | null
@@ -821,9 +865,9 @@ export interface AgentEmployeeResult {
   workspaceId?: string
   /** AI 员工作为角色可服务的工作区集合。 */
   workspaceIds?: string[]
-  /** 研发配置启用独立 Git worktree；缺省为普通员工。 */
-  executionProfile?: 'general' | 'development'
-  /** 研发配置的 Runtime 权限；缺省 safe，auto 仍可能等待审批。 */
+  /** development 使用 Git worktree；controlled 为非代码受控配置；缺省兼容旧普通员工。 */
+  executionProfile?: 'general' | 'development' | 'controlled'
+  /** 研发/受控配置的 Runtime 权限；safe 沿用限制（研发有 worktree 写入豁免），auto 仍可能等待审批。 */
   permissionMode?: 'safe' | 'auto'
   workflowId?: string
   systemPrompt?: string

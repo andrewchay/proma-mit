@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "kind": "role-template-catalog",
+  "status": "draft-unbound",
+  "coordinator": "existing-project-shepherd",
+  "employeeInstancesCreated": 0,
+  "modelBinding": null,
+  "runtimeIntegrated": false,
+  "functions": [
+    {
+      "id": "discovery",
+      "name": "需求、研究与战略",
+      "summary": "澄清目标、核对证据和比较业务选项。",
+      "roles": [
+        {
+          "roleSlug": "requirements-analyst",
+          "name": "需求分析师",
+          "summary": "把模糊目标整理为范围、成果与验收标准，不替人拍板。",
+          "tier": "core",
+          "cardPath": "cards/requirements-analyst.json"
+        },
+        {
+          "roleSlug": "research-synthesist",
+          "name": "研究与证据分析师",
+          "summary": "将市场、竞品与方案资料整理为可追溯证据，不把重复引用当独立证据。",
+          "tier": "core",
+          "cardPath": "cards/research-synthesist.json"
+        },
+        {
+          "roleSlug": "business-strategist",
+          "name": "商业策略顾问",
+          "summary": "比较商业模式、市场进入与定价，明确假设、取舍及验证路径。",
+          "tier": "specialist",
+          "cardPath": "cards/business-strategist.json"
+        },
+        {
+          "roleSlug": "feedback-analyst",
+          "name": "用户反馈分析师",
+          "summary": "归纳真实反馈的主题痛点，不把 AI 模拟意见当用户数据。",
+          "tier": "specialist",
+          "cardPath": "cards/feedback-analyst.json"
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "name": "交付核验",
+      "summary": "核对标准与证据，不替人验收。",
+      "roles": [
+        {
+          "roleSlug": "delivery-verifier",
+          "name": "交付核验员",
+          "summary": "对照确认标准核对任意类型成果，提供建议而不自行完成任务。",
+          "tier": "core",
+          "cardPath": "cards/delivery-verifier.json"
+        }
+      ]
+    },
+    {
+      "id": "brand-design",
+      "name": "品牌、视觉与体验",
+      "summary": "定义表达并制作视觉或体验成果。",
+      "roles": [
+        {
+          "roleSlug": "brand-strategist",
+          "name": "品牌策略师",
+          "summary": "定义长期定位、价值主张和表达规范，为设计与营销提供依据。",
+          "tier": "core",
+          "cardPath": "cards/brand-strategist.json"
+        },
+        {
+          "roleSlug": "visual-designer",
+          "name": "视觉与传播设计师",
+          "summary": "制作提案、海报、演示、信息图或分镜，并提供可交接规格。",
+          "tier": "core",
+          "cardPath": "cards/visual-designer.json"
+        },
+        {
+          "roleSlug": "experience-designer",
+          "name": "体验设计与用户研究员",
+          "summary": "设计产品、服务与客户旅程，区分真实研究和模拟走查。",
+          "tier": "specialist",
+          "cardPath": "cards/experience-designer.json"
+        }
+      ]
+    },
+    {
+      "id": "marketing-content",
+      "name": "营销与内容",
+      "summary": "策划活动并制作内容，不自行发布。",
+      "roles": [
+        {
+          "roleSlug": "marketing-planner",
+          "name": "营销策划师",
+          "summary": "设计活动目标、受众、渠道和衡量方法，不把计划当实际效果。",
+          "tier": "core",
+          "cardPath": "cards/marketing-planner.json"
+        },
+        {
+          "roleSlug": "content-editor",
+          "name": "内容策划与编辑",
+          "summary": "制作文章、脚本、案例、邮件和平台内容，核查事实及品牌一致性。",
+          "tier": "core",
+          "cardPath": "cards/content-editor.json"
+        }
+      ]
+    },
+    {
+      "id": "commercial-customer",
+      "name": "商务与客户",
+      "summary": "准备提案和支持，不擅自承诺。",
+      "roles": [
+        {
+          "roleSlug": "proposal-specialist",
+          "name": "商务与提案专员",
+          "summary": "将真实客户机会整理为方案、范围与报价草案，不擅自作商业承诺。",
+          "tier": "core",
+          "cardPath": "cards/proposal-specialist.json"
+        },
+        {
+          "roleSlug": "customer-success",
+          "name": "客户成功与服务专员",
+          "summary": "准备使用支持并基于真实记录跟踪客户问题和承诺。",
+          "tier": "core",
+          "cardPath": "cards/customer-success.json"
+        }
+      ]
+    },
+    {
+      "id": "finance",
+      "name": "财务与账务",
+      "summary": "分离预测、实际记录和正式动作。",
+      "roles": [
+        {
+          "roleSlug": "financial-planner",
+          "name": "财务规划分析师",
+          "summary": "用可追溯数据构建预算、毛利和现金流情景，不代替批准。",
+          "tier": "core",
+          "cardPath": "cards/financial-planner.json"
+        },
+        {
+          "roleSlug": "bookkeeping-assistant",
+          "name": "账务与对账助理",
+          "summary": "核对实际交易、凭证和应收应付，不将草稿写入正式账簿。",
+          "tier": "core",
+          "cardPath": "cards/bookkeeping-assistant.json"
+        }
+      ]
+    },
+    {
+      "id": "legal",
+      "name": "合同与合规",
+      "summary": "初审风险，专业人士复核。",
+      "roles": [
+        {
+          "roleSlug": "legal-reviewer",
+          "name": "合同与合规审阅员",
+          "summary": "进行合同初审、版本比较与风险整理，为人类和专业律师准备复核材料。",
+          "tier": "core",
+          "cardPath": "cards/legal-reviewer.json"
+        }
+      ]
+    },
+    {
+      "id": "operations-knowledge",
+      "name": "运营与知识",
+      "summary": "形成流程、指南和交接资料。",
+      "roles": [
+        {
+          "roleSlug": "operations-specialist",
+          "name": "业务运营专员",
+          "summary": "整理重复业务流程、资源与供应商方案，不替代 Shepherd 调度。",
+          "tier": "core",
+          "cardPath": "cards/operations-specialist.json"
+        },
+        {
+          "roleSlug": "knowledge-editor",
+          "name": "文档与知识编辑",
+          "summary": "将成果整理为指南、SOP与交接资料，标明来源和适用版本。",
+          "tier": "specialist",
+          "cardPath": "cards/knowledge-editor.json"
+        }
+      ]
+    },
+    {
+      "id": "ai-capability",
+      "name": "AI 行为与能力",
+      "summary": "提出候选与评测，不自行激活。",
+      "roles": [
+        {
+          "roleSlug": "ai-behavior-designer",
+          "name": "AI 行为设计师",
+          "summary": "制作版本化提示词、输出契约与测试，提出候选不自行激活。",
+          "tier": "specialist",
+          "cardPath": "cards/ai-behavior-designer.json"
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "name": "数据与效果",
+      "summary": "以真实数据和适用方法分析。",
+      "roles": [
+        {
+          "roleSlug": "data-analyst",
+          "name": "数据与效果分析师",
+          "summary": "核对口径和数据质量，复现经营营销或实验分析，不将相关当因果。",
+          "tier": "specialist",
+          "cardPath": "cards/data-analyst.json"
+        }
+      ]
+    },
+    {
+      "id": "people",
+      "name": "人力与招聘",
+      "summary": "辅助招聘材料，决定由人承担。",
+      "roles": [
+        {
+          "roleSlug": "recruitment-assistant",
+          "name": "人力与招聘助理",
+          "summary": "准备岗位、面试和入职材料，用岗位证据辅助人类招聘。",
+          "tier": "specialist",
+          "cardPath": "cards/recruitment-assistant.json"
+        }
+      ]
+    }
+  ]
+}

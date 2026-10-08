@@ -1,3 +1,13 @@
+import { beforeAll, afterAll } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+const boundaryTestDir = mkdtempSync(join(tmpdir(), 'gravitas-pi-boundary-'))
+const originalBoundaryDir = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = boundaryTestDir
+const boundaryStore = await import('../project-sqlite-store')
+beforeAll(async () => { await boundaryStore.initProjectDb() })
+afterAll(() => { boundaryStore.closeProjectDb(); if (originalBoundaryDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = originalBoundaryDir; rmSync(boundaryTestDir, { recursive: true, force: true }) })
 import { describe, expect, mock, test } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import type { Context, Model } from '@earendil-works/pi-ai'
