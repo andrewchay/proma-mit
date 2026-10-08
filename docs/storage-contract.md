@@ -25,3 +25,5 @@ Memory 保持 candidate → Approval → 用户批准 → Memory，索引写入�
 ### Owner规划载体绑定与暂停来源关联（2026-10-08）
 
 `project_owner_runtime_revisions`保存项目Owner职责与现有受控载体绑定的连续版本；`project_owner_planning_links`保存Goal/Plan/context/绑定版本与权威paused承载任务的来源关联，属于同`paa.db`附属权威数据，不是Context Store索引或新grant。`controlled_task_preparations.owner_planning_link_id`提供第二份目的定位证据，两者需与任务/配置/Goal/Plan一起一致备份恢复。任一证据存在不得降级为普通Agent，损坏/来源变化fail-closed，不自动重建或重发。只有配置指纹，不持久化渠道凭据或发送文件正文；JSON来源/版本记录不代表签名、费用授权或业务完成。当前A阶段拒绝规划任务启动，实际Runtime与未知费用恢复待B/C实现和D验收。
+
+Owner规划B（2026-10-09）追加`project_owner_planning_links.source_snapshot`保存当次受审数据投影（不含文件/密钥/角色全文）及`project_owner_planning_admissions`保存唯一link/execution/session单发送占位、实际request hash和冻结快照。它们是paa.db权威恢复集的一部分；占位不能靠重建索引/删除行释放来重发，可能已发送保持unknown，停止或解析失败不等于远端未收费。旧A缺snapshot只能在来源仍当前且未关联执行的显式重复准备事务中补齐，不补造历史发送资料或Run。费用/最终Run未接通不能把admission当结算；Owner专用nullable用量证据不同于SDK兼容默认0。

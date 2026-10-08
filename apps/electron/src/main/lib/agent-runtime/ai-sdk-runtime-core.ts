@@ -103,6 +103,8 @@ export interface AISDKToolExecutionState {
 }
 
 export interface AISDKRuntimeStreamInput {
+  /** Owner关闭 AI SDK 内部重试；普通路径沿用 SDK 默认配置。 */
+  sdkMaxRetries?: 0
   model: LanguageModel
   system: string
   messages: ModelMessage[]
@@ -132,6 +134,8 @@ function estimateStreamPartTokens(part: unknown): number {
 }
 
 export interface AISDKAgentTurnInput {
+  /** 内部隔离收紧字段，不授予用途权限；adapter 与最终出口独立重读权威来源。 */
+  ownerPlanningRequest?: { systemPrompt: string; userPrompt: string }
   sessionId: string
   prompt: string
   modelId: string
@@ -194,7 +198,9 @@ type RuntimeToolJsonSchema = RuntimeToolDefinition['parameters']
 export class AISDKRuntimeCore {
   async runAgentTurn(input: AISDKAgentTurnInput): Promise<SDKMessage[]> {
     // Pilot 受控执行：同一闭包覆盖本 turn 全部请求（模型、压缩），derive→reserve→verify 后才发送。
-    const pilotRuntime = input.pilotBudget
+    const owner = input.ownerPlanningRequest
+    if (owner && !input.fetchFn) throw new Error('Owner规划必须经受控模型出口，不能回退自由Caller')
+    const pilotRuntime = !owner && input.pilotBudget
       ? buildPilotRequestRuntime(input.pilotBudget, globalThis.fetch)
       : undefined
     const modelInstance = createAgentAISDKModel({
@@ -206,15 +212,17 @@ export class AISDKRuntimeCore {
       modelId: input.modelId,
       ...((input.fetchFn ?? pilotRuntime?.fetch) ? { fetch: input.fetchFn ?? pilotRuntime?.fetch } : {}),
     })
-    const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
+    const effectiveSystemPrompt = owner ? owner.systemPrompt : buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
       : undefined)
-    const history = await enrichHistoryWithDocuments(
+    const history = owner ? [] : await enrichHistoryWithDocuments(
       input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : [],
     )
-    const enrichedPrompt = await enrichMessageWithDocuments(input.prompt, input.attachments)
-    const messages = buildAISDKModelMessages(history, enrichedPrompt, getImageAttachmentData(input.attachments))
-    const toolSet = this.createAISDKTools(input.runtimeTools, {
+    const enrichedPrompt = owner ? owner.userPrompt : await enrichMessageWithDocuments(input.prompt, input.attachments)
+    const messages: ModelMessage[] = owner
+      ? [{ role: 'user', content: owner.userPrompt }]
+      : buildAISDKModelMessages(history, enrichedPrompt, getImageAttachmentData(input.attachments))
+    const toolSet = owner ? {} : this.createAISDKTools(input.runtimeTools, {
       sessionId: input.sessionId,
       cwd: input.cwd,
       signal: input.activeSession.controller.signal,
@@ -236,18 +244,19 @@ export class AISDKRuntimeCore {
       system: effectiveSystemPrompt,
       messages,
       tools: toolSet,
-      maxTurns: input.maxTurns,
-      maxRetries: input.maxRetries,
+      maxTurns: owner ? 1 : input.maxTurns,
+      maxRetries: owner ? 0 : input.maxRetries,
+      ...(owner ? { sdkMaxRetries: 0 as const } : {}),
       signal: input.activeSession.controller.signal,
       estimatedContextTokens: estimateTokenCount(JSON.stringify({
         system: effectiveSystemPrompt,
         messages,
-        tools: input.runtimeTools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+        tools: owner ? [] : input.runtimeTools.map(({ name, description, parameters }) => ({ name, description, parameters })),
       })) + 256,
       provider: input.provider,
       modelId: input.modelId,
       onAgentEvent: input.onAgentEvent,
-      ...(pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens } : {}),
+      ...(owner ? { maxOutputTokens: 4096 } : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens } : {}),
     })
 
     const steps = streamRun.streamedSteps.length > 0
@@ -255,11 +264,18 @@ export class AISDKRuntimeCore {
       : await streamRun.result.steps
     const sdkMessages = buildAISDKMessagesFromSteps(steps, input.sessionId, input.modelId)
     const usage = await streamRun.result.usage
+    const ownerFinishReason = owner ? await streamRun.result.finishReason : undefined
     const resultMessage: SDKResultMessage = {
       type: 'result',
-      subtype: 'success',
+      subtype: owner && ownerFinishReason !== 'stop' ? 'error_during_execution' : 'success',
       usage: toAISDKResultUsage(usage),
       session_id: input.sessionId,
+      // 原始文本和终态供可信 Run 收据使用；不推算费用或伪造 Provider ID。
+      ...(owner ? { result: await streamRun.result.text, finish_reason: ownerFinishReason, owner_planning_usage: {
+        inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null,
+        cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? null,
+        cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? null,
+      } } : {}),
     }
     return [...sdkMessages, resultMessage as unknown as SDKMessage]
   }
@@ -285,6 +301,7 @@ export class AISDKRuntimeCore {
             messages: input.messages,
             tools: input.tools,
             stopWhen: isStepCount(input.maxTurns),
+            ...(input.sdkMaxRetries !== undefined ? { maxRetries: input.sdkMaxRetries } : {}),
             abortSignal: attemptController.signal,
             ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
           })

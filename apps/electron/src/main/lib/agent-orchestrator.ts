@@ -64,6 +64,8 @@ import { getSettings } from './settings-service'
 import { getContextStoreService } from './context-store-service'
 import { resolveCollaborationWorkspaceId } from './agent-collaboration-tools'
 import { logInfo, logError } from './file-logger'
+import { resolveOwnerPlanningSession, type OwnerPlanningSessionSource } from './project-owner-planning-source'
+import type { AISDKAgentQueryOptions } from './adapters/ai-sdk-agent-adapter'
 import { buildSystemPrompt, buildDynamicContext, buildBuiltinAgents } from './agent-prompt-builder'
 import type { SubAgentInput } from './agent-runtime/types'
 import { permissionService } from './agent-permission-service'
@@ -1839,6 +1841,62 @@ export class AgentOrchestrator {
     appendSDKMessages(sessionId, withTimestamps)
   }
 
+  /** Owner 专用单回合：这里只解析明确绑定的渠道与 cwd，不调用通用上下文服务。 */
+  private async runOwnerPlanningAgent(
+    input: AgentSendInput,
+    callbacks: SessionCallbacks,
+    owner: OwnerPlanningSessionSource,
+  ): Promise<void> {
+    const { sessionId, startedAt } = input
+    if (this.activeSessions.has(sessionId)) throw new Error('Owner规划不允许排队或追加输入')
+    if (resolveRequestedOperation(input.userMessage)) throw new Error('Owner规划不允许命令或压缩操作')
+    const { binding, request } = owner
+    if (input.channelId !== binding.channelId || input.modelId !== binding.modelId
+      || input.workspaceId !== binding.workspaceId || (input.agentRuntime && input.agentRuntime !== 'ai-sdk')) {
+      throw new Error('Owner规划实际渠道、模型、工作区或runtime与权威绑定不一致')
+    }
+    const channel = getChannelById(binding.channelId)
+    const workspace = getAgentWorkspace(binding.workspaceId)
+    if (!channel || !workspace || !isAgentCompatibleProvider(channel.provider, 'ai-sdk')) {
+      throw new Error('Owner规划明确绑定的渠道或工作区不可用')
+    }
+    const generation = startedAt ?? Date.now()
+    this.activeSessions.set(sessionId, generation)
+    this.sessionPermissionModes.set(sessionId, 'safe')
+    const messages: SDKMessage[] = []
+    let persisted = false
+    try {
+      const queryOptions: AISDKAgentQueryOptions = {
+        sessionId, agentRuntime: 'ai-sdk', model: binding.modelId, provider: channel.provider,
+        apiKey: decryptApiKey(binding.channelId), baseUrl: channel.baseUrl,
+        cwd: getAgentWorkspaceCwd(workspace, sessionId), permissionMode: 'safe',
+        prompt: request.userPrompt, systemPrompt: request.systemPrompt, maxTurns: 1, maxRetries: 0,
+        onAgentEvent: (event) => this.runtimeServices.events.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload),
+      }
+      this.runtimeServices.sessions.appendMessages(sessionId, [{
+        type: 'user', message: { content: [{ type: 'text', text: request.userPrompt }] },
+        parent_tool_use_id: null, uuid: randomUUID(),
+      } as SDKMessage])
+      let established = false
+      for await (const message of this.adapter.query(queryOptions)) {
+        if (!established) { established = true; callbacks.onRuntimeSessionEstablished?.() }
+        messages.push(message)
+        this.runtimeServices.events.emit(sessionId, { kind: 'sdk_message', message } as AgentStreamPayload)
+        // 不生成标题、不续跑 Goal；原始 SDK 消息仍由同一可信完成回调返回。
+      }
+      if (messages.length) this.runtimeServices.sessions.appendMessages(sessionId, messages)
+      persisted = true
+      callbacks.onComplete(messages as unknown as AgentMessage[], {
+        startedAt,
+        runtimeResult: [...messages].reverse().find((message): message is SDKResultMessage => message.type === 'result'),
+      })
+    } finally {
+      if (!persisted && messages.length) this.runtimeServices.sessions.appendMessages(sessionId, messages)
+      if (this.activeSessions.get(sessionId) === generation) this.activeSessions.delete(sessionId)
+      this.sessionPermissionModes.delete(sessionId)
+    }
+  }
+
   /**
    * 发送消息并流式推送事件
    *
@@ -1850,6 +1908,19 @@ export class AgentOrchestrator {
    * 自动取出下一条执行。pumpNext 驱动时需传 opts.skipQueueCheck=true 跳过入队判断。
    */
   async sendMessage(input: AgentSendInput, callbacks: SessionCallbacks, opts?: { skipQueueCheck?: boolean }): Promise<void> {
+    // Owner 必须在排队、Goal、命令解析、历史、工作区 MCP 和动态提示前分流。
+    // 损坏的用途证据由 resolver 抛错，绝不退回普通 Agent。
+    try {
+      const owner = resolveOwnerPlanningSession(input.sessionId)
+      if (owner) {
+        await this.runOwnerPlanningAgent(input, callbacks, owner)
+        return
+      }
+    } catch (error) {
+      callbacks.onError(error instanceof Error ? error.message : String(error))
+      callbacks.onComplete([], { startedAt: input.startedAt })
+      return
+    }
     const { sessionId, userMessage, runtimeInstruction, channelId, modelId, agentRuntime, runtimeBudgetLimitUsd, workspaceId, additionalDirectories, customMcpServers, permissionModeOverride, worktreeScopedWrite, mentionedSkills, mentionedMcpServers, mentionedSessionIds, mentionedAgentEmployees, attachments, workflowCapabilityPolicy, triggeredBy } = input
     const stderrChunks: string[] = []
 
@@ -3629,6 +3700,7 @@ export class AgentOrchestrator {
    * 典型场景：用户在 Agent 运行中通过 PermissionModeSelector 切换模式。
    */
   async updateSessionPermissionMode(sessionId: string, mode: PromaPermissionMode): Promise<void> {
+    if (resolveOwnerPlanningSession(sessionId)) throw new Error('Owner规划不允许权限变化')
     if (!this.activeSessions.has(sessionId)) return
     assertControlledPermissionChange(sessionId, mode)
     this.sessionPermissionModes.set(sessionId, mode)
@@ -3776,6 +3848,7 @@ export class AgentOrchestrator {
     presetUuid?: string,
     opts?: { interrupt?: boolean },
   ): Promise<string> {
+    if (resolveOwnerPlanningSession(sessionId)) throw new Error('Owner规划不允许追加输入或中断续跑')
     if (!this.activeSessions.has(sessionId)) {
       throw new Error(`[Agent 编排] 会话未运行，无法追加消息: ${sessionId}`)
     }

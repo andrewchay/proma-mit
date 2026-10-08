@@ -312,6 +312,16 @@ export interface SDKResultMessage {
     cache_read_input_tokens?: number
     cache_creation_input_tokens?: number
   }
+  /** Runtime原文与终止原因；不等于业务成功或Provider直接回执。 */
+  result?: string
+  finish_reason?: string
+  /** Owner真实SDK用量；null表示未报告，不能用兼容usage中的0冒充证据。 */
+  owner_planning_usage?: {
+    inputTokens: number | null
+    outputTokens: number | null
+    cacheReadTokens: number | null
+    cacheWriteTokens: number | null
+  }
   total_cost_usd?: number
   modelUsage?: Record<string, { contextWindow?: number }>
   errors?: string[]

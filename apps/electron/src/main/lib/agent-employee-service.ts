@@ -1,3 +1,4 @@
+import { resolveOwnerPlanningTask, type OwnerPlanningTaskSource } from './project-owner-planning-source'
 /**
  * AI 员工（Agent Employee）服务
  *
@@ -766,6 +767,14 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     catch (error) { console.warn('[AgentEmployee] 非代码启动认领被拒绝:', error); return false }
   }
 
+  // Owner是独立规划职责；仅以同库来源构造资料，不沿用员工角色全文或提及Skills。
+  let ownerPlanning: OwnerPlanningTaskSource | null = null
+  try { if (task) ownerPlanning = resolveOwnerPlanningTask(task.id) }
+  catch (error) { handleExecutionError(executionId, error instanceof Error ? error.message : 'Owner规划来源无效', execution.startedAt); return false }
+  if (ownerPlanning && runtimeBudgetLimitUsd !== undefined) {
+    handleExecutionError(executionId, 'Owner规划不能伪造Pilot硬预算出口', execution.startedAt)
+    return false
+  }
   // 1. 创建独立 Agent 会话
   let sessionId: string
   try {
@@ -846,10 +855,10 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   runRegisteredHeadlessAgent(
     {
       sessionId,
-      userMessage: updated.prompt,
+      userMessage: ownerPlanning?.request.userPrompt ?? updated.prompt,
       channelId: employee.channelId,
       modelId,
-      mentionedSkills: employee.skills,
+      mentionedSkills: ownerPlanning ? undefined : employee.skills,
       agentRuntime: employee.runtime,
       runtimeBudgetLimitUsd,
       workspaceId,

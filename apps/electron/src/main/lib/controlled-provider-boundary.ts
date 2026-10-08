@@ -12,6 +12,8 @@ import {
 	assertControlledPreparedExecution,
 	requiresControlledStart,
 } from './controlled-project-task-service'
+import { resolveOwnerPlanningSession } from './project-owner-planning-source'
+import { assertOwnerPlanningCredential, claimOwnerPlanningProviderRequest } from './project-owner-planning-provider'
 import { resolvePiBaseUrl } from './adapters/pi-runtime-base-url'
 
 export interface ControlledProviderContext {
@@ -162,8 +164,18 @@ export function createControlledProviderFetch(
 			)
 		)
 			throw new Error('模型请求出口与确认渠道不一致')
-		assertControlledProviderBoundary(sessionId, current)
-		return baseFetch(input, init)
+    // async请求体/代理初始化后重新读权威Owner用途；普通controlled保留原语义。
+    const owner = resolveOwnerPlanningSession(sessionId)
+    if (owner && current.runtime !== 'ai-sdk') throw new Error('Owner规划仅允许AI SDK受控出口')
+    store.getProjectDb().transaction(() => {
+      assertControlledProviderBoundary(sessionId, current)
+      if (owner) {
+        assertOwnerPlanningCredential(owner, input, init)
+        claimOwnerPlanningProviderRequest(sessionId, body, url)
+      }
+    })()
+    // fetch内部默认follow会绕过第二次准入并外送冻结资料；Owner一律禁止重定向。
+		return baseFetch(input, owner ? { ...init, redirect: 'error' } : init)
 	}
 	return Object.assign(guarded, { preconnect: () => {} })
 }

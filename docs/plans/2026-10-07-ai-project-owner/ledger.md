@@ -153,3 +153,7 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 ### 2026-10-08 受控Owner主动规划方案获实现审批：A基础
 
 [Owner绑定/暂停关联](owner-runtime-binding.md)追加版本化职责→真实carrier绑定及同库source-link，严格目标/计划/context/config CAS、资料/协议指纹、目标业务任务与承载任务分离；复用controlled准备，paused零执行。关联或preparation目的证据任一存在即拒绝普通Agent启动，B出口未完成不会偷开放。13项/46断言、controlled23项/97、全仓549文件0失败、typecheck/lint1983/docs/build通过。Electron0.12.116/shared0.2.30；没有新增配置/启动UI、没有本片Native验收或实际模型，不能把本片记AO-02/03/04整体完成。继续B单请求零工具出口，费用仍另逐次确认。
+
+### 2026-10-09 Owner主动规划B：受限Runtime与单请求边界
+
+[受限出口](owner-runtime-isolation.md)：同库冻结资料、权威Owner解析、Worker/Orchestrator/AI SDK早分流，零工具/MCP/Skills/history/role/dynamic/title/steering/压缩，SDK内外retry0、输出4096；真实三协议body/解密凭据校验＋同事务唯一admission，未知发送不补跑。独立只读审查指出自动redirect P1，已强制error并用本地307/308验证目标0访问；未报告用量另保存Owner null证据，不拿兼容0当费用。两子会话均wait收敛。555隔离文件失败0、全typecheck/lint1991/docs/diff/fullbuild含两nativehelpers通过，真实Provider/外部skip不算PASS。Electron0.12.117/shared0.2.31；A禁启动仍保留，C回执/提案/费用UI未完成，不记AO-03/04整体完成，不宣称Owner自治或实际收费许可/硬金额上限。本片尚无Native schema验收，不安装/push/merge。

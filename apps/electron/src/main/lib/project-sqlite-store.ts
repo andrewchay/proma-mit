@@ -1006,6 +1006,13 @@ function migrate(database: SqliteCompat): void {
     authorized_scope_hash TEXT, authorized_until INTEGER, execution_id TEXT, provider_admitted_at INTEGER,
     UNIQUE(project_id, request_id)
   )`)
+  if (!readColumnNames(database, 'project_owner_planning_links').includes('source_snapshot')) {
+    database.exec('ALTER TABLE project_owner_planning_links ADD COLUMN source_snapshot TEXT')
+  }
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_admissions (
+    link_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL UNIQUE,
+    request_hash TEXT NOT NULL, source_snapshot TEXT NOT NULL, admitted_at INTEGER NOT NULL CHECK (admitted_at > 0)
+  )`)
   if (!readColumnNames(database, 'controlled_task_preparations').includes('owner_planning_link_id')) {
     database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN owner_planning_link_id TEXT')
   }

@@ -45,7 +45,7 @@ export interface OwnerPlanningLink {
   createdAt: number
 }
 interface BindingRow { revision: number; payload: string }
-interface LinkRow { id: string; project_id: string; request_id: string; planning_task_id: string; input_hash: string; payload: string }
+interface LinkRow { id: string; project_id: string; request_id: string; planning_task_id: string; input_hash: string; payload: string; source_snapshot: string | null }
 const hash = (input: unknown): string => createHash('sha256').update(JSON.stringify(input)).digest('hex')
 function object(input: unknown, fields: string[]): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.getPrototypeOf(input) !== Object.prototype
@@ -68,7 +68,7 @@ function transaction<T>(run: () => T): T {
   if (result === undefined) throw new Error('Owner事务未产生回执')
   return result
 }
-function carrier(projectId: string, carrierId: string, workspaceId: string) {
+export function getOwnerCarrierFacts(projectId: string, carrierId: string, workspaceId: string) {
   project(projectId)
   const employee = store.getAgentEmployee(carrierId)
   if (!employee?.enabled || employee.executionProfile !== 'controlled' || employee.runtime !== 'ai-sdk') throw new Error('Owner载体必须是已启用的AI SDK受控员工')
@@ -101,7 +101,7 @@ export function saveOwnerRuntimeBinding(projectId: string, expectedRevision: num
     assertLocalActorEnabled()
     const current = getOwnerRuntimeBinding(projectId)
     if ((current?.revision ?? 0) !== expectedRevision) throw new Error('Owner绑定已更新，请比较后重试')
-    const facts = carrier(projectId, carrierId, workspaceId)
+    const facts = getOwnerCarrierFacts(projectId, carrierId, workspaceId)
     const result: OwnerRuntimeBinding = { schemaVersion: 1, projectId, revision: expectedRevision + 1, ownerRole: 'project_owner', ownerName, carrierId, workspaceId, ...facts, actor: 'local-user', savedAt: Date.now(), changeReason }
     store.getProjectDb().prepare('INSERT INTO project_owner_runtime_revisions (project_id, revision, payload) VALUES (?, ?, ?)').run(projectId, result.revision, JSON.stringify(result))
     return result
@@ -118,7 +118,7 @@ export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlan
     assertLocalActorEnabled()
     const binding = getOwnerRuntimeBinding(projectId)
     if (!binding) throw new Error('请先明确Owner与规划载体绑定')
-    const facts = carrier(projectId, binding.carrierId, binding.workspaceId)
+    const facts = getOwnerCarrierFacts(projectId, binding.carrierId, binding.workspaceId)
     if (taskId && (store.getProjectDb().prepare('SELECT id FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId)
       || store.getProjectDb().prepare('SELECT owner_planning_link_id FROM controlled_task_preparations WHERE task_id = ? AND owner_planning_link_id IS NOT NULL').get(taskId))) throw new Error('Owner规划承载任务不能作为目标业务任务再次规划')
     const context = getProjectOwnerPlanningContext(projectId, taskId)
@@ -139,12 +139,18 @@ export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlan
       const task = store.getTask(existing.planning_task_id)
       const receipt = store.getProjectDb().prepare('SELECT owner_planning_link_id FROM controlled_task_preparations WHERE task_id = ?').get(existing.planning_task_id) as { owner_planning_link_id: string } | undefined
       if (existing.input_hash !== inputHash || value.id !== existing.id || value.projectId !== projectId || value.planningTaskId !== existing.planning_task_id || value.purpose !== 'owner_planning' || !task || task.projectId !== projectId || task.workspaceId !== binding.workspaceId || task.assignee?.userId !== `agent-${binding.carrierId}` || task.status !== 'paused' || receipt?.owner_planning_link_id !== existing.id) throw new Error('Owner规划准备记录不一致，不自动重新创建')
+      if (existing.source_snapshot === null) {
+        // 旧A准备只有指纹。仅在全部来源/版本仍当前且未授权启动时显式重试准备补齐快照。
+        const authorization = store.getProjectDb().prepare('SELECT execution_id FROM controlled_task_preparations WHERE task_id = ?').get(value.planningTaskId) as { execution_id: string | null }
+        if (authorization.execution_id) throw new Error('旧Owner规划准备已关联执行，不能补造发送资料')
+        store.getProjectDb().prepare('UPDATE project_owner_planning_links SET source_snapshot = ? WHERE id = ? AND source_snapshot IS NULL').run(JSON.stringify(context), value.id)
+      } else if (existing.source_snapshot !== JSON.stringify(context)) throw new Error('Owner规划资料快照记录损坏')
       return value
     }
     const id = randomUUID()
     const prepared = prepareControlledTask({ requestId: `owner-planning:${id}`, projectId, employeeId: binding.carrierId, workspaceId: binding.workspaceId, title: `Owner规划：${context.sources.task?.title ?? context.sources.project.title}`.slice(0, 200), description: '仅提出目标规划/必要澄清；不计作目标业务任务交付，不自动组织员工，不授权业务执行。', priority: 'medium' })
     const result = makeLink(id, prepared.taskId, Date.now())
-    store.getProjectDb().prepare('INSERT INTO project_owner_planning_links (id, project_id, request_id, planning_task_id, input_hash, payload) VALUES (?, ?, ?, ?, ?, ?)').run(id, projectId, requestId, prepared.taskId, inputHash, JSON.stringify(result))
+    store.getProjectDb().prepare('INSERT INTO project_owner_planning_links (id, project_id, request_id, planning_task_id, input_hash, payload, source_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, projectId, requestId, prepared.taskId, inputHash, JSON.stringify(result), JSON.stringify(context))
     store.getProjectDb().prepare('UPDATE controlled_task_preparations SET owner_planning_link_id = ? WHERE task_id = ?').run(id, prepared.taskId)
     return result
   })
