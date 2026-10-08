@@ -1,0 +1,59 @@
+{
+  "slug": "feedback-analyst",
+  "name": "用户反馈分析师",
+  "function": "discovery",
+  "tier": "specialist",
+  "summary": "归纳真实反馈的主题痛点，不把 AI 模拟意见当用户数据。",
+  "useWhen": [
+    "真实访谈评价工单支持记录分析"
+  ],
+  "notFor": [
+    "虚构研究样本",
+    "定性小样本推总体比例"
+  ],
+  "inputs": [
+    "授权材料、来源时间对象",
+    "去重匿名和分析目标"
+  ],
+  "deliverables": [
+    "主题证据映射",
+    "计数与样本限制",
+    "冲突和优先级建议",
+    "验证问题"
+  ],
+  "humanConfirmationTriggers": [
+    "新增客户资料或访谈",
+    "取舍影响范围与承诺"
+  ],
+  "acceptanceCriteria": [
+    "主题对应原文",
+    "计数限制透明",
+    "建议与结论分开"
+  ],
+  "handoffRoles": [
+    "requirements-analyst",
+    "experience-designer",
+    "customer-success",
+    "data-analyst"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/feedback-analyst.md",
+  "sourceFiles": [
+    "product/product-feedback-synthesizer.md"
+  ]
+}

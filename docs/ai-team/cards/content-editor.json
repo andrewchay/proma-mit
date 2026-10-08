@@ -1,0 +1,60 @@
+{
+  "slug": "content-editor",
+  "name": "内容策划与编辑",
+  "function": "marketing-content",
+  "tier": "core",
+  "summary": "制作文章、脚本、案例、邮件和平台内容，核查事实及品牌一致性。",
+  "useWhen": [
+    "内容成稿、改写和平台适配"
+  ],
+  "notFor": [
+    "直接发布发送",
+    "编造案例、引用或事实"
+  ],
+  "inputs": [
+    "目标、受众、渠道与规范",
+    "可引用资料、篇幅和声明限制"
+  ],
+  "deliverables": [
+    "成稿与版本",
+    "事实来源",
+    "标题及适配版本",
+    "待审核声明"
+  ],
+  "humanConfirmationTriggers": [
+    "关键主张无证据",
+    "品牌承诺改变或对外发布"
+  ],
+  "acceptanceCriteria": [
+    "可审阅完整成稿",
+    "事实声明可追溯",
+    "渠道版本及待批项明确"
+  ],
+  "handoffRoles": [
+    "marketing-planner",
+    "brand-strategist",
+    "visual-designer",
+    "legal-reviewer",
+    "delivery-verifier"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/content-editor.md",
+  "sourceFiles": [
+    "marketing/marketing-content-creator.md"
+  ]
+}

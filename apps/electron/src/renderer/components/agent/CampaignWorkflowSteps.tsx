@@ -125,7 +125,6 @@ export function CampaignWorkflowSteps({
   React.useEffect(() => {
     if (!hasInProgressStep) return
 
-    let cancelled = false
     const refreshWorkflow = () => {
       loadWorkflow({ silent: true, keepExpanded: true }).catch(console.error)
     }
@@ -134,10 +133,9 @@ export function CampaignWorkflowSteps({
     refreshWorkflow()
 
     return () => {
-      cancelled = true
       window.clearInterval(timer)
     }
-  }, [campaignId, hasInProgressStep, loadWorkflow])
+  }, [hasInProgressStep, loadWorkflow])
 
   // 用户切回窗口时自动刷新工作流，捕获外部修改或 Agent 后台更新
   React.useEffect(() => {

@@ -6,8 +6,7 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { ShieldCheck, X, Loader2, CheckCircle, AlertCircle, XCircle } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { ShieldCheck, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -24,23 +23,6 @@ interface ContentAuditDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onAudited: () => void
-}
-
-const STATUS_CONFIG = {
-  passed: { label: '通过', color: 'text-emerald-600 bg-emerald-50', icon: CheckCircle },
-  failed: { label: '不通过', color: 'text-red-600 bg-red-50', icon: XCircle },
-  pending: { label: '待审核', color: 'text-amber-600 bg-amber-50', icon: AlertCircle },
-  reviewing: { label: '审核中', color: 'text-blue-600 bg-blue-50', icon: Loader2 },
-}
-
-function ScoreRing({ score, label }: { score: number; label: string }): React.ReactElement {
-  const color = score >= 80 ? 'text-emerald-500' : score >= 60 ? 'text-amber-500' : score >= 40 ? 'text-orange-500' : 'text-red-500'
-  return (
-    <div className="flex flex-col items-center">
-      <div className={cn('text-2xl font-bold', color)}>{score}</div>
-      <span className="text-[10px] text-muted-foreground">{label}</span>
-    </div>
-  )
 }
 
 export function ContentAuditDialog({
@@ -88,8 +70,6 @@ export function ContentAuditDialog({
     }
   }
 
-  const statusConfig = STATUS_CONFIG[auditResult?.auditStatus ?? 'pending']
-  const StatusIcon = statusConfig.icon
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

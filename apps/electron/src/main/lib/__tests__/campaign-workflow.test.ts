@@ -17,11 +17,14 @@ import { describe, it, expect, beforeAll, afterAll, mock } from 'bun:test'
 import { existsSync, readFileSync, readdirSync, unlinkSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import type { ToolCall, ToolResult } from '@gravitas/core'
 import { buildElectronMock } from '../testing/electron-mock'
 
 // ===== 前置 mock =====
 
 const TEST_DIR = join(tmpdir(), `proma-mit-workflow-test-${Date.now()}`)
+const originalConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+const originalMarketingConfigDir = process.env._MAPRO_TEST_CONFIG_DIR
 
 mock.module('electron', () => buildElectronMock())
 
@@ -62,7 +65,7 @@ interface CampaignManagerModule {
 
 interface CampaignAgentToolModule {
   isCampaignAgentToolCall: (toolName: string) => boolean
-  executeCampaignAgentTool: (tc: any) => Promise<any>
+  executeCampaignAgentTool: (tc: ToolCall) => Promise<ToolResult>
 }
 
 let workflowService: WorkflowServiceModule
@@ -95,6 +98,10 @@ describe('Campaign 工作流测试', () => {
     if (existsSync(workspaceDir)) rmSync(workspaceDir, { recursive: true })
 
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true })
+    if (originalMarketingConfigDir === undefined) delete process.env._MAPRO_TEST_CONFIG_DIR
+    else process.env._MAPRO_TEST_CONFIG_DIR = originalMarketingConfigDir
+    if (originalConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+    else process.env.PROMA_TEST_CONFIG_DIR = originalConfigDir
   })
 
   // ===== Slice 1: 工作流初始化 =====

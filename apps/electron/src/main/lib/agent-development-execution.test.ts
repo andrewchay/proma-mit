@@ -27,10 +27,13 @@ const { getPilotStopEscalation } = await import('./project-pilot-stop-escalation
 let lastRun: { input: AgentSendInput; callbacks: HeadlessAgentRunCallbacks } | undefined
 let acceptStopRequest = true
 let confirmProcessTerminated = true
+let completeSynchronouslyOnStop = false
 beforeAll(async () => {
   await store.initProjectDb()
   setHeadlessAgentRunner(async (input, callbacks) => { lastRun = { input, callbacks } })
-  setAgentStopper((sessionId, expectedGeneration) => ({
+  setAgentStopper((sessionId, expectedGeneration) => {
+    if (completeSynchronouslyOnStop) lastRun?.callbacks.onComplete([], { stoppedByUser: true })
+    return ({
     sessionId,
     expectedGeneration,
     activeGeneration: expectedGeneration,
@@ -38,7 +41,7 @@ beforeAll(async () => {
     stopped: acceptStopRequest && confirmProcessTerminated,
     reason: acceptStopRequest ? 'stop-request-accepted' : 'stop-failed',
     processTermination: acceptStopRequest && confirmProcessTerminated ? 'VERIFIED' : 'NOT_VERIFIED',
-  }))
+  }) })
 })
 afterAll(() => {
   service.stopAgentEmployeeHeartbeat()
@@ -71,6 +74,62 @@ async function dispatch(task: ReturnType<typeof store.createTask>) {
   const execution = store.getAgentExecution(result!.taskId)!
   return { execution, run: lastRun! }
 }
+
+const controlledTasks = await import('./controlled-project-task-service')
+const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
+async function startPrepared(projectId: string, employeeId: string, workspaceId: string) {
+  bindWorkspaceToProject(projectId, workspaceId)
+  const prepared = controlledTasks.prepareControlledTask({ requestId: randomUUID(), projectId, employeeId, workspaceId, title: '整理需求', description: '待人工验收', priority: 'medium' })
+  const preview = controlledTasks.getControlledTaskStartPreview(prepared.taskId)
+  lastRun = undefined
+  const result = await controlledTasks.startControlledTask({ taskId: prepared.taskId, previewHash: preview.previewHash, acknowledgeModelCosts: true })
+  return { task: store.getTask(prepared.taskId)!, execution: store.getAgentExecution(result.executionId)!, run: lastRun! }
+}
+
+describe('非代码受控员工', () => {
+  test('托管配置经显式确认启动沿用auto审批，完成待验收；普通任务不能代替确认', async () => {
+    const workspace = createAgentWorkspace(`非代码-${randomUUID()}`)
+    const channel = createChannel({ name: '非代码测试', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
+    const employee = service.createAgentEmployee({ name: '需求分析师', role: '需求', description: '', runtime: 'pi', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id], executionProfile: 'controlled', permissionMode: 'auto' })
+    const project = store.createProject({ title: '非代码项目', description: '' })
+    const ordinary = store.createTask(project.id, { title: '无确认任务', description: '', workspaceId: workspace.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
+    expect(await service.dispatchTaskToAgent(ordinary)).toBeNull()
+    expect(store.listAgentExecutionsByEntity('task', ordinary.id)).toHaveLength(0)
+    const { task, execution, run } = await startPrepared(project.id, employee.id, workspace.id)
+    expect(run.input).toMatchObject({ workspaceId: workspace.id, permissionModeOverride: 'auto', worktreeScopedWrite: false, modelId: 'model' })
+    expect(getAgentSessionMeta(run.input.sessionId)).toMatchObject({ permissionMode: 'auto', projectId: project.id, knowledgeScopeMode: 'project' })
+    expect(execution.outputFiles?.length ?? 0).toBe(0)
+    run.callbacks.onComplete?.([message('已整理需求，待人工核验。')])
+    expect(store.getTask(task.id)?.status).toBe('paused')
+    expect(store.getAgentExecution(execution.id)?.status).toBe('completed')
+    service.updateAgentEmployee(employee.id, { permissionMode: 'safe' })
+    store.closeProjectDb()
+    await store.initProjectDb()
+    expect(store.getAgentEmployee(employee.id)).toMatchObject({ executionProfile: 'controlled', permissionMode: 'safe', workspaceIds: [workspace.id] })
+    const second = await startPrepared(project.id, employee.id, workspace.id)
+    expect(second.run.input.permissionModeOverride).toBe('safe')
+    second.run.callbacks.onComplete?.([message('只读检查完成')])
+  })
+  test('准备/预检拒绝未绑定目标、Workflow和未知配置，不隐式授权旧路径', async () => {
+    const first = createAgentWorkspace(`第一-${randomUUID()}`)
+    const second = createAgentWorkspace(`第二-${randomUUID()}`)
+    const channel = createChannel({ name: '绑定测试', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
+    const employee = service.createAgentEmployee({ name: '研究员', role: '研究', description: '', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [first.id, second.id], executionProfile: 'controlled' })
+    const project = store.createProject({ title: '多区项目', description: '' })
+    const input = { requestId: randomUUID(), projectId: project.id, employeeId: employee.id, title: '范围检查', description: '', priority: 'medium' }
+    for (const workspaceId of [undefined, 'outside-binding', first.id]) {
+      expect(() => controlledTasks.prepareControlledTask({ ...input, workspaceId })).toThrow()
+    }
+    const valid = await startPrepared(project.id, employee.id, second.id)
+    expect(valid.run.input.workspaceId).toBe(second.id)
+    valid.run.callbacks.onComplete?.([message('完成待验收')])
+    expect(() => service.updateAgentEmployee(employee.id, { workflowId: 'sop' })).toThrow('Workflow')
+    store.updateAgentEmployee(employee.id, { workflowId: 'sop' })
+    expect(() => controlledTasks.getControlledTaskStartPreview(valid.task.id)).toThrow()
+    store.getProjectDb().prepare('UPDATE agent_employees SET execution_profile = ? WHERE id = ?').run('future-profile', employee.id)
+    expect(() => controlledTasks.getControlledTaskStartPreview(valid.task.id)).toThrow()
+  })
+})
 
 describe('研发员工既有链路兼容', () => {
   test('Given 已排队 Pilot 命令但 Runtime 无单次费用停止能力 When 真实服务入口尝试启动 Then 保留队列且不触发 runner', async () => {
@@ -235,6 +294,20 @@ describe('研发员工既有链路兼容', () => {
     } finally {
       confirmProcessTerminated = true
     }
+  })
+
+  test('Given 同一代际停止同步触发取消回调 When 服务回读终态 Then 不误报失败且不伪造进程核验', async () => {
+    const { task } = fixture()
+    const { execution } = await dispatch(task)
+    confirmProcessTerminated = false
+    completeSynchronouslyOnStop = true
+    try {
+      expect(service.cancelAgentExecution(execution.id)).toMatchObject({
+        status: 'cancelled', stopped: false, stopRequested: true, processTermination: 'NOT_VERIFIED',
+      })
+      expect(store.getAgentExecution(execution.id)?.status).toBe('cancelled')
+      expect(store.getTask(task.id)?.status).toBe('paused')
+    } finally { confirmProcessTerminated = true; completeSynchronouslyOnStop = false }
   })
 
   test('Given Runtime 未确认停止 When 调用取消 Then 不伪造 cancelled', async () => {

@@ -102,7 +102,7 @@ export class ElectronRuntimeWorkspaceStore implements RuntimeWorkspaceStore {
 
     workspace = getAgentWorkspace(input.workspaceId)
     if (!workspace) {
-      return { cwd }
+      throw new Error('明确工作区不存在，禁止回退到主目录')
     }
 
     workspaceSlug = workspace.slug

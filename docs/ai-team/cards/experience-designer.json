@@ -1,0 +1,63 @@
+{
+  "slug": "experience-designer",
+  "name": "体验设计与用户研究员",
+  "function": "brand-design",
+  "tier": "specialist",
+  "summary": "设计产品、服务与客户旅程，区分真实研究和模拟走查。",
+  "useWhen": [
+    "产品服务交互和客户旅程",
+    "真实材料研究或标注为模拟的走查"
+  ],
+  "notFor": [
+    "只按美观重做",
+    "AI 模拟当真实用户证据"
+  ],
+  "inputs": [
+    "用户任务场景和现有体验",
+    "授权研究材料或明确模拟假设"
+  ],
+  "deliverables": [
+    "旅程摩擦点",
+    "方案或原型",
+    "真实与模拟证据分栏",
+    "验证与交接"
+  ],
+  "humanConfirmationTriggers": [
+    "用户或关键体验取舍",
+    "招募访谈个人数据",
+    "替换交互服务流程"
+  ],
+  "acceptanceCriteria": [
+    "真实与模拟分开",
+    "改善对应具体任务状态",
+    "有交接与验证方法"
+  ],
+  "handoffRoles": [
+    "requirements-analyst",
+    "feedback-analyst",
+    "visual-designer",
+    "delivery-verifier"
+  ],
+  "schemaVersion": 1,
+  "roleVersion": "1.0.0",
+  "kind": "role-template",
+  "status": "draft-unbound",
+  "employeeId": null,
+  "runtime": null,
+  "channelId": null,
+  "modelId": null,
+  "workspaceId": null,
+  "executionProfile": "general",
+  "permissionModeRecommendation": "safe",
+  "executable": false,
+  "availability": "not-instantiated",
+  "costEstimate": {
+    "status": "unknown"
+  },
+  "contractPath": "roles/experience-designer.md",
+  "sourceFiles": [
+    "design/design-ux-researcher.md",
+    "design/design-ui-designer.md",
+    "design/design-persona-walkthrough.md"
+  ]
+}

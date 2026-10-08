@@ -77,6 +77,8 @@ export type PiCanUseToolCallback = (
 export interface CreatePiToolBridgeOptions {
   toolContext: ToolContext
   canUseTool?: PiCanUseToolCallback
+  /** 非代码准备任务不开放普通Agent旁路。 */
+  allowSubAgent?: boolean
   coreTools?: RuntimeToolDefinition[]
   /** 由 Proma MCP 管理器提供的、已命名空间化的工具。 */
   mcpTools?: RuntimeToolDefinition[]
@@ -400,7 +402,7 @@ export function createPiToolBridge(options: CreatePiToolBridgeOptions): ToolDefi
       promptSnippet: `${PI_PROMA_ASK_USER_TOOL_NAME}: 向 Proma 用户提问并等待回答。`,
     }, getRequiredTool(coreTools, ASK_USER_QUESTION_TOOL_NAME), options))
   }
-  if (PI_RUNTIME_TOOL_CAPABILITIES.subAgent) {
+  if (PI_RUNTIME_TOOL_CAPABILITIES.subAgent && options.allowSubAgent !== false) {
     tools.push(createBridgeTool({
       piName: PI_PROMA_AGENT_TOOL_NAME,
       runtimeName: AGENT_TOOL_NAME,

@@ -1948,6 +1948,8 @@ export interface ElectronAPI {
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
+      getOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['getOwnerGoalDraft']
+      saveOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['saveOwnerGoalDraft']
       observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
       getPilotOverview: (projectId: string) => Promise<import('@gravitas/shared').PilotOverviewSnapshot>
       listPilotInbox: (projectId: string) => Promise<import('@gravitas/shared').PilotInboxEntry[]>
@@ -2067,6 +2069,9 @@ export interface ElectronAPI {
       /** 研发 Review：冻结快照单文件新旧内容 */
       getSnapshotDiff: (executionId: string, filePath: string) => Promise<import('@gravitas/shared').DevelopmentSnapshotDiff>
       /** 文件委派：新建或关联任务（不派发执行） */
+      prepareControlledTask: (input: import('@gravitas/shared').PrepareControlledTaskInput) => Promise<{ taskId: string; created: boolean }>
+      getControlledTaskStartPreview: (taskId: string) => Promise<import('@gravitas/shared').ControlledTaskStartPreview>
+      startControlledTask: (input: import('@gravitas/shared').StartControlledTaskInput) => Promise<import('@gravitas/shared').ControlledTaskStartResult>
       prepareFileDelegation: (input: import('@gravitas/shared').PrepareFileDelegationInput) => Promise<{ taskId: string; created: boolean }>
       /** 研发返工：记录意见并幂等派发 */
       requestChanges: (taskId: string, comment: string) => Promise<{ taskId: string } | null>
@@ -4671,6 +4676,8 @@ const electronAPI: ElectronAPI = {
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      getOwnerGoalDraft: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_GOAL_DRAFT, subject),
+      saveOwnerGoalDraft: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_GOAL_DRAFT, request),
       observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),
       getPilotOverview: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PILOT_OVERVIEW, projectId),
       listPilotInbox: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PILOT_INBOX, projectId),
@@ -4792,6 +4799,9 @@ const electronAPI: ElectronAPI = {
       getTaskReview: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_REVIEW, taskId),
       getTaskReadiness: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_TASK_READINESS, taskId),
       getSnapshotDiff: (executionId, filePath) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_SNAPSHOT_DIFF, executionId, filePath),
+      prepareControlledTask: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_CONTROLLED_TASK, input),
+      getControlledTaskStartPreview: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREVIEW_CONTROLLED_TASK_START, taskId),
+      startControlledTask: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.START_CONTROLLED_TASK, input),
       prepareFileDelegation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, input),
       requestChanges: (taskId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, taskId, comment),
       acceptDelivery: (taskId, deliveryId, input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, taskId, deliveryId, input),
