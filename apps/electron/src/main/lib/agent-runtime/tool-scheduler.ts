@@ -54,19 +54,27 @@ class RwLock {
   }
 }
 
-export interface ScheduledCall {
+export interface ScheduledCall<T = unknown> {
   readonly id: string
   readonly tool: RuntimeToolDefinition
   readonly input: unknown
   readonly ctx: ToolContext
-  readonly execute: () => Promise<{ content: string }>
+  readonly execute: () => Promise<T>
 }
 
-export interface ScheduledResult {
+export interface ScheduledResult<T = unknown> {
   readonly id: string
   readonly status: 'completed' | 'error' | 'cancelled'
-  readonly result?: { content: string }
+  readonly result?: T
   readonly error?: string
+}
+
+export interface SchedulerMetrics {
+  readonly dispatched: number
+  readonly completed: number
+  readonly errored: number
+  readonly cancelled: number
+  readonly totalWaitMs: number
 }
 
 export interface ToolSchedulerOptions {
@@ -74,36 +82,52 @@ export interface ToolSchedulerOptions {
   readonly plan?: (call: ScheduledCall) => Promise<ResourceLockSpec>
 }
 
-interface SchedulerItem {
-  readonly call: ScheduledCall
+interface SchedulerItem<T = unknown> {
+  readonly call: ScheduledCall<T>
   readonly spec: ResourceLockSpec
   state: 'pending' | 'running' | 'completed' | 'error' | 'cancelled'
+  readonly queuedAt: number
 }
 
 export class ToolScheduler {
   private readonly maxConcurrent: number
   private readonly plan: (call: ScheduledCall) => Promise<ResourceLockSpec>
   private readonly locks = new Map<string, RwLock>()
+  private readonly metrics: { dispatched: number; completed: number; errored: number; cancelled: number; totalWaitMs: number } = { dispatched: 0, completed: 0, errored: 0, cancelled: 0, totalWaitMs: 0 }
+  /** 跨批次等待者：锁状态变化时全部唤醒（单次 schedule 只通知自己的设计会让并发批次死等）。 */
+  private readonly waiters = new Set<() => void>()
+
+  private wakeWaiters(): void {
+    for (const wake of [...this.waiters]) wake()
+  }
 
   constructor(options: ToolSchedulerOptions = {}) {
     this.maxConcurrent = options.maxConcurrent ?? 4
     this.plan = options.plan ?? ((call) => planLockSpec(call.tool, call.input, call.ctx))
   }
 
-  async schedule(calls: readonly ScheduledCall[], signal?: AbortSignal): Promise<ScheduledResult[]> {
-    const results = new Map<string, ScheduledResult>()
-    const items: SchedulerItem[] = []
+  snapshotMetrics(): SchedulerMetrics {
+    return { ...this.metrics }
+  }
+
+  async schedule<T>(calls: readonly ScheduledCall<T>[], signal?: AbortSignal): Promise<ScheduledResult<T>[]> {
+    const results = new Map<string, ScheduledResult<T>>()
+    const now = Date.now()
+    const items: SchedulerItem<T>[] = []
     for (const call of calls) {
       if (signal?.aborted) {
+        this.metrics.cancelled += 1
         results.set(call.id, { id: call.id, status: 'cancelled' })
-        items.push({ call, spec: { keys: [], mode: 'shared' }, state: 'cancelled' })
+        items.push({ call, spec: { keys: [], mode: 'shared' }, state: 'cancelled', queuedAt: now })
         continue
       }
-      items.push({ call, spec: await this.plan(call), state: 'pending' })
+      items.push({ call, spec: await this.plan(call), state: 'pending', queuedAt: now })
     }
 
     let running = 0
     await new Promise<void>((resolve) => {
+      const wake = (): void => { notify() }
+      this.waiters.add(wake)
       const notify = (): void => {
         // 先按提交顺序扫描：第一个全部锁空闲的调用立即派发（跳过队首阻塞）。
         let progressed = true
@@ -113,6 +137,7 @@ export class ToolScheduler {
             if (item.state !== 'pending') continue
             if (signal?.aborted) {
               item.state = 'cancelled'
+              this.metrics.cancelled += 1
               results.set(item.call.id, { id: item.call.id, status: 'cancelled' })
               progressed = true
               continue
@@ -120,18 +145,24 @@ export class ToolScheduler {
             if (running >= this.maxConcurrent) break
             if (this.canAcquire(item.spec)) {
               item.state = 'running'
+              this.metrics.dispatched += 1
+              this.metrics.totalWaitMs += Date.now() - item.queuedAt
               running += 1
               progressed = true
               void this.run(item, results, signal).finally(() => {
                 running -= 1
-                notify()
+                this.wakeWaiters()
               })
             }
           }
         }
-        if (items.every((item) => item.state === 'completed' || item.state === 'error' || item.state === 'cancelled')) resolve()
+        if (items.every((item) => item.state === 'completed' || item.state === 'error' || item.state === 'cancelled')) {
+          this.waiters.delete(wake)
+          signal?.removeEventListener('abort', wake)
+          resolve()
+        }
       }
-      signal?.addEventListener('abort', notify, { once: true })
+      signal?.addEventListener('abort', wake, { once: true })
       notify()
     })
     return calls.map((call) => results.get(call.id) ?? { id: call.id, status: 'cancelled' })
@@ -141,7 +172,7 @@ export class ToolScheduler {
     return spec.keys.every((key) => (this.locks.get(key) ?? new RwLock()).canAcquire(spec.mode))
   }
 
-  private async run(item: SchedulerItem, results: Map<string, ScheduledResult>, signal?: AbortSignal): Promise<void> {
+  private async run<T>(item: SchedulerItem<T>, results: Map<string, ScheduledResult<T>>, signal?: AbortSignal): Promise<void> {
     const { call, spec } = item
     const acquired: Array<{ lock: RwLock; mode: 'shared' | 'exclusive' }> = []
     try {
@@ -154,14 +185,17 @@ export class ToolScheduler {
       }
       if (signal?.aborted) {
         item.state = 'cancelled'
+        this.metrics.cancelled += 1
         results.set(call.id, { id: call.id, status: 'cancelled' })
         return
       }
       const result = await call.execute()
       item.state = 'completed'
+      this.metrics.completed += 1
       results.set(call.id, { id: call.id, status: 'completed', result })
     } catch (error) {
       item.state = 'error'
+      this.metrics.errored += 1
       results.set(call.id, { id: call.id, status: 'error', error: error instanceof Error ? error.message : String(error) })
     } finally {
       for (let i = acquired.length - 1; i >= 0; i--) {

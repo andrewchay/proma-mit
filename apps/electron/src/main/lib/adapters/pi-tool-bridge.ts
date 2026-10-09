@@ -19,6 +19,7 @@ import {
   GOAL_CHECKPOINT_TOOL_NAME,
 } from '../agent-runtime/tool-registry'
 import { BASH_TOOL_NAME } from '../agent-runtime/tool-impls/bash-tool'
+import { runGuardedToolCall } from '../agent-runtime/tool-scheduler-service'
 import { WEB_SEARCH_TOOL_NAME } from '../agent-runtime/tool-impls/web-search-tool'
 import { WEB_FETCH_TOOL_NAME } from '../agent-runtime/tool-impls/web-fetch-tool'
 import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME } from '../agent-runtime/tool-impls/memory-tool'
@@ -198,9 +199,17 @@ function createBridgeTool<TSchemaType extends TSchema>(
         // 采集不可用时静默跳过
       }
 
-      const result = await runtimeTool.execute(input, {
+      const toolContext = {
         ...options.toolContext,
         abortSignal: signal ?? options.toolContext.abortSignal,
+      }
+      // E05：经共享调度器执行（锁域为本进程内经此调度的调用）。
+      const result = await runGuardedToolCall({
+        tool: runtimeTool,
+        args: input,
+        ctx: toolContext,
+        signal: signal ?? undefined,
+        execute: () => runtimeTool.execute(input, toolContext),
       })
       // 截图必须随 tool result 进入 Pi 的下一轮上下文；只回传文字会让模型看不到页面本体。
       return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)

@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 18:10 GMT+8第十九批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 21:50 GMT+8第二十批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -178,10 +178,10 @@
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
 | E01 | 从 capability.ts 映射 effects；`packages/shared/src/context/tool-effects.ts`及main实例绑定/测试；扩展RuntimeToolDefinition | 三个文件工具实际name/execute同源，Write涵盖mkdir祖先；unknown保守，Bash/MCP不因自述安全，旧工具不自动并行 | H02子契约 | 部分：文件声明与实例来源已落地；其他资源/完整策略映射未完成，见effects-evidence.md；未启用调度 |
-| E02 | `tool-scheduler.ts` 进程内调度器（锁规约/并发上限/跳过队首/取消）与 10 例测试；tool-resources 观察已复用 | 目标：资源冲突串行、独立可信读取并行、目录/realpath别名冲突、并发限额、确定锁序 | E01 子契约 | 部分：调度模块已测；生产接线(E05)、跨进程锁、性能基准未做，见 tool-scheduler-evidence.md |
+| E02 | `tool-scheduler.ts` + 共享单例 `tool-scheduler-service.ts` 已接入 ai-sdk runtime 与 Pi 桥（生产执行）；指标快照 available；交互工具旁路 | 目标：资源冲突串行、独立读取并行、锁域声明 | E01 子契约 | 已接线（部分完成 E05 范围）：锁域=本进程内，跨进程不支持已声明；真实运行矩阵与性能基准未做，见 tool-scheduler-wiring-evidence.md |
 | E03 | `packages/shared/src/context/tool-call-integrity.ts`判定及测试；接线ai-sdk-runtime-core.ts、pi-tool-bridge.ts仍未做 | 目标：不完整批次不执行待执行mutation；已执行流式调用单独记录不谎称撤销；SDK无法先验检查则不声明支持 | E01 | 部分：已核验ai@7.0.31无宿主先验gate，事后分类+AI SDK结果消息观察接线完成；零执行/Pi/调度消费未做，见tool-call-integrity-{evidence,wiring-evidence}.md |
 | E04 | 取消/错误/重启矩阵；tool-scheduler.ts 与 adapter 测试 | queued取消不开始；错误释放锁；幂等read可按策略重试，unknown写/外部调用不自动重放；禁用后仍保留硬底线 | E02/E03 | 待开始 |
-| E05 | 小范围Runtime生产接线与调度指标 | 给出同资源跨session/父子Agent的锁域；不支持跨进程共享锁时禁止宣称全局安全；同一browser/terminal始终序列化 | E04 | 待开始 |
+| E05 | 小范围 Runtime 生产接线与调度指标 | 给出同资源跨 session/父子 Agent 的锁域；不支持跨进程共享锁时禁止宣称全局安全；同一 browser/terminal 始终序列化 | E04 | 部分：接线与锁域声明完成；指标未在 UI/审计中展示；真实运行观测未做 |
 
 ### M4：策略一致性
 
@@ -445,6 +445,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-025 | 2026-10-09 16:50–17:00 GMT+8 | 验证器设置界面 | 四层 IPC（verifier:list/save）；服务层校验与损坏记录标记；设置页列表+表单+修订警告；存储新增listIds | 服务3例；全仓557文件3786pass0fail；build/renderer/typecheck/lint通过；Goal绑定UI未做；verifier-settings-ui-evidence.md |
 | HARNESS-20261009-026 | 2026-10-09 17:10–17:30 GMT+8 | Goal门禁绑定UI | 协调器bindCompletionGate（运行中拒绝）；buildCompletionGateForGoal（最新修订+HEAD基线）；IPC agent:bind-completion-gate；Agent横幅绑定弹层与已绑定显示 | 5例；相关5文件通过；UI未在真实应用点击；goal-gate-binding-ui-evidence.md |
 | HARNESS-20261009-027 | 2026-10-09 18:00–18:10 GMT+8 | E02调度器模块 | planLockSpec（读共享/写排他含祖先/unknown全局）；只在全锁空闲时派发+同步加锁逆序释放（结构性无死锁）；跳过队首；abort取消；10例 | 全仓559文件3801pass0fail；偶发无关超时重跑通过；未接线生产；tool-scheduler-evidence.md |
+| HARNESS-20261009-028 | 2026-10-09 21:35–21:50 GMT+8 | E05生产接线 | 共享调度器接入ai-sdk executeRuntimeTool与Pi桥；交互工具旁路；锁域=本进程内声明；指标快照；修复跨批次等待唤醒缺陷（服务测试看门狗暴露） | 服务7例+接线回归5文件；全仓560文件3807pass0fail；锁等待无超时；HR07–HR09/G2未过；tool-scheduler-wiring-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

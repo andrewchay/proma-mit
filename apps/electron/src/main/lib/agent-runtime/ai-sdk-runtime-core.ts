@@ -45,6 +45,7 @@ import {
 } from './stream-timeouts'
 import { assessToolCallBatchIntegrity, type ToolCallBatchIntegrity } from '@gravitas/shared'
 import { estimateTokenCount } from '../agent-tool-token-estimator'
+import { runGuardedToolCall } from './tool-scheduler-service'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 
 export interface AISDKRuntimeSessionState {
@@ -496,7 +497,8 @@ export class AISDKRuntimeCore {
     }
 
     try {
-      const result = await runtimeTool.execute(args, {
+      // E05：经共享调度器执行。锁域为本进程内经此调度的调用，不宣称跨进程安全。
+      const toolContext = {
         cwd: state.cwd,
         sessionId: state.sessionId,
         abortSignal: state.signal,
@@ -504,7 +506,7 @@ export class AISDKRuntimeCore {
         planModeEntered: state.activeSession.planModeEntered,
         onEnterPlanMode: state.onEnterPlanMode,
         onExitPlanMode: state.onExitPlanMode,
-        setPermissionMode: (mode) => {
+        setPermissionMode: (mode: PromaPermissionMode) => {
           state.onPermissionModeChange?.(mode)
           state.activeSession.permissionMode = mode
           state.activeSession.planModeEntered = false
@@ -512,6 +514,13 @@ export class AISDKRuntimeCore {
         onAskUser: state.onAskUser,
         runSubAgent: state.runSubAgent,
         mcpManager: state.mcpManager,
+      }
+      const result = await runGuardedToolCall({
+        tool: runtimeTool,
+        args,
+        ctx: toolContext,
+        signal: state.signal,
+        execute: () => runtimeTool.execute(args, toolContext),
       })
       return { content: result.content, isError: result.isError, imageData: result.imageData }
     } catch (error) {
