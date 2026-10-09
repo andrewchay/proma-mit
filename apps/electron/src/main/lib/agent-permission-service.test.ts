@@ -10,7 +10,27 @@ function createOptions(overrides: Partial<CanUseToolOptions> = {}): CanUseToolOp
   }
 }
 
-describe('AgentPermissionService safe 权限模式', () => {
+describe('AgentPermissionService 权限模式', () => {
+  test('given fully automatic mode when using high-risk tools then all are allowed without prompting', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const canUseTool = service.createCanUseTool(
+      'session-bypass-risk',
+      (request) => requests.push(request),
+      undefined,
+      undefined,
+      'bypassPermissions',
+    )
+
+    const dangerousCommand = await canUseTool('Bash', { command: 'rm -rf /tmp/example' }, createOptions())
+    const desktopControl = await canUseTool('ComputerUseClick', { x: 1, y: 2 }, createOptions())
+    const upload = await canUseTool('WebBridgeUpload', { url: 'https://example.com' }, createOptions())
+
+    expect(dangerousCommand.behavior).toBe('allow')
+    expect(desktopControl.behavior).toBe('allow')
+    expect(upload.behavior).toBe('allow')
+    expect(requests).toHaveLength(0)
+  })
   test('given safe mode when using read-only tools then permission is allowed without prompting', async () => {
     const service = new AgentPermissionService()
     const requests: PermissionRequest[] = []
