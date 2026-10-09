@@ -1023,6 +1023,11 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'tasks').includes('owner_step_link_id')) {
     database.exec('ALTER TABLE tasks ADD COLUMN owner_step_link_id TEXT')
   }
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_revalidations (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, revision INTEGER NOT NULL,
+    request_id TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+    UNIQUE(project_id, revision), UNIQUE(project_id, request_id)
+  )`)
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_task_materializations (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, subject_key TEXT NOT NULL,
     target_task_id TEXT, revision INTEGER NOT NULL, request_id TEXT NOT NULL,
@@ -1676,7 +1681,7 @@ export function hasOwnerPlanningTaskEvidence(taskId: string): boolean {
 }
 export function deleteProject(id: string): boolean {
   const database = getProjectDb()
-  if (database.prepare('SELECT id FROM project_owner_task_materializations WHERE project_id=? LIMIT 1').get(id) || database.prepare('SELECT id FROM project_owner_task_step_links WHERE project_id=? LIMIT 1').get(id)) throw new Error('Owner任务材料化证据禁止项目物理删除')
+  if (database.prepare('SELECT id FROM project_owner_task_materializations WHERE project_id=? LIMIT 1').get(id) || database.prepare('SELECT id FROM project_owner_task_step_links WHERE project_id=? LIMIT 1').get(id) || database.prepare('SELECT id FROM project_owner_execution_revalidations WHERE project_id=? LIMIT 1').get(id)) throw new Error('Owner任务材料化/重验证证据禁止项目物理删除')
   if (database.prepare('SELECT id FROM project_owner_execution_preparations WHERE project_id = ? LIMIT 1').get(id)) throw new Error('项目关联Owner执行准备证据，暂不支持物理删除，请保留证据')
   if (database.prepare('SELECT id FROM project_owner_planning_links WHERE project_id = ? LIMIT 1').get(id) || database.prepare('SELECT id FROM controlled_task_preparations WHERE project_id = ? AND owner_planning_link_id IS NOT NULL LIMIT 1').get(id) || (database.prepare('SELECT id FROM agent_executions WHERE project_id = ?').all(id) as { id: string }[]).some(item => hasOwnerPlanningExecutionEvidence(item.id))) throw new Error('项目关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined

@@ -1,5 +1,6 @@
 import { registerProjectOwnerTaskIpcHandlers } from './project-owner-task-ipc'
 import { registerProjectOwnerExecutionIpcHandlers } from './project-owner-execution-ipc'
+import { registerProjectOwnerExecutionRevalidationIpcHandlers } from './project-owner-execution-revalidation-ipc'
 import { registerProjectOwnerRuntimeIpcHandlers } from './project-owner-runtime-ipc'
 /**
  * 工作模块 IPC 处理器注册（项目管理 / 日程管家 / 日历同步）
@@ -434,6 +435,7 @@ export function registerWorkModuleIpcHandlers(): void {
   registerProjectOwnerPlanIpcHandlers(ipcMain)
   registerProjectOwnerTaskIpcHandlers(ipcMain)
   registerProjectOwnerExecutionIpcHandlers(ipcMain)
+  registerProjectOwnerExecutionRevalidationIpcHandlers(ipcMain)
   registerProjectOwnerRuntimeIpcHandlers(ipcMain)
   // 项目 CRUD
   ipcMain.handle(PROJECT_CHAIN_IPC.GET, (_, projectId: string) => getProjectChain(projectId))

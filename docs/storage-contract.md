@@ -49,3 +49,8 @@ AO06以同paa.db追加`project_owner_task_materializations`与`project_owner_tas
 材料化只在policy快照锁内同SQLite事务首次INSERT paused+专用marker/关联/依赖/活动，不写Pilot JSON、不发普通TaskChange。内部builder只在本次未提交staging的同步单次作用域可用，已提交链接不可复活取消目标或补造损坏Task。外层raw BEGIN/SAVEPOINT拒绝；DB ABORT整体回滚。单任务只允许一步复用普通未执行目标，显式人员/工作区/范围patch保内容并清旧成员身份；原AO05 whole目标hash自然stale，原件不改，结果仍需重新验证。
 
 这些表/列与原AO05准备、Goal/Plan、Task/dependency、人员资料配置和Pilot账本一起一致备份。header/link/marker/原来源丢失、坏payload、已观察限制残余均不得降legacy或换request重建；普通物理删除/改范围/依赖、旧费用确认/派发、所有Runtime发送均负向拒绝，暂停/取消/保全仍可用。没有active许可、模型资料工具fence、断电/多进程或真实Provider验收。见[暂停Task材料化](plans/2026-10-07-ai-project-owner/owner-task-materialization.md)。
+
+
+### Owner重验证v2来源（2026-10-09）
+
+AO06第二片在同paa.db追加`project_owner_execution_revalidations`（additive）。`project-pilot-policies.json`的PilotPolicy可含可选`ownerExecutionRevalidation`引用（含materialization反查三元组），`ownerExecutionPreparation`逐字节保留；v2存在时v1重存前置拒绝。v2来源实时重放v1构建+权威Task/dep/marker/link精确核验，budget/expiresAt从v1原样携带不顺延。这些表与原AO05准备、材料化、Goal/Plan、Task/dep、人员资料配置和Pilot账本一起一致备份；v2行绝不入旧表，unapplied/partial失败证据保留不补写。v2 current是"已按真实任务重新冻结"，不是授权：旧SourceGate（含发行指纹纳入v2引用）在v2残余下全部拒绝，资料工具/预算purpose/claim/Runner仍关。详见[重验证](plans/2026-10-07-ai-project-owner/owner-execution-revalidation.md)。

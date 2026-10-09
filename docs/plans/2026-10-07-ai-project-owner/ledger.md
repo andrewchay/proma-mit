@@ -204,3 +204,19 @@ Electron0.12.120/shared0.2.33，仅本地研发；没有push/merge/安装，生�
 最终Native **438e18d3-fcfb-4a6d-bd6d-e2b1427324fc**：Electron39.8.10/ABI140/native WAL、生产preload/四IPC/source React/Jotai，45checks、8截图、342精确源码SHA父核对无差异，sourceSHA `cae4ea5f65e670d9eefb6856230befc6556b826f045563cc22bbf352ad1168dd`。0业务启动/SDK/ModelHTTP/费用request/实际grant/TaskChange/外发，TEMP清理、生产目录计数不变、旧203文件与36/44轮报告原件保留。曾生成的9条反向fixture账本最终8条实体（1因残余probe删除）均未启动，其中1completed是人工模拟终态，不是Run或业务成果。限定sourcePanel，不宣称完整生产main导航、真实Provider、硬金额封顶、断电/多进程或打包安装验收。
 
 早期Runtime子测试首版Claude RED未前置SDK tripwire，触及SDK query入口，无Provider/费用回执，不能回溯保证当次zeroNetwork或费用为零；该次不计严格离线证据。后续RED/全部最终测试和Native均执行前装tripwire/内存transport，初始异常日志保留。没有批准真实Provider验收。Electron0.12.121/shared0.2.34仅本地，未push/merge/安装/生产修改；下一步新版Task/link来源与实际许可、资料/每请求门禁须另审，历史AO-G0～G3/G4及停止未知费用门禁不自动关闭。
+
+### 2026-10-09 AO-06第二片：材料化后重新验证（v2准备来源）
+
+用户"继续"后两项只读研究收敛并获批`plan/ao06-revalidation.md`。新表`project_owner_execution_revalidations`（additive）+新模块：v2来源实时重放v1 build+权威Task/dep/marker/link精确核验，冻结真实任务事实与上游双三元组（materialization+原AO05）；planFingerprint/contextFingerprint须等于v1冻结值，budget/expiresAt原样携带不顺延，过期拒绝预览。`PilotPolicy`新增可选`ownerExecutionRevalidation`引用（含materialization反查），v1引用逐字节保留；v2存在时v1重存前置拒绝。v2行绝不入旧表。
+
+不误current闭环：v2存在→v1 view短路非current→v1材料化入口联动关闭；材料化view恒needs_revalidation+分支(b)核验v2引用/行/originalPreparation，悬空显式stale；v2 get current须重建hash全等+引用精确+上游反查。view含unapplied（DB提交但policy未一致应用，重放显式拒绝与v1同构）与悬空stale。证据谓词纳入v2表；发行确认指纹纳入v2引用；deleteProject保护v2表。所有旧SourceGate/负向谓词语义一行未改，v2不引入新任务身份，不误封无关任务。
+
+独立审查2P1（v1重存丢v2引用、幂等重放未核policy应用）+5P2全部整改并复核收束（复核记录`S/ao06-revalidation-security-review-followup-verification.md`），无新repro问题；一个无效unapplied测试被审查指出后重写为真实部分失败路径（回退JSON→unapplied+重放拒绝+证据保留）。最终后台10test38assert、UI/IPC/preload 17test、旧回归（材料化/pilot/file-failure等）全过；全量579隔离文件0失败、typecheck/lint(2035)/docs/build通过。Electron0.12.122/shared0.2.35仅本地。
+
+v2 current仍非执行许可：发行/派工/资料工具/预算purpose/claim/Runner全关。实际许可发行、资料fence、逐请求Owner来源门禁、AO-06白名单调度与依赖推进、singleTask多step拆分/supersedes、真实Provider均需另审。Native验收见后续条目。
+
+### 2026-10-09 AO-06第二片Native验收与UI修复收束
+
+Native两轮：首轮 **6ca90c0a-a809-4c20-a0bb-886ab6d2da4a** 12/12（含singleTask单步、v1替代blocker、悬空fail-closed、SourceGate仍拒、tripwire全零、8截图），报告发现F1（产品面板缺changeReason输入，按钮恒禁用，harness经真实editOwnerRevalidationAtom桥驱动）/F2（历史仅挂载时加载）/F3（v1替代文案在折叠诊断内）。父随后修复F1/F2：面板新增"重验证修订原因（必填）"textarea（editOwnerRevalidationAtom接线，编辑废preview换requestId）与保存后自动重读v2历史；F3留待后续。委派通道超时后由父执行既有rerun.ts完成最终delta run **5ccf97ba-471e-4b7d-aaeb-4bb39c494e99**：12/12重跑通过、tripwire全零（network空/sdk/model/businessRuns/childProcesses=0）、346个源文件SHA与当前树逐一核对0差异（sourceSHA a21fcccc…f36e8绑定；旧run 3617e8d5…4a51保留）。注意：delta run复用旧harness，其boundary文本仍列F1/F2为未修复（复制时点旧文案），以本条目与代码为准；纯产品textarea点击链未单独脚本化（panel/atoms单元测试覆盖接线语义），记为边界。materialization/revalidation行数与TEMP清理、生产目录不变由evidence记录。
+
+独立审查2P1+5P2整改后复核收束（`S/ao06-revalidation-security-review-followup-verification.md`）。最终：后台10test38assert、IPC3、atoms10、panel4，全量579隔离文件0失败、typecheck/lint(2035)/docs/build通过；Electron0.12.122/shared0.2.35。v2 current仍非执行许可；实际许可发行、资料fence、逐请求来源门禁、AO-06白名单调度/依赖推进、singleTask多step拆分/supersedes、真实Provider均需另审。未push/merge/install/生产修改。

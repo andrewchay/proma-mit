@@ -13,6 +13,8 @@ export interface PilotPolicy {
   revision: number
   state: 'paused'
   ownerExecutionPreparation?: OwnerExecutionPreparationReference
+  /** v2重新验证引用独立存在；存在时v1引用必须逐字节保留，两者均非授权。 */
+  ownerExecutionRevalidation?: import('@gravitas/shared').OwnerExecutionRevalidationReference
   pauseDecisionFingerprint?: string
   workspaceId: string
   employeeIds: string[]
@@ -36,7 +38,8 @@ const nonNegativeInt = (value: unknown): value is number => typeof value === 'nu
 const path = (): string => join(getConfigDir(), PATH)
 
 /** 跨进程互斥读-校验-写；意外退出留下锁时默认拒绝写，需人工检查后恢复。 */
-function withPolicyLock<T>(operation: () => T): T {
+/** 供Owner准备/重验证service组合使用；mkdir锁不可重入，不要嵌套调用。 */
+export function withPolicyLock<T>(operation: () => T): T {
   const lock = `${path()}.lock`
   try { mkdirSync(lock, { mode: 0o700 }) }
   catch {
@@ -67,6 +70,17 @@ function validOwnerPreparationReference(raw: unknown): raw is OwnerExecutionPrep
     && /^[a-f0-9]{64}$/.test(value.integrityHash) && value.stage === 'pending_task_links'
 }
 
+function validOwnerRevalidationReference(raw: unknown): raw is import('@gravitas/shared').OwnerExecutionRevalidationReference {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const value = raw as Record<string, unknown>
+  return Object.keys(value).every(key => ['schemaVersion','purpose','id','revision','integrityHash','stage','materializationId','materializationIntegrityHash'].includes(key))
+    && value.schemaVersion === 1 && value.purpose === 'owner_business_execution_revalidation'
+    && nonEmpty(value.id) && positiveInt(value.revision) && nonEmpty(value.materializationId)
+    && typeof value.integrityHash === 'string' && /^[a-f0-9]{64}$/.test(value.integrityHash)
+    && typeof value.materializationIntegrityHash === 'string' && /^[a-f0-9]{64}$/.test(value.materializationIntegrityHash)
+    && value.stage === 'paused_task_links'
+}
+
 function validPolicy(value: unknown): value is PilotPolicy {
   if (!value || typeof value !== 'object') return false
   const p = value as Record<string, unknown>
@@ -74,6 +88,7 @@ function validPolicy(value: unknown): value is PilotPolicy {
     && p.state === 'paused' && (p.pauseDecisionFingerprint === undefined
       || (typeof p.pauseDecisionFingerprint === 'string' && /^[a-f0-9]{64}$/.test(p.pauseDecisionFingerprint)))
     && (p.ownerExecutionPreparation === undefined || validOwnerPreparationReference(p.ownerExecutionPreparation))
+    && (p.ownerExecutionRevalidation === undefined || validOwnerRevalidationReference(p.ownerExecutionRevalidation))
     && nonEmpty(p.workspaceId)
     && Array.isArray(p.employeeIds) && p.employeeIds.length > 0
     && p.employeeIds.every(nonEmpty) && new Set(p.employeeIds).size === p.employeeIds.length
@@ -206,6 +221,29 @@ export function assertPilotPolicyActive(projectId: string, now = Date.now()): ne
   throw new Error('Pilot 未获有效托管授权')
 }
 
+/** v2重新验证引用原子替换；v1引用与state逐字节保留，语义核验由调用方回调前完成。 */
+/**
+ * 仅替换v2引用；必须在withPolicyLock内调用（mkdir锁不可重入），DB证据应由调用方先commit。
+ * v1引用与state逐字节保留；语义核验（v2记录存在且hash相符）由调用方在构建reference前完成。
+ */
+export function saveOwnerRevalidationPolicy(
+  projectId: string, expectedRevision: number,
+  build: (nextRevision: number) => import('@gravitas/shared').OwnerExecutionRevalidationReference,
+): PilotPolicy {
+  const index = readIndex(), previous = index.policies.find(item => item.projectId === projectId)
+  if (!previous || previous.revision !== expectedRevision) throw new Error('Owner策略已更新，请重新预览')
+  if (!previous.ownerExecutionPreparation) throw new Error('Owner重验证要求已存在的v1准备引用')
+  if (previous.state !== 'paused') throw new Error('Owner策略状态已变化')
+  const revision = previous.revision + 1
+  const reference = build(revision)
+  const policy: PilotPolicy = { ...previous, revision, ownerExecutionRevalidation: reference, updatedAt: Date.now() }
+  if (!validPolicy(policy)) throw new Error('Owner重验证策略无效')
+  writeIndex({ version: 1, policies: [...index.policies.filter(item => item.projectId !== projectId), policy] })
+  const current = getPilotPolicy(projectId)
+  if (!current || JSON.stringify(current) !== JSON.stringify(policy) || JSON.stringify(current.ownerExecutionPreparation) !== JSON.stringify(previous.ownerExecutionPreparation)) throw new Error('Owner重验证策略替换未确认，请保留证据核查')
+  return current
+}
+
 /** 仅供Owner准备service使用；先持久证据再原子替换JSON，不能声称跨存储事务。 */
 export function saveOwnerPreparationPolicy(
   projectId: string, expectedRevision: number | null,
@@ -217,6 +255,8 @@ export function saveOwnerPreparationPolicy(
     assertOwnerExecutionBoundaryIdle(projectId)
     const index = readIndex(), previous = index.policies.find(item => item.projectId === projectId)
     if ((previous?.revision ?? null) !== expectedRevision) throw new Error('Owner策略已更新，请重新预览')
+    // v2存在时v1引用不可被重存覆盖；重新验证链只能经saveOwnerRevalidationPolicy前进。
+    if (previous?.ownerExecutionRevalidation) throw new Error('Owner策略已由v2重新验证接管，不能重存v1准备；请保留证据核查')
     const revision = (previous?.revision ?? 0) + 1
     const { input, reference } = build(revision)
     const policy: PilotPolicy = { ...input, version: 1, projectId, revision, state: 'paused', ownerExecutionPreparation: reference, updatedAt: Date.now() }

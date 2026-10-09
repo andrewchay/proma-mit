@@ -1956,6 +1956,10 @@ export interface ElectronAPI {
       listOwnerExecutionPreparationHistory: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['listOwnerExecutionPreparationHistory']
       previewOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['previewOwnerExecutionPreparation']
       saveOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['saveOwnerExecutionPreparation']
+      getOwnerExecutionRevalidation: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['getOwnerExecutionRevalidation']
+      listOwnerExecutionRevalidationHistory: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['listOwnerExecutionRevalidationHistory']
+      previewOwnerExecutionRevalidation: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['previewOwnerExecutionRevalidation']
+      saveOwnerExecutionRevalidation: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['saveOwnerExecutionRevalidation']
       getOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['getOwnerRuntimeBinding']
       saveOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['saveOwnerRuntimeBinding']
       prepareOwnerPlanning: import('@gravitas/shared').ProjectOwnerRuntimeApi['prepareOwnerPlanning']
@@ -4701,6 +4705,10 @@ const electronAPI: ElectronAPI = {
       listOwnerExecutionPreparationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_PREPARATION_HISTORY, request),
       previewOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_PREPARATION, request),
       saveOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_PREPARATION, request),
+      getOwnerExecutionRevalidation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_REVALIDATION, request),
+      listOwnerExecutionRevalidationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_REVALIDATION_HISTORY, request),
+      previewOwnerExecutionRevalidation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_REVALIDATION, request),
+      saveOwnerExecutionRevalidation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_REVALIDATION, request),
       getOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, request),
       saveOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_RUNTIME_BINDING, request),
       prepareOwnerPlanning: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, request),

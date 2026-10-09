@@ -156,7 +156,8 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     changeReason: text(o.changeReason),
   }
 }
-function capabilityHash(slug: string): string {
+/** v2重新验证复用；字段清单逐字保留，改动会破坏旧v1记录hash重放。 */
+export function capabilityHash(slug: string): string {
   const mcpPath = getWorkspaceMcpPath(slug)
   // 不调用会解密凭据/损坏后回退空配置的MCP getter；只核验原件并存opaque摘要。
   const mcp: unknown = existsSync(mcpPath)

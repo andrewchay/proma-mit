@@ -25,6 +25,7 @@ export function hashPilotGrantApproval(policy: PilotPolicy): string {
     maxRework: policy.maxRework,
     expiresAt: policy.expiresAt,
     ...(policy.ownerExecutionPreparation === undefined ? {} : { ownerExecutionPreparation: policy.ownerExecutionPreparation }),
+    ...(policy.ownerExecutionRevalidation === undefined ? {} : { ownerExecutionRevalidation: policy.ownerExecutionRevalidation }),
   })).digest('hex')
 }
 

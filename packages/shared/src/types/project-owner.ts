@@ -365,3 +365,102 @@ export interface ProjectOwnerTaskMaterializationApi {
   previewOwnerTaskMaterialization: (request: PreviewOwnerTaskMaterializationRequest) => Promise<ProjectOwnerGoalResult<OwnerTaskMaterializationPreview>>
   materializeOwnerTasks: (request: MaterializeOwnerTasksRequest) => Promise<ProjectOwnerGoalResult<OwnerTaskMaterializationRecord>>
 }
+
+/** 材料化后重新验证输入；预算/期限从v1原样携带，不重开授权窗口。 */
+export interface OwnerExecutionRevalidationInput {
+  requestId: string
+  expectedRevalidationRevision: number
+  expectedMaterializationId: string
+  expectedMaterializationRevision: number
+  expectedMaterializationHash: string
+  expectedPolicyRevision: number
+  changeReason: string
+}
+export interface OwnerExecutionRevalidationTask {
+  taskId: string
+  stepKey: string
+  linkId: string
+  linkKind: 'created' | 'existing_target'
+  linkIntegrityHash: string
+  taskSpecificationHash: string
+  status: 'paused'
+  assignee: { userId: string; displayName: string }
+  workspaceId: string
+  developmentScope?: import('./development-review').DevelopmentTaskScope
+  dependencies: Array<{ id: string; taskId: string; dependsOnTaskId: string; type: string }>
+}
+export interface OwnerExecutionRevalidationSource {
+  schemaVersion: 2
+  stage: 'paused_task_links'
+  projectId: string
+  taskId?: string
+  materialization: { id: string; revision: number; integrityHash: string }
+  originalPreparation: { id: string; revision: number; integrityHash: string; policyRevision: number }
+  planRevision: number
+  planVersion: number
+  planFingerprint: string
+  contextFingerprint: string
+  selectedStepKeys: string[]
+  tasks: OwnerExecutionRevalidationTask[]
+  executor: { id: string; name: string; configurationHash: string }
+  reviewer: { id: string; name: string; configurationHash: string }
+  workspaceId: string
+  workspaceName: string
+  workspaceHash: string
+  channelId: string
+  modelId: string
+  runtime: string
+  channelHash: string
+  capabilityConfigurationHash: string
+  repositoryIdentityHash?: string
+  ownerBindingProvenance: OwnerExecutionPreparationSource['ownerBindingProvenance']
+  knowledgeSources: OwnerExecutionPreparationSource['knowledgeSources']
+  budget: { maxCostMicros: number; maxRuns: number; maxRework: number; expiresAt: number }
+  executionKind: 'development' | 'controlled'
+  blockers: string[]
+}
+export interface OwnerExecutionRevalidationPreview extends ProjectOwnerGoalSubject {
+  input: OwnerExecutionRevalidationInput
+  source: OwnerExecutionRevalidationSource
+  previewFingerprint: string
+}
+export interface OwnerExecutionRevalidationRecord extends ProjectOwnerGoalSubject {
+  schemaVersion: 2
+  purpose: 'owner_business_execution_revalidation'
+  id: string
+  revision: number
+  policyRevision: number
+  stage: 'paused_task_links'
+  actor: 'local-user'
+  savedAt: number
+  input: OwnerExecutionRevalidationInput
+  source: OwnerExecutionRevalidationSource
+  inputHash: string
+  previewFingerprint: string
+  previousIntegrityHash: string | null
+  integrityHash: string
+}
+export interface OwnerExecutionRevalidationView {
+  revision: number
+  revalidation: OwnerExecutionRevalidationRecord | null
+  status: 'none' | 'needs_revalidation' | 'current' | 'stale' | 'unapplied'
+  blockers: string[]
+}
+export interface OwnerExecutionRevalidationReference {
+  schemaVersion: 1
+  purpose: 'owner_business_execution_revalidation'
+  id: string
+  revision: number
+  integrityHash: string
+  stage: 'paused_task_links'
+  materializationId: string
+  materializationIntegrityHash: string
+}
+export interface PreviewOwnerExecutionRevalidationRequest extends ProjectOwnerGoalSubject { input: OwnerExecutionRevalidationInput }
+export interface SaveOwnerExecutionRevalidationRequest extends PreviewOwnerExecutionRevalidationRequest { previewFingerprint: string }
+export interface ProjectOwnerExecutionRevalidationApi {
+  getOwnerExecutionRevalidation: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationView>>
+  listOwnerExecutionRevalidationHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationRecord[]>>
+  previewOwnerExecutionRevalidation: (request: PreviewOwnerExecutionRevalidationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationPreview>>
+  saveOwnerExecutionRevalidation: (request: SaveOwnerExecutionRevalidationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationRecord>>
+}

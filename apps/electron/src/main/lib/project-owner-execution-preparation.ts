@@ -206,6 +206,10 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
       throw new Error('Owner执行准备策略引用悬空，请保留配置核查')
     return view
   }
+  if (policy?.ownerExecutionRevalidation) {
+    // v2存在时v1准备语义终结；fail-closed：引用损坏同样非current，绝不回落current判定。
+    return { ...view, status: 'stale', blockers: ['已被v2重新验证替代；v1原件保留，不再是当前执行来源'] }
+  }
   if (!matchesPolicy(preparation))
     return {
       ...view,
