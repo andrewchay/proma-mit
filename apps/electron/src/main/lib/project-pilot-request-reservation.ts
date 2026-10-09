@@ -1,3 +1,4 @@
+import { assertOwnerExecutionRequestGate } from './project-owner-execution-gates'
 import { assertNoOwnerExecutionPreparation } from './project-owner-execution-preparation-evidence'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 import { calculatePilotRequestCeiling, type PilotRequestEnvelope } from './project-pilot-request-envelope'
@@ -38,9 +39,9 @@ export function reservePilotRequest(input: PilotRequestReservationInput, now = D
       || input.envelope.outputTokenCeiling > evidence.maxModelOutputTokens) {
       throw new Error('Pilot 请求包络与价格证据不一致')
     }
-    const command = db.prepare(`SELECT project_id, grant_id, execution_id, state, reserved_cost_micros
+    const command = db.prepare(`SELECT project_id, grant_id, execution_id, state, reserved_cost_micros, purpose
       FROM pilot_commands WHERE id = ?`).get(input.commandId) as {
-      project_id: string; grant_id: string; execution_id: string; state: string; reserved_cost_micros: number
+      project_id: string; grant_id: string; execution_id: string; state: string; reserved_cost_micros: number; purpose: string
     } | undefined
     const execution = getAgentExecution(input.executionId)
     const grant = command && db.prepare('SELECT state, expires_at FROM pilot_runtime_grants WHERE id = ? AND project_id = ?')
@@ -50,6 +51,8 @@ export function reservePilotRequest(input: PilotRequestReservationInput, now = D
       || execution.pilotCommandId !== input.commandId || command.execution_id !== input.executionId
       || execution.sessionId !== input.sessionId) throw new Error('Pilot 请求归属或活动授权无法核验')
     assertNoOwnerExecutionPreparation(command.project_id)
+    // Owner逐请求分支（休眠）：purpose默认controlled_task时立即返回；旧guard先行拒绝后本分支今天不可达。
+    assertOwnerExecutionRequestGate({ commandPurpose: command.purpose, grantExpiresAt: grant.expires_at, sessionId: input.sessionId, runtime: '', modelId: evidence.model, permissionMode: '', cwd: '', baseUrl: '' })
     // 不允许复用同一个 requestId 再次发送；既有占额保持不变，包括断流/崩溃。
     if (db.prepare('SELECT 1 FROM pilot_request_reservations WHERE request_id = ?').get(input.requestId)) {
       throw new Error('Pilot 请求 ID 已预留，不得重复发送')

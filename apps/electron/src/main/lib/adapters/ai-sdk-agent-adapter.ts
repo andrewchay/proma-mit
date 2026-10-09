@@ -1,4 +1,5 @@
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
+import { assertToolAllowedForSessionPurpose } from '../project-owner-execution-gates'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
 /**
  * Vercel AI SDK Agent Runtime 适配器。
@@ -231,7 +232,8 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       for (const tool of tools) {
         const execute = tool.execute.bind(tool)
         tool.execute = async (...args) => {
-          assertNoOwnerBusinessSession(sessionId)
+          // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
+          assertToolAllowedForSessionPurpose(sessionId, tool.name, args[0] as Record<string, unknown> | undefined)
           return execute(...args)
         }
       }
@@ -301,9 +303,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             },
             onAgentEvent: input.onAgentEvent,
             canUseTool: input.canUseTool ? async (name, args, signal) => {
-              assertNoOwnerBusinessSession(sessionId)
+              assertToolAllowedForSessionPurpose(sessionId, name, args)
               const result = await input.canUseTool!(name, args, signal)
-              assertNoOwnerBusinessSession(sessionId)
+              assertToolAllowedForSessionPurpose(sessionId, name, args)
               return result
             } : undefined,
             onPermissionModeChange: (mode) => assertControlledPermissionChange(sessionId, mode),

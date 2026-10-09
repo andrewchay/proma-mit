@@ -1,4 +1,5 @@
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
+import { assertToolAllowedForSessionPurpose } from '../project-owner-execution-gates'
 /**
  * Pi Agent SDK 适配器。
  *
@@ -302,8 +303,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }),
       allowSubAgent: !controlled,
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {
+        // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
+        assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         const result = await canUseTool?.(name, args, signal)
+        assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         return result ?? { allowed: false, message: '未配置权限回调' }
       } : undefined,

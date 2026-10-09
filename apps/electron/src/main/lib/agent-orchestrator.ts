@@ -1,4 +1,5 @@
 import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
+import { assertToolAllowedForSessionPurpose } from './project-owner-execution-gates'
 import { assertControlledPermissionChange, isControlledProviderSession } from './controlled-provider-boundary'
 /**
  * AgentOrchestrator — Agent 编排层
@@ -2729,7 +2730,8 @@ export class AgentOrchestrator {
 
       // 动态 canUseTool：每次调用读取当前权限模式，支持运行中切换
       const canUseTool = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
-        assertNoOwnerBusinessSession(sessionId)
+        // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence，先于Plan模式分派防旁路。
+        assertToolAllowedForSessionPurpose(sessionId, toolName, input)
         const currentMode = getPermissionMode()
 
         // Workflow 节点能力集是硬上限；即使运行在 bypassPermissions 下也不能越权。

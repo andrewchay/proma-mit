@@ -54,3 +54,8 @@ AO06以同paa.db追加`project_owner_task_materializations`与`project_owner_tas
 ### Owner重验证v2来源（2026-10-09）
 
 AO06第二片在同paa.db追加`project_owner_execution_revalidations`（additive）。`project-pilot-policies.json`的PilotPolicy可含可选`ownerExecutionRevalidation`引用（含materialization反查三元组），`ownerExecutionPreparation`逐字节保留；v2存在时v1重存前置拒绝。v2来源实时重放v1构建+权威Task/dep/marker/link精确核验，budget/expiresAt从v1原样携带不顺延。这些表与原AO05准备、材料化、Goal/Plan、Task/dep、人员资料配置和Pilot账本一起一致备份；v2行绝不入旧表，unapplied/partial失败证据保留不补写。v2 current是"已按真实任务重新冻结"，不是授权：旧SourceGate（含发行指纹纳入v2引用）在v2残余下全部拒绝，资料工具/预算purpose/claim/Runner仍关。详见[重验证](plans/2026-10-07-ai-project-owner/owner-execution-revalidation.md)。
+
+
+### Owner执行侧门禁休眠能力（2026-10-09）
+
+AO06第三片additive：`pilot_runtime_grants`/`pilot_commands`加`purpose`（默认controlled_task）/`owner_source_id`/`owner_source_integrity_hash`；新表`project_owner_execution_gate_sessions`（含准入内容快照hash与provider_admitted_at）与`project_owner_execution_knowledge_reads`（出处级审计，无正文）。这些表与Pilot账本、Owner准备/材料化/重验证和任务数据一起一致备份。purpose=owner_business_execution的行本片无创建路径；gate行仅测试TEMP或admit函数测试产生，激活前置条件（Pi beforeToolCall切换/CHECK/redirect与参数比对集/性能评估）见[执行侧门禁](plans/2026-10-07-ai-project-owner/owner-execution-gates.md)。

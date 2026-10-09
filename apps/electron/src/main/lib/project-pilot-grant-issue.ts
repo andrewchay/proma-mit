@@ -100,6 +100,8 @@ function grantMatchesPreview(grant: PilotRuntimeGrant, preview: PilotGrantIssueP
 
 export function pilotGrantMatchesPolicy(grant: PilotRuntimeGrant, policy: PilotPolicy): boolean {
   if (policy.ownerExecutionPreparation !== undefined) return false
+  // 防御：畸形“仅v2”policy也取消legacy资格（正常service路径v2⇒v1必在）。
+  if (policy.ownerExecutionRevalidation !== undefined) return false
   try { assertNoOwnerExecutionPreparation(policy.projectId) } catch { return false }
   if (!policy.executorEmployeeId || !policy.reviewerEmployeeId) return false
   return grantMatchesPreview(grant, {

@@ -1023,6 +1023,29 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'tasks').includes('owner_step_link_id')) {
     database.exec('ALTER TABLE tasks ADD COLUMN owner_step_link_id TEXT')
   }
+  for (const [table] of [['pilot_runtime_grants'], ['pilot_commands']] as const) {
+    if (!readColumnNames(database, table).includes('purpose')) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN purpose TEXT NOT NULL DEFAULT 'controlled_task'`)
+    }
+    if (!readColumnNames(database, table).includes('owner_source_id')) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN owner_source_id TEXT`)
+    }
+    if (!readColumnNames(database, table).includes('owner_source_integrity_hash')) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN owner_source_integrity_hash TEXT`)
+    }
+  }
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_gate_sessions (
+    session_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, revalidation_id TEXT NOT NULL,
+    revalidation_integrity_hash TEXT NOT NULL, content_snapshot_hash TEXT NOT NULL,
+    provider_admitted_at INTEGER, created_at INTEGER NOT NULL
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_knowledge_reads (
+    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, execution_id TEXT NOT NULL, revalidation_id TEXT NOT NULL,
+    source_id TEXT NOT NULL, knowledge_base_id TEXT, document_id TEXT, content_hash TEXT,
+    char_start INTEGER, char_end INTEGER, read_at INTEGER NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_gate_execution ON project_owner_execution_gate_sessions(execution_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_knowledge_reads_session ON project_owner_execution_knowledge_reads(session_id)')
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_revalidations (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, revision INTEGER NOT NULL,
     request_id TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
