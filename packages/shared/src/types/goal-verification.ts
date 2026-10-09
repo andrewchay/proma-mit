@@ -64,3 +64,27 @@ export interface PinnedVerifierReceipt {
   readonly startedAt: string
   readonly finishedAt: string
 }
+
+/** 验证器设置的 IPC 通道：仅主进程可写，渲染进程经设置界面操作。 */
+export const VERIFIER_IPC_CHANNELS = {
+  LIST: 'verifier:list',
+  SAVE: 'verifier:save',
+} as const
+
+/** 设置界面展示的验证器摘要（含完整配置，供人工审阅后保存）。 */
+export interface VerifierSummary {
+  readonly verifierId: string
+  readonly revision: number
+  readonly recordSha256: string
+  readonly protectedPaths: readonly string[]
+  readonly config: PinnedVerifierConfig
+  readonly savedAt: string
+  /** 记录损坏或签名校验失败时的提示；正常为空。 */
+  readonly error?: string
+}
+
+export interface SaveVerifierInput {
+  readonly verifierId: string
+  readonly config: PinnedVerifierConfig
+  readonly protectedPaths: readonly string[]
+}

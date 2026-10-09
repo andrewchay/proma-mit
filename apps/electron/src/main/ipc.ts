@@ -14,7 +14,7 @@ import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSyn
 import { writeFile } from 'node:fs/promises'
 import { tmpdir, networkInterfaces } from 'node:os'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isRetiredAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
-import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS } from '@gravitas/shared'
+import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS, VERIFIER_IPC_CHANNELS } from '@gravitas/shared'
 import { CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS } from '@gravitas/shared'
 import {
   listCampaigns,
@@ -4736,6 +4736,16 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.LIST_SESSIONS, async (): Promise<import('@gravitas/shared').TokenUsageSessionSummary[]> => tokenUsageService.listSessions())
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.CLEAR, async (): Promise<void> => tokenUsageService.clear())
   ipcMain.handle(TOKEN_USAGE_IPC_CHANNELS.COST_MINI_LEDGER, async (_event, query: import('@gravitas/shared').TokenUsageQuery = {}): Promise<import('@gravitas/shared').CostMiniLedger> => tokenUsageService.getCostMiniLedger(query))
+
+  // ===== 验证器设置（固定基线验证配置，受保护存储） =====
+  const verifierSettingsSvc = require('./lib/verifier-settings-service') as {
+    verifierSettingsService: {
+      list: () => import('@gravitas/shared').VerifierSummary[]
+      save: (input: import('@gravitas/shared').SaveVerifierInput) => import('@gravitas/shared').VerifierSummary
+    }
+  }
+  ipcMain.handle(VERIFIER_IPC_CHANNELS.LIST, async (): Promise<import('@gravitas/shared').VerifierSummary[]> => verifierSettingsSvc.verifierSettingsService.list())
+  ipcMain.handle(VERIFIER_IPC_CHANNELS.SAVE, async (_event, input: import('@gravitas/shared').SaveVerifierInput): Promise<import('@gravitas/shared').VerifierSummary> => verifierSettingsSvc.verifierSettingsService.save(input))
 
   // ===== Goal 状态层（P0） =====
   const goalSvc = require('./lib/goal-service') as {

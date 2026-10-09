@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 16:42 GMT+8第十六批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 17:00 GMT+8第十七批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -156,7 +156,7 @@
 |---|---|---|---|---|
 | V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
 | V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包和prepared-request上下文已接线；Provider确认/业务映射/verifier/test来源未闭合，见v02-evidence.md、goal-run-evidence.md与invocation-context-evidence.md |
-| V03 | 固定基线验证 + Goal 门禁 + 受保护路径(b) + seatbelt 验证沙箱 + 签名存储(safeStorage密钥) + Goal修订绑定均已实现（测试覆盖见证据）；Agent Bash 沙箱未启用；UI未做 | 用户决策见 protected-verifier-storage-design.md §0 | V02 | 部分：验证命令沙箱化、受保护路径与签名绑定已测；Agent Bash 沙箱、生产 safeStorage 运行时验证、UI 未完成；见 protected-verifier-implementation-evidence.md |
+| V03 | 固定基线验证 + Goal 门禁 + 受保护路径(b) + seatbelt 验证沙箱 + 签名存储 + Goal修订绑定 + 验证器设置界面（LIST/SAVE IPC 与设置页）均已实现；Agent Bash 沙箱已启用；Goal 门禁绑定无 UI | 用户决策见 protected-verifier-storage-design.md §0 | V02 | 部分：验证配置可由设置界面维护；Goal 的 verifierRef/基线绑定仍需 API；正式签名版未验证；见 verifier-settings-ui-evidence.md |
 | V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
 | V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
 
@@ -442,6 +442,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-022 | 2026-10-09 14:33 GMT+8 | 用户决定 | Claude SDK 运行时将下线，其 Bash 无沙箱缺口不处理；git config 写入限制已接受 | 仅文档记录，无代码变更；bash-sandbox-evidence.md |
 | HARNESS-20261009-023 | 2026-10-09 15:00–15:10 GMT+8 | 打包版手动验证（用户执行） | 渠道“测试连接”成功（打包版0.12.126可解密safeStorage）；Bash沙箱拦截/tmp写入；发现缺陷：会话目录位于配置目录下导致git无法stat父目录 | 已修复：配置目录禁写（agent-workspaces例外），读取仅禁verifiers/；新增14例沙箱测试全部通过 |
 | HARNESS-20261009-024 | 2026-10-09 16:42 GMT+8 | 打包版复测通过 | 用户在 0.12.127 打包版中确认 git add/commit 成功；渠道解密与沙箱拦截此前已验证 | 打包版手动验证完成（ad-hoc 签名；正式签名版待 Developer ID 构建复验）；packaged-safestorage-verification.md |
+| HARNESS-20261009-025 | 2026-10-09 16:50–17:00 GMT+8 | 验证器设置界面 | 四层 IPC（verifier:list/save）；服务层校验与损坏记录标记；设置页列表+表单+修订警告；存储新增listIds | 服务3例；全仓557文件3786pass0fail；build/renderer/typecheck/lint通过；Goal绑定UI未做；verifier-settings-ui-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

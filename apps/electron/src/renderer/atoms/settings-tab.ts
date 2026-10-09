@@ -26,6 +26,7 @@ export type SettingsTab =
   | 'agent'
   | 'tools'
   | 'automation'
+  | 'verifier'
   | 'bots'
   | 'calendar'
   | 'data'

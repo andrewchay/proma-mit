@@ -8,7 +8,7 @@
  */
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PinnedVerifierConfig, ProtectedVerifierRef } from '@gravitas/shared'
 import { getConfigDir } from './config-paths'
@@ -99,6 +99,15 @@ export class ProtectedVerifierStore {
     renameSync(tmp, this.recordPath(verifierId))
     this.appendAudit({ action: 'save', verifierId, revision: record.revision, recordSha256 })
     return { record, recordSha256 }
+  }
+
+  /** 列出已保存的 verifierId；目录不存在时返回空数组。 */
+  listIds(): string[] {
+    try {
+      return readdirSync(this.dir).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -'.json'.length)).sort()
+    } catch {
+      return []
+    }
   }
 
   load(verifierId: string): StoredVerifier {
