@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 14:20 GMT+8第十三批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 14:40 GMT+8第十四批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -436,6 +436,9 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-017 | 2026-10-09 12:16–12:30 GMT+8 | 受保护路径（决策b）+ seatbelt验证沙箱 | 基线为HEAD祖先；基线后受保护路径改动拒绝（删除/移动计入旧路径）；验证命令在seatbelt中运行，受保护目录读写被拒，非darwin fail closed | 11+13例；seatbelt路径需realpath（实验确认）；Agent Bash未覆盖 |
 | HARNESS-20261009-018 | 2026-10-09 12:30–12:45 GMT+8 | 签名受保护存储 + Goal修订绑定 | HMAC签名记录、safeStorage加密密钥、0700/0600、哈希链审计、修订/哈希绑定拒绝、配置更新需重建Goal | 8+12例；测试用可逆异或保护器，生产safeStorage未在Electron运行时验证 |
 | HARNESS-20261009-019 | 2026-10-09 14:00–14:25 GMT+8 | 受保护路径统一维护 + 生产 safeStorage 运行时验证 | 路径进入签名记录（统一存储），门禁只引用修订与哈希；生产 safeStorage 在 Electron 中完成加密、跨实例读取、篡改与密钥损坏拒绝验证（dev 二进制） | 相关7文件9例通过；探针修正后全部通过；未验证签名打包版与 Windows/Linux；safestorage-runtime-validation-evidence.md |
+
+| HARNESS-20261009-020 | 2026-10-09 14:25–14:40 GMT+8 | Agent Bash 沙箱（折中） | macOS seatbelt：可写工作目录与会话 scratch（TMPDIR/缓存）及链接 worktree 的对象库/引用/日志/自身 gitdir；禁写 hooks、config、.git 指针、其他 worktree；拒读写配置目录；非 darwin 默认拒绝 | 13 例（真实沙箱与链接 worktree 提交）；tool-impls 等 20 例通过；Claude SDK Bash 未覆盖；bash-sandbox-evidence.md |
+| HARNESS-20261009-021 | 2026-10-09 14:40 GMT+8 | 打包版 safeStorage 验证脚本 | scripts/verify-packaged-safestorage.sh：签名、钥匙串条目、渠道密文计数（不输出内容）、手动“测试连接”步骤 | 脚本语法与错误分支已验证；打包版结果待用户执行；packaged-safestorage-verification.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

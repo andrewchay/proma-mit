@@ -8,27 +8,41 @@
 
 export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec'
 
-export interface SeatbeltPolicy {
-  /** 真实路径；允许写入。 */
-  readonly writableRoots: readonly string[]
-  /** 真实路径；显式拒绝读写（配置目录等），优先级高于允许规则。 */
-  readonly denyRoots: readonly string[]
-}
-
 /** SBPL 字符串转义：只处理反斜杠与双引号。 */
 function quote(path: string): string {
   return `"${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
+export interface SeatbeltPolicy {
+  /** 真实路径子树；允许写入。 */
+  readonly writableRoots: readonly string[]
+  /** 真实字面路径；允许写入（不含子树）。 */
+  readonly writableLiterals?: readonly string[]
+  /** 真实路径子树；读写均拒绝（配置目录等）。 */
+  readonly denyRoots: readonly string[]
+  /** 真实路径子树；仅拒绝写入（如 git hooks）。 */
+  readonly denyWriteRoots?: readonly string[]
+  /** 真实字面路径；仅拒绝写入（如 git config）。 */
+  readonly denyWriteLiterals?: readonly string[]
+}
+
 export function buildSeatbeltProfile(policy: SeatbeltPolicy): string {
-  const allows = policy.writableRoots.map((root) => `(subpath ${quote(root)})`).join(' ')
-  const denies = policy.denyRoots.map((root) => `(subpath ${quote(root)})`).join(' ')
+  const allows = [
+    ...policy.writableRoots.map((root) => `(subpath ${quote(root)})`),
+    ...(policy.writableLiterals ?? []).map((path) => `(literal ${quote(path)})`),
+  ].join(' ')
+  const denyRoots = policy.denyRoots.map((root) => `(subpath ${quote(root)})`).join(' ')
+  const denyWriteRoots = (policy.denyWriteRoots ?? []).map((root) => `(subpath ${quote(root)})`).join(' ')
+  const denyWriteLiterals = (policy.denyWriteLiterals ?? []).map((path) => `(literal ${quote(path)})`).join(' ')
+  // SBPL 后出现的规则优先：先允许，再针对禁止项覆盖。
   return [
     '(version 1)',
     '(allow default)',
     '(deny file-write*)',
     `(allow file-write* ${allows} (literal "/dev/null"))`,
-    ...(policy.denyRoots.length > 0 ? [`(deny file-read* ${denies})`, `(deny file-write* ${denies})`] : []),
+    ...(denyRoots ? [`(deny file-read* ${denyRoots})`, `(deny file-write* ${denyRoots})`] : []),
+    ...(denyWriteRoots ? [`(deny file-write* ${denyWriteRoots})`] : []),
+    ...(denyWriteLiterals ? [`(deny file-write* ${denyWriteLiterals})`] : []),
   ].join('\n')
 }
 
