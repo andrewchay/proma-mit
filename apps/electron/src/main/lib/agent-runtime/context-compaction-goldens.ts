@@ -50,6 +50,23 @@ export const CONTEXT_COMPACTION_GOLDENS: ContextCompactionGoldenFixture[] = [
   },
   {
     golden: {
+      id: 'triple-compaction-chain',
+      requiredFacts: ['Kimi K3', '工作区'],
+      requiredDecisions: ['ContextPacket v1'],
+      requiredOpenTasks: ['P5'],
+    },
+    packet: {
+      version: 1,
+      summary: '第三次压缩：目标与禁止项继续保留，仅合并已完成步骤。',
+      facts: ['用户使用 Kimi K3，模型窗口按 1M 处理。', '工作区为 proma-mit。'],
+      decisions: ['长期记忆使用 ContextPacket v1。'],
+      openTasks: ['完成 P5 Golden 质量门。'],
+      importantFiles: ['context-compaction.ts'],
+      toolState: ['前两轮工具调用结果已归档，无未完成外部调用。'],
+    },
+  },
+  {
+    golden: {
       id: 'overflow-recovery',
       requiredFacts: ['上下文超限'],
       requiredDecisions: ['重试一次'],

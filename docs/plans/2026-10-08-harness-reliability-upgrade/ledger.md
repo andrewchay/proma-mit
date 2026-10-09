@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 23:20 GMT+8第二十三批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 23:40 GMT+8第二十四批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -196,8 +196,8 @@
 
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
-| C01 | 扩展 context-compaction-goldens.ts、context-compaction.test.ts、context-compaction-budget.test.ts | 连续3次以上压缩保留原目标、禁止项、关键决策和未解决阻塞；recent tail保留完整tool-call/result组 | H02 | 待开始 |
-| C02 | 扩展 context-compaction.ts、agent-session-manager.ts 与审计测试 | 摘要有原文/修订定位；archive缺失显示unrecoverable；中止/空结果/错误不写成功；overflow恢复不重放mutation | C01；P03 | 待开始 |
+| C01 | goldens 新增三连压缩样本 + 评估链/负例测试；尾部配对由 alignKeepStartToToolPairs 既有实现承担 | 连续3次以上压缩保留原目标、禁止项、关键决策和未解决阻塞；recent tail保留完整tool-call/result组 | H02 | 完成（离线评估级）：真实模型连续压缩质量仍属 R01 held-out；context-compaction-integrity.test.ts |
+| C02 | boundary 携带 compactionSource（消息数/SHA-256/归档文件）+ assessCompactionArchiveIntegrity 三态 | 摘要有原文/修订定位；archive缺失显示unrecoverable；中止/空结果/错误不写成功；overflow恢复不重放mutation | C01；P03 | 部分完成：定位与 unrecoverable 落地；中止不写成功由既有生命周期测试承担；overflow 不重放为构造性保证（恢复只重读持久化历史），未做端到端故障注入 |
 | C03 | 审计并补 memory-plugin-service.ts、memory-governance.ts、skill-porting/auditor/installer 入口 | session lesson → candidate → existing Approval → approved写入；跨项目/敏感/矛盾事实不自动推广；安全scanner不作无恶意证明 | H00；P03 | 待开始 |
 | C04 | 候选patch的版本、来源和恢复测试 | stale patch拒绝；重复批准幂等；更新失败旧版本可恢复；缺授权不写AGENTS/README；Skill变更遵守version契约 | C03 | 待开始 |
 
@@ -449,6 +449,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-029 | 2026-10-09 21:55–22:10 GMT+8 | E04取消/错误/重启与重试 | 重试硬规则（仅共享锁、取消不重试、默认不重试）；禁用退化全串行仍持锁；修复跨批次并发计数缺陷（禁用测试复现） | 生命周期5例；全仓561文件3812pass0fail；重试无退避、禁用未持久化；HR07–HR09/G2未过；tool-scheduler-lifecycle-evidence.md |
 | HARNESS-20261009-030 | 2026-10-09 22:40–22:55 GMT+8 | M4a策略模型P01+钉板P02 | harness-policy共享模块（严格解析/只收紧/能力映射）；supportsInProcessToolScheduling；ai-sdk Provider前校验；policy-invariants钉板 | shared8例+electron9例；全仓564文件3826pass0fail；proma/pi/claude接线与UI归P03/P04；policy-conformance-evidence.md |
 | HARNESS-20261009-031 | 2026-10-09 22:55–23:20 GMT+8 | M4b一致性矩阵P03+UI P04 | 声明式能力矩阵钉板；四runtime入口Provider前fail-closed；harness-policy:get-state IPC+策略Tab只读卡 | 一致性6例；全仓565文件3832pass0fail；拒绝未写审计流；policy-conformance-evidence.md |
+| HARNESS-20261009-032 | 2026-10-09 23:20–23:40 GMT+8 | M5压缩侧C01/C02 | 三连压缩golden+评估零容忍负例；boundary原文定位（sha256+归档文件）；归档完整性三态评估 | 完整性5例+压缩回归4文件全绿；overflow端到端故障注入未做；ledger C01/C02更新 |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

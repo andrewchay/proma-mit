@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, unl
 import { createInterface } from 'node:readline'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { safeParseJSONObject } from './safe-json'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join, resolve, dirname } from 'node:path'
 import {
   getAgentSessionsIndexPath,
@@ -1097,22 +1097,33 @@ export function compactSDKMessages(id: string, summary: string, keepRecent: numb
   const messages = getAgentSessionSDKMessages(id)
   const keepCount = Math.max(0, Math.min(keepRecent, messages.length))
   // 保留窗口不能从孤儿 tool_result 开始；必要时向前扩展到配对的 assistant
-  const kept = messages.slice(alignKeepStartToToolPairs(messages, messages.length - keepCount))
+  const keepStart = alignKeepStartToToolPairs(messages, messages.length - keepCount)
+  const kept = messages.slice(keepStart)
+  const compacted = messages.slice(0, keepStart)
+
+  // C02 原文/修订定位：boundary 携带压缩前消息数、内容摘要哈希与归档文件名。
+  const filePath = getAgentSessionMessagesPath(id)
+  let archiveFile: string | undefined
+  if (existsSync(filePath)) {
+    const archiveDir = join(getAgentSessionsDir(), 'compaction-archive', id)
+    mkdirSync(archiveDir, { recursive: true })
+    archiveFile = `${Date.now()}-${randomUUID()}.jsonl`
+    copyFileSync(filePath, join(archiveDir, archiveFile))
+  }
+  const compactionSource = {
+    messageCount: compacted.length,
+    sha256: createHash('sha256').update(compacted.map((m) => JSON.stringify(m)).join('\n'), 'utf8').digest('hex'),
+    ...(archiveFile ? { archiveFile } : {}),
+  }
   const boundary: SDKMessage = {
     type: 'system',
     subtype: 'compact_boundary',
     session_id: id,
     summary,
     contextPacket,
+    compactionSource,
   } as unknown as SDKMessage
   const result = [boundary, ...kept]
-
-  const filePath = getAgentSessionMessagesPath(id)
-  if (existsSync(filePath)) {
-    const archiveDir = join(getAgentSessionsDir(), 'compaction-archive', id)
-    mkdirSync(archiveDir, { recursive: true })
-    copyFileSync(filePath, join(archiveDir, `${Date.now()}-${randomUUID()}.jsonl`))
-  }
   const content = result.map((m) => JSON.stringify(m)).join('\n') + '\n'
   writeFileSync(filePath, content, 'utf-8')
 
@@ -1121,6 +1132,39 @@ export function compactSDKMessages(id: string, summary: string, keepRecent: numb
 
   console.log(`[Agent 会话] 上下文压缩: sessionId=${id}, 摘要 ${summary.length} chars, 保留 ${keepCount}/${messages.length} 条`)
   return result
+}
+
+export interface CompactionArchiveIntegrity {
+  readonly status: 'no_compaction' | 'ok' | 'unrecoverable'
+  readonly reason?: string
+  readonly boundaryCount: number
+  readonly archiveFileCount: number
+}
+
+/**
+ * C02：压缩归档完整性评估。
+ * 存在 compact_boundary 但归档目录缺失/为空 → unrecoverable（压缩前原文不可恢复），
+ * 只陈述事实，不尝试伪造恢复。
+ */
+export function assessCompactionArchiveIntegrity(id: string): CompactionArchiveIntegrity {
+  const messages = getAgentSessionSDKMessages(id)
+  const boundaryCount = messages.filter(
+    (m) => m.type === 'system' && (m as { subtype?: string }).subtype === 'compact_boundary',
+  ).length
+  const archiveDir = join(getAgentSessionsDir(), 'compaction-archive', id)
+  const archiveFileCount = existsSync(archiveDir) ? readdirSync(archiveDir).filter((name) => name.endsWith('.jsonl')).length : 0
+  if (boundaryCount === 0) {
+    return { status: 'no_compaction', boundaryCount, archiveFileCount }
+  }
+  if (archiveFileCount === 0) {
+    return {
+      status: 'unrecoverable',
+      reason: '会话存在压缩边界但压缩归档缺失，压缩前原文不可恢复',
+      boundaryCount,
+      archiveFileCount,
+    }
+  }
+  return { status: 'ok', boundaryCount, archiveFileCount }
 }
 
 /**
