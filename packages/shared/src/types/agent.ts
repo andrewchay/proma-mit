@@ -910,6 +910,10 @@ export interface AgentGoal {
   acceptanceCriteria: string[]
   status: AgentGoalStatus
   checkpoint?: AgentGoalCheckpoint
+  /** 完成门禁：存在时 complete 必须经固定基线验证通过。 */
+  completionGate?: import('./goal-verification').GoalCompletionGate
+  /** 最近一次通过门禁的固定基线回执（仅 passed 写入）。 */
+  completionVerification?: import('./goal-verification').PinnedVerifierReceipt
   activeRunId?: string
   /** 主进程已接收检查点的调用身份；不代表证据验证通过。 */
   checkpointRunId?: string
@@ -929,6 +933,7 @@ export interface CreateAgentGoalInput {
   runtime: Extract<AgentRuntime, 'proma' | 'pi' | 'ai-sdk'>
   objective: string
   acceptanceCriteria?: string[]
+  completionGate?: import('./goal-verification').GoalCompletionGate
 }
 
 /** UI 控制 Goal 生命周期的输入。 */

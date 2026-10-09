@@ -13,53 +13,18 @@ import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
+import type { PinnedVerifierConfig, PinnedVerifierReason, PinnedVerifierReceipt } from '@gravitas/shared'
+
+export type { PinnedVerifierConfig, PinnedVerifierReason, PinnedVerifierReceipt }
 
 export const JUNIT_REPORT_PLACEHOLDER = '{{JUNIT_REPORT}}'
 const MAX_TIMEOUT_MS = 30 * 60_000
-
-export interface PinnedVerifierConfig {
-  readonly version: 1
-  readonly verifierId: string
-  /** 完整 argv；首项为可执行文件，不经 shell 解释。 */
-  readonly argv: readonly string[]
-  readonly expectedExitCodes: readonly number[]
-  readonly timeoutMs: number
-  /** 至少要采集到的测试数量；零测试不得通过。 */
-  readonly minimumTests: number
-}
 
 export interface PinnedVerifierRequest {
   readonly repoRoot: string
   readonly commitSha: string
   readonly config: PinnedVerifierConfig
-}
-
-export type PinnedVerifierReason =
-  | 'exit_code_unexpected'
-  | 'timeout'
-  | 'collection_missing'
-  | 'too_few_tests'
-  | 'test_failures'
-  | 'spawn_error'
-
-export interface PinnedVerifierReceipt {
-  readonly version: 1
-  readonly verifierId: string
-  readonly commitSha: string
-  readonly argvSha256: string
-  readonly cleanCheckout: true
-  readonly exitCode: number | null
-  readonly timedOut: boolean
-  readonly tests: number
-  readonly failures: number
-  readonly errors: number
-  readonly skipped: number
-  readonly verdict: 'passed' | 'failed' | 'unknown'
-  readonly reasons: readonly PinnedVerifierReason[]
-  readonly cleanedUp: boolean
-  readonly startedAt: string
-  readonly finishedAt: string
 }
 
 export interface JUnitTotals {
@@ -73,7 +38,8 @@ function assertCommit(sha: string): void {
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('commit 必须是完整的 40 位小写十六进制 SHA')
 }
 
-function validateConfig(config: PinnedVerifierConfig): void {
+/** 校验受保护验证配置；非法配置在执行前拒绝。 */
+export function validatePinnedVerifierConfig(config: PinnedVerifierConfig): void {
   if (config.version !== 1) throw new Error('verifier config version 必须为 1')
   if (!config.verifierId.trim()) throw new Error('verifierId 不能为空')
   if (config.argv.length === 0 || config.argv.some((item) => typeof item !== 'string' || item.length === 0)) {
@@ -131,10 +97,24 @@ export function parseJUnitTotals(xml: string): JUnitTotals | null {
   return { tests, failures, errors: attr('errors') ?? 0, skipped: attr('skipped') ?? 0 }
 }
 
+/** 解析仓库 HEAD 的完整提交 SHA；未提交内容不会被纳入。 */
+export async function resolveHeadCommitSha(repoRoot: string): Promise<string> {
+  if (!isAbsolute(repoRoot)) throw new Error('repoRoot 必须是绝对路径')
+  const sha = await new Promise<string>((resolve, reject) => {
+    const child = spawn('git', ['-C', repoRoot, 'rev-parse', '--verify', 'HEAD^{commit}'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
+    child.once('error', reject)
+    child.once('close', (code) => (code === 0 ? resolve(out.trim()) : reject(new Error('无法解析仓库 HEAD 提交'))))
+  })
+  assertCommit(sha)
+  return sha
+}
+
 /** 固定基线验证：导出 commit 到临时目录，执行受保护 argv，并从报告计数判定。 */
 export async function runPinnedBaselineVerifier(request: PinnedVerifierRequest): Promise<PinnedVerifierReceipt> {
   assertCommit(request.commitSha)
-  validateConfig(request.config)
+  validatePinnedVerifierConfig(request.config)
   const startedAt = new Date().toISOString()
   const argvSha256 = createHash('sha256').update(JSON.stringify(request.config.argv)).digest('hex')
   const workRoot = await mkdtemp(join(tmpdir(), 'gravitas-pinned-'))

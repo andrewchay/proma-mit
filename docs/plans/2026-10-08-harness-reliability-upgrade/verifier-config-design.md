@@ -8,7 +8,7 @@ Goal 或任务完成前需要一个**不可由 Agent 改写**的“什么算验�
 
 ## 已确认决策（2026-10-09 11:10）
 
-用户选择方案 **(a)：固定到已提交基线，在干净 checkout 中验证**；测试框架先支持 Bun test JUnit。已实现的验证函数见 `pinned-baseline-verifier.ts`，证据见 `pinned-baseline-verifier-evidence.md`。配置存储与 Goal/任务门禁接入仍未完成。
+用户选择方案 **(a)：固定到已提交基线，在干净 checkout 中验证**；测试框架先支持 Bun test JUnit。已实现的验证函数见 `pinned-baseline-verifier.ts`，证据见 `pinned-baseline-verifier-evidence.md`。Goal 完成门禁已接入（见 `goal-completion-gate-evidence.md`）；受保护配置存储与写入权限的设计见 `protected-verifier-storage-design.md`，尚未实现。
 
 ## 草案 schema（v1，JSON，主进程读取）
 

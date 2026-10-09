@@ -9,8 +9,11 @@ import type {
   AgentGoalInvocationContext,
   AgentGoalStatus,
   CreateAgentGoalInput,
+  GoalCompletionGate,
+  PinnedVerifierReceipt,
 } from '@gravitas/shared'
 import { ElectronGoalStore } from './goal-store'
+import { resolveHeadCommitSha, runPinnedBaselineVerifier, validatePinnedVerifierConfig } from '../pinned-baseline-verifier'
 
 const MAX_IMMEDIATE_CONTINUATIONS = 3
 
@@ -31,12 +34,27 @@ export interface GoalContinuationRequest {
 /** 返回 false 表示执行环境暂不可用；协调器会保留 Goal 并稍后重试，不会丢失续跑。 */
 export type GoalContinuationRunner = (request: GoalContinuationRequest) => Promise<boolean>
 
+/** 完成门禁的验证函数；默认对仓库 HEAD 的已提交内容运行固定基线验证。 */
+export type CompletionVerifier = (gate: GoalCompletionGate) => Promise<PinnedVerifierReceipt>
+
+export interface GoalCoordinatorOptions {
+  verifyCompletion?: CompletionVerifier
+}
+
+const defaultCompletionVerifier: CompletionVerifier = async (gate) => {
+  const commitSha = await resolveHeadCommitSha(gate.repoRoot)
+  return runPinnedBaselineVerifier({ repoRoot: gate.repoRoot, commitSha, config: gate.verifier })
+}
+
 export class GoalCoordinator {
   private readonly immediateCounts = new Map<string, number>()
   private readonly startingGoalIds = new Set<string>()
   private continuationRunner?: GoalContinuationRunner
+  private readonly verifyCompletion: CompletionVerifier
 
-  constructor(private readonly store = new ElectronGoalStore()) {}
+  constructor(private readonly store = new ElectronGoalStore(), options: GoalCoordinatorOptions = {}) {
+    this.verifyCompletion = options.verifyCompletion ?? defaultCompletionVerifier
+  }
 
   setContinuationRunner(runner: GoalContinuationRunner): void {
     this.continuationRunner = runner
@@ -47,6 +65,7 @@ export class GoalCoordinator {
     if (!objective) throw new Error('Goal 目标不能为空')
     const existing = this.getActiveBySession(input.sessionId)
     if (existing) throw new Error('当前会话已有未结束的 Goal，请先暂停、取消或完成它')
+    const completionGate = input.completionGate ? validateCompletionGate(input.completionGate) : undefined
     const now = Date.now()
     const goal: AgentGoal = {
       id: randomUUID(),
@@ -57,6 +76,7 @@ export class GoalCoordinator {
       runtime: input.runtime,
       objective,
       acceptanceCriteria: input.acceptanceCriteria?.filter(Boolean) ?? [],
+      ...(completionGate ? { completionGate } : {}),
       status: 'active',
       createdAt: now,
       updatedAt: now,
@@ -164,9 +184,24 @@ export class GoalCoordinator {
           throw new Error('Goal调用上下文已变化，请重新运行')
         }
         validateCheckpoint(checkpoint, current)
+        let receipt: PinnedVerifierReceipt | undefined
+        if (checkpoint.outcome === 'complete' && current.completionGate) {
+          // 验证耗时较长：返回后必须重新确认目标、配置与调用身份仍未变化。
+          receipt = await this.verifyCompletion(current.completionGate)
+          const latest = readCurrent()
+          if (JSON.stringify(latest.invocationContext) !== JSON.stringify(context) || goalConfiguration(latest) !== configuration) {
+            throw new Error('Goal配置或调用上下文已变化，请重新运行')
+          }
+          if (receipt.verdict !== 'passed') {
+            const reasons = receipt.reasons.length > 0 ? `（${receipt.reasons.join('、')}）` : ''
+            throw new Error(`固定基线验证未通过：${receipt.verdict}${reasons}。请修复已提交内容后再提交 complete。`)
+          }
+        }
+        const latest = readCurrent()
         this.save({
-          ...current, status: statusFromCheckpoint(checkpoint), checkpoint: cloneCheckpoint(checkpoint),
+          ...latest, status: statusFromCheckpoint(checkpoint), checkpoint: cloneCheckpoint(checkpoint),
           checkpointRunId: runId, activeRunId: undefined, updatedAt: Date.now(),
+          ...(receipt ? { completionVerification: receipt } : {}),
         })
       },
       onFinished: async (canContinue: boolean): Promise<void> => {
@@ -313,12 +348,21 @@ function cloneCheckpoint(checkpoint: AgentGoalCheckpoint): AgentGoalCheckpoint {
   return JSON.parse(JSON.stringify(checkpoint)) as AgentGoalCheckpoint
 }
 
-/** 只比较调用授权配置，不把状态/version更新当成新配置。 */
+/** 只比较调用授权配置与完成门禁，不把状态/version更新当成新配置。 */
 function goalConfiguration(goal: AgentGoal): string {
   return JSON.stringify({
     workspaceId: goal.workspaceId, channelId: goal.channelId, modelId: goal.modelId,
     runtime: goal.runtime, objective: goal.objective, acceptanceCriteria: goal.acceptanceCriteria,
+    completionGate: goal.completionGate,
   })
+}
+
+/** 创建时即校验门禁，避免把非法验证配置存入 Goal。 */
+function validateCompletionGate(gate: GoalCompletionGate): GoalCompletionGate {
+  if (gate.version !== 1) throw new Error('completionGate version 必须为 1')
+  if (!isAbsolute(gate.repoRoot)) throw new Error('completionGate.repoRoot 必须是绝对路径')
+  validatePinnedVerifierConfig(gate.verifier)
+  return JSON.parse(JSON.stringify(gate)) as GoalCompletionGate
 }
 
 function copyPreparedRequest(request: AgentGoalPreparedRequest): AgentGoalPreparedRequest {

@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 11:40 GMT+8第十批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 12:00 GMT+8第十一批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -156,7 +156,7 @@
 |---|---|---|---|---|
 | V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
 | V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包和prepared-request上下文已接线；Provider确认/业务映射/verifier/test来源未闭合，见v02-evidence.md、goal-run-evidence.md与invocation-context-evidence.md |
-| V03 | 固定基线验证器 `pinned-baseline-verifier.ts`（已实现）；接线 goal-runtime 与受保护配置存储尚未做 | 用户决策：固定已提交基线、干净 checkout 验证；Given 显式 criteria，When complete，Then 逐项核验；缺/错/旧/skip/零收集拒绝 | V02 | 部分：固定基线验证与 JUnit 计数已测（9例）；未接入 Goal/任务完成门禁，未实现受保护配置存储；见 pinned-baseline-verifier-evidence.md |
+| V03 | 固定基线验证器已接入 Goal 完成门禁（`completionGate` 默认验证 HEAD 已提交内容，未通过拒绝 complete）；受保护配置存储与写入权限仅完成设计 | 用户决策：固定已提交基线；Given 显式 criteria，When complete，Then 逐项核验；缺/错/旧/skip/零收集拒绝 | V02 | 部分：门禁已接线（7例）；受保护存储/签名/UI 未实现；测试削弱缺口（Agent可改测试后提交）未解决，见 protected-verifier-storage-design.md 与 goal-completion-gate-evidence.md |
 | V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
 | V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
 
@@ -429,6 +429,9 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 
 | HARNESS-20261009-013 | 2026-10-09 11:10–11:20 GMT+8 | V03固定基线验证器 | `git archive`完整SHA干净副本，argv非shell，JUnit根计数判定；工作树未提交改动不影响；9例（真实git/bun） | 用户决策方案(a)；未接入Goal门禁与受保护配置存储。pinned-baseline-verifier-evidence.md |
 | HARNESS-20261009-014 | 2026-10-09 11:20–11:40 GMT+8 | Pi+DeepSeek受控试点与费用闸门修复 | 修复渠道模型恒为0费用（官方端点+目录命中才用目录价，其余保持0失败关闭，3例）；发现并修复 Pi deepseek 端点、统计重复计数、项目库初始化；flash 17/18（12+6用例），v4-pro 18/18；估算有效运行 $0.1949，账本上限 $0.302 | 用户授权 deepseek-flash、deepseek-v4-pro；¥5 按 $0.6 保守折算；key 经 Electron 解密仅入子进程环境，KEY_LEAK=0；pi-deepseek-pilot-evidence.md；原始数据在会话工作台 |
+
+| HARNESS-20261009-015 | 2026-10-09 11:46–12:00 GMT+8 | Goal完成门禁接入固定基线验证 | `completionGate`可选字段；complete时对HEAD已提交内容运行验证，未通过拒绝并返回原因，通过写回执；验证途中配置漂移拒绝；创建时校验；无门禁旧行为不变 | 7例（真实临时git仓库含一例）；门禁仅经协调器API创建，无UI；测试削弱缺口未解决。goal-completion-gate-evidence.md |
+| HARNESS-20261009-016 | 2026-10-09 12:00 GMT+8 | 受保护验证配置存储与写入权限设计 | 设计文档：存储布局、0700/0600、哈希链审计、写入权限矩阵；列出同用户Bash可绕过文件权限、测试削弱、签名密钥位置等需决策问题 | 仅设计，未写入配置、未新增IPC；protected-verifier-storage-design.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
