@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 23:55 GMT+8第二十五批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-10 00:20 GMT+8第二十六批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -205,10 +205,10 @@
 
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
-| R01 | 新独立 held-out benchmark 与离线矩阵；复用 eval/self-evolver.ts、trace-writer.ts | 多任务/多Runtime基线和失败样本；安全断言零容忍；未知费用不作0；不跑TCC实验 | M1–M5 | 待开始 |
-| R02 | 完整PR门禁与隔离打包；现有根scripts、scripts/package-smoke.ts | typecheck/test/lint/docs、完整build、隔离包启动/数据库重开；原生helper失败上抛 | R01 | 待开始 |
+| R01 | `agent-runtime/harness-benchmark/runner.ts` 离线矩阵 + 测试 | 多任务/多Runtime基线和失败样本；安全断言零容忍；未知费用不作0；不跑TCC实验 | M1–M5 | 部分完成：离线矩阵骨架与安全零容忍落地；真实 Provider 基线与失败样本库未做；runtime-acceptance-evidence.md |
+| R02 | 本批实际执行：全量门禁 + dist:fast + package-smoke | typecheck/test/lint/docs、完整build、隔离包启动/数据库重开；原生helper失败上抛 | R01 | 完成（本机 arm64）：567文件3844pass0fail；dmg 1m18s；smoke passed（tools26/defaultSkills3/skillSetToggle2）；Kimi 压缩烟测与 CI runner 未覆盖 |
 | R03 | 单独授权的真实Provider opt-in试点 | 固定Runtime/model/build/budget/cases；逐调用留证；验证真实工具/权限/最新产物；skip不记通过 | R02 | 已执行（用户授权 Pi + deepseek-flash/deepseek-v4-pro，¥5 上限）：36 次运行，17/18 与 18/18 通过，估算累计 ≤ $0.302；唯一失败 text-ok 已如实记录；见 pi-deepseek-pilot-evidence.md。仍非发布门禁 |
-| R04 | 回滚演练与分阶段启用 | 关闭新flags恢复baseline，硬安全底线不降低；旧数据可读、日志不删；扩容需正式门禁决策 | R03 | 待开始 |
+| R04 | `harness-rollback.test.ts` 四例回滚演练 | 关闭新flags恢复baseline，硬安全底线不降低；旧数据可读、日志不删；扩容需正式门禁决策 | R03 | 完成（本批机制级）：调度禁用/策略删除/旧 boundary 可读/预算闸不降低；历史 flags 不在范围；runtime-acceptance-evidence.md |
 
 ### M7：ACP 可选分支
 
@@ -451,6 +451,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-031 | 2026-10-09 22:55–23:20 GMT+8 | M4b一致性矩阵P03+UI P04 | 声明式能力矩阵钉板；四runtime入口Provider前fail-closed；harness-policy:get-state IPC+策略Tab只读卡 | 一致性6例；全仓565文件3832pass0fail；拒绝未写审计流；policy-conformance-evidence.md |
 | HARNESS-20261009-032 | 2026-10-09 23:20–23:40 GMT+8 | M5压缩侧C01/C02 | 三连压缩golden+评估零容忍负例；boundary原文定位（sha256+归档文件）；归档完整性三态评估 | 完整性5例+压缩回归4文件全绿；overflow端到端故障注入未做；ledger C01/C02更新 |
 | HARNESS-20261009-033 | 2026-10-09 23:40–23:55 GMT+8 | M5记忆/Skill侧C03/C04 | 审批链钉板（批准前零写/幂等/拒绝不写）；敏感候选上游拦截；audit免责声明；installer stale拒绝+幂等跳过+contentHash基线 | 记忆链2例+installer4例+auditor1例；全仓567文件3844pass0fail；矛盾语义检测未实现；memory-governance-evidence.md |
+| HARNESS-20261010-034 | 2026-10-09 23:55–2026-10-10 00:20 GMT+8 | M6离线基准R01+门禁R02+回滚R04 | benchmark runner（安全零容忍/费用unknown/矩阵）；dist:fast dmg+package-smoke passed；回滚演练四例 | 基准3例+回滚4例；全仓门禁+真实打包烟测通过；真实Provider基线/CI隔离打包未做；runtime-acceptance-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
