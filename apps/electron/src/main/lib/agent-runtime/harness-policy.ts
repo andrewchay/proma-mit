@@ -7,16 +7,18 @@
  *   由调用方拒绝受控运行。
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   AGENT_RUNTIME_CAPABILITIES,
   DEFAULT_HARNESS_POLICY,
   HarnessPolicyError,
   assertRuntimeSatisfiesPolicy,
+  buildRuntimeGaps,
   parseHarnessPolicy,
   type AgentRuntime,
   type HarnessPolicy,
+  type HarnessPolicyState,
 } from '@gravitas/shared'
 import { getConfigDir } from '../config-paths'
 
@@ -46,4 +48,23 @@ export function loadHarnessPolicy(path: string = getHarnessPolicyPath()): Harnes
 export function assertRuntimePolicy(runtime: AgentRuntime, path?: string): void {
   const policy = loadHarnessPolicy(path)
   assertRuntimeSatisfiesPolicy(runtime, AGENT_RUNTIME_CAPABILITIES[runtime], policy)
+}
+
+/** 供设置 UI 的只读状态：缺失/正常/损坏三态 + 各 runtime 缺口。 */
+export function buildHarnessPolicyState(path: string = getHarnessPolicyPath()): HarnessPolicyState {
+  try {
+    const policy = loadHarnessPolicy(path)
+    const missing = !existsSync(path)
+    return { status: missing ? 'missing' : 'ok', path, policy, error: null, reasons: [], runtimeGaps: buildRuntimeGaps(policy, AGENT_RUNTIME_CAPABILITIES) }
+  } catch (error) {
+    const reasons = error instanceof HarnessPolicyError ? [...error.reasons] : []
+    return {
+      status: 'invalid',
+      path,
+      policy: null,
+      error: error instanceof Error ? error.message : String(error),
+      reasons,
+      runtimeGaps: buildRuntimeGaps(null, AGENT_RUNTIME_CAPABILITIES),
+    }
+  }
 }

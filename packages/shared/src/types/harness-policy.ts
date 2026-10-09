@@ -6,7 +6,7 @@
  * 单调收紧（off → preferred → required），revision 单调递增。
  */
 
-import type { AgentRuntime, AgentRuntimeCapabilities } from './agent'
+import { AGENT_RUNTIME_LABELS, isRetiredAgentRuntime, type AgentRuntime, type AgentRuntimeCapabilities } from './agent'
 
 export type GuaranteeStrength = 'off' | 'preferred' | 'required'
 
@@ -148,4 +148,41 @@ export function assertRuntimeSatisfiesPolicy(
     `Runtime ${runtime} 不满足策略要求的保证: ${gaps.map((key) => HARNESS_GUARANTEE_LABELS[key]).join('、')}`,
     gaps.map((key) => `${key}=required 但 runtime 不支持`),
   )
+}
+
+/** Harness 策略 IPC 通道 */
+export const HARNESS_POLICY_IPC_CHANNELS = {
+  /** 读取策略状态（含解析错误与各 runtime 缺口），只读 */
+  GET_STATE: 'harness-policy:get-state',
+} as const
+
+export interface HarnessRuntimeGap {
+  readonly runtime: AgentRuntime
+  readonly runtimeLabel: string
+  readonly retired: boolean
+  readonly gaps: readonly HarnessGuaranteeKey[]
+}
+
+/** 策略状态（IPC 载荷，纯数据）：invalid 时保留原件、拒绝受控运行。 */
+export interface HarnessPolicyState {
+  readonly status: 'missing' | 'ok' | 'invalid'
+  readonly path: string
+  readonly policy: HarnessPolicy | null
+  readonly error: string | null
+  readonly reasons: readonly string[]
+  readonly runtimeGaps: readonly HarnessRuntimeGap[]
+}
+
+/** 由策略计算各 runtime 的 required 缺口（供主进程与 UI 共用，保持同一份语义）。 */
+export function buildRuntimeGaps(
+  policy: HarnessPolicy | null,
+  capabilities: Record<AgentRuntime, AgentRuntimeCapabilities>,
+): HarnessRuntimeGap[] {
+  const runtimes: AgentRuntime[] = ['claude', 'proma', 'pi', 'ai-sdk']
+  return runtimes.map((runtime) => ({
+    runtime,
+    runtimeLabel: AGENT_RUNTIME_LABELS[runtime],
+    retired: isRetiredAgentRuntime(runtime),
+    gaps: policy ? requiredGuaranteeGaps(capabilities[runtime], policy) : [],
+  }))
 }

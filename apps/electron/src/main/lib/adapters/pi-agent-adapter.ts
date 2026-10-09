@@ -6,6 +6,7 @@
  * Pi 只能调用显式注册的 Proma Tool Bridge，不能直接使用其内置 Shell 或文件工具。
  */
 
+import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
 import { randomUUID } from 'node:crypto'
 import { assertControlledPermissionChange, createControlledProviderFetch, guardControlledPiToolContext, guardControlledPiModelRuntime, isControlledProviderSession } from '../controlled-provider-boundary'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
@@ -231,6 +232,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
     const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
+    // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
+    assertRuntimePolicy('pi')
     if (runtimeBudgetLimitUsd !== undefined && (!Number.isFinite(runtimeBudgetLimitUsd) || runtimeBudgetLimitUsd <= 0)) {
       throw new Error('Pi 调用级费用阈值无效')
     }

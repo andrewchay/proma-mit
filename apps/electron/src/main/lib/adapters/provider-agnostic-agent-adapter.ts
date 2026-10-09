@@ -34,6 +34,7 @@ import type {
   StreamEvent,
   ThinkingBlock,
 } from '@gravitas/core'
+import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
 import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
@@ -190,6 +191,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 发起查询，返回 SDKMessage 异步迭代流 */
   async *query(input: ProviderAgnosticAgentQueryOptions): AsyncIterable<SDKMessage> {
+    // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
+    assertRuntimePolicy('proma')
     const {
       sessionId,
       prompt,

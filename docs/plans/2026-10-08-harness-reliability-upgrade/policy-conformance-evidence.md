@@ -28,3 +28,30 @@
 ## 门禁
 
 全仓 564 文件 3826 pass/0 fail/28 skip；九包 typecheck、lint、docs/diff 通过；真实 workspace 36→36。
+
+---
+
+## P03/P04 第二十三批补记（2026-10-09 23:20 GMT+8，基线 0f67a117）
+
+### P03 一致性矩阵与四 Runtime 接线
+
+- `adapters/harness-policy-conformance.test.ts`：声明式矩阵 `MATRIX` 逐项钉住四个 runtime 的 retired / budgetStop / inProcessToolScheduling / planWriteScope；能力翻转必须同步改表，否则测试失败。
+- 默认策略在全部 runtime 上无缺口；required budgetStop → proma/pi 拒绝、claude/ai-sdk 通过；required toolScheduling → claude 拒绝（SDK 子进程不在锁域）。
+- 预算阈值合并语义跨 runtime 一致（不支持→拒绝；支持→取更严格值）。
+- retired runtime（claude/proma）仅做数据级断言，不构造会话、不为其恢复运行级验收。
+- Provider 前拒绝接线补齐：`pi-agent-adapter.query`、`provider-agnostic-agent-adapter.query`（proma）、`claude-agent-adapter.query` 入口均先 `assertRuntimePolicy(...)`；四个 runtime 全覆盖。
+
+### P04 UI 与配置拒绝
+
+- IPC `harness-policy:get-state`（只读）：返回 missing/ok/invalid 三态、revision、逐条拒绝原因、各 runtime 缺口（`buildRuntimeGaps` 共享语义，主进程与 UI 同源）。
+- AgentSettings 新增「策略」Tab（`HarnessPolicyPanel`）：作用域路径、强度三态着色、缺口列表、损坏时的错误与原因；只读不编辑，并注明审批与沙箱是独立层。
+- 配置拒绝行为（P01 已落地，P04 验收）：损坏 JSON / 未知字段保留原件不覆写并拒绝受控运行。
+
+### 门禁
+
+全仓 565 文件 3832 pass/0 fail/28 skip；九包 typecheck、lint、docs/diff 通过。
+
+### 边界
+
+- UI 只读：策略修订只能改文件， tightened-only 校验在解析/断言层，尚无专门的"保存策略"写入路径（暂无需求）。
+- 审计原因（每次拒绝写入审计流）未接线：当前拒绝以异常形式上浮到会话错误，未追加到 web-bridge/computer-use 式 JSONL 审计。
