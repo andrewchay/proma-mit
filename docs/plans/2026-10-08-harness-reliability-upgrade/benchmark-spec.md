@@ -77,3 +77,7 @@ HR01的请求参数子集现绑定真实query前准备元数据，固定Goal配�
 ## 9. E01第五批声明子集（2026-10-09 09:36 GMT+8）
 
 HR06–HR09的前置声明现在仅覆盖Read/Write/Edit真实注册实例，Write含祖先目录；DTO/副本/MCP提示不升级，未知保守。10个定向文件73pass，全仓546文件3674pass/0fail/27skip。没有E02–E05队列/锁/取消或生产并行，HR06–HR09与G2均未通过；effects元数据也不满足V03测试来源门禁。见effects-evidence.md。
+
+## 10. E02第六批观察子集（2026-10-09 09:56 GMT+8）
+
+文件canonical path、Write缺失尾部/祖先、现存hardlink身份以及特殊/错误路径保守回退已有25用例；四定向文件72pass，全仓547文件3699pass/0fail/27skip。只是非原子观察，尚无实际锁、队列或并行；缺失目标大小写别名/TOCTOU未解决。HR06–HR09/G2仍不通过，见resource-resolution-evidence.md。
