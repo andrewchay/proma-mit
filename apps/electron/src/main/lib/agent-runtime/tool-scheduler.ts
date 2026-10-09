@@ -90,10 +90,12 @@ interface SchedulerItem<T = unknown> {
 }
 
 export class ToolScheduler {
-  private readonly maxConcurrent: number
+  private maxConcurrent: number
   private readonly plan: (call: ScheduledCall) => Promise<ResourceLockSpec>
   private readonly locks = new Map<string, RwLock>()
   private readonly metrics: { dispatched: number; completed: number; errored: number; cancelled: number; totalWaitMs: number } = { dispatched: 0, completed: 0, errored: 0, cancelled: 0, totalWaitMs: 0 }
+  /** 实例级在跑计数：并发上限与禁用退化对跨批次调用同样生效。 */
+  private running = 0
   /** 跨批次等待者：锁状态变化时全部唤醒（单次 schedule 只通知自己的设计会让并发批次死等）。 */
   private readonly waiters = new Set<() => void>()
 
@@ -110,6 +112,12 @@ export class ToolScheduler {
     return { ...this.metrics }
   }
 
+  /** 动态调整并发上限（禁用调度时退化为 1，仍持锁）。 */
+  setMaxConcurrent(maxConcurrent: number): void {
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) throw new Error('maxConcurrent 必须为不小于 1 的整数')
+    this.maxConcurrent = maxConcurrent
+  }
+
   async schedule<T>(calls: readonly ScheduledCall<T>[], signal?: AbortSignal): Promise<ScheduledResult<T>[]> {
     const results = new Map<string, ScheduledResult<T>>()
     const now = Date.now()
@@ -124,7 +132,6 @@ export class ToolScheduler {
       items.push({ call, spec: await this.plan(call), state: 'pending', queuedAt: now })
     }
 
-    let running = 0
     await new Promise<void>((resolve) => {
       const wake = (): void => { notify() }
       this.waiters.add(wake)
@@ -142,15 +149,15 @@ export class ToolScheduler {
               progressed = true
               continue
             }
-            if (running >= this.maxConcurrent) break
+            if (this.running >= this.maxConcurrent) break
             if (this.canAcquire(item.spec)) {
               item.state = 'running'
               this.metrics.dispatched += 1
               this.metrics.totalWaitMs += Date.now() - item.queuedAt
-              running += 1
+              this.running += 1
               progressed = true
               void this.run(item, results, signal).finally(() => {
-                running -= 1
+                this.running -= 1
                 this.wakeWaiters()
               })
             }
