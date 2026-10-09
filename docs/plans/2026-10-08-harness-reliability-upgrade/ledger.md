@@ -439,6 +439,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 
 | HARNESS-20261009-020 | 2026-10-09 14:25–14:40 GMT+8 | Agent Bash 沙箱（折中） | macOS seatbelt：可写工作目录与会话 scratch（TMPDIR/缓存）及链接 worktree 的对象库/引用/日志/自身 gitdir；禁写 hooks、config、.git 指针、其他 worktree；拒读写配置目录；非 darwin 默认拒绝 | 13 例（真实沙箱与链接 worktree 提交）；tool-impls 等 20 例通过；Claude SDK Bash 未覆盖；bash-sandbox-evidence.md |
 | HARNESS-20261009-021 | 2026-10-09 14:40 GMT+8 | 打包版 safeStorage 验证脚本 | scripts/verify-packaged-safestorage.sh：签名、钥匙串条目、渠道密文计数（不输出内容）、手动“测试连接”步骤 | 脚本语法与错误分支已验证；打包版结果待用户执行；packaged-safestorage-verification.md |
+| HARNESS-20261009-022 | 2026-10-09 14:33 GMT+8 | 用户决定 | Claude SDK 运行时将下线，其 Bash 无沙箱缺口不处理；git config 写入限制已接受 | 仅文档记录，无代码变更；bash-sandbox-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
