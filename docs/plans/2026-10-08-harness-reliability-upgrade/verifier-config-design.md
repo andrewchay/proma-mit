@@ -6,6 +6,10 @@
 
 Goal 或任务完成前需要一个**不可由 Agent 改写**的“什么算验证通过”的定义，包括：运行哪条命令、在哪个工作目录、允许哪些退出码、测试结果从哪里采集、最低测试数量，以及它绑定的验收条件哈希。Agent 只能读取配置的摘要，不能编辑它。
 
+## 已确认决策（2026-10-09 11:10）
+
+用户选择方案 **(a)：固定到已提交基线，在干净 checkout 中验证**；测试框架先支持 Bun test JUnit。已实现的验证函数见 `pinned-baseline-verifier.ts`，证据见 `pinned-baseline-verifier-evidence.md`。配置存储与 Goal/任务门禁接入仍未完成。
+
 ## 草案 schema（v1，JSON，主进程读取）
 
 ```json

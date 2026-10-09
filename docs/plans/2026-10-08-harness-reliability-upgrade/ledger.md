@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 11:03 GMT+8第九批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 11:40 GMT+8第十批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -156,7 +156,7 @@
 |---|---|---|---|---|
 | V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
 | V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包和prepared-request上下文已接线；Provider确认/业务映射/verifier/test来源未闭合，见v02-evidence.md、goal-run-evidence.md与invocation-context-evidence.md |
-| V03 | 接线 goal-runtime/goal-coordinator.ts 和测试；拟新增 verification/completion-guard.ts | Given 显式 required criteria，When complete，Then 逐项核验；缺/错/旧/skip/零收集拒绝，不跳业务验收 | V02 | 阻塞：V02受保护验证器/收集与完整来源未闭合，不以普通命令passed接线 |
+| V03 | 固定基线验证器 `pinned-baseline-verifier.ts`（已实现）；接线 goal-runtime 与受保护配置存储尚未做 | 用户决策：固定已提交基线、干净 checkout 验证；Given 显式 criteria，When complete，Then 逐项核验；缺/错/旧/skip/零收集拒绝 | V02 | 部分：固定基线验证与 JUnit 计数已测（9例）；未接入 Goal/任务完成门禁，未实现受保护配置存储；见 pinned-baseline-verifier-evidence.md |
 | V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
 | V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
 
@@ -207,7 +207,7 @@
 |---|---|---|---|---|
 | R01 | 新独立 held-out benchmark 与离线矩阵；复用 eval/self-evolver.ts、trace-writer.ts | 多任务/多Runtime基线和失败样本；安全断言零容忍；未知费用不作0；不跑TCC实验 | M1–M5 | 待开始 |
 | R02 | 完整PR门禁与隔离打包；现有根scripts、scripts/package-smoke.ts | typecheck/test/lint/docs、完整build、隔离包启动/数据库重开；原生helper失败上抛 | R01 | 待开始 |
-| R03 | 单独授权的真实Provider opt-in试点 | 固定Runtime/model/build/budget/cases；逐调用留证；验证真实工具/权限/最新产物；skip不记通过 | R02；用户另行授权 | 阻塞：未获真实调用授权 |
+| R03 | 单独授权的真实Provider opt-in试点 | 固定Runtime/model/build/budget/cases；逐调用留证；验证真实工具/权限/最新产物；skip不记通过 | R02 | 已执行（用户授权 Pi + deepseek-flash/deepseek-v4-pro，¥5 上限）：36 次运行，17/18 与 18/18 通过，估算累计 ≤ $0.302；唯一失败 text-ok 已如实记录；见 pi-deepseek-pilot-evidence.md。仍非发布门禁 |
 | R04 | 回滚演练与分阶段启用 | 关闭新flags恢复baseline，硬安全底线不降低；旧数据可读、日志不删；扩容需正式门禁决策 | R03 | 待开始 |
 
 ### M7：ACP 可选分支
@@ -426,6 +426,9 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 
 | HARNESS-20261009-011 | 2026-10-09 10:55–11:03 GMT+8 | Pi批次语义核验与观察接线 | 源码核验pi-agent-core 1.0.2：length截断批次由SDK判失败不执行，error/aborted不执行；final assistant附toolCallBatchIntegrity（toolUse→tool-calls）；deferred/pending未核实按不完整 | 基线2eef8041，pi-tool-call-batch-evidence.md；零执行结论来自源码阅读，非仓库运行时测试。E03 Pi观察接线完成，执行路径未改 |
 | HARNESS-20261009-012 | 2026-10-09 11:03 GMT+8 | Pi接线工程验证 + verifier设计草案 | pi-message-adapter新增4例（13pass）；typecheck九包、lint1981、docs/diff通过；全仓549文件3721pass/0fail/27skip；真实workspace36→36一致新增0；verifier-config-design.md列三项待判断风险 | shared0.2.37/electron0.12.121；V03仍阻塞待用户选择方案；Provider试点未授权未调用 |
+
+| HARNESS-20261009-013 | 2026-10-09 11:10–11:20 GMT+8 | V03固定基线验证器 | `git archive`完整SHA干净副本，argv非shell，JUnit根计数判定；工作树未提交改动不影响；9例（真实git/bun） | 用户决策方案(a)；未接入Goal门禁与受保护配置存储。pinned-baseline-verifier-evidence.md |
+| HARNESS-20261009-014 | 2026-10-09 11:20–11:40 GMT+8 | Pi+DeepSeek受控试点与费用闸门修复 | 修复渠道模型恒为0费用（官方端点+目录命中才用目录价，其余保持0失败关闭，3例）；发现并修复 Pi deepseek 端点、统计重复计数、项目库初始化；flash 17/18（12+6用例），v4-pro 18/18；估算有效运行 $0.1949，账本上限 $0.302 | 用户授权 deepseek-flash、deepseek-v4-pro；¥5 按 $0.6 保守折算；key 经 Electron 解密仅入子进程环境，KEY_LEAK=0；pi-deepseek-pilot-evidence.md；原始数据在会话工作台 |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

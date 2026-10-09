@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ProviderType } from '@gravitas/shared'
-import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveModelContextCapability } from '@gravitas/shared'
+import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, PROVIDER_DEFAULT_URLS, resolveModelContextCapability } from '@gravitas/shared'
 import { getConfigDir } from '../config-paths'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { loadPiCodingAgent } from './pi-sdk-loader'
@@ -111,7 +111,25 @@ export function resolvePiInputModalities(
     : ['text']
 }
 
-function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string): NonNullable<PiProviderConfigInput['models']>[number] {
+type PiModelCost = Model<Api>['cost']
+
+/**
+ * 请求级费用闸门的价格输入。
+ * 仅当渠道端点是该 provider 的官方默认地址且 Pi 目录收录该模型时使用目录价；
+ * 第三方中转或未收录模型保持 0，闸门会将其视为“实际支出未知”并失败关闭。
+ */
+export async function resolvePiModelCost(provider: ProviderType, baseUrl: string, modelId: string): Promise<PiModelCost> {
+  const unknownCost: PiModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  const official = PROVIDER_DEFAULT_URLS[provider]
+  if (!official || baseUrl !== official) return unknownCost
+  const { getBuiltinModel } = await import('@earendil-works/pi-ai/providers/all')
+  const lookup = getBuiltinModel as unknown as (catalogProvider: string, id: string) => { cost?: PiModelCost } | undefined
+  const cost = lookup(provider, modelId)?.cost
+  if (!cost) return unknownCost
+  return { input: cost.input, output: cost.output, cacheRead: cost.cacheRead, cacheWrite: cost.cacheWrite }
+}
+
+function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string, cost: PiModelCost): NonNullable<PiProviderConfigInput['models']>[number] {
   const model: NonNullable<PiProviderConfigInput['models']>[number] = {
     id: input.modelId,
     name: input.modelId,
@@ -119,7 +137,7 @@ function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: 
     baseUrl,
     reasoning: true,
     input: resolvePiInputModalities(input.provider, input.modelId),
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost,
     contextWindow: inferPiContextWindow(input.modelId),
     maxTokens: resolvePiMaxTokens(input.provider),
   }
@@ -186,7 +204,7 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
     api,
     apiKey: input.apiKey,
     authHeader: shouldUsePiAuthHeader(input.provider),
-    models: [buildPiModelConfig(input, api, baseUrl)],
+    models: [buildPiModelConfig(input, api, baseUrl, await resolvePiModelCost(input.provider, baseUrl, input.modelId))],
   }
 
   modelRuntime.registerProvider(providerId, config)
