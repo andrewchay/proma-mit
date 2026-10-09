@@ -14,6 +14,9 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { getConfigDir } from './config-paths'
+import { wrapWithSeatbelt } from './pinned-verifier-sandbox'
 import type { PinnedVerifierConfig, PinnedVerifierReason, PinnedVerifierReceipt } from '@gravitas/shared'
 
 export type { PinnedVerifierConfig, PinnedVerifierReason, PinnedVerifierReceipt }
@@ -25,6 +28,18 @@ export interface PinnedVerifierRequest {
   readonly repoRoot: string
   readonly commitSha: string
   readonly config: PinnedVerifierConfig
+  /** 测试注入；默认 process.platform。非 darwin 无隔离，直接 unknown。 */
+  readonly platform?: NodeJS.Platform
+  /** 显式拒绝读写的目录（默认：应用配置目录，含签名密钥与已签名记录）。 */
+  readonly protectedDirs?: readonly string[]
+}
+
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
 }
 
 export interface JUnitTotals {
@@ -117,6 +132,17 @@ export async function runPinnedBaselineVerifier(request: PinnedVerifierRequest):
   validatePinnedVerifierConfig(request.config)
   const startedAt = new Date().toISOString()
   const argvSha256 = createHash('sha256').update(JSON.stringify(request.config.argv)).digest('hex')
+  const platform = request.platform ?? process.platform
+  if (platform !== 'darwin') {
+    // 无隔离时不执行受保护命令：unknown 不计成功。
+    const at = new Date().toISOString()
+    return {
+      version: 1, verifierId: request.config.verifierId, commitSha: request.commitSha, argvSha256,
+      cleanCheckout: true, isolation: 'unavailable', exitCode: null, timedOut: false,
+      tests: 0, failures: 0, errors: 0, skipped: 0, verdict: 'unknown', reasons: ['sandbox_unavailable'],
+      cleanedUp: true, startedAt, finishedAt: at,
+    }
+  }
   const workRoot = await mkdtemp(join(tmpdir(), 'gravitas-pinned-'))
   const checkout = join(workRoot, 'checkout')
   const reportDir = join(workRoot, 'report')
@@ -133,7 +159,12 @@ export async function runPinnedBaselineVerifier(request: PinnedVerifierRequest):
     if (extracted.code !== 0) throw new Error(`解包 commit 失败：${extracted.error ?? `退出码 ${extracted.code}`}`)
 
     const argv = request.config.argv.map((item) => item.split(JUNIT_REPORT_PLACEHOLDER).join(reportPath))
-    const [command, ...args] = argv as [string, ...string[]]
+    // seatbelt：只允许写工作目录与用户临时目录；配置目录读写一律拒绝。
+    const sandboxed = wrapWithSeatbelt(argv, {
+      writableRoots: [realOrSelf(workRoot), realOrSelf(tmpdir())],
+      denyRoots: (request.protectedDirs ?? [getConfigDir()]).map(realOrSelf),
+    })
+    const [command, ...args] = sandboxed as [string, ...string[]]
     const run = await runProcess(command, args, { cwd: checkout, timeoutMs: request.config.timeoutMs })
 
     const reasons: PinnedVerifierReason[] = []
@@ -162,6 +193,7 @@ export async function runPinnedBaselineVerifier(request: PinnedVerifierRequest):
       commitSha: request.commitSha,
       argvSha256,
       cleanCheckout: true,
+      isolation: 'seatbelt-macos',
       exitCode: run.code,
       timedOut: run.timedOut,
       tests: totals?.tests ?? 0,

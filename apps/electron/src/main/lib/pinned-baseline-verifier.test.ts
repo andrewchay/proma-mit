@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runPinnedBaselineVerifier, parseJUnitTotals, type PinnedVerifierConfig } from './pinned-baseline-verifier'
@@ -74,6 +74,47 @@ describe('固定基线验证：只使用已提交commit的干净副本', () => {
     const { repo, sha } = makeRepo('cleanup', { 'a.test.ts': passing })
     const receipt = await runPinnedBaselineVerifier({ repoRoot: repo, commitSha: sha, config: config() })
     expect(receipt.cleanedUp).toBe(true)
+  })
+})
+
+describe('seatbelt 沙箱：只允许写工作目录，拒绝配置目录', () => {
+  const junit = '<testsuites tests="1" failures="0"></testsuites>'
+  const sh = (script: string) => ['/bin/sh', '-c', script]
+  test('报告路径（工作目录内）可写，测试通过', async () => {
+    const { repo, sha } = makeRepo('sandbox-report', { 'a.test.ts': passing })
+    const receipt = await runPinnedBaselineVerifier({ repoRoot: repo, commitSha: sha, config: config({ argv: sh(`printf '${junit}' > {{JUNIT_REPORT}}`) }) })
+    expect(receipt).toMatchObject({ verdict: 'passed', isolation: 'seatbelt-macos' })
+  })
+  test('写入受保护配置目录被拒绝，且后续报告不会生成', async () => {
+    const { repo, sha } = makeRepo('sandbox-protected', { 'a.test.ts': passing })
+    const prot = join(root, 'protected-config')
+    mkdirSync(prot)
+    const leak = join(prot, 'leak.txt')
+    const receipt = await runPinnedBaselineVerifier({
+      repoRoot: repo, commitSha: sha, protectedDirs: [prot],
+      config: config({ argv: sh(`echo x > '${leak}' && printf '${junit}' > {{JUNIT_REPORT}}`) }),
+    })
+    expect(existsSync(leak)).toBe(false)
+    expect(receipt.verdict).not.toBe('passed')
+    expect(receipt.reasons).toContain('collection_missing')
+  })
+  test('读取受保护目录被拒绝（签名密钥不可被测试代码读取）', async () => {
+    const { repo, sha } = makeRepo('sandbox-read', { 'a.test.ts': passing })
+    const prot = join(root, 'protected-read')
+    mkdirSync(prot)
+    writeFileSync(join(prot, 'secret'), 'k')
+    const receipt = await runPinnedBaselineVerifier({
+      repoRoot: repo, commitSha: sha, protectedDirs: [prot],
+      config: config({ argv: sh(`cat '${join(prot, 'secret')}' >/dev/null && printf '${junit}' > {{JUNIT_REPORT}}`) }),
+    })
+    expect(receipt.verdict).not.toBe('passed')
+  })
+  test('非 darwin 平台无隔离：不执行命令，判 unknown', async () => {
+    const { repo, sha } = makeRepo('sandbox-linux', { 'a.test.ts': passing })
+    const marker = join(root, 'ran-on-linux')
+    const receipt = await runPinnedBaselineVerifier({ repoRoot: repo, commitSha: sha, platform: 'linux', config: config({ argv: sh(`touch '${marker}'`) }) })
+    expect(existsSync(marker)).toBe(false)
+    expect(receipt).toMatchObject({ verdict: 'unknown', isolation: 'unavailable', reasons: ['sandbox_unavailable'] })
   })
 })
 

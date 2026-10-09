@@ -14,6 +14,8 @@ import type {
 } from '@gravitas/shared'
 import { ElectronGoalStore } from './goal-store'
 import { resolveHeadCommitSha, runPinnedBaselineVerifier, validatePinnedVerifierConfig } from '../pinned-baseline-verifier'
+import { assessProtectedPathChanges, assertProtectedPatterns } from '../completion-protected-paths'
+import { ProtectedVerifierStore, canonicalJson } from '../protected-verifier-store'
 
 const MAX_IMMEDIATE_CONTINUATIONS = 3
 
@@ -34,16 +36,45 @@ export interface GoalContinuationRequest {
 /** 返回 false 表示执行环境暂不可用；协调器会保留 Goal 并稍后重试，不会丢失续跑。 */
 export type GoalContinuationRunner = (request: GoalContinuationRequest) => Promise<boolean>
 
-/** 完成门禁的验证函数；默认对仓库 HEAD 的已提交内容运行固定基线验证。 */
-export type CompletionVerifier = (gate: GoalCompletionGate) => Promise<PinnedVerifierReceipt>
+/** 完成门禁的判定：通过与否、原因、以及固定基线回执（若已运行）。 */
+export interface CompletionDecision {
+  readonly passed: boolean
+  readonly reasons: readonly string[]
+  readonly receipt?: PinnedVerifierReceipt
+}
+
+/** 完成门禁的验证函数；默认检查 HEAD 已提交内容、基线之后的受保护路径与签名配置。 */
+export type CompletionVerifier = (gate: GoalCompletionGate) => Promise<CompletionDecision>
 
 export interface GoalCoordinatorOptions {
   verifyCompletion?: CompletionVerifier
+  /** 受保护验证配置存储；默认使用应用配置目录。 */
+  verifierStore?: ProtectedVerifierStore
 }
 
-const defaultCompletionVerifier: CompletionVerifier = async (gate) => {
-  const commitSha = await resolveHeadCommitSha(gate.repoRoot)
-  return runPinnedBaselineVerifier({ repoRoot: gate.repoRoot, commitSha, config: gate.verifier })
+function createDefaultCompletionVerifier(store: () => ProtectedVerifierStore): CompletionVerifier {
+  return async (gate) => {
+    const headCommitSha = await resolveHeadCommitSha(gate.repoRoot)
+    const protectedCheck = await assessProtectedPathChanges({
+      repoRoot: gate.repoRoot, baselineCommitSha: gate.baselineCommitSha, headCommitSha, protectedPaths: gate.protectedPaths,
+    })
+    if (!protectedCheck.ok) {
+      return { passed: false, reasons: [...protectedCheck.reasons, ...protectedCheck.violations.map((path) => `protected:${path}`)] }
+    }
+    let config = gate.verifier
+    if (gate.verifierRef) {
+      // 执行的配置以签名存储为准；Goal 内副本必须与之逐字一致。
+      try {
+        const stored = store().verifyRef(gate.verifierRef)
+        config = stored.record.config
+        if (canonicalJson(gate.verifier) !== canonicalJson(config)) return { passed: false, reasons: ['verifier_config_mismatch'] }
+      } catch (error) {
+        return { passed: false, reasons: [error instanceof Error ? error.message : '验证配置绑定校验失败'] }
+      }
+    }
+    const receipt = await runPinnedBaselineVerifier({ repoRoot: gate.repoRoot, commitSha: headCommitSha, config })
+    return { passed: receipt.verdict === 'passed', reasons: receipt.reasons, receipt }
+  }
 }
 
 export class GoalCoordinator {
@@ -51,9 +82,16 @@ export class GoalCoordinator {
   private readonly startingGoalIds = new Set<string>()
   private continuationRunner?: GoalContinuationRunner
   private readonly verifyCompletion: CompletionVerifier
+  private readonly verifierStore: () => ProtectedVerifierStore
+  private lazyVerifierStore?: ProtectedVerifierStore
 
   constructor(private readonly store = new ElectronGoalStore(), options: GoalCoordinatorOptions = {}) {
-    this.verifyCompletion = options.verifyCompletion ?? defaultCompletionVerifier
+    this.verifierStore = () => {
+      if (options.verifierStore) return options.verifierStore
+      this.lazyVerifierStore ??= new ProtectedVerifierStore()
+      return this.lazyVerifierStore
+    }
+    this.verifyCompletion = options.verifyCompletion ?? createDefaultCompletionVerifier(this.verifierStore)
   }
 
   setContinuationRunner(runner: GoalContinuationRunner): void {
@@ -65,7 +103,7 @@ export class GoalCoordinator {
     if (!objective) throw new Error('Goal 目标不能为空')
     const existing = this.getActiveBySession(input.sessionId)
     if (existing) throw new Error('当前会话已有未结束的 Goal，请先暂停、取消或完成它')
-    const completionGate = input.completionGate ? validateCompletionGate(input.completionGate) : undefined
+    const completionGate = input.completionGate ? validateCompletionGate(input.completionGate, this.verifierStore()) : undefined
     const now = Date.now()
     const goal: AgentGoal = {
       id: randomUUID(),
@@ -187,15 +225,16 @@ export class GoalCoordinator {
         let receipt: PinnedVerifierReceipt | undefined
         if (checkpoint.outcome === 'complete' && current.completionGate) {
           // 验证耗时较长：返回后必须重新确认目标、配置与调用身份仍未变化。
-          receipt = await this.verifyCompletion(current.completionGate)
+          const decision = await this.verifyCompletion(current.completionGate)
           const latest = readCurrent()
           if (JSON.stringify(latest.invocationContext) !== JSON.stringify(context) || goalConfiguration(latest) !== configuration) {
             throw new Error('Goal配置或调用上下文已变化，请重新运行')
           }
-          if (receipt.verdict !== 'passed') {
-            const reasons = receipt.reasons.length > 0 ? `（${receipt.reasons.join('、')}）` : ''
-            throw new Error(`固定基线验证未通过：${receipt.verdict}${reasons}。请修复已提交内容后再提交 complete。`)
+          if (!decision.passed) {
+            const reasons = decision.reasons.length > 0 ? decision.reasons.join('、') : '未知原因'
+            throw new Error(`固定基线验证未通过：${reasons}。请修复已提交内容后再提交 complete。`)
           }
+          receipt = decision.receipt
         }
         const latest = readCurrent()
         this.save({
@@ -358,10 +397,16 @@ function goalConfiguration(goal: AgentGoal): string {
 }
 
 /** 创建时即校验门禁，避免把非法验证配置存入 Goal。 */
-function validateCompletionGate(gate: GoalCompletionGate): GoalCompletionGate {
+function validateCompletionGate(gate: GoalCompletionGate, verifiers: ProtectedVerifierStore): GoalCompletionGate {
   if (gate.version !== 1) throw new Error('completionGate version 必须为 1')
   if (!isAbsolute(gate.repoRoot)) throw new Error('completionGate.repoRoot 必须是绝对路径')
+  if (!/^[0-9a-f]{40}$/.test(gate.baselineCommitSha)) throw new Error('baselineCommitSha 必须是完整的 40 位小写十六进制 SHA')
+  assertProtectedPatterns(gate.protectedPaths)
   validatePinnedVerifierConfig(gate.verifier)
+  if (gate.verifierRef) {
+    const stored = verifiers.verifyRef(gate.verifierRef)
+    if (canonicalJson(stored.record.config) !== canonicalJson(gate.verifier)) throw new Error('验证配置与受保护存储不一致')
+  }
   return JSON.parse(JSON.stringify(gate)) as GoalCompletionGate
 }
 

@@ -14,12 +14,29 @@ export interface PinnedVerifierConfig {
   readonly minimumTests: number
 }
 
-/** Goal 上记录的完成门禁：验证对象是仓库 HEAD 指向的已提交内容。 */
+/** 受保护验证配置的引用：Goal 绑定到一个已签名的 revision，配置更新后必须重新创建 Goal。 */
+export interface ProtectedVerifierRef {
+  readonly verifierId: string
+  readonly revision: number
+  /** 已签名记录规范化 JSON 的 SHA-256。 */
+  readonly recordSha256: string
+}
+
+/**
+ * Goal 上记录的完成门禁。
+ * 验证对象是仓库 HEAD 指向的已提交内容；基线之后不得修改受保护路径（如测试文件），否则拒绝完成。
+ */
 export interface GoalCompletionGate {
   readonly version: 1
   /** 绝对路径的 Git 仓库根目录。 */
   readonly repoRoot: string
+  /** 批准基线：必须是 HEAD 的祖先；基线之后受保护路径不得改动。 */
+  readonly baselineCommitSha: string
+  /** 受保护路径模式，如 `**\/*.test.ts`、`apps/x/tests/`、精确文件路径。 */
+  readonly protectedPaths: readonly string[]
   readonly verifier: PinnedVerifierConfig
+  /** 存在时必须与受保护存储中的当前签名记录一致。 */
+  readonly verifierRef?: ProtectedVerifierRef
 }
 
 export type PinnedVerifierReason =
@@ -29,6 +46,7 @@ export type PinnedVerifierReason =
   | 'too_few_tests'
   | 'test_failures'
   | 'spawn_error'
+  | 'sandbox_unavailable'
 
 export interface PinnedVerifierReceipt {
   readonly version: 1
@@ -36,6 +54,8 @@ export interface PinnedVerifierReceipt {
   readonly commitSha: string
   readonly argvSha256: string
   readonly cleanCheckout: true
+  /** 实际隔离方式；无法隔离时不会执行命令。 */
+  readonly isolation: 'seatbelt-macos' | 'unavailable'
   readonly exitCode: number | null
   readonly timedOut: boolean
   readonly tests: number

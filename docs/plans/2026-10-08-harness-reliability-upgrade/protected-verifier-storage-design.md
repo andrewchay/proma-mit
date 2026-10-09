@@ -2,6 +2,15 @@
 
 > 2026-10-09 12:00 GMT+8。承接固定基线验证与 Goal 完成门禁（见 `goal-completion-gate-evidence.md`）。本文只做设计，不写入任何配置、不新增 IPC。
 
+## 0. 决策记录（2026-10-09 12:16 GMT+8）
+
+1. 测试削弱：选 (b)。已实现（基线之后受保护路径不得改动）。
+2. Agent Bash：视为不可信，需要沙箱。验证命令已在 seatbelt 中运行；Agent Bash 沙箱尚未启用，见实施证据 §未完成。
+3. 签名密钥：`safeStorage` 加密文件。已实现，生产路径待运行时验证。
+4. 配置变更：需重新创建 Goal。已实现（修订与哈希绑定）。
+
+实施与限制见 `protected-verifier-implementation-evidence.md`。下文为决策前的设计分析，保留作为依据。
+
 ## 1. 要保护的对象
 
 1. **验证配置**（`PinnedVerifierConfig`）：argv、允许退出码、超时、最少测试数。改动它等于改变“什么算通过”。
