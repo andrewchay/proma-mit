@@ -81,3 +81,7 @@ HR06–HR09的前置声明现在仅覆盖Read/Write/Edit真实注册实例，Wri
 ## 10. E02第六批观察子集（2026-10-09 09:56 GMT+8）
 
 文件canonical path、Write缺失尾部/祖先、现存hardlink身份以及特殊/错误路径保守回退已有25用例；四定向文件72pass，全仓547文件3699pass/0fail/27skip。只是非原子观察，尚无实际锁、队列或并行；缺失目标大小写别名/TOCTOU未解决。HR06–HR09/G2仍不通过，见resource-resolution-evidence.md。
+
+## 11. E03第七批判定子集（2026-10-09 10:14 GMT+8）
+
+调用批次完整性可事后识别finishReason截断/invalid/duplicate/空名（13用例；定向9文件89pass；全仓548文件3712pass/0fail/27skip）。B10的“未开始mutation零执行”未满足：AI SDK无宿主先验gate，判定未接线，已执行效果不可撤销；HR基准与G2仍不通过。见tool-call-integrity-evidence.md。
