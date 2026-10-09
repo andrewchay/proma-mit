@@ -24,6 +24,8 @@ export interface SeatbeltPolicy {
   readonly denyWriteRoots?: readonly string[]
   /** 真实字面路径；仅拒绝写入（如 git config）。 */
   readonly denyWriteLiterals?: readonly string[]
+  /** 真实路径子树；在全部拒绝规则之后重新放行读写（如配置目录下的 agent-workspaces）。 */
+  readonly allowAfterDenyRoots?: readonly string[]
 }
 
 export function buildSeatbeltProfile(policy: SeatbeltPolicy): string {
@@ -43,6 +45,8 @@ export function buildSeatbeltProfile(policy: SeatbeltPolicy): string {
     ...(denyRoots ? [`(deny file-read* ${denyRoots})`, `(deny file-write* ${denyRoots})`] : []),
     ...(denyWriteRoots ? [`(deny file-write* ${denyWriteRoots})`] : []),
     ...(denyWriteLiterals ? [`(deny file-write* ${denyWriteLiterals})`] : []),
+    // 例外必须放在所有拒绝之后：SBPL 后出现的规则优先。
+    ...((policy.allowAfterDenyRoots ?? []).map((root) => `(allow file-read* (subpath ${quote(root)}))\n(allow file-write* (subpath ${quote(root)}))`)),
   ].join('\n')
 }
 

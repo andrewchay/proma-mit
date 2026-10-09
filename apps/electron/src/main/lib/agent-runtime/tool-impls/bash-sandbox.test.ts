@@ -68,15 +68,18 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     expect(bun?.startsWith(scratchDirFor(sessionId))).toBe(true)
     expect(npm?.startsWith(scratchDirFor(sessionId))).toBe(true)
   })
-  test('应用配置目录读写均被拒绝（签名密钥与记录不可触碰）', async () => {
+  test('配置目录禁止写入；签名目录（verifiers）读写均被拒绝', async () => {
     const dir = join(root, 'config-check')
     mkdirSync(dir)
-    writeFileSync(join(configDir, 'secret.txt'), 'k')
-    const read = await run(dir, `cat '${join(configDir, 'secret.txt')}'`)
+    mkdirSync(join(configDir, 'verifiers'), { recursive: true })
+    writeFileSync(join(configDir, 'verifiers', 'signing-key.enc'), 'k')
+    const read = await run(dir, `cat '${join(configDir, 'verifiers', 'signing-key.enc')}'`)
     expect(read.isError).toBe(true)
     const write = await run(dir, `echo x > '${join(configDir, 'leak.txt')}'`)
     expect(write.isError).toBe(true)
     expect(existsSync(join(configDir, 'leak.txt'))).toBe(false)
+    const writeVerifier = await run(dir, `echo x > '${join(configDir, 'verifiers', 'leak.json')}'`)
+    expect(writeVerifier.isError).toBe(true)
   })
   test('链接 worktree 中 add/commit/log/branch 正常工作（兼容性）', async () => {
     const { feature } = layout('compat')
@@ -121,6 +124,31 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     expect(result.isError).toBe(true)
     expect(readFileSync(otherHead, 'utf8')).toContain('other')
   })
+  test('会话目录位于配置目录下：agent-workspaces 可读写（含 git），其余配置目录仍被拒', async () => {
+    const sessionDir = join(configDir, 'agent-workspaces', 'ws-fixture', 'session-1')
+    mkdirSync(sessionDir, { recursive: true })
+    writeFileSync(join(configDir, 'channels.json'), '{}')
+    mkdirSync(join(configDir, 'verifiers'), { recursive: true })
+    writeFileSync(join(configDir, 'verifiers', 'signing-key.enc'), 'k')
+    const write = await run(sessionDir, 'echo data > note.txt')
+    expect(write.isError).toBeFalsy()
+    expect(readFileSync(join(sessionDir, 'note.txt'), 'utf8').trim()).toBe('data')
+    const commit = await run(sessionDir, [
+      'git init -q', 'echo x > f.txt', 'git add f.txt',
+      'git -c user.name=agent -c user.email=agent@example.invalid commit -qm init', 'git log --oneline',
+    ].join(' && '))
+    expect(commit.isError).toBeFalsy()
+    expect(commit.content).toContain('init')
+    // 签名目录不可读写；配置目录其余文件（密文）可读但不可写。
+    const readKey = await run(sessionDir, `cat '${join(configDir, 'verifiers', 'signing-key.enc')}'`)
+    expect(readKey.isError).toBe(true)
+    const readChannels = await run(sessionDir, `cat '${join(configDir, 'channels.json')}'`)
+    expect(readChannels.isError).toBeFalsy()
+    const writeKey = await run(sessionDir, `echo x > '${join(configDir, 'verifiers', 'x.json')}'`)
+    expect(writeKey.isError).toBe(true)
+    const writeChannels = await run(sessionDir, `echo x > '${join(configDir, 'channels.json')}'`)
+    expect(writeChannels.isError).toBe(true)
+  })
   test('非 darwin 平台默认拒绝执行，不运行命令', async () => {
     const dir = join(root, 'linux-check')
     mkdirSync(dir)
@@ -140,12 +168,13 @@ describe('沙箱策略内容', () => {
     }))
     expect(profile).toContain('(subpath "/repo/.git/objects")')
     expect(profile).toContain('(subpath "/repo/.git/worktrees/wt")')
-    expect(profile).toContain('(deny file-write* (subpath "/repo/.git/hooks"))')
-    // 同一拒绝规则可包含多个过滤器（SBPL 允许），因此按路径片段断言。
+    // 同一规则可包含多个过滤器（SBPL 允许），按路径片段断言。
+    expect(profile).toContain('(subpath "/repo/.git/hooks")')
     expect(profile).toContain('(literal "/repo/.git/config")')
     expect(profile).toContain('(literal "/work/wt/.git")')
-    expect(profile).toContain('(deny file-read* (subpath "/cfg"))')
-    expect(profile).toContain('(subpath "/repo/.git/hooks")')
+    expect(profile).toContain('(subpath "/cfg/verifiers")')
+    expect(profile).toContain('(subpath "/cfg")')
+    expect(profile).toContain('(subpath "/cfg/agent-workspaces")')
     expect(profile).not.toContain('"/repo/.git/worktrees"')
   })
   test('主工作区：禁止其他 worktree 目录与 hooks，允许其余 .git 内容', () => {

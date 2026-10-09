@@ -77,12 +77,16 @@ export function buildBashSandboxPolicy(input: {
     }
     denyWriteLiterals.push(join(commonDir, 'config'))
   }
+  // 配置目录禁止写入（Agent 会话目录 agent-workspaces 例外放行，否则 git 连父目录都无法 stat）；
+  // 读取只禁止签名目录（密钥密文与记录），其余配置为密文或本就经 Read 工具可读。
+  const configDirs = input.configDirs.map(realOrSelf)
   return {
     writableRoots,
     writableLiterals,
-    denyRoots: input.configDirs.map(realOrSelf),
-    denyWriteRoots,
+    denyRoots: configDirs.map((dir) => realOrSelf(join(dir, 'verifiers'))),
+    denyWriteRoots: [...denyWriteRoots, ...configDirs],
     denyWriteLiterals,
+    allowAfterDenyRoots: configDirs.map((dir) => realOrSelf(join(dir, 'agent-workspaces'))),
   }
 }
 
