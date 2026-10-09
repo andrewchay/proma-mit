@@ -1355,14 +1355,29 @@ export class AgentOrchestrator {
   ): void {
     this.generateTitle({ userMessage, channelId, modelId: modelId || 'unknown' })
       .then((title) => {
-        if (!title) return
+        const resolvedTitle = title || this.createFallbackTitle(userMessage)
+        if (!resolvedTitle) return
         const meta = getAgentSessionMeta(sessionId)
         if (meta && meta.title === DEFAULT_SESSION_TITLE) {
-          updateAgentSessionMeta(sessionId, { title })
-          callbacks?.onTitleUpdated(title)
+          updateAgentSessionMeta(sessionId, { title: resolvedTitle })
+          callbacks?.onTitleUpdated(resolvedTitle)
         }
       })
       .catch((err) => console.error('[Agent Runtime] 标题生成失败:', err))
+  }
+
+  /**
+   * 标题模型不可用时，使用首条用户消息提供可辨认的本地兜底标题。
+   */
+  private createFallbackTitle(userMessage: string): string | null {
+    const normalized = userMessage
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/[#>*_~\[\]\n\r]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!normalized) return null
+    return normalized.slice(0, MAX_TITLE_LENGTH)
   }
 
   /**
@@ -1728,7 +1743,8 @@ export class AgentOrchestrator {
       const meta = getAgentSessionMeta(sessionId)
       if (!meta || meta.title !== DEFAULT_SESSION_TITLE) return
 
-      const title = await this.generateTitle({ userMessage, channelId, modelId })
+      const generatedTitle = await this.generateTitle({ userMessage, channelId, modelId })
+      const title = generatedTitle || this.createFallbackTitle(userMessage)
       if (!title) return
 
       updateAgentSessionMeta(sessionId, { title })
@@ -2721,15 +2737,7 @@ export class AgentOrchestrator {
 
         switch (currentMode) {
           case 'bypassPermissions': {
-            // PH2-③：无人值守放行普通操作，但高危（危险 Bash / ComputerUse / WebBridge 上传下载）仍需克制
-            try {
-              const { permissionService } = await import('./agent-permission-service')
-              if (permissionService.isHighRiskTool(toolName, input)) {
-                return { behavior: 'deny' as const, message: '高危操作未获授权，请在任务 by-task 权限中显式申请（如 bash 高危命令 / 桌面控制），或先手动完成' }
-              }
-            } catch {
-              // 权限服务不可用时退回放行
-            }
+            // 用户选择完全自动模式时，所有通过参数校验和 Workflow 能力边界的工具均自动放行。
             return { behavior: 'allow' as const, updatedInput: input }
           }
 
