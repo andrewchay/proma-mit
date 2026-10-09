@@ -131,6 +131,15 @@ export class GoalCoordinator {
     return this.store.getBySession(sessionId)
   }
 
+  /** 为未在运行的 Goal 绑定完成门禁；绑定后完成必须经过固定基线验证。 */
+  bindCompletionGate(goalId: string, gate: GoalCompletionGate): AgentGoal {
+    const goal = this.requireGoal(goalId)
+    if (goal.status === 'completed' || goal.status === 'cancelled') throw new Error('Goal 已结束，不能绑定门禁')
+    if (goal.activeRunId) throw new Error('Goal 正在运行，暂停后再绑定门禁')
+    const validated = validateCompletionGate(gate, this.verifierStore())
+    return this.save({ ...goal, completionGate: validated, updatedAt: Date.now() })
+  }
+
   setStatus(goalId: string, status: Exclude<AgentGoalStatus, 'completed'>): AgentGoal {
     const goal = this.requireGoal(goalId)
     const resumedCheckpoint = status === 'active'

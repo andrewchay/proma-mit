@@ -834,6 +834,9 @@ export interface ElectronAPI {
   /** 暂停、恢复、标记阻塞或取消 Goal */
   updateAgentGoalStatus: (input: import('@gravitas/shared').UpdateAgentGoalStatusInput) => Promise<import('@gravitas/shared').AgentGoal>
 
+  /** 绑定 Goal 完成门禁（固定基线验证）；基线省略时取仓库当前 HEAD */
+  bindAgentGoalGate: (input: import('@gravitas/shared').BindAgentGoalGateInput) => Promise<import('@gravitas/shared').AgentGoal>
+
   /** 生成 Agent 会话标题 */
   generateAgentTitle: (input: AgentGenerateTitleInput) => Promise<string | null>
 
@@ -3357,6 +3360,10 @@ const electronAPI: ElectronAPI = {
   },
   updateAgentGoalStatus: (input: import('@gravitas/shared').UpdateAgentGoalStatusInput) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.UPDATE_GOAL_STATUS, input)
+  },
+
+  bindAgentGoalGate: (input: import('@gravitas/shared').BindAgentGoalGateInput) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.BIND_COMPLETION_GATE, input)
   },
 
   generateAgentTitle: (input: AgentGenerateTitleInput) => {

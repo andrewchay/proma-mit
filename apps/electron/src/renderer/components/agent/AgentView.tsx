@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target, Network } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target, Network, ShieldCheck } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -477,6 +477,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       setGoalActionPending(false)
     }
   }, [activeGoal, goalActionPending])
+
   const liveMessagesMap = useAtomValue(liveMessagesMapAtom)
   const setLiveMessagesMap = useSetAtom(liveMessagesMapAtom)
   // 稳定化空数组引用，避免 ?? [] 每次创建新引用导致下游 useMemo 链不必要重算
@@ -521,9 +522,45 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     if (!sessionMeta) return globalWorkspaceId // 数据未加载，回退全局
     return sessionMeta.workspaceId ?? null     // 数据已加载，以会话自身为准
   }, [sessionMeta, globalWorkspaceId])
+
+
   const [pendingPrompt, setPendingPrompt] = useAtom(agentPendingPromptAtom)
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtomFamily(sessionId))
   const workspaces = useAtomValue(agentWorkspacesAtom)
+  // Goal 完成门禁：绑定固定基线验证（选择验证器 + 仓库，基线取当前 HEAD）
+  const [gateOpen, setGateOpen] = React.useState(false)
+  const [gateVerifiers, setGateVerifiers] = React.useState<Array<{ verifierId: string; revision: number }>>([])
+  const [gateVerifierId, setGateVerifierId] = React.useState('')
+  const [gateRepo, setGateRepo] = React.useState('')
+  const [gatePending, setGatePending] = React.useState(false)
+
+  const openGatePopover = React.useCallback(async () => {
+    setGateOpen(true)
+    try {
+      const list = (await window.electronAPI.verifierList()) as Array<{ verifierId: string; revision: number }>
+      setGateVerifiers(list)
+      setGateVerifierId((prev) => prev || list[0]?.verifierId || '')
+    } catch {
+      setGateVerifiers([])
+    }
+    const root = workspaces.find((workspace) => workspace.id === currentWorkspaceId)?.rootPath
+    setGateRepo((prev) => prev || root || '')
+  }, [workspaces, currentWorkspaceId])
+
+  const bindGate = React.useCallback(async () => {
+    if (!activeGoal || gatePending) return
+    setGatePending(true)
+    try {
+      await window.electronAPI.bindAgentGoalGate({ goalId: activeGoal.id, repoRoot: gateRepo.trim(), verifierId: gateVerifierId })
+      toast.success('已绑定完成门禁：提交 complete 时将运行固定基线验证')
+      setGateOpen(false)
+      await refreshGoals()
+    } catch (error) {
+      toast.error(`绑定失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setGatePending(false)
+    }
+  }, [activeGoal, gatePending, gateRepo, gateVerifierId, refreshGoals])
 
   // 已有会话首次打开时，从全局默认值初始化 per-session map。
   // setter 内的 `prev.has(sessionId)` 守卫保证幂等，外层不再订阅 Map atom，
@@ -2256,6 +2293,46 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} onClick={() => void updateGoalStatus('active')}>继续</Button>
             )}
             <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} className="text-destructive hover:text-destructive" onClick={() => void updateGoalStatus('cancelled')}>停止 Goal</Button>
+            {activeGoal.completionGate ? (
+              <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" title="完成门禁已绑定：complete 必须经过固定基线验证">
+                <ShieldCheck className="size-3.5 text-primary" />
+                {activeGoal.completionGate.verifierRef.verifierId} · 基线 {activeGoal.completionGate.baselineCommitSha.slice(0, 7)}
+              </span>
+            ) : (
+              <Popover open={gateOpen} onOpenChange={setGateOpen}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="ghost" size="sm" className="shrink-0 gap-1" onClick={() => { void openGatePopover() }}>
+                    <ShieldCheck className="size-3.5" /> 绑定门禁
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent side="bottom" align="end" className="w-[320px] p-3 space-y-2" onOpenAutoFocus={(event) => event.preventDefault()}>
+                  <div className="text-sm font-medium">绑定完成门禁</div>
+                  <div className="text-xs text-muted-foreground">complete 将先在所选仓库的当前 HEAD（干净 checkout）上运行固定基线验证；基线之后受保护路径（测试文件）不得改动。</div>
+                  <select
+                    className="w-full rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-sm"
+                    value={gateVerifierId}
+                    onChange={(event) => { setGateVerifierId(event.target.value) }}
+                  >
+                    {gateVerifiers.length === 0 ? <option value="">（无可用验证器，请先在设置中创建）</option> : null}
+                    {gateVerifiers.map((verifier) => (
+                      <option key={verifier.verifierId} value={verifier.verifierId}>{verifier.verifierId}（修订 {verifier.revision}）</option>
+                    ))}
+                  </select>
+                  <input
+                    className="w-full rounded-md border border-foreground/10 bg-background px-2 py-1.5 text-sm"
+                    placeholder="Git 仓库绝对路径"
+                    value={gateRepo}
+                    onChange={(event) => { setGateRepo(event.target.value) }}
+                  />
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => { setGateOpen(false) }}>取消</Button>
+                    <Button type="button" size="sm" disabled={gatePending || !gateVerifierId || !gateRepo.trim()} onClick={() => { void bindGate() }}>
+                      {gatePending ? '绑定中…' : '确认绑定'}
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
           </div>
         )}
 

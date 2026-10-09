@@ -942,6 +942,14 @@ export interface UpdateAgentGoalStatusInput {
   status: Extract<AgentGoalStatus, 'active' | 'waiting' | 'blocked' | 'cancelled'>
 }
 
+/** Goal 完成门禁绑定输入：基线省略时由主进程解析为仓库当前 HEAD。 */
+export interface BindAgentGoalGateInput {
+  goalId: string
+  repoRoot: string
+  verifierId: string
+  baselineCommitSha?: string
+}
+
 // ===== Agent 会话管理 =====
 
 /** ContextPacket v1：压缩边界中持久化、可审阅的长期上下文。 */
@@ -2085,6 +2093,7 @@ export const AGENT_IPC_CHANNELS = {
   /** 查询指定会话的 Goal */
   LIST_GOALS: 'agent:list-goals',
   /** 更新 Goal 生命周期状态 */
+  BIND_COMPLETION_GATE: 'agent:bind-completion-gate',
   UPDATE_GOAL_STATUS: 'agent:update-goal-status',
 
   // 工作区管理

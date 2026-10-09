@@ -279,7 +279,7 @@ import {
   searchAgentSessionMessages,
   searchAgentSessionReferences,
 } from './lib/agent-session-manager'
-import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, createAgentCollabDelegations, splitAndCreateCollabDelegations, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, createProactiveSchedule, updateProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
+import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveFilesToWorkspaceFiles, isAgentSessionActive, queueAgentMessage, cancelQueuedAgentMessage, promoteQueuedAgentMessage, createAgentCollabDelegations, splitAndCreateCollabDelegations, updateAgentPermissionMode, rewindAgentSession, forkAgentSession, listAgentGoals, updateAgentGoalStatus, bindAgentGoalCompletionGate, createProactiveSchedule, updateProactiveSchedule, listProactiveSchedules, pauseProactiveSchedule, resumeProactiveSchedule, deleteProactiveSchedule, runProactiveScheduleNow, listProactiveTaskRuns } from './lib/agent-service'
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
@@ -2003,6 +2003,11 @@ export async function registerIpcHandlers(): Promise<void> {
     async (_, input: import('@gravitas/shared').UpdateAgentGoalStatusInput): Promise<import('@gravitas/shared').AgentGoal> => {
       return updateAgentGoalStatus(input)
     },
+  )
+
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.BIND_COMPLETION_GATE,
+    async (_, input: import('@gravitas/shared').BindAgentGoalGateInput): Promise<import('@gravitas/shared').AgentGoal> => bindAgentGoalCompletionGate(input),
   )
 
   // ===== Agent 工作区管理相关 =====

@@ -203,6 +203,12 @@ function checkProactiveTarget<T extends ProactiveExecutionTarget>(target: T): T 
 
 /** 导出 EventBus 供飞书 Bridge 等外部服务订阅事件 */
 export { eventBus as agentEventBus }
+/** 绑定 Goal 完成门禁：基线省略时解析为仓库当前 HEAD；完成后须经固定基线验证。 */
+export function bindAgentGoalCompletionGate(input: import('@gravitas/shared').BindAgentGoalGateInput): import('@gravitas/shared').AgentGoal {
+  const { buildCompletionGateForGoal } = require('./verifier-settings-service') as typeof import('./verifier-settings-service')
+  return goalCoordinator.bindCompletionGate(input.goalId, buildCompletionGateForGoal(input))
+}
+
 export { goalCoordinator }
 
 export function createProactiveSchedule(input: CreateProactiveScheduleInput): ProactiveSchedule {
