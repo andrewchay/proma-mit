@@ -6,7 +6,7 @@
  */
 
 import type { ToolDefinition, ToolCall, ToolResult } from '@gravitas/core'
-import type { AgentGoalCheckpoint, ContextProjectionRequest, ProviderType, PromaPermissionMode } from '@gravitas/shared'
+import type { AgentGoalCheckpoint, ContextProjectionRequest, ProviderType, PromaPermissionMode, ToolEffects } from '@gravitas/shared'
 import type { SessionCallbacks } from '../agent-orchestrator'
 
 /** Agent Runtime 输入 */
@@ -120,6 +120,8 @@ export interface SubAgentInput {
 
 /** Runtime 工具定义 */
 export interface RuntimeToolDefinition {
+  /** 仅声明；可信读取必须使用实际实例绑定，不直接信任此字段。 */
+  effects?: ToolEffects
   /** 工具名称 */
   name: string
   /** 工具描述 */

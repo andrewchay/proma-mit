@@ -4,7 +4,7 @@
 > 基线：`6c71b384`；分支：`feat/harness-reliability-upgrade`。
 > 本文冻结 **V01共享DTO切片**。V02权威服务、V03完成门禁、工具调度及新策略配置未实现；本文不替代其后续设计评审。
 > 代码实现：`packages/shared/src/types/verification.ts`、`packages/shared/src/utils/verification.ts`。
-> 下文为首批审计/契约历史快照；第二批已补V02部分新鲜度与回读，当前范围和保留限制见`v02-evidence.md`，第三批Goal/session/run闭包接线及保留限制见`goal-run-contract.md`与`goal-run-evidence.md`。第四批prepared-request元数据与限制见`invocation-context-contract.md`和`invocation-context-evidence.md`。不把历史“未实现”当成最新状态。
+> 下文为首批审计/契约历史快照；第二批已补V02部分新鲜度与回读，当前范围和保留限制见`v02-evidence.md`，第三批Goal/session/run闭包接线及保留限制见`goal-run-contract.md`与`goal-run-evidence.md`。第四批prepared-request元数据与限制见`invocation-context-contract.md`和`invocation-context-evidence.md`。第五批E01文件effects契约/工程证据见`effects-contract.md`与`effects-evidence.md`，未开启调度。不把历史“未实现”当成最新状态。
 
 ## 1. H00：身份与证据来源
 

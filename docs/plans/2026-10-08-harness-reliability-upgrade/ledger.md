@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 07:35 GMT+8第四批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 09:36 GMT+8第五批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -177,7 +177,7 @@
 
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
-| E01 | 从 capability.ts 映射 effects；拟新增 `packages/shared/src/context/tool-effects.ts` 及测试；扩展 RuntimeToolDefinition | descriptor与执行同源；unknown保守；Bash/MCP不因自述而安全；旧工具缺字段不自动并行 | H02 | 待开始 |
+| E01 | 从 capability.ts 映射 effects；`packages/shared/src/context/tool-effects.ts`及main实例绑定/测试；扩展RuntimeToolDefinition | 三个文件工具实际name/execute同源，Write涵盖mkdir祖先；unknown保守，Bash/MCP不因自述安全，旧工具不自动并行 | H02子契约 | 部分：文件声明与实例来源已落地；其他资源/完整策略映射未完成，见effects-evidence.md；未启用调度 |
 | E02 | 拟新增 `agent-runtime/tool-scheduler.ts` 及测试 | 资源冲突读写/写写串行；独立可信读取并行；目录/realpath别名冲突；限制并发；锁按确定顺序避免死锁 | E01 | 待开始 |
 | E03 | 拟新增 `agent-runtime/tool-call-integrity.ts` 及测试；接线 ai-sdk-runtime-core.ts、pi-tool-bridge.ts | response length/不完整批次不执行任何待执行mutation；已执行的流式调用单独记录，不能谎称撤销；SDK无法先验检查则不声明支持 | E01 | 待开始 |
 | E04 | 取消/错误/重启矩阵；tool-scheduler.ts 与 adapter 测试 | queued取消不开始；错误释放锁；幂等read可按策略重试，unknown写/外部调用不自动重放；禁用后仍保留硬底线 | E02/E03 | 待开始 |
@@ -411,6 +411,9 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261008-008 | 2026-10-08 23:25 GMT+8 | V02接线red/green与回归 | Coordinator API red12 fail（含迁移4旧例）后通过；修复fixture重名后Orchestrator red4 fail后通过；最终5定向文件76 pass；全仓543文件3612 pass/0 fail/27 skip；九包typecheck、lint1971文件、docs/diff通过；真实目录36→36一致新增0 | 私有harness-v02-goal-*.log；真实Orchestrator/离线adapter，不调用真实Provider，不做打包/停止真机验收。shared 0.2.32/electron 0.12.115；发现现有runner无受保护收集协议，冻结阻塞而非伪造test passed |
 | HARNESS-20261009-001 | 2026-10-09 07:17–07:35 GMT+8 | V02已准备请求切片 | 早期nonce闭包保留，query前一次准备；存实际workspace/cwd/runtime/channel/provider/requestedModelId，Pi会话模型回退；跨环境、配置/投影漂移拒绝；query前复查slot避免准备后停止迟到启动 | 基线72793fb5，invocation-context-contract.md/evidence.md；只证明准备请求，不代表Provider确认。独立目录/渠道配置撤权、task/execution、可信verifier/test仍未闭合；V02部分、V03阻塞 |
 | HARNESS-20261009-002 | 2026-10-09 07:35 GMT+8 | V02请求接线red/green与回归 | 新准备API13例red后green；接线2 pass/10 fail后通过；移除query前guard离线回归12 pass/2 fail后恢复通过。最终4定向文件60 pass；全仓544文件3644 pass/0 fail/27 skip；九包types、lint1972、docs/diff通过；真实workspace36→36一致新增0 | 私有harness-context-*.log；初次fixture错误期待异常返回、ProviderType导入与可选cwd类型错误均记录并修复。shared0.2.33/electron0.12.116；无真实Provider/build/package/native强停或新flag启用 |
+
+| HARNESS-20261009-003 | 2026-10-09 09:14–09:36 GMT+8 | E01文件effects声明子契约 | shared v1严格保守解析；实际Read/Write/Edit name/execute绑定，WeakMap实例声明冻结与失效保护；Write涵盖祖先目录；catalog真实实例投影与候选资格仅收紧；Bash/MCP/副本/缺字段unknown | 基线9d426f60，effects-contract/evidence.md；不是OS隔离/权限/并行保证。E01部分，E02–E05未启动；未开并行/TCC |
+| HARNESS-20261009-004 | 2026-10-09 09:36 GMT+8 | E01工程验证 | 新main10/shared20例；定向10文件73pass/0fail；全仓546文件3674pass/0fail/27skip，九包types/lint1976/docs/diff通过；真实workspace36→36一致新增0 | red为缺模块加载失败；不完整Electron mock与测试literal类型错误修复后green，未冒充行为通过。shared0.2.34/electron0.12.117；私有harness-effects-*.log；V02部分、V03仍阻塞 |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

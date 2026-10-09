@@ -73,3 +73,7 @@ HR01的Goal/session/run关联子集已接真实Orchestrator，覆盖旧run不能
 ## 8. V02第四批子集进展（2026-10-09 07:35 GMT+8）
 
 HR01的请求参数子集现绑定真实query前准备元数据，固定Goal配置、拒绝跨workspace/runtime/channel/model与配置漂移，并覆盖准备后停止的迟到query窗口。是prepared-request而非Provider确认，见invocation-context-evidence.md。最终4定向文件60 pass；全仓544文件3644 pass/0 fail/27 skip。没有固定verifier/criteria来源、可信非零测试收集或完整task/execution映射，HR01整体、V03及G1仍未通过。
+
+## 9. E01第五批声明子集（2026-10-09 09:36 GMT+8）
+
+HR06–HR09的前置声明现在仅覆盖Read/Write/Edit真实注册实例，Write含祖先目录；DTO/副本/MCP提示不升级，未知保守。10个定向文件73pass，全仓546文件3674pass/0fail/27skip。没有E02–E05队列/锁/取消或生产并行，HR06–HR09与G2均未通过；effects元数据也不满足V03测试来源门禁。见effects-evidence.md。
