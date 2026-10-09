@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 22:10 GMT+8第二十一批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 22:55 GMT+8第二十二批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -187,8 +187,8 @@
 
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
-| P01 | 拟新增 `packages/shared/src/types/harness-policy.ts` 及测试；扩展现有 AgentRuntimeCapabilities | 版本化配置与保证强度；不支持required保证在Provider前拒绝；策略只能收紧、不放宽硬底线 | H02 | 待开始 |
-| P02 | 复用 agent-permission-service.ts、permission-rules.ts、project-pilot-runtime-budget.ts 和已有 controlled出口 | Plan只允许既有plan写范围；高风险/外发审批不旁路；allow-all不吞硬deny；保留真实费用unknown | P01 | 待开始 |
+| P01 | `types/harness-policy.ts`（版本化/强度/只收紧/严格解析）+ 能力扩展 supportsInProcessToolScheduling + ai-sdk adapter Provider 前校验 | 版本化配置与保证强度；不支持required保证在Provider前拒绝；策略只能收紧、不放宽硬底线 | H02 | 部分完成：模型与 ai-sdk 接线落地；proma/pi/claude 接线与 UI 归 P03/P04；policy-conformance-evidence.md |
+| P02 | `policy-invariants.test.ts` 钉板：plan 写范围、safe+scope 逃逸拒绝、预算闸与权限模式无关、接线不吞结果 | Plan只允许既有plan写范围；高风险/外发审批不旁路；allow-all不吞硬deny；保留真实费用unknown | P01 | 部分完成：权限层钉板落地；bypassPermissions 在工具权限层全放行属现状（硬底线在独立层）；费用 unknown 由既有 pilot 测试覆盖 |
 | P03 | 拟新增 `adapters/harness-policy-conformance.test.ts`，参数化真实adapter边界 | claude/pi/ai-sdk/proma分别填写 support/unsupported/retired；不为了测试恢复retired runtime；撤权/预算/取消一致 | P02；V03/D03/E05 | 待开始 |
 | P04 | UI能力说明、审计原因与schema迁移 | 展示作用域、策略revision、拒绝原因、sandbox与approval区别；未知字段/损坏配置保留原件并拒绝受控运行 | P03 | 待开始 |
 
@@ -447,6 +447,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-027 | 2026-10-09 18:00–18:10 GMT+8 | E02调度器模块 | planLockSpec（读共享/写排他含祖先/unknown全局）；只在全锁空闲时派发+同步加锁逆序释放（结构性无死锁）；跳过队首；abort取消；10例 | 全仓559文件3801pass0fail；偶发无关超时重跑通过；未接线生产；tool-scheduler-evidence.md |
 | HARNESS-20261009-028 | 2026-10-09 21:35–21:50 GMT+8 | E05生产接线 | 共享调度器接入ai-sdk executeRuntimeTool与Pi桥；交互工具旁路；锁域=本进程内声明；指标快照；修复跨批次等待唤醒缺陷（服务测试看门狗暴露） | 服务7例+接线回归5文件；全仓560文件3807pass0fail；锁等待无超时；HR07–HR09/G2未过；tool-scheduler-wiring-evidence.md |
 | HARNESS-20261009-029 | 2026-10-09 21:55–22:10 GMT+8 | E04取消/错误/重启与重试 | 重试硬规则（仅共享锁、取消不重试、默认不重试）；禁用退化全串行仍持锁；修复跨批次并发计数缺陷（禁用测试复现） | 生命周期5例；全仓561文件3812pass0fail；重试无退避、禁用未持久化；HR07–HR09/G2未过；tool-scheduler-lifecycle-evidence.md |
+| HARNESS-20261009-030 | 2026-10-09 22:40–22:55 GMT+8 | M4a策略模型P01+钉板P02 | harness-policy共享模块（严格解析/只收紧/能力映射）；supportsInProcessToolScheduling；ai-sdk Provider前校验；policy-invariants钉板 | shared8例+electron9例；全仓564文件3826pass0fail；proma/pi/claude接线与UI归P03/P04；policy-conformance-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

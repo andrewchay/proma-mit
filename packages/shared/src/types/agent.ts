@@ -722,6 +722,8 @@ export interface AgentRuntimeCapabilities {
   supportsPartialStreaming: boolean
   /** 是否支持调用级预算停止阈值；超额后停止，实际费用仍可能超过阈值。 */
   supportsBudgetStopThreshold: boolean
+  /** 工具执行是否在本进程内（可纳入共享调度器锁域）；claude 经 SDK 子进程执行，不在锁域内。 */
+  supportsInProcessToolScheduling: boolean
 }
 
 export type AgentRuntimeForkMode = 'sdk_snapshot' | 'jsonl_history_copy'
@@ -755,6 +757,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: true,
     supportsPartialStreaming: true,
     supportsBudgetStopThreshold: true,
+    supportsInProcessToolScheduling: false,
   },
   proma: {
     supportsTools: true,
@@ -766,6 +769,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: false,
     supportsBudgetStopThreshold: false,
+    supportsInProcessToolScheduling: true,
   },
   pi: {
     supportsTools: true,
@@ -777,6 +781,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
     supportsBudgetStopThreshold: false,
+    supportsInProcessToolScheduling: true,
   },
   'ai-sdk': {
     supportsTools: true,
@@ -790,6 +795,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     // Pilot 单次费用停止由受控请求出口在发送前强制（证据派生 → 预算内预留 → body 核验，否则 HTTP 零发送），
     // 强度高于事后阈值；用户已于 G2 前批准放开（PILOT-20260928-56）。
     supportsBudgetStopThreshold: true,
+    supportsInProcessToolScheduling: true,
   },
 }
 

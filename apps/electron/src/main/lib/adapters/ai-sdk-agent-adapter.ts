@@ -24,6 +24,7 @@ import {
   type AISDKRuntimeSessionState,
 } from '../agent-runtime/ai-sdk-runtime-core'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
+import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { buildPilotRequestRuntime, resolvePilotBudgetForSession } from '../project-pilot-request-exit'
 import { isContextOverflowError } from '../error-patterns'
@@ -223,6 +224,8 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       // AI SDK 的一次 streamText 调用不能像 Claude SDK 那样直接向活跃 stream 注入输入。
       // 因此把运行中的追加消息排成下一轮 Agent turn，并将刚完成的一轮纳入历史，
       // 保持用户在输出期间继续追问时的上下文连续性。
+      // P01：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
+      assertRuntimePolicy('ai-sdk')
       let contextOverflowRecovered = false
       while (!activeSession.cancelled) {
         let messages: SDKMessage[]
