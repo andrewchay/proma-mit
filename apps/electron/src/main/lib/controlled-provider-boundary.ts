@@ -1,6 +1,7 @@
 import type { ToolContext } from './agent-runtime/types'
 /** 非代码准备任务的模型出口。仅按权威execution识别，不接受客户端授权标志。 */
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import type { AnyModel, ProviderRequestOptions } from '@earendil-works/pi-ai'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -15,6 +16,7 @@ import {
 import { resolveOwnerPlanningSession } from './project-owner-planning-source'
 import { assertOwnerPlanningCredential, claimOwnerPlanningProviderRequest } from './project-owner-planning-provider'
 import { resolvePiBaseUrl } from './adapters/pi-runtime-base-url'
+import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
 
 export interface ControlledProviderContext {
 	runtime: 'pi' | 'ai-sdk'
@@ -23,6 +25,7 @@ export interface ControlledProviderContext {
 	permissionMode: string
 }
 export function isControlledProviderSession(sessionId: string): boolean {
+	assertNoOwnerBusinessSession(sessionId)
 	const execution = store.getAgentExecutionBySessionId(sessionId)
 	if (!execution) return false
 	// 旧队列或普通改派也不能凭缺少准备记录绕过最终发送与权限门禁。
@@ -37,6 +40,7 @@ export function assertControlledProviderBoundary(
 	actual: ControlledProviderContext,
 	actualBaseUrl?: string,
 ): void {
+	assertNoOwnerBusinessSession(sessionId)
 	const execution = store.getAgentExecutionBySessionId(sessionId)
 	if (
 		!execution ||
@@ -104,14 +108,17 @@ export function guardControlledPiToolContext(
 	sessionId: string,
 	context: ToolContext,
 ): ToolContext {
-	if (!isControlledProviderSession(sessionId)) return context
+	const controlled = isControlledProviderSession(sessionId)
 	return {
 		...context,
-		runSubAgent: undefined,
-		setPermissionMode: (mode) => {
+		runSubAgent: controlled || !context.runSubAgent ? undefined : async (...args) => {
+			assertNoOwnerBusinessSession(sessionId)
+			return context.runSubAgent!(...args)
+		},
+		setPermissionMode: controlled || context.setPermissionMode ? (mode) => {
 			assertControlledPermissionChange(sessionId, mode)
 			context.setPermissionMode?.(mode)
-		},
+		} : undefined,
 	}
 }
 
@@ -120,15 +127,20 @@ export function createControlledProviderFetch(
 	sessionId: string,
 	actual: () => ControlledProviderContext,
 	baseFetch: typeof globalThis.fetch,
-): typeof globalThis.fetch | undefined {
-	if (!isControlledProviderSession(sessionId)) return undefined
+): typeof globalThis.fetch {
+	// 即使初始化时是legacy也必须注入：用途可在异步初始化或既有请求钩子中出现。
+	let controlled = isControlledProviderSession(sessionId)
 	const guarded = async (
 		input: Parameters<typeof globalThis.fetch>[0],
 		init?: Parameters<typeof globalThis.fetch>[1],
 	): Promise<Response> => {
+		assertNoOwnerBusinessSession(sessionId)
+		controlled = isControlledProviderSession(sessionId) || controlled
+		if (!controlled) return baseFetch(input, init)
 		const body =
 			init?.body ??
 			(input instanceof Request ? await input.clone().text() : undefined)
+		assertNoOwnerBusinessSession(sessionId)
 		if (typeof body !== 'string')
 			throw new Error('非代码模型出口不能核验请求体')
 		const payload = JSON.parse(body) as { model?: unknown }
@@ -175,6 +187,7 @@ export function createControlledProviderFetch(
       }
     })()
     // fetch内部默认follow会绕过第二次准入并外送冻结资料；Owner一律禁止重定向。
+		assertNoOwnerBusinessSession(sessionId)
 		return baseFetch(input, owner ? { ...init, redirect: 'error' } : init)
 	}
 	return Object.assign(guarded, { preconnect: () => {} })
@@ -187,52 +200,77 @@ export function guardControlledPiModelRuntime(
 	actual: () => ControlledProviderContext,
 	baseFetch: typeof globalThis.fetch = globalThis.fetch,
 ): void {
-	if (!isControlledProviderSession(sessionId)) return
-	const stream = runtime.stream.bind(runtime)
-	const streamSimple = runtime.streamSimple.bind(runtime)
-	runtime.stream = (model, context, options) =>
-		stream(model, context, {
+	let controlled = isControlledProviderSession(sessionId)
+	const check = (): boolean => {
+		assertNoOwnerBusinessSession(sessionId)
+		controlled = isControlledProviderSession(sessionId) || controlled
+		return controlled
+	}
+	const stream = runtime.stream
+	const streamSimple = runtime.streamSimple
+	runtime.stream = (model, context, options) => {
+		const restricted = check()
+		return stream.bind(runtime)(model, context, {
 			...options,
-			transport: 'sse',
-			fetch: createControlledProviderFetch(
-				sessionId,
-				actual,
-				options?.fetch ?? baseFetch,
-			),
+			...(restricted ? { transport: 'sse' } : {}),
+			fetch: createControlledProviderFetch(sessionId, actual, options?.fetch ?? baseFetch),
 			onPayload: async (payload, requestModel) => {
+				check()
 				const amended = await options?.onPayload?.(payload, requestModel)
-				assertControlledProviderBoundary(
-					sessionId,
-					{ ...actual(), modelId: requestModel.id },
-					requestModel.baseUrl,
+				if (check()) assertControlledProviderBoundary(
+					sessionId, { ...actual(), modelId: requestModel.id }, requestModel.baseUrl,
 				)
 				return amended
 			},
 		} as NonNullable<typeof options>)
-	runtime.streamSimple = (model, context, options) =>
-		streamSimple(model, context, {
+	}
+	runtime.streamSimple = (model, context, options) => {
+		const restricted = check()
+		return streamSimple.call(runtime, model, context, {
 			...options,
-			transport: 'sse',
-			fetch: createControlledProviderFetch(
-				sessionId,
-				actual,
-				options?.fetch ?? baseFetch,
-			),
+			...(restricted ? { transport: 'sse' } : {}),
+			fetch: createControlledProviderFetch(sessionId, actual, options?.fetch ?? baseFetch),
 			onPayload: async (payload, requestModel) => {
+				check()
 				const amended = await options?.onPayload?.(payload, requestModel)
-				assertControlledProviderBoundary(
-					sessionId,
-					{ ...actual(), modelId: requestModel.id },
-					requestModel.baseUrl,
+				if (check()) assertControlledProviderBoundary(
+					sessionId, { ...actual(), modelId: requestModel.id }, requestModel.baseUrl,
 				)
 				return amended
 			},
 		})
-	const unsupported = (): never => {
-		throw new Error('非代码受控任务不允许未经核验的模型请求路径')
 	}
-	runtime.streamDeferred = unsupported
-	runtime.fetchDeferred = unsupported
-	runtime.generateImages = unsupported
-	runtime.classify = unsupported
+	const checkUnsupported = (): void => {
+		if (check()) throw new Error('非代码受控任务不允许未经核验的模型请求路径')
+	}
+	const alternateOptions = <TModel extends AnyModel>(options?: ProviderRequestOptions<TModel>): ProviderRequestOptions<TModel> => ({
+		...options,
+		fetch: createControlledProviderFetch(sessionId, actual, options?.fetch ?? baseFetch),
+		onPayload: async (payload, requestModel) => {
+			checkUnsupported()
+			const amended = await options?.onPayload?.(payload, requestModel)
+			checkUnsupported()
+			return amended
+		},
+	})
+	const streamDeferred = runtime.streamDeferred
+	runtime.streamDeferred = (model, handle, options) => {
+		checkUnsupported()
+		return streamDeferred.call(runtime, model, handle, { ...options, ...alternateOptions(options) })
+	}
+	const fetchDeferred = runtime.fetchDeferred
+	runtime.fetchDeferred = (model, handle, options) => {
+		checkUnsupported()
+		return fetchDeferred.call(runtime, model, handle, { ...options, ...alternateOptions(options) })
+	}
+	const generateImages = runtime.generateImages
+	runtime.generateImages = (model, context, options) => {
+		checkUnsupported()
+		return generateImages.call(runtime, model, context, { ...options, ...alternateOptions(options) })
+	}
+	const classify = runtime.classify
+	runtime.classify = (model, context, options) => {
+		checkUnsupported()
+		return classify.call(runtime, model, context, { ...options, ...alternateOptions(options) })
+	}
 }

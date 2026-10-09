@@ -36,6 +36,20 @@ import {
 } from './development-task-service'
 import { loadDevelopmentSnapshot } from './development-snapshot-service'
 import { parseAgentId, isAgentAssignee, dispatchTaskToAgentIfIdle } from './agent-employee-service'
+import {
+  assertNoOwnerBusinessTask,
+  assertNoOwnerBusinessExecution,
+  assertNoOwnerBusinessSession,
+} from './project-owner-task-evidence'
+
+/** 只限制准确任务及其执行/会话残余；同项目的其他任务与只读Review不受影响。 */
+function assertLegacyReviewTaskPurpose(taskId: string): void {
+  assertNoOwnerBusinessTask(taskId)
+  for (const execution of listAgentExecutionsByEntity('task', taskId)) {
+    if (execution.sessionId) assertNoOwnerBusinessSession(execution.sessionId)
+    assertNoOwnerBusinessExecution(execution.id)
+  }
+}
 
 export class DevelopmentReviewError extends Error {
   constructor(message: string) {
@@ -61,6 +75,7 @@ async function getTask(taskId: string) {
 
 /** 文件委派准备：校验并落库（新建或关联任务），不派发执行。 */
 export async function prepareFileDelegation(input: PrepareFileDelegationInput): Promise<{ taskId: string; created: boolean }> {
+  if (input.existingTaskId) assertLegacyReviewTaskPurpose(input.existingTaskId)
   const employee = getAgentEmployee(input.employeeId)
   if (!employee?.enabled || employee.executionProfile !== 'development') {
     throw new DevelopmentReviewError('AI 员工不存在、已停用或不是研发档案')
@@ -77,6 +92,7 @@ export async function prepareFileDelegation(input: PrepareFileDelegationInput): 
   }
 
   const task = input.existingTaskId ? await getTask(input.existingTaskId) : undefined
+  if (input.existingTaskId) assertLegacyReviewTaskPurpose(input.existingTaskId)
   if (input.existingTaskId && !task) throw new DevelopmentReviewError('要关联的任务不存在')
   if (task && task.projectId !== input.projectId) throw new DevelopmentReviewError('任务不属于当前项目')
   if (task && isAgentAssignee(task) && parseAgentId(task.assignee?.userId) !== input.employeeId) {
@@ -239,7 +255,9 @@ export function getSnapshotDiff(executionId: string, filePath: string): Developm
 
 /** 人工验收通过：local-user 必须是登记的验收人；证据必填。 */
 export async function acceptDelivery(taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }): Promise<unknown> {
+  assertLegacyReviewTaskPurpose(taskId)
   const task = await getTask(taskId)
+  assertLegacyReviewTaskPurpose(taskId)
   if (!task) throw new DevelopmentReviewError('任务不存在')
   if (!input.evidence?.trim()) throw new DevelopmentReviewError('验收通过必须提供依据')
   const chain = getProjectChain(task.projectId)
@@ -279,7 +297,9 @@ export async function rejectDelivery(taskId: string, deliveryId: string, comment
  * 返回是否真正派发；已有进行中执行时返回 null（意见已保存）。
  */
 export async function requestChanges(taskId: string, comment: string): Promise<{ taskId: string } | null> {
+  assertLegacyReviewTaskPurpose(taskId)
   const task = await getTask(taskId)
+  assertLegacyReviewTaskPurpose(taskId)
   if (!task) throw new DevelopmentReviewError('任务不存在')
   if (!task.developmentScope) throw new DevelopmentReviewError('任务缺少研发执行范围')
   const trimmed = comment?.trim()

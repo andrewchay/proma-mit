@@ -1,3 +1,4 @@
+import { assertNoOwnerBusinessExecution, assertNoOwnerBusinessSession } from './project-owner-task-evidence'
 /**
  * 研发受限员工交付服务（W03）。
  *
@@ -54,8 +55,10 @@ function agentIdFromAssignee(assigneeUserId: string | undefined): string | null 
  * 不影响任务回写主流程。
  */
 export function submitDevelopmentDelivery(executionId: string): DevelopmentDeliveryResult {
+  assertNoOwnerBusinessExecution(executionId)
   const execution = getAgentExecution(executionId)
   if (!execution) throw new DevelopmentDeliveryError('执行记录不存在')
+  if (execution.sessionId.trim()) assertNoOwnerBusinessSession(execution.sessionId)
   if (execution.entityType !== 'task') throw new DevelopmentDeliveryError('仅支持主任务研发交付')
   if (execution.status !== 'completed' || !execution.completedAt) {
     throw new DevelopmentDeliveryError('只有已完成的执行才能提交交付')

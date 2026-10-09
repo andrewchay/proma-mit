@@ -1,3 +1,4 @@
+import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 /**
  * Pi Agent SDK 适配器。
  *
@@ -230,6 +231,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
+    assertNoOwnerBusinessSession(input.sessionId)
     const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
     if (runtimeBudgetLimitUsd !== undefined && (!Number.isFinite(runtimeBudgetLimitUsd) || runtimeBudgetLimitUsd <= 0)) {
       throw new Error('Pi 调用级费用阈值无效')
@@ -254,7 +256,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
     const controlled = isControlledProviderSession(sessionId)
     const actualProvider = () => ({ runtime: 'pi' as const, cwd, modelId: model, permissionMode: input.getPermissionMode?.() ?? permissionMode ?? 'safe' })
-    const controlledFetch = controlled ? createControlledProviderFetch(sessionId, actualProvider, getFetchFn(await getEffectiveProxyUrl())) : undefined
+    const controlledFetch = createControlledProviderFetch(sessionId, actualProvider, getFetchFn(await getEffectiveProxyUrl()))
 
     if (requestedOperation === 'compact') {
       if (provider === 'openai-codex') throw new Error('ChatGPT 订阅暂不支持独立压缩，请缩短对话后重试')
@@ -299,12 +301,12 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         cwd, sessionId, permissionMode, ...toolContextOverrides,
       }),
       allowSubAgent: !controlled,
-      canUseTool: controlled ? async (name, args, signal) => {
+      canUseTool: controlled || canUseTool ? async (name, args, signal) => {
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         const result = await canUseTool?.(name, args, signal)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         return result ?? { allowed: false, message: '未配置权限回调' }
-      } : canUseTool,
+      } : undefined,
       mcpTools,
     })
     // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
@@ -473,8 +475,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       const previousPrepare = session.agent.prepareRequest
       const previousToolHook = session.agent.beforeToolCall
       session.agent.prepareRequest = async (request, signal) => {
+        assertNoOwnerBusinessSession(sessionId)
         if (budgetGate.blocked || budgetGate.inFlight) budgetGate.beforeRequest()
         const prepared = await previousPrepare?.(request, signal)
+        assertNoOwnerBusinessSession(sessionId)
         budgetGate.beforeRequest()
         // coding-agent 的 streamFn 之外可能还有其它请求路径；有限阈值模式只
         // 允许一个受控请求待回执。后续任何未归属回执都进入停等。
@@ -482,10 +486,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       const previousPayload = session.agent.onPayload
       session.agent.onPayload = async (payload, requestModel) => {
+        assertNoOwnerBusinessSession(sessionId)
         // Provider 构造请求体后、发送前再次核验已有准入，阻断遗漏 prepareRequest
         // 的旁路。此处没有可信价格或输入 token 上界，不能称为费用硬封顶。
         budgetGate.beforePayload()
-        return previousPayload?.(payload, requestModel)
+        const amended = await previousPayload?.(payload, requestModel)
+        assertNoOwnerBusinessSession(sessionId)
+        return amended
       }
       session.agent.beforeToolCall = async (context, signal) => {
         if (budgetGate.blocked || budgetGate.inFlight) {
@@ -497,6 +504,29 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         }
         return previous
       }
+    }
+
+    // legacy初始化后也保持用途重读；先拒绝，再进入已有费用/工具钩子。
+    const priorPrepareRequest = session.agent.prepareRequest
+    session.agent.prepareRequest = async (request, signal) => {
+      assertNoOwnerBusinessSession(sessionId)
+      const prepared = await priorPrepareRequest?.(request, signal)
+      assertNoOwnerBusinessSession(sessionId)
+      return prepared ?? undefined
+    }
+    const priorPayload = session.agent.onPayload
+    session.agent.onPayload = async (payload, requestModel) => {
+      assertNoOwnerBusinessSession(sessionId)
+      const amended = await priorPayload?.(payload, requestModel)
+      assertNoOwnerBusinessSession(sessionId)
+      return amended
+    }
+    const priorToolCall = session.agent.beforeToolCall
+    session.agent.beforeToolCall = async (context, signal) => {
+      assertNoOwnerBusinessSession(sessionId)
+      const result = await priorToolCall?.(context, signal)
+      assertNoOwnerBusinessSession(sessionId)
+      return result
     }
 
     // ===== 运行 span 采集：task 级 =====
@@ -721,11 +751,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             ...(images.length > 0 ? { images } : {}),
           }
           if (!timer) {
+            assertNoOwnerBusinessSession(sessionId)
             await session.prompt(promptText, promptOptions)
             return
           }
           // Promise.race 会同时为两个输入挂接 rejection 处理，因此看门狗超时 abort 后
           // 遗留 prompt 的 AbortError 不会产生 unhandled rejection，无需额外 catch。
+          assertNoOwnerBusinessSession(sessionId)
           await Promise.race([
             session.prompt(promptText, promptOptions),
             new Promise<void>((_resolve, reject) => { rejectExec = reject }),
@@ -854,6 +886,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
   /** 软中断当前 turn：终止本轮流式输出，等待流式追加消息后由 prompt 链继续 */
   async interruptQuery(sessionId: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     if (active.session.isStreaming) {
@@ -873,6 +906,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     message: SDKUserMessageInput,
     options?: SendQueuedMessageOptions,
   ): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const active = this.activeSessions.get(sessionId)
     if (!active) throw new Error(`[Pi Runtime] 当前会话没有正在运行的 Agent: ${sessionId}`)
 

@@ -1,3 +1,4 @@
+import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
 import { assertControlledPermissionChange, isControlledProviderSession } from './controlled-provider-boundary'
 /**
  * AgentOrchestrator — Agent 编排层
@@ -767,10 +768,12 @@ export class AgentOrchestrator {
           } as AgentStreamPayload)
         },
         canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
+          assertNoOwnerBusinessSession(sessionId)
           const result = await canUseTool(toolName, input, {
             signal,
             toolUseID: `tool-${Date.now()}`,
           })
+          assertNoOwnerBusinessSession(sessionId)
           return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
         },
         onEnterPlanMode: () => {
@@ -834,6 +837,7 @@ export class AgentOrchestrator {
         extraTools: collabExtraTools,
       }
 
+      assertNoOwnerBusinessSession(sessionId)
       const iterable = this.adapter.query(queryOptions)
       const accumulatedMessages: SDKMessage[] = []
       let runtimeEstablished = false
@@ -1023,10 +1027,12 @@ export class AgentOrchestrator {
         // 会话级思考级别：来自全局设置 agentThinkingLevel（Pi 专用；仅 reasoning 模型生效）
         thinkingLevel: getSettings().agentThinkingLevel,
         canUseTool: async (toolName, toolInput, signal) => {
+          assertNoOwnerBusinessSession(sessionId)
           const result = await piCanUseTool(toolName, toolInput, {
             signal,
             toolUseID: `pi-tool-${Date.now()}`,
           })
+          assertNoOwnerBusinessSession(sessionId)
           return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
         },
         toolContextOverrides: {
@@ -1109,6 +1115,7 @@ export class AgentOrchestrator {
       }
 
       const accumulatedMessages: SDKMessage[] = []
+      assertNoOwnerBusinessSession(sessionId)
       for await (const msg of this.adapter.query(queryOptions)) {
         // Pi 的流式快照只用于即时展示；只持久化最终帧，避免历史中重复累计文本。
         if (!(msg as Record<string, unknown>)._partial) accumulatedMessages.push(msg)
@@ -1215,6 +1222,7 @@ export class AgentOrchestrator {
     },
     input: SubAgentInput,
   ): Promise<string> {
+    assertNoOwnerBusinessSession(parentSessionId)
     if (isControlledProviderSession(parentSessionId)) throw new Error('非代码受控任务禁止未经本次确认的子代理委派')
     const agents = buildBuiltinAgents(false)
     const def = agents[input.agentName]
@@ -1261,6 +1269,7 @@ export class AgentOrchestrator {
       // api.deepseek.com/anthropic），需按 proma runtime 转换为 OpenAI-compatible 端点，
       // 否则用 openai adapter 请求会命中不存在的 /anthropic/chat/completions → 404。
       const effectiveBaseUrl = resolveAgentRuntimeBaseUrl(ctx.provider, 'proma', ctx.baseUrl)
+      assertNoOwnerBusinessSession(parentSessionId)
       for await (const msg of childAdapter.query({
         sessionId: childSessionId,
         prompt,
@@ -1355,7 +1364,7 @@ export class AgentOrchestrator {
     modelId?: string,
     callbacks?: SessionCallbacks,
   ): void {
-    this.generateTitle({ userMessage, channelId, modelId: modelId || 'unknown' })
+    this.generateTitle({ userMessage, channelId, modelId: modelId || 'unknown' }, sessionId)
       .then((title) => {
         if (!title) return
         const meta = getAgentSessionMeta(sessionId)
@@ -1668,12 +1677,13 @@ export class AgentOrchestrator {
    *
    * 使用 Provider 适配器系统，支持所有渠道。任何错误返回 null。
    */
-  async generateTitle(input: AgentGenerateTitleInput): Promise<string | null> {
+  async generateTitle(input: AgentGenerateTitleInput, sessionId?: string): Promise<string | null> {
     const { userMessage, channelId, modelId } = input
-    console.log('[Agent 标题生成] 开始生成标题:', { channelId, modelId, userMessage: userMessage.slice(0, 50) })
-
     try {
+      if (sessionId) assertNoOwnerBusinessSession(sessionId)
+      console.log('[Agent 标题生成] 开始生成标题:', { channelId, modelId, userMessage: userMessage.slice(0, 50) })
       const channel = await this.runtimeServices.credentials.resolveChannel(channelId)
+      if (sessionId) assertNoOwnerBusinessSession(sessionId)
       if (!channel) {
         console.warn('[Agent 标题生成] 渠道不存在:', channelId)
         return null
@@ -1681,6 +1691,7 @@ export class AgentOrchestrator {
 
       if (channel.provider === 'openai-codex') {
         const { streamCodexChat } = await import('./adapters/codex-chat')
+        if (sessionId) assertNoOwnerBusinessSession(sessionId)
         const { content } = await streamCodexChat({
           channelId, modelId, history: [], userMessage: TITLE_PROMPT + userMessage,
           signal: new AbortController().signal, onDelta: () => {},
@@ -1696,7 +1707,12 @@ export class AgentOrchestrator {
       })
 
       const proxyUrl = await getEffectiveProxyUrl()
-      const fetchFn = getFetchFn(proxyUrl)
+      const baseFetch = getFetchFn(proxyUrl)
+      const fetchFn = sessionId ? Object.assign((...args: Parameters<typeof globalThis.fetch>) => {
+        assertNoOwnerBusinessSession(sessionId)
+        return baseFetch(...args)
+      }, { preconnect: () => {} }) : baseFetch
+      if (sessionId) assertNoOwnerBusinessSession(sessionId)
       const title = await fetchTitle(request, providerAdapter, fetchFn)
       if (!title) {
         console.warn('[Agent 标题生成] API 返回空标题')
@@ -1730,7 +1746,7 @@ export class AgentOrchestrator {
       const meta = getAgentSessionMeta(sessionId)
       if (!meta || meta.title !== DEFAULT_SESSION_TITLE) return
 
-      const title = await this.generateTitle({ userMessage, channelId, modelId })
+      const title = await this.generateTitle({ userMessage, channelId, modelId }, sessionId)
       if (!title) return
 
       updateAgentSessionMeta(sessionId, { title })
@@ -1878,6 +1894,7 @@ export class AgentOrchestrator {
         parent_tool_use_id: null, uuid: randomUUID(),
       } as SDKMessage])
       let established = false
+      assertNoOwnerBusinessSession(sessionId)
       for await (const message of this.adapter.query(queryOptions)) {
         if (!established) { established = true; callbacks.onRuntimeSessionEstablished?.() }
         messages.push(message)
@@ -1911,6 +1928,7 @@ export class AgentOrchestrator {
     // Owner 必须在排队、Goal、命令解析、历史、工作区 MCP 和动态提示前分流。
     // 损坏的用途证据由 resolver 抛错，绝不退回普通 Agent。
     try {
+      assertNoOwnerBusinessSession(input.sessionId)
       const owner = resolveOwnerPlanningSession(input.sessionId)
       if (owner) {
         await this.runOwnerPlanningAgent(input, callbacks, owner)
@@ -2711,6 +2729,7 @@ export class AgentOrchestrator {
 
       // 动态 canUseTool：每次调用读取当前权限模式，支持运行中切换
       const canUseTool = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
+        assertNoOwnerBusinessSession(sessionId)
         const currentMode = getPermissionMode()
 
         // Workflow 节点能力集是硬上限；即使运行在 bypassPermissions 下也不能越权。
@@ -3044,6 +3063,7 @@ export class AgentOrchestrator {
 
         try {
           // 获取异步迭代器（手动 .next() 以支持 Promise.race 中断）
+          assertNoOwnerBusinessSession(sessionId)
           const queryIterable = this.adapter.query(queryOptions)
           const queryIterator = queryIterable[Symbol.asyncIterator]()
 
@@ -3700,6 +3720,7 @@ export class AgentOrchestrator {
    * 典型场景：用户在 Agent 运行中通过 PermissionModeSelector 切换模式。
    */
   async updateSessionPermissionMode(sessionId: string, mode: PromaPermissionMode): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     if (resolveOwnerPlanningSession(sessionId)) throw new Error('Owner规划不允许权限变化')
     if (!this.activeSessions.has(sessionId)) return
     assertControlledPermissionChange(sessionId, mode)
@@ -3848,6 +3869,7 @@ export class AgentOrchestrator {
     presetUuid?: string,
     opts?: { interrupt?: boolean },
   ): Promise<string> {
+    assertNoOwnerBusinessSession(sessionId)
     if (resolveOwnerPlanningSession(sessionId)) throw new Error('Owner规划不允许追加输入或中断续跑')
     if (!this.activeSessions.has(sessionId)) {
       throw new Error(`[Agent 编排] 会话未运行，无法追加消息: ${sessionId}`)
@@ -3886,6 +3908,7 @@ export class AgentOrchestrator {
         }
       }
 
+      assertNoOwnerBusinessSession(sessionId)
       await this.adapter.sendQueuedMessage(sessionId, sdkMessage)
       console.log(`[Agent 编排] 追加消息已注入: sessionId=${sessionId}, uuid=${uuid}, interrupt=${!!opts?.interrupt}`)
 

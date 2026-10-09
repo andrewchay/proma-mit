@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -204,4 +204,20 @@ describe('完成回调门控', () => {
     expect(shouldSubmitDevelopmentDelivery(null)).toBe(false)
     expect(shouldSubmitDevelopmentDelivery({ assignee: { userId: 'agent-1' }, developmentScope: { workspaceId: 'w' } })).toBe(true)
   })
+})
+
+test('Given legacy执行与Owner异常执行共用真实session When direct交付 Then 先拒用途且快照/chain不变', async () => {
+  const w = fixture({dirtyWork: wt => writeFileSync(join(wt,'src','a.ts'),'session-purpose-fixture\n')})
+  const owner = store.createTask(w.projectId,{title:'同会话异常Owner目的',description:''})
+  store.createAgentExecution({id:randomUUID(),projectId:w.projectId,entityType:'task',entityId:owner.id,agentId:'fake',sessionId:w.sessionId,prompt:'只模拟旧账本'})
+  store.getProjectDb().prepare("UPDATE tasks SET owner_step_link_id='' WHERE id=?").run(owner.id)
+  const evidence = await import('./project-owner-task-evidence')
+  expect(evidence.hasOwnerBusinessExecutionEvidence(w.executionId)).toBe(false)
+  expect(evidence.hasOwnerBusinessSessionEvidence(w.sessionId)).toBe(true)
+  const before = chainService.getProjectChain(w.projectId)
+  const snapshotPath = join(w.sessionDirectory, `development-snapshot-${w.executionId}.json`)
+  expect(existsSync(snapshotPath)).toBe(false)
+  expect(() => submitDevelopmentDelivery(w.executionId)).toThrow('Owner')
+  expect(existsSync(snapshotPath)).toBe(false)
+  expect(chainService.getProjectChain(w.projectId)).toEqual(before)
 })

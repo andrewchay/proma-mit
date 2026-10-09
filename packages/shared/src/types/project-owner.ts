@@ -288,3 +288,80 @@ export interface ProjectOwnerExecutionPreparationApi {
   previewOwnerExecutionPreparation: (request: PreviewOwnerExecutionPreparationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionPreparationPreview>>
   saveOwnerExecutionPreparation: (request: SaveOwnerExecutionPreparationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionPreparationRecord>>
 }
+
+/** AO06仅落地暂停Task，不代表准备、授权或已安排运行。 */
+export interface OwnerTaskMaterializationInput {
+  requestId: string
+  expectedMaterializationRevision: number
+  expectedPreparationId: string
+  expectedPreparationRevision: number
+  expectedPreparationHash: string
+  expectedPolicyRevision: number
+}
+export interface OwnerTaskProjection {
+  stepKey: string
+  targetTaskId?: string
+  title: string
+  description: string
+  roleKey: string
+  outcome: string
+  acceptanceCriteria: string[]
+  dependencies: string[]
+  assignee: { userId: string; displayName: string }
+  workspaceId: string
+  developmentScope?: import('./development-review').DevelopmentTaskScope
+  /** 更新为Agent负责人时清除旧成员目录键，不能沿用旧人类身份。 */
+  clearAssigneeMemberId?: true
+  previous?: { status: string; assignee?: { userId: string; displayName: string }; assigneeMemberId?: string; workspaceId?: string; developmentScope?: import('./development-review').DevelopmentTaskScope }
+}
+export interface OwnerTaskMaterializationPreview extends ProjectOwnerGoalSubject {
+  input: OwnerTaskMaterializationInput
+  preparation: OwnerExecutionPreparationRecord
+  projections: OwnerTaskProjection[]
+  targetTaskHash?: string
+  targetDependenciesHash?: string
+  previewFingerprint: string
+}
+export interface OwnerTaskStepLink {
+  id: string
+  materializationId: string
+  projectId: string
+  subjectKey: string
+  planFingerprint: string
+  stepKey: string
+  taskId: string
+  kind: 'created' | 'existing_target'
+  projection: OwnerTaskProjection
+  taskSpecificationHash: string
+  dependencies: Array<{ id: string; taskId: string; dependsOnTaskId: string; type: string }>
+  integrityHash: string
+}
+export interface OwnerTaskMaterializationRecord extends ProjectOwnerGoalSubject {
+  schemaVersion: 1
+  purpose: 'owner_business_task_materialization'
+  id: string
+  revision: number
+  actor: 'local-user'
+  savedAt: number
+  stage: 'paused_materialized_needs_revalidation'
+  input: OwnerTaskMaterializationInput
+  inputHash: string
+  preview: OwnerTaskMaterializationPreview
+  links: OwnerTaskStepLink[]
+  previousIntegrityHash: string | null
+  integrityHash: string
+}
+export interface OwnerTaskMaterializationView {
+  revision: number
+  materialization: OwnerTaskMaterializationRecord | null
+  status: 'none' | 'needs_revalidation' | 'stale'
+  blockers: string[]
+}
+export interface PreviewOwnerTaskMaterializationRequest extends ProjectOwnerGoalSubject { input: OwnerTaskMaterializationInput }
+export interface MaterializeOwnerTasksRequest extends PreviewOwnerTaskMaterializationRequest { previewFingerprint: string }
+export interface ProjectOwnerTaskMaterializationApi {
+  getOwnerTaskMaterialization: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerTaskMaterializationView>>
+  listOwnerTaskMaterializationHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerTaskMaterializationRecord[]>>
+  previewOwnerTaskMaterialization: (request: PreviewOwnerTaskMaterializationRequest) => Promise<ProjectOwnerGoalResult<OwnerTaskMaterializationPreview>>
+  materializeOwnerTasks: (request: MaterializeOwnerTasksRequest) => Promise<ProjectOwnerGoalResult<OwnerTaskMaterializationRecord>>
+}

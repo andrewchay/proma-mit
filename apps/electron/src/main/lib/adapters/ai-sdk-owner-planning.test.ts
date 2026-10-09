@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, describe, expect, mock, test, beforeAll } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,9 @@ import type { AISDKAgentQueryOptions } from './ai-sdk-agent-adapter'
 
 const dir = mkdtempSync(join(tmpdir(), 'owner-sdk-'))
 process.env.PROMA_TEST_CONFIG_DIR = dir
-afterAll(() => { rmSync(dir, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
+const ownerPurposeStore = await import('../project-sqlite-store')
+beforeAll(async () => { await ownerPurposeStore.initProjectDb() })
+afterAll(() => { ownerPurposeStore.closeProjectDb(); rmSync(dir, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
 let tools = 0, compact = 0, enriched = 0, pilot = 0, mcp = 0
 let fail = false
 let captured: Record<string, unknown>[] = []

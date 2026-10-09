@@ -1,10 +1,13 @@
 /** 附属来源用途只会收窄能力，绝不授予执行。与policy模块无循环依赖。 */
 import { getProjectDb } from './project-sqlite-store'
 export function hasOwnerExecutionPreparationEvidence(projectId: string): boolean {
+  const database = getProjectDb()
   return Boolean(
-    getProjectDb()
-      .prepare('SELECT id FROM project_owner_execution_preparations WHERE project_id = ? LIMIT 1')
-      .get(projectId),
+    database.prepare('SELECT id FROM project_owner_execution_preparations WHERE project_id=? LIMIT 1').get(projectId)
+    || database.prepare('SELECT id FROM project_owner_task_materializations WHERE project_id=? LIMIT 1').get(projectId)
+    || database.prepare('SELECT id FROM project_owner_task_step_links WHERE project_id=? LIMIT 1').get(projectId)
+    || database.prepare('SELECT id FROM tasks WHERE project_id=? AND owner_step_link_id IS NOT NULL LIMIT 1').get(projectId)
+    || database.prepare(`SELECT r.session_id FROM project_owner_business_session_restrictions r LEFT JOIN tasks t ON t.id=r.task_id LEFT JOIN agent_executions e ON e.id=r.execution_id WHERE r.project_id=? OR t.project_id=? OR e.project_id=? LIMIT 1`).get(projectId,projectId,projectId)
   )
 }
 export function assertNoOwnerExecutionPreparation(projectId: string, reference?: unknown): void {

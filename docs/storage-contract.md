@@ -41,3 +41,11 @@ Owner D为`project_owner_planning_admissions`追加nullable `integrity_hash`，�
 保存顺序为policy锁内DB证据先提交、JSON原子替换引用、回读。不是跨存储原子事务，文件失败可能留下未应用证据，应保留并阻止legacy发行，不自动删除/重发/补授权；摘要仅检测本地损坏，不是认证。Owner准备关联项目/目标任务暂不支持普通物理删除。未知预算/请求或停止未决先走原暂停/对账，不在保存准备时清零。详细范围、兼容与验收边界见[暂停执行准备](plans/2026-10-07-ai-project-owner/owner-execution-preparation.md)。
 
 历史A/C段落描述当时的常量启动禁令；D之后已由准确Owner来源/费用/停止/单发送门禁替代（见[受控启动](plans/2026-10-07-ai-project-owner/owner-planning-controlled-start.md)），不能将旧禁令重新恢复或外推为业务执行授权。
+
+### Owner暂停Task与步骤关联（2026-10-09）
+
+AO06以同paa.db追加`project_owner_task_materializations`与`project_owner_task_step_links`，业务任务仍只存权威`tasks`，依赖仍只存`task_dependencies`。`tasks.owner_step_link_id`与indexed link/history任一残余均限制能力，不是grant。`project_owner_business_session_restrictions`保留已观察Task/execution/session/project的负向用途；queued的空session占位不是共享会话，不据此圈其他任务。
+
+材料化只在policy快照锁内同SQLite事务首次INSERT paused+专用marker/关联/依赖/活动，不写Pilot JSON、不发普通TaskChange。内部builder只在本次未提交staging的同步单次作用域可用，已提交链接不可复活取消目标或补造损坏Task。外层raw BEGIN/SAVEPOINT拒绝；DB ABORT整体回滚。单任务只允许一步复用普通未执行目标，显式人员/工作区/范围patch保内容并清旧成员身份；原AO05 whole目标hash自然stale，原件不改，结果仍需重新验证。
+
+这些表/列与原AO05准备、Goal/Plan、Task/dependency、人员资料配置和Pilot账本一起一致备份。header/link/marker/原来源丢失、坏payload、已观察限制残余均不得降legacy或换request重建；普通物理删除/改范围/依赖、旧费用确认/派发、所有Runtime发送均负向拒绝，暂停/取消/保全仍可用。没有active许可、模型资料工具fence、断电/多进程或真实Provider验收。见[暂停Task材料化](plans/2026-10-07-ai-project-owner/owner-task-materialization.md)。

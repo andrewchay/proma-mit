@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, describe, expect, mock, test, beforeAll } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +7,9 @@ import type { SessionCallbacks } from './agent-orchestrator'
 import { buildElectronMock } from './testing/electron-mock'
 const dir = mkdtempSync(join(tmpdir(), 'owner-orchestrator-'))
 process.env.PROMA_TEST_CONFIG_DIR = dir
-afterAll(() => { rmSync(dir, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
+const ownerPurposeStore = await import('./project-sqlite-store')
+beforeAll(async () => { await ownerPurposeStore.initProjectDb() })
+afterAll(() => { ownerPurposeStore.closeProjectDb(); rmSync(dir, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
 mock.module('electron', () => buildElectronMock())
 let broken = false, dynamic = 0, workspaceContext = 0, history = 0
 const source = { binding: { channelId: 'channel', modelId: 'model', workspaceId: 'ws', runtime: 'ai-sdk' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' } }

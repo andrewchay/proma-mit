@@ -20,7 +20,7 @@ import { getProjectsDir } from './config-paths'
 import { join } from 'node:path'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { assertTaskCompletionAllowed, emptyProjectChain } from './project-chain'
-import type { ProjectChain } from '@gravitas/shared'
+import type { ProjectChain, OwnerTaskStepLink, OwnerTaskMaterializationRecord } from '@gravitas/shared'
 
 // better-sqlite3 类型（仅类型引用；运行时在 loadNativeSqlite 中延迟 require，Bun 下不会加载）
 type SqliteNativeConstructor = typeof import('better-sqlite3')
@@ -1020,6 +1020,28 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'project_owner_planning_links').includes('source_snapshot')) {
     database.exec('ALTER TABLE project_owner_planning_links ADD COLUMN source_snapshot TEXT')
   }
+  if (!readColumnNames(database, 'tasks').includes('owner_step_link_id')) {
+    database.exec('ALTER TABLE tasks ADD COLUMN owner_step_link_id TEXT')
+  }
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_task_materializations (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, subject_key TEXT NOT NULL,
+    target_task_id TEXT, revision INTEGER NOT NULL, request_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+    UNIQUE(project_id, revision), UNIQUE(project_id, request_id)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_task_step_links (
+    id TEXT PRIMARY KEY, materialization_id TEXT NOT NULL, project_id TEXT NOT NULL,
+    subject_key TEXT NOT NULL, plan_fingerprint TEXT NOT NULL, step_key TEXT NOT NULL,
+    task_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+    UNIQUE(project_id, subject_key, plan_fingerprint, step_key)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_business_session_restrictions (
+    session_id TEXT NOT NULL, execution_id TEXT NOT NULL, task_id TEXT NOT NULL,
+    observed_at INTEGER NOT NULL, project_id TEXT, PRIMARY KEY(session_id, execution_id, task_id)
+  )`)
+  if (!readColumnNames(database, 'project_owner_business_session_restrictions').includes('project_id')) database.exec('ALTER TABLE project_owner_business_session_restrictions ADD COLUMN project_id TEXT')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_business_restriction_task ON project_owner_business_session_restrictions(task_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_business_restriction_execution ON project_owner_business_session_restrictions(execution_id)')
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_preparations (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT,
     revision INTEGER NOT NULL, request_id TEXT NOT NULL, payload TEXT NOT NULL,
@@ -1430,6 +1452,7 @@ type TaskRow = {
   permission_requests: string | null;
   token_budget: number | null;
   development_scope: string | null;
+  owner_step_link_id: string | null;
   controlled_preparation_id: string | null;
   sort_order: number;
   created_at: number; updated_at: number;
@@ -1491,6 +1514,7 @@ function rowToTask(row: TaskRow): Task {
     externalSync: row.external_sync ? JSON.parse(row.external_sync) : undefined,
     permissionRequests: parseJsonArray(row.permission_requests),
     developmentScope: row.development_scope ? JSON.parse(row.development_scope) as Task['developmentScope'] : undefined,
+    ownerStepLinkId: row.owner_step_link_id ?? undefined,
     controlledPreparationId: row.controlled_preparation_id ?? undefined,
     createdByUserId: row.created_by_user_id ?? undefined,
     createdByMemberId: row.created_by_member_id ?? undefined,
@@ -1597,6 +1621,53 @@ export function reorderProjects(orderedIds: string[]): boolean {
 export function hasOwnerPlanningExecutionEvidence(executionId: string): boolean {
   return ['project_owner_planning_admissions', 'project_owner_planning_stop_requests', 'project_owner_planning_callback_evidence', 'project_owner_planning_run_receipts', 'project_owner_planning_run_outcomes'].some(table => Boolean(getProjectDb().prepare(`SELECT execution_id FROM ${table} WHERE execution_id = ? LIMIT 1`).get(executionId)))
 }
+/** 残余用途只限制能力，不校验positive授权；空/坏marker同样不是legacy。 */
+export function hasOwnerBusinessTaskEvidence(taskId: string): boolean {
+  const database = getProjectDb(), visited = new Set<string>()
+  let current: string | null = taskId
+  while (current) {
+    // 破损/循环祖先身份不能成为可执行legacy，限制只沿真实parent关系传播。
+    if (visited.has(current) || visited.size >= 256) return true
+    visited.add(current)
+    if (database.prepare('SELECT id FROM tasks WHERE id=? AND owner_step_link_id IS NOT NULL').get(current)
+      || database.prepare('SELECT task_id FROM project_owner_business_session_restrictions WHERE task_id=? LIMIT 1').get(current)
+      || database.prepare('SELECT id FROM project_owner_task_step_links WHERE task_id=? LIMIT 1').get(current)
+      || database.prepare('SELECT id FROM project_owner_task_materializations WHERE target_task_id=? LIMIT 1').get(current)
+      || database.prepare(`SELECT h.id FROM project_owner_task_materializations h, json_each(CASE WHEN json_valid(h.payload) THEN h.payload ELSE '{}' END, '$.links') item WHERE json_extract(item.value,'$.taskId')=? LIMIT 1`).get(current)) return true
+    const row = database.prepare('SELECT parent_id FROM tasks WHERE id=?').get(current) as { parent_id: string | null } | undefined
+    current = row?.parent_id ?? null
+  }
+  return false
+}
+export function hasOwnerBusinessExecutionEvidence(executionId: string): boolean {
+  if (getProjectDb().prepare('SELECT execution_id FROM project_owner_business_session_restrictions WHERE execution_id=? LIMIT 1').get(executionId)) return true
+  const execution = getProjectDb().prepare('SELECT entity_type, entity_id FROM agent_executions WHERE id = ?').get(executionId) as { entity_type: string; entity_id: string } | undefined
+  if (!execution) return false
+  if (execution.entity_type === 'task') return hasOwnerBusinessTaskEvidence(execution.entity_id)
+  if (execution.entity_type === 'subTask') {
+    const parent = getProjectDb().prepare('SELECT task_id FROM execution_subtasks WHERE id = ?').get(execution.entity_id) as { task_id: string } | undefined
+    return Boolean(parent && hasOwnerBusinessTaskEvidence(parent.task_id))
+  }
+  return false
+}
+
+/** 内部负向限制，不接受客户端状态/角色作为许可。 */
+export function assertNoOwnerBusinessTask(taskId: string): void {
+  if (hasOwnerBusinessTaskEvidence(taskId)) throw new Error('Owner业务任务仅暂停落地，执行许可与资料门禁尚未开放')
+}
+export function preserveOwnerBusinessSessionEvidence(sessionId: string): void {
+  // queued账本用空字符串占位，不是跨执行的会话身份。
+  if (!sessionId.trim()) return
+  const database = getProjectDb()
+  const rows = database.prepare('SELECT id, entity_type, entity_id FROM agent_executions WHERE session_id = ?').all(sessionId) as Array<{ id: string; entity_type: string; entity_id: string }>
+  for (const row of rows) {
+    if (!hasOwnerBusinessExecutionEvidence(row.id)) continue
+    const parent = row.entity_type === 'subTask' ? database.prepare('SELECT task_id FROM execution_subtasks WHERE id=?').get(row.entity_id) as { task_id: string } | undefined : undefined
+    const taskId = parent?.task_id ?? row.entity_id, projectId = getTask(taskId)?.projectId ?? getAgentExecution(row.id)?.projectId ?? null
+    database.prepare('INSERT OR IGNORE INTO project_owner_business_session_restrictions(session_id,execution_id,task_id,observed_at,project_id) VALUES(?,?,?,?,?)').run(sessionId, row.id, taskId, now(), projectId)
+  }
+}
+
 export function hasOwnerPlanningTaskEvidence(taskId: string): boolean {
   const database = getProjectDb()
   if (database.prepare('SELECT id FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId) || database.prepare('SELECT id FROM controlled_task_preparations WHERE task_id = ? AND owner_planning_link_id IS NOT NULL').get(taskId)) return true
@@ -1605,6 +1676,7 @@ export function hasOwnerPlanningTaskEvidence(taskId: string): boolean {
 }
 export function deleteProject(id: string): boolean {
   const database = getProjectDb()
+  if (database.prepare('SELECT id FROM project_owner_task_materializations WHERE project_id=? LIMIT 1').get(id) || database.prepare('SELECT id FROM project_owner_task_step_links WHERE project_id=? LIMIT 1').get(id)) throw new Error('Owner任务材料化证据禁止项目物理删除')
   if (database.prepare('SELECT id FROM project_owner_execution_preparations WHERE project_id = ? LIMIT 1').get(id)) throw new Error('项目关联Owner执行准备证据，暂不支持物理删除，请保留证据')
   if (database.prepare('SELECT id FROM project_owner_planning_links WHERE project_id = ? LIMIT 1').get(id) || database.prepare('SELECT id FROM controlled_task_preparations WHERE project_id = ? AND owner_planning_link_id IS NOT NULL LIMIT 1').get(id) || (database.prepare('SELECT id FROM agent_executions WHERE project_id = ?').all(id) as { id: string }[]).some(item => hasOwnerPlanningExecutionEvidence(item.id))) throw new Error('项目关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined
@@ -1639,25 +1711,29 @@ export function deleteProject(id: string): boolean {
 // ===== 任务 CRUD =====
 
 export function createTask(projectId: string, input: CreateTaskInput, preparation?: { id: string }): Task {
+  if (input.parentId) assertNoOwnerBusinessTask(input.parentId)
+  if (Object.hasOwn(input, 'ownerStepLinkId')) throw new Error('Owner用途标记不能从普通创建入口传入')
+  return insertTask(projectId, input, randomUUID(), preparation)
+}
+function insertTask(projectId: string, input: CreateTaskInput, id: string, preparation?: { id: string }, ownerLinkId?: string): Task {
   const database = getProjectDb()
-  const id = randomUUID()
   const timestamp = now()
   const sortOrder = -timestamp
   database.prepare(
     `INSERT INTO tasks (
       id, project_id, parent_id, title, description, status, priority,
-      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, development_scope, controlled_preparation_id, sort_order, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      assignee_user_id, assignee_display_name, assignee_member_id, created_by_user_id, created_by_member_id, workspace_id, start_date, due_date, permission_requests, token_budget, development_scope, controlled_preparation_id, owner_step_link_id, sort_order, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, projectId, input.parentId ?? null, input.title, input.description ?? '',
-    preparation ? 'paused' : 'pending', input.priority ?? 'medium',
+    preparation || ownerLinkId ? 'paused' : 'pending', input.priority ?? 'medium',
     input.assignee?.userId ?? null, input.assignee?.displayName ?? null,
     input.assigneeMemberId ?? null,
     input.createdByUserId ?? null, input.createdByMemberId ?? null, input.workspaceId ?? null,
     input.startDate ?? null, input.dueDate ?? null,
     JSON.stringify(input.permissionRequests ?? []), input.tokenBudget ?? null,
     input.developmentScope ? JSON.stringify(input.developmentScope) : null,
-    preparation?.id ?? null, sortOrder, timestamp, timestamp
+    preparation?.id ?? null, ownerLinkId ?? null, sortOrder, timestamp, timestamp
   )
   recordProjectActivity({
     projectId,
@@ -1667,6 +1743,56 @@ export function createTask(projectId: string, input: CreateTaskInput, preparatio
     summary: `创建任务「${input.title}」`,
   })
   return getTask(id)!
+}
+
+let ownerBuildScope: { id: string; tasks: Set<string>; edges: Set<string> } | null = null
+/** 同步、单次、未提交batch作用域；已提交关联永不变成恢复capability。 */
+export function withOwnerTaskMaterializationBuild(id: string, operation: () => void): void {
+  const database = getProjectDb()
+  const row = database.prepare('SELECT integrity_hash FROM project_owner_task_materializations WHERE id=?').get(id) as { integrity_hash: string } | undefined
+  if (!database.isTransactionActive() || ownerBuildScope || row?.integrity_hash !== 'pending') throw new Error('Owner内部落地拒绝历史或未持有本次写入作用域')
+  ownerBuildScope = { id, tasks: new Set(), edges: new Set() }
+  try { operation() } finally { ownerBuildScope = null }
+}
+/** 只能消费同事务服务端构建的精确关联；不是通用status覆盖入口。 */
+function ownerMaterializationLink(linkId: string): OwnerTaskStepLink {
+  const database = getProjectDb()
+  if (!database.isTransactionActive()) throw new Error('Owner任务落地必须在权威事务内')
+  const row = database.prepare('SELECT * FROM project_owner_task_step_links WHERE id=?').get(linkId) as { project_id: string; task_id: string; materialization_id: string; payload: string } | undefined
+  if (!row) throw new Error('Owner任务关联不存在')
+  if (!ownerBuildScope || ownerBuildScope.id !== row.materialization_id) throw new Error('Owner内部builder不能重放已提交关联')
+  const state = database.prepare('SELECT integrity_hash FROM project_owner_task_materializations WHERE id=?').get(row.materialization_id) as { integrity_hash: string } | undefined
+  if (state?.integrity_hash !== 'pending') throw new Error('Owner已提交证据不能用作恢复能力')
+  const link = JSON.parse(row.payload) as OwnerTaskStepLink
+  const header = database.prepare('SELECT payload FROM project_owner_task_materializations WHERE id=?').get(row.materialization_id) as { payload: string } | undefined
+  const batch = header ? JSON.parse(header.payload) as OwnerTaskMaterializationRecord : null
+  if (!batch || batch.purpose !== 'owner_business_task_materialization' || batch.stage !== 'paused_materialized_needs_revalidation' || link.id !== linkId || link.taskId !== row.task_id || link.projectId !== row.project_id || link.materializationId !== batch.id || batch.projectId !== link.projectId || !batch.links.some(item => item.id === link.id && item.taskId === link.taskId)) throw new Error('Owner任务关联身份不一致')
+  return link
+}
+export function materializePausedOwnerTask(linkId: string): Task {
+  const link = ownerMaterializationLink(linkId), projection = link.projection
+  if (ownerBuildScope!.tasks.has(linkId)) throw new Error('Owner本次Task写入只能消费一次')
+  ownerBuildScope!.tasks.add(linkId)
+  if (getTask(link.taskId)) {
+    if (link.kind !== 'existing_target' || projection.targetTaskId !== link.taskId) throw new Error('Owner不能重用同名或其他权威任务')
+    const task = updateTaskInternal(link.taskId, { assignee: projection.assignee, workspaceId: projection.workspaceId, developmentScope: projection.developmentScope, status: 'paused' }, true)
+    if (!task) throw new Error('Owner目标任务已不存在')
+    if (projection.clearAssigneeMemberId !== true) throw new Error('Owner负责人变更必须明确清除旧成员身份')
+    getProjectDb().prepare('UPDATE tasks SET owner_step_link_id=?,assignee_member_id=NULL WHERE id=?').run(link.id,link.taskId)
+    return getTask(link.taskId)!
+  }
+  if (link.kind !== 'created' || projection.targetTaskId !== undefined) throw new Error('Owner目标任务不可补造')
+  return insertTask(link.projectId, { title: projection.title, description: projection.description, assignee: projection.assignee, workspaceId: projection.workspaceId, developmentScope: projection.developmentScope, createdByUserId: 'local-user' }, link.taskId, undefined, link.id)
+}
+export function materializeOwnerTaskDependency(linkId: string, upstreamLinkId: string): TaskDependency {
+  const downstream = ownerMaterializationLink(linkId), upstream = ownerMaterializationLink(upstreamLinkId)
+  if (downstream.materializationId !== upstream.materializationId || downstream.projectId !== upstream.projectId || !downstream.projection.dependencies.includes(upstream.stepKey)) throw new Error('Owner依赖不属于本次冻结闭包')
+  const pair = JSON.stringify([linkId,upstreamLinkId])
+  if (ownerBuildScope!.edges.has(pair)) throw new Error('Owner本次依赖写入只能消费一次')
+  ownerBuildScope!.edges.add(pair)
+  const edge = insertTaskDependency(downstream.taskId, upstream.taskId, 'finish_to_start')
+  if (edge.type !== 'finish_to_start') throw new Error('Owner依赖类型不匹配')
+  return edge
 }
 
 export function listTasks(projectId: string, filter?: ListTasksFilter): Task[] {
@@ -1704,9 +1830,18 @@ export function getTask(id: string): Task | null {
 }
 
 export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): Task | null {
+  return updateTaskInternal(id, updates, false)
+}
+function updateTaskInternal(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>, ownerMaterialization: boolean): Task | null {
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
   if (!existing) return null
+  if (updates.parentId) assertNoOwnerBusinessTask(updates.parentId)
+  if (Object.hasOwn(updates, 'ownerStepLinkId') && updates.ownerStepLinkId !== undefined) throw new Error('Owner用途标记不可普通编辑')
+  if (!ownerMaterialization && hasOwnerBusinessTaskEvidence(id)) {
+    const allowed = new Set(['status', 'completionNotes'])
+    if (Object.keys(updates).some(key => !allowed.has(key)) || (updates.status !== undefined && !['paused', 'cancelled'].includes(updates.status))) assertNoOwnerBusinessTask(id)
+  }
   const statuses = listTaskStatuses(existing.project_id)
   const statusChanged = updates.status !== undefined && updates.status !== existing.status
   // draft 组进出规则：草稿是流程外待确认态，只能经 confirmTaskDraft/rejectTaskDraft 链路离开，
@@ -1791,7 +1926,10 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
 }
 
 export function deleteTask(id: string): boolean {
+  assertNoOwnerBusinessTask(id)
   const database = getProjectDb()
+  const related = database.prepare('SELECT task_id,depends_on_task_id FROM task_dependencies WHERE task_id=? OR depends_on_task_id=?').all(id,id) as Array<{ task_id: string; depends_on_task_id: string }>
+  for (const edge of related) { assertNoOwnerBusinessTask(edge.task_id); assertNoOwnerBusinessTask(edge.depends_on_task_id) }
   if (database.prepare('SELECT id FROM project_owner_execution_preparations WHERE task_id = ? LIMIT 1').get(id)) throw new Error('任务关联Owner执行准备证据，暂不支持物理删除，请保留证据')
   if (hasOwnerPlanningTaskEvidence(id) || database.prepare("SELECT id FROM project_owner_planning_links WHERE json_extract(payload, '$.targetTaskId') = ? LIMIT 1").get(id)) throw new Error('任务关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
@@ -1900,6 +2038,7 @@ export function listSubTasks(parentId: string): Task[] {
 // ===== 独立执行 subTask =====
 
 export function createExecutionSubTask(taskId: string, input: CreateExecutionSubTaskInput): SubTask | null {
+  assertNoOwnerBusinessTask(taskId)
   const database = getProjectDb()
   const parent = getTask(taskId)
   if (!parent) return null
@@ -1939,6 +2078,7 @@ export function updateExecutionSubTask(
   if (!existing) return null
   const parent = getTask(existing.task_id)
   if (!parent) return null
+  if (hasOwnerBusinessTaskEvidence(parent.id) && (Object.keys(updates).some(key => key !== 'status') || (updates.status !== undefined && !['paused','cancelled'].includes(updates.status)))) assertNoOwnerBusinessTask(parent.id)
   let completedAt = existing.completed_at
   if (updates.status === 'completed') completedAt = now()
   else if (updates.status !== undefined) completedAt = null
@@ -1964,12 +2104,15 @@ export function updateExecutionSubTask(
 }
 
 export function deleteExecutionSubTask(id: string): boolean {
+  const ownerParent = getProjectDb().prepare('SELECT task_id FROM execution_subtasks WHERE id=?').get(id) as { task_id: string } | undefined
+  if (ownerParent) assertNoOwnerBusinessTask(ownerParent.task_id)
   return getProjectDb().prepare(`DELETE FROM execution_subtasks WHERE id = ?`).run(id).changes > 0
 }
 
 // ===== 任务草稿模式 =====
 
 export function createTaskDraft(projectId: string, input: CreateTaskInput): Task {
+  if (input.parentId) assertNoOwnerBusinessTask(input.parentId)
   const database = getProjectDb()
   const id = randomUUID()
   const timestamp = now()
@@ -1989,6 +2132,7 @@ export function createTaskDraft(projectId: string, input: CreateTaskInput): Task
 }
 
 export function confirmTaskDraft(id: string): Task | null {
+  assertNoOwnerBusinessTask(id)
   const task = getTask(id)
   if (!task || task.status !== 'draft') return null
   // 确认是 draft 离开的唯一合法通道（updateTask 已禁止普通路径 draft↔非draft），
@@ -2155,6 +2299,10 @@ export function updateTaskStatus(projectId: string, statusId: string, patch: Upd
   const database = getProjectDb()
   const existing = getTaskStatus(projectId, statusId)
   if (!existing) return null
+  if (patch.stateGroup !== undefined && patch.stateGroup !== existing.stateGroup) {
+    const affected = database.prepare('SELECT id FROM tasks WHERE project_id=? AND status=?').all(projectId,statusId) as Array<{ id: string }>
+    for (const task of affected) assertNoOwnerBusinessTask(task.id)
+  }
   database.prepare(
     `UPDATE task_statuses SET name = ?, state_group = ?, color = ?, wip_limit = ? WHERE project_id = ? AND id = ?`
   ).run(
@@ -2177,6 +2325,8 @@ export function deleteTaskStatus(projectId: string, statusId: string, migrateToS
   if (!target) throw new Error('目标状态不存在，无法迁移任务')
   if (target.id === statusId) throw new Error('不能迁移到被删除的状态本身')
   const tx = database.transaction(() => {
+    const affected = database.prepare('SELECT id FROM tasks WHERE project_id=? AND status=?').all(projectId,statusId) as Array<{ id: string }>
+    for (const task of affected) assertNoOwnerBusinessTask(task.id)
     database.prepare(`UPDATE tasks SET status = ?, updated_at = ? WHERE project_id = ? AND status = ?`)
       .run(migrateToStatusId, now(), projectId, statusId)
     database.prepare(`DELETE FROM task_statuses WHERE project_id = ? AND id = ?`).run(projectId, statusId)
@@ -2250,11 +2400,12 @@ function dependencyWouldCycle(taskId: string, dependsOnTaskId: string, projectId
   return false
 }
 
-export function createTaskDependency(
-  taskId: string,
-  dependsOnTaskId: string,
-  type: TaskDependencyType = 'finish_to_start',
-): TaskDependency {
+export function createTaskDependency(taskId: string, dependsOnTaskId: string, type: TaskDependencyType = 'finish_to_start'): TaskDependency {
+  assertNoOwnerBusinessTask(taskId)
+  assertNoOwnerBusinessTask(dependsOnTaskId)
+  return insertTaskDependency(taskId, dependsOnTaskId, type)
+}
+function insertTaskDependency(taskId: string, dependsOnTaskId: string, type: TaskDependencyType): TaskDependency {
   const database = getProjectDb()
   if (taskId === dependsOnTaskId) throw new Error('任务不能依赖自身')
   const task = getTask(taskId)
@@ -2279,6 +2430,8 @@ export function createTaskDependency(
 }
 
 export function deleteTaskDependency(id: string): boolean {
+  const edge = getProjectDb().prepare('SELECT task_id, depends_on_task_id FROM task_dependencies WHERE id=?').get(id) as { task_id: string; depends_on_task_id: string } | undefined
+  if (edge) { assertNoOwnerBusinessTask(edge.task_id); assertNoOwnerBusinessTask(edge.depends_on_task_id) }
   return getProjectDb().prepare(`DELETE FROM task_dependencies WHERE id = ?`).run(id).changes > 0
 }
 
@@ -3163,6 +3316,11 @@ export function bumpAgentEmployeeStats(id: string, input: { completed?: boolean;
 // ===== AI 员工执行记录 =====
 
 export function createAgentExecution(input: CreateAgentExecutionInput): AgentExecution {
+  const parent = input.entityType === 'subTask' ? getProjectDb().prepare('SELECT task_id FROM execution_subtasks WHERE id=?').get(input.entityId) as { task_id: string } | undefined : undefined
+  assertNoOwnerBusinessTask(parent?.task_id ?? input.entityId)
+  const existingSession = getProjectDb().prepare('SELECT session_id FROM project_owner_business_session_restrictions WHERE session_id=? LIMIT 1').get(input.sessionId)
+  const sessionExecutions = getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').all(input.sessionId) as Array<{ id: string }>
+  if (input.sessionId.trim() && (existingSession || sessionExecutions.some(row => hasOwnerBusinessExecutionEvidence(row.id)))) throw new Error('Owner受限会话不能创建其他执行身份')
   const database = getProjectDb()
   const now = input.startedAt ?? Date.now()
   database.prepare(
@@ -3205,6 +3363,10 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
   const database = getProjectDb()
   const existing = getAgentExecution(id)
   if (!existing) return null
+  if (hasOwnerBusinessExecutionEvidence(id)) {
+    preserveOwnerBusinessSessionEvidence(existing.sessionId)
+    if (patch.sessionId !== undefined || patch.status === 'queued' || patch.status === 'running' || patch.status === 'completed' || patch.prompt !== undefined || patch.requestedPermissions !== undefined || patch.capabilityVersionIds !== undefined || patch.capabilityContentHash !== undefined) throw new Error('Owner业务执行不能更换会话、能力或变为运行/完成')
+  }
   const merged: AgentExecution = { ...existing, ...patch, id: existing.id }
   database.prepare(
     `UPDATE agent_executions SET

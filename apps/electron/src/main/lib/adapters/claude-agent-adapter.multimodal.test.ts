@@ -1,8 +1,18 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import type { SDKMessage } from '@gravitas/shared'
 import type { ClaudeAgentQueryOptions } from './claude-agent-adapter'
 import Anthropic from '@anthropic-ai/sdk'
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages'
+
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+const directory = mkdtempSync(join(tmpdir(), 'claude-owner-purpose-'))
+const previousConfig = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = directory
+const store = await import('../project-sqlite-store')
+beforeAll(async () => { await store.initProjectDb() })
+afterAll(() => { store.closeProjectDb(); if (previousConfig === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previousConfig; rmSync(directory,{recursive:true,force:true}) })
 
 interface CapturedClaudeUserMessage {
   type: 'user'

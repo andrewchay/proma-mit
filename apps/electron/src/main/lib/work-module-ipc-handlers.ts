@@ -1,3 +1,4 @@
+import { registerProjectOwnerTaskIpcHandlers } from './project-owner-task-ipc'
 import { registerProjectOwnerExecutionIpcHandlers } from './project-owner-execution-ipc'
 import { registerProjectOwnerRuntimeIpcHandlers } from './project-owner-runtime-ipc'
 /**
@@ -431,6 +432,7 @@ export function registerWorkModuleIpcHandlers(): void {
   // 草案服务独立于任务/项目链事件，不唤醒派发。
   registerProjectOwnerGoalIpcHandlers(ipcMain)
   registerProjectOwnerPlanIpcHandlers(ipcMain)
+  registerProjectOwnerTaskIpcHandlers(ipcMain)
   registerProjectOwnerExecutionIpcHandlers(ipcMain)
   registerProjectOwnerRuntimeIpcHandlers(ipcMain)
   // 项目 CRUD

@@ -1,3 +1,4 @@
+import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
 /**
  * Vercel AI SDK Agent Runtime 适配器。
@@ -100,6 +101,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: AISDKAgentQueryOptions): AsyncIterable<SDKMessage> {
+    assertNoOwnerBusinessSession(input.sessionId)
     // 先按权威 execution 识别用途；不接受 query 参数授予 Owner 权限。
     const owner = resolveOwnerPlanningSession(input.sessionId)
     const {
@@ -165,7 +167,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
     this.activeSessions.set(sessionId, activeSession)
     let mcpRelease: (() => void) | undefined
     try {
-      const controlledFetch = controlled ? createControlledProviderFetch(sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: model, permissionMode: activeSession.state.permissionMode }), pilotRuntime?.fetch ?? getFetchFn(await getEffectiveProxyUrl())) : undefined
+      const controlledFetch = createControlledProviderFetch(sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: model, permissionMode: activeSession.state.permissionMode }), pilotRuntime?.fetch ?? getFetchFn(await getEffectiveProxyUrl()))
       const requestFetch = controlledFetch ?? pilotRuntime?.fetch
       if (owner && !controlledFetch) throw new Error('Owner规划缺少受控模型出口')
       if (owner) {
@@ -226,6 +228,14 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         }
       }
 
+      for (const tool of tools) {
+        const execute = tool.execute.bind(tool)
+        tool.execute = async (...args) => {
+          assertNoOwnerBusinessSession(sessionId)
+          return execute(...args)
+        }
+      }
+      assertNoOwnerBusinessSession(sessionId)
       let currentPrompt = buildAISDKSkillRequestedPrompt(prompt, skillMentions)
       let currentAttachments = attachments
       let historyMessages = input.historyMessages ?? []
@@ -260,6 +270,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       // 保持用户在输出期间继续追问时的上下文连续性。
       let contextOverflowRecovered = false
       while (!activeSession.cancelled) {
+        assertNoOwnerBusinessSession(sessionId)
         let messages: SDKMessage[]
         try {
           messages = await this.runtimeCore.runAgentTurn({
@@ -289,14 +300,22 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
             },
             onAgentEvent: input.onAgentEvent,
-            canUseTool: input.canUseTool,
-            onPermissionModeChange: controlled ? (mode) => assertControlledPermissionChange(sessionId, mode) : undefined,
+            canUseTool: input.canUseTool ? async (name, args, signal) => {
+              assertNoOwnerBusinessSession(sessionId)
+              const result = await input.canUseTool!(name, args, signal)
+              assertNoOwnerBusinessSession(sessionId)
+              return result
+            } : undefined,
+            onPermissionModeChange: (mode) => assertControlledPermissionChange(sessionId, mode),
             onEnterPlanMode: input.onEnterPlanMode,
             onExitPlanMode: input.onExitPlanMode,
             onAskUser: input.onAskUser,
             // Pilot 受控执行禁用子代理委派：子代理新 sessionId 解析不到预算上下文，
             // 会绕过受控出口；未配置 runSubAgent 时 Agent 工具直接报错，零花费。
-            runSubAgent: pilotRuntime || controlled ? undefined : input.runSubAgent,
+            runSubAgent: pilotRuntime || controlled || !input.runSubAgent ? undefined : async (args) => {
+              assertNoOwnerBusinessSession(sessionId)
+              return input.runSubAgent!(args)
+            },
             onGoalCheckpoint: input.onGoalCheckpoint,
             mcpManager,
             workspaceSlug,
@@ -371,6 +390,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async interruptQuery(sessionId: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
       throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
     }
@@ -381,6 +401,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async setPermissionMode(sessionId: string, mode: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
       throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
     }
@@ -394,6 +415,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async sendQueuedMessage(sessionId: string, message: SDKUserMessageInput): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
       throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
     }

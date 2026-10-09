@@ -10,7 +10,21 @@
 
 import type { DevelopmentTaskScope, AgentWorkspace } from '@gravitas/shared'
 import type { Task } from './project-types'
-import { getTask, updateTask } from './project-sqlite-store'
+import { getTask, updateTask, listAgentExecutionsByEntity } from './project-sqlite-store'
+import {
+  assertNoOwnerBusinessTask,
+  assertNoOwnerBusinessExecution,
+  assertNoOwnerBusinessSession,
+} from './project-owner-task-evidence'
+
+/** 返工或范围重写不能让既有受限execution/session重新获得普通研发身份。 */
+function assertLegacyDevelopmentTaskPurpose(taskId: string): void {
+  assertNoOwnerBusinessTask(taskId)
+  for (const execution of listAgentExecutionsByEntity('task', taskId)) {
+    if (execution.sessionId) assertNoOwnerBusinessSession(execution.sessionId)
+    assertNoOwnerBusinessExecution(execution.id)
+  }
+}
 
 /** 归一化后的研发范围：路径已清洗，reviewerId / decisionIds 已去重 */
 export type NormalizedDevelopmentScope = Readonly<{
@@ -124,6 +138,7 @@ export function setTaskDevelopmentScope(
   options: { confirmHumanReassign?: boolean } = {},
   facts: { getWorkspace(id: string): AgentWorkspace | undefined },
 ): Task {
+  assertLegacyDevelopmentTaskPurpose(taskId)
   const task = getTask(taskId)
   if (!task) throw new Error('任务不存在')
   if (task.completedAt) throw new Error('任务已完成，不能修改执行范围')
@@ -150,6 +165,7 @@ export function resolveDevelopmentDispatchScope(
   task: Task,
   facts: { getWorkspace(id: string): AgentWorkspace | undefined },
 ): NormalizedDevelopmentScope {
+  assertLegacyDevelopmentTaskPurpose(task.id)
   if (!task.developmentScope) throw new Error('任务未配置研发执行范围，不能按研发链路派发')
   const scope = validateDevelopmentScope(task.developmentScope, facts)
   if (task.workspaceId && task.workspaceId !== scope.workspaceId) {

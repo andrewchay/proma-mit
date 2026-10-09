@@ -20,6 +20,7 @@ import {
   saveOwnerExecutionAtom,
   type OwnerExecutionEdit,
 } from '../../atoms/project-owner-execution-atoms'
+import { ProjectOwnerTaskMaterializationPanel } from './ProjectOwnerTaskMaterializationPanel'
 const field = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm'
 const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 /** 完整冻结事实；历史只读，没有恢复、发行或执行入口。 */
@@ -460,6 +461,7 @@ export function ProjectOwnerExecutionPreparationPanel({
           {!e.history.length && <p className="text-sm">暂无历史</p>}
         </section>
       )}
+      <ProjectOwnerTaskMaterializationPanel projectId={projectId} taskId={taskId} />
     </section>
   )
 }

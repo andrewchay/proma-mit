@@ -5,7 +5,7 @@
  * Agent 能够完成"读取文件 → 编辑文件 → 返回结果"的完整循环。
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach, mock, beforeAll, afterAll } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -35,6 +35,14 @@ mock.module('../document-parser', () => ({
   isDocumentAttachment: (mediaType: string) => mediaType === 'text/plain',
   extractTextFromAttachment: async (localPath: string) => `文档内容：${localPath}`,
 }))
+
+// 用途查询现在必须读取权威库；单独TEMP配置，不以missing DB回退legacy。
+const configDirectory = mkdtempSync(join(tmpdir(), 'proma-paa-owner-gate-'))
+const previousConfigDirectory = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = configDirectory
+const projectStore = await import('../project-sqlite-store')
+beforeAll(async () => { await projectStore.initProjectDb() })
+afterAll(() => { projectStore.closeProjectDb(); if (previousConfigDirectory === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDirectory; rmSync(configDirectory, { recursive: true, force: true }) })
 
 // 被测模块需要在 mock 之后导入
 const { ProviderAgnosticAgentAdapter } = await import('./provider-agnostic-agent-adapter')

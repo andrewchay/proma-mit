@@ -5,7 +5,7 @@
  * 独立 mock @gravitas/core，避免与既有适配器测试相互干扰。
  */
 
-import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
+import { describe, expect, mock, test, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -25,6 +25,14 @@ mock.module('../document-parser', () => ({
   isDocumentAttachment: () => false,
   extractTextFromAttachment: async () => '',
 }))
+
+// 用途查询现在必须读取权威库；单独TEMP配置，不以missing DB回退legacy。
+const configDirectory = mkdtempSync(join(tmpdir(), 'proma-paa-owner-gate-'))
+const previousConfigDirectory = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = configDirectory
+const projectStore = await import('../project-sqlite-store')
+beforeAll(async () => { await projectStore.initProjectDb() })
+afterAll(() => { projectStore.closeProjectDb(); if (previousConfigDirectory === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDirectory; rmSync(configDirectory, { recursive: true, force: true }) })
 
 // 被测模块需要在 mock 之后导入
 const { ProviderAgnosticAgentAdapter } = await import('./provider-agnostic-agent-adapter')

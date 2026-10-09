@@ -1,3 +1,4 @@
+import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 /**
  * Provider-Agnostic Agent 适配器
  *
@@ -90,6 +91,7 @@ interface ToolCallExecutionCtx {
     apiKey: string
     baseUrl: string
     model: string
+    fetchFn?: typeof globalThis.fetch
     audit?: Omit<import('../context-compaction-audit-service').ContextCompactionAuditInput, 'packetVersion'>
   }
   /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
@@ -190,6 +192,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 发起查询，返回 SDKMessage 异步迭代流 */
   async *query(input: ProviderAgnosticAgentQueryOptions): AsyncIterable<SDKMessage> {
+    assertNoOwnerBusinessSession(input.sessionId)
     const {
       sessionId,
       prompt,
@@ -233,10 +236,17 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     }
     this.activeSessions.set(sessionId, activeSession)
 
+    const baseFetch = getFetchFn(await getEffectiveProxyUrl())
+    assertNoOwnerBusinessSession(sessionId)
+    const ownerFetch = ((...args: Parameters<typeof globalThis.fetch>) => {
+      assertNoOwnerBusinessSession(sessionId)
+      return baseFetch(...args)
+    }) as typeof globalThis.fetch
     if (requestedOperation === 'compact') {
       try {
         await compactSessionNow({
           sessionId,
+          fetchFn: ownerFetch,
           provider,
           adapterProvider,
           apiKey,
@@ -303,8 +313,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     let totalCacheCreationTokens = 0
 
     try {
-      const proxyUrl = await getEffectiveProxyUrl()
-      const fetchFn = getFetchFn(proxyUrl)
+      const fetchFn = ownerFetch
 
       // 自动上下文压缩：优先按同模型的已报告 token 与已确认窗口判断；缺少观测时兼容历史条数回退。
       // 压缩后以新历史继续本轮；boundary 摘要已持久化，后续 query 自然读到。
@@ -312,6 +321,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       if (effectiveHistoryMessages.length > 0 && provider && apiKey && baseUrl) {
         const auto = await maybeAutoCompact({
           sessionId,
+          fetchFn: ownerFetch,
           provider,
           adapterProvider,
           apiKey,
@@ -338,6 +348,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       let contextOverflowRecovered = false
 
       while (!activeSession.cancelled) {
+      assertNoOwnerBusinessSession(sessionId)
         // 本轮产生的 SDKMessage（assistant + tool_result），跨轮追加时纳入历史
         const turnMessages: SDKMessage[] = []
         try {
@@ -371,6 +382,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       const maxRetries = input.maxRetries ?? 2
 
       while (round < maxTurns) {
+        assertNoOwnerBusinessSession(sessionId)
         round++
 
         const request = adapter.buildStreamRequest({
@@ -503,6 +515,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           planModeEntered,
           canUseTool: input.canUseTool,
           compaction: {
+            fetchFn: ownerFetch,
             provider,
             adapterProvider,
             apiKey,
@@ -577,6 +590,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           if (!contextOverflowRecovered && isContextOverflowError(getErrorMessage(error)) && effectiveHistoryMessages.length > 0) {
             const recovered = await compactSessionNow({
               sessionId,
+              fetchFn: ownerFetch,
               provider,
               adapterProvider,
               apiKey,
@@ -649,6 +663,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 软中断当前 turn：终止本轮流式输出，等待流式追加消息后继续下一轮 */
   async interruptQuery(sessionId: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const session = this.activeSessions.get(sessionId)
     if (!session) return
     session.interrupted = true
@@ -660,6 +675,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
    * 消息进入队列；query 外层 while 在每轮结束后取出一条作为下一轮用户输入。
    */
   async sendQueuedMessage(sessionId: string, message: SDKUserMessageInput): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const session = this.activeSessions.get(sessionId)
     if (!session) {
       throw new Error(`[Agent Runtime] 无活跃会话可追加消息: ${sessionId}`)
@@ -680,6 +696,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 动态切换活跃查询的权限模式 */
   async setPermissionMode(sessionId: string, mode: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const session = this.activeSessions.get(sessionId)
     if (!session) return
     if (mode === 'safe' || mode === 'auto' || mode === 'plan' || mode === 'bypassPermissions') {
@@ -708,6 +725,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     toolName: string,
     input: Record<string, unknown>,
     ctx: {
+      sessionId: string
       abortSignal?: AbortSignal
       permissionMode?: PromaPermissionMode
       planModeEntered?: boolean
@@ -824,7 +842,10 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
     if (ctx.canUseTool) {
       const signal = ctx.abortSignal ?? new AbortController().signal
-      return ctx.canUseTool(toolName, input, signal)
+      assertNoOwnerBusinessSession(ctx.sessionId)
+      const result = await ctx.canUseTool(toolName, input, signal)
+      assertNoOwnerBusinessSession(ctx.sessionId)
+      return result
     }
 
     // 本地兜底：只读工具放行，其余拒绝
@@ -892,6 +913,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     toolMap: Map<string, RuntimeToolDefinition>,
     ctx: ToolCallExecutionCtx,
   ): Promise<ToolResult> {
+    assertNoOwnerBusinessSession(ctx.sessionId)
     // CompactContext：立即压缩当前会话历史（摘要早期 + 保留最近），下一轮生效
     if (tc.name === COMPACT_CONTEXT_TOOL_NAME) {
       if (ctx.compaction) {
@@ -984,6 +1006,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
     // 权限检查
     const permission = await this.checkToolPermission(tc.name, tc.arguments, ctx)
+    assertNoOwnerBusinessSession(ctx.sessionId)
     if (!permission.allowed) {
       return {
         toolCallId: tc.id,

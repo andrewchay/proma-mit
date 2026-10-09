@@ -1,3 +1,4 @@
+import { ownerTaskListRefreshSignalAtom } from '../../atoms/project-owner-task-atoms'
 import { selectTaskExecution, executionStopMessage } from './project-task-execution-state'
 import type { UserMappingInput } from '@gravitas/shared'
 /**
@@ -1068,6 +1069,11 @@ function ProjectDetail({
       console.error('加载项目详情失败:', err)
     }
   }, [project.id])
+
+  const ownerTasksRefreshed = useAtomValue(ownerTaskListRefreshSignalAtom)
+  React.useEffect(() => {
+    if (ownerTasksRefreshed?.projectId === project.id) void loadData()
+  }, [ownerTasksRefreshed, project.id, loadData])
 
   // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”)
   React.useEffect(() => {

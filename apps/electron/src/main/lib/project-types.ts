@@ -130,6 +130,7 @@ export interface Task {
   /** 研发任务执行范围（文件委派）；仅研发链路消费，普通任务缺省为空 */
   developmentScope?: DevelopmentTaskScope
   /** 主进程发出的非代码准备回执，普通编辑不能清除或伪造。 */
+  readonly ownerStepLinkId?: string
   readonly controlledPreparationId?: string
   /** 看板/列表展示排序键（升序；拖拽中点法维护，新建任务为创建时刻的负值=最新在前） */
   sortOrder: number

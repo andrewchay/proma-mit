@@ -1,5 +1,5 @@
 /** 离线捕获最终 Provider 请求与 AI SDK 调用参数，不调用真实 Provider。 */
-import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,11 +35,14 @@ mock.module('@gravitas/core', () => ({
 const dir = mkdtempSync(join(tmpdir(), 'ste-assembly-'))
 const originalConfigDir = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = dir
+const ownerPurposeStore = await import('../project-sqlite-store')
+beforeAll(async () => { await ownerPurposeStore.initProjectDb() })
 const { ProviderAgnosticAgentAdapter } = await import('../adapters/provider-agnostic-agent-adapter')
 const { AISDKRuntimeCore } = await import('./ai-sdk-runtime-core')
 const { setPluginEnabled, collectContributingPrompts } = await import('../plugin-manager')
 const { buildSystemPrompt } = await import('../agent-prompt-builder')
 afterAll(() => {
+  ownerPurposeStore.closeProjectDb()
   rmSync(dir, { recursive: true, force: true })
   if (originalConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = originalConfigDir

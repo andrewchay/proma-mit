@@ -1948,6 +1948,10 @@ export interface ElectronAPI {
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
       listProjects: () => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
+      getOwnerTaskMaterialization: import('@gravitas/shared').ProjectOwnerTaskMaterializationApi['getOwnerTaskMaterialization']
+      listOwnerTaskMaterializationHistory: import('@gravitas/shared').ProjectOwnerTaskMaterializationApi['listOwnerTaskMaterializationHistory']
+      previewOwnerTaskMaterialization: import('@gravitas/shared').ProjectOwnerTaskMaterializationApi['previewOwnerTaskMaterialization']
+      materializeOwnerTasks: import('@gravitas/shared').ProjectOwnerTaskMaterializationApi['materializeOwnerTasks']
       getOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['getOwnerExecutionPreparation']
       listOwnerExecutionPreparationHistory: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['listOwnerExecutionPreparationHistory']
       previewOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['previewOwnerExecutionPreparation']
@@ -4689,6 +4693,10 @@ const electronAPI: ElectronAPI = {
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
+      getOwnerTaskMaterialization: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_TASK_MATERIALIZATION, request),
+      listOwnerTaskMaterializationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_TASK_MATERIALIZATION_HISTORY, request),
+      previewOwnerTaskMaterialization: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_TASK_MATERIALIZATION, request),
+      materializeOwnerTasks: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.MATERIALIZE_OWNER_TASKS, request),
       getOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_PREPARATION, request),
       listOwnerExecutionPreparationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_PREPARATION_HISTORY, request),
       previewOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_PREPARATION, request),

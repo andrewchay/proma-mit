@@ -291,7 +291,8 @@ describe('AISDKAgentAdapter', () => {
       // 消费迭代器即可。
     }
     const plainModelInput = (capturedInputs[1]?.model as { input?: { fetch?: unknown } } | undefined)?.input
-    expect(plainModelInput?.fetch).toBeUndefined()
+    // 普通会话也持有负向用途出口，但不因此获得Pilot/controlled许可。
+    expect(typeof plainModelInput?.fetch).toBe('function')
     expect((capturedInputs[1] as unknown as { maxOutputTokens?: number }).maxOutputTokens).toBeUndefined()
   })
 

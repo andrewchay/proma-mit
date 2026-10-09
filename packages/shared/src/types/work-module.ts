@@ -174,6 +174,10 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_PROJECTS: 'project:list-projects',
   GET_PROJECT: 'project:get-project',
   /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
+  GET_OWNER_TASK_MATERIALIZATION: 'project:get-owner-task-materialization',
+  LIST_OWNER_TASK_MATERIALIZATION_HISTORY: 'project:list-owner-task-materialization-history',
+  PREVIEW_OWNER_TASK_MATERIALIZATION: 'project:preview-owner-task-materialization',
+  MATERIALIZE_OWNER_TASKS: 'project:materialize-owner-tasks',
   GET_OWNER_EXECUTION_PREPARATION: 'project:get-owner-execution-preparation',
   LIST_OWNER_EXECUTION_PREPARATION_HISTORY: 'project:list-owner-execution-preparation-history',
   PREVIEW_OWNER_EXECUTION_PREPARATION: 'project:preview-owner-execution-preparation',

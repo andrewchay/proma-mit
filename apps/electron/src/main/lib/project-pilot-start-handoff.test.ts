@@ -1,5 +1,14 @@
-import { expect, test } from 'bun:test'
-import { runRegisteredHeadlessAgent, setHeadlessAgentRunner } from './agent-headless-runner-registry'
+import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+const directory = mkdtempSync(join(tmpdir(), 'pilot-handoff-'))
+const previous = process.env.PROMA_TEST_CONFIG_DIR
+process.env.PROMA_TEST_CONFIG_DIR = directory
+const store = await import('./project-sqlite-store')
+beforeAll(async () => { await store.initProjectDb() })
+afterAll(() => { store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, {recursive:true,force:true}) })
+const { runRegisteredHeadlessAgent, setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
 
 const input = { sessionId: 'pilot-handoff-test', channelId: 'fixture-channel', userMessage: 'fixture', triggeredBy: 'automation' as const }
 const callbacks = { onError: () => {}, onComplete: () => {}, onTitleUpdated: () => {} }

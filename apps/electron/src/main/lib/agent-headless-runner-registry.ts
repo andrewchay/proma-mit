@@ -56,6 +56,8 @@ export interface AgentStopResult {
 
 export type AgentStopper = (sessionId: string, expectedGeneration?: number) => AgentStopResult
 
+import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
+
 let headlessRunner: HeadlessAgentRunner | null = null
 let agentStopper: AgentStopper | null = null
 
@@ -74,7 +76,9 @@ export async function runRegisteredHeadlessAgent(
   if (!headlessRunner) {
     throw new Error('Agent headless runner 尚未初始化')
   }
+  assertNoOwnerBusinessSession(input.sessionId)
   callbacks.onRunnerInvoke?.()
+  assertNoOwnerBusinessSession(input.sessionId)
   await headlessRunner(input, callbacks)
 }
 
