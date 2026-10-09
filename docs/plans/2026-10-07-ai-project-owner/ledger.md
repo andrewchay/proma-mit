@@ -7,7 +7,7 @@
 - 核心目标：AI 是项目 Owner；人给目标、必要约束、关键授权与验收，AI 主动拆解并在有效授权内持续推进。
 - 旧三条路线保留：Pilot 为编排/安全地基，Task Review 为专业执行与审阅适配器，可用性整改为过渡入口。它们的 PASS 不等于 AI Owner 已完成。
 - 旧可用性整改“先手填员工/工作区/文件/决策”的主路径已不再是默认产品目标。R-P1-03 等剩余项不按旧顺序直接续做，先经新能力核验重新映射。
-- 截至2026-10-08本轮：PR19/20已按用户许可合并，`feat/ai-project-owner`快进到main `6c71b384`继续。项目目标草案已有真实服务/IPC/Jotai入口，本片补单任务入口与无收费计划保存/内容确认；计划记录/版本/角色来源不等于AI主动生成或执行授权。模型规划、计划编辑UI与通用Owner调度仍未完成，不把基础切片折算为产品完成比例。
+- 截至2026-10-09 GMT+8：受控Owner规划A–D已本地完成（HEAD `20eb5922`），包含项目/单任务目标、结构化澄清/生成提案、审阅修订/内容确认，以及费用确认→Worker→真实SDK的隔离transport链；真实Provider、代表性用户端到端及通用Owner调度仍未完成。AO-05暂停执行授权准备首片已本地完成并验收，保存准备不收费、不建业务任务、不发行许可；内容确认、规划费用确认、业务执行许可始终分离。历史PR19/20与各片证据不改写，不按基础切片折算产品完成比例。
 - 新产品目标不重置历史门禁结论：既有 G0 审定保留；历史 G1/G4 未补齐项继续有效，新增动作另补契约和证据。
 
 ## 管理职责设计参考（2026-10-07）
@@ -26,9 +26,9 @@
 | AO-00 | N0 | 统一三条路线为目标驱动 AI Owner；保留历史，停止以文件委派为默认模型 | 无 | 已完成（文档） | 2026-10-07 用户确认＋本目录；非产品代码完成 |
 | AO-01 | N0 | 目标驱动可点击原型：非代码项目、代码单任务、主动澄清、计划确认、推进、成果审阅 | AO-00 | 已完成（原型方向确认） | [离线原型 v1](prototype/index.html)；15/15 模拟测试、代表性浏览器走查；用户2026-10-07 01:26 GMT+8认可并要求继续。非完整浏览器/产品验收 |
 | AO-02 | N0 | 源码/契约缺口核验：Owner 上下文、目标与计划持久化、角色池、非代码执行、授权继承、审批续跑、Review/异常 | AO-00 | 进行中 | [第一批能力核验](capability-audit.md)；已读两套 Goal/项目链/Pilot 入口；[存储设计](planning-storage-design.md) 的目标草案表/服务已实现；[计划版本服务](plan-version-service.md)已补同库附属计划历史、来源指纹与岗位能力建议；Owner身份、真实员工/代码角色、配置/授权继承及完整来源映射仍待补 |
-| AO-03 | N1 | 项目/任务目标和必要约束可保存；缺配置不丢目标；模型规划前核验费用/资料授权 | AO-01、AO-02 | 进行中 | 已接SQLite草案服务→shared/IPC/preload/Jotai→项目概览；新增IPC5/5（含真实服务进程内集成）、状态9/9、组件SSR3/3。构建与模拟API浏览器保存走查通过；单任务TaskItem已接目标入口（无员工/Git/工作区也可保存）；规划费用门禁仍待接，固定Electron证据以本轮verification为准 |
-| AO-04 | N1 | Owner 从目标主动提出结构化计划：任务、依赖、角色、成果、标准、风险和预算建议；可解释/修订 | AO-03 | 进行中（协议/审阅子片） | [规划协议与审阅](planning-protocol-review.md)已接必要澄清/提案边界及已有计划编辑、历史/冲突保护；尚无Owner模型调用/生成回执，不能把parser或人工记录算主动规划完成 |
-| AO-05 | N2 | 计划确认、执行授权分离并绑定版本；上下文继承可核对；新增命令契约补审 | AO-02、AO-04 | 待开始 | 保留G0；无费用计划服务已区分内容确认与执行许可、双版本/来源校验，已接人工计划审阅/修订/确认，未接执行授权或新增派发命令，不能记整个AO-05完成 |
+| AO-03 | N1 | 项目/任务目标和必要约束可保存；缺配置不丢目标；模型规划前核验费用/资料授权 | AO-01、AO-02 | 进行中 | 已接SQLite草案服务→shared/IPC/preload/Jotai→项目概览；新增IPC5/5（含真实服务进程内集成）、状态9/9、组件SSR3/3。构建与模拟API浏览器保存走查通过；单任务TaskItem已接目标入口（无员工/Git/工作区也可保存）；规划费用门禁与单请求出口已由A–D接通，Native D验证真实preload/启动/SDK内存transport；真实Provider与代表性完整目标验收待补 |
+| AO-04 | N1 | Owner 从目标主动提出结构化计划：任务、依赖、角色、成果、标准、风险和预算建议；可解释/修订 | AO-03 | 进行中（规划A–D子片已完成） | [受控启动全链](owner-planning-controlled-start.md)已接必要澄清、可信Run/生成提案、编辑/版本/历史/冲突保护；真实SDK内存transport与Native D已验收，不再记模型出口缺失。真实Provider、代表性目标样例与主动业务编排仍待补 |
+| AO-05 | N2 | 计划确认、执行授权分离并绑定版本；上下文继承可核对；新增命令契约补审 | AO-02、AO-04 | 进行中（暂停准备切片已完成） | 2026-10-09用户要求开始并批准[暂停执行准备](owner-execution-preparation.md)契约：冻结confirmed revision/version、步骤/实际人员/资料配置与拟议预算，复用paused Pilot并拒绝旧发行旁路。没有active grant；exact业务任务关联及完整执行/资料/请求来源门禁完成后另审发行，不记整个AO-05完成 |
 | AO-06 | N2 | 计划合法后在授权内创建权威任务、组织白名单角色、依赖推进，无重复和旧入口绕过 | AO-05 | 待开始 | [员工创建修复](employee-creation-repair.md)新增非代码受控配置及20模板预填，仅人工档案/既有任务路径；Owner自动组织、预算授权及派工仍待补，不建平行任务系统 |
 | AO-07 | N2 | Owner 后台跟进执行，组织技术评审/有限返工，主动发现卡点并提出下一步 | AO-06 | 待开始 | 不靠页面 mount 或人工逐条点开始 |
 | AO-08 | N2 | 必要问题主动送达；答复绑定请求/源版本，批准后自动恢复，拒绝/过期正确停等 | AO-07 | 待开始 | 不能把收件箱显示存在当作通知与续跑完成 |
@@ -112,10 +112,10 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 
 ## 9. 下一步
 
-1. 项目/单任务目标入口与无费用计划版本服务已接；固定Electron验收以本轮verification为准。下一批补受控规划调用与可编辑提案，不把保存或内容确认当执行许可。
-2. AO-02 继续角色/上下文/计划来源与适配器映射，在已有计划持久化上接有授权的模型规划；既有安全门禁不绕过。
-3. 草案服务已落，后续每片先补BDD；计划/授权分离、任务落地和后台推进分别验收，不一次放开自由派发。
-4. 不按旧台账继续写表单、不清库、不重置历史状态、不启动真实付费试跑。
+1. 受控规划A–D已完成，不重复实现。AO-05暂停准备的BDD、旧入口拒绝、Native与独立复审已收束；准备不是许可，当前不发行、不派工。
+2. AO-06另审权威业务任务与exact step关联的暂停落地；不能将同项目任意任务、目标任务或规划载体当作已授权映射。随后补AO-05完整派发/预算/启动/资料工具/每请求来源门禁，再明确审批真实许可发行。
+3. AO-02继续真实职责/适配器/来源映射；AO-03/04补代表性目标与真实模型验收，真实费用仍单独授权。AO-07～12后台推进/审批恢复/Review/异常与端到端门禁尚未完成。
+4. 不按旧台账继续默认手填全部任务，不清库或重置历史，不自动扩大范围，不启动真实付费试跑。
 
 ### 2026-10-08 安装更新
 
@@ -177,3 +177,15 @@ C之后将A常量启动禁令替换为严格当前Owner来源校验；明确费�
 最新Native D runId **642c8bd7-1eaa-4784-b08a-14b8022f23da**，Electron39.8.10/ABI140、better-sqlite3/SQLite3.53.4 WAL、真实产品UI/生产preload/Owner IPC、实际费用确认/原子claim/Worker/Orchestrator/Adapter/SDK，未SQL伪造授权/admission。proposal与clarification各1请求；五类真实准入后故障各1请求并stale，raw callback重开持久、0完整receipt/outcome/新Plan；7条真实准入行旧schema迁移后其余列不变、integrity NULL；共7个内存HTTP，4096/no-tools、重复preview不补发、外部联网0、cleanup成功、360px无横溢出。Source hash父核验无差异。证据在会话`owner-planning-full-native-validation/runs/<runId>/`，保留每轮原文、15项哈希、SDK版本、截图及复跑脚本。仅host桥接与最终transport替身，不宣称完整生产导航、安装包、真实Provider费用/Provider请求ID、金额硬封顶、远端停止、断电/多进程或自主业务闭环。
 
 本批准方案A/B/C/D本地研发与离线验收完成；真实Provider另须逐次费用授权，自动组织员工/后台自主推进/业务自动验收不在此批准切片内。Electron0.12.119/shared0.2.32。没有push/merge/安装，生产员工/配置及installed0.12.109/main0.12.113未改变。详细契约见`owner-planning-controlled-start.md`。
+
+### 2026-10-09 AO-05首片：暂停执行授权准备收束
+
+用户要求“开始AO-05”，完整增量方案获批准后实施[暂停执行准备](owner-execution-preparation.md)。冻结confirmed计划revision/version、所选步骤依赖闭包、明确不同Executor/Reviewer、工作区/渠道/模型/Runtime、实际能力与有界Skill资源摘要、明确none或bound的规划载体provenance、显式知识来源元数据及拟议预算/次数/返工/期限。复用paused Pilot policy与同库追加式准备历史，typed四IPC/生产preload/Jotai/计划审阅内入口已接；历史只读，输入/晚到/冲突保护不缩水。状态始终pending_task_links，0业务Task/grant/command/execution/request/模型调用；不记AO-05整体完成。
+
+独立审查三轮及Native三轮均wait all收敛，原报告和203项旧产物摘要保留。外层事务P1、只冻结SKILL.md/漏binding provenance两个P2，以及追加发现的SSH私钥basename P2和raw BEGIN/SAVEPOINT事务状态缺口均有真RED→GREEN回归。两个save均前置拒绝未提交事务；Native读取驱动真实inTransaction，sql.js在内存探测且active不export；JSON故障保留未应用证据，残余用途拒绝legacy发行/预算/启动/请求。Skill脚本/规则变更与Owner绑定变更使旧preview/current失效，私钥与symlink/超限资源不读取、不保存。最终独立复审未确认剩余可复现P0/P1/P2；并不认证任意SQL写权限攻击者。
+
+本轮新增后台31项/126断言、Jotai16项/77断言、新UI5项/54断言；旧两个browser选择器冲突已通过明确修订字段名和具名fieldset/section修复，未改旧测试或删除内容。全量逐文件**565文件失败0**、全包typecheck、lint2012、docs生成/检查、diff及完整build（renderer/preload/resources/两原生helper）通过。
+
+最终Native runId **a7eebe6b-4416-4d14-853c-7fceefd72096**，实际Electron39.8.10/ABI140、better-sqlite3 WAL、完整生产preload/真实四IPC/source React/Jotai UI，**36项**通过；确认/准备/保存/重开/old DB加表、purpose丢失、资料/配置漂移、JSON/DB故障、两种raw事务、私钥/symlink/大小限制、none/bound来源与360px均覆盖。父独立核对218个源码SHA无差异。证据在会话`owner-execution-preparation-native-validation/revision-20261009-1008/`；TEMP清理、生产工作区名单不变、0联网/模型HTTP/执行账本。Goal/Plan与人员为隔离人工fixture，宿主为harness，不是完整production main导航、安装包、真实Provider/active发行/费用/远端终止或断电/多进程验收。
+
+Electron0.12.120/shared0.2.33，仅本地研发；没有push/merge/安装，生产员工/配置、installed0.12.109和main0.12.113未改变。下一步另审AO-06暂停权威任务及exact step关联，随后补所有执行/资料/请求来源门禁并重新审批AO-05真实许可发行。历史W09/W10/R02/R03/R04/G4及AO-G0～G3不因首片自动通过。

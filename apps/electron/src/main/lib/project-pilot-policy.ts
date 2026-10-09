@@ -1,7 +1,8 @@
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import type { PilotPolicyDraftInput } from '@gravitas/shared'
+import type { OwnerExecutionPreparationReference, PilotPolicyDraftInput } from '@gravitas/shared'
+import { assertNoOwnerExecutionPreparation, assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
 import { getConfigDir } from './config-paths'
 import { getProject, getProjectDb } from './project-sqlite-store'
 
@@ -11,6 +12,7 @@ export interface PilotPolicy {
   projectId: string
   revision: number
   state: 'paused'
+  ownerExecutionPreparation?: OwnerExecutionPreparationReference
   pauseDecisionFingerprint?: string
   workspaceId: string
   employeeIds: string[]
@@ -56,12 +58,22 @@ const fileExists = (file: string): boolean => {
   catch { return false }
 }
 
+function validOwnerPreparationReference(raw: unknown): raw is OwnerExecutionPreparationReference {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const value = raw as Record<string, unknown>
+  return Object.keys(value).every(key => ['schemaVersion','purpose','id','revision','integrityHash','stage'].includes(key))
+    && value.schemaVersion === 1 && value.purpose === 'owner_business_execution_preparation'
+    && nonEmpty(value.id) && positiveInt(value.revision) && typeof value.integrityHash === 'string'
+    && /^[a-f0-9]{64}$/.test(value.integrityHash) && value.stage === 'pending_task_links'
+}
+
 function validPolicy(value: unknown): value is PilotPolicy {
   if (!value || typeof value !== 'object') return false
   const p = value as Record<string, unknown>
   return p.version === 1 && nonEmpty(p.projectId) && positiveInt(p.revision)
     && p.state === 'paused' && (p.pauseDecisionFingerprint === undefined
       || (typeof p.pauseDecisionFingerprint === 'string' && /^[a-f0-9]{64}$/.test(p.pauseDecisionFingerprint)))
+    && (p.ownerExecutionPreparation === undefined || validOwnerPreparationReference(p.ownerExecutionPreparation))
     && nonEmpty(p.workspaceId)
     && Array.isArray(p.employeeIds) && p.employeeIds.length > 0
     && p.employeeIds.every(nonEmpty) && new Set(p.employeeIds).size === p.employeeIds.length
@@ -158,6 +170,7 @@ export function savePilotPolicyDraft(projectId: string, input: PilotPolicyDraftI
     if (activeGrant) throw new Error('项目存在活动 Pilot 授权，请先预览影响面并暂停')
     const index = readIndex()
     const previous = index.policies.find((p) => p.projectId === projectId)
+    assertNoOwnerExecutionPreparation(projectId, previous?.ownerExecutionPreparation)
     if ((previous?.revision ?? null) !== expectedRevision) throw new Error('Pilot 授权版本已变化')
     const policy: PilotPolicy = { version: 1, projectId, revision: (previous?.revision ?? 0) + 1,
       // 契约仅落为草案；待预算扣减、命令幂等和人工授权入口接通后另设激活事务。
@@ -191,4 +204,26 @@ export function assertPilotPolicyActive(projectId: string, now = Date.now()): ne
   void now
   getPilotPolicy(projectId)
   throw new Error('Pilot 未获有效托管授权')
+}
+
+/** 仅供Owner准备service使用；先持久证据再原子替换JSON，不能声称跨存储事务。 */
+export function saveOwnerPreparationPolicy(
+  projectId: string, expectedRevision: number | null,
+  build: (nextRevision: number) => { input: PilotPolicyDraftInput; reference: OwnerExecutionPreparationReference },
+): PilotPolicy {
+  if (getProjectDb().isTransactionActive()) throw new Error('Owner暂停策略保存拒绝未提交外层事务')
+  if (!getProject(projectId)) throw new Error('Owner项目不存在')
+  return withPolicyLock(() => {
+    assertOwnerExecutionBoundaryIdle(projectId)
+    const index = readIndex(), previous = index.policies.find(item => item.projectId === projectId)
+    if ((previous?.revision ?? null) !== expectedRevision) throw new Error('Owner策略已更新，请重新预览')
+    const revision = (previous?.revision ?? 0) + 1
+    const { input, reference } = build(revision)
+    const policy: PilotPolicy = { ...input, version: 1, projectId, revision, state: 'paused', ownerExecutionPreparation: reference, updatedAt: Date.now() }
+    if (!validPolicy(policy)) throw new Error('Owner暂停准备策略无效')
+    writeIndex({ version: 1, policies: [...index.policies.filter(item => item.projectId !== projectId), policy] })
+    const current = getPilotPolicy(projectId)
+    if (!current || JSON.stringify(current) !== JSON.stringify(policy)) throw new Error('Owner准备策略替换未确认，请保留证据核查')
+    return current
+  })
 }

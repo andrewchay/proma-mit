@@ -4,6 +4,8 @@ import type { ProjectOwnerPlanDraft, ProjectOwnerPlanSources } from '@gravitas/s
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from '../../atoms/project-owner-goal-atoms'
 import { acknowledgeOwnerPlanComparisonAtom, canConfirmOwnerPlan, canSaveOwnerPlan, confirmOwnerPlanAtom, editOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, loadOwnerPlanHistoryAtom, ownerPlanEditorsAtom, ownerPlanGoalReady, saveOwnerPlanAtom } from '../../atoms/project-owner-plan-atoms'
 
+import { ProjectOwnerExecutionPreparationPanel } from './ProjectOwnerExecutionPreparationPanel'
+
 const fieldClass = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 const buttonClass = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 const stateLabel = (state: ProjectOwnerPlanDraft['state']) => state === 'stale' ? '已过期' : state === 'confirmed' ? '已确认内容' : '待审阅'
@@ -104,5 +106,6 @@ export function ProjectOwnerPlanPanel({ projectId, taskId }: { projectId: string
       {snapshot && <button type="button" className={buttonClass} disabled={editor.historyLoading} onClick={() => void history(subject)}>{editor.historyLoading ? '正在加载历史…' : '查看计划历史'}</button>}</div>
     {editor.historyError && <p className="mt-2 text-sm text-destructive" role="alert">历史：{editor.historyError}</p>}
     {editor.historyLoaded && <div className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto" aria-label="计划历史"><p className="text-xs text-muted-foreground">历史仅供查阅，不代表当前目标或来源已确认。</p>{editor.history.length ? editor.history.map(plan => <details key={plan.revision} className="rounded-lg bg-muted/40 p-3"><summary className="cursor-pointer text-sm">历史计划 v{plan.planVersion} · {stateLabel(plan.state)}</summary><div className="mt-3"><PlanFacts plan={plan} /></div></details>) : <p className="text-sm">暂无历史版本</p>}</div>}
+    <ProjectOwnerExecutionPreparationPanel projectId={projectId} taskId={taskId} />
   </section>
 }

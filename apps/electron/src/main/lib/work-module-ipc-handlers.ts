@@ -1,3 +1,4 @@
+import { registerProjectOwnerExecutionIpcHandlers } from './project-owner-execution-ipc'
 import { registerProjectOwnerRuntimeIpcHandlers } from './project-owner-runtime-ipc'
 /**
  * 工作模块 IPC 处理器注册（项目管理 / 日程管家 / 日历同步）
@@ -430,6 +431,7 @@ export function registerWorkModuleIpcHandlers(): void {
   // 草案服务独立于任务/项目链事件，不唤醒派发。
   registerProjectOwnerGoalIpcHandlers(ipcMain)
   registerProjectOwnerPlanIpcHandlers(ipcMain)
+  registerProjectOwnerExecutionIpcHandlers(ipcMain)
   registerProjectOwnerRuntimeIpcHandlers(ipcMain)
   // 项目 CRUD
   ipcMain.handle(PROJECT_CHAIN_IPC.GET, (_, projectId: string) => getProjectChain(projectId))

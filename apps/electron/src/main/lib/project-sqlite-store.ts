@@ -336,7 +336,7 @@ class SqlJsCompat implements SqliteCompat {
 
   /** 持久化：将内存库导出写入磁盘 */
   persist(): void {
-    if (this.inTransaction) return
+    if (this.isTransactionActive()) return
     writeFileAtomic(this.filePath, this.database.export())
   }
 
@@ -355,12 +355,23 @@ class SqlJsCompat implements SqliteCompat {
     return this.database.getRowsModified()
   }
 
-  isTransactionActive(): boolean { return this.inTransaction }
+  isTransactionActive(): boolean {
+    if (this.inTransaction) return true
+    // sql.js没有公开autocommit getter；只在内存中探测，不能export一个仍开放的原始事务。
+    // BEGIN/ROLLBACK不读取或修改业务数据。只将SQLite明确的嵌套事务错误判为active。
+    try { this.database.run('BEGIN') }
+    catch (error) {
+      if (error instanceof Error && error.message.includes('cannot start a transaction within a transaction')) return true
+      throw new Error('项目数据库事务状态无法核验', { cause: error })
+    }
+    this.database.run('ROLLBACK')
+    return false
+  }
 
   /** 事务：返回一个执行函数（支持嵌套：内层直接执行，由外层统一提交/回滚） */
   transaction(fn: () => void): () => void {
     return () => {
-      if (this.inTransaction) {
+      if (this.isTransactionActive()) {
         // 已在外层事务中：直接执行，由外层统一提交/回滚
         fn()
         return
@@ -444,7 +455,7 @@ class NativeSqliteCompat implements SqliteCompat {
   /** WAL 模式下写操作直接落盘，无需导出（兼容保留空实现） */
   persist(): void {}
 
-  isTransactionActive(): boolean { return this.inTransaction }
+  isTransactionActive(): boolean { return this.inTransaction || this.database.inTransaction }
 
   prepare(sql: string): StmtCompat {
     return new NativeSqliteStmt(this.database, sql)
@@ -456,7 +467,7 @@ class NativeSqliteCompat implements SqliteCompat {
 
   transaction(fn: () => void): () => void {
     return () => {
-      if (this.inTransaction) {
+      if (this.isTransactionActive()) {
         fn()
         return
       }
@@ -1009,6 +1020,11 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'project_owner_planning_links').includes('source_snapshot')) {
     database.exec('ALTER TABLE project_owner_planning_links ADD COLUMN source_snapshot TEXT')
   }
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_preparations (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT,
+    revision INTEGER NOT NULL, request_id TEXT NOT NULL, payload TEXT NOT NULL,
+    integrity_hash TEXT NOT NULL, UNIQUE(project_id, revision), UNIQUE(project_id, request_id)
+  )`)
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_admissions (
     link_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL, source_snapshot TEXT NOT NULL, admitted_at INTEGER NOT NULL CHECK (admitted_at > 0), integrity_hash TEXT
@@ -1589,6 +1605,7 @@ export function hasOwnerPlanningTaskEvidence(taskId: string): boolean {
 }
 export function deleteProject(id: string): boolean {
   const database = getProjectDb()
+  if (database.prepare('SELECT id FROM project_owner_execution_preparations WHERE project_id = ? LIMIT 1').get(id)) throw new Error('项目关联Owner执行准备证据，暂不支持物理删除，请保留证据')
   if (database.prepare('SELECT id FROM project_owner_planning_links WHERE project_id = ? LIMIT 1').get(id) || database.prepare('SELECT id FROM controlled_task_preparations WHERE project_id = ? AND owner_planning_link_id IS NOT NULL LIMIT 1').get(id) || (database.prepare('SELECT id FROM agent_executions WHERE project_id = ?').all(id) as { id: string }[]).some(item => hasOwnerPlanningExecutionEvidence(item.id))) throw new Error('项目关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined
   if (!existing) return false
@@ -1775,6 +1792,7 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'proje
 
 export function deleteTask(id: string): boolean {
   const database = getProjectDb()
+  if (database.prepare('SELECT id FROM project_owner_execution_preparations WHERE task_id = ? LIMIT 1').get(id)) throw new Error('任务关联Owner执行准备证据，暂不支持物理删除，请保留证据')
   if (hasOwnerPlanningTaskEvidence(id) || database.prepare("SELECT id FROM project_owner_planning_links WHERE json_extract(payload, '$.targetTaskId') = ? LIMIT 1").get(id)) throw new Error('任务关联Owner规划准备或Run证据，暂不支持物理删除；请暂停并保留证据')
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
   if (!existing) return false

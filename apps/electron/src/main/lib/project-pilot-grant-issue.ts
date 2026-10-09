@@ -1,3 +1,4 @@
+import { assertNoOwnerExecutionPreparation } from './project-owner-execution-preparation-evidence'
 import { createHash } from 'node:crypto'
 import type { PilotGrantIssuePreview, PilotRuntimeGrant } from '@gravitas/shared'
 import type { PilotPolicy } from './project-pilot-policy'
@@ -23,10 +24,12 @@ export function hashPilotGrantApproval(policy: PilotPolicy): string {
     maxRuns: policy.maxRuns,
     maxRework: policy.maxRework,
     expiresAt: policy.expiresAt,
+    ...(policy.ownerExecutionPreparation === undefined ? {} : { ownerExecutionPreparation: policy.ownerExecutionPreparation }),
   })).digest('hex')
 }
 
 function previewFromPolicy(policy: PilotPolicy, readiness: PilotReadiness, now: number): PilotGrantIssuePreview {
+  assertNoOwnerExecutionPreparation(policy.projectId, policy.ownerExecutionPreparation)
   if (policy.state !== 'paused') throw new Error('Pilot 策略草案状态无效')
   if (policy.expiresAt <= now) throw new Error('Pilot 策略草案已过期')
   if (!policy.executorEmployeeId || !policy.reviewerEmployeeId) throw new Error('Pilot 执行与评审职责未完整绑定')
@@ -95,6 +98,8 @@ function grantMatchesPreview(grant: PilotRuntimeGrant, preview: PilotGrantIssueP
 }
 
 export function pilotGrantMatchesPolicy(grant: PilotRuntimeGrant, policy: PilotPolicy): boolean {
+  if (policy.ownerExecutionPreparation !== undefined) return false
+  try { assertNoOwnerExecutionPreparation(policy.projectId) } catch { return false }
   if (!policy.executorEmployeeId || !policy.reviewerEmployeeId) return false
   return grantMatchesPreview(grant, {
     projectId: policy.projectId,

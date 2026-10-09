@@ -33,3 +33,11 @@ Owner规划B（2026-10-09）追加`project_owner_planning_links.source_snapshot`
 C阶段在同paa.db新增`project_owner_planning_run_receipts`、`project_owner_planning_run_outcomes`、`project_owner_planning_stop_requests`和`project_owner_planning_callback_evidence`。原文/nullable用量/Runtime报告费用或unknown先保全，再事务处理生成；回执不可覆盖，停止意图持久化，坏来源server callback隔离记录不作为生成或结清证明。generated计划指向原始Run回执，不能单独恢复或删除这些表、Goal/Plan/配置/link/preparation/admission/任务/execution任一子集。关联Owner准备或Run的项目、承载任务和目标业务任务暂不支持物理删除，应暂停并保留证据；没有隐式清缓存或归档入口。未知发送与费用不因停止、回滚、重开而变零或释放占位。原生迁移/重开/receipt先提交及生成事务ABORT验收见[Owner规划C](plans/2026-10-07-ai-project-owner/owner-planning-runs.md)；不是断电或多进程验收。生产模型启动禁令仍保留，完整受控调用恢复待D验证。
 
 Owner D为`project_owner_planning_admissions`追加nullable `integrity_hash`，新发送占位对link/execution/session/request hash/冻结source JSON/时间全部列保存本地SHA，Run接收先验证格式与该摘要。旧表仅ALTER新增列，旧行保持NULL，禁止迁移补造发送证明；没有该证据的回调仍先隔离保留原文，但不升级完整Run/费用、不生成或补发。此SHA是本地损坏检测，不是签名，也不认证拥有任意数据库写权限的攻击者。历史不可覆盖receipt仍保全当时已捕获证据，不因后续占位丢失推断新的发送许可。
+
+### Owner业务执行授权准备（2026-10-09）
+
+`project_owner_execution_preparations`在同paa.db保存追加式准备来源/请求/修订/摘要，`project-pilot-policies.json`只引用当前准备且始终paused。两者与Goal/Plan、人员/工作区配置和既有Pilot账本一起一致备份；不能单独恢复一张表或把来源准备当grant/余额。task links尚空、状态pending_task_links；没有模型/业务任务/授权/请求副作用。
+
+保存顺序为policy锁内DB证据先提交、JSON原子替换引用、回读。不是跨存储原子事务，文件失败可能留下未应用证据，应保留并阻止legacy发行，不自动删除/重发/补授权；摘要仅检测本地损坏，不是认证。Owner准备关联项目/目标任务暂不支持普通物理删除。未知预算/请求或停止未决先走原暂停/对账，不在保存准备时清零。详细范围、兼容与验收边界见[暂停执行准备](plans/2026-10-07-ai-project-owner/owner-execution-preparation.md)。
+
+历史A/C段落描述当时的常量启动禁令；D之后已由准确Owner来源/费用/停止/单发送门禁替代（见[受控启动](plans/2026-10-07-ai-project-owner/owner-planning-controlled-start.md)），不能将旧禁令重新恢复或外推为业务执行授权。

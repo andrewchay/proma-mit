@@ -193,3 +193,98 @@ export interface ProjectOwnerRuntimeApi {
   prepareOwnerPlanning: (request: { projectId: string; input: { requestId: string; taskId?: string; expectedBindingRevision: number; expectedGoalRevision: number; expectedPlanRevision: number; expectedContextFingerprint: string } }) => Promise<ProjectOwnerGoalResult<OwnerPlanningLink>>
   listOwnerPlanningRuns: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<ProjectOwnerRunView[]>>
 }
+
+/** 业务执行范围准备：永久保持pending，不是授权、余额或派工命令。 */
+export interface OwnerExecutionPreparationInput {
+  requestId: string
+  expectedPreparationRevision: number
+  expectedPolicyRevision: number | null
+  expectedGoalRevision: number
+  expectedPlanRevision: number
+  selectedStepKeys: string[]
+  executionKind: 'development' | 'controlled'
+  developmentScope?: import('./development-review').DevelopmentTaskScope
+  executorEmployeeId: string
+  reviewerEmployeeId: string
+  workspaceId: string
+  knowledgeSourceIds: string[]
+  maxCostMicros: number
+  maxRuns: number
+  maxRework: number
+  expiresAt: number
+  changeReason: string
+}
+export interface OwnerExecutionPreparationReference {
+  schemaVersion: 1
+  purpose: 'owner_business_execution_preparation'
+  id: string
+  revision: number
+  integrityHash: string
+  stage: 'pending_task_links'
+}
+export interface OwnerExecutionPreparationSource extends ProjectOwnerGoalSubject {
+  ownerBindingProvenance: { state: 'none' } | { state: 'bound'; bindingRevision: number; carrierId: string; carrierFingerprint: string; bindingHash: string }
+  schemaVersion: 1
+  stage: 'pending_task_links'
+  goalRevision: number
+  goalVersion: number
+  planRevision: number
+  planVersion: number
+  planFingerprint: string
+  contextFingerprint: string
+  plan: ProjectOwnerPlanDraft
+  selectedStepKeys: string[]
+  executor: { id: string; name: string; configurationHash: string }
+  reviewer: { id: string; name: string; configurationHash: string }
+  workspaceId: string
+  workspaceName: string
+  workspaceHash: string
+  targetTaskHash?: string
+  repositoryIdentityHash?: string
+  channelId: string
+  modelId: string
+  runtime: string
+  channelHash: string
+  capabilityConfigurationHash: string
+  developmentScope?: import('./development-review').DevelopmentTaskScope
+  knowledgeSources: Array<{ id: string; name: string; knowledgeBaseIds: string[]; metadataHash: string; contentHash: null }>
+  /** 资料清单未接执行侧fence；不冒充实际工具访问授权。 */
+  blockers: string[]
+}
+export interface OwnerExecutionPreparationPreview extends OwnerExecutionPreparationSource {
+  input: OwnerExecutionPreparationInput
+  previewFingerprint: string
+}
+export interface OwnerExecutionPreparationRecord {
+  schemaVersion: 1
+  id: string
+  projectId: string
+  taskId?: string
+  revision: number
+  policyRevision: number
+  stage: 'pending_task_links'
+  actor: 'local-user'
+  savedAt: number
+  input: OwnerExecutionPreparationInput
+  source: OwnerExecutionPreparationSource
+  inputHash: string
+  previousIntegrityHash: string | null
+  integrityHash: string
+}
+export interface OwnerExecutionPreparationView {
+  choices: { employees: Array<{ id: string; name: string; executionProfile: string; workspaceIds: string[]; channelId: string; modelId?: string; runtime: string }>; workspaces: Array<{ id: string; name: string }>; knowledgeSources: Array<{ id: string; name: string }> }
+  revision: number
+  policyRevision: number | null
+  preparation: OwnerExecutionPreparationRecord | null
+  status: 'none' | 'current' | 'stale' | 'unapplied' | 'other_subject'
+  blockers: string[]
+}
+
+export interface PreviewOwnerExecutionPreparationRequest extends ProjectOwnerGoalSubject { input: OwnerExecutionPreparationInput }
+export interface SaveOwnerExecutionPreparationRequest extends PreviewOwnerExecutionPreparationRequest { previewFingerprint: string }
+export interface ProjectOwnerExecutionPreparationApi {
+  getOwnerExecutionPreparation: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionPreparationView>>
+  listOwnerExecutionPreparationHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionPreparationRecord[]>>
+  previewOwnerExecutionPreparation: (request: PreviewOwnerExecutionPreparationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionPreparationPreview>>
+  saveOwnerExecutionPreparation: (request: SaveOwnerExecutionPreparationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionPreparationRecord>>
+}

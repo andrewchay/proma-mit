@@ -1,3 +1,4 @@
+import { assertNoOwnerExecutionPreparation } from './project-owner-execution-preparation-evidence'
 import { getAgentExecution, getProjectDb } from './project-sqlite-store'
 import { calculatePilotRequestCeiling, type PilotRequestEnvelope } from './project-pilot-request-envelope'
 import { getPilotReviewedPriceEvidence, pilotRequestFingerprint } from './project-pilot-request-evidence'
@@ -48,6 +49,7 @@ export function reservePilotRequest(input: PilotRequestReservationInput, now = D
       || grant.expires_at <= now || execution.status !== 'running' || execution.projectId !== command.project_id
       || execution.pilotCommandId !== input.commandId || command.execution_id !== input.executionId
       || execution.sessionId !== input.sessionId) throw new Error('Pilot 请求归属或活动授权无法核验')
+    assertNoOwnerExecutionPreparation(command.project_id)
     // 不允许复用同一个 requestId 再次发送；既有占额保持不变，包括断流/崩溃。
     if (db.prepare('SELECT 1 FROM pilot_request_reservations WHERE request_id = ?').get(input.requestId)) {
       throw new Error('Pilot 请求 ID 已预留，不得重复发送')
