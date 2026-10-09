@@ -1263,6 +1263,8 @@ export interface SkillExternalSource {
   /** 来源类型 */
   kind: SkillExternalSourceKind
   importedAt: string
+  /** 安装时 SKILL.md 的 SHA-256（漂移/stale 检测用；旧数据可缺省） */
+  contentHash?: string
 }
 
 /** 工作区 Skill 元数据 */

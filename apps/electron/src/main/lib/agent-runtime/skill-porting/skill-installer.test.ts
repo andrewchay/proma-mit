@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
-import { installSkillToWorkspace } from './skill-installer'
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs'
+import { installSkillToWorkspace, detectSkillDrift } from './skill-installer'
 import { getWorkspaceSkillsDir, getInactiveSkillsDir } from '../../config-paths'
 
 const testDir = join(tmpdir(), `gravitas-skill-install-${Date.now()}`)
@@ -80,5 +80,62 @@ describe('skill-installer', () => {
     expect(readFileSync(join(getWorkspaceSkillsDir('ws1'), 'dup-skill', 'SKILL.md'), 'utf-8')).toBe('updated')
     rmSync(src1, { recursive: true, force: true })
     rmSync(src2, { recursive: true, force: true })
+  })
+
+  describe('C04 版本/来源/恢复', () => {
+    const external = (rev: string) => ({
+      kind: 'github' as const,
+      repo: 'acme/tools',
+      rev,
+      originalSpec: `acme/tools@${rev}`,
+      importedAt: '2026-10-09T00:00:00Z',
+    })
+
+    it('安装时记录 SKILL.md contentHash；同 rev 未漂移重复安装幂等跳过', () => {
+      const src = makeSourceSkill('hash-skill')
+      const first = installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src, name: 'hash-skill', externalSource: external('r1') })
+      expect(first.skipped).toBeUndefined()
+      const meta = JSON.parse(readFileSync(join(getWorkspaceSkillsDir('ws1'), 'hash-skill', '.external-source.json'), 'utf-8'))
+      expect(typeof meta.contentHash).toBe('string')
+      expect(meta.contentHash).toHaveLength(64)
+      const before = readFileSync(join(getWorkspaceSkillsDir('ws1'), 'hash-skill', '.external-source.json'), 'utf-8')
+      const second = installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src, name: 'hash-skill', externalSource: external('r1') })
+      expect(second.skipped).toBe(true)
+      expect(readFileSync(join(getWorkspaceSkillsDir('ws1'), 'hash-skill', '.external-source.json'), 'utf-8')).toBe(before)
+    })
+
+    it('本地漂移（stale）拒绝覆盖；force 放行并刷新基线', () => {
+      const src = makeSourceSkill('drift-skill')
+      installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src, name: 'drift-skill', externalSource: external('r1') })
+      const target = join(getWorkspaceSkillsDir('ws1'), 'drift-skill')
+      writeFileSync(join(target, 'SKILL.md'), '---\nname: drift-skill\n---\n本地改动', 'utf-8')
+      expect(detectSkillDrift(target)).toContain('stale')
+      const src2 = makeSourceSkill('drift-skill-2')
+      expect(() => installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src2, name: 'drift-skill', externalSource: external('r2') })).toThrow(/拒绝覆盖/)
+      expect(readFileSync(join(target, 'SKILL.md'), 'utf-8')).toContain('本地改动')
+      const forced = installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src2, name: 'drift-skill', externalSource: external('r2'), force: true })
+      expect(forced.skipped).toBeUndefined()
+      expect(detectSkillDrift(target)).toBeNull()
+    })
+
+    it('旧数据无 contentHash 时 drift 检测返回 undefined（无法检测，不阻止更新）', () => {
+      const src = makeSourceSkill('legacy-skill')
+      installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src, name: 'legacy-skill', externalSource: external('r1') })
+      const target = join(getWorkspaceSkillsDir('ws1'), 'legacy-skill')
+      const metaPath = join(target, '.external-source.json')
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+      delete meta.contentHash
+      writeFileSync(metaPath, JSON.stringify(meta), 'utf-8')
+      expect(detectSkillDrift(target)).toBeUndefined()
+    })
+
+    it('slug 拒绝路径穿越；安装只写 skills 目录', () => {
+      const src = makeSourceSkill('evil')
+      expect(() => installSkillToWorkspace({ workspaceSlug: 'ws1', sourceSkillDir: src, name: '../../escape', externalSource: external('r1') })).not.toThrow()
+      // sanitizeSlug 会把 ../ 规整为合法 slug，绝不逃逸出 skills 目录
+      const skillsRoot = getWorkspaceSkillsDir('ws1')
+      expect(existsSync(join(testDir, 'escape'))).toBe(false)
+      expect(readdirSync(skillsRoot).some((name) => name.includes('escape'))).toBe(true)
+    })
   })
 })

@@ -109,6 +109,7 @@ export async function portSkill(
     const result = installSkillToWorkspace({
       workspaceSlug,
       sourceSkillDir: skillRoot,
+      force: opts.force,
       name,
       externalSource,
       enabled: input.enabled,

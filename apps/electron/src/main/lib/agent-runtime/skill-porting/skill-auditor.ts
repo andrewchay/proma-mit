@@ -29,7 +29,12 @@ export interface AuditReport {
   verdict: AuditVerdict
   findings: AuditFinding[]
   auditedFiles: number
+  /** 静态扫描能力边界声明：safe 不代表无恶意证明 */
+  disclaimer: string
 }
+
+/** 静态扫描的能力边界：任何 verdict 都不构成无恶意证明。 */
+export const AUDIT_DISCLAIMER = '静态启发式扫描仅覆盖已知风险模式；safe/review 均不构成无恶意证明，启用前需人工把关。'
 
 /** 应重点审计的文件扩展（脚本/可执行）。 */
 const SCRIPT_EXTS = new Set(['.sh', '.py', '.js', '.ts', '.mjs', '.cjs', '.rb', '.pl', '.bats', '.zsh', '.fish', '.ps1'])
@@ -142,5 +147,5 @@ export function auditSkill(skillRoot: string): AuditReport {
   const danger = findings.filter((f) => f.severity === 'danger').length
   const warning = findings.filter((f) => f.severity === 'warning').length
   const verdict: AuditVerdict = danger > 0 ? 'blocked' : warning > 0 ? 'review' : 'safe'
-  return { verdict, findings, auditedFiles }
+  return { verdict, findings, auditedFiles, disclaimer: AUDIT_DISCLAIMER }
 }

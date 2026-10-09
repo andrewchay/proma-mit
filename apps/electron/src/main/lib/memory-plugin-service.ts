@@ -508,12 +508,31 @@ export function extractMemoryItemsBlock(
   }
 }
 
+/** 明显的敏感凭据模式：命中即不进入候选（审批链上游就拦截，敏感事实不自动推广）。 */
+const SENSITIVE_CONTENT_PATTERNS: readonly RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}\b/,
+  /\bapi[_-]?key\s*[:=]\s*\S+/i,
+  /BEGIN [A-Z ]*PRIVATE KEY/,
+  /\bBearer\s+[A-Za-z0-9._-]{16,}\b/,
+  /\bpassword\s*[:=]\s*\S+/i,
+]
+
+export function containsSensitiveContent(text: string): boolean {
+  return SENSITIVE_CONTENT_PATTERNS.some((pattern) => pattern.test(text))
+}
+
 export function extractMemoryCandidatesFromOutput(
   output: string,
   runId?: string,
   sessionId?: string,
 ): Array<Omit<MemoryItem, 'id' | 'createdAt' | 'updatedAt'>> {
-  return (extractMemoryItemsBlock(output) ?? []).map((item) => ({
+  const items = extractMemoryItemsBlock(output) ?? []
+  const safe = items.filter((item) => {
+    const sensitive = containsSensitiveContent(item.title) || containsSensitiveContent(item.content)
+    if (sensitive) console.warn(`[记忆] 候选「${item.title}」命中敏感内容模式，已在进入审批链前拦截`)
+    return !sensitive
+  })
+  return safe.map((item) => ({
     ...item,
     sourceRunId: runId ?? null,
     sourceSessionId: sessionId ?? null,
