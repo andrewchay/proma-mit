@@ -21,3 +21,9 @@
 ## 保留边界
 
 不宣称阻止了mutation执行；对已执行的流式调用只能记录事实，不能谎称撤销。不改动pi-tool-bridge；Pi等runtime后续按各自协议另行核验。E03整体、B10、HR基准与G2仍未通过；V02部分、V03受保护测试来源阻塞保持。
+
+## 追加（2026-10-09 10:55 GMT+8，Pi语义核验）
+
+- Pi agent-core 1.0.2：`length` 截断批次的工具调用由 SDK 判为失败而不执行；`error`/`aborted` 不执行工具。这是 Pi 的源码级零执行语义，见 pi-tool-call-batch-evidence.md。
+- Pi 的 final assistant 消息已接入观察字段 `toolCallBatchIntegrity`；`deferred`/`pending` 未核实，按不完整。
+- AI SDK 路径仍无先验 gate，结论不变。

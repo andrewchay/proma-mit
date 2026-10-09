@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { SDKAssistantMessage, SDKMessage } from '@gravitas/shared'
-import type { AssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
+import type { AssistantMessage, AssistantMessage as PiAssistantMessage, ToolResultMessage } from '@earendil-works/pi-ai'
 import { convertPiMessageToSDKMessage, convertPiMessagesToSDKMessages, convertSDKMessagesToPiMessages } from './pi-message-adapter'
 
 describe('pi-message-adapter', () => {
@@ -218,4 +218,35 @@ describe('pi-history-session-entries（Pi 0.87 SessionManager 种子）', () => 
       session.dispose()
     }
   }, 30000)
+})
+
+describe('pi-message-adapter E03批次观察', () => {
+  const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
+  const assistant = (stopReason: PiAssistantMessage['stopReason'], calls: string[] = ['tool-1']): PiAssistantMessage => ({
+    role: 'assistant', api: 'openai-completions', provider: 'proma-openai', model: 'gpt-5.2', usage, stopReason, timestamp: 1,
+    content: calls.map((id) => ({ type: 'toolCall' as const, id, name: 'read', arguments: {} })),
+  })
+  test('final toolUse 批次完整，观察只附加在final消息上', () => {
+    const final = convertPiMessageToSDKMessage(assistant('toolUse'), 's1', 'm', { final: true }) as SDKAssistantMessage
+    expect(final.toolCallBatchIntegrity).toMatchObject({ version: 1, complete: true, unexecutedMandatory: false })
+    const partial = convertPiMessageToSDKMessage(assistant('toolUse'), 's1', 'm', { final: false }) as SDKAssistantMessage
+    expect(partial.toolCallBatchIntegrity).toBeUndefined()
+  })
+  test('length截断的工具调用被标为不完整，原因码指向截断', () => {
+    const msg = convertPiMessageToSDKMessage(assistant('length'), 's1', 'm', { final: true }) as SDKAssistantMessage
+    expect(msg.toolCallBatchIntegrity?.complete).toBe(false)
+    expect(msg.toolCallBatchIntegrity?.reasons).toContain('finish_reason:length')
+  })
+  test('aborted/error/pending/deferred 停止都不完整；无工具的stop仍只观察停止原因', () => {
+    for (const stopReason of ['aborted', 'error', 'pending', 'deferred'] as const) {
+      const msg = convertPiMessageToSDKMessage(assistant(stopReason), 's1', 'm', { final: true }) as SDKAssistantMessage
+      expect(msg.toolCallBatchIntegrity?.complete).toBe(false)
+    }
+    const plain = convertPiMessageToSDKMessage(assistant('stop', []), 's1', 'm', { final: true }) as SDKAssistantMessage
+    expect(plain.toolCallBatchIntegrity?.complete).toBe(true)
+  })
+  test('空工具名或重复id仍由共享判定报告', () => {
+    const msg = convertPiMessageToSDKMessage(assistant('toolUse', ['dup', 'dup']), 's1', 'm', { final: true }) as SDKAssistantMessage
+    expect(msg.toolCallBatchIntegrity?.reasons).toContain('duplicate_tool_call_id')
+  })
 })

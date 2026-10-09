@@ -279,6 +279,8 @@ export interface SDKAssistantMessage {
   }
   parent_tool_use_id: string | null
   session_id?: string
+  /** E03观察：本 step 批次完整性（仅 final 消息），不表示零执行或可撤销。 */
+  toolCallBatchIntegrity?: import('../context/tool-call-integrity').ToolCallBatchIntegrity
   /** SDK 消息唯一标识，用于 forkSession / resumeSessionAt */
   uuid?: string
   error?: { message: string; errorType?: string }

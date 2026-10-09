@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 10:23 GMT+8第八批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 11:03 GMT+8第九批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -423,6 +423,9 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 
 | HARNESS-20261009-009 | 2026-10-09 10:17–10:23 GMT+8 | E03 AI SDK结果消息观察接线 | 判定词表接受end_turn/tool_use映射理由；SDKResultMessage可选toolCallBatchIntegrity随JSONL持久化；逐step编号原因码；不改审批/重试/续跑 | 基线15439d40，tool-call-integrity-wiring-evidence.md；仅事实观察，invalid调用在快照不可见，非零执行保证 |
 | HARNESS-20261009-010 | 2026-10-09 10:23 GMT+8 | E03接线工程验证 | shared14+main4例；定向5文件93pass/0fail；全仓549文件3717pass/0fail/27skip；九包types/lint1981/docs/diff通过；真实workspace36→36一致新增0 | 一处测试标题与断言不符已改名如实；无生产网络调用。shared0.2.36/electron0.12.120；V02部分、V03来源仍阻塞 |
+
+| HARNESS-20261009-011 | 2026-10-09 10:55–11:03 GMT+8 | Pi批次语义核验与观察接线 | 源码核验pi-agent-core 1.0.2：length截断批次由SDK判失败不执行，error/aborted不执行；final assistant附toolCallBatchIntegrity（toolUse→tool-calls）；deferred/pending未核实按不完整 | 基线2eef8041，pi-tool-call-batch-evidence.md；零执行结论来自源码阅读，非仓库运行时测试。E03 Pi观察接线完成，执行路径未改 |
+| HARNESS-20261009-012 | 2026-10-09 11:03 GMT+8 | Pi接线工程验证 + verifier设计草案 | pi-message-adapter新增4例（13pass）；typecheck九包、lint1981、docs/diff通过；全仓549文件3721pass/0fail/27skip；真实workspace36→36一致新增0；verifier-config-design.md列三项待判断风险 | shared0.2.37/electron0.12.121；V03仍阻塞待用户选择方案；Provider试点未授权未调用 |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
