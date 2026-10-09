@@ -14,20 +14,18 @@ process.env.PROMA_DEV = '1'
 mock.module('os', () => ({ homedir: () => tempHomeDir, tmpdir }))
 mock.module('electron', () => buildElectronMock())
 
-const { createAgentSession, compactSDKMessages, getAgentSessionSDKMessages, assessCompactionArchiveIntegrity } = await import('./agent-session-manager')
+const { createAgentSession, compactSDKMessages, assessCompactionArchiveIntegrity } = await import('./agent-session-manager')
 const { getConfigDir } = await import('./config-paths')
-const { createAgentWorkspace, getAgentWorkspacePath } = await import('./agent-workspace-manager')
+const { createAgentWorkspace } = await import('./agent-workspace-manager')
 const { CONTEXT_COMPACTION_GOLDENS } = await import('./agent-runtime/context-compaction-goldens')
 const { evaluateContextCompactionGoldenSet, evaluateContextPacket } = await import('./agent-runtime/context-compaction-evaluator')
 
 afterAll(() => { rmSync(tempHomeDir, { recursive: true, force: true }) })
 
 let workspaceId = ''
-let workspaceSlug = ''
 beforeEach(() => {
   const ws = createAgentWorkspace(`Compact Integrity ${Date.now()}`)
   workspaceId = ws.id
-  workspaceSlug = ws.slug
 })
 
 const msg = (text: string): SDKMessage => ({ type: 'user', message: { content: [{ type: 'text', text }] }, parent_tool_use_id: null }) as unknown as SDKMessage
