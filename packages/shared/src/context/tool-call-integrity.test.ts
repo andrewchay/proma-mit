@@ -5,14 +5,14 @@ const call = (change: Partial<ObservedToolCall> = {}): ObservedToolCall => ({ to
 
 describe('批次完整性判定不撤销已执行效果', () => {
   test('完整tool-calls与stop批次，身份稳定可复制', () => {
-    for (const finishReason of ['tool-calls', 'stop'] as const) {
+    for (const finishReason of ['tool-calls', 'stop', 'end_turn', 'tool_use'] as const) {
       const batch = assessToolCallBatchIntegrity([call()], finishReason)
       expect(batch).toMatchObject({ version: 1, complete: true, unexecutedMandatory: false })
       expect(batch.reasons).toEqual([])
       expect(batch).toEqual(assessToolCallBatchIntegrity([call()], finishReason))
     }
   })
-  for (const finishReason of ['length', 'error', 'content-filter', 'other', undefined, 'unknown', '', 'TOOL-CALLS'] as const) {
+  for (const finishReason of ['length', 'error', 'content-filter', 'other', undefined, 'unknown', '', 'TOOL-CALLS', 'end_turn:'] as const) {
     test(`finishReason=${String(finishReason)}不完整`, () => {
       const batch = assessToolCallBatchIntegrity([call()], finishReason)
       expect(batch.complete).toBe(false)

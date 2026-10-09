@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-09 10:14 GMT+8第七批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 10:23 GMT+8第八批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。E01已有同源文件effects元数据，E02已有观察性路径/别名解析，两者及E03批次判定（未接线）仍部分完成，未启用并行。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -179,7 +179,7 @@
 |---|---|---|---|---|
 | E01 | 从 capability.ts 映射 effects；`packages/shared/src/context/tool-effects.ts`及main实例绑定/测试；扩展RuntimeToolDefinition | 三个文件工具实际name/execute同源，Write涵盖mkdir祖先；unknown保守，Bash/MCP不因自述安全，旧工具不自动并行 | H02子契约 | 部分：文件声明与实例来源已落地；其他资源/完整策略映射未完成，见effects-evidence.md；未启用调度 |
 | E02 | `agent-runtime/tool-resources.ts`观察性解析及测试；拟新增tool-scheduler.ts | 目标：资源冲突串行、独立可信读取并行、目录/realpath别名冲突、并发限额及确定锁序 | E01子契约 | 部分：文件真实路径/缺失尾部/硬链接身份/Write祖先已观察；锁/队列/并行未实现，见resource-resolution-evidence.md |
-| E03 | `packages/shared/src/context/tool-call-integrity.ts`判定及测试；接线ai-sdk-runtime-core.ts、pi-tool-bridge.ts仍未做 | 目标：不完整批次不执行待执行mutation；已执行流式调用单独记录不谎称撤销；SDK无法先验检查则不声明支持 | E01 | 部分：已核验ai@7.0.31无宿主先验gate，仅事后分类；接线/零执行/重试策略未做，见tool-call-integrity-evidence.md |
+| E03 | `packages/shared/src/context/tool-call-integrity.ts`判定及测试；接线ai-sdk-runtime-core.ts、pi-tool-bridge.ts仍未做 | 目标：不完整批次不执行待执行mutation；已执行流式调用单独记录不谎称撤销；SDK无法先验检查则不声明支持 | E01 | 部分：已核验ai@7.0.31无宿主先验gate，事后分类+AI SDK结果消息观察接线完成；零执行/Pi/调度消费未做，见tool-call-integrity-{evidence,wiring-evidence}.md |
 | E04 | 取消/错误/重启矩阵；tool-scheduler.ts 与 adapter 测试 | queued取消不开始；错误释放锁；幂等read可按策略重试，unknown写/外部调用不自动重放；禁用后仍保留硬底线 | E02/E03 | 待开始 |
 | E05 | 小范围Runtime生产接线与调度指标 | 给出同资源跨session/父子Agent的锁域；不支持跨进程共享锁时禁止宣称全局安全；同一browser/terminal始终序列化 | E04 | 待开始 |
 
@@ -420,6 +420,9 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 
 | HARNESS-20261009-007 | 2026-10-09 10:08–10:14 GMT+8 | E03批次完整性判定（不接线） | 核验ai@7.0.31 streamText同流执行/无先验gate结论入契约；shared事后分类finishReason截断/invalid/duplicate/空名，原因码稳定；未改执行路径 | 基线b3a6ca40，tool-call-integrity-{contract,evidence}.md；判定非鉴权/撤销/回执。AI SDK不能宣称零执行支持；Pi未核验 |
 | HARNESS-20261009-008 | 2026-10-09 10:14 GMT+8 | E03工程验证 | 新13例；定向9文件89pass/0fail；全仓548文件3712pass/0fail/27skip；九包types/lint1980/docs/diff通过；真实workspace36→36一致新增0 | red为缺模块加载；自引用断言fixture失败与dynamic类型错误修复后green，如实记录。shared0.2.35/electron0.12.119；V02部分、V03来源仍阻塞 |
+
+| HARNESS-20261009-009 | 2026-10-09 10:17–10:23 GMT+8 | E03 AI SDK结果消息观察接线 | 判定词表接受end_turn/tool_use映射理由；SDKResultMessage可选toolCallBatchIntegrity随JSONL持久化；逐step编号原因码；不改审批/重试/续跑 | 基线15439d40，tool-call-integrity-wiring-evidence.md；仅事实观察，invalid调用在快照不可见，非零执行保证 |
+| HARNESS-20261009-010 | 2026-10-09 10:23 GMT+8 | E03接线工程验证 | shared14+main4例；定向5文件93pass/0fail；全仓549文件3717pass/0fail/27skip；九包types/lint1981/docs/diff通过；真实workspace36→36一致新增0 | 一处测试标题与断言不符已改名如实；无生产网络调用。shared0.2.36/electron0.12.120；V02部分、V03来源仍阻塞 |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

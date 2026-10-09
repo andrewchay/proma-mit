@@ -317,6 +317,8 @@ export interface SDKResultMessage {
   modelUsage?: Record<string, { contextWindow?: number }>
   errors?: string[]
   session_id?: string
+  /** E03观察：本turn各step批次完整性；仅事实记录，不表示零执行或可撤销。 */
+  toolCallBatchIntegrity?: import('../context/tool-call-integrity').ToolCallBatchIntegrity
 }
 
 /** SDK system 消息（init / compact_boundary / permission_denied / task_started / task_progress / task_notification） */

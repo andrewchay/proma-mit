@@ -29,7 +29,7 @@ const INCOMPLETE_FINISH_REASONS: ReadonlySet<string> = new Set([
   'length', 'error', 'content-filter', 'other', 'unknown', '',
 ])
 const VALID_FINISH_REASONS: ReadonlySet<string> = new Set([
-  'tool-calls', 'stop', 'length', 'error', 'content-filter', 'other',
+  'tool-calls', 'stop', 'length', 'error', 'content-filter', 'other', 'end_turn', 'tool_use',
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -56,6 +56,7 @@ function isPlainToolCall(value: unknown): value is ObservedToolCall {
 /**
  * 事后判定一个step的调用批次是否在观察层面完整。
  * finishReason缺失/未知一律按不完整处理，不猜测成功。
+ * end_turn/tool_use是AI SDK快照映射后的完整理由词。
  */
 export function assessToolCallBatchIntegrity(calls: unknown, finishReason: string | undefined): ToolCallBatchIntegrity {
   const reasons: string[] = []

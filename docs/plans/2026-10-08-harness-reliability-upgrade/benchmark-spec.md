@@ -85,3 +85,7 @@ HR06–HR09的前置声明现在仅覆盖Read/Write/Edit真实注册实例，Wri
 ## 11. E03第七批判定子集（2026-10-09 10:14 GMT+8）
 
 调用批次完整性可事后识别finishReason截断/invalid/duplicate/空名（13用例；定向9文件89pass；全仓548文件3712pass/0fail/27skip）。B10的“未开始mutation零执行”未满足：AI SDK无宿主先验gate，判定未接线，已执行效果不可撤销；HR基准与G2仍不通过。见tool-call-integrity-evidence.md。
+
+## 12. E03第八批接线子集（2026-10-09 10:23 GMT+8）
+
+AI SDK结果消息现携带逐step批次完整性观察（end_turn/tool_use计完整，length/空名/重复编号报告），随JSONL持久化；仍是事实记录，非零执行保证或可信回执。B10未满足、Pi未接线；定向5文件93pass，全仓549文件3717pass/0fail/27skip。见tool-call-integrity-wiring-evidence.md。

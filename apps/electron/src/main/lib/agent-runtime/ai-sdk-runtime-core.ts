@@ -43,6 +43,7 @@ import {
   resolveModelFirstResponseTimeoutMs,
   resolveModelStreamIdleTimeoutMs,
 } from './stream-timeouts'
+import { assessToolCallBatchIntegrity, type ToolCallBatchIntegrity } from '@gravitas/shared'
 import { estimateTokenCount } from '../agent-tool-token-estimator'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 
@@ -255,11 +256,14 @@ export class AISDKRuntimeCore {
       : await streamRun.result.steps
     const sdkMessages = buildAISDKMessagesFromSteps(steps, input.sessionId, input.modelId)
     const usage = await streamRun.result.usage
+    // 不完整批次已无法撤销已执行调用；这里只持久化观察，供下游拒绝自动续跑/复核。
+    const toolCallBatchIntegrity = assessStepsToolCallBatchIntegrity(steps)
     const resultMessage: SDKResultMessage = {
       type: 'result',
       subtype: 'success',
       usage: toAISDKResultUsage(usage),
       session_id: input.sessionId,
+      toolCallBatchIntegrity,
     }
     return [...sdkMessages, resultMessage as unknown as SDKMessage]
   }
@@ -652,6 +656,22 @@ export function buildAISDKModelMessages(
       .map((msg): ModelMessage => ({ role: msg.role, content: msg.content })),
     { role: 'user', content: currentContent },
   ]
+}
+
+/**
+ * E03接线：把每个step快照转为批次完整性观察并汇总。
+ * 只记录事实（截断/空名等）；不表示未执行、可撤销或Provider确认。
+ */
+export function assessStepsToolCallBatchIntegrity(steps: ReadonlyArray<Pick<SDKMessageStepSnapshot, 'toolCalls' | 'finishReason'>>): ToolCallBatchIntegrity {
+  const reasons: string[] = []
+  steps.forEach((step, index) => {
+    const batch = assessToolCallBatchIntegrity(
+      step.toolCalls.map((call) => ({ toolCallId: call.toolCallId, toolName: call.toolName })),
+      step.finishReason,
+    )
+    for (const reason of batch.reasons) reasons.push(`step_${index}:${reason}`)
+  })
+  return { version: 1, complete: reasons.length === 0, reasons, unexecutedMandatory: false }
 }
 
 export function buildAISDKMessagesFromSteps(
