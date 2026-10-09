@@ -1,9 +1,12 @@
 /** Goal 控制平面：状态机、检查点校验和有限续跑调度。 */
 
 import { randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
 import type {
   AgentGoal,
   AgentGoalCheckpoint,
+  AgentGoalPreparedRequest,
+  AgentGoalInvocationContext,
   AgentGoalStatus,
   CreateAgentGoalInput,
 } from '@gravitas/shared'
@@ -15,6 +18,7 @@ const MAX_IMMEDIATE_CONTINUATIONS = 3
 export interface AgentGoalRunCallbacks {
   readonly goalId: string
   readonly runId: string
+  onPrepared(request: AgentGoalPreparedRequest): Promise<void>
   onCheckpoint(checkpoint: AgentGoalCheckpoint): Promise<void>
   onFinished(canContinue: boolean): Promise<void>
 }
@@ -120,16 +124,44 @@ export class GoalCoordinator {
     const runId = randomUUID()
     this.save({
       ...goal, status: 'active', activeRunId: runId,
-      checkpoint: undefined, checkpointRunId: undefined, updatedAt: Date.now(),
+      checkpoint: undefined, checkpointRunId: undefined, invocationContext: undefined, updatedAt: Date.now(),
     })
     let finished = false
+    let context: AgentGoalInvocationContext | undefined
+    const configuration = goalConfiguration(goal)
+    const readCurrent = (): AgentGoal => {
+      const current = this.get(goal.id)
+      if (finished || !current || current.sessionId !== sessionId || current.status !== 'active' || current.activeRunId !== runId) {
+        throw new Error('Goal检查点调用身份已失效，请基于当前运行重新提交')
+      }
+      if (goalConfiguration(current) !== configuration) throw new Error('Goal配置已变化，请重新运行')
+      return current
+    }
     return Object.freeze({
       goalId: goal.id,
       runId,
+      onPrepared: async (request: AgentGoalPreparedRequest): Promise<void> => {
+        const current = readCurrent()
+        if (context) throw new Error('Goal请求已准备，不能重复准备')
+        const prepared = copyPreparedRequest(request)
+        if (prepared.runtime !== goal.runtime ||
+          (goal.workspaceId !== undefined && prepared.workspaceId !== goal.workspaceId) ||
+          (goal.channelId !== undefined && prepared.channelId !== goal.channelId) ||
+          (goal.modelId !== undefined && prepared.requestedModelId !== goal.modelId)) {
+          throw new Error('Goal配置与已准备请求不一致，禁止跨环境提交')
+        }
+        const nextContext: AgentGoalInvocationContext = {
+          ...prepared, version: 1, sourcePhase: 'prepared-request',
+          goalId: goal.id, sessionId, runId, preparedAt: Date.now(),
+        }
+        this.save({ ...current, invocationContext: nextContext, updatedAt: Date.now() })
+        context = Object.freeze(nextContext)
+      },
       onCheckpoint: async (checkpoint: AgentGoalCheckpoint): Promise<void> => {
-        const current = this.get(goal.id)
-        if (finished || !current || current.sessionId !== sessionId || current.status !== 'active' || current.activeRunId !== runId) {
-          throw new Error('Goal检查点调用身份已失效，请基于当前运行重新提交')
+        const current = readCurrent()
+        if (!context) throw new Error('Goal请求未准备，不能提交检查点')
+        if (JSON.stringify(current.invocationContext) !== JSON.stringify(context)) {
+          throw new Error('Goal调用上下文已变化，请重新运行')
         }
         validateCheckpoint(checkpoint, current)
         this.save({
@@ -148,6 +180,11 @@ export class GoalCoordinator {
           return
         }
         if (current.activeRunId || current.checkpointRunId !== runId || current.status !== 'active') return
+        if (!context || goalConfiguration(current) !== configuration ||
+          JSON.stringify(current.invocationContext) !== JSON.stringify(context)) {
+          this.waitForUser(current, 'Goal配置或调用上下文已变化，不自动续跑。')
+          return
+        }
         if (!canContinue) {
           this.waitForUser(current, '本轮已停止或有用户输入待处理，不自动续跑。')
           return
@@ -274,4 +311,26 @@ function buildContinuationPrompt(goal: AgentGoal): string {
 
 function cloneCheckpoint(checkpoint: AgentGoalCheckpoint): AgentGoalCheckpoint {
   return JSON.parse(JSON.stringify(checkpoint)) as AgentGoalCheckpoint
+}
+
+/** 只比较调用授权配置，不把状态/version更新当成新配置。 */
+function goalConfiguration(goal: AgentGoal): string {
+  return JSON.stringify({
+    workspaceId: goal.workspaceId, channelId: goal.channelId, modelId: goal.modelId,
+    runtime: goal.runtime, objective: goal.objective, acceptanceCriteria: goal.acceptanceCriteria,
+  })
+}
+
+function copyPreparedRequest(request: AgentGoalPreparedRequest): AgentGoalPreparedRequest {
+  const required = [request.cwd, request.channelId, request.provider]
+  const optional = [request.workspaceId, request.requestedModelId]
+  if (required.some((value) => typeof value !== 'string' || !value.trim()) ||
+    optional.some((value) => value !== undefined && (typeof value !== 'string' || !value.trim())) ||
+    !isAbsolute(request.cwd) || !['proma', 'pi', 'ai-sdk'].includes(request.runtime)) {
+    throw new Error('Goal请求上下文无效')
+  }
+  return {
+    runtime: request.runtime, workspaceId: request.workspaceId, cwd: request.cwd,
+    channelId: request.channelId, provider: request.provider, requestedModelId: request.requestedModelId,
+  }
 }

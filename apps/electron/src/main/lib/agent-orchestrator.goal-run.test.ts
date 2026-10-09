@@ -2,7 +2,7 @@ import { afterAll, describe, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentGoalCheckpoint, AgentProviderAdapter, AgentRuntime, SDKMessage } from '@gravitas/shared'
+import type { AgentGoalCheckpoint, AgentQueryInput, AgentProviderAdapter, AgentRuntime, SDKMessage } from '@gravitas/shared'
 import type { ProviderAgnosticAgentQueryOptions } from './adapters/provider-agnostic-agent-adapter'
 import type { PiAgentQueryOptions } from './adapters/pi-agent-adapter'
 import { buildElectronMock } from './testing/electron-mock'
@@ -18,6 +18,7 @@ const { createChannel } = await import('./channel-manager')
 const { createAgentSession } = await import('./agent-session-manager')
 const { createAgentWorkspace } = await import('./agent-workspace-manager')
 const { GoalCoordinator } = await import('./goal-runtime/goal-coordinator')
+const { ElectronGoalStore } = await import('./goal-runtime/goal-store')
 const { permissionService } = await import('./agent-permission-service')
 
 afterAll(async () => {
@@ -37,14 +38,14 @@ function fixture(runtime: Extract<AgentRuntime, 'ai-sdk' | 'pi'> = 'ai-sdk') {
   const session = createAgentSession('Goal调用测试', channel.id, workspace.id, 'fixture-model', runtime)
   const c = new GoalCoordinator()
   const goal = c.create({ sessionId: session.id, runtime, workspaceId: workspace.id, objective: 'fixture' })
-  const entries: Array<{ checkpoint?: (input: AgentGoalCheckpoint) => Promise<void>; release: () => void }> = []
+  const entries: Array<{ options: AgentQueryInput; checkpoint?: (input: AgentGoalCheckpoint) => Promise<void>; release: () => void }> = []
   const adapter: AgentProviderAdapter = {
     query(input) {
       const gate = Promise.withResolvers<void>()
       const checkpoint = runtime === 'pi'
         ? (input as PiAgentQueryOptions).toolContextOverrides?.onGoalCheckpoint
         : (input as ProviderAgnosticAgentQueryOptions).onGoalCheckpoint
-      entries.push({ checkpoint, release: () => gate.resolve() })
+      entries.push({ options: input, checkpoint, release: () => gate.resolve() })
       return {
         async *[Symbol.asyncIterator]() {
           await gate.promise
@@ -55,13 +56,16 @@ function fixture(runtime: Extract<AgentRuntime, 'ai-sdk' | 'pi'> = 'ai-sdk') {
     abort() {}, dispose() {},
   }
   let captures = 0
+  let afterPrepared: (() => void) | undefined
   const bus = new AgentEventBus()
   const o = new AgentOrchestrator(adapter, bus, createElectronRuntimeServices(bus), (sid) => {
     captures++
-    return c.captureRun(sid)
+    const run = c.captureRun(sid)
+    if (!run) return undefined
+    return { ...run, onPrepared: async (request) => { await run.onPrepared(request); afterPrepared?.() } }
   })
   const input = { sessionId: session.id, workspaceId: workspace.id, channelId: channel.id, modelId: 'fixture-model', agentRuntime: runtime, userMessage: '', startedAt: 123 }
-  return { c, o, goal, entries, input, captures: () => captures }
+  return { c, o, goal, entries, input, captures: () => captures, setAfterPrepared: (hook: () => void) => { afterPrepared = hook } }
 }
 
 async function entry(w: ReturnType<typeof fixture>, index: number) {
@@ -81,6 +85,11 @@ describe('真实Orchestrator Goal闭包边界（离线adapter）', () => {
         expect(w.captures()).toBe(1)
         const runId = w.c.get(w.goal.id)?.activeRunId
         expect(runId).toBeDefined()
+        expect(w.c.get(w.goal.id)?.invocationContext).toMatchObject({
+          sourcePhase: 'prepared-request', runtime, workspaceId: w.input.workspaceId,
+          channelId: w.input.channelId, provider: 'openai', requestedModelId: e.options.model,
+          cwd: e.options.cwd, runId,
+        })
         expect(e.checkpoint).toBeFunction()
         await e.checkpoint!(complete)
         expect(w.c.get(w.goal.id)?.checkpointRunId).toBe(runId)
@@ -88,6 +97,47 @@ describe('真实Orchestrator Goal闭包边界（离线adapter）', () => {
       expect(w.c.get(w.goal.id)?.status).toBe('completed')
     })
   }
+
+  for (const change of [
+    { workspaceId: 'other' }, { channelId: 'other' }, { modelId: 'other' }, { runtime: 'pi' as const },
+  ]) {
+    test(`Goal配置不匹配不进入query：${JSON.stringify(change)}`, async () => {
+      const w = fixture()
+      new ElectronGoalStore().save({ ...w.goal, ...change })
+      // red阶段旧实现可能进入query，释放离线gate，避免以挂死代替断言。
+      const timer = setTimeout(() => { for (const e of w.entries) e.release() }, 100)
+      try {
+        await expect(w.o.sendMessage(w.input, callbacks)).rejects.toThrow('不一致')
+        expect(w.entries).toHaveLength(0)
+        expect(w.c.get(w.goal.id)?.invocationContext).toBeUndefined()
+        expect(w.c.get(w.goal.id)?.status).toBe('waiting')
+      } finally { clearTimeout(timer); for (const e of w.entries) e.release() }
+    })
+  }
+
+  for (const runtime of ['ai-sdk', 'pi'] as const) {
+    test(`${runtime}准备后停止，await间隙不能启动迟到query`, async () => {
+      const w = fixture(runtime)
+      w.setAfterPrepared(() => { w.o.stop(w.input.sessionId, 123) })
+      const timer = setTimeout(() => { for (const e of w.entries) e.release() }, 100)
+      try {
+        await expect(w.o.sendMessage(w.input, callbacks)).rejects.toThrow('已失效')
+        expect(w.entries).toHaveLength(0)
+        expect(w.c.get(w.goal.id)?.status).toBe('waiting')
+      } finally { clearTimeout(timer); for (const e of w.entries) e.release() }
+    })
+  }
+
+  test('Pi使用session fallback的请求模型，而非原始缺失输入', async () => {
+    const w = fixture('pi')
+    const running = w.o.sendMessage({ ...w.input, modelId: undefined }, callbacks)
+    const e = await entry(w, 0)
+    try {
+      expect(e.options.model).toBe('fixture-model')
+      expect(w.c.get(w.goal.id)?.invocationContext?.requestedModelId).toBe(e.options.model)
+      await e.checkpoint!(complete)
+    } finally { e.release(); await running }
+  })
 
   test('停止并开始同startedAt新run后，旧callback/finally不伤新槽位', async () => {
     const w = fixture()

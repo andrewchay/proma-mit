@@ -5,6 +5,7 @@
  */
 
 import type { FileAttachment } from './chat'
+import type { ProviderType } from './channel'
 
 // ===== 记忆配置 =====
 
@@ -873,6 +874,26 @@ export interface AgentGoalCheckpoint {
   blocker?: string
 }
 
+/** 主进程在query前观测的请求参数；不包含凭据或正文。 */
+export interface AgentGoalPreparedRequest {
+  workspaceId?: string
+  cwd: string
+  runtime: Extract<AgentRuntime, 'proma' | 'pi' | 'ai-sdk'>
+  channelId: string
+  provider: ProviderType
+  /** 实际传给adapter的请求模型，不是Provider确认的模型。 */
+  requestedModelId?: string
+}
+
+export interface AgentGoalInvocationContext extends AgentGoalPreparedRequest {
+  version: 1
+  sourcePhase: 'prepared-request'
+  goalId: string
+  sessionId: string
+  runId: string
+  preparedAt: number
+}
+
 /** 持久化的 Goal 实体；桌面端与服务端使用同一契约。 */
 export interface AgentGoal {
   id: string
@@ -888,6 +909,8 @@ export interface AgentGoal {
   activeRunId?: string
   /** 主进程已接收检查点的调用身份；不代表证据验证通过。 */
   checkpointRunId?: string
+  /** 本轮已准备请求的投影；历史保留在Goal事件中，不授予验证信任。 */
+  invocationContext?: AgentGoalInvocationContext
   createdAt: number
   updatedAt: number
   version: number

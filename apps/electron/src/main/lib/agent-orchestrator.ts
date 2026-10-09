@@ -22,7 +22,7 @@ import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, SDKResultMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
+import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, SDKResultMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint, AgentGoalPreparedRequest } from '@gravitas/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -668,8 +668,10 @@ export class AgentOrchestrator {
     skillMentions?: string[]
     requestedOperation?: 'compact'
     onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+    prepareGoalRun?: (request: AgentGoalPreparedRequest) => Promise<void>
+    assertRunOwner?: () => void
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, worktreeScopedWrite, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, onGoalCheckpoint } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, worktreeScopedWrite, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, onGoalCheckpoint, prepareGoalRun, assertRunOwner } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[${agentRuntime} runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -834,6 +836,11 @@ export class AgentOrchestrator {
         extraTools: collabExtraTools,
       }
 
+      await prepareGoalRun?.({
+        workspaceId: runtimeWorkspace.workspace?.id, cwd: agentCwd,
+        runtime: agentRuntime, channelId, provider, requestedModelId: queryOptions.model,
+      })
+      assertRunOwner?.()
       const iterable = this.adapter.query(queryOptions)
       const accumulatedMessages: SDKMessage[] = []
       let runtimeEstablished = false
@@ -931,9 +938,11 @@ export class AgentOrchestrator {
     skillMentions?: string[]
     requestedOperation?: 'compact'
     onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+    prepareGoalRun?: (request: AgentGoalPreparedRequest) => Promise<void>
+    assertRunOwner?: () => void
     runtimeBudgetLimitUsd?: number
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, runtimeBudgetLimitUsd, onGoalCheckpoint } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, runtimeBudgetLimitUsd, onGoalCheckpoint, prepareGoalRun, assertRunOwner } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[Pi Runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -942,11 +951,13 @@ export class AgentOrchestrator {
       let agentCwd = homedir()
       let workspaceName: string | undefined
       let workspaceSlug: string | undefined
+      let resolvedWorkspaceId: string | undefined
       let mcpServers: Record<string, import('@gravitas/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (!ws) throw new Error('明确工作区不存在，禁止回退到主目录')
         if (ws) {
+          resolvedWorkspaceId = ws.id
           workspaceName = ws.name
           workspaceSlug = ws.slug
           mcpServers = getWorkspaceMcpConfig(ws.slug).servers
@@ -1107,6 +1118,11 @@ export class AgentOrchestrator {
         }),
       }
 
+      await prepareGoalRun?.({
+        workspaceId: resolvedWorkspaceId, cwd: agentCwd,
+        runtime: 'pi', channelId, provider, requestedModelId: queryOptions.model,
+      })
+      assertRunOwner?.()
       const accumulatedMessages: SDKMessage[] = []
       for await (const msg of this.adapter.query(queryOptions)) {
         // Pi 的流式快照只用于即时展示；只持久化最终帧，避免历史中重复累计文本。
@@ -2041,17 +2057,19 @@ export class AgentOrchestrator {
 
     const appSettings = getSettings()
     const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+    const assertRunOwner = (): void => {
+      if (this.activeSessions.get(sessionId) !== runGeneration || this.activeRunTokens.get(sessionId) !== runToken) {
+        throw new Error('Agent运行槽位已失效')
+      }
+    }
     let onGoalCheckpoint: ((checkpoint: AgentGoalCheckpoint) => Promise<void>) | undefined
+    let prepareGoalRun: ((request: AgentGoalPreparedRequest) => Promise<void>) | undefined
     if (effectiveAgentRuntime !== 'claude' && resolveRequestedOperation(userMessage) !== 'compact') {
       const captured = this.captureGoalRun?.(sessionId)
       goalRun = captured
       if (captured) {
-        onGoalCheckpoint = async (checkpoint) => {
-          if (this.activeSessions.get(sessionId) !== runGeneration || this.activeRunTokens.get(sessionId) !== runToken) {
-            throw new Error('Goal检查点运行槽位已失效')
-          }
-          await captured.onCheckpoint(checkpoint)
-        }
+        prepareGoalRun = async (request) => { assertRunOwner(); await captured.onPrepared(request) }
+        onGoalCheckpoint = async (checkpoint) => { assertRunOwner(); await captured.onCheckpoint(checkpoint) }
       }
     }
     const effectiveRuntimeBudgetLimitUsd = resolveRuntimeBudgetLimitUsd(
@@ -2258,6 +2276,8 @@ export class AgentOrchestrator {
           requestedOperation: resolveRequestedOperation(userMessage),
           runtimeBudgetLimitUsd: effectiveRuntimeBudgetLimitUsd,
           onGoalCheckpoint,
+          prepareGoalRun,
+          assertRunOwner,
         })
         return
       }
@@ -2286,6 +2306,8 @@ export class AgentOrchestrator {
         skillMentions: mentionedSkills,
         requestedOperation: resolveRequestedOperation(userMessage),
         onGoalCheckpoint,
+        prepareGoalRun,
+        assertRunOwner,
       })
       return
     }

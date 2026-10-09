@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-08 23:25 GMT+8第三批）：**H00/H01与V01已落地；V02已有内容/配置新鲜度、严格回读以及真实Orchestrator的Goal/session/run闭包绑定，仍部分完成。完整InvocationContext、受保护验证器配置/测试收集未闭合，V03因此阻塞。M0及所有发布门禁未通过。**
+> 当前总状态（截至2026-10-09 07:35 GMT+8第四批）：**H00/H01与V01已落地；V02已有新鲜度/严格回读、Goal/session/run闭包与已准备请求上下文，拒绝跨环境/配置漂移，仍部分完成。Provider确认与完整业务身份映射、受保护verifier/测试收集未闭合，V03仍阻塞。M0及所有发布门禁未通过。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -155,7 +155,7 @@
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
 | V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
-| V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包已接线；完整InvocationContext/verifier/test来源未闭合，见v02-evidence.md及goal-run-evidence.md |
+| V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包和prepared-request上下文已接线；Provider确认/业务映射/verifier/test来源未闭合，见v02-evidence.md、goal-run-evidence.md与invocation-context-evidence.md |
 | V03 | 接线 goal-runtime/goal-coordinator.ts 和测试；拟新增 verification/completion-guard.ts | Given 显式 required criteria，When complete，Then 逐项核验；缺/错/旧/skip/零收集拒绝，不跳业务验收 | V02 | 阻塞：V02受保护验证器/收集与完整来源未闭合，不以普通命令passed接线 |
 | V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
 | V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
@@ -409,6 +409,8 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261008-006 | 2026-10-08 22:37 GMT+8 | V02 red/green与回归 | 新鲜度6例先红、回读7例先红后修复；最终5个定向文件53 pass；全仓542文件3595 pass/0 fail/27 skip；九包typecheck、全仓lint1970文件、docs/diff检查通过；真实workspace清单36→36且一致，新增0 | 日志harness-v02-*.log（会话私有工作台）；临时配置/Git真实本地验证命令，不调用真实Provider；没有打包、原生强杀或V03 UI验收。shared 0.2.31/electron 0.12.114；不触碰原主工作树已有或并行新增文件 |
 | HARNESS-20261008-007 | 2026-10-08 22:47–23:25 GMT+8 | V02 Goal身份切片 | 复用Goal activeRunId、追加可选checkpointRunId，主进程闭包固定Goal/run；实际Orchestrator准入后签发，AI SDK/Pi/headless/队列同边界；内部token防相同startedAt旧回调/finally；暂停/停止/新Goal/重复提交隔离 | 基线70908394；goal-run-contract.md/goal-run-evidence.md；只证明已准入尝试，不是Provider/SDK/toolCall身份，未冻结完整InvocationContext；旧complete/evidence未验真，V03仍阻塞 |
 | HARNESS-20261008-008 | 2026-10-08 23:25 GMT+8 | V02接线red/green与回归 | Coordinator API red12 fail（含迁移4旧例）后通过；修复fixture重名后Orchestrator red4 fail后通过；最终5定向文件76 pass；全仓543文件3612 pass/0 fail/27 skip；九包typecheck、lint1971文件、docs/diff通过；真实目录36→36一致新增0 | 私有harness-v02-goal-*.log；真实Orchestrator/离线adapter，不调用真实Provider，不做打包/停止真机验收。shared 0.2.32/electron 0.12.115；发现现有runner无受保护收集协议，冻结阻塞而非伪造test passed |
+| HARNESS-20261009-001 | 2026-10-09 07:17–07:35 GMT+8 | V02已准备请求切片 | 早期nonce闭包保留，query前一次准备；存实际workspace/cwd/runtime/channel/provider/requestedModelId，Pi会话模型回退；跨环境、配置/投影漂移拒绝；query前复查slot避免准备后停止迟到启动 | 基线72793fb5，invocation-context-contract.md/evidence.md；只证明准备请求，不代表Provider确认。独立目录/渠道配置撤权、task/execution、可信verifier/test仍未闭合；V02部分、V03阻塞 |
+| HARNESS-20261009-002 | 2026-10-09 07:35 GMT+8 | V02请求接线red/green与回归 | 新准备API13例red后green；接线2 pass/10 fail后通过；移除query前guard离线回归12 pass/2 fail后恢复通过。最终4定向文件60 pass；全仓544文件3644 pass/0 fail/27 skip；九包types、lint1972、docs/diff通过；真实workspace36→36一致新增0 | 私有harness-context-*.log；初次fixture错误期待异常返回、ProviderType导入与可选cwd类型错误均记录并修复。shared0.2.33/electron0.12.116；无真实Provider/build/package/native强停或新flag启用 |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
@@ -421,4 +423,4 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 - Pilot：`docs/plans/2026-09-26-project-pilot/ledger.md`。本ledger不改写其门禁或继承其PASS。
 - 存储：`docs/storage-contract.md`。新权威数据落点和备份必须遵循该合同。
 
-执行下一步：实施授权已取得，继续补齐H02/H03及V02剩余切片，优先冻结完整InvocationContext、固定verifier/criteria配置和受保护测试收集来源（普通任意命令保持退出证据），解决私有证据写入信任边界后再接V03完成门禁；不得直接跳到真实Provider、开启功能或ACP接入。每项采用“失败行为测试 → 最小实现 → 定向回归 → 简化审查 → 记录证据 → 单独可审阅提交”，受影响包patch同步。README/AGENTS变更只提出最小候选并另行请求授权。
+执行下一步：实施授权已取得，继续补齐H02/H03及V02剩余切片，优先冻结实际运行/业务身份映射、固定verifier/criteria配置和受保护测试收集来源（普通任意命令保持退出证据），解决私有证据写入信任边界后再接V03完成门禁；不得直接跳到真实Provider、开启功能或ACP接入。每项采用“失败行为测试 → 最小实现 → 定向回归 → 简化审查 → 记录证据 → 单独可审阅提交”，受影响包patch同步。README/AGENTS变更只提出最小候选并另行请求授权。
