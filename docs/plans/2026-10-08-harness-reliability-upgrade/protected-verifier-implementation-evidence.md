@@ -36,3 +36,11 @@
 5. (b) 的保证范围只覆盖你配置的 `protectedPaths`；未列入的测试文件可以被削弱而不被发现。
 6. 沙箱只覆盖验证命令；验证命令内的网络访问未限制。
 7. 只在 macOS 上测试过 seatbelt；`sandbox-exec` 是 Apple 标注为旧接口的机制，长期可用性需评估。
+
+## 第二轮（2026-10-09 14:20）：统一维护与生产 safeStorage 验证
+
+- **统一维护（决策 2）**：受保护路径成为签名记录的一部分，由 `ProtectedVerifierStore` 统一保存（`save(id, config, protectedPaths)`），签名覆盖路径。`GoalCompletionGate` 只保留 `repoRoot`、`baselineCommitSha` 与 `verifierRef`，不再内嵌配置或路径。完成时先做绑定校验（修订与哈希），再以存储中的路径与配置执行。
+- 测试：存储新增“篡改受保护路径被检测、非法或空模式拒绝”；门禁新增“门禁不内嵌配置或路径”与“统一存储更新路径后旧 Goal 拒绝完成”。修正过程中有一次用例因注入验证器绕过绑定检查而失败，已改为默认验证器；另一次是默认验证器先解析 HEAD 导致错误信息不符，已调整为先做绑定校验。
+- **生产 safeStorage（决策 3）**：见 `safestorage-runtime-validation-evidence.md`。
+- 全仓：3769 通过、0 失败、28 跳过；类型检查九包通过；lint 通过；真实 workspace 36→36，未生成 `~/.gravitas/verifiers`。
+- 仍未完成：Agent Bash 沙箱（取舍分析见会话说明）、设置界面、打包版签名应用的钥匙串验证。

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { GoalCompletionGate, PinnedVerifierConfig, PinnedVerifierReceipt } from '@gravitas/shared'
+import type { GoalCompletionGate, PinnedVerifierConfig, PinnedVerifierReceipt, ProtectedVerifierRef } from '@gravitas/shared'
 import { GoalCoordinator, type CompletionDecision, type CompletionVerifier } from './goal-coordinator'
 import { ElectronGoalStore } from './goal-store'
 import { ProtectedVerifierStore, type KeyProtector } from '../protected-verifier-store'
@@ -16,16 +16,17 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
+// 仅测试用可逆变换；生产使用 safeStorage（另见运行时验证证据）。
 const testProtector: KeyProtector = {
   encrypt: (plain) => Buffer.from(plain.map((b) => b ^ 0x5a)),
   decrypt: (cipher) => Buffer.from(cipher.map((b) => b ^ 0x5a)),
 }
 const BASE = 'a'.repeat(40)
+const PATHS = ['**/*.test.ts']
 const verifier: PinnedVerifierConfig = {
   version: 1, verifierId: 'fixture-bun', argv: [process.execPath, 'test', '--reporter=junit', '--reporter-outfile={{JUNIT_REPORT}}'],
   expectedExitCodes: [0], timeoutMs: 60_000, minimumTests: 1,
 }
-const gate: GoalCompletionGate = { version: 1, repoRoot: '/fixture/repo', baselineCommitSha: BASE, protectedPaths: ['**/*.test.ts'], verifier }
 const complete = { outcome: 'complete' as const, summary: '完成', completed: [], evidence: [{ kind: 'test' as const, value: 'bun test' }] }
 
 function receipt(verdict: 'passed' | 'failed', reasons: PinnedVerifierReceipt['reasons'] = []): PinnedVerifierReceipt {
@@ -38,23 +39,32 @@ function receipt(verdict: 'passed' | 'failed', reasons: PinnedVerifierReceipt['r
 function decision(passed: boolean, reasons: PinnedVerifierReceipt['reasons'] = []): CompletionDecision {
   return { passed, reasons, receipt: receipt(passed ? 'passed' : 'failed', reasons) }
 }
+function savedStore(dir: string): { store: ProtectedVerifierStore; ref: ProtectedVerifierRef } {
+  const store = new ProtectedVerifierStore({ dir: join(dir, 'verifiers'), protector: testProtector })
+  const saved = store.save('fixture-bun', verifier, PATHS)
+  return { store, ref: { verifierId: 'fixture-bun', revision: saved.record.revision, recordSha256: saved.recordSha256 } }
+}
+function gateFor(ref: ProtectedVerifierRef, extra: Partial<GoalCompletionGate> = {}): GoalCompletionGate {
+  return { version: 1, repoRoot: '/fixture/repo', baselineCommitSha: BASE, verifierRef: ref, ...extra }
+}
 
-function fixture(options: { verify?: CompletionVerifier; withGate?: boolean; gate?: GoalCompletionGate; store?: ProtectedVerifierStore } = {}) {
+function fixture(options: { verify?: CompletionVerifier; withGate?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-gate-'))
   dirs.push(dir); process.env.PROMA_TEST_CONFIG_DIR = dir
+  const { store: verifierStore, ref } = savedStore(dir)
   const store = new ElectronGoalStore()
   const calls: Array<{ repoRoot: string }> = []
   const verify: CompletionVerifier = options.verify ?? (async () => decision(true))
   const c = new GoalCoordinator(store, {
     verifyCompletion: async (g) => { calls.push({ repoRoot: g.repoRoot }); return verify(g) },
-    verifierStore: options.store ?? new ProtectedVerifierStore({ dir: join(dir, 'verifiers'), protector: testProtector }),
+    verifierStore,
   })
   const g = c.create({
     sessionId: 's', runtime: 'ai-sdk', objective: '目标', workspaceId: 'w', channelId: 'ch', modelId: 'm',
-    acceptanceCriteria: ['测试通过'], ...(options.withGate === false ? {} : { completionGate: options.gate ?? gate }),
+    acceptanceCriteria: ['测试通过'], ...(options.withGate === false ? {} : { completionGate: gateFor(ref) }),
   })
   const run = c.captureRun('s')!
-  return { c, store, g, run, calls, verifierStore: options.store }
+  return { c, store, g, run, calls, verifierStore }
 }
 async function prepare(run: { onPrepared(r: unknown): Promise<void> }): Promise<void> {
   await run.onPrepared({ runtime: 'ai-sdk', workspaceId: 'w', channelId: 'ch', requestedModelId: 'm', provider: 'openai', cwd: '/fixture' })
@@ -110,103 +120,94 @@ describe('Goal完成门禁：判定结果与回执', () => {
   })
 })
 
-describe('Goal完成门禁：创建时校验', () => {
-  test('拒绝相对路径、非法基线、空或非法受保护模式、非法验证配置', () => {
-    const w = fixture({ withGate: false })
-    const create = (g: Partial<GoalCompletionGate>) => w.c.create({ sessionId: `x${Math.random()}`, runtime: 'ai-sdk', objective: 'x', completionGate: { ...gate, ...g } as GoalCompletionGate })
-    expect(() => create({ repoRoot: 'relative' })).toThrow('repoRoot')
-    expect(() => create({ baselineCommitSha: 'HEAD' })).toThrow('baselineCommitSha')
-    expect(() => create({ protectedPaths: [] })).toThrow('protectedPaths')
-    expect(() => create({ protectedPaths: ['../escape'] })).toThrow('protectedPaths')
-    expect(() => create({ verifier: { ...verifier, argv: [] } })).toThrow('argv')
+describe('Goal完成门禁：统一维护与创建时校验', () => {
+  test('门禁只能引用统一存储：相对路径、非法基线、未知或不一致引用均拒绝', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-validate-'))
+    dirs.push(dir); process.env.PROMA_TEST_CONFIG_DIR = dir
+    const { ref } = savedStore(dir)
+    const c = new GoalCoordinator(new ElectronGoalStore(), { verifierStore: new ProtectedVerifierStore({ dir: join(dir, 'verifiers'), protector: testProtector }) })
+    const create = (gate: GoalCompletionGate) => c.create({ sessionId: `x${Math.random()}`, runtime: 'ai-sdk', objective: 'x', completionGate: gate })
+    expect(() => create(gateFor(ref, { repoRoot: 'relative' }))).toThrow('repoRoot')
+    expect(() => create(gateFor(ref, { baselineCommitSha: 'HEAD' }))).toThrow('baselineCommitSha')
+    expect(() => create(gateFor({ ...ref, verifierId: 'missing-verifier' }))).toThrow('不存在')
+    expect(() => create(gateFor({ ...ref, recordSha256: 'f'.repeat(64) }))).toThrow('不一致')
   })
-  test('绑定引用与存储不一致时创建失败；与存储一致时可创建', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-bind-'))
-    dirs.push(dir)
-    const store = new ProtectedVerifierStore({ dir: join(dir, 'verifiers'), protector: testProtector })
-    const saved = store.save('fixture-bun', verifier)
-    const w = fixture({ withGate: false, store })
-    const ref = { verifierId: 'fixture-bun', revision: saved.record.revision, recordSha256: saved.recordSha256 }
-    expect(() => w.c.create({ sessionId: 'b1', runtime: 'ai-sdk', objective: 'x', completionGate: { ...gate, verifierRef: { ...ref, recordSha256: 'f'.repeat(64) } } })).toThrow('不一致')
-    expect(() => w.c.create({ sessionId: 'b2', runtime: 'ai-sdk', objective: 'x', completionGate: { ...gate, verifier: { ...verifier, minimumTests: 9 }, verifierRef: ref } })).toThrow('不一致')
-    expect(w.c.create({ sessionId: 'b3', runtime: 'ai-sdk', objective: 'x', completionGate: { ...gate, verifierRef: ref } }).completionGate?.verifierRef).toEqual(ref)
+  test('门禁不内嵌配置或路径：创建结果只保留引用', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-ref-'))
+    dirs.push(dir); process.env.PROMA_TEST_CONFIG_DIR = dir
+    const { ref, store } = savedStore(dir)
+    const c = new GoalCoordinator(new ElectronGoalStore(), { verifierStore: store })
+    const g = c.create({ sessionId: 'ref', runtime: 'ai-sdk', objective: 'x', completionGate: gateFor(ref) })
+    expect(Object.keys(g.completionGate!).sort()).toEqual(['baselineCommitSha', 'repoRoot', 'verifierRef', 'version'])
+  })
+  test('统一存储更新受保护路径后，旧 Goal 拒绝完成（需重新创建 Goal）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-rebind-'))
+    dirs.push(dir); process.env.PROMA_TEST_CONFIG_DIR = dir
+    const { ref, store } = savedStore(dir)
+    // 使用默认验证器：绑定校验发生在 HEAD 解析之前，失败原因即为修订变化。
+    const c = new GoalCoordinator(new ElectronGoalStore(), { verifierStore: store })
+    const g = c.create({ sessionId: 'upd', runtime: 'ai-sdk', objective: 'x', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: gateFor(ref) })
+    store.save('fixture-bun', verifier, ['src/**'])
+    const run = c.captureRun('upd')!
+    await run.onPrepared({ runtime: 'ai-sdk', workspaceId: 'w', channelId: 'ch', requestedModelId: 'm', provider: 'openai', cwd: dir })
+    await expect(run.onCheckpoint(complete)).rejects.toThrow('已更新，请重新创建 Goal')
+    expect(c.get(g.id)?.status).toBe('active')
   })
 })
 
 describe('Goal完成门禁：真实默认验证（临时git仓库，seatbelt）', () => {
+  function git(r: string, args: string[]): string {
+    return execFileSync('git', ['-C', r, '-c', 'user.name=f', '-c', 'user.email=f@x', ...args], { encoding: 'utf8' }).trim()
+  }
   function repo(name: string): string {
     const r = mkdtempSync(join(tmpdir(), `gravitas-goal-${name}-`))
     dirs.push(r)
     mkdirSync(join(r, 'src'))
-    const git = (args: string[]) => execFileSync('git', ['-C', r, '-c', 'user.name=f', '-c', 'user.email=f@x', ...args], { encoding: 'utf8' }).trim()
-    git(['init', '-q'])
+    git(r, ['init', '-q'])
     writeFileSync(join(r, 'ok.test.ts'), 'import { test, expect } from "bun:test"\ntest("ok", () => expect(1).toBe(1))\n')
     writeFileSync(join(r, 'src/value.ts'), 'export const v = 1\n')
-    git(['add', '.'])
-    git(['commit', '-q', '-m', 'base'])
+    git(r, ['add', '.'])
+    git(r, ['commit', '-q', '-m', 'base'])
     return r
   }
-  function git(r: string, args: string[]): string {
-    return execFileSync('git', ['-C', r, '-c', 'user.name=f', '-c', 'user.email=f@x', ...args], { encoding: 'utf8' }).trim()
-  }
-  function coordinatorFor(store?: ProtectedVerifierStore) {
+  function setup(name: string) {
+    const r = repo(name)
     const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-default-'))
     dirs.push(dir); process.env.PROMA_TEST_CONFIG_DIR = dir
-    return new GoalCoordinator(new ElectronGoalStore(), { verifierStore: store ?? new ProtectedVerifierStore({ dir: join(dir, 'verifiers'), protector: testProtector }) })
+    const { store, ref } = savedStore(dir)
+    const c = new GoalCoordinator(new ElectronGoalStore(), { verifierStore: store })
+    return { r, c, store, ref, base: git(r, ['rev-parse', 'HEAD']) }
   }
-  async function finishWithComplete(c: GoalCoordinator, sessionId: string, goalId: string, r: string) {
+  async function finish(c: GoalCoordinator, sessionId: string, r: string) {
     const run = c.captureRun(sessionId)!
     await run.onPrepared({ runtime: 'ai-sdk', workspaceId: 'w', channelId: 'ch', requestedModelId: 'm', provider: 'openai', cwd: r })
-    await run.onCheckpoint(complete)
-    return c.get(goalId)!
+    return run
   }
 
   test('未提交的破坏不影响通过；HEAD 已提交内容通过并记录回执', async () => {
-    const r = repo('clean')
-    const base = git(r, ['rev-parse', 'HEAD'])
-    writeFileSync(join(r, 'ok.test.ts'), 'import { test, expect } from "bun:test"\ntest("bad", () => expect(1).toBe(2))\n')
-    const c = coordinatorFor()
-    const g = c.create({ sessionId: 'r1', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { ...gate, repoRoot: r, baselineCommitSha: base } })
-    const after = await finishWithComplete(c, 'r1', g.id, r)
-    expect(after.status).toBe('completed')
-    expect(after.completionVerification).toMatchObject({ verdict: 'passed', commitSha: base, isolation: 'seatbelt-macos' })
+    const s = setup('clean')
+    writeFileSync(join(s.r, 'ok.test.ts'), 'import { test, expect } from "bun:test"\ntest("bad", () => expect(1).toBe(2))\n')
+    const g = s.c.create({ sessionId: 'r1', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { version: 1, repoRoot: s.r, baselineCommitSha: s.base, verifierRef: s.ref } })
+    const run = await finish(s.c, 'r1', s.r)
+    await run.onCheckpoint(complete)
+    expect(s.c.get(g.id)?.completionVerification).toMatchObject({ verdict: 'passed', commitSha: s.base, isolation: 'seatbelt-macos' })
   })
   test('基线之后修改测试文件并提交：拒绝，并指出违规路径', async () => {
-    const r = repo('weaken')
-    const base = git(r, ['rev-parse', 'HEAD'])
-    writeFileSync(join(r, 'ok.test.ts'), 'import { test, expect } from "bun:test"\ntest("weak", () => expect(1).toBe(1))\n')
-    git(r, ['commit', '-q', '-am', 'weaken'])
-    const c = coordinatorFor()
-    const g = c.create({ sessionId: 'r2', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { ...gate, repoRoot: r, baselineCommitSha: base } })
-    const run = c.captureRun('r2')!
-    await run.onPrepared({ runtime: 'ai-sdk', workspaceId: 'w', channelId: 'ch', requestedModelId: 'm', provider: 'openai', cwd: r })
+    const s = setup('weaken')
+    writeFileSync(join(s.r, 'ok.test.ts'), 'import { test, expect } from "bun:test"\ntest("weak", () => expect(1).toBe(1))\n')
+    git(s.r, ['commit', '-q', '-am', 'weaken'])
+    const g = s.c.create({ sessionId: 'r2', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { version: 1, repoRoot: s.r, baselineCommitSha: s.base, verifierRef: s.ref } })
+    const run = await finish(s.c, 'r2', s.r)
     await expect(run.onCheckpoint(complete)).rejects.toThrow('protected:ok.test.ts')
-    expect(c.get(g.id)?.status).toBe('active')
+    expect(s.c.get(g.id)?.status).toBe('active')
   })
   test('基线之后只改源码并提交：允许完成', async () => {
-    const r = repo('src-only')
-    const base = git(r, ['rev-parse', 'HEAD'])
-    writeFileSync(join(r, 'src/value.ts'), 'export const v = 2\n')
-    git(r, ['commit', '-q', '-am', 'src'])
-    const c = coordinatorFor()
-    const g = c.create({ sessionId: 'r3', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { ...gate, repoRoot: r, baselineCommitSha: base } })
-    const after = await finishWithComplete(c, 'r3', g.id, r)
-    expect(after.status).toBe('completed')
-  })
-  test('签名配置被更新后，旧 Goal 拒绝完成（需重新创建 Goal）', async () => {
-    const r = repo('rebind')
-    const base = git(r, ['rev-parse', 'HEAD'])
-    const dir = mkdtempSync(join(tmpdir(), 'gravitas-goal-rebind-'))
-    dirs.push(dir)
-    const store = new ProtectedVerifierStore({ dir: join(dir, 'verifiers'), protector: testProtector })
-    const saved = store.save('fixture-bun', verifier)
-    const c = coordinatorFor(store)
-    const ref = { verifierId: 'fixture-bun', revision: saved.record.revision, recordSha256: saved.recordSha256 }
-    const g = c.create({ sessionId: 'r4', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { ...gate, repoRoot: r, baselineCommitSha: base, verifierRef: ref } })
-    store.save('fixture-bun', { ...verifier, minimumTests: 5 })
-    const run = c.captureRun('r4')!
-    await run.onPrepared({ runtime: 'ai-sdk', workspaceId: 'w', channelId: 'ch', requestedModelId: 'm', provider: 'openai', cwd: r })
-    await expect(run.onCheckpoint(complete)).rejects.toThrow('已更新，请重新创建 Goal')
-    expect(c.get(g.id)?.status).toBe('active')
+    const s = setup('src-only')
+    writeFileSync(join(s.r, 'src/value.ts'), 'export const v = 2\n')
+    git(s.r, ['commit', '-q', '-am', 'src'])
+    const g = s.c.create({ sessionId: 'r3', runtime: 'ai-sdk', objective: '真实', workspaceId: 'w', channelId: 'ch', modelId: 'm', completionGate: { version: 1, repoRoot: s.r, baselineCommitSha: s.base, verifierRef: s.ref } })
+    const run = await finish(s.c, 'r3', s.r)
+    await run.onCheckpoint(complete)
+    expect(s.c.get(g.id)?.status).toBe('completed')
   })
 })

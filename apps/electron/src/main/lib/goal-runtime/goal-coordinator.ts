@@ -13,9 +13,9 @@ import type {
   PinnedVerifierReceipt,
 } from '@gravitas/shared'
 import { ElectronGoalStore } from './goal-store'
-import { resolveHeadCommitSha, runPinnedBaselineVerifier, validatePinnedVerifierConfig } from '../pinned-baseline-verifier'
-import { assessProtectedPathChanges, assertProtectedPatterns } from '../completion-protected-paths'
-import { ProtectedVerifierStore, canonicalJson } from '../protected-verifier-store'
+import { resolveHeadCommitSha, runPinnedBaselineVerifier } from '../pinned-baseline-verifier'
+import { assessProtectedPathChanges } from '../completion-protected-paths'
+import { ProtectedVerifierStore } from '../protected-verifier-store'
 
 const MAX_IMMEDIATE_CONTINUATIONS = 3
 
@@ -54,25 +54,21 @@ export interface GoalCoordinatorOptions {
 
 function createDefaultCompletionVerifier(store: () => ProtectedVerifierStore): CompletionVerifier {
   return async (gate) => {
+    let stored: ReturnType<ProtectedVerifierStore['verifyRef']>
+    try {
+      // 先做本地绑定校验（廉价）；配置与受保护路径只以统一存储的签名记录为准。
+      stored = store().verifyRef(gate.verifierRef)
+    } catch (error) {
+      return { passed: false, reasons: [error instanceof Error ? error.message : '验证配置绑定校验失败'] }
+    }
     const headCommitSha = await resolveHeadCommitSha(gate.repoRoot)
     const protectedCheck = await assessProtectedPathChanges({
-      repoRoot: gate.repoRoot, baselineCommitSha: gate.baselineCommitSha, headCommitSha, protectedPaths: gate.protectedPaths,
+      repoRoot: gate.repoRoot, baselineCommitSha: gate.baselineCommitSha, headCommitSha, protectedPaths: stored.record.protectedPaths,
     })
     if (!protectedCheck.ok) {
       return { passed: false, reasons: [...protectedCheck.reasons, ...protectedCheck.violations.map((path) => `protected:${path}`)] }
     }
-    let config = gate.verifier
-    if (gate.verifierRef) {
-      // 执行的配置以签名存储为准；Goal 内副本必须与之逐字一致。
-      try {
-        const stored = store().verifyRef(gate.verifierRef)
-        config = stored.record.config
-        if (canonicalJson(gate.verifier) !== canonicalJson(config)) return { passed: false, reasons: ['verifier_config_mismatch'] }
-      } catch (error) {
-        return { passed: false, reasons: [error instanceof Error ? error.message : '验证配置绑定校验失败'] }
-      }
-    }
-    const receipt = await runPinnedBaselineVerifier({ repoRoot: gate.repoRoot, commitSha: headCommitSha, config })
+    const receipt = await runPinnedBaselineVerifier({ repoRoot: gate.repoRoot, commitSha: headCommitSha, config: stored.record.config })
     return { passed: receipt.verdict === 'passed', reasons: receipt.reasons, receipt }
   }
 }
@@ -387,7 +383,7 @@ function cloneCheckpoint(checkpoint: AgentGoalCheckpoint): AgentGoalCheckpoint {
   return JSON.parse(JSON.stringify(checkpoint)) as AgentGoalCheckpoint
 }
 
-/** 只比较调用授权配置与完成门禁，不把状态/version更新当成新配置。 */
+/** 只比较调用授权配置与完成门禁引用，不把状态/version更新当成新配置。 */
 function goalConfiguration(goal: AgentGoal): string {
   return JSON.stringify({
     workspaceId: goal.workspaceId, channelId: goal.channelId, modelId: goal.modelId,
@@ -401,13 +397,9 @@ function validateCompletionGate(gate: GoalCompletionGate, verifiers: ProtectedVe
   if (gate.version !== 1) throw new Error('completionGate version 必须为 1')
   if (!isAbsolute(gate.repoRoot)) throw new Error('completionGate.repoRoot 必须是绝对路径')
   if (!/^[0-9a-f]{40}$/.test(gate.baselineCommitSha)) throw new Error('baselineCommitSha 必须是完整的 40 位小写十六进制 SHA')
-  assertProtectedPatterns(gate.protectedPaths)
-  validatePinnedVerifierConfig(gate.verifier)
-  if (gate.verifierRef) {
-    const stored = verifiers.verifyRef(gate.verifierRef)
-    if (canonicalJson(stored.record.config) !== canonicalJson(gate.verifier)) throw new Error('验证配置与受保护存储不一致')
-  }
-  return JSON.parse(JSON.stringify(gate)) as GoalCompletionGate
+  // 引用必须与统一存储中的当前签名记录一致；门禁不再内嵌配置或受保护路径。
+  verifiers.verifyRef(gate.verifierRef)
+  return { version: 1, repoRoot: gate.repoRoot, baselineCommitSha: gate.baselineCommitSha, verifierRef: { ...gate.verifierRef } }
 }
 
 function copyPreparedRequest(request: AgentGoalPreparedRequest): AgentGoalPreparedRequest {

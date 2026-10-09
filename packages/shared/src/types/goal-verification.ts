@@ -23,20 +23,16 @@ export interface ProtectedVerifierRef {
 }
 
 /**
- * Goal 上记录的完成门禁。
- * 验证对象是仓库 HEAD 指向的已提交内容；基线之后不得修改受保护路径（如测试文件），否则拒绝完成。
+ * Goal 上记录的完成门禁：只引用统一受保护存储中的签名记录（验证配置与受保护路径均在记录内）。
+ * 验证对象是仓库 HEAD 指向的已提交内容；基线之后不得修改记录中的受保护路径，否则拒绝完成。
  */
 export interface GoalCompletionGate {
   readonly version: 1
   /** 绝对路径的 Git 仓库根目录。 */
   readonly repoRoot: string
-  /** 批准基线：必须是 HEAD 的祖先；基线之后受保护路径不得改动。 */
+  /** 批准基线：必须是 HEAD 的祖先。 */
   readonly baselineCommitSha: string
-  /** 受保护路径模式，如 `**\/*.test.ts`、`apps/x/tests/`、精确文件路径。 */
-  readonly protectedPaths: readonly string[]
-  readonly verifier: PinnedVerifierConfig
-  /** 存在时必须与受保护存储中的当前签名记录一致。 */
-  readonly verifierRef?: ProtectedVerifierRef
+  readonly verifierRef: ProtectedVerifierRef
 }
 
 export type PinnedVerifierReason =

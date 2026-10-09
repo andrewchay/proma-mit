@@ -12,6 +12,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { join } from 'node:path'
 import type { PinnedVerifierConfig, ProtectedVerifierRef } from '@gravitas/shared'
 import { getConfigDir } from './config-paths'
+import { assertProtectedPatterns } from './completion-protected-paths'
 
 const VERIFIER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
 const KEY_BYTES = 32
@@ -40,6 +41,8 @@ export interface ProtectedVerifierRecord {
   readonly verifierId: string
   readonly revision: number
   readonly config: PinnedVerifierConfig
+  /** 受保护路径模式：统一由存储维护，Goal 不得覆盖。 */
+  readonly protectedPaths: readonly string[]
   readonly savedAt: string
 }
 
@@ -79,13 +82,14 @@ export class ProtectedVerifierStore {
     this.now = options.now ?? (() => new Date())
   }
 
-  save(verifierId: string, config: PinnedVerifierConfig): StoredVerifier {
+  save(verifierId: string, config: PinnedVerifierConfig, protectedPaths: readonly string[]): StoredVerifier {
     assertVerifierId(verifierId)
+    assertProtectedPatterns(protectedPaths)
     mkdirSync(this.dir, { recursive: true, mode: 0o700 })
     const key = this.ensureKey()
     const previous = existsSync(this.recordPath(verifierId)) ? this.load(verifierId) : undefined
     const record: ProtectedVerifierRecord = {
-      version: 1, verifierId, revision: (previous?.record.revision ?? 0) + 1, config, savedAt: this.now().toISOString(),
+      version: 1, verifierId, revision: (previous?.record.revision ?? 0) + 1, config, protectedPaths: [...protectedPaths], savedAt: this.now().toISOString(),
     }
     const canonical = canonicalJson(record)
     const recordSha256 = sha256(canonical)
