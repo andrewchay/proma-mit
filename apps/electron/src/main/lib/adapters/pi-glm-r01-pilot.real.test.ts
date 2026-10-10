@@ -196,6 +196,8 @@ const ONLY = new Set((process.env.PROMA_PI_PILOT_ONLY ?? '').split(',').map((c) 
 const EXCLUDE = new Set((process.env.PROMA_PI_PILOT_EXCLUDE ?? '').split(',').filter(Boolean))
 const selectedCases = CASES.filter((c) => (ONLY.size === 0 || ONLY.has(c.id)) && !EXCLUDE.has(c.id))
 const runConflict = ONLY.has('conflict-cross-session')
+const runContention = ONLY.has('contention-sleep')
+const runParallelReads = ONLY.has('parallel-reads')
 const priorBudgetPath = process.env.PROMA_PI_PILOT_PRIOR_BUDGET
 const priorBudget: { reservedCny?: number } = priorBudgetPath ? JSON.parse(readFileSync(priorBudgetPath, 'utf8')) : {}
 if (priorBudgetPath && typeof priorBudget.reservedCny !== 'number') throw new Error('历史预算文件缺少预留金额')
@@ -408,6 +410,97 @@ async function runCase(adapter: InstanceType<typeof PiAgentAdapter>, apiKey: str
       })
       save()
     }
+    // 高争用写：两个并发会话同时执行 sleep 0.3（Bash 为 unknown，走全局排他锁）。
+    // 300ms 执行窗口必然产生真实排队等待：totalWaitMs 与锁事件为等待证据（HR07 争用侧）。
+    if (runContention) for (const arm of arms) {
+      if (runCount + 2 > MAX_RUNS) break
+      runCount += 2
+      setToolSchedulerDisabled(arm === 'baseline-serial')
+      const sharedDir = mkdtempSync(join(tmpdir(), `glm-r01-sleep-${arm}-`))
+      workRoots.push(sharedDir)
+      const makeSleeper = (tag: string): PilotQueryOptions => ({
+        sessionId: `glm-r01-sleep-${arm}-${tag}-${Date.now()}`,
+        prompt: '用 Bash 工具运行命令 "sleep 0.3"，完成后只回复 DONE。不要使用其他工具。',
+        agentRuntime: 'pi', provider: 'zhipu', apiKey, baseUrl: benchmarkBaseUrl,
+        model: MODEL, cwd: sharedDir, permissionMode: 'bypassPermissions',
+        canUseTool: async (name, args) => {
+          const allowed = name === 'Bash' && args.command === 'sleep 0.3'
+          return allowed ? { allowed: true } : { allowed: false, message: '争用试点仅授权 sleep 0.3' }
+        },
+      })
+      const started = Date.now()
+      let contentionError: string | undefined
+      let evA: RunEvidence = { text: '', toolCalls: [], toolErrors: 0, permissionDecisions: [], requests: 0, inputTokens: 0, outputTokens: 0, errorTexts: [], toolErrorTexts: [] }
+      let evB: RunEvidence = { ...evA, toolCalls: [], permissionDecisions: [], errorTexts: [], toolErrorTexts: [] }
+      try {
+        const [mA, mB] = await Promise.all([
+          (async () => { const ms: SDKMessage[] = []; for await (const m of adapter.query(makeSleeper('a'))) ms.push(m); return ms })(),
+          (async () => { const ms: SDKMessage[] = []; for await (const m of adapter.query(makeSleeper('b'))) ms.push(m); return ms })(),
+        ])
+        evA = collectEvidence(mA); evB = collectEvidence(mB)
+      } catch (caught) {
+        contentionError = caught instanceof Error ? caught.message.slice(0, 300) : String(caught).slice(0, 300)
+      }
+      records.push({
+        arm, caseId: 'contention-sleep', status: contentionError ? 'failed' : 'completed',
+        pass: !contentionError && evA.toolCalls.some((c) => c.name === 'Bash') && evB.toolCalls.some((c) => c.name === 'Bash'),
+        detail: contentionError ?? `A[Bash=${evA.toolCalls.filter((c) => c.name === 'Bash').length}] B[Bash=${evB.toolCalls.filter((c) => c.name === 'Bash').length}]`,
+        requiredTools: ['Bash'],
+        toolCallNames: [...evA.toolCalls.map((c) => `A:${c.name}`), ...evB.toolCalls.map((c) => `B:${c.name}`)],
+        inputTokens: evA.inputTokens + evB.inputTokens, outputTokens: evA.outputTokens + evB.outputTokens, cost: 'unknown',
+        durationMs: Date.now() - started, error: contentionError,
+        writerDiagnostics: { a: captureRunDiagnostics(evA), b: captureRunDiagnostics(evB) },
+      })
+      save()
+    }
+
+    // HR08 真实重叠：两个并发会话各读不同文件（独立共享锁），execute 窗口应真实重叠。
+    if (runParallelReads) for (const arm of arms) {
+      if (runCount + 2 > MAX_RUNS) break
+      runCount += 2
+      setToolSchedulerDisabled(arm === 'baseline-serial')
+      const sharedDir = mkdtempSync(join(tmpdir(), `glm-r01-reads-${arm}-`))
+      workRoots.push(sharedDir)
+      writeFileSync(join(sharedDir, 'alpha.txt'), 'ALPHA-LINE-1\nALPHA-LINE-2\n')
+      writeFileSync(join(sharedDir, 'beta.txt'), 'BETA-LINE-1\nBETA-LINE-2\n')
+      const makeReader = (file: string, tag: string): PilotQueryOptions => ({
+        sessionId: `glm-r01-reads-${arm}-${tag}-${Date.now()}`,
+        prompt: `读取 ${file} 并用英文逗号分隔回复全部行。只使用一次 Read。`,
+        agentRuntime: 'pi', provider: 'zhipu', apiKey, baseUrl: benchmarkBaseUrl,
+        model: MODEL, cwd: sharedDir, permissionMode: 'bypassPermissions',
+        canUseTool: async (name, args) => {
+          const allowed = name === 'Read' && args.file_path === file
+          return allowed ? { allowed: true } : { allowed: false, message: '重叠试点仅授权本文件 Read' }
+        },
+      })
+      const started = Date.now()
+      let readsError: string | undefined
+      let evA: RunEvidence = { text: '', toolCalls: [], toolErrors: 0, permissionDecisions: [], requests: 0, inputTokens: 0, outputTokens: 0, errorTexts: [], toolErrorTexts: [] }
+      let evB: RunEvidence = { ...evA, toolCalls: [], permissionDecisions: [], errorTexts: [], toolErrorTexts: [] }
+      try {
+        const [mA, mB] = await Promise.all([
+          (async () => { const ms: SDKMessage[] = []; for await (const m of adapter.query(makeReader('alpha.txt', 'a'))) ms.push(m); return ms })(),
+          (async () => { const ms: SDKMessage[] = []; for await (const m of adapter.query(makeReader('beta.txt', 'b'))) ms.push(m); return ms })(),
+        ])
+        evA = collectEvidence(mA); evB = collectEvidence(mB)
+      } catch (caught) {
+        readsError = caught instanceof Error ? caught.message.slice(0, 300) : String(caught).slice(0, 300)
+      }
+      const aOk = evA.text.includes('ALPHA-LINE-1') && evA.text.includes('ALPHA-LINE-2') && evA.toolCalls.some((c) => c.name === 'Read')
+      const bOk = evB.text.includes('BETA-LINE-1') && evB.text.includes('BETA-LINE-2') && evB.toolCalls.some((c) => c.name === 'Read')
+      records.push({
+        arm, caseId: 'parallel-reads', status: readsError ? 'failed' : 'completed',
+        pass: !readsError && aOk && bOk,
+        detail: readsError ?? `A ok=${aOk} B ok=${bOk}`,
+        requiredTools: ['Read'],
+        toolCallNames: [...evA.toolCalls.map((c) => `A:${c.name}`), ...evB.toolCalls.map((c) => `B:${c.name}`)],
+        inputTokens: evA.inputTokens + evB.inputTokens, outputTokens: evA.outputTokens + evB.outputTokens, cost: 'unknown',
+        durationMs: Date.now() - started, error: readsError,
+        writerDiagnostics: { a: captureRunDiagnostics(evA), b: captureRunDiagnostics(evB) },
+      })
+      save()
+    }
+
     setToolSchedulerDisabled(false)
 
     const completed = records.filter((r) => r.status === 'completed')
