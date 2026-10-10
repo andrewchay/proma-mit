@@ -47,6 +47,8 @@ export interface AISDKAgentQueryOptions extends AgentQueryInput {
   historyMessages?: SDKMessage[]
   /** 最大 LLM 请求重试次数 */
   maxRetries?: number
+  /** D03：独立工具加载（opt-in）；不传 = 全量工具既有行为。 */
+  toolLoading?: import('../agent-runtime/tool-loading-gate').ToolLoadingSpec
   /** 工作区 MCP 服务器配置 */
   mcpServers?: Record<string, McpServerEntry>
   /** 工作区 slug，用于 MCP OAuth token 隔离 */
@@ -243,6 +245,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             activeSession: activeSession.state,
             maxTurns,
             maxRetries: input.maxRetries ?? 2,
+            ...(input.toolLoading ? { toolLoading: input.toolLoading } : {}),
             ...(pilotRuntime ? { pilotBudget } : {}),
             ...(controlledFetch ? { fetchFn: controlledFetch } : {}),
             historyMessages,
