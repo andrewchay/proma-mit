@@ -198,6 +198,7 @@ const selectedCases = CASES.filter((c) => (ONLY.size === 0 || ONLY.has(c.id)) &&
 const runConflict = ONLY.has('conflict-cross-session')
 const runContention = ONLY.has('contention-sleep')
 const runParallelReads = ONLY.has('parallel-reads')
+const runAbortQueued = ONLY.has('abort-queued-write')
 const priorBudgetPath = process.env.PROMA_PI_PILOT_PRIOR_BUDGET
 const priorBudget: { reservedCny?: number } = priorBudgetPath ? JSON.parse(readFileSync(priorBudgetPath, 'utf8')) : {}
 if (priorBudgetPath && typeof priorBudget.reservedCny !== 'number') throw new Error('历史预算文件缺少预留金额')
@@ -498,6 +499,70 @@ async function runCase(adapter: InstanceType<typeof PiAgentAdapter>, apiKey: str
         durationMs: Date.now() - started, error: readsError,
         writerDiagnostics: { a: captureRunDiagnostics(evA), b: captureRunDiagnostics(evB) },
       })
+      save()
+    }
+
+    // HR09 真实观测：A 持全局排他锁 sleep 3；B 读文件后排队写 shared.txt；
+    // 在 B 的写排队期间中止 B → 未开始的 mutation 必须零执行（文件不存在 + 无 acquired/execute_start）。
+    // A 运行中不被打断：A 的 execute_end 必须存在。
+    if (runAbortQueued) for (const arm of arms) {
+      if (runCount + 2 > MAX_RUNS) break
+      runCount += 2
+      setToolSchedulerDisabled(arm === 'baseline-serial')
+      const sharedDir = mkdtempSync(join(tmpdir(), `glm-r01-abort-${arm}-`))
+      workRoots.push(sharedDir)
+      writeFileSync(join(sharedDir, 'notes.txt'), 'seed\n')
+      const aOpts: PilotQueryOptions = {
+        sessionId: `glm-r01-abort-${arm}-a-${Date.now()}`,
+        prompt: '用 Bash 工具运行命令 "sleep 3"，完成后只回复 DONE。不要使用其他工具。',
+        agentRuntime: 'pi', provider: 'zhipu', apiKey, baseUrl: benchmarkBaseUrl,
+        model: MODEL, cwd: sharedDir, permissionMode: 'bypassPermissions',
+        canUseTool: async (name, args) => (name === 'Bash' && args.command === 'sleep 3'
+          ? { allowed: true } : { allowed: false, message: 'A 仅授权 sleep 3' }),
+      }
+      const bController = new AbortController()
+      const bOpts: PilotQueryOptions = {
+        sessionId: `glm-r01-abort-${arm}-b-${Date.now()}`,
+        prompt: '先用 Read 读取 notes.txt，然后用 Write 创建 shared.txt，内容为一行 ABORT-TEST。完成后只回复 DONE。',
+        agentRuntime: 'pi', provider: 'zhipu', apiKey, baseUrl: benchmarkBaseUrl,
+        model: MODEL, cwd: sharedDir, permissionMode: 'bypassPermissions',
+        abortSignal: bController.signal,
+        canUseTool: async (name, args) => {
+          const path = typeof args.file_path === 'string' ? args.file_path : ''
+          const allowed = (name === 'Read' && path === 'notes.txt') || (name === 'Write' && path === 'shared.txt')
+          return allowed ? { allowed: true } : { allowed: false, message: 'B 仅授权 notes.txt 读与 shared.txt 写' }
+        },
+      }
+      const started = Date.now()
+      let abortError: string | undefined
+      let evA: RunEvidence = { text: '', toolCalls: [], toolErrors: 0, permissionDecisions: [], requests: 0, inputTokens: 0, outputTokens: 0, errorTexts: [], toolErrorTexts: [] }
+      let evB: RunEvidence = { ...evA, toolCalls: [], permissionDecisions: [], errorTexts: [], toolErrorTexts: [] }
+      const aPromise = (async () => { const ms: SDKMessage[] = []; for await (const m of adapter.query(aOpts)) ms.push(m); return ms })()
+      const bPromise = (async () => { const ms: SDKMessage[] = []; for await (const m of adapter.query(bOpts)) ms.push(m); return ms })()
+      // B 的写大约在第 2–3 秒到达队列（两次Provider往返）；此时 A 仍持有全局锁。
+      const abortTimer = setTimeout(() => bController.abort(), 2500)
+      try {
+        const [mA, mB] = await Promise.all([aPromise, bPromise])
+        evA = collectEvidence(mA); evB = collectEvidence(mB)
+      } catch (caught) {
+        abortError = caught instanceof Error ? caught.message.slice(0, 300) : String(caught).slice(0, 300)
+      } finally {
+        clearTimeout(abortTimer)
+      }
+      const sharedAbsent = !existsSync(join(sharedDir, 'shared.txt'))
+      const aCompletedRun = evA.toolCalls.some((c) => c.name === 'Bash')
+      const writeCalls = schedulerLockEvents().filter((e) => e.phase === 'acquired' && e.key.includes('shared.txt'))
+      records.push({
+        arm, caseId: 'abort-queued-write', status: 'completed',
+        pass: sharedAbsent && aCompletedRun,
+        detail: abortError ?? `shared.txt未创建=${sharedAbsent} A执行=${aCompletedRun} B工具=${evB.toolCalls.map((c) => c.name).join('/') || '无'} B错误=${evB.errorTexts[0]?.slice(0, 80) ?? '无'}`,
+        requiredTools: ['Bash', 'Write'],
+        toolCallNames: [...evA.toolCalls.map((c) => `A:${c.name}`), ...evB.toolCalls.map((c) => `B:${c.name}`)],
+        inputTokens: evA.inputTokens + evB.inputTokens, outputTokens: evA.outputTokens + evB.outputTokens, cost: 'unknown',
+        durationMs: Date.now() - started,
+        writerDiagnostics: { a: captureRunDiagnostics(evA), b: captureRunDiagnostics(evB) },
+      })
+      void writeCalls
       save()
     }
 
