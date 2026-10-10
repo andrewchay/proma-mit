@@ -41,7 +41,7 @@ mock.module('../document-parser', () => ({
 }))
 
 const { PiAgentAdapter } = await import('./pi-agent-adapter')
-const { setToolSchedulerDisabled, schedulerMetricsSnapshot } = await import('../agent-runtime/tool-scheduler-service')
+const { setToolSchedulerDisabled, schedulerMetricsSnapshot, schedulerLockEvents } = await import('../agent-runtime/tool-scheduler-service')
 const { closeProjectDb, initProjectDb } = await import('../project-sqlite-store')
 type PilotQueryOptions = import('./pi-agent-adapter').PiAgentQueryOptions
 
@@ -424,6 +424,8 @@ async function runCase(adapter: InstanceType<typeof PiAgentAdapter>, apiKey: str
           return { arm, runs: armRuns.length, passed: armRuns.filter((r) => r.pass).length, requiredToolRecall: requiredTotal === 0 ? null : `${requiredHit}/${requiredTotal}` }
         }),
         schedulerMetrics: metrics,
+        // 生产单例调度器锁事件：真实运行下验证互斥写执行窗口不重叠（HR07 真实证据）。
+        lockEvents: schedulerLockEvents(),
         note: '基线为当前构建全串行模式，非历史版本；30固定任务仅作筛查。预留额是本地估计，非Provider实际账单。',
     })
     // 试点只记录事实，不以“全部通过”作为门禁；结果由报告解读。
