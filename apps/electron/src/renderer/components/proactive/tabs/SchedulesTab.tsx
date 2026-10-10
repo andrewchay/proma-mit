@@ -144,7 +144,7 @@ export function SchedulesTab(): React.ReactElement {
       }
     } else {
       if (!session?.channelId || !eligibleRuntime(session)) {
-        toast.error('请选择已配置渠道的 Gravitas 或 AI SDK 会话')
+        toast.error('请选择已配置渠道的 AI SDK 会话')
         return
       }
     }
@@ -210,7 +210,7 @@ export function SchedulesTab(): React.ReactElement {
     <div className="p-4 space-y-4 max-w-4xl mx-auto">
       <div className="rounded-xl bg-primary/5 p-4 space-y-2">
         <h2 className="text-sm font-medium">先完成一次只读项目检查</h2>
-        <p className="text-xs text-muted-foreground">选择工作区和模型，试跑后在下方查看本次结果。当前仅支持 Gravitas / AI SDK；Pi / Claude 会话暂不支持。应用关闭或设备休眠时不会常驻执行，重新打开后到期任务最多补跑一次。</p>
+        <p className="text-xs text-muted-foreground">选择工作区和模型，试跑后在下方查看本次结果。新任务使用 AI SDK Runtime；已下线 Runtime 的存量会话不会用于新任务。应用关闭或设备休眠时不会常驻执行，重新打开后到期任务最多补跑一次。</p>
         <Button size="sm" variant="outline" onClick={() => { setNewSession(true); setTaskTitle('项目未提交变更检查'); setPrompt(PROJECT_CHECK_PROMPT); setKind('cron'); setCronExpression('0 9 * * 1-5') }}>使用「项目未提交变更检查」模板</Button>
       </div>
       {/* 创建表单 */}
@@ -280,7 +280,7 @@ export function SchedulesTab(): React.ReactElement {
                 <SelectTrigger><SelectValue placeholder="选择已配置渠道的会话" /></SelectTrigger>
                 <SelectContent>
                   {sessions.map((session) => (
-                    <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>
+                    <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime === 'ai-sdk' ? 'AI SDK' : '已下线 Runtime'}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -494,7 +494,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, workspaces, onOpenCh
     if (!modelId) { toast.error('所选渠道没有可用模型'); return }
     if (newSession && !workspaceId) { toast.error('请选择目标工作区'); return }
     if (newSession && runtime === 'proma' && !(schedule.runtime === 'proma' && schedule.newSession)) {
-      toast.error('Gravitas Runtime 已停止新选用')
+      toast.error('该 Runtime 已停止新建任务')
       return
     }
     const nextSchedule = kind === 'at'
@@ -531,7 +531,7 @@ function ScheduleEditDialog({ schedule, sessions, channels, workspaces, onOpenCh
           <label className="grid gap-1.5 text-sm text-muted-foreground">运行方式<Select value={kind} onValueChange={(value: 'at' | 'interval' | 'cron') => setKind(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="at">一次性执行</SelectItem><SelectItem value="interval">固定间隔</SelectItem><SelectItem value="cron">Cron 计划</SelectItem></SelectContent></Select></label>
         </div>
         {newSession && <label className="grid gap-1.5 text-sm text-muted-foreground">目标工作区<Select value={workspaceId} onValueChange={setWorkspaceId}><SelectTrigger><SelectValue placeholder="选择工作区" /></SelectTrigger><SelectContent>{workspaces.map((workspace) => <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>)}</SelectContent></Select></label>}
-        {newSession ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">渠道<Select value={channelId} onValueChange={setChannelId}><SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger><SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm text-muted-foreground">Runtime<Select value={runtime} onValueChange={(value: 'proma' | 'ai-sdk') => setRuntime(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{schedule.runtime === 'proma' && schedule.newSession && <SelectItem value="proma">Gravitas（存量任务）</SelectItem>}<SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent></Select></label></div> : <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话<Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择会话" /></SelectTrigger><SelectContent>{schedulableSessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent></Select></label>}
+        {newSession ? <div className="grid gap-3 md:grid-cols-2"><label className="grid gap-1.5 text-sm text-muted-foreground">渠道<Select value={channelId} onValueChange={setChannelId}><SelectTrigger><SelectValue placeholder="选择已启用渠道" /></SelectTrigger><SelectContent>{channels.filter((item) => item.enabled).map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name} · {channel.provider}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm text-muted-foreground">Runtime<Select value={runtime} onValueChange={(value: 'proma' | 'ai-sdk') => setRuntime(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{schedule.runtime === 'proma' && schedule.newSession && <SelectItem value="proma" disabled>已下线 Runtime（存量任务）</SelectItem>}<SelectItem value="ai-sdk">AI SDK</SelectItem></SelectContent></Select></label></div> : <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话<Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择会话" /></SelectTrigger><SelectContent>{schedulableSessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime === 'ai-sdk' ? 'AI SDK' : '已下线 Runtime'}</SelectItem>)}</SelectContent></Select></label>}
         <label className="grid gap-1.5 text-sm text-muted-foreground">模型<Select value={modelId} onValueChange={setModelId} disabled={!targetChannel}><SelectTrigger><SelectValue placeholder="选择目标渠道的模型" /></SelectTrigger><SelectContent>{(targetChannel?.models.filter((model) => model.enabled) ?? []).map((model) => <SelectItem key={model.id} value={model.id}>{model.name} · {model.id}</SelectItem>)}</SelectContent></Select></label>
         {kind === 'at' && <label className="grid gap-1.5 text-sm text-muted-foreground">执行时间<Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>}
         {kind === 'interval' && <label className="grid gap-1.5 text-sm text-muted-foreground">间隔（分钟，至少 1）<Input type="number" min="1" value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} /></label>}

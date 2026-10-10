@@ -32,6 +32,7 @@ import { tabMinimapCacheAtom } from '@/atoms/tab-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { ScrollPositionManager } from '@/hooks/useScrollPositionMemory'
 import { cn } from '@/lib/utils'
+import { formatAgentRuntimeDisplayLabel } from '@/lib/agent-runtime-display'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { groupIntoTurns, MessageGroupRenderer, getGroupId, getGroupPreview, extractUserText, parseAttachedFiles as sdkParseAttachedFiles, isImageFile as sdkIsImageFile, CompactingIndicator, buildHistoricalTaskSubjects, type MessageGroup } from './SDKMessageRenderer'
@@ -307,7 +308,7 @@ function RetryAttemptItem({
           {/* 环境信息 */}
           {attempt.environment && (
             <div className="text-[11px] text-amber-600 dark:text-amber-400 space-y-0.5">
-              <div>运行时: {attempt.environment.runtime}</div>
+              <div>运行时: {formatAgentRuntimeDisplayLabel(attempt.environment.runtime)}</div>
               <div>平台: {attempt.environment.platform}</div>
               <div>模型: {attempt.environment.model}</div>
               {attempt.environment.workspace && <div>工作区: {attempt.environment.workspace}</div>}
