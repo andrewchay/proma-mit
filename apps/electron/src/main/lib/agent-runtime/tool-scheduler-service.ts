@@ -85,3 +85,8 @@ export function setToolSchedulerDisabled(disabled: boolean): void {
 export function schedulerMetricsSnapshot(): ReturnType<ToolScheduler['snapshotMetrics']> {
   return toolExecutionScheduler.snapshotMetrics()
 }
+
+/** 锁事件快照（HR07–HR09 执行窗口验证）：只含锁键与阶段，不含工具参数。 */
+export function schedulerLockEvents(): ReturnType<ToolScheduler['snapshotLockEvents']> {
+  return toolExecutionScheduler.snapshotLockEvents()
+}

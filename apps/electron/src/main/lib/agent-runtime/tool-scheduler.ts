@@ -77,6 +77,18 @@ export interface SchedulerMetrics {
   readonly totalWaitMs: number
 }
 
+/** 锁事件：只记录锁键与阶段，不记录工具参数，避免工作区内容进入观测面。 */
+export type LockEventPhase = 'acquired' | 'execute_start' | 'execute_end' | 'released' | 'error' | 'cancelled'
+
+export interface LockEvent {
+  readonly seq: number
+  readonly callId: string
+  readonly key: string
+  readonly mode: 'shared' | 'exclusive'
+  readonly phase: LockEventPhase
+  readonly at: number
+}
+
 export interface ToolSchedulerOptions {
   readonly maxConcurrent?: number
   readonly plan?: (call: ScheduledCall) => Promise<ResourceLockSpec>
@@ -98,6 +110,20 @@ export class ToolScheduler {
   private running = 0
   /** 跨批次等待者：锁状态变化时全部唤醒（单次 schedule 只通知自己的设计会让并发批次死等）。 */
   private readonly waiters = new Set<() => void>()
+  /** 锁事件环形缓冲（HR07–HR09 执行窗口验证用）；超限丢弃最旧事件。 */
+  private readonly lockEvents: LockEvent[] = []
+  private lockEventSeq = 0
+  private static readonly MAX_LOCK_EVENTS = 1000
+
+  private emitLockEvent(callId: string, key: string, mode: 'shared' | 'exclusive', phase: LockEventPhase): void {
+    if (this.lockEvents.length >= ToolScheduler.MAX_LOCK_EVENTS) this.lockEvents.shift()
+    this.lockEvents.push({ seq: this.lockEventSeq++, callId, key, mode, phase, at: Date.now() })
+  }
+
+  /** 返回锁事件副本（时间升序）。锁域=本进程内经此调度器的调用。 */
+  snapshotLockEvents(): readonly LockEvent[] {
+    return [...this.lockEvents]
+  }
 
   private wakeWaiters(): void {
     for (const wake of [...this.waiters]) wake()
@@ -189,18 +215,23 @@ export class ToolScheduler {
         this.locks.set(key, lock)
         lock.acquireNow(spec.mode)
         acquired.push({ lock, mode: spec.mode })
+        this.emitLockEvent(call.id, key, spec.mode, 'acquired')
       }
       if (signal?.aborted) {
         item.state = 'cancelled'
         this.metrics.cancelled += 1
         results.set(call.id, { id: call.id, status: 'cancelled' })
+        for (const [i] of acquired.entries()) this.emitLockEvent(call.id, spec.keys[i]!, spec.mode, 'cancelled')
         return
       }
+      this.emitLockEvent(call.id, spec.keys.join('+') || 'none', spec.mode, 'execute_start')
       const result = await call.execute()
+      this.emitLockEvent(call.id, spec.keys.join('+') || 'none', spec.mode, 'execute_end')
       item.state = 'completed'
       this.metrics.completed += 1
       results.set(call.id, { id: call.id, status: 'completed', result })
     } catch (error) {
+      this.emitLockEvent(call.id, spec.keys.join('+') || 'none', spec.mode, 'error')
       item.state = 'error'
       this.metrics.errored += 1
       results.set(call.id, { id: call.id, status: 'error', error: error instanceof Error ? error.message : String(error) })
@@ -208,6 +239,7 @@ export class ToolScheduler {
       for (let i = acquired.length - 1; i >= 0; i--) {
         const { lock, mode } = acquired[i]!
         lock.release(mode)
+        this.emitLockEvent(call.id, spec.keys[i]!, mode, 'released')
       }
     }
   }
