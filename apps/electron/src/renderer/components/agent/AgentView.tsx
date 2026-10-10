@@ -104,6 +104,7 @@ import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAtt
 import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@gravitas/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
+import { formatAgentRuntimeDisplayLabel } from '@/lib/agent-runtime-display'
 
 /** 稳定的空 SDKMessage 数组引用，避免 ?? [] 每次创建新引用 */
 const EMPTY_SDK_MESSAGES: SDKMessage[] = []
@@ -277,9 +278,7 @@ function AgentThinkingPopover({ agentThinking, onToggle, piThinkingLevel, onPiTh
   )
 }
 
-const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; description: string; disabled?: boolean }> = [
-  { value: 'claude', label: 'Claude（已停止新选用）', description: '存量会话仍可继续运行', disabled: true },
-  { value: 'proma', label: 'Gravitas（已停止新选用）', description: '存量会话仍可继续运行', disabled: true },
+const AGENT_RUNTIME_OPTIONS: Array<{ value: AgentRuntime; label: string; description: string }> = [
   { value: 'pi', label: 'Pi', description: '使用 Pi Agent SDK（v1 只读工具）' },
   { value: 'ai-sdk', label: 'AI SDK', description: '使用 Vercel AI SDK Runtime' },
 ]
@@ -292,15 +291,20 @@ interface AgentRuntimeSelectorProps {
 
 function AgentRuntimeSelector({ runtime, disabled = false, onChange }: AgentRuntimeSelectorProps): React.ReactElement {
   const [open, setOpen] = React.useState(false)
-  const current = AGENT_RUNTIME_OPTIONS.find((option) => option.value === runtime) ?? AGENT_RUNTIME_OPTIONS[0]!
+  const current = AGENT_RUNTIME_OPTIONS.find((option) => option.value === runtime) ?? {
+    value: runtime,
+    label: formatAgentRuntimeDisplayLabel(runtime),
+    description: '存量会话仍可继续运行',
+  }
+  const runtimeUnavailable = runtime === 'claude' || runtime === 'proma'
+  const selectorDisabled = disabled || runtimeUnavailable
 
   const handleOpenChange = (nextOpen: boolean): void => {
-    if (disabled && nextOpen) return
+    if (selectorDisabled && nextOpen) return
     setOpen(nextOpen)
   }
 
-  const handleSelect = (nextRuntime: AgentRuntime, optionDisabled?: boolean): void => {
-    if (optionDisabled) return
+  const handleSelect = (nextRuntime: AgentRuntime): void => {
     onChange(nextRuntime)
     setOpen(false)
   }
@@ -313,11 +317,11 @@ function AgentRuntimeSelector({ runtime, disabled = false, onChange }: AgentRunt
             <Button
               type="button"
               variant="ghost"
-              disabled={disabled}
+              disabled={selectorDisabled}
               aria-label={`Agent Runtime：${current.label}`}
               className={cn(
                 'model-selector-trigger flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground',
-                disabled && 'cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted-foreground',
+                selectorDisabled && 'cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted-foreground',
               )}
             >
               <Box className="size-3.5" />
@@ -327,7 +331,7 @@ function AgentRuntimeSelector({ runtime, disabled = false, onChange }: AgentRunt
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-[220px]">
-          <p>切换当前会话的 Agent Runtime</p>
+          <p>{runtimeUnavailable ? '此存量会话不能切换 Runtime' : '切换当前会话的 Agent Runtime'}</p>
         </TooltipContent>
       </Tooltip>
 
@@ -345,12 +349,10 @@ function AgentRuntimeSelector({ runtime, disabled = false, onChange }: AgentRunt
               <button
                 key={option.value}
                 type="button"
-                disabled={option.disabled}
-                onClick={() => handleSelect(option.value, option.disabled)}
+                onClick={() => handleSelect(option.value)}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors',
                   selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/70',
-                  option.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent',
                 )}
               >
                 <Box className="size-4 shrink-0 text-muted-foreground" />
