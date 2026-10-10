@@ -1,5 +1,6 @@
 # Harness Reliability：首批契约与源码审计
 
+> **G0 冻结（2026-10-10 23:40 GMT+8）**：本文与 `benchmark-spec.md` 的契约范围、错误语义与支持矩阵自本批起冻结，锚定分支 `feat/harness-reliability-upgrade` HEAD `0fee9d24` 之后的 H03 批（见 ledger HARNESS-20261010-046）。解冻须新批次经 ledger 记录并更新锚点。
 > 截至：2026-10-08 21:44 GMT+8 用户授权开始实施后的首批。
 > 基线：`6c71b384`；分支：`feat/harness-reliability-upgrade`。
 > 本文冻结 **V01共享DTO切片**。V02权威服务、V03完成门禁、工具调度及新策略配置未实现；本文不替代其后续设计评审。

@@ -1,5 +1,6 @@
 # Harness Reliability 独立评测规范
 
+> **G0 冻结（2026-10-10 23:40 GMT+8）**：14-case 规格、错误语义、HR 矩阵与 G0–G4/GA 门禁定义自本批起冻结；变更程序同 contracts.md（新批次 + ledger 记录 + 锚点更新）。
 > 首批版本：2026-10-08，基线6c71b384。
 > V01 DTO测试已落地；以下整体机制case为后续实施规格，不是假造已跑benchmark。真实Provider调用未授权。
 > 不运行旧TCC benchmark，不沿用其私有成绩作为本升级PASS。

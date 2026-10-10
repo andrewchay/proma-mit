@@ -87,7 +87,7 @@
 
 | ID | 里程碑 | 退出条件 | 依赖 | 当前状态 |
 |---|---|---|---|---|
-| M0 | 范围、契约与基线 | 现有证据/目录/Runtime 接线审计，方案和门禁冻结 | 本 ledger | 部分完成：H00/H01及V01子契约；H02完整决策/H03仍待补 |
+| M0 | 范围、契约与基线 | 现有证据/目录/Runtime 接线审计，方案和门禁冻结 | 本 ledger | 完成（G0）：H00/H01/V01子契约+H02决策+H03基线钉板；contracts/benchmark 已冻结（解冻程序见文首） |
 | M1 | 产物绑定的完成验证 | coding AgentGoal 仅凭权威、新鲜证据完成；人工验收不变 | M0 | 部分完成：V01与V02切片；无V03完成门禁接线 |
 | M2 | 独立按需工具接线 | 复用目录，权限不降级，关闭 TCC，工具选择与成本通过门禁 | M0；上线需 M3 截断保护 | 待开始 |
 | M3 | Effects、安全调度与截断保护 | 冲突序列化、未知保守、取消清锁、不执行截断调用 | M0 | 部分完成：E01–E05 离线+生产接线落地（锁域=本进程）；截断批次判定未接线；真实运行矩阵未做 |
@@ -148,7 +148,7 @@
 | H00 | 审计既有验证/Goal：goal-coordinator.ts、development-snapshot-service.ts、development-apply-service.ts、project-chain-service.ts | 映射 AgentGoal/Goal/Task/Execution/Deliverable 身份和证据；Given 同名不同任务，Then 不互认回执 | 无 | 已完成：contracts.md身份映射/缺口审计；V01只覆盖结构不串项 |
 | H01 | 审计工具目录与 Runtime：capability*.ts、tool-registry.ts、pi-tool-bridge.ts、各 adapter | 输出 schema 进入模型和执行路径图；分别标注已生产、实验、关闭、未知；不调用 Provider | H00 | 已完成：contracts.md接线表；SDK先验截断阻断仍未知 |
 | H02 | 冻结契约/benchmark；新增本目录 `contracts.md`、`benchmark-spec.md` | 记录验证配置、存储、非劣门槛、固定样本和错误语义；Given 旧 completed，Then 不补造 verified | H00/H01 | 部分完成：V01子契约和14-case规格；完整权威落点/flags/策略仍未冻结 |
-| H03 | 无副作用基线与 feature flag 设计；复用 eval/trace-writer.ts、context-metrics.ts | 同版本 baseline 可复现；flag off 无新行为、无 TCC，日志无敏感正文 | H02 | 待开始 |
+| H03 | harness-flags 开关单一事实源（严格解析/原子持久化/损坏保留原件）+ B15 无副作用基线钉板（flag off 兼容、TCC 关闭） | 同版本 baseline 可复现；flag off 无新行为、无 TCC，日志无敏感正文 | H02 | 完成：登记表+钉板落地；flags 加载接线到 service 启动未接（扩容项）；h03-baseline-evidence.md |
 
 ### M1：完成验证
 
@@ -265,7 +265,7 @@
 
 | Gate | 要求 | 当前状态 | 可宣称能力 |
 |---|---|---|---|
-| G0 | H00–H03、contracts/benchmark/存储和支持矩阵冻结；实施获授权 | 未通过 | 仅规划已写入 |
+| G0 | H00–H03、contracts/benchmark/存储和支持矩阵冻结；实施获授权 | **通过（2026-10-10）** | contracts/benchmark 冻结声明锚定 H03 批；支持矩阵见 P03；存储契约为既定 docs/storage-contract.md |
 | G1 | 离线BDD、隔离故障矩阵、相关Runtime接线与硬安全断言 | 未执行 | 仅有逐项真实证据后可称确定性机制通过 |
 | G2 | PR门禁、完整构建、隔离包启动、最新数据兼容和回滚 | 未执行 | 仅固定构建工程验收 |
 | G3 | 单独授权真实Provider、工具/验证链和新benchmark opt-in验收 | 阻塞：未授权 | 仅已测平台/Runtime/model组合 |
@@ -465,6 +465,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261010-043 | 2026-10-10 22:32–22:45 GMT+8 | HR09 abort传播修复 | 根因=abortSignal仅压缩路径生效；修复接线主链（等价adapter.abort）+预中止fail-fast | pi-agent-abort-signal 2例先红后绿；全仓577文件3870pass0fail29skip；workspace36→36；真实复验待跑；hr09-abort-real-evidence.md |
 | HARNESS-20261010-044 | 2026-10-10 22:47–22:50 GMT+8 | HR09修复后真实复验（通过） | 同一abort-queued-write重跑：两臂shared.txt未创建、B中止后零工具调用、锁事件无写、A执行完整 | 预算累计¥4.863/¥10；每臂1次；hr09-abort-real-evidence.md |
 | HARNESS-20261010-045 | 2026-10-10 23:05–23:20 GMT+8 | V03可信测试收集补强 | receipt+reportSha256/reportBytes（字节级绑定采集内容）；completionVerification绑定boundGoalId/boundRunId（移植可检测） | +3例先红后绿；全仓577文件3873pass0fail29skip；shared0.2.46/electron0.12.145；v03-trusted-collection-evidence.md |
+| HARNESS-20261010-046 | 2026-10-10 23:25–23:40 GMT+8 | H03无副作用基线与G0冻结 | harness-flags单一事实源（4例）+B15钉板（flag off兼容/TCC关闭）+contracts/benchmark冻结声明 | 全仓门禁通过；workspace36→36；flags加载接线未接（扩容项）；h03-baseline-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
