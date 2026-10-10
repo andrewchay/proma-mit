@@ -4,7 +4,7 @@
 
 | 项目 | 当前值 |
 |---|---:|
-| @gravitas/electron | 0.12.143 |
+| @gravitas/electron | 0.12.144 |
 | @gravitas/shared | 0.2.45 |
 | @gravitas/core | 0.2.24 |
 | @gravitas/ui | 0.1.4 |
