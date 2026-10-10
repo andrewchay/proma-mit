@@ -156,7 +156,7 @@
 |---|---|---|---|---|
 | V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
 | V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包和prepared-request上下文已接线；Provider确认/业务映射/verifier/test来源未闭合，见v02-evidence.md、goal-run-evidence.md与invocation-context-evidence.md |
-| V03 | 固定基线验证 + Goal 门禁 + 受保护路径(b) + seatbelt 验证沙箱 + 签名存储 + Goal修订绑定 + 验证器设置界面 + Goal门禁绑定UI（Agent 横幅）均已实现；Agent Bash 沙箱已启用 | 用户决策见 protected-verifier-storage-design.md §0 | V02 | 部分：V03 主要链路完整；正式签名版未验证；自定义历史基线仅 API；见 goal-gate-binding-ui-evidence.md |
+| V03 | 固定基线验证 + Goal 门禁 + 受保护路径(b) + seatbelt 验证沙箱 + 签名存储 + Goal修订绑定 + 验证器设置界面 + Goal门禁绑定UI（Agent 横幅）均已实现；Agent Bash 沙箱已启用；回执新增报告SHA-256/字节数与goalId/runId绑定 | 用户决策见 protected-verifier-storage-design.md §0 | V02 | 部分：可信采集计数+内容哈希+权威绑定已落地（v03-trusted-collection-evidence.md）；正式签名版未验证；Goal存储未签名（本机信任限制不变）；显示侧未消费绑定字段 |
 | V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
 | V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
 
@@ -464,6 +464,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 
 | HARNESS-20261010-043 | 2026-10-10 22:32–22:45 GMT+8 | HR09 abort传播修复 | 根因=abortSignal仅压缩路径生效；修复接线主链（等价adapter.abort）+预中止fail-fast | pi-agent-abort-signal 2例先红后绿；全仓577文件3870pass0fail29skip；workspace36→36；真实复验待跑；hr09-abort-real-evidence.md |
 | HARNESS-20261010-044 | 2026-10-10 22:47–22:50 GMT+8 | HR09修复后真实复验（通过） | 同一abort-queued-write重跑：两臂shared.txt未创建、B中止后零工具调用、锁事件无写、A执行完整 | 预算累计¥4.863/¥10；每臂1次；hr09-abort-real-evidence.md |
+| HARNESS-20261010-045 | 2026-10-10 23:05–23:20 GMT+8 | V03可信测试收集补强 | receipt+reportSha256/reportBytes（字节级绑定采集内容）；completionVerification绑定boundGoalId/boundRunId（移植可检测） | +3例先红后绿；全仓577文件3873pass0fail29skip；shared0.2.46/electron0.12.145；v03-trusted-collection-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 

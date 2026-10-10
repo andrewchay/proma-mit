@@ -211,3 +211,18 @@ describe('Goal完成门禁：真实默认验证（临时git仓库，seatbelt）'
     expect(s.c.get(g.id)?.status).toBe('completed')
   })
 })
+
+describe('回执权威关联（B02：goalId/runId 绑定）', () => {
+  test('持久化回执绑定 goalId 与 runId，跨 Goal 移植可检测', async () => {
+    const w = fixture()
+    await prepare(w.run)
+    await w.run.onCheckpoint(complete)
+    const receipt = w.c.get(w.g.id)!.completionVerification!
+    expect(receipt.boundGoalId).toBe(w.g.id)
+    // runId 不在运行句柄上外露；完成后的 checkpointRunId 即本次 run 身份。
+    expect(receipt.boundRunId).toBe(w.c.get(w.g.id)!.checkpointRunId)
+    expect(receipt.boundRunId).toBeTruthy()
+    // 移植检测：绑定字段与任一身份不符即不可视为本 Goal 的回执。
+    expect(receipt.boundGoalId).not.toBe('other-goal')
+  })
+})

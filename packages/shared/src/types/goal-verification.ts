@@ -63,6 +63,13 @@ export interface PinnedVerifierReceipt {
   readonly cleanedUp: boolean
   readonly startedAt: string
   readonly finishedAt: string
+  /** 可信采集绑定：实际解析的 JUnit 报告内容哈希（64 位十六进制）。采集失败时不存在。 */
+  readonly reportSha256?: string
+  /** 可信采集绑定：实际解析的报告字节数。采集失败时不存在。 */
+  readonly reportBytes?: number
+  /** 权威关联：完成门禁写入时绑定 Goal 与 run，跨 Goal 移植可检测（B02）。 */
+  readonly boundGoalId?: string
+  readonly boundRunId?: string
 }
 
 /** 验证器设置的 IPC 通道：仅主进程可写，渲染进程经设置界面操作。 */

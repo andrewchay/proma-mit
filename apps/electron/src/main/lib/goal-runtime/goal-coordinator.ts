@@ -245,7 +245,8 @@ export class GoalCoordinator {
         this.save({
           ...latest, status: statusFromCheckpoint(checkpoint), checkpoint: cloneCheckpoint(checkpoint),
           checkpointRunId: runId, activeRunId: undefined, updatedAt: Date.now(),
-          ...(receipt ? { completionVerification: receipt } : {}),
+          // B02 权威关联：回执绑定本 Goal 与本次 run，跨 Goal 移植可检测。
+          ...(receipt ? { completionVerification: { ...receipt, boundGoalId: goal.id, boundRunId: runId } } : {}),
         })
       },
       onFinished: async (canContinue: boolean): Promise<void> => {

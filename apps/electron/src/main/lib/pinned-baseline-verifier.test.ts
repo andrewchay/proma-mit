@@ -127,3 +127,25 @@ describe('JUnit计数解析', () => {
     expect(parseJUnitTotals('<testsuites tests="x" failures="0"></testsuites>')).toBeNull()
   })
 })
+
+describe('可信采集绑定（B03：报告哈希与字节数入回执）', () => {
+  test('采集成功时回执携带报告sha256与字节数；同计数不同内容的伪造报告哈希不同', async () => {
+    const { repo, sha } = makeRepo('report-hash', { 'a.test.ts': passing })
+    const receipt = await runPinnedBaselineVerifier({ repoRoot: repo, commitSha: sha, config: config() })
+    expect(receipt.verdict).toBe('passed')
+    expect(receipt.reportSha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(receipt.reportBytes).toBeGreaterThan(0)
+    // 内容绑定性：伪造一份同 counts 的假报告，哈希必然不同。
+    const fake = `<?xml version="1.0"?><testsuites tests="${receipt.tests}" failures="${receipt.failures}" errors="${receipt.errors}" skipped="${receipt.skipped}"/>`
+    const { createHash } = await import('node:crypto')
+    const fakeHash = createHash('sha256').update(fake).digest('hex')
+    expect(fakeHash).not.toBe(receipt.reportSha256)
+  })
+  test('采集失败（报告缺失）时回执不含报告哈希字段', async () => {
+    const { repo, sha } = makeRepo('report-missing', { 'noop.ts': 'export const x = 1\n' })
+    const receipt = await runPinnedBaselineVerifier({ repoRoot: repo, commitSha: sha, config: config({ argv: [bun, '-e', 'process.exit(0)'] }) })
+    expect(receipt.verdict).not.toBe('passed')
+    expect('reportSha256' in receipt).toBe(false)
+    expect('reportBytes' in receipt).toBe(false)
+  })
+})

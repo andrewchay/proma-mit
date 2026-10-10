@@ -173,10 +173,19 @@ export async function runPinnedBaselineVerifier(request: PinnedVerifierRequest):
     if (run.code === null || !request.config.expectedExitCodes.includes(run.code)) reasons.push('exit_code_unexpected')
 
     let totals: JUnitTotals | null = null
+    let reportSha256: string | undefined
+    let reportBytes: number | undefined
     try {
-      totals = parseJUnitTotals(await readFile(reportPath, 'utf8'))
+      // 可信采集：以字节级哈希绑定回执与实际解析的报告内容（B03），
+      // 同计数伪造报告无法复现哈希。
+      const reportBuffer = await readFile(reportPath)
+      reportBytes = reportBuffer.byteLength
+      reportSha256 = createHash('sha256').update(reportBuffer).digest('hex')
+      totals = parseJUnitTotals(reportBuffer.toString('utf8'))
     } catch {
       totals = null
+      reportSha256 = undefined
+      reportBytes = undefined
     }
     if (!totals) {
       reasons.push('collection_missing')
@@ -205,6 +214,7 @@ export async function runPinnedBaselineVerifier(request: PinnedVerifierRequest):
       cleanedUp: false,
       startedAt,
       finishedAt,
+      ...(reportSha256 !== undefined && reportBytes !== undefined ? { reportSha256, reportBytes } : {}),
     }
   } finally {
     await rm(workRoot, { recursive: true, force: true })
