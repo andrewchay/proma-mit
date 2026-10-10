@@ -3,7 +3,7 @@
 > 创建：2026-10-08 18:48 GMT+8 起；基线 HEAD：`6c71b384`。
 > 来源：[Harness Engineering: Anatomy, Architecture, and Evolution of Coding Agents](https://arxiv.org/html/2609.00006v1)，主要依据 §6、§9、§16。
 > 文档性质：实施控制面与验收账本，不是已实现能力声明。
-> 当前总状态（截至2026-10-10 00:35 GMT+8，已推送 origin/feat/harness-reliability-upgrade，HEAD `b97420fc`）：**H00/H01、V01落地；V02部分（新鲜度/严格回读/闭包/配置漂移拒绝）；V03仍阻塞。E01–E05：effects元数据、锁规约、调度器（含跨批次唤醒与实例级并发计数修复）、生产接线（ai-sdk+Pi，锁域=本进程）、生命周期矩阵与重试硬规则已落地，真实运行矩阵未做。M4：P01策略模型/P02钉板/P03一致性矩阵与四Runtime接线/P04只读UI落地；拒绝原因未写审计流。M5：C01–C04压缩Golden链、boundary原文定位、审批链钉板、敏感拦截、Skill stale/幂等落地；矛盾语义检测未实现。M6：R01离线基准骨架、R02本机门禁+打包烟测通过、R04回滚演练落地；真实Provider基线与CI隔离打包未做。M0发布门禁（HR07–HR09/G0–G3）均未通过，正式签名版验证未做。**
+> 当前总状态（截至2026-10-10 17:55 GMT+8，分支 `feat/harness-reliability-upgrade`）：**H00/H01、V01落地；V02部分（新鲜度/严格回读/闭包/配置漂移拒绝）；V03仍阻塞。E01–E05：effects元数据、锁规约、调度器（含跨批次唤醒与实例级并发计数修复）、生产接线（ai-sdk+Pi，锁域=本进程）、生命周期矩阵与重试硬规则已落地，真实运行矩阵未做。M4：P01策略模型/P02钉板/P03一致性矩阵与四Runtime接线/P04只读UI落地；拒绝原因未写审计流。M5：C01–C04压缩Golden链、boundary原文定位、审批链钉板、敏感拦截、Skill stale/幂等落地；矛盾语义检测未实现。M6：R01已有Pi/GLM真实30对调度开关试点（原始严格判定升级29/30、串行基线28/30），多Runtime与历史版本Provider基线未做；R02此前本机门禁+0.12.136打包烟测通过、R04回滚落地。0.12.138全仓门禁通过但未重新打包，CI隔离打包未做。M0发布门禁（HR07–HR09/G0–G3）均未通过，正式签名版验证未做。**
 > 授权变化：2026-10-08 21:44 GMT+8，用户要求切分支开始实施，已在`feat/harness-reliability-upgrade`独立worktree进行首批代码与离线测试。付费实验、外部操作、默认启用新能力、TCC及ACP接入不在本批范围。
 > 执行交接：实施时使用当前工作区 `executing-plans` Skill；逐项先写失败的行为测试，再最小实现、回归、记录证据。不得依赖未安装的 Skill 名称。
 
@@ -205,7 +205,7 @@
 
 | ID | 工作项与文件入口 | 交付与BDD验收 | 依赖 | 状态 |
 |---|---|---|---|---|
-| R01 | `agent-runtime/harness-benchmark/runner.ts` 离线矩阵 + 测试 | 多任务/多Runtime基线和失败样本；安全断言零容忍；未知费用不作0；不跑TCC实验 | M1–M5 | 部分完成：离线矩阵骨架与安全零容忍落地；真实 Provider 基线与失败样本库未做；runtime-acceptance-evidence.md |
+| R01 | 离线矩阵 + GLM真实配对试点 | 多任务/多Runtime基线和失败样本；安全断言零容忍；未知费用不作0；不跑TCC实验 | M1–M5 | 部分完成：2026-10-10 16:53 Pi/glm-5.3-flash真实30对完成；升级29/30、当前构建串行基线28/30，双方通过28对；总预算占用约¥4.506（非账单）；多Runtime/历史baseline未覆盖；见r01-glm-real-evidence.md及合并JSON |
 | R02 | 本批实际执行：全量门禁 + dist:fast + package-smoke | typecheck/test/lint/docs、完整build、隔离包启动/数据库重开；原生helper失败上抛 | R01 | 完成（本机 arm64）：567文件3844pass0fail；dmg 1m18s；smoke passed（tools26/defaultSkills3/skillSetToggle2）；Kimi 压缩烟测与 CI runner 未覆盖 |
 | R03 | 单独授权的真实Provider opt-in试点 | 固定Runtime/model/build/budget/cases；逐调用留证；验证真实工具/权限/最新产物；skip不记通过 | R02 | 已执行（用户授权 Pi + deepseek-flash/deepseek-v4-pro，¥5 上限）：36 次运行，17/18 与 18/18 通过，估算累计 ≤ $0.302；唯一失败 text-ok 已如实记录；见 pi-deepseek-pilot-evidence.md。仍非发布门禁 |
 | R04 | `harness-rollback.test.ts` 四例回滚演练 | 关闭新flags恢复baseline，硬安全底线不降低；旧数据可读、日志不删；扩容需正式门禁决策 | R03 | 完成（本批机制级）：调度禁用/策略删除/旧 boundary 可读/预算闸不降低；历史 flags 不在范围；runtime-acceptance-evidence.md |
@@ -453,6 +453,10 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261009-033 | 2026-10-09 23:40–23:55 GMT+8 | M5记忆/Skill侧C03/C04 | 审批链钉板（批准前零写/幂等/拒绝不写）；敏感候选上游拦截；audit免责声明；installer stale拒绝+幂等跳过+contentHash基线 | 记忆链2例+installer4例+auditor1例；全仓567文件3844pass0fail；矛盾语义检测未实现；memory-governance-evidence.md |
 | HARNESS-20261010-034 | 2026-10-09 23:55–2026-10-10 00:20 GMT+8 | M6离线基准R01+门禁R02+回滚R04 | benchmark runner（安全零容忍/费用unknown/矩阵）；dist:fast dmg+package-smoke passed；回滚演练四例 | 基准3例+回滚4例；全仓门禁+真实打包烟测通过；真实Provider基线/CI隔离打包未做；runtime-acceptance-evidence.md |
 | HARNESS-20261010-035 | 2026-10-10 00:20–00:35 GMT+8 | 台账刷新与推送 | 分支推送 origin（29提交）；M3/M4/M5/M6里程碑状态刷新；头部总状态对齐当前事实 | 无新代码；发布门禁状态不变（HR07–HR09/G0–G3未过）；ledger.md |
+| HARNESS-20261010-036 | 2026-10-10 00:00–15:49 GMT+8 | GLM真实试点与30对扩样授权 | 普通任务两臂8/8，缺权限回调导致的冲突无效样本保留说明；修复后冲突两臂通过、8派发8完成；用户授权¥10扩至30对 | 扩样脚本与请求前保守预留准备完成，真实30对未运行；费用仍非Provider账单；r01-glm-real-evidence.md |
+| HARNESS-20261010-037 | 2026-10-10 16:18–16:53 GMT+8 | GLM30对真实配对结果 | 本地输入额度/协议角色修复，完整usage结算与历史预留延续；协议1对+剩余29对全部完成；严格判定57/60通过，三项失败保留 | 预算占用¥4.5060184（含未知预留，非Provider账单）；111派发111完成；单模型Pi/current-build串行基线，不替代完整R01或发布门禁；r01-glm-real-evidence.md |
+
+| HARNESS-20261010-038 | 2026-10-10 17:49–17:55 GMT+8 | GLM真实试点收束 | 数值比较与终态/工具错误诊断补强；历史57/60原始判定保留；Electron0.12.138 | 574文件3862pass0fail29skip；typecheck/lint/docs/diff通过；workspace36→36；无新增Provider调用、无新打包；r01-glm-real-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
