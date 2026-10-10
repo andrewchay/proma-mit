@@ -25,3 +25,20 @@ baseline 臂 B 的 Read 在 A 的全局排他锁上**真实排队约 1761ms**（
 - HR09 真实观测**未通过**：取消语义在真实运行中未满足"未开始的 mutation 零执行"。
 - 离线层（调度器 queued 取消零执行）此前已验证；缺口在 runtime 的 abort 传播。
 - G0–G3 保持未过；不把本批失败修饰为通过。
+
+## 修复与离线验证（2026-10-10 22:45 GMT+8）
+
+根因：`abortSignal` 仅在压缩路径（runWithCompactionAbort）监听，主 prompt 执行链（runPromptChain/retryablePromptChain）从不响应调用方中止。
+
+修复（pi-agent-adapter.ts）：
+
+- 会话建立后接线调用方 abortSignal，语义等价 `adapter.abort(sessionId)`：终止流式、清 interrupt 队列、释放会话；finally 移除监听。
+- 信号在会话建立前已中止：fail-fast，不发起任何 Provider 请求。
+
+离线验证（pi-agent-abort-signal.test.ts，2 例，先失败后通过）：
+
+- 挂起的 Provider 往返期间中止：session.abort 被调用一次，迭代以 AbortError 结束（修复前永久挂起）。
+- 预中止信号：不发起 prompt，直接 AbortError。
+- 回归：断流重试/流式队列/适配器既有 36 例全过；全仓 577 文件 3870 pass/0 fail/29 skip；workspace 36→36。
+
+待做：修复后的真实复验（abort-queued-write 重跑，费用极小）；E04 语义保持——调度器层运行中调用仍不硬打断，工具自身 signal 负责。

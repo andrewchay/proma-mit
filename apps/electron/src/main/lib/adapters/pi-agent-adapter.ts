@@ -660,6 +660,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       interrupting: false,
     })
 
+    // HR09：调用方 abortSignal 此前只在压缩路径生效；主 prompt 链必须同样响应，
+    // 否则中止后会话继续发起 Provider 请求与工具调用（真实运行已观测到该缺口）。
+    // 语义等价于 adapter.abort(sessionId)：终止流式、清 interrupt 队列、释放会话。
+    const onCallerAbort = (): void => { this.abort(sessionId) }
+    if (abortSignal?.aborted) onCallerAbort()
+    else abortSignal?.addEventListener('abort', onCallerAbort, { once: true })
+
     try {
       const enrichedPrompt = await enrichMessageWithDocuments(prompt, attachments)
       const promptImages = getImageAttachmentData(attachments).map((image) => ({
@@ -807,23 +814,30 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           }
         }
       }
-      void retryablePromptChain()
-        .then(() => {
-          // Pi 的工具 terminate / prepareRequest 拒绝可能被 SDK 收敛为正常 resolve；
-          // 有限费用模式必须按回执状态判断终态，不允许外层误报成功。
-          budgetGate?.assertComplete()
-          queue.close()
-        })
-        .catch((error: unknown) => {
-          queryHadError = true
-          queue.fail(error)
-        })
+      if (abortSignal?.aborted) {
+        // 信号在会话建立前已中止：不再发起任何 Provider 请求，直接以 AbortError 结束。
+        queryHadError = true
+        queue.fail(createAbortError())
+      } else {
+        void retryablePromptChain()
+          .then(() => {
+            // Pi 的工具 terminate / prepareRequest 拒绝可能被 SDK 收敛为正常 resolve；
+            // 有限费用模式必须按回执状态判断终态，不允许外层误报成功。
+            budgetGate?.assertComplete()
+            queue.close()
+          })
+          .catch((error: unknown) => {
+            queryHadError = true
+            queue.fail(error)
+          })
+      }
       while (true) {
         const next = await queue.next()
         if (next.done) break
         yield next.value
       }
     } finally {
+      abortSignal?.removeEventListener('abort', onCallerAbort)
       budgetGate?.stop()
       partialAssistantCoalescer.dispose()
       this.releaseSession(sessionId)
