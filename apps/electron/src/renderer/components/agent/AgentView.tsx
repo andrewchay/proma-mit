@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target, Network, ShieldCheck } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target, Network, ShieldCheck, Pencil } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -27,6 +27,7 @@ import { AskUserBanner } from './AskUserBanner'
 import { McpOAuthBanner } from './McpOAuthBanner'
 import { ExitPlanModeBanner } from './ExitPlanModeBanner'
 import { PlanModeDashedBorder } from './PlanModeDashedBorder'
+import { resolveEditRewindAnchor, stripAttachmentBlocks } from './edit-user-message'
 import { ModelSelector } from '@/components/chat/ModelSelector'
 import { AttachmentPreviewItem } from '@/components/chat/AttachmentPreviewItem'
 import { QuotedSelectionChip } from '@/components/diff/QuotedSelectionChip'
@@ -90,6 +91,8 @@ import {
   allPendingExitPlanRequestsAtom,
   allPendingMcpOAuthRequestsAtom,
   queuedAgentMessagesAtom,
+  editAgentUserMessageIntentAtom,
+  editingAgentUserMessageAtom,
   finalizeStreamingActivities,
 } from '@/atoms/agent-atoms'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
@@ -684,6 +687,62 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       return map
     })
   }, [sessionId, setDraftHtmlMap])
+
+  // 中断引导：检测到用户停止生成（含切到已中断的会话）且尚无建议时，
+  // 补一条"继续"建议，复用现有建议卡片展示与发送链路，降低"接下来该说什么"的成本。
+  const prevStoppedByUserRef = React.useRef(false)
+  React.useEffect(() => {
+    const justStopped = stoppedByUser && !prevStoppedByUserRef.current
+    prevStoppedByUserRef.current = stoppedByUser
+    if (!justStopped) return
+    setPromptSuggestions((prev) => {
+      // 不覆盖后端已推送的建议
+      if (prev.has(sessionId)) return prev
+      const map = new Map(prev)
+      map.set(sessionId, '继续刚才被中断的任务，从上次中断的位置接着完成剩余部分。')
+      return map
+    })
+  }, [stoppedByUser, sessionId, setPromptSuggestions])
+
+  // ===== 编辑用户消息并重发 =====
+  const editIntent = useAtomValue(editAgentUserMessageIntentAtom)
+  const setEditIntent = useSetAtom(editAgentUserMessageIntentAtom)
+  const setEditingUserMessage = useSetAtom(editingAgentUserMessageAtom)
+  const editingUserMessage = useAtomValue(editingAgentUserMessageAtom).get(sessionId) ?? null
+  const [editSendConfirmOpen, setEditSendConfirmOpen] = React.useState(false)
+  /** 用户已确认"回退并发送"后放行 handleSend 的标记（避免再次弹确认） */
+  const editSendConfirmedRef = React.useRef(false)
+
+  // 消费编辑意图：回填输入框（剥离附件 XML 块）并进入编辑态。
+  // 属于其他会话的意图留在 atom 中，等该会话的 AgentView 挂载后再消费。
+  React.useEffect(() => {
+    if (!editIntent || editIntent.sessionId !== sessionId) return
+    setEditIntent(null)
+    if (streaming) {
+      toast.info('Agent 运行中，请完成后再编辑消息', {
+        description: '编辑重发需要回退对话，运行中无法执行',
+      })
+      return
+    }
+    const refillText = stripAttachmentBlocks(editIntent.rawText)
+    setInputContent(refillText)
+    setInputHtmlContent('')
+    setEditingUserMessage((prev) => {
+      const map = new Map(prev)
+      map.set(sessionId, { messageUuid: editIntent.messageUuid, rawText: editIntent.rawText })
+      return map
+    })
+  }, [editIntent, sessionId, streaming, setEditIntent, setInputContent, setInputHtmlContent, setEditingUserMessage])
+
+  /** 取消编辑：仅清除编辑目标，保留用户已修改的输入内容 */
+  const handleCancelEditUserMessage = React.useCallback((): void => {
+    setEditingUserMessage((prev) => {
+      if (!prev.has(sessionId)) return prev
+      const map = new Map(prev)
+      map.delete(sessionId)
+      return map
+    })
+  }, [sessionId, setEditingUserMessage])
   const sessionPathMap = useAtomValue(agentSessionPathMapAtom)
   const setSessionPathMap = useSetAtom(agentSessionPathMapAtom)
   const sessionPath = sessionPathMap.get(sessionId) ?? null
@@ -1447,6 +1506,70 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     // 如果输入为空但有建议，使用建议内容
     const effectiveText = text || suggestion || ''
     if ((!effectiveText && pendingFiles.length === 0) || !agentChannelId || !hasAvailableModel) return
+
+    // ===== 编辑重发分支 =====
+    // 处于编辑态时，发送前必须先回退到目标消息之前（复用 rewindSession 的文件恢复），
+    // 因此先弹确认；用户确认后由 ref 标记放行，在下一段真正执行回退并继续发送流程。
+    const editingTarget = store.get(editingAgentUserMessageAtom).get(sessionId)
+    if (editingTarget && !editSendConfirmedRef.current) {
+      if (streaming) {
+        toast.info('Agent 运行中，请完成后再编辑重发')
+        return
+      }
+      const plan = resolveEditRewindAnchor(persistedSDKMessages, editingTarget.messageUuid)
+      if (!plan) {
+        toast.error('该消息不支持编辑重发', {
+          description: '该消息之前没有可回退的对话点，可复制内容后作为新消息发送',
+        })
+        return
+      }
+      setEditSendConfirmOpen(true)
+      return
+    }
+
+    if (editingTarget && editSendConfirmedRef.current) {
+      editSendConfirmedRef.current = false
+      const plan = resolveEditRewindAnchor(persistedSDKMessages, editingTarget.messageUuid)
+      if (!plan) {
+        toast.error('该消息不支持编辑重发', {
+          description: '该消息之前没有可回退的对话点，可复制内容后作为新消息发送',
+        })
+        return
+      }
+      try {
+        await window.electronAPI.rewindSession({
+          sessionId,
+          assistantMessageUuid: plan.anchorAssistantUuid,
+        })
+      } catch (error) {
+        console.error('[AgentView] 编辑重发回退失败:', error)
+        toast.error('回退失败，消息未发送', {
+          description: error instanceof Error ? error.message : '未知错误',
+        })
+        return
+      }
+      // 本地截断消息与实时消息状态（与后端 JSONL 截断保持一致），
+      // 不走刷新重载，避免重载与本次发送的乐观更新竞态。
+      setPersistedSDKMessages((prev) => prev.slice(0, plan.keptCount))
+      store.set(liveMessagesMapAtom, (prev) => {
+        if (!prev.has(sessionId)) return prev
+        const map = new Map(prev)
+        map.delete(sessionId)
+        return map
+      })
+      // 文件已被回退，预览面板的 diff 内容已过期，触发刷新
+      store.set(agentDiffRefreshVersionAtom, (prev) => {
+        const map = new Map(prev)
+        map.set(sessionId, (prev.get(sessionId) ?? 0) + 1)
+        return map
+      })
+      setEditingUserMessage((prev) => {
+        if (!prev.has(sessionId)) return prev
+        const map = new Map(prev)
+        map.delete(sessionId)
+        return map
+      })
+    }
     const additionalDirectoriesForRun = new Set(attachedDirs)
     for (const dir of attachedFileDirectories) {
       additionalDirectoriesForRun.add(dir)
@@ -1736,7 +1859,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         return map
       })
     }).finally(() => { void refreshGoals() })
-  }, [inputContent, pendingFiles, attachedDirs, attachedFileDirectories, sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, workspaces, streaming, suggestion, hasAvailableModel, store, setStreamingStates, setPendingFiles, setAgentStreamErrors, setPromptSuggestions, setInputContent, permissionMode, setInputHtmlContent, // 取消 draft 标记，让会话出现在侧边栏
+  }, [inputContent, pendingFiles, attachedDirs, attachedFileDirectories, sessionId, agentChannelId, agentModelId, sessionAgentRuntime, currentWorkspaceId, workspaces, streaming, suggestion, hasAvailableModel, store, setStreamingStates, setPendingFiles, setAgentStreamErrors, setPromptSuggestions, setInputContent, permissionMode, setInputHtmlContent, persistedSDKMessages, setEditingUserMessage, // 取消 draft 标记，让会话出现在侧边栏
     setDraftSessionIds, refreshGoals])
 
   /** 停止生成 */
@@ -2493,6 +2616,23 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               </div>
             )}
 
+            {/* 编辑态贴片：正在编辑某条用户消息 */}
+            {editingUserMessage && (
+              <div className="mx-3 mb-2 flex items-center gap-2 rounded-[8px] border border-primary/30 bg-primary/[0.04] px-2.5 py-1.5 text-xs">
+                <Pencil className="size-3.5 shrink-0 text-primary/70" />
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  正在编辑消息 · 发送时将回退该消息之后的对话并恢复文件
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
+                  onClick={handleCancelEditUserMessage}
+                >
+                  取消编辑
+                </button>
+              </div>
+            )}
+
             {/* Agent 待发送队列贴片（流式期间连续发送） */}
             {queuedMessages.length > 0 && (
               <div className="mx-3 mb-2 space-y-1">
@@ -2565,6 +2705,30 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
         )}
       </div>
     </AgentSessionProvider>
+
+    {/* 编辑重发确认弹窗 */}
+    <AlertDialog open={editSendConfirmOpen} onOpenChange={setEditSendConfirmOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认编辑重发</AlertDialogTitle>
+          <AlertDialogDescription>
+            发送将回退该消息之后的所有对话，并恢复文件到当时状态；原消息携带的附件不会随新消息重发。此操作不可撤销，确定发送吗？
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => {
+              editSendConfirmedRef.current = true
+              void handleSend()
+            }}
+          >
+            回退并发送
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     {/* 回退确认弹窗 */}
     <AlertDialog

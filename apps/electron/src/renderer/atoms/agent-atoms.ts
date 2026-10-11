@@ -1055,6 +1055,19 @@ export const backgroundTasksAtomFamily = atomFamily((sessionId: string) =>
 /** 被用户手动打断的会话集合（仅当前 streaming 周期有效，reload 后清除） */
 export const stoppedByUserSessionsAtom = atom<Set<string>>(new Set<string>())
 
+// ===== 编辑用户消息并重发 =====
+
+/** 点击用户消息"编辑"按钮时写入的意图（UserInputMessage → AgentView 单向消费，消费后清空） */
+export const editAgentUserMessageIntentAtom = atom<{
+  sessionId: string
+  messageUuid: string
+  /** 消息原始文本（含 attached_files 等 XML 块，回填输入框前需剥离） */
+  rawText: string
+} | null>(null)
+
+/** 当前处于编辑态的用户消息（按 sessionId 隔离；发送或取消编辑时清除） */
+export const editingAgentUserMessageAtom = atom<Map<string, { messageUuid: string; rawText: string }>>(new Map())
+
 // ===== 初始化就绪状态 =====
 
 /** AgentSettingsInitializer 是否已完成加载（渠道/工作区/设置全部就绪） */

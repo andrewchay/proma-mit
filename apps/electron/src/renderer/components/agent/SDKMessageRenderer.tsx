@@ -12,7 +12,7 @@
  */
 
 import * as React from 'react'
-import { Bot, Loader2, AlertTriangle, FileText, FileImage, Download, Split, Undo2, RotateCw, Plus, Minimize2, Wrench, Settings, ExternalLink, Quote } from 'lucide-react'
+import { Bot, Loader2, AlertTriangle, FileText, FileImage, Download, Split, Undo2, RotateCw, Plus, Minimize2, Wrench, Settings, ExternalLink, Quote, Pencil } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/utils'
 import { ImageLightbox } from '@/components/ui/image-lightbox'
@@ -39,7 +39,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatMessageTime } from '@/components/chat/ChatMessageItem'
 import { getModelLogo, resolveModelDisplayName } from '@/lib/model-logo'
 import { userProfileAtom } from '@/atoms/user-profile'
-import { agentSessionsAtom } from '@/atoms/agent-atoms'
+import { agentSessionsAtom, editAgentUserMessageIntentAtom } from '@/atoms/agent-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { environmentCheckDialogOpenAtom } from '@/atoms/environment'
 import { settingsOpenAtom, settingsTabAtom } from '@/atoms/settings-tab'
@@ -946,13 +946,27 @@ function QuoteChip({ quote }: { quote: QuotedFileRef }): React.ReactElement {
 
 // ===== 用户输入消息渲染 =====
 
-function UserInputMessage({ message }: { message: SDKUserMessage }): React.ReactElement {
+interface UserInputMessageProps {
+  message: SDKUserMessage
+  /** 所属会话；仅历史消息渲染路径传入（实时消息无 sessionId，不展示编辑入口） */
+  sessionId?: string
+}
+
+function UserInputMessage({ message, sessionId }: UserInputMessageProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
+  const setEditIntent = useSetAtom(editAgentUserMessageIntentAtom)
   const rawText = extractUserText(message) ?? ''
   const { files: attachedFiles, quotes, text } = parseAttachedFiles(rawText)
   const imageFiles = attachedFiles.filter((f) => isImageFile(f.filename))
   const nonImageFiles = attachedFiles.filter((f) => !isImageFile(f.filename))
   const meta = extractMeta(message as unknown as SDKMessage)
+  const messageUuid = (message as unknown as { uuid?: string }).uuid
+
+  /** 点击编辑：写入意图 atom，由 AgentView 回填输入框并进入编辑态 */
+  const handleEdit = (): void => {
+    if (!sessionId || !messageUuid) return
+    setEditIntent({ sessionId, messageUuid, rawText })
+  }
 
   return (
     <Message from="user">
@@ -995,6 +1009,11 @@ function UserInputMessage({ message }: { message: SDKUserMessage }): React.React
       {text && (
         <MessageActions className="pl-[46px] mt-0.5">
           <CopyButton content={text} />
+          {sessionId && messageUuid && (
+            <MessageAction tooltip="编辑并重发" onClick={handleEdit}>
+              <Pencil className="size-3.5" />
+            </MessageAction>
+          )}
         </MessageActions>
       )}
     </Message>
@@ -1302,7 +1321,7 @@ export function MessageGroupRenderer({ group, sessionId, allMessages, historical
   if (group.type === 'user') {
     return (
       <div data-message-id={groupId} data-message-role="user">
-        <UserInputMessage message={group.message} />
+        <UserInputMessage message={group.message} sessionId={sessionId} />
       </div>
     )
   }
