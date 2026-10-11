@@ -643,7 +643,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
 
   const setPreviewFileMap = useSetAtom(previewFileMapAtom)
   const suggestionsMap = useAtomValue(agentPromptSuggestionsAtom)
-  const suggestion = suggestionsMap.get(sessionId) ?? null
+  const suggestions = suggestionsMap.get(sessionId) ?? []
+  const suggestion = suggestions[0] ?? null
   const setPromptSuggestions = useSetAtom(agentPromptSuggestionsAtom)
   const setAgentSessions = useSetAtom(agentSessionsAtom)
   const { openSession } = useOpenSession()
@@ -699,7 +700,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       // 不覆盖后端已推送的建议
       if (prev.has(sessionId)) return prev
       const map = new Map(prev)
-      map.set(sessionId, '继续刚才被中断的任务，从上次中断的位置接着完成剩余部分。')
+      map.set(sessionId, ['继续刚才被中断的任务，从上次中断的位置接着完成剩余部分。'])
       return map
     })
   }, [stoppedByUser, sessionId, setPromptSuggestions])
@@ -1501,10 +1502,10 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
   }, [agentChannelId, agentModelId])
 
   /** 发送消息 */
-  const handleSend = React.useCallback(async (): Promise<void> => {
+  const handleSend = React.useCallback(async (overrideText?: string): Promise<void> => {
     const text = inputContent.trim()
-    // 如果输入为空但有建议，使用建议内容
-    const effectiveText = text || suggestion || ''
+    // 如果输入为空但有建议，使用建议内容；overrideText 用于点击指定建议条目时直接发送该条
+    const effectiveText = overrideText ?? text ?? suggestion ?? ''
     if ((!effectiveText && pendingFiles.length === 0) || !agentChannelId || !hasAvailableModel) return
 
     // ===== 编辑重发分支 =====
@@ -2413,7 +2414,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
           ? 'text-primary hover:bg-primary/10'
           : 'text-foreground/30 cursor-not-allowed'
       )}
-      onClick={handleSend}
+      onClick={() => void handleSend()}
       disabled={!canSend}
     >
       <CornerDownLeft className="size-[22px]" />
@@ -2583,29 +2584,34 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               </div>
             )}
 
-            {/* Agent 建议提示 */}
-            {suggestion && !streaming && (
-              <div className="px-3 pt-2.5 pb-1.5">
-                <button
-                  type="button"
-                  className="group flex items-start gap-2 w-full rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-3 py-2.5 text-left text-sm transition-colors hover:border-primary/50 hover:bg-primary/[0.06]"
-                  onClick={handleSend}
-                >
-                  <Sparkles className="size-4 shrink-0 mt-0.5 text-primary/60 group-hover:text-primary/80" />
-                  <span className="flex-1 min-w-0 text-foreground/80 group-hover:text-foreground line-clamp-3">{suggestion}</span>
-                  <X
-                    className="size-3.5 shrink-0 mt-0.5 text-muted-foreground/40 hover:text-foreground transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setPromptSuggestions((prev) => {
-                        if (!prev.has(sessionId)) return prev
-                        const map = new Map(prev)
-                        map.delete(sessionId)
-                        return map
-                      })
-                    }}
-                  />
-                </button>
+            {/* Agent 建议提示（可多条，点击直接发送该条） */}
+            {suggestions.length > 0 && !streaming && (
+              <div className="px-3 pt-2.5 pb-1.5 space-y-1.5">
+                {suggestions.slice(0, 3).map((item, idx) => (
+                  <button
+                    key={`${idx}:${item.slice(0, 24)}`}
+                    type="button"
+                    className="group flex items-start gap-2 w-full rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-3 py-2.5 text-left text-sm transition-colors hover:border-primary/50 hover:bg-primary/[0.06]"
+                    onClick={() => void handleSend(item)}
+                  >
+                    <Sparkles className="size-4 shrink-0 mt-0.5 text-primary/60 group-hover:text-primary/80" />
+                    <span className="flex-1 min-w-0 text-foreground/80 group-hover:text-foreground line-clamp-3">{item}</span>
+                    {idx === 0 && (
+                      <X
+                        className="size-3.5 shrink-0 mt-0.5 text-muted-foreground/40 hover:text-foreground transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setPromptSuggestions((prev) => {
+                            if (!prev.has(sessionId)) return prev
+                            const map = new Map(prev)
+                            map.delete(sessionId)
+                            return map
+                          })
+                        }}
+                      />
+                    )}
+                  </button>
+                ))}
               </div>
             )}
 
