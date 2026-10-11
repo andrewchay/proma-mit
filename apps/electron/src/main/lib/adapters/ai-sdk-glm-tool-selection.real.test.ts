@@ -48,7 +48,7 @@ const OUT_DIR = process.env.PROMA_TOOL_EVAL_OUT ?? join(tmpdir(), 'gravitas-tool
 /** 双臂 × 任务数上限；费用熔断以更严格的剩余预算为准。 */
 const MAX_RUNS = Number(process.env.PROMA_TOOL_EVAL_MAX_RUNS ?? '20')
 /** loading 臂摘要预算：只容少量能力摘要，考察发现质量。 */
-const LOADING_BUDGET = Number(process.env.PROMA_TOOL_EVAL_LOADING_BUDGET ?? '130')
+const LOADING_BUDGET = Number(process.env.PROMA_TOOL_EVAL_LOADING_BUDGET ?? '360')
 
 /** 智谱标准价（元/百万token），同 R01 试点口径；忽略缓存折扣。 */
 const PRICE = { input: 0.8, output: 2.8 }
@@ -158,7 +158,13 @@ afterAll(() => {
               ? { allowed: true }
               : { allowed: false, message: '评测仅授权文件与 shell 工具' }),
             ...(arm === 'loading'
-              ? { toolLoading: { catalog, query: task.prompt, tokenBudget: LOADING_BUDGET } }
+              ? {
+                  toolLoading: {
+                    catalog, query: task.prompt, tokenBudget: LOADING_BUDGET,
+                    // D02 改进：核心文件/shell 工具常驻，考察发现质量不占预算。
+                    alwaysLoadToolNames: ['Read', 'Write', 'Edit', 'Grep', 'Bash'],
+                  },
+                }
               : {}),
           } as never)) {
             messages.push(message)

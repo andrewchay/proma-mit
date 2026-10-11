@@ -10,10 +10,12 @@ export interface ToolDiscoveryRequest {
   /** 任务文本；CJK 与拉丁混合均可。 */
   readonly query: string
   readonly catalog: CapabilityCatalog
-  /** 摘要 token 预算；超出即截断。 */
+  /** 摘要 token 预算；超出即截断（常驻核心集不受此限）。 */
   readonly tokenBudget: number
   /** 必须包含的能力 id；目录缺失时进入 requiredMissing。 */
   readonly requiredIds?: readonly string[]
+  /** 常驻核心工具名（按 toolName）：无论预算与相关度都选中，不进预算截断。 */
+  readonly alwaysLoadToolNames?: readonly string[]
 }
 
 export interface ToolDiscoveryResult {
@@ -38,6 +40,24 @@ export function estimateDiscoveryTokens(text: string): number {
   return cjk + Math.ceil(latin / 4)
 }
 
+/** CJK 任务词 → 工具名关键词映射：把任务动词归一到工具名可命中的词。 */
+const TASK_WORD_LEXICON: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
+  [/读|查看|获取|打开/, ['read']],
+  [/写|创建|保存/, ['write']],
+  [/修改|编辑|改为|更新|替换/, ['edit']],
+  [/搜索|查找|找出|定位/, ['grep', 'search']],
+  [/列出|目录/, ['bash', 'list']],
+  [/运行|执行/, ['bash', 'run']],
+]
+
+export function expandQueryWithTaskWords(query: string): string {
+  const expansions: string[] = []
+  for (const [pattern, words] of TASK_WORD_LEXICON) {
+    if (pattern.test(query)) expansions.push(...words)
+  }
+  return expansions.length > 0 ? `${query}\n${expansions.join(' ')}` : query
+}
+
 /** 词法评分：查询子串与关键词命中；纯符号查询不伪造相关度。 */
 function scoreDescriptor(query: string, haystack: string): number {
   const q = query.trim().toLowerCase()
@@ -59,12 +79,21 @@ function descriptorHaystack(descriptor: { id: string; name: string; summary: str
 export function discoverToolsForQuery(input: ToolDiscoveryRequest): ToolDiscoveryResult {
   if (!Number.isInteger(input.tokenBudget) || input.tokenBudget <= 0) throw new Error('tokenBudget 必须为正整数')
   const byId = new Map(input.catalog.descriptors.map((d) => [d.id, d]))
+  const byName = new Map(input.catalog.descriptors.map((d) => [d.toolName ?? '', d]))
   const required = input.requiredIds ?? []
   const requiredMissing = required.filter((id) => !byId.has(id)).sort()
 
+  // 常驻核心集：按 toolName 选中目录中存在的项；不存在则跳过（selectedIds 中本就不含，无需额外报告）。
+  const alwaysSelected = new Set<string>()
+  for (const name of input.alwaysLoadToolNames ?? []) {
+    const descriptor = byName.get(name)
+    if (descriptor) alwaysSelected.add(descriptor.id)
+  }
+
+  const expandedQuery = expandQueryWithTaskWords(input.query)
   const scored = input.catalog.descriptors.map((descriptor) => ({
     descriptor,
-    score: scoreDescriptor(input.query, descriptorHaystack(descriptor)),
+    score: scoreDescriptor(expandedQuery, descriptorHaystack(descriptor)),
   }))
   const requiredSet = new Set(required)
   // 相关度降序，同分按 id 升序保证 byte-stable；required 始终排在被预算保留的前列。
@@ -78,7 +107,14 @@ export function discoverToolsForQuery(input: ToolDiscoveryRequest): ToolDiscover
     const descriptor = byId.get(id)!
     return estimateDiscoveryTokens(descriptor.id + descriptor.name + descriptor.summary + descriptor.serverName!)
   }
+  // 常驻核心集与 required 一样不静默丢失：先收入，再让预算约束其余发现项。
   for (const { descriptor } of scored) {
+    if (!alwaysSelected.has(descriptor.id)) continue
+    selectedIds.push(descriptor.id)
+    tokensUsed += lineTokens(descriptor.id)
+  }
+  for (const { descriptor } of scored) {
+    if (alwaysSelected.has(descriptor.id)) continue
     const isRequired = requiredSet.has(descriptor.id)
     const line = lineTokens(descriptor.id)
     if (!isRequired && (tokensUsed + line > input.tokenBudget)) {

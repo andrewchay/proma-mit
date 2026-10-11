@@ -18,6 +18,8 @@ export interface ToolLoadingSpec {
   readonly query: string
   readonly tokenBudget: number
   readonly requiredIds?: readonly string[]
+  /** 常驻核心工具名（按 toolName）：无论预算与相关度都加载。 */
+  readonly alwaysLoadToolNames?: readonly string[]
 }
 
 export interface ToolLoadingPlan {
@@ -42,6 +44,7 @@ export function planToolLoading(spec: ToolLoadingSpec, tools: readonly RuntimeTo
     catalog: spec.catalog,
     tokenBudget: spec.tokenBudget,
     requiredIds: spec.requiredIds,
+    alwaysLoadToolNames: spec.alwaysLoadToolNames,
   })
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   const hashes = new Map<string, string>()

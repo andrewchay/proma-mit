@@ -32,6 +32,8 @@ const { discoverToolsForQuery } = await import('./tool-discovery')
 const { bindCoreToolEffects } = await import('./tool-effects')
 const { createReadToolDefinition, executeReadTool } = await import('./tool-impls/read-tool')
 const { createWriteToolDefinition, executeWriteTool } = await import('./tool-impls/write-tool')
+const { createEditToolDefinition, executeEditTool } = await import('./tool-impls/edit-tool')
+const { createBashToolDefinition, executeBashTool } = await import('./tool-impls/bash-tool')
 
 afterAll(() => {
   rmSync(testDir, { recursive: true, force: true })
@@ -42,7 +44,9 @@ const readTool = bindCoreToolEffects({ ...createReadToolDefinition(), execute: e
 const writeTool = bindCoreToolEffects({ ...createWriteToolDefinition(), execute: executeWriteTool })
 const grepTool = bindCoreToolEffects({ name: 'Grep', description: 'Search file contents by pattern. 按模式搜索文件内容。', parameters: { type: 'object', properties: {} }, execute: async () => ({ toolCallId: '', content: '' }) })
 const webSearch = bindCoreToolEffects({ name: 'mcp__tavily__search', description: 'Search the web for current information', parameters: { type: 'object', properties: {} }, execute: async () => ({ toolCallId: '', content: '' }) })
-const catalog = buildToolCapabilityCatalog([readTool, writeTool, grepTool, webSearch]).catalog
+const editTool = bindCoreToolEffects({ ...createEditToolDefinition(), execute: executeEditTool })
+const bashTool = bindCoreToolEffects({ ...createBashToolDefinition(), execute: executeBashTool })
+const catalog = buildToolCapabilityCatalog([readTool, writeTool, editTool, bashTool, grepTool, webSearch]).catalog
 
 describe('D02：工具发现与预算选择', () => {
   test('关键词匹配选中相关能力并给出可注入摘要', () => {
@@ -94,5 +98,38 @@ describe('D02：工具发现与预算选择', () => {
     const after = discoverToolsForQuery({ query: 'search', catalog: reduced, tokenBudget: 400 })
     expect(after.selectedIds).not.toContain('mcp:tavily:search')
     expect(after.selectedIds.length).toBeLessThanOrEqual(before.selectedIds.length)
+  })
+})
+
+describe('D02 改进：常驻核心集与 CJK 任务词映射', () => {
+  test('常驻核心集：预算再小也选中核心工具，且不计入预算截断', () => {
+    const result = discoverToolsForQuery({
+      query: '完全无关的查询',
+      catalog,
+      tokenBudget: 20,
+      alwaysLoadToolNames: ['Read', 'Write', 'Edit', 'Grep', 'Bash'],
+    })
+    for (const name of ['Read', 'Write', 'Edit', 'Grep', 'Bash']) {
+      expect(result.selectedIds).toContain(`builtin:${name}`)
+    }
+    expect(result.omittedByBudget).not.toContain('builtin:Read')
+  })
+
+  test('CJK 任务词映射：找出文件→Grep；改为→Edit；列出→Bash；写→Write', () => {
+    const grep = discoverToolsForQuery({ query: '找出包含 NEEDLE 的文件名', catalog, tokenBudget: 400 })
+    expect(grep.selectedIds).toContain('builtin:Grep')
+    const edit = discoverToolsForQuery({ query: '把 LIMIT 从 3 改为 7', catalog, tokenBudget: 400 })
+    expect(edit.selectedIds).toContain('builtin:Edit')
+    const list = discoverToolsForQuery({ query: '列出当前目录全部文件', catalog, tokenBudget: 400 })
+    expect(list.selectedIds).toContain('builtin:Bash')
+    const write = discoverToolsForQuery({ query: '创建 out.txt 写入一行内容', catalog, tokenBudget: 400 })
+    expect(write.selectedIds).toContain('builtin:Write')
+  })
+
+  test('常驻名不在目录中明确报告，不静默', () => {
+    const result = discoverToolsForQuery({
+      query: 'x', catalog, tokenBudget: 400, alwaysLoadToolNames: ['NonExist'],
+    })
+    expect(result.selectedIds).not.toContain('builtin:NonExist')
   })
 })
