@@ -28,6 +28,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { allPendingPermissionRequestsAtom, agentStreamingStatesAtom, finalizeStreamingActivities } from '@/atoms/agent-atoms'
 import type { DangerLevel } from '@gravitas/shared'
+import { resolveBatchAllowPlan, requiresPerActionApprovalTool } from './permission-batch'
 
 /** 危险等级对应的样式 */
 const DANGER_STYLES: Record<DangerLevel, { icon: typeof Shield; iconColor: string; badgeClass: string; label: string }> = {
@@ -79,10 +80,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
   const request = requests[0] ?? null
 
   // 决策选项构建（根据工具类型决定是否展示"总是允许"）
-  const requiresPerActionApproval = request ? (
-    (request.toolName.startsWith('ComputerUse') && request.toolName !== 'ComputerUseStatus')
-    || new Set(['WebBridgeDownload', 'WebBridgeUpload']).has(request.toolName)
-  ) : false
+  const requiresPerActionApproval = request ? requiresPerActionApprovalTool(request.toolName) : false
 
   const decisions = React.useMemo<Array<{ value: Decision; label: string; description: string }>>(() => {
     if (!request) return []
@@ -90,13 +88,11 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
       { value: 'allow', label: '允许', description: '仅允许本次操作' },
     ]
     if (!requiresPerActionApproval) {
-    if (!requiresPerActionApproval) {
       items.push({
         value: 'allowAlways',
         label: '始终允许',
         description: '本会话与后续会话不再询问同类操作（可在设置中移除）',
       })
-    }
     }
     items.push({ value: 'deny', label: '拒绝', description: '拒绝本次操作并继续' })
     return items
@@ -189,6 +185,41 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
 
   respondRef.current = respond
 
+  // 批量放行：队首之后紧跟多个同类请求时，一键放行整个连续段
+  const batchPlan = React.useMemo(() => resolveBatchAllowPlan(requests), [requests])
+
+  const handleBatchAllow = async (): Promise<void> => {
+    if (!batchPlan || responding) return
+    setResponding(true)
+    try {
+      // 按 FIFO 顺序逐个放行；单个失败不阻断其余请求，
+      // 失败的请求保留在队列中等待用户逐个处理（主进程侧仍处于待响应状态）
+      const succeeded: string[] = []
+      for (const requestId of batchPlan.requestIds) {
+        try {
+          await window.electronAPI.respondPermission({ requestId, behavior: 'allow', alwaysAllow: false })
+          succeeded.push(requestId)
+        } catch (error) {
+          console.error('[PermissionBanner] 批量放行单个请求失败:', requestId, error)
+        }
+      }
+      // 仅成功放行的请求出队
+      const released = new Set(succeeded)
+      if (released.size === 0) return
+      setAllRequests((prev) => {
+        const map = new Map(prev)
+        const current = map.get(sessionId) ?? []
+        const stillPending = current.filter((r) => !released.has(r.requestId))
+        if (stillPending.length === 0) map.delete(sessionId)
+        else map.set(sessionId, stillPending)
+        return map
+      })
+    } finally {
+      setResponding(false)
+      setFocusedIdx(0)
+    }
+  }
+
   const hasToolInput = Object.keys(request.toolInput).length > 0
 
   return (
@@ -267,6 +298,14 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
             <span>{request.decisionReason}</span>
           </p>
         )}
+
+        {/* 计划外提示：危险级操作未出现在已批准的计划中（启发式参考，不阻断） */}
+        {request.offPlanHint && (
+          <p className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="size-3 mt-0.5 shrink-0" />
+            <span>该操作未出现在已批准的计划中，请额外确认是否符合预期。</span>
+          </p>
+        )}
       </div>
 
       {/* 决策选项（卡片式单选） */}
@@ -320,6 +359,19 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
           ↑↓ 选择 · Enter 确认
         </span>
         <div className="flex items-center gap-1.5">
+          {batchPlan && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleBatchAllow()}
+              disabled={responding}
+              className="h-7 px-3 text-xs"
+              title="放行当前及之后连续的同类请求"
+            >
+              <Check className="size-3 mr-1" />
+              全部允许（{batchPlan.requestIds.length} 个{batchPlan.remainingCount > 0 ? `，余 ${batchPlan.remainingCount} 个待处理` : ''}）
+            </Button>
+          )}
           {!requiresPerActionApproval && (
             <Button
               variant="ghost"
