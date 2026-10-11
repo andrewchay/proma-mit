@@ -87,7 +87,7 @@ export function ProactiveScheduleCreateDialog({
       }
     } else {
       if (!session?.channelId || !eligibleRuntime(session)) {
-        toast.error('请选择已配置渠道的 Gravitas 或 AI SDK 会话，并填写任务内容')
+        toast.error('请选择已配置渠道的 AI SDK 会话并填写任务内容')
         return
       }
     }
@@ -168,7 +168,7 @@ export function ProactiveScheduleCreateDialog({
               <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话
                 <Select value={sessionId} onValueChange={setSessionId} disabled={sessions.length === 0}>
                   <SelectTrigger><SelectValue placeholder="选择已配置渠道的会话" /></SelectTrigger>
-                  <SelectContent>{sessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}</SelectContent>
+                  <SelectContent>{sessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · AI SDK</SelectItem>)}</SelectContent>
                 </Select>
               </label>
             </div>
@@ -199,7 +199,7 @@ export function ProactiveScheduleCreateDialog({
           </label>
 
           {!newSession && sessions.length === 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">没有可复用的 Gravitas / AI SDK 会话；可切换为「新建会话执行」。</p>
+            <p className="text-xs text-amber-600 dark:text-amber-400">没有可复用的 AI SDK 会话；可切换为「新建会话执行」。</p>
           )}
           {newSession && channels.length === 0 && (
             <p className="text-xs text-amber-600 dark:text-amber-400">请先在模型配置中启用至少一个渠道。</p>

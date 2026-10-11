@@ -1,8 +1,8 @@
 /**
  * PermissionModeSelector — Agent 权限模式切换器
  *
- * 集成在 AgentHeader 中，紧凑的三模式切换按钮。
- * 支持循环切换和工作区级别的持久化。
+ * 集成在 AgentHeader 中，提供计划、自动审批和完全自动三种可选模式。
+ * 历史 safe 会话继续保持原有策略，首次切换进入计划模式。
  * 每个会话独立维护自己的权限模式。
  */
 
@@ -13,7 +13,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Button } from '@/components/ui/button'
 import { agentPermissionModeMapAtom, agentDefaultPermissionModeAtom, sessionPersistedPermissionModeAtom, sessionExistsAtom } from '@/atoms/agent-atoms'
 import type { PromaPermissionMode } from '@gravitas/shared'
-import { PROMA_PERMISSION_MODE_CONFIG, PROMA_PERMISSION_MODE_ORDER } from '@gravitas/shared'
+import { PROMA_PERMISSION_MODE_CONFIG } from '@gravitas/shared'
+import { getNextSelectableAgentPermissionMode } from './permission-mode-selector-model'
 
 const MODE_ICONS: Record<PromaPermissionMode, React.ComponentType<{ className?: string }>> = {
   safe: Shield,
@@ -50,9 +51,7 @@ export function PermissionModeSelector({ sessionId }: PermissionModeSelectorProp
 
   /** 循环切换模式 */
   const cycleMode = React.useCallback(async () => {
-    const currentIndex = PROMA_PERMISSION_MODE_ORDER.indexOf(mode)
-    const nextIndex = (currentIndex + 1) % PROMA_PERMISSION_MODE_ORDER.length
-    const nextMode = PROMA_PERMISSION_MODE_ORDER[nextIndex]!
+    const nextMode = getNextSelectableAgentPermissionMode(mode)
     const prevMode = mode
 
     // 乐观更新当前 session 的模式

@@ -21,10 +21,10 @@ import roleTemplates from '../../../../resources/employee-role-templates.json'
 import { employeeTemplateChanges, getEmployeeSaveIssues, isEmployeeWorkspaceEligible } from './agent-employee-form'
 
 const RUNTIME_LABEL: Record<string, string> = {
-  proma: 'Gravitas',
   'ai-sdk': 'AI SDK',
   pi: 'Pi',
-  claude: 'Claude',
+  proma: '已下线 Runtime',
+  claude: '已下线 Runtime',
 }
 
 const EXEC_STATUS_META: Record<string, { label: string; className: string }> = {
@@ -532,7 +532,11 @@ export function AgentTeamPanel(): React.ReactElement {
                 onChange={(e) => setForm({ ...form, runtime: e.target.value })}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background"
               >
-                {Object.entries(RUNTIME_LABEL).map(([value, label]) => <option key={value} value={value} disabled={(value === 'claude' || value === 'proma') && form.runtime !== value}>{label}{value === 'claude' || value === 'proma' ? '（已停止新选用）' : ''}</option>)}
+                {(form.runtime === 'claude' || form.runtime === 'proma') && (
+                  <option value={form.runtime} disabled>已下线 Runtime（存量配置）</option>
+                )}
+                <option value="pi">Pi</option>
+                <option value="ai-sdk">AI SDK</option>
               </select>
             </div>
             <div>

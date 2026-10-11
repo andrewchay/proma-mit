@@ -19,6 +19,7 @@ Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agen
 | --- | --- |
 | Chat / Agent / Workflow | 三种基础工作模式：回答、行动交付、流程固化复用 |
 | 项目管理与 AI 员工 | 看板 / 甘特 / 飞书钉钉同步 / 决策协作治理，AI 员工无人值守执行任务 |
+| 团队协作（AgentIC OS） | 成员同步（真人 ↔ AI 员工 ↔ Bot）、团队收件箱 Mailbox、Run Center 归属过滤、成员互调与远程触发 |
 | 领域能力包 | 营销（达人营销 / Campaign / 投放）与出海 sourcing，按插件订阅分发 |
 | 订阅与权益 | 微信 / 支付宝下单、验签回调、订阅生命周期、权益门禁 |
 | 企业版与私有化部署 | 账号打通、工作区权限、审计合规、成员管理；登录 / 一键部署 / 仪表盘 |
@@ -42,6 +43,15 @@ Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agen
 - **Project Pilot（研发托管准备中）**：项目概览现可只读汇总任务、依赖、执行与待人工处理事项，并展示同一次权威观察得到的当前候选线索；任务和决策/交付线索可回到权威入口。携带任务身份的项目服务事件和已提交的项目链修订会立即唤醒后台权威对账；项目链通知会回读精确 revision/payload，外层事务回滚不会触发。主进程每 30 秒的全项目扫描继续补偿删除等缺身份事件。概览中的「活动授权」控制面允许项目经理选择两名安全研发员工及共同 Git 工作区，明确渠道/模型、费用、次数、返工和有效期，保存始终暂停的策略草案；通过预检后必须先预览完整影响面，再明确确认才会发行活动 grant。后台只对当前 `ready_candidate` 重新读取权威任务并复核授权、readiness、策略指纹、角色、工作区和预算，随后以确定性命令/执行 ID 原子排队并复用既有启动门禁；活动 Pilot 项目的普通员工派发和普通排队启动会失败关闭，不能绕过命令账本。暂停同样先预览，将立即撤权、释放预留、取消未启动执行，运行中执行必须逐项选择完成本轮或记录停止请求。策略文件锁与 SQLite 事务拒绝旧确认和并发漂移；受控命令在预算预留与启动前重新核对当前策略、员工绑定及发行指纹。命令预留金额由账本按剩余授权费用和剩余次数派生，调用方不能低报；该预留额已可作为调用级 USD 超额停止阈值传给 Runtime，并与应用级阈值取更严格值。SDK 会在超过阈值后停止，最终费用仍可能超出预留，超额结果继续撤权并进入对账。不支持停止阈值的 Runtime 会在创建会话和调用 Provider 前拒绝执行；目前首版安全研发白名单内的 `proma` / `ai-sdk` 均不具备该能力，而支持 `maxBudgetUsd` 的 Claude 尚未纳入该白名单，因此生产 Pilot 仍会在受控派发前被 readiness 阻塞。启动前 command 与 execution 在同一 SQLite 事务从 queued 认领为 running，失败不会留下半启动状态；未启动执行取消时也在同一事务释放费用和次数预留。应用重启发现遗留 running Pilot 时转为 stale，以未知费用撤权停等，不自动重派。Runtime 终态 result 会经 headless 完成回调原样写入不可覆盖的 SQLite 回执，并绑定 execution/session/channel/model、Runtime、原文哈希、token 与费用；带 `total_cost_usd` 的结果按 `runtime_reported` 结算，没有费用的 token 结果仍按 `unknown` 撤权停等，不使用本地估价冒充实际费用。该记录是 Runtime 转述证据，不宣称具有 Provider 请求 ID；Provider 直接回执与版本化价格快照尚未接入。确定性测试已覆盖受控派发与旧入口阻断，但尚无通过 readiness 的真实 Runtime，因此没有真实 Provider 启动证据；真实停止证明、技术评审返工和审批续跑仍未完成。详见 [Project Pilot 台账](docs/plans/2026-09-26-project-pilot/ledger.md) 与 [G0 命令契约草案](docs/plans/2026-09-26-project-pilot/g0-command-contract.md)。
 - **看板与状态管理**：拖拽排序与跨列改状态一次落库、自定义状态列（按 backlog / unstarted / started / completed / cancelled / triage 六个语义组归类，可设颜色与 WIP 上限）、失败自动回滚；飞书 / 钉钉同步按语义组双向映射，外部轮询不会打回本地进行中状态，拖拽排序不触发外部 API。甘特图任务状态标注与优先级排序、项目级 high-level 风险徽标。
 - **项目决策与协作链路（本地治理闭环）**：决策链覆盖候选、证据与假设、DACI 拍板、影响任务、执行验证及替代版本（关键决策保存结构化来源定位与校验值，修订显式关联被替代版本）；协作链覆盖项目、Task、责任人、Agent Run / Session、版本化交付物与验收交接——负责人提交、验收人逐项确认 DoD、负责人发起交接、接收人确认或退回。项目与任务 DoD 冻结到交付版本，管理员可为低风险任务配置"成果引用存在 / 权威执行已完成"自动验收器；依赖交接契约绑定真实依赖边，逐项确认后才解除阻塞；流动健康展示 WIP、等待、30 天吞吐、平均周期与 SLE 超时。当前仍是本地单操作身份，远端多人身份认证与外部证据自动对账尚未接入。
+
+### 团队协作（AgentIC OS，v0.11.x）
+
+- **成员体系**：飞书 / 钉钉成员同步与双向 mapping（真人 ↔ AI 员工 ↔ Bot），统一成员视图与负责人选择器（真人和 AI 员工同处可选可指派）；事件流与审计记录均带成员归属。
+- **协作面**：团队 Skills 目录视图、工作区文件共享事件流、Todo 事件流化（Agent 侧 InspectTodo 解压缩工具）、团队级 Profile。
+- **Run Center**：运行记录按成员归属过滤与展示，支持导出。
+- **团队收件箱 Mailbox**：首版收件箱 + 待办 / 看板并入；Proactive 动作可回放，自动服务器 / 费用 Audit。
+- **上下文 / 成本 / 资产 / 安全**：本地 Context Hub / Work Graph、Token 成本记账收敛、成功输出转可复用资产提案、凭据统一治理 + 审批门收敛。
+- **远程与开放**：Bridge 即远程入口（`/workflow` 与 `/proactive` 远程触发）；成员间 Agent 互调协议、插件 / SDK 开放 + 多租户精细化。
 
 ### 领域能力包（按订阅分发）
 
@@ -95,7 +105,7 @@ Gravitas 是一个本地优先的 AI 工作台：把多模型 Chat、通用 Agen
 
 1. 打开 Gravitas，先完成环境检查。Agent 模式依赖本机基础环境，尤其是 Git、Node.js / Bun 以及可用的 Shell。
 2. 进入 **设置 > 渠道**，添加至少一个 AI 供应商渠道：填写 Base URL、API Key 和模型列表；也可使用订阅制端点（GitHub Copilot 设备流登录、ChatGPT Codex OAuth 等，登录后自动写入凭据并在模型选择处显示额度余额）。
-3. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）兼容，开箱即用；AI SDK 支持 OpenAI-compatible 与 Anthropic、Google provider，也是后续服务端 Web 化的优先路径。Claude runtime 需要 Anthropic 或兼容协议；Proma runtime 仍可用但非首选。
+3. Agent 模式默认使用 **Pi Runtime**，推荐同时使用 **Pi** 与 **AI SDK** 两种 runtime。Pi 对多种渠道协议（Anthropic、OpenAI 兼容、Google 等）兼容，开箱即用；AI SDK 支持 OpenAI-compatible 与 Anthropic、Google provider，也是后续服务端 Web 化的优先路径。Claude / Gravitas runtime 已软下线（保留历史会话回看，停止新建与切入）。
 4. 进入 **设置 > Agent**，选择默认 Agent 渠道、模型和工作区。新工作区只默认启用 `find-skills`、`proma-coach`、`skill-creator` 三个核心 Skills，其余内置能力保留在 Skill 集市按需安装；思考模式按模型推理等级矩阵分级。
 5. 如需记忆、联网搜索、飞书 / 钉钉 / 微信桥接、订阅与领域包，在设置页对应 Tab 中继续配置。
 6. 如需 TypeSafe 判断，在 **设置 > 工具 > TypeSafe 判断服务** 中保存 API Key 并显式开启。该功能默认关闭；请求只包含当前用户消息的截断文本、通用附件类别，以及 shadow 判断所需的已启用 Skill 名称与简介，不发送历史对话、附件内容、工具结果或本地路径。API Key 仅在主进程使用 `safeStorage` 加密保存；系统加密不可用时只在当前进程内存中保留。
@@ -234,7 +244,7 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 | ChatGPT (Codex) | — | 支持 | OAuth 登录 + 自动刷新，额度面板 |
 | 自定义端点 | 支持 | 支持 | OpenAI 兼容协议 / AI SDK runtime |
 
-**推荐使用 Pi 和 AI SDK**。Pi 是当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与流式输出，对多种渠道协议兼容；AI SDK 能力相近，也是后续服务端 Web 化优先路径。Claude runtime 保留 SDK 原生 session / snapshot 能力（fork / rewind 最接近完整时间线恢复）；Proma 作为较早的 provider-agnostic runtime 仍可用但能力相对有限。
+**推荐使用 Pi 和 AI SDK**。Pi 是当前默认 runtime，支持工具调用、MCP、Plan、AskUser、子 Agent 与流式输出，对多种渠道协议兼容；AI SDK 能力相近，也是后续服务端 Web 化优先路径。Claude runtime 已软下线（保留历史会话回看，停止新建与切入），仍保留 SDK 原生 session / snapshot 能力（fork / rewind 最接近完整时间线恢复）；Proma 作为较早的 provider-agnostic runtime 仍可用但能力相对有限。
 
 订阅制端点（Copilot / Codex 等）通过预设清单做动态模型发现，登录后自动刷新凭据；思考模式按模型推理等级矩阵分级，而非简单布尔开关。
 
@@ -276,21 +286,31 @@ Gravitas 是 Bun workspace monorepo。
 ```
 gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 常量、配置、工具函数
-│   ├── core/       # Provider Adapter、SSE、代码高亮
-│   └── ui/         # 共享 React UI 组件
+│   ├── shared/         # 共享类型、IPC 常量、配置、工具函数
+│   ├── core/           # Provider Adapter、SSE、代码高亮
+│   ├── ui/             # 共享 React UI 组件
+│   └── context-store/  # 本地上下文图存储（实体-边-事实 + 全文检索）
 └── apps/
-    └── electron/   # Electron 桌面应用
+    ├── electron/              # Electron 桌面应用（主形态）
+    ├── server/                # Web Agent 运行时（多租户）
+    ├── web/                   # Web 前端
+    ├── executor/              # 隔离执行 worker（高危命令边界）
+    └── subscription-service/  # 订阅与权益服务
 ```
 
 当前主要包版本：
 
 | 包 | 版本 | 职责 |
 | --- | --- | --- |
-| `@gravitas/electron` | `0.12.37` | Electron 桌面应用 |
-| `@gravitas/shared` | `0.2.6` | 共享类型、IPC 常量、配置和工具 |
-| `@gravitas/core` | `0.2.16` | Provider Adapter、SSE、Shiki 高亮 |
+| `@gravitas/electron` | `0.12.113` | Electron 桌面应用 |
+| `@gravitas/shared` | `0.2.29` | 共享类型、IPC 常量、配置和工具 |
+| `@gravitas/core` | `0.2.24` | Provider Adapter、SSE、Shiki 高亮 |
 | `@gravitas/ui` | `0.1.4` | 共享 React UI 组件 |
+| `@gravitas/context-store` | `0.1.3` | 本地上下文图存储与检索 |
+| `@gravitas/server` | `0.1.15` | Web Agent 运行时（多租户） |
+| `@gravitas/web` | `0.1.2` | Web 前端 |
+| `@gravitas/executor` | `0.1.2` | 隔离执行 worker |
+| `@gravitas/subscription-service` | `0.1.0` | 订阅与权益服务 |
 
 常用命令：
 
@@ -365,6 +385,11 @@ shared 类型和 IPC 常量
 - `conversation-manager.ts`：Chat 会话索引和消息存储。
 - `channel-manager.ts`：渠道 CRUD、API Key 加密、连接测试、模型获取。
 - `feishu-bridge.ts` / `dingtalk-bridge.ts` / `wechat-bridge.ts`：远程机器人桥接。
+- `adapters/pi-agent-adapter.ts` 系列：Pi runtime 主力接入（模型注册、请求预算门、工具桥、流控）；Claude / Gravitas runtime 已软下线。
+- `project-pilot-*`：项目执行控制面——授权 grant、预算台账、派发、暂停恢复、终局门禁、人工对账。
+- `agent-employee-*`：AI 员工能力账本、评测门与灰度；`agent-runtime/eval/`：评测与自演化闭环。
+- `agent-collaboration-*`：协作子会话（委派、配额、交接预算）。
+- `plugins/`：内置插件（灵动岛 / Computer Use / 营销 / 新媒体 / 学术 / 出海 sourcing）与插件市场。
 - `memory-service.ts`、`chat-tool-*`、`document-parser.ts`、`workspace-watcher.ts`：记忆、工具、文档解析和文件监听。
 
 渲染进程以 Jotai 管理状态，关键 atoms 位于 `apps/electron/src/renderer/atoms/`。Agent IPC 监听器在应用顶层全局挂载，避免切换页面时丢失流式事件、权限请求或后台任务状态。

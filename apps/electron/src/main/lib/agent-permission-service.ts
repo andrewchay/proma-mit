@@ -217,6 +217,10 @@ export class AgentPermissionService {
       }
 
       const allow = (): PermissionResult => ({ behavior: 'allow' as const, updatedInput: input })
+      const currentMode = typeof mode === 'function' ? mode() : mode
+
+      // 完全自动模式明确代表所有工具调用均自动放行，包括高危工具；安全与计划模式仍在后续分支执行各自限制。
+      if (currentMode === 'bypassPermissions') return allow()
 
       // 系统级桌面读取/控制不能由子 Agent 自动批准，也不能沿用“始终允许”。
       // 这类操作可能读取任意屏幕内容或影响前台应用，必须回到用户确认流程。
@@ -233,8 +237,6 @@ export class AgentPermissionService {
       // 可以通过创建子代理间接执行写操作。
       // 站点已信任的下载直接放行
       if (webBridgeDownloadTrusted) return allow()
-
-      const currentMode = typeof mode === 'function' ? mode() : mode
 
       // safe 模式：非只读操作直接拒绝，不向用户弹审批，也不沿用历史白名单
       if (currentMode === 'safe' && !this.isReadOnlyTool(toolName, input)) {

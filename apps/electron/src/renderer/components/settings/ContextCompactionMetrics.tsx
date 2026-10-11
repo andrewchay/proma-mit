@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import type { ContextCompactionMetrics as Metrics } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
 import { SettingsCard, SettingsSection } from './primitives'
+import { formatAgentRuntimeDisplayLabel } from '@/lib/agent-runtime-display'
 
 export function ContextCompactionMetrics(): React.ReactElement {
   const [metrics, setMetrics] = React.useState<Metrics | null>(null)
@@ -53,7 +54,7 @@ function MetricRows({ label, values }: { label: string; values: Array<{ key: str
 }
 
 function labelFor(value: string): string {
-  return ({ proma: 'Proma', 'ai-sdk': 'AI SDK', pi: 'Pi', claude: 'Claude', automatic: '自动', manual: '手动', overflow_recovery: '溢出恢复', native: '原生' } as Record<string, string>)[value] ?? value
+  return ({ automatic: '自动', manual: '手动', overflow_recovery: '溢出恢复', native: '原生' } as Record<string, string>)[value] ?? formatAgentRuntimeDisplayLabel(value)
 }
 
 function formatTimestamp(value: string): string {

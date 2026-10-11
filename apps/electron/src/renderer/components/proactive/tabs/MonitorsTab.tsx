@@ -177,7 +177,7 @@ export function MonitorsTab(): React.ReactElement {
           </label>
           <label className="grid gap-1.5 text-sm text-muted-foreground">目标会话
             <Select value={sessionId} onValueChange={setSessionId}><SelectTrigger><SelectValue placeholder="选择已配置渠道的会话" /></SelectTrigger><SelectContent>
-              {sessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · {session.agentRuntime}</SelectItem>)}
+              {sessions.map((session) => <SelectItem key={session.id} value={session.id}>{session.title} · AI SDK</SelectItem>)}
             </SelectContent></Select>
           </label>
           <label className="grid gap-1.5 text-sm text-muted-foreground">执行模型<Select value={modelId} onValueChange={setModelId} disabled={!targetChannel}><SelectTrigger><SelectValue placeholder="选择模型" /></SelectTrigger><SelectContent>{targetChannel?.models.filter((model) => model.enabled).map((model) => <SelectItem key={model.id} value={model.id}>{model.name}</SelectItem>)}</SelectContent></Select></label>

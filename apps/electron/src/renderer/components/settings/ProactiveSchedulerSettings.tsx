@@ -16,10 +16,10 @@ import {
 import { SettingsCard, SettingsSection } from './primitives'
 import { ProactiveScheduleCreateDialog } from './ProactiveScheduleCreateDialog'
 
-type SchedulableSession = AgentSessionMeta & { agentRuntime: 'proma' | 'ai-sdk'; channelId: string }
+type SchedulableSession = AgentSessionMeta & { agentRuntime: 'ai-sdk'; channelId: string }
 
 function eligibleRuntime(session: AgentSessionMeta): session is SchedulableSession {
-  return Boolean(session.channelId) && (session.agentRuntime === 'proma' || session.agentRuntime === 'ai-sdk')
+  return Boolean(session.channelId) && session.agentRuntime === 'ai-sdk'
 }
 
 type ScheduleFilter = 'all' | 'enabled' | 'paused' | 'failing'
@@ -227,7 +227,7 @@ function ScheduleCard({
       <div className="flex flex-wrap gap-1.5">
         <MetaBadge>{schedule.permissionMode === 'plan' ? 'Plan' : '安全'}</MetaBadge>
         <MetaBadge>{schedule.newSession ? '新建会话' : '复用会话'}</MetaBadge>
-        <MetaBadge>{schedule.runtime === 'ai-sdk' ? 'AI SDK' : 'Gravitas'}</MetaBadge>
+        <MetaBadge>{schedule.runtime === 'ai-sdk' ? 'AI SDK' : '已下线 Runtime'}</MetaBadge>
         {schedule.channelId && <MetaBadge className="truncate max-w-[120px]" title={schedule.channelId}>{schedule.channelId.slice(0, 10)}</MetaBadge>}
       </div>
 

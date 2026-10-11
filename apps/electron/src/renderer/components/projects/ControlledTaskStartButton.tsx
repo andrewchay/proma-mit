@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { ControlledTaskStartPreview } from '@gravitas/shared'
+import { formatAgentRuntimeDisplayLabel } from '@/lib/agent-runtime-display'
 import {
 	Dialog,
 	DialogContent,
@@ -144,7 +145,7 @@ export function ControlledTaskStartButton({
 								</dd>
 								<dt>Runtime / 权限</dt>
 								<dd>
-									{preview.runtime} / {preview.permissionMode}
+									{formatAgentRuntimeDisplayLabel(preview.runtime)} / {preview.permissionMode}
 									（无worktree写豁免）
 								</dd>
 							</dl>

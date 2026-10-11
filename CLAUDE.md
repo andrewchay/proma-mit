@@ -14,62 +14,78 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Proma 是一个集成通用 AI Agent 的下一代人工智能软件，采用 Electron 桌面应用架构。
+Gravitas 是单机优先的**团队 Agent 协作操作系统（AgentIC OS）**：多模型 Chat、通用 Agent、可视化 Workflow、项目管理与 AI 员工、团队协作（成员同步 / 收件箱 / Run Center）、领域能力包（营销 / 出海 sourcing / 学术）、订阅商业化与多租户 Web 运行时，数据和配置尽量留在本地。
+
+> 能力全景速览（2026-10-08 盘点）见 [.context/gravitas-core-capabilities-2026-10.md](.context/gravitas-core-capabilities-2026-10.md)。
+
+Gravitas 是开源 AI 桌面应用 **Proma**（github.com/ErlichLiu/Proma）的改造衍生版本，采用 Electron 桌面架构 + 可选多租户 Web 服务端（apps/server）。
 
 ## Monorepo 结构
 
 Bun workspace monorepo：
 
 ```
-proma-v2/
+gravitas/
 ├── packages/
-│   ├── shared/     # 共享类型、IPC 通道常量、配置、工具函数 (v0.1.15)
-│   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.2)
-│   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.3)
+│   ├── shared/         # 共享类型、IPC 常量、配置、工具函数 (v0.2.29)
+│   ├── core/           # Provider 适配器、SSE、代码高亮 (v0.2.24)
+│   ├── ui/             # 共享 React UI 组件 (v0.1.4)
+│   └── context-store/  # 本地上下文图存储：实体-边-事实 + 全文检索 (v0.1.3)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.9.5)
-        └── src/
-            ├── main/       # 主进程 + 服务层 (main/lib/)
-            ├── preload/    # IPC 上下文桥接
-            └── renderer/   # React UI (Vite + Tailwind + Radix UI)
+    ├── electron/              # Electron 桌面应用（主形态）(v0.12.113)
+    │   └── src/
+    │       ├── main/          # 主进程 + 服务层 (main/lib/)
+    │       ├── preload/       # IPC 上下文桥接
+    │       └── renderer/      # React UI (Vite + Tailwind + Radix UI)
+    ├── server/                # Web Agent 运行时（多租户）(v0.1.15)
+    ├── web/                   # Web 前端 (v0.1.2)
+    ├── executor/              # 隔离执行 worker（高危命令边界）(v0.1.2)
+    └── subscription-service/  # 订阅与权益服务 (v0.1.0)
 ```
 
-**包命名规范**：`@proma/*` 作用域（`@proma/core`、`@proma/shared`、`@proma/ui`、`@proma/electron`）
+**包命名规范**：全仓库统一 `@gravitas/*` 作用域（shared / core / ui / context-store / electron / server / web / executor / subscription-service）；历史资料中的 `@proma/*` 为旧命名
 
 **依赖管理**：package.json 中使用 `workspace:*` 引用内部包
 
 ### 包职责详解
 
-#### @proma/shared (v0.1.15)
+#### @gravitas/shared (v0.2.29)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
-- **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`FeishuConfig`
+- **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`PluginManifest`（types/ 下按域拆分：agent.ts 2000+ 行、plugin.ts、settings 等）
 - **依赖**：无运行时依赖（仅 TypeScript）
 
-#### @proma/core (v0.2.2)
+#### @gravitas/core (v0.2.24)
 - **导出模块**：`./providers`、`./highlight`、`./types`、`./utils`
-- **关键功能**：Provider 适配器注册表、代码高亮（Shiki）
-- **依赖**：`@proma/shared`、`shiki`
+- **关键功能**：Provider 适配器注册表、SSE 流读取（含空闲看门狗）、代码高亮（Shiki）
+- **依赖**：`@gravitas/shared`、`shiki`
 - **Peer 依赖**：`@anthropic-ai/claude-agent-sdk`、`@anthropic-ai/sdk`、`@modelcontextprotocol/sdk`
 
-#### @proma/ui (v0.1.3)
-- **关键组件**：共享 React UI 组件库
-- **依赖**：`@proma/core`、`beautiful-mermaid`、`shiki`、Radix UI
+#### @gravitas/ui (v0.1.4)
+- **关键组件**：共享 React UI 组件库（CodeBlock、MermaidBlock）
+- **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @proma/electron (v0.9.5)
-- **职责**：Electron 桌面应用主体，集成所有包
+#### @gravitas/context-store (v0.1.3)
+- **职责**：本地上下文图存储（实体-边-事实 + CJK bigram 检索），详见下文「context-store 设计规范」
+
+#### @gravitas/electron (v0.12.113)
+- **职责**：Electron 桌面应用主体（主形态），集成所有包
 - **关键依赖**：
-  - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
   - `@larksuiteoapi/node-sdk` - 飞书集成
   - Radix UI、TipTap、Tailwind CSS
   - 文件解析：`pdf-parse`、`officeparser`、`word-extractor`
 
-### app 服务端 Web Agent 运行时（`@gravitas/*`，apps/server）
+### 服务端 Web Agent 运行时（apps/server，@gravitas/server）
 
-当前仓库还包含独立的 Web Agent 运行时空（与上面的桌面端并行）：
+与桌面端并行的多租户 Web 运行时（P0–P5 基础能力已落地，详见 README「企业版与私有化部署」）：
 
-- **命名空间**：`@gravitas/shared`、`@gravitas/server`（注意与桌面端 `@proma/*` 不同）。
-- **MCP 服务端执行器**：`apps/server/src/server-mcp-client.ts`（streamable HTTP / SSE 客户端，OAuth 刷新、结果截断）+ `server-mcp-tools.ts`（桥接为 AI SDK 工具）+ OAuth 流程 `server-mcp-oauth.ts`。
+- **运行时与隔离**：`runtime.ts` / `run-profile.ts` / `isolated-executor.ts`——高危命令经隔离执行边界（`apps/executor`），API 进程不直接起 Shell
+- **MCP 服务端执行器**：`server-mcp-client.ts`（streamable HTTP / SSE 客户端，OAuth 刷新、结果截断）+ `server-mcp-tools.ts`（桥接为 AI SDK 工具）+ OAuth 流程 `server-mcp-oauth.ts`
+- **认证体系**：JWT / OIDC / local-admin / none 多策略 + 会话存储（`jwt-auth.ts`、`oidc-*`、`auth-routes/`）
+- **可观测**：`spans.ts` / `signals.ts` / `signal-scan.ts`——RuntimeSpan 存储适配为只读查询工具；`billing.ts` / `metrics.ts` / `recovery.ts` / `operations.ts` 负责计费、指标、崩溃恢复与运维
+- **审计合规**：`audit.ts` / `audit-compliance.ts` / `audit-hashchain.ts`——追加式审计 + 哈希链防篡改
+- **团队与调度**：`team-collaboration.ts` / `agent-registry(-api).ts`（成员互调与 Agent 注册表）、`server-scheduler.ts`（持久化调度）
+- **微信开放平台**：`wechat-platform/`（authorization-service、component-token-service、callback、capability）
 - **连接池 + 工具目录缓存**：`packages/shared/src/utils/agent-runtime-server-mcp-manager.ts`
   - 连接级复用（按 tenant/user/workspace/server，refCount 归零才 close）。
   - **工具目录缓存**（借鉴 OpenAI Codex #37970）：同「连接身份 + 条目指纹」命中时跳过 `listTools` 网络往返，TTL 默认 60s。
@@ -158,7 +174,7 @@ bun run generate:icons    # 生成应用图标
 
 类型定义 → 主进程处理 → Preload 桥接 → 渲染进程调用：
 
-1. **类型 & 常量**：`@proma/shared` 定义 IPC 通道名称常量和请求/响应类型
+1. **类型 & 常量**：`@gravitas/shared` 定义 IPC 通道名称常量和请求/响应类型
 2. **主进程处理**：`main/ipc.ts`（57KB）注册 `ipcMain.handle()` 处理器，调用 `main/lib/` 服务
 3. **Preload 桥接**：`preload/index.ts` 通过 `contextBridge.exposeInMainWorld` 暴露类型安全的 API
 4. **渲染进程**：通过 `window.electronAPI.*` 调用，Jotai atoms 中封装调用逻辑
@@ -223,7 +239,7 @@ bun run generate:icons    # 生成应用图标
 |------|------|
 | `goal-service.ts` | Goal 状态层：Goal CRUD、todos（所有权/声明）、用户门控、证据、配额（shouldRun/spendBudget）、会话绑定（惰性依赖 session-manager） |
 | `turn-decision-service.ts` | Turn 前置路由决策：ready/wait_user_action/blocked/quota_exhausted/goal_terminated/replan/repair/no_goal；支持会话级配额 |
-| `token-usage-service.ts` | Token 统计：按会话/轮/工具/Skill/MCP/模型聚合，`~/.proma-mit/token-usage/` |
+| `token-usage-service.ts` | Token 统计：按会话/轮/工具/Skill/MCP/模型聚合，`~/.gravitas/token-usage/` |
 | `evidence-service.ts` | 从 token 记录解析结构化证据（decisions/validation/writeback/evidence），语义化摘要 |
 | `handoff-budget.ts` | SubAgent 交接预算（16 行 / 1800 字符） |
 | `chat-tools/goal-mcp.ts` | 注入 Goal 工具到 Agent（status/claim/complete/evidence/should_run） |
@@ -233,7 +249,7 @@ bun run generate:icons    # 生成应用图标
 | 服务 | 职责 |
 |------|------|
 | `runtime-init.ts` | 运行时初始化：Shell 环境、Bun、Git 检测（`bun-finder.ts`、`git-detector.ts`、`shell-env.ts`） |
-| `config-paths.ts` | 配置路径管理：`~/.proma/` 目录结构 |
+| `config-paths.ts` | 配置路径管理：`~/.gravitas/` 目录结构 |
 | `user-profile-service.ts` | 用户档案持久化 |
 | `settings-service.ts` | 应用设置持久化（主题等） |
 | `updater/` | 自动更新：Electron Updater 集成 |
@@ -307,10 +323,10 @@ bun run generate:icons    # 生成应用图标
 | `AgentListenersInitializer` | 挂载 `useGlobalAgentListeners`，全局 Agent IPC 监听 |
 | `UpdaterInitializer` | 订阅主进程推送的自动更新状态变化事件 |
 
-### 本地文件存储（`~/.proma/`）
+### 本地文件存储（`~/.gravitas/`）
 
 ```
-~/.proma/
+~/.gravitas/
 ├── channels.json           # 渠道配置（API Key 经 safeStorage 加密）
 ├── conversations.json      # 对话索引（元数据，轻量）
 ├── conversations/          # 消息存储
@@ -372,7 +388,7 @@ bun run generate:icons    # 生成应用图标
     - node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/**/*
     - node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/**/*
     - node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**/*
-    - "!node_modules/@proma/**"
+    - "!node_modules/@gravitas/**"
   ```
 - SDK 主包和同级平台子包会被复制到 `app/node_modules/@anthropic-ai/`，Node.js 的模块解析能从 `app/dist/main.cjs` 找到
 - `agent-orchestrator.ts` 中 `resolveSDKCliPath()` 解析到 SDK 主包入口后，沿 `..` 到 `@anthropic-ai/` 同级目录，再拼 `claude-agent-sdk-${platform}-${arch}/{claude|claude.exe}` 得到 binary 路径
@@ -425,7 +441,7 @@ bun run generate:icons    # 生成应用图标
 
 修改任何 `default-skills/<skill>/` 内容时，**必须同步递增该 Skill `SKILL.md` frontmatter 的 `version` 字段**（patch +1）。
 
-**为什么**：`seedDefaultSkills()` 与 `upgradeDefaultSkillsInWorkspaces()` 通过 semver 比较决定是否将 bundle 中的 Skill 同步到老用户的 `~/.proma/default-skills/` 与各工作区。**version 不变 = 老用户拿不到新内容**。
+**为什么**：`seedDefaultSkills()` 与 `upgradeDefaultSkillsInWorkspaces()` 通过 semver 比较决定是否将 bundle 中的 Skill 同步到老用户的 `~/.gravitas/default-skills/` 与各工作区。**version 不变 = 老用户拿不到新内容**。
 
 **早期实现曾用"无条件 cpSync"绕开这个约束**，但每次启动同步 4MB+ 文件会阻塞主进程导致启动卡顿，已恢复为 semver 比较（见 `config-paths.ts:seedDefaultSkills`、`agent-workspace-manager.ts:upgradeDefaultSkillsInWorkspaces`）。
 
@@ -474,7 +490,7 @@ React UI 更新
 ### 关键设计
 
 - **SDK 调用**：`sdk.query({ prompt, options: { apiKey, model, permissionMode, cwd, abortController } })`
-- **事件转换**：`convertSDKMessage()`（`@proma/shared`）将 SDK 原始消息转为统一的 `AgentEvent` 类型
+- **事件转换**：`convertSDKMessage()`（`@gravitas/shared`）将 SDK 原始消息转为统一的 `AgentEvent` 类型
 - **工具匹配**：`packages/shared/src/agent/tool-matching.ts` — 无状态 `ToolIndex` + `extractToolStarts` / `extractToolResults` 解析工具调用
 - **状态管理**：`applyAgentEvent()` 纯函数更新 `AgentStreamState`，支持流式增量更新
 - **全局 IPC 监听**：`useGlobalAgentListeners`（`renderer/hooks/`）在 `main.tsx` 顶层挂载，通过 `useStore()` 直接操作 atoms，永不销毁。确保页面切换（如设置页）时流式输出、权限请求不丢失
@@ -529,7 +545,7 @@ React UI 更新
 - `0.3.142`: SDK/headless 默认使用 Task 工具（`TaskCreate` / `TaskUpdate` / `TaskGet` / `TaskList`）替代已废弃的 `TodoWrite`；MCP server 默认后台连接，慢连接会在 `init` 中呈现 `pending`
 - `0.3.143`: `@anthropic-ai/sdk` 与 `@modelcontextprotocol/sdk` 改为 peerDependencies；bun/npm/pnpm 会自动安装
 
-### 共享类型（`@proma/shared`）
+### 共享类型（`@gravitas/shared`）
 
 - `AgentEvent`：Agent 事件（text / tool_start / tool_result / done / error）
 - `AgentSessionMeta`：会话元数据（id / title / channelId / workspaceId）
@@ -547,7 +563,7 @@ React UI 更新
 - **Agent SDK**：@anthropic-ai/claude-agent-sdk（[v1 文档](https://platform.claude.com/docs/en/agent-sdk/typescript)、[v2 文档](https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview)）
 - **MCP 集成**：Model Context Protocol 用于外部数据源
 - **凭证存储**：AES-256-GCM 加密
-- **配置位置**：`~/.proma/`（类似 `~/.craft-agent/`）
+- **配置位置**：`~/.gravitas/`
 
 ## 核心特性
 
@@ -565,11 +581,18 @@ React UI 更新
 - ✅ **多模态支持**：图片、文档附件
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
 - ✅ **Goal 状态层（借鉴 LoopX）**：长生命周期目标跨会话追踪，含 todos（所有权/声明）、用户门控（gate）、证据、配额；Goal 可绑定会话，会话完成自动沉淀证据
-- ✅ **Token 统计**：按会话/轮次/工具/Skill/MCP/模型维度统计 token 消耗（`~/.proma-mit/token-usage/`）
+- ✅ **Token 统计**：按会话/轮次/工具/Skill/MCP/模型维度统计 token 消耗（`~/.gravitas/token-usage/`）
 - ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 task_statuses 表（预置五态沿用旧字符串 id，历史数据零迁移），跨状态逻辑只认六个语义组；@dnd-kit 拖拽一次落库改状态+顺序（中点法+重编号兜底），失败回滚提示；飞书/钉钉按语义组双向映射，回声抑制+排序不推外部
 - ✅ **Turn 决策层**：Agent 每轮前置路由判断（ready/wait/blocked/quota/goal_terminated/replan/repair），自动化不可推进时硬阻断
 - ✅ **SubAgent 交接预算**：SubAgent 交接文本限 16 行/1800 字符，超限自动压缩
-- ✅ **运行记录**：Agent/Workflow/Automation 统一运行记录（Run Center）
+- ✅ **运行记录**：Agent/Workflow/Automation 统一运行记录（Run Center，支持按成员归属过滤与导出）
+- ✅ **Pi Runtime 为主力**：默认 runtime（模型注册 `pi-model-registry`、请求预算门 `pi-request-budget-gate`、工具桥 `pi-tool-bridge`、流控 `pi-streaming-control`）；**Claude/Gravitas Runtime 已软下线**（停止新建与切入，保留历史会话）
+- ✅ **AgentIC OS 团队协作（v0.11.x 主线）**：飞书/钉钉成员同步（真人↔AI 员工↔Bot 双向映射）、统一成员视图、团队收件箱 Mailbox、团队 Skills 目录与 Profile、Todo 事件流化、Context Hub / Work Graph、成功输出转资产提案、凭据统一治理 + 审批门、Bridge 远程触发（/workflow、/proactive）、成员互调协议与多租户精细化
+- ✅ **Project Pilot 执行控制面**：授权 grant（预检 + 影响面预览 + 发行指纹）、预算台账与 per-request 停止阈值、暂停/恢复/恢复重放、终局门禁、不可变运行回执、未验证停止升级人工对账（详见 docs/plans/2026-09-26-project-pilot/ledger.md）
+- ✅ **AI 员工能力体系**：能力账本（ledger / transfer / migration / conflict / alerts）、评测门（evaluation-gate）、canary 灰度、observation、sample-scan
+- ✅ **评测与自演化（eval）**：eval-service / runner / scheduler / builder / judge / self-evolver / benchmark-store / trace-writer；生成→评测→held-out→基准库闭环，接真实渠道与 sub-agent
+- ✅ **插件体系**：内置插件（dynamic-island、computer-use、marketing、new-media、academic、outbound-sourcing）+ 多种贡献面（agent-tools / agent-skills / contribute-prompts / overlay / settings）；Marketplace 走 Claude plugin marketplace 规范（known_marketplaces + installed_plugins）
+- ✅ **日历管家 / 主动式 Agent**：calendar（events/tasks JSONL）、proactive 动作可回放与自动审计
 
 ### 架构亮点
 
@@ -628,7 +651,7 @@ React UI 更新
 
 **接入 Proma 运行时**：
 - **ContextStoreService**（`apps/electron/src/main/lib/context-store-service.ts`）：
-  - 按工作区管理 store 实例（`~/.proma/workspaces/{slug}/context-store.db`）
+  - 按工作区管理 store 实例（`~/.gravitas/context-store/{key}/context-store.db`）
   - 自动索引：Pi Runtime 的 `accumulatedMessages` 持久化后自动写入 context-store
   - DynamicContext 注入：每条用户消息前自动召回相关上下文，格式化为 `<recalled_context>` 注入 prompt
   - `local_context_recall` MCP 工具（`local_context` server）：Agent 可主动召回当前工作区历史（仿 injectMemoryTools，受 enabled + 工作区限制）
@@ -668,34 +691,6 @@ React UI 更新
 - **AI 员工交付闸门（Agent 闭环第一批）**：Agent 完成任务一律落 draft 组待人确认（writebackExecutionResult 统一走此闸门，headless 与 Workflow 两路都覆盖），不得直接 completed；confirmTaskDraft 后才进工作流。派发闸门只收 pending/in_progress，draft 交付不会触发再派发死循环。
 - **看板 MCP 工具（proma_project_board）**：AI 员工执行会话注入 project_board_view / project_move_task / project_deliver_task 三工具；授权范围 = execution.sessionId 反查任务的 projectId（非执行会话不可用）；写入与人工走同一 updateTask/reorderTask 路径，draft 规则/DoD/活动流自动生效。TaskCard 对 agent 指派任务展示 AgentExecutionBadge（15s 心跳轮询兜底）。
 - **甘特图与流动指标同口径**：跨状态逻辑全部按语义组（GanttView 超期/条色经 `ganttBarColor()` 纯函数，flow-metrics WIP/完成同源）；查询索引 `idx_tasks_project_sort(project_id, sort_order)` 必须保留。
-
-### 飞书 Task v2 同步 Todo 关键踩坑
-
-- **工具注入判定**（`pi-agent-adapter.ts` / `agent-orchestrator.ts`）：
-  `collaborationAvailable = !!collabWs && !!input.channelId && !isDelegationSession`。
-  三个条件任意不满足则 collaboration 工具不注入，模型永远看不到 `mcp__collaboration__*`。
-- **`runPiAgent` 必须把 `channelId` 传给 PiAgentQueryOptions**——构建 queryOptions 时遗漏
-  channelId 会导致 `input.channelId` 恒为 undefined，collaborationAvailable=false 且委派子会话
-  无 channelId，子会话 headless Pi runtime 无法初始化模型，表现为"子任务创建成功但一直 running 无输出"（git `70319ed`）。
-- **modelId 兜底链**：`startDelegation` 的 `effectiveModelId` 依次取 `args.modelId → ctx.modelId → parent?.modelId`，
-  再取不到会显式 throw（不静默创建无模型子会话）。配合 `createAgentSession` 内部兜底
-  `getSettings().agentModelId` + orchestrator 运行时把解析出的 modelId 回写会话元数据（git `eab9ab1`/`2c7239b`）。
-  会话元数据 modelId 缺失会导致协作子会话无法运行。
-- **子会话只有 1 行 JSONL + status 卡 running = headless 未真正启动模型**；排查顺序：
-  是否 `input.channelId` undefined（→ 注入失败）、模型是否可注册、provider 是否兼容 Pi runtime。
-- **委派配额只能有一个占用点，严禁"外层收口 + 内层开始"双重 assert 计数**（回归坑）：
-  `startDelegation` 内 `assertCanCreateDelegation(ctx,1)`（`rootDelegationCount` 逐条 +1）已是唯一配额闸；
-  各入口（`delegate_agent`/`delegate_agents`/前端 `createCollaborationDelegations`）若在调用
-  `startDelegation` 前**又各自** `assertCanCreateDelegation(ctx[,N])`，会导致每个委派被计入 2 次，
-  `MAX_TOTAL_DELEGATIONS_PER_ROOT=16` 实际只建约 8 个，且批量(外层先占 N)会因越界整批失败、
-  配额占满后该根会话**后续再也无法委派（功能锁死）**。修复：外层改成只解析父会话的
-  `resolveParentForDelegation(ctx)`（校验层级、不占配额），配额统一由 `startDelegation` 内单点累加。
-  排查「某根会话委派到一定数量就抛上限」时先查是否多入口重复 `assertCanCreateDelegation`。
-- **`agent_executions` 表签名坑：主键 `id` 是 executionId，任务关联字段是 `entityId`，二者不是一回事**。
-  `store.getAgentExecution(id)` 按主键 `id`(executionId) 查；若以任务 id 传入会查不到（静默 null）。
-  `updateTodoStatus`/`queryTodoStatus` 等按任务语义查询执行时，应改用
-  `store.listAgentExecutionsByEntity('task', taskId)` 取最近一条非终态，而非 `getAgentExecution(taskId)`。
-  凡看到「按 task 查 execution 却恒 null / 取消执行无效」，先确认是否把 taskId 当 executionId 用了。
 
 ### 飞书 Task v2 同步 Todo 关键踩坑
 
