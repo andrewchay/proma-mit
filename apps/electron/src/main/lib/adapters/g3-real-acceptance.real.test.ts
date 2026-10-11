@@ -189,8 +189,10 @@ afterAll(() => {
     expect(error ?? checkpointError ?? null).toBeNull()
     expect(fixed).toBe(true)
     if (finalGoal.status === 'completed') {
+      const goalId = store.listBySession('g3-session')[0]!.id
       expect(receipt?.verdict).toBe('passed')
-      expect(receipt?.boundGoalId).toBe('g3-session')
+      // 绑定的是 Goal 实体 id（UUID），不是会话号。
+      expect(receipt?.boundGoalId).toBe(goalId)
       expect(String(receipt?.reportSha256 ?? '')).toMatch(/^[0-9a-f]{64}$/)
     }
     expect(estimatedCny).toBeLessThanOrEqual(budgetRemaining)
