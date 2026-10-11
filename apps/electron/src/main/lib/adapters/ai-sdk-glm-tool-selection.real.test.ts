@@ -175,11 +175,16 @@ afterAll(() => {
         for (const message of messages) {
           const record = message as unknown as Record<string, unknown>
           if (record._partial === true) continue
+          if (message.type === 'result') {
+            // 权威 usage 在 result 消息（ai-sdk 汇总）；assistant 消息可能缺失。
+            const resultUsage = (record as unknown as { usage?: { input_tokens?: number; output_tokens?: number } }).usage
+            if (resultUsage) usage = { input: resultUsage.input_tokens, output: resultUsage.output_tokens }
+            continue
+          }
           if (message.type === 'assistant') {
             const inner = record.message as { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } }
             const text = (inner.content ?? []).map((block) => (block.type === 'text' ? block.text ?? '' : '')).join('')
             if (text.trim()) finalText = text
-            if (inner.usage) usage = { input: inner.usage.input_tokens, output: inner.usage.output_tokens }
           }
         }
         inputTokens += usage.input ?? 0

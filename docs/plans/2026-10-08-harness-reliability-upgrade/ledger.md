@@ -169,7 +169,7 @@
 | D01 | `tool-capability-catalog.ts`：从真实注册实例派生目录（effects→access/confirmation/parallelSafe；MCP同名规则；失效省略） | 保持版本兼容和稳定id；失效目录/未知 schema 明确 omitted；不重复实现 catalog | H01/H02 | 完成：派生器+4例；共享catalog/summary/projection复用不重写；m2-d01-d02-evidence.md |
 | D02 | `tool-discovery.ts`：词法评分+预算选择，required必现/缺失报告，CJK子串，同名id区分 | 词法/规则发现，按 token 预算选择；目录修订生效；CJK/同名工具/大型MCP目录；required工具不静默丢失 | D01 | 完成（未接线registry）：5例；结果不进入生产提示词；接线归D03；m2-d01-d02-evidence.md |
 | D03 | ai-sdk 独立 opt-in：`tool-loading-gate.ts`（计划+schema哈希门禁）+ runAgentTurn 接线（toolLoading spec） | 没选中的schema不进入模型；加载不提权；拒绝未加载/旧schema调用；每Runtime明确支持/不支持 | D02；E03/P01 | 完成（ai-sdk opt-in）：不传spec=行为不变；toolSet按选中集过滤+摘要注入；执行包装拒绝tool_not_loaded/schema_changed；Pi/proma/claude未接线（显式不支持）；m2-d03-evidence.md |
-| D04 | `eval/tool-selection-benchmark.ts`：离线确定性多步场景（修订→拒绝→重规划恢复），token/失败/时延统计 | 多步工具选择与恢复非劣，统计schema token、总token/cache、时延、失败；不能拿历史M4单轮结果作新PASS | D03 | 部分完成：离线骨架4例（恢复非劣/token节省/拒绝统计/脱敏序列化）；模型级评测需Provider授权（G3）；eval-runner真实渠道接入待授权；m2-d04-evidence.md |
+| D04 | 离线骨架 + 真实筛查（ai-sdk×glm-5.3-flash，7任务×2臂） | 多步工具选择与恢复非劣，统计schema token、总token/cache、时延、失败；不能拿历史M4单轮结果作新PASS | D03 | 部分完成：离线4例+真实筛查**未过非劣**（baseline 6/7 vs loading 2/7@130预算；瓶颈=D02发现质量，门禁行为正确）；usage提取缺陷已修；复测待改进+授权；m2-d04-evidence.md |
 
 **TCC 保护：** 独立 discovery flag 默认 false，不修改 typedContextCompiler 默认、不调用 TCC spawn 实验。需要额外上下文治理时必须另行说明，不能以工具目录作为复活 TCC 的依赖。
 
@@ -471,6 +471,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261011-001 | 2026-10-11 00:00–00:20 GMT+8 | M2第一批D01+D02 | 目录派生（effects映射/MCP同名/失效省略）+词法发现（预算/required/CJK） | +9例；全仓门禁通过；electron0.12.148；未接线生产提示词；m2-d01-d02-evidence.md |
 | HARNESS-20261011-002 | 2026-10-11 00:30–00:55 GMT+8 | M2 D03：ai-sdk独立工具加载 | tool-loading-gate（未加载/schema漂移拒绝）+runAgentTurn opt-in接线（toolSet过滤+摘要注入+执行包装门禁） | gate 4例+wiring 3例（修复mock真实返回形态后绿）；全仓门禁通过；electron0.12.149；Pi等未接线显式不支持；m2-d03-evidence.md |
 | HARNESS-20261011-003 | 2026-10-11 01:00–01:15 GMT+8 | M2 D04：工具选择benchmark | 多步修订→旧schema拒绝→重规划恢复非劣；token基线/优化口径分离（shared optimized语义不符本场景，如实修正） | +4例；全仓门禁通过；electron0.12.150；模型级评测待Provider授权；m2-d04-evidence.md |
+| HARNESS-20261011-004 | 2026-10-11 08:25–08:35 GMT+8 | D04真实工具评测（首次） | 14真实运行：baseline 6/7 vs loading 2/7，未过非劣；归因D02小预算CJK选择错误；usage提取缺陷致本次费用未知 | 门禁行为符合设计；改进方向=常驻核心工具集+CJK映射+预算默认值；复测待授权；m2-d04-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
