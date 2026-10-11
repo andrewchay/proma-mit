@@ -2042,6 +2042,8 @@ export interface PermissionRequest {
   sdkTitle?: string
   /** SDK 提供的详细描述，如 "Claude wants to write 200 lines to /path/to/file.ts" */
   sdkDescription?: string
+  /** 危险级操作未出现在该会话已批准的计划工具中（启发式提示，仅供参考不阻断） */
+  offPlanHint?: boolean
 }
 
 /** 权限响应（渲染进程 → 主进程） */

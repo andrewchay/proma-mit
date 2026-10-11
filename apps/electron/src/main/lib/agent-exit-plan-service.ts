@@ -57,6 +57,36 @@ export class AgentExitPlanService {
   private pendingRequests = new Map<string, PendingExitPlan>()
 
   /**
+   * 各会话已批准计划涉及的工具名集合（会话 ID → 工具名）。
+   * 用于危险权限请求的"计划外提示"：启发式判断，只作展示参考，不做阻断。
+   */
+  private approvedPlanTools = new Map<string, Set<string>>()
+
+  /**
+   * 判断工具是否被该会话已批准的计划覆盖。
+   * 无已批准计划记录时返回 true（不提示），避免对非 Plan 模式会话造成干扰。
+   */
+  isToolCoveredByApprovedPlan(sessionId: string, toolName: string): boolean {
+    const tools = this.approvedPlanTools.get(sessionId)
+    if (!tools || tools.size === 0) return true
+    return tools.has(toolName)
+  }
+
+  /** 记录会话已批准计划涉及的工具名（多次批准取并集，降低计划外误报） */
+  private recordApprovedPlan(sessionId: string, allowedPrompts: ExitPlanAllowedPrompt[]): void {
+    const existing = this.approvedPlanTools.get(sessionId) ?? new Set<string>()
+    for (const prompt of allowedPrompts) {
+      existing.add(prompt.tool)
+    }
+    this.approvedPlanTools.set(sessionId, existing)
+  }
+
+  /** 会话结束时清理已批准计划记录 */
+  clearSessionPlan(sessionId: string): void {
+    this.approvedPlanTools.delete(sessionId)
+  }
+
+  /**
    * 分析计划内容是否适合转换为 Goal
    *
    * 基于 allowedPrompts 和计划摘要判断：
@@ -220,6 +250,7 @@ export class AgentExitPlanService {
     switch (response.action) {
       case 'approve_auto': {
         // 批准 + 切换到完全自动模式
+        this.recordApprovedPlan(sessionId, pending.request.allowedPrompts)
         pending.resolve({
           behavior: 'allow' as const,
           updatedInput: pending.toolInput,
@@ -229,6 +260,7 @@ export class AgentExitPlanService {
       }
       case 'approve_edit': {
         // 批准 + 切换到自动审批模式
+        this.recordApprovedPlan(sessionId, pending.request.allowedPrompts)
         pending.resolve({
           behavior: 'allow' as const,
           updatedInput: pending.toolInput,
@@ -249,6 +281,7 @@ export class AgentExitPlanService {
           }
 
           const result = this.convertPlanToGoal(pending.request, conversion, true)
+          this.recordApprovedPlan(sessionId, pending.request.allowedPrompts)
           pending.resolve({
             behavior: 'allow' as const,
             updatedInput: pending.toolInput,

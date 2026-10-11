@@ -24,6 +24,7 @@ import {
   hasDangerousStructure,
 } from '@gravitas/shared'
 import { getSettings, updateSettings } from './settings-service'
+import { exitPlanService } from './agent-exit-plan-service'
 import {
   DEFAULT_AGENT_ALLOWLIST,
   type AgentAllowlist,
@@ -627,6 +628,7 @@ export class AgentPermissionService {
     const command = toolName === 'Bash' && typeof input.command === 'string'
       ? input.command
       : undefined
+    const dangerLevel = this.assessDangerLevel(toolName, input)
 
     return {
       requestId: randomUUID(),
@@ -635,7 +637,9 @@ export class AgentPermissionService {
       toolInput: input,
       description: this.buildDescription(toolName, input),
       command,
-      dangerLevel: this.assessDangerLevel(toolName, input),
+      dangerLevel,
+      // 轻量计划偏离提示：危险级操作未出现在该会话已批准的计划工具中时给出参考提示（启发式，不阻断）
+      offPlanHint: dangerLevel === 'dangerous' && !exitPlanService.isToolCoveredByApprovedPlan(sessionId, toolName),
       decisionReason: options.decisionReason,
       decisionReasonType: options.decisionReasonType,
       classifierApprovable: options.classifierApprovable,

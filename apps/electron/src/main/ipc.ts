@@ -1875,8 +1875,9 @@ export async function registerIpcHandlers(): Promise<void> {
       permissionService.clearSessionPending(id)
       // 清理 AskUser 服务中的待处理请求
       askUserService.clearSessionPending(id)
-      // 清理 ExitPlanMode 服务中的待处理请求
+      // 清理 ExitPlanMode 服务中的待处理请求与已批准计划记录
       exitPlanService.clearSessionPending(id)
+      exitPlanService.clearSessionPlan(id)
       return deleteAgentSession(id)
     }
   )
