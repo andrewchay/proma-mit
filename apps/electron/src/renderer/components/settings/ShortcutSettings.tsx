@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/tooltip'
 import { shortcutOverridesAtom, sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
 import { DynamicIslandConfigBlock } from './DynamicIslandConfigBlock'
+import { CustomCommandsSection } from './CustomCommandsSection'
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_CATEGORY_LABELS,
@@ -558,6 +559,9 @@ export function ShortcutSettings(): React.ReactElement {
           </div>
         </div>
       </div>
+
+      {/* 自定义斜杠命令 */}
+      <CustomCommandsSection />
 
       {/* 按分类分组展示 */}
       {categoryOrder.map((category) => {

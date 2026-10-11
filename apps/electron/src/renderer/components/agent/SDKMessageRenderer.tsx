@@ -12,7 +12,7 @@
  */
 
 import * as React from 'react'
-import { Bot, Loader2, AlertTriangle, FileText, FileImage, Download, Split, Undo2, RotateCw, Plus, Minimize2, Wrench, Settings, ExternalLink, Quote, Pencil } from 'lucide-react'
+import { Bot, Loader2, AlertTriangle, FileText, FileImage, Download, Split, Undo2, RotateCw, Plus, Minimize2, Wrench, Settings, ExternalLink, Quote, Pencil, ChevronDown, ChevronUp } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/utils'
 import { ImageLightbox } from '@/components/ui/image-lightbox'
@@ -21,6 +21,7 @@ import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary } from './TurnFileChangesSummary'
 import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
+import { extractCompactBoundaryInfo } from './compact-boundary-info'
 import { getBlockKey } from './tool-utils'
 import { DurationBadge } from './AgentMessages'
 import {
@@ -80,14 +81,45 @@ export interface SDKMessageRendererProps {
 
 // ===== system 消息：上下文压缩分割线 =====
 
-function CompactBoundaryDivider(): React.ReactElement {
+/** 压缩边界分割线：可展开查看压缩摘要与被压缩规模 */
+function CompactBoundaryDivider({ message }: { message?: SDKMessage }): React.ReactElement {
+  const [expanded, setExpanded] = React.useState(false)
+  const info = message ? extractCompactBoundaryInfo(message) : null
+  const expandable = !!info?.summary
+
   return (
-    <div className="flex items-center gap-3 my-4 px-1">
-      <div className="flex-1 h-px bg-border/40" />
-      <span className="shrink-0 text-[11px] text-muted-foreground/60 px-2 py-0.5 rounded-full border border-border/30 bg-muted/20">
-        上下文已压缩
-      </span>
-      <div className="flex-1 h-px bg-border/40" />
+    <div className="my-4 px-1">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-border/40" />
+        <button
+          type="button"
+          onClick={() => expandable && setExpanded((prev) => !prev)}
+          title={expandable ? (expanded ? '收起压缩摘要' : '查看压缩摘要') : undefined}
+          className={cn(
+            'shrink-0 inline-flex items-center gap-1 text-[11px] text-muted-foreground/60 px-2 py-0.5 rounded-full border border-border/30 bg-muted/20',
+            expandable && 'hover:text-foreground/80 hover:border-border/60 transition-colors',
+          )}
+        >
+          <Minimize2 className="size-3" />
+          上下文已压缩
+          {info?.compactedCount != null && <span className="opacity-70">（{info.compactedCount} 条）</span>}
+          {expandable && (expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />)}
+        </button>
+        <div className="flex-1 h-px bg-border/40" />
+      </div>
+      {expanded && info?.summary && (
+        <div className="mt-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
+          <div className="text-[10px] font-medium text-muted-foreground/70 mb-1">压缩摘要（后续对话以此为准）</div>
+          <pre className="text-[11px] leading-relaxed text-foreground/80 whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
+            {info.summary}
+          </pre>
+          {info.archived && (
+            <div className="mt-1.5 text-[10px] text-muted-foreground/50">
+              压缩前原文已归档至本地，可通过回退恢复
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -792,7 +824,7 @@ export function SDKMessageRenderer({
     const subtype = sysMsg.subtype
 
     if (subtype === 'compact_boundary') {
-      return <CompactBoundaryDivider />
+      return <CompactBoundaryDivider message={message} />
     }
     if (subtype === 'permission_denied') {
       return <PermissionDeniedNotice message={sysMsg} />

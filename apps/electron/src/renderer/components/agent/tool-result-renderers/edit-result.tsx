@@ -83,6 +83,23 @@ function offsetFileDiffLineNumbers(fileDiff: FileDiffMetadata, lineNumberStart: 
   }
 }
 
+/**
+ * 构建 @pierre/diffs FileDiff 的渲染选项（edit-result 与 Turn 级 diff 预览共用）
+ */
+export function buildPierreDiffOptions(theme: 'light' | 'dark' | 'system') {
+  return {
+    diffStyle: 'unified' as const,
+    theme: { dark: 'one-dark-pro' as const, light: 'one-light' as const },
+    disableFileHeader: true,
+    diffIndicators: 'bars' as const,
+    hunkSeparators: 'line-info' as const,
+    lineDiffType: 'none' as const,
+    overflow: 'scroll' as const,
+    themeType: theme as 'light' | 'dark' | 'system',
+    unsafeCSS: PIERRE_DIFF_CSS,
+  }
+}
+
 export function EditResultRenderer({ result, isError, input, basePath }: EditResultRendererProps): React.ReactElement {
   const theme = useAtomValue(resolvedThemeAtom)
   const sessionId = useAtomValue(currentAgentSessionIdAtom)
@@ -104,17 +121,7 @@ export function EditResultRenderer({ result, isError, input, basePath }: EditRes
     cacheKey: `new:${filePath}:${cheapHash(newStr)}`,
   }), [filePath, newStr])
 
-  const options = React.useMemo(() => ({
-    diffStyle: 'unified' as const,
-    theme: { dark: 'one-dark-pro' as const, light: 'one-light' as const },
-    disableFileHeader: true,
-    diffIndicators: 'bars' as const,
-    hunkSeparators: 'line-info' as const,
-    lineDiffType: 'none' as const,
-    overflow: 'scroll' as const,
-    themeType: theme as 'light' | 'dark' | 'system',
-    unsafeCSS: PIERRE_DIFF_CSS,
-  }), [theme])
+  const options = React.useMemo(() => buildPierreDiffOptions(theme), [theme])
 
   React.useEffect(() => {
     if (explicitStartLine !== null) {

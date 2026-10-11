@@ -120,7 +120,7 @@ export function AgentRecommendBanner({ conversationId }: AgentRecommendBannerPro
       // 7. 在 Agent 输入区显示建议提示（用户点击后发送，而非自动发送）
       store.set(agentPromptSuggestionsAtom, (prev) => {
         const map = new Map(prev)
-        map.set(session.id, suggestedPrompt)
+        map.set(session.id, [suggestedPrompt])
         return map
       })
 

@@ -21,10 +21,13 @@ import {
   LoaderCircle,
   MessageSquareText,
   Paperclip,
+  Settings,
   Sparkles,
   Wrench,
+  Zap,
 } from 'lucide-react'
 import type { FileIndexEntry, FileSearchResult, AgentSessionReferenceSearchResult } from '@gravitas/shared'
+import type { AgentCustomCommand } from '@/types/settings'
 import { FileMentionList } from '@/components/file-browser/FileMentionList'
 import type { FileMentionRef } from '@/components/file-browser/FileMentionList'
 import { cn } from '@/lib/utils'
@@ -38,17 +41,17 @@ import {
   shouldOpenSlashCommandMenuInContext,
 } from './agent-command-menu-state'
 
-type CommandPage = 'root' | 'skills' | 'tools' | 'sessions' | 'files'
+type CommandPage = 'root' | 'skills' | 'tools' | 'sessions' | 'files' | 'commands'
 type MentionCharacter = '@' | '/' | '&' | '#'
 
-type CommandAction = 'attach-file' | 'attach-folder'
+type CommandAction = 'attach-file' | 'attach-folder' | 'manage-commands'
 
 interface RootMenuItem {
   id: string
   label: string
   description: string
   icon: React.ComponentType<{ className?: string }>
-  kind: 'page' | 'action' | 'skill' | 'tool'
+  kind: 'page' | 'action' | 'skill' | 'tool' | 'custom'
   disabled?: boolean
 }
 
@@ -61,6 +64,10 @@ interface ReferenceMenuItem {
 export interface AgentCommandActions {
   onAttachFile?: () => void
   onAttachFolder?: () => void
+  /** 插入自定义命令的提示词到输入框 */
+  onInsertCustomCommand?: (prompt: string) => void
+  /** 打开自定义命令管理界面（设置页） */
+  onManageCustomCommands?: () => void
 }
 
 interface AgentCommandMenuProps {
@@ -70,9 +77,12 @@ interface AgentCommandMenuProps {
   workspaceSlugRef: React.RefObject<string | null>
   attachedDirsRef: React.RefObject<string[]>
   sessionAttachedDirsRef: React.RefObject<string[]>
+  /** 用户自定义斜杠命令（由外部以 ref 提供，避免菜单重挂载） */
+  customCommandsRef: React.RefObject<readonly AgentCustomCommand[]>
   actionsRef: React.RefObject<AgentCommandActions>
   onInsertMention: (character: MentionCharacter, id: string, label: string) => void
   onRunAction: (action: CommandAction) => void
+  onInsertCustomCommand: (prompt: string) => void
 }
 
 export interface AgentCommandMenuRef {
@@ -130,6 +140,20 @@ function getRootMenuItems(): RootMenuItem[] {
       icon: Wrench,
       kind: 'page',
     },
+    {
+      id: 'commands',
+      label: '自定义命令',
+      description: '插入你保存的快捷提示词',
+      icon: Zap,
+      kind: 'page',
+    },
+    {
+      id: 'manage-commands',
+      label: '管理自定义命令',
+      description: '新增 / 编辑 / 删除快捷提示词',
+      icon: Settings,
+      kind: 'action',
+    },
   ]
 }
 
@@ -139,6 +163,7 @@ function menuTitle(page: CommandPage): string {
     case 'tools': return 'MCP 工具'
     case 'sessions': return '引用会话'
     case 'files': return '引用文件'
+    case 'commands': return '自定义命令'
     default: return '命令'
   }
 }
@@ -156,6 +181,7 @@ function menuEmptyText(page: CommandPage, loading: boolean): string {
     case 'tools': return '没有可用的 MCP 工具'
     case 'sessions': return '没有可引用的会话'
     case 'files': return '没有可引用的文件'
+    case 'commands': return '还没有自定义命令，可在设置中添加'
     default: return '没有匹配的命令'
   }
 }
@@ -169,9 +195,11 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
       workspaceSlugRef,
       attachedDirsRef,
       sessionAttachedDirsRef,
+      customCommandsRef,
       actionsRef,
       onInsertMention,
       onRunAction,
+      onInsertCustomCommand,
     },
     ref,
   ) {
@@ -182,6 +210,8 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
     const [tools, setTools] = React.useState<ReferenceMenuItem[]>([])
     const [sessions, setSessions] = React.useState<ReferenceMenuItem[]>([])
     const [fileResult, setFileResult] = React.useState<FileSearchResult>(EMPTY_FILE_RESULT)
+    // 自定义命令从 ref 读取（外部以 atom 同步，无需异步加载）
+    const customCommands = customCommandsRef.current ?? []
     const [sessionSearchQuery, setSessionSearchQuery] = React.useState(query)
     const [pageEntryQuery, setPageEntryQuery] = React.useState('')
     const [debouncedFileSearchQuery, setDebouncedFileSearchQuery] = React.useState('')
@@ -224,6 +254,9 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
       const loadPage = async (): Promise<void> => {
         setLoading(true)
         try {
+          // 自定义命令页无异步数据，直接空载完成
+          if (page === 'commands') return
+
           // root 页也加载启用的 skills + tools，供 `/` 后继续输入时自动填充候选
           if (page === 'root' || page === 'skills' || page === 'tools') {
             const slug = workspaceSlugRef.current
@@ -322,6 +355,15 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
       // 排在功能入口之前，实现“自动填充”，无需先进子页。
       if (q) {
         const matchedResources = [
+          ...customCommands
+            .filter((cmd) => cmd.name.toLocaleLowerCase().includes(q.toLocaleLowerCase()))
+            .map((cmd) => ({
+              id: cmd.name,
+              label: cmd.name,
+              description: cmd.prompt.length > 60 ? `${cmd.prompt.slice(0, 60)}…` : cmd.prompt,
+              icon: Zap,
+              kind: 'custom' as const,
+            })),
           ...filterCommandMenuItems(skills, q).map((s) => ({
             id: s.id,
             label: s.label,
@@ -342,11 +384,21 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
         }
       }
       return filterCommandMenuItems(entries, query)
-    }, [query, skills, tools])
-    const referenceItems = React.useMemo(() => {
+    }, [query, skills, tools, customCommands])
+    const referenceItems = React.useMemo<ReferenceMenuItem[]>(() => {
+      if (page === 'commands') {
+        return filterCommandMenuItems(
+          customCommands.map((cmd) => ({
+            id: cmd.name,
+            label: cmd.name,
+            description: cmd.prompt.length > 60 ? `${cmd.prompt.slice(0, 60)}…` : cmd.prompt,
+          })),
+          pageQuery,
+        )
+      }
       const source = page === 'skills' ? skills : page === 'tools' ? tools : sessions
       return filterCommandMenuItems(source, pageQuery)
-    }, [page, skills, tools, sessions, pageQuery])
+    }, [page, skills, tools, sessions, customCommands, pageQuery])
 
     const selectRootItem = React.useCallback(
       (item: RootMenuItem): void => {
@@ -364,17 +416,27 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
           onInsertMention('#', item.id, item.label)
           return
         }
+        if (item.kind === 'custom') {
+          const command = customCommands.find((cmd) => cmd.name === item.id)
+          if (command) onInsertCustomCommand(command.prompt)
+          return
+        }
         onRunAction(item.id as CommandAction)
       },
-      [onRunAction, onInsertMention, query, changePage],
+      [onRunAction, onInsertMention, onInsertCustomCommand, query, changePage, customCommands],
     )
 
     const selectReferenceItem = React.useCallback(
       (item: ReferenceMenuItem): void => {
+        if (page === 'commands') {
+          const command = customCommands.find((cmd) => cmd.name === item.id)
+          if (command) onInsertCustomCommand(command.prompt)
+          return
+        }
         const character: MentionCharacter = page === 'skills' ? '/' : page === 'tools' ? '#' : '&'
         onInsertMention(character, item.id, item.label)
       },
-      [onInsertMention, page],
+      [onInsertMention, onInsertCustomCommand, page, customCommands],
     )
 
     React.useImperativeHandle(ref, () => ({
@@ -555,6 +617,7 @@ export function createAgentCommandSuggestion(
   workspaceSlugRef: React.RefObject<string | null>,
   attachedDirsRef: React.RefObject<string[]>,
   sessionAttachedDirsRef: React.RefObject<string[]>,
+  customCommandsRef: React.RefObject<readonly AgentCustomCommand[]>,
   actionsRef: React.RefObject<AgentCommandActions>,
   /** 命令菜单活跃标记：菜单打开期间由编辑器用它阻止 Enter 发送（与其它 mention 一致） */
   mentionActiveRef: React.MutableRefObject<boolean>,
@@ -617,6 +680,15 @@ export function createAgentCommandSuggestion(
         requestAnimationFrame(() => {
           if (action === 'attach-file') actions.onAttachFile?.()
           if (action === 'attach-folder') actions.onAttachFolder?.()
+          if (action === 'manage-commands') actions.onManageCustomCommands?.()
+        })
+      }
+
+      /** 插入自定义命令提示词：先移除 `/` 触发符，再把提示词交给外部填入输入框 */
+      const insertCustomCommand = (prompt: string): void => {
+        removeTrigger()
+        requestAnimationFrame(() => {
+          actionsRef.current?.onInsertCustomCommand?.(prompt)
         })
       }
 
@@ -643,9 +715,11 @@ export function createAgentCommandSuggestion(
         workspaceSlugRef,
         attachedDirsRef,
         sessionAttachedDirsRef,
+        customCommandsRef,
         actionsRef,
         onInsertMention: insertMention,
         onRunAction: runAction,
+        onInsertCustomCommand: insertCustomCommand,
       })
 
       return {

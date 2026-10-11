@@ -1008,14 +1008,14 @@ export const currentAgentSessionDraftAtom = atom(
 
 // ===== 提示建议 Atoms =====
 
-/** Agent 提示建议 Map — 以 sessionId 为 key，存储最近一条建议 */
-export const agentPromptSuggestionsAtom = atom<Map<string, string>>(new Map())
+/** Agent 提示建议 Map — 以 sessionId 为 key，存储建议列表（按相关度排序，最多展示 3 条） */
+export const agentPromptSuggestionsAtom = atom<Map<string, string[]>>(new Map())
 
 /** 当前 Agent 会话的提示建议（派生只读原子） */
-export const currentAgentSuggestionAtom = atom<string | null>((get) => {
+export const currentAgentSuggestionAtom = atom<string[]>((get) => {
   const currentId = get(currentAgentSessionIdAtom)
-  if (!currentId) return null
-  return get(agentPromptSuggestionsAtom).get(currentId) ?? null
+  if (!currentId) return []
+  return get(agentPromptSuggestionsAtom).get(currentId) ?? []
 })
 
 // ===== 后台任务管理 =====

@@ -76,6 +76,8 @@ function UsageRing({ ratio, isWarning }: UsageRingProps): React.ReactElement {
       className={cn(
         'shrink-0 transition-colors',
         isWarning ? 'text-amber-500 dark:text-amber-400' : 'text-foreground/70',
+        // 预警时圆环呼吸闪烁，让"接近上限"无需 hover 即可感知
+        isWarning && 'animate-pulse',
       )}
       aria-hidden="true"
     >
@@ -365,6 +367,11 @@ export function ContextUsageBadge({
 
           {/* 当前会话 token 明细 */}
           <div className="flex flex-col gap-1.5">
+            {isWarning && compactThreshold && (
+              <div className="rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                上下文接近上限（剩余约 {(compactThreshold - displayTokens).toLocaleString()} tokens 触发自动压缩），建议尽快压缩以保留完整后续能力
+              </div>
+            )}
             <div className="text-[11px] font-medium text-foreground/60">当前会话</div>
             {pureInput > 0 && <DetailRow label="输入" value={pureInput.toLocaleString()} />}
             {displayOutput ? <DetailRow label="输出" value={displayOutput.toLocaleString()} /> : null}

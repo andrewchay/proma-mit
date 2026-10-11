@@ -159,6 +159,15 @@ export const DEFAULT_THEME_MODE: ThemeMode = 'dark'
 export const DEFAULT_THEME_STYLE: ThemeStyle = 'default'
 
 /** Markdown 预览字号档位 */
+/**
+ * 用户自定义 Agent 斜杠命令
+ * name 为命令名（斜杠后输入的单词），prompt 为插入输入框的完整提示词
+ */
+export interface AgentCustomCommand {
+  name: string
+  prompt: string
+}
+
 export type MarkdownFontSize = 'small' | 'medium' | 'large'
 
 /** 默认 Markdown 字号档位 */
@@ -260,6 +269,8 @@ export interface AppSettings {
   archiveAfterDays?: number
   /** 发送消息快捷键模式：true = Cmd/Ctrl+Enter 发送，false(默认) = Enter 发送 */
   sendWithCmdEnter?: boolean
+  /** 用户自定义 Agent 斜杠命令（命令菜单中一键插入高频提示词） */
+  agentCustomCommands?: AgentCustomCommand[]
   /** 用户自定义快捷键覆盖 */
   shortcutOverrides?: ShortcutOverrides
   /** 是否显示用户消息悬浮置顶条（默认 true） */

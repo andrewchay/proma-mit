@@ -63,6 +63,7 @@ import { toast } from 'sonner'
 import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveModelContextCapability } from '@gravitas/shared'
 import type { AgentStreamEvent, AgentStreamCompletePayload, AgentEvent, AgentStreamPayload, SDKAssistantMessage, SDKUserMessage, SDKSystemMessage, SDKContentBlock, SDKUserContentBlock } from '@gravitas/shared'
 import { createAgentStreamEventBatcher } from '@/lib/agent-stream-event-batcher'
+import { deriveFollowUpSuggestions } from '@/components/agent/follow-up-suggestions'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
@@ -721,11 +722,11 @@ export function useGlobalAgentListeners(): void {
               return prev.filter((t) => t.toolUseId !== task.toolUseId)
             })
           } else if (event.type === 'prompt_suggestion') {
-            // 存储提示建议到 atom
+            // 存储提示建议到 atom（单条事件写入列表首位）
             console.log(`[GlobalAgentListeners] 收到建议: sessionId=${sessionId}, suggestion="${event.suggestion.slice(0, 50)}..."`)
             store.set(agentPromptSuggestionsAtom, (prev) => {
               const map = new Map(prev)
-              map.set(sessionId, event.suggestion)
+              map.set(sessionId, [event.suggestion])
               return map
             })
           } else if (event.type === 'permission_request') {
@@ -880,6 +881,24 @@ export function useGlobalAgentListeners(): void {
           next.add(data.sessionId)
           return next
         })
+
+        // 正常完成后基于本轮动作生成 follow-up 建议（确定性启发式，不调用模型）
+        if (!data.stoppedByUser && (!data.resultSubtype || data.resultSubtype === 'success')) {
+          void (async () => {
+            try {
+              const messages = await window.electronAPI.getAgentSessionSDKMessages(data.sessionId)
+              const suggestions = deriveFollowUpSuggestions(messages)
+              if (suggestions.length === 0) return
+              store.set(agentPromptSuggestionsAtom, (prev) => {
+                const map = new Map(prev)
+                map.set(data.sessionId, suggestions)
+                return map
+              })
+            } catch {
+              // 建议生成失败静默，不影响会话完成流程
+            }
+          })()
+        }
 
         // 标记用户主动打断状态
         if (data.stoppedByUser) {

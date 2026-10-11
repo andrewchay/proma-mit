@@ -29,6 +29,7 @@ import { htmlToMarkdown } from '@/lib/markdown-rich-text'
 import { createFileMentionSuggestion } from '@/components/file-browser/file-mention-suggestion'
 import { createMcpMentionSuggestion, createSessionMentionSuggestion } from '@/components/agent/mention-suggestions'
 import { createAgentCommandSuggestion, type AgentCommandActions } from '@/components/agent/agent-command-suggestion'
+import type { AgentCustomCommand } from '@/types/settings'
 import { resolveMentionSuggestionChar } from './mention-utils'
 import {
   VOICE_DICTATION_INSERT_EVENT,
@@ -121,6 +122,12 @@ interface RichTextInputProps {
   onAttachFile?: () => void
   /** 统一命令菜单「附加文件夹」动作（跨平台文件夹选择） */
   onAttachFolder?: () => void
+  /** 自定义斜杠命令列表（ref 形式提供给 `/` 命令菜单） */
+  customCommandsRef?: React.RefObject<readonly AgentCustomCommand[]>
+  /** 插入自定义命令提示词到输入框 */
+  onInsertCustomCommand?: (prompt: string) => void
+  /** 打开自定义命令管理界面 */
+  onManageCustomCommands?: () => void
   className?: string
 }
 
@@ -156,6 +163,9 @@ export function RichTextInput({
   historyEntries = [],
   onAttachFile,
   onAttachFolder,
+  customCommandsRef,
+  onInsertCustomCommand,
+  onManageCustomCommands,
 }: RichTextInputProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false)
   const inputIdRef = useRef(`rich-text-input-${Math.random().toString(36).slice(2)}`)
@@ -219,9 +229,12 @@ export function RichTextInput({
   // 工作区 slug 引用（给 Skill/MCP Suggestion 使用）
   const workspaceSlugRef = useRef<string | null>(workspaceSlug ?? null)
   workspaceSlugRef.current = workspaceSlug ?? null
-  // 统一命令菜单动作回调（添加附件/附加文件夹）
-  const commandActionsRef = useRef<AgentCommandActions>({ onAttachFile, onAttachFolder })
-  commandActionsRef.current = { onAttachFile, onAttachFolder }
+  // 统一命令菜单动作回调（添加附件/附加文件夹/自定义命令）
+  const commandActionsRef = useRef<AgentCommandActions>({ onAttachFile, onAttachFolder, onInsertCustomCommand, onManageCustomCommands })
+  commandActionsRef.current = { onAttachFile, onAttachFolder, onInsertCustomCommand, onManageCustomCommands }
+  // 自定义斜杠命令引用（命令菜单读取；外部未提供时用空列表）
+  const effectiveCustomCommandsRef = useRef<readonly AgentCustomCommand[]>([])
+  effectiveCustomCommandsRef.current = customCommandsRef?.current ?? []
 
   // 是否启用 Mention 功能：Agent 首帧可能尚未拿到路径/slug/id，但扩展必须先注册。
   const hasMentionSupport = enableMentions ?? (workspacePath !== undefined || workspaceSlug !== undefined || workspaceId !== undefined)
@@ -252,6 +265,7 @@ export function RichTextInput({
       workspaceSlugRef,
       attachedDirsRef,
       sessionAttachedDirsRef,
+      effectiveCustomCommandsRef,
       commandActionsRef,
       mentionActiveRef,
       mentionItemCountRef,
