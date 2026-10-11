@@ -50,6 +50,8 @@ export interface GoalCoordinatorOptions {
   verifyCompletion?: CompletionVerifier
   /** 受保护验证配置存储；默认使用应用配置目录。 */
   verifierStore?: ProtectedVerifierStore
+  /** V04：续跑外部准入（预算/撤权等策略注入）；拒绝或抛错都 fail-closed 转 waiting。 */
+  canContinue?: (goal: AgentGoal) => { allowed: boolean; reason?: string }
 }
 
 function createDefaultCompletionVerifier(store: () => ProtectedVerifierStore): CompletionVerifier {
@@ -74,10 +76,10 @@ function createDefaultCompletionVerifier(store: () => ProtectedVerifierStore): C
 }
 
 export class GoalCoordinator {
-  private readonly immediateCounts = new Map<string, number>()
   private readonly startingGoalIds = new Set<string>()
   private continuationRunner?: GoalContinuationRunner
   private readonly verifyCompletion: CompletionVerifier
+  private readonly canContinue?: (goal: AgentGoal) => { allowed: boolean; reason?: string }
   private readonly verifierStore: () => ProtectedVerifierStore
   private lazyVerifierStore?: ProtectedVerifierStore
 
@@ -88,6 +90,7 @@ export class GoalCoordinator {
       return this.lazyVerifierStore
     }
     this.verifyCompletion = options.verifyCompletion ?? createDefaultCompletionVerifier(this.verifierStore)
+    this.canContinue = options.canContinue
   }
 
   setContinuationRunner(runner: GoalContinuationRunner): void {
@@ -161,7 +164,6 @@ export class GoalCoordinator {
       checkpointRunId: undefined,
       updatedAt: Date.now(),
     })
-    if (status !== 'active') this.immediateCounts.delete(goalId)
     if (status === 'active') queueMicrotask(() => { void this.schedule(next) })
     return next
   }
@@ -305,18 +307,40 @@ export class GoalCoordinator {
       setTimeout(() => { void this.startContinuation(goal.id) }, delay)
       return
     }
-    const count = (this.immediateCounts.get(goal.id) ?? 0) + 1
-    this.immediateCounts.set(goal.id, count)
+    // V04：计数持久化在 Goal 记录，重启不可绕过；超限转 waiting。
+    // schedule 可能携带 setStatus 时点的陈旧快照；计数前必须重读，避免覆盖并发签发的 run。
+    const latest = this.get(goal.id)
+    if (!latest || latest.status !== 'active' || latest.activeRunId) return
+    const count = (latest.continuationCount ?? 0) + 1
+    const counted = this.save({ ...latest, continuationCount: count, updatedAt: Date.now() })
     if (count > MAX_IMMEDIATE_CONTINUATIONS) {
       this.save({
-        ...goal,
+        ...counted,
         status: 'waiting',
-        checkpoint: { ...goal.checkpoint!, outcome: 'waiting', wakeTrigger: { type: 'user_input' }, blocker: '已达到连续自动续跑上限，等待用户确认继续。' },
+        checkpoint: { ...counted.checkpoint!, outcome: 'waiting', wakeTrigger: { type: 'user_input' }, blocker: '已达到连续自动续跑上限，等待用户确认继续。' },
         updatedAt: Date.now(),
       })
       return
     }
-    queueMicrotask(() => { void this.startContinuation(goal.id) })
+    // V04：外部准入（预算/撤权）在排队前检查；拒绝或异常都 fail-closed。
+    if (this.canContinue) {
+      let verdict: { allowed: boolean; reason?: string }
+      try {
+        verdict = this.canContinue(counted)
+      } catch (error) {
+        verdict = { allowed: false, reason: `续跑准入检查失败：${error instanceof Error ? error.message : String(error)}` }
+      }
+      if (!verdict.allowed) {
+        this.save({
+          ...counted,
+          status: 'waiting',
+          checkpoint: { ...counted.checkpoint!, outcome: 'waiting', wakeTrigger: { type: 'user_input' }, blocker: verdict.reason ?? '续跑被外部策略拒绝。' },
+          updatedAt: Date.now(),
+        })
+        return
+      }
+    }
+    queueMicrotask(() => { void this.startContinuation(counted.id) })
   }
 
   private async startContinuation(goalId: string): Promise<void> {
@@ -386,6 +410,7 @@ function buildContinuationPrompt(goal: AgentGoal): string {
     checkpoint?.summary ? `上一轮进展：${checkpoint.summary}` : '',
     checkpoint?.nextAction ? `下一步：${checkpoint.nextAction}` : '',
     '请基于已有会话和实际证据继续执行。完成本轮后必须调用 GoalCheckpoint。',
+    '不要假设上一轮的未验证副作用已经生效；涉及外部状态（文件、服务、任务）先重新核验再操作。',
   ].filter(Boolean).join('\n')
 }
 

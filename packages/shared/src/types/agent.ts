@@ -921,6 +921,8 @@ export interface AgentGoal {
   /** 最近一次通过门禁的固定基线回执（仅 passed 写入）。 */
   completionVerification?: import('./goal-verification').PinnedVerifierReceipt
   activeRunId?: string
+  /** V04：连续自动续跑计数（持久化）；应用重启后不可绕过续跑上限。 */
+  continuationCount?: number
   /** 主进程已接收检查点的调用身份；不代表证据验证通过。 */
   checkpointRunId?: string
   /** 本轮已准备请求的投影；历史保留在Goal事件中，不授予验证信任。 */

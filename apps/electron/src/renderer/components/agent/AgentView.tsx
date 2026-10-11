@@ -101,6 +101,7 @@ import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
 import { CollaborateDelegationDialog } from './CollaborateDelegationDialog'
 import type { AgentGoal, AgentRuntime, AgentSendInput, AgentPendingFile, FileAttachment, FileDialogLargeFile, ModelOption, SDKMessage, SDKTextBlock, SDKUserMessage } from '@gravitas/shared'
+import { resolveGoalVerificationStatus } from '../../lib/goal-verification-status'
 import { DEFAULT_AGENT_RUNTIME, MAX_ATTACHMENT_SIZE } from '@gravitas/shared'
 import { fileToBase64, formatFileNames, getFileParentPath } from '@/lib/file-utils'
 import { getAgentRuntimeChannelIds, isAgentRuntimeChannelUsable } from '@/lib/agent-runtime-channels'
@@ -429,6 +430,27 @@ function AutoPreviewPopover({ enabled, onToggle }: AutoPreviewPopoverProps): Rea
         </div>
       </PopoverContent>
     </Popover>
+  )
+}
+
+/** V05：Goal 验证状态徽章（run finished ≠ verified ≠ accepted；legacy 未验证；身份不符警告）。 */
+function GoalVerificationBadge({ goal }: { goal: AgentGoal }) {
+  const status = resolveGoalVerificationStatus(goal)
+  const className = status.state === 'accepted'
+    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+    : status.state === 'verified'
+      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+      : status.state === 'mismatch'
+        ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+        : 'bg-foreground/5 text-muted-foreground'
+  return (
+    <span
+      className={`flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ${className}`}
+      title={status.detail ?? status.label}
+    >
+      <ShieldCheck className="size-3.5" />
+      {status.label}
+    </span>
   )
 }
 
@@ -2293,6 +2315,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} onClick={() => void updateGoalStatus('active')}>继续</Button>
             )}
             <Button type="button" variant="ghost" size="sm" disabled={goalActionPending} className="text-destructive hover:text-destructive" onClick={() => void updateGoalStatus('cancelled')}>停止 Goal</Button>
+            <GoalVerificationBadge goal={activeGoal} />
             {activeGoal.completionGate ? (
               <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" title="完成门禁已绑定：complete 必须经过固定基线验证">
                 <ShieldCheck className="size-3.5 text-primary" />

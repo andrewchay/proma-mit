@@ -88,7 +88,7 @@
 | ID | 里程碑 | 退出条件 | 依赖 | 当前状态 |
 |---|---|---|---|---|
 | M0 | 范围、契约与基线 | 现有证据/目录/Runtime 接线审计，方案和门禁冻结 | 本 ledger | 完成（G0）：H00/H01/V01子契约+H02决策+H03基线钉板；contracts/benchmark 已冻结（解冻程序见文首） |
-| M1 | 产物绑定的完成验证 | coding AgentGoal 仅凭权威、新鲜证据完成；人工验收不变 | M0 | 部分完成：V01与V02切片；无V03完成门禁接线 |
+| M1 | 产物绑定的完成验证 | coding AgentGoal 仅凭权威、新鲜证据完成；人工验收不变 | M0 | 部分完成：V01/V02/V03链路+V04续跑边界+V05状态展示落地；业务身份映射与Provider确认未闭合 |
 | M2 | 独立按需工具接线 | 复用目录，权限不降级，关闭 TCC，工具选择与成本通过门禁 | M0；上线需 M3 截断保护 | 部分完成：D01–D03全链+D04离线骨架落地；真实Provider评测、其他Runtime接线、默认启用决策（G4）未做 |
 | M3 | Effects、安全调度与截断保护 | 冲突序列化、未知保守、取消清锁、不执行截断调用 | M0 | 部分完成：E01–E05 离线+生产接线落地（锁域=本进程）；截断批次判定未接线；真实运行矩阵未做 |
 | M4 | 跨 Runtime 策略一致性 | 能力矩阵、版本化策略、契约测试和不支持清单 | M1/M2/M3 的契约 | 完成（离线/本机级）：P01–P04 落地；审计流接线与策略写入路径无需求未做 |
@@ -157,8 +157,8 @@
 | V01 | Shared 技术回执；`packages/shared/src/types/verification.ts`、`utils/verification.ts`及`.test.ts`，更新types/utils导出 | schema/version/身份/未知状态；拒绝 malformed、未来时间和不同 task/session/artifact 回执 | H02的V01子契约 | 已完成：纯DTO解析；真实来源与新鲜度不在本项能力范围 |
 | V02 | 复用快照与运行证据；已有development-snapshot/validation-service及新development-validation-record.ts；暂不另建verification-service | 主进程创建回执；修改/untracked/delete/外部改写使旧证据失效；模型字符串不能变成 passed | V01 | 部分完成：完整Git内容变化集、scope/config绑定、严格回读；Goal/session/run闭包和prepared-request上下文已接线；Provider确认/业务映射/verifier/test来源未闭合，见v02-evidence.md、goal-run-evidence.md与invocation-context-evidence.md |
 | V03 | 固定基线验证 + Goal 门禁 + 受保护路径(b) + seatbelt 验证沙箱 + 签名存储 + Goal修订绑定 + 验证器设置界面 + Goal门禁绑定UI（Agent 横幅）均已实现；Agent Bash 沙箱已启用；回执新增报告SHA-256/字节数与goalId/runId绑定 | 用户决策见 protected-verifier-storage-design.md §0 | V02 | 部分：可信采集计数+内容哈希+权威绑定已落地（v03-trusted-collection-evidence.md）；正式签名版未验证；Goal存储未签名（本机信任限制不变）；显示侧未消费绑定字段 |
-| V04 | 有界修复续跑；goal-coordinator.ts、goal-store.ts | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 待开始 |
-| V05 | 显示验证状态；AgentMessages.tsx，必要时更新 shared/main/preload/Jotai | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 待开始 |
+| V04 | 续跑计数持久化（continuationCount）+ canContinue 外部准入注入 + 陈旧快照重读修复 + 续跑prompt重新核验指令 | 保留现有连续上限；计数跨重启不被绕过；预算/撤权/用户输入/暂停立即阻止新续跑；未知外部副作用不重放 | V03；P01 | 完成：3例（重启不绕过/准入fail-closed/prompt不携带evidence正文）；修复schedule陈旧快照覆盖并发run的既有缺陷；v04v05-evidence.md |
+| V05 | `renderer/lib/goal-verification-status.ts` + AgentView GoalVerificationBadge | run finished、verified、accepted 文字和证据链接清晰；legacy 未验证；不同身份的证据不串项 | V03 | 完成：6例纯函数（五态/mismatch/非passed不算）+横幅徽章；v04v05-evidence.md |
 
 **首片限制：** 开始仅支持固定、本地、已授权的确定性验证命令。研究真实性、文案语义质量、外部投放成功都不能因通用 guard 而宣称已验证。
 
@@ -474,6 +474,7 @@ ACP可能复用MCP的一些JSON表达，但用途不同，也不能互相替代�
 | HARNESS-20261011-004 | 2026-10-11 08:25–08:35 GMT+8 | D04真实工具评测（首次） | 14真实运行：baseline 6/7 vs loading 2/7，未过非劣；归因D02小预算CJK选择错误；usage提取缺陷致本次费用未知 | 门禁行为符合设计；改进方向=常驻核心工具集+CJK映射+预算默认值；复测待授权；m2-d04-evidence.md |
 | HARNESS-20261011-005 | 2026-10-11 08:40–08:50 GMT+8 | D02改进（复测准备） | 常驻核心工具集（不占预算截断）+CJK任务词映射（读/写/改/搜/列/执行→工具名）；评测预算默认130→360 | +3例先红后绿；15例回归绿；electron0.12.153；复测已获用户授权 |
 | HARNESS-20261011-006 | 2026-10-11 10:26 GMT+8 | D04复测——非劣筛查通过 | D02改进后loading臂6/7=baseline 6/7；v1对照2/7；费用如实计量¥0.1596 | 小样本7对配对不宣称统计充分；共同失败=任务措辞歧义；m2-d04-evidence.md |
+| HARNESS-20261011-007 | 2026-10-11 11:00–11:40 GMT+8 | V04有界续跑+V05验证状态UI | 计数持久化+canContinue注入+陈旧快照修复；五态验证状态纯函数+AgentView徽章 | +9例；全仓门禁通过；shared0.2.47/electron0.12.154；v04v05-evidence.md |
 
 以上工程回归不替代G1新完成门禁/调度闭环；V01解析器只验证结构与调用方提供身份一致性，V02切片只补本机权威路径回读与内容/配置新鲜度，不能据此证明来源不可伪造、完整测试收集或业务验收。首批人工简化审查见contracts第6节。实施后逐条追加，不覆盖早期“未实施”历史。当前快照应另在文首标明新的截至时间；不能以文件修改时间代替状态日期。
 
