@@ -5,6 +5,7 @@
  */
 
 import type { FileAttachment } from './chat'
+import type { ProviderType } from './channel'
 
 // ===== 记忆配置 =====
 
@@ -278,6 +279,8 @@ export interface SDKAssistantMessage {
   }
   parent_tool_use_id: string | null
   session_id?: string
+  /** E03观察：本 step 批次完整性（仅 final 消息），不表示零执行或可撤销。 */
+  toolCallBatchIntegrity?: import('../context/tool-call-integrity').ToolCallBatchIntegrity
   /** SDK 消息唯一标识，用于 forkSession / resumeSessionAt */
   uuid?: string
   error?: { message: string; errorType?: string }
@@ -316,6 +319,8 @@ export interface SDKResultMessage {
   modelUsage?: Record<string, { contextWindow?: number }>
   errors?: string[]
   session_id?: string
+  /** E03观察：本turn各step批次完整性；仅事实记录，不表示零执行或可撤销。 */
+  toolCallBatchIntegrity?: import('../context/tool-call-integrity').ToolCallBatchIntegrity
 }
 
 /** SDK system 消息（init / compact_boundary / permission_denied / task_started / task_progress / task_notification） */
@@ -717,6 +722,8 @@ export interface AgentRuntimeCapabilities {
   supportsPartialStreaming: boolean
   /** 是否支持调用级预算停止阈值；超额后停止，实际费用仍可能超过阈值。 */
   supportsBudgetStopThreshold: boolean
+  /** 工具执行是否在本进程内（可纳入共享调度器锁域）；claude 经 SDK 子进程执行，不在锁域内。 */
+  supportsInProcessToolScheduling: boolean
 }
 
 export type AgentRuntimeForkMode = 'sdk_snapshot' | 'jsonl_history_copy'
@@ -750,6 +757,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: true,
     supportsPartialStreaming: true,
     supportsBudgetStopThreshold: true,
+    supportsInProcessToolScheduling: false,
   },
   proma: {
     supportsTools: true,
@@ -761,6 +769,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: false,
     supportsBudgetStopThreshold: false,
+    supportsInProcessToolScheduling: true,
   },
   pi: {
     supportsTools: true,
@@ -772,6 +781,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     supportsFileSnapshotRewind: false,
     supportsPartialStreaming: true,
     supportsBudgetStopThreshold: false,
+    supportsInProcessToolScheduling: true,
   },
   'ai-sdk': {
     supportsTools: true,
@@ -785,6 +795,7 @@ export const AGENT_RUNTIME_CAPABILITIES: Record<AgentRuntime, AgentRuntimeCapabi
     // Pilot 单次费用停止由受控请求出口在发送前强制（证据派生 → 预算内预留 → body 核验，否则 HTTP 零发送），
     // 强度高于事后阈值；用户已于 G2 前批准放开（PILOT-20260928-56）。
     supportsBudgetStopThreshold: true,
+    supportsInProcessToolScheduling: true,
   },
 }
 
@@ -873,6 +884,26 @@ export interface AgentGoalCheckpoint {
   blocker?: string
 }
 
+/** 主进程在query前观测的请求参数；不包含凭据或正文。 */
+export interface AgentGoalPreparedRequest {
+  workspaceId?: string
+  cwd: string
+  runtime: Extract<AgentRuntime, 'proma' | 'pi' | 'ai-sdk'>
+  channelId: string
+  provider: ProviderType
+  /** 实际传给adapter的请求模型，不是Provider确认的模型。 */
+  requestedModelId?: string
+}
+
+export interface AgentGoalInvocationContext extends AgentGoalPreparedRequest {
+  version: 1
+  sourcePhase: 'prepared-request'
+  goalId: string
+  sessionId: string
+  runId: string
+  preparedAt: number
+}
+
 /** 持久化的 Goal 实体；桌面端与服务端使用同一契约。 */
 export interface AgentGoal {
   id: string
@@ -885,7 +916,17 @@ export interface AgentGoal {
   acceptanceCriteria: string[]
   status: AgentGoalStatus
   checkpoint?: AgentGoalCheckpoint
+  /** 完成门禁：存在时 complete 必须经固定基线验证通过。 */
+  completionGate?: import('./goal-verification').GoalCompletionGate
+  /** 最近一次通过门禁的固定基线回执（仅 passed 写入）。 */
+  completionVerification?: import('./goal-verification').PinnedVerifierReceipt
   activeRunId?: string
+  /** V04：连续自动续跑计数（持久化）；应用重启后不可绕过续跑上限。 */
+  continuationCount?: number
+  /** 主进程已接收检查点的调用身份；不代表证据验证通过。 */
+  checkpointRunId?: string
+  /** 本轮已准备请求的投影；历史保留在Goal事件中，不授予验证信任。 */
+  invocationContext?: AgentGoalInvocationContext
   createdAt: number
   updatedAt: number
   version: number
@@ -900,12 +941,21 @@ export interface CreateAgentGoalInput {
   runtime: Extract<AgentRuntime, 'proma' | 'pi' | 'ai-sdk'>
   objective: string
   acceptanceCriteria?: string[]
+  completionGate?: import('./goal-verification').GoalCompletionGate
 }
 
 /** UI 控制 Goal 生命周期的输入。 */
 export interface UpdateAgentGoalStatusInput {
   goalId: string
   status: Extract<AgentGoalStatus, 'active' | 'waiting' | 'blocked' | 'cancelled'>
+}
+
+/** Goal 完成门禁绑定输入：基线省略时由主进程解析为仓库当前 HEAD。 */
+export interface BindAgentGoalGateInput {
+  goalId: string
+  repoRoot: string
+  verifierId: string
+  baselineCommitSha?: string
 }
 
 // ===== Agent 会话管理 =====
@@ -1215,6 +1265,8 @@ export interface SkillExternalSource {
   /** 来源类型 */
   kind: SkillExternalSourceKind
   importedAt: string
+  /** 安装时 SKILL.md 的 SHA-256（漂移/stale 检测用；旧数据可缺省） */
+  contentHash?: string
 }
 
 /** 工作区 Skill 元数据 */
@@ -2051,6 +2103,7 @@ export const AGENT_IPC_CHANNELS = {
   /** 查询指定会话的 Goal */
   LIST_GOALS: 'agent:list-goals',
   /** 更新 Goal 生命周期状态 */
+  BIND_COMPLETION_GATE: 'agent:bind-completion-gate',
   UPDATE_GOAL_STATUS: 'agent:update-goal-status',
 
   // 工作区管理

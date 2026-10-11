@@ -118,6 +118,25 @@ export interface PrepareFileDelegationInput {
 /** 验证结果状态：与模型自述（reported）严格区分。 */
 export type DevelopmentValidationStatus = 'passed' | 'failed' | 'stale' | 'timeout'
 
+/** 主进程采集的验证配置/产物绑定；不是签名或AgentGoal调用身份回执。 */
+export interface DevelopmentValidationBinding {
+  version: 1
+  projectId: string
+  workspaceId: string
+  sessionId: string
+  snapshotId: string
+  baseCommit: string
+  scopeHash: string
+  verificationConfigHash: string
+}
+
+/** 回读时的新鲜度独立于历史验证退出状态；fresh不等于passed或业务验收。 */
+export interface DevelopmentValidationEvidence {
+  result: DevelopmentValidationResult
+  freshness: 'fresh' | 'stale' | 'legacy'
+  reason?: string
+}
+
 /** 一次受控验证运行的结果（进程未确认退出不得计成功）。 */
 export interface DevelopmentValidationResult {
   id: string
@@ -135,6 +154,8 @@ export interface DevelopmentValidationResult {
   /** 输出尾部（截断存储，不作为成功依据） */
   outputTail: string
   outputTruncated: boolean
+  /** 老记录无此字段仍可展示，但不能补造fresh可信绑定。 */
+  binding?: DevelopmentValidationBinding
 }
 
 /** 确认应用前下发的精确操作清单；过期必须重新预检。 */

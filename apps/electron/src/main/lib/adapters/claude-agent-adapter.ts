@@ -25,6 +25,7 @@ import {
   isThinkingSignatureError as matchesThinkingSignatureError,
 } from '@gravitas/shared'
 import type { CanUseToolOptions, PermissionResult } from '../agent-permission-service'
+import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
 import { TRANSIENT_NETWORK_PATTERN } from '../error-patterns'
 import { getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
 import { spawn as spawnChild, execFileSync } from 'node:child_process'
@@ -682,6 +683,8 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
    * 使用 includePartialMessages: false 获取完整 JSON 对象，直接透传。
    */
   async *query(input: AgentQueryInput): AsyncIterable<SDKMessage> {
+    // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
+    assertRuntimePolicy('claude')
     const options = input as ClaudeAgentQueryOptions
 
     // 创建 AbortController

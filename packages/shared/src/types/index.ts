@@ -28,6 +28,10 @@ export * from './chat'
 // Agent 相关类型
 export * from './agent'
 
+// 技术验证回执：只描述结构，不授予信任或业务验收。
+export * from './verification'
+export * from './harness-policy'
+
 // 统一任务事件契约（消费端统一消费）
 export * from './app-event'
 
@@ -42,6 +46,7 @@ export * from './token-usage'
 
 // Goal（目标）状态层类型
 export * from './goal'
+export * from './goal-verification'
 
 // 扩展（Extension）Manifest 与生命周期类型
 export * from './plugin'

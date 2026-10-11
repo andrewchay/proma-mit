@@ -165,3 +165,7 @@ export {
   buildArtifactPersistenceDirective,
   splitOutputByFiles,
 } from './campaign-prompt'
+export {
+  parseVerificationArtifactRevision,
+  parseVerificationReceipt,
+} from './verification'

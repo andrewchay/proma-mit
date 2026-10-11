@@ -85,4 +85,17 @@ describe('skill-auditor（安全审计启发式）', () => {
     expect(report.findings.some((f) => f.rule === 'safety-bypass')).toBe(true)
     rmSync(dir, { recursive: true, force: true })
   })
+
+  it('任何 verdict 都附带能力边界声明（safe 不作无恶意证明）', async () => {
+    const { auditSkill, AUDIT_DISCLAIMER } = await import('./skill-auditor')
+    const { join } = await import('node:path')
+    const { mkdtempSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const dir = mkdtempSync(join(tmpdir(), 'audit-disclaimer-'))
+    writeFileSync(join(dir, 'SKILL.md'), '---\nname: plain\n---\nplain body', 'utf-8')
+    const report = auditSkill(dir)
+    expect(report.verdict).toBe('safe')
+    expect(report.disclaimer).toBe(AUDIT_DISCLAIMER)
+    expect(report.disclaimer).toContain('不构成无恶意证明')
+  })
 })

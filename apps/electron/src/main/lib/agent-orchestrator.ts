@@ -16,12 +16,13 @@ import { assertControlledPermissionChange, isControlledProviderSession } from '.
  */
 
 import { randomUUID } from 'node:crypto'
+import type { AgentGoalRunCallbacks } from './goal-runtime/goal-coordinator'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { app } from 'electron'
-import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, SDKResultMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint } from '@gravitas/shared'
+import type { AgentSendInput, AgentQueueMessageInput, AgentMessage, AgentGenerateTitleInput, AgentProviderAdapter, AgentSessionMeta, TypedError, RetryAttempt, SDKMessage, SDKAssistantMessage, SDKResultMessage, AgentStreamPayload, RewindSessionResult, SdkBeta, ProviderType, FileAttachment, ForkSessionInput, AgentGoalCheckpoint, AgentGoalPreparedRequest } from '@gravitas/shared'
 import {
   PROMA_DEFAULT_PERMISSION_MODE,
   PROMA_PERMISSION_MODE_CONFIG,
@@ -609,6 +610,9 @@ export class AgentOrchestrator {
   /** 活跃执行会话（sessionId → runGeneration），同一会话同时只允许一个执行 */
   private activeSessions = new Map<string, number>()
 
+  /** 内部槽位所有权不采用客户端时间戳，防相同startedAt的旧finally/回调命中新run。 */
+  private readonly activeRunTokens = new Map<string, symbol>()
+
   /** 会话级待发送队列条目（sessionId → FIFO 排队） */
   private sessionSendQueue = new Map<string, QueuedAgentSend[]>()
 
@@ -625,8 +629,7 @@ export class AgentOrchestrator {
     adapter: AgentProviderAdapter,
     eventBus: AgentEventBus,
     runtimeServices?: RuntimeServices,
-    private readonly onGoalCheckpoint?: (sessionId: string, checkpoint: AgentGoalCheckpoint) => Promise<void>,
-    private readonly hasActiveGoal?: (sessionId: string) => boolean,
+    private readonly captureGoalRun?: (sessionId: string) => AgentGoalRunCallbacks | undefined,
   ) {
     this.adapter = adapter
     this.eventBus = eventBus
@@ -664,8 +667,11 @@ export class AgentOrchestrator {
     /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
     skillMentions?: string[]
     requestedOperation?: 'compact'
+    onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+    prepareGoalRun?: (request: AgentGoalPreparedRequest) => Promise<void>
+    assertRunOwner?: () => void
   }): Promise<void> {
-    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, worktreeScopedWrite, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation } = options
+    const { sessionId, agentRuntime = 'proma', channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, adapterProvider, apiKey, baseUrl, callbacks, startedAt, permissionMode, worktreeScopedWrite, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, onGoalCheckpoint, prepareGoalRun, assertRunOwner } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[${agentRuntime} runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -825,13 +831,16 @@ export class AgentOrchestrator {
         onAgentEvent: (event) => {
           runtimeServices.events.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload)
         },
-        onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
-          ? (checkpoint: AgentGoalCheckpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
-          : undefined,
+        onGoalCheckpoint,
         // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区
         extraTools: collabExtraTools,
       }
 
+      await prepareGoalRun?.({
+        workspaceId: runtimeWorkspace.workspace?.id, cwd: agentCwd,
+        runtime: agentRuntime, channelId, provider, requestedModelId: queryOptions.model,
+      })
+      assertRunOwner?.()
       const iterable = this.adapter.query(queryOptions)
       const accumulatedMessages: SDKMessage[] = []
       let runtimeEstablished = false
@@ -928,9 +937,12 @@ export class AgentOrchestrator {
     /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表 */
     skillMentions?: string[]
     requestedOperation?: 'compact'
+    onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
+    prepareGoalRun?: (request: AgentGoalPreparedRequest) => Promise<void>
+    assertRunOwner?: () => void
     runtimeBudgetLimitUsd?: number
   }): Promise<void> {
-    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, runtimeBudgetLimitUsd } = options
+    const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, runtimeBudgetLimitUsd, onGoalCheckpoint, prepareGoalRun, assertRunOwner } = options
     let userMessageUuid = ''
 
     logInfo(sessionId, `[Pi Runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
@@ -939,11 +951,13 @@ export class AgentOrchestrator {
       let agentCwd = homedir()
       let workspaceName: string | undefined
       let workspaceSlug: string | undefined
+      let resolvedWorkspaceId: string | undefined
       let mcpServers: Record<string, import('@gravitas/shared').McpServerEntry> | undefined
       if (workspaceId) {
         const ws = getAgentWorkspace(workspaceId)
         if (!ws) throw new Error('明确工作区不存在，禁止回退到主目录')
         if (ws) {
+          resolvedWorkspaceId = ws.id
           workspaceName = ws.name
           workspaceSlug = ws.slug
           mcpServers = getWorkspaceMcpConfig(ws.slug).servers
@@ -1072,9 +1086,7 @@ export class AgentOrchestrator {
               permissionMode: currentPiPermissionMode,
             }, toolInput)
           },
-          onGoalCheckpoint: this.onGoalCheckpoint && this.hasActiveGoal?.(sessionId)
-            ? (checkpoint) => this.onGoalCheckpoint!(sessionId, checkpoint)
-            : undefined,
+          onGoalCheckpoint,
         },
         mcpServers,
         workspaceSlug,
@@ -1106,6 +1118,11 @@ export class AgentOrchestrator {
         }),
       }
 
+      await prepareGoalRun?.({
+        workspaceId: resolvedWorkspaceId, cwd: agentCwd,
+        runtime: 'pi', channelId, provider, requestedModelId: queryOptions.model,
+      })
+      assertRunOwner?.()
       const accumulatedMessages: SDKMessage[] = []
       for await (const msg of this.adapter.query(queryOptions)) {
         // Pi 的流式快照只用于即时展示；只持久化最终帧，避免历史中重复累计文本。
@@ -2033,6 +2050,9 @@ export class AgentOrchestrator {
     // 否则用本地 runGeneration 作为回退（headless 模式等无渲染进程场景）
     const streamStartedAt = input.startedAt ?? runGeneration
     this.activeSessions.set(sessionId, runGeneration)
+    const runToken = Symbol('agent-run')
+    this.activeRunTokens.set(sessionId, runToken)
+    let goalRun: AgentGoalRunCallbacks | undefined
 
     try {
     // 2.2 读取会话 runtime，并在进入 Claude SDK 专用路径前处理非 Claude runtime。
@@ -2053,6 +2073,21 @@ export class AgentOrchestrator {
 
     const appSettings = getSettings()
     const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+    const assertRunOwner = (): void => {
+      if (this.activeSessions.get(sessionId) !== runGeneration || this.activeRunTokens.get(sessionId) !== runToken) {
+        throw new Error('Agent运行槽位已失效')
+      }
+    }
+    let onGoalCheckpoint: ((checkpoint: AgentGoalCheckpoint) => Promise<void>) | undefined
+    let prepareGoalRun: ((request: AgentGoalPreparedRequest) => Promise<void>) | undefined
+    if (effectiveAgentRuntime !== 'claude' && resolveRequestedOperation(userMessage) !== 'compact') {
+      const captured = this.captureGoalRun?.(sessionId)
+      goalRun = captured
+      if (captured) {
+        prepareGoalRun = async (request) => { assertRunOwner(); await captured.onPrepared(request) }
+        onGoalCheckpoint = async (checkpoint) => { assertRunOwner(); await captured.onCheckpoint(checkpoint) }
+      }
+    }
     const effectiveRuntimeBudgetLimitUsd = resolveRuntimeBudgetLimitUsd(
       effectiveAgentRuntime,
       runtimeBudgetLimitUsd,
@@ -2256,6 +2291,9 @@ export class AgentOrchestrator {
           skillMentions: mentionedSkills,
           requestedOperation: resolveRequestedOperation(userMessage),
           runtimeBudgetLimitUsd: effectiveRuntimeBudgetLimitUsd,
+          onGoalCheckpoint,
+          prepareGoalRun,
+          assertRunOwner,
         })
         return
       }
@@ -2283,6 +2321,9 @@ export class AgentOrchestrator {
         isDelegationSession,
         skillMentions: mentionedSkills,
         requestedOperation: resolveRequestedOperation(userMessage),
+        onGoalCheckpoint,
+        prepareGoalRun,
+        assertRunOwner,
       })
       return
     }
@@ -3449,16 +3490,25 @@ export class AgentOrchestrator {
       }
 
     } finally {
-      // 只在 generation 匹配时才清理，防止旧流的 finally 误删新流的注册
-      if (this.activeSessions.get(sessionId) === runGeneration) {
+      // 客户端generation可能重复；内部token同时匹配才拥有本轮槽位。
+      const ownsRun = this.activeSessions.get(sessionId) === runGeneration && this.activeRunTokens.get(sessionId) === runToken
+      if (ownsRun) {
         this.activeSessions.delete(sessionId)
+        this.activeRunTokens.delete(sessionId)
         this.sessionPermissionModes.delete(sessionId)
         this.queuedMessageUuids.delete(sessionId)
       }
-      permissionService.clearSessionPending(sessionId)
-      // askUserService 不在 turn 结束时清理——AskUserQuestion 的生命周期由用户交互决定，
-      // 仅在会话真正删除时（DELETE_SESSION IPC）才清理。
-      exitPlanService.clearSessionPending(sessionId)
+      if (ownsRun || !this.activeSessions.has(sessionId)) {
+        // 停止后无新run时仍清理旧请求；有新run时旧finally绝不按session清理。
+        permissionService.clearSessionPending(sessionId)
+        // AskUserQuestion仅在会话真正删除时清理，旧run不清理新run的请求。
+        exitPlanService.clearSessionPending(sessionId)
+      }
+      try {
+        await goalRun?.onFinished(ownsRun && !this.sessionSendQueue.get(sessionId)?.length)
+      } catch (error) {
+        console.error('[Goal] 运行结束对账失败，不代替完成证据:', error)
+      }
       // 当前消息执行结束：驱动该会话待发送队列中的下一条（若有则继续执行，否则无事发生）
       this.pumpNext(sessionId)
     }
@@ -3578,6 +3628,7 @@ export class AgentOrchestrator {
       }
     }
 
+    const activeRunToken = this.activeRunTokens.get(sessionId)
     try {
       this.adapter.abort(sessionId)
     } catch (error) {
@@ -3594,7 +3645,7 @@ export class AgentOrchestrator {
     }
 
     // abort 为同步请求接受语义；仅在 generation 仍匹配时释放当前运行所有权，避免旧停止请求误伤新一轮。
-    if (this.activeSessions.get(sessionId) !== activeGeneration) {
+    if (this.activeSessions.get(sessionId) !== activeGeneration || this.activeRunTokens.get(sessionId) !== activeRunToken) {
       return {
         sessionId,
         expectedGeneration,
@@ -3606,6 +3657,7 @@ export class AgentOrchestrator {
       }
     }
     this.activeSessions.delete(sessionId)
+    this.activeRunTokens.delete(sessionId)
     this.sessionPermissionModes.delete(sessionId)
     this.stoppedBySessions.add(sessionId)
     this.queuedMessageUuids.delete(sessionId)

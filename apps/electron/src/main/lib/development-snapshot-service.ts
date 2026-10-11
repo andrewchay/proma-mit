@@ -56,84 +56,18 @@ export interface CreateSnapshotInput {
  */
 export function createDevelopmentSnapshot(input: CreateSnapshotInput): DevelopmentSnapshot {
   const { worktreePath, sessionDirectory, executionId, workspaceId, scope } = input
-  const limits = { ...SNAPSHOT_LIMITS, ...input.limits }
-
+  if (workspaceId !== scope.workspaceId) throw new Error('快照工作区与任务范围不匹配')
   const bindingPath = join(sessionDirectory, 'development-worktree.json')
   if (!existsSync(bindingPath)) throw new Error('研发 worktree 绑定缺失，无法确定快照基线')
   const binding = JSON.parse(readFileSync(bindingPath, 'utf8')) as { baseCommit?: string }
   if (!binding.baseCommit || !/^[a-f0-9]{40,64}$/.test(binding.baseCommit)) throw new Error('研发基线损坏')
 
-  // 枚举基线以来的全部变更：
-  // - 已提交/暂存/未暂存：git diff --name-only -z --no-renames <baseCommit>（对基线而非 HEAD，避免员工 commit 后漏采）
-  // - 未跟踪新增：git status 的 ?? 条目
-  const diffRaw = git(worktreePath, 'diff', '--name-only', '-z', '--no-renames', binding.baseCommit!)
-  const trackedPaths = diffRaw.split('\0').filter(Boolean)
-  const untrackedPaths = parseUntrackedZ(git(worktreePath, 'status', '--porcelain=v1', '-z', '--untracked-files=all'))
-  const entries = [...new Set([...trackedPaths, ...untrackedPaths])]
-  if (!entries.length) throw new Error('worktree 相对基线没有变更，无可冻结交付')
-
-  const files: DevelopmentSnapshotFile[] = []
+  const state = captureDevelopmentState(worktreePath, binding.baseCommit!, scope, input.limits)
+  const { files, contentHash, contentDirEntries } = state
+  if (!files.length) throw new Error('worktree 相对基线没有变更，无可冻结交付')
   const contentsDir = join(sessionDirectory, `development-snapshot-${executionId}.d`)
-  let totalBytes = 0
-  const contentDirEntries: Array<{ index: number; newContent?: Buffer; oldContent?: Buffer }> = []
-
-  for (const rawPath of entries) {
-    const path = normalizeRepoRelativePath(rawPath)
-
-    if (!pathWithinAllowed(path, scope.allowedPaths)) {
-      throw new Error(`存在范围外变更，整轮交付被阻塞：${path}`)
-    }
-    if (isProtectedDevelopmentPath(path)) {
-      throw new Error(`变更换及受保护路径，整轮交付被阻塞：${path}`)
-    }
-
-    const absolute = join(worktreePath, ...path.split('/'))
-    const existedAtBase = gitObjectExists(worktreePath, binding.baseCommit!, path)
-    const existsNow = existsSync(absolute)
-
-    if (existsNow && lstatSync(absolute).isSymbolicLink()) {
-      throw new Error(`暂不支持符号链接变更：${path}`)
-    }
-
-    const changeType = existedAtBase && existsNow ? 'modify' : existedAtBase && !existsNow ? 'delete' : 'add'
-
-    let oldSha256: string | null = null
-    let newSha256: string | null = null
-    let newBytes = 0
-
-    if (changeType !== 'add') {
-      const oldContent = gitShowBinary(worktreePath, binding.baseCommit!, path)
-      assertRegularText(path, oldContent)
-      oldSha256 = sha256(oldContent)
-    }
-    if (changeType !== 'delete') {
-      const stat = statSync(absolute)
-      if (!stat.isFile()) throw new Error(`暂不支持的变更对象：${path}`)
-      if (stat.size > limits.maxFileBytes) {
-        throw new Error(`文件超出单文件上限（${limits.maxFileBytes} 字节）：${path}`)
-      }
-      const newContent = readFileSync(absolute)
-      assertRegularText(path, newContent)
-      newSha256 = sha256(newContent)
-      newBytes = newContent.byteLength
-      totalBytes += newBytes
-      if (totalBytes > limits.maxTotalBytes) throw new Error(`变更总量超出上限（${limits.maxTotalBytes} 字节）`)
-    }
-
-    const index = files.length
-    files.push({ path, changeType, oldSha256, newSha256, newBytes })
-    contentDirEntries.push({
-      index,
-      ...(changeType !== 'add' ? { oldContent: gitShowBinary(worktreePath, binding.baseCommit!, path) } : {}),
-      ...(changeType !== 'delete' ? { newContent: readFileSync(absolute) } : {}),
-    })
-  }
-
-  if (files.length > limits.maxFiles) throw new Error(`变更文件数超出上限（${limits.maxFiles}）`)
 
   const id = `snap-${randomUUID()}`
-  const contentHash = hashFiles(files)
-
   // 先写内容，最后原子写清单；中途失败留下孤立目录，不形成“已提交”假记录
   rmSync(contentsDir, { recursive: true, force: true })
   mkdirSync(contentsDir, { recursive: true })
@@ -149,6 +83,124 @@ export function createDevelopmentSnapshot(input: CreateSnapshotInput): Developme
   }
   writeJsonFileAtomic(join(sessionDirectory, `development-snapshot-${executionId}.json`), snapshot)
   return snapshot
+}
+
+/**
+ * 只读重采完整Git变化集，不写快照、不改index/stash。
+ * Git忽略文件不在现有快照契约内；此检查不是整个文件系统的原子快照。
+ */
+export function developmentWorktreeMatchesSnapshot(
+  worktreePath: string,
+  snapshot: DevelopmentSnapshot,
+  scope: DevelopmentTaskScope,
+): boolean {
+  try {
+    if (snapshot.workspaceId !== scope.workspaceId) return false
+    return captureDevelopmentState(worktreePath, snapshot.baseCommit, scope).contentHash === snapshot.contentHash
+  } catch {
+    // 范围外、符号链接、超限、Git读取失败等都不能被当作验证成功。
+    return false
+  }
+}
+
+interface CapturedDevelopmentState {
+  files: DevelopmentSnapshotFile[]
+  contentHash: string
+  contentDirEntries: Array<{ index: number; newContent?: Buffer; oldContent?: Buffer }>
+}
+
+function captureDevelopmentState(
+  worktreePath: string,
+  baseCommit: string,
+  scope: DevelopmentTaskScope,
+  overrides?: SnapshotLimitsParam,
+): CapturedDevelopmentState {
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(baseCommit)) throw new Error('研发基线损坏')
+  const limits = { ...SNAPSHOT_LIMITS, ...overrides }
+  // 枚举基线以来的全部变更：
+  // - 已提交/暂存/未暂存：git diff --name-only -z --no-renames <baseCommit>（对基线而非 HEAD，避免员工 commit 后漏采）
+  // - 未跟踪新增：git status 的 ?? 条目
+  const diffRaw = git(worktreePath, 'diff', '--name-only', '-z', '--no-renames', baseCommit)
+  const trackedPaths = diffRaw.split('\0').filter(Boolean)
+  const untrackedPaths = parseUntrackedZ(git(worktreePath, 'status', '--porcelain=v1', '-z', '--untracked-files=all'))
+  const entries = [...new Set([...trackedPaths, ...untrackedPaths])]
+
+  const files: DevelopmentSnapshotFile[] = []
+  let totalBytes = 0
+  const contentDirEntries: Array<{ index: number; newContent?: Buffer; oldContent?: Buffer }> = []
+
+  for (const rawPath of entries) {
+    const path = normalizeRepoRelativePath(rawPath)
+
+    if (!pathWithinAllowed(path, scope.allowedPaths)) {
+      throw new Error(`存在范围外变更，整轮交付被阻塞：${path}`)
+    }
+    if (isProtectedDevelopmentPath(path)) {
+      throw new Error(`变更换及受保护路径，整轮交付被阻塞：${path}`)
+    }
+
+    const absolute = join(worktreePath, ...path.split('/'))
+    const existedAtBase = gitObjectExists(worktreePath, baseCommit, path)
+    const existsNow = snapshotPathExistsWithoutSymlinks(worktreePath, path)
+
+    const changeType = existedAtBase && existsNow ? 'modify' : existedAtBase && !existsNow ? 'delete' : 'add'
+
+    let oldSha256: string | null = null
+    let newSha256: string | null = null
+    let newBytes = 0
+    let oldContent: Buffer | undefined
+    let newContent: Buffer | undefined
+
+    if (changeType !== 'add') {
+      oldContent = gitShowBinary(worktreePath, baseCommit, path)
+      assertRegularText(path, oldContent)
+      oldSha256 = sha256(oldContent)
+    }
+    if (changeType !== 'delete') {
+      const stat = statSync(absolute)
+      if (!stat.isFile()) throw new Error(`暂不支持的变更对象：${path}`)
+      if (stat.size > limits.maxFileBytes) {
+        throw new Error(`文件超出单文件上限（${limits.maxFileBytes} 字节）：${path}`)
+      }
+      newContent = readFileSync(absolute)
+      if (newContent.byteLength > limits.maxFileBytes) throw new Error(`文件超出单文件上限（${limits.maxFileBytes} 字节）：${path}`)
+      assertRegularText(path, newContent)
+      newSha256 = sha256(newContent)
+      newBytes = newContent.byteLength
+      totalBytes += newBytes
+      if (totalBytes > limits.maxTotalBytes) throw new Error(`变更总量超出上限（${limits.maxTotalBytes} 字节）`)
+    }
+
+    const index = files.length
+    files.push({ path, changeType, oldSha256, newSha256, newBytes })
+    contentDirEntries.push({
+      index,
+      oldContent,
+      newContent,
+    })
+  }
+
+  if (files.length > limits.maxFiles) throw new Error(`变更文件数超出上限（${limits.maxFiles}）`)
+
+  return { files, contentHash: hashFiles(files), contentDirEntries }
+}
+
+/** 不跟随目标或任一父目录的符号链接，包括dangling链接。 */
+function snapshotPathExistsWithoutSymlinks(worktreePath: string, path: string): boolean {
+  const segments = path.split('/')
+  let current = worktreePath
+  for (let index = 0; index < segments.length; index++) {
+    current = join(current, segments[index]!)
+    try {
+      const stat = lstatSync(current)
+      if (stat.isSymbolicLink()) throw new Error(`暂不支持符号链接变更：${path}`)
+      if (index < segments.length - 1 && !stat.isDirectory()) throw new Error(`路径父级不是目录：${path}`)
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return false
+      throw error
+    }
+  }
+  return true
 }
 
 /** 读取并校验快照：清单存在、内容文件齐全、逐文件 hash 与指纹链一致（T30）。 */

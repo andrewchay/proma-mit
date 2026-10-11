@@ -6,6 +6,7 @@
  */
 
 import type { RuntimeToolDefinition } from './types.ts'
+import { bindCoreToolEffects } from './tool-effects'
 import {
   READ_TOOL_NAME,
   createReadToolDefinition,
@@ -168,9 +169,9 @@ export interface CreateCoreToolsOptions {
 /** 阶段 1 核心工具列表 */
 export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDefinition[] {
   const tools: RuntimeToolDefinition[] = [
-    { ...createReadToolDefinition(), execute: executeReadTool },
-    { ...createWriteToolDefinition(), execute: executeWriteTool },
-    { ...createEditToolDefinition(), execute: executeEditTool },
+    bindCoreToolEffects({ ...createReadToolDefinition(), execute: executeReadTool }),
+    bindCoreToolEffects({ ...createWriteToolDefinition(), execute: executeWriteTool }),
+    bindCoreToolEffects({ ...createEditToolDefinition(), execute: executeEditTool }),
     { ...createBashToolDefinition(), execute: executeBashTool },
     { ...createGrepToolDefinition(), execute: executeGrepTool },
     { ...createWebSearchToolDefinition(), execute: executeWebSearchTool },

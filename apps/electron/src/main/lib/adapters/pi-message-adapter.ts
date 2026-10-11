@@ -17,6 +17,7 @@ import type {
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core'
 import type { FileEntry as PiFileEntry } from '@earendil-works/pi-coding-agent'
 import { randomUUID } from 'node:crypto'
+import { assessToolCallBatchIntegrity } from '@gravitas/shared'
 
 function timestamp(): number {
   return Date.now()
@@ -114,6 +115,15 @@ function piToolCallToSdk(block: PiToolCall): SDKContentBlock {
   }
 }
 
+/** Pi AssistantMessage 的批次观察：length 截断时 Pi 会把其中工具调用判为失败而不执行。 */
+function assessPiToolCallBatch(message: PiAssistantMessage) {
+  const calls = message.content
+    .filter((block): block is PiToolCall => block.type === 'toolCall')
+    .map((call) => ({ toolCallId: call.id, toolName: call.name }))
+  const finishReason = message.stopReason === 'toolUse' ? 'tool-calls' : message.stopReason
+  return assessToolCallBatchIntegrity(calls, finishReason)
+}
+
 function convertPiAssistantMessage(
   message: PiAssistantMessage,
   sessionId: string,
@@ -144,6 +154,8 @@ function convertPiAssistantMessage(
     _channelModelId: channelModelId,
     ...(options.uuid ? { uuid: options.uuid } : {}),
     ...(!final ? { _partial: true } : {}),
+    // E03观察：Pi toolUse 映射为共享词表 tool-calls；其余停止原因原样交给判定，未知即不完整。
+    ...(final ? { toolCallBatchIntegrity: assessPiToolCallBatch(message) } : {}),
     ...(final && message.stopReason === 'error' && message.errorMessage
       ? { error: { message: message.errorMessage, errorType: 'pi_runtime_error' } }
       : {}),

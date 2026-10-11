@@ -1,0 +1,1149 @@
+{
+  "model": "glm-5.3-flash",
+  "runtime": "pi",
+  "asOf": "2026-10-10T16:53:00+08:00",
+  "sources": [
+    {
+      "file": "r01-glm-protocol-check/report.json",
+      "sha256": "8ab0cac54b3df30dc36ac6f85bf5936781560c44c0e8d8c2f725c803815bacba"
+    },
+    {
+      "file": "r01-glm-remaining29/report.json",
+      "sha256": "693626abe5686b1dc552c5325bdf3506bc7cc9c61d510533aa69a8c1181720c6"
+    }
+  ],
+  "completedPairs": 30,
+  "bothPassedPairs": 28,
+  "arms": [
+    {
+      "arm": "upgrade-scheduled",
+      "runs": 30,
+      "passed": 29
+    },
+    {
+      "arm": "baseline-serial",
+      "runs": 30,
+      "passed": 28
+    }
+  ],
+  "budget": {
+    "capCny": 10,
+    "reservedCny": 4.506018399999994,
+    "requests": 165,
+    "confirmedEstimateCny": 0.967516,
+    "costSource": "conservative_local_reservation",
+    "actualCost": "unknown",
+    "priceSource": "https://bigmodel.cn/pricing",
+    "priceAsOf": "2026-10-10"
+  },
+  "records": [
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "text-ok",
+      "pass": true,
+      "detail": "OK",
+      "requiredTools": [],
+      "toolCallNames": [],
+      "inputTokens": 7031,
+      "outputTokens": 35,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 6793
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "text-ok",
+      "pass": true,
+      "detail": "OK",
+      "requiredTools": [],
+      "toolCallNames": [],
+      "inputTokens": 54,
+      "outputTokens": 39,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 4721
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "read-secret",
+      "pass": true,
+      "detail": "Read+值",
+      "requiredTools": [
+        "Read"
+      ],
+      "toolCallNames": [
+        "Read"
+      ],
+      "inputTokens": 7134,
+      "outputTokens": 86,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12237
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "grep-definition",
+      "pass": true,
+      "detail": "a.ts",
+      "requiredTools": [],
+      "toolCallNames": [
+        "Grep"
+      ],
+      "inputTokens": 325,
+      "outputTokens": 85,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 9094
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "write-new-file",
+      "pass": true,
+      "detail": "out/summary.md",
+      "requiredTools": [
+        "Write"
+      ],
+      "toolCallNames": [
+        "Write"
+      ],
+      "inputTokens": 223,
+      "outputTokens": 117,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 9504
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "edit-constant",
+      "pass": true,
+      "detail": "export const LIMIT = 5",
+      "requiredTools": [
+        "Edit"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Edit"
+      ],
+      "inputTokens": 290,
+      "outputTokens": 126,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 13915
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "bash-list",
+      "pass": true,
+      "detail": "Bash+文件名",
+      "requiredTools": [
+        "Bash"
+      ],
+      "toolCallNames": [
+        "Bash"
+      ],
+      "inputTokens": 7352,
+      "outputTokens": 272,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 16120
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "deny-write",
+      "pass": true,
+      "detail": "写入应被拒绝且未落盘",
+      "requiredTools": [],
+      "toolCallNames": [
+        "Write"
+      ],
+      "inputTokens": 265,
+      "outputTokens": 517,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 20374
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "sum-two-files",
+      "pass": true,
+      "detail": "42",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 267,
+      "outputTokens": 194,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14670
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "json-sum",
+      "pass": true,
+      "detail": "16.5",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 200,
+      "outputTokens": 115,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10781
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "json-max",
+      "pass": true,
+      "detail": "19",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 225,
+      "outputTokens": 142,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 8564
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "json-min",
+      "pass": true,
+      "detail": "-2",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 197,
+      "outputTokens": 127,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14234
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "json-average",
+      "pass": true,
+      "detail": "5",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 239,
+      "outputTokens": 165,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12167
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "json-count",
+      "pass": true,
+      "detail": "2",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 234,
+      "outputTokens": 105,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 7343
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "csv-total",
+      "pass": true,
+      "detail": "13",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 220,
+      "outputTokens": 126,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 13717
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "csv-price",
+      "pass": true,
+      "detail": "14",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 291,
+      "outputTokens": 203,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14180
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "sort-integers",
+      "pass": true,
+      "detail": "-1,2,5,9",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 274,
+      "outputTokens": 161,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12044
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "deduplicate",
+      "pass": true,
+      "detail": "a,b,c",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 331,
+      "outputTokens": 224,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14662
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "uppercase",
+      "pass": true,
+      "detail": "HELLO WORLD",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 276,
+      "outputTokens": 140,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12954
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "lowercase",
+      "pass": true,
+      "detail": "hello world",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 240,
+      "outputTokens": 111,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 9874
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "reverse-word",
+      "pass": true,
+      "detail": "sativarg",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 255,
+      "outputTokens": 179,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11939
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "line-count",
+      "pass": true,
+      "detail": "3",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Bash",
+        "Write"
+      ],
+      "inputTokens": 498,
+      "outputTokens": 359,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 23885
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "lookup-key",
+      "pass": true,
+      "detail": "ap-south",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 296,
+      "outputTokens": 167,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10889
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "ini-port",
+      "pass": true,
+      "detail": "8123",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 201,
+      "outputTokens": 95,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 9871
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "markdown-heading",
+      "pass": true,
+      "detail": "Next Steps",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 236,
+      "outputTokens": 193,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14709
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "log-errors",
+      "pass": true,
+      "detail": "2",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 256,
+      "outputTokens": 197,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12192
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "intersection",
+      "pass": true,
+      "detail": "2,3",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 326,
+      "outputTokens": 207,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12637
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "difference",
+      "pass": true,
+      "detail": "1,7",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 309,
+      "outputTokens": 169,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 8117
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "json-names",
+      "pass": true,
+      "detail": "Ada,Carol",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 306,
+      "outputTokens": 137,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 8158
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "unicode-read",
+      "pass": true,
+      "detail": "青山-八号",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 213,
+      "outputTokens": 133,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 13545
+    },
+    {
+      "arm": "upgrade-scheduled",
+      "caseId": "decimal-sum",
+      "pass": false,
+      "detail": "1.00",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 442,
+      "outputTokens": 322,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11630
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "read-secret",
+      "pass": true,
+      "detail": "Read+值",
+      "requiredTools": [
+        "Read"
+      ],
+      "toolCallNames": [
+        "Read"
+      ],
+      "inputTokens": 159,
+      "outputTokens": 69,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 6371
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "grep-definition",
+      "pass": true,
+      "detail": "a.ts",
+      "requiredTools": [],
+      "toolCallNames": [
+        "Grep"
+      ],
+      "inputTokens": 321,
+      "outputTokens": 85,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 6805
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "write-new-file",
+      "pass": true,
+      "detail": "out/summary.md",
+      "requiredTools": [
+        "Write"
+      ],
+      "toolCallNames": [
+        "Write"
+      ],
+      "inputTokens": 207,
+      "outputTokens": 98,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 7432
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "edit-constant",
+      "pass": true,
+      "detail": "export const LIMIT = 5",
+      "requiredTools": [
+        "Edit"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Edit"
+      ],
+      "inputTokens": 298,
+      "outputTokens": 137,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 9105
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "bash-list",
+      "pass": false,
+      "detail": "Bash+文件名",
+      "requiredTools": [
+        "Bash"
+      ],
+      "toolCallNames": [
+        "Bash"
+      ],
+      "inputTokens": 178,
+      "outputTokens": 112,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 6642
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "deny-write",
+      "pass": true,
+      "detail": "写入应被拒绝且未落盘",
+      "requiredTools": [],
+      "toolCallNames": [
+        "Write"
+      ],
+      "inputTokens": 265,
+      "outputTokens": 420,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 18488
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "sum-two-files",
+      "pass": true,
+      "detail": "42",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 248,
+      "outputTokens": 169,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 17272
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "json-sum",
+      "pass": true,
+      "detail": "16.5",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 270,
+      "outputTokens": 159,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 15971
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "json-max",
+      "pass": true,
+      "detail": "19",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 278,
+      "outputTokens": 149,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 15055
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "json-min",
+      "pass": true,
+      "detail": "-2",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 230,
+      "outputTokens": 125,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 15989
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "json-average",
+      "pass": true,
+      "detail": "5",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 247,
+      "outputTokens": 169,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14548
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "json-count",
+      "pass": true,
+      "detail": "2",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 239,
+      "outputTokens": 145,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10953
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "csv-total",
+      "pass": true,
+      "detail": "13",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 286,
+      "outputTokens": 168,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10870
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "csv-price",
+      "pass": true,
+      "detail": "14",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 315,
+      "outputTokens": 205,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14797
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "sort-integers",
+      "pass": true,
+      "detail": "-1,2,5,9",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 261,
+      "outputTokens": 134,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11763
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "deduplicate",
+      "pass": true,
+      "detail": "a,b,c",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 275,
+      "outputTokens": 112,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11120
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "uppercase",
+      "pass": true,
+      "detail": "HELLO WORLD",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 285,
+      "outputTokens": 157,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14604
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "lowercase",
+      "pass": true,
+      "detail": "hello world",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 249,
+      "outputTokens": 120,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10479
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "reverse-word",
+      "pass": true,
+      "detail": "sativarg",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 265,
+      "outputTokens": 147,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11298
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "line-count",
+      "pass": true,
+      "detail": "3",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 271,
+      "outputTokens": 131,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 13432
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "lookup-key",
+      "pass": true,
+      "detail": "ap-south",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 257,
+      "outputTokens": 118,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10399
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "ini-port",
+      "pass": true,
+      "detail": "8123",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 198,
+      "outputTokens": 120,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 10551
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "markdown-heading",
+      "pass": true,
+      "detail": "Next Steps",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 230,
+      "outputTokens": 134,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11683
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "log-errors",
+      "pass": true,
+      "detail": "2",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 369,
+      "outputTokens": 219,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 12411
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "intersection",
+      "pass": true,
+      "detail": "2,3",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 293,
+      "outputTokens": 129,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 13301
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "difference",
+      "pass": true,
+      "detail": "1,7",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 359,
+      "outputTokens": 236,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 9333
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "json-names",
+      "pass": true,
+      "detail": "Ada,Carol",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 283,
+      "outputTokens": 134,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 8071
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "unicode-read",
+      "pass": true,
+      "detail": "青山-八号",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 210,
+      "outputTokens": 137,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 11402
+    },
+    {
+      "arm": "baseline-serial",
+      "caseId": "decimal-sum",
+      "pass": false,
+      "detail": "1.00",
+      "requiredTools": [
+        "Read",
+        "Write"
+      ],
+      "toolCallNames": [
+        "Read",
+        "Read",
+        "Write"
+      ],
+      "inputTokens": 400,
+      "outputTokens": 284,
+      "cost": "unknown",
+      "status": "completed",
+      "durationMs": 14559
+    }
+  ],
+  "note": "Original strict verdicts preserved; current-build serial baseline, not historical-release baseline; billed cost unknown."
+}

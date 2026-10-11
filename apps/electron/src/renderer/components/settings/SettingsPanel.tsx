@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ChannelSettings } from "./ChannelSettings";
 import { AgentSettings } from "./AgentSettings";
+import { VerifierSettings } from "./VerifierSettings";
 import { BotHubSettings } from "./BotHubSettings";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { AutomationSettings } from "./AutomationSettings";
@@ -130,6 +131,8 @@ function renderTabContent(tab: SettingsTab): React.ReactElement {
       return <ChannelsTab />
     case 'agent':
       return <AgentSettings />
+    case 'verifier':
+      return <VerifierSettings />
     case 'tools':
       return <ToolsAndPromptsTab />
     case 'automation':

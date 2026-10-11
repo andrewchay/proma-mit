@@ -6,8 +6,11 @@ import { GoalCoordinator } from './goal-coordinator'
 import { ElectronGoalStore } from './goal-store'
 
 const testDirs: string[] = []
+const originalConfig = process.env.PROMA_TEST_CONFIG_DIR
 
 afterEach(() => {
+  if (originalConfig === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = originalConfig
   while (testDirs.length > 0) {
     const dir = testDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
@@ -19,6 +22,14 @@ function createCoordinator(): GoalCoordinator {
   testDirs.push(dir)
   process.env.PROMA_TEST_CONFIG_DIR = dir
   return new GoalCoordinator(new ElectronGoalStore())
+}
+
+async function capturePrepared(c: GoalCoordinator, sessionId: string) {
+  const goal = c.getActiveBySession(sessionId)!
+  const run = c.captureRun(sessionId)!
+  // 固定fixture请求；生产上下文由真实query参数提供。
+  await run.onPrepared({ runtime: goal.runtime, workspaceId: goal.workspaceId, channelId: goal.channelId ?? 'fixture-channel', requestedModelId: goal.modelId, provider: 'openai', cwd: '/fixture' })
+  return run
 }
 
 describe('GoalCoordinator', () => {
@@ -33,7 +44,8 @@ describe('GoalCoordinator', () => {
       objective: '补完 Goal Runtime',
     })
 
-    await coordinator.submitCheckpoint('session-1', {
+    const run = (await capturePrepared(coordinator, 'session-1'))
+    await run.onCheckpoint({
       outcome: 'continue',
       summary: '共享类型已完成',
       completed: ['共享类型'],
@@ -43,7 +55,7 @@ describe('GoalCoordinator', () => {
     })
     expect(requests).toEqual([])
 
-    await coordinator.onTurnFinished('session-1')
+    await run.onFinished(true)
     await Bun.sleep(0)
 
     expect(requests).toHaveLength(1)
@@ -60,7 +72,7 @@ describe('GoalCoordinator', () => {
       acceptanceCriteria: ['行为测试通过'],
     })
 
-    await expect(coordinator.submitCheckpoint('session-2', {
+    await expect((await capturePrepared(coordinator, 'session-2')).onCheckpoint({
       outcome: 'complete',
       summary: '看起来完成了',
       completed: ['实现'],
@@ -73,12 +85,13 @@ describe('GoalCoordinator', () => {
     const requests: string[] = []
     coordinator.setContinuationRunner(async ({ prompt }) => { requests.push(prompt); return true })
     coordinator.create({ sessionId: 'session-3', runtime: 'proma', objective: '持续推进' })
-    await coordinator.submitCheckpoint('session-3', {
+    const run = (await capturePrepared(coordinator, 'session-3'))
+    await run.onCheckpoint({
       outcome: 'continue', summary: '准备继续', completed: [], evidence: [],
       nextAction: '继续执行', wakeTrigger: { type: 'immediate' },
     })
     coordinator.pauseForUserInput('session-3')
-    await coordinator.onTurnFinished('session-3')
+    await run.onFinished(true)
     await Bun.sleep(0)
 
     expect(requests).toEqual([])
@@ -102,16 +115,150 @@ describe('GoalCoordinator', () => {
     const requests: string[] = []
     coordinator.setContinuationRunner(async ({ prompt }) => { requests.push(prompt); return true })
     const goal = coordinator.create({ sessionId: 'session-pause', runtime: 'ai-sdk', objective: '暂停不再续跑' })
-    await coordinator.submitCheckpoint('session-pause', {
+    const run = (await capturePrepared(coordinator, 'session-pause'))
+    await run.onCheckpoint({
       outcome: 'continue', summary: '等待续跑', completed: [], evidence: [],
       nextAction: '继续执行', wakeTrigger: { type: 'immediate' },
     })
 
     coordinator.setStatus(goal.id, 'waiting')
-    await coordinator.onTurnFinished('session-pause')
+    await run.onFinished(true)
     await Bun.sleep(0)
 
     expect(requests).toEqual([])
     expect(coordinator.get(goal.id)?.status).toBe('waiting')
+  })
+})
+
+
+describe('Goal主进程调用身份', () => {
+  const complete = { outcome: 'complete' as const, summary: '完成', completed: [], evidence: [] }
+  const continuing = { outcome: 'continue' as const, summary: '继续', completed: [], evidence: [], nextAction: '验证', wakeTrigger: { type: 'immediate' as const } }
+
+  test('普通调用签发唯一runId并持久，检查点与run关联且不可重复提交', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'ai-sdk', objective: '目标' })
+    const run = (await capturePrepared(c, 's'))
+    expect(run.goalId).toBe(g.id)
+    expect(c.get(g.id)?.activeRunId).toBe(run.runId)
+    expect(new ElectronGoalStore().get(g.id)?.activeRunId).toBe(run.runId)
+    await run.onCheckpoint(complete)
+    expect(c.get(g.id)?.checkpointRunId).toBe(run.runId)
+    await expect(run.onCheckpoint(complete)).rejects.toThrow('已失效')
+  })
+
+  test('旧run不能更新同会话新Goal', async () => {
+    const c = createCoordinator()
+    const old = c.create({ sessionId: 's', runtime: 'pi', objective: '旧' })
+    const run = (await capturePrepared(c, 's'))
+    c.setStatus(old.id, 'cancelled')
+    const next = c.create({ sessionId: 's', runtime: 'pi', objective: '新' })
+    await expect(run.onCheckpoint(complete)).rejects.toThrow('已失效')
+    await run.onFinished(true)
+    expect(c.get(next.id)?.status).toBe('active')
+    expect(c.get(next.id)?.version).toBe(1)
+  })
+
+  test('新run签发后，旧回调和finally均不能覆盖新run', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'ai-sdk', objective: '目标' })
+    const old = (await capturePrepared(c, 's'))
+    const next = (await capturePrepared(c, 's'))
+    expect(old.runId).not.toBe(next.runId)
+    await expect(old.onCheckpoint(complete)).rejects.toThrow('已失效')
+    await old.onFinished(false)
+    expect(c.get(g.id)?.activeRunId).toBe(next.runId)
+    await next.onCheckpoint(complete)
+  })
+
+  test('暂停后恢复不会复活旧回调', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'pi', objective: '目标' })
+    const old = (await capturePrepared(c, 's'))
+    c.setStatus(g.id, 'waiting')
+    c.setStatus(g.id, 'active')
+    await expect(old.onCheckpoint(complete)).rejects.toThrow('已失效')
+  })
+
+  test('新run无检查点退出不会重放上一轮continue', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'ai-sdk', objective: '目标' })
+    const requests: string[] = []
+    c.setContinuationRunner(async ({ prompt }) => { requests.push(prompt); return true })
+    const old = (await capturePrepared(c, 's'))
+    await old.onCheckpoint(continuing)
+    const next = (await capturePrepared(c, 's'))
+    await next.onFinished(true)
+    await old.onFinished(true)
+    await Bun.sleep(0)
+    expect(requests).toEqual([])
+    expect(c.get(g.id)?.status).toBe('waiting')
+    expect(c.get(g.id)?.activeRunId).toBeUndefined()
+  })
+
+  test('已提交continue但槽位被停止，结束不自动续跑', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'pi', objective: '目标' })
+    const requests: string[] = []
+    c.setContinuationRunner(async ({ prompt }) => { requests.push(prompt); return true })
+    const run = (await capturePrepared(c, 's'))
+    await run.onCheckpoint(continuing)
+    await run.onFinished(false)
+    await Bun.sleep(0)
+    expect(requests).toEqual([])
+    expect(c.get(g.id)?.checkpoint?.wakeTrigger?.type).toBe('user_input')
+  })
+
+  test('重复finally不产生第二次续跑，回调结束后不再可提交', async () => {
+    const c = createCoordinator()
+    c.create({ sessionId: 's', runtime: 'ai-sdk', objective: '目标' })
+    const requests: string[] = []
+    c.setContinuationRunner(async ({ prompt }) => { requests.push(prompt); return true })
+    const run = (await capturePrepared(c, 's'))
+    await run.onCheckpoint(continuing)
+    await run.onFinished(true)
+    await run.onFinished(true)
+    await Bun.sleep(0)
+    expect(requests).toHaveLength(1)
+    await expect(run.onCheckpoint(complete)).rejects.toThrow('已失效')
+  })
+
+  test('无Goal或已取消Goal不签发身份', () => {
+    const c = createCoordinator()
+    expect(c.captureRun('none')).toBeUndefined()
+    const g = c.create({ sessionId: 's', runtime: 'pi', objective: '目标' })
+    c.setStatus(g.id, 'cancelled')
+    expect(c.captureRun('s')).toBeUndefined()
+  })
+})
+
+
+describe('续跑启动结果回读', () => {
+  const continuing = { outcome: 'continue' as const, summary: '继续', completed: [], evidence: [], nextAction: '下一步', wakeTrigger: { type: 'immediate' as const } }
+  test('runner完成新run后再抛错，不回写旧快照覆盖completed', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'ai-sdk', objective: '目标' })
+    c.setContinuationRunner(async () => {
+      await (await capturePrepared(c, 's')).onCheckpoint({ outcome: 'complete', summary: '完成', completed: [], evidence: [] })
+      throw new Error('fixture迟到错误')
+    })
+    const run = (await capturePrepared(c, 's'))
+    await run.onCheckpoint(continuing)
+    await run.onFinished(true)
+    await Bun.sleep(0)
+    expect(c.get(g.id)?.status).toBe('completed')
+  })
+
+  test('runner已经签发新run但返回false，不清空新身份', async () => {
+    const c = createCoordinator()
+    const g = c.create({ sessionId: 's', runtime: 'ai-sdk', objective: '目标' })
+    let nextId: string | undefined
+    c.setContinuationRunner(async () => { nextId = (await capturePrepared(c, 's')).runId; return false })
+    const run = (await capturePrepared(c, 's'))
+    await run.onCheckpoint(continuing)
+    await run.onFinished(true)
+    await Bun.sleep(0)
+    expect(nextId).toBeDefined()
+    expect(c.get(g.id)?.activeRunId).toBe(nextId)
   })
 })

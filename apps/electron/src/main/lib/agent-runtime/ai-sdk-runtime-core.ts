@@ -30,6 +30,7 @@ import {
 import type { LanguageModel, LanguageModelUsage, ModelMessage, TextStreamPart, ToolSet, UserContent } from 'ai'
 import { isStepCount, jsonSchema, streamText, tool } from 'ai'
 import { isContextOverflowError, isTransientNetworkError } from '../error-patterns'
+import { guardLoadedToolCall, planToolLoading } from './tool-loading-gate'
 import { enrichHistoryWithDocuments, enrichMessageWithDocuments, getImageAttachmentData } from './attachment-enrichment'
 import { buildAgentSystemPrompt, sdkMessagesToChatMessages } from './prompt-builder'
 import { ASK_USER_QUESTION_TOOL_NAME, ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME, GOAL_CHECKPOINT_TOOL_NAME } from './tool-registry'
@@ -43,7 +44,9 @@ import {
   resolveModelFirstResponseTimeoutMs,
   resolveModelStreamIdleTimeoutMs,
 } from './stream-timeouts'
+import { assessToolCallBatchIntegrity, type ToolCallBatchIntegrity } from '@gravitas/shared'
 import { estimateTokenCount } from '../agent-tool-token-estimator'
+import { runGuardedToolCall } from './tool-scheduler-service'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 
 export interface AISDKRuntimeSessionState {
@@ -89,6 +92,8 @@ export interface AISDKToolExecutionState {
   onGoalCheckpoint?: (checkpoint: AgentGoalCheckpoint) => Promise<void>
   /** 当前工作区 slug（ReadSkill 工具读取 Skill 用） */
   workspaceSlug?: string
+  /** D03：独立工具加载门禁（opt-in）；存在时执行前校验未加载/旧 schema。 */
+  loadingPlan?: import('./tool-loading-gate').ToolLoadingPlan
   /** 上下文压缩所需的模型凭据（CompactContext 工具拦截时使用） */
   compaction?: {
     provider: ProviderType
@@ -141,6 +146,8 @@ export interface AISDKAgentTurnInput {
   baseUrl: string
   cwd: string
   runtimeTools: RuntimeToolDefinition[]
+  /** D03：显式开启独立工具加载（opt-in）；不传 = 既有全量行为。 */
+  toolLoading?: import('./tool-loading-gate').ToolLoadingSpec
   activeSession: AISDKRuntimeSessionState
   maxTurns: number
   maxRetries: number
@@ -206,15 +213,22 @@ export class AISDKRuntimeCore {
       modelId: input.modelId,
       ...((input.fetchFn ?? pilotRuntime?.fetch) ? { fetch: input.fetchFn ?? pilotRuntime?.fetch } : {}),
     })
-    const effectiveSystemPrompt = buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
+
+    // D03：opt-in 工具加载——计划先行；选中集外的 schema 不进入模型。
+    const loadingPlan = input.toolLoading ? planToolLoading(input.toolLoading, input.runtimeTools) : undefined
+    const discoverySummary = loadingPlan ? `\n\n${loadingPlan.summary}` : ''
+    const effectiveSystemPrompt = `${buildAgentSystemPrompt(input.systemPrompt, input.cwd, input.workspaceSlug
       ? { workspaceSlug: input.workspaceSlug, skills: safeGetWorkspaceSkills(input.workspaceSlug) }
-      : undefined)
+      : undefined)}${discoverySummary}`
     const history = await enrichHistoryWithDocuments(
       input.historyMessages ? sdkMessagesToChatMessages(input.historyMessages) : [],
     )
     const enrichedPrompt = await enrichMessageWithDocuments(input.prompt, input.attachments)
     const messages = buildAISDKModelMessages(history, enrichedPrompt, getImageAttachmentData(input.attachments))
-    const toolSet = this.createAISDKTools(input.runtimeTools, {
+    const turnTools = loadingPlan
+      ? input.runtimeTools.filter((tool) => loadingPlan.loadedNames.has(tool.name))
+      : input.runtimeTools
+    const toolSet = this.createAISDKTools(turnTools, {
       sessionId: input.sessionId,
       cwd: input.cwd,
       signal: input.activeSession.controller.signal,
@@ -229,6 +243,7 @@ export class AISDKRuntimeCore {
       mcpManager: input.mcpManager,
       onGoalCheckpoint: input.onGoalCheckpoint,
       workspaceSlug: input.workspaceSlug,
+      ...(loadingPlan ? { loadingPlan } : {}),
     })
 
     const streamRun = await this.runStreamTextWithRetry({
@@ -255,11 +270,14 @@ export class AISDKRuntimeCore {
       : await streamRun.result.steps
     const sdkMessages = buildAISDKMessagesFromSteps(steps, input.sessionId, input.modelId)
     const usage = await streamRun.result.usage
+    // 不完整批次已无法撤销已执行调用；这里只持久化观察，供下游拒绝自动续跑/复核。
+    const toolCallBatchIntegrity = assessStepsToolCallBatchIntegrity(steps)
     const resultMessage: SDKResultMessage = {
       type: 'result',
       subtype: 'success',
       usage: toAISDKResultUsage(usage),
       session_id: input.sessionId,
+      toolCallBatchIntegrity,
     }
     return [...sdkMessages, resultMessage as unknown as SDKMessage]
   }
@@ -373,6 +391,17 @@ export class AISDKRuntimeCore {
         description: runtimeTool.description,
         inputSchema: jsonSchema<Record<string, unknown>>(runtimeTool.parameters as RuntimeToolJsonSchema),
         execute: async (args: Record<string, unknown>, options): Promise<ExecutedAISDKToolResult> => {
+          if (state.loadingPlan) {
+            const refusal = guardLoadedToolCall(state.loadingPlan, runtimeTool)
+            if (!refusal.ok) {
+              return {
+                content: refusal.reason === 'schema_changed'
+                  ? `工具 ${runtimeTool.name} 已加载的 schema 已被修订，拒绝以旧 schema 执行，请重新加载`
+                  : `工具 ${runtimeTool.name} 不在已加载工具集内，拒绝执行`,
+                isError: true,
+              }
+            }
+          }
           return this.executeRuntimeTool(runtimeTool, args, {
             ...state,
             signal: options.abortSignal ?? state.signal,
@@ -492,7 +521,8 @@ export class AISDKRuntimeCore {
     }
 
     try {
-      const result = await runtimeTool.execute(args, {
+      // E05：经共享调度器执行。锁域为本进程内经此调度的调用，不宣称跨进程安全。
+      const toolContext = {
         cwd: state.cwd,
         sessionId: state.sessionId,
         abortSignal: state.signal,
@@ -500,7 +530,7 @@ export class AISDKRuntimeCore {
         planModeEntered: state.activeSession.planModeEntered,
         onEnterPlanMode: state.onEnterPlanMode,
         onExitPlanMode: state.onExitPlanMode,
-        setPermissionMode: (mode) => {
+        setPermissionMode: (mode: PromaPermissionMode) => {
           state.onPermissionModeChange?.(mode)
           state.activeSession.permissionMode = mode
           state.activeSession.planModeEntered = false
@@ -508,6 +538,13 @@ export class AISDKRuntimeCore {
         onAskUser: state.onAskUser,
         runSubAgent: state.runSubAgent,
         mcpManager: state.mcpManager,
+      }
+      const result = await runGuardedToolCall({
+        tool: runtimeTool,
+        args,
+        ctx: toolContext,
+        signal: state.signal,
+        execute: () => runtimeTool.execute(args, toolContext),
       })
       return { content: result.content, isError: result.isError, imageData: result.imageData }
     } catch (error) {
@@ -652,6 +689,22 @@ export function buildAISDKModelMessages(
       .map((msg): ModelMessage => ({ role: msg.role, content: msg.content })),
     { role: 'user', content: currentContent },
   ]
+}
+
+/**
+ * E03接线：把每个step快照转为批次完整性观察并汇总。
+ * 只记录事实（截断/空名等）；不表示未执行、可撤销或Provider确认。
+ */
+export function assessStepsToolCallBatchIntegrity(steps: ReadonlyArray<Pick<SDKMessageStepSnapshot, 'toolCalls' | 'finishReason'>>): ToolCallBatchIntegrity {
+  const reasons: string[] = []
+  steps.forEach((step, index) => {
+    const batch = assessToolCallBatchIntegrity(
+      step.toolCalls.map((call) => ({ toolCallId: call.toolCallId, toolName: call.toolName })),
+      step.finishReason,
+    )
+    for (const reason of batch.reasons) reasons.push(`step_${index}:${reason}`)
+  })
+  return { version: 1, complete: reasons.length === 0, reasons, unexecutedMandatory: false }
 }
 
 export function buildAISDKMessagesFromSteps(

@@ -55,6 +55,13 @@ describe('Agent runtime 类型', () => {
     expect(AGENT_RUNTIME_CAPABILITIES['ai-sdk'].supportsBudgetStopThreshold).toBe(true)
   })
 
+  test('进程内工具调度锁域声明：claude 子进程不在锁域，其余 runtime 在锁域内', () => {
+    expect(AGENT_RUNTIME_CAPABILITIES.claude.supportsInProcessToolScheduling).toBe(false)
+    expect(AGENT_RUNTIME_CAPABILITIES.proma.supportsInProcessToolScheduling).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.pi.supportsInProcessToolScheduling).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES['ai-sdk'].supportsInProcessToolScheduling).toBe(true)
+  })
+
   test('自动化设置所需的 IPC 通道保持显式且稳定', () => {
     expect(AGENT_IPC_CHANNELS.STOP_ALL_WEB_BRIDGES).toBe('agent:stop-all-web-bridges')
     expect(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_CAPABILITIES).toBe('agent:get-computer-use-capabilities')

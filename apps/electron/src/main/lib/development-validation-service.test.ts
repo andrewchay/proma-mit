@@ -4,7 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -24,7 +24,7 @@ const service = await import('./agent-employee-service')
 const { createDevelopmentWorktree } = await import('./agent-development-worktree')
 const chainService = await import('./project-chain-service')
 const { submitDevelopmentDelivery } = await import('./development-delivery-service')
-const { runDevelopmentValidation, listDevelopmentValidations, DevelopmentValidationError } = await import('./development-validation-service')
+const { runDevelopmentValidation, listDevelopmentValidations, readDevelopmentValidationEvidence, DevelopmentValidationError } = await import('./development-validation-service')
 
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => {
@@ -39,7 +39,7 @@ function git(repo: string, ...args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 
-function fixture(options: { scriptName?: string; scriptContent?: string } = {}): { taskId: string; executionId: string; worktreePath: string; command: string } {
+function fixture(options: { scriptName?: string; scriptContent?: string } = {}): { taskId: string; executionId: string; worktreePath: string; command: string; sessionDirectory: string } {
   const scriptName = options.scriptName ?? 'verify.cjs'
   const scriptContent = options.scriptContent ?? "const fs=require('fs');process.exit(fs.readFileSync('src/a.ts','utf8')==='fixed\\n'?0:1)"
   const command = `node src/${scriptName}`
@@ -74,7 +74,7 @@ function fixture(options: { scriptName?: string; scriptContent?: string } = {}):
   })
   store.createAgentExecution({ id: executionId, projectId: project.id, entityType: 'task', entityId: task.id, agentId: employee.id, sessionId: session.id, prompt: 'p' })
   store.updateAgentExecution(executionId, { status: 'completed', resultSummary: 'done', completedAt: Date.now() })
-  return { taskId: task.id, executionId, worktreePath: worktree.path, command }
+  return { taskId: task.id, executionId, worktreePath: worktree.path, command, sessionDirectory }
 }
 
 describe('验证证据（T27/T28）', () => {
@@ -111,6 +111,50 @@ describe('验证证据（T27/T28）', () => {
     expect(result.status).toBe('stale')
   })
 
+  test('Given 冻结后新增范围内文件 When 验证 Then 执行前拒绝', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    writeFileSync(join(w.worktreePath, 'src', 'new.ts'), 'new\n')
+    await expect(runDevelopmentValidation(w.taskId, w.command)).rejects.toThrow('快照不一致')
+  })
+
+  test('Given 冻结后的删除文件恢复 When 验证 Then 执行前拒绝', async () => {
+    const w = fixture({ scriptContent: 'process.exit(0)' })
+    rmSync(join(w.worktreePath, 'src', 'a.ts'))
+    submitDevelopmentDelivery(w.executionId)
+    writeFileSync(join(w.worktreePath, 'src', 'a.ts'), 'original\n')
+    await expect(runDevelopmentValidation(w.taskId, w.command)).rejects.toThrow('快照不一致')
+  })
+
+  test('Given 文件替换为同内容符号链接 When 验证 Then 不跟随链接且拒绝', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const external = join(directory, `outside-${randomUUID()}.ts`)
+    writeFileSync(external, 'fixed\n')
+    rmSync(join(w.worktreePath, 'src', 'a.ts'))
+    symlinkSync(external, join(w.worktreePath, 'src', 'a.ts'))
+    await expect(runDevelopmentValidation(w.taskId, w.command)).rejects.toThrow('快照不一致')
+  })
+
+  test('Given 验证期间新增文件 When 退出0 Then stale', async () => {
+    const w = fixture({ scriptContent: "require('fs').writeFileSync('src/new.ts','new')" })
+    submitDevelopmentDelivery(w.executionId)
+    expect((await runDevelopmentValidation(w.taskId, w.command)).status).toBe('stale')
+  })
+
+  test('Given 验证期间重新出现删除文件 When 退出0 Then stale', async () => {
+    const w = fixture({ scriptContent: "require('fs').writeFileSync('src/a.ts','original\\n')" })
+    rmSync(join(w.worktreePath, 'src', 'a.ts'))
+    submitDevelopmentDelivery(w.executionId)
+    expect((await runDevelopmentValidation(w.taskId, w.command)).status).toBe('stale')
+  })
+
+  test('Given 验证期间新增范围外文件 When 退出0 Then stale', async () => {
+    const w = fixture({ scriptContent: "require('fs').writeFileSync('outside.txt','new')" })
+    submitDevelopmentDelivery(w.executionId)
+    expect((await runDevelopmentValidation(w.taskId, w.command)).status).toBe('stale')
+  })
+
   test('Given 超时 When 运行 Then status=timeout 且进程被终止', async () => {
     const w = fixture({ scriptName: 'hang.cjs', scriptContent: 'setInterval(()=>{},1000)' })
     submitDevelopmentDelivery(w.executionId)
@@ -127,6 +171,109 @@ describe('验证证据（T27/T28）', () => {
     const all = listDevelopmentValidations(w.taskId)
     expect(all.length).toBe(2)
     expect(all[0]!.finishedAt).toBeGreaterThanOrEqual(all[1]!.finishedAt)
+  })
+
+  test('Given 主进程新验证 When 回读 Then fresh且绑定scope/config而非stdout', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    expect(result.binding).toMatchObject({ version: 1 })
+    const evidence = readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id)
+    expect(evidence.freshness).toBe('fresh')
+    expect(evidence.result.id).toBe(result.id)
+  })
+
+  test('Given 验证后再次修改 When 回读 Then stale不自动沿用passed', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    writeFileSync(join(w.worktreePath, 'src', 'new.ts'), 'later')
+    const evidence = readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id)
+    expect(evidence.freshness).toBe('stale')
+    expect(evidence.result.status).toBe('passed')
+    expect(listDevelopmentValidations(w.taskId)[0]!.status).toBe('passed')
+  })
+
+  test('Given 验证后范围或命令授权变化 When 回读 Then stale', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    const task = store.getTask(w.taskId)!
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, allowedPaths: ['src/a.ts', 'src/verify.cjs'] } })
+    expect(readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).freshness).toBe('stale')
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, verificationCommands: [] } })
+    expect(readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).freshness).toBe('stale')
+  })
+
+  test('Given 验证运行中撤销命令授权 When 完成 Then stale而非沿用旧配置', async () => {
+    const w = fixture({ scriptContent: 'setTimeout(()=>process.exit(0),150)' })
+    submitDevelopmentDelivery(w.executionId)
+    const pending = runDevelopmentValidation(w.taskId, w.command)
+    const task = store.getTask(w.taskId)!
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, verificationCommands: [] } })
+    expect((await pending).status).toBe('stale')
+  })
+
+  test('Given 记录中的命令不在当前授权白名单 When 回读 Then stale', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    writeFileSync(join(w.sessionDirectory, `development-validation-${result.id}.json`), JSON.stringify({ ...result, command: 'node src/not-authorized.cjs' }))
+    expect(readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).freshness).toBe('stale')
+  })
+
+  test('Given legacy验证记录 When 回读 Then legacy而不是补造可信绑定', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    const { binding: _binding, ...legacy } = result
+    writeFileSync(join(w.sessionDirectory, `development-validation-${result.id}.json`), JSON.stringify(legacy))
+    expect(readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).freshness).toBe('legacy')
+    expect(listDevelopmentValidations(w.taskId)[0]!.id).toBe(result.id)
+  })
+
+  test('Given 错身份/未来/伪passed/损坏binding的文件 When 回读 Then 拒绝并从历史列表排除', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    const path = join(w.sessionDirectory, `development-validation-${result.id}.json`)
+    for (const invalid of [
+      { ...result, id: 'other-id' },
+      { ...result, executionId: 'other-execution' },
+      { ...result, taskId: 'other-task' },
+      { ...result, finishedAt: Date.now() + 100_000 },
+      { ...result, exitCode: 1, status: 'passed' },
+      { ...result, binding: { ...result.binding, version: 2 } },
+    ]) {
+      writeFileSync(path, JSON.stringify(invalid))
+      expect(() => readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id)).toThrow()
+      expect(listDevelopmentValidations(w.taskId)).toHaveLength(0)
+    }
+  })
+
+  test('Given 路径穿越/非本任务执行/证据symlink When 回读 Then 拒绝', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    expect(() => readDevelopmentValidationEvidence(w.taskId, w.executionId, '../other')).toThrow()
+    const other = fixture()
+    expect(() => readDevelopmentValidationEvidence(other.taskId, w.executionId, result.id)).toThrow()
+    const path = join(w.sessionDirectory, `development-validation-${result.id}.json`)
+    const external = join(directory, `external-${randomUUID()}.json`)
+    writeFileSync(external, readFileSync(path))
+    rmSync(path)
+    symlinkSync(external, path)
+    expect(() => readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id)).toThrow()
+    expect(listDevelopmentValidations(w.taskId)).toHaveLength(0)
+  })
+
+  test('Given 验证失败 When 回读 Then fresh只表示版本一致，不提升为passed', async () => {
+    const w = fixture({ scriptContent: 'process.exit(3)' })
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    const evidence = readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id)
+    expect(evidence.freshness).toBe('fresh')
+    expect(evidence.result.status).toBe('failed')
   })
 
   test('Given 无已完成执行 When 运行 Then 明确拒绝', async () => {
