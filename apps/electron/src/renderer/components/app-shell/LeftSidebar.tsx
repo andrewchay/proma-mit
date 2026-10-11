@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical, ShieldAlert, CircleHelp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -37,6 +37,9 @@ import {
   agentSessionsAtom,
   currentAgentSessionIdAtom,
   agentSessionIndicatorMapAtom,
+  allPendingPermissionRequestsAtom,
+  allPendingAskUserRequestsAtom,
+  allPendingExitPlanRequestsAtom,
   unviewedCompletedSessionIdsAtom,
   workingDoneSessionIdsAtom,
   agentChannelIdAtom,
@@ -256,6 +259,25 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom)
   const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom)
   const agentIndicatorMap = useAtomValue(agentSessionIndicatorMapAtom)
+
+  // 阻塞原因图谱：blocked 会话具体在等什么（权限 / AskUser / Plan 批准），
+  // 用于侧边栏指示图标区分阻塞类型，优先级 permission > askUser > exitPlan
+  const pendingPermissionMap = useAtomValue(allPendingPermissionRequestsAtom)
+  const pendingAskUserMap = useAtomValue(allPendingAskUserRequestsAtom)
+  const pendingExitPlanMap = useAtomValue(allPendingExitPlanRequestsAtom)
+  const blockedReasonMap = React.useMemo(() => {
+    const map = new Map<string, 'permission' | 'askUser' | 'exitPlan'>()
+    for (const [id, requests] of pendingExitPlanMap) {
+      if (requests.length > 0) map.set(id, 'exitPlan')
+    }
+    for (const [id, requests] of pendingAskUserMap) {
+      if (requests.length > 0) map.set(id, 'askUser')
+    }
+    for (const [id, requests] of pendingPermissionMap) {
+      if (requests.length > 0) map.set(id, 'permission')
+    }
+    return map
+  }, [pendingPermissionMap, pendingAskUserMap, pendingExitPlanMap])
   const unviewedCompletedSessionIds = useAtomValue(unviewedCompletedSessionIdsAtom)
   const setUnviewedCompleted = useSetAtom(unviewedCompletedSessionIdsAtom)
   const agentChannelId = useAtomValue(agentChannelIdAtom)
@@ -1761,6 +1783,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                                         session={item.session}
                                         active={treeActive}
                                         indicatorStatus={getSessionTreeStatus(item, agentIndicatorMap)}
+                                        blockedReason={blockedReasonMap.get(item.session.id)}
                                         isInWorkingSection={workingSessionIds.has(item.session.id)}
                                         delegationSummary={childCount > 0
                                           ? {
@@ -1879,6 +1902,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                         session={session}
                         active={session.id === activeTabId}
                         indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
+                        blockedReason={blockedReasonMap.get(session.id)}
                         isInWorkingSection={workingSessionIds.has(session.id)}
                         onSelect={handleSelectAgentSession}
                         onOpenPermanent={handlePermanentAgentSession}
@@ -2165,6 +2189,8 @@ interface AgentSessionItemProps {
   session: AgentSessionMeta
   active: boolean
   indicatorStatus: SessionIndicatorStatus
+  /** blocked 状态的具体原因（权限 / AskUser / Plan 批准），用于区分指示图标 */
+  blockedReason?: 'permission' | 'askUser' | 'exitPlan'
   /** 是否在工作中分区（auto 或 manual） */
   isInWorkingSection?: boolean
   /** 行左侧状态色块；未传则不显示 */
@@ -2197,6 +2223,7 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
   session,
   active,
   indicatorStatus,
+  blockedReason,
   isInWorkingSection,
   leftAccent,
   workspaceName,
@@ -2382,16 +2409,26 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
             )}
           </div>
 
-          {/* 会话级运行状态呼吸灯（running=蓝 / blocked=橙 / completed=绿，无文字；completed 点击会话后消失） */}
-          {(indicatorStatus === 'running' || indicatorStatus === 'blocked' || indicatorStatus === 'completed') && (
+          {/* 会话级运行状态呼吸灯（running=蓝 / blocked=橙 / completed=绿，无文字；completed 点击会话后消失）
+              blocked 时按阻塞原因替换为对应图标，让用户一眼看出在等什么 */}
+          {indicatorStatus === 'blocked' ? (
+            <span
+              className="flex-shrink-0 text-orange-500"
+              title={blockedReason === 'permission' ? '等待权限确认' : blockedReason === 'askUser' ? '等待你的回答' : '等待计划批准'}
+            >
+              {blockedReason === 'permission'
+                ? <ShieldAlert className="size-3" />
+                : blockedReason === 'askUser'
+                  ? <CircleHelp className="size-3" />
+                  : <span className="sidebar-breathe-dot block w-1.5 h-1.5 bg-current sidebar-breathe-blocked" aria-hidden="true" />}
+            </span>
+          ) : (indicatorStatus === 'running' || indicatorStatus === 'completed') && (
             <span
               className={cn(
                 'sidebar-breathe-dot flex-shrink-0 w-1.5 h-1.5 bg-current',
-                indicatorStatus === 'blocked'
-                  ? 'sidebar-breathe-blocked text-orange-500'
-                  : indicatorStatus === 'completed'
-                    ? 'sidebar-breathe-completed text-green-500'
-                    : 'sidebar-breathe-running text-blue-500'
+                indicatorStatus === 'completed'
+                  ? 'sidebar-breathe-completed text-green-500'
+                  : 'sidebar-breathe-running text-blue-500'
               )}
               aria-hidden="true"
             />
