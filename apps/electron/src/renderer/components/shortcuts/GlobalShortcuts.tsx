@@ -20,7 +20,7 @@ import {
   sidebarCollapsedAtom,
   openTab,
 } from '@/atoms/tab-atoms'
-import { shortcutOverridesAtom, sendWithCmdEnterAtom } from '@/atoms/shortcut-atoms'
+import { shortcutOverridesAtom, sendWithCmdEnterAtom, agentCustomCommandsAtom } from '@/atoms/shortcut-atoms'
 import {
   agentPendingPromptAtom,
   agentSessionDraftHtmlAtom,
@@ -65,6 +65,7 @@ export function GlobalShortcuts(): null {
   const setShortcutOverrides = useSetAtom(shortcutOverridesAtom)
   const shortcutOverrides = useAtomValue(shortcutOverridesAtom)
   const setSendWithCmdEnter = useSetAtom(sendWithCmdEnterAtom)
+  const setCustomCommands = useSetAtom(agentCustomCommandsAtom)
   const { createChat, createAgent } = useCreateSession()
 
   // Tab 管理（用于关闭标签页）
@@ -84,8 +85,9 @@ export function GlobalShortcuts(): null {
         updateShortcutOverrides(settings.shortcutOverrides)
       }
       setSendWithCmdEnter(settings.sendWithCmdEnter ?? false)
+      setCustomCommands(settings.agentCustomCommands ?? [])
     }).catch(console.error)
-  }, [setShortcutOverrides, setSendWithCmdEnter])
+  }, [setShortcutOverrides, setSendWithCmdEnter, setCustomCommands])
 
   // 配置变更时同步到注册表
   useEffect(() => {

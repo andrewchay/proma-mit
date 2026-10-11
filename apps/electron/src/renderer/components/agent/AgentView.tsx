@@ -97,6 +97,8 @@ import {
 } from '@/atoms/agent-atoms'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
+import { settingsTabAtom } from '@/atoms/settings-tab'
+import { agentCustomCommandsAtom } from '@/atoms/shortcut-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
@@ -536,6 +538,7 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     return () => { cancelled = true }
   }, [])
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
+  const setSettingsTab = useSetAtom(settingsTabAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const globalWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const sessions = useAtomValue(agentSessionsAtom)
@@ -744,6 +747,28 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
       return map
     })
   }, [sessionId, setEditingUserMessage])
+
+  // 自定义斜杠命令：atom → ref（命令菜单以 ref 读取，避免菜单重挂载）
+  const customCommands = useAtomValue(agentCustomCommandsAtom)
+  const customCommandsRef = React.useRef(customCommands)
+  customCommandsRef.current = customCommands
+
+  /** 命令菜单插入自定义命令：填入提示词并聚焦输入框 */
+  const handleInsertCustomCommand = React.useCallback((prompt: string): void => {
+    setInputContent(prompt)
+    setInputHtmlContent('')
+    // 延迟聚焦，等待菜单关闭与触发符移除完成
+    requestAnimationFrame(() => {
+      const proseMirror = document.querySelector('[data-input-mode="agent"] .ProseMirror') as HTMLElement | null
+      proseMirror?.focus()
+    })
+  }, [setInputContent, setInputHtmlContent])
+
+  /** 命令菜单 → 管理自定义命令：打开设置页快捷键标签 */
+  const handleManageCustomCommands = React.useCallback((): void => {
+    setSettingsTab('shortcuts')
+    setSettingsOpen(true)
+  }, [setSettingsTab, setSettingsOpen])
   const sessionPathMap = useAtomValue(agentSessionPathMapAtom)
   const setSessionPathMap = useSetAtom(agentSessionPathMapAtom)
   const sessionPath = sessionPathMap.get(sessionId) ?? null
@@ -2702,6 +2727,9 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
               sendWithCmdEnter={sendWithCmdEnter}
               onAttachFile={() => { void handleOpenFileDialog() }}
               onAttachFolder={() => { void handleAttachFolder() }}
+              customCommandsRef={customCommandsRef}
+              onInsertCustomCommand={handleInsertCustomCommand}
+              onManageCustomCommands={handleManageCustomCommands}
             />
 
             {/* Footer 工具栏 — 容器变窄时尾部按钮自动折叠进「更多」Popover */}
