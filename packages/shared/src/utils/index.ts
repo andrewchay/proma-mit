@@ -169,3 +169,10 @@ export {
   parseVerificationArtifactRevision,
   parseVerificationReceipt,
 } from './verification'
+export {
+  parseAgentCompletionStatus,
+} from './agent-completion-status'
+export type {
+  AgentTrafficLight,
+  AgentCompletionStatus,
+} from './agent-completion-status'

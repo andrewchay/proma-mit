@@ -73,7 +73,9 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
 - 整理为清晰的结构：文件列表、关键函数/类型、依赖关系、相关模式
 - 不要做修改，只负责收集和整理信息
 
-保持简洁，只返回与任务相关的信息。`,
+保持简洁，只返回与任务相关的信息。
+
+最后：在回复的最后一个非空行用单个 emoji 标记任务状态：🟢 委派目标未全部完成（说明还差什么）；🟡 目标已完成、且剩余建议能构成下一步完整计划（给出计划要点）；🔴 目标已完成、剩余为零散存档项（三行以内）。`,
       tools: ['Read', 'Glob', 'Grep', 'Bash'],
       ...(light && { model: light }),
     },
@@ -88,7 +90,9 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
 - **风险提示**：潜在的问题和注意事项
 - **参考来源**：代码中的相关实现或外部资料
 
-保持客观，给出有依据的建议。`,
+保持客观，给出有依据的建议。
+
+最后：在回复的最后一个非空行用单个 emoji 标记任务状态：🟢 委派目标未全部完成（说明还差什么）；🟡 目标已完成、且剩余建议能构成下一步完整计划（给出计划要点）；🔴 目标已完成、剩余为零散存档项（三行以内）。`,
       tools: ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'],
       ...(light && { model: light }),
     },
@@ -193,6 +197,24 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
   }
   return withOverrides
 }
+
+/**
+ * 任务完成态红绿灯约定
+ *
+ * 与 @gravitas/shared 的 parseAgentCompletionStatus 保持同一语义：
+ * 状态行必须是回复最后一个非空行，以单个 🟢/🟡/🔴 emoji 开头。
+ * 修改本段文案时同步检查 shared 的解析规则与 UI 状态条。
+ */
+export const TRAFFIC_LIGHT_GUIDE = `## 任务完成态红绿灯
+
+- 开工第一轮先用一行钉住原始需求清单：目标：A、B、C。此后每轮只对照这份清单干活；清单只在用户追加需求时才更新。
+- 多步任务（涉及工具调用、多文件或多阶段）的每轮回复，最后一个非空行必须是进度状态行：单个 🟢/🟡/🔴 emoji 开头，后面跟一行说明。单轮简单问答不需要状态行。
+- 🟢 原始需求有未达项，任务继续。格式：🟢 还差：B、C｜搁置：X。顺手发现的改进只记入搁置（一行以内），不主动展开执行。
+- 🟡 原始需求已全部达成，且超出的建议能串成一份有明确目标和验收标准的后续计划。把计划落盘到 .context/plan/ 下的文件，状态行给出路径，例如：🟡 计划：.context/plan/next.md，等你决定是否启动。
+- 🔴 原始需求已全部达成，超出的建议零散、不构成可执行计划。压成三行以内的存档清单放在状态行之前，状态行直接写 🔴，然后结束。
+- 黄灯与红灯的判定标准：超出项能否串成一个有清晰目标的 Plan？能 → 🟡，不能 → 🔴。
+- 转黄或转红之后立即停手，不要自拟新任务、不要继续追加建议，等用户下一步指令。
+- 用户追加新需求后，更新目标清单，状态回到 🟢。`
 
 /** buildSystemPrompt 所需的上下文 */
 interface SystemPromptContext {
@@ -525,9 +547,12 @@ Gravitas 提供内置 \`collaboration\` 工具，用来创建真实可见、可�
   sections.push(`## 任务完成标准
 
 - 承诺完成的任务必须执行到底，不要在中途停下来等待确认（除非是计划模式）
-- 最终回复必须包含用户期望的实际交付物（代码、分析结果、文档内容），而不仅是"已完成"状态汇报
+- 最终回复必须包含用户期望的实际交付物（代码、分析结果、文档内容），而不仅是“已完成”状态汇报
 - 如果将工作委派给 SubAgent，必须在收到结果后将**完整的关键发现**呈现给用户，不要只转述一句话摘要
 - 写入文件后，告知用户文件路径和关键内容摘要，确保用户能找到产出`)
+
+  // 任务完成态红绿灯
+  sections.push(TRAFFIC_LIGHT_GUIDE)
 
   // 交互规范
   sections.push(`## 交互规范

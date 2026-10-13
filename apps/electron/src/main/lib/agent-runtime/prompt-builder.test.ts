@@ -39,6 +39,16 @@ describe('Prompt 构建器', () => {
     expect(prompt).toContain('调用 WebBridgeScreenshot 后，必须先分析截图内容')
   })
 
+  test('given 默认提示词 when 构建 runtime prompt then 注入任务完成态红绿灯约定', () => {
+    const prompt = buildAgentSystemPrompt(undefined, '/tmp/workspace')
+
+    expect(prompt).toContain('任务完成态红绿灯')
+    expect(prompt).toContain('最后一个非空行必须是进度状态行')
+    expect(prompt).toContain('🟢')
+    expect(prompt).toContain('🟡')
+    expect(prompt).toContain('🔴')
+  })
+
   test('sdkMessagesToChatMessages 转换文本对话', () => {
     const messages: SDKMessage[] = [
       {

@@ -19,6 +19,7 @@ import { ImageLightbox } from '@/components/ui/image-lightbox'
 import { ContentBlock } from './ContentBlock'
 import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary } from './TurnFileChangesSummary'
+import { CompletionStatusBar } from './CompletionStatusBar'
 import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
 import { extractCompactBoundaryInfo } from './compact-boundary-info'
@@ -623,6 +624,16 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
     return { childBlocksMap: childMap, topLevelBlocks: topBlocks }
   }, [enrichedBlocks])
 
+  // 任务完成态红绿灯：仅取主线 text 块（与操作栏口径一致），
+  // 从末尾状态行解析；非流式、无错误、未被中断时才展示，解析失败不渲染。
+  const completionStatusText = React.useMemo(() => {
+    if (isStreaming || hasError || showStoppedBadge) return ''
+    return topLevelBlocks
+      .filter((b) => b.type === 'text' && 'text' in b)
+      .map((b) => (b as { text: string }).text)
+      .join('\n\n')
+  }, [topLevelBlocks, isStreaming, hasError, showStoppedBadge])
+
   // 检测是否有主要内容（text 块），用于决定 tool/thinking 是否 dimmed
   const hasTextContent = topLevelBlocks.some(
     (b) => b.type === 'text' && 'text' in b && !!(b as { text: string }).text
@@ -693,6 +704,12 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
             {isThinkingSignatureError(errorContent.error?.message)
               ? `${THINKING_SIGNATURE_ERROR_TITLE}：${THINKING_SIGNATURE_ERROR_MESSAGE}`
               : (errorContent.error?.message ?? '未知错误')}
+          </div>
+        )}
+        {/* 任务完成态红绿灯：流式结束后展示 */}
+        {!isStreaming && completionStatusText && (
+          <div className="mt-2">
+            <CompletionStatusBar text={completionStatusText} />
           </div>
         )}
       </MessageContent>
