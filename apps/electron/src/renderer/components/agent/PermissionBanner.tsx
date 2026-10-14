@@ -78,6 +78,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
   const respondRef = React.useRef<(behavior: 'allow' | 'deny', alwaysAllow?: boolean) => void>()
 
   const request = requests[0] ?? null
+  const hasRequest = request !== null
 
   // 决策选项构建（根据工具类型决定是否展示"总是允许"）
   const requiresPerActionApproval = request ? requiresPerActionApprovalTool(request.toolName) : false
@@ -149,11 +150,9 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
     window.electronAPI.stopAgent(sessionId).catch(console.error)
   }
 
-  if (!request) return null
-
-  const dangerStyle = DANGER_STYLES[request.dangerLevel] ?? DANGER_STYLES.normal
+  const dangerStyle = request ? DANGER_STYLES[request.dangerLevel] ?? DANGER_STYLES.normal : DANGER_STYLES.normal
   const IconComponent = dangerStyle.icon
-  const isDangerous = request.dangerLevel === 'dangerous'
+  const isDangerous = request?.dangerLevel === 'dangerous'
 
   /** 响应权限请求 */
   const respond = async (behavior: 'allow' | 'deny', alwaysAllow = false): Promise<void> => {
@@ -161,8 +160,10 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
     setResponding(true)
 
     try {
+      const currentRequest = request
+      if (!currentRequest) return
       await window.electronAPI.respondPermission({
-        requestId: request.requestId,
+        requestId: currentRequest.requestId,
         behavior,
         alwaysAllow,
       })
@@ -170,7 +171,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
       setAllRequests((prev) => {
         const map = new Map(prev)
         const current = map.get(sessionId) ?? []
-        const newValue = current.filter((r) => r.requestId !== request.requestId)
+        const newValue = current.filter((r) => r.requestId !== currentRequest.requestId)
         if (newValue.length === 0) map.delete(sessionId)
         else map.set(sessionId, newValue)
         return map
@@ -187,6 +188,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
 
   // 批量放行：队首之后紧跟多个同类请求时，一键放行整个连续段
   const batchPlan = React.useMemo(() => resolveBatchAllowPlan(requests), [requests])
+  const hasToolInput = request ? Object.keys(request.toolInput).length > 0 : false
 
   const handleBatchAllow = async (): Promise<void> => {
     if (!batchPlan || responding) return
@@ -220,7 +222,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
     }
   }
 
-  const hasToolInput = Object.keys(request.toolInput).length > 0
+  if (!hasRequest) return null
 
   return (
     <div

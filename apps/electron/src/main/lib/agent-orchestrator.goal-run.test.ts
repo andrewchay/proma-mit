@@ -218,6 +218,30 @@ describe('真实Orchestrator Goal闭包边界（离线adapter）', () => {
     await Bun.sleep(20)
   })
 
+  test('Codex OAuth 在非 Pi Runtime 请求 /compact 时返回提示且不进入 adapter', async () => {
+    const channel = createChannel({ name: 'Codex OAuth fixture', provider: 'openai-codex', baseUrl: '', apiKey: 'oauth-placeholder', models: [], enabled: true })
+    const workspace = createAgentWorkspace(`Codex compact fixture ${channel.id}`)
+    const session = createAgentSession('Codex compact', channel.id, workspace.id, 'gpt-5.5', 'ai-sdk')
+    const queried: AgentQueryInput[] = []
+    const adapter: AgentProviderAdapter = {
+      query(input) {
+        queried.push(input)
+        return { async *[Symbol.asyncIterator]() { yield { type: 'result', subtype: 'success' } as SDKMessage } }
+      },
+      abort() {}, dispose() {},
+    }
+    const bus = new AgentEventBus()
+    const orchestrator = new AgentOrchestrator(adapter, bus, createElectronRuntimeServices(bus))
+    const errors: string[] = []
+    await orchestrator.sendMessage({
+      sessionId: session.id, workspaceId: workspace.id, channelId: channel.id, modelId: 'gpt-5.5',
+      agentRuntime: 'ai-sdk', userMessage: '/compact', startedAt: 124,
+    }, { ...callbacks, onError: (error) => errors.push(error) })
+
+    expect(queried).toHaveLength(0)
+    expect(errors).toEqual(expect.arrayContaining([expect.stringContaining('不能转交给 AI SDK')]))
+  })
+
   test('compact-only和渠道预检失败都不签发run或Goal工具', async () => {
     const w = fixture()
     await w.o.sendMessage({ ...w.input, channelId: 'absent' }, callbacks)

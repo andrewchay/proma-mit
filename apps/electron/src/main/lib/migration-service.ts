@@ -14,6 +14,7 @@ import { homedir, platform, arch, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import AdmZip from 'adm-zip'
 import { safeStorage } from 'electron'
+import { APP_IS_DEV } from './app-identity'
 import {
   getConfigDir,
   getChannelsPath,
@@ -1141,15 +1142,15 @@ function _importWorkspaceConfig(tempDir: string, targetWorkspace: AgentWorkspace
   const config = readJsonSafe<{ attachedDirectories?: string[]; attachedFiles?: string[] }>(srcConfig)
   if (!config?.attachedDirectories && !config?.attachedFiles) return
 
-  // 应用路径映射
+  // 应用路径映射：Dev 未显式映射的外部路径一律不继承。
   const newDirs: string[] = []
   for (const dir of config.attachedDirectories ?? []) {
     const mapped = pathMappings[dir]
     if (mapped === null) continue // 用户选择移除
     if (mapped !== undefined) {
       newDirs.push(mapped) // 用户重新映射
-    } else if (existsSync(dir)) {
-      newDirs.push(dir) // 路径存在，直接保留
+    } else if (!APP_IS_DEV && existsSync(dir)) {
+      newDirs.push(dir) // Stable 保留原行为；Dev 必须由用户显式映射
     }
     // 路径不存在且无映射：跳过（移除）
   }
@@ -1159,7 +1160,7 @@ function _importWorkspaceConfig(tempDir: string, targetWorkspace: AgentWorkspace
     if (mapped === null) continue
     if (mapped !== undefined) {
       newFiles.push(mapped)
-    } else if (existsSync(file)) {
+    } else if (!APP_IS_DEV && existsSync(file)) {
       newFiles.push(file)
     }
   }
@@ -1306,7 +1307,7 @@ function _importWorkspaceConfigV2(
     if (mapped === null) continue
     if (mapped !== undefined) {
       newDirs.push(mapped)
-    } else if (existsSync(dir)) {
+    } else if (!APP_IS_DEV && existsSync(dir)) {
       newDirs.push(dir)
     }
   }
@@ -1316,7 +1317,7 @@ function _importWorkspaceConfigV2(
     if (mapped === null) continue
     if (mapped !== undefined) {
       newFiles.push(mapped)
-    } else if (existsSync(file)) {
+    } else if (!APP_IS_DEV && existsSync(file)) {
       newFiles.push(file)
     }
   }

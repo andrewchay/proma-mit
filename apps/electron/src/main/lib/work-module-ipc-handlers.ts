@@ -7,6 +7,7 @@
 
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { PROJECT_CHAIN_IPC } from '@gravitas/shared'
+import { APP_AUTOMATIC_SIDE_EFFECTS, APP_IS_DEV } from './app-identity'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 import { registerProjectOwnerGoalIpcHandlers } from './project-owner-goal-ipc'
 import { observeProjectPilot } from './project-pilot-reconcile'
@@ -847,6 +848,7 @@ export function registerWorkModuleIpcHandlers(): void {
 
   // ===== 外部状态轮询 =====
   ipcMain.handle(PROJECT_IPC_CHANNELS.POLL_START, async (_, projectId: string, platform: 'feishu' | 'dingtalk', intervalMs: number = 30000) => {
+    if (APP_IS_DEV) throw new Error('Gravitas Dev 不启动外部平台后台轮询')
     const key = `${projectId}:${platform}`
 
     // 如果已有轮询，先停止
@@ -1061,10 +1063,11 @@ export function registerWorkModuleIpcHandlers(): void {
   // ===== 初始化 Todo Provider =====
   initProjectTodoProviders()
 
-  // 注册 AI 员工 TodoProvider（agent）+ 启动心跳扫描
-  registerAgentEmployeeProvider()
-  // 本地自动同步：任务创建/状态变更 → 钉钉待办推送/回写（替代原 NocoBase 插件 hook）
-  registerProjectAutoSync()
+  // Dev 不注册自动员工执行或外部平台同步，手动 IPC 保持可用。
+  if (APP_AUTOMATIC_SIDE_EFFECTS) {
+    registerAgentEmployeeProvider()
+    registerProjectAutoSync()
+  }
 
   // 设置变更时重新初始化 Provider，避免必须重启应用
   onSettingsChange((_, updates) => {

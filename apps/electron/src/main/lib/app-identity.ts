@@ -1,14 +1,28 @@
-/**
- * Gravitas 运行时身份。
- *
- * 统一使用 gravitas 标识（应用名、配置目录、userData、DeepLink 协议）。
- * 由 proma-mit 品牌更名而来；旧环境残留的 .proma-mit 数据不受影响，但新数据写入 .gravitas。
- */
-export const APP_DISPLAY_NAME = 'Gravitas'
-export const APP_PROCESS_NAME = 'gravitas'
-export const APP_CONFIG_DIR_NAME = '.gravitas'
-export const APP_DEEP_LINK_PROTOCOL = 'gravitas'
+/** 运行时身份：Stable 保留原路径；Dev 使用独立配置和协议。 */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import * as electron from 'electron'
+// Bun 直接导入 electron 时导出的是可执行路径；不能使用静态命名导入。
+const app = (electron as unknown as { app?: import('electron').App }).app
+import { allowsAppUpdates, allowsAutomaticSideEffects, getAppIdentity, getAppServicePorts, resolveAppChannel } from './app-channel'
 
-// 兼容旧常量（统一指向 gravitas，不再有独立 dev 目录）
-export const APP_DEV_CONFIG_DIR_NAME = APP_CONFIG_DIR_NAME
-export const APP_DEV_USER_DATA_DIR_NAME = 'gravitas'
+function readPackagedChannel(): unknown {
+  if (!app?.isPackaged) return undefined
+  // 读取安装包自己的元数据，不信任 cwd 或终端环境变量。
+  const metadata = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'))
+  return metadata.gravitasChannel
+}
+
+export const APP_CHANNEL = resolveAppChannel(app?.isPackaged === true, readPackagedChannel())
+const identity = getAppIdentity(APP_CHANNEL)
+export const APP_DISPLAY_NAME = identity.displayName
+export const APP_PROCESS_NAME = identity.processName
+export const APP_CONFIG_DIR_NAME = identity.configDirName
+export const APP_DEEP_LINK_PROTOCOL = identity.deepLinkProtocol
+export const APP_IS_DEV = APP_CHANNEL === 'dev'
+export const APP_AUTOMATIC_SIDE_EFFECTS = allowsAutomaticSideEffects(APP_CHANNEL)
+export const APP_UPDATES_ENABLED = allowsAppUpdates(APP_CHANNEL, app?.isPackaged === true)
+export const APP_SERVICE_PORTS = getAppServicePorts(APP_CHANNEL, { brief: 8765, companion: 8790 })
+
+export const APP_DEV_CONFIG_DIR_NAME = '.gravitas-dev'
+export const APP_DEV_USER_DATA_DIR_NAME = 'Gravitas Dev'

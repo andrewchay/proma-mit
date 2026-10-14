@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { buildMainBuildArgs } from './dist'
+import { buildChannelBuilderArgs, buildMainBuildArgs } from './dist'
+
+test('Dev 使用独立配置且本地打包禁止发布', () => {
+  expect(buildChannelBuilderArgs(true, 'mac')).toEqual([
+    'electron-builder', '--mac', '--config', 'electron-builder.dev.yml', '--publish', 'never',
+  ])
+  expect(buildChannelBuilderArgs(false, 'mac')).toContain('electron-builder.yml')
+})
 
 /**
  * 打包脚本参数组装的回归测试。

@@ -20,6 +20,7 @@ export function McpOAuthBanner({ sessionId }: McpOAuthBannerProps): React.ReactE
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const requests = allRequests.get(sessionId) ?? []
   const request = requests[0] ?? null
+  const hasRequest = request !== null
 
   const handleDismiss = (): void => {
     setAllRequests((prev) => {
@@ -49,7 +50,7 @@ export function McpOAuthBanner({ sessionId }: McpOAuthBannerProps): React.ReactE
     window.electronAPI.stopAgent(sessionId).catch(console.error)
   }
 
-  if (!request) return null
+  if (!hasRequest) return null
 
   return (
     <div className="mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200">

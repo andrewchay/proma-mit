@@ -260,7 +260,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const controlledFetch = controlled ? createControlledProviderFetch(sessionId, actualProvider, getFetchFn(await getEffectiveProxyUrl())) : undefined
 
     if (requestedOperation === 'compact') {
-      if (provider === 'openai-codex') throw new Error('ChatGPT 订阅暂不支持独立压缩，请缩短对话后重试')
+      if (provider === 'openai-codex') throw new Error('ChatGPT 订阅渠道暂不支持独立压缩。请继续当前对话，或切换到支持压缩的 API 渠道后再试。')
       if (runtimeBudgetLimitUsd !== undefined) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
       await runWithCompactionAbort((signal) => compactSessionNow({
         sessionId,

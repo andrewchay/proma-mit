@@ -13,7 +13,7 @@
 import { dirname } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs'
 import { BrowserWindow } from 'electron'
-import { getMainWindow } from '../index'
+import { getMainWindow } from '../main-window'
 import { resolveAgentStreamTarget } from './agent-stream-target'
 import type { WebContents } from 'electron'
 import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, isRetiredAgentRuntime, normalizeAgentRuntime } from '@gravitas/shared'
@@ -62,6 +62,7 @@ import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import type { ProviderType } from '@gravitas/shared'
+import { APP_AUTOMATIC_SIDE_EFFECTS } from './app-identity'
 
 // ===== 实例创建 =====
 
@@ -73,6 +74,7 @@ const adapter = new RuntimeRoutingAgentAdapter({
   pi: new PiAgentAdapter(),
   'ai-sdk': new AISDKAgentAdapter(runtimeServices.mcp),
 })
+
 const goalCoordinator = new GoalCoordinator()
 const proactiveScheduler = new ProactiveScheduler()
 const orchestrator = new AgentOrchestrator(
@@ -98,9 +100,11 @@ goalCoordinator.setContinuationRunner(async ({ goal, prompt }) => {
   }, win.webContents, true)
   return true
 })
-void goalCoordinator.recoverDueGoals().catch((error) => {
-  console.error('[Goal] 恢复到期 Goal 失败:', error)
-})
+if (APP_AUTOMATIC_SIDE_EFFECTS) {
+  void goalCoordinator.recoverDueGoals().catch((error) => {
+    console.error('[Goal] 恢复到期 Goal 失败:', error)
+  })
+}
 
 proactiveScheduler.setRunner(async (schedule, run) => {
   if (schedule.routineInstanceId) {
@@ -125,6 +129,7 @@ setMonitorRunner(async (monitor, run, eventData) => {
 setRoutineRunner(async (_instance, target) => runProactiveTarget('Routine', target))
 // 延迟到模块初始化结束，避免补跑访问尚未初始化的 EventBus / 窗口映射。
 queueMicrotask(() => {
+  if (!APP_AUTOMATIC_SIDE_EFFECTS) return
   void proactiveScheduler.recover().catch((error) => {
     console.error('[Proactive Scheduler] 恢复到期任务失败:', error)
   })

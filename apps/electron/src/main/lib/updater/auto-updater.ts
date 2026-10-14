@@ -9,6 +9,7 @@ import { autoUpdater } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
 import type { UpdateStatus } from './updater-types'
 import { UPDATER_IPC_CHANNELS } from './updater-types'
+import { APP_UPDATES_ENABLED } from '../app-identity'
 
 /** 当前更新状态 */
 let currentStatus: UpdateStatus = { status: 'idle' }
@@ -32,6 +33,10 @@ export function getUpdateStatus(): UpdateStatus {
 
 /** 手动触发检查更新 */
 export async function checkForUpdates(): Promise<void> {
+  if (!APP_UPDATES_ENABLED) {
+    setStatus({ status: 'error', error: '开发版不使用正式更新渠道，请重新构建或安装开发包。' })
+    return
+  }
   // 已在下载中或已下载完成，不重复检查
   if (currentStatus.status === 'downloading' || currentStatus.status === 'downloaded') {
     console.log('[更新] 跳过检查：已在下载中或已下载完成')
@@ -52,6 +57,7 @@ export async function checkForUpdates(): Promise<void> {
 
 /** 退出并安装已下载的更新 */
 export function quitAndInstall(): void {
+  if (!APP_UPDATES_ENABLED || currentStatus.status !== 'downloaded') return
   // 移除所有窗口的 close 监听器，避免 preventDefault 阻止退出
   for (const w of BrowserWindow.getAllWindows()) {
     w.removeAllListeners('close')
@@ -77,6 +83,7 @@ export function cleanupUpdater(): void {
  * @param mainWindow - 主窗口实例，用于推送更新状态
  */
 export function initAutoUpdater(mainWindow: BrowserWindow): void {
+  if (!APP_UPDATES_ENABLED) return
   win = mainWindow
 
   autoUpdater.logger = {
