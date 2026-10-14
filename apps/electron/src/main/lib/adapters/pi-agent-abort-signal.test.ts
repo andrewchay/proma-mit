@@ -85,6 +85,7 @@ mock.module('./pi-sdk-loader', () => ({
 }))
 
 mock.module('./pi-model-registry', () => ({
+  inferPiContextWindow: () => 256_000,
   registerPiModelFromChannel: async () => ({
     agentDir: '/tmp/pi-agent',
     modelRuntime: {},
