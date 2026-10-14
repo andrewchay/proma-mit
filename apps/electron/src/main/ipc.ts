@@ -576,7 +576,7 @@ export async function registerIpcHandlers(): Promise<void> {
 
   // ===== 嵌入式终端 =====
   const assertMainTerminalRenderer = async (senderId: number): Promise<void> => {
-    const { getMainWindow } = await import('./index')
+    const { getMainWindow } = await import('./main-window')
     const mainWindow = getMainWindow()
     if (!mainWindow || mainWindow.webContents.id !== senderId) throw new Error('仅主窗口可以操作本地终端')
   }
@@ -4460,7 +4460,7 @@ export async function registerIpcHandlers(): Promise<void> {
     QUICK_TASK_IPC_CHANNELS.SUBMIT,
     async (_, input: QuickTaskSubmitInput): Promise<void> => {
       const { hideQuickTaskWindow } = await import('./lib/quick-task-window')
-      const { getMainWindow } = await import('./index')
+      const { getMainWindow } = await import('./main-window')
       hideQuickTaskWindow()
 
       const mainWin = getMainWindow()

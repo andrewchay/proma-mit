@@ -13,7 +13,7 @@
 import { dirname } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs'
 import { BrowserWindow } from 'electron'
-import { getMainWindow } from '../index'
+import { getMainWindow } from '../main-window'
 import { resolveAgentStreamTarget } from './agent-stream-target'
 import type { WebContents } from 'electron'
 import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE, isRetiredAgentRuntime, normalizeAgentRuntime } from '@gravitas/shared'

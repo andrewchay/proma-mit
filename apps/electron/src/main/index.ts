@@ -1,4 +1,5 @@
 import { createDockIcon } from './lib/dock-icon'
+import { getMainWindow, setMainWindow } from './main-window'
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
@@ -13,6 +14,7 @@ import {
   APP_UPDATES_ENABLED,
   APP_SERVICE_PORTS,
 } from './lib/app-identity'
+export { getMainWindow } from './main-window'
 
 app.setName(APP_DISPLAY_NAME)
 if (process.env.PROMA_TEST_CONFIG_DIR) {
@@ -219,11 +221,6 @@ registerBridge({
 
 let mainWindow: BrowserWindow | null = null
 
-/** 获取主窗口实例（供其他模块使用） */
-export function getMainWindow(): BrowserWindow | null {
-  return mainWindow
-}
-
 function installWindowsZoomInFallback(win: BrowserWindow): void {
   if (process.platform !== 'win32') return
 
@@ -352,6 +349,7 @@ function createWindow(): void {
     },
     ...titleBarOptions,
   })
+  setMainWindow(mainWindow)
   installWindowsZoomInFallback(mainWindow)
 
   // Load the renderer
@@ -421,6 +419,7 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    setMainWindow(null)
   })
 }
 

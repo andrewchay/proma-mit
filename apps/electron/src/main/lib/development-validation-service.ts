@@ -206,11 +206,27 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
     })
     let output = ''
     let timedOut = false
-    const timer = setTimeout(() => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout>
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+    const finish = (code: number | null, signal: NodeJS.Signals | null, errorMessage?: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (killTimer) clearTimeout(killTimer)
+      resolve({
+        exitCode: timedOut ? null : code,
+        timedOut,
+        output: errorMessage
+          ? `${output}\n[spawn error] ${errorMessage}`
+          : signal && !timedOut ? `${output}\n[signal] ${signal}` : output,
+      })
+    }
+    timer = setTimeout(() => {
       timedOut = true
       child.kill('SIGTERM')
       // 宽限后强制结束，确保进程终止被确认
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         try { child.kill('SIGKILL') } catch { /* 已退出 */ }
       }, 2000).unref()
     }, timeoutMs)
@@ -218,16 +234,9 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
     child.on('error', (error) => {
-      clearTimeout(timer)
-      resolve({ exitCode: null, timedOut, output: `${output}\n[spawn error] ${error.message}` })
+      finish(null, null, error.message)
     })
-    child.on('close', (code, signal) => {
-      clearTimeout(timer)
-      resolve({
-        exitCode: timedOut ? null : code,
-        timedOut,
-        output: signal && !timedOut ? `${output}\n[signal] ${signal}` : output,
-      })
-    })
+    child.once('exit', finish)
+    child.once('close', finish)
   })
 }
