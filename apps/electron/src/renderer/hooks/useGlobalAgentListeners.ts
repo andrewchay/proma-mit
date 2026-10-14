@@ -219,7 +219,7 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
         const inputTokens = u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
         // 流式过程中 SDK 不返回 contextWindow，按模型名推断一个默认值作为 fallback
         const modelName = aMsg.message.model ?? aMsg._channelModelId
-        const fallbackWindow = inferContextWindow(modelName)
+        const fallbackWindow = aMsg._contextWindow ?? inferContextWindow(modelName)
         events.push({
           type: 'usage_update',
           usage: {
@@ -256,7 +256,7 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
     }
 
     case 'result': {
-      const rMsg = msg as { subtype: string; usage?: { input_tokens: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; modelUsage?: Record<string, { contextWindow?: number }> }
+      const rMsg = msg as { subtype: string; usage?: { input_tokens: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }; total_cost_usd?: number; modelUsage?: Record<string, { contextWindow?: number }>; _contextWindow?: number }
       const usage = rMsg.usage
       // 子 Agent 模型（如 Haiku 200K）的 contextWindow 可能先到达并覆盖主模型
       // （如 Opus 1M），导致上下文指示器在 1M 与 200K 之间跳动、触发误压缩。
@@ -264,7 +264,11 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
       const contextWindow = rMsg.modelUsage
         ? Math.max(0, ...Object.values(rMsg.modelUsage).map((m) => m.contextWindow ?? 0))
         : undefined
-      const resolvedContextWindow = contextWindow && contextWindow > 0 ? contextWindow : undefined
+      const resolvedContextWindow = contextWindow && contextWindow > 0
+        ? contextWindow
+        : rMsg._contextWindow && rMsg._contextWindow > 0
+          ? rMsg._contextWindow
+          : undefined
       return [{
         type: 'complete',
         stopReason: rMsg.subtype === 'success' ? 'end_turn' : 'error',
