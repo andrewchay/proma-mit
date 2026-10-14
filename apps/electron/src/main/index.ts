@@ -15,7 +15,7 @@ import {
 } from './lib/app-identity'
 
 app.setName(APP_DISPLAY_NAME)
-if (process.env.PROMA_TEST_CONFIG_DIR) {
+if (process.env.GRAVITAS_PACKAGE_SMOKE === '1' && process.env.PROMA_TEST_CONFIG_DIR) {
   app.setPath('userData', join(process.env.PROMA_TEST_CONFIG_DIR, 'electron'))
 } else if (APP_IS_DEV) {
   // 必须在获取单实例锁之前设置，Stable 的原 userData 路径保持不变。
