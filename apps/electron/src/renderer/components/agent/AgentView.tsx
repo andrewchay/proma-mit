@@ -17,7 +17,7 @@ import * as React from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
-import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Eye, EyeOff, Box, ChevronDown, Target, Network, ShieldCheck, Pencil } from 'lucide-react'
+import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Box, ChevronDown, Target, Network, ShieldCheck, Pencil } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
@@ -53,7 +53,7 @@ import { cn } from '@/lib/utils'
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
 import { FeishuNotifyToggle } from '@/components/chat/FeishuNotifyToggle'
 import { registerShortcut } from '@/lib/shortcut-registry'
-import { previewPanelOpenMapAtom, previewFileMapAtom, autoPreviewEnabledAtom, quotedSelectionMapAtom, currentQuotedSelectionAtom } from '@/atoms/preview-atoms'
+import { previewPanelOpenMapAtom, previewFileMapAtom, quotedSelectionMapAtom, currentQuotedSelectionAtom } from '@/atoms/preview-atoms'
 import {
   agentStreamingStatesAtom,
   agentSessionStreamingStateAtomFamily,
@@ -376,65 +376,37 @@ function AgentRuntimeSelector({ runtime, disabled = false, onChange }: AgentRunt
   )
 }
 
-interface AutoPreviewPopoverProps {
-  enabled: boolean
-  onToggle: () => void
+interface AttachmentMenuProps {
+  onAttachFile: () => void
+  onAttachFolder: () => void
 }
 
-function AutoPreviewPopover({ enabled, onToggle }: AutoPreviewPopoverProps): React.ReactElement {
-  const [open, setOpen] = React.useState(false)
-  const hoverTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const handleMouseEnter = React.useCallback(() => {
-    if (hoverTimeout.current) clearTimeout(hoverTimeout.current)
-    setOpen(true)
-  }, [])
-
-  const handleMouseLeave = React.useCallback(() => {
-    hoverTimeout.current = setTimeout(() => setOpen(false), 150)
-  }, [])
-
-  React.useEffect(() => {
-    return () => {
-      if (hoverTimeout.current) clearTimeout(hoverTimeout.current)
-    }
-  }, [])
-
+function AttachmentMenu({ onAttachFile, onAttachFolder }: AttachmentMenuProps): React.ReactElement {
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn(
-            'size-[36px] rounded-full',
-            enabled ? 'text-green-500' : 'text-foreground/60 hover:text-foreground'
-          )}
-          onClick={onToggle}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {enabled ? <Eye className="size-5" /> : <EyeOff className="size-5" />}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="center"
-        sideOffset={8}
-        className="w-auto min-w-[160px] p-2 px-2.5"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-xs text-foreground/70">自动预览修改中文件</span>
-          <Switch
-            checked={enabled}
-            onCheckedChange={onToggle}
-            className="h-4 w-7 [&>span]:size-3 [&>span]:data-[state=checked]:translate-x-3"
-          />
-        </div>
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-[36px] shrink-0 rounded-full text-foreground/60 hover:text-foreground"
+              aria-label="添加文件或文件夹"
+            >
+              <Paperclip className="size-5" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top"><p>添加文件或文件夹</p></TooltipContent>
+      </Tooltip>
+      <PopoverContent side="top" align="start" className="w-52 p-1.5" onOpenAutoFocus={(event) => event.preventDefault()}>
+        <button type="button" onClick={onAttachFile} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm hover:bg-accent">
+          <Paperclip className="size-4 text-muted-foreground" /> 添加文件
+        </button>
+        <button type="button" onClick={onAttachFolder} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm hover:bg-accent">
+          <FolderPlus className="size-4 text-muted-foreground" /> 附加文件夹
+        </button>
       </PopoverContent>
     </Popover>
   )
@@ -2178,9 +2150,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     (allExitPlanRequests.get(sessionId)?.length ?? 0) > 0 ||
     (allMcpOAuthRequests.get(sessionId)?.length ?? 0) > 0
 
-  // ===== 预览面板状态（toggle 快捷键 + auto-preview 设置，分屏布局在 MainArea） =====
+  // ===== 预览面板状态（快捷键控制，自动预览已关闭） =====
   const setPreviewOpenMap = useSetAtom(previewPanelOpenMapAtom)
-  const [autoPreviewEnabled, setAutoPreviewEnabled] = useAtom(autoPreviewEnabledAtom)
 
   const togglePreviewPanel = React.useCallback(() => {
     setPreviewOpenMap((prev) => {
@@ -2314,46 +2285,8 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     //   ),
     // },
     {
-      key: 'attach-file',
-      node: (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-[36px] shrink-0 rounded-full text-foreground/60 hover:text-foreground"
-              onClick={handleOpenFileDialog}
-            >
-              <Paperclip className="size-5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            <p>添加附件</p>
-          </TooltipContent>
-        </Tooltip>
-      ),
-    },
-    {
-      key: 'attach-folder',
-      node: (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-[36px] shrink-0 rounded-full text-foreground/60 hover:text-foreground"
-              onClick={handleAttachFolder}
-            >
-              <FolderPlus className="size-5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            <p>附加文件夹</p>
-          </TooltipContent>
-        </Tooltip>
-      ),
+      key: 'attachments',
+      node: <AttachmentMenu onAttachFile={() => { void handleOpenFileDialog() }} onAttachFolder={() => { void handleAttachFolder() }} />,
     },
     {
       key: 'context-usage',
@@ -2371,15 +2304,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
           channelUpdatedAt={currentChannel?.updatedAt}
           channelProvider={currentChannel?.provider}
           channelBaseUrl={currentChannel?.baseUrl}
-        />
-      ),
-    },
-    {
-      key: 'auto-preview',
-      node: (
-        <AutoPreviewPopover
-          enabled={autoPreviewEnabled}
-          onToggle={() => setAutoPreviewEnabled(!autoPreviewEnabled)}
         />
       ),
     },
@@ -2402,8 +2326,6 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     contextStatus.contextWindow,
     contextStatus.isCompacting,
     handleCompact,
-    autoPreviewEnabled,
-    setAutoPreviewEnabled,
     piThinkingLevel,
     currentChannel?.id,
     currentChannel?.updatedAt,

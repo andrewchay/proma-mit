@@ -20,6 +20,7 @@ import {
   FolderPlus,
   LoaderCircle,
   MessageSquareText,
+  Files,
   Paperclip,
   Settings,
   Sparkles,
@@ -41,7 +42,7 @@ import {
   shouldOpenSlashCommandMenuInContext,
 } from './agent-command-menu-state'
 
-type CommandPage = 'root' | 'skills' | 'tools' | 'sessions' | 'files' | 'commands'
+type CommandPage = 'root' | 'skills' | 'tools' | 'sessions' | 'files' | 'commands' | 'attachments'
 type MentionCharacter = '@' | '/' | '&' | '#'
 
 type CommandAction = 'attach-file' | 'attach-folder' | 'manage-commands'
@@ -120,18 +121,11 @@ function getRootMenuItems(): RootMenuItem[] {
       kind: 'page',
     },
     {
-      id: 'attach-file',
-      label: '添加附件',
-      description: '从本机选择文件附加到消息',
-      icon: Paperclip,
-      kind: 'action',
-    },
-    {
-      id: 'attach-folder',
-      label: '附加文件夹',
-      description: '授权 Agent 访问一个文件夹',
-      icon: FolderPlus,
-      kind: 'action',
+      id: 'attachments',
+      label: '添加文件或文件夹',
+      description: '选择文件附加到消息，或授权 Agent 访问文件夹',
+      icon: Files,
+      kind: 'page',
     },
     {
       id: 'tools',
@@ -164,6 +158,7 @@ function menuTitle(page: CommandPage): string {
     case 'sessions': return '引用会话'
     case 'files': return '引用文件'
     case 'commands': return '自定义命令'
+    case 'attachments': return '添加文件或文件夹'
     default: return '命令'
   }
 }
@@ -182,6 +177,7 @@ function menuEmptyText(page: CommandPage, loading: boolean): string {
     case 'sessions': return '没有可引用的会话'
     case 'files': return '没有可引用的文件'
     case 'commands': return '还没有自定义命令，可在设置中添加'
+    case 'attachments': return '选择要添加的内容'
     default: return '没有匹配的命令'
   }
 }
@@ -386,6 +382,12 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
       return filterCommandMenuItems(entries, query)
     }, [query, skills, tools, customCommands])
     const referenceItems = React.useMemo<ReferenceMenuItem[]>(() => {
+      if (page === 'attachments') {
+        return [
+          { id: 'attach-file', label: '添加文件', description: '从本机选择文件附加到消息', icon: Paperclip, kind: 'action' as const },
+          { id: 'attach-folder', label: '附加文件夹', description: '授权 Agent 访问一个文件夹', icon: FolderPlus, kind: 'action' as const },
+        ]
+      }
       if (page === 'commands') {
         return filterCommandMenuItems(
           customCommands.map((cmd) => ({
@@ -428,6 +430,10 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
 
     const selectReferenceItem = React.useCallback(
       (item: ReferenceMenuItem): void => {
+        if (page === 'attachments') {
+          onRunAction(item.id as CommandAction)
+          return
+        }
         if (page === 'commands') {
           const command = customCommands.find((cmd) => cmd.name === item.id)
           if (command) onInsertCustomCommand(command.prompt)
@@ -436,7 +442,7 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
         const character: MentionCharacter = page === 'skills' ? '/' : page === 'tools' ? '#' : '&'
         onInsertMention(character, item.id, item.label)
       },
-      [onInsertMention, onInsertCustomCommand, page, customCommands],
+      [onRunAction, onInsertMention, onInsertCustomCommand, page, customCommands],
     )
 
     React.useImperativeHandle(ref, () => ({

@@ -304,6 +304,7 @@ export function ContextUsageBadge({
   const isWarning = compactThreshold
     ? displayTokens / compactThreshold >= WARNING_RATIO
     : false
+  const hasExceededCompactThreshold = compactThreshold != null && displayTokens >= compactThreshold
 
   const ratio = displayWindow ? displayTokens / displayWindow : 0
 
@@ -369,7 +370,11 @@ export function ContextUsageBadge({
           <div className="flex flex-col gap-1.5">
             {isWarning && compactThreshold && (
               <div className="rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
-                上下文接近上限（剩余约 {(compactThreshold - displayTokens).toLocaleString()} tokens 触发自动压缩），建议尽快压缩以保留完整后续能力
+                {compactThreshold != null && hasExceededCompactThreshold
+                  ? `上下文已超过自动压缩阈值（超出约 ${(displayTokens - compactThreshold).toLocaleString()} tokens），建议立即手动压缩。`
+                  : compactThreshold != null
+                    ? `上下文接近自动压缩阈值（剩余约 ${(compactThreshold - displayTokens).toLocaleString()} tokens），建议尽快压缩以保留完整后续能力。`
+                    : '上下文使用已接近上限，建议尽快压缩。'}
               </div>
             )}
             <div className="text-[11px] font-medium text-foreground/60">当前会话</div>
