@@ -23,8 +23,9 @@ const { evaluateContextCompactionGoldenSet, evaluateContextPacket } = await impo
 afterAll(() => { rmSync(tempHomeDir, { recursive: true, force: true }) })
 
 let workspaceId = ''
+let workspaceSequence = 0
 beforeEach(() => {
-  const ws = createAgentWorkspace(`Compact Integrity ${Date.now()}`)
+  const ws = createAgentWorkspace(`Compact Integrity ${Date.now()}-${workspaceSequence++}`)
   workspaceId = ws.id
 })
 
