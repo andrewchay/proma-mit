@@ -7,7 +7,7 @@
 import { BrowserWindow, clipboard } from 'electron'
 import { VOICE_DICTATION_IPC_CHANNELS } from '../../types'
 import type { VoiceDictationCommitResult, VoiceDictationSettings } from '../../types'
-import { getMainWindow } from '../index'
+import { getMainWindow } from '../main-window'
 import { pasteTextAtCurrentCursor } from './text-insertion-service'
 
 let targetWasPromaInput = false

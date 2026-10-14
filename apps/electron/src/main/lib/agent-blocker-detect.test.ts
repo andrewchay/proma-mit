@@ -3,8 +3,12 @@
  *
  * agent 自述无法完成（elicitation 信号）→ 识别卡点 → 任务转待人决策而非交付。
  */
-import { describe, expect, test } from 'bun:test'
-import { detectAgentBlocker } from './agent-employee-service'
+import { describe, expect, mock, test } from 'bun:test'
+import { buildElectronMock } from './testing/electron-mock'
+
+mock.module('electron', () => buildElectronMock())
+
+const { detectAgentBlocker } = await import('./agent-employee-service')
 
 describe('agent 卡点检测（elicitation 信号）', () => {
   test('Given 自述无法完成 When 检测 Then 命中卡点', () => {

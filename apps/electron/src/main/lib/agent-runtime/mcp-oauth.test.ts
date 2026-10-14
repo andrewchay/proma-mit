@@ -10,6 +10,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { APP_DEEP_LINK_PROTOCOL, APP_DISPLAY_NAME } from '../app-identity'
 import { loadMcpOAuthTokens, saveMcpOAuthTokens, removeMcpOAuthTokens } from './mcp-oauth-store'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth, takePendingMcpOAuth, hasPendingMcpOAuth } from './mcp-oauth-pending'
@@ -105,11 +106,11 @@ describe('MCP OAuth Provider', () => {
       auth: { type: 'oauthClientCredentials', clientId: 'id', clientSecret: 'secret', scope: 'read' },
     })
 
-    expect(provider.clientMetadata.client_name).toBe('Gravitas')
+    expect(provider.clientMetadata.client_name).toBe(APP_DISPLAY_NAME)
     expect(provider.clientMetadata.grant_types).toEqual(['client_credentials'])
     expect(provider.clientMetadata.token_endpoint_auth_method).toBe('client_secret_basic')
     expect(provider.clientInformation()).toEqual({ client_id: 'id', client_secret: 'secret' })
-    expect(String(provider.redirectUrl)).toContain('gravitas://mcp-auth')
+    expect(String(provider.redirectUrl)).toContain(`${APP_DEEP_LINK_PROTOCOL}://mcp-auth`)
     expect(String(provider.redirectUrl)).toContain('workspace=ws')
     expect(String(provider.redirectUrl)).toContain('server=srv')
   })

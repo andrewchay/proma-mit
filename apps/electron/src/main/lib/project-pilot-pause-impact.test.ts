@@ -1,13 +1,17 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createAgentExecution, createProject, closeProjectDb, getAgentExecution, initProjectDb, updateAgentExecution } from './project-sqlite-store'
-import { getPilotPolicy, pausePilotPolicy, savePilotPolicyDraft } from './project-pilot-policy'
-import { confirmPilotPauseImpact, previewPilotPauseImpact, validatePilotPauseChoices } from './project-pilot-pause-impact'
-import { registerPilotCommandLink } from './project-pilot-command-links'
-import { getPilotPauseDecision, recordPilotPauseDecision, recoverAllPilotPauseQueues, recoverPilotPauseQueue } from './project-pilot-pause-decision'
-import { tryStartExecution } from './agent-employee-service'
+import { buildElectronMock } from './testing/electron-mock'
+
+mock.module('electron', () => buildElectronMock())
+
+const { createAgentExecution, createProject, closeProjectDb, getAgentExecution, initProjectDb, updateAgentExecution } = await import('./project-sqlite-store')
+const { getPilotPolicy, pausePilotPolicy, savePilotPolicyDraft } = await import('./project-pilot-policy')
+const { confirmPilotPauseImpact, previewPilotPauseImpact, validatePilotPauseChoices } = await import('./project-pilot-pause-impact')
+const { registerPilotCommandLink } = await import('./project-pilot-command-links')
+const { getPilotPauseDecision, recordPilotPauseDecision, recoverAllPilotPauseQueues, recoverPilotPauseQueue } = await import('./project-pilot-pause-decision')
+const { tryStartExecution } = await import('./agent-employee-service')
 
 const dir = mkdtempSync(join(tmpdir(), 'pilot-pause-impact-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR

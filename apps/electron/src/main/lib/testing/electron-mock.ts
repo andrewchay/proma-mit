@@ -80,6 +80,7 @@ export function buildElectronMock(): Record<string, unknown> {
   const app = {
     isPackaged: false,
     getPath: () => '/tmp',
+    setPath: () => {},
     getAppPath: () => '/tmp',
     whenReady: async () => undefined,
     on: (): unknown => app,
