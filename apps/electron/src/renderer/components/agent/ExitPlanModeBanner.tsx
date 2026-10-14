@@ -99,6 +99,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
   const [submitting, setSubmitting] = React.useState(false)
 
   const request = requests[0] ?? null
+  const hasRequest = request !== null
 
   // ===== Refs：确保 keydown handler 始终读取最新值，消除闭包过期问题 =====
   const focusedIdxRef = React.useRef(focusedIdx)
@@ -118,8 +119,11 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
     if (submitting || !request) return
     setSubmitting(true)
     try {
+      if (!request) return
+      const currentRequest = request
+      if (!currentRequest) return
       await window.electronAPI.respondExitPlanMode({
-        requestId: request.requestId,
+        requestId: currentRequest.requestId,
         action,
         feedback: action === 'feedback' ? feedbackText.trim() : undefined,
       })
@@ -127,7 +131,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
       setAllRequests((prev) => {
         const map = new Map(prev)
         const current = map.get(sessionId) ?? []
-        const newValue = current.filter((r) => r.requestId !== request.requestId)
+        const newValue = current.filter((r) => r.requestId !== currentRequest.requestId)
         if (newValue.length === 0) map.delete(sessionId)
         else map.set(sessionId, newValue)
         return map
@@ -234,7 +238,7 @@ export function ExitPlanModeBanner({ sessionId }: ExitPlanModeBannerProps): Reac
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [request?.requestId, request])
 
-  if (!request) return null
+  if (!hasRequest) return null
 
   return (
     <div className="mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200">

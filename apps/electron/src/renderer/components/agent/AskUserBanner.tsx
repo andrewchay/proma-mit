@@ -46,6 +46,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   const [focusedOptIdx, setFocusedOptIdx] = React.useState(-1)
 
   const request = requests[0] ?? null
+  const hasRequest = request !== null
   const questions = request?.questions ?? []
   const isTakeover = request?.kind === 'computer_use_takeover'
   const isLastTab = activeTab >= questions.length - 1
@@ -193,8 +194,6 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     window.electronAPI.stopAgent(sessionId).catch(console.error)
   }
 
-  if (!request) return null
-
   const getAnswer = (idx: number): QuestionAnswer => answers.get(idx) ?? EMPTY_ANSWER
 
   const buildAnswersRecord = (): Record<string, string> => {
@@ -218,6 +217,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     setSubmitting(true)
     try {
       const answersRecord = skip ? {} : buildAnswersRecord()
+      if (!request) return
       await window.electronAPI.respondAskUser({ requestId: request.requestId, answers: answersRecord })
       setAllRequests((prev) => {
         const map = new Map(prev)
@@ -242,11 +242,12 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   })
 
   const currentQuestion = questions[activeTab]
-  if (!currentQuestion) return null
 
   const goNextTab = (): void => {
     if (!isLastTab) setActiveTab((prev) => prev + 1)
   }
+
+  if (!hasRequest || !currentQuestion) return null
 
   return (
     <div className={`mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200 border border-border/50 ${isTakeover ? 'ring-1 ring-amber-500/40' : ''}`}>
