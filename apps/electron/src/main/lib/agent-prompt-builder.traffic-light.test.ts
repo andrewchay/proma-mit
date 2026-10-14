@@ -33,7 +33,8 @@ describe('任务完成态红绿灯注入', () => {
 
     expect(prompt).toContain('## 任务完成态红绿灯')
     expect(prompt).toContain('最后一个非空行必须是进度状态行')
-    expect(prompt).toContain('转黄或转红之后立即停手')
+    expect(prompt).toContain('🔴 原始需求有未达项')
+    expect(prompt).toContain('转黄或转绿之后立即停手')
   })
 
   it('given 红绿灯常量 when 检查格式约定 then 与 shared 解析规则对齐（末行 emoji 开头）', () => {

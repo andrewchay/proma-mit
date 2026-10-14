@@ -1,22 +1,29 @@
 /**
  * CompletionStatusBar — 任务完成态红绿灯状态条
  *
- * 渲染 Agent 回复末尾约定的 🟢/🟡/🔴 进度状态行（约定见 agent-prompt-builder
+ * 渲染 Agent 回复末尾约定的 🔴/🟡/🟢 进度状态行（约定见 agent-prompt-builder
  * 的 TRAFFIC_LIGHT_GUIDE）。解析结果来自 @gravitas/shared 的
  * parseAgentCompletionStatus；任何不符合约定的文本都不会渲染本组件（干净退化）。
+ *
+ * 展示语义（与提示词约定一致）：
+ * - 🔴 进行中：原始需求有未达项
+ * - 🟡 待决策：需求已达成，后续计划等待用户拍板
+ * - 🟢 已完成：需求已达成，剩余事项已存档
+ *
+ * 图标采用扁平设计（lucide 线性图标），不用 emoji，保证跨平台渲染一致。
  */
 
 import * as React from 'react'
 import { cn } from '@/lib/utils'
+import { CircleDot, CircleHelp, CircleCheck } from 'lucide-react'
 import { parseAgentCompletionStatus } from '@gravitas/shared'
 import type { AgentCompletionStatus, AgentTrafficLight } from '@gravitas/shared'
 
-/** 各状态的外观与固定文案（emoji 由解析层保留，这里补充语义标签） */
-const TRAFFIC_LIGHT_META: Record<AgentTrafficLight, { label: string; className: string }> = {
-  green: { label: '进行中', className: 'text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/5' },
-  yellow: { label: '待决策', className: 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5' },
-  // 红灯语义是「已完成，剩余事项已存档」，不是错误，用中性色避免误导
-  red: { label: '已完成', className: 'text-muted-foreground border-muted-foreground/30 bg-muted/30' },
+/** 各状态的扁平图标、配色与固定文案 */
+const TRAFFIC_LIGHT_META: Record<AgentTrafficLight, { icon: React.ComponentType<{ className?: string }>; label: string; iconClassName: string; className: string }> = {
+  red: { icon: CircleDot, label: '进行中', iconClassName: 'text-red-500 animate-pulse', className: 'text-red-600 dark:text-red-400 border-red-500/30 bg-red-500/5' },
+  yellow: { icon: CircleHelp, label: '待决策', iconClassName: 'text-amber-500', className: 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/5' },
+  green: { icon: CircleCheck, label: '已完成', iconClassName: 'text-emerald-500', className: 'text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/5' },
 }
 
 export function CompletionStatusBar({ text, className }: { text: string; className?: string }): React.ReactElement | null {
@@ -24,6 +31,7 @@ export function CompletionStatusBar({ text, className }: { text: string; classNa
   if (!status) return null
 
   const meta = TRAFFIC_LIGHT_META[status.status]
+  const Icon = meta.icon
   return (
     <div
       className={cn(
@@ -33,7 +41,7 @@ export function CompletionStatusBar({ text, className }: { text: string; classNa
       )}
       title="任务完成态（Agent 红绿灯）"
     >
-      <span className="shrink-0">{status.status === 'green' ? '🟢' : status.status === 'yellow' ? '🟡' : '🔴'}</span>
+      <Icon className={cn('size-3.5 shrink-0', meta.iconClassName)} />
       <span className="shrink-0 font-medium">{meta.label}</span>
       {status.detail && (
         <span className="truncate text-muted-foreground">{status.detail}</span>
