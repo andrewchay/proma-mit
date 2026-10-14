@@ -34,11 +34,8 @@ echo "   项目根目录: $PROJECT_ROOT"
 
 cd apps/electron
 
-echo "🧹 清理打包残留（避免 electron-builder ENOTEMPTY）..."
-# electron-builder 会先 rmdir out/mac-arm64 等 appOutDir；Finder 生成的 .DS_Store
-# 或上次中断的临时目录会让它报 ENOTEMPTY。打包前统一清理，但保留历史 DMG/zip 产物。
-find out -name ".DS_Store" -delete 2>/dev/null || true
-rm -rf out/mac-arm64 out/mac-arm64.tmp out/mac-arm64-unpacked
+# Dev 输出由 dist.ts 管理；不删除或覆盖生产 out/ 目录。
+echo "📦 使用独立开发输出目录 out-dev/"
 
 # 所有分支统一走 scripts/dist.ts，并带 --dev-unlock。
 # --dev-unlock 让 esbuild 用 --define 把放开标记烧进 main.cjs（参考 main/lib/dev-unlock.ts），
@@ -58,4 +55,4 @@ fi
 echo "⚠️  本次产出为调试包：全部付费能力已放开，请勿分发"
 
 echo "✅ 构建完成，输出目录："
-echo "   apps/electron/out/"
+echo "   apps/electron/out-dev/"

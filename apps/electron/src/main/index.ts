@@ -7,15 +7,23 @@ import {
   APP_DEEP_LINK_PROTOCOL,
   APP_DISPLAY_NAME,
   APP_PROCESS_NAME,
+  APP_IS_DEV,
+  APP_DEV_USER_DATA_DIR_NAME,
+  APP_AUTOMATIC_SIDE_EFFECTS,
+  APP_UPDATES_ENABLED,
+  APP_SERVICE_PORTS,
 } from './lib/app-identity'
 
 app.setName(APP_DISPLAY_NAME)
-if (process.env.GRAVITAS_PACKAGE_SMOKE === '1' && process.env.PROMA_TEST_CONFIG_DIR) {
+if (process.env.PROMA_TEST_CONFIG_DIR) {
   app.setPath('userData', join(process.env.PROMA_TEST_CONFIG_DIR, 'electron'))
+} else if (APP_IS_DEV) {
+  // 必须在获取单实例锁之前设置，Stable 的原 userData 路径保持不变。
+  app.setPath('userData', join(app.getPath('appData'), APP_DEV_USER_DATA_DIR_NAME))
 }
+console.log(`[启动] ${APP_DISPLAY_NAME} userData=${app.getPath('userData')}`)
 
-// 统一使用 proma-mit 身份，不再区分 dev/prod userData
-// 注意：本机只应安装一个 proma-mit 版本，避免出现双实例
+// 不同渠道使用独立 userData；每个渠道仍只允许一个实例。
 
 // 单实例锁：防止重复启动同一个版本（dev/prod 因 userData 已隔离，互不影响）
 //
@@ -458,7 +466,7 @@ async function bootstrap(): Promise<void> {
   protocol.handle('proma-file', handlePromaFileRequest)
 
   // 注册 proma-mit:// DeepLink 协议，用于 MCP OAuth 回调
-  if (!app.isPackaged) {
+  if (APP_IS_DEV) {
     app.setAsDefaultProtocolClient(APP_DEEP_LINK_PROTOCOL, process.execPath, [process.argv[1] ?? '.'])
   } else {
     app.setAsDefaultProtocolClient(APP_DEEP_LINK_PROTOCOL)
@@ -535,14 +543,14 @@ async function bootstrap(): Promise<void> {
   await safeAwait('startBriefCallbackServer', async () => {
     const { startBriefCallbackServer } = await import('./lib/brief-callback-server')
     const settings = getSettings()
-    await startBriefCallbackServer(settings.briefCallback?.port ?? 8765)
+    await startBriefCallbackServer(APP_IS_DEV ? APP_SERVICE_PORTS.brief : settings.briefCallback?.port ?? APP_SERVICE_PORTS.brief)
   })
 
   // 启动 Companion 远程访问服务（手机浏览器；仅在设置开启时监听）
   await safeAwait('startCompanionServer', async () => {
     if (getSettings().companionServer?.enabled) {
       const { startCompanionServer } = await import('./lib/companion-server')
-      await startCompanionServer()
+      await startCompanionServer({ port: APP_SERVICE_PORTS.companion })
     }
   })
 
@@ -582,8 +590,8 @@ async function bootstrap(): Promise<void> {
   // 启动 Chat 工具配置文件监听（Agent 创建工具后自动通知渲染进程）
   safeRun('startChatToolsWatcher', startChatToolsWatcher)
 
-  // 生产环境下初始化自动更新
-  if (app.isPackaged && mainWindow) {
+  // 只有正式安装包可以访问正式更新渠道。
+  if (APP_UPDATES_ENABLED && mainWindow) {
     safeRun('initAutoUpdater', () => initAutoUpdater(mainWindow!))
   }
 
@@ -654,8 +662,35 @@ async function bootstrap(): Promise<void> {
   })
 }
 
+/** Dev 默认不恢复任何后台执行或外部监听；纯本地初始化仍可运行。 */
+const automaticStartupHooks = new Set([
+  'recoverAllPilotPauseQueues',
+  'recoverInterruptedPilotRuntimeExecutions',
+  'startPilotBackgroundReconcile',
+  'startBriefCallbackServer',
+  'startCompanionServer',
+  'recoverAutoEvaluations',
+  'startAllBridges',
+  'startWorkflowScheduler',
+  'recoverWorkflowSideEffects',
+  'startDynamicIslandService',
+  'startAppEventBus',
+  'startNotificationCoordinator',
+  'startRunStore',
+  'registerGlobalShortcut:quick-task',
+  'registerGlobalShortcut:show-main-window',
+  'registerGlobalShortcut:voice-dictation',
+])
+
+function shouldSkipStartupHook(name: string): boolean {
+  if (APP_AUTOMATIC_SIDE_EFFECTS || !automaticStartupHooks.has(name)) return false
+  console.log(`[启动] Dev 默认跳过自动服务: ${name}`)
+  return true
+}
+
 /** 同步启动钩子隔离：单点失败仅记录日志，不阻断启动链。 */
 function safeRun(name: string, fn: () => void): void {
+  if (shouldSkipStartupHook(name)) return
   try {
     fn()
   } catch (err) {
@@ -665,6 +700,7 @@ function safeRun(name: string, fn: () => void): void {
 
 /** 异步启动钩子隔离：同 safeRun，但适用于返回 Promise 的钩子。 */
 async function safeAwait(name: string, fn: () => Promise<unknown>): Promise<void> {
+  if (shouldSkipStartupHook(name)) return
   try {
     await fn()
   } catch (err) {
@@ -718,6 +754,24 @@ app.on('before-quit', () => {
   // 标记正在退出，让 close 事件不再阻止关闭
   setQuitting()
   stopPilotBackgroundReconcile?.()
+  // 释放应用自启的本地 HTTP 服务，避免退出后残留端口。
+  try {
+    const { stopBriefCallbackServer } = require('./lib/brief-callback-server') as { stopBriefCallbackServer: () => void }
+    stopBriefCallbackServer()
+  } catch {
+    // 未初始化时忽略
+  }
+  void import('./lib/companion-server')
+    .then(({ stopCompanionServer }) => stopCompanionServer())
+    .catch(() => {
+      // 未初始化或已停止时忽略
+    })
+  try {
+    const { stopAllMonitors } = require('./lib/monitor-service') as { stopAllMonitors: () => void }
+    stopAllMonitors()
+  } catch {
+    // 未初始化时忽略
+  }
 
   // 中止所有活跃的 Agent 和 Chat 子进程
   stopAllAgents()

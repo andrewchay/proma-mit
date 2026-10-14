@@ -12,6 +12,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 在 UI 设计上采用更现代的方案，UI 组件推荐采用 ShadcnUI，在合适的情况下，用卡片和阴影取代边框，用符合主题的饱满色彩，设置界面要设置背景，为未来做不同主题留下空间。
 - 采用 BDD 行为驱动开发的方案。
 
+## Dev / Stable 运行隔离
+
+- 源码运行与 Dev 安装包使用 Gravitas Dev / `.gravitas-dev`；生产保留 Gravitas / `.gravitas` 与原 userData。安装包渠道从自身 package.json 的 `gravitasChannel` 读取，不从环境变量读取。
+- 配置路径复用 `config-paths.ts`；预览/安装缓存复用 `app-temp-paths.ts`，不能硬编码共享临时目录。
+- Dev 不恢复后台自动任务、不使用正式更新；新自动启动入口必须核对渠道策略。手动操作仍走原权限规则。
+- `dist:dev` 输出 out-dev；`dist:stable` 输出 out。`--dev-unlock` 必须生成 Dev 身份，不可发布。完整验收见 `docs/dev-stable-release.md`。
+
 ## 项目概述
 
 Gravitas 是单机优先的**团队 Agent 协作操作系统（AgentIC OS）**：多模型 Chat、通用 Agent、可视化 Workflow、项目管理与 AI 员工、团队协作（成员同步 / 收件箱 / Run Center）、领域能力包（营销 / 出海 sourcing / 学术）、订阅商业化与多租户 Web 运行时，数据和配置尽量留在本地。

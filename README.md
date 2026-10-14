@@ -396,7 +396,19 @@ shared 类型和 IPC 常量
 
 ## 打包注意事项
 
-本地验收包与正式版均使用 com.gravitas.app / Gravitas 身份，不应按独立应用并存安装。目录打包后运行 `bun scripts/package-smoke.ts <Gravitas可执行文件>`；烟测使用临时配置，不覆盖用户应用。默认离线烟测会验证打包资源、SQLite 重开、工作流模板、新工作区的三个默认 Skills，以及 Skill 分组批量停用落盘。
+开发版 **Gravitas Dev** 使用 `com.gravitas.app.dev`、`~/.gravitas-dev/`、独立 Electron userData 和 `gravitas-dev://`；正式版 **Gravitas** 保留 `com.gravitas.app`、`~/.gravitas/` 与原 userData。两版使用同一套源码，可以并存；不要手动复制生产配置到 Dev，也不要同时授权两版写同一外部工作目录。Dev 导入备份时，外部附件路径需要显式重新映射。
+
+在 `apps/electron` 下执行：
+
+```bash
+bun run dist:dev       # 当前 macOS 架构的开发 DMG，输出 out-dev/
+bun run dist:stable    # 本地渠道检查 + 类型/定向测试 + 正式身份 DMG，输出 out/
+bun run release:check  # 渠道契约与定向门禁；不发布
+```
+
+源码开发运行也使用 Dev 数据目录。Dev 默认停用启动时的自动调度、IM 桥接、Brief/Companion 监听和全局快捷键，不使用正式更新渠道；手动操作仍保留原审批流程，Dev 不是网络沙箱。`--dev-unlock` 始终生成 Dev 身份包，不可对外分发。生产发布仍需全量 CI 门禁，以及升级、恢复和真实并存验收；构建成功不等于生产可用。验收清单见 [双版本发布验收](docs/dev-stable-release.md)。
+
+目录打包后运行 `bun scripts/package-smoke.ts <Gravitas可执行文件>`；烟测使用临时配置，不覆盖用户应用。默认离线烟测会验证打包资源、SQLite 重开、工作流模板、新工作区的三个默认 Skills，以及 Skill 分组批量停用落盘。
 
 如需验证真实 Kimi 自动压缩，可显式提供已有 Kimi Coding 渠道和加密渠道配置文件：
 

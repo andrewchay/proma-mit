@@ -9,11 +9,15 @@
 
 import { appendFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { getConfigDir } from './config-paths'
+import { APP_IS_DEV } from './app-identity'
 import { homedir } from 'node:os'
 
-/** 日志根目录：~/.proma-mit/logs/ */
+/** Dev 日志独立，Stable 保留原诊断目录；测试尊重隔离根。 */
 function getLogsDir(): string {
-  const dir = join(homedir(), '.proma-mit', 'logs')
+  const dir = APP_IS_DEV || process.env.PROMA_TEST_CONFIG_DIR
+    ? join(getConfigDir(), 'logs')
+    : join(homedir(), '.proma-mit', 'logs')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
 }
