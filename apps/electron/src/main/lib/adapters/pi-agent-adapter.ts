@@ -123,6 +123,19 @@ export function resolvePromptIdleTimeoutMs(hasModelActivity: boolean, firstToken
   return hasModelActivity ? PI_PROMPT_IDLE_TIMEOUT_MS : firstTokenTimeoutMs
 }
 
+/**
+ * 空闲看门狗判定：给定在飞工具数与已静默时长，是否应判定为挂起流。
+ *
+ * 工具执行期间一律视为活动——长工具（wait_for_delegations 合法等待可达 2 小时、
+ * Bash 长命令、等待用户回答的 AskUserQuestion）执行期间 Pi 不会发任何生命周期事件，
+ * 但会话并非挂起。误杀会引发 AbortError → 断流重试（「重试中(1/3)」）→ 重发撞在
+ * 仍在执行的工具上，最终卡住会话。
+ */
+export function shouldTreatStreamAsIdle(inFlightToolCalls: number, idleMs: number, idleLimitMs: number): boolean {
+  if (inFlightToolCalls > 0) return false
+  return idleMs >= idleLimitMs
+}
+
 /** 构造中止错误（interrupt / abort 场景） */
 function createAbortError(): Error {
   const error = new Error('操作已中止')
@@ -542,6 +555,10 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     // 首模型响应单独记录；工具/重试事件不能冒充首 token、提前缩短 prefill 宽限。
     let lastActivityAt = Date.now()
     let currentPromptHasModelActivity = false
+    // 在飞工具调用数。长工具（如 wait_for_delegations 合法等待数十分钟、Bash 长命令）
+    // 执行期间 Pi 不会发任何生命周期事件，但会话并非挂起；看门狗必须跳过这段静默，
+    // 否则 120s 后误杀 → AbortError 被当瞬时错误重试 → 「重试中(1/3)」且会话状态错乱。
+    let inFlightToolCalls = 0
     const touchActivity = (): void => { lastActivityAt = Date.now() }
     const touchModelActivity = (): void => {
       currentPromptHasModelActivity = true
@@ -589,6 +606,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       if (event.type === 'agent_end') {
         touchActivity()
+        inFlightToolCalls = 0
         if (!event.willRetry && deferredRetryError) queue.push(deferredRetryError)
         deferredRetryError = undefined
         if (!event.willRetry) resetAssistantUuid()
@@ -627,6 +645,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       if (event.type === 'tool_execution_start') {
         touchActivity()
+        inFlightToolCalls += 1
         // tool span：begin 入内存；inputKeys 只存参数键名（脱敏，不存值）。
         Promise.resolve(spanSink?.begin({
           tenantId: 'local',
@@ -645,6 +664,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       if (event.type === 'tool_execution_end') {
         touchActivity()
+        inFlightToolCalls = Math.max(0, inFlightToolCalls - 1)
         Promise.resolve(spanSink?.end(event.toolCallId, {
           status: event.isError ? 'error' : 'ok',
           ...(event.isError ? { error: `工具 ${event.toolName} 执行失败` } : {}),
@@ -714,6 +734,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
           timer = setInterval(() => {
             // 仅模型消息结束首 token 宽限；工具/重试事件只刷新 lastActivityAt。
             const idleLimit = resolvePromptIdleTimeoutMs(currentPromptHasModelActivity, firstTokenTimeoutMs)
+            // 工具执行期间视为活动：长工具（wait_for_delegations / Bash 长命令等）
+            // 合法静默远超 120s，绝不是死流，跳过空闲判定避免误杀重试。
+            if (!shouldTreatStreamAsIdle(inFlightToolCalls, Date.now() - lastActivityAt, idleLimit)) return
             // 距离最后一次 Pi 活动超过阈值 → 判定挂起
             if (Date.now() - lastActivityAt >= idleLimit) {
               const err = new Error(
