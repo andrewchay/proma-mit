@@ -222,6 +222,23 @@ describe('PiAgentAdapter', () => {
     ])
   })
 
+  test('ChatGPT OAuth 订阅下手动 compact 给出兼容性提示且不初始化 Provider', async () => {
+    capturedPrompts = []
+    capturedSessionOptions = undefined
+    const adapter = new PiAgentAdapter()
+
+    await expect(async () => {
+      for await (const _message of adapter.query({
+        sessionId: 's-pi-codex-compact', prompt: '/compact', requestedOperation: 'compact', agentRuntime: 'pi',
+        provider: 'openai-codex', apiKey: 'oauth-session-placeholder', baseUrl: '',
+        model: 'gpt-5.5', cwd: '/tmp', channelId: 'codex-channel',
+      })) { /* Codex OAuth 不得进入通用摘要 API 或 Pi session。 */ }
+    }).toThrow('ChatGPT 订阅渠道暂不支持独立压缩')
+
+    expect(capturedPrompts).toEqual([])
+    expect(capturedSessionOptions).toBeUndefined()
+  })
+
   test('Pi 有限费用模式下手动 compact 在 Provider/会话初始化前被拒绝', async () => {
     capturedPrompts = []
     const adapter = new PiAgentAdapter()
