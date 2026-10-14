@@ -287,6 +287,8 @@ export interface SDKAssistantMessage {
   isReplay?: boolean
   /** 渠道配置的模型 ID，持久化/流式期间注入，用于正确匹配模型显示名 */
   _channelModelId?: string
+  /** Runtime 已解析的上下文窗口，仅供 UI 用量提示；不参与 SDK 消息语义 */
+  _contextWindow?: number
 }
 
 /** SDK user 消息 */

@@ -391,7 +391,7 @@ export function RichTextInput({
       attributes: {
         class: cn(
           'prose dark:prose-invert max-w-none focus:outline-none',
-          'min-h-[101px] w-full text-[15px] leading-[1.6]',
+          'min-h-[72px] w-full text-[15px] leading-[1.6]',
           '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
           '[&_pre]:rounded-md [&_pre]:p-3',
           '[&_code]:bg-muted [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm [&_code]:text-foreground',
@@ -712,8 +712,8 @@ export function RichTextInput({
       className={cn(
         'rich-text-input relative w-full overflow-y-auto scrollbar-thin transition-[max-height] duration-200 ease-in-out',
         isManuallyCollapsed
-          ? 'max-h-[101px]'
-          : isExpanded ? 'max-h-[500px]' : 'max-h-[200px]',
+          ? 'max-h-[72px]'
+          : isExpanded ? 'max-h-[500px]' : 'max-h-[104px]',
         disabled && 'opacity-50 cursor-not-allowed',
         className
       )}
