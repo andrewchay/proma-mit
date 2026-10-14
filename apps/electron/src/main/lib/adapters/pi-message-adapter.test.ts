@@ -38,6 +38,24 @@ describe('pi-message-adapter', () => {
     ])
     expect(assistantMessage.message.usage?.input_tokens).toBe(10)
     expect(assistantMessage._channelModelId).toBe('channel-model')
+    expect(assistantMessage._contextWindow).toBe(256_000)
+  })
+
+  test('uses Codex model context window rather than the unknown-model fallback', () => {
+    const message: AssistantMessage = {
+      role: 'assistant',
+      api: 'openai-codex-responses',
+      provider: 'openai-codex',
+      model: 'gpt-5.6',
+      content: [{ type: 'text', text: 'hello' }],
+      usage: { input: 657_796, output: 294, cacheRead: 656_896, cacheWrite: 0, totalTokens: 658_090, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'stop',
+      timestamp: 1,
+    }
+
+    const converted = convertPiMessageToSDKMessage(message, 's1')
+    expect(converted?.type).toBe('assistant')
+    expect((converted as SDKAssistantMessage)._contextWindow).toBe(1_000_000)
   })
 
   test('converts SDK text history back to Pi messages', () => {
