@@ -2262,8 +2262,8 @@ export class AgentOrchestrator {
           code: 'provider_error',
           title: 'ChatGPT 订阅暂不支持 /compact',
           message: 'Codex OAuth 仅用于 Pi Runtime 的原生 Responses 请求；不能转交给 AI SDK 或通用摘要接口。请使用 Pi Runtime，或切换到支持压缩的 API 渠道。',
-          canRetry: false,
           actions: [],
+          canRetry: false,
         })
         return
       }
