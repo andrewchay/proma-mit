@@ -1,0 +1,23 @@
+  • electron-builder  version=26.15.3 os=27.0.0
+  • loaded configuration  file=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/electron-builder.dev.yml
+  • loaded parent configuration  file=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/electron-builder.yml
+  • @electron/rebuild already used by electron-builder, please consider to remove excess dependency from devDependencies
+
+To ensure your native dependencies are always matched electron version, simply add script `"postinstall": "electron-builder install-app-deps" to your `package.json`
+  • packageManager not detected by file, falling back to environment detection  resolvedPackageManager=bun detected=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron
+  • detected workspace root for project using lock file  pm=bun config=undefined resolved=/Users/chaihao/.proma/agent-workspaces/proma-mit/project projectDir=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron
+  • skipped dependencies rebuild  reason=npmRebuild is set to false
+  • packaging       platform=darwin arch=arm64 electron=39.8.10 appOutDir=out-dev/mac-arm64
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/out-dev/mac-arm64
+  • searching for node modules  pm=bun searchDir=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron
+  • note: bun does not support any CLI for dependency tree extraction, utilizing file traversal collector instead
+  • using manual traversal of node_modules to build dependency tree
+  • missing optional dependencies  dependencies=["@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143","@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143","@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143","@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.143","@anthropic-ai/claude-agent-sdk-win32-x64@0.3.143","@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143","@esbuild/aix-ppc64@0.28.2","@esbuild/android-arm@0.28.2","@esbuild/android-arm64@0.28.2","@esbuild/android-x64@0.28.2","@esbuild/freebsd-arm64@0.28.2","@esbuild/freebsd-x64@0.28.2","@esbuild/linux-arm@0.28.2","@esbuild/linux-arm64@0.28.2","@esbuild/linux-ia32@0.28.2","@esbuild/linux-loong64@0.28.2","@esbuild/linux-mips64el@0.28.2","@esbuild/linux-ppc64@0.28.2","@esbuild/linux-riscv64@0.28.2","@esbuild/linux-s390x@0.28.2","@esbuild/linux-x64@0.28.2","@esbuild/netbsd-arm64@0.28.2","@esbuild/netbsd-x64@0.28.2","@esbuild/openbsd-arm64@0.28.2","@esbuild/openbsd-x64@0.28.2","@esbuild/openharmony-arm64@0.28.2","@esbuild/sunos-x64@0.28.2","@esbuild/win32-arm64@0.28.2","@esbuild/win32-ia32@0.28.2","@esbuild/win32-x64@0.28.2","@napi-rs/canvas-linux-x64-gnu@0.1.100","@napi-rs/canvas-win32-x64-msvc@0.1.100","@napi-rs/canvas-win32-arm64-msvc@0.1.100","@napi-rs/canvas-linux-arm-gnueabihf@0.1.100","@napi-rs/canvas-linux-x64-musl@0.1.100","@napi-rs/canvas-linux-arm64-gnu@0.1.100","@napi-rs/canvas-linux-arm64-musl@0.1.100","@napi-rs/canvas-android-arm64@0.1.100","@napi-rs/canvas-linux-riscv64-gnu@0.1.100","@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143","@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.143","@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143","@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143","@anthropic-ai/claude-agent-sdk-win32-x64@0.3.143","@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143"]
+  • skipped macOS application code signing  reason=cannot find valid "Developer ID Application" identity or custom non-Apple code signing certificate, it could cause some undefined behaviour, e.g. macOS localized description not visible, see https://electron.build/code-signing allIdentities=  1) 8A265941CA0CB807384D3D952E5645D5CE1BE2C5 "E19DFF80-9EC1-4FE8-8E76-58E6CE4BC978"
+  2) B3D0EEE7C3316723965F48D35406E13623A7DCFE "127.0.0.1"
+     2 identities found
+                                                Valid identities only
+  1) 8A265941CA0CB807384D3D952E5645D5CE1BE2C5 "E19DFF80-9EC1-4FE8-8E76-58E6CE4BC978"
+  2) B3D0EEE7C3316723965F48D35406E13623A7DCFE "127.0.0.1"
+     2 valid identities found

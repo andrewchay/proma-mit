@@ -1,0 +1,129 @@
+[配置] 已创建 Token 统计目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/token-usage
+[配置] 已创建 Agent 工作区目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/agent-workspaces
+[启动] Gravitas Dev userData=/Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/electron
+[启动] 开发/测试多实例模式已启用
+[协作工具] EventBus 阻塞事件监听已注册
+sandbox initialization failed: Operation not permitted
+Failed to initialize sandbox.sandbox initialization failed: Operation not permitted
+Failed to initialize sandbox.[调试放开] GRAVITAS_UNLOCK_ALL_CAPABILITIES=1 状态：未配置
+[配置] 已同步默认 Skill: brainstorming
+[配置] 已同步默认 Skill: docx
+[配置] 已同步默认 Skill: executing-plans
+[配置] 已同步默认 Skill: find-skills
+[配置] 已同步默认 Skill: guizang-ppt-skill
+[配置] 已同步默认 Skill: ma-brand-dna
+[配置] 已同步默认 Skill: ma-brand-house
+[配置] 已同步默认 Skill: ma-campaign-optimizer
+[配置] 已同步默认 Skill: ma-campaign-tester
+[配置] 已同步默认 Skill: ma-content-audit
+[配置] 已同步默认 Skill: ma-content-calendar
+[配置] 已同步默认 Skill: ma-creative-roi
+[配置] 已同步默认 Skill: ma-ugc-campaign
+[配置] 已同步默认 Skill: pdf
+[配置] 已同步默认 Skill: pptx
+[配置] 已同步默认 Skill: proma-coach
+[配置] 已同步默认 Skill: proma-memory
+[配置] 已同步默认 Skill: skill-creator
+[配置] 已同步默认 Skill: thinking-patterns
+[配置] 已同步默认 Skill: tool-builder
+[配置] 已同步默认 Skill: writing-plans
+[配置] 已同步默认 Skill: xlsx
+[配置] 已同步营销 Skill: ma-brand-dna
+[配置] 已同步营销 Skill: ma-brand-house
+[配置] 已同步营销 Skill: ma-campaign-optimizer
+[配置] 已同步营销 Skill: ma-campaign-tester
+[配置] 已同步营销 Skill: ma-competitor-analyzer
+[配置] 已同步营销 Skill: ma-consumer-insight
+[配置] 已同步营销 Skill: ma-content-audit
+[配置] 已同步营销 Skill: ma-content-calendar
+[配置] 已同步营销 Skill: ma-creative-concept
+[配置] 已同步营销 Skill: ma-creative-roi
+[配置] 已同步营销 Skill: ma-draft-review
+[配置] 已同步营销 Skill: ma-image-audit
+[配置] 已同步营销 Skill: ma-kol-crm
+[配置] 已同步营销 Skill: ma-kol-history-review
+[配置] 已同步营销 Skill: ma-kol-portal
+[配置] 已同步营销 Skill: ma-kol-pyramid
+[配置] 已同步营销 Skill: ma-kol-scraper
+[配置] 已同步营销 Skill: ma-market-analysis
+[配置] 已同步营销 Skill: ma-marketing
+[配置] 已同步营销 Skill: ma-paid-media
+[配置] 已同步营销 Skill: ma-pgy-invite
+[配置] 已同步营销 Skill: ma-platform-role-mapper
+[配置] 已同步营销 Skill: ma-publish-data-track
+[配置] 已同步营销 Skill: ma-script-studio
+[配置] 已同步营销 Skill: ma-ta-portrait
+[配置] 已同步营销 Skill: ma-tone-manner
+[配置] 已同步营销 Skill: ma-ugc-campaign
+[配置] 已同步默认 Tools: computer-use
+[配置] 已同步默认 Tools: marketing
+[配置] 已同步默认 Tools: outbound-sourcing
+[配置] 已同步领域 Workflow 模板: marketing/marketing-campaign v1.0.0
+[配置] 已同步领域 Workflow 模板: outbound-sourcing/outbound-sourcing-pipeline v1.0.1
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/agent-workspaces/package-smoke-skills
+[Agent 工作区] 已创建 plugin manifest: package-smoke-skills
+[Agent 工作区] 已复制默认 Skills 到: package-smoke-skills
+[Agent 工作区] 已创建工作区: Package Smoke Skills (slug: package-smoke-skills)
+[配置版本化] 已创建工作区快照: package-smoke-skills/ac778a43-b047-4187-99a0-0d6d5a4fbf89
+[Agent 工作区] Skill Set 禁用: package-smoke-skills (2 个)
+[设置] 已更新 keys: marketingCapabilities
+[营销 Skills] 已分发: package-smoke-skills/ma-kol-scraper
+[营销 Skills] 已分发: package-smoke-skills/ma-kol-crm
+[营销 Skills] 已分发: package-smoke-skills/ma-kol-portal
+[营销 Skills] 已分发: package-smoke-skills/ma-kol-history-review
+[营销 Skills] 已分发: package-smoke-skills/ma-kol-pyramid
+[营销 Skills] 已分发: package-smoke-skills/ma-draft-review
+[营销 Skills] 已分发: package-smoke-skills/ma-image-audit
+[营销 Skills] 已分发: package-smoke-skills/ma-content-audit
+[营销 Skills] 已分发: package-smoke-skills/ma-publish-data-track
+[营销 Skills] 已分发: package-smoke-skills/ma-pgy-invite
+[营销 Skills] 已分发: package-smoke-skills/ma-script-studio
+[营销 Skills] 已分发: package-smoke-skills/ma-marketing
+[营销 Skills] 已分发: package-smoke-skills/ma-brand-dna
+[营销 Skills] 已分发: package-smoke-skills/ma-brand-house
+[营销 Skills] 已分发: package-smoke-skills/ma-market-analysis
+[营销 Skills] 已分发: package-smoke-skills/ma-competitor-analyzer
+[营销 Skills] 已分发: package-smoke-skills/ma-consumer-insight
+[营销 Skills] 已分发: package-smoke-skills/ma-ta-portrait
+[营销 Skills] 已分发: package-smoke-skills/ma-creative-concept
+[营销 Skills] 已分发: package-smoke-skills/ma-creative-roi
+[营销 Skills] 已分发: package-smoke-skills/ma-tone-manner
+[营销 Skills] 已分发: package-smoke-skills/ma-ugc-campaign
+[设置] 已更新 keys: marketingCapabilities
+[营销 Skills] 已清理工作区营销 plugin 目录: package-smoke-skills
+[Campaign 服务] 数据库已初始化: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/campaign-database.sqlite
+[Campaign 服务] 已初始化 32 条数据标准基准
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/agent-workspaces/campaign-1791958033990-vihrozq
+[Agent 工作区] 已创建 plugin manifest: campaign-1791958033990-vihrozq
+[Agent 工作区] 已复制默认 Skills 到: campaign-1791958033990-vihrozq
+[Agent 工作区] 已创建工作区: Smoke (slug: campaign-1791958033990-vihrozq)
+[Campaign 服务] 数据库已初始化: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/campaign-database.sqlite
+[KOL数据服务] 数据库已初始化: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/kol-database.sqlite
+[KOL数据服务] 数据库已初始化: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/kol-database.sqlite
+[配置] 已升级默认 Tools: marketing v1→v7
+[配置] 已创建知识库目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/knowledge
+[配置] 已同步新媒体 Skill: nm-community-manager
+[配置] 已同步新媒体 Skill: nm-content-operator
+[配置] 已同步新媒体 Skill: nm-controlled-outbound
+[配置] 已同步新媒体 Skill: nm-social-listening
+[配置] 已同步新媒体 Skill: nm-social-reporting
+[配置] 已同步新媒体 Skill: nm-trend-radar
+(node:33772) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `Gravitas Dev --trace-warnings ...` to show where the warning was created)
+[33772:1014/140714.213350:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
+[33772:1014/140714.213817:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=6
+[配置] 已创建新媒体运营目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-package-smoke-DWYqa8/new-media
+sandbox initialization failed: Osandbox initialization failed: Operation not permitted
+peration not permitted
+Failed to initialize sandbox.Failed to initialize sandbox.[New Media Account Authorization] safeStorage 不可用，将以 base64 明文存储
+[New Media Account Authorization] safeStorage 不可用，将以 base64 明文存储
+[设置] 已更新 keys: newMediaCapabilities
+[设置] 已更新 keys: newMediaCapabilities
+[设置] 已更新 keys: newMediaCapabilities
+{"packageSmoke":"passed","newMedia":{"schemaVersion":3,"migrations":3,"skills":6,"audits":3},"version":"0.13.5","tools":26,"defaultSkills":3,"skillSetToggle":2,"kimiCompaction":false,"sqlite":"node:sqlite","knowledgeEdit":"passed"}
+[33772:1014/140714.355311:ERROR:content/browser/gpu/gpu_process_host.cc:999] GPU process exited unexpectedly: exit_code=6
+[33772:1014/140714.355749:ERROR:content/browser/network_service_instance_impl.cc:613] Network service crashed, restarting service.
+[Package Smoke] 子进程正常结束: exitCode=0
+sandbox initialization failed: Operation not permitted
+Failed to initialize sandbox.sandbox initialization failed: Operation not permitted
+Failed to initialize sandbox.
