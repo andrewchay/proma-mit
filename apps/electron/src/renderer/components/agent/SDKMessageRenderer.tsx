@@ -24,7 +24,7 @@ import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
 import { extractCompactBoundaryInfo } from './compact-boundary-info'
 import { getBlockKey } from './tool-utils'
-import { DurationBadge } from './AgentMessages'
+import { DurationBadge, formatDuration } from './AgentMessages'
 import {
   Message,
   MessageHeader,
@@ -555,6 +555,7 @@ export interface AssistantTurnRendererProps {
 
 export function AssistantTurnRenderer({ turn, sessionId, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: AssistantTurnRendererProps): React.ReactElement | null {
   const channels = useAtomValue(channelsAtom)
+  const [traceExpanded, setTraceExpanded] = React.useState(false)
   const agentSessions = useAtomValue(agentSessionsAtom)
   // 用于「保存为工作流」的会话标题
   const sessionTitleForAction = React.useMemo(() => {
@@ -644,6 +645,24 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
     return buildTaskProgressData(topLevelBlocks, turn.turnMessages)
   }, [topLevelBlocks, turn.turnMessages])
 
+  const toolTraceCount = topLevelBlocks.filter((block) =>
+    block.type === 'tool_use' && !TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name),
+  ).length
+  const hasToolTraceError = turn.turnMessages.some((message) => {
+    if (message.type !== 'user') return false
+    const content = (message as SDKUserMessage).message?.content
+    return Array.isArray(content) && content.some((block) => block.type === 'tool_result' && (block as unknown as SDKToolResultBlock).is_error === true)
+  })
+  const lastRunningToolUse = isStreaming
+    ? [...topLevelBlocks].reverse().find((block) => {
+      if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return false
+      const toolUseId = (block as SDKToolUseBlock).id
+      return !turn.turnMessages.some((message) => message.type === 'user' && Array.isArray((message as SDKUserMessage).message?.content)
+        && ((message as SDKUserMessage).message!.content as SDKContentBlock[]).some((result) => result.type === 'tool_result' && (result as unknown as SDKToolResultBlock).tool_use_id === toolUseId))
+    }) as SDKToolUseBlock | undefined
+    : undefined
+  const lastRunningToolUseId = lastRunningToolUse?.id
+
   // 如果只有错误消息
   if (enrichedBlocks.length === 0 && hasError && errorContent) {
     return (
@@ -668,7 +687,33 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
       />
       <MessageContent>
         <div className={cn('space-y-2')}>
+          {toolTraceCount > 0 && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                aria-expanded={traceExpanded}
+                onClick={() => setTraceExpanded((expanded) => !expanded)}
+                className={cn(
+                  'flex w-full items-center gap-2 py-0.5 text-left text-[13px] transition-colors hover:text-foreground',
+                  hasToolTraceError ? 'text-destructive/80' : 'text-muted-foreground/75',
+                )}
+              >
+                <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', !traceExpanded && '-rotate-90')} />
+                <span>{isStreaming ? '执行中' : '执行'} {toolTraceCount} 次工具</span>
+                {durationMs != null && <span>· 耗时 {formatDuration(durationMs)}</span>}
+                {hasToolTraceError && <span className="text-destructive">· 有失败调用</span>}
+              </button>
+              {(traceExpanded || lastRunningToolUseId !== undefined) && topLevelBlocks.map((block, i) => {
+                if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return null
+                const toolUseId = (block as SDKToolUseBlock).id
+                if (!traceExpanded && toolUseId !== lastRunningToolUseId) return null
+                return <ContentBlock key={getBlockKey(block, i)} block={block} allMessages={allMessages} basePath={basePath} animate={!!isStreaming} index={i} dimmed={hasTextContent} isStreaming={isStreaming} />
+              })}
+            </div>
+          )}
           {topLevelBlocks.map((block, i) => {
+              // 非任务工具调用统一进入默认折叠的执行 trace 区
+              if (block.type === 'tool_use' && !TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return null
               // Task 工具块：聚合为卡片，此处用索引定位首个任务工具
               if (block.type === 'tool_use' && TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) {
                 if (i === firstTaskIndex) {
