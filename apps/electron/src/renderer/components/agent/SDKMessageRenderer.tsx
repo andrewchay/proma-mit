@@ -653,12 +653,15 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
     const content = (message as SDKUserMessage).message?.content
     return Array.isArray(content) && content.some((block) => block.type === 'tool_result' && (block as unknown as SDKToolResultBlock).is_error === true)
   })
-  const hasRunningToolTrace = isStreaming && topLevelBlocks.some((block) => {
-    if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return false
-    const toolUseId = (block as SDKToolUseBlock).id
-    return !turn.turnMessages.some((message) => message.type === 'user' && Array.isArray((message as SDKUserMessage).message?.content)
-      && ((message as SDKUserMessage).message!.content as SDKContentBlock[]).some((result) => result.type === 'tool_result' && (result as unknown as SDKToolResultBlock).tool_use_id === toolUseId))
-  })
+  const lastRunningToolUse = isStreaming
+    ? [...topLevelBlocks].reverse().find((block) => {
+      if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return false
+      const toolUseId = (block as SDKToolUseBlock).id
+      return !turn.turnMessages.some((message) => message.type === 'user' && Array.isArray((message as SDKUserMessage).message?.content)
+        && ((message as SDKUserMessage).message!.content as SDKContentBlock[]).some((result) => result.type === 'tool_result' && (result as unknown as SDKToolResultBlock).tool_use_id === toolUseId))
+    }) as SDKToolUseBlock | undefined
+    : undefined
+  const lastRunningToolUseId = lastRunningToolUse?.id
 
   // 如果只有错误消息
   if (enrichedBlocks.length === 0 && hasError && errorContent) {
@@ -700,14 +703,10 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
                 {durationMs != null && <span>· 耗时 {formatDuration(durationMs)}</span>}
                 {hasToolTraceError && <span className="text-destructive">· 有失败调用</span>}
               </button>
-              {(traceExpanded || hasToolTraceError || hasRunningToolTrace) && topLevelBlocks.map((block, i) => {
+              {(traceExpanded || lastRunningToolUseId !== undefined) && topLevelBlocks.map((block, i) => {
                 if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return null
                 const toolUseId = (block as SDKToolUseBlock).id
-                const resultBlock = turn.turnMessages.some((message) => message.type === 'user' && Array.isArray((message as SDKUserMessage).message?.content)
-                  && ((message as SDKUserMessage).message!.content as SDKContentBlock[]).some((result) => result.type === 'tool_result' && (result as unknown as SDKToolResultBlock).tool_use_id === toolUseId))
-                const resultIsError = turn.turnMessages.some((message) => message.type === 'user' && Array.isArray((message as SDKUserMessage).message?.content)
-                  && ((message as SDKUserMessage).message!.content as SDKContentBlock[]).some((result) => result.type === 'tool_result' && (result as unknown as SDKToolResultBlock).tool_use_id === toolUseId && (result as unknown as SDKToolResultBlock).is_error === true))
-                if (!traceExpanded && !resultIsError && !(isStreaming && !resultBlock)) return null
+                if (!traceExpanded && toolUseId !== lastRunningToolUseId) return null
                 return <ContentBlock key={getBlockKey(block, i)} block={block} allMessages={allMessages} basePath={basePath} animate={!!isStreaming} index={i} dimmed={hasTextContent} isStreaming={isStreaming} />
               })}
             </div>
