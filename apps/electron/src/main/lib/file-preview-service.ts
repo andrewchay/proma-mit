@@ -7,7 +7,8 @@
 
 import { basename, join, dirname, extname, resolve, posix as pathPosix } from 'node:path'
 import { readFileSync, readdirSync, statSync, mkdirSync, existsSync, writeFileSync, unlinkSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { homedir } from 'node:os'
+import { getPreviewTempDir } from './app-temp-paths'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import AdmZip from 'adm-zip'
@@ -27,7 +28,7 @@ const MAX_PPTX_SLIDES = 80
 // ─── 临时文件 ───
 
 function getPreviewTmpDir(): string {
-  const dir = join(tmpdir(), 'proma-preview')
+  const dir = getPreviewTempDir()
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
   }
@@ -46,7 +47,7 @@ function writeTempHtml(html: string): string {
 
 /** 清理所有临时预览文件 */
 export function cleanPreviewTmpDir(): number {
-  const dir = join(tmpdir(), 'proma-preview')
+  const dir = getPreviewTempDir()
   if (!existsSync(dir)) return 0
   let count = 0
   try {

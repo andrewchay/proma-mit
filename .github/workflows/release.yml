@@ -38,6 +38,9 @@ jobs:
       - name: 安装依赖
         run: bun install --frozen-lockfile
 
+      - name: 双渠道隔离检查
+        run: bun apps/electron/scripts/check-release-channel.ts
+
       - name: 类型检查
         run: bun run typecheck
 

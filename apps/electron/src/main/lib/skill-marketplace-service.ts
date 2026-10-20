@@ -4,7 +4,8 @@
 import { createHash } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
+import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir, getAgentWorkspacesDir } from "./config-paths"
+import { homedir } from 'node:os'
 import { getAllWorkspaceSkills, listAgentWorkspaces } from "./agent-workspace-manager"
 import type { SkillMarketplaceItem, SkillMeta } from "@gravitas/shared"
 
@@ -64,8 +65,8 @@ function scanDirectory(dir: string, source: MarketplaceSkillSource, sourceName?:
 }
 
 const EXTERNAL_SKILL_SOURCES = [
-  { source: "claude" as const, name: "Claude Skills", root: "/Users/chaihao/.claude/skills" },
-  { source: "personal" as const, name: "个人 Skills", root: "/Users/chaihao/.proma/agent-workspaces/personal/skills" },
+  { source: "claude" as const, name: "Claude Skills", root: join(homedir(), '.claude', 'skills') },
+  { source: "personal" as const, name: "个人 Skills", root: join(getAgentWorkspacesDir(), 'personal', 'skills') },
 ]
 
 function scanExternalDirectory(root: string, source: "personal" | "claude", sourceName: string): MarketplaceSkillCandidate[] {

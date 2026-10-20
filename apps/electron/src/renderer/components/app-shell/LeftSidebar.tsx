@@ -174,6 +174,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   // 订阅门控（领域包）与开发门禁（dev-gate）叠加：两者都放行才显示。
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const proactiveVisible = isViewVisible('proactive', enabledDevModules)
+  const workflowVisible = isViewVisible('workflow', enabledDevModules)
   const visibleCoreModules = useAtomValue(visibleCoreWorkModulesAtom).filter(
     (module) => isViewVisible(module.id, enabledDevModules),
   )
@@ -1271,7 +1272,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
             <TooltipContent side="right">Proactive Center</TooltipContent>
           </Tooltip>}
 
-          <Tooltip>
+          {workflowVisible && <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
@@ -1292,7 +1293,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Workflow 工作台</TooltipContent>
-          </Tooltip>
+          </Tooltip>}
         </div>
 
         <div className="my-3 h-px w-8 bg-border/70" />
@@ -2597,10 +2598,18 @@ function SubscribedCapabilities(): React.ReactElement {
   const enabled = useAtomValue(activeCapabilitiesAtom)
   const activeView = useAtomValue(activeViewAtom)
   const setActiveView = useSetAtom(activeViewAtom)
+  const enabledDevModules = useAtomValue(enabledDevModulesAtom)
 
-  const subscribedBusiness = CAPABILITY_MANIFEST.filter(
-    (c) => c.kind === 'business' && enabled.includes(c.id as CapabilityId)
-  )
+  const subscribedBusiness = CAPABILITY_MANIFEST.filter((capability) => {
+    if (capability.kind !== 'business' || !enabled.includes(capability.id as CapabilityId)) return false
+    if (capability.id === 'new-media') return true
+    const gateView = capability.id === 'influencer' || capability.id === 'paid-media'
+      ? capability.id
+      : capability.id === 'outbound-sourcing' || capability.id === 'research'
+        ? capability.id
+        : undefined
+    return !gateView || isViewVisible(gateView, enabledDevModules)
+  })
 
   const iconFor = (id: string): React.ReactNode => {
     if (id === 'paid-media') return <Megaphone size={16} className="text-foreground/40" />

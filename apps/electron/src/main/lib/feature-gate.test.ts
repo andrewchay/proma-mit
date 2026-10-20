@@ -8,23 +8,29 @@ import {
 	resolveEffectiveModules,
 } from './feature-gate'
 
-/**
- * 门禁行为测试：验证「未完成功能默认不可见」是机制保证，而不是口头约定。
- */
+/** 渠道门禁行为测试：Dev 可先验收，Stable 仅开放已发布模块。 */
 describe('开发阶段门禁', () => {
-	test('登记表覆盖四个受管模块，未发布的仍默认隐藏', () => {
+	test('新功能默认在 Dev 可见，在 Stable 隐藏', () => {
 		expect(DEV_GATE_MODULES.map((module) => module.id)).toEqual([
 			'knowledge',
 			'marketing',
 			'outbound-sourcing',
 			'proactive',
+			'research',
+			'workflow',
 		])
-		// knowledge 已放开为 released；其余三个未完成，必须保持隐藏。
-		expect(DEV_GATE_MODULES.filter((module) => module.status === 'hidden').map((module) => module.id)).toEqual([
+		expect(resolveEffectiveModules({ isPackaged: true, channel: 'dev' })).toEqual([
+			'knowledge',
 			'marketing',
 			'outbound-sourcing',
 			'proactive',
+			'research',
+			'workflow',
 		])
+		expect(resolveEffectiveModules({ isPackaged: true, channel: 'stable' })).toEqual(['knowledge'])
+		expect(isModuleVisible('workflow', { isPackaged: true, channel: 'stable' })).toBe(false)
+		expect(isModuleVisible('research', { isPackaged: true, channel: 'stable' })).toBe(false)
+		expect(isModuleVisible('workflow', { isPackaged: true, channel: 'dev' })).toBe(true)
 	})
 
 	test('未登记模块一律不可见，新增模块不会默认泄漏', () => {
@@ -48,9 +54,11 @@ describe('开发阶段门禁', () => {
 		expect(
 			isModuleVisible('proactive', {
 				isPackaged: true,
+				channel: 'stable',
 				devEnabled: ['proactive'],
 			}),
 		).toBe(false)
+		expect(isModuleVisible('proactive', { isPackaged: true, channel: 'dev' })).toBe(true)
 		expect(
 			resolveDevEnabledModules(['proactive', 'marketing'], {
 				isPackaged: true,
@@ -58,15 +66,17 @@ describe('开发阶段门禁', () => {
 		).toEqual([])
 	})
 
-	test('非打包环境可逐个开启：只开 proactive 时不连带打开其他模块', () => {
-		const options = { isPackaged: false, devEnabled: ['proactive'] }
-		expect(isModuleVisible('proactive', options)).toBe(true)
-		// knowledge 已发布，不受本地开关控制；其余未发布模块不应被连带打开。
-		expect(isModuleVisible('knowledge', options)).toBe(true)
-		expect(isModuleVisible('marketing', options)).toBe(false)
-		expect(isModuleVisible('outbound-sourcing', options)).toBe(false)
-		// 未传开关时仍默认关闭
-		expect(isModuleVisible('proactive', { isPackaged: false })).toBe(false)
+	test('非打包 Dev 可临时开启显式隐藏的模块', () => {
+		const module = DEV_GATE_MODULES.find((item) => item.id === 'proactive')!
+		const original = module.devAvailability
+		module.devAvailability = 'hidden'
+		try {
+			const options = { channel: 'dev' as const, isPackaged: false }
+			expect(isModuleVisible('proactive', options)).toBe(false)
+			expect(isModuleVisible('proactive', { ...options, devEnabled: ['proactive'] })).toBe(true)
+		} finally {
+			module.devAvailability = original
+		}
 		expect(
 			resolveDevEnabledModules(['proactive', 'knowledge'], {
 				isPackaged: false,
@@ -88,30 +98,38 @@ describe('开发阶段门禁', () => {
 		)
 	})
 
-	test('模块改为 released 后不再受开发开关影响', () => {
-		const module = DEV_GATE_MODULES.find((item) => item.id === 'knowledge')!
-		const original = module.status
+	test('模块设为 Stable released 后在正式版可见', () => {
+		const module = DEV_GATE_MODULES.find((item) => item.id === 'marketing')!
+		const original = module.stableAvailability
 		try {
-			module.status = 'released'
-			expect(isModuleVisible('knowledge', { isPackaged: true })).toBe(true)
+			module.stableAvailability = 'released'
+			expect(isModuleVisible('marketing', { isPackaged: true, channel: 'stable' })).toBe(true)
 		} finally {
-			module.status = original
+			module.stableAvailability = original
 		}
 	})
-	test('生效清单包含已发布模块，未发布的仍需本地开关', () => {
+	test('生效清单按渠道返回模块', () => {
 		expect(resolveEffectiveModules({ isPackaged: true })).toEqual(['knowledge'])
-		expect(resolveEffectiveModules({ isPackaged: false, devEnabled: ['proactive'] })).toEqual([
+		expect(resolveEffectiveModules({ isPackaged: false })).toEqual([
 			'knowledge',
+			'marketing',
+			'outbound-sourcing',
 			'proactive',
+			'research',
+			'workflow',
 		])
 		// 打包环境不因本地开关放开未发布模块，但已发布模块始终在内。
-		expect(resolveEffectiveModules({ isPackaged: true, devEnabled: ['proactive'] })).toEqual(['knowledge'])
+		expect(resolveEffectiveModules({ isPackaged: true, channel: 'stable', devEnabled: ['proactive'] })).toEqual(['knowledge'])
 	})
 
 	test('生效清单不接受未登记 id，避免渲染层被伪造输入放大', () => {
 		expect(resolveEffectiveModules({ isPackaged: false, devEnabled: ['unknown', 'marketing'] })).toEqual([
 			'knowledge',
 			'marketing',
+			'outbound-sourcing',
+			'proactive',
+			'research',
+			'workflow',
 		])
 	})
 })
@@ -126,13 +144,22 @@ describe('开发阶段门禁 · 全局调试放开', () => {
 
 	test('设置放开开关后全部已登记模块生效，无需 enabledDevModules', () => {
 		process.env.GRAVITAS_UNLOCK_ALL_CAPABILITIES = '1'
+		const module = DEV_GATE_MODULES.find((item) => item.id === 'marketing')!
+		const original = module.devAvailability
+		module.devAvailability = 'hidden'
+		try {
 		expect(resolveEffectiveModules({ devEnabled: [], isPackaged: false })).toEqual([
 			'knowledge',
 			'marketing',
 			'outbound-sourcing',
 			'proactive',
+			'research',
+			'workflow',
 		])
 		expect(isModuleVisible('marketing', { isPackaged: false })).toBe(true)
+		} finally {
+			module.devAvailability = original
+		}
 	})
 
 	test('放开不绕过登记表：未登记模块仍不可见', () => {
@@ -148,13 +175,15 @@ describe('开发阶段门禁 · 全局调试放开', () => {
 	test('构建期注入标记在打包环境也生效', () => {
 		// build-mac-app.sh 产出的调试包走这条路径：打包环境 + 构建期标记
 		__setBuildInjectedUnlockForTest(true)
-		expect(resolveEffectiveModules({ devEnabled: [], isPackaged: true })).toEqual([
+		expect(resolveEffectiveModules({ devEnabled: [], isPackaged: true, channel: 'dev' })).toEqual([
 			'knowledge',
 			'marketing',
 			'outbound-sourcing',
 			'proactive',
+			'research',
+			'workflow',
 		])
-		expect(isModuleVisible('proactive', { isPackaged: true })).toBe(true)
+		expect(isModuleVisible('proactive', { isPackaged: true, channel: 'dev' })).toBe(true)
 	})
 
 	test('构建期注入标记同样不绕过登记表', () => {
