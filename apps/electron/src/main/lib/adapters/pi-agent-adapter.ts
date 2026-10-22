@@ -694,8 +694,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         data: image.data,
         mimeType: image.mediaType,
       }))
-      // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
-      const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
+      // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部；
+      // 同步注入 od: 声明的 craft / design-system 上下文（OpenDesign 语义）。
+      const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions, { workspaceSlug, cwd })
 
       // 首 token 宽限按本回合上下文规模自适应；此时 compaction 已完成，effectiveHistoryMessages 为最终历史。
       const firstTokenTimeoutMs = resolveFirstTokenTimeoutMs(

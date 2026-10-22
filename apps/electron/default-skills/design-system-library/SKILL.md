@@ -1,6 +1,6 @@
 ---
 name: design-system-library
-version: 1.0.0
+version: 1.0.1
 description: "按需获取 152 个品牌设计系统包（Stripe、Linear、Notion、Apple、Airbnb、Vercel 等），含 DESIGN.md 设计规范与 tokens.css 设计令牌。当用户要求「按某品牌风格设计」「像 Stripe/Linear/Notion 那样的视觉」「套用某品牌设计系统」时使用；配合 frontend-design、taste-skill 等设计类 Skill。"
 ---
 
@@ -43,9 +43,10 @@ https://raw.githubusercontent.com/nexu-io/open-design/main/design-systems/<syste
 
 1. 从 `references/index.md` 确认目标系统存在，记下其 `id`。
 2. 按方式 A 或 B 取回 `DESIGN.md` 与 `tokens.css`（需要 Tailwind 时加 `tailwind-v4.css`）。
-3. 阅读 `DESIGN.md` 的视觉主题与反模式约定，把 `tokens.css` 的变量粘贴进产物首个 `<style>` 块，再按规范实现组件。
-4. 保持令牌变量名原样（`--accent` 等），保证跨品牌切换可靠；主操作、链接、聚焦态统一用 `--accent`，并保持一个清晰的视觉焦点。
-5. 结合 `design-craft` Skill 的工艺规则（反 AI 味、排版、色彩）打磨细节。
+3. **保存到工作区 cwd 根目录**：`DESIGN.md`（必需）与 `tokens.css`（可选）存为工作目录下的同名文件。启用中的设计类 Skill 若声明了 `od.design_system.requires`，这两个文件会被自动注入系统上下文（Active design system / tokens 契约块），无需再手动粘贴。
+4. 阅读 `DESIGN.md` 的视觉主题与反模式约定，把 `tokens.css` 的变量用于产物的首个 `<style>` 块，再按规范实现组件。
+5. 保持令牌变量名原样（`--accent` 等），保证跨品牌切换可靠；主操作、链接、聚焦态统一用 `--accent`，并保持一个清晰的视觉焦点。
+6. 结合 `design-craft` Skill 的工艺规则（反 AI 味、排版、色彩）打磨细节。
 
 ## 注意事项
 
