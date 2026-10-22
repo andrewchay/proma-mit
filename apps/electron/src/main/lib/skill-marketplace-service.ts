@@ -27,7 +27,6 @@ function readSkillMeta(dir: string, slug: string, enabled: boolean): SkillMeta |
   if (frontmatter?.[1]) {
     // 与 agent-workspace-manager 的 parseSkillFrontmatter 对齐：支持单行值和 | / > 块标量，
     // 否则 Claude Code 约定的多行 description（如 OpenDesign 设计内容包）会丢失集市描述。
-    const keys = new Set(["name", "description", "icon", "version", "category"])
     let currentKey = ""
     let folded = false
     for (const line of frontmatter[1].split("\n")) {
