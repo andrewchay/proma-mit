@@ -1,0 +1,10 @@
+$ bun run --filter='*' typecheck
+@gravitas/executor typecheck: Exited with code 0
+@gravitas/shared typecheck: Exited with code 0
+@gravitas/web typecheck: Exited with code 0
+@gravitas/context-store typecheck: Exited with code 0
+@gravitas/subscription-service typecheck: Exited with code 0
+@gravitas/core typecheck: Exited with code 0
+@gravitas/ui typecheck: Exited with code 0
+@gravitas/server typecheck: Exited with code 0
+@gravitas/electron typecheck: Exited with code 0

@@ -9,9 +9,13 @@
  * - 动态 per-message 上下文（buildDynamicContext）：注入到用户消息前，每次实时读取磁盘
  */
 
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { PromaPermissionMode, AgentDefinition } from '@gravitas/shared'
 import { getUserProfile } from './user-profile-service'
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from './agent-workspace-manager'
+import { getWorkspaceSkillsDir, getDefaultSkillsDir } from './config-paths'
+import { composeOdDesignContext, parseOdRequirements, resolveDesignCraftDir } from './design-context'
 import { readBuiltinOverrides } from './agent-runtime/eval/builtin-agent-overrides'
 import { getBuiltinAgentDefinition } from './agent-definition-store'
 
@@ -75,7 +79,7 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
 
 保持简洁，只返回与任务相关的信息。
 
-最后：在回复的最后一个非空行用单个 emoji 标记任务状态：🟢 委派目标未全部完成（说明还差什么）；🟡 目标已完成、且剩余建议能构成下一步完整计划（给出计划要点）；🔴 目标已完成、剩余为零散存档项（三行以内）。`,
+最后：在回复的最后一个非空行用单个 emoji 标记任务状态：🔴 委派目标未全部完成、任务进行中（说明还差什么）；🟡 目标已完成、且剩余建议能构成下一步完整计划（给出计划要点）；🟢 目标已完成、剩余为零散存档项（三行以内）。`,
       tools: ['Read', 'Glob', 'Grep', 'Bash'],
       ...(light && { model: light }),
     },
@@ -92,7 +96,7 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
 
 保持客观，给出有依据的建议。
 
-最后：在回复的最后一个非空行用单个 emoji 标记任务状态：🟢 委派目标未全部完成（说明还差什么）；🟡 目标已完成、且剩余建议能构成下一步完整计划（给出计划要点）；🔴 目标已完成、剩余为零散存档项（三行以内）。`,
+最后：在回复的最后一个非空行用单个 emoji 标记任务状态：🔴 委派目标未全部完成、任务进行中（说明还差什么）；🟡 目标已完成、且剩余建议能构成下一步完整计划（给出计划要点）；🟢 目标已完成、剩余为零散存档项（三行以内）。`,
       tools: ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'],
       ...(light && { model: light }),
     },
@@ -209,11 +213,11 @@ export const TRAFFIC_LIGHT_GUIDE = `## 任务完成态红绿灯
 
 - 开工第一轮先用一行钉住原始需求清单：目标：A、B、C。此后每轮只对照这份清单干活；清单只在用户追加需求时才更新。
 - 多步任务（涉及工具调用、多文件或多阶段）的每轮回复，最后一个非空行必须是进度状态行：单个 🟢/🟡/🔴 emoji 开头，后面跟一行说明。单轮简单问答不需要状态行。
-- 🟢 原始需求有未达项，任务继续。格式：🟢 还差：B、C｜搁置：X。顺手发现的改进只记入搁置（一行以内），不主动展开执行。
+- 🔴 原始需求有未达项，任务进行中。格式：🔴 还差：B、C｜搁置：X。顺手发现的改进只记入搁置（一行以内），不主动展开执行。
 - 🟡 原始需求已全部达成，且超出的建议能串成一份有明确目标和验收标准的后续计划。把计划落盘到 .context/plan/ 下的文件，状态行给出路径，例如：🟡 计划：.context/plan/next.md，等你决定是否启动。
-- 🔴 原始需求已全部达成，超出的建议零散、不构成可执行计划。压成三行以内的存档清单放在状态行之前，状态行直接写 🔴，然后结束。
-- 黄灯与红灯的判定标准：超出项能否串成一个有清晰目标的 Plan？能 → 🟡，不能 → 🔴。
-- 转黄或转红之后立即停手，不要自拟新任务、不要继续追加建议，等用户下一步指令。
+- 🟢 原始需求已全部达成，超出的建议零散、不构成可执行计划。压成三行以内的存档清单放在状态行之前，状态行直接写 🟢，然后结束。
+- 黄灯与绿灯的判定标准：超出项能否串成一个有清晰目标的 Plan？能 → 🟡，不能 → 🟢。
+- 转黄或转绿之后立即停手，不要自拟新任务、不要继续追加建议，等用户下一步指令。
 - 用户追加新需求后，更新目标清单，状态回到 🟢。`
 
 /** buildSystemPrompt 所需的上下文 */
@@ -601,6 +605,50 @@ interface DynamicContext {
 }
 
 /**
+ * 为 Claude SDK runtime 组装启用中 Skills 的 od: 设计上下文（会话级静态注入）。
+ *
+ * craft 节跨 Skill 去重（union）；design-system 仅需任一 Skill 声明即可，
+ * 且以 cwd 根的 DESIGN.md 为激活约定。无声明、无内容时返回空字符串。
+ */
+export function buildOdContextForActiveSkills(
+  skills: { slug: string }[],
+  workspaceSlug: string,
+  agentCwd?: string,
+): string {
+  if (!skills || skills.length === 0) return ''
+
+  const skillsDir = getWorkspaceSkillsDir(workspaceSlug)
+  const craftRequires = new Set<string>()
+  let designSystemRequired = false
+  let hasOdDeclaration = false
+
+  for (const skill of skills) {
+    try {
+      const mdPath = join(skillsDir, skill.slug, 'SKILL.md')
+      if (!existsSync(mdPath)) continue
+      const requirements = parseOdRequirements(readFileSync(mdPath, 'utf-8'))
+      if (requirements.craftRequires.length === 0 && !requirements.designSystemRequires) continue
+      hasOdDeclaration = true
+      for (const section of requirements.craftRequires) craftRequires.add(section)
+      if (requirements.designSystemRequires) designSystemRequired = true
+    } catch { /* 单个 Skill 解析失败不影响其余 */ }
+  }
+
+  if (!hasOdDeclaration) return ''
+
+  const odContext = composeOdDesignContext({
+    requirements: {
+      craftRequires: [...craftRequires],
+      designSystemRequires: designSystemRequired,
+    },
+    craftDir: resolveDesignCraftDir({ workspaceSlug, getWorkspaceSkillsDir, getDefaultSkillsDir }),
+    cwd: agentCwd,
+  })
+
+  return odContext
+}
+
+/**
  * 构建每条消息的动态上下文
  *
  * 包含当前时间、工作区实时状态（MCP 服务器 + Skills）和工作目录。
@@ -652,6 +700,15 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     // Skills 列表已通过 SDK plugin 机制自动发现并注册，无需手动注入
     // 仅检查 skill-creator 是否启用，注入持续改进提示
     const skills = getWorkspaceSkills(ctx.workspaceSlug)
+
+    // OpenDesign 语义：启用中的 Skill 声明 od.craft.requires / od.design_system.requires
+    // 时，静态注入去重后的设计上下文（Claude SDK 无法在 Skill 激活瞬间挂钩，
+    // 改为会话级注入；设计 Skill 为按需启用，体积可控且缓存稳定）
+    try {
+      const odBlock = buildOdContextForActiveSkills(skills, ctx.workspaceSlug, ctx.agentCwd)
+      if (odBlock) wsLines.push(odBlock)
+    } catch { /* 设计上下文组装失败静默降级 */ }
+
     const hasSkillCreator = skills.some((s) => s.slug === 'skill-creator')
     if (hasSkillCreator) {
       wsLines.push([

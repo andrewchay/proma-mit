@@ -1,5 +1,12 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-07 marketing/video 分支线收尾（PR #3 + #18 合并）
+- PR #3（marketing 全链路，搁置一个月）复活：merge main 进分支解决 10 文件 15 处冲突。要点：`marketing-plugin.ts` 取 main 安全版（签名权益快照）+ 补回 `assertAnyMarketingCapability`（IPC 门控 50+ 处在用）；LeftSidebar 融合**订阅门控 × 开发门禁**两套可见性（atom 输出再过 isViewVisible）；Influencer/PaidMedia 模块视图保留 main 的 ModuleBackButton 结构 + marketing 的 SubscriptionGate/KOLDataManager/CampaignList；CapabilityCenterPanel 两代订阅机制并存（activeViewAtom 跳转 + subscriptionStateAtom 权益展示）；preload/ipc/registry 为 import 并集；2 个 package.json 版本取 main（0.12.104）。
+- 测试适配 1 处：assert 门控用例补 `grantEntitlement`（readSubscribedCapabilities 语义演进为要求签名快照，旧"仅偏好即放行"不再成立）。
+- 门禁：frozen install / typecheck / build:renderer / marketing 全家测试（plugin 21 + gate/template/skills/workflow/video 90 pass）全过 → #3 squash 合并（764286f6）。
+- video-talent-binding 强依赖 marketing（4/7 文件是其引入），marketing 合并后 cherry-pick f2007538 到 feat/minimax-video（零冲突）→ typecheck + video 26 pass → **#18 squash 合并**（2ba5dfcd，MiniMax 视频 H3 V2）。
+- 已删分支：marketing-campaign-full-chain（本地+远程）、minimax-video（本地）、pi-runtime-1.0.2-trial（本地+远程，内容 diff 为空验证）。遗留 worktree：`/Users/chaihao/LLM/proma-mit-wt-theme`（feat/theme-color-packs）、`/Users/chaihao/LLM/proma-mit-wt-video`（feat/video-talent-binding，其内容已全部进 main 可删）。
+
 ## 2026-10-06 主题预览视觉统一（艺术系定稿方向）
 - 用户反馈：界面背景纹样"太丑"→ 已移除 ThemeTextureLayer 及 theme-texture-layer.tsx，运行界面恢复纯净；预览卡图案保留。
 - 用户反馈：简笔 SVG 预览"太简陋"，与青花瓷/青绿山水不一致 → 用户选定**艺术系**：全部主题卡改画作预览，卡片只留图与名称。

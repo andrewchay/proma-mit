@@ -20,6 +20,8 @@ import {
   LoaderCircle,
   MessageSquareText,
   Files,
+  FolderPlus,
+  Paperclip,
   Settings,
   Sparkles,
   Wrench,
@@ -396,7 +398,7 @@ const AgentCommandMenu = React.forwardRef<AgentCommandMenuRef, AgentCommandMenuP
           pageQuery,
         )
       }
-      const source = page === 'skills' ? skills : page === 'tools' ? tools : page === 'attachments' ? [] : sessions
+      const source = page === 'skills' ? skills : page === 'tools' ? tools : sessions
       return filterCommandMenuItems(source, pageQuery)
     }, [page, skills, tools, sessions, customCommands, pageQuery])
 

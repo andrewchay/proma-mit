@@ -112,4 +112,24 @@ describe("Skills 集市与 Skill Set", () => {
     ])
     expect(items.map((item) => item.name)).toEqual(["adaptyv"])
   })
+
+  test("Given 块标量 description 的 SKILL.md When 构建集市 Then 多行描述完整保留", () => {
+    const builtinDir = getDefaultSkillsDir()
+    const slug = "block-scalar-fixture"
+    mkdirSync(join(builtinDir, slug), { recursive: true })
+    writeFileSync(
+      join(builtinDir, slug, "SKILL.md"),
+      "---\nname: " + slug + "\nversion: 1.0.0\ndescription: |\n  第一行摘要。\n  第二行触发词说明。\nod:\n  mode: prototype\n---\n正文\n",
+      "utf-8",
+    )
+    try {
+      const items = getSkillMarketplace("workspace-block-scalar-fixture")
+      const found = items.find((item) => item.slug === slug)
+      expect(found?.description).toBe("第一行摘要。\n第二行触发词说明。")
+      expect(found?.version).toBe("1.0.0")
+      expect(found?.name).toBe(slug)
+    } finally {
+      rmSync(join(builtinDir, slug), { recursive: true, force: true })
+    }
+  })
 })

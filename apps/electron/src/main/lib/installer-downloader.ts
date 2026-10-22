@@ -13,6 +13,7 @@ import path from 'path'
 import { URL } from 'url'
 
 import { app, type BrowserWindow, shell } from 'electron'
+import { getInstallerTempDir } from './app-temp-paths'
 
 import {
   INSTALLER_IPC_CHANNELS,
@@ -28,7 +29,7 @@ const activeDownloads = new Map<string, () => void>()
  * 构造安装包的本地缓存目录
  */
 function getInstallerDir(): string {
-  return path.join(app.getPath('temp'), 'proma-installers')
+  return getInstallerTempDir()
 }
 
 /**

@@ -1,0 +1,66 @@
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/scripts/check-release-channel.test.ts:
+(pass) 实际 builder 配置满足双渠道契约 [2.58ms]
+(pass) 开发包误继承正式发布配置时阻断 [0.22ms]
+(pass) 开发包误用正式身份时阻断 [0.18ms]
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [21.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/scripts/dist.test.ts:
+(pass) Dev 使用独立配置且本地打包禁止发布 [0.62ms]
+(pass) 打包脚本 · 调试放开参数 > 未开启时不注入任何 define，正式构建行为不变 [0.04ms]
+(pass) 打包脚本 · 调试放开参数 > 开启时恰好注入放开标记 define [0.01ms]
+(pass) 打包脚本 · 调试放开参数 > define 名称必须与 dev-unlock.ts 声明的构建期常量一致 [0.02ms]
+
+ 4 pass
+ 0 fail
+ 6 expect() calls
+Ran 4 tests across 1 file. [17.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/app-channel.test.ts:
+(pass) 开发版与正式版渠道隔离 > 源码运行始终为 Dev，旧正式安装包兼容 Stable [0.08ms]
+(pass) 开发版与正式版渠道隔离 > 配置、userData、协议、安装身份不重叠 [0.07ms]
+(pass) 开发版与正式版渠道隔离 > Dev 默认无后台自动动作，也不读取正式更新 [0.02ms]
+
+ 3 pass
+ 0 fail
+ 17 expect() calls
+Ran 3 tests across 1 file. [9.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/dev-unlock.test.ts:
+(pass) 调试放开开关 > 未设置环境变量时一律不放开 [0.11ms]
+(pass) 调试放开开关 > 环境变量不是精确的 1 时不放开，避免 true / yes 之类误开 [0.02ms]
+(pass) 调试放开开关 > 显式设为 1 且非打包环境时放开 [0.22ms]
+(pass) 调试放开开关 > 放开快照授予全部能力，且不伪造成可验签的签名 [0.14ms]
+(pass) 调试放开开关 > 构建期注入标记生效时不依赖环境变量 [0.02ms]
+(pass) 调试放开开关 > 构建期注入为 false 时不得回落到环境变量以外的东西 [0.03ms]
+(pass) 调试放开开关 > 运行时路径可由调用方透传 isPackaged，不依赖进程真实打包状态 [0.01ms]
+(pass) 调试放开开关 > 构建期注入优先于打包状态
+
+ 8 pass
+ 0 fail
+ 19 expect() calls
+Ran 8 tests across 1 file. [20.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/migration-evalsystems.test.ts:
+[配置] 已创建 Agent 工作区目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-migration-eval-1791957743941/agent-workspaces
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-migration-eval-1791957743941/agent-workspaces/ws1
+[Agent 工作区] 已创建 plugin manifest: ws1
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: ws1
+[Agent 工作区] 已创建工作区: ws1 (slug: ws1)
+[设置] 已更新 keys: agentAllowlist
+(pass) 评测/Agent 定义迁移往返（evalsystems） > import 能还原 benchmarks / default-agents / allowlist（含组件在 manifest） [92.39ms]
+
+ 1 pass
+ 0 fail
+ 10 expect() calls
+Ran 1 test across 1 file. [111.00ms]
+测试文件: 5，失败文件: 0

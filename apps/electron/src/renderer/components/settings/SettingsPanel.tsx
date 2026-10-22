@@ -91,7 +91,7 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
     label: '模型与智能体',
     tabs: [
       { id: 'channels', label: '模型配置', icon: <Radio size={16} /> },
-      { id: 'agent', label: 'Agent 配置', icon: <Plug size={16} /> },
+      { id: 'agent', label: '工作空间设置', icon: <Plug size={16} /> },
       { id: 'tools', label: '工具与提示词', icon: <Wrench size={16} /> },
       { id: 'automation', label: '设备控制', icon: <MonitorCog size={16} /> },
     ],

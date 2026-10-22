@@ -297,6 +297,8 @@ import { permissionService } from './lib/agent-permission-service'
 import { askUserService } from './lib/agent-ask-user-service'
 import { exitPlanService } from './lib/agent-exit-plan-service'
 import { getAgentSessionWorkspacePath, getAgentWorkspacesDir, getWorkspaceSkillsDir, getWorkspaceFilesDir, getScratchPadPath } from './lib/config-paths'
+import { getPreviewTempDir } from './lib/app-temp-paths'
+import { APP_AUTOMATIC_SIDE_EFFECTS, APP_CHANNEL, APP_SERVICE_PORTS } from './lib/app-identity'
 import { calculateStorageStats, cleanupStorage, cleanupTempFiles } from './lib/storage-service'
 import type { CleanupOptions } from './lib/storage-service'
 import {
@@ -422,7 +424,7 @@ function realpathOrResolve(path: string): string {
 function getAuthorizedRoots(options?: FileAccessOptions): string[] {
   const roots: string[] = [
     getAgentWorkspacesDir(),
-    join(tmpdir(), 'proma-preview'),
+    getPreviewTempDir(),
   ]
 
   const workspaceSlugs = new Set<string>()
@@ -558,7 +560,7 @@ function normalizeAppIconVariantId(variantId: string): string {
 async function safeStartCompanionServer(): Promise<void> {
   try {
     const { startCompanionServer } = await import('./lib/companion-server')
-    await startCompanionServer()
+    await startCompanionServer({ port: APP_SERVICE_PORTS.companion })
   } catch (error) {
     console.error('[Companion] 启动失败:', error)
   }
@@ -570,7 +572,7 @@ export async function registerIpcHandlers(): Promise<void> {
   // ===== 出海邮件（收发与同步，独立模块） =====
   const { registerOutboundMailIpcHandlers, restoreOutboundMailSchedule } = await import('./lib/outbound-mail/outbound-mail-ipc')
   registerOutboundMailIpcHandlers()
-  restoreOutboundMailSchedule()
+  if (APP_AUTOMATIC_SIDE_EFFECTS) restoreOutboundMailSchedule()
 
   // ===== 嵌入式终端 =====
   const assertMainTerminalRenderer = async (senderId: number): Promise<void> => {
@@ -1314,9 +1316,9 @@ export async function registerIpcHandlers(): Promise<void> {
   })
 
   // 设置变更时联动启停（开关切换无需重启应用）
-  let companionServerDesired = getSettings().companionServer?.enabled ?? false
+  let companionServerDesired = APP_AUTOMATIC_SIDE_EFFECTS && (getSettings().companionServer?.enabled ?? false)
   onSettingsChange((settings) => {
-    const desired = settings.companionServer?.enabled ?? false
+    const desired = APP_AUTOMATIC_SIDE_EFFECTS && (settings.companionServer?.enabled ?? false)
     if (desired === companionServerDesired) return
     companionServerDesired = desired
     if (desired) {
@@ -1338,6 +1340,7 @@ export async function registerIpcHandlers(): Promise<void> {
         effectiveDevModules: resolveEffectiveModules({
           devEnabled: settings.enabledDevModules,
           isPackaged: app.isPackaged,
+          channel: APP_CHANNEL,
         }),
         // 全能力调试放开同样是每次读取时计算的派生结论，不落盘。
         capabilitiesUnlocked: isDevUnlockEnabled({ isPackaged: app.isPackaged }),
@@ -3244,12 +3247,11 @@ export async function registerIpcHandlers(): Promise<void> {
         throw new Error('content 必须是字符串')
       }
 
-      const { isAbsolute, join, relative, resolve } = await import('node:path')
-      const { tmpdir } = await import('node:os')
+      const { isAbsolute, relative, resolve } = await import('node:path')
       const { existsSync, mkdirSync } = await import('node:fs')
       const { writeFile } = await import('node:fs/promises')
 
-      const tmpDir = join(tmpdir(), 'proma-preview')
+      const tmpDir = getPreviewTempDir()
       if (!existsSync(tmpDir)) {
         mkdirSync(tmpDir, { recursive: true })
       }
@@ -4833,6 +4835,7 @@ export async function registerIpcHandlers(): Promise<void> {
   // 打包环境忽略本地调试开关，避免改 settings.json 解锁未完成功能。
   const isDevModuleEnabled = (moduleId: string): boolean => isModuleVisible(moduleId, {
     isPackaged: app.isPackaged,
+    channel: APP_CHANNEL,
     devEnabled: resolveDevEnabledModules(getSettings().enabledDevModules, { isPackaged: app.isPackaged }),
   })
 

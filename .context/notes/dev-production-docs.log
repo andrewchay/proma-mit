@@ -1,0 +1,13 @@
+$ bun scripts/generate-doc-facts.ts --check
+61 | | Electron 渲染进程 TypeScript/TSX 文件 | ${rendererFileCount} |
+62 | `
+63 | 
+64 | if (checkOnly) {
+65 |   const existing = await readFile(outputPath, 'utf8').catch(() => '')
+66 |   if (existing !== content) throw new Error('docs/generated/repository-facts.md 已过期；请运行 bun run docs:generate')
+                                           ^
+error: docs/generated/repository-facts.md 已过期；请运行 bun run docs:generate
+      at /Users/chaihao/.proma/agent-workspaces/proma-mit/project/scripts/generate-doc-facts.ts:66:39
+
+Bun v1.3.14 (macOS arm64)
+error: script "docs:check" exited with code 1

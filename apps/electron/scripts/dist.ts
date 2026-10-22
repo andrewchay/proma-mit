@@ -54,6 +54,7 @@ interface DistOptions {
   verbose: boolean
   noSign: boolean
   devUnlock: boolean
+  dev: boolean
   targetFormat: 'all' | 'dmg' | 'zip' | 'dir'
   platform: 'mac' | 'win' | 'linux'
 }
@@ -158,6 +159,7 @@ function parseArgs(): DistOptions {
     verbose: args.includes('--verbose'),
     noSign: args.includes('--no-sign'),
     devUnlock: args.includes('--dev-unlock'),
+    dev: args.includes('--dev') || args.includes('--dev-unlock'),
     targetFormat: args.includes('--dmg')
       ? 'dmg'
       : args.includes('--zip')
@@ -186,6 +188,12 @@ export function buildMainBuildArgs(devUnlock: boolean): string[] {
     args.push('--', '--define:__GRAVITAS_DEV_UNLOCK__=true')
   }
   return args
+}
+
+/** 所有本地打包明确禁止发布；调试解锁只能产出 Dev 身份包。 */
+export function buildChannelBuilderArgs(dev: boolean, platform: 'mac' | 'win' | 'linux'): string[] {
+  return ['electron-builder', `--${platform}`, '--config',
+    dev ? 'electron-builder.dev.yml' : 'electron-builder.yml', '--publish', 'never']
 }
 
 function main(): void {
@@ -246,6 +254,7 @@ function main(): void {
     runStep('复制资源文件', 'bun', ['run', 'build:resources'], { verbose: opts.verbose })
   )
   printStepResult(results[results.length - 1])
+  if (!results[results.length - 1].success) return printSummary(results)
 
   // ── 步骤 5: electron-builder 打包 ──
   step++
@@ -253,9 +262,9 @@ function main(): void {
 
   // electron-builder 会先 rmdir appOutDir；Finder 生成的 .DS_Store 会让其报
   // ENOTEMPTY。打包前递归清理 out/ 下的 .DS_Store，避免反复撞车。
-  removeDsStoreRecursively(join(process.cwd(), 'out'))
+  removeDsStoreRecursively(join(import.meta.dir, '..', opts.dev ? 'out-dev' : 'out'))
 
-  const builderArgs = ['electron-builder', `--${opts.platform}`]
+  const builderArgs = buildChannelBuilderArgs(opts.dev, opts.platform)
 
   // 只构建当前架构
   if (opts.currentArch) {

@@ -4,7 +4,8 @@
 import { createHash } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
+import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir, getAgentWorkspacesDir } from "./config-paths"
+import { homedir } from 'node:os'
 import { getAllWorkspaceSkills, listAgentWorkspaces } from "./agent-workspace-manager"
 import type { SkillMarketplaceItem, SkillMeta } from "@gravitas/shared"
 
@@ -24,12 +25,31 @@ function readSkillMeta(dir: string, slug: string, enabled: boolean): SkillMeta |
   const values: Record<string, string> = {}
   const frontmatter = readFileSync(path, "utf-8").match(/^---\s*\n([\s\S]*?)\n---/)
   if (frontmatter?.[1]) {
+    // 与 agent-workspace-manager 的 parseSkillFrontmatter 对齐：支持单行值和 | / > 块标量，
+    // 否则 Claude Code 约定的多行 description（如 OpenDesign 设计内容包）会丢失集市描述。
+    let currentKey = ""
+    let folded = false
     for (const line of frontmatter[1].split("\n")) {
-      const match = line.match(/^(name|description|icon|version|category):\s*(.+)\s*$/)
-      if (match?.[1] && match[2]) values[match[1]] = match[2].trim().replace(/^["\x27]|["\x27]$/g, "")
+      if (/^\s/.test(line)) {
+        if (!currentKey) continue
+        const text = line.trim()
+        if (!text) { if (values[currentKey]) values[currentKey] += "\n"; continue }
+        const sep = folded ? " " : "\n"
+        values[currentKey] = values[currentKey] ? values[currentKey] + sep + text : text
+        continue
+      }
+      const match = line.match(/^(name|description|icon|version|category):(.*)$/)
+      if (!match?.[1]) { currentKey = ""; continue }
+      const key = match[1]
+      currentKey = key
+      folded = false
+      const raw = match[2]?.trim() ?? ""
+      if (raw === "|" || raw === ">") { folded = raw === ">"; values[key] = ""; continue }
+      if (raw) values[key] = raw.replace(/^["\x27]|["\x27]$/g, "")
+      else { values[key] = ""; folded = false }
     }
   }
-  return { slug, name: values.name || slug, description: values.description, icon: values.icon, version: values.version, category: values.category, enabled }
+  return { slug, name: values.name?.trim() || slug, description: values.description?.trim(), icon: values.icon?.trim(), version: values.version?.trim(), category: values.category?.trim(), enabled }
 }
 
 function readSkillContentSignature(dir: string): string | undefined {
@@ -64,8 +84,8 @@ function scanDirectory(dir: string, source: MarketplaceSkillSource, sourceName?:
 }
 
 const EXTERNAL_SKILL_SOURCES = [
-  { source: "claude" as const, name: "Claude Skills", root: "/Users/chaihao/.claude/skills" },
-  { source: "personal" as const, name: "个人 Skills", root: "/Users/chaihao/.proma/agent-workspaces/personal/skills" },
+  { source: "claude" as const, name: "Claude Skills", root: join(homedir(), '.claude', 'skills') },
+  { source: "personal" as const, name: "个人 Skills", root: join(getAgentWorkspacesDir(), 'personal', 'skills') },
 ]
 
 function scanExternalDirectory(root: string, source: "personal" | "claude", sourceName: string): MarketplaceSkillCandidate[] {

@@ -8,7 +8,7 @@
 import { existsSync, statSync, unlinkSync, rmSync } from 'node:fs'
 import { promises as fsPromises } from 'node:fs'
 import { join, basename } from 'node:path'
-import { tmpdir } from 'node:os'
+import { getPreviewTempDir, getInstallerTempDir } from './app-temp-paths'
 import { app } from 'electron'
 import {
   getConfigDir,
@@ -335,8 +335,8 @@ async function calcAttachmentsCategory(): Promise<StorageCategory> {
 }
 
 async function calcTempFilesCategory(): Promise<StorageCategory> {
-  const previewDir = join(tmpdir(), 'proma-preview')
-  const installerDir = join(app.getPath('temp'), 'proma-installers')
+  const previewDir = getPreviewTempDir()
+  const installerDir = getInstallerTempDir()
   const [preview, installer] = await Promise.all([
     getDirSize(previewDir),
     getDirSize(installerDir),
@@ -373,7 +373,7 @@ export async function cleanupTempFiles(): Promise<CleanupResult> {
   let freedBytes = 0, deletedCount = 0
   const errors: string[] = []
 
-  const previewDir = join(tmpdir(), 'proma-preview')
+  const previewDir = getPreviewTempDir()
   if (existsSync(previewDir)) {
     try {
       const files = await fsPromises.readdir(previewDir)
@@ -386,7 +386,7 @@ export async function cleanupTempFiles(): Promise<CleanupResult> {
     }
   }
 
-  const installerDir = join(app.getPath('temp'), 'proma-installers')
+  const installerDir = getInstallerTempDir()
   if (existsSync(installerDir)) {
     try {
       const files = await fsPromises.readdir(installerDir)

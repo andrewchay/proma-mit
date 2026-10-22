@@ -1,8 +1,8 @@
 /**
  * 配置路径工具
  *
- * 管理 Proma MIT 应用的本地配置文件路径。
- * 所有用户配置存储在 ~/.proma-mit/ 目录下。
+ * 管理当前应用渠道的本地配置文件路径。
+ * Stable 存储在 ~/.gravitas/，Dev 存储在 ~/.gravitas-dev/。
  */
 
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -14,13 +14,13 @@ import { readJsonFileSafe } from './safe-file'
 /**
  * 获取配置目录名称
  *
- * 统一返回 '.proma-mit'，不区分开发/正式版本。
+ * 按安装渠道返回 '.gravitas' 或 '.gravitas-dev'。
  */
 let _configDirName: string | undefined
 
 export function getConfigDirName(): string {
   if (_configDirName === undefined) {
-    // 统一使用 ~/.proma-mit/，不再区分开发/正式版本
+    // 统一从应用身份读取，禁止 Dev 回退到生产目录。
     _configDirName = APP_CONFIG_DIR_NAME
     console.log(`[配置] 配置目录: ~/${_configDirName}/`)
   }

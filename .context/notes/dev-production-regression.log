@@ -1,0 +1,583 @@
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (5708f80c-08a3-43ec-a96b-7ea6c9c8db27)
+[配置] 已创建 Agent 工作区目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-5708f80c-08a3-43ec-a96b-7ea6c9c8db27
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-5708f80c-08a3-43ec-a96b-7ea6c9c8db27
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-5708f80c-08a3-43ec-a96b-7ea6c9c8db27
+[Agent 工作区] 已创建工作区: Goal fixture 5708f80c-08a3-43ec-a96b-7ea6c9c8db27 (slug: goal-fixture-5708f80c-08a3-43ec-a96b-7ea6c9c8db27)
+[配置] 已创建 Agent 会话目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-sessions
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-5708f80c-08a3-43ec-a96b-7ea6c9c8db27/4debd623-bae5-4fce-a0e0-7151e7deb2d2
+[Agent 会话] 已创建会话: Goal调用测试 (4debd623-bae5-4fce-a0e0-7151e7deb2d2)
+[配置] 已创建 Token 统计目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/token-usage
+[Agent 会话] 已更新会话: Goal调用测试 (4debd623-bae5-4fce-a0e0-7151e7deb2d2)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-5708f80c-08a3-43ec-a96b-7ea6c9c8db27/4debd623-bae5-4fce-a0e0-7151e7deb2d2
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "4debd623-bae5-4fce-a0e0-7151e7deb2d2",
+  workspaceId: "5e0d201d-2677-42d6-91d7-59621ce900a1",
+  collabWs: "5e0d201d-2677-42d6-91d7-59621ce900a1",
+  isDelegationSession: false,
+}
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > ai-sdk普通运行在query前签发身份，并传入同一固定检查点闭包 [104.55ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (c5a47237-6b38-4600-839e-95a7e61cf12d)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-c5a47237-6b38-4600-839e-95a7e61cf12d
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-c5a47237-6b38-4600-839e-95a7e61cf12d
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-c5a47237-6b38-4600-839e-95a7e61cf12d
+[Agent 工作区] 已创建工作区: Goal fixture c5a47237-6b38-4600-839e-95a7e61cf12d (slug: goal-fixture-c5a47237-6b38-4600-839e-95a7e61cf12d)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-c5a47237-6b38-4600-839e-95a7e61cf12d/637a8626-2525-4ea2-b00a-06ee688acb07
+[Agent 会话] 已创建会话: Goal调用测试 (637a8626-2525-4ea2-b00a-06ee688acb07)
+[Agent 会话] 已更新会话: Goal调用测试 (637a8626-2525-4ea2-b00a-06ee688acb07)
+[Agent 编排] 权限模式: bypassPermissions
+[Pi Runtime] 启动 Pi runtime — provider: openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-c5a47237-6b38-4600-839e-95a7e61cf12d/637a8626-2525-4ea2-b00a-06ee688acb07
+[配置] 配置目录: ~/.gravitas-dev/
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > pi普通运行在query前签发身份，并传入同一固定检查点闭包 [497.26ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (1beff4fb-9e33-4200-a0f5-71e1ce08fbd9)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1beff4fb-9e33-4200-a0f5-71e1ce08fbd9
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-1beff4fb-9e33-4200-a0f5-71e1ce08fbd9
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-1beff4fb-9e33-4200-a0f5-71e1ce08fbd9
+[Agent 工作区] 已创建工作区: Goal fixture 1beff4fb-9e33-4200-a0f5-71e1ce08fbd9 (slug: goal-fixture-1beff4fb-9e33-4200-a0f5-71e1ce08fbd9)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1beff4fb-9e33-4200-a0f5-71e1ce08fbd9/fafd9f03-f7dd-47d5-baef-73b95fd417c1
+[Agent 会话] 已创建会话: Goal调用测试 (fafd9f03-f7dd-47d5-baef-73b95fd417c1)
+[Agent 会话] 已更新会话: Goal调用测试 (fafd9f03-f7dd-47d5-baef-73b95fd417c1)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1beff4fb-9e33-4200-a0f5-71e1ce08fbd9/fafd9f03-f7dd-47d5-baef-73b95fd417c1
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "fafd9f03-f7dd-47d5-baef-73b95fd417c1",
+  workspaceId: "c8cb54dc-568a-46b5-97d3-11f0e459351f",
+  collabWs: "c8cb54dc-568a-46b5-97d3-11f0e459351f",
+  isDelegationSession: false,
+}
+[Agent Runtime] Proma runtime 运行失败: 211 |         const prepared = copyPreparedRequest(request)
+212 |         if (prepared.runtime !== goal.runtime ||
+213 |           (goal.workspaceId !== undefined && prepared.workspaceId !== goal.workspaceId) ||
+214 |           (goal.channelId !== undefined && prepared.channelId !== goal.channelId) ||
+215 |           (goal.modelId !== undefined && prepared.requestedModelId !== goal.modelId)) {
+216 |           throw new Error('Goal配置与已准备请求不一致，禁止跨环境提交')
+                          ^
+error: Goal配置与已准备请求不一致，禁止跨环境提交
+      at onPrepared (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/goal-runtime/goal-coordinator.ts:216:21)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:65:65)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2087:80)
+      at runProviderAgnosticAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:839:13)
+      at async sendMessage (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2314:18)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:110:67)
+
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > Goal配置不匹配不进入query：{"workspaceId":"other"} [31.75ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (725d9f10-2bb9-4268-9899-7a71e22a0560)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-725d9f10-2bb9-4268-9899-7a71e22a0560
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-725d9f10-2bb9-4268-9899-7a71e22a0560
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-725d9f10-2bb9-4268-9899-7a71e22a0560
+[Agent 工作区] 已创建工作区: Goal fixture 725d9f10-2bb9-4268-9899-7a71e22a0560 (slug: goal-fixture-725d9f10-2bb9-4268-9899-7a71e22a0560)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-725d9f10-2bb9-4268-9899-7a71e22a0560/78dba900-ec81-42ca-ae3f-b6284e1a98f5
+[Agent 会话] 已创建会话: Goal调用测试 (78dba900-ec81-42ca-ae3f-b6284e1a98f5)
+[Agent 会话] 已更新会话: Goal调用测试 (78dba900-ec81-42ca-ae3f-b6284e1a98f5)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-725d9f10-2bb9-4268-9899-7a71e22a0560/78dba900-ec81-42ca-ae3f-b6284e1a98f5
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "78dba900-ec81-42ca-ae3f-b6284e1a98f5",
+  workspaceId: "6b7bf2b9-3dcf-45ba-8106-13e2cf6de617",
+  collabWs: "6b7bf2b9-3dcf-45ba-8106-13e2cf6de617",
+  isDelegationSession: false,
+}
+[Agent Runtime] Proma runtime 运行失败: 211 |         const prepared = copyPreparedRequest(request)
+212 |         if (prepared.runtime !== goal.runtime ||
+213 |           (goal.workspaceId !== undefined && prepared.workspaceId !== goal.workspaceId) ||
+214 |           (goal.channelId !== undefined && prepared.channelId !== goal.channelId) ||
+215 |           (goal.modelId !== undefined && prepared.requestedModelId !== goal.modelId)) {
+216 |           throw new Error('Goal配置与已准备请求不一致，禁止跨环境提交')
+                          ^
+error: Goal配置与已准备请求不一致，禁止跨环境提交
+      at onPrepared (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/goal-runtime/goal-coordinator.ts:216:21)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:65:65)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2087:80)
+      at runProviderAgnosticAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:839:13)
+      at async sendMessage (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2314:18)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:110:67)
+
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > Goal配置不匹配不进入query：{"channelId":"other"} [13.90ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (8f8a4e08-de6c-4b79-9a3b-c266e8817cd9)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-8f8a4e08-de6c-4b79-9a3b-c266e8817cd9
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-8f8a4e08-de6c-4b79-9a3b-c266e8817cd9
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-8f8a4e08-de6c-4b79-9a3b-c266e8817cd9
+[Agent 工作区] 已创建工作区: Goal fixture 8f8a4e08-de6c-4b79-9a3b-c266e8817cd9 (slug: goal-fixture-8f8a4e08-de6c-4b79-9a3b-c266e8817cd9)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-8f8a4e08-de6c-4b79-9a3b-c266e8817cd9/30e8a452-f946-48ab-830f-91a91fb3a637
+[Agent 会话] 已创建会话: Goal调用测试 (30e8a452-f946-48ab-830f-91a91fb3a637)
+[Agent 会话] 已更新会话: Goal调用测试 (30e8a452-f946-48ab-830f-91a91fb3a637)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-8f8a4e08-de6c-4b79-9a3b-c266e8817cd9/30e8a452-f946-48ab-830f-91a91fb3a637
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "30e8a452-f946-48ab-830f-91a91fb3a637",
+  workspaceId: "033e9e8c-2f42-45ec-abe9-f8d9e8aad1f6",
+  collabWs: "033e9e8c-2f42-45ec-abe9-f8d9e8aad1f6",
+  isDelegationSession: false,
+}
+[Agent Runtime] Proma runtime 运行失败: 211 |         const prepared = copyPreparedRequest(request)
+212 |         if (prepared.runtime !== goal.runtime ||
+213 |           (goal.workspaceId !== undefined && prepared.workspaceId !== goal.workspaceId) ||
+214 |           (goal.channelId !== undefined && prepared.channelId !== goal.channelId) ||
+215 |           (goal.modelId !== undefined && prepared.requestedModelId !== goal.modelId)) {
+216 |           throw new Error('Goal配置与已准备请求不一致，禁止跨环境提交')
+                          ^
+error: Goal配置与已准备请求不一致，禁止跨环境提交
+      at onPrepared (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/goal-runtime/goal-coordinator.ts:216:21)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:65:65)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2087:80)
+      at runProviderAgnosticAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:839:13)
+      at async sendMessage (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2314:18)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:110:67)
+
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > Goal配置不匹配不进入query：{"modelId":"other"} [14.07ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (24a0b9c4-9f7e-472f-890d-a69378033103)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-24a0b9c4-9f7e-472f-890d-a69378033103
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-24a0b9c4-9f7e-472f-890d-a69378033103
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-24a0b9c4-9f7e-472f-890d-a69378033103
+[Agent 工作区] 已创建工作区: Goal fixture 24a0b9c4-9f7e-472f-890d-a69378033103 (slug: goal-fixture-24a0b9c4-9f7e-472f-890d-a69378033103)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-24a0b9c4-9f7e-472f-890d-a69378033103/0bc73b78-e51f-42a9-89b6-cbc94f6b7a18
+[Agent 会话] 已创建会话: Goal调用测试 (0bc73b78-e51f-42a9-89b6-cbc94f6b7a18)
+[Agent 会话] 已更新会话: Goal调用测试 (0bc73b78-e51f-42a9-89b6-cbc94f6b7a18)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-24a0b9c4-9f7e-472f-890d-a69378033103/0bc73b78-e51f-42a9-89b6-cbc94f6b7a18
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "0bc73b78-e51f-42a9-89b6-cbc94f6b7a18",
+  workspaceId: "be5c6e3a-990e-4f3d-80e0-0633e6c88e17",
+  collabWs: "be5c6e3a-990e-4f3d-80e0-0633e6c88e17",
+  isDelegationSession: false,
+}
+[Agent Runtime] Proma runtime 运行失败: 211 |         const prepared = copyPreparedRequest(request)
+212 |         if (prepared.runtime !== goal.runtime ||
+213 |           (goal.workspaceId !== undefined && prepared.workspaceId !== goal.workspaceId) ||
+214 |           (goal.channelId !== undefined && prepared.channelId !== goal.channelId) ||
+215 |           (goal.modelId !== undefined && prepared.requestedModelId !== goal.modelId)) {
+216 |           throw new Error('Goal配置与已准备请求不一致，禁止跨环境提交')
+                          ^
+error: Goal配置与已准备请求不一致，禁止跨环境提交
+      at onPrepared (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/goal-runtime/goal-coordinator.ts:216:21)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:65:65)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2087:80)
+      at runProviderAgnosticAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:839:13)
+      at async sendMessage (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2314:18)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:110:67)
+
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > Goal配置不匹配不进入query：{"runtime":"pi"} [13.31ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (7a4a8cb7-e602-4170-87e7-45c0863f75c6)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-7a4a8cb7-e602-4170-87e7-45c0863f75c6
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-7a4a8cb7-e602-4170-87e7-45c0863f75c6
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-7a4a8cb7-e602-4170-87e7-45c0863f75c6
+[Agent 工作区] 已创建工作区: Goal fixture 7a4a8cb7-e602-4170-87e7-45c0863f75c6 (slug: goal-fixture-7a4a8cb7-e602-4170-87e7-45c0863f75c6)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-7a4a8cb7-e602-4170-87e7-45c0863f75c6/3bf79d7a-cd06-445c-b215-33be78e5caff
+[Agent 会话] 已创建会话: Goal调用测试 (3bf79d7a-cd06-445c-b215-33be78e5caff)
+[Agent 会话] 已更新会话: Goal调用测试 (3bf79d7a-cd06-445c-b215-33be78e5caff)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-7a4a8cb7-e602-4170-87e7-45c0863f75c6/3bf79d7a-cd06-445c-b215-33be78e5caff
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "3bf79d7a-cd06-445c-b215-33be78e5caff",
+  workspaceId: "a8443bca-91be-43a3-927f-3515ca7af3e3",
+  collabWs: "a8443bca-91be-43a3-927f-3515ca7af3e3",
+  isDelegationSession: false,
+}
+[Agent 编排] 已接受会话中止请求: 3bf79d7a-cd06-445c-b215-33be78e5caff, generation=123
+[Agent Runtime] Proma runtime 运行失败: 2073 | 
+2074 |     const appSettings = getSettings()
+2075 |     const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+2076 |     const assertRunOwner = (): void => {
+2077 |       if (this.activeSessions.get(sessionId) !== runGeneration || this.activeRunTokens.get(sessionId) !== runToken) {
+2078 |         throw new Error('Agent运行槽位已失效')
+                         ^
+error: Agent运行槽位已失效
+      at assertRunOwner (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2078:19)
+      at runProviderAgnosticAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:843:7)
+      at async sendMessage (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2314:18)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:124:67)
+
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > ai-sdk准备后停止，await间隙不能启动迟到query [16.01ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (6486e326-4f23-4bad-8b0b-dd3f0b995df6)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-6486e326-4f23-4bad-8b0b-dd3f0b995df6
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-6486e326-4f23-4bad-8b0b-dd3f0b995df6
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-6486e326-4f23-4bad-8b0b-dd3f0b995df6
+[Agent 工作区] 已创建工作区: Goal fixture 6486e326-4f23-4bad-8b0b-dd3f0b995df6 (slug: goal-fixture-6486e326-4f23-4bad-8b0b-dd3f0b995df6)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-6486e326-4f23-4bad-8b0b-dd3f0b995df6/16a0b47c-d5ce-4f46-8636-577be38f9199
+[Agent 会话] 已创建会话: Goal调用测试 (16a0b47c-d5ce-4f46-8636-577be38f9199)
+[Agent 会话] 已更新会话: Goal调用测试 (16a0b47c-d5ce-4f46-8636-577be38f9199)
+[Agent 编排] 权限模式: bypassPermissions
+[Pi Runtime] 启动 Pi runtime — provider: openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-6486e326-4f23-4bad-8b0b-dd3f0b995df6/16a0b47c-d5ce-4f46-8636-577be38f9199
+[Agent 编排] 已接受会话中止请求: 16a0b47c-d5ce-4f46-8636-577be38f9199, generation=123
+[Pi Runtime] 运行失败: 2073 | 
+2074 |     const appSettings = getSettings()
+2075 |     const effectiveAgentRuntime = normalizeAgentRuntime(agentRuntime ?? sessionMeta?.agentRuntime ?? appSettings.agentRuntime)
+2076 |     const assertRunOwner = (): void => {
+2077 |       if (this.activeSessions.get(sessionId) !== runGeneration || this.activeRunTokens.get(sessionId) !== runToken) {
+2078 |         throw new Error('Agent运行槽位已失效')
+                         ^
+error: Agent运行槽位已失效
+      at assertRunOwner (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2078:19)
+      at runPiAgent (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:1125:7)
+      at async sendMessage (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.ts:2286:20)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/agent-orchestrator.goal-run.test.ts:124:67)
+
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > pi准备后停止，await间隙不能启动迟到query [12.98ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (5986305e-d26c-4805-9145-91e0925b76e5)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-5986305e-d26c-4805-9145-91e0925b76e5
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-5986305e-d26c-4805-9145-91e0925b76e5
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-5986305e-d26c-4805-9145-91e0925b76e5
+[Agent 工作区] 已创建工作区: Goal fixture 5986305e-d26c-4805-9145-91e0925b76e5 (slug: goal-fixture-5986305e-d26c-4805-9145-91e0925b76e5)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-5986305e-d26c-4805-9145-91e0925b76e5/6bdf6d7d-7f14-40ca-a49e-23f13f59a164
+[Agent 会话] 已创建会话: Goal调用测试 (6bdf6d7d-7f14-40ca-a49e-23f13f59a164)
+[Agent 会话] 已更新会话: Goal调用测试 (6bdf6d7d-7f14-40ca-a49e-23f13f59a164)
+[Agent 编排] 权限模式: bypassPermissions
+[Pi Runtime] 启动 Pi runtime — provider: openai, model: undefined, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-5986305e-d26c-4805-9145-91e0925b76e5/6bdf6d7d-7f14-40ca-a49e-23f13f59a164
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > Pi使用session fallback的请求模型，而非原始缺失输入 [15.37ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (113251c2-78fb-4372-a664-b7f28fec03f5)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5
+[Agent 工作区] 已创建工作区: Goal fixture 113251c2-78fb-4372-a664-b7f28fec03f5 (slug: goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5/81fa7ac1-245b-4083-9970-3da85ba600f7
+[Agent 会话] 已创建会话: Goal调用测试 (81fa7ac1-245b-4083-9970-3da85ba600f7)
+[Agent 会话] 已更新会话: Goal调用测试 (81fa7ac1-245b-4083-9970-3da85ba600f7)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5/81fa7ac1-245b-4083-9970-3da85ba600f7
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "81fa7ac1-245b-4083-9970-3da85ba600f7",
+  workspaceId: "bf52d605-a01f-454d-a757-bb0825f81c38",
+  collabWs: "bf52d605-a01f-454d-a757-bb0825f81c38",
+  isDelegationSession: false,
+}
+[Agent 编排] 已接受会话中止请求: 81fa7ac1-245b-4083-9970-3da85ba600f7, generation=123
+[Agent 会话] 已更新会话: Goal调用测试 (81fa7ac1-245b-4083-9970-3da85ba600f7)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-113251c2-78fb-4372-a664-b7f28fec03f5/81fa7ac1-245b-4083-9970-3da85ba600f7
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "81fa7ac1-245b-4083-9970-3da85ba600f7",
+  workspaceId: "bf52d605-a01f-454d-a757-bb0825f81c38",
+  collabWs: "bf52d605-a01f-454d-a757-bb0825f81c38",
+  isDelegationSession: false,
+}
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > 停止并开始同startedAt新run后，旧callback/finally不伤新槽位 [30.59ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (9d1dce9c-14a3-4d18-8cd8-c466cf3dd052)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-9d1dce9c-14a3-4d18-8cd8-c466cf3dd052
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-9d1dce9c-14a3-4d18-8cd8-c466cf3dd052
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-9d1dce9c-14a3-4d18-8cd8-c466cf3dd052
+[Agent 工作区] 已创建工作区: Goal fixture 9d1dce9c-14a3-4d18-8cd8-c466cf3dd052 (slug: goal-fixture-9d1dce9c-14a3-4d18-8cd8-c466cf3dd052)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-9d1dce9c-14a3-4d18-8cd8-c466cf3dd052/1ce8e11a-01ca-4c4a-870d-edb3928ba0ed
+[Agent 会话] 已创建会话: Goal调用测试 (1ce8e11a-01ca-4c4a-870d-edb3928ba0ed)
+[Agent 会话] 已更新会话: Goal调用测试 (1ce8e11a-01ca-4c4a-870d-edb3928ba0ed)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-9d1dce9c-14a3-4d18-8cd8-c466cf3dd052/1ce8e11a-01ca-4c4a-870d-edb3928ba0ed
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "1ce8e11a-01ca-4c4a-870d-edb3928ba0ed",
+  workspaceId: "785e99ca-cdb6-48e4-9c58-d397a1a05135",
+  collabWs: "785e99ca-cdb6-48e4-9c58-d397a1a05135",
+  isDelegationSession: false,
+}
+[Agent 编排] 已接受会话中止请求: 1ce8e11a-01ca-4c4a-870d-edb3928ba0ed, generation=123
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > 停止后没有新run，结束仍清理旧权限请求并等待用户 [18.38ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (1323a538-374c-4212-912c-2999bdd825a1)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1323a538-374c-4212-912c-2999bdd825a1
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-1323a538-374c-4212-912c-2999bdd825a1
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-1323a538-374c-4212-912c-2999bdd825a1
+[Agent 工作区] 已创建工作区: Goal fixture 1323a538-374c-4212-912c-2999bdd825a1 (slug: goal-fixture-1323a538-374c-4212-912c-2999bdd825a1)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1323a538-374c-4212-912c-2999bdd825a1/98bff8ea-919a-4705-8107-51be9ee97194
+[Agent 会话] 已创建会话: Goal调用测试 (98bff8ea-919a-4705-8107-51be9ee97194)
+[Agent 会话] 已更新会话: Goal调用测试 (98bff8ea-919a-4705-8107-51be9ee97194)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1323a538-374c-4212-912c-2999bdd825a1/98bff8ea-919a-4705-8107-51be9ee97194
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "98bff8ea-919a-4705-8107-51be9ee97194",
+  workspaceId: "de32bab8-0e1b-4470-b624-4fcd1e74daa4",
+  collabWs: "de32bab8-0e1b-4470-b624-4fcd1e74daa4",
+  isDelegationSession: false,
+}
+[Agent 编排] 会话 98bff8ea-919a-4705-8107-51be9ee97194 消息已排队: queueId=db98d59c-eea8-47cc-a19c-97503f70c4ff, queuedCount=1
+[Agent 会话] 已更新会话: Goal调用测试 (98bff8ea-919a-4705-8107-51be9ee97194)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-1323a538-374c-4212-912c-2999bdd825a1/98bff8ea-919a-4705-8107-51be9ee97194
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "98bff8ea-919a-4705-8107-51be9ee97194",
+  workspaceId: "de32bab8-0e1b-4470-b624-4fcd1e74daa4",
+  collabWs: "de32bab8-0e1b-4470-b624-4fcd1e74daa4",
+  isDelegationSession: false,
+}
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > 排队不预造Goal run；前一run退出后按真实query签发 [47.43ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (e4674180-c112-4571-8771-18e1e16302dc)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-e4674180-c112-4571-8771-18e1e16302dc
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-e4674180-c112-4571-8771-18e1e16302dc
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-e4674180-c112-4571-8771-18e1e16302dc
+[Agent 工作区] 已创建工作区: Goal fixture e4674180-c112-4571-8771-18e1e16302dc (slug: goal-fixture-e4674180-c112-4571-8771-18e1e16302dc)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-e4674180-c112-4571-8771-18e1e16302dc/0c7ca837-fba9-47cf-b097-68df9feb91d4
+[Agent 会话] 已创建会话: Goal调用测试 (0c7ca837-fba9-47cf-b097-68df9feb91d4)
+[Agent 会话] 已更新会话: Goal调用测试 (0c7ca837-fba9-47cf-b097-68df9feb91d4)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-e4674180-c112-4571-8771-18e1e16302dc/0c7ca837-fba9-47cf-b097-68df9feb91d4
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "0c7ca837-fba9-47cf-b097-68df9feb91d4",
+  workspaceId: "29bf5296-ef53-46ce-9a72-af23fe45149e",
+  collabWs: "29bf5296-ef53-46ce-9a72-af23fe45149e",
+  isDelegationSession: false,
+}
+[Agent 编排] 会话 0c7ca837-fba9-47cf-b097-68df9feb91d4 消息已排队: queueId=bb37e9a3-37bb-4001-9341-93d9ac617e3c, queuedCount=1
+[Agent 会话] 已更新会话: Goal调用测试 (0c7ca837-fba9-47cf-b097-68df9feb91d4)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-e4674180-c112-4571-8771-18e1e16302dc/0c7ca837-fba9-47cf-b097-68df9feb91d4
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "0c7ca837-fba9-47cf-b097-68df9feb91d4",
+  workspaceId: "29bf5296-ef53-46ce-9a72-af23fe45149e",
+  collabWs: "29bf5296-ef53-46ce-9a72-af23fe45149e",
+  isDelegationSession: false,
+}
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > continue检查点之后已有用户排队，不插入自动续跑 [50.95ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: Codex OAuth fixture (cccf1041-3ccc-4712-95b8-029d1db912be)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/codex-compact-fixture-cccf1041-3ccc-4712-95b8-029d1db912be
+[Agent 工作区] 已创建 plugin manifest: codex-compact-fixture-cccf1041-3ccc-4712-95b8-029d1db912be
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: codex-compact-fixture-cccf1041-3ccc-4712-95b8-029d1db912be
+[Agent 工作区] 已创建工作区: Codex compact fixture cccf1041-3ccc-4712-95b8-029d1db912be (slug: codex-compact-fixture-cccf1041-3ccc-4712-95b8-029d1db912be)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/codex-compact-fixture-cccf1041-3ccc-4712-95b8-029d1db912be/82eb8ffc-7d84-4605-a389-12da35fdae34
+[Agent 会话] 已创建会话: Codex compact (82eb8ffc-7d84-4605-a389-12da35fdae34)
+[Agent 会话] 已更新会话: Codex compact (82eb8ffc-7d84-4605-a389-12da35fdae34)
+[Agent 编排] 权限模式: bypassPermissions
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > Codex OAuth 在非 Pi Runtime 请求 /compact 时返回提示且不进入 adapter [12.64ms]
+[渠道管理] safeStorage 加密不可用，将以明文存储
+[渠道管理] 已创建渠道: 离线fixture (c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3)
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3
+[Agent 工作区] 已创建 plugin manifest: goal-fixture-c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: goal-fixture-c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3
+[Agent 工作区] 已创建工作区: Goal fixture c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3 (slug: goal-fixture-c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3/c8ae4702-0033-4c9b-94cb-39aea159a813
+[Agent 会话] 已创建会话: Goal调用测试 (c8ae4702-0033-4c9b-94cb-39aea159a813)
+[Agent 会话] 已更新会话: Goal调用测试 (c8ae4702-0033-4c9b-94cb-39aea159a813)
+[Agent 会话] 已更新会话: Goal调用测试 (c8ae4702-0033-4c9b-94cb-39aea159a813)
+[Agent 编排] 权限模式: bypassPermissions
+[Agent Runtime] 启动 ai-sdk runtime — provider: openai, adapter=openai, model: fixture-model, cwd: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-goal-run-vDVcay/agent-workspaces/goal-fixture-c7e5e59f-0cac-421a-8f3e-608ed7ffd2a3/c8ae4702-0033-4c9b-94cb-39aea159a813
+[Agent Runtime] 加载历史消息：0 条
+[AgentOrchestrator] collaboration 工具已注入: {
+  sessionId: "c8ae4702-0033-4c9b-94cb-39aea159a813",
+  workspaceId: "09647ef3-beee-4f01-8a9e-8169e0813e74",
+  collabWs: "09647ef3-beee-4f01-8a9e-8169e0813e74",
+  isDelegationSession: false,
+}
+(pass) 真实Orchestrator Goal闭包边界（离线adapter） > compact-only和渠道预检失败都不签发run或Goal工具 [16.13ms]
+
+ 15 pass
+ 0 fail
+ 58 expect() calls
+Ran 15 tests across 1 file. [1278.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/agent-orchestrator.projectdir.test.ts:
+[配置] 已创建 Agent 工作区目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-project-cwd-ByXMWA/config/agent-workspaces
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-project-cwd-ByXMWA/config/agent-workspaces/workspace-1791958036150
+[Agent 工作区] 已创建 plugin manifest: workspace-1791958036150
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: workspace-1791958036150
+[Agent 工作区] 已创建工作区: 本地项目 (slug: workspace-1791958036150)
+[配置] 已创建 Agent 会话工作目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-project-cwd-ByXMWA/config/agent-workspaces/workspace-1791958036150/session
+(pass) 本地项目正式工作区合同 > Given 绑定已有项目 When runtime 解析 workspaceId Then 使用实际项目根目录 [12.08ms]
+[配置] 已创建 Agent 工作区目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-project-cwd-dAbe4h/config/agent-workspaces
+[配置] 已创建 Agent 工作区: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-project-cwd-dAbe4h/config/agent-workspaces/workspace-1791958036162
+[Agent 工作区] 已创建 plugin manifest: workspace-1791958036162
+[Agent 工作区] 默认 Skills 模板为空，工作区 Skills 未初始化: workspace-1791958036162
+[Agent 工作区] 已创建工作区: 本地项目 (slug: workspace-1791958036162)
+(pass) 本地项目正式工作区合同 > Given 项目目录已移除 When runtime 解析 Then 在执行前明确拒绝 [7.02ms]
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [58.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/monitor-service.test.ts:
+[MonitorService] 事件触发: 配置变更检查 (f2700e06-bd4e-4af6-ba6a-e577a3df2f22)
+(pass) MonitorService > given an event monitor when it fires then it persists an auditable successful run through the injected runner [11.78ms]
+(pass) MonitorService > given a retired runtime when creating a monitor then it is rejected without blocking existing monitors [0.64ms]
+(pass) MonitorService > given a reused-session monitor without a target session when created then it is rejected [0.07ms]
+(pass) MonitorService > given a Routine instance binding when a monitor is created then it is persisted with the controlled execution target [0.46ms]
+[MonitorService] 事件触发: 部署完成 (7775ed4b-b744-4cc7-8743-09c36ef08a8a)
+(pass) MonitorService > given a signed webhook event when received then it enters the monitored execution pipeline [14.01ms]
+
+ 5 pass
+ 0 fail
+ 10 expect() calls
+Ran 5 tests across 1 file. [57.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/proactive-scheduler-store.test.ts:
+[Proactive Scheduler] 读取 runs 失败，将使用空索引（只读，不写回）: 119 | }
+120 | 
+121 | function readIndex(path: string, field: 'schedules' | 'runs'): ReadResult {
+122 |   if (!existsSync(path)) return { index: emptyIndex(field), error: null }
+123 |   try {
+124 |     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+                                       ^
+SyntaxError: JSON Parse error: Expected '}'
+      at readIndex (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:124:34)
+      at readRuns (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:101:20)
+      at listRuns (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:35:48)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.test.ts:37:19)
+
+[Proactive Scheduler] 读取 runs 失败，将使用空索引（只读，不写回）: 119 | }
+120 | 
+121 | function readIndex(path: string, field: 'schedules' | 'runs'): ReadResult {
+122 |   if (!existsSync(path)) return { index: emptyIndex(field), error: null }
+123 |   try {
+124 |     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+                                       ^
+SyntaxError: JSON Parse error: Expected '}'
+      at readIndex (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:124:34)
+      at readRuns (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:101:20)
+      at assertRunsWritable (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:82:10)
+      at saveRun (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:63:10)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.test.ts:40:8)
+
+(pass) Proactive 索引读取保护 > 运行索引损坏时：读取降级、写入拒绝、原文件不被覆盖 [3.39ms]
+[Proactive Scheduler] 读取 schedules 失败，将使用空索引（只读，不写回）: 119 | }
+120 | 
+121 | function readIndex(path: string, field: 'schedules' | 'runs'): ReadResult {
+122 |   if (!existsSync(path)) return { index: emptyIndex(field), error: null }
+123 |   try {
+124 |     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+                                       ^
+SyntaxError: JSON Parse error: Unexpected identifier "not"
+      at readIndex (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:124:34)
+      at readSchedules (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:89:20)
+      at listSchedules (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:34:54)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.test.ts:64:19)
+
+[Proactive Scheduler] 读取 schedules 失败，将使用空索引（只读，不写回）: 119 | }
+120 | 
+121 | function readIndex(path: string, field: 'schedules' | 'runs'): ReadResult {
+122 |   if (!existsSync(path)) return { index: emptyIndex(field), error: null }
+123 |   try {
+124 |     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+                                       ^
+SyntaxError: JSON Parse error: Unexpected identifier "not"
+      at readIndex (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:124:34)
+      at readSchedules (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:89:20)
+      at assertSchedulesWritable (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:75:10)
+      at saveSchedule (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.ts:52:10)
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/proactive-scheduler-store.test.ts:70:9)
+
+(pass) Proactive 索引读取保护 > 调度索引损坏时同样拒绝写入 [1.16ms]
+
+ 2 pass
+ 0 fail
+ 10 expect() calls
+Ran 2 tests across 1 file. [25.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/proactive-scheduler.test.ts:
+(pass) Proactive Scheduler > given an interval schedule when created then it defaults to safe and can pause or resume [2.80ms]
+(pass) Proactive Scheduler > given a bound Routine instance when scheduled then its binding is persisted for later recovery [0.90ms]
+(pass) Proactive Scheduler > given a due interval schedule on recovery then it runs once and persists a successful TaskRun [5.58ms]
+(pass) Proactive Scheduler > given a past one-time schedule in persisted storage when recovering then it runs once and disables itself [4.00ms]
+(pass) Proactive Scheduler > given a paused schedule when deleted then it is removed from durable storage [3.55ms]
+(pass) Proactive Scheduler > given an existing schedule when edited then it recalculates its next run without changing prior run history [3.73ms]
+(pass) Proactive Scheduler > given a future one-time schedule when manually run then its scheduled execution remains pending [6.69ms]
+(pass) Proactive Scheduler > given a cron schedule with an IANA timezone when created then it persists the matching next run [4.84ms]
+(pass) Proactive Scheduler > given an invalid cron schedule when created then it is rejected without persistence [1.27ms]
+(pass) Proactive Scheduler > given a due cron schedule when recovering then it runs once and calculates the following matching run [5.80ms]
+(pass) Proactive Scheduler > given three consecutive scheduled failures when recovering then it auto-pauses until explicitly resumed [10.76ms]
+(pass) Proactive Scheduler newSession 模式 > given newSession when created then sessionId 可为空且 newSession 被持久化 [0.99ms]
+(pass) Proactive Scheduler newSession 模式 > given a newSession run when runner 回传 sessionId then 运行记录被更新 [4.13ms]
+(pass) Proactive Scheduler newSession 模式 > 本次完整输出持久化，失败重试追加新记录而不改写旧结果 [5.19ms]
+(pass) Proactive Scheduler newSession 模式 > 重启将遗留运行标记为中断，不永久显示运行中 [1.70ms]
+
+ 15 pass
+ 0 fail
+ 32 expect() calls
+Ran 15 tests across 1 file. [86.00ms]
+bun test v1.3.14 (0d9b296a)
+
+apps/electron/src/main/lib/skill-marketplace-service.test.ts:
+[配置] 已创建 Agent 工作区目录: /Users/chaihao/.proma/agent-workspaces/proma-mit/project/.context/gravitas-test-8KoM2g/agent-workspaces
+27 |   }
+28 | }
+29 | 
+30 | describe("Skills 集市与 Skill Set", () => {
+31 |   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
+32 |   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
+                                                                              ^
+error: EPERM: operation not permitted, mkdir '/tmp/proma-skill-marketplace-test'
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/skill-marketplace-service.test.ts:32:74)
+(fail) Skills 集市与 Skill Set > Given 明确的 Skill Set 成员 When 批量停用再启用 Then 仅移动对应 Skills [0.62ms]
+27 |   }
+28 | }
+29 | 
+30 | describe("Skills 集市与 Skill Set", () => {
+31 |   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
+32 |   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
+                                                                              ^
+error: EPERM: operation not permitted, mkdir '/tmp/proma-skill-marketplace-test'
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/skill-marketplace-service.test.ts:32:74)
+(fail) Skills 集市与 Skill Set > Given 新建工作区 When 初始化默认 Skills Then 只启用核心集合 [0.17ms]
+27 |   }
+28 | }
+29 | 
+30 | describe("Skills 集市与 Skill Set", () => {
+31 |   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
+32 |   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
+                                                                              ^
+error: EPERM: operation not permitted, mkdir '/tmp/proma-skill-marketplace-test'
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/skill-marketplace-service.test.ts:32:74)
+(fail) Skills 集市与 Skill Set > Given 已有工作区 When 启动升级 Then 不把非核心内置 Skill 补回 [0.18ms]
+27 |   }
+28 | }
+29 | 
+30 | describe("Skills 集市与 Skill Set", () => {
+31 |   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
+32 |   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
+                                                                              ^
+error: EPERM: operation not permitted, mkdir '/tmp/proma-skill-marketplace-test'
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/skill-marketplace-service.test.ts:32:74)
+(fail) Skills 集市与 Skill Set > Given 集市来源 When 安装和更新 Then 分类可发现且保留停用状态 [0.14ms]
+27 |   }
+28 | }
+29 | 
+30 | describe("Skills 集市与 Skill Set", () => {
+31 |   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
+32 |   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
+                                                                              ^
+error: EPERM: operation not permitted, mkdir '/tmp/proma-skill-marketplace-test'
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/skill-marketplace-service.test.ts:32:74)
+(fail) Skills 集市与 Skill Set > Given 同名镜像和增长调度包装 When 构建集市 Then 只保留优先来源与可执行 Skill [0.12ms]
+27 |   }
+28 | }
+29 | 
+30 | describe("Skills 集市与 Skill Set", () => {
+31 |   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
+32 |   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
+                                                                              ^
+error: EPERM: operation not permitted, mkdir '/tmp/proma-skill-marketplace-test'
+      at <anonymous> (/Users/chaihao/.proma/agent-workspaces/proma-mit/project/apps/electron/src/main/lib/skill-marketplace-service.test.ts:32:74)
+(fail) Skills 集市与 Skill Set > Given 不同名称但正文相同的来源镜像 When 构建集市 Then 只保留优先来源 [0.12ms]
+
+ 0 pass
+ 6 fail
+Ran 6 tests across 1 file. [24.00ms]
+测试文件: 6，失败文件: 1

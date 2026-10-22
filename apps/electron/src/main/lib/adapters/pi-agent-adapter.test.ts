@@ -154,7 +154,7 @@ mock.module('./pi-model-registry', () => ({
   }),
 }))
 
-const { PiAgentAdapter, resolveFirstTokenTimeoutMs, resolvePromptIdleTimeoutMs, PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS } = await import('./pi-agent-adapter')
+const { PiAgentAdapter, resolveFirstTokenTimeoutMs, resolvePromptIdleTimeoutMs, shouldTreatStreamAsIdle, PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS } = await import('./pi-agent-adapter')
 
 describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
   test('小上下文用流中空闲阈值下限（120s）', () => {
@@ -173,6 +173,24 @@ describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
   test('工具/重试活动不结束首 token 阶段，真实模型活动后才回到 120s', () => {
     expect(resolvePromptIdleTimeoutMs(false, 320_000)).toBe(320_000)
     expect(resolvePromptIdleTimeoutMs(true, 320_000)).toBe(120_000)
+  })
+})
+
+describe('shouldTreatStreamAsIdle（空闲看门狗判定）', () => {
+  test('工具执行期间即使静默超过阈值也不判定挂起', () => {
+    // wait_for_delegations 合法等待可达 2 小时，期间无任何 Pi 事件
+    expect(shouldTreatStreamAsIdle(1, 3_600_000, 120_000)).toBe(false)
+    expect(shouldTreatStreamAsIdle(2, 10_000_000, 120_000)).toBe(false)
+  })
+
+  test('无在飞工具时按静默时长阈值判定', () => {
+    expect(shouldTreatStreamAsIdle(0, 119_000, 120_000)).toBe(false)
+    expect(shouldTreatStreamAsIdle(0, 120_000, 120_000)).toBe(true)
+    expect(shouldTreatStreamAsIdle(0, 300_000, 120_000)).toBe(true)
+  })
+
+  test('在飞工具数不会出现负值语义（end 多于 start 时按 0 计）', () => {
+    expect(shouldTreatStreamAsIdle(-1, 300_000, 120_000)).toBe(true)
   })
 })
 
