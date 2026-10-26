@@ -443,6 +443,7 @@ export async function runAgentHeadless(
     originSessionId?: string
     /** Runtime 首条消息到达：真正开始活动，转发给 Pilot 开始回执。 */
     onRuntimeStarted?: () => void
+    ownerExecution?: { commandId: string; executionId: string }
   },
 ): Promise<void> {
   // 尝试注册目标窗口 webContents，让流式事件同步推送到桌面端。
@@ -469,6 +470,7 @@ export async function runAgentHeadless(
         }
       },
       onRuntimeSessionEstablished: callbacks.onRuntimeStarted,
+      ...(callbacks.ownerExecution ? { ownerExecution: callbacks.ownerExecution } : {}),
       onComplete: (messages, opts) => {
         callbacks.onComplete(messages, {
           stoppedByUser: opts?.stoppedByUser,

@@ -4,6 +4,7 @@ import type { OwnerTaskMaterializationInput, OwnerTaskMaterializationPreview, Ow
 import type { Task } from './project-types'
 import * as store from './project-sqlite-store'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
+import { isCompletedStatus } from './task-status-logic'
 import { getOwnerExecutionPreparation, listOwnerExecutionPreparationHistory } from './project-owner-execution-preparation'
 import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
 import { withPilotPolicySnapshot, getPilotPolicy } from './project-pilot-policy'
@@ -82,7 +83,8 @@ export function getOwnerTaskMaterialization(rawSubject: unknown): OwnerTaskMater
     if (ownerExecutionHash({ ...current, ...(subject.taskId ? { targetTaskHash: frozen.source.targetTaskHash } : {}) }) !== ownerExecutionHash(frozen.source)) fail('目标、计划、人员或资料来源已变化')
     for (const link of record.links) {
       const task = store.getTask(link.taskId)
-      if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id || task.status !== 'paused' || ownerTaskSpecificationHash(task) !== link.taskSpecificationHash || ownerExecutionHash(edgesFor(task.id, subject.projectId).map(({ id, taskId, dependsOnTaskId, type }) => ({ id, taskId, dependsOnTaskId, type })).sort((a,b) => a.id.localeCompare(b.id))) !== ownerExecutionHash(link.dependencies.slice().sort((a,b) => a.id.localeCompare(b.id)))) fail('权威任务或依赖已变化，不能沿用关联')
+      const statusRemainsInScope = task && (task.status === 'paused' || isCompletedStatus(task.status, store.listTaskStatuses(subject.projectId)))
+      if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id || !statusRemainsInScope || ownerTaskSpecificationHash(task) !== link.taskSpecificationHash || ownerExecutionHash(edgesFor(task.id, subject.projectId).map(({ id, taskId, dependsOnTaskId, type }) => ({ id, taskId, dependsOnTaskId, type })).sort((a,b) => a.id.localeCompare(b.id))) !== ownerExecutionHash(link.dependencies.slice().sort((a,b) => a.id.localeCompare(b.id)))) fail('权威任务或依赖已变化，不能沿用关联')
     }
     return view
   } catch (error) { return { ...view, status: 'stale', blockers: [error instanceof Error ? error.message : 'Owner来源无法核验', ...view.blockers] } }
@@ -115,7 +117,10 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
     const chain = store.getProjectDb().prepare('SELECT payload FROM project_chain_revisions WHERE project_id=? ORDER BY revision DESC LIMIT 1').get(subject.projectId) as { payload: string } | undefined
     if (control || (chain && JSON.stringify(JSON.parse(chain.payload)).includes(JSON.stringify(target.id)))) fail('目标已有受控准备或交付/协作证据，须原流程重确认')
   }
-  const projections: OwnerTaskProjection[] = steps.map(step => ({ stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${step.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, outcome: step.outcome, acceptanceCriteria: step.acceptanceCriteria, dependencies: step.dependencies, assignee: { userId: `agent-${source.executor.id}`, displayName: source.executor.name }, workspaceId: source.workspaceId, ...(source.developmentScope ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }))
+  const projections: OwnerTaskProjection[] = steps.map(step => {
+    const stepExecutor = source.roleAssignments?.find((assignment) => assignment.roleKey === step.roleKey)?.employee ?? source.executor
+    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${step.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, outcome: step.outcome, acceptanceCriteria: step.acceptanceCriteria, dependencies: step.dependencies, assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(source.developmentScope ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
+  })
   const body = { ...subject, input, preparation, projections, ...(target ? { targetTaskHash: ownerExecutionHash(target), targetDependenciesHash: ownerExecutionHash(edgesFor(target.id, subject.projectId)) } : {}) }
   return { ...body, previewFingerprint: ownerExecutionHash(body) }
 }

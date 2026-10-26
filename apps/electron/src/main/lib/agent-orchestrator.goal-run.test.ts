@@ -11,6 +11,8 @@ const originalConfig = process.env.PROMA_TEST_CONFIG_DIR
 const directory = mkdtempSync(join(tmpdir(), 'gravitas-goal-run-'))
 process.env.PROMA_TEST_CONFIG_DIR = directory
 mock.module('electron', () => buildElectronMock())
+const projectStore = await import('./project-sqlite-store')
+await projectStore.initProjectDb()
 const { AgentOrchestrator } = await import('./agent-orchestrator')
 const { AgentEventBus } = await import('./agent-event-bus')
 const { createElectronRuntimeServices } = await import('./agent-runtime/runtime-services')
@@ -24,6 +26,7 @@ const { permissionService } = await import('./agent-permission-service')
 afterAll(async () => {
   // 本地异步审计写入结束后才还原配置环境。
   await Bun.sleep(20)
+  projectStore.closeProjectDb()
   if (originalConfig === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = originalConfig
   rmSync(directory, { recursive: true, force: true })

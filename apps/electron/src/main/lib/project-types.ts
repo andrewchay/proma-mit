@@ -366,6 +366,8 @@ export interface AgentEmployee {
   id: string
   name: string
   role: string
+  /** 创建时选用的岗位模板稳定 ID；旧档案为空，不从可编辑角色文本反推。 */
+  roleTemplateId?: string
   avatar?: string
   description: string
   runtime: AgentEmployeeRuntime
@@ -395,6 +397,7 @@ export interface AgentEmployee {
 export interface CreateAgentEmployeeInput {
   name: string
   role: string
+  roleTemplateId?: string
   avatar?: string
   description: string
   runtime?: AgentEmployeeRuntime
@@ -426,6 +429,8 @@ export interface AgentExecution {
   executor?: 'headless' | 'workflow'
   /** 仅未来 Pilot 受控命令创建的执行填写；旧执行保持无归属。 */
   pilotCommandId?: string
+  /** Owner命令账本关联（Stage B豁免收敛单点锚） */
+  ownerCommandId?: string
   status: AgentExecutionStatus
   prompt: string
   resultSummary?: string
@@ -553,6 +558,7 @@ export interface CreateAgentExecutionInput {
   sessionId: string
   executor?: 'headless' | 'workflow'
   pilotCommandId?: string
+  ownerCommandId?: string
   prompt: string
   status?: AgentExecutionStatus
   requestedPermissions?: string[]

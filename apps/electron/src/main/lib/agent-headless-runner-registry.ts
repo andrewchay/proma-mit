@@ -32,6 +32,8 @@ export interface HeadlessAgentRunCallbacks {
    * 开始回执。只证明启动，不证明终态与费用。
    */
   onRuntimeStarted?: () => void
+  /** 主进程专用 Owner handoff 身份；只有与已claim账本/门禁全等时才允许进入runner。 */
+  ownerExecution?: { commandId: string; executionId: string }
 }
 
 export type HeadlessAgentRunner = (
@@ -57,6 +59,8 @@ export interface AgentStopResult {
 export type AgentStopper = (sessionId: string, expectedGeneration?: number) => AgentStopResult
 
 import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
+import { getAgentExecutionBySessionId } from './project-sqlite-store'
+import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
 
 let headlessRunner: HeadlessAgentRunner | null = null
 let agentStopper: AgentStopper | null = null
@@ -76,9 +80,20 @@ export async function runRegisteredHeadlessAgent(
   if (!headlessRunner) {
     throw new Error('Agent headless runner 尚未初始化')
   }
-  assertNoOwnerBusinessSession(input.sessionId)
+  const assertHandoff = (requireIntent: boolean): void => {
+    const execution = getAgentExecutionBySessionId(input.sessionId)
+    if (execution?.ownerCommandId) {
+      if (!callbacks.ownerExecution || callbacks.ownerExecution.commandId !== execution.ownerCommandId
+        || callbacks.ownerExecution.executionId !== execution.id) throw new Error('Owner命令必须经专用Runtime dispatcher交接')
+      assertOwnerCommandRuntimeContext(execution.id, execution.ownerCommandId, input.sessionId, requireIntent)
+      return
+    }
+    if (callbacks.ownerExecution) throw new Error('Owner handoff context不能用于非Owner execution')
+    assertNoOwnerBusinessSession(input.sessionId)
+  }
+  assertHandoff(false)
   callbacks.onRunnerInvoke?.()
-  assertNoOwnerBusinessSession(input.sessionId)
+  assertHandoff(Boolean(callbacks.ownerExecution))
   await headlessRunner(input, callbacks)
 }
 

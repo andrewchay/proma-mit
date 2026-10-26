@@ -21,7 +21,7 @@ test('20份模板保留完整规则，只预填安全岗位、不覆盖真实绑
   expect(templates).toHaveLength(20)
   for (const template of templates) {
     const changes = employeeTemplateChanges(template)
-    expect(changes).toMatchObject({ executionProfile: 'controlled', permissionMode: 'safe', workflowId: '' })
+    expect(changes).toMatchObject({ executionProfile: 'controlled', permissionMode: 'safe', workflowId: '', roleTemplateId: template.id })
     expect(changes.systemPrompt).toContain('共通执行规则')
     expect(changes.systemPrompt).toContain('外发、发布、付款')
     expect(changes).not.toHaveProperty('workspaceIds')

@@ -45,18 +45,38 @@ const source = await import('./project-owner-planning-source')
 
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(async () => { releaseResponse?.(); await Promise.allSettled(inFlight); employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl = 'https://example.invalid') {
-  const project = store.createProject({ title: 'Owner定位', description: '' })
+interface RepresentativeGoalFixture {
+  projectTitle?: string
+  projectDescription?: string
+  objective?: string
+  constraints?: string[]
+  acceptanceCriteria?: string[]
+}
+function fixture(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl = 'https://example.invalid', scenario: RepresentativeGoalFixture = {}) {
+  const project = store.createProject({ title: scenario.projectTitle ?? 'Owner定位', description: scenario.projectDescription ?? '' })
   const workspace = createAgentWorkspace(`Owner-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: '假渠道', provider, baseUrl, apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
   const employee = employees.createAgentEmployee({ name: '执行载体', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
   const binding = { ownerName: '项目Owner', carrierId: employee.id, workspaceId: workspace.id, changeReason: '明确绑定既有载体' }
-  saveProjectOwnerGoalDraft(project.id, 0, { objective: '提出可评审的定位建议' })
+  saveProjectOwnerGoalDraft(project.id, 0, {
+    objective: scenario.objective ?? '提出可评审的定位建议',
+    constraints: scenario.constraints,
+    acceptanceCriteria: scenario.acceptanceCriteria,
+  })
   return { project, employee, workspace, channel, binding }
 }
-function request(projectId: string, bindingRevision = 1) { const context = getProjectOwnerPlanningContext(projectId); return { requestId: randomUUID(), expectedBindingRevision: bindingRevision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: 0, expectedContextFingerprint: context.fingerprint } }
-function prepared(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl?: string) { const f = fixture(provider, baseUrl); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id)); return { ...f, link } }
+function request(projectId: string, bindingRevision = 1, taskId?: string) { const context = getProjectOwnerPlanningContext(projectId, taskId); return { requestId: randomUUID(), ...(taskId ? { taskId } : {}), expectedBindingRevision: bindingRevision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: 0, expectedContextFingerprint: context.fingerprint } }
+function prepared(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl?: string, scenario?: RepresentativeGoalFixture) { const f = fixture(provider, baseUrl, scenario); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id)); return { ...f, link } }
+function preparedCodeTask() {
+  const f = fixture('openai', 'https://example.invalid', { projectTitle: 'Gravitas报价计算', projectDescription: '维护报价计算模块。', objective: 'PROJECT_GOAL_MUST_NOT_LEAK_TO_TASK：仅用于项目级来源隔离断言。' })
+  const targetTask = store.createTask(f.project.id, { title: '修复负数量报价，保留正常行为', description: '用户只提供目标，未给出文件路径。' })
+  saveProjectOwnerGoalDraft(f.project.id, 0, { objective: '修复负数量报价，保留正常行为', constraints: ['不改变正常正数报价行为'] }, targetTask.id)
+  const context = getProjectOwnerPlanningContext(f.project.id, targetTask.id)
+  service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
+  const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id, 1, targetTask.id))
+  return { ...f, targetTask, context, link }
+}
 const controlled = await import('./controlled-project-task-service')
 const runService = await import('./project-owner-planning-run-service')
 const plans = await import('./project-owner-plan-service')
@@ -87,7 +107,7 @@ test('Given 已批准费用与冻结Owner准备 When 真实start/claim→Worker/
 
 function proposal(f: ReturnType<typeof prepared>) {
   const snapshot=source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
-  return {schemaVersion:1,kind:'plan_proposal',projectId:f.project.id,goalVersion:1,contextFingerprint:f.link.contextFingerprint,proposal:{summary:'真实单请求提案',assumptions:[],risks:[],steps:[{key:'brief',title:'定位研究',outcome:'定位简报',acceptanceCriteria:['范围明确'],dependencies:[],roleKey:snapshot.context.sources.roles[0]!.key}]}}
+  return {schemaVersion:1,kind:'plan_proposal',projectId:f.project.id,goalVersion:snapshot.link.goalVersion,contextFingerprint:f.link.contextFingerprint,proposal:{summary:'真实单请求提案',assumptions:[],risks:[],steps:[{key:'brief',title:'定位研究',outcome:'定位简报',acceptanceCriteria:['范围明确'],dependencies:[],roleKey:snapshot.context.sources.roles[0]!.key}]}}
 }
 async function start(f: ReturnType<typeof prepared>) {
   const preview=controlled.getControlledTaskStartPreview(f.link.planningTaskId)
@@ -96,10 +116,80 @@ async function start(f: ReturnType<typeof prepared>) {
 }
 async function settle(){ await Promise.all(inFlight) }
 function releasePendingResponse(){ const release=releaseResponse; if(!release) throw new Error('离线response尚未就绪');release() }
+test('Given 非代码定位项目目标 When 离线规划发现关键受众未知 Then 输出必要澄清而不生成计划或派工', async () => {
+  const f = prepared('openai', undefined, {
+    projectTitle: '新产品市场定位',
+    projectDescription: '产品即将进入市场，需要梳理定位并形成可审阅方案。',
+    objective: '梳理产品定位并产出可评审方案',
+    constraints: ['只使用已授权信息', '不对外发布'],
+    acceptanceCriteria: ['定位结论、依据和风险可审阅'],
+  })
+  const snapshot = source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
+  responseText = JSON.stringify({ schemaVersion: 1, kind: 'needs_clarification', projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, reason: '缺少决定定位方向的核心受众信息', questions: [{ key: 'audience', question: '这次优先服务哪类受众？', why: '受众会改变价值主张和渠道选择', options: ['新客户', '现有客户'] }] })
+  const started = await start(f)
+  await settle()
+  expect(snapshot.context.sources.project.title).toBe('新产品市场定位')
+  expect(snapshot.context.goal.goal.constraints).toEqual(['只使用已授权信息', '不对外发布'])
+  expect(runService.getOwnerPlanningRunOutcome(started.executionId)?.state).toBe('needs_clarification')
+  expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
+  expect(store.listTasks(f.project.id)).toHaveLength(1)
+  expect(bodies).toHaveLength(1)
+  expect(bodies[0]?.tools).toBeUndefined()
+
+  saveProjectOwnerGoalDraft(f.project.id, 1, {
+    objective: '面向新客户梳理产品定位并产出可评审方案',
+    constraints: ['只使用已授权信息', '不对外发布', '核心受众：新客户'],
+    acceptanceCriteria: ['定位结论、依据和风险可审阅'],
+  })
+  const nextLink = service.prepareOwnerPlanning(f.project.id, request(f.project.id, f.link.bindingRevision))
+  const next = { ...f, link: nextLink }
+  const nextSnapshot = source.readOwnerPlanningSnapshot(nextLink.planningTaskId)!
+  const roleKey = nextSnapshot.context.sources.roles[0]!.key
+  responseText = JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: nextSnapshot.link.goalVersion, contextFingerprint: nextSnapshot.context.fingerprint, proposal: { summary: '面向新客户的定位研究与提案', assumptions: ['优先面向新客户'], risks: ['未经授权的外部市场资料不纳入本次规划'], steps: [{ key: 'evidence', title: '整理授权范围内的受众与产品证据', outcome: '形成证据摘要', acceptanceCriteria: ['结论均可由项目资料复核'], dependencies: [], roleKey }, { key: 'positioning', title: '形成产品定位备选并比较风险', outcome: '输出可审阅定位方案', acceptanceCriteria: ['给出价值主张、适用受众和风险'], dependencies: ['evidence'], roleKey }] } })
+  const nextPreview = controlled.getControlledTaskStartPreview(nextLink.planningTaskId)
+  await expect(controlled.startControlledTask({ taskId: nextLink.planningTaskId, previewHash: nextPreview.previewHash, acknowledgeModelCosts: false })).rejects.toThrow('费用')
+  expect(bodies).toHaveLength(1)
+  const proposed = await start(next)
+  await settle()
+  expect(runService.getOwnerPlanningRunOutcome(proposed.executionId)?.state).toBe('proposed')
+  expect(plans.getProjectOwnerPlanDraft(f.project.id)).toMatchObject({ origin: 'generated', state: 'proposed' })
+  expect(store.listTasks(f.project.id)).toHaveLength(2)
+  expect(bodies).toHaveLength(2)
+})
+test('Given 单任务代码目标仅描述预期行为 When fake-only规划 Then 计划绑定任务且不假称已定位源码或修改代码', async () => {
+  const f = preparedCodeTask()
+  const snapshot = source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
+  expect(snapshot.context.goal.goal.taskId).toBe(f.targetTask.id)
+  expect(snapshot.context.goal.goal.objective).toBe('修复负数量报价，保留正常行为')
+  expect(snapshot.request.userPrompt).toContain('修复负数量报价，保留正常行为')
+  expect(snapshot.request.userPrompt).not.toContain('PROJECT_GOAL_MUST_NOT_LEAK_TO_TASK')
+  const roleKey = snapshot.context.sources.roles[0]!.key
+  responseText = JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, taskId: f.targetTask.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, proposal: { summary: '提出代码定位与回归验证方案', assumptions: ['报价计算应拒绝负数量并保持正数行为'], risks: ['本次规划未读取仓库文件；目标文件与当前实现尚待源码核验'], steps: [{ key: 'locate', title: '定位数量校验与报价路径', outcome: '给出候选修改范围', acceptanceCriteria: ['源码审阅后确认实际入口'], dependencies: [], roleKey }, { key: 'regression', title: '补充负数量回归验证', outcome: '验证负数拒绝且正常报价不变', acceptanceCriteria: ['负数量路径失败', '正常正数报价保持'], dependencies: ['locate'], roleKey }] } })
+  const before = store.getTask(f.targetTask.id)
+  const started = await start(f)
+  await settle()
+  expect(plans.getProjectOwnerPlanDraft(f.project.id, f.targetTask.id)).toMatchObject({ taskId: f.targetTask.id, origin: 'generated', state: 'proposed' })
+  expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
+  expect(store.getTask(f.targetTask.id)).toEqual(before)
+  expect(store.getTask(f.link.planningTaskId)?.status).toBe('paused')
+  expect(runService.getOwnerPlanningRunOutcome(started.executionId)?.state).toBe('proposed')
+  expect(bodies).toHaveLength(1)
+})
 test('Given 必要澄清 When 真实SDK终态 Then 一请求unknown费用，业务不完成且无Plan/自动续问',async () => {
   const f=prepared(), {proposal:_proposal,...scope}=proposal(f);responseText=JSON.stringify({...scope,kind:'needs_clarification',reason:'范围不明确',questions:[{key:'audience',question:'核心受众是谁？',why:'影响定位',options:[]}]})
   const result=await start(f);await settle();const outcome=runService.getOwnerPlanningRunOutcome(result.executionId)!
   expect(outcome.state).toBe('needs_clarification');expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull();expect(runService.getOwnerPlanningRunReceipt(outcome.receiptId)).toMatchObject({cost:{source:'unknown',usd:null},usage:{inputTokens:12,outputTokens:40}});expect(bodies).toHaveLength(1);expect(store.listTasks(f.project.id)).toHaveLength(1)
+})
+test('Given 澄清结果经人工保存到新Goal When 重新准备 Then 费用再次确认前不会发第二个fake请求',async () => {
+  const f=prepared(), {proposal:_proposal,...scope}=proposal(f);responseText=JSON.stringify({...scope,kind:'needs_clarification',reason:'范围不明确',questions:[{key:'audience',question:'核心受众是谁？',why:'影响定位',options:[]}]})
+  const first=await start(f);await settle();expect(runService.getOwnerPlanningRunOutcome(first.executionId)?.state).toBe('needs_clarification');expect(bodies).toHaveLength(1)
+  saveProjectOwnerGoalDraft(f.project.id,1,{objective:'面向现有用户提出可评审的定位建议',constraints:['核心受众：现有用户']})
+  const nextLink=service.prepareOwnerPlanning(f.project.id,request(f.project.id,f.link.bindingRevision)), next={...f,link:nextLink}, preview=controlled.getControlledTaskStartPreview(nextLink.planningTaskId)
+  expect(bodies).toHaveLength(1)
+  responseText=JSON.stringify(proposal(next))
+  await expect(controlled.startControlledTask({taskId:nextLink.planningTaskId,previewHash:preview.previewHash,acknowledgeModelCosts:false})).rejects.toThrow('费用')
+  expect(bodies).toHaveLength(1)
+  await start(next);await settle();expect(bodies).toHaveLength(2);expect(runService.getOwnerPlanningRunOutcome(store.listAgentExecutionsByEntity('task',nextLink.planningTaskId)[0]!.id)?.state).toBe('proposed')
 })
 test('Given source/费用范围更新 When 旧preview或Runner之前变化 Then 权威门禁0发送',async () => {
   const f=prepared(), preview=controlled.getControlledTaskStartPreview(f.link.planningTaskId)

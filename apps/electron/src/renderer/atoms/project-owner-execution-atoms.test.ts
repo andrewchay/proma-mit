@@ -101,15 +101,11 @@ const view: OwnerExecutionPreparationView = {
   status: 'none',
   blockers: ['资料执行fence未接通'],
   choices: {
-    employees: ['e', 'r'].map((id) => ({
-      id,
-      name: id,
-      executionProfile: 'controlled',
-      workspaceIds: ['w'],
-      channelId: 'c',
-      modelId: 'm',
-      runtime: 'ai-sdk',
-    })),
+    employees: [
+      { id: 'e', name: 'e', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' },
+      { id: 'e2', name: 'e2', roleTemplateId: 'review', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' },
+      { id: 'r', name: 'r', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' },
+    ],
     workspaces: [{ id: 'w', name: '托管非Git' }],
     knowledgeSources: [{ id: 'k', name: '来源' }],
   },
@@ -162,6 +158,7 @@ function setup() {
       selectedStepKeys: ['s1', 's2'],
       executorEmployeeId: 'e',
       reviewerEmployeeId: 'r',
+      roleAssignments: { research: 'e', review: 'e2' },
       workspaceId: 'w',
       maxCostMicrosText: '1000001',
       maxRunsText: '2',
@@ -242,12 +239,57 @@ test('Given controlled托管工作区 When 准备 Then 不附研发scope且知�
   expect(input?.maxCostMicros).toBe(1000001)
   expect(canPreviewOwnerExecution(store.get, subject)).toBe(true)
 })
+test('Given岗位预算开关默认关闭 When打开并填写单岗位上限 Then只发送已填写且不超过共享额的cap', () => {
+  const { store } = setup()
+  expect(editor(store).roleBudgetCapsEnabled).toBe(false)
+  store.set(editOwnerExecutionAtom, { subject, patch: { roleBudgetCapsEnabled: true, roleBudgetCapTexts: { research: '500000' } } })
+  expect(ownerExecutionInput(store.get, subject)?.roleBudgetCaps).toEqual([{ roleKey: 'research', maxCostMicros: 500000 }])
+  store.set(editOwnerExecutionAtom, { subject, patch: { roleBudgetCapTexts: { research: '2000000' } } })
+  expect(ownerExecutionInput(store.get, subject)).toBeNull()
+  store.set(editOwnerExecutionAtom, { subject, patch: { roleBudgetCapTexts: { research: '' } } })
+  expect(ownerExecutionInput(store.get, subject)?.roleBudgetCaps).toBeUndefined()
+})
+test('Given 唯一精确roleTemplateId匹配 When没有手动映射 Then只预填推荐且仍是显式输入', () => {
+  const { store } = setup()
+  store.set(editOwnerExecutionAtom, { subject, patch: { roleAssignments: {}, executorEmployeeId: '', workspaceId: '' } })
+  const input = ownerExecutionInput(store.get, subject)
+  expect(input?.workspaceId).toBe('w')
+  expect(input?.roleAssignments).toEqual([
+    { roleKey: 'research', employeeId: 'e' },
+    { roleKey: 'review', employeeId: 'e2' },
+  ])
+})
+test('Given唯一roleTemplate匹配是Owner carrier When预填 Then不把规划载体自动继承为业务岗位', () => {
+  const { store } = setup()
+  const carrierView = {
+    ...view,
+    choices: {
+      ...view.choices,
+      employees: view.choices.employees.map((employee) =>
+        employee.id === 'e' ? { ...employee, isOwnerCarrier: true } : employee,
+      ),
+    },
+  }
+  store.set(ownerExecutionEditorsAtom, new Map([['["a",null]', { ...editor(store), roleAssignments: {}, executorEmployeeId: '', view: carrierView }]]))
+  expect(ownerExecutionInput(store.get, subject)).toBeNull()
+})
+test('Given角色模板缺失或多个精确匹配 When没有手动映射 Then不自动挑人且不能预览', () => {
+  const missing = setup()
+  const noTemplateView = { ...view, choices: { ...view.choices, employees: view.choices.employees.map((employee) => ({ ...employee, roleTemplateId: undefined })) } }
+  missing.store.set(ownerExecutionEditorsAtom, new Map([['["a",null]', { ...editor(missing.store), roleAssignments: {}, executorEmployeeId: '', view: noTemplateView }]]))
+  expect(ownerExecutionInput(missing.store.get, subject)).toBeNull()
+
+  const conflict = setup()
+  const duplicatedView = { ...view, choices: { ...view.choices, employees: [...view.choices.employees, { id: 'e3', name: 'e3', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' }] } }
+  conflict.store.set(ownerExecutionEditorsAtom, new Map([['["a",null]', { ...editor(conflict.store), roleAssignments: {}, executorEmployeeId: '', view: duplicatedView }]]))
+  expect(ownerExecutionInput(conflict.store.get, subject)).toBeNull()
+})
 test('Given 缺依赖/同人员/未知知识/不同模型/非confirmed When 校验 Then 均不能预览', () => {
   for (const patch of [
     { selectedStepKeys: ['s2'] },
     { selectedStepKeys: ['s1', 's1'] },
     { reviewerEmployeeId: 'e' },
-    { executorEmployeeId: 'carrier' },
+    { roleAssignments: { research: 'carrier', review: 'e2' } },
     { knowledgeSourceIds: ['unlinked'] },
     { executionKind: 'development' as const },
   ]) {

@@ -1,7 +1,7 @@
 /** Owner用途只由同库权威关联解析。配置/资料快照不是费用许可；最终发送仍须controlled准入。 */
 import { createHash } from 'node:crypto'
 import type { ProjectOwnerPlanningContext } from '@gravitas/shared'
-import { getOwnerCarrierFacts, getOwnerRuntimeBinding, type OwnerPlanningLink, type OwnerRuntimeBinding } from './project-owner-runtime-binding'
+import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches, type OwnerPlanningLink, type OwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { assertLocalActorEnabled, getProjectOwnerPlanningContext, getProjectOwnerPlanDraft } from './project-owner-plan-service'
 import { buildProjectOwnerPlanningRequest, type ProjectOwnerPlanningRequest } from './project-owner-planning-protocol'
 import * as store from './project-sqlite-store'
@@ -63,7 +63,7 @@ export function resolveOwnerPlanningTask(taskId: string): OwnerPlanningTaskSourc
   const facts = getOwnerCarrierFacts(link.projectId, binding.carrierId, binding.workspaceId)
   const current = getProjectOwnerPlanningContext(link.projectId, link.targetTaskId)
   const plan = getProjectOwnerPlanDraft(link.projectId, link.targetTaskId)
-  if (facts.carrierFingerprint !== binding.carrierFingerprint || facts.channelId !== binding.channelId || facts.modelId !== binding.modelId || current.goal.revision !== link.goalRevision || current.fingerprint !== link.contextFingerprint || JSON.stringify(current) !== JSON.stringify(frozen.context) || (plan?.revision ?? 0) !== link.planRevision) throw new Error('Owner规划目标、资料、计划或载体配置已更新，请重新准备确认')
+  if (!ownerCarrierBindingMatches(binding, facts) || current.goal.revision !== link.goalRevision || current.fingerprint !== link.contextFingerprint || JSON.stringify(current) !== JSON.stringify(frozen.context) || (plan?.revision ?? 0) !== link.planRevision) throw new Error('Owner规划目标、资料、计划或载体配置已更新，请重新准备确认')
   const preparation = store.getProjectDb().prepare('SELECT id FROM controlled_task_preparations WHERE task_id = ?').get(taskId) as { id: string } | undefined
   if (preparation?.id !== task.controlledPreparationId) throw new Error('Owner规划任务准备身份已变化')
   return { ...frozen, binding }

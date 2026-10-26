@@ -59,3 +59,13 @@ AO06第二片在同paa.db追加`project_owner_execution_revalidations`（additiv
 ### Owner执行侧门禁休眠能力（2026-10-09）
 
 AO06第三片additive：`pilot_runtime_grants`/`pilot_commands`加`purpose`（默认controlled_task）/`owner_source_id`/`owner_source_integrity_hash`；新表`project_owner_execution_gate_sessions`（含准入内容快照hash与provider_admitted_at）与`project_owner_execution_knowledge_reads`（出处级审计，无正文）。这些表与Pilot账本、Owner准备/材料化/重验证和任务数据一起一致备份。purpose=owner_business_execution的行本片无创建路径；gate行仅测试TEMP或admit函数测试产生，激活前置条件（Pi beforeToolCall切换/CHECK/redirect与参数比对集/性能评估）见[执行侧门禁](plans/2026-10-07-ai-project-owner/owner-execution-gates.md)。
+
+
+### Owner执行授权账本（2026-10-09 Stage A）
+
+AO06第四片additive：`project_owner_execution_grants`（purpose单值owner_business_execution、状态机active/paused、needs_reconcile枚举预留、上游双三元组+policy revision冻结引用、budget原样复制）与`project_owner_execution_grant_decisions`（撤权决策行）。授权行是静态许可记录：与Pilot账本、Owner准备/材料化/重验证、Task/dep和人员配置一起一致备份；撤权只改state不删行，paused无复活路径，同项目至多一行active（partial UNIQUE索引）。**Stage A结束时账本行无任何消费路径**——首次消费（reserve/claim/逐请求）属Stage B另行审批；真实费用/远端停止/断电多进程仍未验证。详见[发行Stage A](plans/2026-10-07-ai-project-owner/owner-execution-grant.md)。
+
+
+### Owner命令执行链（2026-10-09 Stage B）
+
+AO06第四片Stage B additive：`project_owner_execution_commands`（六态CHECK、幂等键UNIQUE(grant_id,idempotency_key)、source三件套锚v2冻结、ack_fingerprint）、`project_owner_execution_stop_escalations`、`project_owner_execution_start_attempts`（不可变trigger）、`project_owner_execution_start_receipts`（不可变trigger）、`project_owner_execution_command_links`（锚v2 revision）、`project_owner_execution_request_reservations`；`agent_executions`加`owner_command_id`列；`project_owner_execution_grant_decisions`重建（CHECK扩展reconcile，数据保留）。豁免收敛：agent_executions.owner_command_id→commands表三活态→execution_id全等才豁免，缺失/损坏/终态一律不豁免；restriction残余不灭；先命令行后execution。pilot_runtime_usage_receipts与价格证据注册表复用。Stage B Native核心矩阵用fake账本验证；最终8/8矩阵通过，359个源码SHA匹配，网络/SDK/Model/业务Run tripwire为0；没有真实Provider、费用或Provider请求ID。安全修复已加入Owner普通start fail-closed、heartbeat unknown恢复、逐请求累计预算、claim快照复核、handoff session与receipt时间绑定。**截至2026-10-09 23:36 GMT+8，生产Runtime dispatcher与Pi/AI SDK handoff仍未接线，Owner命令API没有生产调用方；普通tryStart/heartbeat路径fail-closed，因此不能据此称生产消费链已联通或Stage B端到端验收完成。** 当前HEAD `3dfe5ce4`、ahead 4、未推送；全量测试、typecheck/lint/docs/build通过。真实Runtime启动、Provider费用/请求ID与远端停止另审另批。详见[Stage B](plans/2026-10-07-ai-project-owner/owner-execution-grant.md) Stage B节及该计划台账末尾追补。

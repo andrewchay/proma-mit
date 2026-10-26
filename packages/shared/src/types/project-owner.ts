@@ -1,3 +1,5 @@
+import type { ProviderType } from './channel'
+
 /** 项目 Owner 的规划元数据；不是任务、执行或授权账本。 */
 export interface ProjectOwnerGoalSubject {
   projectId: string
@@ -155,6 +157,8 @@ export interface OwnerRuntimeBinding {
   modelId: string
   runtime: 'ai-sdk'
   carrierFingerprint: string
+  /** 配置字段指纹；旧记录缺省时继续使用 carrierFingerprint 的历史算法核验。 */
+  carrierConfigurationFingerprint?: string
   actor: 'local-user'
   savedAt: number
   changeReason: string
@@ -184,7 +188,7 @@ export interface ProjectOwnerRunView {
   link: OwnerPlanningLink
   executions: { id: string; sessionId: string; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'; summary: string | null }[]
   receipts: { id: string; executionId: string; capturedAt: number; responseText: string; responseHash: string; validTerminal: boolean; stopped: boolean; error: string | null; usage: { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWriteTokens: number | null } | null; cost: { source: 'runtime_reported' | 'unknown'; usd: number | null } }[]
-  outcomes: { executionId: string; receiptId: string; state: 'proposed' | 'needs_clarification' | 'stale' | 'failed' | 'unknown' | 'stopped'; detail: string; planRevision?: number; clarification?: { reason: string; questions: { key: string; question: string; why: string; options: string[] }[] } }[]
+  outcomes: { executionId: string; receiptId: string; state: 'proposed' | 'needs_clarification' | 'stale' | 'failed' | 'unknown' | 'stopped'; detail: string; planRevision?: number; clarification?: { reason: string; questions: { key: string; question: string; why: string; options: string[]; recommended?: string }[] } }[]
 }
 /** 配置/准备/读取无费用；真正start仍走既有显式费用IPC，不新增自由Caller。 */
 export interface ProjectOwnerRuntimeApi {
@@ -194,6 +198,16 @@ export interface ProjectOwnerRuntimeApi {
   listOwnerPlanningRuns: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<ProjectOwnerRunView[]>>
 }
 
+/** 每个计划岗位键显式绑定一个真实员工；模板建议不代表此映射或授权。 */
+export interface OwnerExecutionRoleAssignment {
+  roleKey: string
+  employeeId: string
+}
+/** 可选岗位费用上限；仅收紧共享授权总额，不构成 Provider 侧硬停止。 */
+export interface OwnerExecutionRoleBudgetCap {
+  roleKey: string
+  maxCostMicros: number
+}
 /** 业务执行范围准备：永久保持pending，不是授权、余额或派工命令。 */
 export interface OwnerExecutionPreparationInput {
   requestId: string
@@ -204,8 +218,12 @@ export interface OwnerExecutionPreparationInput {
   selectedStepKeys: string[]
   executionKind: 'development' | 'controlled'
   developmentScope?: import('./development-review').DevelopmentTaskScope
+  /** 兼容旧准备；新输入同时提供按稳定 roleKey 显式绑定的数组。 */
   executorEmployeeId: string
   reviewerEmployeeId: string
+  roleAssignments?: OwnerExecutionRoleAssignment[]
+  /** 未列出的岗位只受共享 maxCostMicros 限制；空数组按未配置处理。 */
+  roleBudgetCaps?: OwnerExecutionRoleBudgetCap[]
   workspaceId: string
   knowledgeSourceIds: string[]
   maxCostMicros: number
@@ -234,6 +252,8 @@ export interface OwnerExecutionPreparationSource extends ProjectOwnerGoalSubject
   contextFingerprint: string
   plan: ProjectOwnerPlanDraft
   selectedStepKeys: string[]
+  /** 新版每个 roleKey 的实际员工及配置摘要；legacy 准备缺省并沿用单一 executor。 */
+  roleAssignments?: Array<{ roleKey: string; employee: { id: string; name: string; roleTemplateId?: string; configurationHash: string } }>
   executor: { id: string; name: string; configurationHash: string }
   reviewer: { id: string; name: string; configurationHash: string }
   workspaceId: string
@@ -272,7 +292,7 @@ export interface OwnerExecutionPreparationRecord {
   integrityHash: string
 }
 export interface OwnerExecutionPreparationView {
-  choices: { employees: Array<{ id: string; name: string; executionProfile: string; workspaceIds: string[]; channelId: string; modelId?: string; runtime: string }>; workspaces: Array<{ id: string; name: string }>; knowledgeSources: Array<{ id: string; name: string }> }
+  choices: { employees: Array<{ id: string; name: string; roleTemplateId?: string; executionProfile: string; workspaceIds: string[]; channelId: string; modelId?: string; runtime: string; isOwnerCarrier?: boolean }>; workspaces: Array<{ id: string; name: string }>; knowledgeSources: Array<{ id: string; name: string }> }
   revision: number
   policyRevision: number | null
   preparation: OwnerExecutionPreparationRecord | null
@@ -385,6 +405,8 @@ export interface OwnerExecutionRevalidationTask {
   taskSpecificationHash: string
   status: 'paused'
   assignee: { userId: string; displayName: string }
+  /** 新版按步骤冻结的实际执行员工；legacy 任务缺省并沿用 source.executor。 */
+  executor?: { id: string; name: string; roleKey: string; configurationHash: string }
   workspaceId: string
   developmentScope?: import('./development-review').DevelopmentTaskScope
   dependencies: Array<{ id: string; taskId: string; dependsOnTaskId: string; type: string }>
@@ -415,7 +437,7 @@ export interface OwnerExecutionRevalidationSource {
   repositoryIdentityHash?: string
   ownerBindingProvenance: OwnerExecutionPreparationSource['ownerBindingProvenance']
   knowledgeSources: OwnerExecutionPreparationSource['knowledgeSources']
-  budget: { maxCostMicros: number; maxRuns: number; maxRework: number; expiresAt: number }
+  budget: { maxCostMicros: number; maxRuns: number; maxRework: number; expiresAt: number; roleBudgetCaps?: OwnerExecutionRoleBudgetCap[] }
   executionKind: 'development' | 'controlled'
   blockers: string[]
 }
@@ -463,4 +485,210 @@ export interface ProjectOwnerExecutionRevalidationApi {
   listOwnerExecutionRevalidationHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationRecord[]>>
   previewOwnerExecutionRevalidation: (request: PreviewOwnerExecutionRevalidationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationPreview>>
   saveOwnerExecutionRevalidation: (request: SaveOwnerExecutionRevalidationRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionRevalidationRecord>>
+}
+
+/** Owner执行授权账本：发行记录是"允许按账本消费"的静态许可，不创建命令/执行/会话，不调用Provider。 */
+export interface OwnerExecutionGrantBudget { maxCostMicros: number; maxRuns: number; maxRework: number; expiresAt: number; roleBudgetCaps?: OwnerExecutionRoleBudgetCap[] }
+export type OwnerExecutionDispatchMode = 'manual' | 'autonomous'
+export interface OwnerExecutionGrantIssuePreview extends ProjectOwnerGoalSubject {
+  dispatchMode: OwnerExecutionDispatchMode
+  policyRevision: number
+  revalidationId: string
+  revalidationRevision: number
+  revalidationIntegrityHash: string
+  materializationId: string
+  materializationRevision: number
+  materializationIntegrityHash: string
+  sourceHash: string
+  /** grant范围内每个roleKey的冻结执行员工；sourceHash同时绑定其配置摘要。 */
+  roleAssignments?: Array<{ roleKey: string; employeeId: string; employeeName: string }>
+  executorEmployeeId: string
+  reviewerEmployeeId: string
+  workspaceId: string
+  channelId: string
+  modelId: string
+  runtime: string
+  budget: OwnerExecutionGrantBudget
+  blockers: string[]
+  approvalFingerprint: string
+}
+export interface OwnerExecutionGrant extends OwnerExecutionGrantIssuePreview {
+  grantId: string
+  state: 'active' | 'paused' | 'needs_reconcile' | 'archived'
+  issuedAt: number
+}
+export interface OwnerExecutionGrantRevokePreview {
+  grantId: string
+  projectId: string
+  fingerprint: string
+  impact: { commandCount: number; runningCount: number; pendingRequestCount: number }
+  blockers: string[]
+}
+export interface PreviewOwnerExecutionGrantIssueRequest extends ProjectOwnerGoalSubject {
+  input: { requestId: string; expectedRevalidationRevision: number; expectedPolicyRevision: number; dispatchMode?: OwnerExecutionDispatchMode }
+}
+export interface ConfirmOwnerExecutionGrantIssueRequest extends PreviewOwnerExecutionGrantIssueRequest {
+  preview: OwnerExecutionGrantIssuePreview
+  confirmedFingerprint: string
+}
+export interface PreviewOwnerExecutionGrantRevokeRequest extends ProjectOwnerGoalSubject { grantId: string }
+export interface ConfirmOwnerExecutionGrantRevokeRequest extends PreviewOwnerExecutionGrantRevokeRequest { confirmedFingerprint: string }
+export interface ProjectOwnerExecutionGrantApi {
+  getOwnerExecutionGrant: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant | null>>
+  listOwnerExecutionGrantHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant[]>>
+  previewOwnerExecutionGrantIssue: (request: PreviewOwnerExecutionGrantIssueRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrantIssuePreview>>
+  confirmOwnerExecutionGrantIssue: (request: ConfirmOwnerExecutionGrantIssueRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
+  previewOwnerExecutionGrantRevoke: (request: PreviewOwnerExecutionGrantRevokeRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrantRevokePreview>>
+  confirmOwnerExecutionGrantRevoke: (request: ConfirmOwnerExecutionGrantRevokeRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
+}
+
+
+/** Owner命令链（Stage B）：ack→reserve/queue→claim/start→逐请求→结算。默认无真实Provider。 */
+export type OwnerExecutionCommandRole = 'executor' | 'reviewer'
+export interface OwnerExecutionCommandAckPreview extends ProjectOwnerGoalSubject {
+  grantId: string
+  taskId: string
+  stepLinkId: string
+  employeeId: string
+  employeeName: string
+  roleKey?: string
+  role: OwnerExecutionCommandRole
+  reworkOrdinal: number
+  sourceVersion: number
+  sourceHash: string
+  derivedReservationMicros: number
+  remainingCostMicros: number
+  remainingRuns: number
+  roleBudgetCapMicros?: number
+  remainingRoleCostMicros?: number
+  expiresAt: number
+  blockers: string[]
+  ackFingerprint: string
+}
+export interface PreviewOwnerExecutionCommandAckRequest extends ProjectOwnerGoalSubject {
+  input: { grantId: string; taskId: string; role: OwnerExecutionCommandRole; reworkOrdinal: number; expectedRevalidationRevision: number }
+}
+export interface AcknowledgeOwnerExecutionCommandRequest extends PreviewOwnerExecutionCommandAckRequest {
+  preview: OwnerExecutionCommandAckPreview
+  confirmedFingerprint: string
+  acknowledgeModelCosts: boolean
+}
+export interface OwnerExecutionCommandReservationInput {
+  requestId: string
+  grantId: string
+  taskId: string
+  role: OwnerExecutionCommandRole
+  reworkOrdinal: number
+  expectedRevalidationRevision: number
+}
+export interface OwnerExecutionCommandAcknowledgement {
+  input: PreviewOwnerExecutionCommandAckRequest['input']
+  preview: OwnerExecutionCommandAckPreview
+  confirmedFingerprint: string
+  acknowledgeModelCosts: boolean
+}
+export interface QueueOwnerExecutionCommandRequest extends ProjectOwnerGoalSubject {
+  input: OwnerExecutionCommandReservationInput
+  acknowledgement: OwnerExecutionCommandAcknowledgement
+}
+export interface OwnerPreflightReconciliationAudit {
+  evidenceKind: 'typed_preflight' | 'legacy_operator_attested'
+  reasonCode: string
+  errorSha256: string
+  providerConsoleCheckedNoUsage: true
+  preReconciliationUsageMarker: 'none' | 'runtime_unknown'
+  actor: 'local-user'
+  createdAt: number
+}
+export interface OwnerPreflightReconciliationPreview extends ProjectOwnerGoalSubject {
+  commandId: string
+  grantId: string
+  executionId: string
+  channelId: string
+  modelId: string
+  provider: ProviderType
+  evidenceKind: 'typed_preflight' | 'legacy_operator_attested'
+  reasonCode: string
+  errorMessage: string
+  errorSha256: string
+  reservedCostMicros: number
+  requestReservationCount: 0
+  preReconciliationUsageMarker: 'none' | 'runtime_unknown'
+  preReconciliationUsageEvidenceSha256: string | null
+  preReconciliationUsageRecordKeySha256: string | null
+  runReservationsReleased: 1
+  grantWillPause: true
+  providerConsoleAttestationRequired: true
+  fingerprint: string
+}
+export interface OwnerPreflightReconciliationResult {
+  commandId: string
+  reconciliationId: string
+  state: 'released'
+  actualCostMicros: 0
+  grantState: 'paused'
+  evidenceKind: 'typed_preflight' | 'legacy_operator_attested'
+  alreadyApplied: boolean
+}
+export interface OwnerPreflightReconciliationPreviewRequest extends ProjectOwnerGoalSubject {
+  commandId: string
+}
+export interface ConfirmOwnerPreflightReconciliationRequest extends ProjectOwnerGoalSubject {
+  commandId: string
+  confirmedFingerprint: string
+  providerConsoleCheckedNoUsage: boolean
+}
+export interface OwnerExecutionCommandView {
+  commandId: string
+  grantId: string
+  taskId: string
+  taskTitle: string
+  employeeId: string
+  role: OwnerExecutionCommandRole
+  reworkOrdinal: number
+  state: 'reserved' | 'queued' | 'running' | 'settled' | 'released' | 'needs_reconcile' | 'unknown' | 'failed' | 'cancelled'
+  executionId: string | null
+  executionStatus: string | null
+  reservedCostMicros: number
+  actualCostMicros: number | null
+  /** 命令归属的计划岗位；legacy 命令可能缺少。 */
+  budgetRoleKey?: string
+  preflightReconciliation?: OwnerPreflightReconciliationAudit
+  ackFingerprint: string
+  createdAt: number
+  updatedAt: number
+}
+export interface DispatchOwnerExecutionCommandRequest {
+  commandId: string
+  ackFingerprint: string
+  acknowledgeExecution: boolean
+}
+export type OwnerExecutionAutonomousScheduleState = 'no_grant' | 'manual' | 'paused' | 'needs_reconcile' | 'expired' | 'archived' | 'stale' | 'ready' | 'running' | 'waiting'
+export type OwnerTechnicalReviewVerdict = 'approved' | 'changes_requested' | 'blocked'
+export type OwnerExecutionNextAction = 'execute' | 'review' | 'rework' | 'await_business_acceptance' | 'human_decision' | 'none'
+export interface OwnerExecutionAutonomousScheduleStatus {
+  projectId: string
+  state: OwnerExecutionAutonomousScheduleState
+  grantId?: string
+  taskId?: string
+  role?: OwnerExecutionCommandRole
+  reservedCostMicros: number
+  committedCostMicros: number
+  runReservations: number
+  reason: string
+  reworkOrdinal?: number
+  reviewVerdict?: OwnerTechnicalReviewVerdict
+  reviewSummary?: string
+  reviewFindings?: string[]
+  nextAction?: OwnerExecutionNextAction
+}
+export interface ProjectOwnerExecutionCommandApi {
+  getOwnerAutonomousScheduleStatus: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionAutonomousScheduleStatus>>
+  previewOwnerExecutionCommandAck: (request: PreviewOwnerExecutionCommandAckRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionCommandAckPreview>>
+  queueOwnerExecutionCommand: (request: QueueOwnerExecutionCommandRequest) => Promise<ProjectOwnerGoalResult<{ commandId: string; executionId: string }>>
+  listOwnerExecutionCommands: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionCommandView[]>>
+  dispatchOwnerExecutionCommand: (request: DispatchOwnerExecutionCommandRequest) => Promise<ProjectOwnerGoalResult<{ commandId: string; executionId: string; started: boolean }>>
+  cancelQueuedOwnerExecutionCommand: (request: { commandId: string }) => Promise<ProjectOwnerGoalResult<{ commandId: string }>>
+  previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
+  confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>
 }

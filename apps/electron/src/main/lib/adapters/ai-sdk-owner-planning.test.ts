@@ -23,7 +23,7 @@ mock.module('../channel-manager', () => ({ getChannelById: () => ({ provider: 'o
 mock.module('../agent-workspace-manager', () => ({ getAgentWorkspace: () => ({}), getAgentWorkspaceCwd: () => dir, getWorkspaceSkills: () => { enriched++; return [] } }))
 mock.module('../proxy-settings-service', () => ({ getEffectiveProxyUrl: async () => undefined }))
 mock.module('../proxy-fetch', () => ({ getFetchFn: () => globalThis.fetch }))
-mock.module('../project-pilot-request-exit', () => ({ resolvePilotBudgetForSession: () => { pilot++; return undefined }, buildPilotRequestRuntime: () => { pilot++; throw new Error('Pilot forbidden') } }))
+mock.module('../project-pilot-request-exit', () => ({ PILOT_DEFAULT_PRICE_EVIDENCE_ID: 'zai-glm-5.3-flash-2026-09-28', resolvePilotBudgetForSession: () => { pilot++; return undefined }, buildPilotRequestRuntime: () => { pilot++; throw new Error('Pilot forbidden') } }))
 mock.module('../agent-runtime/tool-registry', () => ({
   createCoreTools: () => { tools++; return [] }, GOAL_CHECKPOINT_TOOL_NAME: 'GoalCheckpoint', ASK_USER_QUESTION_TOOL_NAME: 'AskUserQuestion', ENTER_PLAN_MODE_TOOL_NAME: 'EnterPlanMode', EXIT_PLAN_MODE_TOOL_NAME: 'ExitPlanMode',
 }))

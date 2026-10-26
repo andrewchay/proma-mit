@@ -17,6 +17,8 @@ const testDir = mkdtempSync(join(tmpdir(), 'gravitas-d03-wiring-'))
 process.env.PROMA_TEST_CONFIG_DIR = testDir
 
 mock.module('electron', () => buildElectronMock())
+const projectStore = await import('../project-sqlite-store')
+await projectStore.initProjectDb()
 mock.module('../attachment-service', () => ({
   isImageAttachment: () => false,
   getMimeType: () => 'application/octet-stream',
@@ -73,6 +75,7 @@ const { createReadToolDefinition, executeReadTool } = await import('./tool-impls
 const { createWriteToolDefinition, executeWriteTool } = await import('./tool-impls/write-tool')
 
 afterAll(() => {
+  projectStore.closeProjectDb()
   rmSync(testDir, { recursive: true, force: true })
   if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir

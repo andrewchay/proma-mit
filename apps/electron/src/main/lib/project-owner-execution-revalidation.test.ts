@@ -22,7 +22,7 @@ const grants = await import('./project-pilot-grant-issue')
 let service: typeof import('./project-owner-execution-revalidation')
 beforeAll(async () => { await store.initProjectDb(); service = await import('./project-owner-execution-revalidation') })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(single = false) {
+function fixture(single = false, withRoleBudget = false) {
   const project = store.createProject({ title: 'Owner重验证fixture', description: '' })
   const target = single ? store.createTask(project.id, { title: '保留标题', description: '保留说明' }) : null
   const workspace = createAgentWorkspace(`owner-revalidation-${randomUUID()}`)
@@ -36,7 +36,7 @@ function fixture(single = false) {
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划' }, target?.id)
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1, target?.id)
   const subject = { projectId: project.id, ...(target ? { taskId: target.id } : {}) }
-  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: executor.id })), ...(withRoleBudget ? { roleBudgetCaps: [{ roleKey: steps[0]!.roleKey, maxCostMicros: 400000 }] } : {}), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
   const mpv = materialization.previewOwnerTaskMaterialization(subject, materialInput), batch = materialization.materializeOwnerTasks(subject, materialInput, mpv.previewFingerprint)
@@ -58,6 +58,11 @@ test('Given needs_revalidation材料化 When 预览并保存v2 Then 冻结真实
   expect(service.getOwnerExecutionRevalidation(f.subject).status).toBe('current')
   expect(service.listOwnerExecutionRevalidationHistory(f.subject)).toHaveLength(1)
 })
+test('Given岗位预算上限已写入准备 When重验证 Then逐字冻结岗位cap且共享总额不变', () => {
+  const f = fixture(false, true), saved = save(f)
+  expect(saved.source.budget).toMatchObject({ maxCostMicros: 1000000, roleBudgetCaps: [{ roleKey: f.preparation.input.roleAssignments![0]!.roleKey, maxCostMicros: 400000 }] })
+  expect(service.getOwnerExecutionRevalidation(f.subject).status).toBe('current')
+})
 test('Given v2存在 When v1准备视图/材料化视图 Then v1非current，材料化保持needs_revalidation且不开放发行', () => {
   const f = fixture(); save(f)
   const v1 = prep.getOwnerExecutionPreparation(f.subject)
@@ -67,6 +72,16 @@ test('Given v2存在 When v1准备视图/材料化视图 Then v1非current，材
   expect(view.blockers.some(blocker => blocker.includes('v2'))).toBe(true)
   expect(() => grants.previewPilotGrantIssue(f.project.id, policy.getPilotPolicy(f.project.id)!.revision)).toThrow('Owner')
   expect(() => materialization.materializeOwnerTasks(f.subject, { requestId: randomUUID(), expectedMaterializationRevision: 1, expectedPreparationId: f.preparation.id, expectedPreparationRevision: f.preparation.revision, expectedPreparationHash: f.preparation.integrityHash, expectedPolicyRevision: f.preparation.input.expectedPolicyRevision }, 'x'.repeat(64))).toThrow()
+})
+test('Given 已材料化前置Task经正常完成路径完成 When 查询v2与依赖 Then 冻结来源保持current且解除下游blocker', () => {
+  const f = fixture(), saved = save(f)
+  const prerequisiteId = saved.source.tasks.find(task => task.stepKey === 'brief')!.taskId
+  const prerequisite = store.getTask(prerequisiteId)!
+  expect(store.updateTask(prerequisite.id, { status: 'completed', completionNotes: '按既有项目完成流程确认' })).not.toBeNull()
+  expect(saved.source.tasks.find(task => task.taskId === prerequisite.id)?.status).toBe('paused')
+  expect(service.getOwnerExecutionRevalidation(f.subject).status).toBe('current')
+  expect(materialization.getOwnerTaskMaterialization(f.subject).status).toBe('needs_revalidation')
+  expect(store.listTaskBlockers(f.project.id)).toEqual([])
 })
 test('Given 任务描述被普通漂移 When 读取v2 Then stale且记录逐字节不变', () => {
   const f = fixture(), saved = save(f)

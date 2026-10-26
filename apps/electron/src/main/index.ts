@@ -526,12 +526,22 @@ async function bootstrap(): Promise<void> {
       }
     }
   })
+  await safeAwait('recoverInterruptedOwnerRuntimeExecutions', async () => {
+    const { recoverInterruptedOwnerRuntimeExecutions } = await import('./lib/project-owner-execution-stop')
+    for (const recovery of recoverInterruptedOwnerRuntimeExecutions()) {
+      console.log(`[Owner] 恢复对称扫描：execution=${recovery.executionId} command=${recovery.commandId} state=${recovery.state} boundary=${recovery.startBoundary}`)
+    }
+  })
   await safeAwait('recoverInterruptedPilotRuntimeExecutions', async () => {
     const { recoverInterruptedPilotRuntimeExecutions } = await import('./lib/project-pilot-runtime-recovery')
     for (const recovery of recoverInterruptedPilotRuntimeExecutions()) {
       const log = recovery.state === 'needs_attention' ? console.warn : console.info
       log(`[Pilot] 重启恢复 execution=${recovery.executionId} command=${recovery.commandId} startBoundary=${recovery.startBoundary}: ${recovery.reason}`)
     }
+  })
+  await safeAwait('startOwnerAutonomousScheduler', async () => {
+    const { startOwnerAutonomousScheduler } = await import('./lib/project-owner-autonomous-scheduler')
+    startOwnerAutonomousScheduler()
   })
   await safeAwait('startPilotBackgroundReconcile', async () => {
     const { startPilotBackgroundReconcile } = await import('./lib/project-pilot-background-reconcile')

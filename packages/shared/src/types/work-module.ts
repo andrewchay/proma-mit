@@ -174,6 +174,12 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_PROJECTS: 'project:list-projects',
   GET_PROJECT: 'project:get-project',
   /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
+  GET_OWNER_EXECUTION_GRANT: 'project:get-owner-execution-grant',
+  LIST_OWNER_EXECUTION_GRANT_HISTORY: 'project:list-owner-execution-grant-history',
+  PREVIEW_OWNER_EXECUTION_GRANT_ISSUE: 'project:preview-owner-execution-grant-issue',
+  CONFIRM_OWNER_EXECUTION_GRANT_ISSUE: 'project:confirm-owner-execution-grant-issue',
+  PREVIEW_OWNER_EXECUTION_GRANT_REVOKE: 'project:preview-owner-execution-grant-revoke',
+  CONFIRM_OWNER_EXECUTION_GRANT_REVOKE: 'project:confirm-owner-execution-grant-revoke',
   GET_OWNER_EXECUTION_REVALIDATION: 'project:get-owner-execution-revalidation',
   LIST_OWNER_EXECUTION_REVALIDATION_HISTORY: 'project:list-owner-execution-revalidation-history',
   PREVIEW_OWNER_EXECUTION_REVALIDATION: 'project:preview-owner-execution-revalidation',
@@ -186,6 +192,14 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_OWNER_EXECUTION_PREPARATION_HISTORY: 'project:list-owner-execution-preparation-history',
   PREVIEW_OWNER_EXECUTION_PREPARATION: 'project:preview-owner-execution-preparation',
   SAVE_OWNER_EXECUTION_PREPARATION: 'project:save-owner-execution-preparation',
+  GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS: 'project:get-owner-autonomous-schedule-status',
+  PREVIEW_OWNER_EXECUTION_COMMAND_ACK: 'project:preview-owner-execution-command-ack',
+  QUEUE_OWNER_EXECUTION_COMMAND: 'project:queue-owner-execution-command',
+  LIST_OWNER_EXECUTION_COMMANDS: 'project:list-owner-execution-commands',
+  DISPATCH_OWNER_EXECUTION_COMMAND: 'project:dispatch-owner-execution-command',
+  CANCEL_QUEUED_OWNER_EXECUTION_COMMAND: 'project:cancel-queued-owner-execution-command',
+  PREVIEW_OWNER_PREFLIGHT_RECONCILIATION: 'project:preview-owner-preflight-reconciliation',
+  CONFIRM_OWNER_PREFLIGHT_RECONCILIATION: 'project:confirm-owner-preflight-reconciliation',
   GET_OWNER_RUNTIME_BINDING: 'project:get-owner-runtime-binding',
   SAVE_OWNER_RUNTIME_BINDING: 'project:save-owner-runtime-binding',
   PREPARE_OWNER_PLANNING: 'project:prepare-owner-planning',
@@ -632,6 +646,8 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
 export interface CreateAgentEmployeeInput {
   name: string
   role: string
+  /** 由用户从岗位模板明确选择时记录；不从 role 文本推断。 */
+  roleTemplateId?: string
   avatar?: string
   description: string
   runtime?: 'proma' | 'ai-sdk' | 'pi' | 'claude'
@@ -879,6 +895,8 @@ export interface AgentEmployeeResult {
   id: string
   name: string
   role: string
+  /** 稳定岗位模板 ID；旧员工可能缺失。 */
+  roleTemplateId?: string
   avatar?: string
   description: string
   runtime: string

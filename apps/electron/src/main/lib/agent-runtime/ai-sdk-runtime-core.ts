@@ -49,6 +49,7 @@ import { assessToolCallBatchIntegrity, type ToolCallBatchIntegrity } from '@grav
 import { estimateTokenCount } from '../agent-tool-token-estimator'
 import { runGuardedToolCall } from './tool-scheduler-service'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
+import { resolveOwnerExecutionMaxOutputTokens } from '../project-owner-execution-request-exit'
 
 export interface AISDKRuntimeSessionState {
   controller: AbortController
@@ -211,6 +212,9 @@ export class AISDKRuntimeCore {
     const pilotRuntime = !owner && input.pilotBudget
       ? buildPilotRequestRuntime(input.pilotBudget, globalThis.fetch)
       : undefined
+    const ownerExecutionMaxOutputTokens = !owner
+      ? resolveOwnerExecutionMaxOutputTokens(input.sessionId, input.modelId, input.provider)
+      : undefined
     const modelInstance = createAgentAISDKModel({
       provider: input.provider,
       protocol: input.protocol,
@@ -273,7 +277,9 @@ export class AISDKRuntimeCore {
       provider: input.provider,
       modelId: input.modelId,
       onAgentEvent: owner ? (event) => { if (event.type === 'text_delta') partialText += event.text; input.onAgentEvent?.(event) } : input.onAgentEvent,
-      ...(owner ? { maxOutputTokens: 4096 } : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens } : {}),
+      ...(owner ? { maxOutputTokens: 4096 }
+        : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens }
+          : ownerExecutionMaxOutputTokens ? { maxOutputTokens: ownerExecutionMaxOutputTokens } : {}),
     })
 
     const steps = streamRun.streamedSteps.length > 0

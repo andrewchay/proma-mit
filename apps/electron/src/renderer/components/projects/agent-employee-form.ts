@@ -23,5 +23,5 @@ export function getEmployeeSaveIssues(form: EmployeeForm, channels: ChannelOptio
   return issues
 }
 export function employeeTemplateChanges(template: EmployeeRoleTemplate) {
-  return { name: template.name, role: template.role, description: template.description, systemPrompt: template.systemPrompt, executionProfile: 'controlled' as const, permissionMode: 'safe' as const, workflowId: '' }
+  return { name: template.name, role: template.role, roleTemplateId: template.id, description: template.description, systemPrompt: template.systemPrompt, executionProfile: 'controlled' as const, permissionMode: 'safe' as const, workflowId: '' }
 }

@@ -89,6 +89,7 @@ function fixture(confirm = true) {
     executionKind: 'controlled' as const,
     executorEmployeeId: executor.id,
     reviewerEmployeeId: reviewer.id,
+    roleAssignments: [{ roleKey: context.sources.roles[0]!.key, employeeId: executor.id }],
     workspaceId: workspace.id,
     knowledgeSourceIds: [],
     maxCostMicros: 1000000,
@@ -134,6 +135,113 @@ test('Given confirmed非代码计划 When 预览并保存 Then 冻结准确计�
     ].map(count),
   ).toEqual(before)
   expect(() => grants.previewPilotGrantIssue(f.project.id, saved.policyRevision)).toThrow('Owner')
+})
+test('Given 新Owner准备 When roleKey绑定缺失、覆盖不全或重复 Then fail-closed', () => {
+  const f = fixture()
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...f.input, roleAssignments: undefined })).toThrow('显式绑定')
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...f.input, roleAssignments: [] })).toThrow('精确覆盖')
+  const assignment = f.input.roleAssignments![0]!
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...f.input, roleAssignments: [assignment, assignment] })).toThrow('roleKey重复')
+})
+test('Given准备配置可选岗位预算 When预览保存 Then岗位上限与共享总额一同冻结且不创建授权', () => {
+  const f = fixture()
+  const roleKey = f.input.roleAssignments[0]!.roleKey
+  const input = { ...f.input, roleBudgetCaps: [{ roleKey, maxCostMicros: 400000 }] }
+  const preview = service.previewOwnerExecutionPreparation({ projectId: f.project.id }, input)
+  expect(preview.input.roleBudgetCaps).toEqual([{ roleKey, maxCostMicros: 400000 }])
+  const saved = service.saveOwnerExecutionPreparation({ projectId: f.project.id }, input, preview.previewFingerprint)
+  expect(saved.input.roleBudgetCaps).toEqual([{ roleKey, maxCostMicros: 400000 }])
+  expect(service.getOwnerExecutionPreparation({ projectId: f.project.id }).preparation?.input.roleBudgetCaps).toEqual([{ roleKey, maxCostMicros: 400000 }])
+})
+test('Given岗位预算配置无效 When准备预览 Then未知岗位、重复岗位和超过共享总额均fail-closed', () => {
+  const f = fixture()
+  const roleKey = f.input.roleAssignments[0]!.roleKey
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...f.input, roleBudgetCaps: [{ roleKey: 'unknown-role', maxCostMicros: 1 }] })).toThrow('对应所选步骤岗位')
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...f.input, roleBudgetCaps: [{ roleKey, maxCostMicros: 500000 }, { roleKey, maxCostMicros: 400000 }] })).toThrow('roleKey重复')
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...f.input, roleBudgetCaps: [{ roleKey, maxCostMicros: 1000001 }] })).toThrow('不得超过共享总预算')
+  const unmappedInput = { ...f.input, roleAssignments: undefined }
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, { ...unmappedInput, roleBudgetCaps: [{ roleKey, maxCostMicros: 1 }] })).toThrow('显式绑定每个稳定roleKey')
+})
+test('Given 多个项目各自绑定员工、工作区与资料 When 读取准备选项 Then 只显示当前项目的显式关联项且不创建授权', () => {
+  const f = fixture()
+  const otherProject = store.createProject({ title: '另一项目', description: '' })
+  const otherWorkspace = createAgentWorkspace(`Owner-other-${randomUUID()}`)
+  bindWorkspaceToProject(otherProject.id, otherWorkspace.id)
+  const otherEmployee = employees.createAgentEmployee({
+    name: '另一项目执行者', role: '研究', description: '', executionProfile: 'controlled',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    workspaceIds: [otherWorkspace.id],
+  })
+  const unboundWorkspace = createAgentWorkspace(`Owner-unbound-${randomUUID()}`)
+  const unboundEmployee = employees.createAgentEmployee({
+    name: '未绑定执行者', role: '研究', description: '', executionProfile: 'controlled',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    workspaceIds: [unboundWorkspace.id],
+  })
+  const projectSource = catalog.createSource({ name: '当前项目资料', type: 'file', locator: join(directory, 'current.txt') })
+  const projectBase = catalog.createKnowledgeBase({ name: '当前项目知识库', sourceIds: [projectSource.id] })
+  catalog.bindProject({ projectId: f.project.id, knowledgeBaseId: projectBase.id })
+  const otherSource = catalog.createSource({ name: '另一项目资料', type: 'file', locator: join(directory, 'other-project.txt') })
+  const otherBase = catalog.createKnowledgeBase({ name: '另一项目知识库', sourceIds: [otherSource.id] })
+  catalog.bindProject({ projectId: otherProject.id, knowledgeBaseId: otherBase.id })
+  const noSideEffectTables = [
+    'tasks', 'agent_executions', 'pilot_runtime_grants', 'pilot_commands', 'pilot_request_reservations',
+    'project_owner_execution_grants', 'project_owner_execution_commands', 'project_owner_execution_request_reservations',
+  ]
+  const before = noSideEffectTables.map(count)
+
+  const choices = service.getOwnerExecutionPreparation({ projectId: f.project.id }).choices
+
+  expect(choices.workspaces.map(({ id }) => id)).toEqual([f.workspace.id])
+  expect(choices.employees.map(({ id }) => id).sort()).toEqual([f.executor.id, f.reviewer.id].sort())
+  expect(choices.employees.map(({ id }) => id)).not.toContain(otherEmployee.id)
+  expect(choices.employees.map(({ id }) => id)).not.toContain(unboundEmployee.id)
+  expect(choices.knowledgeSources.map(({ id }) => id)).toEqual([projectSource.id])
+  expect(noSideEffectTables.map(count)).toEqual(before)
+})
+test('Given 员工同时属于本项目与另一项目工作区 When读取候选 Then只暴露当前主体允许的工作区', () => {
+  const f = fixture()
+  const otherProject = store.createProject({ title: '隔离工作区项目', description: '' })
+  const otherWorkspace = createAgentWorkspace(`Owner-isolated-${randomUUID()}`)
+  bindWorkspaceToProject(otherProject.id, otherWorkspace.id)
+  const sharedEmployee = employees.createAgentEmployee({
+    name: '跨项目工作区员工', role: '研究', description: '', executionProfile: 'controlled',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    workspaceIds: [f.workspace.id, otherWorkspace.id],
+  })
+  const selected = service.getOwnerExecutionPreparation({ projectId: f.project.id }).choices.employees.find(({ id }) => id === sharedEmployee.id)
+  expect(selected?.workspaceIds).toEqual([f.workspace.id])
+})
+test('Given 已绑定Owner载体 When读取执行候选或伪造角色映射 Then载体不继承为业务岗位且配置漂移阻断', () => {
+  const f = fixture()
+  const carrier = employees.createAgentEmployee({
+    name: 'Owner规划载体', role: '规划', description: '', executionProfile: 'controlled',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    workspaceIds: [f.workspace.id],
+  })
+  bindings.saveOwnerRuntimeBinding(f.project.id, 0, {
+    ownerName: '项目Owner', carrierId: carrier.id, workspaceId: f.workspace.id,
+    changeReason: '建立项目级规划载体绑定',
+  })
+  const choices = service.getOwnerExecutionPreparation({ projectId: f.project.id }).choices
+  expect(choices.employees.find(({ id }) => id === carrier.id)?.isOwnerCarrier).toBe(true)
+  const roleKey = f.input.roleAssignments![0]!.roleKey
+  const explicitlySelected = service.previewOwnerExecutionPreparation({ projectId: f.project.id }, {
+    ...f.input, executorEmployeeId: carrier.id,
+    roleAssignments: [{ roleKey, employeeId: carrier.id }],
+  })
+  expect(explicitlySelected.executor.id).toBe(carrier.id)
+  const subject = { projectId: f.project.id }
+  const preview = service.previewOwnerExecutionPreparation(subject, f.input)
+  service.saveOwnerExecutionPreparation(subject, f.input, preview.previewFingerprint)
+  employees.updateAgentEmployee(carrier.id, { name: '规划载体改名' })
+  const staleView = service.getOwnerExecutionPreparation(subject)
+  expect(staleView.status).toBe('stale')
+  expect(() => service.previewOwnerExecutionPreparation(subject, {
+    ...f.input,
+    expectedPreparationRevision: staleView.revision,
+    expectedPolicyRevision: staleView.policyRevision,
+  })).toThrow('载体配置已漂移')
 })
 test('Given 未确认计划 When 预览 Then 不把内容/规划费用当执行许可', () => {
   const f = fixture(false)
