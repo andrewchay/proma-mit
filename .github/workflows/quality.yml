@@ -17,6 +17,9 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+        env:
+          # Electron完整类型图超过runner默认约2GB堆，保留全部检查而非跳过文件。
+          NODE_OPTIONS: --max-old-space-size=4096
       - run: bun run test
       - run: bun run lint
       - run: bun run docs:check
