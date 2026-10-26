@@ -4,9 +4,9 @@
 
 ## 已完成
 
-- 20 份角色档案：13 核心、7 专项；不新增 Shepherd、项目经理或 Chief of Staff，不替换既有研发员工。
-- 11 类职能索引、20 张能力卡、20 份完整执行规则、20 组共 80 个行为用例。
-- 参考来源、内容哈希、版本和 agency-agents MIT 许可。
+- 21 份角色档案：14 核心、7 专项；不新增 Shepherd、项目经理或 Chief of Staff，不替换既有研发员工。
+- 11 类职能索引、21 张能力卡、21 份完整执行规则、21 组共 84 个行为用例。
+- 参考来源、内容哈希、版本，以及 agency-agents 与 useful-ai-prompts MIT 许可。
 - 通过 Gravitas 现有 `createAgentWorkspace()` 服务创建“通用项目交付”托管工作区；未绑定源码目录、模型或新 MCP。
 - 角色库已复制到该工作区的 `workspace-files/ai-team/`，并提供 `团队目录.md` 入口。
 
