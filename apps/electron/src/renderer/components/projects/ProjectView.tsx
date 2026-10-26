@@ -1,3 +1,4 @@
+import { ownerTaskListRefreshSignalAtom } from '../../atoms/project-owner-task-atoms'
 import { selectTaskExecution, executionStopMessage } from './project-task-execution-state'
 import type { UserMappingInput } from '@gravitas/shared'
 /**
@@ -24,6 +25,7 @@ import { ProjectPilotOverview } from './ProjectPilotOverview'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { TaskReviewPanel } from './TaskReviewPanel'
+import { TaskOwnerGoalEntry } from './TaskOwnerGoalEntry'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ProjectKnowledgePanel } from './ProjectKnowledgePanel'
 import { ProjectWorkspacesPanel } from './ProjectWorkspacesPanel'
@@ -1067,6 +1069,11 @@ function ProjectDetail({
       console.error('加载项目详情失败:', err)
     }
   }, [project.id])
+
+  const ownerTasksRefreshed = useAtomValue(ownerTaskListRefreshSignalAtom)
+  React.useEffect(() => {
+    if (ownerTasksRefreshed?.projectId === project.id) void loadData()
+  }, [ownerTasksRefreshed, project.id, loadData])
 
   // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”)
   React.useEffect(() => {
@@ -2766,6 +2773,7 @@ function TaskItem({
             <button type="button" onClick={onOpenReview} className={`font-medium text-sm truncate text-left hover:text-primary hover:underline ${task.status === 'completed' ? 'line-through text-muted-foreground' : ''}`} title="查看任务交付与验证">
               {task.title}
             </button>
+            <TaskOwnerGoalEntry projectId={task.projectId} taskId={task.id} taskTitle={task.title} />
             {/* AI 员工执行状态（P0） */}
             {isAgentTask && agentExecStatus && (
               <AgentExecutionBadge status={agentExecStatus} />

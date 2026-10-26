@@ -7,7 +7,8 @@
 - 核心目标：AI 是项目 Owner；人给目标、必要约束、关键授权与验收，AI 主动拆解并在有效授权内持续推进。
 - 旧三条路线保留：Pilot 为编排/安全地基，Task Review 为专业执行与审阅适配器，可用性整改为过渡入口。它们的 PASS 不等于 AI Owner 已完成。
 - 旧可用性整改“先手填员工/工作区/文件/决策”的主路径已不再是默认产品目标。R-P1-03 等剩余项不按旧顺序直接续做，先经新能力核验重新映射。
-- 2026-10-07 已在独立分支 `feat/ai-project-owner` 开始首批实现：目标/计划提案纯校验契约及 BDD 测试。AO-01 离线原型 v1 已获用户认可；AO-03 目标草案已接 shared/IPC/preload/Jotai 和项目概览表单，待固定构建验收；单任务可见入口与规划费用授权仍待接；模型规划、通用 Owner 调度未完成，不把原型模拟或契约子片折算为产品完成比例。
+- 截至2026-10-09 GMT+8：受控Owner规划A–D已本地完成（HEAD `20eb5922`），包含项目/单任务目标、结构化澄清/生成提案、审阅修订/内容确认，以及费用确认→Worker→真实SDK的隔离transport链；真实Provider、代表性用户端到端及通用Owner调度仍未完成。AO-05暂停执行授权准备首片已本地完成并验收，保存准备不收费、不建业务任务、不发行许可；内容确认、规划费用确认、业务执行许可始终分离。历史PR19/20与各片证据不改写，不按基础切片折算产品完成比例。
+- 截至2026-10-09 12:05 GMT+8：AO-06[暂停Task与精确步骤关联首片](owner-task-materialization.md)已本地收束。项目目标每step新paused Task与准确依赖，单任务一步显式复用目标；原准备不改，仍需重新验证。575隔离文件、全typecheck/lint/docs/build及Native45checks通过，独立复审整改收束。实际角色调度、依赖推进、执行许可与真实Provider仍未完成。
 - 新产品目标不重置历史门禁结论：既有 G0 审定保留；历史 G1/G4 未补齐项继续有效，新增动作另补契约和证据。
 
 ## 管理职责设计参考（2026-10-07）
@@ -25,11 +26,11 @@
 |---|---|---|---|---|---|
 | AO-00 | N0 | 统一三条路线为目标驱动 AI Owner；保留历史，停止以文件委派为默认模型 | 无 | 已完成（文档） | 2026-10-07 用户确认＋本目录；非产品代码完成 |
 | AO-01 | N0 | 目标驱动可点击原型：非代码项目、代码单任务、主动澄清、计划确认、推进、成果审阅 | AO-00 | 已完成（原型方向确认） | [离线原型 v1](prototype/index.html)；15/15 模拟测试、代表性浏览器走查；用户2026-10-07 01:26 GMT+8认可并要求继续。非完整浏览器/产品验收 |
-| AO-02 | N0 | 源码/契约缺口核验：Owner 上下文、目标与计划持久化、角色池、非代码执行、授权继承、审批续跑、Review/异常 | AO-00 | 进行中 | [第一批能力核验](capability-audit.md)；已读两套 Goal/项目链/Pilot 入口；[存储设计](planning-storage-design.md) 的目标草案表/服务已实现；计划持久化、身份、UI、适配器与完整来源映射仍待补 |
-| AO-03 | N1 | 项目/任务目标和必要约束可保存；缺配置不丢目标；模型规划前核验费用/资料授权 | AO-01、AO-02 | 进行中 | 已接SQLite草案服务→shared/IPC/preload/Jotai→项目概览；新增IPC5/5（含真实服务进程内集成）、状态9/9、组件SSR3/3。构建与模拟API浏览器保存走查通过；单任务按钮/规划费用门禁和固定Electron真实UI验收仍待补 |
-| AO-04 | N1 | Owner 从目标主动提出结构化计划：任务、依赖、角色、成果、标准、风险和预算建议；可解释/修订 | AO-03 | 待开始 | 已补计划提案解析/目标版本/任务绑定/依赖 DAG/角色建议白名单；尚未调用模型或接可编辑计划，不算规划能力完成 |
-| AO-05 | N2 | 计划确认、执行授权分离并绑定版本；上下文继承可核对；新增命令契约补审 | AO-02、AO-04 | 待开始 | 保留 G0；确认目标不能冒充任意权限/费用授权 |
-| AO-06 | N2 | 计划合法后在授权内创建权威任务、组织白名单角色、依赖推进，无重复和旧入口绕过 | AO-05 | 待开始 | [员工创建修复](employee-creation-repair.md)新增非代码受控配置及20模板预填，仅人工档案/既有任务路径；Owner自动组织、预算授权及派工仍待补，不建平行任务系统 |
+| AO-02 | N0 | 源码/契约缺口核验：Owner 上下文、目标与计划持久化、角色池、非代码执行、授权继承、审批续跑、Review/异常 | AO-00 | 进行中 | [第一批能力核验](capability-audit.md)；已读两套 Goal/项目链/Pilot 入口；[存储设计](planning-storage-design.md) 的目标草案表/服务已实现；[计划版本服务](plan-version-service.md)已补同库附属计划历史、来源指纹与岗位能力建议；Owner身份、真实员工/代码角色、配置/授权继承及完整来源映射仍待补 |
+| AO-03 | N1 | 项目/任务目标和必要约束可保存；缺配置不丢目标；模型规划前核验费用/资料授权 | AO-01、AO-02 | 进行中 | 已接SQLite草案服务→shared/IPC/preload/Jotai→项目概览；新增IPC5/5（含真实服务进程内集成）、状态9/9、组件SSR3/3。构建与模拟API浏览器保存走查通过；单任务TaskItem已接目标入口（无员工/Git/工作区也可保存）；规划费用门禁与单请求出口已由A–D接通，Native D验证真实preload/启动/SDK内存transport；真实Provider与代表性完整目标验收待补 |
+| AO-04 | N1 | Owner 从目标主动提出结构化计划：任务、依赖、角色、成果、标准、风险和预算建议；可解释/修订 | AO-03 | 进行中（规划A–D子片已完成） | [受控启动全链](owner-planning-controlled-start.md)已接必要澄清、可信Run/生成提案、编辑/版本/历史/冲突保护；真实SDK内存transport与Native D已验收，不再记模型出口缺失。真实Provider、代表性目标样例与主动业务编排仍待补 |
+| AO-05 | N2 | 计划确认、执行授权分离并绑定版本；上下文继承可核对；新增命令契约补审 | AO-02、AO-04 | 进行中（暂停准备切片已完成） | 2026-10-09用户要求开始并批准[暂停执行准备](owner-execution-preparation.md)契约：冻结confirmed revision/version、步骤/实际人员/资料配置与拟议预算，复用paused Pilot并拒绝旧发行旁路。没有active grant；exact业务任务关联及完整执行/资料/请求来源门禁完成后另审发行，不记整个AO-05完成 |
+| AO-06 | N2 | 计划合法后在授权内创建权威任务、组织白名单角色、依赖推进，无重复和旧入口绕过 | AO-05 | 进行中（暂停Task关联首片已完成） | 已批准并完成[paused材料化](owner-task-materialization.md)：真实Task/step/dep/人员/源版本、幂等与同库原子回滚，全部旧入口负向拒绝。原准备自然stale而不改原件；575文件、Native45checks与复审通过。没有active许可、自主角色调度或依赖推进，20模板不等员工授权 |
 | AO-07 | N2 | Owner 后台跟进执行，组织技术评审/有限返工，主动发现卡点并提出下一步 | AO-06 | 待开始 | 不靠页面 mount 或人工逐条点开始 |
 | AO-08 | N2 | 必要问题主动送达；答复绑定请求/源版本，批准后自动恢复，拒绝/过期正确停等 | AO-07 | 待开始 | 不能把收件箱显示存在当作通知与续跑完成 |
 | AO-09 | N3 | 成果 Review 统一入口：成果/标准/证据/风险；代码附 Diff，非代码使用对应审阅类型 | AO-07 | 待开始 | 人工验收与技术评审/执行成功分开 |
@@ -112,10 +113,10 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 
 ## 9. 下一步
 
-1. 无费用项目目标草案入口源码已接，下一批补固定Electron构建的真实IPC/保存/重开与项目切换验收，并按同一组件接单任务入口；不把保存当执行许可。
-2. AO-02 继续角色/上下文/计划来源与适配器映射，再接计划持久化和有授权的模型规划；既有安全门禁不绕过。
-3. 草案服务已落，后续每片先补BDD；计划/授权分离、任务落地和后台推进分别验收，不一次放开自由派发。
-4. 不按旧台账继续写表单、不清库、不重置历史状态、不启动真实付费试跑。
+1. 受控规划A–D已完成，不重复实现。AO-05暂停准备的BDD、旧入口拒绝、Native与独立复审已收束；准备不是许可，当前不发行、不派工。
+2. AO-06暂停权威Task/exact step关联首片已完成，不重复实施；关联不是执行授权。下一片需新版准备冻结真实Task/link/dep及完整派发/预算/启动/资料工具/每请求Owner来源门禁，之后另审AO-05真实许可发行与AO-06白名单调度、依赖推进。
+3. AO-02继续真实职责/适配器/来源映射；AO-03/04补代表性目标与真实模型验收，真实费用仍单独授权。AO-07～12后台推进/审批恢复/Review/异常与端到端门禁尚未完成。
+4. 不按旧台账继续默认手填全部任务，不清库或重置历史，不自动扩大范围，不启动真实付费试跑。
 
 ### 2026-10-08 安装更新
 
@@ -133,3 +134,99 @@ AO-G* 为新产品闭环门禁，不重命名、替代或自动追认旧 Pilot G
 ### 2026-10-08 PR19授权旁路修复
 
 合并前复查发现普通任务指派controlled员工仍复用早期自动派发测试，绕过准备/范围/费用确认。普通派发、queued启动与Provider/权限识别已按受控员工身份收束，缺回执fail-closed，历史任务无静默授权迁移。新回归先RED（旧路径产生execution）再修复；合法auto/safe测试改为显式prepare/preview/confirm。保留general/development及已准备任务任一证据保护。具体门禁结果以本轮交付及CI为准，不据此宣称真实Provider、Owner自主闭环或新版本已安装。
+
+
+### 2026-10-08 PR19/20合并后的继续开发
+
+用户17:30 GMT+8明确许可19→20合并；main最终`6c71b384`与PR20六项CI通过的tree一致，源码Electron0.12.113/shared0.2.29，不宣称独立post-merge CI完成。用户本地main已在18:13许可下安全快进并保留原note独有记录；备份/stash未清理。安装仍为0.12.109，用户此前暂缓更新，不因源码合并自动替换。
+
+18:34与21:11 GMT+8用户要求在`feat/ai-project-owner`继续。新增[计划版本服务](plan-version-service.md)：`project_owner_plan_revisions`与目标表同库，双CAS、目标/来源/内容指纹、追加式proposed/confirmed历史、派生stale、旧来源拒绝、严格人工身份/历史解析。确认仅认可内容，模型/任务/execution/grant及派发事件为0。主进程五项IPC和typed preload已接；真实TaskItem无条件提供单任务目标入口，Jotai仅打开时加载，复用既有目标保存与冲突保护。
+
+本片当前origin明确为manual，**没有AI生成或计划编辑UI、付费规划门禁、自动派工**。计划服务17项/106断言、IPC5项/39断言通过；固定构建和完整门禁的最终状态见[验证记录](plan-version-verification.md)。AO-02/03仍进行中，AO-04/05/06不因存储和内容确认子片标记整项完成；AO-G0～G3保持未通过。
+
+
+### 2026-10-08 22:11 GMT+8继续：规划协议与审阅入口
+
+[规划协议与审阅](planning-protocol-review.md)接严格needs_clarification/plan_proposal协议与项目/单任务计划UI，Jotai保护晚到输入与版本冲突、未保存目标禁写、旧确认不沿用，依赖选择不要求手填内部key。origin仍manual，未接Owner模型调用或生成回执。548独立文件失败0，完整typecheck/lint1981/docs/build通过；固定Electron39.8.10及实际产品preload/原生SQLite的47次IPC包含真实计划UI修订→新版本→内容确认/历史，非完整生产导航或安装包验收。Electron0.12.115/shared0.2.30，本地开发，无push/merge/安装/真实Provider。
+
+独立源码审查推荐复用controlled权威Task/execution与启动/费用确认，通过owner_planning目的/source-link收紧为单请求零工具/历史/MCP/Skills。Owner/carrier身份、资料/费用范围、可信回执及重启unknown属新增契约，需要明确人审；go on不代表真实收费授权。当前ai-sdk capability支持预算停止，但实际费用出口为Pilot专属，不能伪造grant或误称普通Owner有硬预算。主动规划实现方案已形成，待审批，不按旧台账继续默认手工拆任务。
+
+### 2026-10-08 受控Owner主动规划方案获实现审批：A基础
+
+[Owner绑定/暂停关联](owner-runtime-binding.md)追加版本化职责→真实carrier绑定及同库source-link，严格目标/计划/context/config CAS、资料/协议指纹、目标业务任务与承载任务分离；复用controlled准备，paused零执行。关联或preparation目的证据任一存在即拒绝普通Agent启动，B出口未完成不会偷开放。13项/46断言、controlled23项/97、全仓549文件0失败、typecheck/lint1983/docs/build通过。Electron0.12.116/shared0.2.30；没有新增配置/启动UI、没有本片Native验收或实际模型，不能把本片记AO-02/03/04整体完成。继续B单请求零工具出口，费用仍另逐次确认。
+
+### 2026-10-09 Owner主动规划B：受限Runtime与单请求边界
+
+[受限出口](owner-runtime-isolation.md)：同库冻结资料、权威Owner解析、Worker/Orchestrator/AI SDK早分流，零工具/MCP/Skills/history/role/dynamic/title/steering/压缩，SDK内外retry0、输出4096；真实三协议body/解密凭据校验＋同事务唯一admission，未知发送不补跑。独立只读审查指出自动redirect P1，已强制error并用本地307/308验证目标0访问；未报告用量另保存Owner null证据，不拿兼容0当费用。两子会话均wait收敛。555隔离文件失败0、全typecheck/lint1991/docs/diff/fullbuild含两nativehelpers通过，真实Provider/外部skip不算PASS。Electron0.12.117/shared0.2.31；A禁启动仍保留，C回执/提案/费用UI未完成，不记AO-03/04整体完成，不宣称Owner自治或实际收费许可/硬金额上限。本片尚无Native schema验收，不安装/push/merge。
+
+### 2026-10-09 Owner规划C：Run证据、待审提案与准备界面
+
+[Run与受控准备](owner-planning-runs.md)接Owner职责/真实载体绑定与暂停准备UI、typed IPC/Jotai、完整资料/费用预检、不可覆盖回执、generated待审提案或必要澄清、双CAS、Owner专用完成/停止/心跳隔离。未知token/费用不拿兼容0估算，生成不完成业务任务或写员工学习；停止意图在abort前持久化，坏来源回调先隔离保全后stale，晚到不续跑。审查删除证据P1与吞来源错误P2已修复，关联Owner准备/Run的项目/承载/目标任务拒绝物理删除。A启动禁令继续保留，不把readonly预检或fake占位当生产费用许可。
+
+本轮原生runId `6422d725-0233-4401-ba3d-13a654da35bd`验证Electron39.8.10/ABI140、真实better-sqlite3/SQLite3.53.4/WAL、实际产品preload及源UI的30次Owner IPC；覆盖旧A加列迁移、首次无Plan准备、费用UI+A拒绝启动0HTTP、显式fake callback生成/人工确认/澄清、receipt先提交+生成事务ABORT、重开与小窗无横向溢出。harness host/Runtime明确替身，不证明D真实start→Worker→SDK链、生产导航、打包/真实收费或进程终止。Electron0.12.118/shared0.2.32；最终工程门禁/独立复审仍待本片收束，无push/merge/安装。AO-02/03/04不记整体完成，AO-G0～G3未通过。
+
+C收束：最新静态树559个逐文件测试失败0，全包typecheck、lint2000、docs:check、diff及完整build（renderer/preload/resources/两原生helper）通过。独立复审已wait收敛：原P1/P2关闭；新增“只剩stop/callback/receipt/outcome证据可能降级”P2随后真RED→GREEN，权威store/来源/Worker/删除均识别全部残余execution证据，只用于负向限制，不授权发送。Worker6项/62断言、Run18项/69断言，并在内部生成入口独立拒绝stop意图复用旧回执。复审原报告保留，整改不改写旧结论；D完整实际费用确认→Worker→SDK离线闭环尚未验收，仍不开启动出口。
+
+### D：受控启动全链收束（2026-10-09 GMT+8）
+
+C之后将A常量启动禁令替换为严格当前Owner来源校验；明确费用ack/preview/scope/TTL、既有排队原子claim与最终body/凭据/单请求占位仍不可跳过。规划只追加待审提案或必要澄清，不派工、不满足业务DoD。停止意图必须在新会话/发送前独立拒绝；完整链RED复现并GREEN修复，已发送的费用/远端停止仍未知。
+
+独立D审查与Native两个子会话均已`wait_for_delegations(mode=all)`收敛，续轮再wait all。审查P2“真实准入后空request_hash仍生成”已修复：占位增加全部列本地integrity SHA，坏摘要/时间/legacy NULL先隔离callback，不生成或补发；旧schema additive ALTER，旧行NULL不补造发送证明。本地SHA不是签名。复审42项260断言及独立3项17断言通过，原P2关闭、无确认剩余实质P0/P1/P2；旧报告不覆写。
+
+真实产品fee assert/claim→Worker→Orchestrator→AISDKAdapter/真实SDK→内存transport→Run/Plan BDD **12项112断言**（Bun sql.js）通过，包含必要澄清、未知usage、并发双击、TTL/scope损坏0请求、网络/断流/length/302不重发、停止generation、失联late、重开，以及五类准入损坏。全量逐文件 **560文件失败0**，全包typecheck、lint2001、docs:check、diff与完整build（含renderer/preload/resources/原生helpers）通过。
+
+最新Native D runId **642c8bd7-1eaa-4784-b08a-14b8022f23da**，Electron39.8.10/ABI140、better-sqlite3/SQLite3.53.4 WAL、真实产品UI/生产preload/Owner IPC、实际费用确认/原子claim/Worker/Orchestrator/Adapter/SDK，未SQL伪造授权/admission。proposal与clarification各1请求；五类真实准入后故障各1请求并stale，raw callback重开持久、0完整receipt/outcome/新Plan；7条真实准入行旧schema迁移后其余列不变、integrity NULL；共7个内存HTTP，4096/no-tools、重复preview不补发、外部联网0、cleanup成功、360px无横溢出。Source hash父核验无差异。证据在会话`owner-planning-full-native-validation/runs/<runId>/`，保留每轮原文、15项哈希、SDK版本、截图及复跑脚本。仅host桥接与最终transport替身，不宣称完整生产导航、安装包、真实Provider费用/Provider请求ID、金额硬封顶、远端停止、断电/多进程或自主业务闭环。
+
+本批准方案A/B/C/D本地研发与离线验收完成；真实Provider另须逐次费用授权，自动组织员工/后台自主推进/业务自动验收不在此批准切片内。Electron0.12.119/shared0.2.32。没有push/merge/安装，生产员工/配置及installed0.12.109/main0.12.113未改变。详细契约见`owner-planning-controlled-start.md`。
+
+### 2026-10-09 AO-05首片：暂停执行授权准备收束
+
+用户要求“开始AO-05”，完整增量方案获批准后实施[暂停执行准备](owner-execution-preparation.md)。冻结confirmed计划revision/version、所选步骤依赖闭包、明确不同Executor/Reviewer、工作区/渠道/模型/Runtime、实际能力与有界Skill资源摘要、明确none或bound的规划载体provenance、显式知识来源元数据及拟议预算/次数/返工/期限。复用paused Pilot policy与同库追加式准备历史，typed四IPC/生产preload/Jotai/计划审阅内入口已接；历史只读，输入/晚到/冲突保护不缩水。状态始终pending_task_links，0业务Task/grant/command/execution/request/模型调用；不记AO-05整体完成。
+
+独立审查三轮及Native三轮均wait all收敛，原报告和203项旧产物摘要保留。外层事务P1、只冻结SKILL.md/漏binding provenance两个P2，以及追加发现的SSH私钥basename P2和raw BEGIN/SAVEPOINT事务状态缺口均有真RED→GREEN回归。两个save均前置拒绝未提交事务；Native读取驱动真实inTransaction，sql.js在内存探测且active不export；JSON故障保留未应用证据，残余用途拒绝legacy发行/预算/启动/请求。Skill脚本/规则变更与Owner绑定变更使旧preview/current失效，私钥与symlink/超限资源不读取、不保存。最终独立复审未确认剩余可复现P0/P1/P2；并不认证任意SQL写权限攻击者。
+
+本轮新增后台31项/126断言、Jotai16项/77断言、新UI5项/54断言；旧两个browser选择器冲突已通过明确修订字段名和具名fieldset/section修复，未改旧测试或删除内容。全量逐文件**565文件失败0**、全包typecheck、lint2012、docs生成/检查、diff及完整build（renderer/preload/resources/两原生helper）通过。
+
+最终Native runId **a7eebe6b-4416-4d14-853c-7fceefd72096**，实际Electron39.8.10/ABI140、better-sqlite3 WAL、完整生产preload/真实四IPC/source React/Jotai UI，**36项**通过；确认/准备/保存/重开/old DB加表、purpose丢失、资料/配置漂移、JSON/DB故障、两种raw事务、私钥/symlink/大小限制、none/bound来源与360px均覆盖。父独立核对218个源码SHA无差异。证据在会话`owner-execution-preparation-native-validation/revision-20261009-1008/`；TEMP清理、生产工作区名单不变、0联网/模型HTTP/执行账本。Goal/Plan与人员为隔离人工fixture，宿主为harness，不是完整production main导航、安装包、真实Provider/active发行/费用/远端终止或断电/多进程验收。
+
+Electron0.12.120/shared0.2.33，仅本地研发；没有push/merge/安装，生产员工/配置、installed0.12.109和main0.12.113未改变。下一步另审AO-06暂停权威任务及exact step关联，随后补所有执行/资料/请求来源门禁并重新审批AO-05真实许可发行。历史W09/W10/R02/R03/R04/G4及AO-G0～G3不因首片自动通过。
+
+### 2026-10-09 AO-06首片：暂停权威任务与精确步骤关联收束
+
+用户10:18要求继续AO-06并批准材料化命令契约。复用同paa.db权威Task/dep/activity，追加materialization/step-link及negative session-purpose，不新增授权/预算账本、不改Pilot JSON、不发TaskChange/外部同步。项目目标每step新顶层paused Task；单任务仅一步复用普通尚未执行target，preview显示人员/workspace/status/研发范围与清旧成员键，保内容/日期/priority。原AO05 whole目标hash自然stale，history/source不改，结果paused_materialized_needs_revalidation。
+
+普通dispatch/IfIdle清队列前、enqueue/claim/Worker/Workflow/headless session/worktree/Runner、controlled费用确认、development范围/返工/direct交付、状态group裸迁移/草稿/subTask/依赖/cascade及四Runtime输入/最终请求均补negative-only purpose。部分marker/link/header/preparation/session/execution关联损坏不能退legacy，空session占位不圈无关队列，全部session execution而非LIMIT1。旧issuer不消费Owner关联；实际Task范围/资料/预算许可仍待新版来源门禁。
+
+独立首次4P1/3P2、续轮空session误圈/原AO05丢失旧SourceGate降级、共享受限session的direct交付问题，均保存真实RED→GREEN后复审收束至已审范围无剩余可复现P0/P1/P2。内部builder仅本次staging单次scope，committed link不能复活取消/补造缺Task或edge。原报告和探针保留。最终材料化20/68、用途变更11/33、四IPC3/25、direct delivery9/34；Runtime/启动/Jotai/UI各片报告另列，不合计为真实Run。
+
+最终全量逐文件575失败0，全包typecheck、lint2027、docs、diff与完整build含renderer/preload/resources/两原生helper通过。一次完整复跑曾在未改微信AES-CBC末块篡改单测随机失败，原日志保留`/tmp/ao06-tests-f03-full-unrelated-crypto-failure.log`；原文件单跑及下一完整575复跑通过，未修改无关加密模块，不宣称其随机断言已修复。
+
+最终Native **438e18d3-fcfb-4a6d-bd6d-e2b1427324fc**：Electron39.8.10/ABI140/native WAL、生产preload/四IPC/source React/Jotai，45checks、8截图、342精确源码SHA父核对无差异，sourceSHA `cae4ea5f65e670d9eefb6856230befc6556b826f045563cc22bbf352ad1168dd`。0业务启动/SDK/ModelHTTP/费用request/实际grant/TaskChange/外发，TEMP清理、生产目录计数不变、旧203文件与36/44轮报告原件保留。曾生成的9条反向fixture账本最终8条实体（1因残余probe删除）均未启动，其中1completed是人工模拟终态，不是Run或业务成果。限定sourcePanel，不宣称完整生产main导航、真实Provider、硬金额封顶、断电/多进程或打包安装验收。
+
+早期Runtime子测试首版Claude RED未前置SDK tripwire，触及SDK query入口，无Provider/费用回执，不能回溯保证当次zeroNetwork或费用为零；该次不计严格离线证据。后续RED/全部最终测试和Native均执行前装tripwire/内存transport，初始异常日志保留。没有批准真实Provider验收。Electron0.12.121/shared0.2.34仅本地，未push/merge/安装/生产修改；下一步新版Task/link来源与实际许可、资料/每请求门禁须另审，历史AO-G0～G3/G4及停止未知费用门禁不自动关闭。
+
+### 2026-10-09 AO-06第二片：材料化后重新验证（v2准备来源）
+
+用户"继续"后两项只读研究收敛并获批`plan/ao06-revalidation.md`。新表`project_owner_execution_revalidations`（additive）+新模块：v2来源实时重放v1 build+权威Task/dep/marker/link精确核验，冻结真实任务事实与上游双三元组（materialization+原AO05）；planFingerprint/contextFingerprint须等于v1冻结值，budget/expiresAt原样携带不顺延，过期拒绝预览。`PilotPolicy`新增可选`ownerExecutionRevalidation`引用（含materialization反查），v1引用逐字节保留；v2存在时v1重存前置拒绝。v2行绝不入旧表。
+
+不误current闭环：v2存在→v1 view短路非current→v1材料化入口联动关闭；材料化view恒needs_revalidation+分支(b)核验v2引用/行/originalPreparation，悬空显式stale；v2 get current须重建hash全等+引用精确+上游反查。view含unapplied（DB提交但policy未一致应用，重放显式拒绝与v1同构）与悬空stale。证据谓词纳入v2表；发行确认指纹纳入v2引用；deleteProject保护v2表。所有旧SourceGate/负向谓词语义一行未改，v2不引入新任务身份，不误封无关任务。
+
+独立审查2P1（v1重存丢v2引用、幂等重放未核policy应用）+5P2全部整改并复核收束（复核记录`S/ao06-revalidation-security-review-followup-verification.md`），无新repro问题；一个无效unapplied测试被审查指出后重写为真实部分失败路径（回退JSON→unapplied+重放拒绝+证据保留）。最终后台10test38assert、UI/IPC/preload 17test、旧回归（材料化/pilot/file-failure等）全过；全量579隔离文件0失败、typecheck/lint(2035)/docs/build通过。Electron0.12.122/shared0.2.35仅本地。
+
+v2 current仍非执行许可：发行/派工/资料工具/预算purpose/claim/Runner全关。实际许可发行、资料fence、逐请求Owner来源门禁、AO-06白名单调度与依赖推进、singleTask多step拆分/supersedes、真实Provider均需另审。Native验收见后续条目。
+
+### 2026-10-09 AO-06第二片Native验收与UI修复收束
+
+Native两轮：首轮 **6ca90c0a-a809-4c20-a0bb-886ab6d2da4a** 12/12（含singleTask单步、v1替代blocker、悬空fail-closed、SourceGate仍拒、tripwire全零、8截图），报告发现F1（产品面板缺changeReason输入，按钮恒禁用，harness经真实editOwnerRevalidationAtom桥驱动）/F2（历史仅挂载时加载）/F3（v1替代文案在折叠诊断内）。父随后修复F1/F2：面板新增"重验证修订原因（必填）"textarea（editOwnerRevalidationAtom接线，编辑废preview换requestId）与保存后自动重读v2历史；F3留待后续。委派通道超时后由父执行既有rerun.ts完成最终delta run **5ccf97ba-471e-4b7d-aaeb-4bb39c494e99**：12/12重跑通过、tripwire全零（network空/sdk/model/businessRuns/childProcesses=0）、346个源文件SHA与当前树逐一核对0差异（sourceSHA a21fcccc…f36e8绑定；旧run 3617e8d5…4a51保留）。注意：delta run复用旧harness，其boundary文本仍列F1/F2为未修复（复制时点旧文案），以本条目与代码为准；纯产品textarea点击链未单独脚本化（panel/atoms单元测试覆盖接线语义），记为边界。materialization/revalidation行数与TEMP清理、生产目录不变由evidence记录。
+
+独立审查2P1+5P2整改后复核收束（`S/ao06-revalidation-security-review-followup-verification.md`）。最终：后台10test38assert、IPC3、atoms10、panel4，全量579隔离文件0失败、typecheck/lint(2035)/docs/build通过；Electron0.12.122/shared0.2.35。v2 current仍非执行许可；实际许可发行、资料fence、逐请求来源门禁、AO-06白名单调度/依赖推进、singleTask多step拆分/supersedes、真实Provider均需另审。未push/merge/install/生产修改。
+
+### 2026-10-09 AO-06第三片：执行侧门禁能力（休眠）收束
+
+用户"先推送再继续"：17提交已推送origin（6808fda9..2b8a6f16），随后两项执行侧门禁研究收敛并获批`plan/ao06-execution-gates.md`。交付休眠能力：资料工具fence（purpose感知谓词`assertToolAllowedForSessionPurpose`替换orchestrator canUseTool首行/ai-sdk tool.execute+canUseTool/pi-agent-adapter canUseTool包装；权威链session→execution→marker→材料化→v2 current→policy引用→gate准入行；三层交集+准入内容快照指纹+读审计行无正文；MCP资源恒拒；Plan模式不旁路）；`admitOwnerExecutionGateSession`仅供未来claim链+测试（外层事务拒/幂等/换execution拒）；逐请求Owner分支进`reservePilotRequest`事务（SELECT补purpose列、白名单式controlled_task早退/unknown抛/owner走全链，7旧guard先行不可达）；purpose列additive迁移（pilot_runtime_grants/pilot_commands默认controlled_task+owner_source×2，reservations经join派生）；R1防御（pilotGrantMatchesPolicy拒仅v2畸形policy）；gates对重依赖懒加载（无Owner证据会话依赖图零影响）。无任何生产gate创建路径，不发行不派工不调用模型。
+
+独立审查3P1（reserve分支死代码、Read schema documentId错配+错误DB查询、Pi fence缺失）全部整改并复核收束（`S/ao06-execution-gates-security-review-followup-verification.md`）：documentId→索引库getDocument解析真实source、purpose白名单fail-closed、pi canUseTool双断言；Pi `beforeToolCall`工具入口硬拒保留（fence今天在Pi不可达，激活前置条件已写入docs）。P2处置：CHECK/redirect+boundary参数集/性能评估/快照排序稳定性登记为激活前置；gate行revalidation绑定补逐次核验；F-bundle-require（先存的打包形态createRequire失效，'project'资料scope生产解析为空，fence方向fail-closed）与F-readmission（漂移后无重准入恢复，fail-closed）记入docs。
+
+最终gates 12test23assert、旧回归逐文件全过；全量580隔离文件0失败、typecheck/lint(2037)/docs/build通过。Native **b4f9defe-96d3-4ebd-b8a1-595b9a2eac81** 18/18：Electron39.8.10/ABI140/native WAL/production preload/真实UI，349源SHA与最终树一致（5ee7dfa6…ab9c2），tripwire全零、账本归零、gate行仅TEMP产物、360px截图、rerun脚本；早期中间态run目录诚实保留。Electron0.12.123/shared0.2.36仅本地，未push/merge/install。
+
+未来发行片（另审另批）才实现：新命令账本与boundary idle扩展、独立启动/claim豁免收敛、runner/回执、owner逐请求fetch工厂、stop/恢复对称扫描、四确认序列、Pi beforeToolCall切换与激活前置清单。真实费用/远端停止/断电多进程/完整导航/安装仍未验证。

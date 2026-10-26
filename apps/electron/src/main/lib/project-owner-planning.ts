@@ -2,30 +2,8 @@
  * AI Owner 规划输入边界：只产生简报/计划建议，不创建权威任务或执行授权。
  * 本模块无持久化与 Runtime 依赖；角色可用性须由调用方从权威目录提供。
  */
-import type { ProjectOwnerGoalBrief } from '@gravitas/shared'
-export type { ProjectOwnerGoalBrief } from '@gravitas/shared'
-
-export interface ProjectOwnerPlanStep {
-  /** 仅在本计划内标识依赖，不是权威任务 ID。 */
-  key: string
-  title: string
-  outcome: string
-  acceptanceCriteria: string[]
-  dependencies: string[]
-  /** 能力角色建议，不是已派发员工身份。 */
-  roleKey: string
-}
-
-export interface ProjectOwnerPlanProposal {
-  projectId: string
-  taskId?: string
-  goalVersion: number
-  mode: 'proposal_only'
-  summary: string
-  assumptions: string[]
-  risks: string[]
-  steps: ProjectOwnerPlanStep[]
-}
+import type { ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
+export type { ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
 
 function record(input: unknown, fields: readonly string[], label: string): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)

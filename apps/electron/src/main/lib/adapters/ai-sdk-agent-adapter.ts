@@ -1,3 +1,6 @@
+import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
+import { assertToolAllowedForSessionPurpose } from '../project-owner-execution-gates'
+import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
 /**
  * Vercel AI SDK Agent Runtime 适配器。
  *
@@ -15,7 +18,7 @@ import type {
   SDKMessage,
   SDKUserMessageInput,
 } from '@gravitas/shared'
-import { getAgentProviderProtocol, isAgentCompatibleProvider } from '@gravitas/shared'
+import { getAgentProviderProtocol, isAgentCompatibleProvider, resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { createCoreTools, GOAL_CHECKPOINT_TOOL_NAME } from '../agent-runtime/tool-registry'
 import { compactSessionNow, maybeAutoCompact } from '../agent-runtime/context-compaction'
 import {
@@ -25,6 +28,10 @@ import {
 } from '../agent-runtime/ai-sdk-runtime-core'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
+import { resolveOwnerPlanningSession } from '../project-owner-planning-source'
+import { getAgentWorkspace, getAgentWorkspaceCwd } from '../agent-workspace-manager'
+import { getChannelById, decryptApiKey } from '../channel-manager'
+import { resolve } from 'node:path'
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { buildPilotRequestRuntime, resolvePilotBudgetForSession } from '../project-pilot-request-exit'
 import { isContextOverflowError } from '../error-patterns'
@@ -87,6 +94,7 @@ interface ActiveAISDKSession {
   queuedMessages: SDKUserMessageInput[]
   interrupted: boolean
   cancelled: boolean
+  ownerPlanning?: boolean
   resolveQueuedMessage?: () => void
 }
 
@@ -97,6 +105,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: AISDKAgentQueryOptions): AsyncIterable<SDKMessage> {
+    assertNoOwnerBusinessSession(input.sessionId)
+    // 先按权威 execution 识别用途；不接受 query 参数授予 Owner 权限。
+    const owner = resolveOwnerPlanningSession(input.sessionId)
     const {
       sessionId,
       prompt,
@@ -125,29 +136,58 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
     }
 
     const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
+    // P01：策略 required 保证不满足时，在普通与Owner路径调用Provider前统一拒绝。
+    assertRuntimePolicy('ai-sdk')
 
     // Pilot 受控执行：按会话反查命令归属；同一受控出口覆盖模型请求与压缩请求。
-    const pilotBudget = resolvePilotBudgetForSession(sessionId)
+    if (owner) {
+      if (this.activeSessions.has(sessionId)) throw new Error('Owner规划不允许并发或追加回合')
+      if (requestedOperation) throw new Error('Owner规划不允许命令或压缩操作')
+      const channel = getChannelById(owner.binding.channelId)
+      const workspace = getAgentWorkspace(owner.binding.workspaceId)
+      if (!channel || !workspace || owner.binding.runtime !== 'ai-sdk' || (input.agentRuntime && input.agentRuntime !== 'ai-sdk') || model !== owner.binding.modelId
+        || apiKey !== decryptApiKey(owner.binding.channelId)
+        || provider !== channel.provider
+        || resolveAgentRuntimeBaseUrl(provider, 'ai-sdk', baseUrl) !== resolveAgentRuntimeBaseUrl(channel.provider, 'ai-sdk', channel.baseUrl)
+        || resolve(cwd) !== resolve(getAgentWorkspaceCwd(workspace, sessionId))) {
+        throw new Error('Owner规划实际模型、渠道或工作区与权威绑定不一致')
+      }
+    }
+    const pilotBudget = owner ? undefined : resolvePilotBudgetForSession(sessionId)
     const pilotRuntime = pilotBudget ? buildPilotRequestRuntime(pilotBudget, globalThis.fetch) : undefined
 
+    const controlled = isControlledProviderSession(sessionId)
+    if (owner && !controlled) throw new Error('Owner规划缺少受控模型出口')
     const activeSession: ActiveAISDKSession = {
       state: {
         controller: createAbortController(abortSignal),
-        permissionMode: input.permissionMode ?? 'auto',
-        planModeEntered: input.permissionMode === 'plan',
-        worktreeScopedWrite: input.worktreeScopedWrite === true,
+        permissionMode: owner ? 'safe' : input.permissionMode ?? 'auto',
+        planModeEntered: !owner && input.permissionMode === 'plan',
+        worktreeScopedWrite: !owner && input.worktreeScopedWrite === true,
       },
       queuedMessages: [],
       interrupted: false,
       cancelled: false,
+      ownerPlanning: Boolean(owner),
     }
     this.activeSessions.set(sessionId, activeSession)
-    const controlled = isControlledProviderSession(sessionId)
-    const controlledFetch = controlled ? createControlledProviderFetch(sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: model, permissionMode: activeSession.state.permissionMode }), pilotRuntime?.fetch ?? getFetchFn(await getEffectiveProxyUrl())) : undefined
-    const requestFetch = controlledFetch ?? pilotRuntime?.fetch
-
     let mcpRelease: (() => void) | undefined
     try {
+      const controlledFetch = createControlledProviderFetch(sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: model, permissionMode: activeSession.state.permissionMode }), pilotRuntime?.fetch ?? getFetchFn(await getEffectiveProxyUrl()))
+      const requestFetch = controlledFetch ?? pilotRuntime?.fetch
+      if (owner && !controlledFetch) throw new Error('Owner规划缺少受控模型出口')
+      if (owner) {
+        try {
+        const messages = await this.runtimeCore.runAgentTurn({
+          sessionId, prompt: owner.request.userPrompt, modelId: model, provider, protocol, apiKey, baseUrl, cwd,
+          runtimeTools: [], activeSession: activeSession.state, maxTurns: 1, maxRetries: 0,
+          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt },
+          fetchFn: controlledFetch, onAgentEvent: input.onAgentEvent,
+        })
+        for (const message of messages) yield message
+        } catch (cause) { if (!(cause instanceof OwnerPlanningRuntimeError)) throw cause; yield cause.runtimeResult as unknown as SDKMessage }
+        return
+      }
       if (requestedOperation === 'compact') {
         await compactSessionNow({
           sessionId,
@@ -194,6 +234,15 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         }
       }
 
+      for (const tool of tools) {
+        const execute = tool.execute.bind(tool)
+        tool.execute = async (...args) => {
+          // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
+          assertToolAllowedForSessionPurpose(sessionId, tool.name, args[0] as Record<string, unknown> | undefined)
+          return execute(...args)
+        }
+      }
+      assertNoOwnerBusinessSession(sessionId)
       let currentPrompt = buildAISDKSkillRequestedPrompt(prompt, skillMentions)
       let currentAttachments = attachments
       let historyMessages = input.historyMessages ?? []
@@ -226,10 +275,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       // AI SDK 的一次 streamText 调用不能像 Claude SDK 那样直接向活跃 stream 注入输入。
       // 因此把运行中的追加消息排成下一轮 Agent turn，并将刚完成的一轮纳入历史，
       // 保持用户在输出期间继续追问时的上下文连续性。
-      // P01：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
-      assertRuntimePolicy('ai-sdk')
       let contextOverflowRecovered = false
       while (!activeSession.cancelled) {
+        assertNoOwnerBusinessSession(sessionId)
         let messages: SDKMessage[]
         try {
           messages = await this.runtimeCore.runAgentTurn({
@@ -260,14 +308,22 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
               audit: { sessionId, runtime: 'ai-sdk', trigger: 'manual' },
             },
             onAgentEvent: input.onAgentEvent,
-            canUseTool: input.canUseTool,
-            onPermissionModeChange: controlled ? (mode) => assertControlledPermissionChange(sessionId, mode) : undefined,
+            canUseTool: input.canUseTool ? async (name, args, signal) => {
+              assertToolAllowedForSessionPurpose(sessionId, name, args)
+              const result = await input.canUseTool!(name, args, signal)
+              assertToolAllowedForSessionPurpose(sessionId, name, args)
+              return result
+            } : undefined,
+            onPermissionModeChange: (mode) => assertControlledPermissionChange(sessionId, mode),
             onEnterPlanMode: input.onEnterPlanMode,
             onExitPlanMode: input.onExitPlanMode,
             onAskUser: input.onAskUser,
             // Pilot 受控执行禁用子代理委派：子代理新 sessionId 解析不到预算上下文，
             // 会绕过受控出口；未配置 runSubAgent 时 Agent 工具直接报错，零花费。
-            runSubAgent: pilotRuntime || controlled ? undefined : input.runSubAgent,
+            runSubAgent: pilotRuntime || controlled || !input.runSubAgent ? undefined : async (args) => {
+              assertNoOwnerBusinessSession(sessionId)
+              return input.runSubAgent!(args)
+            },
             onGoalCheckpoint: input.onGoalCheckpoint,
             mcpManager,
             workspaceSlug,
@@ -342,6 +398,10 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async interruptQuery(sessionId: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
+    if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
+      throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
+    }
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     active.interrupted = true
@@ -349,6 +409,10 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async setPermissionMode(sessionId: string, mode: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
+    if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
+      throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
+    }
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     if (mode === 'safe' || mode === 'auto' || mode === 'plan' || mode === 'bypassPermissions') {
@@ -359,6 +423,10 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async sendQueuedMessage(sessionId: string, message: SDKUserMessageInput): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
+    if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
+      throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
+    }
     const active = this.activeSessions.get(sessionId)
     if (!active) {
       throw new Error(`[AI SDK Runtime] 无活跃会话可追加消息: ${sessionId}`)
@@ -369,6 +437,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   }
 
   async cancelQueuedMessage(sessionId: string, messageUuid: string): Promise<void> {
+    if (this.activeSessions.get(sessionId)?.ownerPlanning || resolveOwnerPlanningSession(sessionId)) {
+      throw new Error('Owner规划不允许权限变化、追加输入或中断续跑；请使用停止')
+    }
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     active.queuedMessages = active.queuedMessages.filter((message) => message.uuid !== messageUuid)
@@ -388,8 +459,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
 function createAbortController(parentSignal: AbortSignal | undefined): AbortController {
   const controller = new AbortController()
-  if (parentSignal) {
-    parentSignal.addEventListener('abort', () => controller.abort(), { once: true })
+  if (parentSignal?.aborted) controller.abort(parentSignal.reason)
+  else if (parentSignal) {
+    parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), { once: true })
   }
   return controller
 }
