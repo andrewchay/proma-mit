@@ -206,7 +206,10 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
   }
   if ((matchesStartApproval || withinAutonomousProjectGrant) && plan && delegation && delegationView.state === 'active') {
     const selectedSteps = plan.proposal.steps.filter(step => outcome.assignmentProposal!.selectedStepKeys.includes(step.key))
-    const roleAssignments = outcome.assignmentProposal.assignments.map(({ roleKey, employeeId }) => ({ roleKey, employeeId }))
+    // 执行准备按稳定roleKey排序并要求首个岗位员工与executor一致；这里先统一排序再确定主执行员工。
+    const roleAssignments = outcome.assignmentProposal.assignments
+      .map(({ roleKey, employeeId }) => ({ roleKey, employeeId }))
+      .sort((left, right) => left.roleKey.localeCompare(right.roleKey))
     const firstExecutor = roleAssignments.find(item => selectedSteps.some(step => step.roleKey === item.roleKey))
     const roles = [...new Set(selectedSteps.map(step => step.roleKey))].sort()
     const assignedRoles = [...new Set(roleAssignments.map(item => item.roleKey))].sort()
@@ -227,7 +230,9 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       requestId: randomUUID(), expectedPreparationRevision: executionPreparation.revision,
       expectedPolicyRevision: policy?.revision ?? null, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
       selectedStepKeys: [...outcome.assignmentProposal.selectedStepKeys], executionKind: outcome.assignmentProposal.executionKind,
-      employeeRuntimeVersion: 2, ...(outcome.assignmentProposal.executionKind === 'controlled' ? { textDeliveryVersion: 1 as const, qualityManagementVersion: 1 as const } : {}),
+      employeeRuntimeVersion: 2,
+      // 代码任务按文件交付：带研发范围时不再强制完整文本交付，否则 Write/Edit 会被移出工具集，员工只能把代码写在回复里。
+      ...(outcome.assignmentProposal.executionKind === 'controlled' && !outcome.assignmentProposal.developmentScope ? { textDeliveryVersion: 1 as const, qualityManagementVersion: 1 as const } : {}),
       // 自主管理额度仅覆盖当前项目已绑定工作区；该绑定来自项目预设或用户刚批准的团队范围。
       // 将其作为工作区覆盖确认，避免启动门禁再次要求用户批准同一资料/团队边界。
       ...(withinAutonomousProjectGrant ? { acknowledgeOwnerWorkspaceOverride: true } : {}),

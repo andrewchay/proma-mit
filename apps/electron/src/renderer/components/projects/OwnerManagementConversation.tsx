@@ -95,6 +95,13 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const waitingForUser = isOwnerWaitingForUser(messages)
   const ownerProcessing = (composer.sending || hasActiveTrace) && !waitingForUser
     && editor.view?.manager?.status !== 'paused' && delegation.view?.state !== 'stale' && delegation.view?.state !== 'attention'
+  const focusReplyComposer = (): void => {
+    requestAnimationFrame(() => {
+      const reply = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
+      reply?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      reply?.focus()
+    })
+  }
   const referencedDelivery = composer.deliveryReference
     ? editor.view?.messages.find(message => message.id === composer.deliveryReference?.messageId && message.role === 'assistant' && message.kind === 'delivery')?.delivery?.items.find(item => item.artifactHash === composer.deliveryReference?.artifactHash)
     : undefined
@@ -110,6 +117,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         {ownerProcessing && <span className="sidebar-breathe-dot sidebar-breathe-running size-2 flex-shrink-0 bg-current text-blue-500" aria-label="Owner正在处理" />}
         <p>{waitingForUser ? 'Owner正在等你处理一项待确认内容。' : assignmentTrace ? ownerTraceStatus(assignmentTrace) : 'Owner正在处理你的消息。'}</p>
       </div>
+      {waitingForUser && <div role="alert" className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3"><p>查看 Owner 的最新说明后，可以直接在对话里回复。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
       {assignmentActive && !waitingForUser && <p className="mt-1 text-xs text-muted-foreground">{elapsedLabel(clock - assignmentTrace.createdAt)}；这类安排没有可靠的固定预计时长。{clock - assignmentTrace.createdAt >= ORGANIZATION_STALL_HINT_MS ? '暂时还没有新进展；Owner会继续检查处理状态，你不必重复发送。收到结果或需要你决定的事项时，我会在这里更新。' : ''}</p>}
       </div>}
       {currentFocus ?? <p className="mt-3 text-sm text-muted-foreground">当前没有需要优先处理的项目事项。</p>}
@@ -160,7 +168,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       </article>)}
     </div>}
     </section>
-    {editor.view?.manager && <form className="space-y-3 rounded-2xl bg-background p-4 shadow-sm" aria-label="向Owner发送消息" onSubmit={event => { event.preventDefault(); void send(subject) }}>
+    {editor.view?.manager && <form className="sticky bottom-0 z-10 space-y-3 rounded-2xl bg-background/95 p-4 shadow-lg backdrop-blur" aria-label="向Owner发送消息" onSubmit={event => { event.preventDefault(); void send(subject) }}>
       <label className="sr-only" htmlFor={id}>给项目 Owner 的消息</label>
       <textarea id={id} rows={3} maxLength={4000} className="w-full resize-y rounded-xl bg-muted/30 p-3 text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="回答问题、补充想法、询问进度，或说明希望修改的目标和方案…" disabled={composer.sending || Boolean(composer.pending)} value={composer.text} onChange={event => edit({ subject, text: event.target.value })} />
       <p className="text-xs leading-5 text-muted-foreground">这条消息会进入项目记录并交给 Owner 判断；实际目标、方案或进度变化会显示在上方“现在最需要关注”。要直接修改正式目标，请使用“调整目标”。</p>

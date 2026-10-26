@@ -33,7 +33,7 @@ beforeAll(async () => {
   await store.initProjectDb()
   service = await import('./project-owner-execution-preparation')
 })
-function fixture(confirm = true) {
+function fixture(confirm = true, configureSources?: (projectId: string) => void) {
   const project = store.createProject({ title: 'Owner执行准备', description: '' })
   const workspace = createAgentWorkspace(`Owner-execution-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
@@ -43,7 +43,7 @@ function fixture(confirm = true) {
     baseUrl: 'https://example.invalid',
     apiKey: 'fake',
     enabled: true,
-    models: [{ id: 'model', name: 'model', enabled: true }],
+    models: [{ id: 'deepseek-flash', name: 'deepseek-flash', enabled: true }],
   })
   const employee = (name: string) =>
     employees.createAgentEmployee({
@@ -54,12 +54,13 @@ function fixture(confirm = true) {
       permissionMode: 'safe',
       runtime: 'ai-sdk',
       channelId: channel.id,
-      modelId: 'model',
+      modelId: 'deepseek-flash',
       workspaceIds: [workspace.id],
     })
   const executor = employee('执行者'),
     reviewer = employee('评审者')
   saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成定位方案' })
+  configureSources?.(project.id)
   const context = plans.getProjectOwnerPlanningContext(project.id)
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, {
     expectedContextFingerprint: context.fingerprint,
@@ -101,11 +102,11 @@ function fixture(confirm = true) {
   return { project, workspace, channel, executor, reviewer, input }
 }
 test('Given项目绑定员工的渠道或模型已停用 When读取准备候选 Then无效员工不进入岗位推荐目录', () => {
-  for (const invalidation of ['channel', 'model'] as const) {
+  for (const invalidation of ['channel', 'deepseek-flash'] as const) {
     const f = fixture()
     updateChannel(f.channel.id, invalidation === 'channel'
       ? { enabled: false }
-      : { models: [{ id: 'model', name: 'model', enabled: false }] })
+      : { models: [{ id: 'deepseek-flash', name: 'deepseek-flash', enabled: false }] })
     const view = service.getOwnerExecutionPreparation({ projectId: f.project.id })
     expect(view.choices.employees.some((employee) => employee.id === f.executor.id)).toBe(false)
     expect(view.choices.employees.some((employee) => employee.id === f.reviewer.id)).toBe(false)
@@ -196,13 +197,13 @@ test('Given 多个项目各自绑定员工、工作区与资料 When 读取准�
   bindWorkspaceToProject(otherProject.id, otherWorkspace.id)
   const otherEmployee = employees.createAgentEmployee({
     name: '另一项目执行者', role: '研究', description: '', executionProfile: 'controlled',
-    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'deepseek-flash',
     workspaceIds: [otherWorkspace.id],
   })
   const unboundWorkspace = createAgentWorkspace(`Owner-unbound-${randomUUID()}`)
   const unboundEmployee = employees.createAgentEmployee({
     name: '未绑定执行者', role: '研究', description: '', executionProfile: 'controlled',
-    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'deepseek-flash',
     workspaceIds: [unboundWorkspace.id],
   })
   const projectSource = catalog.createSource({ name: '当前项目资料', type: 'file', locator: join(directory, 'current.txt') })
@@ -234,7 +235,7 @@ test('Given 员工同时属于本项目与另一项目工作区 When读取候选
   bindWorkspaceToProject(otherProject.id, otherWorkspace.id)
   const sharedEmployee = employees.createAgentEmployee({
     name: '跨项目工作区员工', role: '研究', description: '', executionProfile: 'controlled',
-    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'deepseek-flash',
     workspaceIds: [f.workspace.id, otherWorkspace.id],
   })
   const selected = service.getOwnerExecutionPreparation({ projectId: f.project.id }).choices.employees.find(({ id }) => id === sharedEmployee.id)
@@ -244,7 +245,7 @@ test('Given 已绑定Owner载体 When读取执行候选或伪造角色映射 The
   const f = fixture()
   const carrier = employees.createAgentEmployee({
     name: 'Owner规划载体', role: '规划', description: '', executionProfile: 'controlled',
-    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'deepseek-flash',
     workspaceIds: [f.workspace.id],
   })
   bindings.saveOwnerRuntimeBinding(f.project.id, 0, {
@@ -279,7 +280,7 @@ test('Given 有效Owner绑定工作区 When用户手动选其他项目工作区 
   employees.updateAgentEmployee(f.reviewer.id, { workspaceIds: [f.workspace.id, alternateWorkspace.id] })
   const carrier = employees.createAgentEmployee({
     name: 'Owner规划载体', role: '规划', description: '', executionProfile: 'controlled',
-    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'deepseek-flash',
     workspaceIds: [f.workspace.id],
   })
   bindings.saveOwnerRuntimeBinding(f.project.id, 0, {
@@ -307,7 +308,7 @@ test('Given 有效Owner绑定配置 When岗位员工使用其他共同配置 The
   })
   const carrier = employees.createAgentEmployee({
     name: 'Owner规划载体', role: '规划', description: '', executionProfile: 'controlled',
-    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'deepseek-flash',
     workspaceIds: [f.workspace.id],
   })
   bindings.saveOwnerRuntimeBinding(f.project.id, 0, {
@@ -430,15 +431,13 @@ test('Given source未关联项目 When 预览 Then 不借全局目录获取资�
   ).toThrow('关联')
 })
 test('Given 选中正式source When 新增来源或旧源停用 Then 不扩大已冻结范围，撤权失效', () => {
-  const f = fixture(),
-    subject = { projectId: f.project.id },
-    source = catalog.createSource({
-      name: '资料A',
-      type: 'file',
-      locator: join(directory, 'a.txt'),
-    }),
-    base = catalog.createKnowledgeBase({ name: '项目库A', sourceIds: [source.id] })
-  catalog.bindProject({ projectId: f.project.id, knowledgeBaseId: base.id })
+  const source = catalog.createSource({
+    name: '资料A', type: 'file', locator: join(directory, 'a.txt'),
+  })
+  const base = catalog.createKnowledgeBase({ name: '项目库A', sourceIds: [source.id] })
+  // 资料是方案确认的来源边界，须在冻结方案前建立关联。
+  const f = fixture(true, projectId => { catalog.bindProject({ projectId, knowledgeBaseId: base.id }) })
+  const subject = { projectId: f.project.id }
   const input = { ...f.input, knowledgeSourceIds: [source.id] },
     preview = service.previewOwnerExecutionPreparation(subject, input),
     saved = service.saveOwnerExecutionPreparation(subject, input, preview.previewFingerprint)
@@ -456,7 +455,8 @@ test('Given 选中正式source When 新增来源或旧源停用 Then 不扩大�
       .getOwnerExecutionPreparation(subject)
       .preparation!.source.knowledgeSources.map((item) => item.id),
   ).toEqual([source.id])
-  expect(service.getOwnerExecutionPreparation(subject).status).toBe('current')
+  // 新增项目资料使方案来源失效，但不能扩大原准备内冻结的资料集合。
+  expect(service.getOwnerExecutionPreparation(subject).status).toBe('stale')
   catalog.updateSource(source.id, { enabled: false })
   expect(service.getOwnerExecutionPreparation(subject).status).toBe('stale')
 })
@@ -552,7 +552,7 @@ test('Given 既有active/unknown命令占额 When 准备 Then 不新开范围或
     f.project.id,
     f.workspace.id,
     f.channel.id,
-    'model',
+    'deepseek-flash',
     f.executor.id,
     f.reviewer.id,
     f.input.expiresAt,

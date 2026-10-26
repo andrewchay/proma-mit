@@ -39,9 +39,12 @@ function sha256(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex')
 }
 
-/** Git 执行仍使用 UUID；Owner 调度使用带命名空间的确定性 ID，两者都可安全用于快照文件名。 */
+/**
+ * Git 执行仍使用 UUID（历史夹具带 exec- 前缀）；Owner 调度使用带命名空间的确定性 ID。
+ * 三者都只含安全字符，可直接用于快照文件名。
+ */
 function isValidDevelopmentExecutionId(value: string): boolean {
-  return /^[a-f0-9-]{36}$/.test(value) || /^owner-auto-execution-[a-f0-9]{48}$/.test(value)
+  return /^(?:exec-)?[a-f0-9-]{36}$/.test(value) || /^owner-auto-execution-[a-f0-9]{48}$/.test(value)
 }
 
 interface SnapshotLimitsParam { maxFileBytes?: number; maxTotalBytes?: number; maxFiles?: number }

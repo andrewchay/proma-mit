@@ -18,14 +18,16 @@ function injectStreamUsage(body: string): string {
     return body
   } catch { return body }
 }
-function capPiOwnerOutput(body: string, runtime: string): string {
-  if (runtime !== 'pi') return body
+function capPiOwnerOutput(body: string, runtime: ReturnType<typeof readOwnerCommandRuntime>): string {
+  if (runtime.runtime !== 'pi') return body
+  const price = runtime.priceEvidenceId ? getPilotReviewedPriceEvidence(runtime.priceEvidenceId) : null
+  if (!price || price.model !== runtime.modelId || price.providerKind !== 'openai') throw new Error('Owner Pi 输出上限缺少匹配的审核价格证据')
   const parsed = JSON.parse(body) as Record<string, unknown>
   let capped = false
   for (const key of ['max_tokens', 'max_completion_tokens']) {
     const value = parsed[key]
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) continue
-    parsed[key] = Math.min(value, 4096)
+    parsed[key] = price.maxModelOutputTokens
     capped = true
   }
   if (!capped) throw new Error('Owner Pi 请求缺少可核验的输出上限')
@@ -121,10 +123,8 @@ export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId:
       priceEvidenceId: attemptedPriceEvidenceId, errorMessage: OWNER_PREFLIGHT_PRICE_REJECTION })
     throw new Error(OWNER_PREFLIGHT_PRICE_REJECTION)
   }
-  // DeepSeek 评审与 GLM 员工的思考也占输出额度；为正文保留空间，仍逐请求预留完整上界。
-  const outputLimit = modelId === 'deepseek-flash' && row.command_role === 'reviewer'
-    || row.runtime === 'ai-sdk' && /^glm-5\.3(?:-flash)?$/i.test(modelId) ? 8192 : 4096
-  return Math.min(outputLimit, price.maxModelOutputTokens)
+  // 直接采用该模型已审核的最大输出上限；逐请求费用预留会在发送前校验项目预算。
+  return price.maxModelOutputTokens
 }
 function reserveOwnerRequest(input: { requestId: string; commandId: string; executionId: string; sessionId: string; envelope: ReturnType<typeof derivePilotRequestEnvelope> }) {
   if ([input.requestId, input.commandId, input.executionId, input.sessionId].some(id => typeof id !== 'string' || !id.trim())
@@ -213,20 +213,64 @@ function settleOwnerRequestUsage(requestId: string, usage: { promptTokens: numbe
     database.prepare("UPDATE project_owner_execution_request_reservations SET state='settled', settled_cost_micros=? WHERE request_id=? AND state='reserved'").run(Number(cost), requestId)
   })()
 }
-async function settleOwnerAfterResponse(requestId: string, response: Response): Promise<Response> {
-  const markUnknown = (): void => { store.getProjectDb().prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE request_id=? AND state='reserved'").run(requestId) }
-  if (!response.ok || !response.body) { markUnknown(); return response }
-  let clientResponse = response
+/**
+ * 已发出但尚未结算的请求：流式透传不能等整段响应结束再交给 Runtime，
+ * 否则模型输出要等上游关闭后才可见。这里记录后台结算，供工具门禁和测试等待真实终态。
+ */
+const pendingSettlements = new Map<string, { commandId: string; promise: Promise<void> }>()
+
+function markOwnerRequestUnknown(requestId: string): void {
+  store.getProjectDb().prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE request_id=? AND state='reserved'").run(requestId)
+}
+
+/** 计费分支独立读完响应体，成功取得 usage 才结算；任何异常或用量缺失都保持对账状态。 */
+async function settleOwnerFromAccountingBranch(requestId: string, accountingBody: ReadableStream<Uint8Array>): Promise<void> {
   try {
-    const [clientBody, accountingBody] = response.body.tee()
-    clientResponse = new Response(clientBody, { status: response.status, statusText: response.statusText, headers: response.headers })
     const body = await new Response(accountingBody).text()
-    if (body.length > 4_000_000) { markUnknown(); return clientResponse }
+    if (body.length > 4_000_000) { markOwnerRequestUnknown(requestId); return }
     const usage = parseOpenAIUsage(body)
-    if (!usage) { markUnknown(); return clientResponse }
+    if (!usage) { markOwnerRequestUnknown(requestId); return }
     settleOwnerRequestUsage(requestId, usage)
-  } catch { markUnknown() }
-  return clientResponse
+  } catch { markOwnerRequestUnknown(requestId) }
+}
+
+/**
+ * 只有流式（SSE）响应需要即时透传：非流式响应本就整段返回，仍是读完即结算，
+ * 保持“终态回调时用量已确认”的同步语义，避免无谓地推迟命令结算。
+ */
+async function passthroughWithSettlement(commandId: string, requestId: string, response: Response): Promise<Response> {
+  if (!response.ok || !response.body) { markOwnerRequestUnknown(requestId); return response }
+  const isStream = (response.headers.get('content-type') ?? '').includes('text/event-stream')
+  if (!isStream) {
+    try {
+      const body = await response.text()
+      if (body.length > 4_000_000) markOwnerRequestUnknown(requestId)
+      else {
+        const usage = parseOpenAIUsage(body)
+        if (usage) settleOwnerRequestUsage(requestId, usage)
+        else markOwnerRequestUnknown(requestId)
+      }
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
+    } catch {
+      markOwnerRequestUnknown(requestId)
+      return response
+    }
+  }
+  const [clientBody, accountingBody] = response.body.tee()
+  const entry = { commandId, promise: settleOwnerFromAccountingBranch(requestId, accountingBody) }
+  pendingSettlements.set(requestId, entry)
+  void entry.promise.finally(() => { if (pendingSettlements.get(requestId) === entry) pendingSettlements.delete(requestId) })
+  return new Response(clientBody, { status: response.status, statusText: response.statusText, headers: response.headers })
+}
+
+/** 等待已发出请求的结算落库；工具执行前用它把“用量已确认”恢复到同步门禁之前。 */
+export async function awaitOwnerRequestSettlements(filter?: { requestId?: string; commandId?: string }): Promise<void> {
+  if (filter?.requestId) { await pendingSettlements.get(filter.requestId)?.promise; return }
+  while (pendingSettlements.size > 0) {
+    const waiting = [...pendingSettlements].filter(([, entry]) => !filter?.commandId || entry.commandId === filter.commandId)
+    if (waiting.length === 0) return
+    await Promise.all(waiting.map(([, entry]) => entry.promise))
+  }
 }
 /** Owner受控出口：字符串body fail-closed、include_usage注入、预留→核验→发送→结算。 */
 export function createOwnerRequestFetch(input: OwnerRequestFetchInput): typeof globalThis.fetch {
@@ -238,7 +282,7 @@ export function createOwnerRequestFetch(input: OwnerRequestFetchInput): typeof g
     assertOwnerCommandPrice(runtime)
     if (runtime.priceEvidenceId && input.priceEvidenceId && runtime.priceEvidenceId !== input.priceEvidenceId) throw new Error('Owner请求价格与当前员工冻结来源不一致')
     const priceEvidenceId = runtime.priceEvidenceId ?? input.priceEvidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID
-    const finalBody = injectStreamUsage(capPiOwnerOutput(body, runtime.runtime))
+    const finalBody = injectStreamUsage(capPiOwnerOutput(body, runtime))
     const envelope = derivePilotRequestEnvelope({ body: finalBody, priceEvidenceId })
     const requestId = `owner-${randomUUID()}`
     reserveOwnerRequest({ requestId, commandId: input.commandId, executionId: input.executionId, sessionId: input.sessionId, envelope })
@@ -247,10 +291,10 @@ export function createOwnerRequestFetch(input: OwnerRequestFetchInput): typeof g
     let response: Response
     try { response = await input.baseFetch(rawInput, { ...init, body: finalBody, redirect: 'error' }) }
     catch (error) {
-      store.getProjectDb().prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE request_id=? AND state='reserved'").run(requestId)
+      markOwnerRequestUnknown(requestId)
       throw error
     }
-    return settleOwnerAfterResponse(requestId, response)
+    return passthroughWithSettlement(input.commandId, requestId, response)
   }
   return Object.assign(ownerFetch, { preconnect: () => {} })
 }
@@ -258,6 +302,25 @@ export function getOwnerRequestReservation(requestId: string): { state: string; 
   const row = store.getProjectDb().prepare('SELECT state, settled_cost_micros FROM project_owner_execution_request_reservations WHERE request_id=?').get(requestId) as { state: string; settled_cost_micros: number | null } | undefined
   return row ? { state: row.state, settledCostMicros: row.settled_cost_micros } : null
 }
+/** 工具执行前先等流式请求的结算落地，再执行既有同步门禁；非Owner会话直接放行。 */
+const OWNER_SETTLEMENT_WAIT_MS = 10_000
+export async function awaitOwnerExecutionRequestsSettled(sessionId: string): Promise<void> {
+  let execution: ReturnType<typeof store.getAgentExecutionBySessionId>
+  // 窄单测可能不初始化项目库；这种情况没有 Owner 证据，按非Owner会话放行。
+  try { execution = store.getAgentExecutionBySessionId(sessionId) }
+  catch (cause) {
+    if (cause instanceof Error && cause.message.includes('未初始化')) return
+    throw cause
+  }
+  if (!execution?.ownerCommandId) return
+  // 有界等待：上游异常长时间不结束不能让工具无限挂起；超时仍由同步门禁 fail-closed 拒绝。
+  await Promise.race([
+    awaitOwnerRequestSettlements({ commandId: execution.ownerCommandId }),
+    new Promise<void>(resolve => { setTimeout(resolve, OWNER_SETTLEMENT_WAIT_MS).unref?.() }),
+  ])
+  assertOwnerExecutionRequestsSettled(sessionId)
+}
+
 /** Pi工具执行前要求本次会话已有Provider请求全部取得确定用量回执。 */
 export function assertOwnerExecutionRequestsSettled(sessionId: string): void {
   const execution = store.getAgentExecutionBySessionId(sessionId)

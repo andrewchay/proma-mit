@@ -10,6 +10,303 @@ Owner 自己理解和澄清目标、制定及修改方案、拆解工作、调�
 
 用户负责目标、约束、资料范围和项目总费用额度；Owner 负责实现路径和日常项目管理。用户不应被要求挑员工、决定任务拆分、安排任务、逐项启动、跟踪或审批普通内部工作。用户在项目开始时一次确认自主范围（包括项目总费用上限、资料范围和授权期限）后，Owner 在范围内自行规划、执行、评审和返工；方案与进度可透明展示，但不作为等待批准的门禁。
 
+### 2026-10-24 职责与架构收敛（已确认方向，待实现）
+
+**Owner 是项目管理者，AI 员工是执行者；Owner 的核心增量是持续主动管理，员工执行复用现有成熟 Agent 能力。** Owner 必须在没有新用户消息时，通过项目事件与定时巡检主动检查状态、理解变化、提出方案更新、协调执行并与用户交流。定时器只负责发现和唤醒，不能用固定提醒替代项目理解；复用主/子 Agent 执行机制也不能让 Owner 退化成只响应用户的单次会话。
+
+实施保留 Owner 管理身份、项目上下文、开放问题与待跟进责任；员工沿用现有会话、工具、工作区、文件和流式执行。系统统一检查预算、访问、幂等与恢复，不再围绕每次员工执行扩展一套独立运行协议。历史权威数据与回执保留，通过兼容适配渐进收敛。详细职责、循环与验收条件见 [Owner 设计收敛决议](owner-design.md#2026-10-24-职责与实现收敛决议)。
+
+当前优先顺序：修复受控出口等待完整响应才透传导致的流式阻塞风险 → 通过成熟员工执行路径完成最小文件任务与独立检查 → 接回 Owner 的事件处理、定时巡检、实际恢复动作与主动方案更新 → 固定包验证无人追加消息时仍能推进。此顺序不将主动性延期为可选功能；最小执行切片通过后，必须覆盖主动循环才能验收。源码已定位响应缓冲机制：受控出口在 `settleOwnerAfterResponse` 里先把整段响应读完再交给 Runtime。`0.13.267` 已改为流式即时透传（详见下方 2026-10-24 受控出口切片），但尚未构建新固定包，也还没有真实 Provider 的长响应复现，因此不能把源码修复或隔离 BDD 当作“历史超时已解决”。
+
+### 2026-10-24 受控出口流式透传（Electron 源码 0.13.267，待固定包验收）
+
+**停点修复。**`project-owner-execution-request-exit.ts` 的受控出口原先用 `response.body.tee()` 后 `await new Response(accountingBody).text()`，再返回客户端 Response；Runtime 因此要等上游整段响应读完才拿到可读流，模型输出在响应结束前不可见。现按响应类型分开处理：SSE（`text/event-stream`）立即返回客户端分支，计费分支在后台读完并按 usage 结算，客户端分支不被消费也能完成；非流式 JSON 响应本就整段返回，仍是读完即结算，保留“终态回调时用量已确认”的同步语义，避免无谓推迟命令结算。任一步骤缺少 usage、超出体积上限或读取异常都写 `needs_reconcile`，未知用量继续占额且不自动重试。
+
+**工具门禁。**流式结算变为后台完成后，AI SDK 与 Pi 的工具执行前都改为先 `await awaitOwnerExecutionRequestsSettled(sessionId)`：等待该命令已发出请求的结算落库（有界 10s，超时仍由原同步门禁 fail-closed 拒绝），再执行原“任一无结算请求即暂停工具”的检查。终态回调聚合前也会等待同一命令的挂起结算，避免把已发送请求误记成用量未知。
+
+**Runtime 层增量可见。**`agent-runtime/ai-sdk-owner-execution-offline.test.ts` 新增一例：真实 `AISDKRuntimeCore` 配 SSE 替身，上游未结束时首段文本已作为 `text_delta` 到达 `onAgentEvent`，放行后才拿到完整终态。它与出口层用例合起来覆盖“响应结束前可见”；该例的出口是测试内替身，不经过真实 Owner 命令链，因此两层证据分别成立、不合并成一次端到端旅程。
+
+**验证边界。**`project-owner-execution-stage-b.test.ts` 新增两例：SSE 上游未结束时已能读到首块文本、结算在流结束前保持 `reserved`、工具门禁在结算落地前保持等待并在落地后放行；流式响应不带 usage 时请求转 `needs_reconcile` 且门禁拒绝。同文件 62 例中 61 通过，唯一失败是既有环境问题（子进程 esbuild 产物无法解析 `electron`），改动前的 HEAD 同样失败。`bun run test project-owner` 覆盖 61 个文件、0 失败；Electron typecheck、改动文件 Biome 通过。
+
+这是源码与隔离 BDD 证据：没有真实 Provider 调用，也没有固定 Electron 包、长响应流式复现或无人追加消息时的推进验证。最小文件任务与独立检查、Owner 主动循环、固定包验收仍是本顺序中未完成的三步。
+
+### 2026-10-24 主动方案更新（Electron 源码 0.13.269，待真实执行验收）
+
+**问题。**独立检查返回后，Owner 只播报一句"独立检查已返回，我正在整理下一步"，用户看不到检查发现了什么、对项目有什么影响、接下来建议怎么调整；返工排入时也没有任何面向用户的说明。这与收敛决议要求的"主动提出方案更新，说明发现了什么、影响什么、建议如何调整"不一致。
+
+**实现。**`recordOwnerManagementObservation()` 在"检查终态且已有评审证据"时，改用结构化三段式（发现 / 影响 / 建议）：
+
+- `changes_requested`：列出前 3 项修改点与总项数，说明本轮成果保留但不能交付、受影响部分需在剩余返工次数与额度内重做且不扩大范围，建议先调整执行内容与验收依据再重新检查；超出目标/资料/费用边界时停下来请用户决定。
+- `approved`：说明通过、非阻断项数量与内容、可进入交付且不需要追加授权，建议继续整理交付说明。
+- 其他结论（如 `blocked`）：按事实说明"不是通过"，建议先核对依据与成果，不自动返工。
+
+内容全部取自权威观察与评审证据，不做推断；同一观察按事件哈希只写一次；没有评审证据时仍退回原通用进展，不补造建议。
+
+**验证。**新增 `project-owner-management-plan-update.test.ts` 4 例：要求修改时三段式与项数/摘要正确且重复观察不重复播报；通过时不要求追加授权；非通过结论按事实说明；无评审证据时退回通用文案。`bun run test project-owner` 62 个文件 0 失败；Electron typecheck 与 Biome 通过。
+
+**边界。**纯确定性文案，不调用模型，不改变返工、额度或授权判定；它把已有事实说清楚，不等于 Owner 已经会自主修订方案。真实执行下的表述是否足够、是否需要绑定方案修订版本，仍需固定包与真实员工结果验证。
+
+### 2026-10-24 固定构建 0.13.269（Dev arm64，未签名）
+
+`apps/electron/out-dev/Gravitas Dev-0.13.269-arm64-mac.zip`（286,595,042 bytes）；ZIP SHA-256 `10cd1ce218c775ea89dc6ffe2c94245595ccf0ecf53f67a401b22c9729efc7c0`；包内 `app.asar` SHA-256 `f2b63b9726c315adea403c74c5a16007ddc07fb5c3d42d5575c8436b5458fd4c`。`unzip -tq` 逐项 CRC 通过；Info.plist 版本 `0.13.269`、Bundle ID `com.gravitas.app.dev`，包内 `gravitasChannel=dev`。未配置 Developer ID 签名，属本机测试包。
+
+用 `bun scripts/package-smoke.ts <包内可执行文件>` 在临时隔离 profile 跑真实安装包烟测：`packageSmoke=passed`、退出码 0，26 个内置工具、3 个默认工作区 Skills、Skill Set 批量停用、原生 SQLite（`node:sqlite`）、知识库编辑链路与新媒体 schema 均通过。直接手跑二进制不提供权益快照签名会被营销 skills 断言拦下，必须用该脚本。
+
+该构建只证明装箱完整性与本地启动链路：**没有** Owner 项目旅程、真实 Provider 请求、员工执行或 AO-A02 用户验收。用户已授权 GLM-5.3-Flash 共 ¥10（2026-10-24），本轮未消耗。
+
+### 2026-10-24 历史未知费用口径与隔离实例启动
+
+用户决定：正式库里的费用“放行”，按已核对处理，不再阻断新的付费调用。据此只读核对实际数据，避免把口头放行当成清账：
+
+- 正式库 `~/.gravitas/projects/paa.db`：`quick_check=ok`，Owner 请求预留、执行命令、执行授权三张表**均为空**，没有任何待放行对象。
+- 当前主测试 profile `~/Library/Application Support/Gravitas Owner Test/owner-config/projects/paa.db`：同样为空。
+- 真正存在 `needs_reconcile` 命令的是旧版本化测试 profile：`Gravitas Owner Test 0.13.264 / 0.13.265 / 0.13.266`，各 1 条命令；`0.13.262` 为 1 条 settled 命令与 2 条 settled 预留。这些都是被版本隔离弃用的测试数据，不参与新运行。
+
+因此：**没有修改正式库，也没有伪造零用量或退款**；“放行”的落地形式是这些旧记录不再作为新会话的阻断条件。新实例使用全新的隔离目录，与上述任何库都不共享数据。
+
+已用 `0.13.269` Dev 包在隔离目录启动：`PROMA_ALLOW_MULTI_INSTANCE=1 PROMA_TEST_CONFIG_DIR=/tmp/gravitas-owner-dev-269/config`。主进程 `lsof` 核对 SQLite 在 `/tmp/gravitas-owner-dev-269/config/projects/paa.db`、Electron `userData` 在同目录 `electron/`，对 `~/.gravitas` 的引用数为 0。该启动只证明隔离可用，尚未配置渠道、未建项目、未发 Provider 请求。
+
+### 2026-10-24 隔离实例真实 GLM 运行：链路跑通、拒绝无运行证据的代码成果
+
+用户在新隔离实例（`0.13.269` Dev 包、`/tmp/gravitas-owner-dev-269/config`）自行配置智谱 AI 渠道并启用 `glm-5.3-flash`，创建项目「2048」并确认自主管理范围（`maxCostMicros` 2,000,000，`autonomousExecution`/`conversationEnabled`/`executionFollowupEnabled`/`fullDeliveryReviewEnabled`/`qualityDecisionEnabled` 全开）。以下均为该隔离库只读核对结果，未改动任何数据。
+
+**真实发生的事：**
+
+- 规划与安排多次真实调用：`agent_executions` 中 10 条规划执行为 `completed`。
+- 逐请求账本 4 条 `settled`：预留 277,475 micros，实际结算 7,472 micros（约 ¥0.05）；全程无 `needs_reconcile`、无 preflight 拒绝。
+- 执行命令 2 条 executor、2 条 reviewer，全部 `settled`（executor 预留 199,567 / 实结 4,293；reviewer 预留 211,859 / 实结 3,179）。
+- 任务表 1 条 `completed`（"明确游戏需求与验收标准"），8 条 `paused`（含规划/安排载体与后续步骤）。
+- 独立评审 `approved`，给定逐条静态依据（`collapse()` 前端合并、`i++` 防重复合并、`changed` 阻断无效移动、`localStorage` 最高分、`canMove()/over` 结束判定）。
+- 本轮新增的三段式播报在真实运行中出现：`发现：独立检查通过（…），没有阻断项。影响：成果可以进入交付…建议：我继续整理交付说明…`。
+
+**真实暴露的两个门禁缺口（这是本轮最重要的发现）：**
+
+1. **代码任务被强制按文本交付，员工拿不到写文件工具。**`project-owner-management-assignment.ts` 对 `executionKind === 'controlled'` 一律写入 `textDeliveryVersion: 1`；而 `getOwnerExecutionToolNames()` 在 `textDeliveryVersion === 1` 时**移除 `Write`/`Edit`**（`project-owner-execution-gates.ts:149`），`textDeliveryVersion` 本身又只允许用于"新版非代码执行"。结果是：员工只能在回复里给出完整 HTML 文本，无法落盘。隔离库中项目工作区没有任何 `index.html`，`project_owner_action_approvals` 表为空（从未发起写入审批），与员工自述"执行环境无法实际运行或落盘代码"一致。
+2. **Owner 执行会话没有 Shell/浏览器，无法产出运行证据。**Owner 因此拒绝验收："规则要求绑定的每条验证证据均为新鲜成功且未超时截断；当前环境无 Shell/浏览器，未附任何运行验证证据，作者也如实声明未运行。证据不足，无法 accept；同一环境返工也无法产出运行证据，故升级至业务/平台层面决定验证方式。"这条判断本身是正确且符合产品契约的，但也说明：**在补上文件写入与运行验证能力之前，Coding 项目无法真实交付**。
+
+**边界。**以上是真实 Provider（GLM-5.3-Flash）在本机隔离实例上的执行与费用证据，费用按本应用逐请求账本结算，不代表服务商账单。它证明规划→执行→独立评审→Owner 质量判断在真实模型下贯通，且 Owner 会正确拒绝无运行证据的成果；它**不**证明代码成果可运行、不证明交付闭环，也不构成 AO-A02 用户验收。
+
+### 2026-10-24 代码任务文件交付与写入风险分级（Electron 源码 0.13.270）
+
+用户决定：**开文件写入，但高危写入仍需用户审批**。据此修掉上一节记录的第一个缺口。
+
+**不再把代码任务压成文本交付。**`project-owner-management-assignment.ts` 原先对 `executionKind === 'controlled'` 一律写 `textDeliveryVersion: 1` + `qualityManagementVersion: 1`；现在当安排提案带 `developmentScope`（代码/文件任务）时不再写入这两个标志，于是 `getOwnerExecutionToolNames()` 会暴露 `Write`/`Edit`（以及研发范围下的 `Read`）。非代码任务仍走原完整文本交付路径，行为不变。
+
+**写入按风险分级。**新增 `classifyOwnerWorkspaceWrite()`（`project-owner-execution-gates.ts`）：
+
+- **低风险（免逐次审批）**：`Write` 新建文件、目标在工作区内、父目录已存在、非敏感文件名、非 `.git`、在研发范围内且不在保护路径。
+- **高风险（须用户逐次审批）**：覆盖已有文件、`Edit`/`MultiEdit`、`.env*`/`.npmrc`/`id_rsa` 等敏感名、`.git` 目录内、研发保护路径或范围外。
+- **非候选（直接拒绝）**：路径越出工作区、符号链接/硬链接、父目录不存在。
+
+门禁 `assertToolAllowedForSessionPurpose()` 与 AI SDK、Pi 两条权限链路按此放行或转审批；完整文本交付模式下仍完全不暴露写入工具。
+
+**验证。**`project-owner-execution-gates.test.ts` 16/16（新增用例覆盖新建免审批、覆盖/Edit/`.env` 需审批、越界非候选、父目录不存在非候选，并改写原“新建也要审批”的断言）；`bun run test project-owner` 62 个文件 0 失败；Electron typecheck 与改动文件 Biome 通过。
+
+**边界与已知限制。**只证明门禁与工具暴露按预期改变，**未**做真实 Provider 复跑，因此还没有代码落盘的真实证据。另有两项仍缺：(1) `Write` 不能创建新目录（父目录须已存在），单文件任务可行、多目录工程需另行设计；(2) Owner 执行会话仍无 Shell/浏览器，代码成果依旧拿不到“运行验证证据”，Owner 会按规则拒绝验收——这是下一个必须解决的门禁。
+
+### 2026-10-24 运行验证能力：方向确认与既有能力盘点
+
+用户确认运行验证的四个决定：**先做受管浏览器 + 系统内置断言（方案 B），受限 Shell（方案 A）随后默认关闭；断言只用系统内置模板；禁止执行项目自带测试（含 `bun test`）；证据有效期 30 分钟。**
+
+盘点源码后发现不必新造一套：`development-validation-service.ts` 已实现方案 A 的成熟机制——命令按 argv 直接 `spawn` 不经 shell、必须命中任务 `verificationCommands` 白名单、超时不算成功（`exitCode=null`）、输出只存尾部并记录哈希与字节数、证据绑定快照与配置并给出 `fresh` / `stale` / `legacy` 新鲜度、Git 变化集不一致即 stale。因此方案 A 改为**复用它并收窄命令范围**，不再新增并行协议。
+
+方案 B 只补现有服务没有的能力：受管浏览器 + 系统内置断言（不依赖仓库脚本）。其证据将与现有 `DevelopmentValidationEvidence` 对齐并增加 `method: 'browser_assertions'`，复用同一套新鲜度语义，不另造平行证据模型。
+
+设计文档（含白名单草案、采信规则、失败语义、切片顺序）在会话工作台 `runtime-verification-design.md`。**本轮未写实现代码**：下一步按切片 1→4 落地，并以真实 GLM 复跑 2048 验收。
+
+### 2026-10-24 切片1：运行验证证据类型与采信规则（0.13.271）
+
+- `DevelopmentValidationResult` 增加 `method?: 'command' | 'browser_assertions'` 与 `checks?: DevelopmentValidationCheck[]`；缺省 `method` 按 `command` 解释，历史记录不变。
+- 记录层（`development-validation-record.ts`）严格接纳新字段：`browser_assertions` 必须带非空 `checks`，逐项校验 id/title/status/detail 且 id 不可重复，任一畸形即整条作废；`command` 方式带 `checks` 直接拒绝，避免来源混淆。
+- 新增 `development-validation-acceptance.ts`：采信需同时满足 fresh、进程确认退出、输出未截断、成果哈希一致、30 分钟内新鲜；`browser_assertions` 还要求有逐项结果、无失败项、至少一项通过（全 skipped 不算通过）；`command` 沿用状态 passed 语义。
+
+验证：采信规则 12 例、记录层 10 例，`bun run test development-validation` 4 文件 0 失败，Electron typecheck 通过。
+
+### 2026-10-24 切片2：内置断言模板与意图映射（0.13.272）
+
+`owner-runtime-assertion-templates.ts` 内置 7 条断言：`html.loads`、`dom.board`（16 格）、`dom.initial-tiles`、`behavior.merge`、`behavior.no-move`、`storage.best-score`、`dom.restart`。脚本随应用发布，模型不能生成或改写；只做读取与键盘事件模拟，不含 `fetch`/`XHR`/文件写入（有测试断言）。
+
+`selectOwnerRuntimeAssertionTemplates(intents)` 按 Owner 声明的检查意图做关键词匹配，去重并保持注册顺序；意图为空或全部无法识别时退回默认子集（加载、棋盘、初始块），避免"意图写不清就什么都验证不了"。目标结构缺失时断言返回 `skipped`，而 skipped 在采信规则里不计通过。
+
+验证：6 例（标识唯一、脚本可求值、意图命中、去重保序、默认回退、无网络/写文件）。
+
+### 2026-10-24 切片3：受管浏览器断言执行器（0.13.273）
+
+`owner-runtime-browser-verifier.ts`：隐藏窗口 + 独立 partition `owner-runtime-verification`，`webRequest` 阻断除 `file:`/`data:`/`about:` 之外的一切请求；`sandbox`、`contextIsolation` 开启、`nodeIntegration` 关闭；逐条断言限时 15 秒，总预算默认 60 秒，超时标记 `timedOut`。
+
+路径校验在进入浏览器前完成并 fail-closed：必须是工作区内相对路径、存在、非符号链接、扩展名 HTML，并用 `realpath` 复核真实路径没有借父目录软链逃出工作区。校验失败直接抛错，不降级为 skipped。
+
+执行器留注入缝 `setOwnerRuntimeBrowserRunner`，测试用假实现验证编排；真实浏览器路径需 Electron 运行时，本轮未做真机冒烟。
+
+验证：4 例（按意图选断言、越界拒绝且不调用执行器、软链与非法扩展名拒绝、子目录允许）。
+
+### 2026-10-24 切片4：浏览器验证接入既有验证管线（0.13.274）
+
+关键取舍：**不新开评审通路**，而是把浏览器验证做成既有验证白名单里的一种命令。命令形如 `browser:html.loads+dom.board`，由 `developmentScope.verificationCommands` 在派发时确认，因此技术评审的「须命中冻结命令且回执绑定 contentHash」和 Owner 验收的「每条证据 fresh/passed/未截断且带 rawOutputSha256」两处既有门禁**直接生效**，无需改动协议。
+
+`owner-runtime-verification-command.ts`：解析断言标识（空、重复、未知标识一律报错，不静默忽略）；从 `targetPaths` 筛出工作区内实际存在的 HTML；逐文件执行并按需加文件前缀；退出码与输出摘要由断言结果派生（任一失败或超时即非 0），供既有 fresh/截断/哈希判定使用。
+
+`development-validation-service.ts` 的 `runDevelopmentValidation` 按命令前缀分流：`browser:` 走受管浏览器断言，其余仍按 argv 直接执行；其余证据格式、写入与新鲜度计算完全共用。
+
+验证：命令层 8 例（来源判断、解析、目标筛选、全通过、失败、超时、多文件前缀）；`bun run test development-validation owner-runtime project-owner` 70 文件 0 失败；Electron typecheck 通过。
+
+**边界**：真实浏览器执行路径尚未在打包应用中冒烟；断言模板目前只覆盖 HTML 成果，脚本/库类产物仍无运行证据。
+
+### 2026-10-24 切片4.5：Owner派发只提内置验证命令（0.13.275）
+
+Owner 派发协议原先把验证命令写成自由文本，实际会建议 `bun test` 这类仓库测试——与"禁止执行项目自带测试"的决定冲突，也让浏览器验证永远走不到。
+
+提示词改为只接受 `browser:<断言标识>`（列出 7 个可用标识及含义），并明确禁止 `bun test`／`npm test`／`pytest`／自写验证脚本；要求前端/HTML 成果至少声明一条 browser 断言，无法覆盖时须在理由里如实说明验证缺口。
+
+**边界**：这是提示词级约束，不是解析层的确定性拦截；执行侧仍由 `developmentScope.verificationCommands` 白名单与用户派发确认兜底。若要强制"Owner 提出的命令必须是 browser 形式"，需另加解析校验并评估对既有 development 派发的影响。
+
+验证：`project-owner-execution-assignment` 21 例、`bun run test project-owner` 62 文件 0 失败。
+
+### 2026-10-24 切片5：固定包与合并 main（0.13.277）
+
+**固定包**：`Gravitas Dev-0.13.275-arm64-mac.zip`，ZIP SHA-256 `0cdd92d0bcab3a7300977adf94768fa8b6575d178b8cfb8c89cf261d79b95352`。包内烟测 `packageSmoke=passed`（exit 0，26 工具、3 默认 Skills、原生 SQLite、知识库编辑通过）。已在隔离 profile 启动验证（对 `~/.gravitas` 引用 0）。
+
+**合并 main**：`codex/owner-main-integration` 相对 main 领先 497 个提交、落后 0，`git merge-tree` 预演无冲突；在 main 工作树以 `--ff-only` 快进，main 由 `32c21bb7` 前进到本分支 HEAD。回滚点 `32c21bb71469e168039ffbdf05d3143dd8839ff9`（`git reset --hard 32c21bb7` 可回到合并前）。合并后 main 工作树 `docs:check` 与 Electron typecheck 通过。
+
+**全量测试**：`bun run test` 失败文件由 8 降到 1。本轮修掉的红灯都是既有漂移：执行 ID 校验不接纳 `exec-` 前缀（连带 3 个研发服务文件 17 处失败）、启动路径断言匹配已重构代码、模板数 20→21（main 上同为红）、预算提示文案演进、`ste-writing-assembly` 局部 mock 漏导出。
+
+**唯一未修**：`TaskOwnerGoalEntry.browser.test.ts` 保存后等不到「已保存」状态（30 秒超时）。已在切片前提交 `8a2d7bdf` 上用独立工作树复现同样超时，确认与本次改动无关。可疑点是保存成功后 `dirty`（取 `editedWhileSaving`）未清零，需单独排查，不阻塞本次合并但仍是红灯。
+
+**仍未完成**：真实 GLM 复跑 2048（需在 GUI 里走完派发—执行—浏览器验证—评审—验收）；受管浏览器断言执行器尚未在打包应用中做真机冒烟；脚本/库类产物仍无运行证据。
+
+### 2026-10-24 修复最后一个红灯：保存成功后缺少状态反馈（0.13.278）
+
+`TaskOwnerGoalEntry.browser.test.ts` 保存后等不到「已保存」，30 秒超时。调试确认**保存本身成功**（夹具 `writes` 里已有该任务请求），问题在界面：保存成功后目标表单收起、切到已保存视图，而该视图只渲染目标内容与「调整目标」，**没有任何保存成功状态**，原来表单里的 `已保存` 随之消失。
+
+修法不是放宽断言，而是补回反馈：在已保存视图的目标区块标题行加入 `OwnerModuleStatus`，显示「已保存 · v{目标版本}」。全量测试随之转绿。
+
+验证：该浏览器测试 1 例通过；`bun run test` **734 文件 0 失败**（exit 0）；Electron typecheck 与 Biome 通过。
+
+补充观察：`ProjectOwnerJourney.integration.browser.test.ts` 单跑 2.6 秒通过，在目录并发运行时曾 90 秒超时；属浏览器测试资源争用，全量运行未复现。
+
+### 2026-10-24 受管浏览器断言执行器真机冒烟通过（0.13.279）
+
+把断言执行器接进包内烟测（`owner-runtime-verification-smoke.ts`），由 `runPackageSmoke()` 在打包后的真实 Electron 中调用，覆盖真实 `BrowserWindow` + `loadFile` + `webRequest` 路径，而不是注入假实现。
+
+夹具是一个可运行的 2048 最小页（16 格网格、两块初始数字、左移合并、重开按钮、localStorage），断言按注册顺序执行：`html.loads`、`dom.board`、`dom.initial-tiles`、`behavior.merge`、`storage.best-score`、`dom.restart`。
+
+**实测证据**（`Gravitas Dev-0.13.279-arm64-mac.zip`，ZIP SHA-256 `dcd88195b7bad6a910873182d4021bcb8d5a210614e8efbabfabd296fe273519`）：
+
+```
+"ownerRuntimeVerification":{"checks":6,"passed":6,"networkBlocked":true,
+"traversalRejected":true,"htmlLoads":true,"mergeChanged":true}
+```
+
+其中三项是这次真正要证明的：
+
+1. **断言真的能在打包环境执行**：6 条全 passed，`behavior.merge` 通过模拟两次左移把 `2,2` 合并为 `4`，说明键盘交互与页面状态读取都生效。
+2. **断网真的生效**：夹具发起 `fetch` 打向本地探针服务，探针收到 **0 次请求**（`networkBlocked: true`）；等待 600ms 后才断言，避免"还没来得及请求"造成假通过。
+3. **越界路径在进入浏览器前就被拒**：`../owner-runtime-smoke-escape.html` 被判定 `不在工作区内`（`traversalRejected: true`）。
+
+整体结果 `packageSmoke=passed`、exitCode 0，其余项（26 工具、3 默认 Skills、原生 SQLite、知识库编辑）保持通过。
+
+**仍未覆盖**：脚本/库类产物的运行证据（无浏览器可跑）；真实 GLM 端到端复跑 2048 由用户自行实测。
+
+### 2026-10-24 修复派发提示词自相矛盾：受控方式不该要求 browser 断言（0.13.280）
+
+真实运行暴露：Owner 返回 `executionKind: controlled` 却带 `developmentScope`，被解析层以「受控非研发安排不得包含代码范围」拒绝，整次请求失败冻结（实测 `glm-5.3-flash`，输入 2406 / 输出 770 tokens，服务商请求编号 `6bc6f0f8-...`）。
+
+根因是**提示词自相矛盾**，不是模型乱答：
+
+1. `hasReferencedCodeSource()` 要求"存在代码候选且步骤引用了它们"才把 `development` 放进 `executionKinds`；新建项目没有代码候选，于是 Owner 只能选 `controlled`。
+2. 上一片提示词却不分条件地要求"前端/HTML 成果必须至少声明一条 browser 断言"。断言只能写在 `developmentScope.verificationCommands` 里，模型为了满足这条要求就硬塞了代码范围，撞上受控禁止含范围。
+
+修法：提示词按 `executionKinds` 分支生成。提供 development 时才给断言词表并要求 HTML 成果声明断言；只提供 controlled 时明确禁止输出 `developmentScope`、禁止声明任何验证命令，并要求在 `scopeReason` 里如实说明"只能交付文本、无法运行验证"这一缺口，不得虚构路径或运行证据。
+
+验证：`project-owner-execution-assignment` 21 例、`bun run test project-owner` 62 文件 0 失败、Electron typecheck 通过。
+
+**仍未解决的缺口**：新建项目没有代码候选 ⇒ 拿不到 `development` ⇒ 浏览器运行验证对"从零写页面"的任务仍不可达。要让绿地任务也能运行验证，需要允许 development 在没有既有代码候选时声明新文件作为目标路径；这属于派发语义变更，待确认后实施。
+
+### 2026-10-24 运行验证证据：假通过、超时与有效期收口（0.13.281–0.13.283）
+
+**假通过（0.13.281）**：`behavior.merge` 原先只比较"数字是否变化"，`storage.best-score` 只要 localStorage 存在任意键就算通过，`dom.restart` 缺入口返回 skipped，而汇总又把 skipped 当通过。现改为：合并必须出现合并产物（数值翻倍且块数减少）或分数真实增长；最高分必须有分数类键且值为数字；缺重开入口判失败；汇总中任何非 passed（含 skipped）都使整体失败。
+
+**加载超时（0.13.282）**：`loadFile()` 与错误收集器注入原先没有任何超时，异常 HTML 会长期不返回。现统一 deadline，超时即 `webContents.stop()` 并标记 `timedOut`、不产出断言结果，窗口仍在 finally 销毁。
+
+**证据有效期接入验收（0.13.283）**：
+- 证据交接（`project-owner-development-artifact.ts`）为每条回执补 `finishedAt` 与 `expired`（超过 30 分钟置真）；
+- 技术评审 `assertOwnerDevelopmentValidationForVerdict` 与 Owner 验收条件都把 `expired === true` 视为不可通过；
+- 采信函数自身修正：浏览器证据除逐项断言外，还必须 `status === 'passed'` 且 `exitCode === 0`，不再接受"断言全过但整体失败"的拼接证据。
+
+验证：`owner-runtime` 7 文件、`development-validation`＋`project-owner-quality`＋`project-owner-technical` 7 文件，0 失败；typecheck 通过。
+
+### 2026-10-24 绿地研发：空仓新建项目也能拿到运行验证（0.13.285）
+
+之前 `hasReferencedCodeSource()` 要求"存在代码候选且步骤引用了它们"才提供 `development`；新建项目没有代码候选，只能选 `controlled`，于是 `textDeliveryVersion` 被置 1、Write/Edit 被移出工具集，"从零生成 2048 页面"永远只能交付文本。
+
+现在新增绿地可用性：当**没有代码候选**且**至少一个授权工作区是 git 仓库**时，`executionKinds` 包含 `development`，并在上下文标记 `greenfieldDevelopment`。
+
+对应协议分支（`codeFiles` 为空时）：
+- `targetPaths` 是本次要新建的文件相对路径；仍走 `normalizeRepoRelativePath`（拒绝绝对路径、`..`、反斜杠、空段）与受保护路径规则；
+- `allowedPaths` 必须是 `targetPaths` 的子集（`pathWithinAllowed`）；
+- `verificationCommands` **只接受** `browser:<断言标识>`，并用注册表校验标识存在；不接受 `bun test`／`node verify.cjs`／`npm run check` 等执行仓库代码的命令。
+
+有代码候选时仍按原严格规则（目标必须来自源码引用、允许范围必须来自冻结候选），未被放宽。
+
+验证：`project-owner-execution-assignment` 17 例、上下文 11 例（含"git 仓库提供 development"与"非 git 不提供"两个方向）、`bun run test project-owner development owner-runtime` 79 文件 0 失败、typecheck 通过。
+
+**已知前提**：绿地研发依赖工作区是 git 仓库（研发交付要用 worktree 快照）。非 git 目录不提供 development，避免选到一条必然在交付阶段失败的路径。
+
+### 2026-10-24 真机冒烟抓到两处只有实跑才暴露的缺陷（0.13.286–0.13.287）
+
+**1. 合并断言把字符串当数字（0.13.286）**：`readTiles()` 返回的是文本数组，新判定用 `before.indexOf(value / 2)` 找数字，索引恒为 `-1`，于是真实 2048（`2,2 → 4`）被判为"未观察到合并产物"。改为读取即转数字。注入假实现的单测看不出来，只有真机跑真页面才暴露。
+
+**2. 存储隔离残留（0.13.287）**：所有验证共用同一个 partition，`game.html` 写入的 `best` 会残留给 `deceptive.html`，使"只有无关键"的反例页面通过最高分断言——等于用上一次验证的残留冒充本次持久化证据。改为每次验证前 `clearStorageData`（localstorage/indexdb/websql/cookies/serviceworkers/cachestorage）。
+
+**真机证据**（`Gravitas Dev-0.13.287-arm64-mac.zip`）：
+
+```
+"ownerRuntimeVerification":{"checks":6,"passed":6,"networkBlocked":true,"traversalRejected":true,
+"htmlLoads":true,"mergeChanged":true,"deceptiveRejected":true,"loadTimeoutMs":8010}
+"packageSmoke":"passed"
+```
+
+`deceptiveRejected=true` 表示假页面（数字会变但不合并、只有无关存储键、无重开入口）整体被拒；`loadTimeoutMs=8010` 表示阻塞加载的页面在 8 秒预算内返回并标记超时，不再无限等待。
+
+### 2026-10-24 四个复跑缺口收口（0.13.288–0.13.292）
+
+用户复跑 13 个定向测试文件全通过，但指出四处仍会误伤的缺口，逐条处理：
+
+**P1 正常 2048 可能被误判失败（0.13.288）**：合并断言固定按两次左键，随机开局不保证相邻同值块；`behavior.no-move` 无法在无 GUI 钩子时构造"无路可走"局面，正常开局只能返回 skipped，而 skipped 已判失败，等于给正常页面埋必失败项。改为合并按 左/上/右/下 逐方向尝试（每向两次），任一出现合并产物或分数增长即通过；移除 `behavior.no-move` 模板与提示词词表。
+
+**P2 有效期用旧快照（0.13.289）**：交接时写下的 `expired` 只是生成时快照。新增 `isOwnerValidationEvidenceExpired()`，在判定时刻按 `finishedAt` 重算，`expired=true` 仍作为额外否决；技术评审与 Owner 验收两处都改用它。
+
+**P2 只有 init 无提交的空仓（0.13.290）**：原先只查 `.git` 存在，但执行准备要求 `git rev-parse HEAD` 成功。改为 HEAD 可解析才算可用绿地，并补"仅 init"反向用例。
+
+**P2 并行验证共享分区（0.13.291）**：公共同步在同一 partition 且每次开始清空存储，两个项目并行时互相破坏证据。改为每次验证创建独立内存分区（无 `persist:` 前缀）。
+
+**夹具补全（0.13.292）**：烟测夹具只有左键监听，无法覆盖"左键不合并、其他方向才合并"，补全四方向移动并把开局改为竖排两块。
+
+真机证据（0.13.292）：`checks=6 passed=6 networkBlocked=true traversalRejected=true deceptiveRejected=true loadTimeoutMs=8015`，`packageSmoke=passed`。合并在竖排开局下经 `ArrowUp` 检出，直接证明多方向尝试生效。
+
+### 2026-10-24 主动压测：又发现并修掉四处缺陷（0.13.293–0.13.296）
+
+在用户复跑通过后，我从"页面越权、证据时间、合并语义、绿地贯穿"四个角度主动压测，四处都需要修。
+
+**1. 合并判定会误伤真实 2048（0.13.293–0.13.296）**：原判定要求"块数减少"，但真实 2048 合并后立刻生成新块，块数往往不变；而"分数增长"作为替代信号又太容易伪造——页面只要在按键时把分数文本加一即可。改为**数值翻倍的多重集判定**：某值出现至少两次，按键后该值减少且它的两倍出现。真机新增 `spawn.html`（合并后生成新块）证明不再误判。
+
+**2. 页面可导航到本机其他文件（0.13.296）**：原 `webRequest` 放行所有 `file:`，成果可以 `location.href='file:///etc/hosts'`，而断言会把页面文本写进证据详情——等于把本地文件内容带进证据链。改为只放行本次目标文件（含 `#`/`?` 变体）与 `data:`/`about:`，并拒绝 `window.open`。更关键的是加了**离开目标地址即失败**的检测：每次断言前校验当前 URL，跳走就立即失败并停止读取 DOM，绝不产出通过项（`will-navigate` 对加载期脚本跳转不可靠，不能只靠拦截）。
+
+**3. 未来时间戳可绕过有效期（0.13.296）**：`finishedAt` 在未来时 `now - finishedAt` 为负，永远不过期。新增 5 分钟时钟前偏容忍，超出即视为不可采信；采信函数与门禁判定同步。
+
+**4. 绿地链路停在候选阶段（新增集成测试）**：`project-owner-greenfield-preparation.test.ts` 用真实 git 仓库跑通目标→计划→准备，验证绿地范围进入准备来源、`textDeliveryVersion` 未被置 1；同时验证"只有 init 无提交"的仓库被明确拒绝。
+
+**真机证据**（`Gravitas Dev-0.13.296-arm64-mac.zip`）：
+
+```
+"ownerRuntimeVerification":{"checks":6,"passed":6,"networkBlocked":true,"traversalRejected":true,
+"htmlLoads":true,"mergeChanged":true,"deceptiveRejected":true,"navigationRejected":true,
+"spawnMergePassed":true,"loadTimeoutMs":8017}
+"packageSmoke":"passed"
+```
+
+全量 `bun run test` 735 文件 0 失败。
+
 ## 产品交互契约
 
 | 时点 | 用户看到并负责 | Owner 在后台负责 |
@@ -99,7 +396,9 @@ Owner 自己决定任务拆分、员工选择、执行顺序、普通内部重�
 
 **2026-10-21 对话停点诊断与授权恢复续接（源码版本 0.13.185，待固定窗口验收）。**当前只读项目记录显示，上一轮已有提案，但安排检查报告项目当前可用团队不足；之后用户新消息得到的只是“消息已保存”占位回应。委托配置修订后状态为 stale，发送门禁正确阻止了新模型请求，但对话处理先建立了旧上下文 Link，恢复授权时又把该 Link 当作已处理，造成无具体原因、无自动续接的停点。现改为：授权无效/费用核对/额度不足时不建立不可运行请求，按消息幂等写入可理解的阻塞原因；授权恢复后或旧版遗留 Link 无执行记录时，按当前目标和授权重建同一消息请求；主进程对账会找回旧版本未启动的消息。既有已发送运行不会因该恢复路径重试。BDD：`project-owner-management-conversation.test.ts` 14/14、74断言，覆盖 stale 阻塞、零请求、重新授权后原消息自动回应；`project-owner-management-assignment.test.ts` 单文件重跑20/20、146断言；`project-owner-management-delegation.test.ts` 17/17、59断言；Electron typecheck与3文件Biome通过。没有调用真实 Provider。此为源码/隔离 BDD 证据，尚未构建固定包或完成 Electron 窗口验收；真实团队是否可用及员工是否执行仍待验证，AO-A02继续待用户生产验收。
 
-### 当前剩余核心项（2026-10-23，Electron 0.13.248）
+### 当前剩余核心项（2026-10-24 更新；既有真实交付证据截至 Electron 0.13.248）
+
+以下四项继续有效；本轮按上方架构收敛顺序推进，并以 Owner 在无新用户输入时的主动检查、判断、动作和沟通作为共同验收条件。既有事件扫描源码不能单独证明这些行为已完成。
 
 1. **Coding与资料项目真实交付**：2048需要实际工作区文件、浏览器行为验证、独立Review和对话交付；FDE需要成功读取真实24页PDF、逐项页码引用核验及完整材料。基础文字任务通过不能替代这两项。
 2. **异常后的自主处理**：正确处理Reviewer的not_verified/changes_requested等不一致回应，在明确用量、有效授权及额度内进行有界纠正；不能把内部协议或员工无法取得的项目审计证据转交用户。未知请求继续保留预留且不重发；账单核对回写与恢复入口仍需完善。
@@ -436,3 +735,59 @@ Electron `0.13.230` 已构建为隔离 macOS arm64 ZIP：`/tmp/gravitas-owner-te
 **仍开放的产品门禁：**外部账单/用量证据回写及原未知请求的安全恢复入口；固定Electron新版真实团队连续交付、反馈续跑与用户验收。用户报告的约48,869 tokens不等于已知账单金额，旧请求仍保留费用未知与预留。此候选可用于后续分支集成，不宣称Ledger已完成。
 
 固定构建证据：基于 `84259dc7` 打包 macOS arm64 `.253`，ZIP `apps/electron/out/Gravitas Owner Test-0.13.253-arm64-mac.zip`（298791974 bytes）；ZIP SHA-256 `237e009e476cfded09ed8ad5642f3bc8dcc8c5e97ad8c8d91ed65b7bbde1eb80`，包内 app.asar SHA-256 `78e5fcf1e1c3c883a094160c60e633ee06b89cff78225a8819fb62f382e370fc`。ZIP逐项CRC通过，Info.plist核对版本 `0.13.253`、Bundle ID `com.gravitas.owner-test.a02`。此为独立身份、未签名的本地测试包，未启动固定Electron窗口、未发送Provider请求。测试profile按包版本隔离，新版需确认自己的渠道凭据与项目范围；没有复制旧profile或自动恢复原未知费用请求。
+
+### 2026-10-23 分支集成候选 `.256`
+
+在独立 `codex/owner-main-integration` 分支，将本地 main `32c21bb7`、设计内容摘取提交 `9f4cdadd` 与 Owner `0b0b4409` 三方集成，合并提交 `f0b73fde`。保留 Dev/Stable 发布身份，将 Owner Test 移到独立 builder；主进程保留测试 profile 优先级、权限 Hooks 稳定顺序、全局 pending 恢复及 Owner 管理生命周期。原 main 和各源分支未修改，尚未推送或提交 PR。
+
+扩大 73 文件回归发现原分支已有 5 文件失败，并在原 Owner 工作树复现。修复同目标版本的澄清答复被对话去重阻断的续跑路径，只对精确匹配的已消费 answer_saved 事件解除重复规划过滤；启动来源、模型费用和授权准入继续重验。其余过时夹具按审价模型、GLM 输出额度和资料冻结状态修正，不放宽生产门禁。73 文件、811 tests 通过；新增非答复事件负例后，管理理解文件 9/9 通过；全仓 typecheck、lint 和生成文档检查通过。
+
+此记录证明源码集成和本地回归，不证明真实 Provider、固定 Electron 团队交付或用户验收。研发员工标准 `6909916e` 保持独立待集成，历史未知费用与外部账单回写门禁保持开放。详细来源、冲突及构建证据见 [分支集成记录](./branch-integration-20261023.md)。
+
+固定集成构建基于 `c578463d`，Dev arm64 ZIP `.256`（286587446 bytes），SHA-256 `e37f02336e6242e7de5898be099ea2a0641e26fe8f48d835695f955b7cb2157a`；ASAR SHA-256 `fc6b08461e1c42abcce7afeb2c0f9eaff566814d7af798180243b9357998c13c`。CRC、版本和 `com.gravitas.app.dev` / `gravitasChannel=dev` 身份核对通过。首次直接烟测受 macOS 崩溃后窗口恢复模态提示阻塞而超时；新解压副本在临时profile中追加 `--use-mock-keychain -ApplePersistenceIgnoreState YES` 后，实际包本地烟测通过、退出0、无真实Provider。此带测试参数结果不替代正常UI/系统钥匙串或真实Owner旅程验收。详见分支集成记录，不能将 `.255` 包当作包含本次续跑修复的候选。
+
+### 2026-10-23 `.257` 项目模型更换入口与准确提示
+
+用户报告添加 DeepSeek Flash 后仍提示不支持持续管理。只读核对当前 Dev 配置确认：渠道已启用 `deepseek-flash`，但项目 Owner 仍绑定 `kimi-for-coding`；全局默认也仍是 Kimi。DeepSeek Flash 的 AI SDK/OpenAI 预算预览可在隔离 BDD 中通过，问题不是该模型缺少审价，而是已绑定项目隐藏了选择框，且旧错误没有指出实际绑定模型。
+
+现始终展示当前 Owner 模型和“更换 Owner 模型”，展开后明确保存；编辑期间不自动准备，保存后清除旧预算预览/错误并重新读取委托状态。不支持提示写出实际模型及更换入口；没有静默改用其他渠道、放宽预算门禁或重发请求。浏览器回归覆盖已绑定项目展开、手选并保存 DeepSeek、收起编辑区、付费启动数保持0。主进程回归覆盖 DeepSeek provider + Flash 可预览、Kimi绑定不会因新增DeepSeek而静默切换；Jotai覆盖保存后清除旧提示。7个相关文件73 tests通过，含基础及2048/FDE fake旅程；全仓typecheck、lint、docs检查通过。用户正在使用的profile只读核对，未写入渠道、绑定、授权或费用，也没有发送真实Provider请求。
+
+同轮 code-simplifier 复核指出：编辑新模型时旧授权卡仍可能按旧模型确认。`.258` 进一步在 editingConfiguration/dirty 期间卸载授权卡，提示先保存模型再核对预算；保存和重读状态后恢复。浏览器负例验证编辑期间旧卡及确认按钮均不可用，保存后恢复。3个受影响界面/Jotai文件复跑通过。此保护不暂停或篡改此前已合法发出的请求；未保存草案不会改变项目绑定。
+
+最终交付 `.258` 基于 `f314ee42`，未签名 Dev arm64 ZIP：`apps/electron/out-dev/Gravitas Dev-0.13.258-arm64-mac.zip`，286587685 bytes；ZIP SHA-256 `17158a7312c7e6221fe45eb0bf16b8cc0cf12ee379550e4ec39926f83afc347d`，ASAR SHA-256 `fe05b40370327cff210d530edb9106e97e80fc3ef1218c0d187e6a17e95a94a2`。5阶段构建、CRC及包内 `.258` / `gravitasChannel=dev` 核对通过。临时空profile内以 `--use-mock-keychain -ApplePersistenceIgnoreState YES` 跑实际包烟测，`packageSmoke=passed`、退出0、真实Kimi开关关闭；不替代正常系统钥匙串或真实Provider/Owner交付验收。用户可在新版项目对话“更换 Owner 模型”中明确选择 DeepSeek Flash，保存后再核对新模型预算。
+
+### 2026-10-23 `.259` 发送前凭据检查与本地配置失败恢复
+
+只读核对 Dev 的 DeepSeek Flash 失败执行 `e36a117a-67e7-41d5-9e01-33987516286c`：Runtime 在参数检查处返回“AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd”；其他四项非空，说明当时解密后的 API Key 为空。渠道中存在加密字段不代表解密后有可用密钥。该执行没有发送准入记录，准备记录 `provider_admitted_at=null`，全部回执无模型结果、请求hash或用量。用户已在 Dev 设置中重新保存 API Key；本轮没有展示密钥或写入用户 profile，也没有发送 Provider 请求。
+
+管理预算预览及确认现在校验解密后的凭据，实际 Owner Runtime 入口再检查一次；空密钥或解密失败直接提示设置位置，明确本次未发送。Owner 的 AI SDK 入口同时使用统一的 Provider URL 解析。日常读取授权状态不会反复解密凭据。
+
+旧失败的恢复只读核对精确执行、冻结来源、准备状态、发送准入、所有完整性校验回执与回调；仅已知入口配置错误且全部证据一致表明未发送时，将授权视图改为需重新核对。原失败、费用未知与保守预留保留，不补造零用量/零费用、不退款、不重发旧请求。用户保存凭据后可重新核对并明确确认新授权；有发送准入、晚到运行结果或损坏回调时仍进入原核对门禁。
+
+实际 Dev 数据库通过只读备份复制到临时目录，新逻辑在副本中识别 `configurationFailure=true`、授权视图 `stale`、发送准入数0；临时副本核对后删除。该检查没有修改原库。BDD覆盖空凭据预览及Runtime入口拒绝、旧本地失败恢复、已准入同文错误、晚到结果与损坏回调的拒绝恢复。相关9个文件回归通过，新增矛盾证据用例后委托文件26/26通过；code-simplifier已只读复核。固定包构建和检查结果待随后追加；真实Provider、系统钥匙串及连续团队交付仍需固定版本验收。
+
+固定构建基于 `2342e4fe`，未签名 Dev arm64 ZIP `.259`：`apps/electron/out-dev/Gravitas Dev-0.13.259-arm64-mac.zip`（286588772 bytes），ZIP SHA-256 `90088acd63da381a42eb20bb5ba0c5da8948e2f2a570804894961b94b9c35f5f`；ASAR SHA-256 `15a32d20bcefd610871d2bd29d07a545e284a8e4aa1b12f398bd8029c05d4259`。5阶段构建、ZIP CRC及包内 `.259` / `gravitasChannel=dev` 核对通过；最终全仓typecheck、lint、docs检查和diff检查通过。实际包在临时空profile中以 `--use-mock-keychain -ApplePersistenceIgnoreState YES` 完成本地烟测，`packageSmoke=passed`、退出0、真实Provider开关关闭。这不替代正常系统钥匙串、Owner恢复后真实请求或团队交付验收。用户在 `.259` 中重新核对并确认授权后才能发起新请求；本轮未操作用户正在运行的窗口。
+
+### 2026-10-23 `.260` 历史Owner载体阻塞默认团队的恢复
+
+用户已确认方案后提示缺少执行及独立检查团队。只读核对 Dev 项目 `a34b6935`：3条员工记录均曾绑定为Owner载体，当前没有业务员工；旧版仅排除当前Owner，把历史Owner当成已有业务团队，导致默认员工不创建。候选过滤后又不足两人，出现 `no-independent-reviewer`。这次阻塞发生在安排准备阶段，没有因该次团队核对发送模型请求。
+
+现在从持久绑定历史识别全部Owner载体；历史载体不再阻止默认团队创建，也不会进入执行或独立评审候选。仅有Owner且只绑定一个现有项目工作区时，按方案创建 AI SDK / controlled / safe 员工，复用当前Owner模型与渠道，不扩展资料范围。有真实业务员工（含停用员工）时仍保留原配置；所需模板不完整时不创建半个团队。方案自身含 `delivery-verifier` 执行岗位时，另外创建最终独立评审员，避免与执行人员冲突。
+
+后台启动对账覆盖已确认方案的遗留缺员：只在原管理授权仍active、没有管理请求在运行、没有待确认团队工作区建议时补齐；本次确实创建了默认团队才续接安排准备，seed和准备同事务提交。重复扫描不重复创建或安排；过期、撤销或未知请求门禁不解除，不要求用户重建项目或单独配置员工。
+
+实际数据库的隔离副本首次检查因没有工作区索引未创建员工；补齐工作区索引后重做，原3条Owner之外创建5名员工（方案4个岗位及另外1名评审），重复调用不再创建，原Owner记录不变，运行时/模型/工作区边界均相符。副本随后删除，原Dev数据库和窗口未写入。新增回归从旧阻塞消息和已消费事件开始，在同一有效授权下完成补齐、fake员工执行、独立Review及原对话交付，并核对执行与评审command已settled、各自会话存在、重复扫描只有一次安排；另有历史身份排除、模板缺失不留半团队和核验岗位职责分离的回归。
+
+扩大回归的双案例浏览器用例初次在第二次Chromium启动处超时；临时标记定位后已删除。夹具改为共用Browser、各案例独立Context并逐一关闭，保留全部断言后，2048与PDF分析两条fake旅程通过。该调整仅涉及测试生命周期，不是Provider或Electron恢复成功的证据。最终11文件196 tests全部通过（新增恢复链文件32/32），全仓typecheck、lint、生成文档及diff检查通过；code-simplifier已只读复核。固定包证据随后追加。本轮没有真实Provider调用，也不将隔离回归视为用户验收。
+
+固定构建基于 `fe4db5b6`，未签名 Dev arm64 ZIP `.260`：`apps/electron/out-dev/Gravitas Dev-0.13.260-arm64-mac.zip`（286591483 bytes）；ZIP SHA-256 `7d7338bc783825526cd1be0d477647a6c50dd175c8a83bfe550dae1412ecf966`，ASAR SHA-256 `f87cb544590f5055f6226e1fccd755bf1b0080238055c51d11028305a65ff367`。5阶段构建、CRC及包内版本/Dev身份检查通过；实际包在临时空profile以 `--use-mock-keychain -ApplePersistenceIgnoreState YES` 完成本地烟测，`packageSmoke=passed`、退出0，未启用真实Provider。旧窗口未替换、用户profile未写入；正常系统钥匙串与原项目真实团队执行仍待用户打开新版验收。
+
+### 2026-10-23 `.261` 启动岗位排序修复与旧意图续接
+
+用户在 `.260` 确认方案后看到“暂时无法核实这次启动的当前状态”，且看不到再次确认/继续入口。只读核对 Dev 数据库发现两个未完成启动意图，都已保存相同计划步骤和岗位映射，但 `executorEmployeeId` 按计划步骤顺序（需求分析师）选取，岗位映射则按 `roleKey` 字母顺序冻结（交付核验员排首位）。准备校验要求主执行员工与冻结映射首位一致，所以在保存执行准备前拒绝；catch-all 把明确的岗位映射错误隐藏成泛化状态。两条意图均无执行准备、Task批次、授权或命令，因此没有员工启动，也没有该阶段的员工Provider调用。
+
+安排写入现在先按稳定 `roleKey` 排序，再从同序映射中选择主执行员工。对已保存的旧启动意图，只在当前方案与确认指纹一致、岗位集合完全匹配且原executor仍属于岗位映射时，派生一个与排序一致的执行准备输入；不改写旧确认记录或放宽岗位范围。后台恢复在第一条意图成功后，会把同主体、同方案及同执行边界且有效期不早于已发行授权的重复待处理意图归并到同一授权，避免第二次启动同一团队。
+
+本地只读Dev数据库通过SQLite备份复制到隔离目录，并带上工作区索引和渠道配置副本。调用真实恢复及准备校验、但将最终启动器替换为立即失败的假实现后，首条旧意图从岗位错误推进到启动器边界并停在测试哨兵处；未发送Provider请求，临时副本随后删除。新增BDD覆盖旧意图、方案步骤顺序与岗位排序不同、待审方案确认转修订后的兼容路径。安排文件33/33测试、216断言，全仓typecheck、Biome lint、docs生成与check及diff检查通过。Dev原库和窗口未改写、未发起Provider请求。
+
+固定构建基于 `8b552a7b`，未签名 Dev arm64 ZIP `.261`：`apps/electron/out-dev/Gravitas Dev-0.13.261-arm64-mac.zip`（286588912 bytes，SHA-256 `25d80e0a1b5e89d7d7f978feb2573ffd43d728d4011879f54fc9b5d5c546e8d5`）；ASAR SHA-256 `ce4e3d0c2c26a813b1cc00a5c14519139c763ccb528abb7d86e31bf4e7f16db6`。包内 `CFBundleShortVersionString=0.13.261`、`gravitasChannel=dev`。5阶段构建、ZIP CRC和实际打包应用烟测通过（`packageSmoke=passed`、退出0），使用临时空profile与Mock Keychain，没有真实Provider。烟测证明安装包本地启动与存储/资源链路，不证明原项目员工启动或真实模型执行；原项目中仍有两条历史待处理确认，打开 `.261` 后应在原有效预算内自动续接同一团队，不能重发两次。用户须验收该Dev测试包实际旅程。

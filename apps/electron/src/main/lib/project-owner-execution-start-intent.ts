@@ -22,20 +22,37 @@ function needsGrantReconciliation(cause: unknown): boolean {
   return cause instanceof Error && /待核对记录|核对原授权/.test(cause.message)
 }
 
+function safeRecoveryErrorDetail(cause: unknown): string {
+  if (!(cause instanceof Error)) return '未知异常'
+  return cause.message
+    .replace(/Bearer\s+\S+/gi, 'Bearer [已隐藏]')
+    .replace(/\b(?:sk|key|token)[-_][A-Za-z0-9_-]{12,}\b/gi, '[凭证已隐藏]')
+    .replace(/(api[_-]?key|authorization|access[_-]?token)\s*[:=]\s*[^,;\s]+/gi, '$1=[已隐藏]')
+    .replace(/(?:\/Users\/[^\s:]+|\/tmp\/[^\s:]+|[A-Z]:\\[^\s:]+)/g, '[本地路径]')
+    .slice(0, 220) || '未知异常'
+}
+
 function reportRecoveryAttention(intent: StartIntentRef, cause: unknown): boolean {
   const manager = getOwnerManager(intent.projectId)
   if (!manager) return false
   const message = cause instanceof Error ? cause.message : ''
+  const detail = safeRecoveryErrorDetail(cause)
   const content = needsGrantReconciliation(cause)
     ? '已有执行授权或授权状态需要核对，因此我没有再次派发，也不会自动重试。原授权与执行记录已保留；请先核对原授权，再决定是否继续。'
     : manager.status === 'paused'
       ? '我保留了这次已确认的工作范围。项目Owner目前处于暂停状态，因此没有启动员工；恢复项目管理后我会先核对原确认，再继续。'
       : /目标或方案来源已变化|方案版本已变化|执行配置已变化/.test(message)
-        ? '开始前我发现目标、方案或执行边界已变化，因此没有启动员工。原确认和任务记录都已保留；请在当前方案下重新确认结果与范围。'
-        : '我暂时无法核实这次启动的当前状态，因此没有继续派发新工作。原确认和已有记录已保留；我会继续核对，并在需要你重新确认时回到这里说明。'
+        ? `开始前我发现目标、方案或执行边界已变化，因此没有启动员工。${detail}。原确认和任务记录都已保留；请在当前方案下重新确认结果与范围。`
+        : `启动没有完成，且不会自动重试。原因：${detail}。原确认和已有记录已保留；请核对原因后再决定是否重新确认启动。`
   const eventId = attentionEventId(intent.intentId)
   const exists = getProjectDb().prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id=? LIMIT 1').get(intent.projectId, eventId)
-  if (exists) return false
+  if (exists) {
+    const diagnosticEventId = `${eventId}:diagnostic`
+    const diagnosticExists = getProjectDb().prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id=? LIMIT 1').get(intent.projectId, diagnosticEventId)
+    if (diagnosticExists || needsGrantReconciliation(cause) || manager.status === 'paused') return false
+    appendOwnerManagementMessage({ projectId: intent.projectId, eventId: diagnosticEventId, role: 'assistant', kind: 'attention', ...(intent.taskId ? { taskId: intent.taskId } : {}), content: `补充核查：上次启动未完成，原因是${detail}。该启动意图已暂停自动重试；核对后可重新确认启动。` })
+    return true
+  }
   recordOwnerManagementStartBlocked(intent.projectId, intent.intentId, intent.expectedGoalRevision ?? getProjectOwnerGoalDraft(intent.projectId, intent.taskId)?.revision ?? 0, content, intent.taskId)
   return true
 }
@@ -44,6 +61,32 @@ function reportRecoveryResolved(intent: OwnerExecutionStartIntent): void {
   const exists = getProjectDb().prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id=? LIMIT 1').get(intent.projectId, attentionEventId(intent.intentId))
   if (!exists) return
   appendOwnerManagementMessage({ projectId: intent.projectId, eventId: `execution-start-recovery:${intent.intentId}:resolved`, role: 'assistant', kind: 'management_progress', ...(intent.taskId ? { taskId: intent.taskId } : {}), content: '上次启动核对已经完成。我已按原来确认的结果与边界继续组织工作，你不需要重复确认。' })
+}
+
+function coalesceEquivalentPendingIntents(completed: OwnerExecutionStartIntent, grant: OwnerExecutionGrant): void {
+  const rows = getProjectDb().prepare("SELECT * FROM project_owner_execution_start_intents WHERE project_id=? AND task_id IS ? AND state='pending' AND recovery_status='pending' ORDER BY created_at,id")
+    .all(completed.projectId, completed.taskId ?? null) as IntentRow[]
+  const compactInput = (input: OwnerExecutionPreparationInput) => {
+    const { requestId: _requestId, expiresAt: _expiresAt, ...scope } = input
+    return scope
+  }
+  for (const row of rows) {
+    try {
+      const duplicate = readRow(row)
+      if (duplicate.createdAt < completed.createdAt
+        || duplicate.expectedGoalRevision !== completed.expectedGoalRevision
+        || duplicate.expectedPlanRevision !== completed.expectedPlanRevision
+        || duplicate.planFingerprint !== completed.planFingerprint
+        || duplicate.contextFingerprint !== completed.contextFingerprint
+        || duplicate.input.expiresAt < grant.budget.expiresAt
+        || ownerExecutionHash(compactInput(duplicate.input)) !== ownerExecutionHash(compactInput(completed.input))) continue
+      getProjectDb().prepare("UPDATE project_owner_execution_start_intents SET state='completed',grant_id=? WHERE id=? AND state='pending' AND recovery_status='pending'")
+        .run(grant.grantId, duplicate.intentId)
+      reportRecoveryResolved({ ...duplicate, state: 'completed', grantId: grant.grantId })
+    } catch (cause) {
+      console.warn('[Owner执行] 重复启动确认未能安全归并，保留原记录', row.project_id, row.id, cause)
+    }
+  }
 }
 
 function readRow(row: IntentRow): OwnerExecutionStartIntent {
@@ -97,14 +140,31 @@ function supersedeDeliveredFeedbackBatch(subject: ProjectOwnerGoalSubject, plan:
   return true
 }
 
-function getConfirmedPreparationInput(intent: OwnerExecutionStartIntent, planRevision: number): OwnerExecutionPreparationInput {
+function getConfirmedPreparationInput(intent: OwnerExecutionStartIntent, plan: ProjectOwnerPlanDraft): OwnerExecutionPreparationInput {
   const subject = { projectId: intent.projectId, ...(intent.taskId ? { taskId: intent.taskId } : {}) }
+  const planRevision = plan.revision
   const requestId = planRevision === intent.expectedPlanRevision ? intent.input.requestId : `owner-start-preparation:${intent.intentId}:${planRevision}`
   const current = getOwnerExecutionPreparation(subject), existing = current.preparation
   if (existing?.input.requestId === requestId && existing.input.expectedPlanRevision === planRevision) return existing.input
   const policy = getPilotPolicy(intent.projectId)
+  const roleAssignments = intent.input.roleAssignments?.slice().sort((left, right) => left.roleKey.localeCompare(right.roleKey))
+  const selectedRoleKeys = (plan.revision === intent.expectedPlanRevision || plan.revision === intent.expectedPlanRevision + 1)
+    && plan.planFingerprint === intent.planFingerprint
+    ? [...new Set(plan.proposal.steps
+      .filter(step => intent.input.selectedStepKeys.includes(step.key))
+      .map(step => step.roleKey))].sort()
+    : []
+  // 修复旧版本按方案步骤顺序选择executor、但按roleKey冻结岗位映射的启动意图。
+  // 仅在岗位集合与当前确认方案完全一致且原executor仍在映射内时，派生兼容输入；不改写原始确认记录。
+  const canNormalizeLegacyExecutor = Boolean(roleAssignments?.length
+    && selectedRoleKeys.length === roleAssignments.length
+    && roleAssignments.every((assignment, index) => assignment.roleKey === selectedRoleKeys[index])
+    && roleAssignments.some(assignment => assignment.employeeId === intent.input.executorEmployeeId))
+  const normalizedInput = canNormalizeLegacyExecutor && roleAssignments
+    ? { ...intent.input, roleAssignments, executorEmployeeId: roleAssignments[0]!.employeeId }
+    : intent.input
   return {
-    ...intent.input,
+    ...normalizedInput,
     requestId,
     expectedPreparationRevision: current.revision,
     expectedPolicyRevision: policy?.state === 'paused' ? policy.revision : intent.input.expectedPolicyRevision,
@@ -162,7 +222,7 @@ export function completeOwnerExecutionStartIntent(raw: unknown): { intentId: str
     return { intentId: saved.intentId, state: 'completed' }
   }
   const plan = getProjectOwnerPlanDraft(subject.projectId, subject.taskId)
-  const preparationRequestId = plan ? getConfirmedPreparationInput(saved, plan.revision).requestId : ''
+  const preparationRequestId = plan ? getConfirmedPreparationInput(saved, plan).requestId : ''
   const grant = getOwnerExecutionGrant(subject), materialization = getOwnerTaskMaterialization(subject).materialization
   // launch() 可以在同一轮调度中派发员工；若运行状态随后变为暂停/需核对，
   // 这不应撤销已经发生的启动确认。这里核验授权与冻结任务批次的绑定即可。
@@ -178,10 +238,6 @@ export function completeOwnerExecutionStartIntent(raw: unknown): { intentId: str
 export function listPendingOwnerExecutionStartIntents(): OwnerExecutionStartIntent[] {
   const rows = getProjectDb().prepare("SELECT * FROM project_owner_execution_start_intents WHERE state='pending' AND recovery_status='pending' ORDER BY created_at,id").all() as IntentRow[]
   return rows.map(readRow)
-}
-
-function needsHumanReview(cause: unknown): boolean {
-  return cause instanceof Error && (/来源已变化|版本已变化|配置已变化|已登记绑定其他|不能覆盖/.test(cause.message) || needsGrantReconciliation(cause))
 }
 
 const recoveries = new Map<string, Promise<OwnerExecutionGrant>>()
@@ -222,7 +278,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     const previousMaterialization = materializationView.materialization
     const replacingPreviousBatch = Boolean(previousMaterialization && previousMaterialization.input.requestId !== `owner-start:${intent.intentId}`
       && supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id))
-    const input = getConfirmedPreparationInput(intent, plan.revision)
+    const input = getConfirmedPreparationInput(intent, plan)
     const preparationView = getOwnerExecutionPreparation(subject)
     let preparation = preparationView.preparation
     if (preparation) {
@@ -291,11 +347,16 @@ export async function recoverPendingOwnerExecutionStartIntents(projectId?: strin
       }
       continue
     }
-    try { await resumeOwnerExecutionStartIntent(intent.intentId, undefined, dependencies) }
+    try {
+      const grant = await resumeOwnerExecutionStartIntent(intent.intentId, undefined, dependencies)
+      const completedIntent = readRow(getProjectDb().prepare('SELECT * FROM project_owner_execution_start_intents WHERE id=?').get(intent.intentId) as IntentRow)
+      if (completedIntent.state === 'completed') coalesceEquivalentPendingIntents(completedIntent, grant)
+    }
     catch (cause) {
       try {
         const reported = reportRecoveryAttention(intent, cause)
-        if (needsHumanReview(cause)) getProjectDb().prepare("UPDATE project_owner_execution_start_intents SET recovery_status='needs_attention' WHERE id=? AND state='pending'").run(intent.intentId)
+        // 启动意图失败一律暂停自动恢复；由用户看清原因后决定是否重新确认，避免重复触发不确定的远端请求。
+        getProjectDb().prepare("UPDATE project_owner_execution_start_intents SET recovery_status='needs_attention' WHERE id=? AND state='pending'").run(intent.intentId)
         if (reported) console.warn('[Owner执行] 启动确认恢复暂未完成，已在项目对话中告知用户', intent.projectId, cause)
       } catch (notificationError) {
         console.warn('[Owner执行] 启动确认恢复提醒写入失败，意图保持待处理以便后续重试', intent.projectId, intent.intentId, notificationError)

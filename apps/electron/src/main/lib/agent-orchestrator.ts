@@ -55,6 +55,7 @@ import { isClaudeFamilyModel } from './model-family'
 import type { AgentEventBus } from './agent-event-bus'
 import type { AgentStopResult } from './agent-headless-runner-registry'
 import { decryptApiKey, getChannelById } from './channel-manager'
+import { readOwnerPlanningApiKey } from './owner-planning-configuration'
 import { getAdapter, fetchTitle, normalizeAnthropicBaseUrlForSdk } from '@gravitas/core'
 import { normalizeAgentRuntimeError } from '@gravitas/shared/utils'
 import { getFetchFn } from './proxy-fetch'
@@ -1941,7 +1942,7 @@ export class AgentOrchestrator {
     try {
       const queryOptions: AISDKAgentQueryOptions = {
         sessionId, agentRuntime: 'ai-sdk', model: binding.modelId, provider: channel.provider,
-        apiKey: decryptApiKey(binding.channelId), baseUrl: channel.baseUrl,
+        apiKey: readOwnerPlanningApiKey(binding.channelId), baseUrl: resolveAgentRuntimeBaseUrl(channel.provider, 'ai-sdk', channel.baseUrl),
         cwd: getAgentWorkspaceCwd(workspace, sessionId), permissionMode: 'safe',
         prompt: request.userPrompt, systemPrompt: request.systemPrompt, maxTurns: 1, maxRetries: 0,
         onAgentEvent: (event) => this.runtimeServices.events.emit(sessionId, { kind: 'agent_event', event } as AgentStreamPayload),

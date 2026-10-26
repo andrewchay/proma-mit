@@ -201,6 +201,8 @@ test('Given目标已含相同答复 WhenOwner再提问且用户同框确认 Then
     expect(changes.decideOwnerConversationChange(input)).toEqual(saved)
     await until(() => Boolean(active(f)))
     expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(3)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(3)
     finish(f, 'plan')
     await until(() => plans.getProjectOwnerPlanDraft(f.project.id)?.state === 'proposed')
     expect(goals.listProjectOwnerGoalHistory(f.project.id)).toHaveLength(2)
@@ -208,6 +210,26 @@ test('Given目标已含相同答复 WhenOwner再提问且用户同框确认 Then
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
+
+test('Given同目标普通管理规划与已完成对话 When重启管理循环 Then非答复事件不绕过去重追加请求', async () => {
+  const f = fixture()
+  sendOwnerManagementMessage(f.message('先说明你收到的目标'))
+  const grant = f.issue()
+  let stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(active(f)))
+    const execution = finish(f, 'reply')
+    await until(() => store.getAgentExecution(execution.id)?.status === 'completed')
+    stop()
+    const pending = store.getProjectDb().prepare("SELECT planning_task_id, request_id FROM project_owner_planning_links l WHERE project_id=? AND json_extract(payload, '$.conversationMessageId') IS NULL AND NOT EXISTS (SELECT 1 FROM agent_executions e WHERE e.entity_id=l.planning_task_id) LIMIT 1").get(f.project.id) as { planning_task_id: string; request_id: string }
+    const event = store.getProjectDb().prepare('SELECT payload FROM project_owner_management_events WHERE project_id=? AND id=?').get(f.project.id, pending.request_id.slice('management:'.length)) as { payload: string }
+    expect(JSON.parse(event.payload).kind).toBe('goal_saved')
+    stop = startOwnerManagementLoop()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(1)
+    expect(store.listAgentExecutionsByEntity('task', pending.planning_task_id)).toHaveLength(0)
+  } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
 
 test('Given对话请求冻结旧问题 When本次结果提出更新问题 Then原请求仍可验证且新对话只带当前问题', async () => {
   const f = fixture(), grant = f.issue(), stop = startOwnerManagementLoop()

@@ -129,10 +129,17 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     } catch (cause) { setSessionError(cause instanceof Error ? cause.message : '打开员工会话失败') }
     finally { setOpeningSession('') }
   }
+  const focusReplyComposer = (): void => {
+    requestAnimationFrame(() => {
+      const composer = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
+      composer?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      composer?.focus()
+    })
+  }
   return <section className="mt-4 space-y-3 rounded-2xl bg-muted/30 p-4 shadow-sm" aria-label="Owner项目进度与成果">
     <h4 className="font-semibold">项目进展</h4>
     <p role="status" className="text-sm">{waitingForUser ? 'Owner 正在等你处理一项待确认内容。' : progress.loading && !progress.loaded ? '正在读取最新进展…' : progress.error && !progress.loaded ? '暂时无法读取最新进展。' : progressLabel(progress.schedule?.state, progress.schedule?.nextAction)}</p>
-    {waitingForUser && <p role="alert" className="rounded-lg bg-amber-500/10 p-3 text-sm">请查看下方 Owner 的最新说明并直接回复；确认前，受影响的新工作不会启动，其他仍在已确认范围内的工作可以继续。</p>}
+    {waitingForUser && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-sm"><p>请查看 Owner 的最新说明并直接回复；确认前，受影响的新工作不会启动，其他仍在已确认范围内的工作可以继续。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
     {progress.error && <p role="alert" className="text-xs text-destructive">最新进展读取失败；已保留上次记录，不会据此重新启动工作。</p>}
     {hasCurrentRun && <p className="text-sm text-muted-foreground">团队成员正在处理已确认的工作。</p>}
     {employeeCommands.length > 0 && <section className="space-y-2" aria-label="员工会话进度">

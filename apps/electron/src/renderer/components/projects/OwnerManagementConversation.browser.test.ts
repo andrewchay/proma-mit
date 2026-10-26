@@ -53,6 +53,8 @@ window.dialogueFixture={render,setStaleGrant:()=>{const subject={projectId:'p'},
     expect(await page.getByLabel('内部处理记录').count()).toBe(0)
     await page.evaluate('window.dialogueFixture.setAttention()')
     await page.getByText('Owner正在等你处理一项待确认内容。', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '回复 Owner' }).first().click()
+    await page.waitForFunction(() => document.activeElement === document.querySelector('form[aria-label="向Owner发送消息"] textarea'))
     expect(await page.getByLabel('Owner正在处理').count()).toBe(0)
     expect(await progress.innerText()).not.toContain('已等待')
     await page.evaluate('window.dialogueFixture.resume()')

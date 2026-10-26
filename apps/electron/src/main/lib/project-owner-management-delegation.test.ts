@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HeadlessAgentRunCallbacks } from './agent-headless-runner-registry'
+import type { ProviderType } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-delegation-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -30,11 +31,13 @@ const { PROJECT_IPC_CHANNELS } = await import('@gravitas/shared')
 const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
 const callbacks = new Map<string, HeadlessAgentRunCallbacks>()
 let calls = 0
+let localConfigurationError: string | null = null
 beforeAll(async () => {
   await store.initProjectDb()
   // 真实产品排队/claim/准入，终端runner及HTTP为替身，不访问Provider。
   setHeadlessAgentRunner(async (input, handlers) => {
     calls++
+    if (localConfigurationError) throw new Error(localConfigurationError)
     const source = resolveOwnerPlanningSession(input.sessionId)!
     const body = JSON.stringify({ model: source.binding.modelId, stream: true, max_tokens: source.link.maxOutputTokens, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: source.request.systemPrompt }, { role: 'user', content: source.request.userPrompt }] })
     claimOwnerPlanningProviderRequest(input.sessionId, body, new URL('https://example.invalid/v1/chat/completions'))
@@ -42,10 +45,10 @@ beforeAll(async () => {
   })
 })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(modelId = 'deepseek-flash') {
+function fixture(modelId = 'deepseek-flash', provider: ProviderType = 'openai', apiKey = 'fake') {
   const project = store.createProject({ title: '委托项目', description: '' })
   const workspace = createAgentWorkspace(`委托-${randomUUID()}`); bindWorkspaceToProject(project.id, workspace.id)
-  const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid/v1', apiKey: 'fake', enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
+  const channel = createChannel({ name: 'fake', provider, baseUrl: 'https://example.invalid/v1', apiKey, enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
   const employee = employees.createAgentEmployee({ name: 'Owner', role: '规划', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成产品定位建议', constraints: [] })
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: employee.id, workspaceId: workspace.id, changeReason: '隔离测试' })
@@ -82,6 +85,75 @@ test('Given 配置了DeepSeek V4 Pro When 核对项目管理预算 Then按官方
   expect(preview.priceEvidenceId).toBe('deepseek-v4-pro-0813-2026-10-22')
   expect(preview.perRequestCeilingMicros).toBeGreaterThan(1_300_000)
   expect(preview.perRequestCeilingMicros).toBeLessThan(1_400_000)
+  expect(calls).toBe(before)
+})
+
+test('Given DeepSeek渠道的Flash模型 When预览持续管理 Then支持预算上界且不发送请求', () => {
+  const f = fixture('deepseek-flash', 'deepseek'), before = calls
+  expect(service.previewOwnerManagementDelegation(f.input).priceEvidenceId).toBe('deepseek-flash-2026-10-17')
+  expect(calls).toBe(before)
+})
+
+test('Given渠道密钥为空 When预览管理授权 Then在创建执行或占额前指出API Key缺失', () => {
+  const f = fixture('deepseek-flash', 'deepseek', ''), before = calls
+  expect(() => service.previewOwnerManagementDelegation(f.input)).toThrow('API Key')
+  expect(calls).toBe(before)
+  expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
+})
+
+test('Given旧版本地参数失败且没有发送准入 When核对并重新确认 Then保留失败及预留并允许新授权但不自动重发', async () => {
+  const f = fixture(), grant = issue(f)
+  localConfigurationError = 'AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd'
+  try {
+    await startDelegatedOwnerPlanningTask(f.taskId)
+    await until(() => store.listAgentExecutionsByProject(f.project.id)[0]?.status === 'failed')
+  } finally { localConfigurationError = null }
+  const before = calls
+  expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'stale', usedRequests: 1, reservedCostMicros: grant.perRequestCeilingMicros, detail: expect.stringContaining('本地配置') })
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_planning_admissions WHERE execution_id=?').get(store.listAgentExecutionsByProject(f.project.id)[0]!.id)).toEqual({ n: 0 })
+  const input = { ...f.input, requestId: randomUUID() }, preview = service.previewOwnerManagementDelegation(input)
+  const next = service.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
+  expect(next.id).not.toBe(grant.id)
+  expect(calls).toBe(before)
+  expect(store.listAgentExecutionsByProject(f.project.id)[0]?.status).toBe('failed')
+  service.revokeOwnerManagementDelegation(f.project.id, next.id)
+})
+
+test('Given已有发送准入但错误文本与本地参数错误相同 When核对 Then仍暂停核对不能按未发送恢复', async () => {
+  const f = fixture(), grant = issue(f)
+  await startDelegatedOwnerPlanningTask(f.taskId)
+  const execution = store.listAgentExecutionsByProject(f.project.id)[0]!
+  callbacks.get(execution.sessionId!)!.onError('AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd')
+  expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('attention')
+  service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+})
+
+test('Given本地失败之后出现运行结果或损坏回调 When重新核对 Then证据矛盾仍进入核对门禁', async () => {
+  for (const evidence of ['runtime_result', 'broken_json']) {
+    const f = fixture(), grant = issue(f)
+    localConfigurationError = 'AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd'
+    try {
+      await startDelegatedOwnerPlanningTask(f.taskId)
+      await until(() => store.listAgentExecutionsByProject(f.project.id)[0]?.status === 'failed')
+    } finally { localConfigurationError = null }
+    const execution = store.listAgentExecutionsByProject(f.project.id)[0]!
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('stale')
+    if (evidence === 'runtime_result') {
+      const runs = await import('./project-owner-planning-run-service')
+      runs.recordOwnerPlanningRun(execution.id, 'ai-sdk', { type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop', result: '无法解释的运行结果', usage: { input_tokens: 10, output_tokens: 20 } })
+    } else {
+      store.getProjectDb().prepare('INSERT INTO project_owner_planning_callback_evidence (id,execution_id,payload) VALUES (?,?,?)').run(randomUUID(), execution.id, '{broken')
+    }
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('attention')
+    service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  }
+})
+
+test('Given已添加DeepSeek但Owner仍绑定Kimi When预览持续管理 Then提示实际模型与更换入口且不静默切换', () => {
+  const f = fixture('kimi-for-coding', 'kimi-coding'), before = calls
+  createChannel({ name: 'DeepSeek', provider: 'deepseek', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'deepseek-flash', name: 'deepseek-flash', enabled: true }] })
+  expect(() => service.previewOwnerManagementDelegation(f.input)).toThrow('kimi-for-coding')
+  expect(() => service.previewOwnerManagementDelegation(f.input)).toThrow('更换 Owner 模型')
   expect(calls).toBe(before)
 })
 

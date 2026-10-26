@@ -4,6 +4,7 @@ import type { AgentEmployeeResult, OwnerRuntimeBinding, ProjectOwnerGoalSubject,
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from './project-owner-goal-atoms'
 import { ownerPlanApiAtom } from './project-owner-plan-atoms'
 import { ownerRuntimeApiAtom } from './project-owner-runtime-atoms'
+import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from './owner-management-delegation-atoms'
 import { chooseOwnerSetupModel, confirmOwnerSetupAtom, editOwnerSetupAtom, getOwnerSetupState, loadOwnerSetupAtom, ownerSetupApiAtom, ownerSetupBindingAvailable, ownerSetupCarriers, ownerSetupModelKey, ownerSetupStatesAtom, type OwnerSetupApi, type OwnerSetupFacts } from './owner-setup-atoms'
 
 const subject = { projectId: 'project-a' }
@@ -282,6 +283,7 @@ test('Given 已配置GLM与其他应用默认 When 推导Owner默认 Then 优先
 
 test('Given 默认模型存在 When 用户手选其他模型再刷新并确认 Then 保留选择且不调用默认绑定入口', async () => {
   const f = fixture()
+  f.store.set(ownerDelegationEditorsAtom, new Map([[JSON.stringify([subject.projectId, null]), { ...getOwnerDelegationEditor(new Map(), subject), error: '旧模型不支持持续管理' }]]))
   f.facts.channels.push({ id: 'manual', name: '手选渠道', provider: 'openai', enabled: true, updatedAt: 1, models: [{ id: 'manual-model', name: '手选模型', enabled: true }] })
   await f.store.set(loadOwnerSetupAtom, subject)
   f.store.set(editOwnerSetupAtom, { subject, patch: { modelKey: ownerSetupModelKey('manual', 'manual-model') } })
@@ -291,6 +293,7 @@ test('Given 默认模型存在 When 用户手选其他模型再刷新并确认 T
   expect(f.read().error).toBe('')
   expect(f.ensureBindingCalls).toBe(0)
   expect(f.facts.binding).toMatchObject({ channelId: 'manual', modelId: 'manual-model' })
+  expect(getOwnerDelegationEditor(f.store.get(ownerDelegationEditorsAtom), subject).error).toBe('')
   await f.store.set(loadOwnerSetupAtom, subject)
   expect(f.read().dirty).toBe(false)
   expect(f.read().modelKey).toBe(ownerSetupModelKey('manual', 'manual-model'))

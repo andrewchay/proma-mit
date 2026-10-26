@@ -23,6 +23,7 @@ const materialization = await import('./project-owner-task-materialization')
 const revalidation = await import('./project-owner-execution-revalidation')
 const grantIssue = await import('./project-owner-execution-grant-issue')
 const { launchOwnerPreparedExecution } = await import('./project-owner-execution-launch')
+const { getAgentSessionMeta } = await import('./agent-session-manager')
 let policy: typeof import('./project-pilot-policy')
 beforeAll(async () => { await store.initProjectDb(); policy = await import('./project-pilot-policy') })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
@@ -146,6 +147,18 @@ test('Given已撤销旧许可 When重复旧最终请求 Then不能复活原许�
   expect(a.calls).toMatchObject({ schedules: 1 })
 })
 
+/** 终态回调需等待逐请求结算落库，测试用项目级收敛等待替代“回调返回即已结算”的同步假设。 */
+async function waitForOwnerProjectSettled(projectId: string, timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const active = store.getProjectDb().prepare("SELECT COUNT(*) AS count FROM agent_executions WHERE project_id=? AND status IN ('queued','running')").get(projectId) as { count: number }
+    const unsettled = store.getProjectDb().prepare("SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE project_id=? AND state IN ('queued','running')").get(projectId) as { count: number }
+    if (active.count === 0 && unsettled.count === 0) return
+    await Bun.sleep(5)
+  }
+  throw new Error('项目执行未在限定时间内收敛到终态')
+}
+
 test.each(['controlled', 'controlled-auto', 'general', 'mixed', 'pi'] as const)('Given%s员工与最终确认 When真实调度器配替身Runtime执行评审 Then准确员工会话启动且重提不重复派工', async kind => {
   const profile = kind === 'general' || kind === 'mixed' ? 'general' : 'controlled'
   const runtime = kind === 'pi' ? 'pi' : 'ai-sdk'
@@ -172,11 +185,12 @@ test.each(['controlled', 'controlled-auto', 'general', 'mixed', 'pi'] as const)(
       }, { preconnect: () => {} }) as typeof globalThis.fetch
       const fetch = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime, cwd: getAgentWorkspaceCwd(f.workspace, input.sessionId), modelId: input.modelId ?? '', permissionMode: 'safe' }), transport)
       const requestExit = await import('./project-owner-execution-request-exit')
-      expect(requestExit.resolveOwnerExecutionMaxOutputTokens(input.sessionId, input.modelId!, input.channelId === f.channel.id && runtime === 'pi' ? 'zhipu' : 'openai')).toBe(runtime === 'ai-sdk' || input.modelId === 'deepseek-flash' && input.userMessage.includes('角色=reviewer') ? 8192 : 4096)
+      const expectedOutputLimit = input.modelId === 'deepseek-flash' ? 384_000 : 131_072
+      expect(requestExit.resolveOwnerExecutionMaxOutputTokens(input.sessionId, input.modelId!, input.channelId === f.channel.id && runtime === 'pi' ? 'zhipu' : 'openai')).toBe(expectedOutputLimit)
       const target = getChannelById(input.channelId)!
       if (kind === 'mixed' && input.userMessage.includes('角色=reviewer')) await expect(fetch(`${target.baseUrl!}/chat/completions`, { method: 'POST', body: JSON.stringify({ model: 'glm-5.3-flash', max_tokens: 32, messages: [{ role: 'user', content: 'wrong model' }] }) })).rejects.toThrow('与价格证据不一致')
       await fetch(`${target.baseUrl!.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: input.modelId, max_tokens: runtime === 'pi' ? 8192 : 100, messages: [{ role: 'user', content: 'fake-only' }] }) })
-      if (runtime === 'pi') expect(JSON.parse(sentRequestBodies.at(-1)!).max_tokens).toBe(4096)
+      if (runtime === 'pi') expect(JSON.parse(sentRequestBodies.at(-1)!).max_tokens).toBe(expectedOutputLimit)
       const content = input.userMessage.includes('角色=reviewer') ? JSON.stringify({ schemaVersion: 1, verdict: 'approved', summary: '合成评审', criteria: [{ criterion: '范围', status: 'met', evidence: '合成产物' }], findings: [], blockerReason: null }) : '合成材料'
       callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }])
     } catch (cause) { callbacks.onError(String(cause)) }
@@ -185,6 +199,7 @@ test.each(['controlled', 'controlled-auto', 'general', 'mixed', 'pi'] as const)(
   const dependencies = { ...a.dependencies, schedule: async (projectId: string) => { a.calls.schedules++; await scheduler.runOwnerAutonomousSchedule(projectId) } }
   const grant = await launchOwnerPreparedExecution(f.request, dependencies)
   await finished[0]
+  await waitForOwnerProjectSettled(f.project.id)
   const task = store.listTasks(f.project.id)[0]!
   const executions = store.listAgentExecutionsByEntity('task', task.id)
   expect(executions).toHaveLength(1)
@@ -194,6 +209,7 @@ test.each(['controlled', 'controlled-auto', 'general', 'mixed', 'pi'] as const)(
   // 重提唤醒调度器后仅启动尚缺的Reviewer，不重复Executor。
   await launchOwnerPreparedExecution(f.request, dependencies)
   await finished[1]
+  await waitForOwnerProjectSettled(f.project.id)
   const after = store.listAgentExecutionsByEntity('task', task.id)
   expect(after).toHaveLength(2)
   expect(after.map(item => item.agentId).sort()).toEqual([f.executor.id, f.reviewer.id].sort())
@@ -549,6 +565,7 @@ test('Given项目资料已索引但应用重开句柄为空 When自主启动员�
   registry.setHeadlessAgentRunner(async (input, callbacks) => {
     invoked++
     expect(index.getStoreHandle()).not.toBeNull()
+    expect(getAgentSessionMeta(input.sessionId)).toMatchObject({ knowledgeScopeMode: 'explicit', explicitKnowledgeBaseIds: expect.arrayContaining([expect.any(String)]) })
     expect(gates.resolveOwnerExecutionGateSession(input.sessionId).kind).toBe('owner_business')
     expect(() => gates.assertToolAllowedForSessionPurpose(input.sessionId, 'SearchKnowledge', { query: '原文证据' })).not.toThrow()
     callbacks.onError('隔离Runtime替身结束；未发送Provider请求')

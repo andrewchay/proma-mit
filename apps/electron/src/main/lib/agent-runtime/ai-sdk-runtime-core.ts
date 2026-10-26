@@ -50,7 +50,8 @@ import { assessToolCallBatchIntegrity, type ToolCallBatchIntegrity } from '@grav
 import { estimateTokenCount } from '../agent-tool-token-estimator'
 import { runGuardedToolCall } from './tool-scheduler-service'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
-import { resolveOwnerExecutionMaxOutputTokens } from '../project-owner-execution-request-exit'
+import { resolveOwnerExecutionMaxOutputTokens, awaitOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
+import { isOwnerAutoAllowedWorkspaceWrite } from '../project-owner-execution-gates'
 
 export interface AISDKRuntimeSessionState {
   controller: AbortController
@@ -339,6 +340,7 @@ export class AISDKRuntimeCore {
       let attemptHadLiveEvents = false
       let stepHasModelActivity = false
       let estimatedContextTokens = input.estimatedContextTokens
+      let streamError: unknown
       const executingToolCalls = new Set<string>()
       try {
         const attemptController = new AbortController()
@@ -355,6 +357,7 @@ export class AISDKRuntimeCore {
             stopWhen: isStepCount(input.maxTurns),
             ...(input.sdkMaxRetries !== undefined ? { maxRetries: input.sdkMaxRetries } : {}),
             abortSignal: attemptController.signal,
+            onError: ({ error }) => { streamError ??= error },
             ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
             ...(input.jsonOutput ? { output: Output.json() } : {}),
             ...(input.reasoningEffort && input.provider ? { providerOptions: { openai: { reasoningEffort: input.reasoningEffort } } } : {}),
@@ -403,19 +406,24 @@ export class AISDKRuntimeCore {
           input.signal.removeEventListener('abort', abortAttempt)
         }
       } catch (error) {
-        lastError = error
+        // AI SDK 在无终态输出时会抛通用 NoOutputGeneratedError；优先保留流回调捕获的 Provider 原因。
+        const streamErrorDetail = streamError ? safeRuntimeErrorDetail(streamError) : ''
+        const diagnostic = streamErrorDetail && isGenericNoOutputError(error) && !streamErrorDetail.includes(getErrorMessage(error))
+          ? new Error(`${getErrorMessage(error)}；流错误：${streamErrorDetail}`, { cause: streamError })
+          : error
+        lastError = diagnostic
         // 用户停止或追加消息触发的中断由 adapter 决定是否续跑；这里不能上报错误，
         // 否则渲染层会把正常的下一轮 turn 误标记为失败。
         if (input.signal.aborted) {
           throw error
         }
         // 只有尚未向 UI 发出文本或工具事件时，外层才可安全压缩并重放。
-        if (isContextOverflowError(getErrorMessage(error)) && !attemptHadLiveEvents) {
-          throw error
+        if (isContextOverflowError(getErrorMessage(diagnostic)) && !attemptHadLiveEvents) {
+          throw diagnostic
         }
         if (
           attemptHadLiveEvents ||
-          !isTransientNetworkError(getErrorMessage(error)) ||
+          !isTransientNetworkError(getErrorMessage(diagnostic)) ||
           attempt >= input.maxRetries
         ) {
           input.onAgentEvent?.({
@@ -424,10 +432,10 @@ export class AISDKRuntimeCore {
               runtime: 'ai-sdk',
               provider: input.provider,
               model: input.modelId,
-              error,
+              error: diagnostic,
             }),
           })
-          throw error
+          throw diagnostic
         }
         attempt++
         const delayMs = 1000 * attempt
@@ -445,6 +453,8 @@ export class AISDKRuntimeCore {
         description: runtimeTool.description,
         inputSchema: jsonSchema<Record<string, unknown>>(runtimeTool.parameters as RuntimeToolJsonSchema),
         execute: async (args: Record<string, unknown>, options): Promise<ExecutedAISDKToolResult> => {
+          // Owner执行：先用等待流式请求结算落库，再重查“用量已确认”门禁；结算失败仍阻断工具。
+          await awaitOwnerExecutionRequestsSettled(state.sessionId)
           if (state.loadingPlan) {
             const refusal = guardLoadedToolCall(state.loadingPlan, runtimeTool)
             if (!refusal.ok) {
@@ -643,8 +653,10 @@ export class AISDKRuntimeCore {
         ASK_USER_QUESTION_TOOL_NAME,
       ])
       if (safeAllowedTools.has(toolName)) return { allowed: true }
-      if (state.activeSession.ownerActionApproval && state.canUseTool) {
-        return state.canUseTool(toolName, input, state.signal)
+      if (state.activeSession.ownerActionApproval) {
+        // Owner 工作区内低风险新建免逐次审批；覆盖/敏感路径/越界仍交给权限链路请用户裁决。
+        if (isOwnerAutoAllowedWorkspaceWrite(state.sessionId, toolName, input)) return { allowed: true }
+        if (state.canUseTool) return state.canUseTool(toolName, input, state.signal)
       }
       if (toolName === 'Bash') {
         const command = typeof input.command === 'string' ? input.command : ''
@@ -921,6 +933,19 @@ function toAgentEventUsage(usage: LanguageModelUsage): NonNullable<Extract<Agent
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error) || '未知错误'
+}
+
+function isGenericNoOutputError(error: unknown): boolean {
+  return getErrorMessage(error).startsWith('No output generated.')
+}
+
+function safeRuntimeErrorDetail(error: unknown): string {
+  const name = error instanceof Error ? `${error.name}: ` : ''
+  return `${name}${getErrorMessage(error)}`
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [已隐藏]')
+    .replace(/(api[_-]?key|authorization|access[_-]?token)\s*[:=]\s*[^,\s;]+/gi, '$1=[已隐藏]')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[已隐藏凭据]')
+    .slice(0, 400)
 }
 
 function toGoalCheckpoint(input: Record<string, unknown>): AgentGoalCheckpoint {

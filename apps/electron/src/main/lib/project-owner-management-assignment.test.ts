@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
-import type { ProjectOwnerExecutionLaunchApi } from '@gravitas/shared'
+import type { OwnerExecutionPreparationInput, ProjectOwnerExecutionLaunchApi } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-managed-assignment-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -17,7 +17,7 @@ const { createChannel } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const plans = await import('./project-owner-plan-service')
-const { saveOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
+const { getOwnerRuntimeBinding, saveOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
 const { ensureOwnerDefaultTeam } = await import('./project-owner-default-team')
 const { resolveOwnerPlanningSession } = await import('./project-owner-planning-source')
 const { claimOwnerPlanningProviderRequest } = await import('./project-owner-planning-provider')
@@ -169,6 +169,68 @@ test('Given 新项目只有Owner载体 When按方案准备团队 Then 自动在�
   const team = employees.listAgentEmployees().filter(employee => employee.id !== owner.id && employee.workspaceIds?.includes(workspace.id))
   expect(team.map(employee => employee.roleTemplateId).sort()).toEqual(['delivery-verifier', 'requirements-analyst'])
   expect(team.every(employee => employee.runtime === 'ai-sdk' && employee.executionProfile === 'controlled' && employee.permissionMode === 'safe' && employee.workspaceIds?.length === 1)).toBe(true)
+})
+function ownerHistoryFixture() {
+  const f = fixture('missing-reviewer', false, false)
+  employees.deleteAgentEmployee(f.executor.id)
+  const owners = [f.owner]
+  let binding = getOwnerRuntimeBinding(f.project.id)!
+  for (let revision = 1; revision <= 2; revision++) {
+    const owner = employees.createAgentEmployee({ name: `旧配置Owner-${revision}`, role: '项目管理者', description: '', runtime: 'ai-sdk', channelId: f.owner.channelId, modelId: f.owner.modelId, workspaceIds: [f.workspace.id], executionProfile: 'controlled', permissionMode: 'safe' })
+    owners.push(owner)
+    binding = saveOwnerRuntimeBinding(f.project.id, revision, { ownerName: 'Owner', carrierId: owner.id, workspaceId: f.workspace.id, changeReason: '模拟切换模型留下的载体历史' })
+  }
+  return { ...f, owners, binding }
+}
+test('Given多次更换Owner载体且没有业务员工 When准备默认团队 Then历史Owner不阻止补齐且不会成为执行或评审候选', async () => {
+  const f = ownerHistoryFixture()
+  ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'])
+  ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'])
+  const team = employees.listAgentEmployees().filter(employee => employee.workspaceIds?.includes(f.workspace.id) && !f.owners.some(owner => owner.id === employee.id))
+  expect(team.map(employee => employee.roleTemplateId).sort()).toEqual(['delivery-verifier', 'requirements-analyst'])
+  const { getOwnerExecutionPreparation } = await import('./project-owner-execution-preparation')
+  const choices = getOwnerExecutionPreparation(f.subject).choices.employees
+  expect(choices.filter(employee => employee.isOwnerCarrier).map(employee => employee.id).sort()).toEqual(f.owners.map(owner => owner.id).sort())
+  setOwnerManagerStatus(f.project.id, getOwnerManager(f.project.id)!.revision, 'paused')
+})
+test('Given旧Owner记录导致已确认方案缺员且事件已消费 When重启后台管理 Then自动补齐并执行评审交付而不要求再次授权', async () => {
+  const f = ownerHistoryFixture(), context = plans.getProjectOwnerPlanningContext(f.project.id)
+  plans.saveProjectOwnerPlanDraft(f.project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst' }], changeReason: '复现已确认方案' })
+  confirm(f)
+  const grant = authorize(f, true)
+  for (const event of listPendingOwnerManagementEvents(f.project.id)) consumeOwnerManagementEvent(event)
+  const { appendOwnerManagementMessage } = await import('./project-owner-management-store')
+  appendOwnerManagementMessage({ projectId: f.project.id, eventId: 'historical-team-blocked', role: 'assistant', kind: 'attention', content: '当前团队不足以同时完成执行和独立检查' })
+  const scheduler = await import('./project-owner-autonomous-scheduler'), scheduleEvents = await import('./project-owner-autonomous-scheduler-events')
+  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(message => message.kind === 'delivery'), () => getOwnerManagementConversation(f.project.id).messages.at(-1)?.content)
+    expect(delegation.getOwnerManagementDelegation(f.project.id).delegation?.id).toBe(grant.id)
+    const call = calls.find(call => call.projectId === f.project.id && call.purpose === 'owner_execution_assignment')!
+    expect(call.candidates).toHaveLength(2)
+    expect(call.candidates.some(id => f.owners.some(owner => owner.id === id))).toBe(false)
+    expect(store.getProjectDb().prepare('SELECT role,state FROM project_owner_execution_commands WHERE project_id=? ORDER BY role').all(f.project.id)).toEqual([{ role: 'executor', state: 'settled' }, { role: 'reviewer', state: 'settled' }])
+    expect(store.listAgentExecutionsByProject(f.project.id).filter(execution => execution.ownerCommandId).every(execution => execution.sessionId)).toBe(true)
+    reconcileOwnerManagement(f.project.id)
+    reconcileOwnerManagement(f.project.id)
+    expect(calls.filter(call => call.projectId === f.project.id && call.purpose === 'owner_execution_assignment')).toHaveLength(1)
+  } finally { stopWake(); stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id); setOwnerManagerStatus(f.project.id, getOwnerManager(f.project.id)!.revision, 'paused') }
+}, 15000)
+test('Given方案也包含交付核验岗位 When创建默认团队 Then该执行岗位之外仍有另一位独立评审员', () => {
+  const f = ownerHistoryFixture()
+  ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst', 'delivery-verifier'])
+  ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst', 'delivery-verifier'])
+  const team = employees.listAgentEmployees().filter(employee => employee.workspaceIds?.includes(f.workspace.id) && !f.owners.some(owner => owner.id === employee.id))
+  expect(team).toHaveLength(3)
+  expect(team.filter(employee => employee.roleTemplateId === 'delivery-verifier')).toHaveLength(2)
+  setOwnerManagerStatus(f.project.id, getOwnerManager(f.project.id)!.revision, 'paused')
+})
+test('Given方案岗位模板缺失 When准备默认团队 Then不留下只创建了一半的团队', () => {
+  const f = ownerHistoryFixture()
+  expect(ensureOwnerDefaultTeam(f.project.id, f.binding, ['missing-template'])).toBe(false)
+  expect(employees.listAgentEmployees().filter(employee => employee.workspaceIds?.includes(f.workspace.id))).toHaveLength(f.owners.length)
+  setOwnerManagerStatus(f.project.id, getOwnerManager(f.project.id)!.revision, 'paused')
 })
 test('Given 缺少独立评审员且历史含撤销提示 When 重新授权后再次核对团队 Then 当前缺员原因重新显示且不调用模型', async () => {
   const f = fixture('missing-reviewer')
@@ -628,6 +690,47 @@ test('Given 首次待审方案及项目绑定资料 When Owner自主安排 Then 
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'management_progress' && item.content.includes('正在按你确认的方案和预算核验工作范围并启动团队'))).toBe(true)
   } finally { stopWake(); stop(); delegation.revokeOwnerManagementDelegation(f.project.id, issued.id) }
 }, 15000)
+
+test('Given 旧启动意图按方案顺序选择了executor When岗位冻结按roleKey排序 Then 自动对齐兼容输入并安全续接原意图', async () => {
+  const f = fixture('complete', false, false)
+  const visual = employees.createAgentEmployee({ name: '视觉设计师', role: '视觉设计师', roleTemplateId: 'visual-designer', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.owner.channelId, modelId: f.owner.modelId, workspaceIds: [f.workspace.id] })
+  const context = plans.getProjectOwnerPlanningContext(f.project.id)!
+  plans.saveProjectOwnerPlanDraft(f.project.id, 1, 0, {
+    expectedContextFingerprint: context.fingerprint,
+    summary: '按不同顺序完成两项成果', assumptions: [], risks: [],
+    steps: [
+      { key: 'visual', title: '先完成视觉', outcome: '视觉说明', acceptanceCriteria: ['布局清晰'], dependencies: [], roleKey: 'visual-designer' },
+      { key: 'requirements', title: '再完成需求', outcome: '需求说明', acceptanceCriteria: ['规则清楚'], dependencies: ['visual'], roleKey: 'requirements-analyst' },
+    ],
+    changeReason: '覆盖方案顺序与稳定岗位排序不同的旧启动意图',
+  })
+  const issued = authorize(f, true)
+  const { getOwnerExecutionPreparation } = await import('./project-owner-execution-preparation')
+  const { saveOwnerExecutionStartIntent, resumeOwnerExecutionStartIntent } = await import('./project-owner-execution-start-intent')
+  const plan = plans.getProjectOwnerPlanDraft(f.project.id)!
+  const input: OwnerExecutionPreparationInput = {
+    requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null,
+    expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
+    selectedStepKeys: ['visual', 'requirements'], executionKind: 'controlled', employeeRuntimeVersion: 2,
+    textDeliveryVersion: 1, qualityManagementVersion: 1,
+    executorEmployeeId: visual.id, reviewerEmployeeId: f.reviewer!.id,
+    roleAssignments: [
+      { roleKey: 'requirements-analyst', employeeId: f.executor.id },
+      { roleKey: 'visual-designer', employeeId: visual.id },
+    ],
+    workspaceId: f.workspace.id, acknowledgeOwnerWorkspaceOverride: true, knowledgeSourceIds: [],
+    maxCostMicros: issued.maxCostMicros, maxRuns: 12, maxRework: 2,
+    expiresAt: issued.expiresAt, changeReason: '用户已确认方案范围与项目预算',
+  }
+  const intent = saveOwnerExecutionStartIntent({ ...f.subject, intentId: input.requestId, expectedGoalRevision: plan.goalRevision,
+    expectedPlanRevision: plan.revision, planFingerprint: plan.planFingerprint, contextFingerprint: plan.contextFingerprint, input })
+  await expect(resumeOwnerExecutionStartIntent(intent.intentId, undefined, { launch: async () => { throw new Error('TEST_STOP_BEFORE_PROVIDER') } })).rejects.toThrow('TEST_STOP_BEFORE_PROVIDER')
+  const preparation = getOwnerExecutionPreparation(f.subject).preparation
+  expect(preparation?.input.roleAssignments?.map(item => item.roleKey)).toEqual(['requirements-analyst', 'visual-designer'])
+  expect(preparation?.input.executorEmployeeId).toBe(f.executor.id)
+  expect(store.getProjectDb().prepare('SELECT state FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toBeUndefined()
+  delegation.revokeOwnerManagementDelegation(f.project.id, issued.id)
+})
 
 test('Given Owner规划请求执行中持续管理授权被撤销 When提案返回 Then保存方案但不准备团队安排并明确显示未派工', async () => {
   const f = fixture('complete', false, false)

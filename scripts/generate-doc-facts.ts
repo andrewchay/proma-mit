@@ -11,6 +11,7 @@ interface PackageManifest {
 const repositoryRoot = join(import.meta.dir, '..')
 const outputPath = join(repositoryRoot, 'docs/generated/repository-facts.md')
 const checkOnly = process.argv.includes('--check')
+const generatedBuildRoots = ['apps/electron/dist', 'apps/electron/out', 'apps/electron/out-dev', 'apps/electron/out-owner-test']
 
 async function readPackageVersion(relativePath: string): Promise<PackageManifest> {
   const raw = await readFile(join(repositoryRoot, relativePath, 'package.json'), 'utf8')
@@ -30,7 +31,7 @@ async function countFiles(relativeRoot: string, patterns: string[]): Promise<num
   const files = new Set<string>()
   for (const pattern of patterns) {
     for await (const file of new Bun.Glob(pattern).scan({ cwd: root })) {
-      if (!file.split('/').includes('node_modules')) files.add(file)
+      if (!file.split('/').includes('node_modules') && !generatedBuildRoots.some(path => file === path || file.startsWith(`${path}/`))) files.add(file)
     }
   }
   return files.size

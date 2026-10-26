@@ -1,5 +1,6 @@
 /** Owner质量判断纯协议。判断不等于执行，不读文件或改业务状态。 */
 import type { OwnerQualityDecision, ProjectOwnerPlanningContext } from '@gravitas/shared'
+import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !fields.includes(key)) || fields.some(key => !Object.hasOwn(value, key))) throw new Error('Owner质量决定字段不完整或含未知字段')
   return value as Record<string, unknown>
@@ -33,7 +34,7 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
     return { severity: finding.severity as OwnerQualityDecision['findings'][number]['severity'], description: text(finding.description), requestedChange: text(finding.requestedChange) }
   })
   if (value.verdict === 'accept' && (review.verdict !== 'approved' || criteria.some(item => item.status !== 'met') || findings.length
-    || developmentArtifact && (!review.validationEvidence?.length || review.validationEvidence.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh' || item.status !== 'passed' || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength))))) throw new Error('Owner不能在独立检查未通过或标准未满足时接受成果')
+    || developmentArtifact && (!review.validationEvidence?.length || review.validationEvidence.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh' || isOwnerValidationEvidenceExpired(item) || item.status !== 'passed' || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength))))) throw new Error('Owner不能在独立检查未通过或标准未满足时接受成果')
   if (value.verdict === 'rework' && (!criteria.some(item => item.status === 'not_met') || !findings.length)) throw new Error('Owner返工必须指出具体不满足标准及可执行修改')
   return { reviewerCommandId: String(value.reviewerCommandId), artifactHash: String(value.artifactHash), verdict: value.verdict as OwnerQualityDecision['verdict'], reason: text(value.reason), criteria, findings }
 }

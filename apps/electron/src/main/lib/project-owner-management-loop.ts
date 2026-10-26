@@ -15,6 +15,8 @@ import { publishOwnerManagementCompletion } from './project-owner-management-del
 import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
+import { ensureOwnerDefaultTeam } from './project-owner-default-team'
+import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-access'
 
 /** 即使当前没有可继续处理的Run，也要把失效授权反馈写回Owner对话。 */
 function reportStaleManagementDelegations(projectId: string): void {
@@ -178,11 +180,30 @@ export function reconcileOwnerManagement(projectId: string): void {
     if (taskId === null || !hasUnstartedOwnerConversation(projectId, taskId)) continue
     preparePendingOwnerConversation(projectId, taskId)
   }
+  recoverMissingOwnerDefaultTeams(projectId)
   recoverMissingProposedPlanAssignment(projectId)
   recoverProtocolRejectedOwnerAssignments(projectId)
   if (getOwnerManager(projectId)?.status === 'active') {
     try { publishOwnerManagementCompletion(projectId) }
     catch (cause) { console.warn('[Owner管理] 最终成果尚未完成核验，保留原成果并等待下次对账', projectId, cause) }
+  }
+}
+
+/** 旧Owner记录挡住组队时，启动后在原有效授权内补齐；只有本次新建团队才续接安排。 */
+function recoverMissingOwnerDefaultTeams(projectId: string): void {
+  const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id=?').all(projectId) as { subject_key: string }[]
+  for (const { subject_key: key } of subjects) {
+    const taskId = key === 'project' ? undefined : key.startsWith('task:') ? key.slice(5) : null
+    if (taskId === null) continue
+    const plan = getProjectOwnerPlanDraft(projectId, taskId), view = getOwnerManagementDelegation(projectId, taskId)
+    if (plan?.state !== 'confirmed' || view.state !== 'active' || !view.delegation
+      || hasActiveOwnerManagementRequest(view.delegation.id) || getOwnerTeamWorkspaceProposal(projectId, taskId)) continue
+    const binding = getOwnerRuntimeBinding(projectId)
+    if (!binding) continue
+    store.getProjectDb().transaction(() => {
+      if (!ensureOwnerDefaultTeam(projectId, binding, plan.proposal.steps.map(step => step.roleKey))) return
+      prepareOwnerManagementAssignment({ id: `default-team-recovery:${projectId}:${taskId ?? 'project'}:${plan.revision}:${binding.revision}`, projectId, ...(taskId ? { taskId } : {}), kind: 'plan_confirmed', sourceRevision: plan.revision, createdAt: Date.now(), consumedAt: null })
+    })()
   }
 }
 
@@ -296,7 +317,7 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
         const conversations = new Set<string>()
         for (const link of links) {
           if (stopped) break
-          const subject = JSON.parse(link.payload) as { targetTaskId?: string; conversationMessageId?: string; purpose?: string }
+          const subject = JSON.parse(link.payload) as { targetTaskId?: string; conversationMessageId?: string; purpose?: string; requestId?: string; goalRevision?: number }
           const subjectKey = subject.targetTaskId ?? 'project'
           if (subject.conversationMessageId) {
             if (conversations.has(subjectKey)) continue
@@ -308,7 +329,12 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           if (subject.purpose === 'owner_planning' && !subject.conversationMessageId) {
             // 一旦主体已有对话消息链接，旧版初始规划不能在当前消息之后再单独运行，
             // 否则会与用户刚恢复的对话请求重复消耗预算并产生竞争结果。
-            if (conversationSubjects.has(subjectKey)) continue
+            // 同版本答复不会产生goal_saved；其已核验的answer_saved准备必须能接续旧对话。
+            // 这里只解除重复规划过滤，来源、额度和请求准入仍由启动路径完整重验。
+            const answerContinuation = subject.requestId?.startsWith('management:') && store.getProjectDb().prepare(
+              "SELECT 1 FROM project_owner_management_events WHERE project_id = ? AND id = ? AND json_extract(payload, '$.kind') = 'answer_saved' AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.sourceRevision') = ? AND consumed_at IS NOT NULL",
+            ).get(projectId, subject.requestId.slice('management:'.length), subject.targetTaskId ?? null, subject.goalRevision ?? null)
+            if (conversationSubjects.has(subjectKey) && !answerContinuation) continue
             const plan = getProjectOwnerPlanDraft(projectId, subject.targetTaskId)
             if (plan && ['proposed', 'confirmed'].includes(plan.state)) continue
           }

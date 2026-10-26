@@ -10,6 +10,7 @@ import { validateDevelopmentScope } from './development-task-service'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerDevelopmentValidationId, readOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
+import { DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS } from './development-validation-acceptance'
 import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS } from './development-validation-record'
 import { readDevelopmentValidationEvidence } from './development-validation-service'
 import * as store from './project-sqlite-store'
@@ -34,6 +35,10 @@ export interface OwnerDevelopmentValidationArtifact {
   outputTruncated?: boolean
   rawOutputSha256?: string
   rawOutputByteLength?: number
+  /** 验证完成时间；用于按有效期判定是否仍可采信。 */
+  finishedAt?: number
+  /** 超过有效期即置真；评审与验收都不得据此通过。 */
+  expired?: boolean
 }
 
 export function ownerDevelopmentArtifactReference(executorCommandId: string, executorExecutionId: string): string {
@@ -89,7 +94,7 @@ export function ownerDevelopmentArtifactFromPrompt(prompt: string): OwnerDevelop
 export function isOwnerDevelopmentValidationArtifact(value: unknown): value is OwnerDevelopmentValidationArtifact {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const row = value as Record<string, unknown>
-  const allowed = ['command', 'validationId', 'attemptState', 'freshness', 'status', 'exitCode', 'timedOut', 'outputTail', 'outputTruncated', 'rawOutputSha256', 'rawOutputByteLength']
+  const allowed = ['command', 'validationId', 'attemptState', 'freshness', 'status', 'exitCode', 'timedOut', 'outputTail', 'outputTruncated', 'rawOutputSha256', 'rawOutputByteLength', 'finishedAt', 'expired']
   if (Object.keys(row).some(key => !allowed.includes(key)) || typeof row.command !== 'string' || !row.command.trim()
     || typeof row.validationId !== 'string' || !/^val-[a-f0-9]{64}$/.test(row.validationId)
     || !['missing', 'running', 'completed'].includes(String(row.attemptState))) return false
@@ -102,6 +107,8 @@ export function isOwnerDevelopmentValidationArtifact(value: unknown): value is O
   if ((row.rawOutputSha256 === undefined) !== (row.rawOutputByteLength === undefined)
     || row.rawOutputSha256 !== undefined && (typeof row.rawOutputSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.rawOutputSha256)
       || !Number.isSafeInteger(row.rawOutputByteLength) || (row.rawOutputByteLength as number) < 0)) return false
+  if (row.finishedAt !== undefined && (!Number.isSafeInteger(row.finishedAt) || (row.finishedAt as number) < 0)) return false
+  if (row.expired !== undefined && typeof row.expired !== 'boolean') return false
   if (row.attemptState === 'completed' && (!row.status || row.exitCode === undefined || row.timedOut === undefined
     || row.outputTail === undefined || row.outputTruncated === undefined || !row.freshness)) return false
   return true
@@ -234,6 +241,8 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
         outputTail: result.outputTail, outputTruncated: result.outputTruncated,
         ...(result.rawOutputSha256 === undefined ? {} : { rawOutputSha256: result.rawOutputSha256 }),
         ...(result.rawOutputByteLength === undefined ? {} : { rawOutputByteLength: result.rawOutputByteLength }),
+        finishedAt: result.finishedAt,
+        expired: Date.now() - result.finishedAt > DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS,
       }
     } catch {
       return { command, validationId, attemptState: 'completed' as const, freshness: 'unknown' as const,

@@ -88,3 +88,67 @@ test('Given controlled安排有全空范围占位 When解析 Then无损省略且
   }
   expect(() => parseOwnerExecutionAssignmentProposal({ ...response, developmentScope: { ...empty, write: true } }, context)).toThrow('未授权字段')
 })
+
+// 绿地研发需要 development 档案的执行员工（评审员可以是 controlled）。
+const greenfieldContext = {
+  ...context,
+  greenfieldDevelopment: true as const,
+  candidates: [
+    { ...executor, executionProfile: 'development' as const },
+    { ...executor2, executionProfile: 'development' as const },
+    { ...designer, executionProfile: 'development' as const },
+    // 旧契约（无 teamContractVersion）要求评审员同为 development 档案。
+    { ...reviewer, executionProfile: 'development' as const },
+  ],
+}
+const greenfieldResponse: OwnerExecutionAssignmentProposal = {
+  ...response, executionKind: 'development', executionKindReason: '需要从零生成页面文件',
+  developmentScope: { targetPaths: ['index.html'], allowedPaths: ['index.html'], verificationCommands: ['browser:html.loads+dom.board+behavior.merge'], reason: '本次只新建一个页面文件' },
+}
+
+test('Given 绿地项目无代码候选 When Owner声明新建文件与内置断言 Then 接受', () => {
+  expect(parseOwnerExecutionAssignmentProposal(greenfieldResponse, greenfieldContext)).toEqual(greenfieldResponse)
+})
+
+test('Given 绿地项目 When 验证命令要求执行仓库脚本 Then 拒绝', () => {
+  for (const command of ['bun test', 'node verify.cjs', 'npm run check']) {
+    expect(() => parseOwnerExecutionAssignmentProposal({
+      ...greenfieldResponse,
+      developmentScope: { ...greenfieldResponse.developmentScope!, verificationCommands: [command] },
+    }, greenfieldContext)).toThrow('只能用内置浏览器断言验证')
+  }
+})
+
+test('Given 绿地项目 When 断言标识未知 Then 拒绝', () => {
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...greenfieldResponse,
+    developmentScope: { ...greenfieldResponse.developmentScope!, verificationCommands: ['browser:not.exists'] },
+  }, greenfieldContext)).toThrow('验证命令无效')
+})
+
+test('Given 绿地项目 When 允许范围不覆盖目标或路径越界 Then 拒绝', () => {
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...greenfieldResponse,
+    developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['src/game.html'], allowedPaths: ['index.html'] },
+  }, greenfieldContext)).toThrow('子集')
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...greenfieldResponse,
+    developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['../escape.html'], allowedPaths: ['../escape.html'] },
+  }, greenfieldContext)).toThrow()
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...greenfieldResponse,
+    developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['/abs.html'], allowedPaths: ['/abs.html'] },
+  }, greenfieldContext)).toThrow()
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...greenfieldResponse,
+    developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['.env'], allowedPaths: ['.env'] },
+  }, greenfieldContext)).toThrow('受保护')
+})
+
+test('Given 有代码候选 When 目标路径不在源码引用内 Then 仍按原有规则拒绝', () => {
+  const withCode = { ...greenfieldContext, codeFiles: [{ path: 'src/a.ts', sha256: 'b'.repeat(64), matchedTerms: ['a'] }] }
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...greenfieldResponse,
+    developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['index.html'], allowedPaths: ['index.html'] },
+  }, withCode)).toThrow('源码引用')
+})

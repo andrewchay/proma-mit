@@ -308,17 +308,18 @@ test('Given旧自主任务未扫描且后来已有新人工授权 When启动补�
 })
 
 
-test('Given业务用量未知 WhenOwner主动分析 Then保留unknown及占额、不把分析许可当成重试许可', async () => {
-  const f = await fixture(false, false, true); f.issue(); const stop = startOwnerManagementLoop()
+test('Given业务用量未知 When员工失败 Then明确停在人工核对且不声称后台会续跑', async () => {
+  const f = await fixture(false, true, true); f.issue(); const stop = startOwnerManagementLoop()
   try {
-    await until(() => Boolean(active(f.project.id)))
-    const source = planning.readOwnerPlanningSnapshot(active(f.project.id)!.entityId)!
-    expect(source.context.conversation?.executionObservation).toMatchObject({ actualCostMicros: null, commandState: 'needs_reconcile', grantState: 'needs_reconcile' })
-    expect(source.context.conversation!.executionObservation!.reservedCostMicros).toBeGreaterThan(0)
-    finish(f.project.id)
-    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'reply'))
+    observation.scanOwnerExecutionObservations(f.project.id)
+    expect(observation.readOwnerExecutionObservation(f.project.id, f.execution.id, 'terminal').observation).toMatchObject({ executionStatus: 'failed', actualCostMicros: null })
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'attention' && item.content.includes('外部账单核对结果写回应用')))
+    const attention = getOwnerManagementConversation(f.project.id).messages.find(item => item.kind === 'attention' && item.content.includes('外部账单核对结果写回应用'))!
+    expect(attention.content).toContain('没有可核验成果')
+    expect(attention.content).toContain('不会自动重发')
     expect(store.listAgentExecutionsByProject(f.project.id).filter(item => item.ownerCommandId)).toHaveLength(1)
     expect(store.getProjectDb().prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(f.grant.grantId)).toEqual({ state: 'needs_reconcile' })
+    expect(management.listPendingOwnerManagementEvents(f.project.id).filter(item => item.kind === 'execution_observed')).toHaveLength(0)
   } finally { stop() }
 })
 

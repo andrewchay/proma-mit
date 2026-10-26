@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { supportsOwnerExecutionKind, supportsOwnerMixedTeam } from '@gravitas/shared'
 import type { OwnerExecutionAssignmentCandidate, OwnerExecutionAssignmentContext, OwnerExecutionAssignmentProposal } from '@gravitas/shared'
 import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-path-policy'
+import { parseBrowserVerificationCheckIds } from './owner-runtime-verification-command'
 
 export interface OwnerExecutionAssignmentRequest { expectedGoalRevision: number; expectedContextFingerprint: string; systemPrompt: string; userPrompt: string }
 export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true): OwnerExecutionAssignmentRequest {
@@ -15,7 +16,12 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
       ...(context.teamContractVersion === 3 ? ['本次v3允许各员工保留各自渠道与模型，必须选ownerMixedRuntimeCompatible=true的员工，当前仅验证AI SDK和OpenAI用量协议。按具体任务说明模型与能力选择；不得要求用户统一模型或代选人员。业务请求和费用会逐员工冻结、逐请求核验，共享总预算，不沿用Owner规划模型给员工执行。'] : []),
       ...(requireRoleCoverage ? ['assignments必须逐一覆盖selectedStepKeys对应的全部不同roleKey，每个岗位恰好一项。delivery-verifier等核验步骤也是需要安排执行人员的普通计划步骤，不能因为已指定reviewerEmployeeId而省略该岗位。独立Reviewer在所有步骤执行人员之外，不能替代任何步骤的执行安排。输出前对照所选步骤逐项核对roleKey集合完全一致。'] : []),
       '如资料不足以高置信选择，仍须从合法候选中提出最合适安排并在理由中说明不确定性；不能生成候选外人员、步骤、预算、权限或资料范围。',
-      'executionKind为development时必须给developmentScope：目标路径必须来自所选步骤sourceReferences；允许修改路径必须来自冻结codeFiles，且只选本次真正需要的最小范围；至少提出一条验证命令供执行边界核对。代码依据不足时不得编造路径。controlled时不得输出developmentScope。',
+      context.greenfieldDevelopment
+        ? '本次为绿地研发：项目没有既有代码候选，executionKind应选development并在developmentScope中声明本次要新建的文件。targetPaths写工作区内的新文件相对路径（禁止绝对路径、..、反斜杠、受保护文件）；allowedPaths必须是targetPaths的子集；verificationCommands只能用browser:<断言标识>。controlled时不得输出developmentScope。'
+        : 'executionKind为development时必须给developmentScope：目标路径必须来自所选步骤sourceReferences；允许修改路径必须来自冻结codeFiles，且只选本次真正需要的最小范围；至少提出一条验证命令供执行边界核对。代码依据不足时不得编造路径。controlled时不得输出developmentScope。',
+      ...(context.executionKinds.includes('development')
+        ? ['本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。']
+        : ['本次只提供controlled方式：绝不能输出developmentScope，也不得声明browser断言或任何验证命令。执行员工只能交付文本，无法运行或打开成果；请在scopeReason中如实说明这一验证缺口，不要虚构代码范围、路径或运行证据。']),
       '仅输出一个符合此JSON schema的对象：{"schemaVersion":1,"contextFingerprint":"<输入中的指纹>","selectedStepKeys":["<已有步骤键>"],"scopeReason":"<范围理由>","workspaceId":"<项目工作区ID>","workspaceReason":"<工作区理由>","executionKind":"controlled或development","executionKindReason":"<执行方式理由>","assignments":[{"roleKey":"<所选岗位键>","employeeId":"<候选ID>","reason":"<匹配理由>"}],"reviewerEmployeeId":"<候选ID>","reviewerReason":"<评审理由>","developmentScope":{"targetPaths":["<所选计划源码引用路径>"],"allowedPaths":["<冻结代码候选路径>"],"verificationCommands":["<验证建议>"],"reason":"<范围理由>"}}。controlled时省略developmentScope。不要Markdown代码围栏或额外字段。',
     ].join('\n'),
     userPrompt: `请根据以下冻结的项目与团队资料，为Owner提出完整执行安排。输出必须满足系统要求的JSON格式。\n\n<assignment-context-json>\n${JSON.stringify(context)}\n</assignment-context-json>`,
@@ -83,13 +89,30 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
     const verificationCommands = scope.verificationCommands.map(command => text(command, '验证命令', 500))
     if (new Set(verificationCommands).size !== verificationCommands.length || verificationCommands.some(command => /[\r\n\0]/.test(command))) throw new Error('Owner研发验证命令重复或格式无效')
     const codeFiles = new Map((context.codeFiles ?? []).map(file => [file.path, file.sha256]))
-    const referencedPaths = new Set(selectedSteps.flatMap(step => step!.sourceReferences ?? []).map(reference => {
-      if (codeFiles.get(reference.path) !== reference.sha256) throw new Error('Owner安排所引用的源码已不在冻结检索候选内')
-      return reference.path
-    }))
-    if (targetPaths.some(path => !referencedPaths.has(path))) throw new Error('Owner研发目标路径必须来自所选计划步骤的源码引用')
-    if (allowedPaths.some(path => !codeFiles.has(path))) throw new Error('Owner研发允许范围必须来自冻结代码检索候选')
-    if (targetPaths.some(path => !pathWithinAllowed(path, allowedPaths))) throw new Error('Owner研发目标路径超出允许修改范围')
+    if (codeFiles.size === 0) {
+      // 绿地：项目里没有既有代码候选，目标就是本次要新建的文件。
+      // 路径已由 normalizeRepoRelativePath 拒绝绝对路径、父目录与反斜杠，受保护路径也已拒绝；
+      // 这里再要求允许范围覆盖全部目标，且只能用内置浏览器断言（不执行任何仓库脚本）。
+      if (allowedPaths.some(path => !pathWithinAllowed(path, targetPaths))) throw new Error('Owner绿地研发允许范围必须是目标路径的子集')
+      if (verificationCommands.some(command => !/^browser:[a-z0-9.\-]+(?:\+[a-z0-9.\-]+)*$/i.test(command))) {
+        throw new Error('Owner绿地研发只能用内置浏览器断言验证，不接受执行仓库脚本或测试')
+      }
+      for (const command of verificationCommands) {
+        try {
+          parseBrowserVerificationCheckIds(command)
+        } catch (error) {
+          throw new Error(`Owner绿地研发验证命令无效：${(error as Error).message}`)
+        }
+      }
+    } else {
+      const referencedPaths = new Set(selectedSteps.flatMap(step => step!.sourceReferences ?? []).map(reference => {
+        if (codeFiles.get(reference.path) !== reference.sha256) throw new Error('Owner安排所引用的源码已不在冻结检索候选内')
+        return reference.path
+      }))
+      if (targetPaths.some(path => !referencedPaths.has(path))) throw new Error('Owner研发目标路径必须来自所选计划步骤的源码引用')
+      if (allowedPaths.some(path => !codeFiles.has(path))) throw new Error('Owner研发允许范围必须来自冻结代码检索候选')
+      if (targetPaths.some(path => !pathWithinAllowed(path, allowedPaths))) throw new Error('Owner研发目标路径超出允许修改范围')
+    }
     developmentScope = { targetPaths, allowedPaths, verificationCommands, reason: text(scope.reason, '范围理由') }
   } else if (input.developmentScope !== undefined && input.developmentScope !== null) {
     const emptyScope = object(input.developmentScope, ['targetPaths', 'allowedPaths', 'verificationCommands', 'reason'])

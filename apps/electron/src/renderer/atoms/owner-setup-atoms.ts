@@ -1,5 +1,6 @@
 /** 对话只组织本地配置；权威写入和逐次模型费用仍由既有主进程服务决定。 */
 import { atom } from 'jotai'
+import { editOwnerDelegationAtom, loadOwnerDelegationAtom } from './owner-management-delegation-atoms'
 import { getAgentProviderProtocol, type AgentEmployeeResult, type AgentWorkspace, type Channel, type CreateAgentEmployeeInput, type OwnerManagementDelegation, type OwnerManagementDelegationInput, type OwnerRuntimeBinding, type ProjectOwnerGoalSubject, type ProjectOwnerRuntimeApi, type ProjectWorkspaceBinding } from '@gravitas/shared'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom, saveOwnerGoalAtom } from './project-owner-goal-atoms'
 import { getOwnerPlanEditor, loadOwnerPlanAtom, ownerPlanEditorsAtom } from './project-owner-plan-atoms'
@@ -307,6 +308,9 @@ export const confirmOwnerSetupAtom = atom(null, async (get, set, input: ProjectO
       const response = await api.saveBinding({ projectId: subject.projectId, expectedRevision: currentBinding?.revision ?? 0, input: { ownerName: currentBinding?.ownerName ?? '项目Owner', carrierId: carrier.id, workspaceId: workspace.id, changeReason: 'Owner按配置策略建立规划载体；用户仅确认资料访问范围' } })
       if (!response.ok) throw new Error(response.error.message)
       facts = { ...facts, binding: response.value }
+      // 新模型必须重新核对预算；不能保留旧模型的预览或不支持提示。
+      set(editOwnerDelegationAtom, { subject, patch: {} })
+      if (typeof window !== 'undefined') await set(loadOwnerDelegationAtom, subject)
     }
     update({ facts, dirty: false, carrierId: carrier.id, authorizeWorkspace: false, editingConfiguration: false })
     await set(loadOwnerPlanAtom, subject)

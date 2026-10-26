@@ -40,6 +40,8 @@ import {
   saveNewMediaAccountSecret,
 } from './new-media/new-media-account-secret-store'
 
+import { runOwnerRuntimeVerificationSmoke } from './owner-runtime-verification-smoke'
+
 export async function runPackageSmoke(): Promise<void> {
   assert(app.isPackaged, '必须验证实际安装包')
   assert(process.env.PROMA_TEST_CONFIG_DIR, '必须指定临时配置目录')
@@ -180,10 +182,12 @@ export async function runPackageSmoke(): Promise<void> {
   assert(gateBlocked, '无权益时新建笔记未被拒绝')
 
   const newMedia = await runNewMediaSmoke()
+  const ownerRuntimeVerification = await runOwnerRuntimeVerificationSmoke(root)
 
   console.log(JSON.stringify({
     packageSmoke: 'passed',
     newMedia,
+    ownerRuntimeVerification,
     version: app.getVersion(),
     tools: tools.length,
     defaultSkills: defaultSkillSlugs.length,

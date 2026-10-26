@@ -45,6 +45,7 @@ const { registerProjectOwnerTaskIpcHandlers } = await import('../../../main/lib/
 const root = resolve(import.meta.dir, '../../../../../..')
 const renderer = join(root, 'apps/electron/src/renderer')
 const browserTest = existsSync(chromium.executablePath()) ? test : test.skip
+let journeyBrowser: Awaited<ReturnType<typeof chromium.launch>> | undefined
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 const register = { handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => { ipcHandlers.set(channel, handler) } }
 registerProjectOwnerGoalIpcHandlers(register)
@@ -353,7 +354,8 @@ beforeAll(async () => {
   })
 })
 
-afterAll(() => {
+afterAll(async () => {
+  await journeyBrowser?.close()
   employees.stopAgentEmployeeHeartbeat()
   database.closeProjectDb()
   if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
@@ -445,8 +447,10 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
   }, routes: { '/entry.js': () => new Response(Bun.file(join(directory, `entry-${project.id}.js`))) } })
   const bundle = await build({ entryPoints: [entry], outfile: join(directory, `entry-${project.id}.js`), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   void bundle
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
+  // 两个案例共用浏览器进程，各自新建Context隔离页面状态；避免在同一Bun用例内反复关闭/启动进程。
+  journeyBrowser ??= await chromium.launch({ headless: true })
+  const context = await journeyBrowser.newContext()
+  const page = await context.newPage()
   page.setDefaultTimeout(10000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -507,7 +511,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     const deliveryContent = JSON.stringify(deliveryMessage)
     await options.assertDelivered({ deliveryContent, projectId: project.id, runHtml })
   } finally {
-    await browser.close()
+    await context.close()
     server.stop(true)
     stopManagement()
     stopWake()

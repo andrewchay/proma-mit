@@ -40,3 +40,48 @@ test('Given Owner规划GLM JSON协议 When真实AI SDK序列化 Then同时发送
   const { body } = await run('stop', true)
   expect(body).toMatchObject({ max_tokens: 8192, reasoning_effort: 'low', response_format: { type: 'json_object' } })
 })
+
+test('Given Owner员工SSE尚未结束时 WhenRuntime接收首段文本 Then增量已到事件层且结束后才拿到完整终态', async () => {
+  const encoder = new TextEncoder()
+  let releaseStream!: () => void
+  const release = new Promise<void>(resolve => { releaseStream = resolve })
+  const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}) => encoder.encode(`data: ${JSON.stringify({
+    id: 'owner-stream', object: 'chat.completion.chunk', created: 1, model: 'glm-5.3-flash',
+    choices: [{ index: 0, delta, finish_reason: null }], ...extra,
+  })}\n\n`)
+  const fetchFn = Object.assign(async () => new Response(new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(chunk({ content: '第一段：已读取项目资料。' }))
+      await release
+      controller.enqueue(chunk({ content: '第二段：开始写文件。' }))
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        id: 'owner-stream', object: 'chat.completion.chunk', created: 1, model: 'glm-5.3-flash',
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
+      })}\n\n`))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } }), { preconnect() {} }) as typeof globalThis.fetch
+
+  const deltas: string[] = []
+  let finished = false
+  const turn = new AISDKRuntimeCore().runAgentTurn({
+    sessionId: 'employee-stream', prompt: '完成已授权任务', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat',
+    apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
+    runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false },
+    maxTurns: 2, maxRetries: 0, fetchFn,
+    onAgentEvent: event => { if (event.type === 'text_delta') deltas.push(event.text) },
+  }).finally(() => { finished = true })
+
+  // 上游尚未结束时，首段增量必须已经到达事件层（旧实现在这里读不到任何文本）。
+  const deadline = Date.now() + 5000
+  while (deltas.length === 0 && Date.now() < deadline) await Bun.sleep(10)
+  expect(deltas.join('')).toContain('第一段')
+  expect(finished).toBe(false)
+
+  releaseStream()
+  const messages = await turn
+  expect(deltas.join('')).toContain('第二段')
+  expect(messages.at(-1)).toMatchObject({ subtype: 'success' })
+})

@@ -1,11 +1,14 @@
 import { supportsOwnerExecutionKind } from '@gravitas/shared'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { OwnerExecutionAssignmentCandidate, OwnerExecutionAssignmentContext, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
 
 export interface CreateOwnerExecutionAssignmentContextInput {
   context: ProjectOwnerPlanningContext
   plan: ProjectOwnerPlanDraft
-  workspaces: Array<{ id: string; name: string; capabilities?: string[] }>
+  workspaces: Array<{ id: string; name: string; capabilities?: string[]; rootPath?: string }>
   projectTitle: string
   projectDescription: string
   ownerCarrierId: string
@@ -71,7 +74,11 @@ export function createOwnerExecutionAssignmentContext(input: CreateOwnerExecutio
   if (version >= 2 && candidates.length < 2) throw new OwnerExecutionAssignmentCapabilityError('no-independent-reviewer')
   const roles = [...new Set(steps.map(step => step.roleKey))]
   const roleNames = new Map(input.plan.sources.roles.map(role => [role.key, role.name]))
-  const developmentSourcesAvailable = hasReferencedCodeSource(input)
+  // 绿地：没有既有代码候选、且至少一个授权工作区是 git 仓库（研发交付依赖 worktree 快照）。
+  const greenfieldDevelopment = !hasReferencedCodeSource(input)
+    && (input.plan.sources.code?.files.length ?? 0) === 0
+    && input.workspaces.some(workspace => Boolean(workspace.rootPath && isGitRepositoryWithHead(workspace.rootPath)))
+  const developmentSourcesAvailable = hasReferencedCodeSource(input) || greenfieldDevelopment
   const source = {
     ...(version >= 2 ? { teamContractVersion: version as 2 | 3 } : {}),
     schemaVersion: 1 as const,
@@ -94,6 +101,7 @@ export function createOwnerExecutionAssignmentContext(input: CreateOwnerExecutio
     acceptanceCriteria: (input.context.goal.goal.acceptanceCriteria ?? []).slice(0, 30).map(item => boundedText(item, 1000)),
     roles: roles.map(roleKey => ({ roleKey, name: boundedText(roleNames.get(roleKey) ?? roleKey, 200) })),
     steps: steps.map(step => ({ key: step.key, title: boundedText(step.title, 300), outcome: boundedText(step.outcome, 1200), acceptanceCriteria: step.acceptanceCriteria.slice(0, 30).map(item => boundedText(item, 1000)), dependencies: [...step.dependencies], roleKey: step.roleKey, ...(step.sourceReferences ? { sourceReferences: step.sourceReferences.map(reference => ({ ...reference })) } : {}) })),
+    ...(greenfieldDevelopment ? { greenfieldDevelopment: true as const } : {}),
     ...(input.plan.sources.code ? { codeFiles: input.plan.sources.code.files.slice(0, 256).map(file => ({ path: boundedText(file.path, 1000), sha256: file.sha256, matchedTerms: file.matchedTerms.slice(0, 20).map(term => boundedText(term, 120)) })) } : {}),
     candidates,
     ownerCarrierId: input.ownerCarrierId,
@@ -129,4 +137,19 @@ export function ownerAssignmentContextMatchesApprovalTransition(previous: OwnerE
     || current.bindingRevision !== previous.bindingRevision) return false
   const withoutRevision = ({ planRevision: _revision, contextFingerprint: _fingerprint, ...value }: OwnerExecutionAssignmentContext) => value
   return hash(withoutRevision(previous)) === hash(withoutRevision(current))
+}
+
+/**
+ * 研发交付依赖 worktree 快照，其基线来自仓库 HEAD。
+ * 只有 `git init` 而没有首个提交的空仓会在执行准备阶段失败，因此这里就要求 HEAD 可解析，
+ * 避免把一条必然失败的路径提供成候选。
+ */
+function isGitRepositoryWithHead(rootPath: string): boolean {
+  if (!existsSync(join(rootPath, '.git'))) return false
+  try {
+    execFileSync('git', ['-C', rootPath, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000 })
+    return true
+  } catch {
+    return false
+  }
 }

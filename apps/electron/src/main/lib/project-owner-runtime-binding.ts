@@ -113,6 +113,11 @@ export function getOwnerRuntimeBinding(projectId: string, atRevision?: number): 
   if (rows.some((row, index) => row.revision !== index + 1)) throw new Error('Owner配置记录历史不连续')
   return (atRevision === undefined ? versions.at(-1) : versions.find(version => version.revision === revision(atRevision, 1))) ?? null
 }
+/** 历史管理载体仍属于Owner身份，不能当作业务员工或独立评审员复用。 */
+export function getOwnerRuntimeCarrierIds(): ReadonlySet<string> {
+  const rows = store.getProjectDb().prepare('SELECT project_id, revision, payload FROM project_owner_runtime_revisions').all() as Array<{ project_id: string; revision: number; payload: string }>
+  return new Set(rows.map(row => parseBinding(row.payload, row.project_id, row.revision).carrierId))
+}
 export function saveOwnerRuntimeBinding(projectId: string, expectedRevision: number, raw: unknown): OwnerRuntimeBinding {
   const input = object(raw, ['ownerName', 'carrierId', 'workspaceId', 'changeReason'])
   const ownerName = text(input.ownerName, '职责名称'), carrierId = text(input.carrierId, '载体ID', 128), workspaceId = text(input.workspaceId, '工作区ID', 128), changeReason = text(input.changeReason, '变更原因', 2000)

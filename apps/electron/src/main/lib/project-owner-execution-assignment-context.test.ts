@@ -1,4 +1,8 @@
 import { expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { OwnerExecutionAssignmentCandidate, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
 import { createOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
 
@@ -112,4 +116,45 @@ test('Given 旧安排请求与新岗位覆盖提示 When 恢复冻结来源 Then
     expect(request.systemPrompt.includes('每个岗位恰好一项')).toBe(strict)
   }
   expect(() => protocol.resolveOwnerExecutionAssignmentRequest(value, 'f'.repeat(64))).toThrow('不属于已知格式')
+})
+
+test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then 提供development并标记绿地', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'owner-greenfield-repo-'))
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    // 研发交付基线取自 HEAD：必须有首个提交才会被判定为可用绿地仓库。
+    execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo })
+    const value = create({
+      teamContractVersion: 2,
+      workspaces: [{ id: 'w1', name: '研究工作区', rootPath: repo }, { id: 'w2', name: '研发工作区', rootPath: repo }],
+    })
+    expect(value.executionKinds).toContain('development')
+    expect(value.greenfieldDevelopment).toBe(true)
+    expect(value.codeFiles).toBeUndefined()
+  } finally { rmSync(repo, { recursive: true, force: true }) }
+})
+
+test('Given 无代码候选且工作区不是git仓库 When 构造上下文 Then 不提供development（研发交付依赖worktree快照）', () => {
+  const plain = mkdtempSync(join(tmpdir(), 'owner-greenfield-plain-'))
+  try {
+    const value = create({
+      teamContractVersion: 2,
+      workspaces: [{ id: 'w1', name: '研究工作区', rootPath: plain }, { id: 'w2', name: '研发工作区', rootPath: plain }],
+    })
+    expect(value.executionKinds).not.toContain('development')
+    expect(value.greenfieldDevelopment).toBeUndefined()
+  } finally { rmSync(plain, { recursive: true, force: true }) }
+})
+
+test('Given 只有git init没有首个提交 When 构造上下文 Then 不提供development（交付基线缺失）', () => {
+  const empty = mkdtempSync(join(tmpdir(), 'owner-greenfield-empty-'))
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: empty })
+    const value = create({
+      teamContractVersion: 2,
+      workspaces: [{ id: 'w1', name: '研究工作区', rootPath: empty }, { id: 'w2', name: '研发工作区', rootPath: empty }],
+    })
+    expect(value.executionKinds).not.toContain('development')
+    expect(value.greenfieldDevelopment).toBeUndefined()
+  } finally { rmSync(empty, { recursive: true, force: true }) }
 })

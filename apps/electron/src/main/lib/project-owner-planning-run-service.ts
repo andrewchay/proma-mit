@@ -9,6 +9,7 @@ import { parseProjectOwnerPlanningResponse } from './project-owner-planning-prot
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
 import { parseOwnerExecutionAssignmentProposal, type OwnerExecutionAssignmentProtocolContext } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
+import { isOwnerPlanningConfigurationError } from './owner-planning-configuration'
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
 export interface OwnerPlanningRunReceipt {
@@ -78,6 +79,33 @@ function storedReceipt(row: ReceiptRow): OwnerPlanningRunReceipt {
 export function getOwnerPlanningRunReceipt(receiptId: string): OwnerPlanningRunReceipt | null {
   const row = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_run_receipts WHERE id = ?').get(receiptId) as ReceiptRow | undefined
   return row ? storedReceipt(row) : null
+}
+
+/** 发送前配置失败的只读核查；缺少准入本身不足以解除未知请求门禁。 */
+export function isUnsentOwnerPlanningConfigurationFailure(executionId: string, receiptId: string): boolean {
+  const execution = store.getAgentExecution(executionId), receipt = getOwnerPlanningRunReceipt(receiptId)
+  if (!execution || execution.status !== 'failed' || !isOwnerPlanningConfigurationError(execution.error)
+    || !receipt || receipt.executionId !== executionId || receipt.sessionId !== execution.sessionId) return false
+  const frozen = readOwnerPlanningSnapshot(execution.entityId)
+  if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.projectId !== execution.projectId || receipt.projectId !== execution.projectId
+    || frozen.link.planningTaskId !== execution.entityId || frozen.link.protocolVersion === '1') return false
+  const db = store.getProjectDb()
+  const prepared = db.prepare('SELECT execution_id,owner_planning_link_id,provider_admitted_at FROM controlled_task_preparations WHERE task_id=?').get(execution.entityId) as { execution_id: string | null; owner_planning_link_id: string | null; provider_admitted_at: number | null } | undefined
+  if (prepared?.execution_id !== executionId || prepared.owner_planning_link_id !== receipt.linkId || prepared.provider_admitted_at !== null) return false
+  if (db.prepare('SELECT 1 FROM project_owner_planning_admissions WHERE execution_id=? OR session_id=? OR link_id=?').get(executionId, receipt.sessionId, receipt.linkId)) return false
+  const receipts = (db.prepare('SELECT * FROM project_owner_planning_run_receipts WHERE execution_id=?').all(executionId) as ReceiptRow[]).map(storedReceipt)
+  if (!receipts.length || receipts.some(item => item.requestHash !== null || item.runtimeResult !== null || item.responseText !== '' || item.usage !== null
+    || item.stopped || item.validTerminal || item.cost.source !== 'unknown' || item.cost.usd !== null
+    || !['ai-sdk', 'unknown'].includes(item.runtimeSource) || item.error !== null && !isOwnerPlanningConfigurationError(item.error))) return false
+  const callbacks = db.prepare('SELECT id,payload FROM project_owner_planning_callback_evidence WHERE execution_id=?').all(executionId) as { id: string; payload: string }[]
+  return callbacks.length > 0 && callbacks.every(row => {
+    try {
+      const value = JSON.parse(row.payload) as { executionId: string; sessionId: string; projectId: string; runtimeSource: string; runtimeResult: unknown; stopped: boolean; error: string | null }
+      return hash(value) === row.id && value.executionId === executionId && value.sessionId === receipt.sessionId && value.projectId === execution.projectId
+        && ['ai-sdk', 'unknown'].includes(value.runtimeSource) && value.runtimeResult === null && value.stopped === false
+        && (value.error === null || isOwnerPlanningConfigurationError(value.error))
+    } catch { return false }
+  })
 }
 function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRunOutcome | null {
   const row = store.getProjectDb().prepare('SELECT receipt_id, payload FROM project_owner_planning_run_outcomes WHERE execution_id = ?').get(executionId) as { receipt_id: string; payload: string } | undefined

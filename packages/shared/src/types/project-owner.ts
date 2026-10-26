@@ -243,6 +243,9 @@ export interface OwnerDevelopmentValidationEvidence {
   outputTruncated?: boolean
   rawOutputSha256?: string
   rawOutputByteLength?: number
+  /** 验证完成时间与过期标记：过期证据不得支撑评审通过或 Owner 验收。 */
+  finishedAt?: number
+  expired?: boolean
 }
 
 export interface OwnerDevelopmentDeliveryArtifact {
@@ -565,6 +568,8 @@ export interface OwnerExecutionAssignmentContext {
   roles: Array<{ roleKey: string; name: string }>
   steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string; sourceReferences?: Array<{ path: string; line: number; sha256: string }> }>
   codeFiles?: Array<{ path: string; sha256: string; matchedTerms: string[] }>
+  /** 绿地研发：项目没有既有代码候选，本次目标是要新建的文件。 */
+  greenfieldDevelopment?: true
   candidates: OwnerExecutionAssignmentCandidate[]
   ownerCarrierId: string
   ownerName: string

@@ -12,6 +12,7 @@ import { getOwnerManager, recordOwnerManagementDelegationConfirmed } from './pro
 import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { requestOwnerManagementWake } from './project-owner-management-events'
+import { readOwnerPlanningApiKey } from './owner-planning-configuration'
 
 interface Row { payload: string; integrity_hash: string }
 interface GrantRow extends Row { revoked_at: number | null }
@@ -68,7 +69,7 @@ function scope(projectId: string, taskId?: string, conversationEnabled = false, 
   const protocol = getAgentProviderProtocol(channel.provider, binding.runtime)
   const kind = protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
   const price = getPilotReviewedPriceEvidenceForModel(binding.modelId, kind)
-  if (!price || price.maxModelOutputTokens < 8192) throw new Error('这个模型暂不支持有界管理调用，可使用单次确认或选择支持的模型')
+  if (!price || price.maxModelOutputTokens < 8192) throw new Error(`当前 Owner 模型「${binding.modelId}」暂不支持项目预算内的持续管理。请点击“更换 Owner 模型”选择支持的模型，再核对项目预算；添加渠道模型不会自动切换项目 Owner。`)
   const context = getProjectOwnerPlanningContext(projectId, taskId)
   // 不保存渠道凭据；配置/资料摘要用于每次发送前复核。
   const scopeHash = hash({ ownerId: manager.ownerId, binding, configurationFingerprint: facts.carrierConfigurationFingerprint, sources: context.sources, price, ...(conversationEnabled ? { conversationEnabled: true } : {}), ...(executionFollowupEnabled ? { executionFollowupEnabled: true } : {}), ...(fullDeliveryReviewEnabled ? { fullDeliveryReviewEnabled: true } : {}), ...(qualityDecisionEnabled ? { qualityDecisionEnabled: true } : {}) })
@@ -78,6 +79,7 @@ function scope(projectId: string, taskId?: string, conversationEnabled = false, 
 }
 export function previewOwnerManagementDelegation(raw: unknown): OwnerManagementDelegationPreview {
   const input = parse(raw), current = scope(input.projectId, input.taskId, true, true, true, true)
+  readOwnerPlanningApiKey(current.binding.channelId)
   if (input.startApproval) {
     const plan = getProjectOwnerPlanDraft(input.projectId, input.taskId), context = getProjectOwnerPlanningContext(input.projectId, input.taskId)
     if (!plan || plan.state !== 'proposed' || plan.goalRevision !== input.startApproval.expectedGoalRevision || plan.revision !== input.startApproval.expectedPlanRevision
@@ -166,12 +168,17 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
   const { delegation, row } = found, entries = claims(delegation.id)
   const base = { delegation, ...historicalUsage(projectId) }
   let rejectedProtocolReply = false
+  let localConfigurationFailure = false
   for (const entry of entries) {
     const execution = store.getAgentExecution(entry.executionId)
     if (execution && ['queued', 'running'].includes(execution.status)) continue
     const runs = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
     const value = runs.getOwnerPlanningRunOutcome(entry.executionId)
     const receipt = value ? runs.getOwnerPlanningRunReceipt(value.receiptId) : null
+    if (receipt && runs.isUnsentOwnerPlanningConfigurationFailure(entry.executionId, receipt.id)) {
+      localConfigurationFailure = true
+      continue
+    }
     const protocolRejected = Boolean(receipt && value && (receipt.purpose === 'owner_planning' && value.detail.startsWith('Owner规划')
       || receipt.purpose === 'owner_execution_assignment' && (value.detail.startsWith('Owner安排') || value.detail.startsWith('Owner人员安排'))))
     const rejectedReply = value?.state === 'failed'
@@ -205,6 +212,7 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
   }
   // 未知或失败请求的费用核对优先于委托漂移提示，避免把实际中断原因藏在重新授权状态后面。
   if (row.revoked_at !== null) return { ...base, state: 'revoked', detail: '管理委托已撤销；已发出的请求费用和远端停止状态须另核对。' }
+  if (localConfigurationFailure) return { ...base, state: 'stale', detail: '上次在本地配置检查阶段失败，未进入模型请求发送。请保存服务凭据后重新核对项目预算；原失败和保守预留仍保留，不自动重发，也不补造模型用量或账单。' }
   if (delegation.expiresAt <= Date.now()) return { ...base, state: 'expired', detail: '管理委托已到期。' }
   try { assertCurrent(delegation) } catch (cause) { return { ...base, state: 'stale', detail: cause instanceof Error ? cause.message : '管理范围需重新确认' } }
   if ((!delegation.autonomousExecution && base.usedRequests >= delegation.maxRequests) || base.reservedCostMicros + delegation.perRequestCeilingMicros > delegation.maxCostMicros) return { ...base, state: 'exhausted', detail: delegation.autonomousExecution ? '项目总预算预留已用尽。实际费用另按运行证据核对。' : '管理请求额度或费用预留已用尽。实际费用另按运行证据核对。' }

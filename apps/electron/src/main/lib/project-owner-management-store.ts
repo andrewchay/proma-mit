@@ -290,6 +290,32 @@ export function recordOwnerManagementObservation(projectId: string, goalRevision
     const state = observation.trigger === 'terminal' ? observation.executionStatus === 'completed' ? 'completed' : 'failed' : observation.trigger === 'expired' ? 'expired' : 'stalled'
     appendOwnerManagementTrace({ eventId: `${eventId}:trace`, projectId, ...(taskId ? { taskId } : {}), phase: observation.role, state, createdAt: message.createdAt, detailCode: observation.trigger === 'terminal' ? 'result_ready' : observation.trigger === 'expired' ? 'grant_expired' : 'no_update' })
     const subject = observation.role === 'reviewer' ? '独立检查' : '员工执行'
+    const needsManualReconciliation = observation.trigger === 'terminal'
+      && observation.executionStatus !== 'completed'
+      && (observation.commandState === 'needs_reconcile' || observation.actualCostMicros === null)
+    if (needsManualReconciliation) {
+      appendOwnerManagementMessage({ projectId, eventId: `${eventId}:progress`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), goalRevision,
+        content: `${subject}失败，没有可核验成果。当前记录中的模型用量或实际费用未知，保守预留仍保留；系统不会自动重发。请先在服务商账单按模型与请求时间核对。当前版本不能把外部账单核对结果写回应用，也不会在核对前启动后续步骤。` })
+      return true
+    }
+    // 独立检查有结论时，Owner 主动说明发现、影响与建议，而不是只报“检查已返回”。
+    // 全部来自权威观察与评审证据，不做超出事实的推断；同一观察只写一次。
+    const review = observation.review
+    if (observation.trigger === 'terminal' && observation.role === 'reviewer' && observation.executionStatus === 'completed' && review) {
+      const findings = review.findings.map(value => value.trim()).filter(Boolean)
+      const summary = review.summary.trim()
+      const lead = summary ? `（${summary}）` : ''
+      const listed = findings.slice(0, 3).map((value, index) => `${index + 1}) ${value}`).join('；')
+      const more = findings.length > 3 ? `；另有 ${findings.length - 3} 项` : ''
+      const content = review.verdict === 'changes_requested'
+        ? `发现：独立检查未通过${lead}，提出 ${findings.length} 项修改${listed ? `：${listed}${more}` : ''}。\n影响：本轮成果已保留但不能作为交付；受影响部分需要在剩余返工次数与额度内重做，范围不扩大。\n建议：先按上述修改点调整执行内容和验收依据，再重新独立检查；若修改要求超出已确认的目标、资料或费用边界，我会停下来请你决定。`
+        : review.verdict === 'approved'
+          ? `发现：独立检查通过${lead}，${findings.length ? `仍记录 ${findings.length} 项非阻断项：${listed}${more}` : '没有阻断项'}。\n影响：成果可以进入交付，不需要为此改动方案或追加授权。\n建议：我继续整理交付说明（成果位置、依据、限制）；除业务取舍外不需要你再次确认。`
+          : `发现：独立检查结论为 ${review.verdict}${lead}。\n影响：结论不是通过，本轮不能按已通过处理，相关部分仍需在授权内核对或返工。\n建议：先核对检查依据与本轮成果，再决定返工还是请你对边界作决定；我不会自动扩大范围。`
+      appendOwnerManagementMessage({ projectId, eventId: `${eventId}:plan-update`, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision, content })
+      enqueue(projectId, 'execution_observed', goalRevision, taskId, message.id)
+      return true
+    }
     const progress = observation.trigger === 'stalled'
       ? `${subject}长时间没有新进度。我正在核对已有运行状态与授权，不会重复派发。`
       : observation.trigger === 'expired'

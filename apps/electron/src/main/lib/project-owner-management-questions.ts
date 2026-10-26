@@ -97,8 +97,16 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
         : `方案已准备好。${plan.proposal.summary}\n我正在为方案准备内部安排，不会提前启动员工。请审阅结果与完成标准；需要调整时直接告诉我，确认开始后我会负责执行。`
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'plan_proposal', content })
   } else {
-    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'attention', content: '这次规划未得到可继续使用的结果。我已保留记录；核对来源、运行结果或费用后再决定下一步，不会自动重复调用。' })
+    const reason = safeFailureDetail(outcome.detail)
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'attention', content: `这次规划未得到可继续使用的结果。我已保留记录；${reason ? `失败原因：${reason}。` : ''}费用或运行状态未知时不会自动重复调用。` })
   }
+}
+
+function safeFailureDetail(detail: string): string {
+  return detail.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [已隐藏]')
+    .replace(/(api[_-]?key|authorization|access[_-]?token)\s*[:=]\s*[^,\s;]+/gi, '$1=[已隐藏]')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[已隐藏凭据]')
+    .replace(/[\r\n\t]+/g, ' ').slice(0, 300)
 }
 
 export function answerOwnerManagementQuestion(raw: unknown): ProjectOwnerGoalDraft {

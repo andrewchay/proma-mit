@@ -3,6 +3,7 @@ import { requestOwnerManagementWake } from './project-owner-management-events'
 import { recordOwnerManagementTeamChanged } from './project-owner-management-store'
 import { readOwnerCommandFrozenSource, readOwnerCommandRuntime } from './project-owner-employee-runtime'
 import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
+import { awaitOwnerRequestSettlements } from './project-owner-execution-request-exit'
 import {
   assertNoOwnerBusinessTask,
   assertNoOwnerBusinessExecution,
@@ -960,12 +961,17 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       employee.runtime,
     )
     sessionId = session.id
+    const ownerKnowledgeBaseIds = ownerExecution
+      ? [...new Set(readOwnerCommandFrozenSource(ownerExecution.commandId).source.knowledgeSources.flatMap(source => source.knowledgeBaseIds))]
+      : undefined
     // PH2-③ 追根因：AI 员工是无人值守执行，强制 delegationDepth=1 使其不能自我委派（
     //   协作子会话工具会因 delegationDepth>0 拒绝创建），从根上杜绝"创建100字文件却爆60+子会话"。
     updateAgentSessionMeta(sessionId, {
       delegationDepth: 1,
       stoppedByUser: false,
-      ...(development || controlled ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
+      ...(ownerExecution
+        ? { projectId: execution.projectId, knowledgeScopeMode: 'explicit' as const, explicitKnowledgeBaseIds: ownerKnowledgeBaseIds!, permissionMode: permissionModeOverride, modelId }
+        : development || controlled ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
     })
     // 普通执行尽早保留会话定位；Pilot/Owner必须等到调用Runtime前与命令同事务认领。
     if (!execution.pilotCommandId && !ownerExecution) store.updateAgentExecution(executionId, { sessionId })
@@ -1396,6 +1402,9 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
     }
   }
 
+  // 流式透传后逐请求结算在后台完成：终态聚合前先等它落库，避免把已发送请求误记成用量未知。
+  try { await awaitOwnerRequestSettlements({ commandId }) }
+  catch (cause) { console.warn(`[AgentEmployee] Owner命令 ${commandId} 结算等待失败，按用量未知收敛:`, cause instanceof Error ? cause.message : '账本错误') }
   const rows = database.prepare('SELECT request_id, state, settled_cost_micros FROM project_owner_execution_request_reservations WHERE command_id=? ORDER BY request_id').all(commandId) as Array<{ request_id: string; state: string; settled_cost_micros: number | null }>
   const openStop = Boolean(database.prepare('SELECT 1 FROM project_owner_execution_stop_escalations WHERE command_id=? AND resolved_at IS NULL').get(commandId))
   const conflictingTerminal = conflictingOwnerCommandCallbacks.has(commandId)

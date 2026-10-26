@@ -18,13 +18,13 @@ const { saveOwnerRuntimeBinding, prepareOwnerPlanning } = await import('./projec
 const { readOwnerPlanningSnapshot } = await import('./project-owner-planning-source')
 const { ownerPlanningAdmissionHash } = await import('./project-owner-planning-provider')
 const { recordOwnerPlanningRun } = await import('./project-owner-planning-run-service')
-const { getOwnerManagementConversation, answerOwnerManagementQuestion } = await import('./project-owner-management-questions')
+const { getOwnerManagementConversation, answerOwnerManagementQuestion, projectOwnerManagementRunResult } = await import('./project-owner-management-questions')
 const { onOwnerManagementChanged } = await import('./project-owner-management-events')
 const { reconcileOwnerManagement, startOwnerManagementLoop } = await import('./project-owner-management-loop')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 const tick = () => new Promise<void>(resolve => queueMicrotask(resolve))
-function fixture(taskScoped = false) {
+function fixture(taskScoped = false, rawResponse?: string) {
   const project = store.createProject({ title: '必要协商', description: '' })
   const workspace = createAgentWorkspace(`问题-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
@@ -42,10 +42,18 @@ function fixture(taskScoped = false) {
   const admission = { link_id: link.id, execution_id: executionId, session_id: sessionId, request_hash: 'a'.repeat(64), source_snapshot: JSON.stringify(readOwnerPlanningSnapshot(link.planningTaskId)!.context), admitted_at: Date.now() }
   store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at, integrity_hash) VALUES (?, ?, ?, ?, ?, ?, ?)').run(admission.link_id, executionId, sessionId, admission.request_hash, admission.source_snapshot, admission.admitted_at, ownerPlanningAdmissionHash(admission))
   const response = { schemaVersion: 1, kind: 'needs_clarification', projectId: project.id, ...(taskId ? { taskId } : {}), goalVersion: 1, contextFingerprint: context.fingerprint, reason: '受众决定方案取舍', questions: [{ key: 'audience', reasonType: 'missing_information', question: '主要服务谁？', why: '决定定位范围', options: ['新用户', '现有用户'], recommended: '现有用户' }] }
-  const result = { type: 'result' as const, subtype: 'success' as const, session_id: sessionId, finish_reason: 'stop' as const, result: JSON.stringify(response), usage: { input_tokens: 0, output_tokens: 0 } }
+  const result = { type: 'result' as const, subtype: 'success' as const, session_id: sessionId, finish_reason: 'stop' as const, result: rawResponse ?? JSON.stringify(response), usage: { input_tokens: 0, output_tokens: 0 } }
   recordOwnerPlanningRun(executionId, 'ai-sdk', result)
   return { project, taskId, executionId, result, context, link }
 }
+
+test('Given Owner响应格式无效 When写回规划结果 Then对话显示具体协议失败原因', () => {
+  const f = fixture(false, '{"schemaVersion":1,}')
+  projectOwnerManagementRunResult(f.project.id, f.executionId, randomUUID())
+  const message = getOwnerManagementConversation(f.project.id).messages.findLast(item => item.kind === 'attention')
+  expect(message?.content).toContain('失败原因：Owner规划响应不是有效JSON')
+})
+
 function questionInput(f: ReturnType<typeof fixture>) {
   const question = getOwnerManagementConversation(f.project.id).questions.find(item => item.executionId === f.executionId)!
   return { projectId: f.project.id, questionId: question.id, requestId: randomUUID(), expectedGoalRevision: question.goalRevision, expectedContextFingerprint: question.contextFingerprint, answers: { audience: '现有用户' } }
