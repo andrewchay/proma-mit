@@ -3,6 +3,8 @@ import { readOwnerCommandRuntime } from './project-owner-employee-runtime'
 import { randomUUID } from 'node:crypto'
 import * as store from './project-sqlite-store'
 import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
+import { detectOwnerOutwardActions } from './project-owner-outward-actions'
+import { getAgentSessionSDKMessages } from './agent-session-manager'
 
 interface EscalationRow { escalation_id: string; execution_id: string; command_id: string; project_id: string; session_id: string; requested_at: number; reason: string; resolved_at: number | null }
 export interface OwnerStopEscalation { escalationId: string; executionId: string; commandId: string; projectId: string; sessionId: string; requestedAt: number; reason: string }
@@ -60,7 +62,7 @@ export function cancelQueuedOwnerCommand(commandId: string, now = Date.now()): v
     if (stale.changes !== 1) throw new Error('Owner执行取消状态已变化')
   })()
 }
-export interface OwnerRecoveryResult { executionId: string; commandId: string; state: 'unknown_recorded' | 'stale_only'; startBoundary: 'claim_only' | 'handoff_intent' | 'started_proven' | 'invalid_attempt'; reason: string }
+export interface OwnerRecoveryResult { executionId: string; commandId: string; state: 'unknown_recorded' | 'stale_only'; startBoundary: 'claim_only' | 'handoff_intent' | 'started_proven' | 'invalid_attempt'; outwardActions: string[]; reason: string }
 function readOwnerStartBoundary(executionId: string, commandId: string): OwnerRecoveryResult['startBoundary'] {
   const database = store.getProjectDb()
   const attempt = database.prepare('SELECT handoff_intent_at FROM project_owner_execution_start_attempts WHERE execution_id = ? AND command_id = ?').get(executionId, commandId) as { handoff_intent_at: number | null } | undefined
@@ -83,7 +85,12 @@ export function recoverInterruptedOwnerRuntimeExecutions(now = Date.now(), onlyE
         const execution = store.getAgentExecution(candidate.id)
         if (!execution || execution.status !== 'running' || execution.ownerCommandId !== candidate.owner_command_id) return
         database.prepare("UPDATE project_owner_execution_grants SET state = 'paused' WHERE project_id = ? AND state = 'active'").run(execution.projectId)
-        const stale = database.prepare(`UPDATE agent_executions SET status = 'stale', error = ?, last_heartbeat_at = ?, completed_at = ? WHERE id = ? AND project_id = ? AND status = 'running' AND owner_command_id = ?`).run('应用重启后Runtime状态与用量未知，已暂停Owner授权等待对账', now, now, execution.id, execution.projectId, candidate.owner_command_id)
+        // 对外动作只作为人工判断线索，不能证明动作成功，也不改变“不自动重跑”的策略。
+        const outwardActions = detectOwnerOutwardActions(getAgentSessionSDKMessages(execution.sessionId))
+        const recoveryError = outwardActions.length
+          ? `应用重启后Runtime状态与用量未知；检测到对外动作（${outwardActions.join('、')}），不自动重跑以免重复执行，已暂停Owner授权等待对账`
+          : '应用重启后Runtime状态与用量未知，已暂停Owner授权等待对账'
+        const stale = database.prepare(`UPDATE agent_executions SET status = 'stale', error = ?, last_heartbeat_at = ?, completed_at = ? WHERE id = ? AND project_id = ? AND status = 'running' AND owner_command_id = ?`).run(recoveryError, now, now, execution.id, execution.projectId, candidate.owner_command_id)
         if (stale.changes !== 1) throw new Error('Owner中断执行状态已变化')
         database.prepare(`UPDATE project_owner_action_approvals SET status='invalidated', decided_at=?, decision_reason='runtime_recovered'
           WHERE project_id=? AND command_id=? AND execution_id=? AND session_id=? AND status='pending'`)
@@ -96,10 +103,10 @@ export function recoverInterruptedOwnerRuntimeExecutions(now = Date.now(), onlyE
           if (!command || command.state !== 'running' || command.actual_cost_micros !== null || command.usage_evidence !== null || command.usage_record_key !== null) throw new Error('中断执行命令缺失或已有费用证据')
           const runtime = readOwnerCommandRuntime(candidate.owner_command_id)
           settleOwnerCommandUsage(candidate.owner_command_id, { source: 'unknown', executionId: execution.id, sessionId: execution.sessionId, channelId: runtime.channelId, modelId: runtime.modelId, capturedAt: now, reason: '应用重启中断Runtime，无法核验Provider用量' }, now)
-          result = { executionId: execution.id, commandId: candidate.owner_command_id, state: 'unknown_recorded', startBoundary, reason: startBoundary === 'started_proven' ? '启动已证实但终态与用量未知，已按未知用量撤权停等' : '中断Runtime已按未知用量撤权停等' }
+          result = { executionId: execution.id, commandId: candidate.owner_command_id, state: 'unknown_recorded', startBoundary, outwardActions, reason: startBoundary === 'started_proven' ? '启动已证实但终态与用量未知，已按未知用量撤权停等' : '中断Runtime已按未知用量撤权停等' }
         } catch {
           database.prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile',updated_at=? WHERE id=? AND state='running' AND actual_cost_micros IS NULL").run(now, candidate.owner_command_id)
-          result = { executionId: execution.id, commandId: candidate.owner_command_id, state: 'stale_only', startBoundary, reason: '中断执行已置stale，结算失败留待人工对账' }
+          result = { executionId: execution.id, commandId: candidate.owner_command_id, state: 'stale_only', startBoundary, outwardActions, reason: '中断执行已置stale，结算失败留待人工对账' }
         }
       })()
     } catch { /* 单条失败不阻塞其余候选 */ }

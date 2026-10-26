@@ -108,6 +108,7 @@ export * from './project-chain'
 export * from './project-pilot'
 export * from './project-owner'
 export * from './project-owner-management'
+export * from './project-owner-employee-interaction'
 
 // 研发任务委派与人工 Review（冻结快照 / 受限交付）
 export * from './development-review'

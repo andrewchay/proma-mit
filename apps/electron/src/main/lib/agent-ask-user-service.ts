@@ -30,6 +30,7 @@ type PermissionResult = {
 interface PendingAskUser {
   resolve: (result: PermissionResult) => void
   request: AskUserRequest
+  ownerManaged?: boolean
 }
 
 /**
@@ -37,7 +38,14 @@ interface PendingAskUser {
  *
  * 单例模式，管理所有会话的 AskUser 请求。
  */
+export interface AskUserRequestRouter {
+  /** 返回 true 表示已由项目Owner接管，不向员工会话发问。 */
+  route: (request: AskUserRequest) => boolean
+  cancel: (requestId: string) => void
+}
+
 export class AgentAskUserService {
+  constructor(private readonly router?: AskUserRequestRouter) {}
   /** 待处理的 AskUser 请求 Map（requestId → PendingAskUser） */
   private pendingRequests = new Map<string, PendingAskUser>()
 
@@ -63,17 +71,28 @@ export class AgentAskUserService {
       toolInput: input,
     }
 
-    sendToRenderer(request)
-
     return new Promise<PermissionResult>((resolve) => {
-      this.pendingRequests.set(request.requestId, { resolve, request })
-
-      signal.addEventListener('abort', () => {
-        if (this.pendingRequests.has(request.requestId)) {
-          this.pendingRequests.delete(request.requestId)
-          resolve({ behavior: 'deny', message: '操作已中止' })
-        }
-      }, { once: true })
+      const cancel = () => {
+        if (!this.pendingRequests.delete(request.requestId)) return
+        try { this.router?.cancel(request.requestId) } finally { finish({ behavior: 'deny', message: '操作已中止' }) }
+      }
+      const finish = (result: PermissionResult) => {
+        signal.removeEventListener('abort', cancel)
+        resolve(result)
+      }
+      this.pendingRequests.set(request.requestId, { resolve: finish, request })
+      signal.addEventListener('abort', cancel, { once: true })
+      if (signal.aborted) { cancel(); return }
+      try {
+        if (this.router?.route(request)) {
+          const pending = this.pendingRequests.get(request.requestId)
+          if (pending) pending.ownerManaged = true
+        } else sendToRenderer(request)
+      } catch (error) {
+        try { this.router?.cancel(request.requestId) } catch { /* 路由失败仍须结束原Promise，不能绕过安全拒绝。 */ }
+        this.pendingRequests.delete(request.requestId)
+        finish({ behavior: 'deny', message: error instanceof Error ? error.message : '问题转交失败，未放行员工' })
+      }
     })
   }
 
@@ -84,7 +103,7 @@ export class AgentAskUserService {
    */
   respondToAskUser(requestId: string, answers: Record<string, string>): string | null {
     const pending = this.pendingRequests.get(requestId)
-    if (!pending) return null
+    if (!pending || pending.ownerManaged) return null
 
     const sessionId = pending.request.sessionId
 
@@ -102,11 +121,35 @@ export class AgentAskUserService {
     return sessionId
   }
 
+  /** 只检查原内存等待是否仍在；不恢复或创建新的员工会话。 */
+  hasOwnerPendingRequest(requestId: string, sessionId: string): boolean {
+    const pending = this.pendingRequests.get(requestId)
+    return pending?.ownerManaged === true && pending.request.sessionId === sessionId
+  }
+
+  /** 仅供Owner权威回流入口使用；普通IPC不可声明自己是Owner。 */
+  respondToOwnerAskUser(requestId: string, sessionId: string, answers: Record<string, string> | null, reason: string): boolean {
+    const pending = this.pendingRequests.get(requestId)
+    if (!pending || !pending.ownerManaged || pending.request.sessionId !== sessionId) return false
+    this.pendingRequests.delete(requestId)
+    pending.resolve(answers ? { behavior: 'allow', updatedInput: { ...pending.request.toolInput, answers } } : { behavior: 'deny', message: reason })
+    return true
+  }
+
+  /** 等待到期：明确拒绝原员工等待，不放行工具，也不代表Provider已停止。 */
+  expireOwnerAskUser(requestId: string, sessionId: string, reason: string): boolean {
+    const pending = this.pendingRequests.get(requestId)
+    if (!pending || !pending.ownerManaged || pending.request.sessionId !== sessionId) return false
+    this.pendingRequests.delete(requestId)
+    pending.resolve({ behavior: 'deny', message: reason })
+    return true
+  }
+
   /**
    * 获取当前所有待处理的 AskUser 请求（用于渲染进程重载后恢复状态）
    */
   getPendingRequests(): AskUserRequest[] {
-    return [...this.pendingRequests.values()].map((p) => p.request)
+    return [...this.pendingRequests.values()].filter(p => !p.ownerManaged).map((p) => p.request)
   }
 
   /**
@@ -115,6 +158,7 @@ export class AgentAskUserService {
   clearSessionPending(sessionId: string): void {
     for (const [requestId, pending] of this.pendingRequests) {
       if (pending.request.sessionId === sessionId) {
+        this.router?.cancel(requestId)
         pending.resolve({ behavior: 'deny', message: '会话已结束' })
         this.pendingRequests.delete(requestId)
       }
@@ -152,4 +196,7 @@ export class AgentAskUserService {
 }
 
 /** 全局 AskUser 服务实例 */
-export const askUserService = new AgentAskUserService()
+export const askUserService = new AgentAskUserService({
+  route: request => (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).routeOwnerEmployeeAskUser({ sessionId: request.sessionId, requestId: request.requestId, kind: request.kind === 'question' ? 'question' : 'permission', toolInput: request.toolInput, questions: request.questions }),
+  cancel: requestId => (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).cancelOwnerEmployeeInteraction(requestId),
+})

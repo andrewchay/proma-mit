@@ -307,7 +307,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
     let customTools = createPiToolBridge({
       toolContext: guardControlledPiToolContext(sessionId, {
-        cwd, sessionId, permissionMode, ...toolContextOverrides,
+        cwd, sessionId, permissionMode, ...toolContextOverrides, ownerWorkspaceWrite: Boolean(ownerCommand),
       }),
       allowSubAgent: !controlled,
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {

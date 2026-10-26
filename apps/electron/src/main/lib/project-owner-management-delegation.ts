@@ -1,3 +1,12 @@
+/** v6 规划协议允许的输出上限；与运行时校验、费用上界和授权记录保持同一口径。 */
+export const OWNER_PLANNING_MAX_OUTPUT_TOKENS_V6 = 32768
+export const OWNER_PLANNING_MAX_OUTPUT_TOKENS_LEGACY = 8192
+
+/** 只有 GLM-5.3 系（长推理、v6 协议）使用 32768；其余模型维持既有 8192 上界。 */
+export function ownerPlanningOutputCeiling(modelId: string, provider: string): 8192 | 32768 {
+  return provider === 'zhipu' && /^glm-5\.3(?:-flash|-flashx)?$/i.test(modelId) ? OWNER_PLANNING_MAX_OUTPUT_TOKENS_V6 : OWNER_PLANNING_MAX_OUTPUT_TOKENS_LEGACY
+}
+
 /** 有界管理委托：复用Owner零工具出口，永久占用每次保守上界；无退款或未知状态自动重试。 */
 import { createHash, randomUUID } from 'node:crypto'
 import type { OwnerManagementAttentionCheck, OwnerManagementDelegation, OwnerManagementDelegationInput, OwnerManagementDelegationPreview, OwnerManagementDelegationView } from '@gravitas/shared'
@@ -73,9 +82,10 @@ function scope(projectId: string, taskId?: string, conversationEnabled = false, 
   const context = getProjectOwnerPlanningContext(projectId, taskId)
   // 不保存渠道凭据；配置/资料摘要用于每次发送前复核。
   const scopeHash = hash({ ownerId: manager.ownerId, binding, configurationFingerprint: facts.carrierConfigurationFingerprint, sources: context.sources, price, ...(conversationEnabled ? { conversationEnabled: true } : {}), ...(executionFollowupEnabled ? { executionFollowupEnabled: true } : {}), ...(fullDeliveryReviewEnabled ? { fullDeliveryReviewEnabled: true } : {}), ...(qualityDecisionEnabled ? { qualityDecisionEnabled: true } : {}) })
-  const perRequestCeilingMicros = Number((BigInt(price.maxModelInputTokens) * BigInt(price.inputMicrosPerMillion) + BigInt(8192) * BigInt(price.outputMicrosPerMillion) + 999999n) / 1000000n) + price.extraCostCeilingMicros
+  const outputCeiling = ownerPlanningOutputCeiling(binding.modelId, getChannelById(binding.channelId)!.provider)
+  const perRequestCeilingMicros = Number((BigInt(price.maxModelInputTokens) * BigInt(price.inputMicrosPerMillion) + BigInt(outputCeiling) * BigInt(price.outputMicrosPerMillion) + 999999n) / 1000000n) + price.extraCostCeilingMicros
   if (!Number.isSafeInteger(perRequestCeilingMicros) || perRequestCeilingMicros < 1) throw new Error('Owner管理请求费用上界无效')
-  return { binding, context, scopeHash, perRequestCeilingMicros, priceEvidenceId: price.evidenceId }
+  return { binding, context, scopeHash, perRequestCeilingMicros, priceEvidenceId: price.evidenceId, outputCeiling }
 }
 export function previewOwnerManagementDelegation(raw: unknown): OwnerManagementDelegationPreview {
   const input = parse(raw), current = scope(input.projectId, input.taskId, true, true, true, true)
@@ -91,7 +101,7 @@ export function previewOwnerManagementDelegation(raw: unknown): OwnerManagementD
   const prior = historicalUsage(input.projectId)
   if (input.maxRequests <= prior.usedRequests) throw new Error('累计管理请求次数不足以继续一次请求，请提高请求上限')
   if (input.maxCostMicros < prior.reservedCostMicros + current.perRequestCeilingMicros) throw new Error('预算不足以覆盖历史预留和一次保守请求上界，请调整累计预算或使用单次确认')
-  const body = { ...input, conversationEnabled: true as const, executionFollowupEnabled: true as const, fullDeliveryReviewEnabled: true as const, qualityDecisionEnabled: true as const, scopeHash: current.scopeHash, goalContentHash: hash(current.context.goal), bindingRevision: current.binding.revision, goalRevision: current.context.goal.revision, modelId: current.binding.modelId, workspaceName: getAgentWorkspace(current.binding.workspaceId)!.name, priceEvidenceId: current.priceEvidenceId, perRequestCeilingMicros: current.perRequestCeilingMicros, maxOutputTokens: 8192 as const }
+  const body = { ...input, conversationEnabled: true as const, executionFollowupEnabled: true as const, fullDeliveryReviewEnabled: true as const, qualityDecisionEnabled: true as const, scopeHash: current.scopeHash, goalContentHash: hash(current.context.goal), bindingRevision: current.binding.revision, goalRevision: current.context.goal.revision, modelId: current.binding.modelId, workspaceName: getAgentWorkspace(current.binding.workspaceId)!.name, priceEvidenceId: current.priceEvidenceId, perRequestCeilingMicros: current.perRequestCeilingMicros, maxOutputTokens: current.outputCeiling }
   return { ...body, previewHash: hash(body) }
 }
 function latest(projectId: string, taskId?: string): { delegation: OwnerManagementDelegation; row: GrantRow } | null {
@@ -108,7 +118,90 @@ function claims(id: string): Claim[] {
     return claim
   })
 }
-function historicalUsage(projectId: string): { usedRequests: number; reservedCostMicros: number } {
+/** Owner模型开销占项目总预算的比例上限；超出必须由用户新增明确授权。 */
+export const OWNER_MODEL_BUDGET_RATIO = 0.2
+
+export interface OwnerModelBudgetUsage {
+  projectBudgetMicros: number
+  ownerModelLimitMicros: number
+  ownerModelMicros: number
+  /** 已取得实际/估算依据的部分；其余为在途或未结算预留。 */
+  ownerModelSettledMicros: number
+  ownerModelInFlightMicros: number
+  executionMicros: number
+  remainingOwnerModelMicros: number
+}
+
+/** 按上限取整，保证占比永不因四舍五入越过上限。 */
+export function ownerModelBudgetLimit(projectBudgetMicros: number): number {
+  if (!Number.isSafeInteger(projectBudgetMicros) || projectBudgetMicros < 1) throw new Error('项目总预算无效')
+  return Math.floor(projectBudgetMicros * OWNER_MODEL_BUDGET_RATIO)
+}
+
+/**
+ * 纯校验：只要仍有余量就允许发起下一次请求，达到或超过上限即要求增量授权。
+ *
+ * 不以“单次最坏包络必须整笔装得下”为条件：审核价格证据用的是最坏输入/输出包络，
+ * 单次预留可能远大于20%，那样会让项目永远无法启动Owner。越过上限即停止并在
+ * 下次请求前要求用户重新授权，符合“超出需重新申请”的决策。
+ */
+export function assertOwnerModelBudgetAvailable(input: { projectBudgetMicros: number; ownerModelMicros: number }): void {
+  if (!Number.isSafeInteger(input.ownerModelMicros) || input.ownerModelMicros < 0) throw new Error('Owner模型占额记录无效')
+  const limit = ownerModelBudgetLimit(input.projectBudgetMicros)
+  if (input.ownerModelMicros >= limit) throw new Error(`Owner模型开销已达到项目预算的${OWNER_MODEL_BUDGET_RATIO * 100}%上限，须先确认增量授权`)
+}
+
+/**
+ * 单个请求的Owner模型开销：
+ * 1. Runtime报告的实际费用优先；
+ * 2. 否则按回执token与审核单价估算（回执含usage时）；
+ * 3. 都没有才回退到预留上界。
+ *
+ * 不直接用预留上界作为“已花费”是有意的：审核价格证据采用最坏输入/输出包络，
+ * 若按包络计费，单次请求就可能超过项目预算的20%，项目将永远无法启动Owner。
+ */
+function claimCostMicros(claim: Claim, database = store.getProjectDb()): { micros: number; settled: boolean } {
+  const row = database.prepare('SELECT payload FROM project_owner_planning_run_receipts WHERE execution_id = ? ORDER BY rowid DESC LIMIT 1').get(claim.executionId) as { payload: string } | undefined
+  if (row) {
+    try {
+      const receipt = JSON.parse(row.payload) as {
+        modelId?: string
+        usage?: { inputTokens?: number | null; outputTokens?: number | null } | null
+        cost?: { source?: string; usd?: number | null }
+      }
+      if (receipt.cost?.source === 'runtime_reported' && typeof receipt.cost.usd === 'number' && Number.isFinite(receipt.cost.usd) && receipt.cost.usd >= 0) {
+        return { micros: Math.ceil(receipt.cost.usd * 1_000_000), settled: true }
+      }
+      const input = receipt.usage?.inputTokens, output = receipt.usage?.outputTokens
+      const price = typeof receipt.modelId === 'string'
+        ? (['openai', 'anthropic', 'google'] as const).map(kind => getPilotReviewedPriceEvidenceForModel(receipt.modelId!, kind)).find(Boolean)
+        : undefined
+      if (price && typeof input === 'number' && typeof output === 'number' && Number.isSafeInteger(input) && Number.isSafeInteger(output) && input >= 0 && output >= 0) {
+        const estimate = Number((BigInt(input) * BigInt(price.inputMicrosPerMillion) + BigInt(output) * BigInt(price.outputMicrosPerMillion) + 999_999n) / 1_000_000n) + price.extraCostCeilingMicros
+        if (Number.isSafeInteger(estimate) && estimate >= 0) return { micros: Math.min(estimate, claim.reservedCostMicros), settled: true }
+      }
+    } catch { /* 回执损坏时按预留保守占用。 */ }
+  }
+  return { micros: claim.reservedCostMicros, settled: false }
+}
+
+/** Owner模型开销按“实际/估算优先，预留兜底”统计；未知费用不清零、不释放。 */
+export function getOwnerModelBudgetUsage(projectId: string, projectBudgetMicros: number, excludeExecutionId?: string): OwnerModelBudgetUsage {
+  const rows = store.getProjectDb().prepare('SELECT id, payload, integrity_hash FROM project_owner_management_delegations WHERE project_id = ? ORDER BY rowid').all(projectId) as Array<{ id: string } & Row>
+  const entries = rows.flatMap(row => claims(row.id)).filter(claim => claim.executionId !== excludeExecutionId)
+  let ownerModelMicros = 0, ownerModelSettledMicros = 0
+  for (const claim of entries) {
+    const cost = claimCostMicros(claim)
+    ownerModelMicros += cost.micros
+    if (cost.settled) ownerModelSettledMicros += cost.micros
+  }
+  const execution = historicalUsage(projectId).executionReservedCostMicros
+  const limit = ownerModelBudgetLimit(projectBudgetMicros)
+  if (!Number.isSafeInteger(ownerModelMicros) || ownerModelMicros < 0) throw new Error('Owner模型占额记录无效，请保留账本核对')
+  return { projectBudgetMicros, ownerModelLimitMicros: limit, ownerModelMicros, ownerModelSettledMicros, ownerModelInFlightMicros: ownerModelMicros - ownerModelSettledMicros, executionMicros: execution, remainingOwnerModelMicros: Math.max(0, limit - ownerModelMicros) }
+}
+
+function historicalUsage(projectId: string): { usedRequests: number; reservedCostMicros: number; managementReservedCostMicros: number; executionReservedCostMicros: number } {
   const rows = store.getProjectDb().prepare('SELECT id, payload, integrity_hash FROM project_owner_management_delegations WHERE project_id = ? ORDER BY rowid').all(projectId) as Array<{ id: string } & Row>
   const delegations = rows.map(row => {
     const delegation = read<OwnerManagementDelegation>(row)
@@ -116,7 +209,7 @@ function historicalUsage(projectId: string): { usedRequests: number; reservedCos
     return delegation
   })
   const ids = delegations.map(item => item.id)
-  if (!ids.length) return { usedRequests: 0, reservedCostMicros: 0 }
+  if (!ids.length) return { usedRequests: 0, reservedCostMicros: 0, managementReservedCostMicros: 0, executionReservedCostMicros: 0 }
   const entryList = ids.flatMap(claims)
   const managementReserved = entryList.reduce((sum, claim) => sum + claim.reservedCostMicros, 0)
   const placeholders = ids.map(() => '?').join(',')
@@ -130,7 +223,7 @@ function historicalUsage(projectId: string): { usedRequests: number; reservedCos
     WHERE g.owner_management_delegation_id IN (${placeholders}) AND c.project_id=?`).get(...ids, projectId) as { reserved: number }
   const total = managementReserved + execution.reserved
   if (!Number.isSafeInteger(total) || total < 0) throw new Error('Owner项目预算占额无效，请保留账本核对')
-  return { usedRequests: entryList.length, reservedCostMicros: total }
+  return { usedRequests: entryList.length, reservedCostMicros: total, managementReservedCostMicros: managementReserved, executionReservedCostMicros: execution.reserved }
 }
 /** 用于执行命令排队时，与管理调用共享同一项目总预算；未知/未结算命令按完整预留额占用。 */
 export function assertOwnerManagementBudgetReservationAvailable(delegationId: string, additionalCostMicros: number): void {
@@ -166,7 +259,11 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
   const found = latest(projectId, taskId)
   if (!found) return { delegation: null, state: 'none', usedRequests: 0, reservedCostMicros: 0, detail: '' }
   const { delegation, row } = found, entries = claims(delegation.id)
-  const base = { delegation, ...historicalUsage(projectId) }
+  const usage = historicalUsage(projectId)
+  const base = { delegation, ...usage, ownerModelBudget: (() => {
+    const budget = getOwnerModelBudgetUsage(projectId, delegation.maxCostMicros)
+    return { limitMicros: budget.ownerModelLimitMicros, usedMicros: budget.ownerModelMicros, settledMicros: budget.ownerModelSettledMicros, inFlightMicros: budget.ownerModelInFlightMicros, remainingMicros: budget.remainingOwnerModelMicros, ratio: OWNER_MODEL_BUDGET_RATIO }
+  })() }
   let rejectedProtocolReply = false
   let localConfigurationFailure = false
   for (const entry of entries) {
@@ -290,6 +387,7 @@ export function claimOwnerManagementTask(taskId: string, executionId: string): v
   if (source.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && view.delegation.qualityDecisionEnabled !== true) throw new Error('旧管理委托未包含质量决定')
   if (source.link.conversationMessageId && view.delegation.conversationEnabled !== true) throw new Error('旧管理委托不包含持续对话，请重新确认管理范围')
   if (hasActiveOwnerManagementRequest(view.delegation.id)) throw new Error('Owner已有管理请求运行，等待当前结果')
+  assertOwnerModelBudgetAvailable({ projectBudgetMicros: view.delegation.maxCostMicros, ownerModelMicros: getOwnerModelBudgetUsage(view.delegation.projectId, view.delegation.maxCostMicros).ownerModelMicros })
   const claim: Claim = { taskId, executionId, delegationId: view.delegation.id, reservedCostMicros: view.delegation.perRequestCeilingMicros }
   db.prepare('UPDATE controlled_task_preparations SET owner_management_delegation_id = ? WHERE task_id = ?').run(claim.delegationId, taskId)
   db.prepare('INSERT INTO project_owner_management_claims (task_id, delegation_id, execution_id, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)').run(taskId, claim.delegationId, executionId, JSON.stringify(claim), hash(claim))
@@ -312,6 +410,8 @@ export function assertOwnerManagementTask(executionId: string): boolean {
   if (source.link.conversationMessageId && found.delegation.conversationEnabled !== true) throw new Error('管理许可未包含持续对话')
   assertCurrent(found.delegation)
   const usage = historicalUsage(found.delegation.projectId)
-  if ((!found.delegation.autonomousExecution && usage.usedRequests > found.delegation.maxRequests) || usage.reservedCostMicros > found.delegation.maxCostMicros || claim.reservedCostMicros !== found.delegation.perRequestCeilingMicros || source.link.maxOutputTokens > 8192) throw new Error('Owner管理占额超限或与请求不一致')
+  if ((!found.delegation.autonomousExecution && usage.usedRequests > found.delegation.maxRequests) || usage.reservedCostMicros > found.delegation.maxCostMicros || claim.reservedCostMicros !== found.delegation.perRequestCeilingMicros || source.link.maxOutputTokens > ownerPlanningOutputCeiling(source.binding.modelId, getChannelById(source.binding.channelId)!.provider)) throw new Error('Owner管理占额超限或与请求不一致')
+  // 发送前复核：其他请求已用尽Owner模型额度时拒绝；本次占额不把自己挡掉。
+  assertOwnerModelBudgetAvailable({ projectBudgetMicros: found.delegation.maxCostMicros, ownerModelMicros: getOwnerModelBudgetUsage(found.delegation.projectId, found.delegation.maxCostMicros, executionId).ownerModelMicros })
   return true
 }

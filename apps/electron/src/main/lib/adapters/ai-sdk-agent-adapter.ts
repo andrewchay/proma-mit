@@ -184,7 +184,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         const messages = await this.runtimeCore.runAgentTurn({
           sessionId, prompt: owner.request.userPrompt, modelId: model, provider, protocol, apiKey, baseUrl, cwd,
           runtimeTools: [], activeSession: activeSession.state, maxTurns: 1, maxRetries: 0,
-          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt, maxOutputTokens: owner.link.maxOutputTokens, ...((owner.link.protocolVersion === '4' || owner.link.protocolVersion === '5') ? { jsonOutput: true as const } : {}), ...(owner.link.reasoningEffort ? { reasoningEffort: owner.link.reasoningEffort } : {}) },
+          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt, maxOutputTokens: owner.link.maxOutputTokens, ...((['4', '5', '6'] as const).includes(owner.link.protocolVersion as '4' | '5' | '6') ? { jsonOutput: true as const } : {}), ...(owner.link.reasoningEffort ? { reasoningEffort: owner.link.reasoningEffort } : {}) },
           fetchFn: controlledFetch, onAgentEvent: input.onAgentEvent,
         })
         for (const message of messages) yield message

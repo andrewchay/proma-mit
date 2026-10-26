@@ -428,3 +428,39 @@ test('Given 有效委托 When 到期或项目资料变更 Then 发送前拒绝�
   expect(() => assertControlledPreparedExecution(execution.id, 'provider')).toThrow()
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
+
+test('Given 项目总预算 When 计算Owner模型占比上限 Then按20%向下取整且不接受无效输入', () => {
+  expect(service.ownerModelBudgetLimit(2_000_000)).toBe(400_000)
+  expect(service.ownerModelBudgetLimit(1)).toBe(0)
+  expect(service.ownerModelBudgetLimit(999_999)).toBe(199_999)
+  expect(() => service.ownerModelBudgetLimit(0)).toThrow('项目总预算无效')
+  expect(() => service.ownerModelBudgetLimit(1.5)).toThrow('项目总预算无效')
+})
+
+test('Given Owner模型已占额 When 达到20% Then明确拒绝并要求增量授权', () => {
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 399_999 })).not.toThrow()
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 400_000 })).toThrow('20%上限')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 900_000 })).toThrow('20%上限')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: -1 })).toThrow('占额记录无效')
+})
+
+test('Given 已预留Owner模型请求 When 读取占比用量 Then只累计管理占额且不混入员工执行', async () => {
+  const f = fixture(), grant = issue(f), hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  let ordinal = 0
+  const claim = (executionId: string, reservedCostMicros: number) => {
+    const taskId = `claim-task-${++ordinal}`
+    const value = { taskId, executionId, delegationId: grant.id, reservedCostMicros }
+    store.getProjectDb().prepare('INSERT INTO project_owner_management_claims (task_id, delegation_id, execution_id, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)').run(taskId, grant.id, executionId, JSON.stringify(value), hash(value))
+  }
+  const before = service.getOwnerModelBudgetUsage(f.project.id, 2_000_000)
+  expect(before).toMatchObject({ projectBudgetMicros: 2_000_000, ownerModelLimitMicros: 400_000, ownerModelMicros: 0, ownerModelSettledMicros: 0, ownerModelInFlightMicros: 0, executionMicros: 0, remainingOwnerModelMicros: 400_000 })
+  claim(randomUUID(), 150_000)
+  claim(randomUUID(), 150_000)
+  const after = service.getOwnerModelBudgetUsage(f.project.id, 2_000_000)
+  expect(after).toMatchObject({ ownerModelMicros: 300_000, ownerModelSettledMicros: 0, ownerModelInFlightMicros: 300_000, remainingOwnerModelMicros: 100_000 })
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: after.ownerModelMicros })).not.toThrow()
+  expect(service.getOwnerManagementDelegation(f.project.id).ownerModelBudget).toMatchObject({ limitMicros: 400_000, usedMicros: 300_000, settledMicros: 0, inFlightMicros: 300_000, ratio: 0.2 })
+  claim(randomUUID(), 100_000)
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: service.getOwnerModelBudgetUsage(f.project.id, 2_000_000).ownerModelMicros })).toThrow('20%上限')
+  service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+})

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { OwnerExecutionObservation } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
+import { auditProjectOwnerClaims } from './project-owner-claim-audit'
 const directory = mkdtempSync(join(tmpdir(), 'owner-plan-update-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
 mock.module('electron', () => buildElectronMock())
@@ -28,6 +29,10 @@ function observation(overrides: Partial<OwnerExecutionObservation> = {}): OwnerE
     completedAt: 1, resultSummary: '合成评审', error: '', actualCostMicros: 120, reservedCostMicros: 500,
     ...overrides,
   }
+}
+/** 消费遗留事件，构造“没有任何后台工作”的确定状态。 */
+function drainPendingEvents(projectId: string): void {
+  store.getProjectDb().prepare('UPDATE project_owner_management_events SET consumed_at=? WHERE project_id=? AND consumed_at IS NULL').run(Date.now(), projectId)
 }
 function planUpdateMessages(projectId: string): string[] {
   const rows = store.getProjectDb().prepare("SELECT payload FROM project_owner_management_messages WHERE project_id=?").all(projectId) as Array<{ payload: string }>
@@ -89,4 +94,54 @@ test('Given检查已返回但没有评审证据 WhenOwner记录观察 Then退回
   const rows = store.getProjectDb().prepare("SELECT payload FROM project_owner_management_messages WHERE project_id=?").all(project.id) as Array<{ payload: string }>
   const contents = rows.map(row => (JSON.parse(row.payload) as { content: string }).content)
   expect(contents).toContain('独立检查已返回。我正在结合成果、检查结论和验收标准整理下一步。')
+})
+
+test('Given请求未发出就失败 WhenOwner记录观察 Then不要求核对账单且说明无模型费用', () => {
+  const project = projectWithOwner()
+  management.recordOwnerManagementObservation(project.id, 1, observation({
+    role: 'executor', executionStatus: 'failed', commandState: 'needs_reconcile', grantState: 'needs_reconcile',
+    resultSummary: '', error: 'No output generated. Check the stream for errors.；流错误：Owner受控出口拒绝：价格证据与当前员工冻结来源不一致',
+    actualCostMicros: null, reservedCostMicros: 66212, requestsSent: 0,
+  }), 'task-1', 'hash-no-request')
+
+  const rows = store.getProjectDb().prepare("SELECT payload FROM project_owner_management_messages WHERE project_id=?").all(project.id) as Array<{ payload: string }>
+  const contents = rows.map(row => (JSON.parse(row.payload) as { content: string }).content).join('\n')
+  expect(contents).toContain('失败发生在发送模型请求之前，没有产生模型费用')
+  expect(contents).toContain('价格证据与当前员工冻结来源不一致')
+  expect(contents).not.toContain('服务商账单')
+})
+
+test('Given请求已发出但费用未知 WhenOwner记录观察 Then要求核对用量与账单', () => {
+  const project = projectWithOwner()
+  management.recordOwnerManagementObservation(project.id, 1, observation({
+    role: 'executor', executionStatus: 'failed', commandState: 'needs_reconcile', grantState: 'needs_reconcile',
+    resultSummary: '', error: '连接中断', actualCostMicros: null, reservedCostMicros: 66212, requestsSent: 1,
+  }), 'task-1', 'hash-request-unknown')
+
+  const rows = store.getProjectDb().prepare("SELECT payload FROM project_owner_management_messages WHERE project_id=?").all(project.id) as Array<{ payload: string }>
+  const contents = rows.map(row => (JSON.parse(row.payload) as { content: string }).content).join('\n')
+  expect(contents).toContain('在服务商账单按模型与请求时间核对')
+  expect(contents).not.toContain('没有产生模型费用')
+})
+
+test('Given真实失败观察之后 When核对说法与事实 Then最新说明不得声称后台仍在处理', () => {
+  const project = projectWithOwner()
+  management.recordOwnerManagementObservation(project.id, 1, observation({
+    role: 'executor', executionStatus: 'failed', commandState: 'needs_reconcile', grantState: 'needs_reconcile',
+    resultSummary: '', error: '失败原因', actualCostMicros: null, reservedCostMicros: 100, requestsSent: 0,
+  }), 'task-1', 'hash-claim-audit')
+
+  drainPendingEvents(project.id)
+  const report = auditProjectOwnerClaims(project.id)
+  expect({ violations: report.violations.length, pendingEvents: report.facts.pendingEvents, running: report.facts.runningExecutions }).toEqual({ violations: 0, pendingEvents: 0, running: 0 })
+})
+
+test('Given没有排队事实 When写入声称内部复查的消息 Then检查必须报违规', () => {
+  const project = projectWithOwner()
+  management.appendOwnerManagementMessage({ projectId: project.id, eventId: 'synthetic-claim', role: 'assistant', kind: 'management_progress', content: '我正在内部复查原因，稍后会自动继续。' })
+
+  drainPendingEvents(project.id)
+  const report = auditProjectOwnerClaims(project.id)
+  expect(report.violations).toHaveLength(1)
+  expect(report.violations[0]!.content).toContain('内部复查')
 })

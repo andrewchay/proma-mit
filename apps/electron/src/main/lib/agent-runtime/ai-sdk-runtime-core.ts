@@ -133,6 +133,8 @@ export interface AISDKRuntimeStreamInput {
   maxOutputTokens?: number
   /** Owner冻结的GLM-5.3低推理强度；普通Agent设置不受影响。 */
   reasoningEffort?: 'low'
+  /** 受控出口抛错时写入原始原因；AI SDK 会把它包成通用无输出错误。 */
+  fetchErrorHolder?: { error?: unknown }
   jsonOutput?: true
 }
 
@@ -217,7 +219,7 @@ export class AISDKRuntimeCore {
   async runAgentTurn(input: AISDKAgentTurnInput): Promise<SDKMessage[]> {
     // Pilot 受控执行：同一闭包覆盖本 turn 全部请求（模型、压缩），derive→reserve→verify 后才发送。
     const owner = input.ownerPlanningRequest
-    if (owner && (![4096, 8192].includes(owner.maxOutputTokens) || !Number.isSafeInteger(owner.maxOutputTokens))) throw new Error('Owner规划输出上限与版本协议不匹配')
+    if (owner && (![4096, 8192, 32768].includes(owner.maxOutputTokens) || !Number.isSafeInteger(owner.maxOutputTokens))) throw new Error('Owner规划输出上限与版本协议不匹配')
     if (owner?.reasoningEffort && (owner.reasoningEffort !== 'low' || input.provider !== 'zhipu' || input.protocol !== 'openai-chat' || !/^glm-5\.3(?:-flash)?$/i.test(input.modelId))) throw new Error('Owner规划推理强度与冻结GLM模型不匹配')
     if (owner?.jsonOutput && (input.protocol !== 'openai-chat' || input.modelId !== 'deepseek-flash' && !(input.provider === 'zhipu' && /^glm-5\.3(?:-flash)?$/i.test(input.modelId)))) throw new Error('Owner规划JSON输出与冻结模型不匹配')
     if (owner && !input.fetchFn) throw new Error('Owner规划必须经受控模型出口，不能回退自由Caller')
@@ -227,6 +229,15 @@ export class AISDKRuntimeCore {
     const ownerExecutionMaxOutputTokens = !owner
       ? resolveOwnerExecutionMaxOutputTokens(input.sessionId, input.modelId, input.provider)
       : undefined
+    // 受控出口抛出的错误会被 AI SDK 包成通用 NoOutputGeneratedError；这里先记下原始原因再放行。
+    const capturedFetchError: { error?: unknown } = {}
+    const baseFetch = input.fetchFn ?? pilotRuntime?.fetch
+    const capturedFetch = baseFetch
+      ? Object.assign(async (...args: Parameters<typeof fetch>): Promise<Response> => {
+        try { return await baseFetch(...args) }
+        catch (cause) { capturedFetchError.error ??= cause; throw cause }
+      }, { preconnect: () => {} })
+      : undefined
     const modelInstance = createAgentAISDKModel({
       provider: input.provider,
       protocol: input.protocol,
@@ -234,7 +245,7 @@ export class AISDKRuntimeCore {
       apiKey: input.apiKey,
       baseUrl: resolveAgentRuntimeBaseUrl(input.provider, 'ai-sdk', input.baseUrl),
       modelId: input.modelId,
-      ...((input.fetchFn ?? pilotRuntime?.fetch) ? { fetch: input.fetchFn ?? pilotRuntime?.fetch } : {}),
+      ...(capturedFetch ? { fetch: capturedFetch } : {}),
     })
     let partialText = ''
     try {
@@ -282,6 +293,7 @@ export class AISDKRuntimeCore {
       ...(owner || ownerExecutionMaxOutputTokens !== undefined ? { sdkMaxRetries: 0 as const } : {}),
       ...(owner ? { modelSilenceTimeoutMs: OWNER_MODEL_SILENCE_TIMEOUT_MS } : {}),
       signal: input.activeSession.controller.signal,
+      ...(baseFetch ? { fetchErrorHolder: capturedFetchError } : {}),
       estimatedContextTokens: estimateTokenCount(JSON.stringify({
         system: effectiveSystemPrompt,
         messages,
@@ -306,7 +318,10 @@ export class AISDKRuntimeCore {
     // 不完整批次已无法撤销已执行调用；这里只持久化观察，供下游拒绝自动续跑/复核。
     const toolCallBatchIntegrity = assessStepsToolCallBatchIntegrity(steps)
     const ownerFinishReason = owner || ownerExecutionMaxOutputTokens !== undefined ? await streamRun.result.finishReason : undefined
-    const ownerResponse = owner ? await streamRun.result.response : undefined
+    // 员工执行也与规划一样保存服务商请求/响应 ID，失败时才有可核对的请求身份。
+    const ownerResponse = owner || ownerExecutionMaxOutputTokens !== undefined
+      ? await Promise.resolve(streamRun.result.response).catch(() => undefined)
+      : undefined
     const providerRequestId = ownerResponse ? getProviderRequestId(ownerResponse.headers) : undefined
     const providerResponseId = ownerResponse ? getSafeProviderId(ownerResponse.id) : undefined
     const resultMessage: SDKResultMessage = {
@@ -315,7 +330,9 @@ export class AISDKRuntimeCore {
       usage: toAISDKResultUsage(usage),
       session_id: input.sessionId,
       toolCallBatchIntegrity,
-      ...(ownerExecutionMaxOutputTokens !== undefined ? { finish_reason: ownerFinishReason } : {}),
+      ...(ownerExecutionMaxOutputTokens !== undefined ? { finish_reason: ownerFinishReason,
+        ...(providerRequestId ? { provider_request_id: providerRequestId } : {}),
+        ...(providerResponseId ? { provider_response_id: providerResponseId } : {}) } : {}),
       // 原始文本和终态供可信 Run 收据使用；不推算费用或伪造 Provider ID。
       ...(owner ? { result: await streamRun.result.text, finish_reason: ownerFinishReason,
         ...(providerRequestId ? { provider_request_id: providerRequestId } : {}),
@@ -328,8 +345,12 @@ export class AISDKRuntimeCore {
     }
     return [...sdkMessages, resultMessage as unknown as SDKMessage]
     } catch (cause) {
-      if (!owner) throw cause
-      throw new OwnerPlanningRuntimeError({ type: 'result', subtype: 'error_during_execution', session_id: input.sessionId, result: partialText, finish_reason: input.activeSession.controller.signal.aborted ? 'abort' : 'error', errors: [cause instanceof Error ? cause.message : 'Owner规划Runtime异常'], usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null } }, cause)
+      // 有些失败只在读取终态时才暴露成通用无输出错误；这里用受控出口记录的原始原因补全诊断。
+      const diagnostic = isGenericNoOutputError(cause) && capturedFetchError.error
+        ? new Error(`${getErrorMessage(cause)}；流错误：${safeRuntimeErrorDetail(capturedFetchError.error)}`, { cause: capturedFetchError.error })
+        : cause
+      if (!owner) throw diagnostic
+      throw new OwnerPlanningRuntimeError({ type: 'result', subtype: 'error_during_execution', session_id: input.sessionId, result: partialText, finish_reason: input.activeSession.controller.signal.aborted ? 'abort' : 'error', errors: [diagnostic instanceof Error ? diagnostic.message : 'Owner规划Runtime异常'], usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null } }, cause)
     }
   }
 
@@ -407,9 +428,11 @@ export class AISDKRuntimeCore {
         }
       } catch (error) {
         // AI SDK 在无终态输出时会抛通用 NoOutputGeneratedError；优先保留流回调捕获的 Provider 原因。
-        const streamErrorDetail = streamError ? safeRuntimeErrorDetail(streamError) : ''
+        // AI SDK 把受控出口抛出的错误包进通用 NoOutputGeneratedError 的 cause；不读 cause 就会丢失真实原因。
+        const causeChain = input.fetchErrorHolder?.error ? safeRuntimeErrorDetail(input.fetchErrorHolder.error) : collectErrorCauseDetail(error)
+        const streamErrorDetail = streamError ? safeRuntimeErrorDetail(streamError) : causeChain
         const diagnostic = streamErrorDetail && isGenericNoOutputError(error) && !streamErrorDetail.includes(getErrorMessage(error))
-          ? new Error(`${getErrorMessage(error)}；流错误：${streamErrorDetail}`, { cause: streamError })
+          ? new Error(`${getErrorMessage(error)}；流错误：${streamErrorDetail}`, { cause: streamError ?? (error instanceof Error ? error.cause : undefined) })
           : error
         lastError = diagnostic
         // 用户停止或追加消息触发的中断由 adapter 决定是否续跑；这里不能上报错误，
@@ -587,6 +610,7 @@ export class AISDKRuntimeCore {
     try {
       // E05：经共享调度器执行。锁域为本进程内经此调度的调用，不宣称跨进程安全。
       const toolContext = {
+        ownerWorkspaceWrite: Boolean(state.activeSession.ownerActionApproval),
         cwd: state.cwd,
         sessionId: state.sessionId,
         abortSignal: state.signal,
@@ -933,6 +957,19 @@ function toAgentEventUsage(usage: LanguageModelUsage): NonNullable<Extract<Agent
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error) || '未知错误'
+}
+
+/** 逐层读取 cause，最多三层，避免循环；只用于诊断文字。 */
+function collectErrorCauseDetail(error: unknown): string {
+  const parts: string[] = []
+  let current: unknown = error instanceof Error ? error.cause : undefined
+  for (let depth = 0; current && depth < 3; depth++) {
+    const detail = safeRuntimeErrorDetail(current)
+    if (!detail || parts.includes(detail)) break
+    parts.push(detail)
+    current = current instanceof Error ? current.cause : undefined
+  }
+  return parts.join(' ← ')
 }
 
 function isGenericNoOutputError(error: unknown): boolean {

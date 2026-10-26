@@ -19,7 +19,16 @@ import { saveOwnerExecutionStartIntent } from './project-owner-execution-start-i
 import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
-  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位'].includes(detail)
+  // 第三种是“结构/字段不合规”：方案本身有效，原预算内重排一次通常即可修复。
+  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段'].includes(detail)
+}
+
+/** 面向用户的失败原因：脱敏、截断，不暴露内部ID或凭据。 */
+export function ownerAssignmentFailureReason(detail: string): string {
+  return detail.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [已隐藏]')
+    .replace(/(api[_-]?key|authorization|access[_-]?token)\s*[:=]\s*[^,\s;]+/gi, '$1=[已隐藏]')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[已隐藏凭据]')
+    .replace(/[\r\n\t]+/g, ' ').trim().slice(0, 240)
 }
 
 /** 仅完整、成功终态且仅被已知岗位覆盖或独立评审协议拒绝的安排，允许在原预算内续跑一次。 */
@@ -63,7 +72,7 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
   if (!plan || !['proposed', 'confirmed'].includes(plan.state)
     || event.kind === 'planning_result' && (plan.state !== 'proposed' || plan.sourceRun?.executionId !== event.sourceId || plan.goalRevision !== event.sourceRevision)
     || event.kind === 'plan_confirmed' && (plan.state !== 'confirmed' || plan.revision !== event.sourceRevision)
-    || event.kind === 'assignment_recheck' && (plan.revision !== event.sourceRevision || (plan.state !== 'proposed' && !(plan.state === 'confirmed' && event.sourceId?.startsWith('protocol-retry:'))))
+    || event.kind === 'assignment_recheck' && (plan.revision !== event.sourceRevision || (plan.state !== 'proposed' && !(plan.state === 'confirmed' && (event.sourceId?.startsWith('protocol-retry:') || event.sourceId?.startsWith('manual-retry:')))))
     || event.kind === 'team_changed' && plan.revision !== event.sourceRevision
     || event.kind === 'team_changed' && plan.state !== 'confirmed' && !(plan.state === 'proposed' && event.sourceId?.startsWith('team-access:') && getOwnerManagementDelegation(event.projectId, event.taskId).state === 'active')
     || !['planning_result', 'plan_confirmed', 'team_changed', 'delegation_confirmed', 'assignment_recheck'].includes(event.kind)) return
@@ -179,7 +188,9 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
   }
   if (outcome.state !== 'proposed' || !outcome.assignmentProposal) {
     appendOwnerManagementTrace({ eventId: `owner-trace:assignment-result:${event.id}:failed`, projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'assignment_run', state: outcome.state === 'needs_clarification' ? 'waiting' : 'failed', createdAt: Date.now(), detailCode: outcome.state === 'needs_clarification' ? 'decision_required' : 'result_ready' })
-    appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, role: 'assistant', kind: 'attention', content: '这次人员安排没有得到可继续使用的结果。我已保留原记录，需要核对后再决定下一步，不会自动重复调用。' })
+    // 把可核对的失败原因写进对话，Owner 才能如实回答“需要核对什么”，而不是含糊其辞。
+    const reason = ownerAssignmentFailureReason(outcome.detail)
+    appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, role: 'assistant', kind: 'attention', content: `这次人员安排没有得到可继续使用的结果。${reason ? `原因：${reason}。` : ''}我已保留原记录；除非确认可以修复，否则不会自动重复调用。` })
     return
   }
   appendOwnerManagementTrace({ eventId: `owner-trace:assignment-result:${event.id}:completed`, projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'assignment_run', state: 'completed', createdAt: Date.now(), detailCode: 'result_ready' })

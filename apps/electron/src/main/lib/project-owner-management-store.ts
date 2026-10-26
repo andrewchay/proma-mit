@@ -7,7 +7,7 @@ interface PayloadRow { payload: string; integrity_hash: string }
 interface EventRow extends PayloadRow { consumed_at: number | null }
 const tracePhases = ['assignment_preparation', 'assignment_run', 'execution_start', 'executor', 'reviewer', 'owner_quality', 'owner_response'] as const
 const traceStates = ['started', 'queued', 'completed', 'failed', 'blocked', 'waiting', 'stalled', 'expired'] as const
-const traceDetails = ['team_check', 'provider_pending', 'result_ready', 'start_verified', 'no_update', 'grant_expired', 'decision_required', 'authorization_changed'] as const
+const traceDetails = ['team_check', 'provider_pending', 'result_ready', 'start_verified', 'no_update', 'grant_expired', 'decision_required', 'authorization_changed', 'claim_without_fact'] as const
 function parseTraceEntry(input: unknown): OwnerManagementTraceEntry {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Owner诊断Trace记录无效')
   const value = input as Record<string, unknown>
@@ -106,7 +106,7 @@ export function appendOwnerManagementMessage(input: Omit<OwnerManagementMessage,
   const existing = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_management_messages WHERE id = ?').get(id) as PayloadRow | undefined
   if (existing) {
     const old = read<OwnerManagementMessage>(existing)
-    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || old.goalRevision !== input.goalRevision || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
+    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || JSON.stringify(old.employeeInteraction) !== JSON.stringify(input.employeeInteraction) || JSON.stringify(old.runEvidence) !== JSON.stringify(input.runEvidence) || old.goalRevision !== input.goalRevision || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
     return old
   }
   const message: OwnerManagementMessage = { ...input, id, conversationId: manager.conversationId, createdAt: Date.now() }
@@ -151,6 +151,11 @@ export function recordOwnerManagementDelegationConfirmed(projectId: string, revi
   enqueue(projectId, 'delegation_confirmed', revision, taskId, delegationId)
 }
 /** 活跃管理委托下，待审方案缺少安排记录时只生成一次可恢复检查事件。 */
+/** 用户手动重排：sourceId 带请求ID，重复点击不会重复排队。 */
+export function recordOwnerManagementManualRecheck(projectId: string, planRevision: number, requestId: string, taskId?: string): OwnerManagementEvent {
+  return enqueue(projectId, 'assignment_recheck', planRevision, taskId, `manual-retry:${requestId}`)
+}
+
 export function recordOwnerManagementAssignmentRecheck(projectId: string, planRevision: number, delegationId: string, taskId?: string): OwnerManagementEvent {
   return enqueue(projectId, 'assignment_recheck', planRevision, taskId, delegationId)
 }
@@ -215,7 +220,10 @@ export function getOwnerManagementView(projectId: string): OwnerManagementView {
     if (entry.projectId !== projectId) throw new Error('Owner诊断Trace项目归属无效')
     return entry
   })
-  return { manager, messages, pendingEvents: listPendingOwnerManagementEvents(projectId).length, questions: [], trace }
+  const employeeInteractions = (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).listOwnerEmployeeInteractions(projectId)
+  const projection = manager ? (require('./project-owner-state-projection') as typeof import('./project-owner-state-projection')).readOwnerStateProjection(projectId) : null
+  const actionRequests = (require('./project-owner-action-approval') as typeof import('./project-owner-action-approval')).listOwnerPendingActionRequests(projectId)
+  return { manager, messages, ...(projection ? { stateProjection: { stateHash: projection.stateHash, dirtyDomains: projection.dirtyDomains, lastReconciledAt: projection.lastReconciledAt } } : {}), ...(actionRequests.length ? { actionRequests } : {}), ...(employeeInteractions.length ? { employeeInteractions } : {}), pendingEvents: listPendingOwnerManagementEvents(projectId).length, questions: [], trace }
 }
 
 /** 可信回调只追加来源事件；真正的问题展示由后台重读Run与快照后处理。 */
@@ -295,7 +303,9 @@ export function recordOwnerManagementObservation(projectId: string, goalRevision
       && (observation.commandState === 'needs_reconcile' || observation.actualCostMicros === null)
     if (needsManualReconciliation) {
       appendOwnerManagementMessage({ projectId, eventId: `${eventId}:progress`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), goalRevision,
-        content: `${subject}失败，没有可核验成果。当前记录中的模型用量或实际费用未知，保守预留仍保留；系统不会自动重发。请先在服务商账单按模型与请求时间核对。当前版本不能把外部账单核对结果写回应用，也不会在核对前启动后续步骤。` })
+        content: observation.requestsSent === 0
+          ? `${subject}失败，没有可核验成果。本次失败发生在发送模型请求之前，没有产生模型费用，保守预留会在核对后退回；系统不会自动重发。失败原因：${observation.error.trim().slice(0, 300) || '未记录'}`
+          : `${subject}失败，没有可核验成果。当前记录中的模型用量或实际费用未知，保守预留仍保留；系统不会自动重发。请先在服务商账单按模型与请求时间核对。当前版本不能把外部账单核对结果写回应用，也不会在核对前启动后续步骤。` })
       return true
     }
     // 独立检查有结论时，Owner 主动说明发现、影响与建议，而不是只报“检查已返回”。
@@ -326,5 +336,14 @@ export function recordOwnerManagementObservation(projectId: string, goalRevision
     appendOwnerManagementMessage({ projectId, eventId: `${eventId}:progress`, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision, content: progress })
     enqueue(projectId, 'execution_observed', goalRevision, taskId, message.id)
     return true
+  })
+}
+
+/** 员工问题属于系统来源；不伪装成用户消息，也不修改目标或授予执行许可。 */
+export function recordOwnerEmployeeInteractionMessage(interaction: import('@gravitas/shared').OwnerEmployeeInteraction, goalRevision: number, taskId?: string): OwnerManagementMessage {
+  return transaction(() => {
+    const message = appendOwnerManagementMessage({ projectId: interaction.projectId, eventId: `employee-interaction:${interaction.id}:${interaction.revision}`, role: 'assistant', kind: 'employee_interaction', ...(taskId ? { taskId } : {}), goalRevision, employeeInteraction: interaction, content: `员工提出问题，我已接管：\n${interaction.summary}\n我会先核对已确认边界；需要你决定时只在这里讨论，不需要进入员工会话。` })
+    enqueue(interaction.projectId, 'message_received', goalRevision, taskId, message.id)
+    return message
   })
 }

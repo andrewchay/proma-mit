@@ -71,6 +71,12 @@ try {
     JSON.stringify({ snapshot: { ...snapshot, signature }, cachedAt: Date.now() }, null, 2),
   )
 
+  if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNELS_PATH) {
+    copyFileSync(process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNELS_PATH, join(directory, 'channels.json'))
+  }
+  if (process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNELS_PATH) {
+    copyFileSync(process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNELS_PATH, join(directory, 'channels.json'))
+  }
   if (process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID) {
     const channelsPath = process.env.GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH
     if (!channelsPath) throw new Error('真实 Kimi 烟测必须指定 GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH')
@@ -87,7 +93,7 @@ try {
     },
     stdout: 'inherit', stderr: 'inherit',
   })
-  const timeoutMs = process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID ? 180_000 : 60_000
+  const timeoutMs = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID ? 420_000 : process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID ? 180_000 : 60_000
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true

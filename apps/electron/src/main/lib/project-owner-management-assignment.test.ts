@@ -928,3 +928,16 @@ test('Given历史完整安排仅因空代码范围被拒绝 When本地恢复并�
     expect((store.getProjectDb().prepare("SELECT COUNT(*) AS n FROM project_owner_management_events WHERE project_id=? AND json_extract(payload,'$.kind')='assignment_result' AND json_extract(payload,'$.sourceId')=?").get(f.project.id, row.execution_id) as { n: number }).n).toBe(2)
   } finally { legacyNullScopeProjectId = null; stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 }, 15_000)
+
+test('Given 失败详情含凭据或换行 When 生成用户原因 Then 脱敏截断且保留可核对信息', async () => {
+  const { ownerAssignmentFailureReason } = await import('./project-owner-management-assignment')
+  expect(ownerAssignmentFailureReason('Owner人员安排提案格式无效或夹带未授权字段')).toBe('Owner人员安排提案格式无效或夹带未授权字段')
+  expect(ownerAssignmentFailureReason('bad Bearer abc123\napi_key=sk-secret123456789')).not.toContain('abc123')
+  expect(ownerAssignmentFailureReason('x'.repeat(400)).length).toBe(240)
+})
+
+test('Given 结构不合规的失败 When 判断可恢复 Then 允许在原预算内重排一次', async () => {
+  const { isRecoverableOwnerAssignmentRejection } = await import('./project-owner-management-assignment')
+  expect(isRecoverableOwnerAssignmentRejection('Owner人员安排提案格式无效或夹带未授权字段')).toBe(true)
+  expect(isRecoverableOwnerAssignmentRejection('Owner人员安排缺少工作区')).toBe(false)
+})

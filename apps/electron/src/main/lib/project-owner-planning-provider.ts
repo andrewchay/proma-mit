@@ -55,7 +55,7 @@ export function assertOwnerPlanningPayload(source: OwnerPlanningSessionSource, b
   } else {
     if ((payload.max_tokens === undefined && payload.max_completion_tokens === undefined) || [payload.max_tokens, payload.max_completion_tokens].some(value => value !== undefined && value !== source.link.maxOutputTokens) || payload.messages.length !== 2 || !url.pathname.endsWith('/chat/completions')) throw new Error('Owner规划OpenAI请求输出限制/历史/出口不一致')
     if (payload.reasoning_effort !== source.link.reasoningEffort) throw new Error('Owner规划实际推理强度与冻结协议不一致')
-    if (source.link.protocolVersion === '4' || source.link.protocolVersion === '5') {
+    if (source.link.protocolVersion === '4' || source.link.protocolVersion === '5' || source.link.protocolVersion === '6') {
       const format = object(payload.response_format, ['type'])
       if (format.type !== 'json_object') throw new Error('Owner规划JSON输出格式与冻结协议不一致')
     } else if (payload.response_format !== undefined) throw new Error('旧Owner规划协议不能追加JSON输出参数')

@@ -4,6 +4,7 @@ node_modules
 # output
 out
 out-dev
+out-owner-test
 dist
 *.tgz
 

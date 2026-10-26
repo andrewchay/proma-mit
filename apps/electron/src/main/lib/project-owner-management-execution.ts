@@ -34,6 +34,7 @@ export function readOwnerExecutionObservation(projectId: string, executionId: st
     executionStatus: execution.status, commandState: command.state, grantState: command.grant_state,
     ...(execution.completedAt === undefined ? {} : { completedAt: execution.completedAt }), resultSummary: (execution.resultSummary ?? '').slice(0, 16000), error: (execution.error ?? '').slice(0, 2000),
     actualCostMicros: command.actual_cost_micros, reservedCostMicros: command.reserved_cost_micros,
+    requestsSent: (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(command.id) as { count: number }).count,
     ...(review ? { review: { verdict: review.verdict, summary: review.summary.slice(0, 2000), findings: review.findings.slice(0, 8).map(item => `${item.severity}: ${item.description} → ${item.requestedChange}`.slice(0, 1000)) } } : {}),
   } }
 }

@@ -58,6 +58,7 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
     {editor.error && <p role="alert" className="text-sm text-destructive">{editor.error}</p>}
     {current && <div className="space-y-2 rounded-xl bg-background/70 p-3 text-sm">
       <p>{editor.view?.detail}</p>
+      {(editor.view?.ownerModelBudget ?? null) && <p className="text-xs text-muted-foreground">Owner模型开销已用 {usd(editor.view!.ownerModelBudget!.settledMicros)}、在途预留 {usd(editor.view!.ownerModelBudget!.inFlightMicros)}，合计不超过项目预算的 {Math.round(editor.view!.ownerModelBudget!.ratio * 100)}%（上限 {usd(editor.view!.ownerModelBudget!.limitMicros)}）。超出需你重新授权，不会自动放宽。</p>}
       <p className="text-xs text-muted-foreground">模型 {current.modelId} · 预算上限 {usd(current.maxCostMicros)} · 已预留 {usd(editor.view?.reservedCostMicros ?? 0)} · 有效至 {new Date(current.expiresAt).toLocaleString()}</p>
       <p className="text-xs text-muted-foreground">预留金额按保守上界计算，不是实际账单；预算用尽或请求/费用状态不明时会暂停核对，不自动重试。</p>
       {stale && <button type="button" className="rounded-lg bg-background px-3 py-2 text-sm shadow-sm" disabled={editor.busy} onClick={() => void act({ subject, action: 'preview' })}>重新核对当前授权</button>}

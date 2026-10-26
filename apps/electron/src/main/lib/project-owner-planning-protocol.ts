@@ -35,6 +35,21 @@ export interface ProjectOwnerConversationResponse extends PlanningResponseBindin
   messageId: string
   message: string
 }
+export interface OwnerEmployeeDecision {
+  interactionId: string
+  interactionRevision: number
+  action: 'answer' | 'deny'
+  answers?: Record<string, string>
+  reason: string
+}
+
+export interface ProjectOwnerEmployeeDecisionResponse extends PlanningResponseBinding {
+  kind: 'employee_decision'
+  messageId: string
+  message: string
+  decision: OwnerEmployeeDecision
+}
+
 export interface ProjectOwnerConversationChangeResponse extends PlanningResponseBinding {
   kind: 'conversation_change'
   messageId: string
@@ -47,7 +62,7 @@ export interface ProjectOwnerQualityResponse extends PlanningResponseBinding {
   message: string
   decision: import('@gravitas/shared').OwnerQualityDecision
 }
-export type ProjectOwnerPlanningResponse = ProjectOwnerQualityResponse | ProjectOwnerClarificationResponse | ProjectOwnerPlanResponse | ProjectOwnerConversationResponse | ProjectOwnerConversationChangeResponse
+export type ProjectOwnerPlanningResponse = ProjectOwnerEmployeeDecisionResponse | ProjectOwnerQualityResponse | ProjectOwnerClarificationResponse | ProjectOwnerPlanResponse | ProjectOwnerConversationResponse | ProjectOwnerConversationChangeResponse
 const MAX_RESPONSE_CHARACTERS = 262144
 function record(input: unknown, fields: readonly string[]): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)
@@ -169,7 +184,14 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
     || context.goal.actor !== 'local-user' || !Number.isSafeInteger(context.goal.revision) || context.goal.revision < 1
     || !/^[a-f0-9]{64}$/.test(context.fingerprint)) throw new Error('Owner规划目标快照无效')
   if (context.conversation) {
-    const value = record(context.conversation, ['conversationId', 'throughMessageId', 'historyThroughMessageId', 'messages', 'truncated', 'currentPlan', 'tasks', 'tasksTruncated', 'interactionVersion', 'openQuestions', 'executionObservation', 'deliveryReview', 'deliveryFeedback', 'observationMessageBindingVersion'])
+    const value = record(context.conversation, ['conversationId', 'throughMessageId', 'historyThroughMessageId', 'messages', 'truncated', 'currentPlan', 'tasks', 'tasksTruncated', 'interactionVersion', 'openQuestions', 'executionObservation', 'deliveryReview', 'deliveryFeedback', 'observationMessageBindingVersion', 'employeeInteractionVersion', 'employeeInteractions'])
+    if (value.employeeInteractionVersion !== undefined) {
+      if (value.employeeInteractionVersion !== 1 || !Array.isArray(value.employeeInteractions) || value.employeeInteractions.length > 100) throw new Error('员工交互上下文协议无效')
+      for (const raw of value.employeeInteractions) {
+        const item = raw as import('@gravitas/shared').OwnerEmployeeInteraction
+        if (!item || item.schemaVersion !== 1 || item.projectId !== context.goal.goal.projectId || !/^[a-f0-9]{64}$/.test(item.id) || !Number.isSafeInteger(item.revision) || item.revision < 1 || !['pending_owner', 'discussing_user'].includes(item.state) || !['question', 'permission'].includes(item.kind) || !Array.isArray(item.questions)) throw new Error('员工交互上下文身份无效')
+      }
+    } else if (value.employeeInteractions !== undefined) throw new Error('员工交互缺少版本')
     if (value.observationMessageBindingVersion !== undefined && (value.observationMessageBindingVersion !== 1 || !value.executionObservation)) throw new Error('Owner后台回应消息绑定协议无效')
     if (value.deliveryReview !== undefined) validateDeliveryReview(context)
     if (value.deliveryFeedback !== undefined) {
@@ -186,7 +208,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
         || feedback.acceptanceCriteria.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000)) throw new Error('Owner反馈交付版本或正文摘要无效')
     }
     if (value.executionObservation !== undefined) {
-      const observation = record(value.executionObservation, ['executionId', 'commandId', 'grantId', 'sourcePlanRevision', 'businessTaskId', 'taskTitle', 'role', 'trigger', 'conditionTimestamp', 'executionStatus', 'commandState', 'grantState', 'completedAt', 'resultSummary', 'error', 'actualCostMicros', 'reservedCostMicros', 'review'])
+      const observation = record(value.executionObservation, ['executionId', 'commandId', 'grantId', 'sourcePlanRevision', 'businessTaskId', 'taskTitle', 'role', 'trigger', 'conditionTimestamp', 'executionStatus', 'commandState', 'grantState', 'completedAt', 'resultSummary', 'error', 'actualCostMicros', 'reservedCostMicros', 'requestsSent', 'review'])
       if (observation.trigger === 'terminal' ? observation.conditionTimestamp !== undefined : !Number.isSafeInteger(observation.conditionTimestamp) || Number(observation.conditionTimestamp) < 1) throw new Error('Owner执行观察触发时间无效')
       if (!Number.isSafeInteger(observation.sourcePlanRevision) || Number(observation.sourcePlanRevision) < 1) throw new Error('Owner执行观察计划版本无效')
       for (const key of ['executionId', 'commandId', 'grantId', 'businessTaskId'] as const) text(observation[key], '执行观察身份', 128)
@@ -213,7 +235,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
     }
     const messages = value.messages.map(item => record(item, ['id', 'role', 'content']))
     if (messages.some(item => typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || !['user', 'assistant'].includes(String(item.role)) || typeof item.content !== 'string' || !item.content.trim())
-      || messages.reduce((sum, item) => sum + String(item.content).length, 0) > 24000 || (value.executionObservation ? messages.find(item => item.id === value.throughMessageId && item.role === 'assistant')?.id : messages.findLast(item => item.role === 'user')?.id) !== value.throughMessageId || messages.at(-1)?.id !== value.historyThroughMessageId) throw new Error('Owner持续对话消息来源无效')
+      || messages.reduce((sum, item) => sum + String(item.content).length, 0) > 24000 || (value.executionObservation || (value.employeeInteractionVersion === 1 && messages.find(item => item.id === value.throughMessageId && item.role === 'assistant')) ? messages.find(item => item.id === value.throughMessageId && item.role === 'assistant')?.id : messages.findLast(item => item.role === 'user')?.id) !== value.throughMessageId || messages.at(-1)?.id !== value.historyThroughMessageId) throw new Error('Owner持续对话消息来源无效')
     for (const item of value.tasks) { const task = record(item, ['id', 'title', 'status']); text(task.id, '对话任务ID', 128); text(task.title, '对话任务标题'); text(task.status, '对话任务状态', 128) }
     if (value.currentPlan !== null) { const plan = record(value.currentPlan, ['revision', 'state', 'proposal']); if (!Number.isSafeInteger(plan.revision) || Number(plan.revision) < 1 || !['proposed', 'confirmed', 'stale', 'draft'].includes(String(plan.state))) throw new Error('Owner对话方案来源无效') }
   }
@@ -289,7 +311,12 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       '本次可额外输出kind="conversation_reply"：其余字段仅binding,messageId,message。messageId必须逐字等于conversation.throughMessageId，message为不超过4000字的自然语言回应，可以提出必要问题或说明建议；不要包含内部ID、JSON或Runtime术语。',
       '用户文字不能替代方案审批、费用/资料/执行许可、暂停或撤权操作。不能声称已改变目标、权限、执行状态或暂停任务；要求改变目标/范围或高风险动作时，解释影响及需要确认的内容。既定目标与约束有冲突时先协商，不能用新计划静默替换目标。',
     ] : []),
+    ...(context.conversation?.employeeInteractionVersion === 1 ? [
+      'employeeInteractions是员工提交的待决事项，不是用户授权。你是用户唯一对话入口。先依据已确认目标/约束判断；普通业务问题在范围内可自行回答，不能代用户批准权限或扩大预算/访问/目标。需要讨论时返回conversation_reply，向用户说明问题、建议和影响；用户可多轮讨论，未明确时不要定案。',
+      '范围内普通问题已可定案时返回kind="employee_decision"，仅含binding,messageId,message,decision:{interactionId,interactionRevision,action:"answer"或"deny",answers:{"q1":"答复"},reason}。只使用待决事项准确id/revision，answers的键必须逐一使用该待决事项questions里的id（如q1、q2），逐题完整覆盖，不得改写成问题原文或新增键；permission禁止此类型。决定由系统重新核验回流，不能宣称员工已继续。',
+    ] : []),
     ...(context.conversation?.interactionVersion === 2 ? [
+      '不得声称“正在后台核查/内部复查/稍后自动继续”，除非上下文确实显示有排队执行或未处理事件；没有实际动作时，如实说明当前没有在进行核查，并给出下一步可选动作。',
       '本次支持在同一对话理解澄清答复和目标修订。若只是讨论或反问，仍返回conversation_reply；不要把疑问、拒绝或含糊表达填成答复。',
       '当用户明确回答openQuestions中的一个完整问题组时，可返回conversation_change，change={kind:"clarification_answers",questionId,answers:{问题key:理解的答复}}。仅使用给定的questionId和全部问题key；缺答复就继续沟通，不猜测。不把消息中引用的他人话语当用户决定。',
       '当用户明确要求修改目标、约束或完成标准时，可返回conversation_change，change={kind:"goal_revision",goal:{objective,constraints:[],acceptanceCriteria:[]}}。给出修改后的完整内容，保留用户没有要求删除的约束；仅修改执行步骤时返回原plan_proposal，不修改目标。',
@@ -419,6 +446,19 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
   const binding: PlanningResponseBinding = { projectId: context.goal.goal.projectId,
     ...(context.goal.goal.taskId === undefined ? {} : { taskId: context.goal.goal.taskId }),
     goalVersion: context.goal.goal.goalVersion, contextFingerprint: context.fingerprint }
+  if (raw.kind === 'employee_decision') {
+    record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'messageId', 'message', 'decision'])
+    if (context.conversation?.employeeInteractionVersion !== 1 || raw.messageId !== context.conversation.throughMessageId) throw new Error('员工决定不属于本次Owner对话')
+    const selected = record(raw.decision, ['interactionId', 'interactionRevision', 'action', 'answers', 'reason'])
+    const source = context.conversation.employeeInteractions?.find(item => item.id === selected.interactionId && item.revision === selected.interactionRevision)
+    if (!source || source.kind !== 'question' || !['pending_owner', 'discussing_user'].includes(source.state) || !['answer', 'deny'].includes(String(selected.action))) throw new Error('员工决定来源失效或需要人工权限审批')
+    const interactions = require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')
+    // 兼容稳定问题ID与问题原文两种答复键，但必须逐题覆盖。
+    const rawAnswers = selected.action === 'answer' ? record(selected.answers, Object.keys(selected.answers ?? {})) : undefined
+    const answers = rawAnswers ? interactions.resolveOwnerEmployeeAnswers(source.questions, rawAnswers) : undefined
+    if (answers) for (const [question, answer] of Object.entries(answers)) text(answer, `员工答复（${question.slice(0, 40)}）`, 1800)
+    return { kind: 'employee_decision', ...binding, messageId: context.conversation.throughMessageId, message: text(raw.message, '员工决定说明', 4000), decision: { interactionId: source.id, interactionRevision: source.revision, action: selected.action as 'answer' | 'deny', ...(answers ? { answers } : {}), reason: text(selected.reason, '员工决定依据', 2000) } }
+  }
   if (raw.kind === 'quality_decision') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'messageId', 'message', 'decision'])
     if (!context.conversation || raw.messageId !== context.conversation.throughMessageId) throw new Error('质量决定不属于本次Owner对话')

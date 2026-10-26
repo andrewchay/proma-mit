@@ -85,3 +85,18 @@ test('Given Owner员工SSE尚未结束时 WhenRuntime接收首段文本 Then增�
   expect(deltas.join('')).toContain('第二段')
   expect(messages.at(-1)).toMatchObject({ subtype: 'success' })
 })
+
+test('Given 受控出口抛错 When 流无输出 Then 诊断文字包含真实原因', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'owner-cause-'))
+  try {
+    let calls = 0
+    const error = await new AISDKRuntimeCore().runAgentTurn({ sessionId: 'employee-cause', prompt: '完成已授权任务', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
+      activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, runtimeTools: [], maxTurns: 1, maxRetries: 0,
+      fetchFn: Object.assign(async () => { calls++; throw new Error('Owner受控出口拒绝：价格证据与当前员工冻结来源不一致') }, { preconnect: () => {} }) as unknown as typeof fetch,
+    }).catch((cause: unknown) => cause)
+    // 受控出口确实被调用一次，且真实原因进入最终错误文字，而不是只剩通用无输出文案。
+    expect(calls).toBe(1)
+    expect((error as Error).message).toContain('Owner受控出口拒绝：价格证据与当前员工冻结来源不一致')
+    expect((error as Error).message).toContain('价格证据与当前员工冻结来源不一致')
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})

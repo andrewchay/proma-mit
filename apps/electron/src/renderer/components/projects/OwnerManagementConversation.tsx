@@ -3,6 +3,9 @@ import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { confirmOwnerTeamWorkspaceAccessAtom, editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer, loadOwnerManagementAtom, ownerManagementEditorsAtom, ownerMessageComposersAtom, ownerTeamWorkspaceApprovalStatesAtom, sendOwnerMessageAtom } from '../../atoms/project-owner-management-atoms'
 import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
 import { getOwnerPlanEditor, loadOwnerPlanAtom, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
+import { allPendingPermissionRequestsAtom } from '../../atoms/agent-atoms'
+import { retakeOwnerAssignmentAtom } from '../../atoms/project-owner-management-atoms'
+import { PermissionBanner } from '../agent/PermissionBanner'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
@@ -43,14 +46,23 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const subject = useMemo(() => ({ projectId, ...(taskId ? { taskId } : {}) }), [projectId, taskId])
   const view = useMemo(() => atom(get => ({ editor: getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId), composer: getOwnerMessageComposer(get(ownerMessageComposersAtom), subject), plan: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), delegation: getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject) })), [projectId, subject])
   const { editor, composer, plan, delegation } = useAtomValue(view)
+  const pendingPermissions = useAtomValue(allPendingPermissionRequestsAtom)
+  const pendingAction = editor.view?.actionRequests?.find(item =>
+    (taskId === undefined || item.taskId === taskId) && pendingPermissions.get(item.sessionId)?.[0]?.requestId === item.requestId
+    && pendingPermissions.get(item.sessionId)?.[0]?.requiresPerActionApproval,
+  )
   const workspaceApprovalStates = useAtomValue(ownerTeamWorkspaceApprovalStatesAtom)
   const approveWorkspace = useSetAtom(confirmOwnerTeamWorkspaceAccessAtom)
+  const retakeAssignment = useSetAtom(retakeOwnerAssignmentAtom)
+  const [retakeStatus, setRetakeStatus] = useState('')
   const load = useSetAtom(loadOwnerManagementAtom), loadPlan = useSetAtom(loadOwnerPlanAtom), edit = useSetAtom(editOwnerMessageAtom), send = useSetAtom(sendOwnerMessageAtom)
   const id = useId(), loadedMessage = useRef('')
   const [clock, setClock] = useState(Date.now())
   const messages = editor.view?.messages.filter(message => message.taskId === taskId && message.kind !== 'goal') ?? []
   const latestUserMessageIndex = messages.findLastIndex(message => message.role === 'user')
   const latestUserMessage = latestUserMessageIndex >= 0 ? messages[latestUserMessageIndex] : undefined
+  const latestAssistantMessage = messages.findLast(message => message.role === 'assistant')
+  const latestAttention = latestAssistantMessage?.kind === 'attention' ? latestAssistantMessage : undefined
   const latestOwnerResponse = latestUserMessageIndex >= 0 ? messages.slice(latestUserMessageIndex + 1).findLast(message =>
     message.role === 'assistant' && ['reply', 'conversation', 'clarification', 'answer', 'plan_proposal', 'change_proposal', 'change_decision', 'delivery'].includes(message.kind),
   ) : undefined
@@ -95,6 +107,9 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const waitingForUser = isOwnerWaitingForUser(messages)
   const ownerProcessing = (composer.sending || hasActiveTrace) && !waitingForUser
     && editor.view?.manager?.status !== 'paused' && delegation.view?.state !== 'stale' && delegation.view?.state !== 'attention'
+  const focusLatestRecord = (): void => {
+    document.querySelector<HTMLElement>('[aria-label=\"Owner历史对话\"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   const focusReplyComposer = (): void => {
     requestAnimationFrame(() => {
       const reply = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
@@ -120,6 +135,15 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       {waitingForUser && <div role="alert" className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3"><p>查看 Owner 的最新说明后，可以直接在对话里回复。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
       {assignmentActive && !waitingForUser && <p className="mt-1 text-xs text-muted-foreground">{elapsedLabel(clock - assignmentTrace.createdAt)}；这类安排没有可靠的固定预计时长。{clock - assignmentTrace.createdAt >= ORGANIZATION_STALL_HINT_MS ? '暂时还没有新进展；Owner会继续检查处理状态，你不必重复发送。收到结果或需要你决定的事项时，我会在这里更新。' : ''}</p>}
       </div>}
+      {latestAttention && <section className="mt-3 space-y-2 rounded-xl bg-amber-500/10 p-4" role="alert" aria-label="Owner最新处理结果">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">Owner 最新处理结果</h4><time className="text-xs text-muted-foreground">{new Date(latestAttention.createdAt).toLocaleString('zh-CN')}</time></div>
+        <p className="whitespace-pre-wrap break-words text-sm leading-6">{ownerFacingMessage(latestAttention.content)}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" className="text-xs text-primary underline underline-offset-4" onClick={focusLatestRecord}>查看 Owner 历史记录</button>
+          {latestAttention.content.includes('人员安排') && <button type="button" className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50" disabled={retakeStatus === 'sending'} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => setRetakeStatus(result.message)) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前已确认方案重新安排'}</button>}
+        </div>
+        {retakeStatus && retakeStatus !== 'sending' && <p role="status" className="text-xs text-muted-foreground">{retakeStatus}</p>}
+      </section>}
       {currentFocus ?? <p className="mt-3 text-sm text-muted-foreground">当前没有需要优先处理的项目事项。</p>}
       {latestUserMessage && <section className="mt-4 rounded-xl bg-muted/40 p-4" aria-label="最近补充对项目的影响">
         <h4 className="text-sm font-semibold">你最近补充的内容</h4>
@@ -130,6 +154,10 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     </section>
     <aside className="min-w-0 space-y-3 rounded-2xl bg-card p-4 shadow-sm sm:p-5" aria-label="需要你决定">
       <h3 className="text-base font-semibold">需要你决定</h3>
+      {pendingAction && <section aria-label="员工动作需要你逐次审批" className="space-y-3 rounded-xl bg-amber-500/10 p-3">
+        <p className="text-sm leading-6">员工执行已暂停，等待你核对下面的准确操作。Owner不能代签；在对话中讨论不等于批准。一次确认仅适用于本次参数，不扩大预算或范围。</p>
+        <PermissionBanner key={pendingAction.requestId} sessionId={pendingAction.sessionId} keyboardShortcuts={false} />
+      </section>}
       <OwnerConversationChanges projectId={projectId} taskId={taskId} />
       {children}
       <OwnerManagementQuestions projectId={projectId} taskId={taskId} embedded />
@@ -141,7 +169,23 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     {messages.length > 0 && <div className="space-y-3 border-t border-border/60 pt-4" role="log" aria-label="Owner历史对话" aria-live="polite" aria-relevant="additions">
       {messages.map(message => <article key={message.id} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
         <p className="mb-1 text-xs font-medium text-muted-foreground">{message.role === 'user' ? '你' : '项目 Owner'}</p>
+        {message.kind === 'employee_interaction' && message.employeeInteraction && <section className="mb-3 rounded-xl bg-amber-500/10 p-3" aria-label="员工待决事项">
+          <div className="flex items-center justify-between gap-3"><p className="font-medium">员工需要 Owner 判断</p><span className="rounded-full bg-background/70 px-2 py-1 text-xs">{({ pending_owner: '等待 Owner', discussing_user: '讨论中', decided: '已决定', delivering: '回传中', resolved: '已回传', cancelled: '已取消', stale: '已失联', delivery_failed: '回传失败' } as Record<string, string>)[(editor.view?.employeeInteractions?.find(item => item.id === message.employeeInteraction?.id) ?? message.employeeInteraction).state] ?? '状态待核对'}</span></div>
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm">{message.employeeInteraction.summary}</p>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">这是员工执行中的待决事项，不是用户授权。权限、预算、访问范围和系统接管仍须由你在明确入口中确认；Owner不能代签。</p>
+        </section>}
         <p className="whitespace-pre-wrap break-words">{ownerFacingMessage(message.content)}</p>
+        {message.runEvidence && <details className="mt-2 rounded-lg bg-background/70 p-3 text-xs" aria-label="本轮请求证据（只读）">
+          <summary className="cursor-pointer font-medium">本轮请求证据（只读）</summary>
+          <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+            <div><dt className="text-muted-foreground">输入 token</dt><dd>{message.runEvidence.inputTokens ?? '未知'}</dd></div>
+            <div><dt className="text-muted-foreground">输出 token</dt><dd>{message.runEvidence.outputTokens ?? '未知'}</dd></div>
+            <div><dt className="text-muted-foreground">费用</dt><dd>{message.runEvidence.costSource === 'runtime_reported' && message.runEvidence.costUsd !== null ? `${message.runEvidence.costUsd} 美元（服务商报告，未对账）` : '未知（保留预留，未释放）'}</dd></div>
+            <div><dt className="text-muted-foreground">停止请求</dt><dd>{message.runEvidence.stopped ? '已请求停止（是否生效需原运行记录确认）' : '未请求停止'}</dd></div>
+            <div className="sm:col-span-2"><dt className="text-muted-foreground">自动重试</dt><dd>没有自动重试</dd></div>
+          </dl>
+          <p className="mt-2 text-muted-foreground">这些是本地保存的证据摘要，不代表已确认账单，也不是执行许可。</p>
+        </details>}
         {message.teamWorkspaceProposal && <section className="mt-3 space-y-2 rounded-xl bg-background/80 p-3 shadow-sm" aria-label="团队工作区范围建议">
           <p className="font-medium">建议扩大本项目可用资料范围</p>
           <p>允许后，“{message.teamWorkspaceProposal.workspaceName}”工作区的资料、技能和配置会纳入本项目上下文。Owner会自行选择员工并准备安排；这次授权只确认资料范围，不会提前启动员工。</p>
