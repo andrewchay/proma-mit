@@ -2,8 +2,8 @@
  * AI Owner 规划输入边界：只产生简报/计划建议，不创建权威任务或执行授权。
  * 本模块无持久化与 Runtime 依赖；角色可用性须由调用方从权威目录提供。
  */
-import type { ProjectOwnerCodeFileMatch, ProjectOwnerDeliveryContext, ProjectOwnerDeliveryChangeAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
-export type { ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
+import type { OwnerPlanningConversationContext, ProjectOwnerCodeFileMatch, ProjectOwnerDeliveryContext, ProjectOwnerDeliveryChangeAssessment, ProjectOwnerDeliveryFeedbackAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
+export type { ProjectOwnerDeliveryFeedbackAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
 
 function record(input: unknown, fields: readonly string[], label: string): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)
@@ -116,8 +116,9 @@ export function parseProjectOwnerPlanProposal(
   codeFiles: readonly ProjectOwnerCodeFileMatch[] = [],
   requireCodeReferences = false,
   deliverySources: readonly ProjectOwnerDeliveryContext[] = [],
+  expectedDeliveryFeedback?: OwnerPlanningConversationContext['deliveryFeedback'],
 ): ProjectOwnerPlanProposal {
-  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment'], '计划提案')
+  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'], '计划提案')
   const projectId = text(value.projectId, 'projectId', 200)
   const taskId = value.taskId === undefined ? undefined : text(value.taskId, 'taskId', 200)
   const goalVersion = version(value.goalVersion)
@@ -157,6 +158,25 @@ export function parseProjectOwnerPlanProposal(
   } else if (value.deliveryChangeAssessment !== undefined) {
     throw new Error('没有命令绑定交付反馈时不得夹带交付差异评估')
   }
+  let deliveryFeedbackAssessment: ProjectOwnerDeliveryFeedbackAssessment | undefined
+  if (expectedDeliveryFeedback || value.deliveryFeedbackAssessment !== undefined) {
+    const assessment = record(value.deliveryFeedbackAssessment, ['messageId', 'artifactHash', 'stepKey', 'summary', 'changes', 'authorizationImpact', 'authorizationRationale'], '成果反馈影响评估')
+    if (!Array.isArray(assessment.changes) || assessment.changes.length < 1 || assessment.changes.length > 64
+      || (assessment.authorizationImpact !== 'within_confirmed_boundary' && assessment.authorizationImpact !== 'additional_confirmation' && assessment.authorizationImpact !== 'cannot_determine')) throw new Error('成果反馈影响评估字段无效')
+    const changes = assessment.changes.map((rawChange) => {
+      const change = record(rawChange, ['criterion', 'disposition', 'proposedChange'], '成果标准差异')
+      if (change.disposition !== 'addressed' && change.disposition !== 'still_open' && change.disposition !== 'not_applicable') throw new Error('成果标准差异状态无效')
+      return { criterion: text(change.criterion, '原成果标准', 2000), disposition: change.disposition as ProjectOwnerDeliveryFeedbackAssessment['changes'][number]['disposition'], proposedChange: text(change.proposedChange, '拟议改动') }
+    })
+    if (typeof assessment.messageId !== 'string' || !/^[a-f0-9]{64}$/.test(assessment.messageId) || typeof assessment.artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(assessment.artifactHash)) throw new Error('成果反馈影响评估缺少准确版本身份')
+    if (assessment.stepKey !== undefined && (typeof assessment.stepKey !== 'string' || !assessment.stepKey.trim() || assessment.stepKey.length > 100)) throw new Error('成果反馈步骤身份无效')
+    if (expectedDeliveryFeedback && (assessment.messageId !== expectedDeliveryFeedback.messageId || assessment.artifactHash !== expectedDeliveryFeedback.artifactHash
+      || assessment.stepKey !== expectedDeliveryFeedback.stepKey
+      || changes.length !== expectedDeliveryFeedback.acceptanceCriteria.length || changes.some((change, index) => change.criterion !== expectedDeliveryFeedback.acceptanceCriteria[index]))) throw new Error('成果反馈评估与准确成果版本或原完成标准不匹配')
+    if (expectedDeliveryFeedback && assessment.authorizationImpact === 'cannot_determine') throw new Error('成果反馈影响无法判定，必须先向用户澄清而不能直接提交方案')
+    deliveryFeedbackAssessment = { messageId: assessment.messageId, artifactHash: assessment.artifactHash, ...(typeof assessment.stepKey === 'string' ? { stepKey: assessment.stepKey } : {}), summary: text(assessment.summary, '成果反馈改动摘要'), changes,
+      authorizationImpact: assessment.authorizationImpact, authorizationRationale: text(assessment.authorizationRationale, '授权影响说明') }
+  }
   return {
     projectId,
     ...(taskId === undefined ? {} : { taskId }),
@@ -167,5 +187,6 @@ export function parseProjectOwnerPlanProposal(
     risks: texts(value.risks, 'risks'),
     steps,
     ...(deliveryChangeAssessment ? { deliveryChangeAssessment } : {}),
+    ...(deliveryFeedbackAssessment ? { deliveryFeedbackAssessment } : {}),
   }
 }

@@ -475,3 +475,8 @@ Gravitas 目前设有 PR 赠金计划。提交 PR 时可以在描述中留下邮
 - 到达 **Change Date** 后，自动转为 **Apache License, Version 2.0**（见根目录 `LICENSE-APACHE` / [https://www.apache.org/licenses/LICENSE-2.0）。](https://www.apache.org/licenses/LICENSE-2.0%EF%BC%89%E3%80%82)
 
 如需商业/生产授权，请联系许可方。
+
+
+### 项目 Owner
+
+项目管理提供目标与版本化计划、受控团队执行、独立评审、质量决定和原项目持续对话交付。资料、费用、文件写入和对外动作仍按当前授权边界检查；历史失败与未知费用保留，不将员工完成等同于业务验收。

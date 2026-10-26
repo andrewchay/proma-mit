@@ -29,7 +29,7 @@ import {
   type AISDKStreamStepSnapshot,
 } from '@gravitas/core/providers/ai-sdk-bridge'
 import type { LanguageModel, LanguageModelUsage, ModelMessage, TextStreamPart, ToolSet, UserContent } from 'ai'
-import { isStepCount, jsonSchema, streamText, tool } from 'ai'
+import { isStepCount, jsonSchema, Output, streamText, tool } from 'ai'
 import { isContextOverflowError, isTransientNetworkError } from '../error-patterns'
 import { guardLoadedToolCall, planToolLoading } from './tool-loading-gate'
 import { enrichHistoryWithDocuments, enrichMessageWithDocuments, getImageAttachmentData } from './attachment-enrichment'
@@ -42,6 +42,7 @@ import type { SkillMeta } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './types'
 import {
   nextWithIdleTimeout,
+  OWNER_MODEL_SILENCE_TIMEOUT_MS,
   resolveModelFirstResponseTimeoutMs,
   resolveModelStreamIdleTimeoutMs,
 } from './stream-timeouts'
@@ -114,6 +115,8 @@ export interface AISDKToolExecutionState {
 export interface AISDKRuntimeStreamInput {
   /** Owner关闭 AI SDK 内部重试；普通路径沿用 SDK 默认配置。 */
   sdkMaxRetries?: 0
+  /** 仅受控Owner管理路径设置，不改变普通Agent的流超时策略。 */
+  modelSilenceTimeoutMs?: number
   model: LanguageModel
   system: string
   messages: ModelMessage[]
@@ -129,6 +132,7 @@ export interface AISDKRuntimeStreamInput {
   maxOutputTokens?: number
   /** Owner冻结的GLM-5.3低推理强度；普通Agent设置不受影响。 */
   reasoningEffort?: 'low'
+  jsonOutput?: true
 }
 
 export interface AISDKRuntimeStreamResult {
@@ -146,7 +150,7 @@ function estimateStreamPartTokens(part: unknown): number {
 
 export interface AISDKAgentTurnInput {
   /** 内部隔离收紧字段，不授予用途权限；adapter 与最终出口独立重读权威来源。 */
-  ownerPlanningRequest?: { systemPrompt: string; userPrompt: string; maxOutputTokens: number; reasoningEffort?: 'low' }
+  ownerPlanningRequest?: { systemPrompt: string; userPrompt: string; maxOutputTokens: number; reasoningEffort?: 'low'; jsonOutput?: true }
   sessionId: string
   prompt: string
   modelId: string
@@ -214,6 +218,7 @@ export class AISDKRuntimeCore {
     const owner = input.ownerPlanningRequest
     if (owner && (![4096, 8192].includes(owner.maxOutputTokens) || !Number.isSafeInteger(owner.maxOutputTokens))) throw new Error('Owner规划输出上限与版本协议不匹配')
     if (owner?.reasoningEffort && (owner.reasoningEffort !== 'low' || input.provider !== 'zhipu' || input.protocol !== 'openai-chat' || !/^glm-5\.3(?:-flash)?$/i.test(input.modelId))) throw new Error('Owner规划推理强度与冻结GLM模型不匹配')
+    if (owner?.jsonOutput && (input.protocol !== 'openai-chat' || input.modelId !== 'deepseek-flash' && !(input.provider === 'zhipu' && /^glm-5\.3(?:-flash)?$/i.test(input.modelId)))) throw new Error('Owner规划JSON输出与冻结模型不匹配')
     if (owner && !input.fetchFn) throw new Error('Owner规划必须经受控模型出口，不能回退自由Caller')
     const pilotRuntime = !owner && input.pilotBudget
       ? buildPilotRequestRuntime(input.pilotBudget, globalThis.fetch)
@@ -274,6 +279,7 @@ export class AISDKRuntimeCore {
       maxTurns: owner ? 1 : input.maxTurns,
       maxRetries: owner || ownerExecutionMaxOutputTokens !== undefined ? 0 : input.maxRetries,
       ...(owner || ownerExecutionMaxOutputTokens !== undefined ? { sdkMaxRetries: 0 as const } : {}),
+      ...(owner ? { modelSilenceTimeoutMs: OWNER_MODEL_SILENCE_TIMEOUT_MS } : {}),
       signal: input.activeSession.controller.signal,
       estimatedContextTokens: estimateTokenCount(JSON.stringify({
         system: effectiveSystemPrompt,
@@ -286,7 +292,9 @@ export class AISDKRuntimeCore {
       ...(owner ? { maxOutputTokens: owner.maxOutputTokens }
         : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens }
           : ownerExecutionMaxOutputTokens ? { maxOutputTokens: ownerExecutionMaxOutputTokens } : {}),
-      ...(owner?.reasoningEffort ? { reasoningEffort: owner.reasoningEffort } : {}),
+      ...(owner?.reasoningEffort ? { reasoningEffort: owner.reasoningEffort }
+        : ownerExecutionMaxOutputTokens !== undefined && input.provider === 'zhipu' && /^glm-5\.3(?:-flash)?$/i.test(input.modelId) ? { reasoningEffort: 'low' as const } : {}),
+      ...(owner?.jsonOutput ? { jsonOutput: true as const } : {}),
     })
 
     const steps = streamRun.streamedSteps.length > 0
@@ -296,16 +304,17 @@ export class AISDKRuntimeCore {
     const usage = await streamRun.result.usage
     // 不完整批次已无法撤销已执行调用；这里只持久化观察，供下游拒绝自动续跑/复核。
     const toolCallBatchIntegrity = assessStepsToolCallBatchIntegrity(steps)
-    const ownerFinishReason = owner ? await streamRun.result.finishReason : undefined
+    const ownerFinishReason = owner || ownerExecutionMaxOutputTokens !== undefined ? await streamRun.result.finishReason : undefined
     const ownerResponse = owner ? await streamRun.result.response : undefined
     const providerRequestId = ownerResponse ? getProviderRequestId(ownerResponse.headers) : undefined
     const providerResponseId = ownerResponse ? getSafeProviderId(ownerResponse.id) : undefined
     const resultMessage: SDKResultMessage = {
       type: 'result',
-      subtype: owner && ownerFinishReason !== 'stop' ? 'error_during_execution' : 'success',
+      subtype: (owner || ownerExecutionMaxOutputTokens !== undefined) && (ownerFinishReason !== 'stop' || !toolCallBatchIntegrity.complete) ? 'error_during_execution' : 'success',
       usage: toAISDKResultUsage(usage),
       session_id: input.sessionId,
       toolCallBatchIntegrity,
+      ...(ownerExecutionMaxOutputTokens !== undefined ? { finish_reason: ownerFinishReason } : {}),
       // 原始文本和终态供可信 Run 收据使用；不推算费用或伪造 Provider ID。
       ...(owner ? { result: await streamRun.result.text, finish_reason: ownerFinishReason,
         ...(providerRequestId ? { provider_request_id: providerRequestId } : {}),
@@ -347,6 +356,7 @@ export class AISDKRuntimeCore {
             ...(input.sdkMaxRetries !== undefined ? { maxRetries: input.sdkMaxRetries } : {}),
             abortSignal: attemptController.signal,
             ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
+            ...(input.jsonOutput ? { output: Output.json() } : {}),
             ...(input.reasoningEffort && input.provider ? { providerOptions: { openai: { reasoningEffort: input.reasoningEffort } } } : {}),
           })
           const accumulator = new AISDKStreamStepAccumulator()
@@ -358,7 +368,8 @@ export class AISDKRuntimeCore {
               ? 0
               : resolveModelStreamIdleTimeoutMs(
                 stepHasModelActivity,
-                resolveModelFirstResponseTimeoutMs(estimatedContextTokens),
+                resolveModelFirstResponseTimeoutMs(estimatedContextTokens, input.modelSilenceTimeoutMs),
+                input.modelSilenceTimeoutMs,
               )
             const next = await nextWithIdleTimeout({
               iterator,

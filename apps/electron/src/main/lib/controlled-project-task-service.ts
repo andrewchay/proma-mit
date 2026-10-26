@@ -3,7 +3,9 @@ import {
   assertNoOwnerBusinessExecution,
   assertNoOwnerBusinessSession,
 } from './project-owner-task-evidence'
-import { resolveOwnerPlanningTask } from './project-owner-planning-source'
+import { getAgentProviderProtocol } from '@gravitas/shared'
+import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
+import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 /** 非代码项目任务：准备不执行；本机显式启动确认不是Pilot grant或硬费用保证。 */
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -45,6 +47,14 @@ function transactionResult<T>(run: () => T): T {
 const ttl = 5 * 60_000
 const digest = (value: unknown): string =>
 	createHash('sha256').update(JSON.stringify(value)).digest('hex')
+function supportsBoundedOwnerManagement(channelId: string, modelId: string, runtime: Parameters<typeof getAgentProviderProtocol>[1]): boolean {
+	const channel = getChannelById(channelId)
+	if (!channel?.enabled) return false
+	const protocol = getAgentProviderProtocol(channel.provider, runtime)
+	const kind = protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
+	const price = getPilotReviewedPriceEvidenceForModel(modelId, kind)
+	return Boolean(price && price.maxModelOutputTokens >= 8192)
+}
 function object(input: unknown, keys: string[]): Record<string, unknown> {
 	if (!input || typeof input !== 'object' || Array.isArray(input))
 		throw new Error('任务请求格式无效')
@@ -300,6 +310,16 @@ export function getControlledTaskStartPreview(
 	text(taskId, 128, '任务ID')
   assertLegacyControlledTaskPurpose(taskId)
 	row(taskId)
+	// 已有Owner规划Run是不可重发的终态。先给出正确的恢复指引，
+	// 避免规划Run自己生成的新计划被误报成“来源已更新”。
+	const ownerSnapshot = readOwnerPlanningSnapshot(taskId)
+	if (ownerSnapshot) {
+		const executions = store.listAgentExecutionsByEntity('task', taskId)
+		const admitted = store.getProjectDb().prepare('SELECT link_id FROM project_owner_planning_admissions WHERE link_id = ?').get(ownerSnapshot.link.id)
+		if (executions.length > 0 || admitted) {
+			throw new Error('这次Owner规划已完成或已有发送记录，不能重新启动。请回到项目主页审阅已生成的计划，再继续安排业务执行。')
+		}
+	}
 	const facts = context(taskId)
 	if (!['paused', 'pending', 'in_progress'].includes(facts.task.status))
 		throw new Error('当前任务状态不能开始')
@@ -330,7 +350,7 @@ export function getControlledTaskStartPreview(
 		runtime: facts.employee.runtime,
 		workspaceName: facts.workspace.name,
 		permissionMode: facts.result.permissionMode,
-    ...(facts.ownerPlanning ? { ownerPlanning: { purpose: 'owner_planning' as const, linkId: facts.ownerPlanning.link.id, ownerName: facts.ownerPlanning.binding.ownerName, bindingRevision: facts.ownerPlanning.link.bindingRevision, goalRevision: facts.ownerPlanning.link.goalRevision, planRevision: facts.ownerPlanning.link.planRevision, contextFingerprint: facts.ownerPlanning.context.fingerprint, promptHash: facts.ownerPlanning.link.promptHash, protocolVersion: facts.ownerPlanning.link.protocolVersion, ...(facts.ownerPlanning.link.reasoningEffort ? { reasoningEffort: facts.ownerPlanning.link.reasoningEffort } : {}), maxRequests: 1 as const, maxOutputTokens: facts.ownerPlanning.link.maxOutputTokens, systemPrompt: facts.ownerPlanning.request.systemPrompt, userPrompt: facts.ownerPlanning.request.userPrompt, context: facts.ownerPlanning.context, costs: 'unknown_no_hard_cap' as const } } : {}),
+    ...(facts.ownerPlanning ? { ownerPlanning: { purpose: facts.ownerPlanning.link.purpose, linkId: facts.ownerPlanning.link.id, ownerName: facts.ownerPlanning.binding.ownerName, bindingRevision: facts.ownerPlanning.link.bindingRevision, goalRevision: facts.ownerPlanning.link.goalRevision, planRevision: facts.ownerPlanning.link.planRevision, contextFingerprint: facts.ownerPlanning.link.purpose === 'owner_execution_assignment' ? facts.ownerPlanning.link.assignmentContextFingerprint! : facts.ownerPlanning.context.fingerprint, promptHash: facts.ownerPlanning.link.promptHash, protocolVersion: facts.ownerPlanning.link.protocolVersion, ...(facts.ownerPlanning.link.assignmentProtocolVersion ? { assignmentProtocolVersion: facts.ownerPlanning.link.assignmentProtocolVersion } : {}), ...(facts.ownerPlanning.link.reasoningEffort ? { reasoningEffort: facts.ownerPlanning.link.reasoningEffort } : {}), maxRequests: 1 as const, maxOutputTokens: facts.ownerPlanning.link.maxOutputTokens, systemPrompt: facts.ownerPlanning.request.systemPrompt, userPrompt: facts.ownerPlanning.request.userPrompt, context: facts.ownerPlanning.context, ...(facts.ownerPlanning.assignmentContext ? { assignmentContext: facts.ownerPlanning.assignmentContext } : {}), managementSupported: supportsBoundedOwnerManagement(facts.ownerPlanning.binding.channelId, facts.ownerPlanning.binding.modelId, facts.ownerPlanning.binding.runtime), costs: 'unknown_no_hard_cap' as const } } : {}),
 	}
 }
 
@@ -346,6 +366,12 @@ export function assertControlledPreparedExecution(
 		throw new Error('非代码执行身份无效')
   assertNoOwnerBusinessTask(execution.entityId)
 	const record = row(execution.entityId)
+  const delegated = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  if (delegated.assertOwnerManagementTask(executionId)) {
+    if (record.execution_id !== execution.id) throw new Error('Owner管理执行与准备不一致')
+    context(execution.entityId)
+    return
+  }
 	const facts = context(execution.entityId)
 	if (
 		record.execution_id !== execution.id ||
@@ -428,4 +454,23 @@ export async function startControlledTask(
 		executionId,
 		status: store.getAgentExecution(executionId)?.status ?? 'unknown',
 	}
+}
+
+/** 仅主进程管理循环使用；真实许可来自持久委托，不伪造单次费用确认。 */
+export async function startDelegatedOwnerPlanningTask(taskId: string): Promise<ControlledTaskStartResult> {
+  const delegation = await import('./project-owner-management-delegation')
+  const employeeService = await import('./agent-employee-service')
+  const executionId = transactionResult(() => {
+    const previous = delegation.getOwnerManagementClaim(taskId)
+    if (previous) return previous.executionId
+    getControlledTaskStartPreview(taskId)
+    store.updateTask(taskId, { status: 'pending' })
+    const id = employeeService.enqueueControlledPreparedTask(taskId)
+    delegation.claimOwnerManagementTask(taskId, id)
+    store.getProjectDb().prepare('UPDATE controlled_task_preparations SET execution_id = ? WHERE task_id = ?').run(id, taskId)
+    return id
+  })
+  // 已发出或终态的记录不补发；queued由现有原子claim守卫。
+  if (store.getAgentExecution(executionId)?.status === 'queued') await employeeService.tryStartExecution(executionId)
+  return { taskId, executionId, status: store.getAgentExecution(executionId)?.status ?? 'unknown' }
 }

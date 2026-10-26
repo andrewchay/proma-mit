@@ -1,7 +1,10 @@
 /** 模型流首响应与流中空闲超时的共享策略。 */
 
-/** 已开始输出后的最大静默时间。 */
+/** 普通Agent已开始输出后的最大静默时间。 */
 export const MODEL_STREAM_IDLE_TIMEOUT_MS = 120_000
+
+/** Owner管理请求允许慢模型静默处理；超时后仍保留未知费用且不重试。 */
+export const OWNER_MODEL_SILENCE_TIMEOUT_MS = 480_000
 
 /** 慢模型大上下文 prefill 的保守吞吐假设。 */
 const PREFILL_TOKENS_PER_SECOND = 500
@@ -10,18 +13,18 @@ const PREFILL_TOKENS_PER_SECOND = 500
 export const MODEL_FIRST_RESPONSE_MAX_TIMEOUT_MS = 480_000
 
 /**
- * 按估算上下文大小计算首响应宽限；首响应后应恢复 MODEL_STREAM_IDLE_TIMEOUT_MS。
+ * 按估算上下文大小计算首响应宽限；首响应后使用较长的流中静默期限，避免误杀慢速Provider。
  */
-export function resolveModelFirstResponseTimeoutMs(estimatedContextTokens: number): number {
+export function resolveModelFirstResponseTimeoutMs(estimatedContextTokens: number, minimumTimeoutMs = MODEL_STREAM_IDLE_TIMEOUT_MS): number {
   const adaptive = Math.ceil(Math.max(0, estimatedContextTokens) / PREFILL_TOKENS_PER_SECOND) * 1_000
   return Math.min(
-    Math.max(MODEL_STREAM_IDLE_TIMEOUT_MS, adaptive),
+    Math.max(minimumTimeoutMs, adaptive),
     MODEL_FIRST_RESPONSE_MAX_TIMEOUT_MS,
   )
 }
 
-export function resolveModelStreamIdleTimeoutMs(hasModelActivity: boolean, firstResponseTimeoutMs: number): number {
-  return hasModelActivity ? MODEL_STREAM_IDLE_TIMEOUT_MS : firstResponseTimeoutMs
+export function resolveModelStreamIdleTimeoutMs(hasModelActivity: boolean, firstResponseTimeoutMs: number, idleTimeoutMs = MODEL_STREAM_IDLE_TIMEOUT_MS): number {
+  return hasModelActivity ? idleTimeoutMs : firstResponseTimeoutMs
 }
 
 export function createModelStreamIdleTimeoutError(runtime: string, timeoutMs: number): Error {

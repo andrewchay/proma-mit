@@ -41,6 +41,8 @@ export interface SaveProjectOwnerGoalRequest extends ProjectOwnerGoalSubject {
 export interface ProjectOwnerGoalSuccess<T> {
   ok: true
   value: T
+  /** 保存/确认成功但可读项目文档同步失败时的安全提示，不含本地绝对路径。 */
+  archiveWarning?: string
 }
 
 export interface ProjectOwnerGoalFailure {
@@ -79,6 +81,7 @@ export interface ProjectOwnerPlanProposal extends ProjectOwnerGoalSubject {
   risks: string[]
   steps: ProjectOwnerPlanStep[]
   deliveryChangeAssessment?: ProjectOwnerDeliveryChangeAssessment
+  deliveryFeedbackAssessment?: ProjectOwnerDeliveryFeedbackAssessment
 }
 
 /** 对旧交付的拟议差异；不是已实施变更或新授权。 */
@@ -90,6 +93,17 @@ export interface ProjectOwnerDeliveryChangeAssessment {
     authorizationImpact: 'unchanged' | 'additional_confirmation' | 'new_grant_required' | 'cannot_determine'
     authorizationRationale: string
   }>
+}
+
+/** 对话中针对已验收成果提出的修改建议；绑定准确反馈及原完成标准，不授予执行权限。 */
+export interface ProjectOwnerDeliveryFeedbackAssessment {
+  messageId: string
+  artifactHash: string
+  stepKey?: string
+  summary: string
+  changes: Array<{ criterion: string; disposition: 'addressed' | 'still_open' | 'not_applicable'; proposedChange: string }>
+  authorizationImpact: 'within_confirmed_boundary' | 'additional_confirmation' | 'cannot_determine'
+  authorizationRationale: string
 }
 
 export interface ProjectOwnerDeliveryAuthorizationContext {
@@ -145,7 +159,7 @@ export interface ProjectOwnerDeliveryContext {
   technicalReview?: {
     verdict: 'approved' | 'changes_requested' | 'blocked'
     summary: string
-    criteria: Array<{ criterion: string; status: 'met' | 'not_met' | 'not_verified'; evidence: string }>
+    criteria: Array<{ criterion: string; status: 'met' | 'not_met' | 'not_verified'; evidence: string; quote?: string | null }>
     findings: Array<{ severity: 'low' | 'medium' | 'high'; description: string; requestedChange: string }>
     blockerReason: string | null
   }
@@ -157,14 +171,99 @@ export interface ProjectOwnerPlanSources {
   project: { id: string; title: string; description: string }
   task?: { id: string; projectId: string; title: string; description: string }
   roles: ProjectOwnerRoleAdvice[]
+  /** 项目已绑定且启用的知识来源元信息；不表示已经读取原文。 */
+  knowledgeSources?: Array<{ id: string; name: string }>
   code?: ProjectOwnerCodeSearchResult
   delivery?: ProjectOwnerDeliveryContext[]
 }
 
+/** 本次请求冻结的管理对话，与计划/授权来源指纹分离；仅是分析资料。 */
+export interface OwnerPlanningConversationContext {
+  /** 用户明确反馈所对应的已验收成果；正文仍是不可信资料，不构成执行许可。 */
+  deliveryFeedback?: {
+    version: 1
+    messageId: string
+    artifactHash: string
+    stepKey?: string
+    title: string
+    acceptanceCriteria: string[]
+    content: string
+    ownerDecision: string
+    reviewerSummary: string
+  }
+  /** v1按准确业务命令读取完整文本成果；缺省保持旧摘要上下文。 */
+  deliveryReview?: OwnerManagementDeliveryReview
+  /** v1由主进程绑定后台回应的消息身份；缺省保留历史模型回填契约。 */
+  observationMessageBindingVersion?: 1
+  /** 系统主动观察来源，不能伪装用户消息或授权。 */
+  executionObservation?: import('./project-owner-management').OwnerExecutionObservation
+  /** v2新增可确认的自然语言答复/目标修订；缺省保留历史提示原文。 */
+  interactionVersion?: 2
+  openQuestions?: Array<Pick<import('./project-owner-management').OwnerManagementQuestion, 'id' | 'goalRevision' | 'contextFingerprint' | 'reason' | 'questions'>>
+  conversationId: string
+  throughMessageId: string
+  historyThroughMessageId: string
+  messages: Array<{ id: string; role: 'user' | 'assistant'; content: string }>
+  truncated: boolean
+  currentPlan: { revision: number; state: string; proposal: ProjectOwnerPlanProposal } | null
+  tasks: Array<{ id: string; title: string; status: string }>
+  tasksTruncated: boolean
+}
+
+export interface OwnerManagementDeliveryReview {
+  version: 1
+  qualityDecisionVersion?: 1
+  qualityLimits?: { maxRework: number; remainingRework: number; remainingRuns: number; remainingCostMicros: number }
+  /** 只有阻断门槛出现新事实时才生成；触发重新判断，不构成恢复许可。 */
+  qualityRecovery?: { previousExecutionId: string; conditionFingerprint: string; previousDetail: string }
+  state: 'available' | 'unavailable' | 'legacy'
+  detail: string
+  artifact?: OwnerTextDelivery
+  /** 代码执行的完整冻结快照及绑定的验证回执；与文本成果互斥。 */
+  developmentArtifact?: OwnerDevelopmentDeliveryArtifact
+  review?: {
+    reviewerCommandId: string
+    artifactHash: string
+    verdict: string
+    criteria: Array<{ criterion: string; status: string; evidence: string; quote: string | null }>
+    findings: Array<{ severity: string; description: string; requestedChange: string }>
+    validationEvidence?: OwnerDevelopmentValidationEvidence[]
+  }
+}
+
+export interface OwnerDevelopmentValidationEvidence {
+  command: string
+  validationId: string
+  attemptState: 'missing' | 'running' | 'completed'
+  freshness?: 'fresh' | 'stale' | 'legacy' | 'unknown'
+  status?: 'passed' | 'failed' | 'stale' | 'timeout'
+  exitCode?: number | null
+  timedOut?: boolean
+  outputTail?: string
+  outputTruncated?: boolean
+  rawOutputSha256?: string
+  rawOutputByteLength?: number
+}
+
+export interface OwnerDevelopmentDeliveryArtifact {
+  projectId: string
+  grantId: string
+  taskId: string
+  stepLinkId: string
+  sourceHash: string
+  planRevision: number
+  reworkOrdinal: number
+  executorCommandId: string
+  executorExecutionId: string
+  contentHash: string
+  content: string
+  validationEvidence: OwnerDevelopmentValidationEvidence[]
+}
 export interface ProjectOwnerPlanningContext {
   goal: ProjectOwnerGoalDraft
   sources: ProjectOwnerPlanSources
   fingerprint: string
+  conversation?: OwnerPlanningConversationContext
 }
 
 export interface ProjectOwnerPlanInput {
@@ -186,7 +285,7 @@ export interface ProjectOwnerPlanDraft extends ProjectOwnerGoalSubject {
   goalVersion: number
   /** stale由最新目标/来源派生，旧历史本身不被覆盖。 */
   state: 'proposed' | 'confirmed' | 'stale'
-  actor: 'local-user' | 'system:owner-planner'
+  actor: 'local-user' | 'system:owner-planner' | 'system:owner-manager'
   /** generated必须有主进程可信Run回执，不接受客户端自报。 */
   origin: 'manual' | 'generated'
   sourceRun?: { receiptId: string; executionId: string; responseHash: string }
@@ -231,7 +330,7 @@ export interface OwnerRuntimeBinding {
   carrierFingerprint: string
   /** 配置字段指纹；旧记录缺省时继续使用 carrierFingerprint 的历史算法核验。 */
   carrierConfigurationFingerprint?: string
-  actor: 'local-user'
+  actor: 'local-user' | 'system:owner-manager'
   savedAt: number
   changeReason: string
 }
@@ -242,33 +341,42 @@ export interface OwnerPlanningLink {
   requestId: string
   planningTaskId: string
   targetTaskId?: string
+  conversationMessageId?: string
   bindingRevision: number
   goalRevision: number
   goalVersion: number
   planRevision: number
   contextFingerprint: string
   carrierFingerprint: string
-  protocolVersion: '1' | '2' | '3'
+  /** v4固定DeepSeek JSON输出；v5固定GLM低推理强度与JSON输出，旧版本不补加参数。 */
+  protocolVersion: '1' | '2' | '3' | '4' | '5'
+  /** 新版人员安排输出额度契约；缺省表示历史安排协议（4096 token）。 */
+  assignmentProtocolVersion?: '2'
   /** GLM-5.3 family Owner规划固定低推理强度，释放输出预算给可审阅正文。 */
   reasoningEffort?: 'low'
   promptHash: string
-  purpose: 'owner_planning'
+  purpose: 'owner_planning' | 'owner_execution_assignment'
+  assignmentContextFingerprint?: string
   maxRequests: 1
   maxOutputTokens: 4096 | 8192
   createdAt: number
 }
 
 export interface ProjectOwnerRunView {
+  /** 可读项目文档未能同步时的安全提示；不含本地绝对路径。 */
+  archiveWarning?: string
   link: OwnerPlanningLink
   executions: { id: string; sessionId: string; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'; summary: string | null }[]
   receipts: { id: string; executionId: string; capturedAt: number; responseText: string; responseHash: string; validTerminal: boolean; stopped: boolean; error: string | null; providerRequestId?: string; providerResponseId?: string; usage: { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWriteTokens: number | null } | null; cost: { source: 'runtime_reported' | 'unknown'; usd: number | null } }[]
-  outcomes: { executionId: string; receiptId: string; state: 'proposed' | 'needs_clarification' | 'stale' | 'failed' | 'unknown' | 'stopped'; detail: string; planRevision?: number; clarification?: { projectId: string; taskId?: string; goalVersion: number; contextFingerprint: string; reason: string; questions: { key: string; reasonType: 'missing_information' | 'source_conflict'; question: string; why: string; options: string[]; recommended?: string; sourceReferences?: { sourceId: string; quote: string }[] }[] } }[]
+  outcomes: { executionId: string; receiptId: string; state: 'proposed' | 'needs_clarification' | 'replied' | 'stale' | 'failed' | 'unknown' | 'stopped'; detail: string; reply?: string; changeProposal?: import('./project-owner-management').OwnerConversationChange; planRevision?: number; assignmentProposal?: OwnerExecutionAssignmentProposal; clarification?: { projectId: string; taskId?: string; goalVersion: number; contextFingerprint: string; reason: string; questions: { key: string; reasonType: 'missing_information' | 'source_conflict'; question: string; why: string; options: string[]; recommended?: string; sourceReferences?: { sourceId: string; quote: string }[] }[] } }[]
 }
 /** 配置/准备/读取无费用；真正start仍走既有显式费用IPC，不新增自由Caller。 */
 export interface ProjectOwnerRuntimeApi {
   getOwnerRuntimeBinding: (subject: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding | null>>
+  /** 由主进程按审核价格证据和项目已授权工作区自动建立首次Owner绑定；不发送模型请求。 */
+  ensureOwnerRuntimeBinding: (subject: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding | null>>
   saveOwnerRuntimeBinding: (request: { projectId: string; expectedRevision: number; input: { ownerName: string; carrierId: string; workspaceId: string; changeReason: string } }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding>>
-  prepareOwnerPlanning: (request: { projectId: string; input: { requestId: string; taskId?: string; expectedBindingRevision: number; expectedGoalRevision: number; expectedPlanRevision: number; expectedContextFingerprint: string } }) => Promise<ProjectOwnerGoalResult<OwnerPlanningLink>>
+  prepareOwnerPlanning: (request: { projectId: string; input: { requestId: string; taskId?: string; conversationMessageId?: string; expectedBindingRevision: number; expectedGoalRevision: number; expectedPlanRevision: number; expectedContextFingerprint: string } }) => Promise<ProjectOwnerGoalResult<OwnerPlanningLink>>
   listOwnerPlanningRuns: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<ProjectOwnerRunView[]>>
 }
 
@@ -291,6 +399,12 @@ export interface OwnerExecutionPreparationInput {
   expectedPlanRevision: number
   selectedStepKeys: string[]
   executionKind: 'development' | 'controlled'
+  /** 缺省保留旧单模型批次；v2逐员工冻结模型、渠道和审核价格。 */
+  employeeRuntimeVersion?: 2
+  /** 新非代码批次以最终回复作为完整文本成果，独立评审绑定准确内容摘要。 */
+  textDeliveryVersion?: 1
+  /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
+  qualityManagementVersion?: 1
   developmentScope?: import('./development-review').DevelopmentTaskScope
   /** 兼容旧准备；新输入同时提供按稳定 roleKey 显式绑定的数组。 */
   executorEmployeeId: string
@@ -318,7 +432,21 @@ export interface OwnerExecutionPreparationReference {
   integrityHash: string
   stage: 'pending_task_links'
 }
+/** 一个员工在本次批次的实际模型与审核价格来源；无凭据正文。 */
+export interface OwnerEmployeeRuntime {
+  employeeId: string
+  employeeName: string
+  channelId: string
+  modelId: string
+  runtime: 'ai-sdk' | 'pi'
+  channelHash: string
+  priceEvidenceId: string
+  priceEvidenceHash: string
+}
 export interface OwnerExecutionPreparationSource extends ProjectOwnerGoalSubject {
+  textDeliveryVersion?: 1
+  /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
+  qualityManagementVersion?: 1
   ownerBindingProvenance: { state: 'none' } | { state: 'bound'; bindingRevision: number; carrierId: string; carrierFingerprint: string; bindingHash: string }
   schemaVersion: 1
   stage: 'pending_task_links'
@@ -334,6 +462,9 @@ export interface OwnerExecutionPreparationSource extends ProjectOwnerGoalSubject
   toolRecommendations: import('../utils/project-owner-tool-recommendations').OwnerStepToolRecommendation[]
   /** 新版每个 roleKey 的实际员工及配置摘要；legacy 准备缺省并沿用单一 executor。 */
   roleAssignments?: Array<{ roleKey: string; employee: { id: string; name: string; roleTemplateId?: string; configurationHash: string } }>
+  employeeRuntimes?: OwnerEmployeeRuntime[]
+  /** 普通或研发员工按本次Owner许可收紧为controlled/safe时出现；原员工档案保持不变。 */
+  employeeInvocations?: Array<{ employeeId: string; originalProfile: 'general' | 'development'; executionProfile: 'controlled'; permissionMode: 'safe' }>
   executor: { id: string; name: string; configurationHash: string }
   reviewer: { id: string; name: string; configurationHash: string }
   workspaceId: string
@@ -371,13 +502,102 @@ export interface OwnerExecutionPreparationRecord {
   previousIntegrityHash: string | null
   integrityHash: string
 }
+export interface OwnerExecutionAssignmentCandidate {
+  id: string
+  name: string
+  role?: string
+  roleTemplateId?: string
+  description?: string
+  skills?: string[]
+  totalTasks?: number
+  completedTasks?: number
+  failureCount?: number
+  avgDurationMs?: number
+  executionProfile: string
+  ownerControlledCompatible?: true
+  ownerMixedRuntimeCompatible?: true
+  workspaceIds: string[]
+  channelId: string
+  modelId?: string
+  runtime: string
+  permissionMode?: 'safe' | 'auto'
+  isOwnerCarrier?: boolean
+}
+export interface OwnerExecutionAssignmentProposal {
+  schemaVersion: 1
+  contextFingerprint: string
+  selectedStepKeys: string[]
+  scopeReason: string
+  workspaceId: string
+  workspaceReason: string
+  executionKind: 'controlled' | 'development'
+  executionKindReason: string
+  assignments: Array<{ roleKey: string; employeeId: string; reason: string }>
+  reviewerEmployeeId: string
+  reviewerReason: string
+  developmentScope?: {
+    targetPaths: string[]
+    allowedPaths: string[]
+    verificationCommands: string[]
+    reason: string
+  }
+}
+export interface OwnerExecutionAssignmentContext {
+  /** 缺省使用旧模板匹配；v2按能力分工且同模型；v3支持已核验的逐员工模型。 */
+  teamContractVersion?: 2 | 3
+  schemaVersion: 1
+  projectId: string
+  taskId?: string
+  planRevision: number
+  planFingerprint: string
+  goalRevision: number
+  sourceContextFingerprint: string
+  bindingRevision: number
+  contextFingerprint: string
+  workspaces: Array<{ id: string; name: string; capabilities?: string[] }>
+  executionKinds: Array<'controlled' | 'development'>
+  ownerDefaults: { workspaceId: string; channelId: string; modelId: string; runtime: string }
+  projectTitle: string
+  projectDescription: string
+  objective: string
+  constraints: string[]
+  acceptanceCriteria: string[]
+  roles: Array<{ roleKey: string; name: string }>
+  steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string; sourceReferences?: Array<{ path: string; line: number; sha256: string }> }>
+  codeFiles?: Array<{ path: string; sha256: string; matchedTerms: string[] }>
+  candidates: OwnerExecutionAssignmentCandidate[]
+  ownerCarrierId: string
+  ownerName: string
+  feedback?: string
+}
+export interface OwnerExecutionAssignmentInput {
+  requestId: string
+  expectedBindingRevision: number
+  expectedGoalRevision: number
+  expectedPlanRevision: number
+  expectedPlanFingerprint: string
+  expectedContextFingerprint: string
+  feedback?: string
+}
+export interface OwnerExecutionAssignmentRunView {
+  sourceStatus: 'current' | 'stale'
+  sourceDetail?: string
+  link: OwnerPlanningLink
+  executions: Array<{ id: string; sessionId: string; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'; summary: string | null }>
+  outcomes: Array<{ executionId: string; receiptId: string; state: 'proposed' | 'stale' | 'failed' | 'unknown' | 'stopped'; detail: string; assignmentProposal?: OwnerExecutionAssignmentProposal }>
+}
+export interface ProjectOwnerExecutionAssignmentApi {
+  prepareOwnerExecutionAssignment: (request: ProjectOwnerGoalSubject & { input: OwnerExecutionAssignmentInput }) => Promise<ProjectOwnerGoalResult<OwnerPlanningLink>>
+  listOwnerExecutionAssignmentRuns: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionAssignmentRunView[]>>
+}
 export interface OwnerExecutionPreparationView {
-  choices: { employees: Array<{ id: string; name: string; roleTemplateId?: string; executionProfile: string; workspaceIds: string[]; channelId: string; modelId?: string; runtime: string; isOwnerCarrier?: boolean }>; workspaces: Array<{ id: string; name: string }>; workspaceCapabilities: Array<{ workspaceId: string; mcpServers: Array<{ name: string; type: string }>; skills: Array<{ slug: string; name: string; description?: string }> }>; knowledgeSources: Array<{ id: string; name: string }> }
+  choices: { employees: OwnerExecutionAssignmentCandidate[]; workspaces: Array<{ id: string; name: string }>; workspaceCapabilities: Array<{ workspaceId: string; mcpServers: Array<{ name: string; type: string }>; skills: Array<{ slug: string; name: string; description?: string }> }>; knowledgeSources: Array<{ id: string; name: string }> }
   workspaceRecommendation: { workspaceId?: string; source: 'owner_binding' | 'unique_project_workspace' | 'ambiguous' | 'none' | 'owner_binding_unavailable' }
   executionConfigurationRecommendation: { channelId: string; modelId: string; runtime: string; source: 'owner_binding' } | null
   executionConfigurationRecommendationState: 'current' | 'stale' | 'none'
   revision: number
   policyRevision: number | null
+  ownerBindingRevision?: number
   preparation: OwnerExecutionPreparationRecord | null
   status: 'none' | 'current' | 'stale' | 'unapplied' | 'other_subject'
   blockers: string[]
@@ -495,6 +715,9 @@ export interface OwnerExecutionRevalidationTask {
   dependencies: Array<{ id: string; taskId: string; dependsOnTaskId: string; type: string }>
 }
 export interface OwnerExecutionRevalidationSource {
+  textDeliveryVersion?: 1
+  /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
+  qualityManagementVersion?: 1
   schemaVersion: 2
   stage: 'paused_task_links'
   projectId: string
@@ -507,6 +730,8 @@ export interface OwnerExecutionRevalidationSource {
   contextFingerprint: string
   selectedStepKeys: string[]
   tasks: OwnerExecutionRevalidationTask[]
+  employeeRuntimes?: OwnerEmployeeRuntime[]
+  employeeInvocations?: OwnerExecutionPreparationSource['employeeInvocations']
   executor: { id: string; name: string; configurationHash: string }
   reviewer: { id: string; name: string; configurationHash: string }
   workspaceId: string
@@ -574,6 +799,12 @@ export interface ProjectOwnerExecutionRevalidationApi {
 export interface OwnerExecutionGrantBudget { maxCostMicros: number; maxRuns: number; maxRework: number; expiresAt: number; roleBudgetCaps?: OwnerExecutionRoleBudgetCap[] }
 export type OwnerExecutionDispatchMode = 'manual' | 'autonomous'
 export interface OwnerExecutionGrantIssuePreview extends ProjectOwnerGoalSubject {
+  /** 自主Owner执行预算与已批准的项目管理总预算精确绑定。 */
+  ownerManagementDelegationId?: string
+  textDeliveryVersion?: 1
+  /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
+  qualityManagementVersion?: 1
+  executionKind: 'controlled' | 'development'
   dispatchMode: OwnerExecutionDispatchMode
   policyRevision: number
   revalidationId: string
@@ -583,6 +814,7 @@ export interface OwnerExecutionGrantIssuePreview extends ProjectOwnerGoalSubject
   materializationRevision: number
   materializationIntegrityHash: string
   sourceHash: string
+  employeeRuntimes?: OwnerEmployeeRuntime[]
   /** grant范围内每个roleKey的冻结执行员工；sourceHash同时绑定其配置摘要。 */
   roleAssignments?: Array<{ roleKey: string; employeeId: string; employeeName: string }>
   executorEmployeeId: string
@@ -722,10 +954,12 @@ export interface ConfirmOwnerPreflightReconciliationRequest extends ProjectOwner
   providerConsoleCheckedNoUsage: boolean
 }
 export interface OwnerExecutionCommandView {
+  textDelivery?: { state: 'available' | 'unavailable'; detail: string; artifact?: OwnerTextDelivery }
   commandId: string
   grantId: string
   taskId: string
   taskTitle: string
+  stepKey?: string
   employeeId: string
   role: OwnerExecutionCommandRole
   reworkOrdinal: number
@@ -749,9 +983,11 @@ export interface OwnerExecutionCommandView {
   acceptanceCriteria: string[]
   /** 只含与本命令关联的、通过完整性核验的结构化技术评审。 */
   technicalReview?: {
+    artifactHash?: string
+    artifactVerified?: boolean
     verdict: 'approved' | 'changes_requested' | 'blocked'
     summary: string
-    criteria: Array<{ criterion: string; status: 'met' | 'not_met' | 'not_verified'; evidence: string }>
+    criteria: Array<{ criterion: string; status: 'met' | 'not_met' | 'not_verified'; evidence: string; quote?: string | null }>
     findings: Array<{ severity: 'low' | 'medium' | 'high'; description: string; requestedChange: string }>
     blockerReason: string | null
   }
@@ -765,6 +1001,27 @@ export interface OwnerExecutionCommandView {
   createdAt: number
   updatedAt: number
 }
+
+/** 本机保存的完整文本成果；正文来自准确Executor最终回复，不是外部事实验证。 */
+export interface OwnerTextDelivery {
+  schemaVersion: 1
+  projectId: string
+  grantId: string
+  commandId: string
+  executionId: string
+  sessionId: string
+  taskId: string
+  stepLinkId: string
+  sourceHash: string
+  planRevision: number
+  reworkOrdinal: number
+  messageId: string
+  content: string
+  contentSha256: string
+  byteLength: number
+  capturedAt: number
+  integrityHash: string
+}
 export interface DispatchOwnerExecutionCommandRequest {
   commandId: string
   ackFingerprint: string
@@ -772,7 +1029,7 @@ export interface DispatchOwnerExecutionCommandRequest {
 }
 export type OwnerExecutionAutonomousScheduleState = 'no_grant' | 'manual' | 'paused' | 'needs_reconcile' | 'expired' | 'archived' | 'stale' | 'ready' | 'running' | 'waiting'
 export type OwnerTechnicalReviewVerdict = 'approved' | 'changes_requested' | 'blocked'
-export type OwnerExecutionNextAction = 'execute' | 'review' | 'rework' | 'await_business_acceptance' | 'human_decision' | 'none'
+export type OwnerExecutionNextAction = 'execute' | 'review' | 'rework' | 'await_owner_quality' | 'await_business_acceptance' | 'human_decision' | 'none'
 export interface OwnerExecutionAutonomousScheduleStatus {
   projectId: string
   state: OwnerExecutionAutonomousScheduleState
@@ -798,4 +1055,38 @@ export interface ProjectOwnerExecutionCommandApi {
   cancelQueuedOwnerExecutionCommand: (request: { commandId: string }) => Promise<ProjectOwnerGoalResult<{ commandId: string }>>
   previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
   confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>
+}
+
+/** 用户在Owner结果卡确认后，主进程复验并一次完成授权与调度。 */
+export interface ProjectOwnerExecutionLaunchApi {
+  launchOwnerPreparedExecution: (request: MaterializeOwnerTasksRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
+  saveOwnerExecutionStartIntent: (request: OwnerExecutionStartIntentRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionStartIntent>>
+  resumeOwnerExecutionStartIntent: (request: ProjectOwnerGoalSubject & { intentId: string }) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
+}
+
+/** 点击最终确认时先持久化的恢复凭据；它不单独创建任务、授权或派发。 */
+export interface OwnerExecutionStartIntentRequest extends ProjectOwnerGoalSubject {
+  intentId: string
+  expectedGoalRevision: number
+  expectedPlanRevision: number
+  planFingerprint: string
+  contextFingerprint: string
+  input: OwnerExecutionPreparationInput
+}
+export interface OwnerExecutionStartIntent extends OwnerExecutionStartIntentRequest {
+  state: 'pending' | 'completed'
+  grantId?: string
+  createdAt: number
+  integrityHash: string
+}
+
+
+/** Owner的质量判断不是执行事实；须经当前业务授权核验并记录实际动作。 */
+export interface OwnerQualityDecision {
+  reviewerCommandId: string
+  artifactHash: string
+  verdict: 'accept' | 'rework' | 'escalate'
+  reason: string
+  criteria: Array<{ criterion: string; status: 'met' | 'not_met' | 'not_verified'; evidence: string; quote: string | null }>
+  findings: Array<{ severity: 'low' | 'medium' | 'high'; description: string; requestedChange: string }>
 }

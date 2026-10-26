@@ -25,9 +25,102 @@ test('Given 已存目标与资料快照 When 构建规划请求 Then data-only�
   expect(request.systemPrompt).toContain('不执行')
   expect(request.systemPrompt).toContain('JSON')
   expect(request.systemPrompt).toContain('计划默认3步、最多5步')
+  expect(request.systemPrompt).toContain('summary是给用户审阅的结果承诺')
+  expect(request.systemPrompt).toContain('不写先后步骤、人员/岗位、工具、工作区或内部安排')
   expect(request.systemPrompt).toContain('acceptanceCriteria为1–2条')
+  expect(request.systemPrompt).toContain('每个对象属性名后必须使用冒号')
+  expect(request.systemPrompt).toContain('"acceptanceCriteria":["明确的验收标准"]')
+  expect(request.systemPrompt).toContain('roleKey只能逐字使用本次资料roles数组中已有的key')
+  expect(request.systemPrompt).toContain('可用key：["requirements-analyst"]')
   expect(request.userPrompt).toContain(c.goal.goal.objective)
   expect(request).not.toHaveProperty('grantId')
+})
+
+test('Given用户反馈绑定已验收成果 When构建Owner请求 Then提供准确版本正文并视为不可信资料', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const content = '旧交付的完整正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex')
+  const messageId = '1'.repeat(64)
+  c.conversation = { conversationId: 'conversation', throughMessageId: '2'.repeat(64), historyThroughMessageId: '2'.repeat(64),
+    messages: [{ id: '2'.repeat(64), role: 'user', content: '请按反馈修改' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false,
+    deliveryFeedback: { version: 1, messageId, artifactHash, title: '已验收方案', acceptanceCriteria: ['说明依据'], content, ownerDecision: '按标准接受', reviewerSummary: '逐项检查通过' } }
+  const request = protocol.buildProjectOwnerPlanningRequest(c)
+  expect(request.userPrompt).toContain('旧交付的完整正文')
+  expect(request.userPrompt).toContain(messageId)
+  expect(request.systemPrompt).toContain('不可信数据')
+  expect(request.systemPrompt).toContain('不得沿用旧执行授权')
+  c.conversation.deliveryFeedback!.artifactHash = 'f'.repeat(64)
+  expect(() => protocol.buildProjectOwnerPlanningRequest(c)).toThrow('正文摘要')
+})
+
+test('Given反馈绑定准确成果 When Owner 提交修订方案 Then逐项评估改动与授权影响并拒绝不完整/错绑判断', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const content = '已验收成果正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex'), messageId = '3'.repeat(64)
+  c.conversation = { conversationId: 'conversation', throughMessageId: '4'.repeat(64), historyThroughMessageId: '4'.repeat(64), messages: [{ id: '4'.repeat(64), role: 'user', content: '增加目标用户分析' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false,
+    deliveryFeedback: { version: 1, messageId, artifactHash, title: '已验收方案', acceptanceCriteria: ['说明依据', '指出取舍'], content, ownerDecision: '按标准接受', reviewerSummary: '逐项检查通过' } }
+  const base = proposal(c)
+  const feedback = c.conversation.deliveryFeedback!
+  const assessment = { messageId, artifactHash, summary: '补充目标用户分析', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '新增对应分析' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '在当前确认范围内；旧执行许可不沿用' }
+  const valid = { ...base, proposal: { ...base.proposal, deliveryFeedbackAssessment: assessment } }
+  const parsed = protocol.parseProjectOwnerPlanningResponse(valid, c)
+  expect(parsed).toMatchObject({ kind: 'plan_proposal', proposal: { deliveryFeedbackAssessment: assessment } })
+  for (const invalid of [
+    undefined,
+    { ...assessment, messageId: '5'.repeat(64) },
+    { ...assessment, artifactHash: '6'.repeat(64) },
+    { ...assessment, changes: assessment.changes.slice(0, 1) },
+    { ...assessment, changes: [...assessment.changes].reverse() },
+    { ...assessment, authorizationImpact: 'cannot_determine' },
+  ]) {
+    expect(() => protocol.parseProjectOwnerPlanningResponse({ ...valid, proposal: { ...valid.proposal, deliveryFeedbackAssessment: invalid } }, c)).toThrow()
+  }
+  const request = protocol.buildProjectOwnerPlanningRequest(c)
+  expect(request.systemPrompt).toContain('changes必须按顺序逐字覆盖原全部acceptanceCriteria')
+  expect(request.systemPrompt).toContain(messageId)
+  expect(request.systemPrompt).toContain(artifactHash)
+})
+
+test('Given持久Reviewer提示中的代码快照与验证回执 When投影进Owner管理上下文 Then接受准确绑定并原样提供完整证据', async () => {
+  const protocol = await import('./project-owner-planning-protocol')
+  const c = context()
+  const content = '{"files":[{"path":"src/app.ts","content":"return value + 1"}]}'
+  const validationEvidence = [{ command: 'bun test src/app.test.ts', validationId: `val-${'a'.repeat(64)}`, attemptState: 'completed' as const,
+    freshness: 'fresh' as const, status: 'passed' as const, exitCode: 0, timedOut: false, outputTail: 'pass', outputTruncated: false,
+    rawOutputSha256: 'b'.repeat(64), rawOutputByteLength: 4 }]
+  const developmentArtifact = { projectId: 'p', grantId: 'grant-1', taskId: 'task-1', stepLinkId: 'link-1', sourceHash: 'd'.repeat(64),
+    planRevision: 2, reworkOrdinal: 0, executorCommandId: 'exec-cmd', executorExecutionId: 'exec-run', contentHash: 'c'.repeat(64), content, validationEvidence }
+  c.conversation = { executionObservation: { executionId: 'review-exec', commandId: 'review-cmd', grantId: 'grant-1', sourcePlanRevision: 2,
+    businessTaskId: 'task-1', taskTitle: '修复', role: 'reviewer', trigger: 'terminal', executionStatus: 'completed', commandState: 'settled',
+    grantState: 'active', resultSummary: '摘要', error: '', actualCostMicros: 1, reservedCostMicros: 1 },
+    deliveryReview: { version: 1, state: 'available', detail: '代码证据已核对', developmentArtifact, review: { reviewerCommandId: 'review-cmd', artifactHash: 'c'.repeat(64), verdict: 'approved',
+      criteria: [{ criterion: '包含修复逻辑', status: 'met', evidence: '快照包含修复逻辑', quote: 'return value + 1' }], findings: [], validationEvidence } },
+    conversationId: 'conversation-1', throughMessageId: '1'.repeat(64), historyThroughMessageId: '1'.repeat(64), messages: [{ id: '1'.repeat(64), role: 'assistant', content: '后台事件：代码评审已返回' }], truncated: false,
+    currentPlan: null, tasks: [], tasksTruncated: false }
+  const raw = { schemaVersion: 1, kind: 'conversation_reply', projectId: 'p', goalVersion: 1, contextFingerprint: c.fingerprint, messageId: '1'.repeat(64), message: '我已读取代码快照和验证回执。' }
+  expect(protocol.parseProjectOwnerPlanningResponse(raw, c)).toMatchObject({ kind: 'conversation_reply' })
+  const request = protocol.buildProjectOwnerPlanningRequest(c)
+  expect(request.userPrompt).toContain('return value + 1')
+  expect(request.userPrompt).toContain('bun test src/app.test.ts')
+  expect(request.systemPrompt).toContain('developmentArtifact')
+  developmentArtifact.contentHash = 'd'.repeat(64)
+  expect(() => protocol.parseProjectOwnerPlanningResponse(raw, c)).toThrow()
+})
+
+test('Given模型以旧式type和空change返回普通对话 When解析Owner响应 Then安全归一化并保留未知字段拒绝', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const throughMessageId = '9'.repeat(64)
+  c.conversation = { conversationId: 'conversation', throughMessageId, historyThroughMessageId: throughMessageId,
+    messages: [{ id: throughMessageId, role: 'user', content: '请说明如何继续' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false }
+  const legacyReply = { type: 'conversation_reply', binding: { projectId: 'p', goalVersion: 1, contextFingerprint: c.fingerprint },
+    messageId: throughMessageId, message: '我会先核对现有资料。', change: null }
+  expect(protocol.parseProjectOwnerPlanningResponse(legacyReply, c)).toMatchObject({ kind: 'conversation_reply', message: '我会先核对现有资料。' })
+  const { type: _type, change: _change, ...untypedReply } = legacyReply
+  expect(protocol.parseProjectOwnerPlanningResponse(untypedReply, c)).toMatchObject({ kind: 'conversation_reply' })
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...untypedReply, proposal: proposal(c).proposal }, c)).toThrow()
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...untypedReply, messageId: 'wrong-message' }, c)).toThrow()
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...legacyReply, kind: 'plan_proposal' }, c)).toThrow('type与kind冲突')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...legacyReply, unexpected: true }, c)).toThrow('未知字段')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...proposal(c), change: null }, c)).toThrow('未知字段')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...proposal(c), type: 'plan_proposal' }, c)).toThrow('type别名仅支持对话回应')
 })
 
 test('绑定项目/任务/目标和资料的plan响应复用成果/依赖/角色校验，仍proposal_only', async () => {
@@ -69,6 +162,22 @@ test('Given 命令绑定交付反馈 When 构建新规划请求 Then 携带冻�
   expect(request.userPrompt).toContain('补充零数量验证')
   expect(request.systemPrompt).toContain('新计划都不沿用旧授权')
   expect(request.systemPrompt).toContain('所需授权是否变化')
+  const example = JSON.parse(request.systemPrompt.split('\n').find(line => line.startsWith('{"schemaVersion":'))!)
+  expect(example).not.toHaveProperty('deliveryChangeAssessment')
+  expect(protocol.parseProjectOwnerPlanningResponse(example, c).kind).toBe('plan_proposal')
+  expect(example.proposal.deliveryChangeAssessment.commands[0]).toMatchObject({ authorizationImpact: 'new_grant_required', authorizationRationale: '新计划不沿用旧授权' })
+  expect(example.proposal.deliveryChangeAssessment.commands[0].changes[0]).not.toHaveProperty('authorizationImpact')
+  expect(request.systemPrompt).toContain('与changes同级')
+  for (const format of ['legacy', 'fragment', 'envelope'] as const) {
+    const frozen = protocol.buildProjectOwnerPlanningRequest(c, format)
+    const hash = createHash('sha256').update(JSON.stringify(frozen)).digest('hex')
+    expect(protocol.resolveProjectOwnerPlanningRequest(c, hash)).toEqual(frozen)
+    const priorFrozen = protocol.buildProjectOwnerPlanningRequest(c, format, false)
+    const priorHash = createHash('sha256').update(JSON.stringify(priorFrozen)).digest('hex')
+    expect(protocol.resolveProjectOwnerPlanningRequest(c, priorHash)).toEqual(priorFrozen)
+    expect(() => protocol.resolveProjectOwnerPlanningRequest(c, '0'.repeat(64))).toThrow('冻结提示指纹')
+  }
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...example, proposal: { ...example.proposal, deliveryChangeAssessment: undefined }, deliveryChangeAssessment: example.proposal.deliveryChangeAssessment }, c)).toThrow('未知字段')
   expect(request).not.toHaveProperty('grantId')
   const base = proposal(c)
   const assessment = { summary: '补充遗漏边界并保留原授权范围', commands: [{ commandId: 'command-1',
@@ -83,6 +192,7 @@ test('Given 命令绑定交付反馈 When 构建新规划请求 Then 携带冻�
     { ...assessment, commands: [{ ...assessment.commands[0]!, commandId: 'other-command' }] },
     { ...assessment, commands: [{ ...assessment.commands[0]!, changes: [] }] },
     { ...assessment, commands: [{ ...assessment.commands[0]!, changes: [{ ...assessment.commands[0]!.changes[0]!, criterion: '伪造标准' }] }] },
+    { ...assessment, commands: [{ commandId: 'command-1', changes: [{ ...assessment.commands[0]!.changes[0]!, authorizationImpact: 'unchanged', authorizationRationale: '错放字段' }] }] },
   ]) {
     expect(() => protocol.parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, deliveryChangeAssessment: invalidAssessment } }, c)).toThrow()
   }
@@ -151,6 +261,10 @@ test('未知授权/计划模式、跨主体、过期目标/资料、错误JSON/�
     expect(() => protocol.parseProjectOwnerPlanningResponse(payload, c)).toThrow()
   }
   expect(() => protocol.parseProjectOwnerPlanningResponse('```json\n{}\n```', c)).toThrow()
+  expect(protocol.parseProjectOwnerPlanningResponse(`\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``, c)).toMatchObject({ kind: 'plan_proposal' })
+  expect(protocol.parseProjectOwnerPlanningResponse(`结果如下：\n${JSON.stringify(valid)}\n以上为建议。`, c)).toMatchObject({ kind: 'plan_proposal' })
+  expect(() => protocol.parseProjectOwnerPlanningResponse(`${JSON.stringify(valid)}\n${JSON.stringify(valid)}`, c)).toThrow('唯一完整JSON对象')
+  expect(() => protocol.parseProjectOwnerPlanningResponse(`${JSON.stringify(valid)} {broken`, c)).toThrow('唯一完整JSON对象')
   expect(() => protocol.parseProjectOwnerPlanningResponse('{broken', c)).toThrow()
 })
 
@@ -200,4 +314,51 @@ test('输入长度、坏来源或非法JSON对象原型拒绝，不静默截断�
   expect(() => protocol.parseProjectOwnerPlanningResponse({ ...proposal(c), proposal: { ...proposal(c).proposal, summary: 'x'.repeat(262145) } }, c)).toThrow('超限')
   expect(() => protocol.buildProjectOwnerPlanningRequest({ ...c, goal: { ...c.goal, revision: 0 } })).toThrow()
   expect(() => protocol.buildProjectOwnerPlanningRequest({ ...c, sources: { ...c.sources, project: { ...c.sources.project, id: 'cross-project' } } })).toThrow('来源')
+})
+
+test('Given唯一已知schema版本的字符串表示 When解析 Then仅归一化字符串1且其他版本继续拒绝', async () => {
+  const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
+  const c = context(), valid = proposal(c)
+  expect(parseProjectOwnerPlanningResponse({ ...valid, schemaVersion: '1' }, c).kind).toBe('plan_proposal')
+  for (const schemaVersion of ['01', '2', 2, null, true]) expect(() => parseProjectOwnerPlanningResponse({ ...valid, schemaVersion }, c)).toThrow()
+})
+
+test('Given 源码不开放但项目有知识库 When 构建规划 Then 明确可安排员工读取且严格排除路径字段', async () => {
+  const protocol = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.codeSourceAccess = 'none'
+  c.sources.knowledgeSources = [{ id: 'source-pdf', name: '24页PDF资料' }]
+  const refresh = () => { c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex') }
+  refresh()
+  const request = protocol.buildProjectOwnerPlanningRequest(c)
+  expect(JSON.parse(request.userPrompt).sources.knowledgeSources).toEqual(c.sources.knowledgeSources)
+  expect(request.systemPrompt).toContain('codeSourceAccess仅限制源码')
+  expect(request.systemPrompt).toContain('元信息不证明已读过原文')
+  c.sources.knowledgeSources.push({ id: 'source-pdf', name: '重复' }); refresh()
+  expect(() => protocol.buildProjectOwnerPlanningRequest(c)).toThrow('知识来源重复')
+  c.sources.knowledgeSources = [Object.assign({ id: 'source-pdf', name: 'PDF' }, { locator: '/private/file' })]; refresh()
+  expect(() => protocol.buildProjectOwnerPlanningRequest(c)).toThrow('知识来源身份或名称无效')
+})
+
+test('Given 无选项澄清附空recommended When 解析 Then 仅省略无意义空字段并保留其余校验', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const question = { key: 'format', reasonType: 'missing_information', question: '期望输出格式？', why: '明确交付形态', options: [], recommended: '' }
+  const response = { schemaVersion: 1, kind: 'needs_clarification', projectId: 'p', goalVersion: 1, contextFingerprint: c.fingerprint, reason: '格式待确认', questions: [question] }
+  expect(protocol.parseProjectOwnerPlanningResponse(response, c)).toMatchObject({ kind: 'needs_clarification', questions: [{ key: 'format', options: [] }] })
+  const parsed = protocol.parseProjectOwnerPlanningResponse(response, c)
+  if (parsed.kind !== 'needs_clarification') throw new Error('响应类型错误')
+  expect(parsed.questions[0]).not.toHaveProperty('recommended')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...response, questions: [{ ...question, options: ['A', 'B'] }] }, c)).toThrow('澄清建议')
+})
+
+test('Given 项目规划无任务ID When 模型返回null Then 仅视为未填写，任务级和错误项目仍拒绝', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  expect(protocol.parseProjectOwnerPlanningResponse({ ...proposal(c), taskId: null }, c).kind).toBe('plan_proposal')
+  const base = proposal(c)
+  const { projectId, goalVersion, contextFingerprint, ...body } = base
+  expect(protocol.parseProjectOwnerPlanningResponse({ ...body, binding: { projectId, taskId: null, goalVersion, contextFingerprint } }, c).kind).toBe('plan_proposal')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...proposal(c), taskId: 'other' }, c)).toThrow('版本不匹配')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...proposal(c), projectId: 'other', taskId: null }, c)).toThrow('版本不匹配')
+  const task = context('task')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...proposal(task), taskId: null }, task)).toThrow('版本不匹配')
 })

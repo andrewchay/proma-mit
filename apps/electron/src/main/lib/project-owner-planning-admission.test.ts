@@ -31,18 +31,18 @@ let mockAuthorized = false
 auth.mockImplementation(() => { if (!mockAuthorized) throw new Error('假准入未授权') })
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { auth.mockRestore(); employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl = 'https://example.invalid') {
+function fixture(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl = 'https://example.invalid', modelId = 'model') {
   const project = store.createProject({ title: 'Owner定位', description: '' })
   const workspace = createAgentWorkspace(`Owner-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
-  const channel = createChannel({ name: '假渠道', provider, baseUrl, apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
-  const employee = employees.createAgentEmployee({ name: '执行载体', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
+  const channel = createChannel({ name: '假渠道', provider, baseUrl, apiKey: 'fake', enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
+  const employee = employees.createAgentEmployee({ name: '执行载体', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   const binding = { ownerName: '项目Owner', carrierId: employee.id, workspaceId: workspace.id, changeReason: '明确绑定既有载体' }
   saveProjectOwnerGoalDraft(project.id, 0, { objective: '提出可评审的定位建议' })
   return { project, employee, workspace, channel, binding }
 }
 function request(projectId: string, bindingRevision = 1) { const context = getProjectOwnerPlanningContext(projectId); return { requestId: randomUUID(), expectedBindingRevision: bindingRevision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: 0, expectedContextFingerprint: context.fingerprint } }
-function prepared(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl?: string) { const f = fixture(provider, baseUrl); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id)); return { ...f, link } }
+function prepared(provider: 'openai' | 'anthropic' | 'google' = 'openai', baseUrl?: string, modelId?: string) { const f = fixture(provider, baseUrl, modelId); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id)); return { ...f, link } }
 function running(f: ReturnType<typeof prepared>) {
   const sessionId = randomUUID(), executionId = randomUUID()
   store.createAgentExecution({ id: executionId, projectId: f.project.id, entityType: 'task', entityId: f.link.planningTaskId, agentId: f.employee.id, sessionId, status: 'running', prompt: '不能信任此角色原文' })
@@ -107,6 +107,30 @@ test('Given 真实AI SDK序列化+mock费用准入 When 三协议经过真实fin
 test('Given safeStorage加密渠道Key When 实际SDK/final凭据检查 Then 比较解密Key而非密文且不入占位', async () => {
   mockAuthorized = true; encrypted = true
   try { const f = outlet(); expect(f.channel.apiKey).not.toBe('fake'); await f.guarded('https://example.invalid/v1/chat/completions', f.init); expect(f.sent()).toBe(1); expect(JSON.stringify(admitted(f.executionId))).not.toContain('Bearer fake') } finally { encrypted = false }
+})
+test('Given v4 JSON Owner规划 When真实SDK序列化 Then实际body包含json_object且零工具、单请求、零重试', async () => {
+  mockAuthorized = true
+  const f = prepared('openai', undefined, 'deepseek-flash'), run = running(f), scope = source.resolveOwnerPlanningSession(run.sessionId)!
+  expect(scope.link.protocolVersion).toBe('4')
+  const cwd = join(getConfigDir(), 'agent-workspaces', f.workspace.slug, run.sessionId); mkdirSync(cwd, { recursive: true })
+  let calls = 0
+  const fake: typeof fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    calls++
+    const body = JSON.parse(String(init?.body))
+    expect(body.response_format).toEqual({ type: 'json_object' })
+    expect(body.tools ?? []).toEqual([])
+    const chunk = { id: 'fake-json', object: 'chat.completion.chunk', created: 1, model: 'deepseek-flash', choices: [{ index: 0, delta: { content: '{"ok":true}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 } }
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } })
+  }, { preconnect: () => {} })
+  const fetchFn = createControlledProviderFetch(run.sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: 'deepseek-flash', permissionMode: 'safe' }), fake)!
+  const spy = spyOn(AISDKRuntimeCore.prototype, 'runStreamTextWithRetry')
+  try {
+    const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: run.sessionId, prompt: 'never sent', modelId: 'deepseek-flash', provider: 'openai', protocol: 'openai-chat', apiKey: 'fake', baseUrl: f.channel.baseUrl, cwd, runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 9, maxRetries: 9, ownerPlanningRequest: { ...scope.request, maxOutputTokens: 8192, jsonOutput: true }, fetchFn })
+    expect(spy.mock.calls[0]?.[0]).toMatchObject({ maxRetries: 0, sdkMaxRetries: 0, jsonOutput: true })
+    expect(messages.at(-1)).toMatchObject({ result: '{"ok":true}', finish_reason: 'stop' })
+    expect(calls).toBe(1)
+    expect(admitted(run.executionId)).toBeDefined()
+  } finally { spy.mockRestore() }
 })
 test('Given 下游传入follow或Request自带follow When Owner最终运输 Then 强制redirect error且不重试', async () => {
   mockAuthorized = true

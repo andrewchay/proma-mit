@@ -1,5 +1,5 @@
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
-import { assertToolAllowedForSessionPurpose } from '../project-owner-execution-gates'
+import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
 /**
  * Pi Agent SDK 适配器。
  *
@@ -10,7 +10,7 @@ import { assertToolAllowedForSessionPurpose } from '../project-owner-execution-g
 
 import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
 import { randomUUID } from 'node:crypto'
-import { assertControlledPermissionChange, createControlledProviderFetch, guardControlledPiToolContext, guardControlledPiModelRuntime, isControlledProviderSession } from '../controlled-provider-boundary'
+import { assertControlledPermissionChange, createControlledProviderFetch, guardControlledPiToolContext, guardControlledPiModelRuntime, hasOwnerCommandExecutionSession, isControlledProviderSession } from '../controlled-provider-boundary'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { getFetchFn } from '../proxy-fetch'
 import { Type } from 'typebox'
@@ -33,6 +33,7 @@ import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayElig
 import { isTransientNetworkError } from '../error-patterns'
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { compactSessionNow, maybeAutoCompact, estimateOutgoingContextTokens } from '../agent-runtime/context-compaction'
+import { assertOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 仅用于保守的请求间/工具前软门禁；不是单次请求美元硬上限。 */
@@ -259,12 +260,14 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
 
     const controlled = isControlledProviderSession(sessionId)
+    const ownerCommand = hasOwnerCommandExecutionSession(sessionId)
+    const requestGated = runtimeBudgetLimitUsd !== undefined || ownerCommand
     const actualProvider = () => ({ runtime: 'pi' as const, cwd, modelId: model, permissionMode: input.getPermissionMode?.() ?? permissionMode ?? 'safe' })
     const controlledFetch = createControlledProviderFetch(sessionId, actualProvider, getFetchFn(await getEffectiveProxyUrl()))
 
     if (requestedOperation === 'compact') {
       if (provider === 'openai-codex') throw new Error('ChatGPT 订阅渠道暂不支持独立压缩。请继续当前对话，或切换到支持压缩的 API 渠道后再试。')
-      if (runtimeBudgetLimitUsd !== undefined) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
+      if (requestGated) throw new Error('Pi 有限费用模式禁止未纳入请求门禁的压缩调用')
       await runWithCompactionAbort((signal) => compactSessionNow({
         sessionId,
         provider,
@@ -294,24 +297,28 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
     let mcpRelease: (() => void) | undefined
+    const ownerToolNames = getOwnerExecutionToolNames(sessionId)
     let mcpTools: import('../agent-runtime/types').RuntimeToolDefinition[] = []
-    if (mcpServers && workspaceSlug && Object.keys(mcpServers).length > 0) {
+    if (ownerToolNames === null && mcpServers && workspaceSlug && Object.keys(mcpServers).length > 0) {
       const acquired = await this.mcpService.acquireClientManager({ workspaceSlug, mcpServers, cwd, onMcpAuthRequired })
       mcpRelease = acquired.release
       mcpTools = await acquired.manager.listAllTools()
     }
-    const customTools = createPiToolBridge({
+    let customTools = createPiToolBridge({
       toolContext: guardControlledPiToolContext(sessionId, {
         cwd, sessionId, permissionMode, ...toolContextOverrides,
       }),
       allowSubAgent: !controlled,
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {
+        if (ownerCommand) assertOwnerExecutionRequestsSettled(sessionId)
         // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
-        assertToolAllowedForSessionPurpose(sessionId, name, args)
+        const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, name, args)
+        if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         const result = await canUseTool?.(name, args, signal)
-        assertToolAllowedForSessionPurpose(sessionId, name, args)
+        if (result?.allowed) assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
+        if (ownerCommand) assertOwnerExecutionRequestsSettled(sessionId)
         return result ?? { allowed: false, message: '未配置权限回调' }
       } : undefined,
       mcpTools,
@@ -368,6 +375,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         },
       } as unknown as ToolDefinition)
     }
+    if (ownerToolNames !== null) customTools = customTools.filter((tool) => ownerToolNames.has(tool.name))
 
     const settingsManager = SettingsManager.inMemory({
       // 压缩由 Gravitas 在恢复会话前统一管理；关闭 Pi 原生双重压缩所有权。
@@ -375,15 +383,15 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       // 有调用级预算时失败回执/断流可能已产生费用；即使请求前钩子可拒绝
       // 下一请求，也不让 Pi 自己的重试队列保留不确定的待发副作用。
       retry: {
-        enabled: runtimeBudgetLimitUsd === undefined,
+        enabled: !requestGated,
         maxRetries: 2,
         // agent loop 重试和 pi-ai Provider HTTP 重试是两层；一次准入后
         // HTTP 重试可能再发一笔费用，有限费用模式必须显式禁用。
-        ...(runtimeBudgetLimitUsd !== undefined ? { provider: { maxRetries: 0 } } : {}),
+        ...(requestGated ? { provider: { maxRetries: 0 } } : {}),
       },
       // Pi 0.87 默认 streaming cache warming 会绕过 prepareRequest，独立重发
       // Provider 请求；有限费用模式禁止这条未归属的计费路径。
-      cacheWarming: runtimeBudgetLimitUsd === undefined ? 'streaming' : 'off',
+      cacheWarming: requestGated ? 'off' : 'streaming',
       // WebBridge / Computer Use 的截图必须进入模型上下文；blockImages=true
       // 会让 Pi 在工具已成功返回图片后静默丢弃图片本体，表现为“截图没反应”。
       images: { blockImages: false },
@@ -394,8 +402,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const goalGuidance = customTools.some((tool) => tool.name === 'GoalCheckpoint')
       ? '\nWhen the user message states that Goal Runtime is activated, this is an active Goal. Complete the current step and call GoalCheckpoint before ending the turn. Do not claim Goal is unsupported. Use outcome=complete only with concrete evidence; otherwise use continue, waiting, or blocked.'
       : ''
-    const effectiveSystemPrompt = `${systemPrompt ?? ''}\n${goalGuidance}\n${toolPrompt}`
-    if (effectiveHistoryMessages.length > 0 && runtimeBudgetLimitUsd === undefined && provider !== 'openai-codex') {
+    const ownerToolGuidance = ownerToolNames === null
+      ? ''
+      : `当前Owner员工任务只能使用列出的资料工具${ownerToolNames.has('Write') || ownerToolNames.has('Edit') ? '，以及经逐次人工审批的工作区 Write/Edit' : ''}；没有Shell、普通Read、Grep、Glob、MCP或子代理。缺少必要资料或验证能力时直接说明未验证项并停止，不尝试替代工具，不把未运行的检查写成通过。\n\n`
+    const effectiveSystemPrompt = `${systemPrompt ?? ''}\n${ownerToolGuidance}${goalGuidance}`
+    if (effectiveHistoryMessages.length > 0 && !requestGated && provider !== 'openai-codex') {
       // 统一压缩走独立 Provider 请求路径，暂未接此门禁；有限费用模式直接
       // 保留原始历史，由模型上下文检查自然失败，不可静默触发额外计费。
       const auto = await runWithCompactionAbort((signal) => maybeAutoCompact({
@@ -438,7 +449,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       noContextFiles: true,
       // 以 override 固定 Proma 的系统提示词边界，避免 Pi 资源加载过程中隐式追加或
       // 覆盖工具约束；所有模型可见工具均来自 Proma Bridge。
-      systemPromptOverride: () => `${systemPrompt ?? ''}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得声称工具缺失，也不得调用小写 Pi 内置工具。\n\n绝大多数网页信息需求（天气、新闻、资料、价格等）使用 WebSearch 或 WebFetch，不要为此开启 Web Bridge。只有当用户明确需要爬取特定网站、或代为操作浏览器（点击、填表、下单、登录等有状态操作）时，才使用 Web Bridge；识别到这类意图后，先向用户说明将开启受管浏览器代为操作并征求同意，再调用 WebBridgeNavigate，导航、点击、输入会触发权限确认，等待用户批准后再继续。\n\n若已使用 Web Bridge，请遵守强制顺序：WebBridgeNavigate({ url }) 成功后，才能调用 WebBridgeSnapshot、WebBridgeScreenshot、WebBridgeClick、WebBridgeType 或 WebBridgeScroll。尤其是“打开网页并截图/理解内容”任务，绝不能先调用 WebBridgeScreenshot；若尚未导航，立即调用 WebBridgeNavigate，而不是结束回答。快照返回后，点击或输入必须使用其中的 element_id。除非实际工具结果报错，否则不得声称工具缺失。\n\n记忆能力：RecallMemory / AddMemory 是个人跨会话云端记忆；SearchProjectMemory / ReadProjectMemory 是当前会话授权范围内的本地长期记忆。需要回溯时优先按任务相关性选择合适工具，自然运用，不提及“记忆系统”内部概念。${goalGuidance}\n${toolPrompt}\n</pi_proma_tools>`,
+      systemPromptOverride: () => ownerToolNames !== null
+        ? `${effectiveSystemPrompt}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得尝试其他工具或小写 Pi 内置工具。资料不足或能力不在清单中时，说明限制并停止。\n\n${toolPrompt}\n</pi_proma_tools>`
+        : `${effectiveSystemPrompt}\n\n<pi_proma_tools>\n只能使用以下完全一致的工具名称；不得声称工具缺失，也不得调用小写 Pi 内置工具。\n\n绝大多数网页信息需求（天气、新闻、资料、价格等）使用 WebSearch 或 WebFetch，不要为此开启 Web Bridge。只有当用户明确需要爬取特定网站、或代为操作浏览器（点击、填表、下单、登录等有状态操作）时，才使用 Web Bridge；识别到这类意图后，先向用户说明将开启受管浏览器代为操作并征求同意，再调用 WebBridgeNavigate，导航、点击、输入会触发权限确认，等待用户批准后再继续。\n\n若已使用 Web Bridge，请遵守强制顺序：WebBridgeNavigate({ url }) 成功后，才能调用 WebBridgeSnapshot、WebBridgeScreenshot、WebBridgeClick、WebBridgeType 或 WebBridgeScroll。尤其是“打开网页并截图/理解内容”任务，绝不能先调用 WebBridgeScreenshot；若尚未导航，立即调用 WebBridgeNavigate，而不是结束回答。快照返回后，点击或输入必须使用其中的 element_id。除非实际工具结果报错，否则不得声称工具缺失。\n\n记忆能力：RecallMemory / AddMemory 是个人跨会话云端记忆；SearchProjectMemory / ReadProjectMemory 是当前会话授权范围内的本地长期记忆。需要回溯时优先按任务相关性选择合适工具，自然运用，不提及“记忆系统”内部概念。\n${toolPrompt}\n</pi_proma_tools>`,
     })
     await resourceLoader.reload()
 
@@ -708,7 +721,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         data: image.data,
         mimeType: image.mediaType,
       }))
-      // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部。
+      // 按需展开用户请求的 Skill 全文（/skill:xxx 或 skillMentions），注入 prompt 头部；
       const promptWithSkills = await preparePromptWithPromaSkills(resourceLoader, enrichedPrompt, input.skillMentions)
 
       // 首 token 宽限按本回合上下文规模自适应；此时 compaction 已完成，effectiveHistoryMessages 为最终历史。

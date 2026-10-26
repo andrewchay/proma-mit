@@ -1,6 +1,9 @@
+import { hasOwnerMixedRuntime } from './project-owner-employee-runtime'
+import { canUseOwnerControlledEmployee } from './project-owner-employee-invocation'
 import { getWorkspaceCapabilities, listAgentWorkspaces } from './agent-workspace-manager'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 import { validateControlledTarget } from './agent-controlled-context'
+import { freezeOwnerEmployeeRuntime } from './project-owner-employee-runtime'
 import { validateDevelopmentTarget } from './agent-development-context'
 import { getChannelById } from './channel-manager'
 import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
@@ -82,6 +85,10 @@ function history(projectId: string): OwnerExecutionPreparationRecord[] {
         'selectedStepKeys',
         'toolRecommendations',
         'roleAssignments',
+        'employeeInvocations',
+        'employeeRuntimes',
+        'textDeliveryVersion',
+        'qualityManagementVersion',
         'executor',
         'reviewer',
         'workspaceId',
@@ -189,31 +196,48 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
     .filter(
       (employee) =>
         employee.enabled &&
-        ['controlled', 'development'].includes(employee.executionProfile ?? 'general') &&
+        // 候选员工先经受控调用器核验Runtime协议和精确审核价格；不兼容员工不进入安排上下文。
+        !employee.workflowId &&
+        ['general', 'controlled', 'development'].includes(employee.executionProfile ?? 'general') &&
         (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).some((id) => {
           if (!projectWorkspaceIds.has(id)) return false
           try {
-            if ((employee.executionProfile ?? 'general') === 'development') validateDevelopmentTarget(employee, id, targetFacts)
-            else validateControlledTarget(employee, id, targetFacts)
+            freezeOwnerEmployeeRuntime(employee)
+            if ((employee.executionProfile ?? 'general') === 'general') return canUseOwnerControlledEmployee(employee, id)
+            if ((employee.executionProfile ?? 'general') === 'development') {
+              if (canUseOwnerControlledEmployee(employee, id)) return true
+              validateDevelopmentTarget(employee, id, targetFacts)
+            } else validateControlledTarget(employee, id, targetFacts)
             return true
           } catch {
             return false
           }
         }),
     )
-    .map((employee) => ({
-      id: employee.id,
-      name: employee.name,
-      ...(employee.roleTemplateId ? { roleTemplateId: employee.roleTemplateId } : {}),
-      executionProfile: employee.executionProfile ?? 'general',
-      workspaceIds: (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).filter((id) =>
-        projectWorkspaceIds.has(id),
-      ),
-      channelId: employee.channelId,
-      modelId: employee.modelId,
-      runtime: employee.runtime,
-      ...(employee.id === ownerBinding?.carrierId ? { isOwnerCarrier: true } : {}),
-    }))
+    .map((employee) => {
+      const workspaceIds = (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).filter(id => projectWorkspaceIds.has(id))
+      return {
+        id: employee.id,
+        name: employee.name,
+        role: employee.role,
+        ...(employee.roleTemplateId ? { roleTemplateId: employee.roleTemplateId } : {}),
+        description: employee.description,
+        skills: [...(employee.skills ?? [])],
+        totalTasks: employee.totalTasks,
+        completedTasks: employee.completedTasks,
+        failureCount: employee.failureCount,
+        ...(employee.avgDurationMs === undefined ? {} : { avgDurationMs: employee.avgDurationMs }),
+        executionProfile: employee.executionProfile ?? 'general',
+        ...(hasOwnerMixedRuntime(employee) ? { ownerMixedRuntimeCompatible: true as const } : {}),
+        ...(workspaceIds.some(id => canUseOwnerControlledEmployee(employee, id)) ? { ownerControlledCompatible: true as const } : {}),
+        workspaceIds,
+        channelId: employee.channelId,
+        modelId: employee.modelId,
+        runtime: employee.runtime,
+        permissionMode: (employee.permissionMode === 'auto' ? 'auto' : 'safe') as 'safe' | 'auto',
+        ...(employee.id === ownerBinding?.carrierId ? { isOwnerCarrier: true } : {}),
+      }
+    })
   const catalog = readCatalog(),
     baseIds = catalog.bindings
       .filter((binding) => binding.projectId === subject.projectId)
@@ -261,6 +285,7 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
     executionConfigurationRecommendationState,
     revision: preparation?.revision ?? 0,
     policyRevision: policy?.revision ?? null,
+    ...(ownerBinding ? { ownerBindingRevision: ownerBinding.revision } : {}),
     preparation,
     status: preparation ? 'current' : 'none',
     blockers: [],

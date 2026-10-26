@@ -1990,7 +1990,9 @@ export class AgentOrchestrator {
         if (!callbacks.ownerExecution || callbacks.ownerExecution.commandId !== ownerExecution.ownerCommandId
           || callbacks.ownerExecution.executionId !== ownerExecution.id) throw new Error('Owner命令仅允许经专用dispatcher进入Runtime')
         assertOwnerCommandRuntimeContext(ownerExecution.id, ownerExecution.ownerCommandId, input.sessionId, true)
-        if (input.agentRuntime !== 'ai-sdk' || input.customMcpServers || input.mentionedMcpServers?.length
+        const frozenRuntime = projectStore.getAgentEmployee(ownerExecution.agentId)?.runtime
+        if (!['ai-sdk', 'pi'].includes(input.agentRuntime ?? '') || input.agentRuntime !== frozenRuntime) throw new Error('Owner业务Runtime与已确认员工不匹配')
+        if (input.customMcpServers || input.mentionedMcpServers?.length
           || input.mentionedSkills?.length || input.mentionedSessionIds?.length || input.mentionedAgentEmployees?.length
           || input.workflowCapabilityPolicy || input.attachments?.length) throw new Error('Owner业务Runtime不允许MCP、Skills、Workflow、附件或委派上下文')
       } else {
@@ -2833,7 +2835,8 @@ export class AgentOrchestrator {
       // 动态 canUseTool：每次调用读取当前权限模式，支持运行中切换
       const canUseTool = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
         // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence，先于Plan模式分派防旁路。
-        assertToolAllowedForSessionPurpose(sessionId, toolName, input)
+        const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, toolName, input)
+        if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, toolName, input)
         const currentMode = getPermissionMode()
 
         // Workflow 节点能力集是硬上限；即使运行在 bypassPermissions 下也不能越权。

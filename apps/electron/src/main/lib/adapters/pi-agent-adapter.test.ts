@@ -17,6 +17,23 @@ import type { AgentEvent } from '@gravitas/shared'
 
 
 mock.module('electron', () => buildElectronMock())
+mock.module('../controlled-provider-boundary', () => ({
+  assertControlledPermissionChange: () => {},
+  createControlledProviderFetch: () => globalThis.fetch,
+  guardControlledPiToolContext: (_sessionId: string, context: unknown) => context,
+  guardControlledPiModelRuntime: () => {},
+  hasOwnerCommandExecutionSession: (sessionId: string) => sessionId === 's-owner-pi-request-gate',
+  isControlledProviderSession: () => false,
+}))
+
+let ownerToolNamesForTest: ReadonlySet<string> | null = null
+let ownerWriteCandidateForTest = false
+const actualOwnerExecutionGates = await import('../project-owner-execution-gates')
+mock.module('../project-owner-execution-gates', () => ({
+  ...actualOwnerExecutionGates,
+  getOwnerExecutionToolNames: () => ownerToolNamesForTest,
+  isOwnerWorkspaceFileActionCandidate: (_sessionId: string, toolName: string) => ownerWriteCandidateForTest && toolName === 'Write',
+}))
 
 mock.module('../attachment-service', () => ({
   isImageAttachment: (mediaType: string) => mediaType.startsWith('image/'),
@@ -68,7 +85,7 @@ interface CapturedPiPrompt {
 }
 let capturedPrompts: CapturedPiPrompt[] = []
 
-function getCapturedSessionOptions(): { noTools?: 'builtin'; customTools?: Array<{ name: string }> } | undefined {
+function getCapturedSessionOptions(): typeof capturedSessionOptions {
   return capturedSessionOptions
 }
 
@@ -177,6 +194,77 @@ describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
 })
 
 describe('PiAgentAdapter', () => {
+  test('Owner Pi执行只暴露用途白名单并注入边界说明', async () => {
+    ownerToolNamesForTest = new Set(['SearchKnowledge', 'ReadKnowledgeSource'])
+    capturedSessionOptions = undefined
+    capturedSystemPromptOverride = undefined
+    const adapter = new PiAgentAdapter()
+    for await (const _message of adapter.query({
+      sessionId: 's-owner-pi-tool-filter', prompt: '读取项目资料', agentRuntime: 'pi',
+      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+    })) { /* mock Pi session不连接Provider */ }
+    expect(getCapturedSessionOptions()?.customTools?.map(tool => tool.name).sort()).toEqual(['ReadKnowledgeSource', 'SearchKnowledge'])
+    expect(getCapturedSystemPrompt()).toContain('没有Shell、普通Read、Grep、Glob、MCP或子代理')
+    expect(getCapturedSystemPrompt()).not.toContain('- Bash:')
+    expect(getCapturedSystemPrompt()).not.toContain('WebSearch 或 WebFetch')
+    expect(getCapturedSystemPrompt()).not.toContain('WebBridgeNavigate')
+    ownerToolNamesForTest = null
+    adapter.dispose()
+  })
+
+  test('Owner工作区写入候选进入逐次权限回调', async () => {
+    ownerToolNamesForTest = new Set(['SearchKnowledge', 'ReadKnowledgeSource', 'Write', 'Edit'])
+    ownerWriteCandidateForTest = true
+    let approvalCalls = 0
+    capturedSessionOptions = undefined
+    const adapter = new PiAgentAdapter()
+    for await (const _message of adapter.query({
+      sessionId: 's-owner-pi-write-approval', prompt: '写入成果', agentRuntime: 'pi',
+      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+      canUseTool: async () => { approvalCalls++; return { allowed: false, message: '等待人工审批' } },
+    })) { /* mock Pi session不连接Provider */ }
+    const write = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Write') as unknown as { execute: (id: string, input: Record<string, unknown>) => Promise<{ details?: { isError?: boolean } }> } | undefined
+    if (!write) throw new Error('Owner Pi工具桥缺少Write候选')
+    await write.execute('write-approval', { file_path: 'result.txt', content: '未获批准不得写入' })
+    expect(approvalCalls).toBe(1)
+    ownerToolNamesForTest = null
+    ownerWriteCandidateForTest = false
+    adapter.dispose()
+  })
+
+  test('Owner Pi命令禁用重试与压缩，未决用量阻断Pi工具桥', async () => {
+    const project = boundaryStore.createProject({ title: 'Owner Pi 门禁', description: '' })
+    const task = boundaryStore.createTask(project.id, { title: '受控执行', description: '' })
+    const sessionId = 's-owner-pi-request-gate', executionId = 'owner-pi-request-gate', commandId = 'owner-pi-command-gate'
+    boundaryStore.createAgentExecution({ id: executionId, projectId: project.id, entityType: 'task', entityId: task.id, agentId: 'pi-employee', sessionId, prompt: '受控执行', status: 'running' })
+    const database = boundaryStore.getProjectDb()
+    database.prepare('UPDATE agent_executions SET owner_command_id=? WHERE id=?').run(commandId, executionId)
+    database.prepare(`INSERT INTO project_owner_execution_request_reservations
+      (request_id, command_id, execution_id, session_id, request_evidence_id, price_evidence_id, reserved_cost_micros, settled_cost_micros, state, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, NULL, 'needs_reconcile', ?)`)
+      .run('owner-pi-unknown-request', commandId, executionId, sessionId, 'a'.repeat(64), 'test-price-evidence', Date.now())
+    promptEvents = []
+    capturedSettings = undefined
+    capturedSessionOptions = undefined
+    const adapter = new PiAgentAdapter()
+    for await (const _message of adapter.query({
+      sessionId, prompt: '受控执行', agentRuntime: 'pi', provider: 'zhipu', apiKey: 'fake',
+      baseUrl: 'http://127.0.0.1:9/api/paas/v4', model: 'glm-5.3-flash', cwd: '/tmp',
+      canUseTool: async () => ({ allowed: true }),
+    })) { /* mock session不连接Provider */ }
+
+    expect(getCapturedSettings()?.retry?.enabled).toBe(false)
+    expect(getCapturedSettings()?.retry?.provider?.maxRetries).toBe(0)
+    expect(getCapturedSettings()?.cacheWarming).toBe('off')
+    expect(getCapturedSettings()?.compaction?.enabled).toBe(false)
+    const readTool = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read')
+    expect(readTool).toBeDefined()
+    if (!readTool) throw new Error('Owner Pi工具桥缺少Read工具')
+    const read = readTool as unknown as { execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> }
+    await expect(read.execute('owner-pi-read', { path: 'should-not-run.txt' }, new AbortController().signal))
+      .rejects.toThrow('Owner请求费用/用量尚未确认')
+  })
+
   test('given required channel fields are missing then query fails with a helpful error', async () => {
     const adapter = new PiAgentAdapter()
 

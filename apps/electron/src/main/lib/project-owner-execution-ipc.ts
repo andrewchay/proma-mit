@@ -18,6 +18,8 @@ import { cancelQueuedOwnerCommand } from './project-owner-execution-stop'
 import { confirmOwnerPreflightReconciliation, previewOwnerPreflightReconciliation } from './project-owner-execution-preflight-reconciliation'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getOwnerAutonomousScheduleStatus } from './project-owner-autonomous-scheduler'
+import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
+import { resumeOwnerExecutionStartIntent, saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
 import * as store from './project-sqlite-store'
 interface Registrar {
   handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => void
@@ -36,6 +38,17 @@ async function result<T>(operation: () => T | Promise<T>): Promise<ProjectOwnerG
   }
 }
 export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
+  ipc.handle(PROJECT_IPC_CHANNELS.LAUNCH_OWNER_PREPARED_EXECUTION, (_, request) => result(async () => {
+    const { launchOwnerPreparedExecution } = await import('./project-owner-execution-launch')
+    return launchOwnerPreparedExecution(request)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT, (_, request) => result(() => saveOwnerExecutionStartIntent(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.RESUME_OWNER_EXECUTION_START_INTENT, (_, request) => result(() => {
+    const value = ownerExecutionObject(request, ['projectId', 'taskId', 'intentId'])
+    if (typeof value.intentId !== 'string' || !value.intentId.trim()) throw new Error('Owner启动确认意图ID无效')
+    const subject = parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) })
+    return resumeOwnerExecutionStartIntent(value.intentId, subject)
+  }))
   for (const [channel, operation] of [
     [PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_PREPARATION, getOwnerExecutionPreparation],
     [
@@ -58,6 +71,15 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
         value.input,
       )
     }),
+  )
+  ipc.handle(PROJECT_IPC_CHANNELS.PREPARE_OWNER_EXECUTION_ASSIGNMENT, (_, request) =>
+    result(() => {
+      const value = ownerExecutionObject(request, ['projectId', 'taskId', 'input'])
+      return prepareOwnerExecutionAssignment(parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) }), value.input)
+    }),
+  )
+  ipc.handle(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_ASSIGNMENT_RUNS, (_, request) =>
+    result(() => listOwnerExecutionAssignmentRuns(parseOwnerExecutionSubject(request))),
   )
   ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_PREPARATION, (_, request) =>
     result(() => {

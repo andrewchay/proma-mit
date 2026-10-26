@@ -1,3 +1,4 @@
+import { getOwnerManagementEditor, ownerManagementEditorsAtom } from '../../atoms/project-owner-management-atoms'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import type { ProjectOwnerRunView } from '@gravitas/shared'
@@ -10,9 +11,28 @@ import { editOwnerRuntimeAtom, getOwnerRuntimeEditor, loadOwnerRuntimeAtom, owne
 import { isLatestOwnerRunCurrent } from './project-owner-run-current'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { AgentExecutionStopButton } from './AgentExecutionStopButton'
+import { OwnerModuleStatus } from './OwnerModuleStatus'
 const field = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm focus-visible:ring-2 focus-visible:ring-ring'
 const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
-const states = { proposed: '已生成待审提案', needs_clarification: '需要人工澄清', stale: '来源变化，未覆盖计划', failed: '规划失败，未补发', unknown: '终态未知，未补发', stopped: '已请求停止，远端费用未保证结清' }
+const states = { replied: 'Owner已回应', proposed: '已生成待审提案', needs_clarification: '需要人工澄清', stale: '来源变化，未覆盖计划', failed: '规划失败，未补发', unknown: '终态未知，未补发', stopped: '已请求停止，远端费用未保证结清' }
+const executionStates: Record<ProjectOwnerRunView['executions'][number]['status'], string> = {
+  queued: '等待开始', running: '正在规划', completed: '规划已完成', failed: '规划未完成', cancelled: '已取消', stale: '来源已变化，结果不能用于当前目标',
+}
+function runStatus(run: ProjectOwnerRunView): { label: string; tone: 'muted' | 'accent' | 'warn' | 'danger' } {
+  const execution = run.executions[0]
+  if (!execution) return { label: '准备待发送', tone: 'muted' }
+  const outcome = run.outcomes.find(item => item.executionId === execution.id)
+  if (outcome) {
+    const tone = outcome.state === 'proposed' ? 'warn'
+      : outcome.state === 'needs_clarification' || outcome.state === 'stopped' ? 'warn'
+        : outcome.state === 'failed' || outcome.state === 'unknown' || outcome.state === 'stale' ? 'danger'
+          : 'muted'
+    return { label: states[outcome.state], tone }
+  }
+  const tone = execution.status === 'queued' || execution.status === 'running' ? 'accent'
+    : execution.status === 'failed' || execution.status === 'stale' ? 'danger' : 'muted'
+  return { label: executionStates[execution.status], tone }
+}
 function OwnerClarificationAnswers({ subject, executionId, linkId, clarification, goal }: {
   subject: { projectId: string; taskId?: string }
   executionId: string
@@ -62,7 +82,8 @@ function OwnerClarificationAnswers({ subject, executionId, linkId, clarification
   </section>
 }
 /** 保存职责配置、无费用准备和逐次模型确认分开；不会创建/启用员工或升级权限。 */
-export function ProjectOwnerRuntimePanel({ projectId, taskId, showConfiguration = true }: { projectId: string; taskId?: string; showConfiguration?: boolean }): React.ReactElement {
+export function ProjectOwnerRuntimePanel({ projectId, taskId, showConfiguration = true, showClarifications = true }: { projectId: string; taskId?: string; showConfiguration?: boolean; showClarifications?: boolean }): React.ReactElement {
+  const managedQuestions = getOwnerManagementEditor(useAtomValue(ownerManagementEditorsAtom), projectId).view?.questions ?? []
   const subject = useMemo(() => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }), [projectId, taskId])
   const view = useMemo(() => atom(get => ({ editor: getOwnerRuntimeEditor(get(ownerRuntimeEditorsAtom), subject), goal: getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject), plan: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), goalReady: ownerPlanGoalReady(get, subject) })), [subject])
   const { editor, goal, plan, goalReady } = useAtomValue(view)
@@ -120,14 +141,20 @@ export function ProjectOwnerRuntimePanel({ projectId, taskId, showConfiguration 
   })
   const canPrepare = !busy && !editor.dirty && Boolean(editor.binding && editor.context && goalReady && plan.loaded && !plan.loading && !plan.saving && !plan.dirty && !plan.conflict && !plan.requiresReview && editor.context.goal.revision === revision)
   const changed = async () => { await Promise.all([load(subject), loadPlan(subject)]) }
-  return <section className="mt-4 min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label="Owner受控模型规划">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Owner 模型规划</h2><button type="button" className={button} disabled={busy} onClick={() => void changed()}>刷新配置、Run与提案</button></div>
-    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Owner是项目治理职责，下面的既有AI员工只是模型调用载体，不会被改名、激活或升级权限。配置与准备均不收费；真正调用前另行确认本次模型费用。规划只生成待审内容或必要澄清，不自动派工或完成业务任务。</p>
+  const archiveWarning = editor.runs.find((run) => run.archiveWarning)?.archiveWarning
+  const runHistoryNeedsAttention = Boolean(archiveWarning || latestRun && (
+    !latestRunCurrent
+    || !latestExecution
+    || latestExecution.status === 'queued'
+    || latestExecution?.status === 'running'
+    || latestOutcome && ['needs_clarification', 'stale', 'failed', 'unknown', 'stopped'].includes(latestOutcome.state)
+  ))
+  return <section className="mt-4 min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label="目标规划设置与运行记录">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">目标规划设置与运行记录</h2><OwnerModuleStatus tone={latestExecution?.status === 'queued' || latestExecution?.status === 'running' ? 'accent' : latestOutcome?.state === 'unknown' || latestOutcome?.state === 'failed' || latestOutcome?.state === 'stopped' ? 'danger' : latestRunCurrent ? 'muted' : latestRun ? 'warn' : 'muted'}>{nextStep.title}</OwnerModuleStatus></div>
+    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">规划会根据已保存的目标和授权来源生成提案。请在「Owner 计划审阅」中查看、修改并确认；这里的规划操作不会启动业务执行。</p>
+    <div className="mt-3 flex justify-end border-t pt-3"><button type="button" className={button} disabled={busy} onClick={() => void changed()}>刷新配置、Run与提案</button></div>
     {editor.error && <p role="alert" className="mt-3 text-sm text-destructive">{editor.error}。未自动重试，请比较最新来源。</p>}
-    <section className="mt-4 rounded-lg bg-muted/40 p-3" aria-label="Owner规划下一步" data-stage={nextStep.stage}>
-      <h3 className="text-sm font-semibold">{nextStep.title}</h3>
-      <p className="mt-1 text-xs text-muted-foreground">{nextStep.detail}</p>
-    </section>
+    <p className="mt-2 text-xs text-muted-foreground" aria-label="Owner规划状态说明" data-stage={nextStep.stage}>{nextStep.detail}</p>
     {showConfiguration && <><form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void save(subject) }}>
       <label className="block text-sm" htmlFor={`${id}-name`}>Owner职责名称<input id={`${id}-name`} className={field} required maxLength={200} value={editor.ownerName} disabled={busy} onChange={event => edit({ subject, patch: { ownerName: event.target.value } })} /></label>
       <label className="block text-sm" htmlFor={`${id}-carrier`}>实际规划载体（仅既有受控AI SDK员工）<select id={`${id}-carrier`} className={field} disabled={busy} value={editor.carrierId} onChange={event => edit({ subject, patch: { carrierId: event.target.value, workspaceId: '' } })}><option value="">请选择已有员工，不默认创建</option>{!carriers.some(item => item.id === editor.carrierId) && editor.carrierId && <option value={editor.carrierId}>原载体不可用（{editor.carrierId}）</option>}{carriers.map(item => <option key={item.id} value={item.id}>{item.name} · {item.role} · {item.modelId ?? '模型未明确'}</option>)}</select></label>
@@ -138,21 +165,31 @@ export function ProjectOwnerRuntimePanel({ projectId, taskId, showConfiguration 
       {editor.binding && <p className="text-xs text-muted-foreground">已保存配置 v{editor.binding.revision} · 载体 {editor.binding.carrierId} · 渠道 {editor.binding.channelId} · 模型 {editor.binding.modelId}。不代表本次调用费用已同意。</p>}
     </form>
     <div className="mt-4 space-y-2"><button type="button" className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50" disabled={!canPrepare} onClick={() => void prepare(subject)}>准备一次目标规划（不收费）</button><p className="text-xs text-muted-foreground">请先保存目标、绑定配置并解决目标/计划冲突。准备会创建可见暂停承载任务，冻结当前目标和计划版本；不会发送模型请求。未保存计划编辑不作为AI输入。</p></div></>}
-    <div className="mt-4 space-y-3" aria-label="Owner规划Run记录"><p className="text-xs text-muted-foreground">本主体最近最多50份准备。费用来自Runtime报告或保持未知；这些本机回执不宣称Provider请求ID或外部验收证明。</p>{!editor.runs.length && <p className="text-sm text-muted-foreground">尚无暂停准备或规划Run。</p>}{editor.runs.map(run => <article key={run.link.id} className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm">
-      <p className="font-medium">目标 v{run.link.goalVersion} · 目标修订 {run.link.goalRevision} · 计划修订 {run.link.planRevision} · 配置 v{run.link.bindingRevision}</p>
-      <p className="text-xs text-muted-foreground">暂停承载任务：{run.link.planningTaskId}；用途 owner_planning，最多1请求/{run.link.maxOutputTokens}输出token（协议v{run.link.protocolVersion}）。</p>
+    {archiveWarning && <p role="alert" className="mt-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{archiveWarning}<button type="button" className="ml-2 underline underline-offset-2" disabled={busy} onClick={() => void changed()}>重试归档</button></p>}
+    {editor.runs.length > 0 && <details className="mt-4 rounded-lg bg-muted/40 p-3" open={runHistoryNeedsAttention}>
+      <summary className="cursor-pointer text-sm">{runHistoryNeedsAttention ? '当前规划待处理事项与状态' : '查看规划运行记录'}</summary>
+      <div className="mt-3 space-y-3" aria-label="Owner规划Run记录">{editor.runs.map(run => {
+      const status = runStatus(run)
+      return <article key={run.link.id} className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm">
+      <div className="flex items-center justify-between gap-3"><p className="font-medium">规划记录</p><OwnerModuleStatus tone={status.tone}>{status.label}</OwnerModuleStatus></div>
       {!run.executions.length && goalReady && !editor.dirty && !plan.dirty && run.link.goalRevision === revision && run.link.planRevision === (plan.snapshot?.revision ?? 0) && run.link.bindingRevision === editor.binding?.revision && <ControlledTaskStartButton taskId={run.link.planningTaskId} revision={JSON.stringify([run.link.goalRevision, run.link.planRevision, run.link.bindingRevision])} onChanged={changed} />}
-      {run.executions.map(execution => <div key={execution.id} className="space-y-1"><p>Run {execution.id} · {execution.status}</p><p className="text-xs text-muted-foreground">{execution.summary ?? '尚无处理终态；排队不证明模型已发送。'}</p><AgentExecutionStopButton execution={{ id: execution.id, status: execution.status, entityType: 'task', entityId: run.link.planningTaskId }} onChanged={changed} /></div>)}
+      {run.executions.map(execution => <div key={execution.id} className="space-y-1">{execution.status !== 'completed' && <p className="text-xs text-muted-foreground">{execution.summary ?? '还没有完成回报。'}</p>}<AgentExecutionStopButton execution={{ id: execution.id, status: execution.status, entityType: 'task', entityId: run.link.planningTaskId }} onChanged={changed} /></div>)}
       {run.outcomes.map(outcome => <div key={outcome.executionId}>
-        <p>{states[outcome.state]}：{outcome.detail}</p>
-        {outcome.clarification && <div className="mt-2 space-y-1">
+        {outcome.state === 'proposed' && <p className="text-xs text-muted-foreground">新计划还没有开始执行。请到下方“Owner 计划审阅”查看计划步骤，再决定是否确认。</p>}
+        {outcome.state !== 'proposed' && <p className="text-xs text-muted-foreground">{outcome.detail}</p>}
+        {outcome.clarification && (showClarifications || !managedQuestions.some(question => question.executionId === outcome.executionId)) && <div className="mt-2 space-y-1">
           <p className="font-medium">必要澄清：{outcome.clarification.reason}</p>
           {run.link.id === latestRun?.link.id && latestRunCurrent && latestExecution?.id === outcome.executionId
             ? <OwnerClarificationAnswers key={outcome.executionId} subject={subject} executionId={outcome.executionId} linkId={run.link.id} clarification={outcome.clarification} goal={goal} />
             : <p className="text-xs text-muted-foreground">这是历史或来源已变化的澄清记录；请核对当前目标，不会自动续跑。</p>}
         </div>}
       </div>)}
-      {run.receipts.map(receipt => <details key={receipt.id} className="text-xs"><summary className="cursor-pointer">Run原文与费用证据 · {receipt.cost.source === 'unknown' ? '费用未知（不是零元）' : `Runtime报告USD ${receipt.cost.usd}`} · {new Date(receipt.capturedAt).toLocaleString()}</summary><p className="mt-2">输入token {receipt.usage?.inputTokens ?? '未知'} / 输出token {receipt.usage?.outputTokens ?? '未知'}；终态 {receipt.validTerminal ? '完整stop（内容仍需协议校验/人工确认）' : '未证实完整stop'}；{receipt.stopped ? '停止不保证远端已终止。' : ''}</p><p>{receipt.error}</p><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words">{receipt.responseText || '没有收到可保存文本；不补发。'}</pre><p className="break-all">原文摘要 {receipt.responseHash}；回执 {receipt.id}</p></details>)}
-    </article>)}</div>
+      {run.receipts.length > 0 && <p className="text-xs text-muted-foreground">费用暂未核实，请以服务商账单为准。</p>}
+      {(run.receipts.length > 0 || run.executions.length > 0) && <details className="text-xs"><summary className="cursor-pointer">技术记录（高级）</summary><p className="mt-2 break-all">目标/计划/配置修订：{run.link.goalVersion}/{run.link.planRevision}/{run.link.bindingRevision}；暂停任务：{run.link.planningTaskId}；最多1次请求、输出上限{run.link.maxOutputTokens} tokens；协议v{run.link.protocolVersion}。</p>
+        {run.executions.map(execution => <p key={execution.id} className="mt-1 break-all">Run ID：{execution.id} · 状态：{execution.status}</p>)}
+        {run.receipts.map(receipt => <details key={receipt.id} className="mt-2"><summary className="cursor-pointer">模型原文与用量 · {receipt.cost.source === 'unknown' ? '费用未知' : `Runtime报告USD ${receipt.cost.usd}`} · {new Date(receipt.capturedAt).toLocaleString()}</summary><p className="mt-2">输入token {receipt.usage?.inputTokens ?? '未知'} / 输出token {receipt.usage?.outputTokens ?? '未知'}；终态 {receipt.validTerminal ? '完整stop（内容仍需协议校验/人工确认）' : '未证实完整stop'}；{receipt.stopped ? '停止不保证远端已终止。' : ''}</p>{receipt.error && <p>{receipt.error}</p>}<details className="mt-2"><summary className="cursor-pointer">查看模型原始 JSON/文本</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words">{receipt.responseText || '没有收到可保存文本；不补发。'}</pre></details><p className="mt-2 break-all">原文摘要 {receipt.responseHash}；回执 {receipt.id}</p></details>)}
+      </details>}
+    </article>})}</div>
+    </details>}
   </section>
 }

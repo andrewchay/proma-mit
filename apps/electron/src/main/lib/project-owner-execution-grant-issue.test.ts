@@ -14,6 +14,9 @@ const { createAgentWorkspace } = await import('./agent-workspace-manager')
 const { createChannel } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
+const { saveOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
+const management = await import('./project-owner-management-loop')
+const managementDelegation = await import('./project-owner-management-delegation')
 const plans = await import('./project-owner-plan-service')
 const prep = await import('./project-owner-execution-preparation')
 const materialization = await import('./project-owner-task-materialization')
@@ -26,7 +29,7 @@ const priceEvidence = await import('./project-pilot-request-evidence')
 let service: typeof import('./project-owner-execution-grant-issue')
 beforeAll(async () => { await store.initProjectDb(); service = await import('./project-owner-execution-grant-issue') })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(modelId = 'glm-5.3-flash', withRoleBudget = false) {
+function fixture(modelId = 'glm-5.3-flash', withRoleBudget = false, withManagementBudget = false) {
   const project = store.createProject({ title: 'Owner发行fixture', description: '' })
   const workspace = createAgentWorkspace(`owner-grant-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
@@ -34,6 +37,14 @@ function fixture(modelId = 'glm-5.3-flash', withRoleBudget = false) {
   const employee = (name: string) => employees.createAgentEmployee({ name, role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   const executor = employee('执行者'), reviewer = employee('技术评审')
   saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成方案' })
+  if (withManagementBudget) {
+    const owner = employee('Owner')
+    saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '测试' })
+    management.reconcileOwnerManagement(project.id)
+    const delegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 4_000_000, expiresAt: Date.now() + 6 * 3600000 }
+    const delegationPreview = managementDelegation.previewOwnerManagementDelegation(delegationInput)
+    managementDelegation.confirmOwnerManagementDelegation({ input: delegationInput, previewHash: delegationPreview.previewHash })
+  }
   const context = plans.getProjectOwnerPlanningContext(project.id)
   const steps = [{ key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: context.sources.roles[0]!.key }, { key: 'report', title: '汇总', outcome: '方案', acceptanceCriteria: ['有依据'], dependencies: ['brief'], roleKey: context.sources.roles[0]!.key }]
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划' })
@@ -105,7 +116,7 @@ test('Given preview后审核价格证据模型变化 When confirm Then重新校�
   }
 })
 test('Given legacy mode omitted or explicit autonomous When preview and confirm Then legacy is manual and mode is fingerprint-bound/persistent', () => {
-  const f = fixture(), legacyInput = { requestId: randomUUID(), expectedRevalidationRevision: f.record.revision, expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision }
+  const f = fixture('glm-5.3-flash', false, true), legacyInput = { requestId: randomUUID(), expectedRevalidationRevision: f.record.revision, expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision }
   const manual = service.previewOwnerExecutionGrantIssue(f.subject, legacyInput)
   const autonomousInput = issueInput(f, 'autonomous')
   const autonomous = service.previewOwnerExecutionGrantIssue(f.subject, autonomousInput)
@@ -195,10 +206,10 @@ test('Given 病态删除其余五族证据仅留grant行 When 旧issuer Then 第
 
 test('Given 过期needs_reconcile grant When 双阶段归档 Then 只归档grant并保留未知命令占额', async () => {
   const archive = await import('./project-owner-execution-expiry-archive')
-  const f = fixture(), db = store.getProjectDb(), now = Date.now()
+  const f = fixture('glm-5.3-flash', false, true), db = store.getProjectDb(), now = Date.now()
   const autonomousInput = issueInput(f, 'autonomous'), grantPreview = service.previewOwnerExecutionGrantIssue(f.subject, autonomousInput)
   const grant = service.confirmOwnerExecutionGrantIssue(f.subject, { input: autonomousInput, preview: grantPreview, confirmedFingerprint: grantPreview.approvalFingerprint })
-  const task = db.prepare('SELECT id, owner_step_link_id FROM tasks WHERE project_id=? ORDER BY created_at LIMIT 1').get(f.project.id) as { id: string; owner_step_link_id: string }
+  const task = db.prepare('SELECT id, owner_step_link_id FROM tasks WHERE project_id=? AND owner_step_link_id IS NOT NULL ORDER BY created_at LIMIT 1').get(f.project.id) as { id: string; owner_step_link_id: string }
   const commandId = randomUUID(), runId = randomUUID(), receiptHash = 'a'.repeat(64), nowCreated = now - 10
   db.prepare("UPDATE project_owner_execution_grants SET state='needs_reconcile', expires_at=? WHERE id=?").run(now - 1, grant.grantId)
   db.prepare(`INSERT INTO project_owner_execution_commands

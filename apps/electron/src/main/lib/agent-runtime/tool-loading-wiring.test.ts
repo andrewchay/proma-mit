@@ -41,6 +41,7 @@ function resetAiMock(): void {
   streamTextCalls = 0
   lastStreamParams = undefined
   mock.module('ai', () => ({
+    Output: { json: () => ({ type: 'json' }) },
     isStepCount: () => ({ continue: () => true }),
     jsonSchema: (schema: unknown) => schema,
     tool: (def: unknown) => def,

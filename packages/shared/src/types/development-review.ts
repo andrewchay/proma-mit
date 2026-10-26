@@ -154,6 +154,9 @@ export interface DevelopmentValidationResult {
   /** 输出尾部（截断存储，不作为成功依据） */
   outputTail: string
   outputTruncated: boolean
+  /** 对完整进程输出计算的摘要与字节数；历史记录可能缺省。 */
+  rawOutputSha256?: string
+  rawOutputByteLength?: number
   /** 老记录无此字段仍可展示，但不能补造fresh可信绑定。 */
   binding?: DevelopmentValidationBinding
 }

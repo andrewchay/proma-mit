@@ -11,11 +11,12 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { StringDecoder } from 'node:string_decoder'
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DevelopmentSnapshot, DevelopmentTaskScope, DevelopmentValidationBinding, DevelopmentValidationEvidence, DevelopmentValidationResult } from '@gravitas/shared'
 import { writeJsonFileAtomic } from './safe-file'
-import { getAgentExecution, getTask } from './project-sqlite-store'
+import { getAgentExecution, getProjectDb, getTask } from './project-sqlite-store'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
@@ -23,6 +24,9 @@ import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot } from './development-snapshot-service'
 import { normalizeRepoRelativePath } from './development-task-service'
 import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS, parseDevelopmentValidationRecord } from './development-validation-record'
+import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId, reserveOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
+import { ownerExecutionHash } from './project-owner-execution-hash'
+import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -83,7 +87,7 @@ function listTaskExecutions(taskId: string) {
  * 运行一次验证：命令必须命中范围白名单；采集真实退出码；
  * 运行前后内容 hash 绑定，漂移即 stale。
  */
-export async function runDevelopmentValidation(taskId: string, command: string, options: { timeoutMs?: number } = {}): Promise<DevelopmentValidationResult> {
+export async function runDevelopmentValidation(taskId: string, command: string, options: { timeoutMs?: number; executionId?: string; validationId?: string } = {}): Promise<DevelopmentValidationResult> {
   const trimmed = command?.trim()
   if (!trimmed) throw new DevelopmentValidationError('验证命令不能为空')
   const task = getTask(taskId)
@@ -93,21 +97,21 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
     throw new DevelopmentValidationError(`命令不在任务验证白名单内（派发时确认的命令：${authorized.join('；') || '无'}）`)
   }
 
-  const world = resolveValidationWorld(taskId)
+  const world = resolveValidationWorld(taskId, options.executionId)
   if (!world.scope.verificationCommands?.includes(trimmed)) throw new DevelopmentValidationError('验证命令授权已变化')
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.scope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
 
   const startedAt = Date.now()
-  const { exitCode, timedOut, output } = await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
   const status: DevelopmentValidationResult['status'] = timedOut ? 'timeout' : staleAfter ? 'stale' : exitCode === 0 ? 'passed' : 'failed'
 
   const result: DevelopmentValidationResult = {
-    id: `val-${randomUUID()}`,
+    id: options.validationId ?? `val-${randomUUID()}`,
     taskId,
     executionId: world.executionId,
     command: trimmed,
@@ -119,10 +123,90 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
     snapshotContentHash: world.snapshot.contentHash,
     outputTail: output.slice(-DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS),
     outputTruncated: output.length > DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS,
+    rawOutputSha256,
+    rawOutputByteLength,
     binding: world.binding,
   }
   writeJsonFileAtomic(join(world.sessionDirectory, `development-validation-${result.id}.json`), result)
   return result
+}
+
+/**
+ * 在Owner研发Executor成功结算后，按冻结白名单逐条运行一次验证。
+ * 会话目录中的running预留是崩溃后的unknown哨兵；同一Owner命令绝不自动重跑。
+ */
+export async function runOwnerDevelopmentValidations(ownerCommandId: string): Promise<DevelopmentValidationResult[]> {
+  const database = getProjectDb()
+  const command = database.prepare(`SELECT c.id, c.project_id, c.grant_id, c.source_task_id, c.source_step_link_id, c.source_hash, c.role, c.state,
+      c.execution_id, c.actual_cost_micros, c.usage_record_key, c.usage_evidence,
+      e.status AS execution_status, e.owner_command_id AS execution_command_id
+    FROM project_owner_execution_commands c
+    LEFT JOIN agent_executions e ON e.id=c.execution_id WHERE c.id=?`).get(ownerCommandId) as {
+      id: string; project_id: string; grant_id: string; source_task_id: string; source_step_link_id: string; source_hash: string; role: string; state: string
+      execution_id: string | null; actual_cost_micros: number | null; usage_record_key: string | null; usage_evidence: string | null
+      execution_status: string | null; execution_command_id: string | null
+    } | undefined
+  if (!command || command.role !== 'executor' || command.state !== 'settled' || !command.execution_id
+    || command.actual_cost_micros === null || !command.usage_record_key || command.execution_status !== 'completed'
+    || command.execution_command_id !== ownerCommandId) throw new DevelopmentValidationError('Owner研发验证要求准确且已结算的Executor命令')
+  try {
+    const usage: unknown = JSON.parse(command.usage_evidence ?? 'null')
+    if (!isRecord(usage) || usage.source === 'unknown') throw new Error('usage unknown')
+  } catch {
+    throw new DevelopmentValidationError('Owner研发执行费用仍未知，不能启动验证')
+  }
+
+  const { source } = readOwnerCommandFrozenSource(ownerCommandId)
+  const frozenTask = source.tasks.find(item => item.taskId === command.source_task_id && item.linkId === command.source_step_link_id)
+  const task = getTask(command.source_task_id)
+  if (source.executionKind !== 'development' || !source.workspaceId || !frozenTask?.developmentScope || !task
+    || task.projectId !== command.project_id || task.ownerStepLinkId !== command.source_step_link_id
+    || !task.developmentScope || task.workspaceId !== source.workspaceId
+    || ownerExecutionHash(task.developmentScope) !== ownerExecutionHash(frozenTask.developmentScope)) {
+    throw new DevelopmentValidationError('Owner研发验证任务、范围或冻结执行来源不匹配')
+  }
+  const commands = frozenTask.developmentScope.verificationCommands ?? []
+  if (!commands.length) throw new DevelopmentValidationError('冻结研发范围没有白名单验证命令')
+  const world = resolveValidationWorld(command.source_task_id, command.execution_id)
+  if (world.binding.workspaceId !== source.workspaceId
+    || ownerExecutionHash(world.scope) !== ownerExecutionHash(frozenTask.developmentScope)) {
+    throw new DevelopmentValidationError('Owner研发验证工作区或快照范围已变化')
+  }
+
+  const results: DevelopmentValidationResult[] = []
+  for (const verificationCommand of commands) {
+    const validationId = ownerDevelopmentValidationId(ownerCommandId, verificationCommand, world.snapshot.contentHash)
+    const attempt = {
+      ownerCommandId, projectId: command.project_id, grantId: command.grant_id,
+      taskId: command.source_task_id, stepLinkId: command.source_step_link_id, sourceHash: command.source_hash,
+      executionId: command.execution_id, workspaceId: world.binding.workspaceId,
+      command: verificationCommand, snapshotContentHash: world.snapshot.contentHash,
+      verificationConfigHash: world.binding.verificationConfigHash,
+      validationId, startedAt: Date.now(),
+    }
+    const reservation = reserveOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+    if (reservation.kind === 'completed' || reservation.kind === 'unknown') {
+      try {
+        const priorEvidence = readDevelopmentValidationEvidence(command.source_task_id, command.execution_id, validationId)
+        const priorResult = priorEvidence.result
+        if (priorEvidence.freshness === 'fresh' && priorResult.command === verificationCommand
+          && priorResult.snapshotContentHash === world.snapshot.contentHash) {
+          if (reservation.kind === 'unknown') completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+          results.push(priorResult)
+          continue
+        }
+      } catch { /* 无法对账时保留unknown，禁止再次启动命令。 */ }
+      if (reservation.kind === 'completed') throw new DevelopmentValidationError('Owner验证尝试已完成但回执丢失；保留记录且不重跑')
+      throw new DevelopmentValidationError('Owner验证尝试终态未知；保留占位且不自动重跑')
+    }
+    const result = await runDevelopmentValidation(command.source_task_id, verificationCommand, {
+      executionId: command.execution_id,
+      validationId,
+    })
+    completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+    results.push(result)
+  }
+  return results
 }
 
 /** 列出任务全部验证记录（按结束时间倒序）。 */
@@ -193,8 +277,12 @@ function hashJson(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
-/** 受控运行：无 shell，参数按空格切分（首版不支持引号）；输出全量采集后截尾。 */
-async function runCommand(command: string, cwd: string, timeoutMs: number): Promise<{ exitCode: number | null; timedOut: boolean; output: string }> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 受控运行：无 shell，参数按空格切分（首版不支持引号）；完整字节仅做hash/长度统计，文本只保留有界尾部。 */
+async function runCommand(command: string, cwd: string, timeoutMs: number): Promise<{ exitCode: number | null; timedOut: boolean; output: string; rawOutputSha256: string; rawOutputByteLength: number }> {
   const parts = command.split(/\s+/).filter(Boolean)
   if (!parts.length) throw new DevelopmentValidationError('验证命令不能为空')
   return new Promise((resolve) => {
@@ -206,6 +294,11 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
+    const rawOutputHash = createHash('sha256')
+    let rawOutputByteLength = 0
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
+    let spawnError: string | undefined
     let timedOut = false
     let settled = false
     let timer: ReturnType<typeof setTimeout>
@@ -215,12 +308,15 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
       settled = true
       clearTimeout(timer)
       if (killTimer) clearTimeout(killTimer)
+      output = (output + stdoutDecoder.end() + stderrDecoder.end()).slice(-(DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS + 1))
       resolve({
-        exitCode: timedOut ? null : code,
+        exitCode: timedOut || spawnError ? null : code,
         timedOut,
-        output: errorMessage
-          ? `${output}\n[spawn error] ${errorMessage}`
+        output: (errorMessage ?? spawnError)
+          ? `${output}\n[spawn error] ${errorMessage ?? spawnError}`
           : signal && !timedOut ? `${output}\n[signal] ${signal}` : output,
+        rawOutputSha256: rawOutputHash.digest('hex'),
+        rawOutputByteLength,
       })
     }
     timer = setTimeout(() => {
@@ -231,13 +327,17 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
         killTimer = setTimeout(() => signalValidationProcessTree(child, 'SIGKILL'), 2000).unref()
       }
     }, timeoutMs)
-    const collect = (chunk: Buffer | string): void => { output += chunk.toString('utf8') }
-    child.stdout?.on('data', collect)
-    child.stderr?.on('data', collect)
+    const collect = (chunk: Buffer | string, decoder: StringDecoder): void => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8')
+      rawOutputHash.update(bytes)
+      rawOutputByteLength += bytes.length
+      output = (output + decoder.write(bytes)).slice(-(DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS + 1))
+    }
+    child.stdout?.on('data', (chunk: Buffer | string) => collect(chunk, stdoutDecoder))
+    child.stderr?.on('data', (chunk: Buffer | string) => collect(chunk, stderrDecoder))
     child.on('error', (error) => {
-      finish(null, null, error.message)
+      spawnError = error.message
     })
-    child.once('exit', finish)
     child.once('close', finish)
   })
 }

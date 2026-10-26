@@ -535,6 +535,42 @@ function migrate(database: SqliteCompat): void {
       payload TEXT NOT NULL,
       PRIMARY KEY (project_id, revision)
     );
+    CREATE TABLE IF NOT EXISTS project_owner_managers (
+      project_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0),
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+      PRIMARY KEY (project_id, revision)
+    );
+    CREATE TABLE IF NOT EXISTS project_owner_management_events (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, consumed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_owner_management_pending ON project_owner_management_events(project_id, consumed_at);
+    CREATE TABLE IF NOT EXISTS project_owner_management_messages (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, event_id TEXT NOT NULL,
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_owner_management_messages ON project_owner_management_messages(project_id);
+    CREATE TABLE IF NOT EXISTS project_owner_management_traces (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_owner_management_traces ON project_owner_management_traces(project_id);
+    CREATE TABLE IF NOT EXISTS project_owner_management_questions (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, execution_id TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS project_owner_management_answers (
+      question_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, request_id TEXT NOT NULL,
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, UNIQUE(project_id, request_id)
+    );
+    CREATE TABLE IF NOT EXISTS project_owner_management_delegations (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, request_id TEXT NOT NULL,
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, revoked_at INTEGER,
+      UNIQUE(project_id, request_id)
+    );
+    CREATE TABLE IF NOT EXISTS project_owner_management_claims (
+      task_id TEXT PRIMARY KEY, delegation_id TEXT NOT NULL, execution_id TEXT NOT NULL UNIQUE,
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS project_owner_revisions (
       project_id TEXT NOT NULL,
       subject_key TEXT NOT NULL,
@@ -1022,6 +1058,9 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'project_owner_planning_links').includes('source_snapshot')) {
     database.exec('ALTER TABLE project_owner_planning_links ADD COLUMN source_snapshot TEXT')
   }
+  if (!readColumnNames(database, 'project_owner_planning_links').includes('assignment_snapshot')) {
+    database.exec('ALTER TABLE project_owner_planning_links ADD COLUMN assignment_snapshot TEXT')
+  }
   if (!readColumnNames(database, 'tasks').includes('owner_step_link_id')) {
     database.exec('ALTER TABLE tasks ADD COLUMN owner_step_link_id TEXT')
   }
@@ -1057,6 +1096,7 @@ function migrate(database: SqliteCompat): void {
     policy_revision INTEGER NOT NULL, executor_employee_id TEXT NOT NULL, reviewer_employee_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL, channel_id TEXT NOT NULL, model_id TEXT NOT NULL, runtime TEXT NOT NULL,
     dispatch_mode TEXT NOT NULL DEFAULT 'manual' CHECK (dispatch_mode IN ('manual', 'autonomous')),
+    owner_management_delegation_id TEXT,
     max_cost_micros INTEGER NOT NULL CHECK (max_cost_micros > 0), max_runs INTEGER NOT NULL CHECK (max_runs > 0),
     max_rework INTEGER NOT NULL CHECK (max_rework >= 0), expires_at INTEGER NOT NULL,
     role_budgets_json TEXT NOT NULL DEFAULT '[]',
@@ -1070,6 +1110,9 @@ function migrate(database: SqliteCompat): void {
   }
   if (!readColumnNames(database, 'project_owner_execution_grants').includes('role_budgets_json')) {
     database.exec("ALTER TABLE project_owner_execution_grants ADD COLUMN role_budgets_json TEXT NOT NULL DEFAULT '[]'")
+  }
+  if (!readColumnNames(database, 'project_owner_execution_grants').includes('owner_management_delegation_id')) {
+    database.exec('ALTER TABLE project_owner_execution_grants ADD COLUMN owner_management_delegation_id TEXT')
   }
   const grantSchema = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='project_owner_execution_grants'").get() as { sql?: string } | undefined
   if (grantSchema?.sql && !grantSchema.sql.includes("'archived'")) {
@@ -1105,6 +1148,27 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'project_owner_execution_commands').includes('budget_role_key')) {
     database.exec('ALTER TABLE project_owner_execution_commands ADD COLUMN budget_role_key TEXT')
   }
+  // 旧命令保持NULL；新Reviewer排队时冻结其实际读取的完整文本成果版本。
+  if (!readColumnNames(database, 'project_owner_execution_commands').includes('text_delivery_hash')) {
+    database.exec('ALTER TABLE project_owner_execution_commands ADD COLUMN text_delivery_hash TEXT')
+  }
+  database.exec(`CREATE TRIGGER IF NOT EXISTS owner_text_delivery_hash_immutable
+    BEFORE UPDATE OF text_delivery_hash ON project_owner_execution_commands
+    WHEN OLD.text_delivery_hash IS NOT NULL AND NEW.text_delivery_hash IS NOT OLD.text_delivery_hash
+    BEGIN SELECT RAISE(ABORT, 'owner text delivery hash is immutable'); END`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_quality_actions (
+    owner_execution_id TEXT PRIMARY KEY, reviewer_command_id TEXT NOT NULL,
+    project_id TEXT NOT NULL, grant_id TEXT NOT NULL, task_id TEXT NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS owner_quality_actions_reviewer ON project_owner_quality_actions(reviewer_command_id,created_at)')
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS owner_quality_actions_effective
+    ON project_owner_quality_actions(reviewer_command_id)
+    WHERE json_extract(payload,'$.state') IN ('accepted','rework_authorized')`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS owner_quality_actions_immutable_update
+    BEFORE UPDATE ON project_owner_quality_actions BEGIN SELECT RAISE(ABORT, 'owner quality actions are immutable'); END`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS owner_quality_actions_immutable_delete
+    BEFORE DELETE ON project_owner_quality_actions BEGIN SELECT RAISE(ABORT, 'owner quality actions are immutable'); END`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_commands_project ON project_owner_execution_commands(project_id, grant_id)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_commands_state ON project_owner_execution_commands(project_id, state)')
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_technical_reviews (
@@ -1113,9 +1177,13 @@ function migrate(database: SqliteCompat): void {
     executor_command_id TEXT NOT NULL UNIQUE, executor_execution_id TEXT NOT NULL,
     reviewer_execution_id TEXT NOT NULL UNIQUE, source_hash TEXT NOT NULL,
     verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'changes_requested', 'blocked')),
+    validation_evidence_json TEXT NOT NULL DEFAULT '[]', validation_evidence_sha256 TEXT NOT NULL DEFAULT '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
     response_json TEXT NOT NULL, response_sha256 TEXT NOT NULL CHECK (length(response_sha256) = 64),
     created_at INTEGER NOT NULL CHECK (created_at >= 0)
   )`)
+  const ownerReviewColumns = readColumnNames(database, 'project_owner_technical_reviews')
+  if (!ownerReviewColumns.includes('validation_evidence_json')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_json TEXT NOT NULL DEFAULT '[]'")
+  if (!ownerReviewColumns.includes('validation_evidence_sha256')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_sha256 TEXT NOT NULL DEFAULT '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'")
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_technical_reviews_task ON project_owner_technical_reviews(project_id, task_id, created_at)')
   database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_technical_reviews_immutable_update
     BEFORE UPDATE ON project_owner_technical_reviews BEGIN SELECT RAISE(ABORT, 'owner technical reviews are immutable'); END`)
@@ -1240,6 +1308,14 @@ function migrate(database: SqliteCompat): void {
     revision INTEGER NOT NULL, request_id TEXT NOT NULL, payload TEXT NOT NULL,
     integrity_hash TEXT NOT NULL, UNIQUE(project_id, revision), UNIQUE(project_id, request_id)
   )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_start_intents (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, payload TEXT NOT NULL,
+    integrity_hash TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','completed')),
+    grant_id TEXT, created_at INTEGER NOT NULL,
+    recovery_status TEXT NOT NULL DEFAULT 'pending' CHECK(recovery_status IN ('pending','needs_attention'))
+  )`)
+  if (!readColumnNames(database, 'project_owner_execution_start_intents').includes('recovery_status'))
+    database.exec("ALTER TABLE project_owner_execution_start_intents ADD COLUMN recovery_status TEXT NOT NULL DEFAULT 'pending' CHECK(recovery_status IN ('pending','needs_attention'))")
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_admissions (
     link_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL UNIQUE,
     request_hash TEXT NOT NULL, source_snapshot TEXT NOT NULL, admitted_at INTEGER NOT NULL CHECK (admitted_at > 0), integrity_hash TEXT
@@ -1259,8 +1335,15 @@ function migrate(database: SqliteCompat): void {
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_run_outcomes (
     execution_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL, payload TEXT NOT NULL
   )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_planning_run_recoveries (
+    execution_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL, original_outcome_hash TEXT NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+  )`)
   if (!readColumnNames(database, 'controlled_task_preparations').includes('owner_planning_link_id')) {
     database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN owner_planning_link_id TEXT')
+  }
+  if (!readColumnNames(database, 'controlled_task_preparations').includes('owner_management_delegation_id')) {
+    database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN owner_management_delegation_id TEXT')
   }
   if (!readColumnNames(database, 'controlled_task_preparations').includes('provider_admitted_at')) {
     database.exec('ALTER TABLE controlled_task_preparations ADD COLUMN provider_admitted_at INTEGER')

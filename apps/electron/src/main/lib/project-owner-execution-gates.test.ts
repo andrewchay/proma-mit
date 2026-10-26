@@ -23,13 +23,14 @@ const policy = await import('./project-pilot-policy')
 const gates = await import('./project-owner-execution-gates')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(single = false) {
+function fixture(single = false, textDelivery = false) {
   const project = store.createProject({ title: 'Owner门禁fixture', description: '' })
   const target = single ? store.createTask(project.id, { title: '单任务', description: '' }) : null
   const workspace = createAgentWorkspace(`owner-gates-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
-  const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
-  const employee = (name: string) => employees.createAgentEmployee({ name, role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
+  const modelId = textDelivery ? 'glm-5.3-flash' : 'model'
+  const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
+  const employee = (name: string) => employees.createAgentEmployee({ name, role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   const executor = employee('执行者'), reviewer = employee('技术评审')
   saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成方案' }, target?.id)
   const context = plans.getProjectOwnerPlanningContext(project.id, target?.id)
@@ -37,7 +38,7 @@ function fixture(single = false) {
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划' }, target?.id)
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1, target?.id)
   const subject = { projectId: project.id, ...(target ? { taskId: target.id } : {}) }
-  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: executor.id })), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, ...(textDelivery ? { employeeRuntimeVersion: 2 as const, textDeliveryVersion: 1 as const, qualityManagementVersion: 1 as const } : {}), executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: executor.id })), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
   const mpv = materialization.previewOwnerTaskMaterialization(subject, materialInput), batch = materialization.materializeOwnerTasks(subject, materialInput, mpv.previewFingerprint)
@@ -73,6 +74,12 @@ test('Given gate准入+冻结空资料集合 When 知识工具 Then 交集为空
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'SearchKnowledge', {})).toThrow('交集')
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'ReadMcpResourceTool', {})).toThrow('Owner')
+})
+test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不暴露工作区写入工具', () => {
+  const f = fixture(false, true), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['ReadKnowledgeSource', 'SearchKnowledge'])
 })
 test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进入逐次审批且审批前不执行', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)

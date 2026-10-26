@@ -11,7 +11,7 @@ export const DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS = 8000
 
 const HASH = /^[a-f0-9]{64}$/
 const BASE_REVISION = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
-const RECORD_KEYS = ['id', 'taskId', 'executionId', 'command', 'startedAt', 'finishedAt', 'exitCode', 'timedOut', 'status', 'snapshotContentHash', 'outputTail', 'outputTruncated', 'binding']
+const RECORD_KEYS = ['id', 'taskId', 'executionId', 'command', 'startedAt', 'finishedAt', 'exitCode', 'timedOut', 'status', 'snapshotContentHash', 'outputTail', 'outputTruncated', 'rawOutputSha256', 'rawOutputByteLength', 'binding']
 const BINDING_KEYS = ['version', 'projectId', 'workspaceId', 'sessionId', 'snapshotId', 'baseCommit', 'scopeHash', 'verificationConfigHash']
 
 export function parseDevelopmentValidationRecord(
@@ -29,6 +29,8 @@ export function parseDevelopmentValidationRecord(
   if (input.exitCode !== null && !isTime(input.exitCode)) return undefined
   if (typeof input.timedOut !== 'boolean' || typeof input.outputTruncated !== 'boolean') return undefined
   if (typeof input.outputTail !== 'string' || input.outputTail.length > DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS) return undefined
+  if ((input.rawOutputSha256 === undefined) !== (input.rawOutputByteLength === undefined)
+    || input.rawOutputSha256 !== undefined && (typeof input.rawOutputSha256 !== 'string' || !HASH.test(input.rawOutputSha256) || !isTime(input.rawOutputByteLength))) return undefined
   if (typeof input.snapshotContentHash !== 'string' || !HASH.test(input.snapshotContentHash)) return undefined
   if (typeof input.status !== 'string' || !['passed', 'failed', 'stale', 'timeout'].includes(input.status)) return undefined
   if (input.timedOut !== (input.status === 'timeout')) return undefined

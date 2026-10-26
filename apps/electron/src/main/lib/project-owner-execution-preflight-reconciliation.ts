@@ -1,3 +1,4 @@
+import { readOwnerCommandRuntime } from './project-owner-employee-runtime'
 /** Owner发送前失败对账：仅操作人确认的本地审计，不构造Provider用量回执。 */
 import { createHash, randomUUID } from 'node:crypto'
 import type { ProviderType, ProjectOwnerGoalSubject } from '@gravitas/shared'
@@ -106,13 +107,14 @@ function text(value: unknown, label: string): string {
 function errorHash(message: string): string {
   return createHash('sha256').update(message, 'utf8').digest('hex')
 }
-function providerKindFor(provider: ProviderType): 'openai' | 'anthropic' | 'google' {
+function providerKindFor(provider: ProviderType, runtime: string): 'openai' | 'anthropic' | 'google' {
+  if (runtime === 'pi') return 'openai'
   const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
   return protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
 }
 function readCandidate(subject: ProjectOwnerGoalSubject, commandId: string): OwnerPreflightReconciliationPreview {
   const database = store.getProjectDb()
-  const row = database.prepare(`SELECT c.id AS command_id, c.project_id, c.grant_id, c.execution_id,
+  const stored = database.prepare(`SELECT c.id AS command_id, c.project_id, c.grant_id, c.execution_id,
       c.reserved_cost_micros, c.actual_cost_micros, c.usage_evidence, c.usage_record_key,
       c.updated_at AS command_updated_at, c.state AS command_state,
       g.state AS grant_state, g.channel_id AS grant_channel_id, g.model_id AS grant_model_id, g.runtime AS grant_runtime,
@@ -120,9 +122,11 @@ function readCandidate(subject: ProjectOwnerGoalSubject, commandId: string): Own
     FROM project_owner_execution_commands c
     JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
     WHERE c.id=? AND c.project_id=? AND (? IS NULL OR c.source_task_id=?)`).get(commandId, subject.projectId, subject.taskId ?? null, subject.taskId ?? null) as OwnerPreflightCandidate | undefined
+  const runtime = stored ? readOwnerCommandRuntime(stored.command_id) : null
+  const row = stored && runtime ? { ...stored, channel_id: runtime.channelId, model_id: runtime.modelId, runtime: runtime.runtime } : null
   if (!row || !row.execution_id || row.command_state !== 'needs_reconcile' || row.grant_state !== 'needs_reconcile'
     || row.actual_cost_micros !== null || !Number.isSafeInteger(row.reserved_cost_micros) || row.reserved_cost_micros <= 0
-    || row.grant_channel_id !== row.channel_id || row.grant_model_id !== row.model_id || row.grant_runtime !== 'ai-sdk' || row.runtime !== 'ai-sdk') {
+    || row.grant_runtime !== row.runtime || !['ai-sdk', 'pi'].includes(row.runtime)) {
     throw new Error('Owner命令或授权不符合发送前失败对账条件，继续保留needs_reconcile占额')
   }
   const execution = store.getAgentExecution(row.execution_id)
@@ -158,8 +162,8 @@ function readCandidate(subject: ProjectOwnerGoalSubject, commandId: string): Own
   let evidenceKind: OwnerPreflightReconciliationPreview['evidenceKind']
   let reasonCode: string
   if (rejection) {
-    const protocol = getAgentProviderProtocol(channel.provider, 'ai-sdk')
-    const expectedPrice = getPilotReviewedPriceEvidenceForModel(row.model_id, providerKindFor(channel.provider))
+    const protocol = row.runtime === 'pi' ? 'openai-completions' : getAgentProviderProtocol(channel.provider, 'ai-sdk')
+    const expectedPrice = getPilotReviewedPriceEvidenceForModel(row.model_id, providerKindFor(channel.provider, row.runtime))
     if (rejection.execution_id !== execution.id || rejection.command_id !== row.command_id || rejection.project_id !== row.project_id
       || rejection.grant_id !== row.grant_id || rejection.channel_id !== row.channel_id || rejection.model_id !== row.model_id
       || rejection.provider_type !== channel.provider || rejection.provider_protocol !== protocol
@@ -171,9 +175,9 @@ function readCandidate(subject: ProjectOwnerGoalSubject, commandId: string): Own
     reasonCode = rejection.reason_code
   } else {
     const protocol = getAgentProviderProtocol(channel.provider, 'ai-sdk')
-    const price = getPilotReviewedPriceEvidenceForModel(row.model_id, providerKindFor(channel.provider))
+    const price = getPilotReviewedPriceEvidenceForModel(row.model_id, providerKindFor(channel.provider, row.runtime))
     if (channel.provider !== 'zhipu' || row.model_id !== LEGACY_ZHIPU_MODEL || protocol !== 'openai-chat'
-      || !price || price.model !== row.model_id || price.providerKind !== providerKindFor(channel.provider)) {
+      || row.runtime !== 'ai-sdk' || !price || price.model !== row.model_id || price.providerKind !== providerKindFor(channel.provider, row.runtime)) {
       throw new Error('缺少可核验的发送前拒绝事件，且不属于已知旧版Zhipu协议映射回归；保留needs_reconcile')
     }
     evidenceKind = 'legacy_operator_attested'

@@ -17,10 +17,11 @@ export function applyOwnerDeliveryFeedback(current: readonly string[], commandId
     || typeof rawFeedback !== 'string') return { ok: false, reason: 'invalid' }
   const feedback = rawFeedback.trim().replace(/\s+/g, ' ')
   if (!feedback) return { ok: false, reason: 'invalid' }
-  const prefix = `${FEEDBACK_PREFIX}（命令 ${commandId}）：`
+  const legacyPrefix = `${FEEDBACK_PREFIX}（命令 ${commandId}）：`
+  const prefix = `${FEEDBACK_PREFIX}：`
   const entry = `${prefix}${feedback}`
   if (entry.length > 2000 || feedback.length > MAX_FEEDBACK_LENGTH) return { ok: false, reason: 'too_long' }
-  const remaining = current.filter(value => !value.startsWith(prefix))
+  const remaining = current.filter(value => !value.startsWith(legacyPrefix) && value !== entry)
   if (remaining.length >= MAX_CONSTRAINTS) return { ok: false, reason: 'too_many' }
   remaining.push(entry)
   return { ok: true, constraints: remaining }

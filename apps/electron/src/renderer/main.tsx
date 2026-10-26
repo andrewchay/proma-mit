@@ -54,6 +54,7 @@ import {
   initializeMarketingCapabilities,
 } from './atoms/marketing-atoms'
 import { subscriptionStateAtom } from './atoms/subscription-atoms'
+import { useGlobalOwnerManagementListeners } from './hooks/useGlobalOwnerManagementListeners'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
 import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
@@ -492,6 +493,7 @@ function ChatListenersInitializer(): null {
  */
 function AgentListenersInitializer(): null {
   useGlobalAgentListeners()
+  useGlobalOwnerManagementListeners()
   return null
 }
 

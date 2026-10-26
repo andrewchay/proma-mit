@@ -177,3 +177,7 @@ export type {
   AgentCompletionStatus,
 } from './agent-completion-status'
 export * from './project-owner-tool-recommendations'
+
+export * from './owner-clarification-answers'
+
+export { supportsOwnerExecutionKind, supportsOwnerMixedTeam, ownerExecutionModelSummary } from './owner-employee-compatibility'

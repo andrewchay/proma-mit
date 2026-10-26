@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { buildElectronMock } from './testing/electron-mock'
 
 const directory = mkdtempSync(join(tmpdir(), 'gravitas-rd-validate-'))
@@ -24,7 +24,7 @@ const service = await import('./agent-employee-service')
 const { createDevelopmentWorktree } = await import('./agent-development-worktree')
 const chainService = await import('./project-chain-service')
 const { submitDevelopmentDelivery } = await import('./development-delivery-service')
-const { runDevelopmentValidation, listDevelopmentValidations, readDevelopmentValidationEvidence, DevelopmentValidationError } = await import('./development-validation-service')
+const { runDevelopmentValidation, runOwnerDevelopmentValidations, listDevelopmentValidations, readDevelopmentValidationEvidence, DevelopmentValidationError } = await import('./development-validation-service')
 
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => {
@@ -58,7 +58,7 @@ function fixture(options: { scriptName?: string; scriptContent?: string } = {}):
 
   const session = sessionManager.createAgentSession('验证测试', channel.id, workspace.id)
   const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, session.id)
-  const executionId = `exec-${randomUUID()}`
+  const executionId = randomUUID()
   const worktree = createDevelopmentWorktree(repo, sessionDirectory, executionId)
   writeFileSync(join(worktree.path, 'src', 'a.ts'), 'fixed\n')
   writeFileSync(join(worktree.path, 'src', scriptName), scriptContent)
@@ -86,6 +86,32 @@ describe('验证证据（T27/T28）', () => {
     expect(result.exitCode).toBe(0)
     expect(result.timedOut).toBe(false)
     expect(result.snapshotContentHash).toBeTruthy()
+  })
+
+  test('Given 超过展示尾部的UTF-8输出 When 验证 Then 保留完整输出摘要与字节数', async () => {
+    const output = '验证通过🙂'.repeat(1800)
+    const w = fixture({ scriptName: 'verbose.cjs', scriptContent: `process.stdout.write(${JSON.stringify(output)})` })
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, w.command)
+    expect(result.status).toBe('passed')
+    expect(result.outputTruncated).toBe(true)
+    expect(result.rawOutputSha256).toBe(createHash('sha256').update(output, 'utf8').digest('hex'))
+    expect(result.rawOutputByteLength).toBe(Buffer.byteLength(output, 'utf8'))
+    expect(readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).result).toEqual(result)
+  })
+
+  test('Given 白名单程序无法启动 When 产生spawn错误 Then 错误诊断不混入原始输出摘要', async () => {
+    const w = fixture()
+    const missingCommand = `missing-validation-${randomUUID()}`
+    const task = store.getTask(w.taskId)!
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, verificationCommands: [missingCommand] } })
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, missingCommand)
+    expect(result.status).toBe('failed')
+    expect(result.exitCode).toBeNull()
+    expect(result.outputTail).toContain('[spawn error]')
+    expect(result.rawOutputByteLength).toBe(0)
+    expect(result.rawOutputSha256).toBe(createHash('sha256').update('', 'utf8').digest('hex'))
   })
 
   test('Given 非零退出 When 运行 Then status=failed 且真实退出码入档', async () => {
@@ -291,5 +317,9 @@ describe('验证证据（T27/T28）', () => {
   test('Given 无已完成执行 When 运行 Then 明确拒绝', async () => {
     const project = store.createProject({ title: '无执行', description: '' })
     await expect(runDevelopmentValidation(store.createTask(project.id, { title: 't', description: '' }).id, 'node x.cjs')).rejects.toThrow(DevelopmentValidationError)
+  })
+
+  test('Given不存在的Owner命令 When自动运行研发验证 Then不启动任意任务命令', async () => {
+    await expect(runOwnerDevelopmentValidations(randomUUID())).rejects.toThrow('准确且已结算的Executor命令')
   })
 })

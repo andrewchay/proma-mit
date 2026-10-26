@@ -16,14 +16,6 @@
  * 条目读写仍由 memory-plugin-service 的 items.json 权威存储完成。
  */
 
-import { createRequire } from 'node:module'
-
-/**
- * 用于动态 require 的可重入 require（Bun ESM 下裸 require 不存在；
- * esbuild 打包为 cjs 时 __filename 同样可用）。
- */
-const scopedRequire = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
-
 // ===== 类型定义 =====
 
 /** 记忆归属范围类别 */
@@ -88,68 +80,17 @@ export function resetProjectWorkspaceBindingResolver(): void {
   bindingResolver = null
 }
 
-/**
- * 候选绑定服务模块与导出函数名（以并行任务落地的 project-workspace-bindings 为准）。
- * 依次尝试动态 require，命中即缓存模块句柄；全部缺失时安全降级为"无绑定"。
- */
-const BINDING_SERVICE_CANDIDATES: Array<{ module: string; exports: string[] }> = [
-  { module: './project-workspace-bindings', exports: ['hasProjectWorkspaceBinding', 'isWorkspaceBoundToProject', 'hasBinding'] },
-  { module: './project-service', exports: ['hasProjectWorkspaceBinding', 'isWorkspaceBoundToProject'] },
-]
-
-let bindingServiceModule: Record<string, unknown> | null | undefined
-
-/** 动态获取绑定服务模块（缺失返回 null，绝不抛错） */
-function loadBindingServiceModule(): Record<string, unknown> | null {
-  if (bindingServiceModule !== undefined) return bindingServiceModule
-  for (const candidate of BINDING_SERVICE_CANDIDATES) {
-    try {
-      const mod = scopedRequire(candidate.module) as Record<string, unknown>
-      const hasBooleanFn = candidate.exports.some((name) => typeof mod[name] === 'function')
-      if (mod && (hasBooleanFn || typeof mod.listProjectWorkspaceBindings === 'function')) {
-        bindingServiceModule = mod
-        return mod
-      }
-    } catch {
-      // 模块不存在或加载失败：尝试下一个候选
-    }
-  }
-  bindingServiceModule = null
-  return null
-}
-
-/**
- * 解析 projectId ↔ workspaceId 是否存在正式绑定。
- * 优先级：注入的解析器 > 动态发现的绑定服务（布尔函数或 listProjectWorkspaceBindings 列表判定）
- * > 安全降级（无绑定）。
- */
+/** 通过可被打包器静态识别的延迟加载读取正式绑定；缺少权威服务时失败关闭。 */
 export function resolveWorkspaceProjectBinding(projectId: string, workspaceId: string): boolean {
   if (!projectId || !workspaceId) return false
   if (bindingResolver) return bindingResolver.hasBinding(projectId, workspaceId)
-  const mod = loadBindingServiceModule()
-  if (mod) {
-    for (const name of BINDING_SERVICE_CANDIDATES.flatMap((c) => c.exports)) {
-      const fn = mod[name]
-      if (typeof fn === 'function') {
-        try {
-          return Boolean((fn as (p: string, w: string) => unknown)(projectId, workspaceId))
-        } catch {
-          return false
-        }
-      }
-    }
-    // 列表式 API：listProjectWorkspaceBindings(projectId) 返回含 workspaceId 的绑定数组
-    const listFn = mod.listProjectWorkspaceBindings
-    if (typeof listFn === 'function') {
-      try {
-        const bindings = (listFn as (p: string) => Array<{ workspaceId?: string }>)(projectId)
-        return Array.isArray(bindings) && bindings.some((b) => b?.workspaceId === workspaceId)
-      } catch {
-        return false
-      }
-    }
+  try {
+    // 必须保留字面量require：createRequire加变量相对路径不会被esbuild收入单文件应用。
+    const service = require('./project-workspace-bindings') as typeof import('./project-workspace-bindings')
+    return service.hasProjectWorkspaceBinding(projectId, workspaceId)
+  } catch {
+    return false
   }
-  return false
 }
 
 // ===== 范围分类与可见性（纯函数） =====

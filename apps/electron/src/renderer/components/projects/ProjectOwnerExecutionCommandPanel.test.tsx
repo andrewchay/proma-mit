@@ -24,7 +24,11 @@ test('Given执行回报与冻结标准 When展示Owner只读交付审阅 Then区
     actionApprovals: [{ requestId: 'request', toolName: 'Write', actionFingerprint: 'a'.repeat(64), status: 'denied', requestedAt: 1, decidedAt: 2, decidedBy: 'local-user', reason: 'user_rejected' }],
     grantAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1000000, maxRuns: 3, maxRework: 1, expiresAt: 9999999999999, roleBudgetCaps: [{ roleKey: 'executor', maxCostMicros: 500000 }] }, reservedCostMicros: 10, actualCostMicros: 1, ackFingerprint: 'fingerprint', createdAt: 1, updatedAt: 2,
   }
+  command.textDelivery = { state: 'available', detail: '完整正文已冻结；内容仍需独立检查。', artifact: { schemaVersion: 1, projectId: 'project', grantId: command.grantId, commandId: command.commandId, executionId: command.executionId!, sessionId: 'session', taskId: command.taskId, stepLinkId: 'step', sourceHash: 'source', planRevision: 2, reworkOrdinal: 0, messageId: 'message', content: '完整成果 <script>alert(1)</script>\n正文末尾', contentSha256: 'a'.repeat(64), byteLength: 50, capturedAt: 1, integrityHash: 'b'.repeat(64) } }
   const html = renderToStaticMarkup(<OwnerExecutionReviewDetails command={command} />)
+  expect(html).toContain('查看完整正文')
+  expect(html).toContain('正文末尾')
+  expect(html.indexOf('完整文本成果')).toBeLessThan(html.indexOf('交付审阅材料'))
   expect(html).toContain('冻结验收标准')
   expect(html).toContain('包含来源证据')
   expect(html).toContain('执行者自述')

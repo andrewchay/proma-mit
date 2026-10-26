@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { parseOwnerTechnicalReviewResponse } from './project-owner-technical-review'
+import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse } from './project-owner-technical-review'
 
 const criteria = ['接口保持兼容', '回归测试通过']
 
@@ -47,4 +47,45 @@ test('Given非法/多余字段、无效 verdict 或超长响应 When解析 Then 
   expect(() => parseOwnerTechnicalReviewResponse('{"schemaVersion":1,"verdict":"pass"}', criteria)).toThrow()
   expect(() => parseOwnerTechnicalReviewResponse(response('approved', { injected: true }), criteria)).toThrow()
   expect(() => parseOwnerTechnicalReviewResponse('x'.repeat(100_001), criteria)).toThrow()
+})
+
+test('Given所有冻结验证命令均有新鲜、未截断且成功的原始回执 When Reviewer 建议通过 Then允许形成技术评审证据', () => {
+  expect(() => assertOwnerDevelopmentValidationForVerdict('approved', [{
+    command: 'bun test', validationId: `val-${'a'.repeat(64)}`, attemptState: 'completed', freshness: 'fresh',
+    status: 'passed', exitCode: 0, timedOut: false, outputTail: '通过', outputTruncated: false,
+    rawOutputSha256: 'b'.repeat(64), rawOutputByteLength: 4,
+  }])).not.toThrow()
+})
+
+test('Given代码验证回执缺失、失败、过期、截断或原始输出摘要不完整 When Reviewer 建议通过 Then拒绝批准', () => {
+  const valid = {
+    command: 'bun test', validationId: `val-${'a'.repeat(64)}`, attemptState: 'completed' as const, freshness: 'fresh' as const,
+    status: 'passed' as const, exitCode: 0, timedOut: false, outputTail: '通过', outputTruncated: false,
+    rawOutputSha256: 'b'.repeat(64), rawOutputByteLength: 4,
+  }
+  const invalid = [
+    { ...valid, attemptState: 'missing' as const },
+    { ...valid, freshness: 'stale' as const },
+    { ...valid, status: 'failed' as const },
+    { ...valid, exitCode: 1 },
+    { ...valid, timedOut: true },
+    { ...valid, outputTruncated: true },
+    { ...valid, rawOutputSha256: undefined },
+  ]
+  for (const evidence of invalid) expect(() => assertOwnerDevelopmentValidationForVerdict('approved', [evidence])).toThrow('不能批准')
+  expect(() => assertOwnerDevelopmentValidationForVerdict('changes_requested', [{ ...valid, status: 'failed' }])).not.toThrow()
+})
+
+test('Given完整文本评审v2 When引用正文 Then每项met必须有准确原文，错误哈希/漏quote/虚构quote拒绝', () => {
+  const hash = 'a'.repeat(64), content = '接口保持兼容，回归测试通过。'
+  const value = JSON.parse(response('approved', { schemaVersion: 2, artifactHash: hash })) as { criteria: Array<{ criterion: string; status: string; evidence: string; quote?: string | null }> }
+  value.criteria.forEach((item, index) => { item.quote = criteria[index]! })
+  expect(parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria, hash, content)).toMatchObject({ schemaVersion: 2, artifactHash: hash })
+  expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria, 'b'.repeat(64), content)).toThrow('准确成果版本')
+  value.criteria[0]!.quote = '正文没有这句话'
+  expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria, hash, content)).toThrow('原文依据')
+  delete value.criteria[0]!.quote
+  expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria, hash, content)).toThrow()
+  expect(() => parseOwnerTechnicalReviewResponse(response('approved'), criteria, hash, content)).toThrow()
+  expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria)).toThrow()
 })

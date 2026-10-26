@@ -1,9 +1,11 @@
+import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owner-employee-runtime'
 /** Owner逐请求出口：derive→reserve→verify→fetch→settle五步镜像；Owner出口一律redirect:'error'；默认fake transport。 */
 import { createHash, randomUUID } from 'node:crypto'
 import * as store from './project-sqlite-store'
 import { derivePilotRequestEnvelope, getPilotReviewedPriceEvidence, getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { getAgentProviderProtocol, type ProviderType } from '@gravitas/shared'
 import { PILOT_DEFAULT_PRICE_EVIDENCE_ID } from './project-pilot-request-exit'
+import { ownerEmployeePriceProviderKind } from './project-owner-employee-runtime'
 
 const REQUEST_EVIDENCE_PATTERN = /^[a-f0-9]{64}$/
 function injectStreamUsage(body: string): string {
@@ -15,6 +17,19 @@ function injectStreamUsage(body: string): string {
     }
     return body
   } catch { return body }
+}
+function capPiOwnerOutput(body: string, runtime: string): string {
+  if (runtime !== 'pi') return body
+  const parsed = JSON.parse(body) as Record<string, unknown>
+  let capped = false
+  for (const key of ['max_tokens', 'max_completion_tokens']) {
+    const value = parsed[key]
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) continue
+    parsed[key] = Math.min(value, 4096)
+    capped = true
+  }
+  if (!capped) throw new Error('Owner Pi 请求缺少可核验的输出上限')
+  return JSON.stringify(parsed)
 }
 export interface OwnerRequestFetchInput {
   commandId: string
@@ -52,14 +67,16 @@ function recordOwnerPreflightPriceRejection(input: {
   const database = store.getProjectDb()
   if (database.isTransactionActive()) throw new Error('Owner预发送拒绝不得嵌套未提交事务')
   database.transaction(() => {
-    const command = database.prepare(`SELECT c.id AS command_id, c.execution_id, c.project_id, c.grant_id, c.state AS command_state,
+    const stored = database.prepare(`SELECT c.id AS command_id, c.execution_id, c.project_id, c.grant_id, c.state AS command_state,
         g.state AS grant_state, g.channel_id, g.model_id, g.runtime
       FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
       WHERE c.id=?`).get(input.command.command_id) as OwnerPreflightCommandRow | undefined
+    const runtime = stored ? readOwnerCommandRuntime(stored.command_id) : null
+    const command = stored && runtime ? { ...stored, channel_id: runtime.channelId, model_id: runtime.modelId, runtime: runtime.runtime } : null
     const execution = store.getAgentExecution(input.executionId)
     if (!command || !execution || command.project_id !== input.command.project_id || command.grant_id !== input.command.grant_id
       || command.execution_id !== input.executionId || command.command_state !== 'running' || command.grant_state !== 'active'
-      || command.channel_id !== input.command.channel_id || command.model_id !== input.modelId || command.runtime !== 'ai-sdk'
+      || command.channel_id !== input.command.channel_id || command.model_id !== input.modelId || !['ai-sdk', 'pi'].includes(command.runtime)
       || execution.projectId !== command.project_id || execution.ownerCommandId !== command.command_id
       || execution.sessionId === '' || execution.status !== 'running') {
       throw new Error('Owner预发送拒绝归属或状态已变化')
@@ -82,16 +99,19 @@ function recordOwnerPreflightPriceRejection(input: {
 export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId: string, provider: ProviderType): number | undefined {
   const execution = store.getAgentExecutionBySessionId(sessionId)
   if (!execution?.ownerCommandId) return undefined
-  const row = store.getProjectDb().prepare(`SELECT c.id AS command_id, c.state AS command_state, c.role AS command_role, c.execution_id,
+  const stored = store.getProjectDb().prepare(`SELECT c.id AS command_id, c.state AS command_state, c.role AS command_role, c.execution_id,
       c.project_id, c.grant_id, g.state AS grant_state, g.channel_id, g.model_id, g.runtime
     FROM project_owner_execution_commands c
     JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
     WHERE c.id=? AND c.project_id=?`).get(execution.ownerCommandId, execution.projectId) as OwnerPreflightCommandRow | undefined
-  const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
-  const providerKind = protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
+  const runtime = stored ? readOwnerCommandRuntime(stored.command_id) : null
+  const row = stored && runtime ? { ...stored, channel_id: runtime.channelId, model_id: runtime.modelId, runtime: runtime.runtime } : null
+  if (runtime) assertOwnerCommandPrice(runtime)
+  const providerKind = ownerEmployeePriceProviderKind(row?.runtime ?? 'ai-sdk', provider, modelId)
+  const protocol = row?.runtime === 'pi' ? 'openai-completions' : getAgentProviderProtocol(provider, 'ai-sdk')
   if (!row || row.execution_id !== execution.id || row.project_id !== execution.projectId || row.command_id !== execution.ownerCommandId
     || row.command_state !== 'running' || execution.status !== 'running' || row.grant_state !== 'active'
-    || row.runtime !== 'ai-sdk' || row.model_id !== modelId) {
+    || !['ai-sdk', 'pi'].includes(row.runtime) || row.model_id !== modelId) {
     throw new Error('Owner命令执行归属或运行授权不匹配')
   }
   const price = getPilotReviewedPriceEvidenceForModel(modelId, providerKind)
@@ -101,8 +121,9 @@ export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId:
       priceEvidenceId: attemptedPriceEvidenceId, errorMessage: OWNER_PREFLIGHT_PRICE_REJECTION })
     throw new Error(OWNER_PREFLIGHT_PRICE_REJECTION)
   }
-  // DeepSeek 思考内容也占输出额度；为结构化评审保留正文空间，仍逐请求预留完整上界。
-  const outputLimit = modelId === 'deepseek-flash' && row.command_role === 'reviewer' ? 8192 : 4096
+  // DeepSeek 评审与 GLM 员工的思考也占输出额度；为正文保留空间，仍逐请求预留完整上界。
+  const outputLimit = modelId === 'deepseek-flash' && row.command_role === 'reviewer'
+    || row.runtime === 'ai-sdk' && /^glm-5\.3(?:-flash)?$/i.test(modelId) ? 8192 : 4096
   return Math.min(outputLimit, price.maxModelOutputTokens)
 }
 function reserveOwnerRequest(input: { requestId: string; commandId: string; executionId: string; sessionId: string; envelope: ReturnType<typeof derivePilotRequestEnvelope> }) {
@@ -211,12 +232,17 @@ async function settleOwnerAfterResponse(requestId: string, response: Response): 
 export function createOwnerRequestFetch(input: OwnerRequestFetchInput): typeof globalThis.fetch {
   const ownerFetch = async (rawInput: Parameters<typeof globalThis.fetch>[0], rawInit?: Parameters<typeof globalThis.fetch>[1]): Promise<Response> => {
     const init = rawInit ?? {}
-    if (typeof init.body !== 'string' || init.body.length === 0) throw new Error('Owner受控出口无法核验请求体，拒绝发送')
-    const finalBody = injectStreamUsage(init.body)
-    const envelope = derivePilotRequestEnvelope({ body: finalBody, priceEvidenceId: input.priceEvidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID })
+    const body = init.body ?? (rawInput instanceof Request ? await rawInput.clone().text() : undefined)
+    if (typeof body !== 'string' || body.length === 0) throw new Error('Owner受控出口无法核验请求体，拒绝发送')
+    const runtime = readOwnerCommandRuntime(input.commandId)
+    assertOwnerCommandPrice(runtime)
+    if (runtime.priceEvidenceId && input.priceEvidenceId && runtime.priceEvidenceId !== input.priceEvidenceId) throw new Error('Owner请求价格与当前员工冻结来源不一致')
+    const priceEvidenceId = runtime.priceEvidenceId ?? input.priceEvidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID
+    const finalBody = injectStreamUsage(capPiOwnerOutput(body, runtime.runtime))
+    const envelope = derivePilotRequestEnvelope({ body: finalBody, priceEvidenceId })
     const requestId = `owner-${randomUUID()}`
     reserveOwnerRequest({ requestId, commandId: input.commandId, executionId: input.executionId, sessionId: input.sessionId, envelope })
-    verifyOwnerRequestBody(requestId, finalBody, input.priceEvidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID)
+    verifyOwnerRequestBody(requestId, finalBody, priceEvidenceId)
     // Owner出口一律redirect:'error'：发送前核验出口origin属冻结渠道（调用方在参数比对集内完成）。
     let response: Response
     try { response = await input.baseFetch(rawInput, { ...init, body: finalBody, redirect: 'error' }) }
@@ -231,4 +257,11 @@ export function createOwnerRequestFetch(input: OwnerRequestFetchInput): typeof g
 export function getOwnerRequestReservation(requestId: string): { state: string; settledCostMicros: number | null } | null {
   const row = store.getProjectDb().prepare('SELECT state, settled_cost_micros FROM project_owner_execution_request_reservations WHERE request_id=?').get(requestId) as { state: string; settled_cost_micros: number | null } | undefined
   return row ? { state: row.state, settledCostMicros: row.settled_cost_micros } : null
+}
+/** Pi工具执行前要求本次会话已有Provider请求全部取得确定用量回执。 */
+export function assertOwnerExecutionRequestsSettled(sessionId: string): void {
+  const execution = store.getAgentExecutionBySessionId(sessionId)
+  if (!execution?.ownerCommandId) return
+  const pending = store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_request_reservations WHERE command_id=? AND state<>'settled' LIMIT 1").get(execution.ownerCommandId)
+  if (pending) throw new Error('Owner请求费用/用量尚未确认，暂停执行工具并等待对账')
 }

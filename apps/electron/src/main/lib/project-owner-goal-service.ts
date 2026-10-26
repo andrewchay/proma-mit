@@ -1,5 +1,6 @@
-/** 项目内 Owner 目标草案。只追加规划记录，不触发模型/任务/项目链/授权事件。 */
+/** 项目内 Owner 目标草案。追加目标与无费管理事件，不触发模型/任务/项目链/授权。 */
 import type { ProjectOwnerGoalBrief, ProjectOwnerGoalDraft } from '@gravitas/shared'
+import { recordOwnerManagementGoal } from './project-owner-management-store'
 import { prepareProjectOwnerGoalBrief } from './project-owner-planning'
 import { getProject, getProjectDb, getTask } from './project-sqlite-store'
 
@@ -103,6 +104,7 @@ export function saveProjectOwnerGoalDraft(
   expectedRevision: number,
   input: unknown,
   taskId?: string,
+  options: { recordManagementMessage?: boolean } = {},
 ): ProjectOwnerGoalDraft {
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('草案版本参数无效')
   let result: ProjectOwnerGoalDraft | undefined
@@ -115,6 +117,7 @@ export function saveProjectOwnerGoalDraft(
     const goal = parseGoalInput(input, subject, goalVersion)
     if (current && sameGoalContent(current.goal, goal)) {
       result = current
+      recordOwnerManagementGoal(current, options.recordManagementMessage !== false)
       return
     }
     result = {
@@ -127,6 +130,7 @@ export function saveProjectOwnerGoalDraft(
     }
     getProjectDb().prepare(`INSERT INTO project_owner_revisions (project_id, subject_key, revision, payload)
       VALUES (?, ?, ?, ?)`).run(projectId, subject.subjectKey, result.revision, JSON.stringify(result))
+    recordOwnerManagementGoal(result, options.recordManagementMessage !== false)
   })()
   if (!result) throw new Error('目标草案保存失败')
   return result

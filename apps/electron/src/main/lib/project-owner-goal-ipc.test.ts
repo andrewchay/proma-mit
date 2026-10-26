@@ -55,6 +55,13 @@ test('IPC严格拒绝外层actor/权限/版本/未知字段与无效主体', () 
   expect(invoke(saveChannel, { projectId: project.id, expectedRevision: 0, input: { objective: '目标' }, actor: 'system' })).toMatchObject({ ok: false })
   expect(invoke(saveChannel, { projectId: project.id, expectedRevision: 0, input: { objective: '目标', permissionMode: 'allow-all' } })).toMatchObject({ ok: false })
 })
+test('团队工作区范围确认IPC拒绝字段注入和无效来源', () => {
+  const project = fixture(), handler = handlers.get(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS)
+  expect(handler).toBeDefined()
+  for (const request of [null, { projectId: project.id }, { projectId: project.id, messageId: 'not-a-message', workspaceId: 'workspace', scopeFingerprint: 'a'.repeat(64) }, { projectId: project.id, messageId: 'a'.repeat(64), workspaceId: 'workspace', scopeFingerprint: 'b'.repeat(64), actor: 'system' }]) {
+    expect(handler!({}, request)).toMatchObject({ ok: false, error: { code: 'failed' } })
+  }
+})
 test('IPC单任务目标不允许跨项目，project与task草案不互相覆盖', () => {
   const first = fixture(); const second = fixture()
   const task = createTask(first.id, { title: '任务目标', description: '' })

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +44,9 @@ function running(f: ReturnType<typeof prepared>) {
 }
 const runService = await import('./project-owner-planning-run-service')
 const plans = await import('./project-owner-plan-service')
+const management = await import('./project-owner-management-store')
+const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 function accepted(f: ReturnType<typeof prepared>) {
   const run = running(f); const snapshot = source.readOwnerPlanningSnapshot(f.link.planningTaskId)!;
   // 只测试可信callback/生成链：显式假占位，不冒充真实费用授权或HTTP。
@@ -119,7 +122,7 @@ test('Given 已排队但session建立前失败 When 可信启动错误回调 The
 })
 test('Given paused Owner准备 When 只读预检 Then 显示实际用途/全JSON资料/单请求未知成本，预检本身不授权启动', async () => {
   const f = prepared(); const { getControlledTaskStartPreview, startControlledTask } = await import('./controlled-project-task-service'); const preview = getControlledTaskStartPreview(f.link.planningTaskId)
-  expect(preview.ownerPlanning).toMatchObject({ purpose: 'owner_planning', ownerName: f.binding.ownerName, bindingRevision: 1, goalRevision: 1, planRevision: 0, maxRequests: 1, maxOutputTokens: 8192, costs: 'unknown_no_hard_cap', context: { fingerprint: f.link.contextFingerprint } }); expect(preview.modelId).toBe(f.employee.modelId!)
+  expect(preview.ownerPlanning).toMatchObject({ purpose: 'owner_planning', ownerName: f.binding.ownerName, bindingRevision: 1, goalRevision: 1, planRevision: 0, maxRequests: 1, maxOutputTokens: 8192, managementSupported: false, costs: 'unknown_no_hard_cap', context: { fingerprint: f.link.contextFingerprint } }); expect(preview.modelId).toBe(f.employee.modelId!)
   await expect(startControlledTask({ taskId: f.link.planningTaskId, previewHash: preview.previewHash, acknowledgeModelCosts: false })).rejects.toThrow('费用'); expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(0)
 })
 test('Given 已持久停止意图但SDK晚到stop When 完成 Then 留原文USD但不能生成，不把abort接受当远端证明', () => {
@@ -138,4 +141,37 @@ test('Given 旧valid回执尚存在但新增stop意图 When 内部生成被误�
   const f = accepted(prepared()), outcome = runService.recordOwnerPlanningRun(f.executionId,'ai-sdk',f.result)!
   store.updateAgentExecution(f.executionId,{status:'running'});runService.requestOwnerPlanningStop(f.executionId)
   expect(() => plans.appendGeneratedOwnerPlan(outcome.receiptId)).toThrow('已经请求停止');expect(plans.getProjectOwnerPlanDraft(f.project.id)?.revision).toBe(1)
+})
+
+test('Given旧版完整对话回应因字段别名被持久拒绝 When新版本重验本地原文 Then追加恢复记录且不重发请求或改写原始失败', () => {
+  const f = prepared(), manager = management.getOwnerManager(f.project.id)!
+  const message = sendOwnerManagementMessage({ projectId: f.project.id, conversationId: manager.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '请说明当前计划如何继续' })
+  const link = service.prepareOwnerPlanning(f.project.id, { ...request(f.project.id), conversationMessageId: message.id })
+  const run = running({ ...f, link }), snapshot = source.readOwnerPlanningSnapshot(link.planningTaskId)!
+  store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at) VALUES (?, ?, ?, ?, ?, ?)').run(link.id, run.executionId, run.sessionId, 'c'.repeat(64), JSON.stringify(snapshot.context), Date.now())
+  const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id=?').get(run.executionId) as import('./project-owner-planning-provider').OwnerPlanningAdmission
+  store.getProjectDb().prepare('UPDATE project_owner_planning_admissions SET integrity_hash=? WHERE execution_id=?').run(ownerPlanningAdmissionHash(admission), admission.execution_id)
+  const legacy = JSON.stringify({ type: 'conversation_reply', binding: { projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint }, messageId: message.id, message: '我会按已确认的范围继续安排。', change: null })
+  const result = { type: 'result' as const, subtype: 'success' as const, session_id: run.sessionId, result: JSON.stringify({ ...JSON.parse(legacy), unexpected: true }), finish_reason: 'stop', usage: { input_tokens: 3, output_tokens: 4 }, owner_planning_usage: { inputTokens: 3, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }
+  const failed = runService.recordOwnerPlanningRun(run.executionId, 'ai-sdk', result)!
+  expect(failed).toMatchObject({ state: 'failed', detail: 'Owner规划响应包含未知字段' })
+
+  // 重建旧版本已保存的原文形状；仅写入隔离测试库。
+  const row = store.getProjectDb().prepare('SELECT id, payload FROM project_owner_planning_run_receipts WHERE execution_id=?').get(run.executionId) as { id: string; payload: string }
+  const receipt = JSON.parse(row.payload) as import('./project-owner-planning-run-service').OwnerPlanningRunReceipt
+  const runtimeResult = { ...receipt.runtimeResult!, result: legacy }
+  const captureHash = hash({ runtimeSource: receipt.runtimeSource, runtimeResult, stopped: receipt.stopped, error: receipt.error })
+  const { id: _oldId, ...body } = { ...receipt, runtimeResult, responseText: legacy, responseHash: hash(legacy), captureHash }
+  const receiptId = hash(body), rewrittenReceipt = { id: receiptId, ...body }
+  store.getProjectDb().prepare('UPDATE project_owner_planning_run_receipts SET id=?, capture_hash=?, payload=? WHERE id=?').run(receiptId, captureHash, JSON.stringify(rewrittenReceipt), row.id)
+  const rewrittenOutcome = { ...failed, receiptId }
+  store.getProjectDb().prepare('UPDATE project_owner_planning_run_outcomes SET receipt_id=?, payload=? WHERE execution_id=?').run(receiptId, JSON.stringify({ ...rewrittenOutcome, integrityHash: hash(rewrittenOutcome) }), run.executionId)
+
+  const recovered = runService.recoverLegacyOwnerConversationReply(run.executionId)
+  expect(recovered).toMatchObject({ state: 'replied', reply: '我会按已确认的范围继续安排。' })
+  expect(runService.getOwnerPlanningRunOutcome(run.executionId)).toEqual(recovered)
+  expect(runService.getOwnerPlanningRunReceipt(receiptId)?.cost).toEqual({ source: 'unknown', usd: null })
+  expect(store.getProjectDb().prepare('SELECT json_extract(payload, "$.state") AS state FROM project_owner_planning_run_outcomes WHERE execution_id=?').get(run.executionId)).toEqual({ state: 'failed' })
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_planning_run_recoveries WHERE execution_id=?').get(run.executionId)).toEqual({ count: 1 })
+  expect(store.listAgentExecutionsByEntity('task', link.planningTaskId)).toHaveLength(1)
 })

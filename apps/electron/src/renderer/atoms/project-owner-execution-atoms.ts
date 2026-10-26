@@ -1,3 +1,4 @@
+import { supportsOwnerExecutionKind, supportsOwnerMixedTeam } from '@gravitas/shared'
 /** 暂停准备的本地输入，不是业务授权或额度账本。 */
 import { atom, type Getter, type Setter } from 'jotai'
 import type {
@@ -190,8 +191,9 @@ const lines = (text: string) =>
     .map((v) => v.trim())
     .filter(Boolean)
     .sort()
-export function ownerExecutionPlanReady(get: Getter, subject: ProjectOwnerGoalSubject): boolean {
+export function ownerExecutionPlanReady(get: Getter, subject: ProjectOwnerGoalSubject, allowProposed = false): boolean {
   const p = getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject)
+  const stateReady = p.snapshot?.state === 'confirmed' || (allowProposed && p.snapshot?.state === 'proposed')
   return (
     ownerPlanGoalReady(get, subject) &&
     p.loaded &&
@@ -200,18 +202,19 @@ export function ownerExecutionPlanReady(get: Getter, subject: ProjectOwnerGoalSu
     !p.dirty &&
     !p.conflict &&
     !p.requiresReview &&
-    p.snapshot?.state === 'confirmed' &&
-    p.snapshot.contextFingerprint === p.context?.fingerprint
+    stateReady &&
+    p.snapshot?.contextFingerprint === p.context?.fingerprint
   )
 }
 export function ownerExecutionInput(
   get: Getter,
   subject: ProjectOwnerGoalSubject,
+  allowProposed = false,
 ): OwnerExecutionPreparationInput | null {
   const e = read(get, subject)
   const p = getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject).snapshot
   if (
-    !ownerExecutionPlanReady(get, subject) ||
+    !ownerExecutionPlanReady(get, subject, allowProposed) ||
     !p ||
     !e.loaded ||
     !e.view ||
@@ -239,7 +242,7 @@ export function ownerExecutionInput(
   const roleAssignments = selectedRoleKeys.map((roleKey) => {
     const candidates = e.view!.choices.employees.filter((employee) => !employee.isOwnerCarrier
       && employee.roleTemplateId === roleKey
-      && employee.executionProfile === e.executionKind && employee.workspaceIds.includes(workspaceId))
+      && supportsOwnerExecutionKind(employee, e.executionKind) && employee.workspaceIds.includes(workspaceId))
     const selectedEmployeeId = e.roleAssignments[roleKey]
       || (selectedRoleKeys.length === 1 ? e.executorEmployeeId : candidates.length === 1 ? candidates[0]!.id : '')
     return { roleKey, employeeId: selectedEmployeeId, employee: e.view!.choices.employees.find((item) => item.id === selectedEmployeeId) }
@@ -262,18 +265,20 @@ export function ownerExecutionInput(
   const roleEmployees = roleAssignments.map((assignment) => assignment.employee)
   const executor = roleEmployees[0]
   const executorEmployeeId = roleAssignments[0]?.employeeId ?? ''
+  const selectedEmployees = [...roleEmployees, reviewer]
+  const mixed = supportsOwnerMixedTeam(selectedEmployees) || selectedEmployees.some((employee) => employee?.runtime === 'pi')
   if (!workspaceId || !e.view.choices.workspaces.some((v) => v.id === workspaceId)
     || roleAssignments.some((assignment) => !assignment.employeeId || !assignment.employee)
     || !executor || !reviewer || roleEmployees.some((employee) => !employee || employee.id === reviewer.id
-      || employee.executionProfile !== e.executionKind || !employee.workspaceIds.includes(workspaceId)
-      || !employee.modelId || employee.channelId !== executor.channelId || employee.modelId !== executor.modelId || employee.runtime !== executor.runtime)
-    || reviewer.executionProfile !== e.executionKind || !reviewer.workspaceIds.includes(workspaceId)
-    || !executor.modelId || reviewer.channelId !== executor.channelId || reviewer.modelId !== executor.modelId || reviewer.runtime !== executor.runtime)
+      || !supportsOwnerExecutionKind(employee, e.executionKind) || !employee.workspaceIds.includes(workspaceId)
+      || !employee.modelId || !mixed && (employee.channelId !== executor.channelId || employee.modelId !== executor.modelId || employee.runtime !== executor.runtime))
+    || !supportsOwnerExecutionKind(reviewer, e.executionKind) || !reviewer.workspaceIds.includes(workspaceId)
+    || !executor.modelId || !mixed && (reviewer.channelId !== executor.channelId || reviewer.modelId !== executor.modelId || reviewer.runtime !== executor.runtime))
     return null
   const ownerConfiguration = e.view.executionConfigurationRecommendation
   const ownerConfigurationConflict = Boolean(ownerConfiguration && [...roleEmployees, reviewer].some((employee) =>
     employee && (employee.channelId !== ownerConfiguration.channelId || employee.modelId !== ownerConfiguration.modelId || employee.runtime !== ownerConfiguration.runtime)))
-  if (ownerConfigurationConflict && !e.acknowledgeOwnerConfigurationOverride) return null
+  if (!mixed && ownerConfigurationConflict && !e.acknowledgeOwnerConfigurationOverride) return null
   const ownerWorkspaceConflict = e.view.workspaceRecommendation.source === 'owner_binding'
     && workspaceId !== e.view.workspaceRecommendation.workspaceId
   if (ownerWorkspaceConflict && !e.acknowledgeOwnerWorkspaceOverride) return null
@@ -312,6 +317,9 @@ export function ownerExecutionInput(
     expectedPlanRevision: p.revision,
     selectedStepKeys: [...e.selectedStepKeys].sort(),
     executionKind: e.executionKind,
+    ...(mixed ? { employeeRuntimeVersion: 2 as const } : {}),
+    ...(e.executionKind === 'controlled' ? { textDeliveryVersion: 1 as const } : {}),
+    qualityManagementVersion: 1 as const,
     ...(e.executionKind === 'development' ? { developmentScope: scope } : {}),
     executorEmployeeId,
     reviewerEmployeeId: reviewer.id,

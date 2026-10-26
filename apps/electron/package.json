@@ -1,6 +1,6 @@
 {
   "name": "@gravitas/electron",
-  "version": "0.13.11",
+  "version": "0.13.12",
   "description": "Gravitas next gen ai software with general agents - Electron App",
   "license": "BUSL-1.1",
   "main": "dist/main.cjs",
@@ -43,14 +43,15 @@
     "dist:mac": "bun run rebuild:natives && electron-builder --mac",
     "dist:dev": "bun run rebuild:natives && bun run scripts/dist.ts --dev --current-arch --dmg",
     "dist:stable": "bun run release:check && bun run dist:fast",
-    "release:check": "bun run scripts/check-release-channel.ts && bun run typecheck && bun test src/main/lib/app-channel.test.ts src/main/lib/app-identity-import.test.ts scripts/dist.test.ts scripts/check-release-channel.test.ts",
+    "release:check": "bun run scripts/check-release-channel.ts && bun run typecheck && bun run ../../scripts/run-tests.ts app-channel.test app-identity-import.test dist.test check-release-channel.test test-build-identity.test",
     "dist:mac-dev": "bun run rebuild:natives && bun run scripts/dist.ts --dev --current-arch --dmg",
     "dist:mac-dev-zip": "bun run rebuild:natives && bun run scripts/dist.ts --dev --current-arch --zip",
     "dist:win": "bun run rebuild:natives && electron-builder --win",
     "dist:linux": "bun run rebuild:natives && electron-builder --linux",
     "dist:visual": "bun run rebuild:natives && bun run scripts/dist.ts",
     "dist:fast": "bun run rebuild:natives && bun run scripts/dist.ts --current-arch --dmg",
-    "dist:debug": "bun run rebuild:natives && bun run scripts/dist.ts --current-arch --verbose"
+    "dist:debug": "bun run rebuild:natives && bun run scripts/dist.ts --current-arch --verbose",
+    "dist:owner-test-zip": "bun run build && bun run rebuild:natives && electron-builder --mac zip --config electron-builder.owner-test.yml"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.143",

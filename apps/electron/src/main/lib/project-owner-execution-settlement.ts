@@ -1,3 +1,4 @@
+import { readOwnerCommandRuntime } from './project-owner-employee-runtime'
 /** Owner命令结算：五类证据+unknown保全+双needs_reconcile；跨链重放键。镜像Pilot语义。 */
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 import * as store from './project-sqlite-store'
@@ -24,7 +25,7 @@ function assertNoCrossChainReplay(database: ReturnType<typeof store.getProjectDb
   if (database.prepare('SELECT 1 FROM pilot_commands WHERE usage_record_key=? AND execution_id=? LIMIT 1').get(recordKey, executionId)) throw new Error('Owner用量记录键在Pilot账本重复，拒绝结算')
 }
 export interface OwnerCommandSettlement { commandId: string; state: 'settled' | 'needs_reconcile'; actualCostMicros: number | null; grantNeedsReconcile: boolean }
-export function settleOwnerCommandUsage(commandId: string, evidence: OwnerUsageEvidence, now = Date.now()): OwnerCommandSettlement {
+export function settleOwnerCommandUsage(commandId: string, evidence: OwnerUsageEvidence, now = Date.now(), options: { deferSchedulerWake?: boolean } = {}): OwnerCommandSettlement {
   if (!commandId?.trim() || !Number.isSafeInteger(now) || now < 0) throw new Error('Owner结算参数无效')
   if (evidence.capturedAt > now) throw new Error('Owner用量证据时间无效')
   const actualCostMicros = evidence.source === 'unknown' ? null : evidence.costMicros
@@ -45,8 +46,9 @@ export function settleOwnerCommandUsage(commandId: string, evidence: OwnerUsageE
       || !['completed', 'failed', 'cancelled', 'stale'].includes(execution.status)) {
       throw new Error('Owner执行未终结或账本归属无法核验')
     }
+    const runtime = readOwnerCommandRuntime(command.id)
     if (execution.id !== evidence.executionId || execution.sessionId !== evidence.sessionId
-      || grant.channel_id !== evidence.channelId || grant.model_id !== evidence.modelId) {
+      || runtime.channelId !== evidence.channelId || runtime.modelId !== evidence.modelId) {
       throw new Error('Owner用量证据与执行、会话、渠道或模型不匹配')
     }
     if (evidence.source === 'runtime_reported' || evidence.source === 'unknown') assertPilotRuntimeUsageReceipt(evidence, command.project_id)
@@ -85,7 +87,7 @@ export function settleOwnerCommandUsage(commandId: string, evidence: OwnerUsageE
     result = { commandId, state: nextState, actualCostMicros, grantNeedsReconcile }
   })()
   if (!result) throw new Error('Owner结算未完成')
-  if (projectId) requestOwnerAutonomousScheduleWake(projectId)
+  if (projectId && !options.deferSchedulerWake) requestOwnerAutonomousScheduleWake(projectId)
   return result
 }
 /** 只读占额：与预算核验同口径（settled实结、其余含unknown按预留）。 */

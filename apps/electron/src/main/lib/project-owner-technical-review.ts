@@ -1,3 +1,9 @@
+import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
+import { isOwnerDevelopmentValidationArtifact, ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
+import type { OwnerDevelopmentValidationArtifact } from './project-owner-development-artifact'
+import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
+import { ownerDevelopmentValidationId } from './development-validation-attempt'
+import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { createHash } from 'node:crypto'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
@@ -10,6 +16,7 @@ export interface OwnerTechnicalReviewCriterion {
   criterion: string
   status: OwnerTechnicalReviewCriterionStatus
   evidence: string
+  quote?: string | null
 }
 
 export interface OwnerTechnicalReviewFinding {
@@ -19,7 +26,8 @@ export interface OwnerTechnicalReviewFinding {
 }
 
 export interface OwnerTechnicalReviewResponse {
-  schemaVersion: 1
+  schemaVersion: 1 | 2 | 3
+  artifactHash?: string
   verdict: OwnerTechnicalReviewVerdict
   summary: string
   criteria: OwnerTechnicalReviewCriterion[]
@@ -28,6 +36,10 @@ export interface OwnerTechnicalReviewResponse {
 }
 
 export interface OwnerTechnicalReviewEvidence extends OwnerTechnicalReviewResponse {
+  artifactVerified?: boolean
+  developmentArtifact?: OwnerDevelopmentDeliveryArtifact
+  validationEvidence?: OwnerDevelopmentValidationArtifact[]
+  validationEvidenceVerified?: boolean
   projectId: string
   grantId: string
   taskId: string
@@ -40,6 +52,17 @@ export interface OwnerTechnicalReviewEvidence extends OwnerTechnicalReviewRespon
   sourceHash: string
   responseSha256: string
   createdAt: number
+}
+
+export function assertOwnerDevelopmentValidationForVerdict(
+  verdict: OwnerTechnicalReviewVerdict,
+  evidence: OwnerDevelopmentValidationArtifact[],
+): void {
+  if (verdict === 'approved' && evidence.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh'
+    || item.status !== 'passed' || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false
+    || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength))) {
+    throw new Error('Owner代码验证存在失败、截断或未知证据，Reviewer不能批准')
+  }
 }
 
 interface ReviewCommandRow {
@@ -81,11 +104,25 @@ function boundedText(value: unknown, maxLength: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength
 }
 
+function artifactContainsQuote(content: string | undefined, quote: string): boolean {
+  if (!content) return false
+  try {
+    const parsed: unknown = JSON.parse(content)
+    if (isRecord(parsed) && Array.isArray(parsed.files)) {
+      return parsed.files.some(file => isRecord(file)
+        && [file.oldContent, file.newContent].some(body => typeof body === 'string' && body.includes(quote)))
+    }
+  } catch {
+    // 文本成果沿用原文包含校验。
+  }
+  return content.includes(quote)
+}
+
 /**
  * 严格解析 Reviewer 的 JSON 回执。自然语言猜测、Markdown 包裹、漏项和额外字段均不作为调度依据。
  * 此回执只表达技术建议，不代表业务验收、费用结算或外部验证事实。
  */
-export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: string[]): OwnerTechnicalReviewResponse {
+export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: string[], expectedArtifactHash?: string, artifactContent?: string, artifactKind: 'text' | 'development' = 'text'): OwnerTechnicalReviewResponse {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_RESPONSE_LENGTH) throw new Error('技术评审回执为空或超出大小限制')
   if (!Array.isArray(frozenCriteria) || frozenCriteria.length === 0 || frozenCriteria.length > MAX_CRITERIA
     || frozenCriteria.some(item => !boundedText(item, 1000)) || new Set(frozenCriteria).size !== frozenCriteria.length) {
@@ -94,10 +131,12 @@ export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: s
 
   let parsed: unknown
   try { parsed = JSON.parse(raw) } catch { throw new Error('技术评审回执不是严格 JSON') }
-  if (!isRecord(parsed) || !hasExactKeys(parsed, ['schemaVersion', 'verdict', 'summary', 'criteria', 'findings', 'blockerReason'])) {
+  if (!isRecord(parsed) || !hasExactKeys(parsed, ['schemaVersion', 'verdict', 'summary', 'criteria', 'findings', 'blockerReason', ...(expectedArtifactHash ? ['artifactHash'] : [])])) {
     throw new Error('技术评审回执字段不匹配')
   }
-  if (parsed.schemaVersion !== 1 || !['approved', 'changes_requested', 'blocked'].includes(String(parsed.verdict))
+  const expectedSchemaVersion = expectedArtifactHash ? artifactKind === 'development' ? 3 : 2 : 1
+  if (expectedArtifactHash && (!/^[a-f0-9]{64}$/.test(expectedArtifactHash) || parsed.artifactHash !== expectedArtifactHash)) throw new Error('技术评审未绑定准确成果版本')
+  if (parsed.schemaVersion !== expectedSchemaVersion || !['approved', 'changes_requested', 'blocked'].includes(String(parsed.verdict))
     || !boundedText(parsed.summary, 2000) || !Array.isArray(parsed.criteria) || !Array.isArray(parsed.findings)
     || parsed.criteria.length !== frozenCriteria.length || parsed.findings.length > MAX_FINDINGS
     || !(parsed.blockerReason === null || boundedText(parsed.blockerReason, 2000))) {
@@ -107,13 +146,14 @@ export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: s
   const criteriaValues = parsed.criteria as unknown[]
   const findingValues = parsed.findings as unknown[]
   const criteria: OwnerTechnicalReviewCriterion[] = criteriaValues.map((value, index) => {
-    if (!isRecord(value) || !hasExactKeys(value, ['criterion', 'status', 'evidence'])
+    if (!isRecord(value) || !hasExactKeys(value, ['criterion', 'status', 'evidence', ...(expectedArtifactHash ? ['quote'] : [])])
       || value.criterion !== frozenCriteria[index]
       || !['met', 'not_met', 'not_verified'].includes(String(value.status))
       || !boundedText(value.evidence, 2000)) {
       throw new Error(`技术评审标准第 ${index + 1} 项无效或顺序不匹配`)
     }
-    return { criterion: value.criterion as string, status: value.status as OwnerTechnicalReviewCriterionStatus, evidence: value.evidence }
+    if (expectedArtifactHash && (value.quote !== null && !boundedText(value.quote, 1000) || value.status === 'met' && !boundedText(value.quote, 1000) || typeof value.quote === 'string' && artifactContent !== undefined && !artifactContainsQuote(artifactContent, value.quote))) throw new Error('技术评审原文依据与完整成果不匹配')
+    return { criterion: value.criterion as string, status: value.status as OwnerTechnicalReviewCriterionStatus, evidence: value.evidence, ...(expectedArtifactHash ? { quote: value.quote as string | null } : {}) }
   })
 
   const findings: OwnerTechnicalReviewFinding[] = findingValues.map((value, index) => {
@@ -140,7 +180,7 @@ export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: s
     throw new Error('blocked 必须提供明确 blockerReason，且不能伪装成返工 finding')
   }
 
-  return { schemaVersion: 1, verdict, summary: parsed.summary, criteria, findings, blockerReason: parsed.blockerReason as string | null }
+  return { schemaVersion: expectedSchemaVersion, ...(expectedArtifactHash ? { artifactHash: expectedArtifactHash } : {}), verdict, summary: parsed.summary, criteria, findings, blockerReason: parsed.blockerReason as string | null }
 }
 
 function isKnownSettledCommand(row: ReviewCommandRow): boolean {
@@ -200,10 +240,11 @@ function listFrozenCriteria(row: ReviewCommandRow): string[] {
   return link.projection.acceptanceCriteria
 }
 
-function toEvidence(row: ReviewCommandRow, executor: ReviewCommandRow, response: OwnerTechnicalReviewResponse, rawResponse: string, createdAt: number): OwnerTechnicalReviewEvidence {
+function toEvidence(row: ReviewCommandRow, executor: ReviewCommandRow, response: OwnerTechnicalReviewResponse, rawResponse: string, createdAt: number, validationEvidence?: OwnerDevelopmentValidationArtifact[]): OwnerTechnicalReviewEvidence {
   const responseSha256 = createHash('sha256').update(rawResponse, 'utf8').digest('hex')
   return {
     ...response,
+    ...(validationEvidence ? { validationEvidence, validationEvidenceVerified: true } : {}),
     projectId: row.project_id,
     grantId: row.grant_id,
     taskId: row.source_task_id,
@@ -234,21 +275,47 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
   if (store.getProjectDb().prepare('SELECT 1 FROM project_owner_execution_stop_escalations WHERE command_id=? AND resolved_at IS NULL').get(executor.id)) {
     throw new Error('Owner Executor 存在未解决的停止升级，拒绝技术评审续派')
   }
-  const response = parseOwnerTechnicalReviewResponse(rawResponse, listFrozenCriteria(row))
-  const evidence = toEvidence(row, executor, response, rawResponse, createdAt)
+  const frozenSource = readOwnerCommandFrozenSource(row.id).source
+  const reviewerExecution = store.getAgentExecution(reviewerExecutionId)
+  const developmentArtifact = frozenSource.executionKind === 'development' && reviewerExecution?.prompt
+    ? ownerDevelopmentArtifactFromPrompt(reviewerExecution.prompt) : null
+  const textArtifact = frozenSource.executionKind === 'development' ? null : assertOwnerReviewerTextDelivery(row.id)
+  if (frozenSource.executionKind === 'development' && (!developmentArtifact
+    || developmentArtifact.executorCommandId !== executor.id || developmentArtifact.executorExecutionId !== executor.execution_id)) {
+    throw new Error('Owner代码Reviewer没有收到准确Executor快照')
+  }
+  const artifactHash = developmentArtifact?.contentHash ?? textArtifact?.contentSha256
+  const artifactContent = developmentArtifact?.content ?? textArtifact?.content
+  let validationEvidence: OwnerDevelopmentValidationArtifact[] | undefined
+  if (frozenSource.executionKind === 'development') {
+    const frozenTask = frozenSource.tasks.find(task => task.taskId === row.source_task_id && task.linkId === row.source_step_link_id)
+    const expectedCommands = frozenTask?.developmentScope?.verificationCommands ?? []
+    validationEvidence = developmentArtifact?.validationEvidence
+    if (!developmentArtifact || !validationEvidence || expectedCommands.length === 0
+      || validationEvidence.length !== expectedCommands.length
+      || validationEvidence.some((item, index) => item.command !== expectedCommands[index]
+        || item.validationId !== ownerDevelopmentValidationId(executor.id, expectedCommands[index]!, developmentArtifact.contentHash))) {
+      throw new Error('Owner代码Reviewer缺少完整且绑定冻结命令的验证回执')
+    }
+  }
+  const response = parseOwnerTechnicalReviewResponse(rawResponse, listFrozenCriteria(row), artifactHash, artifactContent, frozenSource.executionKind === 'development' ? 'development' : 'text')
+  if (validationEvidence) assertOwnerDevelopmentValidationForVerdict(response.verdict, validationEvidence)
+  const evidence = toEvidence(row, executor, response, rawResponse, createdAt, validationEvidence)
   const database = store.getProjectDb()
-  const existing = database.prepare('SELECT response_sha256 FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(row.id) as { response_sha256: string } | undefined
+  const validationEvidenceJson = JSON.stringify(validationEvidence ?? [])
+  const validationEvidenceSha256 = createHash('sha256').update(validationEvidenceJson, 'utf8').digest('hex')
+  const existing = database.prepare('SELECT response_sha256, validation_evidence_sha256 FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(row.id) as { response_sha256: string; validation_evidence_sha256: string } | undefined
   if (existing) {
-    if (existing.response_sha256 !== evidence.responseSha256) throw new Error('Owner 技术评审 command 已记录不同回执，拒绝覆盖')
+    if (existing.response_sha256 !== evidence.responseSha256 || existing.validation_evidence_sha256 !== validationEvidenceSha256) throw new Error('Owner 技术评审 command 已记录不同回执或验证来源，拒绝覆盖')
     return evidence
   }
   database.prepare(`INSERT INTO project_owner_technical_reviews
     (reviewer_command_id, project_id, grant_id, task_id, step_link_id, rework_ordinal,
      executor_command_id, executor_execution_id, reviewer_execution_id, source_hash, verdict,
-     response_json, response_sha256, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+     validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(row.id, row.project_id, row.grant_id, row.source_task_id, row.source_step_link_id, row.rework_ordinal,
-      executor.id, executor.execution_id, row.execution_id, row.source_hash, response.verdict,
+      executor.id, executor.execution_id, row.execution_id, row.source_hash, response.verdict, validationEvidenceJson, validationEvidenceSha256,
       rawResponse, evidence.responseSha256, createdAt)
   return evidence
 }
@@ -257,11 +324,12 @@ export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: str
   if (!projectId.trim() || (taskId !== undefined && !taskId.trim())) throw new Error('Owner 技术评审查询主体无效')
   const rows = store.getProjectDb().prepare(`SELECT reviewer_command_id, project_id, grant_id, task_id, step_link_id, rework_ordinal,
       executor_command_id, executor_execution_id, reviewer_execution_id, source_hash, verdict,
-      response_json, response_sha256, created_at
+      validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, created_at
     FROM project_owner_technical_reviews WHERE project_id=? AND (? IS NULL OR task_id=?) ORDER BY created_at, reviewer_command_id`)
     .all(projectId, taskId ?? null, taskId ?? null) as Array<{
       reviewer_command_id: string; project_id: string; grant_id: string; task_id: string; step_link_id: string; rework_ordinal: number
       executor_command_id: string; executor_execution_id: string; reviewer_execution_id: string; source_hash: string
+      validation_evidence_json: string; validation_evidence_sha256: string
       verdict: OwnerTechnicalReviewVerdict; response_json: string; response_sha256: string; created_at: number
     }>
   return rows.map(row => {
@@ -273,9 +341,45 @@ export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: str
     if (!isRecord(raw) || raw.verdict !== row.verdict) throw new Error('Owner 技术评审记录与索引状态不一致')
     const criteriaValues = Array.isArray(raw.criteria) ? raw.criteria as unknown[] : []
     const frozenCriteria = criteriaValues.map(item => isRecord(item) && typeof item.criterion === 'string' ? item.criterion : '')
-    const response = parseOwnerTechnicalReviewResponse(row.response_json, frozenCriteria)
+    const artifactKind = raw.schemaVersion === 3 ? 'development' : 'text'
+    const artifactHash = (raw.schemaVersion === 2 || raw.schemaVersion === 3) && typeof raw.artifactHash === 'string' ? raw.artifactHash : undefined
+    let artifactVerified: boolean | undefined, artifactContent: string | undefined, developmentArtifact: OwnerDevelopmentDeliveryArtifact | undefined
+    if (artifactHash) {
+      try {
+        if (artifactKind === 'development') {
+          const execution = store.getAgentExecution(row.reviewer_execution_id)
+          const artifact = execution?.prompt ? ownerDevelopmentArtifactFromPrompt(execution.prompt) : null
+          artifactVerified = artifact?.contentHash === artifactHash
+          if (artifactVerified) {
+            artifactContent = artifact!.content
+            const frozen = readOwnerCommandFrozenSource(row.reviewer_command_id).source
+            developmentArtifact = {
+              projectId: row.project_id, grantId: row.grant_id, taskId: row.task_id, stepLinkId: row.step_link_id,
+              sourceHash: row.source_hash, planRevision: frozen.planRevision, reworkOrdinal: row.rework_ordinal,
+              ...artifact!, validationEvidence: artifact!.validationEvidence ?? [],
+            }
+          }
+        } else {
+          const artifact = assertOwnerReviewerTextDelivery(row.reviewer_command_id)
+          artifactVerified = artifact?.contentSha256 === artifactHash
+          if (artifactVerified) artifactContent = artifact!.content
+        }
+      }
+      catch { artifactVerified = false }
+    }
+    const response = parseOwnerTechnicalReviewResponse(row.response_json, frozenCriteria, artifactHash, artifactContent, artifactKind)
+    if (!/^[a-f0-9]{64}$/.test(row.validation_evidence_sha256)
+      || createHash('sha256').update(row.validation_evidence_json, 'utf8').digest('hex') !== row.validation_evidence_sha256) {
+      throw new Error('Owner验证回执记录完整性校验失败')
+    }
+    let validationEvidence: unknown
+    try { validationEvidence = JSON.parse(row.validation_evidence_json) } catch { throw new Error('Owner验证回执不是有效JSON') }
+    if (!Array.isArray(validationEvidence) || validationEvidence.some(item => !isOwnerDevelopmentValidationArtifact(item))) throw new Error('Owner验证回执结构无效')
     return {
       ...response,
+      ...(developmentArtifact && artifactVerified ? { developmentArtifact } : {}),
+      ...(artifactKind === 'development' ? { validationEvidence: validationEvidence as OwnerDevelopmentValidationArtifact[], validationEvidenceVerified: true } : {}),
+      ...(artifactVerified === undefined ? {} : { artifactVerified }),
       projectId: row.project_id,
       grantId: row.grant_id,
       taskId: row.task_id,

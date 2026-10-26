@@ -27,6 +27,20 @@ describe('研发验证记录：严格JSON解码不授予信任', () => {
     expect(parseDevelopmentValidationRecord(legacy, expected, now)?.binding).toBeUndefined()
   })
 
+  test('完整输出摘要与字节数必须成对且格式有效；旧记录允许缺省', () => {
+    const rawOutputSha256 = 'e'.repeat(64)
+    const withOutputEvidence = { ...record(), rawOutputSha256, rawOutputByteLength: 12_345 }
+    expect(parseDevelopmentValidationRecord(withOutputEvidence, expected, now)).toEqual(withOutputEvidence)
+    expect(parseDevelopmentValidationRecord(record(), expected, now)).toBeDefined()
+    for (const input of [
+      { ...record(), rawOutputSha256 },
+      { ...record(), rawOutputByteLength: 12_345 },
+      { ...withOutputEvidence, rawOutputSha256: 'bad' },
+      { ...withOutputEvidence, rawOutputByteLength: -1 },
+      { ...withOutputEvidence, rawOutputByteLength: Number.MAX_SAFE_INTEGER + 1 },
+    ]) expect(parseDevelopmentValidationRecord(input, expected, now)).toBeUndefined()
+  })
+
   test('身份错配、额外trusted声明和继承对象拒绝', () => {
     for (const input of [
       { ...record(), ...{ id: 'other' } }, { ...record(), taskId: 'other' },

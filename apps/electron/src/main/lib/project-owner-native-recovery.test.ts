@@ -55,7 +55,7 @@ function inspect(runner: typeof runners[number], runnerEnv: NodeJS.ProcessEnv) {
   }
 }
 
-test.skipIf(process.platform === 'win32')('Owner待审批动作在原生SQLite WAL进程强杀后由独立进程失效并保留未知费用', async () => {
+test.skipIf(process.platform === 'win32')('Owner缺历史来源时原生SQLite WAL强杀恢复仍失效审批并保留占额，不补造用量', async () => {
   for (const runner of runners) {
     const dataRoot = mkdtempSync(join(tmpdir(), 'owner-native-recovery-data-'))
     dataRoots.push(dataRoot)
@@ -73,13 +73,14 @@ test.skipIf(process.platform === 'win32')('Owner待审批动作在原生SQLite W
     expect(line).toBeDefined()
     const snapshot = JSON.parse(line!.slice('OWNER_RECOVERY '.length)) as {
       results: Array<{ state: string; startBoundary: string }>
-      rows: Array<{ status: string; decided_at: number; decision_reason: string; execution_status: string; grant_state: string; command_state: string }>
+      rows: Array<{ status: string; decided_at: number; decision_reason: string; execution_status: string; grant_state: string; command_state: string; actual_cost_micros: number | null; reserved_cost_micros: number; usage_evidence: string | null }>
     }
     expect(snapshot.results).toHaveLength(1)
-    expect(snapshot.results[0]).toMatchObject({ state: 'unknown_recorded', startBoundary: 'started_proven' })
+    expect(snapshot.results[0]).toMatchObject({ state: 'stale_only', startBoundary: 'started_proven' })
     expect(snapshot.rows).toHaveLength(1)
     expect(snapshot.rows[0]).toMatchObject({ status: 'invalidated', decided_at: expect.any(Number),
-      decision_reason: 'runtime_recovered', execution_status: 'stale', grant_state: 'paused', command_state: 'needs_reconcile' })
+      decision_reason: 'runtime_recovered', execution_status: 'stale', grant_state: 'paused', command_state: 'needs_reconcile',
+      actual_cost_micros: null, reserved_cost_micros: 1000, usage_evidence: null })
     const repeatedRecovery = await killAt(runner, runnerEnv, 'recover-after', 'READY_OWNER_RECOVERY_AFTER_COMMIT')
     expect(repeatedRecovery).toContain('READY_OWNER_RECOVERY_AFTER_COMMIT []')
     const afterCommit = inspect(runner, runnerEnv)

@@ -1,8 +1,10 @@
 /** 配置/暂停准备/本地Run读取；无start/Caller/receipt写入IPC。 */
 import { PROJECT_IPC_CHANNELS, type ProjectOwnerGoalResult, type ProjectOwnerRunView } from '@gravitas/shared'
-import { getOwnerRuntimeBinding, prepareOwnerPlanning, saveOwnerRuntimeBinding } from './project-owner-runtime-binding'
+import { getOwnerRuntimeBinding, prepareOwnerPlanning, resolveOwnerRuntimeBindingFromDefaults, saveOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
+import { listProjectOwnerPlanHistory } from './project-owner-plan-service'
+import { archiveProjectOwnerPlanHistory } from './project-owner-planning-doc-service'
 import * as store from './project-sqlite-store'
 interface Registrar { handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => void }
 function fields(input: unknown, allowed: string[]): Record<string, unknown> {
@@ -14,10 +16,11 @@ function fields(input: unknown, allowed: string[]): Record<string, unknown> {
 function result<T>(operation: () => T): ProjectOwnerGoalResult<T> {
   try { return { ok: true, value: operation() } } catch (cause) { return { ok: false, error: { code: 'failed', message: cause instanceof Error ? cause.message : 'Owner配置操作失败' } } }
 }
-export function listOwnerPlanningRuns(projectId: string, taskId?: string): ProjectOwnerRunView[] {
+export function listOwnerPlanningRuns(projectId: string, taskId?: string, purpose: 'owner_planning' | 'owner_execution_assignment' = 'owner_planning'): ProjectOwnerRunView[] {
   const project = store.getProject(projectId), task = taskId === undefined ? undefined : store.getTask(taskId)
   if (!project || (taskId !== undefined && (!task || task.projectId !== projectId))) throw new Error('Owner规划记录主体不存在或跨项目')
-  const rows = store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.targetTaskId') IS ? ORDER BY rowid DESC LIMIT 50").all(projectId, taskId ?? null) as { planning_task_id: string }[]
+  const archiveWarning = purpose === 'owner_planning' ? archiveProjectOwnerPlanHistory(projectId, listProjectOwnerPlanHistory(projectId, taskId)) : undefined
+  const rows = store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.targetTaskId') IS ? AND json_extract(payload, '$.purpose') = ? ORDER BY rowid DESC LIMIT 50").all(projectId, taskId ?? null, purpose) as { planning_task_id: string }[]
   return rows.flatMap(row => {
     const snapshot = readOwnerPlanningSnapshot(row.planning_task_id)
     if (!snapshot || snapshot.link.projectId !== projectId) throw new Error('Owner规划读取来源损坏')
@@ -34,11 +37,12 @@ export function listOwnerPlanningRuns(projectId: string, taskId?: string): Proje
         return { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, ...(runtimeResult?.provider_request_id ? { providerRequestId: runtimeResult.provider_request_id } : {}), ...(runtimeResult?.provider_response_id ? { providerResponseId: runtimeResult.provider_response_id } : {}), usage, cost }
       })
     })
-    return [{ link: snapshot.link, executions: executions.map(item => ({ id: item.id, sessionId: item.sessionId, status: item.status, summary: item.resultSummary ?? null })), receipts, outcomes: executions.flatMap(item => { const outcome = getOwnerPlanningRunOutcome(item.id); return outcome ? [outcome] : [] }) }]
+    return [{ ...(archiveWarning ? { archiveWarning } : {}), link: snapshot.link, executions: executions.map(item => ({ id: item.id, sessionId: item.sessionId, status: item.status, summary: item.resultSummary ?? null })), receipts, outcomes: executions.flatMap(item => { const outcome = getOwnerPlanningRunOutcome(item.id); return outcome ? [outcome] : [] }) }]
   })
 }
 export function registerProjectOwnerRuntimeIpcHandlers(ipc: Registrar): void {
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, (_, request) => result(() => { const value = fields(request, ['projectId']); return getOwnerRuntimeBinding(value.projectId as string) }))
+  ipc.handle(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, (_, request) => result(() => { const value = fields(request, ['projectId']); return resolveOwnerRuntimeBindingFromDefaults(value.projectId as string) }))
   ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_RUNTIME_BINDING, (_, request) => result(() => { const value = fields(request, ['projectId', 'expectedRevision', 'input']); if (typeof value.expectedRevision !== 'number') throw new Error('Owner绑定版本无效'); return saveOwnerRuntimeBinding(value.projectId as string, value.expectedRevision, value.input) }))
   ipc.handle(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, (_, request) => result(() => { const value = fields(request, ['projectId', 'input']); return prepareOwnerPlanning(value.projectId as string, value.input) }))
   ipc.handle(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, (_, request) => result(() => { const value = fields(request, ['projectId', 'taskId']); return listOwnerPlanningRuns(value.projectId as string, value.taskId as string | undefined) }))

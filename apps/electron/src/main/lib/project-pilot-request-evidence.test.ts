@@ -22,6 +22,17 @@ test('Given官方DeepSeek Flash价格记录 When按模型与协议查找 Then使
   expect(getPilotReviewedPriceEvidenceForModel('unreviewed-model', 'openai')).toBeUndefined()
 })
 
+test('Given官方DeepSeek V4 Pro价格记录 When准备项目预算 Then按峰时价格和模型token上界保守预留', () => {
+  expect(getPilotReviewedPriceEvidenceForModel('deepseek-v4-pro', 'openai')).toMatchObject({
+    evidenceId: 'deepseek-v4-pro-0813-2026-10-22',
+    inputMicrosPerMillion: 1_320_000,
+    outputMicrosPerMillion: 3_960_000,
+    maxModelInputTokens: 1_000_000,
+    maxModelOutputTokens: 384_000,
+  })
+  expect(getPilotReviewedPriceEvidenceForModel('deepseek-v4-pro', 'anthropic')).toBeUndefined()
+})
+
 test('Given 未审核价格 ID When 生成请求包络 Then 一律拒绝', () => {
   expect(() => derivePilotRequestEnvelope({ body: '{"model":"model-a","max_tokens":10}', priceEvidenceId: 'forged' }))
     .toThrow('未审核入库')

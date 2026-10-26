@@ -1,3 +1,5 @@
+import { OwnerConversationUpdates } from './OwnerConversationUpdates'
+import { ownerConversationNavigationAtom } from '../../atoms/project-owner-management-atoms'
 import { ownerTaskListRefreshSignalAtom } from '../../atoms/project-owner-task-atoms'
 import { selectTaskExecution, executionStopMessage } from './project-task-execution-state'
 import type { UserMappingInput } from '@gravitas/shared'
@@ -22,6 +24,8 @@ import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@g
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
+import { ProjectOwnerConversation } from './ProjectOwnerConversation'
+import { ProjectOwnerHome } from './ProjectOwnerHome'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { TaskReviewPanel } from './TaskReviewPanel'
@@ -398,12 +402,6 @@ interface KanbanBoard {
   columns: KanbanColumn[]
 }
 
-interface ProjectProgress {
-  total: number
-  completed: number
-  percentage: number
-}
-
 interface TodoRetryEvent {
   id: string
   entityType: 'task' | 'subTask'
@@ -501,11 +499,20 @@ async function resolveMemberId(displayName: string): Promise<string | undefined>
 // ===== UI 组件 =====
 
 export function ProjectView(): React.ReactElement {
-  const [activeTab, setActiveTab] = useState<'projects' | 'my-work' | 'board' | 'team' | 'schedule'>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [isLoading, _setIsLoading] = useState(false)
-  const userProfile = useAtomValue(userProfileAtom)
+  const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
+  const navigateToOwner = useSetAtom(ownerConversationNavigationAtom)
+  useEffect(() => {
+    if (!ownerNavigation) return
+    let cancelled = false
+    void callProjectAPI<Project | null>('getProject', ownerNavigation.projectId).then(project => {
+      if (!cancelled && project?.id === ownerNavigation.projectId) setSelectedProject(project)
+    }).catch(cause => console.warn('[Owner对话] 打开项目失败', cause))
+    return () => { cancelled = true }
+  }, [ownerNavigation])
+
 
   const loadProjects = useCallback(async () => {
     try {
@@ -525,23 +532,16 @@ export function ProjectView(): React.ReactElement {
     return (
       <div className="flex flex-col h-full bg-background">
         <ProjectHeader
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
           onRefresh={loadProjects}
         />
-        <div className={activeTab === 'schedule' ? 'flex-1 min-h-0' : 'flex-1 overflow-auto p-6'}>
-          {activeTab === 'projects' && (
-            <ProjectList
-              projects={projects}
-              isLoading={isLoading}
-              onSelectProject={setSelectedProject}
-              onProjectsChange={setProjects}
-            />
-          )}
-          {activeTab === 'my-work' && <MyWorkPanel memberId={userProfile.memberId} fallbackUserId={`paa-${userProfile.userName}`} />}
-          {activeTab === 'board' && <BoardOverview projects={projects} />}
-          {activeTab === 'team' && <AgentTeamPanel />}
-          {activeTab === 'schedule' && <ScheduleView hideHeader />}
+        <div className="flex-1 overflow-auto p-6">
+          <OwnerConversationUpdates projects={projects} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
+          <ProjectList
+            projects={projects}
+            isLoading={isLoading}
+            onSelectProject={setSelectedProject}
+            onProjectsChange={setProjects}
+          />
         </div>
       </div>
     )
@@ -549,43 +549,34 @@ export function ProjectView(): React.ReactElement {
 
   // 项目详情
   return (
-    <ProjectDetail
-      project={selectedProject}
-      onBack={() => setSelectedProject(null)}
-      onRefresh={loadProjects}
-    />
+    <div className="flex h-full flex-col bg-background">
+      <header className="flex items-center gap-4 border-b px-6 py-4">
+        <button onClick={() => setSelectedProject(null)} className="text-sm text-muted-foreground hover:text-foreground titlebar-no-drag">← 返回</button>
+        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{selectedProject.title}</h1>
+      </header>
+      <main className="flex-1 overflow-auto p-6">
+        <ProjectOwnerHome key={selectedProject.id} projectId={selectedProject.id} taskId={ownerNavigation?.projectId === selectedProject.id ? ownerNavigation.taskId : undefined} />
+      </main>
+    </div>
   )
 }
 
 // ===== 头部 =====
 
 function ProjectHeader({
-  activeTab,
-  onTabChange,
   onRefresh,
 }: {
-  activeTab: string
-  onTabChange: (tab: 'projects' | 'my-work' | 'board' | 'team' | 'schedule') => void
   onRefresh: () => void
 }): React.ReactElement {
   return (
     <div className="flex items-center justify-between px-6 py-4 border-b">
       <div>
-        <h1 className="text-xl font-semibold">项目管理</h1>
+        <h1 className="text-xl font-semibold">项目 Owner</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          AI 驱动的智能项目协同 — 会议纪要自动拆任务，IM Todo 双向同步
+          选择或创建项目，在项目对话中告诉 Owner 目标、约束与资料。
         </p>
       </div>
       <div className="flex items-center gap-2">
-        {([
-          { key: 'projects', label: '项目' },
-          { key: 'my-work', label: '我的工作' },
-          { key: 'board', label: '看板' },
-          { key: 'team', label: '团队' },
-          { key: 'schedule', label: '日程管家' },
-        ] as const).map((tab) => (
-          <button key={tab.key} onClick={() => onTabChange(tab.key)} className={`rounded px-2 py-1 text-xs titlebar-no-drag ${activeTab === tab.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>{tab.label}</button>
-        ))}
         <button
           onClick={onRefresh}
           className="px-3 py-1.5 text-sm border rounded-md hover:bg-muted transition-colors titlebar-no-drag"
@@ -600,7 +591,7 @@ function ProjectHeader({
   )
 }
 
-function MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbackUserId: string }): React.ReactElement {
+function _MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbackUserId: string }): React.ReactElement {
   const [items, setItems] = useState<MyWorkItem[]>([])
   const [mode, setMode] = useState<'received' | 'created'>('received')
   const [isLoading, setIsLoading] = useState(true)
@@ -766,9 +757,7 @@ function ProjectList({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">
-          项目列表 ({projects.length})
-        </h2>
+        <div><h2 className="text-lg font-medium">项目列表 ({projects.length})</h2><p className="mt-1 text-sm text-muted-foreground">进入项目后可直接与 Owner 对话，由 Owner 负责后续推进。</p></div>
         <button
           onClick={() => setShowCreate(true)}
           className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
@@ -862,7 +851,7 @@ function SortableProjectCard({
   )
 }
 
-function ProjectCard({
+export function ProjectCard({
   project,
   onClick,
   onDelete,
@@ -871,28 +860,6 @@ function ProjectCard({
   onClick: () => void
   onDelete: () => void
 }): React.ReactElement {
-  const [progress, setProgress] = useState<ProjectProgress | null>(null)
-
-  useEffect(() => {
-    callProjectAPI<ProjectProgress>('getProjectProgress', project.id)
-      .then(setProgress)
-      .catch(() => setProgress({ total: 0, completed: 0, percentage: 0 }))
-  }, [project.id])
-
-  const statusColors = {
-    active: 'bg-green-100 text-green-700',
-    planning: 'bg-blue-100 text-blue-700',
-    completed: 'bg-gray-100 text-gray-700',
-    cancelled: 'bg-red-100 text-red-700',
-  }
-
-  const statusLabels = {
-    active: '进行中',
-    planning: '规划中',
-    completed: '已完成',
-    cancelled: '已取消',
-  }
-
   return (
     <div
       className="p-4 bg-card rounded-lg border shadow-sm hover:shadow-md transition-shadow relative group cursor-pointer"
@@ -902,41 +869,18 @@ function ProjectCard({
         <h3 className="font-medium text-sm hover:text-primary">
           {project.title}
         </h3>
-        <div className="flex items-center gap-2">
-          <span className={`px-2 py-0.5 text-xs rounded-full ${statusColors[project.status]}`}>
-            {statusLabels[project.status]}
-          </span>
-          <button
-            onClick={(e) => { e.stopPropagation(); onDelete() }}
-            className="opacity-0 group-hover:opacity-100 text-xs text-red-500 hover:text-red-700 transition-opacity"
-          >
-            删除
-          </button>
-        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          className="opacity-0 group-hover:opacity-100 text-xs text-red-500 hover:text-red-700 transition-opacity"
+          aria-label={`删除项目 ${project.title}`}
+        >删除</button>
       </div>
       <p className="text-sm text-muted-foreground mb-3">{project.description}</p>
 
-      <div className="mb-4">
-        <ProjectRiskBadge projectId={project.id} />
-      </div>
+      <button type="button" onClick={event => { event.stopPropagation(); onClick() }} className="mb-4 inline-flex items-center rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/15" aria-label={`与 ${project.title} 的 Owner 对话`}>
+        与 Owner 对话
+      </button>
 
-      {progress && (
-        <div className="space-y-2">
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>进度</span>
-            <span>{progress.percentage}%</span>
-          </div>
-          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all"
-              style={{ width: `${progress.percentage}%` }}
-            />
-          </div>
-          <div className="text-xs text-muted-foreground">
-            任务 {progress.completed}/{progress.total}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -998,7 +942,7 @@ function ProjectRiskBadge({ projectId, className = '' }: { projectId: string; cl
 
 // ===== 项目详情 =====
 
-function ProjectDetail({
+function _ProjectDetail({
   project,
   onBack,
   onRefresh,
@@ -1008,6 +952,9 @@ function ProjectDetail({
   onRefresh: () => void
 }): React.ReactElement {
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
+  const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(false)
+  const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
+  useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab('pilot') }, [ownerNavigation, project.id])
   const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
   // R-P1-01：项目概览无任务/顶部 CTA 打开统一创建入口
   const [showOverviewCreate, setShowOverviewCreate] = useState(false)
@@ -1072,11 +1019,12 @@ function ProjectDetail({
 
   const ownerTasksRefreshed = useAtomValue(ownerTaskListRefreshSignalAtom)
   React.useEffect(() => {
-    if (ownerTasksRefreshed?.projectId === project.id) void loadData()
-  }, [ownerTasksRefreshed, project.id, loadData])
+    if (advancedDetailsOpen && ownerTasksRefreshed?.projectId === project.id) void loadData()
+  }, [advancedDetailsOpen, ownerTasksRefreshed, project.id, loadData])
 
   // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”)
   React.useEffect(() => {
+    if (!advancedDetailsOpen) return
     const off = window.electronAPI?.paa?.project?.onProjectActivityChanged?.((payload) => {
       if (!payload?.projectId || payload.projectId === project.id) {
         void loadData()
@@ -1090,18 +1038,18 @@ function ProjectDetail({
       off?.()
       window.clearInterval(timer)
     }
-  }, [loadData, project.id])
+  }, [advancedDetailsOpen, loadData, project.id])
 
   // 外部轮询状态变化 → 刷新（变化由全局 ProjectPollListenersInitializer 写入 atom，此处只消费本项目）
   const pollChanged = useAtomValue(pollStatusChangedAtom)
   const lastPollAtRef = React.useRef(0)
   React.useEffect(() => {
-    if (!pollChanged || pollChanged.at === lastPollAtRef.current) return
+    if (!advancedDetailsOpen || !pollChanged || pollChanged.at === lastPollAtRef.current) return
     lastPollAtRef.current = pollChanged.at
     if (pollChanged.projectId === project.id) {
       void loadData()
     }
-  }, [pollChanged, project.id, loadData])
+  }, [advancedDetailsOpen, pollChanged, project.id, loadData])
 
   const handleSaveProject = async () => {
     if (!editTitle.trim()) return
@@ -1170,8 +1118,8 @@ function ProjectDetail({
   }
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    if (advancedDetailsOpen) void loadData()
+  }, [advancedDetailsOpen, loadData])
 
   const handleStartPolling = async (platform: 'feishu' | 'dingtalk') => {
     const key = `${platform}`
@@ -1290,6 +1238,16 @@ function ProjectDetail({
 
   return (
     <div className="flex flex-col h-full bg-background">
+      <header className="flex items-center gap-4 border-b px-6 py-4">
+        <button onClick={onBack} className="text-sm text-muted-foreground hover:text-foreground titlebar-no-drag">← 返回</button>
+        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{project.title}</h1>
+      </header>
+      <main className="flex-1 overflow-auto p-6">
+        <div className="mx-auto w-full max-w-7xl">
+          <ProjectOwnerConversation projectId={project.id} />
+          <details className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => setAdvancedDetailsOpen(event.currentTarget.open)}>
+            <summary className="cursor-pointer text-sm font-medium text-muted-foreground">项目管理详情（高级）</summary>
+            {advancedDetailsOpen && <div className="mt-4">
       {/* 详情头部 */}
       <div className="flex items-center gap-4 px-6 py-4 border-b">
         <button
@@ -1608,6 +1566,10 @@ function ProjectDetail({
           </div>
         )}
       </div>
+            </div>}
+          </details>
+        </div>
+      </main>
     </div>
   )
 }
@@ -2860,12 +2822,17 @@ function TaskItem({
               {isStoppingAgent ? '停止中…' : '停止执行'}
             </button>
           )}
-          {task.controlledPreparationId && task.status !== 'completed' && agentExecStatus !== 'running' && agentExecStatus !== 'queued' && (
+          {task.controlledPreparationId && task.status !== 'completed' && !agentExecStatus && (
             <ControlledTaskStartButton taskId={task.id} revision={task.updatedAt} onChanged={async () => {
               setExecutionRefreshEpoch((value) => value + 1)
               const latest = await callProjectAPI<Task | null>('getTask', task.id)
               if (latest) onTaskUpdate(latest)
             }} />
+          )}
+          {task.controlledPreparationId && task.status !== 'completed' && agentExecStatus && agentExecStatus !== 'running' && agentExecStatus !== 'queued' && (
+            <p className="text-xs text-muted-foreground max-w-44" title="受控任务一次准备只启动一次；请查看执行会话或在项目主页继续计划审阅与执行授权">
+              已有执行记录，不能重复启动；请查看执行会话。
+            </p>
           )}
           {/* 编辑任务按钮 */}
           <button
@@ -3577,7 +3544,7 @@ function MeetingNotesPanel({
 
 // ===== 看板总览 =====
 
-function BoardOverview({ projects }: { projects: Project[] }): React.ReactElement {
+function _BoardOverview({ projects }: { projects: Project[] }): React.ReactElement {
   return (
     <div className="space-y-6">
       <h2 className="text-lg font-medium">项目看板总览</h2>

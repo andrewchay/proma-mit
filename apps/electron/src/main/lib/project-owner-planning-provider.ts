@@ -32,6 +32,8 @@ function tools(payload: Record<string, unknown>): void {
 /** body而非上层配置必须匹配。支持三种已知SDK协议，未知参数不默默放行。 */
 export function assertOwnerPlanningPayload(source: OwnerPlanningSessionSource, body: unknown, protocol: AgentProviderProtocol, url: URL): void {
   const { systemPrompt, userPrompt } = source.request
+  if (source.link.protocolVersion === '5' && (protocol !== 'openai-chat' || !/^glm-5\.3(?:-flash)?$/i.test(source.binding.modelId))) throw new Error('Owner规划GLM JSON协议与实际模型协议不一致')
+  if (source.link.protocolVersion === '4' && (protocol !== 'openai-chat' || source.binding.modelId !== 'deepseek-flash')) throw new Error('Owner规划JSON协议与实际模型协议不一致')
   if (protocol === 'google-generative') {
     const payload = object(body, ['contents', 'systemInstruction', 'generationConfig', 'tools', 'toolConfig'])
     const config = object(payload.generationConfig, ['maxOutputTokens'])
@@ -43,7 +45,7 @@ export function assertOwnerPlanningPayload(source: OwnerPlanningSessionSource, b
   }
   const payload = object(body, protocol === 'anthropic-messages'
     ? ['model', 'system', 'messages', 'max_tokens', 'stream', 'tools', 'tool_choice']
-    : ['model', 'messages', 'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'stream', 'stream_options', 'tools', 'tool_choice'])
+    : ['model', 'messages', 'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'response_format', 'stream', 'stream_options', 'tools', 'tool_choice'])
   tools(payload)
   if (payload.model !== source.binding.modelId || payload.stream !== true || !Array.isArray(payload.messages)) throw new Error('Owner规划实际模型或流式请求无效')
   if (protocol === 'anthropic-messages') {
@@ -53,6 +55,10 @@ export function assertOwnerPlanningPayload(source: OwnerPlanningSessionSource, b
   } else {
     if ((payload.max_tokens === undefined && payload.max_completion_tokens === undefined) || [payload.max_tokens, payload.max_completion_tokens].some(value => value !== undefined && value !== source.link.maxOutputTokens) || payload.messages.length !== 2 || !url.pathname.endsWith('/chat/completions')) throw new Error('Owner规划OpenAI请求输出限制/历史/出口不一致')
     if (payload.reasoning_effort !== source.link.reasoningEffort) throw new Error('Owner规划实际推理强度与冻结协议不一致')
+    if (source.link.protocolVersion === '4' || source.link.protocolVersion === '5') {
+      const format = object(payload.response_format, ['type'])
+      if (format.type !== 'json_object') throw new Error('Owner规划JSON输出格式与冻结协议不一致')
+    } else if (payload.response_format !== undefined) throw new Error('旧Owner规划协议不能追加JSON输出参数')
     if (payload.stream_options !== undefined) {
       const options = object(payload.stream_options, ['include_usage'])
       if (options.include_usage !== true) throw new Error('Owner规划请求不能主动隐藏usage')

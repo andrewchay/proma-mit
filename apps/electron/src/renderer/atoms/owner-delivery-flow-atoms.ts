@@ -1,13 +1,18 @@
 import { atom, type Getter, type Setter } from 'jotai'
-import type { ProjectOwnerGoalSubject } from '@gravitas/shared'
-import { getOwnerExecutionEditor, loadOwnerExecutionAtom, ownerExecutionEditorsAtom } from './project-owner-execution-atoms'
+import type { ProjectOwnerExecutionLaunchApi, ProjectOwnerGoalSubject } from '@gravitas/shared'
+import { getOwnerExecutionEditor, loadOwnerExecutionAtom, previewOwnerExecutionAtom, saveOwnerExecutionAtom, ownerExecutionEditorsAtom, ownerExecutionInput, ownerExecutionPlanReady } from './project-owner-execution-atoms'
 import { canMaterializeOwnerTasks, getOwnerTaskEditor, loadOwnerTasksAtom, compareOwnerTasksAtom, previewOwnerTasksAtom, canPreviewOwnerTasks, materializeOwnerTasksAtom, ownerTaskEditorsAtom } from './project-owner-task-atoms'
 import { editOwnerRevalidationAtom, getOwnerRevalidationEditor, loadOwnerRevalidationAtom, ownerRevalidationEditorsAtom, revalidateOwnerExecutionAtom } from './project-owner-execution-revalidation-atoms'
-import { getOwnerGrantEditor, loadOwnerGrantAtom, ownerGrantEditorsAtom } from './project-owner-execution-grant-atoms'
+import { getOwnerGrantEditor, loadOwnerGrantAtom, ownerGrantEditorsAtom, previewOwnerGrantIssueAtom, confirmOwnerGrantIssueAtom } from './project-owner-execution-grant-atoms'
+import { confirmOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, ownerPlanEditorsAtom } from './project-owner-plan-atoms'
+import { loadOwnerManagementAtom } from './project-owner-management-atoms'
 
-interface OwnerDeliveryFlowState { loading: boolean; saving: boolean; error: string }
-const empty: OwnerDeliveryFlowState = { loading: false, saving: false, error: '' }
+export type OwnerDeliveryLaunchStage = 'register' | 'validate' | 'grant_preview' | 'grant_confirm' | 'resume'
+interface OwnerDeliveryFlowState { loading: boolean; saving: boolean; error: string; stage: OwnerDeliveryLaunchStage | ''; pendingStartIntentId: string | null }
+const empty: OwnerDeliveryFlowState = { loading: false, saving: false, error: '', stage: '', pendingStartIntentId: null }
 export const ownerDeliveryFlowsAtom = atom(new Map<string, OwnerDeliveryFlowState>())
+type TestableOwnerExecutionLaunchApi = Pick<ProjectOwnerExecutionLaunchApi, 'saveOwnerExecutionStartIntent' | 'resumeOwnerExecutionStartIntent'>
+export const ownerExecutionLaunchApiAtom = atom<TestableOwnerExecutionLaunchApi | null>(null)
 const key = (subject: ProjectOwnerGoalSubject) => JSON.stringify([subject.projectId, subject.taskId ?? null])
 export const getOwnerDeliveryFlow = (entries: ReadonlyMap<string, OwnerDeliveryFlowState>, subject: ProjectOwnerGoalSubject) => entries.get(key(subject)) ?? empty
 function update(get: Getter, set: Setter, subject: ProjectOwnerGoalSubject, patch: Partial<OwnerDeliveryFlowState>) {
@@ -38,6 +43,57 @@ export const loadOwnerDeliveryFlowAtom = atom(null, async (get, set, subject: Pr
   } catch (cause) {
     update(get, set, subject, { error: cause instanceof Error ? cause.message : '读取交付流程失败' })
   } finally { update(get, set, subject, { loading: false }) }
+})
+
+/** 用户确认结果与边界后，先持久化确认意图，再由主进程唯一负责执行与恢复。 */
+export const reviewOwnerManagedExecutionAtom = atom(null, async (get, set, subject: ProjectOwnerGoalSubject) => {
+  const flow = getOwnerDeliveryFlow(get(ownerDeliveryFlowsAtom), subject)
+  if (flow.loading || flow.saving || flow.stage) return
+  const api = get(ownerExecutionLaunchApiAtom) ?? window.electronAPI.paa.project
+  let intentId = flow.pendingStartIntentId
+  if (!intentId) {
+    const plan = getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject)
+    const input = ownerExecutionInput(get, subject, true)
+    if (!plan.snapshot || !input || !['proposed', 'confirmed'].includes(plan.snapshot.state)) {
+      update(get, set, subject, { error: '方案或执行边界尚未准备好；请核对当前方案与范围' })
+      return
+    }
+    if (!api.saveOwnerExecutionStartIntent) {
+      update(get, set, subject, { error: '当前应用缺少启动确认恢复接口，请更新后重试' })
+      return
+    }
+    intentId = input.requestId
+    update(get, set, subject, { saving: true, error: '' })
+  try {
+      const saved = await api.saveOwnerExecutionStartIntent({ ...subject, intentId, expectedGoalRevision: input.expectedGoalRevision,
+        expectedPlanRevision: input.expectedPlanRevision, planFingerprint: plan.snapshot.planFingerprint, contextFingerprint: plan.snapshot.contextFingerprint, input })
+      if (!saved.ok) throw new Error(saved.error.message)
+      update(get, set, subject, { pendingStartIntentId: intentId })
+    } catch (cause) {
+      update(get, set, subject, { error: cause instanceof Error ? cause.message : '未能保存本次确认，执行尚未开始' })
+      return
+    } finally { update(get, set, subject, { saving: false }) }
+  }
+  if (!api.resumeOwnerExecutionStartIntent) {
+    update(get, set, subject, { error: '确认已保存；当前应用缺少自动续接接口，请更新后重试' })
+    return
+  }
+  update(get, set, subject, { stage: 'resume', error: '' })
+  try {
+    const result = await api.resumeOwnerExecutionStartIntent({ ...subject, intentId })
+    if (!result.ok) throw new Error(result.error.message)
+    if (result.value.projectId !== subject.projectId || (result.value.taskId ?? undefined) !== subject.taskId || result.value.dispatchMode !== 'autonomous')
+      throw new Error('Owner启动恢复回执与当前项目不匹配')
+    update(get, set, subject, { pendingStartIntentId: null, stage: '' })
+    // 确认成功必须立即读回Owner在对话中的回应，避免用户看到对话被清空。
+    await set(loadOwnerManagementAtom, subject.projectId)
+    // 启动恢复可能确认了待审计划并生成了绑定该确认版本的新准备；同步权威状态，避免页面继续显示旧修订/草稿。
+    await set(loadOwnerPlanAtom, subject)
+    await set(loadOwnerExecutionAtom, subject)
+    await set(loadOwnerDeliveryFlowAtom, subject)
+  } catch (cause) {
+    update(get, set, subject, { error: cause instanceof Error ? cause.message : '确认已保存；Owner将在应用恢复后继续核对' })
+  } finally { update(get, set, subject, { stage: '' }) }
 })
 
 /** 人工已确认精确Task预览后，一次登记并核验；失败即停，不隐式重试或发行授权。 */
@@ -101,4 +157,67 @@ export const continueOwnerDeliveryRevalidationAtom = atom(null, async (get, set,
   try { await revalidate(get, set, subject, preparation.id, preparation.integrityHash, tasks.id, tasks.integrityHash) }
   catch (cause) { update(get, set, subject, { error: cause instanceof Error ? cause.message : '继续核验失败' }) }
   finally { update(get, set, subject, { saving: false }) }
+})
+
+/**
+ * 最终审阅卡的一次确认：顺序完成登记→核验→授权发行。
+ * 每一步仍走原有服务端快照/指纹/预算校验；任何一步失败即停并保留现场，不隐式重试。
+ */
+export const launchOwnerDeliveryAtom = atom(null, async (get, set, { subject, dispatchMode, managed = false }: { subject: ProjectOwnerGoalSubject; dispatchMode: 'manual' | 'autonomous'; managed?: boolean }) => {
+  const state = getOwnerDeliveryFlow(get(ownerDeliveryFlowsAtom), subject)
+  // stage 非空即链在执行中；嵌套的登记/核验 atom 会自行管理 saving，这里不再占用，避免被幂等守卫跳过。
+  if (state.loading || state.saving || state.stage) return
+  if (managed) {
+    update(get, set, subject, { error: 'Owner自动启动只允许通过Owner对话中的结果与范围确认' })
+    return
+  }
+  update(get, set, subject, { error: '', stage: 'register' })
+  try {
+    const execution = getOwnerExecutionEditor(get(ownerExecutionEditorsAtom), subject)
+    const preparation = execution.view?.preparation
+    if (!preparation) throw new Error('缺少当前计划的暂停执行准备，无法开始执行')
+    const tasksBefore = getOwnerTaskEditor(get(ownerTaskEditorsAtom), subject)
+    const recordBefore = tasksBefore.view?.materialization
+    const samePreparation = Boolean(recordBefore && recordBefore.preview.preparation.id === preparation.id && recordBefore.preview.preparation.integrityHash === preparation.integrityHash)
+    if (!samePreparation) {
+      if (!canMaterializeOwnerTasks(get, subject)) throw new Error('登记摘要尚未就绪或来源已变化，请重新读取并核对后再开始')
+      await set(confirmOwnerDeliveryTasksAtom, subject)
+      const flowError = getOwnerDeliveryFlow(get(ownerDeliveryFlowsAtom), subject).error
+      if (flowError) throw new Error(flowError)
+    } else {
+      const revalidation = getOwnerRevalidationEditor(get(ownerRevalidationEditorsAtom), subject)
+      const validated = revalidation.loaded && revalidation.view?.status === 'current' && revalidation.view.revalidation?.source.materialization.id === recordBefore!.id
+        && revalidation.view.revalidation.source.materialization.integrityHash === recordBefore!.integrityHash
+      if (!validated) {
+        update(get, set, subject, { stage: 'validate' })
+        await set(continueOwnerDeliveryRevalidationAtom, subject)
+        const flowError = getOwnerDeliveryFlow(get(ownerDeliveryFlowsAtom), subject).error
+        if (flowError) throw new Error(flowError)
+      }
+    }
+    const preparationAfter = getOwnerExecutionEditor(get(ownerExecutionEditorsAtom), subject)
+    const revalidationAfter = getOwnerRevalidationEditor(get(ownerRevalidationEditorsAtom), subject)
+    const policyRevision = preparationAfter.view?.policyRevision
+    const revalidationRevision = revalidationAfter.view?.revision
+    const grantBefore = getOwnerGrantEditor(get(ownerGrantEditorsAtom), subject)
+    if (grantBefore.grant && grantBefore.grant.state !== 'paused') throw new Error('已有活动或待对账授权，请先核对现有授权；不会重复发行')
+    if (policyRevision === null || policyRevision === undefined || revalidationRevision === null || revalidationRevision === undefined)
+      throw new Error('执行策略或核验版本未知，不能发行授权；请读取当前来源')
+    const input = { requestId: crypto.randomUUID(), expectedRevalidationRevision: revalidationRevision, expectedPolicyRevision: policyRevision, dispatchMode }
+    update(get, set, subject, { stage: 'grant_preview' })
+    await set(previewOwnerGrantIssueAtom, { subject, input })
+    const previewed = getOwnerGrantEditor(get(ownerGrantEditorsAtom), subject)
+    if (previewed.error) throw new Error(previewed.error)
+    if (!previewed.preview) throw new Error('授权摘要未生成；请核对授权条件后重试')
+    if (previewed.preview.blockers.length > 0) throw new Error(`授权被阻断：${previewed.preview.blockers.join('；')}`)
+    update(get, set, subject, { stage: 'grant_confirm' })
+    await set(confirmOwnerGrantIssueAtom, { subject, input, confirmedFingerprint: previewed.preview.approvalFingerprint })
+    const issued = getOwnerGrantEditor(get(ownerGrantEditorsAtom), subject)
+    if (issued.error) throw new Error(issued.error)
+    if (!issued.grant) throw new Error('授权确认未产生账本行；请读取账本核对当前状态')
+    update(get, set, subject, { stage: '' })
+    await set(loadOwnerDeliveryFlowAtom, subject)
+  } catch (cause) {
+    update(get, set, subject, { error: cause instanceof Error ? cause.message : '开始执行失败' })
+  } finally { update(get, set, subject, { stage: '' }) }
 })

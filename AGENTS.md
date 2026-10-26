@@ -548,3 +548,8 @@ React UI 更新
 - 打包必须包含 default-tools、default-skills 与工作流模板；`scripts/package-smoke.ts` 验证实际 Electron 的发现、执行、数据库重开、新工作区核心 Skills 和分组停用。真实 Kimi 压缩烟测只能在显式设置 `GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID` 与 `GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH` 时运行，并必须验证持久化历史、`compact_boundary`、最近 20 条保留、`pi/automatic` 审计及当前回合继续完成。原生 helper 构建失败必须向上传播。
 - 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。CI 会在托管 runner 无法创建内层 namespace 时仅运行契约测试并明确警告，完整隔离验收必须在支持该能力的 Linux runner 执行。配置与恶意代码测试见 apps/executor/SECURITY.md。
 - 存储职责、备份与恢复见 docs/storage-contract.md。新共享 Node 工具需从 packages/shared/src/utils/node.ts 导出；通用工具仍需对应 utils/index.ts 导出。
+
+
+## Owner 权威边界
+
+目标/方案、管理委托、员工执行许可和质量验收分别绑定版本与来源。恢复或读取历史记录不得扩大原权限，Runtime completed不代表业务完成；独立评审和Owner验收须落库。保留未知用量/费用及原始失败，普通对话不能改写权威目标或继承旧执行许可。

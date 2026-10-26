@@ -200,7 +200,7 @@ test('岗位规则变更使当前提案失效，历史用原岗位快照可读�
 
 test('计划与步骤未知授权字段、不可用岗位、跨主体/伪造版本和循环依赖全部拒绝', () => {
   const { p } = fixture()
-  for (const forbidden of ['actor', 'grantId', 'permissionMode', 'status', 'goalVersion', 'projectId', 'taskId', 'planVersion', 'mode']) {
+  for (const forbidden of ['actor', 'grantId', 'permissionMode', 'status', 'goalVersion', 'projectId', 'taskId', 'planVersion', 'mode', 'deliveryFeedbackAssessment']) {
     expect(() => plans.saveProjectOwnerPlanDraft(p.id, 1, 1, { ...saveInput(p.id), [forbidden]: 'fake' })).toThrow('未知字段')
   }
   const base = saveInput(p.id)
@@ -329,4 +329,29 @@ test('保存与确认不触发项目链/任务事件，来源读取不会暗中�
     expect(tables.map(count)).toEqual(before)
     expect(events).toEqual([])
   } finally { removeTasks(); removeChain() }
+})
+
+test('Given 项目绑定启用知识库 When 规划与保存 Then 冻结来源身份、不泄露路径、停用后指纹变化且历史可读', async () => {
+  const catalog = await import('./knowledge-catalog-service')
+  const service = await import('./project-owner-plan-service')
+  const project = store.createProject({ title: '知识资料规划', description: '' })
+  goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '基于已授权PDF形成方案', codeSourceAccess: 'none' })
+  const initial = service.getProjectOwnerPlanningContext(project.id)
+  expect(initial.sources.knowledgeSources).toBeUndefined()
+  const source = catalog.createSource({ type: 'vault', name: '逐页PDF', locator: join(directory, 'private-pdf'), enabled: true })
+  const disabled = catalog.createSource({ type: 'vault', name: '禁用资料', locator: join(directory, 'disabled-pdf'), enabled: false })
+  const unbound = catalog.createSource({ type: 'vault', name: '其他项目资料', locator: join(directory, 'unbound-pdf'), enabled: true })
+  const base = catalog.createKnowledgeBase({ name: '项目资料', sourceIds: [source.id, disabled.id] })
+  catalog.createKnowledgeBase({ name: '未绑定', sourceIds: [unbound.id] })
+  catalog.bindProject({ projectId: project.id, knowledgeBaseId: base.id })
+  const context = service.getProjectOwnerPlanningContext(project.id)
+  expect(context.sources.knowledgeSources).toEqual([{ id: source.id, name: '逐页PDF' }])
+  expect(JSON.stringify(context.sources)).not.toContain('private-pdf')
+  expect(context.sources.code).toBeUndefined()
+  expect(context.fingerprint).not.toBe(initial.fingerprint)
+  const plan = service.saveProjectOwnerPlanDraft(project.id, 1, 0, { ...input(), expectedContextFingerprint: context.fingerprint })
+  expect(service.getProjectOwnerPlanDraft(project.id)?.sources).toEqual(plan.sources)
+  catalog.updateKnowledgeBase(base.id, { enabled: false })
+  expect(service.getProjectOwnerPlanningContext(project.id).fingerprint).toBe(initial.fingerprint)
+  expect(service.getProjectOwnerPlanDraft(project.id)?.sources.knowledgeSources).toEqual([{ id: source.id, name: '逐页PDF' }])
 })

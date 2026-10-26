@@ -1,3 +1,4 @@
+import { readOwnerCommandRuntime } from './project-owner-employee-runtime'
 /** Owner命令停止/恢复：escalation镜像+queued释放+对称恢复扫描；无自动消解。 */
 import { randomUUID } from 'node:crypto'
 import * as store from './project-sqlite-store'
@@ -89,13 +90,15 @@ export function recoverInterruptedOwnerRuntimeExecutions(now = Date.now(), onlyE
           .run(now, execution.projectId, candidate.owner_command_id, execution.id, execution.sessionId)
         try {
           if (!execution.sessionId.trim()) throw new Error('中断执行缺少会话')
-          const command = database.prepare(`SELECT c.state, c.actual_cost_micros, c.usage_evidence, c.usage_record_key, g.channel_id, g.model_id
+          const command = database.prepare(`SELECT c.state, c.actual_cost_micros, c.usage_evidence, c.usage_record_key
             FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id = c.grant_id AND g.project_id = c.project_id
-            WHERE c.id = ? AND c.project_id = ? AND c.execution_id = ?`).get(candidate.owner_command_id, execution.projectId, execution.id) as { state: string; actual_cost_micros: number | null; usage_evidence: string | null; usage_record_key: string | null; channel_id: string; model_id: string } | undefined
+            WHERE c.id = ? AND c.project_id = ? AND c.execution_id = ?`).get(candidate.owner_command_id, execution.projectId, execution.id) as { state: string; actual_cost_micros: number | null; usage_evidence: string | null; usage_record_key: string | null } | undefined
           if (!command || command.state !== 'running' || command.actual_cost_micros !== null || command.usage_evidence !== null || command.usage_record_key !== null) throw new Error('中断执行命令缺失或已有费用证据')
-          settleOwnerCommandUsage(candidate.owner_command_id, { source: 'unknown', executionId: execution.id, sessionId: execution.sessionId, channelId: command.channel_id, modelId: command.model_id, capturedAt: now, reason: '应用重启中断Runtime，无法核验Provider用量' }, now)
+          const runtime = readOwnerCommandRuntime(candidate.owner_command_id)
+          settleOwnerCommandUsage(candidate.owner_command_id, { source: 'unknown', executionId: execution.id, sessionId: execution.sessionId, channelId: runtime.channelId, modelId: runtime.modelId, capturedAt: now, reason: '应用重启中断Runtime，无法核验Provider用量' }, now)
           result = { executionId: execution.id, commandId: candidate.owner_command_id, state: 'unknown_recorded', startBoundary, reason: startBoundary === 'started_proven' ? '启动已证实但终态与用量未知，已按未知用量撤权停等' : '中断Runtime已按未知用量撤权停等' }
         } catch {
+          database.prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile',updated_at=? WHERE id=? AND state='running' AND actual_cost_micros IS NULL").run(now, candidate.owner_command_id)
           result = { executionId: execution.id, commandId: candidate.owner_command_id, state: 'stale_only', startBoundary, reason: '中断执行已置stale，结算失败留待人工对账' }
         }
       })()

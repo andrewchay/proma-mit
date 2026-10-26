@@ -18,13 +18,23 @@ const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 const field = 'mt-1 min-w-0 max-w-full rounded-md border bg-background p-2 text-sm'
 const nextActionLabels: Record<OwnerExecutionNextAction, string> = {
   execute: '安排执行', review: '安排技术评审', rework: '授权范围内有限返工',
-  await_business_acceptance: '等待人工业务验收', human_decision: '等待人工决策/处理', none: '无后续动作',
+  await_owner_quality: 'Owner正在核对成果与独立检查', await_business_acceptance: '等待人工业务验收', human_decision: '等待人工决策/处理', none: '无后续动作',
 }
 export function getOwnerExecutionNextActionLabel(action: OwnerExecutionNextAction): string { return nextActionLabels[action] }
 function api(): ProjectOwnerExecutionCommandApi {
   const value = typeof window === 'undefined' ? undefined : window.electronAPI?.paa?.project
   if (!value || typeof value.getOwnerAutonomousScheduleStatus !== 'function' || typeof value.previewOwnerExecutionCommandAck !== 'function' || typeof value.queueOwnerExecutionCommand !== 'function' || typeof value.listOwnerExecutionCommands !== 'function' || typeof value.dispatchOwnerExecutionCommand !== 'function' || typeof value.cancelQueuedOwnerExecutionCommand !== 'function' || typeof value.previewOwnerPreflightReconciliation !== 'function' || typeof value.confirmOwnerPreflightReconciliation !== 'function') throw new Error('当前版本没有Owner命令执行接口')
   return value
+}
+
+/** 默认展示成果卡，内部执行回报仍保留在可选审阅记录。 */
+export function OwnerTextDeliveryCard({ command }: { command: OwnerExecutionCommandView }): React.ReactElement | null {
+  if (!command.textDelivery) return null
+  return <section className="space-y-2 rounded-2xl bg-card p-4 shadow-sm" aria-label="完整文本成果">
+    <h5 className="font-medium">{command.taskTitle} · 文本成果</h5>
+    <p className="text-xs text-muted-foreground">{command.textDelivery.detail}</p>
+    {command.textDelivery.artifact && <><details><summary className="cursor-pointer text-sm text-primary">查看完整正文</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-sm">{command.textDelivery.artifact.content}</pre></details><details className="text-xs text-muted-foreground"><summary>成果版本依据</summary><p>方案修订 {command.textDelivery.artifact.planRevision} · 第 {command.textDelivery.artifact.reworkOrdinal} 轮 · {command.textDelivery.artifact.byteLength} 字节</p><p className="break-all">{command.textDelivery.artifact.contentSha256}</p></details></>}
+  </section>
 }
 
 export function OwnerExecutionReviewDetails({ command, onSubmitFeedback }: {
@@ -53,7 +63,7 @@ export function OwnerExecutionReviewDetails({ command, onSubmitFeedback }: {
     }
     setFeedback(''); setFeedbackError(''); setFeedbackStatus('修改意见已加入对应Task的未保存Goal草案。请检查并保存，再重新规划；这不会启动执行或应用/外发成果。')
   }
-  return <details className="rounded-md bg-muted/40 p-3">
+  return <><OwnerTextDeliveryCard command={command} /><details className="rounded-md bg-muted/40 p-3">
     <summary className="cursor-pointer text-sm font-medium">交付审阅材料（只读）</summary>
     <div className="mt-3 space-y-3 text-sm">
       <div>
@@ -70,10 +80,10 @@ export function OwnerExecutionReviewDetails({ command, onSubmitFeedback }: {
       {command.technicalReview && <section className="space-y-2 rounded bg-background p-2">
         <div>
           <h5 className="font-medium">结构化技术评审：{command.technicalReview.verdict}</h5>
-          <p>{command.technicalReview.summary}</p>
+          <p>{command.technicalReview.summary}</p>{command.technicalReview.artifactVerified === false && <p className="text-destructive">此评审对应的成果已缺失或变化，不能继续作为通过依据。</p>}
         </div>
         <ul className="list-disc space-y-1 pl-5">
-          {command.technicalReview.criteria.map((criterion, index) => <li key={`${index}-${criterion.criterion}`}>{criterion.criterion} · {criterion.status} · {criterion.evidence}</li>)}
+          {command.technicalReview.criteria.map((criterion, index) => <li key={`${index}-${criterion.criterion}`}>{criterion.criterion} · {criterion.status} · {criterion.evidence}{criterion.quote && <blockquote className="mt-1 rounded bg-muted/40 p-2">{criterion.quote}</blockquote>}</li>)}
         </ul>
         {command.technicalReview.findings.length > 0 && <ul className="list-disc space-y-1 pl-5">
           {command.technicalReview.findings.map((finding, index) => <li key={`${index}-${finding.description}`}>{finding.severity} · {finding.description} → {finding.requestedChange}</li>)}
@@ -100,7 +110,7 @@ export function OwnerExecutionReviewDetails({ command, onSubmitFeedback }: {
         <p className="text-xs text-muted-foreground">意见绑定命令 {command.commandId}，只改本地未保存草案。保存后Owner可基于新目标重新规划；执行范围和授权仍需重验，写回/外发不会因提交意见而发生。</p>
       </section>}
     </div>
-  </details>
+  </details></>
 }
 
 /** Owner 命令双确认面板：费用确认只排队；第二次独立确认才显式dispatch。 */

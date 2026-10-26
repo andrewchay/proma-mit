@@ -31,6 +31,16 @@ test('Given 已有计划 When 修订保存 Then 新版本 proposed，之后才�
   await f.store.set(saveOwnerPlanAtom, subject); expect(f.read().snapshot?.revision).toBe(2); expect(f.read().dirty).toBe(false)
   await f.store.set(confirmOwnerPlanAtom, subject); expect(f.confirms()).toBe(1)
 })
+test('Given 保存/确认成功但项目文档归档失败 When 返回 Then 计划状态仍成功并展示安全告警', async () => {
+  const warning = '项目文档归档失败；规划内容仍保存在应用账本中。请检查项目工作区后刷新重试。'
+  const f = setup({ confirmOwnerPlanDraft: async () => ({ ok: true, value: plan(3, 'confirmed'), archiveWarning: warning }) })
+  await f.store.set(loadOwnerPlanAtom, subject)
+  await f.store.set(confirmOwnerPlanAtom, subject)
+  expect(f.read().snapshot?.state).toBe('confirmed')
+  expect(f.read().archiveWarning).toBe(warning)
+  expect(f.read().error).toBe('')
+})
+
 test('Given 计划含交付差异评估 When 人工修订并保存 Then 结构化评估随计划版本保留', async () => {
   const assessment = { summary: '补齐未验证标准', commands: [{ commandId: 'cmd-1', changes: [{ criterion: '覆盖正常数量', disposition: 'addressed' as const, proposedChange: '增加回归用例' }], authorizationImpact: 'unchanged' as const, authorizationRationale: '范围内测试' }] }
   const source: ProjectOwnerDeliveryContext = { commandId: 'cmd-1', grantId: 'grant-1', priorAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1000000, maxRuns: 3, maxRework: 1, expiresAt: 9999999999999, roleBudgetCaps: [{ roleKey: 'executor', maxCostMicros: 500000 }] }, taskId: 'task-1', role: 'executor' as const, reworkOrdinal: 0, state: 'settled', acceptanceCriteria: ['覆盖正常数量'], feedback: '增加测试' }

@@ -25,6 +25,7 @@ test('Given已保存的完整澄清答复 When续跑Atom执行 Then只创建一�
   let runs = [oldRun]
   store.set(ownerRuntimeApiAtom, {
     getOwnerRuntimeBinding: async () => ({ ok: true as const, value: binding }),
+    ensureOwnerRuntimeBinding: async () => ({ ok: true as const, value: binding }),
     saveOwnerRuntimeBinding: async () => ({ ok: true as const, value: binding }),
     prepareOwnerPlanning: async request => {
       prepareCalls++

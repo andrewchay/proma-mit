@@ -89,6 +89,7 @@ mock.module('@gravitas/core/providers/ai-sdk-bridge', () => ({
 }))
 
 mock.module('ai', () => ({
+    Output: { json: () => ({ type: 'json' }) },
   isStepCount: (count: number) => ({ type: 'step-count', count }),
   jsonSchema: (schema: unknown) => schema,
   tool: (definition: unknown) => definition,

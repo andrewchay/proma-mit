@@ -1,11 +1,13 @@
 /** 仅可信Runtime回调调用。Run证据不可覆盖；晚到证据不覆盖已有处理结论。无Caller/派工/费用许可。 */
+import { recordOwnerManagementRun, recordOwnerManagementRecoveredAssignment } from './project-owner-management-store'
 import { createHash } from 'node:crypto'
 import { assertOwnerPlanningAdmission, type OwnerPlanningAdmission } from './project-owner-planning-provider'
-import type { SDKResultMessage, ProjectOwnerPlanProposal } from '@gravitas/shared'
+import type { SDKResultMessage, OwnerExecutionAssignmentProposal, ProjectOwnerPlanProposal } from '@gravitas/shared'
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { parseProjectOwnerPlanningResponse } from './project-owner-planning-protocol'
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
+import { parseOwnerExecutionAssignmentProposal, type OwnerExecutionAssignmentProtocolContext } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
@@ -21,7 +23,7 @@ export interface OwnerPlanningRunReceipt {
   channelId: string
   modelId: string
   bindingRevision: number
-  purpose: 'owner_planning'
+  purpose: 'owner_planning' | 'owner_execution_assignment'
   runtimeSource: string
   captureHash: string
   capturedAt: number
@@ -38,12 +40,26 @@ export interface OwnerPlanningRunReceipt {
 export interface OwnerPlanningRunOutcome {
   executionId: string
   receiptId: string
-  state: 'proposed' | 'needs_clarification' | 'stale' | 'failed' | 'unknown' | 'stopped'
+  state: 'proposed' | 'needs_clarification' | 'replied' | 'stale' | 'failed' | 'unknown' | 'stopped'
   detail: string
+  reply?: string
+  changeProposal?: import('@gravitas/shared').OwnerConversationChange
+  qualityDecision?: import('@gravitas/shared').OwnerQualityDecision
   planRevision?: number
   clarification?: Extract<ReturnType<typeof parseProjectOwnerPlanningResponse>, { kind: 'needs_clarification' }>
+  assignmentProposal?: OwnerExecutionAssignmentProposal
 }
 interface ReceiptRow { id: string; execution_id: string; capture_hash: string; payload: string }
+interface OutcomeRow { receipt_id: string; payload: string }
+interface RecoveredOwnerResponse {
+  schemaVersion: 1
+  executionId: string
+  receiptId: string
+  responseHash: string
+  originalOutcomeHash: string
+  recoveredOutcome: OwnerPlanningRunOutcome
+  recoveredAt: number
+}
 function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0 }
 function nullableUsage(result?: SDKResultMessage): OwnerPlanningRunReceipt['usage'] {
   const value = result?.owner_planning_usage
@@ -63,29 +79,138 @@ export function getOwnerPlanningRunReceipt(receiptId: string): OwnerPlanningRunR
   const row = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_run_receipts WHERE id = ?').get(receiptId) as ReceiptRow | undefined
   return row ? storedReceipt(row) : null
 }
-export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRunOutcome | null {
+function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRunOutcome | null {
   const row = store.getProjectDb().prepare('SELECT receipt_id, payload FROM project_owner_planning_run_outcomes WHERE execution_id = ?').get(executionId) as { receipt_id: string; payload: string } | undefined
   if (!row) return null
   try {
     const parsed = JSON.parse(row.payload) as OwnerPlanningRunOutcome & { integrityHash: string }
     const { integrityHash, ...value } = parsed
-    const allowed = ['executionId', 'receiptId', 'state', 'detail', 'planRevision', 'clarification']
+    const allowed = ['executionId', 'receiptId', 'state', 'detail', 'planRevision', 'clarification', 'assignmentProposal', 'reply', 'changeProposal', 'qualityDecision']
     const receipt = getOwnerPlanningRunReceipt(value.receiptId)
-    if (Object.keys(value).some(key => !allowed.includes(key)) || hash(value) !== integrityHash || value.executionId !== executionId || value.receiptId !== row.receipt_id || !receipt || receipt.executionId !== executionId || !['proposed', 'needs_clarification', 'stale', 'failed', 'unknown', 'stopped'].includes(value.state) || typeof value.detail !== 'string') throw new Error('结论完整性无效')
-    if (value.state === 'proposed' || value.state === 'needs_clarification') {
+    if (Object.keys(value).some(key => !allowed.includes(key)) || hash(value) !== integrityHash || value.executionId !== executionId || value.receiptId !== row.receipt_id || !receipt || receipt.executionId !== executionId || !['proposed', 'needs_clarification', 'replied', 'stale', 'failed', 'unknown', 'stopped'].includes(value.state) || typeof value.detail !== 'string') throw new Error('结论完整性无效')
+    if (value.state === 'proposed' || value.state === 'needs_clarification' || value.state === 'replied') {
       if (!receipt.validTerminal || receipt.stopped || receipt.error) throw new Error('结论没有可信终态')
       const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
-      if (!frozen) throw new Error('结论来源缺失')
-      const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
-      if (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined) throw new Error('结论与原始响应不一致')
-    } else if (value.planRevision !== undefined || value.clarification !== undefined) throw new Error('失败结论夹带提案')
+      if (!frozen || frozen.link.purpose !== receipt.purpose) throw new Error('结论来源缺失或用途不匹配')
+      if (frozen.link.purpose === 'owner_execution_assignment') {
+        if (value.state !== 'proposed' || !frozen.assignmentContext || value.planRevision !== undefined || value.clarification !== undefined || value.reply !== undefined || value.changeProposal !== undefined || value.qualityDecision !== undefined) throw new Error('Owner人员安排Run结论字段无效')
+        const source = frozen.assignmentContext
+        const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, sourceReferences }) => ({ key, dependencies, roleKey, ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
+        const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, protocolContext)
+        if (!value.assignmentProposal || JSON.stringify(proposal) !== JSON.stringify(value.assignmentProposal)) throw new Error('人员安排结论与原始响应不一致')
+      } else {
+        if (value.assignmentProposal !== undefined) throw new Error('Owner规划Run不能夹带人员安排结论')
+        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
+        if (value.state === 'replied') {
+          if (!['conversation_reply', 'conversation_change', 'quality_decision'].includes(response.kind) || !('message' in response) || value.reply !== response.message || value.planRevision !== undefined || value.clarification !== undefined || JSON.stringify(value.changeProposal) !== JSON.stringify(response.kind === 'conversation_change' ? response.change : undefined) || JSON.stringify(value.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined)) throw new Error('对话回应与原始响应不一致')
+        } else if (value.qualityDecision !== undefined || value.reply !== undefined || value.changeProposal !== undefined || (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined)) throw new Error('结论与原始响应不一致')
+      }
+    } else if (value.qualityDecision !== undefined || value.planRevision !== undefined || value.clarification !== undefined || value.assignmentProposal !== undefined || value.reply !== undefined || value.changeProposal !== undefined) throw new Error('失败结论夹带提案')
     return value
   } catch { throw new Error('Owner Run处理结论无效，请保留数据核查') }
+}
+
+/**
+ * 对历史兼容拒绝只重新验证本地原文，不重放模型请求；原始失败结论与回执保持不变。
+ * 仅接受严格可解析的普通回应或准确质量决定；质量动作仍重新核验当前授权与成果。
+ */
+export function recoverLegacyOwnerConversationReply(executionId: string): OwnerPlanningRunOutcome | null {
+  const original = readStoredOwnerPlanningRunOutcome(executionId)
+  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配'].includes(original.detail)) return null
+  const receipt = getOwnerPlanningRunReceipt(original.receiptId)
+  if (!receipt || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
+    || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
+    || !receipt.usage || !Number.isSafeInteger(receipt.usage.inputTokens) || receipt.usage.inputTokens === null
+    || !Number.isSafeInteger(receipt.usage.outputTokens) || receipt.usage.outputTokens === null) return null
+  const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
+  if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.projectId !== receipt.projectId || frozen.link.purpose !== 'owner_planning' || !frozen.link.conversationMessageId) return null
+  let response: ReturnType<typeof parseProjectOwnerPlanningResponse>
+  try { response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context) }
+  catch { return null }
+  if (response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') return null
+  const recoveredOutcome: OwnerPlanningRunOutcome = {
+    executionId, receiptId: receipt.id, state: 'replied',
+    detail: 'Owner旧格式回应已从本地原始回执重新校验；未重发请求，费用仍按原预留记录。',
+    reply: response.message,
+    ...(response.kind === 'quality_decision' ? { qualityDecision: response.decision } : {}),
+  }
+  const recovered: RecoveredOwnerResponse = {
+    schemaVersion: 1, executionId, receiptId: receipt.id, responseHash: receipt.responseHash,
+    originalOutcomeHash: hash(original), recoveredOutcome, recoveredAt: Date.now(),
+  }
+  const integrityHash = hash(recovered)
+  store.getProjectDb().prepare(`INSERT OR IGNORE INTO project_owner_planning_run_recoveries
+    (execution_id, receipt_id, original_outcome_hash, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)`)
+    .run(executionId, receipt.id, recovered.originalOutcomeHash, JSON.stringify({ ...recovered, integrityHash }), integrityHash)
+  return getOwnerPlanningRunOutcome(executionId)
+}
+
+/** 只恢复受控安排的空代码范围占位；重验原文，不发送新请求、不改变旧失败或费用。 */
+export function recoverLegacyOwnerAssignmentProposal(executionId: string): OwnerPlanningRunOutcome | null {
+  const original = readStoredOwnerPlanningRunOutcome(executionId)
+  if (!original || original.state !== 'failed' || original.detail !== '受控非研发安排不得包含代码范围') return null
+  const receipt = getOwnerPlanningRunReceipt(original.receiptId)
+  if (!receipt || receipt.purpose !== 'owner_execution_assignment' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
+    || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
+    || !receipt.usage || !finite(receipt.usage.inputTokens) || !Number.isSafeInteger(receipt.usage.inputTokens)
+    || !finite(receipt.usage.outputTokens) || !Number.isSafeInteger(receipt.usage.outputTokens)) return null
+  const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
+  if (!frozen?.assignmentContext || frozen.link.id !== receipt.linkId || frozen.link.projectId !== receipt.projectId) return null
+  let proposal: OwnerExecutionAssignmentProposal
+  try { proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, frozen.assignmentContext) }
+  catch { return null }
+  if (proposal.executionKind !== 'controlled') return null
+  const recovered: RecoveredOwnerResponse = {
+    schemaVersion: 1, executionId, receiptId: receipt.id, responseHash: receipt.responseHash, originalOutcomeHash: hash(original), recoveredAt: Date.now(),
+    recoveredOutcome: { executionId, receiptId: receipt.id, state: 'proposed', detail: 'Owner旧格式受控安排已从本地原回执重新校验；未重发请求或修改原失败和费用。', assignmentProposal: proposal },
+  }
+  const integrityHash = hash(recovered)
+  store.getProjectDb().transaction(() => {
+    store.getProjectDb().prepare(`INSERT OR IGNORE INTO project_owner_planning_run_recoveries
+    (execution_id, receipt_id, original_outcome_hash, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)`)
+    .run(executionId, receipt.id, recovered.originalOutcomeHash, JSON.stringify({ ...recovered, integrityHash }), integrityHash)
+    recordOwnerManagementRecoveredAssignment(receipt.projectId, executionId, frozen.link.goalRevision, receipt.id, frozen.link.targetTaskId)
+  })()
+  return getOwnerPlanningRunOutcome(executionId)
+}
+
+export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRunOutcome | null {
+  const original = readStoredOwnerPlanningRunOutcome(executionId)
+  if (!original) return null
+  const row = store.getProjectDb().prepare('SELECT receipt_id, original_outcome_hash, payload, integrity_hash FROM project_owner_planning_run_recoveries WHERE execution_id = ?').get(executionId) as (OutcomeRow & { original_outcome_hash: string; integrity_hash: string }) | undefined
+  if (!row) return original
+  try {
+    const recovered = JSON.parse(row.payload) as RecoveredOwnerResponse
+    const { integrityHash, ...body } = recovered as RecoveredOwnerResponse & { integrityHash: string }
+    const receipt = getOwnerPlanningRunReceipt(row.receipt_id)
+    const frozen = receipt ? readOwnerPlanningSnapshot(receipt.planningTaskId) : null
+    if (!receipt || !frozen || recovered.schemaVersion !== 1 || recovered.executionId !== executionId || recovered.receiptId !== row.receipt_id
+      || recovered.responseHash !== receipt.responseHash || recovered.originalOutcomeHash !== row.original_outcome_hash || hash(original) !== row.original_outcome_hash
+      || hash(body) !== row.integrity_hash || row.integrity_hash !== integrityHash || !['replied', 'proposed'].includes(recovered.recoveredOutcome.state)
+      || recovered.recoveredOutcome.executionId !== executionId || recovered.recoveredOutcome.receiptId !== receipt.id) throw new Error('旧回应恢复记录完整性无效')
+    if (recovered.recoveredOutcome.state === 'proposed') {
+      if (original.state !== 'failed' || original.detail !== '受控非研发安排不得包含代码范围'
+        || receipt.purpose !== 'owner_execution_assignment' || !frozen.assignmentContext || !receipt.validTerminal || receipt.stopped || receipt.error !== null
+        || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
+        || !receipt.usage || !finite(receipt.usage.inputTokens) || !Number.isSafeInteger(receipt.usage.inputTokens)
+        || !finite(receipt.usage.outputTokens) || !Number.isSafeInteger(receipt.usage.outputTokens)
+        || recovered.recoveredOutcome.detail !== 'Owner旧格式受控安排已从本地原回执重新校验；未重发请求或修改原失败和费用。'
+        || recovered.recoveredOutcome.reply !== undefined || recovered.recoveredOutcome.qualityDecision !== undefined
+        || recovered.recoveredOutcome.planRevision !== undefined || recovered.recoveredOutcome.clarification !== undefined || recovered.recoveredOutcome.changeProposal !== undefined) throw new Error('受控安排恢复来源不符')
+      const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, frozen.assignmentContext)
+      if (proposal.executionKind !== 'controlled' || JSON.stringify(proposal) !== JSON.stringify(recovered.recoveredOutcome.assignmentProposal)) throw new Error('受控安排恢复与原文不一致')
+      return recovered.recoveredOutcome
+    }
+    if (recovered.recoveredOutcome.detail !== 'Owner旧格式回应已从本地原始回执重新校验；未重发请求，费用仍按原预留记录。') throw new Error('旧回应恢复说明不符')
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
+    if ((response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') || recovered.recoveredOutcome.reply !== response.message || JSON.stringify(recovered.recoveredOutcome.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined)) throw new Error('旧回应恢复记录与原文不一致')
+    return recovered.recoveredOutcome
+  } catch { throw new Error('Owner旧回应恢复记录无效，请保留原始回执核查') }
 }
 /** 计划历史反查同Run原文与严格协议，不以origin标签或Model自述作为证明。 */
 export function verifyGeneratedOwnerPlan(sourceRun: { receiptId: string; executionId: string; responseHash: string }, proposal: ProjectOwnerPlanProposal, goalRevision: number, contextFingerprint: string): void {
   const receipt = getOwnerPlanningRunReceipt(sourceRun.receiptId)
-  if (!receipt || receipt.executionId !== sourceRun.executionId || receipt.responseHash !== sourceRun.responseHash || !receipt.validTerminal || receipt.stopped || receipt.error) throw new Error('Owner生成计划缺少可信Run证据')
+  if (!receipt || receipt.purpose !== 'owner_planning' || receipt.executionId !== sourceRun.executionId || receipt.responseHash !== sourceRun.responseHash || !receipt.validTerminal || receipt.stopped || receipt.error) throw new Error('Owner生成计划缺少可信Run证据')
   const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
   if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.goalRevision !== goalRevision || frozen.link.contextFingerprint !== contextFingerprint) throw new Error('Owner生成计划与Run资料不匹配')
   const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
@@ -137,7 +262,7 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
   const oldRow = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_run_receipts WHERE execution_id = ? AND capture_hash = ?').get(executionId, captureHash) as ReceiptRow | undefined
   let receipt = oldRow ? storedReceipt(oldRow) : undefined
   if (!receipt) {
-    const body: Omit<OwnerPlanningRunReceipt, 'id'> = { schemaVersion: 1, executionId, sessionId: execution.sessionId, projectId: link.projectId, planningTaskId: link.planningTaskId, linkId: link.id, carrierId: binding.carrierId, channelId: binding.channelId, modelId: binding.modelId, bindingRevision: binding.revision, purpose: 'owner_planning', runtimeSource, captureHash, capturedAt: Date.now(), requestHash: admission?.request_hash ?? null, responseText, responseHash: hash(responseText), runtimeResult: runtimeResult ?? null, stopped, error: callbackError ?? null, validTerminal, usage: trustedRuntime ? nullableUsage(runtimeResult) : null, cost: trustedRuntime && admission && finite(runtimeResult.total_cost_usd) ? { source: 'runtime_reported', usd: runtimeResult.total_cost_usd } : { source: 'unknown', usd: null } }
+    const body: Omit<OwnerPlanningRunReceipt, 'id'> = { schemaVersion: 1, executionId, sessionId: execution.sessionId, projectId: link.projectId, planningTaskId: link.planningTaskId, linkId: link.id, carrierId: binding.carrierId, channelId: binding.channelId, modelId: binding.modelId, bindingRevision: binding.revision, purpose: link.purpose, runtimeSource, captureHash, capturedAt: Date.now(), requestHash: admission?.request_hash ?? null, responseText, responseHash: hash(responseText), runtimeResult: runtimeResult ?? null, stopped, error: callbackError ?? null, validTerminal, usage: trustedRuntime ? nullableUsage(runtimeResult) : null, cost: trustedRuntime && admission && finite(runtimeResult.total_cost_usd) ? { source: 'runtime_reported', usd: runtimeResult.total_cost_usd } : { source: 'unknown', usd: null } }
     receipt = { id: hash(body), ...body }
     store.getProjectDb().prepare('INSERT INTO project_owner_planning_run_receipts (id, execution_id, capture_hash, payload) VALUES (?, ?, ?, ?)').run(receipt.id, executionId, captureHash, JSON.stringify(receipt))
   }
@@ -150,20 +275,31 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
     if (concurrent) { outcome = concurrent; return }
     if (validTerminal && !stopped && !error && execution.status === 'running') {
       try {
-        const response = parseProjectOwnerPlanningResponse(responseText, frozen.context)
-        try { resolveOwnerPlanningTask(execution.entityId) } catch (cause) { outcome = { executionId, receiptId: receipt!.id, state: 'stale', detail: cause instanceof Error ? cause.message : '来源版本更新，保留原文' }; throw new Error('owner-source-stale') } // // 版本/载体/来源重读与append双CAS在同同步事务。
-        if (response.kind === 'needs_clarification') outcome = { executionId, receiptId: receipt!.id, state: 'needs_clarification', detail: response.reason, clarification: response }
-        else {
-          const plan = appendGeneratedOwnerPlan(receipt!.id)
-          outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'AI提案待人工内容确认，不是执行许可', planRevision: plan.revision }
+        try { resolveOwnerPlanningTask(execution.entityId) } catch (cause) { outcome = { executionId, receiptId: receipt!.id, state: 'stale', detail: cause instanceof Error ? cause.message : '来源版本更新，保留原文' }; throw new Error('owner-source-stale') }
+        if (link.purpose === 'owner_execution_assignment') {
+          const source = frozen.assignmentContext
+          if (!source) throw new Error('Owner安排冻结资料缺失')
+          const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, sourceReferences }) => ({ key, dependencies, roleKey, ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
+          const assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext)
+          outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
+        } else {
+          const response = parseProjectOwnerPlanningResponse(responseText, frozen.context)
+          if (response.kind === 'quality_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已提出质量决定，等待权威服务核验执行', reply: response.message, qualityDecision: response.decision }
+          else if (response.kind === 'conversation_reply' || response.kind === 'conversation_change') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: response.kind === 'conversation_change' ? 'Owner已整理理解，等待用户确认后更新内容' : 'Owner已回应当前消息，未修改计划或执行许可', reply: response.message, ...(response.kind === 'conversation_change' ? { changeProposal: response.change } : {}) }
+          else if (response.kind === 'needs_clarification') outcome = { executionId, receiptId: receipt!.id, state: 'needs_clarification', detail: response.reason, clarification: response }
+          else {
+            const plan = appendGeneratedOwnerPlan(receipt!.id)
+            outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'AI提案待人工内容确认，不是执行许可', planRevision: plan.revision }
+          }
         }
       } catch (cause) { if (outcome.state !== 'stale') outcome = { executionId, receiptId: receipt!.id, state: 'failed', detail: cause instanceof Error ? cause.message : '响应无效，保留原始证据，不覆盖计划' } }
     }
     store.getProjectDb().prepare('INSERT INTO project_owner_planning_run_outcomes (execution_id, receipt_id, payload) VALUES (?, ?, ?)').run(executionId, outcome.receiptId, JSON.stringify({ ...outcome, integrityHash: hash(outcome) }))
     // 规划承载Run终结；业务目标/DoD、员工绩效/学习/Review和通知不在这里写回。
-    if (execution.status === 'running' || execution.status === 'queued') store.updateAgentExecution(executionId, { status: outcome.state === 'proposed' || outcome.state === 'needs_clarification' ? 'completed' : outcome.state === 'stopped' ? 'cancelled' : outcome.state === 'unknown' || outcome.state === 'stale' ? 'stale' : 'failed', completedAt: Date.now(), resultSummary: outcome.detail, ...(outcome.state === 'proposed' || outcome.state === 'needs_clarification' ? {} : { error: outcome.detail }) })
+    if (execution.status === 'running' || execution.status === 'queued') store.updateAgentExecution(executionId, { status: outcome.state === 'proposed' || outcome.state === 'needs_clarification' || outcome.state === 'replied' ? 'completed' : outcome.state === 'stopped' ? 'cancelled' : outcome.state === 'unknown' || outcome.state === 'stale' ? 'stale' : 'failed', completedAt: Date.now(), resultSummary: outcome.detail, ...(outcome.state === 'proposed' || outcome.state === 'needs_clarification' || outcome.state === 'replied' ? {} : { error: outcome.detail }) })
     const task = store.getTask(execution.entityId)
     if (task?.controlledPreparationId && task.assignee?.userId === `agent-${binding.carrierId}`) store.updateTask(task.id, { status: 'paused' })
+    recordOwnerManagementRun(link.projectId, executionId, link.goalRevision, link.targetTaskId, link.purpose)
   })()
   return outcome
 }
