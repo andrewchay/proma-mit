@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { OwnerExecutionAssignmentCandidate, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
-import { createOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
+import { createOwnerExecutionAssignmentContext, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
 
 const plan: ProjectOwnerPlanDraft = {
   projectId: 'p', schemaVersion: 1, revision: 2, planVersion: 1, goalRevision: 1, goalVersion: 1, state: 'confirmed', actor: 'local-user', origin: 'manual', savedAt: 1, changeReason: '确认', contextFingerprint: 'a'.repeat(64), planFingerprint: 'b'.repeat(64),
@@ -118,7 +118,7 @@ test('Given 旧安排请求与新岗位覆盖提示 When 恢复冻结来源 Then
   expect(() => protocol.resolveOwnerExecutionAssignmentRequest(value, 'f'.repeat(64))).toThrow('不属于已知格式')
 })
 
-test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then 提供development并标记绿地', () => {
+test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then 提供development并标记绿地', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'owner-greenfield-repo-'))
   try {
     execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -130,7 +130,19 @@ test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then �
     })
     expect(value.executionKinds).toContain('development')
     expect(value.greenfieldDevelopment).toBe(true)
+    const protocol = await import('./project-owner-execution-assignment-protocol')
+    const { OWNER_RUNTIME_ASSERTION_TEMPLATES } = await import('./owner-runtime-assertion-templates')
+    const { createHash } = await import('node:crypto')
+    for (const current of [true,false]) {
+      const request = protocol.buildOwnerExecutionAssignmentRequest(value,true,current)
+      expect(protocol.resolveOwnerExecutionAssignmentRequest(value,createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
+      if (current) for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) expect(request.systemPrompt).toContain(item.id)
+      else expect(request.systemPrompt).not.toContain('behavior.game-over')
+    }
+
     expect(value.codeFiles).toBeUndefined()
+    expect(parseOwnerExecutionAssignmentContext(JSON.parse(JSON.stringify(value)))).toEqual(value)
+    expect(() => parseOwnerExecutionAssignmentContext({ ...value, greenfieldDevelopment: false })).toThrow()
   } finally { rmSync(repo, { recursive: true, force: true }) }
 })
 

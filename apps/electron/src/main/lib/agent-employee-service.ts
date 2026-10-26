@@ -1,6 +1,7 @@
+import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 import { captureOwnerTextDelivery } from './project-owner-text-delivery'
 import { requestOwnerManagementWake } from './project-owner-management-events'
-import { recordOwnerManagementTeamChanged } from './project-owner-management-store'
+import { appendOwnerManagementMessage, recordOwnerManagementTeamChanged } from './project-owner-management-store'
 import { readOwnerCommandFrozenSource, readOwnerCommandRuntime } from './project-owner-employee-runtime'
 import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
 import { awaitOwnerRequestSettlements } from './project-owner-execution-request-exit'
@@ -70,7 +71,7 @@ import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { recordOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { ownerExecutionHash } from './project-owner-execution-hash'
-import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview } from './project-owner-development-artifact'
+import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework } from './project-owner-development-artifact'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { updateTask, getTask, updateExecutionSubTask } from './project-service'
 import { getSettings } from './settings-service'
@@ -944,7 +945,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   let sessionId: string
   try {
     const task = store.getTask(execution.entityId)
-    const previous = development ? store.listAgentExecutionsByEntity('task', execution.entityId)
+    const previous = development && !ownerExecution ? store.listAgentExecutionsByEntity('task', execution.entityId)
       .find((run) => run.id !== executionId && run.agentId === employee.id && run.outputFiles?.length && run.sessionId) : undefined
     assertLegacyExecutionPurpose(execution)
     if (previous) assertNoOwnerBusinessSession(previous.sessionId)
@@ -983,6 +984,10 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       const previousPath = previous ? resolveDevelopmentWorktree(workspace.rootPath!, sessionDirectory) : undefined
       if (previous && !previousPath) throw new Error('上次研发 worktree 绑定缺失，不能在主仓库或新基线上静默返工')
       const worktree = previousPath ? { path: previousPath, continuedFromExecutionId: previous!.id } : createDevelopmentWorktree(workspace.rootPath!, sessionDirectory, executionId)
+      if (ownerExecution?.role === 'executor') {
+        const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
+        if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
+      }
       const taskPrompt = ownerExecution ? execution.prompt : buildAgentTaskPrompt(task!, employee)
       const prompt = `${taskPrompt}\n\n本次执行基线：${JSON.stringify(worktree)}`
       store.updateAgentExecution(executionId, { prompt, outputFiles: [worktree.path] })
@@ -990,7 +995,14 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   } catch (error) {
     console.error('[AgentEmployee] 创建会话失败:', error)
     const message = error instanceof Error ? error.message : '创建 Agent 会话失败'
-    if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })
+    if (ownerExecution) {
+      store.getProjectDb().transaction(() => {
+        store.updateAgentExecution(executionId, { error: `Owner认领前准备失败：${message}；准备成果已保留，暂停重复派发` })
+        store.getProjectDb().prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile',updated_at=? WHERE id=? AND execution_id=? AND state='queued'").run(Date.now(),ownerExecution.commandId,executionId)
+        store.recordProjectActivity({projectId:execution.projectId,entityType:'task',entityId:execution.entityId,action:'owner_prestart_blocked',actor:'system:owner-runtime',summary:'Owner认领前准备失败，保留准备成果与费用预留，暂停重复派发。',payload:{commandId:ownerExecution.commandId,executionId,reason:message}})
+      })()
+    }
+    else if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })
     else handleExecutionError(executionId, message, execution.startedAt)
     return false
   }
@@ -1426,13 +1438,17 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
     console.warn(`[AgentEmployee] Owner命令 ${commandId} 终态结算失败，转未知恢复:`, cause instanceof Error ? cause.message : '账本错误')
     try { recoverInterruptedOwnerRuntimeExecutions(completedAt, execution.id) } catch { /* fail-closed，保留待核 */ }
   }
-  if (nextStatus === 'completed' && command.role === 'reviewer') {
+  if (command.role === 'reviewer') {
     const rawResponse = messages?.filter(message => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim()).at(-1)?.content
-    if (typeof rawResponse === 'string') {
-      try { recordOwnerTechnicalReviewEvidence(commandId, execution.id, rawResponse, completedAt) }
-      catch (cause) {
-        console.warn(`[AgentEmployee] Owner Reviewer ${commandId} 回执不可用于自动续派:`, cause instanceof Error ? cause.message : '回执校验失败')
-      }
+    try {
+      if (nextStatus !== 'completed') throw new Error(error || '独立评审运行未成功结束')
+      if (typeof rawResponse !== 'string') throw new Error('独立评审没有返回可校验的原文')
+      recordOwnerTechnicalReviewEvidence(commandId, execution.id, rawResponse, completedAt)
+    } catch (cause) {
+      console.warn(`[AgentEmployee] Owner Reviewer ${commandId} 回执不可用于自动续派:`, cause instanceof Error ? cause.message : '回执校验失败')
+      appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
+        eventId: `owner-review-evidence-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
+        content: `独立评审未能形成通过正式校验的回执，当前没有可采信的评审结果。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '回执校验失败')}。项目尚未因此通过验收或交付；原运行与费用记录保留，未自动重试。` })
     }
   }
   if (nextStatus === 'completed' && command.role === 'executor') {
@@ -1443,6 +1459,9 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
         await runOwnerDevelopmentValidations(commandId)
       } catch (cause) {
         console.warn(`[AgentEmployee] Owner研发验证未能形成完整终态 command=${commandId}，保留验证状态供对账:`, cause instanceof Error ? cause.message : '未知验证错误')
+        appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
+          eventId: `owner-development-validation-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
+          content: `员工运行已经结束，但正式研发验证未能形成完整回执。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '验证失败')}。当前成果尚未通过运行验证，不能据此批准或交付；成果与运行记录保留，未自动重试。` })
       }
     }
   }

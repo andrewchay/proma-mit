@@ -1874,6 +1874,8 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.DELETE_SESSION,
     async (_, id: string): Promise<void> => {
+      const { assertOwnerSessionDeletionAllowed } = await import('./lib/project-owner-task-evidence')
+      assertOwnerSessionDeletionAllowed(id)
       // 清理权限服务中该会话的白名单
       permissionService.clearSessionWhitelist(id)
       permissionService.clearSessionPending(id)

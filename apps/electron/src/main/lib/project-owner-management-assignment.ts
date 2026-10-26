@@ -23,13 +23,8 @@ export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
   return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段'].includes(detail)
 }
 
-/** 面向用户的失败原因：脱敏、截断，不暴露内部ID或凭据。 */
-export function ownerAssignmentFailureReason(detail: string): string {
-  return detail.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [已隐藏]')
-    .replace(/(api[_-]?key|authorization|access[_-]?token)\s*[:=]\s*[^,\s;]+/gi, '$1=[已隐藏]')
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[已隐藏凭据]')
-    .replace(/[\r\n\t]+/g, ' ').trim().slice(0, 240)
-}
+export { ownerAssignmentFailureReason } from './project-owner-failure-reason'
+import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 
 /** 仅完整、成功终态且仅被已知岗位覆盖或独立评审协议拒绝的安排，允许在原预算内续跑一次。 */
 export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: string | undefined, executionId: string): boolean {
@@ -242,15 +237,17 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       expectedPolicyRevision: policy?.revision ?? null, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
       selectedStepKeys: [...outcome.assignmentProposal.selectedStepKeys], executionKind: outcome.assignmentProposal.executionKind,
       employeeRuntimeVersion: 2,
+      qualityManagementVersion: 1,
       // 代码任务按文件交付：带研发范围时不再强制完整文本交付，否则 Write/Edit 会被移出工具集，员工只能把代码写在回复里。
-      ...(outcome.assignmentProposal.executionKind === 'controlled' && !outcome.assignmentProposal.developmentScope ? { textDeliveryVersion: 1 as const, qualityManagementVersion: 1 as const } : {}),
+      ...(outcome.assignmentProposal.executionKind === 'controlled' && !outcome.assignmentProposal.developmentScope ? { textDeliveryVersion: 1 as const } : {}),
       // 自主管理额度仅覆盖当前项目已绑定工作区；该绑定来自项目预设或用户刚批准的团队范围。
       // 将其作为工作区覆盖确认，避免启动门禁再次要求用户批准同一资料/团队边界。
       ...(withinAutonomousProjectGrant ? { acknowledgeOwnerWorkspaceOverride: true } : {}),
       ...(outcome.assignmentProposal.developmentScope ? { developmentScope: { workspaceId: outcome.assignmentProposal.workspaceId, targetPaths: outcome.assignmentProposal.developmentScope.targetPaths, allowedPaths: outcome.assignmentProposal.developmentScope.allowedPaths, verificationCommands: outcome.assignmentProposal.developmentScope.verificationCommands } } : {}),
       executorEmployeeId: firstExecutor.employeeId, reviewerEmployeeId: outcome.assignmentProposal.reviewerEmployeeId, roleAssignments,
       workspaceId: outcome.assignmentProposal.workspaceId, knowledgeSourceIds: executionPreparation.choices.knowledgeSources.map(source => source.id), maxCostMicros: remainingCost,
-      maxRuns: Math.max(6, selectedSteps.length * 6), maxRework: 2, expiresAt: delegation.expiresAt,
+      // 研发每轮需为读取/写入/收尾与独立评审留额，覆盖首轮及两轮返工；费用仍由原总额约束。
+      maxRuns: Math.max(1, selectedSteps.length) * (outcome.assignmentProposal.executionKind === 'development' ? 12 : 6), maxRework: 2, expiresAt: delegation.expiresAt,
       changeReason: withinAutonomousProjectGrant ? '用户已确认项目目标、资料范围和总额度；Owner在授权内自主组织执行' : '用户已在项目对话确认结果方案与持续管理边界；Owner按确认方案自主组织执行',
     }
     const intent = saveOwnerExecutionStartIntent({ ...subject, intentId: input.requestId, expectedGoalRevision: plan.goalRevision,

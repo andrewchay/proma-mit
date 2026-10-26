@@ -1,13 +1,13 @@
 /**
- * 真实链路受控冒烟：只跑「准备 → 启动 → 员工执行 → 终止」这一段。
+ * 真实链路受控冒烟：按模式运行准备、员工执行与独立评审；不等同产品验收。
  *
  * 约束：
  * - 只读取已配置渠道的真实凭据，模型费用由调用方在环境变量里设定硬上限；
- * - 不进入评审、不自动返工、不重复派发；执行到终态即停止并输出事实；
+ * - 分段模式不自动返工；project-2048 模式走真实 Owner 有界返工及交付；
  * - 输出只包含身份、状态、用量与脱敏后的错误，不写项目正文。
  */
 import { randomUUID } from 'node:crypto'
-import { ensureSmokeBudget } from './owner-real-chain-smoke-budget'
+import { ensureSmokeBudget, remainingSmokeBudget } from './owner-real-chain-smoke-budget'
 
 export interface OwnerRealChainSmokeReport {
   files?: string[]
@@ -21,14 +21,20 @@ export interface OwnerRealChainSmokeReport {
   modelId: string
   executionId?: string
   status: string
+  artifactDirectory?: string
+  ownerQualityState?: 'not_checked' | 'accepted' | 'rework_authorized' | 'escalated' | 'blocked'
+  deliveryState?: 'not_checked' | 'delivered'
+  checks?: Array<{ id: string; status: string; detail: string }>
+  reworkCount?: number
+  knownEmployeeCostMicros?: number
   error?: string
   resultExcerpt?: string
   usage?: Record<string, unknown>
   costMicros?: number | null
   requestsSent?: number
-  reviewer?: { status: string; verdict?: string; findings?: number; costMicros: number | null; requestsSent: number; error?: string }
+  reviewer?: { status: string; commandSettlement: string; recorded: boolean; verdict?: string; findings?: number; costMicros: number | null; requestsSent: number; error?: string }
   stage?: string
-  ownerPlan?: { revision: number; steps: number; confirmed: boolean }
+  ownerPlan?: { revision: number; steps: number; confirmed: boolean; generatedByOwner?: boolean }
   ownerAssignment?: { selectedSteps: number; assignments: number; reviewerChosen: boolean }
   totalRequestsSent?: number
   totalCostMicros?: number
@@ -41,6 +47,7 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
   if (!channelId) return false
   const modelId = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODEL ?? 'glm-5.3-flash'
   ensureSmokeBudget(CHAIN_SMOKE_MAX_COST_MICROS)
+  const availableCostMicros = remainingSmokeBudget(Number(process.env.GRAVITAS_OWNER_CHAIN_SMOKE_PRIOR_COST_MICROS ?? 0))
 
   const store = await import('./project-sqlite-store')
   await store.initProjectDb()
@@ -48,8 +55,8 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
   const { createAgentWorkspace } = await import('./agent-workspace-manager')
   const { getChannelById } = await import('./channel-manager')
   const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
-  const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
-  const { saveOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
+  const { saveProjectOwnerGoalDraft, getProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
+  const { saveOwnerRuntimeBinding, getOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
   const management = await import('./project-owner-management-loop')
   const delegation = await import('./project-owner-management-delegation')
   const plans = await import('./project-owner-plan-service')
@@ -61,19 +68,60 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
   if (!channel) throw new Error('真实链路冒烟的渠道不存在')
 
   const mode = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODE ?? 'segment'
-  const project = store.createProject({ title: '真实链路冒烟', description: '受控真实执行，只验证员工执行这一段' })
+  const resumeProjectId = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_PROJECT_ID
+  if (resumeProjectId) {
+    const { owner2048SmokeGoal } = await import('./owner-2048-smoke-contract')
+    const binding = getOwnerRuntimeBinding(resumeProjectId)
+    if (mode !== 'project-2048' || !store.getProject(resumeProjectId)
+      || getProjectOwnerGoalDraft(resumeProjectId)?.goal.objective !== owner2048SmokeGoal().objective
+      || binding?.channelId !== channelId || binding.modelId !== modelId
+      || store.listAgentExecutionsByProject(resumeProjectId).some(item => item.status === 'running' || item.status === 'queued'
+        && (!item.ownerCommandId || Boolean(item.sessionId) || Boolean(store.getProjectDb().prepare('SELECT 1 FROM project_owner_execution_start_attempts WHERE execution_id=?').get(item.id))))) throw new Error('只能恢复同一隔离2048项目的已知静止状态')
+    // 修复后的版本重新核验原始来源；不重写方案、请求账本或未知费用。
+    const { readOwnerPlanningSnapshot } = await import('./project-owner-planning-source')
+    for (const row of store.getProjectDb().prepare('SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=?').all(resumeProjectId) as Array<{ planning_task_id: string }>) {
+      if (!readOwnerPlanningSnapshot(row.planning_task_id)) throw new Error('恢复项目的规划来源缺失')
+    }
+    if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REPLAN_SINGLE_STEP === '1') {
+      const goal = getProjectOwnerGoalDraft(resumeProjectId)!
+      const previous = delegation.getOwnerManagementDelegation(resumeProjectId).delegation
+      const marker = '本轮重整内部方案：只能生成1个实现交付步骤；独立评审、测试、返工与最终交付由系统后置流程处理，不得列成普通步骤。保留原历史，不沿用旧执行许可。'
+      if (!previous || previous.expiresAt <= Date.now() || ![1, 2].includes(goal.revision)
+        || goal.revision === 2 && !goal.goal.constraints.includes(marker)) throw new Error('本次单步收敛只能创建一次或恢复同一目标版本')
+      const { owner2048SmokeGoal } = await import('./owner-2048-smoke-contract')
+      const input = { ...owner2048SmokeGoal(), constraints: goal.goal.constraints }
+      if (goal.revision === 1) saveProjectOwnerGoalDraft(resumeProjectId, goal.revision, { ...input, constraints: [...input.constraints, marker] })
+      management.reconcileOwnerManagement(resumeProjectId)
+      if (previous.goalRevision !== getProjectOwnerGoalDraft(resumeProjectId)!.revision) {
+        delegation.revokeOwnerManagementDelegation(resumeProjectId, previous.id)
+        const authorization = { projectId: resumeProjectId, requestId: randomUUID(), maxRequests: Number(process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS ?? 8), maxCostMicros: Math.min(previous.maxCostMicros, availableCostMicros),
+          expiresAt: previous.expiresAt, autonomousExecution: true }
+        const preview = delegation.previewOwnerManagementDelegation(authorization)
+        delegation.confirmOwnerManagementDelegation({ input: authorization, previewHash: preview.previewHash })
+      }
+    }
+    ;(await import('./project-owner-execution-stop')).recoverUnclaimedOwnerCommandPreparations()
+    ;(await import('./project-owner-management-failures')).clearOwnerManagementFailure(resumeProjectId)
+    const startIntentId = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_START_INTENT
+    if (startIntentId) await (await import('./project-owner-execution-start-intent')).resumeOwnerExecutionStartIntent(startIntentId, { projectId: resumeProjectId })
+    const { runOwner2048ProjectSmoke } = await import('./owner-2048-project-smoke')
+    return runOwner2048ProjectSmoke(resumeProjectId, channel.id, modelId)
+  }
+  const project = store.createProject({ title: mode === 'project-2048' ? '真实2048项目冒烟' : '真实链路冒烟', description: mode === 'project-2048' ? '目标、真实Owner规划派工、员工执行、独立评审与原项目交付的完整验收' : '受控真实执行，只验证员工执行这一段' })
   // 研发员工要求工作区绑定本地 Git 仓库；冒烟在临时目录里初始化一个空仓库。
-  const workspace = createAgentWorkspace(`owner-real-chain-${randomUUID()}`, mode === 'development' ? initGitRoot() : undefined)
+  const seedPath = mode === 'project-2048' ? process.env.GRAVITAS_OWNER_CHAIN_SMOKE_SEED_INDEX_PATH : undefined
+  const workspace = createAgentWorkspace(`owner-real-chain-${randomUUID()}`, ['development', 'project-2048'].includes(mode) ? initGitRoot(seedPath) : undefined)
   bindWorkspaceToProject(project.id, workspace.id)
   const employee = (name: string, role: string) => employees.createAgentEmployee({
-    name, role, description: '', executionProfile: 'controlled', permissionMode: 'safe',
+    name, role, description: '', executionProfile: mode === 'project-2048' && name !== 'Smoke Owner' ? 'development' : 'controlled', permissionMode: 'safe',
     runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id],
   })
   const owner = employee('Smoke Owner', '项目管理者')
   const executor = employee('Smoke Executor', '研究')
   const reviewerEmployee = employee('Smoke Reviewer', '独立检查')
 
-  saveProjectOwnerGoalDraft(project.id, 0, mode === 'development'
+  const { owner2048SmokeGoal } = await import('./owner-2048-smoke-contract')
+  saveProjectOwnerGoalDraft(project.id, 0, mode === 'project-2048' ? { ...owner2048SmokeGoal(), ...(seedPath ? { constraints: [...owner2048SmokeGoal().constraints, '项目已有上一尝试未修改的 index.html。初始化因缺失 overlay/overlay-text 元素而在 classList 调用处失败。让员工先读现有文件，只修复缺失元素及必要缺陷，不重写整个游戏，再按同一七项标准验证交付。'] } : {}) } : mode === 'development'
     ? { objective: '做出可在浏览器直接打开的 2048 网页，文件写在项目工作区' }
     : { objective: '产出一段可直接核验的需求说明' })
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Smoke Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '真实链路冒烟' })
@@ -81,10 +129,14 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
 
   // 执行授权不能晚于项目总预算授权；统一用同一时间基准。
   const expiresAt = Date.now() + 3600_000
-  const delegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 2, maxCostMicros: CHAIN_SMOKE_MAX_COST_MICROS, expiresAt, autonomousExecution: true }
+  const delegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: mode === 'project-2048' ? Number(process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS ?? 8) : 2, maxCostMicros: availableCostMicros, expiresAt, autonomousExecution: true }
   const delegationPreview = delegation.previewOwnerManagementDelegation(delegationInput)
   delegation.confirmOwnerManagementDelegation({ input: delegationInput, previewHash: delegationPreview.previewHash })
 
+  if (mode === 'project-2048') {
+    const { runOwner2048ProjectSmoke } = await import('./owner-2048-project-smoke')
+    return runOwner2048ProjectSmoke(project.id, channel.id, modelId)
+  }
   if (mode === 'development') return runDevelopmentChain({ project, workspace, channel, modelId, plans, store, management, expiresAt })
   if (mode === 'full') {
     // 全链路：由真实 Owner 模型自己规划、自己安排，随后执行与评审。
@@ -169,12 +221,14 @@ async function driveReviewer(projectId: string, store: typeof import('./project-
     await new Promise(resolve => setTimeout(resolve, 2000))
   }
   const commands = store.getProjectDb().prepare("SELECT id, state, actual_cost_micros FROM project_owner_execution_commands WHERE project_id=? AND role='reviewer' ORDER BY rowid DESC LIMIT 1").get(projectId) as { id: string; state: string; actual_cost_micros: number | null } | undefined
-  if (!commands) return { report: { status: 'not_dispatched', costMicros: null, requestsSent: 0 } }
+  if (!commands) return { report: { status: 'not_dispatched', commandSettlement: 'not_dispatched', recorded: false, costMicros: null, requestsSent: 0 } }
   const reviewerExecution = store.listAgentExecutionsByProject(projectId).find(item => item.ownerCommandId === commands.id)
   const evidence = reviews.listOwnerTechnicalReviewEvidence(projectId).find(item => item.reviewerExecutionId === reviewerExecution?.id)
   const requestsSent = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(commands.id) as { count: number }).count
   return { report: {
     status: reviewerExecution?.status ?? commands.state,
+    commandSettlement: commands.state,
+    recorded: Boolean(evidence),
     ...(evidence?.verdict ? { verdict: evidence.verdict } : {}),
     ...(evidence?.findings ? { findings: evidence.findings.length } : {}),
     costMicros: commands.actual_cost_micros,
@@ -276,7 +330,7 @@ async function runDevelopmentChain(input: {
   const preparationInput = {
     requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2,
     selectedStepKeys: ['page'], executionKind: 'development' as const,
-    developmentScope: { workspaceId: workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'styles.css', 'game.js'] },
+    developmentScope: { workspaceId: workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'styles.css', 'game.js'], verificationCommands: ['browser:html.loads+dom.board+dom.initial-tiles+behavior.merge+storage.best-score+dom.restart'] },
     executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
     roleAssignments: [{ roleKey: steps[0]!.roleKey, employeeId: executor.id }],
     workspaceId: workspace.id, knowledgeSourceIds: [],
@@ -303,7 +357,7 @@ async function runDevelopmentChain(input: {
     try {
       const run = await runOwnerRuntimeBrowserAssertions({ workspaceRoot: workingRoot, relativePath: page, intents: ['页面可加载', '棋盘可见'], timeoutMs: 20_000 })
       const checks = run.checks ?? []
-      browser = { passed: !run.timedOut && checks.length > 0 && checks.every(item => item.status !== 'failed'), checks: checks.length, failures: checks.filter(item => item.status === 'failed').map(item => `${item.id}: ${item.detail}`.slice(0, 160)) }
+      browser = { passed: !run.timedOut && checks.length > 0 && checks.every(item => item.status === 'passed'), checks: checks.length, failures: checks.filter(item => item.status !== 'passed').map(item => `${item.id}: ${item.detail}`.slice(0, 160)) }
     } catch (cause) {
       browser = { passed: false, checks: 0, failures: [String(cause).slice(0, 200)] }
     }
@@ -313,7 +367,8 @@ async function runDevelopmentChain(input: {
     projectId: project.id, channelId: input.channel.id, modelId, stage: 'development',
     status: execution?.status ?? 'unknown', ...(execution?.error ? { error: execution.error.slice(0, 400) } : {}),
     ...(execution?.resultSummary ? { resultExcerpt: execution.resultSummary.slice(0, 300) } : {}),
-    files, sessionFiles, tools, gitStatus,
+    files, sessionFiles, tools, gitStatus, artifactDirectory: workingRoot,
+    ownerQualityState: 'not_checked', deliveryState: 'not_checked',
     validations: listDevelopmentValidations(store, project.id), ...(browser ? { browser } : {}), reviewer: reviewRun.report,
   }
 }
@@ -336,15 +391,22 @@ function listWorkspaceFiles(root: string, prefix = ''): string[] {
 }
 
 /** 建一个临时 Git 仓库作为开发工作区根目录；只用于冒烟。 */
-function initGitRoot(): string {
-  const { mkdtempSync, realpathSync } = require('node:fs') as typeof import('node:fs')
+function initGitRoot(seedPath?: string): string {
+  const { mkdtempSync, realpathSync, lstatSync, readFileSync, writeFileSync } = require('node:fs') as typeof import('node:fs')
   const { tmpdir } = require('node:os') as typeof import('node:os')
   const { join } = require('node:path') as typeof import('node:path')
   const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
   // macOS 的 /var 是指向 /private/var 的符号链接；统一用真实路径，避免 git 顶层路径不一致。
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'owner-dev-root-')))
   execFileSync('git', ['init', '-q', root])
-  execFileSync('git', ['-C', root, 'commit', '--allow-empty', '-q', '-m', 'init'])
+  if (seedPath) {
+    const stat = lstatSync(seedPath), bytes = readFileSync(seedPath)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024 || !process.env.GRAVITAS_OWNER_CHAIN_SMOKE_SEED_SHA256
+      || (require('node:crypto') as typeof import('node:crypto')).createHash('sha256').update(bytes).digest('hex') !== process.env.GRAVITAS_OWNER_CHAIN_SMOKE_SEED_SHA256) throw new Error('失败源码基线文件或摘要无法核验')
+    writeFileSync(join(root, 'index.html'), bytes, { flag: 'wx' })
+    execFileSync('git', ['-C', root, 'add', '--', 'index.html'])
+  }
+  execFileSync('git', ['-C', root, 'commit', '--allow-empty', '-q', '-m', seedPath ? 'seed unchanged failed 2048 artifact' : 'init'])
   return root
 }
 

@@ -47,7 +47,7 @@ function fixture(taskScoped = false) {
   const subject = { projectId: project.id, ...(taskId ? { taskId } : {}) }
   const message = (content: string) => ({ ...subject, conversationId: getOwnerManager(project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content })
   const issue = () => {
-    const input = { ...subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 3_000_000, expiresAt: Date.now() + 3600000 }
+    const input = { ...subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 3600000 }
     const preview = delegation.previewOwnerManagementDelegation(input)
     return delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
   }

@@ -223,7 +223,7 @@ function recoverLegacyOwnerConversationReplies(projectId: string): void {
   const executions = store.getProjectDb().prepare(`SELECT o.execution_id FROM project_owner_planning_run_outcomes o
     JOIN project_owner_planning_run_receipts r ON r.id = o.receipt_id
     WHERE json_extract(r.payload, '$.projectId') = ? AND json_extract(r.payload, '$.purpose') = 'owner_planning'
-      AND json_extract(o.payload, '$.state') = 'failed' AND json_extract(o.payload, '$.detail') IN ('Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配')
+      AND json_extract(o.payload, '$.state') = 'failed' AND json_extract(o.payload, '$.detail') IN ('Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符')
     ORDER BY r.rowid`).all(projectId) as { execution_id: string }[]
   for (const { execution_id: executionId } of executions) {
     try {

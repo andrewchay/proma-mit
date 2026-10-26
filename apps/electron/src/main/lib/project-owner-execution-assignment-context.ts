@@ -114,12 +114,13 @@ export function createOwnerExecutionAssignmentContext(input: CreateOwnerExecutio
 export function parseOwnerExecutionAssignmentContext(raw: unknown): OwnerExecutionAssignmentContext {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.getPrototypeOf(raw) !== Object.prototype) throw new Error('Owner安排冻结资料无效')
   const value = raw as Record<string, unknown>
-  const allowed = ['teamContractVersion', 'schemaVersion', 'projectId', 'taskId', 'planRevision', 'planFingerprint', 'goalRevision', 'sourceContextFingerprint', 'bindingRevision', 'workspaces', 'executionKinds', 'ownerDefaults', 'projectTitle', 'projectDescription', 'objective', 'constraints', 'acceptanceCriteria', 'roles', 'steps', 'codeFiles', 'candidates', 'ownerCarrierId', 'ownerName', 'feedback', 'contextFingerprint']
+  const allowed = ['teamContractVersion', 'schemaVersion', 'projectId', 'taskId', 'planRevision', 'planFingerprint', 'goalRevision', 'sourceContextFingerprint', 'bindingRevision', 'workspaces', 'executionKinds', 'ownerDefaults', 'projectTitle', 'projectDescription', 'objective', 'constraints', 'acceptanceCriteria', 'roles', 'steps', 'codeFiles', 'greenfieldDevelopment', 'candidates', 'ownerCarrierId', 'ownerName', 'feedback', 'contextFingerprint']
   if (Object.keys(value).some(key => !allowed.includes(key)) || value.teamContractVersion !== undefined && value.teamContractVersion !== 2 && value.teamContractVersion !== 3 || value.schemaVersion !== 1 || typeof value.contextFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(value.contextFingerprint)) throw new Error('Owner安排冻结资料字段或指纹无效')
   const { contextFingerprint, ...body } = value
   if (hash(body) !== contextFingerprint || typeof value.projectId !== 'string' || typeof value.planFingerprint !== 'string' || typeof value.sourceContextFingerprint !== 'string'
     || !Array.isArray(value.workspaces) || !Array.isArray(value.executionKinds) || !Array.isArray(value.steps) || !Array.isArray(value.roles) || !Array.isArray(value.candidates)
-    || !Array.isArray(value.constraints) || !Array.isArray(value.acceptanceCriteria) || value.codeFiles !== undefined && !Array.isArray(value.codeFiles) || !value.ownerDefaults || typeof value.ownerDefaults !== 'object') throw new Error('Owner安排冻结资料完整性校验失败')
+    || !Array.isArray(value.constraints) || !Array.isArray(value.acceptanceCriteria) || value.codeFiles !== undefined && !Array.isArray(value.codeFiles)
+    || value.greenfieldDevelopment !== undefined && value.greenfieldDevelopment !== true || !value.ownerDefaults || typeof value.ownerDefaults !== 'object') throw new Error('Owner安排冻结资料完整性校验失败')
   const candidateIds = (value.candidates as Array<{ id?: unknown }>).map(candidate => candidate?.id)
   const workspaceIds = (value.workspaces as Array<{ id?: unknown }>).map(workspace => workspace?.id)
   const stepKeys = (value.steps as Array<{ key?: unknown }>).map(step => step?.key)

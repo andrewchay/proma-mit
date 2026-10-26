@@ -176,6 +176,9 @@ test('Given 命令绑定交付反馈 When 构建新规划请求 Then 携带冻�
     const priorFrozen = protocol.buildProjectOwnerPlanningRequest(c, format, false)
     const priorHash = createHash('sha256').update(JSON.stringify(priorFrozen)).digest('hex')
     expect(protocol.resolveProjectOwnerPlanningRequest(c, priorHash)).toEqual(priorFrozen)
+    const priorReviewLane = protocol.buildProjectOwnerPlanningRequest(c, format, true, true, true, false)
+    const priorReviewHash = createHash('sha256').update(JSON.stringify(priorReviewLane)).digest('hex')
+    expect(protocol.resolveProjectOwnerPlanningRequest(c, priorReviewHash)).toEqual(priorReviewLane)
     expect(() => protocol.resolveProjectOwnerPlanningRequest(c, '0'.repeat(64))).toThrow('冻结提示指纹')
   }
   expect(() => protocol.parseProjectOwnerPlanningResponse({ ...example, proposal: { ...example.proposal, deliveryChangeAssessment: undefined }, deliveryChangeAssessment: example.proposal.deliveryChangeAssessment }, c)).toThrow('未知字段')

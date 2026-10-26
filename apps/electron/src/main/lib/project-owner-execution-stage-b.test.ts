@@ -1623,3 +1623,20 @@ test('Given Owner流式响应没有用量回执 When流结束 Then请求进入�
   expect(s.reservationState()).toEqual({ state: 'needs_reconcile' })
   await expect(requestExit.awaitOwnerExecutionRequestsSettled(s.sessionId)).rejects.toThrow('尚未确认')
 })
+
+
+test('Given认领前排队准备失败且无请求 When启动恢复 Then只恢复一次并保留原费用预留，未知用量与已有认领不得恢复', () => {
+  for (const proof of ['empty','unknown','claimed','missing_source'] as const) {
+    const f=fixture('glm-5.3-flash','autonomous')
+    const { commandId,executionId }=command.reserveAndQueueAutonomousOwnerCommand(f.subject,{grantId:f.grant.grantId,taskId:f.task.id,role:'executor',reworkOrdinal:0,expectedRevalidationRevision:f.record.revision})
+    const db=store.getProjectDb(), before=db.prepare('SELECT reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)
+    db.prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile' WHERE id=?").run(commandId)
+    if(proof==='unknown')db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=? WHERE id=?').run(JSON.stringify({source:'unknown'}),commandId)
+    if(proof==='missing_source')db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=? WHERE id=?').run('{}',commandId)
+    if(proof==='claimed')db.prepare('INSERT INTO project_owner_execution_start_attempts(execution_id,command_id,project_id,session_id,claimed_at) VALUES(?,?,?,?,?)').run(executionId,commandId,f.project.id,randomUUID(),Date.now())
+    expect(stopModule.recoverUnclaimedOwnerCommandPreparations(Date.now(),executionId)).toBe(proof==='empty'?1:0)
+    expect(db.prepare('SELECT reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual(before)
+    expect(stopModule.recoverUnclaimedOwnerCommandPreparations(Date.now(),executionId)).toBe(0)
+    expect(db.prepare('SELECT state FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual({state:proof==='empty'?'queued':'needs_reconcile'})
+  }
+})

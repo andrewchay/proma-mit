@@ -5,6 +5,7 @@ import { getChannelById, decryptApiKey } from './channel-manager'
 import { resolveOwnerPlanningSession, type OwnerPlanningSessionSource } from './project-owner-planning-source'
 import * as store from './project-sqlite-store'
 import { assertControlledPreparedExecution } from './controlled-project-task-service'
+import { assertOwnerPlanningRequestEnvelope } from './project-owner-planning-envelope'
 /** 本地完整性检查不是签名，不认证有任意SQL写权限的攻击者。旧占位不补造证明。 */
 export interface OwnerPlanningAdmission {
   link_id: string; execution_id: string; session_id: string; request_hash: string; source_snapshot: string; admitted_at: number; integrity_hash?: string | null
@@ -84,11 +85,14 @@ export function assertOwnerPlanningCredential(source: OwnerPlanningSessionSource
 /** 必须在controlled费用/当前execution核验后的同一个同步事务中调用；占位后的发送失败也不补跑。 */
 export function claimOwnerPlanningProviderRequest(sessionId: string, body: string, url: URL): void {
   store.getProjectDb().transaction(() => {
+  const { assertOwnerSmokeRequestLimit } = require('./owner-real-chain-smoke-budget') as typeof import('./owner-real-chain-smoke-budget')
+  assertOwnerSmokeRequestLimit()
   const source = resolveOwnerPlanningSession(sessionId)
   if (!source) throw new Error('Owner规划最终请求丢失权威用途')
   assertControlledPreparedExecution(source.executionId, 'provider')
   const channel = getChannelById(source.binding.channelId)
   if (!channel?.enabled) throw new Error('Owner规划实际渠道不可用')
+  assertOwnerPlanningRequestEnvelope(body, source.binding.modelId, channel.provider)
   const payload: unknown = JSON.parse(body)
   assertOwnerPlanningPayload(source, payload, getAgentProviderProtocol(channel.provider, 'ai-sdk'), url)
   const existing = store.getProjectDb().prepare('SELECT link_id FROM project_owner_planning_admissions WHERE link_id = ? OR execution_id = ? OR session_id = ?').get(source.link.id, source.executionId, source.sessionId)

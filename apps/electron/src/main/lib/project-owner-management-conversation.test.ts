@@ -47,7 +47,7 @@ function fixture(taskScoped = false) {
   const subject = { projectId: project.id, ...(taskId ? { taskId } : {}) }
   const message = (content: string) => ({ ...subject, conversationId: getOwnerManager(project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content })
   const issue = () => {
-    const input = { ...subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 3_000_000, expiresAt: Date.now() + 3600000 }
+    const input = { ...subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 3600000 }
     const preview = delegation.previewOwnerManagementDelegation(input)
     return delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
   }
@@ -92,7 +92,7 @@ test('Given管理配置变化使委托失效 When用户继续发消息 Then先�
     expect(store.getProjectDb().prepare("SELECT COUNT(*) AS c FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.conversationMessageId')=?").get(f.project.id, saved.id)).toEqual({ c: 0 })
     expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
 
-    const input = { ...f.subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 3_000_000, expiresAt: Date.now() + 3600000 }
+    const input = { ...f.subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 3600000 }
     const preview = delegation.previewOwnerManagementDelegation(input)
     renewedGrant = delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
     await until(() => Boolean(active(f)))
@@ -401,4 +401,30 @@ test('Given模型回复声称后台复查 When本地没有排队事实 Then写�
     const traces = store.getProjectDb().prepare("SELECT json_extract(payload,'$.detailCode') AS code FROM project_owner_management_traces WHERE project_id=?").all(f.project.id) as Array<{ code: string }>
     expect(traces.map(item => item.code)).toContain('claim_without_fact')
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given交付包含源码和说明且追问绑定说明 When准备Owner上下文 Then仍能定位整轮成果且不读取之后的交付', () => {
+  const f = fixture()
+  const item = (stepKey: string, title: string, content: string) => ({ stepKey, title, content, artifactHash: createHash('sha256').update(content).digest('hex'), acceptanceCriteria: ['符合要求'], ownerDecision: '已验收', reviewerSummary: '静态检查' })
+  const code = item('code', '游戏源码', '```html\n<!DOCTYPE html><html></html>\n```'), guide = item('guide', '使用说明', '保存为HTML打开')
+  const delivery = appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '本轮交付', delivery: { schemaVersion: 1, planVersion: 1, items: [code, guide] } })
+  const message = sendOwnerManagementMessage({ ...f.message('产物在哪里'), deliveryReference: { messageId: delivery.id, artifactHash: guide.artifactHash, stepKey: 'guide' } })
+  appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '后来交付', delivery: { schemaVersion: 1, planVersion: 2, items: [item('later', '后来的成果', '不得混入')] } })
+  const context = withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), message.id, message.id)
+  const legacy = withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), message.id, message.id, 2, 0, 1, 0, undefined, false)
+  expect(legacy.conversation?.deliveredArtifacts).toBeUndefined()
+  expect(legacy.conversation?.deliveryFeedback?.title).toBe('使用说明')
+  expect(context.conversation?.deliveryFeedback?.title).toBe('使用说明')
+  expect(context.conversation?.deliveredArtifacts).toEqual({ version: 1, messageId: delivery.id, planVersion: 1, items: [code, guide].map(({ stepKey, title, artifactHash }) => ({ stepKey, title, artifactHash })) })
+})
+
+test('Given普通项目追问 When目录版本被篡改 Then请求构建拒绝且旧的无目录快照仍可读取', async () => {
+  const { buildProjectOwnerPlanningRequest, resolveProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+  const f = fixture(), message = sendOwnerManagementMessage(f.message('在哪里查看成果'))
+  const legacy = withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), message.id)
+  const oldRequest = buildProjectOwnerPlanningRequest(legacy)
+  expect(resolveProjectOwnerPlanningRequest(legacy, createHash('sha256').update(JSON.stringify(oldRequest)).digest('hex'))).toEqual(oldRequest)
+  const withCatalog = { ...legacy, conversation: { ...legacy.conversation!, deliveredArtifacts: { version: 1 as const, messageId: 'a'.repeat(64), planVersion: 1, items: [{ stepKey: 'code', title: '游戏源码', artifactHash: 'b'.repeat(64) }] } } }
+  expect(buildProjectOwnerPlanningRequest(withCatalog).systemPrompt).toContain('不是文件列表或全文')
+  expect(() => buildProjectOwnerPlanningRequest({ ...withCatalog, conversation: { ...withCatalog.conversation, deliveredArtifacts: { ...withCatalog.conversation.deliveredArtifacts, items: [{ ...withCatalog.conversation.deliveredArtifacts.items[0]!, artifactHash: 'bad' }] } } })).toThrow('交付目录')
 })

@@ -39,6 +39,19 @@ test('Given代码快照和全部新鲜成功验证回执 When Owner提出accept 
   expect(protocol.parseOwnerQualityDecision(acceptDecision(), context())).toMatchObject({ verdict: 'accept', artifactHash: 'c'.repeat(64) })
 })
 
+test('GivenJSON快照含多行源码和引号 WhenOwner逐字引用文件正文 Then按解码原文核对且不接受拼接或虚构', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), source = 'const name = "2048";\nscore += gained;'
+  c.conversation!.deliveryReview!.developmentArtifact!.content = JSON.stringify({ files: [{ path: 'index.html', oldContent: null, newContent: source }] })
+  const decision = acceptDecision()
+  const criteria = decision.criteria as OwnerQualityDecision['criteria']
+  criteria[0]!.quote = source
+  expect(parseOwnerQualityDecision(decision, c).verdict).toBe('accept')
+  for (const quote of ['const name = "2048"; … score += gained;', 'score += invented;', 'const name = 2048;']) {
+    expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...criteria[0], quote }] }, c)).toThrow('引用不符')
+  }
+})
+
 test('Given完整质量判断附加已满足的项目标准 When解析 Then保留准确任务标准并拒绝未知、未满足、重复及错误引用', async () => {
   const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
   const c = context(); c.goal.goal.acceptanceCriteria = ['额外项目标准']
@@ -107,4 +120,38 @@ test('Given完整独立评审上下文与缺kind的质量决定 When解析 Then�
   delete ordinary.conversation!.executionObservation
   ordinary.conversation!.messages[0]!.role = 'user'
   expect(buildProjectOwnerPlanningRequest(ordinary).systemPrompt).toContain('信息足够时直接提出结构化计划')
+})
+
+
+test('Given历史接受在回执时有效但当前已过期 When读取历史 Then按回执时间可读而当前验收仍拒绝', async () => {
+  const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
+  const c = context(), capturedAt = Date.now() - 60 * 60_000
+  c.sources.roles = [{ key: 'requirements-analyst', name: '需求分析师', version: '1.0.0', sourceSha256: 'a'.repeat(64), rulesSha256: 'b'.repeat(64) }]
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  c.conversation!.deliveryReview!.review!.validationEvidence![0]!.finishedAt = capturedAt - 1000
+  const response = { schemaVersion: 1, kind: 'quality_decision', projectId: 'project-1', goalVersion: 1,
+    contextFingerprint: c.fingerprint, messageId: c.conversation!.throughMessageId, message: '原回执中的判断。', decision: acceptDecision() }
+  expect(() => parseProjectOwnerPlanningResponse(response, c)).toThrow('不能在独立检查未通过')
+  expect(parseProjectOwnerPlanningResponse(response, c, capturedAt)).toMatchObject({ kind: 'quality_decision', decision: { verdict: 'accept' } })
+  expect(() => parseProjectOwnerPlanningResponse({ ...response, decision: { ...acceptDecision(), artifactHash: 'wrong' } }, c, capturedAt)).toThrow('准确评审')
+  expect(() => parseProjectOwnerPlanningResponse(response, c, capturedAt + 60 * 60_000)).toThrow('不能在独立检查未通过')
+})
+
+
+test('Given研发Reviewer逐字引用解码后的源码 When交接Owner构建请求 Then保留准确引用并拒绝虚构引用', async () => {
+  const { buildProjectOwnerPlanningRequest, resolveProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+  const c = context(), source = 'const name = "2048";\nscore += gained;'
+  c.sources.roles = [{ key: 'requirements-analyst', name: '需求分析师', version: '1.0.0', sourceSha256: 'a'.repeat(64), rulesSha256: 'b'.repeat(64) }]
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  c.conversation!.deliveryReview!.developmentArtifact!.content = JSON.stringify({ files: [{ path: 'index.html', oldContent: null, newContent: source }] })
+  c.conversation!.deliveryReview!.review!.criteria[0]!.quote = source
+  expect(() => buildProjectOwnerPlanningRequest(c)).not.toThrow()
+  expect(buildProjectOwnerPlanningRequest(c).systemPrompt).toContain('不得引用验证命令')
+  const legacy = buildProjectOwnerPlanningRequest(c,'envelope',true,true,true,true,false)
+  expect(resolveProjectOwnerPlanningRequest(c,createHash('sha256').update(JSON.stringify(legacy)).digest('hex'))).toEqual(legacy)
+
+  for (const quote of ['const name = "2048"; … score += gained;', 'score += invented;', 'const name = 2048;']) {
+    c.conversation!.deliveryReview!.review!.criteria[0]!.quote = quote
+    expect(() => buildProjectOwnerPlanningRequest(c)).toThrow('逐项检查引用不匹配')
+  }
 })

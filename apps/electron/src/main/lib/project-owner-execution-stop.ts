@@ -75,6 +75,7 @@ function readOwnerStartBoundary(executionId: string, commandId: string): OwnerRe
 export function recoverInterruptedOwnerRuntimeExecutions(now = Date.now(), onlyExecutionId?: string): OwnerRecoveryResult[] {
   if (!Number.isSafeInteger(now) || now < 0) throw new Error('Owner恢复时钟无效')
   const database = store.getProjectDb()
+  recoverUnclaimedOwnerCommandPreparations(now, onlyExecutionId)
   const candidates = database.prepare(`SELECT id, project_id, owner_command_id FROM agent_executions WHERE status = 'running' AND owner_command_id IS NOT NULL AND (? IS NULL OR id = ?) ORDER BY started_at, id`).all(onlyExecutionId ?? null, onlyExecutionId ?? null) as Array<{ id: string; project_id: string; owner_command_id: string }>
   const results: OwnerRecoveryResult[] = []
   for (const candidate of candidates) {
@@ -113,4 +114,29 @@ export function recoverInterruptedOwnerRuntimeExecutions(now = Date.now(), onlyE
     if (result) results.push(result)
   }
   return results
+}
+
+
+/** 仅补偿从未认领、没有会话/请求/用量的排队准备失败；保留原费用预留，最多补偿一次。 */
+export function recoverUnclaimedOwnerCommandPreparations(now = Date.now(), onlyExecutionId?: string): number {
+  if (!Number.isSafeInteger(now) || now < 0) throw new Error('Owner准备恢复时钟无效')
+  const database = store.getProjectDb()
+  let recovered = 0
+  database.transaction(() => {
+    const rows = database.prepare(`SELECT c.id,c.project_id,c.source_task_id,c.execution_id FROM project_owner_execution_commands c
+      JOIN agent_executions e ON e.id=c.execution_id AND e.owner_command_id=c.id
+      WHERE c.state='needs_reconcile' AND e.status='queued' AND e.session_id='' AND c.actual_cost_micros IS NULL
+        AND c.usage_evidence IS NULL AND c.usage_record_key IS NULL AND (? IS NULL OR e.id=?)
+        AND NOT EXISTS(SELECT 1 FROM project_owner_execution_start_attempts a WHERE a.execution_id=e.id)
+        AND NOT EXISTS(SELECT 1 FROM project_owner_execution_request_reservations r WHERE r.command_id=c.id)
+        AND NOT EXISTS(SELECT 1 FROM project_activities a WHERE a.project_id=c.project_id AND a.action='owner_unclaimed_start_recovered' AND json_extract(a.payload,'$.commandId')=c.id)`)
+      .all(onlyExecutionId ?? null,onlyExecutionId ?? null) as Array<{ id: string; project_id: string; source_task_id: string; execution_id: string }>
+    for (const row of rows) {
+      store.recordProjectActivity({ projectId:row.project_id,entityType:'task',entityId:row.source_task_id,action:'owner_unclaimed_start_recovered',actor:'system:owner-runtime',
+        summary:'原执行从未认领且没有会话、请求或用量；恢复排队准备，费用预留和原失败记录保留。',payload:{ commandId:row.id,executionId:row.execution_id,previousState:'needs_reconcile' } })
+      database.prepare("UPDATE project_owner_execution_commands SET state='queued',updated_at=? WHERE id=? AND state='needs_reconcile'").run(now,row.id)
+      recovered += 1
+    }
+  })()
+  return recovered
 }

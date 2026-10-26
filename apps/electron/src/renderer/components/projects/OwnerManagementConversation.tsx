@@ -7,6 +7,7 @@ import { allPendingPermissionRequestsAtom } from '../../atoms/agent-atoms'
 import { retakeOwnerAssignmentAtom } from '../../atoms/project-owner-management-atoms'
 import { PermissionBanner } from '../agent/PermissionBanner'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
+import { OwnerDeliveredArtifact } from './OwnerDeliveredArtifact'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
 
@@ -199,15 +200,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           })()}
         </section>}
         {message.kind === 'delivery' && message.delivery && <section className="mt-3 space-y-2" aria-label="已验收成果">
-          {message.delivery.items.map(item => <details key={item.stepKey} className="rounded-xl bg-background/70 p-3 shadow-sm">
-            <summary className="cursor-pointer font-medium">{item.title}</summary>
-            <div className="mt-3 space-y-3">
-              <div><p className="text-xs font-medium text-muted-foreground">验收标准</p><ul className="list-disc pl-5">{item.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul></div>
-              <p><span className="font-medium">Owner验收：</span>{item.ownerDecision}</p>
-              <p><span className="font-medium">独立评审：</span>{item.reviewerSummary}</p>
-              <div><p className="text-xs font-medium text-muted-foreground">员工提交的成果原文</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans">{item.content}</pre></div>
-            </div>
-          </details>)}
+          {message.delivery.items.map(item => <OwnerDeliveredArtifact key={item.stepKey} item={item} />)}
         </section>}
       </article>)}
     </div>}

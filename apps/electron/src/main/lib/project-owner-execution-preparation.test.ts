@@ -474,7 +474,7 @@ test('Given strict输入 When 欠闭包/未知步骤/同人/注入grant或task l
     { selectedStepKeys: ['brief', 'brief'] },
     {
       executionKind: 'controlled',
-      developmentScope: { workspaceId: f.workspace.id, targetPaths: ['a'], allowedPaths: ['.'] },
+      developmentScope: { workspaceId: f.workspace.id, targetPaths: ['a'], allowedPaths: ['.'], verificationCommands: ['node a'] },
     },
   ])
     expect(() =>
@@ -488,7 +488,7 @@ test('Given 非代码托管工作区 When 切研发模式 Then 不偷取消Git/�
   expect(() =>
     service.previewOwnerExecutionPreparation(
       { projectId: f.project.id },
-      { ...f.input, executionKind: 'development' },
+      { ...f.input, executionKind: 'development', developmentScope: { workspaceId: f.workspace.id, targetPaths: ['a'], allowedPaths: ['.'], verificationCommands: ['node a'] } },
     ),
   ).toThrow('模式')
 })
@@ -814,4 +814,16 @@ test('Given 常见无扩展名SSH私钥basename When Skill冻结 Then 不读取�
     service.previewOwnerExecutionPreparation({ projectId: f.project.id }, f.input),
   ).toThrow('不能安全冻结')
   expect(policy.getPilotPolicy(f.project.id)).toBeNull()
+})
+
+for (const commands of [undefined, []]) test('Given新研发准备缺少验证命令 When预览 Then派工前拒绝且不写准备记录', () => {
+  const f = fixture()
+  const before = service.getOwnerExecutionPreparation({ projectId: f.project.id })
+  expect(() => service.previewOwnerExecutionPreparation({ projectId: f.project.id }, {
+    ...f.input, executionKind: 'development', developmentScope: {
+      workspaceId: f.workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html'],
+      ...(commands ? { verificationCommands: commands } : {}),
+    },
+  })).toThrow('白名单验证命令')
+  expect(service.getOwnerExecutionPreparation({ projectId: f.project.id })).toEqual(before)
 })
