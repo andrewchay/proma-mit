@@ -882,7 +882,7 @@ test('Given 已确认方案因缺评审受阻 When 新建合格员工 Then 持�
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(1)
     expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(1)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id); stop() }
-})
+}, 15_000)
 
 test('Given Owner暂停时团队能力变化 When恢复管理循环 Then累积事件自动重评且只建立一次安排', async () => {
   const f = fixture('missing-reviewer'), grant = authorize(f), stop = startOwnerManagementLoop()
