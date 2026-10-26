@@ -1,11 +1,13 @@
+import { ProjectOwnerRuntimePanel } from './ProjectOwnerRuntimePanel'
 import { useEffect, useId, useMemo } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
+import { ProjectOwnerPlanPanel } from './ProjectOwnerPlanPanel'
 import {
   acknowledgeOwnerGoalComparisonAtom, canSaveOwnerGoal, editOwnerGoalAtom, getOwnerGoalEditor,
   loadOwnerGoalAtom, ownerGoalEditorsAtom, saveOwnerGoalAtom,
 } from '../../atoms/project-owner-goal-atoms'
 
-/** 本地目标保存入口；模型规划/授权/派发未接入，不能将草案展示为运行中。 */
+/** 本地目标保存与受控规划入口；保存不授权调用或派工，草案不能展示为运行中。 */
 export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string; taskId?: string }): React.ReactElement {
   const subject = useMemo(() => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }), [projectId, taskId])
   const editorAtom = useMemo(() => atom((get) => getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject)), [subject])
@@ -27,9 +29,10 @@ export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string
     { key: 'criteriaText' as const, label: '完成标准', placeholder: '可以先留空，之后由 Owner 提出建议。每行一条。' },
   ]
   return (
-    <section className="rounded-xl bg-card p-5 shadow-sm" aria-label={taskId ? '任务目标草案' : '项目目标草案'} data-project-id={projectId}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <>
+    <section className="min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label={taskId ? '任务目标草案' : '项目目标草案'} data-project-id={projectId}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-48">
           <h2 className="text-lg font-semibold">{taskId ? '这项任务希望得到什么结果？' : '这个项目希望达到什么目标？'}</h2>
           <p className="mt-1 text-sm text-muted-foreground">先保存目标与必要约束，不需要先拆任务、选择员工或填写文件路径。</p>
         </div>
@@ -69,9 +72,12 @@ export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string
             onClick={() => void load(subject)}>{editor.loading ? '正在加载…' : '加载最新版本（保留输入）'}</button>
           {editor.snapshot && <span className="text-xs text-muted-foreground">已保存目标 v{editor.snapshot.goal.goalVersion} · 当前输入{editor.dirty ? '尚未保存' : '已同步'}</span>}
         </div>
-        <p className="text-xs leading-relaxed text-muted-foreground">仅本地保存，不会调用模型、扣费、创建执行授权或派发任务。AI 拆解与主动推进仍待接入；草案不等于已确认计划。</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">仅本地保存，不会调用模型、扣费、创建执行授权或派发任务。下一步可配置Owner载体并准备模型规划；草案不等于已确认计划或调用许可。</p>
         <p className="text-xs text-muted-foreground">未保存输入暂存在当前窗口；退出或重载窗口前请保存。标准与约束各最多 32 条，每条不超过 2000 字。</p>
       </form>
     </section>
+    <ProjectOwnerRuntimePanel projectId={projectId} taskId={taskId} />
+    <ProjectOwnerPlanPanel projectId={projectId} taskId={taskId} />
+    </>
   )
 }

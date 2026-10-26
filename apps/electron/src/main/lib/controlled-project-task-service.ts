@@ -1,3 +1,9 @@
+import {
+  assertNoOwnerBusinessTask,
+  assertNoOwnerBusinessExecution,
+  assertNoOwnerBusinessSession,
+} from './project-owner-task-evidence'
+import { resolveOwnerPlanningTask } from './project-owner-planning-source'
 /** 非代码项目任务：准备不执行；本机显式启动确认不是Pilot grant或硬费用保证。 */
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -133,7 +139,20 @@ function row(taskId: string): PreparationRow {
 		throw new Error('非代码任务准备回执缺失或损坏，请保留数据核查')
 	return record
 }
+/** 费用预检之前核对精确task及其既有execution/session，不信任旧确认回执。 */
+function assertLegacyControlledTaskPurpose(taskId: string): void {
+  assertNoOwnerBusinessTask(taskId)
+  for (const execution of store.listAgentExecutionsByEntity('task', taskId)) {
+    if (execution.sessionId) assertNoOwnerBusinessSession(execution.sessionId)
+    assertNoOwnerBusinessExecution(execution.id)
+  }
+}
 function context(taskId: string) {
+  assertLegacyControlledTaskPurpose(taskId)
+  // Owner仅允许当前权威冻结来源；残余或损坏用途证据拒绝降级。
+  // 此校验不是发送许可：仍须费用确认、范围复核、原子认领与最终单请求准入。
+  const ownerPlanning = resolveOwnerPlanningTask(taskId)
+
 	const task = store.getTask(taskId)
 	if (
 		!task ||
@@ -164,6 +183,7 @@ function context(taskId: string) {
 		task.workspaceId,
 	)
 	const scopeHash = digest({
+    ...(ownerPlanning ? { ownerPlanning: { link: ownerPlanning.link, binding: ownerPlanning.binding, source: ownerPlanning.context, request: ownerPlanning.request } } : {}),
 		task: {
 			id: task.id,
 			projectId: task.projectId,
@@ -214,7 +234,7 @@ function context(taskId: string) {
 			hash: version.contentHash,
 		})),
 	})
-	return { task, ...facts, scopeHash }
+	return { task, ...facts, scopeHash, ownerPlanning }
 }
 
 /** 同事务首次INSERT就是paused，创建回执不通知自动派发。 */
@@ -224,7 +244,6 @@ export function prepareControlledTask(raw: unknown): {
 } {
 	const input = parseInput(raw)
 	return transactionResult(() => {
-		const facts = target(input.projectId, input.employeeId, input.workspaceId)
 		const hash = digest(input)
 		const existing = store
 			.getProjectDb()
@@ -232,6 +251,8 @@ export function prepareControlledTask(raw: unknown): {
 				'SELECT * FROM controlled_task_preparations WHERE project_id = ? AND request_id = ?',
 			)
 			.get(input.projectId, input.requestId) as PreparationRow | undefined
+    if (existing) assertLegacyControlledTaskPurpose(existing.task_id)
+    const facts = target(input.projectId, input.employeeId, input.workspaceId)
 		if (existing) {
 			if (existing.input_hash !== hash)
 				throw new Error('准备请求已用于其他内容，请重新确认后提交新请求')
@@ -277,6 +298,7 @@ export function getControlledTaskStartPreview(
 	taskId: string,
 ): ControlledTaskStartPreview {
 	text(taskId, 128, '任务ID')
+  assertLegacyControlledTaskPurpose(taskId)
 	row(taskId)
 	const facts = context(taskId)
 	if (!['paused', 'pending', 'in_progress'].includes(facts.task.status))
@@ -289,6 +311,7 @@ export function getControlledTaskStartPreview(
 		)
 	)
 		throw new Error('任务已有排队或运行的执行，请查看现有执行')
+  if (facts.ownerPlanning && (executions.length > 0 || store.getProjectDb().prepare('SELECT link_id FROM project_owner_planning_admissions WHERE link_id = ?').get(facts.ownerPlanning.link.id))) throw new Error('这份Owner准备已有Run或发送占位，不会补发；新调用需要新准备和费用确认')
 	const expiresAt = (Math.floor(Date.now() / ttl) + 1) * ttl
 	return {
 		taskId,
@@ -307,6 +330,7 @@ export function getControlledTaskStartPreview(
 		runtime: facts.employee.runtime,
 		workspaceName: facts.workspace.name,
 		permissionMode: facts.result.permissionMode,
+    ...(facts.ownerPlanning ? { ownerPlanning: { purpose: 'owner_planning' as const, linkId: facts.ownerPlanning.link.id, ownerName: facts.ownerPlanning.binding.ownerName, bindingRevision: facts.ownerPlanning.link.bindingRevision, goalRevision: facts.ownerPlanning.link.goalRevision, planRevision: facts.ownerPlanning.link.planRevision, contextFingerprint: facts.ownerPlanning.context.fingerprint, promptHash: facts.ownerPlanning.link.promptHash, protocolVersion: '1' as const, maxRequests: 1 as const, maxOutputTokens: 4096 as const, systemPrompt: facts.ownerPlanning.request.systemPrompt, userPrompt: facts.ownerPlanning.request.userPrompt, context: facts.ownerPlanning.context, costs: 'unknown_no_hard_cap' as const } } : {}),
 	}
 }
 
@@ -316,8 +340,11 @@ export function assertControlledPreparedExecution(
 	stage: 'queue' | 'provider' = 'queue',
 ): void {
 	const execution = store.getAgentExecution(executionId)
+  if (execution?.sessionId) assertNoOwnerBusinessSession(execution.sessionId)
+  assertNoOwnerBusinessExecution(executionId)
 	if (!execution || execution.entityType !== 'task')
 		throw new Error('非代码执行身份无效')
+  assertNoOwnerBusinessTask(execution.entityId)
 	const record = row(execution.entityId)
 	const facts = context(execution.entityId)
 	if (
@@ -339,6 +366,7 @@ export function assertControlledPreparedExecution(
 	}
 }
 export function claimControlledPreparedExecution(executionId: string): void {
+  assertControlledPreparedExecution(executionId)
 	store.getProjectDb().transaction(() => {
 		assertControlledPreparedExecution(executionId)
 		const result = store
@@ -356,6 +384,7 @@ export async function startControlledTask(
 ): Promise<ControlledTaskStartResult> {
 	const input = object(raw, ['taskId', 'previewHash', 'acknowledgeModelCosts'])
 	const taskId = text(input.taskId, 128, '任务ID')
+  assertLegacyControlledTaskPurpose(taskId)
 	const previewHash = text(input.previewHash, 128, '预检指纹')
 	if (input.acknowledgeModelCosts !== true)
 		throw new Error('请明确确认本次模型费用；创建任务不等于执行授权')
@@ -363,11 +392,14 @@ export async function startControlledTask(
 		'./agent-employee-service'
 	)
 	const executionId = transactionResult(() => {
+    assertLegacyControlledTaskPurpose(taskId)
 		const record = row(taskId)
 		if (record.confirmed_preview_hash === previewHash && record.execution_id) {
 			const existing = store.getAgentExecution(record.execution_id)
 			if (!existing || existing.entityId !== taskId)
 				throw new Error('已确认执行记录缺失，请保留数据核查')
+      if (existing.sessionId) assertNoOwnerBusinessSession(existing.sessionId)
+      assertNoOwnerBusinessExecution(existing.id)
 			return existing.id
 		}
 		const preview = getControlledTaskStartPreview(taskId)

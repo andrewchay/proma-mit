@@ -174,6 +174,27 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_PROJECTS: 'project:list-projects',
   GET_PROJECT: 'project:get-project',
   /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
+  GET_OWNER_EXECUTION_REVALIDATION: 'project:get-owner-execution-revalidation',
+  LIST_OWNER_EXECUTION_REVALIDATION_HISTORY: 'project:list-owner-execution-revalidation-history',
+  PREVIEW_OWNER_EXECUTION_REVALIDATION: 'project:preview-owner-execution-revalidation',
+  SAVE_OWNER_EXECUTION_REVALIDATION: 'project:save-owner-execution-revalidation',
+  GET_OWNER_TASK_MATERIALIZATION: 'project:get-owner-task-materialization',
+  LIST_OWNER_TASK_MATERIALIZATION_HISTORY: 'project:list-owner-task-materialization-history',
+  PREVIEW_OWNER_TASK_MATERIALIZATION: 'project:preview-owner-task-materialization',
+  MATERIALIZE_OWNER_TASKS: 'project:materialize-owner-tasks',
+  GET_OWNER_EXECUTION_PREPARATION: 'project:get-owner-execution-preparation',
+  LIST_OWNER_EXECUTION_PREPARATION_HISTORY: 'project:list-owner-execution-preparation-history',
+  PREVIEW_OWNER_EXECUTION_PREPARATION: 'project:preview-owner-execution-preparation',
+  SAVE_OWNER_EXECUTION_PREPARATION: 'project:save-owner-execution-preparation',
+  GET_OWNER_RUNTIME_BINDING: 'project:get-owner-runtime-binding',
+  SAVE_OWNER_RUNTIME_BINDING: 'project:save-owner-runtime-binding',
+  PREPARE_OWNER_PLANNING: 'project:prepare-owner-planning',
+  LIST_OWNER_PLANNING_RUNS: 'project:list-owner-planning-runs',
+  GET_OWNER_PLANNING_CONTEXT: 'project:get-owner-planning-context',
+  GET_OWNER_PLAN_DRAFT: 'project:get-owner-plan-draft',
+  LIST_OWNER_PLAN_HISTORY: 'project:list-owner-plan-history',
+  SAVE_OWNER_PLAN_DRAFT: 'project:save-owner-plan-draft',
+  CONFIRM_OWNER_PLAN_DRAFT: 'project:confirm-owner-plan-draft',
   GET_OWNER_GOAL_DRAFT: 'project:get-owner-goal-draft',
   SAVE_OWNER_GOAL_DRAFT: 'project:save-owner-goal-draft',
   CREATE_PROJECT: 'project:create-project',
@@ -480,6 +501,8 @@ export interface PrepareControlledTaskInput {
   priority?: 'low' | 'medium' | 'high' | 'critical'
 }
 export interface ControlledTaskStartPreview {
+  /** 仅Owner已冻结的JSON资料；无岗位全文/文件/历史/凭据。费用确认不保证金额硬上限。 */
+  ownerPlanning?: { purpose: 'owner_planning'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: '1'; maxRequests: 1; maxOutputTokens: 4096; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; costs: 'unknown_no_hard_cap' }
   taskId: string
   previewHash: string
   expiresAt: number

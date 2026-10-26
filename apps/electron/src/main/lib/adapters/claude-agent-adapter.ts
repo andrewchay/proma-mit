@@ -1,3 +1,4 @@
+import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 /**
  * Claude Agent SDK 适配器
  *
@@ -637,6 +638,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
    * 若查询已不存在（如已经 abort 过），静默返回。
    */
   async interruptQuery(sessionId: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const query = activeQueries.get(sessionId)
     if (!query) return
     try {
@@ -685,6 +687,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
   async *query(input: AgentQueryInput): AsyncIterable<SDKMessage> {
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
     assertRuntimePolicy('claude')
+    assertNoOwnerBusinessSession(input.sessionId)
     const options = input as ClaudeAgentQueryOptions
 
     // 创建 AbortController
@@ -720,7 +723,12 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         settingSources: ['user', 'project'],
 
         // 条件字段
-        ...(options.canUseTool && { canUseTool: options.canUseTool }),
+        ...(options.canUseTool && { canUseTool: async (...args: Parameters<NonNullable<ClaudeAgentQueryOptions['canUseTool']>>) => {
+          assertNoOwnerBusinessSession(options.sessionId)
+          const result = await options.canUseTool!(...args)
+          assertNoOwnerBusinessSession(options.sessionId)
+          return result
+        } }),
         ...(options.allowedTools && { allowedTools: options.allowedTools }),
         ...(options.resumeSessionId ? { resume: options.resumeSessionId } : {}),
         ...(options.resumeSessionAt && { resumeSessionAt: options.resumeSessionAt }),
@@ -807,6 +815,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         parent_tool_use_id: null,
       } as import('@anthropic-ai/claude-agent-sdk').SDKUserMessage)
 
+      assertNoOwnerBusinessSession(options.sessionId)
       const queryIterator = sdk.query({
         prompt: channel.generator,
         options: sdkOptions,
@@ -887,6 +896,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
    * 不再单独调用 query.streamInput()，避免触发 endInput() 关闭 CLI stdin。
    */
   async sendQueuedMessage(sessionId: string, message: SDKUserMessageInput): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     // 等待 Query 就绪（SDK init 可能需要几秒）
     const readyPromise = queryReadyPromises.get(sessionId)
     if (readyPromise) {
@@ -901,6 +911,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
       }
     }
 
+    assertNoOwnerBusinessSession(sessionId)
     const channel = activeChannels.get(sessionId)
     if (!channel) {
       throw new Error(`[Claude 适配器] 无活跃消息通道可注入队列消息: ${sessionId}`)
@@ -933,6 +944,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
    * 典型场景：Plan 模式审批通过后切换到 bypassPermissions 或 auto。
    */
   async setPermissionMode(sessionId: string, mode: string): Promise<void> {
+    assertNoOwnerBusinessSession(sessionId)
     const query = activeQueries.get(sessionId)
     if (!query) {
       console.warn(`[Claude 适配器] 无活跃查询，跳过权限模式切换: ${sessionId}`)

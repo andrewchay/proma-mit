@@ -1,3 +1,13 @@
+import {
+  assertNoOwnerBusinessTask,
+  assertNoOwnerBusinessExecution,
+  assertNoOwnerBusinessSession,
+  hasOwnerBusinessTaskEvidence,
+  hasOwnerBusinessExecutionEvidence,
+  hasOwnerBusinessSessionEvidence,
+} from './project-owner-task-evidence'
+import { recordOwnerPlanningRun, requestOwnerPlanningStop, ownerPlanningPurposeExists } from './project-owner-planning-run-service'
+import { resolveOwnerPlanningTask, type OwnerPlanningTaskSource } from './project-owner-planning-source'
 /**
  * AI 员工（Agent Employee）服务
  *
@@ -56,6 +66,39 @@ import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
 /** 当前进程内 execution 对应的 Runtime generation；重启后未知时拒绝伪造已停止。 */
 const runtimeGenerationByExecution = new Map<string, number>()
+
+/** 精确用途优先于员工档案/状态/grant；同时检查复用会话的全部关联及负向残余。 */
+function isOwnerBusinessExecutionRestricted(execution: AgentExecution): boolean {
+  const restricted = hasOwnerBusinessExecutionEvidence(execution.id)
+    || Boolean(execution.sessionId && hasOwnerBusinessSessionEvidence(execution.sessionId))
+  if (restricted && execution.sessionId) store.preserveOwnerBusinessSessionEvidence(execution.sessionId)
+  return restricted
+}
+
+/** 既有受限execution/session也不能通过改派清队列后新建普通Run。 */
+function isOwnerBusinessTaskStartRestricted(taskId: string): boolean {
+  return hasOwnerBusinessTaskEvidence(taskId)
+    || store.listAgentExecutionsByEntity('task', taskId).some(isOwnerBusinessExecutionRestricted)
+}
+
+function assertLegacyExecutionPurpose(execution: AgentExecution): void {
+  // 先保全已观察到的会话用途，不因后续关系损坏退回普通运行。
+  if (execution.sessionId) assertNoOwnerBusinessSession(execution.sessionId)
+  assertNoOwnerBusinessExecution(execution.id)
+}
+
+/** 本片没有合法业务Run；保留已有账本/结果，不走学习、DoD、Review或费用结算。 */
+function quarantineOwnerBusinessExecution(execution: AgentExecution): boolean {
+  if (!isOwnerBusinessExecutionRestricted(execution)) return false
+  if (execution.status === 'queued' || execution.status === 'running') {
+    store.updateAgentExecution(execution.id, {
+      status: 'stale',
+      completedAt: Date.now(),
+      error: 'Owner业务执行用途受限；已有账本与结果保留，运行/费用仍待核查，不自动学习、交付或补发',
+    })
+  }
+  return true
+}
 
 /**
  * Agent 护栏外推通知（飞书/钉钉找人）：卡点待决策、配额超限等需要人介入的场景，
@@ -207,7 +250,7 @@ export function listAgentEmployeeCapabilityRollbackAudits(agentId: string) {
  * 回写 execution 与任务为可人工处理的 paused。不会删除 worktree、会话或已有证据。
  */
 function recordLearningSample(execution: AgentExecution, outcome: 'accepted' | 'changes_requested' | 'failed' | 'cancelled', evidenceSummary: string): void {
-  if (!execution.entityType || execution.entityType !== 'task') return
+  if (!execution.entityType || execution.entityType !== 'task' || isOwnerBusinessExecutionRestricted(execution)) return
   store.createAgentEmployeeLearningSample({
     agentId: execution.agentId,
     executionId: execution.id,
@@ -290,6 +333,7 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   if (execution.status !== 'queued' && execution.status !== 'running') {
     throw new Error(`仅能停止排队或运行中的执行，当前状态：${execution.status}`)
   }
+  const ownerStop = requestOwnerPlanningStop(executionId)
   // Pilot 的停止意图必须先于外部 abort 落盘：同步 stopper 也可能触发终态回调，
   // 不能先发停止请求再要求执行仍为 running 才记录待对账事实。
   let stopConfirmation: ExecutionStopConfirmation
@@ -335,6 +379,13 @@ export function cancelAgentExecution(executionId: string): CancelAgentExecutionR
   }
 
   const stoppedAt = Date.now()
+  if (ownerStop) {
+    try { recordOwnerPlanningRun(executionId, 'unknown', undefined, true) } catch {
+      // Runtime终止已由原stopper核验，但费用/来源仍待对账；callback原文已先隔离保存。
+      store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: 'Owner停止已请求；来源证据损坏，费用仍未知，请保留数据核查' })
+    }
+    return { id: execution.id, status: 'cancelled', stopped: true, processTermination: 'VERIFIED' }
+  }
   if (execution.status === 'queued') cancelQueuedExecution(execution, '用户已停止执行，未交付', stoppedAt)
   else {
     store.updateAgentExecution(execution.id, {
@@ -503,6 +554,7 @@ const dispatchInFlight = new Set<string>()
 
 /** 任务指派给 AI 员工：入队（异步，立即返回 executionId）；并发有额度时立即启动，否则排队等待心跳调度 */
 export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string } | null> {
+  if (isOwnerBusinessTaskStartRestricted(task.id)) return null
   const agentId = parseAgentId(task.assignee?.userId)
   if (!agentId) return null
 
@@ -518,6 +570,9 @@ export async function dispatchTaskToAgent(task: Task): Promise<{ taskId: string 
 
 /** 改派时释放旧员工尚未启动的排队项，避免新负责人被幂等检查永久挡住。 */
 function cancelReassignedQueue(task: Task): void {
+  assertNoOwnerBusinessTask(task.id)
+  // 先完整预检，再改写任何旧队列，避免途中遇受限执行已取消前几条。
+  for (const run of store.listAgentExecutionsByEntity('task', task.id)) assertLegacyExecutionPurpose(run)
   for (const run of store.listAgentExecutionsByEntity('task', task.id)) {
     if (run.status === 'queued' && run.agentId !== parseAgentId(task.assignee?.userId)) {
       cancelQueuedExecution(run, '任务已改派，取消旧排队项')
@@ -533,6 +588,7 @@ function isExecutableAgentTask(task: Task): boolean {
 }
 
 async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{ taskId: string } | null> {
+  if (isOwnerBusinessTaskStartRestricted(task.id)) return null
   // 准备任务只由显式确认入口入队；不能信任调用方传来的陈旧task标记。
   if (requiresControlledStart(task.id)) return null
   // PH2-③ 统一只派发可执行态（pending / in_progress），completed/draft/paused 一律不派发：
@@ -574,6 +630,8 @@ async function dispatchTaskToAgentLocked(task: Task, agentId: string): Promise<{
 
 /** 复用权威execution和冻结提示词，只入队，不创建会话或调用Runtime。 */
 function enqueueAgentTask(task: Task, employee: AgentEmployee): string {
+  assertNoOwnerBusinessTask(task.id)
+  for (const run of store.listAgentExecutionsByEntity('task', task.id)) assertLegacyExecutionPurpose(run)
   const agentId = employee.id
   const executionId = randomUUID()
   const capabilityVersions = store.getActiveAgentEmployeeCapabilityVersions(employee.id, task.workspaceId)
@@ -606,6 +664,8 @@ function enqueueAgentTask(task: Task, employee: AgentEmployee): string {
 
 /** 仅供非代码显式确认事务使用，不暴露为独立IPC入口。 */
 export function enqueueControlledPreparedTask(taskId: string): string {
+  assertNoOwnerBusinessTask(taskId)
+  for (const run of store.listAgentExecutionsByEntity('task', taskId)) assertLegacyExecutionPurpose(run)
   const task = store.getTask(taskId)
   if (!task?.controlledPreparationId || getActivePilotGrant(task.projectId)) throw new Error('非代码任务准备身份或项目授权无效')
   const employee = store.getAgentEmployee(parseAgentId(task.assignee?.userId) ?? '')
@@ -619,6 +679,7 @@ export function enqueueControlledPreparedTask(taskId: string): string {
  * 供“任务改派给 AI 员工”/“任务重新指派”场景使用，避免每次 updated 都重复创建执行。
  */
 export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: string } | null> {
+  if (isOwnerBusinessTaskStartRestricted(task.id)) return null
   if (!isAgentAssignee(task)) return null
   // 只有可执行态（pending / in_progress）才允许派发；completed/draft/paused 均拒绝：
   // - completed/draft：防完成回写→onTaskChange→再派发的死循环
@@ -635,6 +696,7 @@ export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: s
 export async function tryStartExecution(executionId: string): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
+  if (isOwnerBusinessExecutionRestricted(execution)) return false
   let pilotReservedCostMicros: number | undefined
   if (!execution.pilotCommandId && getActivePilotGrant(execution.projectId)) {
     console.warn(`[AgentEmployee] 项目 ${execution.projectId} 存在活动 Pilot 授权，普通排队执行不得启动`)
@@ -720,6 +782,7 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
 async function startAgentHeadless(executionId: string, employee: AgentEmployee, runtimeBudgetLimitUsd?: number): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued') return false
+  if (isOwnerBusinessExecutionRestricted(execution)) return false
 
   // PH2-③：执行工作区优先级 = 任务指定的 workspaceId → 员工档案 → 全局默认
   const task = execution.entityType === 'task' ? store.getTask(execution.entityId) : null
@@ -766,12 +829,22 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     catch (error) { console.warn('[AgentEmployee] 非代码启动认领被拒绝:', error); return false }
   }
 
+  // Owner是独立规划职责；仅以同库来源构造资料，不沿用员工角色全文或提及Skills。
+  let ownerPlanning: OwnerPlanningTaskSource | null = null
+  try { if (task) ownerPlanning = resolveOwnerPlanningTask(task.id) }
+  catch (error) { handleExecutionError(executionId, error instanceof Error ? error.message : 'Owner规划来源无效', execution.startedAt); return false }
+  if (ownerPlanning && runtimeBudgetLimitUsd !== undefined) {
+    handleExecutionError(executionId, 'Owner规划不能伪造Pilot硬预算出口', execution.startedAt)
+    return false
+  }
   // 1. 创建独立 Agent 会话
   let sessionId: string
   try {
     const task = store.getTask(execution.entityId)
     const previous = development ? store.listAgentExecutionsByEntity('task', execution.entityId)
       .find((run) => run.id !== executionId && run.agentId === employee.id && run.outputFiles?.length && run.sessionId) : undefined
+    assertLegacyExecutionPurpose(execution)
+    if (previous) assertNoOwnerBusinessSession(previous.sessionId)
     const previousSession = previous ? getAgentSessionMeta(previous.sessionId) : undefined
     if (previous && (!previousSession || previousSession.workspaceId !== workspaceId || previousSession.agentRuntime !== employee.runtime || previousSession.channelId !== employee.channelId)) {
       throw new Error('上次研发会话与当前工作区、渠道或 Runtime 不一致；请恢复原配置继续返工，或新建任务')
@@ -794,6 +867,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     })
     // 普通执行尽早保留会话定位；Pilot 必须等到调用 Runtime 前与命令同事务认领。
     if (!execution.pilotCommandId) store.updateAgentExecution(executionId, { sessionId })
+    assertLegacyExecutionPurpose(store.getAgentExecution(executionId)!)
+    assertNoOwnerBusinessSession(sessionId)
     if (development) {
       const workspace = getAgentWorkspace(workspaceId!)!
       const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, sessionId)
@@ -822,6 +897,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   }
 
   // 2. 更新执行：Pilot 命令与 execution 同事务认领，避免暂停或重启看到半启动状态。
+  assertLegacyExecutionPurpose(store.getAgentExecution(executionId)!)
+  assertNoOwnerBusinessSession(sessionId)
   if (execution.pilotCommandId) {
     try {
       const policy = getPilotPolicy(execution.projectId)
@@ -843,13 +920,14 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   const clearRuntimeGeneration = (): void => {
     if (runtimeGenerationByExecution.get(executionId) === startedAt) runtimeGenerationByExecution.delete(executionId)
   }
+  assertLegacyExecutionPurpose(updated)
   runRegisteredHeadlessAgent(
     {
       sessionId,
-      userMessage: updated.prompt,
+      userMessage: ownerPlanning?.request.userPrompt ?? updated.prompt,
       channelId: employee.channelId,
       modelId,
-      mentionedSkills: employee.skills,
+      mentionedSkills: ownerPlanning ? undefined : employee.skills,
       agentRuntime: employee.runtime,
       runtimeBudgetLimitUsd,
       workspaceId,
@@ -862,7 +940,10 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     {
       source: 'delegation',
       originSessionId: sessionId,
-      ...(execution.pilotCommandId ? { onRunnerInvoke: () => {
+      onRunnerInvoke: () => {
+        assertLegacyExecutionPurpose(store.getAgentExecution(executionId)!)
+        assertNoOwnerBusinessSession(sessionId)
+        if (!execution.pilotCommandId) return
         const readiness = inspectPilotReadiness(execution.projectId)
         const policy = getPilotPolicy(execution.projectId)
         const currentEmployee = store.getAgentEmployee(employee.id)
@@ -877,11 +958,12 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
           || modelId !== policy.modelId || permissionModeOverride !== 'safe') {
           throw new Error('Pilot 启动交接绑定或启动参数已变化')
         }
-        recordPilotRunnerHandoffIntent(executionId, execution.pilotCommandId!, sessionId)
-      } } : {}),
+        recordPilotRunnerHandoffIntent(executionId, execution.pilotCommandId, sessionId)
+      },
       // Runtime 首条消息到达 = 启动事实成立；写不可变开始回执供重启恢复区分
       // "启动已证"与"启动未知"。回执失败只记录日志：不中断运行，终态结算仍按原路径。
       ...(execution.pilotCommandId ? { onRuntimeStarted: () => {
+        assertLegacyExecutionPurpose(store.getAgentExecution(executionId)!)
         try {
           recordPilotRuntimeStarted(executionId, execution.pilotCommandId!, sessionId, {
             runnerName: 'headless-runner',
@@ -929,6 +1011,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
 async function startAgentWorkflow(executionId: string, employee: AgentEmployee): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
   if (!execution || execution.status !== 'queued' || !employee.workflowId) return false
+  if (isOwnerBusinessExecutionRestricted(execution)) return false
 
   const startedAt = Date.now()
   store.updateAgentExecution(executionId, { status: 'running', lastHeartbeatAt: startedAt })
@@ -951,6 +1034,7 @@ async function startAgentWorkflow(executionId: string, employee: AgentEmployee):
     store.updateAgentExecution(executionId, { sessionId: `workflow:${run.id}` })
 
     // 串行执行到无 ready 节点（可能遇到审批/失败）
+    assertLegacyExecutionPurpose(store.getAgentExecution(executionId)!)
     const finalRun = await executeWorkflowRun(
       employee.workflowId,
       run.id,
@@ -962,6 +1046,7 @@ async function startAgentWorkflow(executionId: string, employee: AgentEmployee):
     // 防覆盖：await 期间用户可能已手动改任务状态（updateTodoStatus 会把 execution 置 cancelled），
     // 此时应放弃 workflow 回写，避免把用户的取消/完成覆盖回”进行中→completed”
     const live = store.getAgentExecution(executionId)
+    if (live && quarantineOwnerBusinessExecution(live)) return true
     if (live?.status === 'cancelled') return true
 
     if (finalRun.status === 'completed') {
@@ -1037,6 +1122,7 @@ function writebackExecutionResult(
   summary: string,
   ts: number,
 ): void {
+  if (isOwnerBusinessExecutionRestricted(execution)) return
   if (execution.entityType === 'subTask') {
     return void updateExecutionSubTask(execution.entityId, {
       status: status as 'completed' | 'paused',
@@ -1094,6 +1180,16 @@ function recordPilotTerminalUsage(
   }
 }
 
+/** Owner坏来源不走普通回写；已有回调原文先保全，当前attempt保守stale且不自动补发。 */
+function handleOwnerRunCallback(execution: AgentExecution, runtimeSource: string, runtimeResult?: SDKResultMessage, stopped = false, error?: string): boolean {
+  try { return Boolean(recordOwnerPlanningRun(execution.id, runtimeSource, runtimeResult, stopped, error)) }
+  catch (cause) {
+    if (execution.entityType !== 'task' || !ownerPlanningPurposeExists(execution.entityId, execution.id)) throw cause
+    if (execution.status === 'running' || execution.status === 'queued') store.updateAgentExecution(execution.id, { status: 'stale', completedAt: Date.now(), error: 'Owner回调证据已隔离保留，来源或回执损坏；费用仍待核查，不自动补发' })
+    console.warn(`[AgentEmployee] Owner回调保守隔离 execution=${execution.id}:`, cause instanceof Error ? cause.message : '来源核查失败')
+    return true
+  }
+}
 /** 执行完成回写 */
 function handleExecutionComplete(
   executionId: string,
@@ -1104,7 +1200,10 @@ function handleExecutionComplete(
   runtimeResult?: SDKResultMessage,
 ): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status !== 'running') return
+  if (!execution) return
+  if (quarantineOwnerBusinessExecution(execution)) return
+  if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, stoppedByUser)) return
+  if (execution.status !== 'running') return
   if (stoppedByUser) {
     const stoppedAt = Date.now()
     store.updateAgentExecution(executionId, { status: 'cancelled', completedAt: stoppedAt, error: '用户已停止执行，未交付' })
@@ -1264,7 +1363,10 @@ function handleExecutionError(
   runtimeResult?: SDKResultMessage,
 ): void {
   const execution = store.getAgentExecution(executionId)
-  if (!execution || execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return
+  if (!execution) return
+  if (quarantineOwnerBusinessExecution(execution)) return
+  if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, false, error)) return
+  if (execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return
 
   const failedAt = Date.now()
   store.updateAgentExecution(executionId, {
@@ -1326,11 +1428,24 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
 
   // 1. 先调度 queued 执行（并发额度释放后启动）
   for (const execution of running.filter((e) => e.status === 'queued')) {
+    if (isOwnerBusinessExecutionRestricted(execution)) continue
     void tryStartExecution(execution.id).catch((error: unknown) => handleExecutionError(execution.id, error instanceof Error ? error.message : '调度失败', now))
   }
 
   // 2. 探测 running 执行
   for (const execution of running.filter((e) => e.status === 'running')) {
+    if (quarantineOwnerBusinessExecution(execution)) continue
+    if (execution.entityType === 'task' && ownerPlanningPurposeExists(execution.entityId, execution.id)) {
+      let active = false
+      try { active = isAgentSessionActive(execution.sessionId) } catch { /* 探测失败保持unknown，不补发 */ }
+      if (active) store.updateAgentExecution(execution.id, { lastHeartbeatAt: now })
+      else {
+        try { recordOwnerPlanningRun(execution.id, 'unknown') } catch {
+          store.updateAgentExecution(execution.id, { status: 'stale', completedAt: now, error: 'Owner失联且来源证据损坏，回调已隔离保全；费用未知，不自动补发' })
+        }
+      }
+      continue // 不沿用普通重试/学习/DoD或外部通知路径。
+    }
     // Workflow 执行（sessionId=workflow:runId）不是 Agent 会话：不做 isActive 探测，仅超时检查
     if (execution.executor === 'workflow') {
       const duration = now - execution.startedAt
@@ -1506,6 +1621,7 @@ export function reconcileWorkflowApprovalRun(workflowId: string, runId: string):
     const execution = store.getAgentExecutionBySessionId(`workflow:${runId}`)
     // 只推进“等待审批”的 execution；已被取消/完成/其它状态的不打扰
     if (!execution || execution.status !== 'stale') return
+    if (quarantineOwnerBusinessExecution(execution)) return
 
     const now = Date.now()
     if (run.status === 'completed') {

@@ -1,3 +1,4 @@
+import { assertNoOwnerExecutionPreparation } from './project-owner-execution-preparation-evidence'
 import { createHash } from 'node:crypto'
 import type { PilotGrantBudgetUsage } from '@gravitas/shared'
 import { createAgentExecution, getAgentExecution, getProjectDb, getTask, listTaskBlockers, listTaskStatuses } from './project-sqlite-store'
@@ -170,6 +171,7 @@ function reservePilotCommandBudgetLocked(
   now: number,
   policy: PilotPolicy,
 ): PilotCommandReservation {
+  assertNoOwnerExecutionPreparation(input.projectId, policy.ownerExecutionPreparation)
   const database = getProjectDb()
   const unresolvedStop = database.prepare(`SELECT 1 FROM pilot_stop_escalations
     WHERE project_id = ? AND resolved_at IS NULL LIMIT 1`).get(input.projectId)
@@ -382,6 +384,7 @@ export function assertPilotCommandStartRecord(executionId: string, commandId: st
   assertValidClock(now)
   const execution = getAgentExecution(executionId)
   if (!execution?.pilotCommandId) throw new Error('Pilot 执行归属或排队状态无法核验')
+  assertNoOwnerExecutionPreparation(execution.projectId)
   const command = getProjectDb().prepare('SELECT grant_id FROM pilot_commands WHERE id = ? AND project_id = ?')
     .get(commandId, execution.projectId) as { grant_id: string } | undefined
   if (!command) throw new Error('Pilot 已预留命令与执行不匹配')
@@ -403,6 +406,7 @@ export function claimPilotCommandStart(
   if (getProjectDb().isTransactionActive()) throw new Error('Pilot 启动认领不得嵌套未提交事务')
   const execution = getAgentExecution(executionId)
   if (!execution?.pilotCommandId) throw new Error('Pilot 执行归属或排队状态无法核验')
+  assertNoOwnerExecutionPreparation(execution.projectId)
   const command = getProjectDb().prepare('SELECT grant_id FROM pilot_commands WHERE id = ? AND project_id = ?')
     .get(commandId, execution.projectId) as { grant_id: string } | undefined
   if (!command) throw new Error('Pilot 已预留命令与执行不匹配')
