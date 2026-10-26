@@ -91,7 +91,7 @@ function fixture(options: { reviewerId?: string; withDecision?: boolean; dirtyWo
 
   const session = sessionManager.createAgentSession('交付测试', channel.id, workspace.id)
   const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, session.id)
-  const executionId = `exec-${randomUUID()}`
+  const executionId = randomUUID()
   const worktree = createDevelopmentWorktree(repo, sessionDirectory, executionId)
   options.dirtyWork?.(worktree.path)
 
