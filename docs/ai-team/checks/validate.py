@@ -5,13 +5,13 @@ def validate(root):
     root=Path(root).resolve()
     manifest=json.loads((root/'manifest.json').read_text())
     catalog=json.loads((root/'catalog.json').read_text())
-    assert manifest['roleCount']==20
-    assert manifest['coreRoleCount']==13 and manifest['specialistRoleCount']==7
+    assert manifest['roleCount']==21
+    assert manifest['coreRoleCount']==14 and manifest['specialistRoleCount']==7
     assert catalog['employeeInstancesCreated']==0 and catalog['runtimeIntegrated'] is False
     assert catalog['modelBinding'] is None and catalog['status']=='draft-unbound'
     entries=manifest['files']
     slugs={e['roleSlug'] for e in entries}
-    assert len(slugs)==20 and len(entries)==20
+    assert len(slugs)==21 and len(entries)==21
     assert not any(x in s for s in slugs for x in ['shepherd','project-manager','chief-of-staff'])
     index={r['roleSlug']:r for f in catalog['functions'] for r in f['roles']}
     assert set(index)==slugs
@@ -45,7 +45,7 @@ def validate(root):
         case_count+=len(tests['cases'])
         for test in tests['cases']:
             assert all(test[k] for k in ['name','given','when','then'])
-    assert counts=={'core':13,'specialist':7}
+    assert counts=={'core':14,'specialist':7}
     for md in root.rglob('*.md'):
         for target in re.findall(r'\]\(([^)]+)\)',md.read_text()):
             if '://' not in target and not target.startswith('#'):
@@ -54,7 +54,18 @@ def validate(root):
     assert provenance['license']=='MIT' and len(provenance['referenceHead'])==40
     assert 'Copyright (c) 2025 AgentLand Contributors' in (root/'licenses/agency-agents-MIT.txt').read_text()
     assert 'Permission is hereby granted' in (root/'licenses/agency-agents-MIT.txt').read_text()
-    assert all(s in provenance['sources'] for e in entries for s in json.loads((root/e['cardPath']).read_text())['sourceFiles'])
+    assert 'Permission is hereby granted' in (root/'licenses/useful-ai-prompts-MIT.txt').read_text()
+    additional_sources=set()
+    for reference_name, reference in provenance.get('additionalReferences',{}).items():
+        assert reference['license']=='MIT' and len(reference['referenceHead'])==40
+        license_path=root/'licenses'/f'{reference_name}-MIT.txt'
+        license_text=license_path.read_text()
+        assert reference['copyright'] in license_text
+        assert 'Permission is hereby granted' in license_text
+        for source_path, evidence in reference['sources'].items():
+            assert re.fullmatch(r'[0-9a-f]{64}',evidence['sha256'])
+            additional_sources.add(source_path)
+    assert all(s in provenance['sources'] or s in additional_sources for e in entries for s in json.loads((root/e['cardPath']).read_text())['sourceFiles'])
     special={
         'requirements-analyst':'不替人拍板',
         'feedback-analyst':'AI 模拟意见当用户数据',
@@ -62,11 +73,12 @@ def validate(root):
         'ai-behavior-designer':'不自行激活',
         'legal-reviewer':'司法辖区',
         'recruitment-assistant':'受保护属性',
+        'support-escalation-specialist':'不创造目标响应时间',
         'financial-planner':'预测收入不当实际收入',
     }
     for slug,phrase in special.items():
         assert phrase in (root/f'roles/{slug}.md').read_text(),slug
-    return {'root':str(root),'roleCount':20,'core':13,'specialists':7,'functions':11,'behaviorCases':case_count,'artifactIntegrity':'pass','modelBehaviorEvaluation':'not-run','runtimeIntegration':'not-implemented','employeeInstancesCreated':0}
+    return {'root':str(root),'roleCount':21,'core':14,'specialists':7,'functions':11,'behaviorCases':case_count,'artifactIntegrity':'pass','modelBehaviorEvaluation':'not-run','runtimeIntegration':'not-implemented','employeeInstancesCreated':0}
 
 if __name__=='__main__':
     print(json.dumps(validate(sys.argv[1]),ensure_ascii=False,indent=2))

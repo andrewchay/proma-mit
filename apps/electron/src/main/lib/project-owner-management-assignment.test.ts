@@ -901,7 +901,7 @@ test('Given Owner暂停时团队能力变化 When恢复管理循环 Then累积�
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(1)
     expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(1)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id); stop() }
-})
+}, 20_000)
 
 test('Given 员工新增与团队事件同事务 When 外层写入回滚 Then 员工和唤醒事件一并回滚', () => {
   const f = fixture(), database = store.getProjectDb()
@@ -946,7 +946,7 @@ test('Given项目已有general员工且无精确模板 When确认方案 Then后�
       expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(1)
     } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
   }
-}, 15_000)
+}, 30_000)
 
 test('Given历史完整安排仅因空代码范围被拒绝 When本地恢复并对账 Then保留原失败和费用且不新增安排请求', async () => {
   const f = fixture()

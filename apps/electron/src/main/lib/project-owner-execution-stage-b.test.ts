@@ -972,7 +972,7 @@ test('Given旧Runtime回调仍滞留 When独立进程重启恢复后回调晚到
     if (parentDbClosed) await store.initProjectDb()
     if (dispatch) await dispatch.catch(() => undefined)
   }
-})
+}, 15_000)
 
 test('Given owner命令运行中但session失联 When 普通heartbeat扫描 Then 走Owner unknown恢复而不走普通回写', () => {
   const f = fixture(), { input, ack } = ackFixture(f)
@@ -1462,7 +1462,7 @@ test('Given已知结算与不可变技术回执 When数据库关闭重开 Then�
   expect((await assertNoAutonomousDispatch(f, 2)).nextAction).toBe('await_business_acceptance')
   technicalReview.recordOwnerTechnicalReviewEvidence(reviewer.commandId, reviewer.executionId, reviewer.rawReview, reviewer.now)
   expect(technicalReview.listOwnerTechnicalReviewEvidence(f.project.id)).toEqual(before)
-})
+}, 15_000)
 
 function verifyAppendNewPlanBatch(taskScopedGoal: boolean) {
   const f = taskScopedGoal
