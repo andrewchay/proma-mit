@@ -42,14 +42,27 @@ export function getOwnerCarrierFacts(projectId: string, carrierId: string, works
   if (!hasProjectWorkspaceBinding(projectId, workspaceId)) throw new Error('Owner工作区未明确绑定项目')
   const channel = getChannelById(employee.channelId)!
   const workspace = getAgentWorkspace(workspaceId)!
-  // 配置只保存指纹，不落渠道凭据或工作区路径。全配置变化需要重新绑定。
-  return { channelId: channel.id, modelId: target.modelId, runtime: 'ai-sdk' as const, carrierFingerprint: hash({ employee, channel, workspace }) }
+  // 配置只保存指纹，不落渠道凭据或工作区路径。旧指纹保留兼容；新配置另存排除运行统计的稳定指纹。
+  const { totalTasks: _totalTasks, completedTasks: _completedTasks, avgDurationMs: _avgDurationMs, failureCount: _failureCount, updatedAt: _updatedAt, ...employeeConfiguration } = employee
+  return {
+    channelId: channel.id,
+    modelId: target.modelId,
+    runtime: 'ai-sdk' as const,
+    carrierFingerprint: hash({ employee, channel, workspace }),
+    carrierConfigurationFingerprint: hash({ employee: employeeConfiguration, channel, workspace }),
+  }
+}
+export function ownerCarrierBindingMatches(binding: OwnerRuntimeBinding, facts: ReturnType<typeof getOwnerCarrierFacts>): boolean {
+  if (binding.channelId !== facts.channelId || binding.modelId !== facts.modelId || binding.runtime !== facts.runtime) return false
+  return binding.carrierConfigurationFingerprint
+    ? binding.carrierConfigurationFingerprint === facts.carrierConfigurationFingerprint
+    : binding.carrierFingerprint === facts.carrierFingerprint
 }
 function parseBinding(payload: string, projectId: string, expectedRevision: number): OwnerRuntimeBinding {
   try {
-    const value = object(JSON.parse(payload), ['schemaVersion', 'projectId', 'revision', 'ownerRole', 'ownerName', 'carrierId', 'workspaceId', 'channelId', 'modelId', 'runtime', 'carrierFingerprint', 'actor', 'savedAt', 'changeReason'])
+    const value = object(JSON.parse(payload), ['schemaVersion', 'projectId', 'revision', 'ownerRole', 'ownerName', 'carrierId', 'workspaceId', 'channelId', 'modelId', 'runtime', 'carrierFingerprint', 'carrierConfigurationFingerprint', 'actor', 'savedAt', 'changeReason'])
     if (value.schemaVersion !== 1 || value.projectId !== projectId || value.revision !== expectedRevision || value.ownerRole !== 'project_owner' || value.actor !== 'local-user' || value.runtime !== 'ai-sdk') throw new Error('配置身份不匹配')
-    return { schemaVersion: 1, projectId, revision: revision(value.revision, 1), ownerRole: 'project_owner', ownerName: text(value.ownerName, '职责名称'), carrierId: text(value.carrierId, '载体ID', 128), workspaceId: text(value.workspaceId, '工作区ID', 128), channelId: text(value.channelId, '渠道ID', 128), modelId: text(value.modelId, '模型ID'), runtime: 'ai-sdk', carrierFingerprint: digest(value.carrierFingerprint), actor: 'local-user', savedAt: revision(value.savedAt, 1), changeReason: text(value.changeReason, '变更原因', 2000) }
+    return { schemaVersion: 1, projectId, revision: revision(value.revision, 1), ownerRole: 'project_owner', ownerName: text(value.ownerName, '职责名称'), carrierId: text(value.carrierId, '载体ID', 128), workspaceId: text(value.workspaceId, '工作区ID', 128), channelId: text(value.channelId, '渠道ID', 128), modelId: text(value.modelId, '模型ID'), runtime: 'ai-sdk', carrierFingerprint: digest(value.carrierFingerprint), ...(value.carrierConfigurationFingerprint === undefined ? {} : { carrierConfigurationFingerprint: digest(value.carrierConfigurationFingerprint) }), actor: 'local-user', savedAt: revision(value.savedAt, 1), changeReason: text(value.changeReason, '变更原因', 2000) }
   } catch { throw new Error('Owner配置记录无效，请保留数据库核查') }
 }
 export function getOwnerRuntimeBinding(projectId: string, atRevision?: number): OwnerRuntimeBinding | null {
@@ -89,7 +102,7 @@ export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlan
       || store.getProjectDb().prepare('SELECT owner_planning_link_id FROM controlled_task_preparations WHERE task_id = ? AND owner_planning_link_id IS NOT NULL').get(taskId))) throw new Error('Owner规划承载任务不能作为目标业务任务再次规划')
     const context = getProjectOwnerPlanningContext(projectId, taskId)
     const plan = getProjectOwnerPlanDraft(projectId, taskId)
-    if (binding.revision !== bindingRevision || context.goal.revision !== goalRevision || context.fingerprint !== contextFingerprint || (plan?.revision ?? 0) !== planRevision || hash(facts) !== hash({ channelId: binding.channelId, modelId: binding.modelId, runtime: binding.runtime, carrierFingerprint: binding.carrierFingerprint })) throw new Error('Owner目标、来源、计划或载体配置已更新，请重新确认')
+    if (binding.revision !== bindingRevision || context.goal.revision !== goalRevision || context.fingerprint !== contextFingerprint || (plan?.revision ?? 0) !== planRevision || !ownerCarrierBindingMatches(binding, facts)) throw new Error('Owner目标、来源、计划或载体配置已更新，请重新确认')
     const request = buildProjectOwnerPlanningRequest(context)
     const makeLink = (id: string, planningTaskId: string, createdAt: number): OwnerPlanningLink => ({ schemaVersion: 1, id, projectId, requestId, planningTaskId, ...(taskId === undefined ? {} : { targetTaskId: taskId }), bindingRevision, goalRevision, goalVersion: context.goal.goal.goalVersion, planRevision, contextFingerprint, carrierFingerprint: facts.carrierFingerprint, protocolVersion: '1', promptHash: hash(request), purpose: 'owner_planning', maxRequests: 1, maxOutputTokens: 4096, createdAt })
     const existing = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_links WHERE project_id = ? AND request_id = ?').get(projectId, requestId) as LinkRow | undefined

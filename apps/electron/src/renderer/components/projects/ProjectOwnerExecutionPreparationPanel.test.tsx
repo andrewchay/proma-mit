@@ -28,12 +28,14 @@ import type {
   OwnerExecutionPreparationInput,
   OwnerExecutionPreparationPreview,
   OwnerExecutionPreparationRecord,
+  OwnerExecutionPreparationView,
 } from '@gravitas/shared'
 import {
   getOwnerExecutionEditor,
   ownerExecutionEditorsAtom,
   type OwnerExecutionEditor,
 } from '../../atoms/project-owner-execution-atoms'
+import { getOwnerPlanEditor, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
 const subject = { projectId: 'a' }
 const input: OwnerExecutionPreparationInput = {
   requestId: 'r',
@@ -47,6 +49,7 @@ const input: OwnerExecutionPreparationInput = {
   reviewerEmployeeId: 'r',
   workspaceId: 'w',
   knowledgeSourceIds: ['k'],
+  roleBudgetCaps: [{ roleKey: 'research', maxCostMicros: 400000 }],
   maxCostMicros: 1000001,
   maxRuns: 2,
   maxRework: 1,
@@ -143,6 +146,7 @@ function render(patch: Partial<OwnerExecutionEditor>) {
     ownerExecutionEditorsAtom,
     new Map([['["a",null]', { ...getOwnerExecutionEditor(new Map(), subject), ...patch }]]),
   )
+  store.set(ownerPlanEditorsAtom, new Map([['["a",null]', { ...getOwnerPlanEditor(new Map(), subject), snapshot: preview.plan }]]))
   return renderToStaticMarkup(
     createElement(
       Provider,
@@ -171,6 +175,8 @@ test('Given 冻结预览 When SSR Then 全事实与未知contentHash清楚可核
     'metadatahash',
     'contentHash 未知',
     '1000001',
+    'research ≤ 400000 微美元',
+    'Executor 与 Reviewer 费用都计入该任务岗位',
     '次数：2',
     '返工：1',
     '期限',
@@ -181,6 +187,14 @@ test('Given 冻结预览 When SSR Then 全事实与未知contentHash清楚可核
   ])
     expect(html).toContain(text)
   expect(html).not.toContain('已授权')
+})
+test('Given 可选岗位cap编辑已启用 When SSR Then 默认不自动开启且说明未配置岗位仍受共享总额', () => {
+  expect(render({})).toContain('<input type="checkbox"/><span>启用按岗位设置上限</span>')
+  const html = render({ roleBudgetCapsEnabled: true, roleBudgetCapTexts: { research: '400000' } })
+  expect(html).toContain('<input type="checkbox" checked=""/>')
+  expect(html).toContain('启用按岗位设置上限')
+  expect(html).toContain('未填写的岗位只受共享总额限制')
+  expect(html).toContain('Reviewer 费用计入被评审任务的岗位')
 })
 test('Given 历史与来源冲突 When SSR Then 历史无恢复按钮且诊断/输入保留', () => {
   const html = render({
@@ -212,6 +226,25 @@ test('Given 非研发模式 When SSR Then 无研发scope编辑或自动模型选
   const development = render({ executionKind: 'development' })
   expect(development).toContain('目标路径（每行一条')
   expect(development).toContain('后台须核验Git')
+})
+test('Given 唯一roleTemplate只匹配Owner载体 When 显示候选 Then 文案解释不自动推荐但可显式选择', () => {
+  const view: OwnerExecutionPreparationView = {
+    choices: {
+      employees: [{ id: 'carrier', name: 'Owner载体', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk', isOwnerCarrier: true }],
+      workspaces: [{ id: 'w', name: '明确工作区' }],
+      knowledgeSources: [],
+    },
+    revision: 0,
+    policyRevision: null,
+    preparation: null,
+    status: 'none',
+    blockers: [],
+  }
+  const html = render({ view, selectedStepKeys: ['s'], workspaceId: 'w' })
+  expect(html).toContain('唯一精确匹配是 Owner 规划载体；请明确选择')
+  expect(html).toContain('精确模板仅匹配 Owner 规划载体；不会自动推荐。你仍可显式选择并接受服务端配置核验')
+  expect(html).toContain('Owner规划载体（不自动推荐）')
+  expect(html).toContain('Owner规划载体（仅显式选择）')
 })
 test('Given 嵌入计划与任务弹窗 When 呈现准备 Then 字段语义唯一且滚动分区具名、不冒充弹窗滚动div', () => {
   const html = render({ preview, history: [record], historyLoaded: true })

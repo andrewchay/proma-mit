@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { assertTaskCompletionAllowed, emptyProjectChain } from './project-chain'
 import type { ProjectChain, OwnerTaskStepLink, OwnerTaskMaterializationRecord } from '@gravitas/shared'
+import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 
 // better-sqlite3 类型（仅类型引用；运行时在 loadNativeSqlite 中延迟 require，Bun 下不会加载）
 type SqliteNativeConstructor = typeof import('better-sqlite3')
@@ -910,6 +911,7 @@ function migrate(database: SqliteCompat): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT '通用',
+      role_template_id TEXT,
       avatar TEXT,
       description TEXT NOT NULL DEFAULT '',
       runtime TEXT NOT NULL DEFAULT 'proma',
@@ -1046,6 +1048,169 @@ function migrate(database: SqliteCompat): void {
   )`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_gate_execution ON project_owner_execution_gate_sessions(execution_id)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_knowledge_reads_session ON project_owner_execution_knowledge_reads(session_id)')
+  const ownerGrantTableSql = `CREATE TABLE IF NOT EXISTS project_owner_execution_grants (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT,
+    purpose TEXT NOT NULL CHECK (purpose = 'owner_business_execution'),
+    state TEXT NOT NULL CHECK (state IN ('active', 'paused', 'needs_reconcile', 'archived')),
+    revalidation_id TEXT NOT NULL, revalidation_revision INTEGER NOT NULL, revalidation_integrity_hash TEXT NOT NULL,
+    materialization_id TEXT NOT NULL, materialization_revision INTEGER NOT NULL, materialization_integrity_hash TEXT NOT NULL,
+    policy_revision INTEGER NOT NULL, executor_employee_id TEXT NOT NULL, reviewer_employee_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL, channel_id TEXT NOT NULL, model_id TEXT NOT NULL, runtime TEXT NOT NULL,
+    dispatch_mode TEXT NOT NULL DEFAULT 'manual' CHECK (dispatch_mode IN ('manual', 'autonomous')),
+    max_cost_micros INTEGER NOT NULL CHECK (max_cost_micros > 0), max_runs INTEGER NOT NULL CHECK (max_runs > 0),
+    max_rework INTEGER NOT NULL CHECK (max_rework >= 0), expires_at INTEGER NOT NULL,
+    role_budgets_json TEXT NOT NULL DEFAULT '[]',
+    approval_fingerprint TEXT NOT NULL, source_hash TEXT NOT NULL, request_id TEXT NOT NULL, input_hash TEXT NOT NULL,
+    issued_at INTEGER NOT NULL
+  )`
+  database.exec(ownerGrantTableSql)
+  // 旧授权一律保持人工模式；历史行不能因迁移获得自主派发权限。
+  if (!readColumnNames(database, 'project_owner_execution_grants').includes('dispatch_mode')) {
+    database.exec("ALTER TABLE project_owner_execution_grants ADD COLUMN dispatch_mode TEXT NOT NULL DEFAULT 'manual' CHECK (dispatch_mode IN ('manual', 'autonomous'))")
+  }
+  if (!readColumnNames(database, 'project_owner_execution_grants').includes('role_budgets_json')) {
+    database.exec("ALTER TABLE project_owner_execution_grants ADD COLUMN role_budgets_json TEXT NOT NULL DEFAULT '[]'")
+  }
+  const grantSchema = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='project_owner_execution_grants'").get() as { sql?: string } | undefined
+  if (grantSchema?.sql && !grantSchema.sql.includes("'archived'")) {
+    database.transaction(() => {
+      database.exec('DROP INDEX IF EXISTS idx_owner_grants_single_active')
+      database.exec('DROP INDEX IF EXISTS idx_owner_grants_project')
+      database.exec('DROP INDEX IF EXISTS idx_owner_grants_revalidation')
+      database.exec('ALTER TABLE project_owner_execution_grants RENAME TO project_owner_execution_grants_before_archive')
+      database.exec(ownerGrantTableSql.replace('CREATE TABLE IF NOT EXISTS project_owner_execution_grants', 'CREATE TABLE project_owner_execution_grants'))
+      const columns = readColumnNames(database, 'project_owner_execution_grants').join(',')
+      database.exec(`INSERT INTO project_owner_execution_grants (${columns}) SELECT ${columns} FROM project_owner_execution_grants_before_archive`)
+      database.exec('DROP TABLE project_owner_execution_grants_before_archive')
+    })()
+  }
+  // expiresAt过期阻断新预留/新发行（Stage B），不阻断对账结算与占额保留。
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_grants_single_active ON project_owner_execution_grants(project_id) WHERE state = 'active'")
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_grants_project ON project_owner_execution_grants(project_id, state)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_grants_revalidation ON project_owner_execution_grants(project_id, revalidation_id)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_commands (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, grant_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+    source_task_id TEXT NOT NULL, source_step_link_id TEXT NOT NULL,
+    source_version INTEGER NOT NULL, source_hash TEXT NOT NULL,
+    employee_id TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('executor', 'reviewer')),
+    budget_role_key TEXT,
+    rework_ordinal INTEGER NOT NULL CHECK (rework_ordinal >= 0),
+    reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+    actual_cost_micros INTEGER CHECK (actual_cost_micros >= 0),
+    usage_evidence TEXT, usage_record_key TEXT,
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'queued', 'running', 'settled', 'released', 'needs_reconcile')),
+    execution_id TEXT UNIQUE, ack_fingerprint TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    UNIQUE (grant_id, idempotency_key)
+  )`)
+  if (!readColumnNames(database, 'project_owner_execution_commands').includes('budget_role_key')) {
+    database.exec('ALTER TABLE project_owner_execution_commands ADD COLUMN budget_role_key TEXT')
+  }
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_commands_project ON project_owner_execution_commands(project_id, grant_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_commands_state ON project_owner_execution_commands(project_id, state)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_technical_reviews (
+    reviewer_command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, grant_id TEXT NOT NULL,
+    task_id TEXT NOT NULL, step_link_id TEXT NOT NULL, rework_ordinal INTEGER NOT NULL CHECK (rework_ordinal >= 0),
+    executor_command_id TEXT NOT NULL UNIQUE, executor_execution_id TEXT NOT NULL,
+    reviewer_execution_id TEXT NOT NULL UNIQUE, source_hash TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'changes_requested', 'blocked')),
+    response_json TEXT NOT NULL, response_sha256 TEXT NOT NULL CHECK (length(response_sha256) = 64),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_technical_reviews_task ON project_owner_technical_reviews(project_id, task_id, created_at)')
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_technical_reviews_immutable_update
+    BEFORE UPDATE ON project_owner_technical_reviews BEGIN SELECT RAISE(ABORT, 'owner technical reviews are immutable'); END`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_technical_reviews_immutable_delete
+    BEFORE DELETE ON project_owner_technical_reviews BEGIN SELECT RAISE(ABORT, 'owner technical reviews are immutable'); END`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_stop_escalations (
+    escalation_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, command_id TEXT NOT NULL,
+    project_id TEXT NOT NULL, session_id TEXT NOT NULL, expected_generation INTEGER,
+    requested_at INTEGER NOT NULL CHECK (requested_at >= 0), reason TEXT NOT NULL,
+    resolved_at INTEGER, resolution TEXT, resolution_evidence TEXT
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_stop_escalations_project ON project_owner_execution_stop_escalations(project_id)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_start_attempts (
+    execution_id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL, claimed_at INTEGER NOT NULL, handoff_intent_at INTEGER
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_start_receipts (
+    execution_id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL, runner_name TEXT NOT NULL, process_id INTEGER,
+    started_at INTEGER NOT NULL CHECK (started_at >= 0), received_at INTEGER NOT NULL CHECK (received_at >= started_at)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_command_links (
+    command_id TEXT NOT NULL, project_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+    revalidation_revision INTEGER NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY (command_id, execution_id)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_request_reservations (
+    request_id TEXT PRIMARY KEY, command_id TEXT NOT NULL, execution_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    request_evidence_id TEXT NOT NULL, price_evidence_id TEXT NOT NULL,
+    reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+    settled_cost_micros INTEGER CHECK (settled_cost_micros IS NULL OR settled_cost_micros >= 0),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'needs_reconcile', 'settled')
+      AND (state != 'settled' OR settled_cost_micros IS NOT NULL)),
+    created_at INTEGER NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_request_reservations_command ON project_owner_execution_request_reservations(command_id)')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_request_reservations_body ON project_owner_execution_request_reservations(execution_id, request_evidence_id)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_preflight_rejections (
+    execution_id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, grant_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL, model_id TEXT NOT NULL, provider_type TEXT NOT NULL, provider_protocol TEXT NOT NULL,
+    price_evidence_id TEXT NOT NULL, reason_code TEXT NOT NULL CHECK (reason_code = 'reviewed_price_evidence_mismatch'),
+    error_sha256 TEXT NOT NULL CHECK (length(error_sha256) = 64), created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  )`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_preflight_rejections_immutable
+    BEFORE UPDATE ON project_owner_execution_preflight_rejections
+    BEGIN SELECT RAISE(ABORT, 'Owner preflight rejection is immutable'); END`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_preflight_rejections_no_delete
+    BEFORE DELETE ON project_owner_execution_preflight_rejections
+    BEGIN SELECT RAISE(ABORT, 'Owner preflight rejection is immutable'); END`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_preflight_reconciliations (
+    reconciliation_id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, execution_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL, grant_id TEXT NOT NULL, channel_id TEXT NOT NULL, model_id TEXT NOT NULL,
+    evidence_kind TEXT NOT NULL CHECK (evidence_kind IN ('typed_preflight', 'legacy_operator_attested')),
+    reason_code TEXT NOT NULL, error_sha256 TEXT NOT NULL CHECK (length(error_sha256) = 64),
+    request_reservation_count INTEGER NOT NULL CHECK (request_reservation_count = 0),
+    provider_console_checked_no_usage INTEGER NOT NULL CHECK (provider_console_checked_no_usage = 1),
+    pre_reconciliation_usage_marker TEXT NOT NULL DEFAULT 'none' CHECK (pre_reconciliation_usage_marker IN ('none', 'runtime_unknown')),
+    pre_reconciliation_usage_evidence_sha256 TEXT CHECK (pre_reconciliation_usage_evidence_sha256 IS NULL OR length(pre_reconciliation_usage_evidence_sha256) = 64),
+    pre_reconciliation_usage_record_key_sha256 TEXT CHECK (pre_reconciliation_usage_record_key_sha256 IS NULL OR length(pre_reconciliation_usage_record_key_sha256) = 64),
+    reserved_cost_micros INTEGER NOT NULL CHECK (reserved_cost_micros > 0),
+    confirmed_fingerprint TEXT NOT NULL, actor TEXT NOT NULL CHECK (actor = 'local-user'), created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  )`)
+  const reconciliationColumns = readColumnNames(database, 'project_owner_execution_preflight_reconciliations')
+  if (!reconciliationColumns.includes('pre_reconciliation_usage_marker')) database.exec("ALTER TABLE project_owner_execution_preflight_reconciliations ADD COLUMN pre_reconciliation_usage_marker TEXT NOT NULL DEFAULT 'none' CHECK (pre_reconciliation_usage_marker IN ('none', 'runtime_unknown'))")
+  if (!reconciliationColumns.includes('pre_reconciliation_usage_evidence_sha256')) database.exec('ALTER TABLE project_owner_execution_preflight_reconciliations ADD COLUMN pre_reconciliation_usage_evidence_sha256 TEXT')
+  if (!reconciliationColumns.includes('pre_reconciliation_usage_record_key_sha256')) database.exec('ALTER TABLE project_owner_execution_preflight_reconciliations ADD COLUMN pre_reconciliation_usage_record_key_sha256 TEXT')
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_preflight_reconciliations_immutable
+    BEFORE UPDATE ON project_owner_execution_preflight_reconciliations
+    BEGIN SELECT RAISE(ABORT, 'Owner preflight reconciliation is immutable'); END`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_preflight_reconciliations_no_delete
+    BEFORE DELETE ON project_owner_execution_preflight_reconciliations
+    BEGIN SELECT RAISE(ABORT, 'Owner preflight reconciliation is immutable'); END`)
+  if (!readColumnNames(database, 'agent_executions').includes('owner_command_id')) {
+    database.exec('ALTER TABLE agent_executions ADD COLUMN owner_command_id TEXT')
+  }
+  // grant_decisions表：老库CHECK仅'revoke'需重建扩展（RB-4，数据保留）；新库直接建扩展CHECK。
+  const ownerDecisionsExists = Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_owner_execution_grant_decisions'").get())
+  if (ownerDecisionsExists) {
+    database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_grant_decisions_v2 (
+      grant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('revoke', 'reconcile')), fingerprint TEXT NOT NULL,
+      impact TEXT NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY (grant_id, created_at, action)
+    )`)
+    database.exec(`INSERT INTO project_owner_execution_grant_decisions_v2 SELECT grant_id, project_id, action, fingerprint, impact, actor, created_at FROM project_owner_execution_grant_decisions`)
+    database.exec(`DROP TABLE project_owner_execution_grant_decisions`)
+    database.exec(`ALTER TABLE project_owner_execution_grant_decisions_v2 RENAME TO project_owner_execution_grant_decisions`)
+  } else {
+    database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_grant_decisions (
+      grant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('revoke', 'reconcile')), fingerprint TEXT NOT NULL,
+      impact TEXT NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY (grant_id, created_at, action)
+    )`)
+  }
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_revalidations (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, revision INTEGER NOT NULL,
     request_id TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
@@ -1141,8 +1306,10 @@ function migrate(database: SqliteCompat): void {
       error TEXT
     )
   `)
-  // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
+  // 员工岗位模板 ID 只记录显式选择；旧档案不从角色文本反推。
   const empColumns = readColumnNames(database, 'agent_employees')
+  if (!empColumns.includes('role_template_id')) database.exec('ALTER TABLE agent_employees ADD COLUMN role_template_id TEXT')
+  // P3：agent_employees 表新增 workflow_id 列（兼容旧库）
   if (!empColumns.includes('workflow_id')) {
     database.exec(`ALTER TABLE agent_employees ADD COLUMN workflow_id TEXT`)
   }
@@ -1667,7 +1834,22 @@ export function hasOwnerBusinessTaskEvidence(taskId: string): boolean {
   }
   return false
 }
+/** 单点豁免（R7）：仅可核验的Owner命令执行豁免业务负向识别；行缺失/损坏/状态未知一律不豁免。 */
+const OWNER_COMMAND_LIVE_STATES = new Set(['reserved', 'queued', 'running'])
+function readVerifiableOwnerCommandLink(executionId: string): { commandId: string } | null {
+  try {
+    const execution = getProjectDb().prepare('SELECT owner_command_id FROM agent_executions WHERE id = ?').get(executionId) as { owner_command_id: string | null } | undefined
+    if (!execution?.owner_command_id) return null
+    const command = getProjectDb().prepare('SELECT execution_id, state FROM project_owner_execution_commands WHERE id = ?').get(execution.owner_command_id) as { execution_id: string | null; state: string } | undefined
+    if (!command || command.execution_id !== executionId || !OWNER_COMMAND_LIVE_STATES.has(command.state)) return null
+    return { commandId: execution.owner_command_id }
+  } catch {
+    return null
+  }
+}
+
 export function hasOwnerBusinessExecutionEvidence(executionId: string): boolean {
+  if (readVerifiableOwnerCommandLink(executionId)) return false
   if (getProjectDb().prepare('SELECT execution_id FROM project_owner_business_session_restrictions WHERE execution_id=? LIMIT 1').get(executionId)) return true
   const execution = getProjectDb().prepare('SELECT entity_type, entity_id FROM agent_executions WHERE id = ?').get(executionId) as { entity_type: string; entity_id: string } | undefined
   if (!execution) return false
@@ -1868,7 +2050,8 @@ function updateTaskInternal(id: string, updates: Partial<Omit<Task, 'id' | 'proj
   if (Object.hasOwn(updates, 'ownerStepLinkId') && updates.ownerStepLinkId !== undefined) throw new Error('Owner用途标记不可普通编辑')
   if (!ownerMaterialization && hasOwnerBusinessTaskEvidence(id)) {
     const allowed = new Set(['status', 'completionNotes'])
-    if (Object.keys(updates).some(key => !allowed.has(key)) || (updates.status !== undefined && !['paused', 'cancelled'].includes(updates.status))) assertNoOwnerBusinessTask(id)
+    const canCompleteThroughNormalFlow = updates.status !== undefined && isCompletedStatus(updates.status, listTaskStatuses(existing.project_id))
+    if (Object.keys(updates).some(key => !allowed.has(key)) || (updates.status !== undefined && !['paused', 'cancelled'].includes(updates.status) && !canCompleteThroughNormalFlow)) assertNoOwnerBusinessTask(id)
   }
   const statuses = listTaskStatuses(existing.project_id)
   const statusChanged = updates.status !== undefined && updates.status !== existing.status
@@ -1950,7 +2133,9 @@ function updateTaskInternal(id: string, updates: Partial<Omit<Task, 'id' | 'proj
     action: 'updated',
     summary: `更新任务「${next.title}」`,
   })
-  return rowToTask(next)
+  const updated = rowToTask(next)
+  requestOwnerAutonomousScheduleWake(next.project_id)
+  return updated
 }
 
 export function deleteTask(id: string): boolean {
@@ -3164,7 +3349,7 @@ function rowToBriefReceipt(row: BriefReceiptRow): BriefReceipt {
 // ===== AI 员工（Agent Employee） =====
 
 type AgentEmployeeRow = {
-  id: string; name: string; role: string; avatar: string | null; description: string;
+  id: string; name: string; role: string; role_template_id: string | null; avatar: string | null; description: string;
   runtime: string; channel_id: string; model_id: string | null; workspace_id: string | null; workspace_ids: string | null;
   execution_profile: string; permission_mode: string;
   workflow_id: string | null; system_prompt: string | null; skills: string | null; enabled: number; total_tasks: number;
@@ -3173,6 +3358,7 @@ type AgentEmployeeRow = {
 }
 
 type AgentExecutionRow = {
+  owner_command_id: string | null;
   id: string; project_id: string; entity_type: string; entity_id: string; agent_id: string;
   session_id: string; executor: string | null; pilot_command_id: string | null; status: string; prompt: string; result_summary: string | null;
   output_files: string | null; risk_level: string | null; error: string | null;
@@ -3186,6 +3372,7 @@ function rowToAgentEmployee(row: AgentEmployeeRow): AgentEmployee {
     id: row.id,
     name: row.name,
     role: row.role,
+    roleTemplateId: row.role_template_id ?? undefined,
     avatar: row.avatar ?? undefined,
     description: row.description,
     runtime: row.runtime as AgentEmployee['runtime'],
@@ -3220,6 +3407,7 @@ function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
     sessionId: row.session_id,
     executor: (row.executor as AgentExecution['executor']) ?? 'headless',
     pilotCommandId: row.pilot_command_id ?? undefined,
+    ownerCommandId: row.owner_command_id ?? undefined,
     status: row.status as AgentExecution['status'],
     prompt: row.prompt,
     resultSummary: row.result_summary ?? undefined,
@@ -3263,12 +3451,13 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
   const now = Date.now()
   database.prepare(
     `INSERT INTO agent_employees
-     (id, name, role, avatar, description, runtime, channel_id, model_id, workspace_id, workspace_ids, workflow_id, system_prompt, skills, execution_profile, permission_mode, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
+     (id, name, role, role_template_id, avatar, description, runtime, channel_id, model_id, workspace_id, workspace_ids, workflow_id, system_prompt, skills, execution_profile, permission_mode, enabled, total_tasks, completed_tasks, avg_duration_ms, failure_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, NULL, 0, ?, ?)`
   ).run(
     id,
     input.name,
     input.role ?? '通用',
+    input.roleTemplateId ?? null,
     input.avatar ?? null,
     input.description ?? '',
     input.runtime ?? 'ai-sdk',
@@ -3294,12 +3483,13 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
   const merged: AgentEmployee = { ...existing, ...patch, id, createdAt: existing.createdAt, updatedAt: Date.now() }
   database.prepare(
     `UPDATE agent_employees SET
-       name = ?, role = ?, avatar = ?, description = ?, runtime = ?, channel_id = ?, model_id = ?,
+       name = ?, role = ?, role_template_id = ?, avatar = ?, description = ?, runtime = ?, channel_id = ?, model_id = ?,
        workspace_id = ?, workspace_ids = ?, workflow_id = ?, system_prompt = ?, skills = ?, execution_profile = ?, permission_mode = ?, enabled = ?, updated_at = ?
      WHERE id = ?`
   ).run(
     merged.name,
     merged.role,
+    merged.roleTemplateId ?? null,
     merged.avatar ?? null,
     merged.description,
     merged.runtime,
@@ -3345,7 +3535,16 @@ export function bumpAgentEmployeeStats(id: string, input: { completed?: boolean;
 
 export function createAgentExecution(input: CreateAgentExecutionInput): AgentExecution {
   const parent = input.entityType === 'subTask' ? getProjectDb().prepare('SELECT task_id FROM execution_subtasks WHERE id=?').get(input.entityId) as { task_id: string } | undefined : undefined
-  assertNoOwnerBusinessTask(parent?.task_id ?? input.entityId)
+  if (!input.ownerCommandId) assertNoOwnerBusinessTask(parent?.task_id ?? input.entityId)
+  else {
+    // 豁免路径：ownerCommandId指向的命令必须可核验且与execution输入全等。
+    const command = getProjectDb().prepare('SELECT project_id, source_task_id, employee_id, execution_id, state FROM project_owner_execution_commands WHERE id = ?').get(input.ownerCommandId) as { project_id: string; source_task_id: string; employee_id: string; execution_id: string | null; state: string } | undefined
+    if (!command || command.project_id !== input.projectId || command.source_task_id !== input.entityId
+      || command.employee_id !== input.agentId || command.execution_id !== input.id
+      || !OWNER_COMMAND_LIVE_STATES.has(command.state)) {
+      assertNoOwnerBusinessTask(parent?.task_id ?? input.entityId)
+    }
+  }
   const existingSession = getProjectDb().prepare('SELECT session_id FROM project_owner_business_session_restrictions WHERE session_id=? LIMIT 1').get(input.sessionId)
   const sessionExecutions = getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').all(input.sessionId) as Array<{ id: string }>
   if (input.sessionId.trim() && (existingSession || sessionExecutions.some(row => hasOwnerBusinessExecutionEvidence(row.id)))) throw new Error('Owner受限会话不能创建其他执行身份')
@@ -3353,8 +3552,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   const now = input.startedAt ?? Date.now()
   database.prepare(
     `INSERT INTO agent_executions
-     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
+     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, owner_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
@@ -3364,6 +3563,7 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
     input.sessionId,
     input.executor ?? 'headless',
     input.pilotCommandId ?? null,
+    input.ownerCommandId ?? null,
     input.status ?? 'queued',
     input.prompt,
     JSON.stringify(input.requestedPermissions ?? []),

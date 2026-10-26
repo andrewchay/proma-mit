@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import initSqlJs from 'sql.js'
-import { closeProjectDb, createAgentEmployee, createAgentEmployeeCapabilityVersion, createAgentEmployeeLearningSample, createProject, createTask, getAgentEmployeeCapabilityHealth, initProjectDb, listAgentEmployeeCapabilityRollbackAudits, listAgentEmployeeCapabilityVersions, listAgentEmployeeLearningSamples, mergeWalIntoDatabaseImage, rollbackAgentEmployeeCapabilityVersion } from './project-sqlite-store'
+import { closeProjectDb, createAgentEmployee, createAgentEmployeeCapabilityVersion, createAgentEmployeeLearningSample, createProject, createTask, getAgentEmployeeCapabilityHealth, initProjectDb, listAgentEmployeeCapabilityRollbackAudits, listAgentEmployeeCapabilityVersions, listAgentEmployeeLearningSamples, mergeWalIntoDatabaseImage, rollbackAgentEmployeeCapabilityVersion, updateAgentEmployee } from './project-sqlite-store'
 
 let configDir = ''
 let dbPath = ''
@@ -23,7 +23,9 @@ afterAll(() => {
 
 test('旧库缺列时迁移补全，能力表可用', () => {
   // initProjectDb 已建库；这里验证新增列与表确实存在且可用（迁移幂等）。
-  const employee = createAgentEmployee({ name: '迁移员工', role: '开发', description: '', channelId: 'channel' })
+  const employee = createAgentEmployee({ name: '迁移员工', role: '开发', roleTemplateId: 'researcher', description: '', channelId: 'channel' })
+  expect(employee.roleTemplateId).toBe('researcher')
+  expect(updateAgentEmployee(employee.id, { roleTemplateId: 'analyst' })?.roleTemplateId).toBe('analyst')
   const version = createAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '能力', contentHash: 'hash', status: 'active', source: 'manual', activatedAt: Date.now() })
   expect(listAgentEmployeeCapabilityVersions(employee.id)).toHaveLength(1)
   expect(getAgentEmployeeCapabilityHealth(employee.id, 30)).toHaveLength(1)

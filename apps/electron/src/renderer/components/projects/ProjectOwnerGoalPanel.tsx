@@ -8,7 +8,7 @@ import {
 } from '../../atoms/project-owner-goal-atoms'
 
 /** 本地目标保存与受控规划入口；保存不授权调用或派工，草案不能展示为运行中。 */
-export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string; taskId?: string }): React.ReactElement {
+export function ProjectOwnerGoalPanel({ projectId, taskId, includePlanningPanels = true }: { projectId: string; taskId?: string; includePlanningPanels?: boolean }): React.ReactElement {
   const subject = useMemo(() => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }), [projectId, taskId])
   const editorAtom = useMemo(() => atom((get) => getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject)), [subject])
   const editor = useAtomValue(editorAtom)
@@ -76,8 +76,10 @@ export function ProjectOwnerGoalPanel({ projectId, taskId }: { projectId: string
         <p className="text-xs text-muted-foreground">未保存输入暂存在当前窗口；退出或重载窗口前请保存。标准与约束各最多 32 条，每条不超过 2000 字。</p>
       </form>
     </section>
-    <ProjectOwnerRuntimePanel projectId={projectId} taskId={taskId} />
-    <ProjectOwnerPlanPanel projectId={projectId} taskId={taskId} />
+    {includePlanningPanels && <>
+      <ProjectOwnerRuntimePanel projectId={projectId} taskId={taskId} />
+      <ProjectOwnerPlanPanel projectId={projectId} taskId={taskId} />
+    </>}
     </>
   )
 }

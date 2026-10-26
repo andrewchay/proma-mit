@@ -1,6 +1,9 @@
-import { useEffect, useId, useMemo } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
-import { getOwnerGoalEditor, ownerGoalEditorsAtom } from '@/atoms/project-owner-goal-atoms'
+import type { ProjectOwnerRunView } from '@gravitas/shared'
+import { getOwnerGoalEditor, ownerGoalEditorsAtom, type OwnerGoalEditor } from '@/atoms/project-owner-goal-atoms'
+import { applyOwnerClarificationAnswersToGoalAtom } from './project-owner-clarification-answers'
+import { deriveOwnerPlanningNextStep } from './project-owner-planning-flow'
 import { getOwnerPlanEditor, loadOwnerPlanAtom, ownerPlanEditorsAtom, ownerPlanGoalReady } from '@/atoms/project-owner-plan-atoms'
 import { editOwnerRuntimeAtom, getOwnerRuntimeEditor, loadOwnerRuntimeAtom, ownerRuntimeEditorsAtom, prepareOwnerRuntimeAtom, saveOwnerRuntimeAtom } from '@/atoms/project-owner-runtime-atoms'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
@@ -8,6 +11,46 @@ import { AgentExecutionStopButton } from './AgentExecutionStopButton'
 const field = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm focus-visible:ring-2 focus-visible:ring-ring'
 const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 const states = { proposed: '已生成待审提案', needs_clarification: '需要人工澄清', stale: '来源变化，未覆盖计划', failed: '规划失败，未补发', unknown: '终态未知，未补发', stopped: '已请求停止，远端费用未保证结清' }
+function OwnerClarificationAnswers({ subject, executionId, clarification, goal }: {
+  subject: { projectId: string; taskId?: string }
+  executionId: string
+  clarification: NonNullable<ProjectOwnerRunView['outcomes'][number]['clarification']>
+  goal: OwnerGoalEditor
+}): React.ReactElement {
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [error, setError] = useState('')
+  const [applied, setApplied] = useState(false)
+  const answerId = useId()
+  const applyAnswersToGoal = useSetAtom(applyOwnerClarificationAnswersToGoalAtom)
+  const questions = clarification.questions
+  const canApply = goal.loaded && !!goal.snapshot && !goal.loading && !goal.saving && !goal.conflict && !goal.requiresReview
+    && questions.every(question => Boolean(answers[question.key]?.trim()))
+  const answerLabels = { invalid: '澄清问题无效，不能写入目标草案。', incomplete: '请先回答全部必要问题。', too_long: '单条答复超过目标约束长度，请缩短后再试。', too_many: '目标约束已达上限；请先合并或删除草案中的约束。', goal_unavailable: '目标尚未加载或正在冲突处理中，请先核对最新目标。' }
+  const apply = () => {
+    const result = applyAnswersToGoal({ subject, questions, answers })
+    if (!result.ok) { setError(answerLabels[result.reason]); setApplied(false); return }
+    setError('')
+    setAnswers({})
+    setApplied(true)
+  }
+  return <section className="mt-3 space-y-3 rounded-lg bg-background/70 p-3" aria-label="Owner必要澄清答复">
+    <h4 className="font-medium">回答并修订目标</h4>
+    {questions.map((question, index) => {
+      const id = `${answerId}-question-${index}`
+      return <div key={question.key} className="space-y-1">
+        <label className="block text-sm font-medium" htmlFor={id}>{question.question}</label>
+        <p className="text-xs text-muted-foreground">原因：{question.why}</p>
+        {question.options.length > 0 && <p className="text-xs text-muted-foreground">可选建议：{question.options.join(' / ')}</p>}
+        {question.recommended && <p className="text-xs text-muted-foreground">推荐：{question.recommended}（可自行修改）</p>}
+        <textarea id={id} className={field} rows={2} maxLength={2000} value={answers[question.key] ?? ''} onChange={event => { setAnswers(current => ({ ...current, [question.key]: event.target.value })); setApplied(false); setError('') }} />
+      </div>
+    })}
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {applied && <p role="status" className="text-sm">答复已加入当前未保存目标草案。请检查并保存；旧准备不会自动继续。</p>}
+    <button type="button" className={button} disabled={!canApply} onClick={apply}>加入目标约束草案</button>
+    <p className="text-xs text-muted-foreground">答复只进入未保存的目标草案，不会自动保存或再次调用。保存新目标版本后，需要重新准备并再次确认本次规划费用。</p>
+  </section>
+}
 /** 保存职责配置、无费用准备和逐次模型确认分开；不会创建/启用员工或升级权限。 */
 export function ProjectOwnerRuntimePanel({ projectId, taskId }: { projectId: string; taskId?: string }): React.ReactElement {
   const subject = useMemo(() => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }), [projectId, taskId])
@@ -21,12 +64,31 @@ export function ProjectOwnerRuntimePanel({ projectId, taskId }: { projectId: str
   const carriers = editor.employees.filter(item => item.enabled && item.executionProfile === 'controlled' && item.runtime === 'ai-sdk')
   const carrier = carriers.find(item => item.id === editor.carrierId)
   const workspaces = editor.workspaces.filter(item => editor.boundWorkspaceIds.includes(item.id) && (carrier?.workspaceIds?.includes(item.id) || carrier?.workspaceId === item.id))
+  const latestRun = editor.runs[0]
+  const latestExecution = latestRun?.executions[0] ?? null
+  const latestOutcome = latestExecution ? latestRun?.outcomes.find(item => item.executionId === latestExecution.id) ?? null : null
+  const latestRunCurrent = Boolean(latestRun && !editor.loading && editor.context && editor.binding
+    && latestRun.link.goalRevision === goal.snapshot?.revision
+    && latestRun.link.bindingRevision === editor.binding.revision
+    && latestRun.link.contextFingerprint === editor.context.fingerprint)
+  const nextStep = deriveOwnerPlanningNextStep({
+    goal: { exists: goal.snapshot !== null, dirty: goal.dirty, requiresReview: goal.requiresReview, conflict: goal.conflict },
+    binding: { exists: editor.binding !== null, available: Boolean(editor.binding && carrier && workspaces.some(item => item.id === editor.binding?.workspaceId)) },
+    plan: { state: plan.snapshot?.state ?? 'none', dirty: plan.dirty, requiresReview: plan.requiresReview, conflict: plan.conflict },
+    prepared: Boolean(latestRun && latestRun.executions.length === 0),
+    executionStatus: latestExecution?.status ?? null,
+    outcomeState: latestRun && !latestRunCurrent ? 'stale' : latestOutcome?.state ?? null,
+  })
   const canPrepare = !busy && !editor.dirty && Boolean(editor.binding && editor.context && goalReady && plan.loaded && !plan.loading && !plan.saving && !plan.dirty && !plan.conflict && !plan.requiresReview && editor.context.goal.revision === revision)
   const changed = async () => { await Promise.all([load(subject), loadPlan(subject)]) }
   return <section className="mt-4 min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label="Owner受控模型规划">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Owner 模型规划</h2><button type="button" className={button} disabled={busy} onClick={() => void changed()}>刷新配置、Run与提案</button></div>
     <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Owner是项目治理职责，下面的既有AI员工只是模型调用载体，不会被改名、激活或升级权限。配置与准备均不收费；真正调用前另行确认本次模型费用。规划只生成待审内容或必要澄清，不自动派工或完成业务任务。</p>
     {editor.error && <p role="alert" className="mt-3 text-sm text-destructive">{editor.error}。未自动重试，请比较最新来源。</p>}
+    <section className="mt-4 rounded-lg bg-muted/40 p-3" aria-label="Owner规划下一步" data-stage={nextStep.stage}>
+      <h3 className="text-sm font-semibold">{nextStep.title}</h3>
+      <p className="mt-1 text-xs text-muted-foreground">{nextStep.detail}</p>
+    </section>
     <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void save(subject) }}>
       <label className="block text-sm" htmlFor={`${id}-name`}>Owner职责名称<input id={`${id}-name`} className={field} required maxLength={200} value={editor.ownerName} disabled={busy} onChange={event => edit({ subject, patch: { ownerName: event.target.value } })} /></label>
       <label className="block text-sm" htmlFor={`${id}-carrier`}>实际规划载体（仅既有受控AI SDK员工）<select id={`${id}-carrier`} className={field} disabled={busy} value={editor.carrierId} onChange={event => edit({ subject, patch: { carrierId: event.target.value, workspaceId: '' } })}><option value="">请选择已有员工，不默认创建</option>{!carriers.some(item => item.id === editor.carrierId) && editor.carrierId && <option value={editor.carrierId}>原载体不可用（{editor.carrierId}）</option>}{carriers.map(item => <option key={item.id} value={item.id}>{item.name} · {item.role} · {item.modelId ?? '模型未明确'}</option>)}</select></label>
@@ -42,7 +104,15 @@ export function ProjectOwnerRuntimePanel({ projectId, taskId }: { projectId: str
       <p className="text-xs text-muted-foreground">暂停承载任务：{run.link.planningTaskId}；用途 owner_planning，最多1请求/4096输出token。</p>
       {!run.executions.length && goalReady && !editor.dirty && !plan.dirty && run.link.goalRevision === revision && run.link.planRevision === (plan.snapshot?.revision ?? 0) && run.link.bindingRevision === editor.binding?.revision && <ControlledTaskStartButton taskId={run.link.planningTaskId} revision={JSON.stringify([run.link.goalRevision, run.link.planRevision, run.link.bindingRevision])} onChanged={changed} />}
       {run.executions.map(execution => <div key={execution.id} className="space-y-1"><p>Run {execution.id} · {execution.status}</p><p className="text-xs text-muted-foreground">{execution.summary ?? '尚无处理终态；排队不证明模型已发送。'}</p><AgentExecutionStopButton execution={{ id: execution.id, status: execution.status, entityType: 'task', entityId: run.link.planningTaskId }} onChanged={changed} /></div>)}
-      {run.outcomes.map(outcome => <div key={outcome.executionId}><p>{states[outcome.state]}：{outcome.detail}</p>{outcome.clarification && <div className="mt-2 space-y-1"><p className="font-medium">请回答并修改上方目标，保存后重新准备；不会自动再次调用。</p>{outcome.clarification.questions.map(question => <p key={question.key}>{question.question}（{question.why}）{question.options.length ? ` 可选：${question.options.join(' / ')}` : ''}</p>)}</div>}</div>)}
+      {run.outcomes.map(outcome => <div key={outcome.executionId}>
+        <p>{states[outcome.state]}：{outcome.detail}</p>
+        {outcome.clarification && <div className="mt-2 space-y-1">
+          <p className="font-medium">必要澄清：{outcome.clarification.reason}</p>
+          {run.link.id === latestRun?.link.id && latestRunCurrent && latestExecution?.id === outcome.executionId
+            ? <OwnerClarificationAnswers key={outcome.executionId} subject={subject} executionId={outcome.executionId} clarification={outcome.clarification} goal={goal} />
+            : <p className="text-xs text-muted-foreground">这是历史或来源已变化的澄清记录；请核对当前目标，不会自动续跑。</p>}
+        </div>}
+      </div>)}
       {run.receipts.map(receipt => <details key={receipt.id} className="text-xs"><summary className="cursor-pointer">Run原文与费用证据 · {receipt.cost.source === 'unknown' ? '费用未知（不是零元）' : `Runtime报告USD ${receipt.cost.usd}`} · {new Date(receipt.capturedAt).toLocaleString()}</summary><p className="mt-2">输入token {receipt.usage?.inputTokens ?? '未知'} / 输出token {receipt.usage?.outputTokens ?? '未知'}；终态 {receipt.validTerminal ? '完整stop（内容仍需协议校验/人工确认）' : '未证实完整stop'}；{receipt.stopped ? '停止不保证远端已终止。' : ''}</p><p>{receipt.error}</p><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words">{receipt.responseText || '没有收到可保存文本；不补发。'}</pre><p className="break-all">原文摘要 {receipt.responseHash}；回执 {receipt.id}</p></details>)}
     </article>)}</div>
   </section>

@@ -78,6 +78,7 @@ export function AgentTeamPanel(): React.ReactElement {
   const [form, setForm] = React.useState({
     name: '',
     role: '',
+    roleTemplateId: '',
     description: '',
     runtime: 'ai-sdk' as string,
     channelId: '',
@@ -235,7 +236,7 @@ export function AgentTeamPanel(): React.ReactElement {
     setEditingId(null)
     setTemplateId('')
     setError('')
-    setForm({ name: '', role: '', description: '', runtime: 'ai-sdk', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'controlled', permissionMode: 'safe', systemPrompt: '' })
+    setForm({ name: '', role: '', roleTemplateId: '', description: '', runtime: 'ai-sdk', channelId: channels[0]?.id ?? '', modelId: '', workflowId: '', workspaceIds: [], executionProfile: 'controlled', permissionMode: 'safe', systemPrompt: '' })
     setShowForm(true)
   }
 
@@ -245,6 +246,7 @@ export function AgentTeamPanel(): React.ReactElement {
     setForm({
       name: emp.name,
       role: emp.role,
+      roleTemplateId: emp.roleTemplateId ?? '',
       description: emp.description,
       runtime: emp.runtime,
       channelId: emp.channelId,
@@ -268,6 +270,7 @@ export function AgentTeamPanel(): React.ReactElement {
       const input = {
         name: form.name.trim(),
         role: form.role.trim() || '通用',
+        roleTemplateId: form.roleTemplateId || undefined,
         description: form.description.trim(),
         runtime: form.runtime as 'proma' | 'ai-sdk' | 'pi' | 'claude',
         channelId: form.channelId,
@@ -444,7 +447,7 @@ export function AgentTeamPanel(): React.ReactElement {
         <div className="rounded-lg border bg-card p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-medium">{editingId ? '编辑 AI 员工' : '新建 AI 员工'}</h3>
-            {!editingId && <button className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => { setTemplateId(''); setForm((current) => ({ ...current, name: 'Gravitas 研发工程师', role: '软件开发与测试', description: '理解项目规则与现有架构，完成小范围开发、缺陷修复和回归测试，提交代码变更与验证证据供人工验收。', executionProfile: 'development', permissionMode: 'safe', workflowId: '' })) }}>使用研发员工模板</button>}
+            {!editingId && <button className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => { setTemplateId(''); setForm((current) => ({ ...current, name: 'Gravitas 研发工程师', role: '软件开发与测试', roleTemplateId: '', description: '理解项目规则与现有架构，完成小范围开发、缺陷修复和回归测试，提交代码变更与验证证据供人工验收。', executionProfile: 'development', permissionMode: 'safe', workflowId: '' })) }}>使用研发员工模板</button>}
           </div>
           {!editingId && <label className="block text-xs text-muted-foreground">使用岗位模板（只预填，不创建或授权）
             <select aria-label="岗位模板" value={templateId} onChange={(event) => {
@@ -517,6 +520,13 @@ export function AgentTeamPanel(): React.ReactElement {
               className="px-3 py-2 text-sm border rounded-md bg-background"
             />
           </div>
+          <label className="block text-xs text-muted-foreground">稳定岗位匹配 ID（可选）
+            <select aria-label="稳定岗位匹配 ID" value={form.roleTemplateId} onChange={(event) => setForm((current) => ({ ...current, roleTemplateId: event.target.value }))} className="mt-1 w-full rounded-md bg-background px-3 py-2 text-sm">
+              <option value="">未绑定（不根据角色文字推断）</option>
+              {roleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · {template.id}</option>)}
+            </select>
+            <span className="mt-1 block">仅作为 Owner roleKey 的唯一精确匹配推荐元数据；不绑定员工、不授权执行，也不会改写角色或提示词。</span>
+          </label>
           <textarea
             placeholder="能力描述（会注入到执行指令中，例如：擅长 React 组件开发、TypeScript 重构、单元测试编写）"
             value={form.description}

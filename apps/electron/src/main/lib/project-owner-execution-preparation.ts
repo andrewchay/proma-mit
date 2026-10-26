@@ -1,5 +1,6 @@
 import { listAgentWorkspaces } from './agent-workspace-manager'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
+import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { readCatalog } from './knowledge-catalog-service'
 /** 追加式来源准备，不是授权账本；保存永远不调用Runner/Provider或创建业务Task。 */
 import { randomUUID } from 'node:crypto'
@@ -76,6 +77,7 @@ function history(projectId: string): OwnerExecutionPreparationRecord[] {
         'contextFingerprint',
         'plan',
         'selectedStepKeys',
+        'roleAssignments',
         'executor',
         'reviewer',
         'workspaceId',
@@ -128,6 +130,9 @@ function history(projectId: string): OwnerExecutionPreparationRecord[] {
 function matchesPolicy(record: OwnerExecutionPreparationRecord): boolean {
   const policy = getPilotPolicy(record.projectId),
     reference = policy?.ownerExecutionPreparation
+  const roleEmployeeIds = record.source.roleAssignments?.map((assignment) => assignment.employee.id) ?? [record.source.executor.id]
+  const expectedEmployeeIds = [...new Set([...roleEmployeeIds, record.source.reviewer.id])].sort()
+  const policyEmployeeIds = [...(policy?.employeeIds ?? [])].sort()
   return (
     policy?.revision === record.policyRevision &&
     reference?.id === record.id &&
@@ -135,6 +140,7 @@ function matchesPolicy(record: OwnerExecutionPreparationRecord): boolean {
     reference.integrityHash === record.integrityHash &&
     policy.executorEmployeeId === record.source.executor.id &&
     policy.reviewerEmployeeId === record.source.reviewer.id &&
+    JSON.stringify(policyEmployeeIds) === JSON.stringify(expectedEmployeeIds) &&
     policy.channelId === record.source.channelId &&
     policy.modelId === record.source.modelId &&
     policy.workspaceId === record.source.workspaceId &&
@@ -160,26 +166,32 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
   )
     throw new Error('Owner执行准备主体不存在')
   const policy = getPilotPolicy(subject.projectId)
+  const ownerBinding = getOwnerRuntimeBinding(subject.projectId)
   const workspaces = listAgentWorkspaces()
     .filter((workspace) => hasProjectWorkspaceBinding(subject.projectId, workspace.id))
     .map(({ id, name }) => ({ id, name }))
+  const projectWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id))
   const employees = listAgentEmployees()
     .filter(
       (employee) =>
         employee.enabled &&
         ['controlled', 'development'].includes(employee.executionProfile ?? 'general') &&
         (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).some((id) =>
-          workspaces.some((workspace) => workspace.id === id),
+          projectWorkspaceIds.has(id),
         ),
     )
     .map((employee) => ({
       id: employee.id,
       name: employee.name,
+      ...(employee.roleTemplateId ? { roleTemplateId: employee.roleTemplateId } : {}),
       executionProfile: employee.executionProfile ?? 'general',
-      workspaceIds: employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : []),
+      workspaceIds: (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).filter((id) =>
+        projectWorkspaceIds.has(id),
+      ),
       channelId: employee.channelId,
       modelId: employee.modelId,
       runtime: employee.runtime,
+      ...(employee.id === ownerBinding?.carrierId ? { isOwnerCarrier: true } : {}),
     }))
   const catalog = readCatalog(),
     baseIds = catalog.bindings
@@ -243,6 +255,7 @@ export function previewOwnerExecutionPreparation(
   const subject = parseOwnerExecutionSubject(rawSubject),
     input = parseOwnerExecutionInput(rawInput),
     records = history(subject.projectId)
+  if (!input.roleAssignments) throw new Error('新Owner准备必须显式绑定每个稳定roleKey的执行员工')
   if (
     (records.at(-1)?.revision ?? 0) !== input.expectedPreparationRevision ||
     (getPilotPolicy(subject.projectId)?.revision ?? null) !== input.expectedPolicyRevision
@@ -322,7 +335,7 @@ export function saveOwnerExecutionPreparation(
     return {
       input: {
         workspaceId: input.workspaceId,
-        employeeIds: [input.executorEmployeeId, input.reviewerEmployeeId],
+        employeeIds: [...new Set([...(input.roleAssignments?.map((item) => item.employeeId) ?? [input.executorEmployeeId]), input.reviewerEmployeeId])],
         executorEmployeeId: input.executorEmployeeId,
         reviewerEmployeeId: input.reviewerEmployeeId,
         modelId: saved.source.modelId,

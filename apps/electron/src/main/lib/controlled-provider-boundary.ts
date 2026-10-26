@@ -6,7 +6,7 @@ import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { getConfigDir } from './config-paths'
-import { getAgentWorkspace } from './agent-workspace-manager'
+import { getAgentWorkspace, getAgentWorkspaceCwd } from './agent-workspace-manager'
 import { getChannelById } from './channel-manager'
 import * as store from './project-sqlite-store'
 import {
@@ -17,6 +17,9 @@ import { resolveOwnerPlanningSession } from './project-owner-planning-source'
 import { assertOwnerPlanningCredential, claimOwnerPlanningProviderRequest } from './project-owner-planning-provider'
 import { resolvePiBaseUrl } from './adapters/pi-runtime-base-url'
 import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
+import { assertOwnerExecutionRequestGate } from './project-owner-execution-gates'
+import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
+import { createOwnerRequestFetch } from './project-owner-execution-request-exit'
 
 export interface ControlledProviderContext {
 	runtime: 'pi' | 'ai-sdk'
@@ -49,7 +52,9 @@ export function assertControlledProviderBoundary(
 		execution.entityType !== 'task'
 	)
 		throw new Error('非代码模型出口没有当前运行执行')
-	assertControlledPreparedExecution(execution.id, 'provider')
+	const ownerCommandId = execution.ownerCommandId
+	if (ownerCommandId) assertOwnerCommandRuntimeContext(execution.id, ownerCommandId, sessionId, true)
+	else assertControlledPreparedExecution(execution.id, 'provider')
 	const task = store.getTask(execution.entityId)!
 	const employee = store.getAgentEmployee(execution.agentId)!
 	const workspace = task.workspaceId
@@ -63,9 +68,9 @@ export function assertControlledProviderBoundary(
 		!statSync(actual.cwd).isDirectory()
 	)
 		throw new Error('明确工作区不可用，禁止回退到主目录')
-	const expectedCwd =
-		workspace.rootPath ??
-		join(getConfigDir(), 'agent-workspaces', workspace.slug, sessionId)
+	const expectedCwd = ownerCommandId
+		? getAgentWorkspaceCwd(workspace, sessionId)
+		: workspace.rootPath ?? join(getConfigDir(), 'agent-workspaces', workspace.slug, sessionId)
 	const expectedBaseUrl =
 		actual.runtime === 'pi'
 			? resolvePiBaseUrl(channel.provider, channel.baseUrl)
@@ -73,8 +78,7 @@ export function assertControlledProviderBoundary(
 	if (
 		actual.runtime !== (employee.runtime ?? 'ai-sdk') ||
 		actual.modelId !== employee.modelId ||
-		(actual.permissionMode !== (employee.permissionMode ?? 'safe') &&
-			actual.permissionMode !== 'plan') ||
+		(ownerCommandId ? actual.permissionMode !== 'safe' : (actual.permissionMode !== (employee.permissionMode ?? 'safe') && actual.permissionMode !== 'plan')) ||
 		resolve(actual.cwd) !== resolve(expectedCwd) ||
 		(actualBaseUrl !== undefined &&
 			actualBaseUrl.replace(/\/+$/, '') !== expectedBaseUrl.replace(/\/+$/, ''))
@@ -82,12 +86,9 @@ export function assertControlledProviderBoundary(
 		throw new Error('模型实际参数与确认的员工、模型、权限或工作区不一致')
 	}
 	// 这是请求准入时间，不宣称Provider已启动、实际费用或终态。
-	store
-		.getProjectDb()
-		.prepare(
-			'UPDATE controlled_task_preparations SET provider_admitted_at = COALESCE(provider_admitted_at, ?) WHERE execution_id = ?',
-		)
-		.run(Date.now(), execution.id)
+	if (!ownerCommandId) store.getProjectDb().prepare(
+		'UPDATE controlled_task_preparations SET provider_admitted_at = COALESCE(provider_admitted_at, ?) WHERE execution_id = ?',
+	).run(Date.now(), execution.id)
 }
 
 /** Plan可收紧权限，但不能借退出Plan把当前确认升级为auto/bypass。 */
@@ -129,7 +130,9 @@ export function createControlledProviderFetch(
 	baseFetch: typeof globalThis.fetch,
 ): typeof globalThis.fetch {
 	// 即使初始化时是legacy也必须注入：用途可在异步初始化或既有请求钩子中出现。
-	let controlled = isControlledProviderSession(sessionId)
+	const initialExecution = store.getAgentExecutionBySessionId(sessionId)
+	const ownerCommandId = initialExecution?.ownerCommandId ?? null
+	let controlled = isControlledProviderSession(sessionId) || ownerCommandId !== null
 	const guarded = async (
 		input: Parameters<typeof globalThis.fetch>[0],
 		init?: Parameters<typeof globalThis.fetch>[1],
@@ -178,19 +181,30 @@ export function createControlledProviderFetch(
 			throw new Error('模型请求出口与确认渠道不一致')
     // async请求体/代理初始化后重新读权威Owner用途；普通controlled保留原语义。
     const owner = resolveOwnerPlanningSession(sessionId)
-    if (owner && current.runtime !== 'ai-sdk') throw new Error('Owner规划仅允许AI SDK受控出口')
+    if ((owner || ownerCommandId) && current.runtime !== 'ai-sdk') throw new Error('Owner受控出口仅允许AI SDK Runtime')
     store.getProjectDb().transaction(() => {
-      assertControlledProviderBoundary(sessionId, current)
+      assertControlledProviderBoundary(sessionId, current, base.toString())
+      if (ownerCommandId) {
+        const ownerExecution = store.getAgentExecutionBySessionId(sessionId)
+        if (!ownerExecution || ownerExecution.ownerCommandId !== ownerCommandId) throw new Error('Owner execution绑定在请求发送前变化')
+        assertOwnerCommandRuntimeContext(ownerExecution.id, ownerCommandId, sessionId, true)
+        assertOwnerExecutionRequestGate({ commandPurpose: 'owner_business_execution', sessionId, runtime: current.runtime, modelId: current.modelId, permissionMode: current.permissionMode, cwd: current.cwd, baseUrl: base.toString(), requestUrl: url.href })
+      }
       if (owner) {
         assertOwnerPlanningCredential(owner, input, init)
         claimOwnerPlanningProviderRequest(sessionId, body, url)
       }
     })()
-    // fetch内部默认follow会绕过第二次准入并外送冻结资料；Owner一律禁止重定向。
+    // fetch内部默认follow会绕过第二次准入并外送冻结资料；所有Owner请求禁止重定向。
 		assertNoOwnerBusinessSession(sessionId)
-		return baseFetch(input, owner ? { ...init, redirect: 'error' } : init)
+		return baseFetch(input, owner || ownerCommandId ? { ...init, redirect: 'error' } : init)
 	}
-	return Object.assign(guarded, { preconnect: () => {} })
+	const guardedFetch = Object.assign(guarded, { preconnect: () => {} })
+	if (ownerCommandId) {
+		const ownerExecution = initialExecution!
+		return createOwnerRequestFetch({ commandId: ownerCommandId, executionId: ownerExecution.id, sessionId, baseFetch: guardedFetch })
+	}
+	return guardedFetch
 }
 
 /** 同一ModelRuntime覆盖普通对话、内部摘要及重试；保留已有payload钩子。 */

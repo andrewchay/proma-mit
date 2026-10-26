@@ -33,6 +33,9 @@ export interface OwnerExecutionEditor {
   executionKind: 'development' | 'controlled'
   executorEmployeeId: string
   reviewerEmployeeId: string
+  roleAssignments: Record<string, string>
+  roleBudgetCapsEnabled: boolean
+  roleBudgetCapTexts: Record<string, string>
   workspaceId: string
   knowledgeSourceIds: string[]
   targetPathsText: string
@@ -64,6 +67,9 @@ const empty: OwnerExecutionEditor = {
   executionKind: 'controlled',
   executorEmployeeId: '',
   reviewerEmployeeId: '',
+  roleAssignments: {},
+  roleBudgetCapsEnabled: false,
+  roleBudgetCapTexts: {},
   workspaceId: '',
   knowledgeSourceIds: [],
   targetPathsText: '',
@@ -120,6 +126,9 @@ export type OwnerExecutionEdit = Partial<
     | 'executionKind'
     | 'executorEmployeeId'
     | 'reviewerEmployeeId'
+    | 'roleAssignments'
+    | 'roleBudgetCapsEnabled'
+    | 'roleBudgetCapTexts'
     | 'workspaceId'
     | 'knowledgeSourceIds'
     | 'targetPathsText'
@@ -202,23 +211,7 @@ export function ownerExecutionInput(
   const runs = parseOwnerExecutionInteger(e.maxRunsText)
   const rework = parseOwnerExecutionInteger(e.maxReworkText)
   const expiresAt = expiry(e.expiresAtText)
-  const executor = e.view.choices.employees.find((v) => v.id === e.executorEmployeeId)
-  const reviewer = e.view.choices.employees.find((v) => v.id === e.reviewerEmployeeId)
-  if (
-    !executor ||
-    !reviewer ||
-    executor.id === reviewer.id ||
-    executor.executionProfile !== e.executionKind ||
-    reviewer.executionProfile !== e.executionKind ||
-    !executor.workspaceIds.includes(e.workspaceId) ||
-    !reviewer.workspaceIds.includes(e.workspaceId) ||
-    !e.view.choices.workspaces.some((v) => v.id === e.workspaceId) ||
-    !executor.modelId ||
-    executor.channelId !== reviewer.channelId ||
-    executor.modelId !== reviewer.modelId ||
-    executor.runtime !== reviewer.runtime
-  )
-    return null
+  const workspaceId = e.workspaceId || (e.view.choices.workspaces.length === 1 ? e.view.choices.workspaces[0]!.id : '')
   const selected = new Set(e.selectedStepKeys)
   if (
     !selected.size ||
@@ -228,6 +221,41 @@ export function ownerExecutionInput(
       .filter((s) => selected.has(s.key))
       .every((s) => s.dependencies.every((k) => selected.has(k)))
   )
+    return null
+  const selectedRoleKeys = [...new Set(p.proposal.steps.filter((step) => selected.has(step.key)).map((step) => step.roleKey))].sort()
+  const roleAssignments = selectedRoleKeys.map((roleKey) => {
+    const candidates = e.view!.choices.employees.filter((employee) => !employee.isOwnerCarrier
+      && employee.roleTemplateId === roleKey
+      && employee.executionProfile === e.executionKind && employee.workspaceIds.includes(workspaceId))
+    const selectedEmployeeId = e.roleAssignments[roleKey]
+      || (selectedRoleKeys.length === 1 ? e.executorEmployeeId : candidates.length === 1 ? candidates[0]!.id : '')
+    return { roleKey, employeeId: selectedEmployeeId, employee: e.view!.choices.employees.find((item) => item.id === selectedEmployeeId) }
+  })
+  let roleBudgetCapsValid = true
+  const roleBudgetCaps = e.roleBudgetCapsEnabled
+    ? selectedRoleKeys.flatMap((roleKey) => {
+        const text = e.roleBudgetCapTexts[roleKey]?.trim() ?? ''
+        if (!text) return []
+        const maxCostMicros = parseOwnerExecutionInteger(text)
+        if (maxCostMicros === null || maxCostMicros <= 0 || cost === null || maxCostMicros > cost) {
+          roleBudgetCapsValid = false
+          return []
+        }
+        return [{ roleKey, maxCostMicros }]
+      })
+    : []
+  if (!roleBudgetCapsValid) return null
+  const reviewer = e.view.choices.employees.find((employee) => employee.id === e.reviewerEmployeeId)
+  const roleEmployees = roleAssignments.map((assignment) => assignment.employee)
+  const executor = roleEmployees[0]
+  const executorEmployeeId = roleAssignments[0]?.employeeId ?? ''
+  if (!workspaceId || !e.view.choices.workspaces.some((v) => v.id === workspaceId)
+    || roleAssignments.some((assignment) => !assignment.employeeId || !assignment.employee)
+    || !executor || !reviewer || roleEmployees.some((employee) => !employee || employee.id === reviewer.id
+      || employee.executionProfile !== e.executionKind || !employee.workspaceIds.includes(workspaceId)
+      || !employee.modelId || employee.channelId !== executor.channelId || employee.modelId !== executor.modelId || employee.runtime !== executor.runtime)
+    || reviewer.executionProfile !== e.executionKind || !reviewer.workspaceIds.includes(workspaceId)
+    || !executor.modelId || reviewer.channelId !== executor.channelId || reviewer.modelId !== executor.modelId || reviewer.runtime !== executor.runtime)
     return null
   if (
     new Set(e.knowledgeSourceIds).size !== e.knowledgeSourceIds.length ||
@@ -246,7 +274,7 @@ export function ownerExecutionInput(
   )
     return null
   const scope = {
-    workspaceId: e.workspaceId,
+    workspaceId,
     targetPaths: lines(e.targetPathsText),
     allowedPaths: lines(e.allowedPathsText),
     verificationCommands: lines(e.verificationCommandsText),
@@ -265,9 +293,11 @@ export function ownerExecutionInput(
     selectedStepKeys: [...e.selectedStepKeys].sort(),
     executionKind: e.executionKind,
     ...(e.executionKind === 'development' ? { developmentScope: scope } : {}),
-    executorEmployeeId: executor.id,
+    executorEmployeeId,
     reviewerEmployeeId: reviewer.id,
-    workspaceId: e.workspaceId,
+    roleAssignments: roleAssignments.map(({ roleKey, employeeId }) => ({ roleKey, employeeId })),
+    ...(roleBudgetCaps.length ? { roleBudgetCaps } : {}),
+    workspaceId,
     knowledgeSourceIds: [...e.knowledgeSourceIds].sort(),
     maxCostMicros: cost,
     maxRuns: runs,
@@ -292,6 +322,11 @@ function sameInput(
       'developmentScope',
       'executorEmployeeId',
       'reviewerEmployeeId',
+      'roleAssignments',
+      'roleBudgetCaps',
+      'roleKey',
+      'employeeId',
+      'maxCostMicros',
       'workspaceId',
       'knowledgeSourceIds',
       'maxCostMicros',

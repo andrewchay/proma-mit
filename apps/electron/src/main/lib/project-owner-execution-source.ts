@@ -22,7 +22,7 @@ import {
   getProjectOwnerPlanDraft,
   getProjectOwnerPlanningContext,
 } from './project-owner-plan-service'
-import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
+import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
 import { readCatalog } from './knowledge-catalog-service'
 import {
   getTask,
@@ -102,6 +102,8 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     'developmentScope',
     'executorEmployeeId',
     'reviewerEmployeeId',
+    'roleAssignments',
+    'roleBudgetCaps',
     'workspaceId',
     'knowledgeSourceIds',
     'maxCostMicros',
@@ -135,6 +137,25 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
         : { verificationCommands: strings(scope.verificationCommands) }),
     }
   }
+  let roleAssignments: OwnerExecutionPreparationInput['roleAssignments']
+  if (o.roleAssignments !== undefined) {
+    if (!Array.isArray(o.roleAssignments) || o.roleAssignments.length > 200) throw new Error('Owner岗位绑定清单无效')
+    roleAssignments = o.roleAssignments.map((rawAssignment) => {
+      const assignment = ownerExecutionObject(rawAssignment, ['roleKey', 'employeeId'])
+      return { roleKey: text(assignment.roleKey), employeeId: text(assignment.employeeId) }
+    }).sort((left, right) => left.roleKey < right.roleKey ? -1 : left.roleKey > right.roleKey ? 1 : 0)
+    if (new Set(roleAssignments.map((item) => item.roleKey)).size !== roleAssignments.length) throw new Error('Owner岗位绑定roleKey重复')
+  }
+  let roleBudgetCaps: OwnerExecutionPreparationInput['roleBudgetCaps']
+  if (o.roleBudgetCaps !== undefined) {
+    if (!Array.isArray(o.roleBudgetCaps) || o.roleBudgetCaps.length > 200) throw new Error('Owner岗位预算清单无效')
+    const parsed = o.roleBudgetCaps.map((rawCap) => {
+      const cap = ownerExecutionObject(rawCap, ['roleKey', 'maxCostMicros'])
+      return { roleKey: text(cap.roleKey), maxCostMicros: integer(cap.maxCostMicros, 1) }
+    }).sort((left, right) => left.roleKey < right.roleKey ? -1 : left.roleKey > right.roleKey ? 1 : 0)
+    if (new Set(parsed.map((item) => item.roleKey)).size !== parsed.length) throw new Error('Owner岗位预算roleKey重复')
+    if (parsed.length) roleBudgetCaps = parsed
+  }
   return {
     requestId: text(o.requestId),
     expectedPreparationRevision: integer(o.expectedPreparationRevision),
@@ -147,6 +168,8 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     ...(developmentScope === undefined ? {} : { developmentScope }),
     executorEmployeeId: text(o.executorEmployeeId),
     reviewerEmployeeId: text(o.reviewerEmployeeId),
+    ...(roleAssignments === undefined ? {} : { roleAssignments }),
+    ...(roleBudgetCaps === undefined ? {} : { roleBudgetCaps }),
     workspaceId: text(o.workspaceId),
     knowledgeSourceIds: strings(o.knowledgeSourceIds),
     maxCostMicros: integer(o.maxCostMicros, 1),
@@ -239,28 +262,41 @@ export function buildOwnerExecutionSource(
   )
     throw new Error('Owner执行准备必须包含所选步骤依赖闭包')
   if (input.expiresAt <= Date.now()) throw new Error('Owner执行准备期限已过期')
-  if (input.executorEmployeeId === input.reviewerEmployeeId)
-    throw new Error('Owner执行与评审人员必须不同')
-  const executor = getAgentEmployee(input.executorEmployeeId),
-    reviewer = getAgentEmployee(input.reviewerEmployeeId)
-  if (
-    !executor?.enabled ||
-    !reviewer?.enabled ||
-    executor.executionProfile !== input.executionKind ||
-    reviewer.executionProfile !== input.executionKind
-  )
-    throw new Error('Owner执行或评审员工不存在、已停用或模式不符')
+  const selectedSteps = plan.proposal.steps.filter((step) => input.selectedStepKeys.includes(step.key))
+  const selectedRoleKeys = [...new Set(selectedSteps.map((step) => step.roleKey))].sort()
+  const roleAssignments = input.roleAssignments
+  if (roleAssignments && (roleAssignments.length !== selectedRoleKeys.length || roleAssignments.some((item, index) => item.roleKey !== selectedRoleKeys[index])))
+    throw new Error('Owner岗位绑定必须精确覆盖所选步骤的全部稳定roleKey')
+  if (input.roleBudgetCaps?.length && !roleAssignments)
+    throw new Error('Owner岗位预算要求显式冻结岗位员工映射')
+  if (input.roleBudgetCaps?.some((cap) => !selectedRoleKeys.includes(cap.roleKey) || cap.maxCostMicros > input.maxCostMicros))
+    throw new Error('Owner岗位预算必须对应所选步骤岗位，且不得超过共享总预算')
+  if (roleAssignments?.length && roleAssignments[0]?.employeeId !== input.executorEmployeeId)
+    throw new Error('Owner主执行员工必须与首个稳定roleKey绑定一致')
+  const reviewer = getAgentEmployee(input.reviewerEmployeeId)
+  const roleEmployees = roleAssignments
+    ? roleAssignments.map((assignment) => ({ roleKey: assignment.roleKey, employee: getAgentEmployee(assignment.employeeId) }))
+    : [{ roleKey: selectedRoleKeys[0]!, employee: getAgentEmployee(input.executorEmployeeId) }]
+  const executor = roleEmployees[0]?.employee
+  if (!executor?.enabled || !reviewer?.enabled || input.reviewerEmployeeId === executor.id
+    || roleEmployees.some(({ employee }) => !employee?.enabled || employee.executionProfile !== input.executionKind || employee.id === reviewer.id)
+    || reviewer.executionProfile !== input.executionKind)
+    throw new Error('Owner执行或评审员工不存在、已停用、模式不符或职责重叠')
   const facts = { getChannel: getChannelById, getWorkspace: getAgentWorkspace }
-  const validate =
-    input.executionKind === 'controlled' ? validateControlledTarget : validateDevelopmentTarget
+  const validate = input.executionKind === 'controlled' ? validateControlledTarget : validateDevelopmentTarget
   const target = validate(executor, input.workspaceId, facts)
   validate(reviewer, input.workspaceId, facts)
-  if (
-    executor.channelId !== reviewer.channelId ||
-    executor.modelId !== reviewer.modelId ||
-    executor.runtime !== reviewer.runtime
-  )
-    throw new Error('Owner执行与评审必须明确同渠道、模型与Runtime')
+  for (const { employee } of roleEmployees) validate(employee!, input.workspaceId, facts)
+  const compatibleEmployees = [...roleEmployees.map((item) => item.employee!), reviewer]
+  if (compatibleEmployees.some((employee) => employee.channelId !== executor.channelId
+    || employee.modelId !== executor.modelId || employee.runtime !== executor.runtime))
+    throw new Error('Owner各岗位执行与评审必须明确同渠道、模型与Runtime')
+  const binding = getOwnerRuntimeBinding(subject.projectId)
+  if (binding) {
+    const carrierFacts = getOwnerCarrierFacts(subject.projectId, binding.carrierId, binding.workspaceId)
+    if (!ownerCarrierBindingMatches(binding, carrierFacts))
+      throw new Error('Owner规划载体配置已漂移，请重新核对绑定来源')
+  }
   if (!hasProjectWorkspaceBinding(subject.projectId, input.workspaceId))
     throw new Error('Owner执行工作区未绑定当前项目')
   const workspace = getAgentWorkspace(input.workspaceId)!,
@@ -323,6 +359,7 @@ export function buildOwnerExecutionSource(
       enabled: employee.enabled,
       name: employee.name,
       role: employee.role,
+      roleTemplateId: employee.roleTemplateId,
       executionProfile: employee.executionProfile,
       runtime: employee.runtime,
       permissionMode: employee.permissionMode,
@@ -335,7 +372,6 @@ export function buildOwnerExecutionSource(
       skills: employee.skills,
       capabilityVersions: getActiveAgentEmployeeCapabilityVersions(employee.id, input.workspaceId),
     })
-  const binding = getOwnerRuntimeBinding(subject.projectId)
   const ownerBindingProvenance = binding
     ? {
         state: 'bound' as const,
@@ -358,6 +394,12 @@ export function buildOwnerExecutionSource(
     contextFingerprint: plan.contextFingerprint,
     plan,
     selectedStepKeys: input.selectedStepKeys,
+    ...(roleAssignments === undefined ? {} : {
+      roleAssignments: roleEmployees.map(({ roleKey, employee }) => ({
+        roleKey,
+        employee: { id: employee!.id, name: employee!.name, ...(employee!.roleTemplateId ? { roleTemplateId: employee!.roleTemplateId } : {}), configurationHash: configurationHash(employee!) },
+      })),
+    }),
     executor: {
       id: executor.id,
       name: executor.name,

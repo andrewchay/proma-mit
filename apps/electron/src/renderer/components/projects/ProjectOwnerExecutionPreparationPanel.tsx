@@ -22,6 +22,7 @@ import {
 } from '../../atoms/project-owner-execution-atoms'
 import { ProjectOwnerTaskMaterializationPanel } from './ProjectOwnerTaskMaterializationPanel'
 import { ProjectOwnerRevalidationPanel } from './ProjectOwnerRevalidationPanel'
+import { ProjectOwnerExecutionGrantPanel } from './ProjectOwnerExecutionGrantPanel'
 const field = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm'
 const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 /** 完整冻结事实；历史只读，没有恢复、发行或执行入口。 */
@@ -69,8 +70,10 @@ function PreparationFacts({
             : '来源未记录，旧准备需核查'}
       </p>
       <p>
-        实际执行人员：{source.executor.name}（{source.executor.id}）<br />
-        实际评审人员：{source.reviewer.name}（{source.reviewer.id}）
+        {source.roleAssignments?.length
+          ? <>逐步执行人员：{source.roleAssignments.map((item) => `${item.roleKey} → ${item.employee.name}（${item.employee.id}）`).join('；')}</>
+          : <>实际执行人员：{source.executor.name}（{source.executor.id}）</>}
+        <br />实际评审人员：{source.reviewer.name}（{source.reviewer.id}）
       </p>
       <p>
         模式：{input.executionKind}；工作区：{source.workspaceName}（{source.workspaceId}）<br />
@@ -99,10 +102,13 @@ function PreparationFacts({
         </p>
       )}
       <p>
-        拟议预算：{input.maxCostMicros} 微美元；次数：{input.maxRuns}；返工：{input.maxRework}
+        项目共享总额：{input.maxCostMicros} 微美元；次数：{input.maxRuns}；返工：{input.maxRework}
+        <br />
+        岗位上限：{input.roleBudgetCaps?.length ? input.roleBudgetCaps.map((cap) => `${cap.roleKey} ≤ ${cap.maxCostMicros} 微美元`).join('；') : '未配置，所有岗位仅受共享总额限制'}
         <br />
         期限：{new Date(input.expiresAt).toLocaleString()}；修订原因：{input.changeReason}
       </p>
+      {input.roleBudgetCaps?.length ? <p className="text-xs text-muted-foreground">岗位上限按所属任务归集，Executor 与 Reviewer 费用都计入该任务岗位。任意岗位上限都不能扩大项目共享总额；unknown 仍按预留额占用。</p> : null}
       <p>预算不是实际预留，不承诺费用绝对硬封顶；资料清单不是执行侧工具许可。</p>
       <div role="status">
         <p>后续发行阻塞：</p>
@@ -183,6 +189,15 @@ export function ProjectOwnerExecutionPreparationPanel({
   }, [load, subject])
   const id = useId()
   const choices = e.view?.choices
+  const selectedRoleKeys = [...new Set((plan?.proposal.steps ?? []).filter((step) => e.selectedStepKeys.includes(step.key)).map((step) => step.roleKey))].sort()
+  const recommendedWorkspaceId = e.workspaceId || (choices?.workspaces.length === 1 ? choices.workspaces[0]!.id : '')
+  const roleCandidates = () => choices?.employees.filter((employee) => employee.executionProfile === e.executionKind
+    && employee.workspaceIds.includes(recommendedWorkspaceId)
+    && (!e.reviewerEmployeeId || employee.id !== e.reviewerEmployeeId)) ?? []
+  const recommendedEmployee = (roleKey: string) => {
+    const exactMatches = roleCandidates().filter((employee) => !employee.isOwnerCarrier && employee.roleTemplateId === roleKey)
+    return exactMatches.length === 1 ? exactMatches[0] : undefined
+  }
   const busy = e.loading || e.previewing || e.saving
   const patch = (value: OwnerExecutionEdit) => edit({ subject, patch: value })
   const toggle = (values: string[], value: string, checked: boolean) =>
@@ -291,37 +306,64 @@ export function ProjectOwnerExecutionPreparationPanel({
               <option value="development">研发（后台须核验Git）</option>
             </select>
           </label>
-          {(['executorEmployeeId', 'reviewerEmployeeId'] as const).map((k) => (
-            <label className="block text-sm" key={k} htmlFor={`${id}-${k}`}>
-              {k === 'executorEmployeeId' ? '实际执行人员' : '实际评审人员'}
-              <select
-                id={`${id}-${k}`}
-                className={field}
-                value={e[k]}
-                onChange={(v) => patch({ [k]: v.target.value })}
-              >
-                <option value="">先选择，不继承规划载体</option>
-                {e[k] && !choices?.employees.some((v) => v.id === e[k]) && (
-                  <option value={e[k]}>{e[k]}（当前不可用）</option>
-                )}
-                {choices?.employees.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name} · {v.executionProfile} · {v.channelId}/{v.modelId ?? '无模型'} ·{' '}
-                    {v.runtime}
+          {selectedRoleKeys.map((roleKey) => {
+            const candidates = roleCandidates()
+            const recommendation = recommendedEmployee(roleKey)
+            const value = e.roleAssignments[roleKey] || (selectedRoleKeys.length === 1 ? e.executorEmployeeId : recommendation?.id ?? '')
+            const exactMatchCount = candidates.filter((employee) => !employee.isOwnerCarrier && employee.roleTemplateId === roleKey).length
+            const carrierExactMatch = candidates.some((employee) => employee.isOwnerCarrier && employee.roleTemplateId === roleKey)
+            return (
+              <label className="block text-sm" key={roleKey} htmlFor={`${id}-role-${roleKey}`}>
+                实际执行人员 · roleKey {roleKey}
+                <select
+                  id={`${id}-role-${roleKey}`}
+                  className={field}
+                  value={value}
+                  onChange={(event) => patch({
+                    roleAssignments: { ...e.roleAssignments, [roleKey]: event.target.value },
+                    ...(roleKey === selectedRoleKeys[0] ? { executorEmployeeId: event.target.value } : {}),
+                  })}
+                >
+                  <option value="">{exactMatchCount > 1 ? `有 ${exactMatchCount} 个精确模板匹配，必须明确选择` : carrierExactMatch ? '唯一精确匹配是 Owner 规划载体；请明确选择' : '没有唯一模板匹配，请明确选择'}</option>
+                  {candidates.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} · {employee.executionProfile} · {employee.channelId}/{employee.modelId ?? '无模型'} · {employee.runtime}{employee.roleTemplateId === roleKey ? ' · 精确模板匹配' : ''}{employee.isOwnerCarrier ? ' · Owner规划载体（不自动推荐）' : ''}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-muted-foreground">
+                  {recommendation ? `唯一精确模板匹配推荐：${recommendation.name}；你仍需核对并可更换。` : exactMatchCount > 1 ? '匹配冲突：不得自动挑选，请明确选择。' : carrierExactMatch ? '精确模板仅匹配 Owner 规划载体；不会自动推荐。你仍可显式选择并接受服务端配置核验，或选择其他员工。' : '没有稳定模板匹配；请显式选择员工，不按显示名猜测。'}
+                </span>
+              </label>
+            )
+          })}
+          <label className="block text-sm" htmlFor={`${id}-reviewerEmployeeId`}>
+            独立技术评审人员
+            <select
+              id={`${id}-reviewerEmployeeId`}
+              className={field}
+              value={e.reviewerEmployeeId}
+              onChange={(event) => patch({ reviewerEmployeeId: event.target.value })}
+            >
+              <option value="">先选择评审员工</option>
+              {choices?.employees.filter((employee) => employee.executionProfile === e.executionKind
+                && employee.workspaceIds.includes(recommendedWorkspaceId)
+                && !Object.values(e.roleAssignments).includes(employee.id)).map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {employee.name} · {employee.executionProfile} · {employee.channelId}/{employee.modelId ?? '无模型'} · {employee.runtime}{employee.isOwnerCarrier ? ' · Owner规划载体（仅显式选择）' : ''}
                   </option>
                 ))}
-              </select>
-            </label>
-          ))}
+            </select>
+          </label>
           <p className="text-xs text-muted-foreground">
-            执行与评审必须是不同人员；两人模式、工作区、渠道、模型与Runtime必须一致，不会自动改配。
+            来源规则：工作区仅从当前项目的显式绑定中推荐唯一项；岗位仅按唯一 roleTemplateId 预填，缺失或冲突需你选择。Owner 规划载体只作规划来源，不会自动推荐为执行员工；若你显式选择它，仍按其员工配置重新核验。全局默认与最近使用值不参与回退。渠道、模型和 Runtime 来自你选定的员工现有配置，岗位及评审配置不一致时服务端阻止预览；此处预填不修改员工配置，也不构成授权。
           </p>
           <label className="block text-sm" htmlFor={`${id}-workspace`}>
             明确工作区
             <select
               id={`${id}-workspace`}
               className={field}
-              value={e.workspaceId}
+              value={recommendedWorkspaceId}
               onChange={(v) => patch({ workspaceId: v.target.value })}
             >
               <option value="">先选择工作区</option>
@@ -335,6 +377,9 @@ export function ProjectOwnerExecutionPreparationPanel({
               ))}
             </select>
           </label>
+          <p className="text-xs text-muted-foreground">
+            {choices?.workspaces.length === 1 ? `当前项目唯一显式绑定工作区推荐：${choices.workspaces[0]!.name}；仍须在预览中核对。` : (choices?.workspaces.length ?? 0) > 1 ? '当前项目有多个绑定工作区，必须明确选择；不取全局默认或首项。' : '当前项目没有可用绑定工作区，准备阻塞。'}
+          </p>
           {e.executionKind === 'development' &&
             (['targetPathsText', 'allowedPathsText', 'verificationCommandsText'] as const).map(
               (k) => (
@@ -405,6 +450,22 @@ export function ProjectOwnerExecutionPreparationPanel({
               />
             </label>
           ))}
+          <fieldset className="space-y-2 rounded-lg bg-background/60 p-3" aria-label="可选岗位预算上限">
+            <legend className="text-sm font-medium">岗位费用上限（可选）</legend>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={e.roleBudgetCapsEnabled} onChange={(event) => patch({ roleBudgetCapsEnabled: event.target.checked })} />
+              <span>启用按岗位设置上限</span>
+            </label>
+            {e.roleBudgetCapsEnabled && <>
+              <p className="text-xs text-muted-foreground">每个上限都受项目共享总额约束。未填写的岗位只受共享总额限制；费用未知时仍保留该岗位的预留占额。</p>
+              {selectedRoleKeys.map((roleKey) => <label className="block text-sm" key={roleKey} htmlFor={`${id}-role-budget-${roleKey}`}>
+                {plan?.sources.roles.find((role) => role.key === roleKey)?.name ?? roleKey} · {roleKey} 上限（微美元，可留空）
+                <input id={`${id}-role-budget-${roleKey}`} className={field} type="text" inputMode="numeric" value={e.roleBudgetCapTexts[roleKey] ?? ''}
+                  onChange={(event) => patch({ roleBudgetCapTexts: { ...e.roleBudgetCapTexts, [roleKey]: event.target.value } })} />
+              </label>)}
+              <p className="text-xs text-muted-foreground">岗位上限覆盖该岗位任务的 Executor 与 Reviewer 两类调用；Reviewer 费用计入被评审任务的岗位。</p>
+            </>}
+          </fieldset>
         </fieldset>
         <div className="flex flex-wrap gap-2">
           <button type="submit" className={button} disabled={!canPreview}>
@@ -464,6 +525,7 @@ export function ProjectOwnerExecutionPreparationPanel({
       )}
       <ProjectOwnerTaskMaterializationPanel projectId={projectId} taskId={taskId} />
       <ProjectOwnerRevalidationPanel projectId={projectId} taskId={taskId} />
+      <ProjectOwnerExecutionGrantPanel projectId={projectId} taskId={taskId} />
     </section>
   )
 }

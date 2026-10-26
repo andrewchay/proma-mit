@@ -73,7 +73,9 @@ test('Given 来源或Plan期间变化 When 晚到终态 Then 原文/真实USD保
 test('Given 取消/网络unknown后晚到 When 返回原文token费用 Then 新证据不丢但不重新生成', () => {
   const f = accepted(prepared()); const first = runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', undefined, true)!
   expect(first.state).toBe('stopped'); expect(runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', { ...f.result, total_cost_usd: 0.2 })).toEqual(first)
-  const rows = store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_run_receipts WHERE execution_id = ?').all(f.executionId) as { payload: string }[]; expect(rows).toHaveLength(2); expect(JSON.parse(rows[1]!.payload).cost.usd).toBe(0.2); expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
+  const rows = store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_run_receipts WHERE execution_id = ?').all(f.executionId) as { payload: string }[]; expect(rows).toHaveLength(2)
+  const costs = rows.map(({ payload }) => (JSON.parse(payload) as { cost: { usd: number | null } }).cost.usd)
+  expect(costs).toContain(null); expect(costs).toContain(0.2); expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
 })
 test('Given 澄清 When 完成 Then 人答前无提案或补请求', () => {
   const f = accepted(prepared()); const { proposal: _proposal, ...binding } = f.response; const response = { ...binding, kind: 'needs_clarification', reason: '验收范围影响结果', questions: [{ key: 'audience', question: '核心受众是谁？', why: '决定定位范围', options: [] }] }

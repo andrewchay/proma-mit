@@ -1,6 +1,8 @@
 import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
 import { assertToolAllowedForSessionPurpose } from './project-owner-execution-gates'
 import { assertControlledPermissionChange, isControlledProviderSession } from './controlled-provider-boundary'
+import * as projectStore from './project-sqlite-store'
+import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
 /**
  * AgentOrchestrator — Agent 编排层
  *
@@ -115,6 +117,8 @@ export interface SessionCallbacks {
    * 只表示 Runtime 真正开始活动，不证明终态与费用；Pilot 用它写开始回执。
    */
   onRuntimeSessionEstablished?: () => void
+  /** 只由主进程Owner dispatcher注入；不接受AgentSendInput/IPC自报。 */
+  ownerExecution?: { commandId: string; executionId: string }
 }
 
 /** 会话级待发送队列条目（对应 AgentSendInput 的一次排队发送） */
@@ -685,7 +689,8 @@ export class AgentOrchestrator {
       const runtimeWorkspace = runtimeServices.workspaces.resolveWorkspaceContext({ workspaceId, sessionId })
       const agentCwd = runtimeWorkspace.cwd
       const workspaceSlug = runtimeWorkspace.workspaceSlug ?? ''
-      const mcpServerConfigs = runtimeWorkspace.mcpServers
+      const ownerExecution = Boolean(callbacks.ownerExecution)
+      const mcpServerConfigs = ownerExecution ? {} : runtimeWorkspace.mcpServers
 
       console.log(`[Agent Runtime] 启动 ${agentRuntime} runtime — provider: ${provider}, adapter=${adapterProvider ?? provider}, model: ${modelId}, cwd: ${agentCwd}`)
 
@@ -734,7 +739,7 @@ export class AgentOrchestrator {
           console.warn('[Agent Runtime] 回写会话 modelId 失败:', err)
         }
       }
-      const collabExtraTools = collabWorkspaceId && !isDelegationSession
+      const collabExtraTools = !ownerExecution && collabWorkspaceId && !isDelegationSession
         ? await import('./agent-collaboration-tools').then((m) => {
             console.log('[AgentOrchestrator] collaboration 工具已注入:', { sessionId, workspaceId, collabWs: collabWorkspaceId, isDelegationSession })
             return m.buildRuntimeCollaborationTools({
@@ -1962,7 +1967,18 @@ export class AgentOrchestrator {
     // Owner 必须在排队、Goal、命令解析、历史、工作区 MCP 和动态提示前分流。
     // 损坏的用途证据由 resolver 抛错，绝不退回普通 Agent。
     try {
-      assertNoOwnerBusinessSession(input.sessionId)
+      const ownerExecution = projectStore.getAgentExecutionBySessionId(input.sessionId)
+      if (ownerExecution?.ownerCommandId) {
+        if (!callbacks.ownerExecution || callbacks.ownerExecution.commandId !== ownerExecution.ownerCommandId
+          || callbacks.ownerExecution.executionId !== ownerExecution.id) throw new Error('Owner命令仅允许经专用dispatcher进入Runtime')
+        assertOwnerCommandRuntimeContext(ownerExecution.id, ownerExecution.ownerCommandId, input.sessionId, true)
+        if (input.agentRuntime !== 'ai-sdk' || input.customMcpServers || input.mentionedMcpServers?.length
+          || input.mentionedSkills?.length || input.mentionedSessionIds?.length || input.mentionedAgentEmployees?.length
+          || input.workflowCapabilityPolicy || input.attachments?.length) throw new Error('Owner业务Runtime不允许MCP、Skills、Workflow、附件或委派上下文')
+      } else {
+        if (callbacks.ownerExecution) throw new Error('Owner dispatcher context不能用于非Owner execution')
+        assertNoOwnerBusinessSession(input.sessionId)
+      }
       const owner = resolveOwnerPlanningSession(input.sessionId)
       if (owner) {
         await this.runOwnerPlanningAgent(input, callbacks, owner)

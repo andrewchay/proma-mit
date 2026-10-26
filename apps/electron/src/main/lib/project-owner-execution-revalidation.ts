@@ -11,6 +11,7 @@ import type {
 } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
+import { isCompletedStatus } from './task-status-logic'
 import { getOwnerExecutionPreparation } from './project-owner-execution-preparation'
 import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
 import {
@@ -48,11 +49,15 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
   const v1 = buildOwnerExecutionSource(subject, frozenPreparation.input)
   const tasks: OwnerExecutionRevalidationTask[] = materialization.links.map(link => {
     const task = store.getTask(link.taskId)
-    if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id || task.status !== 'paused') fail('权威任务已不处于冻结暂停状态，不能重新验证')
+    const statusRemainsInScope = task && (task.status === 'paused' || isCompletedStatus(task.status, store.listTaskStatuses(subject.projectId)))
+    if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id || !statusRemainsInScope) fail('权威任务不再处于冻结暂停/已完成状态，不能重新验证')
     if (ownerTaskSpecificationHash(task) !== link.taskSpecificationHash) fail('权威任务规格已变化，请先核查漂移')
     const dependencies = edgesFor(task.id, subject.projectId).map(({ id, taskId, dependsOnTaskId, type }) => ({ id, taskId, dependsOnTaskId, type }))
     if (ownerExecutionHash(dependencies.slice().sort((a, b) => a.id.localeCompare(b.id))) !== ownerExecutionHash(link.dependencies.slice().sort((a, b) => a.id.localeCompare(b.id)))) fail('权威依赖已变化，不能沿用关联')
-    return { taskId: task.id, stepKey: link.stepKey, linkId: link.id, linkKind: link.kind, linkIntegrityHash: link.integrityHash, taskSpecificationHash: link.taskSpecificationHash, status: 'paused' as const, assignee: task.assignee ?? { userId: '', displayName: '' }, workspaceId: task.workspaceId ?? '', ...(task.developmentScope ? { developmentScope: task.developmentScope } : {}), dependencies }
+    const roleKey = link.projection.roleKey
+    const roleAssignment = v1.roleAssignments?.find((assignment) => assignment.roleKey === roleKey)
+    if (v1.roleAssignments && (!roleAssignment || task.assignee?.userId !== `agent-${roleAssignment.employee.id}`)) fail('权威Task负责人与冻结roleKey员工映射不一致')
+    return { taskId: task.id, stepKey: link.stepKey, linkId: link.id, linkKind: link.kind, linkIntegrityHash: link.integrityHash, taskSpecificationHash: link.taskSpecificationHash, status: 'paused' as const, assignee: task.assignee ?? { userId: '', displayName: '' }, ...(roleAssignment ? { executor: { id: roleAssignment.employee.id, name: roleAssignment.employee.name, roleKey, configurationHash: roleAssignment.employee.configurationHash } } : {}), workspaceId: task.workspaceId ?? '', ...(task.developmentScope ? { developmentScope: task.developmentScope } : {}), dependencies }
   })
   if (ownerExecutionHash(tasks.map(task => task.stepKey).sort()) !== ownerExecutionHash(v1.selectedStepKeys.slice().sort())) fail('步骤与真实任务数量不符，请保留原件核查')
   return {
@@ -81,7 +86,13 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     ...(v1.repositoryIdentityHash === undefined ? {} : { repositoryIdentityHash: v1.repositoryIdentityHash }),
     ownerBindingProvenance: v1.ownerBindingProvenance,
     knowledgeSources: v1.knowledgeSources,
-    budget: { maxCostMicros: frozenPreparation.input.maxCostMicros, maxRuns: frozenPreparation.input.maxRuns, maxRework: frozenPreparation.input.maxRework, expiresAt: frozenPreparation.input.expiresAt },
+    budget: {
+      maxCostMicros: frozenPreparation.input.maxCostMicros,
+      maxRuns: frozenPreparation.input.maxRuns,
+      maxRework: frozenPreparation.input.maxRework,
+      expiresAt: frozenPreparation.input.expiresAt,
+      ...(frozenPreparation.input.roleBudgetCaps?.length ? { roleBudgetCaps: frozenPreparation.input.roleBudgetCaps } : {}),
+    },
     executionKind: frozenPreparation.input.executionKind,
     blockers: [...v1.blockers, 'v2冻结真实任务事实，不是执行授权；发行、派工、资料工具与预算purpose仍关闭'],
   }

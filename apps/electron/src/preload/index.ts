@@ -1967,10 +1967,24 @@ export interface ElectronAPI {
       listOwnerExecutionPreparationHistory: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['listOwnerExecutionPreparationHistory']
       previewOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['previewOwnerExecutionPreparation']
       saveOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['saveOwnerExecutionPreparation']
+      getOwnerAutonomousScheduleStatus: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['getOwnerAutonomousScheduleStatus']
+      previewOwnerExecutionCommandAck: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['previewOwnerExecutionCommandAck']
+      queueOwnerExecutionCommand: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['queueOwnerExecutionCommand']
+      listOwnerExecutionCommands: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['listOwnerExecutionCommands']
+      dispatchOwnerExecutionCommand: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['dispatchOwnerExecutionCommand']
+      cancelQueuedOwnerExecutionCommand: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['cancelQueuedOwnerExecutionCommand']
+      previewOwnerPreflightReconciliation: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['previewOwnerPreflightReconciliation']
+      confirmOwnerPreflightReconciliation: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['confirmOwnerPreflightReconciliation']
       getOwnerExecutionRevalidation: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['getOwnerExecutionRevalidation']
       listOwnerExecutionRevalidationHistory: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['listOwnerExecutionRevalidationHistory']
       previewOwnerExecutionRevalidation: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['previewOwnerExecutionRevalidation']
       saveOwnerExecutionRevalidation: import('@gravitas/shared').ProjectOwnerExecutionRevalidationApi['saveOwnerExecutionRevalidation']
+      getOwnerExecutionGrant: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['getOwnerExecutionGrant']
+      listOwnerExecutionGrantHistory: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['listOwnerExecutionGrantHistory']
+      previewOwnerExecutionGrantIssue: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['previewOwnerExecutionGrantIssue']
+      confirmOwnerExecutionGrantIssue: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['confirmOwnerExecutionGrantIssue']
+      previewOwnerExecutionGrantRevoke: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['previewOwnerExecutionGrantRevoke']
+      confirmOwnerExecutionGrantRevoke: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['confirmOwnerExecutionGrantRevoke']
       getOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['getOwnerRuntimeBinding']
       saveOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['saveOwnerRuntimeBinding']
       prepareOwnerPlanning: import('@gravitas/shared').ProjectOwnerRuntimeApi['prepareOwnerPlanning']
@@ -4736,10 +4750,24 @@ const electronAPI: ElectronAPI = {
       listOwnerExecutionPreparationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_PREPARATION_HISTORY, request),
       previewOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_PREPARATION, request),
       saveOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_PREPARATION, request),
+      getOwnerAutonomousScheduleStatus: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS, request),
+      previewOwnerExecutionCommandAck: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_COMMAND_ACK, request),
+      queueOwnerExecutionCommand: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.QUEUE_OWNER_EXECUTION_COMMAND, request),
+      listOwnerExecutionCommands: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_COMMANDS, request),
+      dispatchOwnerExecutionCommand: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DISPATCH_OWNER_EXECUTION_COMMAND, request),
+      cancelQueuedOwnerExecutionCommand: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CANCEL_QUEUED_OWNER_EXECUTION_COMMAND, request),
+      previewOwnerPreflightReconciliation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_PREFLIGHT_RECONCILIATION, request),
+      confirmOwnerPreflightReconciliation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_PREFLIGHT_RECONCILIATION, request),
       getOwnerExecutionRevalidation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_REVALIDATION, request),
       listOwnerExecutionRevalidationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_REVALIDATION_HISTORY, request),
       previewOwnerExecutionRevalidation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_REVALIDATION, request),
       saveOwnerExecutionRevalidation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_REVALIDATION, request),
+      getOwnerExecutionGrant: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_GRANT, request),
+      listOwnerExecutionGrantHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_GRANT_HISTORY, request),
+      previewOwnerExecutionGrantIssue: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_ISSUE, request),
+      confirmOwnerExecutionGrantIssue: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_ISSUE, request),
+      previewOwnerExecutionGrantRevoke: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_REVOKE, request),
+      confirmOwnerExecutionGrantRevoke: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_REVOKE, request),
       getOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, request),
       saveOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_RUNTIME_BINDING, request),
       prepareOwnerPlanning: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, request),

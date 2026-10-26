@@ -37,7 +37,7 @@ function fixture(single = false) {
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划' }, target?.id)
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1, target?.id)
   const subject = { projectId: project.id, ...(target ? { taskId: target.id } : {}) }
-  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: executor.id })), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
   const mpv = materialization.previewOwnerTaskMaterialization(subject, materialInput), batch = materialization.materializeOwnerTasks(subject, materialInput, mpv.previewFingerprint)
@@ -82,7 +82,7 @@ test('Given 空集合白名单 When ReadKnowledgeSource任意documentId Then 拒
   expect((store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM project_owner_execution_knowledge_reads WHERE session_id=?').get(sessionId) as { c: number }).c).toBe(0)
 })
 test('Given unknown purpose When 逐请求核验 Then 拒（白名单式fail-closed）', () => {
-  expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'evil-purpose', grantExpiresAt: Date.now() + 1000, sessionId: randomUUID(), runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: '' })).toThrow('未知Pilot命令用途')
+  expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'evil-purpose', sessionId: randomUUID(), runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: '', requestUrl: '' })).toThrow('未知Pilot命令用途')
 })
 test('Given admit重复 When 同execution Then 返回同gate；换execution拒绝', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
@@ -132,6 +132,6 @@ test('Given 畸形仅v2 policy When pilotGrantMatchesPolicy Then false（R1防�
 })
 test('Given Owner分支purpose=owner_business_execution且无gate When 逐请求核验 Then 拒（休眠语义就绪）', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
-  expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'owner_business_execution', grantExpiresAt: Date.now() + 1000, sessionId, runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: 'https://example.invalid' })).toThrow('门禁')
-  expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'controlled_task', grantExpiresAt: Date.now() + 1000, sessionId, runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: '' })).not.toThrow()
+  expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'owner_business_execution', sessionId, runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: 'https://example.invalid', requestUrl: 'https://example.invalid' })).toThrow('门禁')
+  expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'controlled_task', sessionId, runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: '', requestUrl: '' })).not.toThrow()
 })
