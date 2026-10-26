@@ -31,7 +31,13 @@ function parse(input: unknown = planInput()) {
 describe('Given 人类仅提供非代码项目目标', () => {
   test('Then 可形成简报，不要求文件、Git、员工或执行预算', () => {
     const goal = prepareProjectOwnerGoalBrief(goalInput)
-    expect(goal).toEqual({ ...goalInput, constraints: [], acceptanceCriteria: [] })
+    expect(goal).toEqual({ ...goalInput, constraints: [], acceptanceCriteria: [], codeSourceAccess: 'none' })
+  })
+
+  test('Then 仅任务目标可明确允许绑定工作区源码，项目级目标拒绝启用', () => {
+    expect(prepareProjectOwnerGoalBrief({ ...goalInput, taskId: 'task-1', codeSourceAccess: 'bound_workspace' }).codeSourceAccess).toBe('bound_workspace')
+    expect(() => prepareProjectOwnerGoalBrief({ ...goalInput, codeSourceAccess: 'bound_workspace' })).toThrow('项目目标不能启用')
+    expect(() => prepareProjectOwnerGoalBrief({ ...goalInput, taskId: 'task-1', codeSourceAccess: 'global' })).toThrow('授权选项无效')
   })
 
   test('Then 保留明确约束与标准，规范空白且不修改输入', () => {
@@ -62,6 +68,17 @@ describe('Given Owner 提出的结构化计划', () => {
     expect(proposal).not.toHaveProperty('grantId')
     expect(proposal.steps[0]).not.toHaveProperty('taskId')
     expect(proposal.steps[0]).not.toHaveProperty('status')
+  })
+
+  test('Then 代码规划必须引用本次冻结检索命中的文件、行号和摘要', () => {
+    const code = [{ path: 'src/quote.ts', sha256: 'a'.repeat(64), matchedTerms: ['quantity'], excerpts: [{ path: 'src/quote.ts', line: 12, text: 'if (quantity < 0)' }] }]
+    const taskGoal = prepareProjectOwnerGoalBrief({ ...goalInput, taskId: 'task-1', codeSourceAccess: 'bound_workspace' })
+    const input = { ...planInput(), taskId: 'task-1', steps: [{ ...planInput().steps[0]!, sourceReferences: [{ path: 'src/quote.ts', line: 12, sha256: 'a'.repeat(64) }] }] }
+    expect(parseProjectOwnerPlanProposal(input, taskGoal, ['researcher', 'strategist'], code).steps[0]?.sourceReferences).toEqual(input.steps[0]?.sourceReferences)
+    expect(() => parseProjectOwnerPlanProposal({ ...planInput(), taskId: 'task-1' }, taskGoal, ['researcher', 'strategist'], code, true)).toThrow('必须引用本次检索到的文件')
+    expect(() => parseProjectOwnerPlanProposal({ ...planInput(), taskId: 'task-1' }, taskGoal, ['researcher', 'strategist'], [], true)).toThrow('必须请求澄清')
+    const invalid = { ...input, steps: [{ ...input.steps[0]!, sourceReferences: [{ path: 'outside.ts', line: 12, sha256: 'a'.repeat(64) }] }] }
+    expect(() => parseProjectOwnerPlanProposal(invalid, taskGoal, ['researcher', 'strategist'], code)).toThrow('不属于本次冻结检索结果')
   })
 
   test('Then 允许合法前向依赖，不强迫模型按拓扑顺序排列', () => {

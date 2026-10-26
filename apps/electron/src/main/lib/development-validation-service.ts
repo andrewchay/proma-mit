@@ -9,7 +9,7 @@
  * - 进程未确认退出（timeout）不算成功；输出只存尾部，不作为成功依据。
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -201,6 +201,7 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
     const child = spawn(parts[0]!, parts.slice(1), {
       cwd,
       shell: false,
+      detached: process.platform !== 'win32',
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -224,11 +225,11 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
     }
     timer = setTimeout(() => {
       timedOut = true
-      child.kill('SIGTERM')
-      // 宽限后强制结束，确保进程终止被确认
-      killTimer = setTimeout(() => {
-        try { child.kill('SIGKILL') } catch { /* 已退出 */ }
-      }, 2000).unref()
+      signalValidationProcessTree(child, process.platform === 'win32' ? 'SIGKILL' : 'SIGTERM')
+      if (process.platform !== 'win32') {
+        // Unix先给进程组宽限，之后强制结束，确保进程终止被确认。
+        killTimer = setTimeout(() => signalValidationProcessTree(child, 'SIGKILL'), 2000).unref()
+      }
     }, timeoutMs)
     const collect = (chunk: Buffer | string): void => { output += chunk.toString('utf8') }
     child.stdout?.on('data', collect)
@@ -239,4 +240,28 @@ async function runCommand(command: string, cwd: string, timeoutMs: number): Prom
     child.once('exit', finish)
     child.once('close', finish)
   })
+}
+
+/** 超时终止整棵验证进程树，避免shim或runner子进程继续占用输出管道。 */
+function signalValidationProcessTree(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (!child.pid) return
+  if (process.platform === 'win32') {
+    const windowsRoot = process.env.SystemRoot || process.env.WINDIR
+    if (!windowsRoot) {
+      try { child.kill(signal) } catch { /* 进程已退出 */ }
+      return
+    }
+    const result = spawnSync(join(windowsRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore', windowsHide: true, timeout: 5000,
+    })
+    if (result.error || result.status !== 0) {
+      try { child.kill(signal) } catch { /* 进程已退出 */ }
+    }
+    return
+  }
+  try {
+    process.kill(-child.pid, signal)
+    return
+  } catch { /* 进程组信号失败时回退终止主进程 */ }
+  try { child.kill(signal) } catch { /* 进程已退出 */ }
 }

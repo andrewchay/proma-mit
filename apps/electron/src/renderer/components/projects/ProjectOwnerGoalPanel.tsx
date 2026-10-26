@@ -53,6 +53,12 @@ export function ProjectOwnerGoalPanel({ projectId, taskId, includePlanningPanels
               placeholder={field.placeholder} />
           </div>)}</div>
         </details>
+        {taskId && <label className="flex items-start gap-2 rounded-lg bg-muted/40 p-3 text-sm">
+          <input type="checkbox" className="mt-0.5" checked={editor.codeSourceAccess === 'bound_workspace'}
+            onChange={(event) => edit({ subject, patch: { codeSourceAccess: event.target.checked ? 'bound_workspace' : 'none' } })} />
+          <span><span className="font-medium">允许Owner检索当前绑定工作区的代码</span>
+            <span className="mt-1 block text-xs text-muted-foreground">只检索工作区内有限源码片段；隐藏目录、依赖目录和凭据行会跳过。片段会随规划请求发送给当前受控模型，仍需在启动时单独确认费用。关闭此项并保存后，旧规划来源失效。</span></span>
+        </label>}
         {editor.error && <p className="text-sm text-destructive" role="alert">{editor.error} 你的输入仍保留在当前窗口。</p>}
         {editor.conflict && <p className="text-sm text-muted-foreground">其他修改已更新服务器草案。请加载最新版本后比较，不会自动覆盖或重试保存。</p>}
         {editor.requiresReview && <div className="rounded-lg bg-muted p-3 text-sm" aria-label="草案版本比较">

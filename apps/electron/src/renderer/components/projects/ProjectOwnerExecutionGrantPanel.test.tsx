@@ -195,3 +195,21 @@ test('Given 历史 When SSR Then 只读声明与账本行可核对、滚动区�
   expect(html).toMatch(/<section[^>]*overflow-y-auto[^>]*aria-label="授权账本历史"/)
   expect(html).not.toMatch(/<div[^>]*class="[^"]*overflow-y-auto/)
 })
+
+test('Given授权需要对账或已归档 When展示 Then不能开始新发行流程', () => {
+  for (const state of ['needs_reconcile', 'archived'] as const) {
+    const html = render({ grant: { loaded: true, grant: { ...grant, state } }, revalidation: { revision: 1, status: 'current', revalidation: { id: 'rev-1' } }, policyRevision: 2 })
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^<]*预览发行影响面/)
+    expect(html).toContain('不能发行新授权')
+  }
+})
+
+test('Given活动授权的冻结重验证视图stale When精确引用一致 Then保留人工执行任务选择且不开放新授权', () => {
+  const record = { id: grant.revalidationId, integrityHash: grant.revalidationIntegrityHash, source: { tasks: [{ taskId: 'frozen-task', stepKey: 's', status: 'paused' }] } }
+  const html = render({ grant: { loaded: true, grant }, revalidation: { revision: 1, status: 'stale', revalidation: record }, policyRevision: 2 })
+  expect(html).toContain('frozen-task')
+  expect(html).toContain('value="frozen-task"')
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^<]*预览发行影响面/)
+  const mismatched = render({ grant: { loaded: true, grant }, revalidation: { revision: 1, status: 'stale', revalidation: { ...record, integrityHash: 'different' } }, policyRevision: 2 })
+  expect(mismatched).not.toContain('value="frozen-task"')
+})

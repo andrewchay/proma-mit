@@ -64,6 +64,7 @@ import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, resolveModelContextCapability } from '@
 import type { AgentStreamEvent, AgentStreamCompletePayload, AgentEvent, AgentStreamPayload, SDKAssistantMessage, SDKUserMessage, SDKSystemMessage, SDKContentBlock, SDKUserContentBlock } from '@gravitas/shared'
 import { createAgentStreamEventBatcher } from '@/lib/agent-stream-event-batcher'
 import { deriveFollowUpSuggestions } from '@/components/agent/follow-up-suggestions'
+import { mergePendingAgentRequestSnapshot } from './pending-agent-request-recovery'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
@@ -353,6 +354,13 @@ export function useGlobalAgentListeners(): void {
   const store = useStore()
 
   useEffect(() => {
+    let disposed = false
+    let pendingRequestSnapshotLoaded = false
+    const resolvedBeforeSnapshot = {
+      permissions: new Set<string>(),
+      askUsers: new Set<string>(),
+      exitPlans: new Set<string>(),
+    }
     /** 正在执行的写工具：toolUseId → { path, sessionId } */
     const pendingWriteTools = new Map<string, { path: string; sessionId: string }>()
     /** 正在执行的 git 突变 Bash 命令：toolUseId → sessionId（完成后触发 diff 刷新） */
@@ -767,6 +775,7 @@ export function useGlobalAgentListeners(): void {
             )
           } else if (event.type === 'permission_resolved') {
             // 权限请求已被任一入口（桌面 / 手机 companion）应答，从队列移除，避免僵尸横幅
+            if (!pendingRequestSnapshotLoaded) resolvedBeforeSnapshot.permissions.add(event.requestId)
             store.set(allPendingPermissionRequestsAtom, (prev) => {
               const map = new Map(prev)
               const current = map.get(sessionId) ?? []
@@ -777,10 +786,21 @@ export function useGlobalAgentListeners(): void {
             })
           } else if (event.type === 'ask_user_resolved') {
             // AskUser 已被应答，同上从队列移除
+            if (!pendingRequestSnapshotLoaded) resolvedBeforeSnapshot.askUsers.add(event.requestId)
             store.set(allPendingAskUserRequestsAtom, (prev) => {
               const map = new Map(prev)
               const current = map.get(sessionId) ?? []
               const next = current.filter((r) => r.requestId !== event.requestId)
+              if (next.length === 0) map.delete(sessionId)
+              else map.set(sessionId, next)
+              return map
+            })
+          } else if (event.type === 'exit_plan_mode_resolved') {
+            if (!pendingRequestSnapshotLoaded) resolvedBeforeSnapshot.exitPlans.add(event.requestId)
+            store.set(allPendingExitPlanRequestsAtom, (prev) => {
+              const map = new Map(prev)
+              const current = map.get(sessionId) ?? []
+              const next = current.filter((request) => request.requestId !== event.requestId)
               if (next.length === 0) map.delete(sessionId)
               else map.set(sessionId, next)
               return map
@@ -1171,7 +1191,33 @@ export function useGlobalAgentListeners(): void {
       })
     })
 
+    // 先订阅实时事件，再读取快照；用解决事件集合消除快照返回期间的竞态。
+    void window.electronAPI.getPendingRequests().then((snapshot) => {
+      if (disposed) return
+      pendingRequestSnapshotLoaded = true
+      store.set(allPendingPermissionRequestsAtom, (prev) => mergePendingAgentRequestSnapshot(
+        prev, snapshot.permissions, resolvedBeforeSnapshot.permissions,
+      ))
+      store.set(allPendingAskUserRequestsAtom, (prev) => mergePendingAgentRequestSnapshot(
+        prev, snapshot.askUsers, resolvedBeforeSnapshot.askUsers,
+      ))
+      store.set(allPendingExitPlanRequestsAtom, (prev) => mergePendingAgentRequestSnapshot(
+        prev, snapshot.exitPlans, resolvedBeforeSnapshot.exitPlans,
+      ))
+      resolvedBeforeSnapshot.permissions.clear()
+      resolvedBeforeSnapshot.askUsers.clear()
+      resolvedBeforeSnapshot.exitPlans.clear()
+    }).catch((error: unknown) => {
+      if (disposed) return
+      pendingRequestSnapshotLoaded = true
+      resolvedBeforeSnapshot.permissions.clear()
+      resolvedBeforeSnapshot.askUsers.clear()
+      resolvedBeforeSnapshot.exitPlans.clear()
+      console.error('[GlobalAgentListeners] 恢复待处理交互请求失败:', error)
+    })
+
     return () => {
+      disposed = true
       cleanupEvent()
       streamEventBatcher.dispose()
       cleanupComplete()

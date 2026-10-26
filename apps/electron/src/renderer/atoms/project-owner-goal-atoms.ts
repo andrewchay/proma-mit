@@ -7,6 +7,7 @@ export interface OwnerGoalEditor {
   objective: string
   constraintsText: string
   criteriaText: string
+  codeSourceAccess: 'none' | 'bound_workspace'
   dirty: boolean
   loaded: boolean
   loading: boolean
@@ -18,7 +19,7 @@ export interface OwnerGoalEditor {
 }
 
 const emptyEditor: OwnerGoalEditor = {
-  snapshot: null, objective: '', constraintsText: '', criteriaText: '', dirty: false,
+  snapshot: null, objective: '', constraintsText: '', criteriaText: '', codeSourceAccess: 'none', dirty: false,
   loaded: false, loading: false, saving: false, conflict: false, requiresReview: false, editVersion: 0, error: '',
 }
 const subjectKey = (subject: ProjectOwnerGoalSubject) => JSON.stringify([subject.projectId, subject.taskId ?? null])
@@ -48,6 +49,7 @@ function textFields(snapshot: ProjectOwnerGoalDraft | null) {
     objective: snapshot?.goal.objective ?? '',
     constraintsText: snapshot?.goal.constraints.join('\n') ?? '',
     criteriaText: snapshot?.goal.acceptanceCriteria.join('\n') ?? '',
+    codeSourceAccess: snapshot?.goal.codeSourceAccess ?? 'none',
   }
 }
 function assertResponseSubject(snapshot: ProjectOwnerGoalDraft | null, subject: ProjectOwnerGoalSubject): void {
@@ -59,7 +61,7 @@ const errorText = (cause: unknown) => cause instanceof Error ? cause.message : '
 
 export const editOwnerGoalAtom = atom(null, (get, set, payload: {
   subject: ProjectOwnerGoalSubject
-  patch: Partial<Pick<OwnerGoalEditor, 'objective' | 'constraintsText' | 'criteriaText'>>
+  patch: Partial<Pick<OwnerGoalEditor, 'objective' | 'constraintsText' | 'criteriaText' | 'codeSourceAccess'>>
 }) => {
   update(get, set, payload.subject, { ...payload.patch, dirty: true, editVersion: read(get, payload.subject).editVersion + 1 })
 })
@@ -100,7 +102,7 @@ export const saveOwnerGoalAtom = atom(null, async (get, set, subject: ProjectOwn
   try {
     const response = await get(ownerGoalApiAtom).saveOwnerGoalDraft({
       ...subject, expectedRevision: before.snapshot?.revision ?? 0,
-      input: { objective: before.objective, constraints: lines(before.constraintsText), acceptanceCriteria: lines(before.criteriaText) },
+      input: { objective: before.objective, constraints: lines(before.constraintsText), acceptanceCriteria: lines(before.criteriaText), codeSourceAccess: before.codeSourceAccess },
     })
     if (!response.ok) {
       update(get, set, subject, { error: response.error.message, conflict: response.error.code === 'conflict' })

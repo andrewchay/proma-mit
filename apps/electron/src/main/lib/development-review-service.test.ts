@@ -102,6 +102,12 @@ describe('Review 汇总与快照 Diff（T10 数据层）', () => {
     expect(summary.reviewerId).toBe('local-user')
     expect(summary.executions.length).toBeGreaterThanOrEqual(1)
     expect(summary.deliveries[0]!.status).toBe('submitted')
+    expect(summary.deliveries[0]!.executionId).toBe(w.executionId)
+    expect(summary.deliveries[0]!.artifactRef).toMatch(/^development-snapshot:.+:[a-f0-9]{64}$/)
+    expect(summary.snapshots).toContainEqual(expect.objectContaining({
+      executionId: w.executionId,
+      files: [expect.objectContaining({ path: 'src/a.ts', changeType: 'modify' })],
+    }))
     expect(summary.decidedDecisions.length).toBe(1)
   })
 

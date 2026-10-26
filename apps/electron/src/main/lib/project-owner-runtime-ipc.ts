@@ -30,8 +30,8 @@ export function listOwnerPlanningRuns(projectId: string, taskId?: string): Proje
         const receipt = getOwnerPlanningRunReceipt(record.id)
         if (!receipt || receipt.linkId !== snapshot.link.id || receipt.projectId !== projectId || receipt.executionId !== execution.id) throw new Error('Owner Run证据关联无效')
         // 仅明确的展示DTO，不把SDK原始元数据或载体配置凭据带往渲染进程。
-        const { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, usage, cost } = receipt
-        return { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, usage, cost }
+        const { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, usage, cost, runtimeResult } = receipt
+        return { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, ...(runtimeResult?.provider_request_id ? { providerRequestId: runtimeResult.provider_request_id } : {}), ...(runtimeResult?.provider_response_id ? { providerResponseId: runtimeResult.provider_response_id } : {}), usage, cost }
       })
     })
     return [{ link: snapshot.link, executions: executions.map(item => ({ id: item.id, sessionId: item.sessionId, status: item.status, summary: item.resultSummary ?? null })), receipts, outcomes: executions.flatMap(item => { const outcome = getOwnerPlanningRunOutcome(item.id); return outcome ? [outcome] : [] }) }]

@@ -1,6 +1,7 @@
 /** Owner用途只由同库权威关联解析。配置/资料快照不是费用许可；最终发送仍须controlled准入。 */
 import { createHash } from 'node:crypto'
 import type { ProjectOwnerPlanningContext } from '@gravitas/shared'
+import { getChannelById } from './channel-manager'
 import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches, type OwnerPlanningLink, type OwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { assertLocalActorEnabled, getProjectOwnerPlanningContext, getProjectOwnerPlanDraft } from './project-owner-plan-service'
 import { buildProjectOwnerPlanningRequest, type ProjectOwnerPlanningRequest } from './project-owner-planning-protocol'
@@ -41,7 +42,12 @@ export function readOwnerPlanningSnapshot(taskId: string): { link: OwnerPlanning
   try {
     const value = JSON.parse(row.payload) as Record<string, unknown>
     const targetTaskId = value.targetTaskId === undefined ? undefined : id(value.targetTaskId)
-    const link: OwnerPlanningLink = { schemaVersion: 1, id: id(row.id), projectId: id(row.project_id), requestId: id(row.request_id), planningTaskId: id(row.planning_task_id), ...(targetTaskId === undefined ? {} : { targetTaskId }), bindingRevision: number(value.bindingRevision, 1), goalRevision: number(value.goalRevision, 1), goalVersion: number(value.goalVersion, 1), planRevision: number(value.planRevision, 0), contextFingerprint: digest(value.contextFingerprint), carrierFingerprint: digest(value.carrierFingerprint), protocolVersion: '1', promptHash: digest(value.promptHash), purpose: 'owner_planning', maxRequests: 1, maxOutputTokens: 4096, createdAt: number(value.createdAt, 1) }
+    const protocolVersion = value.protocolVersion === '1' ? '1' : value.protocolVersion === '2' ? '2' : value.protocolVersion === '3' ? '3' : undefined
+    if (!protocolVersion) throw new Error('Owner规划协议版本无效')
+    const maxOutputTokens: 4096 | 8192 = protocolVersion === '1' ? 4096 : 8192
+    if (value.maxOutputTokens !== maxOutputTokens) throw new Error('Owner规划协议输出限制无效')
+    if ((protocolVersion === '3' && value.reasoningEffort !== 'low') || (protocolVersion !== '3' && value.reasoningEffort !== undefined)) throw new Error('Owner规划推理强度与协议版本不匹配')
+    const link: OwnerPlanningLink = { schemaVersion: 1, id: id(row.id), projectId: id(row.project_id), requestId: id(row.request_id), planningTaskId: id(row.planning_task_id), ...(targetTaskId === undefined ? {} : { targetTaskId }), bindingRevision: number(value.bindingRevision, 1), goalRevision: number(value.goalRevision, 1), goalVersion: number(value.goalVersion, 1), planRevision: number(value.planRevision, 0), contextFingerprint: digest(value.contextFingerprint), carrierFingerprint: digest(value.carrierFingerprint), protocolVersion, ...(protocolVersion === '3' ? { reasoningEffort: 'low' as const } : {}), promptHash: digest(value.promptHash), purpose: 'owner_planning', maxRequests: 1, maxOutputTokens, createdAt: number(value.createdAt, 1) }
     if (Object.keys(value).length !== Object.keys(link).length || Object.entries(link).some(([key, item]) => value[key] !== item) || taskId !== link.planningTaskId || link.planningTaskId === link.targetTaskId) throw new Error('关联内容不一致')
     if (row.input_hash !== hash({ projectId: link.projectId, requestId: link.requestId, taskId: link.targetTaskId, bindingRevision: link.bindingRevision, goalRevision: link.goalRevision, planRevision: link.planRevision, contextFingerprint: link.contextFingerprint })) throw new Error('关联请求指纹不一致')
     if (!row.source_snapshot || row.source_snapshot.length > 300000) throw new Error('发送快照缺失或超限')
@@ -60,6 +66,7 @@ export function resolveOwnerPlanningTask(taskId: string): OwnerPlanningTaskSourc
   const task = store.getTask(taskId)
   const binding = getOwnerRuntimeBinding(link.projectId)
   if (!binding || binding.revision !== link.bindingRevision || binding.carrierFingerprint !== link.carrierFingerprint || !task || task.projectId !== link.projectId || task.parentId || task.assignee?.userId !== `agent-${binding.carrierId}` || task.workspaceId !== binding.workspaceId || !['paused', 'pending', 'in_progress'].includes(task.status)) throw new Error('Owner规划目标身份或载体绑定已变化')
+  if (link.protocolVersion === '3' && (getChannelById(binding.channelId)?.provider !== 'zhipu' || !/^glm-5\.3(?:-flash)?$/i.test(binding.modelId))) throw new Error('Owner规划推理协议与冻结模型不匹配')
   const facts = getOwnerCarrierFacts(link.projectId, binding.carrierId, binding.workspaceId)
   const current = getProjectOwnerPlanningContext(link.projectId, link.targetTaskId)
   const plan = getProjectOwnerPlanDraft(link.projectId, link.targetTaskId)

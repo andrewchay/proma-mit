@@ -91,6 +91,14 @@ describe('权限批量审批 —— 可批量段计算', () => {
     }
     expect(requiresPerActionApprovalTool('ComputerUseStatus')).toBe(false)
   })
+
+  test('Owner敏感动作即使工具类型相同也必须逐条处理', () => {
+    const requests = [
+      makeRequest({ requestId: 'owner-1', toolName: 'Write', requiresPerActionApproval: true }),
+      makeRequest({ requestId: 'owner-2', toolName: 'Write', requiresPerActionApproval: true }),
+    ]
+    expect(resolveBatchAllowPlan(requests)).toBeNull()
+  })
 })
 
 describe('权限批量审批 —— 命令族提取', () => {

@@ -12,7 +12,7 @@ mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
 const store = await import('./project-sqlite-store')
 const employees = await import('./agent-employee-service')
 const { createAgentWorkspace } = await import('./agent-workspace-manager')
-const { createChannel } = await import('./channel-manager')
+const { createChannel, updateChannel } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const plans = await import('./project-owner-plan-service')
@@ -100,6 +100,17 @@ function fixture(confirm = true) {
   }
   return { project, workspace, channel, executor, reviewer, input }
 }
+test('Given项目绑定员工的渠道或模型已停用 When读取准备候选 Then无效员工不进入岗位推荐目录', () => {
+  for (const invalidation of ['channel', 'model'] as const) {
+    const f = fixture()
+    updateChannel(f.channel.id, invalidation === 'channel'
+      ? { enabled: false }
+      : { models: [{ id: 'model', name: 'model', enabled: false }] })
+    const view = service.getOwnerExecutionPreparation({ projectId: f.project.id })
+    expect(view.choices.employees.some((employee) => employee.id === f.executor.id)).toBe(false)
+    expect(view.choices.employees.some((employee) => employee.id === f.reviewer.id)).toBe(false)
+  }
+})
 function count(table: string): number {
   return (store.getProjectDb().prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number })
     .c
@@ -135,6 +146,22 @@ test('Given confirmed非代码计划 When 预览并保存 Then 冻结准确计�
     ].map(count),
   ).toEqual(before)
   expect(() => grants.previewPilotGrantIssue(f.project.id, saved.policyRevision)).toThrow('Owner')
+})
+test('Given步骤与当前项目Skill说明匹配 When Owner准备预览保存并检查来源变化 Then候选及理由被冻结且能力变化使旧准备stale', () => {
+  const f = fixture()
+  const skillDirectory = join(getWorkspaceSkillsDir(f.workspace.slug), 'research-skill')
+  mkdirSync(skillDirectory, { recursive: true })
+  const skillPath = join(skillDirectory, 'SKILL.md')
+  writeFileSync(skillPath, '---\nname: 研究方案\ndescription: 研究方案能力\n---\n')
+  const preview = service.previewOwnerExecutionPreparation({ projectId: f.project.id }, f.input)
+  const recommendation = preview.toolRecommendations[0]!
+  expect(recommendation.stepKey).toBe('brief')
+  expect(recommendation.candidates.some((candidate) => candidate.id === 'skill:research-skill' && candidate.reason.includes('研究'))).toBe(true)
+  const saved = service.saveOwnerExecutionPreparation({ projectId: f.project.id }, f.input, preview.previewFingerprint)
+  expect(saved.source.toolRecommendations).toEqual(preview.toolRecommendations)
+  expect(service.getOwnerExecutionPreparation({ projectId: f.project.id }).status).toBe('current')
+  writeFileSync(skillPath, '---\nname: 新研究方案\ndescription: 新能力\n---\n')
+  expect(service.getOwnerExecutionPreparation({ projectId: f.project.id }).status).toBe('stale')
 })
 test('Given 新Owner准备 When roleKey绑定缺失、覆盖不全或重复 Then fail-closed', () => {
   const f = fixture()
@@ -193,6 +220,7 @@ test('Given 多个项目各自绑定员工、工作区与资料 When 读取准�
   const choices = service.getOwnerExecutionPreparation({ projectId: f.project.id }).choices
 
   expect(choices.workspaces.map(({ id }) => id)).toEqual([f.workspace.id])
+  expect(choices.workspaceCapabilities.map(({ workspaceId }) => workspaceId)).toEqual([f.workspace.id])
   expect(choices.employees.map(({ id }) => id).sort()).toEqual([f.executor.id, f.reviewer.id].sort())
   expect(choices.employees.map(({ id }) => id)).not.toContain(otherEmployee.id)
   expect(choices.employees.map(({ id }) => id)).not.toContain(unboundEmployee.id)
@@ -242,6 +270,65 @@ test('Given 已绑定Owner载体 When读取执行候选或伪造角色映射 The
     expectedPreparationRevision: staleView.revision,
     expectedPolicyRevision: staleView.policyRevision,
   })).toThrow('载体配置已漂移')
+})
+test('Given 有效Owner绑定工作区 When用户手动选其他项目工作区 Then预览前必须明确确认覆盖', () => {
+  const f = fixture()
+  const alternateWorkspace = createAgentWorkspace(`Owner-alternate-${randomUUID()}`)
+  bindWorkspaceToProject(f.project.id, alternateWorkspace.id)
+  employees.updateAgentEmployee(f.executor.id, { workspaceIds: [f.workspace.id, alternateWorkspace.id] })
+  employees.updateAgentEmployee(f.reviewer.id, { workspaceIds: [f.workspace.id, alternateWorkspace.id] })
+  const carrier = employees.createAgentEmployee({
+    name: 'Owner规划载体', role: '规划', description: '', executionProfile: 'controlled',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    workspaceIds: [f.workspace.id],
+  })
+  bindings.saveOwnerRuntimeBinding(f.project.id, 0, {
+    ownerName: '项目Owner', carrierId: carrier.id, workspaceId: f.workspace.id,
+    changeReason: '建立Owner默认工作区',
+  })
+  const subject = { projectId: f.project.id }
+  const input = { ...f.input, workspaceId: alternateWorkspace.id }
+  expect(() => service.previewOwnerExecutionPreparation(subject, input)).toThrow('确认覆盖')
+  const preview = service.previewOwnerExecutionPreparation(subject, {
+    ...input, acknowledgeOwnerWorkspaceOverride: true,
+  })
+  expect(preview.input.acknowledgeOwnerWorkspaceOverride).toBe(true)
+  expect(preview.workspaceId).toBe(alternateWorkspace.id)
+  const saved = service.saveOwnerExecutionPreparation(subject, {
+    ...input, acknowledgeOwnerWorkspaceOverride: true,
+  }, preview.previewFingerprint)
+  expect(saved.input.acknowledgeOwnerWorkspaceOverride).toBe(true)
+})
+test('Given 有效Owner绑定配置 When岗位员工使用其他共同配置 Then须显式确认而不静默继承', () => {
+  const f = fixture()
+  const alternateChannel = createChannel({
+    name: '另一离线假渠道', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake',
+    enabled: true, models: [{ id: 'other-model', name: 'other-model', enabled: true }],
+  })
+  const carrier = employees.createAgentEmployee({
+    name: 'Owner规划载体', role: '规划', description: '', executionProfile: 'controlled',
+    permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.channel.id, modelId: 'model',
+    workspaceIds: [f.workspace.id],
+  })
+  bindings.saveOwnerRuntimeBinding(f.project.id, 0, {
+    ownerName: '项目Owner', carrierId: carrier.id, workspaceId: f.workspace.id,
+    changeReason: '建立Owner默认配置',
+  })
+  for (const employee of [f.executor, f.reviewer]) {
+    employees.updateAgentEmployee(employee.id, { channelId: alternateChannel.id, modelId: 'other-model' })
+  }
+  const subject = { projectId: f.project.id }
+  expect(() => service.previewOwnerExecutionPreparation(subject, f.input)).toThrow('配置不同')
+  const preview = service.previewOwnerExecutionPreparation(subject, {
+    ...f.input, acknowledgeOwnerConfigurationOverride: true,
+  })
+  expect(preview.input.acknowledgeOwnerConfigurationOverride).toBe(true)
+  expect(preview.channelId).toBe(alternateChannel.id)
+  expect(preview.modelId).toBe('other-model')
+  const saved = service.saveOwnerExecutionPreparation(subject, {
+    ...f.input, acknowledgeOwnerConfigurationOverride: true,
+  }, preview.previewFingerprint)
+  expect(saved.input.acknowledgeOwnerConfigurationOverride).toBe(true)
 })
 test('Given 未确认计划 When 预览 Then 不把内容/规划费用当执行许可', () => {
   const f = fixture(false)

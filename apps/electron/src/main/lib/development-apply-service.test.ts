@@ -150,6 +150,26 @@ describe('确认应用（T20/T22/T24）', () => {
     expect(status.latest!.status).toBe('blocked')
   })
 
+  test('Given 已准备的写入 When 用户拒绝 Then 留下可追溯记录且原仓库不变', async () => {
+    const w = fixture()
+    acceptLatestDelivery(w)
+    const manifest = apply.prepareApply(w.taskId)
+    const headBefore = git(w.repo, 'rev-parse', 'HEAD')
+    const filesBefore = git(w.repo, 'status', '--porcelain')
+
+    const rejected = apply.rejectApply(manifest.operationId)
+    expect(rejected.status).toBe('rejected')
+    expect(rejected.rejectedBy).toBe('local-user')
+    expect(rejected.rejectionReason).toBe('user_rejected')
+    expect(rejected.rejectedAt).toBeNumber()
+    expect(apply.rejectApply(manifest.operationId)).toEqual(rejected)
+    expect(() => apply.confirmApply(manifest.operationId)).toThrow('当前状态不可确认')
+    expect(readFileSync(join(w.repo, 'src', 'a.ts'), 'utf8')).toBe('original\n')
+    expect(git(w.repo, 'rev-parse', 'HEAD')).toBe(headBefore)
+    expect(git(w.repo, 'status', '--porcelain')).toBe(filesBefore)
+    expect(apply.getApplyStatus(w.taskId).latest).toEqual(rejected)
+  })
+
   test('Given 重复确认 When confirm Then 幂等不重复应用（T29）', async () => {
     const w = fixture()
     acceptLatestDelivery(w)

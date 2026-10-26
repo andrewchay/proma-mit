@@ -2,12 +2,15 @@ import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ProjectOwnerDeliveryContext } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
 
 const directory = mkdtempSync(join(tmpdir(), 'gravitas-owner-plan-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
 mock.module('electron', () => buildElectronMock())
+let commandFixture: Array<Omit<ProjectOwnerDeliveryContext, 'priorAuthorization'> & { grantAuthorization: ProjectOwnerDeliveryContext['priorAuthorization'] }> = []
+mock.module('./project-owner-execution-command', () => ({ listOwnerExecutionCommands: () => commandFixture }))
 const store = await import('./project-sqlite-store')
 const goals = await import('./project-owner-goal-service')
 beforeAll(async () => { await store.initProjectDb() })
@@ -36,6 +39,63 @@ test('Given 已保存目标 When 保存与确认计划 Then 仅追加计划，�
   expect(store.listTasks(project.id)).toHaveLength(tasks)
   expect((store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM agent_executions').get() as { n: number }).n).toBe(executions)
   expect(confirmed).not.toHaveProperty('grantId')
+})
+
+test('Given Task Goal中的交付反馈找不到同任务命令 When 读取规划上下文 Then 拒绝丢失交付来源后继续规划', async () => {
+  const service = await import('./project-owner-plan-service')
+  const project = store.createProject({ title: '交付反馈来源核验', description: '' })
+  const task = store.createTask(project.id, { title: '目标任务', description: '验证原交付' })
+  goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '补充交付验证', constraints: ['Owner交付修改意见（命令 missing-command）：补充零值用例'] }, task.id)
+  expect(() => service.getProjectOwnerPlanningContext(project.id, task.id)).toThrow('交付修改意见关联的Owner命令已缺失')
+})
+
+test('Given Task Goal交付标记格式损坏或命令重复 When读取规划上下文 Then fail closed不静默丢弃修改意见', async () => {
+  const service = await import('./project-owner-plan-service')
+  const project = store.createProject({ title: '交付标记损坏', description: '' })
+  const task = store.createTask(project.id, { title: '目标任务', description: '核验反馈来源' })
+  goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '补充验证', constraints: ['Owner交付修改意见坏格式'] }, task.id)
+  expect(() => service.getProjectOwnerPlanningContext(project.id, task.id)).toThrow('交付修改意见标记格式损坏')
+
+  const duplicateProject = store.createProject({ title: '交付标记重复', description: '' })
+  const duplicateTask = store.createTask(duplicateProject.id, { title: '目标任务', description: '核验反馈唯一性' })
+  goals.saveProjectOwnerGoalDraft(duplicateProject.id, 0, { objective: '补充验证', constraints: [
+    'Owner交付修改意见（命令 duplicate-command）：意见A', 'Owner交付修改意见（命令 duplicate-command）：意见B',
+  ] }, duplicateTask.id)
+  commandFixture = [{ commandId: 'duplicate-command', grantId: 'grant-duplicate', grantAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: 9999999999999, roleBudgetCaps: [] },
+    taskId: duplicateTask.id, role: 'executor', reworkOrdinal: 0, state: 'settled', acceptanceCriteria: ['标准'], feedback: '账本反馈' }]
+  expect(() => service.getProjectOwnerPlanningContext(duplicateProject.id, duplicateTask.id)).toThrow('重复关联同一命令')
+  commandFixture = []
+})
+
+test('Given Task Goal反馈精确绑定已有命令 When读取规划上下文 Then冻结交付与评审进入指纹来源', async () => {
+  const service = await import('./project-owner-plan-service')
+  const project = store.createProject({ title: '交付来源绑定', description: '' })
+  const task = store.createTask(project.id, { title: '报价修复', description: '修复边界并保持正常行为' })
+  goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '补充边界验证', constraints: ['Owner交付修改意见（命令 command-1）：增加零值验证'] }, task.id)
+  commandFixture = [{ commandId: 'command-1', grantId: 'grant-1', grantAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1000000, maxRuns: 3, maxRework: 1, expiresAt: 9999999999999, roleBudgetCaps: [{ roleKey: 'executor', maxCostMicros: 500000 }] }, taskId: task.id, role: 'executor', reworkOrdinal: 0, state: 'settled',
+    acceptanceCriteria: ['正常数量行为不变'], executionResultSummary: '执行者自述：完成修改',
+    technicalReview: { verdict: 'changes_requested', summary: '缺少零值覆盖', criteria: [{ criterion: '正常数量行为不变', status: 'met', evidence: '回归样例' }], findings: [{ severity: 'medium', description: '未覆盖零值', requestedChange: '增加零值用例' }], blockerReason: null }, feedback: '命令表替身反馈' }]
+  const context = service.getProjectOwnerPlanningContext(project.id, task.id)
+  const { grantAuthorization, ...deliveryFixture } = commandFixture[0]!
+  expect(context.sources.delivery).toEqual([{ ...deliveryFixture, priorAuthorization: grantAuthorization, feedback: '增加零值验证' }])
+  const firstFingerprint = context.fingerprint
+  commandFixture = [{ ...commandFixture[0]!, executionResultSummary: '执行者自述：其它回报' }]
+  expect(service.getProjectOwnerPlanningContext(project.id, task.id).fingerprint).not.toBe(firstFingerprint)
+  commandFixture = []
+})
+
+test('Given 反馈规划带完整命令差异 When保存并重读 Then逐项授权评估参与持久计划指纹', async () => {
+  const service = await import('./project-owner-plan-service')
+  const project = store.createProject({ title: '交付差异持久化', description: '' })
+  const task = store.createTask(project.id, { title: '边界修复', description: '原交付任务' })
+  goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '补充边界验证', constraints: ['Owner交付修改意见（命令 command-2）：增加零值验证'] }, task.id)
+  commandFixture = [{ commandId: 'command-2', grantId: 'grant-2', grantAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1000000, maxRuns: 3, maxRework: 1, expiresAt: 9999999999999, roleBudgetCaps: [{ roleKey: 'executor', maxCostMicros: 500000 }] }, taskId: task.id, role: 'executor', reworkOrdinal: 0, state: 'settled', acceptanceCriteria: ['保持正常数量行为'], feedback: '增加零值验证' }]
+  const context = service.getProjectOwnerPlanningContext(project.id, task.id)
+  const deliveryChangeAssessment = { summary: '增加零值回归验证', commands: [{ commandId: 'command-2', changes: [{ criterion: '保持正常数量行为', disposition: 'addressed' as const, proposedChange: '增加零值与正常数量回归测试' }], authorizationImpact: 'unchanged' as const, authorizationRationale: '只补本地验证，不改执行范围' }] }
+  const saved = service.saveProjectOwnerPlanDraft(project.id, context.goal.revision, 0, { ...input(), expectedContextFingerprint: context.fingerprint, deliveryChangeAssessment }, task.id)
+  expect(saved.proposal.deliveryChangeAssessment).toEqual(deliveryChangeAssessment)
+  expect(service.getProjectOwnerPlanDraft(project.id, task.id)?.proposal.deliveryChangeAssessment).toEqual(deliveryChangeAssessment)
+  commandFixture = []
 })
 
 const plans = await import('./project-owner-plan-service')

@@ -25,6 +25,7 @@ type AgentApi = {
   listValidations: (taskId: string) => Promise<DevelopmentValidationResult[]>
   prepareApply: (taskId: string) => Promise<{ operationId: string; files: Array<{ path: string; changeType: string }>; expiresAt: number }>
   confirmApply: (operationId: string) => Promise<{ status: string; taskCompleted: boolean; taskError?: string }>
+  rejectApply: (operationId: string) => Promise<unknown>
   getApplyStatus: (taskId: string) => Promise<DevelopmentApplyStatusInfo>
 }
 
@@ -297,11 +298,20 @@ export function TaskReviewPanel({ taskId, onChanged }: { taskId: string; onChang
                 <button className="rounded bg-primary px-2 py-1 text-white disabled:opacity-50" disabled={busy}
                   onClick={() => void act(async () => { const api = await agentApi(); const result = await api.confirmApply(applyManifest.operationId); setApplyManifest(null); setApplyStatus(await api.getApplyStatus(taskId)); if (!result.taskCompleted) setError('文件已应用，但任务完成被 DoD 闸门阻止：' + (result.taskError ?? '需逐项验收')) })}
                 >确认写入</button>
-                <button className="rounded border px-2 py-1" onClick={() => setApplyManifest(null)}>取消</button>
+                <button className="rounded border px-2 py-1 disabled:opacity-50" disabled={busy}
+                  onClick={() => void act(async () => { const api = await agentApi(); await api.rejectApply(applyManifest.operationId); setApplyManifest(null); setApplyStatus(await api.getApplyStatus(taskId)) })}
+                >拒绝本次写入</button>
               </div>
             </div>
           ) : applyStatus?.latest?.status === 'applied' ? (
             <p className="text-green-600">已应用到原仓库（未提交改动）。任务完成状态：{applyStatus.taskCompleted ? '已完成' : '未完成（走 DoD 闸门）'}。</p>
+          ) : applyStatus?.latest?.status === 'rejected' ? (
+            <div className="space-y-1">
+              <p className="text-muted-foreground">已拒绝本次写入；原仓库未被修改。操作人：{applyStatus.latest.rejectedBy ?? '未知'}，时间：{applyStatus.latest.rejectedAt ? new Date(applyStatus.latest.rejectedAt).toLocaleString() : '未知'}。</p>
+              <button className="rounded border px-2 py-1 disabled:opacity-50" disabled={busy}
+                onClick={() => void act(async () => { const api = await agentApi(); setApplyManifest(await api.prepareApply(taskId)) })}
+              >重新预检</button>
+            </div>
           ) : applyStatus?.latest?.status === 'blocked' ? (
             <p className="text-amber-600">上次确认未通过：{applyStatus.latest.error ?? '仓库状态已变化'}。请重新预检。</p>
           ) : (

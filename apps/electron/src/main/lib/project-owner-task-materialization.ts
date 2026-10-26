@@ -99,23 +99,30 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   assertLocalActorEnabled()
   const history = readHistory(subject.projectId)
   if ((history.at(-1)?.revision ?? 0) !== input.expectedMaterializationRevision) fail('材料化版本已更新')
-  if (history.some(record => record.taskId === subject.taskId)) fail('已有步骤关联，修订或迁移须另行确认，不重复创建')
+  const priorRecords = history.filter(record => record.taskId === subject.taskId)
   const view = getOwnerExecutionPreparation(subject), preparation = view.preparation
   if (!preparation || view.status !== 'current' || preparation.id !== input.expectedPreparationId || preparation.revision !== input.expectedPreparationRevision || preparation.integrityHash !== input.expectedPreparationHash || preparation.policyRevision !== input.expectedPolicyRevision) fail('准备或目标已更新，请重新预览')
   assertOwnerExecutionBoundaryIdle(subject.projectId)
   const currentPolicy = getPilotPolicy(subject.projectId)
   if (currentPolicy?.state !== 'paused' || currentPolicy.ownerExecutionPreparation?.purpose !== 'owner_business_execution_preparation') fail('必须为原Owner暂停准备策略')
   const source = preparation.source
+  if (priorRecords.some(record => record.preview.preparation.source.planFingerprint === source.planFingerprint)) fail('相同计划已材料化，不能重复创建')
+  for (const record of priorRecords) for (const link of record.links) {
+    const task = store.getTask(link.taskId)
+    if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id) fail('旧材料化任务或标记缺失/损坏，保留历史，不补造')
+  }
   const steps = source.plan.proposal.steps.filter(step => source.selectedStepKeys.includes(step.key))
   if (steps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
   let target: Task | null = null
   if (subject.taskId) {
     if (steps.length !== 1 || steps[0]!.dependencies.length) fail('单任务首片仅支持无步骤依赖的一步，不自动拆子任务或合并')
-    target = store.getTask(subject.taskId)
-    if (!target || !['pending', 'paused'].includes(target.status) || target.parentId || store.getProjectDb().prepare('SELECT id FROM tasks WHERE id=? AND controlled_preparation_id IS NOT NULL').get(target.id) || store.hasOwnerPlanningTaskEvidence(target.id) || store.hasOwnerBusinessTaskEvidence(target.id) || store.listAgentExecutionsByEntity('task', target.id).length || store.listExecutionSubTasks(target.id).length || store.listTasks(subject.projectId, { includeSubTasks: true }).some(task => task.parentId === target!.id) || edgesFor(target.id, subject.projectId).length) fail('目标已有执行、用途、层级或依赖，不能自动接管')
-    const control = store.getProjectDb().prepare('SELECT id FROM controlled_task_preparations WHERE task_id=? LIMIT 1').get(target.id)
-    const chain = store.getProjectDb().prepare('SELECT payload FROM project_chain_revisions WHERE project_id=? ORDER BY revision DESC LIMIT 1').get(subject.projectId) as { payload: string } | undefined
-    if (control || (chain && JSON.stringify(JSON.parse(chain.payload)).includes(JSON.stringify(target.id)))) fail('目标已有受控准备或交付/协作证据，须原流程重确认')
+    target = priorRecords.length ? null : store.getTask(subject.taskId)
+    if (!priorRecords.length && (!target || !['pending', 'paused'].includes(target.status) || target.parentId || store.getProjectDb().prepare('SELECT id FROM tasks WHERE id=? AND controlled_preparation_id IS NOT NULL').get(target.id) || store.hasOwnerPlanningTaskEvidence(target.id) || store.hasOwnerBusinessTaskEvidence(target.id) || store.listAgentExecutionsByEntity('task', target.id).length || store.listExecutionSubTasks(target.id).length || store.listTasks(subject.projectId, { includeSubTasks: true }).some(task => task.parentId === target!.id) || edgesFor(target.id, subject.projectId).length)) fail('目标已有执行、用途、层级或依赖，不能自动接管')
+    if (!priorRecords.length && target) {
+      const control = store.getProjectDb().prepare('SELECT id FROM controlled_task_preparations WHERE task_id=? LIMIT 1').get(target.id)
+      const chain = store.getProjectDb().prepare('SELECT payload FROM project_chain_revisions WHERE project_id=? ORDER BY revision DESC LIMIT 1').get(subject.projectId) as { payload: string } | undefined
+      if (control || (chain && JSON.stringify(JSON.parse(chain.payload)).includes(JSON.stringify(target.id)))) fail('目标已有受控准备或交付/协作证据，须原流程重确认')
+    }
   }
   const projections: OwnerTaskProjection[] = steps.map(step => {
     const stepExecutor = source.roleAssignments?.find((assignment) => assignment.roleKey === step.roleKey)?.employee ?? source.executor

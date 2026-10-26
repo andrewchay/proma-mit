@@ -2,9 +2,9 @@ import { useEffect, useId, useMemo } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import type { ProjectOwnerPlanDraft, ProjectOwnerPlanSources } from '@gravitas/shared'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from '../../atoms/project-owner-goal-atoms'
-import { acknowledgeOwnerPlanComparisonAtom, canConfirmOwnerPlan, canSaveOwnerPlan, confirmOwnerPlanAtom, editOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, loadOwnerPlanHistoryAtom, ownerPlanEditorsAtom, ownerPlanGoalReady, saveOwnerPlanAtom } from '../../atoms/project-owner-plan-atoms'
+import { acknowledgeOwnerPlanComparisonAtom, canRemoveOwnerPlanStep, removeOwnerPlanStepAtom, canConfirmOwnerPlan, canSaveOwnerPlan, confirmOwnerPlanAtom, editOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, loadOwnerPlanHistoryAtom, ownerPlanEditorsAtom, ownerPlanGoalReady, saveOwnerPlanAtom } from '../../atoms/project-owner-plan-atoms'
 
-import { ProjectOwnerExecutionPreparationPanel } from './ProjectOwnerExecutionPreparationPanel'
+import { ProjectOwnerExecutionConversation } from './ProjectOwnerExecutionConversation'
 
 const fieldClass = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 const buttonClass = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
@@ -29,6 +29,17 @@ function PlanSourceFacts({ sources }: { sources: ProjectOwnerPlanSources }): Rea
     {sources.task && <p>任务来源：{sources.task.title}（{sources.task.id}）<br />{sources.task.description || '无任务描述'}</p>}
     <p>岗位来源：{sources.roles.map(role => `${role.name} [${role.key}] v${role.version}`).join('；') || '无'}</p>
     <details><summary className="cursor-pointer">岗位来源校验值（仅标识来源，不是授权）</summary>{sources.roles.map(role => <p key={role.key} className="mt-1">{role.key}<br />source: {role.sourceSha256}<br />rules: {role.rulesSha256}</p>)}</details>
+    {sources.code && <details><summary className="cursor-pointer">源码检索证据 · {sources.code.files.length} 个候选 / 扫描 {sources.code.filesScanned} 个文件{sources.code.truncated ? ' · 结果已截断' : ''}</summary>
+      <p>工作区 {sources.code.workspaceId} · 根目录指纹 {sources.code.rootFingerprint}</p>
+      {sources.code.files.map(file => <div key={file.path} className="mt-2 rounded bg-background/60 p-2"><p>{file.path} · SHA-256 {file.sha256}</p>
+        {file.excerpts.map(excerpt => <pre key={`${excerpt.path}:${excerpt.line}`} className="mt-1 overflow-auto whitespace-pre-wrap">L{excerpt.line}: {excerpt.text}</pre>)}</div>)}
+      {!sources.code.files.length && <p>未找到匹配源码片段；提案不得虚构文件位置。</p>}
+    </details>}
+    {sources.delivery?.map(item => <details key={item.commandId}><summary className="cursor-pointer">反馈交付证据 · 命令 {item.commandId} · {item.state}</summary>
+      <p>冻结验收标准：{item.acceptanceCriteria.join('；')}</p><p>执行回报（执行者自述）：{item.executionResultSummary ?? '无'}</p>
+      {item.technicalReview && <p>技术评审：{item.technicalReview.verdict} · {item.technicalReview.summary} · {item.technicalReview.findings.map(finding => finding.requestedChange).join('；') || '无修改要求'}</p>}
+      <p>人工反馈：{item.feedback}</p><p>原授权快照（仅历史上限）：{item.priorAuthorization.grantState} · {item.priorAuthorization.dispatchMode} · 最高费用 {item.priorAuthorization.maxCostMicros} 微单位 · 最多 {item.priorAuthorization.maxRuns} 次运行 / {item.priorAuthorization.maxRework} 次返工 · 截止 {new Date(item.priorAuthorization.expiresAt).toLocaleString()}</p><p>岗位预算上限：{item.priorAuthorization.roleBudgetCaps.map(cap => `${cap.roleKey} ${cap.maxCostMicros}`).join("；") || "无"}</p><p>授权引用 {item.grantId}；仅识别历史来源，不代表当前有效、剩余额度或许可继承。</p>
+    </details>)}
   </div>
 }
 /** 完整只读事实用于冲突比较和历史；不允许把历史版本恢复成当前确认。 */
@@ -38,9 +49,18 @@ function PlanFacts({ plan }: { plan: ProjectOwnerPlanDraft }): React.ReactElemen
     {plan.sourceRun && <p className="text-xs text-muted-foreground break-all">来源Run：{plan.sourceRun.executionId}；回执 {plan.sourceRun.receiptId}；原文摘要 {plan.sourceRun.responseHash}</p>}
     <p>{plan.proposal.summary}</p>
     <p>假设：{plan.proposal.assumptions.join('；') || '无'}</p><p>风险：{plan.proposal.risks.join('；') || '无'}</p>
+    {plan.proposal.deliveryChangeAssessment && <section className="space-y-2 rounded-md bg-muted/40 p-3" aria-label="交付改动与授权影响">
+      <h4 className="font-medium">交付改动与授权影响建议</h4><p>{plan.proposal.deliveryChangeAssessment.summary}</p>
+      {plan.proposal.deliveryChangeAssessment.commands.map(command => <div key={command.commandId} className="rounded bg-background/60 p-2">
+        <p className="font-medium">命令 {command.commandId} · 授权影响：{command.authorizationImpact}</p><p>{command.authorizationRationale}</p>
+        <ul className="list-disc pl-5">{command.changes.map((change, index) => <li key={`${index}-${change.criterion}`}>{change.criterion} · {change.disposition}：{change.proposedChange}</li>)}</ul>
+      </div>)}
+      <p className="text-xs text-muted-foreground">这是规划建议，不代表已实施或已获授权。执行、写回与外发须走各自的授权确认。</p>
+    </section>}
     <ol className="space-y-2">{plan.proposal.steps.map(step => <li key={step.key} className="rounded-md bg-background/60 p-2">
       <p className="font-medium">{step.key} · {step.title}</p><p>成果：{step.outcome}</p><p>完成标准：{step.acceptanceCriteria.join('；')}</p>
       <p>岗位建议：{plan.sources.roles.find(role => role.key === step.roleKey)?.name ?? step.roleKey} · 依赖：{step.dependencies.join('、') || '无'}</p>
+      {step.sourceReferences?.map(reference => <p key={`${reference.path}:${reference.line}`} className="text-xs text-muted-foreground">源码依据：{reference.path}:{reference.line} · SHA-256 {reference.sha256}</p>)}
     </li>)}</ol>
     <p className="text-xs text-muted-foreground">修订原因：{plan.changeReason} · 本机登记人：{plan.actor}</p>
     <PlanSourceFacts sources={plan.sources} />
@@ -54,6 +74,7 @@ export function ProjectOwnerPlanPanel({ projectId, taskId }: { projectId: string
   const load = useSetAtom(loadOwnerPlanAtom); const edit = useSetAtom(editOwnerPlanAtom)
   const save = useSetAtom(saveOwnerPlanAtom); const confirm = useSetAtom(confirmOwnerPlanAtom)
   const acknowledge = useSetAtom(acknowledgeOwnerPlanComparisonAtom); const history = useSetAtom(loadOwnerPlanHistoryAtom)
+  const removeStep = useSetAtom(removeOwnerPlanStepAtom)
   const id = useId()
   // biome-ignore lint/correctness/useExhaustiveDependencies: 已保存目标版本变化时刷新派生 stale 与来源；未保存目标仍由 atom 门禁阻止写入。
   useEffect(() => { void load(subject) }, [load, subject, goalRevision])
@@ -93,6 +114,7 @@ export function ProjectOwnerPlanPanel({ projectId, taskId }: { projectId: string
               </label>)}
               {editor.steps.length === 1 && <p className="text-xs text-muted-foreground">没有其他步骤，无需填写依赖。</p>}
             </fieldset>
+            <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" className={buttonClass} disabled={editor.loading || editor.saving || !canRemoveOwnerPlanStep(editor.steps, step.key)} onClick={() => removeStep({ subject, stepKey: step.key })}>移除此步骤</button><span className="text-xs text-muted-foreground">{editor.steps.length === 1 ? '至少保留一个交付步骤。' : editor.steps.some(other => other.dependencies.includes(step.key)) ? '其他步骤依赖本步骤，请先调整依赖。' : '只调整未保存计划；保存并重新确认后才生效。'}</span></div>
           </fieldset>)}
         </div>
         <PlanTextField id={`${id}-reason`} label="修订原因（必填）" required maxLength={2000} value={editor.changeReason} onChange={changeReason => edit({ subject, patch: { changeReason } })} />
@@ -106,6 +128,6 @@ export function ProjectOwnerPlanPanel({ projectId, taskId }: { projectId: string
       {snapshot && <button type="button" className={buttonClass} disabled={editor.historyLoading} onClick={() => void history(subject)}>{editor.historyLoading ? '正在加载历史…' : '查看计划历史'}</button>}</div>
     {editor.historyError && <p className="mt-2 text-sm text-destructive" role="alert">历史：{editor.historyError}</p>}
     {editor.historyLoaded && <div className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto" aria-label="计划历史"><p className="text-xs text-muted-foreground">历史仅供查阅，不代表当前目标或来源已确认。</p>{editor.history.length ? editor.history.map(plan => <details key={plan.revision} className="rounded-lg bg-muted/40 p-3"><summary className="cursor-pointer text-sm">历史计划 v{plan.planVersion} · {stateLabel(plan.state)}</summary><div className="mt-3"><PlanFacts plan={plan} /></div></details>) : <p className="text-sm">暂无历史版本</p>}</div>}
-    <ProjectOwnerExecutionPreparationPanel projectId={projectId} taskId={taskId} />
+    <ProjectOwnerExecutionConversation projectId={projectId} taskId={taskId} />
   </section>
 }

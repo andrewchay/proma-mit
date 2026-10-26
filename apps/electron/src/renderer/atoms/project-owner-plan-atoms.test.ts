@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore } from 'jotai/vanilla'
-import type { ProjectOwnerPlanApi, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
+import type { ProjectOwnerDeliveryContext, ProjectOwnerPlanApi, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from './project-owner-goal-atoms'
-import { acknowledgeOwnerPlanComparisonAtom, confirmOwnerPlanAtom, editOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, loadOwnerPlanHistoryAtom, ownerPlanApiAtom, ownerPlanEditorsAtom, saveOwnerPlanAtom } from './project-owner-plan-atoms'
+import { acknowledgeOwnerPlanComparisonAtom, removeOwnerPlanStepAtom, confirmOwnerPlanAtom, editOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, loadOwnerPlanHistoryAtom, ownerPlanApiAtom, ownerPlanEditorsAtom, saveOwnerPlanAtom } from './project-owner-plan-atoms'
 const original = process.env.PROMA_TEST_CONFIG_DIR
 const directory = mkdtempSync(join(tmpdir(), 'owner-plan-atoms-'))
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -30,6 +30,21 @@ test('Given 已有计划 When 修订保存 Then 新版本 proposed，之后才�
   f.store.set(editOwnerPlanAtom, { subject, patch: { summary: '修订', changeReason: '补充证据' } }); await f.store.set(confirmOwnerPlanAtom, subject); expect(f.confirms()).toBe(0)
   await f.store.set(saveOwnerPlanAtom, subject); expect(f.read().snapshot?.revision).toBe(2); expect(f.read().dirty).toBe(false)
   await f.store.set(confirmOwnerPlanAtom, subject); expect(f.confirms()).toBe(1)
+})
+test('Given 计划含交付差异评估 When 人工修订并保存 Then 结构化评估随计划版本保留', async () => {
+  const assessment = { summary: '补齐未验证标准', commands: [{ commandId: 'cmd-1', changes: [{ criterion: '覆盖正常数量', disposition: 'addressed' as const, proposedChange: '增加回归用例' }], authorizationImpact: 'unchanged' as const, authorizationRationale: '范围内测试' }] }
+  const source: ProjectOwnerDeliveryContext = { commandId: 'cmd-1', grantId: 'grant-1', priorAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1000000, maxRuns: 3, maxRework: 1, expiresAt: 9999999999999, roleBudgetCaps: [{ roleKey: 'executor', maxCostMicros: 500000 }] }, taskId: 'task-1', role: 'executor' as const, reworkOrdinal: 0, state: 'settled', acceptanceCriteria: ['覆盖正常数量'], feedback: '增加测试' }
+  const current = { ...plan(), taskId: 'task-1', sources: { ...plan().sources, delivery: [source] }, proposal: { ...plan().proposal, taskId: 'task-1', deliveryChangeAssessment: assessment } }
+  const context: ProjectOwnerPlanningContext = { goal: { schemaVersion: 1, revision: 1, state: 'draft', actor: 'local-user', savedAt: 1, goal: { projectId: 'a', taskId: 'task-1', goalVersion: 1, objective: '目标', constraints: [], acceptanceCriteria: [] } }, sources: current.sources, fingerprint: 'context' }
+  let savedAssessment: unknown
+  const f = setup({ getOwnerPlanDraft: async () => ({ ok: true, value: current }), getOwnerPlanningContext: async () => ({ ok: true, value: context }),
+    saveOwnerPlanDraft: async request => { savedAssessment = request.input.deliveryChangeAssessment; return { ok: true, value: { ...current, revision: 2, proposal: { ...current.proposal, summary: request.input.summary } } } } })
+  const taskSubject = { projectId: 'a', taskId: 'task-1' }
+  f.store.set(ownerGoalEditorsAtom, new Map([...f.store.get(ownerGoalEditorsAtom), ['["a","task-1"]', { ...getOwnerGoalEditor(f.store.get(ownerGoalEditorsAtom), taskSubject), loaded: true, snapshot: context.goal }]]))
+  await f.store.set(loadOwnerPlanAtom, taskSubject)
+  f.store.set(editOwnerPlanAtom, { subject: taskSubject, patch: { summary: '修订', changeReason: '保留差异评估' } })
+  await f.store.set(saveOwnerPlanAtom, taskSubject)
+  expect(savedAssessment).toEqual(assessment)
 })
 test('Given stale或目标未保存/冲突 When 确认或保存 Then 禁止写入', async () => {
   const f = setup({ getOwnerPlanDraft: async () => ({ ok: true, value: plan(1, 'stale') }) }); await f.store.set(loadOwnerPlanAtom, subject); await f.store.set(confirmOwnerPlanAtom, subject); expect(f.confirms()).toBe(0)
@@ -135,4 +150,21 @@ test('Given 内容超出服务上限 When 点击保存 Then UI拦截而不是发
 test('Given 已保存目标但尚无Plan When 加载 Then 仍取得规划资料供首次Owner准备，不能人工伪造空计划', async () => {
   const f = setup({ getOwnerPlanDraft: async () => ({ ok: true, value: null }) }); await f.store.set(loadOwnerPlanAtom, subject)
   expect(f.read().context?.goal.revision).toBe(1); expect(f.read().snapshot).toBeNull(); expect(f.writes()).toBe(0)
+})
+
+test('Given 三步依赖计划 When 移除末端步骤 Then 只改本地草案，保留依赖与至少一步且旧确认不可用', async () => {
+  const f = setup(); await f.store.set(loadOwnerPlanAtom, subject)
+  const first = f.read().steps[0]!
+  f.store.set(editOwnerPlanAtom, { subject, patch: { steps: [first, { ...first, key: 's2', dependencies: [first.key] }, { ...first, key: 's3', dependencies: ['s2'] }] } })
+  f.store.set(removeOwnerPlanStepAtom, { subject, stepKey: first.key })
+  expect(f.read().steps).toHaveLength(3)
+  f.store.set(removeOwnerPlanStepAtom, { subject, stepKey: 's3' })
+  expect(f.read().steps.map(step => step.key)).toEqual([first.key, 's2'])
+  f.store.set(removeOwnerPlanStepAtom, { subject, stepKey: 's2' })
+  f.store.set(removeOwnerPlanStepAtom, { subject, stepKey: first.key })
+  expect(f.read().steps.map(step => step.key)).toEqual([first.key])
+  expect(f.read().dirty).toBe(true)
+  await f.store.set(confirmOwnerPlanAtom, subject)
+  expect(f.confirms()).toBe(0)
+  expect(f.writes()).toBe(0)
 })

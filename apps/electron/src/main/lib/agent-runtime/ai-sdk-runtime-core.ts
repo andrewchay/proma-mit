@@ -60,6 +60,8 @@ export interface AISDKRuntimeSessionState {
    * 仅写入会话 cwd（隔离 Git worktree）内路径；Bash 仍只读、外部工具仍禁。
    */
   worktreeScopedWrite?: boolean
+  /** Owner command敏感动作只可经逐次用户确认后执行。 */
+  ownerActionApproval?: boolean
 }
 
 export interface AISDKToolPermissionResult {
@@ -125,6 +127,8 @@ export interface AISDKRuntimeStreamInput {
   onAgentEvent?: (event: AgentEvent) => void
   /** Pilot 受控执行强制输出上限；来自价格证据的模型输出硬上界。 */
   maxOutputTokens?: number
+  /** Owner冻结的GLM-5.3低推理强度；普通Agent设置不受影响。 */
+  reasoningEffort?: 'low'
 }
 
 export interface AISDKRuntimeStreamResult {
@@ -142,7 +146,7 @@ function estimateStreamPartTokens(part: unknown): number {
 
 export interface AISDKAgentTurnInput {
   /** 内部隔离收紧字段，不授予用途权限；adapter 与最终出口独立重读权威来源。 */
-  ownerPlanningRequest?: { systemPrompt: string; userPrompt: string }
+  ownerPlanningRequest?: { systemPrompt: string; userPrompt: string; maxOutputTokens: number; reasoningEffort?: 'low' }
   sessionId: string
   prompt: string
   modelId: string
@@ -208,6 +212,8 @@ export class AISDKRuntimeCore {
   async runAgentTurn(input: AISDKAgentTurnInput): Promise<SDKMessage[]> {
     // Pilot 受控执行：同一闭包覆盖本 turn 全部请求（模型、压缩），derive→reserve→verify 后才发送。
     const owner = input.ownerPlanningRequest
+    if (owner && (![4096, 8192].includes(owner.maxOutputTokens) || !Number.isSafeInteger(owner.maxOutputTokens))) throw new Error('Owner规划输出上限与版本协议不匹配')
+    if (owner?.reasoningEffort && (owner.reasoningEffort !== 'low' || input.provider !== 'zhipu' || input.protocol !== 'openai-chat' || !/^glm-5\.3(?:-flash)?$/i.test(input.modelId))) throw new Error('Owner规划推理强度与冻结GLM模型不匹配')
     if (owner && !input.fetchFn) throw new Error('Owner规划必须经受控模型出口，不能回退自由Caller')
     const pilotRuntime = !owner && input.pilotBudget
       ? buildPilotRequestRuntime(input.pilotBudget, globalThis.fetch)
@@ -266,8 +272,8 @@ export class AISDKRuntimeCore {
       messages,
       tools: toolSet,
       maxTurns: owner ? 1 : input.maxTurns,
-      maxRetries: owner ? 0 : input.maxRetries,
-      ...(owner ? { sdkMaxRetries: 0 as const } : {}),
+      maxRetries: owner || ownerExecutionMaxOutputTokens !== undefined ? 0 : input.maxRetries,
+      ...(owner || ownerExecutionMaxOutputTokens !== undefined ? { sdkMaxRetries: 0 as const } : {}),
       signal: input.activeSession.controller.signal,
       estimatedContextTokens: estimateTokenCount(JSON.stringify({
         system: effectiveSystemPrompt,
@@ -277,9 +283,10 @@ export class AISDKRuntimeCore {
       provider: input.provider,
       modelId: input.modelId,
       onAgentEvent: owner ? (event) => { if (event.type === 'text_delta') partialText += event.text; input.onAgentEvent?.(event) } : input.onAgentEvent,
-      ...(owner ? { maxOutputTokens: 4096 }
+      ...(owner ? { maxOutputTokens: owner.maxOutputTokens }
         : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens }
           : ownerExecutionMaxOutputTokens ? { maxOutputTokens: ownerExecutionMaxOutputTokens } : {}),
+      ...(owner?.reasoningEffort ? { reasoningEffort: owner.reasoningEffort } : {}),
     })
 
     const steps = streamRun.streamedSteps.length > 0
@@ -290,6 +297,9 @@ export class AISDKRuntimeCore {
     // 不完整批次已无法撤销已执行调用；这里只持久化观察，供下游拒绝自动续跑/复核。
     const toolCallBatchIntegrity = assessStepsToolCallBatchIntegrity(steps)
     const ownerFinishReason = owner ? await streamRun.result.finishReason : undefined
+    const ownerResponse = owner ? await streamRun.result.response : undefined
+    const providerRequestId = ownerResponse ? getProviderRequestId(ownerResponse.headers) : undefined
+    const providerResponseId = ownerResponse ? getSafeProviderId(ownerResponse.id) : undefined
     const resultMessage: SDKResultMessage = {
       type: 'result',
       subtype: owner && ownerFinishReason !== 'stop' ? 'error_during_execution' : 'success',
@@ -297,7 +307,10 @@ export class AISDKRuntimeCore {
       session_id: input.sessionId,
       toolCallBatchIntegrity,
       // 原始文本和终态供可信 Run 收据使用；不推算费用或伪造 Provider ID。
-      ...(owner ? { result: await streamRun.result.text, finish_reason: ownerFinishReason, owner_planning_usage: {
+      ...(owner ? { result: await streamRun.result.text, finish_reason: ownerFinishReason,
+        ...(providerRequestId ? { provider_request_id: providerRequestId } : {}),
+        ...(providerResponseId ? { provider_response_id: providerResponseId } : {}),
+        owner_planning_usage: {
         inputTokens: usage.inputTokens ?? null, outputTokens: usage.outputTokens ?? null,
         cacheReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? null,
         cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? null,
@@ -334,6 +347,7 @@ export class AISDKRuntimeCore {
             ...(input.sdkMaxRetries !== undefined ? { maxRetries: input.sdkMaxRetries } : {}),
             abortSignal: attemptController.signal,
             ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
+            ...(input.reasoningEffort && input.provider ? { providerOptions: { openai: { reasoningEffort: input.reasoningEffort } } } : {}),
           })
           const accumulator = new AISDKStreamStepAccumulator()
           const streamedSteps: AISDKStreamStepSnapshot[] = []
@@ -586,7 +600,7 @@ export class AISDKRuntimeCore {
     input: Record<string, unknown>,
     state: AISDKToolExecutionState,
   ): Promise<AISDKToolPermissionResult> {
-    if (state.activeSession.permissionMode === 'bypassPermissions') {
+    if (state.activeSession.permissionMode === 'bypassPermissions' && !state.activeSession.ownerActionApproval) {
       return { allowed: true }
     }
 
@@ -618,6 +632,9 @@ export class AISDKRuntimeCore {
         ASK_USER_QUESTION_TOOL_NAME,
       ])
       if (safeAllowedTools.has(toolName)) return { allowed: true }
+      if (state.activeSession.ownerActionApproval && state.canUseTool) {
+        return state.canUseTool(toolName, input, state.signal)
+      }
       if (toolName === 'Bash') {
         const command = typeof input.command === 'string' ? input.command : ''
         if (isBashCommandReadOnly(command)) return { allowed: true }
@@ -694,6 +711,22 @@ export class AISDKRuntimeCore {
       message: `${toolName} 需要用户授权，但当前未配置权限回调。请在设置中将权限模式设为“允许所有”或启用交互式权限。`,
     }
   }
+}
+
+function getProviderRequestId(headers: Record<string, string> | undefined): string | undefined {
+  if (!headers) return undefined
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === 'x-request-id' || name.toLowerCase() === 'request-id') {
+      const safeValue = getSafeProviderId(value)
+      if (safeValue) return safeValue
+    }
+  }
+  return undefined
+}
+
+function getSafeProviderId(value: string | undefined): string | undefined {
+  const normalized = value?.trim()
+  return normalized && normalized.length <= 200 && /^[\x21-\x7e]+$/.test(normalized) ? normalized : undefined
 }
 
 export function buildAISDKModelMessages(

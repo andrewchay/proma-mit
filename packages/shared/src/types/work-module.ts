@@ -516,7 +516,7 @@ export interface PrepareControlledTaskInput {
 }
 export interface ControlledTaskStartPreview {
   /** 仅Owner已冻结的JSON资料；无岗位全文/文件/历史/凭据。费用确认不保证金额硬上限。 */
-  ownerPlanning?: { purpose: 'owner_planning'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: '1'; maxRequests: 1; maxOutputTokens: 4096; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; costs: 'unknown_no_hard_cap' }
+  ownerPlanning?: { purpose: 'owner_planning'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: '1' | '2' | '3'; reasoningEffort?: 'low'; maxRequests: 1; maxOutputTokens: 4096 | 8192; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; costs: 'unknown_no_hard_cap' }
   taskId: string
   previewHash: string
   expiresAt: number
@@ -606,6 +606,8 @@ export const AGENT_EMPLOYEE_IPC_CHANNELS = {
   PREPARE_APPLY: 'agent-employee:prepare-apply',
   /** 确认应用（二次校验后写入，保留为未提交改动）。 */
   CONFIRM_APPLY: 'agent-employee:confirm-apply',
+  /** 人工拒绝本次应用并持久记录；不写入仓库。 */
+  REJECT_APPLY: 'agent-employee:reject-apply',
   /** 查询应用操作状态与恢复分类。 */
   GET_APPLY_STATUS: 'agent-employee:get-apply-status',
   /** 查询能力版本依赖关系（显式 ID）。 */

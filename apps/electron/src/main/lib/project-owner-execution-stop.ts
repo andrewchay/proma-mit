@@ -84,6 +84,9 @@ export function recoverInterruptedOwnerRuntimeExecutions(now = Date.now(), onlyE
         database.prepare("UPDATE project_owner_execution_grants SET state = 'paused' WHERE project_id = ? AND state = 'active'").run(execution.projectId)
         const stale = database.prepare(`UPDATE agent_executions SET status = 'stale', error = ?, last_heartbeat_at = ?, completed_at = ? WHERE id = ? AND project_id = ? AND status = 'running' AND owner_command_id = ?`).run('应用重启后Runtime状态与用量未知，已暂停Owner授权等待对账', now, now, execution.id, execution.projectId, candidate.owner_command_id)
         if (stale.changes !== 1) throw new Error('Owner中断执行状态已变化')
+        database.prepare(`UPDATE project_owner_action_approvals SET status='invalidated', decided_at=?, decision_reason='runtime_recovered'
+          WHERE project_id=? AND command_id=? AND execution_id=? AND session_id=? AND status='pending'`)
+          .run(now, execution.projectId, candidate.owner_command_id, execution.id, execution.sessionId)
         try {
           if (!execution.sessionId.trim()) throw new Error('中断执行缺少会话')
           const command = database.prepare(`SELECT c.state, c.actual_cost_micros, c.usage_evidence, c.usage_record_key, g.channel_id, g.model_id

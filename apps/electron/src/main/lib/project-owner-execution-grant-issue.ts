@@ -3,8 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { getAgentProviderProtocol, type OwnerExecutionGrant, type OwnerExecutionGrantBudget, type OwnerExecutionGrantIssuePreview, type OwnerExecutionGrantRevokePreview, type OwnerExecutionRevalidationRecord, type OwnerExecutionRoleBudgetCap, type ProjectOwnerGoalSubject } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
 import { getChannelById } from './channel-manager'
-import { PILOT_DEFAULT_PRICE_EVIDENCE_ID } from './project-pilot-request-exit'
-import { getPilotReviewedPriceEvidence } from './project-pilot-request-evidence'
+import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getAgentEmployee } from './project-sqlite-store'
 import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
@@ -125,12 +124,12 @@ function resolveCurrentChain(subject: ProjectOwnerGoalSubject, input: { expected
   const roleEmployeeIds = [...new Set(record.source.tasks.map((task) => task.executor?.id).filter((id): id is string => Boolean(id))) ]
   if (!roleEmployeeIds.length) roleEmployeeIds.push(record.source.executor.id)
   if (!executor?.enabled || !reviewer?.enabled || roleEmployeeIds.some((employeeId) => !getAgentEmployee(employeeId)?.enabled)) fail('发行前置失败：冻结员工已停用')
-  const evidence = getPilotReviewedPriceEvidence(PILOT_DEFAULT_PRICE_EVIDENCE_ID)
   const channel = getChannelById(record.source.channelId)
-  if (!evidence) fail('发行前置失败：已审核价格证据不可用')
   if (!channel) fail('发行前置失败：冻结渠道不可用')
   const protocol = getAgentProviderProtocol(channel.provider, 'ai-sdk')
   const evidenceProviderKind = protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
+  const evidence = getPilotReviewedPriceEvidenceForModel(record.source.modelId, evidenceProviderKind)
+  if (!evidence) fail('发行前置失败：已审核价格证据不可用')
   if (evidenceProviderKind !== evidence.providerKind) fail(`发行前置失败：渠道协议与已审核价格证据不匹配（${evidenceProviderKind} / ${evidence.providerKind}）`)
   if (record.source.modelId !== evidence.model) fail(`发行前置失败：模型 ${record.source.modelId} 与已审核价格证据模型 ${evidence.model} 不匹配`)
   const roleAssignments = record.source.tasks.flatMap((task) => task.executor ? [{ roleKey: task.executor.roleKey, employeeId: task.executor.id, employeeName: task.executor.name }] : [])

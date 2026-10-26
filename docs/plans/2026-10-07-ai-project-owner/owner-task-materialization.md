@@ -12,13 +12,19 @@
 
 单任务首片仅一步、无步骤依赖绑定既有target，不能默认拆children、合并多步骤或改成projectGoal。只接管无旧执行/受控/规划/交付/层级/依赖证据的普通pending/paused目标。preview显示人员、旧canonical成员键、工作区、状态及研发范围影响；confirm只更新已批准项并清旧成员键，保title/description/priority/parent/日期。合法patch使原AO05 whole目标hash自然stale，原准备不改、不伪current；材料化结果恒为paused_materialized_needs_revalidation。
 
+### 新计划追加批次
+
+已经材料化的项目/目标允许在旧Grant先撤权、所有运行/unknown/待审批/停止升级边界结清且新计划经人工确认后追加一批暂停Task。新AO05准备只在旧v2证据行及其integrity引用核验通过、且新planFingerprint不同于旧v2来源时，原子替换当前paused policy的v1准备引用并清除当前v2指针；旧v2/v1准备、材料化、映射、Task及执行证据均追加保留。任何活动或未决执行状态仍由boundary idle拒绝；同一planFingerprint不得借重存准备覆盖旧验证。
+
+项目目标每个新计划步骤创建新Task。单任务目标的首次材料化仍绑定原普通target；其后新计划材料化追加新Task，不改写原target或旧mapping。旧Task缺失、owner marker损坏或计划指纹重复时fail closed，不自动修复。新批次须单独重验证、发行；旧Grant不复活、不迁移。
+
 ## 同库与幂等
 
 复用tasks/task_dependencies/project_activities，仅加附属材料化history、exact links、不可普通清除marker和已观察session负向限制。不是平行任务、许可或预算系统。
 
 policy快照锁内二次CAS，SQLite一个事务落全部Task/link/dependency/activity，**不修改Pilot JSON、不发TaskChange/外部同步**。外层wrapper/raw BEGIN/SAVEPOINT拒绝；ABORT全部rollback。内部builder仅本次未提交staging同步作用域且单次消费；历史committed link不是恢复capability，不能复活取消目标、补造Task/edge。
 
-project级requestId+完整输入幂等；同请求返回已提交历史，current drift另读显示，不再次生成Task/dep/activity。另一request或新planFingerprint不能悄悄迁移旧mapping。双向校验header/indexed links/marker，缺坏原件拒绝重建或降none。Task/link/计划/资料漂移不自动修复，不释放unknown预算。
+project级requestId+完整输入幂等；同请求返回已提交历史，current drift另读显示，不再次生成Task/dep/activity。另一request或新planFingerprint仅在新准备、明确二次预览/确认后追加，不迁移或改写旧mapping。双向校验header/indexed links/marker，缺坏原件拒绝重建或降none。Task/link/计划/资料漂移不自动修复，不释放unknown预算。
 
 ## 负向能力边界
 

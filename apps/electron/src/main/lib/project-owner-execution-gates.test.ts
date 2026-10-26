@@ -74,6 +74,17 @@ test('Given gate准入+冻结空资料集合 When 知识工具 Then 交集为空
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'SearchKnowledge', {})).toThrow('交集')
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'ReadMcpResourceTool', {})).toThrow('Owner')
 })
+test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进入逐次审批且审批前不执行', () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Write', { file_path: 'denied.txt' })).toBe(true)
+  expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Edit', { file_path: 'edit.md' })).toBe(true)
+  expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Write', { file_path: '../outside.txt' })).toBe(false)
+  expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Bash', { command: 'touch denied.txt' })).toBe(false)
+  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Write', { file_path: 'denied.txt', content: 'test' })).toThrow('逐次人工审批')
+  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Bash', { command: 'touch denied.txt' })).toThrow('仅允许工作区内Write/Edit')
+})
 test('Given 空集合白名单 When ReadKnowledgeSource任意documentId Then 拒且无审计行', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
@@ -134,4 +145,13 @@ test('Given Owner分支purpose=owner_business_execution且无gate When 逐请求
   const f = fixture(), sessionId = syntheticRunningExecution(f)
   expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'owner_business_execution', sessionId, runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: 'https://example.invalid', requestUrl: 'https://example.invalid' })).toThrow('门禁')
   expect(() => gates.assertOwnerExecutionRequestGate({ commandPurpose: 'controlled_task', sessionId, runtime: 'ai-sdk', modelId: 'model', permissionMode: 'safe', cwd: '/tmp', baseUrl: '', requestUrl: '' })).not.toThrow()
+})
+
+test('Given Owner用途工具目录 When 尚未准入或已准入 Then 不向模型宣传不可执行的Bash/Read/MCP', () => {
+  expect(gates.getOwnerExecutionToolNames(randomUUID())).toBeNull()
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!]).toEqual([])
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
 })

@@ -1,7 +1,7 @@
 /** Owner逐请求出口：derive→reserve→verify→fetch→settle五步镜像；Owner出口一律redirect:'error'；默认fake transport。 */
 import { createHash, randomUUID } from 'node:crypto'
 import * as store from './project-sqlite-store'
-import { derivePilotRequestEnvelope, getPilotReviewedPriceEvidence } from './project-pilot-request-evidence'
+import { derivePilotRequestEnvelope, getPilotReviewedPriceEvidence, getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { getAgentProviderProtocol, type ProviderType } from '@gravitas/shared'
 import { PILOT_DEFAULT_PRICE_EVIDENCE_ID } from './project-pilot-request-exit'
 
@@ -27,6 +27,7 @@ export interface OwnerRequestFetchInput {
 const OWNER_PREFLIGHT_PRICE_REJECTION = 'Owner 命令输出上限与运行授权/审核价格证据不匹配'
 
 interface OwnerPreflightCommandRow {
+  command_role: string
   command_state: string
   command_id: string
   execution_id: string | null
@@ -81,7 +82,7 @@ function recordOwnerPreflightPriceRejection(input: {
 export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId: string, provider: ProviderType): number | undefined {
   const execution = store.getAgentExecutionBySessionId(sessionId)
   if (!execution?.ownerCommandId) return undefined
-  const row = store.getProjectDb().prepare(`SELECT c.id AS command_id, c.state AS command_state, c.execution_id,
+  const row = store.getProjectDb().prepare(`SELECT c.id AS command_id, c.state AS command_state, c.role AS command_role, c.execution_id,
       c.project_id, c.grant_id, g.state AS grant_state, g.channel_id, g.model_id, g.runtime
     FROM project_owner_execution_commands c
     JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
@@ -93,13 +94,16 @@ export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId:
     || row.runtime !== 'ai-sdk' || row.model_id !== modelId) {
     throw new Error('Owner命令执行归属或运行授权不匹配')
   }
-  const price = getPilotReviewedPriceEvidence(PILOT_DEFAULT_PRICE_EVIDENCE_ID)
+  const price = getPilotReviewedPriceEvidenceForModel(modelId, providerKind)
   if (!price || price.model !== modelId || price.providerKind !== providerKind) {
+    const attemptedPriceEvidenceId = price?.evidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID
     recordOwnerPreflightPriceRejection({ command: row, executionId: execution.id, provider, protocol, modelId,
-      priceEvidenceId: PILOT_DEFAULT_PRICE_EVIDENCE_ID, errorMessage: OWNER_PREFLIGHT_PRICE_REJECTION })
+      priceEvidenceId: attemptedPriceEvidenceId, errorMessage: OWNER_PREFLIGHT_PRICE_REJECTION })
     throw new Error(OWNER_PREFLIGHT_PRICE_REJECTION)
   }
-  return Math.min(4096, price.maxModelOutputTokens)
+  // DeepSeek 思考内容也占输出额度；为结构化评审保留正文空间，仍逐请求预留完整上界。
+  const outputLimit = modelId === 'deepseek-flash' && row.command_role === 'reviewer' ? 8192 : 4096
+  return Math.min(outputLimit, price.maxModelOutputTokens)
 }
 function reserveOwnerRequest(input: { requestId: string; commandId: string; executionId: string; sessionId: string; envelope: ReturnType<typeof derivePilotRequestEnvelope> }) {
   if ([input.requestId, input.commandId, input.executionId, input.sessionId].some(id => typeof id !== 'string' || !id.trim())

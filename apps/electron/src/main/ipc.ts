@@ -294,6 +294,7 @@ import {
   deleteWorkspaceSnapshot,
 } from './lib/workspace-config-version-service'
 import { permissionService } from './lib/agent-permission-service'
+import { handlePermissionResponse } from './lib/agent-permission-response'
 import { askUserService } from './lib/agent-ask-user-service'
 import { exitPlanService } from './lib/agent-exit-plan-service'
 import { getAgentSessionWorkspacePath, getAgentWorkspacesDir, getWorkspaceSkillsDir, getWorkspaceFilesDir, getScratchPadPath } from './lib/config-paths'
@@ -2486,15 +2487,11 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.PERMISSION_RESPOND,
     async (event, response: PermissionResponse): Promise<void> => {
-      const { requestId, behavior, alwaysAllow } = response
-      const sessionId = permissionService.respondToPermission(requestId, behavior, alwaysAllow)
-
-      // 发送 permission_resolved 事件给渲染进程和灵动岛（agentEventBus）
-      if (sessionId) {
-        const payload = { kind: 'proma_event', event: { type: 'permission_resolved', requestId, behavior } } as const
-        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
-        agentEventBus.emit(sessionId, payload)
-      }
+      handlePermissionResponse(response, {
+        respondToPermission: (requestId, behavior, alwaysAllow) => permissionService.respondToPermission(requestId, behavior, alwaysAllow),
+        sendResolvedEvent: (sessionId, payload) => event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload }),
+        emitResolvedEvent: (sessionId, payload) => agentEventBus.emit(sessionId, payload),
+      })
     }
   )
 

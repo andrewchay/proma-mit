@@ -190,7 +190,7 @@ export function ownerTaskInput(
     e.loading ||
     e.requiresReview ||
     !e.view ||
-    e.view.materialization ||
+    (e.view.materialization && e.view.materialization.preview.preparation.source.planFingerprint === preparation?.source.planFingerprint) ||
     !e.requestId ||
     !ownerExecutionPlanReady(get, s) ||
     !execution.loaded ||
@@ -295,6 +295,7 @@ export const loadOwnerTasksAtom = atom(null, async (get, set, s: ProjectOwnerGoa
     update(get, set, s, {
       view: result.value,
       loaded: true,
+      error: '',
       requiresReview:
         current.requiresReview ||
         stamp !== sourceStamp(get, s) ||

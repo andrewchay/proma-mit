@@ -51,13 +51,13 @@ function accepted(f: ReturnType<typeof prepared>) {
   const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id=?').get(run.executionId) as import('./project-owner-planning-provider').OwnerPlanningAdmission
   store.getProjectDb().prepare('UPDATE project_owner_planning_admissions SET integrity_hash=? WHERE execution_id=?').run(ownerPlanningAdmissionHash(admission), admission.execution_id)
   const response = { schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, proposal: { summary: '生成定位简报', assumptions: [], risks: [], steps: [{ key: 'brief', title: '定位研究', outcome: '定位简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: snapshot.context.sources.roles[0]!.key }] } }
-  const result = { type: 'result' as const, subtype: 'success' as const, session_id: run.sessionId, result: JSON.stringify(response), finish_reason: 'stop', usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }
+  const result = { type: 'result' as const, subtype: 'success' as const, session_id: run.sessionId, result: JSON.stringify(response), finish_reason: 'stop', provider_request_id: 'provider-request-1', provider_response_id: 'provider-response-1', usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }
   return { ...f, ...run, response, result }
 }
 test('Given 可信Run When 完成 Then 先存原文/unknown费用，再generated proposed，不触业务DoD；重复幂等', () => {
   const f = accepted(prepared()); const before = store.listTasks(f.project.id).length
   const outcome = runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', f.result)!
-  expect(outcome.state).toBe('proposed'); const receipt = runService.getOwnerPlanningRunReceipt(outcome.receiptId)!; expect(receipt).toMatchObject({ responseText: f.result.result, cost: { source: 'unknown', usd: null }, usage: { inputTokens: null, outputTokens: 4 } })
+  expect(outcome.state).toBe('proposed'); const receipt = runService.getOwnerPlanningRunReceipt(outcome.receiptId)!; expect(receipt).toMatchObject({ responseText: f.result.result, runtimeResult: { provider_request_id: 'provider-request-1', provider_response_id: 'provider-response-1' }, cost: { source: 'unknown', usd: null }, usage: { inputTokens: null, outputTokens: 4 } })
   expect(plans.getProjectOwnerPlanDraft(f.project.id)).toMatchObject({ state: 'proposed', actor: 'system:owner-planner', origin: 'generated', sourceRun: { executionId: f.executionId } }); expect(store.getTask(f.link.planningTaskId)?.status).toBe('paused'); expect(store.listTasks(f.project.id)).toHaveLength(before)
   expect(runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', f.result)).toEqual(outcome); expect(plans.listProjectOwnerPlanHistory(f.project.id)).toHaveLength(1)
 })
@@ -78,8 +78,8 @@ test('Given 取消/网络unknown后晚到 When 返回原文token费用 Then 新�
   expect(costs).toContain(null); expect(costs).toContain(0.2); expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
 })
 test('Given 澄清 When 完成 Then 人答前无提案或补请求', () => {
-  const f = accepted(prepared()); const { proposal: _proposal, ...binding } = f.response; const response = { ...binding, kind: 'needs_clarification', reason: '验收范围影响结果', questions: [{ key: 'audience', question: '核心受众是谁？', why: '决定定位范围', options: [] }] }
-  const outcome = runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', { ...f.result, result: JSON.stringify(response) })!; expect(outcome.state).toBe('needs_clarification'); expect(outcome.clarification?.questions).toHaveLength(1); expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
+  const f = accepted(prepared()); const { proposal: _proposal, ...binding } = f.response; const response = { ...binding, kind: 'needs_clarification', reason: '验收范围影响结果', questions: [{ key: 'audience', reasonType: 'source_conflict', question: '核心受众是谁？', why: '决定定位范围', options: [], sourceReferences: [{ sourceId: 'goal.objective', quote: '提出可评审的定位建议' }, { sourceId: 'project.title', quote: 'Owner定位' }] }] }
+  const outcome = runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', { ...f.result, result: JSON.stringify(response) })!; expect(outcome.state).toBe('needs_clarification'); expect(outcome.clarification?.questions).toHaveLength(1); expect(outcome.clarification?.questions[0]?.sourceReferences).toEqual(response.questions[0]?.sourceReferences); expect(runService.getOwnerPlanningRunOutcome(f.executionId)?.clarification?.questions[0]?.sourceReferences).toEqual(response.questions[0]?.sourceReferences); expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
 })
 test('Given 无占位/错session/非stop/坏JSON When callback Then 不生成；费用不从兼容usage估算', () => {
   for (const variation of ['no_admission', 'wrong_session', 'length', 'bad_json']) {
@@ -119,7 +119,7 @@ test('Given 已排队但session建立前失败 When 可信启动错误回调 The
 })
 test('Given paused Owner准备 When 只读预检 Then 显示实际用途/全JSON资料/单请求未知成本，预检本身不授权启动', async () => {
   const f = prepared(); const { getControlledTaskStartPreview, startControlledTask } = await import('./controlled-project-task-service'); const preview = getControlledTaskStartPreview(f.link.planningTaskId)
-  expect(preview.ownerPlanning).toMatchObject({ purpose: 'owner_planning', ownerName: f.binding.ownerName, bindingRevision: 1, goalRevision: 1, planRevision: 0, maxRequests: 1, maxOutputTokens: 4096, costs: 'unknown_no_hard_cap', context: { fingerprint: f.link.contextFingerprint } }); expect(preview.modelId).toBe(f.employee.modelId!)
+  expect(preview.ownerPlanning).toMatchObject({ purpose: 'owner_planning', ownerName: f.binding.ownerName, bindingRevision: 1, goalRevision: 1, planRevision: 0, maxRequests: 1, maxOutputTokens: 8192, costs: 'unknown_no_hard_cap', context: { fingerprint: f.link.contextFingerprint } }); expect(preview.modelId).toBe(f.employee.modelId!)
   await expect(startControlledTask({ taskId: f.link.planningTaskId, previewHash: preview.previewHash, acknowledgeModelCosts: false })).rejects.toThrow('费用'); expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(0)
 })
 test('Given 已持久停止意图但SDK晚到stop When 完成 Then 留原文USD但不能生成，不把abort接受当远端证明', () => {

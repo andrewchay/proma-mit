@@ -156,11 +156,23 @@ describe('验证证据（T27/T28）', () => {
   })
 
   test('Given 超时 When 运行 Then status=timeout 且进程被终止', async () => {
-    const w = fixture({ scriptName: 'hang.cjs', scriptContent: 'setInterval(()=>{},1000)' })
+    const childPidPath = join(directory, `validation-child-${randomUUID()}.pid`)
+    const scriptContent = `const fs=require('fs'),cp=require('child_process');const child=cp.spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(childPidPath)},String(child.pid));setInterval(()=>{},1000)`
+    const w = fixture({ scriptName: 'hang.cjs', scriptContent })
     submitDevelopmentDelivery(w.executionId)
     const result = await runDevelopmentValidation(w.taskId, w.command, { timeoutMs: 600 })
     expect(result.status).toBe('timeout')
     expect(result.exitCode).toBeNull()
+    const childPid = Number(readFileSync(childPidPath, 'utf8'))
+    try {
+      process.kill(childPid, 0)
+      expect(true).toBe(false)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') expect(true).toBe(true)
+      else throw error
+    } finally {
+      try { process.kill(childPid, 'SIGKILL') } catch { /* 测试进程已退出 */ }
+    }
   }, 20000)
 
   test('Given 多次运行 When 列表 Then 按时间倒序且记录持久化', async () => {

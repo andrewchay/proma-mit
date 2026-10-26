@@ -74,7 +74,7 @@ function TaskProjectionFacts({
     </li>
   )
 }
-function MaterializationFacts({
+export function MaterializationFacts({
   preview: p,
 }: {
   preview: OwnerTaskMaterializationPreview
@@ -227,7 +227,7 @@ export function ProjectOwnerTaskMaterializationPanel({
       <p className="mt-2 text-xs">
         {taskId
           ? '单任务首片仅支持无依赖的一步，显式核对before/after；不拆子任务、不接管旧Run。'
-          : '项目目标每个所选步骤各建一个新的顶层暂停Task，依赖精确映射；不按标题复用旧任务。'}
+          : '项目目标每个所选步骤各追加一个新的顶层暂停Task，依赖精确映射；新计划不会复用或改写旧Task。'}
       </p>
       <p role="status" className="mt-2 text-sm">
         {e.loading
@@ -238,6 +238,11 @@ export function ProjectOwnerTaskMaterializationPanel({
         <p className="mt-2 text-xs">
           当前AO05来源：{preparation.id} · revision {preparation.revision} · hash{' '}
           {preparation.integrityHash} · policy revision {preparation.policyRevision}
+        </p>
+      )}
+      {e.view?.materialization && preparation && e.view.materialization.preview.preparation.source.planFingerprint !== preparation.source.planFingerprint && (
+        <p role="status" className="mt-2 text-sm">
+          新计划将追加一批暂停Task；旧Task、步骤映射与执行证据保留。新批次仍需独立重验证与授权。
         </p>
       )}
       {!canPreview && !e.view?.materialization && (

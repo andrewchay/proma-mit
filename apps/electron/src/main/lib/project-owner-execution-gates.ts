@@ -1,8 +1,9 @@
 /** Owner业务执行侧休眠门禁：资料fence/逐请求核验/purpose。本片不发行、不派工，gate行无生产创建路径。 */
 import { createHash, randomUUID } from 'node:crypto'
+import { lstatSync, realpathSync } from 'node:fs'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import type { OwnerExecutionRevalidationRecord } from '@gravitas/shared'
-import { resolve } from 'node:path'
+import { dirname, resolve, sep } from 'node:path'
 import { getAgentWorkspace, getAgentWorkspaceCwd } from './agent-workspace-manager'
 import { getChannelById } from './channel-manager'
 import * as store from './project-sqlite-store'
@@ -26,8 +27,9 @@ function materialization(): MaterializationModule { return (materializationModul
 function pilotPolicy(): PolicyModule { return (policyModule ??= require('./project-pilot-policy') as PolicyModule) }
 import { getStoreHandle } from './knowledge-index-service'
 import { resolveRetrievableScope } from './knowledge-scope-service'
+import { hasApprovedOwnerAction } from './project-owner-action-approval'
 
-/** 仅这两个知识工具可经fence放行；其余工具与MCP资源读取恒拒。 */
+/** 知识读取需经过资料fence；Owner文件写入仅在逐次审批后开放。 */
 export const OWNER_TOOL_ALLOWED = new Set(['SearchKnowledge', 'ReadKnowledgeSource'])
 const SNAPSHOT_MAX_DOCUMENTS = 2048
 
@@ -39,6 +41,29 @@ export interface OwnerGateSessionRow {
   contentSnapshotHash: string
   providerAdmittedAt: number | null
   createdAt: number
+}
+
+/** Owner执行只允许工作区内的Write/Edit进入逐次审批；执行阶段还会核对批准后的完整参数指纹。 */
+export function isOwnerWorkspaceFileActionCandidate(sessionId: string, toolName: string, args?: Record<string, unknown>): boolean {
+  if (toolName !== 'Write' && toolName !== 'Edit') return false
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind !== 'owner_business') return false
+  const filePath = typeof args?.file_path === 'string' ? args.file_path.trim() : ''
+  if (!filePath) return false
+  const workspace = getAgentWorkspace(context.record.source.workspaceId)
+  if (!workspace) return false
+  const root = resolve(getAgentWorkspaceCwd(workspace, sessionId))
+  const target = resolve(root, filePath)
+  if (target === root || !target.startsWith(`${root}${sep}`)) return false
+  try {
+    const realRoot = realpathSync(root)
+    const realParent = realpathSync(dirname(target))
+    if (realParent !== realRoot && !realParent.startsWith(`${realRoot}${sep}`)) return false
+    try { if (lstatSync(target).isSymbolicLink()) return false } catch { /* 新文件尚不存在时由Write创建。 */ }
+    return true
+  } catch {
+    return false
+  }
 }
 export type OwnerSessionGateContext =
   | { kind: 'unrestricted' }
@@ -74,6 +99,13 @@ export function resolveOwnerExecutionGateSession(sessionId: string): OwnerSessio
   if (chain.kind !== 'owner_business') return chain
   if (!chain.gate || chain.gate.executionId !== chain.executionId || chain.gate.revalidationId !== chain.record.id || chain.gate.revalidationIntegrityHash !== chain.record.integrityHash) return { kind: 'restricted', reason: 'Owner会话门禁未准入或已过期，工具执行拒绝' }
   return chain
+}
+
+/** 工具目录必须与当前用途契约一致；null表示普通会话，受限Owner绝不加载MCP或其他工具。 */
+export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<string> | null {
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind === 'unrestricted') return null
+  return context.kind === 'owner_business' ? new Set([...OWNER_TOOL_ALLOWED, 'Write', 'Edit']) : new Set()
 }
 
 function frozenSourceIds(record: OwnerExecutionRevalidationRecord): string[] {
@@ -117,11 +149,20 @@ function recordKnowledgeReadPermission(context: Extract<OwnerSessionGateContext,
   // 出处级审计：只存IDs/hash/时间戳，不存正文；id由随机UUID保证非NULL主键。
   store.getProjectDb().prepare('INSERT INTO project_owner_execution_knowledge_reads(id,session_id,execution_id,revalidation_id,source_id,knowledge_base_id,document_id,content_hash,char_start,char_end,read_at) VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?)').run(randomUUID(), context.gate!.sessionId, context.gate!.executionId, context.record.id, sourceId, knowledgeBaseId, documentId, contentHash, Date.now())
 }
-/** purpose感知工具谓词：无Owner证据=现状行为；有证据时仅知识工具可经fence，其余/MCP资源恒拒。 */
+/** purpose感知工具谓词：Owner知识读取走资料fence，工作区Write/Edit须先通过逐次审批。 */
 export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>): void {
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return
-  if (!OWNER_TOOL_ALLOWED.has(toolName)) assertNoOwnerBusinessSession(sessionId)
+  if (!OWNER_TOOL_ALLOWED.has(toolName)) {
+    if (context.kind === 'restricted') throw new Error(context.reason)
+    if (context.kind === 'owner_business') {
+      if (isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)
+        && hasApprovedOwnerAction(sessionId, { toolName, toolInput: args ?? {} })) return
+      throw new Error('Owner业务会话仅允许工作区内Write/Edit经逐次人工审批后执行')
+    }
+    assertNoOwnerBusinessSession(sessionId)
+    return
+  }
   if (context.kind === 'restricted') throw new Error(context.reason)
   // Owner业务会话：知识工具走fence（准入+快照重验+三层交集）。
   const policy = pilotPolicy().getPilotPolicy(context.subject.projectId)

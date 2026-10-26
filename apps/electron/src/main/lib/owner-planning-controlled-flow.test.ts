@@ -100,7 +100,7 @@ test('Given 已批准费用与冻结Owner准备 When 真实start/claim→Worker/
   await expect(controlled.startControlledTask({taskId:f.link.planningTaskId,previewHash:preview.previewHash,acknowledgeModelCosts:false})).rejects.toThrow('费用')
   expect(bodies).toHaveLength(0)
   const result=await controlled.startControlledTask({taskId:f.link.planningTaskId,previewHash:preview.previewHash,acknowledgeModelCosts:true});await Promise.all(inFlight)
-  expect(bodies).toHaveLength(1);expect(bodies[0]).toMatchObject({model:'model',max_tokens:4096,messages:[{role:'system',content:snapshot.request.systemPrompt},{role:'user',content:snapshot.request.userPrompt}]});expect(bodies[0]?.tools).toBeUndefined()
+  expect(bodies).toHaveLength(1);expect(bodies[0]).toMatchObject({model:'model',max_tokens:8192,stream:true,stream_options:{include_usage:true},messages:[{role:'system',content:snapshot.request.systemPrompt},{role:'user',content:snapshot.request.userPrompt}]});expect(bodies[0]?.tools).toBeUndefined()
   expect(store.getAgentExecution(result.executionId)?.status).toBe('completed');expect(plans.getProjectOwnerPlanDraft(f.project.id)).toMatchObject({origin:'generated',state:'proposed'});expect(runService.getOwnerPlanningRunOutcome(result.executionId)?.state).toBe('proposed');expect(store.getTask(f.link.planningTaskId)?.status).toBe('paused');expect(store.listAgentEmployeeLearningSamples(f.employee.id)).toHaveLength(0)
   const repeated=await controlled.startControlledTask({taskId:f.link.planningTaskId,previewHash:preview.previewHash,acknowledgeModelCosts:true});expect(repeated.executionId).toBe(result.executionId);expect(bodies).toHaveLength(1)
 })
@@ -125,7 +125,7 @@ test('Given 非代码定位项目目标 When 离线规划发现关键受众未�
     acceptanceCriteria: ['定位结论、依据和风险可审阅'],
   })
   const snapshot = source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
-  responseText = JSON.stringify({ schemaVersion: 1, kind: 'needs_clarification', projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, reason: '缺少决定定位方向的核心受众信息', questions: [{ key: 'audience', question: '这次优先服务哪类受众？', why: '受众会改变价值主张和渠道选择', options: ['新客户', '现有客户'] }] })
+  responseText = JSON.stringify({ schemaVersion: 1, kind: 'needs_clarification', projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, reason: '缺少决定定位方向的核心受众信息', questions: [{ key: 'audience', reasonType: 'missing_information', question: '这次优先服务哪类受众？', why: '受众会改变价值主张和渠道选择', options: ['新客户', '现有客户'] }] })
   const started = await start(f)
   await settle()
   expect(snapshot.context.sources.project.title).toBe('新产品市场定位')
@@ -176,12 +176,12 @@ test('Given 单任务代码目标仅描述预期行为 When fake-only规划 Then
   expect(bodies).toHaveLength(1)
 })
 test('Given 必要澄清 When 真实SDK终态 Then 一请求unknown费用，业务不完成且无Plan/自动续问',async () => {
-  const f=prepared(), {proposal:_proposal,...scope}=proposal(f);responseText=JSON.stringify({...scope,kind:'needs_clarification',reason:'范围不明确',questions:[{key:'audience',question:'核心受众是谁？',why:'影响定位',options:[]}]})
+  const f=prepared(), {proposal:_proposal,...scope}=proposal(f);responseText=JSON.stringify({...scope,kind:'needs_clarification',reason:'范围不明确',questions:[{key:'audience',reasonType:'missing_information',question:'核心受众是谁？',why:'影响定位',options:[]}]})
   const result=await start(f);await settle();const outcome=runService.getOwnerPlanningRunOutcome(result.executionId)!
   expect(outcome.state).toBe('needs_clarification');expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull();expect(runService.getOwnerPlanningRunReceipt(outcome.receiptId)).toMatchObject({cost:{source:'unknown',usd:null},usage:{inputTokens:12,outputTokens:40}});expect(bodies).toHaveLength(1);expect(store.listTasks(f.project.id)).toHaveLength(1)
 })
 test('Given 澄清结果经人工保存到新Goal When 重新准备 Then 费用再次确认前不会发第二个fake请求',async () => {
-  const f=prepared(), {proposal:_proposal,...scope}=proposal(f);responseText=JSON.stringify({...scope,kind:'needs_clarification',reason:'范围不明确',questions:[{key:'audience',question:'核心受众是谁？',why:'影响定位',options:[]}]})
+  const f=prepared(), {proposal:_proposal,...scope}=proposal(f);responseText=JSON.stringify({...scope,kind:'needs_clarification',reason:'范围不明确',questions:[{key:'audience',reasonType:'missing_information',question:'核心受众是谁？',why:'影响定位',options:[]}]})
   const first=await start(f);await settle();expect(runService.getOwnerPlanningRunOutcome(first.executionId)?.state).toBe('needs_clarification');expect(bodies).toHaveLength(1)
   saveProjectOwnerGoalDraft(f.project.id,1,{objective:'面向现有用户提出可评审的定位建议',constraints:['核心受众：现有用户']})
   const nextLink=service.prepareOwnerPlanning(f.project.id,request(f.project.id,f.link.bindingRevision)), next={...f,link:nextLink}, preview=controlled.getControlledTaskStartPreview(nextLink.planningTaskId)

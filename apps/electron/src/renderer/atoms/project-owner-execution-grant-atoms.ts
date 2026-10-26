@@ -29,6 +29,7 @@ export interface OwnerGrantEditor {
   historyLoading: boolean
   historyError: string
   error: string
+  mutationVersion: number
 }
 const empty: OwnerGrantEditor = {
   grant: null,
@@ -44,6 +45,7 @@ const empty: OwnerGrantEditor = {
   historyLoading: false,
   historyError: '',
   error: '',
+  mutationVersion: 0,
 }
 const key = (s: ProjectOwnerGoalSubject) => JSON.stringify([s.projectId, s.taskId ?? null])
 /** 按 subject 隔离的账本编辑器表：主体不共享状态，读/写均经本 atom。 */
@@ -93,15 +95,18 @@ function assertSubject(value: { projectId: string; taskId?: string }, s: Project
   if (key(value) !== key(s)) throw new Error('授权账本响应主体不匹配')
 }
 export const loadOwnerGrantAtom = atom(null, async (get, set, s: ProjectOwnerGoalSubject) => {
-  if (read(get, s).loading) return
+  const before = read(get, s)
+  if (before.loading || before.confirming || before.revoking) return
   update(get, set, s, { loading: true, error: '' })
   try {
     const result = await get(ownerGrantApiAtom).getOwnerExecutionGrant(s)
+    if (read(get, s).mutationVersion !== before.mutationVersion) return
     if (!result.ok) throw new Error(result.error.message)
     if (result.value) assertSubject(result.value, s)
     update(get, set, s, { grant: result.value, loaded: true })
   } catch (error) {
-    update(get, set, s, { error: message(error), loaded: false })
+    if (read(get, s).mutationVersion === before.mutationVersion)
+      update(get, set, s, { error: message(error), loaded: false })
   } finally {
     update(get, set, s, { loading: false })
   }
@@ -109,15 +114,18 @@ export const loadOwnerGrantAtom = atom(null, async (get, set, s: ProjectOwnerGoa
 export const loadOwnerGrantHistoryAtom = atom(
   null,
   async (get, set, s: ProjectOwnerGoalSubject) => {
-    if (read(get, s).historyLoading) return
+    const before = read(get, s)
+    if (before.historyLoading || before.confirming || before.revoking) return
     update(get, set, s, { historyLoading: true, historyError: '' })
     try {
       const result = await get(ownerGrantApiAtom).listOwnerExecutionGrantHistory(s)
+      if (read(get, s).mutationVersion !== before.mutationVersion) return
       if (!result.ok) throw new Error(result.error.message)
       for (const record of result.value) assertSubject(record, s)
       update(get, set, s, { history: result.value, historyLoaded: true })
     } catch (error) {
-      update(get, set, s, { historyError: message(error) })
+      if (read(get, s).mutationVersion === before.mutationVersion)
+        update(get, set, s, { historyError: message(error) })
     } finally {
       update(get, set, s, { historyLoading: false })
     }
@@ -131,7 +139,7 @@ export const previewOwnerGrantIssueAtom = atom(
     set,
     { subject, input }: { subject: ProjectOwnerGoalSubject; input: OwnerGrantIssueInput },
   ) => {
-    if (read(get, subject).previewing || read(get, subject).confirming) return
+    if (read(get, subject).previewing || read(get, subject).confirming || read(get, subject).revoking) return
     update(get, set, subject, { previewing: true, preview: null, revokePreview: null, error: '' })
     try {
       const result = await get(ownerGrantApiAtom).previewOwnerExecutionGrantIssue({
@@ -164,12 +172,12 @@ export const confirmOwnerGrantIssueAtom = atom(
     }: { subject: ProjectOwnerGoalSubject; input: OwnerGrantIssueInput; confirmedFingerprint: string },
   ) => {
     const before = read(get, subject)
-    if (before.confirming || !before.preview) return
+    if (before.confirming || before.revoking || before.previewing || !before.preview) return
     if (before.preview.approvalFingerprint !== confirmedFingerprint) {
       update(get, set, subject, { error: '确认指纹与预览不符，请重新预览' })
       return
     }
-    update(get, set, subject, { confirming: true, error: '' })
+    update(get, set, subject, { confirming: true, error: '', mutationVersion: before.mutationVersion + 1 })
     try {
       const result = await get(ownerGrantApiAtom).confirmOwnerExecutionGrantIssue({
         ...subject,
@@ -202,7 +210,7 @@ export const previewOwnerGrantRevokeAtom = atom(
     set,
     { subject, grantId }: { subject: ProjectOwnerGoalSubject; grantId: string },
   ) => {
-    if (read(get, subject).revoking || read(get, subject).previewing) return
+    if (read(get, subject).revoking || read(get, subject).previewing || read(get, subject).confirming) return
     update(get, set, subject, { revoking: true, revokePreview: null, preview: null, error: '' })
     try {
       const result = await get(ownerGrantApiAtom).previewOwnerExecutionGrantRevoke({
@@ -234,12 +242,12 @@ export const confirmOwnerGrantRevokeAtom = atom(
     }: { subject: ProjectOwnerGoalSubject; grantId: string; confirmedFingerprint: string },
   ) => {
     const before = read(get, subject)
-    if (before.revoking || !before.revokePreview) return
+    if (before.revoking || before.confirming || before.previewing || !before.revokePreview) return
     if (before.revokePreview.fingerprint !== confirmedFingerprint) {
       update(get, set, subject, { error: '撤权指纹与预览不符，请重新预览' })
       return
     }
-    update(get, set, subject, { revoking: true, error: '' })
+    update(get, set, subject, { revoking: true, error: '', mutationVersion: before.mutationVersion + 1 })
     try {
       const result = await get(ownerGrantApiAtom).confirmOwnerExecutionGrantRevoke({
         ...subject,

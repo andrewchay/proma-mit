@@ -23,6 +23,7 @@ import {
 import { ProjectOwnerTaskMaterializationPanel } from './ProjectOwnerTaskMaterializationPanel'
 import { ProjectOwnerRevalidationPanel } from './ProjectOwnerRevalidationPanel'
 import { ProjectOwnerExecutionGrantPanel } from './ProjectOwnerExecutionGrantPanel'
+import { recommendOwnerStepTools } from './project-owner-tool-recommendations'
 const field = 'mt-1 w-full min-w-0 rounded-md border bg-background p-2 text-sm'
 const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 /** 完整冻结事实；历史只读，没有恢复、发行或执行入口。 */
@@ -55,6 +56,7 @@ function PreparationFacts({
             </p>
             <p>成果：{s.outcome}</p>
             <p>完成标准：{s.acceptanceCriteria.join('；')}</p>
+            <p>工具/Skill候选：{source.toolRecommendations?.find((item) => item.stepKey === s.key)?.candidates.map((candidate) => `${candidate.label}（${candidate.reason}）`).join('；') || '无明确词面匹配'}</p>
             <p>
               依赖：{s.dependencies.join('、') || '无'} · 岗位建议：{s.roleKey}（不是实际员工）
             </p>
@@ -127,7 +129,7 @@ function PreparationFacts({
     </div>
   )
 }
-function SavedFacts({ record }: { record: OwnerExecutionPreparationRecord }): React.ReactElement {
+export function SavedFacts({ record }: { record: OwnerExecutionPreparationRecord }): React.ReactElement {
   return (
     <details className="rounded-lg bg-muted/40 p-3">
       <summary className="cursor-pointer text-sm">
@@ -142,7 +144,7 @@ function SavedFacts({ record }: { record: OwnerExecutionPreparationRecord }): Re
     </details>
   )
 }
-function PreviewFacts({
+export function PreviewFacts({
   preview,
 }: {
   preview: OwnerExecutionPreparationPreview
@@ -158,9 +160,11 @@ function PreviewFacts({
 export function ProjectOwnerExecutionPreparationPanel({
   projectId,
   taskId,
+  showDownstream = true,
 }: {
   projectId: string
   taskId?: string
+  showDownstream?: boolean
 }): React.ReactElement {
   const subject = useMemo(
     () => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }),
@@ -190,7 +194,25 @@ export function ProjectOwnerExecutionPreparationPanel({
   const id = useId()
   const choices = e.view?.choices
   const selectedRoleKeys = [...new Set((plan?.proposal.steps ?? []).filter((step) => e.selectedStepKeys.includes(step.key)).map((step) => step.roleKey))].sort()
-  const recommendedWorkspaceId = e.workspaceId || (choices?.workspaces.length === 1 ? choices.workspaces[0]!.id : '')
+  const recommendedWorkspaceId = e.workspaceId || e.view?.workspaceRecommendation.workspaceId || ''
+  const workspaceRecommendationSource = e.view?.workspaceRecommendation.source
+  const workspaceSelectionPending = workspaceRecommendationSource === 'ambiguous' && !recommendedWorkspaceId
+  const workspaceBindingUnavailable = workspaceRecommendationSource === 'owner_binding_unavailable'
+  const noProjectWorkspace = workspaceRecommendationSource === 'none'
+  const selectedExecutionEmployees = selectedRoleKeys.flatMap((roleKey) => {
+    const employeeId = e.roleAssignments[roleKey] || (selectedRoleKeys.length === 1 ? e.executorEmployeeId : '')
+    const employee = choices?.employees.find((candidate) => candidate.id === employeeId)
+    return employee ? [{ roleKey, employee }] : []
+  })
+  const selectedReviewer = choices?.employees.find((employee) => employee.id === e.reviewerEmployeeId)
+  const configuredEmployees = [
+    ...selectedExecutionEmployees.map(({ roleKey, employee }) => ({ label: `roleKey ${roleKey} · ${employee.name}`, employee })),
+    ...(selectedReviewer ? [{ label: `Reviewer · ${selectedReviewer.name}`, employee: selectedReviewer }] : []),
+  ]
+  const distinctConfigurationCount = new Set(configuredEmployees.map(({ employee }) =>
+    JSON.stringify([employee.channelId, employee.modelId ?? '', employee.runtime]),
+  )).size
+  const hasConfigurationConflict = configuredEmployees.length > 1 && distinctConfigurationCount > 1
   const roleCandidates = () => choices?.employees.filter((employee) => employee.executionProfile === e.executionKind
     && employee.workspaceIds.includes(recommendedWorkspaceId)
     && (!e.reviewerEmployeeId || employee.id !== e.reviewerEmployeeId)) ?? []
@@ -199,6 +221,11 @@ export function ProjectOwnerExecutionPreparationPanel({
     return exactMatches.length === 1 ? exactMatches[0] : undefined
   }
   const busy = e.loading || e.previewing || e.saving
+  const toolRecommendations = recommendOwnerStepTools(
+    plan?.proposal.steps ?? [],
+    recommendedWorkspaceId,
+    choices?.workspaceCapabilities ?? [],
+  )
   const patch = (value: OwnerExecutionEdit) => edit({ subject, patch: value })
   const toggle = (values: string[], value: string, checked: boolean) =>
     checked ? [...values, value] : values.filter((v) => v !== value)
@@ -232,6 +259,16 @@ export function ProjectOwnerExecutionPreparationPanel({
         <p role="alert" className="mt-2 text-sm text-destructive">
           {e.error}。输入保留，不会自动重试。
         </p>
+      )}
+      {hasConfigurationConflict && (
+        <div role="alert" className="mt-2 rounded-md bg-destructive/10 p-3 text-sm">
+          <p>执行岗位与 Reviewer 的渠道、模型或 Runtime 来源冲突。请逐项选择配置一致的员工；系统不会从 Owner carrier、全局默认或最近使用值替你覆盖。</p>
+          <ul className="mt-1 text-xs">
+            {configuredEmployees.map(({ label, employee }) => (
+              <li key={`${label}-${employee.id}`}>{label}：{employee.channelId} / {employee.modelId ?? '无模型'} / {employee.runtime}</li>
+            ))}
+          </ul>
+        </div>
       )}
       {e.requiresReview && (
         <div className="mt-3 rounded-md bg-muted p-3">
@@ -286,9 +323,14 @@ export function ProjectOwnerExecutionPreparationPanel({
                   完成标准：{s.acceptanceCriteria.join('；')}
                   <br />
                   依赖：{s.dependencies.join('、') || '无'}；岗位建议：{s.roleKey}
+                  <br />
+                  工具/Skill候选：{toolRecommendations.find((item) => item.stepKey === s.key)?.candidates.length
+                    ? toolRecommendations.find((item) => item.stepKey === s.key)!.candidates.map((candidate) => `${candidate.label}（${candidate.reason}）`).join('；')
+                    : '无明确词面匹配'}
                 </span>
               </label>
             ))}
+            <p className="text-xs text-muted-foreground">候选仅根据步骤文本与所选项目工作区的 Skill/MCP 名称、说明做词面匹配，可能不完整或不相关；无匹配时不猜测。展示候选不会启用工具、开放资料或形成执行授权，实际调用仍受现有逐请求权限门禁控制。</p>
           </fieldset>
           <label className="block text-sm" htmlFor={`${id}-kind`}>
             执行模式
@@ -324,7 +366,7 @@ export function ProjectOwnerExecutionPreparationPanel({
                     ...(roleKey === selectedRoleKeys[0] ? { executorEmployeeId: event.target.value } : {}),
                   })}
                 >
-                  <option value="">{exactMatchCount > 1 ? `有 ${exactMatchCount} 个精确模板匹配，必须明确选择` : carrierExactMatch ? '唯一精确匹配是 Owner 规划载体；请明确选择' : '没有唯一模板匹配，请明确选择'}</option>
+                  <option value="">{workspaceSelectionPending ? '先在下方明确选择项目工作区' : workspaceBindingUnavailable ? 'Owner绑定失效；先修复绑定或明确核对工作区' : noProjectWorkspace ? '当前项目没有绑定工作区' : candidates.length === 0 ? '没有当前可执行的项目员工；检查渠道、模型与工作区配置' : exactMatchCount > 1 ? `有 ${exactMatchCount} 个精确模板匹配，必须明确选择` : carrierExactMatch ? '唯一精确匹配是 Owner 规划载体；请明确选择' : '没有唯一模板匹配，请明确选择'}</option>
                   {candidates.map((employee) => (
                     <option key={employee.id} value={employee.id}>
                       {employee.name} · {employee.executionProfile} · {employee.channelId}/{employee.modelId ?? '无模型'} · {employee.runtime}{employee.roleTemplateId === roleKey ? ' · 精确模板匹配' : ''}{employee.isOwnerCarrier ? ' · Owner规划载体（不自动推荐）' : ''}
@@ -332,7 +374,7 @@ export function ProjectOwnerExecutionPreparationPanel({
                   ))}
                 </select>
                 <span className="text-xs text-muted-foreground">
-                  {recommendation ? `唯一精确模板匹配推荐：${recommendation.name}；你仍需核对并可更换。` : exactMatchCount > 1 ? '匹配冲突：不得自动挑选，请明确选择。' : carrierExactMatch ? '精确模板仅匹配 Owner 规划载体；不会自动推荐。你仍可显式选择并接受服务端配置核验，或选择其他员工。' : '没有稳定模板匹配；请显式选择员工，不按显示名猜测。'}
+                  {workspaceSelectionPending ? '当前项目有多个绑定工作区；先在下方明确选择，随后再筛选匹配员工。' : workspaceBindingUnavailable ? 'Owner绑定工作区或载体配置已失效；请先核查绑定，员工列表不会按其他工作区静默回退。' : noProjectWorkspace ? '当前项目没有可用绑定工作区，需先建立项目工作区绑定。' : candidates.length === 0 ? '当前项目没有配置有效且工作区匹配的员工。启用渠道、模型并修复员工工作区配置后，重新读取来源。' : recommendation ? `唯一精确模板匹配推荐：${recommendation.name}；你仍需核对并可更换。` : exactMatchCount > 1 ? '匹配冲突：不得自动挑选，请明确选择。' : carrierExactMatch ? '精确模板仅匹配 Owner 规划载体；不会自动推荐。你仍可显式选择并接受服务端配置核验，或选择其他员工。' : '没有稳定模板匹配；请显式选择员工，不按显示名猜测。'}
                 </span>
               </label>
             )
@@ -356,7 +398,7 @@ export function ProjectOwnerExecutionPreparationPanel({
             </select>
           </label>
           <p className="text-xs text-muted-foreground">
-            来源规则：工作区仅从当前项目的显式绑定中推荐唯一项；岗位仅按唯一 roleTemplateId 预填，缺失或冲突需你选择。Owner 规划载体只作规划来源，不会自动推荐为执行员工；若你显式选择它，仍按其员工配置重新核验。全局默认与最近使用值不参与回退。渠道、模型和 Runtime 来自你选定的员工现有配置，岗位及评审配置不一致时服务端阻止预览；此处预填不修改员工配置，也不构成授权。
+            来源规则：Owner绑定的有效工作区优先作为显式核对建议；否则仅当当前项目唯一绑定时才推荐。岗位仅按唯一 roleTemplateId 预填，缺失或冲突需你选择。Owner规划载体只作规划来源，不会自动推荐为执行员工；若你显式选择它，仍按其员工配置重新核验。全局默认与最近使用值不参与回退。渠道、模型和 Runtime 来自你选定的员工现有配置；与Owner绑定默认值冲突时必须确认覆盖，员工间不一致仍由服务端阻止。此处预填不修改员工配置，也不构成授权。
           </p>
           <label className="block text-sm" htmlFor={`${id}-workspace`}>
             明确工作区
@@ -378,8 +420,32 @@ export function ProjectOwnerExecutionPreparationPanel({
             </select>
           </label>
           <p className="text-xs text-muted-foreground">
-            {choices?.workspaces.length === 1 ? `当前项目唯一显式绑定工作区推荐：${choices.workspaces[0]!.name}；仍须在预览中核对。` : (choices?.workspaces.length ?? 0) > 1 ? '当前项目有多个绑定工作区，必须明确选择；不取全局默认或首项。' : '当前项目没有可用绑定工作区，准备阻塞。'}
+            {e.view?.workspaceRecommendation.source === 'owner_binding' ? '按有效Owner绑定工作区推荐；如改选其他项目工作区，需单独确认。'
+              : e.view?.workspaceRecommendation.source === 'owner_binding_unavailable' ? 'Owner绑定工作区或载体配置已失效，须重新核查Owner绑定；不会静默改用其他工作区。'
+                : e.view?.workspaceRecommendation.source === 'unique_project_workspace' ? '当前项目唯一显式绑定工作区推荐；仍须在预览中核对。'
+                  : e.view?.workspaceRecommendation.source === 'ambiguous' ? '当前项目有多个绑定工作区，必须明确选择；不取全局默认或首项。'
+                    : '当前项目没有可用绑定工作区，准备阻塞。'}
           </p>
+          {e.view?.workspaceRecommendation.source === 'owner_binding' && recommendedWorkspaceId !== e.view.workspaceRecommendation.workspaceId && <label className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm">
+            <input type="checkbox" checked={e.acknowledgeOwnerWorkspaceOverride} onChange={(event) => patch({ acknowledgeOwnerWorkspaceOverride: event.target.checked })} />
+            <span>我已核对手动选择的项目工作区与Owner绑定默认工作区不同，确认按此工作区继续准备。此确认会写入冻结预览与保存记录；改变工作区、岗位或计划步骤后需重新确认。</span>
+          </label>}
+          {e.view?.executionConfigurationRecommendation && <p className="text-xs text-muted-foreground">
+            Owner绑定默认配置建议：{e.view.executionConfigurationRecommendation.channelId} / {e.view.executionConfigurationRecommendation.modelId} / {e.view.executionConfigurationRecommendation.runtime}。仅用于核对，不修改员工配置；所有执行人员与Reviewer最终仍须使用相同配置。
+          </p>}
+          {e.view?.executionConfigurationRecommendationState === 'stale' && <p className="text-xs text-destructive">
+            Owner载体配置已不同于绑定时快照，已撤销默认配置建议。请重新核查并更新Owner绑定；绑定恢复有效前，准备服务会阻止预览。
+          </p>}
+          {e.view?.executionConfigurationRecommendation && (() => {
+            const recommendation = e.view.executionConfigurationRecommendation!
+            const selectedIds = [...new Set([...selectedRoleKeys.map((roleKey) => e.roleAssignments[roleKey]).filter(Boolean), e.reviewerEmployeeId])]
+            const selectedEmployees = selectedIds.map((employeeId) => choices?.employees.find((employee) => employee.id === employeeId)).filter(Boolean)
+            const conflict = selectedEmployees.some((employee) => employee!.channelId !== recommendation.channelId || employee!.modelId !== recommendation.modelId || employee!.runtime !== recommendation.runtime)
+            return conflict ? <label className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm">
+              <input type="checkbox" checked={e.acknowledgeOwnerConfigurationOverride} onChange={(event) => patch({ acknowledgeOwnerConfigurationOverride: event.target.checked })} />
+              <span>我已核对执行/评审配置与Owner绑定默认配置不同，确认按当前手动选择继续准备。此确认写入冻结预览与保存记录；修改人员、步骤或来源后需重新确认。</span>
+            </label> : null
+          })()}
           {e.executionKind === 'development' &&
             (['targetPathsText', 'allowedPathsText', 'verificationCommandsText'] as const).map(
               (k) => (
@@ -523,9 +589,11 @@ export function ProjectOwnerExecutionPreparationPanel({
           {!e.history.length && <p className="text-sm">暂无历史</p>}
         </section>
       )}
-      <ProjectOwnerTaskMaterializationPanel projectId={projectId} taskId={taskId} />
-      <ProjectOwnerRevalidationPanel projectId={projectId} taskId={taskId} />
-      <ProjectOwnerExecutionGrantPanel projectId={projectId} taskId={taskId} />
+      {showDownstream && <>
+        <ProjectOwnerTaskMaterializationPanel projectId={projectId} taskId={taskId} />
+        <ProjectOwnerRevalidationPanel projectId={projectId} taskId={taskId} />
+        <ProjectOwnerExecutionGrantPanel projectId={projectId} taskId={taskId} />
+      </>}
     </section>
   )
 }

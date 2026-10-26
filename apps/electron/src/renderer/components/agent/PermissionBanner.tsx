@@ -79,9 +79,10 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
 
   const request = requests[0] ?? null
   const hasRequest = request !== null
+  const batchPlan = React.useMemo(() => resolveBatchAllowPlan(requests), [requests])
 
   // 决策选项构建（根据工具类型决定是否展示"总是允许"）
-  const requiresPerActionApproval = request ? requiresPerActionApprovalTool(request.toolName) : false
+  const requiresPerActionApproval = request ? Boolean(request.requiresPerActionApproval) || requiresPerActionApprovalTool(request.toolName) : false
 
   const decisions = React.useMemo<Array<{ value: Decision; label: string; description: string }>>(() => {
     if (!request) return []
@@ -187,7 +188,6 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
   respondRef.current = respond
 
   // 批量放行：队首之后紧跟多个同类请求时，一键放行整个连续段
-  const batchPlan = React.useMemo(() => resolveBatchAllowPlan(requests), [requests])
   const hasToolInput = request ? Object.keys(request.toolInput).length > 0 : false
 
   const handleBatchAllow = async (): Promise<void> => {
@@ -235,7 +235,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
         <div className="flex items-center gap-2">
           <IconComponent className={`size-4 ${dangerStyle.iconColor}`} />
           <span className="text-sm font-semibold text-foreground">
-            {isDangerous ? '危险操作需要确认' : '工具调用需要确认'}
+            {request.requiresPerActionApproval ? 'Owner 动作需要逐次确认' : isDangerous ? '危险操作需要确认' : '工具调用需要确认'}
           </span>
           <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${dangerStyle.badgeClass}`}>
             {dangerStyle.label}
@@ -263,6 +263,11 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
 
       {/* 操作内容 */}
       <div className="px-4 pb-2 space-y-1.5">
+        {request.requiresPerActionApproval && (
+          <p className="rounded-md bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300">
+            只批准下面这一次精确操作。拒绝会留下本地审计记录，工具不会执行；此决定不会授权后续动作。
+          </p>
+        )}
         {request.sdkTitle && (
           <p className="text-sm text-foreground">{request.sdkTitle}</p>
         )}
@@ -281,7 +286,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
               {request.command}
             </pre>
           </div>
-        ) : hasToolInput && !request.sdkTitle ? (
+        ) : hasToolInput && (!request.sdkTitle || request.requiresPerActionApproval) ? (
           <div className="rounded-lg bg-muted/40 p-2.5">
             <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
               <FileCode2 className="size-3" />

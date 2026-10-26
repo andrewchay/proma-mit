@@ -15,7 +15,7 @@ let fail = false
 let captured: Record<string, unknown>[] = []
 let release: (() => void) | undefined
 let block = false
-const source = { binding: { modelId: 'bound-model', runtime: 'ai-sdk', workspaceId: 'ws', channelId: 'channel' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' }, sessionId: 'owner' }
+const source = { binding: { modelId: 'bound-model', runtime: 'ai-sdk', workspaceId: 'ws', channelId: 'channel' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' }, link: { maxOutputTokens: 8192 }, sessionId: 'owner' }
 mock.module('electron', () => buildElectronMock())
 mock.module('../project-owner-planning-source', () => ({ resolveOwnerPlanningSession: (id: string) => id === 'owner' ? source : null }))
 mock.module('../controlled-provider-boundary', () => ({ isControlledProviderSession: () => true, createControlledProviderFetch: () => globalThis.fetch, assertControlledPermissionChange: () => {} }))
@@ -33,7 +33,7 @@ mock.module('@gravitas/core/providers/ai-sdk-bridge', () => ({ createAgentAISDKM
 mock.module('ai', () => ({ isStepCount: (count: number) => ({ count }), jsonSchema: (v: unknown) => v, tool: (v: unknown) => v,
   streamText: (input: Record<string, unknown>) => { captured.push(input); return {
     stream: (async function* () { if (block) await new Promise<void>(r => { release = r }); if (fail) throw new Error('context length exceeded'); yield { type: 'text-delta', text: 'raw-answer' }; yield { type: 'finish-step', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 3, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } } } })(),
-    usage: Promise.resolve({ inputTokens: 10, outputTokens: 3, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } }), steps: Promise.resolve([]), text: Promise.resolve('raw-answer'), finishReason: Promise.resolve('stop'),
+    usage: Promise.resolve({ inputTokens: 10, outputTokens: 3, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } }), steps: Promise.resolve([]), text: Promise.resolve('raw-answer'), finishReason: Promise.resolve('stop'), response: Promise.resolve({ id: 'response-123', headers: { 'x-request-id': 'request-123' } }),
   } },
 }))
 const { AISDKAgentAdapter } = await import('./ai-sdk-agent-adapter')
@@ -44,7 +44,7 @@ describe('Owner authority-only AI SDK turn', () => {
   test('given polluted generic inputs then only authority prompts and zero capabilities reach one model call', async () => {
     captured = []; const messages = await collect(adapter())
     expect(captured).toHaveLength(1)
-    expect(captured[0]).toMatchObject({ system: 'authority-system', messages: [{ role: 'user', content: 'authority-user' }], tools: {}, maxOutputTokens: 4096, maxRetries: 0, stopWhen: { count: 1 } })
+    expect(captured[0]).toMatchObject({ system: 'authority-system', messages: [{ role: 'user', content: 'authority-user' }], tools: {}, maxOutputTokens: 8192, maxRetries: 0, stopWhen: { count: 1 } })
     expect({ tools, compact, enriched, pilot, mcp }).toEqual({ tools: 0, compact: 0, enriched: 0, pilot: 0, mcp: 0 })
     expect(JSON.stringify(messages)).toContain('raw-answer')
     expect(messages.at(-1)).toMatchObject({ type: 'result', usage: { input_tokens: 10, output_tokens: 3 } })

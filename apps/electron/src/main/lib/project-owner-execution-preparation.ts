@@ -1,6 +1,9 @@
-import { listAgentWorkspaces } from './agent-workspace-manager'
+import { getWorkspaceCapabilities, listAgentWorkspaces } from './agent-workspace-manager'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
-import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
+import { validateControlledTarget } from './agent-controlled-context'
+import { validateDevelopmentTarget } from './agent-development-context'
+import { getChannelById } from './channel-manager'
+import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
 import { readCatalog } from './knowledge-catalog-service'
 /** 追加式来源准备，不是授权账本；保存永远不调用Runner/Provider或创建业务Task。 */
 import { randomUUID } from 'node:crypto'
@@ -77,6 +80,7 @@ function history(projectId: string): OwnerExecutionPreparationRecord[] {
         'contextFingerprint',
         'plan',
         'selectedStepKeys',
+        'toolRecommendations',
         'roleAssignments',
         'executor',
         'reviewer',
@@ -167,18 +171,35 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
     throw new Error('Owner执行准备主体不存在')
   const policy = getPilotPolicy(subject.projectId)
   const ownerBinding = getOwnerRuntimeBinding(subject.projectId)
-  const workspaces = listAgentWorkspaces()
-    .filter((workspace) => hasProjectWorkspaceBinding(subject.projectId, workspace.id))
-    .map(({ id, name }) => ({ id, name }))
+  const allWorkspaces = listAgentWorkspaces()
+  const workspaceById = new Map(allWorkspaces.map((workspace) => [workspace.id, workspace]))
+  const boundWorkspaces = allWorkspaces.filter((workspace) => hasProjectWorkspaceBinding(subject.projectId, workspace.id))
+  const workspaces = boundWorkspaces.map(({ id, name }) => ({ id, name }))
+  const workspaceCapabilities = boundWorkspaces.map((workspace) => {
+    const capabilities = getWorkspaceCapabilities(workspace.slug)
+    return {
+      workspaceId: workspace.id,
+      mcpServers: capabilities.mcpServers.filter((server) => server.enabled).map(({ name, type }) => ({ name, type })),
+      skills: capabilities.skills.filter((skill) => skill.enabled).map(({ slug, name, description }) => ({ slug, name, ...(description ? { description } : {}) })),
+    }
+  })
   const projectWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id))
+  const targetFacts = { getChannel: getChannelById, getWorkspace: (id: string) => workspaceById.get(id) }
   const employees = listAgentEmployees()
     .filter(
       (employee) =>
         employee.enabled &&
         ['controlled', 'development'].includes(employee.executionProfile ?? 'general') &&
-        (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).some((id) =>
-          projectWorkspaceIds.has(id),
-        ),
+        (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).some((id) => {
+          if (!projectWorkspaceIds.has(id)) return false
+          try {
+            if ((employee.executionProfile ?? 'general') === 'development') validateDevelopmentTarget(employee, id, targetFacts)
+            else validateControlledTarget(employee, id, targetFacts)
+            return true
+          } catch {
+            return false
+          }
+        }),
     )
     .map((employee) => ({
       id: employee.id,
@@ -205,8 +226,39 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
   const knowledgeSources = catalog.sources
     .filter((source) => source.enabled && sourceIds.has(source.id))
     .map(({ id, name }) => ({ id, name }))
+  let workspaceRecommendation: OwnerExecutionPreparationView['workspaceRecommendation']
+  let executionConfigurationRecommendation: OwnerExecutionPreparationView['executionConfigurationRecommendation'] = null
+  let executionConfigurationRecommendationState: OwnerExecutionPreparationView['executionConfigurationRecommendationState'] = 'none'
+  if (ownerBinding) {
+    try {
+      const facts = getOwnerCarrierFacts(subject.projectId, ownerBinding.carrierId, ownerBinding.workspaceId)
+      if (ownerCarrierBindingMatches(ownerBinding, facts)) {
+        workspaceRecommendation = { workspaceId: ownerBinding.workspaceId, source: 'owner_binding' }
+        executionConfigurationRecommendation = {
+          channelId: ownerBinding.channelId,
+          modelId: ownerBinding.modelId,
+          runtime: ownerBinding.runtime,
+          source: 'owner_binding',
+        }
+        executionConfigurationRecommendationState = 'current'
+      } else {
+        workspaceRecommendation = { source: 'owner_binding_unavailable' }
+        executionConfigurationRecommendationState = 'stale'
+      }
+    } catch {
+      workspaceRecommendation = { source: 'owner_binding_unavailable' }
+      executionConfigurationRecommendationState = 'stale'
+    }
+  } else if (workspaces.length === 1) {
+    workspaceRecommendation = { workspaceId: workspaces[0]!.id, source: 'unique_project_workspace' }
+  } else {
+    workspaceRecommendation = { source: workspaces.length ? 'ambiguous' : 'none' }
+  }
   const view: OwnerExecutionPreparationView = {
-    choices: { employees, workspaces, knowledgeSources },
+    choices: { employees, workspaces, workspaceCapabilities, knowledgeSources },
+    workspaceRecommendation,
+    executionConfigurationRecommendation,
+    executionConfigurationRecommendationState,
     revision: preparation?.revision ?? 0,
     policyRevision: policy?.revision ?? null,
     preparation,
@@ -295,11 +347,12 @@ export function saveOwnerExecutionPreparation(
   }
   // 预检没有持久化副作用；在policy锁内/DB事务中再次核查，JSON失败时保留未应用证据。
   let saved: OwnerExecutionPreparationRecord | undefined
-  saveOwnerPreparationPolicy(subject.projectId, input.expectedPolicyRevision, (policyRevision) => {
+  saveOwnerPreparationPolicy(subject.projectId, input.expectedPolicyRevision, (policyRevision, validateReplacementPlanFingerprint) => {
+    const preview = previewOwnerExecutionPreparation(subject, input)
+    if (preview.previewFingerprint !== previewFingerprint)
+      throw new OwnerExecutionPreparationConflictError('Owner预览来源已更新，请重新确认')
+    validateReplacementPlanFingerprint(preview.planFingerprint)
     getProjectDb().transaction(() => {
-      const preview = previewOwnerExecutionPreparation(subject, input)
-      if (preview.previewFingerprint !== previewFingerprint)
-        throw new OwnerExecutionPreparationConflictError('Owner预览来源已更新，请重新确认')
       const previous = history(subject.projectId).at(-1)
       const { input: _input, previewFingerprint: _fingerprint, ...source } = preview
       const body = {

@@ -29,11 +29,14 @@ export interface OwnerExecutionEditor {
   error: string
   requestId: string
   editVersion: number
+  pendingSaveInput: OwnerExecutionPreparationInput | null
   selectedStepKeys: string[]
   executionKind: 'development' | 'controlled'
   executorEmployeeId: string
   reviewerEmployeeId: string
   roleAssignments: Record<string, string>
+  acknowledgeOwnerConfigurationOverride: boolean
+  acknowledgeOwnerWorkspaceOverride: boolean
   roleBudgetCapsEnabled: boolean
   roleBudgetCapTexts: Record<string, string>
   workspaceId: string
@@ -63,11 +66,14 @@ const empty: OwnerExecutionEditor = {
   error: '',
   requestId: '',
   editVersion: 0,
+  pendingSaveInput: null,
   selectedStepKeys: [],
   executionKind: 'controlled',
   executorEmployeeId: '',
   reviewerEmployeeId: '',
   roleAssignments: {},
+  acknowledgeOwnerConfigurationOverride: false,
+  acknowledgeOwnerWorkspaceOverride: false,
   roleBudgetCapsEnabled: false,
   roleBudgetCapTexts: {},
   workspaceId: '',
@@ -127,6 +133,8 @@ export type OwnerExecutionEdit = Partial<
     | 'executorEmployeeId'
     | 'reviewerEmployeeId'
     | 'roleAssignments'
+    | 'acknowledgeOwnerConfigurationOverride'
+    | 'acknowledgeOwnerWorkspaceOverride'
     | 'roleBudgetCapsEnabled'
     | 'roleBudgetCapTexts'
     | 'workspaceId'
@@ -143,14 +151,19 @@ export type OwnerExecutionEdit = Partial<
 >
 export const editOwnerExecutionAtom = atom(
   null,
-  (get, set, { subject, patch }: { subject: ProjectOwnerGoalSubject; patch: OwnerExecutionEdit }) =>
+  (get, set, { subject, patch }: { subject: ProjectOwnerGoalSubject; patch: OwnerExecutionEdit }) => {
+    const invalidatesOverride = ['workspaceId', 'roleAssignments', 'reviewerEmployeeId', 'executorEmployeeId', 'executionKind', 'selectedStepKeys']
+      .some((field) => Object.prototype.hasOwnProperty.call(patch, field))
     update(get, set, subject, {
       ...patch,
+      ...(invalidatesOverride ? { acknowledgeOwnerConfigurationOverride: false, acknowledgeOwnerWorkspaceOverride: false } : {}),
       preview: null,
       requestId: crypto.randomUUID(),
       editVersion: read(get, subject).editVersion + 1,
+      pendingSaveInput: null,
       dirty: true,
-    }),
+    })
+  },
 )
 export function parseOwnerExecutionInteger(text: string): number | null {
   if (!/^(0|[1-9]\d*)$/.test(text)) return null
@@ -211,7 +224,7 @@ export function ownerExecutionInput(
   const runs = parseOwnerExecutionInteger(e.maxRunsText)
   const rework = parseOwnerExecutionInteger(e.maxReworkText)
   const expiresAt = expiry(e.expiresAtText)
-  const workspaceId = e.workspaceId || (e.view.choices.workspaces.length === 1 ? e.view.choices.workspaces[0]!.id : '')
+  const workspaceId = e.workspaceId || e.view.workspaceRecommendation.workspaceId || (e.view.choices.workspaces.length === 1 ? e.view.choices.workspaces[0]!.id : '')
   const selected = new Set(e.selectedStepKeys)
   if (
     !selected.size ||
@@ -257,6 +270,13 @@ export function ownerExecutionInput(
     || reviewer.executionProfile !== e.executionKind || !reviewer.workspaceIds.includes(workspaceId)
     || !executor.modelId || reviewer.channelId !== executor.channelId || reviewer.modelId !== executor.modelId || reviewer.runtime !== executor.runtime)
     return null
+  const ownerConfiguration = e.view.executionConfigurationRecommendation
+  const ownerConfigurationConflict = Boolean(ownerConfiguration && [...roleEmployees, reviewer].some((employee) =>
+    employee && (employee.channelId !== ownerConfiguration.channelId || employee.modelId !== ownerConfiguration.modelId || employee.runtime !== ownerConfiguration.runtime)))
+  if (ownerConfigurationConflict && !e.acknowledgeOwnerConfigurationOverride) return null
+  const ownerWorkspaceConflict = e.view.workspaceRecommendation.source === 'owner_binding'
+    && workspaceId !== e.view.workspaceRecommendation.workspaceId
+  if (ownerWorkspaceConflict && !e.acknowledgeOwnerWorkspaceOverride) return null
   if (
     new Set(e.knowledgeSourceIds).size !== e.knowledgeSourceIds.length ||
     !e.knowledgeSourceIds.every((id) => e.view?.choices.knowledgeSources.some((v) => v.id === id))
@@ -296,6 +316,8 @@ export function ownerExecutionInput(
     executorEmployeeId,
     reviewerEmployeeId: reviewer.id,
     roleAssignments: roleAssignments.map(({ roleKey, employeeId }) => ({ roleKey, employeeId })),
+    ...(e.acknowledgeOwnerConfigurationOverride ? { acknowledgeOwnerConfigurationOverride: true } : {}),
+    ...(e.acknowledgeOwnerWorkspaceOverride ? { acknowledgeOwnerWorkspaceOverride: true } : {}),
     ...(roleBudgetCaps.length ? { roleBudgetCaps } : {}),
     workspaceId,
     knowledgeSourceIds: [...e.knowledgeSourceIds].sort(),
@@ -326,7 +348,8 @@ function sameInput(
       'roleBudgetCaps',
       'roleKey',
       'employeeId',
-      'maxCostMicros',
+      'acknowledgeOwnerConfigurationOverride',
+      'acknowledgeOwnerWorkspaceOverride',
       'workspaceId',
       'knowledgeSourceIds',
       'maxCostMicros',
@@ -373,13 +396,20 @@ export const loadOwnerExecutionAtom = atom(null, async (get, set, s: ProjectOwne
     const result = await get(ownerExecutionApiAtom).getOwnerExecutionPreparation(s)
     if (!result.ok) throw new Error(result.error.message)
     const current = read(get, s)
+    const saved = result.value.preparation
+    if (saved) { assertSubject(saved, s); assertSubject(saved.source, s) }
+    const recoveredSave = Boolean(saved && current.pendingSaveInput && sameInput(saved.input, current.pendingSaveInput)
+      && current.requestId === saved.input.requestId
+      && saved.source.planFingerprint === getOwnerPlanEditor(get(ownerPlanEditorsAtom), s).snapshot?.planFingerprint)
     const changed = Boolean(
       before.view && JSON.stringify(before.view) !== JSON.stringify(result.value),
     )
     update(get, set, s, {
       view: result.value,
+      ...(changed ? { acknowledgeOwnerConfigurationOverride: false, acknowledgeOwnerWorkspaceOverride: false } : {}),
       loaded: true,
-      requiresReview: current.requiresReview || (current.dirty && (!before.view || changed)),
+      requiresReview: recoveredSave || current.requiresReview || (current.dirty && (!before.view || changed)),
+      ...(recoveredSave ? { dirty: false, pendingSaveInput: null, error: '' } : {}),
       requestId: current.requestId || crypto.randomUUID(),
     })
   } catch (error) {
@@ -441,7 +471,7 @@ export const saveOwnerExecutionAtom = atom(null, async (get, set, s: ProjectOwne
   const before = read(get, s)
   const input = ownerExecutionInput(get, s)
   if (!input || !before.preview) return
-  update(get, set, s, { saving: true, error: '' })
+  update(get, set, s, { saving: true, error: '', pendingSaveInput: input })
   try {
     const result = await get(ownerExecutionApiAtom).saveOwnerExecutionPreparation({
       ...s,
@@ -451,6 +481,7 @@ export const saveOwnerExecutionAtom = atom(null, async (get, set, s: ProjectOwne
     if (!result.ok) {
       update(get, set, s, {
         error: result.error.message,
+        pendingSaveInput: null,
         preview: null,
         requiresReview: true,
         loaded: false,
@@ -466,7 +497,9 @@ export const saveOwnerExecutionAtom = atom(null, async (get, set, s: ProjectOwne
       loaded: false,
       historyLoaded: false,
       dirty: current.editVersion !== before.editVersion,
-      requiresReview: true,
+      pendingSaveInput: null,
+      requiresReview: current.editVersion !== before.editVersion || !ownerExecutionPlanReady(get, s)
+        || getOwnerPlanEditor(get(ownerPlanEditorsAtom), s).snapshot?.planFingerprint !== result.value.source.planFingerprint,
       view: current.view
         ? {
             ...current.view,

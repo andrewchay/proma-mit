@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { derivePilotRequestEnvelope, pilotRequestFingerprint, registerPilotPriceEvidenceForTests }
   from './project-pilot-request-evidence'
+import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 
 const evidence = {
   evidenceId: 'approved-ev', providerKind: 'openai' as const, model: 'model-a',
@@ -8,6 +9,18 @@ const evidence = {
   maxModelInputTokens: 4_000, maxModelOutputTokens: 200, reviewedAt: '2026-09-28', source: 'test-fixture',
 }
 registerPilotPriceEvidenceForTests(evidence)
+
+test('Given官方DeepSeek Flash价格记录 When按模型与协议查找 Then使用峰时费率上界且未知模型不匹配', () => {
+  expect(getPilotReviewedPriceEvidenceForModel('deepseek-flash', 'openai')).toMatchObject({
+    evidenceId: 'deepseek-flash-2026-10-17',
+    inputMicrosPerMillion: 300_000,
+    outputMicrosPerMillion: 1_200_000,
+    maxModelInputTokens: 1_000_000,
+    maxModelOutputTokens: 384_000,
+  })
+  expect(getPilotReviewedPriceEvidenceForModel('deepseek-flash', 'anthropic')).toBeUndefined()
+  expect(getPilotReviewedPriceEvidenceForModel('unreviewed-model', 'openai')).toBeUndefined()
+})
 
 test('Given 未审核价格 ID When 生成请求包络 Then 一律拒绝', () => {
   expect(() => derivePilotRequestEnvelope({ body: '{"model":"model-a","max_tokens":10}', priceEvidenceId: 'forged' }))

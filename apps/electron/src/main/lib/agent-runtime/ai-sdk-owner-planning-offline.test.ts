@@ -12,7 +12,7 @@ const { AISDKRuntimeCore } = await import('./ai-sdk-runtime-core')
 function input(fetchFn: typeof globalThis.fetch): AISDKAgentTurnInput {
   return { sessionId: 'owner', prompt: 'evil', systemPrompt: 'evil', modelId: 'offline-model', provider: 'openai', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: dir,
     runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 20, maxRetries: 9,
-    ownerPlanningRequest: { systemPrompt: 'authority-system', userPrompt: 'authority-user' }, fetchFn,
+    ownerPlanningRequest: { systemPrompt: 'authority-system', userPrompt: 'authority-user', maxOutputTokens: 8192 }, fetchFn,
     historyMessages: [{ type: 'user', message: { content: 'evil-history' } } as never], attachments: [{ localPath: '/should/not/read', mediaType: 'text/plain' } as never], workspaceSlug: 'evil',
   }
 }
@@ -25,14 +25,28 @@ describe('Owner real AI SDK offline serialization', () => {
         'data: {"id":"offline","object":"chat.completion.chunk","created":1,"model":"offline-model","choices":[{"index":0,"delta":{"content":"raw-answer"},"finish_reason":null}]}',
         'data: {"id":"offline","object":"chat.completion.chunk","created":1,"model":"offline-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}',
         'data: [DONE]', '',
-      ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
+      ].join('\n\n'), { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'provider-req-123', 'x-private-debug': 'must-not-persist' } })
     }) as typeof globalThis.fetch
     const messages = await new AISDKRuntimeCore().runAgentTurn(input(fetchFn))
     expect(bodies).toHaveLength(1)
-    expect(bodies[0]).toMatchObject({ model: 'offline-model', max_tokens: 4096, messages: [{ role: 'system', content: 'authority-system' }, { role: 'user', content: 'authority-user' }] })
+    expect(bodies[0]).toMatchObject({ model: 'offline-model', max_tokens: 8192, messages: [{ role: 'system', content: 'authority-system' }, { role: 'user', content: 'authority-user' }] })
     expect(bodies[0]?.tools).toBeUndefined()
     expect(JSON.stringify(bodies)).not.toContain('evil')
-    expect(messages.at(-1)).toMatchObject({ type: 'result', result: 'raw-answer', finish_reason: 'stop', usage: { input_tokens: 12, output_tokens: 4 } })
+    expect(messages.at(-1)).toMatchObject({ type: 'result', result: 'raw-answer', finish_reason: 'stop', provider_request_id: 'provider-req-123', provider_response_id: 'offline', usage: { input_tokens: 12, output_tokens: 4 } })
+    expect(JSON.stringify(messages.at(-1))).not.toContain('must-not-persist')
+  })
+  test('given frozen GLM-5.3 Owner low-effort protocol then the actual OpenAI payload contains reasoning_effort low', async () => {
+    let body: Record<string, unknown> | undefined
+    const fetchFn = (async (_url, init) => {
+      body = JSON.parse(String(init?.body))
+      return new Response([
+        'data: {"id":"glm-low","object":"chat.completion.chunk","created":1,"model":"glm-5.3-flash","choices":[{"index":0,"delta":{"content":"raw-answer"},"finish_reason":null}]}',
+        'data: {"id":"glm-low","object":"chat.completion.chunk","created":1,"model":"glm-5.3-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16}}',
+        'data: [DONE]', '',
+      ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
+    }) as typeof globalThis.fetch
+    await new AISDKRuntimeCore().runAgentTurn({ ...input(fetchFn), provider: 'zhipu', modelId: 'glm-5.3-flash', ownerPlanningRequest: { systemPrompt: 'authority-system', userPrompt: 'authority-user', maxOutputTokens: 8192, reasoningEffort: 'low' } })
+    expect(body).toMatchObject({ model: 'glm-5.3-flash', max_tokens: 8192, reasoning_effort: 'low' })
   })
   test('given Anthropic then real SDK maps 4096 to max_tokens without tools', async () => {
     let body: Record<string, unknown> | undefined
@@ -49,7 +63,7 @@ describe('Owner real AI SDK offline serialization', () => {
       return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } })
     }) as typeof globalThis.fetch
     const messages = await new AISDKRuntimeCore().runAgentTurn({ ...input(fetchFn), provider: 'anthropic', protocol: 'anthropic-messages' })
-    expect(body).toMatchObject({ max_tokens: 4096, system: [{ type: 'text', text: 'authority-system' }], messages: [{ role: 'user', content: [{ type: 'text', text: 'authority-user' }] }] })
+    expect(body).toMatchObject({ max_tokens: 8192, system: [{ type: 'text', text: 'authority-system' }], messages: [{ role: 'user', content: [{ type: 'text', text: 'authority-user' }] }] })
     expect(body?.tools).toBeUndefined()
     expect(messages.at(-1)).toMatchObject({ result: 'raw-answer', usage: { input_tokens: 12, output_tokens: 4 } })
   })
@@ -60,7 +74,7 @@ describe('Owner real AI SDK offline serialization', () => {
       return new Response('data: ' + JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'raw-answer' }] }, finishReason: 'STOP', index: 0 }], usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, totalTokenCount: 16 } }) + '\n\n', { headers: { 'content-type': 'text/event-stream' } })
     }) as typeof globalThis.fetch
     const messages = await new AISDKRuntimeCore().runAgentTurn({ ...input(fetchFn), provider: 'google', protocol: 'google-generative' })
-    expect(body).toMatchObject({ generationConfig: { maxOutputTokens: 4096 }, systemInstruction: { parts: [{ text: 'authority-system' }] }, contents: [{ role: 'user', parts: [{ text: 'authority-user' }] }] })
+    expect(body).toMatchObject({ generationConfig: { maxOutputTokens: 8192 }, systemInstruction: { parts: [{ text: 'authority-system' }] }, contents: [{ role: 'user', parts: [{ text: 'authority-user' }] }] })
     expect(body?.tools).toBeUndefined()
     expect(messages.at(-1)).toMatchObject({ result: 'raw-answer', usage: { input_tokens: 12, output_tokens: 4 } })
   })
@@ -93,6 +107,12 @@ describe('Owner real AI SDK offline serialization', () => {
 test('given Owner收紧字段但无fetch出口 then 不回退普通自由Caller', async () => {
   const supplied = input(Object.assign(async () => new Response('unused'), { preconnect: () => {} }))
   await expect(new AISDKRuntimeCore().runAgentTurn({ ...supplied, fetchFn: undefined })).rejects.toThrow('受控模型出口')
+})
+test('given Owner输出上限不属于冻结协议 then 不触发HTTP请求', async () => {
+  let calls = 0
+  const fetchFn = Object.assign(async () => { calls++; return new Response('unused') }, { preconnect: () => {} }) as typeof globalThis.fetch
+  await expect(new AISDKRuntimeCore().runAgentTurn({ ...input(fetchFn), ownerPlanningRequest: { systemPrompt: 'authority-system', userPrompt: 'authority-user', maxOutputTokens: 5000 } })).rejects.toThrow('输出上限')
+  expect(calls).toBe(0)
 })
 test('given Provider未报告usage then Owner专用证据保留unknown而非兼容0，length保留文本但不success', async () => {
   for (const reason of ['stop', 'length']) {

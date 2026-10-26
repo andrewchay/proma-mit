@@ -8,7 +8,7 @@ import { ProjectOwnerGoalPanel } from './ProjectOwnerGoalPanel'
 function render(state: Partial<ReturnType<typeof import('../../atoms/project-owner-goal-atoms').getOwnerGoalEditor>> = {}) {
   const store = createStore()
   store.set(ownerGoalEditorsAtom, new Map([['["a",null]', {
-    snapshot: null, objective: '', constraintsText: '', criteriaText: '', dirty: false,
+    snapshot: null, objective: '', constraintsText: '', criteriaText: '', codeSourceAccess: 'none', dirty: false,
     loaded: false, loading: false, saving: false, conflict: false, requiresReview: false,
     editVersion: 0, error: '', ...state,
   }]]))
@@ -23,6 +23,13 @@ test('目标表单仅目标必填，缺配置可编辑但加载完成前禁止�
   expect(html).toContain('必要约束与完成标准（可选）')
   expect(html).toContain('不会调用模型')
   expect(html).not.toContain('placeholder="文件路径')
+})
+
+test('任务目标源码检索需要显式勾选并说明片段会发送给模型', () => {
+  const store = createStore()
+  const html = renderToStaticMarkup(createElement(Provider, { store }, createElement(ProjectOwnerGoalPanel, { projectId: 'a', taskId: 'task-1' })))
+  expect(html).toContain('允许Owner检索当前绑定工作区的代码')
+  expect(html).toContain('片段会随规划请求发送给当前受控模型')
 })
 test('冲突与加载失败提示保留输入，不展示模型已运行或启动授权', () => {
   const html = render({ objective: '保留我的输入', dirty: true, loaded: true, conflict: true, error: '已更新' })

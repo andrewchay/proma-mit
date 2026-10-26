@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react'
-import { atom, useAtomValue } from 'jotai'
+import { atom, useAtom, useAtomValue } from 'jotai'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from '../../atoms/project-owner-goal-atoms'
 import { getOwnerPlanEditor, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
 import { getOwnerRuntimeEditor, ownerRuntimeEditorsAtom } from '../../atoms/project-owner-runtime-atoms'
+import type { ProjectOwnerPlanDraft } from '@gravitas/shared'
+import { isLatestOwnerRunCurrent } from './project-owner-run-current'
 import { ProjectOwnerGoalPanel } from './ProjectOwnerGoalPanel'
 import { ProjectOwnerPlanPanel } from './ProjectOwnerPlanPanel'
 import { ProjectOwnerRuntimePanel } from './ProjectOwnerRuntimePanel'
+import { ProjectOwnerConversation } from './ProjectOwnerConversation'
 
 const outcomeLabels = {
   proposed: '已生成待审提案',
@@ -42,6 +45,9 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
   const [goalOpen, setGoalOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [planOpen, setPlanOpen] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 切换项目时重建折叠状态，避免隐式挂载上个项目的高级表单。
+  const advancedAtom = useMemo(() => atom(false), [projectId])
+  const [advancedOpen, setAdvancedOpen] = useAtom(advancedAtom)
 
   const latestRun = runtime.runs[0]
   const latestExecution = latestRun?.executions[0]
@@ -52,10 +58,9 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
     ? latestRun?.receipts.find(receipt => receipt.executionId === latestExecution.id)
     : undefined
   const latestRunCurrent = Boolean(latestRun && !runtime.loading && runtime.context && runtime.binding
-    && latestRun.link.goalRevision === goal.snapshot?.revision
-    && latestRun.link.planRevision === (plan.snapshot?.revision ?? 0)
-    && latestRun.link.bindingRevision === runtime.binding.revision
-    && latestRun.link.contextFingerprint === runtime.context.fingerprint)
+    && isLatestOwnerRunCurrent({ link: latestRun.link, executionId: latestExecution?.id, outcome: latestOutcome,
+      goalRevision: goal.snapshot?.revision, plan: plan.snapshot, bindingRevision: runtime.binding.revision,
+      contextFingerprint: runtime.context.fingerprint }))
   const needsReconciliation = latestOutcome?.state === 'unknown' || latestOutcome?.state === 'failed'
     || latestOutcome?.state === 'stopped' || latestReceipt?.cost.source === 'unknown'
   const projectStage = !goal.snapshot ? '目标待保存'
@@ -64,6 +69,7 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
     : latestRun && !latestRunCurrent ? '历史规划来源已变化'
     : latestOutcome ? outcomeLabels[latestOutcome.state]
     : latestExecution ? executionLabels[latestExecution.status]
+    : latestRun ? '规划准备已就绪'
     : plan.snapshot ? planLabel(plan.snapshot.state)
     : '规划提案待准备'
   const nextAction = !goal.snapshot ? '先记录项目目标'
@@ -73,7 +79,7 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
     : latestRun && !latestRunCurrent ? '核对规划来源是否仍匹配'
     : plan.snapshot?.state === 'proposed' ? '审阅规划提案'
     : plan.snapshot?.state === 'stale' ? '检查已变化的计划来源'
-    : !plan.snapshot ? '准备一次目标规划'
+    : !plan.snapshot ? latestRun ? '确认本次规划范围与费用' : '准备一次目标规划'
     : '检查已确认计划，再准备执行授权'
   const nextDetail = !goal.snapshot
     ? '保存目标草案只记录本地内容，不会调用模型、扣费或派发任务。'
@@ -99,7 +105,10 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
       </div>
     </header>
 
-    <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,.9fr)]">
+    <ProjectOwnerConversation projectId={projectId} />
+    <details className="rounded-2xl bg-card p-5 shadow-sm" open={advancedOpen} onToggle={event => setAdvancedOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm font-medium text-muted-foreground">项目详情与高级设置</summary>
+    {advancedOpen && <div className="mt-4 grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,.9fr)]">
       <div className="min-w-0 space-y-4">
         <article className="rounded-2xl bg-card p-5 shadow-sm sm:p-6" aria-label="项目目标摘要">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -189,7 +198,7 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
         <article className="rounded-2xl bg-card p-5 shadow-sm" aria-label="最新模型调用摘要">
           <div className="flex items-start justify-between gap-3"><div><h2 className="font-semibold">最近一次规划</h2><p className="mt-1 text-xs text-muted-foreground">费用信息只显示可信回执；缺失时保持未知</p></div><span className={`rounded-full px-2.5 py-1 text-xs ${needsReconciliation ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-muted'}`}>{latestReceipt?.cost.source === 'runtime_reported' && latestReceipt.cost.usd !== null ? `Runtime 报告 USD ${latestReceipt.cost.usd}` : latestReceipt ? '费用 unknown' : '尚无请求记录'}</span></div>
           {latestExecution
-            ? <div className="mt-4 space-y-2 text-sm"><p>{latestOutcome ? latestRunCurrent ? outcomeLabels[latestOutcome.state] : `历史记录 · 来源已变化 · ${outcomeLabels[latestOutcome.state]}` : executionLabels[latestExecution.status]}</p><p className="break-all text-xs text-muted-foreground">Run {latestExecution.id}</p>{latestReceipt && <p className="text-xs text-muted-foreground">输入 token {latestReceipt.usage?.inputTokens ?? '未知'} · 输出 token {latestReceipt.usage?.outputTokens ?? '未知'} · Provider request ID 未提供</p>}</div>
+            ? <div className="mt-4 space-y-2 text-sm"><p>{latestOutcome ? latestRunCurrent ? outcomeLabels[latestOutcome.state] : `历史记录 · 来源已变化 · ${outcomeLabels[latestOutcome.state]}` : executionLabels[latestExecution.status]}</p><p className="break-all text-xs text-muted-foreground">Run {latestExecution.id}</p>{latestReceipt && <p className="break-all text-xs text-muted-foreground">输入 token {latestReceipt.usage?.inputTokens ?? '未知'} · 输出 token {latestReceipt.usage?.outputTokens ?? '未知'} · Provider request ID {latestReceipt.providerRequestId ?? '未提供'}{latestReceipt.providerResponseId ? ` · Provider response ID ${latestReceipt.providerResponseId}` : ''}</p>}</div>
             : <p className="mt-3 text-sm text-muted-foreground">{latestRun ? '已准备规划承载任务，尚无模型调用回执。' : '尚无规划请求。保存目标和配置不会发送模型请求。'}</p>}
           {latestOutcome && <p className="mt-3 text-sm text-muted-foreground">{latestOutcome.detail}</p>}
         </article>
@@ -203,6 +212,7 @@ export function ProjectOwnerHome({ projectId }: { projectId: string }): React.Re
           </details>
         </article>
       </aside>
-    </div>
+    </div>}
+    </details>
   </section>
 }

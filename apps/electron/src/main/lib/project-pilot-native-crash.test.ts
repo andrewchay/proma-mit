@@ -22,8 +22,9 @@ useFreshDataRoot()
 afterAll(() => { for (const dir of [stageRoot, ...dataRoots]) rmSync(dir, { recursive: true, force: true }) })
 
 const timeoutMs = 20_000
-const nodeBinary = process.env.PROMA_NATIVE_NODE_BINARY ?? (process.platform === 'win32'
-  ? 'node' : execFileSync('/usr/bin/which', ['node'], { encoding: 'utf8' }).trim())
+const nodeBinary = process.env.PROMA_NATIVE_NODE_BINARY ?? execFileSync(
+  'node', ['-p', 'process.execPath'], { encoding: 'utf8' },
+).trim()
 const electronBinary = join(import.meta.dir, '../../../../../node_modules/.bin/electron')
 const nativeModuleDir = join(import.meta.dir, '../../../../../node_modules/better-sqlite3')
 // 同步探测：Electron 固定二进制（run-as-node）能否加载生产 better-sqlite3 原生模块（Electron ABI）。
