@@ -760,7 +760,7 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
       </MessageContent>
       {/* 文件改动汇总：流式结束后展示本轮所有 Edit/Write/MultiEdit/NotebookEdit 文件 */}
       {!isStreaming && (
-        <TurnFileChangesSummary turnMessages={turn.turnMessages} basePath={basePath} />
+        <TurnFileChangesSummary turnMessages={turn.turnMessages} basePath={basePath} sessionId={sessionId} />
       )}
       {/* 操作栏：流式输出完成后显示操作按钮 */}
       {!isStreaming && (() => {
