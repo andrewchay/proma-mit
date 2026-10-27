@@ -1619,6 +1619,9 @@ function migrate(database: SqliteCompat): void {
   // 项目列表手动拖拽排序：sort_order 为 REAL，升序即展示顺序；
   // 回填 -created_at 保持历史"最新在前"的默认顺序不变
   const projectColumns = readColumnNames(database, 'projects')
+  if (!projectColumns.includes('archived_at')) {
+    database.exec(`ALTER TABLE projects ADD COLUMN archived_at INTEGER`)
+  }
   if (!projectColumns.includes('sort_order')) {
     database.exec(`ALTER TABLE projects ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
     database.exec(`UPDATE projects SET sort_order = -created_at WHERE sort_order = 0`)
@@ -1816,6 +1819,7 @@ function rowToProject(row: ProjectRow): Project {
     title: row.title,
     description: row.description,
     status: row.status as Project['status'],
+    archivedAt: row.archived_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.archived_at === null || row.archived_at === undefined ? {} : { archivedAt: row.archived_at }),
@@ -1921,6 +1925,34 @@ export function updateProject(id: string, updates: Partial<Omit<Project, 'id' | 
     `UPDATE projects SET title = ?, description = ?, status = ?, archived_at = ?, updated_at = ? WHERE id = ?`
   ).run(next.title, next.description, next.status, next.archived_at, next.updated_at, id)
   return rowToProject(next)
+}
+
+/** 软归档项目，保留任务、历史和 Owner 记录。 */
+export function archiveProject(id: string): Project | null {
+  const database = getProjectDb()
+  const project = getProject(id)
+  if (!project) return null
+  if (project.archivedAt) return project
+  const archivedAt = now()
+  database.transaction(() => {
+    database.prepare('UPDATE projects SET archived_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL').run(archivedAt, archivedAt, id)
+    recordProjectActivity({ projectId: id, entityType: 'project', entityId: id, action: 'archived', summary: `归档项目「${project.title}」` })
+  })()
+  return getProject(id)
+}
+
+/** 取消软归档，不触碰项目任务。 */
+export function restoreProject(id: string): Project | null {
+  const database = getProjectDb()
+  const project = getProject(id)
+  if (!project) return null
+  if (!project.archivedAt) return project
+  const restoredAt = now()
+  database.transaction(() => {
+    database.prepare('UPDATE projects SET archived_at = NULL, updated_at = ? WHERE id = ? AND archived_at IS NOT NULL').run(restoredAt, id)
+    recordProjectActivity({ projectId: id, entityType: 'project', entityId: id, action: 'restored', summary: `取消归档项目「${project.title}」` })
+  })()
+  return getProject(id)
 }
 
 /**
@@ -2180,7 +2212,11 @@ export function getTask(id: string): Task | null {
 export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): Task | null {
   return updateTaskInternal(id, updates, false)
 }
-function updateTaskInternal(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>, ownerMaterialization: boolean): Task | null {
+/** 待办建议确认写入专用：不唤醒Owner自主调度或员工派发。 */
+export function updateTaskWithoutOwnerScheduleWake(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>): Task | null {
+  return updateTaskInternal(id, updates, false, false)
+}
+function updateTaskInternal(id: string, updates: Partial<Omit<Task, 'id' | 'projectId' | 'createdAt'>>, ownerMaterialization: boolean, wakeOwnerSchedule = true): Task | null {
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow | undefined
   if (!existing) return null
@@ -2272,7 +2308,7 @@ function updateTaskInternal(id: string, updates: Partial<Omit<Task, 'id' | 'proj
     summary: `更新任务「${next.title}」`,
   })
   const updated = rowToTask(next)
-  requestOwnerAutonomousScheduleWake(next.project_id)
+  if (wakeOwnerSchedule) requestOwnerAutonomousScheduleWake(next.project_id)
   return updated
 }
 

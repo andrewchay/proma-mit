@@ -320,13 +320,52 @@ export interface ProjectAlert {
 export interface ProjectActivity {
   id: string
   projectId: string
-  entityType: ExecutableWorkItemType
+  entityType: ExecutableWorkItemType | 'project'
   entityId: string
   action: string
   summary: string
   payload?: Record<string, unknown>
   actor?: string
   createdAt: number
+}
+
+/** 跨项目待办建议；由只读任务快照计算，写入前仍需用户确认和任务版本匹配。 */
+export interface TaskArrangementSuggestion {
+  id: string
+  projectId: string
+  projectTitle: string
+  projectArchivedAt?: number
+  taskId: string
+  taskTitle: string
+  taskUpdatedAt: number
+  taskStatus: string
+  taskStatusName: string
+  currentAssignee?: TaskAssignee
+  currentDueDate?: number
+  priority: TaskPriority
+  dependencies: string[]
+  blockers: string[]
+  suggestedAssignee?: TaskAssignee
+  suggestedAssigneeMemberId?: string
+  assigneeReason?: string
+  suggestedDueDate?: number
+  dueDateReason?: string
+  suggestedStatus?: { id: string; name: string }
+  statusReason?: string
+  reviewReasons: string[]
+}
+
+/** 仅可应用当前建议中明确生成的负责人、截止日期、状态。 */
+export interface ApplyTaskArrangementSuggestionInput {
+  suggestionId: string
+  taskId: string
+  expectedUpdatedAt: number
+  changes: {
+    assignee?: TaskAssignee
+    assigneeMemberId?: string
+    dueDate?: number
+    status?: string
+  }
 }
 
 export interface ProjectTemplate {

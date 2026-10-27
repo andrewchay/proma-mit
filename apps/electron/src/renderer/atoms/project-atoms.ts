@@ -57,6 +57,43 @@ export const draggingTaskIdAtom = atom<string | null>(null)
  */
 export const pollStatusChangedAtom = atom<{ projectId: string; taskId: string; newStatus: string | null; at: number } | null>(null)
 
+/** 跨项目待办巡检结果；只保存当前进程内的派生展示数据，不覆盖 SQLite 任务事实。 */
+export interface OwnerTodoScanItem {
+  id: string
+  projectId: string
+  projectTitle: string
+  projectArchivedAt?: number
+  taskId: string
+  taskTitle: string
+  taskUpdatedAt: number
+  taskStatus: string
+  taskStatusName: string
+  currentAssignee?: { userId: string; displayName: string }
+  currentDueDate?: number
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  dependencies: string[]
+  blockers: string[]
+  suggestedAssignee?: { userId: string; displayName: string }
+  suggestedAssigneeMemberId?: string
+  assigneeReason?: string
+  suggestedDueDate?: number
+  dueDateReason?: string
+  suggestedStatus?: { id: string; name: string }
+  statusReason?: string
+  reviewReasons: string[]
+}
+
+export interface OwnerTodoScanState {
+  items: OwnerTodoScanItem[]
+  scannedAt: number | null
+  fingerprint: string | null
+  isScanning: boolean
+  error?: string
+}
+
+export const ownerTodoScanAtom = atom<OwnerTodoScanState>({ items: [], scannedAt: null, fingerprint: null, isScanning: false })
+export const ownerTodoScanRequestAtom = atom<number | null>(null)
+
 // ===== 派生 atom：看板列 =====
 
 /** 列定义 + 各列内按 sortOrder 升序的任务（一个状态一列，含空列） */
